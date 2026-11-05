@@ -550,6 +550,31 @@ class TestOPAClientVerifyDomainPolicy:
                 await client.verify_domain_policy("trade.governance", ("allow",))
 
     @pytest.mark.asyncio
+    async def test_healthcare_domain_refuses_finance_package(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """CAGE_DOMAIN=healthcare against OPA serving trade.governance → refuse."""
+        from src.gateway.governance.plugin_loader import (
+            domain_config_of,
+            load_domain_plugin,
+        )
+
+        monkeypatch.setenv("CAGE_DOMAIN", "healthcare")
+        cfg = domain_config_of(load_domain_plugin())
+        assert cfg.opa_package == "dosing.governance"
+        client, http = self._client_returning(
+            {"result": [_module("trade.governance", "allow")]}
+        )
+        with patch.object(client, "_get_client", return_value=http):
+            with pytest.raises(
+                OPAPolicyMismatchError,
+                match="no module declaring package 'dosing.governance'",
+            ):
+                await client.verify_domain_policy(
+                    cfg.opa_package, cfg.opa_required_rules
+                )
+
+    @pytest.mark.asyncio
     async def test_prefix_package_does_not_match(self) -> None:
         client, http = self._client_returning(
             {

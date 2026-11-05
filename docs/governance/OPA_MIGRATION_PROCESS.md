@@ -109,17 +109,14 @@ requesting review.
   [`constraints_test.rego`](../../compliance/postures/us_fed/opa/constraints_test.rego)**
   — every new decision path introduced by the policy change must have at least
   one `test_*` rule asserting its decision, and a fix must have a test that
-  fails on the policy before the fix. (`tests/opa_snapshots/` is the traffic
-  snapshot set that [`canary_opa_policy.sh`](../../scripts/canary_opa_policy.sh)
-  replays against the system-authz policy, not a trade-policy regression
-  suite.)
+  fails on the policy before the fix.
 
 - [ ] **Run the CI test bundle locally** — all tests must pass before pushing.
-  Zero failures is the acceptance criterion. The bundle must include the policy
-  directory, because the posture tests import `data.trade.governance`:
+  Zero failures is the acceptance criterion. Pass `compliance/postures/us_fed/opa/`
+  together with all `src/cage_*/opa/` directories:
   ```bash
-  opa check compliance/postures/us_fed/opa/ src/cage_finance/opa/ config/opa/ deployment/
-  opa test compliance/postures/us_fed/opa/ src/cage_finance/opa/ config/opa/ -v
+  opa check compliance/postures/us_fed/opa/ src/cage_*/opa/
+  opa test compliance/postures/us_fed/opa/ src/cage_*/opa/ -v
   ```
   If the change affects EU_ECB or APAC_MAS postures, add their test directories.
 

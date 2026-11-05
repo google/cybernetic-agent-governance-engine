@@ -20,8 +20,8 @@ off until its switch turns it on:
 - ``CAGE_NEMO_ENABLED``: NeMo Colang semantic rails (:func:`nemo_rails_enabled`).
 - ``CAGE_CONSENSUS_CRITICS_ENABLED``: multi-model consensus critics
   (:func:`consensus_critics_enabled`).
-- ``CAGE_CAUSAL_TIER_ENABLED``: the finance causal tier. ``src.cage_finance``
-  owns that name and reads it through :func:`opt_in_enabled`.
+- ``CAGE_CAUSAL_TIER_ENABLED``: optional domain causal tier. The active domain
+  plugin owns that name and reads it through :func:`opt_in_enabled`.
 
 All switches accept the same values, since every one of them controls a
 safety component. ``true`` or ``1`` turns the component on. ``false``, ``0``,

@@ -12,165 +12,216 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""
-Rego policy drift detection tests (Gap 3).
+"""Mounted-`.rego` Gate (R-15, G-34, Decision 9).
 
-These tests provide a pytest-visible safety net that catches wholesale
-deletion or corruption of key Rego rules without requiring a live OPA
-instance.  They complement the native `.rego_test` suite by running
-in the standard `pytest-logic` CI job (marker: ``local``).
+Every non-test `.rego` file tracked in `git ls-files "*.rego"` (outside
+`compliance/lula/`, `compliance/postures/`, and `tests/`) must be mounted by:
+  1. `deployment/k8s/` manifests,
+  2. `infra/modules/opa_policy/` Terraform configuration,
+  3. a Lula validation in `compliance/lula/`, or
+  4. a registered `src/cage_{domain}/opa/` domain plugin (`opa_policy_path`).
 
-Assertions:
-- config/opa/trade_policy.rego exists and contains key rule names.
-- config/opa/bounding_contracts.rego exists and is non-empty.
-- config/opa/generated_stpa_policy.rego exists and is non-empty.
+Also verifies that the 6 retired unmounted `.rego` files remain absent.
 """
 
 from __future__ import annotations
 
+import subprocess
 from pathlib import Path
 
 import pytest
 
-# ---------------------------------------------------------------------------
-# Resolve paths relative to repo root (works from any CWD)
-# ---------------------------------------------------------------------------
+from src.cage_finance.plugin import FinanceCagePlugin
+from src.cage_healthcare.plugin import HealthcareCagePlugin
+
+pytestmark = [pytest.mark.unit, pytest.mark.local]
 
 _REPO_ROOT = Path(__file__).resolve().parents[1]
-_OPA_DIR = _REPO_ROOT / "config" / "opa"
 
-_TRADE_POLICY = _OPA_DIR / "trade_policy.rego"
-_BOUNDING_CONTRACTS = _OPA_DIR / "bounding_contracts.rego"
-_STPA_POLICY = _OPA_DIR / "generated_stpa_policy.rego"
+_RETIRED_UNMOUNTED_REGO_FILES: tuple[str, ...] = (
+    "config/opa/generated_stpa_policy.rego",
+    "deployment/system_authz.rego",
+    "config/opa/trade_policy.rego",
+    "config/opa/agent_catalog.rego",
+    "config/opa/bounding_contracts.rego",
+    "config/opa/bounding_contracts_test.rego",
+)
+
+_EXEMPT_PREFIXES: tuple[str, ...] = (
+    "compliance/lula/",
+    "compliance/postures/",
+    "tests/",
+)
 
 
-# ---------------------------------------------------------------------------
-# Tests: trade_policy.rego
-# ---------------------------------------------------------------------------
+def _collect_mounted_rego_paths(repo_root: Path = _REPO_ROOT) -> set[str]:
+    """Return repo-relative paths (or basenames referenced in mounts) of mounted `.rego` policies."""
+    mounted: set[str] = set()
+
+    # 1. Registered domain plugins in src/cage_{domain}/opa/*.rego whose
+    #    `package` declaration matches `plugin_cls.domain_config.opa_package`.
+    import inspect
+    import re
+
+    for plugin_cls in (FinanceCagePlugin, HealthcareCagePlugin):
+        opa_pkg = getattr(plugin_cls.domain_config, "opa_package", "")
+        if not opa_pkg:
+            continue
+        plugin_dir = Path(inspect.getfile(plugin_cls)).resolve().parent
+        rel_plugin = plugin_dir.relative_to(Path(__file__).resolve().parents[1])
+        opa_dir = (repo_root / rel_plugin / "opa").resolve()
+        if not opa_dir.is_dir():
+            continue
+        pkg_re = re.compile(rf"^\s*package\s+{re.escape(opa_pkg)}\b", re.MULTILINE)
+        for rego_file in sorted(opa_dir.glob("*.rego")):
+            text = rego_file.read_text(encoding="utf-8", errors="ignore")
+            if pkg_re.search(text):
+                rel = rego_file.relative_to(repo_root.resolve())
+                mounted.add(rel.as_posix())
+
+    # 2. infra/modules/opa_policy/, infra/targets/gcp-gke/, compliance/lula/ references
+    #    Strip `#` (and HCL `//`) comment lines so commented-out filenames in
+    #    Lula YAML or Terraform files can never mask an unmounted `.rego` file.
+    search_dirs = (
+        repo_root / "infra" / "modules" / "opa_policy",
+        repo_root / "infra" / "targets" / "gcp-gke",
+        repo_root / "compliance" / "lula",
+    )
+    corpus = ""
+    for d in search_dirs:
+        if d.exists():
+            for f in sorted(d.rglob("*")):
+                if f.is_file() and f.suffix in {".yaml", ".yml", ".tf", ".json"}:
+                    raw_text = f.read_text(encoding="utf-8", errors="ignore")
+                    active_lines: list[str] = []
+                    for raw_line in raw_text.splitlines():
+                        stripped = raw_line.lstrip()
+                        if f.suffix in {".yaml", ".yml"} and stripped.startswith("#"):
+                            continue
+                        if f.suffix == ".tf" and (
+                            stripped.startswith("#") or stripped.startswith("//")
+                        ):
+                            continue
+                        if f.suffix in {".yaml", ".yml", ".tf"} and "#" in raw_line:
+                            raw_line = raw_line.split("#", 1)[0]
+                        active_lines.append(raw_line)
+                    corpus += "\n".join(active_lines) + "\n"
+
+    for candidate in repo_root.rglob("*.rego"):
+        try:
+            rel_str = candidate.resolve().relative_to(repo_root.resolve()).as_posix()
+        except ValueError:
+            continue
+        if rel_str in corpus or candidate.name in corpus:
+            mounted.add(rel_str)
+
+    return mounted
 
 
-@pytest.mark.local
-class TestTradePolicyRego:
-    """Drift-detection tests for config/opa/trade_policy.rego."""
+def is_rego_file_allowed(rel_path: str, mounted_paths: set[str]) -> bool:
+    """Return True if `rel_path` is a test/compliance `.rego` or is mounted at runtime."""
+    if rel_path.endswith("_test.rego"):
+        return True
+    if any(rel_path.startswith(prefix) for prefix in _EXEMPT_PREFIXES):
+        return True
+    return rel_path in mounted_paths
 
-    def test_file_exists(self):
-        """trade_policy.rego exists on disk."""
-        assert _TRADE_POLICY.exists(), (
-            f"Expected {_TRADE_POLICY} to exist — was it deleted?"
+
+class TestMountedRegoGate:
+    """Enforces that every tracked non-test `.rego` file is mounted at runtime."""
+
+    def test_every_tracked_non_test_rego_file_is_mounted(self) -> None:
+        proc = subprocess.run(
+            ["git", "ls-files", "*.rego"],
+            cwd=_REPO_ROOT,
+            check=True,
+            capture_output=True,
+            text=True,
+        )
+        tracked = [line.strip() for line in proc.stdout.splitlines() if line.strip()]
+        assert tracked, "Expected at least one tracked .rego file in the repository"
+
+        mounted = _collect_mounted_rego_paths(_REPO_ROOT)
+        unmounted = [rel for rel in tracked if not is_rego_file_allowed(rel, mounted)]
+        assert unmounted == [], (
+            f"Unmounted .rego files found in git ls-files: {unmounted}. "
+            "Every non-test .rego file outside compliance/lula/, compliance/postures/, "
+            "and tests/ must be mounted by deployment/k8s/, infra/modules/opa_policy/, "
+            "compliance/lula/, or a registered src/cage_<domain>/opa/ plugin."
         )
 
-    def test_file_is_non_empty(self):
-        """trade_policy.rego is not an empty file."""
-        content = _TRADE_POLICY.read_text(encoding="utf-8")
-        assert len(content.strip()) > 0, "trade_policy.rego is empty"
+    def test_gate_rejects_unmounted_rego_path(self) -> None:
+        mounted = _collect_mounted_rego_paths(_REPO_ROOT)
+        for retired in (
+            "config/opa/generated_stpa_policy.rego",
+            "deployment/system_authz.rego",
+            "config/opa/trade_policy.rego",
+            "config/opa/agent_catalog.rego",
+            "config/opa/bounding_contracts.rego",
+        ):
+            assert not is_rego_file_allowed(retired, mounted), (
+                f"Gate must reject unmounted policy {retired}"
+            )
 
-    def test_contains_package_declaration(self):
-        """trade_policy.rego declares an OPA package."""
-        content = _TRADE_POLICY.read_text(encoding="utf-8")
-        assert "package " in content, (
-            "trade_policy.rego must contain a 'package' declaration"
+    @pytest.mark.parametrize("rel_path", _RETIRED_UNMOUNTED_REGO_FILES)
+    def test_retired_unmounted_rego_files_absent_from_disk(self, rel_path: str) -> None:
+        assert not (_REPO_ROOT / rel_path).exists(), (
+            f"Retired unmounted .rego file {rel_path} must not exist on disk"
         )
 
-    def test_contains_allow_rule(self):
-        """trade_policy.rego contains an 'allow' rule (default or computed)."""
-        content = _TRADE_POLICY.read_text(encoding="utf-8")
-        assert "allow" in content, (
-            "trade_policy.rego must contain an 'allow' rule — "
-            "if removed, downstream OPA queries will fail"
+    def test_commented_out_lula_reference_does_not_mask_unmounted_rego(
+        self, tmp_path: Path
+    ) -> None:
+        """A `# rogue_policy.rego` comment in compliance/lula/*.yaml must not count as mounted."""
+        lula_dir = tmp_path / "compliance" / "lula"
+        lula_dir.mkdir(parents=True)
+        (lula_dir / "lula-validation-test.yaml").write_text(
+            "# Historical reference: rogue_policy.rego\nkind: LulaValidation # inline_rogue.rego\n",
+            encoding="utf-8",
         )
-
-    def test_package_is_financial_trade(self):
-        """trade_policy.rego uses package financial.trade."""
-        content = _TRADE_POLICY.read_text(encoding="utf-8")
-        assert "financial.trade" in content, (
-            "Package name 'financial.trade' not found — policy may have been replaced"
+        rogue_dir = tmp_path / "src" / "rogue"
+        rogue_dir.mkdir(parents=True)
+        (rogue_dir / "rogue_policy.rego").write_text(
+            "package rogue\ndefault allow := false\n", encoding="utf-8"
         )
-
-
-# ---------------------------------------------------------------------------
-# Tests: generated_stpa_policy.rego
-# ---------------------------------------------------------------------------
-
-
-@pytest.mark.local
-class TestGeneratedStpaPolicyRego:
-    """Drift-detection tests for config/opa/generated_stpa_policy.rego."""
-
-    def test_file_exists(self):
-        """generated_stpa_policy.rego exists — it is auto-generated by stpa_compiler."""
-        assert _STPA_POLICY.exists(), (
-            f"Expected {_STPA_POLICY} to exist. "
-            "Run: python -m src.gateway.governance.stpa_compiler compile"
+        (rogue_dir / "inline_rogue.rego").write_text(
+            "package rogue2\ndefault allow := false\n", encoding="utf-8"
         )
+        mounted = _collect_mounted_rego_paths(tmp_path)
+        assert "src/rogue/rogue_policy.rego" not in mounted
+        assert "src/rogue/inline_rogue.rego" not in mounted
 
-    def test_file_is_non_empty(self):
-        """generated_stpa_policy.rego has content (was not emptied)."""
-        content = _STPA_POLICY.read_text(encoding="utf-8")
-        assert len(content.strip()) > 0, (
-            "generated_stpa_policy.rego is empty — regenerate with stpa_compiler"
-        )
-
-    def test_contains_auto_generated_header(self):
-        """generated_stpa_policy.rego contains the AUTO-GENERATED marker."""
-        content = _STPA_POLICY.read_text(encoding="utf-8")
-        assert "AUTO-GENERATED" in content or "stpa_compiler" in content, (
-            "Auto-generated header not found — file may have been manually edited "
-            "or replaced without the standard marker"
-        )
-
-    def test_contains_stpa_allow_rule(self):
-        """generated_stpa_policy.rego defines stpa_allow."""
-        content = _STPA_POLICY.read_text(encoding="utf-8")
-        assert "stpa_allow" in content, (
-            "stpa_allow rule not found in generated_stpa_policy.rego — "
-            "STPA safety gate has been removed from the generated policy"
-        )
-
-    def test_contains_stpa_violations_aggregate(self):
-        """generated_stpa_policy.rego defines stpa_violations aggregate set."""
-        content = _STPA_POLICY.read_text(encoding="utf-8")
-        assert "stpa_violations" in content, (
-            "stpa_violations aggregate missing — STPA UCA enforcement removed"
-        )
-
-    def test_contains_uca_violations(self):
-        """generated_stpa_policy.rego contains at least one UCA violation rule."""
-        content = _STPA_POLICY.read_text(encoding="utf-8")
-        # At minimum UCA-1 should be present
-        assert "stpa_violation_uca" in content, (
-            "No stpa_violation_uca_* rules found — all STPA constraints removed"
-        )
-
-    def test_package_is_stpa_generated(self):
-        """generated_stpa_policy.rego uses package stpa.generated."""
-        content = _STPA_POLICY.read_text(encoding="utf-8")
-        assert "package stpa.generated" in content, (
-            "Package 'stpa.generated' not found — policy was re-packaged or replaced"
-        )
+    def test_canonical_domain_rego_policies_exist_and_are_mounted(self) -> None:
+        mounted = _collect_mounted_rego_paths(_REPO_ROOT)
+        for canonical in (
+            "src/cage_finance/opa/trade_governance.rego",
+            "src/cage_healthcare/opa/dosing_governance.rego",
+        ):
+            path = _REPO_ROOT / canonical
+            assert path.exists(), (
+                f"Expected canonical domain policy {canonical} to exist"
+            )
+            assert path.read_text(encoding="utf-8").strip(), (
+                f"{canonical} must be non-empty"
+            )
+            assert is_rego_file_allowed(canonical, mounted)
 
 
-# ---------------------------------------------------------------------------
-# Tests: cross-policy consistency
-# ---------------------------------------------------------------------------
+class TestCheckPolicyDriftCli:
+    """Exercises scripts/check_policy_drift.py --domain parameterization."""
 
+    @pytest.mark.parametrize("domain", ["all", "finance", "healthcare"])
+    def test_production_domains_pass_policy_drift(self, domain: str) -> None:
+        from scripts.check_policy_drift import main as drift_main
 
-@pytest.mark.local
-class TestCrossPolicyConsistency:
-    """Cross-file consistency checks that no single policy can satisfy alone."""
+        assert drift_main(["--domain", domain]) == 0
 
-    def test_all_three_rego_files_exist(self):
-        """Core OPA policy files co-exist in config/opa/."""
-        missing = [
-            p
-            for p in [_TRADE_POLICY, _BOUNDING_CONTRACTS, _STPA_POLICY]
-            if not p.exists()
-        ]
-        assert not missing, f"Missing OPA policy files: {[str(m) for m in missing]}"
+    def test_stub_domain_fails_policy_drift(self) -> None:
+        from scripts.check_policy_drift import main as drift_main
 
-    def test_opa_directory_is_not_empty(self):
-        """config/opa/ contains at least 3 .rego files."""
-        rego_files = list(_OPA_DIR.glob("*.rego"))
-        assert len(rego_files) >= 3, (
-            f"Expected ≥3 .rego files in {_OPA_DIR}, found {len(rego_files)}: "
-            f"{[f.name for f in rego_files]}"
-        )
+        assert drift_main(["--domain", "physical_ai"]) == 1
+
+    def test_unknown_domain_returns_config_error(self) -> None:
+        from scripts.check_policy_drift import main as drift_main
+
+        assert drift_main(["--domain", "nonexistent_domain"]) == 2

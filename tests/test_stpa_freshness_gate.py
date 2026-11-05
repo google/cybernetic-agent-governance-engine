@@ -72,7 +72,6 @@ def gate(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
     monkeypatch.setattr(module, "_REPO_ROOT", repo)
     monkeypatch.setattr(module, "_SOURCE_DIR", repo / "config" / "stpa")
     monkeypatch.setattr(module, "_DOMAIN_STPA_DIRS", [])
-    monkeypatch.setattr(module, "_SOURCE_LEGACY", repo / "missing.yaml")
     monkeypatch.setattr(module, "_GENERATED_ARTIFACTS", [artifact])
     return module, repo, source, artifact
 

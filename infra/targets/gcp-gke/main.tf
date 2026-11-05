@@ -946,19 +946,33 @@ module "compliance_bridge" {
 
 # ─── Deploy OPA Policy Engine ──────────────────────────────────────────────────
 
+locals {
+  domain_opa_dir = "${path.module}/../../../src/cage_${var.cage_domain}/opa"
+  domain_opa_policies = {
+    for f in try(fileset(local.domain_opa_dir, "*.rego"), toset([])) :
+    f => file("${local.domain_opa_dir}/${f}")
+    if !endswith(f, "_test.rego")
+  }
+}
+
+resource "terraform_data" "domain_opa_policies_guard" {
+  lifecycle {
+    precondition {
+      condition     = length(local.domain_opa_policies) > 0
+      error_message = "Active cage_domain (${var.cage_domain}) has no non-test .rego policies under src/cage_${var.cage_domain}/opa/; stub domains cannot deploy an empty OPA bundle (POAM-2026-198)."
+    }
+  }
+}
+
 module "opa" {
   source = "../../modules/opa_policy"
 
-  namespace = module.namespace.name
-  image     = var.image_digests["opa"]
-  replicas  = var.enable_high_availability ? 2 : 1
+  namespace    = module.namespace.name
+  image        = var.image_digests["opa"]
+  replicas     = var.enable_high_availability ? 2 : 1
+  policy_files = local.domain_opa_policies
 
-  # Optional: Add custom policies
-  policy_files = {
-    "trade_governance.rego" = file("${path.module}/../../../src/cage_finance/opa/trade_governance.rego")
-  }
-
-  depends_on = [module.gke]
+  depends_on = [module.gke, terraform_data.domain_opa_policies_guard]
 }
 
 # ─── Deploy Gateway ─────────────────────────────────────────────────────────────
@@ -1339,7 +1353,7 @@ resource "terraform_data" "control_plane_access_guard" {
 # A destroy plan reports resource preconditions only as warnings, so
 # `terraform destroy -var-file=staging.tfvars` needs neither authorized_networks
 # nor the compliance keys, while a variable validation fails the destroy plan.
-# Every terraform_data guard in this file is standalone: POAM-2026-180 tracks
+# The five legacy guards above and below are standalone: POAM-2026-180 tracks
 # moving them, and tests/infrastructure/test_guard_placement.py fails on a new one.
 
 # W6: what each inference backend deploys must be able to run. "vllm" schedules

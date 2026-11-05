@@ -74,7 +74,6 @@
     "ia-3": "Device Identification and Authentication"
   },
   "enforcement_artifacts": {
-    "opa": "config/opa/generated_stpa_policy.rego (OPA Rego)",
     "nemo": "config/rails/generated_stpa_rails.co (NeMo Colang)",
     "python": "src/cage_finance/stpa/uca_rules.py (generated Python UCA rules), src/gateway/governance/stpa_validator.py (STPA validator)"
   },

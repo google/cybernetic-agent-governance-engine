@@ -539,6 +539,7 @@ EVIDENCE — Blocking cage_evidence records from the last 24 hours
 CODEBASE REFERENCE (use these paths in your fix)
   - Production gateway (Python):      src/gateway/server/hybrid_server.py
   - Core governance engine:           src/gateway/governance/
+  - STPA Python validator:            src/gateway/governance/stpa_validator.py
   - Domain plugins & OPA policies:    src/cage_<domain>/opa/
   - Reference advisor application:    src/governed_financial_advisor/graph/
   - Compliance bridge (Python):       src/compliance_bridge/

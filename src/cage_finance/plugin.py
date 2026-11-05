@@ -78,6 +78,7 @@ class FinanceCagePlugin(CagePlugin):
 
     name = "finance"
     api_version = "2.0"
+    maturity = "production"
     domain_config = DomainConfig(
         ftra_registry_path=Path(__file__).resolve().parents[2]
         / "config"

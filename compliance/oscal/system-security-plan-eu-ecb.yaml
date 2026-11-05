@@ -3,7 +3,7 @@ system-security-plan:
   metadata:
     title: CAGE System Security Plan (EU_ECB — EU AI Act / GDPR / DORA)
     published: '2026-06-15T00:00:00Z'
-    last-modified: '2026-11-06T21:22:22Z'
+    last-modified: '2026-11-05T21:08:46Z'
     version: 1.0.0-draft+stpa
     oscal-version: 1.0.4
     remarks: 'This System Security Plan (SSP) documents the compliance controls implemented
@@ -648,7 +648,8 @@ system-security-plan:
       description: 'CTRL_AGT_001 regional agentic confidence floor. Since commit ecca70b9
         the finance trade_confidence tier (src/cage_finance/tiers/trade_confidence_tier.py,
         phase 1, order 1) refuses execute_trade and execute_trade_bounded when the
-        confidence score is below the effective domains.finance.confidence.min_trade_confidence.value
+        agent''s declared confidence parameter (a caller-supplied self-assessment,
+        not a server-measured signal) is below the effective domains.finance.confidence.min_trade_confidence.value
         of 0.97: a score at or above the universal defer floor requires human approval
         (HITL), a lower score defers, and a missing or malformed score is a HARD violation.
         The kernel ConfidenceStage still enforces the universal confidence band (0.95)
@@ -814,22 +815,22 @@ system-security-plan:
         \ This eliminates the\n          \"Natural Language Tax\" — the compliance\
         \ gap between human-readable safety\n          specifications and the actual\
         \ code running in the cluster.\n\n          Compiler source: src/gateway/governance/stpa_compiler.py\n\
-        \          Control structure (source of truth): config/stpa_control_structure.yaml\n\
-        \          Generated artifacts:\n            - config/opa/generated_stpa_policy.rego\
-        \    (OPA Rego — 7 UCAs)\n            - src/gateway/governance/stpa_validator.py\
-        \ (Python — 11 UCAs)\n            - config/sandbox/generated_sandbox_policy.yaml\
-        \ (Sandbox — 1 UCAs)\n\n          Target compliance framework: EU AI Act (Regulation\
+        \          Control structure (source of truth): config/stpa/\n          Generated\
+        \ artifacts:\n            - src/gateway/governance/stpa_validator.py (Python\
+        \ — 12 UCAs: 6 enforcing, 6 advisory)\n            - config/sandbox/generated_sandbox_policy.yaml\
+        \ (Sandbox — 2 UCAs)\n\n          Target compliance framework: EU AI Act (Regulation\
         \ (EU) 2024/1689) High-Risk AI — Annex III §5(b)\n          Framework reference:\
         \ https://eur-lex.europa.eu/legal-content/EN/TXT/?uri=CELEX%3A32024R1689\n\
         \          System: CAGE Financial Advisor v1.1.0\n          UCAs encoded:\
-        \ 12\n          Hazards modelled: 7\n          Safety constraints: 3\n   \
-        \       Last compiled: 2026-11-06T21:22:22Z\n\n          UCA-to-Control mapping\
-        \ (EU AI Act (Regulation (EU) 2024/1689) High-Risk AI — Annex III §5(b)):\n\
-        \            UCA-1 (unsafe_action): Agent executes write operation without\
-        \ a signed approval token.\n  → EU_AI_ACT: Art. 9(5) (Risk Management — Residual\
-        \ risk mitigation measures), Art. 14 (Human Oversight — Technical measures\
-        \ to enable oversight)\nUCA-10 (wrong_timing): Agent reads account balance\
-        \ with stale connection data.\n  → EU_AI_ACT: \nUCA-12 (unsafe_action): Agent\
+        \ 12 (6 enforcing server-bound, 6 advisory)\n          Hazards modelled: 7\n\
+        \          Safety constraints: 3\n          Last compiled: 2026-11-05T21:08:46Z\n\
+        \n          UCA-to-Control mapping (EU AI Act (Regulation (EU) 2024/1689)\
+        \ High-Risk AI — Annex III §5(b)):\n            UCA-1 (unsafe_action): Agent\
+        \ executes write operation without a human approval token.\n  → EU_AI_ACT:\
+        \ Art. 9(5) (Risk Management — Residual risk mitigation measures), Art. 14\
+        \ (Human Oversight — Technical measures to enable oversight)\nUCA-10 (wrong_timing)\
+        \ [advisory — partial]: Agent reads account balance with stale connection\
+        \ data.\n  → EU_AI_ACT: \nUCA-12 (unsafe_action) [advisory — partial]: Agent\
         \ executes bounded trade when bounding contracts B1-B10 fail validation. Phase\
         \ 5: execute_trade_bounded is EXTERNALLY_REVERSIBLE when B10 rollback window\
         \ validation passes, enabling HITL review without confidence hard-gate per\
@@ -842,27 +843,28 @@ system-security-plan:
         \ to enable oversight)\nUCA-2 (wrong_timing): Agent executes trade with stale\
         \ market data (latency > threshold).\n  → EU_AI_ACT: Art. 10(3) (Data Governance\
         \ — Examination of data for bias), Art. 17 (Quality Management System (QMS)\
-        \ Requirements)\nUCA-3 (unsafe_action): Agent outputs PII to user interface.\n\
-        \  → EU_AI_ACT: Art. 10(5) (Data Governance — Personal data and data minimisation),\
-        \ GDPR Art. 22 (Automated Individual Decision-Making Including Profiling)\n\
-        UCA-4 (stopped_too_soon): Agent debits account but fails to credit asset (atomic\
-        \ failure).\n  → EU_AI_ACT: Art. 12 (Record-Keeping and Automatic Logging\
-        \ Obligations), Art. 17 (Quality Management System (QMS) Requirements)\nUCA-5\
-        \ (unsafe_action): Agent executes buy order when daily drawdown exceeds limit.\n\
-        \  → EU_AI_ACT: Art. 9(2)(b) (Risk Controls — Identification of known and\
-        \ foreseeable risks), Art. 14 (Human Oversight — Technical measures to enable\
-        \ oversight)\nUCA-6 (wrong_timing): Agent submits market order exceeding allowable\
-        \ fraction of daily volume.\n  → EU_AI_ACT: Art. 9(5) (Risk Management — Residual\
-        \ risk mitigation measures), Art. 14 (Human Oversight — Technical measures\
-        \ to enable oversight)\nUCA-7 (unsafe_action): Adversarial prompt injection\
-        \ score exceeds detection threshold.\n  → EU_AI_ACT: Art. 9(5) (Risk Management\
-        \ — Residual risk mitigation measures), Annex III §5(b) (High-Risk AI Classification\
-        \ — Creditworthiness and credit scoring)\nUCA-8 (wrong_timing): Agent executes\
-        \ trade before risk assessment is complete.\n  → EU_AI_ACT: Art. 9 (Risk Management\
+        \ Requirements)\nUCA-3 (unsafe_action) [advisory — partial]: Agent outputs\
+        \ PII to user interface.\n  → EU_AI_ACT: Art. 10(5) (Data Governance — Personal\
+        \ data and data minimisation), GDPR Art. 22 (Automated Individual Decision-Making\
+        \ Including Profiling)\nUCA-4 (stopped_too_soon) [advisory — partial]: Agent\
+        \ debits account but fails to credit asset (atomic failure).\n  → EU_AI_ACT:\
+        \ Art. 12 (Record-Keeping and Automatic Logging Obligations), Art. 17 (Quality\
+        \ Management System (QMS) Requirements)\nUCA-5 (unsafe_action): Agent executes\
+        \ buy order when daily drawdown exceeds limit.\n  → EU_AI_ACT: Art. 9(2)(b)\
+        \ (Risk Controls — Identification of known and foreseeable risks), Art. 14\
+        \ (Human Oversight — Technical measures to enable oversight)\nUCA-6 (wrong_timing):\
+        \ Agent submits market order exceeding allowable fraction of daily volume.\n\
+        \  → EU_AI_ACT: Art. 9(5) (Risk Management — Residual risk mitigation measures),\
+        \ Art. 14 (Human Oversight — Technical measures to enable oversight)\nUCA-7\
+        \ (unsafe_action): Adversarial prompt injection score exceeds detection threshold.\n\
+        \  → EU_AI_ACT: Art. 9(5) (Risk Management — Residual risk mitigation measures),\
+        \ Annex III §5(b) (High-Risk AI Classification — Creditworthiness and credit\
+        \ scoring)\nUCA-8 (wrong_timing) [advisory — partial]: Agent executes trade\
+        \ before risk assessment is complete.\n  → EU_AI_ACT: Art. 9 (Risk Management\
         \ System for High-Risk AI), Art. 14 (Human Oversight — Technical measures\
-        \ to enable oversight)\nUCA-9 (wrong_timing): Agent executes trade with compliance\
-        \ check bypassed.\n  → EU_AI_ACT: Art. 9 (Risk Management System for High-Risk\
-        \ AI), Art. 17 (Quality Management System (QMS) Requirements)"
+        \ to enable oversight)\nUCA-9 (wrong_timing) [advisory — partial]: Agent executes\
+        \ trade with compliance check bypassed.\n  → EU_AI_ACT: Art. 9 (Risk Management\
+        \ System for High-Risk AI), Art. 17 (Quality Management System (QMS) Requirements)"
       props:
       - name: implementation-status
         value: implemented
@@ -870,14 +872,16 @@ system-security-plan:
         value: 1.1.0
       - name: uca-count
         value: '12'
+      - name: enforcing-uca-count
+        value: '6'
+      - name: advisory-uca-count
+        value: '6'
       - name: hazard-count
         value: '7'
       - name: last-compiled
-        value: '2026-11-06T21:22:22Z'
+        value: '2026-11-05T21:08:46Z'
       - name: target-framework
         value: EU AI Act (Regulation (EU) 2024/1689) High-Risk AI — Annex III §5(b)
-      - name: artifact-opa
-        value: config/opa/generated_stpa_policy.rego
       - name: artifact-python
         value: src/gateway/governance/stpa_validator.py
       - name: artifact-sandbox
@@ -895,12 +899,12 @@ system-security-plan:
         implementation-status:
           state: implemented
         links:
-        - href: ../../config/stpa_control_structure.yaml
+        - href: ../../config/stpa/core_system.yaml
           rel: reference
           text: STPA control structure YAML (source of truth)
-        - href: ../../config/opa/generated_stpa_policy.rego
+        - href: ../../src/gateway/governance/stpa_validator.py
           rel: reference
-          text: Generated OPA Rego policy
+          text: STPA Python validator
       - component-uuid: e5000099-stpa-4000-8000-compiler00001
         uuid: h8000099-stpa-4000-8000-compiler00001
         description: 'STPA compiler enforces Art. 14 (Human Oversight — Technical
@@ -909,12 +913,12 @@ system-security-plan:
         implementation-status:
           state: implemented
         links:
-        - href: ../../config/stpa_control_structure.yaml
+        - href: ../../config/stpa/core_system.yaml
           rel: reference
           text: STPA control structure YAML (source of truth)
-        - href: ../../config/opa/generated_stpa_policy.rego
+        - href: ../../src/gateway/governance/stpa_validator.py
           rel: reference
-          text: Generated OPA Rego policy
+          text: STPA Python validator
       - component-uuid: e5000099-stpa-4000-8000-compiler00001
         uuid: h8000099-stpa-4000-8000-compiler00002
         description: 'STPA compiler enforces Art. 10(3) (Data Governance — Examination
@@ -923,12 +927,12 @@ system-security-plan:
         implementation-status:
           state: implemented
         links:
-        - href: ../../config/stpa_control_structure.yaml
+        - href: ../../config/stpa/core_system.yaml
           rel: reference
           text: STPA control structure YAML (source of truth)
-        - href: ../../config/opa/generated_stpa_policy.rego
+        - href: ../../src/gateway/governance/stpa_validator.py
           rel: reference
-          text: Generated OPA Rego policy
+          text: STPA Python validator
       - component-uuid: e5000099-stpa-4000-8000-compiler00001
         uuid: h8000099-stpa-4000-8000-compiler00003
         description: 'STPA compiler enforces Art. 17 (Quality Management System (QMS)
@@ -937,54 +941,54 @@ system-security-plan:
         implementation-status:
           state: implemented
         links:
-        - href: ../../config/stpa_control_structure.yaml
+        - href: ../../config/stpa/core_system.yaml
           rel: reference
           text: STPA control structure YAML (source of truth)
-        - href: ../../config/opa/generated_stpa_policy.rego
+        - href: ../../src/gateway/governance/stpa_validator.py
           rel: reference
-          text: Generated OPA Rego policy
+          text: STPA Python validator
       - component-uuid: e5000099-stpa-4000-8000-compiler00001
         uuid: h8000099-stpa-4000-8000-compiler00004
         description: 'STPA compiler enforces Art. 10(5) (Data Governance — Personal
           data and data minimisation) via generated artifacts under EU AI Act High-Risk
           AI obligations. UCAs covered: UCA-3.'
         implementation-status:
-          state: implemented
+          state: partial
         links:
-        - href: ../../config/stpa_control_structure.yaml
+        - href: ../../config/stpa/core_system.yaml
           rel: reference
           text: STPA control structure YAML (source of truth)
-        - href: ../../config/opa/generated_stpa_policy.rego
+        - href: ../../src/gateway/governance/stpa_validator.py
           rel: reference
-          text: Generated OPA Rego policy
+          text: STPA Python validator
       - component-uuid: e5000099-stpa-4000-8000-compiler00001
         uuid: h8000099-stpa-4000-8000-compiler00005
         description: 'STPA compiler enforces GDPR Art. 22 (Automated Individual Decision-Making
           Including Profiling) via generated artifacts under EU AI Act High-Risk AI
           obligations. UCAs covered: UCA-3.'
         implementation-status:
-          state: implemented
+          state: partial
         links:
-        - href: ../../config/stpa_control_structure.yaml
+        - href: ../../config/stpa/core_system.yaml
           rel: reference
           text: STPA control structure YAML (source of truth)
-        - href: ../../config/opa/generated_stpa_policy.rego
+        - href: ../../src/gateway/governance/stpa_validator.py
           rel: reference
-          text: Generated OPA Rego policy
+          text: STPA Python validator
       - component-uuid: e5000099-stpa-4000-8000-compiler00001
         uuid: h8000099-stpa-4000-8000-compiler00006
         description: 'STPA compiler enforces Art. 12 (Record-Keeping and Automatic
           Logging Obligations) via generated artifacts under EU AI Act High-Risk AI
           obligations. UCAs covered: UCA-4.'
         implementation-status:
-          state: implemented
+          state: partial
         links:
-        - href: ../../config/stpa_control_structure.yaml
+        - href: ../../config/stpa/core_system.yaml
           rel: reference
           text: STPA control structure YAML (source of truth)
-        - href: ../../config/opa/generated_stpa_policy.rego
+        - href: ../../src/gateway/governance/stpa_validator.py
           rel: reference
-          text: Generated OPA Rego policy
+          text: STPA Python validator
       - component-uuid: e5000099-stpa-4000-8000-compiler00001
         uuid: h8000099-stpa-4000-8000-compiler00007
         description: 'STPA compiler enforces Art. 9(2)(b) (Risk Controls — Identification
@@ -993,12 +997,12 @@ system-security-plan:
         implementation-status:
           state: implemented
         links:
-        - href: ../../config/stpa_control_structure.yaml
+        - href: ../../config/stpa/core_system.yaml
           rel: reference
           text: STPA control structure YAML (source of truth)
-        - href: ../../config/opa/generated_stpa_policy.rego
+        - href: ../../src/gateway/governance/stpa_validator.py
           rel: reference
-          text: Generated OPA Rego policy
+          text: STPA Python validator
       - component-uuid: e5000099-stpa-4000-8000-compiler00001
         uuid: h8000099-stpa-4000-8000-compiler00008
         description: 'STPA compiler enforces Annex III §5(b) (High-Risk AI Classification
@@ -1007,26 +1011,26 @@ system-security-plan:
         implementation-status:
           state: implemented
         links:
-        - href: ../../config/stpa_control_structure.yaml
+        - href: ../../config/stpa/core_system.yaml
           rel: reference
           text: STPA control structure YAML (source of truth)
-        - href: ../../config/opa/generated_stpa_policy.rego
+        - href: ../../src/gateway/governance/stpa_validator.py
           rel: reference
-          text: Generated OPA Rego policy
+          text: STPA Python validator
       - component-uuid: e5000099-stpa-4000-8000-compiler00001
         uuid: h8000099-stpa-4000-8000-compiler00009
         description: 'STPA compiler enforces Art. 9 (Risk Management System for High-Risk
           AI) via generated artifacts under EU AI Act High-Risk AI obligations. UCAs
           covered: UCA-8, UCA-9.'
         implementation-status:
-          state: implemented
+          state: partial
         links:
-        - href: ../../config/stpa_control_structure.yaml
+        - href: ../../config/stpa/core_system.yaml
           rel: reference
           text: STPA control structure YAML (source of truth)
-        - href: ../../config/opa/generated_stpa_policy.rego
+        - href: ../../src/gateway/governance/stpa_validator.py
           rel: reference
-          text: Generated OPA Rego policy
+          text: STPA Python validator
   back-matter:
     resources:
     - uuid: eu-ecb-res-0001-4000-8000-000000000001

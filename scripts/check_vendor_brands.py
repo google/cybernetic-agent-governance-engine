@@ -133,7 +133,6 @@ DOC_GOVERNANCE_FILES: frozenset[str] = frozenset(
 EXCLUDED_FILES: set[str] = {
     "generated_stpa_validator.py",
     "generated_saga_nodes.py",
-    "generated_stpa_policy.rego",
 }
 
 # Directories excluded from scanning

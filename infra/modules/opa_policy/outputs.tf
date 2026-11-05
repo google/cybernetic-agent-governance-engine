@@ -31,3 +31,8 @@ output "diagnostics_url" {
   description = "OPA diagnostics URL"
   value       = "http://${kubernetes_service.opa.metadata[0].name}.${var.namespace}.svc.cluster.local:8282"
 }
+
+output "policy_files_data" {
+  description = "Mounted OPA policy files map in the opa-policies ConfigMap"
+  value       = var.create_policy_configmap ? kubernetes_config_map.opa_policies[0].data : {}
+}

@@ -694,17 +694,12 @@ def test_gate_agent_state_schema_catches_planted_drift(tmp_path: Path) -> None:
 
 
 def test_gate_stpa_compiler_emits_opa_fmt_compliant_rego_and_catches_drift() -> None:
-    """`generate_opa()` must match `config/opa/generated_stpa_policy.rego` with tabs, and `content_digest` must detect drift."""
+    """`generate_opa()` must emit tab-indented Rego without consecutive blank lines, and `content_digest` must detect drift."""
     files = sorted((REPO_ROOT / "config" / "stpa").rglob("*.yaml"))
     cs = load_control_structures(files)
     compiled = generate_opa(cs)
-    on_disk = (REPO_ROOT / "config" / "opa" / "generated_stpa_policy.rego").read_text(
-        encoding="utf-8"
-    )
-    assert check_stpa_freshness.content_digest(
-        compiled
-    ) == check_stpa_freshness.content_digest(on_disk), (
-        "generate_opa() output drifted from config/opa/generated_stpa_policy.rego"
+    assert not (REPO_ROOT / "config" / "opa" / "generated_stpa_policy.rego").exists(), (
+        "generated_stpa_policy.rego must not be emitted on disk by default (F-102)"
     )
     assert "\n\n\n" not in compiled, (
         "generate_opa() must not emit consecutive blank lines"

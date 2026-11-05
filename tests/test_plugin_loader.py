@@ -34,10 +34,13 @@ _RULES = ("allow",)
 
 
 class FakePlugin:
-    def __init__(self, name, api_version="2.0", domain_config=None):
+    def __init__(
+        self, name, api_version="2.0", domain_config=None, maturity="production"
+    ):
         self.name = name
         self.api_version = api_version
         self.domain_config = domain_config
+        self.maturity = maturity
 
     def contribute(self):
         return PluginContribution(domain=self.name)

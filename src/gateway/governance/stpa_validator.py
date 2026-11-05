@@ -24,6 +24,7 @@ from __future__ import annotations
 
 import inspect
 import logging
+import math
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass, field
 from typing import Any
@@ -190,7 +191,7 @@ class UcaRule:
 
 
 def _check_core_uca_1(action_name: str, params: Mapping[str, Any]) -> Violation | None:
-    """UCA-1 [unsafe_action] on 'write_db': requires a signed approval_token."""
+    """UCA-1 [unsafe_action] on 'write_db': requires an approval_token."""
     if _normalize_action_name(action_name) != "write_db":
         return None
     token = params.get("approval_token") if isinstance(params, Mapping) else None
@@ -198,14 +199,78 @@ def _check_core_uca_1(action_name: str, params: Mapping[str, Any]) -> Violation 
         reason = (
             "param 'approval_token' is None"
             if token is None
-            else "param 'approval_token' is missing or not a valid signed token"
+            else "param 'approval_token' is missing or not a valid approval token"
         )
         return Violation(
             tier="stpa",
             code="STPA_UCA_1",
             message=(
-                f"UCA-1 (write_db): Agent executes write operation without a signed "
+                f"UCA-1 (write_db): Agent executes write operation without an "
                 f"approval token. [{reason}] (hazards: H-1)"
+            ),
+            kind=ViolationKind.HARD,
+        )
+    return None
+
+
+_UCA7_MAX_SEMANTIC_SCORE: float = 0.85
+
+
+def _check_core_uca_7(action_name: str, params: Mapping[str, Any]) -> Violation | None:
+    """UCA-7 [unsafe_action] on 'prompt_injection_check': semantic_score <= 0.85."""
+    if _normalize_action_name(action_name) != "prompt_injection_check":
+        return None
+    val = params.get("semantic_score") if isinstance(params, Mapping) else None
+    if val is None:
+        return Violation(
+            tier="stpa",
+            code="STPA_UCA_7",
+            message=(
+                "UCA-7 (prompt_injection_check): Missing required server-bound "
+                "param `semantic_score`. (hazards: H-6)"
+            ),
+            kind=ViolationKind.HARD,
+        )
+    if isinstance(val, bool) or not isinstance(val, (int, float, str)):
+        return Violation(
+            tier="stpa",
+            code="STPA_UCA_7",
+            message=(
+                "UCA-7 (prompt_injection_check): Invalid non-numeric param "
+                "`semantic_score`. (hazards: H-6)"
+            ),
+            kind=ViolationKind.HARD,
+        )
+    try:
+        f_val = float(val)
+    except (TypeError, ValueError):
+        return Violation(
+            tier="stpa",
+            code="STPA_UCA_7",
+            message=(
+                "UCA-7 (prompt_injection_check): Invalid non-numeric param "
+                "`semantic_score`. (hazards: H-6)"
+            ),
+            kind=ViolationKind.HARD,
+        )
+    if not math.isfinite(f_val):
+        return Violation(
+            tier="stpa",
+            code="STPA_UCA_7",
+            message=(
+                "UCA-7 (prompt_injection_check): Non-finite param "
+                "`semantic_score`. (hazards: H-6)"
+            ),
+            kind=ViolationKind.HARD,
+        )
+    if f_val > _UCA7_MAX_SEMANTIC_SCORE:
+        return Violation(
+            tier="stpa",
+            code="STPA_UCA_7",
+            message=(
+                f"UCA-7 (prompt_injection_check): Agent processes user prompt "
+                f"containing semantic injection payload. "
+                f"({f_val:.4f} > {_UCA7_MAX_SEMANTIC_SCORE}) (hazards: H-6)"
             ),
             kind=ViolationKind.HARD,
         )
@@ -216,8 +281,14 @@ CORE_UCA_RULES: tuple[UcaRule, ...] = (
     UcaRule(
         uca_id="UCA-1",
         action="write_db",
-        description="Agent executes write operation without a signed approval token.",
+        description="Agent executes write operation without an approval token.",
         predicate=_check_core_uca_1,
+    ),
+    UcaRule(
+        uca_id="UCA-7",
+        action="prompt_injection_check",
+        description="Agent processes user prompt containing semantic injection payload.",
+        predicate=_check_core_uca_7,
     ),
 )
 

@@ -36,11 +36,14 @@ from src.gateway.governance.safety.cbf_engine import ControlBarrierFunction
 _CONFIG_DIR = Path(__file__).resolve().parent / "config"
 
 
+# Enforces clinical consensus, SerumConcentrationBarrier CBF, FTRA terminal
+# classification, and dosing.governance OPA policy across Compose and GKE.
+# Domain-specific STPA hazard YAML and compiled uca_rules remain planned for
+# healthcare (currently finance-only); core system STPA UCAs apply via Layer 1.
 class HealthcareCagePlugin(contracts.CagePlugin):
     """Healthcare domain capability plugin."""
 
-    name = "healthcare"
-    api_version = "2.0"
+    name, api_version, maturity = "healthcare", "2.0", "production"
     domain_config = contracts.DomainConfig(
         ftra_registry_path=_CONFIG_DIR / "ftra" / "terminal_registry.json",
         opa_package="dosing.governance",

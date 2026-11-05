@@ -145,6 +145,7 @@ class TestDomainLiteralGate:
 
         assert "generated_stpa_validator.py" not in EXCLUDED_FILES
         assert "generated_saga_nodes.py" not in EXCLUDED_FILES
+        assert "generated_stpa_policy.rego" not in EXCLUDED_FILES
 
     @pytest.mark.parametrize(
         "bad_literal",
@@ -165,6 +166,13 @@ class TestDomainLiteralGate:
             "Execution Quant",
             "administer_medication",
             "move_effector",
+            "cage_finance",
+            "cage_healthcare",
+            "cage_physical_ai",
+            "trade_governance",
+            "dosing_governance",
+            "trade.governance",
+            "dosing.governance",
         ],
     )
     def test_gate_detects_all_forbidden_domain_literals(

@@ -84,7 +84,7 @@ def is_causal_tier_enabled() -> bool:
 #
 # Keep this set in sync with:
 #   - src/cage_finance/tiers/*/handles() implementations
-#   - config/opa/trade_policy.rego action name bindings
+#   - src/cage_finance/opa/trade_governance.rego action name bindings
 #   - config/ftra/terminal_registry.json terminals block
 REGISTERED_ACTIONS: frozenset[str] = frozenset(
     {

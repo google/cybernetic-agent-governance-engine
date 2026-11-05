@@ -18,11 +18,10 @@ Prevents regressions on the documented `docs/QUICKSTART.md` onboarding path:
 1. `docker-compose.yml`, `docker-compose.dev.yml`, `.env.example`, and
    `config/environments/local-dev.env.example` must configure `OPA_URL` as a
    base URL without a path (validated against `_opa_endpoint()`).
-2. The `opa` service in `docker-compose.yml` must mount `./config/opa` and
-   ONLY the active domain's Rego directory (`./src/cage_${CAGE_DOMAIN:-finance}/opa`),
-   never the non-existent `./policies` directory or multiple domains at once,
-   and must pass `--ignore=.*` so `config/opa/.policy_hash` does not break
-   `opa run` or `opa check`.
+2. The `opa` service in `docker-compose.yml` must mount ONLY the active
+   domain's Rego directory (`./src/cage_${CAGE_DOMAIN:-finance}/opa`), never the
+   non-existent `./policies` directory or multiple domains at once, and must
+   pass `--ignore=.*` so dotfiles do not break `opa run` or `opa check`.
 3. `examples/governance_demo.py --no-pause` must execute all three acts cleanly
    and demonstrate atomic TOCTOU rejection.
 """

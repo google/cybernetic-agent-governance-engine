@@ -264,7 +264,7 @@ case "${CAGE_REGION}" in
   US_FED)
     echo ""
     info "Gate 1.1 — OPA unit tests (US_FED posture)"
-    if opa test compliance/postures/us_fed/opa/ src/cage_finance/opa/ config/opa/ -v; then
+    if opa test compliance/postures/us_fed/opa/ src/cage_*/opa/ -v; then
       success "Gate 1.1 passed — OPA unit tests"
     else
       error "Gate 1.1 FAILED — OPA unit tests"

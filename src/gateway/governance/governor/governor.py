@@ -57,7 +57,13 @@ from src.gateway.governance.governor.pipeline import (
     run_pipeline,
 )
 from src.gateway.governance.governor.sealing import run_sealed
-from src.gateway.governance.governor.server_inputs import bind_server_inputs
+from src.gateway.governance.governor.server_inputs import (
+    KERNEL_SERVER_INPUT_ACTIONS,
+    KERNEL_SERVER_INPUT_KEYS,
+    bind_server_inputs,
+    inspect_prompt_injection_params,
+    verified_post_hitl_approval,
+)
 from src.gateway.governance.governor.settlement import SettlementLedger, settle
 from src.gateway.governance.governor.stages.domain_tiers import order_stages
 from src.gateway.governance.governor.trace import decision_trace_event, publish_trace
@@ -475,8 +481,17 @@ class SymbolicGovernor:
                 OBSERVATION_INPUT, json.dumps({"tool": tool_name, "params": sealed})
             )
 
+            eval_params = copy.deepcopy(sealed)
+            if (
+                tool_name in KERNEL_SERVER_INPUT_ACTIONS
+                or any(k in eval_params for k in KERNEL_SERVER_INPUT_KEYS)
+                or inspect_prompt_injection_params(eval_params)[0]
+            ):
+                eval_params = await bind_server_inputs(
+                    self._components.server_inputs, tool_name, eval_params
+                )
             ctx = StageContext(
-                action=tool_name, params=copy.deepcopy(sealed), profile=Profile.FULL
+                action=tool_name, params=eval_params, profile=Profile.FULL
             )
             result, seal = await run_sealed(
                 self.stages, ctx, sealed, path="govern", settlements=self._settlements
@@ -645,9 +660,10 @@ class SymbolicGovernor:
         now refuses, or is unreachable) denies.
         """
         if rebind_inputs:
-            params = await bind_server_inputs(
-                self._components.server_inputs, action, params
-            )
+            with verified_post_hitl_approval(approval.approval_id):
+                params = await bind_server_inputs(
+                    self._components.server_inputs, action, params
+                )
         with tracer.start_as_current_span(
             "symbolic_governor.revalidate_post_hitl"
         ) as span:
@@ -696,9 +712,19 @@ class SymbolicGovernor:
                 raise GovernanceError(
                     f"no tier governs {action}; post-HITL re-validation refused"
                 )
+            eval_params = copy.deepcopy(params)
+            if not rebind_inputs and (
+                action in KERNEL_SERVER_INPUT_ACTIONS
+                or any(k in eval_params for k in KERNEL_SERVER_INPUT_KEYS)
+                or inspect_prompt_injection_params(eval_params)[0]
+            ):
+                with verified_post_hitl_approval(approval.approval_id):
+                    eval_params = await bind_server_inputs(
+                        self._components.server_inputs, action, eval_params
+                    )
             ctx = StageContext(
                 action=action,
-                params=params,
+                params=eval_params,
                 profile=Profile.POST_HITL,
                 approved_holds=approval.approved_holds,
             )

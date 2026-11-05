@@ -377,10 +377,10 @@ When adding or modifying domain actions, regenerate STPA verification artifacts:
 uv run python scripts/check_stpa_freshness.py --regenerate
 ```
 
-This updates:
-- [`config/stpa_control_structure.yaml`](../../config/stpa_control_structure.yaml)
-- [`config/opa/generated_stpa_policy.rego`](../../config/opa/generated_stpa_policy.rego)
+This verifies freshness across:
+- [`config/stpa/core_system.yaml`](../../config/stpa/core_system.yaml)
 - [`config/rails/generated_stpa_rails.co`](../../config/rails/generated_stpa_rails.co)
+- `src/cage_<domain>/stpa/{uca_rules.py,saga_nodes.py,terminal_registry.json}`
 
 ### OSCAL Component Definition
 

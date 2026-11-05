@@ -63,7 +63,7 @@ from src.gateway.governance.stpa_compiler import (
 # ---------------------------------------------------------------------------
 
 _FULL_YAML_PATH = (
-    Path(__file__).resolve().parents[1] / "config" / "stpa_control_structure.yaml"
+    Path(__file__).resolve().parents[1] / "config" / "stpa" / "core_system.yaml"
 )
 _FINANCE_YAML_PATH = (
     Path(__file__).resolve().parents[1]
@@ -102,6 +102,7 @@ control_actions:
       - name: token
         type: string
         required: true
+        server_bound: true
 
 unsafe_control_actions:
   - id: UCA-1
@@ -241,8 +242,10 @@ class TestGenerateSspPatch:
     def test_artifacts_in_props(self, minimal_cs: ControlStructureModel) -> None:
         block = generate_ssp_patch(minimal_cs)
         props = {p["name"]: p["value"] for p in block["props"]}
-        assert "artifact-opa" in props
+        assert "artifact-opa" not in props
         assert "artifact-python" in props
+        assert "enforcing-uca-count" in props
+        assert "advisory-uca-count" in props
         assert (
             props.get("artifact-sandbox")
             == "config/sandbox/generated_sandbox_policy.yaml"
@@ -299,7 +302,7 @@ class TestEnforcementArtifactCitation:
 
     def test_all_target_cites_every_generator(self) -> None:
         text = self._ac3(_with_uca1_targets(["all"]))
-        assert _OPA_ARTIFACT in text
+        assert _OPA_ARTIFACT not in text
         assert _NEMO_ARTIFACT in text
         assert "uca_rules.py" in text
 
@@ -340,19 +343,13 @@ class TestGenerateComponentEntry:
         self, minimal_cs: ControlStructureModel, nemo_cs: ControlStructureModel
     ) -> None:
         entry = generate_component_entry(minimal_cs)
-        assert (
-            "deterministic OPA Rego and Python validator artifacts"
-            in entry["description"]
-        )
+        assert "deterministic Python validator artifacts" in entry["description"]
         assert "NeMo" not in entry["description"] + entry["purpose"]
-        assert "runtime OPA/Python governance" in entry["purpose"]
+        assert "runtime Python governance" in entry["purpose"]
 
         nemo_entry = generate_component_entry(nemo_cs)
-        assert (
-            "deterministic OPA Rego and NeMo Colang artifacts"
-            in nemo_entry["description"]
-        )
-        assert "runtime OPA/NeMo governance" in nemo_entry["purpose"]
+        assert "deterministic NeMo Colang artifacts" in nemo_entry["description"]
+        assert "runtime NeMo governance" in nemo_entry["purpose"]
 
 
 # ---------------------------------------------------------------------------
@@ -1316,6 +1313,113 @@ class TestRegionalSspExportAndCheck:
         assert rewritten != original_text
         eu_copy.write_text(rewritten, encoding="utf-8")
         assert main(["export", "--check", "--ssp", str(eu_copy)]) == 0
+
+
+class TestServerBoundAndAdvisoryOscalExport:
+    """F-99 / F-102: OSCAL exporter verifies per-UCA server_bound enforcement and never marks advisory-only controls implemented."""
+
+    def test_advisory_only_control_marked_partially_implemented(self) -> None:
+        raw = yaml.safe_load(_MINIMAL_YAML)
+        raw["control_actions"][0]["params"][0]["server_bound"] = False
+        raw["unsafe_control_actions"][0]["advisory"] = True
+        cs = ControlStructureModel(**raw)
+
+        block = generate_ssp_patch(cs)
+        props = {p["name"]: p["value"] for p in block["props"]}
+        assert props["enforcing-uca-count"] == "0"
+        assert props["advisory-uca-count"] == "1"
+        assert props["implementation-status"] == "partial"
+        for bc in block["by-components"]:
+            assert bc["implementation-status"]["state"] == "partial"
+
+        comp = generate_component_entry(cs)
+        assert "OPA Rego" not in comp["description"]
+        assert "config/stpa/" in comp["description"]
+
+    def test_production_cs_marks_si4_advisory_only_partially_implemented(
+        self, full_cs: ControlStructureModel
+    ) -> None:
+        from src.gateway.governance.oscal_ssp_exporter import FrameworkRouter
+
+        block = generate_ssp_patch(full_cs)
+        props = {p["name"]: p["value"] for p in block["props"]}
+        assert props["enforcing-uca-count"] == "6"
+        assert props["advisory-uca-count"] == "6"
+        assert "config/opa/generated_stpa_policy.rego" not in block["description"]
+        controls = FrameworkRouter.get("NIST").all_controls(
+            full_cs.unsafe_control_actions
+        )
+        by_ctrl = dict(zip(controls, block["by-components"], strict=True))
+        assert by_ctrl["si-4"]["implementation-status"]["state"] == "partial"
+        assert by_ctrl["sc-28"]["implementation-status"]["state"] == "partial"
+        assert by_ctrl["ac-3"]["implementation-status"]["state"] == "implemented"
+        assert by_ctrl["si-3"]["implementation-status"]["state"] == "implemented"
+
+    def test_yaml_server_bound_without_registered_resolver_not_credited_implemented(
+        self, minimal_cs: ControlStructureModel
+    ) -> None:
+        """Static YAML ``server_bound: true`` without a live ``ServerInputResolver``
+        in ``assemble_governor()`` must downgrade to ``planned``, never ``implemented``."""
+        block = generate_ssp_patch(minimal_cs)
+        props = {p["name"]: p["value"] for p in block["props"]}
+        assert props["enforcing-uca-count"] == "0"
+        assert props["advisory-uca-count"] == "1"
+        assert props["implementation-status"] == "planned"
+        assert "[unregistered server_bound — planned]" in block["description"]
+        for bc in block["by-components"]:
+            assert bc["implementation-status"]["state"] == "planned"
+
+    def test_yaml_server_bound_with_assembled_resolver_credited_implemented(
+        self, minimal_cs: ControlStructureModel, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Once ``assemble_governor()`` registers a ``ServerInputResolver`` owning the
+        ``server_bound: true`` parameter, the exporter credits ``implemented``."""
+        import importlib.metadata
+        from collections.abc import Mapping
+        from typing import Any
+
+        from src.gateway.governance.contracts import CagePlugin, PluginContribution
+
+        class _TokenResolver:
+            owned_keys: frozenset[str] = frozenset({"token"})
+
+            async def resolve(self, params: Mapping[str, Any]) -> Mapping[str, Any]:
+                return {"token": "srv-bound"}
+
+        class _DoThingPlugin(CagePlugin):
+            name = "do_thing_domain"
+            api_version = "2.0"
+            maturity = "production"
+            domain_config = None
+
+            def contribute(self) -> PluginContribution:
+                return PluginContribution(
+                    domain=self.name,
+                    maturity=self.maturity,
+                    registered_actions=frozenset({"do_thing"}),
+                    server_inputs={"do_thing": _TokenResolver()},
+                )
+
+        class _FakeEntryPoint:
+            name = "do_thing_domain"
+
+            @staticmethod
+            def load() -> type[CagePlugin]:
+                return _DoThingPlugin
+
+        monkeypatch.setattr(
+            importlib.metadata,
+            "entry_points",
+            lambda **_kwargs: [_FakeEntryPoint()],
+        )
+
+        block = generate_ssp_patch(minimal_cs)
+        props = {p["name"]: p["value"] for p in block["props"]}
+        assert props["enforcing-uca-count"] == "1"
+        assert props["advisory-uca-count"] == "0"
+        assert props["implementation-status"] == "implemented"
+        for bc in block["by-components"]:
+            assert bc["implementation-status"]["state"] == "implemented"
 
 
 pytestmark = [pytest.mark.unit, pytest.mark.local]

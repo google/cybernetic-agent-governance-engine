@@ -327,7 +327,7 @@ SPAN_ATTR_OPA_URL: Final[str] = "opa.url"
 """OPA server URL"""
 
 SPAN_ATTR_OPA_POLICY_PATH: Final[str] = "opa.policy_path"
-"""OPA policy path (e.g. 'trade_governance')"""
+"""OPA policy path (e.g. 'example.governance')"""
 
 SPAN_ATTR_ISO42001_CONTROL_ID: Final[str] = "iso42001.control_id"
 """ISO 42001 control identifier (alternative namespace)"""

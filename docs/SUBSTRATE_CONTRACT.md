@@ -53,7 +53,7 @@ The `spec` field accepts any of the following formats (auto-detected):
 | Linux Foundation AAIF | `governedRunLoop` key | AAIF working group |
 | OSCAL 1.1.x | `oscal-version` key | https://pages.nist.gov/OSCAL/ |
 | Lula validation manifest | `kind: LulaValidation` | https://lula.dev |
-| Native CAGE YAML | (fallback) | `config/stpa_control_structure.yaml` schema |
+| Native CAGE YAML | (fallback) | `config/stpa/core_system.yaml` schema |
 
 **Response:**
 
@@ -231,7 +231,7 @@ The following are guaranteed stable across minor versions:
 - `policy_version_id` format (16-char hex prefix of SHA-256)
 - Caller authentication by Linkerd workload identity (`l5d-client-id`, `CAGE_TRUSTED_CLIENT_IDENTITIES`)
 - `GovernanceControl` enum values (`CTRL_*` identifiers)
-- UCA YAML schema (`config/stpa_control_structure.yaml`)
+- UCA YAML schema (`config/stpa/core_system.yaml`)
 
 ### 4.2 Experimental Surface (may change in minor versions)
 

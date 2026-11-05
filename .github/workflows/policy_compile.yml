@@ -13,28 +13,23 @@
 # limitations under the License.
 
 name: Policy Compile
-# Cancel superseded runs for the same ref. Without this, the push +
-# pull_request double-trigger consumes two identical sets of runners on
-# every push to an open PR (measured: 23.3 duplicated job-minutes per push).
 concurrency:
   group: ${{ github.workflow }}-${{ github.event_name }}-${{ github.head_ref || github.ref }}
   cancel-in-progress: true
 
-
 on:
   push:
     paths:
-      - "config/stpa_control_structure.yaml"
+      - "config/stpa/**"
+      - "src/cage_*/config/stpa/**"
       - "src/gateway/governance/stpa_compiler.py"
   pull_request:
     paths:
-      - "config/stpa_control_structure.yaml"
+      - "config/stpa/**"
+      - "src/cage_*/config/stpa/**"
       - "src/gateway/governance/stpa_compiler.py"
   workflow_dispatch: {}
 
-# Default least-privilege permissions for every job in this workflow.
-# zizmor's excessive-permissions audit flags jobs with no permissions:
-# block because they inherit the (potentially broad) repository default.
 permissions:
   contents: read
 
@@ -42,11 +37,6 @@ jobs:
   compile-policies:
     name: Compile STPA → Governance Artifacts
     runs-on: ubuntu-latest
-    # CAGE_ENV=ci is set at job level so every step runs under the same
-    # permissive posture. Importing the governance package has no startup
-    # guards (they run in governor/posture.py when a governor is
-    # bootstrapped), but the kms_signer HMAC fallback used by later steps is
-    # permitted only in DEV/TEST/CI posture.
     env:
       CAGE_ENV: ci
 
@@ -67,35 +57,33 @@ jobs:
           version: "latest"
 
       - name: Install dependencies
-        # --all-extras installs the 'compliance' extra (which owns dowhy, the
-        # Tier-6 causal gatekeeper), matching the environment the generated
-        # artifacts are validated against.
         run: uv sync --frozen --all-extras
 
-      - name: Validate STPA control structure
+      - name: Validate core and domain STPA control structures
         run: |
-          uv run python -m src.gateway.governance.stpa_compiler validate \
-            --input config/stpa_control_structure.yaml
+          uv run python -m src.gateway.governance.stpa_compiler validate --input-dir config/stpa
+          for d_yaml in src/cage_*/config/stpa/*.yaml; do
+            uv run python -m src.gateway.governance.stpa_compiler validate --domain-yaml "${d_yaml}"
+          done
 
-      - name: Compile STPA → OPA + NeMo + Python + LangGraph
+      - name: Compile core STPA → NeMo + FTRA + Sandbox
         run: |
           uv run python -m src.gateway.governance.stpa_compiler compile \
-            --targets opa nemo python langgraph \
-            --input config/stpa_control_structure.yaml
-        continue-on-error: false
+            --input-dir config/stpa \
+            --targets nemo ftra sandbox
 
-      - name: Compile STPA → FTRA Terminal Registry
+      - name: Compile domain STPA → Python + LangGraph + FTRA
         run: |
-          uv run python -m src.gateway.governance.stpa_compiler compile \
-            --targets ftra \
-            --input config/stpa_control_structure.yaml \
-            --ftra-out config/ftra/terminal_registry.json
-        continue-on-error: false
+          for d_yaml in src/cage_*/config/stpa/*.yaml; do
+            d_root="$(dirname "$(dirname "$(dirname "${d_yaml}")")")"
+            uv run python -m src.gateway.governance.stpa_compiler compile \
+              --domain-yaml "${d_yaml}" \
+              --out-dir "${d_root}/stpa"
+          done
 
       - name: Check STPA freshness
         run: |
           uv run python scripts/check_stpa_freshness.py
-        continue-on-error: false
 
       - name: Upload generated artifacts
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
@@ -103,9 +91,10 @@ jobs:
         with:
           name: stpa-compiled-artifacts
           path: |
-            config/opa/generated_stpa_policy.rego
             config/rails/generated_stpa_rails.co
-            src/gateway/governance/generated_stpa_validator.py
-            src/gateway/governance/generated_saga_nodes.py
-            config/ftra/terminal_registry.json
+            config/sandbox/generated_sandbox_policy.yaml
+            src/gateway/governance/terminal_action_registry.json
+            src/cage_*/stpa/uca_rules.py
+            src/cage_*/stpa/saga_nodes.py
+            src/cage_*/stpa/terminal_registry.json
           retention-days: 30

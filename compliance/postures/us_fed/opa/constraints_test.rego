@@ -14,7 +14,7 @@
 #   SI-2  (Flaw Remediation)         — fail-closed default posture
 #
 # Run with (the CI bundle; the policy package lives in src/cage_finance/opa/):
-#   opa test compliance/postures/us_fed/opa/ src/cage_finance/opa/ config/opa/ -v
+#   opa test compliance/postures/us_fed/opa/ src/cage_finance/opa/ -v
 
 package governed_financial_advisor.governance.policy.trade_governance_test
 
@@ -167,6 +167,26 @@ test_prompt_injection_system_override_is_governance_violation if {
 	}
 	result := governance.allow with input as inp
 	result == "GOVERNANCE_VIOLATION"
+}
+
+test_prompt_injection_unverified_is_governance_violation if {
+	inp := {
+		"action": "prompt_injection_check",
+		"semantic_score": 0.0,
+		"prompt_injection_verified": false,
+	}
+	result := governance.allow with input as inp
+	result == "GOVERNANCE_VIOLATION"
+}
+
+test_prompt_injection_clean_score_is_allowed if {
+	inp := {
+		"action": "prompt_injection_check",
+		"semantic_score": 0.0,
+		"prompt_injection_verified": true,
+	}
+	result := governance.allow with input as inp
+	result == "ALLOW"
 }
 
 # ---------------------------------------------------------------------------

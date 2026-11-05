@@ -16,12 +16,12 @@
 STPA-to-Policy Compiler
 =======================
 
-CLI utility that ingests ``config/stpa_control_structure.yaml`` and emits
+CLI utility that ingests ``config/stpa/*.yaml`` (or per-domain STPA YAML) and emits
 deterministic, runtime-enforceable governance artifacts:
 
-  1. OPA Rego policy     → config/opa/generated_stpa_policy.rego
-  2. NeMo Colang rail    → config/rails/generated_stpa_rails.co
-  3. Python validator    → src/gateway/governance/stpa_validator.py (and domain stpa/uca_rules.py)
+  1. NeMo Colang rail    → config/rails/generated_stpa_rails.co
+  2. Python validator    → src/gateway/governance/stpa_validator.py (and domain stpa/uca_rules.py)
+  3. Optional OPA Rego   → only when --opa-out is explicitly passed
 
 Usage::
 
@@ -78,9 +78,9 @@ logger = logging.getLogger("stpa_compiler")
 # ---------------------------------------------------------------------------
 
 _REPO_ROOT = Path(__file__).resolve().parents[3]
-_DEFAULT_INPUT = _REPO_ROOT / "config" / "stpa_control_structure.yaml"
+_DEFAULT_INPUT: Path | None = None
 _DEFAULT_INPUT_DIR = _REPO_ROOT / "config" / "stpa"
-_DEFAULT_OPA_OUT = _REPO_ROOT / "config" / "opa" / "generated_stpa_policy.rego"
+_DEFAULT_OPA_OUT: Path | None = None
 _DEFAULT_NEMO_OUT = _REPO_ROOT / "config" / "rails" / "generated_stpa_rails.co"
 _DEFAULT_PY_OUT = _REPO_ROOT / "config" / "stpa" / "uca_rules.py"
 _DEFAULT_LG_OUT = _REPO_ROOT / "config" / "stpa" / "saga_nodes.py"
@@ -92,7 +92,7 @@ _DEFAULT_SANDBOX_OUT = (
 )
 
 # ---------------------------------------------------------------------------
-# Pydantic schema — mirrors stpa_control_structure.yaml
+# Pydantic schema — STPA control structure YAML model
 # ---------------------------------------------------------------------------
 
 UcaType = Literal["not_provided", "unsafe_action", "wrong_timing", "stopped_too_soon"]
@@ -509,6 +509,7 @@ class UCAModel(BaseModel):
     # FTRA: commencement-time worst-case reachability classification.
     # Fail-closed: IrreversibilityClassifier treats absent entries as IRREVERSIBLE_TERMINAL.
     terminal_classification: TerminalClassification | None = None
+    advisory: bool = False
 
     @field_validator("id")
     @classmethod
@@ -605,7 +606,7 @@ class SystemModel(BaseModel):
 
 
 class ControlStructureModel(BaseModel):
-    """Root schema for stpa_control_structure.yaml."""
+    """Root schema for an STPA control structure YAML file."""
 
     system: SystemModel
     hazards: list[HazardModel]
@@ -676,6 +677,65 @@ class ControlStructureModel(BaseModel):
                     f"params of {saga.forward_action!r}: {sent}. The gateway binds "
                     "them; a saga tool call must not send them."
                 )
+        return self
+
+    @model_validator(mode="after")
+    def _v_enforcing_ucas_read_server_bound_params(self) -> ControlStructureModel:
+        # Every parameter read by an enforcing (non-advisory) Python/OPA UCA
+        # condition must be declared server_bound: true on its control action
+        # so a caller cannot self-certify or omit the safety signal (F-99, R-13).
+        has_typed_params = any(
+            isinstance(p, dict)
+            for action in self.control_actions
+            for p in (action.get("params") or [])
+        )
+        if not has_typed_params:
+            return self
+        server_bound_by_action: dict[str, set[str]] = {
+            str(action.get("name")): {
+                str(param.get("name"))
+                for param in (action.get("params") or [])
+                if isinstance(param, dict) and param.get("server_bound") is True
+            }
+            for action in self.control_actions
+        }
+        declared_by_action: dict[str, set[str]] = {
+            str(action.get("name")): {
+                str(param.get("name"))
+                for param in (action.get("params") or [])
+                if isinstance(param, dict)
+            }
+            for action in self.control_actions
+        }
+        for uca in self.unsafe_control_actions:
+            if uca.advisory:
+                continue
+            if not (
+                "python" in uca.enforcement
+                or "opa" in uca.enforcement
+                or "all" in uca.enforcement
+            ):
+                continue
+            action_sb = server_bound_by_action.get(uca.action, set())
+            cond = uca.condition
+            if cond.param is not None and cond.param not in action_sb:
+                raise ValueError(
+                    f"{uca.id}: enforcing UCA on {uca.action!r} reads parameter "
+                    f"{cond.param!r} which is not declared server_bound: true "
+                    "(declare server_bound: true on the control action param or "
+                    "mark the UCA advisory: true)"
+                )
+            if cond.composite is not None:
+                m = _COMPOSITE_SCALED_THRESHOLD_RE.match(cond.composite.strip())
+                if m:
+                    lhs, _ref, rhs = m.group(1), m.group(2), m.group(3)
+                    action_decl = declared_by_action.get(uca.action, set())
+                    if rhs not in action_sb or lhs not in (action_sb | action_decl):
+                        raise ValueError(
+                            f"{uca.id}: enforcing composite UCA on {uca.action!r} "
+                            f"requires {rhs!r} to be server_bound: true and {lhs!r} "
+                            "to be declared on the control action"
+                        )
         return self
 
     @classmethod
@@ -814,7 +874,7 @@ _BANNER = """\
 #
 # =============================================================================
 # AUTO-GENERATED by stpa_compiler — DO NOT EDIT
-# Source: config/stpa_control_structure.yaml
+# Source: config/stpa/
 # Generated: {timestamp}
 # =============================================================================
 """
@@ -849,8 +909,7 @@ def generate_opa(cs: ControlStructureModel) -> str:
         f"# System: {cs.system.name} v{cs.system.version}",
         "#",
         "# This policy enforces STPA Unsafe Control Actions (UCAs) identified in",
-        "# config/stpa_control_structure.yaml.  It is loaded by OPA alongside",
-        "# trade_governance.rego (which owns RBAC rules).",
+        "# the STPA YAML control structure alongside the active domain OPA policy.",
         "#",
         "package stpa.generated",
         "",
@@ -976,7 +1035,7 @@ def generate_opa(cs: ControlStructureModel) -> str:
     if cs.rbac_rules:
         lines += [
             "# ---------------------------------------------------------------------------",
-            "# RBAC rules (compiled from stpa_control_structure.yaml rbac_rules)",
+            "# RBAC rules (compiled from STPA YAML rbac_rules)",
             "# ---------------------------------------------------------------------------",
             "",
         ]
@@ -1899,7 +1958,7 @@ def generate_langgraph(cs: ControlStructureModel) -> str:
             intent_context_src = "{}"
             step2_lines = [
                 "    # Step 2: LOCAL stub — wire to a real implementation before promoting",
-                "    # to production.  See execution_type field in stpa_control_structure.yaml.",
+                "    # to production.  See execution_type field in the STPA YAML schema.",
                 "    # To use MCP: set execution_type: mcp_tool, mcp_tool_name and",
                 "    # mcp_arguments in the YAML and regenerate with:",
                 "    #   python -m src.gateway.governance.stpa_compiler compile",
@@ -2479,7 +2538,7 @@ def _ruff_format(path: Path) -> None:
 
 def write_artifacts(
     result: CompileResult,
-    opa_out: Path,
+    opa_out: Path | None,
     nemo_out: Path,
     python_out: Path,
     langgraph_out: Path,
@@ -2487,7 +2546,7 @@ def write_artifacts(
     sandbox_out: Path | None = None,
 ) -> None:
     """Write generated artifacts to disk, creating parent dirs as needed."""
-    if result.opa_content:
+    if result.opa_content and opa_out is not None:
         opa_out.parent.mkdir(parents=True, exist_ok=True)
         opa_out.write_text(result.opa_content)
         logger.info("✅ OPA policy written → %s", opa_out)
@@ -2532,8 +2591,8 @@ def _build_parser() -> argparse.ArgumentParser:
         prog="stpa_compiler",
         description=textwrap.dedent(
             """\
-            STPA-to-Policy Compiler — transforms stpa_control_structure.yaml into
-            deterministic OPA Rego policies, NeMo Colang rails, and Python validators.
+            STPA-to-Policy Compiler — transforms config/stpa/*.yaml and domain STPA YAML
+            into deterministic NeMo Colang rails, FTRA registries, and Python validators.
             """
         ),
         formatter_class=argparse.RawDescriptionHelpFormatter,
@@ -2556,7 +2615,7 @@ def _build_parser() -> argparse.ArgumentParser:
         type=Path,
         default=_DEFAULT_INPUT,
         metavar="YAML",
-        help=f"Path to control structure YAML (default: {_DEFAULT_INPUT})",
+        help=f"Path to a single control structure YAML (default: merge {_DEFAULT_INPUT_DIR}/*.yaml)",
     )
     compile_p.add_argument(
         "--domain-yaml",
@@ -2660,7 +2719,7 @@ def _build_parser() -> argparse.ArgumentParser:
         type=Path,
         default=_DEFAULT_INPUT,
         metavar="YAML",
-        help=f"Path to control structure YAML (default: {_DEFAULT_INPUT})",
+        help=f"Path to a single control structure YAML (default: merge {_DEFAULT_INPUT_DIR}/*.yaml)",
     )
     val_p.add_argument(
         "--domain-yaml",
@@ -2682,18 +2741,24 @@ def _build_parser() -> argparse.ArgumentParser:
     return parser
 
 
+def _resolve_cli_control_structure(args: argparse.Namespace) -> ControlStructureModel:
+    if getattr(args, "domain_yaml", None) is not None:
+        return load_control_structure(args.domain_yaml)
+    if args.input is not None:
+        return load_control_structure(args.input)
+    source_dir = args.input_dir if args.input_dir is not None else _DEFAULT_INPUT_DIR
+    yaml_files = sorted(source_dir.rglob("*.yaml"))
+    if not yaml_files:
+        raise FileNotFoundError(f"No YAML files found under {source_dir}")
+    logger.info(
+        "Multi-source mode: loading %d files from %s", len(yaml_files), source_dir
+    )
+    return load_control_structures(yaml_files)
+
+
 def cmd_validate(args: argparse.Namespace) -> int:
     try:
-        if getattr(args, "domain_yaml", None) is not None:
-            cs = load_control_structure(args.domain_yaml)
-        elif args.input_dir is not None:
-            yaml_files = sorted(args.input_dir.rglob("*.yaml"))
-            if not yaml_files:
-                print(f"❌ No YAML files found under {args.input_dir}", file=sys.stderr)
-                return 1
-            cs = load_control_structures(yaml_files)
-        else:
-            cs = load_control_structure(args.input)
+        cs = _resolve_cli_control_structure(args)
         print(
             f"✅ Control structure valid: {len(cs.unsafe_control_actions)} UCAs, "
             f"{len(cs.hazards)} hazards, {len(cs.safety_constraints)} constraints."
@@ -2706,24 +2771,7 @@ def cmd_validate(args: argparse.Namespace) -> int:
 
 def cmd_compile(args: argparse.Namespace) -> int:
     try:
-        if getattr(args, "domain_yaml", None) is not None:
-            cs = load_control_structure(args.domain_yaml)
-        elif args.input_dir is not None:
-            yaml_files = sorted(args.input_dir.rglob("*.yaml"))
-            if not yaml_files:
-                print(
-                    f"❌ No YAML files found under {args.input_dir}",
-                    file=sys.stderr,
-                )
-                return 1
-            logger.info(
-                "Multi-source mode: loading %d files from %s",
-                len(yaml_files),
-                args.input_dir,
-            )
-            cs = load_control_structures(yaml_files)
-        else:
-            cs = load_control_structure(args.input)
+        cs = _resolve_cli_control_structure(args)
     except Exception as exc:
         print(f"❌ Failed to load control structure: {exc}", file=sys.stderr)
         return 1
@@ -2773,7 +2821,7 @@ def cmd_compile(args: argparse.Namespace) -> int:
         sandbox_out=args.sandbox_out,
     )
     print("✅ STPA compiler finished. Artifacts written:")
-    if result.opa_content:
+    if result.opa_content and args.opa_out is not None:
         print(f"   OPA Rego  → {args.opa_out}")
     if result.nemo_content:
         print(f"   NeMo Colang → {args.nemo_out}")

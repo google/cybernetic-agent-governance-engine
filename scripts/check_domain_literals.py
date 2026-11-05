@@ -12,12 +12,13 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""G6: the kernel must carry no domain action names.
+"""G6: the kernel and operational scripts must carry no domain-specific literals.
 
-Scans src/gateway/ for domain action literals in executable code. Excludes:
+Scans src/gateway/, src/integrations/, and scripts/ for domain action, package,
+and policy literals in executable code. Excludes:
   - docstrings and comments (illustrative examples are legitimate)
-  - generated_*.py (STPA compiler output legitimately names domain actions)
   - protos/ (schema examples)
+  - documented meta-checkers / paper benchmark harnesses in SCRIPTS_EXCLUDED_FILES
 
 Exit 1 on any executable-code occurrence.
 
@@ -30,7 +31,8 @@ import ast
 import sys
 from pathlib import Path
 
-# Domain action, field, threshold, and role literals that must not appear in kernel executable code
+# Domain action, field, threshold, role, plugin, and OPA policy literals that
+# must not appear in kernel (src/gateway/) or operational script executable code.
 FORBIDDEN_LITERALS = {
     "execute_trade",
     "reverse_trade",
@@ -48,15 +50,40 @@ FORBIDDEN_LITERALS = {
     "Execution Quant",
     "administer_medication",
     "move_effector",
+    "cage_finance",
+    "cage_healthcare",
+    "cage_physical_ai",
+    "trade_governance",
+    "dosing_governance",
+    "trade.governance",
+    "dosing.governance",
 }
 
-# Domain action names forbidden in Layer 3 integrations
-INTEGRATIONS_FORBIDDEN_LITERALS = {"execute_trade", "reverse_trade"}
+# Domain literals forbidden in Layer 3 integrations
+INTEGRATIONS_FORBIDDEN_LITERALS = {
+    "execute_trade",
+    "reverse_trade",
+    "cage_finance",
+    "cage_healthcare",
+    "cage_physical_ai",
+    "trade_governance",
+    "dosing_governance",
+    "trade.governance",
+    "dosing.governance",
+}
 
-# Files that are allowed to contain domain action names (generated_stpa_validator.py
-# and generated_saga_nodes.py have been relocated to src/cage_finance/stpa/).
-EXCLUDED_FILES: set[str] = {
-    "generated_stpa_policy.rego",  # OPA generated policy
+# Kernel/integration file exclusions (empty: generated STPA modules live under src/cage_<domain>/stpa/).
+EXCLUDED_FILES: set[str] = set()
+
+# Scripts whose sole purpose is defining domain-boundary/symbol tables or running
+# explicit finance-domain paper benchmarks (§6.5). Every operational/CI gate
+# script outside this map is scanned against FORBIDDEN_LITERALS.
+SCRIPTS_EXCLUDED_FILES: dict[str, str] = {
+    "check_domain_literals.py": "Gate G6 itself defines FORBIDDEN_LITERALS.",
+    "check_import_boundaries.py": "Gate G3 AST boundary checker defines FORBIDDEN_DOMAIN_LITERALS.",
+    "check_doc_references.py": "Gate G9 Markdown symbol resolver maps src/cage_* package names.",
+    "measure_paper_metrics.py": "Paper evaluation harness explicitly benchmarks FinanceCagePlugin.",
+    "measure_reconciliation_metrics.py": "Paper §6.5 reconciliation benchmark explicitly exercises CashBarrier.",
 }
 
 # Directories excluded from scanning
@@ -116,14 +143,7 @@ def check_file(
     filepath: Path,
     forbidden_literals: set[str] | frozenset[str] | None = None,
 ) -> list[tuple[int, str]]:
-    """Parse a Python file and return any domain literal violations.
-
-    Args:
-        filepath: Path to Python file to check.
-
-    Returns:
-        List of (line_number, literal) tuples for violations found.
-    """
+    """Parse a Python file and return any domain literal violations."""
     try:
         source = filepath.read_text(encoding="utf-8")
         tree = ast.parse(source, filename=str(filepath))
@@ -143,26 +163,20 @@ def check_file(
         return [(1, f"<unparseable: {exc}>")]
 
 
-def should_skip(path: Path, base_dir: Path) -> bool:
-    """Return True if path should be excluded from scanning.
-
-    Args:
-        path: File or directory path to check.
-        base_dir: Base directory for relative path computation.
-
-    Returns:
-        True if path should be skipped.
-    """
-    # Skip excluded directories
+def should_skip(
+    path: Path,
+    base_dir: Path,
+    *,
+    extra_excluded_files: set[str] | frozenset[str] = frozenset(),
+) -> bool:
+    """Return True if path should be excluded from scanning."""
     for part in path.relative_to(base_dir).parts:
         if part in EXCLUDED_DIRS:
             return True
 
-    # Skip excluded files
-    if path.name in EXCLUDED_FILES:
+    if path.name in EXCLUDED_FILES or path.name in extra_excluded_files:
         return True
 
-    # Skip test files (tests/ or *_test.py) — test fixtures may use domain vocabulary
     if (
         "/tests/" in str(path)
         or path.name.endswith("_test.py")
@@ -174,14 +188,11 @@ def should_skip(path: Path, base_dir: Path) -> bool:
 
 
 def main() -> int:
-    """Scan src/gateway/ and src/integrations/ for forbidden domain action literals.
-
-    Returns:
-        Exit code: 0 if no violations, 1 if violations found.
-    """
+    """Scan src/gateway/, src/integrations/, and scripts/ for forbidden domain literals."""
     repo_root = Path(__file__).parent.parent
     gateway_dir = repo_root / "src" / "gateway"
     integrations_dir = repo_root / "src" / "integrations"
+    scripts_dir = repo_root / "scripts"
 
     if not gateway_dir.exists():
         print(f"❌ Gateway directory not found: {gateway_dir}", file=sys.stderr)
@@ -190,31 +201,21 @@ def main() -> int:
     violations_found = False
     scanned_count = 0
 
-    # Scan kernel (src/gateway/)
-    for py_file in gateway_dir.rglob("*.py"):
-        if should_skip(py_file, gateway_dir):
+    scan_targets: list[tuple[Path, set[str] | frozenset[str], frozenset[str]]] = [
+        (gateway_dir, FORBIDDEN_LITERALS, frozenset()),
+        (integrations_dir, INTEGRATIONS_FORBIDDEN_LITERALS, frozenset()),
+        (scripts_dir, FORBIDDEN_LITERALS, frozenset(SCRIPTS_EXCLUDED_FILES)),
+    ]
+
+    for target_dir, literals, extra_excluded in scan_targets:
+        if not target_dir.exists():
             continue
-
-        scanned_count += 1
-        violations = check_file(py_file, forbidden_literals=FORBIDDEN_LITERALS)
-
-        if violations:
-            violations_found = True
-            rel_path = py_file.relative_to(repo_root)
-            print(f"❌ {rel_path}:")
-            for line_num, literal in violations:
-                print(f"   Line {line_num}: '{literal}'")
-
-    # Scan integrations (src/integrations/)
-    if integrations_dir.exists():
-        for py_file in integrations_dir.rglob("*.py"):
-            if should_skip(py_file, integrations_dir):
+        for py_file in sorted(target_dir.rglob("*.py")):
+            if should_skip(py_file, target_dir, extra_excluded_files=extra_excluded):
                 continue
 
             scanned_count += 1
-            violations = check_file(
-                py_file, forbidden_literals=INTEGRATIONS_FORBIDDEN_LITERALS
-            )
+            violations = check_file(py_file, forbidden_literals=literals)
 
             if violations:
                 violations_found = True
@@ -226,14 +227,13 @@ def main() -> int:
     if violations_found:
         print()
         print(
-            "❌ Gate G6 FAILED: Found forbidden domain action literals in kernel/integration code."
+            "❌ Gate G6 FAILED: Found forbidden domain literals in kernel/integration/scripts code."
         )
         print(f"   Forbidden literals: {', '.join(sorted(FORBIDDEN_LITERALS))}")
         print()
         print(
-            "   The kernel and integrations must be domain-agnostic. Move domain-specific logic"
+            "   Kernel, integrations, and operational scripts must be domain-agnostic."
         )
-        print("   to domain plugins (src/cage_finance/, src/cage_healthcare/, etc.).")
         return 1
 
     print(

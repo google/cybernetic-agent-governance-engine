@@ -3,7 +3,7 @@ system-security-plan:
   metadata:
     title: CAGE System Security Plan (US_FED — NIST SP 800-53 Rev 5 HIGH)
     published: '2026-03-06T00:00:00Z'
-    last-modified: '2026-11-08T04:17:51Z'
+    last-modified: '2026-11-08T11:53:26Z'
     version: 1.0.1-draft+stpa
     oscal-version: 1.0.4
     remarks: 'This System Security Plan (SSP) documents the security controls implemented
@@ -636,11 +636,11 @@ system-security-plan:
     - uuid: e5000003-0000-4000-8000-000000000003
       type: software
       title: OPA Policy Engine
-      description: 'Open Policy Agent evaluating Rego policies (trade_governance.rego,
-        system_authz.rego) on every trade execution request. Enforces RBAC role limits
-        (junior: $5k/$10k; senior: $500k/$1M) for the trader role the gateway binds
-        from the verified caller workload identity, and fiscal thresholds. Decision
-        logs captured by Cloud Logging.
+      description: 'Open Policy Agent evaluating Rego policies (trade_governance.rego)
+        on every trade execution request. Enforces RBAC role limits (junior: $5k/$10k;
+        senior: $500k/$1M) for the trader role the gateway binds from the verified
+        caller workload identity, and fiscal thresholds. Decision logs captured by
+        Cloud Logging.
 
         '
       purpose: 'Provides deterministic, auditable policy enforcement independent of
@@ -657,7 +657,7 @@ system-security-plan:
       - name: namespace
         value: governance-stack
       - name: policy-files
-        value: trade_governance.rego, system_authz.rego
+        value: trade_governance.rego
     - uuid: e5000004-0000-4000-8000-000000000004
       type: software
       title: Compliance Bridge Service
@@ -922,12 +922,11 @@ system-security-plan:
       control-id: ac-3
       description: 'Access enforcement is implemented via Open Policy Agent (OPA)
         evaluating Rego policies on every request and SymbolicGovernor two-phase pipeline
-        enforcement (src/gateway/governance/governor/governor.py). The system_authz.rego
-        policy enforces RBAC role-based access decisions. The domain trade policy
-        (src/cage_finance/opa/trade_governance.rego) enforces fiscal limits by role
-        (junior: $5,000/$10,000 single/daily; senior: $500,000/$1,000,000). The role,
-        and the trader id that keys cumulative spend, are bound server-side from the
-        verified Linkerd workload identity of the caller (CAGE_TRADER_ROLE_BINDINGS;
+        enforcement (src/gateway/governance/governor/governor.py). The domain trade
+        policy (src/cage_finance/opa/trade_governance.rego) enforces fiscal limits
+        by role (junior: $5,000/$10,000 single/daily; senior: $500,000/$1,000,000).
+        The role, and the trader id that keys cumulative spend, are bound server-side
+        from the verified Linkerd workload identity of the caller (CAGE_TRADER_ROLE_BINDINGS;
         an unbound identity is junior; with no verified identity an enforcing posture
         binds no role and OPA denies) by TradeInputResolver (src/cage_finance/tools/trade_inputs.py,
         src/cage_finance/tools/trader_binding.py) on every preview and committing
@@ -977,9 +976,9 @@ system-security-plan:
       by-components:
       - component-uuid: e5000003-0000-4000-8000-000000000003
         uuid: h8000002-0000-4000-8000-000000000002
-        description: 'OPA policy engine evaluates system_authz.rego and trade_governance.rego
-          for all trade execution and inference requests. Policy files: src/cage_finance/opa/trade_governance.rego,
-          deployment/system_authz.rego. Automated assertion via Lula: compliance/lula/lula-validation-ac3.yaml.
+        description: 'OPA policy engine evaluates trade_governance.rego for all trade
+          execution requests. Policy files: src/cage_finance/opa/trade_governance.rego.
+          Automated assertion via Lula: compliance/lula/lula-validation-ac3.yaml.
 
           '
         implementation-status:
@@ -1457,22 +1456,22 @@ system-security-plan:
         \ This eliminates the\n          \"Natural Language Tax\" — the compliance\
         \ gap between human-readable safety\n          specifications and the actual\
         \ code running in the cluster.\n\n          Compiler source: src/gateway/governance/stpa_compiler.py\n\
-        \          Control structure (source of truth): config/stpa_control_structure.yaml\n\
-        \          Generated artifacts:\n            - config/opa/generated_stpa_policy.rego\
-        \    (OPA Rego — 7 UCAs)\n            - src/gateway/governance/stpa_validator.py\
-        \ (Python — 11 UCAs)\n            - config/sandbox/generated_sandbox_policy.yaml\
-        \ (Sandbox — 1 UCAs)\n\n          Target compliance framework: NIST SP 800-53\
+        \          Control structure (source of truth): config/stpa/\n          Generated\
+        \ artifacts:\n            - src/gateway/governance/stpa_validator.py (Python\
+        \ — 12 UCAs: 6 enforcing, 6 advisory)\n            - config/sandbox/generated_sandbox_policy.yaml\
+        \ (Sandbox — 2 UCAs)\n\n          Target compliance framework: NIST SP 800-53\
         \ Rev 5 (FedRAMP baseline)\n          Framework reference: https://csrc.nist.gov/publications/detail/sp/800-53/rev-5/final\n\
         \          System: CAGE Financial Advisor v1.1.0\n          UCAs encoded:\
-        \ 12\n          Hazards modelled: 7\n          Safety constraints: 3\n   \
-        \       Last compiled: 2026-11-08T04:17:51Z\n\n          UCA-to-Control mapping\
-        \ (NIST SP 800-53 Rev 5 (FedRAMP baseline)):\n            UCA-1 (unsafe_action):\
-        \ Agent executes write operation without a signed approval token.\n  → NIST:\
-        \ ac-3 (Access Enforcement), sc-4 (Information in Shared System Resources\
-        \ / Fiscal Limits)\nUCA-10 (wrong_timing): Agent reads account balance with\
-        \ stale connection data.\n  → NIST: cm-6 (Configuration Settings), si-4 (System\
-        \ Monitoring)\nUCA-12 (unsafe_action): Agent executes bounded trade when bounding\
-        \ contracts B1-B10 fail validation. Phase 5: execute_trade_bounded is EXTERNALLY_REVERSIBLE\
+        \ 12 (6 enforcing server-bound, 6 advisory)\n          Hazards modelled: 7\n\
+        \          Safety constraints: 3\n          Last compiled: 2026-11-08T11:53:26Z\n\
+        \n          UCA-to-Control mapping (NIST SP 800-53 Rev 5 (FedRAMP baseline)):\n\
+        \            UCA-1 (unsafe_action): Agent executes write operation without\
+        \ a human approval token.\n  → NIST: ac-3 (Access Enforcement), sc-4 (Information\
+        \ in Shared System Resources / Fiscal Limits)\nUCA-10 (wrong_timing) [advisory\
+        \ — partial]: Agent reads account balance with stale connection data.\n  →\
+        \ NIST: cm-6 (Configuration Settings), si-4 (System Monitoring)\nUCA-12 (unsafe_action)\
+        \ [advisory — partial]: Agent executes bounded trade when bounding contracts\
+        \ B1-B10 fail validation. Phase 5: execute_trade_bounded is EXTERNALLY_REVERSIBLE\
         \ when B10 rollback window validation passes, enabling HITL review without\
         \ confidence hard-gate per VEC-004. When B10 fails (closed rollback window),\
         \ the bounding tier raises a HITL violation (B10_ROLLBACK_WINDOW_CLOSED) and\
@@ -1483,22 +1482,23 @@ system-security-plan:
         \ Resources / Fiscal Limits), cm-6 (Configuration Settings)\nUCA-2 (wrong_timing):\
         \ Agent executes trade with stale market data (latency > threshold).\n  →\
         \ NIST: cm-6 (Configuration Settings), sa-11 (Developer Testing and Evaluation)\n\
-        UCA-3 (unsafe_action): Agent outputs PII to user interface.\n  → NIST: ac-3\
-        \ (Access Enforcement), sc-28 (Protection of Information at Rest)\nUCA-4 (stopped_too_soon):\
-        \ Agent debits account but fails to credit asset (atomic failure).\n  → NIST:\
-        \ si-7 (Software, Firmware, and Information Integrity), au-10 (Non-Repudiation)\n\
-        UCA-5 (unsafe_action): Agent executes buy order when daily drawdown exceeds\
-        \ limit.\n  → NIST: ac-3 (Access Enforcement), sc-4 (Information in Shared\
-        \ System Resources / Fiscal Limits)\nUCA-6 (wrong_timing): Agent submits market\
-        \ order exceeding allowable fraction of daily volume.\n  → NIST: sc-4 (Information\
-        \ in Shared System Resources / Fiscal Limits), si-3 (Malicious Code Protection)\n\
-        UCA-7 (unsafe_action): Adversarial prompt injection score exceeds detection\
-        \ threshold.\n  → NIST: sc-4 (Information in Shared System Resources / Fiscal\
-        \ Limits), si-3 (Malicious Code Protection)\nUCA-8 (wrong_timing): Agent executes\
+        UCA-3 (unsafe_action) [advisory — partial]: Agent outputs PII to user interface.\n\
+        \  → NIST: ac-3 (Access Enforcement), sc-28 (Protection of Information at\
+        \ Rest)\nUCA-4 (stopped_too_soon) [advisory — partial]: Agent debits account\
+        \ but fails to credit asset (atomic failure).\n  → NIST: si-7 (Software, Firmware,\
+        \ and Information Integrity), au-10 (Non-Repudiation)\nUCA-5 (unsafe_action):\
+        \ Agent executes buy order when daily drawdown exceeds limit.\n  → NIST: ac-3\
+        \ (Access Enforcement), sc-4 (Information in Shared System Resources / Fiscal\
+        \ Limits)\nUCA-6 (wrong_timing): Agent submits market order exceeding allowable\
+        \ fraction of daily volume.\n  → NIST: sc-4 (Information in Shared System\
+        \ Resources / Fiscal Limits), si-3 (Malicious Code Protection)\nUCA-7 (unsafe_action):\
+        \ Adversarial prompt injection score exceeds detection threshold.\n  → NIST:\
+        \ sc-4 (Information in Shared System Resources / Fiscal Limits), si-3 (Malicious\
+        \ Code Protection)\nUCA-8 (wrong_timing) [advisory — partial]: Agent executes\
         \ trade before risk assessment is complete.\n  → NIST: ac-3 (Access Enforcement),\
-        \ sa-11 (Developer Testing and Evaluation)\nUCA-9 (wrong_timing): Agent executes\
-        \ trade with compliance check bypassed.\n  → NIST: ac-3 (Access Enforcement),\
-        \ cm-6 (Configuration Settings)"
+        \ sa-11 (Developer Testing and Evaluation)\nUCA-9 (wrong_timing) [advisory\
+        \ — partial]: Agent executes trade with compliance check bypassed.\n  → NIST:\
+        \ ac-3 (Access Enforcement), cm-6 (Configuration Settings)"
       props:
       - name: implementation-status
         value: implemented
@@ -1506,14 +1506,16 @@ system-security-plan:
         value: 1.1.0
       - name: uca-count
         value: '12'
+      - name: enforcing-uca-count
+        value: '6'
+      - name: advisory-uca-count
+        value: '6'
       - name: hazard-count
         value: '7'
       - name: last-compiled
-        value: '2026-11-08T04:17:51Z'
+        value: '2026-11-08T11:53:26Z'
       - name: target-framework
         value: NIST SP 800-53 Rev 5 (FedRAMP baseline)
-      - name: artifact-opa
-        value: config/opa/generated_stpa_policy.rego
       - name: artifact-python
         value: src/gateway/governance/stpa_validator.py
       - name: artifact-sandbox
@@ -1526,49 +1528,48 @@ system-security-plan:
       - component-uuid: e5000099-stpa-4000-8000-compiler00001
         uuid: h8000099-stpa-4000-8000-compiler00000
         description: 'STPA compiler enforces AC-3 (Access Enforcement) via generated
-          artifacts: config/opa/generated_stpa_policy.rego (OPA Rego), src/cage_finance/stpa/uca_rules.py
-          (generated Python UCA rules), src/gateway/governance/stpa_validator.py (STPA
-          validator). UCAs covered: UCA-1, UCA-12, UCA-3, UCA-5, UCA-8, UCA-9.'
+          artifacts: src/cage_finance/stpa/uca_rules.py (generated Python UCA rules),
+          src/gateway/governance/stpa_validator.py (STPA validator). UCAs covered:
+          UCA-1, UCA-12, UCA-3, UCA-5, UCA-8, UCA-9.'
         implementation-status:
           state: implemented
         links:
-        - href: ../../config/stpa_control_structure.yaml
+        - href: ../../config/stpa/core_system.yaml
           rel: reference
           text: STPA control structure YAML (source of truth)
-        - href: ../../config/opa/generated_stpa_policy.rego
+        - href: ../../src/gateway/governance/stpa_validator.py
           rel: reference
-          text: Generated OPA Rego policy
+          text: STPA Python validator
       - component-uuid: e5000099-stpa-4000-8000-compiler00001
         uuid: h8000099-stpa-4000-8000-compiler00001
         description: 'STPA compiler enforces SC-4 (Information in Shared System Resources
-          / Fiscal Limits) via generated artifacts: config/opa/generated_stpa_policy.rego
-          (OPA Rego), src/cage_finance/stpa/uca_rules.py (generated Python UCA rules),
-          src/gateway/governance/stpa_validator.py (STPA validator). UCAs covered:
-          UCA-1, UCA-13, UCA-5, UCA-6, UCA-7.'
+          / Fiscal Limits) via generated artifacts: src/cage_finance/stpa/uca_rules.py
+          (generated Python UCA rules), src/gateway/governance/stpa_validator.py (STPA
+          validator). UCAs covered: UCA-1, UCA-13, UCA-5, UCA-6, UCA-7.'
         implementation-status:
           state: implemented
         links:
-        - href: ../../config/stpa_control_structure.yaml
+        - href: ../../config/stpa/core_system.yaml
           rel: reference
           text: STPA control structure YAML (source of truth)
-        - href: ../../config/opa/generated_stpa_policy.rego
+        - href: ../../src/gateway/governance/stpa_validator.py
           rel: reference
-          text: Generated OPA Rego policy
+          text: STPA Python validator
       - component-uuid: e5000099-stpa-4000-8000-compiler00001
         uuid: h8000099-stpa-4000-8000-compiler00002
         description: 'STPA compiler enforces CM-6 (Configuration Settings) via generated
-          artifacts: config/opa/generated_stpa_policy.rego (OPA Rego), src/cage_finance/stpa/uca_rules.py
-          (generated Python UCA rules), src/gateway/governance/stpa_validator.py (STPA
-          validator). UCAs covered: UCA-10, UCA-13, UCA-2, UCA-9.'
+          artifacts: src/cage_finance/stpa/uca_rules.py (generated Python UCA rules),
+          src/gateway/governance/stpa_validator.py (STPA validator). UCAs covered:
+          UCA-10, UCA-13, UCA-2, UCA-9.'
         implementation-status:
           state: implemented
         links:
-        - href: ../../config/stpa_control_structure.yaml
+        - href: ../../config/stpa/core_system.yaml
           rel: reference
           text: STPA control structure YAML (source of truth)
-        - href: ../../config/opa/generated_stpa_policy.rego
+        - href: ../../src/gateway/governance/stpa_validator.py
           rel: reference
-          text: Generated OPA Rego policy
+          text: STPA Python validator
       - component-uuid: e5000099-stpa-4000-8000-compiler00001
         uuid: h8000099-stpa-4000-8000-compiler00003
         description: 'STPA compiler enforces SI-4 (System Monitoring) via generated
@@ -1576,29 +1577,29 @@ system-security-plan:
           src/gateway/governance/stpa_validator.py (STPA validator). UCAs covered:
           UCA-10.'
         implementation-status:
-          state: implemented
+          state: partial
         links:
-        - href: ../../config/stpa_control_structure.yaml
+        - href: ../../config/stpa/core_system.yaml
           rel: reference
           text: STPA control structure YAML (source of truth)
-        - href: ../../config/opa/generated_stpa_policy.rego
+        - href: ../../src/gateway/governance/stpa_validator.py
           rel: reference
-          text: Generated OPA Rego policy
+          text: STPA Python validator
       - component-uuid: e5000099-stpa-4000-8000-compiler00001
         uuid: h8000099-stpa-4000-8000-compiler00004
         description: 'STPA compiler enforces SA-11 (Developer Testing and Evaluation)
-          via generated artifacts: config/opa/generated_stpa_policy.rego (OPA Rego),
-          src/cage_finance/stpa/uca_rules.py (generated Python UCA rules), src/gateway/governance/stpa_validator.py
-          (STPA validator). UCAs covered: UCA-12, UCA-2, UCA-8.'
+          via generated artifacts: src/cage_finance/stpa/uca_rules.py (generated Python
+          UCA rules), src/gateway/governance/stpa_validator.py (STPA validator). UCAs
+          covered: UCA-12, UCA-2, UCA-8.'
         implementation-status:
           state: implemented
         links:
-        - href: ../../config/stpa_control_structure.yaml
+        - href: ../../config/stpa/core_system.yaml
           rel: reference
           text: STPA control structure YAML (source of truth)
-        - href: ../../config/opa/generated_stpa_policy.rego
+        - href: ../../src/gateway/governance/stpa_validator.py
           rel: reference
-          text: Generated OPA Rego policy
+          text: STPA Python validator
       - component-uuid: e5000099-stpa-4000-8000-compiler00001
         uuid: h8000099-stpa-4000-8000-compiler00005
         description: 'STPA compiler enforces SC-28 (Protection of Information at Rest)
@@ -1606,14 +1607,14 @@ system-security-plan:
           UCA rules), src/gateway/governance/stpa_validator.py (STPA validator). UCAs
           covered: UCA-3.'
         implementation-status:
-          state: implemented
+          state: partial
         links:
-        - href: ../../config/stpa_control_structure.yaml
+        - href: ../../config/stpa/core_system.yaml
           rel: reference
           text: STPA control structure YAML (source of truth)
-        - href: ../../config/opa/generated_stpa_policy.rego
+        - href: ../../src/gateway/governance/stpa_validator.py
           rel: reference
-          text: Generated OPA Rego policy
+          text: STPA Python validator
       - component-uuid: e5000099-stpa-4000-8000-compiler00001
         uuid: h8000099-stpa-4000-8000-compiler00006
         description: 'STPA compiler enforces SI-7 (Software, Firmware, and Information
@@ -1621,14 +1622,14 @@ system-security-plan:
           Python UCA rules), src/gateway/governance/stpa_validator.py (STPA validator).
           UCAs covered: UCA-4.'
         implementation-status:
-          state: implemented
+          state: partial
         links:
-        - href: ../../config/stpa_control_structure.yaml
+        - href: ../../config/stpa/core_system.yaml
           rel: reference
           text: STPA control structure YAML (source of truth)
-        - href: ../../config/opa/generated_stpa_policy.rego
+        - href: ../../src/gateway/governance/stpa_validator.py
           rel: reference
-          text: Generated OPA Rego policy
+          text: STPA Python validator
       - component-uuid: e5000099-stpa-4000-8000-compiler00001
         uuid: h8000099-stpa-4000-8000-compiler00007
         description: 'STPA compiler enforces AU-10 (Non-Repudiation) via generated
@@ -1636,29 +1637,29 @@ system-security-plan:
           src/gateway/governance/stpa_validator.py (STPA validator). UCAs covered:
           UCA-4.'
         implementation-status:
-          state: implemented
+          state: partial
         links:
-        - href: ../../config/stpa_control_structure.yaml
+        - href: ../../config/stpa/core_system.yaml
           rel: reference
           text: STPA control structure YAML (source of truth)
-        - href: ../../config/opa/generated_stpa_policy.rego
+        - href: ../../src/gateway/governance/stpa_validator.py
           rel: reference
-          text: Generated OPA Rego policy
+          text: STPA Python validator
       - component-uuid: e5000099-stpa-4000-8000-compiler00001
         uuid: h8000099-stpa-4000-8000-compiler00008
         description: 'STPA compiler enforces SI-3 (Malicious Code Protection) via
-          generated artifacts: config/opa/generated_stpa_policy.rego (OPA Rego), src/cage_finance/stpa/uca_rules.py
-          (generated Python UCA rules), src/gateway/governance/stpa_validator.py (STPA
-          validator). UCAs covered: UCA-6, UCA-7.'
+          generated artifacts: src/cage_finance/stpa/uca_rules.py (generated Python
+          UCA rules), src/gateway/governance/stpa_validator.py (STPA validator). UCAs
+          covered: UCA-6, UCA-7.'
         implementation-status:
           state: implemented
         links:
-        - href: ../../config/stpa_control_structure.yaml
+        - href: ../../config/stpa/core_system.yaml
           rel: reference
           text: STPA control structure YAML (source of truth)
-        - href: ../../config/opa/generated_stpa_policy.rego
+        - href: ../../src/gateway/governance/stpa_validator.py
           rel: reference
-          text: Generated OPA Rego policy
+          text: STPA Python validator
     - uuid: p7000001-plat-sc7-8000-platform0001
       control-id: sc-7
       description: 'L3/L4 and FQDN-resolved IP egress boundaries are enforced on governance-stack

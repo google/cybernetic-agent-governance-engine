@@ -49,6 +49,7 @@ from src.gateway.governance.contracts import (
     CagePlugin,
     DomainConfig,
     PluginContribution,
+    PluginMaturity,
 )
 from src.gateway.governance.safety.cbf_engine import ControlBarrierFunction
 
@@ -62,7 +63,8 @@ class PhysicalAICagePlugin(CagePlugin):
 
     name: str = "physical_ai"
     api_version: str = "2.0"
-    # No physical-AI FTRA registry yet: the domain refuses to start (POAM-2026-077).
+    maturity: PluginMaturity = "stub"
+    # No physical-AI FTRA registry or OPA bundle yet: stub domain refuses enforcing start (POAM-2026-077 / POAM-2026-198).
     domain_config: DomainConfig | None = None
 
     def contribute(self) -> PluginContribution:
@@ -93,6 +95,7 @@ class PhysicalAICagePlugin(CagePlugin):
 
         return PluginContribution(
             domain=self.name,
+            maturity=self.maturity,
             tiers=create_physical_ai_tiers(
                 cbf=(spatial_cbf, velocity_cbf, torque_cbf),
             ),

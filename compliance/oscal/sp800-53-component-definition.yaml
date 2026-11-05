@@ -94,8 +94,9 @@ component-definition:
                    (401/403), eliminating header spoofing attack surface.
 
                 2. OPA RBAC & Claimed-Action Policy Enforcement: Every inbound API request is
-                   evaluated against OPA RBAC policy rules (deployment/system_authz.rego) and
-                   domain governance policies (src/cage_finance/opa/trade_governance.rego),
+                   evaluated against domain governance policies
+                   (src/cage_finance/opa/trade_governance.rego,
+                   src/cage_healthcare/opa/dosing_governance.rego),
                    with allow/deny decisions recorded in structured audit logs with full
                    request context and caller identity. Every governor pipeline run (including
                    Profile.POST_HITL in SymbolicGovernor.revalidate_post_hitl()) verifies that
@@ -173,6 +174,9 @@ component-definition:
                 - href: "../../infra/modules/gateway/mesh-policy/templates/policy.yaml"
                   rel: implementation
                   text: "Linkerd AuthorizationPolicy and MeshTLSAuthentication mesh access enforcement"
+                - href: "../../src/cage_finance/opa/trade_governance.rego"
+                  rel: implementation
+                  text: "Domain OPA trade governance policy"
                 - href: "../../src/compliance_bridge/main.py"
                   rel: implementation
                   text: "defer_escalate() and defer_inject() authentication enforcement"
@@ -957,9 +961,11 @@ component-definition:
                 domain OPA policy (src/cage_finance/opa/trade_governance.rego). Prompt injection
                 is screened on every input by the deterministic Stage 1 keyword scan
                 (ac_keyword_scan in src/gateway/governance/text_filter.py, run by the LangGraph
-                input rail node and the inference proxy). UCA-7 compiles only to OPA
-                (stpa_violation_uca_7 in config/opa/generated_stpa_policy.rego, which denies a
-                prompt_injection_check whose semantic_score exceeds the UCA's threshold); the
+                input rail node and the inference proxy). UCA-7 is enforced on the Python STPA
+                path (_check_core_uca_7 in src/gateway/governance/stpa_validator.py, bound by
+                PromptInjectionInputResolver in src/gateway/governance/governor/server_inputs.py,
+                which denies a prompt_injection_check whose server-bound semantic_score exceeds
+                the UCA's threshold); the
                 optional NeMo Colang rails add LLM-backed screening only when
                 CAGE_NEMO_ENABLED=true.
                 Before parking a REQUIRE_APPROVAL token for human review, run_pipeline() previews
@@ -1042,7 +1048,7 @@ component-definition:
                   rel: reference
 
     # -----------------------------------------------------------------------
-    # Component 4: OPA Policy Engine (deployment/system_authz.rego)
+    # Component 4: OPA Policy Engine (src/cage_finance/opa/trade_governance.rego)
     # Enforces: AC-6 (Least Privilege), AC-3 (Access Enforcement),
     #           IA-3 (Device Identification and Authentication)
     # -----------------------------------------------------------------------
@@ -1050,8 +1056,7 @@ component-definition:
       title: "OPA Policy Engine"
       type: software
       description: >
-        Open Policy Agent evaluating Rego policies (deployment/system_authz.rego,
-        src/cage_finance/opa/trade_governance.rego) on
+        Open Policy Agent evaluating Rego policies (src/cage_finance/opa/trade_governance.rego) on
         every trade execution and governance request. Enforces RBAC role limits,
         fiscal thresholds, and request authentication. Decision logs are emitted
         to stdout and captured by Cloud Logging.
@@ -1070,7 +1075,7 @@ component-definition:
             - uuid: "d3a6a007-74a4-4c0f-b2ba-d68bb2c395ff"
               control-id: ac-6
               description: |
-                Least privilege is enforced via OPA Rego policy in deployment/system_authz.rego.
+                Least privilege is enforced via OPA Rego policy in src/cage_finance/opa/trade_governance.rego.
                 The policy grants permissions based on user role (junior_analyst, senior_analyst,
                 compliance_officer, admin) with graduated fiscal limits: junior analysts are
                 limited to $5,000 per trade and $10,000 daily aggregate; senior analysts to
@@ -1098,7 +1103,7 @@ component-definition:
               control-id: ac-3
               description: |
                 Access enforcement is implemented via OPA allow/deny decisions logged with
-                a full audit trail in deployment/system_authz.rego. Every request is
+                a full audit trail in src/cage_finance/opa/trade_governance.rego. Every request is
                 evaluated against the current policy; denied requests are logged with
                 the reason (insufficient_role, fiscal_limit_exceeded, invalid_seal) and
                 returned as structured JSON with HTTP 403. Audit logs include user identity,

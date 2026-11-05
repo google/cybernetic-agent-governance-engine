@@ -68,6 +68,7 @@ from opentelemetry import trace
 from src.gateway.governance.classification_engine import ClassificationEngine
 from src.gateway.governance.consequence_magnitude import ConsequenceMagnitudes
 from src.gateway.governance.contracts import (
+    VALID_PLUGIN_MATURITIES,
     CagePlugin,
     ConsensusContribution,
     ConsensusProvider,
@@ -93,6 +94,7 @@ from src.gateway.governance.governor.governor import SymbolicGovernor
 from src.gateway.governance.governor.invariants import validate_invariant
 from src.gateway.governance.governor.metrics import GovernorMetrics
 from src.gateway.governance.governor.pipeline import Stage
+from src.gateway.governance.governor.server_inputs import kernel_server_inputs
 from src.gateway.governance.governor.stages.confidence import ConfidenceStage
 from src.gateway.governance.governor.stages.ftra import FtraStage
 from src.gateway.governance.governor.stages.opa import OpaStage
@@ -278,6 +280,45 @@ def _collect_server_inputs(
     return resolvers
 
 
+def _assemble_server_inputs(
+    contributions: Sequence[PluginContribution], known_actions: set[str]
+) -> dict[str, ServerInputResolver]:
+    """Combine kernel-core STPA resolvers with plugin-contributed resolvers."""
+    resolvers = kernel_server_inputs()
+    plugin_resolvers = _collect_server_inputs(contributions, known_actions)
+    for action, resolver in plugin_resolvers.items():
+        if action in resolvers:
+            raise GovernorAssemblyError(
+                f"plugin cannot override kernel server_inputs resolver for {action!r}"
+            )
+        resolvers[action] = resolver
+    return resolvers
+
+
+def require_production_plugin_maturity(
+    plugins: Sequence[CagePlugin],
+    contributions: Sequence[PluginContribution],
+    posture: DeploymentPosture,
+) -> None:
+    """Refuse stub-maturity plugins under enforcing postures (POAM-2026-198)."""
+    for plugin, contribution in zip(plugins, contributions, strict=True):
+        plugin_maturity = getattr(plugin, "maturity", "production")
+        if plugin_maturity not in VALID_PLUGIN_MATURITIES:
+            raise GovernorAssemblyError(
+                f"plugin {plugin.name!r}: invalid maturity {plugin_maturity!r}"
+            )
+        if contribution.maturity != plugin_maturity:
+            raise GovernorAssemblyError(
+                f"plugin {plugin.name!r} declares maturity={plugin_maturity!r} "
+                f"but contributed maturity={contribution.maturity!r}"
+            )
+        if is_enforcing(posture) and contribution.maturity == "stub":
+            raise RuntimeError(
+                f"domain {contribution.domain!r} has maturity='stub' and cannot be "
+                f"assembled in enforcing posture {posture.value!r} (POAM-2026-198)"
+            )
+
+
 def _collect_consequence_magnitudes(
     contributions: Sequence[PluginContribution],
 ) -> ConsequenceMagnitudes:
@@ -398,6 +439,7 @@ def assemble_governor(
     _reject_unsafe_causal_activation((), posture)
     contributions = tuple(_contribution_of(plugin) for plugin in plugins)
     _reject_duplicates("domain", (c.domain for c in contributions))
+    require_production_plugin_maturity(plugins, contributions, posture)
     tiers = tuple(t for c in contributions for t in c.tiers)
     _reject_unsafe_causal_activation(tiers, posture)
     # Collected before the jurisdiction is resolved, so the jurisdiction's
@@ -444,7 +486,7 @@ def assemble_governor(
                 )
             ground_truth_providers[inv_id] = prov
 
-    server_inputs = _collect_server_inputs(
+    server_inputs = _assemble_server_inputs(
         contributions, _known_actions(plugins, contributions)
     )
     narrowers = tuple(n for c in contributions for n in c.narrowers)
