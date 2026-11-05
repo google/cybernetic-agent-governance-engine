@@ -1,53 +1,37 @@
-# Copyright 2026 Google LLC
-#
-# Licensed under the Apache License, Version 2.0 (the "License");
-# you may not use this file except in compliance with the License.
-# You may obtain a copy of the License at
-#
-#     https://www.apache.org/licenses/LICENSE-2.0
-#
-# Unless required by applicable law or agreed to in writing, software
-# distributed under the License is distributed on an "AS IS" BASIS,
-# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-# See the License for the specific language governing permissions and
-# limitations under the License.
-
 system-security-plan:
   uuid: eu-ecb-ssp-2026-0001-4000-8000-000000000001
   metadata:
     title: CAGE System Security Plan (EU_ECB — EU AI Act / GDPR / DORA)
     published: '2026-06-15T00:00:00Z'
-    last-modified: '2026-10-25T00:00:00Z'
-    version: 1.0.0-draft
+    last-modified: '2026-11-04T22:01:35Z'
+    version: 1.0.0-draft+stpa
     oscal-version: 1.0.4
-    remarks: 'This System Security Plan (SSP) documents the compliance controls
-      implemented for the Cybernetic AI Governance Engine (CAGE) deployed in the
-      European Central Bank (EU_ECB) jurisdiction. This SSP covers EU AI Act,
-      GDPR, and DORA compliance postures applicable to CAGE_DEPLOYMENT_REGION=EU_ECB.
+    remarks: 'This System Security Plan (SSP) documents the compliance controls implemented
+      for the Cybernetic AI Governance Engine (CAGE) deployed in the European Central
+      Bank (EU_ECB) jurisdiction. This SSP covers EU AI Act, GDPR, and DORA compliance
+      postures applicable to CAGE_DEPLOYMENT_REGION=EU_ECB.
 
       CAGE_DEPLOYMENT_REGION: EU_ECB
 
-      Compliance Frameworks:
-        - ISO/IEC 42001:2023 (Universal baseline — all regions)
-        - EU AI Act (Regulation (EU) 2024/1689) — High-Risk AI classification
-        - GDPR (Regulation (EU) 2016/679) — Automated decision-making
-        - DORA (Regulation (EU) 2022/2554) — ICT operational resilience
+      Compliance Frameworks: - ISO/IEC 42001:2023 (Universal baseline — all regions)
+      - EU AI Act (Regulation (EU) 2024/1689) — High-Risk AI classification - GDPR
+      (Regulation (EU) 2016/679) — Automated decision-making - DORA (Regulation (EU)
+      2022/2554) — ICT operational resilience
 
       Posture Scope: EU_ECB deployments only (CAGE_DEPLOYMENT_REGION=EU_ECB)
 
-      US_FED SSP: compliance/oscal/system-security-plan.yaml
-      APAC_MAS SSP: compliance/oscal/system-security-plan-apac-mas.yaml
+      US_FED SSP: compliance/oscal/system-security-plan.yaml APAC_MAS SSP: compliance/oscal/system-security-plan-apac-mas.yaml
 
-      Note: This SSP is NOT applicable to US_FED or APAC_MAS deployments.
-      US_FED uses NIST SP 800-53 Rev 5 HIGH baseline.
-      APAC_MAS uses MAS FEAT / MAS Notice 655 / MAS TRM baseline.
+      Note: This SSP is NOT applicable to US_FED or APAC_MAS deployments. US_FED uses
+      NIST SP 800-53 Rev 5 HIGH baseline. APAC_MAS uses MAS FEAT / MAS Notice 655
+      / MAS TRM baseline.
 
-      Data Residency: All data paths must remain within europe-west1 (GCP).
-      GDPR Art. 44 prohibits cross-border data transfers without adequate safeguards.
+      Data Residency: All data paths must remain within europe-west1 (GCP). GDPR Art.
+      44 prohibits cross-border data transfers without adequate safeguards.
 
-      SR 26-2 "no legal force" sentinel: SR 26-2 (Federal Reserve supervisory
-      guidance) has no legal force in EU_ECB deployments. All SR 26-2 telemetry
-      is suppressed for CAGE_DEPLOYMENT_REGION=EU_ECB per .clinerules §12.4.
+      SR 26-2 "no legal force" sentinel: SR 26-2 (Federal Reserve supervisory guidance)
+      has no legal force in EU_ECB deployments. All SR 26-2 telemetry is suppressed
+      for CAGE_DEPLOYMENT_REGION=EU_ECB per .clinerules §12.4.
 
       '
     props:
@@ -63,58 +47,79 @@ system-security-plan:
       value: DRAFT — EU AI Office registration pending
     - name: high-risk-ai-classification
       value: EU AI Act Annex III §5(b) — financial services AI
+    - name: customer_responsibility_tier3_ledger_apis
+      ns: https://cage.laah.cybernetics.dev/ns/oscal
+      value: 'Customer Responsibility (Tier-3 Commercial Deployment Interface — Retail-Banking,
+        Custody & Payment Ledger APIs): CAGE ships the Tier-2 posture-completing simulated
+        ground-truth reconciliation provider (SimulatedEstateProvider) with deterministic
+        seeding, fault injection, and real Cloud KMS asymmetric snapshot signing (RECONCILER_KMS_KEY).
+        Commercial retail-banking, custody, and core-banking ledger APIs are classified
+        as Tier-3 commercial-deployment-only interfaces and do not live in the reference
+        repository; organizations deploying CAGE in commercial production are responsible
+        for supplying and accrediting their own external retail-banking ledger integration
+        behind the EstateProvider seam.'
+      class: customer-responsibility
     roles:
     - id: system-owner
       title: System Owner
       description: Overall responsibility for CAGE EU_ECB deployment compliance.
     - id: dpo
       title: Data Protection Officer
-      description: 'GDPR Art. 37 DPO responsible for data protection compliance,
-        DPIA oversight, and Art. 22 automated decision-making safeguards.'
+      description: GDPR Art. 37 DPO responsible for data protection compliance, DPIA
+        oversight, and Art. 22 automated decision-making safeguards.
     - id: isso
       title: Information System Security Officer
-      description: 'Primary security point of contact for EU_ECB deployment.
-        Maintains SSP and coordinates DORA ICT risk assessments.'
+      description: Primary security point of contact for EU_ECB deployment. Maintains
+        SSP and coordinates DORA ICT risk assessments.
     - id: compliance-engineer
       title: Compliance Engineer
-      description: 'Maintains OSCAL artifacts, operates Lula compliance-as-code
-        pipeline for EU AI Act, GDPR, and DORA controls.'
+      description: Maintains OSCAL artifacts, operates Lula compliance-as-code pipeline
+        for EU AI Act, GDPR, and DORA controls.
     - id: ai-model-operator
       title: AI Model Operator
-      description: 'Manages AI model versions, monitors FEAT metrics, coordinates
-        EU AI Act Art. 9 risk management system updates.'
+      description: Manages AI model versions, monitors FEAT metrics, coordinates EU
+        AI Act Art. 9 risk management system updates.
+    assurance-posture:
+      status: ILLUSTRATIVE_REFERENCE
+      attestation_boundary: CODEBASE_SYNTHETIC_EVALUATION
+      disclaimer: This artifact represents a deterministic architectural reference
+        generated by the Cybernetic Agent Governance Engine (CAGE). It demonstrates
+        control mechanism linkage and evidence gathering paths. It does NOT constitute
+        a formal statutory attestation, FedRAMP ATO, CE Conformity Mark, BSI ISO/IEC
+        42001 certification, or MAS regulatory approval. Formal certification requires
+        independent assessment by an accredited third-party body within the deploying
+        organization's operational context.
+      third_party_certificate_url: null
   import-profile:
     href: ./eu-ai-act-profile.yaml
-    remarks: 'Imports the CAGE EU AI Act compliance profile covering Art. 9
-      (Risk Management), Art. 10 (Data Governance), Art. 13 (Transparency),
-      Art. 14 (Human Oversight), and Art. 17 (Quality Management System).
-      Also imports common-controls-catalog.yaml for ISO 42001 universal baseline.'
+    remarks: Imports the CAGE EU AI Act compliance profile covering Art. 9 (Risk Management),
+      Art. 10 (Data Governance), Art. 13 (Transparency), Art. 14 (Human Oversight),
+      and Art. 17 (Quality Management System). Also imports common-controls-catalog.yaml
+      for ISO 42001 universal baseline.
   system-characteristics:
     system-ids:
     - id: cage-gke-eu-ecb
       identifier-type: https://cage.internal/system-ids
     system-name: Cybernetic Governance Engine (EU_ECB)
     system-name-short: CAGE-EU
-    description: 'CAGE EU_ECB deployment — AI governance platform for financial
-      services operating under EU AI Act High-Risk AI classification (Annex III
-      §5(b)), GDPR automated decision-making constraints (Art. 22), and DORA
-      ICT operational resilience requirements (Art. 10). Deployed on GKE in
-      europe-west1 with all data paths confined to EU jurisdiction per GDPR
-      Art. 44 data residency requirements.
+    description: 'CAGE EU_ECB deployment — AI governance platform for financial services
+      operating under EU AI Act High-Risk AI classification (Annex III §5(b)), GDPR
+      automated decision-making constraints (Art. 22), and DORA ICT operational resilience
+      requirements (Art. 10). Deployed on GKE in europe-west1 with all data paths
+      confined to EU jurisdiction per GDPR Art. 44 data residency requirements.
 
       '
     security-sensitivity-level: high
     status:
       state: under-development
-      remarks: 'EU_ECB SSP draft. EU AI Office registration and DPIA completion
-        required before production deployment.'
+      remarks: EU_ECB SSP draft. EU AI Office registration and DPIA completion required
+        before production deployment.
     authorization-boundary:
-      description: 'The EU_ECB authorization boundary encompasses all CAGE
-        components deployed within the governance-stack Kubernetes namespace
-        on GKE in europe-west1. All data storage (GCS buckets, Cloud SQL,
-        Redis) must be provisioned in europe-west1. External interconnections
-        to Langfuse must use a self-hosted EU instance (not cloud.langfuse.com)
-        to satisfy GDPR Art. 44 data residency requirements.'
+      description: The EU_ECB authorization boundary encompasses all CAGE components
+        deployed within the governance-stack Kubernetes namespace on GKE in europe-west1.
+        All data storage (GCS buckets, Cloud SQL, Redis) must be provisioned in europe-west1.
+        External interconnections to Langfuse must use a self-hosted EU instance (not
+        cloud.langfuse.com) to satisfy GDPR Art. 44 data residency requirements.
       props:
       - name: gcp-region
         value: europe-west1
@@ -123,9 +128,9 @@ system-security-plan:
       - name: gdpr-art44-compliant
         value: 'true'
   system-implementation:
-    remarks: 'EU_ECB system implementation. All components inherit the ISO 42001
-      universal baseline from component-definition.yaml. EU-specific controls
-      are additive layers on top of the universal baseline.'
+    remarks: EU_ECB system implementation. All components inherit the ISO 42001 universal
+      baseline from component-definition.yaml. EU-specific controls are additive layers
+      on top of the universal baseline.
     users:
     - uuid: eu-ecb-user-0001-4000-8000-000000000001
       title: EU Data Subject
@@ -142,12 +147,12 @@ system-security-plan:
     - uuid: eu-ecb-comp-0001-4000-8000-000000000001
       type: software
       title: CAGE EU AI Act Risk Management System
-      description: 'EU AI Act Art. 9 risk management system implemented via
-        the Compliance Bridge service. Maintains documented risk assessments,
-        residual risk acceptance records, and post-market monitoring data for
-        the High-Risk AI classification under Annex III §5(b).'
-      purpose: 'Satisfies EU AI Act Art. 9 mandatory risk management system
-        requirement for High-Risk AI systems in financial services.'
+      description: EU AI Act Art. 9 risk management system implemented via the Compliance
+        Bridge service. Maintains documented risk assessments, residual risk acceptance
+        records, and post-market monitoring data for the High-Risk AI classification
+        under Annex III §5(b).
+      purpose: Satisfies EU AI Act Art. 9 mandatory risk management system requirement
+        for High-Risk AI systems in financial services.
       status:
         state: under-development
       responsible-roles:
@@ -164,18 +169,16 @@ system-security-plan:
     - uuid: eu-ecb-comp-0002-4000-8000-000000000002
       type: software
       title: CAGE GDPR Art. 22 Human Oversight Controls
-      description: 'GDPR Art. 22 human oversight implemented via the DEFER
-        State Machine (defer_queue.py) and HITL escalator (hitl_escalator.py).
-        Since commit ecca70b9 trades at or above the EU_ECB consensus threshold
-        (domains.finance.consensus.threshold_usd = 7500.0, documented as a
-        EUR 7,500 equivalent; global value 10,000) deterministically escalate to
-        human review with NOTIONAL_THRESHOLD_ESCALATION (REQUIRE_APPROVAL) by
-        default (CAGE_CONSENSUS_CRITICS_ENABLED=false), or consult multi-model
-        critic consensus when CAGE_CONSENSUS_CRITICS_ENABLED=true
-        (src/cage_finance/tiers/consensus_tier.py); before ecca70b9 the global
-        value applied in EU_ECB.'
-      purpose: 'Satisfies GDPR Art. 22(2)(b) safeguards for automated individual
-        decision-making with legal or similarly significant effects.'
+      description: GDPR Art. 22 human oversight implemented via the DEFER State Machine
+        (defer_queue.py) and HITL escalator (hitl_escalator.py). Since commit ecca70b9
+        trades at or above the EU_ECB consensus threshold (domains.finance.consensus.threshold_usd
+        = 7500.0, documented as a EUR 7,500 equivalent; global value 10,000) deterministically
+        escalate to human review with NOTIONAL_THRESHOLD_ESCALATION (REQUIRE_APPROVAL)
+        by default (CAGE_CONSENSUS_CRITICS_ENABLED=false), or consult multi-model
+        critic consensus when CAGE_CONSENSUS_CRITICS_ENABLED=true (src/cage_finance/tiers/consensus_tier.py);
+        before ecca70b9 the global value applied in EU_ECB.
+      purpose: Satisfies GDPR Art. 22(2)(b) safeguards for automated individual decision-making
+        with legal or similarly significant effects.
       status:
         state: under-development
       responsible-roles:
@@ -192,11 +195,11 @@ system-security-plan:
     - uuid: eu-ecb-comp-0003-4000-8000-000000000003
       type: software
       title: CAGE DORA Art. 10 ICT Audit Logging
-      description: 'DORA Art. 10 ICT operational resilience implemented via
-        the Compliance Bridge audit workflow. Audit logs stored in europe-west1
-        GCS buckets with 5-year retention for major ICT incidents.'
-      purpose: 'Satisfies DORA Art. 10 ICT operational resilience testing and
-        audit logging requirements for financial entities supervised by ECB.'
+      description: DORA Art. 10 ICT operational resilience implemented via the Compliance
+        Bridge audit workflow. Audit logs stored in europe-west1 GCS buckets with
+        5-year retention for major ICT incidents.
+      purpose: Satisfies DORA Art. 10 ICT operational resilience testing and audit
+        logging requirements for financial entities supervised by ECB.
       status:
         state: under-development
       responsible-roles:
@@ -216,23 +219,20 @@ system-security-plan:
       type: software
       title: CAGE EU AI Act Art. 27 FRIA Jurisdiction Tier
       description: 'The fria tier (src/gateway/governance/jurisdiction/eu_ai_act/fria_tier.py)
-        contributed by the EU_ECB entry of the jurisdiction table
-        (src/gateway/governance/jurisdiction/registry.py). A phase-1 read-only
-        pipeline tier, ordered after causal, that denies an action whose
-        deployer FRIA artefact is missing or older than the 365-day
-        reassessment interval, denies when the normative provider is
-        unavailable, times out or refuses, and parks an approval when the
-        provider escalates to human review. The tier declares
-        revalidated_after_approval, so it is re-run at post-approval
-        revalidation (POST_HITL) before an approved request is sealed: a
-        determination revoked, or an artefact expired, while a human reviews
-        the request denies, and an external hold is answered only by an
-        approval given against it (GHSA-f6xq-23f7-9grm). The provider payload
-        carries the verified workload identity of the caller (actor_id,
-        operator_urn) and the trace id (correlation_id).'
-      purpose: 'Satisfies EU AI Act Art. 27 (Fundamental Rights Impact
-        Assessment) and Art. 27(2) reassessment currency for deployers of
-        High-Risk AI systems (control CTRL_FRIA_006).'
+        contributed by the EU_ECB entry of the jurisdiction table (src/gateway/governance/jurisdiction/registry.py).
+        A phase-1 read-only pipeline tier, ordered after causal, that denies an action
+        whose deployer FRIA artefact is missing or older than the 365-day reassessment
+        interval, denies when the normative provider is unavailable, times out or
+        refuses, and parks an approval when the provider escalates to human review.
+        The tier declares revalidated_after_approval, so it is re-run at post-approval
+        revalidation (POST_HITL) before an approved request is sealed: a determination
+        revoked, or an artefact expired, while a human reviews the request denies,
+        and an external hold is answered only by an approval given against it (GHSA-f6xq-23f7-9grm).
+        The provider payload carries the verified workload identity of the caller
+        (actor_id, operator_urn) and the trace id (correlation_id).'
+      purpose: Satisfies EU AI Act Art. 27 (Fundamental Rights Impact Assessment)
+        and Art. 27(2) reassessment currency for deployers of High-Risk AI systems
+        (control CTRL_FRIA_006).
       status:
         state: operational
       responsible-roles:
@@ -249,21 +249,18 @@ system-security-plan:
     - uuid: eu-ecb-comp-0005-4000-8000-000000000005
       type: software
       title: CAGE Regional Finance Threshold Overlay and Trade-Confidence Tier
-      description: 'Since commit ecca70b9, load_and_validate_thresholds()
-        (src/gateway/governance/schemas/thresholds.py) deep-merges the domains
-        object of config/thresholds/EU_ECB_BASELINE.json onto the global
-        domains sections of config/governance_thresholds.json
-        (src/gateway/governance/schemas/regional_overlay.py) when
-        CAGE_DEPLOYMENT_REGION=EU_ECB. The finance plugin
-        (src/cage_finance/plugin.py) builds its CashBarrier, bounding contracts
-        and trade_confidence tier from the effective domains.finance section,
-        and the CBF, STPA and consensus readers resolve the same effective
-        values through THRESHOLDS.resolve(). Before ecca70b9 these EU_ECB
-        values were declared in the baseline file but not read; EU_ECB ran on
-        the global (US_FED) values.'
-      purpose: 'Applies the EU_ECB configuration settings (NIST SP 800-53
-        CM-6) and the regional agentic confidence floor (CTRL_AGT_001) to the
-        governor pipeline, failing closed when they cannot be applied.'
+      description: Since commit ecca70b9, load_and_validate_thresholds() (src/gateway/governance/schemas/thresholds.py)
+        deep-merges the domains object of config/thresholds/EU_ECB_BASELINE.json onto
+        the global domains sections of config/governance_thresholds.json (src/gateway/governance/schemas/regional_overlay.py)
+        when CAGE_DEPLOYMENT_REGION=EU_ECB. The finance plugin (src/cage_finance/plugin.py)
+        builds its CashBarrier, bounding contracts and trade_confidence tier from
+        the effective domains.finance section, and the CBF, STPA and consensus readers
+        resolve the same effective values through THRESHOLDS.resolve(). Before ecca70b9
+        these EU_ECB values were declared in the baseline file but not read; EU_ECB
+        ran on the global (US_FED) values.
+      purpose: Applies the EU_ECB configuration settings (NIST SP 800-53 CM-6) and
+        the regional agentic confidence floor (CTRL_AGT_001) to the governor pipeline,
+        failing closed when they cannot be applied.
       status:
         state: operational
       responsible-roles:
@@ -298,120 +295,96 @@ system-security-plan:
     - uuid: eu-ecb-comp-0006-4000-8000-000000000006
       type: software
       title: CAGE Warrant Reliance Gate (WarrantStage)
-      description: 'Since commit a0deb7ad (#423) the EU_ECB trade-confidence
-        floor is a warranted norm: config/thresholds/EU_ECB_BASELINE.json sets
-        domains.finance.confidence.min_trade_confidence to value 0.97,
-        requires_warrant true, governing_version cage-policy-2.1.0. The
-        finance plugin contributes it as a kernel NormBinding
-        (src/gateway/governance/contracts.py) for execute_trade and
-        execute_trade_bounded. For every request to one of those actions the
-        kernel WarrantStage (src/gateway/governance/governor/stages/warrant.py)
-        reads the norm''s warrant through the kernel WarrantCache
-        (src/gateway/governance/warrant/cache.py) over the WarrantSource seam
-        (src/gateway/governance/seams/warrant.py; adapter selected by
-        CAGE_WARRANT_SOURCE, src/gateway/governance/warrant/source_factory.py)
-        and evaluates its standing with WarrantStandingVerifier
-        (src/gateway/governance/warrant/verifier.py) against the deployment
-        jurisdiction and the binding''s governing_version. A missing, revoked,
-        suspended, expired, out-of-scope, version-mismatched or
-        digest-mismatched warrant, a warrant for another norm, a source error
-        or a fetch timeout, or a stale warrant (below) yields one
-        RELIANCE_INELIGIBLE finding. The
-        classifier ranks HARD > RELIANCE_INELIGIBLE > HITL > NARROWABLE >
-        DEFERRABLE and answers DEFER with DeferReason.WARRANT_INELIGIBLE
-        (quorum 3, not resolvable by data injection) regardless of model
-        confidence; no seal is minted. The gate never short-circuits, so FTRA,
-        STPA and OPA still run and a HARD finding still denies. WarrantStage
-        is in POST_HITL_READ_ONLY_STAGES
-        (src/gateway/governance/governor/pipeline.py), so a warrant revoked
-        between human approval and execution, as observed through the
-        freshness window below, defers at revalidate_post_hitl() with no
-        seal and no phase-2 commit, and the human approval stays unspent and
-        redeemable once the warrant is eligible again (DeferQueue spends it
-        only through the admit hook of run_sealed(), after every stage passes
-        and before the seal is minted). Since 2026-10-07 the committing run of
-        govern() also defers on a warrant failure instead of denying
-        (POAM-2026-110). assemble_governor() (src/gateway/governance/governor/assembly.py)
-        refuses to assemble when a warranted norm has no WarrantSource, when
-        DEFER is disabled, when it lacks a governing_version, or when no domain
-        tier claims its actions. Since 2026-10-10 (VEIP v0.2 conformance,
-        closing POAM-2026-104): (1) warrant authenticity is cryptographically
-        verified against an out-of-band WarrantTrustAnchor
-        (src/gateway/governance/warrant/trust_anchor.py, pinned by raw 32-byte
-        Ed25519 SHA-256 fingerprint) and an independently fetched,
-        JCS-canonicalized and Ed25519-signed VerifiedKeyManifest
-        (/.well-known/veip/key-manifest.json) cached out-of-band in
-        WarrantCache; WarrantStandingVerifier resolves warrant.kid from the
-        verified key manifest (failing closed on unknown, revoked or expired
-        kid), verifies the 18-field JCS digest and the Ed25519 signature over
-        JCS(warrant_with_digest), verifies issuer state_as_of freshness (<= 60
-        s, else INELIGIBLE_STALE) and norm_parameters value parity, and sets
-        verification_status to VERIFIED only after cryptographic verification
-        succeeds; (2) Provider05WarrantSource
-        (src/integrations/provider_05/warrant_source.py) implements the live
-        HTTP path (GET /v0.2/warrants/{norm_id} and GET
-        /.well-known/veip/key-manifest.json) and is verified over the wire
-        against the live VEIP v0.2 sandbox across all eight conformance
-        scenarios (ACTIVE, REVOKED, SUSPENDED, EXPIRED, STALE_STATE,
-        TAMPERED_SIGNATURE, UNKNOWN_KID, MISSING). Since commit 0cdb5aaa (#427) every warranted norm the
-        decision relied on yields a RelianceRecord
-        (src/gateway/governance/warrant/reliance.py: norm_id, warrant_id,
-        declared digest, warrant status, reliance status, governing_version,
-        evaluated_at, provider_name, verification_status VERIFIED when v0.2
-        signature verified or UNVERIFIED otherwise;
-        since 9ddefb8c also observed_at, age_seconds and max_age_seconds;
-        since POAM-2026-111 every Warrant Contract v0.1/v0.2 evidence field, with
-        evaluated_at renamed attested_at, residual_risk_ref, issuing_authority,
-        authority_basis and revocation_ref added, and governing_version split
-        into required_governing_version (what the binding requires) and
-        warrant_governing_version (what the warrant declares)). The envelope
-        WARRANT attestation is derived from the same record, its metadata
-        equal to the record.
-        ALLOW and NARROW seals carry it in their evidence record, covered by
-        record_hash, so altering or dropping it breaks seal verification
-        (verify_seal_against_evidence, src/gateway/governance/routing_seal.py);
-        the ALLOW envelope carries a WARRANT ExternalAttestation with status
-        matching verification_status (VERIFIED under v0.2). Refusals are primary evidence: DEFER and REQUIRE_APPROVAL
-        tokens and a hash-chained GOVERNANCE_DEFERRAL record carry the same
-        record, and a DENY receipt with a co-occurring warrant failure carries
-        it inside proof_hash. Refusal and deferral evidence writes are
-        non-blocking (neither executes anything) but a failed write logs at
-        ERROR and increments
-        cage_governance_evidence_publish_failures_total{kind}
-        (src/gateway/governance/governor/metrics.py). Whether an action is
-        governed is resolved over the full stage set before POST_HITL
-        filtering (resolve_claims, src/gateway/governance/governor/pipeline.py,
-        shared with revalidate_post_hitl), so the warrant stage re-runs after
-        approval even when only read-only tiers claim the action. Since commit
-        9ddefb8c (#430) the Warrant Contract v0.1/v0.2 Q2 60 s freshness window is
-        enforced: assemble_governor() wraps the configured WarrantSource in
-        one WarrantCache per governor (built at the composition root, no
-        module singleton). The cache stamps each warrant with CAGE''s own
-        receipt time (a monotonic clock for age, a UTC wall clock for the
-        observed_at evidence field), and in v0.2 WarrantStandingVerifier also
-        enforces the issuer-signed state_as_of window (<= 60 s). It serves a cached warrant only
-        while its age is at most warrant.max_age_seconds and re-fetches past
-        that, so a revocation returned by the re-fetch is refused on that
-        request. A re-fetch that raises or does not answer within
-        warrant.fetch_timeout_seconds never extends the old state: the norm is
-        INELIGIBLE_STALE, a RELIANCE_INELIGIBLE finding, so DEFER. A failure
-        with no earlier observation is INELIGIBLE_UNRESOLVED, a MISSING
-        answer is never cached, and concurrent requests for one norm share a
-        single in-flight fetch (read-through, single-flight; no background
-        poll). The same window applies under POST_HITL. Thresholds
-        (config/governance_thresholds.json, WarrantThresholds in
-        src/gateway/governance/schemas/thresholds.py): max_age_seconds
-        default 60, validated 0 < value <= 60; fetch_timeout_seconds default
-        2, validated below max_age_seconds; an out-of-range value, including
-        an env override (WARRANT_MAX_AGE_SECONDS,
-        WARRANT_FETCH_TIMEOUT_SECONDS), aborts startup, and the cache
-        constructor enforces the same bounds. Limit stated plainly: a
-        revocation issued less than max_age_seconds after CAGE last received
-        the warrant is observed only when that window elapses (at most 60 s,
-        the contracted bound), not on every request.'
-      purpose: 'Ensures CAGE relies on the EU_ECB trade-confidence norm only
-        while a current, in-scope warrant for the governing version is
-        presented, failing closed (DEFER) otherwise.'
+      description: 'Since commit a0deb7ad (#423) the EU_ECB trade-confidence floor
+        is a warranted norm: config/thresholds/EU_ECB_BASELINE.json sets domains.finance.confidence.min_trade_confidence
+        to value 0.97, requires_warrant true, governing_version cage-policy-2.1.0.
+        The finance plugin contributes it as a kernel NormBinding (src/gateway/governance/contracts.py)
+        for execute_trade and execute_trade_bounded. For every request to one of those
+        actions the kernel WarrantStage (src/gateway/governance/governor/stages/warrant.py)
+        reads the norm''s warrant through the kernel WarrantCache (src/gateway/governance/warrant/cache.py)
+        over the WarrantSource seam (src/gateway/governance/seams/warrant.py; adapter
+        selected by CAGE_WARRANT_SOURCE, src/gateway/governance/warrant/source_factory.py)
+        and evaluates its standing with WarrantStandingVerifier (src/gateway/governance/warrant/verifier.py)
+        against the deployment jurisdiction and the binding''s governing_version.
+        A missing, revoked, suspended, expired, out-of-scope, version-mismatched or
+        digest-mismatched warrant, a warrant for another norm, a source error or a
+        fetch timeout, or a stale warrant (below) yields one RELIANCE_INELIGIBLE finding.
+        The classifier ranks HARD > RELIANCE_INELIGIBLE > HITL > NARROWABLE > DEFERRABLE
+        and answers DEFER with DeferReason.WARRANT_INELIGIBLE (quorum 3, not resolvable
+        by data injection) regardless of model confidence; no seal is minted. The
+        gate never short-circuits, so FTRA, STPA and OPA still run and a HARD finding
+        still denies. WarrantStage is in POST_HITL_READ_ONLY_STAGES (src/gateway/governance/governor/pipeline.py),
+        so a warrant revoked between human approval and execution, as observed through
+        the freshness window below, defers at revalidate_post_hitl() with no seal
+        and no phase-2 commit, and the human approval stays unspent and redeemable
+        once the warrant is eligible again (DeferQueue spends it only through the
+        admit hook of run_sealed(), after every stage passes and before the seal is
+        minted). Since 2026-10-07 the committing run of govern() also defers on a
+        warrant failure instead of denying (POAM-2026-110). assemble_governor() (src/gateway/governance/governor/assembly.py)
+        refuses to assemble when a warranted norm has no WarrantSource, when DEFER
+        is disabled, when it lacks a governing_version, or when no domain tier claims
+        its actions. Since 2026-10-10 (VEIP v0.2 conformance, closing POAM-2026-104):
+        (1) warrant authenticity is cryptographically verified against an out-of-band
+        WarrantTrustAnchor (src/gateway/governance/warrant/trust_anchor.py, pinned
+        by raw 32-byte Ed25519 SHA-256 fingerprint) and an independently fetched,
+        JCS-canonicalized and Ed25519-signed VerifiedKeyManifest (/.well-known/veip/key-manifest.json)
+        cached out-of-band in WarrantCache; WarrantStandingVerifier resolves warrant.kid
+        from the verified key manifest (failing closed on unknown, revoked or expired
+        kid), verifies the 18-field JCS digest and the Ed25519 signature over JCS(warrant_with_digest),
+        verifies issuer state_as_of freshness (<= 60 s, else INELIGIBLE_STALE) and
+        norm_parameters value parity, and sets verification_status to VERIFIED only
+        after cryptographic verification succeeds; (2) Provider05WarrantSource (src/integrations/provider_05/warrant_source.py)
+        implements the live HTTP path (GET /v0.2/warrants/{norm_id} and GET /.well-known/veip/key-manifest.json)
+        and is verified over the wire against the live VEIP v0.2 sandbox across all
+        eight conformance scenarios (ACTIVE, REVOKED, SUSPENDED, EXPIRED, STALE_STATE,
+        TAMPERED_SIGNATURE, UNKNOWN_KID, MISSING). Since commit 0cdb5aaa (#427) every
+        warranted norm the decision relied on yields a RelianceRecord (src/gateway/governance/warrant/reliance.py:
+        norm_id, warrant_id, declared digest, warrant status, reliance status, governing_version,
+        evaluated_at, provider_name, verification_status VERIFIED when v0.2 signature
+        verified or UNVERIFIED otherwise; since 9ddefb8c also observed_at, age_seconds
+        and max_age_seconds; since POAM-2026-111 every Warrant Contract v0.1/v0.2
+        evidence field, with evaluated_at renamed attested_at, residual_risk_ref,
+        issuing_authority, authority_basis and revocation_ref added, and governing_version
+        split into required_governing_version (what the binding requires) and warrant_governing_version
+        (what the warrant declares)). The envelope WARRANT attestation is derived
+        from the same record, its metadata equal to the record. ALLOW and NARROW seals
+        carry it in their evidence record, covered by record_hash, so altering or
+        dropping it breaks seal verification (verify_seal_against_evidence, src/gateway/governance/routing_seal.py);
+        the ALLOW envelope carries a WARRANT ExternalAttestation with status matching
+        verification_status (VERIFIED under v0.2). Refusals are primary evidence:
+        DEFER and REQUIRE_APPROVAL tokens and a hash-chained GOVERNANCE_DEFERRAL record
+        carry the same record, and a DENY receipt with a co-occurring warrant failure
+        carries it inside proof_hash. Refusal and deferral evidence writes are non-blocking
+        (neither executes anything) but a failed write logs at ERROR and increments
+        cage_governance_evidence_publish_failures_total{kind} (src/gateway/governance/governor/metrics.py).
+        Whether an action is governed is resolved over the full stage set before POST_HITL
+        filtering (resolve_claims, src/gateway/governance/governor/pipeline.py, shared
+        with revalidate_post_hitl), so the warrant stage re-runs after approval even
+        when only read-only tiers claim the action. Since commit 9ddefb8c (#430) the
+        Warrant Contract v0.1/v0.2 Q2 60 s freshness window is enforced: assemble_governor()
+        wraps the configured WarrantSource in one WarrantCache per governor (built
+        at the composition root, no module singleton). The cache stamps each warrant
+        with CAGE''s own receipt time (a monotonic clock for age, a UTC wall clock
+        for the observed_at evidence field), and in v0.2 WarrantStandingVerifier also
+        enforces the issuer-signed state_as_of window (<= 60 s). It serves a cached
+        warrant only while its age is at most warrant.max_age_seconds and re-fetches
+        past that, so a revocation returned by the re-fetch is refused on that request.
+        A re-fetch that raises or does not answer within warrant.fetch_timeout_seconds
+        never extends the old state: the norm is INELIGIBLE_STALE, a RELIANCE_INELIGIBLE
+        finding, so DEFER. A failure with no earlier observation is INELIGIBLE_UNRESOLVED,
+        a MISSING answer is never cached, and concurrent requests for one norm share
+        a single in-flight fetch (read-through, single-flight; no background poll).
+        The same window applies under POST_HITL. Thresholds (config/governance_thresholds.json,
+        WarrantThresholds in src/gateway/governance/schemas/thresholds.py): max_age_seconds
+        default 60, validated 0 < value <= 60; fetch_timeout_seconds default 2, validated
+        below max_age_seconds; an out-of-range value, including an env override (WARRANT_MAX_AGE_SECONDS,
+        WARRANT_FETCH_TIMEOUT_SECONDS), aborts startup, and the cache constructor
+        enforces the same bounds. Limit stated plainly: a revocation issued less than
+        max_age_seconds after CAGE last received the warrant is observed only when
+        that window elapses (at most 60 s, the contracted bound), not on every request.'
+      purpose: Ensures CAGE relies on the EU_ECB trade-confidence norm only while
+        a current, in-scope warrant for the governing version is presented, failing
+        closed (DEFER) otherwise.
       status:
         state: operational
       responsible-roles:
@@ -465,20 +438,21 @@ system-security-plan:
         text: Warrant freshness window tests
       - href: ../../tests/governor/test_warrant_reliance_e2e.py
         rel: reference
-        text: Warrant reliance end-to-end matrix (composition root, gateway, trade tool)
+        text: Warrant reliance end-to-end matrix (composition root, gateway, trade
+          tool)
       - href: ../../tests/integrations/provider_05/test_provider_05_live.py
         rel: reference
         text: VEIP v0.2 Tier 1 over-the-wire conformance suite
   control-implementation:
-    description: 'CAGE EU_ECB compliance control implementations. ISO 42001
-      universal controls are inherited from component-definition.yaml. The
-      following entries document EU-specific additive controls only.'
+    description: CAGE EU_ECB compliance control implementations. ISO 42001 universal
+      controls are inherited from component-definition.yaml. The following entries
+      document EU-specific additive controls only.
     implemented-requirements:
     - uuid: eu-ecb-req-0001-4000-8000-000000000001
       control-id: eu-ai-act-art9
-      description: 'EU AI Act Art. 9 Risk Management System implemented via
-        Compliance Bridge service. Annual risk reassessment required per Art. 9(4).
-        High-Risk AI classification documented under Annex III §5(b).'
+      description: EU AI Act Art. 9 Risk Management System implemented via Compliance
+        Bridge service. Annual risk reassessment required per Art. 9(4). High-Risk
+        AI classification documented under Annex III §5(b).
       props:
       - name: implementation-status
         value: under-development
@@ -489,8 +463,8 @@ system-security-plan:
       by-components:
       - component-uuid: eu-ecb-comp-0001-4000-8000-000000000001
         uuid: eu-ecb-bycomp-0001-4000-8000-000000000001
-        description: 'Risk management system documented in compliance artifacts.
-          Lula validation provides automated continuous compliance assertion.'
+        description: Risk management system documented in compliance artifacts. Lula
+          validation provides automated continuous compliance assertion.
         implementation-status:
           state: under-development
         links:
@@ -499,9 +473,9 @@ system-security-plan:
           text: Lula automated validation for EU AI Act Art. 9
     - uuid: eu-ecb-req-0002-4000-8000-000000000002
       control-id: gdpr-art22
-      description: 'GDPR Art. 22 human oversight implemented via DEFER State
-        Machine and HITL escalator. EU_ECB consensus threshold EUR 7,500.
-        Data subject rights (Art. 22(3)) implemented via contest mechanism.'
+      description: GDPR Art. 22 human oversight implemented via DEFER State Machine
+        and HITL escalator. EU_ECB consensus threshold EUR 7,500. Data subject rights
+        (Art. 22(3)) implemented via contest mechanism.
       props:
       - name: implementation-status
         value: under-development
@@ -512,8 +486,8 @@ system-security-plan:
       by-components:
       - component-uuid: eu-ecb-comp-0002-4000-8000-000000000002
         uuid: eu-ecb-bycomp-0002-4000-8000-000000000002
-        description: 'DEFER queue and HITL escalator provide human oversight.
-          Lula validation asserts consensus threshold and audit trail presence.'
+        description: DEFER queue and HITL escalator provide human oversight. Lula
+          validation asserts consensus threshold and audit trail presence.
         implementation-status:
           state: under-development
         links:
@@ -522,9 +496,9 @@ system-security-plan:
           text: Lula automated validation for GDPR Art. 22
     - uuid: eu-ecb-req-0003-4000-8000-000000000003
       control-id: dora-art10
-      description: 'DORA Art. 10 ICT audit logging implemented via Compliance
-        Bridge. Logs stored in europe-west1 with 5-year retention. Incident
-        classification system operational.'
+      description: DORA Art. 10 ICT audit logging implemented via Compliance Bridge.
+        Logs stored in europe-west1 with 5-year retention. Incident classification
+        system operational.
       props:
       - name: implementation-status
         value: under-development
@@ -535,8 +509,8 @@ system-security-plan:
       by-components:
       - component-uuid: eu-ecb-comp-0003-4000-8000-000000000003
         uuid: eu-ecb-bycomp-0003-4000-8000-000000000003
-        description: 'Compliance Bridge audit workflow provides DORA-compliant
-          ICT audit logging. GCS bucket in europe-west1 ensures data residency.'
+        description: Compliance Bridge audit workflow provides DORA-compliant ICT
+          audit logging. GCS bucket in europe-west1 ensures data residency.
         implementation-status:
           state: under-development
         links:
@@ -545,14 +519,13 @@ system-security-plan:
           text: Lula automated validation for DORA Art. 10
     - uuid: eu-ecb-req-0004-4000-8000-000000000004
       control-id: eu-ai-act-art27
-      description: 'EU AI Act Art. 27 FRIA (CTRL_FRIA_006) is enforced by the
-        fria jurisdiction tier in every EU_ECB governor pipeline. Not applicable
-        in US_FED or APAC_MAS: their jurisdiction entries contribute no tier, so
-        no fria stage is assembled (tests/governor/test_jurisdiction_wiring.py;
-        proof/model.py JURISDICTION_TIERS). An enforcing EU_ECB posture refuses
-        to start on the stub normative provider (assert_production_posture,
-        jurisdiction_requirements check). Independent external validation
-        depends on provider credential provisioning (EU-001).'
+      description: 'EU AI Act Art. 27 FRIA (CTRL_FRIA_006) is enforced by the fria
+        jurisdiction tier in every EU_ECB governor pipeline. Not applicable in US_FED
+        or APAC_MAS: their jurisdiction entries contribute no tier, so no fria stage
+        is assembled (tests/governor/test_jurisdiction_wiring.py; proof/model.py JURISDICTION_TIERS).
+        An enforcing EU_ECB posture refuses to start on the stub normative provider
+        (assert_production_posture, jurisdiction_requirements check). Independent
+        external validation depends on provider credential provisioning (EU-001).'
       props:
       - name: implementation-status
         value: implemented
@@ -565,15 +538,13 @@ system-security-plan:
       by-components:
       - component-uuid: eu-ecb-comp-0004-4000-8000-000000000004
         uuid: eu-ecb-bycomp-0004-4000-8000-000000000004
-        description: 'Fail-closed FRIA tier: stale or missing artefact, provider
-          unavailability, timeout and refusal each deny; a needs_human_review
-          finding requires approval. Every path is re-checked at post-approval
-          revalidation: a refusal, an unavailable provider or a stale artefact
-          observed then denies with no seal and no phase-2 commit, and a hold
-          the approval was not given against is refused
-          (APPROVAL_CONTEXT_DRIFT). Each path is observed failing in
-          tests/governor/test_jurisdiction_wiring.py; proof/model.py claims
-          post_hitl_rechecks_jurisdiction and approval_answers_only_its_holds
+        description: 'Fail-closed FRIA tier: stale or missing artefact, provider unavailability,
+          timeout and refusal each deny; a needs_human_review finding requires approval.
+          Every path is re-checked at post-approval revalidation: a refusal, an unavailable
+          provider or a stale artefact observed then denies with no seal and no phase-2
+          commit, and a hold the approval was not given against is refused (APPROVAL_CONTEXT_DRIFT).
+          Each path is observed failing in tests/governor/test_jurisdiction_wiring.py;
+          proof/model.py claims post_hitl_rechecks_jurisdiction and approval_answers_only_its_holds
           hold, with runtime parity in tests/test_formal_profile_parity.py.'
         implementation-status:
           state: implemented
@@ -583,55 +554,46 @@ system-security-plan:
           text: Lula automated validation for EU AI Act Art. 27
     - uuid: eu-ecb-req-0005-4000-8000-000000000005
       control-id: cm-6
-      description: 'Configuration settings (NIST SP 800-53 CM-6). The effective
-        EU_ECB domains.finance values, enforced since commit ecca70b9, are:
-        CBF gamma 0.6 (CashBarrier(gamma=...) in src/cage_finance/plugin.py);
-        drawdown.limit 0.04 (bounding contract B2,
-        src/cage_finance/safety/bounding/contracts.py); consensus.threshold_usd
-        7500.0 (deterministic HITL escalation NOTIONAL_THRESHOLD_ESCALATION by
-        default, or multi-model critic consensus when
-        CAGE_CONSENSUS_CRITICS_ENABLED=true,
-        src/cage_finance/tiers/consensus_tier.py); STPA UCA-5 drawdown
-        3.5%, UCA-6 order-volume fraction 0.005 and FIN-2 /
-        UCA-2 latency 150 ms (src/cage_finance/stpa/uca_rules.py).
-        The gateway supplies both inputs itself, never from the caller
-        (src/cage_finance/tools/trade_inputs.py): latency_ms is the measured age
-        of the traded symbol''s latest quote and drawdown is the daily NAV
-        drawdown in percent; an unavailable or untrustworthy source leaves the
-        input unset and UCA-2 / UCA-5 refuse the trade. Previews and the
-        committing run evaluate the same server-side inputs (POAM-2026-105
-        closed): the finance plugin contributes TradeInputResolver through
-        PluginContribution.server_inputs, and the kernel bind_server_inputs()
-        (src/gateway/governance/governor/server_inputs.py) drops every caller
-        value for latency_ms, drawdown, its aliases and portfolio_total before
-        resolving them, in POST /governance/validate-action, the MCP
-        simulate_governance_check dry run and the trade tool before its
-        committing run. No STPA input is defaulted on a dry run. UCA-6
-        (order-volume fraction 0.005) is evaluated on every trade and refuses
-        one lacking either input (POAM-2026-106 closed): order_size is the
-        caller''s notional amount divided by the verified quote price, and
-        daily_vol is the symbol''s average daily volume from the market-data
-        feed (verified source, traded symbol, finite and positive, at most four
-        days old), both bound server-side by TradeInputResolver. The same
-        resolver is registered for execute_trade_bounded, and bounding contract
-        B2 compares the drawdown the gateway measured (never a caller value)
-        with drawdown.limit (4%); an unmeasured drawdown is a HARD refusal
-        (POAM-2026-108 closed).
-        The overlay fails closed: a missing or malformed EU_ECB_BASELINE.json,
-        a regional section with no global counterpart, or a shape change aborts
-        threshold loading; an unknown or invalid key fails governor assembly
-        (src/cage_finance/thresholds.py); and assemble_governor()
-        (src/gateway/governance/governor/assembly.py) refuses to assemble when
-        the thresholds region differs from the jurisdiction region. FIN-1
-        stpa.max_sell_portfolio_fraction (0.08) is enforced by UCA-13
-        (src/cage_finance/stpa/uca_rules.py): a sell whose amount exceeds this
-        fraction of portfolio_total, or that lacks a numeric amount or
-        portfolio_total, is a HARD STPA violation (POAM-2026-103 closed).
-        portfolio_total = current NAV from the server-side NAV source
-        (src/cage_finance/tools/trade_inputs.py), never from the caller; an
-        unavailable, unverified, stale or non-positive NAV leaves it unset and
-        UCA-13 refuses the sell. The consensus threshold is configured in the key threshold_usd and documented in
-        EU_ECB_BASELINE.json as a EUR 7,500 equivalent.'
+      description: 'Configuration settings (NIST SP 800-53 CM-6). The effective EU_ECB
+        domains.finance values, enforced since commit ecca70b9, are: CBF gamma 0.6
+        (CashBarrier(gamma=...) in src/cage_finance/plugin.py); drawdown.limit 0.04
+        (bounding contract B2, src/cage_finance/safety/bounding/contracts.py); consensus.threshold_usd
+        7500.0 (deterministic HITL escalation NOTIONAL_THRESHOLD_ESCALATION by default,
+        or multi-model critic consensus when CAGE_CONSENSUS_CRITICS_ENABLED=true,
+        src/cage_finance/tiers/consensus_tier.py); STPA UCA-5 drawdown 3.5%, UCA-6
+        order-volume fraction 0.005 and FIN-2 / UCA-2 latency 150 ms (src/cage_finance/stpa/uca_rules.py).
+        The gateway supplies both inputs itself, never from the caller (src/cage_finance/tools/trade_inputs.py):
+        latency_ms is the measured age of the traded symbol''s latest quote and drawdown
+        is the daily NAV drawdown in percent; an unavailable or untrustworthy source
+        leaves the input unset and UCA-2 / UCA-5 refuse the trade. Previews and the
+        committing run evaluate the same server-side inputs (POAM-2026-105 closed):
+        the finance plugin contributes TradeInputResolver through PluginContribution.server_inputs,
+        and the kernel bind_server_inputs() (src/gateway/governance/governor/server_inputs.py)
+        drops every caller value for latency_ms, drawdown, its aliases and portfolio_total
+        before resolving them, in POST /governance/validate-action, the MCP simulate_governance_check
+        dry run and the trade tool before its committing run. No STPA input is defaulted
+        on a dry run. UCA-6 (order-volume fraction 0.005) is evaluated on every trade
+        and refuses one lacking either input (POAM-2026-106 closed): order_size is
+        the caller''s notional amount divided by the verified quote price, and daily_vol
+        is the symbol''s average daily volume from the market-data feed (verified
+        source, traded symbol, finite and positive, at most four days old), both bound
+        server-side by TradeInputResolver. The same resolver is registered for execute_trade_bounded,
+        and bounding contract B2 compares the drawdown the gateway measured (never
+        a caller value) with drawdown.limit (4%); an unmeasured drawdown is a HARD
+        refusal (POAM-2026-108 closed). The overlay fails closed: a missing or malformed
+        EU_ECB_BASELINE.json, a regional section with no global counterpart, or a
+        shape change aborts threshold loading; an unknown or invalid key fails governor
+        assembly (src/cage_finance/thresholds.py); and assemble_governor() (src/gateway/governance/governor/assembly.py)
+        refuses to assemble when the thresholds region differs from the jurisdiction
+        region. FIN-1 stpa.max_sell_portfolio_fraction (0.08) is enforced by UCA-13
+        (src/cage_finance/stpa/uca_rules.py): a sell whose amount exceeds this fraction
+        of portfolio_total, or that lacks a numeric amount or portfolio_total, is
+        a HARD STPA violation (POAM-2026-103 closed). portfolio_total = current NAV
+        from the server-side NAV source (src/cage_finance/tools/trade_inputs.py),
+        never from the caller; an unavailable, unverified, stale or non-positive NAV
+        leaves it unset and UCA-13 refuses the sell. The consensus threshold is configured
+        in the key threshold_usd and documented in EU_ECB_BASELINE.json as a EUR 7,500
+        equivalent.'
       props:
       - name: implementation-status
         value: implemented
@@ -644,13 +606,11 @@ system-security-plan:
       by-components:
       - component-uuid: eu-ecb-comp-0005-4000-8000-000000000005
         uuid: eu-ecb-bycomp-0005-4000-8000-000000000005
-        description: 'Each fail-closed path and the effective EU_ECB values
-          are observed in tests/governor/test_regional_overlay.py
-          (test_effective_finance_values_per_region,
-          test_region_mismatch_fails_assembly,
-          test_unknown_regional_key_fails_assembly,
-          test_missing_regional_file_fails_closed). Remediation recorded as
-          POAM-2026-102 in docs/POAM.md.'
+        description: Each fail-closed path and the effective EU_ECB values are observed
+          in tests/governor/test_regional_overlay.py (test_effective_finance_values_per_region,
+          test_region_mismatch_fails_assembly, test_unknown_regional_key_fails_assembly,
+          test_missing_regional_file_fails_closed). Remediation recorded as POAM-2026-102
+          in docs/POAM.md.
         implementation-status:
           state: implemented
         links:
@@ -659,21 +619,18 @@ system-security-plan:
           text: Regional overlay fail-closed tests
     - uuid: eu-ecb-req-0006-4000-8000-000000000006
       control-id: ctrl-agt-001
-      description: 'CTRL_AGT_001 regional agentic confidence floor. Since commit
-        ecca70b9 the finance trade_confidence tier
-        (src/cage_finance/tiers/trade_confidence_tier.py, phase 1, order 1)
-        refuses execute_trade and execute_trade_bounded when the confidence
-        score is below the effective
-        domains.finance.confidence.min_trade_confidence.value of 0.97: a
-        score at or above the universal defer floor requires human approval
-        (HITL), a lower score defers, and a missing or malformed score is a
-        HARD violation. The kernel ConfidenceStage still enforces the universal
-        confidence band (0.95) for every action. Since commit a0deb7ad the
-        tier is built from the same NormBinding the warrant gate checks, so it
-        enforces exactly the value the warrant refers to; changing that value
-        requires a new governing_version and a re-issued warrant
-        (test_eu_warranted_value_is_pinned_to_its_governing_version). Reliance
-        on the floor is gated by the warrant reliance gate (eu-ecb-req-0007).'
+      description: 'CTRL_AGT_001 regional agentic confidence floor. Since commit ecca70b9
+        the finance trade_confidence tier (src/cage_finance/tiers/trade_confidence_tier.py,
+        phase 1, order 1) refuses execute_trade and execute_trade_bounded when the
+        confidence score is below the effective domains.finance.confidence.min_trade_confidence.value
+        of 0.97: a score at or above the universal defer floor requires human approval
+        (HITL), a lower score defers, and a missing or malformed score is a HARD violation.
+        The kernel ConfidenceStage still enforces the universal confidence band (0.95)
+        for every action. Since commit a0deb7ad the tier is built from the same NormBinding
+        the warrant gate checks, so it enforces exactly the value the warrant refers
+        to; changing that value requires a new governing_version and a re-issued warrant
+        (test_eu_warranted_value_is_pinned_to_its_governing_version). Reliance on
+        the floor is gated by the warrant reliance gate (eu-ecb-req-0007).'
       props:
       - name: implementation-status
         value: implemented
@@ -686,10 +643,9 @@ system-security-plan:
       by-components:
       - component-uuid: eu-ecb-comp-0005-4000-8000-000000000005
         uuid: eu-ecb-bycomp-0006-4000-8000-000000000006
-        description: 'Verified by tests/cage_finance/test_trade_confidence_tier.py
-          (test_plugin_wires_the_effective_floor_and_gamma) and
-          tests/governor/test_jurisdiction_wiring.py (trade_confidence tier
-          present in the assembled pipeline).'
+        description: Verified by tests/cage_finance/test_trade_confidence_tier.py
+          (test_plugin_wires_the_effective_floor_and_gamma) and tests/governor/test_jurisdiction_wiring.py
+          (trade_confidence tier present in the assembled pipeline).
         implementation-status:
           state: implemented
         links:
@@ -698,36 +654,32 @@ system-security-plan:
           text: TradeConfidenceTier tests
     - uuid: eu-ecb-req-0007-4000-8000-000000000007
       control-id: ac-3
-      description: 'Access enforcement for reliance on a warranted norm (NIST
-        SP 800-53 AC-3). In EU_ECB an execute_trade or execute_trade_bounded
-        request is admitted only while WarrantStage finds an eligible warrant
-        for confidence.min_trade_confidence (governing_version
-        cage-policy-2.1.0); otherwise the governor defers with
-        DeferReason.WARRANT_INELIGIBLE, mints no seal and commits no phase-2
-        reservation, including at post-approval revalidation. Status is
-        implemented (2026-10-10, closing POAM-2026-104): warrant authenticity
-        is verified against an out-of-band WarrantTrustAnchor and
-        kid-resolved VerifiedKeyManifest (VEIP v0.2, verification_status
-        VERIFIED), and Provider05WarrantSource implements the live HTTP path
-        verified over the wire against the VEIP v0.2 sandbox. Since 2026-10-07 a post-approval warrant deferral
-        no longer spends the approval token: SymbolicGovernor.revalidate_post_hitl()
-        receives an unspent PostHitlApproval and spends it (atomic
-        DeferQueue.consume_approval()) only when the run is about to seal, so
-        the approval stays single-use, bound to the same action and
-        parameters and subject to its own expiry, and two concurrent
-        redemptions yield at most one seal. A DENY still spends it. Every admit and every refusal is
-        evidenced: since 0cdb5aaa the reliance record is bound into the seal''s
-        evidence record (record_hash), the DEFER/REQUIRE_APPROVAL token, the
-        GOVERNANCE_DEFERRAL record and any co-occurring DENY receipt''s
-        proof_hash, with verification_status VERIFIED when v0.2 Ed25519
-        signature verification succeeds and UNVERIFIED otherwise. Since 9ddefb8c
-        reliance is also bounded in time: a warrant is relied on for at most
-        warrant.max_age_seconds (<= 60 s, Warrant Contract v0.1/v0.2 Q2) after CAGE
-        received it (and in v0.2 also within 60 s of the issuer''s signed
-        state_as_of); past that it is re-fetched, and a failed or timed-out
-        re-fetch (or stale state_as_of) is INELIGIBLE_STALE and defers. The reliance record carries
-        observed_at, age_seconds and max_age_seconds, so the evidence shows
-        how fresh the relied-on warrant state was.'
+      description: 'Access enforcement for reliance on a warranted norm (NIST SP 800-53
+        AC-3). In EU_ECB an execute_trade or execute_trade_bounded request is admitted
+        only while WarrantStage finds an eligible warrant for confidence.min_trade_confidence
+        (governing_version cage-policy-2.1.0); otherwise the governor defers with
+        DeferReason.WARRANT_INELIGIBLE, mints no seal and commits no phase-2 reservation,
+        including at post-approval revalidation. Status is implemented (2026-10-10,
+        closing POAM-2026-104): warrant authenticity is verified against an out-of-band
+        WarrantTrustAnchor and kid-resolved VerifiedKeyManifest (VEIP v0.2, verification_status
+        VERIFIED), and Provider05WarrantSource implements the live HTTP path verified
+        over the wire against the VEIP v0.2 sandbox. Since 2026-10-07 a post-approval
+        warrant deferral no longer spends the approval token: SymbolicGovernor.revalidate_post_hitl()
+        receives an unspent PostHitlApproval and spends it (atomic DeferQueue.consume_approval())
+        only when the run is about to seal, so the approval stays single-use, bound
+        to the same action and parameters and subject to its own expiry, and two concurrent
+        redemptions yield at most one seal. A DENY still spends it. Every admit and
+        every refusal is evidenced: since 0cdb5aaa the reliance record is bound into
+        the seal''s evidence record (record_hash), the DEFER/REQUIRE_APPROVAL token,
+        the GOVERNANCE_DEFERRAL record and any co-occurring DENY receipt''s proof_hash,
+        with verification_status VERIFIED when v0.2 Ed25519 signature verification
+        succeeds and UNVERIFIED otherwise. Since 9ddefb8c reliance is also bounded
+        in time: a warrant is relied on for at most warrant.max_age_seconds (<= 60
+        s, Warrant Contract v0.1/v0.2 Q2) after CAGE received it (and in v0.2 also
+        within 60 s of the issuer''s signed state_as_of); past that it is re-fetched,
+        and a failed or timed-out re-fetch (or stale state_as_of) is INELIGIBLE_STALE
+        and defers. The reliance record carries observed_at, age_seconds and max_age_seconds,
+        so the evidence shows how fresh the relied-on warrant state was.'
       props:
       - name: implementation-status
         value: implemented
@@ -740,91 +692,73 @@ system-security-plan:
       by-components:
       - component-uuid: eu-ecb-comp-0006-4000-8000-000000000006
         uuid: eu-ecb-bycomp-0007-4000-8000-000000000007
-        description: 'Observed in tests/governor/test_warrant_reliance_gate.py:
-          the failure matrix (test_every_ineligible_standing_is_one_reliance_finding,
-          test_source_timeout_is_ineligible), a revoked warrant at confidence
-          0.99 defers rather than denies
-          (test_revoked_warrant_with_high_confidence_defers_not_denies), a HARD
-          finding still denies, govern() mints no seal on a warrant failure, a
-          warrant revoked after approval defers with no seal, no commit and no
-          spend of the approval
-          (test_warrant_revoked_after_approval_defers_without_seal), the
-          assembly refusals, and the pinned EU_ECB (norm_id, value) to
-          governing_version pair. proof/model.py claims 12
-          (warranted_norm_never_fabricates_deny) and 13
-          (post_hitl_rechecks_warrant) hold, with runtime parity in
-          tests/test_formal_profile_parity.py. Observed in
-          tests/governor/test_warrant_evidence_binding.py: tampering with or
-          dropping the reliance record breaks seal verification
-          (test_tampered_reliance_record_breaks_seal_verification,
-          test_dropping_the_reliance_record_breaks_seal_verification), DEFER
-          tokens and GOVERNANCE_DEFERRAL records carry the ineligible record
-          (test_defer_carries_the_ineligible_reliance_record), a post-approval
-          revocation defers with no seal when only read-only tiers claim
-          the action
-          (test_post_hitl_revocation_is_caught_when_only_read_only_tiers_claim),
-          and a failed deferral evidence write is counted while the deferral
-          proceeds (test_deferral_proceeds_and_is_counted_when_the_sink_fails).
-          Observed in tests/governor/test_warrant_freshness.py (injected
-          clocks, no sleeps): a warrant is served without a fetch up to and
-          including 60.000 s and re-fetched at 60.001 s, a re-fetched
-          revocation is refused immediately, a re-fetch error or timeout is
-          INELIGIBLE_STALE and the governor defers with WARRANT_INELIGIBLE,
-          concurrent requests share one fetch, POST_HITL inside the window
-          relies on the cached warrant while an expired one is re-fetched
-          (and deferred without a seal or a spent approval when the re-fetch
-          fails), out-of-range
-          windows (above 60 s, at or below 0, NaN, infinite, timeout not
-          below max_age) are refused by the schema, the loader and the cache,
-          and every reliance record carries observed_at, age_seconds and
-          max_age_seconds. Observed in
-          tests/integrations/provider_05/test_provider_05_reliance_record.py
-          (2026-10-07): for VEC-001 to VEC-006 and MISSING the record carries
-          the seven Warrant Contract v0.1 evidence fields with the vector
-          values (residual_risk_ref RRR-2026-08-01-A1), MISSING leaves every
-          warrant-declared field empty, VEC-005 records the required and the
-          declared governing_version apart, VEC-006 names both full digests,
-          and the WARRANT attestation metadata equals the record. Observed end to end in
-          tests/governor/test_warrant_reliance_e2e.py (2026-10-06, updated
-          2026-10-10 for v0.2): the
-          governor is built by bootstrap_governor() with the real finance
-          plugin, the EU_ECB thresholds and jurisdiction and the
-          CAGE_WARRANT_SOURCE=provider_05 adapter; requests enter through POST /governance/validate-action
-          behind workload identity and through execute_trade_action(). VEC-001
-          at confidence 0.98 is admitted, and with a signed VEIP v0.2 ACTIVE
+        description: 'Observed in tests/governor/test_warrant_reliance_gate.py: the
+          failure matrix (test_every_ineligible_standing_is_one_reliance_finding,
+          test_source_timeout_is_ineligible), a revoked warrant at confidence 0.99
+          defers rather than denies (test_revoked_warrant_with_high_confidence_defers_not_denies),
+          a HARD finding still denies, govern() mints no seal on a warrant failure,
+          a warrant revoked after approval defers with no seal, no commit and no spend
+          of the approval (test_warrant_revoked_after_approval_defers_without_seal),
+          the assembly refusals, and the pinned EU_ECB (norm_id, value) to governing_version
+          pair. proof/model.py claims 12 (warranted_norm_never_fabricates_deny) and
+          13 (post_hitl_rechecks_warrant) hold, with runtime parity in tests/test_formal_profile_parity.py.
+          Observed in tests/governor/test_warrant_evidence_binding.py: tampering with
+          or dropping the reliance record breaks seal verification (test_tampered_reliance_record_breaks_seal_verification,
+          test_dropping_the_reliance_record_breaks_seal_verification), DEFER tokens
+          and GOVERNANCE_DEFERRAL records carry the ineligible record (test_defer_carries_the_ineligible_reliance_record),
+          a post-approval revocation defers with no seal when only read-only tiers
+          claim the action (test_post_hitl_revocation_is_caught_when_only_read_only_tiers_claim),
+          and a failed deferral evidence write is counted while the deferral proceeds
+          (test_deferral_proceeds_and_is_counted_when_the_sink_fails). Observed in
+          tests/governor/test_warrant_freshness.py (injected clocks, no sleeps): a
+          warrant is served without a fetch up to and including 60.000 s and re-fetched
+          at 60.001 s, a re-fetched revocation is refused immediately, a re-fetch
+          error or timeout is INELIGIBLE_STALE and the governor defers with WARRANT_INELIGIBLE,
+          concurrent requests share one fetch, POST_HITL inside the window relies
+          on the cached warrant while an expired one is re-fetched (and deferred without
+          a seal or a spent approval when the re-fetch fails), out-of-range windows
+          (above 60 s, at or below 0, NaN, infinite, timeout not below max_age) are
+          refused by the schema, the loader and the cache, and every reliance record
+          carries observed_at, age_seconds and max_age_seconds. Observed in tests/integrations/provider_05/test_provider_05_reliance_record.py
+          (2026-10-07): for VEC-001 to VEC-006 and MISSING the record carries the
+          seven Warrant Contract v0.1 evidence fields with the vector values (residual_risk_ref
+          RRR-2026-08-01-A1), MISSING leaves every warrant-declared field empty, VEC-005
+          records the required and the declared governing_version apart, VEC-006 names
+          both full digests, and the WARRANT attestation metadata equals the record.
+          Observed end to end in tests/governor/test_warrant_reliance_e2e.py (2026-10-06,
+          updated 2026-10-10 for v0.2): the governor is built by bootstrap_governor()
+          with the real finance plugin, the EU_ECB thresholds and jurisdiction and
+          the CAGE_WARRANT_SOURCE=provider_05 adapter; requests enter through POST
+          /governance/validate-action behind workload identity and through execute_trade_action().
+          VEC-001 at confidence 0.98 is admitted, and with a signed VEIP v0.2 ACTIVE
           warrant and verified key manifest (test_veip_v02_active_warrant_is_verified_and_executes_e2e)
-          the signed envelope and sealed GOVERNANCE_DECISION record carry
-          verification_status VERIFIED; VEC-002 to VEC-006, the v0.2 REVOKED,
-          SUSPENDED, EXPIRED, STALE_STATE, TAMPERED_SIGNATURE and UNKNOWN_KID
-          scenarios, a missing warrant and a stale state (61 s, source failing) defer
-          with WARRANT_INELIGIBLE, the reliance record in the DEFER token and
-          the GOVERNANCE_DEFERRAL record, and nothing sealed or actuated, as
-          do source faults injected through Provider05WarrantSource
-          inject_fault() (kernel FaultMode: timeout, connection error,
-          malformed payload, fields rewritten in transit); a
-          HARD bounding-tier finding under a revoked warrant denies with the
-          reliance record inside the refusal receipt (kernel-stage HARD
-          findings before the warrant stage short-circuit before any reliance
-          is formed); after execute_trade_action() VEC-002 to VEC-006 and a
-          missing warrant leave a GOVERNANCE_DEFERRAL and no
-          GOVERNANCE_REFUSAL in the evidence chain (2026-10-07); a warrant
-          revoked after human approval, or a source fault at revalidation,
-          defers with no seal while the approval stays unspent, the same
-          approval redeems once the warrant is restored (ALLOW and a seal)
-          and a second redemption is refused, a deferred approval still
-          expires, a HARD finding at revalidation still spends it, and five
-          concurrent redemptions execute once; the 0.97 floor applies
-          with an eligible warrant; APAC_MAS (0.96) and US_FED (0.95) never
-          consult a warrant; and bootstrap refuses an EU_ECB governor with no
-          warrant source or with DEFER disabled. Observed over the physical wire
-          in tests/integrations/provider_05/test_provider_05_live.py
-          (2026-10-10, Tier 1 conformance against
-          https://veip-cage-sandbox.am-43b.workers.dev): /.well-known/veip/key-manifest.json
-          verifies against the out-of-band root fingerprint
-          sha256:61ab867fc9ce773f2974081effbf0c9a4173caa23a4e18fa2c3bf65b249b8d85,
-          and all eight live v0.2 scenarios (ACTIVE, REVOKED, SUSPENDED,
-          EXPIRED, STALE_STATE, TAMPERED_SIGNATURE, UNKNOWN_KID, MISSING)
-          produce the expected reliance and verification statuses.'
+          the signed envelope and sealed GOVERNANCE_DECISION record carry verification_status
+          VERIFIED; VEC-002 to VEC-006, the v0.2 REVOKED, SUSPENDED, EXPIRED, STALE_STATE,
+          TAMPERED_SIGNATURE and UNKNOWN_KID scenarios, a missing warrant and a stale
+          state (61 s, source failing) defer with WARRANT_INELIGIBLE, the reliance
+          record in the DEFER token and the GOVERNANCE_DEFERRAL record, and nothing
+          sealed or actuated, as do source faults injected through Provider05WarrantSource
+          inject_fault() (kernel FaultMode: timeout, connection error, malformed payload,
+          fields rewritten in transit); a HARD bounding-tier finding under a revoked
+          warrant denies with the reliance record inside the refusal receipt (kernel-stage
+          HARD findings before the warrant stage short-circuit before any reliance
+          is formed); after execute_trade_action() VEC-002 to VEC-006 and a missing
+          warrant leave a GOVERNANCE_DEFERRAL and no GOVERNANCE_REFUSAL in the evidence
+          chain (2026-10-07); a warrant revoked after human approval, or a source
+          fault at revalidation, defers with no seal while the approval stays unspent,
+          the same approval redeems once the warrant is restored (ALLOW and a seal)
+          and a second redemption is refused, a deferred approval still expires, a
+          HARD finding at revalidation still spends it, and five concurrent redemptions
+          execute once; the 0.97 floor applies with an eligible warrant; APAC_MAS
+          (0.96) and US_FED (0.95) never consult a warrant; and bootstrap refuses
+          an EU_ECB governor with no warrant source or with DEFER disabled. Observed
+          over the physical wire in tests/integrations/provider_05/test_provider_05_live.py
+          (2026-10-10, Tier 1 conformance against https://veip-cage-sandbox.am-43b.workers.dev):
+          /.well-known/veip/key-manifest.json verifies against the out-of-band root
+          fingerprint sha256:61ab867fc9ce773f2974081effbf0c9a4173caa23a4e18fa2c3bf65b249b8d85,
+          and all eight live v0.2 scenarios (ACTIVE, REVOKED, SUSPENDED, EXPIRED,
+          STALE_STATE, TAMPERED_SIGNATURE, UNKNOWN_KID, MISSING) produce the expected
+          reliance and verification statuses.'
         implementation-status:
           state: implemented
         links:
@@ -846,6 +780,227 @@ system-security-plan:
         - href: ../../tests/integrations/provider_05/test_provider_05_live.py
           rel: reference
           text: VEIP v0.2 Tier 1 over-the-wire conformance suite
+    - uuid: g7000099-stpa-4000-8000-compiler00001
+      control-id: sa-11
+      description: "The STPA-to-Policy Compiler implements a deterministic, design-time\
+        \ safety\n          control that translates STAMP/STPA Unsafe Control Action\
+        \ (UCA) analysis\n          directly into runtime-enforceable governance artifacts.\
+        \ This eliminates the\n          \"Natural Language Tax\" — the compliance\
+        \ gap between human-readable safety\n          specifications and the actual\
+        \ code running in the cluster.\n\n          Compiler source: src/gateway/governance/stpa_compiler.py\n\
+        \          Control structure (source of truth): config/stpa_control_structure.yaml\n\
+        \          Generated artifacts:\n            - config/opa/generated_stpa_policy.rego\
+        \    (OPA Rego — 7 UCAs)\n            - src/gateway/governance/stpa_validator.py\
+        \ (Python — 11 UCAs)\n            - config/sandbox/generated_sandbox_policy.yaml\
+        \ (Sandbox — 1 UCAs)\n\n          Target compliance framework: EU AI Act (Regulation\
+        \ (EU) 2024/1689) High-Risk AI — Annex III §5(b)\n          Framework reference:\
+        \ https://eur-lex.europa.eu/legal-content/EN/TXT/?uri=CELEX%3A32024R1689\n\
+        \          System: CAGE Financial Advisor v1.1.0\n          UCAs encoded:\
+        \ 12\n          Hazards modelled: 7\n          Safety constraints: 3\n   \
+        \       Last compiled: 2026-11-04T22:01:35Z\n\n          UCA-to-Control mapping\
+        \ (EU AI Act (Regulation (EU) 2024/1689) High-Risk AI — Annex III §5(b)):\n\
+        \            UCA-1 (unsafe_action): Agent executes write operation without\
+        \ a signed approval token.\n  → EU_AI_ACT: Art. 9(5) (Risk Management — Residual\
+        \ risk mitigation measures), Art. 14 (Human Oversight — Technical measures\
+        \ to enable oversight)\nUCA-10 (wrong_timing): Agent reads account balance\
+        \ with stale connection data.\n  → EU_AI_ACT: \nUCA-12 (unsafe_action): Agent\
+        \ executes bounded trade when bounding contracts B1-B10 fail validation. Phase\
+        \ 5: execute_trade_bounded is EXTERNALLY_REVERSIBLE when B10 rollback window\
+        \ validation passes, enabling HITL review without confidence hard-gate per\
+        \ VEC-004. When B10 fails (closed rollback window), the bounding tier raises\
+        \ a HITL violation (B10_ROLLBACK_WINDOW_CLOSED) and the request parks for\
+        \ human approval, as an irreversible action would.\n  → EU_AI_ACT: \nUCA-13\
+        \ (unsafe_action): Agent executes sell order exceeding the allowable fraction\
+        \ of portfolio value.\n  → EU_AI_ACT: Art. 9(5) (Risk Management — Residual\
+        \ risk mitigation measures), Art. 14 (Human Oversight — Technical measures\
+        \ to enable oversight)\nUCA-2 (wrong_timing): Agent executes trade with stale\
+        \ market data (latency > threshold).\n  → EU_AI_ACT: Art. 10(3) (Data Governance\
+        \ — Examination of data for bias), Art. 17 (Quality Management System (QMS)\
+        \ Requirements)\nUCA-3 (unsafe_action): Agent outputs PII to user interface.\n\
+        \  → EU_AI_ACT: Art. 10(5) (Data Governance — Personal data and data minimisation),\
+        \ GDPR Art. 22 (Automated Individual Decision-Making Including Profiling)\n\
+        UCA-4 (stopped_too_soon): Agent debits account but fails to credit asset (atomic\
+        \ failure).\n  → EU_AI_ACT: Art. 12 (Record-Keeping and Automatic Logging\
+        \ Obligations), Art. 17 (Quality Management System (QMS) Requirements)\nUCA-5\
+        \ (unsafe_action): Agent executes buy order when daily drawdown exceeds limit.\n\
+        \  → EU_AI_ACT: Art. 9(2)(b) (Risk Controls — Identification of known and\
+        \ foreseeable risks), Art. 14 (Human Oversight — Technical measures to enable\
+        \ oversight)\nUCA-6 (wrong_timing): Agent submits market order exceeding allowable\
+        \ fraction of daily volume.\n  → EU_AI_ACT: Art. 9(5) (Risk Management — Residual\
+        \ risk mitigation measures), Art. 14 (Human Oversight — Technical measures\
+        \ to enable oversight)\nUCA-7 (unsafe_action): Adversarial prompt injection\
+        \ score exceeds detection threshold.\n  → EU_AI_ACT: Art. 9(5) (Risk Management\
+        \ — Residual risk mitigation measures), Annex III §5(b) (High-Risk AI Classification\
+        \ — Creditworthiness and credit scoring)\nUCA-8 (wrong_timing): Agent executes\
+        \ trade before risk assessment is complete.\n  → EU_AI_ACT: Art. 9 (Risk Management\
+        \ System for High-Risk AI), Art. 14 (Human Oversight — Technical measures\
+        \ to enable oversight)\nUCA-9 (wrong_timing): Agent executes trade with compliance\
+        \ check bypassed.\n  → EU_AI_ACT: Art. 9 (Risk Management System for High-Risk\
+        \ AI), Art. 17 (Quality Management System (QMS) Requirements)"
+      props:
+      - name: implementation-status
+        value: implemented
+      - name: stpa-compiler-version
+        value: 1.1.0
+      - name: uca-count
+        value: '12'
+      - name: hazard-count
+        value: '7'
+      - name: last-compiled
+        value: '2026-11-04T22:01:35Z'
+      - name: target-framework
+        value: EU AI Act (Regulation (EU) 2024/1689) High-Risk AI — Annex III §5(b)
+      - name: artifact-opa
+        value: config/opa/generated_stpa_policy.rego
+      - name: artifact-python
+        value: src/gateway/governance/stpa_validator.py
+      - name: artifact-sandbox
+        value: config/sandbox/generated_sandbox_policy.yaml
+      - name: compiler-source
+        value: src/gateway/governance/stpa_compiler.py
+      responsible-roles:
+      - role-id: compliance-engineer
+      by-components:
+      - component-uuid: e5000099-stpa-4000-8000-compiler00001
+        uuid: h8000099-stpa-4000-8000-compiler00000
+        description: 'STPA compiler enforces Art. 9(5) (Risk Management — Residual
+          risk mitigation measures) via generated artifacts under EU AI Act High-Risk
+          AI obligations. UCAs covered: UCA-1, UCA-13, UCA-6, UCA-7.'
+        implementation-status:
+          state: implemented
+        links:
+        - href: ../../config/stpa_control_structure.yaml
+          rel: reference
+          text: STPA control structure YAML (source of truth)
+        - href: ../../config/opa/generated_stpa_policy.rego
+          rel: reference
+          text: Generated OPA Rego policy
+      - component-uuid: e5000099-stpa-4000-8000-compiler00001
+        uuid: h8000099-stpa-4000-8000-compiler00001
+        description: 'STPA compiler enforces Art. 14 (Human Oversight — Technical
+          measures to enable oversight) via generated artifacts under EU AI Act High-Risk
+          AI obligations. UCAs covered: UCA-1, UCA-13, UCA-5, UCA-6, UCA-8.'
+        implementation-status:
+          state: implemented
+        links:
+        - href: ../../config/stpa_control_structure.yaml
+          rel: reference
+          text: STPA control structure YAML (source of truth)
+        - href: ../../config/opa/generated_stpa_policy.rego
+          rel: reference
+          text: Generated OPA Rego policy
+      - component-uuid: e5000099-stpa-4000-8000-compiler00001
+        uuid: h8000099-stpa-4000-8000-compiler00002
+        description: 'STPA compiler enforces Art. 10(3) (Data Governance — Examination
+          of data for bias) via generated artifacts under EU AI Act High-Risk AI obligations.
+          UCAs covered: UCA-2.'
+        implementation-status:
+          state: implemented
+        links:
+        - href: ../../config/stpa_control_structure.yaml
+          rel: reference
+          text: STPA control structure YAML (source of truth)
+        - href: ../../config/opa/generated_stpa_policy.rego
+          rel: reference
+          text: Generated OPA Rego policy
+      - component-uuid: e5000099-stpa-4000-8000-compiler00001
+        uuid: h8000099-stpa-4000-8000-compiler00003
+        description: 'STPA compiler enforces Art. 17 (Quality Management System (QMS)
+          Requirements) via generated artifacts under EU AI Act High-Risk AI obligations.
+          UCAs covered: UCA-2, UCA-4, UCA-9.'
+        implementation-status:
+          state: implemented
+        links:
+        - href: ../../config/stpa_control_structure.yaml
+          rel: reference
+          text: STPA control structure YAML (source of truth)
+        - href: ../../config/opa/generated_stpa_policy.rego
+          rel: reference
+          text: Generated OPA Rego policy
+      - component-uuid: e5000099-stpa-4000-8000-compiler00001
+        uuid: h8000099-stpa-4000-8000-compiler00004
+        description: 'STPA compiler enforces Art. 10(5) (Data Governance — Personal
+          data and data minimisation) via generated artifacts under EU AI Act High-Risk
+          AI obligations. UCAs covered: UCA-3.'
+        implementation-status:
+          state: implemented
+        links:
+        - href: ../../config/stpa_control_structure.yaml
+          rel: reference
+          text: STPA control structure YAML (source of truth)
+        - href: ../../config/opa/generated_stpa_policy.rego
+          rel: reference
+          text: Generated OPA Rego policy
+      - component-uuid: e5000099-stpa-4000-8000-compiler00001
+        uuid: h8000099-stpa-4000-8000-compiler00005
+        description: 'STPA compiler enforces GDPR Art. 22 (Automated Individual Decision-Making
+          Including Profiling) via generated artifacts under EU AI Act High-Risk AI
+          obligations. UCAs covered: UCA-3.'
+        implementation-status:
+          state: implemented
+        links:
+        - href: ../../config/stpa_control_structure.yaml
+          rel: reference
+          text: STPA control structure YAML (source of truth)
+        - href: ../../config/opa/generated_stpa_policy.rego
+          rel: reference
+          text: Generated OPA Rego policy
+      - component-uuid: e5000099-stpa-4000-8000-compiler00001
+        uuid: h8000099-stpa-4000-8000-compiler00006
+        description: 'STPA compiler enforces Art. 12 (Record-Keeping and Automatic
+          Logging Obligations) via generated artifacts under EU AI Act High-Risk AI
+          obligations. UCAs covered: UCA-4.'
+        implementation-status:
+          state: implemented
+        links:
+        - href: ../../config/stpa_control_structure.yaml
+          rel: reference
+          text: STPA control structure YAML (source of truth)
+        - href: ../../config/opa/generated_stpa_policy.rego
+          rel: reference
+          text: Generated OPA Rego policy
+      - component-uuid: e5000099-stpa-4000-8000-compiler00001
+        uuid: h8000099-stpa-4000-8000-compiler00007
+        description: 'STPA compiler enforces Art. 9(2)(b) (Risk Controls — Identification
+          of known and foreseeable risks) via generated artifacts under EU AI Act
+          High-Risk AI obligations. UCAs covered: UCA-5.'
+        implementation-status:
+          state: implemented
+        links:
+        - href: ../../config/stpa_control_structure.yaml
+          rel: reference
+          text: STPA control structure YAML (source of truth)
+        - href: ../../config/opa/generated_stpa_policy.rego
+          rel: reference
+          text: Generated OPA Rego policy
+      - component-uuid: e5000099-stpa-4000-8000-compiler00001
+        uuid: h8000099-stpa-4000-8000-compiler00008
+        description: 'STPA compiler enforces Annex III §5(b) (High-Risk AI Classification
+          — Creditworthiness and credit scoring) via generated artifacts under EU
+          AI Act High-Risk AI obligations. UCAs covered: UCA-7.'
+        implementation-status:
+          state: implemented
+        links:
+        - href: ../../config/stpa_control_structure.yaml
+          rel: reference
+          text: STPA control structure YAML (source of truth)
+        - href: ../../config/opa/generated_stpa_policy.rego
+          rel: reference
+          text: Generated OPA Rego policy
+      - component-uuid: e5000099-stpa-4000-8000-compiler00001
+        uuid: h8000099-stpa-4000-8000-compiler00009
+        description: 'STPA compiler enforces Art. 9 (Risk Management System for High-Risk
+          AI) via generated artifacts under EU AI Act High-Risk AI obligations. UCAs
+          covered: UCA-8, UCA-9.'
+        implementation-status:
+          state: implemented
+        links:
+        - href: ../../config/stpa_control_structure.yaml
+          rel: reference
+          text: STPA control structure YAML (source of truth)
+        - href: ../../config/opa/generated_stpa_policy.rego
+          rel: reference
+          text: Generated OPA Rego policy
   back-matter:
     resources:
     - uuid: eu-ecb-res-0001-4000-8000-000000000001

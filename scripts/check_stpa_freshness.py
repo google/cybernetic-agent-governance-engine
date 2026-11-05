@@ -79,6 +79,10 @@ _DOMAIN_STPA_DIRS: list[Path] = [
 # Fallback single-file path for environments that have not yet migrated.
 _SOURCE_LEGACY = _REPO_ROOT / "config" / "stpa_control_structure.yaml"
 
+_OSCAL_SSP = _REPO_ROOT / "compliance" / "oscal" / "system-security-plan.yaml"
+_OSCAL_COMP_DEF = _REPO_ROOT / "compliance" / "oscal" / "component-definition.yaml"
+_OSCAL_PATCH = _REPO_ROOT / "compliance" / "oscal" / "stpa_compiler_ssp_patch.yaml"
+
 _GENERATED_ARTIFACTS: list[Path] = [
     _REPO_ROOT / "src" / "cage_finance" / "stpa" / "uca_rules.py",
     _REPO_ROOT / "src" / "cage_finance" / "stpa" / "saga_nodes.py",
@@ -88,6 +92,9 @@ _GENERATED_ARTIFACTS: list[Path] = [
     _REPO_ROOT / "config" / "rails" / "generated_stpa_rails.co",
     _REPO_ROOT / "config" / "agp" / "generated_semantic_policy.txt",
     _REPO_ROOT / "config" / "sandbox" / "generated_sandbox_policy.yaml",
+    _OSCAL_SSP,
+    _OSCAL_COMP_DEF,
+    _OSCAL_PATCH,
 ]
 
 _CORE = "core"
@@ -110,10 +117,20 @@ _ARTIFACT_RECIPES: dict[Path, tuple[str, str]] = {
 #: Targets whose written form is passed through ``ruff format`` by the compiler.
 _RUFF_FORMATTED = frozenset({"python", "langgraph"})
 
-# Volatile stamps masked before hashing: every compile rewrites them.
+# Volatile stamps masked before hashing: every compile/export rewrites them.
+# Covers STPA compiler headers/JSON fields as well as the 4 OSCAL SSP/Component
+# timestamp locations (last-modified, generated, props[last-compiled], and
+# "Last compiled:" inside implemented-requirement.description, including
+# PyYAML's 80-column double-quoted line-continuation wrap).
 _VOLATILE_STAMP_RE = re.compile(
-    r'(Generated:\s*|"(?:generated_at|issued_at|expires_at)":\s*")'
-    r"\d{4}-\d{2}-\d{2}T[^\s\"]*"
+    r"("
+    r"Generated:\s*"
+    r'|"(?:generated_at|issued_at|expires_at)":\s*"'
+    r"|(?:last-modified|generated):\s*['\"]?"
+    r"|-\s*name:\s*last-compiled\s*\n\s*value:\s*['\"]?"
+    r"|Last(?:\s+|\s*\\\n\s*\\\s*)compiled:\s*"
+    r")"
+    r"\d{4}-\d{2}-\d{2}T[^\s\"'\\]*"
 )
 
 
@@ -123,9 +140,11 @@ class ContentCheck(enum.Enum):
     UNAVAILABLE = "unavailable"
 
 
-# Regex that matches the "Generated: <ISO-8601>" comment or "generated_at": "<ISO-8601>" JSON field.
+# Regex that matches the "Generated: <ISO-8601>" comment, "generated_at": "<ISO-8601>"
+# JSON field, or OSCAL "last-modified:" / "generated:" YAML timestamp.
 _GENERATED_TS_RE = re.compile(
-    r'(?:Generated:\s*|"generated_at":\s*")(\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}[^\s"]*)'
+    r'(?:Generated:\s*|"generated_at":\s*|(?:last-modified|generated):\s*[\'"]?)'
+    r'(\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}[^\s"\'\\]*)'
 )
 
 
@@ -139,7 +158,9 @@ def _parse_embedded_timestamp(artifact: Path) -> datetime.datetime | None:
                 m = _GENERATED_TS_RE.search(line)
                 if m:
                     ts_str = m.group(1)
-                    # Normalise timezone offset (e.g. +00:00 → UTC)
+                    # Normalise timezone offset (e.g. +00:00 → UTC, Z → +00:00)
+                    if ts_str.endswith("Z"):
+                        ts_str = ts_str[:-1] + "+00:00"
                     try:
                         return datetime.datetime.fromisoformat(ts_str)
                     except ValueError:
@@ -222,6 +243,25 @@ def _regenerate_all() -> dict[Path, str | None]:
         if target in _RUFF_FORMATTED and ruff is not None:
             text = _ruff_formatted(text, ruff)
         regenerated[artifact] = text
+
+    oscal_targets = (_OSCAL_SSP, _OSCAL_COMP_DEF, _OSCAL_PATCH)
+    if any(p in regenerated for p in oscal_targets):
+        try:
+            from src.gateway.governance.oscal_ssp_exporter import (
+                render_default_oscal_artifacts,
+            )
+
+            oscal_rendered = render_default_oscal_artifacts(
+                ssp_path=_OSCAL_SSP,
+                comp_def_path=_OSCAL_COMP_DEF,
+                patch_out_path=_OSCAL_PATCH,
+            )
+            for p, text in oscal_rendered.items():
+                if p in regenerated:
+                    regenerated[p] = text
+        except Exception:  # noqa: BLE001
+            pass
+
     return regenerated
 
 
@@ -287,11 +327,20 @@ def _git_dirty(paths: list[Path]) -> set[Path] | None:
     return dirty
 
 
+def _rel(artifact: Path) -> Path:
+    try:
+        return artifact.relative_to(_REPO_ROOT)
+    except ValueError:
+        return artifact
+
+
 def _stale(artifact: Path, reason: str) -> str:
-    return (
-        f"STALE ({reason}): {artifact.relative_to(_REPO_ROOT)}\n"
-        f"  Run: python -m src.gateway.governance.stpa_compiler compile"
+    cmd = (
+        "python -m src.gateway.governance.oscal_ssp_exporter export"
+        if artifact in (_OSCAL_SSP, _OSCAL_COMP_DEF, _OSCAL_PATCH)
+        else "python -m src.gateway.governance.stpa_compiler compile"
     )
+    return f"STALE ({reason}): {_rel(artifact)}\n  Run: {cmd}"
 
 
 def _check_commit_order(

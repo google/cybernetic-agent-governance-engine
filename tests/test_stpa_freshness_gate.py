@@ -193,3 +193,42 @@ def test_every_committed_artifact_matches_a_fresh_compile() -> None:
     assert {a.name: r.value for a, r in results.items()} == {
         a.name: "match" for a in module._GENERATED_ARTIFACTS
     }
+
+
+def test_generated_artifacts_include_oscal_files() -> None:
+    """All three US_FED OSCAL artifacts are tracked in _GENERATED_ARTIFACTS."""
+    module = _load_gate()
+    names = {a.name for a in module._GENERATED_ARTIFACTS}
+    assert {
+        "system-security-plan.yaml",
+        "component-definition.yaml",
+        "stpa_compiler_ssp_patch.yaml",
+    }.issubset(names)
+
+
+def test_planted_divergence_in_us_fed_ssp_reported_by_check_stpa_freshness(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Planting a divergence in the US_FED SSP is caught by check_stpa_freshness.py."""
+    module = _load_gate()
+    real_ssp = module._OSCAL_SSP
+    fake_ssp = tmp_path / "system-security-plan.yaml"
+    original_text = real_ssp.read_text(encoding="utf-8")
+
+    # Plant a divergence inside the _STPA_IMPL_UUID control implementation block
+    diverged = original_text.replace(
+        "uuid: g7000099-stpa-4000-8000-compiler00001\n      control-id: sa-11",
+        "uuid: g7000099-stpa-4000-8000-compiler00001\n      control-id: sa-999",
+        1,
+    )
+    assert diverged != original_text
+    fake_ssp.write_text(diverged, encoding="utf-8")
+
+    monkeypatch.setattr(module, "_OSCAL_SSP", fake_ssp)
+    monkeypatch.setattr(module, "_GENERATED_ARTIFACTS", [fake_ssp])
+
+    errors = module.check_freshness()
+    assert len(errors) == 1
+    assert "content differs from a fresh compile (sha256)" in errors[0]
+    assert "system-security-plan.yaml" in errors[0]
+    assert "oscal_ssp_exporter export" in errors[0]

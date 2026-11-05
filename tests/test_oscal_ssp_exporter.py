@@ -1225,4 +1225,97 @@ class TestPhaseEPlatformNarratives:
         assert "MicroVM" in sc39_req["description"]
 
 
+# ---------------------------------------------------------------------------
+# Regional SSP Export & Drift Check (--check, POAM-2026-176 / POAM-2026-177)
+# ---------------------------------------------------------------------------
+
+
+class TestRegionalSspExportAndCheck:
+    """Verify regional SSPs carry _STPA_IMPL_UUID and export --check catches drift."""
+
+    _ROOT = Path(__file__).resolve().parents[1]
+    _EU_SSP_PATH = _ROOT / "compliance" / "oscal" / "system-security-plan-eu-ecb.yaml"
+    _APAC_SSP_PATH = (
+        _ROOT / "compliance" / "oscal" / "system-security-plan-apac-mas.yaml"
+    )
+
+    def test_committed_regional_ssps_carry_stpa_impl_uuid_and_pass_check(self) -> None:
+        for ssp_path, expected_fw, expected_marker in (
+            (self._EU_SSP_PATH, "EU AI Act", "→ EU_AI_ACT:"),
+            (self._APAC_SSP_PATH, "MAS FEAT", "→ MAS_FEAT:"),
+        ):
+            assert ssp_path.exists(), f"Missing regional SSP: {ssp_path}"
+            data = yaml.safe_load(ssp_path.read_text(encoding="utf-8"))
+            impl_reqs = data["system-security-plan"]["control-implementation"][
+                "implemented-requirements"
+            ]
+            stpa_block = next(
+                (r for r in impl_reqs if r.get("uuid") == _STPA_IMPL_MARKER), None
+            )
+            assert stpa_block is not None, (
+                f"{ssp_path.name} missing _STPA_IMPL_UUID ({_STPA_IMPL_MARKER})"
+            )
+            assert stpa_block["control-id"] == "sa-11"
+            assert expected_marker in stpa_block["description"]
+            props = {p["name"]: p["value"] for p in stpa_block.get("props", [])}
+            assert expected_fw in props.get("target-framework", "")
+            assert props.get("uca-count") == "12"
+            assert main(["export", "--check", "--ssp", str(ssp_path)]) == 0
+
+    def test_planted_divergence_in_eu_ecb_ssp_detected_by_export_check(
+        self, tmp_path: Path
+    ) -> None:
+        eu_copy = tmp_path / "system-security-plan-eu-ecb.yaml"
+        original_text = self._EU_SSP_PATH.read_text(encoding="utf-8")
+        eu_copy.write_text(original_text, encoding="utf-8")
+        assert main(["export", "--check", "--ssp", str(eu_copy)]) == 0
+
+        diverged = original_text.replace(
+            f"uuid: {_STPA_IMPL_MARKER}\n      control-id: sa-11",
+            f"uuid: {_STPA_IMPL_MARKER}\n      control-id: sa-999",
+            1,
+        )
+        assert diverged != original_text
+        eu_copy.write_text(diverged, encoding="utf-8")
+
+        assert main(["export", "--check", "--ssp", str(eu_copy)]) == 1
+        # --check must never overwrite the file on disk
+        assert eu_copy.read_text(encoding="utf-8") == diverged
+
+    def test_planted_divergence_in_apac_mas_ssp_detected_by_export_check(
+        self, tmp_path: Path
+    ) -> None:
+        apac_copy = tmp_path / "system-security-plan-apac-mas.yaml"
+        original_text = self._APAC_SSP_PATH.read_text(encoding="utf-8")
+        apac_copy.write_text(original_text, encoding="utf-8")
+        assert main(["export", "--check", "--ssp", str(apac_copy)]) == 0
+
+        diverged = original_text.replace(
+            f"uuid: {_STPA_IMPL_MARKER}\n      control-id: sa-11",
+            f"uuid: {_STPA_IMPL_MARKER}\n      control-id: sa-999",
+            1,
+        )
+        assert diverged != original_text
+        apac_copy.write_text(diverged, encoding="utf-8")
+
+        assert main(["export", "--check", "--ssp", str(apac_copy)]) == 1
+        assert apac_copy.read_text(encoding="utf-8") == diverged
+
+    def test_volatile_timestamp_changes_ignored_by_export_check(
+        self, tmp_path: Path
+    ) -> None:
+        import re
+
+        eu_copy = tmp_path / "system-security-plan-eu-ecb.yaml"
+        original_text = self._EU_SSP_PATH.read_text(encoding="utf-8")
+        rewritten = re.sub(
+            r"2026-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z",
+            "1999-12-31T23:59:59Z",
+            original_text,
+        )
+        assert rewritten != original_text
+        eu_copy.write_text(rewritten, encoding="utf-8")
+        assert main(["export", "--check", "--ssp", str(eu_copy)]) == 0
+
+
 pytestmark = [pytest.mark.unit, pytest.mark.local]

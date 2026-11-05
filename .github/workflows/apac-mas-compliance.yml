@@ -56,7 +56,13 @@ jobs:
           python-version: "3.11"
 
       - name: Install Python dependencies
-        run: pip install pyyaml
+        run: pip install pyyaml pydantic
+
+      - name: Verify APAC_MAS OSCAL SSP is current (no drift)
+        run: |
+          python3 -m src.gateway.governance.oscal_ssp_exporter export \
+            --check \
+            --ssp compliance/oscal/system-security-plan-apac-mas.yaml
 
       - name: Validate MAS FEAT Lula manifest structure
         # Validates YAML structure of MAS FEAT Lula stubs.

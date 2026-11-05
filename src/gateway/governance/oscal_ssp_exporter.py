@@ -72,7 +72,10 @@ import datetime
 import json
 import logging
 import os
+import re
+import shutil
 import sys
+import tempfile
 import textwrap
 from pathlib import Path
 from typing import Any
@@ -96,10 +99,33 @@ _REPO_ROOT = Path(__file__).resolve().parents[3]
 _DEFAULT_INPUT = _REPO_ROOT / "config" / "stpa_control_structure.yaml"
 _DEFAULT_INPUT_DIR = _REPO_ROOT / "config" / "stpa"
 _DEFAULT_SSP = _REPO_ROOT / "compliance" / "oscal" / "system-security-plan.yaml"
+_DEFAULT_EU_SSP = (
+    _REPO_ROOT / "compliance" / "oscal" / "system-security-plan-eu-ecb.yaml"
+)
+_DEFAULT_APAC_SSP = (
+    _REPO_ROOT / "compliance" / "oscal" / "system-security-plan-apac-mas.yaml"
+)
 _DEFAULT_COMP_DEF = _REPO_ROOT / "compliance" / "oscal" / "component-definition.yaml"
 _DEFAULT_PATCH_OUT = (
     _REPO_ROOT / "compliance" / "oscal" / "stpa_compiler_ssp_patch.yaml"
 )
+
+# Volatile generation timestamps masked when comparing OSCAL / STPA outputs
+# across runs (`--check` and `scripts/check_stpa_freshness.py`, POAM-2026-176).
+_VOLATILE_STAMP_RE = re.compile(
+    r"(Generated:\s*"
+    r'|"(?:generated_at|issued_at|expires_at)":\s*"'
+    r"|(?:last-modified|generated):\s*\'?"
+    r"|- name: last-compiled\n\s+value:\s*\'?"
+    r"|Last(?:\\\n\s*\\)?\s+compiled:(?:\\\n\s*\\)?\s*)"
+    r"\d{4}-\d{2}-\d{2}T[^\s\"\'\\]*"
+)
+
+
+def mask_volatile_stamps(text: str) -> str:
+    """Replace volatile wall-clock generation timestamps in *text* with ``<ts>``."""
+    return _VOLATILE_STAMP_RE.sub(r"\1<ts>", text)
+
 
 # Stable UUIDs for the STPA compiler artifacts — deterministic so the SSP diff
 # is minimal across re-runs (no UUID churn).
@@ -155,18 +181,21 @@ _FTRA_SI10_DESCRIPTION = (
 REGIONAL_PROFILES: dict[str, dict] = {
     "US_FED": {
         "profile_path": "compliance/oscal/sp800053-profile.yaml",
+        "ssp_path": "compliance/oscal/system-security-plan.yaml",
         "framework": "NIST SP 800-53 Rev 5 HIGH",
         "framework_id": "nist-sp800-53-rev5-high",
         "coverage_metric": "nist_sp800_53_coverage_pct",
     },
     "EU_ECB": {
         "profile_path": "compliance/oscal/eu-ai-act-profile.yaml",
+        "ssp_path": "compliance/oscal/system-security-plan-eu-ecb.yaml",
         "framework": "EU AI Act (Reg 2024/1689) + GDPR",
         "framework_id": "eu-ai-act-2024",
         "coverage_metric": "eu_ai_act_coverage_pct",
     },
     "APAC_MAS": {
         "profile_path": "compliance/oscal/mas-feat-profile.yaml",
+        "ssp_path": "compliance/oscal/system-security-plan-apac-mas.yaml",
         "framework": "MAS FEAT Principles + MAS Notice 655",
         "framework_id": "mas-feat-2023",
         "coverage_metric": "mas_feat_coverage_pct",
@@ -769,6 +798,8 @@ def _build_metadata(region: str = "US_FED") -> dict[str, Any]:
 def generate_ssp_patch(
     cs: ControlStructureModel,
     target_framework: str = "NIST",
+    *,
+    now: str | None = None,
 ) -> dict[str, Any]:
     """
     Generate the OSCAL ``implemented-requirement`` block for the STPA compiler.
@@ -785,7 +816,7 @@ def generate_ssp_patch(
     Returns a dict ready to be appended to
     ``system-security-plan.implemented-requirements``.
     """
-    now = _now_iso()
+    now = now or _now_iso()
 
     # Load the external framework routing table — zero hardcoded dicts in Python.
     router = FrameworkRouter.get(target_framework)
@@ -895,7 +926,11 @@ def generate_ssp_patch(
     return requirement
 
 
-def generate_component_entry(cs: ControlStructureModel) -> dict[str, Any]:
+def generate_component_entry(
+    cs: ControlStructureModel,
+    *,
+    now: str | None = None,
+) -> dict[str, Any]:
     """
     Generate a new OSCAL component entry for the STPA compiler itself,
     to be merged into component-definition.yaml.
@@ -903,7 +938,7 @@ def generate_component_entry(cs: ControlStructureModel) -> dict[str, Any]:
     The ISO 42001 Annex A control mapping is loaded from the external
     ``config/oscal/framework_mappings/ISO_42001.json`` routing table.
     """
-    now = _now_iso()
+    now = now or _now_iso()
     # Load ISO 42001 mappings from external routing table
     iso_router = FrameworkRouter.get("ISO42001")
     all_iso = iso_router.all_controls(cs.unsafe_control_actions)
@@ -988,7 +1023,7 @@ def generate_component_entry(cs: ControlStructureModel) -> dict[str, Any]:
     }
 
 
-def generate_ftra_component_entry() -> dict[str, Any]:
+def generate_ftra_component_entry(*, now: str | None = None) -> dict[str, Any]:
     """
     Generate the OSCAL component entry for the FTRA Irreversibility Classifier,
     to be merged into component-definition.yaml.
@@ -997,7 +1032,7 @@ def generate_ftra_component_entry() -> dict[str, Any]:
     no AC-4: it never rejected undeclared parameters in production (the schema
     validator that could have was never registered and has been removed).
     """
-    now = _now_iso()
+    now = now or _now_iso()
 
     return {
         "uuid": _FTRA_COMPONENT_UUID,
@@ -1062,6 +1097,8 @@ def _apply_ssp_patch(
     ssp_path: Path,
     patch_blocks: list[dict[str, Any]],
     dry_run: bool = False,
+    *,
+    now: str | None = None,
 ) -> bool:
     """
     Load the existing SSP YAML, inject/replace patch blocks, write back.
@@ -1107,7 +1144,7 @@ def _apply_ssp_patch(
     ] = impl_reqs
 
     # Update metadata timestamps
-    now = _now_iso()
+    now = now or _now_iso()
     ssp["system-security-plan"]["metadata"]["last-modified"] = now
     old_version = ssp["system-security-plan"]["metadata"].get("version", "1.0.0-draft")
     if not old_version.endswith("+stpa"):
@@ -1157,6 +1194,8 @@ def _apply_component_patch(
     comp_path: Path,
     component_entry: dict[str, Any],
     dry_run: bool = False,
+    *,
+    now: str | None = None,
 ) -> bool:
     """Inject/replace the STPA compiler component in component-definition.yaml."""
     if not comp_path.exists():
@@ -1177,7 +1216,7 @@ def _apply_component_patch(
     components.append(component_entry)
     comp_def["component-definition"]["components"] = components
 
-    now = _now_iso()
+    now = now or _now_iso()
     comp_def["component-definition"]["metadata"]["last-modified"] = now
 
     if dry_run:
@@ -1220,6 +1259,8 @@ def _apply_ftra_component_patch(
     comp_path: Path,
     ftra_component_entry: dict[str, Any],
     dry_run: bool = False,
+    *,
+    now: str | None = None,
 ) -> bool:
     """Inject/replace the FTRA component in component-definition.yaml.
 
@@ -1251,7 +1292,7 @@ def _apply_ftra_component_patch(
     components.append(ftra_component_entry)
     comp_def["component-definition"]["components"] = components
 
-    now = _now_iso()
+    now = now or _now_iso()
     comp_def["component-definition"]["metadata"]["last-modified"] = now
 
     if dry_run:
@@ -1273,11 +1314,13 @@ def _write_standalone_patch(
     component_entry: dict[str, Any],
     cs: ControlStructureModel,
     dry_run: bool = False,
+    *,
+    now: str | None = None,
 ) -> None:
     """Write the standalone patch YAML (for PR diff review)."""
     doc = {
         "stpa-compiler-ssp-patch": {
-            "generated": _now_iso(),
+            "generated": now or _now_iso(),
             "source": "config/stpa_control_structure.yaml",
             "system": cs.system.name,
             "version": cs.system.version,
@@ -1302,6 +1345,128 @@ def _write_standalone_patch(
             doc, fh, allow_unicode=True, default_flow_style=False, sort_keys=False
         )
     logger.info("✅ Standalone patch → %s", patch_path)
+
+
+def _infer_region_from_ssp(ssp_path: Path) -> str | None:
+    """Return the deployment region declared by *ssp_path*, or ``None``."""
+    try:
+        resolved = ssp_path.resolve()
+        for r, prof in REGIONAL_PROFILES.items():
+            if (_REPO_ROOT / prof["ssp_path"]).resolve() == resolved:
+                return r
+    except OSError:
+        pass
+    if not ssp_path.exists():
+        return None
+    try:
+        with open(ssp_path, encoding="utf-8") as fh:
+            doc = yaml.safe_load(fh)
+        props = (doc or {}).get("system-security-plan", {}).get("metadata", {}).get(
+            "props"
+        ) or []
+        for prop in props:
+            if isinstance(prop, dict) and prop.get("name") == "cage-deployment-region":
+                val = str(prop.get("value", "")).strip().upper()
+                if val in REGIONAL_PROFILES:
+                    return val
+    except Exception:  # noqa: BLE001
+        return None
+    return None
+
+
+def _render_targets_in_memory(
+    *,
+    cs: ControlStructureModel,
+    ssp_path: Path,
+    comp_def_path: Path | None,
+    patch_out_path: Path | None,
+    framework_key: str,
+    platform: str | None,
+    now: str | None = None,
+) -> tuple[bool, dict[Path, str]]:
+    """Render target OSCAL YAML artifacts into memory without modifying files on disk."""
+    now = now or _now_iso()
+    stpa_patch_block = generate_ssp_patch(cs, target_framework=framework_key, now=now)
+    component_entry = generate_component_entry(cs, now=now)
+    ftra_component_entry = generate_ftra_component_entry(now=now)
+    platform_narratives = generate_platform_control_narratives(platform)
+    all_patch_blocks = [stpa_patch_block, *platform_narratives]
+
+    rendered: dict[Path, str] = {}
+    with tempfile.TemporaryDirectory() as tmp:
+        tmp_dir = Path(tmp)
+        if not ssp_path.exists():
+            logger.error("SSP not found at %s", ssp_path)
+            return False, {}
+        tmp_ssp = tmp_dir / "ssp.yaml"
+        shutil.copyfile(ssp_path, tmp_ssp)
+        if not _apply_ssp_patch(tmp_ssp, all_patch_blocks, dry_run=False, now=now):
+            return False, {}
+        rendered[ssp_path] = tmp_ssp.read_text(encoding="utf-8")
+
+        if comp_def_path is not None:
+            if comp_def_path.exists():
+                tmp_comp = tmp_dir / "comp.yaml"
+                shutil.copyfile(comp_def_path, tmp_comp)
+                _apply_component_patch(
+                    tmp_comp, component_entry, dry_run=False, now=now
+                )
+                _apply_ftra_component_patch(
+                    tmp_comp, ftra_component_entry, dry_run=False, now=now
+                )
+                rendered[comp_def_path] = tmp_comp.read_text(encoding="utf-8")
+            else:
+                logger.warning(
+                    "Component definition not found at %s — skipping", comp_def_path
+                )
+
+        if patch_out_path is not None:
+            tmp_patch = tmp_dir / "patch.yaml"
+            _write_standalone_patch(
+                tmp_patch,
+                stpa_patch_block,
+                component_entry,
+                cs,
+                dry_run=False,
+                now=now,
+            )
+            rendered[patch_out_path] = tmp_patch.read_text(encoding="utf-8")
+
+    return True, rendered
+
+
+def render_default_oscal_artifacts(
+    cs: ControlStructureModel | None = None,
+    *,
+    ssp_path: Path = _DEFAULT_SSP,
+    comp_def_path: Path = _DEFAULT_COMP_DEF,
+    patch_out_path: Path = _DEFAULT_PATCH_OUT,
+) -> dict[Path, str | None]:
+    """Render the three default US_FED OSCAL artifacts in memory for freshness checking."""
+    unavailable: dict[Path, str | None] = {
+        ssp_path: None,
+        comp_def_path: None,
+        patch_out_path: None,
+    }
+    try:
+        if cs is None:
+            domain_yamls = sorted(
+                (_REPO_ROOT / "src").glob("cage_*/config/stpa/*.yaml")
+            )
+            cs = load_control_structures([_DEFAULT_INPUT, *domain_yamls])
+        ok, rendered = _render_targets_in_memory(
+            cs=cs,
+            ssp_path=ssp_path,
+            comp_def_path=comp_def_path,
+            patch_out_path=patch_out_path,
+            framework_key="NIST",
+            platform="gcp-gke",
+        )
+        if not ok:
+            return unavailable
+        return {k: rendered.get(k) for k in unavailable}
+    except Exception:  # noqa: BLE001
+        return unavailable
 
 
 # ---------------------------------------------------------------------------
@@ -1350,21 +1515,24 @@ def _build_parser() -> argparse.ArgumentParser:
     exp.add_argument(
         "--ssp",
         type=Path,
-        default=_DEFAULT_SSP,
+        default=None,
         metavar="FILE",
-        help=f"Target SSP YAML (default: {_DEFAULT_SSP})",
+        help=(
+            f"Target SSP YAML (default: regional SSP from CAGE_DEPLOYMENT_REGION, "
+            f"or {_DEFAULT_SSP})"
+        ),
     )
     exp.add_argument(
         "--component-def",
         type=Path,
-        default=_DEFAULT_COMP_DEF,
+        default=None,
         metavar="FILE",
         help=f"Target component-definition YAML (default: {_DEFAULT_COMP_DEF})",
     )
     exp.add_argument(
         "--patch-out",
         type=Path,
-        default=_DEFAULT_PATCH_OUT,
+        default=None,
         metavar="FILE",
         help=f"Standalone patch output (default: {_DEFAULT_PATCH_OUT})",
     )
@@ -1372,6 +1540,14 @@ def _build_parser() -> argparse.ArgumentParser:
         "--dry-run",
         action="store_true",
         help="Print patch blocks without writing any files.",
+    )
+    exp.add_argument(
+        "--check",
+        action="store_true",
+        help=(
+            "Verify that target OSCAL file(s) on disk match a fresh export "
+            "(masking volatile timestamps); exit 1 on drift without writing files."
+        ),
     )
     exp.add_argument(
         "--framework",
@@ -1402,16 +1578,26 @@ def _build_parser() -> argparse.ArgumentParser:
 
 def cmd_export(args: argparse.Namespace) -> int:
     # ---------------------------------------------------------------------------
-    # Multi-jurisdiction SSP router — resolve region before any framework work.
-    # CAGE_DEPLOYMENT_REGION drives both the OSCAL profile path and the
-    # FrameworkRouter key used for UCA cross-walk narrative generation.
-    # The --framework CLI flag is still honoured when explicitly supplied;
-    # if it was left at the default ("NIST"), the router overrides it from env.
+    # Multi-jurisdiction SSP router — resolve region and target SSP path.
+    # When --ssp is omitted, CAGE_DEPLOYMENT_REGION selects both the regional
+    # profile and its canonical ssp_path (preventing an EU_ECB/APAC_MAS run from
+    # overwriting the US_FED system-security-plan.yaml, POAM-2026-177).
+    # When --ssp is explicitly supplied and declares cage-deployment-region in
+    # metadata.props, that region's profile and framework are used automatically.
     # ---------------------------------------------------------------------------
-    regional_profile = get_regional_profile()  # reads CAGE_DEPLOYMENT_REGION
-    region = os.environ.get("CAGE_DEPLOYMENT_REGION", "US_FED").strip().upper()
-    if region not in REGIONAL_PROFILES:
-        region = "US_FED"
+    env_region = os.environ.get("CAGE_DEPLOYMENT_REGION", "US_FED").strip().upper()
+    if env_region not in REGIONAL_PROFILES:
+        env_region = "US_FED"
+
+    if args.ssp is None:
+        region = env_region
+        regional_profile = get_regional_profile(region)
+        ssp_path = _REPO_ROOT / regional_profile["ssp_path"]
+    else:
+        ssp_path = args.ssp
+        inferred_region = _infer_region_from_ssp(ssp_path)
+        region = inferred_region if inferred_region is not None else env_region
+        regional_profile = get_regional_profile(region)
 
     # Derive the FrameworkRouter key from the resolved region, unless the caller
     # explicitly passed a non-default --framework value on the CLI.
@@ -1424,6 +1610,20 @@ def cmd_export(args: argparse.Namespace) -> int:
             args.framework,
             region,
         )
+
+    is_default_us_ssp = (
+        ssp_path.resolve() == _DEFAULT_SSP.resolve() and region == "US_FED"
+    )
+    comp_def_path = (
+        args.component_def
+        if args.component_def is not None
+        else (_DEFAULT_COMP_DEF if is_default_us_ssp else None)
+    )
+    patch_out_path = (
+        args.patch_out
+        if args.patch_out is not None
+        else (_DEFAULT_PATCH_OUT if is_default_us_ssp else None)
+    )
 
     try:
         if args.input_dir is not None:
@@ -1451,54 +1651,121 @@ def cmd_export(args: argparse.Namespace) -> int:
         print(f"❌ Failed to load control structure: {exc}", file=sys.stderr)
         return 1
 
-    # Generate STPA compiler patch block
-    stpa_patch_block = generate_ssp_patch(cs, target_framework=framework_key)
-    component_entry = generate_component_entry(cs)
-    ftra_component_entry = generate_ftra_component_entry()
-
-    # Generate platform-aware control narratives (Phase E / Step 6f: GKE is sole cloud target)
+    # Generate platform-aware control narratives (Phase E / Step 6f: GKE is sole cloud target
+    # for the US_FED NIST SP 800-53 SSP; regional EU_ECB/APAC_MAS SSPs use their own profiles).
     platform = getattr(args, "platform", None)
-    if platform is None and args.ssp.resolve() == _DEFAULT_SSP.resolve():
-        platform = "gcp-gke"
-    platform_narratives = generate_platform_control_narratives(platform)
+    if platform is None:
+        if is_default_us_ssp:
+            platform = "gcp-gke"
+        elif region != "US_FED":
+            platform = "agnostic"
 
-    # Combine STPA patch with platform narratives
-    all_patch_blocks = [stpa_patch_block, *platform_narratives]
+    now = _now_iso()
 
-    # Apply all patches to SSP
-    ok_ssp = _apply_ssp_patch(args.ssp, all_patch_blocks, dry_run=args.dry_run)
-    _apply_component_patch(args.component_def, component_entry, dry_run=args.dry_run)
-    _apply_ftra_component_patch(
-        args.component_def, ftra_component_entry, dry_run=args.dry_run
+    if args.dry_run:
+        stpa_patch_block = generate_ssp_patch(
+            cs, target_framework=framework_key, now=now
+        )
+        component_entry = generate_component_entry(cs, now=now)
+        ftra_component_entry = generate_ftra_component_entry(now=now)
+        platform_narratives = generate_platform_control_narratives(platform)
+        all_patch_blocks = [stpa_patch_block, *platform_narratives]
+        ok_ssp = _apply_ssp_patch(ssp_path, all_patch_blocks, dry_run=True, now=now)
+        if comp_def_path is not None:
+            _apply_component_patch(
+                comp_def_path, component_entry, dry_run=True, now=now
+            )
+            _apply_ftra_component_patch(
+                comp_def_path, ftra_component_entry, dry_run=True, now=now
+            )
+        if patch_out_path is not None:
+            _write_standalone_patch(
+                patch_out_path,
+                stpa_patch_block,
+                component_entry,
+                cs,
+                dry_run=True,
+                now=now,
+            )
+        if not ok_ssp:
+            print("⚠️  SSP patch failed — check logs above.", file=sys.stderr)
+            return 1
+        return 0
+
+    ok_ssp, rendered = _render_targets_in_memory(
+        cs=cs,
+        ssp_path=ssp_path,
+        comp_def_path=comp_def_path,
+        patch_out_path=patch_out_path,
+        framework_key=framework_key,
+        platform=platform,
+        now=now,
     )
-    _write_standalone_patch(
-        args.patch_out, stpa_patch_block, component_entry, cs, dry_run=args.dry_run
-    )
-
     if not ok_ssp:
         print("⚠️  SSP patch failed — check logs above.", file=sys.stderr)
         return 1
 
-    if not args.dry_run:
-        router = FrameworkRouter.get(framework_key)
-        print("✅ OSCAL SSP export complete:")
-        print(f"   Region          : {region}")
-        print(f"   Profile path    : {regional_profile['profile_path']}")
-        print(f"   SSP             → {args.ssp}")
-        print(f"   Component def   → {args.component_def}")
-        print(f"   Standalone patch→ {args.patch_out}")
-        print(f"   Framework       : {router.label}")
-        print(f"   UCAs exported   : {len(cs.unsafe_control_actions)}")
+    if getattr(args, "check", False):
+        expected_targets = [
+            p for p in (ssp_path, comp_def_path, patch_out_path) if p is not None
+        ]
+        drifted: list[str] = []
+        for target in expected_targets:
+            if not target.exists() or target not in rendered:
+                drifted.append(f"MISSING: {target}")
+                continue
+            on_disk = target.read_text(encoding="utf-8")
+            if mask_volatile_stamps(on_disk) != mask_volatile_stamps(rendered[target]):
+                drifted.append(f"DRIFTED: {target}")
+        if drifted:
+            for item in drifted:
+                print(f"❌ {item}", file=sys.stderr)
+            remediation = "python -m src.gateway.governance.oscal_ssp_exporter export"
+            if not is_default_us_ssp:
+                remediation += f" --ssp {ssp_path}"
+            print(
+                f"Fix: {remediation}",
+                file=sys.stderr,
+            )
+            return 1
         print(
-            f"   Controls mapped : {len(router.all_controls(cs.unsafe_control_actions))}"
+            f"✅ OSCAL SSP check passed ({len(expected_targets)} file(s) current: "
+            f"{', '.join(str(p) for p in expected_targets)})"
         )
-        # Coverage metric is region-specific — only emit the NIST coverage label
-        # for US_FED deployments; other regions use their own coverage_metric key.
-        coverage_metric = regional_profile["coverage_metric"]
-        if region == "US_FED":
-            print(f"   Coverage metric : {coverage_metric} (NIST SP 800-53 Rev 5 HIGH)")
-        else:
-            print(f"   Coverage metric : {coverage_metric}")
+        return 0
+
+    for target, fresh_text in rendered.items():
+        if target.exists() and mask_volatile_stamps(
+            target.read_text(encoding="utf-8")
+        ) == mask_volatile_stamps(fresh_text):
+            logger.info(
+                "OSCAL artifact unchanged (skipping timestamp-only write) → %s",
+                target,
+            )
+            continue
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_text(fresh_text, encoding="utf-8")
+        logger.info("✅ OSCAL artifact written → %s", target)
+
+    router = FrameworkRouter.get(framework_key)
+    print("✅ OSCAL SSP export complete:")
+    print(f"   Region          : {region}")
+    print(f"   Profile path    : {regional_profile['profile_path']}")
+    print(f"   SSP             → {ssp_path}")
+    if comp_def_path is not None:
+        print(f"   Component def   → {comp_def_path}")
+    if patch_out_path is not None:
+        print(f"   Standalone patch→ {patch_out_path}")
+    print(f"   Framework       : {router.label}")
+    print(f"   UCAs exported   : {len(cs.unsafe_control_actions)}")
+    print(f"   Controls mapped : {len(router.all_controls(cs.unsafe_control_actions))}")
+    # Coverage metric is region-specific — only emit the NIST coverage label
+    # for US_FED deployments; other regions use their own coverage_metric key.
+    coverage_metric = regional_profile["coverage_metric"]
+    if region == "US_FED":
+        print(f"   Coverage metric : {coverage_metric} (NIST SP 800-53 Rev 5 HIGH)")
+    else:
+        print(f"   Coverage metric : {coverage_metric}")
 
     return 0
 
