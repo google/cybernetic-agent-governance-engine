@@ -638,7 +638,6 @@ The ingress adapter layer (`src/gateway/governance/ingress/`) provides a uniform
 | [`oscal_adapter.py`](../../src/gateway/governance/ingress/oscal_adapter.py) | OSCAL v1.1.2 component definitions | `ControlRegistry` entries |
 | [`lula_adapter.py`](../../src/gateway/governance/ingress/lula_adapter.py) | Lula validation manifests | `ControlRegistry` entries |
 | [`policy_translator.py`](../../src/gateway/governance/ingress/policy_translator.py) | Multi-format policy detection | Normalized policy object |
-| [`agw_adapter.py`](../../src/gateway/governance/ingress/agw_adapter.py) | Agent Gateway request format (Phase B absorption) | Governance pipeline inputs (OIDC-validated tri-identity context) |
 
 **Extension pattern**: A new external framework is integrated by implementing the `IngressAdapter` protocol (translate foreign schema → `ControlRegistry` entry) and registering the adapter in the ingress `__init__.py`. The kernel's `ControlRegistry` and `SymbolicGovernor` pipeline are unaffected.
 

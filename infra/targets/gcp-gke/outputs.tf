@@ -97,8 +97,6 @@ output "deployment_summary" {
     is_regional            = module.gke.is_regional
     namespace              = module.namespace.name
     inference_backend      = var.inference_backend
-    advisor_runtime        = local.advisor_enabled ? var.advisor_runtime : "none"
-    geap_agent_principal   = length(module.gcp_geap_advisor) > 0 ? module.gcp_geap_advisor[0].geap_agent_principal : (length(module.governed_advisor) > 0 ? "gke-pod" : "none")
     enforcing_posture      = local.enforcing_posture
     gpu_node_pool_enabled  = var.enable_gpu_node_pool
     worm_bucket            = module.worm_bucket.bucket_name
@@ -113,18 +111,6 @@ output "deployment_summary" {
     opa_endpoint           = module.opa.endpoint_url
   }
 }
-
-output "advisor_runtime" {
-  description = "Runtime of the deployed Governed Financial Advisor ('geap' or 'gke'), or 'none' when inference_backend = \"none\" deploys no advisor"
-  value       = local.advisor_enabled ? var.advisor_runtime : "none"
-}
-
-output "geap_agent_principal" {
-  description = "GEAP Agent Identity (ID-2) principal URI while a GEAP advisor is deployed"
-  value       = length(module.gcp_geap_advisor) > 0 ? module.gcp_geap_advisor[0].geap_agent_principal : ""
-}
-
-
 
 # ─── Database and Cache ───────────────────────────────────────────────────────
 

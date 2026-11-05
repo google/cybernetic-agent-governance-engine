@@ -76,7 +76,7 @@ class BigQueryQuerySpec:
 
 @dataclass(frozen=True)
 class LossClusterRecord:
-    """Semantic failure cluster surfaced by GEAP `client.evals.generate_loss_clusters` or Online Monitors."""
+    """Semantic failure cluster surfaced by Vertex AI GenAI Eval `client.evals.generate_loss_clusters` or Online Monitors."""
 
     cluster_id: str
     title: str
@@ -88,7 +88,7 @@ class LossClusterRecord:
 
 
 class BigQueryTrajectoryHarvester(TrajectoryHarvesterProtocol):
-    """Harvests `RefusalReceipt`, Eval-Prod Drift, and GEAP `LossClusterRecord` anchors from BigQuery."""
+    """Harvests `RefusalReceipt`, Eval-Prod Drift, and Vertex AI Eval `LossClusterRecord` anchors from BigQuery."""
 
     def __init__(
         self,
@@ -313,11 +313,11 @@ class BigQueryTrajectoryHarvester(TrajectoryHarvesterProtocol):
         max_avg_score: float = 3.0,
         limit: int = 100,
     ) -> tuple[tuple[LossClusterRecord, ...], tuple[AnchorItem, ...]]:
-        """Harvest GEAP Failure Clusters (`generate_loss_clusters` or BigQuery) into negative Golden Anchors.
+        """Harvest Vertex AI GenAI Eval failure clusters (`generate_loss_clusters` or BigQuery) into negative Golden Anchors.
 
         Supports both:
-        1. Direct GEAP SDK objects/mappings returned by ``evals_client.generate_loss_clusters(src=eval_result_name)``
-           (GEAP Tour Slide 28: ``cluster.title``, ``cluster.description``, ``cluster.sample_count``,
+        1. Direct Vertex AI Eval SDK objects/mappings returned by ``evals_client.generate_loss_clusters(src=eval_result_name)``
+           (``cluster.title``, ``cluster.description``, ``cluster.sample_count``,
            ``cluster.avg_score``, ``cluster.representative_examples``).
         2. Parameterized BigQuery queries over the 10-minute Online Monitor loss cluster sink table.
         """

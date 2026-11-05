@@ -288,11 +288,11 @@ async def require_operator_identity(request: Request) -> OperatorPrincipal:
                 if isinstance(jwt_claims, dict):
                     jwt_sub = jwt_claims.get("sub")
                 elif token:
-                    from src.gateway.governance.ingress.agw_adapter import (
-                        get_agw_adapter,
+                    from src.compliance_bridge.oidc_verifier import (
+                        verify_operator_oidc_token,
                     )
 
-                    valid, claims = await get_agw_adapter().validate_oidc_token(token)
+                    valid, claims, _ = await verify_operator_oidc_token(token)
                     if valid and isinstance(claims, dict):
                         jwt_sub = claims.get("sub")
                 if isinstance(jwt_sub, str) and jwt_sub.strip():

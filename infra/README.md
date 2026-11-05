@@ -16,7 +16,6 @@ infra/
 │   ├── compliance_bridge/          # Langfuse → Lula compliance bridge
 │   ├── deployment_config/          # Shared deployment ConfigMap
 │   ├── gateway/                    # Inference & Governance Gateway
-│   ├── gcp_geap_advisor/           # GEAP Vertex AI Agent Engine runtime
 │   ├── gcp_gke_cluster/            # GKE cluster with NIST controls
 │   ├── governed_advisor/           # Governed Financial Advisor on GKE
 │   ├── k8s_namespace/              # Namespace with Pod Security Standards
@@ -170,8 +169,7 @@ terraform apply
 - **[`app_secrets`](modules/app_secrets/)** - Kubernetes Secrets management
 - **[`deployment_config`](modules/deployment_config/)** - Shared deployment ConfigMap
 - **[`gateway`](modules/gateway/)** - Inference Gateway
-- **[`governed_advisor`](modules/governed_advisor/)** - Governed Financial Advisor backend (GKE mode)
-- **[`gcp_geap_advisor`](modules/gcp_geap_advisor/)** - Governed Financial Advisor on Vertex AI Agent Engine (GEAP mode)
+- **[`governed_advisor`](modules/governed_advisor/)** - Governed Financial Advisor backend
 - **[`nemo_guardrails`](modules/nemo_guardrails/)** - Standalone NeMo Guardrails service
 
 Each module includes:

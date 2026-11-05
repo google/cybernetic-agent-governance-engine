@@ -321,15 +321,13 @@ resource "google_container_cluster" "primary" {
 # Hosts stateless governance control-plane workloads (gateway, OPA, NeMo,
 # Langfuse, compliance-bridge, and reconciler).
 #
-# SC-39 Architecture Note (Kubernetes Baseline vs. GEAP MicroVM Mode):
-#   - CAGE's Terraform namespace module (`infra/modules/k8s_namespace/main.tf`)
-#     enforces Pod Security Standards (`restricted`) on GKE workloads. In the
-#     `gcp-gke` deployment target (`infra/targets/gcp-gke/`) with
-#     `advisor_runtime = "geap"` (`infra/modules/gcp_geap_advisor/`), agent
-#     applications execute in GEAP Agent Runtime (Vertex AI Agent Engine / Agent
-#     Substrate), which provides native hardware-enforced MicroVM isolation.
-#   - Consequently, GKE MicroVM (`sandbox_type = "microvm"` / nested virtualization)
-#     is intentionally omitted on GKE so Pool 1 can remain on cost-efficient E2
+# SC-39 Architecture Note (Kubernetes Baseline & GKE Sandbox Mode):
+#   - CAGE's Terraform namespace (`infra/modules/k8s_namespace/main.tf`) and
+#     in-cluster workload modules (`infra/modules/governed_advisor/main.tf`,
+#     `infra/modules/gateway/main.tf`, `infra/modules/compliance_bridge/main.tf`)
+#     enforce Pod Security Standards (`restricted`) across GKE workloads.
+#   - GKE MicroVM (`sandbox_type = "microvm"` / nested virtualization) is
+#     intentionally omitted on GKE so Pool 1 can remain on cost-efficient E2
 #     instances (`e2-standard-4` / `e2-standard-8`, with optional `gvisor`
 #     user-space kernel sandboxing via `var.enable_gvisor_sandbox`) and Pool 3
 #     (`gpu-l4`, `g2-standard-8`) retains direct NVIDIA L4 PCIe passthrough.
@@ -456,10 +454,10 @@ resource "google_container_node_pool" "general_spot_nodes" {
     }
 
     labels = {
-      workload-type              = "general-spot"
-      pool-name                  = "general-spot"
+      workload-type               = "general-spot"
+      pool-name                   = "general-spot"
       "cloud.google.com/gke-spot" = "true"
-      environment                = var.environment
+      environment                 = var.environment
     }
 
     metadata = {

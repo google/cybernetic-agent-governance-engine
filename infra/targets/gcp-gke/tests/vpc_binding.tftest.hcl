@@ -16,8 +16,8 @@
 # five custom-VPC consumers (module.gke, module.service_mesh,
 # module.cloudsql_postgres, module.memorystore_governance, and
 # module.memorystore_app) to module.vpc_network in the create path and to
-# var.network / var.subnetwork in the BYO path, while module.gcp_geap_advisor
-# stays unchanged under POAM-2026-189.
+# var.network / var.subnetwork in the BYO path; module.governed_advisor runs
+# in-cluster on module.gke after POAM-2026-189 (AR-1).
 #
 # Mock providers only, so no credentials and no state. CI runs this file in
 # the terraform-test job:

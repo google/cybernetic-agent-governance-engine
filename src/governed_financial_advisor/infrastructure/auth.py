@@ -63,10 +63,7 @@ logger = logging.getLogger(__name__)
 
 _ALLOWED_USER_OIDC_ALGS: tuple[str, ...] = ("RS256", "ES256", "EdDSA")
 _EMBEDDED_KEY_HEADERS: frozenset[str] = frozenset({"jwk", "jku", "x5c", "x5u"})
-USER_TOKEN_HEADERS: tuple[str, ...] = (
-    "x-cage-user-token",
-    "x-geap-user-assertion",
-)
+USER_TOKEN_HEADERS: tuple[str, ...] = ("x-cage-user-token",)
 
 
 def _parse_unverified_jws_header(token: str) -> dict[str, Any] | None:

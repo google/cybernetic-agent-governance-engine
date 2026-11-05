@@ -83,21 +83,21 @@ cage_deployment_region = "US_FED"
 # Every committed dev profile sets enforce_in_dev itself (POAM-2026-174). It feeds
 # local.enforcing_posture in main.tf (POAM-2026-130, 181); US dev does not
 # enforce. Redis replication, replica counts and PDBs do not depend on it.
-enforce_in_dev                 = false
+enforce_in_dev = false
 # POAM-024: HA decoupled from compliance — set explicitly false for dev cost optimization
 enable_high_availability       = false
 enable_deletion_protection     = false
 enable_binary_authorization    = false
-enable_audit_logging           = false  # Enable in prod: SR 26-2 §IV.D / AU-2
-enable_cmek                    = false  # Enable in prod: SC-12 / SC-13
-enable_private_master_endpoint = false  # Enable in prod: SC-7 / AC-17
+enable_audit_logging           = false # Enable in prod: SR 26-2 §IV.D / AU-2
+enable_cmek                    = false # Enable in prod: SC-12 / SC-13
+enable_private_master_endpoint = false # Enable in prod: SC-7 / AC-17
 # GCP org policy constraints/compute.vmExternalIpAccess blocks external IPs on
 # node VMs. Enable private nodes so nodes use Cloud NAT (nat-router-us-central1)
 # for egress instead. Master endpoint remains public (kubectl access preserved).
-enable_private_nodes           = true
-enable_pod_security_standards  = false  # Apply manually via pod-security-admission.yaml
-enable_dataplane_v2            = true
-enable_fqdn_network_policy     = true
+enable_private_nodes          = true
+enable_pod_security_standards = false # Apply manually via pod-security-admission.yaml
+enable_dataplane_v2           = true
+enable_fqdn_network_policy    = true
 
 # US Dev: open access (prod must restrict to corporate VPN CIDR)
 # SR 26-2 §IV.C — access controls; restrict to known CIDRs in prod
@@ -132,10 +132,10 @@ gpu_node_locations          = ["us-central1-a", "us-central1-b", "us-central1-c"
 
 # ─── Storage (Dev: Smaller, US-resident) ──────────────────────────────────────
 storage_class           = "standard-rwo"
-postgres_storage_size   = "10Gi"   # Dev: small; prod default is 50Gi
-redis_storage_size      = "2Gi"    # Dev: small; prod default is 10Gi
-clickhouse_storage_size = "10Gi"   # Dev: small; prod default is 20Gi
-model_bucket_name       = ""       # Defaults to ${project_id}-models (us-central1)
+postgres_storage_size   = "10Gi" # Dev: small; prod default is 50Gi
+redis_storage_size      = "2Gi"  # Dev: small; prod default is 10Gi
+clickhouse_storage_size = "10Gi" # Dev: small; prod default is 20Gi
+model_bucket_name       = ""     # Defaults to ${project_id}-models (us-central1)
 
 # ─── Container Registry ───────────────────────────────────────────────────────
 registry_url = "" # Defaults to gcr.io/${project_id}

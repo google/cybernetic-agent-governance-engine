@@ -56,11 +56,11 @@ class CredentialAccessDenied(CredentialBrokerError):
 
 @dataclass(frozen=True)
 class TriIdentityCredentialBinding:
-    """GEAP Three-Identity outbound credential binding contract (Module M2).
+    """Three-Identity outbound credential binding contract.
 
-    Binds ``ID-1`` (end-user identity), ``ID-2`` (agent SPIFFE / GEAP
-    ``principal://agents.global.org-...`` SVID), and ``ID-3`` (requested OAuth
-    scopes) to a verified ``X-CAGE-Routing-Seal`` prior to credential release.
+    Binds ``ID-1`` (end-user identity), ``ID-2`` (agent SPIFFE SVID), and
+    ``ID-3`` (requested OAuth scopes) to a verified ``X-CAGE-Routing-Seal``
+    prior to credential release.
     """
 
     user_id: str
@@ -82,9 +82,7 @@ def validate_tri_identity_binding(
         CredentialAccessDenied: If the agent SVID, verified user delegation,
             tool name, or ``PreCredentials`` routing seal is missing or malformed.
     """
-    if not binding.agent_svid or not binding.agent_svid.startswith(
-        ("spiffe://", "principal://agents.global.org-")
-    ):
+    if not binding.agent_svid or not binding.agent_svid.startswith("spiffe://"):
         raise CredentialAccessDenied(
             f"Invalid ID-2 agent workload identity for credential brokering: {binding.agent_svid!r}"
         )

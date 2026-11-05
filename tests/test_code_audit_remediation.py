@@ -34,52 +34,30 @@ from src.cage_finance.safety.bounding.contract import (
     BoundingContractConfig,
     BoundingContractEnforcer,
 )
-from src.gateway.governance.ingress.agw_adapter import AgwAdapter
+from src.compliance_bridge.oidc_verifier import OidcVerifier
 
 
-# Issue #2: AgwAdapter fail-closed authentication
+# Issue #2: Out-of-band OIDC verifier fail-closed authentication
 @pytest.mark.asyncio
 @pytest.mark.local
-async def test_agw_adapter_fails_closed_on_invalid_oidc():
-    """Verify AgwAdapter returns success=False when OIDC validation fails."""
-    adapter = AgwAdapter()
-
-    # Test with missing token
-    result = await adapter.process(
-        {
-            "agent_id": "test-agent",
-            "tool": {"name": "execute_trade", "parameters": {}},
-            "auth": {"token": ""},  # Empty token
-        }
-    )
-
-    # Issue #2 fix: success must be False when identity_verified is False
-    assert result.success is False, "success should be False when OIDC validation fails"
-    assert result.identity_verified is False
-    assert "OIDC token validation failed" in result.error
+async def test_oidc_verifier_fails_closed_on_empty_token():
+    """Verify OidcVerifier rejects empty tokens fail-closed."""
+    verifier = OidcVerifier()
+    valid, claims, err = await verifier.verify_token("")
+    assert valid is False
+    assert claims == {}
+    assert "empty" in err
 
 
 @pytest.mark.asyncio
 @pytest.mark.local
-async def test_agw_adapter_success_coupled_to_identity():
-    """Verify AgwAdapter couples success to identity_verified (no hardcoded True)."""
-    adapter = AgwAdapter()
-
-    # Even with valid-looking request structure, no OIDC issuer means fail-closed
-    result = await adapter.process(
-        {
-            "agent_id": "test-agent",
-            "tool": {"name": "execute_trade", "parameters": {"quantity": 100}},
-            "auth": {"token": "fake-jwt-token"},
-            "trace_id": "test-trace-123",
-        }
-    )
-
-    # Both success and identity_verified must be False
-    assert result.success == result.identity_verified, (
-        "success must match identity_verified (no decoupling)"
-    )
-    assert result.success is False
+async def test_oidc_verifier_fails_closed_on_unverified_token():
+    """Verify OidcVerifier rejects malformed or unconfigured OIDC tokens fail-closed."""
+    verifier = OidcVerifier()
+    valid, claims, err = await verifier.verify_token("fake-jwt-token")
+    assert valid is False
+    assert claims == {}
+    assert err != ""
 
 
 # Issue #3: Empty BoundingContractConfig validation

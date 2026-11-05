@@ -761,7 +761,7 @@ def test_advisor_pods_receive_no_signing_key_variable() -> None:
             for env in c.get("env") or []:
                 if env.get("name") in _SIGNING_KEY_VARS:
                     offenders.append(f"{path}: {env['name']}")
-    for mod_name in ("governed_advisor", "gcp_geap_advisor"):
+    for mod_name in ("governed_advisor",):
         module_tf = (_INFRA / "modules" / mod_name / "main.tf").read_text()
         offenders += [
             f"{mod_name} module: {v}"
@@ -861,7 +861,7 @@ def test_advisor_pods_receive_no_governance_salt_or_seal_enforcement_vars() -> N
             for env in c.get("env") or []:
                 if env.get("name") in forbidden:
                     offenders.append(f"{path}: {env['name']}")
-    for mod_name in ("governed_advisor", "gcp_geap_advisor"):
+    for mod_name in ("governed_advisor",):
         module_tf = (_INFRA / "modules" / mod_name / "main.tf").read_text()
         variables_tf = (_INFRA / "modules" / mod_name / "variables.tf").read_text()
         offenders += [

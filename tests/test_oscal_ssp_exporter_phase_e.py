@@ -178,9 +178,9 @@ class TestNarrativeContent:
 
         assert "Cilium" in sc7["description"]
         assert "Linkerd" in sc8["description"]
-        assert "GEAP Agent Runtime" in sc39["description"]
-        assert "MicroVM" in sc39["description"]
+        assert "governed_advisor" in sc39["description"]
         assert "gvisor" in sc39["description"]
+        assert "GEAP Agent Runtime" not in sc39["description"]
         assert "readOnlyRootFilesystem: true" in si3["description"]
 
 

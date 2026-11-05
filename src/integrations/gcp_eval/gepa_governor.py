@@ -15,7 +15,7 @@
 """GEPA Evolutionary Prompt Governor (`src/integrations/gcp_eval/gepa_governor.py`).
 
 Governs the **Gemini Evolutionary Prompt Algorithm (`AgentOptimizer`)** from the
-Gemini Enterprise Agent Platform (GEAP Tour Slides 30-31: ``generations=5``,
+Vertex AI AgentOptimizer (GEPA evolutionary prompt loop: ``generations=5``,
 ``population_size=4``, metrics ``["response_quality", "tool_selection", "safety"]``).
 
 Standalone evolutionary prompt mutation optimizing purely for soft LLM rubric scores
@@ -35,7 +35,7 @@ applies a four-stage CAGE survival and fitness filter across every mutated gener
    :func:`~src.eval_harness.runner.compute_trajectory_tokenomics` and penalizes or
    eliminates candidates exhibiting quadratic context bloat.
 4. **Composite Evolutionary Fitness & Cryptographic `.cer` Certification**: Combines
-   normalized GEAP rubric metrics (``response_quality``, ``tool_selection``, ``safety``)
+   normalized Vertex AI Eval rubric metrics (``response_quality``, ``tool_selection``, ``safety``)
    with CAGE's paired 4-bucket ``mean_composite_lift``, ``mean_instruction_following_lift``,
    and ``routing_premium``, then signs the top-performing survivor into a KMS-backed
    ``.cer`` receipt via :class:`~src.integrations.gcp_eval.cer_publisher.GcpSkillCertifier`.
@@ -173,7 +173,7 @@ class GEPAOptimizationReport:
 
 
 class GovernedGEPAOptimizer:
-    """Governs GEAP's `AgentOptimizer` evolutionary prompt loop with CAGE hard invariants."""
+    """Governs Vertex AI `AgentOptimizer` (GEPA) evolutionary prompt loops with CAGE hard invariants."""
 
     def __init__(
         self,
@@ -214,14 +214,14 @@ class GovernedGEPAOptimizer:
 
     @staticmethod
     def _normalize_gepa_rubric_score(scores: Mapping[str, float]) -> float:
-        """Normalize GEAP metric scores (either [0, 1] or [1, 5] scale) into [0.0, 1.0]."""
+        """Normalize Vertex AI Eval metric scores (either [0, 1] or [1, 5] scale) into [0.0, 1.0]."""
         if not scores:
             return 0.0
         normalized: list[float] = []
         for raw_val in scores.values():
             val = float(raw_val)
             if val > 1.0:
-                # GEAP PointwiseMetric 1.0 - 5.0 scale -> [0.0, 1.0]
+                # Vertex AI PointwiseMetric 1.0 - 5.0 scale -> [0.0, 1.0]
                 norm = max(0.0, min(1.0, (val - 1.0) / 4.0))
             else:
                 norm = max(0.0, min(1.0, val))

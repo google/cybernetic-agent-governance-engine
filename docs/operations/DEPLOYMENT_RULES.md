@@ -257,7 +257,7 @@ All Cloud Build configs live under `deployment/docker/`.
 | [`scripts/render_image_digests.sh`](../../scripts/render_image_digests.sh) | Resolves each image built for a git SHA (and each mirrored third-party image) to its `@sha256:` digest and writes the `image_digests` var file Terraform reads. No fallback to another build's image: an image not built for that SHA is left out and named, and the plan refuses a map missing an image the profile deploys | `[--output PATH\|-] [short_sha]` (`PROJECT_ID` env); default output `infra/targets/gcp-gke/image_digests.<short_sha>.tfvars.json` (gitignored) |
 
 `scripts/build_images.sh` builds and attests, in parallel via Cloud Build, the images named in `IMAGES` (default: all six). `deploy_all.sh` passes the images the profile deploys, so staging under `inference_backend = "none"` builds no vLLM, advisor or NeMo image:
-1. `governed-financial-advisor` (root `Dockerfile`; both the `geap` and `gke` advisor runtimes consume it)
+1. `governed-financial-advisor` (root `Dockerfile`; consumed by the in-cluster `governed_advisor` GKE Deployment)
 2. `gateway` (`src/gateway/Dockerfile`)
 3. `agentsight-ui` (`src/agentsight-ui/Dockerfile`)
 4. `compliance-bridge` (`src/compliance_bridge/Dockerfile`)

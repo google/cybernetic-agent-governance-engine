@@ -378,10 +378,6 @@ resource "kubernetes_deployment" "gateway" {
             value = join(",", var.trusted_client_identities)
           }
           env {
-            name  = "CAGE_TRUSTED_GEAP_AGENT_PRINCIPALS"
-            value = join(",", var.trusted_geap_principals)
-          }
-          env {
             name  = "RECONCILIATION_PROVIDER"
             value = var.reconciliation_provider
           }

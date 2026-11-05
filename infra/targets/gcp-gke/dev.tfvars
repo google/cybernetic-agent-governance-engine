@@ -5,7 +5,7 @@
 # project_id is intentionally omitted here — it is injected via TF_VAR_project_id
 # which deploy_all.sh reads from GOOGLE_CLOUD_PROJECT in .env (DEP-22).
 # region is also injected via TF_VAR_region from GOOGLE_CLOUD_LOCATION in .env.
-zone       = "us-central1-a" # Current cluster location
+zone = "us-central1-a" # Current cluster location
 
 # ─── Cluster ──────────────────────────────────────────────────────────────────
 # deploy_all.sh keys remote state on cluster_name. us-dev.tfvars names the
@@ -34,9 +34,9 @@ enable_private_master_endpoint = false
 enable_pod_security_standards  = false
 # Required: org policy constraints/compute.vmExternalIpAccess blocks nodes with external IPs.
 # Private nodes use NAT egress (Cloud NAT) instead of external IPs.
-enable_private_nodes           = true
-enable_dataplane_v2            = true
-enable_fqdn_network_policy     = true
+enable_private_nodes       = true
+enable_dataplane_v2        = true
+enable_fqdn_network_policy = true
 
 # Authorized networks for private cluster access
 authorized_networks = [
@@ -68,7 +68,7 @@ gpu_node_pool_min_count     = 0               # Total across gpu_node_locations;
 gpu_node_pool_max_count     = 2               # Total across gpu_node_locations (vllm-inference + vllm-reasoning)
 gpu_node_pool_initial_count = 0
 gpu_node_pool_name          = "gpu-node-pool-nvidia-l4" # used as cloud.google.com/gke-nodepool nodeSelector
-gpu_node_pool_spot          = false                      # §3, §7: GPU Spot stays off in every posture
+gpu_node_pool_spot          = false                     # §3, §7: GPU Spot stays off in every posture
 gpu_node_locations          = ["us-central1-a", "us-central1-b", "us-central1-c"]
 
 # Pool 4: ClickHouse pool: 1 local-SSD node in dev (§3)

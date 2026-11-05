@@ -918,8 +918,8 @@ async def test_langgraph_and_adk_rollout_adapters_with_vertex_backend(
 
 
 @pytest.mark.asyncio
-async def test_geap_module_m5_loss_cluster_harvester_and_simulated_cicd_gate() -> None:
-    """Verify Module M5: GEAP `generate_loss_clusters` harvesting and 3-Tier Simulated CI/CD Eval Gate."""
+async def test_vertex_eval_loss_cluster_harvester_and_simulated_cicd_gate() -> None:
+    """Verify Vertex AI Eval `generate_loss_clusters` harvesting and 3-Tier Simulated CI/CD Eval Gate."""
     bad_traj = ATIFTrajectory(
         trajectory_id="traj-cluster-fail-1",
         harness_id="google-adk",
@@ -935,7 +935,7 @@ async def test_geap_module_m5_loss_cluster_harvester_and_simulated_cicd_gate() -
         final_response="Used legacy docker push",
     )
 
-    class _FakeGeapClusterObj:
+    class _FakeVertexClusterObj:
         def __init__(self) -> None:
             self.cluster_id = "loss-01"
             self.title = "Tool misuse by alice@example.com"
@@ -951,10 +951,10 @@ async def test_geap_module_m5_loss_cluster_harvester_and_simulated_cicd_gate() -
                 }
             ]
 
-    class _FakeGeapEvalsClient:
+    class _FakeVertexEvalsClient:
         def generate_loss_clusters(self, *, src: str) -> list[Any]:
             assert src == "projects/p/locations/us-central1/evaluations/eval-123"
-            return [_FakeGeapClusterObj()]
+            return [_FakeVertexClusterObj()]
 
     bq_rows = [
         {
@@ -977,11 +977,11 @@ async def test_geap_module_m5_loss_cluster_harvester_and_simulated_cicd_gate() -
     fake_bq = _FakeBqClient(bq_rows)
     harvester = BigQueryTrajectoryHarvester(bq_client=fake_bq)
 
-    # 1. Direct GEAP SDK generate_loss_clusters mode
+    # 1. Direct Vertex AI Eval SDK generate_loss_clusters mode
     clusters_sdk, anchors_sdk = await harvester.harvest_loss_clusters_to_anchors(
         skill_name="gcp-deploy-skill",
         eval_result_name="projects/p/locations/us-central1/evaluations/eval-123",
-        evals_client=_FakeGeapEvalsClient(),
+        evals_client=_FakeVertexEvalsClient(),
         max_avg_score=3.0,
     )
     assert len(clusters_sdk) == 1
@@ -1000,7 +1000,7 @@ async def test_geap_module_m5_loss_cluster_harvester_and_simulated_cicd_gate() -
     assert "@skill_name" in harvester.executed_queries[-1].sql
     assert "@max_avg_score" in harvester.executed_queries[-1].sql
 
-    # 3. Simulated CI/CD Gate (GEAP Tour Slides 24 & 31)
+    # 3. Simulated CI/CD Gate
     good_traj = ATIFTrajectory(
         trajectory_id="traj-good-1",
         harness_id="google-adk",
@@ -1051,7 +1051,7 @@ async def test_geap_module_m5_loss_cluster_harvester_and_simulated_cicd_gate() -
     anchors = [pos_anchor, anchors_sdk[0]]
 
     harness = FoundationModelEvalHarness(governor=None)
-    backend = VertexGenAIEvalBackend(experiment_name="geap-simulated-cicd-gate")
+    backend = VertexGenAIEvalBackend(experiment_name="vertex-simulated-cicd-gate")
 
     # Clean run passes all 3 gates (calibration, rubric >= 3.0, zero dry_run_violations)
     pass_result = await backend.run_simulated_cicd_gate(
@@ -1087,7 +1087,7 @@ async def test_geap_module_m5_loss_cluster_harvester_and_simulated_cicd_gate() -
 
 
 @pytest.mark.asyncio
-async def test_geap_module_m6_governed_gepa_optimizer(tmp_path: Path) -> None:
+async def test_vertex_eval_governed_gepa_optimizer(tmp_path: Path) -> None:
     """Verify Module M6: `GovernedGEPAOptimizer` prunes unsafe/bloated prompt mutations and signs `.cer` for winner."""
     from src.integrations.gcp_eval import GEPACandidateSpec, GovernedGEPAOptimizer
 

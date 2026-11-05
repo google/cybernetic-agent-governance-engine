@@ -86,8 +86,8 @@ def test_workload_isolation_separation() -> None:
     assert "module.memorystore_governance.primary_endpoint_ip" in gw_block
     assert "module.memorystore_app" not in gw_block
 
-    # Find advisor module blocks (GEAP Agent Runtime and GKE fallback)
-    for adv_mod in ("gcp_geap_advisor", "governed_advisor"):
+    # Find advisor module block (in-cluster GKE Deployment)
+    for adv_mod in ("governed_advisor",):
         adv_block = _extract_module_block(adv_mod, gke_main_text)
         assert "module.memorystore_app.primary_endpoint_ip" in adv_block
         assert "module.memorystore_governance" not in adv_block

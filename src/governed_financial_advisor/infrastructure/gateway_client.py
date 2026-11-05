@@ -142,13 +142,13 @@ class GatewayClient:
         return self._http
 
     def _build_headers(self) -> dict[str, str]:
-        """Construct outbound request headers with W3C trace context, x-cage-principal, and GEAP ID-2/ID-1 headers.
+        """Construct outbound request headers with W3C trace context and x-cage-principal.
 
-        ``x-cage-principal`` and ``x-geap-user-id`` carry the same end-user
-        principal, sanitized once by :func:`principal_header_value`.
-        ``x-cage-principal-verified`` records whether the advisor verified the
-        principal against an out-of-band OIDC trust anchor (``"true"``) or
-        accepted a caller assertion in a permissive posture (``"false"``).
+        ``x-cage-principal`` carries the end-user principal, sanitized once by
+        :func:`principal_header_value`. ``x-cage-principal-verified`` records
+        whether the advisor verified the principal against an out-of-band OIDC
+        trust anchor (``"true"``) or accepted a caller assertion in a
+        permissive posture (``"false"``).
         """
         from src.governed_financial_advisor.utils.context import (
             principal_verified_context,
@@ -162,11 +162,6 @@ class GatewayClient:
         if principal:
             headers["x-cage-principal"] = principal
             headers["x-cage-principal-verified"] = "true" if verified else "false"
-        id2_token = os.environ.get("CAGE_GEAP_ID2_OIDC_TOKEN", "").strip()
-        if id2_token:
-            headers["Authorization"] = f"Bearer {id2_token}"
-        if os.environ.get("CAGE_ADVISOR_RUNTIME", "").lower() == "geap" and principal:
-            headers["x-geap-user-id"] = principal
         return headers
 
     @side_effect_node(kind="api_call", external_system="gateway_api")

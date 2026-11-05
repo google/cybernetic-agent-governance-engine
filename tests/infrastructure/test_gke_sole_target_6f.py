@@ -201,13 +201,10 @@ class TestNodePoolsAndAntiSpotAffinity:
             assert pool_resource in main_tf, (
                 f"Missing node pool resource: {pool_resource}"
             )
-        for pool_label in (
-            'pool-name        = "gpu-l4"',
-            'pool-name     = "general"',
-            'pool-name                  = "general-spot"',
-            'pool-name     = "clickhouse"',
-        ):
-            assert pool_label in main_tf, f"Missing canonical pool label: {pool_label}"
+        for pool_name in ("gpu-l4", "general", "general-spot", "clickhouse"):
+            assert re.search(rf'pool-name\s*=\s*"{pool_name}"', main_tf), (
+                f"Missing canonical pool label: {pool_name}"
+            )
 
     def test_gpu_l4_and_clickhouse_pools_are_never_spot(self) -> None:
         main_tf = (GKE_CLUSTER_MODULE_DIR / "main.tf").read_text(encoding="utf-8")
