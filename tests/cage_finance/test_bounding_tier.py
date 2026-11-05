@@ -25,7 +25,11 @@ from src.cage_finance.tiers.bounding_tier import BoundingContractTierPlugin
 from src.gateway.governance.contracts import ViolationKind
 
 # Hermetic: validates bounding tier integration in-memory.
-pytestmark = [pytest.mark.unit, pytest.mark.local]
+pytestmark = [
+    pytest.mark.unit,
+    pytest.mark.local,
+    pytest.mark.usefixtures("connected_evidence_sink"),
+]
 
 
 class TestBoundingContractTierPlugin:

@@ -180,6 +180,26 @@ def test_metrics_http_server_invalid_env_falls_back(
         handle.stop()
 
 
+def test_metrics_http_server_fails_closed_under_enforcing_posture(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Under is_enforcing(), port <= 0, missing prometheus_client, or OSError raises RuntimeError."""
+    with patch("src.gateway.governance.env_posture.is_enforcing", return_value=True):
+        with pytest.raises(RuntimeError, match="cannot be disabled"):
+            start_metrics_http_server(port=0, addr="127.0.0.1")
+
+        with patch("src.gateway.observability.loop_monitor.start_http_server", None):
+            with pytest.raises(RuntimeError, match="prometheus_client is required"):
+                start_metrics_http_server(port=9090, addr="127.0.0.1")
+
+        with patch(
+            "src.gateway.observability.loop_monitor.start_http_server",
+            side_effect=OSError("address already in use"),
+        ):
+            with pytest.raises(RuntimeError, match="Failed to bind Prometheus"):
+                start_metrics_http_server(port=9090, addr="127.0.0.1")
+
+
 # ---------------------------------------------------------------------------
 # 3. _gateway_lifespan wiring tests
 # ---------------------------------------------------------------------------

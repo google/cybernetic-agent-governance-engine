@@ -135,7 +135,6 @@ OPEN_EXACT_PATHS: frozenset[str] = frozenset(
     {
         "/health",
         "/healthz",
-        "/metrics",
         "/governance/jwks",
         "/governance/.well-known/jwks.json",
     }

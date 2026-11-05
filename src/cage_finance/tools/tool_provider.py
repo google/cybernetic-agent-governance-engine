@@ -434,6 +434,12 @@ async def _govern_and_actuate(
                 )
                 return f"BLOCKED: {reason}"
             except Exception as exc:
+                from src.gateway.governance.evidence.stream import (
+                    EvidenceChainUnavailableError,
+                )
+
+                if isinstance(exc, EvidenceChainUnavailableError):
+                    raise
                 # Only log errors, don't block — receipt may legitimately not exist
                 logger.debug(
                     "execute_trade: NARROW receipt lookup failed (may be ALLOW verdict): %s",

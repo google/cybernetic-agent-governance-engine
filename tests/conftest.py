@@ -1358,3 +1358,28 @@ def classification_engine(narrower_registry):
         defer_enabled=True,
         narrow_enabled=False,
     )
+
+
+@pytest.fixture()
+def connected_evidence_sink(monkeypatch: pytest.MonkeyPatch):
+    """Attach an isolated FakeRedis-backed EvidenceStreamSink for hermetic unit tests."""
+    import fakeredis.aioredis
+
+    import src.gateway.governance.evidence.stream as es
+
+    sink = es.EvidenceStreamSink()
+    sink._redis = fakeredis.aioredis.FakeRedis(decode_responses=True)
+    sink._running = True
+    monkeypatch.setattr(es, "_evidence_sink", sink)
+    try:
+        yield sink
+    finally:
+        sink._stopping = True
+        sink._running = False
+        task = sink._appender_task
+        if task is not None and not task.done():
+            try:
+                task.get_loop().call_soon_threadsafe(task.cancel)
+            except RuntimeError:
+                pass
+        sink._redis = None

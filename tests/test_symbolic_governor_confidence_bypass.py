@@ -48,6 +48,8 @@ os.environ.setdefault("CAGE_ENV", "test")
 from src.gateway.governance.governor.governor import GovernanceError, SymbolicGovernor
 from tests.fixtures.governor import make_governor
 
+pytestmark = [pytest.mark.usefixtures("connected_evidence_sink")]
+
 # ---------------------------------------------------------------------------
 # Helpers — minimal SymbolicGovernor assembly
 # ---------------------------------------------------------------------------

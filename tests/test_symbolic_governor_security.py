@@ -34,7 +34,7 @@ import pytest
 
 from tests.fixtures.governor import make_governor
 
-pytestmark = pytest.mark.unit
+pytestmark = [pytest.mark.unit, pytest.mark.usefixtures("connected_evidence_sink")]
 
 
 # ---------------------------------------------------------------------------

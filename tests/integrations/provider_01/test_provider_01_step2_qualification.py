@@ -59,7 +59,12 @@ from src.gateway.governance.kms_signer import (
 from src.gateway.infrastructure.redis_replication import ReplicationPolicy
 from src.integrations.provider_01.provider import Provider01NormativeProvider
 
-pytestmark = [pytest.mark.unit, pytest.mark.local, pytest.mark.partner]
+pytestmark = [
+    pytest.mark.unit,
+    pytest.mark.local,
+    pytest.mark.partner,
+    pytest.mark.usefixtures("connected_evidence_sink"),
+]
 
 _MAGNITUDES = ConsequenceMagnitudes(
     (ConsequenceMagnitude("payment.release", (MagnitudePath(("amount",), 2),)),)

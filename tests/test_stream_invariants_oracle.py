@@ -1057,7 +1057,27 @@ async def test_mutation_inv5_missing_refusal_and_publish_failure_loss_caught(
         async def ingest(self, _event: dict[str, Any]) -> None:
             return None
 
+    from src.gateway.governance.evidence.stream import EvidenceChainUnavailableError
+
     monkeypatch.setattr(gm, "get_evidence_sink", lambda: _DroppingSink())
+    with pytest.raises(EvidenceChainUnavailableError):
+        await gm.record_refusal(
+            _ACTION, "dropped refusal", oscal_control_ref="AC-3", params={}
+        )
+    mid = sum(
+        sample.value
+        for metric in (
+            [metrics._evidence_publish_failures]
+            if metrics._evidence_publish_failures is not None
+            else []
+        )
+        for family in metric.collect()
+        for sample in family.samples
+        if sample.name.endswith("_total")
+    )
+    assert int(mid - before) == 1
+
+    monkeypatch.setenv("EVIDENCE_CHAIN_BLOCKING", "false")
     ph = await gm.record_refusal(
         _ACTION, "dropped refusal", oscal_control_ref="AC-3", params={}
     )
@@ -1073,6 +1093,6 @@ async def test_mutation_inv5_missing_refusal_and_publish_failure_loss_caught(
         for sample in family.samples
         if sample.name.endswith("_total")
     )
-    delta = int(after - before)
+    delta = int(after - mid)
     assert delta == 1
     assert "evidence_loss" in _rules_of(empty_chain, publish_failures=delta)

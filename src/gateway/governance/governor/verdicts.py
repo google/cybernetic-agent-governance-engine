@@ -110,11 +110,23 @@ def build_refusal_receipt(
 
 
 async def publish_refusal(receipt: RefusalReceipt) -> None:
-    from src.gateway.governance.evidence.stream import get_evidence_sink
+    """Hash-chain the refusal receipt into the evidence stream.
+
+    When ``EVIDENCE_CHAIN_BLOCKING=true`` (the default), commits via
+    ``ingest_sync()`` and raises :class:`EvidenceChainUnavailableError` after
+    logging at ERROR and incrementing
+    ``cage_governance_evidence_publish_failures_total{kind="refusal"}``, even
+    when ``sink._redis is None``. When ``EVIDENCE_CHAIN_BLOCKING=false``, the
+    failure is logged and counted without blocking the refusal.
+    """
+    from src.gateway.governance.evidence.stream import (
+        commit_decision_evidence,
+        get_evidence_sink,
+        is_evidence_chain_blocking,
+    )
 
     try:
         sink = get_evidence_sink()
-        has_redis = getattr(sink, "_redis", None) is not None
         event = {
             "type": "GOVERNANCE_REFUSAL",
             "controlId": receipt.control_id
@@ -123,14 +135,17 @@ async def publish_refusal(receipt: RefusalReceipt) -> None:
             if hasattr(receipt, "to_dict")
             else vars(receipt),
         }
-        msg_id = await sink.ingest(event)
-        if has_redis and msg_id is None:
-            governor_metrics().evidence_publish_failure("refusal")
+        await commit_decision_evidence(
+            event,
+            label="GOVERNANCE_REFUSAL",
+            sink=sink,
+            sentinel_unset=False,
+        )
     except Exception as exc:
-        # Non-blocking (the refusal already holds the action back) but never
-        # silent: ERROR log plus a Prometheus counter an operator can alert on.
         logger.error("Failed to publish refusal receipt: %s", exc)
         governor_metrics().evidence_publish_failure("refusal")
+        if is_evidence_chain_blocking():
+            raise
 
 
 async def publish_settlement(
@@ -321,7 +336,17 @@ async def _park_defer_context(
             effective_thread_id,
         )
         defer_id, persisted = token.defer_id, False
-    await publish_deferral(token, persisted=persisted)
+    try:
+        await publish_deferral(token, persisted=persisted)
+    except Exception:
+        if persisted:
+            try:
+                async with open_defer_queue() as queue:
+                    await queue._redis.delete(f"DEFER:{defer_id}")
+                    await queue._redis.zrem("DEFER:expiry_index", defer_id)
+            except Exception:
+                pass
+        raise
     return defer_id, persisted
 
 
@@ -368,18 +393,33 @@ def deferral_event(token: "DeferToken", *, persisted: bool) -> dict[str, Any]:
 async def publish_deferral(token: "DeferToken", *, persisted: bool) -> None:
     """Hash-chain the deferral into the evidence stream.
 
-    Non-blocking, like :func:`publish_refusal`: a DEFER never executes, so
-    failing it on an evidence-write error adds no safety.  Never silent: a
-    failure is logged at ERROR and counted in
-    ``cage_governance_evidence_publish_failures_total{kind="deferral"}``.
+    When ``EVIDENCE_CHAIN_BLOCKING=true`` (the default), commits via
+    ``ingest_sync()`` and raises :class:`EvidenceChainUnavailableError` after
+    logging at ERROR and incrementing
+    ``cage_governance_evidence_publish_failures_total{kind="deferral"}``, so
+    no un-chained deferral decision or token is returned. When
+    ``EVIDENCE_CHAIN_BLOCKING=false``, the failure is logged and counted
+    without blocking the deferral.
     """
-    from src.gateway.governance.evidence.stream import get_evidence_sink
+    from src.gateway.governance.evidence.stream import (
+        commit_decision_evidence,
+        get_evidence_sink,
+        is_evidence_chain_blocking,
+    )
 
     try:
-        await get_evidence_sink().ingest(deferral_event(token, persisted=persisted))
+        sink = get_evidence_sink()
+        await commit_decision_evidence(
+            deferral_event(token, persisted=persisted),
+            label="GOVERNANCE_DEFERRAL",
+            sink=sink,
+            sentinel_unset=False,
+        )
     except Exception as exc:
         logger.error("Failed to publish deferral evidence: %s", exc)
         governor_metrics().evidence_publish_failure("deferral")
+        if is_evidence_chain_blocking():
+            raise
 
 
 def post_hitl_deferral_event(
@@ -443,21 +483,23 @@ async def handle_post_hitl_defer(
 ) -> NoReturn:
     """DEFER a post-approval committing run, leaving its approval unspent.
 
-    Nothing was sealed and every phase-2 commit was rolled back. The
-    deferral is hash-chained as primary evidence (non-blocking, counted on
-    failure like every deferral write), then :class:`GovernanceDeferred` is
+    Nothing was sealed and every phase-2 commit was rolled back. Under
+    ``EVIDENCE_CHAIN_BLOCKING=true`` (default), the deferral is committed
+    synchronously via ``ingest_sync()`` before :class:`GovernanceDeferred` is
     raised naming the approval that stays redeemable.
-
-    Raises:
-        GovernanceDeferred: Always.
     """
-    from src.gateway.governance.evidence.stream import get_evidence_sink
+    from src.gateway.governance.evidence.stream import (
+        commit_decision_evidence,
+        get_evidence_sink,
+        is_evidence_chain_blocking,
+    )
 
     span = trace.get_current_span()
     defer_reason = _reason_from_classification(classification_meta)
     classification_reason = str(classification_meta.get("classification_reason", ""))
     try:
-        await get_evidence_sink().ingest(
+        sink = get_evidence_sink()
+        await commit_decision_evidence(
             post_hitl_deferral_event(
                 action,
                 params,
@@ -468,11 +510,16 @@ async def handle_post_hitl_defer(
                 classification_reason=classification_reason,
                 barrier_preview=barrier_preview,
                 reliance=reliance,
-            )
+            ),
+            label="GOVERNANCE_DEFERRAL",
+            sink=sink,
+            sentinel_unset=False,
         )
     except Exception as exc:
         logger.error("Failed to publish post-approval deferral evidence: %s", exc)
         governor_metrics().evidence_publish_failure("deferral")
+        if is_evidence_chain_blocking():
+            raise
     span.set_attribute("cage.verdict", GovernanceDecision.DEFER)
     span.set_attribute("cage.defer_token", approval_id)
     span.set_attribute("cage.approval_retained", True)
@@ -505,6 +552,7 @@ async def handle_require_approval(
     latency_ms: float = 0.0,
     *,
     reliance: Sequence[RelianceRecord] = (),
+    emit_side_effects: bool = True,
 ) -> dict[str, Any]:
     """Park the pending approval in the gateway's DeferQueue; mint no seal.
 
@@ -528,18 +576,21 @@ async def handle_require_approval(
     from src.gateway.governance.defer_queue import DeferReason
 
     span = trace.get_current_span()
-    defer_id, persisted = await _park_defer_context(
-        action=action,
-        params=params,
-        metadata={"action": action, "params": params},
-        thread_id=params.get("thread_id"),
-        confidence=reported_confidence(params),
-        classification_meta=classification_meta,
-        violations=violations,
-        defer_reason=DeferReason.HITL_REQUIRED,
-        reliance=reliance,
-    )
-    deferred_id = defer_id if persisted else None
+    if emit_side_effects:
+        defer_id, persisted = await _park_defer_context(
+            action=action,
+            params=params,
+            metadata={"action": action, "params": params},
+            thread_id=params.get("thread_id"),
+            confidence=reported_confidence(params),
+            classification_meta=classification_meta,
+            violations=violations,
+            defer_reason=DeferReason.HITL_REQUIRED,
+            reliance=reliance,
+        )
+        deferred_id = defer_id if persisted else None
+    else:
+        deferred_id = None
     span.set_attribute("cage.verdict", GovernanceDecision.REQUIRE_APPROVAL)
     span.set_attribute("cage.deferred_id", deferred_id or "")
     span.set_attribute(OBSERVATION_OUTPUT, GovernanceDecision.REQUIRE_APPROVAL)
@@ -574,6 +625,7 @@ async def handle_defer(
     latency_ms: float = 0.0,
     *,
     reliance: Sequence[RelianceRecord] = (),
+    emit_side_effects: bool = True,
 ) -> dict[str, Any]:
     span = trace.get_current_span()
     defer_reason = _reason_from_classification(classification_meta)
@@ -588,17 +640,20 @@ async def handle_defer(
         "params": params,
         "action": action,
     }
-    defer_token, _persisted = await _park_defer_context(
-        action=action,
-        params=params,
-        metadata=defer_metadata,
-        thread_id=params.get("thread_id"),
-        confidence=reported_confidence(params),
-        classification_meta=classification_meta,
-        violations=violations,
-        defer_reason=defer_reason,
-        reliance=reliance,
-    )
+    if emit_side_effects:
+        defer_token, _persisted = await _park_defer_context(
+            action=action,
+            params=params,
+            metadata=defer_metadata,
+            thread_id=params.get("thread_id"),
+            confidence=reported_confidence(params),
+            classification_meta=classification_meta,
+            violations=violations,
+            defer_reason=defer_reason,
+            reliance=reliance,
+        )
+    else:
+        defer_token = f"preview-{uuid.uuid4()}"
 
     span.set_attribute("cage.verdict", GovernanceDecision.DEFER)
     span.set_attribute("cage.defer_token", defer_token)
@@ -698,6 +753,7 @@ async def handle_deny(
     *,
     reliance: Sequence[RelianceRecord] = (),
     redis_client: Any | None = None,
+    emit_side_effects: bool = True,
 ) -> None:
     span = trace.get_current_span()
     span.set_attribute("cage.verdict", GovernanceDecision.DENY)
@@ -711,17 +767,18 @@ async def handle_deny(
         action, params, violations, tier_failures, reliance=reliance
     )
     span.set_attribute("cage.refusal_proof_hash", receipt.proof_hash)
-    governor_metrics().refusal_decided(receipt.violated_tier)
-    await publish_refusal(receipt)
+    if emit_side_effects:
+        governor_metrics().refusal_decided(receipt.violated_tier)
+        await publish_refusal(receipt)
     # Lead with the violation that decided the refusal (a HARD one when
     # present), so a co-occurring HITL finding never masks the real cause.
     ordered = sorted(violations, key=lambda v: v.kind != ViolationKind.HARD)
 
     quarantine_meta: dict[str, Any] = {}
-    auto_quarantine = os.getenv(
-        "CAGE_ENABLE_AUTO_QUARANTINE", "false"
-    ).strip().lower() in ("true", "1", "yes") or bool(
-        params.get("_quarantine_on_breach")
+    auto_quarantine = emit_side_effects and (
+        os.getenv("CAGE_ENABLE_AUTO_QUARANTINE", "false").strip().lower()
+        in ("true", "1", "yes")
+        or bool(params.get("_quarantine_on_breach"))
     )
     if auto_quarantine and ordered and ordered[0].kind == ViolationKind.HARD:
         import time as _time

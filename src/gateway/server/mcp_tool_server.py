@@ -718,6 +718,7 @@ async def execute_tool_endpoint(request_body: ToolExecutionRequest, request: Req
             status_code=404, detail=f"Tool '{request_body.tool_name}' not found."
         )
 
+    from src.gateway.governance.evidence.stream import EvidenceChainUnavailableError
     from src.gateway.server.governance_middleware import (
         get_last_refusal_proof_hash,
         reset_last_refusal_proof_hash,
@@ -736,6 +737,16 @@ async def execute_tool_endpoint(request_body: ToolExecutionRequest, request: Req
         if proof_hash:
             response["proof_hash"] = proof_hash
         return response
+    except EvidenceChainUnavailableError as exc:
+        logger.error("Evidence chain unavailable during /tools/execute: %s", exc)
+        return JSONResponse(
+            status_code=503,
+            content={
+                "status": "ERROR",
+                "error": "evidence_chain_unavailable",
+                "detail": f"EvidenceChainUnavailableError: {exc}",
+            },
+        )
     except Exception as exc:
         logger.error("Tool Execution Error: %s", exc)
         err_response: dict[str, Any] = {"status": "ERROR", "error": str(exc)}

@@ -142,7 +142,7 @@ def mock_kms_signer():
 def mock_evidence_sink():
     """Patch the evidence stream sink so _emit_refusal_receipt doesn't call real I/O."""
     sink = MagicMock()
-    sink.ingest = AsyncMock(return_value=None)
+    sink.ingest = AsyncMock(return_value="1700000000000-0")
     with patch(
         "src.gateway.server.governance_middleware.get_evidence_sink",
         return_value=sink,
@@ -568,7 +568,7 @@ class TestEmitRefusalReceipt:
         from src.gateway.server.governance_middleware import _emit_refusal_receipt
 
         sink = MagicMock()
-        sink.ingest = AsyncMock(return_value=None)
+        sink.ingest = AsyncMock(return_value="1700000000000-0")
 
         with patch(
             "src.gateway.server.governance_middleware.get_evidence_sink",
@@ -604,7 +604,7 @@ class TestEmitRefusalReceipt:
         )
 
         sink = MagicMock()
-        sink.ingest = AsyncMock(return_value=None)
+        sink.ingest = AsyncMock(return_value="1700000000000-0")
 
         with (
             patch(
@@ -629,10 +629,47 @@ class TestEmitRefusalReceipt:
         # Error must be logged
         assert any("Failed to KMS-sign" in r.message for r in caplog.records)
 
-    async def test_emit_receipt_sink_failure_is_logged_not_raised(
+    async def test_emit_receipt_sink_failure_raises_when_blocking(
         self, mock_kms_signer, caplog
     ):
-        """If the evidence sink fails, the error is logged but NOT re-raised."""
+        """Under default EVIDENCE_CHAIN_BLOCKING=true, sink failure raises EvidenceChainUnavailableError."""
+        import logging
+
+        from src.gateway.governance.evidence.stream import (
+            EvidenceChainUnavailableError,
+        )
+        from src.gateway.server.governance_middleware import _emit_refusal_receipt
+
+        failing_sink = MagicMock()
+        failing_sink.ingest = AsyncMock(
+            side_effect=ConnectionError("Redis stream unavailable")
+        )
+
+        with patch(
+            "src.gateway.server.governance_middleware.get_evidence_sink",
+            return_value=failing_sink,
+        ):
+            with (
+                caplog.at_level(logging.ERROR, logger="Gateway.GovernanceMiddleware"),
+                pytest.raises(
+                    EvidenceChainUnavailableError, match="Redis stream unavailable"
+                ),
+            ):
+                await _emit_refusal_receipt(
+                    action_id="execute_trade",
+                    refusal_reason="test_reason",
+                    oscal_control_ref="SC-4",
+                    params={},
+                )
+
+        assert any(
+            "Failed to emit OSCAL refusal receipt" in r.message for r in caplog.records
+        )
+
+    async def test_emit_receipt_sink_failure_is_logged_not_raised_when_non_blocking(
+        self, mock_kms_signer, caplog
+    ):
+        """Under explicit non-blocking dev opt-out, sink failure is logged and does not raise."""
         import logging
 
         from src.gateway.server.governance_middleware import _emit_refusal_receipt
@@ -642,19 +679,25 @@ class TestEmitRefusalReceipt:
             side_effect=ConnectionError("Pub/Sub unavailable")
         )
 
-        with patch(
-            "src.gateway.server.governance_middleware.get_evidence_sink",
-            return_value=failing_sink,
+        with (
+            patch(
+                "src.gateway.server.governance_middleware.get_evidence_sink",
+                return_value=failing_sink,
+            ),
+            patch(
+                "src.gateway.governance.evidence.stream.is_evidence_chain_blocking",
+                return_value=False,
+            ),
         ):
             with caplog.at_level(logging.ERROR, logger="Gateway.GovernanceMiddleware"):
-                # Must NOT raise — sink failure is non-fatal
-                await _emit_refusal_receipt(
+                result = await _emit_refusal_receipt(
                     action_id="execute_trade",
                     refusal_reason="test_reason",
                     oscal_control_ref="SC-4",
                     params={},
                 )
 
+        assert isinstance(result, str) and len(result) == 64
         assert any(
             "Failed to emit OSCAL refusal receipt" in r.message for r in caplog.records
         )
@@ -933,3 +976,61 @@ class TestValidateActionCanonicalEnvelope:
             {"tool_name": "execute_trade", "parameters": {"amount": 100}},
             governor=mock_gov,
         )
+
+    def test_validate_action_returns_503_when_governor_raises_evidence_chain_unavailable(
+        self, client_for_external_hold, mock_kms_signer
+    ):
+        """POST /validate-action returns HTTP 503 when governor decision evidence fails closed."""
+        from src.gateway.governance.evidence.stream import (
+            EvidenceChainUnavailableError,
+        )
+
+        mock_gov = _mock_governor()
+        mock_gov.validate_action = AsyncMock(
+            side_effect=EvidenceChainUnavailableError(
+                "Redis connection not established"
+            )
+        )
+
+        with _installed_governor(mock_gov):
+            resp = client_for_external_hold.post(
+                "/validate-action",
+                json={"action": "execute_trade", "params": {"amount": 100}},
+            )
+
+        assert resp.status_code == 503
+        data = resp.json()
+        assert data["error"] == "evidence_chain_unavailable"
+        assert "Redis connection not established" in data["detail"]
+
+    def test_validate_action_returns_503_when_refusal_receipt_sink_fails_closed(
+        self, client_for_external_hold, mock_kms_signer
+    ):
+        """POST /validate-action returns HTTP 503 instead of un-evidenced 403 when refusal sink fails."""
+        from src.gateway.server.governance_middleware import GovernanceError
+
+        mock_gov = _mock_governor()
+        mock_gov.validate_action = AsyncMock(
+            side_effect=GovernanceError("drawdown_limit_exceeded")
+        )
+        failing_sink = MagicMock()
+        failing_sink.ingest = AsyncMock(
+            side_effect=ConnectionError("Redis stream offline")
+        )
+
+        with (
+            _installed_governor(mock_gov),
+            patch(
+                "src.gateway.server.governance_middleware.get_evidence_sink",
+                return_value=failing_sink,
+            ),
+        ):
+            resp = client_for_external_hold.post(
+                "/validate-action",
+                json={"action": "execute_trade", "params": {"amount": 100}},
+            )
+
+        assert resp.status_code == 503
+        data = resp.json()
+        assert data["error"] == "evidence_chain_unavailable"
+        assert "Redis stream offline" in data["detail"]

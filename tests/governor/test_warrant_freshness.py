@@ -88,7 +88,11 @@ from tests.fixtures.governor import (
     make_governor,
 )
 
-pytestmark = [pytest.mark.unit, pytest.mark.local]
+pytestmark = [
+    pytest.mark.unit,
+    pytest.mark.local,
+    pytest.mark.usefixtures("connected_evidence_sink"),
+]
 
 _REPO = pathlib.Path(__file__).resolve().parents[2]
 _NORM = TRADE_CONFIDENCE_NORM_ID

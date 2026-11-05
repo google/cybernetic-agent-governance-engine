@@ -112,7 +112,11 @@ from src.integrations.provider_08.adapter import Provider08NormativeProvider
 from tests.fixtures.governor import allow_opa, clean_stpa
 from tests.test_consequence_gateway import _make_mock_signer_with_keypair
 
-pytestmark = [pytest.mark.unit, pytest.mark.local]
+pytestmark = [
+    pytest.mark.unit,
+    pytest.mark.local,
+    pytest.mark.usefixtures("connected_evidence_sink"),
+]
 
 _TRACER = TracerProvider().get_tracer(__name__)
 

@@ -61,7 +61,11 @@ from src.gateway.governance.contracts import (
 from src.gateway.governance.decisions import GovernanceDecision
 from src.gateway.governance.defer_queue import DeferQueue, DeferReason
 from src.gateway.governance.env_posture import DeploymentPosture
-from src.gateway.governance.evidence.stream import EvidenceStreamSink, verify_record
+from src.gateway.governance.evidence.stream import (
+    EvidenceChainUnavailableError,
+    EvidenceStreamSink,
+    verify_record,
+)
 from src.gateway.governance.governance_envelope import GovernanceEnvelopeBuilder
 from src.gateway.governance.governor import sealing as sealing_module
 from src.gateway.governance.governor.assembly import DecisionFlags, assemble_governor
@@ -198,7 +202,7 @@ def _source_with(**overrides: Any) -> StaticWarrantSource:
 
 
 @pytest.fixture
-def chain(monkeypatch: pytest.MonkeyPatch) -> SimpleNamespace:
+async def chain(monkeypatch: pytest.MonkeyPatch) -> AsyncIterator[SimpleNamespace]:
     """Real ``EvidenceStreamSink`` and seal index over fakeredis; HMAC seals."""
     monkeypatch.setenv("CAGE_SEAL_STRICT_MODE", "false")
     monkeypatch.setenv("CAGE_ENV", "test")
@@ -210,6 +214,7 @@ def chain(monkeypatch: pytest.MonkeyPatch) -> SimpleNamespace:
     )
     sink = EvidenceStreamSink(redis_url="redis://localhost:6379", stream_key=_STREAM)
     sink._redis = stream_redis
+    sink._running = True
     index = fakeredis.aioredis.FakeRedis(server=fakeredis.FakeServer())
     queue_redis = fakeredis.aioredis.FakeRedis(
         server=fakeredis.FakeServer(), decode_responses=True
@@ -237,12 +242,15 @@ def chain(monkeypatch: pytest.MonkeyPatch) -> SimpleNamespace:
             f for f in entries if event_type is None or f["event_type"] == event_type
         ]
 
-    return SimpleNamespace(
-        sink=sink,
-        index=index,
-        queue=DeferQueue(queue_redis),
-        records=records,
-    )
+    try:
+        yield SimpleNamespace(
+            sink=sink,
+            index=index,
+            queue=DeferQueue(queue_redis),
+            records=records,
+        )
+    finally:
+        await sink.stop()
 
 
 def _payload(fields: dict[str, Any]) -> dict[str, Any]:
@@ -802,7 +810,7 @@ async def test_pipeline_and_post_hitl_gate_agree_on_governedness() -> None:
     assert not governor._is_governed_action("read_quote", {})
 
 
-# ── Best-effort evidence is never silent ─────────────────────────────────────
+# ── Blocking refusal & deferral evidence (F-101 / R-14) ──────────────────────
 
 
 def _publish_failures(kind: str) -> float:
@@ -814,7 +822,7 @@ def _publish_failures(kind: str) -> float:
     return value or 0.0
 
 
-async def test_deferral_proceeds_and_is_counted_when_the_sink_fails(
+async def test_deferral_blocks_and_is_counted_when_the_sink_fails(
     chain: SimpleNamespace,
     monkeypatch: pytest.MonkeyPatch,
     caplog: pytest.LogCaptureFixture,
@@ -826,15 +834,18 @@ async def test_deferral_proceeds_and_is_counted_when_the_sink_fails(
     before = _publish_failures("deferral")
     governor = _governor(StaticWarrantSource())
 
-    with caplog.at_level("ERROR"):
-        result = await governor.validate_action(_ACTION, _trade())
+    with (
+        caplog.at_level("ERROR"),
+        pytest.raises(
+            EvidenceChainUnavailableError, match="evidence stream down"
+        ) as exc_info,
+    ):
+        await governor.validate_action(_ACTION, _trade())
 
-    # The deferral still proceeds: token parked with its reliance record ...
-    assert result["verdict"] == GovernanceDecision.DEFER
-    token = await chain.queue.get(result["defer_token"])
-    assert token is not None
-    assert token.opa_input_snapshot["reliance"] == result["reliance"]
-    # ... and the lost evidence write is loud: ERROR log plus counter.
+    assert isinstance(exc_info.value.original_error, ConnectionError)
+    # Blocking posture: no deferral decision is returned and no un-evidenced
+    # token remains parked in Redis.
+    assert await chain.queue._redis.keys("DEFER:*") == []
     assert _publish_failures("deferral") == before + 1
     assert any(
         r.levelname == "ERROR" and "deferral evidence" in r.getMessage()
@@ -842,7 +853,7 @@ async def test_deferral_proceeds_and_is_counted_when_the_sink_fails(
     )
 
 
-async def test_refusal_is_counted_when_the_sink_fails(
+async def test_refusal_blocks_and_is_counted_when_the_sink_fails(
     chain: SimpleNamespace,
     monkeypatch: pytest.MonkeyPatch,
     caplog: pytest.LogCaptureFixture,
@@ -854,14 +865,105 @@ async def test_refusal_is_counted_when_the_sink_fails(
     before = _publish_failures("refusal")
     governor = _governor(StaticWarrantSource())
 
-    with caplog.at_level("ERROR"), pytest.raises(GovernanceError):
+    # Kills any mutant that wraps publish_refusal in a try/except that swallows
+    # the write error and lets handle_deny proceed to raise GovernanceError.
+    with (
+        caplog.at_level("ERROR"),
+        pytest.raises(
+            EvidenceChainUnavailableError, match="evidence stream down"
+        ) as exc_info,
+    ):
         await governor.validate_action(_ACTION, _trade(confidence="0.99"))
 
+    assert not isinstance(exc_info.value, GovernanceError)
+    assert isinstance(exc_info.value.original_error, ConnectionError)
     assert _publish_failures("refusal") == before + 1
     assert any(
         r.levelname == "ERROR" and "refusal receipt" in r.getMessage()
         for r in caplog.records
     )
+
+
+async def test_refusal_and_deferral_fail_closed_when_sink_returns_none_or_is_missing_or_disconnected(
+    chain: SimpleNamespace,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    async def _none_ingest(event: Any) -> str | None:
+        return None
+
+    monkeypatch.setattr(chain.sink, "ingest", _none_ingest)
+    governor = _governor(StaticWarrantSource())
+
+    before_deferral = _publish_failures("deferral")
+    with pytest.raises(EvidenceChainUnavailableError, match="GOVERNANCE_DEFERRAL"):
+        await governor.validate_action(_ACTION, _trade())
+    assert _publish_failures("deferral") == before_deferral + 1
+    assert await chain.queue._redis.keys("DEFER:*") == []
+
+    before_refusal = _publish_failures("refusal")
+    with pytest.raises(EvidenceChainUnavailableError, match="GOVERNANCE_REFUSAL"):
+        await governor.validate_action(_ACTION, _trade(confidence="0.99"))
+    assert _publish_failures("refusal") == before_refusal + 1
+
+    # Disconnected real EvidenceStreamSink (sink._redis is None) must ALSO fail
+    # closed via ingest_sync() — closes the former has_redis loophole.
+    disconnected_sink = EvidenceStreamSink(stream_key=_STREAM)
+    assert disconnected_sink._redis is None
+    monkeypatch.setattr(rs.es, "get_evidence_sink", lambda: disconnected_sink)
+    with pytest.raises(
+        EvidenceChainUnavailableError, match="Redis connection not established"
+    ):
+        await governor.validate_action(_ACTION, _trade())
+    with pytest.raises(
+        EvidenceChainUnavailableError, match="Redis connection not established"
+    ):
+        await governor.validate_action(_ACTION, _trade(confidence="0.99"))
+
+    # Post-HITL deferral also fails closed when evidence stream is unavailable.
+    spend = SpendCounter()
+    with pytest.raises(
+        EvidenceChainUnavailableError, match="Redis connection not established"
+    ):
+        await governor.revalidate_post_hitl(
+            _ACTION,
+            _trade(),
+            approval=granted_approval(counter=spend),
+        )
+    assert spend.calls == 0
+
+    monkeypatch.setattr(rs.es, "get_evidence_sink", lambda: None)
+    with pytest.raises(EvidenceChainUnavailableError, match="Evidence sink is None"):
+        await governor.validate_action(_ACTION, _trade())
+    with pytest.raises(EvidenceChainUnavailableError, match="Evidence sink is None"):
+        await governor.validate_action(_ACTION, _trade(confidence="0.99"))
+
+
+async def test_nonblocking_deferral_and_refusal_proceed_and_are_counted_when_sink_fails(
+    chain: SimpleNamespace,
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    async def _down(event: Any) -> None:
+        raise ConnectionError("evidence stream down")
+
+    monkeypatch.setattr(rs.es, "is_evidence_chain_blocking", lambda: False)
+    monkeypatch.setattr(chain.sink, "ingest", _down)
+    governor = _governor(StaticWarrantSource())
+
+    before_deferral = _publish_failures("deferral")
+    with caplog.at_level("ERROR"):
+        result = await governor.validate_action(_ACTION, _trade())
+
+    assert result["verdict"] == GovernanceDecision.DEFER
+    token = await chain.queue.get(result["defer_token"])
+    assert token is not None
+    assert token.opa_input_snapshot["reliance"] == result["reliance"]
+    assert _publish_failures("deferral") == before_deferral + 1
+
+    before_refusal = _publish_failures("refusal")
+    with caplog.at_level("ERROR"), pytest.raises(GovernanceError):
+        await governor.validate_action(_ACTION, _trade(confidence="0.99"))
+    assert _publish_failures("refusal") == before_refusal + 1
 
 
 # ── Unwarranted regions: nothing changes ─────────────────────────────────────

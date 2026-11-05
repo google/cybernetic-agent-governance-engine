@@ -253,9 +253,13 @@ class TestEmitRefusalReceiptIntegration:
         )
 
     @pytest.mark.asyncio
-    async def test_emission_failure_does_not_raise(self, monkeypatch, caplog):
-        """A2 requirement: emission errors are logged but do not propagate."""
+    async def test_emission_failure_blocks_by_default_and_logs_when_nonblocking(
+        self, monkeypatch, caplog
+    ):
+        """Blocking mode raises EvidenceChainUnavailableError; non-blocking logs without propagating."""
         from unittest.mock import AsyncMock, MagicMock
+
+        from src.gateway.governance.evidence.stream import EvidenceChainUnavailableError
 
         # Mock sink to raise an exception
         mock_sink = MagicMock()
@@ -280,7 +284,21 @@ class TestEmitRefusalReceiptIntegration:
             violated_rule="test",
         )
 
-        # Should not raise
+        # Default blocking posture must raise EvidenceChainUnavailableError
+        with pytest.raises(EvidenceChainUnavailableError, match="Redis down"):
+            await _emit_refusal_receipt(
+                action_id="execute_trade",
+                refusal_reason="test",
+                oscal_control_ref="SC-4",
+                params={},
+                receipt=receipt,
+            )
+
+        # Explicit non-blocking posture logs at ERROR without propagating
+        monkeypatch.setattr(
+            "src.gateway.governance.evidence.stream.is_evidence_chain_blocking",
+            lambda: False,
+        )
         await _emit_refusal_receipt(
             action_id="execute_trade",
             refusal_reason="test",

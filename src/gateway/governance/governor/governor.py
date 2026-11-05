@@ -44,6 +44,7 @@ from src.gateway.governance.contracts import (
     ViolationKind,
 )
 from src.gateway.governance.decisions import GovernanceDecision
+from src.gateway.governance.env_posture import is_enforcing
 from src.gateway.governance.governor.approval import PostHitlApproval
 from src.gateway.governance.governor.errors import GovernanceDeferred, GovernanceError
 from src.gateway.governance.governor.pipeline import (
@@ -161,6 +162,47 @@ class SymbolicGovernor:
         for keys a domain resolves server-side are replaced, so the preview
         evaluates the same inputs as the committing run.
         """
+        return await self._evaluate_dry_run(
+            action,
+            params,
+            policy_version_id,
+            emit_side_effects=True,
+        )
+
+    async def preview_action(
+        self,
+        action: str,
+        params: dict[str, Any],
+        policy_version_id: str | None = None,
+    ) -> dict[str, Any]:
+        """Offline counterfactual DRY_RUN evaluation with no queue or evidence writes.
+
+        Reserved strictly for non-enforcing postures (e.g. offline evaluation
+        and trajectory replay). Refuses to run under ``STAGING`` or ``PRODUCTION``
+        posture so an enforcing gateway can never route online decisions around
+        ``DeferQueue`` parking or blocking refusal/deferral evidence.
+        """
+        if is_enforcing(self._components.posture):
+            raise RuntimeError(
+                "SymbolicGovernor.preview_action is forbidden in enforcing posture "
+                f"({self._components.posture.value}); online validation must use "
+                "validate_action() so deferrals and refusals commit to the evidence chain."
+            )
+        return await self._evaluate_dry_run(
+            action,
+            params,
+            policy_version_id,
+            emit_side_effects=False,
+        )
+
+    async def _evaluate_dry_run(
+        self,
+        action: str,
+        params: dict[str, Any],
+        policy_version_id: str | None = None,
+        *,
+        emit_side_effects: bool = True,
+    ) -> dict[str, Any]:
         params = await bind_server_inputs(
             self._components.server_inputs, action, params
         )
@@ -180,13 +222,14 @@ class SymbolicGovernor:
             span.set_attribute("cage.governance_latency_ms", latency_ms)
 
             if not result.violations:
-                await _trace(
-                    result,
-                    action,
-                    Profile.DRY_RUN,
-                    "validate_action",
-                    GovernanceDecision.ALLOW,
-                )
+                if emit_side_effects:
+                    await _trace(
+                        result,
+                        action,
+                        Profile.DRY_RUN,
+                        "validate_action",
+                        GovernanceDecision.ALLOW,
+                    )
                 span.set_attribute("cage.verdict", GovernanceDecision.ALLOW)
                 span.set_attribute(OBSERVATION_OUTPUT, GovernanceDecision.ALLOW)
                 span.set_status(Status(StatusCode.OK))
@@ -226,22 +269,33 @@ class SymbolicGovernor:
             )
 
             if classification.decision == GovernanceDecision.NARROW:
-                return await self._narrow_candidate(action, params, result, meta, t0)
+                return await self._narrow_candidate(
+                    action,
+                    params,
+                    result,
+                    meta,
+                    t0,
+                    emit_side_effects=emit_side_effects,
+                )
 
             if classification.decision == GovernanceDecision.REQUIRE_APPROVAL:
                 meta = await self._reverified_narrow_hint(action, meta)
 
             # Unmapped decisions fall through to DENY (fail-closed).
             handler = _VERDICT_HANDLERS.get(classification.decision, handle_deny)
-            await _trace(
-                result,
-                action,
-                Profile.DRY_RUN,
-                "validate_action",
-                classification.decision
-                if classification.decision in _PENDING_DECISIONS
-                else GovernanceDecision.DENY,
-            )
+            if emit_side_effects:
+                await _trace(
+                    result,
+                    action,
+                    Profile.DRY_RUN,
+                    "validate_action",
+                    classification.decision
+                    if classification.decision in _PENDING_DECISIONS
+                    else GovernanceDecision.DENY,
+                )
+            handler_kwargs: dict[str, Any] = {"reliance": result.reliance}
+            if not emit_side_effects:
+                handler_kwargs["emit_side_effects"] = False
             verdict = handler(
                 action,
                 params,
@@ -249,7 +303,7 @@ class SymbolicGovernor:
                 list(result.tier_failures),
                 meta,
                 latency_ms,
-                reliance=result.reliance,
+                **handler_kwargs,
             )
             resolved = await verdict if inspect.isawaitable(verdict) else verdict
             return {**resolved, **_context_meta(result)}
@@ -305,6 +359,8 @@ class SymbolicGovernor:
         result: PipelineResult,
         meta: dict[str, Any],
         t0: float,
+        *,
+        emit_side_effects: bool = True,
     ) -> dict[str, Any]:
         """Offer a narrower's proposal only if the DRY_RUN profile passes on it.
 
@@ -315,14 +371,15 @@ class SymbolicGovernor:
         """
         proposal = meta.get("narrowed_params")
         if not isinstance(proposal, dict):
-            await _trace(
-                result,
-                action,
-                Profile.DRY_RUN,
-                "validate_action",
-                GovernanceDecision.DENY,
-            )
-            await _deny(action, params, result)
+            if emit_side_effects:
+                await _trace(
+                    result,
+                    action,
+                    Profile.DRY_RUN,
+                    "validate_action",
+                    GovernanceDecision.DENY,
+                )
+            await _deny(action, params, result, emit_side_effects=emit_side_effects)
         verified = await self._rebind(action, proposal)  # the params the response names
         ctx = StageContext(
             action=action, params=copy.deepcopy(verified), profile=Profile.DRY_RUN
@@ -330,19 +387,23 @@ class SymbolicGovernor:
         rerun = await run_pipeline(self.stages, ctx, profile=Profile.DRY_RUN)
         latency_ms = round((time.perf_counter() - t0) * 1000, 2)
         reverified = not rerun.violations
-        await _trace(
-            result,
-            action,
-            Profile.DRY_RUN,
-            "validate_action",
-            GovernanceDecision.NARROW if reverified else GovernanceDecision.DENY,
-            narrower_present=True,
-            clamped_params_valid=reverified,
-        )
+        if emit_side_effects:
+            await _trace(
+                result,
+                action,
+                Profile.DRY_RUN,
+                "validate_action",
+                GovernanceDecision.NARROW if reverified else GovernanceDecision.DENY,
+                narrower_present=True,
+                clamped_params_valid=reverified,
+            )
         trace.get_current_span().set_attribute(
             "cage.governance.narrow_reverified", reverified
         )
         if not reverified:
+            extra_kwargs: dict[str, Any] = (
+                {"emit_side_effects": False} if not emit_side_effects else {}
+            )
             if self._defers_on_reliance(rerun):
                 return {
                     **(
@@ -354,6 +415,7 @@ class SymbolicGovernor:
                             {**meta, **_ftra_meta(rerun), **_RELIANCE_DEFER_META},
                             latency_ms,
                             reliance=rerun.reliance,
+                            **extra_kwargs,
                         )
                     ),
                     **_context_meta(rerun),
@@ -371,6 +433,7 @@ class SymbolicGovernor:
                 deny_meta,
                 latency_ms,
                 reliance=rerun.reliance,
+                **extra_kwargs,
             )
             raise GovernanceError(
                 f"handle_deny returned without raising; refusing {action}"
@@ -1073,15 +1136,22 @@ _VERDICT_HANDLERS: dict[GovernanceDecision, Callable[..., Any]] = {
 
 
 async def _deny(
-    action: str, params: dict[str, Any], result: PipelineResult
+    action: str,
+    params: dict[str, Any],
+    result: PipelineResult,
+    *,
+    emit_side_effects: bool = True,
 ) -> NoReturn:
+    deny_kwargs: dict[str, Any] = {"reliance": result.reliance}
+    if not emit_side_effects:
+        deny_kwargs["emit_side_effects"] = False
     await handle_deny(
         action,
         params,
         list(result.violations),
         list(result.tier_failures),
         _ftra_meta(result),
-        reliance=result.reliance,
+        **deny_kwargs,
     )
     raise GovernanceError(
         f"handle_deny returned without raising; refusing {action}"

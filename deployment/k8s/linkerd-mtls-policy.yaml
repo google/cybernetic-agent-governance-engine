@@ -289,9 +289,6 @@ spec:
             value: "/healthz"
         - path:
             type: Exact
-            value: "/metrics"
-        - path:
-            type: Exact
             value: "/governance/jwks"
         - path:
             type: Exact

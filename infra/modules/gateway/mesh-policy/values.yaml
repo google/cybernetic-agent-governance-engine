@@ -21,6 +21,5 @@ trustedIdentities: []
 openExactPaths:
   - /health
   - /healthz
-  - /metrics
   - /governance/jwks
   - /governance/.well-known/jwks.json

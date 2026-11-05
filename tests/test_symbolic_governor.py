@@ -25,7 +25,7 @@ from src.gateway.governance import GovernanceError
 from tests.fixtures.approval import granted_approval
 from tests.fixtures.governor import make_governor
 
-pytestmark = pytest.mark.unit
+pytestmark = [pytest.mark.unit, pytest.mark.usefixtures("connected_evidence_sink")]
 
 
 # ---------------------------------------------------------------------------

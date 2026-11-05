@@ -39,7 +39,11 @@ from src.gateway.governance.jcs_canonicalizer import jcs_canonicalize_plan
 from src.gateway.infrastructure.redis_replication import ReplicationPolicy
 from tests.test_consequence_gateway import _make_mock_signer_with_keypair
 
-pytestmark = [pytest.mark.unit, pytest.mark.local]
+pytestmark = [
+    pytest.mark.unit,
+    pytest.mark.local,
+    pytest.mark.usefixtures("connected_evidence_sink"),
+]
 
 _MAGNITUDES = ConsequenceMagnitudes(
     (ConsequenceMagnitude("execute_trade", (MagnitudePath(("amount",), 2),)),)

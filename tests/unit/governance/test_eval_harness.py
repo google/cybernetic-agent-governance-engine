@@ -42,6 +42,7 @@ from src.gateway.governance.contracts import (
     ViolationKind,
 )
 from src.gateway.governance.decisions import GovernanceDecision
+from src.gateway.governance.env_posture import DeploymentPosture
 from src.gateway.governance.narrower import NarrowerRegistry
 from tests.fixtures.governor import default_classifier, make_governor
 
@@ -948,7 +949,9 @@ async def test_fiscal_and_cbf_tier_shadow_state_preview_without_redis() -> None:
 
 
 @pytest.mark.asyncio
-async def test_revalidate_post_hitl_rebind_inputs_refreshes_server_telemetry() -> None:
+async def test_revalidate_post_hitl_rebind_inputs_refreshes_server_telemetry(
+    connected_evidence_sink: Any,
+) -> None:
     """revalidate_post_hitl(rebind_inputs=True) refreshes server-owned inputs before OPA/Phase 2."""
     from collections.abc import Mapping
 
@@ -2074,3 +2077,39 @@ async def test_issue_472_certification_gate_and_eval_residuals(
     ):
         with pytest.raises(ValueError, match="forbidden"):
             _resolve_symbol(forbidden_target)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "posture",
+    [DeploymentPosture.STAGING, DeploymentPosture.PRODUCTION],
+)
+async def test_preview_action_refuses_enforcing_posture(
+    posture: DeploymentPosture,
+) -> None:
+    """SymbolicGovernor.preview_action raises RuntimeError under enforcing postures."""
+    gov = make_governor(
+        core_stages=(),
+        classifier=default_classifier(narrow_enabled=False),
+        domain_tiers=(_BoundedTransferTier(),),
+        posture=posture,
+    )
+    with pytest.raises(RuntimeError, match="forbidden in enforcing posture"):
+        await gov.preview_action(
+            "execute_transfer", {"amount": 250_000.0, "currency": "USD"}
+        )
+
+    harness = FoundationModelEvalHarness(gov)
+    with pytest.raises(RuntimeError, match="forbidden in enforcing posture"):
+        await harness.evaluate_trajectory(
+            trajectory_id="traj-enforcing",
+            model_id="test",
+            prompt="Transfer $250k",
+            steps=[
+                ToolActionStep(
+                    step_id=1,
+                    tool_name="execute_transfer",
+                    arguments={"amount": 250_000.0, "currency": "USD"},
+                )
+            ],
+        )

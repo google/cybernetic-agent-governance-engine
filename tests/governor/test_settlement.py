@@ -36,7 +36,11 @@ from src.gateway.governance.governor.reservation import HeldCommit
 from src.gateway.governance.governor.settlement import SettlementLedger
 from tests.fixtures.governor import make_governor
 
-pytestmark = [pytest.mark.unit, pytest.mark.local]
+pytestmark = [
+    pytest.mark.unit,
+    pytest.mark.local,
+    pytest.mark.usefixtures("connected_evidence_sink"),
+]
 
 
 class _Tier(MutatingTier):

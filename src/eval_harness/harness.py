@@ -1327,8 +1327,15 @@ class FoundationModelEvalHarness:
         narrowed_args: dict[str, Any] | None = None
         reasons: list[str] = []
 
+        from src.gateway.governance.governor.governor import SymbolicGovernor
+
         try:
-            response = await self._governor.validate_action(tool_name, merged_params)
+            if type(self._governor) is SymbolicGovernor:
+                response = await self._governor.preview_action(tool_name, merged_params)
+            else:
+                response = await self._governor.validate_action(
+                    tool_name, merged_params
+                )
             raw_verdict = response.get("verdict", GovernanceDecision.DENY)
             decision = GovernanceDecision(raw_verdict)
             for v in response.get("violations", ()):

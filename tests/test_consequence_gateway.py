@@ -199,8 +199,24 @@ def signer():
     return signer_obj
 
 
+@pytest.fixture(autouse=True)
+async def _connected_evidence_sink(monkeypatch: pytest.MonkeyPatch):
+    """Provide a FakeRedis-backed EvidenceStreamSink by default and stop its appender task."""
+    from src.gateway.governance.evidence.stream import EvidenceStreamSink
+
+    sink = EvidenceStreamSink()
+    sink._redis = fakeredis.aioredis.FakeRedis(decode_responses=True)
+    sink._running = True
+    monkeypatch.setattr("src.gateway.governance.evidence.stream._evidence_sink", sink)
+    yield sink
+    await sink.stop()
+
+
 @pytest.fixture
-def gateway(store: ConsequenceAuthorityStore, signer) -> ConsequenceGateway:
+def gateway(
+    store: ConsequenceAuthorityStore,
+    signer,
+) -> ConsequenceGateway:
     """ConsequenceGateway instance with fakeredis store and mock signer."""
     return ConsequenceGateway(store=store, signer=signer, magnitudes=_MAGNITUDES)
 
@@ -665,6 +681,64 @@ async def test_consequence_gateway_fails_closed_when_evidence_chain_unavailable(
     assert result.decision == ConsequenceDecision.BLOCK
     assert result.reason_code == "EVIDENCE_CHAIN_UNAVAILABLE"
     assert "chain head corrupted" in result.detail
+
+
+@pytest.mark.asyncio
+async def test_consequence_gateway_execute_fails_closed_when_sink_disconnected(
+    gateway: ConsequenceGateway,
+    signer,
+    action_payload: dict,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """An unstarted EvidenceStreamSink (_redis is None) downgrades EXECUTE to BLOCK."""
+    from src.gateway.governance.evidence.stream import EvidenceStreamSink
+
+    disconnected_sink = EvidenceStreamSink()
+    assert disconnected_sink._redis is None
+    monkeypatch.setattr(
+        "src.gateway.governance.evidence.stream.get_evidence_sink",
+        lambda: disconnected_sink,
+    )
+
+    action_digest = hashlib.sha256(jcs_canonicalize_plan(action_payload)).hexdigest()
+    token = await ConsequenceToken.mint(
+        sub="actor-123",
+        tid="thread-456",
+        rec="rec-011-disconnected",
+        act=action_digest,
+        ver="v1",
+        ttl_seconds=60,
+        signer=signer,
+    )
+
+    result = await gateway.evaluate(token=token, action_payload=action_payload)
+    assert result.decision == ConsequenceDecision.BLOCK
+    assert result.reason_code == "EVIDENCE_CHAIN_UNAVAILABLE"
+    assert "Redis connection not established" in result.detail
+
+
+@pytest.mark.asyncio
+async def test_consequence_gateway_refusal_raises_when_evidence_chain_unavailable(
+    gateway: ConsequenceGateway,
+    action_payload: dict,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Under EVIDENCE_CHAIN_BLOCKING=true, a BLOCK refusal fails closed if refusal evidence cannot commit."""
+    from src.gateway.governance.evidence.stream import (
+        EvidenceChainUnavailableError,
+        EvidenceStreamSink,
+    )
+
+    disconnected_sink = EvidenceStreamSink()
+    monkeypatch.setattr(
+        "src.gateway.governance.evidence.stream.get_evidence_sink",
+        lambda: disconnected_sink,
+    )
+
+    with pytest.raises(
+        EvidenceChainUnavailableError, match="Redis connection not established"
+    ):
+        await gateway.evaluate(token="not-a-valid-token", action_payload=action_payload)
 
 
 @pytest.mark.asyncio
