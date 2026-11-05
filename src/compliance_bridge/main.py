@@ -43,13 +43,13 @@ import re
 import time
 from collections import OrderedDict
 from contextlib import asynccontextmanager
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import TYPE_CHECKING, Any, Literal
 
 from fastapi import BackgroundTasks, Depends, FastAPI, HTTPException, Query, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_validator
 from sse_starlette.sse import EventSourceResponse
 
 if TYPE_CHECKING:
@@ -74,7 +74,14 @@ def _ensure_langfuse_imported() -> None:
 
 
 from .audit_workflow import run_audit_workflow
-from .auth import OperatorPrincipal, require_internal_token, require_operator_identity
+from .auth import (
+    OperatorPrincipal,
+    ensure_human_operator_principal,
+    require_human_operator_identity,
+    require_internal_token,
+    require_operator_identity,
+    validate_operator_identity_posture,
+)
 from .cer_index import CERIndex
 from .cmek_guard import validate_cmek_configuration
 from .lula_scheduler import run_lula_scheduler
@@ -256,6 +263,11 @@ async def lifespan(app: FastAPI):  # type: ignore[no-untyped-def]
         logger.info("✅ KMS batch signer started")
     else:
         logger.info("[INFO] KMS batch signer disabled (KMS_BATCH_ENABLED != true)")
+
+    # POAM-2026-196 (F-40, F-41): Validate HITL human operator allowlist posture.
+    # Under an enforcing posture, CAGE_TRUSTED_OPERATOR_IDENTITIES must be non-empty
+    # and must never contain workload identities (spiffe:// or Linkerd SAs).
+    validate_operator_identity_posture()
 
     # Start background tasks
     _sla_task = asyncio.create_task(run_sla_monitor(), name="sla-monitor")
@@ -1835,55 +1847,78 @@ async def defer_inject(
 
 
 class DeferEscalateRequest(BaseModel):
-    """Request body for operator approval of a deferred execution.
+    """Request body for human operator approval of a deferred execution (POAM-2026-196).
 
-    BREAKING CHANGE: operator_urn, session_id, and auth_method fields removed.
-    Identity is now extracted from verified transport substrate (SPIFFE SVID)
-    or OIDC claims via require_operator_identity dependency. Self-asserted
-    identity parameters are rejected to prevent spoofing attacks.
+    Self-asserted identity fields (``operator_urn``, ``session_id``, ``auth_method``)
+    are forbidden in the body and extracted exclusively from verified human OIDC
+    credentials via ``require_human_operator_identity``. Under an enforcing
+    ``DeploymentPosture``, ``client_data_json`` and ``challenge_binding`` are
+    mandatory and verified against ``ApprovalRecord.verify_webauthn_challenge()``.
     """
 
-    pass  # All fields removed; identity comes from dependency injection
+    model_config = ConfigDict(extra="forbid")
+
+    client_data_json: str | None = Field(
+        default=None,
+        description="Base64url-encoded W3C CollectedClientData JSON (type=webauthn.get).",
+    )
+    challenge_binding: str | None = Field(
+        default=None,
+        description="Hex-encoded 32-byte SHA-256 challenge digest bound to the approval.",
+    )
+    credential_id: str | None = Field(
+        default=None,
+        description="Optional base64url-encoded WebAuthn credential ID.",
+    )
+    authenticator_data: str | None = Field(
+        default=None,
+        description="Optional base64url-encoded WebAuthn authenticatorData.",
+    )
+    signature: str | None = Field(
+        default=None,
+        description="Optional base64url-encoded WebAuthn assertion signature.",
+    )
 
 
 @app.post(
     "/v1/defer/{defer_id}/escalate",
     tags=["governance"],
-    summary="Escalate a deferred token with dual-control approval",
+    summary="Escalate a deferred token with human dual-control approval",
 )
 async def defer_escalate(
     defer_id: str,
     body: DeferEscalateRequest,
-    _token: str = Depends(require_internal_token),
-    operator: OperatorPrincipal = Depends(require_operator_identity),
+    operator: OperatorPrincipal = Depends(require_human_operator_identity),
 ) -> JSONResponse:
-    """Escalate a DEFER-parked token with operator approval.
+    """Escalate a DEFER-parked token with verified human operator approval.
 
-    BREAKING CHANGE (Stream B residual gap closure): Operator identity is now
-    extracted from verified SPIFFE SVID (primary) or OIDC JWT (gated fallback).
-    Self-asserted operator_urn/session_id/auth_method body parameters rejected.
-
-    The endpoint enforces dual-control quorum: a token requires multiple distinct
-    operator approvals (threshold determined by defer_reason) before transitioning
-    to ESCALATED state.
-
-    Args:
-        defer_id: The token's defer_id.
-        body: Empty request body (identity fields removed in breaking change)
-        _token: Internal service token (required, injected)
-        operator: Verified operator identity from SVID/OIDC (injected)
-
-    Returns:
-        JSON response with status:
-        - "partially_approved" — approval recorded but quorum not yet reached
-        - "escalated" — quorum threshold met, token resolved
-
-    Raises:
-        401 Unauthorized: Missing or invalid authentication.
-        409 Conflict: Operator has already approved this token.
-        404 Not Found: Token does not exist or already resolved.
-        503 Service Unavailable: Redis connection failed.
+    Authenticates human operators via ``require_human_operator_identity`` (out-of-band
+    ``kid``-verified OIDC JWT in ``CAGE_TRUSTED_OPERATOR_IDENTITIES``; does not
+    require workload ``CAGE_INTERNAL_TOKEN``). Workload SVID identities are
+    refused with HTTP 403, and under an enforcing ``DeploymentPosture`` both
+    ``client_data_json`` and ``challenge_binding`` are mandatory.
     """
+    # POAM-2026-196 (F-40, F-41): Defense-in-depth check for direct callers.
+    operator = ensure_human_operator_principal(operator)
+
+    from src.gateway.governance.env_posture import DeploymentPosture
+
+    if DeploymentPosture.from_env().is_enforcing() and (
+        not (body.client_data_json and body.client_data_json.strip())
+        or not (body.challenge_binding and body.challenge_binding.strip())
+    ):
+        raise HTTPException(
+            status_code=400,
+            detail={
+                "error": "WEBAUTHN_BINDING_REQUIRED",
+                "message": (
+                    "client_data_json and challenge_binding are mandatory in "
+                    "enforcing postures (POAM-2026-196)."
+                ),
+                "defer_id": defer_id,
+            },
+        )
+
     redis_url = _resolve_defer_redis_url()
 
     try:
@@ -1901,13 +1936,27 @@ async def defer_escalate(
             detail={"error": "DEFER_QUEUE_UNAVAILABLE", "message": str(exc)},
         )
 
-    # Create approval record from verified operator identity
-    approval_record = ApprovalRecord(
-        approver_urn=operator.operator_urn,
-        approved_at_utc=datetime.utcnow().isoformat() + "Z",
-        auth_method=operator.channel_provenance,
-        auth_principal_hash=operator.auth_principal_hash,
-    )
+    try:
+        approval_record = ApprovalRecord(
+            approver_urn=operator.operator_urn,
+            approved_at_utc=datetime.now(tz=timezone.utc).isoformat(),
+            auth_method=operator.channel_provenance,
+            auth_principal_hash=operator.auth_principal_hash,
+            client_data_json=body.client_data_json,
+            challenge_binding=body.challenge_binding,
+            credential_id=body.credential_id,
+            authenticator_data=body.authenticator_data,
+            signature=body.signature,
+        )
+    except (ValidationError, ValueError) as val_exc:
+        raise HTTPException(
+            status_code=400,
+            detail={
+                "error": "APPROVAL_VALIDATION_FAILED",
+                "message": str(val_exc),
+                "defer_id": defer_id,
+            },
+        ) from val_exc
 
     try:
         queue = get_shared_defer_queue(redis_url)

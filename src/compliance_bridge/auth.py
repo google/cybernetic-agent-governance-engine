@@ -22,10 +22,16 @@ import logging
 import os
 import re
 from dataclasses import dataclass
-from typing import Literal
+from typing import Any, Literal
 
 from fastapi import Header, HTTPException, Request
 
+from src.compliance_bridge.oidc_verifier import (
+    load_static_operator_jwks,
+    validate_jwks_uri,
+    verify_operator_oidc_token,
+)
+from src.gateway.governance.env_posture import is_enforcing
 from src.gateway.server.workload_identity import is_pod_local_connection
 
 logger = logging.getLogger(__name__)
@@ -91,7 +97,7 @@ def _linkerd_id_to_spiffe(l5d_id: str) -> str | None:
 
 
 def _trusted_operator_identities() -> frozenset[str]:
-    """Return configured trusted operator identities (Linkerd DNS or spiffe:// URIs)."""
+    """Return configured trusted human operator identities."""
     raw = os.environ.get("CAGE_TRUSTED_OPERATOR_IDENTITIES", "")
     return frozenset(part.strip() for part in raw.split(",") if part.strip())
 
@@ -123,16 +129,6 @@ async def require_internal_token(
     ``CAGE_ALLOW_DEV_UNAUTHENTICATED=true`` (GHSA-529c-23c8-3m42 / GHSA-qrg7-27x4-mq39).
     Accepts token from X-Cage-Internal-Token or Authorization: Bearer.
     Matches against CAGE_INTERNAL_TOKEN or COMPLIANCE_BRIDGE_INTERNAL_TOKEN.
-
-    Args:
-        request: The FastAPI request object
-        x_cage_internal_token: The internal auth token from request headers
-
-    Returns:
-        The validated token value, or "dev-unauthenticated" under dual-condition dev opt-in
-
-    Raises:
-        HTTPException: 401 if token is missing or invalid
     """
     expected_token = os.environ.get("CAGE_INTERNAL_TOKEN") or os.environ.get(
         "COMPLIANCE_BRIDGE_INTERNAL_TOKEN"
@@ -150,14 +146,12 @@ async def require_internal_token(
     allow_dev_unauth = (
         os.environ.get("CAGE_ALLOW_DEV_UNAUTHENTICATED", "false").lower() == "true"
     )
-    # Dev-mode degradation requires dual-condition opt-in
     if cage_env in ("dev", "development") and allow_dev_unauth and not token_val:
         logger.warning(
             "⚠️  Internal token missing in dev mode (CAGE_ALLOW_DEV_UNAUTHENTICATED=true); allowing unauthenticated access"
         )
         return "dev-unauthenticated"
 
-    # Token is mandatory unless dual-condition dev opt-in is active
     if not token_val:
         raise HTTPException(
             status_code=401,
@@ -170,48 +164,192 @@ async def require_internal_token(
             detail="CAGE_INTERNAL_TOKEN or COMPLIANCE_BRIDGE_INTERNAL_TOKEN not configured",
         )
 
-    # Constant-time comparison to prevent timing attacks
     if not hmac.compare_digest(token_val, expected_token):
         raise HTTPException(status_code=401, detail="Invalid internal token")
 
     return token_val
 
 
-async def require_operator_identity(request: Request) -> OperatorPrincipal:
-    """Extract verified operator identity from Linkerd mTLS SVID or OIDC claims.
+def is_workload_identity(urn: str) -> bool:
+    """Return True if ``urn`` is a workload/service-account identity rather than a human operator."""
+    if not isinstance(urn, str):
+        return False
+    candidate = urn.strip()
+    if not candidate:
+        return False
+    return (
+        candidate.startswith("spiffe://")
+        or candidate.startswith("principal://agents.")
+        or ".serviceaccount.identity.linkerd." in candidate
+        or candidate.endswith(".svc.cluster.local")
+        or bool(_LINKERD_IDENTITY.fullmatch(candidate))
+    )
 
-    Identity precedence (fail-closed, evaluated not negotiated):
-    1. **SPIFFE SVID / Linkerd mTLS** (primary): Extracted from Linkerd inbound
-       proxy ``l5d-client-id`` header, accepted only on a connection from inside
-       the pod, or transport-level ``request.attributes.source.principal``
-       (never from client-controlled ``x-cage-source-principal`` headers;
-       GHSA-529c-23c8-3m42 / GHSA-qrg7-27x4-mq39).
-    2. **OIDC JWT** (fallback): Only if ``CAGE_OPERATOR_IDENTITY_ALLOW_OIDC=true``.
-    3. **Dev synthetic** (dev-only): If ``CAGE_ENV=dev`` AND
-       ``CAGE_OPERATOR_IDENTITY_ALLOW_DEV_SYNTHETIC=true``.
 
-    Args:
-        request: FastAPI request carrying Linkerd ``l5d-client-id``, transport
-                 ``.attributes.source.principal``, or OIDC ``Authorization``.
+def get_trusted_operator_identities() -> frozenset[str]:
+    """Return the configured frozenset of trusted human operator identities."""
+    return _trusted_operator_identities()
 
-    Returns:
-        OperatorPrincipal with verified identity and provenance channel
 
-    Raises:
-        HTTPException: 401 if no valid identity source exists, 403 if untrusted,
-                       or 400 if dev-prefix used outside dev mode
+def validate_operator_identity_posture() -> None:
+    """Validate HITL operator identity posture at startup (POAM-2026-196, F-40, F-41).
+
+    Under an enforcing posture (staging/prod), ``CAGE_TRUSTED_OPERATOR_IDENTITIES``
+    must be non-empty and must never contain workload identities (``spiffe://`` or
+    Linkerd ``.serviceaccount.identity.linkerd.``). Workload identities in
+    ``CAGE_TRUSTED_OPERATOR_IDENTITIES`` are rejected in all postures, and any
+    configured ``CAGE_OPERATOR_JWKS_URI`` must pass scheme validation.
     """
-    if hasattr(request.headers, "get") and request.headers.get(
-        "x-cage-source-principal"
+    trusted = get_trusted_operator_identities()
+    for entry in sorted(trusted):
+        if is_workload_identity(entry):
+            raise RuntimeError(
+                f"FATAL [POAM-2026-196]: Workload identity {entry!r} is not permitted in "
+                "CAGE_TRUSTED_OPERATOR_IDENTITIES; only human OIDC operator identities may "
+                "be allowlisted as HITL approvers."
+            )
+    if is_enforcing() and not trusted:
+        raise RuntimeError(
+            "FATAL [POAM-2026-196]: CAGE_TRUSTED_OPERATOR_IDENTITIES is empty in an "
+            "enforcing posture. Configure at least one human OIDC operator identity."
+        )
+    jwks_uri = os.environ.get("CAGE_OPERATOR_JWKS_URI", "").strip()
+    if jwks_uri:
+        try:
+            validate_jwks_uri(jwks_uri)
+        except ValueError as exc:
+            raise RuntimeError(
+                f"FATAL [POAM-2026-196]: Invalid CAGE_OPERATOR_JWKS_URI: {exc}"
+            ) from exc
+
+
+def _load_operator_jwks_by_kid() -> dict[str, Any]:
+    """Load out-of-band static operator OIDC verification keys indexed by ``kid``."""
+    return load_static_operator_jwks()
+
+
+async def validate_operator_oidc_token(
+    token: str,
+) -> tuple[bool, dict[str, Any], str]:
+    """Cryptographically verify an operator OIDC JWT via ``oidc_verifier``."""
+    return await verify_operator_oidc_token(token)
+
+
+def ensure_human_operator_principal(operator: OperatorPrincipal) -> OperatorPrincipal:
+    """Refuse workload identities (SVID) as HITL approvers and enforce the human operator allowlist."""
+    if operator.channel_provenance == "SVID" or is_workload_identity(
+        operator.operator_urn
     ):
         logger.warning(
-            "Rejected unverified client-supplied x-cage-source-principal header "
-            "(GHSA-529c-23c8-3m42 / GHSA-qrg7-27x4-mq39)"
+            "Refused HITL approval from workload identity %r (channel=%s)",
+            operator.operator_urn,
+            operator.channel_provenance,
+        )
+        raise HTTPException(
+            status_code=403,
+            detail=(
+                "Workload identities (SVID) cannot approve HITL escalations; "
+                "human OIDC operator identity required."
+            ),
         )
 
-    # Channel 1: Linkerd mTLS workload identity (l5d-client-id) or transport SVID
-    l5d_id, duplicate_headers = _linkerd_client_id_header(request)
-    if duplicate_headers:
+    if operator.channel_provenance == "DEV_SYNTHETIC":
+        cage_env = os.environ.get("CAGE_ENV", _CAGE_ENV)
+        allow_dev_syn = (
+            os.environ.get(
+                "CAGE_OPERATOR_IDENTITY_ALLOW_DEV_SYNTHETIC", "false"
+            ).lower()
+            == "true"
+        )
+        if (
+            cage_env != "dev"
+            or not allow_dev_syn
+            or not operator.operator_urn.startswith("urn:cage:dev:")
+        ):
+            raise HTTPException(
+                status_code=403,
+                detail="DEV_SYNTHETIC operator identity is not permitted outside dual-condition dev mode.",
+            )
+        return operator
+
+    if operator.channel_provenance != "OIDC":
+        raise HTTPException(
+            status_code=403,
+            detail=f"Unsupported operator channel {operator.channel_provenance!r} for HITL approval.",
+        )
+
+    trusted = get_trusted_operator_identities()
+    if not trusted:
+        logger.warning(
+            "Refused HITL approval for %r: CAGE_TRUSTED_OPERATOR_IDENTITIES is empty",
+            operator.operator_urn,
+        )
+        raise HTTPException(
+            status_code=403,
+            detail=(
+                "CAGE_TRUSTED_OPERATOR_IDENTITIES is empty; fail-closed operator "
+                "allowlist denies all HITL approvals."
+            ),
+        )
+    for entry in sorted(trusted):
+        if is_workload_identity(entry):
+            logger.error(
+                "Refused HITL approval: workload identity %r found in CAGE_TRUSTED_OPERATOR_IDENTITIES",
+                entry,
+            )
+            raise HTTPException(
+                status_code=403,
+                detail=(
+                    f"Workload identity '{entry}' is not permitted in "
+                    "CAGE_TRUSTED_OPERATOR_IDENTITIES."
+                ),
+            )
+    if operator.operator_urn not in trusted:
+        logger.warning(
+            "OIDC principal %r not in CAGE_TRUSTED_OPERATOR_IDENTITIES",
+            operator.operator_urn,
+        )
+        raise HTTPException(
+            status_code=403,
+            detail=(
+                f"OIDC principal '{operator.operator_urn}' is not authorized in "
+                "CAGE_TRUSTED_OPERATOR_IDENTITIES"
+            ),
+        )
+    return operator
+
+
+def _extract_oidc_bearer_candidate(request: Request) -> str | None:
+    """Extract an OIDC JWT candidate from ``X-Cage-Operator-Token`` or ``Authorization: Bearer``."""
+    headers = getattr(request, "headers", None)
+    if headers is None:
+        return None
+    op_token = headers.get("x-cage-operator-token") or headers.get(
+        "X-Cage-Operator-Token"
+    )
+    if isinstance(op_token, str) and op_token.strip():
+        raw = op_token.strip()
+        return raw[7:].strip() if raw.startswith("Bearer ") else raw
+
+    auth_header = headers.get("authorization") or headers.get("Authorization") or ""
+    if isinstance(auth_header, str) and auth_header.startswith("Bearer "):
+        candidate = auth_header[7:].strip()
+        expected_internal = os.environ.get("CAGE_INTERNAL_TOKEN") or os.environ.get(
+            "COMPLIANCE_BRIDGE_INTERNAL_TOKEN"
+        )
+        if expected_internal and hmac.compare_digest(candidate, expected_internal):
+            return None
+        return candidate
+    return None
+
+
+async def require_operator_identity(request: Request) -> OperatorPrincipal:
+    """Extract and verify operator or caller identity from substrate headers or OIDC claims."""
+    l5d_id, multi_l5d = _linkerd_client_id_header(request)
+    if multi_l5d:
+        logger.warning(
+            "Multiple or comma-joined l5d-client-id headers detected — rejecting request"
+        )
         raise HTTPException(
             status_code=401,
             detail="Multiple l5d-client-id headers presented",
@@ -219,8 +357,6 @@ async def require_operator_identity(request: Request) -> OperatorPrincipal:
     if l5d_id is not None and not is_pod_local_connection(
         getattr(request, "scope", {})
     ):
-        # Only the pod's own Linkerd proxy writes this header. From any other
-        # peer it names whichever operator the caller chose.
         client = getattr(request, "client", None)
         logger.warning(
             "Refused l5d-client-id from %s: it did not come through the pod's "
@@ -231,34 +367,113 @@ async def require_operator_identity(request: Request) -> OperatorPrincipal:
             status_code=401,
             detail="l5d-client-id did not come through the Linkerd proxy",
         )
+
+    # Channel 1 (Human Operator OIDC): Evaluated when OIDC is enabled and an OIDC
+    # token is presented, even if the request also traversed a Linkerd proxy.
+    allow_oidc = (
+        os.environ.get("CAGE_OPERATOR_IDENTITY_ALLOW_OIDC", "false").lower() == "true"
+    )
+    oidc_token = _extract_oidc_bearer_candidate(request) if allow_oidc else None
+    if allow_oidc and oidc_token:
+        is_valid, jwt_claims, err_reason = await validate_operator_oidc_token(
+            oidc_token
+        )
+        if not is_valid:
+            logger.warning("OIDC operator assertion rejected: %s", err_reason)
+            raise HTTPException(
+                status_code=401,
+                detail=f"OIDC JWT validation failed: {err_reason}",
+            )
+        jwt_sub = str(jwt_claims.get("sub", "")).strip()
+        if is_workload_identity(jwt_sub):
+            logger.warning("Rejected workload identity %r in OIDC sub claim", jwt_sub)
+            raise HTTPException(
+                status_code=403,
+                detail=(
+                    f"Workload identity '{jwt_sub}' cannot authenticate as a "
+                    "human OIDC operator."
+                ),
+            )
+        trusted = get_trusted_operator_identities()
+        if not trusted:
+            logger.warning(
+                "OIDC operator authentication failed closed: CAGE_TRUSTED_OPERATOR_IDENTITIES is empty"
+            )
+            raise HTTPException(
+                status_code=403,
+                detail=(
+                    "CAGE_TRUSTED_OPERATOR_IDENTITIES is empty; fail-closed operator "
+                    "allowlist denies all OIDC principals."
+                ),
+            )
+        for entry in sorted(trusted):
+            if is_workload_identity(entry):
+                logger.error(
+                    "Workload identity %r found in CAGE_TRUSTED_OPERATOR_IDENTITIES",
+                    entry,
+                )
+                raise HTTPException(
+                    status_code=403,
+                    detail=(
+                        f"Workload identity '{entry}' is not permitted in "
+                        "CAGE_TRUSTED_OPERATOR_IDENTITIES."
+                    ),
+                )
+        if jwt_sub not in trusted:
+            logger.warning(
+                "OIDC principal %r not in CAGE_TRUSTED_OPERATOR_IDENTITIES",
+                jwt_sub,
+            )
+            raise HTTPException(
+                status_code=403,
+                detail=(
+                    f"OIDC principal '{jwt_sub}' is not authorized in "
+                    "CAGE_TRUSTED_OPERATOR_IDENTITIES"
+                ),
+            )
+        principal_hash = hashlib.sha256(jwt_sub.encode("utf-8")).hexdigest()
+        return OperatorPrincipal(
+            operator_urn=jwt_sub,
+            channel_provenance="OIDC",
+            auth_principal_hash=principal_hash,
+        )
+
+    # Channel 2 (SPIFFE SVID / Linkerd mTLS workload identity)
     try:
         svid: str | None = None
         if isinstance(l5d_id, str):
             svid = _linkerd_id_to_spiffe(l5d_id)
             if svid is None:
+                logger.warning("Malformed l5d-client-id header rejected: %r", l5d_id)
                 raise HTTPException(
                     status_code=401,
                     detail="Malformed l5d-client-id workload identity header",
                 )
         else:
-            attr_principal = getattr(
-                getattr(request, "attributes", None), "source", {}
-            ).get("principal")
-            if isinstance(attr_principal, str) and _SPIFFE_ID.fullmatch(attr_principal):
-                svid = attr_principal
+            raw_attr = None
+            attrs = getattr(request, "attributes", None)
+            if isinstance(attrs, dict):
+                raw_attr = attrs.get("source.principal")
+            elif attrs is not None:
+                src = getattr(attrs, "source", None)
+                if isinstance(src, dict):
+                    raw_attr = src.get("principal")
+            if isinstance(raw_attr, str) and _SPIFFE_ID.fullmatch(raw_attr):
+                svid = raw_attr
 
-        if isinstance(svid, str) and _SPIFFE_ID.fullmatch(svid):
+        if svid:
             trusted = _trusted_operator_identities()
             if trusted and svid not in trusted and (l5d_id not in trusted):
                 logger.warning(
-                    "Operator SVID %s not in CAGE_TRUSTED_OPERATOR_IDENTITIES", svid
+                    "SVID principal %r (raw=%r) not in CAGE_TRUSTED_OPERATOR_IDENTITIES",
+                    svid,
+                    l5d_id,
                 )
                 raise HTTPException(
                     status_code=403,
-                    detail="Operator workload identity is not authorized",
+                    detail=f"Operator principal '{svid}' is not authorized in CAGE_TRUSTED_OPERATOR_IDENTITIES",
                 )
-            principal_hash = hashlib.sha256(svid.encode()).hexdigest()
-            logger.info(f"✅ Operator identity verified via SVID: {svid[:30]}...")
+            principal_hash = hashlib.sha256(svid.encode("utf-8")).hexdigest()
             return OperatorPrincipal(
                 operator_urn=svid,
                 channel_provenance="SVID",
@@ -266,92 +481,49 @@ async def require_operator_identity(request: Request) -> OperatorPrincipal:
             )
     except HTTPException:
         raise
-    except Exception as e:
-        logger.warning(f"⚠️  SVID extraction failed: {e}")
+    except Exception as exc:
+        logger.debug("SVID extraction failed: %s", exc)
 
-    # Channel 2: OIDC JWT sub claim (gated fallback)
-    allow_oidc = (
-        os.environ.get("CAGE_OPERATOR_IDENTITY_ALLOW_OIDC", "false").lower() == "true"
-    )
-    if allow_oidc:
-        auth_header = (
-            request.headers.get("authorization")
-            if hasattr(request.headers, "get")
-            else None
-        )
-        if auth_header and auth_header.startswith("Bearer "):
-            token = auth_header[len("Bearer ") :].strip()
-            try:
-                jwt_sub: str | None = None
-                state = getattr(request, "state", None)
-                jwt_claims = getattr(state, "jwt_claims", None)
-                if isinstance(jwt_claims, dict):
-                    jwt_sub = jwt_claims.get("sub")
-                elif token:
-                    from src.compliance_bridge.oidc_verifier import (
-                        verify_operator_oidc_token,
-                    )
-
-                    valid, claims, _ = await verify_operator_oidc_token(token)
-                    if valid and isinstance(claims, dict):
-                        jwt_sub = claims.get("sub")
-                if isinstance(jwt_sub, str) and jwt_sub.strip():
-                    trusted = _trusted_operator_identities()
-                    if trusted and jwt_sub not in trusted:
-                        logger.warning(
-                            "Operator OIDC sub %s not in CAGE_TRUSTED_OPERATOR_IDENTITIES",
-                            jwt_sub,
-                        )
-                        raise HTTPException(
-                            status_code=403,
-                            detail="Operator OIDC identity is not authorized",
-                        )
-                    principal_hash = hashlib.sha256(jwt_sub.encode()).hexdigest()
-                    logger.info(
-                        f"✅ Operator identity verified via OIDC: {jwt_sub[:30]}..."
-                    )
-                    return OperatorPrincipal(
-                        operator_urn=jwt_sub,
-                        channel_provenance="OIDC",
-                        auth_principal_hash=principal_hash,
-                    )
-            except HTTPException:
-                raise
-            except Exception as e:
-                logger.warning(f"⚠️  OIDC JWT extraction failed: {e}")
-
-    # Channel 3: Dev-mode synthetic principal (dual-condition guard)
-    allow_dev_synthetic = (
+    # Channel 3: Dev-mode synthetic (dual-condition gate)
+    env_override = os.environ.get("CAGE_ENV")
+    enforcing_env = (env_override or _CAGE_ENV) in ("staging", "production", "prod")
+    is_dev = not enforcing_env and (_CAGE_ENV == "dev" or env_override == "dev")
+    allow_dev_syn = (
         os.environ.get("CAGE_OPERATOR_IDENTITY_ALLOW_DEV_SYNTHETIC", "false").lower()
         == "true"
     )
-    env_override = os.environ.get("CAGE_ENV", "").lower()
-    is_dev_posture = _CAGE_ENV in ("dev", "development") and env_override not in (
-        "prod",
-        "production",
-        "staging",
-    )
-    if is_dev_posture and allow_dev_synthetic:
-        # Extract from custom dev header
-        dev_principal = request.headers.get("x-cage-dev-operator-urn")
-        if dev_principal:
-            # Enforce reserved prefix
-            if not dev_principal.startswith("urn:cage:dev:"):
+    if is_dev and allow_dev_syn:
+        dev_urn = request.headers.get("x-cage-dev-operator-urn")
+        if dev_urn:
+            if not dev_urn.startswith("urn:cage:dev:"):
                 raise HTTPException(
                     status_code=400,
-                    detail="Dev-mode operator URN must start with 'urn:cage:dev:' prefix",
+                    detail="Dev synthetic operator URN must start with 'urn:cage:dev:' prefix",
                 )
-            principal_hash = hashlib.sha256(dev_principal.encode()).hexdigest()
-            logger.warning(f"⚠️  DEV-MODE: Synthetic operator identity: {dev_principal}")
+            logger.warning(
+                "⚠️  Using DEV_SYNTHETIC operator identity: %s (never valid in production)",
+                dev_urn,
+            )
+            principal_hash = hashlib.sha256(dev_urn.encode("utf-8")).hexdigest()
             return OperatorPrincipal(
-                operator_urn=dev_principal,
+                operator_urn=dev_urn,
                 channel_provenance="DEV_SYNTHETIC",
                 auth_principal_hash=principal_hash,
             )
 
-    # No valid identity source found - fail closed
-    logger.error("❌ No valid operator identity found in request")
+    # Fail-closed: No valid operator identity found
     raise HTTPException(
         status_code=401,
-        detail="No verified operator identity (SVID/OIDC/dev-synthetic)",
+        detail=(
+            "No verified operator identity found. Required: OIDC JWT "
+            "(if CAGE_OPERATOR_IDENTITY_ALLOW_OIDC=true), SPIFFE SVID "
+            "(l5d-client-id), or dev header (if CAGE_ENV=dev and "
+            "CAGE_OPERATOR_IDENTITY_ALLOW_DEV_SYNTHETIC=true)."
+        ),
     )
+
+
+async def require_human_operator_identity(request: Request) -> OperatorPrincipal:
+    """Extract and verify a human operator identity for HITL approval endpoints (POAM-2026-196)."""
+    principal = await require_operator_identity(request)
+    return ensure_human_operator_principal(principal)

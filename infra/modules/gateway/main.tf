@@ -160,12 +160,7 @@ resource "kubernetes_deployment" "gateway" {
             name           = "metrics"
           }
 
-          env_from {
-            secret_ref {
-              name = "advisor-secrets"
-            }
-          }
-
+          # Secrets from gateway-secrets (R-2, F-43, F-84)
           env_from {
             secret_ref {
               name = "gateway-secrets"
@@ -235,7 +230,7 @@ resource "kubernetes_deployment" "gateway" {
             name = "OTEL_EXPORTER_OTLP_HEADERS"
             value_from {
               secret_key_ref {
-                name     = "advisor-secrets"
+                name     = "gateway-secrets"
                 key      = "OTEL_EXPORTER_OTLP_HEADERS"
                 optional = true
               }
@@ -281,7 +276,7 @@ resource "kubernetes_deployment" "gateway" {
             name = "REDIS_PASSWORD"
             value_from {
               secret_key_ref {
-                name     = "advisor-secrets"
+                name     = "gateway-secrets"
                 key      = "REDIS_PASSWORD"
                 optional = true
               }
@@ -326,9 +321,9 @@ resource "kubernetes_deployment" "gateway" {
             value = "hybrid-gateway"
           }
           # Causal-tier telemetry (CTRL_TEL_003). The kernel reads only the
-          # vendor-neutral TELEMETRY_* names; they map the Langfuse project keys
-          # already held in advisor-secrets. Enforcing postures require
-          # CAGE_TELEMETRY_PROVIDER to be set explicitly.
+          # vendor-neutral TELEMETRY_* names from gateway-secrets
+          # (isolated from the governed advisor Secret; R-2, F-84). Enforcing
+          # postures require CAGE_TELEMETRY_PROVIDER to be set explicitly.
           env {
             name  = "CAGE_TELEMETRY_PROVIDER"
             value = "remote"
@@ -341,8 +336,8 @@ resource "kubernetes_deployment" "gateway" {
             name = "TELEMETRY_PUBLIC_KEY"
             value_from {
               secret_key_ref {
-                name = "advisor-secrets"
-                key  = "LANGFUSE_PUBLIC_KEY"
+                name = "gateway-secrets"
+                key  = "TELEMETRY_PUBLIC_KEY"
               }
             }
           }
@@ -350,8 +345,8 @@ resource "kubernetes_deployment" "gateway" {
             name = "TELEMETRY_SECRET_KEY"
             value_from {
               secret_key_ref {
-                name = "advisor-secrets"
-                key  = "LANGFUSE_SECRET_KEY"
+                name = "gateway-secrets"
+                key  = "TELEMETRY_SECRET_KEY"
               }
             }
           }

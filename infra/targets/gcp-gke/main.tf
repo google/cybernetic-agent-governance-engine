@@ -934,6 +934,12 @@ module "compliance_bridge" {
   service_account_name = kubernetes_service_account.workload["compliance_bridge"].metadata[0].name
   evidence_kms_key     = local.compliance_evidence_key_version
 
+  # POAM-2026-196: Human operator OIDC trust-anchor and allowlist configuration.
+  trusted_operator_identities = var.trusted_operator_identities
+  operator_oidc_issuer        = var.operator_oidc_issuer
+  operator_oidc_audience      = var.operator_oidc_audience
+  operator_jwks_uri           = var.operator_jwks_uri
+
   depends_on = [module.langfuse, module.vllm, module.worm_bucket, module.memorystore_governance]
 }
 
@@ -996,14 +1002,11 @@ module "gateway" {
     "${local.ksa_advisor}.${module.namespace.name}.${module.service_mesh.identity_suffix}",
   ]
 
-  # K-4: wire OTLP auth header so Langfuse trace ingestion returns 200, not 401.
-  # If an explicit override is provided use it; otherwise derive from the
-  # Langfuse project keys using HTTP Basic-auth encoding (publicKey:secretKey).
-  otel_exporter_otlp_headers = var.otel_exporter_otlp_headers != "" ? var.otel_exporter_otlp_headers : (
-    var.langfuse_public_key != "" ? "Authorization=Basic ${base64encode("${var.langfuse_public_key}:${var.langfuse_secret_key}")}" : ""
-  )
-  reconciliation_provider = "simulated"
-  cage_kms_provider       = "gcp"
+  # K-4 / R-2 / F-84: derive OTLP auth header exclusively from the dedicated
+  # gateway telemetry keypair (never shared with advisor-secrets).
+  otel_exporter_otlp_headers = local.effective_gateway_otlp_headers
+  reconciliation_provider    = "simulated"
+  cage_kms_provider          = "gcp"
 
   # POAM-2026-079: own identity; signs seals with gateway-seal and trusts
   # ground truth only from reconciler-snapshot (G8).
@@ -1136,10 +1139,39 @@ resource "random_password" "cage_internal_token" {
   special = false
 }
 
+resource "random_password" "gateway_telemetry_public_key" {
+  length  = 32
+  special = false
+}
+
+resource "random_password" "gateway_telemetry_secret_key" {
+  length  = 32
+  special = false
+}
+
+locals {
+  effective_gateway_telemetry_public_key = (
+    var.gateway_langfuse_public_key != ""
+    ? var.gateway_langfuse_public_key
+    : random_password.gateway_telemetry_public_key.result
+  )
+  effective_gateway_telemetry_secret_key = (
+    var.gateway_langfuse_secret_key != ""
+    ? var.gateway_langfuse_secret_key
+    : random_password.gateway_telemetry_secret_key.result
+  )
+  effective_gateway_otlp_headers = (
+    var.gateway_otel_exporter_otlp_headers != ""
+    ? var.gateway_otel_exporter_otlp_headers
+    : "Authorization=Basic ${base64encode("${local.effective_gateway_telemetry_public_key}:${local.effective_gateway_telemetry_secret_key}")}"
+  )
+}
+
 module "app_secrets" {
   source = "../../modules/app_secrets"
 
   namespace = module.namespace.name
+  cage_env  = local.enforcing_posture ? "staging" : var.environment
 
   governance_salt      = var.governance_salt
   salt                 = random_password.advisor_salt.result
@@ -1158,6 +1190,11 @@ module "app_secrets" {
     var.langfuse_public_key != "" ? "Authorization=Basic ${base64encode("${var.langfuse_public_key}:${var.langfuse_secret_key}")}" : "Authorization=Basic ${base64encode("${module.langfuse.public_key}:${module.langfuse.secret_key}")}"
   )
   redis_password = ""
+
+  gateway_langfuse_public_key        = local.effective_gateway_telemetry_public_key
+  gateway_langfuse_secret_key        = local.effective_gateway_telemetry_secret_key
+  gateway_otel_exporter_otlp_headers = local.effective_gateway_otlp_headers
+  gateway_redis_password             = var.gateway_redis_password
 
   database_url    = ""
   nextauth_secret = module.langfuse.nextauth_secret

@@ -35,18 +35,17 @@ Environment
 ``CAGE_E2E_BRIDGE_URL``
     Compliance bridge base URL; approvals are recorded only through its
     ``POST /v1/defer/{defer_id}/escalate``.
-``CAGE_E2E_INTERNAL_TOKEN``
-    The bridge's internal service token (from a Secret, never a literal).
-``CAGE_E2E_OPERATOR_PRINCIPALS``
-    Two distinct operator Linkerd workload identities (``l5d-client-id`` format:
-    ``<sa>.<ns>.serviceaccount.identity.linkerd.<trust-domain>``), comma-separated
-    (HITL quorum is 2).
+``CAGE_E2E_OPERATOR_OIDC_TOKENS``
+    Two distinct human operator OIDC JWTs (from a Secret, never literals),
+    comma-separated (HITL quorum is 2; POAM-2026-196 refuses workload SVIDs).
 """
 
 from __future__ import annotations
 
 import asyncio
 import base64
+import hashlib
+import json
 import os
 import uuid
 from collections.abc import AsyncIterator
@@ -63,10 +62,29 @@ _ENV = (
     "CAGE_E2E_GATEWAY_URL",
     "CAGE_E2E_UNMESHED_GATEWAY_URL",
     "CAGE_E2E_BRIDGE_URL",
-    "CAGE_E2E_INTERNAL_TOKEN",
-    "CAGE_E2E_OPERATOR_PRINCIPALS",
+    "CAGE_E2E_OPERATOR_OIDC_TOKENS",
 )
 _TIMEOUT = httpx.Timeout(60.0)
+
+
+def _webauthn_binding_payload(deferred_id: str, slot: int) -> dict[str, str]:
+    """Construct a W3C ``webauthn.get`` challenge-bound approval body for E2E."""
+    digest = hashlib.sha256(f"{deferred_id}:{slot}".encode()).digest()
+    challenge_b64 = base64.urlsafe_b64encode(digest).rstrip(b"=").decode("ascii")
+    client_data_bytes = json.dumps(
+        {
+            "type": "webauthn.get",
+            "challenge": challenge_b64,
+            "origin": "https://console.cage.example",
+        }
+    ).encode("utf-8")
+    client_data_json = (
+        base64.urlsafe_b64encode(client_data_bytes).rstrip(b"=").decode("ascii")
+    )
+    return {
+        "client_data_json": client_data_json,
+        "challenge_binding": digest.hex(),
+    }
 
 
 @dataclass
@@ -74,8 +92,7 @@ class Live:
     gateway: httpx.AsyncClient
     unmeshed: httpx.AsyncClient
     bridge: httpx.AsyncClient
-    internal_token: str
-    operators: tuple[str, str]
+    operator_tokens: tuple[str, str]
 
     async def validate(self, action: str, params: dict[str, Any]) -> httpx.Response:
         return await self.gateway.post(
@@ -101,16 +118,13 @@ class Live:
         )
 
     async def approve(self, deferred_id: str) -> None:
-        """Record the two-operator quorum through the compliance bridge."""
+        """Record the two-human-operator quorum through the compliance bridge."""
         statuses = []
-        for principal in self.operators:
+        for slot, oidc_token in enumerate(self.operator_tokens):
             resp = await self.bridge.post(
                 f"/v1/defer/{deferred_id}/escalate",
-                json={},
-                headers={
-                    "X-Cage-Internal-Token": self.internal_token,
-                    "l5d-client-id": principal,
-                },
+                json=_webauthn_binding_payload(deferred_id, slot),
+                headers={"Authorization": f"Bearer {oidc_token}"},
             )
             assert resp.status_code == 200, resp.text
             statuses.append(resp.json().get("status"))
@@ -122,11 +136,15 @@ async def live() -> AsyncIterator[Live]:
     missing = [name for name in _ENV if not os.environ.get(name)]
     if missing:
         pytest.fail(f"--run-e2e requires {', '.join(missing)}")
-    operators = tuple(
-        p.strip() for p in os.environ["CAGE_E2E_OPERATOR_PRINCIPALS"].split(",")
+    operator_tokens = tuple(
+        t.strip()
+        for t in os.environ["CAGE_E2E_OPERATOR_OIDC_TOKENS"].split(",")
+        if t.strip()
     )
-    if len(operators) != 2 or len(set(operators)) != 2:
-        pytest.fail("CAGE_E2E_OPERATOR_PRINCIPALS must name two distinct operators")
+    if len(operator_tokens) != 2 or len(set(operator_tokens)) != 2:
+        pytest.fail(
+            "CAGE_E2E_OPERATOR_OIDC_TOKENS must supply two distinct human OIDC JWTs"
+        )
     async with (
         httpx.AsyncClient(
             base_url=os.environ["CAGE_E2E_GATEWAY_URL"], timeout=_TIMEOUT
@@ -138,9 +156,7 @@ async def live() -> AsyncIterator[Live]:
             base_url=os.environ["CAGE_E2E_BRIDGE_URL"], timeout=_TIMEOUT
         ) as bridge,
     ):
-        yield Live(
-            gw, unmeshed, bridge, os.environ["CAGE_E2E_INTERNAL_TOKEN"], operators
-        )  # type: ignore[arg-type]
+        yield Live(gw, unmeshed, bridge, operator_tokens)  # type: ignore[arg-type]
 
 
 def _trade(amount: float, **extra: Any) -> dict[str, Any]:

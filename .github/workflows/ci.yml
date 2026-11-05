@@ -1103,3 +1103,11 @@ jobs:
         run: terraform -chdir=infra/modules/langfuse_stack init -backend=false -input=false
       - name: Run terraform test against the langfuse_stack module
         run: terraform -chdir=infra/modules/langfuse_stack test
+      - name: Initialise the compliance_bridge module without a backend
+        run: terraform -chdir=infra/modules/compliance_bridge init -backend=false -input=false
+      - name: Run terraform test against the compliance_bridge module
+        run: terraform -chdir=infra/modules/compliance_bridge test
+      - name: Initialise the app_secrets module without a backend
+        run: terraform -chdir=infra/modules/app_secrets init -backend=false -input=false
+      - name: Run terraform test against the app_secrets module
+        run: terraform -chdir=infra/modules/app_secrets test

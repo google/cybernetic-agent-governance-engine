@@ -169,3 +169,37 @@ variable "redis_password" {
   sensitive   = true
   default     = ""
 }
+
+variable "cage_env" {
+  description = "Deployment posture for gateway-secrets credential-isolation guard (R-2, F-84)."
+  type        = string
+  default     = "development"
+}
+
+variable "gateway_langfuse_public_key" {
+  description = "Dedicated telemetry public key for gateway-secrets (TELEMETRY_PUBLIC_KEY; never falls back to advisor-secrets langfuse_public_key)."
+  type        = string
+  default     = ""
+  sensitive   = true
+}
+
+variable "gateway_langfuse_secret_key" {
+  description = "Dedicated telemetry secret key for gateway-secrets (TELEMETRY_SECRET_KEY; never falls back to advisor-secrets langfuse_secret_key)."
+  type        = string
+  default     = ""
+  sensitive   = true
+}
+
+variable "gateway_otel_exporter_otlp_headers" {
+  description = "Dedicated OTLP exporter headers for gateway-secrets (OTEL_EXPORTER_OTLP_HEADERS; never falls back to advisor-secrets)."
+  type        = string
+  default     = ""
+  sensitive   = true
+}
+
+variable "gateway_redis_password" {
+  description = "Dedicated governance Redis password for gateway-secrets (REDIS_PASSWORD; never falls back to advisor-secrets)."
+  type        = string
+  default     = ""
+  sensitive   = true
+}

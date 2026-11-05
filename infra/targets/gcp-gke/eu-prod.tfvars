@@ -168,3 +168,15 @@ langfuse_s3_endpoint   = "https://storage.googleapis.com"
 langfuse_s3_bucket     = "" # Auto-generated from GCS bucket resource
 langfuse_s3_access_key = "" # Auto-generated from google_storage_hmac_key
 langfuse_s3_secret_key = "" # Auto-generated from google_storage_hmac_key
+
+# ─── Human HITL Operator Identity (POAM-2026-196) ─────────────────────────────
+# Non-secret human OIDC allowlist and trust-anchor defaults; override in
+# terraform.auto.tfvars with your organization's real IdP issuer, JWKS URI, and
+# human risk-officer sub claims before production cutover.
+trusted_operator_identities = [
+  "risk-officer-primary@example.com",
+  "risk-officer-secondary@example.com",
+]
+operator_oidc_issuer   = "https://idp.cage.example"
+operator_oidc_audience = "cage-compliance-bridge"
+operator_jwks_uri      = "https://idp.cage.example/.well-known/jwks.json"

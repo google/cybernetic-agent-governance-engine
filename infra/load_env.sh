@@ -98,6 +98,21 @@ while IFS= read -r line || [ -n "$line" ]; do
             LANGFUSE_COMPLIANCE_SECRET_KEY)
                 export TF_VAR_langfuse_compliance_secret_key="$var_value"
                 ;;
+            GATEWAY_LANGFUSE_PUBLIC_KEY)
+                export TF_VAR_gateway_langfuse_public_key="$var_value"
+                ;;
+            GATEWAY_LANGFUSE_SECRET_KEY)
+                export TF_VAR_gateway_langfuse_secret_key="$var_value"
+                ;;
+            OPERATOR_OIDC_ISSUER|CAGE_OPERATOR_OIDC_ISSUER)
+                export TF_VAR_operator_oidc_issuer="$var_value"
+                ;;
+            OPERATOR_OIDC_AUDIENCE|CAGE_OPERATOR_OIDC_AUDIENCE)
+                export TF_VAR_operator_oidc_audience="$var_value"
+                ;;
+            OPERATOR_JWKS_URI|CAGE_OPERATOR_JWKS_URI)
+                export TF_VAR_operator_jwks_uri="$var_value"
+                ;;
             
             # Container registry
             REGISTRY_URL)

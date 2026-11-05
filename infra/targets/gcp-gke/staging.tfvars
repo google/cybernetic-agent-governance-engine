@@ -244,3 +244,15 @@ memorystore_app_instance_id        = "cage-valkey-app-staging-v3"
 #     langfuse_compliance_secret_key = "sk-lf-<staging-compliance-project-key>"
 #   The precondition will FAIL if these match langfuse_public_key / langfuse_secret_key
 #   in staging (local.enforcing_posture, POAM-2026-181).
+
+# ─── Human HITL Operator Identity (POAM-2026-196) ─────────────────────────────
+# Non-secret human OIDC allowlist and trust-anchor defaults; override in
+# terraform.auto.tfvars with your organization's real IdP issuer, JWKS URI, and
+# human risk-officer sub claims before production cutover.
+trusted_operator_identities = [
+  "risk-officer-primary@example.com",
+  "risk-officer-secondary@example.com",
+]
+operator_oidc_issuer   = "https://idp.cage.example"
+operator_oidc_audience = "cage-compliance-bridge"
+operator_jwks_uri      = "https://idp.cage.example/.well-known/jwks.json"

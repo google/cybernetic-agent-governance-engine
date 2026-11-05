@@ -56,7 +56,6 @@ resource "kubernetes_secret" "advisor_secrets" {
     "LANGFUSE_SECRET_KEY"        = var.langfuse_secret_key
     "LANGFUSE_HOST"              = var.langfuse_host
     "CAGE_API_KEY"               = var.cage_api_key
-    "CAGE_INTERNAL_TOKEN"        = var.cage_internal_token
     "OTEL_EXPORTER_OTLP_HEADERS" = var.otel_exporter_otlp_headers
     "LANGFUSE_BASIC_AUTH_B64"    = var.otel_exporter_otlp_headers
     "REDIS_PASSWORD"             = var.redis_password
@@ -64,14 +63,32 @@ resource "kubernetes_secret" "advisor_secrets" {
 }
 
 resource "kubernetes_secret" "gateway_secrets" {
+  lifecycle {
+    precondition {
+      condition = !contains(["staging", "prod", "production"], lower(var.cage_env)) || (
+        trimspace(var.gateway_langfuse_public_key) != "" &&
+        trimspace(var.gateway_langfuse_secret_key) != "" &&
+        var.gateway_langfuse_public_key != var.langfuse_public_key &&
+        var.gateway_langfuse_secret_key != var.langfuse_secret_key
+      )
+      error_message = "CAGE Invariant (AU-9 / SC-28 / R-2 / F-84): under an enforcing posture, gateway-secrets requires non-empty gateway_langfuse_public_key and gateway_langfuse_secret_key distinct from advisor-secrets (langfuse_public_key / langfuse_secret_key)."
+    }
+  }
+
   metadata {
     name      = "gateway-secrets"
     namespace = var.namespace
   }
 
+  # Dedicated secret for the trusted gateway kernel plane (R-2, F-43, F-84).
+  # Strictly isolated from advisor-secrets with zero fallback to advisor keys.
   data = {
-    "GOVERNANCE_SALT"         = var.governance_salt
-    "EVIDENCE_STREAM_ENABLED" = "true"
+    "GOVERNANCE_SALT"            = var.governance_salt
+    "EVIDENCE_STREAM_ENABLED"    = "true"
+    "TELEMETRY_PUBLIC_KEY"       = var.gateway_langfuse_public_key
+    "TELEMETRY_SECRET_KEY"       = var.gateway_langfuse_secret_key
+    "OTEL_EXPORTER_OTLP_HEADERS" = var.gateway_otel_exporter_otlp_headers
+    "REDIS_PASSWORD"             = var.gateway_redis_password
   }
 }
 
@@ -189,3 +206,5 @@ services:
 EOT
   }
 }
+
+

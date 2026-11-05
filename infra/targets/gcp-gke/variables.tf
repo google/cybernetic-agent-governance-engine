@@ -777,6 +777,58 @@ variable "compliance_bridge_image" {
   }
 }
 
+variable "trusted_operator_identities" {
+  description = "Allowlisted human OIDC operator sub claims permitted to approve HITL deferrals on compliance-bridge (CAGE_TRUSTED_OPERATOR_IDENTITIES; POAM-2026-196)."
+  type        = list(string)
+  default     = []
+}
+
+variable "operator_oidc_issuer" {
+  description = "Expected OIDC issuer URL for human HITL operator JWTs on compliance-bridge (CAGE_OPERATOR_OIDC_ISSUER; POAM-2026-196)."
+  type        = string
+  default     = ""
+}
+
+variable "operator_oidc_audience" {
+  description = "Expected OIDC audience claim for human HITL operator JWTs on compliance-bridge (CAGE_OPERATOR_OIDC_AUDIENCE; POAM-2026-196)."
+  type        = string
+  default     = "cage-compliance-bridge"
+}
+
+variable "operator_jwks_uri" {
+  description = "Out-of-band HTTPS JWKS URI used by compliance-bridge to verify kid-pinned human operator OIDC JWTs (CAGE_OPERATOR_JWKS_URI; POAM-2026-196)."
+  type        = string
+  default     = ""
+}
+
+variable "gateway_langfuse_public_key" {
+  description = "Dedicated telemetry public key for gateway-secrets (TELEMETRY_PUBLIC_KEY; R-2, F-84). When empty, gcp-gke generates an independent key distinct from advisor-secrets."
+  type        = string
+  sensitive   = true
+  default     = ""
+}
+
+variable "gateway_langfuse_secret_key" {
+  description = "Dedicated telemetry secret key for gateway-secrets (TELEMETRY_SECRET_KEY; R-2, F-84). When empty, gcp-gke generates an independent key distinct from advisor-secrets."
+  type        = string
+  sensitive   = true
+  default     = ""
+}
+
+variable "gateway_otel_exporter_otlp_headers" {
+  description = "Dedicated OTLP Authorization header override for gateway-secrets (OTEL_EXPORTER_OTLP_HEADERS; R-2, F-84)."
+  type        = string
+  sensitive   = true
+  default     = ""
+}
+
+variable "gateway_redis_password" {
+  description = "Dedicated governance Redis password for gateway-secrets when password auth is used (REDIS_PASSWORD; R-2, F-84)."
+  type        = string
+  sensitive   = true
+  default     = ""
+}
+
 # ─── OPA Configuration ────────────────────────────────────────────────────────
 
 variable "opa_policy_files" {

@@ -294,13 +294,44 @@ async def _park_defer_context(
     sealed ALLOW (Refusals Are Primary Evidence).
     """
     from src.gateway.governance.defer_queue import DeferToken, open_defer_queue
+    from src.gateway.server.workload_identity import current_client_identity
 
     effective_thread_id = thread_id or str(uuid.uuid4())
+    # F-44 (POAM-2026-196): Resolve initiator_urn from verified transport mTLS
+    # caller identity FIRST so caller-supplied params/metadata can never override
+    # or spoof the authenticated workload identity. Fall back to params/metadata
+    # only for direct in-process evaluations with no transport caller context.
+    initiator_urn: str | None = None
+    _caller = current_client_identity()
+    if isinstance(_caller, str) and _caller.strip():
+        initiator_urn = _caller.strip()
+    if not initiator_urn:
+        for _mapping in (params or {}, metadata or {}):
+            if isinstance(_mapping, dict):
+                for _key in (
+                    "initiator_urn",
+                    "_initiator_urn",
+                    "id1_user",
+                    "user_id",
+                    "actor_urn",
+                    "_caller_principal",
+                ):
+                    _val = _mapping.get(_key)
+                    if (
+                        isinstance(_val, str)
+                        and _val.strip()
+                        and _val.strip() != "anonymous"
+                    ):
+                        initiator_urn = _val.strip()
+                        break
+            if initiator_urn:
+                break
 
     opa_input_snapshot = {
         "action": action,
         "params": params or {},
         "metadata": metadata or {},
+        "initiator_urn": initiator_urn,
         "violations": [
             v.to_dict() if isinstance(v, Violation) else v for v in violations
         ],
@@ -322,6 +353,7 @@ async def _park_defer_context(
         opa_input_snapshot=opa_input_snapshot,
         confidence_score=min(max(confidence, 0.0), 1.0),
         aarm_vector="AARM-V7",
+        initiator_urn=initiator_urn,
     )
 
     try:
@@ -384,6 +416,8 @@ def deferral_event(token: "DeferToken", *, persisted: bool) -> dict[str, Any]:
         "deferred_at_utc": token.deferred_at_utc,
         "timestamp_utc": datetime.now(tz=timezone.utc).isoformat(),
     }
+    if token.initiator_urn:
+        event["initiator_urn"] = token.initiator_urn
     reliance = snapshot.get("reliance")
     if reliance:
         event["reliance"] = reliance
