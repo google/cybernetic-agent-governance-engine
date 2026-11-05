@@ -1482,9 +1482,9 @@ class TestAgnosticTargetEliminated:
     def test_docs_and_infra_do_not_claim_agnostic_or_any_k8s_target_exists(
         self,
     ) -> None:
-        check_doc_refs = (
-            REPO_ROOT / "scripts" / "check_doc_references.py"
-        ).read_text(encoding="utf-8")
+        check_doc_refs = (REPO_ROOT / "scripts" / "check_doc_references.py").read_text(
+            encoding="utf-8"
+        )
         assert '"infra",' in check_doc_refs, (
             "scripts/check_doc_references.py DOC_SCOPE must include 'infra' so infra/*.md cannot drift outside Gate G9"
         )
