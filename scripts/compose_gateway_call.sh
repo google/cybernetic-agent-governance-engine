@@ -15,12 +15,17 @@
 
 # Send an identified request to the Docker Compose gateway.
 #
-# The gateway believes l5d-client-id only on a connection from inside its own
-# pod, where the Linkerd proxy that sets it runs (POAM-2026-167,
-# src/gateway/server/workload_identity.py). Compose has no proxy, and a request
-# from the host reaches the gateway from outside its container, so the gateway
-# refuses one that carries the header. This script sends the request from
-# inside the gateway container instead, with the identity the proxy would set.
+# In enforcing deployments (GKE + Linkerd), the gateway believes l5d-client-id
+# only on a non-loopback connection from the pod's own IP, where the Linkerd
+# inbound proxy runs; loopback peers (127.0.0.1 / ::1) are never treated as the
+# proxy (POAM-2026-167, src/gateway/server/workload_identity.py).
+#
+# Compose has no Linkerd proxy, and a request from the host reaches the gateway
+# from outside its container (which the gateway refuses with 403). This script
+# sends the request from inside the gateway container over the dev-only loopback
+# channel (LT-1), which requires BOTH a non-enforcing dev posture (CAGE_ENV in
+# dev/development) AND CAGE_ALLOW_DEV_LOOPBACK_IDENTITY=true in the gateway
+# container (unconditionally refused when is_enforcing() is True).
 #
 # Usage: scripts/compose_gateway_call.sh PATH [JSON_BODY]
 #   POSTs JSON_BODY to PATH if given, otherwise GETs PATH, and prints the
@@ -39,9 +44,18 @@ identity="${GATEWAY_CALL_IDENTITY:-cage-advisor-sa.governance-stack.serviceaccou
 
 cd "$(dirname "${BASH_SOURCE[0]}")/.."
 exec docker compose exec -T gateway python - "$identity" "$@" <<'PY'
+import os
 import sys
 import urllib.error
 import urllib.request
+
+cage_env = os.environ.get("CAGE_ENV", "").strip().lower()
+allow_dev_loopback = os.environ.get("CAGE_ALLOW_DEV_LOOPBACK_IDENTITY", "").strip().lower()
+if cage_env not in {"dev", "development"} or allow_dev_loopback not in {"1", "true", "yes", "on"}:
+    sys.exit(
+        "compose_gateway_call.sh requires CAGE_ENV=dev/development and "
+        "CAGE_ALLOW_DEV_LOOPBACK_IDENTITY=true in the gateway container (LT-1 / POAM-2026-167)"
+    )
 
 identity, path = sys.argv[1], sys.argv[2]
 body = sys.argv[3].encode() if len(sys.argv) > 3 else None

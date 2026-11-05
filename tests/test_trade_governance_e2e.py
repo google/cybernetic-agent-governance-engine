@@ -421,7 +421,8 @@ async def gw(monkeypatch: pytest.MonkeyPatch) -> AsyncIterator[Gateway]:
         IdentityPolicy(trusted=frozenset({ADVISOR, JUNIOR_DESK})),
     )
     async with httpx.AsyncClient(
-        transport=httpx.ASGITransport(app=root), base_url="http://gateway"
+        transport=httpx.ASGITransport(app=root, client=("10.112.0.43", 50000)),
+        base_url="http://10.112.0.43:8080",
     ) as http:
         yield Gateway(
             governor=governor,

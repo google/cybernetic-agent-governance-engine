@@ -661,7 +661,8 @@ async def test_mcp_execute_tool_attaches_proof_hash_on_refusal(
     req = MagicMock()
     req.scope = {
         "headers": [(b"l5d-client-id", trusted_id.encode("latin-1"))],
-        "client": ("127.0.0.1", 50000),  # through the pod's own Linkerd proxy
+        "client": ("10.112.0.43", 50000),  # through the pod's own Linkerd proxy
+        "server": ("10.112.0.43", 8080),
     }
     req.client = MagicMock(host="127.0.0.1")
     body = await mcp_mod.execute_tool_endpoint(

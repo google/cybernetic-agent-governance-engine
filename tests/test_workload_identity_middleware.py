@@ -26,6 +26,7 @@ from starlette.routing import Mount, Route, WebSocketRoute
 from starlette.testclient import TestClient
 
 from src.gateway.server.workload_identity import (
+    ALLOW_DEV_LOOPBACK_IDENTITY_ENV,
     CLIENT_IDENTITY_HEADER,
     OPEN_EXACT_PATHS,
     TRUSTED_IDENTITIES_ENV,
@@ -34,6 +35,7 @@ from src.gateway.server.workload_identity import (
     _serving,
     current_client_identity,
     extract_client_identity,
+    is_dev_loopback_identity_allowed,
     is_open_path,
     is_pod_local_connection,
     is_workload_identity,
@@ -70,20 +72,22 @@ async def _ws(websocket):
     await websocket.close()
 
 
-#: The Linkerd inbound proxy connects to the container from inside the pod.
-#: Loopback stands in for that here; the pod-IP form is tested separately.
-PROXY_PEER = ("127.0.0.1", 50000)
+#: The gateway pod's own address: the peer of every request its proxy forwards.
+POD_IP = "10.112.0.43"
+POD_SERVER = (POD_IP, 8080)
+#: The Linkerd inbound proxy connects to the container from the pod's own IP.
+PROXY_PEER = (POD_IP, 50000)
+#: Loopback peer (e.g. kubectl port-forward); never trusted as the proxy (POAM-2026-167).
+LOOPBACK_PEER = ("127.0.0.1", 50000)
 #: Another pod reaching the container directly, as it can when the pod runs
 #: without its proxy.
 OTHER_POD = ("10.112.3.7", 51000)
-#: The gateway pod's own address: the peer of every request its proxy forwards.
-POD_IP = "10.112.0.43"
 
 
 def _client(
     policy: IdentityPolicy,
     peer: tuple[str, int] = PROXY_PEER,
-    base_url: str = "http://testserver",
+    base_url: str = f"http://{POD_IP}:8080",
 ) -> TestClient:
     inner = Starlette(
         routes=[
@@ -190,11 +194,14 @@ def test_extract_client_identity_validates_single_linkerd_header() -> None:
     scope = {
         "headers": [(b"l5d-client-id", ADVISOR.encode("latin-1"))],
         "client": PROXY_PEER,
+        "server": POD_SERVER,
     }
     assert extract_client_identity(scope) == ADVISOR
 
     with pytest.raises(ValueError, match="l5d-client-id"):
-        extract_client_identity({"headers": [], "client": PROXY_PEER})
+        extract_client_identity(
+            {"headers": [], "client": PROXY_PEER, "server": POD_SERVER}
+        )
 
     with pytest.raises(ValueError, match="l5d-client-id"):
         extract_client_identity(
@@ -204,6 +211,7 @@ def test_extract_client_identity_validates_single_linkerd_header() -> None:
                     (b"l5d-client-id", ADVISOR.encode("latin-1")),
                 ],
                 "client": PROXY_PEER,
+                "server": POD_SERVER,
             }
         )
 
@@ -217,6 +225,7 @@ def test_extract_client_identity_validates_single_linkerd_header() -> None:
                     )
                 ],
                 "client": PROXY_PEER,
+                "server": POD_SERVER,
             }
         )
 
@@ -310,16 +319,27 @@ def test_extract_client_identity_refuses_a_header_from_another_pod() -> None:
 @pytest.mark.parametrize(
     ("client", "server", "expected"),
     [
-        (("127.0.0.1", 1), None, True),
-        (("127.8.9.10", 1), None, True),  # all of 127.0.0.0/8 is loopback
-        (("::1", 1), None, True),
-        (("::ffff:127.0.0.1", 1), None, True),  # IPv4-mapped loopback
+        (("127.0.0.1", 1), None, False),  # POAM-2026-167: loopback is never trusted
+        (("127.0.0.1", 1), ("127.0.0.1", 8080), False),  # kubectl port-forward loopback
+        (("127.0.0.1", 1), (POD_IP, 8080), False),
+        (
+            ("127.8.9.10", 1),
+            ("127.8.9.10", 8080),
+            False,
+        ),  # all of 127.0.0.0/8 is loopback
+        (("::1", 1), None, False),
+        (("::1", 1), ("::1", 8080), False),
+        (("::ffff:127.0.0.1", 1), ("127.0.0.1", 8080), False),  # IPv4-mapped loopback
+        (("0.0.0.0", 1), ("0.0.0.0", 8080), False),  # unspecified IPv4
+        (("::", 1), ("::", 8080), False),  # unspecified IPv6
         ((POD_IP, 1), (POD_IP, 8080), True),  # the proxy, from the pod's own IP
         ((POD_IP, 1), [POD_IP, 8080], True),  # servers may pass lists
         ((f"::ffff:{POD_IP}", 1), (POD_IP, 8080), True),
+        (("fd00::43", 1), ("fd00::43", 8080), True),  # IPv6 pod IP
         (OTHER_POD, (POD_IP, 8080), False),  # another pod
         (("10.112.0.1", 1), (POD_IP, 8080), False),  # any other peer
         ((POD_IP, 1), None, False),  # no local address to compare with
+        ((POD_IP, 1), ("127.0.0.1", 8080), False),  # loopback server
         ((POD_IP, 1), ("testserver", 80), False),
         (("testclient", 50000), ("testserver", 80), False),  # TestClient default
         (None, (POD_IP, 8080), False),
@@ -331,6 +351,136 @@ def test_is_pod_local_connection(
     client: object, server: object, expected: bool
 ) -> None:
     assert is_pod_local_connection({"client": client, "server": server}) is expected
+
+
+@pytest.mark.parametrize(
+    ("loopback_client", "loopback_server"),
+    [
+        (("127.0.0.1", 50000), ("127.0.0.1", 8080)),
+        (("127.0.0.1", 50000), (POD_IP, 8080)),
+        (("::1", 50000), ("::1", 8080)),
+        (("::ffff:127.0.0.1", 50000), ("127.0.0.1", 8080)),
+    ],
+)
+async def test_loopback_peer_is_refused_even_when_server_is_loopback(
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+    loopback_client: tuple[str, int],
+    loopback_server: tuple[str, int],
+) -> None:
+    """POAM-2026-167 (F-38, F-39): kubectl port-forward connects from 127.0.0.1 to 127.0.0.1 and must be refused."""
+    monkeypatch.delenv(ALLOW_DEV_LOOPBACK_IDENTITY_ENV, raising=False)
+    seen: list[str | None] = []
+    app = WorkloadIdentityMiddleware(_recording(seen), ENFORCED)
+
+    with caplog.at_level(
+        logging.WARNING, logger="src.gateway.server.workload_identity"
+    ):
+        status = await _status(
+            app,
+            "/tools/execute",
+            ADVISOR,
+            client=loopback_client,
+            server=loopback_server,
+        )
+
+    assert status == 403
+    assert seen == []
+    assert any(
+        "INGRESS_IDENTITY_NOT_FROM_PROXY" in r.getMessage()
+        and ADVISOR in r.getMessage()
+        for r in caplog.records
+    )
+
+    with pytest.raises(ValueError, match="not through the pod's Linkerd proxy"):
+        extract_client_identity(
+            {
+                "headers": [(b"l5d-client-id", ADVISOR.encode("latin-1"))],
+                "client": loopback_client,
+                "server": loopback_server,
+            }
+        )
+
+
+async def test_dev_loopback_channel_requires_both_dev_posture_and_opt_in(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """LT-1: loopback identity acceptance requires BOTH non-enforcing dev posture and CAGE_ALLOW_DEV_LOOPBACK_IDENTITY=true."""
+    seen: list[str | None] = []
+    app = WorkloadIdentityMiddleware(_recording(seen), ENFORCED)
+    loopback_scope = {
+        "headers": [(b"l5d-client-id", ADVISOR.encode("latin-1"))],
+        "client": LOOPBACK_PEER,
+        "server": ("127.0.0.1", 8080),
+    }
+
+    # 1. Dev posture WITHOUT opt-in -> refused (403)
+    monkeypatch.setenv("CAGE_ENV", "dev")
+    monkeypatch.delenv(ALLOW_DEV_LOOPBACK_IDENTITY_ENV, raising=False)
+    assert is_dev_loopback_identity_allowed() is False
+    assert (
+        await _status(
+            app,
+            "/tools/execute",
+            ADVISOR,
+            client=LOOPBACK_PEER,
+            server=("127.0.0.1", 8080),
+        )
+        == 403
+    )
+    with pytest.raises(ValueError, match="not through the pod's Linkerd proxy"):
+        extract_client_identity(loopback_scope)
+
+    # 2. Dev posture WITH opt-in -> loopback admitted (200), external peer still refused (403)
+    for dev_val in ("dev", "development"):
+        monkeypatch.setenv("CAGE_ENV", dev_val)
+        monkeypatch.setenv(ALLOW_DEV_LOOPBACK_IDENTITY_ENV, "true")
+        monkeypatch.setenv(TRUSTED_IDENTITIES_ENV, ADVISOR)
+        assert is_dev_loopback_identity_allowed() is True
+        assert load_identity_policy() == ENFORCED
+        assert (
+            await _status(
+                app,
+                "/tools/execute",
+                ADVISOR,
+                client=LOOPBACK_PEER,
+                server=("127.0.0.1", 8080),
+            )
+            == 200
+        )
+        assert extract_client_identity(loopback_scope) == ADVISOR
+        # External peer (e.g. Docker bridge IP from host curl) is STILL refused!
+        assert (
+            await _status(
+                app,
+                "/tools/execute",
+                ADVISOR,
+                client=OTHER_POD,
+                server=("127.0.0.1", 8080),
+            )
+            == 403
+        )
+
+    # 3. Non-dev / enforcing postures WITH opt-in -> unconditionally refused (403) and startup fails closed
+    for non_dev in ("production", "prod", "staging", "local", "test", "ci"):
+        monkeypatch.setenv("CAGE_ENV", non_dev)
+        monkeypatch.setenv(ALLOW_DEV_LOOPBACK_IDENTITY_ENV, "true")
+        monkeypatch.setenv(TRUSTED_IDENTITIES_ENV, ADVISOR)
+        assert is_dev_loopback_identity_allowed() is False
+        assert (
+            await _status(
+                app,
+                "/tools/execute",
+                ADVISOR,
+                client=LOOPBACK_PEER,
+                server=("127.0.0.1", 8080),
+            )
+            == 403
+        )
+        with pytest.raises(ValueError, match="not through the pod's Linkerd proxy"):
+            extract_client_identity(loopback_scope)
+        with pytest.raises(RuntimeError, match=ALLOW_DEV_LOOPBACK_IDENTITY_ENV):
+            load_identity_policy()
 
 
 # --- load_identity_policy ---------------------------------------------------
@@ -436,7 +586,7 @@ async def _status(  # type: ignore[no-untyped-def]
     path: str,
     identity: str | None = None,
     client: tuple[str, int] | None = PROXY_PEER,
-    server: tuple[str, int] | None = None,
+    server: tuple[str, int] | None = POD_SERVER,
 ) -> int:
     headers = (
         []
@@ -513,10 +663,15 @@ def test_is_workload_identity(value: object, expected: bool) -> None:
 
 
 class _MeshProxy(httpx.AsyncBaseTransport):
-    """Stands in for the Linkerd inbound proxy: sets ``l5d-client-id``."""
+    """Stands in for the Linkerd inbound proxy: sets ``l5d-client-id`` and connects from POD_IP."""
 
     def __init__(self, app) -> None:  # type: ignore[no-untyped-def]
-        self._inner = httpx.ASGITransport(app=app)
+        async def _pod_ip_app(scope, receive, send):  # type: ignore[no-untyped-def]
+            if scope.get("type") in ("http", "websocket"):
+                scope = {**scope, "client": PROXY_PEER, "server": POD_SERVER}
+            await app(scope, receive, send)
+
+        self._inner = httpx.ASGITransport(app=_pod_ip_app, client=PROXY_PEER)
         self.identity = ADVISOR
 
     async def handle_async_request(self, request: httpx.Request) -> httpx.Response:
@@ -570,3 +725,21 @@ def test_the_gateway_mcp_server_is_stateless() -> None:
     from src.gateway.server.mcp_tool_server import mcp
 
     assert mcp.settings.stateless_http is True
+
+
+def test_mesh_conformance_chart_renderer_matches_app_policy() -> None:
+    """F-106: render_mesh_policy_chart in test_linkerd_mesh_conformance renders canonical Linkerd policy objects."""
+    import yaml
+
+    from tests.integration.test_linkerd_mesh_conformance import (
+        ADVISOR_SPIFFE_ID,
+        render_mesh_policy_chart,
+    )
+    from tests.test_gateway_mesh_policy import gateway_policy_violations
+
+    rendered = render_mesh_policy_chart(
+        namespace="governance-stack",
+        trusted_identities=[ADVISOR_SPIFFE_ID],
+    )
+    docs = [d for d in yaml.safe_load_all(rendered) if d]
+    assert gateway_policy_violations(docs) == []

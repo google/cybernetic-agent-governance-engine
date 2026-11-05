@@ -77,6 +77,9 @@ services:
       - VLLM_BASE_URL=${VLLM_BASE_URL:-http://vllm-fast:8000/v1}
       - VLLM_API_KEY=${VLLM_API_KEY:-dev-local}
       - CAGE_TRUSTED_CLIENT_IDENTITIES=${CAGE_TRUSTED_CLIENT_IDENTITIES:-cage-advisor-sa.governance-stack.serviceaccount.identity.linkerd.cluster.local}
+      # POAM-2026-167 / LT-1: Dual-condition dev loopback identity opt-in for Docker Compose
+      # (active only when CAGE_ENV is dev/development and is_enforcing() is False).
+      - CAGE_ALLOW_DEV_LOOPBACK_IDENTITY=${CAGE_ALLOW_DEV_LOOPBACK_IDENTITY:-true}
       - OTEL_TRACES_EXPORTER=${OTEL_TRACES_EXPORTER:-none}
       # v0.1.0 REQUIRED: ControlRegistry regional compliance profile selector.
       # Override in .env: CAGE_DEPLOYMENT_REGION=EU_ECB

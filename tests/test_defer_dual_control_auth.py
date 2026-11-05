@@ -41,8 +41,9 @@ from src.gateway.governance.defer_queue import ApprovalRecord, DeferReason, Defe
 
 pytestmark = [pytest.mark.unit, pytest.mark.local]
 
-#: The pod's own Linkerd proxy connects from inside the pod; loopback stands in.
-PROXY_PEER = ("127.0.0.1", 50000)
+#: The pod's own Linkerd proxy connects from the pod's own non-loopback IP (POAM-2026-167).
+PROXY_PEER = ("10.112.0.42", 50000)
+POD_SERVER = ("10.112.0.42", 3001)
 #: Another pod reaching the bridge directly, as it can when the bridge runs
 #: without its proxy (POAM-2026-167).
 OTHER_POD = ("10.112.3.7", 51000)
@@ -74,7 +75,7 @@ class TestOperatorIdentityProvenance:
             ]
         )
         mock_request.attributes = None  # No gRPC attributes in HTTP mode
-        mock_request.scope = {"client": PROXY_PEER}
+        mock_request.scope = {"client": PROXY_PEER, "server": POD_SERVER}
 
         principal = await require_operator_identity(mock_request)
 
@@ -256,6 +257,42 @@ class TestOperatorIdentitySvidHardening:
         principal = await require_operator_identity(request)
 
         assert principal.channel_provenance == "SVID"
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        ("loopback_peer", "loopback_server"),
+        [
+            (("127.0.0.1", 50000), ("127.0.0.1", 3001)),
+            (("127.0.0.1", 50000), ("10.112.0.42", 3001)),
+            (("::1", 50000), ("::1", 3001)),
+            (("::ffff:127.0.0.1", 50000), ("127.0.0.1", 3001)),
+        ],
+    )
+    async def test_svid_from_loopback_is_refused(
+        self,
+        monkeypatch,
+        loopback_peer: tuple[str, int],
+        loopback_server: tuple[str, int],
+    ):
+        """POAM-2026-167 (F-38, F-39): loopback peers (e.g. kubectl port-forward) are never trusted on Channel 1."""
+        monkeypatch.delenv("CAGE_OPERATOR_IDENTITY_ALLOW_OIDC", raising=False)
+        monkeypatch.delenv("CAGE_OPERATOR_IDENTITY_ALLOW_DEV_SYNTHETIC", raising=False)
+        request = self._request(
+            [
+                (
+                    b"l5d-client-id",
+                    b"operator-alice.governance-stack.serviceaccount.identity.linkerd.cluster.local",
+                )
+            ],
+            peer=loopback_peer,
+        )
+        request.scope = {"client": loopback_peer, "server": loopback_server}
+
+        with pytest.raises(HTTPException) as exc_info:
+            await require_operator_identity(request)
+
+        assert exc_info.value.status_code == 401
+        assert "did not come through the Linkerd proxy" in exc_info.value.detail
 
     @pytest.mark.asyncio
     async def test_single_well_formed_svid_accepted(self):

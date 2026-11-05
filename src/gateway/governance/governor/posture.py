@@ -258,6 +258,19 @@ def _check_otel_tracer(components: GovernorComponents) -> None:
             )
 
 
+def _check_dev_loopback_identity(components: GovernorComponents) -> None:
+    """Forbid the LT-1 dev loopback identity opt-in when enforcing (POAM-2026-167)."""
+    from src.gateway.governance.env_posture import env_flag
+    from src.gateway.server.workload_identity import ALLOW_DEV_LOOPBACK_IDENTITY_ENV
+
+    if env_flag(ALLOW_DEV_LOOPBACK_IDENTITY_ENV, False):
+        raise RuntimeError(
+            f"{ALLOW_DEV_LOOPBACK_IDENTITY_ENV}=true is forbidden in production posture "
+            "(loopback peers are never trusted as the mesh proxy in enforcing mode; "
+            "POAM-2026-167 / LT-1)"
+        )
+
+
 CHECKS: tuple[tuple[str, Callable[[GovernorComponents], None]], ...] = (
     ("required_tiers", _check_required_tiers),
     ("otel_tracer", _check_otel_tracer),
@@ -271,6 +284,7 @@ CHECKS: tuple[tuple[str, Callable[[GovernorComponents], None]], ...] = (
     ("reconciliation_provider", _check_reconciliation_provider),
     ("reconciler_trust_anchor", _check_reconciler_trust_anchor),
     ("governance_salt", _check_governance_salt),
+    ("dev_loopback_identity", _check_dev_loopback_identity),
 )
 
 

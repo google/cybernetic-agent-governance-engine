@@ -25,6 +25,7 @@ ad-hoc CAGE_ENV string comparisons with a typed enum.
 from __future__ import annotations
 
 import os
+from collections.abc import Mapping
 from enum import Enum
 
 
@@ -44,7 +45,9 @@ class DeploymentPosture(Enum):
         return is_enforcing(self)
 
 
-def resolve_posture() -> DeploymentPosture:
+def resolve_posture(
+    env: Mapping[str, str] | None = None,
+) -> DeploymentPosture:
     """
     Resolve the current deployment posture from environment variables.
 
@@ -54,8 +57,9 @@ def resolve_posture() -> DeploymentPosture:
     Returns:
         DeploymentPosture: The resolved deployment posture.
     """
+    source = os.environ if env is None else env
     cage_env = (
-        os.environ.get("CAGE_ENV") or os.environ.get("ENVIRONMENT", "production")
+        source.get("CAGE_ENV") or source.get("ENVIRONMENT", "production")
     ).lower()
 
     # Map common variations to canonical values
@@ -84,10 +88,18 @@ _PERMISSIVE_POSTURES = frozenset(
 )
 
 
-def is_enforcing(posture: DeploymentPosture | None = None) -> bool:
+def is_enforcing(
+    posture: DeploymentPosture | Mapping[str, str] | None = None,
+) -> bool:
     """Return whether ``posture`` (default: :func:`resolve_posture`) enforces
     production startup checks. Fail secure: only DEV, TEST and CI relax them."""
-    return (posture or resolve_posture()) not in _PERMISSIVE_POSTURES
+    if posture is None:
+        resolved = resolve_posture()
+    elif isinstance(posture, DeploymentPosture):
+        resolved = posture
+    else:
+        resolved = resolve_posture(posture)
+    return resolved not in _PERMISSIVE_POSTURES
 
 
 def env_flag(name: str, default: bool) -> bool:

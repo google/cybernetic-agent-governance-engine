@@ -12,27 +12,38 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Live Linkerd service-mesh conformance tests for POAM-2026-080 (SC-8 / IA-3 / AC-3).
+"""Live Linkerd service-mesh conformance tests for POAM-2026-080 & POAM-2026-167 (F-106).
 
-Renders and applies the repository's canonical ``infra/modules/gateway/mesh-policy``
-Helm chart and test workload ServiceAccounts to a Linkerd-meshed Kubernetes
-cluster (e.g. ``kind`` + Linkerd in CI via ``make test-mesh``) and verifies
-over real Linkerd proxy sidecars that:
+Renders and applies the repository's canonical Helm chart
+(``infra/modules/gateway/mesh-policy``) to a Linkerd-meshed Kubernetes cluster
+(e.g. ``kind`` + Linkerd in CI via ``make test-mesh``), deploys the built Wolfi
+gateway container image (``src/gateway/Dockerfile``) booting the real
+``src.gateway.server.hybrid_server:root_app`` application with an in-pod OPA
+sidecar, and verifies over real Linkerd proxy sidecars that:
 
-1. The Linkerd CRD validation webhooks accept ``Server``, ``HTTPRoute``,
-   ``MeshTLSAuthentication``, ``NetworkAuthentication``, and
+1. The Linkerd CRD validation webhooks accept the Helm-rendered ``Server``,
+   ``HTTPRoute``, ``MeshTLSAuthentication``, ``NetworkAuthentication``, and
    ``AuthorizationPolicy`` resources without schema errors.
 2. A meshed pod running as ``cage-advisor-sa`` reaches both open (``/healthz``)
-   and gated (``/governance/policy-version``) gateway routes over mTLS, and the
-   inbound Linkerd proxy injects
-   ``l5d-client-id: cage-advisor-sa.governance-stack.serviceaccount.identity.linkerd.cluster.local``.
+   and gated (``/governance/policy-version``) routes on ``hybrid_server:root_app``
+   over mTLS, passing both Linkerd's ``AuthorizationPolicy`` and
+   ``WorkloadIdentityMiddleware`` (``is_pod_local_connection`` non-loopback
+   pod-IP ``peer == server``).
 3. A meshed pod running as ``cage-vllm-sa`` reaches open routes (``/healthz``)
    but is rejected with HTTP 403 by the inbound Linkerd proxy on gated routes
    (``/governance/policy-version``).
 4. A forged ``l5d-client-id`` header sent by ``cage-vllm-sa`` cannot bypass the
-   Linkerd ``AuthorizationPolicy`` on gated routes (HTTP 403) and is overwritten
-   by the inbound Linkerd proxy with the caller's true mTLS identity on open
-   routes.
+   Linkerd ``AuthorizationPolicy`` on gated routes (HTTP 403), and even when the
+   mesh ``MeshTLSAuthentication`` is widened to let ``cage-vllm-sa`` through the
+   proxy, the inbound Linkerd proxy overwrites the forged header with
+   ``cage-vllm-sa``'s mTLS identity so ``WorkloadIdentityMiddleware`` on
+   ``hybrid_server:root_app`` rejects it with HTTP 403
+   (``INGRESS_IDENTITY_REFUSED``).
+5. A ``kubectl port-forward`` loopback connection (``127.0.0.1``) sending a
+   forged ``l5d-client-id`` header is rejected with HTTP 403 by
+   ``WorkloadIdentityMiddleware`` on ``hybrid_server:root_app`` and logs
+   ``INGRESS_IDENTITY_NOT_FROM_PROXY`` (``is_pod_local_connection`` refuses
+   loopback peers; POAM-2026-167, F-38, F-39, F-106).
 """
 
 from __future__ import annotations
@@ -41,8 +52,12 @@ import json
 import os
 import pathlib
 import shutil
+import socket
 import subprocess
 import textwrap
+import time
+import urllib.error
+import urllib.request
 
 import pytest
 import yaml
@@ -51,6 +66,7 @@ pytestmark = [pytest.mark.integration]
 
 REPO_ROOT = pathlib.Path(__file__).resolve().parents[2]
 MESH_POLICY_CHART_DIR = REPO_ROOT / "infra" / "modules" / "gateway" / "mesh-policy"
+FINANCE_REGO_PATH = REPO_ROOT / "src" / "cage_finance" / "opa" / "trade_governance.rego"
 
 NAMESPACE = "governance-stack"
 VLLM_NAMESPACE = "vllm-inference"
@@ -82,7 +98,7 @@ def render_mesh_policy_chart(
     namespace: str = NAMESPACE,
     trusted_identities: list[str] | None = None,
 ) -> str:
-    """Render ``infra/modules/gateway/mesh-policy`` with the given values."""
+    """Render ``infra/modules/gateway/mesh-policy`` for the given namespace and identities."""
     identities = (
         [ADVISOR_SPIFFE_ID] if trusted_identities is None else list(trusted_identities)
     )
@@ -218,34 +234,69 @@ def render_mesh_policy_chart(
     return "\n---\n".join(docs)
 
 
+def _resolve_gateway_image() -> str:
+    """Resolve the built Wolfi gateway image (src/gateway/Dockerfile) for F-106."""
+    configured = os.environ.get("CAGE_GATEWAY_IMAGE", "").strip()
+    if configured:
+        return configured
+    gw_img_res = _kubectl(
+        "get",
+        "deployment/gateway",
+        "-n",
+        NAMESPACE,
+        "-o",
+        "jsonpath={.spec.template.spec.containers[0].image}",
+        check=False,
+    )
+    if gw_img_res.returncode == 0 and gw_img_res.stdout.strip():
+        return gw_img_res.stdout.strip()
+    raise RuntimeError(
+        "Set CAGE_GATEWAY_IMAGE to the built src/gateway/Dockerfile image "
+        "(or run against a cluster with deployment/gateway in governance-stack) "
+        "before running Linkerd mesh conformance (POAM-2026-167 / F-106)."
+    )
+
+
 def _require_linkerd_cluster() -> None:
     """Ensure a Kubernetes cluster with Linkerd policy CRDs is reachable."""
     require_cluster = os.environ.get(
         "CAGE_REQUIRE_LINKERD_CLUSTER", "0"
     ).strip().lower() in ("1", "true", "yes")
-    try:
-        res = _kubectl(
-            "get", "crd", "servers.policy.linkerd.io", timeout=10, check=False
-        )
-    except (FileNotFoundError, subprocess.TimeoutExpired) as exc:
-        if require_cluster:
-            pytest.fail(f"Linkerd cluster required but kubectl failed: {exc}")
-        pytest.skip(f"kubectl unavailable or cluster unreachable: {exc}")
 
-    if res.returncode != 0:
-        msg = (
-            "Linkerd policy CRD (servers.policy.linkerd.io) not installed on current cluster: "
-            f"{res.stderr.strip()}"
-        )
+    if shutil.which("kubectl") is None:
         if require_cluster:
-            pytest.fail(msg)
-        pytest.skip(msg)
+            pytest.fail(
+                "kubectl binary not found while CAGE_REQUIRE_LINKERD_CLUSTER=1."
+            )
+        pytest.skip("kubectl not installed; skipping live Linkerd conformance suite.")
+
+    crd_check = _kubectl(
+        "get",
+        "crd",
+        "servers.policy.linkerd.io",
+        "authorizationpolicies.policy.linkerd.io",
+        "meshtlsauthentications.policy.linkerd.io",
+        check=False,
+    )
+    if crd_check.returncode != 0:
+        if require_cluster:
+            pytest.fail(
+                f"Linkerd policy CRDs missing in target cluster:\n{crd_check.stderr}"
+            )
+        pytest.skip(
+            "Linkerd policy CRDs not installed in current kubectl context; "
+            "run in CI (kind + Linkerd) or GKE staging with Linkerd installed."
+        )
 
 
 @pytest.fixture(scope="module")
 def linkerd_mesh_fixture():
-    """Apply CAGE Linkerd policy chart (when absent) and deploy meshed probe workloads."""
+    """Apply CAGE Linkerd policy chart and deploy the Wolfi gateway image booting hybrid_server:root_app."""
     _require_linkerd_cluster()
+    gateway_image = _resolve_gateway_image()
+    opa_image = os.environ.get(
+        "CAGE_OPA_IMAGE", "openpolicyagent/opa:0.70.0-static"
+    ).strip()
 
     for ns in (NAMESPACE, VLLM_NAMESPACE):
         if _kubectl("get", "namespace", ns, check=False).returncode != 0:
@@ -278,39 +329,24 @@ def linkerd_mesh_fixture():
             )
             _kubectl("apply", "-f", "-", input_text=sa_yaml)
 
-    if (
-        _kubectl(
-            "get",
-            "server.policy.linkerd.io/gateway-http",
-            "authorizationpolicy.policy.linkerd.io/gateway-gated",
-            "-n",
-            NAMESPACE,
-            check=False,
-        ).returncode
-        != 0
-    ):
-        _kubectl(
-            "apply",
-            "-f",
-            "-",
-            input_text=render_mesh_policy_chart(namespace=NAMESPACE),
-        )
+    rendered_policy = render_mesh_policy_chart(
+        namespace=NAMESPACE,
+        trusted_identities=[ADVISOR_SPIFFE_ID],
+    )
+    _kubectl("apply", "-f", "-", input_text=rendered_policy)
 
-    gw_img_res = _kubectl(
-        "get",
-        "deploy",
-        "gateway",
-        "-n",
-        NAMESPACE,
-        "-o",
-        "jsonpath={.spec.template.spec.containers[0].image}",
-        check=False,
-    )
-    probe_image = (
-        gw_img_res.stdout.strip()
-        if gw_img_res.returncode == 0 and gw_img_res.stdout.strip()
-        else "python:3.11-slim"
-    )
+    opa_configmap = {
+        "apiVersion": "v1",
+        "kind": "ConfigMap",
+        "metadata": {
+            "name": "gateway-mesh-probe-opa-policy",
+            "namespace": NAMESPACE,
+        },
+        "data": {
+            "trade_governance.rego": FINANCE_REGO_PATH.read_text(encoding="utf-8"),
+        },
+    }
+    _kubectl("apply", "-f", "-", input_text=yaml.safe_dump(opa_configmap))
 
     probe_workloads_yaml = textwrap.dedent(
         f"""\
@@ -319,9 +355,6 @@ def linkerd_mesh_fixture():
         metadata:
           name: gateway-mesh-probe
           namespace: {NAMESPACE}
-          labels:
-            app: gateway
-            probe: linkerd-mesh-conformance
         spec:
           replicas: 1
           selector:
@@ -330,11 +363,12 @@ def linkerd_mesh_fixture():
               probe: linkerd-mesh-conformance
           template:
             metadata:
-              annotations:
-                linkerd.io/inject: enabled
               labels:
                 app: gateway
                 probe: linkerd-mesh-conformance
+              annotations:
+                linkerd.io/inject: enabled
+                config.linkerd.io/skip-outbound-ports: "8181"
             spec:
               serviceAccountName: cage-gateway-sa
               securityContext:
@@ -343,47 +377,112 @@ def linkerd_mesh_fixture():
                 seccompProfile:
                   type: RuntimeDefault
               containers:
-                - name: gateway
-                  image: {probe_image}
+                - name: opa
+                  image: {opa_image}
+                  imagePullPolicy: IfNotPresent
+                  args:
+                    - "run"
+                    - "--server"
+                    - "--log-level=error"
+                    - "--addr=127.0.0.1:8181"
+                    - "--ignore=.*"
+                    - "/policies"
                   securityContext:
                     allowPrivilegeEscalation: false
                     capabilities:
                       drop:
                         - ALL
                     privileged: false
-                    readOnlyRootFilesystem: false
+                    readOnlyRootFilesystem: true
                     runAsNonRoot: true
                     runAsUser: 1000
                     seccompProfile:
                       type: RuntimeDefault
+                  volumeMounts:
+                    - name: opa-policy
+                      mountPath: /policies
+                      readOnly: true
+                - name: gateway
+                  image: {gateway_image}
+                  imagePullPolicy: IfNotPresent
+                  command:
+                    - uvicorn
+                    - src.gateway.server.hybrid_server:root_app
+                    - --host
+                    - 0.0.0.0
+                    - --port
+                    - "8080"
+                    - --loop
+                    - uvloop
+                    - --http
+                    - httptools
+                    - --no-proxy-headers
+                  env:
+                    - name: PORT
+                      value: "8080"
+                    - name: SERVICE_NAME
+                      value: "hybrid-gateway"
+                    - name: CAGE_ENV
+                      value: "development"
+                    - name: CAGE_ALLOW_DEV_LOOPBACK_IDENTITY
+                      value: "false"
+                    - name: CAGE_METRICS_PORT
+                      value: "0"
+                    - name: CAGE_DOMAIN
+                      value: "finance"
+                    - name: CAGE_DEPLOYMENT_REGION
+                      value: "US_FED"
+                    - name: CAGE_INFERENCE_BACKEND
+                      value: "none"
+                    - name: CAGE_TELEMETRY_PROVIDER
+                      value: "noop"
+                    - name: OTEL_TRACES_EXPORTER
+                      value: "none"
+                    - name: CAGE_KMS_PROVIDER
+                      value: "ed25519"
+                    - name: EVIDENCE_STREAM_ENABLED
+                      value: "false"
+                    - name: EVIDENCE_CHAIN_BLOCKING
+                      value: "false"
+                    - name: USE_MOCK_BROKER
+                      value: "true"
+                    - name: OPA_URL
+                      value: "http://127.0.0.1:8181"
+                    - name: CAGE_TRUSTED_CLIENT_IDENTITIES
+                      value: "{ADVISOR_SPIFFE_ID}"
+                    - name: TMPDIR
+                      value: "/tmp"
                   ports:
                     - name: http
                       containerPort: 8080
-                  command:
-                    - python3
-                    - -c
-                    - |
-                      import json
-                      from http.server import BaseHTTPRequestHandler, HTTPServer
-
-                      OPEN_PATHS = {{"/health", "/healthz", "/metrics", "/governance/jwks", "/governance/.well-known/jwks.json"}}
-                      TRUSTED_ID = "{ADVISOR_SPIFFE_ID}"
-
-                      class Handler(BaseHTTPRequestHandler):
-                          def do_GET(self):
-                              client_id = self.headers.get("l5d-client-id", "")
-                              if self.path not in OPEN_PATHS and client_id != TRUSTED_ID:
-                                  body = json.dumps({{"error": "untrusted_client", "l5d_client_id": client_id}}).encode()
-                                  self.send_response(403)
-                              else:
-                                  body = json.dumps({{"status": "ok", "path": self.path, "l5d_client_id": client_id}}).encode()
-                                  self.send_response(200)
-                              self.send_header("Content-Type", "application/json")
-                              self.send_header("Content-Length", str(len(body)))
-                              self.end_headers()
-                              self.wfile.write(body)
-
-                      HTTPServer(("0.0.0.0", 8080), Handler).serve_forever()
+                  readinessProbe:
+                    httpGet:
+                      path: /healthz
+                      port: http
+                    initialDelaySeconds: 2
+                    periodSeconds: 2
+                    failureThreshold: 45
+                  securityContext:
+                    allowPrivilegeEscalation: false
+                    capabilities:
+                      drop:
+                        - ALL
+                    privileged: false
+                    readOnlyRootFilesystem: true
+                    runAsNonRoot: true
+                    runAsUser: 1000
+                    seccompProfile:
+                      type: RuntimeDefault
+                  volumeMounts:
+                    - name: tmp
+                      mountPath: /tmp
+              volumes:
+                - name: opa-policy
+                  configMap:
+                    name: gateway-mesh-probe-opa-policy
+                - name: tmp
+                  emptyDir:
+                    medium: Memory
         ---
         apiVersion: v1
         kind: Service
@@ -415,19 +514,20 @@ def linkerd_mesh_fixture():
               type: RuntimeDefault
           containers:
             - name: client
-              image: {probe_image}
+              image: {gateway_image}
+              imagePullPolicy: IfNotPresent
               securityContext:
                 allowPrivilegeEscalation: false
                 capabilities:
                   drop:
                     - ALL
                 privileged: false
-                readOnlyRootFilesystem: false
+                readOnlyRootFilesystem: true
                 runAsNonRoot: true
                 runAsUser: 1000
                 seccompProfile:
                   type: RuntimeDefault
-              command: ["python3", "-c", "import time; time.sleep(3600)"]
+              command: ["python", "-c", "import time; time.sleep(3600)"]
         ---
         apiVersion: v1
         kind: Pod
@@ -445,25 +545,26 @@ def linkerd_mesh_fixture():
               type: RuntimeDefault
           containers:
             - name: client
-              image: {probe_image}
+              image: {gateway_image}
+              imagePullPolicy: IfNotPresent
               securityContext:
                 allowPrivilegeEscalation: false
                 capabilities:
                   drop:
                     - ALL
                 privileged: false
-                readOnlyRootFilesystem: false
+                readOnlyRootFilesystem: true
                 runAsNonRoot: true
                 runAsUser: 1000
                 seccompProfile:
                   type: RuntimeDefault
-              command: ["python3", "-c", "import time; time.sleep(3600)"]
+              command: ["python", "-c", "import time; time.sleep(3600)"]
         """
     )
     try:
         _kubectl("apply", "-f", "-", input_text=probe_workloads_yaml)
 
-        _kubectl(
+        rollout_res = _kubectl(
             "rollout",
             "status",
             "deployment/gateway-mesh-probe",
@@ -471,7 +572,34 @@ def linkerd_mesh_fixture():
             NAMESPACE,
             "--timeout=180s",
             timeout=200,
+            check=False,
         )
+        if rollout_res.returncode != 0:
+            desc = _kubectl(
+                "describe",
+                "pods",
+                "-l",
+                "probe=linkerd-mesh-conformance",
+                "-n",
+                NAMESPACE,
+                check=False,
+            )
+            logs = _kubectl(
+                "logs",
+                "-l",
+                "probe=linkerd-mesh-conformance",
+                "-n",
+                NAMESPACE,
+                "--all-containers=true",
+                "--tail=200",
+                check=False,
+            )
+            pytest.fail(
+                "gateway-mesh-probe rollout failed:\n"
+                f"STDOUT:\n{rollout_res.stdout}\nSTDERR:\n{rollout_res.stderr}\n"
+                f"DESCRIBE:\n{desc.stdout}\nLOGS:\n{logs.stdout}\n{logs.stderr}"
+            )
+
         _kubectl(
             "wait",
             "--for=condition=Ready",
@@ -489,6 +617,7 @@ def linkerd_mesh_fixture():
             "delete",
             "deployment/gateway-mesh-probe",
             "service/gateway-mesh-probe",
+            "configmap/gateway-mesh-probe-opa-policy",
             "pod/advisor-mesh-client",
             "pod/vllm-mesh-client",
             "-n",
@@ -525,7 +654,7 @@ def _exec_http_get(
         "-c",
         "client",
         "--",
-        "python3",
+        "python",
         "-c",
         script,
     )
@@ -550,16 +679,18 @@ def test_linkerd_manifests_accepted_by_apiserver(linkerd_mesh_fixture) -> None:
 
 
 def test_trusted_advisor_sa_reaches_gated_and_open_routes(linkerd_mesh_fixture) -> None:
-    """Verify cage-advisor-sa is admitted to both open and gated routes with verified l5d-client-id."""
+    """Verify cage-advisor-sa is admitted to both open and gated routes on hybrid_server:root_app."""
     status_open, body_open = _exec_http_get("advisor-mesh-client", "/healthz")
     assert status_open == 200
-    assert json.loads(body_open)["l5d_client_id"] == ADVISOR_SPIFFE_ID
+    assert json.loads(body_open)["status"] == "healthy"
 
     status_gated, body_gated = _exec_http_get(
         "advisor-mesh-client", "/governance/policy-version"
     )
     assert status_gated == 200
-    assert json.loads(body_gated)["l5d_client_id"] == ADVISOR_SPIFFE_ID
+    gated_payload = json.loads(body_gated)
+    assert gated_payload.get("active_hash")
+    assert gated_payload.get("thresholds_digest")
 
 
 def test_untrusted_vllm_sa_reaches_open_route_but_denied_on_gated_route(
@@ -568,7 +699,7 @@ def test_untrusted_vllm_sa_reaches_open_route_but_denied_on_gated_route(
     """Verify cage-vllm-sa is admitted to /healthz (200) but blocked by Linkerd on gated routes (403)."""
     status_open, body_open = _exec_http_get("vllm-mesh-client", "/healthz")
     assert status_open == 200
-    assert json.loads(body_open)["l5d_client_id"] == VLLM_SPIFFE_ID
+    assert json.loads(body_open)["status"] == "healthy"
 
     status_gated, _ = _exec_http_get("vllm-mesh-client", "/governance/policy-version")
     assert status_gated == 403
@@ -577,7 +708,7 @@ def test_untrusted_vllm_sa_reaches_open_route_but_denied_on_gated_route(
 def test_forged_l5d_client_id_header_rejected_and_overwritten_by_linkerd(
     linkerd_mesh_fixture,
 ) -> None:
-    """Verify a caller cannot spoof l5d-client-id to bypass Linkerd or application middleware."""
+    """Verify forged l5d-client-id cannot bypass Linkerd or WorkloadIdentityMiddleware on hybrid_server:root_app."""
     forged_headers = {"l5d-client-id": ADVISOR_SPIFFE_ID}
 
     status_gated, _ = _exec_http_get(
@@ -587,10 +718,118 @@ def test_forged_l5d_client_id_header_rejected_and_overwritten_by_linkerd(
     )
     assert status_gated == 403
 
-    status_open, body_open = _exec_http_get(
-        "vllm-mesh-client",
-        "/healthz",
-        extra_headers=forged_headers,
+    # Temporarily admit cage-vllm-sa at the Linkerd proxy layer while keeping
+    # CAGE_TRUSTED_CLIENT_IDENTITIES restricted to ADVISOR_SPIFFE_ID in
+    # hybrid_server:root_app: proves Linkerd overwrites the forged header with
+    # VLLM_SPIFFE_ID and WorkloadIdentityMiddleware enforces defense-in-depth.
+    widened_policy = render_mesh_policy_chart(
+        namespace=NAMESPACE,
+        trusted_identities=[ADVISOR_SPIFFE_ID, VLLM_SPIFFE_ID],
     )
-    assert status_open == 200
-    assert json.loads(body_open)["l5d_client_id"] == VLLM_SPIFFE_ID
+    strict_policy = render_mesh_policy_chart(
+        namespace=NAMESPACE,
+        trusted_identities=[ADVISOR_SPIFFE_ID],
+    )
+    try:
+        _kubectl("apply", "-f", "-", input_text=widened_policy)
+        overwritten_verified = False
+        for _ in range(15):
+            status_mw, body_mw = _exec_http_get(
+                "vllm-mesh-client",
+                "/governance/policy-version",
+                extra_headers=forged_headers,
+            )
+            assert status_mw == 403
+            if "caller workload identity is not authorized" in body_mw:
+                overwritten_verified = True
+                break
+            time.sleep(0.5)
+        assert overwritten_verified, (
+            "Expected Linkerd inbound proxy to overwrite forged l5d-client-id "
+            "and reach WorkloadIdentityMiddleware 403 JSON response."
+        )
+        gw_logs = _kubectl(
+            "logs",
+            "deployment/gateway-mesh-probe",
+            "-n",
+            NAMESPACE,
+            "-c",
+            "gateway",
+            "--tail=100",
+        ).stdout
+        assert "INGRESS_IDENTITY_REFUSED" in gw_logs
+        assert VLLM_SPIFFE_ID in gw_logs
+    finally:
+        _kubectl("apply", "-f", "-", input_text=strict_policy)
+
+
+def _free_local_port() -> int:
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
+        sock.bind(("127.0.0.1", 0))
+        return int(sock.getsockname()[1])
+
+
+def test_port_forward_loopback_forged_l5d_client_id_rejected_by_middleware(
+    linkerd_mesh_fixture,
+) -> None:
+    """Verify kubectl port-forward (loopback peer) sending forged l5d-client-id is rejected with 403 (POAM-2026-167 / F-106)."""
+    local_port = _free_local_port()
+    pf_proc = subprocess.Popen(
+        [
+            "kubectl",
+            "-n",
+            NAMESPACE,
+            "port-forward",
+            "deployment/gateway-mesh-probe",
+            f"{local_port}:8080",
+        ],
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+    )
+    try:
+        health_url = f"http://127.0.0.1:{local_port}/healthz"
+        assert health_url.startswith(("http://", "https://"))
+        ready = False
+        for _ in range(30):
+            if pf_proc.poll() is not None:
+                _, stderr = pf_proc.communicate(timeout=5)
+                pytest.fail(f"kubectl port-forward exited early: {stderr}")
+            try:
+                req = urllib.request.Request(health_url)
+                with urllib.request.urlopen(req, timeout=2) as resp:  # nosec B310
+                    if resp.status == 200:
+                        ready = True
+                        break
+            except Exception:
+                time.sleep(0.2)
+        assert ready, "kubectl port-forward tunnel did not become ready on /healthz"
+
+        gated_url = f"http://127.0.0.1:{local_port}/governance/policy-version"
+        assert gated_url.startswith(("http://", "https://"))
+        forged_req = urllib.request.Request(
+            gated_url,
+            headers={"l5d-client-id": ADVISOR_SPIFFE_ID},
+        )
+        with pytest.raises(urllib.error.HTTPError) as exc_info:
+            urllib.request.urlopen(forged_req, timeout=5)  # nosec B310
+        assert exc_info.value.code == 403
+        err_body = exc_info.value.read().decode("utf-8", errors="replace")
+        assert "Forbidden" in err_body
+
+        gw_logs = _kubectl(
+            "logs",
+            "deployment/gateway-mesh-probe",
+            "-n",
+            NAMESPACE,
+            "-c",
+            "gateway",
+            "--tail=100",
+        ).stdout
+        assert "INGRESS_IDENTITY_NOT_FROM_PROXY" in gw_logs
+    finally:
+        pf_proc.terminate()
+        try:
+            pf_proc.wait(timeout=5)
+        except subprocess.TimeoutExpired:
+            pf_proc.kill()

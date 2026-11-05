@@ -168,6 +168,10 @@ def test_healthy_production_posture_passes(healthy: pytest.MonkeyPatch) -> None:
                 mp.setenv("CAGE_INFERENCE_BACKEND", "none"),
             ),
         ),
+        (
+            "dev_loopback_identity.*CAGE_ALLOW_DEV_LOOPBACK_IDENTITY=true",
+            lambda mp: mp.setenv("CAGE_ALLOW_DEV_LOOPBACK_IDENTITY", "true"),
+        ),
     ],
 )
 def test_each_violation_refuses_production(
