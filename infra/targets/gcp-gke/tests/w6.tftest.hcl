@@ -268,3 +268,79 @@ run "compliance_bridge_artifactregistry_writer_uses_service_account_resource" {
   }
 }
 
+run "gke_module_binds_dedicated_node_service_account_to_every_node_pool" {
+  command = plan
+
+  module {
+    source = "../../modules/gcp_gke_cluster"
+  }
+
+  variables {
+    project_id                    = "node-sa-test-project"
+    region                        = "us-central1"
+    zone                          = "us-central1-a"
+    cluster_name                  = "cage-node-sa-test"
+    environment                   = "staging"
+    enable_general_spot_node_pool = true
+    enable_gpu_node_pool          = true
+    enable_clickhouse_node_pool   = true
+    node_pools = [
+      {
+        name         = "custom-pool"
+        machine_type = "e2-standard-4"
+        min_count    = 0
+        max_count    = 2
+      }
+    ]
+  }
+
+  assert {
+    condition = (
+      google_service_account.gke_nodes.account_id == "cage-gke-nodes-staging" &&
+      output.node_service_account_email == "cage-gke-nodes-staging@node-sa-test-project.iam.gserviceaccount.com"
+    )
+    error_message = "module.gke must provision google_service_account.gke_nodes and output node_service_account_email"
+  }
+
+  assert {
+    condition = (
+      google_project_iam_member.gke_nodes_default_node_sa.role == "roles/container.defaultNodeServiceAccount" &&
+      google_project_iam_member.gke_nodes_default_node_sa.member == "serviceAccount:cage-gke-nodes-staging@node-sa-test-project.iam.gserviceaccount.com" &&
+      google_project_iam_member.gke_nodes_artifact_registry_reader.role == "roles/artifactregistry.reader" &&
+      google_project_iam_member.gke_nodes_artifact_registry_reader.member == "serviceAccount:cage-gke-nodes-staging@node-sa-test-project.iam.gserviceaccount.com"
+    )
+    error_message = "module.gke must grant roles/container.defaultNodeServiceAccount and roles/artifactregistry.reader to the dedicated node GSA"
+  }
+
+  assert {
+    condition = (
+      google_container_cluster.primary.node_config[0].service_account == "cage-gke-nodes-staging@node-sa-test-project.iam.gserviceaccount.com" &&
+      google_container_node_pool.primary_nodes.node_config[0].service_account == "cage-gke-nodes-staging@node-sa-test-project.iam.gserviceaccount.com" &&
+      google_container_node_pool.general_spot_nodes[0].node_config[0].service_account == "cage-gke-nodes-staging@node-sa-test-project.iam.gserviceaccount.com" &&
+      google_container_node_pool.gpu_nodes[0].node_config[0].service_account == "cage-gke-nodes-staging@node-sa-test-project.iam.gserviceaccount.com" &&
+      google_container_node_pool.clickhouse_nodes[0].node_config[0].service_account == "cage-gke-nodes-staging@node-sa-test-project.iam.gserviceaccount.com" &&
+      google_container_node_pool.extra_pools["custom-pool"].node_config[0].service_account == "cage-gke-nodes-staging@node-sa-test-project.iam.gserviceaccount.com"
+    )
+    error_message = "every GKE node_config block must bind the dedicated node service account"
+  }
+
+  # Decision A4 (POAM-2026-187): every node_config intentionally retains
+  # oauth_scopes = ["https://www.googleapis.com/auth/cloud-platform"] alongside
+  # the dedicated least-privilege node GSA (`cage-gke-nodes-staging`). In GCP,
+  # effective VM permissions equal `OAuth scope ∩ IAM roles`; per Google's GKE
+  # hardening guidance, setting `cloud-platform` avoids brittle legacy per-API
+  # OAuth scope lists while bounding node permissions strictly through the two
+  # IAM bindings verified above.
+  assert {
+    condition = (
+      google_container_cluster.primary.node_config[0].oauth_scopes == toset(["https://www.googleapis.com/auth/cloud-platform"]) &&
+      google_container_node_pool.primary_nodes.node_config[0].oauth_scopes == toset(["https://www.googleapis.com/auth/cloud-platform"]) &&
+      google_container_node_pool.general_spot_nodes[0].node_config[0].oauth_scopes == toset(["https://www.googleapis.com/auth/cloud-platform"]) &&
+      google_container_node_pool.gpu_nodes[0].node_config[0].oauth_scopes == toset(["https://www.googleapis.com/auth/cloud-platform"]) &&
+      google_container_node_pool.clickhouse_nodes[0].node_config[0].oauth_scopes == toset(["https://www.googleapis.com/auth/cloud-platform"]) &&
+      google_container_node_pool.extra_pools["custom-pool"].node_config[0].oauth_scopes == toset(["https://www.googleapis.com/auth/cloud-platform"])
+    )
+    error_message = "every GKE node_config block must retain cloud-platform oauth_scopes bounded by IAM (Decision A4)"
+  }
+}
+
