@@ -41,6 +41,7 @@ def fetch_data():
             url,
             auth=auth,
             params={"type": "GENERATION", "public": "false", "limit": 100},
+            timeout=10.0,
         )
         res.raise_for_status()
         obs_data = res.json().get("data", [])
@@ -69,7 +70,10 @@ def fetch_data():
 
         print("\nFetching SPAN observations for overhead analysis...")
         res = requests.get(
-            url, auth=auth, params={"type": "SPAN", "public": "false", "limit": 100}
+            url,
+            auth=auth,
+            params={"type": "SPAN", "public": "false", "limit": 100},
+            timeout=10.0,
         )
         res.raise_for_status()
         span_data = res.json().get("data", [])

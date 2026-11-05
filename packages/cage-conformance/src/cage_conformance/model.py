@@ -100,9 +100,15 @@ Gaps closed by this proof:
 
 from __future__ import annotations
 
+import sys
 from collections.abc import Iterator
 from dataclasses import dataclass
 from itertools import product
+
+if hasattr(sys.stdout, "reconfigure"):
+    sys.stdout.reconfigure(errors="replace")
+if hasattr(sys.stderr, "reconfigure"):
+    sys.stderr.reconfigure(errors="replace")
 
 # ---------------------------------------------------------------------------
 # State definition

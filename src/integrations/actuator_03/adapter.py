@@ -44,6 +44,8 @@ from src.gateway.governance.seams.actuation import (
 from src.gateway.governance.seams.quarantine import (
     QuarantineDirective,
     QuarantineReceipt,
+    QuarantineReleaseDirective,
+    QuarantineReleaseReceipt,
     QuarantineTriggerReason,
 )
 from src.integrations.actuator_03.constants import (
@@ -185,13 +187,21 @@ class Actuator03Adapter:
         signer: RawMessageSigner,
         http_client: httpx.AsyncClient | None = None,
         receipt_key_resolver: Ed25519KeyResolver | None = None,
-        require_signed_receipts: bool = False,
+        require_signed_receipts: bool | None = None,
     ) -> None:
         parsed = urlparse(endpoint)
         if parsed.scheme not in ("https", "http"):
             raise ValueError(
                 f"[actuator_03] Unsupported endpoint scheme: {parsed.scheme!r}"
             )
+        from src.gateway.governance.env_posture import is_enforcing, resolve_posture
+
+        if require_signed_receipts is None:
+            # Finding CAGE-09: default require_signed_receipts=True in enforcing postures or when resolver configured
+            require_signed_receipts = is_enforcing(resolve_posture()) or (
+                receipt_key_resolver is not None
+            )
+
         if require_signed_receipts and receipt_key_resolver is None:
             raise ValueError(
                 "[actuator_03] require_signed_receipts requires a receipt_key_resolver"
@@ -237,9 +247,14 @@ class Actuator03Adapter:
         http_client = httpx.AsyncClient(verify=ssl_ctx, timeout=5.0)
 
         manifest_url = os.environ.get(_ENV_RECEIPT_KEY_MANIFEST_URL, "").strip()
-        require_signed = os.environ.get(
-            _ENV_REQUIRE_SIGNED_RECEIPTS, ""
-        ).strip().lower() in ("1", "true", "yes")
+        from src.gateway.governance.env_posture import is_enforcing, resolve_posture
+
+        raw_flag = os.environ.get(_ENV_REQUIRE_SIGNED_RECEIPTS)
+        if raw_flag is not None:
+            require_signed = raw_flag.strip().lower() in ("1", "true", "yes")
+        else:
+            require_signed = is_enforcing(resolve_posture()) or bool(manifest_url)
+
         resolver: Ed25519KeyResolver | None = (
             Ed25519KeyManifestClient(manifest_url) if manifest_url else None
         )
@@ -498,6 +513,31 @@ class Actuator03Adapter:
             outcome=ActuationOutcome.ACCEPTED,
             verification=verification,
             findings=findings,
+            envelope_digest=envelope_digest,
+            timestamp_utc=now_utc,
+        )
+
+    async def release_workload(
+        self, directive: QuarantineReleaseDirective
+    ) -> QuarantineReleaseReceipt:
+        """Fail-closed release for in-silicon DPU isolation (requires out-of-band hardware reset)."""
+        now_utc = datetime.now(tz=timezone.utc).isoformat()
+        canonical_bytes = jcs_canonicalize_plan(directive.to_dict())
+        envelope_digest = hashlib.sha256(canonical_bytes).hexdigest()
+        return QuarantineReleaseReceipt(
+            released=False,
+            enforcement_plane="IN_SILICON_DPU",
+            epoch_before=0,
+            epoch_after=0,
+            outcome=ActuationOutcome.REJECTED,
+            verification=ReceiptVerification.UNVERIFIED,
+            findings=[
+                _finding(
+                    "DPU_RELEASE_REQUIRES_OUT_OF_BAND_RESET",
+                    "TERMINAL",
+                    "in-silicon DPU flow quarantine cannot be lifted via in-band API",
+                )
+            ],
             envelope_digest=envelope_digest,
             timestamp_utc=now_utc,
         )

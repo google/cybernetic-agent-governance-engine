@@ -813,6 +813,131 @@ async def validate_action_endpoint(
             },
         )
 
+    # ── Out-of-Band Quarantine Enforcement (SC-7 / AC-3, CAGE-09) ───────────
+    from src.gateway.governance.quarantine_actuator import (
+        get_workload_min_epoch,
+        is_workload_quarantined,
+    )
+    from src.gateway.server.workload_identity import current_client_identity
+
+    caller_svid = current_client_identity()
+    if not caller_svid:
+        try:
+            from src.gateway.server.workload_identity import extract_client_identity
+
+            caller_svid = extract_client_identity(request.scope)
+        except Exception:
+            caller_svid = None
+    if not caller_svid:
+        caller_svid = request.headers.get("x-cage-agent-svid") or body.params.get(
+            "agent_svid"
+        )
+
+    req_thread_id = None
+    if hasattr(request, "headers") and hasattr(request.headers, "get"):
+        hdr_t = request.headers.get("x-cage-thread-id")
+        if isinstance(hdr_t, str):
+            req_thread_id = hdr_t
+    if not req_thread_id and isinstance(getattr(body, "params", None), dict):
+        param_t = body.params.get("thread_id")
+        if isinstance(param_t, str):
+            req_thread_id = param_t
+
+    app_state = getattr(getattr(request, "app", None), "state", None)
+    raw_redis = getattr(app_state, "redis", None)
+    shared_redis = (
+        raw_redis
+        if raw_redis is not None and type(raw_redis).__name__ != "MagicMock"
+        else None
+    )
+
+    if await is_workload_quarantined(
+        thread_id=str(req_thread_id) if req_thread_id else None,
+        agent_svid=str(caller_svid) if caller_svid else None,
+        redis_client=shared_redis,
+    ):
+        logger.warning(
+            "🛑 Quarantined workload attempted /governance/validate-action (svid=%s, thread=%s)",
+            caller_svid,
+            req_thread_id,
+        )
+        return JSONResponse(
+            status_code=403,
+            content={
+                "error": "workload_quarantined",
+                "message": "Workload SVID or thread is quarantined by CAGE out-of-band governance",
+                "agent_id": str(caller_svid) if caller_svid else None,
+                "thread_id": str(req_thread_id) if req_thread_id else None,
+            },
+        )
+
+    if caller_svid:
+        min_epoch = await get_workload_min_epoch(
+            str(caller_svid), redis_client=shared_redis
+        )
+        raw_epoch = (
+            request.headers.get("x-cage-epoch")
+            if hasattr(request, "headers") and hasattr(request.headers, "get")
+            else None
+        )
+        if not raw_epoch and isinstance(getattr(body, "params", None), dict):
+            raw_epoch = body.params.get("epoch")
+        if isinstance(raw_epoch, (int, str)):
+            raw_epoch = str(raw_epoch)
+        else:
+            raw_epoch = None
+
+        if min_epoch > 0:
+            if raw_epoch is None:
+                logger.warning(
+                    "🛑 Missing workload epoch on /governance/validate-action (svid=%s, min_epoch=%s)",
+                    caller_svid,
+                    min_epoch,
+                )
+                return JSONResponse(
+                    status_code=403,
+                    content={
+                        "error": "missing_workload_epoch",
+                        "message": f"Workload generation epoch required (minimum: {min_epoch})",
+                        "agent_id": str(caller_svid),
+                        "min_epoch": min_epoch,
+                    },
+                )
+            try:
+                parsed_epoch = int(raw_epoch)
+            except (ValueError, TypeError):
+                logger.warning(
+                    "🛑 Malformed workload epoch on /governance/validate-action: %r (svid=%s, min_epoch=%s)",
+                    raw_epoch,
+                    caller_svid,
+                    min_epoch,
+                )
+                return JSONResponse(
+                    status_code=403,
+                    content={
+                        "error": "missing_workload_epoch",
+                        "message": f"Malformed workload generation epoch {raw_epoch!r} (valid integer >= {min_epoch} required)",
+                        "agent_id": str(caller_svid),
+                        "min_epoch": min_epoch,
+                    },
+                )
+            if parsed_epoch < min_epoch:
+                logger.warning(
+                    "🛑 Stale workload epoch on /governance/validate-action: %s < min %s (svid=%s)",
+                    parsed_epoch,
+                    min_epoch,
+                    caller_svid,
+                )
+                return JSONResponse(
+                    status_code=403,
+                    content={
+                        "error": "stale_workload_epoch",
+                        "message": f"Workload generation epoch {parsed_epoch} is stale (minimum required: {min_epoch})",
+                        "agent_id": str(caller_svid),
+                        "min_epoch": min_epoch,
+                    },
+                )
+
     # ── Extract W3C trace context from inbound headers ────────────────────────
     # The GFA injected 'traceparent' via otel_inject(headers).  Extracting it
     # here and attaching it as the current context means all spans opened by

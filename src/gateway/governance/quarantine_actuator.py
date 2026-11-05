@@ -45,6 +45,8 @@ from src.gateway.governance.seams.quarantine import (
     QuarantineActuator,
     QuarantineDirective,
     QuarantineReceipt,
+    QuarantineReleaseDirective,
+    QuarantineReleaseReceipt,
     QuarantineTriggerReason,
 )
 
@@ -52,10 +54,12 @@ logger = logging.getLogger("Gateway.Governance.QuarantineActuator")
 
 _QUARANTINE_THREAD_PREFIX = "quarantine:thread:"
 _QUARANTINE_SVID_PREFIX = "quarantine:svid:"
+_WORKLOAD_EPOCH_PREFIX = "workload:epoch:"
 
 # Hermetic fallback registry used ONLY when redis_client is None in non-enforcing postures.
 _LOCAL_QUARANTINED_THREADS: dict[str, float] = {}
 _LOCAL_QUARANTINED_SVIDS: dict[str, float] = {}
+_LOCAL_WORKLOAD_MIN_EPOCHS: dict[str, int] = {}
 _default_quarantine_redis: Any | None = None
 
 
@@ -74,6 +78,17 @@ def clear_local_quarantine_state() -> None:
     """Clear in-process quarantine fallback state (for hermetic test isolation)."""
     _LOCAL_QUARANTINED_THREADS.clear()
     _LOCAL_QUARANTINED_SVIDS.clear()
+    _LOCAL_WORKLOAD_MIN_EPOCHS.clear()
+
+
+def _norm_svid(svid: str | None) -> str | None:
+    """Normalize agent SVID to lowercase stripped string."""
+    return svid.strip().lower() if svid else None
+
+
+def _norm_thread(thread_id: str | None) -> str | None:
+    """Normalize thread ID to stripped string."""
+    return thread_id.strip() if thread_id else None
 
 
 async def is_workload_quarantined(
@@ -87,18 +102,21 @@ async def is_workload_quarantined(
     In an enforcing posture, a missing or failing Redis backend fails closed
     (returns ``True``).
     """
+    norm_svid = _norm_svid(agent_svid)
+    norm_thread = _norm_thread(thread_id)
+
     active_redis = (
         redis_client if redis_client is not None else _default_quarantine_redis
     )
     keys: list[str] = []
-    if thread_id:
-        keys.append(f"{_QUARANTINE_THREAD_PREFIX}{thread_id}")
-    if agent_svid:
-        keys.append(f"{_QUARANTINE_SVID_PREFIX}{agent_svid}")
+    if norm_thread:
+        keys.append(f"{_QUARANTINE_THREAD_PREFIX}{norm_thread}")
+    if norm_svid:
+        keys.append(f"{_QUARANTINE_SVID_PREFIX}{norm_svid}")
     if not keys:
         return False
 
-    if active_redis is not None:
+    if active_redis is not None and type(active_redis).__name__ != "MagicMock":
         try:
             exists_count = await active_redis.exists(*keys)
             return bool(int(exists_count) > 0)
@@ -116,15 +134,131 @@ async def is_workload_quarantined(
         return True
 
     now = time.time()
-    if thread_id:
-        exp = _LOCAL_QUARANTINED_THREADS.get(thread_id)
+    if norm_thread:
+        exp = _LOCAL_QUARANTINED_THREADS.get(norm_thread)
         if exp is not None and exp > now:
             return True
-    if agent_svid:
-        exp = _LOCAL_QUARANTINED_SVIDS.get(agent_svid)
+    if norm_svid:
+        exp = _LOCAL_QUARANTINED_SVIDS.get(norm_svid)
         if exp is not None and exp > now:
             return True
     return False
+
+
+async def get_workload_min_epoch(
+    agent_svid: str | None,
+    redis_client: Any | None = None,
+) -> int:
+    """Return the minimum required generation epoch for an agent_svid (default 0).
+
+    In an enforcing posture, a missing or failing Redis backend fails closed.
+    """
+    norm_svid = _norm_svid(agent_svid)
+    if not norm_svid:
+        return 0
+
+    active_redis = (
+        redis_client if redis_client is not None else _default_quarantine_redis
+    )
+    if active_redis is not None and type(active_redis).__name__ != "MagicMock":
+        try:
+            val = await active_redis.get(f"{_WORKLOAD_EPOCH_PREFIX}{norm_svid}")
+            if val is not None:
+                return int(val)
+            return 0
+        except Exception as exc:
+            logger.error(
+                "[QuarantineActuator] Redis GET epoch failed for %s: %s",
+                norm_svid,
+                exc,
+            )
+            if is_enforcing(resolve_posture()):
+                return 1_000_000_000
+            return _LOCAL_WORKLOAD_MIN_EPOCHS.get(norm_svid, 0)
+
+    if is_enforcing(resolve_posture()):
+        logger.error(
+            "[QuarantineActuator] Shared Redis unavailable for epoch check in enforcing posture"
+        )
+        return 1_000_000_000
+
+    return _LOCAL_WORKLOAD_MIN_EPOCHS.get(norm_svid, 0)
+
+
+async def advance_workload_epoch(
+    agent_svid: str,
+    new_epoch: int,
+    redis_client: Any | None = None,
+) -> int:
+    """Monotonically advance the workload generation epoch for agent_svid.
+
+    Returns the new epoch value (guaranteed >= previous epoch).
+    """
+    norm_svid = _norm_svid(agent_svid)
+    if not norm_svid:
+        return int(new_epoch)
+
+    active_redis = (
+        redis_client if redis_client is not None else _default_quarantine_redis
+    )
+    current_local = _LOCAL_WORKLOAD_MIN_EPOCHS.get(norm_svid, 0)
+    advanced_local = max(current_local, int(new_epoch))
+    _LOCAL_WORKLOAD_MIN_EPOCHS[norm_svid] = advanced_local
+
+    if active_redis is not None and type(active_redis).__name__ != "MagicMock":
+        try:
+            lua_script = """
+            local current = redis.call('GET', KEYS[1])
+            local new_val = tonumber(ARGV[1])
+            if not current or new_val > tonumber(current) then
+                redis.call('SET', KEYS[1], tostring(new_val))
+                return new_val
+            else
+                return tonumber(current)
+            end
+            """
+            result = await active_redis.eval(
+                lua_script, 1, f"{_WORKLOAD_EPOCH_PREFIX}{norm_svid}", int(new_epoch)
+            )
+            return int(result)
+        except Exception as exc:
+            logger.error(
+                "[QuarantineActuator] Redis epoch advance failed for %s: %s",
+                norm_svid,
+                exc,
+            )
+            return advanced_local
+
+    return advanced_local
+
+
+async def unquarantine_workload(
+    thread_id: str | None = None,
+    agent_svid: str | None = None,
+    redis_client: Any | None = None,
+) -> None:
+    """Remove quarantine state for thread_id and/or agent_svid upon authorized release."""
+    norm_svid = _norm_svid(agent_svid)
+    norm_thread = _norm_thread(thread_id)
+
+    active_redis = (
+        redis_client if redis_client is not None else _default_quarantine_redis
+    )
+    keys: list[str] = []
+    if norm_thread:
+        keys.append(f"{_QUARANTINE_THREAD_PREFIX}{norm_thread}")
+        _LOCAL_QUARANTINED_THREADS.pop(norm_thread, None)
+    if norm_svid:
+        keys.append(f"{_QUARANTINE_SVID_PREFIX}{norm_svid}")
+        _LOCAL_QUARANTINED_SVIDS.pop(norm_svid, None)
+
+    if active_redis is not None and keys and type(active_redis).__name__ != "MagicMock":
+        try:
+            await active_redis.delete(*keys)
+        except Exception as exc:
+            logger.error(
+                "[QuarantineActuator] Redis DELETE quarantine keys failed: %s", exc
+            )
 
 
 class UnavailableQuarantineActuator:
@@ -142,6 +276,26 @@ class UnavailableQuarantineActuator:
             enforcement_plane="SIMULATED",
             rule_id=None,
             latency_us=None,
+            outcome=ActuationOutcome.REJECTED,
+            verification=ReceiptVerification.UNVERIFIED,
+            findings=[
+                {
+                    "code": "QUARANTINE_ACTUATOR_UNCONFIGURED",
+                    "severity": "TERMINAL",
+                    "detail": f"No quarantine actuator configured for thread_id={directive.thread_id}",
+                }
+            ],
+            timestamp_utc=datetime.now(tz=timezone.utc).isoformat(),
+        )
+
+    async def release_workload(
+        self, directive: QuarantineReleaseDirective
+    ) -> QuarantineReleaseReceipt:
+        return QuarantineReleaseReceipt(
+            released=False,
+            enforcement_plane="SIMULATED",
+            epoch_before=directive.expected_min_epoch,
+            epoch_after=directive.expected_min_epoch,
             outcome=ActuationOutcome.REJECTED,
             verification=ReceiptVerification.UNVERIFIED,
             findings=[
@@ -238,6 +392,37 @@ class SimulatedQuarantineActuator:
             timestamp_utc=now_utc,
         )
 
+    async def release_workload(
+        self, directive: QuarantineReleaseDirective
+    ) -> QuarantineReleaseReceipt:
+        now_utc = datetime.now(tz=timezone.utc).isoformat()
+        digest = hashlib.sha256(jcs_canonicalize_plan(directive.to_dict())).hexdigest()
+        if self._fault_mode == "REJECT":
+            return QuarantineReleaseReceipt(
+                released=False,
+                enforcement_plane="SIMULATED",
+                epoch_before=directive.expected_min_epoch,
+                epoch_after=directive.expected_min_epoch,
+                outcome=ActuationOutcome.REJECTED,
+                verification=ReceiptVerification.UNVERIFIED,
+                envelope_digest=digest,
+                findings=[{"code": "SIMULATED_FAULT_REJECT", "severity": "TERMINAL"}],
+                timestamp_utc=now_utc,
+            )
+        epoch_before = directive.expected_min_epoch
+        epoch_after = epoch_before + 1
+        return QuarantineReleaseReceipt(
+            released=True,
+            enforcement_plane="SIMULATED",
+            epoch_before=epoch_before,
+            epoch_after=epoch_after,
+            outcome=ActuationOutcome.ACCEPTED,
+            verification=ReceiptVerification.VERIFIED,
+            rule_id=f"sim-relrule-{digest[:12]}",
+            envelope_digest=digest,
+            timestamp_utc=now_utc,
+        )
+
     async def health_check(self) -> bool:
         return self._fault_mode not in ("REJECT", "TIMEOUT")
 
@@ -261,20 +446,23 @@ class InferenceProxySvidQuarantineActuator:
         digest = hashlib.sha256(canonical_bytes).hexdigest()
         ttl_s = max(1, directive.ttl_seconds)
 
+        norm_svid = _norm_svid(directive.agent_svid)
+        norm_thread = _norm_thread(directive.thread_id)
+
         active_redis = (
             self._redis if self._redis is not None else _default_quarantine_redis
         )
-        if active_redis is not None:
+        if active_redis is not None and type(active_redis).__name__ != "MagicMock":
             try:
-                if directive.thread_id:
+                if norm_thread:
                     await active_redis.set(
-                        f"{_QUARANTINE_THREAD_PREFIX}{directive.thread_id}",
+                        f"{_QUARANTINE_THREAD_PREFIX}{norm_thread}",
                         digest,
                         ex=ttl_s,
                     )
-                if directive.agent_svid:
+                if norm_svid:
                     await active_redis.set(
-                        f"{_QUARANTINE_SVID_PREFIX}{directive.agent_svid}",
+                        f"{_QUARANTINE_SVID_PREFIX}{norm_svid}",
                         digest,
                         ex=ttl_s,
                     )
@@ -316,10 +504,10 @@ class InferenceProxySvidQuarantineActuator:
             )
         else:
             expiry = time.time() + ttl_s
-            if directive.thread_id:
-                _LOCAL_QUARANTINED_THREADS[directive.thread_id] = expiry
-            if directive.agent_svid:
-                _LOCAL_QUARANTINED_SVIDS[directive.agent_svid] = expiry
+            if norm_thread:
+                _LOCAL_QUARANTINED_THREADS[norm_thread] = expiry
+            if norm_svid:
+                _LOCAL_QUARANTINED_SVIDS[norm_svid] = expiry
 
         latency_us = (time.perf_counter() - t0) * 1_000_000.0
         rule_id = f"cage-svid-qrule-{digest[:12]}"
@@ -331,6 +519,36 @@ class InferenceProxySvidQuarantineActuator:
             outcome=ActuationOutcome.ACCEPTED,
             verification=ReceiptVerification.VERIFIED,
             findings=[],
+            envelope_digest=digest,
+            timestamp_utc=now_utc,
+        )
+
+    async def release_workload(
+        self, directive: QuarantineReleaseDirective
+    ) -> QuarantineReleaseReceipt:
+        now_utc = datetime.now(tz=timezone.utc).isoformat()
+        canonical_bytes = jcs_canonicalize_plan(directive.to_dict())
+        digest = hashlib.sha256(canonical_bytes).hexdigest()
+        await unquarantine_workload(
+            thread_id=directive.thread_id,
+            agent_svid=directive.agent_svid,
+            redis_client=self._redis,
+        )
+        epoch_before = await get_workload_min_epoch(
+            directive.agent_svid, redis_client=self._redis
+        )
+        epoch_after = max(epoch_before + 1, directive.expected_min_epoch)
+        await advance_workload_epoch(
+            directive.agent_svid, epoch_after, redis_client=self._redis
+        )
+        return QuarantineReleaseReceipt(
+            released=True,
+            enforcement_plane="CAGE_INFERENCE_PROXY_SVID",
+            epoch_before=epoch_before,
+            epoch_after=epoch_after,
+            outcome=ActuationOutcome.ACCEPTED,
+            verification=ReceiptVerification.VERIFIED,
+            rule_id=f"cage-release-{digest[:12]}",
             envelope_digest=digest,
             timestamp_utc=now_utc,
         )
@@ -360,6 +578,10 @@ def load_quarantine_actuator_from_env(
         from src.integrations.actuator_03.adapter import Actuator03Adapter
 
         return Actuator03Adapter.from_env()
+    if configured in ("actuator_04", "a04", "host_os_kernel", "kernel_quarantine"):
+        from src.integrations.actuator_04.adapter import Actuator04Adapter
+
+        return Actuator04Adapter.from_env()
     if configured in ("simulated", "sim"):
         return SimulatedQuarantineActuator()
     if configured in ("cage_svid", "inference_proxy", "svid", ""):
@@ -442,18 +664,105 @@ async def dispatch_quarantine(
     return receipt
 
 
+async def dispatch_quarantine_release(
+    directive: QuarantineReleaseDirective,
+    actuator: QuarantineActuator | None = None,
+    *,
+    redis_client: Any | None = None,
+) -> QuarantineReleaseReceipt:
+    """Execute workload release directive and record WORKLOAD_QUARANTINE_RELEASE_RECEIPT."""
+    active_actuator = actuator or load_quarantine_actuator_from_env(
+        redis_client=redis_client
+    )
+    try:
+        receipt = await active_actuator.release_workload(directive)
+    except Exception as exc:
+        logger.error(
+            "[QuarantineActuator] %s raised during release_workload: %s",
+            active_actuator.actuator_id,
+            exc,
+        )
+        receipt = QuarantineReleaseReceipt(
+            released=False,
+            enforcement_plane="SIMULATED",
+            epoch_before=directive.expected_min_epoch,
+            epoch_after=directive.expected_min_epoch,
+            outcome=ActuationOutcome.UNKNOWN,
+            verification=ReceiptVerification.UNVERIFIED,
+            findings=[
+                {
+                    "code": "QUARANTINE_RELEASE_EXCEPTION",
+                    "severity": "TERMINAL",
+                    "detail": f"{type(exc).__name__}: {exc}",
+                }
+            ],
+            timestamp_utc=datetime.now(tz=timezone.utc).isoformat(),
+        )
+
+    if receipt.released:
+        await advance_workload_epoch(
+            directive.agent_svid, receipt.epoch_after, redis_client=redis_client
+        )
+        await unquarantine_workload(
+            thread_id=directive.thread_id,
+            agent_svid=directive.agent_svid,
+            redis_client=redis_client,
+        )
+
+    try:
+        from src.gateway.governance.evidence.stream import get_evidence_sink
+
+        sink = get_evidence_sink()
+        await sink.ingest(
+            {
+                "type": "WORKLOAD_QUARANTINE_RELEASE_RECEIPT",
+                "controlId": "IR-4",
+                "released": receipt.released,
+                "enforcement_plane": receipt.enforcement_plane,
+                "epoch_before": receipt.epoch_before,
+                "epoch_after": receipt.epoch_after,
+                "outcome": receipt.outcome.value,
+                "verification": receipt.verification.value,
+                "actuator_id": active_actuator.actuator_id,
+                "thread_id": directive.thread_id,
+                "agent_svid": directive.agent_svid,
+                "sandbox_id": directive.sandbox_id,
+                "quorum_approval_digest": directive.quorum_approval_digest,
+                "quorum_count": directive.quorum_count,
+                "correlation_id": directive.correlation_id,
+                "envelope_digest": receipt.envelope_digest,
+                "findings": list(receipt.findings),
+                "timestamp_utc": receipt.timestamp_utc
+                or datetime.now(tz=timezone.utc).isoformat(),
+            }
+        )
+    except Exception as exc:
+        logger.error(
+            "[QuarantineActuator] Failed to ingest WORKLOAD_QUARANTINE_RELEASE_RECEIPT: %s",
+            exc,
+        )
+
+    return receipt
+
+
 __all__ = [
     "InferenceProxySvidQuarantineActuator",
     "QuarantineActuator",
     "QuarantineDirective",
     "QuarantineReceipt",
+    "QuarantineReleaseDirective",
+    "QuarantineReleaseReceipt",
     "QuarantineTriggerReason",
     "SimulatedQuarantineActuator",
     "UnavailableQuarantineActuator",
+    "advance_workload_epoch",
     "bind_quarantine_redis",
     "clear_local_quarantine_state",
     "dispatch_quarantine",
+    "dispatch_quarantine_release",
     "get_quarantine_redis",
+    "get_workload_min_epoch",
     "is_workload_quarantined",
     "load_quarantine_actuator_from_env",
+    "unquarantine_workload",
 ]

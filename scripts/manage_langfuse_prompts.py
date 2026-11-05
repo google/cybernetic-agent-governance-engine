@@ -50,7 +50,7 @@ def list_and_clean_prompts():
     host = os.environ.get("LANGFUSE_HOST", "http://localhost:3000")
 
     url = f"{host}/api/public/prompts"
-    resp = requests.get(url, auth=auth)
+    resp = requests.get(url, auth=auth, timeout=10.0)
     if resp.status_code == 200:
         prompts = resp.json().get("data", [])
         print(f"Found {len(prompts)} prompts in Langfuse.")

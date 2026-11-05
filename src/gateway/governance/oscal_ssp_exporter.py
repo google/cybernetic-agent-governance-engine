@@ -77,6 +77,11 @@ import textwrap
 from pathlib import Path
 from typing import Any
 
+if hasattr(sys.stdout, "reconfigure"):
+    sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+if hasattr(sys.stderr, "reconfigure"):
+    sys.stderr.reconfigure(encoding="utf-8", errors="replace")
+
 import yaml
 
 from src.gateway.governance.stpa_compiler import (
@@ -536,7 +541,7 @@ class FrameworkRouter:
                 f"FrameworkRouter: mapping file not found at {json_path}. "
                 f"Ensure config/oscal/framework_mappings/{file_stem}.json exists."
             )
-        with open(json_path) as fh:
+        with open(json_path, encoding="utf-8") as fh:
             data = json.load(fh)
 
         self.framework_id: str = data["_framework_id"]
@@ -1077,7 +1082,7 @@ def _apply_ssp_patch(
         logger.error("SSP not found at %s", ssp_path)
         return False
 
-    with open(ssp_path) as fh:
+    with open(ssp_path, encoding="utf-8") as fh:
         ssp = yaml.safe_load(fh)
 
     try:
@@ -1144,7 +1149,7 @@ def _apply_ssp_patch(
         logger.info("[DRY-RUN] Would update SSP at %s", ssp_path)
         return True
 
-    with open(ssp_path, "w") as fh:
+    with open(ssp_path, "w", encoding="utf-8") as fh:
         yaml.dump(
             ssp, fh, allow_unicode=True, default_flow_style=False, sort_keys=False
         )
@@ -1163,7 +1168,7 @@ def _apply_component_patch(
         logger.warning("Component definition not found at %s — skipping", comp_path)
         return False
 
-    with open(comp_path) as fh:
+    with open(comp_path, encoding="utf-8") as fh:
         comp_def = yaml.safe_load(fh)
 
     try:
@@ -1184,7 +1189,7 @@ def _apply_component_patch(
         logger.info("[DRY-RUN] Would update component-definition at %s", comp_path)
         return True
 
-    with open(comp_path, "w") as fh:
+    with open(comp_path, "w", encoding="utf-8") as fh:
         yaml.dump(
             comp_def, fh, allow_unicode=True, default_flow_style=False, sort_keys=False
         )
@@ -1230,7 +1235,7 @@ def _apply_ftra_component_patch(
         logger.warning("Component definition not found at %s — skipping", comp_path)
         return False
 
-    with open(comp_path) as fh:
+    with open(comp_path, encoding="utf-8") as fh:
         comp_def = yaml.safe_load(fh)
 
     try:
@@ -1258,7 +1263,7 @@ def _apply_ftra_component_patch(
         logger.info("[DRY-RUN] Would update FTRA component in %s", comp_path)
         return True
 
-    with open(comp_path, "w") as fh:
+    with open(comp_path, "w", encoding="utf-8") as fh:
         yaml.dump(
             comp_def, fh, allow_unicode=True, default_flow_style=False, sort_keys=False
         )
@@ -1297,7 +1302,7 @@ def _write_standalone_patch(
         return
 
     patch_path.parent.mkdir(parents=True, exist_ok=True)
-    with open(patch_path, "w") as fh:
+    with open(patch_path, "w", encoding="utf-8") as fh:
         yaml.dump(
             doc, fh, allow_unicode=True, default_flow_style=False, sort_keys=False
         )

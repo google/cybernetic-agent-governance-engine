@@ -24,6 +24,7 @@ In this project, Lula is run as a Kubernetes CronJob (`deployment/k8s/lula-cron.
 | [`lula-validation-iso001-token-quota.yaml`](lula-validation-iso001-token-quota.yaml) | A.4 | ISO 42001 | ALL | ✅ Active | Token Quota OPA Injection (ISO-001) — asserts advisor_running, advisor_has_redis_url, advisor_has_quota_markers |
 | [`lula-validation-ftra.yaml`](lula-validation-ftra.yaml)                 | CTRL_FTRA_001 | ISO 42001 / NIST | ALL | ✅ Active | FTRA Tier 0.5 Gate — Forward-Looking Trajectory Reachability Analyzer boundary check |
 | [`lula-validation-flowsignal.yaml`](lula-validation-flowsignal.yaml)     | A.8.4         | ISO 42001 | ALL | ✅ Active | FlowSignal Integration (FLOWSIGNAL-001) — asserts normative provider, secretKeyRef for mTLS credentials, Redis namespace isolation, and KMS config |
+| [`lula-validation-host-quarantine.yaml`](lula-validation-host-quarantine.yaml) | SC-7, IR-4, IA-3 | NIST SP 800-53 / ISO 42001 | ALL | ✅ Active | Host OS Kernel Quarantine Substrate (`actuator_04`) — asserts hardened DaemonSet (`drop: [ALL]`, `readOnlyRootFilesystem: true`, immutable image tag) and gateway-only ingress `NetworkPolicy` |
 
 ### US_FED Controls (NIST SP 800-53 / NIST AI 600-1 — US_FED only)
 
@@ -75,7 +76,7 @@ In this project, Lula is run as a Kubernetes CronJob (`deployment/k8s/lula-cron.
 
 The active/stub split is **intentional and aligned with the posture architecture**:
 
-- **7 Active (ALL scope):** ISO 42001 universal controls (A.5.2, A.5.3, A.9.2) + TokenQuotaProxy fail-closed (A.8.4 / CTRL_TQP_007) + Token Quota OPA Injection (A.4 / ISO-001) + FTRA Tier 0.5 Gate (CTRL_FTRA_001) + FlowSignal Integration (A.8.4 / FLOWSIGNAL-001) — production-ready across all deployment regions
+- **8 Active (ALL scope):** ISO 42001 universal controls (A.5.2, A.5.3, A.9.2) + TokenQuotaProxy fail-closed (A.8.4 / CTRL_TQP_007) + Token Quota OPA Injection (A.4 / ISO-001) + FTRA Tier 0.5 Gate (CTRL_FTRA_001) + FlowSignal Integration (A.8.4 / FLOWSIGNAL-001) + Host OS Kernel Quarantine Substrate (`lula-validation-host-quarantine.yaml`) — production-ready across all deployment regions
 - **3 Active (US_FED scope):** SC-4 fiscal limits (`lula-validation-sc4.yaml`), SC-7 GKE Dataplane V2 boundary protection (`lula-validation-cilium-dpv2.yaml`), and AU-12 Prometheus metrics scrape (`lula-validation-metrics.yaml`) — production-ready for US Federal deployments
 - **1 Active (EU_ECB scope):** EU AI Act Art. 27 FRIA gating (`lula-validation-eu-fria.yaml`) — production-ready for EU_ECB deployments
 - **1 Stub (ALL scope):** CSA AARM vectors — universal but requires cluster configuration. **Note:** This validation is listed as `Status: 🔶 Stub` and counted as 1 stub (ALL scope). It is NOT counted as an active validation for release gate purposes until real assertions replace the stub. See CA-05 remediation note below.

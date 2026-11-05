@@ -544,6 +544,9 @@ def get_normative_provider(
         "p08": "provider_08",
         "verdict": "provider_08",
         "verdict_systems": "provider_08",
+        "actuator_04": "actuator_04",
+        "a04": "actuator_04",
+        "host_os_kernel": "actuator_04",
     }
     provider_name = alias_map.get(provider_name, provider_name)
 
@@ -588,6 +591,13 @@ def get_normative_provider(
             consequence_magnitudes=consequence_magnitudes
         )
 
+    if provider_name == "actuator_04":
+        from src.integrations.actuator_04.normative import (
+            Actuator04NormativeProvider,
+        )
+
+        return Actuator04NormativeProvider.from_env()
+
     valid = [
         *_PROVIDERS.keys(),
         "provider_01",
@@ -595,6 +605,7 @@ def get_normative_provider(
         "provider_06",
         "provider_07",
         "provider_08",
+        "actuator_04",
     ]
     raise ValueError(
         f"Unknown normative provider: {provider_name!r}. Available providers: {valid}. "

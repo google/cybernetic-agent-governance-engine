@@ -211,8 +211,13 @@ def _load_actuator(name: str) -> ExecutionActuator:
 
         return Actuator03Adapter.from_env()
 
+    if normalized in ("actuator_04", "a04", "host_os_kernel"):
+        from src.integrations.actuator_04.adapter import Actuator04Adapter
+
+        return Actuator04Adapter.from_env()
+
     raise ValueError(
-        f"Unknown execution actuator: '{name}'. Supported: actuator_01, actuator_02, actuator_03"
+        f"Unknown execution actuator: '{name}'. Supported: actuator_01, actuator_02, actuator_03, actuator_04"
     )
 
 

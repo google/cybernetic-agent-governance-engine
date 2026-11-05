@@ -73,8 +73,15 @@ def _load_attestation_provider(name: str) -> AttestationProvider:
 
         return Provider05BlueprintProvider.from_env()
 
+    if normalized in ("actuator_04", "a04", "host_os_kernel", "kernel_attestation"):
+        from src.integrations.actuator_04.attestation import (
+            Actuator04AttestationProvider,
+        )
+
+        return Actuator04AttestationProvider.from_env()
+
     raise ValueError(
-        f"Unknown attestation provider: '{name}'. Supported: provider_02, provider_05"
+        f"Unknown attestation provider: '{name}'. Supported: provider_02, provider_05, actuator_04"
     )
 
 

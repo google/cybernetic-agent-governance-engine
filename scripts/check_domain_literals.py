@@ -30,6 +30,11 @@ import ast
 import sys
 from pathlib import Path
 
+if hasattr(sys.stdout, "reconfigure"):
+    sys.stdout.reconfigure(errors="replace")
+if hasattr(sys.stderr, "reconfigure"):
+    sys.stderr.reconfigure(errors="replace")
+
 # Domain action, field, threshold, and role literals that must not appear in kernel executable code
 FORBIDDEN_LITERALS = {
     "execute_trade",

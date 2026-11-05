@@ -68,94 +68,7 @@ component-definition:
             - uuid: "12e40b44-a5eb-4e0d-b319-42bab7d5d10a"
               control-id: ac-3
               description: |
-                Access enforcement is implemented via OPA RBAC policy evaluation on every
-                inbound API request through deployment/system_authz.rego. Before any
-                handler runs, WorkloadIdentityMiddleware
-                (src/gateway/server/workload_identity.py) rejects with 403 every request
-                outside a small exact open-path list (health, metrics, JWKS; no prefixes)
-                unless its Linkerd-verified l5d-client-id is listed in
-                CAGE_TRUSTED_CLIENT_IDENTITIES (the advisor only), verified in CI by
-                tests/integration/test_linkerd_mesh_conformance.py (POAM-2026-080 closed).
-                The header counts only on a connection from inside the pod, where the
-                pod's own Linkerd proxy writes it, and an admission policy refuses
-                governance pods created without the proxy (POAM-2026-167).
-                OPA allow/deny decisions are recorded in
-                structured audit logs with full request context and user identity.
-
-                Dual-control authentication enforcement (Work Item 2, 2026-09-07): All defer
-                escalation endpoints now require cryptographically-verified operator identity.
-                The /v1/defer/escalate endpoint (src/compliance_bridge/main.py:1527) enforces
-                Depends(require_internal_token) to prevent unauthenticated access. The
-                /v1/defer/inject endpoint (src/compliance_bridge/main.py:1326) also requires
-                internal token authentication. No /v1/defer/ route is reachable without
-                authentication in production (CAGE_ENV=prod/staging).
-
-                Quorum enforcement mechanism: DeferQueue.approve() (src/gateway/governance/defer_queue.py:447)
-                enforces distinctness of approver_urn values via WATCH/MULTI/EXEC atomic
-                transaction (lines 510-518). The approver_urn is provably derived from
-                transport-layer verified SPIFFE SVID (primary) or OIDC JWT subject (gated
-                fallback). Single authenticated principal cannot reach quorum - duplicate
-                approvals are rejected with ALREADY_APPROVED status (line 511-518). Required
-                quorum is auto-computed from defer_reason: quorum-3 for FTRA_IRREVERSIBLE_TERMINAL,
-                EXTERNAL_VALIDATION, and FLOWSIGNAL_ESCALATION defer reasons; quorum-2 for
-                all others (src/gateway/governance/defer_queue.py:66-80).
-
-                Protection against single-principal quorum bypass: The defer_inject endpoint
-                rejects injection attempts for quorum-3 defer reasons (line 1377-1392) and
-                rejects injection if token has partial approvals (line 1394-1405), preventing
-                circumvention of the dual-control requirement via automated data injection.
-
-                Approval binding (D-H, 2026-10-01): DeferQueue.approve() stamps each
-                ApprovalRecord server-side with approved_barrier_preview, the phase-2 barrier
-                snapshot (PASS/FAIL) recorded on the token when it was parked; a client-supplied
-                value is overwritten. consume_approval() refuses a token whose approvals are bound
-                to a different snapshot, and SymbolicGovernor.revalidate_post_hitl() refuses the
-                committing run with GovernanceError [APPROVAL_CONTEXT_DRIFT] when an approval
-                given against PASS meets barriers that now refuse; no routing seal is minted and
-                phase-2 commits are rolled back. Verified by tests/test_trade_governance_e2e.py
-                (D-H scenarios) against real DeferQueue, CBF and fiscal state in fakeredis.
-
-                Single-commit execution and advisory narrowing (Phases 2–3, 2026-10-01):
-                Pre-flight validation (SymbolicGovernor.validate_action in
-                src/gateway/governance/governor/governor.py) runs under Profile.DRY_RUN,
-                mutates no state, and mints no GovernanceSeal. When an action requires human
-                approval (REQUIRE_APPROVAL), validate_action() parks a DeferToken
-                (DeferReason.HITL_REQUIRED) in DeferQueue and returns deferred_id;
-                execute_trade_action(..., deferred_id=...) (src/cage_finance/tools/tool_provider.py)
-                is the sole committing path: enforce_approved_governance()
-                (src/gateway/server/governance_middleware.py) checks the approved token without
-                spending it (DeferQueue.redeemable_approval()) and hands
-                SymbolicGovernor.revalidate_post_hitl() an unspent PostHitlApproval. The governor
-                spends it atomically (DeferQueue.consume_approval(), a RESOLVED to CONSUMED CAS)
-                only after every stage passes and before the seal is minted, so a DENY spends it,
-                a warrant-ineligible DEFER leaves it redeemable (POAM-2026-104), and concurrent
-                redemptions seal at most once.
-                When narrowing is enabled, any narrow_hint / narrowed_params attached to a
-                REQUIRE_APPROVAL verdict is purely advisory: it is dry-run re-verified before
-                surfacing (_reverified_narrow_hint) and re-verified in full by the single
-                committing run (_sealed_narrow with tamper-evident issue_narrow_receipt in
-                src/gateway/governance/narrow_receipt.py inside ReservationScope). Every
-                pipeline run (including Profile.POST_HITL in SymbolicGovernor.revalidate_post_hitl())
-                verifies that the action is in governor.claimed_actions
-                (src/gateway/governance/governor/pipeline.py), refusing unclaimed actions with
-                ADR009_ACTION_NOT_CLAIMED ([ACTION_NOT_CLAIMED]), and assemble_governor()
-                (src/gateway/governance/governor/assembly.py) verifies at startup that every
-                claimed action is registered in the FTRA terminal registry.
-              props:
-                - name: implementation-status
-                  value: implemented
-                - name: control-origination
-                  value: system-specific
-                - name: dual-control-implementation-date
-                  value: "2026-09-07"
-                - name: spiffe-enforcement-date
-                  value: "2026-09-22"
-                - name: approval-binding-date
-                  value: "2026-10-01"
-                - name: breaking-change
-                  value: "removed X-Agent-ID and X-SPIFFE-ID header parsing; mTLS client certificate required"
-              description: |
-                AC-3 (Access Enforcement) is implemented through multiple layers:
+                AC-3 (Access Enforcement) is implemented through multiple deterministic layers:
 
                 1. **Kernel-Level Workload Identity Extraction (2026-09-22 BREAKING CHANGE)**:
                    All public inference and AGW ingress endpoints enforce strict Linkerd mTLS
@@ -188,13 +101,74 @@ component-definition:
                    - Subagent authorized_parent_prefixes: ["spiffe://cluster.local/ns/agents/"]
                    - OPA evaluation: startswith(parent_spiffe, prefix) → allow
 
-                3. **Dual-Control Authentication for DEFER Escalation**:
-                   defer_escalate() and defer_inject() enforce quorum authentication via
-                   DeferQueue.approve() as documented in previous implementation.
+                3. **OPA RBAC Policy Evaluation on API Requests**:
+                   Access enforcement is implemented via OPA RBAC policy evaluation on every
+                   inbound API request through deployment/system_authz.rego. Before any
+                   handler runs, WorkloadIdentityMiddleware
+                   (src/gateway/server/workload_identity.py) rejects with 403 every request
+                   outside a small exact open-path list (health, metrics, JWKS; no prefixes)
+                   unless its Linkerd-verified l5d-client-id is listed in
+                   CAGE_TRUSTED_CLIENT_IDENTITIES (the advisor only), verified in CI by
+                   tests/integration/test_linkerd_mesh_conformance.py (POAM-2026-080 closed).
+                   The header counts only on a connection from inside the pod, where the
+                   pod's own Linkerd proxy writes it, and an admission policy refuses
+                   governance pods created without the proxy (POAM-2026-167).
+                   OPA allow/deny decisions are recorded in structured audit logs with full
+                   request context and user identity.
 
-                BREAKING CHANGE: Removed anonymous fallback and HTTP header identity parsing.
-                Unauthenticated requests fail closed (401/403). This change enforces cryptographic
-                identity binding at the kernel level, eliminating header spoofing attack surface.
+                4. **Dual-Control Authentication & Quorum Enforcement for DEFER Escalation**:
+                   All defer escalation endpoints require cryptographically-verified operator
+                   identity. The /v1/defer/escalate endpoint (src/compliance_bridge/main.py:1527)
+                   and /v1/defer/inject endpoint enforce Depends(require_internal_token).
+                   No /v1/defer/ route is reachable without authentication in production.
+                   Quorum enforcement mechanism: DeferQueue.approve() (src/gateway/governance/defer_queue.py)
+                   enforces distinctness of approver_urn values via WATCH/MULTI/EXEC atomic
+                   transaction. The approver_urn is provably derived from transport-layer verified
+                   SPIFFE SVID (primary) or OIDC JWT subject (gated fallback). Single authenticated
+                   principal cannot reach quorum - duplicate approvals are rejected with ALREADY_APPROVED
+                   status. Required quorum is auto-computed from defer_reason: quorum-3 for
+                   FTRA_IRREVERSIBLE_TERMINAL, EXTERNAL_VALIDATION, and FLOWSIGNAL_ESCALATION defer
+                   reasons; quorum-2 for all others. Protection against single-principal quorum bypass:
+                   defer_inject rejects injection attempts for quorum-3 defer reasons and rejects
+                   injection if token has partial approvals.
+
+                5. **Approval Binding & Single-Commit Execution**:
+                   Approval binding (D-H, 2026-10-01): DeferQueue.approve() stamps each
+                   ApprovalRecord server-side with approved_barrier_preview, the phase-2 barrier
+                   snapshot (PASS/FAIL) recorded on the token when it was parked; a client-supplied
+                   value is overwritten. consume_approval() refuses a token whose approvals are bound
+                   to a different snapshot, and SymbolicGovernor.revalidate_post_hitl() refuses the
+                   committing run with GovernanceError [APPROVAL_CONTEXT_DRIFT] when an approval
+                   given against PASS meets barriers that now refuse; no routing seal is minted and
+                   phase-2 commits are rolled back.
+                   Pre-flight validation (SymbolicGovernor.validate_action) runs under Profile.DRY_RUN,
+                   mutates no state, and mints no GovernanceSeal. When an action requires human
+                   approval (REQUIRE_APPROVAL), validate_action() parks a DeferToken in DeferQueue;
+                   execute_trade_action(..., deferred_id=...) is the sole committing path:
+                   enforce_approved_governance() (src/gateway/server/governance_middleware.py)
+                   checks the approved token without spending it (DeferQueue.redeemable_approval())
+                   and hands SymbolicGovernor.revalidate_post_hitl() an unspent PostHitlApproval.
+                   The governor spends it atomically (DeferQueue.consume_approval(), a RESOLVED to
+                   CONSUMED CAS) only after every stage passes and before the seal is minted, so a
+                   DENY spends it, a warrant-ineligible DEFER leaves it redeemable (POAM-2026-104),
+                   and concurrent redemptions seal at most once. Advisory narrowing is dry-run
+                   re-verified before surfacing (_reverified_narrow_hint) and re-verified in full
+                   by the single committing run (_sealed_narrow with issue_narrow_receipt). Every
+                   pipeline run verifies that the action is in governor.claimed_actions, refusing
+                   unclaimed actions with ADR009_ACTION_NOT_CLAIMED ([ACTION_NOT_CLAIMED]).
+              props:
+                - name: implementation-status
+                  value: implemented
+                - name: control-origination
+                  value: system-specific
+                - name: dual-control-implementation-date
+                  value: "2026-09-07"
+                - name: spiffe-enforcement-date
+                  value: "2026-09-22"
+                - name: approval-binding-date
+                  value: "2026-10-01"
+                - name: breaking-change
+                  value: "removed X-Agent-ID and X-SPIFFE-ID header parsing; mTLS client certificate required"
               links:
                 - href: "https://csrc.nist.gov/projects/cprt/api/cprt/framework/version/SP_800_53_5_1_1/home?element=AC-3"
                   rel: reference
@@ -1863,6 +1837,142 @@ component-definition:
                   rel: test
                   text: "Mock-provider plan of every committed profile and the module's refusals"
 
+    # -----------------------------------------------------------------------
+    # Component 7: Host OS Kernel Quarantine Substrate (src/integrations/actuator_04/)
+    # Enforces: SC-7 (Boundary Protection), SI-4 (System Monitoring),
+    #           IR-4 (Incident Handling), IA-3 (Device Identification and Attestation)
+    # -----------------------------------------------------------------------
+    - uuid: "83f0137c-e6e6-5fbc-b1f5-5038752c9168"
+      title: "Host OS Kernel Quarantine Substrate (actuator_04)"
+      type: software
+      description: >
+        Hardened Host OS kernel-level runtime containment and hardware attestation
+        substrate (actuator_04). Provides zero-subprocess host network isolation
+        (WFP callouts on Windows, Netlink RTN_BLACKHOLE + Landlock on Linux, /dev/pf on macOS),
+        immediate TCP socket severing (SetTcpEntry / MIB_TCP_STATE_DELETE_TCB),
+        in-place thread/process freeze (NtSuspendProcess / SIGSTOP), TPM 2.0 PCR attestation,
+        and multi-node Kubernetes DaemonSet fan-out with Ed25519-signed receipts.
+      purpose: >
+        Provides privilege-separated host kernel enforcement and cryptographic
+        hardware attestation for agent workloads, executing fail-closed socket
+        severing and containment when Layer 7 policies detect critical breaches,
+        and enforcing quorum-governed release with monotonic epoch advancement.
+      responsible-roles:
+        - role-id: provider
+      control-implementations:
+        - uuid: "0538f3f4-023d-528e-83c4-b791a8807f17"
+          source: "https://csrc.nist.gov/projects/cprt/api/cprt/framework/version/SP_800_53_5_1_1/home"
+          description: "NIST SP 800-53 Rev 5 HIGH-baseline controls implemented by Host OS Kernel Quarantine Substrate (actuator_04)"
+          implemented-requirements:
+            - uuid: "c84c0e4a-c931-529a-b4e9-976ac4dee410"
+              control-id: sc-7
+              description: |
+                Boundary protection (SC-7) is enforced at the host operating system kernel
+                boundary by actuator_04 (src/integrations/actuator_04/adapter.py) and the
+                cluster-wide DaemonSet (deployment/k8s/host-quarantine-daemon.yaml).
+                Upon receipt of a valid KMS-signed QuarantineDirective, the host substrate
+                immediately binds the target workload's TCP sockets to a blackhole filter
+                (Linux Netlink RTN_BLACKHOLE or Windows WFP filter) and invokes kernel-level
+                socket deletion, terminating active communication channels within <1 ms.
+                In Kubernetes/GKE clusters, Actuator04Transport routes quarantine directives
+                to specific host nodes or fans out concurrently across all nodes via asyncio.gather,
+                requiring detached Ed25519-signed QuarantineReceipt receipts verified against
+                an out-of-band key manifest (Ed25519KeyManifestClient). Network isolation is
+                further protected by a dedicated NetworkPolicy restricting control port 3030
+                ingress exclusively to pods carrying app: gateway.
+              props:
+                - name: implementation-status
+                  value: implemented
+                - name: control-origination
+                  value: system-specific
+              links:
+                - href: "https://csrc.nist.gov/projects/cprt/api/cprt/framework/version/SP_800_53_5_1_1/home?element=SC-7"
+                  rel: reference
+                - href: "../../compliance/lula/lula-validation-host-quarantine.yaml"
+                  rel: lula
+                - href: "../../src/integrations/actuator_04/adapter.py"
+                  rel: implementation
+                  text: "Host kernel quarantine actuator adapter and receipt verification"
+                - href: "../../deployment/k8s/host-quarantine-daemon.yaml"
+                  rel: implementation
+                  text: "Hardened Kubernetes DaemonSet and NetworkPolicy for host quarantine daemon"
+
+            - uuid: "b96d2068-bf8c-57e0-b96a-5dd9b2df95c0"
+              control-id: si-4
+              description: |
+                System monitoring (SI-4) is implemented via real-time host kernel DLP lineage
+                tracking and bidirectional signed OCSF telemetry (src/integrations/actuator_04/ocsf_bridge.py).
+                The host substrate monitors process activity, file system operations, and socket
+                lifecycles. When an unauthorized sandbox escape or Crown-Jewel file exfiltration
+                is detected (OCSF classes 1001, 1007, 4001), the substrate signs an OCSF event
+                (CAGE_OCSF_EVENT_V1) and delivers it to Actuator04OcsfIngestor. Events with
+                severity_id >= 4 immediately trigger cluster-wide workload quarantine in CAGE,
+                sealing the EvidenceStreamSink audit trail and blocking the offending SVID
+                across /v1/chat/completions, /governance/validate-action, and /mcp.
+              props:
+                - name: implementation-status
+                  value: implemented
+                - name: control-origination
+                  value: system-specific
+              links:
+                - href: "https://csrc.nist.gov/projects/cprt/api/cprt/framework/version/SP_800_53_5_1_1/home?element=SI-4"
+                  rel: reference
+                - href: "../../src/integrations/actuator_04/ocsf_bridge.py"
+                  rel: implementation
+                  text: "Signed OCSF telemetry ingestion and automated sandbox escape response"
+
+            - uuid: "1927dfe5-1b2b-53f5-936e-97b258db3953"
+              control-id: ir-4
+              description: |
+                Incident handling (IR-4) containment and recovery protocols are enforced via
+                cryptographically-bound quarantine release directives and monotonic epoch advancement
+                (src/gateway/governance/seams/quarantine.py, src/integrations/actuator_04/adapter.py).
+                Quarantine isolation can only be lifted through a KMS-signed QuarantineReleaseDirective
+                containing a verified multi-operator DeferQueue quorum approval digest (quorum >= 2).
+                Upon verifying the release directive, the host substrate increments the workload's
+                generation epoch (Gen N -> Gen N + 1) in both the host kernel and CAGE registry,
+                invalidating all previously minted tokens and routing seals and guaranteeing that
+                compromised credentials cannot be reused post-incident. All quarantine, release,
+                and epoch transitions are recorded in an Ed25519-sealed crash-safe journal.
+              props:
+                - name: implementation-status
+                  value: implemented
+                - name: control-origination
+                  value: system-specific
+              links:
+                - href: "https://csrc.nist.gov/projects/cprt/api/cprt/framework/version/SP_800_53_5_1_1/home?element=IR-4"
+                  rel: reference
+                - href: "../../src/gateway/governance/seams/quarantine.py"
+                  rel: implementation
+                  text: "QuarantineReleaseDirective and QuarantineReleaseReceipt contracts with epoch advancement"
+                - href: "../../src/gateway/governance/quarantine_actuator.py"
+                  rel: implementation
+                  text: "Monotonic workload epoch tracking and quorum release coordination"
+
+            - uuid: "1986097d-c4ce-55f1-8ea8-315977620c34"
+              control-id: ia-3
+              description: |
+                Device identification and attestation (IA-3) is enforced through hardware TPM 2.0
+                PCR measurement collection and cryptographic signature verification
+                (src/integrations/actuator_04/attestation.py). Actuator04AttestationProvider polls
+                /v1/cage/attest across host endpoints, extracting TPM PCR 0..7 digests and ring-0
+                posture records. Measurements are compared against an independently-verified baseline
+                manifest. Any variance in PCR registers triggers an immediate DRIFT_DETECTED status,
+                preventing unmeasured or tampered host nodes from being admitted into the governance
+                fabric. All attestation claims are signed with EdDSA (Ed25519) and verified using
+                out-of-band trust anchors (never embedded keys).
+              props:
+                - name: implementation-status
+                  value: implemented
+                - name: control-origination
+                  value: system-specific
+              links:
+                - href: "https://csrc.nist.gov/projects/cprt/api/cprt/framework/version/SP_800_53_5_1_1/home?element=IA-3"
+                  rel: reference
+                - href: "../../src/integrations/actuator_04/attestation.py"
+                  rel: implementation
+                  text: "TPM 2.0 PCR hardware attestation provider and baseline drift detection"
+
   back-matter:
     resources:
       # -----------------------------------------------------------------------
@@ -1930,3 +2040,7 @@ component-definition:
         title: "Lula Validation: IR-6 Incident Reporting"
         rlinks:
           - href: "../../compliance/lula/lula-validation-ir6.yaml"
+      - uuid: "46d5d6d7-0dba-54c6-b4b9-5789f1a137d0"
+        title: "Lula Validation: Host OS Kernel Quarantine Substrate (actuator_04)"
+        rlinks:
+          - href: "../../compliance/lula/lula-validation-host-quarantine.yaml"

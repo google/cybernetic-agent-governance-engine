@@ -1,0 +1,166 @@
+# Copyright 2026 Google LLC
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     https://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: host-quarantine-daemon
+  namespace: governance-stack
+  labels:
+    app: host-quarantine-daemon
+    component: host-quarantine
+    cage.io/component: actuator_04
+spec:
+  clusterIP: None
+  selector:
+    app: host-quarantine-daemon
+  ports:
+    - name: http-quarantine
+      port: 3030
+      targetPort: 3030
+      protocol: TCP
+
+---
+apiVersion: apps/v1
+kind: DaemonSet
+metadata:
+  name: host-quarantine-daemon
+  namespace: governance-stack
+  labels:
+    app: host-quarantine-daemon
+    component: host-quarantine
+    cage.io/component: actuator_04
+spec:
+  selector:
+    matchLabels:
+      app: host-quarantine-daemon
+  updateStrategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxUnavailable: 1
+  template:
+    metadata:
+      labels:
+        app: host-quarantine-daemon
+        component: host-quarantine
+        cage.io/component: actuator_04
+      annotations:
+        seccomp.security.alpha.kubernetes.io/pod: runtime/default
+    spec:
+      nodeSelector:
+        kubernetes.io/os: linux
+
+      # Required for process suspension (SIGSTOP) and socket inspection across host PID namespace
+      hostPID: true
+
+      securityContext:
+        seccompProfile:
+          type: RuntimeDefault
+
+      tolerations:
+        - operator: Exists
+          effect: NoSchedule
+        - operator: Exists
+          effect: NoExecute
+
+      containers:
+        - name: host-quarantine-daemon
+          image: gcr.io/cage-governance/host-quarantine-daemon:v1.0.0
+          imagePullPolicy: IfNotPresent
+          securityContext:
+            readOnlyRootFilesystem: true
+            allowPrivilegeEscalation: true
+            capabilities:
+              drop:
+                - ALL
+              add:
+                - NET_ADMIN    # Netlink RTN_BLACKHOLE route manipulation
+                - BPF          # eBPF socket map and process inspection
+                - SYS_PTRACE   # Cross-PID namespace process freeze (SIGSTOP)
+                - SYS_RESOURCE # Lock memory for eBPF maps
+
+          ports:
+            - name: http-quarantine
+              containerPort: 3030
+              protocol: TCP
+
+          env:
+            - name: KILLSWITCH_STATE_DIR
+              value: "/var/lib/cage-host-quarantine"
+            - name: KILLSWITCH_PORT
+              value: "3030"
+            - name: CAGE_ENV
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.namespace
+
+          resources:
+            requests:
+              memory: "64Mi"
+              cpu: "50m"
+            limits:
+              memory: "256Mi"
+              cpu: "250m"
+
+          volumeMounts:
+            # Crash-safe journal and active lease storage
+            - name: quarantine-state
+              mountPath: /var/lib/cage-host-quarantine
+            # Kernel tracing and debug filesystem
+            - name: sys-fs
+              mountPath: /sys
+              readOnly: true
+            # Process filesystem for socket-to-PID resolution
+            - name: proc-fs
+              mountPath: /proc
+              readOnly: true
+
+      volumes:
+        - name: quarantine-state
+          emptyDir: {}
+        - name: sys-fs
+          hostPath:
+            path: /sys
+            type: Directory
+        - name: proc-fs
+          hostPath:
+            path: /proc
+            type: Directory
+
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: host-quarantine-ingress-gateway-only
+  namespace: governance-stack
+  labels:
+    app.kubernetes.io/managed-by: cage
+    cage.io/component: host-quarantine
+    cage.io/control-type: boundary-protection
+spec:
+  podSelector:
+    matchLabels:
+      app: host-quarantine-daemon
+  policyTypes:
+    - Ingress
+  ingress:
+    # Restrict TCP 3030 strictly to gateway pods
+    - from:
+        - podSelector:
+            matchLabels:
+              app: gateway
+      ports:
+        - protocol: TCP
+          port: 3030

@@ -2772,7 +2772,7 @@ def load_control_structure(path: Path) -> ControlStructureModel:
     """Load and validate the YAML control structure."""
     if not path.exists():
         raise FileNotFoundError(f"Control structure not found: {path}")
-    with open(path) as fh:
+    with open(path, encoding="utf-8") as fh:
         raw = yaml.safe_load(fh)
     return ControlStructureModel(**raw)
 
@@ -2913,30 +2913,30 @@ def write_artifacts(
     """Write generated artifacts to disk, creating parent dirs as needed."""
     if result.opa_content:
         opa_out.parent.mkdir(parents=True, exist_ok=True)
-        opa_out.write_text(result.opa_content)
+        opa_out.write_text(result.opa_content, encoding="utf-8")
         logger.info("✅ OPA policy written → %s", opa_out)
 
     if result.nemo_content:
         nemo_out.parent.mkdir(parents=True, exist_ok=True)
-        nemo_out.write_text(result.nemo_content)
+        nemo_out.write_text(result.nemo_content, encoding="utf-8")
         logger.info("✅ NeMo rails written → %s", nemo_out)
 
     if result.python_content:
         python_out.parent.mkdir(parents=True, exist_ok=True)
-        python_out.write_text(result.python_content)
+        python_out.write_text(result.python_content, encoding="utf-8")
         _ruff_format(python_out)
         logger.info("✅ Python validator written → %s", python_out)
 
     if result.langgraph_content:
         langgraph_out.parent.mkdir(parents=True, exist_ok=True)
-        langgraph_out.write_text(result.langgraph_content)
+        langgraph_out.write_text(result.langgraph_content, encoding="utf-8")
         _ruff_format(langgraph_out)
         logger.info("✅ LangGraph Saga nodes written → %s", langgraph_out)
 
     if result.agp_content:
         effective_agp_out = agp_out or _DEFAULT_AGP_OUT
         effective_agp_out.parent.mkdir(parents=True, exist_ok=True)
-        effective_agp_out.write_text(result.agp_content)
+        effective_agp_out.write_text(result.agp_content, encoding="utf-8")
         logger.info("✅ AGP Semantic Policy written → %s", effective_agp_out)
         char_count = len(result.agp_content)
         if char_count > _AGP_CHAR_BUDGET:
@@ -2957,25 +2957,25 @@ def write_artifacts(
     if result.ftra_content:
         effective_ftra_out = ftra_out or _DEFAULT_FTRA_OUT
         effective_ftra_out.parent.mkdir(parents=True, exist_ok=True)
-        effective_ftra_out.write_text(result.ftra_content)
+        effective_ftra_out.write_text(result.ftra_content, encoding="utf-8")
         logger.info("✅ FTRA terminal registry written → %s", effective_ftra_out)
 
     if result.registry_content:
         effective_registry_out = registry_out or _DEFAULT_REGISTRY_OUT
         effective_registry_out.parent.mkdir(parents=True, exist_ok=True)
-        effective_registry_out.write_text(result.registry_content)
+        effective_registry_out.write_text(result.registry_content, encoding="utf-8")
         logger.info("✅ Agent Registry manifest written → %s", effective_registry_out)
 
     if result.iap_cel_content:
         effective_iap_cel_out = iap_cel_out or _DEFAULT_IAP_CEL_OUT
         effective_iap_cel_out.parent.mkdir(parents=True, exist_ok=True)
-        effective_iap_cel_out.write_text(result.iap_cel_content)
+        effective_iap_cel_out.write_text(result.iap_cel_content, encoding="utf-8")
         logger.info("✅ IAP CEL policies written → %s", effective_iap_cel_out)
 
     if result.sandbox_content:
         effective_sandbox_out = sandbox_out or _DEFAULT_SANDBOX_OUT
         effective_sandbox_out.parent.mkdir(parents=True, exist_ok=True)
-        effective_sandbox_out.write_text(result.sandbox_content)
+        effective_sandbox_out.write_text(result.sandbox_content, encoding="utf-8")
         logger.info("✅ Sandbox policy written → %s", effective_sandbox_out)
 
 

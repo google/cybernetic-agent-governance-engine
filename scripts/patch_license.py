@@ -12,7 +12,13 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import sys
 from pathlib import Path
+
+if hasattr(sys.stdout, "reconfigure"):
+    sys.stdout.reconfigure(errors="replace")
+if hasattr(sys.stderr, "reconfigure"):
+    sys.stderr.reconfigure(errors="replace")
 
 HEADER = """# Copyright 2026 Google LLC
 #
@@ -47,7 +53,7 @@ def patch_files():
                     continue
                 if not path.is_file():
                     continue
-                with open(path) as f:
+                with open(path, encoding="utf-8", errors="replace") as f:
                     content = f.read()
                 if "Copyright 2026 Google LLC" not in content:
                     print(f"Patching {path}")
@@ -65,7 +71,7 @@ def patch_files():
                             new_content = lines[0] + "\n" + header_to_use
                     else:
                         new_content = header_to_use + content
-                    with open(path, "w") as f:
+                    with open(path, "w", encoding="utf-8") as f:
                         f.write(new_content)
 
 
