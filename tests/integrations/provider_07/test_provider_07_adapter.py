@@ -875,8 +875,8 @@ def partner_contract_vectors() -> list[dict[str, Any]]:
                     {"action": "defer_to_human", "expected_utility": 0.652098},
                     {"action": "reject_trade", "expected_utility": 0.26286},
                 ],
-                "authority_record_id": "infertheta-step1-allow-unsigned",
-                "kid": "infertheta-staging-ed25519-step1",
+                "authority_record_id": "provider07-step1-allow-unsigned",
+                "kid": "provider07-staging-ed25519-step1",
                 "signature": "unsigned-placeholder",
                 "findings": [
                     {
@@ -938,7 +938,7 @@ def partner_contract_vectors() -> list[dict[str, Any]]:
                     {"action": "rebalance_to_proposed", "expected_utility": 0.191225},
                 ],
                 "authority_record_id": None,
-                "kid": "infertheta-staging-ed25519-step1",
+                "kid": "provider07-staging-ed25519-step1",
                 "signature": "unsigned-placeholder",
                 "findings": [
                     {
@@ -1000,7 +1000,7 @@ def partner_contract_vectors() -> list[dict[str, Any]]:
                     {"action": "reject_trade", "expected_utility": 0.580895},
                 ],
                 "authority_record_id": None,
-                "kid": "infertheta-staging-ed25519-step1",
+                "kid": "provider07-staging-ed25519-step1",
                 "signature": "unsigned-placeholder",
                 "findings": [
                     {
@@ -1064,7 +1064,7 @@ class TestProvider07PartnerContractVectors:
         assert result.findings[0]["code"] == "PROVIDER_07_ALLOW"
         assert (
             result.findings[0]["authority_record_id"]
-            == "infertheta-step1-allow-unsigned"
+            == "provider07-step1-allow-unsigned"
         )
         assert result.findings[0]["posterior_risk_score"] == pytest.approx(0.094135)
 
@@ -1178,7 +1178,7 @@ class TestProvider07PartnerContractVectors:
         assert result.findings[0].get("step1_demo_mode") is True
         assert (
             result.findings[0]["authority_record_id"]
-            == "infertheta-step1-allow-unsigned"
+            == "provider07-step1-allow-unsigned"
         )
         assert result.findings[0]["posterior_risk_score"] == pytest.approx(0.094135)
 

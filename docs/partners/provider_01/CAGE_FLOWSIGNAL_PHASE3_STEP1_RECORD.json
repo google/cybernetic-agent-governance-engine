@@ -45,7 +45,7 @@
     "repository": "google/cybernetic-agent-governance-engine",
     "step1_harness_pr": 445,
     "step1_harness_commit": "5595a82ef907fec25aec7ccc8ed5832303bd9f26",
-    "verification_script": "scripts/verify_flowsignal_wire_and_hostile.py",
+    "verification_script": "scripts/verify_provider_01_wire_and_hostile.py",
     "adapter_module": "src/integrations/provider_01/provider.py",
     "consequence_gateway_module": "src/gateway/governance/consequence_gateway.py",
     "consequence_token_module": "src/gateway/governance/consequence_token.py",

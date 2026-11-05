@@ -110,7 +110,7 @@ def credentials() -> _Credentials:
     missing = [name for name, value in values.items() if not value]
     if missing:
         pytest.skip(
-            "FlowSignal live credentials not configured — missing: "
+            "Provider 01 live credentials not configured — missing: "
             + ", ".join(missing)
         )
     return _Credentials(
@@ -226,7 +226,7 @@ async def test_live_each_credential_is_enforced(credentials: _Credentials) -> No
     body = _build_cage_authority_request(_payment("credential-gate"))
     wrong_key = {
         **credentials.headers(api_key=False),
-        "Authorization": "Bearer not-the-flowsignal-key",
+        "Authorization": "Bearer not-the-provider-01-key",
     }
     async with httpx.AsyncClient(timeout=_TIMEOUT) as client:
         no_identity = await client.post(
@@ -251,7 +251,7 @@ async def test_live_allow_mints_a_bound_consequence_token(
     assert result.admitted is True, result
     (finding,) = result.findings
     assert finding["code"] == "CONSEQUENCE_TOKEN"
-    assert finding.get("authority_receipt_id"), "FlowSignal issued no authority receipt"
+    assert finding.get("authority_receipt_id"), "Provider 01 issued no authority receipt"
 
     claims = ConsequenceToken.verify(finding["token"], signer=signer)
     assert claims.rec

@@ -407,7 +407,7 @@ class TestAdapterReceiptVerification:
         adapter = _adapter(lambda d: (200, {}))
         assert ActuatorCapability.SIGNED_RECEIPTS not in adapter.get_capabilities()
 
-    async def test_archytan_flat_signature_and_ingress_signature_unverified_without_resolver(
+    async def test_actuator_01_flat_signature_and_ingress_signature_unverified_without_resolver(
         self,
     ) -> None:
         """Always-on flat signature + ingress_signature stays ACCEPTED when no manifest URL is set."""
@@ -415,8 +415,8 @@ class TestAdapterReceiptVerification:
             lambda d: (
                 200,
                 {
-                    "receipt_id": "r-archytan-1",
-                    "session_uuid": "s-archytan-1",
+                    "receipt_id": "r-actuator01-1",
+                    "session_uuid": "s-actuator01-1",
                     "status": "ACCEPTED",
                     "envelope_digest": d,
                     "signature": "a" * 128,
@@ -429,7 +429,7 @@ class TestAdapterReceiptVerification:
         assert receipt.outcome is ActuationOutcome.ACCEPTED
         assert receipt.verification is ReceiptVerification.UNVERIFIED
 
-    async def test_archytan_flat_hex_signature_with_ingress_signature_verifies(
+    async def test_actuator_01_flat_hex_signature_with_ingress_signature_verifies(
         self,
     ) -> None:
         """Flat 128-char hex signature verifies even when ingress_signature is appended after signing."""
@@ -457,7 +457,7 @@ class TestAdapterReceiptVerification:
         assert receipt.outcome is ActuationOutcome.ACCEPTED
         assert receipt.verification is ReceiptVerification.VERIFIED
 
-    async def test_archytan_default_sandbox_kid_and_4xx_synthesized_session_uuid(
+    async def test_actuator_01_default_sandbox_kid_and_4xx_synthesized_session_uuid(
         self,
     ) -> None:
         """Flat receipt resolves archytan-sandbox-receipt-2026-01 by default and 4xx preserves session_uuid."""

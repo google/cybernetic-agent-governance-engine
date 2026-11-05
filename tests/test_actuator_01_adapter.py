@@ -869,7 +869,7 @@ class TestV3SecurityGates:
         clearance.target_route = "https://unauthorized.egress.example.com"  # Mismatch
 
         mock_client = MagicMock(spec=ActuatorHttpClient)
-        mock_client.base_url = "https://sandbox.archytan.example.com"
+        mock_client.base_url = "https://sandbox.actuator01.example.com"
         mock_signer = MockPerOperatorSigner("urn:actuator_01:op:test")
 
         adapter = Actuator01Adapter(
@@ -893,7 +893,7 @@ class TestV3SecurityGates:
         clearance = make_valid_clearance()
         clearance.executor_id = "actuator_01"
         clearance.target_route = (
-            "https://sandbox.archytan.example.com/"  # With trailing slash
+            "https://sandbox.actuator01.example.com/"  # With trailing slash
         )
 
         async def mock_submit(*args, **kwargs):
@@ -908,7 +908,7 @@ class TestV3SecurityGates:
 
         mock_client = MagicMock(spec=ActuatorHttpClient)
         mock_client.base_url = (
-            "https://sandbox.archytan.example.com"  # No trailing slash
+            "https://sandbox.actuator01.example.com"  # No trailing slash
         )
         mock_client.submit_envelope = mock_submit
         mock_signer = MockPerOperatorSigner("urn:actuator_01:op:test")
@@ -941,7 +941,7 @@ class TestV3SecurityGates:
             )
 
         mock_client = MagicMock(spec=ActuatorHttpClient)
-        mock_client.base_url = "https://sandbox.archytan.example.com"
+        mock_client.base_url = "https://sandbox.actuator01.example.com"
         mock_client.submit_envelope = mock_submit
         mock_signer = MockPerOperatorSigner("urn:actuator_01:op:test")
 
@@ -971,7 +971,7 @@ class TestV3SecurityGates:
             )
 
         mock_client = MagicMock(spec=ActuatorHttpClient)
-        mock_client.base_url = "https://sandbox.archytan.example.com"
+        mock_client.base_url = "https://sandbox.actuator01.example.com"
         mock_client.submit_envelope = mock_submit
         mock_signer = MockPerOperatorSigner("urn:actuator_01:op:test")
 

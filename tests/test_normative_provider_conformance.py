@@ -258,7 +258,7 @@ class TestProvider01DecisionMapping:
         from src.integrations.provider_01.provider import Provider01NormativeProvider
 
         return Provider01NormativeProvider(
-            endpoint="https://mock.flowsignal.example.com",
+            endpoint="https://mock.provider01.example.com",
             api_key="test-key",
             timeout=5.0,
             # Declared magnitude-free, so an ALLOW reaches the signer that
@@ -272,7 +272,7 @@ class TestProvider01DecisionMapping:
         )
 
     @pytest.mark.asyncio
-    async def test_flowsignal_decision_allow(self, provider) -> None:
+    async def test_provider_01_decision_allow(self, provider) -> None:
         """ALLOW decision → admitted=True, CONSEQUENCE_TOKEN finding (Phase 2 ST-4)."""
         from unittest.mock import patch
 
@@ -293,7 +293,7 @@ class TestProvider01DecisionMapping:
             )
             mock_get_signer.return_value = mock_signer
 
-            respx.post("https://mock.flowsignal.example.com/cage/validate").mock(
+            respx.post("https://mock.provider01.example.com/cage/validate").mock(
                 return_value=httpx.Response(
                     200,
                     json={
@@ -322,10 +322,10 @@ class TestProvider01DecisionMapping:
             mock_get_signer.assert_called_once()
 
     @pytest.mark.asyncio
-    async def test_flowsignal_decision_refuse(self, provider) -> None:
+    async def test_provider_01_decision_refuse(self, provider) -> None:
         """REFUSE decision → admitted=False, PROVIDER_01_REFUSE finding with blocked severity."""
         with respx.mock:
-            respx.post("https://mock.flowsignal.example.com/cage/validate").mock(
+            respx.post("https://mock.provider01.example.com/cage/validate").mock(
                 return_value=httpx.Response(
                     200,
                     json={
@@ -348,10 +348,10 @@ class TestProvider01DecisionMapping:
             )
 
     @pytest.mark.asyncio
-    async def test_flowsignal_decision_escalate(self, provider) -> None:
+    async def test_provider_01_decision_escalate(self, provider) -> None:
         """ESCALATE decision → admitted=False, EXTERNAL_HOLD finding with needs_human_review=True."""
         with respx.mock:
-            respx.post("https://mock.flowsignal.example.com/cage/validate").mock(
+            respx.post("https://mock.provider01.example.com/cage/validate").mock(
                 return_value=httpx.Response(
                     200,
                     json={
@@ -378,12 +378,12 @@ class TestProvider01DecisionMapping:
         # Only truly invalid values should be in this list.
         ["INVALID", "Accept", "", "DENY", "BLOCK", "PENDING", "null", "123"],
     )
-    async def test_flowsignal_decision_malformed_failclosed(
+    async def test_provider_01_decision_malformed_failclosed(
         self, provider, malformed_decision: str
     ) -> None:
         """Malformed/unrecognized decision value → fail-closed with PARSE_ERROR."""
         with respx.mock:
-            respx.post("https://mock.flowsignal.example.com/cage/validate").mock(
+            respx.post("https://mock.provider01.example.com/cage/validate").mock(
                 return_value=httpx.Response(
                     200,
                     json={
@@ -405,12 +405,12 @@ class TestProvider01DecisionMapping:
             assert malformed_decision in result.findings[0]["message"]
 
     @pytest.mark.asyncio
-    async def test_flowsignal_missing_decision_field_fails_closed(
+    async def test_provider_01_missing_decision_field_fails_closed(
         self, provider
     ) -> None:
         """Payload without decision field → fail closed (BC-03 remediation)."""
         with respx.mock:
-            respx.post("https://mock.flowsignal.example.com/cage/validate").mock(
+            respx.post("https://mock.provider01.example.com/cage/validate").mock(
                 return_value=httpx.Response(
                     200,
                     json={
@@ -435,12 +435,12 @@ class TestProvider01DecisionMapping:
             )
 
     @pytest.mark.asyncio
-    async def test_flowsignal_missing_decision_field_fails_closed_even_when_admitted_false(
+    async def test_provider_01_missing_decision_field_fails_closed_even_when_admitted_false(
         self, provider
     ) -> None:
         """Payload without decision field fails closed regardless of admitted value (BC-03 remediation)."""
         with respx.mock:
-            respx.post("https://mock.flowsignal.example.com/cage/validate").mock(
+            respx.post("https://mock.provider01.example.com/cage/validate").mock(
                 return_value=httpx.Response(
                     200,
                     json={
@@ -470,7 +470,7 @@ class TestProvider01DecisionMapping:
             )
 
     @pytest.mark.asyncio
-    async def test_flowsignal_decision_case_insensitive(self, provider) -> None:
+    async def test_provider_01_decision_case_insensitive(self, provider) -> None:
         """Decision values are case-insensitive (ALLOW, Allow, allow all work)."""
         from unittest.mock import patch
 
@@ -492,7 +492,7 @@ class TestProvider01DecisionMapping:
             mock_get_signer.return_value = mock_signer
 
             # Lowercase "allow"
-            respx.post("https://mock.flowsignal.example.com/cage/validate").mock(
+            respx.post("https://mock.provider01.example.com/cage/validate").mock(
                 return_value=httpx.Response(
                     200,
                     json={

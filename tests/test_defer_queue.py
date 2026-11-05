@@ -268,11 +268,11 @@ def test_create_external_hold_token_embeds_finding_message():
         thread_id="thread-fs-003",
         confidence_score=0.75,
         opa_input_snapshot={"action": "execute_trade"},
-        finding_message="FlowSignal: requires senior approval",
+        finding_message="Provider 01: requires senior approval",
     )
     assert (
         token.opa_input_snapshot.get("_external_hold_finding_message")
-        == "FlowSignal: requires senior approval"
+        == "Provider 01: requires senior approval"
     )
 
 
@@ -367,7 +367,7 @@ def fake_redis_with_past_expiry():
 
 
 @pytest.mark.asyncio
-async def test_expire_stale_calls_dlq_publisher_for_flowsignal_escalation(
+async def test_expire_stale_calls_dlq_publisher_for_external_hold_escalation(
     fake_redis_with_past_expiry,
 ):
     """DLQ publisher is called exactly once for expired EXTERNAL_HOLD tokens."""
@@ -394,7 +394,7 @@ async def test_expire_stale_calls_dlq_publisher_for_flowsignal_escalation(
 
 
 @pytest.mark.asyncio
-async def test_expire_stale_does_not_call_dlq_for_non_flowsignal_reasons(
+async def test_expire_stale_does_not_call_dlq_for_non_external_hold_reasons(
     fake_redis_with_past_expiry,
 ):
     """DLQ publisher is NOT called for non-EXTERNAL_HOLD tokens."""

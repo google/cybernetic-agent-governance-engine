@@ -398,7 +398,7 @@ class TestConsequenceTokenMinting:
             "params": {"amount": 50000},
         }
 
-        flowsignal_response = {
+        provider_01_response = {
             "decision": "ALLOW",
             "authority_record_id": "auth-record-xyz",
             "authority_receipt": {"id": "rcpt-record-xyz"},
@@ -406,7 +406,7 @@ class TestConsequenceTokenMinting:
             "message": "Transaction approved",
         }
 
-        mock_response = _mock_response(flowsignal_response)
+        mock_response = _mock_response(provider_01_response)
 
         # Mock the signer
         mock_signer = self._make_mock_signer_with_keypair()
@@ -462,14 +462,14 @@ class TestConsequenceTokenMinting:
             "params": {"destination": "account-456", "amount": 100},
         }
 
-        flowsignal_response = {
+        provider_01_response = {
             "decision": "ALLOW",
             "authority_record_id": "auth-rec-12345",
             "authority_receipt": {"id": "rcpt-rec-12345"},
             "authority_state_version": "v2.0.0",
         }
 
-        mock_response = _mock_response(flowsignal_response)
+        mock_response = _mock_response(provider_01_response)
         mock_signer = self._make_mock_signer_with_keypair()
 
         with (
@@ -539,14 +539,14 @@ class TestConsequenceTokenMinting:
             "params": {"value": 100000},
         }
 
-        flowsignal_response = {
+        provider_01_response = {
             "decision": "ALLOW",
             "authority_record_id": "auth-integration-test",
             "authority_receipt": {"id": "rcpt-integration-test"},
             "authority_state_version": "v1.0",
         }
 
-        mock_response = _mock_response(flowsignal_response)
+        mock_response = _mock_response(provider_01_response)
         mock_signer = self._make_mock_signer_with_keypair()
 
         # Mint the token via provider_01
@@ -608,13 +608,13 @@ class TestConsequenceTokenMinting:
             "action": "test",
         }
 
-        flowsignal_response = {
+        provider_01_response = {
             "decision": "ALLOW",
             "authority_record_id": "auth-fail",
             "authority_receipt": {"id": "rcpt-fail"},
         }
 
-        mock_response = _mock_response(flowsignal_response)
+        mock_response = _mock_response(provider_01_response)
 
         # Mock signer to raise (simulate KMS failure)
         mock_signer = MagicMock()
@@ -658,12 +658,12 @@ class TestConsequenceTokenMinting:
 
         action_payload = {"actor_id": "user-refuse", "thread_id": "thread-refuse"}
 
-        flowsignal_response = {
+        provider_01_response = {
             "decision": "REFUSE",
             "message": "Transaction blocked",
         }
 
-        mock_response = _mock_response(flowsignal_response)
+        mock_response = _mock_response(provider_01_response)
         mock_signer = MagicMock()
         mock_signer.sign_raw_async = AsyncMock()
 
@@ -701,12 +701,12 @@ class TestConsequenceTokenMinting:
 
         action_payload = {"actor_id": "user-escalate", "thread_id": "thread-escalate"}
 
-        flowsignal_response = {
+        provider_01_response = {
             "decision": "ESCALATE",
             "message": "Requires human review",
         }
 
-        mock_response = _mock_response(flowsignal_response)
+        mock_response = _mock_response(provider_01_response)
         mock_signer = MagicMock()
         mock_signer.sign_raw_async = AsyncMock()
 
@@ -733,7 +733,7 @@ class TestConsequenceTokenMinting:
 
     @pytest.mark.asyncio
     @pytest.mark.local
-    async def test_flowsignal_allow_without_authority_record_fails_closed(
+    async def test_provider_01_allow_without_authority_record_fails_closed(
         self,
         adapter: Provider01NormativeProvider,
     ) -> None:
@@ -793,27 +793,27 @@ class TestDualHeaderAuthentication:
         """Adapter sets standard Authorization header when only API key is provided."""
         provider = Provider01NormativeProvider(
             endpoint="http://localhost:8080",
-            api_key="flowsignal-app-key-123",
+            api_key="provider01-app-key-123",
             gcp_id_token="",
         )
         headers = provider._headers()
         assert headers == {
             "Content-Type": "application/json",
-            "Authorization": "Bearer flowsignal-app-key-123",
+            "Authorization": "Bearer provider01-app-key-123",
         }
         assert "X-Serverless-Authorization" not in headers
 
     def test_headers_dual_header_gcp_oidc(self) -> None:
         """Adapter sets both X-Serverless-Authorization and Authorization when gcp_id_token is set."""
         provider = Provider01NormativeProvider(
-            endpoint="https://flowsignal-staging.example.com",
-            api_key="flowsignal-app-key-123",
+            endpoint="https://provider01-staging.example.com",
+            api_key="provider01-app-key-123",
             gcp_id_token="google-oidc-identity-token-xyz",
         )
         headers = provider._headers()
         assert headers == {
             "Content-Type": "application/json",
-            "Authorization": "Bearer flowsignal-app-key-123",
+            "Authorization": "Bearer provider01-app-key-123",
             "X-Serverless-Authorization": "Bearer google-oidc-identity-token-xyz",
         }
 
@@ -826,12 +826,12 @@ class TestDualHeaderAuthentication:
         monkeypatch.setattr(prov_mod, "_GCP_ID_TOKEN", "env-google-oidc-token")
 
         provider = Provider01NormativeProvider(
-            endpoint="https://flowsignal-staging.example.com",
-            api_key="flowsignal-app-key-123",
+            endpoint="https://provider01-staging.example.com",
+            api_key="provider01-app-key-123",
         )
         headers = provider._headers()
         assert headers["X-Serverless-Authorization"] == "Bearer env-google-oidc-token"
-        assert headers["Authorization"] == "Bearer flowsignal-app-key-123"
+        assert headers["Authorization"] == "Bearer provider01-app-key-123"
 
     def test_headers_empty_credentials(self, monkeypatch: pytest.MonkeyPatch) -> None:
         """Adapter emits only Content-Type when credentials are omitted."""
@@ -860,7 +860,7 @@ class TestMtlsConfiguration:
     def test_client_kwargs_with_full_mtls_bundle(self) -> None:
         """Adapter passes verify and cert tuple to httpx.AsyncClient when mTLS is configured."""
         provider = Provider01NormativeProvider(
-            endpoint="https://flowsignal-staging.example.com",
+            endpoint="https://provider01-staging.example.com",
             api_key="test-key",
             timeout=5.0,
             ca_bundle="/etc/cage/tls/ca.pem",
@@ -879,7 +879,7 @@ class TestMtlsConfiguration:
     async def test_incomplete_mtls_cert_without_key_fails_closed(self) -> None:
         """Missing client_key when client_cert is set fails closed without making network calls."""
         provider = Provider01NormativeProvider(
-            endpoint="https://flowsignal-staging.example.com",
+            endpoint="https://provider01-staging.example.com",
             api_key="test-key",
             client_cert="/etc/cage/tls/client.crt",
             client_key="",
@@ -902,7 +902,7 @@ class TestMtlsConfiguration:
     async def test_plain_http_rejected_when_mtls_configured(self) -> None:
         """Plain http:// endpoint is rejected fail-closed when mTLS material is configured."""
         provider = Provider01NormativeProvider(
-            endpoint="http://flowsignal-staging.example.com",
+            endpoint="http://provider01-staging.example.com",
             api_key="test-key",
             ca_bundle="/etc/cage/tls/ca.pem",
             client_cert="/etc/cage/tls/client.crt",
