@@ -51,6 +51,7 @@ from scripts import (
     check_import_boundaries,
     check_locked_yanks,
     check_locust_baseline,
+    check_oscal_claim_census,
     check_poam_lula_divergence,
     check_producer_consumer_keys,
     check_project_id_hygiene,
@@ -1401,3 +1402,49 @@ def test_gate_doc_version_hygiene_rejects_stale_filename_and_major_drift(
     assert "# v5.x" in targets
     assert "# Unreleased (v5.x)" in targets
     assert "docs/BREAKING_CHANGES_v4.md" in targets
+
+
+def test_gate_oscal_claim_census_rejects_drifted_hash_and_stale_register(
+    tmp_path: Path,
+) -> None:
+    """check_oscal_claim_census.py must run in ci.yml lint + poam-drift.yml and reject drift."""
+    ci_yaml = yaml.safe_load((WORKFLOWS_DIR / "ci.yml").read_text(encoding="utf-8"))
+    lint_steps = ci_yaml["jobs"]["lint"]["steps"]
+    assert any(
+        "scripts/check_oscal_claim_census.py --verify-rendered docs/compliance/OSCAL_EVIDENCE_CLAIM_REGISTER.md"
+        in step.get("run", "")
+        for step in lint_steps
+    ), "ci.yml lint job must run scripts/check_oscal_claim_census.py --verify-rendered"
+
+    poam_yaml = yaml.safe_load(
+        (WORKFLOWS_DIR / "poam-drift.yml").read_text(encoding="utf-8")
+    )
+    poam_steps = poam_yaml["jobs"]["poam-drift"]["steps"]
+    assert any(
+        "scripts/check_oscal_claim_census.py --verify-rendered docs/compliance/OSCAL_EVIDENCE_CLAIM_REGISTER.md"
+        in step.get("run", "")
+        for step in poam_steps
+    ), "poam-drift.yml must run scripts/check_oscal_claim_census.py --verify-rendered"
+
+    assert (
+        check_oscal_claim_census.main(
+            ["--verify-rendered", str(check_oscal_claim_census.DEFAULT_REGISTER_PATH)]
+        )
+        == 0
+    ), "Live repository failed OSCAL claim census or rendered register parity"
+
+    stale_reg = tmp_path / "OSCAL_EVIDENCE_CLAIM_REGISTER.md"
+    stale_reg.write_text("# Stale Register\n", encoding="utf-8")
+    assert check_oscal_claim_census.main(["--verify-rendered", str(stale_reg)]) == 1, (
+        "OSCAL census gate failed to reject a stale rendered register"
+    )
+
+    drifted_census = tmp_path / "evidence_claim_census.jsonl"
+    rows = check_oscal_claim_census.load_census()
+    rows[0]["description_sha256"] = "0" * 64
+    drifted_census.write_text(
+        "\n".join(json.dumps(r) for r in rows) + "\n", encoding="utf-8"
+    )
+    assert check_oscal_claim_census.main(["--census", str(drifted_census)]) == 1, (
+        "OSCAL census gate failed to reject planted description_sha256 drift"
+    )

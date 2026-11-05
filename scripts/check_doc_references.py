@@ -64,6 +64,7 @@ DOC_SCOPE = (
     "CONTRIBUTING.md",
     "docs/POAM.md",
     "docs/BREAKING_CHANGES.md",
+    "docs/compliance/OSCAL_EVIDENCE_CLAIM_REGISTER.md",
     "docs/architecture",
     "compliance",
     "infra",

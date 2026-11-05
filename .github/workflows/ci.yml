@@ -323,6 +323,12 @@ jobs:
         # consumers must be emitted by a producer in src/ (zero baseline/waivers).
         run: |
           uv run python scripts/check_producer_consumer_keys.py --verbose
+      - name: OSCAL evidence-claim census & register parity check
+        # Verifies 1-to-1 claim completeness and SHA-256/status freshness across
+        # all 7 OSCAL YAML files, path resolution in cites/read_back.check, and
+        # byte-for-byte parity of docs/compliance/OSCAL_EVIDENCE_CLAIM_REGISTER.md.
+        run: |
+          uv run python scripts/check_oscal_claim_census.py --verify-rendered docs/compliance/OSCAL_EVIDENCE_CLAIM_REGISTER.md
 
   bare-kernel-smoke:
     name: "Bare-Kernel Smoke Test (Zero Cloud SDKs)"
