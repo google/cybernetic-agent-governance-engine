@@ -355,7 +355,7 @@ def test_gateway_servicemonitor_and_podmonitoring_select_gateway() -> None:
     assert pm["spec"]["endpoints"][0]["path"] == "/metrics"
 
 
-def test_lula_validation_metrics_covers_servicemonitor_and_podmonitoring() -> None:
+def test_lula_validation_metrics_covers_in_state_podmonitoring() -> None:
     lula_path = _REPO / "compliance" / "lula" / "lula-validation-metrics.yaml"
     doc = yaml.safe_load(lula_path.read_text(encoding="utf-8"))
     comp_def = doc["component-definition"]
@@ -368,16 +368,15 @@ def test_lula_validation_metrics_covers_servicemonitor_and_podmonitoring() -> No
         comp_def["back-matter"]["resources"][0]["description"]
     )
     resources = {
-        r["name"]: r["resource"]
+        r["name"]: r["resource-rule"]["resource"]
         for r in resource_desc["domain"]["kubernetes-spec"]["resources"]
     }
     assert resources == {
-        "stera-gateway-monitor": "servicemonitors",
         "gateway-metrics": "podmonitorings",
     }
     rego = resource_desc["provider"]["opa-spec"]["rego"]
-    assert "service_monitor_valid" in rego
     assert "pod_monitoring_valid" in rego
+    assert 'count(input["gateway-metrics"]) > 0' in rego
 
 
 @pytest.mark.parametrize(
@@ -443,9 +442,14 @@ def test_gateway_hpa_uses_gmp_loop_lag_metric_and_defines_pdb() -> None:
     assert pdb["spec"]["selector"]["matchLabels"] == {"app": "gateway"}
 
 
-def test_gateway_terraform_module_wires_probes_pdb_and_loop_lag_hpa() -> None:
+def test_gateway_terraform_module_wires_probes_pdb_loop_lag_hpa_and_podmonitoring() -> (
+    None
+):
     main_tf = (_REPO / "infra/modules/gateway/main.tf").read_text(encoding="utf-8")
     vars_tf = (_REPO / "infra/modules/gateway/variables.tf").read_text(encoding="utf-8")
+    tpl = (
+        _REPO / "infra/modules/gateway/metrics-monitors/templates/monitors.yaml"
+    ).read_text(encoding="utf-8")
 
     assert 'name  = "OMP_NUM_THREADS"' in main_tf
     assert 'name  = "OPENBLAS_NUM_THREADS"' in main_tf
@@ -459,3 +463,31 @@ def test_gateway_terraform_module_wires_probes_pdb_and_loop_lag_hpa() -> None:
     assert "prometheus.googleapis.com|cage_event_loop_lag_seconds|gauge" in main_tf
     assert 'variable "enable_autoscaling"' in vars_tf
     assert 'variable "autoscaling_target_loop_lag"' in vars_tf
+    assert 'resource "helm_release" "metrics_monitors"' in main_tf
+    assert 'variable "enable_pod_monitoring"' in vars_tf
+    assert 'variable "enable_service_monitor"' in vars_tf
+    assert "kind: PodMonitoring" in tpl
+    assert "name: gateway-metrics" in tpl
+    assert "kind: ServiceMonitor" in tpl
+    assert "name: stera-gateway-monitor" in tpl
+
+
+def test_reconciliation_worker_managed_in_terraform_state_poam_096() -> None:
+    mod_tf = (_REPO / "infra/modules/reconciliation_worker/main.tf").read_text(
+        encoding="utf-8"
+    )
+    iam_tf = (_REPO / "infra/targets/gcp-gke/iam.tf").read_text(encoding="utf-8")
+    gke_tf = (_REPO / "infra/targets/gcp-gke/main.tf").read_text(encoding="utf-8")
+
+    assert 'resource "kubernetes_deployment" "reconciliation_worker"' in mod_tf
+    assert 'resource "kubernetes_secret" "reconciliation_worker"' in mod_tf
+    assert 'name      = "reconciliation-worker-secrets"' in mod_tf
+    assert 'type = "Recreate"' in mod_tf
+    assert "var.ttl_seconds >= 2 * var.poll_interval_seconds" in mod_tf
+    assert "src.gateway.governance.reconciliation.daemon" in mod_tf
+    assert "name    = local.ksa_reconciler" in iam_tf
+    assert 'module "reconciliation_worker"' in gke_tf
+    assert (
+        'kubernetes_service_account.workload["reconciler"].metadata[0].name' in gke_tf
+    )
+    assert "enable_pod_monitoring  = true" in gke_tf

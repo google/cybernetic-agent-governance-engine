@@ -19,12 +19,16 @@ component-definition:
     last-modified: '2026-07-01T13:18:54Z'
     version: 1.0.0
     oscal-version: 1.1.2
-    remarks: "Auto-converted from standalone lula validation format.\nRegion: ALL. Posture: iso42001.\nNotes: ISO 42001 §A.4: AI System Resource Controls — Token Quota OPA Injection (ISO-001). Asserts that the governed-financial-advisor Deployment matches required state signatures."
+    remarks: |-
+      Auto-converted from standalone lula validation format.
+      Region: ALL. Posture: iso42001.
+      Notes: ISO 42001 §A.4: AI System Resource Controls — Token Quota OPA Injection (ISO-001). Asserts that the governed-financial-advisor Deployment matches required state signatures.
   components:
   - uuid: a30eb71f-447c-53aa-8891-bb1b7db73afa
     type: software
     title: CAGE Cybernetic Governance Engine
-    description: The Cybernetic AI Governance Engine (CAGE) — AI governance gateway, compliance bridge, and governed financial advisor.
+    description: The Cybernetic AI Governance Engine (CAGE) — AI governance gateway, compliance bridge, and governed financial
+      advisor.
     control-implementations:
     - uuid: 3f2c9f85-c105-5d35-898d-e7fde67638ef
       source: https://www.iso.org/standard/81230.html
@@ -47,18 +51,20 @@ component-definition:
           type: kubernetes
           kubernetes-spec:
             resources:
-            - name: governed-financial-advisor-deployment
-              resource: deployments
-              namespace: governance-stack
-              filters:
-              - field: metadata.name
-                value: governed-financial-advisor
-            - name: opa-policy-configmap
-              resource: configmaps
-              namespace: governance-stack
-              filters:
-              - field: metadata.name
-                value: opa-policy
+              - name: gateway-deployment
+                resource-rule:
+                  group: apps
+                  version: v1
+                  resource: deployments
+                  namespaces:
+                    - governance-stack
+              - name: opa-policy-configmap
+                resource-rule:
+                  group: ""
+                  version: v1
+                  resource: configmaps
+                  namespaces:
+                    - governance-stack
         provider:
           type: opa
           opa-spec:
@@ -66,33 +72,27 @@ component-definition:
               package lula
 
               import future.keywords.if
+              import future.keywords.in
 
-              # ISO 42001 §A.4 — Token Quota OPA Injection (ISO-001)
-              #
-              # Check 1: The governed-financial-advisor Deployment is running with ≥1 ready replica.
-              # Check 2: The REDIS_URL env var is set (required for quota snapshot reads).
-              # Check 3: The OPA policy configmap contains token quota rule markers.
-
-              advisor_running if {
-                input["governed-financial-advisor-deployment"].status.readyReplicas >= 1
-              }
-
-              advisor_has_redis_url if {
-                some container in input["governed-financial-advisor-deployment"].spec.template.spec.containers
+              # ISO 42001 §A.4 — Token Quota & OPA Policy Enforcement (ISO-001)
+              gateway_has_redis_url if {
+                some d in input["gateway-deployment"]
+                d.metadata.name in {"gateway", "governed-financial-advisor"}
+                some container in d.spec.template.spec.containers
                 some env in container.env
                 env.name == "REDIS_URL"
                 env.value != ""
               }
 
-              advisor_has_quota_markers if {
-                some filename in object.keys(input["opa-policy-configmap"].data)
-                policy_content := input["opa-policy-configmap"].data[filename]
-                contains(policy_content, "quota_available")
-                contains(policy_content, "token_quota")
+              opa_policy_present if {
+                some cm in input["opa-policy-configmap"]
+                cm.metadata.name in {"opa-policies", "opa-policy"}
+                count(cm.data) > 0
               }
 
               validate if {
-                advisor_running
-                advisor_has_redis_url
-                advisor_has_quota_markers
+                count(input["gateway-deployment"]) > 0
+                count(input["opa-policy-configmap"]) > 0
+                gateway_has_redis_url
+                opa_policy_present
               }

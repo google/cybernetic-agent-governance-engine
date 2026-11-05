@@ -317,8 +317,8 @@ resource "google_storage_bucket_iam_member" "cloudbuild_source_viewer" {
 # One KSA per workload, annotated to its own GSA (POAM-2026-079 / AC-5 / AC-6).
 # The advisor is the untrusted neural plane: its KSA has no GSA at all, so the
 # pod cannot authenticate to KMS or any other Google Cloud API.
-# The reconciler runs only from deployment/k8s/reconciliation-worker.yaml, so
-# its KSA is defined in deployment/k8s/service-account.yaml, not here.
+# The reconciler runs in-state via module.reconciliation_worker (POAM-2026-096),
+# bound solely to google_service_account.reconciler for reconciler-snapshot signing.
 # ---------------------------------------------------------------------------
 
 locals {
@@ -337,6 +337,11 @@ locals {
       name    = local.ksa_compliance_bridge
       gsa     = google_service_account.compliance_bridge.email
       purpose = "compliance-evidence"
+    }
+    reconciler = {
+      name    = local.ksa_reconciler
+      gsa     = google_service_account.reconciler.email
+      purpose = "ledger-reconciliation"
     }
     vllm = {
       name    = local.ksa_vllm

@@ -1167,21 +1167,11 @@ variable "gateway_egress_allowed_fqdns" {
 }
 
 variable "reconciler_egress_allowed_fqdns" {
-  description = "FQDNs allowed for reconciliation-worker HTTPS (443) egress via GKE FQDNNetworkPolicy (§5.3)"
+  description = "FQDNs allowed for reconciliation-worker HTTPS (443) egress via GKE FQDNNetworkPolicy: reconciler-snapshot signing (Cloud KMS) and Workload Identity token exchange (§5.3, POAM-2026-096)"
   type        = list(string)
   default = [
     "cloudkms.googleapis.com",
-  ]
-}
-
-variable "trivy_egress_allowed_fqdns" {
-  description = "FQDNs allowed for Trivy vulnerability scanner HTTPS (443) egress via GKE FQDNNetworkPolicy (§5.3)"
-  type        = list(string)
-  default = [
-    "ghcr.io",
-    "*.ghcr.io",
-    "pkg.dev",
-    "*.pkg.dev",
+    "oauth2.googleapis.com",
   ]
 }
 
@@ -1252,4 +1242,18 @@ variable "partner_harness_kms_key" {
   description = "Cloud KMS CryptoKey name granted to cage-partner-harness for CI partner integration signing (POAM-2026-165). Empty string skips the key binding."
   type        = string
   default     = "actuator-01-signing"
+}
+
+# ─── Pre-W Evidence Survival: Reconciler & GMP PodMonitoring (PR-11) ──────────
+
+variable "enable_reconciliation_worker" {
+  description = "Deploy the in-state continuous reconciliation-worker Deployment, Secret, and KSA so CA-7/SI-10 reconciler-snapshot signing survives cluster rebuilds (POAM-2026-096, F-86)."
+  type        = bool
+  default     = true
+}
+
+variable "enable_service_monitor" {
+  description = "Deploy Prometheus Operator ServiceMonitor/stera-gateway-monitor alongside GKE Managed Prometheus PodMonitoring/gateway-metrics when monitoring.coreos.com/v1 CRDs are installed (R-6, F-91)."
+  type        = bool
+  default     = false
 }

@@ -34,12 +34,18 @@ component-definition:
     last-modified: '2026-10-25T23:30:57Z'
     version: 1.0.0
     oscal-version: 1.1.2
-    remarks: "Auto-converted from standalone lula validation format.\nRegion: US_FED. Posture: nist-sp800-53.\nNotes: System Constraint SC-4: Fiscal Limits and RBAC Enforcement. CRITICAL CONTROL — verified via Kubernetes ConfigMap label presence. The opa-compliance-status ConfigMap is created alongside the OPA Deployment during each deploy. Its absence or mislabelling indicates the enforcement layer was not correctly deployed. Any FAIL on this control triggers an immediate Slack/PagerDuty alert via compliance-bridge audit_workflow._step4_alert_on_critical_fail(). See: deployment/k8s/opa.yaml for label definitions. See: src/cage_finance/opa/trade_governance.rego\n     for the Rego rules enforcing SC-4.\nSee: src/compliance_bridge/audit_workflow.py for the alert pipeline."
+    remarks: |-
+      Auto-converted from standalone lula validation format.
+      Region: US_FED. Posture: nist-sp800-53.
+      Notes: System Constraint SC-4: Fiscal Limits and RBAC Enforcement. CRITICAL CONTROL — verified via Kubernetes ConfigMap label presence. The opa-compliance-status ConfigMap is created alongside the OPA Deployment during each deploy. Its absence or mislabelling indicates the enforcement layer was not correctly deployed. Any FAIL on this control triggers an immediate Slack/PagerDuty alert via compliance-bridge audit_workflow._step4_alert_on_critical_fail(). See: deployment/k8s/opa.yaml for label definitions. See: src/cage_finance/opa/trade_governance.rego
+           for the Rego rules enforcing SC-4.
+      See: src/compliance_bridge/audit_workflow.py for the alert pipeline.
   components:
   - uuid: 3c6ec14f-85af-5735-8a1b-dacc49e1abdc
     type: software
     title: CAGE Cybernetic Governance Engine
-    description: The Cybernetic AI Governance Engine (CAGE) — AI governance gateway, compliance bridge, and governed financial advisor.
+    description: The Cybernetic AI Governance Engine (CAGE) — AI governance gateway, compliance bridge, and governed financial
+      advisor.
     control-implementations:
     - uuid: 71af40e7-a7a8-570a-a320-3c4154bea03a
       source: https://csrc.nist.gov/publications/detail/sp/800-53/rev-5/final
@@ -57,4 +63,50 @@ component-definition:
       title: Lula Validation — SC4
       rlinks:
       - href: lula.dev
-      description: "domain:\n  type: kubernetes\n  kubernetes-spec:\n    resources:\n    - name: opa-compliance-status\n      resource: configmaps\n      namespace: governance-stack\nprovider:\n  type: opa\n  opa-spec:\n    rego: \"package lula\\n\\nimport future.keywords.if\\n\\n# SC-4: Fiscal Limits and RBAC\\n# Verifies the OPA ConfigMap is present and labelled as ISO 42001 enabled.\\n# This is a structural assertion — if the ConfigMap is missing or mislabelled,\\n# the enforcement layer is considered non-compliant regardless of traffic.\\nvalidate if {\\n  input[\\\"opa-compliance-status\\\"].metadata.labels[\\\"compliance.iso42001/enabled\\\"] == \\\"true\\\"\\n}\\n\"\n"
+      description: |
+        domain:
+          type: kubernetes
+          kubernetes-spec:
+            resources:
+              - name: opa-deployment
+                resource-rule:
+                  group: apps
+                  version: v1
+                  resource: deployments
+                  namespaces:
+                    - governance-stack
+              - name: opa-policies
+                resource-rule:
+                  group: ""
+                  version: v1
+                  resource: configmaps
+                  namespaces:
+                    - governance-stack
+        provider:
+          type: opa
+          opa-spec:
+            rego: |
+              package lula
+
+              import future.keywords.if
+              import future.keywords.in
+
+              # SC-4: Information in Shared Resources — Session Isolation & Fiscal Limits via OPA
+              opa_service_ready if {
+                some deploy in input["opa-deployment"]
+                deploy.metadata.name == "opa-service"
+                deploy.status.readyReplicas >= 1
+              }
+
+              session_isolation_policy_loaded if {
+                some cm in input["opa-policies"]
+                cm.metadata.name == "opa-policies"
+                cm.data["session_isolation.rego"] != ""
+              }
+
+              validate if {
+                count(input["opa-deployment"]) > 0
+                count(input["opa-policies"]) > 0
+                opa_service_ready
+                session_isolation_policy_loaded
+              }

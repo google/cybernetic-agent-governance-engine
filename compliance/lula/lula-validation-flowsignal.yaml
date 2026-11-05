@@ -44,12 +44,29 @@ component-definition:
     last-modified: '2026-08-27T16:14:00Z'
     version: 1.1.0
     oscal-version: 1.1.2
-    remarks: "Auto-converted from standalone lula validation format.\nRegion: ALL. Posture: iso42001.\nNotes: ISO 42001 §A.8.4 — FlowSignal Integration Compliance (FLOWSIGNAL-001). Asserts that the FlowSignal (provider_01) consequence authority integration is configured correctly on the gateway Deployment in the governance-stack namespace:\n  (1) CAGE_NORMATIVE_PROVIDER=provider_01 is set via env var (not hardcoded in image),\n      enabling runtime provider selection per the plugin architecture specification.\n  (2) All FlowSignal mTLS secrets (FLOWSIGNAL_CLIENT_CERT, FLOWSIGNAL_CLIENT_KEY,\n      FLOWSIGNAL_CA_BUNDLE) are referenced via secretKeyRef if present — never\n      inline value: fields (prevents credential exposure in pod specs).\n  (3) Redis key namespace flowsignal:token:* does not collide with existing\n      prefixes (fiscal:*, DEFER:*, safety:*) — ensures namespace isolation for\n      the distributed consequence authority consumption store.\n  (4) REDIS_URL env var is present on the gateway Deployment (consumption store\n      dependency per consequence_authority_store.py from_env() factory).\n  (5) Phase 2: KMS configuration env vars (KMS_GOVERNANCE_KEY or CAGE_KMS_PROVIDER)\n      are present for ConsequenceToken JWS signing via KMSGovernanceSigner.\nReference architecture: This validation enforces illustrative deployment patterns for FlowSignal consequence authority integration. Adopters should adapt namespace prefixes, secret names, and KMS key configurations to their own environments. See: plans/flowsignal_integration_implementation_plan.md Phase 1 §4, Phase 2 §5. See: src/gateway/governance/consequence_authority_store.py — Redis key schema, src/gateway/governance/consequence_token.py — KMS-signed JWS."
+    remarks: |-
+      Auto-converted from standalone lula validation format.
+      Region: ALL. Posture: iso42001.
+      Notes: ISO 42001 §A.8.4 — FlowSignal Integration Compliance (FLOWSIGNAL-001). Asserts that the FlowSignal (provider_01) consequence authority integration is configured correctly on the gateway Deployment in the governance-stack namespace:
+        (1) CAGE_NORMATIVE_PROVIDER=provider_01 is set via env var (not hardcoded in image),
+            enabling runtime provider selection per the plugin architecture specification.
+        (2) All FlowSignal mTLS secrets (FLOWSIGNAL_CLIENT_CERT, FLOWSIGNAL_CLIENT_KEY,
+            FLOWSIGNAL_CA_BUNDLE) are referenced via secretKeyRef if present — never
+            inline value: fields (prevents credential exposure in pod specs).
+        (3) Redis key namespace flowsignal:token:* does not collide with existing
+            prefixes (fiscal:*, DEFER:*, safety:*) — ensures namespace isolation for
+            the distributed consequence authority consumption store.
+        (4) REDIS_URL env var is present on the gateway Deployment (consumption store
+            dependency per consequence_authority_store.py from_env() factory).
+        (5) Phase 2: KMS configuration env vars (KMS_GOVERNANCE_KEY or CAGE_KMS_PROVIDER)
+            are present for ConsequenceToken JWS signing via KMSGovernanceSigner.
+      Reference architecture: This validation enforces illustrative deployment patterns for FlowSignal consequence authority integration. Adopters should adapt namespace prefixes, secret names, and KMS key configurations to their own environments. See: plans/flowsignal_integration_implementation_plan.md Phase 1 §4, Phase 2 §5. See: src/gateway/governance/consequence_authority_store.py — Redis key schema, src/gateway/governance/consequence_token.py — KMS-signed JWS.
   components:
   - uuid: a4d8f2c1-6e9b-5c73-ba18-f29e4a7c8d0e
     type: software
     title: CAGE Cybernetic Governance Engine
-    description: The Cybernetic AI Governance Engine (CAGE) — AI governance gateway, compliance bridge, and governed financial advisor.
+    description: The Cybernetic AI Governance Engine (CAGE) — AI governance gateway, compliance bridge, and governed financial
+      advisor.
     control-implementations:
     - uuid: b5e9a3d2-7f0c-5d84-cb29-a30f5b8d9e1f
       source: https://www.iso.org/standard/81230.html
@@ -72,12 +89,13 @@ component-definition:
           type: kubernetes
           kubernetes-spec:
             resources:
-            - name: gateway-deployment
-              resource: deployments
-              namespace: governance-stack
-              filters:
-              - field: metadata.name
-                value: cage-gateway
+              - name: gateway-deployment
+                resource-rule:
+                  group: apps
+                  version: v1
+                  resource: deployments
+                  namespaces:
+                    - governance-stack
         provider:
           type: opa
           opa-spec:
@@ -86,35 +104,22 @@ component-definition:
 
               import future.keywords.if
               import future.keywords.every
+              import future.keywords.in
 
-              # FlowSignal Integration — Consequence Authority Store & Provider Configuration
-              #
-              # Check 1: CAGE_NORMATIVE_PROVIDER=provider_01 is set via env var.
-              # Check 2: FlowSignal secrets use secretKeyRef if present (never inline value:).
-              # Check 3: Redis key namespace flowsignal:token:* does not collide with existing prefixes.
-              # Check 4: REDIS_URL env var is present.
-              # Check 5: KMS configuration env vars present (Phase 2 ConsequenceToken signing).
-
-              # Check 1: CAGE_NORMATIVE_PROVIDER=provider_01 is set via env var (not hardcoded).
-              normative_provider_configured if {
-                some container in input["gateway-deployment"].spec.template.spec.containers
-                some env in container.env
-                env.name == "CAGE_NORMATIVE_PROVIDER"
-                env.value == "provider_01"
+              gateway_deploy(d) if {
+                d.metadata.name in {"gateway", "cage-gateway", "stera-gateway"}
               }
 
-              # Check 2: FlowSignal secrets use secretKeyRef if present — never inline value:.
-              # This check is "if present, must use secretKeyRef" (graceful for reference architecture).
               flowsignal_secret_names := {"FLOWSIGNAL_CLIENT_CERT", "FLOWSIGNAL_CLIENT_KEY", "FLOWSIGNAL_CA_BUNDLE"}
 
-              # Find all FlowSignal-related env vars across all containers.
-              flowsignal_env_vars[env] {
-                some container in input["gateway-deployment"].spec.template.spec.containers
+              flowsignal_env_vars[env] if {
+                some d in input["gateway-deployment"]
+                gateway_deploy(d)
+                some container in d.spec.template.spec.containers
                 some env in container.env
                 flowsignal_secret_names[env.name]
               }
 
-              # Assert that every FlowSignal env var uses secretKeyRef (not inline value:).
               flowsignal_secrets_use_secretref if {
                 every env in flowsignal_env_vars {
                   env.valueFrom.secretKeyRef != null
@@ -122,53 +127,34 @@ component-definition:
                 }
               }
 
-              # If no FlowSignal env vars are present, pass the check (reference architecture —
-              # not all deployments will have FlowSignal configured).
-              flowsignal_secrets_use_secretref if {
-                count(flowsignal_env_vars) == 0
-              }
-
-              # Check 3: Redis key namespace flowsignal:token:* does not collide with existing prefixes.
-              # Existing prefixes to check against: fiscal:*, DEFER:*, safety:*
               existing_prefixes := {"fiscal:", "DEFER:", "safety:"}
               flowsignal_prefix := "flowsignal:token:"
 
               redis_namespace_no_collision if {
-                # flowsignal:token:* must not start with any existing prefix
                 every prefix in existing_prefixes {
                   not startswith(flowsignal_prefix, prefix)
-                }
-                # and vice versa — existing prefixes must not start with flowsignal:token:
-                every prefix in existing_prefixes {
                   not startswith(prefix, flowsignal_prefix)
                 }
               }
 
-              # Check 4: REDIS_URL env var is present on the gateway Deployment.
               redis_url_configured if {
-                some container in input["gateway-deployment"].spec.template.spec.containers
+                some d in input["gateway-deployment"]
+                gateway_deploy(d)
+                some container in d.spec.template.spec.containers
                 some env in container.env
                 env.name == "REDIS_URL"
               }
 
-              # Check 5: KMS configuration env vars present (Phase 2 ConsequenceToken signing).
-              # ConsequenceToken.mint() requires KMSGovernanceSigner, which is initialized
-              # via get_signer() from env vars. At least one of KMS_GOVERNANCE_KEY or
-              # CAGE_KMS_PROVIDER must be present to enable KMS signing.
               kms_config_present if {
-                some container in input["gateway-deployment"].spec.template.spec.containers
+                some d in input["gateway-deployment"]
+                gateway_deploy(d)
+                some container in d.spec.template.spec.containers
                 some env in container.env
-                env.name == "KMS_GOVERNANCE_KEY"
-              }
-
-              kms_config_present if {
-                some container in input["gateway-deployment"].spec.template.spec.containers
-                some env in container.env
-                env.name == "CAGE_KMS_PROVIDER"
+                env.name in {"KMS_GOVERNANCE_KEY", "CAGE_KMS_PROVIDER"}
               }
 
               validate if {
-                normative_provider_configured
+                count(input["gateway-deployment"]) > 0
                 flowsignal_secrets_use_secretref
                 redis_namespace_no_collision
                 redis_url_configured

@@ -282,21 +282,63 @@ if [[ "$READINESS_FAILED" == "false" ]]; then
     validation_files=("$REPO_ROOT"/compliance/lula/lula-validation-*.yaml)
     shopt -u nullglob
 
+    verify_lula_assessment_file() {
+      local file="$1"
+      local label="$2"
+      if [[ ! -s "$file" ]]; then
+        error "Lula assessment results missing or empty for ${label}: ${file}"
+        return 1
+      fi
+      if ! grep -Eq "observations:" "$file" || grep -Eq "observations:[[:space:]]*\[\]" "$file"; then
+        error "Lula assessment results for ${label} contain 0 observations"
+        return 1
+      fi
+      if ! grep -Eq "(relevant-evidence|Result:[[:space:]]*satisfied|state:[[:space:]]*satisfied)" "$file"; then
+        error "Lula assessment results for ${label} contain 0 satisfied observations/findings"
+        return 1
+      fi
+      if grep -Eq "(state:[[:space:]]*not-satisfied|Result:[[:space:]]*not-satisfied|lula-validation-error)" "$file"; then
+        error "Lula assessment results for ${label} contain not-satisfied or lula-validation-error state"
+        return 1
+      fi
+      return 0
+    }
+
     if [[ ${#validation_files[@]} -eq 0 ]]; then
       error "No Lula validation files found in compliance/lula/"
       ((LULA_FAILURES++)) || true
     else
+      assessment_out="$REPO_ROOT/compliance/lula/assessment-results.yaml"
+      evaluated_count=0
       for validation_file in "${validation_files[@]}"; do
-        info "Validating: $(basename "$validation_file")"
-        if ! lula validate -f "$validation_file"; then
-          error "Lula validation failed: $(basename "$validation_file")"
+        base_name="$(basename "$validation_file")"
+        if grep -Eq '^#[[:space:]]*cage-status:[[:space:]]*planned([[:space:]]|$)' "$validation_file"; then
+          info "Skipping planned-control Lula spec on host: ${base_name}"
+          continue
+        fi
+        if grep -Eq '^[[:space:]]*type:[[:space:]]*api([[:space:]]|$)' "$validation_file"; then
+          info "Skipping in-cluster API-domain Lula spec on host (.svc.cluster.local; evaluated by in-cluster auditor): ${base_name}"
+          continue
+        fi
+        info "Validating: ${base_name}"
+        ((evaluated_count++)) || true
+        rm -f "$assessment_out"
+        if ! lula validate -f "$validation_file" -o "$assessment_out"; then
+          error "Lula validation failed: ${base_name}"
+          ((LULA_FAILURES++)) || true
+        elif ! verify_lula_assessment_file "$assessment_out" "${base_name}"; then
+          error "Lula validation verdict not-satisfied or 0 observations: ${base_name}"
           ((LULA_FAILURES++)) || true
         fi
       done
+      if [[ $evaluated_count -eq 0 ]]; then
+        error "Zero active Kubernetes-domain Lula validation files were evaluated"
+        ((LULA_FAILURES++)) || true
+      fi
     fi
 
     if [[ $LULA_FAILURES -eq 0 ]]; then
-      success "All Lula validation gates passed at 1-replica scale"
+      success "All active Kubernetes-domain Lula validation gates passed at 1-replica scale"
     else
       error "$LULA_FAILURES Lula validation file(s) failed"
       error "POAM-024 is NOT satisfied — security posture incomplete"

@@ -73,3 +73,29 @@ def test_run_loop_refuses_ttl_shorter_than_two_ticks() -> None:
     )
     with pytest.raises(ValueError, match="2 x poll interval"):
         reconciler.run_loop()
+
+
+def test_reconciler_managed_in_gke_terraform_state() -> None:
+    """POAM-2026-096 / F-86: reconciliation-worker Deployment, Secret, and KSA live in Terraform state."""
+    repo_root = Path(__file__).resolve().parent.parent
+    mod_main = (
+        repo_root / "infra" / "modules" / "reconciliation_worker" / "main.tf"
+    ).read_text()
+    gke_main = (repo_root / "infra" / "targets" / "gcp-gke" / "main.tf").read_text()
+    gke_iam = (repo_root / "infra" / "targets" / "gcp-gke" / "iam.tf").read_text()
+
+    assert 'name      = "reconciliation-worker"' in mod_main
+    assert 'name      = "reconciliation-worker-secrets"' in mod_main
+    assert '"reconciler-kms-key" = var.reconciler_kms_key' in mod_main
+    assert 'type = "Recreate"' in mod_main
+    assert "replicas               = 1" in mod_main
+    assert "var.ttl_seconds >= 2 * var.poll_interval_seconds" in mod_main
+    import re
+
+    assert re.search(r"\bread_only_root_filesystem\s*=\s*true\b", mod_main)
+    assert 'module "reconciliation_worker"' in gke_main
+    assert 'kubernetes_service_account.workload["reconciler"]' in gke_main
+    assert re.search(r'\bksa_reconciler\s*=\s*"cage-reconciler-sa"', gke_iam)
+    assert re.search(
+        r"\breconciler\s*=\s*\{\s*name\s*=\s*local\.ksa_reconciler\b", gke_iam
+    )

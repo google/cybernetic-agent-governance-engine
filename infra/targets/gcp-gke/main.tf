@@ -661,7 +661,7 @@ locals {
 locals {
   required_image_digests = concat(
     ["gateway", "opa", "agentsight-ui", "langfuse", "langfuse-worker", "cloud-sql-proxy", "clickhouse-server", "clickhouse-keeper"],
-    var.enable_compliance_bridge && var.compliance_bridge_image == "" ? ["compliance-bridge"] : [],
+    (var.enable_compliance_bridge || var.enable_reconciliation_worker) && var.compliance_bridge_image == "" ? ["compliance-bridge"] : [],
     local.vllm_enabled && var.vllm_image == "" ? ["vllm-streamer"] : [],
     local.advisor_enabled ? ["governed-financial-advisor"] : [],
     var.enable_nemo_guardrails && var.nemo_image == "" ? ["nemo-guardrails"] : [],
@@ -1030,7 +1030,43 @@ module "gateway" {
   # so pre-change connections do not outlive a policy tightening.
   network_policy_hash = local.network_policy_spec_hash
 
+  # R-6 / F-91: Keep GMP PodMonitoring/gateway-metrics in Terraform state across W.
+  enable_pod_monitoring  = true
+  enable_service_monitor = var.enable_service_monitor
+
   depends_on = [module.app_secrets, module.opa, module.vllm, module.memorystore_governance, module.service_mesh]
+}
+
+# ─── Deploy Ground-Truth Reconciliation Worker (POAM-2026-096, F-86, CA-7) ────
+# Single-writer Deployment signing ground-truth CBF snapshots with
+# reconciler-snapshot via cage-reconciler-sa Workload Identity (G8). Reuses the
+# digest-pinned compliance-bridge image, which ships src/gateway on PYTHONPATH.
+
+module "reconciliation_worker" {
+  count = var.enable_reconciliation_worker ? 1 : 0
+
+  source = "../../modules/reconciliation_worker"
+
+  namespace                  = module.namespace.name
+  image                      = var.compliance_bridge_image != "" ? var.compliance_bridge_image : var.image_digests["compliance-bridge"]
+  service_account_name       = kubernetes_service_account.workload["reconciler"].metadata[0].name
+  reconciler_kms_key         = local.reconciler_snapshot_key_version
+  deployment_config_map_name = module.deployment_config.config_map_name
+  cage_env                   = var.environment
+  cage_kms_provider          = "gcp"
+
+  # Governance Memorystore Valkey: db 0 for ground-truth snapshots + settlement
+  # ledger (shared with gateway), db 1 for hash-chained fence evidence.
+  redis_url                 = local.evidence_stream_redis_url
+  enable_redis_tls          = var.enable_memorystore_tls
+  redis_ca_pem              = var.enable_memorystore_tls ? join("\n", module.memorystore_governance.managed_server_ca) : ""
+  redis_auth_mode           = local.governance_redis_auth
+  evidence_stream_redis_url = local.evidence_stream_redis_url
+  evidence_stream_redis_db  = local.evidence_stream_redis_db
+  evidence_stream_key       = local.evidence_stream_key
+  network_policy_hash       = local.network_policy_spec_hash
+
+  depends_on = [module.deployment_config, module.memorystore_governance, module.service_mesh]
 }
 
 # ─── Deploy Governed Financial Advisor (GEAP Agent Runtime for GCP) ──────────

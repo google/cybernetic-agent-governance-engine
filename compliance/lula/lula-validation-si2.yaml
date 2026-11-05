@@ -50,12 +50,28 @@ component-definition:
     last-modified: '2026-09-28T00:00:00Z'
     version: 1.1.0
     oscal-version: 1.1.2
-    remarks: "Auto-converted from standalone lula validation format.\nRegion: US_FED. Posture: nist-sp800-53.\nNotes: NIST SP 800-53 Rev 5 SI-2: Flaw Remediation — Image Digest Pinning and Vulnerability Scanning. Namespace: governance-stack. Implements four flaw remediation and supply-chain integrity assertions for the CAGE governance namespace:\n  (1) Required Terraform-managed Deployments (gateway, governed-financial-advisor,\n      vllm-inference, vllm-reasoning, nemo-guardrails, agentsight-ui) must exist\n      and every container image must be pinned by an immutable @sha256: digest\n      (never :latest or tag-only).\n  (2) When compliance-bridge is deployed, its container images must also be pinned\n      by an immutable @sha256: digest (never :latest).\n  (3) All container images across governance-stack Deployments must be pinned by\n      @sha256: digest and use imagePullPolicy in {\"Always\", \"IfNotPresent\"}.\n  (4) At least one CronJob labeled cage.io/purpose: vulnerability-scan must exist\n      (provides continuous vulnerability scanning evidence per SI-2 and RA-5;\n      see also lula-validation-ra5.yaml for the dedicated RA-5 validation).\nSee: docs/POAM.md — POAM-2026-013, POAM-2026-083 (SI-2 / SI-7 remediation), POAM-2026-010 (RA-5 remediation)."
+    remarks: |-
+      Auto-converted from standalone lula validation format.
+      Region: US_FED. Posture: nist-sp800-53.
+      Notes: NIST SP 800-53 Rev 5 SI-2: Flaw Remediation — Image Digest Pinning and Vulnerability Scanning. Namespace: governance-stack. Implements four flaw remediation and supply-chain integrity assertions for the CAGE governance namespace:
+        (1) Required Terraform-managed Deployments (gateway, governed-financial-advisor,
+            vllm-inference, vllm-reasoning, nemo-guardrails, agentsight-ui) must exist
+            and every container image must be pinned by an immutable @sha256: digest
+            (never :latest or tag-only).
+        (2) When compliance-bridge is deployed, its container images must also be pinned
+            by an immutable @sha256: digest (never :latest).
+        (3) All container images across governance-stack Deployments must be pinned by
+            @sha256: digest and use imagePullPolicy in {"Always", "IfNotPresent"}.
+        (4) At least one CronJob labeled cage.io/purpose: vulnerability-scan must exist
+            (provides continuous vulnerability scanning evidence per SI-2 and RA-5;
+            see also lula-validation-ra5.yaml for the dedicated RA-5 validation).
+      See: docs/POAM.md — POAM-2026-013, POAM-2026-083 (SI-2 / SI-7 remediation), POAM-2026-010 (RA-5 remediation).
   components:
   - uuid: 8c900df5-a133-56be-a946-99fa2e009bf1
     type: software
     title: CAGE Cybernetic Governance Engine
-    description: The Cybernetic AI Governance Engine (CAGE) — AI governance gateway, compliance bridge, and governed financial advisor.
+    description: The Cybernetic AI Governance Engine (CAGE) — AI governance gateway, compliance bridge, and governed financial
+      advisor.
     control-implementations:
     - uuid: 265c3e24-6a08-5306-8c7e-e2c1d830495f
       source: https://csrc.nist.gov/publications/detail/sp/800-53/rev-5/final
@@ -73,4 +89,86 @@ component-definition:
       title: Lula Validation — SI2
       rlinks:
       - href: lula.dev
-      description: "domain:\n  type: kubernetes\n  kubernetes-spec:\n    resources:\n    - name: cage-deployments\n      resource: deployments\n      namespace: governance-stack\n    - name: vuln-scan-cronjobs\n      resource: cronjobs\n      namespace: governance-stack\nprovider:\n  type: opa\n  opa-spec:\n    rego: \"package lula\\n\\nimport future.keywords.if\\nimport future.keywords.every\\nimport future.keywords.in\\n\\n# SI-2 / SI-7: Flaw Remediation — Digest Pinning and Vulnerability Scanning (POAM-2026-083)\\n#\\n# Check 1: The Deployments every inference backend deploys (gateway, agentsight-ui)\\n#          must exist and every container image must be pinned by @sha256: digest\\n#          (never :latest).\\n# Check 2: Deployments that exist only in some configurations must be digest-pinned\\n#          when present: governed-financial-advisor, vllm-inference and vllm-reasoning\\n#          (inference_backend = \\\"vllm\\\"), nemo-guardrails (enable_nemo_guardrails) and\\n#          compliance-bridge (enable_compliance_bridge). Under inference_backend = \\\"none\\\"\\n#          they are absent, not degraded (W6).\\n# Check 3: All containers across all CAGE deployments must be digest-pinned and use\\n#          imagePullPolicy in {\\\"Always\\\", \\\"IfNotPresent\\\"}.\\n# Check 4: At least one CronJob with label cage.io/purpose: vulnerability-scan must exist.\\n\\nrequired_deployments := {\\n  \\\"gateway\\\",\\n  \\\"agentsight-ui\\\"\\n}\\n\\noptional_deployments := {\\n  \\\"governed-financial-advisor\\\",\\n  \\\"vllm-inference\\\",\\n  \\\"vllm-reasoning\\\",\\n  \\\"nemo-guardrails\\\",\\n  \\\"compliance-bridge\\\"\\n}\\n\\nuses_latest_tag(image) if { endswith(image, \\\":latest\\\") }\\nuses_latest_tag(image) if { contains(image, \\\":latest@\\\") }\\nuses_latest_tag(image) if { not contains(image, \\\":\\\") }\\n\\npinned_by_digest(image) if {\\n  contains(image, \\\"@sha256:\\\")\\n  not uses_latest_tag(image)\\n}\\n\\n# Check 1: Every required Terraform Deployment is present and digest-pinned.\\ncage_images_pinned if {\\n  every req_name in required_deployments {\\n    matching := [d | d := input[\\\"cage-deployments\\\"][_]; d.metadata.name == req_name]\\n    count(matching) >= 1\\n    every deploy in matching {\\n      every container in deploy.spec.template.spec.containers {\\n        pinned_by_digest(container.image)\\n      }\\n    }\\n  }\\n}\\n\\n# Check 2: Every optional Deployment that is present is digest-pinned.\\noptional_images_pinned if {\\n  every opt_name in optional_deployments {\\n    present := [d | d := input[\\\"cage-deployments\\\"][_]; d.metadata.name == opt_name]\\n    every deploy in present {\\n      every container in deploy.spec.template.spec.containers {\\n        pinned_by_digest(container.image)\\n      }\\n    }\\n  }\\n}\\n\\n# Check 3: All containers across all CAGE deployments are digest-pinned and use Always or IfNotPresent.\\nall_containers_pull_policy_valid if {\\n  count(input[\\\"cage-deployments\\\"]) >= 1\\n  every deploy in input[\\\"cage-deployments\\\"] {\\n    every container in deploy.spec.template.spec.containers {\\n      pinned_by_digest(container.image)\\n      container.imagePullPolicy in {\\\"Always\\\", \\\"IfNotPresent\\\"}\\n    }\\n  }\\n}\\n\\n# Check 4: At least one vulnerability-scan CronJob must exist.\\nvuln_scan_exists if {\\n  some cj in input[\\\"vuln-scan-cronjobs\\\"]\\n  cj.metadata.labels[\\\"cage.io/purpose\\\"] == \\\"vulnerability-scan\\\"\\n  cj.spec.schedule != null\\n}\\n\\nvalidate if {\\n  cage_images_pinned\\n  optional_images_pinned\\n  all_containers_pull_policy_valid\\n  vuln_scan_exists\\n}\\n\"\n"
+      description: |
+        domain:
+          type: kubernetes
+          kubernetes-spec:
+            resources:
+              - name: cage-deployments
+                resource-rule:
+                  group: apps
+                  version: v1
+                  resource: deployments
+                  namespaces:
+                    - governance-stack
+        provider:
+          type: opa
+          opa-spec:
+            rego: |
+              package lula
+
+              import future.keywords.if
+              import future.keywords.every
+              import future.keywords.in
+
+              # SI-2 / SI-7: Flaw Remediation — Digest Pinning (POAM-2026-083)
+              required_deployments := {
+                "gateway",
+                "agentsight-ui",
+              }
+
+              optional_deployments := {
+                "governed-financial-advisor",
+                "vllm-inference",
+                "vllm-reasoning",
+                "nemo-guardrails",
+                "compliance-bridge",
+              }
+
+              uses_latest_tag(image) if { endswith(image, ":latest") }
+              uses_latest_tag(image) if { contains(image, ":latest@") }
+              uses_latest_tag(image) if { not contains(image, ":") }
+
+              pinned_by_digest(image) if {
+                contains(image, "@sha256:")
+                not uses_latest_tag(image)
+              }
+
+              cage_images_pinned if {
+                every req_name in required_deployments {
+                  matching := [d | some d in input["cage-deployments"]; d.metadata.name == req_name]
+                  count(matching) >= 1
+                  every deploy in matching {
+                    every container in deploy.spec.template.spec.containers {
+                      pinned_by_digest(container.image)
+                    }
+                  }
+                }
+              }
+
+              optional_images_pinned if {
+                every opt_name in optional_deployments {
+                  present := [d | some d in input["cage-deployments"]; d.metadata.name == opt_name]
+                  every deploy in present {
+                    every container in deploy.spec.template.spec.containers {
+                      pinned_by_digest(container.image)
+                    }
+                  }
+                }
+              }
+
+              all_containers_pull_policy_valid if {
+                every deploy in input["cage-deployments"] {
+                  every container in deploy.spec.template.spec.containers {
+                    pinned_by_digest(container.image)
+                    container.imagePullPolicy in {"Always", "IfNotPresent"}
+                  }
+                }
+              }
+
+              validate if {
+                count(input["cage-deployments"]) > 0
+                cage_images_pinned
+                optional_images_pinned
+                all_containers_pull_policy_valid
+              }

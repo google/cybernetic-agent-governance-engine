@@ -181,9 +181,41 @@ ISO_MANIFESTS=(
   "compliance/lula/lula-validation-aarm-vectors.yaml"
 )
 
+verify_lula_assessment_file() {
+  local file="$1"
+  local label="$2"
+  if [[ ! -s "$file" ]]; then
+    error "Lula assessment results missing or empty for ${label}: ${file}"
+    return 1
+  fi
+  if ! grep -Eq "observations:" "$file" || grep -Eq "observations:[[:space:]]*\[\]" "$file"; then
+    error "Lula assessment results for ${label} contain 0 observations"
+    return 1
+  fi
+  if ! grep -Eq "(relevant-evidence|Result:[[:space:]]*satisfied|state:[[:space:]]*satisfied)" "$file"; then
+    error "Lula assessment results for ${label} contain 0 satisfied observations/findings"
+    return 1
+  fi
+  if grep -Eq "(state:[[:space:]]*not-satisfied|Result:[[:space:]]*not-satisfied|lula-validation-error)" "$file"; then
+    error "Lula assessment results for ${label} contain not-satisfied or lula-validation-error state"
+    return 1
+  fi
+  return 0
+}
+
+run_lula_validate_strict() {
+  local manifest="$1"
+  local out_file="compliance/lula/assessment-results.yaml"
+  rm -f "$out_file"
+  if ! lula validate -f "$manifest" -o "$out_file"; then
+    return 1
+  fi
+  verify_lula_assessment_file "$out_file" "$manifest"
+}
+
 for manifest in "${ISO_MANIFESTS[@]}"; do
   info "  Validating: ${manifest}"
-  if lula validate -f "${manifest}"; then
+  if run_lula_validate_strict "${manifest}"; then
     success "  Passed: ${manifest}"
   else
     error "  FAILED: ${manifest}"
@@ -226,6 +258,8 @@ case "${CAGE_REGION}" in
       echo ""
       info "Gate 1.2 — NIST SP 800-53 Lula validations (prod only)"
 
+      # lula-validation-ra5.yaml is intentionally excluded while in-cluster
+      # periodic scanning remains status=planned under POAM-010 (F-109).
       NIST_MANIFESTS=(
         "compliance/lula/lula-validation-ac2.yaml"
         "compliance/lula/lula-validation-ac3.yaml"
@@ -233,7 +267,6 @@ case "${CAGE_REGION}" in
         "compliance/lula/lula-validation-cm6.yaml"
         "compliance/lula/lula-validation-ia3.yaml"
         "compliance/lula/lula-validation-ir6.yaml"
-        "compliance/lula/lula-validation-ra5.yaml"
         "compliance/lula/lula-validation-sc4.yaml"
         "compliance/lula/lula-validation-sc8.yaml"
         "compliance/lula/lula-validation-si2.yaml"
@@ -241,7 +274,7 @@ case "${CAGE_REGION}" in
 
       for manifest in "${NIST_MANIFESTS[@]}"; do
         info "  Validating: ${manifest}"
-        if lula validate -f "${manifest}"; then
+        if run_lula_validate_strict "${manifest}"; then
           success "  Passed: ${manifest}"
         else
           error "  FAILED: ${manifest}"
@@ -297,7 +330,7 @@ case "${CAGE_REGION}" in
   APAC_MAS)
     echo ""
     info "Gate 1.1 — MAS FEAT Lula validation"
-    if lula validate -f compliance/lula/lula-validation-mas-feat.yaml; then
+    if run_lula_validate_strict compliance/lula/lula-validation-mas-feat.yaml; then
       success "Gate 1.1 passed — MAS FEAT validation"
     else
       error "Gate 1.1 FAILED — MAS FEAT validation"
@@ -307,7 +340,7 @@ case "${CAGE_REGION}" in
     if [[ "${CAGE_ENV}" == "prod" ]]; then
       echo ""
       info "Gate 1.2 — MAS Notice 655 Lula validation (prod only)"
-      if lula validate -f compliance/lula/lula-validation-mas-notice655.yaml; then
+      if run_lula_validate_strict compliance/lula/lula-validation-mas-notice655.yaml; then
         success "Gate 1.2 passed — MAS Notice 655 validation"
       else
         error "Gate 1.2 FAILED — MAS Notice 655 validation"
@@ -316,7 +349,7 @@ case "${CAGE_REGION}" in
 
       echo ""
       info "Gate 1.3 — MAS TRM §6 Lula validation (prod only)"
-      if lula validate -f compliance/lula/lula-validation-mas-trm-s6.yaml; then
+      if run_lula_validate_strict compliance/lula/lula-validation-mas-trm-s6.yaml; then
         success "Gate 1.3 passed — MAS TRM §6 validation"
       else
         error "Gate 1.3 FAILED — MAS TRM §6 validation"

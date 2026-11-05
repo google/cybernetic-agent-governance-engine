@@ -157,49 +157,6 @@ locals {
       }
     }
 
-    trivy_scanner_egress_fqdn = {
-      apiVersion = "networking.gke.io/v1alpha1"
-      kind       = "FQDNNetworkPolicy"
-      metadata = {
-        name      = "trivy-scanner-egress-fqdn"
-        namespace = module.namespace.name
-        labels = {
-          "app.kubernetes.io/managed-by" = "terraform"
-          "cage.io/component"            = "z3n-egress"
-          "app.kubernetes.io/part-of"    = "security-scanning"
-        }
-        annotations = {
-          "compliance.nist.gov/control"  = "SC-7,AC-4,SI-3,RA-5"
-          "compliance.nist.gov/standard" = "SP-800-53-Rev5"
-          "cage.io/poam"                 = "POAM-007,POAM-011"
-        }
-      }
-      spec = {
-        podSelector = {
-          matchLabels = {
-            app = "security-scanner"
-          }
-        }
-        egress = [
-          {
-            matches = [
-              for fqdn in var.trivy_egress_allowed_fqdns : (
-                can(regex("[*]", fqdn))
-                ? { pattern = fqdn, name = null }
-                : { name = fqdn, pattern = null }
-              )
-            ]
-            ports = [
-              {
-                protocol = "TCP"
-                port     = 443
-              }
-            ]
-          }
-        ]
-      }
-    }
-
     vllm_egress_fqdn = {
       apiVersion = "networking.gke.io/v1alpha1"
       kind       = "FQDNNetworkPolicy"
@@ -1012,71 +969,7 @@ resource "kubernetes_network_policy_v1" "reconciliation_worker_egress" {
   }
 }
 
-# ─── 6. Trivy Vulnerability Scanner DNS Egress (§5.3) ─────────────────────────
-# Companion to trivy_scanner_egress_fqdn (FQDNNetworkPolicy on port 443).
-
-resource "kubernetes_network_policy_v1" "trivy_scanner_dns_egress" {
-  metadata {
-    name      = "trivy-scanner-dns-egress"
-    namespace = module.namespace.name
-    labels = {
-      "app.kubernetes.io/managed-by" = "terraform"
-      "cage.io/component"            = "z3n-egress"
-      "app.kubernetes.io/part-of"    = "security-scanning"
-    }
-  }
-
-  spec {
-    pod_selector {
-      match_labels = {
-        app = "security-scanner"
-      }
-    }
-    policy_types = ["Egress"]
-
-    egress {
-      to {
-        namespace_selector {
-          match_labels = {
-            "kubernetes.io/metadata.name" = "kube-system"
-          }
-        }
-        pod_selector {
-          match_labels = {
-            "k8s-app" = "kube-dns"
-          }
-        }
-      }
-      to {
-        namespace_selector {
-          match_labels = {
-            "kubernetes.io/metadata.name" = "kube-system"
-          }
-        }
-        pod_selector {
-          match_labels = {
-            "k8s-app" = "node-local-dns"
-          }
-        }
-      }
-      to {
-        ip_block {
-          cidr = var.kube_dns_cidr
-        }
-      }
-      ports {
-        protocol = "UDP"
-        port     = "53"
-      }
-      ports {
-        protocol = "TCP"
-        port     = "53"
-      }
-    }
-  }
-}
-
-# ─── 7. vLLM L3/L4 Egress (DNS + GKE Workload Identity Metadata Server) ──────
+# ─── 6. vLLM L3/L4 Egress (DNS + GKE Workload Identity Metadata Server) ──────
 
 resource "kubernetes_network_policy_v1" "vllm_egress_l3_l4" {
   metadata {
@@ -1202,6 +1095,7 @@ resource "terraform_data" "network_policy_workload_rollout" {
       ["deployment/gateway"],
       length(module.governed_advisor) > 0 ? ["deployment/governed-financial-advisor"] : [],
       var.enable_compliance_bridge ? ["deployment/compliance-bridge"] : [],
+      var.enable_reconciliation_worker ? ["deployment/reconciliation-worker"] : [],
     ))} -n ${module.namespace.name}"
     fqdn_policy_objects = local.fqdn_network_policies
   }
@@ -1213,7 +1107,6 @@ resource "terraform_data" "network_policy_workload_rollout" {
     kubernetes_network_policy_v1.financial_advisor_egress_internal_only,
     kubernetes_network_policy_v1.agent_egress_internal_only,
     kubernetes_network_policy_v1.reconciliation_worker_egress,
-    kubernetes_network_policy_v1.trivy_scanner_dns_egress,
     kubernetes_network_policy_v1.vllm_egress_l3_l4,
     kubernetes_manifest.fqdn_network_policy,
   ]

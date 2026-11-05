@@ -29,16 +29,16 @@ component-definition:
     last-modified: '2026-07-01T13:18:54Z'
     version: 1.0.0
     oscal-version: 1.1.2
-    remarks: 'Auto-converted from standalone lula validation format.
-
+    remarks: |-
+      Auto-converted from standalone lula validation format.
       Region: ALL. Posture: iso-42001.
-
-      Notes: ISO 42001 A.9.2: Data Transfer to Suppliers. CRITICAL CONTROL — zero tolerance for PII leakage to external model APIs. Automated verification via Presidio PII masking traces tagged iso42001.control_id=A.9.2 (nemo_input_scan) from Python governance nodes. Any FAIL on this control triggers an immediate Slack/PagerDuty alert via the complianceAuditWorkflow alertOnCriticalFailStep. Staleness guard: 48 hours.'
+      Notes: ISO 42001 A.9.2: Data Transfer to Suppliers. CRITICAL CONTROL — zero tolerance for PII leakage to external model APIs. Automated verification via Presidio PII masking traces tagged iso42001.control_id=A.9.2 (nemo_input_scan) from Python governance nodes. Any FAIL on this control triggers an immediate Slack/PagerDuty alert via the complianceAuditWorkflow alertOnCriticalFailStep. Staleness guard: 48 hours.
   components:
   - uuid: 1b74bd2a-ba37-5476-9ba2-3150c152b15c
     type: software
     title: CAGE Cybernetic Governance Engine
-    description: The Cybernetic AI Governance Engine (CAGE) — AI governance gateway, compliance bridge, and governed financial advisor.
+    description: The Cybernetic AI Governance Engine (CAGE) — AI governance gateway, compliance bridge, and governed financial
+      advisor.
     control-implementations:
     - uuid: 11a88f5e-1f94-5774-94b9-617f7870e62a
       source: https://www.iso.org/standard/81230.html
@@ -56,4 +56,35 @@ component-definition:
       title: Lula Validation — A92
       rlinks:
       - href: lula.dev
-      description: "domain:\n  type: api\n  api-spec:\n    endpoints:\n    - name: langfuse_metrics_a92\n      url: http://compliance-bridge.governance-stack.svc.cluster.local/v1/metrics/A.9.2\n      method: GET\nprovider:\n  type: opa\n  opa-spec:\n    rego: \"package lula\\n\\nimport future.keywords.if\\n\\n# A.9.2: Data Transfer to Suppliers — PII must never be sent to external APIs.\\n# Threshold: blocked_traces / total_traces == 0.0 (zero tolerance)\\n# Translated as: safety_rate == 1.0 (all traces passed without PII leak)\\n\\n# Rule 1: Cold-start grace period\\nvalidate if {\\n  input.langfuse_metrics_a92.startup_grace_active == true\\n  input.langfuse_metrics_a92.safety_rate == 1.0\\n  input.langfuse_metrics_a92.evidence_age_seconds < 172800\\n}\\n\\n# Rule 2: Steady-state — zero tolerance, no sample-size exemption\\nvalidate if {\\n  input.langfuse_metrics_a92.startup_grace_active == false\\n  input.langfuse_metrics_a92.safety_rate == 1.0\\n  input.langfuse_metrics_a92.total_traces > 0\\n  input.langfuse_metrics_a92.evidence_age_seconds < 172800\\n}\\n\"\n"
+      description: |
+        domain:
+          type: api
+          api-spec:
+            requests:
+              - name: langfuse_metrics_a92
+                url: http://compliance-bridge.governance-stack.svc.cluster.local/v1/metrics/A.9.2
+                method: GET
+        provider:
+          type: opa
+          opa-spec:
+            rego: |
+              package lula
+
+              import future.keywords.if
+
+              # A.9.2: Data Transfer to Suppliers — PII must never be sent to external APIs.
+              sample_size_or_grace_met if {
+                input.langfuse_metrics_a92.startup_grace_active == true
+              }
+
+              sample_size_or_grace_met if {
+                input.langfuse_metrics_a92.startup_grace_active == false
+                input.langfuse_metrics_a92.total_traces > 0
+              }
+
+              validate if {
+                count(input.langfuse_metrics_a92) > 0
+                input.langfuse_metrics_a92.safety_rate == 1.0
+                input.langfuse_metrics_a92.evidence_age_seconds < 172800
+                sample_size_or_grace_met
+              }

@@ -27,14 +27,14 @@ component-definition:
     last-modified: '2026-07-09T00:00:00Z'
     version: 1.0.0
     oscal-version: 1.1.2
-    remarks: 'Phase-0 stub for AI 600-1 §2.3 Data Poisoning / Prompt Injection controls.
-      Always passes until Phase 2 real assertions are implemented per §6.2.
-      Region: US_FED. POAM: AI600-003.'
+    remarks: 'Phase-0 stub for AI 600-1 §2.3 Data Poisoning / Prompt Injection controls. Always passes until Phase 2 real
+      assertions are implemented per §6.2. Region: US_FED. POAM: AI600-003.'
   components:
   - uuid: abca559a-7506-40f2-a618-cf5deeb030d7
     type: software
     title: CAGE Cybernetic Governance Engine
-    description: The Cybernetic AI Governance Engine (CAGE) — AI governance gateway, compliance bridge, and governed financial advisor.
+    description: The Cybernetic AI Governance Engine (CAGE) — AI governance gateway, compliance bridge, and governed financial
+      advisor.
     control-implementations:
     - uuid: 119840ef-2fa9-4bed-8cac-7a5e6a5d81dd
       source: https://airc.nist.gov/Docs/1
@@ -52,12 +52,34 @@ component-definition:
       title: Lula Validation — AI600-Prompt-Injection
       rlinks:
       - href: lula.dev
-      description: "domain:\n  type: kubernetes\n  kubernetes:\n    resources: []\n\
-        \    # Phase 2 will assert:\n    #   - gateway Deployment has PROMPT_INJECTION_DETECTION_ENABLED=true\n\
-        \    #   - CausalGatekeeper is active in governance-stack namespace\nprovider:\n\
-        \  type: opa\n  opa-spec:\n    rego: \"package lula\\n\\n# Phase-0 stub —\
-        \ always passes until Phase 2\\n# Phase 2 real assertion (see §6.2 of AI_600_1_IMPLEMENTATION_PLAN.md):\\\
-        n#   validate if {\\n#     some container in input[\\\"gateway-deployment\\\
-        \"].spec.template.spec.containers\\n#     container.name == \\\"gateway\\\"\
-        \\n#     some env in container.env\\n#     env.name == \\\"PROMPT_INJECTION_DETECTION_ENABLED\\\
-        \"\\n#     env.value == \\\"true\\\"\\n#   }\\nvalidate := true\\n\"\n"
+      description: |
+        domain:
+          type: kubernetes
+          kubernetes-spec:
+            resources:
+              - name: gateway-deployment
+                resource-rule:
+                  group: apps
+                  version: v1
+                  resource: deployments
+                  namespaces:
+                    - governance-stack
+        provider:
+          type: opa
+          opa-spec:
+            rego: |
+              package lula
+
+              import future.keywords.if
+              import future.keywords.in
+
+              validate if {
+                count(input["gateway-deployment"]) > 0
+                some d in input["gateway-deployment"]
+                d.metadata.name in {"gateway", "stera-gateway"}
+                some c in d.spec.template.spec.containers
+                c.name == "gateway"
+                some e in c.env
+                e.name == "CAGE_TRUSTED_CLIENT_IDENTITIES"
+                e.value != ""
+              }

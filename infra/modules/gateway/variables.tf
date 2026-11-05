@@ -317,3 +317,15 @@ variable "autoscaling_target_loop_lag" {
   type        = string
   default     = "50m"
 }
+
+variable "enable_pod_monitoring" {
+  description = "Deploy GKE Managed Prometheus PodMonitoring/gateway-metrics via the local metrics-monitors chart (R-6, F-91, NIST AU-12)."
+  type        = bool
+  default     = true
+}
+
+variable "enable_service_monitor" {
+  description = "Deploy Prometheus Operator ServiceMonitor/stera-gateway-monitor alongside PodMonitoring when monitoring.coreos.com/v1 CRDs are installed (R-6, F-91)."
+  type        = bool
+  default     = false
+}
