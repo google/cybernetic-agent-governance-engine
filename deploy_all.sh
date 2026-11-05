@@ -41,12 +41,12 @@ ${BOLD}Usage${RESET}
   ./deploy_all.sh --target TARGET --env ENV [OPTIONS]
 
 ${BOLD}Targets${RESET}
-  agnostic     Deploy to any existing Kubernetes cluster (k3s, EKS, AKS, GKE)
   gcp-gke      Provision and deploy to Google Cloud GKE cluster
 
 ${BOLD}Environments${RESET}
   dev          Development (fast iteration, minimal security)
-  prod         Production (ISO 42001 baseline hardening + jurisdictional compliance)
+  staging      Staging (zonal cluster, enforcing compliance posture)
+  prod         Production (regional cluster, ISO 42001 + jurisdictional compliance)
   --env names the profile infra/targets/TARGET/ENV.tfvars. The banner and NIST
   hardening follow the profile's environment and cage_deployment_region.
 
@@ -57,7 +57,6 @@ ${BOLD}Options${RESET}
                           images, which must already exist
   --image-sha=SHA         Deploy the images built for an earlier commit (implies
                           --skip-build)
-  --kubeconfig=PATH       Kubeconfig path (agnostic target only)
   --var KEY=VALUE         Override any Terraform variable
   --verify-e2e            After apply, run the live trade-governance e2e Job
                           (make test-gke-e2e; needs REGISTRY_URL and the
@@ -69,9 +68,6 @@ ${BOLD}Options${RESET}
   GOOGLE_CLOUD_PROJECT in .env, or pass --var project_id=<project>.
 
 ${BOLD}Examples${RESET}
-  # Deploy to local k3s cluster
-  ./deploy_all.sh --target agnostic --env dev
-
   # Deploy to GCP GKE (dev mode - fast iteration)
   ./deploy_all.sh --target gcp-gke --env dev --auto-approve
 
@@ -291,9 +287,9 @@ deploy_terraform_target() {
   local backend_config_args=()
   
   # Validate target
-  if [[ ! -d "$tf_dir" ]]; then
+  if [[ "$target" != "gcp-gke" || ! -d "$tf_dir" ]]; then
     error "Unknown target: $target"
-    echo "Available targets: agnostic, gcp-gke"
+    echo "Available targets: gcp-gke"
     echo "Run './deploy_all.sh --help' for usage."
     exit 1
   fi
@@ -309,18 +305,14 @@ deploy_terraform_target() {
   if [[ -f "$var_file" ]]; then
     tf_args+=("-var-file=$var_file")
     info "Using var file: $var_file"
-  elif [[ "$target" == "gcp-gke" ]]; then
+  else
     # A gcp-gke environment is defined by its tfvars file, which names its
     # cluster. Never fall back to defaults.
     error "Var file not found: $var_file"
     exit 1
-  else
-    warn "Var file not found: $var_file (will use defaults)"
   fi
   
   # Parse remaining arguments
-  local kubeconfig_path=""
-  local kubeconfig_context=""
   local verify_e2e=false
   local image_sha=""
   local _vf=""
@@ -346,10 +338,6 @@ deploy_terraform_target() {
         tf_args+=("-var")
         tf_args+=("$2")
         shift 2
-        ;;
-      --kubeconfig=*)
-        kubeconfig_path="${1#--kubeconfig=}"
-        shift
         ;;
       --skip-build)
         export SKIP_BUILD=true
@@ -440,18 +428,7 @@ deploy_terraform_target() {
   #
   
   # Target-specific backend configuration
-  if [[ "$target" == "agnostic" ]]; then
-    # Kubernetes backend: Store state in cluster
-    if [[ -n "$kubeconfig_path" ]]; then
-      backend_config_args+=("-backend-config=config_path=$kubeconfig_path")
-      export KUBECONFIG="$kubeconfig_path"
-    else
-      backend_config_args+=("-backend-config=config_path=~/.kube/config")
-    fi
-    
-    info "Using Kubernetes backend (state stored in cluster)"
-    info "Ensure 'terraform-state' namespace exists: kubectl create namespace terraform-state"
-  elif [[ "$target" == "gcp-gke" ]]; then
+  if [[ "$target" == "gcp-gke" ]]; then
     # Remote state in GCS, one state per cluster. main.tf declares the backend
     # without bucket or prefix; both are supplied here. Keying the state on the
     # effective cluster_name means a run can only plan against the state of the
@@ -623,17 +600,8 @@ deploy_terraform_target() {
   
   echo ""
   info "To access the cluster:"
-  if [[ "$target" == "gcp-gke" ]]; then
-    echo "  gcloud container clusters get-credentials <CLUSTER_NAME> --zone=<ZONE> --project=<PROJECT>"
-    echo "  Or run: terraform -chdir=$tf_dir output -raw kubectl_command | bash"
-  else
-    echo "  kubectl get pods -n <NAMESPACE>"
-  fi
-  
-  echo ""
-  info "To view MinIO console:"
-  echo "  kubectl port-forward svc/minio 9001:9001 -n <NAMESPACE>"
-  echo "  Open: http://localhost:9001"
+  echo "  gcloud container clusters get-credentials <CLUSTER_NAME> --zone=<ZONE> --project=<PROJECT>"
+  echo "  Or run: terraform -chdir=$tf_dir output -raw kubectl_command | bash"
 
   if [[ "$verify_e2e" == "true" ]]; then
     header "Live Trade-Governance E2E Verification"

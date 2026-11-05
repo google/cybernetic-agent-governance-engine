@@ -4,7 +4,7 @@ Provisions the ClickHouse analytical query plane for CAGE (`evidence_stream` com
 
 ## Architectural Role (§2.6)
 
-- **System of Record**: The retention-locked GCS WORM bucket ([`infra/modules/worm_bucket`](../worm_bucket/README.md)) is the authoritative system of record for hash-chained compliance evidence and OSCAL assessment artifacts.
+- **System of Record**: The retention-locked GCS WORM bucket ([`infra/modules/worm_bucket`](../worm_bucket/main.tf)) is the authoritative system of record for hash-chained compliance evidence and OSCAL assessment artifacts.
 - **Query Plane**: ClickHouse is strictly the analytical query plane, fed asynchronously by [`src/compliance_bridge/clickhouse_sink.py`](../../../src/compliance_bridge/clickhouse_sink.py). Losing a ClickHouse node (or the entire ClickHouse cluster in `dev`/`staging`) causes **zero evidence loss**.
 
 ## Posture Matrix (§1.1, §2.6)

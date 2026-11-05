@@ -48,14 +48,9 @@ def _resource_starts(text: str, resource_type: str) -> list[int]:
     return [m.start() for m in re.finditer(pattern, text, re.MULTILINE)]
 
 
-def test_redis_cache_module_hardcodes_noeviction() -> None:
-    main_tf = (_INFRA / "modules/redis_cache/main.tf").read_text()
-    assert "maxmemory-policy noeviction" in main_tf
-
-
-def test_redis_cache_module_exposes_no_policy_variable() -> None:
-    variables_tf = (_INFRA / "modules/redis_cache/variables.tf").read_text()
-    assert 'variable "maxmemory_policy"' not in variables_tf
+def test_legacy_redis_cache_module_is_retired() -> None:
+    """POAM-2026-185 retired infra/modules/redis_cache alongside infra/targets/agnostic."""
+    assert not (_INFRA / "modules/redis_cache").exists()
 
 
 def test_no_evicting_policy_anywhere_in_infra() -> None:

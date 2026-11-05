@@ -10,7 +10,7 @@
 
 > **Jurisdictional Architecture:** CAGE deploys to three regions controlled by `CAGE_DEPLOYMENT_REGION`. **ISO 42001** is the **universal baseline** active in all regions. NIST SP 800-53, EU AI Act/GDPR/DORA, and MAS FEAT are **jurisdictional extensions** active only in their respective regions. See [`docs/compliance/cross-region/JURISDICTIONAL_SEPARATION_ANALYSIS.md`](docs/compliance/cross-region/JURISDICTIONAL_SEPARATION_ANALYSIS.md) for the full architectural rationale.
 
-> **Deployment Targets:** The `gcp-gke` deployment target (`infra/targets/gcp-gke/`) is an optional GCP-specific configuration. The `agnostic` deployment target (`infra/targets/agnostic/`) deploys to any Kubernetes 1.24+ cluster without GCP dependencies.
+> **Deployment Target:** The `gcp-gke` deployment target ([`infra/targets/gcp-gke/`](infra/targets/gcp-gke/main.tf)) is the repository's reference Terraform deployment target (`POAM-2026-185`); the core CAGE runtime (`src/gateway/`) remains cloud-agnostic and vendor-neutral.
 
 ---
 
@@ -86,7 +86,7 @@ The Cybernetic Agent Governance Engine (CAGE) splits its internal control framew
 | **AI Safety (US_FED)** | Prompt Injection Detection & CausalGatekeeper WAL Integrity | **NIST AI 600-1 §2.3** | `CTRL_WAL_002` | `src/gateway/governance/prompt_injection_detector.py` | `US_FED` only |
 | **AI Safety (US_FED)** | Human-AI Configuration / HITL Escalation (DEFER Queue) | **NIST AI 600-1 §2.5** | `CTRL_DFR_008` | `src/gateway/governance/hitl_escalator.py` | `US_FED` only |
 | **AI Safety (US_FED)** | CBRN Content Filtering (NeMo Guardrails) | **NIST AI 600-1 §2.6 / §2.12** | `CTRL_CBRN_011` | `src/integrations/nemo/colang/cbrn_rails.co` | `US_FED` only *(Cat-M: AO pre-approval required)* |
-| **Infrastructure** | GKE Clusters, Workload Identity, Pod Networking | **NIST RMF (SP 800-37)** <br> **FedRAMP HIGH** | *Out of Code Scope* | `infra/modules/gcp_gke_cluster/` | *Optional — GCP-specific deployment target (`infra/targets/gcp-gke/`); not required for `agnostic` target deployments* |
+| **Infrastructure** | GKE Clusters, Workload Identity, Pod Networking | **NIST RMF (SP 800-37)** <br> **FedRAMP HIGH** | *Out of Code Scope* | `infra/modules/gcp_gke_cluster/` | *GCP GKE reference deployment target (`infra/targets/gcp-gke/`); not required for local `docker-compose.yml` development* |
 
 ---
 

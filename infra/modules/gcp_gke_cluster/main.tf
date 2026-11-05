@@ -304,9 +304,10 @@ resource "google_container_cluster" "primary" {
 # Hosts stateless governance control-plane workloads (gateway, OPA, NeMo,
 # Langfuse, compliance-bridge, and reconciler).
 #
-# SC-39 Architecture Note (Cloud-Agnostic Baseline vs. Optional GCP/GEAP Mode):
-#   - CAGE is cloud-agnostic (`infra/targets/agnostic/` runs all workloads on any
-#     standard Kubernetes cluster). In the optional `gcp-gke` deployment mode with
+# SC-39 Architecture Note (Kubernetes Baseline vs. GEAP MicroVM Mode):
+#   - CAGE's Kubernetes manifests (`deployment/k8s/`) enforce baseline Pod
+#     Security Standards (`restricted`) on any Kubernetes cluster. In the
+#     `gcp-gke` deployment target (`infra/targets/gcp-gke/`) with
 #     `advisor_runtime = "geap"` (`infra/modules/gcp_geap_advisor/`), agent
 #     applications execute in GEAP Agent Runtime (Vertex AI Agent Engine / Agent
 #     Substrate), which provides native hardware-enforced MicroVM isolation.

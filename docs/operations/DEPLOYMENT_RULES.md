@@ -60,13 +60,6 @@ gcloud builds submit \
   --substitutions="_IMAGE_NAME=gateway,_DOCKERFILE=src/gateway/Dockerfile,_SHORT_SHA=$(git rev-parse --short HEAD)" .
 ```
 
-### ✅ Approved Methods for Local / Agnostic
-
-```bash
-# Deploy to any existing Kubernetes cluster (k3s, EKS, AKS, GKE)
-./deploy_all.sh --target agnostic --env dev
-```
-
 ### ❌ Prohibited for GKE
 
 ```bash
@@ -88,11 +81,11 @@ docker-compose build && docker-compose push
 Usage: ./deploy_all.sh --target TARGET --env ENV [OPTIONS]
 
 Targets:
-  agnostic     Deploy to any existing Kubernetes cluster (k3s, EKS, AKS, GKE)
   gcp-gke      Provision and deploy to Google Cloud GKE cluster
 
 Environments:
   dev          Development (fast iteration, reduced security posture)
+  staging      Staging (full security posture at 1-replica scale)
   prod         Production (ISO 42001 baseline hardening; jurisdiction-specific
                posture controlled by CAGE_DEPLOYMENT_REGION)
 
@@ -100,7 +93,6 @@ Options:
   --auto-approve          Skip Terraform confirmation prompts
   --var-file=PATH         Additional .tfvars file (e.g. prod.tfvars)
   --skip-build            Skip container image builds (Cloud Build step)
-  --kubeconfig=PATH       Kubeconfig path (agnostic target only)
   --var KEY=VALUE         Override any Terraform variable
 ```
 
@@ -246,7 +238,6 @@ not complete, for reasons this change leaves alone:
 | `gcp-gke` | `prod` | EU_ECB | `CAGE_DEPLOYMENT_REGION=EU_ECB ./deploy_all.sh --target gcp-gke --env prod --var-file=infra/targets/gcp-gke/eu-prod.tfvars` |
 | `gcp-gke` | `prod` | APAC_MAS | `CAGE_DEPLOYMENT_REGION=APAC_MAS ./deploy_all.sh --target gcp-gke --env prod --var-file=infra/targets/gcp-gke/apac-prod.tfvars` |
 | `gcp-gke` | `staging` | US_FED (set by `staging.tfvars`) | `./deploy_all.sh --target gcp-gke --env staging --var project_id=<PROJECT_ID> --auto-approve` |
-| `agnostic` | `dev` | Any | `./deploy_all.sh --target agnostic --env dev` |
 
 `deploy_all.sh` takes the jurisdiction from the profile's `cage_deployment_region` and ignores a `CAGE_DEPLOYMENT_REGION` that disagrees, with a warning. Staging is therefore US_FED unless a profile says otherwise. Whatever jurisdiction or compliance flag a staging or prod profile selects, including none, its plans keep the control-plane guard, the POAM-019 key guards, the cluster allowlist and Cloud SQL PITR: those follow the tier, and the flags decide only whether a dev plan enforces (POAM-2026-181).
 
@@ -311,22 +302,13 @@ Background deployments write logs to `/tmp/cage-deploy-*.log` and their PIDs to
 - Never edit Terraform state directly.
 - Secret values belong in `terraform.auto.tfvars` (gitignored via
   `scripts/gen_tfvars.py`) — never in committed `.tf` files.
-- Active IaC lives under `infra/targets/`. The removed `deployment/terraform/`
-  directory is historical reference only (see
-  ``deployment/TERRAFORM_MIGRATION.md``).
+- Active IaC lives under [`infra/targets/gcp-gke/`](../../infra/targets/gcp-gke/main.tf) and [`infra/modules/`](../../infra/modules/). The removed `deployment/terraform/` and `2bacc478:infra/targets/agnostic/` (`POAM-2026-185`) directories are historical reference only.
 
-### Terraform state backends
+### Terraform state backend
 
 | Target | Backend | State path |
 |--------|---------|-----------|
-| `gcp-gke` | GCS (optional, configure in `infra/targets/gcp-gke/providers.tf`) | `cage/gcp-gke` |
-| `agnostic` | Kubernetes Secret | namespace `terraform-state`, suffix `tfstate-agnostic` |
-
-For the agnostic target, ensure the namespace exists before the first deploy:
-
-```bash
-kubectl create namespace terraform-state
-```
+| `gcp-gke` | GCS (configured in [`infra/targets/gcp-gke/main.tf`](../../infra/targets/gcp-gke/main.tf)) | `cage/gcp-gke/<cluster_name>` |
 
 ---
 
@@ -355,10 +337,6 @@ kubectl get pods -n governance-stack
 
 # Verify key services
 kubectl get deployments -n governance-stack
-
-# Access MinIO console
-kubectl port-forward svc/minio 9001:9001 -n governance-stack
-# Open: http://localhost:9001
 
 # Port-forward all dev services (auto-reconnecting)
 bash scripts/port_forward_dev.sh
@@ -415,19 +393,6 @@ cd infra/targets/gcp-gke && terraform plan -var-file=staging.tfvars
 ```bash
 gcloud compute project-info describe --project=<PROJECT_ID>
 # Request quota increase in GCP Console if needed
-```
-
-### Terraform: "terraform-state namespace not found" (agnostic)
-
-```bash
-kubectl create namespace terraform-state
-```
-
-### Terraform: "Storage class not found" (k3s)
-
-```bash
-kubectl get storageclass
-# Update infra/targets/agnostic/dev.tfvars with correct storage_class value
 ```
 
 ### Pods in CrashLoopBackOff after deployment

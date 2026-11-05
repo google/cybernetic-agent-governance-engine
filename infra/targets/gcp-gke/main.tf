@@ -1192,8 +1192,6 @@ module "app_secrets" {
   langfuse_compliance_public_key = var.langfuse_compliance_public_key
   langfuse_compliance_secret_key = var.langfuse_compliance_secret_key
 
-  oscal_api_key = var.oscal_api_key
-
   opa_url = "http://${module.opa.service_name}.${module.namespace.name}.svc.cluster.local:8181"
 
   cage_deployment_region = var.cage_deployment_region

@@ -307,10 +307,14 @@ fi
 # ---------------------------------------------------------------------------
 echo "🚀 Bootstrapping GCP project '${PROJECT_ID}' (env=${ENV}, region=${REGION})..."
 
-# --- PF1: Enable all required GCP APIs ---
+# --- PF1 / EF1: Enable all required GCP APIs ---
+# Enable compute.googleapis.com first so Compute Engine is active before
+# dependent APIs (container, servicenetworking, networkconnectivity, memorystore),
+# and chunk remaining APIs into batches of <= 20 to respect Service Usage's
+# hard 20-service batch limit (SU_MAX_BATCH_SIZE_EXCEEDED, EF1).
 REQUIRED_APIS=(
-  "container.googleapis.com"
   "compute.googleapis.com"
+  "container.googleapis.com"
   "storage.googleapis.com"
   "artifactregistry.googleapis.com"
   "containerfilesystem.googleapis.com"
@@ -332,8 +336,13 @@ REQUIRED_APIS=(
   "accesscontextmanager.googleapis.com"
 )
 
-echo "🔌 [PF1] Enabling ${#REQUIRED_APIS[@]} required GCP APIs on '${PROJECT_ID}'..."
-gcloud services enable "${REQUIRED_APIS[@]}" --project="$PROJECT_ID" --quiet
+MAX_SERVICES_BATCH_SIZE=20
+echo "🔌 [PF1] Enabling ${#REQUIRED_APIS[@]} required GCP APIs on '${PROJECT_ID}' (compute.googleapis.com first, then batches of <=${MAX_SERVICES_BATCH_SIZE})..."
+gcloud services enable "${REQUIRED_APIS[0]}" --project="$PROJECT_ID" --quiet
+for ((i = 1; i < ${#REQUIRED_APIS[@]}; i += MAX_SERVICES_BATCH_SIZE)); do
+  api_batch=("${REQUIRED_APIS[@]:i:MAX_SERVICES_BATCH_SIZE}")
+  gcloud services enable "${api_batch[@]}" --project="$PROJECT_ID" --quiet
+done
 
 # --- PF2: Ensure remote Terraform state GCS bucket exists ---
 echo "🪣 [PF2] Ensuring Terraform state bucket 'gs://${STATE_BUCKET}' exists..."

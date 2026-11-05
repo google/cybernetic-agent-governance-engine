@@ -73,6 +73,13 @@ The credential broker seam is the newest entry and the one most exposed to vendo
 - Consequently the seam adds no packaging extra and no import-boundary exception: a kernel built with zero cloud extras still imports and type-checks against `CredentialBrokerAdapter`.
 - Swapping secret backends is a deployment-time substitution of the injected object. No kernel file changes.
 
+### 2.4 Deployment Substrate Scope: Vendor-Neutral Kernel vs. GKE Reference Infrastructure (`POAM-2026-185`)
+
+CAGE's vendor neutrality contract governs **software architecture and runtime protocol boundaries**, not a claim that the repository ships multi-cloud Kubernetes Terraform stacks:
+
+- **What is vendor-neutral:** The **Layer 1 governance kernel ([`src/gateway/`](../../src/gateway/__init__.py))** imports zero cloud SDKs (Gate G3, [`scripts/check_import_boundaries.py`](../../scripts/check_import_boundaries.py)), emits standard OTLP telemetry (Gate G7, [`scripts/check_telemetry_literals.py`](../../scripts/check_telemetry_literals.py)), and depends only on the **Layer 3 protocol seams** in §2.3 (`BaseKMSProvider`, `EvidenceColdStore`, `NormativeProvider`, `AttestationProvider`, `WarrantSource`, `ExecutionActuator`, `CredentialBrokerAdapter`). Concrete AWS (`AWSKMSProvider`, `S3ColdStore`), Azure (`AzureKMSProvider`), and GCP (`GCPKMSProvider`, `GcsColdStore`) adapters live in `src/integrations/`. For local and cloud-agnostic container execution without cloud dependencies, the repository ships [`docker-compose.yml`](../../docker-compose.yml) and [`docker-compose.dev.yml`](../../docker-compose.dev.yml).
+- **What is the sole shipped Kubernetes / Terraform target:** [`infra/targets/gcp-gke/`](../../infra/targets/gcp-gke/main.tf) (GKE with Linkerd mTLS workload identity, Cloud KMS asymmetric signing, Cloud SQL, Memorystore, and retention-locked GCS WORM storage) is the **only Kubernetes and Terraform deployment target** shipped and validated in CI (`POAM-2026-185`; the unvalidated `2bacc478:infra/targets/agnostic/` target was retired). Static manifests under [`deployment/k8s/`](../../deployment/README.md) are reference/Lula-validation artifacts, not a standalone multi-cloud deployment target (`POAM-2026-169`). Adopters deploying on another Kubernetes distribution supply their own cluster/IaC harness wired to Layer 3's AWS, Azure, S3, and OTLP adapters.
+
 ---
 
 ## 3. Evidence Cold Store Contract

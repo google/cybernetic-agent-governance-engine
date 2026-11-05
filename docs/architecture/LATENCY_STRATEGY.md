@@ -175,10 +175,10 @@ vLLM cold-start time is a critical secondary latency factor, especially because 
 
 - Weights are staged once in the model bucket; the vLLM workload identity holds only bucket-scoped `roles/storage.objectViewer` and `roles/storage.legacyBucketReader` (the latter for `storage.buckets.get`, required by `runai_model_streamer_gcs`), defined in [`infra/targets/gcp-gke/iam.tf`](../../infra/targets/gcp-gke/iam.tf).
 - `HF_HUB_OFFLINE=1` and `TRANSFORMERS_OFFLINE=1` forbid runtime egress to `huggingface.co`, and no Hugging Face token is baked into the vLLM image or passed to the pods.
-- A non-`gs://` model path falls back to vLLM's `auto` load format (used by the `agnostic` target via `var.vllm_model_path`).
+- A non-`gs://` model path falls back to vLLM's `auto` load format.
 
 > [!NOTE]
-> The older MinIO + Tensorizer path ([`deployment/k8s/tensorize-job.yaml`](../../deployment/k8s/tensorize-job.yaml)) is not wired into either Terraform target; the `gcp-gke` target streams from GCS as described above.
+> The older MinIO + Tensorizer path ([`deployment/k8s/tensorize-job.yaml`](../../deployment/k8s/tensorize-job.yaml)) is not wired into the `gcp-gke` Terraform target, which streams from GCS as described above.
 
 ## Governor Pipeline Ordering (Two-Phase)
 

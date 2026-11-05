@@ -25,5 +25,4 @@ kubectl get ingress gateway-ingress -n governance-stack -o jsonpath='{.status.lo
 
 Then create an `A` record in your DNS provider (or Google Cloud DNS) mapping `$GATEWAY_DOMAIN` to the ingress IP.
 
-For deployments on EKS, AKS, OpenShift, or vanilla Kubernetes, use the standard manifests in `deployment/k8s/` instead.
-
+The portable nginx ingress equivalent for static manifest validation is [`../ingress.yaml`](../ingress.yaml).

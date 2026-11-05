@@ -15,86 +15,36 @@ Deploy the Cybernetic Governance Engine infrastructure in 5–10 minutes.
 | uv (Python package manager) | latest |
 | Git | any |
 
-### For the agnostic target
+### For local development (Docker Compose)
 
-- A running Kubernetes cluster (k3s, minikube, kind, EKS, AKS, or GKE)
-- `kubectl` configured with cluster access
-- `terraform-state` namespace created in the cluster (one-time):
-  ```bash
-  kubectl create namespace terraform-state
-  ```
+- Docker Engine & Docker Compose v2 (`docker compose version`)
+- No cloud account or Kubernetes cluster required
 
-### For the GCP-GKE target
+### For the GCP-GKE target (`infra/targets/gcp-gke/`)
 
 - `gcloud` CLI authenticated:
   ```bash
   gcloud auth application-default login
   ```
 - A GCP project with billing enabled
-- Required APIs enabled (see step 3 below)
+- Required APIs enabled via [`scripts/bootstrap_gcp_project.sh`](../scripts/bootstrap_gcp_project.sh) (see Option B step 3 below)
 - IAM permissions: Kubernetes Engine Admin, Service Account Admin, Storage Admin, Cloud Build Editor
 
 ---
 
-## Option A: Agnostic Kubernetes (~5 minutes)
+## Option A: Local Development via Docker Compose (~2 minutes)
 
-Deploy to any existing Kubernetes cluster (k3s, EKS, AKS, GKE, etc.).
-
-### 1. Set up a local cluster (if needed)
-
-```bash
-# Install k3s
-curl -sfL https://get.k3s.io | sh -
-
-# Verify
-kubectl get nodes
-
-# Create the Terraform state namespace
-kubectl create namespace terraform-state
-```
-
-### 2. Configure your environment
+Run the full CAGE governance stack locally without cloud dependencies (`POAM-2026-185`):
 
 ```bash
 cp .env.example .env
-# Edit .env — at minimum set K8S_NAMESPACE
+docker compose up --build
 ```
 
-### 3. Deploy
+For hot-reload development overrides:
 
 ```bash
-# From the repository root
-./deploy_all.sh --target agnostic --env dev --auto-approve
-```
-
-What this provisions:
-1. `governance-stack-dev` Kubernetes namespace (with PSA labels)
-2. MinIO S3-compatible object storage
-3. Terraform state stored in-cluster as a Kubernetes Secret
-
-### 4. Verify the deployment
-
-```bash
-# Check namespace
-kubectl get ns governance-stack-dev
-
-# Check pods
-kubectl get pods -n governance-stack-dev
-
-# Retrieve MinIO credentials
-kubectl get secret minio-credentials -n governance-stack-dev \
-  -o jsonpath='{.data.access-key}' | base64 -d && echo
-
-# Access the MinIO console
-kubectl port-forward svc/minio 9001:9001 -n governance-stack-dev
-# Open: http://localhost:9001
-```
-
-### 5. Tear down
-
-```bash
-cd infra/targets/agnostic
-terraform destroy -var-file=dev.tfvars -auto-approve
+docker compose -f docker-compose.dev.yml up
 ```
 
 ---
@@ -228,10 +178,6 @@ make build-bg
 ### Initialize
 
 ```bash
-# Agnostic target
-cd infra/targets/agnostic
-terraform init -backend-config="config_path=~/.kube/config"
-
 # GCP target (GCS backend): one state per cluster, named by the tfvars file
 cd infra/targets/gcp-gke
 terraform init -reconfigure \
@@ -321,7 +267,7 @@ terraform destroy -var-file=dev.tfvars -var-file=image_digests.<short_sha>.tfvar
 
 ## Security Posture Testing
 
-### Binary Authorization (GCP only)
+### Binary Authorization (GCP)
 
 ```bash
 cd infra/targets/gcp-gke
@@ -329,15 +275,14 @@ terraform apply -var-file=dev.tfvars \
   -var="enable_binary_authorization=true"
 ```
 
-### Private cluster with authorized networks (GCP only, US_FED)
+### Private cluster with authorized networks (US_FED)
 
 ```bash
 terraform apply -var-file=prod.tfvars \
-  -var="enable_nist_compliance=true" \
   -var='authorized_networks=[{"cidr":"<YOUR_IP>/32","display_name":"My IP"}]'
 ```
 
-### Pod Security Standards (both targets)
+### Pod Security Standards
 
 ```bash
 # Already enforced at namespace level by pod-security-admission.yaml
@@ -350,19 +295,6 @@ terraform apply -var-file=dev.tfvars \
 ---
 
 ## Troubleshooting
-
-### `terraform-state namespace not found` (agnostic)
-
-```bash
-kubectl create namespace terraform-state
-```
-
-### `Storage class not found` (k3s)
-
-```bash
-kubectl get storageclass
-# Update storage_class in dev.tfvars to match an available class (e.g. local-path)
-```
 
 ### `Failed to create GKE cluster: quota exceeded`
 

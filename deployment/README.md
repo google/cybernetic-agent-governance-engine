@@ -56,8 +56,8 @@ CAGE is deployed as a set of Kubernetes workloads across two namespaces:
 ### `deploy_all.sh` (recommended)
 
 ```bash
-# Cloud-agnostic target (k3s, EKS, AKS, any Kubernetes ≥ 1.24)
-./deploy_all.sh --target agnostic --env dev
+# Local / cloud-agnostic container stack (Docker Compose)
+docker compose up --build
 
 # GCP GKE — dev
 ./deploy_all.sh --target gcp-gke --env dev --auto-approve
@@ -79,13 +79,12 @@ CAGE_DEPLOYMENT_REGION=APAC_MAS ./deploy_all.sh --target gcp-gke --env prod \
 
 | Flag | Description |
 |------|-------------|
-| `--target agnostic\|gcp-gke` | Infrastructure target (required) |
-| `--env dev\|prod` | Deployment tier (default: `dev`) |
+| `--target gcp-gke` | Infrastructure target (required) |
+| `--env dev\|staging\|prod` | Deployment tier (default: `dev`) |
 | `--auto-approve` | Skip Terraform confirmation prompt |
 | `--var-file=PATH` | Additional `.tfvars` file |
 | `--var KEY=VALUE` | Override any Terraform variable |
 | `--skip-build` | Skip container image builds |
-| `--kubeconfig=PATH` | Kubeconfig path (agnostic target only) |
 
 The script:
 1. Reads `.env` and maps variables to `TF_VAR_*` (secrets go directly to `TF_VAR_*`, never as bare env vars — H-16).
@@ -222,23 +221,23 @@ gcloud builds submit --config deployment/docker/cloudbuild.verify.yaml \
 
 | File | Description |
 |------|-------------|
-| `inference-gateway/gateway.yaml` | Gateway API `Gateway` resource |
-| `inference-gateway/http-route.yaml` | `HTTPRoute` for inference routing |
-| `inference-gateway/inference-pool.yaml` | `InferencePool` resource |
-| `inference-gateway/reference-grant.yaml` | `ReferenceGrant` for cross-namespace routing |
+| `deployment/k8s/inference-gateway/gateway.yaml` | Gateway API `Gateway` resource |
+| `deployment/k8s/inference-gateway/http-route.yaml` | `HTTPRoute` for inference routing |
+| `deployment/k8s/inference-gateway/inference-pool.yaml` | `InferencePool` resource |
+| `deployment/k8s/inference-gateway/reference-grant.yaml` | `ReferenceGrant` for cross-namespace routing |
 
 ---
 
 ## Prerequisites
 
-### For GCP deployments
+### For GCP GKE deployments
 
 - `gcloud` CLI authenticated (`gcloud auth application-default login`)
 - GCP project with billing enabled
-- APIs enabled: `container.googleapis.com`, `compute.googleapis.com`, `storage.googleapis.com`, `artifactregistry.googleapis.com`, `containerfilesystem.googleapis.com`, `cloudbuild.googleapis.com`
+- APIs enabled via `scripts/bootstrap_gcp_project.sh`
 - IAM: Kubernetes Engine Admin, Cloud Build Editor, Storage Admin
 
-### For any Kubernetes target
+### Common CLI tooling
 
 - `kubectl` ≥ 1.24 with cluster access configured
 - `terraform` ≥ 1.5.0

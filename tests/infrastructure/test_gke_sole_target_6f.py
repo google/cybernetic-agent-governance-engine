@@ -1416,3 +1416,107 @@ class TestImageSupplyChainAndAttestation:
         assert '"@sha256:"' in rego
         assert '"IfNotPresent"' in rego
         assert "advisor-deployment" not in rego
+
+
+# ============================================================================
+# 9. POAM-2026-184 — Remove Dead oscal_api_key Variable & Fix load_env.sh
+# ============================================================================
+
+
+class TestDeadOscalApiKeyRemoval:
+    """Verify POAM-2026-184: dead `oscal_api_key` declarations are removed and `infra/load_env.sh` is accurate."""
+
+    def test_no_terraform_file_declares_or_references_oscal_api_key(self) -> None:
+        tf_files = list((REPO_ROOT / "infra").rglob("*.tf"))
+        assert tf_files, "Expected .tf files under infra/"
+        for tf_file in tf_files:
+            content = tf_file.read_text(encoding="utf-8")
+            assert "oscal_api_key" not in content, (
+                f"{tf_file.relative_to(REPO_ROOT)} must not declare or reference dead oscal_api_key (POAM-2026-184)"
+            )
+
+    def test_load_env_sh_accurately_documents_selective_tf_var_mapping(self) -> None:
+        load_env_sh = (REPO_ROOT / "infra" / "load_env.sh").read_text(encoding="utf-8")
+        assert (
+            "Export as both the original name and TF_VAR_ prefixed version"
+            not in load_env_sh
+        )
+        assert "only keys mapped in the case" in load_env_sh
+
+
+# ============================================================================
+# 10. POAM-2026-185 — Retire Broken agnostic Target & Agnostic-Only Modules
+# ============================================================================
+
+
+class TestAgnosticTargetEliminated:
+    """Verify POAM-2026-185: broken `infra/targets/agnostic` and its legacy modules are removed."""
+
+    def test_gcp_gke_is_the_sole_terraform_target_directory(self) -> None:
+        targets_dir = REPO_ROOT / "infra" / "targets"
+        target_names = sorted(p.name for p in targets_dir.iterdir() if p.is_dir())
+        assert target_names == ["gcp-gke"], (
+            f"Expected ['gcp-gke'] as the sole Terraform target under infra/targets/, got {target_names}"
+        )
+
+    @pytest.mark.parametrize(
+        "retired_module",
+        ["minio_storage", "postgres_db", "redis_cache"],
+    )
+    def test_agnostic_only_modules_are_removed(self, retired_module: str) -> None:
+        assert not (REPO_ROOT / "infra" / "modules" / retired_module).exists(), (
+            f"infra/modules/{retired_module} was only used by the retired agnostic target and must not exist"
+        )
+
+    def test_deploy_scripts_do_not_accept_or_advertise_agnostic_target(self) -> None:
+        deploy_all = (REPO_ROOT / "deploy_all.sh").read_text(encoding="utf-8")
+        assert "--target agnostic" not in deploy_all
+        assert 'if [[ "$target" == "agnostic" ]]' not in deploy_all
+        assert 'if [[ "$target" != "gcp-gke" || ! -d "$tf_dir" ]]' in deploy_all
+
+        load_env = (REPO_ROOT / "infra" / "load_env.sh").read_text(encoding="utf-8")
+        assert "infra/targets/agnostic" not in load_env
+        assert "TF_VAR_minio_endpoint" not in load_env
+        assert "TF_VAR_minio_bucket" not in load_env
+
+    def test_docs_and_infra_do_not_claim_agnostic_or_any_k8s_target_exists(
+        self,
+    ) -> None:
+        check_doc_refs = (REPO_ROOT / "scripts" / "check_doc_references.py").read_text(
+            encoding="utf-8"
+        )
+        assert '"infra",' in check_doc_refs, (
+            "scripts/check_doc_references.py DOC_SCOPE must include 'infra' so infra/*.md cannot drift outside Gate G9"
+        )
+
+        vendor_contract = (
+            REPO_ROOT / "docs" / "architecture" / "VENDOR_NEUTRALITY_CONTRACT.md"
+        ).read_text(encoding="utf-8")
+        assert (
+            "### 2.4 Deployment Substrate Scope: Vendor-Neutral Kernel vs. GKE Reference Infrastructure (`POAM-2026-185`)"
+            in vendor_contract
+        )
+
+        doc_paths = [
+            REPO_ROOT / "COMPLIANCE.md",
+            REPO_ROOT / "docs" / "operations" / "DEPLOYMENT_RULES.md",
+            REPO_ROOT / "docs" / "operations" / "DEPLOYMENT_DECISION_RECORD.md",
+            *sorted((REPO_ROOT / "docs" / "architecture").glob("*.md")),
+            *sorted((REPO_ROOT / "infra").rglob("*.md")),
+            *sorted((REPO_ROOT / "deployment").rglob("*.md")),
+        ]
+        forbidden_phrases = (
+            "--target agnostic",
+            "target=agnostic",
+            'target == "agnostic"',
+            "not required for `agnostic` target deployments",
+            "CAGE works with any Kubernetes",
+            "can be deployed on any standard Kubernetes",
+        )
+        for doc_path in doc_paths:
+            text = doc_path.read_text(encoding="utf-8")
+            rel = doc_path.relative_to(REPO_ROOT)
+            for phrase in forbidden_phrases:
+                assert phrase not in text, (
+                    f"{rel} still contains stale deployment claim {phrase!r} after POAM-2026-185"
+                )

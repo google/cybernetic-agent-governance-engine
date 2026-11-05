@@ -49,10 +49,11 @@ while IFS= read -r line || [ -n "$line" ]; do
         # Remove surrounding quotes if present
         var_value=$(echo "$var_value" | sed -e 's/^"//' -e 's/"$//' -e "s/^'//" -e "s/'$//")
         
-        # Export as both the original name and TF_VAR_ prefixed version
+        # Export under the original variable name; only keys mapped in the case
+        # statement below are also exported with a TF_VAR_ prefix (POAM-2026-184).
         export "$var_name=$var_value"
         
-        # Map common .env variables to Terraform variables
+        # Map recognized .env variables to Terraform TF_VAR_ variables
         case "$var_name" in
             # AWS/S3 credentials
             AWS_ACCESS_KEY_ID)
@@ -60,14 +61,6 @@ while IFS= read -r line || [ -n "$line" ]; do
                 ;;
             AWS_SECRET_ACCESS_KEY)
                 export TF_VAR_aws_secret_key="$var_value"
-                ;;
-            
-            # MinIO configuration
-            S3_ENDPOINT_URL)
-                export TF_VAR_minio_endpoint="$var_value"
-                ;;
-            S3_BUCKET_NAME)
-                export TF_VAR_minio_bucket="$var_value"
                 ;;
             
             # Model configuration
@@ -166,7 +159,7 @@ echo "   REGISTRY_URL=${REGISTRY_URL:-<not set>}"
 echo "   STORAGE_BACKEND=${STORAGE_BACKEND:-<not set>}"
 echo ""
 echo "💡 Usage with Terraform:"
-echo "   cd infra/targets/gcp-gke  # or infra/targets/agnostic"
+echo "   cd infra/targets/gcp-gke"
 echo "   terraform plan"
 echo "   terraform apply"
 echo ""
