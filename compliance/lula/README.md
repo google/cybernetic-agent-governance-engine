@@ -181,7 +181,7 @@ lula validate -f compliance/lula/lula-validation-sc4.yaml --kubeconfig ~/.kube/c
 
 ### In-cluster (via CronJob)
 
-The Lula CronJob at `deployment/k8s/lula-cron.yaml` runs all **Active** validations on the schedule defined in the ISCM Strategy. Results are logged to stdout and monitored via the AgentSight observability stack.
+The static manifest `deployment/k8s/lula-cron.yaml` defines a CronJob for Lula validations, and `#664` (`372daad2`) migrated all 33 `compliance/lula/lula-validation-*.yaml` files to the Lula v0.16.0 `resource-rule` / `requests` schema (`tests/test_lula_v0160_schema.py`), but `lula-cron.yaml` is not yet in Terraform state (`POAM-2026-195`), 5 validations carry `.stub-baseline` stub markers (`scripts/check_lula_stub_count.py`), and the AgentSight eBPF collector is not in force (`POAM-021` reopened, `POAM-2026-193`).
 
 ---
 

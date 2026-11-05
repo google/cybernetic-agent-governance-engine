@@ -285,7 +285,8 @@ terraform apply -var-file=prod.tfvars \
 ### Pod Security Standards
 
 ```bash
-# Already enforced at namespace level by pod-security-admission.yaml
+# Four dev profiles (dev, us-dev, eu-dev, apac-dev) set enable_pod_security_standards = false
+# (defaulting namespace admission to privileged; deployment/k8s/pod-security-admission.yaml is not applied by Terraform).
 # For the Terraform namespace module:
 terraform apply -var-file=dev.tfvars \
   -var="enable_pod_security_standards=true" \

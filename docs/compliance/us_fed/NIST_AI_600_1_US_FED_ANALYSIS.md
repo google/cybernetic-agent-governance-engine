@@ -456,12 +456,12 @@ CAGE's agentic AI risk surface is **unusually broad** because:
 **CAGE Applicability:** **Critical** — CAGE's governance pipeline is itself a security control. Attacks that compromise the governance pipeline (jailbreaking OPA policies, extracting the HMAC seal secret via model inference, or bypassing NeMo Guardrails) directly undermine the security of the entire financial advisory system.
 
 **Current Coverage:**
-- **Linkerd mTLS + Cilium L7 egress lockdown** (POAM-007 closed): SPIFFE/SVID identity for intra-cluster service communication
-- **OPA circuit breaker:** Fail-DENY after 5 failures, 30s recovery — prevents governance bypass via OPA unavailability
-- **HMAC routing seal:** `X-CAGE-Routing-Seal` header prevents request forgery
-- **Cloud KMS HSM-backed signing:** Asymmetric governance verdict signing
+- **Linkerd mTLS** (`POAM-007` closed on HMAC retirement): intra-cluster mTLS across meshed pods (`deployment/k8s/linkerd-mtls-policy.yaml` and `deployment/k8s/cilium/egress-lockdown.yaml` are outside Terraform state and tracked under `POAM-2026-080`, `POAM-2026-096`, and `POAM-2026-195`)
+- **OPA circuit breaker:** Fail-DENY after 5 failures, 30s recovery — prevents governance bypass via OPA unavailability (OPA pod authentication and bundle lockdown tracked under `POAM-2026-195`)
+- **Asymmetric governance seal:** KMS HSM-backed JWT seal (`KMSGovernanceSigner`)
+- **Cloud KMS HSM-backed signing:** Asymmetric governance verdict and evidence batch signing
 - **Aho-Corasick keyword scan:** Tier-1 injection detection
-- **AgentSight eBPF daemon:** Kernel-level syscall monitoring (`execve`, `openat`, `connect`, `socket`, `bind`)
+- **AgentSight eBPF daemon *(not in force — `POAM-021` reopened 2026-11-05, `POAM-2026-193`)*:** `deployment/k8s/agentsight-daemon.yaml` is outside Terraform state and refused by Binary Authorization on staging
 
 **Gaps:**
 1. **No model extraction attack testing.** AI 600-1 §2.9 flags model extraction (stealing model weights via repeated inference queries) as an AI-specific security risk. There is no test for model extraction resistance in the red team dataset.
@@ -685,7 +685,7 @@ This section consolidates all recommended updates to the five existing NIST RMF 
 | **4.6 Harmful Bias** | RA-3, SI-12, PM-26, PM-28 | NRP entity detection in Presidio | **Gap** | No fairness metric; no demographic impact assessment; no homogenization risk assessment |
 | **4.7 Human-AI Config** | AC-5, AU-3, AU-10, CA-7, IR-4, PM-26 | HITL approval gate; DEFER queue; TOCTOU remediation | **Partial** | No human oversight scope doc; no automation bias assessment; no DEFER SLA; no override audit trail |
 | **4.8 Information Integrity** | AU-10, SI-7, SI-12, AC-3, RA-3 | KMS-signed verdicts; STPA constraints; CausalGatekeeper | **Partial** | No output provenance tracking; no watermarking; explainer outputs not validated |
-| **4.9 Information Security** | AC-3, AC-4, AU-12, CA-8, RA-5, SC-7, SC-8, SI-3, SI-4, SI-10 | Linkerd mTLS; OPA circuit breaker; AgentSight eBPF; HMAC seal | **Partial** | No model extraction testing; no advanced jailbreak testing; vLLM API unauthenticated; HMAC bypass open (POAM-012) |
+| **4.9 Information Security** | AC-3, AC-4, AU-12, CA-8, RA-5, SC-7, SC-8, SI-3, SI-4, SI-10 | Linkerd mTLS; OPA circuit breaker; asymmetric KMS seal (`AgentSight eBPF` not in force — `POAM-021` reopened, `POAM-2026-193`) | **Partial** | No model extraction testing; no advanced jailbreak testing; per-service mesh authorization and OPA lockdown open (`POAM-2026-080`, `POAM-2026-195`); workload monitoring open (`POAM-021`, `POAM-2026-193`) |
 | **4.10 Intellectual Property** | SA-4, SA-9, CM-10 | None | **Gap** | No training data license audit; no copyright detection; no IP ownership policy; model licenses not reviewed |
 | **4.11 Obscene Content** | SI-10, SI-15, AC-3 | NeMo domain restriction; Aho-Corasick | **Partial** | No dedicated content safety classifier |
 | **4.12 Value Chain** | SA-4, SA-9, SA-12, SR-3, SR-4, SR-5, CM-8, RA-5, SI-2, SI-7 | SBOM exists; Trivy/pip-audit CI; Linkerd mTLS | **Partial** | No model weight integrity verification; no model card review; unpinned deps (POAM-013); NeMo integrity not verified |

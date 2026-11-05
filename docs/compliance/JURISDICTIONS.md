@@ -29,12 +29,12 @@ This document provides lean technical profiles for CAGE's jurisdiction-specific 
 | Control ID | Name | Evidence Source | SLA (seconds) |
 |------------|------|-----------------|---------------|
 | **SA-11** | STPA Compiler — Developer Safety Testing | STPA compiler output | N/A (compile-time) |
-| **SC-7** | Boundary Protection — Cilium L7 Egress Lockdown | Cilium L7 flow logs | 86,400 (24h) |
-| **SC-8** | Transmission Confidentiality — Linkerd mTLS | Linkerd proxy telemetry | 86,400 (24h) |
+| **SC-7** | Boundary Protection — GKE Dataplane V2 NetworkPolicy | Namespace `default_deny_external_egress` (`Cilium L7 flow logs` **not in force** — `POAM-2026-169` Instances 2 & 16, `POAM-2026-195`) | 86,400 (24h) |
+| **SC-8** | Transmission Confidentiality — Linkerd mTLS | Linkerd proxy telemetry (`POAM-2026-080` reopened for default-off mesh policy and loopback trust) | 86,400 (24h) |
 | **AC-2** | Account Management | Kubernetes RBAC audit logs | N/A |
 | **IR-1** | Incident Response Policy and Procedures | POAM, runbooks | N/A |
-| **AU-2** | Audit Events — AgentSight Kernel + Cilium L7 Flows | AgentSight syscall traces | 3,600 (1h) |
-| **SI-7** | Software Integrity — AgentSight File Integrity Monitoring | AgentSight FIM events | 14,400 (4h) |
+| **AU-2** | Audit Events — Application OTel & Evidence Stream | `AgentSight syscall traces` and `Cilium L7 flows` **not in force** (`POAM-021` reopened, `POAM-2026-193`) | 3,600 (1h) |
+| **SI-7** | Software Integrity — Cryptographic Seal & Digest Verification | `AgentSight FIM events` **not in force** (`POAM-021` reopened, `POAM-2026-193`) | 14,400 (4h) |
 | **SI-10** | Input Validation — Multi-Component Protection | NeMo rails + STPA/OPA value checks, recorded by the FTRA boundary check | N/A |
 
 **Note:** Universal ISO/IEC 42001 controls (A.5.2, A.5.3, A.6.2, A.8.4, A.9.2, SC-4) also apply. See [Universal Controls](#universal-controls-isoiec-42001).
@@ -47,10 +47,10 @@ Governance events emitted by US_FED deployments that map to registered controls:
 |------------|------------|------------------|---------------------|
 | `stpa_compile` | SA-11 | STPA compiler CLI | `nist.SA-11.passed` |
 | `linkerd_mtls` | SC-8 | Linkerd proxy sidecar | `nist.SC-8.passed` |
-| `cilium_l7_egress` | SC-7 | Cilium L7 network policy | `nist.SC-7.passed` |
-| `cilium_l7_flow` | SC-7 | Cilium Hubble flow logs | `nist.SC-7.passed` |
-| `agentsight_syscall` | AU-2 | AgentSight eBPF daemon | `nist.AU-2.passed` |
-| `agentsight_fim` | SI-7 | AgentSight file integrity monitor | `nist.SI-7.passed` |
+| `cilium_l7_egress` | SC-7 | *Not in force (`POAM-2026-169` Instance 16, `POAM-2026-195`): no producer emits this event and no Cilium L7 policy is in state* | `nist.SC-7.passed` |
+| `cilium_l7_flow` | SC-7 | *Not in force (`POAM-2026-169` Instance 16): mapped in [`src/gateway/governance/iso_control.py`](../../src/gateway/governance/iso_control.py) and [`src/compliance_bridge/types.py`](../../src/compliance_bridge/types.py), but no producer emits it and GKE Dataplane V2 provides L3/L4 policy logging rather than Cilium L7 flow exports* | `nist.SC-7.passed` |
+| `agentsight_syscall` | AU-2 | *Not in force (`POAM-021` reopened, `POAM-2026-193`): `deployment/k8s/agentsight-daemon.yaml` is unmanaged and refused by Binary Authorization on staging; no producer emits this event* | `nist.AU-2.passed` |
+| `agentsight_fim` | SI-7 | *Not in force (`POAM-021` reopened, `POAM-2026-193`): no producer emits this event* | `nist.SI-7.passed` |
 | `ftra_boundary_check` | SI-10 | FTRA boundary check (value validation by STPA/OPA; see [FTRA_SCOPE.md](../governance/FTRA_SCOPE.md)) | `nist.SI-10.passed` |
 
 **Universal events** (all regions): `nemo_input_scan`, `nemo_output_rail`, `opa_policy_check`, `otel_trace`, `stpa_validation`, `causal_gatekeeper`, `saga_rollback`, `context_accumulate`, `defer_parking`

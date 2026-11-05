@@ -64,10 +64,10 @@ agent → gateway → [ FTRA → STPA → OPA → confidence → warrant* → co
 
 \* `warrant` applies only to norms the active region marks `requires_warrant`.
 
-By default every tier is deterministic and needs no model. `consensus` escalates an action at or above its threshold to a human; LLM critics are optional. The diagram shows the seven tiers of the formal model in [`proof/`](proof/), plus `warrant`. Domain plugins contribute tiers of their own, such as finance's `bounding` and healthcare's `dose_barrier`, and the finance causal tier is an optional extension, off by default.
+By default every tier is deterministic and needs no model. `consensus` escalates an action at or above its threshold to a human; LLM critics are optional. The diagram shows the seven tiers of the formal model in [`proof/`](proof/), plus `warrant`. Domain plugins contribute tiers of their own, such as finance's `bounding` (and the non-production healthcare reference stub's `dose_barrier`), and the finance causal tier is an optional extension, off by default.
 
 - **Kernel** — domain- and vendor-neutral enforcement. Import boundaries are enforced in CI, not by convention.
-- **Domain plugins** — finance and healthcare ship complete configurations. Exactly one domain is active per process.
+- **Domain plugins** — `finance` ([`src/cage_finance/`](src/cage_finance/)) is the sole finalized, production-eligible domain configuration; `healthcare` ([`src/cage_healthcare/`](src/cage_healthcare/)) and `physical_ai` ([`src/cage_physical_ai/`](src/cage_physical_ai/)) ship as non-production reference stubs (`POAM-2026-076`–`078`, `POAM-2026-198`). Exactly one domain is active per process.
 - **Adapters** — LangGraph today, via [`packages/cage-client`](packages/cage-client/) ([GitHub Packages](https://github.com/orgs/google/packages?repo_name=cybernetic-agent-governance-engine) · [GitHub Releases](https://github.com/google/cybernetic-agent-governance-engine/releases/tag/client-v0.2.0)).
 
 Deeper material lives in [`docs/architecture/`](docs/architecture/), and the formal guarantees — control barrier functions, reachability analysis, the correctness invariants — are documented in [`docs/architecture/`](docs/architecture/) with proofs under [`proof/`](proof/).

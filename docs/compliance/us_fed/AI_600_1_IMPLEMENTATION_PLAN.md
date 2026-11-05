@@ -1265,9 +1265,7 @@ Kubernetes assertions. This is the final step before AI 600-1 release gate closu
 **POAM**: AI600-005 | **AI 600-1 ref**: §2.7 Information Integrity
 **Controls**: AgentSight daemon, KMS signing
 
-**Current state**: `deployment/k8s/agentsight-daemon.yaml` deploys the AgentSight
-observability daemon. However, there is no cryptographic provenance chain linking
-each governance decision to a signed audit record.
+**Current state (`2026-11-05`)**: `deployment/k8s/agentsight-daemon.yaml` is a static manifest outside Terraform state, has been refused by Binary Authorization on staging since 2026-09-06 (Cloud Audit Logs), and is **not in force** (`POAM-021` reopened, `POAM-2026-193`). Furthermore, `POST /v1/infra/events` in [`src/compliance_bridge/main.py`](../../../src/compliance_bridge/main.py) logs caller-supplied events to container stdout only (after `#667` retired `4c48d107^:src/compliance_bridge/clickhouse_sink.py`) without verifying cryptographic provenance (`POAM-2026-193`).
 
 **Dev tasks**:
 
