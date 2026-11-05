@@ -29,15 +29,21 @@ What is checked:
     (catches ``FlowSignalNormativeProvider``, ``_map_flowsignal_decision``, etc.).
   - Python AST string and bytes literals (``ast.Constant``) outside of docstrings.
 
-Layer 3 External Wire-Protocol Boundary:
+Layer 3 External Wire-Protocol Boundary & Provenance Ceiling:
   CAGE-owned paths, class/function/variable identifiers, CLI choices, environment
   variable names, log messages, and test fixtures must use anonymized identifiers
   (``provider_01``..``provider_08``, ``actuator_01``) across all 5 trees.
   At the Layer 3 wire boundary, only external wire-protocol constants fixed by a
   partner's cryptographic signing preimage, HTTP header contract, discovery path,
-  or signed JWS test vector payload may retain the wire-level string/bytes value,
-  and each such constant must be explicitly enumerated in
-  ``LAYER3_WIRE_PROTOCOL_LITERALS`` below.
+  or signed JWS test vector payload may retain the wire-level string/bytes value.
+  Every such constant must be registered in ``LAYER3_WIRE_PROTOCOL_PROVENANCE``
+  mapping the literal to the committed non-Python partner specification or
+  received test vector artifact (``.md`` or ``.json``) that defines it. Gate G8
+  mechanically verifies both directions:
+    1. Provenance floor: every allowlisted literal must appear in its cited
+       non-Python specification or vector artifact on disk.
+    2. Ceiling (no dead/speculative entries): every allowlisted literal must be
+       referenced in the scanned Python trees; unused entries fail Gate G8.
 """
 
 from __future__ import annotations
@@ -70,63 +76,43 @@ FORBIDDEN_VENDOR_BRANDS: set[str] = PARTNER_VENDOR_BRANDS | {
     "openai",
 }
 
-# Explicit Layer 3 external wire-protocol constants fixed by partner signing schemes,
-# HTTP headers, discovery endpoints, or cryptographically signed JWS test vectors.
-# Any string or bytes literal outside this set that contains a partner brand in
-# src/integrations/, packages/cage-conformance/src/, scripts/, or tests/ fails Gate G8.
+# Allowed artifact extensions for LAYER3_WIRE_PROTOCOL_PROVENANCE citations.
+# Python (.py) files are forbidden as provenance sources so an author cannot
+# self-justify a literal by pointing at the code or test that introduced it.
+ALLOWED_PROVENANCE_SUFFIXES: frozenset[str] = frozenset({".md", ".json"})
+
+# Explicit Layer 3 external wire-protocol constants mapped to the committed
+# partner specification or received vector artifact where the wire value is defined.
+LAYER3_WIRE_PROTOCOL_PROVENANCE: dict[str, str] = {
+    # actuator_01 cryptographic domain-separation prefixes & HTTP wire headers
+    "ARCHYTAN_ASSERTION_V1:": "src/integrations/actuator_01/README.md",
+    "ARCHYTAN_QUORUM_V1:": "src/integrations/actuator_01/README.md",
+    "ARCHYTAN_POLICY_DECISION_V1:": "docs/operations/ARCHYTAN_VECTOR_ALIGNMENT.md",
+    "ARCHYTAN_RECEIPT_V1:": "src/integrations/actuator_01/README.md",
+    "X-Archytan-Signatures": "src/integrations/actuator_01/README.md",
+    "x-archytan-signatures": "src/integrations/actuator_01/README.md",
+    "archytan.envelope/v1": "tests/fixtures/actuator_01/vector1_direct.json",
+    "archytan.local": "docs/operations/ARCHYTAN_VECTOR_ALIGNMENT.md",
+    "https://archytan.local": "docs/operations/ARCHYTAN_VECTOR_ALIGNMENT.md",
+    "archytan-sandbox-receipt-2026-01": "src/integrations/actuator_01/README.md",
+    "urn:archytan:op:test_vector_1": "tests/fixtures/actuator_01/vector1_direct.json",
+    "urn:archytan:op:test_vector_3_approver": "tests/fixtures/actuator_01/vector3_escalate.json",
+    "urn:archytan:op:test_vector_3_op1": "tests/fixtures/actuator_01/vector3_escalate.json",
+    "urn:archytan:cage:policy-authority": "deployment/certs/actuator_01/sandbox_public_keys.json",
+    "urn:archytan:cage:operator:test-alice": "deployment/certs/actuator_01/sandbox_public_keys.json",
+    "urn:archytan:cage:operator:test-bob": "deployment/certs/actuator_01/sandbox_public_keys.json",
+    # provider_02 discovery endpoint & protected-set schema identifier
+    "/.well-known/nexart-node.json": "tests/fixtures/provider_02_native/attest_exchange_k1.json",
+    "nexart.governed.execution.v1.protected-set.v1": "tests/fixtures/provider_02_native/attest_exchange_k1.json",
+    # provider_07 signed JWS receipt kids and authority_record_ids in wire vectors
+    "infertheta-provider07-2026-01": "src/integrations/provider_07/README.md",
+    "infertheta-provider07-prod-2026-01": "docs/partners/provider_07/INFERTHETA_CANONICAL_SCHEMA.md",
+    "infertheta-ar-09b99a87-66ff-4791-9f31-f453841d2e8a": "src/integrations/provider_07/README.md",
+    "infertheta-ar-": "src/integrations/provider_07/README.md",
+}
+
 LAYER3_WIRE_PROTOCOL_LITERALS: frozenset[str] = frozenset(
-    {
-        # actuator_01 cryptographic domain-separation prefixes & HTTP wire headers
-        "ARCHYTAN_ASSERTION_V1:",
-        "ARCHYTAN_QUORUM_V1:",
-        "ARCHYTAN_POLICY_DECISION_V1:",
-        "ARCHYTAN_RECEIPT_V1:",
-        "ARCHYTAN_INGRESS_V1:",
-        "X-Archytan-Signatures",
-        "x-archytan-signatures",
-        "archytan.envelope/v1",
-        "archytan.local",
-        "https://archytan.local",
-        "archytan-sandbox-receipt-2026-01",
-        "urn:archytan:agent:test",
-        "urn:archytan:agent:001",
-        "urn:archytan:agent:vec1",
-        "urn:archytan:agent:vec2",
-        "urn:archytan:agent:vec3",
-        "urn:archytan:agent:vec5",
-        "urn:archytan:executor:production-01",
-        "urn:archytan:cage:policy-authority",
-        "urn:archytan:cage:operator:test-alice",
-        "urn:archytan:cage:operator:test-bob",
-        "urn:archytan:cage:operator:unregistered",
-        "urn:archytan:op:test_vector_1",
-        "urn:archytan:op:test_vector_3_approver",
-        "urn:archytan:op:test_vector_3_op1",
-        # provider_02 discovery endpoint & protected-set schema identifier
-        "/.well-known/nexart-node.json",
-        "nexart.governed.execution.v1.protected-set.v1",
-        # provider_07 signed JWS receipt kids and authority_record_ids in wire vectors
-        "infertheta-2026-03",
-        "infertheta-2025-01-retired",
-        "infertheta-2099-99-unknown",
-        "infertheta-001",
-        "infertheta-002",
-        "infertheta-003",
-        "infertheta-004",
-        "infertheta-005",
-        "infertheta-006",
-        "infertheta-allow-001",
-        "infertheta-allow-002",
-        "infertheta-deny-001",
-        "infertheta-degraded-001",
-        "infertheta-bad-kid",
-        "infertheta-live-allow-001",
-        "infertheta-live-deny-001",
-        "infertheta-provider07-2026-01",
-        "infertheta-provider07-prod-2026-01",
-        "infertheta-ar-09b99a87-66ff-4791-9f31-f453841d2e8a",
-        "infertheta-ar-",
-    }
+    LAYER3_WIRE_PROTOCOL_PROVENANCE
 )
 
 # Documentation-governance scripts and gate unit tests that inspect markdown docs
@@ -168,6 +154,7 @@ class VendorBrandChecker(ast.NodeVisitor):
         self.brands = {b.lower() for b in brands}
         self.allow_wire_literals = allow_wire_literals
         self.violations: list[tuple[int, str]] = []
+        self.matched_wire_literals: set[str] = set()
         self._docstring_nodes: set[ast.AST] = set()
 
     def _check_identifier(self, lineno: int, kind: str, name: str) -> None:
@@ -225,10 +212,12 @@ class VendorBrandChecker(ast.NodeVisitor):
                 text = node.value.decode("utf-8", errors="replace")
 
             if text is not None:
+                stripped = text.strip()
                 if (
                     self.allow_wire_literals
-                    and text.strip() in LAYER3_WIRE_PROTOCOL_LITERALS
+                    and stripped in LAYER3_WIRE_PROTOCOL_LITERALS
                 ):
+                    self.matched_wire_literals.add(stripped)
                     self.generic_visit(node)
                     return
 
@@ -238,6 +227,50 @@ class VendorBrandChecker(ast.NodeVisitor):
                         self.violations.append((node.lineno, text))
                         break
         self.generic_visit(node)
+
+
+def check_wire_literal_provenance(
+    repo_root: Path,
+    provenance: dict[str, str] | None = None,
+) -> list[str]:
+    """Verify every allowlisted Layer 3 wire literal exists in its cited spec/vector artifact."""
+    active_provenance = (
+        LAYER3_WIRE_PROTOCOL_PROVENANCE if provenance is None else provenance
+    )
+    errors: list[str] = []
+    content_cache: dict[Path, str] = {}
+
+    for literal, rel_artifact in sorted(active_provenance.items()):
+        if not literal or not rel_artifact:
+            errors.append(
+                f"'{literal}' -> '{rel_artifact}': empty literal or provenance path"
+            )
+            continue
+
+        artifact_path = repo_root / rel_artifact
+        if artifact_path.suffix not in ALLOWED_PROVENANCE_SUFFIXES:
+            errors.append(
+                f"'{literal}' -> '{rel_artifact}': provenance must be a non-Python "
+                f"spec or vector artifact ({sorted(ALLOWED_PROVENANCE_SUFFIXES)}), not '{artifact_path.suffix}'"
+            )
+            continue
+
+        if not artifact_path.is_file():
+            errors.append(
+                f"'{literal}' -> '{rel_artifact}': provenance artifact does not exist"
+            )
+            continue
+
+        if artifact_path not in content_cache:
+            content_cache[artifact_path] = artifact_path.read_text(encoding="utf-8")
+
+        text = content_cache[artifact_path]
+        if literal not in text and literal.lower() not in text.lower():
+            errors.append(
+                f"'{literal}' -> '{rel_artifact}': literal not found in cited provenance artifact"
+            )
+
+    return errors
 
 
 def check_path(
@@ -259,6 +292,7 @@ def check_file(
     brands: set[str] | None = None,
     *,
     allow_wire_literals: bool = False,
+    matched_wire_literals: set[str] | None = None,
 ) -> list[tuple[int, str]]:
     """Parse ``filepath`` and return ``(lineno, offending_token)`` violations."""
     active_brands = FORBIDDEN_VENDOR_BRANDS if brands is None else brands
@@ -271,6 +305,8 @@ def check_file(
             allow_wire_literals=allow_wire_literals,
         )
         checker.visit(tree)
+        if matched_wire_literals is not None:
+            matched_wire_literals.update(checker.matched_wire_literals)
         return checker.violations
     except SyntaxError as exc:
         print(f"⚠️  Syntax error in {filepath}: {exc}", file=sys.stderr)
@@ -318,6 +354,15 @@ def main() -> int:
         )
         return 1
 
+    provenance_errors = check_wire_literal_provenance(repo_root)
+    if provenance_errors:
+        print(
+            "❌ Gate G8 FAILED: LAYER3_WIRE_PROTOCOL_PROVENANCE contains unverified entries:"
+        )
+        for err in provenance_errors:
+            print(f"   • {err}")
+        return 1
+
     # (directory, brands_to_enforce, allow_layer3_wire_literals)
     scan_targets: list[tuple[Path, set[str], bool]] = [
         (gateway_dir, FORBIDDEN_VENDOR_BRANDS, False),
@@ -330,6 +375,7 @@ def main() -> int:
     violations_found = False
     scanned_files = 0
     scanned_paths = 0
+    matched_wire_literals: set[str] = set()
 
     for scan_dir, brands, allow_wire_literals in scan_targets:
         if not scan_dir.exists():
@@ -360,6 +406,7 @@ def main() -> int:
                 entry,
                 brands,
                 allow_wire_literals=allow_wire_literals,
+                matched_wire_literals=matched_wire_literals,
             )
             if violations:
                 violations_found = True
@@ -367,30 +414,51 @@ def main() -> int:
                 for line_num, literal in violations:
                     print(f"   Line {line_num}: '{literal}'")
 
+    unused_wire_literals = sorted(LAYER3_WIRE_PROTOCOL_LITERALS - matched_wire_literals)
+    if unused_wire_literals:
+        violations_found = True
+        print(
+            "❌ LAYER3_WIRE_PROTOCOL_PROVENANCE contains unused allowlist entries (ceiling check):"
+        )
+        for unused in unused_wire_literals:
+            print(f"   • '{unused}' (cited in {LAYER3_WIRE_PROTOCOL_PROVENANCE[unused]})")
+
     if violations_found:
         print()
         print(
             "❌ Gate G8 FAILED: Found forbidden vendor/partner brands in paths, identifiers, or literals."
         )
-        print(f"   Kernel forbidden brands: {', '.join(sorted(FORBIDDEN_VENDOR_BRANDS))}")
-        print(f"   Partner forbidden brands: {', '.join(sorted(PARTNER_VENDOR_BRANDS))}")
+        print(
+            f"   Kernel forbidden brands: {', '.join(sorted(FORBIDDEN_VENDOR_BRANDS))}"
+        )
+        print(
+            f"   Partner forbidden brands: {', '.join(sorted(PARTNER_VENDOR_BRANDS))}"
+        )
         print()
         print("   Partner and vendor brand rules across all 5 scanned trees:")
-        print("   • File and directory paths must use anonymized IDs (provider_01, actuator_01)")
-        print("   • Python class, function, variable, attribute, and arg names must be anonymized")
+        print(
+            "   • File and directory paths must use anonymized IDs (provider_01, actuator_01)"
+        )
+        print(
+            "   • Python class, function, variable, attribute, and arg names must be anonymized"
+        )
         print("   • Docstrings and comments may name partners in prose")
         print(
-            "   • Only external wire-protocol constants in LAYER3_WIRE_PROTOCOL_LITERALS are permitted"
+            "   • Only external wire-protocol constants in LAYER3_WIRE_PROTOCOL_PROVENANCE "
+            "(each verified against its cited .md/.json partner spec or vector artifact, with "
+            "zero unused entries) are permitted"
         )
         return 1
 
     if args.verbose:
         print(
             f"📊 Scanned {scanned_files} Python files and {scanned_paths} paths across "
-            f"{', '.join(str(t[0].relative_to(repo_root)) for t in scan_targets if t[0].exists())}"
+            f"{', '.join(str(t[0].relative_to(repo_root)) for t in scan_targets if t[0].exists())} "
+            f"({len(matched_wire_literals)}/{len(LAYER3_WIRE_PROTOCOL_LITERALS)} provenance-verified wire literals active)"
         )
     print(
-        f"✅ Gate G8 PASSED: No forbidden vendor brands in {scanned_files} Python files or {scanned_paths} paths."
+        f"✅ Gate G8 PASSED: No forbidden vendor brands in {scanned_files} Python files or {scanned_paths} paths "
+        f"({len(LAYER3_WIRE_PROTOCOL_LITERALS)} provenance-verified wire literals)."
     )
     return 0
 

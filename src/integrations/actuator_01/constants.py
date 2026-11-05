@@ -34,7 +34,6 @@ NONCE_HEX_LENGTH = 32
 # never be replayed as an assertion.
 RECEIPT_SIGNATURE_DOMAIN_TAG = b"ARCHYTAN_RECEIPT_V1:"
 LEGACY_RECEIPT_SIGNATURE_DOMAIN_TAG = b"CAGE_ACTUATION_RECEIPT_V1:"
-INGRESS_SIGNATURE_DOMAIN_TAG = b"ARCHYTAN_INGRESS_V1:"
 
 # Default sandbox receipt signing key ID published at /v1/keys/receipt-manifest
 DEFAULT_RECEIPT_KID = "archytan-sandbox-receipt-2026-01"

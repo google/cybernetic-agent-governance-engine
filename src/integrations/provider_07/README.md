@@ -319,7 +319,7 @@ src/integrations/provider_07/
 **Integration Status**:
 - ✅ Step 1 Wire Contract: Confirmed & validated against live staging
 - ✅ Step 1 Dedicated Suitability Graph: Calibrated & deployed on Render
-- ✅ Step 2 Cryptographic Hardening: Ed25519 signatures (RFC 8785 JCS), out-of-band JWKS (`kid = "infertheta-provider07-2026-01"`), and minted `authority_record_id` (`infertheta-ar-<uuid4>`) verified live against staging
+- ✅ Step 2 Cryptographic Hardening: Ed25519 signatures (RFC 8785 JCS), out-of-band JWKS (`kid = "infertheta-provider07-2026-01"`), and minted `authority_record_id` (`infertheta-ar-<uuid4>`, Step 2 ALLOW vector `infertheta-ar-09b99a87-66ff-4791-9f31-f453841d2e8a`) verified live against staging
 - ✅ Step 3 Production-Readiness Increment: `POST /evidence-chain/{thread_id}` (persisted & idempotent), content-addressed `US_FED` `baseline_hash` + HTTP `ETag`, fail-closed reserved regions (`EU_ECB`, `APAC_MAS`), and 24h overlap multi-key JWKS rotation verified live against staging
 - ✅ Step 4 Production Cutover: Isolated production instance (`https://infertheta-cage-prod.onrender.com`), dedicated PostgreSQL persistence, production JWKS (`kid = "infertheta-provider07-prod-2026-01"`), and GKE `provider-07-credentials` wiring verified over the wire
 

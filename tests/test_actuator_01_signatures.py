@@ -185,4 +185,4 @@ class TestSandboxSigningAndWebAuthn:
         assert alice_signer is not bob_signer
 
         with pytest.raises(KeyError, match="Unknown operator URN"):
-            bundle.resolve_signer("urn:archytan:cage:operator:unregistered")
+            bundle.resolve_signer("urn:actuator01:cage:operator:unregistered")

@@ -81,7 +81,7 @@ The envelope structure was aligned to match the Archytan ArbiterKernel specifica
 
 1. **DIRECT vs ESCALATE Differentiation:**
    - DIRECT path: `approval` key **omitted entirely** (not `null`)
-   - ESCALATE path: `approval` key **present** with full WebAuthn structure
+   - ESCALATE path: `approval` key **present** with full WebAuthn structure (`rp_id = "archytan.local"`, `origin = "https://archytan.local"` in `client_data_json`)
 
 2. **Target Digest Computation:**
    - Target digest is SHA-256 of JCS-canonical target object

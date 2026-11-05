@@ -321,3 +321,35 @@ BAD_URL = "https://flowsignal.example.com/v1/evaluate"
         finally:
             temp_path.unlink()
 
+    def test_layer3_wire_protocol_provenance_and_ceiling(self, tmp_path):
+        """G8 enforces .md/.json spec/vector provenance on LAYER3_WIRE_PROTOCOL_PROVENANCE and pins the 22-entry ceiling."""
+        from scripts.check_vendor_brands import (
+            LAYER3_WIRE_PROTOCOL_PROVENANCE,
+            check_wire_literal_provenance,
+        )
+
+        repo_root = Path(__file__).resolve().parent.parent
+        assert check_wire_literal_provenance(repo_root) == []
+        assert len(LAYER3_WIRE_PROTOCOL_PROVENANCE) == 22
+
+        # Rejects citing a .py file as provenance
+        py_file = tmp_path / "adapter.py"
+        py_file.write_text('TAG = "flowsignal-convenient-string"\n', encoding="utf-8")
+        errs_py = check_wire_literal_provenance(
+            tmp_path,
+            {"flowsignal-convenient-string": "adapter.py"},
+        )
+        assert len(errs_py) == 1
+        assert "non-Python" in errs_py[0]
+
+        # Rejects citing a .md/.json artifact that does not contain the literal
+        spec_file = tmp_path / "spec.md"
+        spec_file.write_text("# Partner Spec\nNo such constant here.\n", encoding="utf-8")
+        errs_missing = check_wire_literal_provenance(
+            tmp_path,
+            {"flowsignal-unverified-constant": "spec.md"},
+        )
+        assert len(errs_missing) == 1
+        assert "not found in cited provenance artifact" in errs_missing[0]
+
+
