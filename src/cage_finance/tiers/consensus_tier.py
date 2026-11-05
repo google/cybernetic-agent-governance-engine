@@ -66,6 +66,8 @@ def build_finance_consensus_contribution(
     threshold: float | None = None,
 ) -> ConsensusContribution:
     """Build the finance domain's ``ConsensusContribution``."""
+    from src.cage_finance.models.trade_order import TradeOrder
+
     resolved_threshold = (
         float(threshold)
         if threshold is not None
@@ -76,6 +78,7 @@ def build_finance_consensus_contribution(
         threshold=resolved_threshold,
         magnitude_extractor=extract_field_magnitude("amount"),
         high_stakes_actions=frozenset({"HIGH_VALUE_TRADE"}),
+        action_schemas={"execute_trade": TradeOrder},
     )
 
 

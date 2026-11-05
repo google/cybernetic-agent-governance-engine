@@ -41,6 +41,7 @@ from src.gateway.governance.telemetry_provider import ConfigurationError
 
 CAGE_NEMO_ENABLED_ENV: Final[str] = "CAGE_NEMO_ENABLED"
 CAGE_CONSENSUS_CRITICS_ENABLED_ENV: Final[str] = "CAGE_CONSENSUS_CRITICS_ENABLED"
+CAGE_CONSENSUS_ADVISORY_ONLY_ENV: Final[str] = "CAGE_CONSENSUS_ADVISORY_ONLY"
 
 _ON: Final[frozenset[str]] = frozenset({"true", "1"})
 _OFF: Final[frozenset[str]] = frozenset({"false", "0", ""})
@@ -86,3 +87,19 @@ def consensus_critics_enabled(environ: Mapping[str, str] | None = None) -> bool:
     ``NOTIONAL_THRESHOLD_ESCALATION``. No critic model is called.
     """
     return opt_in_enabled(CAGE_CONSENSUS_CRITICS_ENABLED_ENV, environ)
+
+
+def consensus_advisory_only(environ: Mapping[str, str] | None = None) -> bool:
+    """Return whether consensus critics run in advisory-only escalation mode (``CAGE_CONSENSUS_ADVISORY_ONLY``)."""
+    return opt_in_enabled(CAGE_CONSENSUS_ADVISORY_ONLY_ENV, environ)
+
+
+def consensus_advisory_only_override(
+    environ: Mapping[str, str] | None = None,
+) -> bool | None:
+    """Return explicit ``CAGE_CONSENSUS_ADVISORY_ONLY`` bool override, or ``None`` when unset/empty."""
+    env = os.environ if environ is None else environ
+    raw = env.get(CAGE_CONSENSUS_ADVISORY_ONLY_ENV, "").strip()
+    if not raw:
+        return None
+    return opt_in_enabled(CAGE_CONSENSUS_ADVISORY_ONLY_ENV, env)

@@ -42,6 +42,12 @@ from src.gateway.governance.telemetry_provider import (
 
 logger = logging.getLogger("cage.integrations.telemetry_langfuse")
 
+# Governed-agent Langfuse SDK credential env var pairs checked against gateway
+# TELEMETRY_PUBLIC_KEY / TELEMETRY_SECRET_KEY for plane isolation (F-92 / R-11).
+AGENT_TELEMETRY_CREDENTIAL_ENV_PAIRS: tuple[tuple[str, str], ...] = (
+    ("LANGFUSE_PUBLIC_KEY", "LANGFUSE_SECRET_KEY"),
+)
+
 # The Langfuse public API caps ``GET /api/public/traces`` at 100 rows a page.
 _PAGE_LIMIT = 100
 _MAX_CONCURRENT_PAGES = 5

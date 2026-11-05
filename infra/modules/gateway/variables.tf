@@ -324,3 +324,53 @@ variable "enable_service_monitor" {
   type        = bool
   default     = false
 }
+
+variable "gateway_secret_name" {
+  description = "Kubernetes Secret supplying gateway-scoped credentials (GOVERNANCE_SALT, TELEMETRY_PUBLIC_KEY, TELEMETRY_SECRET_KEY, OTEL_EXPORTER_OTLP_HEADERS, REDIS_PASSWORD). Must never be shared with advisor-secrets (F-84, F-92, R-2)."
+  type        = string
+  default     = "gateway-secrets"
+}
+
+variable "telemetry_secret_name" {
+  description = "Optional override Kubernetes Secret supplying TELEMETRY_PUBLIC_KEY and TELEMETRY_SECRET_KEY (defaults to gateway_secret_name when empty). Must never be \"advisor-secrets\" in enforcing postures or when causal_tier_enabled = true (F-92)."
+  type        = string
+  default     = ""
+}
+
+variable "gateway_telemetry_public_key" {
+  description = "Optional gateway plane TELEMETRY_PUBLIC_KEY value for plan-time collision checks against advisor_telemetry_public_key (F-92)."
+  type        = string
+  default     = ""
+  sensitive   = true
+}
+
+variable "advisor_telemetry_public_key" {
+  description = "Optional governed-agent LANGFUSE_PUBLIC_KEY / advisor telemetry public key for plan-time collision checks against gateway_telemetry_public_key (F-92)."
+  type        = string
+  default     = ""
+  sensitive   = true
+}
+
+variable "causal_tier_enabled" {
+  description = "Enable the DoWhy causal gatekeeper tier (CAGE_CAUSAL_TIER_ENABLED). Requires a dedicated plane-only telemetry Secret (telemetry_secret_name != \"advisor-secrets\") and causal_gatekeeper_strict_mode = true (F-92 / R-11)."
+  type        = bool
+  default     = false
+}
+
+variable "causal_gatekeeper_strict_mode" {
+  description = "Require trace_id on causal telemetry spans and refuse producer-supplied timestamp ordering (CAUSAL_GATEKEEPER_STRICT_MODE, F-92)."
+  type        = bool
+  default     = false
+}
+
+variable "consensus_critics_enabled" {
+  description = "Enable multi-model consensus critics (CAGE_CONSENSUS_CRITICS_ENABLED). Requires an active inference backend and, under enforcing postures, consensus_advisory_only = true (F-53..F-56 / R-11)."
+  type        = bool
+  default     = false
+}
+
+variable "consensus_advisory_only" {
+  description = "Run consensus critics in advisory-only escalation mode so critic votes cannot replace human review (CAGE_CONSENSUS_ADVISORY_ONLY, F-56)."
+  type        = bool
+  default     = false
+}
