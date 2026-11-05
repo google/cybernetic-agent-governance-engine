@@ -79,6 +79,7 @@ STREAM_RULES: dict[str, str] = {
     "refusal_evidence": "Every refusal carries a proof hash, expected refusals appear, and a refusal-triggered quarantine follows its refusal",
     "evidence_loss": "No evidence was dropped or failed to publish",
     "digest_format": "Every governance_decision_digest and refusal_proof_hash, at any depth of any record, is lowercase SHA-256 hex",
+    "reconciliation_fence": "Every reconciliation fence event or refusal follows a hash-chained RECONCILIATION_DISCREPANCY_FENCE cause record",
 }
 
 INPUT_ASSERTION = "input"

@@ -23,6 +23,8 @@ by ``invariant_id``.
 
 from __future__ import annotations
 
+import asyncio
+import hashlib
 import inspect
 import json
 import logging
@@ -32,6 +34,7 @@ import time
 from collections.abc import Awaitable, Mapping, Sequence
 from contextlib import contextmanager
 from dataclasses import dataclass, field
+from datetime import datetime, timezone
 from typing import Any, Protocol
 
 from src.gateway.governance.jcs_canonicalizer import jcs_canonicalize_plan
@@ -102,6 +105,20 @@ def reconciled_state_key(invariant_id: str) -> str:
     return f"{RECONCILED_STATE_KEY_PREFIX}{invariant_id}"
 
 
+ACTIVE_FENCE_KEY_PREFIX = "reconciliation:active_fence:"
+
+
+def active_fence_key(invariant_id: str) -> str:
+    """Return the Redis DB 0 key tracking an active reconciliation discrepancy fence."""
+    return f"{ACTIVE_FENCE_KEY_PREFIX}{invariant_id}"
+
+
+class ReconcilerDecisionSigner(Protocol):
+    """Structural typing contract for KMS decision signers used by the reconciler."""
+
+    def sign_decision(self, plan: dict[str, Any]) -> Any: ...
+
+
 @contextmanager
 def _null_context():  # type: ignore[no-untyped-def]
     yield
@@ -130,6 +147,14 @@ class ReconciliationResult:
     #: Exact bytes read from Redis, so the CBF commit script can confirm the
     #: snapshot generation it nets against is still the published one.
     raw_payload: str | None = field(default=None, repr=False, compare=False)
+    #: Fence epoch minted when this tick fenced the gateway on a discrepancy.
+    fence_epoch: int | None = None
+    #: Record hash of the chained RECONCILIATION_DISCREPANCY_FENCE evidence entry.
+    evidence_record_hash: str | None = None
+    #: Stream sequence of the chained RECONCILIATION_DISCREPANCY_FENCE evidence entry.
+    evidence_sequence: int | None = None
+    #: Non-None when appending the discrepancy fence evidence record failed.
+    evidence_error: str | None = None
 
     def __post_init__(self) -> None:
         self.state_scalar = float(self.state_scalar)
@@ -316,7 +341,7 @@ class GroundTruthReconciler:
         account_id: str = "default",
         poll_interval: int = POLL_INTERVAL_SECONDS,
         ttl: int = TTL_SECONDS,
-        signer: Any | None = None,
+        signer: ReconcilerDecisionSigner | None = None,
         *,
         providers: (
             Mapping[str, GroundTruthProvider] | Sequence[GroundTruthProvider] | None
@@ -329,6 +354,8 @@ class GroundTruthReconciler:
         settlement_lag_seconds: float | None = None,
         settlement_clock_skew_seconds: float | None = None,
         pending_debit_max_age_seconds: float | None = None,
+        evidence_sink: Any | None = None,
+        evidence_stream_key: str | None = None,
     ) -> None:
         self._providers: dict[str, Any] = {}
         if providers is not None:
@@ -354,7 +381,7 @@ class GroundTruthReconciler:
         self._account_id = account_id
         self._poll_interval = poll_interval
         self._ttl = ttl
-        self._signer = signer
+        self._signer: ReconcilerDecisionSigner | None = signer
         self._max_staleness_s = (
             float(max_staleness_s) if max_staleness_s is not None else float(ttl)
         )
@@ -398,12 +425,21 @@ class GroundTruthReconciler:
             else get_reconciliation_pending_debit_max_age_seconds()
         )
         self._failure_count: int = 0
+        self._evidence_publish_failures: int = 0
+        self._local_fence_epoch: int = 0
+        self._evidence_sink: Any | None = evidence_sink
+        self._evidence_stream_key: str | None = evidence_stream_key
         self._last_sequence_by_invariant: dict[str, int] = {}
 
     @property
     def failure_count(self) -> int:
         """Total number of failed reconciliation or KMS signing ticks."""
         return self._failure_count
+
+    @property
+    def evidence_publish_failures(self) -> int:
+        """Total number of failed RECONCILIATION_DISCREPANCY_FENCE evidence appends."""
+        return self._evidence_publish_failures
 
     def settlement_cutoff_for(self, result: ReconciliationResult) -> float:
         """Latest ``submitted_at`` this snapshot is trusted to have absorbed."""
@@ -459,15 +495,375 @@ class GroundTruthReconciler:
         except Exception:
             pass
 
-    def _increment_fence_epoch(self) -> None:
+    def _increment_fence_epoch(self) -> int:
+        self._local_fence_epoch += 1
         if self._redis is None:
-            return
+            return self._local_fence_epoch
         try:
             if hasattr(self._redis, "incr"):
-                self._redis.incr(FENCE_EPOCH_KEY)
+                epoch_raw = self._redis.incr(FENCE_EPOCH_KEY)
                 self._redis.incr(_CBF_FENCE_EPOCH_KEY)
-        except Exception:
-            pass
+                if not isinstance(epoch_raw, MagicMock_type()):
+                    epoch = int(epoch_raw)
+                    if epoch > self._local_fence_epoch:
+                        self._local_fence_epoch = epoch
+                    return epoch
+        except Exception as exc:
+            logger.warning("Failed to increment fence epoch in Redis: %s", exc)
+        return self._local_fence_epoch
+
+    def _sign_discrepancy_event(self, payload: dict[str, Any]) -> None:
+        """Sign canonical discrepancy fence payload via KMS; fail closed in enforcing postures."""
+        from src.gateway.governance.env_posture import DeploymentPosture
+        from src.gateway.governance.evidence.stream import _normalize_for_jcs
+
+        enforcing = DeploymentPosture.from_env().is_enforcing()
+        unconfigured_dev_signer = False
+        try:
+            signer = self._signer
+            if signer is None:
+                from src.gateway.governance.reconciliation.trust import (
+                    get_reconciler_signer,
+                )
+
+                try:
+                    signer = get_reconciler_signer()
+                except Exception:
+                    unconfigured_dev_signer = True
+                    raise
+                if not enforcing and not getattr(signer, "is_kms_active", True):
+                    unconfigured_dev_signer = True
+                    raise RuntimeError("KMS signer inactive in non-enforcing posture")
+
+            if not hasattr(signer, "sign_decision"):
+                raise TypeError(
+                    "Configured reconciler signer does not implement sign_decision(plan: dict)"
+                )
+
+            normalized = _normalize_for_jcs(payload)
+            if not isinstance(normalized, dict):
+                raise TypeError(
+                    f"Normalized discrepancy fence payload must be dict, got {type(normalized).__name__}"
+                )
+            signable_plan: dict[str, Any] = dict(normalized)
+            signable_plan.setdefault("signed_at", time.time())
+
+            record = signer.sign_decision(signable_plan)
+            sig_str = str(getattr(record, "signature", "") or "")
+            sig_kid = str(getattr(record, "kid", "") or "")
+            sig_alg = str(getattr(record, "algorithm", "") or "")
+            if not sig_str or sig_str.startswith("HMAC_FALLBACK"):
+                raise RuntimeError(
+                    "Reconciler signer returned empty or fallback signature for discrepancy fence"
+                )
+            if not sig_kid or not sig_alg:
+                raise RuntimeError(
+                    "Reconciler signer returned discrepancy fence signature without kid/algorithm"
+                )
+            if enforcing and (
+                sig_alg in ("HMAC_SHA256_FALLBACK", "HS256", "SOFTWARE_ED25519")
+                or not getattr(signer, "is_kms_active", True)
+            ):
+                raise RuntimeError(
+                    f"Unverified/fallback signing algorithm {sig_alg!r} rejected for "
+                    "RECONCILIATION_DISCREPANCY_FENCE in enforcing posture"
+                )
+
+            payload["signature"] = sig_str
+            payload["kms_key_id"] = sig_kid
+            payload["signing_algorithm"] = sig_alg
+        except Exception as exc:
+            if DeploymentPosture.from_env().is_enforcing():
+                logger.error(
+                    "Failed to sign RECONCILIATION_DISCREPANCY_FENCE record in enforcing posture "
+                    "(fail-closed, unsigned evidence suppressed): %s",
+                    exc,
+                )
+                raise RuntimeError(
+                    f"Discrepancy fence KMS signing failed in enforcing posture: {exc}"
+                ) from exc
+            if not (unconfigured_dev_signer and self._signer is None):
+                logger.error(
+                    "Failed to sign RECONCILIATION_DISCREPANCY_FENCE record with configured signer: %s",
+                    exc,
+                )
+                raise
+            logger.warning(
+                "Discrepancy fence evidence left unsigned (KMS unconfigured in non-enforcing posture): %s",
+                exc,
+            )
+
+    def _append_discrepancy_evidence(self, event: dict[str, Any]) -> Any:
+        """Append ``RECONCILIATION_DISCREPANCY_FENCE`` to the hash-chained evidence stream."""
+        from src.gateway.governance.evidence.stream import (
+            EvidenceChainUnavailableError,
+            EvidenceCommitResult,
+            append_evidence_record_sync,
+        )
+
+        sink = self._evidence_sink
+        if sink is not None:
+            # 1. If sink exposes a synchronous Redis client, use canonical sync CAS.
+            sink_redis = getattr(sink, "_redis", None)
+            sink_stream_key = getattr(sink, "_stream_key", self._evidence_stream_key)
+            if (
+                sink_redis is not None
+                and hasattr(sink_redis, "xrevrange")
+                and not asyncio.iscoroutinefunction(
+                    getattr(sink_redis, "xrevrange", None)
+                )
+            ):
+                res = append_evidence_record_sync(
+                    sink_redis,
+                    event,
+                    stream_key=sink_stream_key,
+                )
+                if hasattr(sink, "_chain_restored"):
+                    sink._chain_restored = False
+                return res
+
+            # 2. If sink has ingest_sync or ingest (sync or async callable).
+            ingest_fn = getattr(sink, "ingest_sync", None) or getattr(
+                sink, "ingest", None
+            )
+            if callable(ingest_fn):
+                outcome = ingest_fn(event)
+                if asyncio.iscoroutine(outcome):
+                    try:
+                        asyncio.get_running_loop()
+                        loop_running = True
+                    except RuntimeError:
+                        loop_running = False
+                    if not loop_running:
+                        outcome = asyncio.run(outcome)
+                    elif self._redis is not None and sink_redis is not None:
+                        outcome.close()
+                        res = append_evidence_record_sync(
+                            self._redis,
+                            event,
+                            stream_key=sink_stream_key,
+                        )
+                        if hasattr(sink, "_chain_restored"):
+                            sink._chain_restored = False
+                        return res
+                    else:
+                        import concurrent.futures
+
+                        with concurrent.futures.ThreadPoolExecutor(
+                            max_workers=1
+                        ) as pool:
+                            outcome = pool.submit(asyncio.run, outcome).result(
+                                timeout=5.0
+                            )
+                if isinstance(outcome, EvidenceCommitResult):
+                    if not outcome.success:
+                        raise EvidenceChainUnavailableError(
+                            "Evidence sink returned success=False for RECONCILIATION_DISCREPANCY_FENCE"
+                        )
+                    return outcome
+                if outcome is None or outcome is False:
+                    raise EvidenceChainUnavailableError(
+                        "Evidence sink failed to commit RECONCILIATION_DISCREPANCY_FENCE"
+                    )
+                return EvidenceCommitResult(
+                    success=True,
+                    evidence_id=str(outcome),
+                    commit_timestamp=datetime.now(tz=timezone.utc),
+                    hash=str(getattr(sink, "chain_root", "") or ""),
+                    sequence=max(0, int(getattr(sink, "total_records", 1)) - 1),
+                )
+
+        if self._redis is not None:
+            return append_evidence_record_sync(
+                self._redis,
+                event,
+                stream_key=self._evidence_stream_key,
+            )
+
+        raise EvidenceChainUnavailableError(
+            "Cannot emit RECONCILIATION_DISCREPANCY_FENCE: neither evidence_sink nor redis_client is available."
+        )
+
+    def _fence_gateway_with_evidence(
+        self,
+        result: ReconciliationResult,
+        *,
+        fence_trigger: str,
+        primary_error: str,
+        reasons: list[str],
+        discrepancy_delta: float,
+        effective_threshold: float,
+        baseline_scalar: float | None = None,
+        unsettled_total: float | None = None,
+        barrier_floor: float | None = None,
+        set_span_attr: Any | None = None,
+    ) -> ReconciliationResult:
+        """Fence the gateway on a reconciliation discrepancy and emit chained evidence (F-86)."""
+        from src.gateway.governance.evidence.stream import (
+            RECONCILIATION_DISCREPANCY_FENCE_EVENT_TYPE,
+            _normalize_for_jcs,
+        )
+        from src.gateway.governance.governor.metrics import governor_metrics
+
+        def _attr(key: str, val: object) -> None:
+            if callable(set_span_attr):
+                set_span_attr(key, val)
+
+        # 1. Fail-closed state transitions happen FIRST so the gateway is always
+        # fenced even if the evidence stream is unreachable.
+        self._failure_count += 1
+        fence_epoch = self._increment_fence_epoch()
+        self._invalidate_redis_verified_state(result.invariant_id)
+        result.fence_epoch = fence_epoch
+        result.error = primary_error
+
+        fence_id = f"{result.invariant_id}:epoch:{fence_epoch}"
+        if self._redis is not None and hasattr(self._redis, "set"):
+            try:
+                self._redis.set(
+                    active_fence_key(result.invariant_id),
+                    json.dumps(
+                        {
+                            "fence_epoch": int(fence_epoch),
+                            "fence_id": fence_id,
+                            "invariant_id": str(result.invariant_id),
+                            "fence_trigger": fence_trigger,
+                        }
+                    ),
+                )
+            except Exception as marker_exc:
+                logger.warning(
+                    "Failed to record active reconciliation fence marker in Redis: %s",
+                    marker_exc,
+                )
+        safe_scalar = (
+            float(result.state_scalar)
+            if isinstance(result.state_scalar, (int, float))
+            and math.isfinite(result.state_scalar)
+            else 0.0
+        )
+        safe_verified_at = (
+            float(result.verified_at)
+            if isinstance(result.verified_at, (int, float))
+            and math.isfinite(result.verified_at)
+            else 0.0
+        )
+        safe_delta = (
+            float(discrepancy_delta)
+            if isinstance(discrepancy_delta, (int, float))
+            and math.isfinite(discrepancy_delta)
+            else 0.0
+        )
+        safe_threshold = (
+            float(effective_threshold)
+            if isinstance(effective_threshold, (int, float))
+            and math.isfinite(effective_threshold)
+            else 0.0
+        )
+
+        snapshot_meta = {
+            "account_id": str(self._account_id),
+            "invariant_id": str(result.invariant_id),
+            "sequence": int(result.sequence),
+            "source": str(result.source),
+            "state_scalar": safe_scalar,
+            "verified_at": safe_verified_at,
+        }
+        custodian_snapshot_digest = hashlib.sha256(
+            jcs_canonicalize_plan(_normalize_for_jcs(snapshot_meta))
+        ).hexdigest()
+
+        non_empty_reasons = [str(r) for r in reasons if str(r).strip()] or [
+            primary_error
+        ]
+        discrepancy_digests = [
+            hashlib.sha256(
+                jcs_canonicalize_plan(
+                    _normalize_for_jcs(
+                        {
+                            "fence_id": fence_id,
+                            "index": idx,
+                            "reason": reason_text,
+                        }
+                    )
+                )
+            ).hexdigest()
+            for idx, reason_text in enumerate(non_empty_reasons)
+        ]
+
+        timestamp_utc = datetime.now(tz=timezone.utc).isoformat()
+        event_payload: dict[str, Any] = {
+            "type": RECONCILIATION_DISCREPANCY_FENCE_EVENT_TYPE,
+            "event_type": RECONCILIATION_DISCREPANCY_FENCE_EVENT_TYPE,
+            "schema_version": 1,
+            "controlId": "CA-7",
+            "control_id": "CA-7",
+            "fence_epoch": int(fence_epoch),
+            "fence_id": fence_id,
+            "fence_trigger": fence_trigger,
+            "invariant_id": str(result.invariant_id),
+            "account_id": str(self._account_id),
+            "source": str(result.source),
+            "sequence": int(result.sequence),
+            "state_scalar": safe_scalar,
+            "discrepancy_delta": safe_delta,
+            "effective_threshold": safe_threshold,
+            "discrepancy_count": len(non_empty_reasons),
+            "reasons": non_empty_reasons,
+            "discrepancy_digests": discrepancy_digests,
+            "custodian_snapshot_digest": custodian_snapshot_digest,
+            "timestamp_utc": timestamp_utc,
+            "signed_at": (
+                safe_verified_at if safe_verified_at > 0.0 else round(time.time(), 6)
+            ),
+        }
+        if baseline_scalar is not None and math.isfinite(baseline_scalar):
+            event_payload["baseline_scalar"] = float(baseline_scalar)
+        if unsettled_total is not None and math.isfinite(unsettled_total):
+            event_payload["unsettled_total"] = float(unsettled_total)
+        if barrier_floor is not None and math.isfinite(barrier_floor):
+            event_payload["barrier_floor"] = float(barrier_floor)
+
+        try:
+            self._sign_discrepancy_event(event_payload)
+        except Exception as sign_exc:
+            self._evidence_publish_failures += 1
+            governor_metrics().evidence_publish_failure(
+                "reconciliation_discrepancy_fence"
+            )
+            result.evidence_error = str(sign_exc)
+            result.error = f"{primary_error}; fence_signing_failed: {sign_exc}"
+            _attr("reconciliation.evidence_error", result.evidence_error)
+            _attr("reconciliation.error", result.error)
+            raise
+
+        try:
+            commit_res = self._append_discrepancy_evidence(event_payload)
+            result.evidence_record_hash = str(getattr(commit_res, "hash", "") or "")
+            result.evidence_sequence = int(getattr(commit_res, "sequence", 0))
+            _attr("reconciliation.fence_epoch", fence_epoch)
+            _attr("reconciliation.fence_id", fence_id)
+            _attr(
+                "reconciliation.evidence_record_hash",
+                result.evidence_record_hash,
+            )
+        except Exception as exc:
+            self._evidence_publish_failures += 1
+            governor_metrics().evidence_publish_failure(
+                "reconciliation_discrepancy_fence"
+            )
+            result.evidence_error = str(exc)
+            result.error = f"{primary_error}; evidence_append_failed: {exc}"
+            _attr("reconciliation.evidence_error", result.evidence_error)
+            logger.error(
+                "Failed to append RECONCILIATION_DISCREPANCY_FENCE evidence record "
+                "(gateway remains fenced at epoch=%d): %s",
+                fence_epoch,
+                exc,
+            )
+
+        _attr("reconciliation.error", result.error)
+        return result
 
     def _resolve_state_key(self, invariant_id: str, provider: Any) -> str | None:
         source_obj = self._get_source(provider)
@@ -612,6 +1008,7 @@ class GroundTruthReconciler:
             inv_key = reconciled_state_key(result.invariant_id)
             pipe = self._redis.pipeline()
             pipe.setex(inv_key, self._ttl, payload_json)
+            pipe.delete(active_fence_key(result.invariant_id))
             if result.invariant_id == "finance.cash_balance":
                 pipe.setex(
                     _REDIS_KEY_VERIFIED_BALANCE,
@@ -857,12 +1254,19 @@ class GroundTruthReconciler:
                 # state key would bypass the Lua CAS/ledger discipline and
                 # re-anchor the discrepancy baseline to the custodian's own
                 # value, masking the divergence on the next cycle.
-                self._failure_count += 1
-                self._increment_fence_epoch()
-                self._invalidate_redis_verified_state(result.invariant_id)
-                result.error = f"Ground-truth scalar {scalar} is below barrier floor {barrier_floor}"
-                _set_span_attr("reconciliation.error", result.error)
-                return result
+                result.discrepancy_detected = True
+                result.discrepancy_delta = float(barrier_floor - scalar)
+                primary_err = f"Ground-truth scalar {scalar} is below barrier floor {barrier_floor}"
+                return self._fence_gateway_with_evidence(
+                    result,
+                    fence_trigger="barrier_floor_breach",
+                    primary_error=primary_err,
+                    reasons=[primary_err],
+                    discrepancy_delta=float(barrier_floor - scalar),
+                    effective_threshold=0.0,
+                    barrier_floor=float(barrier_floor),
+                    set_span_attr=_set_span_attr,
+                )
 
             if is_snapshot:
                 baseline = self._read_self_reported_baseline(
@@ -901,17 +1305,29 @@ class GroundTruthReconciler:
                         else max(ratio_term, self._discrepancy_abs_floor)
                     )
                     if is_flagged_spike or delta > eff_threshold:
-                        self._failure_count += 1
                         result.discrepancy_detected = True
                         result.discrepancy_delta = delta
-                        self._increment_fence_epoch()
-                        self._invalidate_redis_verified_state(result.invariant_id)
-                        result.error = (
+                        primary_err = (
                             f"Discrepancy spike detected: delta={delta:.2f} > "
                             f"threshold={eff_threshold:.2f}; fence epoch incremented"
                         )
-                        _set_span_attr("reconciliation.error", result.error)
-                        return result
+                        reasons = [
+                            f"discrepancy_delta={delta:.2f} exceeds effective_threshold={eff_threshold:.2f}"
+                        ]
+                        if is_flagged_spike:
+                            reasons.append("provider_flagged_discrepancy_spike")
+                        return self._fence_gateway_with_evidence(
+                            result,
+                            fence_trigger="custodian_discrepancy_spike",
+                            primary_error=primary_err,
+                            reasons=reasons,
+                            discrepancy_delta=delta,
+                            effective_threshold=eff_threshold,
+                            baseline_scalar=baseline,
+                            unsettled_total=unsettled,
+                            barrier_floor=barrier_floor,
+                            set_span_attr=_set_span_attr,
+                        )
 
             _set_span_attr("reconciliation.state_scalar", result.state_scalar)
 
@@ -1012,6 +1428,9 @@ class GroundTruthReconciler:
             client = get_redis_client()._get()
         else:
             client = redis.from_url(redis_url, decode_responses=True)
+        from src.gateway.governance.evidence.stream import EvidenceStreamClient
+
+        evidence_sink = EvidenceStreamClient.from_env()
         provider = _DefaultSimulatedProvider(
             journal=simulated_journal_from_env(
                 client, _DefaultSimulatedProvider.invariant_id
@@ -1021,6 +1440,8 @@ class GroundTruthReconciler:
             provider=provider,
             redis_client=client,
             account_id=account_id,
+            evidence_sink=evidence_sink,
+            evidence_stream_key=evidence_sink.stream_key,
         )
 
 
