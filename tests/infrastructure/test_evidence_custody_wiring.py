@@ -348,9 +348,142 @@ def test_bridge_network_policy_allows_governance_psc() -> None:
         'resource "kubernetes_network_policy_v1" "compliance_bridge_egress_l3_l4"',
     )
     assert 'app = "compliance-bridge"' in block
-    assert "cidr = var.memorystore_governance_psc_cidr" in block
+    assert "cidr = local.governance_valkey_cidr" in block
     assert 'port     = "6379"' in block
-    assert "memorystore_app_psc_cidr" not in block
+    assert "local.app_valkey_cidr" not in block
+    assert "app_valkey_cidr" not in block
+    assert "memorystore_app" not in block
+
+
+def test_datastore_egress_derived_from_live_endpoints_no_static_cidrs() -> None:
+    """POAM-2026-190 (DE-M1..DE-M4, F-10, F-11, F-14, F-15):
+    - No var.memorystore_governance_psc_cidr, var.memorystore_app_psc_cidr, or
+      var.cloud_sql_cidr remains anywhere in infra/targets/gcp-gke/.
+    - No IPv4 CIDR literal for a data store appears in network_policy.tf or any
+      .tfvars profile (only link-local metadata 169.254.169.254/32 and
+      169.254.169.252/32 in network_policy.tf).
+    - default_deny_external_egress references no data-store module or local and
+      holds no 3307/5432/6379 rule (DE-M2).
+    - datastore_egress allows local.governance_valkey_cidr, local.app_valkey_cidr,
+      and local.cloud_sql_cidr derived from the module outputs (DE-M1).
+    - network_policy_spec_hash includes local.cloud_sql_cidr alongside
+      local.governance_valkey_cidr and local.app_valkey_cidr (F-15).
+    - memorystore_valkey/outputs.tf filters on CONNECTION_TYPE_PRIMARY rather than
+      indexing [0].connections[0] (DE-M3).
+    """
+    removed_vars = (
+        "memorystore_governance_psc_cidr",
+        "memorystore_app_psc_cidr",
+        "cloud_sql_cidr",
+    )
+    for path in sorted(_GKE.glob("*")):
+        if path.is_file() and path.suffix in {".tf", ".tfvars"}:
+            content = path.read_text()
+            for var_name in removed_vars:
+                assert f"var.{var_name}" not in content, (
+                    f"{path.name} still references var.{var_name}"
+                )
+                assert re.search(rf'variable\s+"{var_name}"', content) is None, (
+                    f"{path.name} still declares variable {var_name}"
+                )
+                if path.suffix == ".tfvars":
+                    assert re.search(rf"(?m)^\s*{var_name}\s*=", content) is None, (
+                        f"{path.name} still sets removed variable {var_name}"
+                    )
+
+    netpol = _GKE_NETPOL.read_text()
+    assert (
+        'governance_valkey_cidr = "${module.memorystore_governance.primary_endpoint_ip}/32"'
+        in netpol
+    )
+    assert (
+        'app_valkey_cidr        = "${module.memorystore_app.primary_endpoint_ip}/32"'
+        in netpol
+    )
+    assert (
+        'cloud_sql_cidr         = "${module.cloudsql_postgres.private_ip_address}/32"'
+        in netpol
+    )
+
+    # Only link-local metadata /32 CIDRs (or 0.0.0.0/0 in comments) may appear as
+    # IPv4 CIDR literals in network_policy.tf; no data-store CIDR literal is allowed (DE-M1).
+    netpol_code = "\n".join(
+        line for line in netpol.splitlines() if not line.lstrip().startswith("#")
+    )
+    cidrs_in_netpol = set(
+        re.findall(r"\b(?:\d{1,3}\.){3}\d{1,3}/\d{1,2}\b", netpol_code)
+    )
+    assert cidrs_in_netpol <= {"169.254.169.254/32", "169.254.169.252/32"}, (
+        f"Unexpected CIDR literals in network_policy.tf: {cidrs_in_netpol}"
+    )
+
+    # No data-store CIDR literal (10.0.16.*, 10.6.80.*, 10.128.0.*) in any .tfvars profile.
+    forbidden_profile_cidrs = {
+        "10.0.16.0/28",
+        "10.0.16.16/28",
+        "10.6.80.0/20",
+        "10.128.0.0/20",
+    }
+    for tfvars in sorted(_GKE.glob("*.tfvars")):
+        tfvars_code = "\n".join(
+            line
+            for line in tfvars.read_text().splitlines()
+            if not line.lstrip().startswith("#")
+        )
+        found = set(re.findall(r"\b(?:\d{1,3}\.){3}\d{1,3}/\d{1,2}\b", tfvars_code))
+        assert not (found & forbidden_profile_cidrs), (
+            f"{tfvars.name} contains legacy static data-store CIDR: {found & forbidden_profile_cidrs}"
+        )
+
+    # DE-M2: default_deny_external_egress references no data-store module or local
+    # and holds no 3307/5432/6379 port rule.
+    default_deny = _block(
+        netpol,
+        'resource "kubernetes_network_policy_v1" "default_deny_external_egress"',
+    )
+    for forbidden_ref in (
+        "memorystore_governance",
+        "memorystore_app",
+        "cloudsql_postgres",
+        "governance_valkey_cidr",
+        "app_valkey_cidr",
+        "cloud_sql_cidr",
+        '"3307"',
+        '"5432"',
+        '"6379"',
+    ):
+        assert forbidden_ref not in default_deny, (
+            f"default_deny_external_egress must not contain {forbidden_ref} (DE-M2)"
+        )
+
+    # DE-M1: datastore_egress holds the three derived locals on 3307/5432/6379.
+    datastore_egress = _block(
+        netpol,
+        'resource "kubernetes_network_policy_v1" "datastore_egress"',
+    )
+    assert "local.cloud_sql_cidr" in datastore_egress
+    assert "local.governance_valkey_cidr" in datastore_egress
+    assert "local.app_valkey_cidr" in datastore_egress
+    for port in ('"3307"', '"5432"', '"6379"'):
+        assert port in datastore_egress
+
+    # F-15: network_policy_spec_hash includes local.cloud_sql_cidr.
+    spec_hash_block = _block(netpol, "network_policy_spec_hash = sha256(jsonencode(")
+    assert "local.governance_valkey_cidr" in spec_hash_block
+    assert "local.app_valkey_cidr" in spec_hash_block
+    assert "local.cloud_sql_cidr" in spec_hash_block
+
+    # DE-M3: memorystore_valkey/outputs.tf filters on CONNECTION_TYPE_PRIMARY
+    # rather than indexing [0].connections[0].
+    valkey_outputs = (_REPO / "infra/modules/memorystore_valkey/outputs.tf").read_text()
+    for out_name in ("primary_endpoint_ip", "primary_endpoint_port"):
+        out_block = _block(valkey_outputs, f'output "{out_name}"')
+        assert "CONNECTION_TYPE_PRIMARY" in out_block, (
+            f"{out_name} must filter on CONNECTION_TYPE_PRIMARY (DE-M3)"
+        )
+        assert "endpoints[0].connections[0]" not in out_block, (
+            f"{out_name} must not index endpoints[0].connections[0] (DE-M3)"
+        )
 
 
 def test_bridge_fqdn_policy_allows_gcs_and_kms() -> None:

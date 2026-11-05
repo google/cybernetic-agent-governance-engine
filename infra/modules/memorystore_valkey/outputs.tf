@@ -23,15 +23,30 @@ output "instance_id" {
 }
 
 # Pitfall guard: The module exports only the primary endpoint to consumers.
-# Read-replica endpoints are never exported.
+# Read-replica endpoints are never exported. Filter by CONNECTION_TYPE_PRIMARY
+# rather than assuming the primary connection sits at index [0][0] (F-14).
 output "primary_endpoint_ip" {
   description = "Primary endpoint IP address via PSC"
-  value       = try(google_memorystore_instance.instance.endpoints[0].connections[0].psc_auto_connection[0].ip_address, null)
+  value = try(
+    [
+      for conn in flatten([for ep in google_memorystore_instance.instance.endpoints : ep.connections]) :
+      conn.psc_auto_connection[0].ip_address
+      if try(conn.psc_auto_connection[0].connection_type, "") == "CONNECTION_TYPE_PRIMARY"
+    ][0],
+    ""
+  )
 }
 
 output "primary_endpoint_port" {
   description = "Primary endpoint port via PSC"
-  value       = try(google_memorystore_instance.instance.endpoints[0].connections[0].psc_auto_connection[0].port, 6379)
+  value = try(
+    [
+      for conn in flatten([for ep in google_memorystore_instance.instance.endpoints : ep.connections]) :
+      conn.psc_auto_connection[0].port
+      if try(conn.psc_auto_connection[0].connection_type, "") == "CONNECTION_TYPE_PRIMARY"
+    ][0],
+    6379
+  )
 }
 
 output "endpoints" {

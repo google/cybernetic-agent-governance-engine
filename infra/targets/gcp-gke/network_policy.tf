@@ -28,6 +28,11 @@
 #      pre-change connection outlives a policy tightening.
 
 locals {
+  # Derived /32 data-store egress CIDRs from the live resource endpoints (POAM-2026-190).
+  governance_valkey_cidr = "${module.memorystore_governance.primary_endpoint_ip}/32"
+  app_valkey_cidr        = "${module.memorystore_app.primary_endpoint_ip}/32"
+  cloud_sql_cidr         = "${module.cloudsql_postgres.private_ip_address}/32"
+
   # Canonical GKE FQDNNetworkPolicy (networking.gke.io/v1alpha1) manifests.
   # Parameterized strictly by tfvars FQDNs; identical structure in every posture.
   fqdn_network_policies = {
@@ -251,8 +256,9 @@ locals {
   # Any change to CIDRs, FQDNs, or policy rules changes this digest and forces
   # a rollout restart of selected workloads (§5.3, §7).
   network_policy_spec_hash = sha256(jsonencode({
-    governance_psc_cidr = var.memorystore_governance_psc_cidr
-    app_psc_cidr        = var.memorystore_app_psc_cidr
+    governance_psc_cidr = local.governance_valkey_cidr
+    app_psc_cidr        = local.app_valkey_cidr
+    cloud_sql_cidr      = local.cloud_sql_cidr
     kube_dns_cidr       = var.kube_dns_cidr
     fqdn_policies       = local.fqdn_network_policies
   }))
@@ -349,39 +355,6 @@ resource "kubernetes_network_policy_v1" "default_deny_external_egress" {
       }
     }
 
-    # Cloud SQL VPC peering egress (Cloud SQL Proxy and PostgreSQL)
-    egress {
-      to {
-        ip_block {
-          cidr = var.cloud_sql_cidr
-        }
-      }
-      ports {
-        protocol = "TCP"
-        port     = "3307"
-      }
-      ports {
-        protocol = "TCP"
-        port     = "5432"
-      }
-    }
-
-    # Memorystore Valkey / Redis egress
-    egress {
-      dynamic "to" {
-        for_each = distinct([var.memorystore_governance_psc_cidr, var.memorystore_app_psc_cidr])
-        content {
-          ip_block {
-            cidr = to.value
-          }
-        }
-      }
-      ports {
-        protocol = "TCP"
-        port     = "6379"
-      }
-    }
-
     # GKE compute metadata server (HTTP 80) for Workload Identity
     egress {
       to {
@@ -405,6 +378,66 @@ resource "kubernetes_network_policy_v1" "default_deny_external_egress" {
       ports {
         protocol = "TCP"
         port     = "988"
+      }
+    }
+  }
+}
+
+# ─── 1b. Namespace-Wide Data-Store Egress (Derived /32 Endpoints, POAM-2026-190) ─
+# Separated from default_deny_external_egress so the baseline default-deny policy
+# has no dependency on the data-store modules and is created immediately after
+# the namespace. Retains namespace-wide pod_selector {} for behavior parity until
+# POAM-2026-195 (PR-7b) narrows data-store egress per workload.
+
+resource "kubernetes_network_policy_v1" "datastore_egress" {
+  metadata {
+    name      = "datastore-egress"
+    namespace = module.namespace.name
+    labels = {
+      "app.kubernetes.io/managed-by" = "terraform"
+      "cage.io/component"            = "z3n-egress"
+    }
+    annotations = {
+      "compliance.nist.gov/control"  = "SC-7,AC-4"
+      "compliance.nist.gov/standard" = "SP-800-53-Rev5"
+      "cage.io/poam"                 = "POAM-2026-190"
+    }
+  }
+
+  spec {
+    pod_selector {}
+    policy_types = ["Egress"]
+
+    # Cloud SQL private IP (/32) egress (Cloud SQL Proxy 3307 and PostgreSQL 5432)
+    egress {
+      to {
+        ip_block {
+          cidr = local.cloud_sql_cidr
+        }
+      }
+      ports {
+        protocol = "TCP"
+        port     = "3307"
+      }
+      ports {
+        protocol = "TCP"
+        port     = "5432"
+      }
+    }
+
+    # Memorystore Valkey primary PSC endpoint (/32) egress on TLS port 6379
+    egress {
+      dynamic "to" {
+        for_each = distinct([local.governance_valkey_cidr, local.app_valkey_cidr])
+        content {
+          ip_block {
+            cidr = to.value
+          }
+        }
+      }
+      ports {
+        protocol = "TCP"
+        port     = "6379"
       }
     }
   }
@@ -480,7 +513,7 @@ resource "kubernetes_network_policy_v1" "gateway_egress_l3_l4" {
     egress {
       to {
         ip_block {
-          cidr = var.memorystore_governance_psc_cidr
+          cidr = local.governance_valkey_cidr
         }
       }
       ports {
@@ -625,7 +658,7 @@ resource "kubernetes_network_policy_v1" "compliance_bridge_egress_l3_l4" {
     egress {
       to {
         ip_block {
-          cidr = var.memorystore_governance_psc_cidr
+          cidr = local.governance_valkey_cidr
         }
       }
       ports {
@@ -748,7 +781,7 @@ resource "kubernetes_network_policy_v1" "financial_advisor_egress_internal_only"
     egress {
       to {
         ip_block {
-          cidr = var.memorystore_app_psc_cidr
+          cidr = local.app_valkey_cidr
         }
       }
       ports {
@@ -943,7 +976,7 @@ resource "kubernetes_network_policy_v1" "reconciliation_worker_egress" {
     egress {
       to {
         ip_block {
-          cidr = var.memorystore_governance_psc_cidr
+          cidr = local.governance_valkey_cidr
         }
       }
       ports {
@@ -1102,6 +1135,7 @@ resource "terraform_data" "network_policy_workload_rollout" {
 
   depends_on = [
     kubernetes_network_policy_v1.default_deny_external_egress,
+    kubernetes_network_policy_v1.datastore_egress,
     kubernetes_network_policy_v1.gateway_egress_l3_l4,
     kubernetes_network_policy_v1.compliance_bridge_egress_l3_l4,
     kubernetes_network_policy_v1.financial_advisor_egress_internal_only,
