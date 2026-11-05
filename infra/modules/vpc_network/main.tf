@@ -28,11 +28,11 @@ locals {
 
   default_secondary_ranges = concat(
     var.pod_cidr != "" ? [{
-      range_name    = "gke-pods"
+      range_name    = var.pod_range_name
       ip_cidr_range = var.pod_cidr
     }] : [],
     var.service_cidr != "" ? [{
-      range_name    = "gke-services"
+      range_name    = var.service_range_name
       ip_cidr_range = var.service_cidr
     }] : []
   )
@@ -150,7 +150,7 @@ resource "google_compute_firewall" "allow_https_egress" {
 }
 
 # ─── Private Services Access (PSA) Peering ───────────────────────────────────
-# Required for Cloud SQL and Memorystore Redis Private IP peering via PSA.
+# Required for Cloud SQL Private IP peering via PSA.
 
 resource "google_compute_global_address" "private_ip_alloc" {
   count         = var.enable_psa ? 1 : 0
@@ -167,4 +167,23 @@ resource "google_service_networking_connection" "private_service_access" {
   network                 = google_compute_network.vpc.id
   service                 = "servicenetworking.googleapis.com"
   reserved_peering_ranges = [google_compute_global_address.private_ip_alloc[0].name]
+}
+
+# ─── Network Connectivity Service Connection Policy (Memorystore PSC) ────────
+# Required for Memorystore for Valkey PSC auto-created endpoints (EF7c).
+
+resource "google_network_connectivity_service_connection_policy" "memorystore" {
+  count         = var.enable_memorystore_psc ? 1 : 0
+  name          = "${local.network_name}-memorystore-policy"
+  location      = var.region
+  project       = var.project_id
+  service_class = "gcp-memorystore"
+  description   = "SC-7: PSC endpoint policy for Memorystore for Valkey on ${local.network_name} (EF7c, POAM-2026-173)"
+  network       = "projects/${var.project_id}/global/networks/${google_compute_network.vpc.name}"
+
+  psc_config {
+    subnetworks = [
+      "projects/${var.project_id}/regions/${var.region}/subnetworks/${google_compute_subnetwork.subnet.name}",
+    ]
+  }
 }

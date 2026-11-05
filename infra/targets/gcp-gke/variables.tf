@@ -1006,8 +1006,34 @@ variable "redis_url" {
   default     = ""
 }
 variable "master_ipv4_cidr_block" { default = "172.16.0.0/28" }
-variable "pod_cidr" { default = "10.100.0.0/14" }
-variable "service_cidr" { default = "10.104.0.0/20" }
+
+variable "pod_cidr" {
+  description = "Secondary CIDR range for GKE pods. In create mode (create_vpc_network = true), module.vpc_network allocates this range on the subnetwork and module.gke attaches to it by name. In BYO mode (create_vpc_network = false) with existing named secondary ranges (cluster_secondary_range_name != null), set pod_cidr = null so the value is not silently discarded (POAM-2026-173)."
+  type        = string
+  default     = "10.100.0.0/14"
+  nullable    = true
+}
+
+variable "service_cidr" {
+  description = "Secondary CIDR range for GKE services. In create mode (create_vpc_network = true), module.vpc_network allocates this range on the subnetwork and module.gke attaches to it by name. In BYO mode (create_vpc_network = false) with existing named secondary ranges (services_secondary_range_name != null), set service_cidr = null so the value is not silently discarded (POAM-2026-173)."
+  type        = string
+  default     = "10.104.0.0/20"
+  nullable    = true
+}
+
+variable "cluster_secondary_range_name" {
+  description = "Secondary IP range name for GKE pods. In create mode (create_vpc_network = true), overrides the default 'gke-pods' range name created by module.vpc_network. In BYO mode (create_vpc_network = false), names an existing secondary range on var.subnetwork (requires pod_cidr = null; when null, GKE allocates pod_cidr)."
+  type        = string
+  default     = null
+  nullable    = true
+}
+
+variable "services_secondary_range_name" {
+  description = "Secondary IP range name for GKE services. In create mode (create_vpc_network = true), overrides the default 'gke-services' range name created by module.vpc_network. In BYO mode (create_vpc_network = false), names an existing secondary range on var.subnetwork (requires service_cidr = null; when null, GKE allocates service_cidr)."
+  type        = string
+  default     = null
+  nullable    = true
+}
 
 # DEP-09: Remove the "US_FED" default from cage_deployment_region.
 # A missing or misconfigured value previously silently applied US_FED compliance
@@ -1055,13 +1081,13 @@ variable "memorystore_app_instance_id" {
 # ─── Track 6f VPC & Perimeter Configuration (§5.4) ────────────────────────────
 
 variable "network" {
-  description = "VPC network name or self_link for GKE, Cloud SQL, and Memorystore (§5.4)"
+  description = "VPC network name for GKE, the Linkerd webhook firewall, Cloud SQL, and Memorystore (§5.4, POAM-2026-173). When create_vpc_network = true, overrides 'cage-vpc-<environment>' if set to a non-'default' value. When create_vpc_network = false (BYO VPC), names the existing VPC network, which must already have Private Services Access (PSA) peering for Cloud SQL and a gcp-memorystore Network Connectivity Service Connection Policy covering var.subnetwork."
   type        = string
   default     = "default"
 }
 
 variable "subnetwork" {
-  description = "VPC subnetwork name or self_link for GKE (§5.4)"
+  description = "VPC subnetwork name for GKE (§5.4, POAM-2026-173). When create_vpc_network = true, overrides 'cage-subnet-<environment>' if set to a non-'default' value. When create_vpc_network = false (BYO VPC), names the existing subnetwork in var.region, which must be listed in the BYO VPC's gcp-memorystore Service Connection Policy psc_config.subnetworks."
   type        = string
   default     = "default"
 }
@@ -1073,7 +1099,7 @@ variable "subnet_cidr" {
 }
 
 variable "create_vpc_network" {
-  description = "Provision dedicated VPC network with GKE pod/service secondary ranges via module.vpc_network (§5.4)"
+  description = "Provision dedicated VPC network with GKE pod/service secondary ranges, Private Services Access (PSA) peering for Cloud SQL, and a gcp-memorystore Network Connectivity Service Connection Policy via module.vpc_network (§5.4, POAM-2026-173). When false (BYO VPC), var.network and var.subnetwork must already provide PSA peering and a gcp-memorystore Service Connection Policy covering var.subnetwork."
   type        = bool
   default     = true
 }

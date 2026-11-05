@@ -49,12 +49,26 @@ variable "pod_cidr" {
   description = "Secondary CIDR range for GKE pods"
   type        = string
   default     = ""
+  nullable    = false
 }
 
 variable "service_cidr" {
   description = "Secondary CIDR range for GKE services"
   type        = string
   default     = ""
+  nullable    = false
+}
+
+variable "pod_range_name" {
+  description = "Name of the secondary IP range for GKE pods when pod_cidr is set"
+  type        = string
+  default     = "gke-pods"
+}
+
+variable "service_range_name" {
+  description = "Name of the secondary IP range for GKE services when service_cidr is set"
+  type        = string
+  default     = "gke-services"
 }
 
 variable "secondary_ip_ranges" {
@@ -73,7 +87,7 @@ variable "enable_audit_logging" {
 }
 
 variable "enable_psa" {
-  description = "Enable Private Services Access (PSA) peering for Cloud SQL / Memorystore Redis"
+  description = "Enable Private Services Access (PSA) peering for Cloud SQL private IP"
   type        = bool
   default     = true
 }
@@ -82,6 +96,12 @@ variable "psa_prefix_length" {
   description = "Prefix length for Private Services Access peering IP allocation"
   type        = number
   default     = 16
+}
+
+variable "enable_memorystore_psc" {
+  description = "Enable Network Connectivity Service Connection Policy (gcp-memorystore) for Memorystore for Valkey PSC auto-created endpoints"
+  type        = bool
+  default     = true
 }
 
 variable "enable_default_deny" {

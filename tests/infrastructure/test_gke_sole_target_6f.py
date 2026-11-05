@@ -802,9 +802,8 @@ class TestPerimeterControls:
     ) -> None:
         perimeter_tf = (GKE_TARGET_DIR / "perimeter.tf").read_text(encoding="utf-8")
 
-        # 1. VPC & Private Google Access module
-        assert 'module "vpc_network"' in perimeter_tf
-        assert 'source = "../../modules/vpc_network"' in perimeter_tf
+        # 1. VPC & Private Google Access module + consumer bindings (POAM-2026-173 / F-13)
+        self._assert_vpc_network_module_and_consumer_bindings(perimeter_tf)
 
         # 2. Binary Authorization policy & attestor
         assert (
@@ -849,6 +848,137 @@ class TestPerimeterControls:
         # 5. Cloud DNS managed zone & A record
         assert 'data "google_dns_managed_zone" "cage_zone"' in perimeter_tf
         assert 'resource "google_dns_record_set" "gateway_a_record"' in perimeter_tf
+
+    @staticmethod
+    def _extract_hcl_block(hcl_text: str, header: str) -> str:
+        idx = hcl_text.find(header)
+        assert idx != -1, f"Expected HCL block header {header!r}"
+        brace_start = hcl_text.find("{", idx)
+        assert brace_start != -1, f"Missing opening brace for {header!r}"
+        depth = 0
+        for pos in range(brace_start, len(hcl_text)):
+            ch = hcl_text[pos]
+            if ch == "{":
+                depth += 1
+            elif ch == "}":
+                depth -= 1
+                if depth == 0:
+                    return hcl_text[idx : pos + 1]
+        raise AssertionError(f"Unbalanced braces in HCL block {header!r}")
+
+    def _assert_vpc_network_module_and_consumer_bindings(
+        self, perimeter_tf: str
+    ) -> None:
+        vpc_module_block = self._extract_hcl_block(perimeter_tf, 'module "vpc_network"')
+        assert 'source = "../../modules/vpc_network"' in vpc_module_block
+        assert "count  = var.create_vpc_network ? 1 : 0" in vpc_module_block
+        assert "enable_psa             = true" in vpc_module_block
+        assert "enable_memorystore_psc = true" in vpc_module_block
+        assert (
+            'pod_range_name         = coalesce(var.cluster_secondary_range_name, "gke-pods")'
+            in vpc_module_block
+        )
+        assert (
+            'service_range_name     = coalesce(var.services_secondary_range_name, "gke-services")'
+            in vpc_module_block
+        )
+
+        # Verify perimeter.tf effective network/range locals (including BYO range-name forwarding, VB-M3)
+        for expected_local in (
+            "effective_network_name    = var.create_vpc_network ? module.vpc_network[0].network_name : var.network",
+            "effective_subnetwork_name = var.create_vpc_network ? module.vpc_network[0].subnetwork_name : var.subnetwork",
+            "cloudsql_network_name     = var.create_vpc_network ? module.vpc_network[0].private_service_access_network_name : var.network",
+            "memorystore_network_name  = var.create_vpc_network ? module.vpc_network[0].memorystore_psc_network_name : var.network",
+            "gke_pods_range_name       = var.create_vpc_network ? module.vpc_network[0].pod_secondary_range_name : var.cluster_secondary_range_name",
+            "gke_services_range_name   = var.create_vpc_network ? module.vpc_network[0].service_secondary_range_name : var.services_secondary_range_name",
+            "gke_pod_cidr              = var.create_vpc_network ? null : var.pod_cidr",
+            "gke_service_cidr          = var.create_vpc_network ? null : var.service_cidr",
+        ):
+            assert expected_local in perimeter_tf, (
+                f"perimeter.tf missing expected VPC binding local: {expected_local}"
+            )
+
+        # Verify vpc_network module SCP count uses var.enable_memorystore_psc, not var.enable_psa (VB-M1)
+        vpc_mod_main = (
+            REPO_ROOT / "infra" / "modules" / "vpc_network" / "main.tf"
+        ).read_text(encoding="utf-8")
+        scp_block = self._extract_hcl_block(
+            vpc_mod_main,
+            'resource "google_network_connectivity_service_connection_policy" "memorystore"',
+        )
+        assert "count         = var.enable_memorystore_psc ? 1 : 0" in scp_block
+        assert "var.enable_psa" not in scp_block
+        assert 'service_class = "gcp-memorystore"' in scp_block
+
+        # Verify memorystore_valkey module uses desired_auto_created_endpoints and has no ignore_changes (VB-M2)
+        memorystore_main = (
+            REPO_ROOT / "infra" / "modules" / "memorystore_valkey" / "main.tf"
+        ).read_text(encoding="utf-8")
+        assert "desired_auto_created_endpoints" in memorystore_main
+        assert "desired_psc_auto_connections" not in memorystore_main
+        assert "ignore_changes" not in memorystore_main
+
+        # Verify gcp_gke_cluster module enforces the no-discard secondary range preconditions (VB-M4)
+        # and does not mask ip_allocation_policy / network / subnetwork in ignore_changes
+        gke_mod_main = (GKE_CLUSTER_MODULE_DIR / "main.tf").read_text(encoding="utf-8")
+        assert (
+            "condition     = var.cluster_secondary_range_name == null || var.pod_cidr == null"
+            in gke_mod_main
+        )
+        assert (
+            "condition     = var.services_secondary_range_name == null || var.service_cidr == null"
+            in gke_mod_main
+        )
+        gke_cluster_block = self._extract_hcl_block(
+            gke_mod_main, 'resource "google_container_cluster" "primary"'
+        )
+        ig_start = gke_cluster_block.find("ignore_changes = [")
+        assert ig_start != -1, (
+            "Expected ignore_changes list in google_container_cluster.primary"
+        )
+        ig_end = gke_cluster_block.find("]", ig_start)
+        assert ig_end != -1
+        gke_ignore_list = gke_cluster_block[ig_start : ig_end + 1]
+        for forbidden_attr in ("ip_allocation_policy", "network", "subnetwork"):
+            assert re.search(rf"\b{forbidden_attr}\b", gke_ignore_list) is None, (
+                f"{forbidden_attr} must never appear in google_container_cluster.primary ignore_changes"
+            )
+
+        # Verify target main.tf binds all five consumers and drops redundant depends_on = [module.gke] (VB-M5, VB-M8, F-08)
+        target_main = (GKE_TARGET_DIR / "main.tf").read_text(encoding="utf-8")
+
+        gke_call = self._extract_hcl_block(target_main, 'module "gke"')
+        assert (
+            "network                       = local.effective_network_name" in gke_call
+        )
+        assert (
+            "subnetwork                    = local.effective_subnetwork_name"
+            in gke_call
+        )
+        assert "cluster_secondary_range_name  = local.gke_pods_range_name" in gke_call
+        assert (
+            "services_secondary_range_name = local.gke_services_range_name" in gke_call
+        )
+        assert "pod_cidr                      = local.gke_pod_cidr" in gke_call
+        assert "service_cidr                  = local.gke_service_cidr" in gke_call
+
+        mesh_call = self._extract_hcl_block(target_main, 'module "service_mesh"')
+        assert "network                = local.effective_network_name" in mesh_call
+
+        sql_call = self._extract_hcl_block(target_main, 'module "cloudsql_postgres"')
+        assert "authorized_network = local.cloudsql_network_name" in sql_call
+        assert "local.effective_network_name" not in sql_call
+        assert "depends_on" not in sql_call
+
+        for ms_module in (
+            'module "memorystore_governance"',
+            'module "memorystore_app"',
+        ):
+            ms_call = self._extract_hcl_block(target_main, ms_module)
+            assert re.search(
+                r"\bnetwork_id\s*=\s*local\.memorystore_network_name\b", ms_call
+            )
+            assert "depends_on" not in ms_call
 
     def test_ingress_manifest_includes_cloud_armor_backend_config(self) -> None:
         docs = _load_yaml_docs(K8S_DIR / "ingress.yaml")

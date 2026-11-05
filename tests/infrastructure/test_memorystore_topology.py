@@ -102,5 +102,23 @@ def test_primary_endpoint_only_exported() -> None:
     """Pitfall guard: Memorystore module must export only primary endpoint, no read replicas."""
     valkey_outputs_text = _VALKEY_OUTPUTS.read_text()
     assert 'output "primary_endpoint_ip"' in valkey_outputs_text
+    assert 'output "psc_network"' in valkey_outputs_text
     assert "read_replica" not in valkey_outputs_text
     assert "replica_endpoint" not in valkey_outputs_text
+
+
+def test_memorystore_psc_network_binding_and_no_ignore_changes() -> None:
+    """POAM-2026-173 (F-02, F-08): Memorystore binds to SCP-gated custom VPC without ignore_changes."""
+    valkey_main_text = _VALKEY_MAIN.read_text()
+    assert "desired_auto_created_endpoints" in valkey_main_text
+    assert "network    = local.network_link" in valkey_main_text
+    assert "project_id = var.project_id" in valkey_main_text
+    assert "desired_psc_auto_connections" not in valkey_main_text
+    assert "ignore_changes" not in valkey_main_text
+
+    gke_main_text = _GKE_MAIN.read_text()
+    for mod_name in ("memorystore_governance", "memorystore_app"):
+        block = _extract_module_block(mod_name, gke_main_text)
+        assert re.search(r"\bnetwork_id\s*=\s*local\.memorystore_network_name\b", block)
+        assert "var.network" not in block
+        assert "depends_on" not in block

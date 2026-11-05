@@ -89,3 +89,33 @@ output "node_service_account_email" {
   description = "Dedicated least-privilege Google Service Account email bound to all GKE node_config blocks (AC-6, POAM-2026-187)"
   value       = local.node_service_account_email
 }
+
+output "network" {
+  description = "VPC network the GKE cluster is planned on"
+  value       = google_container_cluster.primary.network
+}
+
+output "subnetwork" {
+  description = "VPC subnetwork the GKE cluster is planned on"
+  value       = google_container_cluster.primary.subnetwork
+}
+
+output "cluster_secondary_range_name" {
+  description = "Secondary IP range name for GKE pods on google_container_cluster.primary"
+  value       = google_container_cluster.primary.ip_allocation_policy[0].cluster_secondary_range_name
+}
+
+output "services_secondary_range_name" {
+  description = "Secondary IP range name for GKE services on google_container_cluster.primary"
+  value       = google_container_cluster.primary.ip_allocation_policy[0].services_secondary_range_name
+}
+
+output "cluster_ipv4_cidr_block" {
+  description = "Pod IPv4 CIDR block on google_container_cluster.primary"
+  value       = google_container_cluster.primary.ip_allocation_policy[0].cluster_ipv4_cidr_block
+}
+
+output "services_ipv4_cidr_block" {
+  description = "Services IPv4 CIDR block on google_container_cluster.primary"
+  value       = google_container_cluster.primary.ip_allocation_policy[0].services_ipv4_cidr_block
+}

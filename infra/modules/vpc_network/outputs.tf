@@ -66,3 +66,40 @@ output "psa_address_name" {
   description = "Name of the global reserved address for PSA"
   value       = try(google_compute_global_address.private_ip_alloc[0].name, null)
 }
+
+output "private_service_access_network_name" {
+  description = "VPC network name gated on the Private Services Access peering connection for Cloud SQL"
+  value       = var.enable_psa ? google_compute_network.vpc.name : null
+  depends_on  = [google_service_networking_connection.private_service_access]
+}
+
+output "memorystore_psc_network_name" {
+  description = "VPC network name gated on the Network Connectivity Service Connection Policy for Memorystore PSC"
+  value       = var.enable_memorystore_psc ? google_compute_network.vpc.name : null
+  depends_on  = [google_network_connectivity_service_connection_policy.memorystore]
+}
+
+output "pod_secondary_range_name" {
+  description = "Pod secondary IP range name read back from google_compute_subnetwork.subnet"
+  value       = one([for r in google_compute_subnetwork.subnet.secondary_ip_range : r.range_name if r.range_name == var.pod_range_name])
+}
+
+output "service_secondary_range_name" {
+  description = "Service secondary IP range name read back from google_compute_subnetwork.subnet"
+  value       = one([for r in google_compute_subnetwork.subnet.secondary_ip_range : r.range_name if r.range_name == var.service_range_name])
+}
+
+output "memorystore_service_connection_policy_id" {
+  description = "ID of the Network Connectivity Service Connection Policy for Memorystore PSC"
+  value       = one(google_network_connectivity_service_connection_policy.memorystore[*].id)
+}
+
+output "memorystore_service_connection_policy_network" {
+  description = "Network URI on the Memorystore Service Connection Policy"
+  value       = one(google_network_connectivity_service_connection_policy.memorystore[*].network)
+}
+
+output "memorystore_service_connection_policy_subnetworks" {
+  description = "Subnetwork URIs on the Memorystore Service Connection Policy psc_config"
+  value       = one([for m in google_network_connectivity_service_connection_policy.memorystore : m.psc_config[0].subnetworks])
+}
