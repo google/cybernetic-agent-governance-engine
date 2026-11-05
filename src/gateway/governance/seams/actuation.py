@@ -63,7 +63,7 @@ class ExecutionClearance:
     Per Implementation Plan v2 §2.5, `issued_at` and `correlation_id` are
     externally-supplied with provenance flags to keep both Q6 branches open.
 
-    v3.0 Routing Extensions (Archytan Vector 3):
+    v3.0 Routing Extensions (actuator_01 Vector 3):
         executor_id: Identifies the downstream actuator responsible for execution.
         target_route: Resource locator for the execution endpoint (URI scheme).
         consequence_ceiling: Maximum consequence tier permitted for this clearance.
@@ -98,7 +98,7 @@ class ExecutionClearance:
     # Contains the validated parameters needed to execute the action
     params: dict = field(default_factory=dict)
 
-    # v3.0 Routing and Consequence Boundary (Archytan Vector 3 Integration)
+    # v3.0 Routing and Consequence Boundary (actuator_01 Vector 3 Integration)
     executor_id: str = "actuator_01"
     """Downstream actuator identifier (e.g., 'actuator_01', 'domain_actuator')."""
 
@@ -108,7 +108,7 @@ class ExecutionClearance:
     consequence_ceiling: str = "LOW_INFORMATIONAL"
     """Maximum permitted consequence tier for this clearance."""
 
-    # Receipt and Authority Graph Anchors (Archytan Wire Realignment Phase 1)
+    # Receipt and Authority Graph Anchors (actuator_01 Wire Realignment Phase 1)
     receipt_id: str = ""
     """Upstream receipt identifier linking to attestation/normative baseline."""
 

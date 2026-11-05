@@ -16,7 +16,7 @@
 Normative Provider Seam — Vendor-Neutral Compliance Interface.
 
 This module defines the contract between CAGE's governance kernel and external
-normative compliance providers (FlowSignal, Provider 03, Provider 06, etc.).
+normative compliance providers (Provider 01, Provider 03, Provider 06, etc.).
 
 By extracting these symbols into a dedicated seam module with zero kernel imports,
 we eliminate the circular dependency that previously forced provider_01, provider_03,

@@ -13,8 +13,8 @@
 # limitations under the License.
 
 """
-provider.py — FlowSignal Normative Compliance Provider
-======================================================
+provider.py — Provider 01 Normative Compliance Provider
+=======================================================
 
 Production normative provider backed by external cloud API.
 Extracted from ``src/gateway/governance/normative_provider.py`` for
@@ -31,12 +31,12 @@ Phase 3 v0.2 Schema Reconciliation
 Provider now sends the full 37-field `CageAuthorityDetermineRequest` payload
 to the `/cage/validate` endpoint (superseding the legacy 7-field `/validate/fria`).
 
-See: docs/partners/provider_01/FLOWSIGNAL_PHASE3_V02_SCHEMA.md § 2 for complete schema.
+See: src/integrations/provider_01/README.md for complete schema.
 
 Authentication
 --------------
 Dual-header authentication supported for Cloud Run DRS ingress:
-  - Authorization: Bearer {key} (FlowSignal application API key)
+  - Authorization: Bearer {key} (Provider 01 application API key)
   - X-Serverless-Authorization: Bearer {token} (Google Cloud IAM identity token)
 
 Key sourced from CAGE_NORMATIVE_API_KEY_SECRET (direct value or
@@ -51,9 +51,9 @@ Environment variables
   CAGE_NORMATIVE_GCP_ID_TOKEN           — Google IAM identity token for Cloud Run DRS (optional)
   CAGE_NORMATIVE_GATE_TIMEOUT_SECONDS   — Per-request timeout (default: 5)
   CAGE_NORMATIVE_VALIDATE_PATH          — Validation endpoint path (default: /cage/validate)
-  FLOWSIGNAL_CA_BUNDLE                  — Optional custom CA bundle path for mTLS verification
-  FLOWSIGNAL_CLIENT_CERT                — Optional client certificate path for mTLS authentication
-  FLOWSIGNAL_CLIENT_KEY                 — Optional client private key path for mTLS authentication
+  PROVIDER_01_CA_BUNDLE                 — Optional custom CA bundle path for mTLS verification
+  PROVIDER_01_CLIENT_CERT               — Optional client certificate path for mTLS authentication
+  PROVIDER_01_CLIENT_KEY                — Optional client private key path for mTLS authentication
 
 Status
 ------
@@ -99,35 +99,35 @@ _VALIDATE_PATH: str = (
     .split("#")[0]
     .strip()
 )
-_CA_BUNDLE: str = os.environ.get("FLOWSIGNAL_CA_BUNDLE", "").split("#")[0].strip()
-_CLIENT_CERT: str = os.environ.get("FLOWSIGNAL_CLIENT_CERT", "").split("#")[0].strip()
-_CLIENT_KEY: str = os.environ.get("FLOWSIGNAL_CLIENT_KEY", "").split("#")[0].strip()
+_CA_BUNDLE: str = os.environ.get("PROVIDER_01_CA_BUNDLE", "").split("#")[0].strip()
+_CLIENT_CERT: str = os.environ.get("PROVIDER_01_CLIENT_CERT", "").split("#")[0].strip()
+_CLIENT_KEY: str = os.environ.get("PROVIDER_01_CLIENT_KEY", "").split("#")[0].strip()
 
 # ---------------------------------------------------------------------------
-# FlowSignal Decision Values (tri-state)
+# Provider 01 Decision Values (tri-state)
 # ---------------------------------------------------------------------------
 
-_FLOWSIGNAL_ALLOW = "ALLOW"
-_FLOWSIGNAL_REFUSE = "REFUSE"
-_FLOWSIGNAL_ESCALATE = "ESCALATE"
+_PROVIDER_01_ALLOW = "ALLOW"
+_PROVIDER_01_REFUSE = "REFUSE"
+_PROVIDER_01_ESCALATE = "ESCALATE"
 
-# Finding codes for FlowSignal decision mapping
-FINDING_CODE_FLOWSIGNAL_REFUSE = "FLOWSIGNAL_REFUSE"
+# Finding codes for Provider 01 decision mapping
+FINDING_CODE_PROVIDER_01_REFUSE = "PROVIDER_01_REFUSE"
 FINDING_CODE_EXTERNAL_HOLD = "EXTERNAL_HOLD"
 FINDING_CODE_PARSE_ERROR = "PARSE_ERROR"
 FINDING_CODE_TLS_CONFIG_ERROR = "TLS_CONFIG_ERROR"
 
 
-async def _map_flowsignal_decision(
+async def _map_provider_01_decision(
     decision: str,
     data: dict[str, Any],
     action_payload: dict[str, Any],
     *,
     magnitudes: ConsequenceMagnitudes | None,
 ) -> tuple[bool, list[dict[str, Any]]]:
-    """Map FlowSignal tri-state decision to CAGE (admitted, findings).
+    """Map Provider 01 tri-state decision to CAGE (admitted, findings).
 
-    This implements the ESCALATE contract mapping per §3.1 of the FlowSignal
+    This implements the ESCALATE contract mapping per §3.1 of the Provider 01
     integration plan, mirroring provider_06's tri-state pattern.
 
     Phase 2 (ST-4): On ALLOW, mints a ConsequenceToken and attaches it as a
@@ -135,12 +135,12 @@ async def _map_flowsignal_decision(
 
     Mapping logic:
       - ALLOW    → admitted=True, findings=[CONSEQUENCE_TOKEN] (ConsequenceToken JWS)
-      - REFUSE   → admitted=False, findings with code=FLOWSIGNAL_REFUSE
+      - REFUSE   → admitted=False, findings with code=PROVIDER_01_REFUSE
       - ESCALATE → admitted=False, findings with code=EXTERNAL_HOLD,
                    needs_human_review=True for DeferQueue parking
 
     Args:
-        decision: The FlowSignal decision value (ALLOW, REFUSE, ESCALATE).
+        decision: The Provider 01 decision value (ALLOW, REFUSE, ESCALATE).
         data: The full response payload (for extracting authority record context).
         action_payload: The original FRIA request payload (for extracting actor/thread
             context and computing the action digest).
@@ -158,7 +158,7 @@ async def _map_flowsignal_decision(
 
     decision_upper = decision.upper().strip()
 
-    if decision_upper == _FLOWSIGNAL_ALLOW:
+    if decision_upper == _PROVIDER_01_ALLOW:
         # ALLOW: admitted=True, with ConsequenceToken finding (Phase 2 ST-4)
         # Delegate to kernel minting service (relocated from this adapter),
         # which also checks the declared consequence magnitudes.
@@ -189,7 +189,7 @@ async def _map_flowsignal_decision(
                     "code": FINDING_CODE_CONSEQUENCE_TOKEN_MINT_FAILED,
                     "severity": "blocked",
                     "message": (
-                        "FlowSignal ALLOW carries no authority receipt id "
+                        "Provider 01 ALLOW carries no authority receipt id "
                         "(authority_receipt.id or authority_receipt_id); single "
                         "use is keyed per determination"
                     ),
@@ -224,39 +224,39 @@ async def _map_flowsignal_decision(
             consequence_token_finding["mandate_id"] = mandate_id
         return True, [consequence_token_finding]
 
-    if decision_upper == _FLOWSIGNAL_REFUSE:
+    if decision_upper == _PROVIDER_01_REFUSE:
         # REFUSE: hard deny with blocked severity
-        message = data.get("message", "FlowSignal refused the transaction")
+        message = data.get("message", "Provider 01 refused the transaction")
         return False, [
             {
-                "code": FINDING_CODE_FLOWSIGNAL_REFUSE,
+                "code": FINDING_CODE_PROVIDER_01_REFUSE,
                 "severity": "blocked",
                 "message": message,
             }
         ]
 
-    if decision_upper == _FLOWSIGNAL_ESCALATE:
+    if decision_upper == _PROVIDER_01_ESCALATE:
         # ESCALATE: soft deny for human review (DeferQueue parking)
-        message = data.get("message", "FlowSignal escalated — requires human approval")
+        message = data.get("message", "Provider 01 escalated — requires human approval")
         return False, [
             {
                 "code": FINDING_CODE_EXTERNAL_HOLD,
                 "severity": "review",
                 "message": message,
                 "needs_human_review": True,  # CAGE-specific extension for DeferQueue
-                "hold_ttl_seconds": 300,  # 5-minute hold for FlowSignal escalations
+                "hold_ttl_seconds": 300,  # 5-minute hold for Provider 01 escalations
             }
         ]
 
     # Unrecognized decision value: fail-closed
-    raise ValueError(f"Unrecognized FlowSignal decision: {decision!r}")
+    raise ValueError(f"Unrecognized Provider 01 decision: {decision!r}")
 
 
 def _build_cage_authority_request(envelope: dict[str, Any]) -> dict[str, Any]:
     """Build the complete 37-field CageAuthorityDetermineRequest payload.
 
-    Maps CAGE GovernanceEnvelope fields to the FlowSignal Phase 3 v0.2 schema.
-    See: docs/partners/provider_01/FLOWSIGNAL_PHASE3_V02_SCHEMA.md § 2
+    Maps CAGE GovernanceEnvelope fields to the Provider 01 Phase 3 v0.2 schema.
+    See: src/integrations/provider_01/README.md
 
     Args:
         envelope: The GovernanceEnvelope dict (or dict-like payload with CAGE fields).
@@ -338,11 +338,11 @@ def _build_cage_authority_request(envelope: dict[str, Any]) -> dict[str, Any]:
 
 
 # ---------------------------------------------------------------------------
-# FlowSignal
+# Provider 01
 # ---------------------------------------------------------------------------
 
 
-class FlowSignalNormativeProvider:
+class Provider01NormativeProvider:
     """Production normative provider backed by external cloud API.
 
     Implements the 3-endpoint HTTP contract defined in §2.5.2 of
@@ -383,12 +383,12 @@ class FlowSignalNormativeProvider:
 
         if not self._endpoint:
             logger.error(
-                "[FlowSignal] CAGE_NORMATIVE_ENDPOINT is required. "
+                "[provider_01] CAGE_NORMATIVE_ENDPOINT is required. "
                 "Set CAGE_NORMATIVE_PROVIDER=static for dev/test."
             )
 
         logger.info(
-            "[FlowSignal] Initialised: endpoint=%s timeout=%.1fs gcp_iam=%s mtls=%s",
+            "[provider_01] Initialised: endpoint=%s timeout=%.1fs gcp_iam=%s mtls=%s",
             self._endpoint or "(not set)",
             self._timeout,
             "configured" if self._gcp_id_token else "none",
@@ -403,8 +403,8 @@ class FlowSignalNormativeProvider:
         """
         if bool(self._client_cert) != bool(self._client_key):
             return (
-                "Incomplete mTLS configuration: FLOWSIGNAL_CLIENT_CERT and "
-                "FLOWSIGNAL_CLIENT_KEY must both be provided together"
+                "Incomplete mTLS configuration: PROVIDER_01_CLIENT_CERT and "
+                "PROVIDER_01_CLIENT_KEY must both be provided together"
             )
 
         has_tls_material = bool(
@@ -442,7 +442,7 @@ class FlowSignalNormativeProvider:
 
         tls_error = self._validate_tls_config()
         if tls_error:
-            logger.error("[FlowSignal] fetch_baseline TLS config error: %s", tls_error)
+            logger.error("[provider_01] fetch_baseline TLS config error: %s", tls_error)
             return NormativeBaseline(region=region, profile={}, error=tls_error)
 
         url = f"{self._endpoint}/legal-baseline/{quote(region, safe='')}"
@@ -458,7 +458,7 @@ class FlowSignalNormativeProvider:
                 )
         except httpx.HTTPStatusError as exc:
             logger.error(
-                "[FlowSignal] fetch_baseline HTTP error: %s status=%d",
+                "[provider_01] fetch_baseline HTTP error: %s status=%d",
                 url,
                 exc.response.status_code,
             )
@@ -468,11 +468,11 @@ class FlowSignalNormativeProvider:
                 error=f"HTTP {exc.response.status_code}: {exc.response.text[:200]}",
             )
         except httpx.RequestError as exc:
-            logger.error("[FlowSignal] fetch_baseline request error: %s %s", url, exc)
+            logger.error("[provider_01] fetch_baseline request error: %s %s", url, exc)
             return NormativeBaseline(region=region, profile={}, error=str(exc))
         except Exception as exc:
             logger.error(
-                "[FlowSignal] fetch_baseline unexpected error: %s %s", url, exc
+                "[provider_01] fetch_baseline unexpected error: %s %s", url, exc
             )
             return NormativeBaseline(region=region, profile={}, error=str(exc))
 
@@ -483,19 +483,19 @@ class FlowSignalNormativeProvider:
         - Endpoint: POST /cage/validate (cutover from legacy /validate/fria)
         - Payload: Full 37-field CageAuthorityDetermineRequest
 
-        Expects FlowSignal tri-state response: {"decision": "ALLOW|REFUSE|ESCALATE", ...}
+        Expects Provider 01 tri-state response: {"decision": "ALLOW|REFUSE|ESCALATE", ...}
 
         The ``decision`` field is mandatory. Missing or unrecognized values fail closed
         with structured findings (code="cage.endpoint_error" or "FINDING_CODE_PARSE_ERROR").
 
-        Phase 2 (ST-4): On FlowSignal ALLOW, mints a ConsequenceToken and attaches
+        Phase 2 (ST-4): On Provider 01 ALLOW, mints a ConsequenceToken and attaches
         it as a CONSEQUENCE_TOKEN finding in the returned ValidationResult.
         """
         import httpx
 
         tls_error = self._validate_tls_config()
         if tls_error:
-            logger.error("[FlowSignal] validate_fria TLS config error: %s", tls_error)
+            logger.error("[provider_01] validate_fria TLS config error: %s", tls_error)
             return ValidationResult(
                 admitted=False,
                 error=tls_error,
@@ -543,11 +543,11 @@ class FlowSignalNormativeProvider:
                 resp.raise_for_status()
                 data = resp.json()
 
-                # FlowSignal tri-state decision mapping (Phase 1, §3.1; Phase 2 ST-4)
+                # Provider 01 tri-state decision mapping (Phase 1, §3.1; Phase 2 ST-4)
                 if "decision" in data:
                     decision = data["decision"]
                     try:
-                        admitted, findings = await _map_flowsignal_decision(
+                        admitted, findings = await _map_provider_01_decision(
                             decision,
                             data,
                             payload,
@@ -569,7 +569,7 @@ class FlowSignalNormativeProvider:
                     except ValueError as exc:
                         # Unrecognized decision value: fail-closed
                         logger.warning(
-                            "[FlowSignal] FlowSignal decision parse error: %s",
+                            "[provider_01] Provider 01 decision parse error: %s",
                             exc,
                         )
                         return ValidationResult(
@@ -579,29 +579,29 @@ class FlowSignalNormativeProvider:
                                 {
                                     "code": FINDING_CODE_PARSE_ERROR,
                                     "severity": "blocked",
-                                    "message": f"Malformed FlowSignal decision: {decision!r}",
+                                    "message": f"Malformed Provider 01 decision: {decision!r}",
                                 }
                             ],
                         )
 
                 # Missing decision field: fail closed (BC-03 remediation)
                 logger.warning(
-                    "[FlowSignal] FlowSignal response missing 'decision' field — failing closed"
+                    "[provider_01] Provider 01 response missing 'decision' field — failing closed"
                 )
                 return ValidationResult(
                     admitted=False,
-                    error="Missing required 'decision' field in FlowSignal response",
+                    error="Missing required 'decision' field in Provider 01 response",
                     findings=[
                         {
                             "code": "cage.endpoint_error",
                             "severity": "blocked",
-                            "message": "FlowSignal response missing required 'decision' field",
+                            "message": "Provider 01 response missing required 'decision' field",
                         }
                     ],
                 )
         except httpx.HTTPStatusError as exc:
             logger.error(
-                "[FlowSignal] validate_fria HTTP error: %s status=%d",
+                "[provider_01] validate_fria HTTP error: %s status=%d",
                 url,
                 exc.response.status_code,
             )
@@ -612,12 +612,12 @@ class FlowSignalNormativeProvider:
                     {
                         "code": "ENDPOINT_ERROR",
                         "severity": "blocked",
-                        "message": f"FlowSignal HTTP error: {exc.response.status_code}",
+                        "message": f"Provider 01 HTTP error: {exc.response.status_code}",
                     }
                 ],
             )
         except httpx.RequestError as exc:
-            logger.error("[FlowSignal] validate_fria request error: %s %s", url, exc)
+            logger.error("[provider_01] validate_fria request error: %s %s", url, exc)
             return ValidationResult(
                 admitted=False,
                 error=str(exc),
@@ -625,12 +625,14 @@ class FlowSignalNormativeProvider:
                     {
                         "code": "ENDPOINT_ERROR",
                         "severity": "blocked",
-                        "message": f"FlowSignal request failed: {exc}",
+                        "message": f"Provider 01 request failed: {exc}",
                     }
                 ],
             )
         except Exception as exc:
-            logger.error("[FlowSignal] validate_fria unexpected error: %s %s", url, exc)
+            logger.error(
+                "[provider_01] validate_fria unexpected error: %s %s", url, exc
+            )
             return ValidationResult(
                 admitted=False,
                 error=str(exc),
@@ -638,7 +640,7 @@ class FlowSignalNormativeProvider:
                     {
                         "code": "ENDPOINT_ERROR",
                         "severity": "blocked",
-                        "message": f"FlowSignal unexpected error: {exc}",
+                        "message": f"Provider 01 unexpected error: {exc}",
                     }
                 ],
             )
@@ -649,7 +651,9 @@ class FlowSignalNormativeProvider:
 
         tls_error = self._validate_tls_config()
         if tls_error:
-            logger.error("[FlowSignal] submit_evidence TLS config error: %s", tls_error)
+            logger.error(
+                "[provider_01] submit_evidence TLS config error: %s", tls_error
+            )
             return EvidenceSeal(thread_id=thread_id, error=tls_error)
 
         url = f"{self._endpoint}/evidence-chain/{quote(thread_id, safe='')}"
@@ -668,7 +672,7 @@ class FlowSignalNormativeProvider:
                 )
         except httpx.HTTPStatusError as exc:
             logger.error(
-                "[FlowSignal] submit_evidence HTTP error: %s status=%d",
+                "[provider_01] submit_evidence HTTP error: %s status=%d",
                 url,
                 exc.response.status_code,
             )
@@ -677,10 +681,10 @@ class FlowSignalNormativeProvider:
                 error=f"HTTP {exc.response.status_code}: {exc.response.text[:200]}",
             )
         except httpx.RequestError as exc:
-            logger.error("[FlowSignal] submit_evidence request error: %s %s", url, exc)
+            logger.error("[provider_01] submit_evidence request error: %s %s", url, exc)
             return EvidenceSeal(thread_id=thread_id, error=str(exc))
         except Exception as exc:
             logger.error(
-                "[FlowSignal] submit_evidence unexpected error: %s %s", url, exc
+                "[provider_01] submit_evidence unexpected error: %s %s", url, exc
             )
             return EvidenceSeal(thread_id=thread_id, error=str(exc))

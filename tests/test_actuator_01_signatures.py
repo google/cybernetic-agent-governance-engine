@@ -117,7 +117,7 @@ class TestQuorumSignatures:
 class TestSandboxSigningAndWebAuthn:
     """Tests for Ed25519KeyPairSigner, SandboxSigningBundle, and build_webauthn_approval."""
 
-    def test_seed_signer_matches_archytan_vector_keys(self):
+    def test_seed_signer_matches_actuator_01_vector_keys(self):
         """Ed25519KeyPairSigner.from_seed_hex reproduces Archytan golden public keys."""
         op1 = Ed25519KeyPairSigner.from_seed_hex(
             "01" * 32, "urn:archytan:op:test_vector_1"
@@ -185,4 +185,4 @@ class TestSandboxSigningAndWebAuthn:
         assert alice_signer is not bob_signer
 
         with pytest.raises(KeyError, match="Unknown operator URN"):
-            bundle.resolve_signer("urn:archytan:cage:operator:unregistered")
+            bundle.resolve_signer("urn:actuator01:cage:operator:unregistered")

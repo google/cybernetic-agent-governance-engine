@@ -799,59 +799,59 @@ class TestGovernanceAppRoutes:
 # ===========================================================================
 
 
-class TestFlowSignalHttp202Receipt:
-    """Tests for HTTP 202 Accepted receipt on FlowSignal ESCALATE decisions.
+class TestExternalHoldHttp202Receipt:
+    """Tests for HTTP 202 Accepted receipt on external hold ESCALATE decisions.
 
     External provider escalation decisions (EXTERNAL_HOLD) return HTTP 202 with
     an async receipt body containing defer_id, status, and poll_url.
     """
 
     @pytest.fixture()
-    def client_for_flowsignal(self, mock_kms_signer):
+    def client_for_external_hold(self, mock_kms_signer):
         from src.gateway.server.governance_middleware import governance_app
 
         return TestClient(governance_app, raise_server_exceptions=False)
 
-    def test_flowsignal_escalation_returns_http_202(
-        self, client_for_flowsignal, mock_kms_signer
+    def test_external_hold_escalation_returns_http_202(
+        self, client_for_external_hold, mock_kms_signer
     ):
-        """FlowSignal ESCALATE decision returns HTTP 202 Accepted (not 200)."""
-        flowsignal_result = {
+        """External provider ESCALATE decision returns HTTP 202 Accepted (not 200)."""
+        hold_result = {
             "verdict": "DEFER",
             "defer_reason": "EXTERNAL_HOLD",
             "defer_id": "fs-defer-001",
-            "violations": ["FlowSignal: requires human approval"],
+            "violations": ["Provider 01: requires human approval"],
             "seal": "",
             "latency_ms": 5.2,
         }
         mock_gov = _mock_governor()
-        mock_gov.validate_action = AsyncMock(return_value=flowsignal_result)
+        mock_gov.validate_action = AsyncMock(return_value=hold_result)
 
         with _installed_governor(mock_gov):
-            resp = client_for_flowsignal.post(
+            resp = client_for_external_hold.post(
                 "/validate-action",
                 json={"action": "execute_trade", "params": {"amount": 50000}},
             )
 
         assert resp.status_code == 202
 
-    def test_flowsignal_escalation_receipt_shape(
-        self, client_for_flowsignal, mock_kms_signer
+    def test_external_hold_escalation_receipt_shape(
+        self, client_for_external_hold, mock_kms_signer
     ):
         """HTTP 202 body contains defer_id, status: pending_review, poll_url."""
-        flowsignal_result = {
+        hold_result = {
             "verdict": "DEFER",
             "defer_reason": "EXTERNAL_HOLD",
             "defer_id": "fs-defer-002",
-            "violations": ["FlowSignal: requires human approval"],
+            "violations": ["Provider 01: requires human approval"],
             "seal": "",
             "latency_ms": 3.1,
         }
         mock_gov = _mock_governor()
-        mock_gov.validate_action = AsyncMock(return_value=flowsignal_result)
+        mock_gov.validate_action = AsyncMock(return_value=hold_result)
 
         with _installed_governor(mock_gov):
-            resp = client_for_flowsignal.post(
+            resp = client_for_external_hold.post(
                 "/validate-action",
                 json={"action": "execute_trade", "params": {"amount": 50000}},
             )
@@ -864,8 +864,8 @@ class TestFlowSignalHttp202Receipt:
         assert data["defer_reason"] == "EXTERNAL_HOLD"
         assert data["ttl_seconds"] == 300
 
-    def test_flowsignal_escalation_via_is_flowsignal_hold_marker(
-        self, client_for_flowsignal, mock_kms_signer
+    def test_external_hold_escalation_via_is_external_hold_marker(
+        self, client_for_external_hold, mock_kms_signer
     ):
         """is_external_hold=True also triggers HTTP 202 (alternative detection)."""
         # This covers the case where defer_reason might be different but the
@@ -882,7 +882,7 @@ class TestFlowSignalHttp202Receipt:
         mock_gov.validate_action = AsyncMock(return_value=result_with_marker)
 
         with _installed_governor(mock_gov):
-            resp = client_for_flowsignal.post(
+            resp = client_for_external_hold.post(
                 "/validate-action",
                 json={"action": "execute_trade", "params": {"amount": 25000}},
             )
@@ -891,10 +891,10 @@ class TestFlowSignalHttp202Receipt:
         data = resp.json()
         assert data["status"] == "pending_review"
 
-    def test_non_flowsignal_defer_returns_200_not_202(
-        self, client_for_flowsignal, mock_kms_signer
+    def test_non_external_hold_defer_returns_200_not_202(
+        self, client_for_external_hold, mock_kms_signer
     ):
-        """Regular DEFER (not FlowSignal) returns HTTP 200, not 202."""
+        """Regular DEFER (not external hold) returns HTTP 200, not 202."""
         regular_defer_result = {
             "verdict": "DEFER",
             "defer_reason": "CONFIDENCE_BELOW_THRESHOLD",
@@ -907,19 +907,19 @@ class TestFlowSignalHttp202Receipt:
         mock_gov.validate_action = AsyncMock(return_value=regular_defer_result)
 
         with _installed_governor(mock_gov):
-            resp = client_for_flowsignal.post(
+            resp = client_for_external_hold.post(
                 "/validate-action",
                 json={"action": "execute_trade", "params": {"amount": 1000}},
             )
 
-        # Non-FlowSignal DEFER should return 200 wrapped in canonical v3.0 envelope
+        # Non-EXTERNAL_HOLD DEFER should return 200 wrapped in canonical v3.0 envelope
         assert resp.status_code == 200
         data = resp.json()
         assert data["envelope_version"] == "3.0"
         assert data["payload"]["verdict"] == "DEFER"
 
     def test_external_hold_without_marker_returns_202(
-        self, client_for_flowsignal, mock_kms_signer
+        self, client_for_external_hold, mock_kms_signer
     ):
         """EXTERNAL_HOLD defer_reason without is_external_hold marker still returns HTTP 202.
 
@@ -940,7 +940,7 @@ class TestFlowSignalHttp202Receipt:
         mock_gov.validate_action = AsyncMock(return_value=external_hold_no_marker)
 
         with _installed_governor(mock_gov):
-            resp = client_for_flowsignal.post(
+            resp = client_for_external_hold.post(
                 "/validate-action",
                 json={"action": "execute_trade", "params": {"amount": 30000}},
             )
@@ -953,7 +953,7 @@ class TestFlowSignalHttp202Receipt:
         assert data["defer_reason"] == "EXTERNAL_HOLD"
 
     def test_approved_verdict_still_returns_200(
-        self, client_for_flowsignal, mock_kms_signer
+        self, client_for_external_hold, mock_kms_signer
     ):
         """ALLOW verdict returns HTTP 200 with canonical envelope (ADR-008 Phase 3)."""
         approved_result = {
@@ -965,7 +965,7 @@ class TestFlowSignalHttp202Receipt:
         mock_gov.validate_action = AsyncMock(return_value=approved_result)
 
         with _installed_governor(mock_gov):
-            resp = client_for_flowsignal.post(
+            resp = client_for_external_hold.post(
                 "/validate-action",
                 json={"action": "execute_trade", "params": {"amount": 100}},
             )
@@ -978,7 +978,7 @@ class TestFlowSignalHttp202Receipt:
         assert data["payload"]["verdict"] == "ALLOW"
 
     def test_agw_request_authz_uses_governor_from_app_state(
-        self, client_for_flowsignal, mock_kms_signer
+        self, client_for_external_hold, mock_kms_signer
     ):
         """POST /agw/request-authz resolves governor via governor_of(request.app)."""
         from src.gateway.governance.ingress.agw_adapter import (
@@ -1010,7 +1010,7 @@ class TestFlowSignalHttp202Receipt:
                 return_value=mock_adapter,
             ),
         ):
-            resp = client_for_flowsignal.post(
+            resp = client_for_external_hold.post(
                 "/agw/request-authz",
                 json={"tool_name": "execute_trade", "parameters": {"amount": 100}},
             )

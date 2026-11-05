@@ -65,7 +65,7 @@ from src.gateway.governance.kms_signer import (
 )
 from src.gateway.governance.seams.normative import ValidationResult
 from src.integrations.provider_01.provider import (
-    FlowSignalNormativeProvider,
+    Provider01NormativeProvider,
     _build_cage_authority_request,
 )
 
@@ -110,7 +110,7 @@ def credentials() -> _Credentials:
     missing = [name for name, value in values.items() if not value]
     if missing:
         pytest.skip(
-            "FlowSignal live credentials not configured — missing: "
+            "Provider 01 live credentials not configured — missing: "
             + ", ".join(missing)
         )
     return _Credentials(
@@ -121,8 +121,8 @@ def credentials() -> _Credentials:
 
 
 @pytest.fixture
-def provider(credentials: _Credentials) -> FlowSignalNormativeProvider:
-    return FlowSignalNormativeProvider(
+def provider(credentials: _Credentials) -> Provider01NormativeProvider:
+    return Provider01NormativeProvider(
         endpoint=credentials.endpoint,
         api_key=credentials.api_key,
         gcp_id_token=credentials.id_token,
@@ -226,7 +226,7 @@ async def test_live_each_credential_is_enforced(credentials: _Credentials) -> No
     body = _build_cage_authority_request(_payment("credential-gate"))
     wrong_key = {
         **credentials.headers(api_key=False),
-        "Authorization": "Bearer not-the-flowsignal-key",
+        "Authorization": "Bearer not-the-provider-01-key",
     }
     async with httpx.AsyncClient(timeout=_TIMEOUT) as client:
         no_identity = await client.post(
@@ -243,7 +243,7 @@ async def test_live_each_credential_is_enforced(credentials: _Credentials) -> No
 
 @pytest.mark.asyncio
 async def test_live_allow_mints_a_bound_consequence_token(
-    provider: FlowSignalNormativeProvider, signer: KMSGovernanceSigner
+    provider: Provider01NormativeProvider, signer: KMSGovernanceSigner
 ) -> None:
     """ALLOW admits, and the token binds FlowSignal's authority receipt to the exact action."""
     payload = _payment("allow")
@@ -251,7 +251,9 @@ async def test_live_allow_mints_a_bound_consequence_token(
     assert result.admitted is True, result
     (finding,) = result.findings
     assert finding["code"] == "CONSEQUENCE_TOKEN"
-    assert finding.get("authority_receipt_id"), "FlowSignal issued no authority receipt"
+    assert finding.get("authority_receipt_id"), (
+        "Provider 01 issued no authority receipt"
+    )
 
     claims = ConsequenceToken.verify(finding["token"], signer=signer)
     assert claims.rec
@@ -273,17 +275,17 @@ async def test_live_allow_mints_a_bound_consequence_token(
     ],
 )
 async def test_live_refuse_admits_nothing(
-    provider: FlowSignalNormativeProvider, action: str, params: dict[str, Any]
+    provider: Provider01NormativeProvider, action: str, params: dict[str, Any]
 ) -> None:
     """REFUSE is a hard denial: not admitted, and nothing is minted."""
     result = await provider.validate_fria(_payment("refuse", action=action, **params))
     assert result.admitted is False
-    assert _codes(result) == ["FLOWSIGNAL_REFUSE"]
+    assert _codes(result) == ["PROVIDER_01_REFUSE"]
 
 
 @pytest.mark.asyncio
 async def test_live_escalate_holds_for_human_review(
-    provider: FlowSignalNormativeProvider,
+    provider: Provider01NormativeProvider,
 ) -> None:
     """Stale screening evidence escalates: held for review, not admitted, nothing minted."""
     captured = datetime.now(timezone.utc) - timedelta(days=3)
@@ -329,7 +331,7 @@ async def test_live_validate_rejects_malformed_and_forged_bodies(
     ],
 )
 async def test_live_invalid_magnitude_fails_closed_whatever_partner_decides(
-    provider: FlowSignalNormativeProvider,
+    provider: Provider01NormativeProvider,
     signer: KMSGovernanceSigner,
     bad_amount: float,
 ) -> None:
@@ -340,14 +342,14 @@ async def test_live_invalid_magnitude_fails_closed_whatever_partner_decides(
     assert result.admitted is False
     assert "CONSEQUENCE_TOKEN" not in _codes(result)
     assert set(_codes(result)) <= {
-        "FLOWSIGNAL_REFUSE",
+        "PROVIDER_01_REFUSE",
         "CONSEQUENCE_TOKEN_MINT_FAILED",
     }
 
 
 @pytest.mark.asyncio
 async def test_live_unserved_routes_fail_closed(
-    provider: FlowSignalNormativeProvider,
+    provider: Provider01NormativeProvider,
 ) -> None:
     """FlowSignal serves no baseline or evidence-chain route, and the adapter fabricates neither."""
     baseline = await provider.fetch_baseline("EU_ECB")

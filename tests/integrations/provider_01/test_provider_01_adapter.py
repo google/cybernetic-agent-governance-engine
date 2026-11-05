@@ -22,7 +22,7 @@ import respx
 
 from src.gateway.governance.consequence_magnitude import ConsequenceMagnitudes
 from src.gateway.governance.contracts import ConsequenceMagnitude, MagnitudePath
-from src.integrations.provider_01.provider import FlowSignalNormativeProvider
+from src.integrations.provider_01.provider import Provider01NormativeProvider
 
 pytestmark = [pytest.mark.unit, pytest.mark.local, pytest.mark.partner]
 
@@ -32,8 +32,8 @@ _MAGNITUDES = ConsequenceMagnitudes(
 
 
 @pytest.fixture
-def provider() -> FlowSignalNormativeProvider:
-    return FlowSignalNormativeProvider(
+def provider() -> Provider01NormativeProvider:
+    return Provider01NormativeProvider(
         endpoint="https://provider01.example.com",
         api_key="test-api-key",
         timeout=2.0,
@@ -43,7 +43,7 @@ def provider() -> FlowSignalNormativeProvider:
 
 @pytest.mark.asyncio
 @respx.mock
-async def test_fetch_baseline_success(provider: FlowSignalNormativeProvider) -> None:
+async def test_fetch_baseline_success(provider: Provider01NormativeProvider) -> None:
     respx.get("https://provider01.example.com/legal-baseline/US_FED").mock(
         return_value=httpx.Response(
             200,
@@ -60,7 +60,7 @@ async def test_fetch_baseline_success(provider: FlowSignalNormativeProvider) -> 
 
 @pytest.mark.asyncio
 @respx.mock
-async def test_fetch_baseline_error(provider: FlowSignalNormativeProvider) -> None:
+async def test_fetch_baseline_error(provider: Provider01NormativeProvider) -> None:
     respx.get("https://provider01.example.com/legal-baseline/US_FED").mock(
         return_value=httpx.Response(500)
     )
@@ -121,7 +121,7 @@ def _make_mock_signer():
 
 @pytest.mark.asyncio
 @respx.mock
-async def test_validate_fria_success(provider: FlowSignalNormativeProvider) -> None:
+async def test_validate_fria_success(provider: Provider01NormativeProvider) -> None:
     from unittest.mock import patch
 
     from src.gateway.governance.kms_signer import reset_governance_signer
@@ -161,7 +161,7 @@ async def test_validate_fria_success(provider: FlowSignalNormativeProvider) -> N
 
 @pytest.mark.asyncio
 @respx.mock
-async def test_validate_fria_error(provider: FlowSignalNormativeProvider) -> None:
+async def test_validate_fria_error(provider: Provider01NormativeProvider) -> None:
     # Phase 3 v0.2: endpoint cutover to /cage/validate
     respx.post("https://provider01.example.com/cage/validate").mock(
         return_value=httpx.Response(502)
@@ -173,7 +173,7 @@ async def test_validate_fria_error(provider: FlowSignalNormativeProvider) -> Non
 
 @pytest.mark.asyncio
 @respx.mock
-async def test_submit_evidence_success(provider: FlowSignalNormativeProvider) -> None:
+async def test_submit_evidence_success(provider: Provider01NormativeProvider) -> None:
     respx.get("https://provider01.example.com/evidence-chain/thread-1").mock(
         return_value=httpx.Response(
             200,
@@ -188,7 +188,7 @@ async def test_submit_evidence_success(provider: FlowSignalNormativeProvider) ->
 
 @pytest.mark.asyncio
 @respx.mock
-async def test_submit_evidence_error(provider: FlowSignalNormativeProvider) -> None:
+async def test_submit_evidence_error(provider: Provider01NormativeProvider) -> None:
     respx.get("https://provider01.example.com/evidence-chain/thread-1").mock(
         return_value=httpx.Response(500)
     )

@@ -30,7 +30,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 
 from src.integrations.provider_01.provider import (
-    FlowSignalNormativeProvider,
+    Provider01NormativeProvider,
     _build_cage_authority_request,
 )
 
@@ -201,7 +201,7 @@ class TestPhase3SchemaMapping:
         self,
     ) -> None:
         """validate_fria sends full 37-field payload to /cage/validate."""
-        adapter = FlowSignalNormativeProvider(
+        adapter = Provider01NormativeProvider(
             endpoint="http://localhost:8080",
             api_key="test-key",
             timeout=5.0,
@@ -237,7 +237,7 @@ class TestPhase3SchemaMapping:
                 # Verify REFUSE was processed correctly
                 assert result.admitted is False
                 assert len(result.findings) == 1
-                assert result.findings[0]["code"] == "FLOWSIGNAL_REFUSE"
+                assert result.findings[0]["code"] == "PROVIDER_01_REFUSE"
 
             # Verify the endpoint was called with /cage/validate
             assert client_instance.post.called
@@ -267,7 +267,7 @@ class TestEndpointCutover:
     @pytest.mark.asyncio
     async def test_validate_fria_uses_cage_validate_endpoint_by_default(self) -> None:
         """validate_fria targets /cage/validate by default."""
-        adapter = FlowSignalNormativeProvider(
+        adapter = Provider01NormativeProvider(
             endpoint="http://localhost:8080",
             api_key="test-key",
         )
@@ -290,7 +290,7 @@ class TestEndpointCutover:
     @pytest.mark.asyncio
     async def test_validate_fria_respects_validate_path_override(self) -> None:
         """validate_fria respects CAGE_NORMATIVE_VALIDATE_PATH override."""
-        adapter = FlowSignalNormativeProvider(
+        adapter = Provider01NormativeProvider(
             endpoint="http://localhost:8080",
             api_key="test-key",
         )

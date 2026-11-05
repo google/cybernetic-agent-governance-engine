@@ -399,7 +399,7 @@ def test_an_unpinned_role_withholds_any_verified_posture(
 
 def test_default_pins_name_the_author_and_leave_the_operator_to_the_verifier() -> None:
     parties = cc.default_parties()
-    for profile in cc.MODE_PROFILES.values():
+    for profile in (*cc.MODE_PROFILES.values(), *cc.ENDPOINT_PROFILES):
         assert parties[profile].author == (f"github:{CAGE_REPO}",)
         assert parties[profile].counterparty == ()
 

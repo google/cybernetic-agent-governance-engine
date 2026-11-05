@@ -130,7 +130,7 @@ The adapter enforces **strict fail-closed semantics** on all error conditions:
 | **Network timeout** | N/A | `HTTP_TIMEOUT` | `False` | Empty response body | Cannot confirm safety → default deny |
 | **HTTP 5xx errors** | 500/502/503 | `PROVIDER_ERROR` | `False` | Server error message | Provider instability → fail closed |
 | **HTTP 404 on baseline** | 404 | `BASELINE_NOT_FOUND` | `False` | Empty baseline | Cannot validate without normative anchor |
-| **Unknown `kid`** | 200 | `INFERTHETA_UNKNOWN_KEY` | `False` | Unresolved key ID | Untrusted signing key → reject |
+| **Unknown `kid`** | 200 | `PROVIDER_07_UNKNOWN_KEY` | `False` | Unresolved key ID | Untrusted signing key → reject |
 | **Invalid Ed25519 signature** | 200 | `SIGNATURE_VERIFICATION_FAILED` | `False` | Signature mismatch | Tampered response → reject |
 | **Malformed JSON** | 200 | `SCHEMA_VALIDATION_ERROR` | `False` | Parsing error | Cannot parse → cannot trust |
 | **Missing `authority_record_id` on `ALLOW`** | 200 | `TOKEN_MINT_FAILED` | `False` | Missing audit token | Authorization without token is invalid |
@@ -141,7 +141,7 @@ The adapter enforces **strict fail-closed semantics** on all error conditions:
 
 **Canonical Transform** (from tri-state to binary):
 ```python
-def map_decision_to_admitted(response: InferThetaInferenceResponse) -> bool:
+def map_decision_to_admitted(response: Provider07InferenceResponse) -> bool:
     """
     Map tri-state decision to binary admission flag.
     
@@ -161,8 +161,8 @@ def map_decision_to_admitted(response: InferThetaInferenceResponse) -> bool:
 
 ### Inference Endpoint: `POST /infer`
 
-**Request**: [`InferThetaInferenceRequest`](schema.py)  
-**Response**: [`InferThetaInferenceResponse`](schema.py)
+**Request**: [`Provider07InferenceRequest`](schema.py)  
+**Response**: [`Provider07InferenceResponse`](schema.py)
 
 **Key Fields**:
 - **Input**: `portfolio_vector`, `proposed_trade`, `client_profile`, `market_volatility_index`
@@ -171,7 +171,7 @@ def map_decision_to_admitted(response: InferThetaInferenceResponse) -> bool:
 
 ### Baseline Endpoint: `GET /baseline/{region}`
 
-**Response**: [`InferThetaBaselineResponse`](schema.py)
+**Response**: [`Provider07BaselineResponse`](schema.py)
 
 **Key Fields & Regional Semantics**:
 - **Output**: `region`, `rules` (normative thresholds), content-addressed `baseline_hash` (`sha256:...` aligned with HTTP `ETag`), `issued_at` (UNIX timestamp)
@@ -179,7 +179,7 @@ def map_decision_to_admitted(response: InferThetaInferenceResponse) -> bool:
 
 ### Evidence Chain Endpoint: `POST /evidence-chain/{thread_id}`
 
-**Response**: [`InferThetaEvidenceResponse`](schema.py)
+**Response**: [`Provider07EvidenceResponse`](schema.py)
 
 **Key Fields & Idempotency**:
 - **Input**: `{"evidence_hash": "sha256:..."}` authenticated via `Authorization: Bearer <api_key>`
@@ -196,10 +196,10 @@ def map_decision_to_admitted(response: InferThetaInferenceResponse) -> bool:
 **Invariant**: **Never verify a signature against an embedded public key supplied by the signed document.**
 
 **Protocol**:
-1. Extract `kid` from `InferThetaInferenceResponse.kid`
+1. Extract `kid` from `Provider07InferenceResponse.kid`
 2. Fetch JWKS manifest from `PROVIDER_07_JWKS_URL` (cached with TTL)
 3. Resolve public key by `kid`:
-   - **If `kid` unknown**: Fail with `INFERTHETA_UNKNOWN_KEY`, set `admitted=False`
+   - **If `kid` unknown**: Fail with `PROVIDER_07_UNKNOWN_KEY`, set `admitted=False`
    - **If `kid` found**: Extract Ed25519 public key (`x` parameter from JWK)
 
 **Example JWKS Response**:
@@ -319,7 +319,7 @@ src/integrations/provider_07/
 **Integration Status**:
 - ✅ Step 1 Wire Contract: Confirmed & validated against live staging
 - ✅ Step 1 Dedicated Suitability Graph: Calibrated & deployed on Render
-- ✅ Step 2 Cryptographic Hardening: Ed25519 signatures (RFC 8785 JCS), out-of-band JWKS (`kid = "infertheta-provider07-2026-01"`), and minted `authority_record_id` (`infertheta-ar-<uuid4>`) verified live against staging
+- ✅ Step 2 Cryptographic Hardening: Ed25519 signatures (RFC 8785 JCS), out-of-band JWKS (`kid = "infertheta-provider07-2026-01"`), and minted `authority_record_id` (`infertheta-ar-<uuid4>`, Step 2 ALLOW vector `infertheta-ar-09b99a87-66ff-4791-9f31-f453841d2e8a`) verified live against staging
 - ✅ Step 3 Production-Readiness Increment: `POST /evidence-chain/{thread_id}` (persisted & idempotent), content-addressed `US_FED` `baseline_hash` + HTTP `ETag`, fail-closed reserved regions (`EU_ECB`, `APAC_MAS`), and 24h overlap multi-key JWKS rotation verified live against staging
 - ✅ Step 4 Production Cutover: Isolated production instance (`https://infertheta-cage-prod.onrender.com`), dedicated PostgreSQL persistence, production JWKS (`kid = "infertheta-provider07-prod-2026-01"`), and GKE `provider-07-credentials` wiring verified over the wire
 

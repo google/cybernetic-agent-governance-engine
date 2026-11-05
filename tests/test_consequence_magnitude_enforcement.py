@@ -107,7 +107,7 @@ from src.gateway.governance.normative_provider import get_normative_provider
 from src.gateway.governance.plugin_loader import domain_config_of
 from src.gateway.governance.seams.normative import ValidationResult
 from src.gateway.infrastructure.redis_replication import ReplicationPolicy
-from src.integrations.provider_01.provider import FlowSignalNormativeProvider
+from src.integrations.provider_01.provider import Provider01NormativeProvider
 from src.integrations.provider_08.adapter import Provider08NormativeProvider
 from tests.fixtures.governor import allow_opa, clean_stpa
 from tests.test_consequence_gateway import _make_mock_signer_with_keypair
@@ -689,7 +689,7 @@ def test_assemble_governor_rejects_tier_with_foreign_magnitude_policy(
 
 def test_normative_provider_factory_threads_consequence_magnitudes() -> None:
     p01 = get_normative_provider("provider_01", consequence_magnitudes=_POLICY)
-    assert isinstance(p01, FlowSignalNormativeProvider)
+    assert isinstance(p01, Provider01NormativeProvider)
     assert p01._consequence_magnitudes == _POLICY
 
     p08 = get_normative_provider("provider_08", consequence_magnitudes=_POLICY)

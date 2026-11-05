@@ -57,7 +57,7 @@ from src.gateway.governance.kms_signer import (
     reset_governance_signer,
 )
 from src.gateway.infrastructure.redis_replication import ReplicationPolicy
-from src.integrations.provider_01.provider import FlowSignalNormativeProvider
+from src.integrations.provider_01.provider import Provider01NormativeProvider
 
 pytestmark = [pytest.mark.unit, pytest.mark.local, pytest.mark.partner]
 
@@ -67,13 +67,7 @@ _MAGNITUDES = ConsequenceMagnitudes(
 
 _TRACER = TracerProvider().get_tracer(__name__)
 _REPO_ROOT = Path(__file__).resolve().parents[3]
-_STEP1_RECORD_PATH = (
-    _REPO_ROOT
-    / "docs"
-    / "partners"
-    / "provider_01"
-    / "CAGE_FLOWSIGNAL_PHASE3_STEP1_RECORD.json"
-)
+_PARTNER_DIR = _REPO_ROOT / "docs" / "partners" / "provider_01"
 
 
 class _InMemoryAsyncRedis:
@@ -132,11 +126,13 @@ def _make_mock_signer() -> KMSGovernanceSigner:
 
 
 def test_step1_record_contains_complete_phase3_and_phase4_provenance() -> None:
-    """Verify CAGE_FLOWSIGNAL_PHASE3_STEP1_RECORD.json pins both Phase 3 and Phase 4 digests."""
-    record = json.loads(_STEP1_RECORD_PATH.read_text(encoding="utf-8"))
-    p3 = record["flowsignal_baseline"]["phase3_staging_reference"]
-    assert p3["service"] == "flowsignal-cage-phase3-staging"
-    assert p3["cloud_run_revision"] == "flowsignal-cage-phase3-staging-00005-8mp"
+    """Verify the provider_01 Step 1 record pins both Phase 3 and Phase 4 digests."""
+    record_path = next(_PARTNER_DIR.glob("*.json"))
+    record = json.loads(record_path.read_text(encoding="utf-8"))
+    baseline = next(v for k, v in record.items() if k.endswith("_baseline"))
+    p3 = baseline["phase3_staging_reference"]
+    assert p3["service"].endswith("-cage-phase3-staging")
+    assert p3["cloud_run_revision"].endswith("-cage-phase3-staging-00005-8mp")
     assert (
         p3["container_image_digest"]
         == "sha256:ec26099cf1ee11aa1491ef14f716acd84d87dccc0ba3c59fca0a6e0f9fc80929"
@@ -146,9 +142,9 @@ def test_step1_record_contains_complete_phase3_and_phase4_provenance() -> None:
         == "f1b81dd094a9fad8107d61996cb489b62e93302e427792bdf3c14d20277aea9d"
     )
 
-    p4 = record["flowsignal_baseline"]["step1_exercised_deployment"]
-    assert p4["service"] == "flowsignal-cage-phase4-staging"
-    assert p4["cloud_run_revision"] == "flowsignal-cage-phase4-staging-00001-8nr"
+    p4 = baseline["step1_exercised_deployment"]
+    assert p4["service"].endswith("-cage-phase4-staging")
+    assert p4["cloud_run_revision"].endswith("-cage-phase4-staging-00001-8nr")
     assert (
         p4["container_image_digest"]
         == "sha256:d681fd2df24f4585ac40c43a76c1eb73ffb7bdb7611f67d4ba2a717cd43d951d"
@@ -159,11 +155,11 @@ def test_step1_record_contains_complete_phase3_and_phase4_provenance() -> None:
 @respx.mock
 async def test_scb_001_refuse_with_authority_record_id_never_mints_token() -> None:
     """Verify REFUSE responses carrying authority_record_id never mint a ConsequenceToken."""
-    provider = FlowSignalNormativeProvider(
-        endpoint="https://flowsignal.example.com",
+    provider = Provider01NormativeProvider(
+        endpoint="https://provider01.example.com",
         api_key="test-key",
     )
-    respx.post("https://flowsignal.example.com/cage/validate").mock(
+    respx.post("https://provider01.example.com/cage/validate").mock(
         return_value=httpx.Response(
             200,
             json={
@@ -184,7 +180,7 @@ async def test_scb_001_refuse_with_authority_record_id_never_mints_token() -> No
     )
     assert result.admitted is False
     assert len(result.findings) == 1
-    assert result.findings[0]["code"] == "FLOWSIGNAL_REFUSE"
+    assert result.findings[0]["code"] == "PROVIDER_01_REFUSE"
     assert "token" not in result.findings[0]
 
 
@@ -195,12 +191,12 @@ async def test_zero_negative_or_nonfinite_magnitude_fails_closed_on_allow(
     bad_amount: float,
 ) -> None:
     """Verify zero, negative, or non-finite payment magnitudes fail closed even on ALLOW."""
-    provider = FlowSignalNormativeProvider(
-        endpoint="https://flowsignal.example.com",
+    provider = Provider01NormativeProvider(
+        endpoint="https://provider01.example.com",
         api_key="test-key",
         consequence_magnitudes=_MAGNITUDES,
     )
-    respx.post("https://flowsignal.example.com/cage/validate").mock(
+    respx.post("https://provider01.example.com/cage/validate").mock(
         return_value=httpx.Response(
             200,
             json={
@@ -226,8 +222,8 @@ async def test_zero_negative_or_nonfinite_magnitude_fails_closed_on_allow(
 @respx.mock
 async def test_tc01_to_tc06_step2_consequence_qualification_vectors() -> None:
     """Execute TC-01..TC-06 consequence token and receipt-vs-mandate separation vectors."""
-    provider = FlowSignalNormativeProvider(
-        endpoint="https://flowsignal.example.com",
+    provider = Provider01NormativeProvider(
+        endpoint="https://provider01.example.com",
         api_key="test-key",
         consequence_magnitudes=_MAGNITUDES,
     )
@@ -265,7 +261,7 @@ async def test_tc01_to_tc06_step2_consequence_qualification_vectors() -> None:
             return_value=signer,
         ):
             # TC-01: Nominal ALLOW with authority_receipt.id -> EXECUTE
-            respx.post("https://flowsignal.example.com/cage/validate").mock(
+            respx.post("https://provider01.example.com/cage/validate").mock(
                 return_value=httpx.Response(
                     200,
                     json={
@@ -298,7 +294,7 @@ async def test_tc01_to_tc06_step2_consequence_qualification_vectors() -> None:
             eval_mutated = await gateway.evaluate(token_1, mutated_payload)
             assert eval_mutated.decision == ConsequenceDecision.BLOCK
             assert eval_mutated.reason_code == "ACTION_BINDING_MISMATCH"
-            assert "flowsignal:token:rcpt-step2-0001" not in redis_stub.data
+            assert "consequence:token:rcpt-step2-0001" not in redis_stub.data
 
             # TC-01 (cont.): Unmutated payload consumes token_1 -> EXECUTE
             eval_ok = await gateway.evaluate(token_1, base_payload)
@@ -325,7 +321,7 @@ async def test_tc01_to_tc06_step2_consequence_qualification_vectors() -> None:
             assert eval_expired.reason_code == "TOKEN_INVALID"
 
             # TC-05: ESCALATE -> EXTERNAL_HOLD with needs_human_review=True
-            respx.post("https://flowsignal.example.com/cage/validate").mock(
+            respx.post("https://provider01.example.com/cage/validate").mock(
                 return_value=httpx.Response(
                     200,
                     json={
@@ -351,7 +347,7 @@ async def test_tc01_to_tc06_step2_consequence_qualification_vectors() -> None:
                         "amount": 125000.0,
                     },
                 )
-            respx.post("https://flowsignal.example.com/cage/validate").mock(
+            respx.post("https://provider01.example.com/cage/validate").mock(
                 return_value=httpx.Response(
                     200,
                     json={
@@ -380,8 +376,8 @@ async def test_allow_without_authority_receipt_id_fails_closed_even_when_mandate
     """ALLOW omitting authority_receipt.id / authority_receipt_id fails closed
     with CONSEQUENCE_TOKEN_MINT_FAILED even when authority_record_id is present.
     """
-    provider = FlowSignalNormativeProvider(
-        endpoint="https://flowsignal.example.com",
+    provider = Provider01NormativeProvider(
+        endpoint="https://provider01.example.com",
         api_key="test-key",
     )
     fria_tier = FriaTier(
@@ -403,7 +399,7 @@ async def test_allow_without_authority_receipt_id_fails_closed_even_when_mandate
                 "mandate_id": "MANDATE-TREASURY-001",
             },
         )
-    respx.post("https://flowsignal.example.com/cage/validate").mock(
+    respx.post("https://provider01.example.com/cage/validate").mock(
         return_value=httpx.Response(
             200,
             json={

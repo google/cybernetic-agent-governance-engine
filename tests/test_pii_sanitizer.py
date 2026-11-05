@@ -131,7 +131,7 @@ def test_consequence_token_finding_dict_scrubbed(sanitizer):
         "code": "CONSEQUENCE_TOKEN",
         "severity": "info",
         "token": "eyJhbGciOiJSUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiJhY3RvcjoxMjMiLCJ0aWQiOiJ0aHJlYWQ6NDU2In0.c2lnbmF0dXJlX3BsYWNlaG9sZGVyX2Zha2VfZGF0YV9mb3JfdGVzdGluZ19vbmx5",
-        "authority_record_id": "rec:flowsignal-abc123",
+        "authority_record_id": "rec:provider01-abc123",
         "message": "ConsequenceToken minted for post-validation consequence enforcement",
     }
     result = sanitizer.sanitize_dict(finding)
@@ -143,7 +143,7 @@ def test_consequence_token_finding_dict_scrubbed(sanitizer):
     # All other fields must survive intact
     assert result["code"] == "CONSEQUENCE_TOKEN"
     assert result["severity"] == "info"
-    assert result["authority_record_id"] == "rec:flowsignal-abc123"
+    assert result["authority_record_id"] == "rec:provider01-abc123"
     assert (
         result["message"]
         == "ConsequenceToken minted for post-validation consequence enforcement"
@@ -316,7 +316,7 @@ def test_realistic_validation_result_with_consequence_token(sanitizer):
                 "code": "CONSEQUENCE_TOKEN",
                 "severity": "info",
                 "token": "eyJhbGciOiJSUzI1NiIsInR5cCI6IkpXVCIsImtpZCI6ImRldi1rZXktMDEifQ.eyJzdWIiOiJhY3RvcjoxMjMiLCJ0aWQiOiJ0aHJlYWQ6NDU2IiwicmVjIjoicmVjOmFiYzEyMyIsImFjdCI6InNoYTI1NjphYmNkZWYxMjM0NTYiLCJ2ZXIiOm51bGwsImlhdCI6MTcwMDAwMDAwMCwiZXhwIjoxNzAwMDAwMDYwLCJqdGkiOiJyZWM6YWJjMTIzIn0.cGFkZGVkX2Zha2Vfc2lnbmF0dXJlX2Jhc2U2NHVybF9lbmNvZGVkX3BsYWNlaG9sZGVyX25vdF9yZWFsX2NyeXB0b19kYXRhX2p1c3RfYV90ZXN0X2ZpeHR1cmVfZm9yX3JlZ2V4X21hdGNoaW5n",
-                "authority_record_id": "rec:flowsignal-abc123",
+                "authority_record_id": "rec:provider01-abc123",
                 "message": "ConsequenceToken minted for post-validation consequence enforcement",
             },
             {
@@ -336,7 +336,7 @@ def test_realistic_validation_result_with_consequence_token(sanitizer):
     ct_finding = result["findings"][0]
     assert ct_finding["token"] == "[REDACTED_TOKEN]"
     assert ct_finding["code"] == "CONSEQUENCE_TOKEN"
-    assert ct_finding["authority_record_id"] == "rec:flowsignal-abc123"
+    assert ct_finding["authority_record_id"] == "rec:provider01-abc123"
     assert "ConsequenceToken minted" in ct_finding["message"]
 
     # Other findings unaffected

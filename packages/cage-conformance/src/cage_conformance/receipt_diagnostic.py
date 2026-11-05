@@ -12,11 +12,11 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Offline preimage and field diagnostic for ``actuator_01`` (Archytan) receipts.
+"""Offline preimage and field diagnostic for ``actuator_01`` receipts.
 
 Compares the signed-message preimage and required fields that CAGE's
 ``verify_partner_receipt()`` (``src/integrations/actuator_01/receipt_verifier.py``
-lines 193-234) expects against Archytan's receipt signing scheme
+lines 193-234) expects against the ``actuator_01`` partner receipt signing scheme
 (``"ARCHYTAN_RECEIPT_V1:" || SHA-256(intent_hash)``), using only the Python
 standard library. Does not verify Ed25519 signatures and never contacts a live
 endpoint.
@@ -26,13 +26,13 @@ Usage (one paragraph):
     receipt over stdin with ``cage-conformance diagnose-receipt < receipt.json``,
     or run ``python3 -m cage_conformance.receipt_diagnostic receipt.json`` with
     ``PYTHONPATH=packages/cage-conformance/src`` and no package install) against
-    any captured Archytan receipt JSON. The tool makes no network calls and does
+    any captured ``actuator_01`` receipt JSON. The tool makes no network calls and does
     not verify the Ed25519 signature; instead, it prints the exact preimage and
     SHA-256 digest CAGE constructs (``"ARCHYTAN_RECEIPT_V1:" || JCS(body without
     "signature" and "ingress_signature")``) alongside the preimage and SHA-256
-    digest for Archytan's signing scheme (``"ARCHYTAN_RECEIPT_V1:" ||
+    digest for the partner signing scheme (``"ARCHYTAN_RECEIPT_V1:" ||
     SHA-256(intent_hash)``), lists which required fields (``envelope_digest``
-    for CAGE, ``intent_hash`` for Archytan) are absent, and states the specific
+    for CAGE, ``intent_hash`` for the partner) are absent, and states the specific
     reconciliation failure reason (``preimage digest mismatch``, ``missing
     envelope_digest``, or ``both``). It exits ``0`` when the candidate preimage
     digests agree and ``envelope_digest`` is present, ``1`` on any mismatch, and
@@ -58,7 +58,7 @@ else:  # pragma: no cover - direct script execution without -m or pip install
     from cage_conformance.stream_invariants import jcs_bytes
 
 RECEIPT_DOMAIN_TAG = b"ARCHYTAN_RECEIPT_V1:"
-RECEIPT_DOMAIN_TAG_STR = "ARCHYTAN_RECEIPT_V1:"
+RECEIPT_DOMAIN_TAG_STR = RECEIPT_DOMAIN_TAG.decode("ascii")
 STRIPPED_SIGNATURE_FIELDS: tuple[str, ...] = ("signature", "ingress_signature")
 _HEX64_RE = re.compile(r"[0-9a-fA-F]{64}")
 
@@ -67,7 +67,7 @@ PreimageBuilder = Callable[[Mapping[str, Any]], bytes]
 
 @dataclass(frozen=True)
 class ReceiptDiagnosis:
-    """Comparison of CAGE receipt verification against Archytan receipt signing."""
+    """Comparison of CAGE receipt verification against partner receipt signing."""
 
     input_name: str
     input_sha256: str
@@ -82,13 +82,13 @@ class ReceiptDiagnosis:
     cage_canonical_body_utf8: str
     cage_preimage_utf8: str
     cage_preimage_sha256: str
-    archytan_domain_tag: str
+    partner_domain_tag: str
     intent_digest_source: str | None
     intent_sha256_hex: str | None
-    archytan_preimage_utf8: str | None
-    archytan_preimage_sha256: str | None
-    archytan_raw_preimage_hex: str | None
-    archytan_raw_preimage_sha256: str | None
+    partner_preimage_utf8: str | None
+    partner_preimage_sha256: str | None
+    partner_raw_preimage_hex: str | None
+    partner_raw_preimage_sha256: str | None
 
     def to_dict(self) -> dict[str, Any]:
         data = asdict(self)
@@ -111,7 +111,7 @@ def _resolve_intent_sha256(
 ) -> tuple[str | None, bytes | None, str | None]:
     """Return ``(sha256_hex, sha256_raw_bytes, source_label)`` for ``intent_hash``.
 
-    Archytan receipts carry ``intent_hash`` (the JCS-canonicalized governance
+    Partner receipts carry ``intent_hash`` (the JCS-canonicalized governance
     envelope) and sign ``"ARCHYTAN_RECEIPT_V1:" || SHA-256(intent_hash)``.
     When diagnosing a CAGE README-shaped receipt that carries ``envelope_digest``
     (already the 64-hex SHA-256 of the canonical envelope) and no ``intent_hash``,
@@ -148,8 +148,8 @@ def _resolve_intent_sha256(
     return None, None, None
 
 
-def build_archytan_preimage(body: Mapping[str, Any]) -> bytes | None:
-    """Build Archytan's candidate preimage: ``"ARCHYTAN_RECEIPT_V1:" || SHA-256(intent_hash)``."""
+def build_partner_preimage(body: Mapping[str, Any]) -> bytes | None:
+    """Build partner candidate preimage: ``"ARCHYTAN_RECEIPT_V1:" || SHA-256(intent_hash)``."""
     intent_sha256_hex, _, _ = _resolve_intent_sha256(body)
     if intent_sha256_hex is None:
         return None
@@ -172,7 +172,7 @@ def diagnose_receipt(
     input_sha256: str | None = None,
     cage_preimage_builder: PreimageBuilder = build_cage_preimage,
 ) -> ReceiptDiagnosis:
-    """Compare CAGE's receipt preimage and field requirements against Archytan's."""
+    """Compare CAGE's receipt preimage and field requirements against the partner's."""
     if not isinstance(body, Mapping):
         raise ValueError("receipt must be a JSON object")
 
@@ -189,21 +189,21 @@ def diagnose_receipt(
 
     intent_sha256_hex, intent_sha256_raw, intent_source = _resolve_intent_sha256(body)
     if intent_sha256_hex is not None and intent_sha256_raw is not None:
-        archytan_preimage = RECEIPT_DOMAIN_TAG + intent_sha256_hex.encode("ascii")
-        archytan_preimage_utf8: str | None = archytan_preimage.decode("ascii")
-        archytan_preimage_sha256: str | None = hashlib.sha256(
-            archytan_preimage
+        partner_preimage = RECEIPT_DOMAIN_TAG + intent_sha256_hex.encode("ascii")
+        partner_preimage_utf8: str | None = partner_preimage.decode("ascii")
+        partner_preimage_sha256: str | None = hashlib.sha256(
+            partner_preimage
         ).hexdigest()
-        archytan_raw_preimage = RECEIPT_DOMAIN_TAG + intent_sha256_raw
-        archytan_raw_preimage_hex: str | None = archytan_raw_preimage.hex()
-        archytan_raw_preimage_sha256: str | None = hashlib.sha256(
-            archytan_raw_preimage
+        partner_raw_preimage = RECEIPT_DOMAIN_TAG + intent_sha256_raw
+        partner_raw_preimage_hex: str | None = partner_raw_preimage.hex()
+        partner_raw_preimage_sha256: str | None = hashlib.sha256(
+            partner_raw_preimage
         ).hexdigest()
     else:
-        archytan_preimage_utf8 = None
-        archytan_preimage_sha256 = None
-        archytan_raw_preimage_hex = None
-        archytan_raw_preimage_sha256 = None
+        partner_preimage_utf8 = None
+        partner_preimage_sha256 = None
+        partner_raw_preimage_hex = None
+        partner_raw_preimage_sha256 = None
 
     missing_envelope_digest = not _has_field(body, "envelope_digest")
     missing_intent_hash = not _has_field(body, "intent_hash")
@@ -214,9 +214,9 @@ def diagnose_receipt(
         absent.append("intent_hash")
 
     preimage_digest_mismatch = (
-        archytan_preimage_sha256 is None
+        partner_preimage_sha256 is None
         or cage_preimage_sha256
-        not in {archytan_preimage_sha256, archytan_raw_preimage_sha256}
+        not in {partner_preimage_sha256, partner_raw_preimage_sha256}
     )
 
     if preimage_digest_mismatch and missing_envelope_digest:
@@ -244,13 +244,13 @@ def diagnose_receipt(
         cage_canonical_body_utf8=cage_canonical_bytes.decode("utf-8"),
         cage_preimage_utf8=cage_preimage.decode("utf-8", errors="replace"),
         cage_preimage_sha256=cage_preimage_sha256,
-        archytan_domain_tag=RECEIPT_DOMAIN_TAG_STR,
+        partner_domain_tag=RECEIPT_DOMAIN_TAG_STR,
         intent_digest_source=intent_source,
         intent_sha256_hex=intent_sha256_hex,
-        archytan_preimage_utf8=archytan_preimage_utf8,
-        archytan_preimage_sha256=archytan_preimage_sha256,
-        archytan_raw_preimage_hex=archytan_raw_preimage_hex,
-        archytan_raw_preimage_sha256=archytan_raw_preimage_sha256,
+        partner_preimage_utf8=partner_preimage_utf8,
+        partner_preimage_sha256=partner_preimage_sha256,
+        partner_raw_preimage_hex=partner_raw_preimage_hex,
+        partner_raw_preimage_sha256=partner_raw_preimage_sha256,
     )
 
 
@@ -269,22 +269,22 @@ def format_diagnosis(diagnosis: ReceiptDiagnosis) -> str:
         f"  reason:                  {diagnosis.reason}",
         "  required_fields:",
         f"    envelope_digest (CAGE receipt_verifier.py:230): {env_state}",
-        f"    intent_hash (Archytan receipt schema):          {intent_state}",
+        f"    intent_hash (partner receipt schema):           {intent_state}",
         f"  absent_required_fields:  {absent_str}",
         "  cage_candidate (RECEIPT_SIGNATURE_DOMAIN_TAG || JCS(body - {signature, ingress_signature})):",
         f"    preimage_utf8:         {diagnosis.cage_preimage_utf8}",
         f"    preimage_sha256:       {diagnosis.cage_preimage_sha256}",
-        '  archytan_candidate ("ARCHYTAN_RECEIPT_V1:" || SHA-256(intent_hash)):',
+        f'  partner_candidate ("{RECEIPT_DOMAIN_TAG_STR}" || SHA-256(intent_hash)):',
     ]
-    if diagnosis.archytan_preimage_utf8 is not None:
+    if diagnosis.partner_preimage_utf8 is not None:
         lines.extend(
             [
                 f"    intent_digest_source:  {diagnosis.intent_digest_source}",
                 f"    intent_sha256_hex:     {diagnosis.intent_sha256_hex}",
-                f"    preimage_utf8 (hex):   {diagnosis.archytan_preimage_utf8}",
-                f"    preimage_sha256 (hex): {diagnosis.archytan_preimage_sha256}",
-                f"    preimage_hex (raw32):  {diagnosis.archytan_raw_preimage_hex}",
-                f"    preimage_sha256 (raw): {diagnosis.archytan_raw_preimage_sha256}",
+                f"    preimage_utf8 (hex):   {diagnosis.partner_preimage_utf8}",
+                f"    preimage_sha256 (hex): {diagnosis.partner_preimage_sha256}",
+                f"    preimage_hex (raw32):  {diagnosis.partner_raw_preimage_hex}",
+                f"    preimage_sha256 (raw): {diagnosis.partner_raw_preimage_sha256}",
             ]
         )
     else:
@@ -357,7 +357,7 @@ def main(
         prog="cage-conformance diagnose-receipt",
         description=(
             "Compare CAGE verify_partner_receipt() preimage and field requirements "
-            "against Archytan's receipt signing scheme (offline, no signature check)"
+            "against actuator_01 partner receipt signing scheme (offline, no signature check)"
         ),
         allow_abbrev=False,
     )

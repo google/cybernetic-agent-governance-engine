@@ -80,7 +80,7 @@ def test_factory_resolution_normative(provider_name: str) -> None:
         ("p01", "provider_01"),
         ("p03", "provider_03"),
         ("agent_integrity", "provider_06"),
-        ("verdict", "provider_08"),
+        ("p07", "provider_07"),
         ("p08", "provider_08"),
     ],
 )
@@ -236,13 +236,13 @@ async def test_provider_02_rejected_from_normative_factory() -> None:
 # ---------------------------------------------------------------------------
 
 
-class TestFlowSignalDecisionMapping:
-    """Verify FlowSignal correctly maps FlowSignal tri-state decision to CAGE primitives.
+class TestProvider01DecisionMapping:
+    """Verify Provider01NormativeProvider maps tri-state decision to CAGE primitives.
 
-    These tests cover the ESCALATE contract mapping per §3.1 of the FlowSignal
+    These tests cover the ESCALATE contract mapping per §3.1 of the provider_01
     integration plan, ensuring:
       - ALLOW → admitted=True, no blocking findings
-      - REFUSE → admitted=False, FLOWSIGNAL_REFUSE finding
+      - REFUSE → admitted=False, PROVIDER_01_REFUSE finding
       - ESCALATE → admitted=False, EXTERNAL_HOLD finding with needs_human_review
       - Malformed decision → fail-closed with PARSE_ERROR
       - Missing decision → backward-compat with admitted/findings shape
@@ -250,15 +250,15 @@ class TestFlowSignalDecisionMapping:
 
     @pytest.fixture
     def provider(self):
-        """Instantiate FlowSignal with mock endpoint."""
+        """Instantiate Provider01NormativeProvider with mock endpoint."""
         from src.gateway.governance.consequence_magnitude import (
             ConsequenceMagnitudes,
         )
         from src.gateway.governance.contracts import ConsequenceMagnitude
-        from src.integrations.provider_01.provider import FlowSignalNormativeProvider
+        from src.integrations.provider_01.provider import Provider01NormativeProvider
 
-        return FlowSignalNormativeProvider(
-            endpoint="https://mock.flowsignal.example.com",
+        return Provider01NormativeProvider(
+            endpoint="https://mock.provider01.example.com",
             api_key="test-key",
             timeout=5.0,
             # Declared magnitude-free, so an ALLOW reaches the signer that
@@ -272,7 +272,7 @@ class TestFlowSignalDecisionMapping:
         )
 
     @pytest.mark.asyncio
-    async def test_flowsignal_decision_allow(self, provider) -> None:
+    async def test_provider_01_decision_allow(self, provider) -> None:
         """ALLOW decision → admitted=True, CONSEQUENCE_TOKEN finding (Phase 2 ST-4)."""
         from unittest.mock import patch
 
@@ -293,12 +293,12 @@ class TestFlowSignalDecisionMapping:
             )
             mock_get_signer.return_value = mock_signer
 
-            respx.post("https://mock.flowsignal.example.com/cage/validate").mock(
+            respx.post("https://mock.provider01.example.com/cage/validate").mock(
                 return_value=httpx.Response(
                     200,
                     json={
                         "decision": "ALLOW",
-                        "message": "Transaction approved by FlowSignal",
+                        "message": "Transaction approved by provider_01",
                         "authority_record_id": "test-auth-rec",
                         "authority_receipt": {"id": "test-auth-rcpt"},
                     },
@@ -322,10 +322,10 @@ class TestFlowSignalDecisionMapping:
             mock_get_signer.assert_called_once()
 
     @pytest.mark.asyncio
-    async def test_flowsignal_decision_refuse(self, provider) -> None:
-        """REFUSE decision → admitted=False, FLOWSIGNAL_REFUSE finding with blocked severity."""
+    async def test_provider_01_decision_refuse(self, provider) -> None:
+        """REFUSE decision → admitted=False, PROVIDER_01_REFUSE finding with blocked severity."""
         with respx.mock:
-            respx.post("https://mock.flowsignal.example.com/cage/validate").mock(
+            respx.post("https://mock.provider01.example.com/cage/validate").mock(
                 return_value=httpx.Response(
                     200,
                     json={
@@ -340,7 +340,7 @@ class TestFlowSignalDecisionMapping:
             assert isinstance(result, ValidationResult)
             assert result.admitted is False
             assert len(result.findings) == 1
-            assert result.findings[0]["code"] == "FLOWSIGNAL_REFUSE"
+            assert result.findings[0]["code"] == "PROVIDER_01_REFUSE"
             assert result.findings[0]["severity"] == "blocked"
             assert (
                 "blocked" in result.findings[0]["message"].lower()
@@ -348,10 +348,10 @@ class TestFlowSignalDecisionMapping:
             )
 
     @pytest.mark.asyncio
-    async def test_flowsignal_decision_escalate(self, provider) -> None:
+    async def test_provider_01_decision_escalate(self, provider) -> None:
         """ESCALATE decision → admitted=False, EXTERNAL_HOLD finding with needs_human_review=True."""
         with respx.mock:
-            respx.post("https://mock.flowsignal.example.com/cage/validate").mock(
+            respx.post("https://mock.provider01.example.com/cage/validate").mock(
                 return_value=httpx.Response(
                     200,
                     json={
@@ -378,12 +378,12 @@ class TestFlowSignalDecisionMapping:
         # Only truly invalid values should be in this list.
         ["INVALID", "Accept", "", "DENY", "BLOCK", "PENDING", "null", "123"],
     )
-    async def test_flowsignal_decision_malformed_failclosed(
+    async def test_provider_01_decision_malformed_failclosed(
         self, provider, malformed_decision: str
     ) -> None:
         """Malformed/unrecognized decision value → fail-closed with PARSE_ERROR."""
         with respx.mock:
-            respx.post("https://mock.flowsignal.example.com/cage/validate").mock(
+            respx.post("https://mock.provider01.example.com/cage/validate").mock(
                 return_value=httpx.Response(
                     200,
                     json={
@@ -405,12 +405,12 @@ class TestFlowSignalDecisionMapping:
             assert malformed_decision in result.findings[0]["message"]
 
     @pytest.mark.asyncio
-    async def test_flowsignal_missing_decision_field_fails_closed(
+    async def test_provider_01_missing_decision_field_fails_closed(
         self, provider
     ) -> None:
         """Payload without decision field → fail closed (BC-03 remediation)."""
         with respx.mock:
-            respx.post("https://mock.flowsignal.example.com/cage/validate").mock(
+            respx.post("https://mock.provider01.example.com/cage/validate").mock(
                 return_value=httpx.Response(
                     200,
                     json={
@@ -435,12 +435,12 @@ class TestFlowSignalDecisionMapping:
             )
 
     @pytest.mark.asyncio
-    async def test_flowsignal_missing_decision_field_fails_closed_even_when_admitted_false(
+    async def test_provider_01_missing_decision_field_fails_closed_even_when_admitted_false(
         self, provider
     ) -> None:
         """Payload without decision field fails closed regardless of admitted value (BC-03 remediation)."""
         with respx.mock:
-            respx.post("https://mock.flowsignal.example.com/cage/validate").mock(
+            respx.post("https://mock.provider01.example.com/cage/validate").mock(
                 return_value=httpx.Response(
                     200,
                     json={
@@ -470,7 +470,7 @@ class TestFlowSignalDecisionMapping:
             )
 
     @pytest.mark.asyncio
-    async def test_flowsignal_decision_case_insensitive(self, provider) -> None:
+    async def test_provider_01_decision_case_insensitive(self, provider) -> None:
         """Decision values are case-insensitive (ALLOW, Allow, allow all work)."""
         from unittest.mock import patch
 
@@ -492,7 +492,7 @@ class TestFlowSignalDecisionMapping:
             mock_get_signer.return_value = mock_signer
 
             # Lowercase "allow"
-            respx.post("https://mock.flowsignal.example.com/cage/validate").mock(
+            respx.post("https://mock.provider01.example.com/cage/validate").mock(
                 return_value=httpx.Response(
                     200,
                     json={

@@ -17,7 +17,7 @@ normative_provider.py — External Normative Provider Interface (CAGE v0.1.0)
 ===========================================================================
 
 Implements §2.5 of EXTENSIBILITY_ARCHITECTURE.md: the 3-endpoint integration
-surface for external normative providers (e.g. FlowSignal).
+surface for external normative providers (e.g. ``provider_01``).
 
 Architecture
 ------------
@@ -364,7 +364,7 @@ class NormativeProviderDaemon:
                     local_path,
                 )
                 # Load hash for change detection
-                # BREAKING CHANGE (FlowSignal Phase 2 §5.3): Profile hash computation
+                # BREAKING CHANGE (Phase 2 §5.3): Profile hash computation
                 # migrated to RFC 8785 JCS to match NormativeBaseline.profile_hash property.
                 with open(local_path) as fh:
                     cached = json.load(fh)
@@ -512,11 +512,11 @@ def get_normative_provider(
 
     Supported providers:
         - "static"       — Local stub for dev/CI (kernel-resident)
-        - "flowsignal"   — FlowSignal legal baseline & FRIA API (alias: "provider_01")
-        - "provider_03"  — Provider 03 JCS bind receipts & normative API
-        - "provider_06"  — Provider 06 tri-state agent integrity verifier
-        - "provider_07"  — Provider 07 Bayesian causal suitability oracle (alias: "infertheta")
-        - "provider_08"  — Provider 08 runtime evidence provider (alias: "verdict")
+        - "provider_01"  — Provider 01 legal baseline & FRIA API (alias: "p01")
+        - "provider_03"  — Provider 03 JCS bind receipts & normative API (alias: "p03")
+        - "provider_06"  — Provider 06 tri-state agent integrity verifier (alias: "p06")
+        - "provider_07"  — Provider 07 Bayesian causal suitability oracle (alias: "p07")
+        - "provider_08"  — Provider 08 runtime evidence provider (alias: "p08")
 
     Note: actuator_01 (see src/integrations/actuator_01/) implements the
     ExecutionActuator seam (KMS-signed envelope protocol), not NormativeProvider.
@@ -532,18 +532,13 @@ def get_normative_provider(
 
     # Provider alias normalization
     alias_map = {
-        "flowsignal": "provider_01",
-        "flow_signal": "provider_01",
         "p01": "provider_01",
         "p03": "provider_03",
         "p06": "provider_06",
         "p07": "provider_07",
         "agent_integrity": "provider_06",
         "agentintegrity": "provider_06",
-        "infertheta": "provider_07",
         "p08": "provider_08",
-        "verdict": "provider_08",
-        "verdict_systems": "provider_08",
     }
     provider_name = alias_map.get(provider_name, provider_name)
 
@@ -561,9 +556,9 @@ def get_normative_provider(
 
     # Vendor providers — lazy-loaded from src/integrations/{provider}/
     if provider_name == "provider_01":
-        from src.integrations.provider_01 import FlowSignalNormativeProvider
+        from src.integrations.provider_01 import Provider01NormativeProvider
 
-        return FlowSignalNormativeProvider(
+        return Provider01NormativeProvider(
             consequence_magnitudes=consequence_magnitudes
         )
 

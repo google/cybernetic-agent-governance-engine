@@ -112,7 +112,7 @@ PROVIDER_01_GCP_AUTH: dict[str, str] = {
 #: Variables a job mints during the run instead of reading a secret.
 MINTED: dict[str, str] = {
     "PROVIDER_01_GCP_ID_TOKEN": (
-        "Google ID token for FlowSignal's Cloud Run ingress, audience "
+        "Google ID token for provider_01 Cloud Run ingress, audience "
         "PROVIDER_01_ENDPOINT, minted per run with PROVIDER_01_GCP_AUTH."
     ),
 }

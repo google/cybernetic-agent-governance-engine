@@ -380,6 +380,7 @@ def test_live_tests_read_only_what_the_harness_supplies() -> None:
     actuator_01's test once read file paths while the workflow passed
     differently named PEM secrets, so it could only skip.
     """
+    finding_code_suffixes = ("_ALLOW", "_REFUSE", "_UNSUITABLE", "_ESCALATE")
     staged = set(harness.STAGED_FILES.values())
     for partner, target in harness.PARTNER_TARGETS.items():
         supplied = (
@@ -390,9 +391,13 @@ def test_live_tests_read_only_what_the_harness_supplies() -> None:
         )
         prefix = partner.upper() + "_"
         for path in _files_under(target):
-            read = set(
-                re.findall(rf'"({prefix}[A-Z0-9_]+)"', path.read_text(encoding="utf-8"))
-            )
+            read = {
+                token
+                for token in re.findall(
+                    rf'"({prefix}[A-Z0-9_]+)"', path.read_text(encoding="utf-8")
+                )
+                if not token.endswith(finding_code_suffixes)
+            }
             unknown = sorted(read - supplied)
             assert not unknown, f"{path.relative_to(_REPO_ROOT)} reads {unknown}"
 

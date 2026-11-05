@@ -75,7 +75,7 @@ MAGNITUDES = ConsequenceMagnitudes(
 
 
 def _key(rec: str) -> str:
-    return f"flowsignal:token:{rec}"
+    return f"consequence:token:{rec}"
 
 
 @pytest.fixture

@@ -49,7 +49,9 @@ PROVENANCE_SCHEMA_VERSION = "cage-conformance-provenance/1"
 MODE_PROFILES: Mapping[str, str] = MappingProxyType(
     {"trace": "trace-v1", "stream": "stream-v1"}
 )
-MODES = tuple(MODE_PROFILES)
+#: Live endpoint contract profiles.
+ENDPOINT_PROFILES: tuple[str, ...] = ("substrate-v1", "provider-01-v0.2")
+MODES: tuple[str, ...] = (*MODE_PROFILES, "endpoint")
 
 _ORG_TOKEN = re.compile(r"[a-z0-9]+")
 _SHA256_HEX = re.compile(r"[0-9a-f]{64}")
@@ -243,7 +245,7 @@ class ConformanceReport:
     def __post_init__(self) -> None:
         object.__setattr__(self, "inputs", tuple(self.inputs))
         object.__setattr__(self, "assertions", tuple(self.assertions))
-        if not isinstance(self.mode, str) or self.mode not in MODE_PROFILES:
+        if not isinstance(self.mode, str) or self.mode not in MODES:
             raise ReportError(f"mode must be one of {list(MODES)}")
         if not self.inputs:
             raise ReportError("a report needs at least one input")
@@ -255,7 +257,13 @@ class ConformanceReport:
         if not isinstance(self.provenance, Provenance):
             raise ReportError("provenance must be a Provenance")
         subject = self.provenance.adapter_under_test
-        if subject.contract_profile != MODE_PROFILES[self.mode]:
+        if self.mode == "endpoint":
+            if subject.contract_profile not in ENDPOINT_PROFILES:
+                raise ReportError(
+                    f"contract_profile {subject.contract_profile!r} is not an "
+                    f"endpoint profile {list(ENDPOINT_PROFILES)}"
+                )
+        elif subject.contract_profile != MODE_PROFILES[self.mode]:
             raise ReportError(
                 f"contract_profile {subject.contract_profile!r} is not the "
                 f"{self.mode} profile {MODE_PROFILES[self.mode]!r}"

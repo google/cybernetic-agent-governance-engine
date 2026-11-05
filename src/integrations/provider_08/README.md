@@ -44,7 +44,7 @@ seam it supplies three things to a CAGE deployment:
 | Protocol | [`NormativeProvider`](../../gateway/governance/seams/normative.py) |
 | Integration style | Synchronous gate, remote HTTPS, on the request hot path (5 s default timeout) |
 | Class | `Provider08NormativeProvider` ([`adapter.py`](adapter.py)) |
-| Factory names | `provider_08`, aliases `p08`, `verdict`, `verdict_systems` |
+| Factory names | `provider_08`, alias `p08` |
 | Conformance suite | Registered in `NORMATIVE_PROVIDERS` (`tests/test_normative_provider_conformance.py`) |
 | Wire models | Pydantic v2 ([`schema.py`](schema.py)) |
 

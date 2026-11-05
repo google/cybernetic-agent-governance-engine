@@ -13,10 +13,10 @@
 # limitations under the License.
 
 """
-verify_flowsignal_wire_and_hostile.py
+verify_provider_01_wire_and_hostile.py
 ======================================
 Executes the Phase 4 Step 1 Live-Seeded Cross-Boundary Validation Suite across
-FlowSignal Cloud Run staging and CAGE's Path 1 & Path 2 governance/consequence
+Provider 01 Cloud Run staging and CAGE's Path 1 & Path 2 governance/consequence
 harnesses:
 
 1. Case 1 — ConsequenceToken Issuance & Suppression (Live Wire + Hostile LIVE-P3-004):
@@ -24,7 +24,7 @@ harnesses:
    - Live REFUSE (`DELETE_ACCOUNT` & expired mandate) -> `admitted=False`, no token.
    - Live ESCALATE (stale screening) -> `admitted=False`, `EXTERNAL_HOLD`, no token.
    - Live Malformed & Field-Injection Ingress (`HTTP 422`).
-   - Hostile Malformed FlowSignal Responses (Vectors A, B, C) -> `admitted=False`, no token.
+   - Hostile Malformed Provider 01 Responses (Vectors A, B, C) -> `admitted=False`, no token.
 2. Case 2 — Action-Binding Mutation & Substitution (Path 1, Live-Seeded Token):
    - Single-field (`amount`) and composed (`amount` + `beneficiary`) post-ALLOW
      payload mutations -> `ConsequenceGateway` returns `BLOCK` (`ACTION_BINDING_MISMATCH`).
@@ -39,7 +39,7 @@ harnesses:
    - Drifted `executor_id` -> `REJECTED` (`EXECUTOR_ID_MISMATCH`).
    - Drifted `target_route` -> `REJECTED` (`TARGET_ROUTE_MISMATCH`).
 5. Case 5 — Changed Authority Conditions & Post-Approval Revalidation (Path 2):
-   - `FriaTier` over live `FlowSignalNormativeProvider` (stale local FRIA ->
+   - `FriaTier` over live `Provider01NormativeProvider` (stale local FRIA ->
      `FRIA_ASSESSMENT_STALE`; live ALLOW -> `[]`; live REFUSE -> `FRIA_REJECTED`;
      live ESCALATE -> `FRIA_EXTERNAL_HOLD`).
    - Post-`govern()` parameter tampering rejected by `verify_seal()`.
@@ -59,13 +59,13 @@ value exits with actionable guidance rather than silently targeting someone
 else's project.
 
 Required:
-    FLOWSIGNAL_STAGING_ENDPOINT — Cloud Run base URL of the staging service.
-    CAGE_GCP_PROJECT            — GCP project ID or number holding the secret.
-    CAGE_GCP_IMPERSONATE_SA     — service account to impersonate.
+    PROVIDER_01_STAGING_ENDPOINT — Cloud Run base URL of the staging service.
+    CAGE_GCP_PROJECT             — GCP project ID or number holding the secret.
+    CAGE_GCP_IMPERSONATE_SA      — service account to impersonate.
 
 Optional:
-    FLOWSIGNAL_BEARER_SECRET    — Secret Manager secret name
-                                  (default: "flowsignal-cage-phase3-bearer").
+    PROVIDER_01_BEARER_SECRET    — Secret Manager secret name
+                                   (default: "provider-01-cage-phase3-bearer").
 """
 
 from __future__ import annotations
@@ -137,7 +137,7 @@ from src.gateway.governance.routing_seal import (
 )
 from src.gateway.governance.seams.normative import ValidationResult
 from src.integrations.provider_01.provider import (
-    FlowSignalNormativeProvider,
+    Provider01NormativeProvider,
     _build_cage_authority_request,
 )
 
@@ -168,19 +168,19 @@ def _require_env(name: str, description: str) -> str:
 def get_gcp_credentials() -> tuple[str, str, str]:
     """Resolve the staging endpoint and credentials from the environment."""
     endpoint = _require_env(
-        "FLOWSIGNAL_STAGING_ENDPOINT",
-        "the Cloud Run base URL of the FlowSignal staging service",
+        "PROVIDER_01_STAGING_ENDPOINT",
+        "the Cloud Run base URL of the Provider 01 staging service",
     )
     project = _require_env(
         "CAGE_GCP_PROJECT",
-        "the GCP project ID or number holding the FlowSignal bearer secret",
+        "the GCP project ID or number holding the Provider 01 bearer secret",
     )
     impersonate_sa = _require_env(
         "CAGE_GCP_IMPERSONATE_SA",
         "the service account to impersonate (e.g. cage-gateway@<project>.iam.gserviceaccount.com)",
     )
     secret_name = os.environ.get(
-        "FLOWSIGNAL_BEARER_SECRET", "flowsignal-cage-phase3-bearer"
+        "PROVIDER_01_BEARER_SECRET", "provider-01-cage-phase3-bearer"
     )
 
     gcloud_env = {**os.environ, "CLOUDSDK_PYTHON": sys.executable}
@@ -344,7 +344,7 @@ def _base_allow_payload() -> dict[str, Any]:
 
 async def main() -> None:
     print("=" * 88)
-    print("FLOWSIGNAL PHASE 4 STEP 1 — LIVE WIRE & CROSS-BOUNDARY VALIDATION SUITE")
+    print("PROVIDER 01 PHASE 4 STEP 1 — LIVE WIRE & CROSS-BOUNDARY VALIDATION SUITE")
     print(f"Timestamp: {datetime.now(timezone.utc).isoformat()}")
     print("=" * 88)
 
@@ -389,7 +389,7 @@ async def main() -> None:
             return_value=mock_evidence_sink,
         ),
     ):
-        provider = FlowSignalNormativeProvider(
+        provider = Provider01NormativeProvider(
             endpoint=endpoint,
             api_key=bearer,
             gcp_id_token=id_token,
@@ -461,7 +461,7 @@ async def main() -> None:
         assert res_refuse_action.admitted is False
         assert not refuse_token_minted
         assert any(
-            f.get("code") == "FLOWSIGNAL_REFUSE" for f in res_refuse_action.findings
+            f.get("code") == "PROVIDER_01_REFUSE" for f in res_refuse_action.findings
         )
 
         # 1D. Provider-level live REFUSE (expired mandate) -> no token
@@ -715,7 +715,7 @@ async def main() -> None:
             opa_input_digest="b" * 64,
             nonce="0123456789abcdef0123456789abcdef",
             params=allow_payload["params"],
-            approvals=[{"reviewer": "flowsignal-live-allow"}],
+            approvals=[{"reviewer": "provider-01-live-allow"}],
             required_quorum=1,
             executor_id="rogue_external_actuator",
             target_route="local://default",
@@ -749,7 +749,7 @@ async def main() -> None:
             opa_input_digest="b" * 64,
             nonce="fedcba9876543210fedcba9876543210",
             params=allow_payload["params"],
-            approvals=[{"reviewer": "flowsignal-live-allow"}],
+            approvals=[{"reviewer": "provider-01-live-allow"}],
             required_quorum=1,
             executor_id=broker_actuator.actuator_id,
             target_route="https://untrusted-egress.example.com/settle",

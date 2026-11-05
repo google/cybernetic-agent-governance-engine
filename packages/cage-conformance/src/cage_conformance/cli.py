@@ -12,10 +12,11 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""``cage-conformance``: verify exported traces and evidence streams.
+"""``cage-conformance``: verify exported traces, evidence streams, and live endpoints.
 
     cage-conformance verify --trace events.jsonl [provenance options]
     cage-conformance verify --stream evidence.jsonl [stream options] [provenance options]
+    cage-conformance verify --endpoint https://partner.example --profile substrate-v1 [provenance options]
     cage-conformance audience report.json
     cage-conformance attest report.json --output attested.json [--token-file FILE]
     cage-conformance verify-report report.json [--parties parties.json]
@@ -39,10 +40,10 @@ import json
 import os
 import sys
 import time
-from collections.abc import Callable, Iterator
+from collections.abc import Callable, Iterator, Sequence
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, TextIO
+from typing import Any, Optional, TextIO
 
 from . import __version__
 from .attestation import (
@@ -64,6 +65,7 @@ from .receipt_diagnostic import (
     run_diagnose_receipt,
 )
 from .report import (
+    ENDPOINT_PROFILES,
     MODE_PROFILES,
     AdapterUnderTest,
     ConformanceReport,
@@ -73,9 +75,20 @@ from .report import (
     build_provenance,
     validate_report,
 )
-from .runner import iter_stream_records, iter_trace_events, verify_stream, verify_trace
+from .runner import (
+    iter_stream_records,
+    iter_trace_events,
+    verify_endpoint,
+    verify_stream,
+    verify_trace,
+)
 
 Loader = Callable[[TextIO, str], Iterator[dict[str, Any]]]
+
+API_KEY_ENV_VAR = "CAGE_CONFORMANCE_API_KEY"
+LEGACY_API_KEY_ENV_VAR = "CAGE_NORMATIVE_API_KEY_SECRET"
+GCP_ID_TOKEN_ENV_VAR = "CAGE_CONFORMANCE_GCP_ID_TOKEN"
+LEGACY_GCP_ID_TOKEN_ENV_VAR = "CAGE_NORMATIVE_GCP_ID_TOKEN"
 
 
 def _read(
@@ -96,10 +109,26 @@ def _read(
     return items, tuple(inputs)
 
 
+def _read_optional_secret(
+    secret_file: Path | None, env_vars: Sequence[str]
+) -> str | None:
+    """Read an optional credential from a file or environment, never from argv."""
+    if secret_file is not None:
+        val = secret_file.read_text(encoding="utf-8").strip()
+        if not val:
+            raise ValueError(f"secret file {secret_file} is empty")
+        return val
+    for env_name in env_vars:
+        val = os.environ.get(env_name, "").strip()
+        if val:
+            return val
+    return None
+
+
 def _add_verify_parser(subparsers: argparse._SubParsersAction) -> None:
     verify = subparsers.add_parser(
         "verify",
-        help="Check a GOVERNANCE_TRACE export or an evidence stream",
+        help="Check a GOVERNANCE_TRACE export, an evidence stream, or a live endpoint",
         allow_abbrev=False,
     )
     target = verify.add_mutually_exclusive_group(required=True)
@@ -116,6 +145,44 @@ def _add_verify_parser(subparsers: argparse._SubParsersAction) -> None:
         type=Path,
         metavar="JSONL",
         help="cage-audit/3.0 evidence stream records in order ('-' reads stdin)",
+    )
+    target.add_argument(
+        "--endpoint",
+        default=None,
+        metavar="URL",
+        help="Live HTTP endpoint URL (requires --profile)",
+    )
+
+    endpoint = verify.add_argument_group("endpoint options")
+    endpoint.add_argument(
+        "--profile",
+        choices=list(ENDPOINT_PROFILES),
+        default=None,
+        help="Endpoint contract profile (required with --endpoint)",
+    )
+    endpoint.add_argument(
+        "--api-key-file",
+        type=Path,
+        default=None,
+        help=(
+            f"File holding the endpoint API key (default: ${API_KEY_ENV_VAR} "
+            f"or ${LEGACY_API_KEY_ENV_VAR})"
+        ),
+    )
+    endpoint.add_argument(
+        "--gcp-id-token-file",
+        type=Path,
+        default=None,
+        help=(
+            f"File holding a GCP OIDC bearer token (default: "
+            f"${GCP_ID_TOKEN_ENV_VAR} or ${LEGACY_GCP_ID_TOKEN_ENV_VAR})"
+        ),
+    )
+    endpoint.add_argument(
+        "--timeout",
+        type=float,
+        default=15.0,
+        help="Per-request HTTP timeout in seconds (default: 15.0)",
     )
 
     stream = verify.add_argument_group("stream options")
@@ -167,14 +234,23 @@ def _add_verify_parser(subparsers: argparse._SubParsersAction) -> None:
 
 
 def _verify(args: argparse.Namespace) -> int:
-    mode = "trace" if args.trace else "stream"
+    if args.endpoint is not None:
+        if not args.profile:
+            raise ValueError("--endpoint requires --profile")
+        mode = "endpoint"
+        contract_profile = args.profile
+    else:
+        if args.profile is not None:
+            raise ValueError("--profile is only valid with --endpoint")
+        mode = "trace" if args.trace else "stream"
+        contract_profile = MODE_PROFILES[mode]
     adapter = AdapterUnderTest(
         provider_id=args.provider_id,
         adapter_author_org=args.adapter_author_org,
         counterparty_org=args.counterparty_org,
         adapter_version=args.adapter_version,
         adapter_commit=args.adapter_commit,
-        contract_profile=MODE_PROFILES[mode],
+        contract_profile=contract_profile,
     )
     runner = RunnerProvenance(
         runner_org=args.runner_org,
@@ -183,7 +259,22 @@ def _verify(args: argparse.Namespace) -> int:
         timestamp_utc=datetime.now(timezone.utc).isoformat(timespec="seconds"),
     )
     provenance = build_provenance(adapter, runner)
-    if args.trace:
+    if args.endpoint is not None:
+        api_key = _read_optional_secret(
+            args.api_key_file, (API_KEY_ENV_VAR, LEGACY_API_KEY_ENV_VAR)
+        )
+        gcp_id_token = _read_optional_secret(
+            args.gcp_id_token_file, (GCP_ID_TOKEN_ENV_VAR, LEGACY_GCP_ID_TOKEN_ENV_VAR)
+        )
+        report = verify_endpoint(
+            args.endpoint,
+            profile=args.profile,
+            provenance=provenance,
+            api_key=api_key,
+            gcp_id_token=gcp_id_token,
+            timeout_s=args.timeout,
+        )
+    elif args.trace:
         events, inputs = _read(args.trace, iter_trace_events)
         report = verify_trace(events, provenance=provenance, inputs=inputs)
     else:
@@ -348,7 +439,7 @@ def main(argv: list[str] | None = None) -> int:
         "diagnose-receipt",
         help=(
             "Compare CAGE verify_partner_receipt() preimage and field requirements "
-            "against Archytan's receipt signing scheme"
+            "against actuator_01 partner receipt signing scheme"
         ),
         allow_abbrev=False,
     )

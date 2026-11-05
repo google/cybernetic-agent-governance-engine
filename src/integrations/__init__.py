@@ -21,16 +21,16 @@ for external compliance and attestation vendors. Each subdirectory
 is a complete vendor integration boundary:
 
   integrations/
-  ├── provider_01/  — Synchronous normative compliance provider (FlowSignal)
-  ├── provider_02/  — CER attestation provider + LangGraph callback (NexArt)
-  ├── provider_03/  — Synchronous decision governance provider (Veritas)
-  ├── provider_05/  — Execution warrant source & three-axiom attestation (VEIP)
-  ├── provider_06/  — Synchronous agent integrity verifier (Guardian Cyber)
-  ├── provider_07/  — Bayesian causal suitability normative oracle (InferTheta)
-  ├── provider_08/  — Runtime evidence normative provider & Rekor custody (Verdict Systems)
-  ├── actuator_01/  — Downstream mTLS execution actuator (Archytan)
-  ├── actuator_02/  — Dynamic sandbox supervisor & OCSF ingestor (NVIDIA OpenShell)
-  └── actuator_03/  — Out-of-band DPU hardware quarantine actuator (NVIDIA Sentry / DOCA)
+  ├── provider_01/  — Synchronous normative compliance provider
+  ├── provider_02/  — CER attestation provider + LangGraph callback
+  ├── provider_03/  — Synchronous decision governance provider
+  ├── provider_05/  — Execution warrant source & three-axiom attestation
+  ├── provider_06/  — Synchronous agent integrity verifier
+  ├── provider_07/  — Bayesian causal suitability normative oracle
+  ├── provider_08/  — Runtime evidence normative provider & Rekor custody
+  ├── actuator_01/  — Downstream mTLS execution actuator
+  ├── actuator_02/  — Dynamic sandbox supervisor & OCSF ingestor
+  └── actuator_03/  — Out-of-band DPU hardware quarantine actuator
 
 Vendor packages MUST NOT introduce imports into the CAGE kernel.
 All vendor code is loaded lazily via the allowlisted kernel seam factories

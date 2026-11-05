@@ -13,14 +13,14 @@
 # limitations under the License.
 
 """
-ConsequenceToken — Short-TTL, Single-Use JWS for FlowSignal Authority Decisions
+ConsequenceToken — Short-TTL, Single-Use JWS for Normative Authority Decisions
 
 Phase 2 (P1) implementation: Mints and verifies KMS-signed JWS tokens carrying
-FlowSignal consequence authority decisions from the governance gate to downstream
+normative consequence authority decisions from the governance gate to downstream
 execution adapters.
 
 Architecture:
-  - Minting: After a FlowSignal ALLOW decision, the provider calls ConsequenceToken.mint()
+  - Minting: After a normative provider ALLOW decision, the provider calls ConsequenceToken.mint()
     to produce a compact JWS with claims (sub, tid, rec, act, ver, iat, exp, jti).
   - Verification: Downstream execution adapter calls ConsequenceToken.verify() before
     running the side-effect, checking signature, TTL, and claims integrity.
@@ -87,8 +87,7 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 # Clock skew tolerance: allow tokens with `iat` up to 5 seconds in the future
-# to account for minor clock drift between CAGE nodes. Conservative value per
-# FlowSignal integration plan §5.4 risk mitigation (R2).
+# to account for minor clock drift between CAGE nodes.
 _CLOCK_SKEW_TOLERANCE_SECONDS = 5
 
 
@@ -130,9 +129,9 @@ class ConsequenceTokenClaims:
 
 
 class ConsequenceToken:
-    """Short-TTL, single-use JWS carrying FlowSignal authority decisions.
+    """Short-TTL, single-use JWS carrying normative authority decisions.
 
-    Provides cryptographic binding between the governance evaluation (FlowSignal ALLOW)
+    Provides cryptographic binding between the governance evaluation (normative ALLOW)
     and the downstream execution adapter, preventing replay and substitution attacks.
     """
 

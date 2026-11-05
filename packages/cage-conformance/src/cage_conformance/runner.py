@@ -24,11 +24,27 @@ that checked nothing is not conformant.
 
 from __future__ import annotations
 
+import copy
 import json
-from collections.abc import Iterable, Iterator, Mapping, Sequence
-from typing import Any, TextIO
+import re
+import urllib.error
+import urllib.parse
+import urllib.request
+from collections.abc import Callable, Iterable, Iterator, Mapping, Sequence
+from dataclasses import dataclass
+from datetime import datetime, timedelta, timezone
+from pathlib import Path
+from types import MappingProxyType
+from typing import Any, Optional, TextIO
 
-from .report import AssertionResult, ConformanceReport, InputDigest, Provenance
+from .report import (
+    ENDPOINT_PROFILES,
+    AssertionResult,
+    ConformanceReport,
+    InputDigest,
+    Provenance,
+    ReportError,
+)
 from .stream_invariants import check_stream
 from .trace_conformance import TRACE_EVENT_TYPE, Finding, check_trace
 
@@ -67,6 +83,71 @@ STREAM_RULES: dict[str, str] = {
 
 INPUT_ASSERTION = "input"
 _MAX_DETAILS = 50
+_VECTORS_DIR = Path(__file__).resolve().parent / "vectors"
+_PROFILE_VECTOR_FILES: Mapping[str, str] = MappingProxyType(
+    {
+        "substrate-v1": "substrate_v1.json",
+        "provider-01-v0.2": "provider_01_v02.json",
+    }
+)
+_SHA256_LOWER_RE = re.compile(r"^[0-9a-f]{64}$")
+
+
+@dataclass(frozen=True)
+class HttpResponse:
+    """One HTTP response captured during live endpoint verification."""
+
+    status_code: int
+    headers: Mapping[str, str]
+    body: bytes
+
+    def json(self) -> Any:
+        return json.loads(self.body.decode("utf-8"))
+
+
+HttpRequester = Callable[
+    [str, str, Mapping[str, str], bytes | None, float], HttpResponse
+]
+
+
+def _validate_http_url(url: str) -> None:
+    parsed = urllib.parse.urlparse(url)
+    if parsed.scheme not in ("http", "https") or not parsed.netloc:
+        raise ValueError(
+            f"endpoint URL must use http:// or https:// with a host, got {url!r}"
+        )
+
+
+def http_request(
+    method: str,
+    url: str,
+    headers: Mapping[str, str],
+    body: bytes | None = None,
+    timeout_s: float = 15.0,
+) -> HttpResponse:
+    """Stdlib HTTP requester with strict scheme validation (Bandit B310)."""
+    _validate_http_url(url)
+    request = urllib.request.Request(
+        url=url,
+        data=body,
+        headers=dict(headers),
+        method=method.upper(),
+    )
+    try:
+        with urllib.request.urlopen(request, timeout=timeout_s) as resp:  # nosec B310
+            return HttpResponse(
+                status_code=int(resp.status),
+                headers=dict(resp.headers.items()),
+                body=resp.read(),
+            )
+    except urllib.error.HTTPError as exc:
+        err_body = exc.read() if exc.fp is not None else b""
+        err_headers = dict(exc.headers.items()) if exc.headers is not None else {}
+        return HttpResponse(
+            status_code=int(exc.code),
+            headers=err_headers,
+            body=err_body,
+        )
 
 
 def _json_lines(stream: TextIO, source: str) -> Iterator[Any]:
@@ -182,4 +263,386 @@ def verify_stream(
         checked=len(records),
         provenance=provenance,
         assertions=_assertions(STREAM_RULES, findings, len(records), "stream record"),
+    )
+
+
+def _load_profile_vectors(profile: str) -> tuple[InputDigest, dict[str, Any]]:
+    if profile not in _PROFILE_VECTOR_FILES:
+        raise ReportError(
+            f"contract_profile {profile!r} is not an endpoint profile "
+            f"{list(ENDPOINT_PROFILES)}"
+        )
+    filename = _PROFILE_VECTOR_FILES[profile]
+    vector_path = _VECTORS_DIR / filename
+    raw = vector_path.read_bytes()
+    return InputDigest.of_bytes(filename, raw), json.loads(raw.decode("utf-8"))
+
+
+def _validate_strict_response_schema(
+    body: Mapping[str, Any], *, max_clock_skew_seconds: int = 300
+) -> str | None:
+    """Validate a provider_01 v0.2 receipt against strict hash and timestamp rules."""
+    for field_name in ("policy_pack_hash", "Canonical_payload_hash"):
+        val = body.get(field_name)
+        if not isinstance(val, str) or not _SHA256_LOWER_RE.match(val):
+            return "INVALID_SHA256_HEX"
+
+    evaluated_at = body.get("evaluated_at")
+    if not isinstance(evaluated_at, str):
+        return "MISSING_EVALUATED_AT"
+    try:
+        eval_dt = datetime.fromisoformat(evaluated_at.replace("Z", "+00:00"))
+    except ValueError:
+        return "INVALID_TIMESTAMP_FORMAT"
+
+    now_utc = datetime.now(timezone.utc)
+    if eval_dt > now_utc + timedelta(seconds=max_clock_skew_seconds):
+        return "FUTURE_TIMESTAMP_SKEW"
+    return None
+
+
+def _bind_consequence(verdict: str, *, signature_valid: bool = True) -> str:
+    """Bind a normative verdict and signature status to the gateway enforcement action."""
+    if not signature_valid:
+        return "FAIL_CLOSED_ABORT"
+    mapping = {
+        "ALLOW": "EXECUTE",
+        "ESCALATE": "HOLD_FOR_APPROVAL",
+        "DENY": "ABORT",
+    }
+    return mapping.get(verdict, "FAIL_CLOSED_ABORT")
+
+
+def _run_substrate_v1(
+    base_url: str,
+    headers: Mapping[str, str],
+    vectors: Mapping[str, Any],
+    requester: HttpRequester,
+    timeout_s: float,
+) -> tuple[int, tuple[AssertionResult, ...]]:
+    checks = vectors.get("checks", [])
+    assertions: list[AssertionResult] = []
+    root = base_url.rstrip("/")
+
+    for check in checks:
+        cid = str(check["id"])
+        title = str(check["title"])
+        method = str(check.get("method", "GET")).upper()
+        path = str(check["path"])
+        expected_status = int(check.get("expected_status", 200))
+        url = f"{root}/{path.lstrip('/')}"
+
+        try:
+            resp = requester(method, url, headers, None, timeout_s)
+        except Exception as exc:
+            assertions.append(
+                AssertionResult(
+                    assertion_id=cid,
+                    title=title,
+                    passed=False,
+                    detail=f"request error: {exc}",
+                )
+            )
+            continue
+
+        if resp.status_code != expected_status:
+            assertions.append(
+                AssertionResult(
+                    assertion_id=cid,
+                    title=title,
+                    passed=False,
+                    detail=f"expected HTTP {expected_status}, got {resp.status_code}",
+                )
+            )
+            continue
+
+        try:
+            payload = resp.json()
+        except Exception as exc:
+            assertions.append(
+                AssertionResult(
+                    assertion_id=cid,
+                    title=title,
+                    passed=False,
+                    detail=f"response body is not valid JSON: {exc}",
+                )
+            )
+            continue
+
+        if not isinstance(payload, Mapping):
+            assertions.append(
+                AssertionResult(
+                    assertion_id=cid,
+                    title=title,
+                    passed=False,
+                    detail="response body must be a JSON object",
+                )
+            )
+            continue
+
+        failures: list[str] = []
+        for key in check.get("required_keys", []):
+            if key not in payload:
+                failures.append(f"missing required key {key!r}")
+        for key in check.get("sha256_hex_keys", []):
+            value = payload.get(key)
+            if not isinstance(value, str) or not _SHA256_LOWER_RE.match(value):
+                failures.append(
+                    f"key {key!r} must be a 64-character lowercase hex SHA-256 digest"
+                )
+        for key in check.get("list_keys", []):
+            value = payload.get(key)
+            if not isinstance(value, list):
+                failures.append(f"key {key!r} must be a JSON array")
+
+        assertions.append(
+            AssertionResult(
+                assertion_id=cid,
+                title=title,
+                passed=not failures,
+                detail="; ".join(failures)
+                if failures
+                else f"HTTP {resp.status_code} OK",
+            )
+        )
+
+    return len(checks), tuple(assertions)
+
+
+def _run_provider_01_v02(
+    base_url: str,
+    headers: Mapping[str, str],
+    vectors: Mapping[str, Any],
+    requester: HttpRequester,
+    timeout_s: float,
+) -> tuple[int, tuple[AssertionResult, ...]]:
+    base_template = dict(vectors["base_request_template"])
+    trimmed = base_url.rstrip("/")
+    evaluate_url = (
+        trimmed if trimmed.endswith("/v1/evaluate") else f"{trimmed}/v1/evaluate"
+    )
+    post_headers = {**headers, "Content-Type": "application/json"}
+    assertions: list[AssertionResult] = []
+
+    for vec in vectors.get("wire_vectors", []):
+        vid = str(vec["id"])
+        title = str(vec["title"])
+        req_body = copy.deepcopy(base_template)
+        overrides = vec.get("request_overrides", {})
+        for key, value in overrides.items():
+            if (
+                key == "payload"
+                and isinstance(value, Mapping)
+                and isinstance(req_body.get("payload"), Mapping)
+            ):
+                merged_payload = dict(req_body["payload"])
+                merged_payload.update(value)
+                req_body["payload"] = merged_payload
+            else:
+                req_body[key] = value
+
+        raw_req = json.dumps(req_body, sort_keys=True).encode("utf-8")
+        case1a_passed_body: Mapping[str, Any] | None = None
+
+        try:
+            resp = requester("POST", evaluate_url, post_headers, raw_req, timeout_s)
+            body = resp.json()
+        except Exception as exc:
+            assertions.append(
+                AssertionResult(
+                    assertion_id=vid,
+                    title=title,
+                    passed=False,
+                    detail=f"request error: {exc}",
+                )
+            )
+            if vid == "CASE-1A":
+                assertions.append(
+                    AssertionResult(
+                        assertion_id="CASE-1B",
+                        title="Deterministic receipt on identical request_id replay",
+                        passed=False,
+                        detail="skipped: CASE-1A did not return a valid ALLOW receipt",
+                    )
+                )
+            continue
+
+        expected_status = int(vec["expected_status"])
+        if expected_status == 200:
+            schema_err = (
+                _validate_strict_response_schema(body)
+                if isinstance(body, Mapping)
+                else "NON_OBJECT_BODY"
+            )
+            sig_obj = body.get("signature") if isinstance(body, Mapping) else None
+            has_sig = isinstance(sig_obj, Mapping) and bool(sig_obj.get("sig"))
+            verdict = body.get("verdict") if isinstance(body, Mapping) else None
+            reason_code = body.get("reason_code") if isinstance(body, Mapping) else None
+            passed = (
+                resp.status_code == 200
+                and verdict == vec.get("expected_verdict")
+                and reason_code == vec.get("expected_reason_code")
+                and schema_err is None
+                and (not vec.get("requires_receipt_signature", True) or has_sig)
+            )
+            detail = (
+                f"status={resp.status_code} verdict={verdict} "
+                f"reason_code={reason_code} schema_error={schema_err}"
+            )
+            assertions.append(
+                AssertionResult(
+                    assertion_id=vid,
+                    title=title,
+                    passed=passed,
+                    detail=detail,
+                )
+            )
+            if vid == "CASE-1A" and passed and isinstance(body, Mapping):
+                case1a_passed_body = body
+        else:
+            error_obj = body.get("error") if isinstance(body, Mapping) else None
+            err_code = (
+                error_obj.get("code")
+                if isinstance(error_obj, Mapping)
+                else (body.get("code") if isinstance(body, Mapping) else None)
+            )
+            passed = resp.status_code == expected_status and err_code == vec.get(
+                "expected_error_code"
+            )
+            assertions.append(
+                AssertionResult(
+                    assertion_id=vid,
+                    title=title,
+                    passed=passed,
+                    detail=f"status={resp.status_code} error_code={err_code}",
+                )
+            )
+
+        if vid == "CASE-1A":
+            if case1a_passed_body is None:
+                assertions.append(
+                    AssertionResult(
+                        assertion_id="CASE-1B",
+                        title="Deterministic receipt on identical request_id replay",
+                        passed=False,
+                        detail="skipped: CASE-1A did not return a valid ALLOW receipt",
+                    )
+                )
+            else:
+                try:
+                    replay_resp = requester(
+                        "POST", evaluate_url, post_headers, raw_req, timeout_s
+                    )
+                    replay_body = replay_resp.json()
+                    replay_ok = (
+                        replay_resp.status_code == 200
+                        and isinstance(replay_body, Mapping)
+                        and replay_body.get("verdict") == "ALLOW"
+                        and replay_body.get("receipt_id")
+                        == case1a_passed_body.get("receipt_id")
+                        and replay_body.get("Canonical_payload_hash")
+                        == case1a_passed_body.get("Canonical_payload_hash")
+                    )
+                    replay_detail = (
+                        f"first_receipt_id={case1a_passed_body.get('receipt_id')} "
+                        f"replay_receipt_id="
+                        f"{replay_body.get('receipt_id') if isinstance(replay_body, Mapping) else None}"
+                    )
+                except Exception as exc:
+                    replay_ok = False
+                    replay_detail = f"replay error: {exc}"
+                assertions.append(
+                    AssertionResult(
+                        assertion_id="CASE-1B",
+                        title="Deterministic receipt on identical request_id replay",
+                        passed=replay_ok,
+                        detail=replay_detail,
+                    )
+                )
+
+    for hvec in vectors.get("hostile_response_vectors", []):
+        hid = str(hvec["id"])
+        htitle = str(hvec["title"])
+        detected = _validate_strict_response_schema(hvec["response"])
+        expected_err = str(hvec["expected_error_code"])
+        assertions.append(
+            AssertionResult(
+                assertion_id=hid,
+                title=htitle,
+                passed=detected == expected_err,
+                detail=f"detected_error={detected} expected_error={expected_err}",
+            )
+        )
+
+    for cvec in vectors.get("consequence_vectors", []):
+        cid = str(cvec["id"])
+        ctitle = str(cvec["title"])
+        if "verdicts" in cvec:
+            actual_actions = [_bind_consequence(str(v)) for v in cvec["verdicts"]]
+            expected_actions = list(cvec["expected_actions"])
+            assertions.append(
+                AssertionResult(
+                    assertion_id=cid,
+                    title=ctitle,
+                    passed=actual_actions == expected_actions,
+                    detail=f"actions={actual_actions}",
+                )
+            )
+        else:
+            action = _bind_consequence(
+                str(cvec["verdict"]),
+                signature_valid=bool(cvec.get("signature_valid", True)),
+            )
+            assertions.append(
+                AssertionResult(
+                    assertion_id=cid,
+                    title=ctitle,
+                    passed=action == cvec["expected_action"],
+                    detail=f"action={action}",
+                )
+            )
+
+    return len(assertions), tuple(assertions)
+
+
+def verify_endpoint(
+    endpoint_url: str,
+    *,
+    profile: str,
+    provenance: Provenance,
+    api_key: str | None = None,
+    gcp_id_token: str | None = None,
+    timeout_s: float = 15.0,
+    http_requester: HttpRequester = http_request,
+) -> ConformanceReport:
+    """Verify a live HTTP endpoint against an endpoint contract profile."""
+    _validate_http_url(endpoint_url)
+    input_digest, vectors = _load_profile_vectors(profile)
+
+    headers: dict[str, str] = {"Accept": "application/json"}
+    if gcp_id_token:
+        headers["Authorization"] = f"Bearer {gcp_id_token}"
+    if api_key:
+        headers["X-API-Key"] = api_key
+
+    if profile == "substrate-v1":
+        checked, assertions = _run_substrate_v1(
+            endpoint_url, headers, vectors, http_requester, timeout_s
+        )
+    elif profile == "provider-01-v0.2":
+        checked, assertions = _run_provider_01_v02(
+            endpoint_url, headers, vectors, http_requester, timeout_s
+        )
+    else:  # pragma: no cover - guarded by _load_profile_vectors
+        raise ReportError(
+            f"contract_profile {profile!r} is not an endpoint profile "
+            f"{list(ENDPOINT_PROFILES)}"
+        )
+
+    return ConformanceReport(
+        mode="endpoint",
+        inputs=(input_digest,),
+        checked=checked,
+        provenance=provenance,
+        assertions=assertions,
     )

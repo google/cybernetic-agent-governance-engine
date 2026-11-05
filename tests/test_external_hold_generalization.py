@@ -48,11 +48,11 @@ def test_external_hold_token_shape_is_vendor_agnostic():
     This proves I1 (vendor-shaped asymmetry) is fixed: both providers' hold
     findings produce the same token shape.
     """
-    # Simulate provider_01 ESCALATE finding (FlowSignal-shaped)
+    # Simulate provider_01 ESCALATE finding
     provider_01_finding = {
         "code": "EXTERNAL_HOLD",
         "severity": "review",
-        "message": "FlowSignal escalated — requires human approval",
+        "message": "Provider 01 escalated — requires human approval",
         "needs_human_review": True,
         "hold_ttl_seconds": 300,
     }
@@ -94,7 +94,7 @@ def test_external_hold_token_shape_is_vendor_agnostic():
     # Only the embedded finding message should differ
     msg_01 = token_01.opa_input_snapshot.get("_external_hold_finding_message")
     msg_06 = token_06.opa_input_snapshot.get("_external_hold_finding_message")
-    assert msg_01 == "FlowSignal escalated — requires human approval"
+    assert msg_01 == "Provider 01 escalated — requires human approval"
     assert msg_06 == "Provider escalated — requires human approval"
 
 

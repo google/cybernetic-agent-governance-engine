@@ -789,7 +789,7 @@ async def submit_attested_bundle(
     ``execution_analyst`` <-> ``evaluator`` static refinement loop) is sealed
     into ``evidence.topology`` so the node verifies ``topologyValidation:
     "valid"`` alongside CAGE's own local ``LineageError`` checks. Passing
-    ``include_topology=False`` is deprecated (retained only for NexArt Nodes
+    ``include_topology=False`` is deprecated (retained only for Provider 02 nodes
     < v0.30.1) and emits a ``DeprecationWarning`` because omitting
     ``evidence.topology`` weakens structural execution provenance (AU-10).
 
@@ -805,7 +805,7 @@ async def submit_attested_bundle(
     else:
         msg = (
             "[Provider02Adapter] include_topology=False is deprecated and "
-            "retained only for compatibility with NexArt Nodes < v0.30.1: "
+            "retained only for compatibility with Provider 02 nodes < v0.30.1: "
             "omitting evidence.topology weakens structural execution "
             "provenance (AU-10)."
         )

@@ -237,9 +237,9 @@ class ApprovalRecord(BaseModel):
     clearance refuses locally if they are absent.
 
     Phase 2 dual-control implementation per
-    local/integrations/archytan/IMPLEMENTATION_PLAN_v2.md §4.4.1.
+    docs/partners/actuator_01/IMPLEMENTATION_PLAN_v2.md §4.4.1.
 
-    v3.0 WebAuthn Audit Fix (Archytan Vector 3):
+    v3.0 WebAuthn Audit Fix (actuator_01 Vector 3):
         client_data_json replaces client_data_hash to preserve the raw W3C
         CollectedClientData for cryptographic verification. This remediates
         the audit finding where hashing before verification prevented
@@ -506,7 +506,7 @@ _DEFER_REASON_QUORUM: dict[DeferReason, int] = {
 def get_required_quorum(defer_reason: DeferReason) -> int:
     """Return the required quorum threshold for a given DeferReason.
 
-    Per local/integrations/archytan/IMPLEMENTATION_PLAN_v2.md §4.5,
+    Per docs/partners/actuator_01/IMPLEMENTATION_PLAN_v2.md §4.5,
     this mapping is total over every DeferReason enum value.
 
     Irreversible terminal nodes, external validation escalations and
@@ -1576,7 +1576,7 @@ async def open_defer_queue() -> AsyncIterator[DeferQueue]:
 
 
 # ---------------------------------------------------------------------------
-# FlowSignal escalation token factory
+# Normative provider escalation token factory
 # ---------------------------------------------------------------------------
 
 

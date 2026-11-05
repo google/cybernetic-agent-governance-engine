@@ -149,7 +149,7 @@ class TestValidateClearance:
 class TestBuildEnvelopeDict:
     """Tests for envelope dictionary construction."""
 
-    async def test_archytan_vector_3_structure(self, valid_clearance):
+    async def test_actuator_01_vector_3_structure(self, valid_clearance):
         """Envelope emits canonical Archytan ArbiterKernel wire structure."""
         envelope = await build_envelope_dict(valid_clearance)
 

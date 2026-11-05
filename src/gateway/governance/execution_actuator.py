@@ -310,7 +310,7 @@ def load_actuators_from_env(
 
     Reads:
         CAGE_ACTIVE_ACTUATORS: Comma-separated list of actuator names
-            (e.g., "actuator_01,archytan"). Empty or unset -> no-op.
+            (e.g., "actuator_01"). Empty or unset -> no-op.
 
     Args:
         registry: Target registry (defaults to global singleton).

@@ -8,6 +8,14 @@
     "stream-v1": {
       "author": ["github:google/cybernetic-agent-governance-engine"],
       "counterparty": []
+    },
+    "substrate-v1": {
+      "author": ["github:google/cybernetic-agent-governance-engine"],
+      "counterparty": []
+    },
+    "provider-01-v0.2": {
+      "author": ["github:google/cybernetic-agent-governance-engine"],
+      "counterparty": []
     }
   }
 }

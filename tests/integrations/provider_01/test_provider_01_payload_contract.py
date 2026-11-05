@@ -38,7 +38,7 @@ from src.gateway.governance.jurisdiction.eu_ai_act.fria_tier import FriaTier
 pytestmark = [pytest.mark.unit, pytest.mark.local, pytest.mark.partner]
 
 #: Where the FRIA payload enters provider_01: (class, method, parameter).
-ENTRY = ("FlowSignalNormativeProvider", "validate_fria", "payload")
+ENTRY = ("Provider01NormativeProvider", "validate_fria", "payload")
 #: A read whose key the guard cannot resolve statically; never allowed.
 DYNAMIC = "<dynamic key>"
 
@@ -259,10 +259,10 @@ def test_guard_reaches_every_function_that_handles_the_payload() -> None:
     magnitudes are checked by the kernel before the call and at minting.
     """
     reads = _provider_reads()
-    assert "FlowSignalNormativeProvider.validate_fria" in reads
+    assert "Provider01NormativeProvider.validate_fria" in reads
     assert {
         "_build_cage_authority_request",
-        "_map_flowsignal_decision",
+        "_map_provider_01_decision",
     } <= {name for name, keys in reads.items() if keys}
     assert {"params", "thread_id", "correlation_id", "operator_urn", "actor_id"} <= (
         set().union(*reads.values())
@@ -283,7 +283,7 @@ def test_fria_payload_keys_are_the_production_shape() -> None:
 
 
 _SAMPLE = """
-class FlowSignalNormativeProvider:
+class Provider01NormativeProvider:
     async def validate_fria(self, payload):
         payload.get("got")
         payload["subscripted"]

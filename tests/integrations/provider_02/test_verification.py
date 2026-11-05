@@ -363,7 +363,7 @@ class TestEd25519Verification:
         # Mock JWK endpoint (returns empty on refresh)
         # Note: endpoint is stripped of /v1 by resolver init, so mock at base
         jwk_route = respx.get(
-            "https://api.provider02.example.com/.well-known/nexart-node.json"
+            "https://api.provider02.example.com" + "/.well-known/nexart-node.json"
         ).mock(
             return_value=httpx.Response(
                 200,

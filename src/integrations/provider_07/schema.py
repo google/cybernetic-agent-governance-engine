@@ -25,7 +25,7 @@ Key Invariants:
 - authority_record_id mandatory when decision == "ALLOW"
 - Fail-closed on unknown kid, signature failure, or schema validation errors
 
-See: docs/partners/provider_07/INFERTHETA_CANONICAL_SCHEMA.md
+See: src/integrations/provider_07/README.md
 """
 
 from typing import Any, Literal
@@ -69,7 +69,7 @@ class ClientProfile(BaseModel):
     liquidity_need: str  # "HIGH" | "MEDIUM" | "LOW"
 
 
-class InferThetaInferenceRequest(BaseModel):
+class Provider07InferenceRequest(BaseModel):
     """
     Request payload for Bayesian inference over portfolio suitability.
 
@@ -116,7 +116,7 @@ class ActionUtility(BaseModel):
     expected_utility: float
 
 
-class InferThetaInferenceResponse(BaseModel):
+class Provider07InferenceResponse(BaseModel):
     """
     Response payload from Bayesian suitability inference.
 
@@ -165,7 +165,7 @@ class NormativeRule(BaseModel):
     threshold: float
 
 
-class InferThetaBaselineResponse(BaseModel):
+class Provider07BaselineResponse(BaseModel):
     """
     Regional normative ruleset and configuration.
 
@@ -189,7 +189,7 @@ class InferThetaBaselineResponse(BaseModel):
 # ============================================================================
 
 
-class InferThetaEvidenceResponse(BaseModel):
+class Provider07EvidenceResponse(BaseModel):
     """
     Evidence seal receipt returned by the provider's audit trail endpoint.
 

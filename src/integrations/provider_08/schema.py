@@ -12,13 +12,11 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 """
-provider_08 Wire Protocol Schema Models (Verdict Runtime Evidence Provider)
+provider_08 Wire Protocol Schema Models (Runtime Evidence Provider)
 
-Strict Pydantic v2 models for the three Verdict endpoints behind the
+Strict Pydantic v2 models for the three provider_08 endpoints behind the
 ``NormativeProvider`` seam. Unknown decisions fail validation, which the
 adapter maps to a fail-closed ``PARSE_ERROR`` finding.
-
-See: docs/partners/provider_08/VERDICT_PARTNER_SPECIFICATION.md
 """
 
 from __future__ import annotations
@@ -28,8 +26,8 @@ from typing import Any, Literal
 from pydantic import BaseModel, ConfigDict, Field
 
 
-class VerdictFinding(BaseModel):
-    """One structural finding from the Verdict FRIA gate (OSCAL vocabulary)."""
+class Provider08Finding(BaseModel):
+    """One structural finding from the provider_08 FRIA gate (OSCAL vocabulary)."""
 
     model_config = ConfigDict(extra="ignore")
 
@@ -41,7 +39,7 @@ class VerdictFinding(BaseModel):
     reference: str | None = None
 
 
-class VerdictFriaResponse(BaseModel):
+class Provider08FriaResponse(BaseModel):
     """``POST /validate/fria`` response."""
 
     model_config = ConfigDict(extra="ignore")
@@ -49,7 +47,7 @@ class VerdictFriaResponse(BaseModel):
     decision: Literal["ALLOW", "REFUSE", "ESCALATE"]
     admitted: bool
     message: str = ""
-    findings: list[VerdictFinding] = Field(default_factory=list)
+    findings: list[Provider08Finding] = Field(default_factory=list)
     region: str
     authority_record_id: str
     authority_state_version: str
@@ -59,7 +57,7 @@ class VerdictFriaResponse(BaseModel):
     provider: str = "verdict.systems"
 
 
-class VerdictBaselineResponse(BaseModel):
+class Provider08BaselineResponse(BaseModel):
     """``GET /legal-baseline/{region}`` response."""
 
     model_config = ConfigDict(extra="ignore")
@@ -73,7 +71,7 @@ class VerdictBaselineResponse(BaseModel):
     provider: str = "verdict.systems"
 
 
-class VerdictEvidenceSealResponse(BaseModel):
+class Provider08EvidenceSealResponse(BaseModel):
     """``GET|POST /evidence-chain/{thread_id}`` response."""
 
     model_config = ConfigDict(extra="ignore")

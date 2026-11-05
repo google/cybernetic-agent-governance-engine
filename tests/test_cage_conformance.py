@@ -322,7 +322,8 @@ def _set(path: tuple[str | int, ...], value: Any) -> dict[str, Any]:
         (_set(("summary", "conformant"), False), "summary does not match"),
         (_set(("assertions", 1, "passed"), False), "summary does not match"),
         (_set(("checked",), True), "non-negative integer"),
-        (_set(("mode",), "endpoint"), "mode must be one of"),
+        (_set(("mode",), "endpoint"), "is not an endpoint profile"),
+        (_set(("mode",), "unknown"), "mode must be one of"),
         (_set(("mode",), ["trace"]), "mode must be one of"),
         (_set(("inputs",), []), "at least one input"),
         (_set(("inputs", 0), "trace.jsonl"), "must be a JSON object"),
@@ -459,6 +460,193 @@ def test_stream_tampering_and_loss_fail_their_rules() -> None:
     assert failed[0].detail.startswith("stream: ")
 
 
+# ── Endpoint mode ─────────────────────────────────────────────────────────────
+
+
+def _endpoint_provenance(profile: str = "substrate-v1") -> cc.Provenance:
+    return cc.build_provenance(_adapter(contract_profile=profile), _runner())
+
+
+def _substrate_requester(*, omit_thresholds_digest: bool = False) -> cc.HttpRequester:
+    def _req(
+        method: str,
+        url: str,
+        headers: Any,
+        body: bytes | None,
+        timeout_s: float,
+    ) -> cc.HttpResponse:
+        assert method == "GET"
+        if url.endswith("/governance/policy-version"):
+            payload: dict[str, Any] = {"active_hash": "a" * 64}
+            if not omit_thresholds_digest:
+                payload["thresholds_digest"] = "b" * 64
+            return cc.HttpResponse(
+                status_code=200,
+                headers={"content-type": "application/json"},
+                body=json.dumps(payload).encode("utf-8"),
+            )
+        if url.endswith("/governance/jwks"):
+            return cc.HttpResponse(
+                status_code=200,
+                headers={"content-type": "application/json"},
+                body=json.dumps({"keys": [{"kty": "OKP", "kid": "k1"}]}).encode(
+                    "utf-8"
+                ),
+            )
+        return cc.HttpResponse(status_code=404, headers={}, body=b"{}")
+
+    return _req
+
+
+def _provider_01_requester(
+    *, break_case1a: bool = False, seen_headers: list[dict[str, str]] | None = None
+) -> cc.HttpRequester:
+    def _req(
+        method: str,
+        url: str,
+        headers: Any,
+        body: bytes | None,
+        timeout_s: float,
+    ) -> cc.HttpResponse:
+        if seen_headers is not None:
+            seen_headers.append(dict(headers))
+        assert method == "POST"
+        assert url.endswith("/v1/evaluate")
+        req = json.loads((body or b"{}").decode("utf-8"))
+        payload = req.get("payload", {})
+        amount = float(payload.get("amount_usd", 0.0))
+        if amount < 0:
+            return cc.HttpResponse(
+                status_code=422,
+                headers={"content-type": "application/json"},
+                body=json.dumps({"error": {"code": "SCHEMA_VALIDATION_FAILED"}}).encode(
+                    "utf-8"
+                ),
+            )
+        if req.get("mandate_valid_until") == "2025-12-31T23:59:59Z":
+            verdict, reason = "DENY", "MANDATE_EXPIRED"
+        elif not payload.get("sanctions_screen_passed", True):
+            verdict, reason = "DENY", "SANCTIONS_SCREEN_FAILED"
+        elif amount > 100000.0 and not payload.get("dual_control_token"):
+            verdict, reason = "ESCALATE", "DUAL_CONTROL_REQUIRED"
+        elif break_case1a:
+            verdict, reason = "DENY", "UNEXPECTED_DENY"
+        else:
+            verdict, reason = "ALLOW", "WITHIN_MANDATE_LIMITS"
+
+        req_id = str(req.get("request_id", ""))
+        canonical_hash = hashlib.sha256(body or b"").hexdigest()
+        receipt = {
+            "receipt_id": f"rcpt-{hashlib.sha256(req_id.encode()).hexdigest()[:16]}",
+            "request_id": req_id,
+            "verdict": verdict,
+            "reason_code": reason,
+            "policy_pack_id": req.get("policy_pack_id"),
+            "policy_pack_version": req.get("policy_pack_version"),
+            "policy_pack_hash": req.get("policy_pack_hash"),
+            "evaluated_at": "2026-03-31T21:00:00Z",
+            "Canonical_payload_hash": canonical_hash,
+            "signature": {
+                "alg": "Ed25519",
+                "kid": "provider-01-normative-ed25519-2026-01",
+                "sig": "c2lnbmF0dXJl",
+            },
+        }
+        return cc.HttpResponse(
+            status_code=200,
+            headers={"content-type": "application/json"},
+            body=json.dumps(receipt).encode("utf-8"),
+        )
+
+    return _req
+
+
+def test_substrate_v1_endpoint_conformance() -> None:
+    report = cc.verify_endpoint(
+        "https://gateway.example.test",
+        profile="substrate-v1",
+        provenance=_endpoint_provenance("substrate-v1"),
+        http_requester=_substrate_requester(),
+    )
+    assert report.conformant
+    assert report.mode == "endpoint"
+    assert report.checked == 2
+    assert [a.assertion_id for a in report.assertions] == [
+        "SUBSTRATE-POLICY-VERSION",
+        "SUBSTRATE-JWKS",
+    ]
+    assert cc.validate_report(report.to_dict()) == report
+
+    bad = cc.verify_endpoint(
+        "https://gateway.example.test",
+        profile="substrate-v1",
+        provenance=_endpoint_provenance("substrate-v1"),
+        http_requester=_substrate_requester(omit_thresholds_digest=True),
+    )
+    assert not bad.conformant
+    assert [a.assertion_id for a in bad.assertions if not a.passed] == [
+        "SUBSTRATE-POLICY-VERSION"
+    ]
+
+
+def test_provider_01_v02_endpoint_conformance() -> None:
+    seen_headers: list[dict[str, str]] = []
+    report = cc.verify_endpoint(
+        "https://normative.example.test",
+        profile="provider-01-v0.2",
+        provenance=_endpoint_provenance("provider-01-v0.2"),
+        api_key="test-key",
+        gcp_id_token="test-id-token",
+        http_requester=_provider_01_requester(seen_headers=seen_headers),
+    )
+    assert report.conformant, [a for a in report.assertions if not a.passed]
+    assert report.checked == 11
+    assert [a.assertion_id for a in report.assertions] == [
+        "CASE-1A",
+        "CASE-1B",
+        "CASE-1C",
+        "CASE-1D",
+        "CASE-1E",
+        "CASE-1F",
+        "CASE-1G-TRUNCATED-HASH",
+        "CASE-1G-UPPERCASE-HASH",
+        "CASE-1G-FUTURE-RECEIPT",
+        "CASE-2A",
+        "CASE-2B",
+    ]
+    assert seen_headers[0]["X-API-Key"] == "test-key"
+    assert seen_headers[0]["Authorization"] == "Bearer test-id-token"
+
+    broken = cc.verify_endpoint(
+        "https://normative.example.test",
+        profile="provider-01-v0.2",
+        provenance=_endpoint_provenance("provider-01-v0.2"),
+        http_requester=_provider_01_requester(break_case1a=True),
+    )
+    assert not broken.conformant
+    assert {a.assertion_id for a in broken.assertions if not a.passed} == {
+        "CASE-1A",
+        "CASE-1B",
+    }
+
+
+def test_endpoint_rejects_non_http_url_and_unknown_profile() -> None:
+    with pytest.raises(ValueError, match="http:// or https://"):
+        cc.verify_endpoint(
+            "file:///etc/passwd",
+            profile="substrate-v1",
+            provenance=_endpoint_provenance("substrate-v1"),
+            http_requester=_substrate_requester(),
+        )
+    with pytest.raises(cc.ReportError, match="is not an endpoint profile"):
+        cc.verify_endpoint(
+            "https://gateway.example.test",
+            profile="trace-v1",
+            provenance=_provenance(),
+            http_requester=_substrate_requester(),
+        )
+
+
 # ── CLI ───────────────────────────────────────────────────────────────────────
 
 
@@ -510,6 +698,77 @@ def test_cli_stream_mode_and_failure_exit_codes(tmp_path: Path) -> None:
     assert cli_main(["verify", "--trace", str(executed_only), *_PROVENANCE_FLAGS]) == 1
     missing = str(tmp_path / "absent.jsonl")
     assert cli_main(["verify", "--trace", missing, *_PROVENANCE_FLAGS]) == 2
+
+
+def test_cli_endpoint_mode_and_verify_report(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    import cage_conformance.cli as cli_mod
+
+    monkeypatch.setattr(
+        cli_mod,
+        "verify_endpoint",
+        lambda url, *, profile, provenance, api_key=None, gcp_id_token=None, timeout_s=15.0: (
+            cc.verify_endpoint(
+                url,
+                profile=profile,
+                provenance=provenance,
+                api_key=api_key,
+                gcp_id_token=gcp_id_token,
+                timeout_s=timeout_s,
+                http_requester=_substrate_requester(),
+            )
+        ),
+    )
+    key_file = tmp_path / "api.key"
+    key_file.write_text("k-123\n", encoding="utf-8")
+    out = tmp_path / "endpoint_report.json"
+    argv = [
+        "verify",
+        "--endpoint",
+        "https://gateway.example.test",
+        "--profile",
+        "substrate-v1",
+        "--api-key-file",
+        str(key_file),
+        "--output",
+        str(out),
+        *_PROVENANCE_FLAGS,
+    ]
+    assert cli_main(argv) == 0
+    assert "cage-conformance endpoint: CONFORMANT" in capsys.readouterr().out
+    assert cli_main(["verify-report", str(out)]) == 0
+    assert "mode=endpoint conformant=True" in capsys.readouterr().out
+
+    # --endpoint without --profile returns exit code 2
+    assert (
+        cli_main(
+            [
+                "verify",
+                "--endpoint",
+                "https://gateway.example.test",
+                *_PROVENANCE_FLAGS,
+            ]
+        )
+        == 2
+    )
+    # --profile with --trace returns exit code 2
+    trace = _write_jsonl(tmp_path / "trace.jsonl", _CONFORMANT)
+    assert (
+        cli_main(
+            [
+                "verify",
+                "--trace",
+                str(trace),
+                "--profile",
+                "substrate-v1",
+                *_PROVENANCE_FLAGS,
+            ]
+        )
+        == 2
+    )
 
 
 def test_cli_requires_every_identity_flag(tmp_path: Path) -> None:

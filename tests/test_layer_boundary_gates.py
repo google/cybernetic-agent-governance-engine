@@ -235,3 +235,121 @@ def foo():
             temp_path.unlink()
             # Restore original brand list
             check_vendor_brands.FORBIDDEN_VENDOR_BRANDS = original_brands
+
+    def test_rejects_partner_brand_in_file_path(self):
+        """G8 path check rejects branded filenames across scripts/, tests/, and vectors/."""
+        from scripts.check_vendor_brands import PARTNER_VENDOR_BRANDS, check_path
+
+        repo_root = Path("/repo")
+        assert check_path(
+            repo_root / "scripts" / "verify_flowsignal_wire_and_hostile.py",
+            repo_root,
+            PARTNER_VENDOR_BRANDS,
+        ) == ["flowsignal"]
+        assert check_path(
+            repo_root
+            / "packages"
+            / "cage-conformance"
+            / "src"
+            / "cage_conformance"
+            / "vectors"
+            / "flowsignal_v02.json",
+            repo_root,
+            PARTNER_VENDOR_BRANDS,
+        ) == ["flowsignal"]
+        assert (
+            check_path(
+                repo_root / "scripts" / "verify_provider_01_wire_and_hostile.py",
+                repo_root,
+                PARTNER_VENDOR_BRANDS,
+            )
+            == []
+        )
+
+    def test_rejects_partner_brand_in_class_and_function_identifiers(self):
+        """G8 rejects reintroducing FlowSignalNormativeProvider in src/integrations/."""
+        from scripts.check_vendor_brands import PARTNER_VENDOR_BRANDS
+
+        source = """
+class FlowSignalNormativeProvider:
+    def _map_flowsignal_decision(self, flowsignal_resp: dict) -> str:
+        return "ALLOW"
+"""
+        with tempfile.NamedTemporaryFile(
+            mode="w", suffix=".py", delete=False, dir="."
+        ) as f:
+            f.write(source)
+            f.flush()
+            temp_path = Path(f.name)
+
+        try:
+            violations = check_vendor_file(
+                temp_path,
+                PARTNER_VENDOR_BRANDS,
+                allow_wire_literals=True,
+            )
+            tokens = [token for _, token in violations]
+            assert "class:FlowSignalNormativeProvider" in tokens
+            assert "def:_map_flowsignal_decision" in tokens
+            assert "arg:flowsignal_resp" in tokens
+        finally:
+            temp_path.unlink()
+
+    def test_layer3_wire_protocol_literal_boundary(self):
+        """G8 permits LAYER3_WIRE_PROTOCOL_LITERALS at Layer 3 but rejects non-wire partner strings."""
+        from scripts.check_vendor_brands import PARTNER_VENDOR_BRANDS
+
+        source = """
+RECEIPT_DOMAIN_TAG = b"ARCHYTAN_RECEIPT_V1:"
+WELL_KNOWN = "/.well-known/nexart-node.json"
+BAD_URL = "https://flowsignal.example.com/v1/evaluate"
+"""
+        with tempfile.NamedTemporaryFile(
+            mode="w", suffix=".py", delete=False, dir="."
+        ) as f:
+            f.write(source)
+            f.flush()
+            temp_path = Path(f.name)
+
+        try:
+            violations = check_vendor_file(
+                temp_path,
+                PARTNER_VENDOR_BRANDS,
+                allow_wire_literals=True,
+            )
+            assert violations == [(4, "https://flowsignal.example.com/v1/evaluate")]
+        finally:
+            temp_path.unlink()
+
+    def test_layer3_wire_protocol_provenance_and_ceiling(self, tmp_path):
+        """G8 enforces .md/.json spec/vector provenance on LAYER3_WIRE_PROTOCOL_PROVENANCE and pins the 22-entry ceiling."""
+        from scripts.check_vendor_brands import (
+            LAYER3_WIRE_PROTOCOL_PROVENANCE,
+            check_wire_literal_provenance,
+        )
+
+        repo_root = Path(__file__).resolve().parent.parent
+        assert check_wire_literal_provenance(repo_root) == []
+        assert len(LAYER3_WIRE_PROTOCOL_PROVENANCE) == 22
+
+        # Rejects citing a .py file as provenance
+        py_file = tmp_path / "adapter.py"
+        py_file.write_text('TAG = "flowsignal-convenient-string"\n', encoding="utf-8")
+        errs_py = check_wire_literal_provenance(
+            tmp_path,
+            {"flowsignal-convenient-string": "adapter.py"},
+        )
+        assert len(errs_py) == 1
+        assert "non-Python" in errs_py[0]
+
+        # Rejects citing a .md/.json artifact that does not contain the literal
+        spec_file = tmp_path / "spec.md"
+        spec_file.write_text(
+            "# Partner Spec\nNo such constant here.\n", encoding="utf-8"
+        )
+        errs_missing = check_wire_literal_provenance(
+            tmp_path,
+            {"flowsignal-unverified-constant": "spec.md"},
+        )
+        assert len(errs_missing) == 1
+        assert "not found in cited provenance artifact" in errs_missing[0]

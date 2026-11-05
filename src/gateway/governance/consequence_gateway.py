@@ -15,10 +15,9 @@
 """
 consequence_gateway.py — Post-Validation Consequence Evaluation Gateway
 
-Vendor-agnostic consequence boundary after a normative provider's validation, ported from FlowSignal's
-production integration candidate. Verifies a ConsequenceToken, re-derives
-the action digest, checks the declared magnitudes, and atomically consumes
-the authority record before permitting execution.
+Vendor-agnostic consequence boundary after a normative provider's validation.
+Verifies a ConsequenceToken, re-derives the action digest, checks the declared
+magnitudes, and atomically consumes the authority record before permitting execution.
 
 7-step evaluation sequence:
   1. JWS signature verification (via ConsequenceToken.verify)
@@ -65,7 +64,7 @@ logger = logging.getLogger("Gateway.Governance.ConsequenceGateway")
 
 
 class ConsequenceDecision(str, Enum):
-    """Post-validation consequence decision (ported from FlowSignal vendor file)."""
+    """Post-validation consequence decision."""
 
     EXECUTE = "EXECUTE"
     HOLD = "HOLD"
@@ -90,10 +89,8 @@ class ConsequenceEvaluation:
 class ConsequenceGateway:
     """Vendor-agnostic post-validation consequence boundary.
 
-    Preserves FlowSignal's check sequence while applying CAGE-side
-    substitutions (ConsequenceToken instead of vendor's AuthorityRecordBinding,
-    ConsequenceAuthorityStore instead of SQLite/in-memory stores), and adds
-    the declared-magnitude check before consumption.
+    Verifies ConsequenceToken binding, checks declared magnitudes, and
+    atomically consumes the single-use authority record via ConsequenceAuthorityStore.
 
     The 7 steps:
       1. JWS signature verification (via ConsequenceToken.verify)

@@ -24,7 +24,7 @@ package, ``cryptography``, installed with the ``attest`` extra.
 
 from __future__ import annotations
 
-__version__ = "0.3.0"
+__version__ = "0.4.0"
 
 from .attestation import (  # noqa: E402
     ATTESTED_NOTICE,
@@ -55,8 +55,8 @@ from .receipt_diagnostic import (  # noqa: E402
     RECEIPT_DOMAIN_TAG_STR,
     STRIPPED_SIGNATURE_FIELDS,
     ReceiptDiagnosis,
-    build_archytan_preimage,
     build_cage_preimage,
+    build_partner_preimage,
     diagnose_receipt,
     format_diagnosis,
     run_diagnose_receipt,
@@ -64,6 +64,7 @@ from .receipt_diagnostic import (  # noqa: E402
 )
 from .report import (  # noqa: E402
     ATTESTED_POSTURES,
+    ENDPOINT_PROFILES,
     MODE_PROFILES,
     PROVENANCE_SCHEMA_VERSION,
     REPORT_SCHEMA_VERSION,
@@ -84,8 +85,12 @@ from .runner import (  # noqa: E402
     INPUT_ASSERTION,
     STREAM_RULES,
     TRACE_RULES,
+    HttpRequester,
+    HttpResponse,
+    http_request,
     iter_stream_records,
     iter_trace_events,
+    verify_endpoint,
     verify_stream,
     verify_trace,
 )
@@ -94,6 +99,7 @@ __all__ = [
     "ATTESTED_NOTICE",
     "ATTESTED_POSTURES",
     "ATTESTED_SCHEMA_VERSION",
+    "ENDPOINT_PROFILES",
     "INPUT_ASSERTION",
     "ISSUERS",
     "MODE_PROFILES",
@@ -111,6 +117,8 @@ __all__ = [
     "AttestationError",
     "AttestedReport",
     "ConformanceReport",
+    "HttpRequester",
+    "HttpResponse",
     "InputDigest",
     "KeySet",
     "Parties",
@@ -126,14 +134,15 @@ __all__ = [
     "attest",
     "attested_posture",
     "audience_for",
-    "build_archytan_preimage",
     "build_cage_preimage",
+    "build_partner_preimage",
     "build_provenance",
     "default_parties",
     "derive_posture",
     "diagnose_receipt",
     "fetch_key_set",
     "format_diagnosis",
+    "http_request",
     "is_attested",
     "iter_stream_records",
     "iter_trace_events",
@@ -144,6 +153,7 @@ __all__ = [
     "strip_signature_fields",
     "validate_attested_report",
     "validate_report",
+    "verify_endpoint",
     "verify_stream",
     "verify_token",
     "verify_trace",

@@ -12,7 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Tests for the offline actuator_01 (Archytan) receipt preimage diagnostic."""
+"""Tests for the offline actuator_01 receipt preimage diagnostic."""
 
 from __future__ import annotations
 
@@ -39,8 +39,8 @@ if str(_PACKAGE_SRC) not in sys.path:
 from cage_conformance.cli import main as cli_main  # noqa: E402
 from cage_conformance.receipt_diagnostic import (  # noqa: E402
     RECEIPT_DOMAIN_TAG,
-    build_archytan_preimage,
     build_cage_preimage,
+    build_partner_preimage,
     diagnose_receipt,
     format_diagnosis,
 )
@@ -118,12 +118,12 @@ def _verify_with_receipt_verifier(
     return capturing_key, check
 
 
-def _archytan_receipt() -> dict[str, Any]:
-    """Build an Archytan-shaped receipt with intent_hash and no envelope_digest."""
+def _partner_receipt() -> dict[str, Any]:
+    """Build a partner-shaped receipt with intent_hash and no envelope_digest."""
     vector1_obj = json.loads(_VECTOR1_PATH.read_text(encoding="utf-8"))
     intent_jcs = jcs_bytes(vector1_obj).decode("utf-8")
     return {
-        "receipt_id": "r-archytan-0001",
+        "receipt_id": "r-actuator-01-0001",
         "timestamp_ns": 1785012000000000000,
         "status": "ACCEPTED",
         "intent_hash": intent_jcs,
@@ -151,21 +151,21 @@ def test_cage_preimage_matches_receipt_verifier_path() -> None:
     assert capturing_fixture_key.verified_preimage == diag_fixture_preimage
     assert fixture_check.verification == ReceiptVerification.VERIFIED
 
-    archytan_body = _archytan_receipt()
-    diag_archytan_preimage = build_cage_preimage(archytan_body)
-    capturing_archytan_key, archytan_check = _verify_with_receipt_verifier(
-        archytan_body,
-        signed_preimage=diag_archytan_preimage,
+    partner_body = _partner_receipt()
+    diag_partner_preimage = build_cage_preimage(partner_body)
+    capturing_partner_key, partner_check = _verify_with_receipt_verifier(
+        partner_body,
+        signed_preimage=diag_partner_preimage,
         envelope_digest=_VECTOR1_SHA256,
     )
     # verify_partner_receipt tries body minus "signature" first, then body minus
     # ("signature", "ingress_signature") with RECEIPT_SIGNATURE_DOMAIN_TAG, which
-    # matches build_cage_preimage(archytan_body) and passes Ed25519 verification
+    # matches build_cage_preimage(partner_body) and passes Ed25519 verification
     # before failing on the missing envelope_digest at line 230.
-    assert capturing_archytan_key.verified_preimage == diag_archytan_preimage
-    assert archytan_check.verification == ReceiptVerification.INVALID
-    assert archytan_check.finding is not None
-    assert archytan_check.finding["code"] == "RECEIPT_ENVELOPE_MISMATCH"
+    assert capturing_partner_key.verified_preimage == diag_partner_preimage
+    assert partner_check.verification == ReceiptVerification.INVALID
+    assert partner_check.finding is not None
+    assert partner_check.finding["code"] == "RECEIPT_ENVELOPE_MISMATCH"
 
 
 def test_readme_fixture_reports_preimage_digest_mismatch_and_exits_nonzero(
@@ -192,27 +192,25 @@ def test_readme_fixture_reports_preimage_digest_mismatch_and_exits_nonzero(
     assert "signature_verification:  NOT_PERFORMED" in out
     assert "reason:                  preimage digest mismatch" in out
     assert "envelope_digest (CAGE receipt_verifier.py:230): present" in out
-    assert "intent_hash (Archytan receipt schema):          absent" in out
+    assert "intent_hash (partner receipt schema):           absent" in out
     assert "absent_required_fields:  intent_hash" in out
 
     expected_cage_sha256 = hashlib.sha256(capturing_key.verified_preimage).hexdigest()
-    expected_archytan_preimage = f"ARCHYTAN_RECEIPT_V1:{_VECTOR1_SHA256}".encode(
-        "ascii"
-    )
-    expected_archytan_sha256 = hashlib.sha256(expected_archytan_preimage).hexdigest()
+    expected_partner_preimage = f"ARCHYTAN_RECEIPT_V1:{_VECTOR1_SHA256}".encode("ascii")
+    expected_partner_sha256 = hashlib.sha256(expected_partner_preimage).hexdigest()
 
     assert capturing_key.verified_preimage.decode("utf-8") in out
     assert expected_cage_sha256 in out
-    assert expected_archytan_preimage.decode("ascii") in out
-    assert expected_archytan_sha256 in out
+    assert expected_partner_preimage.decode("ascii") in out
+    assert expected_partner_sha256 in out
 
 
-def test_archytan_shaped_receipt_reports_both_preimage_and_missing_envelope_digest(
+def test_partner_shaped_receipt_reports_both_preimage_and_missing_envelope_digest(
     tmp_path: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:
-    """An Archytan receipt (intent_hash, no envelope_digest) reports both reasons and exits 1."""
-    body = _archytan_receipt()
-    receipt_file = tmp_path / "archytan_receipt.json"
+    """A partner receipt (intent_hash, no envelope_digest) reports both reasons and exits 1."""
+    body = _partner_receipt()
+    receipt_file = tmp_path / "partner_receipt.json"
     receipt_file.write_text(json.dumps(body), encoding="utf-8")
 
     diag_preimage = build_cage_preimage(body)
@@ -233,7 +231,7 @@ def test_archytan_shaped_receipt_reports_both_preimage_and_missing_envelope_dige
         in out
     )
     assert "envelope_digest (CAGE receipt_verifier.py:230): absent" in out
-    assert "intent_hash (Archytan receipt schema):          present" in out
+    assert "intent_hash (partner receipt schema):           present" in out
     assert "absent_required_fields:  envelope_digest" in out
     assert f"intent_sha256_hex:     {_VECTOR1_SHA256}" in out
     assert f"ARCHYTAN_RECEIPT_V1:{_VECTOR1_SHA256}" in out
@@ -243,12 +241,12 @@ def test_missing_envelope_digest_only_reason(
     tmp_path: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:
     """When preimage digests match but envelope_digest is absent, reports missing envelope_digest."""
-    body = _archytan_receipt()
+    body = _partner_receipt()
     receipt_file = tmp_path / "missing_env_only.json"
     receipt_file.write_text(json.dumps(body), encoding="utf-8")
 
     def matching_builder(b: Any) -> bytes:
-        preimage = build_archytan_preimage(b)
+        preimage = build_partner_preimage(b)
         assert preimage is not None
         return preimage
 
@@ -265,14 +263,14 @@ def test_agreement_exits_zero(
 ) -> None:
     """When preimage digests match and envelope_digest is present, reports AGREEMENT and exits 0."""
     body = {
-        **_archytan_receipt(),
+        **_partner_receipt(),
         "envelope_digest": _VECTOR1_SHA256,
     }
     receipt_file = tmp_path / "reconciled.json"
     receipt_file.write_text(json.dumps(body), encoding="utf-8")
 
     def matching_builder(b: Any) -> bytes:
-        preimage = build_archytan_preimage(b)
+        preimage = build_partner_preimage(b)
         assert preimage is not None
         return preimage
 
@@ -321,7 +319,7 @@ def test_dict_intent_hash_and_missing_both_digests() -> None:
     )
 
     diag_empty = diagnose_receipt({"receipt_id": "r-empty", "status": "ACCEPTED"})
-    assert diag_empty.archytan_preimage_utf8 is None
+    assert diag_empty.partner_preimage_utf8 is None
     assert diag_empty.absent_fields == ("envelope_digest", "intent_hash")
     assert (
         diag_empty.reason == "both (preimage digest mismatch; missing envelope_digest)"
