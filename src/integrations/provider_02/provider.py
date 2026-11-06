@@ -27,28 +27,38 @@ Provider 02 adds a capability: **public JWK-verifiable receipts**
      and verifies both Ed25519 signatures on the node's response against the
      ``kid``-resolved manifest key (see ``governed_cer.py``)
   2. CER creation via ``certifyDecision`` — wraps the raw HTTP API
-  3. CER verification via locally-cached Ed25519 JWKs — no hot-path network call
-  4. Attestation fetch via ``fetch_attestations`` — returns UNVERIFIED status
-     until Wave 3 (Ed25519 signature verification) lands
+  3. CER verification via locally-cached Ed25519 JWKs — inline TTL refresh and
+     hard ``max_staleness_seconds`` fail-closed ceiling
+  4. Attestation fetch via ``fetch_attestations`` — maps ``verify_cer`` verdicts
+     to ``ExternalAttestation`` records
 
-JWK Caching Strategy
---------------------
-The JWK endpoint is configured via ``PROVIDER_02_JWK_ENDPOINT`` and cached locally
-with a 24-hour sync interval.  This avoids relying on a live out-of-band
-network request during hot-path validation, which would break zero-trust
-network boundaries and paralyse the worker pool on DNS degradation.
+JWK Caching & Staleness Strategy
+--------------------------------
+The JWK endpoint is configured via ``PROVIDER_02_JWK_ENDPOINT`` and cached
+in-memory with two monotonic bounds:
 
-The cache syncs out-of-band via a background asyncio task, keeping the public
-PEM string instantly accessible inside the execution environment.
+  * ``ttl_seconds`` (``PROVIDER_02_JWKS_TTL_S`` or
+    ``PROVIDER_02_JWK_CACHE_TTL_HOURS * 3600``, default 24h): refresh threshold.
+    Once ``age > ttl_seconds`` (``JWKCache.is_stale``) or an unknown ``kid`` is
+    encountered, ``verify_cer`` and ``attest_bundle`` refresh the manifest
+    inline via ``ETag`` / ``If-None-Match`` conditional GET and atomically
+    replace the cached key set so revoked or removed keys are evicted.
+  * ``max_staleness_seconds`` (``PROVIDER_02_JWKS_MAX_STALENESS_S``, default
+    ``2 * ttl_seconds``): hard fail-closed ceiling. If a refresh fails and the
+    cache age exceeds ``max_staleness_seconds``
+    (``JWKCache.exceeds_max_staleness``), cached keys are evicted and
+    verification/attestation fails closed with ``CER_JWKS_STALE``.
 
 Environment variables
 ---------------------
-  PROVIDER_02_API_ENDPOINT       — API base URL (required)
-  PROVIDER_02_API_KEY_SECRET     — API key (direct or Secret Manager path)
-  PROVIDER_02_ATTEST_PATH        — Attestation path (default: /api/attest)
-  PROVIDER_02_JWK_ENDPOINT       — Public JWK endpoint for receipt verification
-  PROVIDER_02_JWK_CACHE_TTL_HOURS — JWK cache TTL (default: 24)
-  PROVIDER_02_TIMEOUT_SECONDS    — Per-request timeout (default: 5.0)
+  PROVIDER_02_API_ENDPOINT          — API base URL (required)
+  PROVIDER_02_API_KEY_SECRET        — API key (direct or Secret Manager path)
+  PROVIDER_02_ATTEST_PATH           — Attestation path (default: /api/attest)
+  PROVIDER_02_JWK_ENDPOINT          — Public JWK endpoint for receipt verification
+  PROVIDER_02_JWK_CACHE_TTL_HOURS   — JWK cache refresh TTL in hours (default: 24)
+  PROVIDER_02_JWKS_TTL_S            — Optional JWK refresh TTL override in seconds
+  PROVIDER_02_JWKS_MAX_STALENESS_S  — Hard fail-closed JWK max staleness in seconds
+  PROVIDER_02_TIMEOUT_SECONDS       — Per-request timeout (default: 5.0)
 
 Architecture precedent: follows the Provider 01 pattern in
 ``normative_provider.py`` — httpx.AsyncClient, timeout config, fail-closed.
@@ -56,7 +66,6 @@ Architecture precedent: follows the Provider 01 pattern in
 
 from __future__ import annotations
 
-import asyncio
 import base64
 import hashlib
 import logging
@@ -102,6 +111,22 @@ _JWK_CACHE_TTL_HOURS: float = float(
 _TIMEOUT: float = float(os.environ.get("PROVIDER_02_TIMEOUT_SECONDS", "5.0"))
 _ATTEST_PATH: str = os.environ.get("PROVIDER_02_ATTEST_PATH", "/api/attest")
 _VERIFY_PATH: str = os.environ.get("PROVIDER_02_VERIFY_PATH", "/v1/cer/verify")
+
+
+def _default_jwk_ttl_seconds() -> float:
+    """Resolve default JWK refresh TTL in seconds from environment."""
+    raw_seconds = os.environ.get("PROVIDER_02_JWKS_TTL_S")
+    if raw_seconds is not None and raw_seconds.strip():
+        return float(raw_seconds)
+    return _JWK_CACHE_TTL_HOURS * 3600.0
+
+
+def _default_jwk_max_staleness_seconds(ttl_seconds: float) -> float:
+    """Resolve default hard fail-closed JWK max staleness ceiling in seconds."""
+    raw_max = os.environ.get("PROVIDER_02_JWKS_MAX_STALENESS_S")
+    if raw_max is not None and raw_max.strip():
+        return float(raw_max)
+    return ttl_seconds * 2.0
 
 
 def _node_rejection(status: int, body: Any) -> tuple[str, str]:
@@ -173,24 +198,88 @@ class CERVerification:
 
 @dataclass
 class JWKCache:
-    """In-memory cache of Provider 02's public JWK set.
+    """Bounded in-memory cache of Provider 02's public JWK set.
 
-    Synced out-of-band every ``_JWK_CACHE_TTL_HOURS`` hours.
-    The cache holds the raw JWK set dict and the last sync timestamp.
+    Tracks both a soft refresh threshold (``ttl_seconds``) and a hard fail-closed
+    staleness ceiling (``max_staleness_seconds``). Freshness is measured via
+    ``time.monotonic()`` when ``fetched_at_monotonic`` is recorded (falling back
+    to ``last_synced`` wall-clock timestamps when constructed directly in tests).
     """
 
     jwk_set: dict[str, Any] = field(default_factory=dict)
     last_synced: float = 0.0
     etag: str = ""
+    ttl_seconds: float = field(default_factory=_default_jwk_ttl_seconds)
+    max_staleness_seconds: float | None = None
+    fetched_at_monotonic: float | None = None
+
+    def __post_init__(self) -> None:
+        if self.ttl_seconds <= 0:
+            raise ValueError(
+                f"JWKCache ttl_seconds must be positive, got {self.ttl_seconds}"
+            )
+        resolved_max = (
+            _default_jwk_max_staleness_seconds(self.ttl_seconds)
+            if self.max_staleness_seconds is None
+            else self.max_staleness_seconds
+        )
+        if resolved_max < self.ttl_seconds:
+            raise ValueError(
+                f"JWKCache max_staleness_seconds ({resolved_max}) "
+                f"must be >= ttl_seconds ({self.ttl_seconds})"
+            )
+        self.max_staleness_seconds = resolved_max
+
+    @property
+    def effective_max_staleness_seconds(self) -> float:
+        """Hard fail-closed staleness ceiling in seconds."""
+        if self.max_staleness_seconds is None:
+            return _default_jwk_max_staleness_seconds(self.ttl_seconds)
+        return self.max_staleness_seconds
+
+    @property
+    def was_synced(self) -> bool:
+        """True if this cache has ever completed a JWK sync."""
+        return self.fetched_at_monotonic is not None or self.last_synced > 0.0
+
+    @property
+    def age_seconds(self) -> float:
+        """Elapsed seconds since the JWK set was last synced."""
+        if self.fetched_at_monotonic is not None:
+            return time.monotonic() - self.fetched_at_monotonic
+        if self.last_synced > 0.0:
+            return time.time() - self.last_synced
+        return float("inf")
 
     @property
     def is_stale(self) -> bool:
-        ttl_seconds = _JWK_CACHE_TTL_HOURS * 3600
-        return (time.time() - self.last_synced) > ttl_seconds
+        """True when the cache has never synced or exceeded ``ttl_seconds``."""
+        return self.age_seconds > self.ttl_seconds
+
+    @property
+    def exceeds_max_staleness(self) -> bool:
+        """True when the cache has never synced or exceeded ``max_staleness_seconds``."""
+        return self.age_seconds > self.effective_max_staleness_seconds
+
+    @property
+    def is_expired(self) -> bool:
+        """Alias for ``exceeds_max_staleness``."""
+        return self.exceeds_max_staleness
 
     @property
     def has_keys(self) -> bool:
         return bool(self.jwk_set.get("keys"))
+
+    def contains_kid(self, kid: str) -> bool:
+        """True if ``kid`` appears in the cached key manifest entries."""
+        if not kid:
+            return False
+        keys = self.jwk_set.get("keys")
+        if not isinstance(keys, list):
+            return False
+        return any(
+            isinstance(entry, dict) and entry.get("kid") == kid for entry in keys
+        )
 
 
 # ---------------------------------------------------------------------------
@@ -204,23 +293,22 @@ class Provider02AttestationProvider(AttestationProvider):
     Implements the ``AttestationProvider`` protocol from
     ``src.gateway.governance.seams.attestation``.
 
-    Provider 02 fetches CER attestations and returns them with
-    ``AttestationStatus.UNVERIFIED`` until Wave 3 (Ed25519 signature verification)
-    lands. At that point, the status will transition to ``AttestationStatus.VERIFIED``
-    when signature checks pass.
+    JWK manifests are refreshed inline on ``verify_cer`` and ``attest_bundle``
+    whenever the cache is empty, ``is_stale`` (``age > ttl_seconds``), or missing
+    the requested ``kid``, and fail closed with ``CER_JWKS_STALE`` if refresh
+    fails once ``age > max_staleness_seconds``.
 
     Usage::
 
         provider = Provider02AttestationProvider()
-        await provider.start()  # starts JWK sync daemon
 
         # Fetch attestations (AttestationProvider protocol)
-        attestations = await provider.fetch_attestations({"action": "execute_trade"})
+        attestations = await provider.fetch_attestations({"certificate_hash": cer_hash})
 
         # Create a CER (provider-specific)
         cer = await provider.certify_decision(evidence_payload)
 
-        # Verify a CER (local — uses cached JWKs)
+        # Verify a CER (uses TTL-bounded cached JWKs)
         result = await provider.verify_cer(cer.certificate_hash)
 
         # Attest a completed bundle (provider-specific)
@@ -233,14 +321,20 @@ class Provider02AttestationProvider(AttestationProvider):
         api_key: str = "",
         jwk_endpoint: str = "",
         timeout: float = _TIMEOUT,
+        jwk_ttl_seconds: float | None = None,
+        jwk_max_staleness_seconds: float | None = None,
     ) -> None:
         self._endpoint = (endpoint or _ENDPOINT).rstrip("/")
         self._api_key = api_key or _API_KEY
         self._jwk_endpoint = jwk_endpoint or _JWK_ENDPOINT
         self._timeout = timeout
-        self._jwk_cache = JWKCache()
-        self._sync_task: asyncio.Task | None = None
-        self._running = False
+        resolved_ttl = (
+            _default_jwk_ttl_seconds() if jwk_ttl_seconds is None else jwk_ttl_seconds
+        )
+        self._jwk_cache = JWKCache(
+            ttl_seconds=resolved_ttl,
+            max_staleness_seconds=jwk_max_staleness_seconds,
+        )
 
         # mTLS configuration
         self._client_cert = os.getenv("PROVIDER_02_CLIENT_CERT", "")
@@ -269,10 +363,13 @@ class Provider02AttestationProvider(AttestationProvider):
             )
 
         logger.info(
-            "[Provider02] Initialised: endpoint=%s jwk=%s timeout=%.1fs",
+            "[Provider02] Initialised: endpoint=%s jwk=%s timeout=%.1fs "
+            "ttl=%.1fs max_staleness=%.1fs",
             self._endpoint or "(not set)",
             self._jwk_endpoint or "(not set)",
             self._timeout,
+            self._jwk_cache.ttl_seconds,
+            self._jwk_cache.effective_max_staleness_seconds,
         )
 
     @classmethod
@@ -333,13 +430,26 @@ class Provider02AttestationProvider(AttestationProvider):
         key from the response to reach the verifier, which would be security
         theatre.
 
+        Refuses any cached key once ``exceeds_max_staleness`` is True so an
+        expired warm cache cannot be converted into key validity during a JWKS
+        outage.
+
         Args:
             kid: Key ID to resolve
 
         Returns:
-            Ed25519PublicKey if found in cache, None otherwise
+            Ed25519PublicKey if found and within ``max_staleness_seconds``, None otherwise
         """
         if not self._jwk_cache.has_keys:
+            return None
+        if self._jwk_cache.exceeds_max_staleness:
+            logger.error(
+                "[Provider02] Refusing cached key %s: JWK cache age %.1fs "
+                "exceeds max_staleness_seconds %.1fs",
+                kid,
+                self._jwk_cache.age_seconds,
+                self._jwk_cache.effective_max_staleness_seconds,
+            )
             return None
 
         for entry in self._jwk_cache.jwk_set.get("keys", []):
@@ -381,6 +491,31 @@ class Provider02AttestationProvider(AttestationProvider):
 
         return None
 
+    async def _ensure_fresh_jwks(
+        self,
+        kid: str | None = None,
+        *,
+        already_synced: bool = False,
+    ) -> bool:
+        """Refresh JWKs inline when stale or missing ``kid``; check max staleness.
+
+        Args:
+            kid: Optional key ID expected in the manifest.
+            already_synced: True if ``_sync_jwks()`` already ran in this call.
+
+        Returns:
+            True if ``self._jwk_cache`` is within ``max_staleness_seconds`` after
+            any sync attempt; False if stale past ``max_staleness_seconds``.
+        """
+        needs_sync = not already_synced and (
+            not self._jwk_cache.has_keys
+            or self._jwk_cache.is_stale
+            or (kid is not None and not self._jwk_cache.contains_kid(kid))
+        )
+        if needs_sync:
+            await self._sync_jwks()
+        return not self._jwk_cache.exceeds_max_staleness
+
     # ------------------------------------------------------------------
     # AttestationProvider Protocol
     # ------------------------------------------------------------------
@@ -395,16 +530,15 @@ class Provider02AttestationProvider(AttestationProvider):
     ) -> list[ExternalAttestation]:
         """Fetch current attestations for the given governance context.
 
-        Wraps ``verify_cer`` and returns attestations with
-        ``AttestationStatus.UNVERIFIED`` until Wave 3 (B3) implements
-        real Ed25519 signature verification.
+        Wraps ``verify_cer`` and maps the verification outcome to
+        ``ExternalAttestation``.
 
         Args:
             context: Governance context dict. Expected keys:
                 - certificate_hash: str (required for CER verification)
 
         Returns:
-            List of ExternalAttestation entries with UNVERIFIED status.
+            List of ExternalAttestation entries.
         """
         certificate_hash = context.get("certificate_hash", "")
         if not certificate_hash:
@@ -414,13 +548,8 @@ class Provider02AttestationProvider(AttestationProvider):
             )
             return []
 
-        # Verify the CER (currently returns valid=False, signature_checked=False)
         result = await self.verify_cer(certificate_hash)
 
-        # Map CERVerification to ExternalAttestation
-        # Phase 0 fail-closed: status is UNVERIFIED until signature verification
-        # is implemented in Wave 3 (B3).
-        #
         # Status mapping:
         #   - valid=True, signature_checked=True  → VERIFIED (Wave 3 / B3)
         #   - valid=False, signature_checked=False, error contains "Phase 2b" → UNVERIFIED
@@ -428,15 +557,12 @@ class Provider02AttestationProvider(AttestationProvider):
         status = AttestationStatus.UNVERIFIED
 
         if result.valid and result.signature_checked:
-            # Wave 3 (B3) path: real Ed25519 verification passed
             status = AttestationStatus.VERIFIED
         elif (
             result.error
             and "Phase 2b" not in result.error
             and "not yet implemented" not in result.error
         ):
-            # Real errors (network failures, parse errors, etc.) → ERROR
-            # But "Phase 2b pending" messages → UNVERIFIED
             status = AttestationStatus.ERROR
 
         attestation = ExternalAttestation(
@@ -454,35 +580,6 @@ class Provider02AttestationProvider(AttestationProvider):
         )
 
         return [attestation]
-
-    # ------------------------------------------------------------------
-    # Lifecycle
-    # ------------------------------------------------------------------
-
-    async def start(self) -> None:
-        """Start the JWK sync daemon."""
-        if self._running:
-            return
-
-        self._running = True
-
-        # Initial JWK fetch
-        if self._jwk_endpoint:
-            await self._sync_jwks()
-            self._sync_task = asyncio.create_task(
-                self._jwk_sync_loop(),
-                name="provider-02-jwk-sync",
-            )
-
-    async def stop(self) -> None:
-        """Stop the JWK sync daemon."""
-        self._running = False
-        if self._sync_task and not self._sync_task.done():
-            self._sync_task.cancel()
-            try:
-                await self._sync_task
-            except asyncio.CancelledError:
-                pass
 
     # ------------------------------------------------------------------
     # CER creation
@@ -518,7 +615,7 @@ class Provider02AttestationProvider(AttestationProvider):
             return CERReceipt(error=str(exc))
 
     # ------------------------------------------------------------------
-    # CER verification (local — uses cached JWKs)
+    # CER verification (TTL-bounded cached JWKs, fail-closed on staleness)
     # ------------------------------------------------------------------
 
     async def verify_cer(
@@ -527,7 +624,7 @@ class Provider02AttestationProvider(AttestationProvider):
         """Verify a CER with two-stage Ed25519 signature verification.
 
         Stage 1: Certificate-hash binding (SHA-256 recomputation)
-        Stage 2: Envelope signature (Ed25519 verification)
+        Stage 2: Envelope signature (Ed25519 verification against fresh JWK set)
 
         Both stages must pass before valid=True and signature_checked=True are set.
 
@@ -546,9 +643,32 @@ class Provider02AttestationProvider(AttestationProvider):
                 error=f"Invalid certificate hash length: {len(certificate_hash)} (expected 64)",
             )
 
-        # Fallback to remote verification if JWK cache is empty
-        if not self._jwk_cache.has_keys:
-            return await self._verify_remote(certificate_hash)
+        # Inline JWK sync when cold or past refresh TTL (F-110 Defect A)
+        synced_on_entry = False
+        if not self._jwk_cache.has_keys or self._jwk_cache.is_stale:
+            await self._sync_jwks()
+            synced_on_entry = True
+
+        # Fail closed when a warm cache exceeded max_staleness_seconds and refresh failed (F-110 Defect B)
+        if self._jwk_cache.was_synced and self._jwk_cache.exceeds_max_staleness:
+            return CERVerification(
+                valid=False,
+                signature_checked=False,
+                error=(
+                    "CER_JWKS_STALE: cached JWK set exceeded max_staleness_seconds "
+                    "and refresh from JWK endpoint failed"
+                ),
+            )
+
+        # Cold cache that has never loaded keys: fail-closed remote diagnostic fallback
+        if not self._jwk_cache.was_synced and not self._jwk_cache.has_keys:
+            if cer_body is None:
+                return await self._verify_remote(certificate_hash)
+            return CERVerification(
+                valid=False,
+                signature_checked=False,
+                error="CER_JWKS_STALE: JWK cache unavailable and initial sync failed",
+            )
 
         # If CER body not provided, resolve it
         if cer_body is None:
@@ -575,10 +695,16 @@ class Provider02AttestationProvider(AttestationProvider):
 
             cer_body = resolution.evidence
 
-        return await self._verify_two_stage(certificate_hash, cer_body)
+        return await self._verify_two_stage(
+            certificate_hash, cer_body, already_synced=synced_on_entry
+        )
 
     async def _verify_two_stage(
-        self, certificate_hash: str, cer_body: dict[str, Any]
+        self,
+        certificate_hash: str,
+        cer_body: dict[str, Any],
+        *,
+        already_synced: bool = False,
     ) -> CERVerification:
         """Perform two-stage verification: hash binding + signature.
 
@@ -588,6 +714,7 @@ class Provider02AttestationProvider(AttestationProvider):
         Args:
             certificate_hash: Expected SHA-256 hex digest
             cer_body: Full CER JSON structure
+            already_synced: True if ``verify_cer`` already refreshed JWKs on entry
 
         Returns:
             CERVerification with valid=True only if BOTH stages pass
@@ -639,20 +766,27 @@ class Provider02AttestationProvider(AttestationProvider):
                 error="CER_SIGNATURE_INVALID: envelope.kid is missing",
             )
 
+        # Ensure JWKs are fresh or re-synced for unknown kid; fail closed on max staleness
+        if not await self._ensure_fresh_jwks(kid, already_synced=already_synced):
+            return CERVerification(
+                valid=False,
+                signature_checked=False,
+                key_id=kid,
+                error=(
+                    "CER_JWKS_STALE: cached JWK set exceeded max_staleness_seconds "
+                    "and refresh from JWK endpoint failed"
+                ),
+            )
+
         # Resolve the public key from the JWK cache (ONLY source of keys)
         public_key = self._resolve_public_key(kid)
         if public_key is None:
-            # Unknown kid: try one refresh, then fail closed
-            logger.info("[Provider02] Unknown kid %s — refreshing JWK cache", kid)
-            await self._sync_jwks()
-            public_key = self._resolve_public_key(kid)
-            if public_key is None:
-                return CERVerification(
-                    valid=False,
-                    signature_checked=False,
-                    key_id=kid,
-                    error=f"CER_UNKNOWN_KEY: kid '{kid}' not found in key manifest",
-                )
+            return CERVerification(
+                valid=False,
+                signature_checked=False,
+                key_id=kid,
+                error=f"CER_UNKNOWN_KEY: kid '{kid}' not found in key manifest",
+            )
 
         # Extract signature and payload
         signature_b64url = verification_envelope.get(
@@ -742,10 +876,8 @@ class Provider02AttestationProvider(AttestationProvider):
                 resp = await client.get(url, headers=self._headers())
                 resp.raise_for_status()
                 data = resp.json()
-                # Phase 0 fail-closed: CAGE did not verify the signature itself,
-                # so valid=False regardless of what the remote endpoint reports.
                 return CERVerification(
-                    valid=False,  # Fail closed until Phase 2b
+                    valid=False,  # Fail closed
                     signature_checked=False,  # CAGE did not check the signature
                     signer=data.get("signer", ""),
                     timestamp=data.get("timestamp", ""),
@@ -788,8 +920,9 @@ class Provider02AttestationProvider(AttestationProvider):
         Returns:
             An ``AttestationVerdict``. ``verified`` is True only when the node
             accepted the CER *and* CAGE verified both Ed25519 signatures against
-            the ``kid``-resolved manifest key. Transport errors and node
-            rejections return a non-verified verdict; this method never raises.
+            a fresh ``kid``-resolved manifest key. Transport errors, stale JWK
+            caches exceeding ``max_staleness_seconds``, and node rejections
+            return a non-verified verdict; this method never raises.
         """
         import httpx
 
@@ -822,17 +955,30 @@ class Provider02AttestationProvider(AttestationProvider):
             )
             return AttestationVerdict.reject(code, error, certificate_hash)
 
+        synced_on_entry = False
         if not self._jwk_cache.has_keys or self._jwk_cache.is_stale:
             await self._sync_jwks()
+            synced_on_entry = True
+
+        if self._jwk_cache.exceeds_max_staleness:
+            return AttestationVerdict.reject(
+                "CER_JWKS_STALE",
+                "cached JWK set exceeded max_staleness_seconds and refresh failed",
+                certificate_hash,
+            )
+
         supplied = topology is not None
         verdict = verify_attestation(
             cer, body, self._resolve_public_key, topology_supplied=supplied
         )
-        if verdict.code == "UNKNOWN_KEY":
-            # The node may have rotated keys since the last sync. Refresh the
-            # independently fetched manifest once; never trust a key from the
-            # response itself.
+        if verdict.code == "UNKNOWN_KEY" and not synced_on_entry:
             await self._sync_jwks()
+            if self._jwk_cache.exceeds_max_staleness:
+                return AttestationVerdict.reject(
+                    "CER_JWKS_STALE",
+                    "cached JWK set exceeded max_staleness_seconds and refresh failed",
+                    certificate_hash,
+                )
             verdict = verify_attestation(
                 cer, body, self._resolve_public_key, topology_supplied=supplied
             )
@@ -886,27 +1032,41 @@ class Provider02AttestationProvider(AttestationProvider):
         return verify_governed_cer(cer, body, topology_supplied=topology is not None)
 
     # ------------------------------------------------------------------
-    # JWK sync daemon
+    # Inline JWK synchronization
     # ------------------------------------------------------------------
 
+    def _evict_expired_jwks(self) -> None:
+        """Atomically clear cached keys and ETag once ``max_staleness_seconds`` elapses."""
+        self._jwk_cache = JWKCache(
+            jwk_set={},
+            last_synced=self._jwk_cache.last_synced,
+            etag="",
+            ttl_seconds=self._jwk_cache.ttl_seconds,
+            max_staleness_seconds=self._jwk_cache.effective_max_staleness_seconds,
+            fetched_at_monotonic=self._jwk_cache.fetched_at_monotonic,
+        )
+
     async def _sync_jwks(self) -> None:
-        """Fetch the Provider 02 public JWK set and update the local cache."""
+        """Fetch the Provider 02 public JWK set and atomically replace the local cache."""
+        ttl_seconds = self._jwk_cache.ttl_seconds
+        max_staleness_seconds = self._jwk_cache.effective_max_staleness_seconds
+
         if not self._jwk_endpoint:
+            if self._jwk_cache.was_synced and self._jwk_cache.exceeds_max_staleness:
+                self._evict_expired_jwks()
             return
 
         import httpx
 
         try:
             async with httpx.AsyncClient(**self._build_httpx_kwargs()) as client:
-                headers = {}
-                if self._jwk_cache.etag:
+                headers: dict[str, str] = {}
+                if self._jwk_cache.etag and self._jwk_cache.has_keys:
                     headers["If-None-Match"] = self._jwk_cache.etag
 
                 # Construct full URL: if jwk_endpoint is relative, prepend base endpoint
                 jwk_url = self._jwk_endpoint
                 if self._jwk_endpoint.startswith("/"):
-                    # Relative path - construct full URL from base endpoint
-                    # Extract base from _endpoint (without /v1 suffix if present)
                     base = (
                         self._endpoint.rsplit("/v1", 1)[0]
                         if self._endpoint.endswith("/v1")
@@ -917,8 +1077,18 @@ class Provider02AttestationProvider(AttestationProvider):
                 resp = await client.get(jwk_url, headers=headers)
 
                 if resp.status_code == 304:
-                    # Not modified — cache is still valid
-                    self._jwk_cache.last_synced = time.time()
+                    if "If-None-Match" not in headers or not self._jwk_cache.has_keys:
+                        raise ValueError(
+                            "unexpected HTTP 304 without cached ETag and keys"
+                        )
+                    self._jwk_cache = JWKCache(
+                        jwk_set={"keys": list(self._jwk_cache.jwk_set.get("keys", []))},
+                        last_synced=time.time(),
+                        etag=self._jwk_cache.etag,
+                        ttl_seconds=ttl_seconds,
+                        max_staleness_seconds=max_staleness_seconds,
+                        fetched_at_monotonic=time.monotonic(),
+                    )
                     logger.debug(
                         "[Provider02] JWK cache still valid (304 Not Modified)."
                     )
@@ -931,36 +1101,45 @@ class Provider02AttestationProvider(AttestationProvider):
                 ):
                     raise ValueError("key manifest has no 'keys' list")
 
+                # Atomic full-set replacement (never mutates/merges old keys)
+                fresh_keys = list(jwk_set["keys"])
                 self._jwk_cache = JWKCache(
-                    jwk_set=jwk_set,
+                    jwk_set={"keys": fresh_keys},
                     last_synced=time.time(),
                     etag=resp.headers.get("ETag", ""),
+                    ttl_seconds=ttl_seconds,
+                    max_staleness_seconds=max_staleness_seconds,
+                    fetched_at_monotonic=time.monotonic(),
                 )
 
-                key_count = len(jwk_set.get("keys", []))
                 logger.info(
                     "[Provider02] JWK cache refreshed: %d keys (etag=%s)",
-                    key_count,
+                    len(fresh_keys),
                     self._jwk_cache.etag[:16] if self._jwk_cache.etag else "none",
                 )
 
         except Exception as exc:
-            logger.warning(
-                "[Provider02] JWK sync failed: %s — using cached keys.",
-                exc,
-            )
-
-    async def _jwk_sync_loop(self) -> None:
-        """Background loop: sync JWKs every _JWK_CACHE_TTL_HOURS hours."""
-        while self._running:
-            try:
-                await asyncio.sleep(_JWK_CACHE_TTL_HOURS * 3600)
-                await self._sync_jwks()
-            except asyncio.CancelledError:
-                break
-            except Exception as exc:
-                logger.error("[Provider02] JWK sync loop error: %s", exc)
-                await asyncio.sleep(300)  # retry in 5 minutes
+            if self._jwk_cache.was_synced and self._jwk_cache.exceeds_max_staleness:
+                self._evict_expired_jwks()
+                logger.error(
+                    "[Provider02] JWK sync failed (%s) and cache exceeded "
+                    "max_staleness_seconds (%.1fs) — evicted stale keys (fail-closed).",
+                    exc,
+                    max_staleness_seconds,
+                )
+            elif self._jwk_cache.has_keys:
+                logger.warning(
+                    "[Provider02] JWK sync failed (%s) — retaining cached keys "
+                    "within max staleness window (age=%.1fs, max=%.1fs).",
+                    exc,
+                    self._jwk_cache.age_seconds,
+                    max_staleness_seconds,
+                )
+            else:
+                logger.warning(
+                    "[Provider02] Initial JWK sync failed (%s) — cache remains empty.",
+                    exc,
+                )
 
     # ------------------------------------------------------------------
     # Properties
@@ -969,9 +1148,7 @@ class Provider02AttestationProvider(AttestationProvider):
     @property
     def jwk_cache_age_seconds(self) -> float:
         """Seconds since the JWK cache was last synced."""
-        if self._jwk_cache.last_synced == 0:
-            return float("inf")
-        return time.time() - self._jwk_cache.last_synced
+        return self._jwk_cache.age_seconds
 
     @property
     def has_jwk_keys(self) -> bool:
