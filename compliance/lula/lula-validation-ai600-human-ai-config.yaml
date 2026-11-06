@@ -15,8 +15,8 @@
 # lula-validation-ai600-human-ai-config.yaml
 # NIST AI 600-1 §2.5 — Human-AI Configuration controls
 #
-# Validates: Consensus threshold enforced; override audit active; HITL escalator.
-# POAM: AI600-004
+# Validates: Consensus & confidence REQUIRE_APPROVAL thresholds enforced (consensus_tier.py, confidence.py); dual-control quorum & override audit active (defer_queue.py).
+# POAM: AI600-005
 # Phase: 0 (stub — always passes) → Phase 2 (real assertions replace stub per §6.4)
 # Region: US_FED (CAGE_DEPLOYMENT_REGION=US_FED)
 
@@ -27,8 +27,8 @@ component-definition:
     last-modified: '2026-07-09T00:00:00Z'
     version: 1.0.0
     oscal-version: 1.1.2
-    remarks: 'Phase-0 stub for AI 600-1 §2.5 Human-AI Configuration controls. Always passes until Phase 2 real assertions
-      are implemented per §6.4. Region: US_FED. POAM: AI600-004.'
+    remarks: 'Phase-0 stub for AI 600-1 §2.5 Human-AI Configuration controls (consensus_tier.py, confidence.py, defer_queue.py REQUIRE_APPROVAL quorum). Always passes until Phase 2 real assertions
+      are implemented per §6.4. Region: US_FED. POAM: AI600-005.'
   components:
   - uuid: d496060e-28ec-43e7-a516-53d9764b030b
     type: software

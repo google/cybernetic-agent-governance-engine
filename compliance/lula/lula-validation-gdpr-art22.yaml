@@ -23,9 +23,17 @@
 # Domain: api → compliance-bridge (Python FastAPI service)
 # Provider: opa (inline Rego)
 #
+# System-triggered human oversight: REQUIRE_APPROVAL via consensus_tier.py
+#   (>= EUR 7,500), confidence.py ([0.70, 0.95) universal), and
+#   trade_confidence_tier.py ([0.70, 0.97) EU_ECB trade floor), parked in
+#   defer_queue.py for distinct-principal dual-control quorum + POST_HITL
+#   drift revalidation.
+# Planned scope (POAM EU-006 in docs/compliance/eu_ecb/POAM_EU_ECB.md):
+#   GDPR Art. 22(3) subject-initiated contest on request and
+#   GET /v1/compliance/gdpr/art22 on compliance-bridge.
 # Regulatory basis: GDPR Art. 22 — Automated Individual Decision-Making
 # Jurisdiction: EU_ECB (CAGE_DEPLOYMENT_REGION=EU_ECB)
-# POAM: EU-GDPR-001
+# POAM: EU-006
 
 component-definition:
   uuid: 0cbf0c15-21b6-5763-b779-783b55c828f0
@@ -37,7 +45,7 @@ component-definition:
     remarks: |-
       Auto-converted from standalone lula validation format.
       Region: EU_ECB. Posture: gdpr.
-      Notes: GDPR Art. 22: Human Oversight of Automated Individual Decision-Making. CAGE financial advisory decisions may constitute "automated individual decision-making" with "legal or similarly significant effects" under GDPR Art. 22(1) when they produce trade recommendations affecting individual investor portfolios. Art. 22(2)(b) permits such processing with explicit consent and Art. 22(3) safeguards: the data subject must have the right to obtain human intervention, express their point of view, and contest the decision. CAGE implements this via the DEFER State Machine (defer_queue.py) and the HITL escalator (hitl_escalator.py). The EU_ECB consensus threshold of EUR 7,500 (EU_ECB_BASELINE.json) ensures more decisions receive human review than the US_FED baseline (USD 10,000). Evidence: GET /v1/compliance/gdpr/art22 (compliance-bridge service). Staleness guard: 48 hours. Jurisdiction: EU_ECB only (CAGE_DEPLOYMENT_REGION=EU_ECB).
+      Notes: GDPR Art. 22: Human Oversight of Automated Individual Decision-Making. CAGE financial advisory decisions may constitute "automated individual decision-making" with "legal or similarly significant effects" under GDPR Art. 22(1) when they gate or execute trades affecting individual investor portfolios. Under Art. 22(2)(b) and Art. 22(3) safeguards, CAGE enforces system-triggered human intervention via REQUIRE_APPROVAL: trades at or above EUR 7,500 (domains.finance.consensus.threshold_usd = 7500.0 in src/cage_finance/tiers/consensus_tier.py, vs. USD 10,000 global) and medium-confidence actions in [0.70, 0.95) universally (src/gateway/governance/governor/stages/confidence.py) or [0.70, 0.97) on EU_ECB trade execution (src/cage_finance/tiers/trade_confidence_tier.py) park in DeferQueue (src/gateway/governance/defer_queue.py) for distinct-principal dual-control quorum (DeferQueue.approve() / POST /v1/defer/{id}/escalate) and single-use consumption with POST_HITL drift revalidation (DeferQueue.consume_approval(), SymbolicGovernor.revalidate_post_hitl()). Sub-0.70 DEFER and WARRANT_INELIGIBLE are turn-terminal epistemic/reliance holds rather than Art. 22 approval gates. Subject-initiated Art. 22(3) contest on request and the GET /v1/compliance/gdpr/art22 compliance-bridge endpoint remain planned (tracked under EU-006 in docs/compliance/eu_ecb/POAM_EU_ECB.md). Staleness guard: 48 hours. Jurisdiction: EU_ECB only (CAGE_DEPLOYMENT_REGION=EU_ECB).
   components:
   - uuid: 3d1d017f-b867-5b0e-9d2f-cbb649c8c7dc
     type: software

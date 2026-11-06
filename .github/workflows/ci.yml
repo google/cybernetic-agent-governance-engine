@@ -308,6 +308,9 @@ jobs:
         # start site. Zero waivers: wire into service lifespan or delete dead loops.
         run: |
           uv run python scripts/check_daemon_lifespans.py --verbose
+      - name: Lula stub count gate (OSCAL Rego extraction & downward-only baseline)
+        run: |
+          uv run python scripts/check_lula_stub_count.py
 
   bare-kernel-smoke:
     name: "Bare-Kernel Smoke Test (Zero Cloud SDKs)"
@@ -537,6 +540,8 @@ jobs:
         # The domain/provider are embedded inside back-matter.resources[].description.
         # Full live lula validate runs post-cluster-provisioning per Phase 3 §7.5.
         run: python3 scripts/check_ai600_lula_manifests.py
+      - name: Enforce Lula stub count downward-only baseline & POAM linkage
+        run: python3 scripts/check_lula_stub_count.py
       - name: Assert lula manifest count matches README
         run: |
           DISK_COUNT=$(ls compliance/lula/lula-validation-*.yaml 2>/dev/null | wc -l | tr -d ' ')
