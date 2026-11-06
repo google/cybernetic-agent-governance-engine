@@ -238,6 +238,46 @@ def _create_blocked_response(reason: str) -> dict[str, Any]:
     }
 
 
+def _extract_message_text(content: Any) -> str:
+    """Extract text from a string or OpenAI multimodal content-part array."""
+    if isinstance(content, str):
+        return content
+    if isinstance(content, list):
+        parts: list[str] = []
+        for item in content:
+            if isinstance(item, str) and item:
+                parts.append(item)
+            elif isinstance(item, dict):
+                for key in ("text", "input_text", "content"):
+                    val = item.get(key)
+                    if isinstance(val, str) and val:
+                        parts.append(val)
+                        break
+        return " ".join(parts)
+    return ""
+
+
+def _scrub_message_content(content: Any) -> Any:
+    """Scrub PII from a string or OpenAI multimodal content-part array."""
+    if isinstance(content, str):
+        return scrub_pii(content)
+    if isinstance(content, list):
+        scrubbed_list: list[Any] = []
+        for item in content:
+            if isinstance(item, str):
+                scrubbed_list.append(scrub_pii(item))
+            elif isinstance(item, dict):
+                new_item = dict(item)
+                for key in ("text", "input_text", "content"):
+                    if isinstance(new_item.get(key), str):
+                        new_item[key] = scrub_pii(new_item[key])
+                scrubbed_list.append(new_item)
+            else:
+                scrubbed_list.append(item)
+        return scrubbed_list
+    return content
+
+
 async def _mask_output(rails: Any, text: str) -> str:
     """Mask *text* before it leaves the proxy.
 
@@ -310,8 +350,8 @@ async def chat_completions(
         # Attach GenAI tracking
         if span.is_recording():
             safe_messages = [
-                {**m, "content": scrub_pii(m.get("content", ""))}
-                if isinstance(m.get("content"), str)
+                {**m, "content": _scrub_message_content(m.get("content"))}
+                if "content" in m
                 else m
                 for m in messages
             ]
@@ -323,24 +363,27 @@ async def chat_completions(
                 "gen_ai.request.streaming", body.get("stream", False) is True
             )
 
-        # Extract the last user message for NeMo context (used as the primary
+        # Extract the last user message for NeMo context (used as fallback
         # input text for NeMo rails, which expect a single string).
         # ALL governance checks run regardless of whether a user message exists —
         # system-only, assistant-only, and mixed message sets are all governed.
         last_user_msg = next(
             (
-                m.get("content", "")
+                _extract_message_text(m.get("content"))
                 for m in reversed(messages)
-                if m.get("role") == "user" and m.get("content")
+                if m.get("role") == "user" and _extract_message_text(m.get("content"))
             ),
             "",
         )
 
-        # Build a combined text representation of ALL messages for Ingress Stage 1 scan.
-        # This prevents system-only or assistant-only requests from bypassing
-        # the keyword filter (GHSA-hfqj-24cj-693g).
+        # Build a combined text representation of ALL messages for Ingress Stage 1 scan
+        # and semantic input verification (including multimodal content-part arrays).
+        # This prevents system-only, assistant-only, or multi-turn requests from bypassing
+        # the keyword filter or NeMo rails (GHSA-hfqj-24cj-693g).
         all_messages_text = " ".join(
-            m.get("content", "") for m in messages if isinstance(m.get("content"), str)
+            text
+            for text in (_extract_message_text(m.get("content")) for m in messages)
+            if text
         )
 
         # 1. Ingress Stage 1 keyword scan — applied to ALL messages, not just user role.
@@ -459,14 +502,13 @@ async def chat_completions(
         stamp_iso_control(span, ingress_stage=2, control="A.4", outcome="PASS")
 
         # 4. NeMo input verification — runs for ALL requests while semantic
-        # rails are on. Uses the full message list; falls back to last_user_msg
-        # for NeMo rails that expect a single string (NeMo context is the last
-        # user msg or a concatenation of all messages when no user message
-        # exists). With rails off no input rail runs, and the evidence records
+        # rails are on. Uses all_messages_text across the full message list so
+        # multi-turn requests cannot hide instructions behind a benign trailing
+        # user turn. With rails off no input rail runs, and the evidence records
         # SKIPPED with the reason code instead of a PASS that never happened.
         # Steps 4-7 are wrapped in a try/except so that any downstream
         # failure triggers a quota rollback (CTRL_TQP_007 §5.3).
-        nemo_input_text = last_user_msg if last_user_msg else all_messages_text
+        nemo_input_text = all_messages_text if all_messages_text else last_user_msg
         try:
             if rails_refusal is not None:
                 # Off by configuration. An enabled-but-absent rail (rails
@@ -754,17 +796,17 @@ async def chat_completions(
 
         # 6. Output filtering / PII masking
         try:
-            if vllm_response.get("choices"):
-                choice = vllm_response["choices"][0]
+            for choice in vllm_response.get("choices", []):
                 message = choice.get("message", {})
 
                 if (
                     choice.get("finish_reason") == "tool_calls"
                     or "tool_calls" in message
                 ):
-                    for tool_call in message.get("tool_calls", []):
+                    for tool_call in message.get("tool_calls") or []:
                         if (
-                            "function" in tool_call
+                            isinstance(tool_call, dict)
+                            and "function" in tool_call
                             and "arguments" in tool_call["function"]
                         ):
                             raw_args = tool_call["function"]["arguments"]
@@ -775,9 +817,13 @@ async def chat_completions(
                                     if isinstance(safe_args, str)
                                     else str(safe_args)
                                 )
-                elif message.get("content"):
-                    safe_content = await _mask_output(rails, message["content"])
-                    message["content"] = safe_content
+                if message.get("content"):
+                    if isinstance(message["content"], str):
+                        message["content"] = await _mask_output(
+                            rails, message["content"]
+                        )
+                    elif isinstance(message["content"], list):
+                        message["content"] = _scrub_message_content(message["content"])
         except Exception:
             await _get_token_quota_proxy().rollback_step(
                 agent_id, reserved_tokens=token_delta
