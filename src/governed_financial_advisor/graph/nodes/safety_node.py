@@ -214,7 +214,7 @@ async def _route_trade(
         and bool(defer_token.strip())
     ):
         logger.info(
-            "⏸️ Safety Node: Action DEFERRED by governance (defer_token=%s)",
+            "⏸️ Safety Node: Action DEFERRED by governance (ticket_id=%s)",
             defer_token.strip(),
         )
         return "deferred", result
