@@ -40,8 +40,9 @@ class GovernanceEnvelope(BaseModel):
 
     Security & Verification Scope (IMPORTANT):
         1. ``CageClient`` currently performs Pydantic schema validation and
-           fail-closed HTTP status mediation (``200``/``403``/``422``/``202``/``409``/``5xx``)
-           only — **it does NOT verify ``GovernanceEnvelope.signature`` against a
+           fail-closed HTTP status and payload verdict mediation
+           (``200``/``403``/``422``/``202``/``409``/``5xx``) only —
+           **it does NOT verify ``GovernanceEnvelope.signature`` against a
            gateway trust anchor and does NOT check ``GovernanceEnvelope.expires_at``
            freshness client-side**. Both ``signature`` and ``expires_at`` are
            parsed as **untrusted** fields unless verified separately against an
@@ -57,35 +58,6 @@ class GovernanceEnvelope(BaseModel):
     The envelope is strictly immutable (``frozen=True``). Clients parse envelopes
     received from the gateway but NEVER construct or modify them. Any attempt
     to modify an envelope after creation will raise a ``ValidationError``.
-
-    Attributes:
-        envelope_version: Semantic version of the envelope schema (e.g., "3.0").
-            Must match the regex pattern "^3\\.d+$" to ensure compatibility.
-        envelope_type: Fixed string "cage_governance_decision" identifying the
-            envelope as a governance decision (vs. other future envelope types).
-        issued_at: UTC datetime when the envelope claims to have been issued.
-        expires_at: UTC datetime when the envelope claims to expire (parsed by
-            Pydantic, NOT enforced for freshness by ``CageClient``).
-        issuer: Dictionary identifying the gateway instance that issued the envelope:
-            - 'service': Service name (e.g., "cage-gateway")
-            - 'instance_id': Unique instance identifier
-            - 'region': Deployment region (e.g., "us-central1")
-        subject: Dictionary identifying the action being governed:
-            - 'action': Action name (e.g., "execute_action")
-            - 'action_hash': SHA256 hash of the action parameters
-            - 'record_hash': SHA256 hash of the audit record
-            - 'agent_id': Identifier of the agent requesting the action
-        governance_context: Dictionary containing governance metadata:
-            - 'policy_version': Version of the policy that was evaluated
-            - 'tiers_passed': List of governance tiers that approved the action
-        payload: The actual decision payload, structure depends on decision type:
-            - For ALLOW: {'decision': 'ALLOW', 'execution_token': '...'}
-            - For DENY: {'decision': 'DENY', 'reason_code': '...', 'details': {...}}
-            - For DEFER: {'decision': 'DEFER', 'ticket_id': '...', 'reason': '...'}
-        signature: Unverified cryptographic signature dictionary:
-            - 'algorithm': Signature algorithm (e.g., "RS256")
-            - 'value': Base64-encoded signature (NOT verified by ``CageClient``)
-            - 'kid': Key identifier for the signing key
     """
 
     envelope_version: str = Field(
@@ -94,6 +66,10 @@ class GovernanceEnvelope(BaseModel):
     envelope_type: str = Field(
         default="cage_governance_decision",
         description="Fixed type identifier for governance decision envelopes",
+    )
+    envelope_id: str | None = Field(
+        default=None,
+        description="Unique identifier for the governance envelope",
     )
     issued_at: datetime = Field(
         ..., description="UTC datetime when the envelope was issued"
@@ -120,8 +96,12 @@ class GovernanceEnvelope(BaseModel):
     payload: dict[str, Any] = Field(
         ..., description="Decision payload (structure depends on decision type)"
     )
-    signature: dict[str, str] = Field(
-        ...,
+    external_attestations: list[dict[str, Any]] | None = Field(
+        default=None,
+        description="Optional external normative/attestation records",
+    )
+    signature: dict[str, str] | None = Field(
+        default=None,
         description=(
             "Signature metadata (algorithm, value, kid); "
             "unverified unless checked separately against a gateway trust anchor"
@@ -139,10 +119,6 @@ class ExecutionGrant(BaseModel):
     """
     Read-only Pydantic schema model for a JWT-style execution grant payload.
 
-    This model defines the claim schema for Phase 3 direct-dispatch execution
-    grants (``iss``, ``sub``, ``aud``, ``exp``, ``iat``, ``nonce``,
-    ``action_hash``, ``record_hash``, and ``signature``).
-
     Security Note:
         ``packages/cage-client/`` currently provides schema parsing only for
         ``ExecutionGrant`` — it does NOT verify ``signature`` against a gateway
@@ -152,18 +128,6 @@ class ExecutionGrant(BaseModel):
         and enforce expiration/single-use semantics before executing any action.
 
     Like ``GovernanceEnvelope``, this model is strictly immutable (``frozen=True``).
-
-    Attributes:
-        grant_version: Version of the grant schema (default: "1.0").
-        iss: Issuer claim - identifies the gateway that issued the grant.
-        sub: Subject claim - identifies the agent authorized to execute.
-        aud: Audience claim - identifies the target actuator/service.
-        exp: Expiration time (Unix timestamp; unverified client-side).
-        iat: Issued-at time (Unix timestamp).
-        nonce: Nonce field (not consumed client-side by ``cage-client``).
-        action_hash: SHA256 hash of the action parameters.
-        record_hash: SHA256 hash of the audit record.
-        signature: Base64-encoded signature string (unverified client-side).
     """
 
     grant_version: str = Field(

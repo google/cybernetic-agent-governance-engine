@@ -14,13 +14,15 @@
 
 """mTLS transport configuration for secure client connections.
 
-Fail-closed: Missing certificate files raise FileNotFoundError.
+Fail-closed: Missing certificate files raise FileNotFoundError, and
+half-configured client certificate/key pairs raise ValueError. Note that
+channel TLS/mTLS protects only the point-to-point transport hop and does NOT
+substitute for end-to-end GovernanceEnvelope.signature verification.
 """
 
 import importlib.util
 import ssl
 from pathlib import Path
-from typing import Optional
 
 import httpx
 
@@ -35,6 +37,11 @@ def create_mtls_transport(
 ) -> httpx.AsyncHTTPTransport:
     """Create HTTP/2-enabled async transport with optional mTLS.
 
+    Security Note:
+        Channel TLS/mTLS configured here protects only the point-to-point
+        transport channel and does NOT substitute for end-to-end
+        ``GovernanceEnvelope.signature`` verification.
+
     Args:
         cert_path: Path to client certificate PEM file (optional)
         key_path: Path to client private key PEM file (optional)
@@ -44,13 +51,14 @@ def create_mtls_transport(
         Configured httpx.AsyncHTTPTransport instance
 
     Raises:
+        ValueError: If only one of cert_path or key_path is supplied
         FileNotFoundError: If mTLS paths are supplied but files do not exist (fail-closed)
-
-    Behavior:
-    - If all mTLS paths are None: Standard TLS with strict certificate verification
-    - If mTLS paths are provided: Validates file existence, configures mutual TLS
     """
-    # Fail-closed validation: If mTLS paths are supplied, files MUST exist
+    if (cert_path is None) != (key_path is None):
+        raise ValueError(
+            "Both cert_path and key_path must be provided together for mutual TLS"
+        )
+
     if cert_path is not None:
         cert_file = Path(cert_path)
         if not cert_file.exists():
@@ -66,28 +74,18 @@ def create_mtls_transport(
         if not ca_file.exists():
             raise FileNotFoundError(f"CA certificate bundle not found: {ca_path}")
 
-    # Configure SSL context for mTLS if paths are provided
     verify: bool | ssl.SSLContext | str
-
     if cert_path or key_path or ca_path:
-        # Build custom SSL context with client certificates
         ssl_context = ssl.create_default_context(
             purpose=ssl.Purpose.SERVER_AUTH,
-            cafile=ca_path,  # Use custom CA bundle if provided
+            cafile=ca_path,
         )
-
-        # Load client certificate and private key for mutual TLS
         if cert_path and key_path:
             ssl_context.load_cert_chain(certfile=cert_path, keyfile=key_path)
-
-        # Enforce strict server certificate verification
         ssl_context.check_hostname = True
         ssl_context.verify_mode = ssl.CERT_REQUIRED
-
         verify = ssl_context
     else:
-        # Standard TLS with default system CA bundle and strict verification
         verify = True
 
-    # Create HTTP/2-enabled async transport
     return httpx.AsyncHTTPTransport(http2=_HTTP2_AVAILABLE, verify=verify)

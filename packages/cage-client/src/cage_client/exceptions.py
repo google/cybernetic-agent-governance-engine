@@ -26,50 +26,11 @@ from typing import Any
 
 
 class CageGatewayError(Exception):
-    """
-    Base exception for all CAGE Gateway client errors.
-
-    All exceptions raised by the CAGE Client SDK inherit from this base class,
-    enabling clients to catch all gateway-related errors with a single handler.
-    """
-
-    pass
+    """Base exception for all CAGE Gateway client errors."""
 
 
 class PolicyViolationException(CageGatewayError):
-    """
-    Raised when a proposed action violates governance policy.
-
-    This exception provides structured violation details that enable LLM-based
-    agents to understand why the action was rejected and replan accordingly.
-    The `recoverable` flag indicates whether the agent should attempt to
-    reformulate the request or abandon the task entirely.
-
-    Attributes:
-        reason_code: Machine-readable violation code (e.g., "TIER_3_BLOCKED",
-            "CBF_UNSAFE", "FTRA_REACHABILITY_DENIED").
-        violation_details: Structured dictionary containing:
-            - 'failed_tier': The governance tier that rejected the action
-            - 'policy_rule': The specific policy rule that was violated
-            - 'evidence': Supporting evidence for the violation
-            - 'suggested_alternatives': Optional list of alternative actions
-        audit_id: Unique identifier for the audit record of this violation.
-        recoverable: If True, the agent may reformulate the request; if False,
-            the action is fundamentally prohibited and should be abandoned.
-
-    Example:
-        try:
-            result = await gateway_client.execute_action(action)
-        except PolicyViolationException as e:
-            if e.recoverable:
-                # Attempt to reformulate based on violation_details
-                logger.info(f"Action blocked: {e.reason_code}, replanning...")
-                alternatives = e.violation_details.get("suggested_alternatives", [])
-            else:
-                # Fundamental prohibition, abort task
-                logger.error(f"Action prohibited: {e.reason_code}, task aborted.")
-                raise
-    """
+    """Raised when a proposed action violates governance policy or is narrowed."""
 
     def __init__(
         self,
@@ -77,7 +38,7 @@ class PolicyViolationException(CageGatewayError):
         violation_details: dict[str, Any],
         audit_id: str,
         recoverable: bool = True,
-    ):
+    ) -> None:
         self.reason_code = reason_code
         self.violation_details = violation_details
         self.audit_id = audit_id
@@ -89,34 +50,7 @@ class PolicyViolationException(CageGatewayError):
 
 
 class DeferralPending(CageGatewayError):
-    """
-    Raised when an action requires human-in-the-loop approval and is deferred.
-
-    This exception signals to LangGraph-based agents that they should park the
-    current checkpoint and wait for human approval via the deferral ticket system.
-    The agent's execution state is preserved in the checkpointer, and execution
-    resumes when the ticket is resolved.
-
-    Attributes:
-        ticket_id: Unique identifier for the deferral ticket, used to poll for
-            resolution or resume execution after human approval.
-        defer_reason: Human-readable explanation for why the action was deferred
-            (e.g., "High-value trade requires manual approval").
-        expires_at: UTC datetime when the deferral ticket expires and the action
-            is automatically rejected if no human decision is made.
-        ttl_seconds: Time-to-live in seconds (default: 14400 = 4 hours), used
-            to calculate `expires_at` if not explicitly provided.
-
-    Example:
-        try:
-            result = await gateway_client.execute_action(action)
-        except DeferralPending as e:
-            logger.info(f"Action deferred: {e.ticket_id}, parking checkpoint...")
-            # LangGraph checkpointer parks execution state
-            await checkpointer.park(ticket_id=e.ticket_id, expires_at=e.expires_at)
-            # Human resolves ticket via HITL UI
-            # Execution resumes when ticket is approved
-    """
+    """Raised when an action requires human-in-the-loop approval and is deferred."""
 
     def __init__(
         self,
@@ -124,7 +58,7 @@ class DeferralPending(CageGatewayError):
         defer_reason: str,
         expires_at: datetime,
         ttl_seconds: int = 14400,
-    ):
+    ) -> None:
         self.ticket_id = ticket_id
         self.defer_reason = defer_reason
         self.expires_at = expires_at
@@ -142,10 +76,8 @@ class RoutingSealVerificationError(CageGatewayError):
     Note:
         `CageClient` in `packages/cage-client/` does NOT currently verify
         `GovernanceEnvelope.signature` or `expires_at` client-side; it performs
-        Pydantic schema validation and fail-closed HTTP status mediation only.
-        Callers or downstream verifiers that implement out-of-band `kid` trust
-        anchor verification may raise this exception on signature or freshness
-        validation failures.
+        Pydantic schema validation and fail-closed HTTP status and payload
+        verdict mediation only. Callers or downstream verifiers that implement
+        out-of-band `kid` trust anchor verification may raise this exception on
+        signature or freshness validation failures.
     """
-
-    pass

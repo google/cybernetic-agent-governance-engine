@@ -46,6 +46,9 @@ jobs:
         with:
           python-version: "3.12"
 
+      - name: Verify cage-client SDK sync
+        run: python3 scripts/check_client_sdk_sync.py --verbose
+
       - name: Verify cage-conformance proof sync
         run: python3 scripts/check_conformance_sync.py
 

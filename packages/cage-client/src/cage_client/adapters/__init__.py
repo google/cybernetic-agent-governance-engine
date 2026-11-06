@@ -13,11 +13,17 @@
 # limitations under the License.
 
 """
-Framework Adapters for CAGE Client SDK.
+CAGE Gateway Client Adapters.
 
-Provides pre-execution interceptors and decorators for AI agent orchestration frameworks.
+This package provides integration adapters for popular agentic frameworks,
+enabling seamless CAGE governance enforcement in existing agent workflows.
+
+Available Adapters:
+    - LangGraph: `@cage_guard` decorator for LangGraph node functions
 """
 
 from .langgraph import cage_guard
 
-__all__ = ["cage_guard"]
+__all__ = [
+    "cage_guard",
+]

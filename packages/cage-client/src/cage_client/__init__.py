@@ -13,12 +13,14 @@
 # limitations under the License.
 
 """
-CAGE Gateway Client SDK (`cage-client`).
+CAGE Gateway Client SDK (`cage-client` / `src.gateway.client`).
 
 Lightweight Python Policy Enforcement Point (PEP) client SDK for interacting
 with the CAGE governance gateway over TLS/mTLS. Performs fail-closed HTTP
-status mediation and Pydantic schema validation of `GovernanceEnvelope`
-responses (`signature` and `expires_at` are not verified client-side).
+status and payload verdict mediation and Pydantic schema validation of
+`GovernanceEnvelope` responses (`signature` and `expires_at` are not verified
+client-side; channel TLS/mTLS does NOT substitute for end-to-end envelope
+signature verification).
 """
 
 from .adapters.langgraph import cage_guard
