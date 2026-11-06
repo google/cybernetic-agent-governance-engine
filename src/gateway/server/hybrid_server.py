@@ -180,21 +180,14 @@ async def _gateway_lifespan(app: FastAPI):  # type: ignore[no-untyped-def]
         if nemo_rails is not None:
             logger.info("✅ NeMo rails pre-warmed and shared across sub-applications")
 
-        # ── Pre-warm Token Quota Proxy, UCA Logger, and shared DeferQueue ──────
-        try:
-            from src.gateway.governance.defer_queue import get_shared_defer_queue
-            from src.gateway.governance.token_quota_proxy import TokenQuotaProxy
-            from src.gateway.governance.uca_logger import UCALogger
+        # ── Pre-warm UCA Logger singleton and shared DeferQueue ────────────────
+        from src.gateway.governance.defer_queue import get_shared_defer_queue
+        from src.gateway.governance.uca_logger import _get_uca_logger
 
-            app.state.token_quota_proxy = TokenQuotaProxy.from_env()
-            app.state.uca_logger = UCALogger.from_env()
-            app.state.defer_queue = get_shared_defer_queue()
-            governance_app.state.defer_queue = app.state.defer_queue
-            logger.info("✅ Token Quota Proxy, UCA Logger, and DeferQueue pre-warmed")
-        except Exception as e:
-            # 'Token Quota Proxy' is a component name; logs the startup error only.
-            # nosemgrep: python.lang.security.audit.logging.logger-credential-leak.python-logger-credential-disclosure
-            logger.warning("⚠️ Token Quota Proxy pre-warm failed (non-blocking): %s", e)
+        _get_uca_logger()
+        app.state.defer_queue = get_shared_defer_queue()
+        governance_app.state.defer_queue = app.state.defer_queue
+        logger.info("✅ UCA Logger and DeferQueue pre-warmed")
 
         # ── Production guards not owned by the governor posture check ──────────
         # KMS signing mode (K3), KMS/Redis readiness, the POAM-023 stub

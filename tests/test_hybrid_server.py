@@ -115,7 +115,8 @@ def _make_hybrid_stubs() -> dict:
             TokenQuotaProxy=MagicMock(from_env=MagicMock(return_value=MagicMock()))
         ),
         "src.gateway.governance.uca_logger": MagicMock(
-            UCALogger=MagicMock(from_env=MagicMock(return_value=MagicMock()))
+            UCALogger=MagicMock(from_env=MagicMock(return_value=MagicMock())),
+            _get_uca_logger=MagicMock(return_value=MagicMock()),
         ),
         # OTel
         "opentelemetry.instrumentation.fastapi": MagicMock(),
