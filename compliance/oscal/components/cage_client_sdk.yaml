@@ -13,92 +13,94 @@
 # limitations under the License.
 
 # OSCAL Component Definition
-# CAGE Client SDK — Out-of-Process Policy Decision Point (PDP) Client
+# CAGE Client SDK — Out-of-Process Policy Enforcement Point (PEP) Client
 #
-# This component definition documents the CAGE Client SDK security controls,
-# which enable client applications to enforce governance decisions via an
-# out-of-process PDP architecture with cryptographic routing seal validation.
+# This component definition documents the CAGE Client SDK (packages/cage-client/)
+# security posture across implemented and planned NIST SP 800-53 Rev 5 controls.
 
 component-definition:
   uuid: "8a9f5c3d-2b1e-4f7a-9c8d-5e6f7a8b9c0d"
   metadata:
-    title: "CAGE Client SDK — Out-of-Process PDP Client Component Definition"
-    version: "1.0.0"
+    title: "CAGE Client SDK — Out-of-Process PEP Client Component Definition"
+    version: "1.1.0"
     oscal-version: "1.0.4"
-    last-modified: "2026-09-18T20:47:00Z"
+    last-modified: "2026-11-06T18:00:00Z"
     remarks: >
-      This component definition maps the CAGE Client SDK enforcement mechanisms
-      to NIST SP 800-53 Rev 5 controls. The SDK implements an out-of-process
-      Policy Decision Point (PDP) architecture where governance decisions are
-      evaluated by the central governance gateway and cryptographically sealed
-      before transmission to client applications. The SDK validates routing
-      seals via HMAC-SHA256 verification and enforces W3C traceparent propagation
-      for distributed audit trail integrity.
+      This component definition maps the Python CAGE Client SDK
+      (packages/cage-client/) to NIST SP 800-53 Rev 5 controls. The SDK acts as
+      an out-of-process HTTP Policy Enforcement Point (PEP) that mediates
+      action execution against the central CAGE Governance Gateway Policy
+      Decision Point (PDP) over TLS/mTLS (AC-3, SC-8) and propagates W3C
+      traceparent correlation headers. Client-side cryptographic verification
+      of GovernanceEnvelope.signature against an out-of-band kid trust anchor
+      (AU-10) and client-side enforcement of GovernanceEnvelope.expires_at
+      temporal freshness or single-use nonce consumption (SC-23) are not yet
+      implemented in packages/cage-client/ and are recorded truthfully as
+      planned. Server-side v3 asymmetric KMS JWT routing seals and atomic Redis
+      SETNX single-use nonce consumption live in
+      src/gateway/governance/routing_seal.py, and MAX_CONSECUTIVE_DENIALS lives
+      in src/governed_financial_advisor/graph/nodes/safety_node.py, outside
+      packages/cage-client/.
 
   components:
     # -----------------------------------------------------------------------
-    # Component 1: CAGE Client SDK
-    # Enforces: AC-3 (Access Enforcement), AU-10 (Non-Repudiation),
-    #           SC-8 (Transmission Confidentiality), SC-23 (Session Authenticity)
+    # Component 1: CAGE Client SDK (packages/cage-client/)
+    # Implemented: AC-3 (Access Enforcement), SC-8 (Transmission Confidentiality)
+    # Planned:     AU-10 (Non-Repudiation), SC-23 (Session Authenticity)
     # -----------------------------------------------------------------------
     - uuid: "7c8e9f1a-3d4b-5c6e-8f9a-1b2c3d4e5f6a"
       title: "CAGE Client SDK"
       type: software
       description: >
-        Python/TypeScript client library providing out-of-process Policy Decision
-        Point (PDP) integration for AI governance enforcement. The SDK validates
-        cryptographic routing seals issued by the central governance gateway,
-        enforces W3C traceparent propagation for distributed tracing, and implements
-        session lifecycle management with consecutive denial budget enforcement.
+        Python client library (packages/cage-client/) providing out-of-process
+        HTTP Policy Enforcement Point (PEP) mediation for LangGraph and Python
+        agent applications communicating with the CAGE Governance Gateway PDP.
+        Performs fail-closed HTTP status mediation (200/403/422/202/409/5xx),
+        Pydantic schema validation of GovernanceEnvelope responses, optional
+        mutual TLS transport configuration, and W3C traceparent header
+        propagation. Does not yet verify GovernanceEnvelope.signature or
+        enforce GovernanceEnvelope.expires_at client-side.
       purpose: >
-        Enables client applications to delegate governance decisions to the central
-        CAGE governance gateway while maintaining cryptographic proof of authorization
-        via HMAC routing seals. Implements fail-closed semantics where actions are
-        blocked by default unless a valid routing seal is presented. Enforces
-        audit trail continuity via W3C traceparent headers and implements session
-        budget controls to prevent runaway denial loops.
+        Enables standalone Python and LangGraph applications to submit proposed
+        actions to the CAGE Governance Gateway over TLS/mTLS and block execution
+        fail-closed on gateway refusal, deferral, network failure, or malformed
+        response payloads while propagating W3C traceparent headers for
+        distributed trace correlation.
       responsible-roles:
         - role-id: provider
       control-implementations:
         - uuid: "9b1c2d3e-4f5a-6b7c-8d9e-0f1a2b3c4d5e"
           source: "https://csrc.nist.gov/projects/cprt/api/cprt/framework/version/SP_800_53_5_1_1/home"
-          description: "NIST SP 800-53 Rev 5 controls implemented by the CAGE Client SDK"
+          description: "NIST SP 800-53 Rev 5 controls mapped for the CAGE Client SDK (packages/cage-client/)"
           implemented-requirements:
             - uuid: "1a2b3c4d-5e6f-7a8b-9c0d-1e2f3a4b5c6d"
               control-id: ac-3
               description: |
-                Access enforcement is implemented via out-of-process PDP client mediation.
-                The CAGE Client SDK delegates all access control decisions to the central
-                governance gateway (src/gateway/governance/symbolic_governor.py), which
-                evaluates requests against the 8-tier governance pipeline (FTRA Tier 0.5,
-                STPA Tier 1, Confidence Tier 2, CBF/OPA Tier 3, Fiscal Tier 4, Consensus
-                Tier 5, Causal Tier 6).
+                Access enforcement in packages/cage-client/ is implemented via
+                out-of-process HTTP Policy Enforcement Point (PEP) mediation in
+                packages/cage-client/src/cage_client/core.py (CageClient.validate_action())
+                and packages/cage-client/src/cage_client/adapters/langgraph.py (@cage_guard).
 
-                The SDK enforces fail-closed semantics: actions are BLOCKED by default
-                unless a valid HMAC-SHA256 routing seal is returned by the governance
-                gateway. The SDK validates the seal signature before allowing execution
-                to proceed, ensuring that no action can execute without passing through
-                the full governance pipeline.
+                Before a decorated LangGraph node executes, @cage_guard calls
+                CageClient.validate_action(), which posts canonicalized action parameters
+                (SHA-256 parameter_hash) to /governance/validate-action and mediates
+                execution fail-closed by HTTP response status and schema validity:
+                - Network / timeout error (httpx.RequestError): raises CageGatewayError
+                - HTTP 5xx or unexpected status code: raises CageGatewayError
+                - HTTP 403 / 422 (DENY): requires audit_id and raises PolicyViolationException
+                - HTTP 202 / 409 (DEFER): requires ticket_id and raises DeferralPending
+                - HTTP 200 (ALLOW): requires valid JSON with a Pydantic-valid
+                  GovernanceEnvelope (raises CageGatewayError on missing/malformed fields)
 
-                Routing seal validation enforces:
-                - HMAC-SHA256 signature verification using shared secret
-                - TTL expiration check (30-second micro-TTL window)
-                - Single-use nonce consumption via Redis atomic SETNX
-                - Action slug and thread ID binding to prevent seal reuse
-
-                The advisor graph enforces a consecutive denial budget
-                (MAX_CONSECUTIVE_DENIALS = 2 in graph/nodes/safety_node.py). A refusal
-                that brings the thread's consecutive_denials to 2 ends the turn with
-                HARD_PAUSE_BUDGET_EXCEEDED and no trade. The counter persists in the
-                thread checkpoint; the pause does not lock the thread, and a later
-                ALLOW, NARROW or REQUIRE_APPROVAL resets it.
-
-                Reference implementation:
-                - Client SDK seal validation: src/governed_financial_advisor/tools/api.py
-                - Gateway seal generation: src/gateway/governance/routing_seal.py
-                - Denial budget: src/governed_financial_advisor/graph/nodes/safety_node.py,
-                  model-checked as BudgetNeverExceededWithoutPause in proof/LangGraphHarness.tla
-                  (POAM-2026-091)
+                Scope boundary: Client-side cryptographic verification of
+                GovernanceEnvelope.signature (au-10) and client-side temporal freshness
+                enforcement of GovernanceEnvelope.expires_at (sc-23) are not yet
+                implemented in packages/cage-client/ (recorded as planned under au-10 and
+                sc-23). Server-side v3 asymmetric KMS JWT routing seals and Redis SETNX
+                single-use nonce consumption live in src/gateway/governance/routing_seal.py,
+                and consecutive denial budget tracking (MAX_CONSECUTIVE_DENIALS) lives in
+                src/governed_financial_advisor/graph/nodes/safety_node.py, outside
+                packages/cage-client/.
               props:
                 - name: implementation-status
                   value: implemented
@@ -109,48 +111,40 @@ component-definition:
               links:
                 - href: "https://csrc.nist.gov/projects/cprt/api/cprt/framework/version/SP_800_53_5_1_1/home?element=AC-3"
                   rel: reference
-                - href: "../../src/gateway/governance/routing_seal.py"
+                - href: "../../packages/cage-client/src/cage_client/core.py"
                   rel: implementation
-                  text: "Routing seal generation and validation"
-                - href: "../../src/governed_financial_advisor/tools/api.py"
+                  text: "Out-of-process HTTP PEP mediation in CageClient.validate_action()"
+                - href: "../../packages/cage-client/src/cage_client/adapters/langgraph.py"
                   rel: implementation
-                  text: "Client SDK seal validation enforcement"
-                - href: "../../proof/LangGraphHarness.tla"
-                  rel: verification
-                  text: "TLA+ model of the advisor thread (BudgetNeverExceededWithoutPause, RefusedTurnNeverTrades)"
+                  text: "LangGraph pre-execution @cage_guard node decorator"
 
             - uuid: "2b3c4d5e-6f7a-8b9c-0d1e-2f3a4b5c6d7e"
               control-id: au-10
               description: |
-                Non-repudiation is implemented via W3C traceparent propagation and HMAC
-                routing seal validation. Every governance request carries a W3C traceparent
-                header (trace-id, span-id, trace-flags) that links the client request to
-                the governance decision in the central audit trail.
+                Client-side non-repudiation is planned (not yet implemented) in
+                packages/cage-client/.
 
-                The SDK validates the HMAC-SHA256 routing seal before executing any action,
-                creating a cryptographic binding between the governance decision and the
-                executed action. The seal includes:
-                - Action slug (e.g., "execute_trade")
-                - Thread ID (conversation identifier)
-                - Timestamp (UTC ISO 8601)
-                - TTL expiration (30 seconds)
+                packages/cage-client/src/cage_client/crypto.py (generate_w3c_traceparent())
+                generates and propagates a W3C Trace Context traceparent header
+                (00-{trace_id}-{span_id}-01) on outbound /governance/validate-action
+                requests for distributed trace correlation only; trace correlation is
+                not cryptographic non-repudiation.
 
-                Seal validation failures are logged with full request context, creating an
-                audit trail of both successful authorizations and failed validation attempts.
-                The single-use nonce consumption via Redis SETNX ensures that each seal can
-                only be validated once, preventing replay attacks.
-
-                The SDK enforces traceparent propagation across all governance API calls,
-                ensuring that distributed traces can be correlated across client sessions,
-                gateway evaluations, and downstream tier executions (OPA, CBF).
-
-                W3C Trace Context specification: https://www.w3.org/TR/trace-context/
+                While GovernanceEnvelope (packages/cage-client/src/cage_client/envelope.py)
+                parses the signature dictionary (algorithm, value, kid), CageClient does
+                not yet verify GovernanceEnvelope.signature against an independently
+                resolved out-of-band kid trust anchor (implementation-status: planned).
+                Point-to-point transport mTLS (sc-8) protects the wire channel only and
+                does not substitute for end-to-end envelope signature verification or
+                non-repudiation. Server-side asymmetric KMS JWT routing seal signing and
+                verification live in src/gateway/governance/routing_seal.py, outside
+                packages/cage-client/.
               props:
                 - name: implementation-status
-                  value: implemented
+                  value: planned
                 - name: control-origination
                   value: system-specific
-                - name: w3c-traceparent-compliance
+                - name: w3c-traceparent-propagation
                   value: "true"
               links:
                 - href: "https://csrc.nist.gov/projects/cprt/api/cprt/framework/version/SP_800_53_5_1_1/home?element=AU-10"
@@ -158,119 +152,90 @@ component-definition:
                 - href: "https://www.w3.org/TR/trace-context/"
                   rel: reference
                   text: "W3C Trace Context specification"
-                - href: "../../src/gateway/infrastructure/telemetry.py"
+                - href: "../../packages/cage-client/src/cage_client/crypto.py"
                   rel: implementation
-                  text: "W3C traceparent extraction and propagation"
-                - href: "../../src/gateway/governance/routing_seal.py"
+                  text: "W3C traceparent generation for distributed trace correlation"
+                - href: "../../packages/cage-client/src/cage_client/envelope.py"
                   rel: implementation
-                  text: "HMAC routing seal verification"
+                  text: "GovernanceEnvelope Pydantic schema (signature parsed but unverified client-side)"
 
             - uuid: "3c4d5e6f-7a8b-9c0d-1e2f-3a4b5c6d7e8f"
               control-id: sc-8
               description: |
-                Transmission confidentiality is implemented via mTLS HTTP/2 transport
-                between client SDK and governance gateway. All governance API calls are
-                transmitted over TLS 1.2+ encrypted channels with mutual certificate
-                verification.
+                Point-to-point transmission confidentiality and integrity are implemented
+                in packages/cage-client/src/cage_client/transport.py::create_mtls_transport().
 
-                The SDK enforces TLS 1.2+ minimum version via ssl.TLSVersion.TLSv1_2
-                in create_hardened_client_context() (src/gateway/infrastructure/tls_context.py).
-                Legacy protocols (TLS 1.0, TLS 1.1) are explicitly disabled via
-                ssl.OP_NO_TLSv1 | ssl.OP_NO_TLSv1_1.
+                create_mtls_transport() configures an httpx.AsyncHTTPTransport (with
+                optional HTTP/2 multiplexing when the h2 extra is installed):
+                - Validates that any supplied cert_path, key_path, or ca_path exists on
+                  disk, raising FileNotFoundError fail-closed when missing
+                - Builds an SSLContext via ssl.create_default_context(purpose=ssl.Purpose.SERVER_AUTH,
+                  cafile=ca_path), loads client credentials via load_cert_chain() when
+                  cert_path and key_path are supplied, and enforces check_hostname = True
+                  and verify_mode = ssl.CERT_REQUIRED (or verify=True against the system
+                  CA store when no custom paths are supplied)
+                - CageClient disables HTTP redirects (follow_redirects=False)
 
-                mTLS mutual authentication ensures:
-                - Client presents valid X.509 certificate to gateway
-                - Gateway validates client certificate chain against CA bundle
-                - Server certificate is validated by client against trusted CA
-                - All traffic is encrypted end-to-end
-
-                NIST SP 800-52 Rev. 2 compliance is enforced via cipher suite restrictions
-                and protocol version pinning. TLS enforcement is verified via
-                tests/test_tls_enforcement.py::TestTlsProtocolStandards.
-
-                The SDK implements HTTP/2 multiplexing over the TLS connection, reducing
-                latency for high-frequency governance validation requests.
+                Scope boundary: packages/cage-client/ does not call
+                src/gateway/infrastructure/tls_context.py::create_hardened_client_context().
+                Channel TLS/mTLS covers sc-8 point-to-point transmission confidentiality
+                only and does not substitute for end-to-end GovernanceEnvelope.signature
+                verification (au-10) or GovernanceEnvelope.expires_at authenticity (sc-23).
               props:
                 - name: implementation-status
                   value: implemented
                 - name: control-origination
                   value: system-specific
-                - name: tls-minimum-version
-                  value: "1.2"
-                - name: nist-sp800-52-compliance
-                  value: "true"
               links:
                 - href: "https://csrc.nist.gov/projects/cprt/api/cprt/framework/version/SP_800_53_5_1_1/home?element=SC-8"
                   rel: reference
-                - href: "../../src/gateway/infrastructure/tls_context.py"
+                - href: "../../packages/cage-client/src/cage_client/transport.py"
                   rel: implementation
-                  text: "TLS 1.2+ enforcement and cipher suite restrictions"
-                - href: "../../tests/test_tls_enforcement.py"
-                  rel: test
-                  text: "TLS protocol standards verification"
+                  text: "Client TLS/mTLS transport configuration in create_mtls_transport()"
 
             - uuid: "4d5e6f7a-8b9c-0d1e-2f3a-4b5c6d7e8f9a"
               control-id: sc-23
               description: |
-                Session authenticity is implemented via routing seal micro-TTL validation.
-                Each routing seal carries a 30-second TTL window, enforcing temporal
-                freshness of governance decisions and preventing stale authorization reuse.
+                Client-side session authenticity and envelope freshness enforcement are
+                planned (not yet implemented) in packages/cage-client/.
 
-                The SDK validates:
-                - Seal timestamp is within 30-second window of current time
-                - Seal has not been previously consumed (single-use nonce via Redis SETNX)
-                - Seal signature matches expected HMAC-SHA256 hash
-                - Seal action slug matches requested action
-                - Seal thread ID matches current conversation context
+                CageClient._handle_allow_response()
+                (packages/cage-client/src/cage_client/core.py) parses
+                GovernanceEnvelope.expires_at via Pydantic schema validation without
+                enforcing temporal freshness against current UTC time or consuming a
+                single-use nonce client-side (implementation-status: planned).
 
-                TTL enforcement prevents authorization staleness attacks where a valid
-                governance decision from 5 minutes ago could be replayed to execute an
-                action under different market conditions or risk profiles.
-
-                The 30-second micro-TTL balances security and usability:
-                - Short enough to prevent meaningful staleness (market conditions change)
-                - Long enough to accommodate network latency and client processing time
-
-                Routing seal single-use consumption is enforced by
-                verify_and_consume_seal() (verify, then an atomic SET NX nonce burn).
-
-                Formal verification: TLA+ LangGraphHarness.tla checks that a trade
-                executes only after a gateway ALLOW with a seal (SealGateIntegrity) and
-                that each DeferQueue ticket is resolved and consumed at most once
-                (SingleUseDeferralTicket, POAM-2026-091 / POAM-2026-093). It does not
-                model the seal TTL.
+                Server-side v3 asymmetric KMS JWT routing seal TTL validation and atomic
+                Redis SETNX single-use nonce consumption (verify_and_consume_seal()) live
+                in src/gateway/governance/routing_seal.py, outside packages/cage-client/.
               props:
                 - name: implementation-status
-                  value: implemented
+                  value: planned
                 - name: control-origination
                   value: system-specific
-                - name: seal-ttl-seconds
-                  value: "30"
-                - name: single-use-enforcement
-                  value: "true"
               links:
                 - href: "https://csrc.nist.gov/projects/cprt/api/cprt/framework/version/SP_800_53_5_1_1/home?element=SC-23"
                   rel: reference
-                - href: "../../src/gateway/governance/routing_seal.py"
+                - href: "../../packages/cage-client/src/cage_client/core.py"
                   rel: implementation
-                  text: "Routing seal TTL validation and single-use consumption"
-                - href: "../../proof/LangGraphHarness.tla"
-                  rel: verification
-                  text: "TLA+ SealGateIntegrity and SingleUseDeferralTicket invariants"
+                  text: "CageClient._handle_allow_response() envelope schema parsing (freshness check planned)"
+                - href: "../../packages/cage-client/src/cage_client/envelope.py"
+                  rel: implementation
+                  text: "GovernanceEnvelope expires_at schema field"
 
-    # -----------------------------------------------------------------------
-    # Related Components (References Only)
-    # -----------------------------------------------------------------------
-    related-components:
-      - component-uuid: "56654b26-d648-4e47-bbc8-19edd3ec67ba"
-        title: "Governance Gateway"
-        description: >
-          Central governance gateway that evaluates access control decisions
-          and issues cryptographic routing seals. The CAGE Client SDK validates
-          seals generated by this component.
-      - component-uuid: "7c8e9f1a-3d4b-5c6e-8f9a-1b2c3d4e5f6a"
-        title: "DeferQueue"
-        description: >
-          Persistent queue for deferred governance decisions requiring data
-          hydration or manual review. The CAGE Client SDK enforces single-use
-          deferral ticket consumption semantics.
+  # -------------------------------------------------------------------------
+  # Related Components (References Only)
+  # -------------------------------------------------------------------------
+  related-components:
+    - component-uuid: "56654b26-d648-4e47-bbc8-19edd3ec67ba"
+      title: "Governance Gateway"
+      description: >
+        Central governance gateway (PDP) that evaluates /governance/validate-action
+        requests from CageClient and returns HTTP ALLOW, DENY, or DEFER responses.
+    - component-uuid: "6f4d2e1b-8c3a-4d9f-9a1b-2c3d4e5f6a7b"
+      title: "DeferQueue"
+      description: >
+        Server-side persistent queue (src/gateway/governance/defer_queue.py) for
+        deferred governance decisions requiring human review; CageClient surfaces
+        deferral ticket IDs via DeferralPending while single-use approval
+        consumption is enforced server-side by DeferQueue.consume_approval().

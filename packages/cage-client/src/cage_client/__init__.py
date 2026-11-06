@@ -15,9 +15,10 @@
 """
 CAGE Gateway Client SDK (`cage-client`).
 
-Lightweight Python client SDK for interacting with the CAGE governance gateway.
-Enables LangGraph / LangChain agents to submit actions for governance evaluation
-and receive cryptographically signed decisions.
+Lightweight Python Policy Enforcement Point (PEP) client SDK for interacting
+with the CAGE governance gateway over TLS/mTLS. Performs fail-closed HTTP
+status mediation and Pydantic schema validation of `GovernanceEnvelope`
+responses (`signature` and `expires_at` are not verified client-side).
 """
 
 from .adapters.langgraph import cage_guard

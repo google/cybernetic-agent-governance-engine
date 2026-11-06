@@ -15,10 +15,10 @@
 """
 CAGE Gateway Client - Out-of-Process Policy Enforcement Point (PEP).
 
-This module provides the `CageClient` singleton that communicates with the
-CAGE Gateway Policy Decision Point (PDP) over HTTP/2. It maps governance
-responses into tri-state actions:
-  - ALLOW → Return KMS-signed GovernanceEnvelope
+This module provides the `CageClient` HTTP client that communicates with the
+CAGE Gateway Policy Decision Point (PDP) over TLS/mTLS (with optional HTTP/2).
+It mediates governance HTTP responses into tri-state outcomes:
+  - ALLOW → Return schema-validated GovernanceEnvelope (signature and expires_at unverified client-side)
   - DENY → Raise PolicyViolationException with structured diagnostics
   - DEFER → Raise DeferralPending with ticket details for HITL approval
 
@@ -28,14 +28,26 @@ Architecture:
     │ (PEP)        │ <────────────────────── │ (PDP)        │
     └──────────────┘        TLS/mTLS        └──────────────┘
          │
-         ├─ ALLOW  → GovernanceEnvelope
+         ├─ ALLOW  → GovernanceEnvelope (schema-validated only)
          ├─ DENY   → PolicyViolationException
          └─ DEFER  → DeferralPending
 
-Fail-Closed Semantics:
+Fail-Closed HTTP Mediation Semantics:
     - Network errors → Raise CageGatewayError (deny action)
-    - 5xx server errors → Raise CageGatewayError (deny action)
-    - Missing audit_id → Raise CageGatewayError (deny action)
+    - 5xx / unexpected status codes → Raise CageGatewayError (deny action)
+    - Missing audit_id / ticket_id / malformed envelope JSON → Raise CageGatewayError
+
+Security & Verification Scope:
+    1. `CageClient` performs Pydantic schema validation and fail-closed HTTP
+       status mediation (`200`/`403`/`422`/`202`/`409`/`5xx`) only — **it does
+       NOT verify `GovernanceEnvelope.signature` against a gateway trust anchor
+       and does NOT check `GovernanceEnvelope.expires_at` freshness client-side**
+       (`signature` and `expires_at` are parsed as untrusted fields unless
+       verified separately).
+    2. **TLS/mTLS in `transport.py` protects only the point-to-point transport
+       channel and does NOT substitute for end-to-end envelope signature
+       verification** (the envelope carries a signature specifically so trust
+       does not rest solely on transport or proxy configuration).
 
 Usage:
     from cage_client import CageClient
@@ -51,7 +63,8 @@ Usage:
                 agent_id="advisor-prod-v3",
                 context={"session_id": "abc123"}
             )
-            # Action allowed, envelope contains execution grant
+            # Action allowed by HTTP status mediation; envelope.signature and
+            # envelope.expires_at are unverified unless checked separately.
             print(f"Action allowed: {envelope.payload}")
 
         except PolicyViolationException as e:
@@ -165,13 +178,26 @@ class CageClient:
         context: dict[str, Any] | None = None,
     ) -> GovernanceEnvelope:
         """
-        Submit an action to the CAGE Gateway for governance validation.
+        Submit an action to the CAGE Gateway for HTTP PEP governance mediation.
 
         This method sends a POST request to the gateway's `/governance/validate-action`
-        endpoint with the proposed action details. It handles the tri-state response:
-          - 200 OK (ALLOW) → Return GovernanceEnvelope
+        endpoint with the proposed action details and mediates the tri-state HTTP response:
+          - 200 OK (ALLOW) → Parse and return schema-validated GovernanceEnvelope
           - 403/422 (DENY) → Parse diagnostics, raise PolicyViolationException
           - 202/409 (DEFER) → Parse ticket, raise DeferralPending
+
+        Security & Verification Scope:
+            1. `CageClient` currently performs Pydantic schema validation and
+               fail-closed HTTP status mediation (`200`/`403`/`422`/`202`/`409`/`5xx`)
+               only — **it does NOT verify `GovernanceEnvelope.signature` against
+               a gateway trust anchor and does NOT check `GovernanceEnvelope.expires_at`
+               freshness client-side** (`signature` and `expires_at` are parsed as
+               untrusted fields unless verified separately).
+            2. **TLS/mTLS in `transport.py` protects only the point-to-point
+               transport channel and does NOT substitute for end-to-end envelope
+               signature verification** (the envelope carries a signature
+               specifically so trust does not rest solely on transport or proxy
+               configuration).
 
         Args:
             action: Action name (e.g., "execute_action", "access_pii")
@@ -180,7 +206,8 @@ class CageClient:
             context: Optional additional context (session metadata, etc.)
 
         Returns:
-            GovernanceEnvelope: Cryptographically signed governance decision
+            GovernanceEnvelope: Schema-validated governance decision envelope
+            (`signature` and `expires_at` are NOT verified client-side)
 
         Raises:
             PolicyViolationException: Action denied by governance policy
@@ -272,13 +299,24 @@ class CageClient:
         self, response: httpx.Response
     ) -> GovernanceEnvelope:
         """
-        Parse and verify a 200 OK (ALLOW) response from the gateway.
+        Parse and schema-validate a 200 OK (ALLOW) response from the gateway.
+
+        Security & Verification Scope:
+            1. This method performs JSON parsing and Pydantic schema validation
+               only — **it does NOT verify `GovernanceEnvelope.signature` against
+               a gateway trust anchor and does NOT check `GovernanceEnvelope.expires_at`
+               freshness client-side** (`signature` and `expires_at` are parsed as
+               untrusted fields unless verified separately).
+            2. **TLS/mTLS in `transport.py` protects only the point-to-point
+               transport channel and does NOT substitute for end-to-end envelope
+               signature verification.**
 
         Args:
             response: httpx.Response object from the gateway
 
         Returns:
-            GovernanceEnvelope: Validated governance decision envelope
+            GovernanceEnvelope: Schema-validated governance decision envelope
+            (signature and expires_at are unverified client-side)
 
         Raises:
             CageGatewayError: Invalid response structure or missing envelope

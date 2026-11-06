@@ -4,11 +4,16 @@ Lightweight Python Policy Enforcement Point (PEP) client for the **Cybernetic AI
 
 ## Features
 
-- **Decoupled PEP/PDP Architecture**: Communicates out-of-process with CAGE Gateways via REST/mTLS.
-- **Fail-Closed Semantics**: Network failures and malformed envelopes automatically block execution.
-- **KMS-Signed Envelopes**: Receives tamper-evident `GovernanceEnvelope` decisions signed by the CAGE Gateway KMS key over Linkerd mTLS.
+- **Decoupled PEP/PDP Architecture**: Communicates out-of-process with CAGE Gateways via REST over TLS/mTLS.
+- **Fail-Closed HTTP Mediation**: Network failures, `5xx` errors, refusals (`403`/`422`), deferrals (`202`/`409`), and malformed `GovernanceEnvelope` JSON automatically block execution.
+- **Immutable Schema Validation**: Parses gateway `GovernanceEnvelope` responses into frozen Pydantic models (`signature` and `expires_at` are parsed as untrusted schema fields and are **not** verified client-side; see [Security Model & Verification Scope](#security-model--verification-scope)).
 - **LangGraph Native Adapter**: Pre-execution node decoration via `@cage_guard`.
 - **W3C Distributed Tracing**: Propagates `traceparent` context across agent-to-gateway hops.
+
+## Security Model & Verification Scope
+
+1. **HTTP Status & Schema Mediation Only (No Client-Side Signature or Freshness Check):** `CageClient` currently performs Pydantic schema validation and fail-closed HTTP status mediation (`200`/`403`/`422`/`202`/`409`/`5xx`) only — **it does NOT verify `GovernanceEnvelope.signature` against a gateway trust anchor and does NOT check `GovernanceEnvelope.expires_at` freshness client-side**. Both `signature` and `expires_at` are parsed as untrusted fields unless verified separately against an independently resolved out-of-band `kid` trust anchor.
+2. **Channel TLS/mTLS Does Not Substitute for Envelope Signature Verification:** TLS/mTLS configured via `transport.py` (`create_mtls_transport`) protects only the point-to-point transport channel and **does NOT substitute for end-to-end `GovernanceEnvelope.signature` verification**. The envelope carries a cryptographic signature specifically so trust does not rest solely on transport or proxy configuration.
 
 ## Installation
 
@@ -45,7 +50,7 @@ async def main():
                 parameters={"symbol": "AAPL", "amount": 1000.0},
                 agent_id="portfolio-manager",
             )
-            print("Action approved:", envelope.decision)
+            print("Action approved:", envelope.payload.get("decision"))
         except PolicyViolationException as exc:
             print("Action denied:", exc.reason_code, exc.violation_details)
         except DeferralPending as exc:
@@ -79,7 +84,7 @@ CAGE provides two integration patterns for LangGraph applications. Choose based 
 
 | Use Case | Recommended Approach | Dependencies |
 |----------|---------------------|--------------|
-| **Standalone LangGraph app** consuming CAGE as a governance service | ✅ `cage-client` SDK | 66KB package (httpx, pydantic, cryptography) |
+| **Standalone LangGraph app** consuming CAGE as a governance service | ✅ `cage-client` SDK | Lightweight package (httpx, pydantic) |
 | **Building inside the CAGE monorepo** (e.g., new domain plugin) | Node factories ([`langgraph_harness/`](../../src/gateway/governance/langgraph_harness/)) | Full CAGE repository |
 | **Rapid prototyping** with minimal dependencies | ✅ `cage-client` SDK | Lightweight |
 | **Contributing to CAGE core** or extending the kernel | Node factories | Full monorepo |
@@ -88,7 +93,7 @@ CAGE provides two integration patterns for LangGraph applications. Choose based 
 ### Client SDK (This Package)
 
 **Pros:**
-- Lightweight: 66KB package with 3 dependencies
+- Lightweight: 2 runtime dependencies (`httpx`, `pydantic`)
 - Decoupled: LangGraph app and CAGE services deploy independently
 - Simple: `pip install cage-client[langgraph]` and you're ready
 - Fail-closed: Network errors automatically block execution
@@ -166,4 +171,3 @@ The decision semantics remain identical (`ALLOW`/`DENY`/`DEFER`).
 ## License
 
 Apache License 2.0.
-

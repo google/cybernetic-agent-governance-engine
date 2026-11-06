@@ -82,6 +82,37 @@ component-definition:
                 OPA allow/deny decisions are recorded in
                 structured audit logs with full request context and user identity.
 
+                1. **Kernel-Level Workload Identity Extraction (2026-09-22 BREAKING CHANGE)**:
+                   All public inference and AGW ingress endpoints enforce strict Linkerd mTLS
+                   workload identity validation. Under Linkerd mTLS, the Linkerd inbound proxy
+                   terminates TLS and sets `l5d-client-id`
+                   (`<sa>.<ns>.serviceaccount.identity.linkerd.<trust-domain>`). Gateway ingress
+                   authentication and caller identity extraction live in
+                   src/gateway/server/workload_identity.py (`WorkloadIdentityMiddleware` and
+                   `extract_client_identity(scope)`). HTTP header-based identity
+                   (X-Agent-ID, X-SPIFFE-ID) has been deprecated and removed.
+                   Requests without a verified Linkerd workload identity fail closed (403/401).
+
+                   `WorkloadIdentityMiddleware` and `extract_client_identity(scope)` validate:
+                   - Presence of a single Linkerd-verified `l5d-client-id` header in ASGI scope
+                   - Arrival on a connection from inside the pod (`is_pod_local_connection`):
+                     only the pod's own Linkerd proxy writes the header, and a pod running
+                     without its proxy refuses every caller (POAM-2026-167)
+                   - Match against Linkerd workload identity syntax (`<sa>.<ns>.serviceaccount.identity.linkerd.<trust-domain>`)
+                   - Membership in `CAGE_TRUSTED_CLIENT_IDENTITIES` (required and enforced in every environment)
+                   - Fails closed on any validation error (403 Forbidden / 401 Unauthorized)
+
+                2. **Linkerd Service Mesh AuthorizationPolicy Enforcement**:
+                   Mesh-layer ingress access control on the gateway HTTP port is enforced
+                   deny-by-default via Linkerd `Server`, `HTTPRoute`, `MeshTLSAuthentication`,
+                   and `AuthorizationPolicy` manifests
+                   (infra/modules/gateway/mesh-policy/templates/policy.yaml). Exact open paths
+                   (`gateway-open`) admit health, metrics, and JWKS probes via
+                   `NetworkAuthentication`, while the catch-all `gateway-gated` route
+                   (`PathPrefix "/"`) admits only Linkerd mTLS client identities listed in
+                   `gateway-trusted-clients`. `WorkloadIdentityMiddleware` repeats the check
+                   in-process on `l5d-client-id` for defense-in-depth.
+
                 Dual-control authentication enforcement (Work Item 2, 2026-09-07): All defer
                 escalation endpoints now require cryptographically-verified operator identity.
                 The /v1/defer/escalate endpoint (src/compliance_bridge/main.py:1527) enforces
@@ -141,6 +172,10 @@ component-definition:
                 ADR009_ACTION_NOT_CLAIMED ([ACTION_NOT_CLAIMED]), and assemble_governor()
                 (src/gateway/governance/governor/assembly.py) verifies at startup that every
                 claimed action is registered in the FTRA terminal registry.
+
+                BREAKING CHANGE: Removed anonymous fallback and HTTP header identity parsing.
+                Unauthenticated requests fail closed (401/403). This change enforces cryptographic
+                identity binding at the kernel level, eliminating header spoofing attack surface.
               props:
                 - name: implementation-status
                   value: implemented
@@ -154,47 +189,6 @@ component-definition:
                   value: "2026-10-01"
                 - name: breaking-change
                   value: "removed X-Agent-ID and X-SPIFFE-ID header parsing; mTLS client certificate required"
-              description: |
-                AC-3 (Access Enforcement) is implemented through multiple layers:
-
-                1. **Kernel-Level Workload Identity Extraction (2026-09-22 BREAKING CHANGE)**:
-                   All public inference and AGW ingress endpoints enforce strict Linkerd mTLS
-                   workload identity validation. Under Linkerd mTLS, the Linkerd inbound proxy
-                   terminates TLS and sets `l5d-client-id`
-                   (`<sa>.<ns>.serviceaccount.identity.linkerd.<trust-domain>`). Gateway ingress
-                   authentication and caller identity extraction live in
-                   src/gateway/server/workload_identity.py (`WorkloadIdentityMiddleware` and
-                   `extract_client_identity(scope)`). HTTP header-based identity
-                   (X-Agent-ID, X-SPIFFE-ID) has been deprecated and removed.
-                   Requests without a verified Linkerd workload identity fail closed (403/401).
-
-                   `WorkloadIdentityMiddleware` and `extract_client_identity(scope)` validate:
-                   - Presence of a single Linkerd-verified `l5d-client-id` header in ASGI scope
-                   - Arrival on a connection from inside the pod (`is_pod_local_connection`):
-                     only the pod's own Linkerd proxy writes the header, and a pod running
-                     without its proxy refuses every caller (POAM-2026-167)
-                   - Match against Linkerd workload identity syntax (`<sa>.<ns>.serviceaccount.identity.linkerd.<trust-domain>`)
-                   - Membership in `CAGE_TRUSTED_CLIENT_IDENTITIES` (required and enforced in every environment)
-                   - Fails closed on any validation error (403 Forbidden / 401 Unauthorized)
-
-                2. **Agent-to-Agent (A2A) Authorization with SPIFFE Prefix Matching**:
-                   Parent agent SPIFFE IDs are evaluated against subagent authorization
-                   policies using declarative OPA Rego rules (config/opa/agent_catalog.rego).
-                   Subagents declare `authorized_parent_prefixes` arrays enabling hierarchical
-                   trust delegation without enumerating every parent SPIFFE ID.
-
-                   Example authorization flow:
-                   - Parent: spiffe://cluster.local/ns/agents/sa/orchestrator
-                   - Subagent authorized_parent_prefixes: ["spiffe://cluster.local/ns/agents/"]
-                   - OPA evaluation: startswith(parent_spiffe, prefix) → allow
-
-                3. **Dual-Control Authentication for DEFER Escalation**:
-                   defer_escalate() and defer_inject() enforce quorum authentication via
-                   DeferQueue.approve() as documented in previous implementation.
-
-                BREAKING CHANGE: Removed anonymous fallback and HTTP header identity parsing.
-                Unauthenticated requests fail closed (401/403). This change enforces cryptographic
-                identity binding at the kernel level, eliminating header spoofing attack surface.
               links:
                 - href: "https://csrc.nist.gov/projects/cprt/api/cprt/framework/version/SP_800_53_5_1_1/home?element=AC-3"
                   rel: reference
@@ -203,9 +197,9 @@ component-definition:
                 - href: "../../src/gateway/server/workload_identity.py"
                   rel: implementation
                   text: "Gateway workload identity enforcement and extraction (WorkloadIdentityMiddleware, extract_client_identity)"
-                - href: "../../config/opa/agent_catalog.rego"
+                - href: "../../infra/modules/gateway/mesh-policy/templates/policy.yaml"
                   rel: implementation
-                  text: "A2A authorization with SPIFFE namespace prefix matching"
+                  text: "Linkerd AuthorizationPolicy and MeshTLSAuthentication mesh access enforcement"
                 - href: "../../src/compliance_bridge/main.py"
                   rel: implementation
                   text: "defer_escalate() and defer_inject() authentication enforcement"

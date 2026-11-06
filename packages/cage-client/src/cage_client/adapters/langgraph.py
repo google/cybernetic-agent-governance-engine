@@ -86,7 +86,8 @@ State Contract:
       - state["context"]: dict (optional) - Additional governance context
 
     On success (ALLOW), the decorator injects:
-      - state["governance_envelope"]: GovernanceEnvelope - Signed decision
+      - state["governance_envelope"]: GovernanceEnvelope - Schema-validated envelope
+        (note: `signature` and `expires_at` are not verified client-side by `CageClient`)
       - state["governance_status"]: str - Always "ALLOWED"
 
 Error Propagation:
