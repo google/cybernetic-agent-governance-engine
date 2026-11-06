@@ -72,7 +72,7 @@ Agent identity is established at the transport/mesh layer and is **never** read 
 - **Single source of truth**: under Linkerd mTLS, the Linkerd inbound proxy terminates TLS and sets `l5d-client-id` (`<sa>.<ns>.serviceaccount.identity.linkerd.<trust-domain>`). Gateway ingress authentication and caller identity extraction live in [`src/gateway/server/workload_identity.py`](../../src/gateway/server/workload_identity.py) (`WorkloadIdentityMiddleware` and `extract_client_identity(scope)`). `CAGE_TRUSTED_CLIENT_IDENTITIES` is required in every environment.
 - **Removed (breaking change, v3.1.0)**: the `X-Agent-ID` header, any `X-SPIFFE-ID` header, body-derived `agent_id` fields, and the anonymous-caller fallback. Callers that previously asserted identity this way are now rejected.
 - **Fail-closed rejection**: `WorkloadIdentityMiddleware` rejects any non-open request lacking a single trusted `l5d-client-id` header with **403**, and `extract_client_identity(scope)` raises `WorkloadIdentityError` when no verified Linkerd workload identity is present.
-- **Authorization remains policy-side**: the extracted identity is the OPA principal; agent-to-agent authorization is evaluated in [`config/opa/agent_catalog.rego`](../../config/opa/agent_catalog.rego) by prefix matching against `authorized_parent_prefixes`.
+- **Authorization remains policy-side**: mesh caller admission is enforced by Linkerd `AuthorizationPolicy` ([`infra/modules/gateway/mesh-policy/templates/policy.yaml`](../../infra/modules/gateway/mesh-policy/templates/policy.yaml)) and `WorkloadIdentityMiddleware`, while action admissibility is evaluated in OPA ([`deployment/system_authz.rego`](../../deployment/system_authz.rego) and domain Rego policies).
 
 ---
 

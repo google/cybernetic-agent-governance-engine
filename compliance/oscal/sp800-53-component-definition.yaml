@@ -68,114 +68,87 @@ component-definition:
             - uuid: "12e40b44-a5eb-4e0d-b319-42bab7d5d10a"
               control-id: ac-3
               description: |
-                Access enforcement is implemented via OPA RBAC policy evaluation on every
-                inbound API request through deployment/system_authz.rego. Before any
-                handler runs, WorkloadIdentityMiddleware
-                (src/gateway/server/workload_identity.py) rejects with 403 every request
-                outside a small exact open-path list (health, metrics, JWKS; no prefixes)
-                unless its Linkerd-verified l5d-client-id is listed in
-                CAGE_TRUSTED_CLIENT_IDENTITIES (the advisor only), verified in CI by
-                tests/integration/test_linkerd_mesh_conformance.py (POAM-2026-080 closed).
-                The header counts only on a connection from inside the pod, where the
-                pod's own Linkerd proxy writes it, and an admission policy refuses
-                governance pods created without the proxy (POAM-2026-167).
-                OPA allow/deny decisions are recorded in
-                structured audit logs with full request context and user identity.
+                AC-3 (Access Enforcement) is implemented across three operative layers:
 
-                1. **Kernel-Level Workload Identity Extraction (2026-09-22 BREAKING CHANGE)**:
-                   All public inference and AGW ingress endpoints enforce strict Linkerd mTLS
-                   workload identity validation. Under Linkerd mTLS, the Linkerd inbound proxy
-                   terminates TLS and sets `l5d-client-id`
-                   (`<sa>.<ns>.serviceaccount.identity.linkerd.<trust-domain>`). Gateway ingress
-                   authentication and caller identity extraction live in
-                   src/gateway/server/workload_identity.py (`WorkloadIdentityMiddleware` and
-                   `extract_client_identity(scope)`). HTTP header-based identity
-                   (X-Agent-ID, X-SPIFFE-ID) has been deprecated and removed.
-                   Requests without a verified Linkerd workload identity fail closed (403/401).
+                1. Kernel-Level Workload Identity & Linkerd Mesh Access Policy (2026-09-22
+                   BREAKING CHANGE): Before any handler runs, WorkloadIdentityMiddleware and
+                   extract_client_identity(scope) (src/gateway/server/workload_identity.py)
+                   reject with 403/401 every request outside a small exact open-path list
+                   (health, metrics, JWKS; no prefixes) unless its Linkerd-verified
+                   l5d-client-id (<sa>.<ns>.serviceaccount.identity.linkerd.<trust-domain>):
+                   - is present as a single header in ASGI scope,
+                   - arrives on a pod-local connection (is_pod_local_connection), where only
+                     the pod's own Linkerd inbound proxy writes the header and an admission
+                     policy refuses governance pods created without the proxy (POAM-2026-167),
+                   - matches Linkerd workload identity syntax, and
+                   - is listed in CAGE_TRUSTED_CLIENT_IDENTITIES (required and enforced in
+                     every environment), verified in CI by
+                     tests/integration/test_linkerd_mesh_conformance.py (POAM-2026-080 closed).
+                   At the service-mesh layer, Linkerd AuthorizationPolicy and
+                   MeshTLSAuthentication resources
+                   (infra/modules/gateway/mesh-policy/templates/policy.yaml,
+                   infra/modules/service_mesh/main.tf) restrict inbound mTLS connections to
+                   authorized workload service accounts before traffic reaches the gateway
+                   container. HTTP header-based identity parsing (X-Agent-ID, X-SPIFFE-ID) and
+                   anonymous fallback were removed; unauthenticated requests fail closed
+                   (401/403), eliminating header spoofing attack surface.
 
-                   `WorkloadIdentityMiddleware` and `extract_client_identity(scope)` validate:
-                   - Presence of a single Linkerd-verified `l5d-client-id` header in ASGI scope
-                   - Arrival on a connection from inside the pod (`is_pod_local_connection`):
-                     only the pod's own Linkerd proxy writes the header, and a pod running
-                     without its proxy refuses every caller (POAM-2026-167)
-                   - Match against Linkerd workload identity syntax (`<sa>.<ns>.serviceaccount.identity.linkerd.<trust-domain>`)
-                   - Membership in `CAGE_TRUSTED_CLIENT_IDENTITIES` (required and enforced in every environment)
-                   - Fails closed on any validation error (403 Forbidden / 401 Unauthorized)
+                2. OPA RBAC & Claimed-Action Policy Enforcement: Every inbound API request is
+                   evaluated against OPA RBAC policy rules (deployment/system_authz.rego) and
+                   domain governance policies (src/cage_finance/opa/trade_governance.rego),
+                   with allow/deny decisions recorded in structured audit logs with full
+                   request context and caller identity. Every governor pipeline run (including
+                   Profile.POST_HITL in SymbolicGovernor.revalidate_post_hitl()) verifies that
+                   the action is in governor.claimed_actions
+                   (src/gateway/governance/governor/pipeline.py), refusing unclaimed actions
+                   with ADR009_ACTION_NOT_CLAIMED ([ACTION_NOT_CLAIMED]), and
+                   assemble_governor() (src/gateway/governance/governor/assembly.py) verifies
+                   at startup that every claimed action is registered in the FTRA terminal
+                   registry.
 
-                2. **Linkerd Service Mesh AuthorizationPolicy Enforcement**:
-                   Mesh-layer ingress access control on the gateway HTTP port is enforced
-                   deny-by-default via Linkerd `Server`, `HTTPRoute`, `MeshTLSAuthentication`,
-                   and `AuthorizationPolicy` manifests
-                   (infra/modules/gateway/mesh-policy/templates/policy.yaml). Exact open paths
-                   (`gateway-open`) admit health, metrics, and JWKS probes via
-                   `NetworkAuthentication`, while the catch-all `gateway-gated` route
-                   (`PathPrefix "/"`) admits only Linkerd mTLS client identities listed in
-                   `gateway-trusted-clients`. `WorkloadIdentityMiddleware` repeats the check
-                   in-process on `l5d-client-id` for defense-in-depth.
-
-                Dual-control authentication enforcement (Work Item 2, 2026-09-07): All defer
-                escalation endpoints now require cryptographically-verified operator identity.
-                The /v1/defer/escalate endpoint (src/compliance_bridge/main.py:1527) enforces
-                Depends(require_internal_token) to prevent unauthenticated access. The
-                /v1/defer/inject endpoint (src/compliance_bridge/main.py:1326) also requires
-                internal token authentication. No /v1/defer/ route is reachable without
-                authentication in production (CAGE_ENV=prod/staging).
-
-                Quorum enforcement mechanism: DeferQueue.approve() (src/gateway/governance/defer_queue.py:447)
-                enforces distinctness of approver_urn values via WATCH/MULTI/EXEC atomic
-                transaction (lines 510-518). The approver_urn is provably derived from
-                transport-layer verified SPIFFE SVID (primary) or OIDC JWT subject (gated
-                fallback). Single authenticated principal cannot reach quorum - duplicate
-                approvals are rejected with ALREADY_APPROVED status (line 511-518). Required
-                quorum is auto-computed from defer_reason: quorum-3 for FTRA_IRREVERSIBLE_TERMINAL,
-                EXTERNAL_VALIDATION, EXTERNAL_HOLD, and WARRANT_INELIGIBLE defer reasons; quorum-2 for
-                all others (src/gateway/governance/defer_queue.py:66-80).
-
-                Protection against single-principal quorum bypass: The defer_inject endpoint
-                rejects injection attempts for quorum-3 defer reasons (line 1377-1392) and
-                rejects injection if token has partial approvals (line 1394-1405), preventing
-                circumvention of the dual-control requirement via automated data injection.
-
-                Approval binding (D-H, 2026-10-01): DeferQueue.approve() stamps each
-                ApprovalRecord server-side with approved_barrier_preview, the phase-2 barrier
-                snapshot (PASS/FAIL) recorded on the token when it was parked; a client-supplied
-                value is overwritten. consume_approval() refuses a token whose approvals are bound
-                to a different snapshot, and SymbolicGovernor.revalidate_post_hitl() refuses the
-                committing run with GovernanceError [APPROVAL_CONTEXT_DRIFT] when an approval
-                given against PASS meets barriers that now refuse; no routing seal is minted and
-                phase-2 commits are rolled back. Verified by tests/test_trade_governance_e2e.py
-                (D-H scenarios) against real DeferQueue, CBF and fiscal state in fakeredis.
-
-                Single-commit execution and advisory narrowing (Phases 2–3, 2026-10-01):
-                Pre-flight validation (SymbolicGovernor.validate_action in
-                src/gateway/governance/governor/governor.py) runs under Profile.DRY_RUN,
-                mutates no state, and mints no GovernanceSeal. When an action requires human
-                approval (REQUIRE_APPROVAL), validate_action() parks a DeferToken
-                (DeferReason.HITL_REQUIRED) in DeferQueue and returns deferred_id;
-                execute_trade_action(..., deferred_id=...) (src/cage_finance/tools/tool_provider.py)
-                is the sole committing path: enforce_approved_governance()
-                (src/gateway/server/governance_middleware.py) checks the approved token without
-                spending it (DeferQueue.redeemable_approval()) and hands
-                SymbolicGovernor.revalidate_post_hitl() an unspent PostHitlApproval. The governor
-                spends it atomically (DeferQueue.consume_approval(), a RESOLVED to CONSUMED CAS)
-                only after every stage passes and before the seal is minted, so a DENY spends it,
-                a warrant-ineligible DEFER leaves it redeemable (POAM-2026-104), and concurrent
-                redemptions seal at most once.
-                When narrowing is enabled, any narrow_hint / narrowed_params attached to a
-                REQUIRE_APPROVAL verdict is purely advisory: it is dry-run re-verified before
-                surfacing (_reverified_narrow_hint) and re-verified in full by the single
-                committing run (_sealed_narrow with tamper-evident issue_narrow_receipt in
-                src/gateway/governance/narrow_receipt.py inside ReservationScope). Every
-                pipeline run (including Profile.POST_HITL in SymbolicGovernor.revalidate_post_hitl())
-                verifies that the action is in governor.claimed_actions
-                (src/gateway/governance/governor/pipeline.py), refusing unclaimed actions with
-                ADR009_ACTION_NOT_CLAIMED ([ACTION_NOT_CLAIMED]), and assemble_governor()
-                (src/gateway/governance/governor/assembly.py) verifies at startup that every
-                claimed action is registered in the FTRA terminal registry.
-
-                BREAKING CHANGE: Removed anonymous fallback and HTTP header identity parsing.
-                Unauthenticated requests fail closed (401/403). This change enforces cryptographic
-                identity binding at the kernel level, eliminating header spoofing attack surface.
+                3. Dual-Control Quorum & Single-Commit HITL Approval Binding:
+                   - Endpoint authentication (Work Item 2, 2026-09-07): All defer escalation
+                     endpoints require cryptographically-verified operator identity. Both
+                     /v1/defer/escalate (src/compliance_bridge/main.py) and /v1/defer/inject
+                     enforce Depends(require_internal_token); no /v1/defer/ route is reachable
+                     without authentication in production (CAGE_ENV=prod/staging).
+                   - Quorum enforcement: DeferQueue.approve()
+                     (src/gateway/governance/defer_queue.py) enforces distinctness of
+                     approver_urn values via WATCH/MULTI/EXEC atomic transactions, rejecting
+                     duplicate approvals from the same principal with ALREADY_APPROVED.
+                     Required quorum is auto-computed from defer_reason (quorum-3 for
+                     FTRA_IRREVERSIBLE_TERMINAL, EXTERNAL_VALIDATION, EXTERNAL_HOLD, and
+                     WARRANT_INELIGIBLE; quorum-2 for all others), and defer_inject rejects
+                     quorum-3 reasons or partially approved tokens.
+                   - Approval binding (D-H, 2026-10-01): DeferQueue.approve() stamps each
+                     ApprovalRecord server-side with approved_barrier_preview (overwriting any
+                     client-supplied value). consume_approval() refuses a token whose approvals
+                     are bound to a different snapshot, and
+                     SymbolicGovernor.revalidate_post_hitl() refuses the committing run with
+                     GovernanceError [APPROVAL_CONTEXT_DRIFT] when an approval given against
+                     PASS meets barriers that now refuse; no routing seal is minted and phase-2
+                     commits are rolled back (verified by tests/test_trade_governance_e2e.py).
+                   - Single-commit execution and advisory narrowing (Phases 2-3, 2026-10-01):
+                     Pre-flight validation (SymbolicGovernor.validate_action in
+                     src/gateway/governance/governor/governor.py) runs under Profile.DRY_RUN,
+                     mutates no state, and mints no GovernanceSeal. When human approval is
+                     required (REQUIRE_APPROVAL), validate_action() parks a DeferToken
+                     (DeferReason.HITL_REQUIRED) in DeferQueue and returns deferred_id;
+                     execute_trade_action(..., deferred_id=...)
+                     (src/cage_finance/tools/tool_provider.py) is the sole committing path:
+                     enforce_approved_governance()
+                     (src/gateway/server/governance_middleware.py) checks the approved token
+                     without spending it (DeferQueue.redeemable_approval()) and hands
+                     SymbolicGovernor.revalidate_post_hitl() an unspent PostHitlApproval. The
+                     governor spends it atomically (DeferQueue.consume_approval(), RESOLVED to
+                     CONSUMED CAS) only after every stage passes and before the seal is minted,
+                     so a DENY spends it, a warrant-ineligible DEFER leaves it redeemable
+                     (POAM-2026-104), and concurrent redemptions seal at most once. When
+                     narrowing is enabled, any narrow_hint / narrowed_params is dry-run
+                     re-verified before surfacing (_reverified_narrow_hint) and re-verified in
+                     full by the single committing run (_sealed_narrow with tamper-evident
+                     issue_narrow_receipt in src/gateway/governance/narrow_receipt.py inside
+                     ReservationScope).
               props:
                 - name: implementation-status
                   value: implemented
@@ -272,18 +245,21 @@ component-definition:
                 (provenance_chain.LEGACY_PAUSE) but cannot be newly built. The compliance-bridge aggregates
                 spans into OSCAL Assessment Results via audit_workflow.py.
 
-                3. ATTESTATION FETCH AUDIT (Phase 5b C3, POAM-2026-072, 2026-09-09):
-                   Attestation fetch operations generate structured audit records capturing
-                   provider_name, fetch attempt timestamp, success/failure outcome, and error
-                   details. The ExternalAttestation dataclass (src/gateway/governance/attestation.py)
+                3. WARRANT & EXTERNAL ATTESTATION AUDIT (Phase 5b C3, POAM-2026-072; POAM-2026-169 #6):
+                   External warrant reliance operations generate structured audit records
+                   capturing provider_name, observation timestamp (observed_at), freshness
+                   window (age_seconds, max_age_seconds), verification status, and negative
+                   outcomes. The ExternalAttestation dataclass (src/gateway/governance/attestation.py)
                    includes a dedicated provider_name field for first-class provider attribution,
-                   eliminating ambiguity in multi-provider environments. The AttestationAggregator._do_fetch()
-                   method (src/gateway/governance/attestation_aggregator.py) wraps external provider
-                   calls in try-except blocks that pre-capture provider context before execution,
-                   ensuring defect diagnosis remains possible even when the fetch operation fails.
-                   ERROR-status attestations embed structured failure metadata directly into the
-                   ExternalAttestation record, preserving fetch failures as first-class evidence
-                   for non-repudiation analysis (AU-10 correlation).
+                   and WarrantSource / RelianceRecord (src/gateway/governance/warrant/reliance.py,
+                   src/gateway/governance/warrant/verifier.py) bind external warrant reliance
+                   outcomes (VERIFIED, UNVERIFIED, and INELIGIBLE_STALE on stale or failed
+                   re-fetch) into both the signed GovernanceEnvelope (WARRANT attestation) and
+                   the hash-linked evidence chain, preserving verification and freshness
+                   failures as first-class evidence for non-repudiation analysis (AU-10
+                   correlation). Background AttestationAggregator polling was retired from
+                   gateway lifespan under POAM-2026-169 #6 because its cache had no runtime
+                   reader.
 
                 4. OPERATIONAL & SAFETY TELEMETRY SCRAPE (Prometheus / GKE Managed Prometheus):
                    The gateway starts an out-of-band Prometheus WSGI HTTP server on
@@ -322,9 +298,9 @@ component-definition:
                 - href: "../../src/gateway/governance/attestation.py"
                   rel: implementation
                   text: "ExternalAttestation dataclass with provider_name field"
-                - href: "../../src/gateway/governance/attestation_aggregator.py"
+                - href: "../../src/gateway/governance/warrant/reliance.py"
                   rel: implementation
-                  text: "AttestationAggregator._do_fetch() try-block pre-capture"
+                  text: "RelianceRecord binding external warrant reliance into signed GovernanceEnvelope and hash-linked evidence chain"
                 - href: "../../src/gateway/observability/loop_monitor.py"
                   rel: implementation
                   text: "Out-of-band Prometheus metrics HTTP server and asyncio event-loop lag monitor"
@@ -338,25 +314,20 @@ component-definition:
             - uuid: "c3-au10-attestation-2026-0909"
               control-id: au-10
               description: |
-                Non-repudiation of attestation fetch operations is implemented via dedicated
-                provider attribution and error-preserving audit trails. The ExternalAttestation
-                dataclass (src/gateway/governance/attestation.py) includes a first-class
-                provider_name field that records the originating attestation provider for
-                every fetch operation, ensuring unambiguous attribution in multi-provider
-                environments. The AttestationAggregator._do_fetch() method wraps all external
-                provider calls in try-except blocks that capture provider context BEFORE
-                the fetch operation executes, guaranteeing that provider identity and
-                diagnostic context survive even when the fetch operation raises an exception.
-
-                ERROR-status attestations are constructed as complete ExternalAttestation
-                records embedding structured failure metadata (exception type, message,
-                timestamp) rather than being discarded or logged ephemerally. This design
-                ensures that fetch failures enter the tamper-evident evidence chain with
-                the same completeness as successful fetch operations, satisfying non-repudiation
-                requirements for negative outcomes (AU-10). All attestation records participate
-                in the hash-linked evidence chain described in AU-12, providing time-correlated
-                audit trail binding between governance decisions and their supporting external
-                attestations.
+                Non-repudiation of external warrant reliance is implemented via dedicated
+                provider attribution and tamper-evident evidence binding on the live
+                governance decision path. The ExternalAttestation dataclass
+                (src/gateway/governance/attestation.py) includes a first-class provider_name
+                field recording the originating provider for unambiguous attribution in
+                multi-provider environments, while WarrantSource and RelianceRecord
+                (src/gateway/governance/warrant/reliance.py,
+                src/gateway/governance/warrant/verifier.py) construct complete reliance
+                records for both positive (VERIFIED) and negative (UNVERIFIED,
+                INELIGIBLE_STALE) outcomes so fetch, freshness, and signature-verification
+                failures enter the hash-linked evidence chain and signed GovernanceEnvelope
+                with the same completeness as verified warrants (POAM-2026-072; background
+                AttestationAggregator polling was retired from gateway lifespan under
+                POAM-2026-169 #6 because its cache had no runtime reader).
 
                 Warrant reliance (0cdb5aaa, #427; VEIP v0.2 conformance 2026-10-10):
                 for a warranted norm, the RelianceRecord
@@ -407,9 +378,9 @@ component-definition:
                 - href: "../../src/gateway/governance/attestation.py"
                   rel: implementation
                   text: "ExternalAttestation.provider_name first-class field"
-                - href: "../../src/gateway/governance/attestation_aggregator.py"
+                - href: "../../src/gateway/governance/warrant/reliance.py"
                   rel: implementation
-                  text: "AttestationAggregator._do_fetch() pre-capture error handling"
+                  text: "RelianceRecord binding external warrant reliance into signed GovernanceEnvelope and hash-linked evidence chain"
 
             - uuid: "0c2d40d7-0d19-4b9d-9afa-6c80967b31b4"
               control-id: sc-13

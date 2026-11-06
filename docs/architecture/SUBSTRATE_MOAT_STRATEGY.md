@@ -117,8 +117,6 @@ The matrix claims CAGE uses a **4-state asymmetric router** where high-confidenc
 | OSCAL Adapter | [`oscal_adapter.py`](../../src/gateway/governance/ingress/oscal_adapter.py) | ✅ Implemented |
 | Lula Adapter | [`lula_adapter.py`](../../src/gateway/governance/ingress/lula_adapter.py) | ✅ Implemented |
 | AGW Adapter | [`agw_adapter.py`](../../src/gateway/governance/ingress/agw_adapter.py) | ✅ Implemented |
-| Agent Registry Adapter | [`agent_registry_adapter.py`](../../src/gateway/governance/ingress/agent_registry_adapter.py) | ✅ Implemented |
-| AGP Policy Uploader | [`agp_policy_uploader.py`](../../src/gateway/governance/ingress/agp_policy_uploader.py) | ✅ Implemented |
 
 **Remaining gap:** A unified CI/CD-callable `POST /governance/ingest-policy` HTTP endpoint that orchestrates the full translation pipeline into compiled enforcement artifacts is not yet implemented.
 
@@ -407,7 +405,7 @@ This positioning is credible because AGW explicitly supports **Service Extension
 CAGE integrates with Google Agent Gateway's Service Extensions mechanism and the Google Enterprise Agent Platform (GEAP — see [`GEAP_INTEGRATION_ARCHITECTURE.md`](GEAP_INTEGRATION_ARCHITECTURE.md)). Service Extensions allow AGW to delegate authorization decisions to [`AgwAdapter.evaluate_request_authz()`](../../src/gateway/governance/ingress/agw_adapter.py) — making CAGE the semantic and state-tier governance layer that AGW calls before allowing egress MCP traffic. On approval, the adapter verifies tri-identity OIDC context (`GeapTriIdentityContext`, `validate_oidc_token()`) and injects the `X-CAGE-Routing-Seal` header so the backend FastMCP tool server ([`FastMcpSealVerificationMiddleware`](../../src/integrations/gcp_geap/runtime_guards.py)) verifies governance authority before executing the tool.
 
 **Shipped modules:**
-1. **AGW Service Extension Adapter & Policy Uploader** — [`agw_adapter.py`](../../src/gateway/governance/ingress/agw_adapter.py) (`AgwAdapter`, `GeapTriIdentityContext`) and [`agp_policy_uploader.py`](../../src/gateway/governance/ingress/agp_policy_uploader.py) (`verify_and_transition_gateway_mode()`), paired with STPA-to-IAP CEL compilation ([`generate_iap_cel_policies()`](../../src/gateway/governance/stpa_compiler.py)) and Agent Registry FTRA/ToolSpec ingestion ([`agent_registry_adapter.py`](../../src/gateway/governance/ingress/agent_registry_adapter.py)).
+1. **AGW Service Extension Adapter** — [`agw_adapter.py`](../../src/gateway/governance/ingress/agw_adapter.py) (`AgwAdapter`, `GeapTriIdentityContext`, `evaluate_request_authz()`).
 2. **Vertex AI Agent Engine Runtime & Terraform Module** — [`geap_app.py`](../../src/governed_financial_advisor/geap_app.py) (`GovernedFinancialAdvisorGeapApp`), [`runtime_guards.py`](../../src/integrations/gcp_geap/runtime_guards.py) (`FastMcpSealVerificationMiddleware`, `GovernedMemoryBankGuard`), and [`infra/modules/gcp_geap_advisor/`](../../infra/modules/gcp_geap_advisor/main.tf) (`fail_open = false` Service Extension callout).
 
 ### 9.7 Updated Competitive Matrix — Four-Way Comparison

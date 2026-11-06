@@ -66,8 +66,6 @@ _DEFAULT_INPUT = _REPO_ROOT / "config" / "stpa_control_structure.yaml"
 _DEFAULT_INPUT_DIR = _REPO_ROOT / "config" / "stpa"
 _DEFAULT_OPA_OUT = _REPO_ROOT / "config" / "opa" / "generated_stpa_policy.rego"
 _DEFAULT_HASH_FILE = _REPO_ROOT / "config" / "opa" / ".policy_hash"
-_DEFAULT_AGP_OUT = _REPO_ROOT / "config" / "agp" / "generated_semantic_policy.txt"
-_AGP_CHAR_BUDGET = 5_000
 
 
 def _sha256_file(path: Path) -> str:
@@ -250,48 +248,6 @@ def check_compiled_artifact_drift(
     return 0
 
 
-def check_agp_budget(agp_file: Path) -> int:
-    """Check that the AGP policy file is within the 5,000-character budget.
-
-    Returns:
-        0 if within budget, 1 if over budget or contains TRUNCATED sentinel.
-    """
-    if not agp_file.exists():
-        logger.info(
-            "AGP policy file not found at %s — skipping budget check.", agp_file
-        )
-        return 0
-
-    content = agp_file.read_text(encoding="utf-8")
-    char_count = len(content)
-
-    if "# TRUNCATED" in content:
-        logger.error(
-            "❌ AGP policy file contains TRUNCATED sentinel — "
-            "output exceeded the 5,000-character budget.\n"
-            "   File: %s (%d chars)",
-            agp_file,
-            char_count,
-        )
-        return 1
-
-    if char_count > _AGP_CHAR_BUDGET:
-        logger.error(
-            "❌ AGP policy file exceeds 5,000-character budget: %d chars\n   File: %s",
-            char_count,
-            agp_file,
-        )
-        return 1
-
-    logger.info(
-        "✅ AGP policy budget OK: %d/%d chars (%.1f%%)",
-        char_count,
-        _AGP_CHAR_BUDGET,
-        100.0 * char_count / _AGP_CHAR_BUDGET,
-    )
-    return 0
-
-
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(
         description="Policy drift detection gate — fails CI if compiled artifacts have drifted.",
@@ -331,44 +287,20 @@ def main(argv: list[str] | None = None) -> int:
         help=f"Path to stored baseline hash file (default: {_DEFAULT_HASH_FILE})",
     )
     parser.add_argument(
-        "--agp-file",
-        type=Path,
-        default=_DEFAULT_AGP_OUT,
-        metavar="FILE",
-        help=f"Path to AGP policy text file for budget check (default: {_DEFAULT_AGP_OUT})",
-    )
-    parser.add_argument(
         "--update-baseline",
         action="store_true",
         help="Update the stored baseline hash instead of checking for drift.",
     )
-    parser.add_argument(
-        "--skip-agp-check",
-        action="store_true",
-        help="Skip the AGP character budget check.",
-    )
 
     args = parser.parse_args(argv)
 
-    # Run drift check
-    drift_rc = check_compiled_artifact_drift(
+    return check_compiled_artifact_drift(
         input_path=args.input,
         opa_file=args.opa_file,
         hash_file=args.hash_file,
         update_baseline=args.update_baseline,
         input_dir=args.input_dir,
     )
-
-    if args.update_baseline:
-        return drift_rc
-
-    # Run AGP budget check
-    agp_rc = 0
-    if not args.skip_agp_check:
-        agp_rc = check_agp_budget(args.agp_file)
-
-    # Return worst exit code
-    return max(drift_rc, agp_rc)
 
 
 if __name__ == "__main__":

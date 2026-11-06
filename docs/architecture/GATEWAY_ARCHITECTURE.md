@@ -380,7 +380,7 @@ Agent identity is a **transport-layer fact**, not an application-layer claim. Th
 - The `X-Agent-ID` request header is **no longer read anywhere** in the kernel and confers no identity.
 - No `X-SPIFFE-ID` (or equivalent) client-supplied header is trusted — only `l5d-client-id` set by the Linkerd inbound proxy after mTLS is accepted.
 - No `agent_id` is derived from the JSON request body.
-- The anonymous / unauthenticated caller fallback has been deleted from both ingress paths and from [`config/opa/agent_catalog.rego`](../../config/opa/agent_catalog.rego).
+- The anonymous / unauthenticated caller fallback has been deleted from all gateway ingress paths.
 
 **Fail-closed ingress behaviour:**
 
@@ -390,7 +390,7 @@ Agent identity is a **transport-layer fact**, not an application-layer claim. Th
 
 **End-user principal (asserted, not authenticated):** `x-cage-principal` confers no identity. [`extract_rate_limit_keys()`](../../src/gateway/server/rate_limit.py) reads it only behind a verified `l5d-client-id` and uses it only as the per-principal rate-limit key. See the advisor's [Principal Trust Model](../examples/governed-financial-advisor/ARCHITECTURE.md#45-principal-trust-model).
 
-**Authorization (distinct from authentication):** the extracted identity becomes the OPA principal. Agent-to-agent delegation is authorized declaratively in [`config/opa/agent_catalog.rego`](../../config/opa/agent_catalog.rego) by `startswith()` prefix matching against each subagent's `authorized_parent_prefixes`, so ephemeral pod suffixes never enter policy bodies.
+**Authorization (distinct from authentication):** mesh-level caller admission is enforced by Linkerd `AuthorizationPolicy` ([`infra/modules/gateway/mesh-policy/templates/policy.yaml`](../../infra/modules/gateway/mesh-policy/templates/policy.yaml)) and `WorkloadIdentityMiddleware`, while action admissibility is evaluated by OPA RBAC and domain Rego policies without embedding ephemeral pod suffixes.
 
 **Proof-of-possession (available, not yet on the hot path):** [`src/gateway/server/dpop_validator.py`](../../src/gateway/server/dpop_validator.py) provides the vendor-neutral `ProofOfPossessionValidator` protocol and an RFC 9449 `DPoPValidator` that binds a DPoP proof to the mTLS client certificate, raising `TokenBindingError` on failure. It is unit-tested in [`tests/test_dpop_validator.py`](../../tests/test_dpop_validator.py) but is not yet invoked by gateway middleware; see §5 of the identity spec for the remaining rollout items.
 
@@ -465,10 +465,8 @@ The ingress adapter layer normalizes external governance signals from heterogene
 | **ACS Adapter** | [`acs_adapter.py`](../../src/gateway/governance/ingress/acs_adapter.py) | Ingests ACS (Agent Capability Statement) declarations |
 | **OSCAL Adapter** | [`oscal_adapter.py`](../../src/gateway/governance/ingress/oscal_adapter.py) | Parses OSCAL component definitions and assessment results into internal policy objects |
 | **Lula Adapter** | [`lula_adapter.py`](../../src/gateway/governance/ingress/lula_adapter.py) | Ingests Lula validation results and maps them to CAGE control verdicts |
-| **AGP Policy Uploader** | [`agp_policy_uploader.py`](../../src/gateway/governance/ingress/agp_policy_uploader.py) | Uploads translated policies to the Agent Gateway Protocol policy store and orchestrates fail-closed `AUDIT_ONLY -> ENFORCING` mode transitions via [`verify_and_transition_gateway_mode()`](../../src/gateway/governance/ingress/agp_policy_uploader.py) |
 | **AGW Service Extension Adapter** | [`agw_adapter.py`](../../src/gateway/governance/ingress/agw_adapter.py) | Evaluates Google Agent Gateway (`ext_authz`) callouts via [`AgwAdapter.evaluate_request_authz()`](../../src/gateway/governance/ingress/agw_adapter.py), verifies tri-identity OIDC context (`GeapTriIdentityContext`, `validate_oidc_token()`), and injects `X-CAGE-Routing-Seal` on approval |
 | **Policy Translator** | [`policy_translator.py`](../../src/gateway/governance/ingress/policy_translator.py) | Translates between OSCAL/Lula/AAIF representations and OPA Rego |
-| **Agent Registry Adapter** | [`agent_registry_adapter.py`](../../src/gateway/governance/ingress/agent_registry_adapter.py) | SPIFFE trust-domain agent catalog (`RegistryCatalog`), FTRA terminal-class overrides ([`to_ftra_terminal_overrides()`](../../src/gateway/governance/ingress/agent_registry_adapter.py)), and `ToolSpec` association ([`associate_toolspec()`](../../src/gateway/governance/ingress/agent_registry_adapter.py)) |
 
 ### 7.2 FTRA Commencement Reachability Gate (`src/gateway/governance/ftra/`)
 

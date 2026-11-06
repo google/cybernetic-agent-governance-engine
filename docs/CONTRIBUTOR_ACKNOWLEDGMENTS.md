@@ -26,7 +26,7 @@ Discovered that [`src/gateway/core/policy.py`](../src/gateway/core/policy.py) ke
 
 **Attack Vector:** An attacker could register an agent with a carefully chosen SPIFFE ID suffix to inherit another agent's grants.
 
-**Fix:** Changed keying to full SPIFFE identity, aligning with how [`config/opa/agent_catalog.rego`](../config/opa/agent_catalog.rego) consumes the data.
+**Fix:** Changed keying to full SPIFFE identity, aligning with how `372daad2^:config/opa/agent_catalog.rego` consumed the data.
 
 **Test Coverage:** 58 tests with regression test `test_parse_registry_response_keys_on_full_spiffe_identity`.
 

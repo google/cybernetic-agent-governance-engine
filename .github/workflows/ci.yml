@@ -296,6 +296,12 @@ jobs:
         # config/, and .github/ with zero waivers.
         run: |
           uv run python scripts/check_yaml_unique_keys.py --verbose
+      - name: Write-only state attribute check (POAM-2026-169 #6)
+        # Every *.state.<attr> written in src/ must have at least one reader in
+        # src/. Blocks dead request.state / app.state / scope.state writes that
+        # appear enforced in code or OSCAL prose while no runtime stage reads them.
+        run: |
+          uv run python scripts/check_write_only_state.py --verbose
 
   bare-kernel-smoke:
     name: "Bare-Kernel Smoke Test (Zero Cloud SDKs)"

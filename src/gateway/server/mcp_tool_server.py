@@ -315,11 +315,13 @@ async def lifespan(app: FastAPI):  # type: ignore[no-untyped-def]
 
     # Shutdown
     logger.info("🛑 CAGE MCP Tool Server Shutting Down...")
-    audit_task.cancel()
-    try:
-        await audit_task
-    except asyncio.CancelledError:
-        pass
+    running_audit_task = getattr(app.state, "audit_task", None)
+    if running_audit_task is not None:
+        running_audit_task.cancel()
+        try:
+            await running_audit_task
+        except asyncio.CancelledError:
+            pass
     if rl_redis is not None and hasattr(rl_redis, "aclose"):
         try:
             await rl_redis.aclose()

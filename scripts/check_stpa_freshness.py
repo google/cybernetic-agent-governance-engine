@@ -90,7 +90,6 @@ _GENERATED_ARTIFACTS: list[Path] = [
     _REPO_ROOT / "src" / "gateway" / "governance" / "terminal_action_registry.json",
     _REPO_ROOT / "config" / "opa" / "generated_stpa_policy.rego",
     _REPO_ROOT / "config" / "rails" / "generated_stpa_rails.co",
-    _REPO_ROOT / "config" / "agp" / "generated_semantic_policy.txt",
     _REPO_ROOT / "config" / "sandbox" / "generated_sandbox_policy.yaml",
     _OSCAL_SSP,
     _OSCAL_COMP_DEF,
@@ -110,8 +109,7 @@ _ARTIFACT_RECIPES: dict[Path, tuple[str, str]] = {
     _GENERATED_ARTIFACTS[3]: (_CORE, "ftra"),
     _GENERATED_ARTIFACTS[4]: (_CORE, "opa"),
     _GENERATED_ARTIFACTS[5]: (_CORE, "nemo"),
-    _GENERATED_ARTIFACTS[6]: (_CORE, "agp"),
-    _GENERATED_ARTIFACTS[7]: (_CORE, "sandbox"),
+    _GENERATED_ARTIFACTS[6]: (_CORE, "sandbox"),
 }
 
 #: Targets whose written form is passed through ``ruff format`` by the compiler.
@@ -214,7 +212,6 @@ def _regenerate_all() -> dict[Path, str | None]:
         "nemo": stpa_compiler.generate_nemo,
         "python": stpa_compiler.generate_python,
         "langgraph": stpa_compiler.generate_langgraph,
-        "agp": stpa_compiler.generate_agp,
         "ftra": stpa_compiler.generate_terminal_registry,
         "sandbox": stpa_compiler.generate_sandbox_policy,
     }

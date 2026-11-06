@@ -1,9 +1,0 @@
-# CAGE Semantic Governance Policy — CAGE Financial Advisor v1.1.0
-# Generated from STPA control structure. Do not edit manually.
-# Source: config/stpa_control_structure.yaml
-
-# UCA-1: Agent executes write operation without a signed approval token.
-Do not execute "write_db" if "approval_token" is null or missing.
-
-# UCA-7: Adversarial prompt injection score exceeds detection threshold.
-Do not execute "prompt_injection_check" if "semantic_score" exceeds 0.85.

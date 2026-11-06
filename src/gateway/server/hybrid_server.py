@@ -100,9 +100,10 @@ async def _gateway_lifespan(app: FastAPI):  # type: ignore[no-untyped-def]
         start_metrics_http_server,
     )
 
-    metrics_server = start_metrics_http_server()
-    app.state.metrics_server = metrics_server
-    loop_lag_task: asyncio.Task[None] | None = None
+    app.state.metrics_server = start_metrics_http_server()
+    app.state.loop_lag_task = None
+    app.state.normative_polling_task = None
+    app.state.nemo_reload_task = None
 
     try:
         # ── Inference backend (CAGE_INFERENCE_BACKEND) ──────────────────────
@@ -198,7 +199,6 @@ async def _gateway_lifespan(app: FastAPI):  # type: ignore[no-untyped-def]
 
         # External Normative Provider integration (§2.5)
         provider_name = os.getenv("CAGE_NORMATIVE_PROVIDER", "static")
-        normative_polling_task = None
 
         if provider_name != "static":
             from src.gateway.governance.normative_provider import (
@@ -207,61 +207,23 @@ async def _gateway_lifespan(app: FastAPI):  # type: ignore[no-untyped-def]
 
             daemon = NormativeProviderDaemon.from_env()
             await daemon.boot_fetch()
-            normative_polling_task = asyncio.create_task(daemon.start_polling())
-            app.state.normative_polling_task = normative_polling_task
+            app.state.normative_polling_task = asyncio.create_task(
+                daemon.start_polling()
+            )
             logger.info(
                 "✅ Normative provider '%s' initialized with background polling",
                 provider_name,
             )
-        else:
-            app.state.normative_polling_task = None
-
-        # ── Attestation Aggregator Boot & Polling ──────────────────────────────
-        from src.gateway.governance.attestation_aggregator import AttestationAggregator
-
-        attestation_aggregator = AttestationAggregator.from_env()
-        attestation_polling_task = None
-        if attestation_aggregator.provider_count > 0:
-            await attestation_aggregator.boot_fetch()
-            attestation_polling_task = asyncio.create_task(
-                attestation_aggregator.start_poll_loop()
-            )
-            app.state.attestation_aggregator = attestation_aggregator
-            app.state.attestation_polling_task = attestation_polling_task
-            logger.info(
-                "Attestation aggregator initialized with %d provider(s)",
-                attestation_aggregator.provider_count,
-            )
-        else:
-            app.state.attestation_aggregator = attestation_aggregator
-            app.state.attestation_polling_task = None
 
         # ── Actuator Registry Initialization ────────────────────────────────────
         from src.gateway.governance.execution_actuator import load_actuators_from_env
 
         actuator_registry = load_actuators_from_env()
-        app.state.actuator_registry = actuator_registry
         logger.info(
             "Actuator registry initialized with %d actuator(s): %s",
             len(actuator_registry.list_actuators()),
             ", ".join(actuator_registry.list_actuators()),
         )
-
-        # GCP Adaptation: Agent Registry daemon (no-op if CAGE_AGENT_REGISTRY_PROJECT not set)
-        registry_daemon: Any = None
-        try:
-            from src.gateway.governance.ingress.agent_registry_adapter import (
-                AgentRegistryDaemon,
-            )
-
-            registry_daemon = AgentRegistryDaemon()
-            await registry_daemon.start()
-        except ImportError:
-            logger.warning(
-                "⚠️ agent_registry_adapter not available — using static agent catalog."
-            )
-        except Exception as reg_err:
-            logger.error("❌ AgentRegistryDaemon failed to start: %s", reg_err)
 
         # ── Activate the single CAGE_DOMAIN plugin (fail-closed readiness, ─────
         #    including the OPA package/rule handshake)
@@ -344,15 +306,12 @@ async def _gateway_lifespan(app: FastAPI):  # type: ignore[no-untyped-def]
         mcp_app.state.redis = shared_redis
         bind_quarantine_redis(shared_redis)
 
-        nemo_reload_task = _start_nemo_reload_subscriber(shared_redis, app)
-        if nemo_reload_task is not None:
-            app.state.nemo_reload_task = nemo_reload_task
-
-        loop_lag_task = asyncio.create_task(run_loop_lag_monitor())
-        app.state.loop_lag_task = loop_lag_task
+        app.state.nemo_reload_task = _start_nemo_reload_subscriber(shared_redis, app)
+        app.state.loop_lag_task = asyncio.create_task(run_loop_lag_monitor())
     except BaseException:
-        if metrics_server is not None:
-            metrics_server.stop()
+        metrics_srv = getattr(app.state, "metrics_server", None)
+        if metrics_srv is not None:
+            metrics_srv.stop()
         raise
 
     # ── Start Stateless MCP Session Manager (A3) ───────────────────────────
@@ -380,6 +339,7 @@ async def _gateway_lifespan(app: FastAPI):  # type: ignore[no-untyped-def]
         yield
 
     # Shutdown: cancel event-loop lag monitor task if running
+    loop_lag_task = getattr(app.state, "loop_lag_task", None)
     if loop_lag_task is not None:
         loop_lag_task.cancel()
         try:
@@ -388,10 +348,12 @@ async def _gateway_lifespan(app: FastAPI):  # type: ignore[no-untyped-def]
             pass
 
     # Shutdown: stop out-of-band Prometheus metrics HTTP server if running
-    if metrics_server is not None:
-        metrics_server.stop()
+    metrics_srv = getattr(app.state, "metrics_server", None)
+    if metrics_srv is not None:
+        metrics_srv.stop()
 
     # Shutdown: cancel NeMo reload subscriber task if running
+    nemo_reload_task = getattr(app.state, "nemo_reload_task", None)
     if nemo_reload_task is not None:
         nemo_reload_task.cancel()
         try:
@@ -405,27 +367,14 @@ async def _gateway_lifespan(app: FastAPI):  # type: ignore[no-untyped-def]
         except Exception as redis_close_exc:
             logger.debug("Shared Redis close error: %s", redis_close_exc)
 
-    # Shutdown: stop Agent Registry daemon if running
-    if registry_daemon is not None:
-        await registry_daemon.stop()
-
     # Shutdown: cancel normative provider polling task if running
+    normative_polling_task = getattr(app.state, "normative_polling_task", None)
     if normative_polling_task is not None:
         normative_polling_task.cancel()
         try:
             await normative_polling_task
         except asyncio.CancelledError:
             pass
-
-    # Shutdown: cancel attestation aggregator polling task if running
-    attestation_task = getattr(app.state, "attestation_polling_task", None)
-    if attestation_task is not None:
-        attestation_task.cancel()
-        try:
-            await attestation_task
-        except asyncio.CancelledError:
-            pass
-        logger.info("Attestation aggregator polling task cancelled cleanly.")
 
     # Shutdown: cancel plugin-registered background tasks if running
     for bg_task in getattr(app.state, "background_tasks", ()) or ():

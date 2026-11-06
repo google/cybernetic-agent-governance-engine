@@ -110,10 +110,7 @@ def _make_hybrid_stubs() -> dict:
         # KMS + Seal
         "src.gateway.governance.kms_signer": mock_kms_mod,
         "src.gateway.governance.routing_seal": mock_seal_mod,
-        # Token quota + UCA
-        "src.gateway.governance.token_quota_proxy": MagicMock(
-            TokenQuotaProxy=MagicMock(from_env=MagicMock(return_value=MagicMock()))
-        ),
+        # UCA logger
         "src.gateway.governance.uca_logger": MagicMock(
             UCALogger=MagicMock(from_env=MagicMock(return_value=MagicMock())),
             _get_uca_logger=MagicMock(return_value=MagicMock()),
@@ -129,8 +126,6 @@ def _make_hybrid_stubs() -> dict:
         "src.gateway.infrastructure.config_manager": MagicMock(
             config_manager=MagicMock(get=MagicMock(return_value="http://vllm:8000/v1"))
         ),
-        # Agent registry (optional import)
-        "src.gateway.governance.ingress.agent_registry_adapter": None,
         # Normative provider (only used if != static)
         "src.gateway.governance.normative_provider": MagicMock(
             NormativeProviderDaemon=MagicMock(
