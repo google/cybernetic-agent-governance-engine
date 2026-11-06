@@ -165,3 +165,24 @@ def test_syntax_error_in_client_module_fails_closed(tmp_path: Path) -> None:
     errors = import_violations(package_dir, display_base=tmp_path)
     assert len(errors) == 1
     assert "failed to parse Python AST" in errors[0]
+
+
+def test_vacuous_import_or_module_corpus_floor_fails_closed(
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """Synced trees with 0 root imports or fewer modules than --min-modules fail closed."""
+    kernel_dir = tmp_path / KERNEL_REL
+    package_dir = tmp_path / PACKAGE_REL
+    for base in (kernel_dir, package_dir):
+        base.mkdir(parents=True)
+        (base / "__init__.py").write_text("X = 1\n", encoding="utf-8")
+
+    assert main(["--repo-root", str(tmp_path)]) == 1
+    captured = capsys.readouterr()
+    assert "recognized root imports" in captured.err
+
+    _seed_synced_repo(tmp_path)
+    assert main(["--repo-root", str(tmp_path), "--min-modules", "8"]) == 1
+    captured = capsys.readouterr()
+    assert "synced modules 4 < minimum expected 8" in captured.err

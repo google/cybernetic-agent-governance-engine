@@ -48,6 +48,8 @@ KERNEL_SRC = REPO_ROOT / KERNEL_REL
 PACKAGE_SRC = REPO_ROOT / PACKAGE_REL
 
 FORBIDDEN_ROOTS: frozenset[str] = frozenset({"src", "proof"})
+MIN_EXPECTED_REPO_MODULES = 8
+MIN_EXPECTED_REPO_IMPORTS = 10
 
 
 def _sha256(path: Path) -> str:
@@ -123,17 +125,18 @@ def _extract_root_imports(tree: ast.AST) -> list[tuple[int, str]]:
     return found
 
 
-def import_violations(
+def import_violations_with_stats(
     package_src: Path = PACKAGE_SRC,
     *,
     display_base: Path | None = None,
-) -> list[str]:
-    """Return violations for any ``.py`` module importing ``src`` or ``proof``."""
+) -> tuple[list[str], int]:
+    """Return ``(violations, recognized_import_count)`` for ``package_src``."""
     if not package_src.is_dir():
-        return [f"{package_src} does not exist"]
+        return [f"{package_src} does not exist"], 0
 
     base = display_base if display_base is not None else package_src.parent
     errors: list[str] = []
+    import_count = 0
     for rel_path, full_path in collect_py_files(package_src).items():
         disp = (
             full_path.relative_to(base) if full_path.is_relative_to(base) else rel_path
@@ -145,9 +148,21 @@ def import_violations(
             errors.append(f"{disp}: failed to parse Python AST: {exc}")
             continue
 
-        for lineno, mod_name in _extract_root_imports(tree):
+        extracted = _extract_root_imports(tree)
+        import_count += len(extracted)
+        for lineno, mod_name in extracted:
             if mod_name.split(".")[0] in FORBIDDEN_ROOTS:
                 errors.append(f"{disp}:{lineno}: imports {mod_name!r}")
+    return errors, import_count
+
+
+def import_violations(
+    package_src: Path = PACKAGE_SRC,
+    *,
+    display_base: Path | None = None,
+) -> list[str]:
+    """Return violations for any ``.py`` module importing ``src`` or ``proof``."""
+    errors, _ = import_violations_with_stats(package_src, display_base=display_base)
     return errors
 
 
@@ -162,7 +177,7 @@ def _build_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--repo-root",
         type=Path,
-        default=REPO_ROOT,
+        default=None,
         help="Repository root directory (defaults to parent of scripts/).",
     )
     parser.add_argument(
@@ -170,27 +185,65 @@ def _build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="Print verified module list and SHA-256 digests.",
     )
+    parser.add_argument(
+        "--min-modules",
+        type=int,
+        default=None,
+        help="Minimum synced Python modules expected in each client tree.",
+    )
+    parser.add_argument(
+        "--min-imports",
+        type=int,
+        default=None,
+        help="Minimum top-level imports expected across each client tree.",
+    )
     return parser
 
 
 def main(argv: Sequence[str] | None = None) -> int:
     args = _build_parser().parse_args(argv)
-    repo_root = args.repo_root.resolve()
+    repo_root = (args.repo_root if args.repo_root is not None else REPO_ROOT).resolve()
+    is_live_repo = repo_root == REPO_ROOT.resolve()
+    min_modules = (
+        args.min_modules
+        if args.min_modules is not None
+        else (MIN_EXPECTED_REPO_MODULES if is_live_repo else 1)
+    )
+    min_imports = (
+        args.min_imports
+        if args.min_imports is not None
+        else (MIN_EXPECTED_REPO_IMPORTS if is_live_repo else 1)
+    )
+
     kernel_dir = repo_root / KERNEL_REL
     package_dir = repo_root / PACKAGE_REL
 
-    errors = (
-        sync_violations(repo_root)
-        + import_violations(package_dir, display_base=repo_root)
-        + import_violations(kernel_dir, display_base=repo_root)
+    pkg_import_errors, pkg_imports = import_violations_with_stats(
+        package_dir, display_base=repo_root
     )
+    kern_import_errors, kern_imports = import_violations_with_stats(
+        kernel_dir, display_base=repo_root
+    )
+    errors = sync_violations(repo_root) + pkg_import_errors + kern_import_errors
+
+    if not errors and kernel_dir.is_dir() and package_dir.is_dir():
+        kernel_count = len(collect_py_files(kernel_dir))
+        if kernel_count < min_modules:
+            errors.append(
+                f"vacuous/blind corpus floor failure: synced modules {kernel_count} < minimum expected {min_modules}"
+            )
+        if pkg_imports < min_imports or kern_imports < min_imports:
+            errors.append(
+                f"vacuous/blind corpus floor failure: recognized root imports "
+                f"(kernel={kern_imports}, package={pkg_imports}) < minimum expected {min_imports}"
+            )
 
     if args.verbose and kernel_dir.is_dir() and package_dir.is_dir():
         kernel_files = collect_py_files(kernel_dir)
         package_files = collect_py_files(package_dir)
         print(
             f"Scanning client SDK trees: {len(kernel_files)} module(s) in {KERNEL_REL}, "
-            f"{len(package_files)} module(s) in {PACKAGE_REL}..."
+            f"{len(package_files)} module(s) in {PACKAGE_REL} ({pkg_imports} root imports)..."
         )
         if not errors:
             for rel_path, full_path in kernel_files.items():
@@ -204,7 +257,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     module_count = len(collect_py_files(kernel_dir))
     print(
         f"✅ cage-client sync: {module_count} Python modules byte-identical, "
-        "no src/ or proof/ imports"
+        f"{pkg_imports} root imports verified, no src/ or proof/ imports"
     )
     return 0
 
