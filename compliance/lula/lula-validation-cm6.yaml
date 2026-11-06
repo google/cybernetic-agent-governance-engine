@@ -50,16 +50,16 @@ component-definition:
     last-modified: '2026-07-01T13:18:54Z'
     version: 1.0.0
     oscal-version: 1.1.2
-    remarks: 'Auto-converted from standalone lula validation format.
-
+    remarks: |-
+      Auto-converted from standalone lula validation format.
       Region: US_FED. Posture: nist-sp800-53.
-
-      Notes: NIST SP 800-53 Rev 5 CM-6: Configuration Settings. Namespace: governance-stack (confirmed from live cluster deployment snapshot). Automated verification that the governance thresholds are deployed as a Kubernetes ConfigMap, ensuring the baseline security configuration is active and cluster-immutable (vs. local file edits). The governance thresholds (config/governance_thresholds.json) define the fiscal and risk limits enforced by OPA. The NeMo Guardrails configuration is no longer asserted: NeMo rails are opt-in, and their standalone server is off by default (W6). No manifest in this repository creates the thresholds ConfigMap, so this validation cannot pass as written (POAM-2026-151). This validation also addresses the CM-6/SI-7 POAM items flagged in docs/NIST_RMF_CHUNK1_CURRENT_STATE.md regarding deprecated Rego stub confusion. See: compliance/continuous-monitoring/ISCM_STRATEGY.md — CM-6 monitoring cadence. See: docs/POAM.md — CM-6 POAM remediation item.'
+      Notes: NIST SP 800-53 Rev 5 CM-6: Configuration Settings. Namespace: governance-stack (confirmed from live cluster deployment snapshot). Automated verification that the governance thresholds are deployed as a Kubernetes ConfigMap, ensuring the baseline security configuration is active and cluster-immutable (vs. local file edits). The governance thresholds (config/governance_thresholds.json) define the fiscal and risk limits enforced by OPA. The NeMo Guardrails configuration is no longer asserted: NeMo rails are opt-in, and their standalone server is off by default (W6). No manifest in this repository creates the thresholds ConfigMap, so this validation cannot pass as written (POAM-2026-151). This validation also addresses the CM-6/SI-7 POAM items flagged in docs/NIST_RMF_CHUNK1_CURRENT_STATE.md regarding deprecated Rego stub confusion. See: compliance/continuous-monitoring/ISCM_STRATEGY.md — CM-6 monitoring cadence. See: docs/POAM.md — CM-6 POAM remediation item.
   components:
   - uuid: d5fa035a-4fb3-5485-88a4-347630f5fe50
     type: software
     title: CAGE Cybernetic Governance Engine
-    description: The Cybernetic AI Governance Engine (CAGE) — AI governance gateway, compliance bridge, and governed financial advisor.
+    description: The Cybernetic AI Governance Engine (CAGE) — AI governance gateway, compliance bridge, and governed financial
+      advisor.
     control-implementations:
     - uuid: 9dec443c-138b-578d-9255-d6f67fc95c5b
       source: https://csrc.nist.gov/publications/detail/sp/800-53/rev-5/final
@@ -77,4 +77,38 @@ component-definition:
       title: Lula Validation — CM6
       rlinks:
       - href: lula.dev
-      description: "domain:\n  type: kubernetes\n  kubernetes-spec:\n    resources:\n    - name: governance-thresholds-config\n      resource: configmaps\n      namespace: governance-stack\nprovider:\n  type: opa\n  opa-spec:\n    rego: \"package lula\\n\\nimport future.keywords.if\\n\\n# CM-6: Configuration Settings\\n# Verifies that the governance thresholds ConfigMap is present in the\\n# cluster, confirming that the baseline configuration settings are deployed\\n# and available to the governed services. The NeMo Guardrails ConfigMap is not\\n# asserted: NeMo rails are opt-in and their standalone server is off by\\n# default (W6).\\n# CM-6 requires that configuration settings are documented, applied, and\\n# monitored for unauthorized changes.\\nvalidate if {\\n  input[\\\"governance-thresholds-config\\\"].metadata.name != null\\n}\\n\"\n"
+      description: |
+        domain:
+          type: kubernetes
+          kubernetes-spec:
+            resources:
+              - name: governance-thresholds-config
+                resource-rule:
+                  group: ""
+                  version: v1
+                  resource: configmaps
+                  namespaces:
+                    - governance-stack
+        provider:
+          type: opa
+          opa-spec:
+            rego: |
+              package lula
+
+              import future.keywords.if
+              import future.keywords.in
+
+              # CM-6: Configuration Settings
+              # Verifies that the governance thresholds ConfigMap (or in-state cage-deployment
+              # configuration) is present in governance-stack. The NeMo Guardrails ConfigMap
+              # is not asserted (opt-in under W6).
+              config_present if {
+                some cm in input["governance-thresholds-config"]
+                cm.metadata.name in {"governance-thresholds-config", "cage-deployment"}
+                count(cm.data) > 0
+              }
+
+              validate if {
+                count(input["governance-thresholds-config"]) > 0
+                config_present
+              }

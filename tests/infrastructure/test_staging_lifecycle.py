@@ -42,6 +42,7 @@ def _setup_fake_repo(
     kubectl_wait_rc: int = 0,
     ready_replicas: str = "1",
     lula_rc: int = 0,
+    lula_state: str = "satisfied",
     pytest_rc: int = 0,
     surviving_bucket: str = "",
 ) -> tuple[Path, Path, Path]:
@@ -134,6 +135,32 @@ exit 0
         bin_dir / "lula",
         f"""#!/usr/bin/env bash
 echo "lula $*" >> "{log_file}"
+out_file=""
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    -o|--output-file)
+      out_file="$2"
+      shift 2
+      ;;
+    *)
+      shift
+      ;;
+  esac
+done
+if [[ -n "$out_file" ]]; then
+  cat <<EOF > "$out_file"
+assessment-results:
+  results:
+    - findings:
+        - target:
+            status:
+              state: {lula_state}
+      observations:
+        - uuid: 00000000-0000-4000-8000-000000000001
+          relevant-evidence:
+            - description: "Result: {lula_state}"
+EOF
+fi
 exit {lula_rc}
 """,
     )
@@ -310,3 +337,58 @@ def test_staging_lifecycle_fresh_project_fails_on_surviving_workload_bucket(
     )
     assert proc.returncode != 0
     assert "Surviving workload GCS bucket(s) after destroy" in proc.stderr
+
+
+def test_staging_lifecycle_fails_closed_when_lula_exits_zero_with_not_satisfied(
+    tmp_path: Path,
+) -> None:
+    repo, bin_dir, log_file = _setup_fake_repo(
+        tmp_path, lula_rc=0, lula_state="not-satisfied"
+    )
+    env = {
+        **os.environ,
+        "PATH": f"{bin_dir}:{os.environ.get('PATH', '')}",
+        "GOOGLE_CLOUD_PROJECT": "demo-staging-proj",
+    }
+    proc = subprocess.run(
+        ["bash", str(repo / "scripts" / "staging_lifecycle.sh")],
+        env=env,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert proc.returncode != 0
+    assert "not-satisfied" in proc.stderr
+    calls = log_file.read_text(encoding="utf-8")
+    assert "destroy -var-file=staging.tfvars" in calls
+
+
+def test_staging_lifecycle_skips_api_and_planned_lula_specs_on_host(
+    tmp_path: Path,
+) -> None:
+    repo, bin_dir, log_file = _setup_fake_repo(tmp_path)
+    (repo / "compliance" / "lula" / "lula-validation-api.yaml").write_text(
+        "  type: api\n  url: http://compliance-bridge.governance-stack.svc.cluster.local/v1/metrics/A.5.2\n",
+        encoding="utf-8",
+    )
+    (repo / "compliance" / "lula" / "lula-validation-ra5.yaml").write_text(
+        "# cage-status: planned\n  type: kubernetes\n",
+        encoding="utf-8",
+    )
+    env = {
+        **os.environ,
+        "PATH": f"{bin_dir}:{os.environ.get('PATH', '')}",
+        "GOOGLE_CLOUD_PROJECT": "demo-staging-proj",
+    }
+    proc = subprocess.run(
+        ["bash", str(repo / "scripts" / "staging_lifecycle.sh")],
+        env=env,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert proc.returncode == 0, proc.stderr
+    calls = log_file.read_text(encoding="utf-8")
+    assert "lula-validation-sample.yaml" in calls
+    assert "lula-validation-api.yaml" not in calls
+    assert "lula-validation-ra5.yaml" not in calls

@@ -19,27 +19,30 @@ component-definition:
     last-modified: '2026-10-21T18:00:00Z'
     version: 1.1.0
     oscal-version: 1.1.2
-    remarks: "Auto-converted from standalone lula validation format.\nVerifies that the ServiceMonitor (stera-gateway-monitor) and GMP PodMonitoring (gateway-metrics) for the CAGE Gateway are deployed and select app=gateway on port metrics (/metrics)."
+    remarks: |-
+      Auto-converted from standalone lula validation format.
+      Verifies that the in-state GMP PodMonitoring (gateway-metrics, monitoring.googleapis.com/v1) for the CAGE Gateway is deployed via infra/modules/gateway/metrics-monitors and selects app=gateway on port metrics (/metrics).
   components:
   - uuid: 5c6ec14f-85af-5735-8a1b-dacc49e1abdc
     type: software
     title: CAGE Cybernetic Governance Engine
-    description: The Cybernetic AI Governance Engine (CAGE) — AI governance gateway, compliance bridge, and governed financial advisor.
+    description: The Cybernetic AI Governance Engine (CAGE) — AI governance gateway, compliance bridge, and governed financial
+      advisor.
     control-implementations:
     - uuid: 81af40e7-a7a8-570a-a320-3c4154bea03a
       source: https://csrc.nist.gov/publications/detail/sp/800-53/rev-5/final
-      description: 'Control implementation for metrics (AU-12).'
+      description: Control implementation for metrics (AU-12).
       implemented-requirements:
       - uuid: 67b3f09d-e367-5c5c-9876-82f5d837d78b
         control-id: au-12
-        description: Automated lula validation for Gateway Prometheus ServiceMonitor and GMP PodMonitoring scrape targets.
+        description: Automated lula validation for in-state Gateway GMP PodMonitoring (gateway-metrics) scrape target.
         links:
         - href: '#ab6f9b2e-f19d-54a8-bd5f-47f1fbed0a22'
           rel: lula
   back-matter:
     resources:
     - uuid: ab6f9b2e-f19d-54a8-bd5f-47f1fbed0a22
-      title: Lula Validation — ServiceMonitor & PodMonitoring
+      title: Lula Validation — GMP PodMonitoring
       rlinks:
       - href: lula.dev
       description: |
@@ -47,12 +50,13 @@ component-definition:
           type: kubernetes
           kubernetes-spec:
             resources:
-            - name: stera-gateway-monitor
-              resource: servicemonitors
-              namespace: governance-stack
-            - name: gateway-metrics
-              resource: podmonitorings
-              namespace: governance-stack
+              - name: gateway-metrics
+                resource-rule:
+                  group: monitoring.googleapis.com
+                  version: v1
+                  resource: podmonitorings
+                  namespaces:
+                    - governance-stack
         provider:
           type: opa
           opa-spec:
@@ -62,17 +66,8 @@ component-definition:
               import future.keywords.if
               import future.keywords.in
 
-              service_monitor_valid if {
-                sm := input["stera-gateway-monitor"]
-                sm.metadata.name == "stera-gateway-monitor"
-                sm.spec.selector.matchLabels.app == "gateway"
-                some ep in sm.spec.endpoints
-                ep.port == "metrics"
-                ep.path == "/metrics"
-              }
-
               pod_monitoring_valid if {
-                pm := input["gateway-metrics"]
+                some pm in input["gateway-metrics"]
                 pm.metadata.name == "gateway-metrics"
                 pm.spec.selector.matchLabels.app == "gateway"
                 some ep in pm.spec.endpoints
@@ -81,6 +76,6 @@ component-definition:
               }
 
               validate if {
-                service_monitor_valid
+                count(input["gateway-metrics"]) > 0
                 pod_monitoring_valid
               }

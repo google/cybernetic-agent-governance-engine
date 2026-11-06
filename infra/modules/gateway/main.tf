@@ -658,3 +658,27 @@ resource "helm_release" "mesh_policy" {
     trustedIdentities = var.trusted_client_identities
   })]
 }
+
+# ─── Prometheus / GMP Metrics Scrape Targets (R-6, F-91, NIST AU-12) ─────────
+# Installed via a local Helm chart (same pattern as mesh_policy) so Terraform
+# plans cleanly on fresh clusters before GKE installs monitoring.googleapis.com
+# CRDs, while keeping PodMonitoring/gateway-metrics (and optional
+# ServiceMonitor/stera-gateway-monitor) inside Terraform state across W.
+resource "helm_release" "metrics_monitors" {
+  count = var.enable_pod_monitoring || var.enable_service_monitor ? 1 : 0
+
+  name      = "gateway-metrics-monitors"
+  chart     = "${path.module}/metrics-monitors"
+  namespace = var.namespace
+
+  values = [yamlencode({
+    podMonitoring = {
+      enabled = var.enable_pod_monitoring
+    }
+    serviceMonitor = {
+      enabled = var.enable_service_monitor
+    }
+  })]
+
+  depends_on = [kubernetes_service.gateway]
+}

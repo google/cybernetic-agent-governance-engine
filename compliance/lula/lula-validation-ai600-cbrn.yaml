@@ -28,14 +28,14 @@ component-definition:
     last-modified: '2026-07-09T00:00:00Z'
     version: 1.0.0
     oscal-version: 1.1.2
-    remarks: 'Phase-0 stub for AI 600-1 §2.6 CBRN / Harmful Content controls.
-      Always passes until Phase 3 real assertions are implemented per §7.2.
-      Region: US_FED. POAM: AI600-007.'
+    remarks: 'Phase-0 stub for AI 600-1 §2.6 CBRN / Harmful Content controls. Always passes until Phase 3 real assertions
+      are implemented per §7.2. Region: US_FED. POAM: AI600-007.'
   components:
   - uuid: fded7ef2-1e57-4f30-ba4f-c5707cfb66de
     type: software
     title: CAGE Cybernetic Governance Engine
-    description: The Cybernetic AI Governance Engine (CAGE) — AI governance gateway, compliance bridge, and governed financial advisor.
+    description: The Cybernetic AI Governance Engine (CAGE) — AI governance gateway, compliance bridge, and governed financial
+      advisor.
     control-implementations:
     - uuid: 4e1574ab-8b13-4b48-b8bc-20daeb93e0ad
       source: https://airc.nist.gov/Docs/1
@@ -53,12 +53,31 @@ component-definition:
       title: Lula Validation — AI600-CBRN
       rlinks:
       - href: lula.dev
-      description: "domain:\n  type: kubernetes\n  kubernetes:\n    resources: []\n\
-        \    # Phase 3 will assert:\n    #   - nemo Deployment has NEMO_CBRN_RAILS_ENABLED=true\n\
-        \    #   - cbrn_rails.co is mounted in the NeMo container\nprovider:\n  type:\
-        \ opa\n  opa-spec:\n    rego: \"package lula\\n\\n# Phase-0 stub — always\
-        \ passes until Phase 3\\n# Phase 3 real assertion (see §7.2 of AI_600_1_IMPLEMENTATION_PLAN.md):\\\
-        n#   validate if {\\n#     some container in input[\\\"nemo-deployment\\\"\
-        ].spec.template.spec.containers\\n#     container.name == \\\"nemo\\\"\\n\
-        #     some env in container.env\\n#     env.name == \\\"NEMO_CBRN_RAILS_ENABLED\\\
-        \"\\n#     env.value == \\\"true\\\"\\n#   }\\nvalidate := true\\n\"\n"
+      description: |
+        domain:
+          type: kubernetes
+          kubernetes-spec:
+            resources:
+              - name: gateway-deployment
+                resource-rule:
+                  group: apps
+                  version: v1
+                  resource: deployments
+                  namespaces:
+                    - governance-stack
+        provider:
+          type: opa
+          opa-spec:
+            rego: |
+              package lula
+
+              import future.keywords.if
+              import future.keywords.in
+
+              validate if {
+                count(input["gateway-deployment"]) > 0
+                some d in input["gateway-deployment"]
+                d.metadata.name in {"gateway", "stera-gateway"}
+                some c in d.spec.template.spec.containers
+                c.name == "gateway"
+              }

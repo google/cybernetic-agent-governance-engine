@@ -39,12 +39,20 @@ component-definition:
     last-modified: '2026-07-01T13:18:54Z'
     version: 1.0.0
     oscal-version: 1.1.2
-    remarks: "Auto-converted from standalone lula validation format.\nRegion: US_FED. Posture: nist-sp800-53.\nNotes: NIST SP 800-53 Rev 5 IR-6: Incident Reporting. Namespace: governance-stack (confirmed from live cluster deployment snapshot). Automated verification that the compliance-bridge incident reporting service is live and operational. The compliance-bridge (src/compliance_bridge/) provides:\n  - Real-time Slack/PagerDuty alerting via notifier.py\n  - Compliance audit workflow with critical-failure alerting via audit_workflow.py\n  - The /v1/metrics/* API endpoints consumed by other Lula validations\nIR-6 requires that security incidents be reported to appropriate organizational officials and external authorities within defined timeframes — the compliance-bridge is the automated first-responder for this requirement. See: compliance/continuous-monitoring/ISCM_STRATEGY.md — IR-6 monitoring cadence. See: docs/ROLES_AND_RESPONSIBILITIES.md — ISSO/ISSM incident response chain."
+    remarks: |-
+      Auto-converted from standalone lula validation format.
+      Region: US_FED. Posture: nist-sp800-53.
+      Notes: NIST SP 800-53 Rev 5 IR-6: Incident Reporting. Namespace: governance-stack (confirmed from live cluster deployment snapshot). Automated verification that the compliance-bridge incident reporting service is live and operational. The compliance-bridge (src/compliance_bridge/) provides:
+        - Real-time Slack/PagerDuty alerting via notifier.py
+        - Compliance audit workflow with critical-failure alerting via audit_workflow.py
+        - The /v1/metrics/* API endpoints consumed by other Lula validations
+      IR-6 requires that security incidents be reported to appropriate organizational officials and external authorities within defined timeframes — the compliance-bridge is the automated first-responder for this requirement. See: compliance/continuous-monitoring/ISCM_STRATEGY.md — IR-6 monitoring cadence. See: docs/ROLES_AND_RESPONSIBILITIES.md — ISSO/ISSM incident response chain.
   components:
   - uuid: cd3eece5-1330-586c-9103-aa82e530c38f
     type: software
     title: CAGE Cybernetic Governance Engine
-    description: The Cybernetic AI Governance Engine (CAGE) — AI governance gateway, compliance bridge, and governed financial advisor.
+    description: The Cybernetic AI Governance Engine (CAGE) — AI governance gateway, compliance bridge, and governed financial
+      advisor.
     control-implementations:
     - uuid: 92301774-6531-538c-ac3f-5509744b1aa0
       source: https://csrc.nist.gov/publications/detail/sp/800-53/rev-5/final
@@ -62,4 +70,31 @@ component-definition:
       title: Lula Validation — IR6
       rlinks:
       - href: lula.dev
-      description: "domain:\n  type: kubernetes\n  kubernetes-spec:\n    resources:\n    - name: compliance-bridge-deployment\n      resource: deployments\n      namespace: governance-stack\nprovider:\n  type: opa\n  opa-spec:\n    rego: \"package lula\\n\\nimport future.keywords.if\\n\\n# IR-6: Incident Reporting\\n# Verifies the compliance-bridge Deployment is present and has at least 1\\n# ready replica, confirming the incident reporting and notification\\n# infrastructure is operational.\\n# The compliance-bridge dispatches Slack/PagerDuty alerts on:\\n#   - Critical ISO 42001 compliance failures (A.9.2 PII leak, SC-4 OPA down)\\n#   - Governance threshold violations above MANUAL_REVIEW threshold\\n#   - Audit workflow failures requiring ISSO/ISSM notification\\nvalidate if {\\n  input[\\\"compliance-bridge-deployment\\\"].status.readyReplicas >= 1\\n}\\n\"\n"
+      description: |
+        domain:
+          type: kubernetes
+          kubernetes-spec:
+            resources:
+              - name: compliance-bridge-deployment
+                resource-rule:
+                  group: apps
+                  version: v1
+                  resource: deployments
+                  namespaces:
+                    - governance-stack
+        provider:
+          type: opa
+          opa-spec:
+            rego: |
+              package lula
+
+              import future.keywords.if
+              import future.keywords.in
+
+              # IR-6: Incident Reporting
+              validate if {
+                count(input["compliance-bridge-deployment"]) > 0
+                some deploy in input["compliance-bridge-deployment"]
+                deploy.metadata.name == "compliance-bridge"
+                deploy.status.readyReplicas >= 1
+              }

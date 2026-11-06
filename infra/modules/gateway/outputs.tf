@@ -21,3 +21,8 @@ output "deployment_name" {
   description = "The name of the Gateway deployment"
   value       = kubernetes_deployment.gateway.metadata[0].name
 }
+
+output "metrics_monitors_release_name" {
+  description = "Helm release name managing PodMonitoring/gateway-metrics and optional ServiceMonitor (R-6, F-91)."
+  value       = length(helm_release.metrics_monitors) > 0 ? helm_release.metrics_monitors[0].name : ""
+}

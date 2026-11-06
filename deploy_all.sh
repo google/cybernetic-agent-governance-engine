@@ -520,7 +520,8 @@ deploy_terraform_target() {
       # local.required_image_digests in infra/targets/gcp-gke/main.tf; a
       # mismatch fails closed at plan time (var.image_digests validation).
       local _images="gateway agentsight-ui"
-      if [[ "$(_effective_tf_var enable_compliance_bridge "${tf_args[@]}")" == "true" &&
+      if [[ ( "$(_effective_tf_var enable_compliance_bridge "${tf_args[@]}")" == "true" ||
+              "$(_effective_tf_var enable_reconciliation_worker "${tf_args[@]}")" == "true" ) &&
             -z "$(_effective_tf_var compliance_bridge_image "${tf_args[@]}")" ]]; then
         _images+=" compliance-bridge"
       fi

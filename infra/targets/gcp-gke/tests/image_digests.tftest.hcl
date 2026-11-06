@@ -163,12 +163,38 @@ run "nemo_requires_its_server_and_presidio_images" {
 run "no_bridge_needs_no_bridge_image" {
   command = plan
   variables {
-    enable_compliance_bridge = false
-    image_digests            = { for k, v in var.core : k => v if k != "compliance-bridge" }
+    enable_compliance_bridge     = false
+    enable_reconciliation_worker = false
+    image_digests                = { for k, v in var.core : k => v if k != "compliance-bridge" }
   }
   assert {
     condition     = !contains(local.required_image_digests, "compliance-bridge")
-    error_message = "with the compliance bridge off, its image must not be required"
+    error_message = "with both compliance bridge and reconciliation worker off, compliance-bridge must not be required"
+  }
+}
+
+run "reconciler_without_bridge_still_requires_the_bridge_image" {
+  command = plan
+  variables {
+    enable_compliance_bridge     = false
+    enable_reconciliation_worker = true
+    image_digests                = { for k, v in var.core : k => v if k != "compliance-bridge" }
+  }
+  expect_failures = [var.image_digests]
+}
+
+run "staging_plans_pod_monitoring_and_reconciliation_worker_in_state" {
+  command = plan
+  variables {
+    image_digests = var.core
+  }
+  assert {
+    condition     = length(module.gateway.metrics_monitors_release_name) > 0 && module.gateway.metrics_monitors_release_name == "gateway-metrics-monitors"
+    error_message = "R-6 (F-91): GKE gateway module must plan PodMonitoring/gateway-metrics in Terraform state"
+  }
+  assert {
+    condition     = length(module.reconciliation_worker) == 1 && kubernetes_service_account.workload["reconciler"].metadata[0].name == "cage-reconciler-sa"
+    error_message = "POAM-2026-096 (F-86): GKE target must plan module.reconciliation_worker and ServiceAccount/cage-reconciler-sa in Terraform state"
   }
 }
 
