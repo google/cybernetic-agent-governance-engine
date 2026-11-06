@@ -238,6 +238,28 @@ def _create_blocked_response(reason: str) -> dict[str, Any]:
     }
 
 
+def _message_text(content: Any) -> str:
+    """The text of a chat message ``content``, in every shape the backend accepts.
+
+    OpenAI-compatible backends take ``content`` as a string or as a list of
+    content parts (``[{"type": "text", "text": "..."}]``). Every part that
+    carries text is included, so the ingress scans see what the model sees.
+    """
+    if content is None:
+        return ""
+    if isinstance(content, str):
+        return content
+    if isinstance(content, list):
+        texts: list[str] = []
+        for part in content:
+            if isinstance(part, str):
+                texts.append(part)
+            elif isinstance(part, dict) and isinstance(part.get("text"), str):
+                texts.append(part["text"])
+        return " ".join(texts)
+    return json.dumps(content, default=str)
+
+
 async def _mask_output(rails: Any, text: str) -> str:
     """Mask *text* before it leaves the proxy.
 
@@ -310,9 +332,7 @@ async def chat_completions(
         # Attach GenAI tracking
         if span.is_recording():
             safe_messages = [
-                {**m, "content": scrub_pii(m.get("content", ""))}
-                if isinstance(m.get("content"), str)
-                else m
+                {**m, "content": scrub_pii(_message_text(m.get("content")))}
                 for m in messages
             ]
             span.set_attribute("gen_ai.operation.name", "chat")
@@ -329,19 +349,18 @@ async def chat_completions(
         # system-only, assistant-only, and mixed message sets are all governed.
         last_user_msg = next(
             (
-                m.get("content", "")
+                _message_text(m.get("content"))
                 for m in reversed(messages)
-                if m.get("role") == "user" and m.get("content")
+                if m.get("role") == "user" and _message_text(m.get("content"))
             ),
             "",
         )
 
         # Build a combined text representation of ALL messages for Ingress Stage 1 scan.
         # This prevents system-only or assistant-only requests from bypassing
-        # the keyword filter (GHSA-hfqj-24cj-693g).
-        all_messages_text = " ".join(
-            m.get("content", "") for m in messages if isinstance(m.get("content"), str)
-        )
+        # the keyword filter (GHSA-hfqj-24cj-693g), and content sent as a list
+        # of parts is scanned as the text it carries.
+        all_messages_text = " ".join(_message_text(m.get("content")) for m in messages)
 
         # 1. Ingress Stage 1 keyword scan — applied to ALL messages, not just user role.
         if ac_keyword_scan(all_messages_text):
