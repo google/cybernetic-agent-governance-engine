@@ -215,6 +215,8 @@ line-length = 88
 target-version = "py310"
 exclude = [
     "src/gateway/governance/vendor",
+    "src/gateway/client/_jcs",
+    "packages/cage-client/src/cage_client/_jcs",
     ".github/",
 ]
 
@@ -294,6 +296,8 @@ exclude = [
     "src/gateway/protos/",
     "src/agentsight-ui/gateway_protos/",
     "src/gateway/governance/vendor/",
+    "src/gateway/client/_jcs/",
+    "packages/cage-client/src/cage_client/_jcs/",
 ]
 
 [[tool.mypy.overrides]]

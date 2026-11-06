@@ -198,12 +198,12 @@ The policy-enforcement-point client is shipped as a standalone, independently in
 | --------- | ----- |
 | **Distribution name** | `cage-client` v0.2.0 (Apache-2.0) |
 | **Source root** | [`packages/cage-client/src/cage_client/`](../../packages/cage-client/src/cage_client) |
-| **Runtime dependencies** | `httpx>=0.27.0`, `pydantic>=2.0.0` — two packages only |
+| **Runtime dependencies** | `httpx>=0.27.0`, `pydantic>=2.0.0`, `cryptography>=41.0.0` — three packages only |
 | **Optional extras** | `langgraph` (`langgraph`, `langchain-core`), `http2` (`h2`), `all` |
 | **Python floor** | $\ge 3.10$ |
 | **Build command** | `make build-client-sdk` (`cd packages/cage-client && uv build`) |
 
-Modules, all rooted at [`packages/cage-client/src/cage_client/`](../../packages/cage-client/src/cage_client): `core.py` exposes `CageClient.validate_action()`; `transport.py` and `envelope.py` carry the wire layer; `crypto.py` generates W3C `traceparent` headers (`generate_w3c_traceparent()`); `exceptions.py` defines `PolicyViolationException`, `DeferralPending`, `RoutingSealVerificationError` and the `CageGatewayError` base; and the `adapters` subpackage provides the `@cage_guard` LangGraph decorator.
+Modules, all rooted at [`packages/cage-client/src/cage_client/`](../../packages/cage-client/src/cage_client): `core.py` exposes `CageClient.validate_action()` and `enforce_verification_posture()`; `transport.py` and `envelope.py` carry the wire layer; `jwks.py` (`JwksKeyResolver`) resolves signing keys out-of-band by `kid` from `GET /governance/.well-known/jwks.json`; `crypto.py` verifies asymmetric envelope signatures, computes RFC 8785 `subject.action_hash` bindings (`compute_expected_action_hash()`), and generates W3C `traceparent` headers (`generate_w3c_traceparent()`); `_jcs/` provides pure-stdlib RFC 8785 JSON canonicalization; `exceptions.py` defines `PolicyViolationException`, `DeferralPending`, `RoutingSealVerificationError` and the `CageGatewayError` base; and the `adapters` subpackage provides the `@cage_guard` LangGraph decorator.
 
 > [!NOTE]
 > An in-tree mirror of the same client lives at [`src/gateway/client/`](../../src/gateway/client) and is what the reference advisor imports (`from src.gateway.client.adapters.langgraph import cage_guard`). Both trees are 1-to-1 byte-identical and enforced in CI by [`scripts/check_client_sdk_sync.py`](../../scripts/check_client_sdk_sync.py); `packages/cage-client/` is the published artifact.

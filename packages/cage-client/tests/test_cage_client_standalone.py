@@ -13,19 +13,29 @@
 # limitations under the License.
 
 """
-Standalone unit test suite for cage-client SDK subpackage.
+Standalone unit and cryptographic verification test suite for cage-client SDK subpackage.
 """
 
 from __future__ import annotations
 
 import asyncio
+import base64
 import sys
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
 
 import httpx
 import pytest
 import tomllib
+from cryptography.hazmat.primitives import hashes, serialization
+from cryptography.hazmat.primitives.asymmetric import (
+    ec,
+    ed25519,
+    padding,
+    rsa,
+    utils,
+)
 
 pytestmark = [pytest.mark.unit, pytest.mark.local]
 
@@ -41,16 +51,186 @@ from cage_client import (
     CageGatewayError,
     DeferralPending,
     GovernanceEnvelope,
+    JwksKeyResolver,
     PolicyViolationException,
     RoutingSealVerificationError,
     cage_guard,
+    compute_expected_action_hash,
+    enforce_verification_posture,
     generate_w3c_traceparent,
 )
+from cage_client._jcs import canonicalize
 from cage_client.transport import create_mtls_transport
 
 
+def _b64u(data: bytes) -> str:
+    return base64.urlsafe_b64encode(data).rstrip(b"=").decode("ascii")
+
+
+def _make_ec_keypair(
+    kid: str = "ec-key-01",
+    curve: ec.EllipticCurve = ec.SECP256R1(),
+    crv_name: str = "P-256",
+    alg: str = "ES256",
+) -> tuple[ec.EllipticCurvePrivateKey, bytes, dict[str, Any]]:
+    priv = ec.generate_private_key(curve)
+    pub = priv.public_key()
+    pem = pub.public_bytes(
+        serialization.Encoding.PEM,
+        serialization.PublicFormat.SubjectPublicKeyInfo,
+    )
+    coord_len = (curve.key_size + 7) // 8
+    nums = pub.public_numbers()
+    jwk = {
+        "kty": "EC",
+        "crv": crv_name,
+        "kid": kid,
+        "use": "sig",
+        "alg": alg,
+        "x": _b64u(nums.x.to_bytes(coord_len, "big")),
+        "y": _b64u(nums.y.to_bytes(coord_len, "big")),
+    }
+    return priv, pem, jwk
+
+
+def _make_ed25519_keypair(
+    kid: str = "ed-key-01",
+) -> tuple[ed25519.Ed25519PrivateKey, bytes, dict[str, Any]]:
+    priv = ed25519.Ed25519PrivateKey.generate()
+    pub = priv.public_key()
+    pem = pub.public_bytes(
+        serialization.Encoding.PEM,
+        serialization.PublicFormat.SubjectPublicKeyInfo,
+    )
+    raw = pub.public_bytes(
+        serialization.Encoding.Raw,
+        serialization.PublicFormat.Raw,
+    )
+    jwk = {
+        "kty": "OKP",
+        "crv": "Ed25519",
+        "kid": kid,
+        "use": "sig",
+        "alg": "EdDSA",
+        "x": _b64u(raw),
+    }
+    return priv, pem, jwk
+
+
+def _make_rsa_keypair(
+    kid: str = "rsa-key-01",
+    alg: str = "RS256",
+) -> tuple[rsa.RSAPrivateKey, bytes, dict[str, Any]]:
+    priv = rsa.generate_private_key(public_exponent=65537, key_size=2048)
+    pub = priv.public_key()
+    pem = pub.public_bytes(
+        serialization.Encoding.PEM,
+        serialization.PublicFormat.SubjectPublicKeyInfo,
+    )
+    nums = pub.public_numbers()
+    n_len = (nums.n.bit_length() + 7) // 8
+    e_len = (nums.e.bit_length() + 7) // 8
+    jwk = {
+        "kty": "RSA",
+        "kid": kid,
+        "use": "sig",
+        "alg": alg,
+        "n": _b64u(nums.n.to_bytes(n_len, "big")),
+        "e": _b64u(nums.e.to_bytes(e_len, "big")),
+    }
+    return priv, pem, jwk
+
+
+def _sign_envelope_dict(
+    unsigned_env: dict[str, Any],
+    *,
+    priv_key: Any,
+    kid: str,
+    algorithm: str,
+    ec_p1363: bool = False,
+) -> dict[str, Any]:
+    env_copy = {k: v for k, v in unsigned_env.items() if k != "signature"}
+    canon = canonicalize(env_copy)
+    if isinstance(priv_key, ec.EllipticCurvePrivateKey):
+        hash_alg = {
+            "ES384": hashes.SHA384(),
+            "ES512": hashes.SHA512(),
+        }.get(algorithm.upper(), hashes.SHA256())
+        der_sig = priv_key.sign(canon, ec.ECDSA(hash_alg))
+        if ec_p1363:
+            r, s = utils.decode_dss_signature(der_sig)
+            coord_len = (priv_key.curve.key_size + 7) // 8
+            sig_bytes = r.to_bytes(coord_len, "big") + s.to_bytes(coord_len, "big")
+        else:
+            sig_bytes = der_sig
+    elif isinstance(priv_key, ed25519.Ed25519PrivateKey):
+        sig_bytes = priv_key.sign(canon)
+    elif isinstance(priv_key, rsa.RSAPrivateKey):
+        if algorithm.upper().startswith("PS"):
+            sig_bytes = priv_key.sign(
+                canon,
+                padding.PSS(
+                    mgf=padding.MGF1(hashes.SHA256()),
+                    salt_length=padding.PSS.MAX_LENGTH,
+                ),
+                hashes.SHA256(),
+            )
+        else:
+            sig_bytes = priv_key.sign(canon, padding.PKCS1v15(), hashes.SHA256())
+    else:
+        raise TypeError(f"Unsupported key: {type(priv_key)}")
+
+    signed = dict(env_copy)
+    signed["signature"] = {
+        "algorithm": algorithm,
+        "kid": kid,
+        "value": _b64u(sig_bytes),
+    }
+    return signed
+
+
+def _build_unsigned_envelope(
+    *,
+    action: str = "query_resource",
+    parameters: dict[str, Any] | None = None,
+    issued_at: datetime | None = None,
+    expires_at: datetime | None = None,
+    **payload_overrides: Any,
+) -> dict[str, Any]:
+    now = datetime.now(timezone.utc)
+    iat = issued_at or (now - timedelta(seconds=5))
+    exp = expires_at or (now + timedelta(minutes=5))
+    params = parameters if parameters is not None else {"limit": 10}
+    payload: dict[str, Any] = {"verdict": "ALLOW"}
+    payload.update(payload_overrides)
+    return {
+        "envelope_version": "3.0",
+        "envelope_type": "cage_governance_decision",
+        "envelope_id": "env-standalone-001",
+        "issued_at": iat.isoformat(),
+        "expires_at": exp.isoformat(),
+        "issuer": {
+            "service": "cage-gateway",
+            "instance_id": "gw-001",
+            "region": "us-central1",
+        },
+        "subject": {
+            "action": action,
+            "action_hash": compute_expected_action_hash(action, params),
+            "record_hash": "rec-xyz-001",
+            "agent_id": "agent-01",
+        },
+        "governance_context": {
+            "policy_version": "1.0",
+            "tiers_passed": ["stpa", "opa"],
+        },
+        "payload": payload,
+        "external_attestations": [{"provider": "provider_01", "status": "VERIFIED"}],
+    }
+
+
 def _sample_top_level_envelope(**payload_overrides: Any) -> dict[str, Any]:
-    """Return a canonical v3.0 top-level GovernanceEnvelope dictionary."""
+    """Return a synthetic v3.0 top-level GovernanceEnvelope dictionary for schema tests."""
     payload: dict[str, Any] = {"verdict": "ALLOW"}
     payload.update(payload_overrides)
     return {
@@ -90,9 +270,19 @@ async def _run_with_mock_handler(
     action: str = "query_resource",
     parameters: dict[str, Any] | None = None,
     agent_id: str = "agent-01",
+    verify_signature: bool = False,
+    verify_expiration: bool = False,
+    verify_subject: bool = False,
+    **client_kwargs: Any,
 ) -> GovernanceEnvelope:
     """Execute CageClient.validate_action against an in-memory httpx.MockTransport."""
-    client = CageClient(gateway_url="https://cage-standalone.example.test")
+    client = CageClient(
+        gateway_url="https://cage-standalone.example.test",
+        verify_signature=verify_signature,
+        verify_expiration=verify_expiration,
+        verify_subject=verify_subject,
+        **client_kwargs,
+    )
     await client._client.aclose()
     client._client = httpx.AsyncClient(
         transport=httpx.MockTransport(handler),
@@ -113,10 +303,13 @@ def test_standalone_exports() -> None:
     assert cage_client.__version__ == "0.2.0"
     assert cage_client.CageClient is CageClient
     assert cage_client.GovernanceEnvelope is GovernanceEnvelope
+    assert cage_client.JwksKeyResolver is JwksKeyResolver
+    assert cage_client.JwksCache is JwksKeyResolver
     assert cage_client.cage_guard is cage_guard
+    assert cage_client.enforce_verification_posture is enforce_verification_posture
     assert issubclass(PolicyViolationException, CageGatewayError)
     assert issubclass(DeferralPending, CageGatewayError)
-    assert issubclass(RoutingSealVerificationError, Exception)
+    assert issubclass(RoutingSealVerificationError, CageGatewayError)
     assert "verify_routing_seal" not in cage_client.__all__
 
 
@@ -140,34 +333,35 @@ def test_w3c_traceparent_format() -> None:
     assert parts[3] == "01"
 
 
-def test_pyproject_drops_unused_cryptography_and_docs_state_unverified_signature() -> (
+def test_pyproject_declares_cryptography_and_docs_describe_envelope_verification() -> (
     None
 ):
-    """Verify cage-client declares no unused cryptography dep and documents unverified signatures."""
+    """Verify cage-client declares cryptography>=41.0.0 and documents fail-closed verification."""
     pyproject_data = tomllib.loads(
         (subpackage_root / "pyproject.toml").read_text(encoding="utf-8")
     )
+    assert pyproject_data["project"]["version"] == "0.2.0"
     runtime_deps = pyproject_data["project"]["dependencies"]
-    assert not any("cryptography" in dep.lower() for dep in runtime_deps), (
-        f"Unused cryptography dependency must not be declared in pyproject.toml: {runtime_deps}"
+    assert any(dep.startswith("cryptography>=41.0.0") for dep in runtime_deps), (
+        f"cryptography>=41.0.0 must be declared in pyproject.toml: {runtime_deps}"
     )
 
     envelope_doc = GovernanceEnvelope.__doc__ or ""
-    assert "does NOT verify" in envelope_doc
+    assert "RFC 8785" in envelope_doc
     assert "GovernanceEnvelope.signature" in envelope_doc
     assert "expires_at" in envelope_doc
     assert "does NOT substitute" in envelope_doc
 
     validate_doc = CageClient.validate_action.__doc__ or ""
-    assert "does NOT verify" in validate_doc
+    assert "JwksKeyResolver" in validate_doc
     assert "does NOT substitute" in validate_doc
 
     allow_doc = CageClient._handle_allow_response.__doc__ or ""
-    assert "does NOT verify" in allow_doc
+    assert "RoutingSealVerificationError" in allow_doc
     assert "does NOT substitute" in allow_doc
 
     readme_text = (subpackage_root / "README.md").read_text(encoding="utf-8")
-    assert "does NOT verify `GovernanceEnvelope.signature`" in readme_text
+    assert "JwksKeyResolver" in readme_text
     assert "does NOT substitute for end-to-end" in readme_text
 
 
@@ -184,10 +378,13 @@ def test_partial_mtls_cert_or_key_fails_closed() -> None:
         create_mtls_transport(cert_path=None, key_path="/nonexistent/key.pem")
 
 
-def test_standalone_top_level_allow_and_extra_fields_forbidden() -> None:
-    """Top-level ALLOW envelope with envelope_id/external_attestations parses; extra keys fail."""
+def test_standalone_top_level_allow_and_extra_fields_forbidden(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Dev/test opt-out parses unsigned envelope; extra schema keys fail closed."""
+    monkeypatch.setenv("CAGE_ENV", "test")
     env_dict = _sample_top_level_envelope()
-    del env_dict["signature"]  # Dev/test unsigned wire shape
+    del env_dict["signature"]
 
     envelope = asyncio.run(
         _run_with_mock_handler(lambda req: httpx.Response(200, json=env_dict))
@@ -206,9 +403,11 @@ def test_standalone_top_level_allow_and_extra_fields_forbidden() -> None:
         )
 
 
-def test_standalone_http_200_verdicts_mediated_fail_closed() -> None:
+def test_standalone_http_200_verdicts_mediated_fail_closed(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     """HTTP 200 NARROW, DENY, REQUIRE_APPROVAL, DEFER, and unknown verdicts mediate fail-closed (#484)."""
-    # 1. NARROW -> PolicyViolationException(NARROWED)
+    monkeypatch.setenv("CAGE_ENV", "test")
     narrow_env = _sample_top_level_envelope(
         verdict="NARROW",
         narrowed_params={"limit": 5},
@@ -229,7 +428,6 @@ def test_standalone_http_200_verdicts_mediated_fail_closed() -> None:
     assert narrow_exc.value.recoverable is True
     assert narrow_exc.value.violation_details["narrowed_params"] == {"limit": 5}
 
-    # 2. DENY -> PolicyViolationException
     deny_env = _sample_top_level_envelope(
         verdict="DENY",
         violations=[
@@ -248,7 +446,6 @@ def test_standalone_http_200_verdicts_mediated_fail_closed() -> None:
     assert deny_exc.value.reason_code == "CBF_HARD_STOP"
     assert deny_exc.value.audit_id == "rec-xyz-001"
 
-    # 3. REQUIRE_APPROVAL -> DeferralPending with deferred_id
     hitl_env = _sample_top_level_envelope(
         verdict="REQUIRE_APPROVAL",
         deferred_id="hitl-parked-001",
@@ -261,7 +458,6 @@ def test_standalone_http_200_verdicts_mediated_fail_closed() -> None:
     assert hitl_exc.value.ticket_id == "hitl-parked-001"
     assert hitl_exc.value.defer_reason == "hitl_violation"
 
-    # 4. REQUIRE_APPROVAL with unpersisted deferred_id=None -> CageGatewayError (never envelope_id!)
     unpersisted_hitl_env = _sample_top_level_envelope(
         verdict="REQUIRE_APPROVAL",
         deferred_id=None,
@@ -274,7 +470,6 @@ def test_standalone_http_200_verdicts_mediated_fail_closed() -> None:
             )
         )
 
-    # 5. Internal DEFER -> DeferralPending with defer_token
     defer_env = _sample_top_level_envelope(
         verdict="DEFER",
         defer_token="defer-tok-002",
@@ -289,7 +484,6 @@ def test_standalone_http_200_verdicts_mediated_fail_closed() -> None:
     assert defer_exc.value.defer_reason == "CONFIDENCE_BELOW_THRESHOLD"
     assert defer_exc.value.ttl_seconds == 300
 
-    # 6. Unknown verdict -> CageGatewayError
     unknown_env = _sample_top_level_envelope(verdict="ESCALATE")
     with pytest.raises(CageGatewayError, match="unrecognised verdict"):
         asyncio.run(
@@ -297,8 +491,11 @@ def test_standalone_http_200_verdicts_mediated_fail_closed() -> None:
         )
 
 
-def test_standalone_v2_refusal_403_and_v1_external_hold_202() -> None:
+def test_standalone_v2_refusal_403_and_v1_external_hold_202(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     """Canonical gateway 403 refusal (proof_hash) and 202 EXTERNAL_HOLD (defer_id) wire formats."""
+    monkeypatch.setenv("CAGE_ENV", "test")
     refusal_403 = {
         "schema_version": "2.0.0",
         "verdict": "DENIED",
@@ -336,3 +533,331 @@ def test_standalone_v2_refusal_403_and_v1_external_hold_202() -> None:
     assert hold_exc.value.ticket_id == "ext-hold-777"
     assert hold_exc.value.defer_reason == "EXTERNAL_HOLD"
     assert hold_exc.value.ttl_seconds == 300
+
+
+def test_standalone_default_jwks_and_pinned_public_keys_verify_ec_ed25519_rsa() -> None:
+    """Default CageClient verifies EC P-256 (DER + P1363), Ed25519, and RSA-2048 via JWKS and public_keys."""
+    ec_priv, ec_pem, ec_jwk = _make_ec_keypair(kid="ec-01")
+    ed_priv, _ed_pem, ed_jwk = _make_ed25519_keypair(kid="ed-01")
+    rsa_priv, _, rsa_jwk = _make_rsa_keypair(kid="rsa-01", alg="PS256")
+    jwks_doc = {"keys": [ec_jwk, ed_jwk, rsa_jwk]}
+    params = {"limit": 10, "neg_zero": -0.0}
+
+    for priv, kid, alg, p1363 in [
+        (ec_priv, "ec-01", "ES256", False),
+        (ec_priv, "ec-01", "ES256", True),
+        (ed_priv, "ed-01", "EdDSA", False),
+        (rsa_priv, "rsa-01", "PS256", False),
+    ]:
+        signed_env = _sign_envelope_dict(
+            _build_unsigned_envelope(parameters=params),
+            priv_key=priv,
+            kid=kid,
+            algorithm=alg,
+            ec_p1363=p1363,
+        )
+
+        def handler(
+            req: httpx.Request, env: dict[str, Any] = signed_env
+        ) -> httpx.Response:
+            if req.url.path == "/governance/.well-known/jwks.json":
+                return httpx.Response(200, json=jwks_doc)
+            return httpx.Response(200, json=env)
+
+        verified = asyncio.run(
+            _run_with_mock_handler(
+                handler,
+                parameters=params,
+                verify_signature=True,
+                verify_expiration=True,
+                verify_subject=True,
+            )
+        )
+        assert verified.signature is not None
+        assert verified.signature["kid"] == kid
+
+    # Also verify pinned public_keys (PEM str, PEM bytes, and PublicKey object) without JWKS hit
+    ec_signed = _sign_envelope_dict(
+        _build_unsigned_envelope(parameters=params),
+        priv_key=ec_priv,
+        kid="ec-01",
+        algorithm="ES256",
+    )
+    pinned_verified = asyncio.run(
+        _run_with_mock_handler(
+            lambda req: (
+                httpx.Response(200, json=ec_signed)
+                if req.url.path.endswith("/validate-action")
+                else httpx.Response(500)
+            ),
+            parameters=params,
+            verify_signature=True,
+            verify_expiration=True,
+            verify_subject=True,
+            public_keys={
+                "ec-01": ec_pem.decode("utf-8"),
+                "ed-01": ed_priv.public_key(),
+            },
+        )
+    )
+    assert pinned_verified.envelope_id == "env-standalone-001"
+
+
+def test_standalone_tampered_embedded_alg_confusion_expiry_and_replay_fail_closed() -> (
+    None
+):
+    """Tampering, embedded keys, alg confusion, expiry, and replay all raise RoutingSealVerificationError."""
+    ec_priv, ec_pem, _ = _make_ec_keypair(kid="ec-01")
+    params = {"limit": 10}
+
+    # 1. Tampered verdict (DENY -> ALLOW) or tampered narrowed_params BEFORE verdict dispatch
+    signed_deny = _sign_envelope_dict(
+        _build_unsigned_envelope(parameters=params, verdict="DENY"),
+        priv_key=ec_priv,
+        kid="ec-01",
+        algorithm="ES256",
+    )
+    signed_deny["payload"] = {"verdict": "ALLOW"}
+    with pytest.raises(RoutingSealVerificationError, match="verification failed"):
+        asyncio.run(
+            _run_with_mock_handler(
+                lambda req: httpx.Response(200, json=signed_deny),
+                parameters=params,
+                verify_signature=True,
+                verify_expiration=True,
+                verify_subject=True,
+                public_keys={"ec-01": ec_pem},
+            )
+        )
+
+    # 2. Embedded public key inside signature or top-level envelope -> RoutingSealVerificationError
+    rogue_priv, rogue_pem, rogue_jwk = _make_ec_keypair(kid="rogue-01")
+    embedded_sig_env = _sign_envelope_dict(
+        _build_unsigned_envelope(parameters=params),
+        priv_key=rogue_priv,
+        kid="rogue-01",
+        algorithm="ES256",
+    )
+    embedded_sig_env["signature"]["public_key"] = rogue_pem.decode("utf-8")
+    with pytest.raises(
+        RoutingSealVerificationError, match="unexpected or embedded-key"
+    ):
+        asyncio.run(
+            _run_with_mock_handler(
+                lambda req: httpx.Response(200, json=embedded_sig_env),
+                parameters=params,
+                verify_signature=True,
+                verify_expiration=True,
+                verify_subject=True,
+                public_keys={"ec-01": ec_pem},
+            )
+        )
+
+    embedded_top_env = _sign_envelope_dict(
+        _build_unsigned_envelope(parameters=params),
+        priv_key=rogue_priv,
+        kid="rogue-01",
+        algorithm="ES256",
+    )
+    embedded_top_env["jwk"] = rogue_jwk
+    with pytest.raises(RoutingSealVerificationError, match="embedded key material"):
+        asyncio.run(
+            _run_with_mock_handler(
+                lambda req: httpx.Response(200, json=embedded_top_env),
+                parameters=params,
+                verify_signature=True,
+                verify_expiration=True,
+                verify_subject=True,
+                public_keys={"ec-01": ec_pem},
+            )
+        )
+
+    # 3. Algorithm confusion: ES384 / EdDSA / none / HS256 against P-256 key
+    for bad_alg in ("ES384", "EdDSA", "none", "HS256"):
+        confused_env = _sign_envelope_dict(
+            _build_unsigned_envelope(parameters=params),
+            priv_key=ec_priv,
+            kid="ec-01",
+            algorithm="ES256",
+        )
+        confused_env["signature"]["algorithm"] = bad_alg
+        with pytest.raises(RoutingSealVerificationError):
+            asyncio.run(
+                _run_with_mock_handler(
+                    lambda req, env=confused_env: httpx.Response(200, json=env),
+                    parameters=params,
+                    verify_signature=True,
+                    verify_expiration=True,
+                    verify_subject=True,
+                    public_keys={"ec-01": ec_pem},
+                )
+            )
+
+    # 4. Expired envelope beyond clock_skew_seconds fails; within clock_skew_seconds passes
+    now = datetime.now(timezone.utc)
+    expired_env = _sign_envelope_dict(
+        _build_unsigned_envelope(
+            parameters=params,
+            issued_at=now - timedelta(minutes=10),
+            expires_at=now - timedelta(seconds=10),
+        ),
+        priv_key=ec_priv,
+        kid="ec-01",
+        algorithm="ES256",
+    )
+    with pytest.raises(RoutingSealVerificationError, match="expired"):
+        asyncio.run(
+            _run_with_mock_handler(
+                lambda req: httpx.Response(200, json=expired_env),
+                parameters=params,
+                verify_signature=True,
+                verify_expiration=True,
+                verify_subject=True,
+                clock_skew_seconds=5.0,
+                public_keys={"ec-01": ec_pem},
+            )
+        )
+    skew_ok = asyncio.run(
+        _run_with_mock_handler(
+            lambda req: httpx.Response(200, json=expired_env),
+            parameters=params,
+            verify_signature=True,
+            verify_expiration=True,
+            verify_subject=True,
+            clock_skew_seconds=30.0,
+            public_keys={"ec-01": ec_pem},
+        )
+    )
+    assert skew_ok.envelope_id == "env-standalone-001"
+
+    # 5. Replay / parameter substitution: valid signature for limit=10 replayed for limit=9999
+    valid_limit_10 = _sign_envelope_dict(
+        _build_unsigned_envelope(parameters={"limit": 10}),
+        priv_key=ec_priv,
+        kid="ec-01",
+        algorithm="ES256",
+    )
+    with pytest.raises(RoutingSealVerificationError, match="action_hash"):
+        asyncio.run(
+            _run_with_mock_handler(
+                lambda req: httpx.Response(200, json=valid_limit_10),
+                parameters={"limit": 9999},
+                verify_signature=True,
+                verify_expiration=True,
+                verify_subject=True,
+                public_keys={"ec-01": ec_pem},
+            )
+        )
+
+
+def test_standalone_jwks_ttl_staleness_304_rotation_and_flood_cooldown() -> None:
+    """JWKS resolver enforces TTL, max_jwks_staleness_s eviction, 304 rejection, rotation, and flood cooldown."""
+    priv_v1, _, jwk_v1 = _make_ec_keypair(kid="kid-v1")
+    priv_v2, _, jwk_v2 = _make_ec_keypair(kid="kid-v2")
+    now_mono = [1000.0]
+    jwks_state: dict[str, Any] = {"status": 200, "body": {"keys": [jwk_v1]}, "hits": 0}
+    params = {"limit": 10}
+
+    def handler(req: httpx.Request) -> httpx.Response:
+        if req.url.path == "/governance/.well-known/jwks.json":
+            assert "if-none-match" not in {k.lower() for k in req.headers.keys()}
+            jwks_state["hits"] += 1
+            return httpx.Response(jwks_state["status"], json=jwks_state["body"])
+        return httpx.Response(200, json=jwks_state["envelope"])
+
+    async def _scenario() -> None:
+        client = CageClient(
+            gateway_url="https://cage-standalone.example.test",
+            jwks_ttl_s=60.0,
+            max_jwks_staleness_s=300.0,
+            jwks_min_refresh_interval_s=10.0,
+            jwks_clock=lambda: now_mono[0],
+        )
+        await client._client.aclose()
+        client._client = httpx.AsyncClient(
+            transport=httpx.MockTransport(handler),
+            base_url="https://cage-standalone.example.test",
+        )
+        try:
+            # 1. Cold cache warms kid-v1
+            jwks_state["envelope"] = _sign_envelope_dict(
+                _build_unsigned_envelope(parameters=params),
+                priv_key=priv_v1,
+                kid="kid-v1",
+                algorithm="ES256",
+            )
+            await client.validate_action("query_resource", params, "agent-01")
+            assert jwks_state["hits"] == 1
+
+            # 2. Stale TTL (>60s) with 503 < max_staleness_s (300s) serves warm kid-v1
+            now_mono[0] = 1100.0
+            jwks_state["status"] = 503
+            await client.validate_action("query_resource", params, "agent-01")
+            assert jwks_state["hits"] == 2
+
+            # 3. Past max_staleness_s (>=300s since t=1000) with 503 evicts & fails closed
+            now_mono[0] = 1305.0
+            with pytest.raises(RoutingSealVerificationError, match="no fresh cached"):
+                await client.validate_action("query_resource", params, "agent-01")
+            assert jwks_state["hits"] == 3
+
+            # 4. HTTP 304 is explicitly rejected fail-closed
+            jwks_state["status"] = 304
+            with pytest.raises(RoutingSealVerificationError, match="304"):
+                await client.validate_action("query_resource", params, "agent-01")
+
+            # 5. Rotation to kid-v2 atomically evicts kid-v1
+            jwks_state["status"] = 200
+            jwks_state["body"] = {"keys": [jwk_v2]}
+            jwks_state["envelope"] = _sign_envelope_dict(
+                _build_unsigned_envelope(parameters=params),
+                priv_key=priv_v2,
+                kid="kid-v2",
+                algorithm="ES256",
+            )
+            await client.validate_action("query_resource", params, "agent-01")
+            hits_after_v2 = jwks_state["hits"]
+
+            # Forged unknown-kid burst within jwks_min_refresh_interval_s=10s hits JWKS at most ONCE!
+            now_mono[0] = 1306.0
+            for idx in range(5):
+                forged = dict(jwks_state["envelope"])
+                forged["signature"] = {
+                    "algorithm": "ES256",
+                    "kid": f"forged-kid-{idx}",
+                    "value": forged["signature"]["value"],
+                }
+                jwks_state["envelope"] = forged
+                with pytest.raises(RoutingSealVerificationError, match="unknown kid"):
+                    await client.validate_action("query_resource", params, "agent-01")
+            assert jwks_state["hits"] == hits_after_v2 + 1
+        finally:
+            await client.aclose()
+
+    asyncio.run(_scenario())
+
+
+@pytest.mark.parametrize(
+    "enforcing_env",
+    ["staging", "prod", "production", "ci", "uat", "canary", "custom-env"],
+)
+@pytest.mark.parametrize(
+    "opt_out_kwargs",
+    [
+        {"verify_signature": False},
+        {"verify_expiration": False},
+        {"verify_subject": False},
+    ],
+)
+def test_standalone_enforcing_posture_forbids_verification_opt_out(
+    monkeypatch: pytest.MonkeyPatch,
+    enforcing_env: str,
+    opt_out_kwargs: dict[str, bool],
+) -> None:
+    """Any non-dev/test CAGE_ENV rejects verification opt-out at CageClient init."""
+    monkeypatch.setenv("CAGE_ENV", enforcing_env)
+    with pytest.raises(ValueError, match="forbidden in enforcing posture"):
+        CageClient(
+            gateway_url="https://cage-standalone.example.test",
+            **opt_out_kwargs,
+        )

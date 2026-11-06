@@ -491,15 +491,21 @@ class GovernanceEnvelopeBuilder:
                 logger.warning("⚠️ KMS not active — envelope will be unsigned")
                 return envelope
 
-            # Use the direct digest signing method for efficiency
-            digest = envelope.compute_digest()
-            sig_hex = await signer.sign_precomputed_digest_async(digest)
-            signature_bytes = bytes.fromhex(sig_hex)
-
             # kid and alg come from the signer's cached public JWK
             jwk = signer.public_jwk
             kid = jwk["kid"]
             alg = jwk.get("alg", "ES256")
+
+            if alg.upper() in {"EDDSA", "ED25519"} and hasattr(
+                signer, "sign_raw_async"
+            ):
+                canonical = envelope.to_canonical_bytes(include_signature=False)
+                signature_bytes = await signer.sign_raw_async(canonical)
+            else:
+                # Use the direct digest signing method for efficiency
+                digest = envelope.compute_digest()
+                sig_hex = await signer.sign_precomputed_digest_async(digest)
+                signature_bytes = bytes.fromhex(sig_hex)
 
             return self.attach_signature(envelope, signature_bytes, kid, alg)
 
