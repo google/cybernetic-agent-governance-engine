@@ -19,6 +19,10 @@ JWKS endpoint (``/governance/.well-known/jwks.json``) with single-flight
 ``asyncio.Lock`` refresh, bounded unknown-``kid`` refresh cooldown, HTTP ``304``
 rejection, atomic key replacement on rotation/revocation, and fail-closed
 eviction once ``max_jwks_staleness_s`` elapses during a JWKS outage.
+
+Only the two key types the gateway signs with are admitted: EC P-256 (``ES256``)
+and Ed25519 (``EdDSA``). A JWKS containing any other key type, curve, or ``alg``
+is refused as a whole rather than partially used.
 """
 
 from __future__ import annotations
@@ -33,25 +37,18 @@ from typing import Any
 from urllib.parse import urlparse
 
 import httpx
-from cryptography.hazmat.primitives.asymmetric import ec, ed25519, rsa
+from cryptography.hazmat.primitives.asymmetric import ec, ed25519
 
 from .exceptions import RoutingSealVerificationError
 
-PublicKey = ec.EllipticCurvePublicKey | ed25519.Ed25519PublicKey | rsa.RSAPublicKey
+PublicKey = ec.EllipticCurvePublicKey | ed25519.Ed25519PublicKey
 
 _B64URL_RE = re.compile(r"^[A-Za-z0-9_-]+={0,2}$")
 _PRIVATE_JWK_FIELDS: frozenset[str] = frozenset(
     {"d", "p", "q", "dp", "dq", "qi", "oth", "k"}
 )
-_EC_CURVES: dict[str, tuple[ec.EllipticCurve, int, frozenset[str]]] = {
-    "P-256": (ec.SECP256R1(), 32, frozenset({"ES256", "ECDSA_P256_SHA256"})),
-    "P-384": (ec.SECP384R1(), 48, frozenset({"ES384", "ECDSA_P384_SHA384"})),
-    "P-521": (ec.SECP521R1(), 66, frozenset({"ES512", "ECDSA_P521_SHA512"})),
-}
-_RSA_ALGS: frozenset[str] = frozenset(
-    {"RS256", "RS384", "RS512", "PS256", "PS384", "PS512"}
-)
-_MIN_RSA_BITS = 2048
+_P256_COORDINATE_BYTES = 32
+_ED25519_KEY_BYTES = 32
 
 
 def validate_http_url(url: str, *, field_name: str = "url") -> str:
@@ -91,77 +88,53 @@ def b64url_decode(value: str, *, field_name: str = "base64url") -> bytes:
     return decoded
 
 
-def _parse_ec_jwk(jwk: Mapping[str, Any]) -> ec.EllipticCurvePublicKey:
+def _parse_p256_jwk(jwk: Mapping[str, Any]) -> ec.EllipticCurvePublicKey:
     crv_name = jwk.get("crv")
-    if not isinstance(crv_name, str) or crv_name not in _EC_CURVES:
-        raise ValueError(f"Unsupported EC curve crv={crv_name!r}")
-    curve, coord_len, allowed_algs = _EC_CURVES[crv_name]
+    if crv_name != "P-256":
+        raise ValueError(f"EC JWK crv={crv_name!r} is not accepted (only P-256)")
     jwk_alg = jwk.get("alg")
-    if jwk_alg is not None and (
-        not isinstance(jwk_alg, str) or jwk_alg.strip().upper() not in allowed_algs
-    ):
-        raise ValueError(f"EC JWK alg={jwk_alg!r} incompatible with curve {crv_name!r}")
+    if jwk_alg is not None and jwk_alg != "ES256":
+        raise ValueError(f"EC P-256 JWK alg={jwk_alg!r} is not ES256")
     x_raw = jwk.get("x")
     y_raw = jwk.get("y")
     if not isinstance(x_raw, str) or not isinstance(y_raw, str):
         raise ValueError("EC JWK missing string 'x' or 'y' coordinate")
     x_bytes = b64url_decode(x_raw, field_name="JWK.x")
     y_bytes = b64url_decode(y_raw, field_name="JWK.y")
-    if len(x_bytes) != coord_len or len(y_bytes) != coord_len:
-        raise ValueError(f"EC JWK coordinates for {crv_name} must be {coord_len} bytes")
+    if len(x_bytes) != _P256_COORDINATE_BYTES or len(y_bytes) != _P256_COORDINATE_BYTES:
+        raise ValueError(
+            f"EC P-256 JWK coordinates must be {_P256_COORDINATE_BYTES} bytes"
+        )
     numbers = ec.EllipticCurvePublicNumbers(
         int.from_bytes(x_bytes, "big"),
         int.from_bytes(y_bytes, "big"),
-        curve,
+        ec.SECP256R1(),
     )
     return numbers.public_key()
 
 
-def _parse_okp_jwk(jwk: Mapping[str, Any]) -> ed25519.Ed25519PublicKey:
+def _parse_ed25519_jwk(jwk: Mapping[str, Any]) -> ed25519.Ed25519PublicKey:
     crv_name = jwk.get("crv")
     if crv_name != "Ed25519":
-        raise ValueError(f"Unsupported OKP curve crv={crv_name!r}")
+        raise ValueError(f"OKP JWK crv={crv_name!r} is not accepted (only Ed25519)")
     jwk_alg = jwk.get("alg")
-    if jwk_alg is not None and (
-        not isinstance(jwk_alg, str)
-        or jwk_alg.strip().upper() not in {"EDDSA", "ED25519"}
-    ):
-        raise ValueError(f"Ed25519 JWK alg={jwk_alg!r} is incompatible")
+    if jwk_alg is not None and jwk_alg != "EdDSA":
+        raise ValueError(f"Ed25519 JWK alg={jwk_alg!r} is not EdDSA")
     x_raw = jwk.get("x")
     if not isinstance(x_raw, str):
         raise ValueError("OKP JWK missing string 'x' coordinate")
     x_bytes = b64url_decode(x_raw, field_name="JWK.x")
-    if len(x_bytes) != 32:
-        raise ValueError("Ed25519 JWK 'x' coordinate must be 32 bytes")
+    if len(x_bytes) != _ED25519_KEY_BYTES:
+        raise ValueError(f"Ed25519 JWK 'x' must be {_ED25519_KEY_BYTES} bytes")
     return ed25519.Ed25519PublicKey.from_public_bytes(x_bytes)
 
 
-def _parse_rsa_jwk(jwk: Mapping[str, Any]) -> rsa.RSAPublicKey:
-    jwk_alg = jwk.get("alg")
-    if jwk_alg is not None and (
-        not isinstance(jwk_alg, str) or jwk_alg.strip().upper() not in _RSA_ALGS
-    ):
-        raise ValueError(f"RSA JWK alg={jwk_alg!r} is incompatible")
-    n_raw = jwk.get("n")
-    e_raw = jwk.get("e")
-    if not isinstance(n_raw, str) or not isinstance(e_raw, str):
-        raise ValueError("RSA JWK missing string 'n' or 'e' parameter")
-    n_bytes = b64url_decode(n_raw, field_name="JWK.n")
-    e_bytes = b64url_decode(e_raw, field_name="JWK.e")
-    n_int = int.from_bytes(n_bytes, "big")
-    e_int = int.from_bytes(e_bytes, "big")
-    if e_int < 3 or e_int % 2 == 0:
-        raise ValueError("Invalid RSA public exponent in JWK")
-    public_key = rsa.RSAPublicNumbers(e_int, n_int).public_key()
-    if public_key.key_size < _MIN_RSA_BITS:
-        raise ValueError(
-            f"RSA JWK modulus size {public_key.key_size} < {_MIN_RSA_BITS} bits"
-        )
-    return public_key
-
-
 def jwk_to_public_key(jwk: Mapping[str, Any]) -> tuple[str, PublicKey]:
-    """Parse an RFC 7517 signing JWK entry into ``(kid, public_key)``."""
+    """Parse an RFC 7517 signing JWK entry into ``(kid, public_key)``.
+
+    Only EC P-256 and OKP Ed25519 keys are admitted; any other ``kty`` or curve
+    raises ``ValueError``.
+    """
     if not isinstance(jwk, Mapping):
         raise ValueError("JWK entry must be a JSON object")
     if _PRIVATE_JWK_FIELDS.intersection(jwk.keys()):
@@ -181,16 +154,21 @@ def jwk_to_public_key(jwk: Mapping[str, Any]) -> tuple[str, PublicKey]:
 
     kty = jwk.get("kty")
     if kty == "EC":
-        return kid, _parse_ec_jwk(jwk)
+        return kid, _parse_p256_jwk(jwk)
     if kty == "OKP":
-        return kid, _parse_okp_jwk(jwk)
-    if kty == "RSA":
-        return kid, _parse_rsa_jwk(jwk)
-    raise ValueError(f"Unsupported JWK kty={kty!r} for kid={kid!r}")
+        return kid, _parse_ed25519_jwk(jwk)
+    raise ValueError(
+        f"JWK kty={kty!r} for kid={kid!r} is not accepted "
+        "(only EC P-256 and OKP Ed25519)"
+    )
 
 
 def parse_jwks_payload(payload: Any, *, max_keys: int = 64) -> dict[str, PublicKey]:
-    """Validate and parse an RFC 7517 JWKS JSON document into ``{kid: PublicKey}``."""
+    """Validate and parse an RFC 7517 JWKS JSON document into ``{kid: PublicKey}``.
+
+    Any entry that cannot be admitted refuses the whole document: a partially
+    usable key set is never returned.
+    """
     if not isinstance(payload, Mapping):
         raise RoutingSealVerificationError("JWKS response must be a JSON object")
     raw_keys = payload.get("keys")

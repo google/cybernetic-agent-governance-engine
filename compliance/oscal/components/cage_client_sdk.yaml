@@ -24,7 +24,7 @@ component-definition:
     title: "CAGE Client SDK — Out-of-Process PEP Client Component Definition"
     version: "1.2.0"
     oscal-version: "1.0.4"
-    last-modified: "2026-11-06T20:00:00Z"
+    last-modified: "2026-11-06T22:20:00Z"
     remarks: >
       This component definition maps the Python CAGE Client SDK
       (packages/cage-client/, mirrored 1-to-1 at src/gateway/client/ via
@@ -145,10 +145,11 @@ component-definition:
                   caller-pinned public_keys; embedded public keys or unexpected signature
                   fields inside the envelope raise RoutingSealVerificationError
                 - Canonicalizes the unsigned wire envelope via pure-stdlib RFC 8785 JCS
-                  (_jcs.canonicalize) and verifies asymmetric signatures with strict
-                  algorithm-to-key/curve/hash binding (EC P-256/P-384/P-521 ES256/ES384/ES512,
-                  Ed25519 EdDSA, and RSA >= 2048 RS*/PS*; "none" and symmetric HS*/HMAC*
-                  algorithms are rejected fail-closed)
+                  (_jcs.canonicalize) and accepts exactly two signature algorithms, the
+                  two the gateway signs with: ES256 (EC P-256, SHA-256) and EdDSA
+                  (Ed25519). Every other algorithm (including none, HS*, ES384, ES512,
+                  RS* and PS*) and every other key type is rejected fail-closed, and a
+                  JWKS containing any other key is refused as a whole
                 - Propagates W3C Trace Context traceparent headers
                   (generate_w3c_traceparent()) for distributed audit correlation
 

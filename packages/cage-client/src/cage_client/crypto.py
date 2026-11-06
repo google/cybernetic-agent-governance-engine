@@ -14,8 +14,11 @@
 
 """Cryptographic verification, RFC 8785 action hashing, and W3C traceparent helpers.
 
-Zero vendor SDKs. Enforces strict algorithm-to-key/curve/hash binding and RFC 8785
-JCS canonicalization matching ``GovernanceEnvelopeBuilder``.
+Zero vendor SDKs. Exactly two signature algorithms are accepted, the two the
+gateway signs with: ``ES256`` (ECDSA on P-256 with SHA-256) and ``EdDSA``
+(Ed25519). Every other algorithm is rejected, as is any key that is not P-256
+or Ed25519. Canonicalization is RFC 8785 JCS, matching
+``GovernanceEnvelopeBuilder``.
 """
 
 from __future__ import annotations
@@ -23,47 +26,18 @@ from __future__ import annotations
 import hashlib
 import math
 import secrets
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
 from typing import Any
 
 from cryptography.hazmat.primitives import hashes, serialization
-from cryptography.hazmat.primitives.asymmetric import (
-    ec,
-    ed25519,
-    rsa,
-    utils,
-)
-from cryptography.hazmat.primitives.asymmetric import (
-    padding as rsa_padding,
-)
+from cryptography.hazmat.primitives.asymmetric import ec, ed25519, utils
 
 from ._jcs import canonicalize
 from .exceptions import RoutingSealVerificationError
 from .jwks import PublicKey, b64url_decode, jwk_to_public_key
 
 _MAX_SAFE_INTEGER = 2**53 - 1
-_MIN_RSA_BITS = 2048
-
-_EC_ALG_BINDINGS: dict[str, tuple[str, hashes.HashAlgorithm]] = {
-    "ES256": ("secp256r1", hashes.SHA256()),
-    "ECDSA_P256_SHA256": ("secp256r1", hashes.SHA256()),
-    "ES384": ("secp384r1", hashes.SHA384()),
-    "ECDSA_P384_SHA384": ("secp384r1", hashes.SHA384()),
-    "ES512": ("secp521r1", hashes.SHA512()),
-    "ECDSA_P521_SHA512": ("secp521r1", hashes.SHA512()),
-}
-
-_RSA_PKCS1_ALGS: dict[str, hashes.HashAlgorithm] = {
-    "RS256": hashes.SHA256(),
-    "RS384": hashes.SHA384(),
-    "RS512": hashes.SHA512(),
-}
-
-_RSA_PSS_ALGS: dict[str, hashes.HashAlgorithm] = {
-    "PS256": hashes.SHA256(),
-    "PS384": hashes.SHA384(),
-    "PS512": hashes.SHA512(),
-}
+_P256_COORDINATE_BYTES = 32
 
 
 def generate_w3c_traceparent() -> str:
@@ -141,34 +115,31 @@ def compute_expected_action_hash(action: str, parameters: Mapping[str, Any]) -> 
     return f"sha256:{hashlib.sha256(canonical_bytes).hexdigest()}"
 
 
+def _describe_key(key: Any) -> str:
+    if isinstance(key, ec.EllipticCurvePublicKey):
+        return f"EC {key.curve.name} key"
+    return f"{type(key).__name__}"
+
+
 def _validate_loaded_public_key(loaded: Any, *, kid: str) -> PublicKey:
+    """Admit only EC P-256 and Ed25519 public keys."""
     if isinstance(loaded, ec.EllipticCurvePublicKey):
-        if loaded.curve.name not in {"secp256r1", "secp384r1", "secp521r1"}:
+        if loaded.curve.name != "secp256r1":
             raise RoutingSealVerificationError(
-                f"Unsupported EC curve {loaded.curve.name!r} for kid={kid!r}"
+                f"EC curve {loaded.curve.name!r} for kid={kid!r} is not accepted "
+                "(only P-256)"
             )
         return loaded
     if isinstance(loaded, ed25519.Ed25519PublicKey):
         return loaded
-    if isinstance(loaded, rsa.RSAPublicKey):
-        if loaded.key_size < _MIN_RSA_BITS:
-            raise RoutingSealVerificationError(
-                f"RSA key size {loaded.key_size} < {_MIN_RSA_BITS} bits for kid={kid!r}"
-            )
-        return loaded
     raise RoutingSealVerificationError(
-        f"Unsupported public key type {type(loaded).__name__} for kid={kid!r}"
+        f"Public key type {type(loaded).__name__} for kid={kid!r} is not accepted "
+        "(only EC P-256 and Ed25519)"
     )
 
 
 def load_pinned_public_key(key_raw: Any, *, kid: str) -> PublicKey:
-    """Parse and validate a pinned public key (PEM str/bytes, PublicKey, or JWK dict)."""
-    if isinstance(
-        key_raw,
-        (ec.EllipticCurvePublicKey, ed25519.Ed25519PublicKey, rsa.RSAPublicKey),
-    ):
-        return _validate_loaded_public_key(key_raw, kid=kid)
-
+    """Parse and validate a pinned public key (PEM str/bytes, JWK dict, or key object)."""
     if isinstance(key_raw, Mapping):
         jwk_copy = dict(key_raw)
         jwk_copy.setdefault("kid", kid)
@@ -192,37 +163,28 @@ def load_pinned_public_key(key_raw: Any, *, kid: str) -> PublicKey:
             ) from exc
         return _validate_loaded_public_key(loaded, kid=kid)
 
-    raise RoutingSealVerificationError(
-        f"Unsupported pinned public key representation {type(key_raw).__name__} for kid={kid!r}"
-    )
+    return _validate_loaded_public_key(key_raw, kid=kid)
 
 
-def _verify_ec_signature(
-    public_key: ec.EllipticCurvePublicKey,
-    alg: str,
-    signature_bytes: bytes,
-    canonical_bytes: bytes,
+def _verify_es256(
+    public_key: PublicKey, signature_bytes: bytes, canonical_bytes: bytes
 ) -> None:
-    binding = _EC_ALG_BINDINGS.get(alg)
-    if binding is None:
+    """ECDSA P-256 / SHA-256 over ``canonical_bytes`` (IEEE P1363 or DER signature)."""
+    if (
+        not isinstance(public_key, ec.EllipticCurvePublicKey)
+        or public_key.curve.name != "secp256r1"
+    ):
         raise RoutingSealVerificationError(
-            f"Algorithm {alg!r} is incompatible with EC public key"
+            f"ES256 requires an EC P-256 key, got {_describe_key(public_key)}"
         )
-    expected_curve, hash_alg = binding
-    if public_key.curve.name != expected_curve:
-        raise RoutingSealVerificationError(
-            f"Algorithm {alg!r} requires curve {expected_curve!r}, "
-            f"got {public_key.curve.name!r}"
-        )
-    key_size = (public_key.curve.key_size + 7) // 8
-    if len(signature_bytes) == key_size * 2:
-        r = int.from_bytes(signature_bytes[:key_size], "big")
-        s = int.from_bytes(signature_bytes[key_size:], "big")
+    if len(signature_bytes) == 2 * _P256_COORDINATE_BYTES:
+        r = int.from_bytes(signature_bytes[:_P256_COORDINATE_BYTES], "big")
+        s = int.from_bytes(signature_bytes[_P256_COORDINATE_BYTES:], "big")
         if r <= 0 or s <= 0:
             raise RoutingSealVerificationError("Invalid ECDSA IEEE P1363 zero scalar")
         der_sig = utils.encode_dss_signature(r, s)
         try:
-            public_key.verify(der_sig, canonical_bytes, ec.ECDSA(hash_alg))
+            public_key.verify(der_sig, canonical_bytes, ec.ECDSA(hashes.SHA256()))
             return
         except Exception as p1363_err:
             if signature_bytes[:1] != b"\x30":
@@ -230,42 +192,35 @@ def _verify_ec_signature(
                     f"GovernanceEnvelope ECDSA signature verification failed: {p1363_err}"
                 ) from p1363_err
     try:
-        public_key.verify(signature_bytes, canonical_bytes, ec.ECDSA(hash_alg))
+        public_key.verify(signature_bytes, canonical_bytes, ec.ECDSA(hashes.SHA256()))
     except Exception as exc:
         raise RoutingSealVerificationError(
             f"GovernanceEnvelope ECDSA signature verification failed: {exc}"
         ) from exc
 
 
-def _verify_rsa_signature(
-    public_key: rsa.RSAPublicKey,
-    alg: str,
-    signature_bytes: bytes,
-    canonical_bytes: bytes,
+def _verify_eddsa(
+    public_key: PublicKey, signature_bytes: bytes, canonical_bytes: bytes
 ) -> None:
-    if public_key.key_size < _MIN_RSA_BITS:
+    """Ed25519 over ``canonical_bytes``."""
+    if not isinstance(public_key, ed25519.Ed25519PublicKey):
         raise RoutingSealVerificationError(
-            f"RSA key size {public_key.key_size} < {_MIN_RSA_BITS} bits"
-        )
-    if alg in _RSA_PKCS1_ALGS:
-        hash_alg = _RSA_PKCS1_ALGS[alg]
-        pad: rsa_padding.AsymmetricPadding = rsa_padding.PKCS1v15()
-    elif alg in _RSA_PSS_ALGS:
-        hash_alg = _RSA_PSS_ALGS[alg]
-        pad = rsa_padding.PSS(
-            mgf=rsa_padding.MGF1(hash_alg),
-            salt_length=rsa_padding.PSS.AUTO,
-        )
-    else:
-        raise RoutingSealVerificationError(
-            f"Algorithm {alg!r} is incompatible with RSA public key"
+            f"EdDSA requires an Ed25519 key, got {_describe_key(public_key)}"
         )
     try:
-        public_key.verify(signature_bytes, canonical_bytes, pad, hash_alg)
+        public_key.verify(signature_bytes, canonical_bytes)
     except Exception as exc:
         raise RoutingSealVerificationError(
-            f"GovernanceEnvelope RSA signature verification failed: {exc}"
+            f"GovernanceEnvelope Ed25519 signature verification failed: {exc}"
         ) from exc
+
+
+#: The accepted ``signature.algorithm`` values, matched exactly (case-sensitive),
+#: each bound to the one key type and hash it may be verified with.
+_VERIFIERS: dict[str, Callable[[PublicKey, bytes, bytes], None]] = {
+    "ES256": _verify_es256,
+    "EdDSA": _verify_eddsa,
+}
 
 
 def verify_envelope_signature(
@@ -275,32 +230,17 @@ def verify_envelope_signature(
     signature_b64: str,
     public_key: PublicKey,
 ) -> None:
-    """Verify ``signature_b64`` over RFC 8785 ``canonical_bytes`` with strict alg/key binding."""
-    alg = algorithm.strip().upper()
-    if not alg or alg == "NONE" or alg.startswith("HS") or alg.startswith("HMAC"):
+    """Verify ``signature_b64`` over RFC 8785 ``canonical_bytes``.
+
+    ``algorithm`` must be exactly ``ES256`` (with an EC P-256 key) or ``EdDSA``
+    (with an Ed25519 key). Any other value is rejected before the signature is
+    decoded.
+    """
+    verifier = _VERIFIERS.get(algorithm)
+    if verifier is None:
         raise RoutingSealVerificationError(
-            f"Forbidden or non-asymmetric envelope signature algorithm {algorithm!r}"
+            f"Envelope signature algorithm {algorithm!r} is not accepted "
+            f"(accepted: {', '.join(sorted(_VERIFIERS))})"
         )
     signature_bytes = b64url_decode(signature_b64, field_name="signature.value")
-
-    if isinstance(public_key, ec.EllipticCurvePublicKey):
-        _verify_ec_signature(public_key, alg, signature_bytes, canonical_bytes)
-        return
-    if isinstance(public_key, ed25519.Ed25519PublicKey):
-        if alg not in {"EDDSA", "ED25519"}:
-            raise RoutingSealVerificationError(
-                f"Algorithm {alg!r} is incompatible with Ed25519 public key"
-            )
-        try:
-            public_key.verify(signature_bytes, canonical_bytes)
-        except Exception as exc:
-            raise RoutingSealVerificationError(
-                f"GovernanceEnvelope Ed25519 signature verification failed: {exc}"
-            ) from exc
-        return
-    if isinstance(public_key, rsa.RSAPublicKey):
-        _verify_rsa_signature(public_key, alg, signature_bytes, canonical_bytes)
-        return
-    raise RoutingSealVerificationError(
-        f"Unsupported public key type: {type(public_key).__name__}"
-    )
+    verifier(public_key, signature_bytes, canonical_bytes)

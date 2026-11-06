@@ -535,19 +535,19 @@ def test_standalone_v2_refusal_403_and_v1_external_hold_202(
     assert hold_exc.value.ttl_seconds == 300
 
 
-def test_standalone_default_jwks_and_pinned_public_keys_verify_ec_ed25519_rsa() -> None:
-    """Default CageClient verifies EC P-256 (DER + P1363), Ed25519, and RSA-2048 via JWKS and public_keys."""
+def test_standalone_default_jwks_and_pinned_public_keys_verify_es256_and_eddsa() -> (
+    None
+):
+    """Default CageClient verifies ES256 (DER + P1363) and EdDSA via JWKS and public_keys."""
     ec_priv, ec_pem, ec_jwk = _make_ec_keypair(kid="ec-01")
     ed_priv, _ed_pem, ed_jwk = _make_ed25519_keypair(kid="ed-01")
-    rsa_priv, _, rsa_jwk = _make_rsa_keypair(kid="rsa-01", alg="PS256")
-    jwks_doc = {"keys": [ec_jwk, ed_jwk, rsa_jwk]}
+    jwks_doc = {"keys": [ec_jwk, ed_jwk]}
     params = {"limit": 10, "neg_zero": -0.0}
 
     for priv, kid, alg, p1363 in [
         (ec_priv, "ec-01", "ES256", False),
         (ec_priv, "ec-01", "ES256", True),
         (ed_priv, "ed-01", "EdDSA", False),
-        (rsa_priv, "rsa-01", "PS256", False),
     ]:
         signed_env = _sign_envelope_dict(
             _build_unsigned_envelope(parameters=params),
@@ -601,6 +601,79 @@ def test_standalone_default_jwks_and_pinned_public_keys_verify_ec_ed25519_rsa() 
         )
     )
     assert pinned_verified.envelope_id == "env-standalone-001"
+
+
+def test_standalone_validly_signed_foreign_algorithms_are_refused() -> None:
+    """Correct ES384/ES512/RS256/PS256 signatures are refused: pinned, via JWKS, or mixed in."""
+    params = {"limit": 10}
+    p384_priv, p384_pem, p384_jwk = _make_ec_keypair(
+        kid="p384-01", curve=ec.SECP384R1(), crv_name="P-384", alg="ES384"
+    )
+    p521_priv, p521_pem, p521_jwk = _make_ec_keypair(
+        kid="p521-01", curve=ec.SECP521R1(), crv_name="P-521", alg="ES512"
+    )
+    rsa_priv, rsa_pem, rsa_jwk = _make_rsa_keypair(kid="rsa-01", alg="RS256")
+
+    def serve(doc: dict[str, Any], env: dict[str, Any]) -> Any:
+        def handler(req: httpx.Request) -> httpx.Response:
+            if req.url.path == "/governance/.well-known/jwks.json":
+                return httpx.Response(200, json=doc)
+            return httpx.Response(200, json=env)
+
+        return handler
+
+    cases: list[tuple[Any, bytes, dict[str, Any], str, str]] = [
+        (p384_priv, p384_pem, p384_jwk, "p384-01", "ES384"),
+        (p521_priv, p521_pem, p521_jwk, "p521-01", "ES512"),
+        (rsa_priv, rsa_pem, rsa_jwk, "rsa-01", "RS256"),
+        (rsa_priv, rsa_pem, {**rsa_jwk, "alg": "PS256"}, "rsa-01", "PS256"),
+    ]
+    for priv, pem, jwk, kid, alg in cases:
+        signed = _sign_envelope_dict(
+            _build_unsigned_envelope(parameters=params),
+            priv_key=priv,
+            kid=kid,
+            algorithm=alg,
+        )
+
+        # Pinned: the key itself is refused when the client is built.
+        with pytest.raises(RoutingSealVerificationError, match="not accepted"):
+            CageClient(
+                gateway_url="https://cage-standalone.example.test",
+                public_keys={kid: pem},
+            )
+
+        # Via JWKS: the key set is refused, so the envelope never verifies.
+        with pytest.raises(RoutingSealVerificationError, match="not accepted"):
+            asyncio.run(
+                _run_with_mock_handler(
+                    serve({"keys": [jwk]}, signed),
+                    parameters=params,
+                    verify_signature=True,
+                    verify_expiration=True,
+                    verify_subject=True,
+                )
+            )
+
+    # One foreign key refuses the whole JWKS, even for an envelope signed by an
+    # accepted key: the client never works from a partially usable key set.
+    ec_priv, _, ec_jwk = _make_ec_keypair(kid="ec-01")
+    accepted = _sign_envelope_dict(
+        _build_unsigned_envelope(parameters=params),
+        priv_key=ec_priv,
+        kid="ec-01",
+        algorithm="ES256",
+    )
+    with pytest.raises(RoutingSealVerificationError, match="not accepted"):
+        asyncio.run(
+            _run_with_mock_handler(
+                serve({"keys": [ec_jwk, rsa_jwk]}, accepted),
+                parameters=params,
+                verify_signature=True,
+                verify_expiration=True,
+                verify_subject=True,
+            )
+        )
 
 
 def test_standalone_tampered_embedded_alg_confusion_expiry_and_replay_fail_closed() -> (
@@ -672,8 +745,18 @@ def test_standalone_tampered_embedded_alg_confusion_expiry_and_replay_fail_close
             )
         )
 
-    # 3. Algorithm confusion: ES384 / EdDSA / none / HS256 against P-256 key
-    for bad_alg in ("ES384", "EdDSA", "none", "HS256"):
+    # 3. Relabelled valid ES256 signature: every label but ES256 is refused
+    for bad_alg in (
+        "ES384",
+        "ES512",
+        "RS256",
+        "PS256",
+        "EdDSA",
+        "none",
+        "HS256",
+        "es256",
+        "ECDSA_P256_SHA256",
+    ):
         confused_env = _sign_envelope_dict(
             _build_unsigned_envelope(parameters=params),
             priv_key=ec_priv,

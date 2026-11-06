@@ -42,7 +42,10 @@ from fastapi import FastAPI
 
 from src.gateway.client._jcs import canonicalize as client_jcs_canonicalize
 from src.gateway.client.core import CageClient, enforce_verification_posture
-from src.gateway.client.crypto import compute_expected_action_hash
+from src.gateway.client.crypto import (
+    compute_expected_action_hash,
+    verify_envelope_signature,
+)
 from src.gateway.client.envelope import GovernanceEnvelope
 from src.gateway.client.exceptions import (
     CageGatewayError,
@@ -238,7 +241,7 @@ def create_mock_allow_envelope() -> dict[str, Any]:
             "execution_token": "mock-token-123",
         },
         "signature": {
-            "algorithm": "RS256",
+            "algorithm": "ES256",
             "value": "mock-signature-base64",
             "kid": "test-key-001",
         },
@@ -942,63 +945,115 @@ async def test_embedded_public_key_in_envelope_never_trusted(
 
 
 @respx.mock
-async def test_algorithm_and_curve_confusion_rejected(
+async def test_only_es256_and_eddsa_are_accepted(
     mock_gateway_url: str,
     patched_httpx_no_http2: None,
 ) -> None:
-    """alg=none/HS256, ES256 on P-384 key, RS256 on EC key, and RSA < 2048 fail closed."""
-    p384_priv = ec.generate_private_key(ec.SECP384R1())
-    p384_pem = p384_priv.public_key().public_bytes(
+    """Keys other than P-256/Ed25519 are refused when pinned; labels other than ES256/EdDSA when verified."""
+    pem = (
         serialization.Encoding.PEM,
         serialization.PublicFormat.SubjectPublicKeyInfo,
     )
-    params = {"symbol": "AAPL", "amount": 100}
+    p384_key = ec.generate_private_key(ec.SECP384R1()).public_key()
+    rsa_key = rsa.generate_private_key(
+        public_exponent=65537, key_size=2048
+    ).public_key()
+    for pinned in (p384_key.public_bytes(*pem), p384_key):
+        with pytest.raises(RoutingSealVerificationError, match="only P-256"):
+            CageClient(gateway_url=mock_gateway_url, public_keys={"p384-kid": pinned})
+    for pinned in (rsa_key.public_bytes(*pem), rsa_key):
+        with pytest.raises(
+            RoutingSealVerificationError, match="only EC P-256 and Ed25519"
+        ):
+            CageClient(gateway_url=mock_gateway_url, public_keys={"rsa-kid": pinned})
 
-    # P-384 key pinned, but envelope claims ES256 (curve confusion)
-    confused_env = _build_signed_allow_envelope(
+    params = {"symbol": "AAPL", "amount": 100}
+    p256_priv = ec.generate_private_key(ec.SECP256R1())
+    valid_env = _build_signed_allow_envelope(
         action="query_portfolio",
         parameters=params,
-        priv_key=p384_priv,
-        kid="p384-kid",
+        priv_key=p256_priv,
+        kid="p256-kid",
         alg="ES256",
     )
-    respx.post(f"{mock_gateway_url}/governance/validate-action").mock(
-        return_value=httpx.Response(status_code=200, json=confused_env)
-    )
+    route = respx.post(f"{mock_gateway_url}/governance/validate-action")
     async with CageClient(
         gateway_url=mock_gateway_url,
-        public_keys={"p384-kid": p384_pem},
+        public_keys={"p256-kid": p256_priv.public_key().public_bytes(*pem)},
     ) as client:
-        with pytest.raises(RoutingSealVerificationError, match="curve"):
-            await client.validate_action(
-                action="query_portfolio",
-                parameters=params,
-                agent_id="test-agent",
-            )
-
-        # alg="none" rejected immediately
-        none_env = dict(confused_env)
-        none_env["signature"] = {"algorithm": "none", "kid": "p384-kid", "value": "AA"}
-        respx.post(f"{mock_gateway_url}/governance/validate-action").mock(
-            return_value=httpx.Response(status_code=200, json=none_env)
+        route.mock(return_value=httpx.Response(status_code=200, json=valid_env))
+        verified = await client.validate_action(
+            action="query_portfolio", parameters=params, agent_id="test-agent"
         )
-        with pytest.raises(RoutingSealVerificationError):
+        assert verified.signature is not None
+        assert verified.signature["algorithm"] == "ES256"
+
+        # The same valid ES256 signature under any other label is refused,
+        # including spellings that name the same algorithm.
+        for label in (
+            "ES384",
+            "ES512",
+            "RS256",
+            "PS256",
+            "HS256",
+            "none",
+            "es256",
+            "ECDSA_P256_SHA256",
+        ):
+            relabeled = {
+                **valid_env,
+                "signature": {**valid_env["signature"], "algorithm": label},
+            }
+            route.mock(return_value=httpx.Response(status_code=200, json=relabeled))
+            with pytest.raises(RoutingSealVerificationError, match="not accepted"):
+                await client.validate_action(
+                    action="query_portfolio", parameters=params, agent_id="test-agent"
+                )
+
+        # An accepted label still has to match the key type.
+        eddsa_label = {
+            **valid_env,
+            "signature": {**valid_env["signature"], "algorithm": "EdDSA"},
+        }
+        route.mock(return_value=httpx.Response(status_code=200, json=eddsa_label))
+        with pytest.raises(RoutingSealVerificationError, match="requires an Ed25519"):
             await client.validate_action(
-                action="query_portfolio",
-                parameters=params,
-                agent_id="test-agent",
+                action="query_portfolio", parameters=params, agent_id="test-agent"
             )
 
-    # Weak RSA (<2048-bit) rejected eagerly on pin load
-    weak_rsa = rsa.generate_private_key(public_exponent=65537, key_size=1024)
-    weak_pem = weak_rsa.public_key().public_bytes(
-        serialization.Encoding.PEM,
-        serialization.PublicFormat.SubjectPublicKeyInfo,
-    )
-    with pytest.raises(RoutingSealVerificationError, match="2048"):
-        CageClient(
-            gateway_url=mock_gateway_url,
-            public_keys={"weak-rsa": weak_pem},
+
+def test_verify_envelope_signature_binds_algorithm_to_key_type() -> None:
+    """ES256 verifies only with a P-256 key and EdDSA only with an Ed25519 key."""
+    canonical = b'{"action":"query_portfolio"}'
+    p384_priv = ec.generate_private_key(ec.SECP384R1())
+    p384_sig = _b64u(p384_priv.sign(canonical, ec.ECDSA(hashes.SHA256())))
+    with pytest.raises(
+        RoutingSealVerificationError, match="ES256 requires an EC P-256"
+    ):
+        verify_envelope_signature(
+            canonical_bytes=canonical,
+            algorithm="ES256",
+            signature_b64=p384_sig,
+            public_key=p384_priv.public_key(),
+        )
+
+    ed_priv = ed25519.Ed25519PrivateKey.generate()
+    ed_sig = _b64u(ed_priv.sign(canonical))
+    with pytest.raises(
+        RoutingSealVerificationError, match="ES256 requires an EC P-256"
+    ):
+        verify_envelope_signature(
+            canonical_bytes=canonical,
+            algorithm="ES256",
+            signature_b64=ed_sig,
+            public_key=ed_priv.public_key(),
+        )
+    with pytest.raises(RoutingSealVerificationError, match="EdDSA requires an Ed25519"):
+        verify_envelope_signature(
+            canonical_bytes=canonical,
+            algorithm="EdDSA",
+            signature_b64=ed_sig,
+            public_key=ec.generate_private_key(ec.SECP256R1()).public_key(),
         )
 
 

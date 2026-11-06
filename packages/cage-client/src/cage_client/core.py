@@ -21,8 +21,9 @@ and verifies returned ``GovernanceEnvelope`` decisions fail-closed by default:
   - Out-of-band ``kid`` public-key resolution via ``/governance/.well-known/jwks.json``
     (``JwksKeyResolver`` with bounded TTL and ``max_jwks_staleness_s`` eviction)
     or pinned ``public_keys`` — never from embedded envelope keys
-  - Asymmetric signature verification over RFC 8785 JCS canonical bytes with
-    strict algorithm-to-key/curve/hash binding
+  - Signature verification over RFC 8785 JCS canonical bytes accepting exactly
+    ``ES256`` (EC P-256) and ``EdDSA`` (Ed25519), the two algorithms the gateway
+    signs with; every other algorithm and key type is rejected
   - ``expires_at`` freshness (within ``clock_skew_seconds``) and ``expires_at > issued_at``
   - ``subject.action`` and ``subject.action_hash`` request binding against replay
 
