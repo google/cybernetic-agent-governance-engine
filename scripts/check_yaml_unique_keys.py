@@ -52,6 +52,8 @@ DEFAULT_SCAN_ROOTS: tuple[str, ...] = (
 )
 
 YAML_SUFFIXES: frozenset[str] = frozenset({".yaml", ".yml"})
+MIN_EXPECTED_DEFAULT_YAML_FILES = 40
+MIN_EXPECTED_DEFAULT_YAML_MAPPINGS = 200
 
 
 class _MergeKeyTag:
@@ -117,6 +119,7 @@ class UniqueKeySafeLoader(yaml.SafeLoader):
 
     duplicate_sink: list[tuple[int, str, int, int]] | None = None
     current_document_index: int = 0
+    mapping_count: int = 0
 
     def construct_mapping(
         self, node: MappingNode, deep: bool = False
@@ -129,6 +132,7 @@ class UniqueKeySafeLoader(yaml.SafeLoader):
                 node.start_mark,
             )
 
+        self.mapping_count += 1
         seen_keys: dict[tuple[type[Any], Hashable], int] = {}
         for key_node, _value_node in node.value:
             line_no = key_node.start_mark.line + 1
@@ -197,8 +201,10 @@ def load_all_unique(content: str) -> list[Any]:
     return documents
 
 
-def scan_yaml_text(content: str, path: Path) -> list[YamlViolation]:
-    """Scan a YAML string (including multi-document ``---`` streams) for violations."""
+def scan_yaml_text_with_stats(
+    content: str, path: Path
+) -> tuple[list[YamlViolation], int]:
+    """Scan a YAML string and return ``(violations, mapping_count)``."""
     duplicates: list[tuple[int, str, int, int]] = []
 
     class _RecordingUniqueKeyLoader(UniqueKeySafeLoader):
@@ -258,11 +264,17 @@ def scan_yaml_text(content: str, path: Path) -> list[YamlViolation]:
         )
 
     violations.sort(key=lambda v: (str(v.path), v.line, v.kind, v.key or ""))
+    return violations, loader.mapping_count
+
+
+def scan_yaml_text(content: str, path: Path) -> list[YamlViolation]:
+    """Scan a YAML string (including multi-document ``---`` streams) for violations."""
+    violations, _ = scan_yaml_text_with_stats(content, path)
     return violations
 
 
-def scan_yaml_file(path: Path) -> list[YamlViolation]:
-    """Read ``path`` as UTF-8 and return any YAML integrity violations."""
+def scan_yaml_file_with_stats(path: Path) -> tuple[list[YamlViolation], int]:
+    """Read ``path`` as UTF-8 and return ``(violations, mapping_count)``."""
     try:
         content = path.read_text(encoding="utf-8")
     except OSError as exc:
@@ -274,8 +286,14 @@ def scan_yaml_file(path: Path) -> list[YamlViolation]:
                 message=f"failed to read YAML file: {exc}",
                 error_type=type(exc).__name__,
             )
-        ]
-    return scan_yaml_text(content, path=path)
+        ], 0
+    return scan_yaml_text_with_stats(content, path=path)
+
+
+def scan_yaml_file(path: Path) -> list[YamlViolation]:
+    """Read ``path`` as UTF-8 and return any YAML integrity violations."""
+    violations, _ = scan_yaml_file_with_stats(path)
+    return violations
 
 
 def collect_yaml_files(targets: Sequence[Path]) -> tuple[list[Path], list[Path]]:
@@ -295,8 +313,10 @@ def collect_yaml_files(targets: Sequence[Path]) -> tuple[list[Path], list[Path]]
     return sorted(files), missing
 
 
-def scan_paths(targets: Sequence[Path]) -> tuple[list[Path], list[YamlViolation]]:
-    """Scan all YAML files under ``targets`` and return ``(files, violations)``."""
+def scan_paths_with_stats(
+    targets: Sequence[Path],
+) -> tuple[list[Path], list[YamlViolation], int]:
+    """Scan all YAML files under ``targets`` and return ``(files, violations, mapping_count)``."""
     files, missing = collect_yaml_files(targets)
     violations: list[YamlViolation] = [
         YamlViolation(
@@ -308,8 +328,17 @@ def scan_paths(targets: Sequence[Path]) -> tuple[list[Path], list[YamlViolation]
         )
         for missing_path in missing
     ]
+    total_mappings = 0
     for yaml_file in files:
-        violations.extend(scan_yaml_file(yaml_file))
+        file_violations, file_mappings = scan_yaml_file_with_stats(yaml_file)
+        violations.extend(file_violations)
+        total_mappings += file_mappings
+    return files, violations, total_mappings
+
+
+def scan_paths(targets: Sequence[Path]) -> tuple[list[Path], list[YamlViolation]]:
+    """Scan all YAML files under ``targets`` and return ``(files, violations)``."""
+    files, violations, _ = scan_paths_with_stats(targets)
     return files, violations
 
 
@@ -335,19 +364,43 @@ def _build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="Print scanned file counts and per-root summary.",
     )
+    parser.add_argument(
+        "--min-files",
+        type=int,
+        default=None,
+        help="Minimum YAML files expected in scanned corpus.",
+    )
+    parser.add_argument(
+        "--min-mappings",
+        type=int,
+        default=None,
+        help="Minimum YAML mappings expected in scanned corpus.",
+    )
     return parser
 
 
 def main(argv: Sequence[str] | None = None) -> int:
     args = _build_parser().parse_args(argv)
-    if args.paths is not None:
+    default_repo_scan = args.paths is None
+    if not default_repo_scan:
         targets = [p if p.is_absolute() else (Path.cwd() / p) for p in args.paths]
         display_root: Path | None = Path.cwd()
     else:
         targets = [REPO_ROOT / rel for rel in DEFAULT_SCAN_ROOTS]
         display_root = REPO_ROOT
 
-    files, violations = scan_paths(targets)
+    min_files = (
+        args.min_files
+        if args.min_files is not None
+        else (MIN_EXPECTED_DEFAULT_YAML_FILES if default_repo_scan else 1)
+    )
+    min_mappings = (
+        args.min_mappings
+        if args.min_mappings is not None
+        else (MIN_EXPECTED_DEFAULT_YAML_MAPPINGS if default_repo_scan else 1)
+    )
+
+    files, violations, total_mappings = scan_paths_with_stats(targets)
     if args.verbose:
         roots_label = ", ".join(
             str(t.relative_to(display_root))
@@ -355,7 +408,10 @@ def main(argv: Sequence[str] | None = None) -> int:
             else str(t)
             for t in targets
         )
-        print(f"Scanning {len(files)} YAML file(s) across [{roots_label}]...")
+        print(
+            f"Scanning {len(files)} YAML file(s) ({total_mappings} mappings) "
+            f"across [{roots_label}]..."
+        )
 
     if violations:
         print(
@@ -367,10 +423,28 @@ def main(argv: Sequence[str] | None = None) -> int:
             print(f"  - {violation.format(display_root)}", file=sys.stderr)
         return 1
 
+    corpus_failures: list[str] = []
+    if len(files) < min_files:
+        corpus_failures.append(
+            f"scanned YAML files {len(files)} < minimum expected {min_files}"
+        )
+    if total_mappings < min_mappings:
+        corpus_failures.append(
+            f"recognized YAML mappings {total_mappings} < minimum expected {min_mappings}"
+        )
+    if corpus_failures:
+        print(
+            "YAML integrity check FAILED: vacuous/blind corpus floor not met:",
+            file=sys.stderr,
+        )
+        for failure in corpus_failures:
+            print(f"  - {failure}", file=sys.stderr)
+        return 1
+
     if args.verbose:
         print(
-            f"YAML integrity check PASSED: {len(files)} YAML file(s) verified "
-            "(0 duplicate keys, 0 parse errors)."
+            f"YAML integrity check PASSED: {len(files)} YAML file(s), "
+            f"{total_mappings} mappings verified (0 duplicate keys, 0 parse errors)."
         )
     return 0
 

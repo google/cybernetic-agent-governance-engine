@@ -179,3 +179,22 @@ def test_sibling_sequence_items_with_same_keys_allowed(tmp_path: Path) -> None:
 def test_live_repository_yaml_scan_passes_with_zero_violations() -> None:
     """All YAML files under compliance/, config/, and .github/ must pass cleanly."""
     assert main(["--verbose"]) == 0
+
+
+def test_empty_or_mapping_free_yaml_corpus_fails_closed(
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """Empty YAML directories or YAML corpora with 0 mappings must fail closed."""
+    empty_dir = tmp_path / "empty_yaml"
+    empty_dir.mkdir()
+    assert main(["--paths", str(empty_dir)]) == 1
+    captured = capsys.readouterr()
+    assert "vacuous/blind corpus floor not met" in captured.err
+    assert "scanned YAML files 0 < minimum expected 1" in captured.err
+
+    scalar_only = tmp_path / "scalar_only.yaml"
+    scalar_only.write_text("---\n- item1\n- item2\n", encoding="utf-8")
+    assert main(["--paths", str(scalar_only)]) == 1
+    captured = capsys.readouterr()
+    assert "recognized YAML mappings 0 < minimum expected 1" in captured.err
