@@ -35,7 +35,7 @@ def test_live_repo_src_has_zero_write_only_state_attributes(
         f"Unexpected write-only state violations:\n{captured.out}{captured.err}"
     )
     assert (
-        "OK: every *.state.<attr> written in src/ has at least one reader."
+        "OK: every *.state.<attr> written in src/ has at least one reader"
         in captured.out
     )
 
@@ -170,3 +170,22 @@ def test_syntax_error_and_missing_root_fail_closed(
     captured = capsys.readouterr()
     assert rc == 1
     assert "failed to parse Python source" in captured.err
+
+
+def test_zero_recognized_state_writes_fails_closed(
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """A corpus matching zero *.state.<attr> writes must fail closed, never pass vacuously."""
+    src_dir = tmp_path / "src"
+    src_dir.mkdir(parents=True)
+    (src_dir / "plain.py").write_text(
+        "def compute(x: int) -> int:\n    return x * 2\n",
+        encoding="utf-8",
+    )
+
+    rc = main(["--root", str(tmp_path)])
+    captured = capsys.readouterr()
+    assert rc == 1
+    assert "vacuous/blind corpus floor not met" in captured.err
+    assert "recognized *.state.<attr> writes 0 < minimum expected 1" in captured.err

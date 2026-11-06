@@ -47,6 +47,9 @@ EXCLUDED_DIRS: frozenset[str] = frozenset(
 )
 
 STATE_PARAM_NAMES: frozenset[str] = frozenset({"state", "app_state", "req_state"})
+MIN_EXPECTED_REPO_FILES = 100
+MIN_EXPECTED_REPO_WRITES = 10
+MIN_EXPECTED_REPO_READ_ATTRS = 5
 
 
 @dataclass(frozen=True)
@@ -228,16 +231,17 @@ def iter_python_files(scan_dir: Path) -> list[Path]:
     return files
 
 
-def find_write_only_state(
+def scan_write_only_state_with_stats(
     root: Path,
-) -> tuple[list[StateWrite], list[str]]:
-    """Scan ``root`` and return ``(write_only_sites, parse_errors)``."""
+) -> tuple[list[StateWrite], list[str], int, int, int]:
+    """Scan ``root`` and return ``(violations, parse_errors, file_count, write_count, read_attr_count)``."""
     scan_dir = root / "src" if (root / "src").is_dir() else root
     all_writes: list[StateWrite] = []
     all_reads: set[str] = set()
     parse_errors: list[str] = []
+    files = iter_python_files(scan_dir)
 
-    for filepath in iter_python_files(scan_dir):
+    for filepath in files:
         try:
             source = filepath.read_text(encoding="utf-8")
             tree = ast.parse(source, filename=str(filepath))
@@ -251,6 +255,14 @@ def find_write_only_state(
         all_reads.update(visitor.reads)
 
     violations = [w for w in all_writes if w.attr not in all_reads]
+    return violations, parse_errors, len(files), len(all_writes), len(all_reads)
+
+
+def find_write_only_state(
+    root: Path,
+) -> tuple[list[StateWrite], list[str]]:
+    """Scan ``root`` and return ``(write_only_sites, parse_errors)``."""
+    violations, parse_errors, _, _, _ = scan_write_only_state_with_stats(root)
     return violations, parse_errors
 
 
@@ -273,24 +285,83 @@ def main(argv: Sequence[str] | None = None) -> int:
         action="store_true",
         help="Print summary when clean.",
     )
+    parser.add_argument(
+        "--min-files",
+        type=int,
+        default=None,
+        help="Minimum Python files expected in scanned corpus.",
+    )
+    parser.add_argument(
+        "--min-writes",
+        type=int,
+        default=None,
+        help="Minimum *.state.<attr> write sites expected in scanned corpus.",
+    )
+    parser.add_argument(
+        "--min-read-attrs",
+        type=int,
+        default=None,
+        help="Minimum distinct *.state.<attr> read attributes expected in scanned corpus.",
+    )
     args = parser.parse_args(argv)
 
     repo_root = Path(__file__).resolve().parent.parent
-    if args.root is None:
+    default_repo_scan = args.root is None
+    if default_repo_scan:
         scan_target = repo_root / "src"
         display_base = repo_root
     else:
         scan_target = args.root.resolve()
         display_base = scan_target
 
+    min_files = (
+        args.min_files
+        if args.min_files is not None
+        else (MIN_EXPECTED_REPO_FILES if default_repo_scan else 1)
+    )
+    min_writes = (
+        args.min_writes
+        if args.min_writes is not None
+        else (MIN_EXPECTED_REPO_WRITES if default_repo_scan else 1)
+    )
+    min_read_attrs = (
+        args.min_read_attrs
+        if args.min_read_attrs is not None
+        else (MIN_EXPECTED_REPO_READ_ATTRS if default_repo_scan else 0)
+    )
+
     if not scan_target.exists():
         print(f"Error: scan root does not exist: {scan_target}", file=sys.stderr)
         return 1
 
-    violations, parse_errors = find_write_only_state(scan_target)
+    violations, parse_errors, file_count, write_count, read_attr_count = (
+        scan_write_only_state_with_stats(scan_target)
+    )
     if parse_errors:
         for err in parse_errors:
             print(err, file=sys.stderr)
+        return 1
+
+    corpus_failures: list[str] = []
+    if file_count < min_files:
+        corpus_failures.append(
+            f"scanned Python files {file_count} < minimum expected {min_files}"
+        )
+    if write_count < min_writes:
+        corpus_failures.append(
+            f"recognized *.state.<attr> writes {write_count} < minimum expected {min_writes}"
+        )
+    if read_attr_count < min_read_attrs:
+        corpus_failures.append(
+            f"recognized *.state.<attr> read attributes {read_attr_count} < minimum expected {min_read_attrs}"
+        )
+    if corpus_failures:
+        print(
+            "Write-only state check FAILED: vacuous/blind corpus floor not met:",
+            file=sys.stderr,
+        )
+        for failure in corpus_failures:
+            print(f"  - {failure}", file=sys.stderr)
         return 1
 
     if violations:
@@ -306,7 +377,10 @@ def main(argv: Sequence[str] | None = None) -> int:
         return 1
 
     if args.verbose:
-        print("OK: every *.state.<attr> written in src/ has at least one reader.")
+        print(
+            f"OK: every *.state.<attr> written in src/ has at least one reader "
+            f"({write_count} writes, {read_attr_count} distinct read attrs across {file_count} files)."
+        )
     return 0
 
 
