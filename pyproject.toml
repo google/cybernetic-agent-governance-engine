@@ -203,7 +203,7 @@ langfuse = [
 
 
 lint = [
-    "ruff>=0.4.6",
+    "ruff==0.16.5",
     "mypy>=1.15.0",
     "codespell>=2.2.0",
     "types-pyyaml>=6.0.12.20240917",
@@ -323,6 +323,10 @@ url = "https://pypi.org/simple"
 default = true
 
 [tool.uv]
+constraint-dependencies = [
+    # CVE-2026-49272 / GHSA-3jp2-3mrg-2vxc: RFC 8628 device_code validation bypass in oauthlib<=4.0.0
+    "oauthlib>=4.0.1",
+]
 override-dependencies = [
     # Force patched opentelemetry (>=1.45.1 / >=0.66b0) past google-adk's <=1.42.1 pin (CVE-2026-114603)
     "opentelemetry-api>=1.45.1",
