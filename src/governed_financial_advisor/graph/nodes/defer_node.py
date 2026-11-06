@@ -13,12 +13,13 @@
 # limitations under the License.
 
 """
-Defer Node — LangGraph Integration for CageClient Deferral Flow.
+Defer Node — Turn-Terminal Governance Hold (Layer 4 Advisor Integration).
 
-Suspends graph execution when the gateway returns a DEFER verdict. The gateway
-owns DeferQueue; this node only packages the gateway-issued ticket metadata into
-the LangGraph checkpoint payload and finishes the current turn until HITL
-resolution resumes the thread.
+Terminates the current LangGraph turn when the CAGE Gateway returns a ``DEFER``
+verdict with a ``defer_token``. The gateway owns ``DeferQueue``; ``defer_node``
+records the gateway-issued ticket ID, emits a truthful reason-specific
+turn-terminal hold message (epistemic quality hold or warrant reliance hold),
+and finishes the turn without claiming human-approval auto-resumption.
 """
 
 from __future__ import annotations
@@ -34,65 +35,76 @@ logger = logging.getLogger("DeferNode")
 
 
 async def defer_node(state: AgentState) -> dict[str, Any]:
-    """Package gateway-issued deferral ticket metadata for LangGraph checkpointing.
+    """Emit a turn-terminal governance hold response for a gateway ``DEFER``.
 
     Args:
-        state: Current AgentState with ``deferral_ticket_id`` and ``deferral_reason``
-            populated by ``safety_check_node`` from the gateway's DEFER verdict.
+        state: Current ``AgentState`` with ``deferral_ticket_id`` and
+            ``deferral_reason`` populated by ``safety_check_node`` from the
+            gateway's ``DEFER`` envelope (``defer_token`` / ``defer_reason``).
 
     Returns:
         State updates dictionary containing:
-          - safety_status: "DEFERRED"
-          - deferral_ticket_id: Ticket ID issued by the gateway
-          - checkpoint_payload: Snapshot for HITL resumption
-          - messages: User-facing explanation of deferral
-          - next_step: "FINISH"
+          - safety_status: ``"DEFERRED"``
+          - deferral_ticket_id: Non-empty ticket ID issued by the gateway
+          - messages: User-facing explanation of the turn-terminal hold
+          - next_step: ``"FINISH"``
 
     Raises:
-        RuntimeError: If ``deferral_ticket_id`` is missing from state (fail-closed).
+        RuntimeError: If ``deferral_ticket_id`` is missing or blank in state
+            (fail-closed).
     """
-    thread_id = str(state.get("thread_id") or "anonymous_thread")
     plan_raw = state.get("execution_plan_output")
     plan: dict[str, Any] = plan_raw if isinstance(plan_raw, dict) else {}
 
-    ticket_id = state.get("deferral_ticket_id")
-    if not ticket_id:
+    raw_ticket_id = state.get("deferral_ticket_id")
+    if not isinstance(raw_ticket_id, str) or not raw_ticket_id.strip():
         raise RuntimeError(
             "defer_node requires a gateway-issued deferral_ticket_id in state; "
             "the advisor does not own DeferQueue."
         )
+    ticket_id = raw_ticket_id.strip()
 
-    defer_reason_str = state.get("deferral_reason", "Human approval required")
+    raw_reason = state.get("deferral_reason")
+    defer_reason_str = (
+        raw_reason.strip() if isinstance(raw_reason, str) else str(raw_reason or "")
+    ) or "CONFIDENCE_BELOW_THRESHOLD"
 
     logger.info(
-        "⏸️ [DeferNode] Gateway deferral detected: ticket_id=%s, reason=%s",
+        "⏸️ [DeferNode] Turn-terminal governance hold: ticket_id=%s, reason=%s",
         ticket_id,
         defer_reason_str,
     )
 
-    checkpoint_payload = {
-        "ticket_id": ticket_id,
-        "thread_id": thread_id,
-        "defer_reason": defer_reason_str,
-        "execution_plan_snapshot": plan,
-        "parked_at": state.get("timestamp") or "unknown",
-    }
+    symbol = str(plan.get("symbol") or "asset")
+    if "WARRANT_INELIGIBLE" in defer_reason_str:
+        guidance = (
+            "An external reliance or warrant precondition required to govern "
+            "this action was not met. This hold cannot be overridden by human "
+            "approval; submit a new request only after a valid, in-scope "
+            "warrant is standing."
+        )
+    else:
+        guidance = (
+            "Epistemic confidence fell below the minimum admissibility "
+            "threshold (< 0.70). This epistemic quality hold prevents "
+            "automation-bias rubber-stamping (whereas high-value human review "
+            "uses `REQUIRE_APPROVAL`); inject fresh context or market data and "
+            "submit a new request once context improves."
+        )
 
     explanation = (
-        f"Transaction for {plan.get('symbol', 'asset')} requires human approval "
-        f"and has been deferred to the HITL review queue.\n\n"
+        f"Proposed transaction for {symbol} has been placed on a "
+        f"**turn-terminal governance hold** and will not execute in this turn "
+        f"or auto-resume via human approval.\n\n"
         f"**Deferral Details:**\n"
         f"- Ticket ID: `{ticket_id}`\n"
         f"- Reason: {defer_reason_str}\n\n"
-        f"Execution will resume automatically once the ticket is approved by "
-        f"a human reviewer. You can check the ticket status in the governance "
-        f"dashboard or wait for notification."
+        f"{guidance}"
     )
 
     return {
         "safety_status": "DEFERRED",
         "deferral_ticket_id": ticket_id,
-        "checkpoint_payload": checkpoint_payload,
         "messages": [AIMessage(content=explanation)],
         "next_step": "FINISH",
     }

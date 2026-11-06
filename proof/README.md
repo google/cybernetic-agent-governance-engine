@@ -170,7 +170,7 @@ CHECK_DEADLOCK FALSE
 
 ### FtraBoundary and LangGraphHarness: Results
 
-Neither spec has a Python twin, so TLC's distinct-state count (`-continue`) and the exact set of violated invariants are pinned in [`tla_pins.py`](tla_pins.py). Each spec has one negative-control cfg that removes the defence it depends on; it lists the demonstrated invariant first because TLC reports only the first violated invariant per state.
+Unlike [`model.py`](model.py) + [`trace_conformance.py`](trace_conformance.py) and [`DistributedCBF.tla`](DistributedCBF.tla) + [`distributed_cbf_model.py`](distributed_cbf_model.py), [`FtraBoundary.tla`](FtraBoundary.tla) and [`LangGraphHarness.tla`](LangGraphHarness.tla) are standalone TLC-checked design specifications with no Python BFS twin and no runtime trace-conformance checker coupling them to `src/governed_financial_advisor/`; TLC's distinct-state count (`-continue`) and violated-invariant set are pinned in [`tla_pins.py`](tla_pins.py), while advisor node behavioral conformance ([`safety_node.py`](../src/governed_financial_advisor/graph/nodes/safety_node.py) / [`defer_node.py`](../src/governed_financial_advisor/graph/nodes/defer_node.py): `SafetyDefer` leaving `consecutive_denials` unchanged vs. `SafetyDeny` incrementing it) is enforced by live ASGI integration tests in [`tests/test_advisor_trade_preview_e2e.py`](../tests/test_advisor_trade_preview_e2e.py). Each spec has one negative-control cfg that removes the defence it depends on; it lists the demonstrated invariant first because TLC reports only the first violated invariant per state.
 
 | cfg | Posture | Distinct states | Result |
 |-----|---------|-----------------|--------|
