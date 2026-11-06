@@ -75,6 +75,8 @@ ROOT_FUNCTION_NAMES: frozenset[str] = frozenset(
 IGNORED_TYPE_TOKENS: frozenset[str] = frozenset(
     {"None", "Optional", "Union", "Any", "Callable", "Awaitable", "Coroutine"}
 )
+MIN_EXPECTED_REPO_FILES = 100
+MIN_EXPECTED_REPO_DAEMONS = 4
 
 
 @dataclass(frozen=True)
@@ -862,10 +864,33 @@ def main(argv: list[str] | None = None) -> int:
         action="store_true",
         help="Print every discovered daemon class and its resolved start site(s).",
     )
+    parser.add_argument(
+        "--min-files",
+        type=int,
+        default=None,
+        help="Minimum Python files expected in scanned corpus.",
+    )
+    parser.add_argument(
+        "--min-daemons",
+        type=int,
+        default=None,
+        help="Minimum daemon classes expected in scanned corpus.",
+    )
     args = parser.parse_args(argv)
 
     repo_root = Path(__file__).resolve().parent.parent
-    src_dir = args.src_dir.resolve() if args.src_dir is not None else repo_root / "src"
+    default_repo_scan = args.src_dir is None
+    src_dir = args.src_dir.resolve() if not default_repo_scan else repo_root / "src"
+    min_files = (
+        args.min_files
+        if args.min_files is not None
+        else (MIN_EXPECTED_REPO_FILES if default_repo_scan else 1)
+    )
+    min_daemons = (
+        args.min_daemons
+        if args.min_daemons is not None
+        else (MIN_EXPECTED_REPO_DAEMONS if default_repo_scan else 1)
+    )
 
     if not src_dir.is_dir():
         print(f"ERROR: src directory not found: {src_dir}", file=sys.stderr)
@@ -891,6 +916,24 @@ def main(argv: list[str] | None = None) -> int:
                     f"  [UNSTARTED] {info.name} ({info.rel_path}:{info.lineno}, "
                     f"entry: {methods_str}) -> NO REACHABLE START SITE"
                 )
+
+    corpus_failures: list[str] = []
+    if result.scanned_files < min_files:
+        corpus_failures.append(
+            f"scanned Python files {result.scanned_files} < minimum expected {min_files}"
+        )
+    if len(result.daemons) < min_daemons:
+        corpus_failures.append(
+            f"recognized daemon classes {len(result.daemons)} < minimum expected {min_daemons}"
+        )
+    if corpus_failures:
+        print(
+            "Daemon lifespan check FAILED: vacuous/blind corpus floor not met:",
+            file=sys.stderr,
+        )
+        for failure in corpus_failures:
+            print(f"  - {failure}", file=sys.stderr)
+        return 1
 
     if result.unstarted:
         print()

@@ -422,3 +422,27 @@ class TestAuditDaemonLifespans:
             assert result.wired_locations[daemon_name], (
                 f"Expected live daemon {daemon_name} to resolve at least one start site"
             )
+
+    def test_zero_recognized_daemons_or_empty_corpus_fails_closed(
+        self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        empty_dir = tmp_path / "empty_src"
+        empty_dir.mkdir()
+        assert main(["--src-dir", str(empty_dir)]) == 1
+        captured = capsys.readouterr()
+        assert "vacuous/blind corpus floor not met" in captured.err
+        assert "scanned Python files 0 < minimum expected 1" in captured.err
+
+        plain_dir = tmp_path / "plain_src"
+        _write_module(
+            plain_dir,
+            "service/plain.py",
+            """
+            class PlainHelper:
+                def compute(self) -> int:
+                    return 42
+            """,
+        )
+        assert main(["--src-dir", str(plain_dir)]) == 1
+        captured = capsys.readouterr()
+        assert "recognized daemon classes 0 < minimum expected 1" in captured.err
