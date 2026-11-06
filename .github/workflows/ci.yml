@@ -218,7 +218,7 @@ jobs:
       - name: Check lockfile integrity
         run: uv lock --check
       - name: Install dependencies
-        run: uv sync --all-groups --all-extras
+        run: uv sync --locked --all-groups --all-extras
       - name: Ruff lint
         run: uv run ruff check .
       - name: Ruff format check
@@ -358,7 +358,7 @@ jobs:
         with:
           python-version: "3.11"
       - name: Install dependencies
-        run: pip install pyyaml pydantic ruff
+        run: pip install pyyaml pydantic "ruff==0.16.5"
       - name: Check generated STPA artifacts are current
         run: |
           python scripts/check_stpa_freshness.py --verbose
