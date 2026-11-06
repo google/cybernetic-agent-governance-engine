@@ -77,7 +77,7 @@ def test_identical_temp_trees_pass_and_ignore_pycache(
     assert sync_violations(tmp_path) == []
     assert main(["--repo-root", str(tmp_path), "--verbose"]) == 0
     captured = capsys.readouterr()
-    assert "4 Python modules byte-identical" in captured.out
+    assert "4 files byte-identical (4 Python modules)" in captured.out
     assert "✓ core.py" in captured.out
 
 
@@ -116,9 +116,37 @@ def test_missing_and_extra_modules_fail(tmp_path: Path) -> None:
         for err in errors
     )
     assert any(
-        "src/gateway/client/orphan_pkg_only.py is missing (extra module" in err
+        "src/gateway/client/orphan_pkg_only.py is missing (extra file" in err
         for err in errors
     )
+
+
+def test_non_python_files_are_compared_not_skipped(tmp_path: Path) -> None:
+    """A non-.py file (marker, data) present in one tree or differing fails the gate."""
+    kernel_dir, package_dir = _seed_synced_repo(tmp_path)
+    marker = "# Marker file for PEP 561.\n\n"
+    (package_dir / "py.typed").write_text(marker, encoding="utf-8")
+
+    errors = sync_violations(tmp_path)
+    assert errors == [
+        "src/gateway/client/py.typed is missing "
+        "(extra file at packages/cage-client/src/cage_client/py.typed)"
+    ]
+
+    (kernel_dir / "py.typed").write_text(marker, encoding="utf-8")
+    assert sync_violations(tmp_path) == []
+
+    (kernel_dir / "adapters" / "schema.json").write_text('{"v": 1}\n', encoding="utf-8")
+    (package_dir / "adapters" / "schema.json").write_text(
+        '{"v": 2}\n', encoding="utf-8"
+    )
+    errors = sync_violations(tmp_path)
+    assert len(errors) == 1
+    assert (
+        "packages/cage-client/src/cage_client/adapters/schema.json differs from "
+        "src/gateway/client/adapters/schema.json" in errors[0]
+    )
+    assert main(["--repo-root", str(tmp_path)]) == 1
 
 
 def test_missing_or_empty_directories_fail_closed(tmp_path: Path) -> None:

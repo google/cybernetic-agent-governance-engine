@@ -19,14 +19,16 @@ Both the in-tree mirror (``src/gateway/client/``) and the distributable wheel
 source (``packages/cage-client/src/cage_client/``) ship the exact same Policy
 Enforcement Point (PEP) client SDK. This zero-waiver gate fails if:
 
-1. the set of ``.py`` modules under ``src/gateway/client/`` (excluding
-   ``__pycache__``) does not match ``packages/cage-client/src/cage_client/``
-   1-to-1 (missing or extra modules in either tree);
-2. any paired ``.py`` module differs byte-for-byte (SHA-256);
+1. the set of files under ``src/gateway/client/`` (every file, not only ``.py``
+   modules; ``__pycache__`` excluded) does not match
+   ``packages/cage-client/src/cage_client/`` 1-to-1 (missing or extra files in
+   either tree);
+2. any paired file differs byte-for-byte (SHA-256);
 3. any ``.py`` module in either client tree imports ``src`` or ``proof``
    (absolute monorepo imports would break standalone ``cage-client`` installs).
 
-Zero waivers and zero allowlists are permitted.
+Every file is compared, so nothing in either tree can drift without the gate
+seeing it. Zero waivers and zero allowlists are permitted.
 
 Usage:
     uv run python scripts/check_client_sdk_sync.py --verbose
@@ -56,18 +58,27 @@ def _sha256(path: Path) -> str:
     return hashlib.sha256(path.read_bytes()).hexdigest()
 
 
-def collect_py_files(root: Path) -> dict[Path, Path]:
-    """Return ``{relative_path: full_path}`` for all ``.py`` files excluding ``__pycache__``."""
+def collect_files(root: Path) -> dict[Path, Path]:
+    """Return ``{relative_path: full_path}`` for every file under ``root`` except ``__pycache__``."""
     collected: dict[Path, Path] = {}
-    for candidate in sorted(root.rglob("*.py")):
+    for candidate in sorted(root.rglob("*")):
         if "__pycache__" in candidate.parts or not candidate.is_file():
             continue
         collected[candidate.relative_to(root)] = candidate
     return collected
 
 
+def collect_py_files(root: Path) -> dict[Path, Path]:
+    """Return ``{relative_path: full_path}`` for the ``.py`` modules under ``root``."""
+    return {
+        rel_path: full_path
+        for rel_path, full_path in collect_files(root).items()
+        if rel_path.suffix == ".py"
+    }
+
+
 def sync_violations(repo_root: Path = REPO_ROOT) -> list[str]:
-    """Return violations for missing, extra, or byte-divergent ``.py`` modules."""
+    """Return violations for missing, extra, or byte-divergent files in either tree."""
     kernel_dir = repo_root / KERNEL_REL
     package_dir = repo_root / PACKAGE_REL
     errors: list[str] = []
@@ -79,12 +90,12 @@ def sync_violations(repo_root: Path = REPO_ROOT) -> list[str]:
     if errors:
         return errors
 
-    kernel_files = collect_py_files(kernel_dir)
-    package_files = collect_py_files(package_dir)
+    kernel_files = collect_files(kernel_dir)
+    package_files = collect_files(package_dir)
 
-    if not kernel_files:
+    if not any(rel_path.suffix == ".py" for rel_path in kernel_files):
         errors.append(f"no .py modules found under {KERNEL_REL}")
-    if not package_files:
+    if not any(rel_path.suffix == ".py" for rel_path in package_files):
         errors.append(f"no .py modules found under {PACKAGE_REL}")
     if errors:
         return errors
@@ -100,7 +111,7 @@ def sync_violations(repo_root: Path = REPO_ROOT) -> list[str]:
             continue
         if in_package and not in_kernel:
             errors.append(
-                f"{KERNEL_REL / rel_path} is missing (extra module at {PACKAGE_REL / rel_path})"
+                f"{KERNEL_REL / rel_path} is missing (extra file at {PACKAGE_REL / rel_path})"
             )
             continue
         kernel_sha = _sha256(kernel_files[rel_path])
@@ -239,11 +250,11 @@ def main(argv: Sequence[str] | None = None) -> int:
             )
 
     if args.verbose and kernel_dir.is_dir() and package_dir.is_dir():
-        kernel_files = collect_py_files(kernel_dir)
-        package_files = collect_py_files(package_dir)
+        kernel_files = collect_files(kernel_dir)
+        package_files = collect_files(package_dir)
         print(
-            f"Scanning client SDK trees: {len(kernel_files)} module(s) in {KERNEL_REL}, "
-            f"{len(package_files)} module(s) in {PACKAGE_REL} ({pkg_imports} root imports)..."
+            f"Scanning client SDK trees: {len(kernel_files)} file(s) in {KERNEL_REL}, "
+            f"{len(package_files)} file(s) in {PACKAGE_REL} ({pkg_imports} root imports)..."
         )
         if not errors:
             for rel_path, full_path in kernel_files.items():
@@ -254,9 +265,11 @@ def main(argv: Sequence[str] | None = None) -> int:
             print(f"❌ {error}", file=sys.stderr)
         return 1
 
+    file_count = len(collect_files(kernel_dir))
     module_count = len(collect_py_files(kernel_dir))
     print(
-        f"✅ cage-client sync: {module_count} Python modules byte-identical, "
+        f"✅ cage-client sync: {file_count} files byte-identical "
+        f"({module_count} Python modules), "
         f"{pkg_imports} root imports verified, no src/ or proof/ imports"
     )
     return 0
