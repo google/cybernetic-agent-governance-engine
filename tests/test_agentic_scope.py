@@ -122,24 +122,6 @@ class TestConsensusGateThreshold:
 
         assert THRESHOLDS.resolve("domains.finance.consensus.threshold_usd") == 10000.0
 
-    def test_hitl_escalator_fires_above_threshold(self):
-        """should_escalate_for_consensus returns True when amount > threshold."""
-        from src.gateway.governance.hitl_escalator import should_escalate_for_consensus
-
-        assert should_escalate_for_consensus(15000.0, threshold=10000.0) is True
-
-    def test_hitl_escalator_does_not_fire_at_threshold(self):
-        """should_escalate_for_consensus returns False when amount == threshold."""
-        from src.gateway.governance.hitl_escalator import should_escalate_for_consensus
-
-        assert should_escalate_for_consensus(10000.0, threshold=10000.0) is False
-
-    def test_hitl_escalator_does_not_fire_below_threshold(self):
-        """should_escalate_for_consensus returns False when amount < threshold."""
-        from src.gateway.governance.hitl_escalator import should_escalate_for_consensus
-
-        assert should_escalate_for_consensus(9999.99, threshold=10000.0) is False
-
 
 # ---------------------------------------------------------------------------
 # §4.1 Task 3c — CausalGatekeeper blocks tool calls outside authorized space

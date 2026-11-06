@@ -1217,7 +1217,7 @@ async def test_mutation_without_the_consumption_cas_replay_executes_twice(
     async def _always(self: DeferQueue, *args: Any, **kwargs: Any) -> bool:
         return True
 
-    monkeypatch.setattr(DeferQueue, "atomic_resolve", _always)
+    monkeypatch.setattr(DeferQueue, "_atomic_resolve", _always)
     results = await _replay_concurrently(gw)
     with pytest.raises(AssertionError):
         _assert_single_execution(results, await gw.fiscal.current_spend_usd())

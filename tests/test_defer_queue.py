@@ -28,13 +28,12 @@ from unittest.mock import AsyncMock, MagicMock
 import fakeredis.aioredis
 import pytest
 
+import src.gateway.governance.defer_queue as defer_queue_mod
 from src.gateway.governance.defer_queue import (
     _DEFAULT_HOLD_TTL,
     DeferQueue,
     DeferReason,
     DeferToken,
-    create_external_hold_token,
-    is_external_hold_finding,
 )
 from src.gateway.governance.schemas.thresholds import get_confidence_defer_floor
 
@@ -242,91 +241,18 @@ def test_external_hold_default_ttl_constant():
     assert _DEFAULT_HOLD_TTL == 300
 
 
-def test_create_external_hold_token_sets_correct_reason():
-    """create_external_hold_token() must set EXTERNAL_HOLD reason."""
-    token = create_external_hold_token(
-        thread_id="thread-fs-001",
-        confidence_score=0.82,
-        opa_input_snapshot={"action": "execute_trade", "amount_usd": 50000},
-    )
-    assert token.defer_reason == DeferReason.EXTERNAL_HOLD
+def test_atomic_resolve_is_private_helper_only():
+    """DeferQueue must not expose public atomic_resolve; _atomic_resolve is private."""
+    assert not hasattr(DeferQueue, "atomic_resolve")
+    assert callable(getattr(DeferQueue, "_atomic_resolve", None))
 
 
-def test_create_external_hold_token_sets_300s_ttl():
-    """create_external_hold_token() must use 300s default TTL when not specified."""
-    token = create_external_hold_token(
-        thread_id="thread-fs-002",
-        confidence_score=0.85,
-        opa_input_snapshot={"action": "execute_trade"},
-    )
-    assert token.ttl_seconds == 300
-
-
-def test_create_external_hold_token_embeds_finding_message():
-    """External hold finding message is embedded in opa_input_snapshot for audit."""
-    token = create_external_hold_token(
-        thread_id="thread-fs-003",
-        confidence_score=0.75,
-        opa_input_snapshot={"action": "execute_trade"},
-        finding_message="Provider 01: requires senior approval",
-    )
-    assert (
-        token.opa_input_snapshot.get("_external_hold_finding_message")
-        == "Provider 01: requires senior approval"
-    )
-
-
-def test_create_external_hold_token_aarm_vector():
-    """External hold tokens use AARM-V8 (External Hold) vector."""
-    token = create_external_hold_token(
-        thread_id="thread-fs-004",
-        confidence_score=0.80,
-        opa_input_snapshot={},
-    )
-    assert token.aarm_vector == "AARM-V8"
-
-
-def test_is_external_hold_finding_true_positive():
-    """is_external_hold_finding() returns True for valid EXTERNAL_HOLD findings."""
-    finding = {
-        "code": "EXTERNAL_HOLD",
-        "severity": "review",
-        "message": "Requires human approval",
-        "needs_human_review": True,
-    }
-    assert is_external_hold_finding(finding) is True
-
-
-def test_is_external_hold_finding_missing_needs_human_review():
-    """is_external_hold_finding() returns False if needs_human_review is missing."""
-    finding = {
-        "code": "EXTERNAL_HOLD",
-        "severity": "review",
-        "message": "Requires human approval",
-    }
-    assert is_external_hold_finding(finding) is False
-
-
-def test_is_external_hold_finding_wrong_code():
-    """is_external_hold_finding() returns False for non-EXTERNAL_HOLD codes."""
-    finding = {
-        "code": "PROVIDER_01_REFUSE",
-        "severity": "blocked",
-        "message": "Hard deny",
-        "needs_human_review": True,  # Even with this, wrong code
-    }
-    assert is_external_hold_finding(finding) is False
-
-
-def test_is_external_hold_finding_needs_human_review_false():
-    """is_external_hold_finding() returns False if needs_human_review is False."""
-    finding = {
-        "code": "EXTERNAL_HOLD",
-        "severity": "review",
-        "message": "...",
-        "needs_human_review": False,
-    }
-    assert is_external_hold_finding(finding) is False
+def test_retired_external_hold_helpers_absent():
+    """Retired zero-caller external hold helpers must not be exposed on defer_queue."""
+    retired_token_fn = "_".join(("create", "external", "hold", "token"))
+    retired_finding_fn = "_".join(("is", "external", "hold", "finding"))
+    assert not hasattr(defer_queue_mod, retired_token_fn)
+    assert not hasattr(defer_queue_mod, retired_finding_fn)
 
 
 # ---------------------------------------------------------------------------
@@ -376,10 +302,12 @@ async def test_expire_stale_calls_dlq_publisher_for_external_hold_escalation(
     queue = DeferQueue(fake_redis_with_past_expiry, dlq_publisher=dlq_publisher)
 
     # Park an EXTERNAL_HOLD token that's already expired
-    token = create_external_hold_token(
+    token = DeferToken(
         thread_id="thread-dlq-001",
+        defer_reason=DeferReason.EXTERNAL_HOLD,
         confidence_score=0.82,
         opa_input_snapshot={"action": "execute_trade"},
+        ttl_seconds=_DEFAULT_HOLD_TTL,
     )
     await fake_redis_with_past_expiry._park_expired(token)
 
@@ -427,10 +355,12 @@ async def test_expire_stale_without_dlq_publisher_logs_warning_only(
     # No dlq_publisher configured (default behavior)
     queue = DeferQueue(fake_redis_with_past_expiry)
 
-    token = create_external_hold_token(
+    token = DeferToken(
         thread_id="thread-no-dlq-001",
+        defer_reason=DeferReason.EXTERNAL_HOLD,
         confidence_score=0.80,
         opa_input_snapshot={},
+        ttl_seconds=_DEFAULT_HOLD_TTL,
     )
     await fake_redis_with_past_expiry._park_expired(token)
 
@@ -451,15 +381,19 @@ async def test_expire_stale_dlq_publisher_error_does_not_crash_sweep(
     queue = DeferQueue(fake_redis_with_past_expiry, dlq_publisher=dlq_publisher)
 
     # Park two EXTERNAL_HOLD tokens
-    token1 = create_external_hold_token(
+    token1 = DeferToken(
         thread_id="thread-err-001",
+        defer_reason=DeferReason.EXTERNAL_HOLD,
         confidence_score=0.80,
         opa_input_snapshot={},
+        ttl_seconds=_DEFAULT_HOLD_TTL,
     )
-    token2 = create_external_hold_token(
+    token2 = DeferToken(
         thread_id="thread-err-002",
+        defer_reason=DeferReason.EXTERNAL_HOLD,
         confidence_score=0.80,
         opa_input_snapshot={},
+        ttl_seconds=_DEFAULT_HOLD_TTL,
     )
     await fake_redis_with_past_expiry._park_expired(token1)
     await fake_redis_with_past_expiry._park_expired(token2)

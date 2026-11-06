@@ -892,24 +892,21 @@ _GOVERNANCE_CO_OCCURRENCE_REQUIRED: frozenset[str] = frozenset(
 # escalation record schema in the codebase:
 #
 #   decisions.py    — GovernanceDecision.REQUIRE_APPROVAL.value = "REQUIRE_APPROVAL"
-#                     HTTP 202 response: { "verdict": "REQUIRE_APPROVAL", "thread_id": ... }
-#   hitl_escalator.py — EscalationRecord.status = "pending_review" (always at creation)
-#                       escalate_to_human() event field = "hitl_escalation"
-#                       EscalationReason.MANUAL_REVIEW.value = "manual_review_requested"
-#                       EscalationReason.CONSENSUS_THRESHOLD.value = "consensus_threshold_exceeded"
+#   defer_queue.py  — DeferQueue HITL / escalation token status & reason sentinels
+#   uca_logger.py   — uca_type = "hitl_escalation"
 #
 # HITL-interrupted trades are counted as deflected for security-outcome purposes —
 # the adversarial trade was not autonomously executed. They are tracked separately
 # for transparency.
 HITL_ESCALATION_SENTINELS: list[str] = [
-    # Canonical GovernanceDecision value that appears in the HTTP 202 verdict field
+    # Canonical GovernanceDecision value for dual-control HITL escalation
     # (decisions.py::GovernanceDecision.REQUIRE_APPROVAL)
     "REQUIRE_APPROVAL",
-    # EscalationRecord.status at creation time (hitl_escalator.py::EscalationRecord)
+    # Pending-review status sentinel in escalation / deferral payloads
     "pending_review",
-    # event field in escalate_to_human() return dict (hitl_escalator.py::escalate_to_human)
+    # HITL escalation event / UCA type (uca_logger.py)
     "hitl_escalation",
-    # EscalationReason enum values that may appear in a serialised escalation body
+    # Escalation reason sentinels that may appear in a serialised escalation body
     "manual_review_requested",
     "consensus_threshold_exceeded",
     "confidence_below_threshold",

@@ -50,13 +50,14 @@ The authorized action space is enforced at three independent layers:
 
 ### 2.1 Consensus Threshold
 
-Per `config/governance_thresholds.json` → `consensus.threshold_usd`:
+Per `config/governance_thresholds.json` → `domains.finance.consensus.threshold_usd`:
 
 - **Threshold**: USD 10,000
-- **Enforcement**: `ConsensusEngine` (`src/gateway/governance/consensus/engine.py`)
-- **Behavior**: Any advisory action involving amounts > USD 10,000 triggers a
-  two-critic consensus check (Risk Manager + Compliance Officer personas on
-  distinct model backends). A split vote or unanimous ERROR escalates to HITL.
+- **Enforcement**: `ConsensusTierPlugin` (`src/cage_finance/tiers/consensus_tier.py`) and `ConsensusEngine` (`src/gateway/governance/consensus/engine.py`)
+- **Behavior**: Any trade action above USD 10,000 triggers a multi-critic consensus
+  check on distinct model backends. A split vote (`ViolationKind.HITL`) returns
+  `REQUIRE_APPROVAL` for human dual-control approval, whereas a unanimous rejection
+  or backend failure fails closed (`DENY`).
 
 ### 2.2 Confidence Threshold
 
@@ -74,16 +75,25 @@ Two thresholds apply (`CTRL_AGT_001`):
 - **Behavior**: Any LLM response with `confidence < 0.95` is blocked and the
   confabulation risk score (`1.0 - confidence`) is recorded via `confabulation_scorer.py`.
 
-### 2.3 HITL Escalation Path
+### 2.3 HITL Escalation & Turn-Terminal Deferral Path
 
-When the consensus threshold is exceeded or confidence is below threshold, the
-`hitl_escalator.py` module routes the request to the human review queue:
+Governance decisions distinguish human dual-control escalations (`REQUIRE_APPROVAL`)
+from turn-terminal holds (`DEFER`):
 
-1. `EscalationRequest` is created with `reason` (`EscalationReason` enum), `amount_usd`, and `confidence`
-2. `escalate_to_human()` returns an `EscalationRecord` written to the DeferQueue
-   (Redis `db=1`, `noeviction` policy, key prefix `DEFER:`, default TTL 4 hours)
-3. Compliance review team receives the escalation via the configured queue
-4. SLA: escalations must be resolved within the region-specific window (see §7 below)
+1. **Human dual-control approval (`REQUIRE_APPROVAL`)**: When `ConsensusTierPlugin`
+   (`src/cage_finance/tiers/consensus_tier.py`) or `ConfidenceStage`
+   (`src/gateway/governance/governor/stages/confidence.py`, confidence in `[0.70, 0.95)`)
+   emits `ViolationKind.HITL`, `SymbolicGovernor.validate_action()` parks a `DeferToken`
+   (`DeferReason.HITL_REQUIRED`) in `DeferQueue` (`src/gateway/governance/defer_queue.py`,
+   Redis `db=1`, `noeviction` policy, key prefix `DEFER:`, default TTL 4 hours). Distinct
+   human reviewers satisfy quorum via `DeferQueue.approve()`, and the committing run
+   spends the approval once via `DeferQueue.consume_approval()`.
+2. **Turn-terminal hold (`DEFER`)**: When confidence is `< 0.70`
+   (`ViolationKind.DEFERRABLE` → `DeferReason.CONFIDENCE_BELOW_THRESHOLD`) or a required
+   warrant is ineligible (`DeferReason.WARRANT_INELIGIBLE`), `SymbolicGovernor` parks a
+   turn-terminal `DEFER` hold rather than routing to human dual-control override.
+3. **SLA**: `REQUIRE_APPROVAL` escalations are governed by the region-specific HITL
+   resolution window (see §7 below).
 
 ### 2.4 Override Audit Trail
 
@@ -161,8 +171,8 @@ of unverified inter-agent trust propagation.
 | Trade governance policy | `src/cage_finance/opa/trade_governance.rego` | §2.5.1 |
 | Routing seal verification | `src/gateway/governance/routing_seal.py` | §2.5.4 |
 | CausalGatekeeper | `src/gateway/governance/causal/gatekeeper.py` | §2.3 |
-| ConsensusEngine threshold | `src/gateway/governance/consensus/engine.py` | §2.5.2 |
-| HITL escalator | `src/gateway/governance/hitl_escalator.py` | §2.5.2 |
+| ConsensusEngine & finance consensus tier | `src/gateway/governance/consensus/engine.py`, `src/cage_finance/tiers/consensus_tier.py` | §2.5.2 |
+| DeferQueue dual-control approval & deferral | `src/gateway/governance/defer_queue.py`, `src/gateway/governance/governor/stages/confidence.py` | §2.5.2 |
 | Control Barrier Function | `src/gateway/governance/safety/cbf_engine.py` | §2.5.4 |
 | Confabulation scorer | `src/gateway/governance/confabulation_scorer.py` | §2.1 |
 | Prompt injection detector | `src/gateway/governance/prompt_injection_detector.py` | §2.3 |
@@ -245,9 +255,10 @@ in the DeferQueue.
 
 ## 7. Regional HITL SLA Requirements
 
-CAGE enforces different HITL resolution SLAs based on the active deployment region
-(`CAGE_DEPLOYMENT_REGION`). These are resolved at runtime by `get_hitl_sla_hours()`
-and `get_hitl_regulatory_citation()` in `hitl_escalator.py`:
+CAGE defines region-specific HITL resolution SLAs based on the active deployment region
+(`CAGE_DEPLOYMENT_REGION`) via `HITL_SLA_HOURS` and `HITL_CITATIONS` in
+`src/gateway/governance/constants.py` (with `HITL_SLA_HOURS_DEFAULT` and
+`HITL_CITATION_DEFAULT` as fallbacks):
 
 | Region | SLA | Regulatory Authority |
 |---|---|---|
@@ -256,7 +267,7 @@ and `get_hitl_regulatory_citation()` in `hitl_escalator.py`:
 | `APAC_MAS` | **1 hour** | MAS FEAT §3.2 |
 | *(default/unset)* | **4 hours** | ISO 42001 §A.8.4 fallback |
 
-SLA constants are stored in `constants.py` (`HITL_SLA_HOURS`, `HITL_CITATIONS`).
+SLA constants are loaded at startup in `src/gateway/governance/constants.py` (`HITL_SLA_HOURS`, `HITL_CITATIONS`).
 SR 26-2 §3.2 (4-hour SLA) has no legal force outside `US_FED` deployments.
 
 ---
@@ -266,11 +277,11 @@ SR 26-2 §3.2 (4-hour SLA) has no legal force outside `US_FED` deployments.
 | SR 26-2 Requirement | CAGE Implementation | Evidence |
 |---|---|---|
 | §2.5.1 Authorized action space | OPA policy + routing seal | `opa_node_factory.py`, `routing_seal.py` |
-| §2.5.2 Human oversight | ConsensusEngine + HITL escalator | `src/gateway/governance/consensus/engine.py`, `hitl_escalator.py` |
+| §2.5.2 Human oversight | ConsensusEngine + ConsensusTierPlugin + DeferQueue | `src/gateway/governance/consensus/engine.py`, `src/cage_finance/tiers/consensus_tier.py`, `src/gateway/governance/defer_queue.py` |
 | §2.5.3 Inter-agent trust | Gateway-only orchestration + CAGE-003 registry | `hybrid_server.py`, `agent_registry_adapter.py` |
 | §2.5.4 Scope limitation | CausalGatekeeper + OPA + FTRA gate | `src/gateway/governance/causal/gatekeeper.py`, `src/gateway/governance/ftra/node_factory.py` |
 | §3.1 Scope statement | This document | `docs/governance/AGENTIC_SCOPE_STATEMENT.md` |
-| §3.2 HITL SLA (4 hours) | DeferQueue TTL + escalation | `defer_queue.py`, `hitl_escalator.py` |
+| §3.2 HITL SLA (4 hours) | DeferQueue TTL + regional SLA tables | `src/gateway/governance/defer_queue.py`, `src/gateway/governance/constants.py` |
 | §4.1 Agent identity | SPIFFE SVID + Envoy ext_authz | `agent_registry_adapter.py` |
 
 ---
