@@ -800,3 +800,78 @@ class TestGdprArt22Posture:
         assert "7,500" in dpia
         assert "[0.70, 0.97)" in dpia
         assert "EU-006" in dpia
+
+
+class TestNothingSkippedSilently:
+    """Entries the manifest glob would miss fail the gate instead of dropping out."""
+
+    @staticmethod
+    def _valid_corpus(lula_dir: Path) -> Path:
+        (lula_dir / "lula-validation-one.yaml").write_text(
+            _make_oscal_manifest(), encoding="utf-8"
+        )
+        (lula_dir / ".stub-baseline").write_text("0\n", encoding="utf-8")
+        poam = lula_dir / "POAM.md"
+        poam.write_text("# POAM\n", encoding="utf-8")
+        return poam
+
+    @staticmethod
+    def _run(lula_dir: Path, poam: Path) -> int:
+        return gate.main(["--lula-dir", str(lula_dir), "--poam-files", str(poam)])
+
+    def test_valid_corpus_passes(self, tmp_path: Path) -> None:
+        poam = self._valid_corpus(tmp_path)
+        assert self._run(tmp_path, poam) == 0
+
+    @pytest.mark.parametrize(
+        "name",
+        [
+            "lula-ai600-misnamed.yaml",
+            "lula-validation-wrong-suffix.yml",
+            "lula-validation-oscal.json",
+        ],
+    )
+    def test_content_file_outside_the_manifest_glob_fails(
+        self, tmp_path: Path, capsys: pytest.CaptureFixture[str], name: str
+    ) -> None:
+        poam = self._valid_corpus(tmp_path)
+        (tmp_path / name).write_text(_make_oscal_manifest(), encoding="utf-8")
+        assert self._run(tmp_path, poam) == 1
+        err = capsys.readouterr().err
+        assert "Unrecognized entries" in err
+        assert name in err
+
+    def test_undeclared_subdirectory_fails(
+        self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        poam = self._valid_corpus(tmp_path)
+        nested = tmp_path / "ai600"
+        nested.mkdir()
+        (nested / "lula-validation-nested.yaml").write_text(
+            _make_oscal_manifest(), encoding="utf-8"
+        )
+        assert self._run(tmp_path, poam) == 1
+        assert "ai600/" in capsys.readouterr().err
+
+    def test_declared_entries_are_listed_as_not_scanned(
+        self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        poam = self._valid_corpus(tmp_path)
+        (tmp_path / "assessment-results.yaml").write_text(
+            "assessment-results: {}\n", encoding="utf-8"
+        )
+        (tmp_path / "drafts").mkdir()
+        (tmp_path / "schemas").mkdir()
+        assert self._run(tmp_path, poam) == 0
+        assert (
+            "Not scanned (declared non-manifest entries): "
+            "assessment-results.yaml, drafts/, schemas/" in capsys.readouterr().out
+        )
+
+    def test_live_repository_has_no_unrecognized_entries(self) -> None:
+        assert gate.unrecognized_entries(LULA_DIR) == []
+        assert gate.declared_entries(LULA_DIR) == [
+            "assessment-results.yaml",
+            "drafts/",
+            "schemas/",
+        ]

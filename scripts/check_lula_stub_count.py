@@ -54,6 +54,14 @@ both OSCAL ``component-definition`` documents with embedded
      preserve) ``.stub-baseline`` as stubs are hardened into real assertions;
      it refuses (exit 1) if ``stub_count > baseline``.
 
+4. **Nothing is skipped silently**:
+   Every YAML/JSON file and subdirectory in ``compliance/lula/`` is either a
+   ``lula-validation-*.yaml`` manifest or a declared non-manifest entry
+   (``assessment-results.yaml``, ``drafts/``, ``schemas/``). Anything else fails
+   the gate, so a manifest saved under another name, suffix, or subdirectory
+   cannot drop out of the scan unnoticed. Declared entries are listed in the
+   output as not scanned.
+
 Usage::
 
     # In CI — fails on corpus-floor breach, upward stub drift, or missing POAM
@@ -66,6 +74,7 @@ Usage::
 from __future__ import annotations
 
 import argparse
+import fnmatch
 import re
 import sys
 from collections.abc import Sequence
@@ -91,6 +100,14 @@ _BASELINE_FILE = _LULA_DIR / ".stub-baseline"
 _MANIFEST_GLOB = "lula-validation-*.yaml"
 _LIVE_CORPUS_MIN_MANIFESTS = 30
 _LIVE_CORPUS_MIN_REGO_BODIES = 30
+
+#: Suffixes that could hold Lula/OSCAL content. Every such file in the manifest
+#: directory must be a manifest or a declared non-manifest entry.
+_CONTENT_SUFFIXES: frozenset[str] = frozenset({".yaml", ".yml", ".json"})
+#: Entries of compliance/lula/ that are deliberately not scanned as manifests.
+_DECLARED_NON_MANIFESTS: frozenset[str] = frozenset(
+    {"assessment-results.yaml", "drafts", "schemas"}
+)
 
 _DEFAULT_RELATIVE_POAM_FILES: tuple[Path, ...] = (
     Path("docs/POAM.md"),
@@ -466,6 +483,41 @@ def classify_manifest(path: Path) -> ManifestResult:
 
 
 # ---------------------------------------------------------------------------
+# Directory classification (nothing is skipped silently)
+# ---------------------------------------------------------------------------
+
+
+def unrecognized_entries(lula_dir: Path) -> list[str]:
+    """Return entries the manifest scan would otherwise skip without saying so.
+
+    Every YAML/JSON file and subdirectory in ``lula_dir`` must be either a
+    ``lula-validation-*.yaml`` manifest or a declared non-manifest entry, so a
+    manifest saved under another name, suffix, or subdirectory cannot drop out
+    of the scan unnoticed.
+    """
+    found: list[str] = []
+    for entry in sorted(lula_dir.iterdir()):
+        if entry.name in _DECLARED_NON_MANIFESTS:
+            continue
+        if entry.is_dir():
+            found.append(f"{entry.name}/")
+        elif entry.suffix.lower() in _CONTENT_SUFFIXES and not fnmatch.fnmatchcase(
+            entry.name, _MANIFEST_GLOB
+        ):
+            found.append(entry.name)
+    return found
+
+
+def declared_entries(lula_dir: Path) -> list[str]:
+    """Return the declared non-manifest entries present in ``lula_dir``."""
+    return [
+        f"{entry.name}/" if entry.is_dir() else entry.name
+        for entry in sorted(lula_dir.iterdir())
+        if entry.name in _DECLARED_NON_MANIFESTS
+    ]
+
+
+# ---------------------------------------------------------------------------
 # POAM coverage
 # ---------------------------------------------------------------------------
 
@@ -728,6 +780,8 @@ def main(argv: Sequence[str] | None = None) -> int:
         return 1
 
     results = [classify_manifest(f) for f in yaml_files]
+    unrecognized = unrecognized_entries(lula_dir)
+    declared = declared_entries(lula_dir)
 
     # ------------------------------------------------------------------
     # 2. Check POAM coverage
@@ -750,6 +804,8 @@ def main(argv: Sequence[str] | None = None) -> int:
         f"Scanned {total_manifests} manifest(s) in {_display_path(lula_dir, repo_root)} "
         f"(extracted {total_rego_bodies} Rego policy body/bodies)"
     )
+    if declared:
+        print(f"Not scanned (declared non-manifest entries): {', '.join(declared)}")
     print(f"Stubs found: {stub_count}\n")
     _print_table(results)
     _print_stub_details(results)
@@ -758,6 +814,14 @@ def main(argv: Sequence[str] | None = None) -> int:
     # 4. Evaluate non-vacuous corpus & per-manifest floors first
     # ------------------------------------------------------------------
     failures: list[str] = []
+
+    if unrecognized:
+        failures.append(
+            f"Unrecognized entries in {_display_path(lula_dir, repo_root)} were not "
+            f"scanned: {', '.join(unrecognized)}\n"
+            f"  Name manifests lula-validation-*.yaml, or declare the entry in "
+            f"_DECLARED_NON_MANIFESTS."
+        )
 
     if total_manifests < min_manifests:
         failures.append(
