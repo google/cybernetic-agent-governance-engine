@@ -29,7 +29,7 @@ locals {
   # For Cloud SQL IAM authentication via proxy:
   # The database user name for service accounts in Postgres is the SA email without .gserviceaccount.com.
   # When constructing the DATABASE_URL, '@' in the username must be URL-encoded as '%40' for Prisma parsing.
-  encoded_iam_user = replace(var.cloudsql_iam_user, "@", "%40")
+  encoded_iam_user       = replace(var.cloudsql_iam_user, "@", "%40")
   effective_database_url = var.enable_cloudsql_proxy ? "postgresql://${local.encoded_iam_user}:unused@127.0.0.1:5432/${var.cloudsql_database_name}?sslmode=disable" : var.database_url
 }
 
@@ -267,6 +267,11 @@ resource "kubernetes_deployment" "langfuse_web" {
                 }
               }
             }
+          }
+
+          env {
+            name  = "CLICKHOUSE_DB"
+            value = var.clickhouse_db
           }
 
           env {
@@ -658,6 +663,11 @@ resource "kubernetes_deployment" "langfuse_worker" {
                 }
               }
             }
+          }
+
+          env {
+            name  = "CLICKHOUSE_DB"
+            value = var.clickhouse_db
           }
 
           env {

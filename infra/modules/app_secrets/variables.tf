@@ -48,23 +48,6 @@ variable "langfuse_host" {
   type = string
 }
 
-variable "clickhouse_url" {
-  type = string
-}
-
-variable "clickhouse_migration_url" {
-  type = string
-}
-
-variable "clickhouse_user" {
-  type = string
-}
-
-variable "clickhouse_password" {
-  type      = string
-  sensitive = true
-}
-
 variable "database_url" {
   type      = string
   sensitive = true

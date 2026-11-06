@@ -858,9 +858,10 @@ module "langfuse" {
   cloudsql_iam_user        = module.cloudsql_postgres.iam_user_name
   cloudsql_database_name   = module.cloudsql_postgres.database_name
   clickhouse_url           = "http://${module.clickhouse_operator.service_name}:${module.clickhouse_operator.http_port}"
-  clickhouse_migration_url = "clickhouse://default:${module.clickhouse_operator.password}@${module.clickhouse_operator.service_name}:${module.clickhouse_operator.tcp_port}"
-  clickhouse_user          = "default"
-  clickhouse_password      = module.clickhouse_operator.password
+  clickhouse_db            = module.clickhouse_operator.langfuse_database
+  clickhouse_migration_url = "clickhouse://${module.clickhouse_operator.langfuse_username}:${module.clickhouse_operator.langfuse_password}@${module.clickhouse_operator.service_name}:${module.clickhouse_operator.tcp_port}/${module.clickhouse_operator.langfuse_database}"
+  clickhouse_user          = module.clickhouse_operator.langfuse_username
+  clickhouse_password      = module.clickhouse_operator.langfuse_password
   redis_connection_string  = "redis://${module.memorystore_app.primary_endpoint_ip}:${module.memorystore_app.primary_endpoint_port}"
   redis_host               = module.memorystore_app.primary_endpoint_ip
   redis_port               = tostring(module.memorystore_app.primary_endpoint_port)
@@ -1169,13 +1170,9 @@ module "app_secrets" {
   )
   redis_password = ""
 
-  clickhouse_url           = "http://${module.clickhouse_operator.service_name}:${module.clickhouse_operator.http_port}"
-  clickhouse_migration_url = "clickhouse://default:${module.clickhouse_operator.password}@${module.clickhouse_operator.service_name}:${module.clickhouse_operator.tcp_port}"
-  clickhouse_user          = "default"
-  clickhouse_password      = module.clickhouse_operator.password
-  database_url             = ""
-  nextauth_secret          = module.langfuse.nextauth_secret
-  nextauth_url             = var.langfuse_nextauth_url
+  database_url    = ""
+  nextauth_secret = module.langfuse.nextauth_secret
+  nextauth_url    = var.langfuse_nextauth_url
 
   aws_access_key_id     = var.aws_access_key
   aws_secret_access_key = var.aws_secret_key
