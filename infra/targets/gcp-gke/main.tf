@@ -597,9 +597,9 @@ resource "kubernetes_secret" "clickhouse_tiering_hmac" {
   }
 }
 
-# ─── Deploy ClickHouse Operator & Query Plane (§1.1, §2.6, §3, §7) ───────────
-# ClickHouse is strictly the analytical query plane fed by clickhouse_sink.py.
-# The retention-locked GCS WORM bucket (module.worm_bucket) is the system of record;
+# ─── Deploy ClickHouse Operator & Langfuse OLAP Plane (§1.1, §2.6, §3, §7) ───
+# ClickHouse serves strictly as the Langfuse v3 OLAP store (`langfuse_app` on `langfuse.*`).
+# The retention-locked GCS WORM bucket (module.worm_bucket) is the evidence system of record;
 # the cold tier uses the dedicated google_storage_bucket.clickhouse_tiering.
 #
 # Posture matrix (§1.1, §2.6):
@@ -918,16 +918,8 @@ module "compliance_bridge" {
   evidence_cold_store        = "gcs"
   evidence_cold_store_bucket = module.worm_bucket.bucket_name
   cmek_key_resource_name     = var.enable_cmek ? local.cmek_key_id : ""
-  clickhouse_host            = module.clickhouse_operator.service_name
-  clickhouse_port            = tostring(module.clickhouse_operator.http_port)
-  clickhouse_database        = "cage_evidence"
-  clickhouse_enabled         = true
-  # Least-privilege writer (INSERT on evidence_stream only), never `default`.
-  clickhouse_username             = module.clickhouse_operator.evidence_sink_username
-  clickhouse_password_secret_name = module.clickhouse_operator.evidence_sink_password_secret_name
-  clickhouse_password_secret_key  = module.clickhouse_operator.evidence_sink_password_secret_key
-  cage_env                        = var.environment
-  deployment_config_map_name      = module.deployment_config.config_map_name
+  cage_env                   = var.environment
+  deployment_config_map_name = module.deployment_config.config_map_name
 
   # EvidenceCustodian: same governance Memorystore instance, db, key, TLS and
   # IAM auth mode as the gateway producer (see local.evidence_stream_*).
@@ -945,7 +937,7 @@ module "compliance_bridge" {
   service_account_name = kubernetes_service_account.workload["compliance_bridge"].metadata[0].name
   evidence_kms_key     = local.compliance_evidence_key_version
 
-  depends_on = [module.langfuse, module.vllm, module.worm_bucket, module.clickhouse_operator, module.memorystore_governance]
+  depends_on = [module.langfuse, module.vllm, module.worm_bucket, module.memorystore_governance]
 }
 
 

@@ -52,26 +52,6 @@ output "native_url" {
   value       = "clickhouse://${kubernetes_service.clickhouse.metadata[0].name}.${var.namespace}.svc.cluster.local:9000"
 }
 
-output "evidence_database" {
-  description = "ClickHouse database holding evidence_stream"
-  value       = var.evidence_database
-}
-
-output "evidence_sink_username" {
-  description = "Least-privilege ClickHouse user for the compliance-bridge evidence sink"
-  value       = var.evidence_sink_username
-}
-
-output "evidence_sink_password_secret_name" {
-  description = "Kubernetes Secret holding the evidence sink password (key: evidence_sink_password_secret_key)"
-  value       = kubernetes_secret.evidence_sink.metadata[0].name
-}
-
-output "evidence_sink_password_secret_key" {
-  description = "Key within evidence_sink_password_secret_name for the evidence sink password"
-  value       = "CLICKHOUSE_PASSWORD"
-}
-
 output "langfuse_database" {
   description = "Dedicated ClickHouse database for Langfuse v3 trace storage"
   value       = var.langfuse_database
@@ -110,7 +90,7 @@ output "keeper_replicas" {
 }
 
 output "table_engine" {
-  description = "ClickHouse table engine for evidence_stream (MergeTree in dev/staging, ReplicatedMergeTree in prod)"
+  description = "ClickHouse table engine for Langfuse OLAP tables (MergeTree in dev/staging, ReplicatedMergeTree in prod)"
   value       = local.table_engine
 }
 

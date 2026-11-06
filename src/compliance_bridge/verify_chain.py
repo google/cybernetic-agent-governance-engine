@@ -106,7 +106,7 @@ def verify_evidence_chain(records: list[dict[str, Any]]) -> ChainStatus:
             )
             return ChainStatus.BROKEN
 
-        # Genesis records carry "" (Redis) or None (ClickHouse NULL).
+        # Genesis records carry "" (or None if deserialized without prev_hash).
         prev_hash = record.get("prev_hash") or ""
         if prev_hash != expected_prev:
             logger.error(

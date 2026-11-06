@@ -27,8 +27,8 @@ Enforces, for both Terraform (infra/) and raw manifests (deployment/k8s/):
    EVIDENCE_STREAM_KMS_SIGN or WORM bucket IAM.
 3. The bridge can reach the governance instance (IAM + NetworkPolicy) and
    GCS / Cloud KMS (FQDNNetworkPolicy).
-4. The bridge's ClickHouse env matches what clickhouse_sink.py reads and the
-   cage_evidence schema.
+4. The bridge's Terraform module and GKE target carry zero retired ClickHouse
+   evidence-sink wiring, and the retired ClickHouse evidence files stay absent.
 5. Deleted knobs (EVIDENCE_STREAM_KMS_SIGN, EVIDENCE_COLD_STORE_FLUSH_SECONDS)
    are set nowhere.
 """
@@ -125,7 +125,6 @@ def _container_env(path: Path, deployment: str) -> dict[str, dict]:
 
 
 _GATEWAY_MANIFESTS = ["gateway.yaml", "gateway.yaml.tpl", "gateway-deployment.yaml.tpl"]
-_BRIDGE_MANIFESTS = ["compliance-bridge.yaml", "compliance-bridge-deployment.yaml.tpl"]
 
 
 # ---------------------------------------------------------------------------
@@ -379,38 +378,23 @@ def test_manifest_bridge_egress_allowlist_covers_redis() -> None:
 
 
 # ---------------------------------------------------------------------------
-# 4. Bridge env: custody + ClickHouse sink (Terraform and manifests)
+# 4. Bridge env: WORM custody only (ClickHouse evidence sink retired)
 # ---------------------------------------------------------------------------
 
 
-def _sink_env_names() -> set[str]:
-    return set(
-        re.findall(r'os\.environ\.get\("(CLICKHOUSE_[A-Z_]+)"', _CH_SINK.read_text())
-    )
+def test_bridge_module_has_no_clickhouse_evidence_wiring() -> None:
+    assert not _CH_SINK.exists(), "Retired clickhouse_sink.py must not exist"
+    assert not _CH_SCHEMA.exists(), "Retired evidence_stream_schema.sql must not exist"
 
-
-def test_bridge_module_clickhouse_env_matches_sink_and_schema() -> None:
     env = _tf_env(_BRIDGE_MOD.read_text())
-    sink_names = _sink_env_names()
-    for name in (
-        "CLICKHOUSE_ENABLED",
-        "CLICKHOUSE_USERNAME",
-        "CLICKHOUSE_DATABASE",
-        "CLICKHOUSE_PASSWORD",
-    ):
-        assert name in sink_names, f"clickhouse_sink.py no longer reads {name}"
-        assert name in env, f"compliance_bridge module does not set {name}"
-    assert env["CLICKHOUSE_PASSWORD"] == "value_from"  # secretKeyRef, never a literal
-
-    schema_db = re.search(
-        r"CREATE DATABASE IF NOT EXISTS (\w+);", _CH_SCHEMA.read_text()
-    ).group(1)
-    assert schema_db == "cage_evidence"
-    assert f'default     = "{schema_db}"' in _block(
-        _BRIDGE_VARS.read_text(), 'variable "clickhouse_database"'
+    leaked_env = [name for name in env if name.startswith("CLICKHOUSE_")]
+    assert leaked_env == [], (
+        f"compliance_bridge module sets retired ClickHouse env: {leaked_env}"
     )
+    assert "clickhouse_" not in _BRIDGE_VARS.read_text().lower()
+
     bridge = _block(_GKE_MAIN.read_text(), 'module "compliance_bridge"')
-    assert _tf_attr(bridge, "clickhouse_database") == f'"{schema_db}"'
+    assert "clickhouse" not in bridge.lower()
 
 
 def test_bridge_module_keeps_cold_store_and_custody_interval() -> None:
@@ -471,15 +455,6 @@ def test_manifest_bridge_reads_the_gateway_stream(
     assert br["EVIDENCE_CUSTODY_INTERVAL_S"]["value"] == "60"
     assert br["EVIDENCE_VERIFY_INTERVAL_S"]["value"] == "300"
     assert br["EVIDENCE_VERIFY_PREFIX"]["value"] == "evidence"
-
-
-@pytest.mark.parametrize("manifest", _BRIDGE_MANIFESTS)
-def test_manifest_bridge_clickhouse_env(manifest: str) -> None:
-    env = _container_env(_K8S / manifest, "compliance-bridge")
-    assert env["CLICKHOUSE_DATABASE"]["value"] == "cage_evidence"
-    assert env["CLICKHOUSE_ENABLED"]["value"] == "true"
-    assert "CLICKHOUSE_USERNAME" in env
-    assert "secretKeyRef" in env["CLICKHOUSE_PASSWORD"]["valueFrom"]
 
 
 # ---------------------------------------------------------------------------

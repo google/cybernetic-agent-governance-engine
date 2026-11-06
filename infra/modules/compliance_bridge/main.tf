@@ -349,42 +349,6 @@ resource "kubernetes_deployment" "compliance_bridge" {
             }
           }
 
-          # §2.6: ClickHouse is the analytical query plane fed by clickhouse_sink.py
-          env {
-            name  = "CLICKHOUSE_ENABLED"
-            value = tostring(var.clickhouse_enabled)
-          }
-
-          env {
-            name  = "CLICKHOUSE_HOST"
-            value = var.clickhouse_host
-          }
-
-          env {
-            name  = "CLICKHOUSE_PORT"
-            value = var.clickhouse_port
-          }
-
-          env {
-            name  = "CLICKHOUSE_DATABASE"
-            value = var.clickhouse_database
-          }
-
-          env {
-            name  = "CLICKHOUSE_USERNAME"
-            value = var.clickhouse_username
-          }
-
-          env {
-            name = "CLICKHOUSE_PASSWORD"
-            value_from {
-              secret_key_ref {
-                name = var.clickhouse_password_secret_name
-                key  = var.clickhouse_password_secret_key
-              }
-            }
-          }
-
           env {
             name  = "OSCAL_S3_REGION"
             value = var.oscal_s3_region

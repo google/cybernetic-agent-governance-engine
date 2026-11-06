@@ -1,11 +1,11 @@
-# ClickHouse Operator & Query-Plane Module (`infra/modules/clickhouse_operator`)
+# ClickHouse Operator & Langfuse OLAP Module (`infra/modules/clickhouse_operator`)
 
-Provisions the ClickHouse analytical query plane for CAGE (`evidence_stream` compliance queries and Langfuse v3 trace analytics).
+Provisions the ClickHouse OLAP backend dedicated exclusively to Langfuse v3 trace analytics (`langfuse_app` scoped to `langfuse.*`).
 
-## Architectural Role (§2.6)
+## Architectural Role (§2.6 / F-108)
 
-- **System of Record**: The retention-locked GCS WORM bucket ([`infra/modules/worm_bucket`](../worm_bucket/main.tf)) is the authoritative system of record for hash-chained compliance evidence and OSCAL assessment artifacts.
-- **Query Plane**: ClickHouse is strictly the analytical query plane, fed asynchronously by [`src/compliance_bridge/clickhouse_sink.py`](../../../src/compliance_bridge/clickhouse_sink.py). Losing a ClickHouse node (or the entire ClickHouse cluster in `dev`/`staging`) causes **zero evidence loss**.
+- **System of Record**: The governance Redis Stream and retention-locked GCS WORM bucket ([`infra/modules/worm_bucket`](../worm_bucket/main.tf)) are the sole live compliance evidence stores; GKE Managed Prometheus (`Monarch`) is the operational metrics store.
+- **Langfuse OLAP Plane**: ClickHouse serves strictly as Langfuse v3's trace analytics backend and plays no role in compliance evidence custody. Losing a ClickHouse node (or the entire ClickHouse cluster in `dev`/`staging`) causes **zero evidence loss**.
 
 ## Posture Matrix (§1.1, §2.6)
 
@@ -15,20 +15,10 @@ Provisions the ClickHouse analytical query plane for CAGE (`evidence_stream` com
 | **`staging`** | 1 node, local SSD | `MergeTree()` | Hot local SSD (`hot_local_ssd`) |
 | **`prod`** | Altinity ClickHouse Operator + 3-node cluster + 3-node ClickHouse Keeper | `ReplicatedMergeTree` | Hot local SSD (`hot_local_ssd`) + GCS cold tier (`cold_gcs`, `hot_to_cold` policy) |
 
-## Least-Privilege Evidence Writer (§7.2, §7.3)
+## Least-Privilege RBAC Isolation (F-108)
 
-The module renders `users.d/evidence_sink_user.xml`, a config-defined user
-(`evidence_sink_username`, default `cage_evidence_sink`) whose only privilege is
-`INSERT` on `<evidence_database>.evidence_stream`. Its profile pins
-`allow_ddl = 0` and `mutations_sync = 0` with `CONST` constraints, and it cannot
-manage access. Being config-defined, it cannot be widened or re-keyed through SQL.
-
-Its password is generated into a dedicated Secret (`evidence_sink_secret_name`,
-default `clickhouse-evidence-sink`, key `CLICKHOUSE_PASSWORD`) and injected into
-the server as `CLICKHOUSE_EVIDENCE_SINK_PASSWORD`. Wire the compliance bridge to
-the `evidence_sink_username`, `evidence_sink_password_secret_name` and
-`evidence_sink_password_secret_key` outputs; never hand it the admin (`default`)
-password. The module rejects `evidence_sink_username = "default"`.
+- **Loopback-Only `default` Superuser**: `users.d/networks.xml` restricts the built-in `default` user strictly to container loopback (`127.0.0.1` / `::1`) with `replace="replace"` and `access_management = 0`, and `outputs.tf` never exports the `default` password.
+- **Scoped `langfuse_app` Principal**: `users.d/langfuse_user.xml` defines `langfuse_app` (backed by its own Secret `clickhouse-langfuse-app` via `CLICKHOUSE_LANGFUSE_PASSWORD`) with grants scoped strictly to `langfuse.*` after `01_databases.sql` bootstraps `CREATE DATABASE IF NOT EXISTS langfuse;` on container startup.
 
 ## Node Isolation Invariant (§3, §7)
 

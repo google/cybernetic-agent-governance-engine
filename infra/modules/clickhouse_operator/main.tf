@@ -15,12 +15,11 @@
 # ─────────────────────────────────────────────────────────────────────────────
 # ClickHouse Operator & Query-Plane Module (Track 6e / §1.1, §2.6, §3, §7)
 # ─────────────────────────────────────────────────────────────────────────────
-# Architectural invariant (§2.6):
-#   The retention-locked GCS WORM bucket (`infra/modules/worm_bucket`) is the
-#   canonical system of record for compliance evidence. ClickHouse is strictly
-#   the analytical query plane fed by `src/compliance_bridge/clickhouse_sink.py`
-#   and Langfuse v3 trace analytics. Losing ClickHouse nodes causes zero
-#   evidence loss.
+# Architectural invariant (§2.6 / F-108):
+#   The retention-locked GCS WORM bucket (`infra/modules/worm_bucket`) and the
+#   governance Redis Stream are the sole live evidence stores. ClickHouse serves
+#   strictly as the OLAP trace store for Langfuse v3 (`langfuse_app` scoped to
+#   `langfuse.*`). Losing ClickHouse nodes causes zero evidence loss.
 #
 # Posture matrix (§1.1, §2.6):
 #   - dev / staging: 1 node on local SSD (`MergeTree`), no Keeper quorum.
@@ -83,33 +82,6 @@ resource "kubernetes_secret" "clickhouse_admin" {
   }
 }
 
-# Dedicated credential for the least-privilege evidence writer. Held in its own
-# Secret so the compliance bridge never receives the admin (`default`) password.
-resource "random_password" "evidence_sink" {
-  length  = 32
-  special = false
-}
-
-resource "kubernetes_secret" "evidence_sink" {
-  metadata {
-    name      = var.evidence_sink_secret_name
-    namespace = var.namespace
-    labels = {
-      app                         = "clickhouse"
-      component                   = "query-plane"
-      "cage.io/sensitivity-level" = "high"
-    }
-    annotations = {
-      "cage.io/rotation-schedule" = "90d"
-      "cage.io/rotation-owner"    = "platform-team"
-    }
-  }
-
-  data = {
-    "CLICKHOUSE_PASSWORD" = random_password.evidence_sink.result
-  }
-}
-
 # Dedicated credential for Langfuse v3 web, worker, and golang-migrate, scoped
 # exclusively to `langfuse.*` with zero superuser or cross-database privileges (F-108).
 resource "random_password" "langfuse_app" {
@@ -143,7 +115,7 @@ locals {
   enable_operator = var.enable_operator != null ? var.enable_operator : local.is_ha
   replicas        = local.is_ha ? 3 : 1
   keeper_replicas = local.is_ha ? 3 : 0
-  table_engine    = local.is_ha ? "ReplicatedMergeTree('/clickhouse/tables/{shard}/evidence_stream', '{replica}')" : "MergeTree()"
+  table_engine    = local.is_ha ? "ReplicatedMergeTree('/clickhouse/tables/{shard}/{database}/{table}', '{replica}')" : "MergeTree()"
   storage_policy  = local.is_ha && var.cold_tier_bucket != "" ? "hot_to_cold" : "default"
   cold_tier_on    = local.is_ha && var.cold_tier_bucket != ""
 }
@@ -390,10 +362,10 @@ resource "kubernetes_config_map" "clickhouse_config" {
   lifecycle {
     precondition {
       condition = (
-        length(distinct([var.evidence_sink_username, var.langfuse_username, "default"])) == 3 &&
-        var.langfuse_database != var.evidence_database
+        var.langfuse_username != "default" &&
+        !contains(["default", "system"], var.langfuse_database)
       )
-      error_message = "ClickHouse RBAC invariant (F-108): default, evidence_sink_username, and langfuse_username must be distinct identities, and langfuse_database must not equal evidence_database."
+      error_message = "ClickHouse RBAC invariant (F-108): langfuse_username must be distinct from default, and langfuse_database must not be default or system."
     }
   }
 
@@ -422,44 +394,6 @@ resource "kubernetes_config_map" "clickhouse_config" {
               <ip>::1</ip>
             </networks>
           </default>
-        </users>
-      </clickhouse>
-    EOT
-
-    # §7.2 / §7.3: least-privilege writer for src/compliance_bridge/clickhouse_sink.py.
-    # INSERT on the evidence table only — no SELECT, ALTER, DROP, TRUNCATE or
-    # OPTIMIZE — and DDL forbidden by a CONST constraint. Materialized-view pushes
-    # run under the view's DEFINER, so the writer needs no grant on MV targets
-    # (and must not hold one on evidence_chain_divergence, or it could forge
-    # verdicts). The password comes from the pod env (secretKeyRef), never here.
-    "evidence_sink_user.xml" = <<-EOT
-      <clickhouse>
-        <profiles>
-          <evidence_writer_profile>
-            <readonly>0</readonly>
-            <allow_ddl>0</allow_ddl>
-            <mutations_sync>0</mutations_sync>
-            <max_partitions_per_insert_block>8</max_partitions_per_insert_block>
-            <max_execution_time>30</max_execution_time>
-            <constraints>
-              <allow_ddl><const/></allow_ddl>
-              <mutations_sync><const/></mutations_sync>
-            </constraints>
-          </evidence_writer_profile>
-        </profiles>
-        <users>
-          <${var.evidence_sink_username}>
-            <password from_env="CLICKHOUSE_EVIDENCE_SINK_PASSWORD"/>
-            <profile>evidence_writer_profile</profile>
-            <quota>default</quota>
-            <access_management>0</access_management>
-            <networks>
-              <ip>::/0</ip>
-            </networks>
-            <grants>
-              <query>GRANT INSERT ON ${var.evidence_database}.evidence_stream</query>
-            </grants>
-          </${var.evidence_sink_username}>
         </users>
       </clickhouse>
     EOT
@@ -754,17 +688,6 @@ resource "kubernetes_stateful_set" "clickhouse" {
             }
           }
 
-          # Read by users.d/evidence_sink_user.xml (<password from_env=...>).
-          env {
-            name = "CLICKHOUSE_EVIDENCE_SINK_PASSWORD"
-            value_from {
-              secret_key_ref {
-                name = kubernetes_secret.evidence_sink.metadata[0].name
-                key  = "CLICKHOUSE_PASSWORD"
-              }
-            }
-          }
-
           # Read by users.d/langfuse_user.xml (<password from_env=...>).
           env {
             name = "CLICKHOUSE_LANGFUSE_PASSWORD"
@@ -845,12 +768,6 @@ resource "kubernetes_stateful_set" "clickhouse" {
             name       = "clickhouse-users-config"
             mount_path = "/etc/clickhouse-server/users.d/networks.xml"
             sub_path   = "networks.xml"
-          }
-
-          volume_mount {
-            name       = "clickhouse-users-config"
-            mount_path = "/etc/clickhouse-server/users.d/evidence_sink_user.xml"
-            sub_path   = "evidence_sink_user.xml"
           }
 
           volume_mount {

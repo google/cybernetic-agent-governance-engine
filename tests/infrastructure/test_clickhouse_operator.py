@@ -29,28 +29,25 @@ Enforces:
 5. Node pool isolation (§3, §7 Pitfalls):
    - Dedicated `clickhouse-node-pool` tainted `workload=clickhouse:NoSchedule` with local NVMe SSD and `spot = false`
    - ClickHouse and Keeper pods carry toleration `workload=clickhouse:NoSchedule` and node affinity requiring `workload=clickhouse` and `cloud.google.com/gke-spot NotIn ["true"]`
-6. Exit criteria fault-injection test (§6):
-   - Complete ClickHouse node loss while `EvidenceStreamSink` (gateway producer), `EvidenceCustodian` (compliance-bridge custody) and `ClickHouseSink` are active causes zero evidence loss in the retention-locked WORM bucket.
+6. Exit criteria custody test (§6):
+   - `EvidenceStreamSink` (gateway producer) and `EvidenceCustodian` (compliance-bridge custody) archive hash-chained batches into the retention-locked WORM bucket with zero ClickHouse dependency.
 7. ClickHouse's `cold_gcs` tier uses a dedicated, non-retention-locked, CMEK-encrypted bucket whose IAM is scoped to the ClickHouse GSA only (never the WORM bucket).
 """
 
 from __future__ import annotations
 
-import asyncio
 import hashlib
 import json
 import re
+import sys
 from collections.abc import Mapping
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any
-from unittest.mock import MagicMock, patch
 
 import fakeredis.aioredis
 import pytest
 import yaml
 
-from src.compliance_bridge.clickhouse_sink import ClickHouseSink
 from src.gateway.governance.evidence.cold_store import (
     ColdStoreHealth,
     ColdStoreReceipt,
@@ -207,16 +204,13 @@ def test_compliance_bridge_wired_to_worm_bucket_and_object_creator_iam() -> None
     assert "oscal_s3_bucket            = module.worm_bucket.bucket_name" in cb_block
     assert 'evidence_cold_store        = "gcs"' in cb_block
     assert "evidence_cold_store_bucket = module.worm_bucket.bucket_name" in cb_block
-    assert (
-        "clickhouse_host            = module.clickhouse_operator.service_name"
-        in cb_block
-    )
+    assert "clickhouse" not in cb_block.lower()
 
     cb_module_main = _COMPLIANCE_BRIDGE_MAIN.read_text()
     assert 'name  = "EVIDENCE_COLD_STORE"' in cb_module_main
     assert 'name  = "EVIDENCE_COLD_STORE_BUCKET"' in cb_module_main
     assert 'name  = "CMEK_KEY_RESOURCE_NAME"' in cb_module_main
-    assert 'name  = "CLICKHOUSE_HOST"' in cb_module_main
+    assert "CLICKHOUSE_" not in cb_module_main
 
     iam_text = _GKE_IAM.read_text()
     assert (
@@ -249,7 +243,7 @@ def test_clickhouse_operator_module_posture_matrix() -> None:
 
     # ReplicatedMergeTree in prod/HA vs MergeTree in dev/staging
     assert (
-        "ReplicatedMergeTree('/clickhouse/tables/{shard}/evidence_stream', '{replica}')"
+        "ReplicatedMergeTree('/clickhouse/tables/{shard}/{database}/{table}', '{replica}')"
         in ch_op_main
     )
     assert '"MergeTree()"' in ch_op_main
@@ -520,14 +514,16 @@ class _LockedWormColdStore(EvidenceColdStore):
 async def test_clickhouse_node_loss_causes_zero_evidence_loss_in_locked_worm_bucket() -> (
     None
 ):
-    """§6 Exit Criteria: Evidence reaches the locked bucket; ClickHouse node loss causes no evidence loss.
+    """§6 Exit Criteria: Evidence reaches the locked WORM bucket with zero ClickHouse dependency.
 
     Option A custody: the gateway's EvidenceStreamSink only hash-chains and
     XADDs to the governance Redis stream; the compliance bridge's
     EvidenceCustodian re-verifies the chain and writes the batch to the WORM
-    bucket. The ClickHouse query plane is down for the whole run.
+    bucket, while ClickHouse serves Langfuse trace analytics only.
     """
     from src.compliance_bridge.evidence_custodian import EvidenceCustodian
+
+    assert "src.compliance_bridge.clickhouse_sink" not in sys.modules
 
     stream_key = "cage:evidence:stream"
     worm_bucket = _LockedWormColdStore()
@@ -540,56 +536,16 @@ async def test_clickhouse_node_loss_causes_zero_evidence_loss_in_locked_worm_buc
         await evidence_sink._ensure_chain_restored()
     evidence_sink._running = True
 
-    # 2. Simulate complete ClickHouse node loss (query plane down: ConnectionRefusedError)
-    ch_sink = ClickHouseSink(
-        host="clickhouse-dead-node.governance-stack.svc.cluster.local",
-        port=8123,
-        batch_size=2,
-        flush_seconds=0.05,
-    )
-    ch_sink._max_retries = 1
-    ch_sink._breaker._failure_threshold = 1
-
-    mock_ch_module = MagicMock()
-    mock_ch_module.get_client.side_effect = ConnectionRefusedError(
-        "ClickHouse query-plane node terminated"
-    )
-
     events = [
         {"type": "STERA_ALLOW", "controlId": "AU-9", "action": "rebalance", "seq": i}
         for i in range(5)
     ]
 
-    with patch.dict("sys.modules", {"clickhouse_connect": mock_ch_module}):
-        await ch_sink.start()
-        try:
-            for ev in events:
-                # Commit to the primary evidence stream (gateway -> Redis Streams)
-                commit = await evidence_sink.ingest_sync(ev)
-                assert commit.success is True
+    for ev in events:
+        commit = await evidence_sink.ingest_sync(ev)
+        assert commit.success is True
 
-                # Feed query-plane sink while ClickHouse node is completely down
-                await ch_sink.ingest(
-                    {
-                        "schema": "cage-audit/3.0",
-                        "chain_id": evidence_sink.chain_id,
-                        "sequence": commit.sequence,
-                        "timestamp_utc": commit.commit_timestamp.isoformat(),
-                        "event_type": ev["type"],
-                        "control_id": ev["controlId"],
-                        "trace_id": "trace-worm-test",
-                        "record_hash": commit.hash,
-                        "payload_json": json.dumps(ev),
-                    }
-                )
-
-            # Force query-plane flush attempt — must fail gracefully and open circuit breaker
-            await asyncio.sleep(0.15)
-            assert ch_sink._breaker.is_open() is True
-        finally:
-            await ch_sink.close()
-
-    # 3. Compliance-bridge custodian: one custody cycle Redis stream -> locked WORM bucket
+    # 2. Compliance-bridge custodian: one custody cycle Redis stream -> locked WORM bucket
     custodian = EvidenceCustodian(
         redis=fake_redis,
         cold_store=worm_bucket,

@@ -107,7 +107,7 @@ pkill -f "kubectl port-forward"
 | **OPA Policy Engine** | `http://localhost:8181` | `svc/opa:8181` | Rego evaluation endpoint |
 | **vLLM Fast (`Qwen/Qwen2.5-1.5B-Instruct`)** | `http://localhost:8001`, `http://localhost:18081/v1` | `svc/vllm-service:8000` | 1x NVIDIA L4 GPU; auto-wakes on eval (`dev_gpu_toggle.sh`) |
 | **vLLM Reasoning (`deepseek-ai/DeepSeek-R1-Distill-Llama-8B`)** | `http://localhost:8000`, `http://localhost:18082/v1` | `svc/vllm-reasoning:8000` | 1x NVIDIA L4 GPU; auto-wakes on eval (`dev_gpu_toggle.sh`) |
-| **ClickHouse Query Plane** *(optional manual forward)* | `http://localhost:8123`, `localhost:9000` | `svc/clickhouse:8123` | `kubectl port-forward -n governance-stack svc/clickhouse 8123:8123` |
+| **ClickHouse (Langfuse OLAP)** *(optional manual forward)* | `http://localhost:8123`, `localhost:9000` | `svc/clickhouse:8123` | `kubectl port-forward -n governance-stack svc/clickhouse 8123:8123` |
 
 ### Managed Data Layer Architecture (Track 6b, 6c, 6e)
 
@@ -119,9 +119,9 @@ pkill -f "kubectl port-forward"
 2. **Cloud SQL for PostgreSQL 15 ([`infra/modules/cloudsql_postgres/main.tf`](../../infra/modules/cloudsql_postgres/main.tf))**:
    - Replaces in-cluster PostgreSQL (`cage-postgres-<env>`, `db-f1-micro` in `dev`, `db-g1-small` in `staging`, `db-custom-2-7680` REGIONAL in `prod`) with private IP (`10.6.80.0/20`), `ENCRYPTED_ONLY`, and `cloudsql.iam_authentication=on`.
    - `langfuse-web` and `langfuse-worker` connect through the `cloud-sql-proxy` sidecar (`--auto-iam-authn` on `127.0.0.1:5432`) using the `langfuse-sa` Workload Identity with zero static database passwords.
-3. **Retention-Locked GCS WORM Bucket & ClickHouse Query Plane ([`infra/modules/worm_bucket/main.tf`](../../infra/modules/worm_bucket/main.tf), [`infra/modules/clickhouse_operator/main.tf`](../../infra/modules/clickhouse_operator/main.tf))**:
+3. **Retention-Locked GCS WORM Bucket & Langfuse ClickHouse OLAP ([`infra/modules/worm_bucket/main.tf`](../../infra/modules/worm_bucket/main.tf), [`infra/modules/clickhouse_operator/main.tf`](../../infra/modules/clickhouse_operator/main.tf))**:
    - The GCS WORM bucket (`<project_id>-evidence-worm-<env>`, `EVIDENCE_COLD_STORE=gcs`, 1-day locked retention in `staging`, 2555-day SEC 17a-4 locked retention in `prod`) is the **canonical system of record** for compliance evidence.
-   - ClickHouse (`svc/clickhouse:8123`) is strictly the analytical query plane fed by [`src/compliance_bridge/clickhouse_sink.py`](../../src/compliance_bridge/clickhouse_sink.py) and Langfuse v3 (`1`-node `MergeTree` on local SSD in `dev`/`staging`; Altinity Operator `3`-node `ReplicatedMergeTree` + `3`-node `clickhouse-keeper` + GCS cold tier in `prod`).
+   - ClickHouse (`svc/clickhouse:8123`) serves Langfuse v3 trace analytics exclusively (`langfuse_app` scoped to `langfuse.*`; `1`-node `MergeTree` on local SSD in `dev`/`staging`; Altinity Operator `3`-node `ReplicatedMergeTree` + `3`-node `clickhouse-keeper` + GCS cold tier in `prod`) and plays no role in evidence custody.
 
 ### Gateway Posture Flags ([`infra/modules/gateway/main.tf`](../../infra/modules/gateway/main.tf))
 

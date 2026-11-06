@@ -48,6 +48,10 @@ run "defaults_plan_scoped_langfuse_identity_and_database_init" {
     condition     = strcontains(kubernetes_config_map.clickhouse_config.data["networks.xml"], "replace=\"replace\"")
     error_message = "networks.xml must set replace=\"replace\" on default user networks"
   }
+  assert {
+    condition     = !contains(keys(kubernetes_config_map.clickhouse_config.data), "evidence_sink_user.xml")
+    error_message = "clickhouse_config must not render retired evidence_sink_user.xml"
+  }
 }
 
 run "langfuse_username_default_is_refused" {

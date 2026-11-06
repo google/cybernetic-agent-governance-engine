@@ -130,12 +130,12 @@ Every record includes a machine-readable disclaimer (line 155-163):
 
 **Schema Version:** `_SCHEMA = f"cage-audit/{_SCHEMA_VERSION}"` with
 `_SCHEMA_VERSION = "3.0"`
-([`stream.py:471`](../../src/gateway/governance/evidence/stream.py:471)). The
-kernel producer emits the same `cage-audit/3.0` contract that
-[`deployment/clickhouse/evidence_stream_schema.sql`](../../deployment/clickhouse/evidence_stream_schema.sql)
-and [`clickhouse_sink.py`](../../src/compliance_bridge/clickhouse_sink.py) encode;
-`_link_hash()` mirrors the DDL's `mv_evidence_hash_verification` view field for
-field. See [`CLICKHOUSE_EVIDENCE_SINK.md`](CLICKHOUSE_EVIDENCE_SINK.md) §2.
+([`stream.py:518`](../../src/gateway/governance/evidence/stream.py:518)). The
+kernel producer emits the `cage-audit/3.0` contract that
+[`EvidenceCustodian`](../../src/compliance_bridge/evidence_custodian.py) re-verifies
+and archives to the retention-locked cold store and
+[`CustodyVerifier`](../../src/compliance_bridge/evidence_verifier.py) validates on
+read-back. See [`EVIDENCE_CHAIN.md`](EVIDENCE_CHAIN.md).
 
 **Wire Format:** Redis Streams (`XADD`)
 
@@ -182,7 +182,7 @@ field. See [`CLICKHOUSE_EVIDENCE_SINK.md`](CLICKHOUSE_EVIDENCE_SINK.md) §2.
 
 **Hash Chain Algorithm (v3.0):**
 ```python
-# Genesis: prev_hash = "" at sequence 0 (stored NULL by the ClickHouse sink)
+# Genesis: prev_hash = "" at sequence 0
 # Header (JCS-canonicalized):
 header = {
     "canonicalization": str,  # v3.0 REQUIRED
@@ -494,144 +494,44 @@ The three audit stream systems serve distinct, non-overlapping purposes:
 
 ---
 
-## 13. Long-Term Storage Sink: ClickHouse
+## 13. Long-Term Evidence Custody & ClickHouse Role Retirement
 
-**Status:** Design ratified — ClickHouse is the official **long-term queryable
-storage sink** for `cage-audit/3.0`.
+**Status:** Active — Redis Streams (`cage:evidence:stream`) and the retention-locked
+GCS WORM bucket (`module.worm_bucket`) are the sole live evidence stores, and GKE
+Managed Prometheus (`Monarch`) is the sole operational metrics store. ClickHouse
+([`infra/modules/clickhouse_operator`](../../infra/modules/clickhouse_operator))
+serves Langfuse v3 trace analytics exclusively (`langfuse_app` on `langfuse.*`).
 
-**Full specification:** [`docs/architecture/CLICKHOUSE_EVIDENCE_SINK.md`](CLICKHOUSE_EVIDENCE_SINK.md)
-**DDL artifact:** [`deployment/clickhouse/evidence_stream_schema.sql`](../../deployment/clickhouse/evidence_stream_schema.sql)
-
-### 13.1 Why a third tier
-
-Sections 1–12 establish that no *stream consolidation* is required. They leave a
-separate gap unaddressed: neither existing tier is **queryable**.
-
-- Redis Streams is the chain head but is bounded (`EVIDENCE_STREAM_MAX_LEN`,
-  default `100000` entries) and supports only sequential range reads.
-- The GCS WORM bucket is durable (7-year lock in prod) but stores opaque NDJSON objects; answering
-  "every `request_denied` on tier `tier1_reversible_trades` correlated to trace
-  `00-…-01` during Q3" requires bulk rehydration.
-
-Every audit, Lula gate evaluation over a long window, and incident
-investigation therefore pays a rehydration cost that scales with retention. The
-ClickHouse tier removes that cost **without** altering the authority model.
-
-### 13.2 Tier responsibilities
+### 13.1 Active two-tier custody architecture
 
 | Tier | Store | Role | Retention | Authority |
 |---|---|---|---|---|
-| **Hot** | Redis Streams `cage:evidence:stream` | Chain head. Sequence is allocated in-process under `asyncio.Lock` after `XREVRANGE` chain restoration — there is no Lua allocator (see §9.2) | Bounded by `EVIDENCE_STREAM_MAX_LEN` (default 100,000 entries) | **Authoritative inside the Redis window** |
-| **Cold** | Retention-locked GCS WORM bucket + CMEK (`module.worm_bucket`), region-partitioned | Immutable archival evidence and system of record; independent witness for tamper *proof* | **7 years** (prod lock) | **Archival authority** |
-| **Query** | ClickHouse `cage_evidence.evidence_stream` | Analytical mirror; continuous tamper detection; Prometheus metrics | **7 years** | **Derived — never authoritative** |
+| **Hot** | Redis Streams `cage:evidence:stream` | Linear hash-chained head via Lua compare-and-append (`_APPEND_BATCH_SCRIPT`) | Bounded by `EVIDENCE_STREAM_MAX_LEN` (default 100,000 entries) | **Authoritative inside the Redis window** |
+| **Cold** | Retention-locked GCS WORM bucket + CMEK ([`infra/modules/worm_bucket`](../../infra/modules/worm_bucket)) | KMS-attested (`EVIDENCE_KMS_KEY`) NDJSON batches written by [`EvidenceCustodian`](../../src/compliance_bridge/evidence_custodian.py) and re-verified on read-back by [`CustodyVerifier`](../../src/compliance_bridge/evidence_verifier.py) | **7 years** (prod lock; 1 day staging lock) | **Archival system of record** |
 
-**Authority rule.** ClickHouse never feeds chain restoration, never allocates
-sequences, and never gates seal issuance. On disagreement: GCS outranks
-ClickHouse; Redis outranks GCS inside the Redis window. ClickHouse's role is to
-make disagreement *cheap to discover*, not to arbitrate it.
+Operational and evidence-pipeline health counters are exported directly by Python
+`prometheus_client` collectors in `src/gateway/` and `src/compliance_bridge/` and
+scraped by GKE Managed Prometheus (`Monarch`).
 
-### 13.3 Data flow
+### 13.2 Retirement of the uninstantiated ClickHouse evidence mirror
 
-```mermaid
-flowchart LR
-    A[Gateway + Compliance Bridge producers] --> C[EvidenceStreamSink.ingest]
-    C --> B[PIISanitizer.sanitize_dict]
-    B --> D[Redis Streams XADD, chain head]
-    D --> E[Bridge EvidenceCustodian, 60s, KMS attestation, WORM bucket]
-    D -.not wired at HEAD.-> F[ClickHouse sink, 100 rec or 5s batch, 7 years]
-    F --> G[MV gap detector]
-    F --> H[MV hash verifier]
-    F --> I[MV 5m metrics]
-    H --> J[evidence_chain_divergence]
-    I --> K[Prometheus]
-    J --> K
-```
+Earlier revisions specified an asynchronous third-tier ClickHouse analytical mirror
+(`372daad2^:docs/architecture/CLICKHOUSE_EVIDENCE_SINK.md`,
+`372daad2^:deployment/clickhouse/evidence_stream_schema.sql`, and
+`372daad2^:src/compliance_bridge/clickhouse_sink.py`). Because no runtime consumer
+connected Redis Streams to `ClickHouseSink` on the governance evidence path and
+`CustodyVerifier` + GMP (`Monarch`) already satisfy read-back verification and
+operational telemetry, the uninstantiated ClickHouse evidence sink, DDL, and
+`cage_evidence_sink` database credential were retired. ClickHouse remains deployed
+solely as the Langfuse v3 OLAP backend.
 
-| Hop | Trigger | Rationale |
-|---|---|---|
-| Producer → Redis | Synchronous (blocking when `EVIDENCE_CHAIN_BLOCKING=true`) | Evidence durability must precede seal issuance |
-| Redis → GCS | 60s flush | Optimises object size and storage cost |
-| Redis → ClickHouse | 100 records **or** 5s | Optimises query freshness for incident response |
+### 13.3 Upstream PII scrubbing and retention
 
-The 5s vs. 60s asymmetry is intentional: the two cold sinks optimise different
-things and are deliberately decoupled from each other.
-
-### 13.4 Non-blocking guarantee
-
-The ClickHouse sink **must never** impede Redis stream consumption. This is
-structural, not procedural:
-
-- The consumer only calls `put_nowait()` onto a bounded (10k) queue; it never
-  awaits ClickHouse.
-- Flushing runs in a separate `asyncio.Task`; all ClickHouse exceptions are
-  swallowed and counted, never re-raised.
-- Retries are capped at 3 with jittered exponential backoff; a circuit breaker
-  opens after 10 consecutive failures.
-- Queue overflow sheds the oldest record, increments
-  `clickhouse_sink_dropped_total`, and logs that the evidence remains durable in
-  Redis and GCS.
-
-A total ClickHouse outage degrades queryability only. It cannot affect
-governance decisions, seal issuance, or evidence durability.
-
-### 13.5 Tamper-evidence carried into the mirror
-
-The ClickHouse tier preserves the source hash-chain properties rather than
-re-deriving them:
-
-- `payload` stores the **exact JCS-canonical bytes** that were hashed; the sink
-  performs no re-serialization and no re-scrubbing (either would invalidate
-  `record_hash`).
-- `ORDER BY (chain_id, sequence)` makes chain verification a contiguous scan.
-- Plain `MergeTree` — never `ReplacingMergeTree` — so no background merge can
-  silently drop a row; a forged re-insert surfaces as a visible duplicate.
-- Three verification tiers with explicit conclusiveness boundaries: structural
-  linkage (conclusive), in-database recomputation (conclusive only for
-  escape-safe rows), and authoritative Python re-verification via
-  [`verify_record()`](../../src/gateway/governance/evidence/stream.py:788) against
-  GCS. Only the third tier may declare `CONFIRMED` tampering.
-
-### 13.6 Retention and erasure
-
-| Tier | Retention | Erasure primitive |
-|---|---|---|
-| Redis | Bounded by `EVIDENCE_STREAM_MAX_LEN` | `XADD MAXLEN` trimming |
-| GCS | 7 years (prod retention lock) | Retention policy expiry; crypto-shred via CMEK |
-| ClickHouse | 7 years | `ALTER TABLE … DROP PARTITION` (monthly) |
-
-`TTL … SETTINGS ttl_only_drop_parts = 1` ensures expiry drops whole parts rather
-than rewriting rows — retention never becomes a row-level mutation. Seven years
-satisfies NIST SP 800-53 AU-11, SOX §802 (7 yr), and MiFID II Art. 25 (5 yr)
-simultaneously.
-
-**GDPR position.** Row-level erasure is impossible by design. The Art. 17
-obligation is intended to be discharged **upstream** by scrubbing payloads before
-ingestion so no personal data reaches any cold tier.
-[`PIISanitizer`](../../src/gateway/governance/pii_sanitizer.py:207) runs inside
-`EvidenceStreamSink.ingest()` before the record hash is computed. Residual risk is
-handled by partition `DROP` or CMEK crypto-shredding. This trades granular erasure
-for immutability and makes sanitizer coverage a load-bearing GDPR control.
-
-### 13.7 Architectural boundaries
-
-Consistent with §6.1, the ClickHouse tier introduces **no Layer 1 changes**:
-
-| Layer | Impact |
-|---|---|
-| Layer 1 — Kernel (`src/gateway/`) | **None.** The kernel remains unaware that ClickHouse exists. Gate G3 import boundaries are unaffected. |
-| Layer 2 — Domain plugins (`src/cage_*`) | **None.** The schema is domain-agnostic; domain vocabulary stays inside the opaque `payload`. |
-| Layer 3 — Integrations | Adapter [`ClickHouseSink`](../../src/compliance_bridge/clickhouse_sink.py:135) in `src/compliance_bridge/clickhouse_sink.py`, reached through the `get_clickhouse_sink()` singleton. There is no shared `EvidenceSink` protocol at HEAD; the cold store and the ClickHouse sink are independent surfaces. |
-
-### 13.8 Decision record
-
-| Question | Decision | Rationale |
-|---|---|---|
-| Replace GCS with ClickHouse? | **No** | GCS is the independent witness that makes tamper *proof* possible; a mirror cannot verify itself |
-| Replace Redis with ClickHouse? | **No** | Redis provides the low-latency append path and the stream head used for chain restoration; ClickHouse offers no equivalent |
-| Is ClickHouse in the request hot path? | **No** | Asynchronous, best-effort, cannot add decision latency |
-| Table engine | `MergeTree` | Deduplicating/collapsing engines can silently delete rows — disqualifying for an audit mirror |
-| Retention | 7 years | Financial-services baseline; aligns with the GCS tier |
-| Row-level erasure | **Never supported** | Immutability outranks granular erasure; discharged upstream by PII scrubbing |
+Row-level erasure inside WORM-locked evidence batches is impossible by design.
+[`PIISanitizer`](../../src/gateway/governance/pii_sanitizer.py) runs inside
+`EvidenceStreamSink.ingest()` before `record_hash` is computed so payloads are
+sanitized prior to hashing and archival; retention expiry and CMEK key lifecycle
+govern cold-store disposal (see [`EVIDENCE_CHAIN.md`](EVIDENCE_CHAIN.md) §4.4).
 
 ---
 
@@ -644,7 +544,7 @@ Consistent with §6.1, the ClickHouse tier introduces **no Layer 1 changes**:
 - Event Bus: [`src/compliance_bridge/sse_events.py`](../../src/compliance_bridge/sse_events.py)
 - PII Scrubber: [`src/gateway/governance/pii_sanitizer.py`](../../src/gateway/governance/pii_sanitizer.py)
 - Evidence Consumer: [`src/compliance_bridge/main.py`](../../src/compliance_bridge/main.py)
-- ClickHouse DDL: [`deployment/clickhouse/evidence_stream_schema.sql`](../../deployment/clickhouse/evidence_stream_schema.sql)
+- Evidence Custodian & Verifier: [`src/compliance_bridge/evidence_custodian.py`](../../src/compliance_bridge/evidence_custodian.py), [`src/compliance_bridge/evidence_verifier.py`](../../src/compliance_bridge/evidence_verifier.py)
 
 ### Compliance Standards
 - ISO/IEC 42001:2023 Annex A.5.3 (Logging and Monitoring), A.5.4, A.9.2
@@ -659,7 +559,7 @@ Consistent with §6.1, the ClickHouse tier introduces **no Layer 1 changes**:
 - [`AGENTS.md`](../../AGENTS.md) — CAGE contribution standards (clean architecture principle)
 - [`docs/BREAKING_CHANGES_v3.md`](../../docs/BREAKING_CHANGES_v3.md) — v3.0 schema migration notes
 - [`docs/architecture/ARCHITECTURE.md`](ARCHITECTURE.md) — CAGE reference architecture
-- [`docs/architecture/CLICKHOUSE_EVIDENCE_SINK.md`](CLICKHOUSE_EVIDENCE_SINK.md) — ClickHouse long-term storage sink specification (§13)
+- [`docs/architecture/EVIDENCE_CHAIN.md`](EVIDENCE_CHAIN.md) — Cryptographic hash-chained evidence stream and WORM custody specification
 
 ---
 

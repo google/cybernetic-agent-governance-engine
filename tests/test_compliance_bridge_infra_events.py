@@ -18,23 +18,22 @@ Unit tests for the POST /v1/infra/events endpoint in compliance_bridge.main.
 Validates:
   - Authentication (Bearer token)
   - Schema validation and event type routing
-  - Secret scrubbing in summary text
+  - Secret scrubbing in summary text and structured INFRA log emission
   - Rejection (422) for unregistered event types or cross-jurisdiction mismatches
-  - Persistence invocation to ClickHouseSink under evidence_class='INFRA'
 """
 
 from __future__ import annotations
 
 import json
-from unittest.mock import AsyncMock, patch
+import logging
 
 import pytest
 from fastapi.testclient import TestClient
 
 from src.compliance_bridge.main import app
 
-# Hermetic: FastAPI TestClient + AsyncMock ClickHouseSink, no live services.
-# Covers auth (Bearer), secret scrubbing, 422 rejection, INFRA persistence.
+# Hermetic: FastAPI TestClient, no live services.
+# Covers auth (Bearer), secret scrubbing, 422 rejection, INFRA structured log emission.
 pytestmark = [pytest.mark.unit, pytest.mark.local]
 
 AUTH_TOKEN = "test-internal-token-secret"
@@ -104,6 +103,7 @@ class TestInfraEventsIngestion:
         client: TestClient,
         auth_headers: dict[str, str],
         monkeypatch: pytest.MonkeyPatch,
+        caplog: pytest.LogCaptureFixture,
         event_type: str,
         expected_control: str,
     ) -> None:
@@ -118,13 +118,7 @@ class TestInfraEventsIngestion:
             "control_hint": expected_control,
         }
 
-        mock_sink = AsyncMock()
-        mock_sink.ingest = AsyncMock()
-
-        with patch(
-            "src.compliance_bridge.clickhouse_sink.get_clickhouse_sink",
-            return_value=mock_sink,
-        ):
+        with caplog.at_level(logging.INFO, logger="compliance_bridge"):
             res = client.post("/v1/infra/events", json=payload, headers=auth_headers)
 
         assert res.status_code == 200
@@ -134,9 +128,14 @@ class TestInfraEventsIngestion:
         assert data["control_id"] == expected_control
         assert data["evidence_class"] == "INFRA"
 
-        # Verify record passed to clickhouse sink
-        mock_sink.ingest.assert_awaited_once()
-        ingested_record = mock_sink.ingest.call_args[0][0]
+        prefix = "[infra/events] Ingested INFRA event: "
+        matched = [
+            rec.getMessage()[len(prefix) :]
+            for rec in caplog.records
+            if rec.getMessage().startswith(prefix)
+        ]
+        assert len(matched) == 1
+        ingested_record = json.loads(matched[0])
         assert ingested_record["evidence_class"] == "INFRA"
         assert ingested_record["control_id"] == expected_control
 
@@ -145,6 +144,7 @@ class TestInfraEventsIngestion:
         client: TestClient,
         auth_headers: dict[str, str],
         monkeypatch: pytest.MonkeyPatch,
+        caplog: pytest.LogCaptureFixture,
     ) -> None:
         monkeypatch.setenv("CAGE_DEPLOYMENT_REGION", "US_FED")
         payload = {
@@ -157,17 +157,18 @@ class TestInfraEventsIngestion:
             "control_hint": "AU-2",
         }
 
-        mock_sink = AsyncMock()
-        mock_sink.ingest = AsyncMock()
-
-        with patch(
-            "src.compliance_bridge.clickhouse_sink.get_clickhouse_sink",
-            return_value=mock_sink,
-        ):
+        with caplog.at_level(logging.INFO, logger="compliance_bridge"):
             res = client.post("/v1/infra/events", json=payload, headers=auth_headers)
 
         assert res.status_code == 200
-        ingested_record = mock_sink.ingest.call_args[0][0]
+        prefix = "[infra/events] Ingested INFRA event: "
+        matched = [
+            rec.getMessage()[len(prefix) :]
+            for rec in caplog.records
+            if rec.getMessage().startswith(prefix)
+        ]
+        assert len(matched) == 1
+        ingested_record = json.loads(matched[0])
         payload_data = json.loads(ingested_record["payload_json"])
         assert "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9" not in payload_data["summary"]
         assert "sk-lf-12345678abcdef" not in payload_data["summary"]
