@@ -1022,3 +1022,11 @@ jobs:
         run: terraform -chdir=infra/modules/service_mesh init -backend=false -input=false
       - name: Run terraform test against the service_mesh module
         run: terraform -chdir=infra/modules/service_mesh test
+      - name: Initialise the clickhouse_operator module without a backend
+        run: terraform -chdir=infra/modules/clickhouse_operator init -backend=false -input=false
+      - name: Run terraform test against the clickhouse_operator module
+        run: terraform -chdir=infra/modules/clickhouse_operator test
+      - name: Initialise the langfuse_stack module without a backend
+        run: terraform -chdir=infra/modules/langfuse_stack init -backend=false -input=false
+      - name: Run terraform test against the langfuse_stack module
+        run: terraform -chdir=infra/modules/langfuse_stack test

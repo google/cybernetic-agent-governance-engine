@@ -79,17 +79,44 @@ variable "clickhouse_url" {
   default     = ""
 }
 
+variable "clickhouse_db" {
+  description = "Dedicated ClickHouse database for Langfuse v3 trace storage (CLICKHOUSE_DB); never default or system."
+  type        = string
+  default     = "langfuse"
+
+  validation {
+    condition     = can(regex("^[a-z][a-z0-9_]{2,62}$", var.clickhouse_db)) && !contains(["default", "system"], var.clickhouse_db)
+    error_message = "clickhouse_db must be a dedicated lowercase database identifier and must not be \"default\" or \"system\"."
+  }
+}
+
 variable "clickhouse_migration_url" {
   description = "ClickHouse database migration URL (required for Langfuse v3 golang-migrate)"
   type        = string
   sensitive   = true
   default     = ""
+
+  validation {
+    condition = (
+      var.clickhouse_migration_url == "" || (
+        !can(regex("^clickhouse://default[:@]", var.clickhouse_migration_url)) &&
+        can(regex("^clickhouse://[^/]+/[a-z][a-z0-9_]{2,62}([?]|$)", var.clickhouse_migration_url)) &&
+        !can(regex("/(default|system)([?]|$)", var.clickhouse_migration_url))
+      )
+    )
+    error_message = "clickhouse_migration_url must not authenticate as \"default\" and must target a dedicated database path other than \"default\" or \"system\" (e.g. clickhouse://langfuse_app:<pw>@clickhouse:9000/langfuse)."
+  }
 }
 
 variable "clickhouse_user" {
-  description = "ClickHouse user"
+  description = "Least-privilege ClickHouse user for Langfuse v3 (never the admin user \"default\")"
   type        = string
-  default     = "default"
+  default     = "langfuse_app"
+
+  validation {
+    condition     = var.clickhouse_user == "" || (can(regex("^[a-z][a-z0-9_]{2,62}$", var.clickhouse_user)) && var.clickhouse_user != "default")
+    error_message = "clickhouse_user must be a dedicated lowercase identifier and must not be \"default\"."
+  }
 }
 
 variable "clickhouse_password" {

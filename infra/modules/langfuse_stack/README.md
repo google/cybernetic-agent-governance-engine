@@ -48,7 +48,9 @@ module "langfuse" {
   database_url = module.postgres.connection_string
 
   clickhouse_url            = "http://clickhouse:8123"
-  clickhouse_migration_url  = "clickhouse://default:password@clickhouse:9000/langfuse"
+  clickhouse_db             = "langfuse"
+  clickhouse_migration_url  = "clickhouse://langfuse_app:password@clickhouse:9000/langfuse"
+  clickhouse_user           = "langfuse_app"
   clickhouse_password       = "your-clickhouse-password"
 
   redis_connection_string = "redis://:password@redis:6379"
@@ -67,10 +69,11 @@ module "langfuse" {
   namespace    = "governance-stack"
   database_url = module.postgres.connection_string
 
-  # ClickHouse (required for Langfuse v3)
+  # ClickHouse (required for Langfuse v3; dedicated non-admin identity)
   clickhouse_url           = "http://clickhouse.governance-stack.svc.cluster.local:8123"
-  clickhouse_migration_url = "clickhouse://default:${var.clickhouse_password}@clickhouse.governance-stack.svc.cluster.local:9000/langfuse"
-  clickhouse_user          = "default"
+  clickhouse_db            = "langfuse"
+  clickhouse_migration_url = "clickhouse://langfuse_app:${var.clickhouse_password}@clickhouse.governance-stack.svc.cluster.local:9000/langfuse"
+  clickhouse_user          = "langfuse_app"
   clickhouse_password      = var.clickhouse_password
 
   # Redis
@@ -122,8 +125,9 @@ module "langfuse" {
 | Name | Description | Type | Default |
 |------|-------------|------|---------|
 | `clickhouse_url` | ClickHouse HTTP URL | string (sensitive) | `""` |
-| `clickhouse_migration_url` | ClickHouse migration URL (golang-migrate) | string (sensitive) | `""` |
-| `clickhouse_user` | ClickHouse user | string | `"default"` |
+| `clickhouse_db` | Dedicated ClickHouse database for Langfuse (`CLICKHOUSE_DB`) | string | `"langfuse"` |
+| `clickhouse_migration_url` | ClickHouse migration URL (golang-migrate; non-`default` user + explicit `/langfuse` path) | string (sensitive) | `""` |
+| `clickhouse_user` | Dedicated least-privilege ClickHouse user (never `default`) | string | `"langfuse_app"` |
 | `clickhouse_password` | ClickHouse password | string (sensitive) | `""` |
 
 ### Redis (required for Langfuse v3)

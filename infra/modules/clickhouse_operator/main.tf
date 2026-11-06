@@ -110,6 +110,33 @@ resource "kubernetes_secret" "evidence_sink" {
   }
 }
 
+# Dedicated credential for Langfuse v3 web, worker, and golang-migrate, scoped
+# exclusively to `langfuse.*` with zero superuser or cross-database privileges (F-108).
+resource "random_password" "langfuse_app" {
+  length  = 32
+  special = false
+}
+
+resource "kubernetes_secret" "langfuse_app" {
+  metadata {
+    name      = var.langfuse_secret_name
+    namespace = var.namespace
+    labels = {
+      app                         = "clickhouse"
+      component                   = "query-plane"
+      "cage.io/sensitivity-level" = "high"
+    }
+    annotations = {
+      "cage.io/rotation-schedule" = "90d"
+      "cage.io/rotation-owner"    = "platform-team"
+    }
+  }
+
+  data = {
+    "CLICKHOUSE_PASSWORD" = random_password.langfuse_app.result
+  }
+}
+
 locals {
   is_prod         = var.environment == "prod"
   is_ha           = local.is_prod || var.enable_high_availability
@@ -357,9 +384,19 @@ resource "kubernetes_pod_disruption_budget_v1" "clickhouse_keeper" {
   }
 }
 
-# ─── ClickHouse Server Configuration (Hot Local SSD + GCS Cold Tier) ──────────
+# ─── ClickHouse Server Configuration (Hot Local SSD + GCS Cold Tier + RBAC) ──
 
 resource "kubernetes_config_map" "clickhouse_config" {
+  lifecycle {
+    precondition {
+      condition = (
+        length(distinct([var.evidence_sink_username, var.langfuse_username, "default"])) == 3 &&
+        var.langfuse_database != var.evidence_database
+      )
+      error_message = "ClickHouse RBAC invariant (F-108): default, evidence_sink_username, and langfuse_username must be distinct identities, and langfuse_database must not equal evidence_database."
+    }
+  }
+
   metadata {
     name      = "clickhouse-users-config"
     namespace = var.namespace
@@ -370,13 +407,19 @@ resource "kubernetes_config_map" "clickhouse_config" {
   }
 
   data = {
+    # F-108: Restrict the built-in `default` superuser strictly to container
+    # loopback (127.0.0.1 / ::1) with `replace="replace"` so ClickHouse's XML
+    # merger overwrites `/etc/clickhouse-server/users.xml`'s `::/0` instead of
+    # appending to it, and keep `access_management = 0` so even loopback `default`
+    # holds zero SQL RBAC-grant privileges while `/entrypoint.sh` creates `langfuse`.
     "networks.xml" = <<-EOT
       <clickhouse>
         <users>
           <default>
-            <networks>
-              <ip>0.0.0.0/0</ip>
-              <ip>::/0</ip>
+            <access_management>0</access_management>
+            <networks replace="replace">
+              <ip>127.0.0.1</ip>
+              <ip>::1</ip>
             </networks>
           </default>
         </users>
@@ -417,6 +460,36 @@ resource "kubernetes_config_map" "clickhouse_config" {
               <query>GRANT INSERT ON ${var.evidence_database}.evidence_stream</query>
             </grants>
           </${var.evidence_sink_username}>
+        </users>
+      </clickhouse>
+    EOT
+
+    # F-108: Dedicated Langfuse v3 application & migration identity scoped
+    # strictly to `langfuse.*` (`default_database = langfuse`). Holds zero
+    # privileges on `default.*` or `system` user management.
+    "langfuse_user.xml" = <<-EOT
+      <clickhouse>
+        <profiles>
+          <langfuse_app_profile>
+            <readonly>0</readonly>
+            <allow_ddl>1</allow_ddl>
+            <max_execution_time>120</max_execution_time>
+          </langfuse_app_profile>
+        </profiles>
+        <users>
+          <${var.langfuse_username}>
+            <password from_env="CLICKHOUSE_LANGFUSE_PASSWORD"/>
+            <profile>langfuse_app_profile</profile>
+            <default_database>${var.langfuse_database}</default_database>
+            <quota>default</quota>
+            <access_management>0</access_management>
+            <networks>
+              <ip>::/0</ip>
+            </networks>
+            <grants>
+              <query>GRANT SHOW, SELECT, INSERT, ALTER, CREATE TABLE, CREATE VIEW, DROP TABLE, DROP VIEW, TRUNCATE, OPTIMIZE ON ${var.langfuse_database}.*</query>
+            </grants>
+          </${var.langfuse_username}>
         </users>
       </clickhouse>
     EOT
@@ -508,6 +581,27 @@ resource "kubernetes_config_map" "clickhouse_config" {
   }
 }
 
+# Declarative `/docker-entrypoint-initdb.d/` database bootstrap (F-108).
+# ClickHouse executes `01_databases.sql` over 127.0.0.1 on fresh bootstrap so
+# the dedicated `langfuse` database exists out-of-the-box before `langfuse_app`
+# runs golang-migrate, without granting `langfuse_app` global CREATE DATABASE.
+resource "kubernetes_config_map" "clickhouse_init_sql" {
+  metadata {
+    name      = "clickhouse-init-sql"
+    namespace = var.namespace
+    labels = {
+      app       = "clickhouse"
+      component = "query-plane-ddl"
+    }
+  }
+
+  data = {
+    "01_databases.sql" = <<-EOT
+      CREATE DATABASE IF NOT EXISTS ${var.langfuse_database};
+    EOT
+  }
+}
+
 # ─── ClickHouse Query-Plane Headless Service ──────────────────────────────────
 
 resource "kubernetes_service" "clickhouse" {
@@ -586,6 +680,12 @@ resource "kubernetes_stateful_set" "clickhouse" {
           component = "query-plane"
           posture   = var.environment
         }
+        annotations = {
+          "cage.io/clickhouse-config-sha256" = sha256(jsonencode({
+            users = kubernetes_config_map.clickhouse_config.data
+            init  = kubernetes_config_map.clickhouse_init_sql.data
+          }))
+        }
       }
 
       spec {
@@ -660,6 +760,17 @@ resource "kubernetes_stateful_set" "clickhouse" {
             value_from {
               secret_key_ref {
                 name = kubernetes_secret.evidence_sink.metadata[0].name
+                key  = "CLICKHOUSE_PASSWORD"
+              }
+            }
+          }
+
+          # Read by users.d/langfuse_user.xml (<password from_env=...>).
+          env {
+            name = "CLICKHOUSE_LANGFUSE_PASSWORD"
+            value_from {
+              secret_key_ref {
+                name = kubernetes_secret.langfuse_app.metadata[0].name
                 key  = "CLICKHOUSE_PASSWORD"
               }
             }
@@ -744,6 +855,12 @@ resource "kubernetes_stateful_set" "clickhouse" {
 
           volume_mount {
             name       = "clickhouse-users-config"
+            mount_path = "/etc/clickhouse-server/users.d/langfuse_user.xml"
+            sub_path   = "langfuse_user.xml"
+          }
+
+          volume_mount {
+            name       = "clickhouse-users-config"
             mount_path = "/etc/clickhouse-server/config.d/storage_configuration.xml"
             sub_path   = "storage_configuration.xml"
           }
@@ -753,12 +870,25 @@ resource "kubernetes_stateful_set" "clickhouse" {
             mount_path = "/etc/clickhouse-server/config.d/remote_servers_and_keeper.xml"
             sub_path   = "remote_servers_and_keeper.xml"
           }
+
+          volume_mount {
+            name       = "clickhouse-init-sql"
+            mount_path = "/docker-entrypoint-initdb.d"
+            read_only  = true
+          }
         }
 
         volume {
           name = "clickhouse-users-config"
           config_map {
             name = kubernetes_config_map.clickhouse_config.metadata[0].name
+          }
+        }
+
+        volume {
+          name = "clickhouse-init-sql"
+          config_map {
+            name = kubernetes_config_map.clickhouse_init_sql.metadata[0].name
           }
         }
       }

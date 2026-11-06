@@ -52,10 +52,9 @@ output "native_url" {
   value       = "clickhouse://${kubernetes_service.clickhouse.metadata[0].name}.${var.namespace}.svc.cluster.local:9000"
 }
 
-output "password" {
-  description = "Generated ClickHouse password"
-  value       = random_password.clickhouse.result
-  sensitive   = true
+output "evidence_database" {
+  description = "ClickHouse database holding evidence_stream"
+  value       = var.evidence_database
 }
 
 output "evidence_sink_username" {
@@ -70,6 +69,32 @@ output "evidence_sink_password_secret_name" {
 
 output "evidence_sink_password_secret_key" {
   description = "Key within evidence_sink_password_secret_name for the evidence sink password"
+  value       = "CLICKHOUSE_PASSWORD"
+}
+
+output "langfuse_database" {
+  description = "Dedicated ClickHouse database for Langfuse v3 trace storage"
+  value       = var.langfuse_database
+}
+
+output "langfuse_username" {
+  description = "Least-privilege ClickHouse user for Langfuse v3 (scoped exclusively to langfuse_database.*)"
+  value       = var.langfuse_username
+}
+
+output "langfuse_password" {
+  description = "Generated password for the dedicated Langfuse ClickHouse user (never the loopback-only admin user)"
+  value       = random_password.langfuse_app.result
+  sensitive   = true
+}
+
+output "langfuse_password_secret_name" {
+  description = "Kubernetes Secret holding the Langfuse ClickHouse password (key: langfuse_password_secret_key)"
+  value       = kubernetes_secret.langfuse_app.metadata[0].name
+}
+
+output "langfuse_password_secret_key" {
+  description = "Key within langfuse_password_secret_name for the Langfuse ClickHouse password"
   value       = "CLICKHOUSE_PASSWORD"
 }
 
