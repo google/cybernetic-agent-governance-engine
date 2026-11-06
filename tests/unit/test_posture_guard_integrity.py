@@ -548,3 +548,49 @@ def test_resolve_cors_origins_honors_explicit_allowed_origins(
         "https://console.example.com",
         "https://audit.example.com",
     ]
+
+
+# ---------------------------------------------------------------------------
+# 6. Non-vacuous corpus recognition floor
+# ---------------------------------------------------------------------------
+
+
+def test_empty_directory_fails_corpus_floor(
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """An empty --root directory recognizes 0 Python files and must fail closed."""
+    empty_dir = tmp_path / "empty_src"
+    empty_dir.mkdir()
+    rc = check_posture_main(["--root", str(empty_dir)])
+    captured = capsys.readouterr()
+    assert rc == 1
+    assert "POSTURE GUARD CORPUS FLOOR FAILURE" in captured.out
+    assert "scanned Python files 0 < minimum expected 1" in captured.out
+
+
+def test_zero_recognized_guards_fails_when_minimum_corpus_required(
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """A corpus with Python files but 0 recognized guards fails when floor > 0."""
+    blind_dir = tmp_path / "blind_src"
+    blind_dir.mkdir()
+    (blind_dir / "plain.py").write_text(
+        "def add(x: int, y: int) -> int:\n    return x + y\n", encoding="utf-8"
+    )
+
+    rc = check_posture_main(
+        [
+            "--root",
+            str(blind_dir),
+            "--min-raising-targets",
+            "1",
+            "--min-broad-guards",
+            "1",
+        ]
+    )
+    captured = capsys.readouterr()
+    assert rc == 1
+    assert "recognized posture-raising targets 0 < minimum expected 1" in captured.out
+    assert "recognized broad enforcing guards 0 < minimum expected 1" in captured.out

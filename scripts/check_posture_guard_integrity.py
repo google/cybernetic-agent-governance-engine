@@ -86,7 +86,12 @@ from collections.abc import Iterator, Sequence
 from dataclasses import dataclass
 from pathlib import Path
 
-SRC_ROOT = Path("src")
+REPO_ROOT = Path(__file__).resolve().parent.parent
+SRC_ROOT = REPO_ROOT / "src"
+
+MIN_EXPECTED_REPO_FILES = 100
+MIN_EXPECTED_RAISING_TARGETS = 10
+MIN_EXPECTED_BROAD_GUARDS = 5
 
 POSTURE_SYMBOLS: frozenset[str] = frozenset(
     {
@@ -676,7 +681,7 @@ def _analyze_parsed_modules(
     parsed_modules: Sequence[tuple[str, ast.Module]],
     *,
     verbose: bool = False,
-) -> list[PostureGuardViolation]:
+) -> tuple[list[PostureGuardViolation], int, int, int]:
     """Run two-pass Rule A and Rule B analysis over ``parsed_modules``."""
     posture_raising_targets: set[str] = set()
     broad_enforcing_guards: set[str] = set()
@@ -796,7 +801,26 @@ def _analyze_parsed_modules(
             verbose=verbose,
         )
 
-    return violations
+    return (
+        violations,
+        len(parsed_modules),
+        len(posture_raising_targets),
+        len(broad_enforcing_guards),
+    )
+
+
+def scan_tree_with_stats(
+    root: Path = SRC_ROOT,
+    *,
+    verbose: bool = False,
+) -> tuple[list[PostureGuardViolation], int, int, int]:
+    """Scan ``*.py`` files under ``root`` and return violations plus corpus counts."""
+    py_files = sorted(p for p in root.rglob("*.py") if "__pycache__" not in p.parts)
+    parsed: list[tuple[str, ast.Module]] = []
+    for py_file in py_files:
+        tree = ast.parse(py_file.read_text(encoding="utf-8"), filename=str(py_file))
+        parsed.append((py_file.as_posix(), tree))
+    return _analyze_parsed_modules(parsed, verbose=verbose)
 
 
 def scan_tree(
@@ -805,12 +829,8 @@ def scan_tree(
     verbose: bool = False,
 ) -> list[PostureGuardViolation]:
     """Scan all ``*.py`` files under ``root`` for Rule A and Rule B violations."""
-    py_files = sorted(p for p in root.rglob("*.py") if "__pycache__" not in p.parts)
-    parsed: list[tuple[str, ast.Module]] = []
-    for py_file in py_files:
-        tree = ast.parse(py_file.read_text(encoding="utf-8"), filename=str(py_file))
-        parsed.append((py_file.as_posix(), tree))
-    return _analyze_parsed_modules(parsed, verbose=verbose)
+    violations, _, _, _ = scan_tree_with_stats(root, verbose=verbose)
+    return violations
 
 
 def scan_source(
@@ -821,7 +841,8 @@ def scan_source(
 ) -> list[PostureGuardViolation]:
     """Scan a synthetic Python source snippet for Rule A and Rule B violations."""
     tree = ast.parse(source, filename=filename)
-    return _analyze_parsed_modules([(filename, tree)], verbose=verbose)
+    violations, _, _, _ = _analyze_parsed_modules([(filename, tree)], verbose=verbose)
+    return violations
 
 
 def main(argv: Sequence[str] | None = None) -> int:
@@ -837,17 +858,74 @@ def main(argv: Sequence[str] | None = None) -> int:
     parser.add_argument(
         "--root",
         type=Path,
-        default=SRC_ROOT,
-        help="Root directory of Python sources to scan (default: src).",
+        default=None,
+        help="Root directory of Python sources to scan (default: <repo>/src).",
+    )
+    parser.add_argument(
+        "--min-files",
+        type=int,
+        default=None,
+        help="Minimum Python files expected in scanned corpus.",
+    )
+    parser.add_argument(
+        "--min-raising-targets",
+        type=int,
+        default=None,
+        help="Minimum posture-gated raising targets expected in scanned corpus.",
+    )
+    parser.add_argument(
+        "--min-broad-guards",
+        type=int,
+        default=None,
+        help="Minimum broad enforcing guards expected in scanned corpus.",
     )
     args = parser.parse_args(argv)
 
+    default_repo_scan = args.root is None
+    scan_root = SRC_ROOT if default_repo_scan else args.root
+    min_files = (
+        args.min_files
+        if args.min_files is not None
+        else (MIN_EXPECTED_REPO_FILES if default_repo_scan else 1)
+    )
+    min_raising = (
+        args.min_raising_targets
+        if args.min_raising_targets is not None
+        else (MIN_EXPECTED_RAISING_TARGETS if default_repo_scan else 0)
+    )
+    min_broad = (
+        args.min_broad_guards
+        if args.min_broad_guards is not None
+        else (MIN_EXPECTED_BROAD_GUARDS if default_repo_scan else 0)
+    )
+
     print("🔍 Checking posture guard integrity (Rule A + Rule B)...")
-    if not args.root.exists():
-        print(f"❌ Source root not found: {args.root}")
+    if not scan_root.exists():
+        print(f"❌ Source root not found: {scan_root}")
         return 1
 
-    violations = scan_tree(args.root, verbose=args.verbose)
+    violations, file_count, raising_count, broad_count = scan_tree_with_stats(
+        scan_root, verbose=args.verbose
+    )
+    corpus_failures: list[str] = []
+    if file_count < min_files:
+        corpus_failures.append(
+            f"scanned Python files {file_count} < minimum expected {min_files}"
+        )
+    if raising_count < min_raising:
+        corpus_failures.append(
+            f"recognized posture-raising targets {raising_count} < minimum expected {min_raising}"
+        )
+    if broad_count < min_broad:
+        corpus_failures.append(
+            f"recognized broad enforcing guards {broad_count} < minimum expected {min_broad}"
+        )
+    if corpus_failures:
+        print("\n❌ POSTURE GUARD CORPUS FLOOR FAILURE (vacuous/blind parser check):")
+        for failure in corpus_failures:
+            print(f"  - {failure}")
+        return 1
+
     if violations:
         print(
             f"\n❌ POSTURE GUARD INTEGRITY VIOLATIONS DETECTED ({len(violations)}):\n"
