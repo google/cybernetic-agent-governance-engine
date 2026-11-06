@@ -1241,8 +1241,8 @@ component-definition:
                 src/compliance_bridge/audit_workflow.py: (1) collect OTel spans from
                 Langfuse, (2) evaluate control safety rates, (3) generate OSCAL Assessment
                 Results, (4) store to MinIO/GCS, (5) alert on failures. Lula validations are
-                scheduled via src/compliance_bridge/lula_scheduler.py (standalone Terraform
-                CronJob tracked under POAM-2026-195).
+                scheduled via a standalone Terraform CronJob tracked under POAM-2026-195
+                (retiring 385e502e:src/compliance_bridge/lula_scheduler.py).
                 Lula validation manifests in compliance/lula/ provide automated control
                 assertions (lula-validation-au12.yaml, lula-validation-ac3.yaml,
                 lula-validation-ra5.yaml, lula-validation-cm6.yaml, lula-validation-ir6.yaml).

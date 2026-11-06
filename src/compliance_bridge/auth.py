@@ -527,3 +527,291 @@ async def require_human_operator_identity(request: Request) -> OperatorPrincipal
     """Extract and verify a human operator identity for HITL approval endpoints (POAM-2026-196)."""
     principal = await require_operator_identity(request)
     return ensure_human_operator_principal(principal)
+
+
+# ---------------------------------------------------------------------------
+# Producer mesh-identity authentication (/v1/infra/events, /v1/audit/ingest)
+# ---------------------------------------------------------------------------
+
+TRUSTED_INFRA_PRODUCERS_ENV = "CAGE_TRUSTED_INFRA_PRODUCERS"
+TRUSTED_AUDIT_PRODUCERS_ENV = "CAGE_TRUSTED_AUDIT_PRODUCERS"
+
+_DEFAULT_TRUSTED_INFRA_PRODUCERS: frozenset[str] = frozenset(
+    {
+        "agentsight-daemon.governance-stack.serviceaccount.identity.linkerd.cluster.local",
+        "cage-agentsight-sa.governance-stack.serviceaccount.identity.linkerd.cluster.local",
+        "cilium-monitor-exporter.kube-system.serviceaccount.identity.linkerd.cluster.local",
+        "cilium-monitor-exporter.governance-stack.serviceaccount.identity.linkerd.cluster.local",
+    }
+)
+
+_DEFAULT_TRUSTED_AUDIT_PRODUCERS: frozenset[str] = frozenset(
+    {
+        "lula-auditor.governance-stack.serviceaccount.identity.linkerd.cluster.local",
+        "cage-lula-auditor-sa.governance-stack.serviceaccount.identity.linkerd.cluster.local",
+    }
+)
+
+# Transport-attested pod-scoped SPIFFE ID:
+# spiffe://<trust-domain>/ns/<namespace>/sa/<service-account>/pod/<pod-name>
+_SPIFFE_POD_SVID = re.compile(
+    r"^spiffe://([a-z0-9](?:[-a-z0-9.]*[a-z0-9])?)"
+    r"/ns/([a-z0-9](?:[-a-z0-9]*[a-z0-9])?)"
+    r"/sa/([a-z0-9](?:[-a-z0-9]*[a-z0-9])?)"
+    r"/pod/([a-z0-9](?:[-a-z0-9.]*[a-z0-9])?)\Z"
+)
+
+
+@dataclass(frozen=True)
+class ProducerPrincipal:
+    """Verified Linkerd mesh workload identity of an evidence or audit producer.
+
+    Attributes:
+        linkerd_id: Canonical ``l5d-client-id`` DNS workload identity.
+        spiffe_id: Canonical ``spiffe://<trust-domain>/ns/<ns>/sa/<sa>`` URI.
+        service_account: Mesh-verified Kubernetes ServiceAccount (derived ``source``).
+        namespace: Mesh-verified Kubernetes namespace.
+        trust_domain: Mesh trust domain (for example ``cluster.local``).
+        channel_provenance: ``LINKERD_MTLS`` (pod-local proxy) or ``DEV_LOOPBACK`` (LT-1).
+        auth_principal_hash: SHA-256 hex digest of ``spiffe_id``.
+        verified_pod_name: Pod name bound by a transport-level pod SVID, or ``None``
+            when only ServiceAccount-level Linkerd mTLS is present.
+    """
+
+    linkerd_id: str
+    spiffe_id: str
+    service_account: str
+    namespace: str
+    trust_domain: str
+    channel_provenance: Literal["LINKERD_MTLS", "DEV_LOOPBACK"]
+    auth_principal_hash: str
+    verified_pod_name: str | None = None
+
+
+def _is_loopback_peer(scope: dict[str, object]) -> bool:
+    """Return True if ``scope['client']`` is an IPv4/IPv6/IPv4-mapped loopback address."""
+    import ipaddress
+
+    endpoint = scope.get("client")
+    if not isinstance(endpoint, (tuple, list)) or not endpoint:
+        return False
+    try:
+        addr = ipaddress.ip_address(str(endpoint[0]))
+    except ValueError:
+        return False
+    if isinstance(addr, ipaddress.IPv6Address) and addr.ipv4_mapped:
+        addr = addr.ipv4_mapped
+    return addr.is_loopback
+
+
+def _load_trusted_producers(env_var: str, defaults: frozenset[str]) -> frozenset[str]:
+    """Resolve explicit trusted producer identities from ``env_var`` or ``defaults``.
+
+    When ``env_var`` is unset, returns ``defaults``. When ``env_var`` is set to
+    an empty/whitespace string, returns ``frozenset()`` (denies all producers).
+    Raises HTTP 500 fail-closed if any configured identity violates Linkerd DNS
+    or SPIFFE URI syntax.
+    """
+    raw = os.environ.get(env_var)
+    if raw is None:
+        return defaults
+    entries = frozenset(part.strip() for part in raw.split(",") if part.strip())
+    malformed = sorted(
+        item
+        for item in entries
+        if not _LINKERD_IDENTITY.fullmatch(item) and not _SPIFFE_ID.fullmatch(item)
+    )
+    if malformed:
+        logger.error(
+            "%s contains malformed workload identity entries: %s",
+            env_var,
+            malformed,
+        )
+        raise HTTPException(
+            status_code=500,
+            detail=f"{env_var} contains malformed workload identity entries",
+        )
+    return entries
+
+
+def _extract_verified_pod_name(
+    request: Request,
+    *,
+    trust_domain: str,
+    namespace: str,
+    service_account: str,
+) -> str | None:
+    """Extract pod name ONLY from substrate transport pod SVID, never HTTP headers."""
+    candidates: list[object] = []
+    scope = getattr(request, "scope", None)
+    if isinstance(scope, dict) and "transport_pod_svid" in scope:
+        candidates.append(scope.get("transport_pod_svid"))
+    attr_source = getattr(getattr(request, "attributes", None), "source", None)
+    if isinstance(attr_source, dict) and "principal" in attr_source:
+        candidates.append(attr_source.get("principal"))
+
+    expected_sa_svid = f"spiffe://{trust_domain}/ns/{namespace}/sa/{service_account}"
+    for raw in candidates:
+        if raw is None:
+            continue
+        if not isinstance(raw, str):
+            raise HTTPException(
+                status_code=403,
+                detail="Malformed transport pod SVID attribute",
+            )
+        if raw == expected_sa_svid:
+            # ServiceAccount-level transport SVID matches Linkerd identity; no pod claim bound.
+            continue
+        match = _SPIFFE_POD_SVID.fullmatch(raw)
+        if match is None:
+            raise HTTPException(
+                status_code=403,
+                detail="Transport pod SVID does not satisfy pod-scoped SPIFFE grammar",
+            )
+        td, ns, sa, pod_name = (
+            match.group(1),
+            match.group(2),
+            match.group(3),
+            match.group(4),
+        )
+        if td != trust_domain or ns != namespace or sa != service_account:
+            logger.warning(
+                "Transport pod SVID (%s/%s/%s) disagrees with Linkerd identity (%s/%s/%s)",
+                td,
+                ns,
+                sa,
+                trust_domain,
+                namespace,
+                service_account,
+            )
+            raise HTTPException(
+                status_code=403,
+                detail="Transport pod SVID does not match verified Linkerd identity",
+            )
+        if len(pod_name) > 128:
+            raise HTTPException(
+                status_code=403,
+                detail="Transport pod SVID pod name exceeds maximum length",
+            )
+        return pod_name
+    return None
+
+
+def _verify_mesh_producer(
+    request: Request,
+    *,
+    trusted: frozenset[str],
+    env_var: str,
+    endpoint_label: str,
+) -> ProducerPrincipal:
+    """Authenticate and authorize a workload producer via Linkerd ``l5d-client-id``.
+
+    Shared bearer tokens (``CAGE_INTERNAL_TOKEN``) are never accepted as a
+    substitute for verified Linkerd mTLS identity (``F-85`` / ``POAM-2026-167``).
+    """
+    from src.gateway.server.workload_identity import is_dev_loopback_identity_allowed
+
+    if hasattr(request.headers, "get") and request.headers.get(
+        "x-cage-source-principal"
+    ):
+        logger.warning(
+            "Ignored unverified client-supplied x-cage-source-principal header on %s",
+            endpoint_label,
+        )
+
+    l5d_id, duplicate_headers = _linkerd_client_id_header(request)
+    if duplicate_headers:
+        raise HTTPException(
+            status_code=401,
+            detail="Multiple l5d-client-id headers presented",
+        )
+    if l5d_id is None:
+        raise HTTPException(
+            status_code=401,
+            detail="Missing Linkerd workload identity header (l5d-client-id)",
+        )
+
+    scope_obj = getattr(request, "scope", {})
+    scope: dict[str, object] = scope_obj if isinstance(scope_obj, dict) else {}
+    channel: Literal["LINKERD_MTLS", "DEV_LOOPBACK"]
+    if is_pod_local_connection(scope):
+        channel = "LINKERD_MTLS"
+    elif is_dev_loopback_identity_allowed(os.environ) and _is_loopback_peer(scope):
+        channel = "DEV_LOOPBACK"
+    else:
+        client = getattr(request, "client", None)
+        logger.warning(
+            "Refused producer l5d-client-id on %s from %s: not from pod-local Linkerd proxy",
+            endpoint_label,
+            getattr(client, "host", "<none>"),
+        )
+        raise HTTPException(
+            status_code=401,
+            detail="l5d-client-id did not come through the Linkerd proxy",
+        )
+
+    match = _LINKERD_IDENTITY.fullmatch(l5d_id)
+    if match is None:
+        raise HTTPException(
+            status_code=401,
+            detail="Malformed l5d-client-id workload identity header",
+        )
+
+    sa, namespace, trust_domain = match.group(1), match.group(2), match.group(3)
+    spiffe_id = f"spiffe://{trust_domain}/ns/{namespace}/sa/{sa}"
+
+    if l5d_id not in trusted and spiffe_id not in trusted:
+        logger.warning(
+            "Rejected unauthorized %s producer workload %s (not in %s)",
+            endpoint_label,
+            l5d_id,
+            env_var,
+        )
+        raise HTTPException(
+            status_code=403,
+            detail=f"Workload identity is not an authorized {endpoint_label} producer",
+        )
+
+    verified_pod_name = _extract_verified_pod_name(
+        request,
+        trust_domain=trust_domain,
+        namespace=namespace,
+        service_account=sa,
+    )
+    principal_hash = hashlib.sha256(spiffe_id.encode()).hexdigest()
+    return ProducerPrincipal(
+        linkerd_id=l5d_id,
+        spiffe_id=spiffe_id,
+        service_account=sa,
+        namespace=namespace,
+        trust_domain=trust_domain,
+        channel_provenance=channel,
+        auth_principal_hash=principal_hash,
+        verified_pod_name=verified_pod_name,
+    )
+
+
+async def require_infra_event_producer(request: Request) -> ProducerPrincipal:
+    """Authenticate and authorize a ``POST /v1/infra/events`` mesh producer."""
+    trusted = _load_trusted_producers(
+        TRUSTED_INFRA_PRODUCERS_ENV, _DEFAULT_TRUSTED_INFRA_PRODUCERS
+    )
+    return _verify_mesh_producer(
+        request,
+        trusted=trusted,
+        env_var=TRUSTED_INFRA_PRODUCERS_ENV,
+        endpoint_label="infra-event",
+    )
+
+
+async def require_audit_ingest_producer(request: Request) -> ProducerPrincipal:
+    """Authenticate and authorize a ``POST /v1/audit/ingest`` mesh producer."""
+    trusted = _load_trusted_producers(
+        TRUSTED_AUDIT_PRODUCERS_ENV, _DEFAULT_TRUSTED_AUDIT_PRODUCERS
+    )
+    return _verify_mesh_producer(
+        request,
+        trusted=trusted,
+        env_var=TRUSTED_AUDIT_PRODUCERS_ENV,
+        endpoint_label="audit-ingest",
+    )

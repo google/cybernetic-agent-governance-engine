@@ -99,7 +99,7 @@
 **Current State:**
 
 - `compliance/oscal/component-definition.yaml` defines 3 software components (TypeScript Gateway, OPA, NeMo+Presidio) mapped to 4 ISO 42001 controls (A.5.2, A.5.3, SC-4, A.9.2). Uses OSCAL 1.0.4 schema. No SP 800-53 control source is referenced — all `source:` fields point to the ISO 42001 URL.
-- `compliance/lula/` — **15 automated validation manifests** drive continuous compliance checks across ISO 42001, NIST SP 800-53, and CSA AARM controls. Cadence tiers enforced by `lula_scheduler.py`: Critical=6h, High=daily, Medium=weekly. CronJob defined in `de5534ac:deployment/k8s/lula-cron.yaml`.
+- `compliance/lula/` — **15 automated validation manifests** drive continuous compliance checks across ISO 42001, NIST SP 800-53, and CSA AARM controls. Cadence tiers (Critical=6h, High=daily, Medium=weekly) scheduled via standalone Terraform CronJob tracked under `POAM-2026-195` (retiring `385e502e:src/compliance_bridge/lula_scheduler.py` and `de5534ac:deployment/k8s/lula-cron.yaml`).
 - `src/compliance_bridge/oscal_parser.py` provides deterministic OSCAL Assessment Result YAML parsing with strict Pydantic validation. Used by `audit_workflow.py` to ingest Lula output.
 - The Langfuse compliance project (dual-project architecture) acts as a continuous evidence store, with 5-minute TTL caching in `metrics.py`.
 

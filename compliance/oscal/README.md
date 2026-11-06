@@ -112,7 +112,7 @@ for f in files:
 
 ### Automated validation (Kubernetes CronJob)
 
-Lula validations are invoked periodically (`src/compliance_bridge/lula_scheduler.py`; standalone Terraform CronJob tracked under `POAM-2026-195`, replacing retired `de5534ac:deployment/k8s/lula-cron.yaml`) and store OSCAL Assessment Results ingested by the compliance bridge audit workflow.
+Lula validations are invoked periodically (standalone Terraform CronJob tracked under `POAM-2026-195`, retiring `385e502e:src/compliance_bridge/lula_scheduler.py` and `de5534ac:deployment/k8s/lula-cron.yaml`) and store OSCAL Assessment Results ingested by the compliance bridge audit workflow.
 
 ---
 

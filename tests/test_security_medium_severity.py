@@ -271,66 +271,6 @@ class TestM10SafetyRateMetric:
 
 
 # ---------------------------------------------------------------------------
-# M-11 — Lula scheduler: no fixed /tmp path (TOCTOU)
-# ---------------------------------------------------------------------------
-
-
-class TestM11LulaToctou:
-    """M-11: _results_path() must return empty string when env var not set,
-    triggering tempfile.mkstemp() usage instead of a fixed /tmp path."""
-
-    def test_results_path_empty_when_env_unset(self):
-        from src.compliance_bridge import lula_scheduler
-
-        with patch.dict(os.environ, {}, clear=False):
-            os.environ.pop("LULA_ASSESSMENT_RESULTS_PATH", None)
-            path = lula_scheduler._results_path()
-        assert path == "", f"Expected empty string, got: {path!r}"
-
-    def test_results_path_uses_env_var_when_set(self):
-        from src.compliance_bridge import lula_scheduler
-
-        with patch.dict(
-            os.environ, {"LULA_ASSESSMENT_RESULTS_PATH": "/custom/path.yaml"}
-        ):
-            path = lula_scheduler._results_path()
-        assert path == "/custom/path.yaml"
-
-    def test_no_hardcoded_tmp_path(self):
-        import inspect
-
-        from src.compliance_bridge import lula_scheduler
-
-        source = inspect.getsource(lula_scheduler)
-        assert '"/tmp/lula-assessment-results.yaml"' not in source, (
-            "Hardcoded /tmp path must be removed (TOCTOU risk)"
-        )
-
-
-# ---------------------------------------------------------------------------
-# M-12 — Lula loopback auth token
-# ---------------------------------------------------------------------------
-
-
-class TestM12LulaLoopbackAuth:
-    """M-12: _post_results_to_bridge must include X-Lula-Scheduler-Token header."""
-
-    def test_loopback_token_exists(self):
-        from src.compliance_bridge.lula_scheduler import _LOOPBACK_AUTH_TOKEN
-
-        assert isinstance(_LOOPBACK_AUTH_TOKEN, str)
-        assert len(_LOOPBACK_AUTH_TOKEN) >= 32, "Token must be at least 32 hex chars"
-
-    def test_post_results_sends_auth_header(self):
-        import inspect
-
-        from src.compliance_bridge import lula_scheduler
-
-        source = inspect.getsource(lula_scheduler._post_results_to_bridge)
-        assert "X-Lula-Scheduler-Token" in source
-
-
-# ---------------------------------------------------------------------------
 # M-13 — CORS: no empty string in allow_origins
 # ---------------------------------------------------------------------------
 
