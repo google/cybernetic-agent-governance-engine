@@ -52,6 +52,7 @@ from scripts import (
     check_locked_yanks,
     check_locust_baseline,
     check_poam_lula_divergence,
+    check_producer_consumer_keys,
     check_project_id_hygiene,
     check_stpa_freshness,
     check_telemetry_literals,
@@ -1329,3 +1330,47 @@ def test_gate_tlc_model_check_rejects_unpinned_tlc_verdicts(
     assert verify_tla.main() == 1, (
         "tlc-model-check passed a cfg missing a pinned invariant"
     )
+
+
+def test_gate_producer_consumer_keys_rejects_unproduced_keys_and_events(
+    tmp_path: Path,
+) -> None:
+    """Gate 11 (check_producer_consumer_keys.py) must run in ci.yml lint and catch drift."""
+    ci_yaml = yaml.safe_load((WORKFLOWS_DIR / "ci.yml").read_text(encoding="utf-8"))
+    lint_steps = ci_yaml["jobs"]["lint"]["steps"]
+    assert any(
+        "scripts/check_producer_consumer_keys.py" in step.get("run", "")
+        for step in lint_steps
+    ), "ci.yml lint job must run scripts/check_producer_consumer_keys.py"
+
+    # Live repo passes with floors active
+    assert check_producer_consumer_keys.main(["--repo-root", str(REPO_ROOT)]) == 0, (
+        "Live repository must pass Gate 11 with zero baseline waivers"
+    )
+
+    # Planted unproduced event_type + payload key must fail closed (exit 1)
+    producer = tmp_path / "src" / "gateway" / "governance" / "governor" / "verdicts.py"
+    producer.parent.mkdir(parents=True, exist_ok=True)
+    producer.write_text(
+        "def emit(sink):\n"
+        "    sink.ingest_sync({'type': 'GOVERNANCE_REFUSAL', 'violated_rule': 'r1'}, "
+        "event_type='GOVERNANCE_REFUSAL')\n",
+        encoding="utf-8",
+    )
+    consumer = tmp_path / "proof" / "stream_invariants.py"
+    consumer.parent.mkdir(parents=True, exist_ok=True)
+    consumer.write_text(
+        "def check_stream(records):\n"
+        "    for r in records:\n"
+        "        event_type = r['event_type']\n"
+        "        payload = r['payload']\n"
+        "        if event_type == 'UNPRODUCED_GHOST_EVENT':\n"
+        "            pass\n"
+        "        if event_type == 'GOVERNANCE_REFUSAL':\n"
+        "            _ = payload.get('ghost_key')\n",
+        encoding="utf-8",
+    )
+    assert (
+        check_producer_consumer_keys.main(["--repo-root", str(tmp_path), "--no-floors"])
+        == 1
+    ), "Gate 11 failed to reject planted unproduced event_type and payload key"

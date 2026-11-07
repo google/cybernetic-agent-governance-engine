@@ -317,6 +317,12 @@ jobs:
       - name: Lula stub count gate (OSCAL Rego extraction & downward-only baseline)
         run: |
           uv run python scripts/check_lula_stub_count.py
+      - name: Producer/consumer key & event-type parity check (Gate 11)
+        # Every event_type and dictionary key read by stream_invariants.py,
+        # src/compliance_bridge/ stream consumers, and cage-client envelope
+        # consumers must be emitted by a producer in src/ (zero baseline/waivers).
+        run: |
+          uv run python scripts/check_producer_consumer_keys.py --verbose
 
   bare-kernel-smoke:
     name: "Bare-Kernel Smoke Test (Zero Cloud SDKs)"
