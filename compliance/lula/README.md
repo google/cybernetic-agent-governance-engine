@@ -76,11 +76,11 @@ In this project, Lula is run as a Kubernetes CronJob (`deployment/k8s/lula-cron.
 The active/stub split is **intentional and aligned with the posture architecture**:
 
 - **7 Active (ALL scope):** ISO 42001 universal controls (A.5.2, A.5.3, A.9.2) + TokenQuotaProxy fail-closed (A.8.4 / CTRL_TQP_007) + Token Quota OPA Injection (A.4 / ISO-001) + FTRA Tier 0.5 Gate (CTRL_FTRA_001) + FlowSignal Integration (A.8.4 / FLOWSIGNAL-001) — production-ready across all deployment regions
-- **3 Active (US_FED scope):** SC-4 fiscal limits (`lula-validation-sc4.yaml`), SC-7 GKE Dataplane V2 boundary protection (`lula-validation-cilium-dpv2.yaml`), and AU-12 Prometheus metrics scrape (`lula-validation-metrics.yaml`) — production-ready for US Federal deployments
+- **4 Active (US_FED scope):** SC-4 fiscal limits (`lula-validation-sc4.yaml`), SC-7 GKE Dataplane V2 boundary protection (`lula-validation-cilium-dpv2.yaml`), AU-12 audit record generation (`lula-validation-au12.yaml`), and AU-12 Prometheus metrics scrape (`lula-validation-metrics.yaml`) — production-ready for US Federal deployments
 - **1 Active (EU_ECB scope):** EU AI Act Art. 27 FRIA gating (`lula-validation-eu-fria.yaml`) — production-ready for EU_ECB deployments
 - **1 Stub (ALL scope):** CSA AARM vectors — universal but requires cluster configuration. **Note:** This validation is listed as `Status: 🔶 Stub` and counted as 1 stub (ALL scope). It is NOT counted as an active validation for release gate purposes until real assertions replace the stub. See CA-05 remediation note below.
-- **10 Stub (US_FED scope):** NIST SP 800-53 controls — US Federal only; require cluster-specific namespace/resource configuration before activation
-- **5 Stub (US_FED scope):** NIST AI 600-1 controls — phases 0–3 implemented in v3.0.0 (runtime enforcement active); Lula manifests are stub-ready and require Langfuse metric availability and cluster-specific configuration before activation
+- **9 Stub (US_FED scope):** NIST SP 800-53 controls — US Federal only; carry substantive fail-closed Rego assertions and require cluster-specific namespace/resource configuration before CronJob activation
+- **5 Stub (US_FED scope):** NIST AI 600-1 controls — Phase-0 placeholder Rego stubs tracked by `compliance/lula/.stub-baseline` (`5`, downward-only ratchet in `scripts/check_lula_stub_count.py`), whereas the other 16 `🔶 Stub` rows across all scopes join the 12 `✅ Active` rows as 28 substantive fail-closed Rego manifests awaiting CronJob or compliance-bridge endpoint wiring
 - **3 Stub (EU_ECB scope):** EU AI Act / GDPR / DORA controls — EU regional only; require cluster-specific resource configuration and live compliance-bridge endpoints
 - **3 Stub (APAC_MAS scope):** MAS FEAT / MAS Notice 655 / MAS TRM §6.3 controls — APAC regional only; require cluster-specific configuration and `data_residency_region = "asia-southeast1"` assertion
 

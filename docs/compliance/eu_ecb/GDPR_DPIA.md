@@ -102,11 +102,11 @@ Measures taken to limit data processing to what is necessary:
 
 | Risk | Likelihood | Severity | Mitigation |
 |---|---|---|---|
-| AI recommendation causes significant adverse financial decision for client | Medium | High | HITL review for amounts > €10,000; explainer chain; right to explanation |
+| AI recommendation causes significant adverse financial decision for client | Medium | High | `REQUIRE_APPROVAL` dual-control review for amounts ≥ €7,500 (`threshold_usd = 7500.0`) and `[0.70, 0.97)` EU_ECB trade confidence; WORM decision reconstruction |
 | Client PII inadvertently retained in Langfuse traces | Low | High | Presidio PII scrubbing (score_threshold ≥ 0.5); regular trace audit |
 | Unauthorized access to client financial data in GCS | Low | High | CMEK encryption; IAM least-privilege (`cage-compliance-bridge-sa`) |
 | Cross-border data transfer outside EU (Langfuse traces) | Low | High | Langfuse EU_ECB project scoped to Frankfurt (eu-west data centre) |
-| Data subject cannot exercise GDPR Art. 22 rights (automated decision-making) | Low | Medium | Human oversight mandatory; HITL available for all high-value decisions |
+| Data subject cannot exercise GDPR Art. 22(3) contestation on request | Medium | Medium | System-triggered `REQUIRE_APPROVAL` dual-control quorum active for high-value/medium-confidence trades; subject-initiated contest API & `GET /v1/compliance/gdpr/art22` planned (`POAM EU-006`) |
 
 ---
 
@@ -114,17 +114,15 @@ Measures taken to limit data processing to what is necessary:
 
 GDPR Art. 22 gives data subjects the right not to be subject to decisions based solely on automated processing where those decisions produce legal or similarly significant effects.
 
-**CAGE position:** The Governed Financial Advisor does NOT make final autonomous decisions for high-value recommendations. All decisions with:
-- Confidence < 0.95, OR
-- Amount > €10,000
+**CAGE position:** In `CAGE_DEPLOYMENT_REGION=EU_ECB`, system-triggered human involvement is enforced via **`REQUIRE_APPROVAL`** before trade execution whenever:
+- Trade confidence is in `[0.70, 0.97)` (`domains.finance.confidence.min_trade_confidence = 0.97` in `src/cage_finance/tiers/trade_confidence_tier.py`; universal non-trade band `[0.70, 0.95)` in `src/gateway/governance/governor/stages/confidence.py`), OR
+- Trade notional is `>= EUR 7,500` (`domains.finance.consensus.threshold_usd = 7500.0` in `src/cage_finance/tiers/consensus_tier.py`, vs. `10,000` global default).
 
-...are escalated to a Human-in-the-Loop operator before action. The AI system produces **recommendations**, not binding decisions. Human operators retain final authority.
+`REQUIRE_APPROVAL` parks the decision in `DeferQueue` (`src/gateway/governance/defer_queue.py`) for distinct-principal dual-control quorum (`DeferQueue.approve()` / `POST /v1/defer/{id}/escalate`) and spends approvals single-use via `DeferQueue.consume_approval()` + `SymbolicGovernor.revalidate_post_hitl()` (`POST_HITL` drift check). Sub-`0.70` `DEFER` (`CONFIDENCE_BELOW_THRESHOLD` / `TRADE_CONFIDENCE_BELOW_FLOOR`) and `WARRANT_INELIGIBLE` are turn-terminal epistemic/reliance holds rather than Art. 22 human-approval gates.
 
-**Safeguards in place (GDPR Art. 22(2)(b)):**
-- Human review gate with 1-hour SLA (APAC_MAS) / 4-hour SLA (default)
-- HITL override mechanism with full audit trail
-- Explainability chain per request (explainer agent node)
-- Right to explanation: WORM UCA records provide reconstruction of any decision
+**Safeguards status (GDPR Art. 22(2)(b) & Art. 22(3)):**
+- **Implemented:** `REQUIRE_APPROVAL` dual-control quorum (`DeferQueue.approve()`), single-use `POST_HITL` drift revalidation (`SymbolicGovernor.revalidate_post_hitl()`), explainability trace capture, and tamper-evident WORM evidence reconstruction
+- **Planned (`POAM EU-006`):** Subject-initiated Art. 22(3) point-of-view / contestation mechanism on request and the compliance-bridge `GET /v1/compliance/gdpr/art22` Lula status endpoint (`compliance/lula/lula-validation-gdpr-art22.yaml`)
 
 ---
 
@@ -155,4 +153,4 @@ No high-residual-risk items were identified that require prior consultation with
 - `compliance/universal/PII_SCRUBBING_POLICY.md` — Presidio PII scrubbing configuration
 - `compliance/universal/AUDIT_LOG_RETENTION_SCHEDULE.md` — GDPR Art. 5(1)(e) retention periods
 - `docs/governance/HUMAN_OVERSIGHT_SCOPE.md` — HITL gate and Art. 22 safeguards
-- `compliance/eu_ecb/POAM_EU_ECB.md` — EU-004 POAM item
+- `compliance/eu_ecb/POAM_EU_ECB.md` — EU-004 and EU-006 POAM items

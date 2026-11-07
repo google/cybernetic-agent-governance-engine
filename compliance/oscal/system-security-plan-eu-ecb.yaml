@@ -3,7 +3,7 @@ system-security-plan:
   metadata:
     title: CAGE System Security Plan (EU_ECB — EU AI Act / GDPR / DORA)
     published: '2026-06-15T00:00:00Z'
-    last-modified: '2026-11-04T22:01:35Z'
+    last-modified: '2026-11-06T21:22:22Z'
     version: 1.0.0-draft+stpa
     oscal-version: 1.0.4
     remarks: 'This System Security Plan (SSP) documents the compliance controls implemented
@@ -169,14 +169,25 @@ system-security-plan:
     - uuid: eu-ecb-comp-0002-4000-8000-000000000002
       type: software
       title: CAGE GDPR Art. 22 Human Oversight Controls
-      description: GDPR Art. 22 human oversight implemented via the DEFER State Machine
-        (defer_queue.py) and HITL escalator (hitl_escalator.py). Since commit ecca70b9
-        trades at or above the EU_ECB consensus threshold (domains.finance.consensus.threshold_usd
+      description: GDPR Art. 22 system-triggered human involvement is enforced via
+        REQUIRE_APPROVAL parked in DeferQueue (src/gateway/governance/defer_queue.py)
+        for distinct-principal dual-control quorum (DeferQueue.approve() / POST /v1/defer/{id}/escalate)
+        and spent single-use via DeferQueue.consume_approval() plus SymbolicGovernor.revalidate_post_hitl()
+        (POST_HITL drift check in src/gateway/governance/governor/governor.py). Since
+        commit ecca70b9 trades at or above the EU_ECB consensus threshold (domains.finance.consensus.threshold_usd
         = 7500.0, documented as a EUR 7,500 equivalent; global value 10,000) deterministically
         escalate to human review with NOTIONAL_THRESHOLD_ESCALATION (REQUIRE_APPROVAL)
         by default (CAGE_CONSENSUS_CRITICS_ENABLED=false), or consult multi-model
         critic consensus when CAGE_CONSENSUS_CRITICS_ENABLED=true (src/cage_finance/tiers/consensus_tier.py);
-        before ecca70b9 the global value applied in EU_ECB.
+        before ecca70b9 the global value applied in EU_ECB. Medium-confidence actions
+        in [0.70, 0.95) universally (src/gateway/governance/governor/stages/confidence.py)
+        and [0.70, 0.97) on EU_ECB trade execution (domains.finance.confidence.min_trade_confidence
+        = 0.97 in src/cage_finance/tiers/trade_confidence_tier.py) likewise raise
+        ViolationKind.HITL (REQUIRE_APPROVAL), whereas sub-0.70 DEFER (CONFIDENCE_BELOW_THRESHOLD
+        / TRADE_CONFIDENCE_BELOW_FLOOR) and WARRANT_INELIGIBLE are turn-terminal epistemic/reliance
+        holds rather than Art. 22 human-approval gates. Subject-initiated contest
+        on request (GDPR Art. 22(3)) and GET /v1/compliance/gdpr/art22 on compliance-bridge
+        are planned (POAM EU-006).
       purpose: Satisfies GDPR Art. 22(2)(b) safeguards for automated individual decision-making
         with legal or similarly significant effects.
       status:
@@ -473,12 +484,23 @@ system-security-plan:
           text: Lula automated validation for EU AI Act Art. 9
     - uuid: eu-ecb-req-0002-4000-8000-000000000002
       control-id: gdpr-art22
-      description: GDPR Art. 22 human oversight implemented via DEFER State Machine
-        and HITL escalator. EU_ECB consensus threshold EUR 7,500. Data subject rights
-        (Art. 22(3)) implemented via contest mechanism.
+      description: GDPR Art. 22 system-triggered human oversight is enforced via REQUIRE_APPROVAL
+        (EUR 7,500 consensus threshold in src/cage_finance/tiers/consensus_tier.py;
+        [0.70, 0.95) universal confidence band in src/gateway/governance/governor/stages/confidence.py;
+        [0.70, 0.97) EU_ECB trade-confidence band in src/cage_finance/tiers/trade_confidence_tier.py)
+        with distinct-principal dual-control quorum in DeferQueue (src/gateway/governance/defer_queue.py)
+        and POST_HITL drift revalidation (SymbolicGovernor.revalidate_post_hitl()).
+        Sub-0.70 DEFER and WARRANT_INELIGIBLE are turn-terminal epistemic/reliance
+        holds rather than Art. 22 human-approval gates. Subject-initiated Art. 22(3)
+        point-of-view / contestation on request and GET /v1/compliance/gdpr/art22
+        are planned (POAM EU-006).
       props:
       - name: implementation-status
         value: under-development
+      - name: subject-initiated-contest-status
+        value: planned
+      - name: compliance-bridge-art22-endpoint-status
+        value: planned
       - name: regulatory-citation
         value: GDPR Art. 22 (Regulation (EU) 2016/679)
       responsible-roles:
@@ -486,8 +508,12 @@ system-security-plan:
       by-components:
       - component-uuid: eu-ecb-comp-0002-4000-8000-000000000002
         uuid: eu-ecb-bycomp-0002-4000-8000-000000000002
-        description: DEFER queue and HITL escalator provide human oversight. Lula
-          validation asserts consensus threshold and audit trail presence.
+        description: REQUIRE_APPROVAL escalations (consensus_tier.py, confidence.py,
+          trade_confidence_tier.py) park tokens in DeferQueue for distinct-principal
+          dual-control approval (DeferQueue.approve()) and single-use consumption
+          with POST_HITL drift revalidation (DeferQueue.consume_approval(), SymbolicGovernor.revalidate_post_hitl()).
+          Subject-initiated Art. 22(3) contest on request and the GET /v1/compliance/gdpr/art22
+          Lula status endpoint are planned (POAM EU-006).
         implementation-status:
           state: under-development
         links:
@@ -797,7 +823,7 @@ system-security-plan:
         \ https://eur-lex.europa.eu/legal-content/EN/TXT/?uri=CELEX%3A32024R1689\n\
         \          System: CAGE Financial Advisor v1.1.0\n          UCAs encoded:\
         \ 12\n          Hazards modelled: 7\n          Safety constraints: 3\n   \
-        \       Last compiled: 2026-11-04T22:01:35Z\n\n          UCA-to-Control mapping\
+        \       Last compiled: 2026-11-06T21:22:22Z\n\n          UCA-to-Control mapping\
         \ (EU AI Act (Regulation (EU) 2024/1689) High-Risk AI — Annex III §5(b)):\n\
         \            UCA-1 (unsafe_action): Agent executes write operation without\
         \ a signed approval token.\n  → EU_AI_ACT: Art. 9(5) (Risk Management — Residual\
@@ -847,7 +873,7 @@ system-security-plan:
       - name: hazard-count
         value: '7'
       - name: last-compiled
-        value: '2026-11-04T22:01:35Z'
+        value: '2026-11-06T21:22:22Z'
       - name: target-framework
         value: EU AI Act (Regulation (EU) 2024/1689) High-Risk AI — Annex III §5(b)
       - name: artifact-opa
