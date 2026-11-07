@@ -880,10 +880,8 @@ async def validate_action_endpoint(
             action=body.action,
             params=body.params,
             governance_result=jsonable_encoder(payload_result),
-            record_hash=result.get("record_hash"),
             agent_id=result.get("agent_id"),
             tiers_passed=result.get("tiers_passed", []),
-            controls_satisfied=result.get("controls_satisfied", []),
             external_attestations=attestations,
         )
         return JSONResponse(content=envelope.to_dict(include_signature=True))

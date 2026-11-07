@@ -63,7 +63,6 @@ def mock_allow_envelope() -> GovernanceEnvelope:
         subject={
             "action": "execute_trade",
             "action_hash": "abc123",
-            "record_hash": "def456",
             "agent_id": "test-agent",
         },
         governance_context={

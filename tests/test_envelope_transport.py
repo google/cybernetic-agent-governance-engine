@@ -66,8 +66,6 @@ def mock_symbolic_governor():
             "violations": [],
             "latency_ms": 1.5,
             "tiers_passed": ["stpa", "cbf", "opa"],
-            "controls_satisfied": ["CTRL_OPA_001", "CTRL_CBF_002"],
-            "record_hash": "sha256:abc123",
             "agent_id": "advisor-test",
         }
     )
@@ -145,7 +143,7 @@ class TestEnvelopeTransportApproved:
     def test_approved_envelope_contains_subject_metadata(
         self, client, mock_symbolic_governor
     ):
-        """Envelope contains subject metadata (action, action_hash, record_hash, agent_id)."""
+        """Envelope contains subject metadata (action, action_hash, agent_id) and omits record_hash."""
         resp = client.post(
             "/validate-action",
             json={"action": "execute_trade", "params": {"amount": 100}},
@@ -157,13 +155,13 @@ class TestEnvelopeTransportApproved:
         assert subject["action"] == "execute_trade"
         assert "action_hash" in subject
         assert subject["action_hash"].startswith("sha256:")
-        assert subject.get("record_hash") == "sha256:abc123"
+        assert "record_hash" not in subject
         assert subject.get("agent_id") == "advisor-test"
 
     def test_approved_envelope_contains_governance_context(
         self, client, mock_symbolic_governor
     ):
-        """Envelope contains governance context (policy_version, tiers, controls)."""
+        """Envelope contains governance context (policy_version, tiers, region) and omits controls_satisfied."""
         resp = client.post(
             "/validate-action",
             json={"action": "execute_trade", "params": {"amount": 100}},
@@ -175,8 +173,32 @@ class TestEnvelopeTransportApproved:
         assert "policy_version" in context
         assert context["policy_version"].startswith("sha256:")
         assert context["tiers_passed"] == ["stpa", "cbf", "opa"]
-        assert context["controls_satisfied"] == ["CTRL_OPA_001", "CTRL_CBF_002"]
+        assert "controls_satisfied" not in context
         assert "deployment_region" in context
+
+    def test_preview_envelope_drops_unpopulated_fields_even_on_stray_governor_keys(
+        self, client, mock_symbolic_governor
+    ):
+        """EP-1 negative assertion: subject.record_hash and governance_context.controls_satisfied never appear."""
+        mock_symbolic_governor.validate_action = AsyncMock(
+            return_value={
+                "verdict": "ALLOW",
+                "violations": [],
+                "latency_ms": 1.5,
+                "tiers_passed": ["stpa", "cbf", "opa"],
+                "record_hash": "sha256:stray",
+                "controls_satisfied": ["CTRL_STRAY_001"],
+                "agent_id": "advisor-test",
+            }
+        )
+        resp = client.post(
+            "/validate-action",
+            json={"action": "execute_trade", "params": {"amount": 100}},
+        )
+        assert resp.status_code == 200
+        data = resp.json()
+        assert "record_hash" not in data["subject"]
+        assert "controls_satisfied" not in data["governance_context"]
 
     def test_approved_envelope_contains_payload(self, client, mock_symbolic_governor):
         """Envelope payload contains the original governance result."""
@@ -367,7 +389,6 @@ class TestEnvelopeTransportEdgeCases:
                 "violations": [],
                 "latency_ms": 1.5,
                 "tiers_passed": ["stpa", "cbf", "opa"],
-                "controls_satisfied": ["CTRL_OPA_001"],
                 "external_attestations": [
                     {
                         "type": "EXTERNAL_PROVIDER_APPROVAL",

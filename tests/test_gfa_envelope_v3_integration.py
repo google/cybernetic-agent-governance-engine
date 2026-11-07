@@ -52,7 +52,6 @@ def mock_v3_envelope_approved():
         "subject": {
             "action": "execute_trade",
             "action_hash": "sha256:abc123def456",
-            "record_hash": "sha256:rec789",
             "consequence_ceiling": "LOW_INFORMATIONAL",
             "target_route": "local://default",
             "executor_id": "kernel",
@@ -61,7 +60,6 @@ def mock_v3_envelope_approved():
             "policy_version": "sha256:policy-v1",
             "tiers_passed": ["stpa", "cbf", "opa", "consensus"],
             "deployment_region": "US_FED",
-            "controls_satisfied": ["CTRL_OPA_001", "CTRL_CBF_002"],
         },
         "payload": {
             "verdict": "ALLOW",
@@ -102,7 +100,6 @@ def mock_v3_envelope_denied():
             "policy_version": "sha256:policy-v1",
             "tiers_passed": ["stpa"],
             "deployment_region": "US_FED",
-            "controls_satisfied": [],
         },
         "payload": {
             "verdict": "DENIED",

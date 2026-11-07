@@ -110,14 +110,12 @@ class TestGovernanceEnvelope:
             subject=SubjectMetadata(
                 action="execute_trade",
                 action_hash="sha256:abc123",
-                record_hash="sha256:def456",
                 agent_id="advisor-v1",
             ),
             governance_context=GovernanceContext(
                 policy_version="sha256:policy123",
                 tiers_passed=["stpa", "cbf", "opa"],
                 deployment_region="US_FED",
-                controls_satisfied=["CTRL_OPA_001"],
             ),
             payload=sample_governance_result,
             signature=None,
@@ -130,7 +128,9 @@ class TestGovernanceEnvelope:
         assert result["envelope_id"] == "cage-test123"
         assert result["issuer"]["service"] == "test-gateway"
         assert result["subject"]["action"] == "execute_trade"
+        assert "record_hash" not in result["subject"]
         assert result["governance_context"]["tiers_passed"] == ["stpa", "cbf", "opa"]
+        assert "controls_satisfied" not in result["governance_context"]
         assert result["payload"] == sample_governance_result
         assert "signature" not in result  # No signature attached
 
@@ -216,10 +216,8 @@ class TestGovernanceEnvelopeBuilder:
             action="execute_trade",
             params=sample_params,
             governance_result=sample_governance_result,
-            record_hash="sha256:evidence123",
             agent_id="advisor-v1",
             tiers_passed=["stpa", "cbf", "opa"],
-            controls_satisfied=["CTRL_OPA_001"],
         )
 
         assert envelope.envelope_version == "3.0"
@@ -227,11 +225,51 @@ class TestGovernanceEnvelopeBuilder:
         assert envelope.envelope_id.startswith("cage-")
         assert envelope.subject.action == "execute_trade"
         assert envelope.subject.action_hash.startswith("sha256:")
-        assert envelope.subject.record_hash == "sha256:evidence123"
+        assert not hasattr(envelope.subject, "record_hash")
         assert envelope.subject.agent_id == "advisor-v1"
         assert envelope.governance_context.tiers_passed == ["stpa", "cbf", "opa"]
+        assert not hasattr(envelope.governance_context, "controls_satisfied")
         assert envelope.payload == sample_governance_result
         assert envelope.signature is None
+
+    def test_retired_preview_fields_rejected_at_construction(
+        self, sample_governance_result, sample_params
+    ):
+        """EP-1: SubjectMetadata.record_hash and GovernanceContext.controls_satisfied are rejected."""
+        from src.gateway.governance.governance_envelope import (
+            GovernanceContext,
+            GovernanceEnvelopeBuilder,
+            SubjectMetadata,
+        )
+
+        with pytest.raises(TypeError, match="record_hash"):
+            SubjectMetadata(
+                action="execute_trade",
+                action_hash="sha256:abc",
+                record_hash="sha256:dead",  # type: ignore[call-arg]
+            )
+
+        with pytest.raises(TypeError, match="controls_satisfied"):
+            GovernanceContext(
+                policy_version="sha256:pol",
+                controls_satisfied=["AU-10"],  # type: ignore[call-arg]
+            )
+
+        builder = GovernanceEnvelopeBuilder()
+        with pytest.raises(TypeError, match="record_hash"):
+            builder.build_unsigned(
+                action="execute_trade",
+                params=sample_params,
+                governance_result=sample_governance_result,
+                record_hash="sha256:dead",  # type: ignore[call-arg]
+            )
+        with pytest.raises(TypeError, match="controls_satisfied"):
+            builder.build_unsigned(
+                action="execute_trade",
+                params=sample_params,
+                governance_result=sample_governance_result,
+                controls_satisfied=["AU-10"],  # type: ignore[call-arg]
+            )
 
     def test_action_hash_is_deterministic(
         self, sample_governance_result, sample_params
@@ -331,7 +369,6 @@ class TestGovernanceEnvelopeBuilder:
             action="execute_trade",
             params=sample_params,
             governance_result=sample_governance_result,
-            record_hash="sha256:test",
         )
 
         # Convert to dict and back
@@ -342,7 +379,6 @@ class TestGovernanceEnvelopeBuilder:
         assert reconstructed.envelope_id == original.envelope_id
         assert reconstructed.subject.action == original.subject.action
         assert reconstructed.subject.action_hash == original.subject.action_hash
-        assert reconstructed.subject.record_hash == original.subject.record_hash
 
 
 # ---------------------------------------------------------------------------

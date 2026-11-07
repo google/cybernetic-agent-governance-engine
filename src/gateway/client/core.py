@@ -543,14 +543,10 @@ class CageClient:
             raise CageGatewayError(
                 "NARROW envelope missing required 'narrowed_params' object"
             )
-        audit_id = (
-            envelope.payload.get("audit_id")
-            or envelope.subject.get("record_hash")
-            or envelope.envelope_id
-        )
+        audit_id = envelope.payload.get("audit_id") or envelope.envelope_id
         if not audit_id:
             raise CageGatewayError(
-                "NARROW envelope missing required 'record_hash' or 'envelope_id'"
+                "NARROW envelope missing required 'audit_id' or 'envelope_id'"
             )
         raise PolicyViolationException(
             reason_code="NARROWED",
@@ -564,14 +560,10 @@ class CageClient:
 
     @staticmethod
     def _mediate_deny_verdict(envelope: GovernanceEnvelope) -> None:
-        audit_id = (
-            envelope.payload.get("audit_id")
-            or envelope.subject.get("record_hash")
-            or envelope.envelope_id
-        )
+        audit_id = envelope.payload.get("audit_id") or envelope.envelope_id
         if not audit_id:
             raise CageGatewayError(
-                "DENY envelope missing required 'audit_id' or 'record_hash'"
+                "DENY envelope missing required 'audit_id' or 'envelope_id'"
             )
         violations = envelope.payload.get("violations", [])
         reason_code = (
