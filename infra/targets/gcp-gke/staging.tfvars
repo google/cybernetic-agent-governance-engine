@@ -222,10 +222,6 @@ presidio_anonymizer_image = ""
 memorystore_governance_instance_id = "cage-valkey-gov-staging-v2"
 memorystore_app_instance_id        = "cage-valkey-app-staging-v3"
 
-memorystore_governance_psc_cidr = "10.128.0.0/20"
-memorystore_app_psc_cidr        = "10.128.0.0/20"
-cloud_sql_cidr                  = "10.6.80.0/20"
-
 # ─── Secrets (set in terraform.auto.tfvars — gitignored) ──────────────────────
 # K-2: KMS key for CMEK encryption (etcd + persistent volumes).
 #   kms_key_id = "projects/<proj>/locations/<loc>/keyRings/<ring>/cryptoKeys/<key>"

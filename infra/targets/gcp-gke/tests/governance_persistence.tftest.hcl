@@ -464,3 +464,58 @@ run "module_refuses_a_fsync_policy_without_aof" {
 
   expect_failures = [google_memorystore_instance.instance]
 }
+
+run "memorystore_valkey_selects_primary_connection_when_not_first" {
+  command = plan
+
+  module {
+    source = "../../modules/memorystore_valkey"
+  }
+
+  variables {
+    network_id = "default"
+  }
+
+  override_resource {
+    target          = google_memorystore_instance.instance
+    override_during = plan
+    values = {
+      endpoints = [{
+        connections = [
+          {
+            psc_auto_connection = [{
+              connection_type    = "CONNECTION_TYPE_READER"
+              forwarding_rule    = "projects/persistence-test-project/regions/us-central1/forwardingRules/reader"
+              ip_address         = "10.99.0.1"
+              network            = "projects/persistence-test-project/global/networks/default"
+              port               = 6380
+              project_id         = "persistence-test-project"
+              psc_connection_id  = "reader"
+              service_attachment = "projects/persistence-test-project/regions/us-central1/serviceAttachments/reader"
+            }]
+          },
+          {
+            psc_auto_connection = [{
+              connection_type    = "CONNECTION_TYPE_PRIMARY"
+              forwarding_rule    = "projects/persistence-test-project/regions/us-central1/forwardingRules/primary"
+              ip_address         = "10.99.0.2"
+              network            = "projects/persistence-test-project/global/networks/default"
+              port               = 6379
+              project_id         = "persistence-test-project"
+              psc_connection_id  = "primary"
+              service_attachment = "projects/persistence-test-project/regions/us-central1/serviceAttachments/primary"
+            }]
+          },
+        ]
+      }]
+    }
+  }
+
+  assert {
+    condition = (
+      output.primary_endpoint_ip == "10.99.0.2" &&
+      output.primary_endpoint_port == 6379
+    )
+    error_message = "primary_endpoint_ip and primary_endpoint_port must select CONNECTION_TYPE_PRIMARY rather than connections[0] (F-14, DE-M3)"
+  }
+}

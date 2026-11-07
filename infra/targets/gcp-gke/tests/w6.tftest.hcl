@@ -344,3 +344,102 @@ run "gke_module_binds_dedicated_node_service_account_to_every_node_pool" {
   }
 }
 
+run "datastore_egress_follows_endpoints" {
+  command = plan
+
+  override_module {
+    target = module.memorystore_governance
+    outputs = {
+      managed_server_ca     = ["-----BEGIN CERTIFICATE-----test-----END CERTIFICATE-----"]
+      primary_endpoint_ip   = "10.20.1.11"
+      primary_endpoint_port = 6379
+      replica_count         = 1
+    }
+  }
+
+  override_module {
+    target = module.memorystore_app
+    outputs = {
+      primary_endpoint_ip   = "10.20.2.22"
+      primary_endpoint_port = 6379
+    }
+  }
+
+  override_module {
+    target = module.cloudsql_postgres
+    outputs = {
+      private_ip_address             = "10.20.3.33"
+      connection_name                = "w6-test-project:us-central1:cage-postgres-staging"
+      database_name                  = "langfuse"
+      iam_user_name                  = "cage-langfuse@w6-test-project.iam"
+      point_in_time_recovery_enabled = true
+    }
+  }
+
+  assert {
+    condition = (
+      local.governance_valkey_cidr == "10.20.1.11/32" &&
+      local.app_valkey_cidr == "10.20.2.22/32" &&
+      local.cloud_sql_cidr == "10.20.3.33/32"
+    )
+    error_message = "derived data-store /32 locals must follow the live module endpoint outputs"
+  }
+
+  assert {
+    condition = (
+      toset(flatten([
+        for r in kubernetes_network_policy_v1.datastore_egress.spec[0].egress : [
+          for t in r.to : t.ip_block[0].cidr if length(t.ip_block) > 0
+        ] if contains([for p in r.ports : p.port], "6379")
+      ])) == toset(["10.20.1.11/32", "10.20.2.22/32"])
+    )
+    error_message = "kubernetes_network_policy_v1.datastore_egress must allow TCP 6379 to both Valkey /32 endpoints"
+  }
+
+  assert {
+    condition = (
+      toset(flatten([
+        for r in kubernetes_network_policy_v1.datastore_egress.spec[0].egress : [
+          for t in r.to : t.ip_block[0].cidr if length(t.ip_block) > 0
+        ] if contains([for p in r.ports : p.port], "3307") && contains([for p in r.ports : p.port], "5432")
+      ])) == toset(["10.20.3.33/32"])
+    )
+    error_message = "kubernetes_network_policy_v1.datastore_egress must allow TCP 3307 and 5432 to the Cloud SQL /32 endpoint"
+  }
+
+  assert {
+    condition = (
+      length([
+        for r in kubernetes_network_policy_v1.default_deny_external_egress.spec[0].egress : r
+        if anytrue([for p in r.ports : contains(["3307", "5432", "6379"], p.port)])
+      ]) == 0
+    )
+    error_message = "kubernetes_network_policy_v1.default_deny_external_egress must hold no 3307/5432/6379 data-store rule (DE-M2)"
+  }
+
+  assert {
+    condition = (
+      toset(flatten([
+        for r in kubernetes_network_policy_v1.gateway_egress_l3_l4.spec[0].egress : [
+          for t in r.to : t.ip_block[0].cidr if length(t.ip_block) > 0
+        ] if contains([for p in r.ports : p.port], "6379")
+      ])) == toset(["10.20.1.11/32"]) &&
+      toset(flatten([
+        for r in kubernetes_network_policy_v1.compliance_bridge_egress_l3_l4.spec[0].egress : [
+          for t in r.to : t.ip_block[0].cidr if length(t.ip_block) > 0
+        ] if contains([for p in r.ports : p.port], "6379")
+      ])) == toset(["10.20.1.11/32"]) &&
+      toset(flatten([
+        for r in kubernetes_network_policy_v1.financial_advisor_egress_internal_only.spec[0].egress : [
+          for t in r.to : t.ip_block[0].cidr if length(t.ip_block) > 0
+        ] if contains([for p in r.ports : p.port], "6379")
+      ])) == toset(["10.20.2.22/32"]) &&
+      toset(flatten([
+        for r in kubernetes_network_policy_v1.reconciliation_worker_egress.spec[0].egress : [
+          for t in r.to : t.ip_block[0].cidr if length(t.ip_block) > 0
+        ] if contains([for p in r.ports : p.port], "6379")
+      ])) == toset(["10.20.1.11/32"])
+    )
+    error_message = "per-workload NetworkPolicies must derive their Valkey /32 CIDRs from the governance and app endpoints"
+  }
+}

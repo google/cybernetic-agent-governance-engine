@@ -1121,25 +1121,8 @@ variable "dns_domain_name" {
 }
 
 # ─── Track 6f Network Policy & FQDN Policy Configuration (§5.3, §7) ──────────
-# The policy set is identical in every posture; only CIDRs and FQDNs differ via tfvars.
-
-variable "memorystore_governance_psc_cidr" {
-  description = "PSC endpoint CIDR block for the governance Memorystore instance on TLS port 6379 (§5.3)"
-  type        = string
-  default     = "10.0.16.0/28"
-}
-
-variable "memorystore_app_psc_cidr" {
-  description = "PSC endpoint CIDR block for the app Memorystore instance on TLS port 6379 (§5.3)"
-  type        = string
-  default     = "10.0.16.16/28"
-}
-
-variable "cloud_sql_cidr" {
-  description = "VPC peering CIDR block for Cloud SQL private IP connection (§5.3)"
-  type        = string
-  default     = "10.6.80.0/20"
-}
+# The policy set is identical in every posture; data-store /32 CIDRs are derived
+# from the live resource endpoints in network_policy.tf (POAM-2026-190).
 
 variable "cage_domain" {
   description = "CAGE domain configuration (e.g. 'finance')"
