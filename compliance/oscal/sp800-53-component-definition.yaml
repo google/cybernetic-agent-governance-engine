@@ -128,7 +128,7 @@ component-definition:
                 fallback). Single authenticated principal cannot reach quorum - duplicate
                 approvals are rejected with ALREADY_APPROVED status (line 511-518). Required
                 quorum is auto-computed from defer_reason: quorum-3 for FTRA_IRREVERSIBLE_TERMINAL,
-                EXTERNAL_VALIDATION, and EXTERNAL_HOLD defer reasons; quorum-2 for
+                EXTERNAL_VALIDATION, EXTERNAL_HOLD, and WARRANT_INELIGIBLE defer reasons; quorum-2 for
                 all others (src/gateway/governance/defer_queue.py:66-80).
 
                 Protection against single-principal quorum bypass: The defer_inject endpoint
