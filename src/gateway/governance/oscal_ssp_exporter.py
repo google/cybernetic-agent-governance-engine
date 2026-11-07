@@ -257,34 +257,32 @@ PLATFORM_CONTROL_NARRATIVES: dict[str, dict[str, dict[str, str]]] = {
             "title": "Boundary Protection — GKE Dataplane V2 (Cilium/eBPF) NetworkPolicy & FQDNNetworkPolicy Egress Lockdown",
             "status": "implemented",
             "narrative": (
-                "L3/L4 and FQDN-resolved IP egress boundaries are enforced on all governance-stack "
+                "L3/L4 and FQDN-resolved IP egress boundaries are enforced on governance-stack "
                 "pods by Kubernetes NetworkPolicy (networking.k8s.io/v1) and GKE FQDNNetworkPolicy "
-                "(networking.gke.io/v1alpha1) resources on GKE Dataplane V2 (Cilium/eBPF). "
-                "Standard Kubernetes NetworkPolicies (deployment/k8s/network-policy.yaml) provide "
-                "L3/L4 default-deny and restrict port 53 DNS egress strictly to kube-system "
-                "(k8s-app: kube-dns) and the Cloud DNS metadata IP (169.254.169.254/32); "
+                "(networking.gke.io/v1alpha1) resources reconciled by Terraform in "
+                "infra/targets/gcp-gke/network_policy.tf on GKE Dataplane V2 (Cilium/eBPF). "
+                "Standard Kubernetes NetworkPolicies in infra/targets/gcp-gke/network_policy.tf provide "
+                "external L3/L4 default-deny, restrict port 53 DNS egress strictly to kube-system "
+                "(k8s-app: kube-dns) and the Cloud DNS metadata IP (169.254.169.254/32), and scope "
+                "managed data-store egress (datastore_egress) to the live Cloud SQL private IP (/32) "
+                "and Memorystore for Valkey PSC endpoint IPs (/32); "
                 "GKE Dataplane V2 (Cilium) snoops DNS responses from kube-dns or Cloud DNS and "
                 "programs the resolved IP addresses into Cilium's eBPF policy map in real time. "
                 "Scope note: GKE FQDNNetworkPolicy v1alpha1 enforces at L3/L4 on DNS-resolved IPs "
                 "and does not perform L7 HTTP-method or DNS-query-pattern filtering; L7 HTTP-method "
                 "enforcement is not claimed by this control implementation. Gateway pods may reach "
-                "only the FQDNs on their allowlist (deployment/k8s/cilium/egress-lockdown.yaml): "
+                "only the FQDNs on their allowlist (gateway_fqdn_egress in "
+                "infra/targets/gcp-gke/network_policy.tf): "
                 "required GCP service APIs (*.googleapis.com), observability telemetry and the OFAC "
                 "sanctions APIs. No model provider is listed, although the *.googleapis.com "
                 "wildcard also matches Google's model API (POAM-2026-152). "
-                "Reconciliation worker egress is restricted to Cloud KMS (cloudkms.googleapis.com:443), "
-                "the Memorystore for Valkey PSC endpoint CIDR (ipBlock on TLS port 6379), sovereign "
-                "telemetry OTLP (port 3000), and cluster DNS. Sovereign agent and financial advisor pods are "
-                "locked to intra-cluster egress only (OPA:8181, Gateway:8080, Compliance-Bridge:8090) "
-                "and cannot contact any external endpoint directly, preventing lateral movement and "
-                "data exfiltration even if a pod is compromised."
+                "Sovereign agent and financial advisor pods are denied external internet egress "
+                "(advisor_internal_only and sovereign_agent_internal_only in "
+                "infra/targets/gcp-gke/network_policy.tf); per-workload intra-namespace segmentation "
+                "replacing the shared intra-namespace allow rule is tracked under POAM-2026-195."
             ),
-            "evidence": (
-                "deployment/k8s/cilium/egress-lockdown.yaml, "
-                "deployment/k8s/cilium/reconciliation-worker-egress.yaml, "
-                "deployment/k8s/network-policy.yaml"
-            ),
-            "poam_refs": "POAM-007 (IA-3)",
+            "evidence": "infra/targets/gcp-gke/network_policy.tf",
+            "poam_refs": "POAM-007 (IA-3), POAM-2026-152 (SC-7), POAM-2026-195 (SC-7)",
         },
         "sc-8": {
             "uuid": _PLATFORM_SC8_IMPL_UUID,
@@ -304,15 +302,16 @@ PLATFORM_CONTROL_NARRATIVES: dict[str, dict[str, dict[str, str]]] = {
                 "Certificate Authority Service root CA whose key is generated and held by CAS; "
                 "the intermediate issuer certificate is obtained by cert-manager through a CSR "
                 "and rotated every 48 hours, so no CA private key exists in Terraform state or "
-                "in the repository. The gateway's HTTP port is deny by default: a Linkerd "
-                "Server/HTTPRoute/AuthorizationPolicy set admits only cage-advisor-sa outside a "
+                "in the repository. The gateway's HTTP port is deny by default: the Helm chart in "
+                "infra/modules/gateway/mesh-policy/templates/policy.yaml installs a Linkerd "
+                "Server/HTTPRoute/AuthorizationPolicy set admitting only cage-advisor-sa outside a "
                 "short list of open paths, and the gateway repeats the check on the "
                 "l5d-client-id header in every environment, accepting the header only on a "
                 "connection from inside the pod, where its own Linkerd proxy writes it "
                 "(src/gateway/server/workload_identity.py; the compliance bridge's operator "
-                "path applies the same rule, POAM-2026-167). "
-                "OPA and NeMo Server policies in deployment/k8s/linkerd-mtls-policy.yaml admit only "
-                "the gateway (and the compliance bridge for OPA). Managed data-plane connections "
+                "path applies the same rule, POAM-2026-167; dedicated Linkerd Server/AuthorizationPolicy "
+                "resources for OPA, NeMo, and compliance-bridge are tracked under POAM-2026-195). "
+                "Managed data-plane connections "
                 "enforce in-transit TLS: dual Memorystore for Valkey instances (governance and app) "
                 "enforce transit_encryption_mode=SERVER_AUTHENTICATION over Private Service Connect, "
                 "verified under every enforcing posture (is_enforcing()), CA from REDIS_CA_CERT_PATH "
@@ -325,13 +324,12 @@ PLATFORM_CONTROL_NARRATIVES: dict[str, dict[str, dict[str, str]]] = {
                 "issuance tests (tests/live/test_cas_mesh_issuer_live.py) (POAM-2026-080, POAM-2026-086)."
             ),
             "evidence": (
-                "infra/modules/service_mesh/main.tf, infra/modules/gateway/mesh-policy, "
+                "infra/modules/service_mesh/main.tf, infra/modules/gateway/mesh-policy/templates/policy.yaml, "
                 "infra/modules/memorystore_valkey/main.tf, infra/modules/cloudsql_postgres/main.tf, "
-                "deployment/k8s/linkerd-mtls-policy.yaml, "
                 "tests/integration/test_linkerd_mesh_conformance.py, "
                 "tests/test_redis_async_builder.py"
             ),
-            "poam_refs": "POAM-007 (IA-3), POAM-011 (SC-8), POAM-2026-080 (IA-9), POAM-2026-086 (SC-8)",
+            "poam_refs": "POAM-007 (IA-3), POAM-011 (SC-8), POAM-2026-080 (IA-9), POAM-2026-086 (SC-8), POAM-2026-195 (SC-8)",
         },
         "sc-39": {
             "uuid": _PLATFORM_SC39_IMPL_UUID,
@@ -340,11 +338,11 @@ PLATFORM_CONTROL_NARRATIVES: dict[str, dict[str, dict[str, str]]] = {
             "status": "implemented",
             "narrative": (
                 "CAGE is a cloud-agnostic governance engine whose baseline process isolation is "
-                "enforced across Kubernetes deployments (`deployment/k8s/` and `infra/targets/gcp-gke/`) via "
+                "enforced across Kubernetes deployments (`infra/modules/` and `infra/targets/gcp-gke/`) via "
                 "universal Kubernetes Pod Security Standards (`restricted` profile in "
-                "`deployment/k8s/pod-security-admission.yaml`), non-root execution (`runAsNonRoot: true`, "
+                "`infra/modules/k8s_namespace/main.tf`), non-root execution (`runAsNonRoot: true`, "
                 '`runAsUser: 1000`), `allowPrivilegeEscalation: false`, `capabilities: drop: ["ALL"]`, '
-                "and `seccompProfile: RuntimeDefault` (`deployment/k8s/security-context-patch.yaml`, "
+                "and `seccompProfile: RuntimeDefault` (`infra/modules/compliance_bridge/main.tf`, "
                 "`infra/modules/gateway/main.tf`). When deployed on the `gcp-gke` target "
                 "(`infra/targets/gcp-gke/`), CAGE adds target-specific split-plane isolation: "
                 '(1) Agent Application Plane (Optional GEAP Agent Runtime mode, `advisor_runtime = "geap"` '
@@ -365,9 +363,9 @@ PLATFORM_CONTROL_NARRATIVES: dict[str, dict[str, dict[str, str]]] = {
                 "GPU passthrough and NVMe block I/O."
             ),
             "evidence": (
-                "deployment/k8s/pod-security-admission.yaml, deployment/k8s/security-context-patch.yaml, "
-                "infra/modules/governed_advisor/main.tf, infra/modules/gcp_geap_advisor/main.tf, "
-                "infra/modules/gcp_gke_cluster/main.tf"
+                "infra/modules/k8s_namespace/main.tf, infra/modules/gateway/main.tf, "
+                "infra/modules/compliance_bridge/main.tf, infra/modules/governed_advisor/main.tf, "
+                "infra/modules/gcp_geap_advisor/main.tf, infra/modules/gcp_gke_cluster/main.tf"
             ),
             "poam_refs": "POAM-009 (SC-39)",
         },
@@ -394,7 +392,11 @@ PLATFORM_CONTROL_NARRATIVES: dict[str, dict[str, dict[str, str]]] = {
                 "third-party digests and Binary Authorization admission enforcement is tracked under "
                 "POAM-2026-083 (referencing POAM-2026-013)."
             ),
-            "evidence": "infra/targets/gcp-gke/perimeter.tf; infra/targets/gcp-gke/kms_signing.tf; infra/targets/gcp-gke/variables.tf; compliance/lula/lula-validation-si2.yaml; deployment/k8s/*-deployment.yaml (readOnlyRootFilesystem: true)",
+            "evidence": (
+                "infra/targets/gcp-gke/perimeter.tf; infra/targets/gcp-gke/kms_signing.tf; "
+                "infra/targets/gcp-gke/variables.tf; infra/modules/vllm_inference/main.tf; "
+                "compliance/lula/lula-validation-si2.yaml"
+            ),
             "poam_refs": "POAM-010 (SI-3), POAM-2026-013 (SI-2), POAM-2026-083 (SI-3/SI-7)",
         },
     },
@@ -657,7 +659,7 @@ NETWORK_HARDENING_MAPPINGS: dict[str, dict[str, str]] = {
         "title": "Transmission Confidentiality and Integrity — Linkerd mTLS",
         "implemented_by": "Linkerd Service Mesh (Server + HTTPRoute + AuthorizationPolicy + MeshTLSAuthentication), trust anchor in Google CAS",
         "status": "partial",
-        "evidence_file": "deployment/k8s/linkerd-mtls-policy.yaml",
+        "evidence_file": "infra/modules/gateway/mesh-policy/templates/policy.yaml",
         "iso_clause": "A.7.5 (Cryptographic Controls), A.8.4 (AI System Operation)",
         "narrative": (
             "Pods in the governance-stack namespace are meshed by Linkerd "
@@ -671,46 +673,49 @@ NETWORK_HARDENING_MAPPINGS: dict[str, dict[str, str]] = {
             "Certificate Authority Service root CA whose key is generated and held by CAS; "
             "the intermediate issuer certificate is obtained by cert-manager through a CSR "
             "and rotated every 48 hours, so no CA private key exists in Terraform state or "
-            "in the repository. The gateway's HTTP port is deny by default: a Linkerd "
-            "Server/HTTPRoute/AuthorizationPolicy set admits only cage-advisor-sa outside a "
+            "in the repository. The gateway's HTTP port is deny by default: the Helm chart in "
+            "infra/modules/gateway/mesh-policy/templates/policy.yaml installs a Linkerd "
+            "Server/HTTPRoute/AuthorizationPolicy set admitting only cage-advisor-sa outside a "
             "short list of open paths, and the gateway repeats the check on the "
             "l5d-client-id header, accepted only on a connection from inside the pod "
-            "(src/gateway/server/workload_identity.py, POAM-2026-167). OPA and NeMo "
-            "Server policies in deployment/k8s/linkerd-mtls-policy.yaml admit only the "
-            "gateway (and the compliance bridge for OPA). Status is partial until the mesh "
-            "is applied and verified in a deployed environment (POAM-2026-080)."
+            "(src/gateway/server/workload_identity.py, POAM-2026-167; dedicated OPA, NeMo, "
+            "and compliance-bridge Server policies are tracked under POAM-2026-195). Status "
+            "is partial until the mesh is applied and verified in a deployed environment "
+            "(POAM-2026-080)."
         ),
-        "poam_refs": "POAM-007 (IA-3), POAM-011 (SC-8), POAM-2026-080 (IA-9)",
+        "poam_refs": "POAM-007 (IA-3), POAM-011 (SC-8), POAM-2026-080 (IA-9), POAM-2026-195 (SC-8)",
         "poam_status": "OPEN — POAM-2026-080: mesh defined in infra/modules/service_mesh, not yet applied and verified",
     },
     "sc-7": {
         "title": "Boundary Protection — GKE Dataplane V2 (Cilium/eBPF) NetworkPolicy & FQDNNetworkPolicy Egress Lockdown",
         "implemented_by": "GKE Dataplane V2 (Cilium/eBPF) NetworkPolicy + FQDNNetworkPolicy (L3/L4 + FQDN-resolved IP rules)",
         "status": "implemented",
-        "evidence_file": "deployment/k8s/cilium/egress-lockdown.yaml",
+        "evidence_file": "infra/targets/gcp-gke/network_policy.tf",
         "iso_clause": "A.6.2 (AI System Lifecycle), A.8.4 (AI System Operation)",
         "narrative": (
-            "L3/L4 and FQDN-resolved IP egress boundaries are enforced on all governance-stack "
+            "L3/L4 and FQDN-resolved IP egress boundaries are enforced on governance-stack "
             "pods by Kubernetes NetworkPolicy (networking.k8s.io/v1) and GKE FQDNNetworkPolicy "
-            "(networking.gke.io/v1alpha1) resources on GKE Dataplane V2 (Cilium/eBPF). "
-            "Standard Kubernetes NetworkPolicies (deployment/k8s/network-policy.yaml) provide "
-            "L3/L4 default-deny and restrict port 53 DNS egress strictly to kube-system "
-            "(k8s-app: kube-dns) and the Cloud DNS metadata IP (169.254.169.254/32); "
+            "(networking.gke.io/v1alpha1) resources reconciled by Terraform in "
+            "infra/targets/gcp-gke/network_policy.tf on GKE Dataplane V2 (Cilium/eBPF). "
+            "Standard Kubernetes NetworkPolicies in infra/targets/gcp-gke/network_policy.tf provide "
+            "external L3/L4 default-deny, restrict port 53 DNS egress strictly to kube-system "
+            "(k8s-app: kube-dns) and the Cloud DNS metadata IP (169.254.169.254/32), and scope "
+            "managed data-store egress (datastore_egress) to the live Cloud SQL private IP (/32) "
+            "and Memorystore for Valkey PSC endpoint IPs (/32); "
             "GKE Dataplane V2 (Cilium) snoops DNS responses from kube-dns or Cloud DNS and "
             "programs the resolved IP addresses into Cilium's eBPF policy map in real time. "
             "Scope note: GKE FQDNNetworkPolicy v1alpha1 enforces at L3/L4 on DNS-resolved IPs "
             "and does not perform L7 HTTP-method or DNS-query-pattern filtering; L7 HTTP-method "
             "enforcement is not claimed by this control implementation. Gateway pods may reach "
-            "only the FQDNs on their allowlist (deployment/k8s/cilium/egress-lockdown.yaml): "
+            "only the FQDNs on their allowlist (gateway_fqdn_egress in "
+            "infra/targets/gcp-gke/network_policy.tf): "
             "required GCP service APIs (*.googleapis.com), observability telemetry and the OFAC "
             "sanctions APIs. No model provider is listed, although the *.googleapis.com "
             "wildcard also matches Google's model API (POAM-2026-152). "
-            "Reconciliation worker egress is restricted to Cloud KMS (cloudkms.googleapis.com:443), "
-            "the Memorystore for Valkey PSC endpoint CIDR (ipBlock on TLS port 6379), sovereign "
-            "telemetry OTLP (port 3000), and cluster DNS. Sovereign agent and financial advisor pods are "
-            "locked to intra-cluster egress only and cannot contact any external endpoint directly."
+            "Sovereign agent and financial advisor pods are denied external internet egress; "
+            "per-workload intra-namespace segmentation is tracked under POAM-2026-195."
         ),
-        "poam_refs": "POAM-007 (IA-3)",
+        "poam_refs": "POAM-007 (IA-3), POAM-2026-152 (SC-7), POAM-2026-195 (SC-7)",
         "poam_status": "CLOSED — GKE Dataplane V2 NetworkPolicy + FQDNNetworkPolicy egress lockdown implemented",
     },
 }

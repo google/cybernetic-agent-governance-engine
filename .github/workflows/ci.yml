@@ -424,7 +424,7 @@ jobs:
           python3 - <<'EOF'
           import sys
 
-          CONFIGMAP = "deployment/k8s/nemo-rails-configmap.yaml"
+          CONFIGMAP = "infra/modules/nemo_guardrails/nemo-rails-configmap.yaml"
           CANONICAL = "config/rails/actions.py"
 
           # Extract the actions.py block from the ConfigMap YAML.
@@ -765,14 +765,23 @@ jobs:
           linkerd install --crds | kubectl apply -f -
           linkerd install | kubectl apply -f -
           linkerd check
-      - name: Provision the cage-deployment ConfigMap
-        # Live runs read the session region from this ConfigMap
-        # (tests/fixtures/deployment_region.py); render the canonical template.
+      - name: Provision cage-deployment ConfigMap and render gateway mesh-policy chart
+        # Live runs read the session region from cage-deployment
+        # (tests/fixtures/deployment_region.py; Terraform creates the same
+        # object via infra/modules/deployment_config) and render the canonical
+        # gateway Linkerd policy Helm chart (infra/modules/gateway/mesh-policy).
         env:
           CAGE_DEPLOYMENT_REGION: US_FED
         run: |
           kubectl create namespace governance-stack
-          envsubst '${CAGE_DEPLOYMENT_REGION}' < deployment/k8s/cage-deployment-configmap.yaml.tpl | kubectl apply -f -
+          kubectl create configmap cage-deployment \
+            --namespace=governance-stack \
+            --from-literal=CAGE_DEPLOYMENT_REGION="${CAGE_DEPLOYMENT_REGION}" \
+            --dry-run=client -o yaml | kubectl apply -f -
+          helm template mesh-policy infra/modules/gateway/mesh-policy \
+            --namespace governance-stack \
+            --set-string "trustedIdentities[0]=cage-advisor-sa.governance-stack.serviceaccount.identity.linkerd.cluster.local" \
+            | kubectl apply -f -
       - name: Run Linkerd service-mesh conformance suite
         env:
           CAGE_REQUIRE_LINKERD_CLUSTER: "1"

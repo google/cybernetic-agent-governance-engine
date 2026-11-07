@@ -173,14 +173,13 @@ single approved refinement propagates to every consumer simultaneously.
 **Related quarantine / CI notes:**
 
 - [`infra/modules/nemo_guardrails/main.tf`](../../../../infra/modules/nemo_guardrails/main.tf)
-  carries a `HISTORICAL-ONLY — DO NOT APPLY` banner. It defines an inline
-  Colang configuration that predates and diverges from the canonical
-  `config/rails/` source and must never be `terraform apply`'d — see
-  [`AGENTS.md`](../../../../AGENTS.md#deployment-rules).
+  loads [`infra/modules/nemo_guardrails/nemo-rails-configmap.yaml`](../../../../infra/modules/nemo_guardrails/nemo-rails-configmap.yaml)
+  directly into `kubernetes_config_map.nemo_config` (regenerated from
+  `config/rails/` via `make update-nemo-configmap`).
 - The `.github/workflows/ci.yml` `nemo-freshness-check` job diffs
   `config/rails/actions.py` against the embedded snapshot in
-  `deployment/k8s/nemo-rails-configmap.yaml`, failing the build if the
-  ConfigMap drifts from the canonical action source.
+  `infra/modules/nemo_guardrails/nemo-rails-configmap.yaml`, failing the build
+  if the ConfigMap drifts from the canonical action source.
 
 ---
 
