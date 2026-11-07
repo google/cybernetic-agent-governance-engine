@@ -356,7 +356,7 @@ Partner integration tests enforce the **Trust Anchor Isolation** invariant from 
 - **OTLP Basic-Auth Header Derivation**: Gateway (`gateway-secrets`) and Advisor (`advisor-secrets`) automatically receive `OTEL_EXPORTER_OTLP_HEADERS` (`Authorization=Basic base64(<public_key>:<secret_key>)`) for authenticated Langfuse v3 OTLP trace ingestion.
 
 ### 1. Local Dry-Run Requirements
-Running [`scripts/verify_langfuse_posture.py`](../../scripts/verify_langfuse_posture.py) locally or in pre-merge validation requires `--dry-run --posture development` and mock environment variables:
+A dry-run (`--dry-run`) checks only that the variables are set, so it says nothing about isolation, and no CI job runs it. To run it locally, set mock values:
 ```bash
 export GOOGLE_CLOUD_PROJECT="mock-dev-project"
 _region="${CAGE_DEPLOYMENT_REGION:-US_FED}"
@@ -373,6 +373,8 @@ export LANGFUSE_COMPLIANCE_PUBLIC_KEY="pk-lf-comp-mock"
 export LANGFUSE_COMPLIANCE_SECRET_KEY="sk-lf-comp-mock"
 uv run python scripts/verify_langfuse_posture.py --dry-run --posture development
 ```
+
+The live check (no `--dry-run`) queries both Langfuse instances and fails unless each key pair reaches only its own project. It also needs `LANGFUSE_PROJECT_ID` and `LANGFUSE_COMPLIANCE_PROJECT_ID`, and checks both halves in every posture. It is Gate 0.3 of [`run_matrix_tests.sh`](../../scripts/run_matrix_tests.sh), which [`compliance-matrix.yml`](../../.github/workflows/compliance-matrix.yml) runs on demand against a named deployment.
 
 ### 2. Jurisdictional Region Derivation
 `GOOGLE_CLOUD_LOCATION` must be derived from `CAGE_DEPLOYMENT_REGION`:
