@@ -39,9 +39,13 @@ an optional `error` string ([`provider.py`](provider.py:100)).
 | `certify_decision()` | `POST {base}/certifyDecision` | Submit a governance decision, receive a `CERReceipt`. **Route returns 404 on the live node (2026-10-06)** |
 | `verify_cer()` | *(local)* → falls back to `GET {base}/verify/{hash}` | Verify against the cached JWK set; remote only when the cache is empty. **Remote route returns 404 on the live node** |
 
-JWKs are synced out-of-band by a background asyncio task
-([`_jwk_sync_loop()`](provider.py:408)) on a 24h default TTL with `ETag`/`304`
-handling, so hot-path verification makes no network call.
+JWKs are refreshed inline on `verify_cer()` and `attest_bundle()` via
+[`_ensure_fresh_jwks()`](provider.py) / [`_sync_jwks()`](provider.py) whenever
+the cache is cold, exceeds `ttl_seconds` (`JWKCache.is_stale`), or lacks the
+requested `kid`, using `ETag`/`304` conditional GET and atomic key-set
+replacement. If a refresh fails and the cache age exceeds `max_staleness_seconds`
+(`JWKCache.exceeds_max_staleness`), cached keys are evicted and verification
+fails closed with `CER_JWKS_STALE`.
 
 > **Implementation note, verified in code:** [`_verify_local()`](provider.py:274)
 > is **not** a complete Ed25519 verification. It confirms the JWK cache is
@@ -129,6 +133,7 @@ For partner versions and live-run status, see
 Placeholder endpoints only. `PROVIDER_02_API_ENDPOINT`,
 `PROVIDER_02_API_KEY_SECRET` / `PROVIDER_02_API_KEY`,
 `PROVIDER_02_JWK_ENDPOINT`, `PROVIDER_02_JWK_CACHE_TTL_HOURS`,
+`PROVIDER_02_JWKS_TTL_S`, `PROVIDER_02_JWKS_MAX_STALENESS_S`,
 `PROVIDER_02_TIMEOUT_SECONDS`, `PROVIDER_02_ATTESTATION_ENABLED` (default
 `false`).
 

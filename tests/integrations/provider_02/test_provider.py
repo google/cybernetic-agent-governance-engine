@@ -157,6 +157,196 @@ class TestJWKCache:
             assert provider.has_jwk_keys
             assert provider._jwk_cache.etag == '"v1"'
 
+    def test_ttl_and_max_staleness_validation(self) -> None:
+        """JWKCache enforces positive ttl_seconds and max_staleness_seconds >= ttl_seconds."""
+        with pytest.raises(ValueError, match="ttl_seconds must be positive"):
+            JWKCache(ttl_seconds=0.0)
+        with pytest.raises(ValueError, match="ttl_seconds must be positive"):
+            JWKCache(ttl_seconds=-5.0)
+        with pytest.raises(ValueError, match="must be >= ttl_seconds"):
+            JWKCache(ttl_seconds=60.0, max_staleness_seconds=59.9)
+
+        strict_cache = JWKCache(ttl_seconds=60.0, max_staleness_seconds=60.0)
+        assert strict_cache.effective_max_staleness_seconds == 60.0
+
+        default_cache = JWKCache(ttl_seconds=30.0)
+        assert default_cache.effective_max_staleness_seconds == 60.0
+
+    def test_env_var_ttl_and_max_staleness_overrides(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """PROVIDER_02_JWKS_TTL_S and PROVIDER_02_JWKS_MAX_STALENESS_S configure cache bounds."""
+        monkeypatch.setenv("PROVIDER_02_JWKS_TTL_S", "45")
+        monkeypatch.setenv("PROVIDER_02_JWKS_MAX_STALENESS_S", "120")
+        provider = Provider02AttestationProvider(
+            endpoint="https://api.provider02.example.com/v1"
+        )
+        assert provider._jwk_cache.ttl_seconds == 45.0
+        assert provider._jwk_cache.effective_max_staleness_seconds == 120.0
+
+    def test_monotonic_staleness_and_expiration_boundaries(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Exact monotonic boundary checks for is_stale and exceeds_max_staleness."""
+        now = 1000.0
+        monkeypatch.setattr(
+            "src.integrations.provider_02.provider.time.monotonic", lambda: now
+        )
+        cache = JWKCache(
+            jwk_set={"keys": [{"kid": "k1"}]},
+            ttl_seconds=30.0,
+            max_staleness_seconds=90.0,
+            fetched_at_monotonic=1000.0,
+        )
+        assert cache.was_synced is True
+        assert cache.age_seconds == 0.0
+        assert cache.is_stale is False
+        assert cache.exceeds_max_staleness is False
+        assert cache.is_expired is False
+        assert cache.contains_kid("k1") is True
+        assert cache.contains_kid("k2") is False
+        assert cache.contains_kid("") is False
+
+        # Exact TTL boundary: age == ttl_seconds -> not yet stale
+        now = 1030.0
+        assert cache.is_stale is False
+
+        # Past TTL, within max_staleness_seconds
+        now = 1030.1
+        assert cache.is_stale is True
+        assert cache.exceeds_max_staleness is False
+
+        # Exact max_staleness_seconds boundary: age == max_staleness_seconds -> not yet expired
+        now = 1090.0
+        assert cache.exceeds_max_staleness is False
+
+        # Past max_staleness_seconds -> expired
+        now = 1090.1
+        assert cache.exceeds_max_staleness is True
+        assert cache.is_expired is True
+
+    @pytest.mark.asyncio
+    async def test_sync_304_refreshes_monotonic_clock_and_rejects_unsolicited_304(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Conditional 304 refreshes cache timestamp when ETag exists, but fails on cold cache."""
+        now = 500.0
+        monkeypatch.setattr(
+            "src.integrations.provider_02.provider.time.monotonic", lambda: now
+        )
+
+        # 1. Cold cache receiving unsolicited 304 must NOT mark cache synced
+        resp_304 = MagicMock()
+        resp_304.status_code = 304
+        resp_304.headers = {}
+
+        with patch("httpx.AsyncClient") as MockClient:
+            mock_instance = AsyncMock()
+            mock_instance.get.return_value = resp_304
+            mock_instance.__aenter__ = AsyncMock(return_value=mock_instance)
+            mock_instance.__aexit__ = AsyncMock(return_value=False)
+            MockClient.return_value = mock_instance
+
+            cold_provider = Provider02AttestationProvider(
+                endpoint="https://api.provider02.example.com/v1",
+                jwk_endpoint="https://jwks.provider02.example.com/.well-known/jwks.json",
+                jwk_ttl_seconds=30.0,
+                jwk_max_staleness_seconds=60.0,
+            )
+            await cold_provider._sync_jwks()
+            assert cold_provider.has_jwk_keys is False
+            assert cold_provider._jwk_cache.was_synced is False
+
+            # 2. Warm cache with ETag receiving 304 refreshes monotonic freshness
+            warm_provider = Provider02AttestationProvider(
+                endpoint="https://api.provider02.example.com/v1",
+                jwk_endpoint="https://jwks.provider02.example.com/.well-known/jwks.json",
+                jwk_ttl_seconds=30.0,
+                jwk_max_staleness_seconds=60.0,
+            )
+            warm_provider._jwk_cache = JWKCache(
+                jwk_set={"keys": [{"kid": "k1", "kty": "OKP", "crv": "Ed25519"}]},
+                last_synced=100.0,
+                etag='"v1"',
+                ttl_seconds=30.0,
+                max_staleness_seconds=60.0,
+                fetched_at_monotonic=460.0,
+            )
+            assert warm_provider._jwk_cache.is_stale is True
+            await warm_provider._sync_jwks()
+            sent_headers = mock_instance.get.call_args.kwargs["headers"]
+            assert sent_headers.get("If-None-Match") == '"v1"'
+            assert warm_provider._jwk_cache.is_stale is False
+            assert warm_provider._jwk_cache.contains_kid("k1") is True
+
+    @pytest.mark.asyncio
+    async def test_sync_atomically_replaces_keys_and_evicts_removed_kids(self) -> None:
+        """Full-set replacement evicts previously cached kids missing from new manifest."""
+        resp_1 = MagicMock()
+        resp_1.status_code = 200
+        resp_1.headers = {"ETag": '"v1"'}
+        resp_1.raise_for_status = MagicMock()
+        resp_1.json.return_value = {
+            "keys": [
+                {"kid": "key-old", "kty": "OKP", "crv": "Ed25519"},
+                {"kid": "key-keep", "kty": "OKP", "crv": "Ed25519"},
+            ]
+        }
+        resp_2 = MagicMock()
+        resp_2.status_code = 200
+        resp_2.headers = {"ETag": '"v2"'}
+        resp_2.raise_for_status = MagicMock()
+        resp_2.json.return_value = {
+            "keys": [
+                {"kid": "key-keep", "kty": "OKP", "crv": "Ed25519"},
+            ]
+        }
+
+        with patch("httpx.AsyncClient") as MockClient:
+            mock_instance = AsyncMock()
+            mock_instance.get.side_effect = [resp_1, resp_2]
+            mock_instance.__aenter__ = AsyncMock(return_value=mock_instance)
+            mock_instance.__aexit__ = AsyncMock(return_value=False)
+            MockClient.return_value = mock_instance
+
+            provider = Provider02AttestationProvider(
+                endpoint="https://api.provider02.example.com/v1",
+                jwk_endpoint="https://jwks.provider02.example.com/.well-known/jwks.json",
+            )
+            await provider._sync_jwks()
+            assert provider._jwk_cache.contains_kid("key-old") is True
+            assert provider._jwk_cache.contains_kid("key-keep") is True
+
+            await provider._sync_jwks()
+            assert provider._jwk_cache.contains_kid("key-old") is False
+            assert provider._jwk_cache.contains_kid("key-keep") is True
+            assert provider._jwk_cache.etag == '"v2"'
+
+    @pytest.mark.asyncio
+    async def test_sync_without_jwk_endpoint_evicts_expired_warm_cache(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """When _jwk_endpoint is empty and warm cache exceeds max_staleness_seconds, keys are evicted."""
+        monkeypatch.setattr(
+            "src.integrations.provider_02.provider.time.monotonic", lambda: 500.0
+        )
+        provider = Provider02AttestationProvider(
+            endpoint="https://api.provider02.example.com/v1",
+            jwk_ttl_seconds=30.0,
+            jwk_max_staleness_seconds=60.0,
+        )
+        provider._jwk_endpoint = ""
+        provider._jwk_cache = JWKCache(
+            jwk_set={"keys": [{"kid": "k1", "kty": "OKP", "crv": "Ed25519"}]},
+            etag='"v1"',
+            ttl_seconds=30.0,
+            max_staleness_seconds=60.0,
+            fetched_at_monotonic=400.0,
+        )
+        await provider._sync_jwks()
+        assert provider.has_jwk_keys is False
+        assert provider._jwk_cache.etag == ""
+
 
 # ---------------------------------------------------------------------------
 # Test 3: CER verification
@@ -248,7 +438,8 @@ class TestCERVerification:
             assert result.error is not None and (
                 "Phase 2b" in result.error or "not yet implemented" in result.error
             )
-            mock_instance.get.assert_called_once()
+            # 1st GET: inline JWK sync attempt on cold cache; 2nd GET: /verify/{hash} fallback
+            assert mock_instance.get.call_count == 2
 
 
 # ---------------------------------------------------------------------------
@@ -392,17 +583,16 @@ class TestAttestationStatusTransition:
 class TestProviderLifecycle:
     """Tests for provider start/stop lifecycle."""
 
-    @pytest.mark.asyncio
-    async def test_start_stop_without_jwk_endpoint(self):  # type: ignore[no-untyped-def]
-        """Provider starts and stops cleanly without JWK endpoint."""
+    def test_dead_daemon_lifecycle_methods_removed(self) -> None:
+        """F-110: unstarted start/stop/_jwk_sync_loop daemon methods are deleted."""
         provider = Provider02AttestationProvider(
             endpoint="https://api.provider02.example.com/v1",
         )
-        await provider.start()
-        assert provider._running is True
-
-        await provider.stop()
-        assert provider._running is False
+        assert not hasattr(provider, "start")
+        assert not hasattr(provider, "stop")
+        assert not hasattr(provider, "_jwk_sync_loop")
+        assert not hasattr(provider, "_sync_task")
+        assert not hasattr(provider, "_running")
 
     def test_auth_headers(self):  # type: ignore[no-untyped-def]
         """Provider generates correct auth headers."""

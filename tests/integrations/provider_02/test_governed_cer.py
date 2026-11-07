@@ -210,7 +210,21 @@ class TestKeyResolution:
     def test_revoked_or_inactive_key_refused(self, override: dict[str, Any]) -> None:
         provider = _provider_with_k1()
         provider._jwk_cache = JWKCache(
-            jwk_set={"keys": [{**EXCHANGE["manifestKey"], **override}]}
+            jwk_set={"keys": [{**EXCHANGE["manifestKey"], **override}]},
+            last_synced=time.time(),
+        )
+        assert provider._resolve_public_key("k1") is None
+
+    def test_expired_cache_key_refused(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setattr(
+            "src.integrations.provider_02.provider.time.monotonic", lambda: 500.0
+        )
+        provider = _provider_with_k1()
+        provider._jwk_cache = JWKCache(
+            jwk_set={"keys": [EXCHANGE["manifestKey"]]},
+            ttl_seconds=30.0,
+            max_staleness_seconds=60.0,
+            fetched_at_monotonic=400.0,
         )
         assert provider._resolve_public_key("k1") is None
 
@@ -281,6 +295,105 @@ class TestAttestBundle:
             )
         assert verdict.code == "CER_SEAL_FAILED"
         client.post.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_stale_cache_refreshes_inline_and_rejects_revoked_key(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        cer, response = _exchange()
+        monkeypatch.setattr(
+            "src.integrations.provider_02.provider.time.monotonic", lambda: 200.0
+        )
+        provider = Provider02AttestationProvider(
+            endpoint="https://provider02.example.com",
+            jwk_endpoint="/.well-known/provider02-jwks.json",
+            jwk_ttl_seconds=30.0,
+            jwk_max_staleness_seconds=120.0,
+        )
+        provider._jwk_cache = JWKCache(
+            jwk_set={"keys": [EXCHANGE["manifestKey"]]},
+            ttl_seconds=30.0,
+            max_staleness_seconds=120.0,
+            fetched_at_monotonic=150.0,  # age=50 > ttl_seconds=30
+        )
+
+        jwk_resp = MagicMock()
+        jwk_resp.status_code = 200
+        jwk_resp.headers = {"ETag": '"v2"'}
+        jwk_resp.raise_for_status = MagicMock()
+        jwk_resp.json.return_value = {
+            "keys": [{**EXCHANGE["manifestKey"], "revoked": True}]
+        }
+
+        patcher, client = _mock_http(_http_response(200, response))
+        client.get = AsyncMock(return_value=jwk_resp)
+        with (
+            patcher,
+            patch(
+                "src.integrations.provider_02.provider.seal_governed_execution",
+                return_value=cer,
+            ),
+        ):
+            verdict = await provider.attest_bundle(cer["evidence"]["bundle"])
+        assert not verdict.verified
+        assert verdict.code == "UNKNOWN_KEY"
+        client.get.assert_called_once()
+
+    @pytest.mark.asyncio
+    async def test_expired_cache_on_jwks_outage_fails_closed(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        cer, response = _exchange()
+        monkeypatch.setattr(
+            "src.integrations.provider_02.provider.time.monotonic", lambda: 300.0
+        )
+        provider = Provider02AttestationProvider(
+            endpoint="https://provider02.example.com",
+            jwk_endpoint="/.well-known/provider02-jwks.json",
+            jwk_ttl_seconds=30.0,
+            jwk_max_staleness_seconds=60.0,
+        )
+        provider._jwk_cache = JWKCache(
+            jwk_set={"keys": [EXCHANGE["manifestKey"]]},
+            ttl_seconds=30.0,
+            max_staleness_seconds=60.0,
+            fetched_at_monotonic=200.0,  # age=100 > max_staleness_seconds=60
+        )
+
+        patcher, client = _mock_http(_http_response(200, response))
+        client.get = AsyncMock(side_effect=httpx.ConnectError("jwks unreachable"))
+        with (
+            patcher,
+            patch(
+                "src.integrations.provider_02.provider.seal_governed_execution",
+                return_value=cer,
+            ),
+        ):
+            verdict = await provider.attest_bundle(cer["evidence"]["bundle"])
+        assert not verdict.verified
+        assert verdict.code == "CER_JWKS_STALE"
+        assert provider.has_jwk_keys is False
+
+    @pytest.mark.asyncio
+    async def test_malformed_response_with_bogus_kid_does_not_trigger_jwks_sync(
+        self,
+    ) -> None:
+        cer, response = _exchange()
+        response["ok"] = False
+        response["kid"] = "untrusted-bogus-kid"
+        patcher, client = _mock_http(_http_response(200, response))
+        client.get = AsyncMock()
+        with (
+            patcher,
+            patch(
+                "src.integrations.provider_02.provider.seal_governed_execution",
+                return_value=cer,
+            ),
+        ):
+            verdict = await _provider_with_k1().attest_bundle(cer["evidence"]["bundle"])
+        assert not verdict.verified
+        assert verdict.code == "NODE_NOT_OK"
+        client.get.assert_not_called()
 
 
 def _verify_response(

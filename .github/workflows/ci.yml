@@ -302,6 +302,12 @@ jobs:
         # appear enforced in code or OSCAL prose while no runtime stage reads them.
         run: |
           uv run python scripts/check_write_only_state.py --verbose
+      - name: Daemon lifespan wiring check (AST Query #1)
+        # Every daemon or background-loop class defining start/run_forever/run_loop
+        # in src/ must have a reachable lifespan, plugin contribution, or __main__
+        # start site. Zero waivers: wire into service lifespan or delete dead loops.
+        run: |
+          uv run python scripts/check_daemon_lifespans.py --verbose
 
   bare-kernel-smoke:
     name: "Bare-Kernel Smoke Test (Zero Cloud SDKs)"

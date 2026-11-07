@@ -419,8 +419,5 @@ async def test_provider_02_endpoint_reachable(
     """Smoke test: the node is reachable and its key manifest loads."""
     endpoint = os.getenv("PROVIDER_02_API_ENDPOINT", "")
     assert endpoint.startswith("https://"), f"Invalid endpoint: {endpoint}"
-    await provider.start()
-    try:
-        assert provider.has_jwk_keys, "node key manifest did not load"
-    finally:
-        await provider.stop()
+    await provider._sync_jwks()
+    assert provider.has_jwk_keys, "node key manifest did not load"

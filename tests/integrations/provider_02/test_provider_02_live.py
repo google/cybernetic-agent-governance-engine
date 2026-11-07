@@ -59,13 +59,10 @@ async def live_provider() -> Provider02AttestationProvider:
         timeout=15.0,
     )
 
-    # Start the JWK sync daemon
-    await provider.start()
+    # Perform initial inline JWK sync
+    await provider._sync_jwks()
 
     yield provider
-
-    # Clean shutdown
-    await provider.stop()
 
 
 @pytest.mark.asyncio
@@ -73,8 +70,9 @@ async def test_live_jwk_sync(
     live_provider: Provider02AttestationProvider,
 ) -> None:
     """Verify live JWK manifest synchronization and cache population."""
-    # JWK cache should be populated after start()
-    assert live_provider.has_jwk_keys, "JWK cache should be populated after start()"
+    assert live_provider.has_jwk_keys, (
+        "JWK cache should be populated after initial sync"
+    )
 
     # Cache age should be recent (< 60 seconds from initial sync)
     cache_age = live_provider.jwk_cache_age_seconds
