@@ -46,7 +46,7 @@ from src.gateway.client.crypto import (
     compute_expected_action_hash,
     verify_envelope_signature,
 )
-from src.gateway.client.envelope import GovernanceEnvelope
+from src.gateway.client.envelope import ExecutionGrant, GovernanceEnvelope
 from src.gateway.client.exceptions import (
     CageGatewayError,
     DeferralPending,
@@ -898,6 +898,151 @@ async def test_tampered_envelope_verdict_or_narrowed_params_rejected_before_disp
 
 
 @respx.mock
+async def test_client_acts_only_on_the_values_that_were_signed(
+    mock_gateway_url: str,
+    patched_httpx_no_http2: None,
+) -> None:
+    """Every body below must fail closed: the client acts on the JSON exactly as signed.
+
+    Each body is validly signed, or is the signed body with a repeated key or a
+    ``NaN`` spliced in. Before the envelope model became strict, every one but
+    the ``NaN`` body (refused later, at canonicalisation) came back as ALLOW.
+    """
+    priv = ec.generate_private_key(ec.SECP256R1())
+    kid = "ec-exact-01"
+    pem = priv.public_key().public_bytes(
+        serialization.Encoding.PEM,
+        serialization.PublicFormat.SubjectPublicKeyInfo,
+    )
+    params = {"symbol": "AAPL", "amount": 100}
+    valid = _build_signed_allow_envelope(
+        action="query_portfolio", parameters=params, priv_key=priv, kid=kid
+    )
+    valid_json = json.dumps(valid)
+
+    def signed(body: dict[str, Any]) -> str:
+        return json.dumps(
+            _sign_client_envelope(body, priv_key=priv, kid=kid, alg="ES256")
+        )
+
+    def signed_payload(**payload: Any) -> str:
+        return json.dumps(
+            _build_signed_allow_envelope(
+                action="query_portfolio",
+                parameters=params,
+                priv_key=priv,
+                kid=kid,
+                payload_overrides=payload,
+            )
+        )
+
+    def relabelled(**signature: str) -> str:
+        return json.dumps({**valid, "signature": {**valid["signature"], **signature}})
+
+    cases: list[tuple[str, str, type[CageGatewayError], str]] = [
+        (
+            "padded key beside the signed DENY",
+            signed_payload(
+                **{"verdict": "DENY", "decision": "DENY", "verdict ": "ALLOW"}
+            ),
+            PolicyViolationException,
+            "POLICY_DENIED",
+        ),
+        (
+            "padded subject.action",
+            signed(
+                {
+                    **valid,
+                    "subject": {**valid["subject"], "action": " query_portfolio "},
+                }
+            ),
+            RoutingSealVerificationError,
+            "subject.action mismatch",
+        ),
+        (
+            "lower-case verdict",
+            signed_payload(verdict="allow", decision="allow"),
+            CageGatewayError,
+            "unrecognised verdict 'allow'",
+        ),
+        *[
+            (
+                f"expires_at {value!r}",
+                signed({**valid, "expires_at": value}),
+                CageGatewayError,
+                "Failed to parse governance envelope",
+            )
+            for value in (4102444800, "4102444800", "2100-01-01 00:00:00Z")
+        ],
+        (
+            "padded kid",
+            relabelled(kid=f" {kid}"),
+            RoutingSealVerificationError,
+            "unknown kid",
+        ),
+        (
+            "padded signature value",
+            relabelled(value=f"{valid['signature']['value']} "),
+            RoutingSealVerificationError,
+            "Invalid base64url encoding",
+        ),
+        (
+            "repeated key",
+            valid_json.replace('"payload": {', '"payload": {"verdict": "DENY", ', 1),
+            RoutingSealVerificationError,
+            "duplicate JSON object key 'verdict'",
+        ),
+        (
+            "NaN",
+            valid_json.replace('"payload": {', '"payload": {"score": NaN, ', 1),
+            RoutingSealVerificationError,
+            "non-finite JSON number NaN",
+        ),
+    ]
+
+    route = respx.post(f"{mock_gateway_url}/governance/validate-action")
+    async with CageClient(
+        gateway_url=mock_gateway_url, public_keys={kid: pem}
+    ) as client:
+        route.mock(return_value=httpx.Response(200, content=valid_json.encode()))
+        allowed = await client.validate_action(
+            action="query_portfolio", parameters=params, agent_id="test-agent"
+        )
+        assert allowed.payload["verdict"] == "ALLOW"
+
+        for name, body, expected, message in cases:
+            route.mock(return_value=httpx.Response(200, content=body.encode()))
+            try:
+                await client.validate_action(
+                    action="query_portfolio", parameters=params, agent_id="test-agent"
+                )
+            except expected as exc:
+                assert message in str(exc), f"{name}: {exc!r}"
+            else:
+                pytest.fail(f"{name}: accepted")
+
+
+def test_execution_grant_validates_without_coercion() -> None:
+    """ExecutionGrant shares the strict wire config: nothing coerced, nothing stripped."""
+    from pydantic import ValidationError
+
+    grant: dict[str, Any] = {
+        "iss": "cage-gateway",
+        "sub": "test-agent",
+        "aud": "actuator_01",
+        "exp": 4102444800,
+        "iat": 4102444500,
+        "nonce": " nonce-01 ",
+        "action_hash": "abc123",
+        "record_hash": "def456",
+        "signature": "c2lnbmF0dXJl",
+    }
+    assert ExecutionGrant(**grant).nonce == " nonce-01 "
+    with pytest.raises(ValidationError):
+        ExecutionGrant(**{**grant, "exp": "4102444800"})
+
+
+@respx.mock
 async def test_embedded_public_key_in_envelope_never_trusted(
     mock_gateway_url: str,
     patched_httpx_no_http2: None,
@@ -998,6 +1143,8 @@ async def test_only_es256_and_eddsa_are_accepted(
             "HS256",
             "none",
             "es256",
+            " ES256",
+            "ES256 ",
             "ECDSA_P256_SHA256",
         ):
             relabeled = {

@@ -26,6 +26,9 @@ and verifies returned ``GovernanceEnvelope`` decisions fail-closed by default:
     signs with; every other algorithm and key type is rejected
   - ``expires_at`` freshness (within ``clock_skew_seconds``) and ``expires_at > issued_at``
   - ``subject.action`` and ``subject.action_hash`` request binding against replay
+  - Values acted on exactly as signed: the response is parsed as strict JSON (a
+    repeated key or ``NaN`` is refused) and nothing is stripped, case-folded or
+    coerced before the signature block, timestamps, subject and verdict are read
 
 Security & Verification Scope:
     1. By default (``verify_signature=True``, ``verify_expiration=True``,
@@ -56,7 +59,7 @@ import time
 from collections.abc import Callable, Mapping
 from datetime import datetime, timedelta, timezone
 from types import TracebackType
-from typing import Any
+from typing import Any, NoReturn
 
 import httpx
 
@@ -106,6 +109,25 @@ def _first_violation_code(violations: Any) -> str | None:
             if match:
                 return match.group(1)
     return None
+
+
+def _refuse_duplicate_keys(pairs: list[tuple[str, Any]]) -> dict[str, Any]:
+    """JSON object hook: a key named twice is refused, never resolved last-wins."""
+    obj: dict[str, Any] = {}
+    for key, value in pairs:
+        if key in obj:
+            raise RoutingSealVerificationError(
+                f"Refusing GovernanceEnvelope response with duplicate JSON object key {key!r}"
+            )
+        obj[key] = value
+    return obj
+
+
+def _refuse_non_finite_number(token: str) -> NoReturn:
+    """JSON constant hook: ``NaN`` and ``Infinity`` are not JSON (RFC 8259)."""
+    raise RoutingSealVerificationError(
+        f"Refusing GovernanceEnvelope response with non-finite JSON number {token}"
+    )
 
 
 def enforce_verification_posture(
@@ -416,12 +438,9 @@ class CageClient:
                 f"GovernanceEnvelope signature block contains unexpected fields: "
                 f"{sorted(unexpected_sig_keys)!r}"
             )
-        kid_raw = sig.get("kid")
-        alg_raw = sig.get("algorithm")
-        val_raw = sig.get("value")
-        kid = kid_raw.strip() if isinstance(kid_raw, str) else ""
-        alg = alg_raw.strip() if isinstance(alg_raw, str) else ""
-        sig_val = val_raw.strip() if isinstance(val_raw, str) else ""
+        kid = sig.get("kid", "")
+        alg = sig.get("algorithm", "")
+        sig_val = sig.get("value", "")
         if not kid or not alg or not sig_val:
             raise RoutingSealVerificationError(
                 "GovernanceEnvelope signature block is incomplete (requires algorithm, kid, value)"
@@ -629,8 +648,15 @@ class CageClient:
                transport channel and does NOT substitute for end-to-end envelope
                signature verification.**
         """
+        # The signature covers one reading of these bytes, so refuse JSON that a
+        # second parser could read differently (a repeated key) or that is not
+        # JSON at all (NaN, Infinity) rather than resolving it silently.
         try:
-            response_data = response.json()
+            response_data = json.loads(
+                response.content,
+                object_pairs_hook=_refuse_duplicate_keys,
+                parse_constant=_refuse_non_finite_number,
+            )
         except json.JSONDecodeError as exc:
             raise CageGatewayError(f"Invalid JSON in ALLOW response: {exc}") from exc
 
@@ -651,9 +677,8 @@ class CageClient:
         if self._verify_subject:
             self._verify_subject_binding(envelope, action=action, parameters=parameters)
 
-        verdict = str(
-            envelope.payload.get("verdict") or envelope.payload.get("decision") or ""
-        ).upper()
+        # Matched exactly as signed: no case folding, no coercion to str.
+        verdict = envelope.payload.get("verdict") or envelope.payload.get("decision")
 
         if verdict == "NARROW":
             self._mediate_narrow_verdict(envelope)
@@ -663,7 +688,7 @@ class CageClient:
             self._mediate_defer_verdict(envelope)
         if verdict != "ALLOW":
             raise CageGatewayError(
-                f"Gateway envelope carries unrecognised verdict {verdict or None!r}"
+                f"Gateway envelope carries unrecognised verdict {verdict!r}"
             )
 
         logger.info(

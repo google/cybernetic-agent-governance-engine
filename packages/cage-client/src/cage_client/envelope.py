@@ -25,16 +25,32 @@ transport hop and does NOT substitute for end-to-end ``GovernanceEnvelope.signat
 verification.
 """
 
+import re
 from datetime import datetime
 from typing import Any
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, field_validator
+
+# The signature covers the JSON the gateway sent, but the client acts on these
+# models, so they validate without transforming anything. ``strict`` refuses
+# type coercion (an epoch integer is not a timestamp), and no string or key is
+# stripped or case-folded: stripping let a padded key replace a signed one.
+_SIGNED_WIRE_CONFIG = ConfigDict(frozen=True, extra="forbid", strict=True)
+
+# RFC 3339 date-time as the gateway emits it: a ``T`` separator, an explicit
+# offset, and either no fraction or a 3- or 6-digit one (the forms
+# ``datetime.fromisoformat`` parses on Python 3.10).
+_RFC3339_TIMESTAMP = re.compile(
+    r"[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}"
+    r"(?:\.[0-9]{3}|\.[0-9]{6})?(?:Z|[+-][0-9]{2}:[0-9]{2})"
+)
 
 
 class GovernanceEnvelope(BaseModel):
     """Read-only client view of a cryptographically signed governance decision envelope.
 
-    Strictly immutable (``frozen=True``, ``extra="forbid"``).
+    Strictly immutable and validated without coercion (``frozen=True``,
+    ``extra="forbid"``, ``strict=True``).
 
     Security & Verification Scope:
         1. By default, ``CageClient`` verifies ``GovernanceEnvelope.signature``
@@ -90,11 +106,21 @@ class GovernanceEnvelope(BaseModel):
         description="Cryptographic signature (algorithm, kid, value) verified out-of-band by CageClient",
     )
 
-    model_config = ConfigDict(
-        frozen=True,
-        extra="forbid",
-        str_strip_whitespace=True,
-    )
+    model_config = _SIGNED_WIRE_CONFIG
+
+    @field_validator("issued_at", "expires_at", mode="before")
+    @classmethod
+    def _parse_rfc3339(cls, value: Any) -> datetime:
+        """Accept an offset-aware ``datetime`` or the gateway's RFC 3339 string, nothing else."""
+        if isinstance(value, datetime):
+            if value.utcoffset() is None:
+                raise ValueError("timestamp must carry a UTC offset")
+            return value
+        if not isinstance(value, str) or not _RFC3339_TIMESTAMP.fullmatch(value):
+            raise ValueError(
+                "timestamp must be an RFC 3339 string with a 'T' separator and an explicit offset"
+            )
+        return datetime.fromisoformat(value.replace("Z", "+00:00"))
 
 
 class ExecutionGrant(BaseModel):
@@ -117,8 +143,4 @@ class ExecutionGrant(BaseModel):
     )
     signature: str = Field(..., description="Base64-encoded cryptographic signature")
 
-    model_config = ConfigDict(
-        frozen=True,
-        extra="forbid",
-        str_strip_whitespace=True,
-    )
+    model_config = _SIGNED_WIRE_CONFIG
