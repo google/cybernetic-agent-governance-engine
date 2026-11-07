@@ -232,6 +232,12 @@ jobs:
         # Violations indicate a regression in the plugin seam architecture.
         run: |
           uv run python scripts/check_import_boundaries.py --verbose
+      - name: Posture guard integrity check
+        # F-112: posture-gated startup factories and guards must neither be
+        # swallowed by broad except handlers (Rule A) nor narrowed to prod-only
+        # conditions at call sites (Rule B).
+        run: |
+          uv run python scripts/check_posture_guard_integrity.py --verbose
       - name: Model-free install gate (POAM-2026-168)
         # No model sits in CAGE's decision path. The base install and the
         # gateway image (the extras src/gateway/Dockerfile installs) must

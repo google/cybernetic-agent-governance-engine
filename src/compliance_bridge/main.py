@@ -241,7 +241,8 @@ async def lifespan(app: FastAPI):  # type: ignore[no-untyped-def]
     # The signer is disabled by default (kms_batch.enabled=false in
     # config/governance_thresholds.json). Can be explicitly enabled
     # via env var KMS_BATCH_ENABLED=true or config override.
-    # assert_kms_active_in_production() enforces KMS mode in prod.
+    # assert_kms_active_in_production() enforces KMS mode across all
+    # enforcing postures (staging, production, etc.).
     # ------------------------------------------------------------------
     from src.gateway.governance.schemas.thresholds import get_kms_batch_enabled
 
@@ -251,12 +252,8 @@ async def lifespan(app: FastAPI):  # type: ignore[no-untyped-def]
     _kms_enabled = get_kms_batch_enabled()
     if _kms_enabled:
         await _batch_signer.start()
+        _batch_signer.assert_kms_active_in_production()
         logger.info("✅ KMS batch signer started")
-        _env_for_kms = os.environ.get(
-            "CAGE_ENV", "prod"
-        ).lower()  # Default to "prod" to fail-secure: missing CAGE_ENV must not silently disable enforcement
-        if _env_for_kms == "prod":
-            _batch_signer.assert_kms_active_in_production()
     else:
         logger.info("[INFO] KMS batch signer disabled (KMS_BATCH_ENABLED != true)")
 
@@ -307,27 +304,35 @@ app = FastAPI(
 # both need cross-origin access to the SSE stream.
 # ---------------------------------------------------------------------------
 
+
 # M-13: Build CORS origin list without empty strings (empty string allows all origins)
 # HIGH-1 FIX: Get allowed origins from environment, no wildcard default
-_allowed_origins_str = os.environ.get("ALLOWED_ORIGINS", "")
-if _allowed_origins_str:
-    _cors_origins: list[str] = [
-        origin.strip() for origin in _allowed_origins_str.split(",") if origin.strip()
-    ]
-else:
-    # In production, fail-closed - no CORS if not configured
-    _cage_env = os.environ.get("CAGE_ENV", "production")
-    if _cage_env == "production":
-        _cors_origins = []  # Deny all cross-origin in production if not configured
-        logger.warning("ALLOWED_ORIGINS not set in production - CORS disabled")
-    else:
-        # Dev defaults only in non-production environments
-        _cors_origins = [
-            "http://localhost:5173",  # Vite dev server default
-            "http://localhost:3000",  # Alternative dev port
-            "http://127.0.0.1:5173",
-            "http://127.0.0.1:3000",
+def _resolve_cors_origins() -> list[str]:
+    """Resolve allowed CORS origins from ``ALLOWED_ORIGINS`` and deployment posture."""
+    from src.gateway.governance.env_posture import is_enforcing
+
+    allowed_origins_str = os.environ.get("ALLOWED_ORIGINS", "")
+    if allowed_origins_str:
+        return [
+            origin.strip()
+            for origin in allowed_origins_str.split(",")
+            if origin.strip()
         ]
+    if is_enforcing():
+        # Deny all cross-origin requests in enforcing postures (prod, production,
+        # staging, etc.) when ALLOWED_ORIGINS is not configured.
+        logger.warning("ALLOWED_ORIGINS not set in enforcing posture - CORS disabled")
+        return []
+    # Dev defaults only in permissive non-production environments
+    return [
+        "http://localhost:5173",  # Vite dev server default
+        "http://localhost:3000",  # Alternative dev port
+        "http://127.0.0.1:5173",
+        "http://127.0.0.1:3000",
+    ]
+
+
+_cors_origins: list[str] = _resolve_cors_origins()
 
 # Allow UI_ORIGIN as additional origin (backward compat)
 _ui_origin = os.environ.get("UI_ORIGIN", "").strip()

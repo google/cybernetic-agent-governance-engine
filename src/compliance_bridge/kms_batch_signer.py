@@ -241,6 +241,11 @@ class AsyncBatchSigner:
         if self._running:
             return
 
+        # Eagerly load the signer before spawning the worker so enforcing
+        # postures fail closed at startup without leaking an orphaned task.
+        if self._signer is None:
+            self._signer = build_evidence_signer()  # type: ignore[assignment]
+
         self._running = True
         self._worker_task = asyncio.create_task(
             self._worker_loop(), name="kms-batch-signer"
@@ -250,15 +255,6 @@ class AsyncBatchSigner:
             self._flush_interval * 1000,
             self._max_batch_size,
         )
-
-        # Eagerly load the signer so we can check its mode at startup
-        if self._signer is None:
-            try:
-                self._signer = build_evidence_signer()  # type: ignore[assignment]
-            except Exception as _exc:
-                logger.error(
-                    "[KMSBatchSigner] Failed to load signer at startup: %s", _exc
-                )
 
         if self._signer is not None and not getattr(
             self._signer, "is_kms_active", False
@@ -452,11 +448,8 @@ class AsyncBatchSigner:
         return getattr(self._signer, "is_kms_active", False)
 
     def assert_kms_active_in_production(self) -> None:
-        """Raise RuntimeError if HMAC fallback is active in a production environment."""
-        env = (
-            os.environ.get("CAGE_ENV") or os.environ.get("ENVIRONMENT", "production")
-        ).lower()
-        if env in ("development", "test", "dev", "ci"):
+        """Raise RuntimeError if HMAC fallback is active in an enforcing posture."""
+        if not is_enforcing(resolve_posture()):
             return
         if not self.is_kms_active:
             raise RuntimeError(
