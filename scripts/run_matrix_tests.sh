@@ -13,6 +13,14 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+# Live posture suite for one deployment, jurisdiction and environment.
+# Every Lula gate reads the running deployment (Lula's Kubernetes domain, or
+# in-cluster service URLs), Gate 0.3 queries its Langfuse instances, and
+# EU_ECB's prod Gate 1.2 reads its cage-deployment ConfigMap. Point KUBECONFIG
+# at the deployment and run from a host that can reach its in-cluster
+# services; without them those gates fail. compliance-matrix.yml runs this on
+# demand against a named deployment.
+
 set -euo pipefail
 
 # ---------------------------------------------------------------------------
@@ -161,16 +169,18 @@ else
   PHASE0_FAILURES=$((PHASE0_FAILURES + 1))
 fi
 
-# Gate 0.3 — Langfuse posture verification
+# Gate 0.3 — Langfuse posture of the deployment under test
 echo ""
-info "Gate 0.3 — Langfuse posture verification"
-# Non-secret GCP context vars — safe to default here.
-export GOOGLE_CLOUD_PROJECT="${GOOGLE_CLOUD_PROJECT:-mock-project}"
-export GOOGLE_CLOUD_LOCATION="${GOOGLE_CLOUD_LOCATION:-mock-location}"
-# All LANGFUSE_* vars (HOST, PUBLIC_KEY, SECRET_KEY, COMPLIANCE_*) are loaded
-# from .env above. Do NOT set fallback values here — missing vars must surface
-# as a real Gate 0.3 failure so operators know to populate .env.
-if uv run python scripts/verify_langfuse_posture.py --dry-run --posture development; then
+info "Gate 0.3 — Langfuse posture verification (live)"
+# The live check queries both Langfuse instances with the deployment's keys
+# and fails unless each pair reaches only its own project. A dry-run checked
+# only that the variables were set, so it could not fail wherever they were.
+# No defaults here: an unset variable fails the gate.
+LANGFUSE_POSTURE="development"
+if [[ "${CAGE_ENV}" == "prod" ]]; then
+  LANGFUSE_POSTURE="production"
+fi
+if uv run python scripts/verify_langfuse_posture.py --posture "${LANGFUSE_POSTURE}"; then
   success "Gate 0.3 passed — Langfuse posture verified"
 else
   error "Gate 0.3 FAILED — Langfuse posture verification"

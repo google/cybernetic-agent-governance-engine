@@ -22,9 +22,9 @@ the cage-project (observability) and cage-compliance (compliance) postures.
 Usage:
     python scripts/verify_langfuse_posture.py [--dry-run] [--posture development|production]
 
-Environment variables:
-    LANGFUSE_PROJECT_ID           Override core project ID (default: cmpugv47f000dwq07fqu86ral)
-    LANGFUSE_COMPLIANCE_PROJECT_ID Override compliance project ID (default: cage-compliance)
+Environment variables (live check; a dry-run only checks they are set):
+    LANGFUSE_PROJECT_ID            Project the core keys must reach, and the compliance keys must not
+    LANGFUSE_COMPLIANCE_PROJECT_ID Project the compliance keys must reach, and the core keys must not
 
 Exit codes:
     0 — all checks pass
@@ -40,10 +40,6 @@ from urllib.error import URLError
 from urllib.parse import urlparse
 from urllib.request import Request, urlopen
 
-# Known project IDs — must match live Langfuse instance
-CAGE_PROJECT_ID = os.getenv("LANGFUSE_PROJECT_ID", "cmpugv47f000dwq07fqu86ral")
-CAGE_COMPLIANCE_ID = os.getenv("LANGFUSE_COMPLIANCE_PROJECT_ID", "cage-compliance")
-
 # Required env vars for each posture
 BASE_REQUIRED_VARS = [
     "GOOGLE_CLOUD_PROJECT",
@@ -56,12 +52,17 @@ BASE_REQUIRED_VARS = [
     "LANGFUSE_COMPLIANCE_SECRET_KEY",
 ]
 PROD_EXTRA_VARS = ["LANGFUSE_COMPLIANCE_PROJECT_ID"]
+# The live check compares what each key pair can reach with both projects,
+# so it needs both IDs in every posture: without one, half of it cannot run.
+LIVE_EXTRA_VARS = ["LANGFUSE_PROJECT_ID", "LANGFUSE_COMPLIANCE_PROJECT_ID"]
 
 
-def check_env_vars(posture: str) -> bool:
+def check_env_vars(posture: str, *, live: bool = False) -> bool:
     required = BASE_REQUIRED_VARS[:]
     if posture == "production":
         required.extend(PROD_EXTRA_VARS)
+    if live:
+        required.extend(v for v in LIVE_EXTRA_VARS if v not in required)
     missing = [v for v in required if not os.getenv(v)]
     if missing:
         print(
@@ -98,6 +99,20 @@ def query_langfuse_projects(host: str, pub_key: str, secret_key: str) -> list | 
 
 
 def verify_live_isolation() -> bool:
+    """Each key pair must reach its own project and not the other one.
+
+    Both halves always run. Before #636 the check skipped the compliance half,
+    and passed, whenever ``LANGFUSE_COMPLIANCE_PROJECT_ID`` was unset.
+    """
+    core_project_id = os.getenv("LANGFUSE_PROJECT_ID", "")
+    compliance_project_id = os.getenv("LANGFUSE_COMPLIANCE_PROJECT_ID", "")
+    if not core_project_id or not compliance_project_id:
+        print(
+            "❌ LANGFUSE_PROJECT_ID and LANGFUSE_COMPLIANCE_PROJECT_ID must both be set "
+            "for the live isolation check."
+        )
+        return False
+
     print("🔄 Querying live Langfuse APIs for cross-contamination verification...")
     core_projects = query_langfuse_projects(
         os.getenv("LANGFUSE_HOST", ""),
@@ -118,33 +133,15 @@ def verify_live_isolation() -> bool:
 
     success = True
 
-    # Core credentials must include cage-project and must NOT include cage-compliance
-    if CAGE_PROJECT_ID in core_projects and CAGE_COMPLIANCE_ID not in core_projects:
-        print(f"✅ Core credentials correctly map only to '{CAGE_PROJECT_ID}'")
-    elif CAGE_PROJECT_ID in core_projects and not os.getenv(
-        "LANGFUSE_COMPLIANCE_PROJECT_ID"
-    ):
-        # Compliance project not yet provisioned — core check passes, compliance isolation pending
-        print(f"✅ Core credentials map to '{CAGE_PROJECT_ID}'")
-        print(
-            "⚠️  Compliance project ID not set (LANGFUSE_COMPLIANCE_PROJECT_ID unset) — "
-            "isolation check skipped; provision cage-compliance project to complete U-10"
-        )
+    if core_project_id in core_projects and compliance_project_id not in core_projects:
+        print(f"✅ Core credentials correctly map only to '{core_project_id}'")
     else:
         print(
             f"❌ Core credentials isolation breach! Accessible projects: {core_projects}"
         )
         success = False
 
-    # Compliance credentials check — only if compliance project ID is configured
-    compliance_project_id = os.getenv("LANGFUSE_COMPLIANCE_PROJECT_ID")
-    if not compliance_project_id:
-        print(
-            "⚠️  Skipping compliance isolation check — LANGFUSE_COMPLIANCE_PROJECT_ID not set"
-        )
-    elif (
-        compliance_project_id in comp_projects and CAGE_PROJECT_ID not in comp_projects
-    ):
+    if compliance_project_id in comp_projects and core_project_id not in comp_projects:
         print(
             f"✅ Compliance credentials correctly map only to '{compliance_project_id}'"
         )
@@ -179,7 +176,7 @@ def main() -> None:
     )
     print("-" * 60)
 
-    if not check_env_vars(args.posture):
+    if not check_env_vars(args.posture, live=not args.dry_run):
         sys.exit(1)
 
     if not args.dry_run:

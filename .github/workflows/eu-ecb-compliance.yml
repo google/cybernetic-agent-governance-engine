@@ -66,7 +66,7 @@ jobs:
 
       - name: Validate EU AI Act Lula manifest structure
         # Validates YAML structure of EU AI Act Lula stubs.
-        # Full live lula validate runs post-cluster-provisioning.
+        # The manifests read a live deployment; `lula validate` runs only against one (compliance-matrix.yml, on demand).
         run: |
           python3 - <<'PYEOF'
           import yaml, sys, pathlib
@@ -169,6 +169,7 @@ jobs:
   # NOTE: the former `eu-ecb-iso42001-lula` job was removed. It ran a
   # structural YAML check over compliance/lula/lula-validation-a*.yaml that was
   # byte-identical to its counterpart in the sibling region workflow (the region
-  # "context" was cosmetic — neither job read the region). The Lula Validate
-  # workflow already validates all 31 manifests with the real `lula` binary,
-  # a strict superset of those 12.
+  # "context" was cosmetic — neither job read the region). ci.yml's Lula stub
+  # gate parses every manifest. No pull-request workflow runs the `lula`
+  # binary, because every manifest reads a live deployment
+  # (compliance-matrix.yml runs them on demand against one).

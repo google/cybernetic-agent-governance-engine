@@ -14,35 +14,63 @@
 
 name: Compliance Matrix
 
+# A live-deployment suite (POAM-2026-169, instance 6). Every Lula gate in
+# scripts/run_matrix_tests.sh reads a running deployment: 23 manifests use
+# Lula's Kubernetes domain and 10 call in-cluster service URLs, so none can be
+# satisfied without one. Gate 0.3 queries the deployment's Langfuse instances,
+# and EU_ECB's prod Gate 1.2 reads its cage-deployment ConfigMap. The script's
+# hermetic phases are run on every pull request by other workflows
+# (regional-posture.yml, the required OPA job in security-scan.yml, and ci.yml's
+# EU_ECB bias evaluation and STPA freshness check).
+#
+# So this runs only on demand, against the deployment named by `deployment`: a
+# GitHub Environment whose secrets hold that deployment's kubeconfig and
+# Langfuse credentials. Without them the job fails before any gate runs. The
+# API-domain manifests call in-cluster service URLs, which a GitHub-hosted
+# runner cannot reach, so from one those gates fail too.
 on:
-  # Allow existing per-region workflows to invoke this workflow
-  workflow_call:
-    inputs:
-      lula_version:
-        description: "Lula binary version to install (defenseunicorns-labs/lula1)"
-        type: string
-        required: false
-        default: "v0.16.0"
-
-  # Allow manual triggering from the GitHub Actions UI
   workflow_dispatch:
     inputs:
+      deployment:
+        description: "GitHub Environment holding the target deployment's credentials"
+        type: string
+        required: true
+      region:
+        description: "Jurisdiction the deployment must satisfy"
+        type: choice
+        options: [US_FED, EU_ECB, APAC_MAS]
+        required: true
+      cage_env:
+        description: "Environment posture the deployment must satisfy"
+        type: choice
+        options: [dev, prod]
+        required: true
       lula_version:
         description: "Lula binary version to install (defenseunicorns-labs/lula1)"
         type: string
         required: false
         default: "v0.16.0"
 
-  # Run automatically on pushes to integration branches
-  push:
-    branches:
-      - main
-      - develop
+  workflow_call:
+    inputs:
+      deployment:
+        type: string
+        required: true
+      region:
+        type: string
+        required: true
+      cage_env:
+        type: string
+        required: true
+      lula_version:
+        type: string
+        required: false
+        default: "v0.16.0"
 
-# Cancel in-progress runs for the same ref to avoid resource waste
+# One run at a time per deployment; a verification run is never cancelled.
 concurrency:
-  group: compliance-matrix-${{ github.ref }}
-  cancel-in-progress: true
+  group: compliance-matrix-${{ inputs.deployment }}
+  cancel-in-progress: false
 
 env:
   PYTHON_VERSION: "3.11"
@@ -51,11 +79,6 @@ env:
   # NOTE: github.com/defenseunicorns/lula is a separate TypeScript npm package (lula2).
   LULA_VERSION: ${{ inputs.lula_version || 'v0.16.0' }}
 
-# ---------------------------------------------------------------------------
-# Job 1: Universal ISO 42001 Gates
-# Runs first, unconditionally, for all regions.
-# Source: docs/RELEASE_PLAN.md §5.1
-# ---------------------------------------------------------------------------
 # Default least-privilege permissions for every job in this workflow.
 # Without this block jobs inherit the (potentially broad) repository default,
 # which zizmor flags as an excessive-permissions finding.
@@ -63,121 +86,63 @@ permissions:
   contents: read
 
 jobs:
-  universal-iso42001:
-    name: "Universal ISO 42001 Gates"
-    runs-on: ubuntu-latest
-    timeout-minutes: 20
-
-    steps:
-      - name: Checkout repository
-        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          fetch-depth: 0
-
-      - name: Set up Python ${{ env.PYTHON_VERSION }}
-        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
-        with:
-          python-version: ${{ env.PYTHON_VERSION }}
-          cache: pip
-
-      - name: Install Python dependencies
-        run: |
-          python -m pip install --upgrade pip
-          pip install pyyaml pydantic "ruff==0.16.5"
-          if [ -f requirements.txt ]; then pip install -r requirements.txt; fi
-          if [ -f requirements-dev.txt ]; then pip install -r requirements-dev.txt; fi
-
-      - name: Install Lula binary
-        # Official Lula Go CLI (OSCAL validator): https://github.com/defenseunicorns-labs/lula1
-        # NOTE: github.com/defenseunicorns/lula is a TypeScript npm package (lula2), not this tool.
-        env:
-          # Passed via env rather than interpolated directly into the script:
-          # a `${{ }}` expansion is substituted before the shell runs, so a
-          # value containing shell metacharacters would execute as code.
-          LULA_VERSION: ${{ env.LULA_VERSION }}
-        run: |
-          LULA_URL="https://github.com/defenseunicorns-labs/lula1/releases/download/${LULA_VERSION}/lula_${LULA_VERSION}_Linux_amd64"
-          echo "Installing lula ${LULA_VERSION} from defenseunicorns-labs/lula1..."
-          curl -fsSL \
-            -H "Authorization: token ${{ github.token }}" \
-            "${LULA_URL}" -o /usr/local/bin/lula
-          chmod +x /usr/local/bin/lula
-          lula version
-
-      - name: Gate 0.1 — Core unit test suite presence check
-        run: |
-          test -f tests/test_symbolic_governor.py || {
-            echo "::error::Core unit test suite tests/test_symbolic_governor.py not found"
-            exit 1
-          }
-
-      - name: Gate 0.2 — STPA freshness check
-        run: python3 scripts/check_stpa_freshness.py
-
-      - name: "Gate 0.3 — Langfuse Posture Dry-Run"
-        run: python3 scripts/verify_langfuse_posture.py --dry-run --posture development
-        env:
-          GOOGLE_CLOUD_PROJECT: "mock-project"
-          GOOGLE_CLOUD_LOCATION: "mock-location"
-          LANGFUSE_HOST: ${{ secrets.LANGFUSE_HOST || 'http://localhost:3000' }}
-          LANGFUSE_PUBLIC_KEY: ${{ secrets.LANGFUSE_PUBLIC_KEY || 'pk-lf-mock' }}
-          LANGFUSE_SECRET_KEY: ${{ secrets.LANGFUSE_SECRET_KEY || 'sk-lf-mock' }}
-          LANGFUSE_COMPLIANCE_HOST: "http://localhost:3001"
-          LANGFUSE_COMPLIANCE_PUBLIC_KEY: "pk-lf-comp-mock"
-          LANGFUSE_COMPLIANCE_SECRET_KEY: "sk-lf-comp-mock"
-
-      - name: "Gate 0.4a — ISO 42001 Lula YAML Structure (a52)"
-        run: python3 -c "import yaml; d = yaml.safe_load(open('compliance/lula/lula-validation-a52.yaml')); assert isinstance(d, dict) and 'component-definition' in d; print('✅ lula-validation-a52.yaml is valid OSCAL YAML')"
-      - name: "Gate 0.4b — ISO 42001 Lula YAML Structure (a53)"
-        run: python3 -c "import yaml; d = yaml.safe_load(open('compliance/lula/lula-validation-a53.yaml')); assert isinstance(d, dict) and 'component-definition' in d; print('✅ lula-validation-a53.yaml is valid OSCAL YAML')"
-      - name: "Gate 0.4c — ISO 42001 Lula YAML Structure (a92)"
-        run: python3 -c "import yaml; d = yaml.safe_load(open('compliance/lula/lula-validation-a92.yaml')); assert isinstance(d, dict) and 'component-definition' in d; print('✅ lula-validation-a92.yaml is valid OSCAL YAML')"
-      - name: "Gate 0.4d — ISO 42001 Lula YAML Structure (aarm-vectors)"
-        run: python3 -c "import yaml; d = yaml.safe_load(open('compliance/lula/lula-validation-aarm-vectors.yaml')); assert isinstance(d, dict) and 'component-definition' in d; print('✅ lula-validation-aarm-vectors.yaml is valid OSCAL YAML')"
-
-  # ---------------------------------------------------------------------------
-  # Job 2: Regional Posture Gates (2×3 matrix)
-  # Runs after universal-iso42001 passes.
-  # Source: docs/RELEASE_PLAN.md §5.2–§5.4
-  # ---------------------------------------------------------------------------
-  regional-posture:
-    name: "Regional Posture (${{ matrix.region }} / ${{ matrix.environment }})"
-    needs: [universal-iso42001]
+  live-posture:
+    name: "Live Regional Posture (${{ inputs.region }} / ${{ inputs.cage_env }})"
     runs-on: ubuntu-latest
     timeout-minutes: 30
-
-    strategy:
-      # MANDATORY: all matrix cells must run even if one fails.
-      # A single regional failure must not suppress other regions' results.
-      fail-fast: false
-      matrix:
-        environment: [dev, prod]
-        region: [US_FED, EU_ECB, APAC_MAS]
-
-    # Regional jobs must not silently pass on error
-    continue-on-error: false
+    # The deployment's credentials are this Environment's secrets. GitHub
+    # creates a missing Environment empty, and the next step then fails.
+    environment: ${{ inputs.deployment }}
 
     env:
-      CAGE_ENV: ${{ matrix.environment }}
-      CAGE_REGION: ${{ matrix.region }}
+      CAGE_ENV: ${{ inputs.cage_env }}
+      CAGE_REGION: ${{ inputs.region }}
 
     steps:
       - name: Checkout repository
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
+          # Gate 0.2 compares `git log` commit times of STPA sources and artifacts.
           fetch-depth: 0
+          persist-credentials: false
+
+      - name: Require the deployment's credentials
+        env:
+          DEPLOYMENT: ${{ inputs.deployment }}
+          KUBECONFIG_DATA: ${{ secrets.KUBECONFIG }}
+          GOOGLE_CLOUD_PROJECT: ${{ vars.GOOGLE_CLOUD_PROJECT }}
+          LANGFUSE_HOST: ${{ secrets.LANGFUSE_HOST }}
+          LANGFUSE_PUBLIC_KEY: ${{ secrets.LANGFUSE_PUBLIC_KEY }}
+          LANGFUSE_SECRET_KEY: ${{ secrets.LANGFUSE_SECRET_KEY }}
+          LANGFUSE_PROJECT_ID: ${{ vars.LANGFUSE_PROJECT_ID }}
+          LANGFUSE_COMPLIANCE_HOST: ${{ secrets.LANGFUSE_COMPLIANCE_HOST }}
+          LANGFUSE_COMPLIANCE_PUBLIC_KEY: ${{ secrets.LANGFUSE_COMPLIANCE_PUBLIC_KEY }}
+          LANGFUSE_COMPLIANCE_SECRET_KEY: ${{ secrets.LANGFUSE_COMPLIANCE_SECRET_KEY }}
+          LANGFUSE_COMPLIANCE_PROJECT_ID: ${{ vars.LANGFUSE_COMPLIANCE_PROJECT_ID }}
+        run: |
+          missing=()
+          for name in KUBECONFIG_DATA GOOGLE_CLOUD_PROJECT \
+              LANGFUSE_HOST LANGFUSE_PUBLIC_KEY LANGFUSE_SECRET_KEY LANGFUSE_PROJECT_ID \
+              LANGFUSE_COMPLIANCE_HOST LANGFUSE_COMPLIANCE_PUBLIC_KEY \
+              LANGFUSE_COMPLIANCE_SECRET_KEY LANGFUSE_COMPLIANCE_PROJECT_ID; do
+            [ -n "${!name:-}" ] || missing+=("${name}")
+          done
+          if [ "${#missing[@]}" -gt 0 ]; then
+            echo "::error::Environment '${DEPLOYMENT}' does not provide ${missing[*]}. The suite checks a live deployment; nothing was checked."
+            exit 1
+          fi
+          kubeconfig="${RUNNER_TEMP}/kubeconfig"
+          ( umask 077 && printf '%s\n' "${KUBECONFIG_DATA}" > "${kubeconfig}" )
+          echo "KUBECONFIG=${kubeconfig}" >> "${GITHUB_ENV}"
 
       - name: Set up Python ${{ env.PYTHON_VERSION }}
         uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
         with:
           python-version: ${{ env.PYTHON_VERSION }}
-          cache: pip
 
       # scripts/run_matrix_tests.sh runs every Python step with `uv run`.
-      # Without uv, each run failed at `uv: command not found`, and until
-      # #602 removed continue-on-error that failure was reported as a pass
-      # (POAM-2026-169). No requirements*.txt exists, so the pip step this
-      # replaces installed nothing.
+      # Until #636 the workflow never installed uv, so from 2026-07-08 every
+      # regional run stopped at `uv: command not found` (POAM-2026-169).
       - name: Install uv
         uses: astral-sh/setup-uv@1c37ad07a6a961277cf70c0d37d6f313000f5884 # v10.3.0
 
@@ -202,7 +167,7 @@ jobs:
           lula version
 
       - name: Install OPA binary (US_FED only)
-        if: matrix.region == 'US_FED'
+        if: inputs.region == 'US_FED'
         env:
           # The version security-scan.yml's required OPA job runs the same
           # `opa test` with, so the two gates share one parser. `latest`
@@ -218,38 +183,24 @@ jobs:
           chmod +x /usr/local/bin/opa
           opa version
 
-      - name: Make orchestrator script executable
-        run: chmod +x scripts/run_matrix_tests.sh
-
-      - name: Run compliance matrix tests
-        run: ./scripts/run_matrix_tests.sh ${{ matrix.environment }} ${{ matrix.region }}
+      - name: Run the live posture suite
+        run: bash scripts/run_matrix_tests.sh "${CAGE_ENV}" "${CAGE_REGION}"
         env:
-          CAGE_ENV: ${{ matrix.environment }}
-          CAGE_REGION: ${{ matrix.region }}
-          # Gate 0.3 is the Langfuse posture dry-run the universal job also
-          # runs. A dry-run checks only that these variables are set, and the
-          # repository's Langfuse secrets are empty in CI, so with the
-          # placeholders below it cannot fail: it lets the phases after it run
-          # and verifies nothing (the universal job's copy is the same). The
-          # script sets the Google Cloud project and location itself.
-          LANGFUSE_HOST: ${{ secrets.LANGFUSE_HOST || 'http://localhost:3000' }}
-          LANGFUSE_PUBLIC_KEY: ${{ secrets.LANGFUSE_PUBLIC_KEY || 'ci-placeholder' }}
-          LANGFUSE_SECRET_KEY: ${{ secrets.LANGFUSE_SECRET_KEY || 'ci-placeholder' }}
-          LANGFUSE_COMPLIANCE_HOST: "http://localhost:3001"
-          LANGFUSE_COMPLIANCE_PUBLIC_KEY: "ci-placeholder"
-          LANGFUSE_COMPLIANCE_SECRET_KEY: "ci-placeholder"
-          # US_FED credentials (only used when CAGE_REGION=US_FED)
-          KUBECONFIG: ${{ secrets.KUBECONFIG_US_FED }}
-          # EU_ECB credentials (only used when CAGE_REGION=EU_ECB)
-          GOOGLE_CREDENTIALS: ${{ secrets.GOOGLE_CREDENTIALS_EU_ECB }}
-          # APAC_MAS credentials (only used when CAGE_REGION=APAC_MAS)
-          GOOGLE_CREDENTIALS_APAC: ${{ secrets.GOOGLE_CREDENTIALS_APAC_MAS }}
+          GOOGLE_CLOUD_PROJECT: ${{ vars.GOOGLE_CLOUD_PROJECT }}
+          LANGFUSE_HOST: ${{ secrets.LANGFUSE_HOST }}
+          LANGFUSE_PUBLIC_KEY: ${{ secrets.LANGFUSE_PUBLIC_KEY }}
+          LANGFUSE_SECRET_KEY: ${{ secrets.LANGFUSE_SECRET_KEY }}
+          LANGFUSE_PROJECT_ID: ${{ vars.LANGFUSE_PROJECT_ID }}
+          LANGFUSE_COMPLIANCE_HOST: ${{ secrets.LANGFUSE_COMPLIANCE_HOST }}
+          LANGFUSE_COMPLIANCE_PUBLIC_KEY: ${{ secrets.LANGFUSE_COMPLIANCE_PUBLIC_KEY }}
+          LANGFUSE_COMPLIANCE_SECRET_KEY: ${{ secrets.LANGFUSE_COMPLIANCE_SECRET_KEY }}
+          LANGFUSE_COMPLIANCE_PROJECT_ID: ${{ vars.LANGFUSE_COMPLIANCE_PROJECT_ID }}
 
       - name: Upload test results
         if: always()
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
         with:
-          name: compliance-results-${{ matrix.region }}-${{ matrix.environment }}
+          name: compliance-results-${{ inputs.region }}-${{ inputs.cage_env }}
           path: |
             compliance-results/
             pytest-results/
