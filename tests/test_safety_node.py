@@ -19,7 +19,8 @@ The safety node submits the proposed trade to the gateway's
 ``GatewayClient``. These tests drive the real ``GatewayClient`` over an
 ``httpx.MockTransport`` so the node's handling of each gateway response is
 observed end to end — including every fail-closed path (denial, HTTP error,
-timeout, unreachable gateway, non-APPROVED verdicts).
+timeout, unreachable gateway, non-APPROVED verdicts, and DEFER payloads
+missing a valid ``defer_token``).
 """
 
 from __future__ import annotations
@@ -93,6 +94,26 @@ def _approved_envelope() -> dict[str, Any]:
     }
 
 
+def _defer_envelope(
+    defer_token: Any = "ticket-9",
+    defer_reason: Any = "CONFIDENCE_BELOW_THRESHOLD",
+) -> dict[str, Any]:
+    payload: dict[str, Any] = {
+        "verdict": "DEFER",
+        "defer_token": defer_token,
+        "violations": [],
+        "latency_ms": 3.4,
+    }
+    if defer_reason is not None:
+        payload["defer_reason"] = defer_reason
+    return {
+        "envelope_version": "3.0",
+        "envelope_id": "env-defer-1",
+        "signature": "sig-defer",
+        "payload": payload,
+    }
+
+
 class TestSafetyNodeGatewayCall:
     @pytest.mark.asyncio
     async def test_submits_trade_to_validate_action(self, gateway) -> None:
@@ -152,23 +173,56 @@ class TestSafetyNodeVerdicts:
         assert result["consecutive_denials"] == 0
 
     @pytest.mark.asyncio
-    async def test_defer_with_ticket_defers(self, gateway) -> None:
+    async def test_defer_with_defer_token_defers_and_preserves_denial_counter(
+        self, gateway
+    ) -> None:
         gateway(
             lambda r: httpx.Response(
-                202,
-                json={
-                    "verdict": "DEFER",
-                    "defer_id": "ticket-9",
-                    "defer_reason": "EXTERNAL_HOLD",
-                },
+                200,
+                json=_defer_envelope(
+                    defer_token="  ticket-9  ",
+                    defer_reason="WARRANT_INELIGIBLE",
+                ),
+            )
+        )
+
+        state = _trade_state(consecutive_denials=1)
+        result = await safety_check_node(state)
+
+        assert result["safety_status"] == "DEFERRED"
+        assert result["deferral_ticket_id"] == "ticket-9"
+        assert result["deferral_reason"] == "WARRANT_INELIGIBLE"
+        assert result["routing_verdict_cache"] is None
+        # SafetyDefer (LangGraphHarness.tla:348-356): consecutive_denials is
+        # neither reset to 0 nor incremented on DEFER.
+        assert "consecutive_denials" not in result
+        merged = {**state, **result}
+        assert merged["consecutive_denials"] == 1
+
+    @pytest.mark.parametrize(
+        "raw_reason",
+        [None, "", "   "],
+        ids=["missing", "empty", "whitespace"],
+    )
+    @pytest.mark.asyncio
+    async def test_defer_defaults_blank_or_missing_reason(
+        self, gateway, raw_reason: str | None
+    ) -> None:
+        gateway(
+            lambda r: httpx.Response(
+                200,
+                json=_defer_envelope(
+                    defer_token="tok-default-reason",
+                    defer_reason=raw_reason,
+                ),
             )
         )
 
         result = await safety_check_node(_trade_state())
 
         assert result["safety_status"] == "DEFERRED"
-        assert result["deferral_ticket_id"] == "ticket-9"
-        assert result["deferral_reason"] == "EXTERNAL_HOLD"
+        assert result["deferral_ticket_id"] == "tok-default-reason"
+        assert result["deferral_reason"] == "CONFIDENCE_BELOW_THRESHOLD"
 
 
 class TestSafetyNodeFailClosed:
@@ -246,6 +300,43 @@ class TestSafetyNodeFailClosed:
 
         assert result["safety_status"] == "BLOCKED"
         assert "ConnectError" in result["last_violation"]["evidence"]
+
+    @pytest.mark.parametrize(
+        "body",
+        [
+            {"verdict": "DEFER", "defer_id": "legacy-only"},
+            {
+                "envelope_version": "3.0",
+                "envelope_id": "env-legacy",
+                "signature": "sig-legacy",
+                "payload": {"verdict": "DEFER", "defer_id": "legacy-only"},
+            },
+            _defer_envelope(defer_token=""),
+            _defer_envelope(defer_token="   "),
+            _defer_envelope(defer_token=None),
+            _defer_envelope(defer_token=123),
+        ],
+        ids=[
+            "legacy-defer-id-flat",
+            "legacy-defer-id-envelope",
+            "empty-defer-token",
+            "blank-defer-token",
+            "null-defer-token",
+            "non-string-defer-token",
+        ],
+    )
+    @pytest.mark.asyncio
+    async def test_defer_without_valid_defer_token_fails_closed(
+        self, gateway, body: dict[str, Any]
+    ) -> None:
+        gateway(lambda r: httpx.Response(200, json=body))
+
+        result = await safety_check_node(_trade_state(consecutive_denials=0))
+
+        assert result["safety_status"] == "BLOCKED"
+        assert result["consecutive_denials"] == 1
+        assert result["last_violation"]["reason_code"] == "NOT_APPROVED"
+        assert result["last_violation"]["recoverable"] is False
 
     @pytest.mark.parametrize(
         "body",

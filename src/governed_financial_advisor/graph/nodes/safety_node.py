@@ -32,8 +32,9 @@ Key responsibilities:
         executes
       * DENIED for any step → increment consecutive_denials, store violation,
         route to explainer
-      * DEFER for any step (and no refusal) → store the gateway's deferral
-        ticket, route to defer_node
+      * DEFER for any step (with a non-blank ``defer_token`` and no refusal) →
+        store the gateway's deferral ticket, leave ``consecutive_denials``
+        untouched, and route to ``defer_node`` for a turn-terminal hold
 
 R-11: Policy evaluation is performed by the out-of-process CAGE Gateway PDP,
 enforcing fail-closed governance that cannot be bypassed by LLM agents. The
@@ -44,7 +45,7 @@ routing-seal secret, signer or governor of its own.
 Fail-closed: only an explicit ALLOW, NARROW or REQUIRE_APPROVAL verdict for
 every trade step routes onward (nothing is committed here; the gateway commits
 only inside ``execute_trade_action``). For any step, a DENIED verdict, an
-unknown / missing verdict, a DEFER without a ticket, an HTTP error, a
+unknown / missing verdict, a DEFER without a non-blank ``defer_token``, an HTTP error, a
 timeout or an unreachable gateway all produce ``BLOCKED``.
 
 MAX_CONSECUTIVE_DENIALS = 2: Policy-probing attack mitigation. When an agent
@@ -141,7 +142,8 @@ async def _route_trade(
 
     Returns:
         ``("routed", result)`` for an ALLOW, NARROW or REQUIRE_APPROVAL
-        verdict, ``("deferred", result)`` for a DEFER with a ticket, and
+        verdict, ``("deferred", result)`` for a DEFER with a non-blank
+        ``defer_token``, and
         ``("blocked", update)`` with the BLOCKED (or budget-exhausted) state
         update for anything else.
     """
@@ -205,10 +207,15 @@ async def _route_trade(
         )
         return "routed", result
 
-    if verdict == GovernanceDecision.DEFER and result.get("defer_id"):
+    defer_token = result.get("defer_token") if isinstance(result, dict) else None
+    if (
+        verdict == GovernanceDecision.DEFER
+        and isinstance(defer_token, str)
+        and bool(defer_token.strip())
+    ):
         logger.info(
-            "⏸️ Safety Node: Action DEFERRED by governance (defer_id=%s)",
-            result["defer_id"],
+            "⏸️ Safety Node: Action DEFERRED by governance (ticket_id=%s)",
+            defer_token.strip(),
         )
         return "deferred", result
 
@@ -239,9 +246,10 @@ async def safety_check_node(state: AgentState) -> dict[str, Any]:
         trade step → safety_status "APPROVED", consecutive_denials reset to 0
       - DENIED (``PermissionError``) for any step → "BLOCKED" (or HARD_PAUSE
         on budget exhaustion); the remaining steps are not submitted
-      - DEFER with a ``defer_id`` for any step and no refusal → "DEFERRED"
-        with the first deferred step's ticket. The steps after a deferral are
-        still submitted, so that a refused step blocks the plan instead.
+      - DEFER with a non-blank ``defer_token`` for any step and no refusal →
+        "DEFERRED" with the first deferred step's ticket (turn-terminal hold;
+        ``consecutive_denials`` is left untouched). The steps after a deferral
+        are still submitted, so that a refused step blocks the plan instead.
       - Anything else (unknown verdict, HTTP error, timeout,
         unreachable gateway) for any step → "BLOCKED" with ``GATEWAY_ERROR`` /
         ``NOT_APPROVED``
@@ -257,13 +265,15 @@ async def safety_check_node(state: AgentState) -> dict[str, Any]:
           - safety_status: "APPROVED" | "BLOCKED" | "DEFERRED" |
             "HARD_PAUSE_BUDGET_EXCEEDED" | "SKIPPED"
           - consecutive_denials: Updated counter (reset to 0 on approval,
-            incremented once when any step is refused)
+            incremented once when any step is refused, omitted/unchanged on
+            DEFER)
           - last_violation: Structured violation details on DENY
           - governance_signature: On approval, the gateway signature of each
             trade step, comma-separated in plan order
           - deferred_id: On approval, the first ``deferred_id`` a
             REQUIRE_APPROVAL step parked
-          - deferral_ticket_id / deferral_reason: On DEFER
+          - deferral_ticket_id / deferral_reason: On DEFER (from ``defer_token``
+            and ``defer_reason``)
     """
     logger.info("🛡️ Safety Node: Submitting action to CAGE Gateway for validation")
 
@@ -329,14 +339,17 @@ async def safety_check_node(state: AgentState) -> dict[str, Any]:
             deferral = payload
 
     if deferral is not None:
+        raw_reason = deferral.get("defer_reason")
+        defer_reason = (
+            raw_reason.strip() if isinstance(raw_reason, str) else str(raw_reason or "")
+        ) or "CONFIDENCE_BELOW_THRESHOLD"
         return {
             "safety_status": "DEFERRED",
-            "deferral_ticket_id": str(deferral["defer_id"]),
-            "deferral_reason": str(
-                deferral.get("defer_reason") or "Human approval required"
-            ),
+            "deferral_ticket_id": str(deferral["defer_token"]).strip(),
+            "deferral_reason": defer_reason,
             "routing_verdict_cache": None,
-            # Do NOT reset consecutive_denials — deferral is not approval.
+            # Do NOT reset or increment consecutive_denials — deferral is
+            # neither approval nor refusal (LangGraphHarness.tla SafetyDefer).
         }
 
     routing_cache = (
@@ -371,7 +384,7 @@ def route_safety(state: AgentState) -> str:
     Routes based on safety_status field:
       - "APPROVED" → governed_trader (execute the action)
       - "BLOCKED" → explainer (self-correction or budget check)
-      - "DEFERRED" → defer_node (park checkpoint for HITL)
+      - "DEFERRED" → defer_node (turn-terminal governance hold)
       - "HARD_PAUSE_BUDGET_EXCEEDED" → human_review (escalate to human)
       - default → explainer (defensive fallback)
 

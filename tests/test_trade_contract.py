@@ -470,8 +470,18 @@ def _deny(reason: str) -> Handler:
 
 
 def _defer(ticket: str) -> Handler:
-    body = {"verdict": "DEFER", "defer_id": ticket, "defer_reason": "EXTERNAL_HOLD"}
-    return lambda request: httpx.Response(202, json=body)
+    body = {
+        "envelope_version": "3.0",
+        "envelope_id": f"env-{ticket}",
+        "signature": f"sig-{ticket}",
+        "payload": {
+            "verdict": "DEFER",
+            "defer_token": ticket,
+            "defer_reason": "CONFIDENCE_BELOW_THRESHOLD",
+            "violations": [],
+        },
+    }
+    return lambda request: httpx.Response(200, json=body)
 
 
 def _respond(status: int, body: dict[str, Any]) -> Handler:
@@ -632,9 +642,25 @@ async def test_a_deferred_step_defers_the_plan(gateway) -> None:
 
     assert out["safety_status"] == "DEFERRED"
     assert out["deferral_ticket_id"] == "ticket-b"
-    assert out["deferral_reason"] == "EXTERNAL_HOLD"
+    assert out["deferral_reason"] == "CONFIDENCE_BELOW_THRESHOLD"
     assert "consecutive_denials" not in out  # deferral is not approval
     assert out["routing_verdict_cache"] is None
+
+
+@pytest.mark.asyncio
+async def test_a_legacy_defer_id_without_defer_token_blocks_closed(gateway) -> None:
+    legacy = {
+        "envelope_version": "3.0",
+        "envelope_id": "env-legacy",
+        "signature": "sig-legacy",
+        "payload": {"verdict": "DEFER", "defer_id": "legacy-ticket"},
+    }
+    gateway(_by_symbol({"AAA": _allow("sig-a"), "BBB": _respond(200, legacy)}))
+
+    out = await safety_check_node(_two_step_state())
+
+    assert out["safety_status"] == "BLOCKED"
+    assert out["consecutive_denials"] == 1
 
 
 @pytest.mark.asyncio

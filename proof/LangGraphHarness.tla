@@ -343,7 +343,7 @@ SafetyApprove ==
                    resolved_allow, executed, evidence_committed,
                    hitl_ticks_remaining, ticket_vars>>
 
-(* Gateway DEFER with a defer_id: the governor parked a ticket; the counter
+(* Gateway DEFER with a defer_token: the governor parked a ticket; the counter
    is left alone (deferral is not approval). *)
 SafetyDefer ==
     /\ phase = "SAFETY_CHECK"
