@@ -33,51 +33,10 @@ resource "kubernetes_config_map" "nemo_config" {
     }
   }
 
-  data = {
-    # Colang configuration for conversational rails
-    "config.yml" = var.nemo_config_yaml != "" ? var.nemo_config_yaml : <<-YAML
-      models:
-        - type: main
-          engine: openai
-          model: ${var.llm_model_name}
-
-      instructions:
-        - type: general
-          content: |
-            You are a governed financial AI assistant.
-            Refuse any requests for illegal financial advice,
-            market manipulation, or insider trading instructions.
-
-      rails:
-        input:
-          flows:
-            - check jailbreak
-        output:
-          flows:
-            - check output financial compliance
-    YAML
-
-    "financial_rails.co" = <<-COLANG
-      define user ask about illegal trading
-        "insider trading"
-        "market manipulation"
-        "pump and dump"
-        "front running"
-
-      define bot refuse illegal request
-        "I cannot assist with requests that violate financial regulations or securities law."
-
-      define flow check jailbreak
-        user ask about illegal trading
-        bot refuse illegal request
-
-      define flow check input sensitive data
-        $result = execute check_pii(text=$user_message)
-        if $result.has_pii
-          bot "I noticed your message contains sensitive personal information. Please rephrase without including personal identifiers."
-          stop
-    COLANG
-  }
+  data = merge(
+    yamldecode(file("${path.module}/nemo-rails-configmap.yaml")).data,
+    var.nemo_config_yaml != "" ? { "config.yml" = var.nemo_config_yaml } : {},
+  )
 }
 
 resource "kubernetes_deployment" "nemo_guardrails" {

@@ -180,7 +180,7 @@ AARM_THREAT_VECTORS: dict[str, AARMVector] = {
         ],
         implementation_files=[
             "src/cage_finance/safety/fiscal_limit_guard.py",
-            "deployment/k8s/linkerd-mtls-policy.yaml",
+            "infra/modules/gateway/mesh-policy/templates/policy.yaml",
         ],
         notes=(
             "FiscalLimitGuard atomically pre-reserves capacity (Redis WATCH/MULTI/EXEC) "
@@ -321,7 +321,7 @@ AARM_THREAT_VECTORS: dict[str, AARMVector] = {
         implementation_files=[
             "src/integrations/presidio/redactor.py",
             "src/gateway/infrastructure/privacy.py",
-            "deployment/k8s/cilium/egress-lockdown.yaml",
+            "infra/targets/gcp-gke/network_policy.tf",
         ],
         notes=(
             "Presidio redacts 12 identity PII entity types (spaCy NER, in-process) "

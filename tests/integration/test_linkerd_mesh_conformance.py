@@ -14,10 +14,10 @@
 
 """Live Linkerd service-mesh conformance tests for POAM-2026-080 (SC-8 / IA-3 / AC-3).
 
-Applies the repository's canonical ``deployment/k8s/service-account.yaml`` and
-``deployment/k8s/linkerd-mtls-policy.yaml`` manifests to a Linkerd-meshed
-Kubernetes cluster (e.g. ``kind`` + Linkerd in CI via ``make test-mesh``) and
-verifies over real Linkerd proxy sidecars that:
+Renders and applies the repository's canonical ``infra/modules/gateway/mesh-policy``
+Helm chart and test workload ServiceAccounts to a Linkerd-meshed Kubernetes
+cluster (e.g. ``kind`` + Linkerd in CI via ``make test-mesh``) and verifies
+over real Linkerd proxy sidecars that:
 
 1. The Linkerd CRD validation webhooks accept ``Server``, ``HTTPRoute``,
    ``MeshTLSAuthentication``, ``NetworkAuthentication``, and
@@ -40,16 +40,17 @@ from __future__ import annotations
 import json
 import os
 import pathlib
+import shutil
 import subprocess
 import textwrap
 
 import pytest
+import yaml
 
 pytestmark = [pytest.mark.integration]
 
 REPO_ROOT = pathlib.Path(__file__).resolve().parents[2]
-SERVICE_ACCOUNT_MANIFEST = REPO_ROOT / "deployment" / "k8s" / "service-account.yaml"
-LINKERD_POLICY_MANIFEST = REPO_ROOT / "deployment" / "k8s" / "linkerd-mtls-policy.yaml"
+MESH_POLICY_CHART_DIR = REPO_ROOT / "infra" / "modules" / "gateway" / "mesh-policy"
 
 NAMESPACE = "governance-stack"
 VLLM_NAMESPACE = "vllm-inference"
@@ -75,6 +76,146 @@ def _kubectl(
         timeout=timeout,
         check=check,
     )
+
+
+def render_mesh_policy_chart(
+    namespace: str = NAMESPACE,
+    trusted_identities: list[str] | None = None,
+) -> str:
+    """Render ``infra/modules/gateway/mesh-policy`` with the given values."""
+    identities = (
+        [ADVISOR_SPIFFE_ID] if trusted_identities is None else list(trusted_identities)
+    )
+    if shutil.which("helm") is not None:
+        set_args: list[str] = []
+        for idx, identity in enumerate(identities):
+            set_args.extend(["--set-string", f"trustedIdentities[{idx}]={identity}"])
+        res = subprocess.run(
+            [
+                "helm",
+                "template",
+                "mesh-policy",
+                str(MESH_POLICY_CHART_DIR),
+                "--namespace",
+                namespace,
+                *set_args,
+            ],
+            capture_output=True,
+            text=True,
+            timeout=30,
+            check=True,
+        )
+        return res.stdout
+
+    values = yaml.safe_load((MESH_POLICY_CHART_DIR / "values.yaml").read_text())
+    open_paths = list(values["openExactPaths"])
+    open_matches = "\n".join(
+        f"        - path:\n            type: Exact\n            value: {json.dumps(p)}"
+        for p in open_paths
+    )
+    docs = [
+        textwrap.dedent(
+            f"""\
+            apiVersion: policy.linkerd.io/v1beta3
+            kind: Server
+            metadata:
+              name: gateway-http
+              namespace: {namespace}
+            spec:
+              podSelector:
+                matchLabels:
+                  app: gateway
+              port: http
+            """
+        ),
+        (
+            "apiVersion: policy.linkerd.io/v1beta3\n"
+            "kind: HTTPRoute\n"
+            "metadata:\n"
+            "  name: gateway-open\n"
+            f"  namespace: {namespace}\n"
+            "spec:\n"
+            "  parentRefs:\n"
+            "    - group: policy.linkerd.io\n"
+            "      kind: Server\n"
+            "      name: gateway-http\n"
+            "  rules:\n"
+            "    - matches:\n"
+            f"{open_matches}\n"
+        ),
+        textwrap.dedent(
+            f"""\
+            apiVersion: policy.linkerd.io/v1beta3
+            kind: HTTPRoute
+            metadata:
+              name: gateway-gated
+              namespace: {namespace}
+            spec:
+              parentRefs:
+                - group: policy.linkerd.io
+                  kind: Server
+                  name: gateway-http
+              rules:
+                - matches:
+                    - path:
+                        type: PathPrefix
+                        value: /
+            ---
+            apiVersion: policy.linkerd.io/v1alpha1
+            kind: NetworkAuthentication
+            metadata:
+              name: gateway-any-network
+              namespace: {namespace}
+            spec:
+              networks:
+                - cidr: 0.0.0.0/0
+                - cidr: ::/0
+            ---
+            apiVersion: policy.linkerd.io/v1alpha1
+            kind: AuthorizationPolicy
+            metadata:
+              name: gateway-open
+              namespace: {namespace}
+            spec:
+              targetRef:
+                group: policy.linkerd.io
+                kind: HTTPRoute
+                name: gateway-open
+              requiredAuthenticationRefs:
+                - group: policy.linkerd.io
+                  kind: NetworkAuthentication
+                  name: gateway-any-network
+            """
+        ),
+    ]
+    if identities:
+        id_lines = "\n".join(f"    - {json.dumps(i)}" for i in identities)
+        docs.append(
+            f"apiVersion: policy.linkerd.io/v1alpha1\n"
+            f"kind: MeshTLSAuthentication\n"
+            f"metadata:\n"
+            f"  name: gateway-trusted-clients\n"
+            f"  namespace: {namespace}\n"
+            f"spec:\n"
+            f"  identities:\n"
+            f"{id_lines}\n"
+            f"---\n"
+            f"apiVersion: policy.linkerd.io/v1alpha1\n"
+            f"kind: AuthorizationPolicy\n"
+            f"metadata:\n"
+            f"  name: gateway-gated\n"
+            f"  namespace: {namespace}\n"
+            f"spec:\n"
+            f"  targetRef:\n"
+            f"    group: policy.linkerd.io\n"
+            f"    kind: HTTPRoute\n"
+            f"    name: gateway-gated\n"
+            f"  requiredAuthenticationRefs:\n"
+            f"    - group: policy.linkerd.io\n"
+            f"      kind: MeshTLSAuthentication\n"
+            f"      name: gateway-trusted-clients\n"
+        )
+    return "\n---\n".join(docs)
 
 
 def _require_linkerd_cluster() -> None:
@@ -103,7 +244,7 @@ def _require_linkerd_cluster() -> None:
 
 @pytest.fixture(scope="module")
 def linkerd_mesh_fixture():
-    """Apply CAGE Linkerd policy manifests (when absent) and deploy meshed probe workloads."""
+    """Apply CAGE Linkerd policy chart (when absent) and deploy meshed probe workloads."""
     _require_linkerd_cluster()
 
     for ns in (NAMESPACE, VLLM_NAMESPACE):
@@ -120,23 +261,22 @@ def linkerd_mesh_fixture():
             )
             _kubectl("apply", "-f", "-", input_text=ns_yaml)
 
-    # Only apply static manifests when the cluster does not already have them
-    # (e.g., bare kind in CI). On live GKE clusters, Terraform manages KSA
-    # Workload Identity annotations and Linkerd policy resources.
-    if (
-        _kubectl(
-            "get",
-            "sa",
-            "cage-gateway-sa",
-            "cage-advisor-sa",
-            "cage-vllm-sa",
-            "-n",
-            NAMESPACE,
-            check=False,
-        ).returncode
-        != 0
-    ):
-        _kubectl("apply", "-f", str(SERVICE_ACCOUNT_MANIFEST))
+    # Create probe ServiceAccounts when absent (e.g. bare kind in CI). On live
+    # GKE clusters, Terraform manages KSA Workload Identity annotations and
+    # Linkerd policy resources via infra/targets/gcp-gke/iam.tf and
+    # infra/modules/gateway/mesh-policy.
+    for sa_name in ("cage-gateway-sa", "cage-advisor-sa", "cage-vllm-sa"):
+        if _kubectl("get", "sa", sa_name, "-n", NAMESPACE, check=False).returncode != 0:
+            sa_yaml = textwrap.dedent(
+                f"""\
+                apiVersion: v1
+                kind: ServiceAccount
+                metadata:
+                  name: {sa_name}
+                  namespace: {NAMESPACE}
+                """
+            )
+            _kubectl("apply", "-f", "-", input_text=sa_yaml)
 
     if (
         _kubectl(
@@ -149,7 +289,12 @@ def linkerd_mesh_fixture():
         ).returncode
         != 0
     ):
-        _kubectl("apply", "-f", str(LINKERD_POLICY_MANIFEST))
+        _kubectl(
+            "apply",
+            "-f",
+            "-",
+            input_text=render_mesh_policy_chart(namespace=NAMESPACE),
+        )
 
     gw_img_res = _kubectl(
         "get",
@@ -389,7 +534,7 @@ def _exec_http_get(
 
 
 def test_linkerd_manifests_accepted_by_apiserver(linkerd_mesh_fixture) -> None:
-    """Verify Linkerd policy resources from deployment/k8s/linkerd-mtls-policy.yaml are active."""
+    """Verify Linkerd policy resources rendered from infra/modules/gateway/mesh-policy are active."""
     expected_resources = [
         "server.policy.linkerd.io/gateway-http",
         "httproute.policy.linkerd.io/gateway-open",

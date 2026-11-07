@@ -101,8 +101,8 @@ TRUSTED_GEAP_PRINCIPALS_ENV = "CAGE_TRUSTED_GEAP_AGENT_PRINCIPALS"
 #: Paths that need no caller identity. Everything else is refused unless the
 #: caller presents a trusted identity. Only exact paths can be open: there is
 #: no prefix form, so no route family is ever open by accident. Keep in sync
-#: with the gateway's open HTTPRoute (deployment/k8s/linkerd-mtls-policy.yaml
-#: and infra/modules/gateway/mesh-policy); a test enforces that.
+#: with the gateway's open HTTPRoute (infra/modules/gateway/mesh-policy); a
+#: test enforces that.
 OPEN_EXACT_PATHS: frozenset[str] = frozenset(
     {
         "/health",

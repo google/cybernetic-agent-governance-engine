@@ -248,13 +248,13 @@ verify-tla:
 # NeMo ConfigMap sync (R-22 fix)
 # ---------------------------------------------------------------------------
 
-## Regenerate deployment/k8s/nemo-rails-configmap.yaml from config/rails/.
+## Regenerate infra/modules/nemo_guardrails/nemo-rails-configmap.yaml from config/rails/.
 ## Run this after any change to config/rails/actions.py, definitions.co,
 ## main_logic.co, config.yml, or prompts.yml.
 ##
 ## Requires: kubectl, python3
 update-nemo-configmap:
-	@echo "==> Regenerating nemo-rails-configmap.yaml from config/rails/ ..."
+	@echo "==> Regenerating infra/modules/nemo_guardrails/nemo-rails-configmap.yaml from config/rails/ ..."
 	@kubectl create configmap nemo-rails-config \
 	  --namespace=governance-stack \
 	  --from-file=actions.py=config/rails/actions.py \
@@ -263,10 +263,9 @@ update-nemo-configmap:
 	  --from-file=main_logic.co=config/rails/main_logic.co \
 	  --from-file=prompts.yml=config/rails/prompts.yml \
 	  --dry-run=client -o yaml \
-	  > deployment/k8s/nemo-rails-configmap.yaml
-	@echo "✅ deployment/k8s/nemo-rails-configmap.yaml updated."
-	@echo "   Review the diff and commit; then apply with:"
-	@echo "   kubectl apply -f deployment/k8s/nemo-rails-configmap.yaml"
+	  > infra/modules/nemo_guardrails/nemo-rails-configmap.yaml
+	@echo "✅ infra/modules/nemo_guardrails/nemo-rails-configmap.yaml updated."
+	@echo "   Review the diff and commit; Terraform reconciles kubernetes_config_map.nemo_config from this file."
 
 # ---------------------------------------------------------------------------
 # License notices

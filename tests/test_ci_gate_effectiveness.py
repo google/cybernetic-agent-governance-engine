@@ -733,9 +733,10 @@ def test_gate_nemo_freshness_catches_planted_configmap_drift(tmp_path: Path) -> 
     assert clean_proc.returncode == 0, clean_proc.stdout + clean_proc.stderr
 
     # Fails on planted drift
-    (tmp_path / "deployment" / "k8s").mkdir(parents=True)
+    configmap_dir = tmp_path / "infra" / "modules" / "nemo_guardrails"
+    configmap_dir.mkdir(parents=True)
     (tmp_path / "config" / "rails").mkdir(parents=True)
-    (tmp_path / "deployment" / "k8s" / "nemo-rails-configmap.yaml").write_text(
+    (configmap_dir / "nemo-rails-configmap.yaml").write_text(
         "data:\n  actions.py: |\n    x = 1\n",
         encoding="utf-8",
     )
