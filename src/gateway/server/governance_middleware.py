@@ -785,7 +785,8 @@ async def validate_action_endpoint(
     Returns:
         ``ALLOW`` / ``NARROW`` (NARROW carries ``narrowed_params``) as a signed
         governance envelope; ``REQUIRE_APPROVAL`` with the ``deferred_id`` of
-        the gateway-held approval token; ``DEFER`` (202 for external holds);
+        the gateway-held approval token; ``DEFER`` with the ``defer_id`` of
+        the parked hold;
         or 403 ``DENIED`` with a refusal receipt.
     """
     # GHSA-v3h4-8458-5ww3: the caller is authenticated before any processing by
@@ -830,40 +831,6 @@ async def validate_action_endpoint(
             params=body.params,
             policy_version_id=body.policy_version_id,
         )
-
-        # Phase 1, §3.2: HTTP 202 Accepted for normative provider ESCALATE decisions
-        # When the verdict is DEFER and it's an external provider escalation, return
-        # HTTP 202 with an async receipt body so clients know to poll for resolution.
-        # Detection: defer_reason == "EXTERNAL_HOLD" OR
-        #            is_external_hold == True (explicit marker). The EU fria tier
-        #            reports a provider hold as HITL → REQUIRE_APPROVAL instead.
-        verdict = result.get("verdict")
-        defer_reason = result.get("defer_reason", "")
-        is_external_hold = result.get("is_external_hold", False)
-
-        if verdict == "DEFER" and (
-            defer_reason == "EXTERNAL_HOLD" or is_external_hold is True
-        ):
-            defer_id = result.get("defer_id", "")
-            receipt_payload = {
-                "schema_version": "1.0.0",
-                "defer_id": defer_id,
-                "status": "pending_review",
-                "poll_url": f"/v1/defer/{defer_id}",
-                "verdict": "DEFER",
-                "defer_reason": "EXTERNAL_HOLD",
-                "ttl_seconds": 300,  # External provider escalations use 5-minute TTL (configurable per-provider)
-                "latency_ms": result.get("latency_ms", 0),
-            }
-            logger.info(
-                "🔔 Normative provider ESCALATE → HTTP 202: defer_id=%s action=%s",
-                defer_id,
-                body.action,
-            )
-            return JSONResponse(
-                status_code=202,
-                content=receipt_payload,
-            )
 
         # ADR-008 Phase 3: Build canonical signed envelope for all HTTP 200 verdicts
         from src.gateway.governance.contracts import Violation

@@ -28,9 +28,9 @@ Verifies:
 import pytest
 
 from src.gateway.governance.defer_queue import (
+    _DEFAULT_HOLD_TTL,
     DeferReason,
     DeferToken,
-    create_external_hold_token,
     get_required_quorum,
 )
 
@@ -66,22 +66,31 @@ def test_external_hold_token_shape_is_vendor_agnostic():
         "hold_ttl_seconds": 300,
     }
 
-    # Both providers should produce identical token structures
-    # (apart from the finding message, which is deliberately different)
-    token_01 = create_external_hold_token(
+    # Both providers produce identical DeferToken structures when parked with EXTERNAL_HOLD
+    token_01 = DeferToken(
         thread_id="thread-001",
+        defer_reason=DeferReason.EXTERNAL_HOLD,
         confidence_score=0.82,
-        opa_input_snapshot={"action": "execute_trade", "amount_usd": 50000},
-        finding_message=provider_01_finding["message"],
+        opa_input_snapshot={
+            "action": "execute_trade",
+            "amount_usd": 50000,
+            "_external_hold_finding_message": provider_01_finding["message"],
+        },
         ttl_seconds=provider_01_finding["hold_ttl_seconds"],
+        aarm_vector="AARM-V8",
     )
 
-    token_06 = create_external_hold_token(
+    token_06 = DeferToken(
         thread_id="thread-001",
+        defer_reason=DeferReason.EXTERNAL_HOLD,
         confidence_score=0.82,
-        opa_input_snapshot={"action": "execute_trade", "amount_usd": 50000},
-        finding_message=provider_06_finding["message"],
+        opa_input_snapshot={
+            "action": "execute_trade",
+            "amount_usd": 50000,
+            "_external_hold_finding_message": provider_06_finding["message"],
+        },
         ttl_seconds=provider_06_finding["hold_ttl_seconds"],
+        aarm_vector="AARM-V8",
     )
 
     # Verify structural identity
@@ -104,26 +113,25 @@ def test_external_hold_token_shape_is_vendor_agnostic():
 
 
 def test_external_hold_token_respects_custom_ttl():
-    """When hold_ttl_seconds is provided in the finding, it overrides the default."""
-    # Provider specifies custom 600s TTL
-    token = create_external_hold_token(
+    """When custom ttl_seconds is provided on EXTERNAL_HOLD DeferToken, it overrides the default."""
+    token = DeferToken(
         thread_id="thread-custom-ttl",
+        defer_reason=DeferReason.EXTERNAL_HOLD,
         confidence_score=0.75,
         opa_input_snapshot={"action": "execute_trade"},
-        finding_message="Custom TTL hold",
-        ttl_seconds=600,  # 10 minutes
+        ttl_seconds=600,
     )
     assert token.ttl_seconds == 600
 
 
-def test_external_hold_token_uses_default_ttl_when_not_specified():
-    """When hold_ttl_seconds is None, the default 300s TTL is used."""
-    token = create_external_hold_token(
+def test_external_hold_token_uses_hold_ttl_constant():
+    """_DEFAULT_HOLD_TTL (300s) applies cleanly to EXTERNAL_HOLD DeferToken construction."""
+    token = DeferToken(
         thread_id="thread-default-ttl",
+        defer_reason=DeferReason.EXTERNAL_HOLD,
         confidence_score=0.78,
         opa_input_snapshot={"action": "execute_trade"},
-        finding_message="Default TTL hold",
-        ttl_seconds=None,  # No provider override
+        ttl_seconds=_DEFAULT_HOLD_TTL,
     )
     assert token.ttl_seconds == 300
 

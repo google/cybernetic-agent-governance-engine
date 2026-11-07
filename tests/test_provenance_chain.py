@@ -300,7 +300,7 @@ class TestVerifyChainIntegrity:
             "pii_sanitizer",
             "routing_seal",
             "confabulation_scorer",
-            "hitl_escalator",
+            "defer_queue",
             "provenance_chain",
             "audit_logger",
         ]

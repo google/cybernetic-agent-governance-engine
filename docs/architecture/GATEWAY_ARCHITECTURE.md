@@ -414,7 +414,6 @@ The following governance modules ([`src/gateway/governance/`](../../src/gateway/
 | Module | AI 600-1 Control | Architectural Role | Status |
 |---|---|---|---|
 | [`confabulation_scorer.py`](../../src/gateway/governance/confabulation_scorer.py) | §2.1 Confabulation | Emits Langfuse confabulation-risk scores (`risk = 1.0 - confidence`); blocks when confidence falls below minimum. | Active |
-| [`hitl_escalator.py`](../../src/gateway/governance/hitl_escalator.py) | §2.5 Human-AI Configuration | Generates structured `EscalationRecord` entries for the DeferQueue (Redis `db=1`) with 4-hour SLA resolution window. | Active |
 | [`prompt_injection_detector.py`](../../src/gateway/governance/prompt_injection_detector.py) | §2.3 Prompt Injection | 14 structural regex patterns detecting ChatML injection, jailbreaks, and persona overrides; fails fast on first match. | Active |
 | [`provenance_chain.py`](../../src/gateway/governance/provenance_chain.py) | §2.7 Information Integrity | Cryptographic SHA-256 hash chain with RFC 8785 JCS canonicalization tracking every governance decision to immutable storage. | Active |
 | [`text_filter.py`](../../src/gateway/governance/text_filter.py) | §2.6 CBRN Content | Stateless $O(n)$ Aho-Corasick keyword scanner for hazardous concepts and prompt abuse strings. | Active |
@@ -445,7 +444,6 @@ run_pipeline()  (sequential)
       │
       ▼ (parallel / adjacent utilities — not sequential pipeline tiers)
 [confabulation_scorer.py] ← Langfuse confabulation-risk score payload builder
-[hitl_escalator.py]       ← DEFER-queue / human-escalation helper functions
 [pii_sanitizer.py]        ← Pre-ledger PII redaction inside uca_logger.py before WORM write
 [provenance_chain.py]     ← SHA-256 hash chain record per governance node
       │

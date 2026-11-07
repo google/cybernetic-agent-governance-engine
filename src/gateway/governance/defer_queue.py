@@ -87,7 +87,7 @@ _DEFAULT_HOLD_TTL = 300  # 5-minute default TTL for external hold escalations
 #: The guard is checked on the snapshot ``_cas_update`` compares by revision.
 #: Every write that moves a token out of these statuses (``approve``,
 #: ``_resolve``) goes through ``_cas_update`` and bumps the revision;
-#: ``atomic_resolve`` writes only status (and ``op_id``) but only ever leaves
+#: ``_atomic_resolve`` writes only status (and ``op_id``) but only ever leaves
 #: RESOLVED, which no entry below accepts.
 _RESOLVABLE_FROM: dict[str, frozenset[str]] = {
     "INJECTED": frozenset({"PARKED"}),
@@ -117,7 +117,7 @@ _RESOLVABLE_FROM: dict[str, frozenset[str]] = {
 #:   {0, actual_rev}   — Conflict: current revision != expected revision
 #:
 #: The ``op_id`` field holds the id of the last write to the hash (park,
-#: ``_cas_update`` or ``atomic_resolve``). If the revision has moved but
+#: ``_cas_update`` or ``_atomic_resolve``). If the revision has moved but
 #: ``op_id`` is still this update's, the move was this update: the client
 #: re-sent the script after a lost reply. The script then returns the success
 #: it already had instead of a conflict.
@@ -961,54 +961,40 @@ class DeferQueue:
         return None
 
     # ------------------------------------------------------------------
-    # atomic_resolve — atomic CAS ticket invalidation for idempotency
+    # _atomic_resolve — private atomic CAS helper for consume_approval
     # ------------------------------------------------------------------
 
-    async def atomic_resolve(
+    async def _atomic_resolve(
         self,
         ticket_id: str,
         expected_status: str = "PENDING",
         new_status: str = "RESOLVED",
     ) -> bool:
-        """Atomically transition a ticket status via Lua CAS (compare-and-swap).
+        """Private Lua compare-and-swap helper for single-use status transitions.
 
-        Guarantees idempotency for resume operations: only the first resume
-        attempt succeeds. Subsequent attempts return False, enabling the
-        caller to return HTTP 409 Conflict to prevent double-execution.
-
-        This is the atomic primitive that prevents "double-spending" of
-        approval tickets — a core safety invariant for HITL resumption flows.
+        Invoked internally by :meth:`consume_approval` to atomically transition
+        an approved ``HITL_REQUIRED`` token from ``RESOLVED`` to ``CONSUMED`` so
+        that at most one concurrent caller can spend an approval. Not part of
+        the public ``DeferQueue`` surface.
 
         Implementation:
-            Uses a Lua script executed on Redis to ensure atomicity across
-            concurrent resume requests. The script checks current status and
-            only updates if it matches the expected value. A random ``op_id``
-            stored with the new status lets a re-send of this same call (after
-            a lost reply) recognise its own transition and return True again.
+            Executes a single-key Redis Lua script that updates ``status`` only
+            when it matches ``expected_status``. A random per-attempt ``op_id``
+            stored alongside ``status`` allows a pooled Redis client re-sending
+            the command after a lost reply to recognise its own transition and
+            return ``True`` while rejecting any distinct concurrent or replayed
+            caller.
 
         Args:
-            ticket_id:       The defer_id or ticket identifier to resolve.
+            ticket_id:       The ``defer_id`` to transition.
             expected_status: Status value required for transition (default: "PENDING").
             new_status:      Target status value (default: "RESOLVED").
 
         Returns:
-            True if the status was transitioned from expected_status to new_status.
-            False if the current status does not match expected_status (already
-            resolved, expired, or never existed).
-
-        Note:
-            This method only updates the status field. The caller is responsible
-            for updating the full token record (resolved_at_utc, resolution, etc.)
-            after atomic_resolve returns True.
-
-        Example::
-
-            # In a resume endpoint:
-            if not await defer_queue.atomic_resolve(ticket_id):
-                # Already resolved or expired
-                raise HTTPException(status_code=409, detail="Ticket already resolved")
-
-            # Proceed with graph resumption...
+            True if the status was transitioned from ``expected_status`` to
+            ``new_status`` (or matched this call's ``op_id`` on retry).
+            False if the current status does not match ``expected_status`` or on
+            Redis error (fail-closed).
         """
         key = f"{_KEY_PREFIX}{ticket_id}"
 
@@ -1147,7 +1133,7 @@ class DeferQueue:
         Re-checks :meth:`redeemable_approval` (so a mismatched request, or a
         token that expired since it was checked, does not burn the approval),
         then spends it with the ``RESOLVED -> CONSUMED`` compare-and-swap in
-        :meth:`atomic_resolve`: of any number of concurrent callers at most
+        :meth:`_atomic_resolve`: of any number of concurrent callers at most
         one receives the token. A ``RESOLVED`` approval is immutable (neither
         ``approve()`` nor ``_resolve()`` leaves ``RESOLVED``), so the token
         checked is the token consumed.
@@ -1160,7 +1146,7 @@ class DeferQueue:
         token = await self.redeemable_approval(defer_id, action=action, covers=covers)
         if token is None:
             return None
-        if not await self.atomic_resolve(
+        if not await self._atomic_resolve(
             defer_id, expected_status="RESOLVED", new_status="CONSUMED"
         ):
             return None  # another caller consumed it first (replay)
@@ -1573,82 +1559,6 @@ async def open_defer_queue() -> AsyncIterator[DeferQueue]:
     reusing one pooled client and cached Lua script SHA across calls.
     """
     yield get_shared_defer_queue()
-
-
-# ---------------------------------------------------------------------------
-# Normative provider escalation token factory
-# ---------------------------------------------------------------------------
-
-
-def create_external_hold_token(
-    thread_id: str,
-    confidence_score: float,
-    opa_input_snapshot: dict[str, Any],
-    finding_message: str | None = None,
-    ttl_seconds: int | None = None,
-) -> DeferToken:
-    """Create a DeferToken for external provider escalation decisions.
-
-    This factory ensures the correct ``DeferReason.EXTERNAL_HOLD`` reason
-    and applies the provider-specified TTL (or the 300-second default).
-
-    Args:
-        thread_id:           LangGraph thread ID for checkpoint correlation.
-        confidence_score:    Model/consensus confidence at decision time.
-        opa_input_snapshot:  Sanitized OPA input dict (PII stripped).
-        finding_message:     Optional message from the EXTERNAL_HOLD finding.
-        ttl_seconds:         Optional provider-specified TTL (default: 300s).
-
-    Returns:
-        A fully constructed DeferToken ready for ``DeferQueue.park()``.
-
-    Example::
-
-        from src.gateway.governance.defer_queue import (
-            create_external_hold_token, DeferQueue
-        )
-
-        token = create_external_hold_token(
-            thread_id="thread-123",
-            confidence_score=0.82,
-            opa_input_snapshot={"action": "execute_action", "amount": 50000},
-            ttl_seconds=600,
-        )
-        await queue.park(token)
-    """
-    return DeferToken(
-        thread_id=thread_id,
-        defer_reason=DeferReason.EXTERNAL_HOLD,
-        confidence_score=confidence_score,
-        opa_input_snapshot={
-            **opa_input_snapshot,
-            # Embed the finding message for audit purposes (non-sensitive)
-            "_external_hold_finding_message": finding_message or "",
-        },
-        ttl_seconds=ttl_seconds if ttl_seconds is not None else _DEFAULT_HOLD_TTL,
-        aarm_vector="AARM-V8",  # CSA AARM External Hold (tri-state provider escalation)
-    )
-
-
-def is_external_hold_finding(finding: dict[str, Any]) -> bool:
-    """Check if a validation finding is an external provider HOLD finding.
-
-    A finding is an external hold if it has:
-      - ``code`` == "EXTERNAL_HOLD"
-      - ``needs_human_review`` == True
-
-    Provider adapters use it to mark an escalation that needs a human.
-
-    Args:
-        finding: A single finding dict from ``ValidationResult.findings``.
-
-    Returns:
-        True if the finding is an EXTERNAL_HOLD, False otherwise.
-    """
-    return (
-        finding.get("code") == "EXTERNAL_HOLD"
-        and finding.get("needs_human_review", False) is True
-    )
 
 
 # ---------------------------------------------------------------------------

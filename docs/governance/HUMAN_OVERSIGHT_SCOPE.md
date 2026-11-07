@@ -25,8 +25,8 @@ CAGE automatically escalates governance decisions to human review when any of th
 
 | Trigger | Code Location | Threshold / Condition |
 |---|---|---|
-| **Consensus threshold exceeded** | `hitl_escalator.py` `should_escalate_for_consensus()` | Trade amount > $10,000 USD (`consensus.threshold_usd` in `governance_thresholds.json`) |
-| **Model confidence low** | `hitl_escalator.py` `should_escalate_for_confidence()` | Confidence < 0.95 (CTRL_AGT_001) |
+| **Consensus notional / critic split** | [`src/cage_finance/tiers/consensus_tier.py`](../../src/cage_finance/tiers/consensus_tier.py) (`ConsensusTierPlugin`) + [`src/gateway/governance/consensus/engine.py`](../../src/gateway/governance/consensus/engine.py) | Trade amount > $10,000 USD (`domains.finance.consensus.threshold_usd` in `config/governance_thresholds.json`) with critic split (`ViolationKind.HITL` → `REQUIRE_APPROVAL`) |
+| **Model confidence in approval band** | [`src/gateway/governance/governor/stages/confidence.py`](../../src/gateway/governance/governor/stages/confidence.py) (`ConfidenceStage`) | `0.70 <= confidence < 0.95` (`CTRL_AGT_001` → `ViolationKind.HITL` / `REQUIRE_APPROVAL`; `< 0.70` emits `ViolationKind.DEFERRABLE` → turn-terminal `DEFER` hold) |
 | **CausalGatekeeper block** | `src/gateway/governance/causal/gatekeeper.py` `causal_safety_check()` | World-model p-value < `get_causal_lock_p_value_threshold()` (0.05) or marginal risk boundary exceeded |
 | **OPA MANUAL_REVIEW decision** | `src/cage_finance/opa/trade_governance.rego` | OPA policy (package `trade.governance`) returns `"MANUAL_REVIEW"` |
 | **Governance confidence low** | `src/gateway/governance/consensus/engine.py` `ConsensusEngine` | ConsensusEngine self-reported confidence < threshold |
@@ -36,75 +36,42 @@ CAGE automatically escalates governance decisions to human review when any of th
 
 ## DeferQueue Schema
 
-Escalation records written to the DeferQueue have the following schema (matches
-[`DeferToken`](../../src/gateway/governance/defer_queue.py) Pydantic model and
-[`EscalationRecord`](../../src/gateway/governance/hitl_escalator.py) dataclass):
+Parked governance records use the [`DeferToken`](../../src/gateway/governance/defer_queue.py)
+Pydantic model and [`DeferReason`](../../src/gateway/governance/defer_queue.py) enum in
+[`src/gateway/governance/defer_queue.py`](../../src/gateway/governance/defer_queue.py):
 
-```json
-{
-  "event": "hitl_escalation",
-  "trace_id": "<langfuse-trace-id>",
-  "reason": "<EscalationReason.value>",
-  "amount_usd": 12500.00,
-  "confidence": 0.87,
-  "reviewer_queue": "compliance-review",
-  "status": "pending_review",
-  "timestamp": "2026-06-23T14:00:00.000000Z",
-  "escalated_at": "2026-06-23T14:00:00.000000Z"
-}
-```
+| `DeferReason` | Governance Disposition | Resolution Semantics |
+|---|---|---|
+| `HITL_REQUIRED` | `REQUIRE_APPROVAL` | Human dual-control approval via `DeferQueue.approve()` (`ApprovalRecord` quorum) and single-use consumption via `DeferQueue.consume_approval()` |
+| `CONFIDENCE_BELOW_THRESHOLD` | `DEFER` | Turn-terminal hold when `confidence < 0.70` (`ViolationKind.DEFERRABLE`); not overridable by human dual-control approval |
+| `WARRANT_INELIGIBLE` | `DEFER` | Turn-terminal hold when a governing warrant is missing, expired, or revoked; requires warrant re-issuance and a fresh request |
+| `EXTERNAL_HOLD` | `DEFER` | External normative provider escalation (quorum = 3; routes to DLQ on TTL expiry via `DeferQueue.expire_stale()`) |
+| `FTRA_IRREVERSIBLE_TERMINAL` | `REQUIRE_APPROVAL` / graph park | Pre-execution FTRA terminal reachability hold (`CTRL_FTRA_001`) |
 
-`EscalationReason` enum values (from [`hitl_escalator.py`](../../src/gateway/governance/hitl_escalator.py)):
-
-| Value | Trigger |
-|---|---|
-| `CONSENSUS_THRESHOLD` | Trade amount exceeds consensus threshold |
-| `CONFIDENCE_LOW` | Model confidence below 0.95 |
-| `CAUSAL_BLOCK` | CausalGatekeeper marginal risk boundary or placebo refutation failure |
-| `MANUAL_REVIEW` | OPA policy returned `"MANUAL_REVIEW"` |
-| `GOVERNANCE_CONFIDENCE_LOW` | ConsensusEngine self-reported confidence below threshold |
-
-Controller-boundary `REQUIRE_APPROVAL` verdicts (including out-of-envelope or irreversible FTRA findings such as `FTRA_REGISTERED_IRREVERSIBLE`, `FTRA_REGISTERED_EXTERNALLY_REVERSIBLE`, `FTRA_UNREGISTERED_ACTION`, `FTRA_MAGNITUDE_EXCEEDS_ENVELOPE`, and `FTRA_CONFIDENCE_BELOW_ENVELOPE`) are parked by `SymbolicGovernor.validate_action()` as `DeferToken` records with `DeferReason.HITL_REQUIRED` in [`defer_queue.py`](../../src/gateway/governance/defer_queue.py), returning `deferred_id` for human approval via `DeferQueue.approve()`. Multi-step plan trajectories deferred by `PlanGraphAnalyzer` use `DeferReason.FTRA_COMPOUND_IRREVERSIBLE`, while legacy terminal-state tokens (`DeferReason.FTRA_IRREVERSIBLE_TERMINAL`) cannot be released via automated replay (`replay_evaluate()`).
+Controller-boundary `REQUIRE_APPROVAL` verdicts (including notional/quorum consensus escalations from [`src/cage_finance/tiers/consensus_tier.py`](../../src/cage_finance/tiers/consensus_tier.py), `[0.70, 0.95)` confidence escalations from [`src/gateway/governance/governor/stages/confidence.py`](../../src/gateway/governance/governor/stages/confidence.py), and out-of-envelope or irreversible FTRA findings such as `FTRA_REGISTERED_IRREVERSIBLE`, `FTRA_REGISTERED_EXTERNALLY_REVERSIBLE`, `FTRA_UNREGISTERED_ACTION`, `FTRA_MAGNITUDE_EXCEEDS_ENVELOPE`, and `FTRA_CONFIDENCE_BELOW_ENVELOPE`) are parked by `SymbolicGovernor.validate_action()` as `DeferToken` records with `DeferReason.HITL_REQUIRED` in [`defer_queue.py`](../../src/gateway/governance/defer_queue.py), returning `deferred_id` for human approval via `DeferQueue.approve()` and single-use redemption via `DeferQueue.consume_approval()`.
 
 ---
 
-## Human Override Audit Trail (AI600-005)
+## Human Approval & Audit Trail (AI600-005)
 
-When a human reviewer resolves an escalation, the `hitl_override_audit_span()`
-function in [`hitl_escalator.py`](../../src/gateway/governance/hitl_escalator.py)
-emits a structured OTel span with the following attributes. The function accepts
-an optional `region` parameter; when provided it resolves the regulatory citation
-via `get_hitl_regulatory_citation(region)` (from
-[`constants.py`](../../src/gateway/governance/constants.py) `HITL_CITATIONS`)
-and stamps the span accordingly:
-
-| OTel Attribute | Description |
-|---|---|
-| `hitl.reviewer_id` | Pseudonymised reviewer identifier (e.g. `reviewer-123`) |
-| `hitl.decision` | `OVERRIDE` \| `UPHOLD` \| `DEFER` |
-| `hitl.reason` | Free-text justification (≤500 chars) |
-| `hitl.original_escalation_reason` | `EscalationReason.value` that triggered escalation |
-| `hitl.override_ts` | ISO 8601 UTC timestamp of the override decision |
-| `hitl.trace_id` | Langfuse trace ID of the governed request |
-| `hitl.regulatory_citation` | Resolved from `HITL_CITATIONS[region]` (e.g. `"SR 26-2 §3.2"` for US_FED) |
-| `langfuse.trace.metadata.iso.control_id` | `A.8.4` |
-| `langfuse.trace.metadata.iso.requirement` | `Human Oversight and Control` |
-| `langfuse.trace.metadata.poam_ref` | `AI600-005` |
-
-Override decisions are persisted to the Langfuse compliance project as scored
-events, creating an immutable evidence trail for ISO 42001 §A.8.4 and AI 600-1
-§2.5 compliance.
+Each operator approval appended via `DeferQueue.approve()` in
+[`defer_queue.py`](../../src/gateway/governance/defer_queue.py) records a durable
+[`ApprovalRecord`](../../src/gateway/governance/defer_queue.py) bound to the parked
+decision (`approver_urn`, `approved_at_utc`, `auth_method`, `auth_principal_hash`,
+server-stamped `approved_barrier_preview`, and WebAuthn `client_data_json` /
+`challenge_binding`). Regional regulatory citations and SLA windows are defined in
+[`constants.py`](../../src/gateway/governance/constants.py) (`HITL_CITATIONS` /
+`HITL_CITATION_DEFAULT` and `HITL_SLA_HOURS` / `HITL_SLA_HOURS_DEFAULT`), while
+every post-approval execution decision enters the signed governance evidence chain.
 
 ---
 
 ## SLA Requirements by Region
 
-CAGE enforces different HITL resolution SLAs based on the active deployment
-region (`CAGE_DEPLOYMENT_REGION`). The SLA hours are defined in
-[`constants.py`](../../src/gateway/governance/constants.py)
-(`HITL_SLA_HOURS` dict) and resolved at call time by
-`get_hitl_sla_hours(region)` in
-[`hitl_escalator.py`](../../src/gateway/governance/hitl_escalator.py):
+CAGE defines region-specific HITL resolution SLAs based on the active deployment
+region (`CAGE_DEPLOYMENT_REGION`) in [`constants.py`](../../src/gateway/governance/constants.py)
+(`HITL_SLA_HOURS` and `HITL_CITATIONS`, with `HITL_SLA_HOURS_DEFAULT` and
+`HITL_CITATION_DEFAULT` fallbacks):
 
 | Region | SLA | Regulatory Authority |
 |---|---|---|
@@ -112,10 +79,6 @@ region (`CAGE_DEPLOYMENT_REGION`). The SLA hours are defined in
 | `EU_ECB` | **2 hours** | DORA Art. 10 — ICT incident management for major incidents |
 | `APAC_MAS` | **1 hour** | MAS FEAT §3.2 — Human oversight of AI decisions |
 | *(default)* | **4 hours** | ISO 42001 §A.8.4 fallback |
-
-The regulatory citation string for each region is returned by
-`get_hitl_regulatory_citation(region)` (`HITL_CITATIONS` dict) and is stamped
-on the OTel span at override time.
 
 > [!IMPORTANT]
 > SR 26-2 §3.2 (4-hour SLA) is a US Federal Reserve requirement that has no legal force outside `US_FED` deployments. EU_ECB and APAC_MAS deployments must use their respective regional SLAs.
@@ -139,8 +102,8 @@ FTRA uses the same floor to choose between `DEFER` and `REQUIRE_APPROVAL` on pla
 | Score | Violation | Disposition | Human Required? |
 |---|---|---|---|
 | score ≥ `confidence.agent_threshold` (0.95) | none | Confidence check clears | No |
-| `confidence.defer_floor` (0.70) ≤ score < 0.95 | `DEFER` (`CONFIDENCE_GREY_ZONE`) | DEFER — parked in the `DeferQueue` (`DeferReason.CONFIDENCE_GREY_ZONE`) for data hydration | No (automated hydration; token stays parked until it clears the floor or expires) |
-| score < `confidence.defer_floor` (0.70) | `HITL` (`LOW_CONFIDENCE`) | REQUIRE_APPROVAL — parked in `DeferQueue` (`DeferReason.HITL_REQUIRED`) for human approval | **Yes** |
+| `confidence.defer_floor` (0.70) ≤ score < 0.95 | `ViolationKind.HITL` (`CONFIDENCE_BELOW_THRESHOLD`) | `REQUIRE_APPROVAL` — parked in `DeferQueue` (`DeferReason.HITL_REQUIRED`) for human dual-control approval and consumed via `DeferQueue.consume_approval()` | **Yes** |
+| score < `confidence.defer_floor` (0.70) | `ViolationKind.DEFERRABLE` (`CONFIDENCE_BELOW_THRESHOLD`) | `DEFER` — turn-terminal hold parked in `DeferQueue` (`DeferReason.CONFIDENCE_BELOW_THRESHOLD`) | No (turn-terminal hold; not overridable by human approval) |
 
 On replay, `replay_evaluate()` in `defer_queue.py` re-checks the hydrated
 confidence against `get_confidence_defer_floor()`: at or above it the token is
@@ -231,7 +194,7 @@ telemetry staleness limit is `TELEMETRY_MAX_STALENESS_SECONDS` (300 s).
    The hint authorises nothing; an approval covers it because an approved trade may shrink,
    and the committing run re-verifies whatever executes.
 5. **Reviewer decides (`DeferQueue.approve` / `POST /defer/{deferred_id}/approve`):**
-   - `OVERRIDE` (`DeferQueue.approve`) — transitions the `DeferToken` to `DeferStatus.APPROVED`, stamps `approved_barrier_preview` from the server-stored `original_verdict_snapshot["barrier_preview"]` (never from caller input), and emits `hitl_override_audit_span()`
+   - `OVERRIDE` (`DeferQueue.approve`) — records an `ApprovalRecord`, stamps `approved_barrier_preview` from the server-stored `barrier_preview` (never from caller input), and transitions the `DeferToken` to `RESOLVED` (`resolution="ESCALATED"`) once quorum is met
    - `UPHOLD` (`DeferQueue.reject`) — confirms the block; decision is logged
    - `DEFER` — escalates to senior reviewer; re-queued with extended SLA
 6. **Single-commit execution (`execute_trade_action(..., deferred_id=...)` → `enforce_approved_governance` → `revalidate_post_hitl`):**
@@ -266,12 +229,13 @@ telemetry staleness limit is `TELEMETRY_MAX_STALENESS_SECONDS` (300 s).
 ## Scope Boundaries
 
 Human oversight is **in scope** for:
-- Financial trade decisions > $10,000 USD (FTRA out-of-envelope / consensus escalation)
-- Controller-boundary FTRA escalations (`FTRA_REGISTERED_IRREVERSIBLE`, `FTRA_REGISTERED_EXTERNALLY_REVERSIBLE`, `FTRA_UNREGISTERED_ACTION`, `FTRA_MAGNITUDE_EXCEEDS_ENVELOPE`, `FTRA_CONFIDENCE_BELOW_ENVELOPE`) parked as `DeferReason.HITL_REQUIRED`
-- Governance decisions with confidence < 0.70 (`LOW_CONFIDENCE`, `DeferReason.HITL_REQUIRED`)
+- Financial trade decisions > $10,000 USD (`ConsensusTierPlugin` in [`src/cage_finance/tiers/consensus_tier.py`](../../src/cage_finance/tiers/consensus_tier.py) / FTRA out-of-envelope `REQUIRE_APPROVAL` escalations)
+- Controller-boundary FTRA `REQUIRE_APPROVAL` escalations (`FTRA_REGISTERED_IRREVERSIBLE`, `FTRA_REGISTERED_EXTERNALLY_REVERSIBLE`, `FTRA_UNREGISTERED_ACTION`, `FTRA_MAGNITUDE_EXCEEDS_ENVELOPE`, `FTRA_CONFIDENCE_BELOW_ENVELOPE`) parked as `DeferReason.HITL_REQUIRED` and consumed via `DeferQueue.consume_approval()`
+- Governance decisions with confidence in `[0.70, 0.95)` (`ViolationKind.HITL`, `CONFIDENCE_BELOW_THRESHOLD`, parked as `DeferReason.HITL_REQUIRED`)
 - OPA policy `MANUAL_REVIEW` / `requires_hitl` decisions and EU AI Act Art. 27 `FRIA_EXTERNAL_HOLD` holds
 
 Human oversight is **out of scope** for:
+- Turn-terminal `DEFER` holds on confidence `< 0.70` (`DeferReason.CONFIDENCE_BELOW_THRESHOLD`) or missing/stale/revoked warrants (`DeferReason.WARRANT_INELIGIBLE`) — turn-terminal holds cannot be overridden by human dual-control approval
 - Tier 1 keyword blocks (Aho-Corasick) — these are bright-line safety controls that are not overridable
 - CBRN content blocks — these are immutable Cat-M controls (no override permitted without AO pre-approval)
 - SC-8 TLS validation failures — infrastructure-level controls not subject to HITL
@@ -282,7 +246,8 @@ Human oversight is **out of scope** for:
 
 ## Related Documents
 
-- [`src/gateway/governance/hitl_escalator.py`](../../src/gateway/governance/hitl_escalator.py) — HITL escalation functions including `hitl_override_audit_span()`, `get_hitl_sla_hours()`, `get_hitl_regulatory_citation()`
+- [`src/cage_finance/tiers/consensus_tier.py`](../../src/cage_finance/tiers/consensus_tier.py) — Finance consensus tier (`ConsensusTierPlugin`, `$10,000` notional threshold)
+- [`src/gateway/governance/governor/stages/confidence.py`](../../src/gateway/governance/governor/stages/confidence.py) — Tier 2 `ConfidenceStage` (`>= 0.95` pass, `[0.70, 0.95)` `REQUIRE_APPROVAL`, `< 0.70` turn-terminal `DEFER`)
 - [`src/gateway/governance/defer_queue.py`](../../src/gateway/governance/defer_queue.py) — DeferQueue implementation (Redis db=1, noeviction, `_DEFAULT_TTL = 3600 * 4`)
 - [`src/gateway/governance/constants.py`](../../src/gateway/governance/constants.py) — `HITL_SLA_HOURS` and `HITL_CITATIONS` dicts
 - [`compliance/lula/lula-validation-ai600-human-ai-config.yaml`](../../compliance/lula/lula-validation-ai600-human-ai-config.yaml) — Lula validation manifest

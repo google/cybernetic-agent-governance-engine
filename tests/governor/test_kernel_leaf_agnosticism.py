@@ -16,7 +16,6 @@
 
 from __future__ import annotations
 
-import inspect
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -47,12 +46,6 @@ from src.gateway.governance.confidence_claim_detector import (
 from src.gateway.governance.contracts import PluginContribution
 from src.gateway.governance.env_posture import DeploymentPosture
 from src.gateway.governance.governor.assembly import DecisionFlags, assemble_governor
-from src.gateway.governance.hitl_escalator import (
-    EscalationReason,
-    EscalationRequest,
-    escalate_to_human,
-    should_escalate_for_consensus,
-)
 from src.gateway.governance.ontology import STAMP_UCA, Constraint
 from src.gateway.governance.ontology_validator import KnowledgeGraphValidator
 from src.gateway.governance.opa_node_factory import (
@@ -205,33 +198,6 @@ class TestClaimDetectorsAgnosticism:
         conf_res = detect_confidence_claim(conf_text, execution_verbs=healthcare_verbs)
         assert conf_res.detected is True
         assert conf_res.pattern_matched == "skip_review_imperative"
-
-
-class TestHitlEscalatorAgnosticism:
-    """§4b.14: hitl_escalator uses magnitude and requires an explicit consensus threshold."""
-
-    def test_should_escalate_for_consensus_requires_explicit_threshold(self) -> None:
-        sig = inspect.signature(should_escalate_for_consensus)
-        assert list(sig.parameters.keys()) == ["magnitude", "threshold"]
-        for param in sig.parameters.values():
-            assert param.default is inspect.Parameter.empty
-
-        with pytest.raises(TypeError):
-            should_escalate_for_consensus(50.0)  # type: ignore[call-arg]
-
-        assert should_escalate_for_consensus(magnitude=50.0, threshold=25.0) is True
-        assert should_escalate_for_consensus(magnitude=20.0, threshold=25.0) is False
-
-    def test_escalation_request_uses_magnitude(self) -> None:
-        req = EscalationRequest(
-            trace_id="trace-hc-1",
-            reason=EscalationReason.CONSENSUS_THRESHOLD,
-            magnitude=75.0,
-            confidence=0.91,
-        )
-        record = escalate_to_human(req)
-        assert record["magnitude"] == 75.0
-        assert "amount_usd" not in record
 
 
 class TestAaifAdapterAgnosticism:

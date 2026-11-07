@@ -795,16 +795,12 @@ class TestGovernanceAppRoutes:
 
 
 # ===========================================================================
-# G. FlowSignal HTTP 202 receipt tests (Phase 1, §3.2)
+# G. Canonical envelope responses on /validate-action (ADR-008 Phase 3)
 # ===========================================================================
 
 
-class TestExternalHoldHttp202Receipt:
-    """Tests for HTTP 202 Accepted receipt on external hold ESCALATE decisions.
-
-    External provider escalation decisions (EXTERNAL_HOLD) return HTTP 202 with
-    an async receipt body containing defer_id, status, and poll_url.
-    """
+class TestValidateActionCanonicalEnvelope:
+    """Verify /validate-action wraps DEFER (including EXTERNAL_HOLD) and ALLOW in v3.0 envelopes."""
 
     @pytest.fixture()
     def client_for_external_hold(self, mock_kms_signer):
@@ -812,13 +808,14 @@ class TestExternalHoldHttp202Receipt:
 
         return TestClient(governance_app, raise_server_exceptions=False)
 
-    def test_external_hold_escalation_returns_http_202(
+    def test_external_hold_defer_returns_canonical_200_envelope_not_202(
         self, client_for_external_hold, mock_kms_signer
     ):
-        """External provider ESCALATE decision returns HTTP 202 Accepted (not 200)."""
+        """EXTERNAL_HOLD DEFER is wrapped in a canonical HTTP 200 v3.0 envelope (no unwrapped HTTP 202)."""
         hold_result = {
             "verdict": "DEFER",
             "defer_reason": "EXTERNAL_HOLD",
+            "is_external_hold": True,
             "defer_id": "fs-defer-001",
             "violations": ["Provider 01: requires human approval"],
             "seal": "",
@@ -833,68 +830,16 @@ class TestExternalHoldHttp202Receipt:
                 json={"action": "execute_trade", "params": {"amount": 50000}},
             )
 
-        assert resp.status_code == 202
-
-    def test_external_hold_escalation_receipt_shape(
-        self, client_for_external_hold, mock_kms_signer
-    ):
-        """HTTP 202 body contains defer_id, status: pending_review, poll_url."""
-        hold_result = {
-            "verdict": "DEFER",
-            "defer_reason": "EXTERNAL_HOLD",
-            "defer_id": "fs-defer-002",
-            "violations": ["Provider 01: requires human approval"],
-            "seal": "",
-            "latency_ms": 3.1,
-        }
-        mock_gov = _mock_governor()
-        mock_gov.validate_action = AsyncMock(return_value=hold_result)
-
-        with _installed_governor(mock_gov):
-            resp = client_for_external_hold.post(
-                "/validate-action",
-                json={"action": "execute_trade", "params": {"amount": 50000}},
-            )
-
+        assert resp.status_code == 200
         data = resp.json()
-        assert data["defer_id"] == "fs-defer-002"
-        assert data["status"] == "pending_review"
-        assert data["poll_url"] == "/v1/defer/fs-defer-002"
-        assert data["verdict"] == "DEFER"
-        assert data["defer_reason"] == "EXTERNAL_HOLD"
-        assert data["ttl_seconds"] == 300
-
-    def test_external_hold_escalation_via_is_external_hold_marker(
-        self, client_for_external_hold, mock_kms_signer
-    ):
-        """is_external_hold=True also triggers HTTP 202 (alternative detection)."""
-        # This covers the case where defer_reason might be different but the
-        # explicit marker is set
-        result_with_marker = {
-            "verdict": "DEFER",
-            "is_external_hold": True,
-            "defer_id": "fs-defer-003",
-            "violations": ["External hold"],
-            "seal": "",
-            "latency_ms": 2.0,
-        }
-        mock_gov = _mock_governor()
-        mock_gov.validate_action = AsyncMock(return_value=result_with_marker)
-
-        with _installed_governor(mock_gov):
-            resp = client_for_external_hold.post(
-                "/validate-action",
-                json={"action": "execute_trade", "params": {"amount": 25000}},
-            )
-
-        assert resp.status_code == 202
-        data = resp.json()
-        assert data["status"] == "pending_review"
+        assert data["envelope_version"] == "3.0"
+        assert data["payload"]["verdict"] == "DEFER"
+        assert data["payload"]["defer_reason"] == "EXTERNAL_HOLD"
 
     def test_non_external_hold_defer_returns_200_not_202(
         self, client_for_external_hold, mock_kms_signer
     ):
-        """Regular DEFER (not external hold) returns HTTP 200, not 202."""
+        """Regular DEFER returns HTTP 200 wrapped in canonical v3.0 envelope."""
         regular_defer_result = {
             "verdict": "DEFER",
             "defer_reason": "CONFIDENCE_BELOW_THRESHOLD",
@@ -912,45 +857,10 @@ class TestExternalHoldHttp202Receipt:
                 json={"action": "execute_trade", "params": {"amount": 1000}},
             )
 
-        # Non-EXTERNAL_HOLD DEFER should return 200 wrapped in canonical v3.0 envelope
         assert resp.status_code == 200
         data = resp.json()
         assert data["envelope_version"] == "3.0"
         assert data["payload"]["verdict"] == "DEFER"
-
-    def test_external_hold_without_marker_returns_202(
-        self, client_for_external_hold, mock_kms_signer
-    ):
-        """EXTERNAL_HOLD defer_reason without is_external_hold marker still returns HTTP 202.
-
-        Regression test for Defect 1: Previously the middleware only checked
-        defer_reason == "FLOWSIGNAL_ESCALATION" (dead code after rename) OR
-        is_flowsignal_hold == True. An EXTERNAL_HOLD with no marker would
-        silently fall through to HTTP 200, failing to signal the client to poll.
-        """
-        external_hold_no_marker = {
-            "verdict": "DEFER",
-            "defer_reason": "EXTERNAL_HOLD",
-            "defer_id": "external-defer-regression",
-            "violations": ["External provider escalation"],
-            "seal": "",
-            "latency_ms": 3.5,
-        }
-        mock_gov = _mock_governor()
-        mock_gov.validate_action = AsyncMock(return_value=external_hold_no_marker)
-
-        with _installed_governor(mock_gov):
-            resp = client_for_external_hold.post(
-                "/validate-action",
-                json={"action": "execute_trade", "params": {"amount": 30000}},
-            )
-
-        # Must return 202, not 200 — this is a human-in-the-loop escalation
-        assert resp.status_code == 202
-        data = resp.json()
-        assert data["defer_id"] == "external-defer-regression"
-        assert data["status"] == "pending_review"
-        assert data["defer_reason"] == "EXTERNAL_HOLD"
 
     def test_approved_verdict_still_returns_200(
         self, client_for_external_hold, mock_kms_signer

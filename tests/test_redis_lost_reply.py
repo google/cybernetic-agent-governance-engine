@@ -309,7 +309,7 @@ class TestDeferQueue:
         assert await lossy.consume_approval(
             token.defer_id, action=ACTION, covers=_covers
         )
-        assert not await queue.atomic_resolve(
+        assert not await queue._atomic_resolve(
             token.defer_id, expected_status="RESOLVED", new_status="CONSUMED"
         )
         assert (
@@ -320,7 +320,7 @@ class TestDeferQueue:
     async def test_status_cas_fails_closed_on_redis_error(self):
         redis = AsyncMock()
         redis.eval.side_effect = ConnectionError("redis down")
-        assert not await DeferQueue(redis).atomic_resolve(
+        assert not await DeferQueue(redis)._atomic_resolve(
             "t", expected_status="RESOLVED", new_status="CONSUMED"
         )
 
