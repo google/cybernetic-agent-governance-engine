@@ -119,6 +119,8 @@ lint:
 	@uv lock --check
 	@echo "==> Checking the base install and gateway image are model-free..."
 	@uv run python scripts/check_model_free_install.py
+	@echo "==> Verifying CAGE Client SDK dual-tree parity..."
+	@uv run python scripts/check_client_sdk_sync.py --verbose
 	@echo "✅ Lint checks passed."
 
 ## Run security scanning (lockfile check, Bandit SAST, pip-audit CVEs, Semgrep)
@@ -355,7 +357,11 @@ check-agent-state-schema: ## Verify AgentState schema freshness
 	@echo "==> Verifying AgentState schema freshness..."
 	@uv run python scripts/generate_agent_state_schema.py --check
 
+.PHONY: check-client-sdk-sync
+check-client-sdk-sync: ## Verify src/gateway/client/ and packages/cage-client/src/cage_client/ are byte-identical
+	@uv run python scripts/check_client_sdk_sync.py --verbose
+
 .PHONY: build-client-sdk
-build-client-sdk: ## Build standalone CAGE Client SDK wheel and sdist in packages/cage-client/
+build-client-sdk: check-client-sdk-sync ## Build standalone CAGE Client SDK wheel and sdist in packages/cage-client/
 	@echo "==> Building CAGE Client SDK (packages/cage-client)..."
 	@cd packages/cage-client && uv build

@@ -13,28 +13,27 @@
 # limitations under the License.
 
 """
-CAGE Gateway Client SDK (Layer 1).
+CAGE Gateway Client SDK (`cage-client` / `src.gateway.client`).
 
-This package provides the official Python client SDK for interacting with the
-CAGE governance gateway. It enables LangGraph-based agents to submit actions
-for governance evaluation and receive cryptographically signed decisions.
-
-The client SDK is strictly Layer 1 (kernel) code and adheres to Gate G3 import
-boundaries: no imports from Layer 2 (domain plugins), Layer 3 (integrations),
-or vendor SDKs.
+Lightweight Python Policy Enforcement Point (PEP) client SDK for interacting
+with the CAGE governance gateway over TLS/mTLS. Performs fail-closed HTTP
+status and payload verdict mediation and Pydantic schema validation of
+`GovernanceEnvelope` responses (`signature` and `expires_at` are not verified
+client-side; channel TLS/mTLS does NOT substitute for end-to-end envelope
+signature verification).
 """
 
-from src.gateway.client.adapters.langgraph import cage_guard
-from src.gateway.client.core import CageClient
-from src.gateway.client.crypto import generate_w3c_traceparent
-from src.gateway.client.envelope import ExecutionGrant, GovernanceEnvelope
-from src.gateway.client.exceptions import (
+from .adapters.langgraph import cage_guard
+from .core import CageClient
+from .crypto import generate_w3c_traceparent
+from .envelope import ExecutionGrant, GovernanceEnvelope
+from .exceptions import (
     CageGatewayError,
     DeferralPending,
     PolicyViolationException,
     RoutingSealVerificationError,
 )
-from src.gateway.client.transport import create_mtls_transport
+from .transport import create_mtls_transport
 
 __version__ = "0.2.0"
 

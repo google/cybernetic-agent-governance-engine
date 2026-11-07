@@ -22,7 +22,7 @@ Available Adapters:
     - LangGraph: `@cage_guard` decorator for LangGraph node functions
 """
 
-from src.gateway.client.adapters.langgraph import cage_guard
+from .langgraph import cage_guard
 
 __all__ = [
     "cage_guard",
