@@ -496,36 +496,6 @@ jobs:
         run: |
           uv run pytest -p no:langsmith -p no:langsmith_plugin tests/test_no_direct_bind_proof.py -m local -v -o addopts=""
 
-  langfuse-posture-check:
-    name: "Langfuse Posture Dry-Run Check"
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          persist-credentials: false
-      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
-        with:
-          python-version: "3.11"
-      - name: Langfuse posture dry-run check
-        run: |
-          export GOOGLE_CLOUD_PROJECT="mock-dev-project"
-          # DEP-24: GOOGLE_CLOUD_LOCATION is derived from CAGE_DEPLOYMENT_REGION.
-          # US_FED → us-central1 | EU_ECB → europe-west1 | APAC_MAS → asia-southeast1
-          # Defaults to us-central1 for CI dry-run (no live cluster).
-          _region="${CAGE_DEPLOYMENT_REGION:-US_FED}"
-          case "$_region" in
-            EU_ECB)    export GOOGLE_CLOUD_LOCATION="europe-west1" ;;
-            APAC_MAS)  export GOOGLE_CLOUD_LOCATION="asia-southeast1" ;;
-            *)         export GOOGLE_CLOUD_LOCATION="us-central1" ;;
-          esac
-          export LANGFUSE_HOST="http://localhost:3000"
-          export LANGFUSE_PUBLIC_KEY="pk-lf-mock"
-          export LANGFUSE_SECRET_KEY="sk-lf-mock"
-          export LANGFUSE_COMPLIANCE_HOST="http://localhost:3001"
-          export LANGFUSE_COMPLIANCE_PUBLIC_KEY="pk-lf-comp-mock"
-          export LANGFUSE_COMPLIANCE_SECRET_KEY="sk-lf-comp-mock"
-          python3 scripts/verify_langfuse_posture.py --dry-run --posture development
-
   # ── AI 600-1 Compliance Gates ──────────────────────────────────────────────
 
   lula-ai600-validation:
@@ -544,7 +514,7 @@ jobs:
       - name: Validate AI 600-1 Lula manifest structure (stub syntax check)
         # Stub manifests use OSCAL component-definition structure (not standalone domain/provider).
         # The domain/provider are embedded inside back-matter.resources[].description.
-        # Full live lula validate runs post-cluster-provisioning per Phase 3 §7.5.
+        # The manifests read a live deployment; `lula validate` runs only against one (compliance-matrix.yml, on demand).
         run: python3 scripts/check_ai600_lula_manifests.py
       - name: Enforce Lula stub count downward-only baseline & POAM linkage
         run: python3 scripts/check_lula_stub_count.py

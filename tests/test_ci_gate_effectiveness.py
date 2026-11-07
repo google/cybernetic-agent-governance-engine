@@ -763,6 +763,49 @@ def test_gate_langfuse_posture_catches_missing_env_var(
     assert verify_langfuse_posture.check_env_vars("development") is False
 
 
+def test_gate_langfuse_live_check_runs_both_halves(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The live Langfuse check needs both project IDs and fails on a breach in either half.
+
+    Before #636 it skipped the compliance half, and passed, whenever
+    ``LANGFUSE_COMPLIANCE_PROJECT_ID`` was unset.
+    """
+    for var in verify_langfuse_posture.BASE_REQUIRED_VARS:
+        monkeypatch.setenv(var, "mock-value")
+    monkeypatch.setenv("LANGFUSE_HOST", "https://core.invalid")
+    monkeypatch.setenv("LANGFUSE_COMPLIANCE_HOST", "https://compliance.invalid")
+    monkeypatch.delenv("LANGFUSE_PROJECT_ID", raising=False)
+    monkeypatch.delenv("LANGFUSE_COMPLIANCE_PROJECT_ID", raising=False)
+    assert verify_langfuse_posture.check_env_vars("development", live=True) is False
+
+    reachable = {
+        "https://core.invalid": ["core-project"],
+        "https://compliance.invalid": ["compliance-project"],
+    }
+    monkeypatch.setattr(
+        verify_langfuse_posture,
+        "query_langfuse_projects",
+        lambda host, _public_key, _secret_key: reachable[host],
+    )
+    monkeypatch.setenv("LANGFUSE_PROJECT_ID", "core-project")
+    # Planted: no compliance project ID, so the compliance half cannot run.
+    assert verify_langfuse_posture.verify_live_isolation() is False
+
+    monkeypatch.setenv("LANGFUSE_COMPLIANCE_PROJECT_ID", "compliance-project")
+    assert verify_langfuse_posture.check_env_vars("development", live=True) is True
+    assert verify_langfuse_posture.verify_live_isolation() is True
+
+    # Planted: the compliance keys also reach the core project.
+    reachable["https://compliance.invalid"] = ["compliance-project", "core-project"]
+    assert verify_langfuse_posture.verify_live_isolation() is False
+
+    # Planted: the core keys also reach the compliance project.
+    reachable["https://compliance.invalid"] = ["compliance-project"]
+    reachable["https://core.invalid"] = ["core-project", "compliance-project"]
+    assert verify_langfuse_posture.verify_live_isolation() is False
+
+
 def test_gate_lula_manifests_and_readme_count_catches_planted_defect(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -1067,6 +1110,116 @@ def test_gate_compliance_matrix_script_has_valid_paths_and_no_silent_skips() -> 
     assert (REPO_ROOT / "src" / "cage_finance" / "opa").is_dir()
     assert 'warn "Gate 0.1 SKIPPED' not in script_text
     assert 'warn "Gate 1.2 SKIPPED' not in script_text
+
+
+def _compliance_matrix_workflow() -> dict[str, Any]:
+    data = yaml.safe_load(
+        (WORKFLOWS_DIR / "compliance-matrix.yml").read_text(encoding="utf-8")
+    )
+    assert isinstance(data, dict), "compliance-matrix.yml did not parse as a mapping"
+    return data
+
+
+def _workflow_step(job: dict[str, Any], name: str) -> dict[str, Any]:
+    for step in job["steps"]:
+        if step.get("name") == name:
+            return step
+    raise AssertionError(f"step {name!r} not found")
+
+
+def test_gate_compliance_matrix_runs_only_against_a_named_deployment() -> None:
+    """Compliance Matrix runs on demand only, against one named deployment.
+
+    Every Lula manifest reads a running deployment, so a push- or PR-triggered
+    run could only fail or, before #664's assessment check, print
+    not-satisfied results as passes (POAM-2026-169, instance 6).
+    """
+    data = _compliance_matrix_workflow()
+    triggers = data.get("on") or data.get(True) or {}
+    assert set(triggers) == {"workflow_dispatch", "workflow_call"}, sorted(triggers)
+    for trigger in ("workflow_dispatch", "workflow_call"):
+        inputs = triggers[trigger]["inputs"]
+        for name in ("deployment", "region", "cage_env"):
+            assert inputs[name]["required"] is True, (trigger, name)
+
+    jobs = data["jobs"]
+    assert jobs, "compliance-matrix.yml defines no jobs"
+    for job_id, job in jobs.items():
+        assert job.get("environment") == "${{ inputs.deployment }}", job_id
+        assert "strategy" not in job, f"{job_id} must target one deployment"
+
+    # The design's premise. A manifest that stops reading a live deployment
+    # belongs in a pull-request workflow instead.
+    domain_type = re.compile(r"domain:\s*\n\s*type:\s*([A-Za-z0-9_-]+)")
+    manifests = sorted(
+        (REPO_ROOT / "compliance" / "lula").glob("lula-validation-*.yaml")
+    )
+    assert len(manifests) >= 30, f"found only {len(manifests)} Lula manifests"
+    for manifest in manifests:
+        types = set(domain_type.findall(manifest.read_text(encoding="utf-8")))
+        assert types and types <= {"kubernetes", "api"}, (manifest.name, types)
+
+    # A Langfuse dry-run checks only that variables are set, so it cannot fail
+    # wherever they are. Gate 0.3 runs the live check against the deployment.
+    for workflow in sorted(WORKFLOWS_DIR.glob("*.yml")):
+        text = workflow.read_text(encoding="utf-8")
+        assert "verify_langfuse_posture.py --dry-run" not in text, workflow.name
+    script_text = MATRIX_SCRIPT_PATH.read_text(encoding="utf-8")
+    assert "verify_langfuse_posture.py --posture" in script_text
+    assert "--dry-run" not in script_text
+
+
+def test_gate_compliance_matrix_fails_closed_without_deployment_credentials(
+    tmp_path: Path,
+) -> None:
+    """The credentials step fails, naming each missing input, unless the deployment provides all of them."""
+    job = _compliance_matrix_workflow()["jobs"]["live-posture"]
+    step = _workflow_step(job, "Require the deployment's credentials")
+    required = sorted(set(step["env"]) - {"DEPLOYMENT"})
+    assert {"KUBECONFIG_DATA", "LANGFUSE_COMPLIANCE_PROJECT_ID"} <= set(required)
+    suite_env = set(_workflow_step(job, "Run the live posture suite")["env"])
+    assert set(required) - {"KUBECONFIG_DATA"} <= suite_env
+
+    def run_step(
+        values: dict[str, str],
+    ) -> tuple[subprocess.CompletedProcess[str], Path]:
+        github_env = tmp_path / "github_env"
+        github_env.write_text("", encoding="utf-8")
+        env = {
+            "PATH": os.environ.get("PATH", "/usr/bin:/bin"),
+            "RUNNER_TEMP": str(tmp_path),
+            "GITHUB_ENV": str(github_env),
+            "DEPLOYMENT": "planted",
+            **values,
+        }
+        proc = subprocess.run(
+            ["bash", "--noprofile", "--norc", "-eo", "pipefail", "-c", step["run"]],
+            env=env,
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        return proc, github_env
+
+    proc, github_env = run_step({})
+    assert proc.returncode != 0
+    assert "nothing was checked" in proc.stdout
+    for name in required:
+        assert name in proc.stdout, name
+    assert github_env.read_text(encoding="utf-8") == ""
+
+    provided = {name: f"value-for-{name}" for name in required}
+    for dropped in required:
+        proc, _ = run_step({k: v for k, v in provided.items() if k != dropped})
+        assert proc.returncode != 0, f"passed without {dropped}"
+        assert dropped in proc.stdout, dropped
+
+    proc, github_env = run_step(provided)
+    assert proc.returncode == 0, proc.stdout + proc.stderr
+    kubeconfig = tmp_path / "kubeconfig"
+    assert github_env.read_text(encoding="utf-8").strip() == f"KUBECONFIG={kubeconfig}"
+    assert kubeconfig.read_text(encoding="utf-8") == "value-for-KUBECONFIG_DATA\n"
+    assert kubeconfig.stat().st_mode & 0o777 == 0o600
 
 
 def test_gate_tlc_model_check_rejects_unpinned_tlc_verdicts(

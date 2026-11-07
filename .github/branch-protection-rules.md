@@ -121,8 +121,8 @@ From the workflow files, not the API:
 | `MAS FEAT Compliance Posture (APAC_MAS only)` | `apac-mas-compliance.yml` | Runs on every PR |
 | `Compile STPA → Governance Artifacts` | `policy_compile.yml` | Path-filtered; only runs when STPA files change |
 
-`compliance-matrix.yml` runs only on pushes to `main` and on demand, so a pull request that
-breaks it shows nothing until after the merge (POAM-2026-169).
+`compliance-matrix.yml` runs only on demand, against a named deployment: every Lula manifest
+it validates reads a live deployment, so no pull request or push runs it (POAM-2026-169).
 
 > **Note on path-filtered workflows:** a path-filtered workflow that does not run reports no
 > check. None of them is required, so this does not block a merge.

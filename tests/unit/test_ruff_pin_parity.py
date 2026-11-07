@@ -57,9 +57,6 @@ def test_ruff_exact_pin_matches_uv_lock_and_ci_workflows() -> None:
     assert "uv sync --locked --all-groups --all-extras" in ci_yml
     assert f'"ruff=={locked_ruff}"' in ci_yml
 
-    matrix_yml = (WORKFLOWS_DIR / "compliance-matrix.yml").read_text(encoding="utf-8")
-    assert f'"ruff=={locked_ruff}"' in matrix_yml
-
     unpinned_pip_ruff = re.compile(r"\bpip\s+install\b[^\n]*\bruff(?!==)")
     for wf in sorted(WORKFLOWS_DIR.glob("*.yml")):
         text = wf.read_text(encoding="utf-8")

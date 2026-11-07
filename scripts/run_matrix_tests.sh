@@ -13,6 +13,14 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+# Live posture suite for one deployment, jurisdiction and environment.
+# Every Lula gate reads the running deployment (Lula's Kubernetes domain, or
+# in-cluster service URLs), Gate 0.3 queries its Langfuse instances, and
+# EU_ECB's prod Gate 1.2 reads its cage-deployment ConfigMap. Point KUBECONFIG
+# at the deployment and run from a host that can reach its in-cluster
+# services; without them those gates fail. compliance-matrix.yml runs this on
+# demand against a named deployment.
+
 set -euo pipefail
 
 # ---------------------------------------------------------------------------
@@ -122,9 +130,16 @@ PHASE0_FAILURES=0
 # so the marker alone selects and configures the posture under test.
 # ---------------------------------------------------------------------------
 REGION_MARKER="$(echo "${CAGE_REGION}" | tr '[:upper:]' '[:lower:]')"
-echo "=== Phase: Pytest unit tests (-m \"local and ${REGION_MARKER}\") ==="
+# tests/conftest.py refuses CAGE_ENV=prod without a KMS key, and the hermetic
+# suite needs none: the prod legs run it as `test`. The posture gates in the
+# phases below keep CAGE_ENV as given.
+PYTEST_CAGE_ENV="${CAGE_ENV}"
+if [[ "${CAGE_ENV}" == "prod" ]]; then
+  PYTEST_CAGE_ENV="test"
+fi
+echo "=== Phase: Pytest unit tests (-m \"local and ${REGION_MARKER}\", CAGE_ENV=${PYTEST_CAGE_ENV}) ==="
 mkdir -p pytest-results
-uv run pytest tests/ -m "local and ${REGION_MARKER}" \
+CAGE_ENV="${PYTEST_CAGE_ENV}" uv run pytest tests/ -m "local and ${REGION_MARKER}" \
     --tb=short -q \
     --junitxml="pytest-results/pytest-${CAGE_REGION}-${CAGE_ENV}.xml" \
   || { echo "Pytest failed for region ${CAGE_REGION}"; exit 1; }
@@ -133,7 +148,7 @@ uv run pytest tests/ -m "local and ${REGION_MARKER}" \
 echo ""
 info "Gate 0.1 — Core unit tests (tests/test_symbolic_governor.py)"
 if [[ -f "tests/test_symbolic_governor.py" ]]; then
-  if uv run pytest -p no:langsmith -p no:langsmith_plugin tests/test_symbolic_governor.py -q; then
+  if CAGE_ENV="${PYTEST_CAGE_ENV}" uv run pytest -p no:langsmith -p no:langsmith_plugin tests/test_symbolic_governor.py -q; then
     success "Gate 0.1 passed — core unit tests"
   else
     error "Gate 0.1 FAILED — core unit tests"
@@ -147,23 +162,25 @@ fi
 # Gate 0.2 — STPA freshness check
 echo ""
 info "Gate 0.2 — STPA freshness check"
-if python3 scripts/check_stpa_freshness.py; then
+if uv run python scripts/check_stpa_freshness.py; then
   success "Gate 0.2 passed — STPA artifacts are fresh"
 else
   error "Gate 0.2 FAILED — STPA freshness check"
   PHASE0_FAILURES=$((PHASE0_FAILURES + 1))
 fi
 
-# Gate 0.3 — Langfuse posture verification
+# Gate 0.3 — Langfuse posture of the deployment under test
 echo ""
-info "Gate 0.3 — Langfuse posture verification"
-# Non-secret GCP context vars — safe to default here.
-export GOOGLE_CLOUD_PROJECT="${GOOGLE_CLOUD_PROJECT:-mock-project}"
-export GOOGLE_CLOUD_LOCATION="${GOOGLE_CLOUD_LOCATION:-mock-location}"
-# All LANGFUSE_* vars (HOST, PUBLIC_KEY, SECRET_KEY, COMPLIANCE_*) are loaded
-# from .env above. Do NOT set fallback values here — missing vars must surface
-# as a real Gate 0.3 failure so operators know to populate .env.
-if python3 scripts/verify_langfuse_posture.py --dry-run --posture development; then
+info "Gate 0.3 — Langfuse posture verification (live)"
+# The live check queries both Langfuse instances with the deployment's keys
+# and fails unless each pair reaches only its own project. A dry-run checked
+# only that the variables were set, so it could not fail wherever they were.
+# No defaults here: an unset variable fails the gate.
+LANGFUSE_POSTURE="development"
+if [[ "${CAGE_ENV}" == "prod" ]]; then
+  LANGFUSE_POSTURE="production"
+fi
+if uv run python scripts/verify_langfuse_posture.py --posture "${LANGFUSE_POSTURE}"; then
   success "Gate 0.3 passed — Langfuse posture verified"
 else
   error "Gate 0.3 FAILED — Langfuse posture verification"

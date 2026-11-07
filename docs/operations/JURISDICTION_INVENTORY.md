@@ -105,13 +105,13 @@ Read at `d830249c`; nothing was planned.
 
 - **Required checks:** the eight in [`.github/branch-protection-rules.md`](../../.github/branch-protection-rules.md) §3, which `repo-rules.yml` compares with the live ruleset in CI. This section listed six, verified 2026-10-28, until 2026-11-02 (POAM-2026-133).
 - **Region-pinned tests in the required job:** US_FED 18, EU_ECB 48, APAC_MAS 7, plus about 150 region-parametrized items per region (verified, collection). The asymmetry is POAM-2026-122.
-- **Regional workflows that cannot fail the build:**
-  - the EU and APAC legs of [`regional-posture.yml`](../../.github/workflows/regional-posture.yml), which are hermetic, marker-pinned pytest runs;
-  - the test step of [`compliance-matrix.yml`](../../.github/workflows/compliance-matrix.yml), which also installs from `requirements*.txt` files that don't exist;
-  - `lula-validate.yml`;
+- **Regional workflows that cannot block a merge:**
+  - [`regional-posture.yml`](../../.github/workflows/regional-posture.yml), hermetic, marker-pinned pytest runs that start only after a merge (path-filtered) or on dispatch;
+  - [`compliance-matrix.yml`](../../.github/workflows/compliance-matrix.yml), which since #636 runs only on demand against a named deployment, because every Lula manifest it validates reads a live deployment;
   - `ci-integration.yml`, which runs on dispatch only.
 
-  POAM-2026-121 records the first two. POAM-2026-150 records the pattern, with `ci.yml`'s `integration-smoke` job, which skips all 153 tests it selects.
+  POAM-2026-121 and POAM-2026-150 record the `continue-on-error` masks these and other workflows carried until #602 (`319c702d`).
+- **Regional Lula claims have never been satisfied in CI.** Compliance Matrix is the only workflow that runs the `lula` binary. Before #636 it did not reach a regional phase on `main` (POAM-2026-169, instance 6). In #636's first dispatch run `41482637392` (2026-11-02) every Lula gate printed `PASS` on a `not-satisfied` result, and with #664's assessment check every leg fails at Gate 0.4 (dispatch run `42332320807`, 2026-11-07). That covers the ISO 42001, NIST SP 800-53, MAS FEAT, MAS Notice 655 and MAS TRM §6 manifests; until a run against a deployment satisfies them, no CI result backs those claims.
 - **Regional workflows that can fail:** [`eu-ecb-compliance.yml`](../../.github/workflows/eu-ecb-compliance.yml) and [`apac-mas-compliance.yml`](../../.github/workflows/apac-mas-compliance.yml) check the prod profiles' residency, jurisdiction and tier (`environment = "prod"`), and the dev profiles' `enforce_in_dev = true`.
 
 ## 7. Inference consumers
