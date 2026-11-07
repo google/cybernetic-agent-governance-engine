@@ -18,7 +18,7 @@ Enforces:
 1. In-cluster Helm PostgreSQL module is deleted from the GKE target (§2.5).
 2. Cloud SQL PostgreSQL instance is provisioned via module "cloudsql_postgres" with:
    - PG15 (POSTGRES_15)
-   - Private IP (authorized_network = var.network, ipv4_enabled = false)
+   - Private IP (authorized_network = local.cloudsql_network_name, ipv4_enabled = false)
    - ENCRYPTED_ONLY ssl_mode
    - Posture matrix tiers (§1.1): dev (db-f1-micro), staging (db-g1-small), prod (db-custom-2-7680, PITR, HA)
    - IAM authentication enabled (cloudsql.iam_authentication = on, CLOUD_IAM_SERVICE_ACCOUNT)
@@ -43,6 +43,7 @@ pytestmark = [pytest.mark.unit, pytest.mark.local]
 
 _REPO = Path(__file__).resolve().parents[2]
 _GKE_MAIN = _REPO / "infra/targets/gcp-gke/main.tf"
+_GKE_PERIMETER = _REPO / "infra/targets/gcp-gke/perimeter.tf"
 _GKE_IAM = _REPO / "infra/targets/gcp-gke/iam.tf"
 _GKE_OUTPUTS = _REPO / "infra/targets/gcp-gke/outputs.tf"
 _CLOUDSQL_MAIN = _REPO / "infra/modules/cloudsql_postgres/main.tf"
@@ -85,7 +86,11 @@ def test_cloudsql_postgres_module_configured() -> None:
 
     assert 'source = "../../modules/cloudsql_postgres"' in block
     assert 'database_version   = "POSTGRES_15"' in block
-    assert "authorized_network = var.network" in block
+    assert "authorized_network = local.cloudsql_network_name" in block
+    assert (
+        "module.vpc_network[0].private_service_access_network_name"
+        in _GKE_PERIMETER.read_text()
+    )
     assert 'user_type       = "CLOUD_IAM_SERVICE_ACCOUNT"' in block
     assert "enable_iam_auth = true" in block
 
