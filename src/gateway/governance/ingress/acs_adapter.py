@@ -91,7 +91,11 @@ def _map_constraint(constraint: dict[str, Any]) -> dict[str, Any]:
     """Map a single ACS constraint dict to a CAGE ConditionModel dict."""
     ctype = constraint.get("type", "")
     param = constraint.get("parameter") or constraint.get("param")
-    value = constraint.get("value") or constraint.get("threshold")
+    value = constraint.get("value")
+    if value is None:
+        # Use `is None`, not truthiness: a zero threshold (value: 0 / 0.0) is a
+        # legitimate boundary and must not fall through to the `threshold` key.
+        value = constraint.get("threshold")
     threshold_ref = constraint.get("thresholdRef") or constraint.get("threshold_ref")
 
     cage_operator = _ACS_CONSTRAINT_TYPE_MAP.get(ctype)
