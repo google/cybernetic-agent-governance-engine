@@ -84,22 +84,12 @@ _DEFAULT_OPA_OUT = _REPO_ROOT / "config" / "opa" / "generated_stpa_policy.rego"
 _DEFAULT_NEMO_OUT = _REPO_ROOT / "config" / "rails" / "generated_stpa_rails.co"
 _DEFAULT_PY_OUT = _REPO_ROOT / "config" / "stpa" / "uca_rules.py"
 _DEFAULT_LG_OUT = _REPO_ROOT / "config" / "stpa" / "saga_nodes.py"
-_DEFAULT_AGP_OUT = _REPO_ROOT / "config" / "agp" / "generated_semantic_policy.txt"
 _DEFAULT_FTRA_OUT = (
     _REPO_ROOT / "src" / "gateway" / "governance" / "terminal_action_registry.json"
-)
-_DEFAULT_REGISTRY_OUT = (
-    _REPO_ROOT / "config" / "registry" / "generated_tool_authorizations.json"
-)
-_DEFAULT_IAP_CEL_OUT = (
-    _REPO_ROOT / "config" / "registry" / "generated_iap_cel_policies.json"
 )
 _DEFAULT_SANDBOX_OUT = (
     _REPO_ROOT / "config" / "sandbox" / "generated_sandbox_policy.yaml"
 )
-
-# AGP Semantic Governance Policy character budget (platform limit)
-_AGP_CHAR_BUDGET = 5_000
 
 # ---------------------------------------------------------------------------
 # Pydantic schema — mirrors stpa_control_structure.yaml
@@ -2116,157 +2106,6 @@ def generate_langgraph(cs: ControlStructureModel) -> str:
 
 
 # ---------------------------------------------------------------------------
-# AGP Semantic Governance Policy generator (C1)
-# ---------------------------------------------------------------------------
-
-
-def generate_agp(cs: ControlStructureModel) -> str:
-    """Generate Google Agent Platform Semantic Governance Policy (SGP) text.
-
-    Emits natural language constraint text following the mapping in
-    ``CAGE_STPA_TO_AGP_SEMANTIC_POLICY_RESEARCH.md §4.1``.
-
-    The output is a plain-text string (not JSON) suitable for the AGP
-    ``Constraints`` field. Maximum 5,000 characters; generator warns and
-    appends a ``# TRUNCATED`` sentinel if the budget is exceeded.
-
-    CBF invariants are intentionally omitted — they are not mappable to
-    AGP natural language constraints.
-
-    Args:
-        cs: Validated ``ControlStructureModel`` instance.
-
-    Returns:
-        Natural language constraint text string.
-    """
-    lines: list[str] = [
-        f"# CAGE Semantic Governance Policy — {cs.system.name} v{cs.system.version}",
-        "# Generated from STPA control structure. Do not edit manually.",
-        "# Source: config/stpa_control_structure.yaml",
-        "",
-    ]
-
-    for uca in cs.unsafe_control_actions:
-        cond = uca.condition
-        action = uca.action
-        param = cond.param or ""
-
-        # Resolve threshold value
-        threshold: str | float | None = None
-        if cond.threshold is not None:
-            threshold = cond.threshold
-        elif cond.threshold_ref:
-            # Attempt runtime resolution via THRESHOLDS singleton
-            try:
-                from src.gateway.governance.schemas.thresholds import THRESHOLDS
-
-                qualified_ref = _qualify_threshold_ref(
-                    cond.threshold_ref, cs.system.domain
-                )
-                try:
-                    threshold = THRESHOLDS.resolve(qualified_ref)
-                except KeyError:
-                    threshold = THRESHOLDS.resolve(cond.threshold_ref)
-            except Exception:
-                threshold = f"<{cond.threshold_ref}>"
-
-        op = cond.operator
-
-        # Map operator → NL sentence
-        if op == "is_null" and param:
-            sentence = f'Do not execute "{action}" if "{param}" is null or missing.'
-        elif op == "is_false" and param:
-            sentence = (
-                f'Do not execute "{action}" if "{param}" is false or not set to true.'
-            )
-        elif op == "is_true" and param:
-            sentence = f'Do not execute "{action}" if "{param}" is true.'
-        elif op == "greater_than" and param and threshold is not None:
-            sentence = f'Do not execute "{action}" if "{param}" exceeds {threshold}.'
-        elif op == "less_than" and param and threshold is not None:
-            sentence = f'Do not execute "{action}" if "{param}" is below {threshold}.'
-        elif op == "equals" and param and threshold is not None:
-            sentence = f'Do not execute "{action}" if "{param}" equals {threshold}.'
-        elif cond.composite:
-            # Composite conditions: emit as a general constraint
-            sentence = f'Do not execute "{action}" when: {cond.composite}.'
-        else:
-            # Cannot map — skip with a comment
-            lines.append(f"# UCA {uca.id}: condition not mappable to AGP NL — omitted.")
-            continue
-
-        if cond.applies_when:
-            sentence = (
-                f'When "{cond.applies_when.param}" is "{cond.applies_when.equals}": '
-                f"{sentence}"
-            )
-        if cond.require_params and cond.composite:
-            lhs, _, rhs = _composite_parts(cond.composite)
-            sentence += f' Also do not execute it if "{lhs}" or "{rhs}" is missing.'
-
-        lines.append(f"# {uca.id}: {uca.description}")
-        lines.append(sentence)
-        lines.append("")
-
-    # NeMo rail messages → "Block any request that ..." sentences
-    for uca in cs.unsafe_control_actions:
-        if uca.nemo_rail:
-            msg = uca.nemo_rail.message
-            lines.append(f"# {uca.id} (NeMo rail): {uca.description}")
-            lines.append(f"Block any request that {msg}")
-            lines.append("")
-
-    # RBAC rules → human approval / deny sentences
-    if cs.rbac_rules:
-        for role in cs.rbac_rules.roles:
-            if role.limits:
-                tl = role.limits
-                review_below = tl.get("manual_review_below")
-                allow_below = tl.get("allow_below")
-                role_action = role.action or (
-                    role.allowed_actions[0] if role.allowed_actions else "action"
-                )
-                mag_field = role.magnitude_field
-                deny_field = role.denylist_field
-                denylist: list[str] = []
-                if role.restrictions:
-                    for r in role.restrictions:
-                        denylist.extend(r.get("denylist", []))
-
-                if review_below and allow_below:
-                    lines.append(
-                        f'Require human approval for "{role_action}" where '
-                        f'"{mag_field}" exceeds {allow_below} for "{role.name}" role users.'
-                    )
-                    lines.append("")
-
-                for item in denylist:
-                    lines.append(
-                        f'Deny "{role_action}" where "{deny_field}" is "{item}" '
-                        "in any letter case or with surrounding spaces, "
-                        f'for "{role.name}" role users.'
-                    )
-                    lines.append("")
-
-    output = "\n".join(lines)
-
-    # Enforce 5,000-character budget
-    if len(output) > _AGP_CHAR_BUDGET:
-        logger.warning(
-            "generate_agp: output exceeds %d-character AGP budget (%d chars). "
-            "Truncating with sentinel.",
-            _AGP_CHAR_BUDGET,
-            len(output),
-        )
-        # Truncate to budget minus sentinel length
-        sentinel = "\n# TRUNCATED — output exceeded 5,000-character AGP budget."
-        truncated = output[: _AGP_CHAR_BUDGET - len(sentinel)]
-        output = truncated + sentinel
-
-    return output
-
-
-# ---------------------------------------------------------------------------
 # FTRA Terminal Registry generator
 # ---------------------------------------------------------------------------
 
@@ -2360,245 +2199,6 @@ def generate_terminal_registry(cs: ControlStructureModel) -> str:
     import json as _json
 
     return _json.dumps(registry, indent=2)
-
-
-# ---------------------------------------------------------------------------
-# GEAP Agent Registry manifest generator (Phase C)
-# ---------------------------------------------------------------------------
-
-
-def generate_registry_manifest(cs: ControlStructureModel) -> str:
-    """Generate a GEAP Agent Registry tool authorization manifest as JSON.
-
-    GCP Adaptation: the output is consumed by ``AgentRegistryAdapter.push_tool_authorizations()``
-    to update tool authorization policies in the GEAP Agent Registry.  Cloud-agnostic
-    deployments do not use this artifact.
-
-    Emits a JSON string (not natural language) representing the tool authorization
-    manifest derived from the STPA control structure.
-
-    Output format::
-
-        {
-          "_generated_by": "CAGE stpa_compiler",
-          "_source": "config/stpa_control_structure.yaml",
-          "_generated_at": "2026-07-23T00:00:00Z",
-          "_schema_version": "1.0.0",
-          "tool_authorizations": [
-            {
-              "tool_name": "execute_action",
-              "allowed_roles": ["trader", "senior"],
-              "denied_roles": ["junior"],
-              "uca_refs": ["UCA-1", "UCA-2"],
-              "hazard_refs": ["H-1", "H-2"],
-              "requires_approval_above_usd": 10000
-            }
-          ]
-        }
-
-    Mapping rules:
-    - Each unique ``action`` in ``cs.unsafe_control_actions`` becomes a ``tool_name`` entry.
-    - ``uca_refs``: list of UCA IDs that reference this action.
-    - ``hazard_refs``: union of all ``hazard_refs`` across UCAs for this action.
-    - ``allowed_roles``: from ``cs.rbac_rules.roles`` where the action is in ``allowed_actions``.
-    - ``denied_roles``: roles where the action is NOT in ``allowed_actions``.
-    - ``requires_approval_above_usd``: from ``rbac_rules.roles[].limits.manual_review_below``
-      if present (minimum across all roles that have this limit for the action).
-
-    Args:
-        cs: Validated ``ControlStructureModel`` instance.
-
-    Returns:
-        JSON string suitable for writing to
-        ``config/registry/generated_tool_authorizations.json``.
-    """
-    import datetime as _dt
-    import json as _json
-
-    now_utc = _dt.datetime.now(_dt.timezone.utc).isoformat()
-
-    # ── Step 1: Collect per-action UCA refs and hazard refs ──────────────────
-    action_uca_refs: dict[str, list[str]] = {}
-    action_hazard_refs: dict[str, set[str]] = {}
-
-    for uca in cs.unsafe_control_actions:
-        action = uca.action
-        action_uca_refs.setdefault(action, []).append(uca.id)
-        action_hazard_refs.setdefault(action, set()).update(uca.hazard_refs)
-
-    # ── Step 2: Collect per-action RBAC role membership ──────────────────────
-    # allowed_roles: roles whose allowed_actions list includes this action
-    # denied_roles: roles whose allowed_actions list does NOT include this action
-    action_allowed_roles: dict[str, list[str]] = {}
-    action_denied_roles: dict[str, list[str]] = {}
-    action_approval_threshold: dict[str, float | None] = {}
-
-    if cs.rbac_rules:
-        for action in action_uca_refs:
-            allowed: list[str] = []
-            denied: list[str] = []
-            thresholds: list[float] = []
-
-            for role in cs.rbac_rules.roles:
-                if action in role.allowed_actions:
-                    allowed.append(role.name)
-                    # Collect manual_review_below threshold if present
-                    if role.limits:
-                        review_below = role.limits.get("manual_review_below")
-                        if review_below is not None:
-                            thresholds.append(float(review_below))
-                else:
-                    denied.append(role.name)
-
-            action_allowed_roles[action] = allowed
-            action_denied_roles[action] = denied
-            # Use the minimum threshold across all allowed roles (most restrictive)
-            action_approval_threshold[action] = min(thresholds) if thresholds else None
-
-    # ── Step 3: Build tool_authorizations list ────────────────────────────────
-    tool_authorizations: list[dict] = []
-
-    for action in sorted(action_uca_refs.keys()):
-        entry: dict = {
-            "tool_name": action,
-            "allowed_roles": action_allowed_roles.get(action, []),
-            "denied_roles": action_denied_roles.get(action, []),
-            "uca_refs": action_uca_refs[action],
-            "hazard_refs": sorted(action_hazard_refs.get(action, set())),
-        }
-        threshold = action_approval_threshold.get(action)
-        if threshold is not None:
-            entry["requires_approval_above_usd"] = threshold
-
-        tool_authorizations.append(entry)
-
-    manifest = {
-        "_generated_by": "CAGE stpa_compiler",
-        "_source": "config/stpa_control_structure.yaml",
-        "_generated_at": now_utc,
-        "_schema_version": "1.0.0",
-        "tool_authorizations": tool_authorizations,
-    }
-
-    return _json.dumps(manifest, indent=2)
-
-
-def generate_iap_cel_policies(cs: ControlStructureModel) -> str:
-    """Generate GCP IAM CEL conditions for GEAP ``roles/iap.egressor`` bindings.
-
-    Compiles STPA control action terminal classifications (``READ_ONLY`` vs.
-    mutating) and RBAC role memberships into deterministic IAM Common Expression
-    Language (CEL) expressions compatible with GEAP Agent Gateway egress policy
-    enforcement (`roles/iap.egressor`, `iap.webServiceVersions.egressViaIAP`).
-
-    Output format::
-
-        {
-          "_generated_by": "CAGE stpa_compiler",
-          "_source": "config/stpa_control_structure.yaml",
-          "_generated_at": "2026-07-23T00:00:00Z",
-          "_schema_version": "1.0.0",
-          "role": "roles/iap.egressor",
-          "permission": "iap.webServiceVersions.egressViaIAP",
-          "read_only_tools": ["read_resource"],
-          "mutating_tools": ["mutate_record"],
-          "read_only_cel_expression": "resource.type == \\"networkservices\\" && (destination.mcp.tool.name in [\\"read_resource\\"] || request.headers[\\"mcp-method\\"] in [\\"tools/list\\", \\"prompts/list\\"])",
-          "role_bindings": [
-            {
-              "role_name": "operator",
-              "allowed_tools": ["mutate_record", "read_resource"],
-              "read_only_tools": ["read_resource"],
-              "mutating_tools": ["mutate_record"],
-              "cel_expression": "resource.type == \\"networkservices\\" && destination.mcp.tool.name in [\\"mutate_record\\", \\"read_resource\\"]"
-            }
-          ]
-        }
-    """
-    import datetime as _dt
-    import json as _json
-
-    now_utc = _dt.datetime.now(_dt.timezone.utc).isoformat()
-
-    # Determine worst-case terminal classification per action (fail-closed)
-    action_ucas: dict[str, list[UCAModel]] = {}
-    for uca in cs.unsafe_control_actions:
-        if uca.action != "*":
-            action_ucas.setdefault(uca.action, []).append(uca)
-
-    ca_by_name = {ca["name"]: ca for ca in cs.control_actions if "name" in ca}
-    all_actions = sorted(set(ca_by_name.keys()) | set(action_ucas.keys()))
-
-    read_only_tools: list[str] = []
-    mutating_tools: list[str] = []
-
-    for action in all_actions:
-        classifications: list[str] = []
-        ca = ca_by_name.get(action)
-        if ca and ca.get("terminal_classification"):
-            classifications.append(str(ca["terminal_classification"]))
-        for u in action_ucas.get(action, []):
-            if u.terminal_classification:
-                classifications.append(u.terminal_classification)
-
-        if classifications and all(c == "READ_ONLY" for c in classifications):
-            read_only_tools.append(action)
-        else:
-            mutating_tools.append(action)
-
-    ro_list_literal = ", ".join(_json.dumps(t) for t in read_only_tools)
-    if read_only_tools:
-        read_only_cel = (
-            'resource.type == "networkservices" && ('
-            f"destination.mcp.tool.name in [{ro_list_literal}] || "
-            'request.headers["mcp-method"] in ["tools/list", "prompts/list"])'
-        )
-    else:
-        read_only_cel = (
-            'resource.type == "networkservices" && '
-            'request.headers["mcp-method"] in ["tools/list", "prompts/list"]'
-        )
-
-    role_bindings: list[dict[str, Any]] = []
-    if cs.rbac_rules:
-        for role in sorted(cs.rbac_rules.roles, key=lambda r: r.name):
-            allowed = sorted(set(role.allowed_actions))
-            role_ro = [t for t in allowed if t in read_only_tools]
-            role_mut = [t for t in allowed if t not in read_only_tools]
-            allowed_literal = ", ".join(_json.dumps(t) for t in allowed)
-            if allowed:
-                cel_expr = (
-                    'resource.type == "networkservices" && '
-                    f"destination.mcp.tool.name in [{allowed_literal}]"
-                )
-            else:
-                cel_expr = 'resource.type == "networkservices" && false'
-
-            binding: dict[str, Any] = {
-                "role_name": role.name,
-                "allowed_tools": allowed,
-                "read_only_tools": role_ro,
-                "mutating_tools": role_mut,
-                "cel_expression": cel_expr,
-            }
-            if role.limits and role.limits.get("manual_review_below") is not None:
-                binding["manual_review_below"] = float(
-                    role.limits["manual_review_below"]
-                )
-            role_bindings.append(binding)
-
-    payload: dict[str, Any] = {
-        "_generated_by": "CAGE stpa_compiler",
-        "_source": "config/stpa_control_structure.yaml",
-        "_generated_at": now_utc,
-        "_schema_version": "1.0.0",
-        "role": "roles/iap.egressor",
-        "permission": "iap.webServiceVersions.egressViaIAP",
-        "read_only_tools": read_only_tools,
-        "mutating_tools": mutating_tools,
-        "read_only_cel_expression": read_only_cel,
-        "role_bindings": role_bindings,
-    }
-    return _json.dumps(payload, indent=2)
 
 
 # ---------------------------------------------------------------------------
@@ -2760,10 +2360,7 @@ class CompileResult:
     nemo_content: str = ""
     python_content: str = ""
     langgraph_content: str = ""
-    agp_content: str = ""
     ftra_content: str = ""
-    registry_content: str = ""
-    iap_cel_content: str = ""
     sandbox_content: str = ""
     errors: list[str] = field(default_factory=list)
 
@@ -2840,29 +2437,11 @@ def compile_control_structure(
         except Exception as exc:
             result.errors.append(f"Python generation failed: {exc}")
 
-    if "agp" in effective_targets:
-        try:
-            result.agp_content = generate_agp(cs)
-        except Exception as exc:
-            result.errors.append(f"AGP generation failed: {exc}")
-
     if "ftra" in effective_targets:
         try:
             result.ftra_content = generate_terminal_registry(cs)
         except Exception as exc:
             result.errors.append(f"FTRA terminal registry generation failed: {exc}")
-
-    if "registry" in effective_targets:
-        try:
-            result.registry_content = generate_registry_manifest(cs)
-        except Exception as exc:
-            result.errors.append(f"Agent Registry manifest generation failed: {exc}")
-
-    if "iap-cel" in effective_targets:
-        try:
-            result.iap_cel_content = generate_iap_cel_policies(cs)
-        except Exception as exc:
-            result.errors.append(f"IAP CEL policy generation failed: {exc}")
 
     if "sandbox" in effective_targets:
         try:
@@ -2904,10 +2483,7 @@ def write_artifacts(
     nemo_out: Path,
     python_out: Path,
     langgraph_out: Path,
-    agp_out: Path | None = None,
     ftra_out: Path | None = None,
-    registry_out: Path | None = None,
-    iap_cel_out: Path | None = None,
     sandbox_out: Path | None = None,
 ) -> None:
     """Write generated artifacts to disk, creating parent dirs as needed."""
@@ -2933,44 +2509,11 @@ def write_artifacts(
         _ruff_format(langgraph_out)
         logger.info("✅ LangGraph Saga nodes written → %s", langgraph_out)
 
-    if result.agp_content:
-        effective_agp_out = agp_out or _DEFAULT_AGP_OUT
-        effective_agp_out.parent.mkdir(parents=True, exist_ok=True)
-        effective_agp_out.write_text(result.agp_content)
-        logger.info("✅ AGP Semantic Policy written → %s", effective_agp_out)
-        char_count = len(result.agp_content)
-        if char_count > _AGP_CHAR_BUDGET:
-            logger.warning(
-                "⚠️  AGP output exceeds %d-char budget (%d chars). "
-                "Output contains TRUNCATED sentinel.",
-                _AGP_CHAR_BUDGET,
-                char_count,
-            )
-        else:
-            logger.info(
-                "   AGP character budget: %d/%d used (%.1f%%)",
-                char_count,
-                _AGP_CHAR_BUDGET,
-                100.0 * char_count / _AGP_CHAR_BUDGET,
-            )
-
     if result.ftra_content:
         effective_ftra_out = ftra_out or _DEFAULT_FTRA_OUT
         effective_ftra_out.parent.mkdir(parents=True, exist_ok=True)
         effective_ftra_out.write_text(result.ftra_content)
         logger.info("✅ FTRA terminal registry written → %s", effective_ftra_out)
-
-    if result.registry_content:
-        effective_registry_out = registry_out or _DEFAULT_REGISTRY_OUT
-        effective_registry_out.parent.mkdir(parents=True, exist_ok=True)
-        effective_registry_out.write_text(result.registry_content)
-        logger.info("✅ Agent Registry manifest written → %s", effective_registry_out)
-
-    if result.iap_cel_content:
-        effective_iap_cel_out = iap_cel_out or _DEFAULT_IAP_CEL_OUT
-        effective_iap_cel_out.parent.mkdir(parents=True, exist_ok=True)
-        effective_iap_cel_out.write_text(result.iap_cel_content)
-        logger.info("✅ IAP CEL policies written → %s", effective_iap_cel_out)
 
     if result.sandbox_content:
         effective_sandbox_out = sandbox_out or _DEFAULT_SANDBOX_OUT
@@ -3048,22 +2591,14 @@ def _build_parser() -> argparse.ArgumentParser:
             "nemo",
             "python",
             "langgraph",
-            "agp",
             "ftra",
-            "registry",
-            "iap-cel",
             "sandbox",
             "all",
         ],
         default=["all"],
         help=(
             "Artifacts to generate (default: all). "
-            "Use 'agp' for AGP Semantic Policy. "
             "Use 'ftra' for FTRA terminal registry (config/ftra/terminal_registry.json). "
-            "Use 'registry' for GEAP Agent Registry tool authorization manifest "
-            "(GCP Adaptation — config/registry/generated_tool_authorizations.json). "
-            "Use 'iap-cel' for GEAP IAM CEL egress conditions "
-            "(GCP Adaptation — config/registry/generated_iap_cel_policies.json). "
             "Use 'sandbox' for Sandbox Supervisor policy "
             "(config/sandbox/generated_sandbox_policy.yaml)."
         ),
@@ -3097,38 +2632,11 @@ def _build_parser() -> argparse.ArgumentParser:
         help=f"LangGraph Saga output path (default: {_DEFAULT_LG_OUT})",
     )
     compile_p.add_argument(
-        "--agp-out",
-        type=Path,
-        default=_DEFAULT_AGP_OUT,
-        metavar="FILE",
-        help=f"AGP Semantic Policy output path (default: {_DEFAULT_AGP_OUT})",
-    )
-    compile_p.add_argument(
         "--ftra-out",
         type=Path,
         default=_DEFAULT_FTRA_OUT,
         metavar="FILE",
         help=f"FTRA terminal registry output path (default: {_DEFAULT_FTRA_OUT})",
-    )
-    compile_p.add_argument(
-        "--registry-out",
-        type=Path,
-        default=_DEFAULT_REGISTRY_OUT,
-        metavar="FILE",
-        help=(
-            f"Agent Registry manifest output path (default: {_DEFAULT_REGISTRY_OUT}). "
-            "GCP Adaptation — only used when --targets registry is specified."
-        ),
-    )
-    compile_p.add_argument(
-        "--iap-cel-out",
-        type=Path,
-        default=_DEFAULT_IAP_CEL_OUT,
-        metavar="FILE",
-        help=(
-            f"IAP CEL policies output path (default: {_DEFAULT_IAP_CEL_OUT}). "
-            "GCP Adaptation — only used when --targets iap-cel is specified."
-        ),
     )
     compile_p.add_argument(
         "--sandbox-out",
@@ -3241,35 +2749,8 @@ def cmd_compile(args: argparse.Namespace) -> int:
             print(sep + "PYTHON VALIDATOR" + sep + result.python_content)
         if result.langgraph_content:
             print(sep + "LANGGRAPH SAGA NODES" + sep + result.langgraph_content)
-        if result.agp_content:
-            char_count = len(result.agp_content)
-            print(
-                sep
-                + f"AGP SEMANTIC POLICY ({char_count}/{_AGP_CHAR_BUDGET} chars)"
-                + sep
-                + result.agp_content
-            )
-            if char_count > _AGP_CHAR_BUDGET:
-                print(
-                    f"⚠️  WARNING: AGP output exceeds {_AGP_CHAR_BUDGET}-char budget.",
-                    file=sys.stderr,
-                )
         if result.ftra_content:
             print(sep + "FTRA TERMINAL REGISTRY (JSON)" + sep + result.ftra_content)
-        if result.registry_content:
-            print(
-                sep
-                + "AGENT REGISTRY MANIFEST (JSON) [GCP Adaptation]"
-                + sep
-                + result.registry_content
-            )
-        if result.iap_cel_content:
-            print(
-                sep
-                + "IAP CEL POLICIES (JSON) [GCP Adaptation]"
-                + sep
-                + result.iap_cel_content
-            )
         if result.sandbox_content:
             print(sep + "SANDBOX POLICY (YAML)" + sep + result.sandbox_content)
         return 0
@@ -3288,10 +2769,7 @@ def cmd_compile(args: argparse.Namespace) -> int:
         args.nemo_out,
         python_out,
         langgraph_out,
-        agp_out=args.agp_out,
         ftra_out=ftra_out,
-        registry_out=args.registry_out,
-        iap_cel_out=getattr(args, "iap_cel_out", _DEFAULT_IAP_CEL_OUT),
         sandbox_out=args.sandbox_out,
     )
     print("✅ STPA compiler finished. Artifacts written:")
@@ -3303,16 +2781,8 @@ def cmd_compile(args: argparse.Namespace) -> int:
         print(f"   Python validator → {python_out}")
     if result.langgraph_content:
         print(f"   LangGraph Saga → {langgraph_out}")
-    if result.agp_content:
-        print(f"   AGP Semantic Policy → {args.agp_out}")
     if result.ftra_content:
         print(f"   FTRA terminal registry → {ftra_out}")
-    if result.registry_content:
-        print(f"   Agent Registry manifest [GCP] → {args.registry_out}")
-    if result.iap_cel_content:
-        print(
-            f"   IAP CEL policies [GCP] → {getattr(args, 'iap_cel_out', _DEFAULT_IAP_CEL_OUT)}"
-        )
     if result.sandbox_content:
         print(f"   Sandbox policy → {args.sandbox_out}")
     return 0

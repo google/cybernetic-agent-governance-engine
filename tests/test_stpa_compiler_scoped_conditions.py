@@ -28,7 +28,6 @@ import yaml
 
 from src.gateway.governance.stpa_compiler import (
     ControlStructureModel,
-    generate_agp,
     generate_opa,
     generate_python,
 )
@@ -168,10 +167,3 @@ class TestRego:
         rego = generate_opa(_cs())
         assert rego.count("stpa_violation_uca_1 := msg if {") == 1
         assert "is_number" not in rego
-
-
-class TestAgp:
-    def test_scope_and_required_params_are_stated(self) -> None:
-        text = generate_agp(_cs(applies_when=_SCOPE, require_params=True))
-        assert 'When "mode" is "Release": Do not execute "do_thing" when:' in text
-        assert 'Also do not execute it if "qty" or "pool" is missing.' in text

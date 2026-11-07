@@ -237,7 +237,6 @@ The following are guaranteed stable across minor versions:
 
 The following may change without a major version bump:
 
-- AGP Semantic Policy output format (`config/agp/generated_semantic_policy.txt`)
 - Webhook payload schema (additive changes only; no field removals without notice)
 - Internal tier ordering within the 8-tier pipeline (`Tier 0.5` through `Tier 6`)
 

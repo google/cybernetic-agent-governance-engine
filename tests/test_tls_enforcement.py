@@ -16,9 +16,8 @@
 
 Validates:
 1. NIST SP 800-52 Rev. 2 minimum TLS version compliance (TLS 1.2+ mandatory, TLS 1.0/1.1 disabled).
-2. OIDC and external key endpoint TLS verification (explicit verify=True, HTTPS URL schemes).
-3. HSTS and proxy transport header evaluation.
-4. Linkerd mTLS service mesh manifest annotations (IA-3 / SC-8 / POAM-011).
+2. HSTS and proxy transport header evaluation.
+3. Linkerd mTLS service mesh manifest annotations (IA-3 / SC-8 / POAM-011).
 """
 
 from __future__ import annotations
@@ -26,7 +25,6 @@ from __future__ import annotations
 import os
 import ssl
 from pathlib import Path
-from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 import yaml
@@ -70,45 +68,7 @@ class TestTlsProtocolStandards:
 
 
 # ---------------------------------------------------------------------------
-# 2. OIDC & JWKS TLS Enforcement Tests
-# ---------------------------------------------------------------------------
-
-
-class TestOidcTlsEnforcement:
-    """Validate OIDC JWKS fetching enforces secure transport (SC-8 / HIGH-4)."""
-
-    @pytest.mark.asyncio
-    async def test_fetch_jwks_uses_tls_verification(self) -> None:
-        """Verify that _fetch_jwks configures httpx.AsyncClient with verify=True."""
-        from src.gateway.server import governance_middleware
-
-        mock_resp = MagicMock()
-        mock_resp.json.return_value = {"keys": [{"kid": "test-key-1", "kty": "EC"}]}
-        mock_resp.raise_for_status.return_value = None
-
-        mock_client = AsyncMock()
-        mock_client.get.return_value = mock_resp
-        mock_client.__aenter__.return_value = mock_client
-        mock_client.__aexit__.return_value = None
-
-        with patch.object(
-            governance_middleware,
-            "_OIDC_JWKS_URI",
-            "https://auth.example.com/.well-known/jwks.json",
-        ):
-            with patch("httpx.AsyncClient", return_value=mock_client) as mock_httpx_cls:
-                # Clear any prior cache
-                governance_middleware._jwks_cache.clear()
-                jwks = await governance_middleware._fetch_jwks()
-
-                # Verify httpx.AsyncClient was instantiated with verify=True
-                mock_httpx_cls.assert_called_once_with(verify=True, timeout=5.0)
-                assert "test-key-1" in jwks
-                assert jwks["test-key-1"]["kty"] == "EC"
-
-
-# ---------------------------------------------------------------------------
-# 3. Linkerd mTLS Policy Manifest Assertions (SC-8 / IA-3)
+# 2. Linkerd mTLS Policy Manifest Assertions (SC-8 / IA-3)
 # ---------------------------------------------------------------------------
 
 

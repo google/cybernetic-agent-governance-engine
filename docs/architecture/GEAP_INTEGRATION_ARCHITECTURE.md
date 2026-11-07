@@ -1,9 +1,9 @@
 # CAGE × Gemini Enterprise Agent Platform (GEAP) Integration Architecture
 
 **Document type:** Architectural Specification & Modular Implementation Blueprint  
-**Status:** ACTIVE — Phases 1–3 (Modules M1–M6) Implemented at HEAD; Modules M7–M8 Specified  
+**Status:** ACTIVE — Modules M1, M2, M4, M5, M6 Implemented at HEAD; Module M3 Retired (`F-111`); Modules M7–M8 Specified  
 **Date:** 2026-10-12  
-**Last Updated:** 2026-10-22  
+**Last Updated:** 2026-11-06  
 **Authority:** Supplements [`SUBSTRATE_MOAT_STRATEGY.md`](SUBSTRATE_MOAT_STRATEGY.md), [`GOVERNANCE_SUBSTRATE_DUALITY.md`](GOVERNANCE_SUBSTRATE_DUALITY.md), and [`EVALUATION_AND_ALIGNMENT_HARNESS.md`](EVALUATION_AND_ALIGNMENT_HARNESS.md)
 
 ---
@@ -43,14 +43,12 @@ flowchart TB
         AGW_IN["Agent Gateway Ingress<br/>(CLIENT_TO_AGENT + Model Armor)"]
         RUNTIME["Vertex AI Agent Runtime (ADK)<br/>SPIFFE ID-2 + Delegated OAuth ID-3"]
         MEM["Vertex Memory Bank<br/>(PreloadMemoryTool)"]
-        AGW_OUT["Agent Gateway Egress<br/>(AGENT_TO_ANYWHERE + IAP CEL)"]
-        REG["GEAP Agent Registry<br/>(Agents, MCP Toolspecs, Endpoints)"]
+        AGW_OUT["Agent Gateway Egress<br/>(AGENT_TO_ANYWHERE)"]
     end
 
     subgraph Online["CAGE Online Runtime Enforcement Plane (<10 ms)"]
         M1["Module M1: AGW Service Extension<br/>(REQUEST_AUTHZ Callout & Seal Injector)"]
         M2["Module M2: Tri-Identity Envelope<br/>Binder (ID-1 User, ID-2 SPIFFE, ID-3 OAuth)"]
-        M3["Module M3: Agent Registry &<br/>IAP CEL / SGP Bidirectional Compiler"]
         M4["Module M4: FastMCP Seal Verifier<br/>& Memory Bank Sanitizer Middleware"]
         GOV["SymbolicGovernor<br/>(FTRA + STPA + OPA + Causal + Redis Lua CBF)"]
     end
@@ -60,8 +58,6 @@ flowchart TB
     RUNTIME --> AGW_OUT
     AGW_OUT <-->|"1. REQUEST_AUTHZ (failOpen: false)"| M1
     M1 --> M2 --> GOV
-    CER -.->|"GCS .cer Verification"| M3
-    M3 <-->|"Toolspecs / CEL / SGP"| REG
     AGW_OUT -->|"2. X-CAGE-Routing-Seal"| M4
     GOV -.->|"Async Cloud Logging -> BigQuery"| M5
 ```
@@ -74,7 +70,7 @@ flowchart TB
 |---|---|---|---|
 | **M1** | **AGW `REQUEST_AUTHZ` Service Extension & Seal Injector** | Layer 1 Ingress ([`agw_adapter.py`](../../src/gateway/governance/ingress/agw_adapter.py)) | ✅ **Implemented (Phase 3)** |
 | **M2** | **GEAP Tri-Identity (`ID-1`/`ID-2`/`ID-3`) Envelope Binder** | Layer 1 Seam ([`agw_adapter.py`](../../src/gateway/governance/ingress/agw_adapter.py), [`credential_broker.py`](../../src/gateway/governance/seams/credential_broker.py)) | ✅ **Implemented (Phase 3)** |
-| **M3** | **Agent Registry Toolspec & IAP CEL / SGP Bidirectional Compiler** | Layer 1 Ingress ([`agent_registry_adapter.py`](../../src/gateway/governance/ingress/agent_registry_adapter.py), [`agp_policy_uploader.py`](../../src/gateway/governance/ingress/agp_policy_uploader.py), [`stpa_compiler.py`](../../src/gateway/governance/stpa_compiler.py)) | ✅ **Implemented (Phase 2)** |
+| **M3** | **Agent Registry Toolspec & IAP CEL / SGP Bidirectional Compiler** | Retired (`372daad2^:src/gateway/governance/ingress/agent_registry_adapter.py`, `372daad2^:src/gateway/governance/ingress/agp_policy_uploader.py`) | 🗑️ **Retired (`F-111` — unreferenced catalog & AGP/CEL compiler targets removed)** |
 | **M4** | **FastMCP Seal Verification Middleware & Memory Bank Guard** | Layer 3 GEAP Runtime ([`runtime_guards.py`](../../src/integrations/gcp_geap/runtime_guards.py)) + Layer 1 Seal ([`routing_seal.py`](../../src/gateway/governance/routing_seal.py), [`pii_sanitizer.py`](../../src/gateway/governance/pii_sanitizer.py)) | ✅ **Implemented (Phase 3)** |
 | **M5** | **Failure Cluster Harvester & 3-Tier Simulated CI/CD Eval Gate** | Layer 3 GCP Eval ([`bq_harvester.py`](../../src/integrations/gcp_eval/bq_harvester.py), [`vertex_evaluator.py`](../../src/integrations/gcp_eval/vertex_evaluator.py)) | ✅ **Implemented (Phase 1)** |
 | **M6** | **GEPA Evolutionary Prompt Governor (`GovernedGEPAOptimizer`)** | Layer 3 GCP Eval ([`gepa_governor.py`](../../src/integrations/gcp_eval/gepa_governor.py)) | ✅ **Implemented (Phase 1)** |
@@ -112,19 +108,9 @@ CAGE provides two complementary GEPA modules across its Split-Plane Architecture
   3. **Tokenomics & Quadratic Bloat Guard**: Runs [`compute_trajectory_tokenomics`](../../src/eval_harness/runner.py) across candidate rollouts and eliminates candidates exhibiting `is_quadratic_bloat` when `eliminate_on_quadratic_bloat=True`.
   4. **Composite Fitness & Automatic `.cer` Signing**: Ranks surviving candidates by a weighted combination of 4-bucket `mean_with_skill_composite`, `mean_composite_lift`, Stage 0 `length_adjusted_score`, normalized GEAP rubric scores, and `routing_premium`. When configured with a [`GcpSkillCertifier`](../../src/integrations/gcp_eval/cer_publisher.py), the winning survivor is automatically signed into a [`SkillCertificationReceipt`](../../src/eval_harness/harness.py) (`.cer`, schema `cage.skill.cer.v2`, `evidence_level="PAIRED_TRACES"`). The receipt binds `stages_run` and the SHA-256 digests of the RFC 8785 canonical JSON of the evaluated cases, the baseline and winning with-skill trajectory sets, and the anchors (when Stage 1 ran). Candidates must clear [`lift_meets_threshold()`](../../src/eval_harness/harness.py), the lift rule shared with the CLI gate and the `.cer` verifier.
 
-### 4.3 Module M3: Agent Registry Toolspec & IAP CEL / SGP Bidirectional Compiler
+### 4.3 Module M3: Retired (`F-111`)
 
-GEAP's **Agent Registry** catalogs three primary resource types (`Agents`, `MCP Servers`, and `Endpoints`), associates custom MCP `toolspecs` carrying `behavioralHints` (`readOnlyHint`, `destructiveHint`), and pairs with GEAP's 4-step `DRY_RUN` → `ENFORCED` Agent Gateway workflow using `roles/iap.egressor` IAM CEL conditions.
-
-Module M3 bridges CAGE's STPA control structure and FTRA reachability engine with GEAP Agent Registry and IAM CEL policies:
-1. **STPA → IAM CEL Egress Policy Compiler ([`generate_iap_cel_policies`](../../src/gateway/governance/stpa_compiler.py), `--targets iap-cel`)**:
-   * Compiles STPA control action terminal classifications (`READ_ONLY` vs. mutating) and RBAC role memberships (`cs.rbac_rules.roles`) into deterministic GCP IAM CEL expressions (`resource.type == "networkservices" && destination.mcp.tool.name in [...]`) for `roles/iap.egressor` (`iap.webServiceVersions.egressViaIAP`).
-2. **Three-Resource Agent Registry Sync & FTRA Override Derivation ([`RegistryCatalog`](../../src/gateway/governance/ingress/agent_registry_adapter.py), [`AgentRegistryAdapter`](../../src/gateway/governance/ingress/agent_registry_adapter.py))**:
-   * Parses GEAP `agents` (supporting both `spiffe://` and `principal://agents.global.org-...` identities, A2A `skills`, and `toolSpecs`), `mcpServers` (`_parse_mcp_servers_response`), and `endpoints` (`_parse_endpoints_response`).
-   * Exposes [`RegistryCatalog.to_ftra_terminal_overrides`](../../src/gateway/governance/ingress/agent_registry_adapter.py) to translate MCP `behavioralHints` (`destructiveHint=True` or `readOnlyHint=False` → `IRREVERSIBLE_TERMINAL`; `readOnlyHint=True` → `READ_ONLY`) into fail-closed FTRA terminal action overrides.
-   * Implements [`AgentRegistryAdapter.associate_toolspec`](../../src/gateway/governance/ingress/agent_registry_adapter.py) to validate that every associated MCP tool declares explicit `behavioralHints` before registration.
-3. **Fail-Closed `DRY_RUN` → `ENFORCED` Gateway Transition Gate ([`verify_and_transition_gateway_mode`](../../src/gateway/governance/ingress/agp_policy_uploader.py))**:
-   * Returns a [`GatewayEnforcementTransitionResult`](../../src/gateway/governance/ingress/agp_policy_uploader.py) that blocks transitioning an Agent Gateway from `DRY_RUN` to `ENFORCED` unless: (a) every target observed in `discovered_targets` is registered in `RegistryCatalog`, (b) every target has an explicit `roles/iap.egressor` binding with a valid agent principal and non-empty CEL condition, and (c) an async `cer_verifier` ([`CerArtifactVerifier`](../../src/gateway/governance/ingress/agp_policy_uploader.py), returning `(verified, reason)`) is injected and every provided skill `.cer` artifact (at least one) passes it. A missing verifier, a missing artifact, a refusal, or a verifier exception blocks the transition; there is no presence-only (`status == "CERTIFIED"`) fallback. The gate is `async` so it can await the real verifier, typically a closure over [`GcsSkillCertificationVerifier.verify_cer_receipt`](../../src/integrations/gcp_eval/cer_publisher.py) that supplies each skill's `SKILL.md` bytes.
+Module M3 (`372daad2^:src/gateway/governance/ingress/agent_registry_adapter.py`, `372daad2^:src/gateway/governance/ingress/agp_policy_uploader.py`, and the `--targets agp` / `registry` / `iap-cel` generators in [`stpa_compiler.py`](../../src/gateway/governance/stpa_compiler.py)) was retired under `F-111` because no runtime governor stage read `data.agent_catalog` and no deployment path consumed the generated AGP semantic policy or registry JSON files. Online GEAP callout enforcement runs directly through Modules M1, M2, and M4 (`AgwAdapter.evaluate_request_authz`, `GeapTriIdentityContext`, and `FastMcpSealVerificationMiddleware`), while FTRA terminal classifications are compiled from STPA YAML into [`terminal_action_registry.json`](../../src/gateway/governance/terminal_action_registry.json) and `.cer` skill receipts are verified via [`GcsSkillCertificationVerifier.verify_cer_receipt`](../../src/integrations/gcp_eval/cer_publisher.py).
 
 ### 4.4 Modules M1 & M2: AGW `REQUEST_AUTHZ` Service Extension & Tri-Identity Envelope Binder
 

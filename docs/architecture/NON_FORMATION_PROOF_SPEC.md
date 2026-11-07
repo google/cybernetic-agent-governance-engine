@@ -464,8 +464,8 @@ here for readability is, in the actual wire format, the envelope's own
   which already calls `ControlRegistry().active_hash`. This is the field
   that binds "what standing was claimed" to "under which compiled rule-set,"
   closing the traceability gap between proof elements 2 and 9.
-- `claimed_authority` / `claimed_scope` — **new**, sourced from the SPIFFE ID
-  and `agent_catalog.rego` scope lookup already performed by the OPA tier
+- `claimed_authority` / `claimed_scope` — **new**, sourced from the verified
+  workload identity and OPA RBAC scope lookup performed by the OPA tier
   (Tier 3b) before refusal; simply not currently copied into the receipt.
 
 ### 6.3a `failure` — Proof Element 3 (Lost Standing)

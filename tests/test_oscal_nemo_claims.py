@@ -195,7 +195,6 @@ def _committed_ftra_si10(artifact: str) -> str:
 def test_ftra_si10_says_uca7_compiles_only_to_opa(statement: str) -> None:
     text = _flat(statement)
     assert NEMO_RAILS not in text
-    assert "generated_semantic_policy.txt" not in text
     assert "UCA-7 compiles only to OPA" in text
     assert "NeMo" not in text or NEMO_QUALIFIER in text
 

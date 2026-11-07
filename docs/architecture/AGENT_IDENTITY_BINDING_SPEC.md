@@ -322,7 +322,7 @@ Writing policies against exact UUIDs causes `POLICY_DRIFT_VIOLATION` errors when
 ### 3.2 OPA Rego Input Contract
 
 > [!NOTE]
-> Target state. At HEAD the gateway does not build this input: the verified identity is a Linkerd name, the governor records the caller as `_caller_principal`, and [`config/opa/agent_catalog.rego`](../../config/opa/agent_catalog.rego) keys on `input.caller_identity.sub` (populated by the optional OIDC middleware in [`governance_middleware.py`](../../src/gateway/server/governance_middleware.py)). The contract below is the intended shape once SPIFFE-style names reach OPA.
+> Target state. At HEAD the gateway does not build this input: the verified identity is a Linkerd workload identity (`l5d-client-id` validated against `CAGE_TRUSTED_CLIENT_IDENTITIES` by [`WorkloadIdentityMiddleware`](../../src/gateway/server/workload_identity.py)), and the governor records the caller as `_caller_principal`. The unreferenced OIDC middleware and static catalog files (`372daad2^:config/opa/agent_catalog.rego`, `372daad2^:config/agent_catalog.json`) were retired under `F-111`. The contract below is the intended shape once SPIFFE-style names reach OPA.
 
 The target OPA policy evaluation input is:
 
@@ -403,24 +403,27 @@ Examples:
   spiffe://cage.example.com/agents/security/penetration-tester-9e2b5f1a
 ```
 
-### 3.5 Agent Registration with Namespace Prefixes
+### 3.5 Agent Registration with Namespace Prefixes (Target State)
 
-Agents are **not** registered through a Python API. `ControlRegistry` is a read-only singleton that loads `config/compliance/{REGION}_BASELINE.json`; it has no mutating methods. Registration is declarative and lands through PR + CI:
+> [!NOTE]
+> Target state (`F-111`). At HEAD, caller admission is enforced declaratively via `CAGE_TRUSTED_CLIENT_IDENTITIES` in [`WorkloadIdentityMiddleware`](../../src/gateway/server/workload_identity.py) and Linkerd `AuthorizationPolicy` ([`infra/modules/gateway/mesh-policy/templates/policy.yaml`](../../infra/modules/gateway/mesh-policy/templates/policy.yaml)). The earlier static `372daad2^:config/agent_catalog.json` and `372daad2^:config/opa/agent_catalog.rego` files were retired because no runtime governor stage queried `data.agent_catalog`.
 
-1. Add the agent to `config/agent_catalog.json`, declaring `authorized_parent_prefixes` as SPIFFE **prefixes**, never exact IDs.
-2. [`config/opa/agent_catalog.rego`](../../config/opa/agent_catalog.rego) loads that file as an OPA data document (`approved_agents := data.agent_catalog_data.agents`) at startup and on bundle update.
-3. Prefix authorization is evaluated by `_parent_authorized_for_subagent`, which iterates the declared prefixes and applies `startswith(parent_spiffe, prefix)`.
+Agents are **not** registered through a mutating Python API (`ControlRegistry` is a read-only singleton loading `config/compliance/{REGION}_BASELINE.json`). In the target multi-agent delegation design, registration lands declaratively through PR + CI:
+
+1. Declare `authorized_parent_prefixes` as SPIFFE **prefixes**, rather than exact instance IDs, in a version-controlled OPA data document.
+2. Load that document into the active OPA policy bundle under the `agent_catalog_data` namespace evaluated on the live governor stage.
+3. Evaluate prefix authorization via `startswith(parent_spiffe, prefix)`:
 
 ```rego
-# config/opa/agent_catalog.rego — shipped rule
-_parent_authorized_for_subagent(parent_spiffe, subagent) {
+# Target-state OPA prefix helper (illustrative)
+_parent_authorized_for_subagent(parent_spiffe, subagent) if {
     authorized_prefixes := object.get(subagent, "authorized_parent_prefixes", [])
     some prefix in authorized_prefixes
     startswith(parent_spiffe, prefix)
 }
 ```
 
-Because matching is prefix-based, ephemeral instance suffixes never enter the policy body, and the catalog stays stable across pod restarts.
+Because matching is prefix-based, ephemeral instance suffixes stay out of the policy body across pod restarts.
 
 ---
 
@@ -541,10 +544,9 @@ Header-based identity was first removed in `feat(gateway)!: replace X-Agent-ID h
 - [ ] Kubernetes pod manifests mounting agent signing keys
 - [ ] Load tests verifying DPoP overhead < 5ms p99
 
-### Phase 3 — Namespace Prefix Policies ✅ SHIPPED
-- [x] [`config/opa/agent_catalog.rego`](../../config/opa/agent_catalog.rego) evaluates `authorized_parent_prefixes` via `startswith()`
-- [x] Catalog entries declared declaratively in `config/agent_catalog.json`
-- [ ] Verify `POLICY_DRIFT_VIOLATION` no longer triggers on pod restarts under sustained staging load
+### Phase 3 — Namespace Prefix Policies 🔲 TARGET STATE (Prototype Retired under F-111)
+- [ ] Wire an OPA delegation-prefix rule into the live `OpaStage` pipeline (the unreferenced prototype in `372daad2^:config/opa/agent_catalog.rego` and `372daad2^:config/agent_catalog.json` was retired under `F-111`; caller admission at HEAD is enforced by `WorkloadIdentityMiddleware` + Linkerd `AuthorizationPolicy`)
+- [ ] Verify `POLICY_DRIFT_VIOLATION` does not trigger on pod restarts under sustained staging load
 
 ### Phase 4 — A2A Delegation Framework 🔲 NOT STARTED
 - [ ] Subagent SPIFFE ID generation in the agent runtime
@@ -604,7 +606,8 @@ Header-based identity was first removed in `feat(gateway)!: replace X-Agent-ID h
 | Version | Date | Author | Changes |
 |---|---|---|---|
 | 1.0.0 | 2026-09-22 | Principal Security & Governance Architect | Initial specification: SPIFFE extraction, DPoP binding, namespace prefix matching, A2A delegation |
-| 1.1.0 | 2026-09-22 | Documentation sync | Re-grounded against shipped code: corrected module paths (`server/workload_identity.py`, `server/dpop_validator.py`, `governance/constants.py`), replaced the non-existent `ControlRegistry.register_control()` API with the `config/agent_catalog.json` + `agent_catalog.rego` mechanism, converted §5 roadmap to verified implementation status |
+| 1.1.0 | 2026-09-22 | Documentation sync | Re-grounded against shipped code: corrected module paths (`server/workload_identity.py`, `server/dpop_validator.py`, `governance/constants.py`), replaced the non-existent `ControlRegistry.register_control()` API with the `372daad2^:config/agent_catalog.json` + `372daad2^:config/opa/agent_catalog.rego` mechanism, converted §5 roadmap to verified implementation status |
+| 1.2.0 | 2026-11-06 | F-111 retirement | Retired unreferenced `OIDCValidationMiddleware`, `372daad2^:src/gateway/governance/ingress/agent_registry_adapter.py`, `372daad2^:config/agent_catalog.json`, and `372daad2^:config/opa/agent_catalog.rego`; marked §3.5 / Phase 3 as target state and pointed active AC-3 caller admission to `WorkloadIdentityMiddleware` + Linkerd `AuthorizationPolicy` |
 
 ---
 

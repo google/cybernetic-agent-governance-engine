@@ -116,20 +116,15 @@ The CAGE gateway (`src/gateway/server/hybrid_server.py`) is the **sole trusted
 orchestrator**. No peer-to-peer agent calls are permitted without routing seal
 verification.
 
-### 3.2 CAGE-003 Agent Registry (v2.1.0)
+### 3.2 Linkerd Mesh Workload Identity & AuthorizationPolicy (v3.1.0+)
 
-The CAGE-003 Agent Registry (`src/gateway/governance/ingress/agent_registry_adapter.py`)
-maintains a SPIFFE trust-domain catalog of all authorized agents. Each registered
-agent entry includes:
+Caller admission at the gateway boundary is enforced cryptographically via Linkerd mTLS
+workload identity (`src/gateway/server/workload_identity.py`) and mesh-level
+`AuthorizationPolicy` / `MeshTLSAuthentication` (`infra/modules/gateway/mesh-policy/templates/policy.yaml`):
 
-- **SPIFFE SVID**: `spiffe://cage.local/<service-name>` — cryptographic identity
-- **Allowed tools**: enumerated set of tool names the agent may invoke
-- **Trust level**: `INTERNAL` | `DOWNSTREAM` | `EXTERNAL`
-- **Region scope**: `US_FED` | `EU_ECB` | `APAC_MAS` | `ALL`
-
-The registry is loaded at gateway startup and consulted by the OPA agent catalog
-policy (`config/opa/agent_catalog.rego`). Any agent not present in the registry
-is denied at the Envoy ext_authz boundary before reaching the governance kernel.
+- **Linkerd Workload Identity (`l5d-client-id`)**: `<sa>.<ns>.serviceaccount.identity.linkerd.<trust-domain>` set by the pod-local Linkerd inbound proxy
+- **Trusted Caller Allowlist**: `CAGE_TRUSTED_CLIENT_IDENTITIES` enforced fail-closed (403/401) in every environment
+- **Action Scope**: evaluated per request by OPA RBAC (`deployment/system_authz.rego`), domain Rego policies, and `governor.claimed_actions`
 
 ### 3.3 Trust Hierarchy
 
@@ -138,8 +133,8 @@ CAGE Gateway (trusted orchestrator)
   ├── ConsensusEngine (internal — same trust boundary)
   ├── CausalGatekeeper (internal — same trust boundary)
   ├── NeMo Guardrails (internal — same trust boundary)
-  ├── Agent Registry (CAGE-003 — SPIFFE trust-domain catalog)
-  └── governed-financial-advisor (downstream — requires routing seal + SPIFFE SVID)
+  ├── WorkloadIdentityMiddleware (Linkerd mTLS l5d-client-id allowlist)
+  └── governed-financial-advisor (downstream — requires Linkerd mTLS + routing seal)
         └── Market Data API (external — read-only, pre-approved)
 ```
 
@@ -278,11 +273,11 @@ SR 26-2 §3.2 (4-hour SLA) has no legal force outside `US_FED` deployments.
 |---|---|---|
 | §2.5.1 Authorized action space | OPA policy + routing seal | `opa_node_factory.py`, `routing_seal.py` |
 | §2.5.2 Human oversight | ConsensusEngine + ConsensusTierPlugin + DeferQueue | `src/gateway/governance/consensus/engine.py`, `src/cage_finance/tiers/consensus_tier.py`, `src/gateway/governance/defer_queue.py` |
-| §2.5.3 Inter-agent trust | Gateway-only orchestration + CAGE-003 registry | `hybrid_server.py`, `agent_registry_adapter.py` |
+| §2.5.3 Inter-agent trust | Gateway-only orchestration + Linkerd mesh policy | `hybrid_server.py`, `workload_identity.py` |
 | §2.5.4 Scope limitation | CausalGatekeeper + OPA + FTRA gate | `src/gateway/governance/causal/gatekeeper.py`, `src/gateway/governance/ftra/node_factory.py` |
 | §3.1 Scope statement | This document | `docs/governance/AGENTIC_SCOPE_STATEMENT.md` |
 | §3.2 HITL SLA (4 hours) | DeferQueue TTL + regional SLA tables | `src/gateway/governance/defer_queue.py`, `src/gateway/governance/constants.py` |
-| §4.1 Agent identity | SPIFFE SVID + Envoy ext_authz | `agent_registry_adapter.py` |
+| §4.1 Agent identity | Linkerd mTLS workload identity (`l5d-client-id`) | `workload_identity.py` |
 
 ---
 

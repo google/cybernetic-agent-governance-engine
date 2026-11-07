@@ -45,7 +45,6 @@ import pytest
 _SAGA_MODULE = "src.cage_finance.stpa.saga_nodes"
 _STPA_MODULE = "src.cage_finance.stpa.uca_rules"
 _REGO_POLICY = pathlib.Path("config/opa/generated_stpa_policy.rego")
-_SEMANTIC_POLICY = pathlib.Path("config/agp/generated_semantic_policy.txt")
 _STPA_RAILS = pathlib.Path("config/rails/generated_stpa_rails.co")
 
 
@@ -375,7 +374,7 @@ class TestGeneratedSTPAValidator:
 
 
 # ---------------------------------------------------------------------------
-# Tests: generated Rego, semantic policy, and Rails artifacts
+# Tests: generated Rego and Rails artifacts
 # ---------------------------------------------------------------------------
 
 
@@ -416,22 +415,6 @@ class TestGeneratedPolicyArtifacts:
         assert len(content.strip()) >= 50, (
             f"generated_stpa_policy.rego must have at least 50 characters, "
             f"got {len(content.strip())}"
-        )
-
-    def test_generated_semantic_policy_exists(self) -> None:
-        """config/agp/generated_semantic_policy.txt must exist."""
-        assert _SEMANTIC_POLICY.exists(), (
-            f"{_SEMANTIC_POLICY} not found. "
-            "generated_semantic_policy.txt must be present."
-        )
-
-    def test_generated_semantic_policy_is_nonempty(self) -> None:
-        """generated_semantic_policy.txt must be non-empty."""
-        if not _SEMANTIC_POLICY.exists():
-            pytest.skip(f"{_SEMANTIC_POLICY} not found")
-        content = _SEMANTIC_POLICY.read_text()
-        assert len(content.strip()) >= 1, (
-            "generated_semantic_policy.txt must not be empty"
         )
 
     def test_generated_stpa_rails_exists(self) -> None:

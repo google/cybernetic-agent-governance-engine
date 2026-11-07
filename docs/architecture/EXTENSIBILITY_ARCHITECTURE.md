@@ -425,33 +425,20 @@ When `CAGE_NORMATIVE_PROVIDER=static` (default), the ControlRegistry loads from 
 
 #### 2.5.5 Runtime Adapter Taxonomy ✅ IMPLEMENTED
 
-> **Status:** Implemented in v3.0.1. See [`attestation_aggregator.py`](../../src/gateway/governance/attestation_aggregator.py) and [`execution_actuator.py`](../../src/gateway/governance/execution_actuator.py).
+> **Status:** Implemented in v3.0.1 (updated for `POAM-2026-169` #6). Live decision-path warrant attestations run through [`warrant/reliance.py`](../../src/gateway/governance/warrant/reliance.py), offline batch CER/attestation aggregation lives in [`attestation_aggregator.py`](../../src/gateway/governance/attestation_aggregator.py), and downstream actuation routing lives in [`execution_actuator.py`](../../src/gateway/governance/execution_actuator.py).
 
-CAGE supports three distinct adapter loading patterns, each optimized for its specific integration boundary and cardinality:
+CAGE supports distinct adapter loading patterns across its runtime and offline seams:
 
 | Pattern | Adapter Type | Environment Variable | Cardinality | Runtime Behavior | Use Case |
 |---------|--------------|---------------------|-------------|------------------|----------|
-| **Multi-Active Composite** | Attestation Providers | `CAGE_ATTESTATION_PROVIDERS` | 0..N | Background polled; results aggregated via consensus | External compliance attestations (CERs, blueprints, warrants) polled from multiple providers and merged into governance envelope |
+| **Live Warrant Reliance** | Warrant Source | `CAGE_WARRANT_PROVIDER` | 0..1 | Evaluated on the governor pipeline (`WarrantStage`) with bounded freshness cache | Cryptographically verified (`VERIFIED` / `UNVERIFIED` / `INELIGIBLE_STALE`) external warrants bound into `RelianceRecord`, `GovernanceEnvelope.external_attestations`, and the hash-linked evidence chain |
+| **Offline / Library Composite** | Attestation Providers | `CAGE_ATTESTATION_PROVIDERS` | 0..N | Explicit library helper (`AttestationAggregator`); not polled in gateway lifespan | Standalone / batch aggregation and CER verification (`provider_02`, `provider_05`) outside the online gateway lifespan (`POAM-2026-169` #6) |
 | **Multi-Active Routed** | Execution Actuators | `CAGE_ACTIVE_ACTUATORS` | 0..N | Action-claim dispatch; first match wins | Downstream execution gateways registered by capability claim (e.g., `trade.*`, `transfer.*`); registry routes execution clearances to the actuator handling each action pattern |
 | **Single-Active Exclusive** | Normative Provider | `CAGE_NORMATIVE_PROVIDER` | 0..1 | Singleton instance selected per deployment | Single normative baseline engine per instance; exactly one provider supplies legal/regulatory baselines for the deployment region |
 
-##### Multi-Active Composite: Attestation Providers
+##### Warrant Reliance vs. Offline Attestation Aggregation
 
-Attestation providers implement the [`AttestationProvider`](../../src/gateway/governance/attestation_provider.py) protocol and are aggregated by [`AttestationAggregator`](../../src/gateway/governance/attestation_aggregator.py). The aggregator polls all registered providers at a configurable interval (default: 6 hours, matching THR-AUD-002 Lula cadence) and caches results in-memory. Cached attestations are embedded into [`GovernanceEnvelope`](../../src/gateway/governance/governance_envelope.py) instances at build time with zero per-transaction network calls.
-
-**Configuration:**
-
-```bash
-# Comma-separated list of provider names (empty = hermetic dev/CI mode)
-CAGE_ATTESTATION_PROVIDERS=provider_02,provider_05
-
-# Optional: Override default 6-hour poll interval
-CAGE_ATTESTATION_POLL_INTERVAL_S=21600
-```
-
-**Supported providers:** `provider_02` (CER attestations), `provider_05` (AO warrants/blueprints).
-
-**Fail-closed semantics:** If any provider fails during boot-fetch, the aggregator logs a warning and continues with the successfully-fetched subset. Stale attestations are flagged via `_last_fetch_succeeded: bool` signal. The governance envelope includes all available attestations; missing attestations do not block transactions (fail-open on staleness, fail-closed on signature verification).
+On the live gateway decision path, external warrant attestations embedded in [`GovernanceEnvelope.external_attestations`](../../src/gateway/governance/governance_envelope.py) and committed to the hash-linked evidence chain are produced by [`WarrantSource`](../../src/gateway/governance/seams/warrant.py) and [`RelianceRecord`](../../src/gateway/governance/warrant/reliance.py) (`WarrantStage`). Separately, [`AttestationProvider`](../../src/gateway/governance/attestation_provider.py) adapters (`provider_02` CER attestations, `provider_05` warrants/blueprints) can be aggregated programmatically in offline scripts and conformance suites via [`AttestationAggregator`](../../src/gateway/governance/attestation_aggregator.py) (`CAGE_ATTESTATION_PROVIDERS`); background `AttestationAggregator` polling was removed from `_gateway_lifespan` (`POAM-2026-169` #6) because its in-memory cache had no runtime reader.
 
 ##### Multi-Active Routed: Execution Actuators
 
@@ -536,7 +523,7 @@ CAGE_NORMATIVE_API_KEY_SECRET=projects/cage-prod/secrets/normative-provider-api-
 
 All three adapter types default to hermetic mode when their respective environment variables are unset or empty:
 
-- `CAGE_ATTESTATION_PROVIDERS=""` → `AttestationAggregator` returns zero providers; governance envelopes include no external attestations.
+- `CAGE_ATTESTATION_PROVIDERS=""` → `AttestationAggregator.from_env()` loads zero providers in offline/conformance callers (warrant reliance on the live pipeline is controlled separately via `CAGE_WARRANT_PROVIDER`).
 - `CAGE_ACTIVE_ACTUATORS=""` → `ActuatorRegistry` remains empty; consequence gateway handles actions locally or raises errors for unclaimed patterns.
 - `CAGE_NORMATIVE_PROVIDER="static"` → `ControlRegistry` loads baselines from committed `config/compliance/*.json` files only.
 
@@ -650,10 +637,8 @@ The ingress adapter layer (`src/gateway/governance/ingress/`) provides a uniform
 | [`acs_adapter.py`](../../src/gateway/governance/ingress/acs_adapter.py) | ACS (AI Compliance Schema) | `ControlRegistry` entries |
 | [`oscal_adapter.py`](../../src/gateway/governance/ingress/oscal_adapter.py) | OSCAL v1.1.2 component definitions | `ControlRegistry` entries |
 | [`lula_adapter.py`](../../src/gateway/governance/ingress/lula_adapter.py) | Lula validation manifests | `ControlRegistry` entries |
-| [`agp_policy_uploader.py`](../../src/gateway/governance/ingress/agp_policy_uploader.py) | AGP compiled policy bundles | OPA bundle push |
 | [`policy_translator.py`](../../src/gateway/governance/ingress/policy_translator.py) | Multi-format policy detection | Normalized policy object |
-| [`agw_adapter.py`](../../src/gateway/governance/ingress/agw_adapter.py) | Agent Gateway request format (Phase B absorption) | Governance pipeline inputs (OIDC-validated agent identity) |
-| [`agent_registry_adapter.py`](../../src/gateway/governance/ingress/agent_registry_adapter.py) | CAGE-003 Agent Registry | SPIFFE trust-domain catalog |
+| [`agw_adapter.py`](../../src/gateway/governance/ingress/agw_adapter.py) | Agent Gateway request format (Phase B absorption) | Governance pipeline inputs (OIDC-validated tri-identity context) |
 
 **Extension pattern**: A new external framework is integrated by implementing the `IngressAdapter` protocol (translate foreign schema → `ControlRegistry` entry) and registering the adapter in the ingress `__init__.py`. The kernel's `ControlRegistry` and `SymbolicGovernor` pipeline are unaffected.
 
