@@ -558,3 +558,106 @@ def test_historical_assertion_normative_never_and_headings_are_not_flagged(
         encoding="utf-8",
     )
     assert audit_markdown_file(doc) == []
+
+
+def _seed_version_hygiene_repo(
+    root: Path,
+    *,
+    pyproject_version: str = "4.0.0",
+    breaking_body: str = (
+        "# CAGE Breaking Changes\n\n"
+        "# v3.x\n\n## v3.0.1\n\n"
+        "# v4.x\n\n## v4.0.0\n\n"
+        "# Unreleased (v5.x)\n\n## Unreleased (next major) — Item\n"
+    ),
+) -> None:
+    (root / "pyproject.toml").write_text(
+        f'[project]\nname = "cage"\nversion = "{pyproject_version}"\n',
+        encoding="utf-8",
+    )
+    docs_dir = root / "docs"
+    docs_dir.mkdir(parents=True, exist_ok=True)
+    (docs_dir / "BREAKING_CHANGES.md").write_text(breaking_body, encoding="utf-8")
+
+
+def test_version_hygiene_live_repo_passes() -> None:
+    assert g9.audit_version_hygiene(REPO) == []
+
+
+def test_version_hygiene_happy_path_with_partner_and_lula_schema(
+    tmp_path: Path,
+) -> None:
+    _seed_version_hygiene_repo(tmp_path)
+    partner_spec = tmp_path / "docs" / "partners" / "provider_01" / "spec_v02.md"
+    partner_spec.parent.mkdir(parents=True, exist_ok=True)
+    partner_spec.write_text("# Partner v0.2 spec\n", encoding="utf-8")
+
+    lula_schema = (
+        tmp_path
+        / "compliance"
+        / "lula"
+        / "schemas"
+        / "lula_v0160_validation.schema.json"
+    )
+    lula_schema.parent.mkdir(parents=True, exist_ok=True)
+    lula_schema.write_text("{}\n", encoding="utf-8")
+
+    verifier = tmp_path / "scripts" / "verify_lula_assessment_results.py"
+    verifier.parent.mkdir(parents=True, exist_ok=True)
+    verifier.write_text('"""Lula v0.16.0 verifier."""\n', encoding="utf-8")
+
+    assert g9.audit_version_hygiene(tmp_path) == []
+
+
+def test_version_hygiene_rejects_stale_versioned_doc_filenames(tmp_path: Path) -> None:
+    _seed_version_hygiene_repo(tmp_path)
+    (tmp_path / "docs" / "BREAKING_CHANGES_v3.md").write_text(
+        "# Old\n", encoding="utf-8"
+    )
+    (tmp_path / "MIGRATION_v4.md").write_text("# Migration\n", encoding="utf-8")
+    oscal_dir = tmp_path / "compliance" / "oscal"
+    oscal_dir.mkdir(parents=True)
+    (oscal_dir / "ssp_v3.yaml").write_text("ssp: {}\n", encoding="utf-8")
+
+    issues = g9.audit_version_hygiene(tmp_path)
+    assert sorted(i.target for i in issues) == [
+        "MIGRATION_v4.md",
+        "compliance/oscal/ssp_v3.yaml",
+        "docs/BREAKING_CHANGES_v3.md",
+    ]
+
+
+def test_version_hygiene_rejects_major_version_drift_in_breaking_changes(
+    tmp_path: Path,
+) -> None:
+    # Bumping pyproject.toml to 5.0.0 without promoting # Unreleased (v5.x) -> # v5.x
+    # and advancing # Unreleased (v6.x) must fail closed on both counts.
+    _seed_version_hygiene_repo(tmp_path, pyproject_version="5.0.0")
+    issues = g9.audit_version_hygiene(tmp_path)
+    assert [(i.reference_type, i.target) for i in issues] == [
+        ("Version Hygiene", "# v5.x"),
+        ("Version Hygiene", "# Unreleased (v5.x)"),
+    ]
+
+
+def test_version_hygiene_rejects_lula_schema_version_drift(tmp_path: Path) -> None:
+    _seed_version_hygiene_repo(tmp_path)
+    lula_schema = (
+        tmp_path
+        / "compliance"
+        / "lula"
+        / "schemas"
+        / "lula_v0170_validation.schema.json"
+    )
+    lula_schema.parent.mkdir(parents=True, exist_ok=True)
+    lula_schema.write_text("{}\n", encoding="utf-8")
+    verifier = tmp_path / "scripts" / "verify_lula_assessment_results.py"
+    verifier.parent.mkdir(parents=True, exist_ok=True)
+    verifier.write_text('"""Lula v0.16.0 verifier."""\n', encoding="utf-8")
+
+    issues = g9.audit_version_hygiene(tmp_path)
+    assert len(issues) == 1
+    assert (
+        issues[0].target == "compliance/lula/schemas/lula_v0170_validation.schema.json"
+    )
+    assert "Lula v0.17.0" in issues[0].reason

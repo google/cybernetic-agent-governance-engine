@@ -1,17 +1,19 @@
-# CAGE v3.x Breaking Changes
+# CAGE Breaking Changes
 
-> **Status:** Released. Covers v3.0.1 (2026-09-07) through v4.0.0 (2026-10-26). v4.0.0's breaking changes
-> (CT-1 to CT-6) are recorded here too: the file keeps its v3 name because the published advisory links to it.
-> The next major version's breaking changes (IB-1 to IB-4, CP-1, AG-1 to AG-8, RS-1, RD-1 to RD-4, LR-1 to LR-2, CD-1 to CD-3, AT-1 to AT-2, and EP-1, unreleased) are recorded at the end.
-> The v3.1.0 clean breaks are collected in
-> [v3.1.0 Clean Breaks — Zero-Trust Identity & Egress](#v310-clean-breaks--zero-trust-identity--egress-2026-09-22) at the end of this document.
-> See [`CHANGELOG.md`](../CHANGELOG.md) for the full release notes. The sections below
-> describe the breaking changes included in v3.0.1. Item IDs (`SR-#`,
+> **Scope:** Canonical ledger of breaking changes across CAGE major versions (`# v3.x`, `# v4.x`, and `# Unreleased (v5.x)`).
+> Every breaking change (`!` + `BREAKING CHANGE:` footer) records an indexed entry under `# Unreleased (v<next_major>.x)`.
+> See [`CHANGELOG.md`](../CHANGELOG.md) for full release notes.
+
+# v3.x
+
+> **Status:** Released (`v3.0.1` 2026-09-07 through `v3.3.0` 2026-10-25). The `v3.1.0` clean breaks are collected in
+> [v3.1.0 Clean Breaks — Zero-Trust Identity & Egress](#v310-clean-breaks--zero-trust-identity--egress-2026-09-22) below.
+> The initial subsections describe the breaking changes shipped in `v3.0.1`; item IDs (`SR-#`,
 > `MR-#`, `CR-#`, `FF-#`, `EV-#`) match
 > `MAJOR_VERSION_CLEANUP_PLAN.md` (the untracked v3.0.1 cleanup working plan) 1:1
 > so the two documents can be cross-referenced.
 >
-> **Release Scope:** `AGWEnvelope`/`AGWEnvelopeBuilder` removal, legacy provider
+> **v3.0.1 Release Scope:** `AGWEnvelope`/`AGWEnvelopeBuilder` removal, legacy provider
 > signing method removal, RFC 8785 JCS canonicalization migration (POAM-2026-060),
 > schema sentinels (`cage-evidence-stream/2.0` / `cage-context-accumulator/2.0`),
 > canonical 6 governance decision set, and `KMS_BATCH_ENABLED` default-value
@@ -888,6 +890,8 @@ vector and a deprecation window would have preserved it.
 
 ---
 
+# v4.x
+
 ## v4.0.0 — Causal Tier Refusal Paths Made Operative (GHSA-c8pw-f3g3-xg7c)
 
 Security fix (advisory GHSA-c8pw-f3g3-xg7c; POAM-2026-114). No release has enforced a working causal boundary. In v3.0.0–v3.3.0 neither refusal path of the finance causal tier could refuse once its telemetry gates passed: the marginal risk boundary tripped 10,000× too high, and the placebo refutation could not fail.
@@ -900,6 +904,10 @@ Security fix (advisory GHSA-c8pw-f3g3-xg7c; POAM-2026-114). No release has enfor
 | **CT-4** | Placebo refutation | Phase 2 permutes the treatment (`PLACEBO_TYPE = "permute"`), keeps every simulated effect ([`PlaceboRefutation`](../src/gateway/governance/causal/gatekeeper.py)) and refuses the world model when the result is missing or non-finite (`placebo_result_invalid`) or the effects have zero spread (`placebo_degenerate`). The `p < 0.05` lock and the 0.2 magnitude lock (now per normalised unit) are unchanged in direction. | dowhy's default float placebo is N(0, 0): every effect is 0.0, the normal test returns NaN and, from 100 simulations, the bootstrap test returns p = 1.0. The old code read missing or NaN as a pass. | A world model the refuter cannot evaluate is untrusted: every `execute_trade` is DENY `CAUSAL_CHECK_FAILED` until the telemetry supports it. Test doubles that faked `CausalModel.refute_estimate` no longer control phase 2; patch `gatekeeper._placebo_refutation`. |
 | **CT-5** | Cache key | The spec fingerprint in `causal_wm:{spec_fingerprint}:…` includes `normalization_scale`. | A cached β is only meaningful in its unit. | Verdicts cached before the upgrade are not read; each key is recomputed once (entries expire after `causal.cache_ttl_seconds`). |
 | **CT-6** | Numerical trust | Before fitting, phase 1 bounds the regression's rounding error (`_least_squares_error_bound` in [`gatekeeper.py`](../src/gateway/governance/causal/gatekeeper.py), the LAPACK least-squares bound) and refuses the world model when it exceeds `_LSQ_ERROR_BOUND_MAX` = 1e-6: `design_ill_conditioned`, with no β. | Above the bound, correct platforms return materially different coefficients: a constant treatment fitted +0.10 on macOS arm64 and −6.5e11 on Linux x86_64, so which guard refused it depended on the platform. | A constant treatment, or one collinear (or nearly so) with a covariate, is refused with `design_ill_conditioned` instead of a slope or placebo reason. Well-conditioned telemetry (a bound near 1e-14 on the synthetic frame) is unaffected. |
+
+---
+
+# Unreleased (v5.x)
 
 ## Unreleased (next major) — Inference Backend and Content-Safety Refusals
 

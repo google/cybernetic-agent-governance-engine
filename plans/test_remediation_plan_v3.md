@@ -978,7 +978,7 @@ Each work package lands with a **structural** test, not merely a green suite:
 - All static gates in §10.2 step 1 pass.
 - Both formal proofs pass unchanged.
 - OSCAL / STPA / NeMo-configmap artifacts regenerated and committed.
-- [`docs/BREAKING_CHANGES_v3.md`](../docs/BREAKING_CHANGES_v3.md) updated with the W1, W2, and
+- [`docs/BREAKING_CHANGES.md`](../docs/BREAKING_CHANGES.md) updated with the W1, W2, and
   W6 breaking changes.
 
 ---

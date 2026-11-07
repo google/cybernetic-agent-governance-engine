@@ -1374,3 +1374,30 @@ def test_gate_producer_consumer_keys_rejects_unproduced_keys_and_events(
         check_producer_consumer_keys.main(["--repo-root", str(tmp_path), "--no-floors"])
         == 1
     ), "Gate 11 failed to reject planted unproduced event_type and payload key"
+
+
+def test_gate_doc_version_hygiene_rejects_stale_filename_and_major_drift(
+    tmp_path: Path,
+) -> None:
+    """Gate G9 audit_version_hygiene must catch version-suffixed living docs and major-version drift."""
+    assert check_doc_references.audit_version_hygiene(REPO_ROOT) == [], (
+        "Live repository failed Gate G9 version hygiene"
+    )
+
+    (tmp_path / "pyproject.toml").write_text(
+        '[project]\nname = "cage"\nversion = "5.0.0"\n',
+        encoding="utf-8",
+    )
+    docs_dir = tmp_path / "docs"
+    docs_dir.mkdir(parents=True, exist_ok=True)
+    (docs_dir / "BREAKING_CHANGES.md").write_text(
+        "# CAGE Breaking Changes\n\n# v4.x\n\n# Unreleased (v5.x)\n",
+        encoding="utf-8",
+    )
+    (docs_dir / "BREAKING_CHANGES_v4.md").write_text("# Stale\n", encoding="utf-8")
+
+    issues = check_doc_references.audit_version_hygiene(tmp_path)
+    targets = {issue.target for issue in issues}
+    assert "# v5.x" in targets
+    assert "# Unreleased (v5.x)" in targets
+    assert "docs/BREAKING_CHANGES_v4.md" in targets

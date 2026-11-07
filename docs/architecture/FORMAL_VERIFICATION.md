@@ -477,7 +477,7 @@ record_n = ProvenanceRecord(
 
 **Deterministic serialization:** All hashes use RFC 8785 JCS canonicalization (`jcs_canonicalize_plan()`) with non-serializable values coerced to strings beforehand. This guarantees identical digests regardless of Python dict insertion order and across Python, Go, and JavaScript runtimes.
 
-> **Serialisation note:** `compute_hash()` in `provenance_chain.py` uses RFC 8785 JCS. See [`docs/BREAKING_CHANGES_v3.md`](../BREAKING_CHANGES_v3.md).
+> **Serialisation note:** `compute_hash()` in `provenance_chain.py` uses RFC 8785 JCS. See [`docs/BREAKING_CHANGES.md`](../BREAKING_CHANGES.md).
 
 **Tamper detection:** Any mutation at node $k$ produces $\text{chain\_hash}(\text{record}_k) \ne \text{expected}_k$, which is detectable by `verify_chain_integrity()` in $O(n)$ time:
 

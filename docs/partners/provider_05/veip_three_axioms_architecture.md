@@ -556,7 +556,7 @@ silently breaking every downstream signature/hash comparison.
    **breaking change** for any external verifier or stored hash that was
    computed with the old method — must ship as a major/minor version bump
    per [`docs/operations/GIT_WORKFLOW_STANDARDS.md`](../docs/operations/GIT_WORKFLOW_STANDARDS.md)
-   and the existing `docs/BREAKING_CHANGES_v3.md` precedent (the routing seal
+   and the existing `docs/BREAKING_CHANGES.md` precedent (the routing seal
    v2→v3 JWT migration is the direct template for this migration).
 2. **`routing_seal.py` v2 HMAC path** (`_canonical_payload()`,
    [`routing_seal.py:187`](../src/gateway/governance/routing_seal.py:187)):
@@ -965,7 +965,7 @@ deferred** to a follow-on phase:
 
 | Risk / Question | Impact | Mitigation / Owner |
 |---|---|---|
-| **JCS migration is a breaking change** across `routing_seal.py`, `normative_provider.py`, `provenance_chain.py` — any external verifier relying on the current `json.dumps(sort_keys=True)` hashes breaks silently. | High | Version-gate behind a minor/major release per `docs/BREAKING_CHANGES_v3.md` precedent; dual-hash transition window (compute both, log divergence, cut over). |
+| **JCS migration is a breaking change** across `routing_seal.py`, `normative_provider.py`, `provenance_chain.py` — any external verifier relying on the current `json.dumps(sort_keys=True)` hashes breaks silently. | High | Version-gate behind a minor/major release per `docs/BREAKING_CHANGES.md` precedent; dual-hash transition window (compute both, log divergence, cut over). |
 | **Fail-open default for all three axioms** means a compromised/unavailable VEIP feed does not, by itself, block a transaction — an adversary who can DoS VEIP gains nothing (transactions proceed) but an adversary who can **spoof** VEIP with false-positive `VERIFIED` attestations degrades audit trust without affecting the ALLOW/DENY decision. | Medium | VEIP root-of-trust JWKS must be provisioned via the same Workload-Identity/KMS rigor as CAGE's own signer — this is a deployment-hardening requirement, not a code gap, and should be captured as a POAM item once VEIP integration ships. |
 | **Physics axiom is fundamentally probabilistic**, not a formal guarantee (§5.4). Overclaiming "Rowhammer-proof" would be a compliance-narrative risk (c.f. FTRA BFS-exclusion honesty precedent). | Medium | Document the eBPF-correlation approach explicitly as a compensating control, not a formal proof, in both this document and any downstream OSCAL/SSP narrative generated from it. |
 | **Per-deployment-region fail-open/fail-closed policy** (`CAGE_VEIP_FAIL_CLOSED_<AXIOM>`) introduces a new region-specific configuration surface — must integrate with the existing `CAGE_DEPLOYMENT_REGION` guard pattern used throughout the codebase (`config/compliance/{REGION}_BASELINE.json`). | Low | Extend `config/thresholds/{REGION}_BASELINE.json` schema with a `veip_axiom_policy` block during implementation; validated by `schemas/thresholds.py` Pydantic model, same as all other region-gated config. |

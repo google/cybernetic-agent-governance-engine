@@ -429,7 +429,7 @@ not describe a pause verdict.
 **Evidence:**
 - [`GovernanceDecision`](../../src/gateway/governance/decisions.py) enum extended with
   the `NARROW` member (the lattice is `ALLOW | NARROW | REQUIRE_APPROVAL | DEFER | DENY`)
-- `docs/BREAKING_CHANGES_v3.md` P4-1–P4-5 record the `PAUSE` removal
+- `docs/BREAKING_CHANGES.md` P4-1–P4-5 record the `PAUSE` removal
 
 **Paper impact:** Abstract, §3.1 (decision taxonomy), and §7.1 (limitations) must be
 updated to reflect the five-state model.

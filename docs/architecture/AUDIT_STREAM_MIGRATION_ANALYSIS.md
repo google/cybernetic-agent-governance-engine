@@ -557,7 +557,7 @@ govern cold-store disposal (see [`EVIDENCE_CHAIN.md`](EVIDENCE_CHAIN.md) §4.4).
 
 ### Architecture Documents
 - [`AGENTS.md`](../../AGENTS.md) — CAGE contribution standards (clean architecture principle)
-- [`docs/BREAKING_CHANGES_v3.md`](../../docs/BREAKING_CHANGES_v3.md) — v3.0 schema migration notes
+- [`docs/BREAKING_CHANGES.md`](../../docs/BREAKING_CHANGES.md) — v3.0 schema migration notes
 - [`docs/architecture/ARCHITECTURE.md`](ARCHITECTURE.md) — CAGE reference architecture
 - [`docs/architecture/EVIDENCE_CHAIN.md`](EVIDENCE_CHAIN.md) — Cryptographic hash-chained evidence stream and WORM custody specification
 

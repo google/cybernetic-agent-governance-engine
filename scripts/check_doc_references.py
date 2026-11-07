@@ -48,6 +48,8 @@ import tempfile
 from dataclasses import dataclass
 from pathlib import Path
 
+import tomllib
+
 REPO_ROOT = Path.cwd().resolve()
 
 # The gate's scope, and the only copy of it: CI gate G9 and `make docs-check`
@@ -61,7 +63,7 @@ DOC_SCOPE = (
     "SECURITY.md",
     "CONTRIBUTING.md",
     "docs/POAM.md",
-    "docs/BREAKING_CHANGES_v3.md",
+    "docs/BREAKING_CHANGES.md",
     "docs/architecture",
     "compliance",
     "infra",
@@ -1508,6 +1510,225 @@ def _audit_historical_assertions(path: Path, line_idx: int, line: str) -> list[I
     ]
 
 
+SEMVER_MAJOR_PATTERN = re.compile(r"^(\d+)\.(\d+)\.(\d+)")
+RELEASED_MAJOR_HEADING_PATTERN = re.compile(r"^#\s+v(\d+)\.x\s*$")
+UNRELEASED_MAJOR_HEADING_PATTERN = re.compile(
+    r"^#\s+Unreleased(?:\s*\(v(\d+)\.x\))?(?:\s*$|\b)",
+    re.IGNORECASE,
+)
+VERSIONED_DOC_FILENAME_PATTERN = re.compile(
+    r"(?:^|[_-])v\d+(?:[._-]|$)",
+    re.IGNORECASE,
+)
+LULA_SCHEMA_FILENAME_PATTERN = re.compile(
+    r"^lula_v(\d)(\d{2})(\d)_validation\.schema\.json$"
+)
+
+
+def _check_lula_schema_version(repo_root: Path, schema_path: Path) -> list[Issue]:
+    """Verify compliance/lula/schemas/lula_v<NNN>_validation.schema.json matches pinned Lula CLI."""
+    rel = schema_path.relative_to(repo_root).as_posix()
+    match = LULA_SCHEMA_FILENAME_PATTERN.match(schema_path.name)
+    if match is None:
+        return [
+            Issue(
+                schema_path,
+                1,
+                "Version Hygiene",
+                rel,
+                "Unrecognized versioned Lula schema filename; expected lula_v<M><mm><p>_validation.schema.json",
+            )
+        ]
+
+    expected_ver = f"v{int(match.group(1))}.{int(match.group(2))}.{int(match.group(3))}"
+    issues: list[Issue] = []
+
+    verifier_path = repo_root / "scripts" / "verify_lula_assessment_results.py"
+    if verifier_path.is_file():
+        verifier_text = verifier_path.read_text(encoding="utf-8")
+        if f"Lula {expected_ver}" not in verifier_text:
+            issues.append(
+                Issue(
+                    schema_path,
+                    1,
+                    "Version Hygiene",
+                    rel,
+                    f"Schema filename pins Lula {expected_ver}, which does not match scripts/verify_lula_assessment_results.py",
+                )
+            )
+
+    matrix_workflow = repo_root / ".github" / "workflows" / "compliance-matrix.yml"
+    if matrix_workflow.is_file():
+        wf_text = matrix_workflow.read_text(encoding="utf-8")
+        if expected_ver not in wf_text:
+            issues.append(
+                Issue(
+                    schema_path,
+                    1,
+                    "Version Hygiene",
+                    rel,
+                    f"Schema filename pins Lula {expected_ver}, which does not match LULA_VERSION in .github/workflows/compliance-matrix.yml",
+                )
+            )
+
+    return issues
+
+
+def audit_version_hygiene(repo_root: Path | None = None) -> list[Issue]:
+    """Verify BREAKING_CHANGES.md major-version parity and forbid version-suffixed living doc filenames."""
+    root = REPO_ROOT if repo_root is None else repo_root
+    issues: list[Issue] = []
+
+    pyproject_path = root / "pyproject.toml"
+    if not pyproject_path.is_file():
+        issues.append(
+            Issue(
+                pyproject_path,
+                1,
+                "Version Hygiene",
+                "pyproject.toml",
+                "pyproject.toml is missing",
+            )
+        )
+        return issues
+
+    try:
+        pyproject_data = tomllib.loads(pyproject_path.read_text(encoding="utf-8"))
+    except tomllib.TOMLDecodeError as exc:
+        issues.append(
+            Issue(
+                pyproject_path,
+                1,
+                "Version Hygiene",
+                "pyproject.toml",
+                f"Invalid TOML in pyproject.toml: {exc}",
+            )
+        )
+        return issues
+
+    version_str = str(pyproject_data.get("project", {}).get("version", ""))
+    ver_match = SEMVER_MAJOR_PATTERN.match(version_str)
+    if ver_match is None:
+        issues.append(
+            Issue(
+                pyproject_path,
+                1,
+                "Version Hygiene",
+                version_str or "project.version",
+                "pyproject.toml [project].version must start with major.minor.patch",
+            )
+        )
+        return issues
+
+    current_major = int(ver_match.group(1))
+    breaking_doc = root / "docs" / "BREAKING_CHANGES.md"
+    if not breaking_doc.is_file():
+        issues.append(
+            Issue(
+                pyproject_path,
+                1,
+                "Version Hygiene",
+                "docs/BREAKING_CHANGES.md",
+                "Canonical breaking-changes ledger docs/BREAKING_CHANGES.md is missing",
+            )
+        )
+    else:
+        released_majors: dict[int, int] = {}
+        unreleased_headings: list[tuple[int, str, int | None]] = []
+        in_fence = False
+        for line_idx, raw_line in enumerate(
+            breaking_doc.read_text(encoding="utf-8").splitlines(), start=1
+        ):
+            stripped = raw_line.strip()
+            if stripped.startswith(("```", "~~~")):
+                in_fence = not in_fence
+                continue
+            if in_fence:
+                continue
+            rel_match = RELEASED_MAJOR_HEADING_PATTERN.match(stripped)
+            if rel_match is not None:
+                released_majors.setdefault(int(rel_match.group(1)), line_idx)
+                continue
+            unrel_match = UNRELEASED_MAJOR_HEADING_PATTERN.match(stripped)
+            if unrel_match is not None:
+                parsed_major = (
+                    int(unrel_match.group(1))
+                    if unrel_match.group(1) is not None
+                    else None
+                )
+                unreleased_headings.append((line_idx, stripped, parsed_major))
+
+        if current_major not in released_majors:
+            issues.append(
+                Issue(
+                    breaking_doc,
+                    1,
+                    "Version Hygiene",
+                    f"# v{current_major}.x",
+                    f"docs/BREAKING_CHANGES.md lacks '# v{current_major}.x' section matching pyproject.toml version {version_str}",
+                )
+            )
+        for maj, line_no in sorted(released_majors.items()):
+            if maj > current_major:
+                issues.append(
+                    Issue(
+                        breaking_doc,
+                        line_no,
+                        "Version Hygiene",
+                        f"# v{maj}.x",
+                        f"Released major section '# v{maj}.x' exceeds pyproject.toml version {version_str} (use '# Unreleased (v{current_major + 1}.x)')",
+                    )
+                )
+        for line_no, heading_text, unrel_major in unreleased_headings:
+            if unrel_major != current_major + 1:
+                issues.append(
+                    Issue(
+                        breaking_doc,
+                        line_no,
+                        "Version Hygiene",
+                        heading_text,
+                        f"Unreleased major section must be '# Unreleased (v{current_major + 1}.x)' for pyproject.toml version {version_str}",
+                    )
+                )
+
+    candidates: list[Path] = sorted(root.glob("*.md"))
+    docs_dir = root / "docs"
+    partners_dir = docs_dir / "partners"
+    if docs_dir.is_dir():
+        for path in sorted(docs_dir.rglob("*")):
+            if not path.is_file():
+                continue
+            if partners_dir in path.parents:
+                continue
+            candidates.append(path)
+
+    compliance_dir = root / "compliance"
+    lula_schemas_dir = compliance_dir / "lula" / "schemas"
+    if compliance_dir.is_dir():
+        for path in sorted(compliance_dir.rglob("*")):
+            if path.is_file():
+                candidates.append(path)
+
+    for candidate in candidates:
+        if VERSIONED_DOC_FILENAME_PATTERN.search(candidate.name) is None:
+            continue
+        if candidate.parent == lula_schemas_dir:
+            issues.extend(_check_lula_schema_version(root, candidate))
+            continue
+        rel_path = candidate.relative_to(root).as_posix()
+        issues.append(
+            Issue(
+                candidate,
+                1,
+                "Version Hygiene",
+                rel_path,
+                "Living documentation/compliance filenames must be version-neutral (organize per-version sections inside the file instead of '_v<N>' / '-v<N>' suffixes)",
+            )
+        )
+
+    return issues
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(
         description="Verify doc references against repo code."
@@ -1549,6 +1770,9 @@ def main(argv: list[str] | None = None) -> int:
     for f in files:
         file_issues = audit_markdown_file(f)
         all_issues.extend(file_issues)
+
+    if not args.path:
+        all_issues.extend(audit_version_hygiene(REPO_ROOT))
 
     out_lines: list[str] = []
     if not all_issues:

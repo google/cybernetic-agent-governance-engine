@@ -30,7 +30,7 @@ The CAGE audit log system produces two complementary NDJSON streams:
 > (`cage-context-accumulator/2.0`). Those production chains canonicalize with
 > RFC 8785 JCS; the `sort_keys=True` serialization described below applies only
 > to the playground chains and is **not** interchangeable with them. See
-> [`docs/BREAKING_CHANGES_v3.md`](../BREAKING_CHANGES_v3.md) for the production
+> [`docs/BREAKING_CHANGES.md`](../BREAKING_CHANGES.md) for the production
 > canonicalization change.
 
 ```

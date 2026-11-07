@@ -169,7 +169,7 @@ registry paths rather than inventing a third mechanism.
   in both.
 - **Deterministic canonicalization.** Changes touching JCS canonicalization or
   JWS byte layout are wire-format breaks and need a
-  [`BREAKING_CHANGES_v3.md`](docs/BREAKING_CHANGES_v3.md) entry.
+  [`BREAKING_CHANGES.md`](docs/BREAKING_CHANGES.md) entry.
 - **Region gates stay additive.** Regional behaviour changes affect regional
   posture only.
 
@@ -224,7 +224,7 @@ assertion.
 
 **Compatibility impact** — No API change. Behavioural: a value outside the
 recognised set now classifies as restricted. Note in
-[`BREAKING_CHANGES_v3.md`](docs/BREAKING_CHANGES_v3.md).
+[`BREAKING_CHANGES.md`](docs/BREAKING_CHANGES.md).
 
 ---
 
@@ -469,7 +469,7 @@ reference manifests use them as probe targets.
 send `Authorization: Bearer …`. In-repo consumers to update: the
 [`agentsight-ui`](src/agentsight-ui/) client and any `scripts/` utility that
 calls these routes. Record in
-[`BREAKING_CHANGES_v3.md`](docs/BREAKING_CHANGES_v3.md).
+[`BREAKING_CHANGES.md`](docs/BREAKING_CHANGES.md).
 
 ---
 
@@ -795,7 +795,7 @@ blocking → constructs; staging behaves as restricted; permissive posture +
 non-blocking → constructs with a warning.
 
 **Compatibility impact** — Configuration-affecting for adopters relying on the
-override. Record in [`BREAKING_CHANGES_v3.md`](docs/BREAKING_CHANGES_v3.md).
+override. Record in [`BREAKING_CHANGES.md`](docs/BREAKING_CHANGES.md).
 
 ---
 
@@ -1209,7 +1209,7 @@ never *Rebase and merge*.
 - [ ] New tests fail before the fix and pass after (state how this was verified)
 - [ ] Adversarial case added where the finding describes an attacker
 - [ ] Breaking change: `!` marker + BREAKING CHANGE footer + entry in
-      docs/BREAKING_CHANGES_v3.md
+      docs/BREAKING_CHANGES.md
 - [ ] make test-fast green; CI green (license-check, stpa-freshness-check,
       security-scan)
 ```
@@ -1383,7 +1383,7 @@ in architecture documentation rather than in any runbook:
 | Unrecognised posture values resolve to the restrictive interpretation | Configuration model |
 | Authentication is applied at application scope, not per route | Bridge architecture |
 
-### 8.3 [`docs/BREAKING_CHANGES_v3.md`](docs/BREAKING_CHANGES_v3.md)
+### 8.3 [`docs/BREAKING_CHANGES.md`](docs/BREAKING_CHANGES.md)
 
 One entry per change: what changed, who is affected, the failure symptom, and
 the adaptation required.
@@ -1453,7 +1453,7 @@ tracking them individually.
 - [ ] Compliance artifacts consistent with remediated code
 - [ ] SECURITY_STATUS.md describes the corrected design
 - [ ] Architectural invariants (§8.2) recorded
-- [ ] BREAKING_CHANGES_v3.md complete
+- [ ] BREAKING_CHANGES.md complete
 - [ ] check_import_boundaries.py green — no domain/vendor leakage into the kernel
 ```
 
@@ -1466,7 +1466,7 @@ A finding is closed when **all** of the following hold:
 3. Where the finding represents a class, a CI guard prevents the next instance.
 4. Architectural boundaries are intact and the gateway/GFA mirrors agree.
 5. Any behavioural change an adopter would notice is recorded in
-   [`BREAKING_CHANGES_v3.md`](docs/BREAKING_CHANGES_v3.md).
+   [`BREAKING_CHANGES.md`](docs/BREAKING_CHANGES.md).
 
 No deployment, cluster validation, or operational sign-off forms part of this
 definition.

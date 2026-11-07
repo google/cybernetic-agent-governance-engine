@@ -91,7 +91,7 @@ on the CAGE side:
   returns.
 
 Both are documented in
-[`docs/BREAKING_CHANGES_v3.md`](../../../docs/BREAKING_CHANGES_v3.md).
+[`docs/BREAKING_CHANGES.md`](../../../docs/BREAKING_CHANGES.md).
 
 ## Vendor isolation
 
