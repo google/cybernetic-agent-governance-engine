@@ -408,7 +408,6 @@ class TestAuditDaemonLifespans:
         assert "Provider02AttestationProvider" not in discovered_names
 
         expected_wired = {
-            "AgentRegistryDaemon",
             "AsyncBatchSigner",
             "CustodyVerifier",
             "EvidenceCustodian",
