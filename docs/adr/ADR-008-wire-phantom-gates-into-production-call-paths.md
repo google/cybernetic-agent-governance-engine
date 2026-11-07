@@ -93,6 +93,8 @@ Envelope structure (v2.1):
 }
 ```
 
+> **Update (`EP-1`):** Dry-run preview envelopes emitted by `POST /governance/validate-action` (`GovernanceEnvelope` v3.0) no longer declare `subject.record_hash` or `governance_context.controls_satisfied` because dry-run previews neither append an evidence-chain record nor compute satisfied control IDs. Committing runs bind `record_hash` on the routing seal and `ExecutionGrant`.
+
 #### DeferQueue Fail-Closed Path
 [`DeferQueue`](../../src/gateway/governance/defer_queue.py) provides a Redis-backed (db=1, `noeviction` maxmemory policy) state machine for parking ambiguous decisions:
 
@@ -164,7 +166,7 @@ confidence < 0.70         → DEFER (data-hydration, NOT human triage)
 **Fully Implemented** (as of 2026-09-14):
 
 - ✅ [`ConsequenceGateway`](../../src/gateway/governance/consequence_gateway.py:82) — 6-step verification sequence (library primitive for normative-provider tokens; not on the governor ALLOW path)
-- ✅ [`GovernanceEnvelopeBuilder`](../../src/gateway/governance/governance_envelope.py:253) — RFC 8785 JCS envelope builder
+- ✅ [`GovernanceEnvelopeBuilder`](../../src/gateway/governance/governance_envelope.py:251) — RFC 8785 JCS envelope builder
 - ✅ [`DeferQueue`](../../src/gateway/governance/defer_queue.py:298) — Redis-backed defer state machine
 - ✅ [`ConsequenceToken`](../../src/gateway/governance/consequence_token.py) — JWS compact serialization with KMS signing
 - ✅ [`ConsequenceAuthorityStore`](../../src/gateway/governance/consequence_authority_store.py) — Redis single-use consumption

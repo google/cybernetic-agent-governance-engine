@@ -217,7 +217,6 @@ def _build_unsigned_envelope(
         "subject": {
             "action": action,
             "action_hash": compute_expected_action_hash(action, params),
-            "record_hash": "rec-xyz-001",
             "agent_id": "agent-01",
         },
         "governance_context": {
@@ -247,7 +246,6 @@ def _sample_top_level_envelope(**payload_overrides: Any) -> dict[str, Any]:
         "subject": {
             "action": "query_resource",
             "action_hash": "hash-abc",
-            "record_hash": "rec-xyz-001",
             "agent_id": "agent-01",
         },
         "governance_context": {
@@ -444,7 +442,7 @@ def test_standalone_http_200_verdicts_mediated_fail_closed(
             _run_with_mock_handler(lambda req: httpx.Response(200, json=deny_env))
         )
     assert deny_exc.value.reason_code == "CBF_HARD_STOP"
-    assert deny_exc.value.audit_id == "rec-xyz-001"
+    assert deny_exc.value.audit_id == "env-standalone-001"
 
     hitl_env = _sample_top_level_envelope(
         verdict="REQUIRE_APPROVAL",

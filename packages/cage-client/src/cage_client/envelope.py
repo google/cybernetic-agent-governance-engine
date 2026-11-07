@@ -88,7 +88,7 @@ class GovernanceEnvelope(BaseModel):
     )
     subject: dict[str, str] = Field(
         ...,
-        description="Governed action metadata (action, action_hash, record_hash, agent_id)",
+        description="Governed action metadata (action, action_hash, agent_id)",
     )
     governance_context: dict[str, Any] = Field(
         ...,

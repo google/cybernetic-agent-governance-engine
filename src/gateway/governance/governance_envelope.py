@@ -36,14 +36,12 @@ Envelope Structure (RFC 8785 JCS-canonicalized):
         "subject": {
             "action": "execute_action",
             "action_hash": "sha256:...",
-            "record_hash": "sha256:...",  # Evidence chain binding
             "agent_id": "advisor-prod-v3"
         },
         "governance_context": {
             "policy_version": "sha256:...",
             "tiers_passed": ["stpa", "cbf", "opa", "consensus"],
-            "deployment_region": "US_FED",
-            "controls_satisfied": ["CTRL_OPA_001", "CTRL_CBF_002"]
+            "deployment_region": "US_FED"
         },
         "payload": { ... },  # Original governance decision
         "signature": {
@@ -61,7 +59,6 @@ Usage:
         action="execute_action",
         params={"symbol": "AAPL", "amount": 1000},
         governance_result=result,
-        record_hash="sha256:abc123...",
     )
 
     # Verify an envelope
@@ -139,7 +136,6 @@ class SubjectMetadata:
 
     action: str
     action_hash: str
-    record_hash: str | None = None
     agent_id: str | None = None
     consequence_ceiling: str = "LOW_INFORMATIONAL"
     target_route: str = "local://default"
@@ -153,8 +149,6 @@ class SubjectMetadata:
             "target_route": self.target_route,
             "executor_id": self.executor_id,
         }
-        if self.record_hash:
-            result["record_hash"] = self.record_hash
         if self.agent_id:
             result["agent_id"] = self.agent_id
         return result
@@ -167,14 +161,12 @@ class GovernanceContext:
     policy_version: str
     tiers_passed: list[str] = field(default_factory=list)
     deployment_region: str = _DEPLOYMENT_REGION
-    controls_satisfied: list[str] = field(default_factory=list)
 
     def to_dict(self) -> dict[str, Any]:
         return {
             "policy_version": self.policy_version,
             "tiers_passed": self.tiers_passed,
             "deployment_region": self.deployment_region,
-            "controls_satisfied": self.controls_satisfied,
         }
 
 
@@ -321,10 +313,8 @@ class GovernanceEnvelopeBuilder:
         action: str,
         params: dict[str, Any],
         governance_result: dict[str, Any],
-        record_hash: str | None = None,
         agent_id: str | None = None,
         tiers_passed: list[str] | None = None,
-        controls_satisfied: list[str] | None = None,
         envelope_type: EnvelopeType = EnvelopeType.GOVERNANCE_DECISION,
         external_attestations: list[ExternalAttestation] | None = None,
         consequence_ceiling: str = "LOW_INFORMATIONAL",
@@ -337,10 +327,8 @@ class GovernanceEnvelopeBuilder:
             action: The action name (e.g., "execute_action").
             params: The action parameters.
             governance_result: The governance decision payload.
-            record_hash: Optional evidence chain record hash.
             agent_id: Optional agent identifier.
             tiers_passed: List of governance tiers that passed.
-            controls_satisfied: List of control IDs satisfied.
             envelope_type: The type of envelope to create.
             external_attestations: Optional list of external attestation
                 entries to embed in the envelope.  These are included in
@@ -361,7 +349,6 @@ class GovernanceEnvelopeBuilder:
         subject = SubjectMetadata(
             action=action,
             action_hash=action_hash,
-            record_hash=record_hash,
             agent_id=agent_id,
             consequence_ceiling=consequence_ceiling,
             target_route=target_route,
@@ -372,7 +359,6 @@ class GovernanceEnvelopeBuilder:
             policy_version=self._get_policy_version(),
             tiers_passed=tiers_passed or [],
             deployment_region=_DEPLOYMENT_REGION,
-            controls_satisfied=controls_satisfied or [],
         )
 
         return GovernanceEnvelope(
@@ -426,10 +412,8 @@ class GovernanceEnvelopeBuilder:
         action: str,
         params: dict[str, Any],
         governance_result: dict[str, Any],
-        record_hash: str | None = None,
         agent_id: str | None = None,
         tiers_passed: list[str] | None = None,
-        controls_satisfied: list[str] | None = None,
         envelope_type: EnvelopeType = EnvelopeType.GOVERNANCE_DECISION,
         external_attestations: list[ExternalAttestation] | None = None,
         consequence_ceiling: str = "LOW_INFORMATIONAL",
@@ -442,10 +426,8 @@ class GovernanceEnvelopeBuilder:
             action: The action name (e.g., "execute_action").
             params: The action parameters.
             governance_result: The governance decision payload.
-            record_hash: Optional evidence chain record hash.
             agent_id: Optional agent identifier.
             tiers_passed: List of governance tiers that passed.
-            controls_satisfied: List of control IDs satisfied.
             envelope_type: The type of envelope to create.
             external_attestations: Optional list of external attestation
                 entries to embed in the envelope.
@@ -460,10 +442,8 @@ class GovernanceEnvelopeBuilder:
             action=action,
             params=params,
             governance_result=governance_result,
-            record_hash=record_hash,
             agent_id=agent_id,
             tiers_passed=tiers_passed,
-            controls_satisfied=controls_satisfied,
             envelope_type=envelope_type,
             external_attestations=external_attestations,
             consequence_ceiling=consequence_ceiling,
@@ -681,7 +661,6 @@ class GovernanceEnvelopeBuilder:
         subject = SubjectMetadata(
             action=subject_data.get("action", ""),
             action_hash=subject_data.get("action_hash", ""),
-            record_hash=subject_data.get("record_hash"),
             agent_id=subject_data.get("agent_id"),
             consequence_ceiling=subject_data.get(
                 "consequence_ceiling", "LOW_INFORMATIONAL"
@@ -695,7 +674,6 @@ class GovernanceEnvelopeBuilder:
             policy_version=context_data.get("policy_version", ""),
             tiers_passed=context_data.get("tiers_passed", []),
             deployment_region=context_data.get("deployment_region", _DEPLOYMENT_REGION),
-            controls_satisfied=context_data.get("controls_satisfied", []),
         )
 
         sig_data = data.get("signature")
@@ -771,7 +749,6 @@ async def build_governance_envelope(
     action: str,
     params: dict[str, Any],
     governance_result: dict[str, Any],
-    record_hash: str | None = None,
     **kwargs: Any,
 ) -> GovernanceEnvelope:
     """Convenience function to build a signed governance envelope.
@@ -780,7 +757,6 @@ async def build_governance_envelope(
         action: The action name.
         params: The action parameters.
         governance_result: The governance decision payload.
-        record_hash: Optional evidence chain record hash.
         **kwargs: Additional arguments passed to build().
 
     Returns:
@@ -791,7 +767,6 @@ async def build_governance_envelope(
         action=action,
         params=params,
         governance_result=governance_result,
-        record_hash=record_hash,
         **kwargs,
     )
 

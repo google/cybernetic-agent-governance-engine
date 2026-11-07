@@ -179,9 +179,9 @@ past receipts (§7.2).
 
 ### 2.8 `governance_envelope.py` — the attestation-embedding precedent
 
-[`GovernanceEnvelope`](../../src/gateway/governance/governance_envelope.py:201)
+[`GovernanceEnvelope`](../../src/gateway/governance/governance_envelope.py:193)
 already demonstrates every architectural pattern the new receipt needs:
-JCS-canonicalized digest ([`compute_digest()`](../../src/gateway/governance/governance_envelope.py:246)),
+JCS-canonicalized digest ([`compute_digest()`](../../src/gateway/governance/governance_envelope.py:238)),
 KMS-signed via `sign_precomputed_digest()`, and an
 `external_attestations[]` array
 ([`ExternalAttestation`](../../src/gateway/governance/seams/attestation.py:59))
@@ -294,7 +294,7 @@ in §5-§8 is justified by exactly one row below.
 | [`jcs_canonicalize_plan()`](../../src/gateway/governance/jcs_canonicalizer.py:48) | ✅ Existing | Canonicalization primitive for every hashed sub-object |
 | [`KMSGovernanceSigner.sign_precomputed_digest()`](../../src/gateway/governance/kms_signer.py:648) | ✅ Existing | Signing primitive — reused verbatim |
 | [`JWKSet`](../../src/gateway/governance/jwks.py:168) / `/jwks` endpoint | ✅ Existing | Public-key distribution for external replay verification |
-| [`GovernanceEnvelopeBuilder`](../../src/gateway/governance/governance_envelope.py:259) | ✅ Existing | Envelope wrapper — receipt becomes envelope `payload` |
+| [`GovernanceEnvelopeBuilder`](../../src/gateway/governance/governance_envelope.py:251) | ✅ Existing | Envelope wrapper — receipt becomes envelope `payload` |
 | [`ControlRegistry.active_hash`](../../src/gateway/governance/constants.py:287) | ✅ Existing | Direct precedent for `rule_snapshot.rule_digest` |
 | [`ProvenanceRecord`](../../src/gateway/governance/provenance_chain.py:94) hash-chain pattern | ✅ Existing (pattern reused) | Template for `rule_lineage` chain (§6.4) |
 | `GovernanceDecision.DENY` ([`decisions.py:99`](../../src/gateway/governance/decisions.py:99)) | ✅ Existing | Trigger condition for receipt issuance |
@@ -403,13 +403,13 @@ and signing (§2.4).
 `proof_hash` is the SHA-256 digest of the JCS-canonical bytes of every field
 above it (i.e. everything except `proof_hash` and `envelope_signature`
 itself) — directly mirroring
-[`GovernanceEnvelope.compute_digest()`](../../src/gateway/governance/governance_envelope.py:246).
+[`GovernanceEnvelope.compute_digest()`](../../src/gateway/governance/governance_envelope.py:238).
 `envelope_signature` is populated by wrapping this receipt as a
 `GovernanceEnvelope` payload and calling
 `GovernanceEnvelopeBuilder.build()` (§5 decision 2) — the field shown inline
 here for readability is, in the actual wire format, the envelope's own
-`signature` block, and `proof_hash` corresponds to the envelope's
-`subject.record_hash`.
+`signature` block, and `proof_hash` is carried directly inside the receipt
+`payload` covered by the envelope digest.
 
 ### 6.1 `intent` — Proof Element 1 (Movement)
 
@@ -432,7 +432,7 @@ here for readability is, in the actual wire format, the envelope's own
 - `action_hash` — **new**, computed with the same
   `jcs_canonicalize_plan({"action": action, **safe_params})` recipe already
   used by
-  [`GovernanceEnvelopeBuilder._compute_action_hash()`](../../src/gateway/governance/governance_envelope.py:291)
+  [`GovernanceEnvelopeBuilder._compute_action_hash()`](../../src/gateway/governance/governance_envelope.py:294)
   and [`routing_seal.py`'s action-hash check](../../src/gateway/governance/routing_seal.py:688) —
   reusing the identical hash lets a verifier confirm the receipt's `intent`
   matches what a *would-be* seal's `action_hash` claim would have been, had
@@ -460,7 +460,7 @@ here for readability is, in the actual wire format, the envelope's own
   ([`contracts.py:55`](../../src/gateway/governance/contracts.py:55)).
 - `policy_version` — **new**, but trivially sourced: identical value to
   `GovernanceContext.policy_version`
-  ([`governance_envelope.py:167`](../../src/gateway/governance/governance_envelope.py:167)),
+  ([`governance_envelope.py:161`](../../src/gateway/governance/governance_envelope.py:161)),
   which already calls `ControlRegistry().active_hash`. This is the field
   that binds "what standing was claimed" to "under which compiled rule-set,"
   closing the traceability gap between proof elements 2 and 9.
@@ -646,7 +646,7 @@ here for readability is, in the actual wire format, the envelope's own
 - This sub-object does **not** vary per-transaction — it is a **constant
   reference block** stamped onto every receipt issued while a given commit
   is deployed, analogous to how
-  [`GovernanceContext.policy_version`](../../src/gateway/governance/governance_envelope.py:167)
+  [`GovernanceContext.policy_version`](../../src/gateway/governance/governance_envelope.py:161)
   is constant across all envelopes issued under one active `ControlRegistry`
   load.
 - `proof_artifact_digest` — **new**, computed once at CI/release time by
@@ -688,15 +688,13 @@ envelope = await builder.build(
     action=f"refusal_receipt:{intent.action}",
     params=receipt.to_dict(),  # the full 9-part structure
     governance_result={"decision": "DENY", "receipt_id": receipt.receipt_id},
-    record_hash=receipt.proof_hash,
     agent_id=intent.agent_id,
     tiers_passed=[],  # none passed — this is a DENY
-    controls_satisfied=[],  # none — refusal, not approval
     envelope_type=EnvelopeType.GOVERNANCE_DECISION,  # or new REFUSAL_RECEIPT type
 )
 ```
 
-This reuses [`GovernanceEnvelopeBuilder.build()`](../../src/gateway/governance/governance_envelope.py:415)
+This reuses [`GovernanceEnvelopeBuilder.build()`](../../src/gateway/governance/governance_envelope.py:410)
 unmodified — the same KMS-signing path
 ([`sign_precomputed_digest()`](../../src/gateway/governance/kms_signer.py:648))
 used for ALLOW decisions today also signs DENY receipts, satisfying the
@@ -768,9 +766,8 @@ receipt the same CMEK guarantee already verified for OSCAL artifacts.
                                  ▼
 ┌─────────────────────────────────────────────────────────────────────────┐
 │ 6. ENVELOPE WRAP  (GovernanceEnvelopeBuilder.build_unsigned)             │
-│    envelope.payload = receipt.to_dict()                                 │
-│    envelope.subject.record_hash = proof_hash                            │
-│    digest = envelope.compute_digest()   # SHA-256 of full envelope       │
+│    envelope.payload = receipt.to_dict()   # embeds proof_hash            │
+│    digest = envelope.compute_digest()     # SHA-256 of full envelope     │
 └───────────────────────────────┬───────────────────────────────────────┘
                                  ▼
 ┌─────────────────────────────────────────────────────────────────────────┐
@@ -937,7 +934,7 @@ convention:
 
 | # | Question / Risk | Discussion |
 |---|---|---|
-| 1 | Should `GovernanceRefusalReceipt` be a new `EnvelopeType.REFUSAL_RECEIPT` or reuse `GOVERNANCE_DECISION`? | Reuse minimizes code paths but conflates ALLOW/DENY envelope semantics in downstream consumers (e.g. dashboards) that filter by `envelope_type`. A new sibling type is cleaner but touches the `EnvelopeType` enum ([`governance_envelope.py:108`](../../src/gateway/governance/governance_envelope.py:108)) and any code that pattern-matches on it. Recommend the new-type approach for clarity, deferred to implementation phase. |
+| 1 | Should `GovernanceRefusalReceipt` be a new `EnvelopeType.REFUSAL_RECEIPT` or reuse `GOVERNANCE_DECISION`? | Reuse minimizes code paths but conflates ALLOW/DENY envelope semantics in downstream consumers (e.g. dashboards) that filter by `envelope_type`. A new sibling type is cleaner but touches the `EnvelopeType` enum ([`governance_envelope.py:105`](../../src/gateway/governance/governance_envelope.py:105)) and any code that pattern-matches on it. Recommend the new-type approach for clarity, deferred to implementation phase. |
 | 2 | Where does the "archival JWKS" (indefinite key retention, §8.1) live? | Not addressed by existing `JWKSet` (which is designed for short-lived rotation). Likely a new, append-only, WORM-stored key-history artifact, separate from the live `/jwks` endpoint. Needs a dedicated design pass — flagged, not resolved, here. |
 | 3 | Does `ControlRegistry` need a `from_file(path)` classmethod for offline replay (§8.1 step 3)? | Currently `_load_registry()` resolves paths internally from `CAGE_DEPLOYMENT_REGION`; replay tooling run outside a live CAGE deployment (e.g. by an external auditor) needs a way to instantiate a registry against an arbitrary historical file without environment-variable coupling. This is a small, additive API surface change — design only, not scoped for this document. |
 | 4 | Performance impact of `no_bind_proof`'s evidence-stream range-scan on every DENY? | The evidence stream is already hash-chained and append-only; a range-scan between two known sequence numbers is O(1) lookups (both boundary hashes are already known — the request itself brackets them), not a full-stream scan. Should be validated empirically during implementation, not assumed here. |

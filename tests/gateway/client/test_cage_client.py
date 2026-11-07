@@ -152,7 +152,6 @@ def _build_signed_allow_envelope(
         "subject": {
             "action": action,
             "action_hash": compute_expected_action_hash(action, params),
-            "record_hash": "rec-signed-001",
             "agent_id": "test-agent",
         },
         "governance_context": {
@@ -219,6 +218,7 @@ def create_mock_allow_envelope() -> dict[str, Any]:
     return {
         "envelope_version": "3.0",
         "envelope_type": "cage_governance_decision",
+        "envelope_id": "cage-mock-env-001",
         "issued_at": now_str,
         "expires_at": expires_str,
         "issuer": {
@@ -229,7 +229,6 @@ def create_mock_allow_envelope() -> dict[str, Any]:
         "subject": {
             "action": "query_portfolio",
             "action_hash": "abc123",
-            "record_hash": "def456",
             "agent_id": "test-agent",
         },
         "governance_context": {
@@ -1531,10 +1530,8 @@ async def test_live_asgi_all_seven_gateway_outcomes(
         # 1. ALLOW (HTTP 200 signed top-level GovernanceEnvelope + external_attestations)
         mock_governor.validate_action.return_value = {
             "verdict": GovernanceDecision.ALLOW,
-            "record_hash": "rec-allow-001",
             "agent_id": "agent-asgi-01",
             "tiers_passed": ["stpa", "opa", "cbf"],
-            "controls_satisfied": ["AU-10"],
             "external_attestations": [
                 {
                     "type": "fria",
@@ -1552,7 +1549,8 @@ async def test_live_asgi_all_seven_gateway_outcomes(
         )
         assert allow_env.envelope_id is not None
         assert allow_env.payload["verdict"] == "ALLOW"
-        assert allow_env.subject["record_hash"] == "rec-allow-001"
+        assert "record_hash" not in allow_env.subject
+        assert "controls_satisfied" not in allow_env.governance_context
         assert allow_env.signature is not None
         assert allow_env.signature["algorithm"] == expected_alg
         assert allow_env.external_attestations is not None
@@ -1561,7 +1559,6 @@ async def test_live_asgi_all_seven_gateway_outcomes(
         # 2. NARROW (HTTP 200 signed GovernanceEnvelope with clamped params)
         mock_governor.validate_action.return_value = {
             "verdict": GovernanceDecision.NARROW,
-            "record_hash": "rec-narrow-002",
             "violations": [
                 Violation(
                     tier="cbf",
@@ -1587,7 +1584,8 @@ async def test_live_asgi_all_seven_gateway_outcomes(
             )
         assert narrow_exc.value.reason_code == "NARROWED"
         assert narrow_exc.value.recoverable is True
-        assert narrow_exc.value.audit_id == "rec-narrow-002"
+        assert narrow_exc.value.audit_id is not None
+        assert narrow_exc.value.audit_id.startswith("cage-")
         assert narrow_exc.value.violation_details["narrowed_params"] == {
             "symbol": "AAPL",
             "amount": 10000,
@@ -1692,7 +1690,6 @@ async def test_live_asgi_all_seven_gateway_outcomes(
         # 6. Envelope DENY (HTTP 200 signed GovernanceEnvelope with verdict=DENY)
         mock_governor.validate_action.return_value = {
             "verdict": GovernanceDecision.DENY,
-            "record_hash": "rec-deny-006",
             "violations": [
                 Violation(
                     tier="cbf",
@@ -1711,7 +1708,8 @@ async def test_live_asgi_all_seven_gateway_outcomes(
                 agent_id="agent-asgi-01",
             )
         assert env_deny_exc.value.reason_code == "CBF_DRAWDOWN_LIMIT"
-        assert env_deny_exc.value.audit_id == "rec-deny-006"
+        assert env_deny_exc.value.audit_id is not None
+        assert env_deny_exc.value.audit_id.startswith("cage-")
 
         # 7. Hard DENY GovernanceError with real RefusalReceipt (HTTP 403 v2.0.0 refusal)
         hard_violation = Violation(
@@ -1761,7 +1759,6 @@ async def test_live_asgi_all_seven_gateway_outcomes(
         mock_governor.validate_action.side_effect = None
         mock_governor.validate_action.return_value = {
             "verdict": GovernanceDecision.ALLOW,
-            "record_hash": "rec-unsigned-007",
             "agent_id": "agent-asgi-01",
         }
         inactive_signer = MagicMock(is_kms_active=False, kms_active=False)
@@ -1793,7 +1790,7 @@ async def test_live_asgi_all_seven_gateway_outcomes(
                 agent_id="agent-asgi-01",
             )
             assert unsigned_env.signature is None
-            assert unsigned_env.subject["record_hash"] == "rec-unsigned-007"
+            assert "record_hash" not in unsigned_env.subject
         finally:
             await dev_opt_out_client.aclose()
     finally:
