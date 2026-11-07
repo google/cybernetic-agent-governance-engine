@@ -826,13 +826,16 @@ async def test_live_asgi_all_seven_gateway_outcomes(
         assert defer_exc.value.defer_reason == "CONFIDENCE_BELOW_THRESHOLD"
         assert defer_exc.value.ttl_seconds == 300
 
-        # 5. EXTERNAL_HOLD DEFER (HTTP 202 async receipt with defer_id)
+        # 5. EXTERNAL_HOLD DEFER: the same signed HTTP 200 envelope as any other
+        #    DEFER, in the shape handle_defer() returns (defer_token and
+        #    retry_after_seconds). The gateway has no separate 202 receipt.
         mock_governor.validate_action.return_value = {
             "verdict": GovernanceDecision.DEFER,
+            "violations": [],
             "defer_reason": "EXTERNAL_HOLD",
-            "is_external_hold": True,
-            "defer_id": "ext-hold-token-005",
-            "latency_ms": 9.4,
+            "defer_token": "ext-hold-token-005",
+            "deferrable": True,
+            "retry_after_seconds": 300,
         }
         with pytest.raises(
             (DeferralPending, standalone_cage_client.DeferralPending)
