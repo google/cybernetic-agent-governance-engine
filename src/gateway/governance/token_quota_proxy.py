@@ -82,26 +82,47 @@ logger = logging.getLogger("Gateway.Governance.TokenQuotaProxy")
 # and the increment.
 
 # check_and_increment: atomically increment step and token counters.
-# Returns {allowed, steps, tokens, reason} as a 4-element list.
+# Returns {allowed, steps, tokens, reason, quota_status} as a 5-element list.
 _LUA_CHECK_AND_INCREMENT = """
 -- KEYS[1] = steps_key, KEYS[2] = tokens_key
 -- ARGV[1] = step_quota_max, ARGV[2] = token_quota_max
 -- ARGV[3] = token_delta, ARGV[4] = ttl_seconds
+-- ARGV[5] = soft_cap_tokens (optional)
+-- ARGV[6] = burst_max_tokens (optional)
+-- ARGV[7] = allow_burst (0 or 1, optional)
 local steps  = redis.call('INCR', KEYS[1])
 local tokens = redis.call('INCRBY', KEYS[2], ARGV[3])
 redis.call('EXPIRE', KEYS[1], ARGV[4])
 redis.call('EXPIRE', KEYS[2], ARGV[4])
-if steps > tonumber(ARGV[1]) then
+
+local step_max = tonumber(ARGV[1])
+local token_max = tonumber(ARGV[2])
+local delta = tonumber(ARGV[3])
+local soft_cap = (ARGV[5] and ARGV[5] ~= '') and tonumber(ARGV[5]) or token_max
+local burst_max = (ARGV[6] and ARGV[6] ~= '') and tonumber(ARGV[6]) or token_max
+local allow_burst = (ARGV[7] and ARGV[7] ~= '') and tonumber(ARGV[7]) or 0
+
+if steps > step_max then
     redis.call('DECR', KEYS[1])
-    redis.call('DECRBY', KEYS[2], ARGV[3])
-    return {0, steps - 1, tokens - tonumber(ARGV[3]), 'step_count'}
+    redis.call('DECRBY', KEYS[2], delta)
+    return {0, steps - 1, tokens - delta, 'step_count', 'EXHAUSTED'}
 end
-if tokens > tonumber(ARGV[2]) then
-    redis.call('DECR', KEYS[1])
-    redis.call('DECRBY', KEYS[2], ARGV[3])
-    return {0, steps - 1, tokens - tonumber(ARGV[3]), 'token_count'}
+
+if tokens > token_max then
+    if allow_burst == 1 and tokens <= burst_max then
+        return {1, steps, tokens, '', 'BURST_ACTIVE'}
+    else
+        redis.call('DECR', KEYS[1])
+        redis.call('DECRBY', KEYS[2], delta)
+        return {0, steps - 1, tokens - delta, 'token_count', 'EXHAUSTED'}
+    end
 end
-return {1, steps, tokens, ''}
+
+if tokens >= soft_cap then
+    return {1, steps, tokens, '', 'SOFT_CAP_REACHED'}
+end
+
+return {1, steps, tokens, '', 'NORMAL'}
 """
 
 # rollback: atomically decrement both counters after a downstream failure.
@@ -166,7 +187,7 @@ class QuotaCheckResult:
     """Result of a check_and_increment call.
 
     Attributes:
-        allowed:            True if the request is within quota.
+        allowed:            True if the request is within quota or allowed under burst.
         agent_id:           The agent UUID that was checked.
         step_count:         Current step count after this call.
         accumulated_tokens: Current token count after this call.
@@ -174,6 +195,9 @@ class QuotaCheckResult:
         token_quota_max:    Configured token hard limit.
         block_reason:       "step_count", "token_count", or "" if allowed.
         session_ttl:        TTL in seconds for this session's Redis keys.
+        quota_status:       "NORMAL", "SOFT_CAP_REACHED", "BURST_ACTIVE", or "EXHAUSTED".
+        tokens_remaining:   Estimated tokens remaining in base or burst quota.
+        burst_available:    True if burst allowance has not been exhausted.
     """
 
     allowed: bool
@@ -184,6 +208,9 @@ class QuotaCheckResult:
     token_quota_max: int
     block_reason: str | None
     session_ttl: int
+    quota_status: str = "NORMAL"
+    tokens_remaining: int = 0
+    burst_available: bool = True
 
 
 # ---------------------------------------------------------------------------
@@ -195,14 +222,17 @@ class TokenQuotaProxy:
     """Stateful inline circuit breaker enforcing per-session token quotas.
 
     Uses an atomic Redis Lua reservation pattern operating
-    on token counts and step counts.
+    on token counts and step counts, with task-aware elastic bursting (RFC #652).
 
     Args:
-        redis_client:    An async Redis client (redis.asyncio.Redis or
-                         fakeredis.aioredis for tests).
-        step_quota_max:  Hard limit on sequence steps per session (default 12).
-        token_quota_max: Hard limit on accumulated tokens per session (default 100k).
-        session_ttl:     TTL in seconds for session Redis keys (default 3600).
+        redis_client:           An async Redis client (redis.asyncio.Redis or
+                                fakeredis.aioredis for tests).
+        step_quota_max:         Hard limit on sequence steps per session (default 12).
+        token_quota_max:        Hard limit on accumulated tokens per session (default 100k).
+        session_ttl:            TTL in seconds for session Redis keys (default 3600).
+        soft_cap_ratio:         Threshold ratio triggering soft-cap warning (default 0.85).
+        burst_allowance_ratio:  Allowed elastic overdraft ratio to finish in-flight tasks (default 0.15).
+        safe_landing_reserve:   Reserved tokens for handover manifest generation (default 1500).
     """
 
     def __init__(
@@ -211,42 +241,111 @@ class TokenQuotaProxy:
         step_quota_max: int = 12,
         token_quota_max: int = 100_000,
         session_ttl: int = 3600,
+        soft_cap_ratio: float = 0.85,
+        burst_allowance_ratio: float = 0.15,
+        safe_landing_reserve: int = 1500,
     ) -> None:
         self._redis = redis_client
         self._step_quota_max = step_quota_max
         self._token_quota_max = token_quota_max
         self._session_ttl = session_ttl
+        self._soft_cap_ratio = soft_cap_ratio
+        self._burst_allowance_ratio = burst_allowance_ratio
+        self._safe_landing_reserve = safe_landing_reserve
         # SHA hashes loaded at init time via _load_scripts()
         self._sha_check: str | None = None
         self._sha_rollback: str | None = None
         self._sha_reconcile: str | None = None
 
+    @property
+    def step_quota_max(self) -> int:
+        return self._step_quota_max
+
+    @property
+    def token_quota_max(self) -> int:
+        return self._token_quota_max
+
+    @property
+    def session_ttl(self) -> int:
+        return self._session_ttl
+
+    @property
+    def soft_cap_ratio(self) -> float:
+        return self._soft_cap_ratio
+
+    @property
+    def burst_allowance_ratio(self) -> float:
+        return self._burst_allowance_ratio
+
+    @property
+    def safe_landing_reserve(self) -> int:
+        return self._safe_landing_reserve
+
+    @property
+    def soft_cap_tokens(self) -> int:
+        return int(self._token_quota_max * self._soft_cap_ratio)
+
+    @property
+    def burst_max_tokens(self) -> int:
+        return int(self._token_quota_max * (1.0 + self._burst_allowance_ratio))
+
     @classmethod
-    def from_env(cls) -> TokenQuotaProxy:
+    def from_env(cls, redis_client: Any | None = None) -> TokenQuotaProxy:
         """Construct from environment variables.
 
         Environment variables:
-            REDIS_URL          — Redis connection URL (default: redis://localhost:6379)
-            STEP_QUOTA_MAX     — Hard step limit per session (default: 12)
-            TOKEN_QUOTA_MAX    — Hard token limit per session (default: 100000)
-            SESSION_TTL_SECONDS — Session TTL in seconds (default: 3600)
+            REDIS_URL                   — Redis connection URL (default: redis://localhost:6379)
+            STEP_QUOTA_MAX              — Hard step limit per session (default: 12)
+            TOKEN_QUOTA_MAX             — Hard token limit per session (default: 100000)
+            SESSION_TTL_SECONDS         — Session TTL in seconds (default: 3600)
+            TOKEN_QUOTA_SOFT_CAP_RATIO  — Soft-cap ratio (default: 0.85)
+            TOKEN_QUOTA_BURST_RATIO     — Burst overdraft ratio (default: 0.15)
+            TOKEN_QUOTA_SAFE_RESERVE    — Safe-landing reserve tokens (default: 1500)
 
         Raises:
             RuntimeError: If redis-py is not installed.
         """
-        from src.gateway.infrastructure.redis_client import build_async_redis
+        if redis_client is None:
+            from src.gateway.infrastructure.redis_client import build_async_redis
 
-        redis_url = os.environ.get("REDIS_URL", "redis://localhost:6379")
-        step_max = int(os.environ.get("STEP_QUOTA_MAX", "12"))
-        token_max = int(os.environ.get("TOKEN_QUOTA_MAX", "100000"))
-        ttl = int(os.environ.get("SESSION_TTL_SECONDS", "3600"))
+            redis_url = os.environ.get("REDIS_URL", "redis://localhost:6379")
+            client = build_async_redis(redis_url, socket_timeout=3.0)
+        else:
+            client = redis_client
 
-        client = build_async_redis(redis_url, socket_timeout=3.0)
+        step_max = int(
+            os.environ.get("CAGE_STEP_QUOTA_MAX")
+            or os.environ.get("STEP_QUOTA_MAX", "12")
+        )
+        token_max = int(
+            os.environ.get("CAGE_TOKEN_QUOTA_MAX")
+            or os.environ.get("TOKEN_QUOTA_MAX", "100000")
+        )
+        ttl = int(
+            os.environ.get("CAGE_SESSION_TTL_SECONDS")
+            or os.environ.get("SESSION_TTL_SECONDS", "3600")
+        )
+        soft_cap_ratio = float(
+            os.environ.get("CAGE_QUOTA_SOFT_CAP_RATIO")
+            or os.environ.get("TOKEN_QUOTA_SOFT_CAP_RATIO", "0.85")
+        )
+        burst_ratio = float(
+            os.environ.get("CAGE_QUOTA_BURST_ALLOWANCE_RATIO")
+            or os.environ.get("TOKEN_QUOTA_BURST_RATIO", "0.15")
+        )
+        safe_reserve = int(
+            os.environ.get("CAGE_QUOTA_SAFE_LANDING_RESERVE")
+            or os.environ.get("TOKEN_QUOTA_SAFE_RESERVE", "1500")
+        )
+
         return cls(
             redis_client=client,
             step_quota_max=step_max,
             token_quota_max=token_max,
             session_ttl=ttl,
+            soft_cap_ratio=soft_cap_ratio,
+            burst_allowance_ratio=burst_ratio,
+            safe_landing_reserve=safe_reserve,
         )
 
     # ------------------------------------------------------------------
@@ -294,8 +393,9 @@ class TokenQuotaProxy:
         self,
         agent_id: str,
         token_delta: int = 0,
+        allow_burst: bool = False,
     ) -> QuotaCheckResult:
-        """Atomically check quota and increment counters if within limits.
+        """Atomically check quota and increment counters if within limits or burst ceiling.
 
         This is the primary enforcement point.  Call this before any vLLM
         or NeMo call.  If the result is not allowed, return 429 immediately.
@@ -307,9 +407,11 @@ class TokenQuotaProxy:
             agent_id:    The agent UUID identifying this session.
             token_delta: The number of tokens to reserve (from max_tokens
                          in the request body).  Use 0 if unknown.
+            allow_burst: If True, permits elastic overdraft up to the burst
+                         allowance ceiling to finalize an active task (RFC #652).
 
         Returns:
-            QuotaCheckResult with allowed=True if within quota.
+            QuotaCheckResult with allowed=True if within quota or burst allowance.
 
         Raises:
             QuotaExceededError: If quota is exceeded OR Redis is unavailable.
@@ -328,6 +430,10 @@ class TokenQuotaProxy:
 
         steps_key = self._session_key(agent_id, "steps")
         tokens_key = self._session_key(agent_id, "tokens")
+        soft_cap_tokens = int(self._token_quota_max * self._soft_cap_ratio)
+        burst_max_tokens = int(
+            self._token_quota_max * (1.0 + self._burst_allowance_ratio)
+        )
 
         try:
             result = await self._redis.evalsha(
@@ -339,6 +445,9 @@ class TokenQuotaProxy:
                 str(self._token_quota_max),
                 str(max(0, token_delta)),
                 str(self._session_ttl),
+                str(soft_cap_tokens),
+                str(burst_max_tokens),
+                "1" if allow_burst else "0",
             )
         except Exception as exc:
             # 'token' = LLM usage-token counts; logs agent id/counters/error only.
@@ -357,11 +466,20 @@ class TokenQuotaProxy:
                 session_key=steps_key,
             ) from exc
 
-        # Lua returns: {allowed(0/1), steps, tokens, reason_str}
+        # Lua returns: {allowed(0/1), steps, tokens, reason_str, quota_status}
         allowed_flag = int(result[0])
         steps = int(result[1])
         tokens = int(result[2])
         reason = str(result[3]) if result[3] else None
+        quota_status = str(result[4]) if len(result) > 4 and result[4] else "NORMAL"
+
+        burst_max = int(self._token_quota_max * (1.0 + self._burst_allowance_ratio))
+        burst_available = tokens < burst_max
+
+        if quota_status == "BURST_ACTIVE":
+            tokens_remaining = max(0, burst_max - tokens)
+        else:
+            tokens_remaining = max(0, self._token_quota_max - tokens)
 
         quota_result = QuotaCheckResult(
             allowed=allowed_flag == 1,
@@ -372,14 +490,18 @@ class TokenQuotaProxy:
             token_quota_max=self._token_quota_max,
             block_reason=reason,
             session_ttl=self._session_ttl,
+            quota_status=quota_status,
+            tokens_remaining=tokens_remaining,
+            burst_available=burst_available,
         )
 
         if quota_result.allowed:
             # 'token' = LLM usage-token counts; logs agent id/counters/error only.
             # nosemgrep: python.lang.security.audit.logging.logger-credential-leak.python-logger-credential-disclosure
             logger.info(
-                "TokenQuotaProxy: ALLOWED agent=%s steps=%d/%d tokens=%d/%d",
+                "TokenQuotaProxy: ALLOWED agent=%s status=%s steps=%d/%d tokens=%d/%d",
                 agent_id,
+                quota_status,
                 steps,
                 self._step_quota_max,
                 tokens,
@@ -399,6 +521,51 @@ class TokenQuotaProxy:
             )
 
         return quota_result
+
+    async def request_completion_overdraft(
+        self,
+        agent_id: str,
+        estimated_delta: int,
+    ) -> QuotaCheckResult:
+        """Explicitly request atomic completion overdraft to finalize an in-flight task."""
+        return await self.check_and_increment(
+            agent_id=agent_id,
+            token_delta=estimated_delta,
+            allow_burst=True,
+        )
+
+    async def get_session_quota(self, agent_id: str) -> dict[str, Any]:
+        """Inspect current quota counters and burst availability for an agent session."""
+        steps_key = self._session_key(agent_id, "steps")
+        tokens_key = self._session_key(agent_id, "tokens")
+        steps_raw = await self._redis.get(steps_key)
+        tokens_raw = await self._redis.get(tokens_key)
+        steps = int(steps_raw) if steps_raw else 0
+        tokens = int(tokens_raw) if tokens_raw else 0
+        burst_max = int(self._token_quota_max * (1.0 + self._burst_allowance_ratio))
+        soft_cap = int(self._token_quota_max * self._soft_cap_ratio)
+
+        status = "NORMAL"
+        if tokens > self._token_quota_max:
+            status = "BURST_ACTIVE" if tokens <= burst_max else "EXHAUSTED"
+        elif tokens >= soft_cap:
+            status = "SOFT_CAP_REACHED"
+        if steps > self._step_quota_max:
+            status = "EXHAUSTED"
+
+        return {
+            "agent_id": agent_id,
+            "step_count": steps,
+            "accumulated_tokens": tokens,
+            "quota_max_steps": self._step_quota_max,
+            "quota_max_tokens": self._token_quota_max,
+            "soft_cap_tokens": soft_cap,
+            "burst_max_tokens": burst_max,
+            "quota_status": status,
+            "tokens_remaining": max(0, self._token_quota_max - tokens),
+            "burst_tokens_remaining": max(0, burst_max - tokens),
+            "burst_available": tokens < burst_max,
+        }
 
     async def reconcile_actual_tokens(
         self,
