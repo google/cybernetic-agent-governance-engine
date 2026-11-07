@@ -16,56 +16,60 @@
 # CAGE Client SDK — Out-of-Process Policy Enforcement Point (PEP) Client
 #
 # This component definition documents the CAGE Client SDK (packages/cage-client/)
-# security posture across implemented and planned NIST SP 800-53 Rev 5 controls.
+# security posture across implemented NIST SP 800-53 Rev 5 controls.
 
 component-definition:
   uuid: "8a9f5c3d-2b1e-4f7a-9c8d-5e6f7a8b9c0d"
   metadata:
     title: "CAGE Client SDK — Out-of-Process PEP Client Component Definition"
-    version: "1.1.0"
+    version: "1.2.0"
     oscal-version: "1.0.4"
-    last-modified: "2026-11-06T18:00:00Z"
+    last-modified: "2026-11-07T00:35:00Z"
     remarks: >
       This component definition maps the Python CAGE Client SDK
-      (packages/cage-client/) to NIST SP 800-53 Rev 5 controls. The SDK acts as
-      an out-of-process HTTP Policy Enforcement Point (PEP) that mediates
-      action execution against the central CAGE Governance Gateway Policy
-      Decision Point (PDP) over TLS/mTLS (AC-3, SC-8) and propagates W3C
-      traceparent correlation headers. Client-side cryptographic verification
-      of GovernanceEnvelope.signature against an out-of-band kid trust anchor
-      (AU-10) and client-side enforcement of GovernanceEnvelope.expires_at
-      temporal freshness or single-use nonce consumption (SC-23) are not yet
-      implemented in packages/cage-client/ and are recorded truthfully as
-      planned. Server-side v3 asymmetric KMS JWT routing seals and atomic Redis
-      SETNX single-use nonce consumption live in
-      src/gateway/governance/routing_seal.py, and MAX_CONSECUTIVE_DENIALS lives
-      in src/governed_financial_advisor/graph/nodes/safety_node.py, outside
+      (packages/cage-client/, mirrored 1-to-1 at src/gateway/client/ via
+      scripts/check_client_sdk_sync.py) to NIST SP 800-53 Rev 5 controls. The
+      SDK acts as an out-of-process HTTP Policy Enforcement Point (PEP) that
+      mediates action execution against the central CAGE Governance Gateway
+      Policy Decision Point (PDP) over TLS/mTLS (AC-3, SC-8), propagates W3C
+      traceparent correlation headers, verifies GovernanceEnvelope.signature
+      over RFC 8785 JCS canonical bytes against independently resolved
+      out-of-band kid trust anchors (AU-10), and enforces
+      GovernanceEnvelope.expires_at temporal freshness and subject.action_hash
+      request binding (SC-23) fail-closed by default. Server-side v3 asymmetric
+      KMS JWT routing seals and atomic Redis SETNX single-use nonce consumption
+      live in src/gateway/governance/routing_seal.py, and
+      MAX_CONSECUTIVE_DENIALS lives in
+      src/governed_financial_advisor/graph/nodes/safety_node.py, outside
       packages/cage-client/.
 
   components:
     # -----------------------------------------------------------------------
     # Component 1: CAGE Client SDK (packages/cage-client/)
-    # Implemented: AC-3 (Access Enforcement), SC-8 (Transmission Confidentiality)
-    # Planned:     AU-10 (Non-Repudiation), SC-23 (Session Authenticity)
+    # Implemented: AC-3 (Access Enforcement), AU-10 (Non-Repudiation),
+    #              SC-8 (Transmission Confidentiality), SC-23 (Session Authenticity)
     # -----------------------------------------------------------------------
     - uuid: "7c8e9f1a-3d4b-5c6e-8f9a-1b2c3d4e5f6a"
       title: "CAGE Client SDK"
       type: software
       description: >
         Python client library (packages/cage-client/) providing out-of-process
-        HTTP Policy Enforcement Point (PEP) mediation for LangGraph and Python
-        agent applications communicating with the CAGE Governance Gateway PDP.
-        Performs fail-closed HTTP status mediation (200/403/422/202/409/5xx),
-        Pydantic schema validation of GovernanceEnvelope responses, optional
-        mutual TLS transport configuration, and W3C traceparent header
-        propagation. Does not yet verify GovernanceEnvelope.signature or
-        enforce GovernanceEnvelope.expires_at client-side.
+        HTTP Policy Enforcement Point (PEP) mediation and fail-closed
+        GovernanceEnvelope verification for LangGraph and Python agent
+        applications communicating with the CAGE Governance Gateway PDP.
+        Performs fail-closed HTTP status and verdict mediation
+        (200/403/422/202/409/5xx), out-of-band kid JWKS/PEM asymmetric signature
+        verification over RFC 8785 JCS canonical bytes, expires_at freshness
+        validation, subject.action and subject.action_hash request binding,
+        Pydantic schema validation, optional mutual TLS transport configuration,
+        and W3C traceparent header propagation.
       purpose: >
         Enables standalone Python and LangGraph applications to submit proposed
-        actions to the CAGE Governance Gateway over TLS/mTLS and block execution
-        fail-closed on gateway refusal, deferral, network failure, or malformed
-        response payloads while propagating W3C traceparent headers for
-        distributed trace correlation.
+        actions to the CAGE Governance Gateway over TLS/mTLS, cryptographically
+        verify returned GovernanceEnvelope decisions against out-of-band kid
+        trust anchors, and block execution fail-closed on gateway refusal,
+        deferral, signature/freshness/binding failure, network error, or
+        malformed response payloads.
       responsible-roles:
         - role-id: provider
       control-implementations:
@@ -84,21 +88,24 @@ component-definition:
                 Before a decorated LangGraph node executes, @cage_guard calls
                 CageClient.validate_action(), which posts canonicalized action parameters
                 (SHA-256 parameter_hash) to /governance/validate-action and mediates
-                execution fail-closed by HTTP response status and schema validity:
+                execution fail-closed by HTTP response status, cryptographic envelope
+                integrity, and verdict:
                 - Network / timeout error (httpx.RequestError): raises CageGatewayError
                 - HTTP 5xx or unexpected status code: raises CageGatewayError
-                - HTTP 403 / 422 (DENY): requires audit_id and raises PolicyViolationException
-                - HTTP 202 / 409 (DEFER): requires ticket_id and raises DeferralPending
-                - HTTP 200 (ALLOW): requires valid JSON with a Pydantic-valid
-                  GovernanceEnvelope (raises CageGatewayError on missing/malformed fields)
+                - HTTP 403 / 422 (DENY): requires audit_id / proof_hash and raises PolicyViolationException
+                - HTTP 202 / 409 (DEFER): requires ticket_id / defer_id and raises DeferralPending
+                - HTTP 200: verifies GovernanceEnvelope schema, out-of-band kid signature
+                  (au-10), expires_at freshness and subject.action_hash binding (sc-23)
+                  prior to mediating ALLOW, NARROW (PolicyViolationException), DENY
+                  (PolicyViolationException), or DEFER / REQUIRE_APPROVAL (DeferralPending)
+                - Enforcing posture guard (enforce_verification_posture()): rejects
+                  disabling signature, expiration, or subject verification in any
+                  non-dev/test CAGE_ENV posture with ValueError at client startup
 
-                Scope boundary: Client-side cryptographic verification of
-                GovernanceEnvelope.signature (au-10) and client-side temporal freshness
-                enforcement of GovernanceEnvelope.expires_at (sc-23) are not yet
-                implemented in packages/cage-client/ (recorded as planned under au-10 and
-                sc-23). Server-side v3 asymmetric KMS JWT routing seals and Redis SETNX
-                single-use nonce consumption live in src/gateway/governance/routing_seal.py,
-                and consecutive denial budget tracking (MAX_CONSECUTIVE_DENIALS) lives in
+                Scope boundary: Server-side v3 asymmetric KMS JWT routing seals and Redis
+                SETNX single-use nonce consumption live in
+                src/gateway/governance/routing_seal.py, and consecutive denial budget
+                tracking (MAX_CONSECUTIVE_DENIALS) lives in
                 src/governed_financial_advisor/graph/nodes/safety_node.py, outside
                 packages/cage-client/.
               props:
@@ -113,7 +120,7 @@ component-definition:
                   rel: reference
                 - href: "../../packages/cage-client/src/cage_client/core.py"
                   rel: implementation
-                  text: "Out-of-process HTTP PEP mediation in CageClient.validate_action()"
+                  text: "Out-of-process HTTP PEP mediation and posture guard in CageClient"
                 - href: "../../packages/cage-client/src/cage_client/adapters/langgraph.py"
                   rel: implementation
                   text: "LangGraph pre-execution @cage_guard node decorator"
@@ -121,29 +128,49 @@ component-definition:
             - uuid: "2b3c4d5e-6f7a-8b9c-0d1e-2f3a4b5c6d7e"
               control-id: au-10
               description: |
-                Client-side non-repudiation is planned (not yet implemented) in
-                packages/cage-client/.
+                Client-side cryptographic non-repudiation verification of gateway
+                GovernanceEnvelope decisions is implemented in
+                packages/cage-client/src/cage_client/core.py (CageClient._verify_signature_block()),
+                packages/cage-client/src/cage_client/crypto.py (verify_envelope_signature(),
+                load_pinned_public_key()), packages/cage-client/src/cage_client/jwks.py
+                (JwksKeyResolver), and packages/cage-client/src/cage_client/_jcs/.
 
-                packages/cage-client/src/cage_client/crypto.py (generate_w3c_traceparent())
-                generates and propagates a W3C Trace Context traceparent header
-                (00-{trace_id}-{span_id}-01) on outbound /governance/validate-action
-                requests for distributed trace correlation only; trace correlation is
-                not cryptographic non-repudiation.
+                By default (verify_signature=True), CageClient verifies every HTTP 200
+                GovernanceEnvelope before returning ALLOW or dispatching NARROW / DENY /
+                DEFER verdicts:
+                - Resolves signing public keys strictly out-of-band by kid via
+                  JwksKeyResolver ({gateway_url}/governance/.well-known/jwks.json with
+                  single-flight refresh, HTTP 304 rejection, atomic rotation/revocation
+                  replacement, and hard max_jwks_staleness_s fail-closed eviction) or
+                  caller-pinned public_keys; embedded public keys or unexpected signature
+                  fields inside the envelope raise RoutingSealVerificationError
+                - Canonicalizes the unsigned wire envelope via pure-stdlib RFC 8785 JCS
+                  (_jcs.canonicalize) and accepts exactly two signature algorithms, the
+                  two the gateway signs with: ES256 (EC P-256, SHA-256) and EdDSA
+                  (Ed25519). Every other algorithm (including none, HS*, ES384, ES512,
+                  RS* and PS*) and every other key type is rejected fail-closed, and a
+                  JWKS containing any other key is refused as a whole
+                - Acts only on the values it verified: the response is parsed as strict
+                  JSON (a repeated object key or a NaN/Infinity token raises
+                  RoutingSealVerificationError), GovernanceEnvelope validates in Pydantic
+                  strict mode without stripping, case-folding or coercing any field
+                  (timestamps only as RFC 3339 strings with an explicit offset), and the
+                  verdict, kid and algorithm are matched exactly as received
+                - Propagates W3C Trace Context traceparent headers
+                  (generate_w3c_traceparent()) for distributed audit correlation
 
-                While GovernanceEnvelope (packages/cage-client/src/cage_client/envelope.py)
-                parses the signature dictionary (algorithm, value, kid), CageClient does
-                not yet verify GovernanceEnvelope.signature against an independently
-                resolved out-of-band kid trust anchor (implementation-status: planned).
                 Point-to-point transport mTLS (sc-8) protects the wire channel only and
-                does not substitute for end-to-end envelope signature verification or
-                non-repudiation. Server-side asymmetric KMS JWT routing seal signing and
-                verification live in src/gateway/governance/routing_seal.py, outside
-                packages/cage-client/.
+                does not substitute for end-to-end GovernanceEnvelope.signature
+                verification. Server-side KMS envelope signing lives in
+                src/gateway/governance/governance_envelope.py and
+                src/gateway/governance/kms_signer.py.
               props:
                 - name: implementation-status
-                  value: planned
+                  value: implemented
                 - name: control-origination
                   value: system-specific
+                - name: implementation-date
+                  value: "2026-11-06"
                 - name: w3c-traceparent-propagation
                   value: "true"
               links:
@@ -152,12 +179,15 @@ component-definition:
                 - href: "https://www.w3.org/TR/trace-context/"
                   rel: reference
                   text: "W3C Trace Context specification"
+                - href: "../../packages/cage-client/src/cage_client/core.py"
+                  rel: implementation
+                  text: "Pre-verdict GovernanceEnvelope signature verification in CageClient._verify_signature_block()"
                 - href: "../../packages/cage-client/src/cage_client/crypto.py"
                   rel: implementation
-                  text: "W3C traceparent generation for distributed trace correlation"
-                - href: "../../packages/cage-client/src/cage_client/envelope.py"
+                  text: "Asymmetric signature verification, pinned key validation, and W3C traceparent generation"
+                - href: "../../packages/cage-client/src/cage_client/jwks.py"
                   rel: implementation
-                  text: "GovernanceEnvelope Pydantic schema (signature parsed but unverified client-side)"
+                  text: "Out-of-band kid JWKS resolver with bounded TTL and max_jwks_staleness_s eviction"
 
             - uuid: "3c4d5e6f-7a8b-9c0d-1e2f-3a4b5c6d7e8f"
               control-id: sc-8
@@ -167,7 +197,8 @@ component-definition:
 
                 create_mtls_transport() configures an httpx.AsyncHTTPTransport (with
                 optional HTTP/2 multiplexing when the h2 extra is installed):
-                - Validates that any supplied cert_path, key_path, or ca_path exists on
+                - Rejects half-configured client cert/key pairs with ValueError and
+                  validates that any supplied cert_path, key_path, or ca_path exists on
                   disk, raising FileNotFoundError fail-closed when missing
                 - Builds an SSLContext via ssl.create_default_context(purpose=ssl.Purpose.SERVER_AUTH,
                   cafile=ca_path), loads client credentials via load_cert_chain() when
@@ -180,7 +211,8 @@ component-definition:
                 src/gateway/infrastructure/tls_context.py::create_hardened_client_context().
                 Channel TLS/mTLS covers sc-8 point-to-point transmission confidentiality
                 only and does not substitute for end-to-end GovernanceEnvelope.signature
-                verification (au-10) or GovernanceEnvelope.expires_at authenticity (sc-23).
+                verification (au-10) or GovernanceEnvelope.expires_at and subject binding
+                checks (sc-23).
               props:
                 - name: implementation-status
                   value: implemented
@@ -196,32 +228,50 @@ component-definition:
             - uuid: "4d5e6f7a-8b9c-0d1e-2f3a-4b5c6d7e8f9a"
               control-id: sc-23
               description: |
-                Client-side session authenticity and envelope freshness enforcement are
-                planned (not yet implemented) in packages/cage-client/.
+                Client-side envelope temporal freshness and request-subject authenticity
+                binding are implemented in packages/cage-client/src/cage_client/core.py
+                (CageClient._verify_timestamps(), CageClient._verify_subject_binding())
+                and packages/cage-client/src/cage_client/crypto.py
+                (compute_expected_action_hash()).
 
-                CageClient._handle_allow_response()
-                (packages/cage-client/src/cage_client/core.py) parses
-                GovernanceEnvelope.expires_at via Pydantic schema validation without
-                enforcing temporal freshness against current UTC time or consuming a
-                single-use nonce client-side (implementation-status: planned).
+                By default (verify_expiration=True, verify_subject=True,
+                clock_skew_seconds=5.0), CageClient enforces on every HTTP 200
+                GovernanceEnvelope before returning ALLOW or mediating verdicts:
+                - Requires timezone-aware issued_at and expires_at timestamps with
+                  expires_at > issued_at, rejects future-dated issued_at where
+                  issued_at - timedelta(seconds=clock_skew_seconds) > now(UTC), and
+                  rejects expired envelopes where
+                  expires_at + timedelta(seconds=clock_skew_seconds) <= now(UTC) with
+                  RoutingSealVerificationError
+                - Prevents cross-action and cross-parameter replay/substitution by
+                  verifying envelope.subject["action"] == action and constant-time
+                  hmac.compare_digest() parity between envelope.subject["action_hash"]
+                  and sha256:<hex> over RFC 8785 JCS {"action": action, "params": ...}
 
-                Server-side v3 asymmetric KMS JWT routing seal TTL validation and atomic
-                Redis SETNX single-use nonce consumption (verify_and_consume_seal()) live
-                in src/gateway/governance/routing_seal.py, outside packages/cage-client/.
+                Scope boundary: Stateless CageClient validates temporal freshness and
+                request-parameter hash binding per call; stateful server-side single-use
+                seal nonce consumption via atomic Redis SETNX (verify_and_consume_seal())
+                lives in src/gateway/governance/routing_seal.py, outside
+                packages/cage-client/.
               props:
                 - name: implementation-status
-                  value: planned
+                  value: implemented
                 - name: control-origination
                   value: system-specific
+                - name: implementation-date
+                  value: "2026-11-06"
               links:
                 - href: "https://csrc.nist.gov/projects/cprt/api/cprt/framework/version/SP_800_53_5_1_1/home?element=SC-23"
                   rel: reference
                 - href: "../../packages/cage-client/src/cage_client/core.py"
                   rel: implementation
-                  text: "CageClient._handle_allow_response() envelope schema parsing (freshness check planned)"
+                  text: "Temporal freshness and subject binding checks in CageClient._verify_timestamps() and _verify_subject_binding()"
+                - href: "../../packages/cage-client/src/cage_client/crypto.py"
+                  rel: implementation
+                  text: "RFC 8785 JCS compute_expected_action_hash() request-parameter binding"
                 - href: "../../packages/cage-client/src/cage_client/envelope.py"
                   rel: implementation
-                  text: "GovernanceEnvelope expires_at schema field"
+                  text: "Immutable GovernanceEnvelope issued_at, expires_at, and subject schema fields"
 
   # -------------------------------------------------------------------------
   # Related Components (References Only)
@@ -231,7 +281,9 @@ component-definition:
       title: "Governance Gateway"
       description: >
         Central governance gateway (PDP) that evaluates /governance/validate-action
-        requests from CageClient and returns HTTP ALLOW, DENY, or DEFER responses.
+        requests from CageClient, publishes public signing keys at
+        /governance/.well-known/jwks.json, and returns signed GovernanceEnvelope
+        responses or structured refusal/deferral receipts.
     - component-uuid: "6f4d2e1b-8c3a-4d9f-9a1b-2c3d4e5f6a7b"
       title: "DeferQueue"
       description: >

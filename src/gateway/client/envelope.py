@@ -12,52 +12,56 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+"""CAGE Gateway Client SDK Envelope Types.
+
+Defines the read-only, immutable Pydantic models that clients receive from the
+governance gateway. ``CageClient`` cryptographically verifies ``GovernanceEnvelope``
+responses by default against an out-of-band ``kid`` trust anchor (``JwksKeyResolver``
+or pinned ``public_keys``), enforces ``expires_at`` freshness, and binds
+``subject.action`` + ``subject.action_hash`` to the submitted request.
+
+Note that channel TLS/mTLS (``transport.py``) protects only the point-to-point
+transport hop and does NOT substitute for end-to-end ``GovernanceEnvelope.signature``
+verification.
 """
-CAGE Gateway Client SDK Envelope Types.
 
-This module defines the read-only, immutable Pydantic models representing
-decision envelope payloads returned by the governance gateway. Note that
-``CageClient`` performs Pydantic schema validation only — it does NOT verify
-``signature`` against a gateway trust anchor and does NOT enforce ``expires_at``
-temporal freshness client-side.
-
-Clients parse these envelopes but NEVER construct or modify them. All envelopes
-are frozen (immutable) to prevent accidental in-memory mutation after parsing.
-"""
-
+import re
 from datetime import datetime
 from typing import Any
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, field_validator
+
+# The signature covers the JSON the gateway sent, but the client acts on these
+# models, so they validate without transforming anything. ``strict`` refuses
+# type coercion (an epoch integer is not a timestamp), and no string or key is
+# stripped or case-folded: stripping let a padded key replace a signed one.
+_SIGNED_WIRE_CONFIG = ConfigDict(frozen=True, extra="forbid", strict=True)
+
+# RFC 3339 date-time as the gateway emits it: a ``T`` separator, an explicit
+# offset, and either no fraction or a 3- or 6-digit one (the forms
+# ``datetime.fromisoformat`` parses on Python 3.10).
+_RFC3339_TIMESTAMP = re.compile(
+    r"[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}"
+    r"(?:\.[0-9]{3}|\.[0-9]{6})?(?:Z|[+-][0-9]{2}:[0-9]{2})"
+)
 
 
 class GovernanceEnvelope(BaseModel):
-    """
-    Read-only client schema view of a governance decision envelope.
+    """Read-only client view of a cryptographically signed governance decision envelope.
 
-    This model parses the decision payload, audit metadata, ``expires_at``, and
-    ``signature`` fields returned by the gateway for a proposed action.
+    Strictly immutable and validated without coercion (``frozen=True``,
+    ``extra="forbid"``, ``strict=True``).
 
-    Security & Verification Scope (IMPORTANT):
-        1. ``CageClient`` currently performs Pydantic schema validation and
-           fail-closed HTTP status and payload verdict mediation
-           (``200``/``403``/``422``/``202``/``409``/``5xx``) only —
-           **it does NOT verify ``GovernanceEnvelope.signature`` against a
-           gateway trust anchor and does NOT check ``GovernanceEnvelope.expires_at``
-           freshness client-side**. Both ``signature`` and ``expires_at`` are
-           parsed as **untrusted** fields unless verified separately against an
-           independently resolved out-of-band ``kid`` trust anchor.
-        2. **TLS/mTLS in ``transport.py`` protects only the point-to-point
-           transport channel and does NOT substitute for end-to-end envelope
-           signature verification.** The envelope carries a ``signature`` field
-           specifically so trust does not rest solely on transport or proxy
-           configuration; callers requiring cryptographic non-repudiation or
-           replay/freshness enforcement must verify the signature and
-           ``expires_at`` independently.
-
-    The envelope is strictly immutable (``frozen=True``). Clients parse envelopes
-    received from the gateway but NEVER construct or modify them. Any attempt
-    to modify an envelope after creation will raise a ``ValidationError``.
+    Security & Verification Scope:
+        1. By default, ``CageClient`` verifies ``GovernanceEnvelope.signature``
+           over RFC 8785 JCS canonical bytes against an out-of-band ``kid`` trust
+           anchor (JWKS or pinned ``public_keys``), checks ``expires_at`` freshness,
+           and validates ``subject.action`` + ``subject.action_hash`` request
+           binding before returning ``ALLOW`` or dispatching ``NARROW`` / ``DENY`` /
+           ``DEFER`` verdicts.
+        2. Channel TLS/mTLS in ``transport.py`` protects only the point-to-point
+           transport channel and does NOT substitute for end-to-end
+           ``GovernanceEnvelope.signature`` verification.
     """
 
     envelope_version: str = Field(
@@ -76,10 +80,7 @@ class GovernanceEnvelope(BaseModel):
     )
     expires_at: datetime = Field(
         ...,
-        description=(
-            "UTC datetime when the envelope expires "
-            "(parsed as schema data; not checked for freshness by CageClient)"
-        ),
+        description="UTC datetime when the envelope expires (verified for freshness by CageClient)",
     )
     issuer: dict[str, str] = Field(
         ...,
@@ -102,33 +103,28 @@ class GovernanceEnvelope(BaseModel):
     )
     signature: dict[str, str] | None = Field(
         default=None,
-        description=(
-            "Signature metadata (algorithm, value, kid); "
-            "unverified unless checked separately against a gateway trust anchor"
-        ),
+        description="Cryptographic signature (algorithm, kid, value) verified out-of-band by CageClient",
     )
 
-    model_config = ConfigDict(
-        frozen=True,
-        extra="forbid",
-        str_strip_whitespace=True,
-    )
+    model_config = _SIGNED_WIRE_CONFIG
+
+    @field_validator("issued_at", "expires_at", mode="before")
+    @classmethod
+    def _parse_rfc3339(cls, value: Any) -> datetime:
+        """Accept an offset-aware ``datetime`` or the gateway's RFC 3339 string, nothing else."""
+        if isinstance(value, datetime):
+            if value.utcoffset() is None:
+                raise ValueError("timestamp must carry a UTC offset")
+            return value
+        if not isinstance(value, str) or not _RFC3339_TIMESTAMP.fullmatch(value):
+            raise ValueError(
+                "timestamp must be an RFC 3339 string with a 'T' separator and an explicit offset"
+            )
+        return datetime.fromisoformat(value.replace("Z", "+00:00"))
 
 
 class ExecutionGrant(BaseModel):
-    """
-    Read-only Pydantic schema model for a JWT-style execution grant payload.
-
-    Security Note:
-        ``packages/cage-client/`` currently provides schema parsing only for
-        ``ExecutionGrant`` — it does NOT verify ``signature`` against a gateway
-        trust anchor, does NOT check ``exp`` temporal freshness, and does NOT
-        consume ``nonce`` client-side. Downstream actuators or callers MUST
-        cryptographically verify the grant against an out-of-band trust anchor
-        and enforce expiration/single-use semantics before executing any action.
-
-    Like ``GovernanceEnvelope``, this model is strictly immutable (``frozen=True``).
-    """
+    """Direct dispatch execution grant (JWT-style token)."""
 
     grant_version: str = Field(
         default="1.0", description="Execution grant schema version"
@@ -136,25 +132,15 @@ class ExecutionGrant(BaseModel):
     iss: str = Field(..., description="Issuer (gateway instance identifier)")
     sub: str = Field(..., description="Subject (authorized agent identifier)")
     aud: str = Field(..., description="Audience (target actuator/service)")
-    exp: int = Field(
-        ...,
-        description="Expiration time (Unix timestamp; unverified client-side)",
-    )
+    exp: int = Field(..., description="Expiration time (Unix timestamp)")
     iat: int = Field(..., description="Issued-at time (Unix timestamp)")
-    nonce: str = Field(..., description="Unique nonce claim")
+    nonce: str = Field(..., description="Unique nonce (replay attack prevention)")
     action_hash: str = Field(
-        ..., description="SHA256 hash of action parameters (integrity claim)"
+        ..., description="SHA256 hash of action parameters (integrity check)"
     )
     record_hash: str = Field(
         ..., description="SHA256 hash of audit record (governance trail link)"
     )
-    signature: str = Field(
-        ...,
-        description="Base64-encoded signature string (unverified client-side)",
-    )
+    signature: str = Field(..., description="Base64-encoded cryptographic signature")
 
-    model_config = ConfigDict(
-        frozen=True,
-        extra="forbid",
-        str_strip_whitespace=True,
-    )
+    model_config = _SIGNED_WIRE_CONFIG

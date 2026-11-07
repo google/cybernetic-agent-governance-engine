@@ -15,15 +15,11 @@
 """
 CAGE LangGraph Integration Adapter.
 
-Provides the `@cage_guard` decorator that integrates CAGE governance into
+Provides the ``@cage_guard`` decorator that integrates CAGE governance into
 LangGraph-based agent workflows. Intercepts LangGraph node execution and
-submits proposed actions to the CAGE Gateway via `CageClient.validate_action()`
-for pre-execution HTTP PEP mediation.
-
-Note:
-    `CageClient` performs HTTP status/verdict mediation and Pydantic schema
-    validation only (`GovernanceEnvelope.signature` and `expires_at` are not
-    verified client-side).
+submits proposed actions to the CAGE Gateway via ``CageClient.validate_action()``
+for pre-execution HTTP PEP mediation and fail-closed ``GovernanceEnvelope``
+signature, freshness, and request-binding verification.
 """
 
 import functools

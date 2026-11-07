@@ -15,10 +15,8 @@
 """
 CAGE Gateway Client SDK Exception Hierarchy.
 
-This module defines the exception types raised by the CAGE Client SDK when
-interacting with the governance gateway. All exceptions are designed to
-provide structured, machine-readable error details that enable LLM-based
-agents to perform self-correction and replanning.
+Defines structured exception types raised by the CAGE Client SDK when mediating
+governance responses and verifying cryptographic ``GovernanceEnvelope`` integrity.
 """
 
 from datetime import datetime
@@ -71,13 +69,17 @@ class DeferralPending(CageGatewayError):
 
 class RoutingSealVerificationError(CageGatewayError):
     """
-    Exception type reserved for cryptographic envelope or routing seal verification failures.
+    Raised when ``GovernanceEnvelope`` cryptographic or freshness verification fails.
 
-    Note:
-        `CageClient` in `packages/cage-client/` does NOT currently verify
-        `GovernanceEnvelope.signature` or `expires_at` client-side; it performs
-        Pydantic schema validation and fail-closed HTTP status and payload
-        verdict mediation only. Callers or downstream verifiers that implement
-        out-of-band `kid` trust anchor verification may raise this exception on
-        signature or freshness validation failures.
+    Raised fail-closed by ``CageClient`` and ``JwksKeyResolver`` whenever:
+      - ``GovernanceEnvelope.signature`` is missing, malformed, contains embedded
+        key material, uses a forbidden/mismatched algorithm, or fails cryptographic
+        verification against the out-of-band ``kid`` trust anchor;
+      - ``kid`` cannot be resolved from pinned ``public_keys`` or
+        ``/governance/.well-known/jwks.json`` (including JWKS staleness eviction or
+        HTTP ``304`` rejection);
+      - ``issued_at`` / ``expires_at`` are naive, non-monotonic, or expired beyond
+        ``clock_skew_seconds``; or
+      - ``subject.action`` or ``subject.action_hash`` fails to match the submitted
+        request action and parameters.
     """

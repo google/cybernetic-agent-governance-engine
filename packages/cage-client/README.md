@@ -5,15 +5,16 @@ Lightweight Python Policy Enforcement Point (PEP) client for the **Cybernetic AI
 ## Features
 
 - **Decoupled PEP/PDP Architecture**: Communicates out-of-process with CAGE Gateways via REST over TLS/mTLS.
-- **Fail-Closed HTTP Mediation**: Network failures, `5xx` errors, refusals (`403`/`422`), deferrals (`202`/`409`), and malformed `GovernanceEnvelope` JSON automatically block execution.
-- **Immutable Schema Validation**: Parses gateway `GovernanceEnvelope` responses into frozen Pydantic models (`signature` and `expires_at` are parsed as untrusted schema fields and are **not** verified client-side; see [Security Model & Verification Scope](#security-model--verification-scope)).
+- **Fail-Closed Envelope Signature & Freshness Verification**: Verifies every HTTP `200` `GovernanceEnvelope` by default against out-of-band `kid` trust anchors (`/governance/.well-known/jwks.json` or pinned `public_keys`), enforces `expires_at` temporal freshness, and binds `subject.action` + `subject.action_hash` to the submitted request.
+- **Fail-Closed HTTP & Verdict Mediation**: Network failures, `5xx` errors, refusals (`403`/`422` or HTTP `200` `DENY`/`NARROW`), deferrals (`202`/`409` or HTTP `200` `DEFER`/`REQUIRE_APPROVAL`), and malformed or tampered `GovernanceEnvelope` payloads automatically block execution.
+- **Immutable Schema Validation**: Parses verified gateway `GovernanceEnvelope` responses into frozen Pydantic models (`extra="forbid"`).
 - **LangGraph Native Adapter**: Pre-execution node decoration via `@cage_guard`.
 - **W3C Distributed Tracing**: Propagates `traceparent` context across agent-to-gateway hops.
 
 ## Security Model & Verification Scope
 
-1. **HTTP Status & Schema Mediation Only (No Client-Side Signature or Freshness Check):** `CageClient` currently performs Pydantic schema validation and fail-closed HTTP status mediation (`200`/`403`/`422`/`202`/`409`/`5xx`) only — **it does NOT verify `GovernanceEnvelope.signature` against a gateway trust anchor and does NOT check `GovernanceEnvelope.expires_at` freshness client-side**. Both `signature` and `expires_at` are parsed as untrusted fields unless verified separately against an independently resolved out-of-band `kid` trust anchor.
-2. **Channel TLS/mTLS Does Not Substitute for Envelope Signature Verification:** TLS/mTLS configured via `transport.py` (`create_mtls_transport`) protects only the point-to-point transport channel and **does NOT substitute for end-to-end `GovernanceEnvelope.signature` verification**. The envelope carries a cryptographic signature specifically so trust does not rest solely on transport or proxy configuration.
+1. **Out-of-Band `kid` Signature, Freshness & Request Binding (`AU-10`, `SC-23`):** By default (`verify_signature=True`, `verify_expiration=True`, `verify_subject=True`), `CageClient` resolves signing keys strictly out-of-band by `kid` from `{gateway_url}/governance/.well-known/jwks.json` (`JwksKeyResolver`, bounded `jwks_ttl_s=300.0` refresh and hard `max_jwks_staleness_s=3600.0` fail-closed eviction) or caller-pinned `public_keys` — never from embedded envelope keys. It accepts exactly two signature algorithms, the two the gateway signs with (`ES256` on EC P-256 and `EdDSA` on Ed25519), and rejects every other algorithm and key type; a JWKS containing any other key is refused as a whole. It verifies signatures over RFC 8785 JCS canonical bytes, checks `expires_at` freshness within `clock_skew_seconds`, and validates `subject.action` + `subject.action_hash` before returning `ALLOW` or dispatching `NARROW` / `DENY` / `DEFER` verdicts. It acts only on the values it verified: the response is parsed as strict JSON (a repeated key or `NaN` is refused), and the envelope is validated without stripping, case-folding or coercing anything, so the verdict, `kid`, algorithm, subject and timestamps are read exactly as signed. Disabling verification is rejected at startup in any non-dev/test `CAGE_ENV` posture.
+2. **Channel TLS/mTLS Does Not Substitute for Envelope Signature Verification (`SC-8`):** TLS/mTLS configured via `transport.py` (`create_mtls_transport`) protects only the point-to-point transport channel and **does NOT substitute for end-to-end `GovernanceEnvelope.signature` verification**. The envelope carries an asymmetric signature specifically so trust does not rest solely on transport or proxy configuration.
 
 ## Installation
 
@@ -37,12 +38,19 @@ uv add "git+https://github.com/google/cybernetic-agent-governance-engine.git#sub
 
 ```python
 import asyncio
-from cage_client import CageClient, PolicyViolationException, DeferralPending
+from cage_client import (
+    CageClient,
+    DeferralPending,
+    PolicyViolationException,
+    RoutingSealVerificationError,
+)
 
 
 async def main():
+    # Resolves gateway signing keys out-of-band from /governance/.well-known/jwks.json
+    # (or supply pinned trust anchors via public_keys={"kid": pem_bytes}).
     async with CageClient(
-        gateway_url="http://localhost:8080",
+        gateway_url="https://cage-gateway.example.com",
     ) as client:
         try:
             envelope = await client.validate_action(
@@ -50,7 +58,9 @@ async def main():
                 parameters={"symbol": "AAPL", "amount": 1000.0},
                 agent_id="portfolio-manager",
             )
-            print("Action approved:", envelope.payload.get("decision"))
+            print("Action approved:", envelope.payload.get("verdict"))
+        except RoutingSealVerificationError as exc:
+            print("Envelope signature/freshness/binding failed:", exc)
         except PolicyViolationException as exc:
             print("Action denied:", exc.reason_code, exc.violation_details)
         except DeferralPending as exc:
@@ -66,7 +76,7 @@ asyncio.run(main())
 from cage_client import CageClient
 from cage_client.adapters.langgraph import cage_guard
 
-cage = CageClient(gateway_url="http://localhost:8080")
+cage = CageClient(gateway_url="https://cage-gateway.example.com")
 
 
 @cage_guard(
@@ -74,7 +84,7 @@ cage = CageClient(gateway_url="http://localhost:8080")
     action="execute_trade",
 )
 async def trade_execution_node(state: dict) -> dict:
-    # This node only executes if CAGE Gateway issues an ALLOW decision
+    # This node only executes if CAGE Gateway issues a cryptographically verified ALLOW envelope
     return {"trade_status": "EXECUTED"}
 ```
 
@@ -84,7 +94,7 @@ CAGE provides two integration patterns for LangGraph applications. Choose based 
 
 | Use Case | Recommended Approach | Dependencies |
 |----------|---------------------|--------------|
-| **Standalone LangGraph app** consuming CAGE as a governance service | ✅ `cage-client` SDK | Lightweight package (httpx, pydantic) |
+| **Standalone LangGraph app** consuming CAGE as a governance service | ✅ `cage-client` SDK | Lightweight package (`httpx`, `pydantic`, `cryptography`) |
 | **Building inside the CAGE monorepo** (e.g., new domain plugin) | Node factories ([`langgraph_harness/`](../../src/gateway/governance/langgraph_harness/)) | Full CAGE repository |
 | **Rapid prototyping** with minimal dependencies | ✅ `cage-client` SDK | Lightweight |
 | **Contributing to CAGE core** or extending the kernel | Node factories | Full monorepo |
@@ -93,10 +103,11 @@ CAGE provides two integration patterns for LangGraph applications. Choose based 
 ### Client SDK (This Package)
 
 **Pros:**
-- Lightweight: 2 runtime dependencies (`httpx`, `pydantic`)
+- Lightweight: 3 runtime dependencies (`httpx`, `pydantic`, `cryptography`)
+- End-to-end verified: Out-of-band `kid` JWKS/PEM signature, freshness, and action-hash verification on by default
 - Decoupled: LangGraph app and CAGE services deploy independently
 - Simple: `pip install cage-client[langgraph]` and you're ready
-- Fail-closed: Network errors automatically block execution
+- Fail-closed: Network errors and envelope verification failures automatically block execution
 
 **Architecture:**
 ```
@@ -111,7 +122,7 @@ Your LangGraph App (pip install cage-client)
 from cage_client import CageClient
 from cage_client.adapters.langgraph import cage_guard
 
-cage = CageClient(gateway_url="http://localhost:8080")
+cage = CageClient(gateway_url="https://cage-gateway.example.com")
 
 
 @cage_guard(client=cage, action="execute_trade")
