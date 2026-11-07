@@ -427,7 +427,8 @@ async def build(monkeypatch: pytest.MonkeyPatch) -> AsyncIterator[StackFactory]:
             IdentityPolicy(trusted=frozenset({ADVISOR})),
         )
         http = httpx.AsyncClient(
-            transport=httpx.ASGITransport(app=root), base_url="http://gateway"
+            transport=httpx.ASGITransport(app=root, client=("10.112.0.43", 50000)),
+            base_url="http://10.112.0.43:8080",
         )
         clients.append(http)
         return Stack(

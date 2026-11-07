@@ -79,8 +79,10 @@ def _body(**snapshot: Any) -> dict[str, Any]:
 async def _post(
     app: FastAPI, body: Any, headers: dict[str, str] | None = None
 ) -> httpx.Response:
-    transport = httpx.ASGITransport(app=app)
-    async with httpx.AsyncClient(transport=transport, base_url="http://gw") as client:
+    transport = httpx.ASGITransport(app=app, client=("10.112.0.43", 50000))
+    async with httpx.AsyncClient(
+        transport=transport, base_url="http://10.112.0.43:8080"
+    ) as client:
         return await client.post(
             "/governance/state-commitments", json=body, headers=headers or {}
         )
@@ -195,11 +197,11 @@ class TestGatewayClientCommitState:
         client = object.__new__(GatewayClient)
         headers = {"l5d-client-id": identity} if identity else {}
         client._http = httpx.AsyncClient(  # type: ignore[attr-defined]
-            transport=httpx.ASGITransport(app=app),
-            base_url="http://gw",
+            transport=httpx.ASGITransport(app=app, client=("10.112.0.43", 50000)),
+            base_url="http://10.112.0.43:8080",
             headers=headers,  # stands in for the Linkerd proxy
         )
-        client._base_url = "http://gw"  # type: ignore[attr-defined]
+        client._base_url = "http://10.112.0.43:8080"  # type: ignore[attr-defined]
         return client
 
     @staticmethod

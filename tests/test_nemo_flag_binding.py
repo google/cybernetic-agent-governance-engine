@@ -298,7 +298,8 @@ async def test_approving_a_refinement_while_off_is_refused_and_left_staged(
     replica.state.nemo_rails = None
 
     async with httpx.AsyncClient(
-        transport=httpx.ASGITransport(app=replica), base_url="http://replica"
+        transport=httpx.ASGITransport(app=replica, client=("10.112.0.43", 50000)),
+        base_url="http://10.112.0.43:8080",
     ) as client:
         staged = await client.post(
             "/v1/nemo/propose-refinement",

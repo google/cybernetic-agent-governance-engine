@@ -740,7 +740,7 @@ jobs:
   mesh-conformance:
     name: "Linkerd Mesh Policy Conformance (kind)"
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -755,9 +755,20 @@ jobs:
           python-version-file: "pyproject.toml"
       - name: Install Dependencies
         run: uv sync --all-groups --all-extras
-      - name: Create kind cluster and install Linkerd control plane
+      - name: Build Wolfi gateway image archive (src/gateway/Dockerfile, F-106)
+        run: |
+          docker buildx build \
+            --provenance=false \
+            --sbom=false \
+            --output "type=docker,dest=${RUNNER_TEMP}/cage-gateway-mesh-ci.tar" \
+            -f src/gateway/Dockerfile \
+            -t cage-gateway:mesh-ci \
+            .
+      - name: Create kind cluster, load gateway image, and install Linkerd control plane
         run: |
           kind create cluster --name cage-mesh-test --wait 90s
+          kind load image-archive "${RUNNER_TEMP}/cage-gateway-mesh-ci.tar" --name cage-mesh-test
+          rm -f "${RUNNER_TEMP}/cage-gateway-mesh-ci.tar"
           export LINKERD2_VERSION=edge-26.9.3
           curl --proto '=https' --tlsv1.2 -sSfL https://run.linkerd.io/install-edge | sh
           export PATH="$HOME/.linkerd2/bin:$PATH"
@@ -785,6 +796,8 @@ jobs:
       - name: Run Linkerd service-mesh conformance suite
         env:
           CAGE_REQUIRE_LINKERD_CLUSTER: "1"
+          CAGE_GATEWAY_IMAGE: "cage-gateway:mesh-ci"
+          CAGE_OPA_IMAGE: "openpolicyagent/opa:0.70.0-static"
           SKIP_PORT_FORWARD_CHECKS: "1"
         run: |
           make test-mesh

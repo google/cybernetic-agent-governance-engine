@@ -142,9 +142,11 @@ class TestTwoLayerGeapWorkloadIdentity:
             return JSONResponse({"ok": True})
 
         inner = Starlette(routes=[Route("/governance/validate-action", _ok)])
-        # client: requests arrive through the pod's own Linkerd proxy.
+        # client: requests arrive through the pod's own Linkerd proxy (pod IP).
         client = TestClient(
-            WorkloadIdentityMiddleware(inner, policy), client=("127.0.0.1", 50000)
+            WorkloadIdentityMiddleware(inner, policy),
+            client=("10.112.0.43", 50000),
+            base_url="http://10.112.0.43:8080",
         )
 
         # 1. Valid Linkerd + valid kid-resolved GEAP ID-2 JWT -> 200 OK

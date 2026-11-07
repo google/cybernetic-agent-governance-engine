@@ -300,7 +300,8 @@ class TestApplyRefinementProposalFlow:
             gw_srv.root_app,
             raise_server_exceptions=False,
             headers={"l5d-client-id": self._TRUSTED_ID},
-            client=("127.0.0.1", 50000),  # through the pod's own Linkerd proxy
+            client=("10.112.0.43", 50000),  # through the pod's own Linkerd proxy
+            base_url="http://10.112.0.43:8080",
         )
         return tc
 
@@ -397,7 +398,8 @@ class TestApplyRefinementProposalFlow:
         tc = TestClient(
             gw_srv.root_app,
             raise_server_exceptions=False,
-            client=("127.0.0.1", 50000),  # through the pod's own Linkerd proxy
+            client=("10.112.0.43", 50000),  # through the pod's own Linkerd proxy
+            base_url="http://10.112.0.43:8080",
         )
 
         prop = tc.post(

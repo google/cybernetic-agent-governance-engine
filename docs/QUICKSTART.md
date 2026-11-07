@@ -77,7 +77,7 @@ This starts:
 
 `/health` is one of the open paths listed in §1, so it needs no `l5d-client-id` header. Every other route does.
 
-Compose has no Linkerd proxy, and a request from your shell reaches the gateway from outside its container, so the gateway refuses one that carries the header. [`scripts/compose_gateway_call.sh`](../scripts/compose_gateway_call.sh) sends a request from inside the gateway container instead, where the proxy would run, with the advisor identity that `.env` trusts.
+Compose has no Linkerd proxy, and a request from your shell reaches the gateway from outside its container, so the gateway refuses one that carries the header. [`scripts/compose_gateway_call.sh`](../scripts/compose_gateway_call.sh) sends a request from inside the gateway container over the dev-only loopback channel (`LT-1`: requires both `CAGE_ENV=development` and `CAGE_ALLOW_DEV_LOOPBACK_IDENTITY=true` in `.env`, and is unconditionally refused in enforcing postures), with the advisor identity that `.env` trusts.
 
 ```bash
 curl http://localhost:8080/health

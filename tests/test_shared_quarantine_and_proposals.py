@@ -214,8 +214,10 @@ async def test_inference_proxy_rejects_quarantined_workload_via_app_state_redis(
         raising=False,
     )
     async with httpx.AsyncClient(
-        transport=httpx.ASGITransport(app=gw_srv.root_app),
-        base_url="http://test",
+        transport=httpx.ASGITransport(
+            app=gw_srv.root_app, client=("10.112.0.43", 50000)
+        ),
+        base_url="http://10.112.0.43:8080",
         headers={
             "l5d-client-id": trusted_id,
             "x-cage-thread-id": "quarantined-thread-42",
@@ -274,10 +276,12 @@ async def test_nemo_proposal_staged_on_replica_a_approved_on_replica_b_and_pubsu
 
     async with (
         httpx.AsyncClient(
-            transport=httpx.ASGITransport(app=replica_a), base_url="http://replica-a"
+            transport=httpx.ASGITransport(app=replica_a, client=("10.112.0.43", 50000)),
+            base_url="http://10.112.0.43:8080",
         ) as client_a,
         httpx.AsyncClient(
-            transport=httpx.ASGITransport(app=replica_b), base_url="http://replica-b"
+            transport=httpx.ASGITransport(app=replica_b, client=("10.112.0.44", 50000)),
+            base_url="http://10.112.0.44:8080",
         ) as client_b,
     ):
         # 1. Stage proposal on Replica A
@@ -369,8 +373,8 @@ async def test_nemo_proposal_routes_fail_closed_with_503_when_redis_unavailable(
     replica.state.redis = None
 
     async with httpx.AsyncClient(
-        transport=httpx.ASGITransport(app=replica),
-        base_url="http://replica-no-redis",
+        transport=httpx.ASGITransport(app=replica, client=("10.112.0.43", 50000)),
+        base_url="http://10.112.0.43:8080",
         headers={"l5d-client-id": trusted_id},
     ) as client:
         stage_resp = await client.post(

@@ -31,19 +31,39 @@ A caller that reaches the container without passing through the proxy can
 send any ``l5d-client-id`` it likes. That is the position of every caller of a
 pod running without its proxy, for example one admitted while the proxy
 injector was down (POAM-2026-167). So the header is believed only on a
-connection from inside the pod's own network namespace
-(:func:`is_pod_local_connection`): the proxy connects to the container from the
-pod's own IP address, and only a process in the same pod can use that address
-or loopback. A request that carries the header from any other peer is
-refused. A pod without its proxy therefore refuses every caller, instead of
-believing whichever identity a caller names.
+connection from the pod's own non-loopback IP address
+(:func:`is_pod_local_connection`): the Linkerd inbound proxy connects to the
+container from the pod's own IP address (``peer == server`` and
+``not peer.is_loopback``). Loopback peers (``127.0.0.1``, ``::1``,
+``::ffff:127.0.0.1``) are never treated as the mesh proxy — even when
+``scope["server"]`` is also loopback — because ``kubectl port-forward``
+(kubelet loopback stream) and unproxied pod-local processes connect from
+loopback (POAM-2026-167, F-38, F-39). A request that carries the header from
+loopback or any external peer is refused.
 
 This depends on ``scope["client"]`` being the TCP peer, so the servers run
 with uvicorn's proxy-header handling off (``proxy_headers=False``). With it
 on, a peer that uvicorn trusts could set the client address through
-``X-Forwarded-For``. ``kubectl port-forward`` also connects from inside the
-pod, so permission to port-forward to a gateway pod amounts to holding every
-identity the gateway trusts.
+``X-Forwarded-For``.
+
+Architectural determination ``D-167-1``: Because CAGE relies on Linkerd's
+proxy-injected ``l5d-client-id`` header rather than terminating mTLS in-process,
+header authenticity holds only when all three invariants hold together:
+(1) mandatory ``linkerd.io/inject: enabled`` and ``all-authenticated`` inbound
+policy with ``proxy-init`` netfilter redirect active; (2) non-loopback pod-IP
+peer equality (:func:`is_pod_local_connection`); and (3) no untrusted in-pod
+co-tenant or interactive ``pods/exec`` / ``pods/portforward`` access in
+enforcing namespaces.
+
+Dev-only Compose loopback channel (``LT-1``)
+--------------------------------------------
+For local Docker Compose development without a Linkerd sidecar, scripts running
+inside the gateway container (``scripts/compose_gateway_call.sh``) connect over
+loopback. Accepting ``l5d-client-id`` over loopback requires a dual condition
+(:func:`is_dev_loopback_identity_allowed`): (1) a non-enforcing dev posture
+(``not is_enforcing(os.environ)`` and ``CAGE_ENV`` in ``{"dev", "development"}``),
+**and** (2) explicit opt-in ``CAGE_ALLOW_DEV_LOOPBACK_IDENTITY=true``. This
+channel is unconditionally refused whenever ``is_enforcing(os.environ)`` is True.
 
 The identity is Linkerd's DNS-style name, not a ``spiffe://`` URI::
 
@@ -92,11 +112,19 @@ from contextlib import contextmanager
 from dataclasses import dataclass
 from typing import Any
 
+from src.gateway.governance.env_posture import (
+    DeploymentPosture,
+    is_enforcing,
+    resolve_posture,
+)
+
 logger = logging.getLogger(__name__)
 
 CLIENT_IDENTITY_HEADER = "l5d-client-id"
 TRUSTED_IDENTITIES_ENV = "CAGE_TRUSTED_CLIENT_IDENTITIES"
 TRUSTED_GEAP_PRINCIPALS_ENV = "CAGE_TRUSTED_GEAP_AGENT_PRINCIPALS"
+ALLOW_DEV_LOOPBACK_IDENTITY_ENV = "CAGE_ALLOW_DEV_LOOPBACK_IDENTITY"
+_TRUTHY = frozenset({"1", "true", "yes", "on"})
 
 #: Paths that need no caller identity. Everything else is refused unless the
 #: caller presents a trusted identity. Only exact paths can be open: there is
@@ -207,13 +235,42 @@ def is_open_path(path: str) -> bool:
     return path in OPEN_EXACT_PATHS
 
 
+def is_dev_loopback_identity_allowed(
+    env: Mapping[str, str] | None = None,
+) -> bool:
+    """True only when the dual-condition dev loopback channel (LT-1) is active.
+
+    Requires BOTH:
+    1. A non-enforcing dev posture (``not is_enforcing(source)`` and
+       ``CAGE_ENV`` in ``{"dev", "development"}``), AND
+    2. Explicit opt-in ``CAGE_ALLOW_DEV_LOOPBACK_IDENTITY=true``.
+
+    Unconditionally returns ``False`` whenever ``is_enforcing(source)`` is True.
+    """
+    source = os.environ if env is None else env
+    if is_enforcing(source) or resolve_posture(source) is not DeploymentPosture.DEV:
+        return False
+    if source.get("CAGE_ENV", "").strip().lower() not in {"dev", "development"}:
+        return False
+    return source.get(ALLOW_DEV_LOOPBACK_IDENTITY_ENV, "").strip().lower() in _TRUTHY
+
+
 def load_identity_policy() -> IdentityPolicy:
     """Build the policy from the environment. Always fails closed when unset.
 
     Raises:
-        RuntimeError: no identity is configured, or a configured identity is
-            not a Linkerd workload identity.
+        RuntimeError: no identity is configured, a configured identity is
+            not a Linkerd workload identity, or the LT-1 dev loopback opt-in is
+            set outside a non-enforcing dev posture.
     """
+    dev_loopback_flag = (
+        os.environ.get(ALLOW_DEV_LOOPBACK_IDENTITY_ENV, "").strip().lower() in _TRUTHY
+    )
+    if dev_loopback_flag and not is_dev_loopback_identity_allowed(os.environ):
+        raise RuntimeError(
+            f"{ALLOW_DEV_LOOPBACK_IDENTITY_ENV}=true is forbidden when is_enforcing() is True "
+            "or CAGE_ENV is not 'dev'/'development' (POAM-2026-167 / LT-1)."
+        )
     raw = os.environ.get(TRUSTED_IDENTITIES_ENV, "")
     identities = frozenset(part.strip() for part in raw.split(",") if part.strip())
     malformed = sorted(i for i in identities if not _LINKERD_IDENTITY.match(i))
@@ -266,20 +323,39 @@ def _address(
 
 
 def is_pod_local_connection(scope: Mapping[str, Any]) -> bool:
-    """True if the request's TCP peer is inside the pod's own network namespace.
+    """True if the request's TCP peer is the pod's own non-loopback IP address.
 
-    The peer must be a loopback address, or the address the connection arrived
-    on, which is the pod's own IP. The Linkerd inbound proxy connects to the
-    container from the pod's own IP, and no caller outside the pod can open a
-    TCP connection from either address. ``scope["client"]`` must be the TCP
-    peer, which is why the servers run with uvicorn's proxy-header handling off.
+    The Linkerd inbound proxy connects to the container from the pod's own IP,
+    so ``scope["client"]`` and ``scope["server"]`` share the same non-loopback
+    IP address. ``scope["client"]`` must be the TCP peer, which is why the
+    servers run with uvicorn's proxy-header handling off (``proxy_headers=False``).
+
+    Loopback peers (``127.0.0.1``, ``::1``, ``::ffff:127.0.0.1``) are never
+    treated as the Linkerd proxy — even when ``scope["server"]`` is also
+    loopback — because ``kubectl port-forward`` (kubelet loopback stream) and
+    unproxied pod-local processes connect from loopback (POAM-2026-167, F-38,
+    F-39, D-167-1).
     """
     peer = _address(scope.get("client"))
-    if peer is None:
+    if peer is None or peer.is_loopback or peer.is_unspecified:
         return False
-    if peer.is_loopback:
+    server = _address(scope.get("server"))
+    if server is None or server.is_loopback or server.is_unspecified:
+        return False
+    return peer == server
+
+
+def _is_trusted_identity_source(
+    scope: Mapping[str, Any],
+    env: Mapping[str, str] | None = None,
+) -> bool:
+    """True if ``l5d-client-id`` came from the pod-local proxy or the LT-1 dev loopback channel."""
+    if is_pod_local_connection(scope):
         return True
-    return peer == _address(scope.get("server"))
+    if not is_dev_loopback_identity_allowed(env):
+        return False
+    peer = _address(scope.get("client"))
+    return peer is not None and peer.is_loopback
 
 
 def _peer(scope: Mapping[str, Any]) -> str:
@@ -295,7 +371,8 @@ def extract_client_identity(scope: Mapping[str, Any]) -> str:
     Raises:
         ValueError: if the request does not carry exactly one valid
             ``l5d-client-id`` header, or the header did not arrive on a
-            connection from inside the pod (:func:`is_pod_local_connection`).
+            connection from the pod's Linkerd proxy (:func:`is_pod_local_connection`)
+            or the dual-condition LT-1 dev loopback channel.
     """
     presented = _client_identities(scope)
     if len(presented) != 1 or not _LINKERD_IDENTITY.match(presented[0]):
@@ -303,7 +380,7 @@ def extract_client_identity(scope: Mapping[str, Any]) -> str:
             f"Request must carry exactly one valid {CLIENT_IDENTITY_HEADER} header "
             f"(got {len(presented)})."
         )
-    if not is_pod_local_connection(scope):
+    if not _is_trusted_identity_source(scope):
         raise ValueError(
             f"{CLIENT_IDENTITY_HEADER} arrived from {_peer(scope)}, not through "
             "the pod's Linkerd proxy."
@@ -353,7 +430,7 @@ class WorkloadIdentityMiddleware:
                 await self.app(scope, receive, send)
             return
         presented = _client_identities(scope)
-        if presented and not is_pod_local_connection(scope):
+        if presented and not _is_trusted_identity_source(scope):
             # Through the proxy, the header is the identity the proxy verified.
             # From any other peer, it is whatever the caller chose to send, so
             # it is logged with repr().
