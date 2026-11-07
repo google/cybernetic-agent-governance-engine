@@ -290,6 +290,12 @@ jobs:
         # every partner. Manifest-pinned deposits and non-Markdown records are exempt.
         run: |
           uv run python scripts/check_partner_headers.py
+      - name: YAML unique keys and syntax check
+        # Reject duplicate YAML mapping keys (which PyYAML's default SafeLoader
+        # silently overwrites) and YAML syntax/parse errors across compliance/,
+        # config/, and .github/ with zero waivers.
+        run: |
+          uv run python scripts/check_yaml_unique_keys.py --verbose
 
   bare-kernel-smoke:
     name: "Bare-Kernel Smoke Test (Zero Cloud SDKs)"

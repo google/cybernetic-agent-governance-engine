@@ -137,24 +137,15 @@ class DeferralPending(CageGatewayError):
 
 class RoutingSealVerificationError(CageGatewayError):
     """
-    Raised when the cryptographic seal on a governance envelope fails verification.
+    Exception type reserved for cryptographic envelope or routing seal verification failures.
 
-    This exception indicates a critical security failure: either the envelope
-    was tampered with in transit, or the gateway's signing key is not trusted
-    by the client. Clients should NEVER ignore this exception; doing so would
-    bypass the entire governance layer.
-
-    The client SDK automatically verifies the envelope signature using the
-    gateway's public key. If verification fails, this exception is raised
-    before any action is executed.
-
-    Example:
-        try:
-            result = await gateway_client.execute_action(action)
-        except RoutingSealVerificationError as e:
-            logger.critical(f"Envelope signature verification failed: {e}")
-            # Abort execution, escalate to security team
-            raise
+    Note:
+        `CageClient` in `packages/cage-client/` does NOT currently verify
+        `GovernanceEnvelope.signature` or `expires_at` client-side; it performs
+        Pydantic schema validation and fail-closed HTTP status mediation only.
+        Callers or downstream verifiers that implement out-of-band `kid` trust
+        anchor verification may raise this exception on signature or freshness
+        validation failures.
     """
 
     pass

@@ -20,11 +20,13 @@ import sys
 from pathlib import Path
 
 import pytest
+import tomllib
 
 pytestmark = [pytest.mark.unit, pytest.mark.local]
 
 # Add standalone subpackage src directory to path for testing
-subpackage_src = Path(__file__).parent.parent / "src"
+subpackage_root = Path(__file__).parent.parent
+subpackage_src = subpackage_root / "src"
 if str(subpackage_src) not in sys.path:
     sys.path.insert(0, str(subpackage_src))
 
@@ -71,3 +73,32 @@ def test_w3c_traceparent_format():
     assert len(parts[1]) == 32  # 16 bytes hex
     assert len(parts[2]) == 16  # 8 bytes hex
     assert parts[3] == "01"
+
+
+def test_pyproject_drops_unused_cryptography_and_docs_state_unverified_signature():
+    """Verify cage-client declares no unused cryptography dep and documents unverified signatures."""
+    pyproject_data = tomllib.loads(
+        (subpackage_root / "pyproject.toml").read_text(encoding="utf-8")
+    )
+    runtime_deps = pyproject_data["project"]["dependencies"]
+    assert not any("cryptography" in dep.lower() for dep in runtime_deps), (
+        f"Unused cryptography dependency must not be declared in pyproject.toml: {runtime_deps}"
+    )
+
+    envelope_doc = GovernanceEnvelope.__doc__ or ""
+    assert "does NOT verify" in envelope_doc
+    assert "GovernanceEnvelope.signature" in envelope_doc
+    assert "expires_at" in envelope_doc
+    assert "does NOT substitute" in envelope_doc
+
+    validate_doc = CageClient.validate_action.__doc__ or ""
+    assert "does NOT verify" in validate_doc
+    assert "does NOT substitute" in validate_doc
+
+    allow_doc = CageClient._handle_allow_response.__doc__ or ""
+    assert "does NOT verify" in allow_doc
+    assert "does NOT substitute" in allow_doc
+
+    readme_text = (subpackage_root / "README.md").read_text(encoding="utf-8")
+    assert "does NOT verify `GovernanceEnvelope.signature`" in readme_text
+    assert "does NOT substitute for end-to-end" in readme_text
