@@ -349,8 +349,9 @@ deploy-kill: scripts/deploy_bg.sh
 # ---------------------------------------------------------------------------
 
 .PHONY: poam-drift-check
-poam-drift-check: ## Check that all closed POAM findings have a corresponding Lula assertion
-	python3 scripts/check_poam_lula_divergence.py
+poam-drift-check: ## Enforce POA&M divergence and OSCAL claim-census parity checks
+	uv run python scripts/check_poam_lula_divergence.py
+	uv run python scripts/check_oscal_claim_census.py --verify-rendered docs/compliance/OSCAL_EVIDENCE_CLAIM_REGISTER.md
 
 .PHONY: check-agent-state-schema
 check-agent-state-schema: ## Verify AgentState schema freshness
