@@ -701,11 +701,12 @@ _CREDENTIAL_PATTERN = re.compile(
     dependencies=[Depends(require_internal_token)],
 )
 async def ingest_infra_event(event: InfraEvent) -> dict:
-    """Ingest a structured infrastructure event into ClickHouse (INFRA partition).
+    """Ingest a structured infrastructure telemetry event (INFRA class).
 
-    Events are written directly to ClickHouse under evidence_class='INFRA'.
-    They are NOT appended to the OSCAL ContextAccumulator hash chain — the hash
-    chain remains the AI governance evidence chain exclusively.
+    Events are validated against the regional control map, scrubbed of secret
+    patterns, and emitted as structured INFRA telemetry logs. They are NOT
+    appended to the OSCAL ContextAccumulator hash chain — the hash chain
+    remains the AI governance evidence chain exclusively.
     """
     active_region = os.environ.get("CAGE_DEPLOYMENT_REGION", "US_FED").strip().upper()
     iso_map = get_iso_control_map(active_region)
@@ -755,13 +756,8 @@ async def ingest_infra_event(event: InfraEvent) -> dict:
         "record_hash": event_id,
     }
 
-    try:
-        from .clickhouse_sink import get_clickhouse_sink
-
-        sink = get_clickhouse_sink()
-        await sink.ingest(record)
-    except Exception as exc:
-        logger.error("[infra/events] Error queueing event to ClickHouse: %s", exc)
+    sanitized_record_json = json.dumps(record).replace("\n", "").replace("\r", "")
+    logger.info("[infra/events] Ingested INFRA event: %s", sanitized_record_json)
 
     return {
         "status": "INGESTED",

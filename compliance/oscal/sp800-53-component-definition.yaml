@@ -1238,8 +1238,7 @@ component-definition:
     # -----------------------------------------------------------------------
     # Component 4: Compliance Bridge (src/compliance_bridge/)
     # Enforces: CA-7 (Continuous Monitoring), AU-9 / AU-9(3) (Protection of Audit
-    #           Info), AU-10 (Non-Repudiation), AC-6 (Least Privilege),
-    #           IR-6 (Incident Reporting)
+    #           Info), AU-10 (Non-Repudiation), IR-6 (Incident Reporting)
     # -----------------------------------------------------------------------
     - uuid: "7acccab0-36a0-45d3-adbe-cf31d6cec458"
       title: "Compliance Bridge"
@@ -1336,11 +1335,6 @@ component-definition:
                 compliance-bridge service account (roles/storage.objectCreator /
                 objectViewer). OSCAL Assessment Results continue to be stored through
                 src/compliance_bridge/storage.py.
-
-                The ClickHouse query-plane mirror is written by a least-privilege,
-                config-defined user (cage_evidence_sink: INSERT on
-                cage_evidence.evidence_stream only, DDL pinned off by a CONST profile
-                constraint), never the admin user; see the AC-6 statement below.
 
                 Status remains partial until live staging verification of attestations in
                 the WORM bucket closes POAM-2026-084.
@@ -1498,37 +1492,6 @@ component-definition:
                 - href: "../../tests/test_evidence_verifier.py"
                   rel: test
                   text: "Tamper, deletion, foreign-kid, unknown-kid, citation gate, and endpoint fail-closed paths"
-
-            - uuid: "bd0486b6-1a05-4f64-9784-752c72b2f843"
-              control-id: ac-6
-              description: |
-                The ClickHouse evidence sink (src/compliance_bridge/clickhouse_sink.py)
-                authenticates as cage_evidence_sink, a config-defined ClickHouse user
-                rendered by infra/modules/clickhouse_operator (users.d/evidence_sink_user.xml)
-                and mirrored in deployment/k8s/langfuse-db.yaml. Its only privilege is
-                INSERT on cage_evidence.evidence_stream: no SELECT, ALTER, DROP, TRUNCATE,
-                OPTIMIZE or access management, and no INSERT on evidence_chain_divergence
-                (which would let it mask a divergence verdict). Its settings profile pins
-                allow_ddl=0 and mutations_sync=0 with CONST constraints. Being config-defined,
-                the user cannot be widened or re-keyed through SQL. Its password is generated
-                into the dedicated clickhouse-evidence-sink Secret, mounted only by the
-                ClickHouse server and the compliance bridge; the bridge never receives the
-                admin password. Both Terraform modules reject clickhouse_username "default".
-                Enforced by tests/infrastructure/test_clickhouse_evidence_writer.py.
-              props:
-                - name: implementation-status
-                  value: implemented
-                - name: control-origination
-                  value: system-specific
-              links:
-                - href: "https://csrc.nist.gov/projects/cprt/api/cprt/framework/version/SP_800_53_5_1_1/home?element=AC-6"
-                  rel: reference
-                - href: "../../infra/modules/clickhouse_operator/main.tf"
-                  rel: implementation
-                  text: "Config-defined INSERT-only writer and dedicated Secret"
-                - href: "../../tests/infrastructure/test_clickhouse_evidence_writer.py"
-                  rel: test
-                  text: "Least-privilege writer static gate"
 
             - uuid: "07769d00-7959-4cfe-86aa-972a537952d5"
               control-id: ir-6

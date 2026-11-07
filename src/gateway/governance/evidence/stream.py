@@ -509,22 +509,22 @@ _STOP_DRAIN_TIMEOUT_S: float = float(
 #
 # v3.2.0 BREAKING: wire schema realigned to ``cage-audit/3.0``.
 # The kernel previously emitted ``cage-evidence-stream/2.0`` with no
-# ``chain_id`` and no ``trace_id``.  The durable sink and the ClickHouse DDL
-# (``deployment/clickhouse/evidence_stream_schema.sql``) require
-# ``schema_version IN ('3.0')`` and enforce ``length(trace_id) > 0``, so every
-# kernel-emitted record was rejected at INSERT.  The authoritative definition
-# of the hashed header is the ``mv_evidence_hash_verification`` materialized
-# view in that DDL; ``_link_hash()`` below mirrors it field for field.
+# ``chain_id`` and no ``trace_id``.  The ``cage-audit/3.0`` wire contract and
+# WORM custody pipeline (``EvidenceCustodian`` / ``CustodyVerifier``) require
+# ``schema_version == '3.0'`` and non-empty ``trace_id`` so every record can be
+# independently reconstructed from its Redis Stream and WORM batch fields.
+# ``_link_hash()`` below defines the canonical hashed header field for field;
+# ``verify_record()`` rebuilds the identical JCS preimage during verification.
 _SCHEMA_VERSION = "3.0"
 _SCHEMA = f"cage-audit/{_SCHEMA_VERSION}"
 
-# Header members that the ClickHouse rebuild view pins to constants. They are
-# inside the hash, so they cannot be silently changed on one side only.
+# Header members pinned to constants in ``cage-audit/3.0``. They are inside
+# the hash preimage, so they cannot be silently changed on one side only.
 _HASH_ALGORITHM = "SHA-256"
 _CANONICALIZATION = "RFC8785"
 
-# Evidence emitted by the kernel is always GOVERNANCE class. The DDL's other
-# value, INFRA, is reserved for the compliance bridge's own operational rows.
+# Evidence emitted by the kernel is always GOVERNANCE class. INFRA is reserved
+# for the compliance bridge's own operational telemetry records.
 _EVIDENCE_CLASS = "GOVERNANCE"
 
 
@@ -656,16 +656,16 @@ def _sha256(data: str | bytes) -> str:
 def current_trace_id() -> str:
     """Return the active OTel trace ID as 32 lowercase hex characters.
 
-    The ClickHouse DDL enforces ``CONSTRAINT chk_trace_id_present CHECK
-    length(trace_id) > 0``, and ``trace_id`` is inside the hashed header, so an
-    empty value is not representable — a record with no trace would be rejected
-    at INSERT and could never be rebuilt.
+    The ``cage-audit/3.0`` wire contract requires a non-empty ``trace_id``, and
+    ``trace_id`` is inside the hashed header, so an empty value is not
+    representable — every record must carry a valid 32-hex-character trace
+    identifier for deterministic hash reconstruction.
 
     When no valid span context is active (background daemons, tests, direct
     library use) a random 128-bit value is generated instead. It is
-    deliberately random rather than a fixed sentinel: a constant would collapse
-    every untraced record onto one bloom-filter key and make ``idx_trace_id``
-    useless.
+    deliberately random rather than a fixed sentinel so untraced records do
+    not collide onto a single synthetic trace correlation key in custody
+    batches.
     """
     try:
         span_context = trace.get_current_span().get_span_context()
@@ -696,23 +696,23 @@ def _link_hash(
 
     v3.0.0: Collapsed from _link_hash_v1_1 - all records now use v1.1 schema.
 
-    v3.2.0 BREAKING — ``cage-audit/3.0``: the header now mirrors the
-    ``mv_evidence_hash_verification`` materialized view in
-    ``deployment/clickhouse/evidence_stream_schema.sql``, which is the
-    authoritative rebuild definition. Members, in the lexicographic order JCS
-    produces and the view hardcodes:
+    v3.2.0 BREAKING — ``cage-audit/3.0``: the header uses an explicit JCS
+    object so ``EvidenceCustodian`` and ``CustodyVerifier`` can reconstruct
+    the exact preimage from Redis Stream and WORM batch fields without
+    re-parsing ``payload_json``. Members, in the lexicographic order JCS
+    produces:
 
         canonicalization, chain_id, [classification_reason], control_id,
         event_type, hash_algorithm, [narrowing_applied], [pause_token],
         schema, sequence, trace_id
 
-    Bracketed members are sparse — emitted only when non-None, matching the
-    view's ``if(... IS NULL, '', ...)`` branches.
+    Bracketed members are sparse — emitted only when non-None so absent
+    optional fields never pollute the canonical header preimage.
 
     Args:
         prev_hash: Hash of the previous record in the chain. Must be ``""`` at
-            sequence 0; the DDL enforces ``(sequence = 0) = (prev_hash IS NULL)``
-            and the view hashes ``ifNull(prev_hash, '')``.
+            sequence 0 (genesis), hashed as empty UTF-8 bytes before the
+            canonical header and payload bytes.
         sequence: Monotonic sequence number.
         event_type: Event type (e.g., "AUDIT_FINDING", "GOVERNANCE_DECISION").
         control_id: NIST/ISO control identifier.
@@ -739,7 +739,7 @@ def _link_hash(
         "sequence": sequence,
         "trace_id": trace_id,
     }
-    # Sparse members — present only when set, mirroring the view's NULL branches.
+    # Sparse members — present only when set in the canonical header.
     if classification_reason is not None:
         header_dict["classification_reason"] = classification_reason
     if narrowing_applied is not None:
@@ -759,14 +759,14 @@ def _extract_sparse_header(
     """Pull the three sparse ``cage-audit/3.0`` header members from an event.
 
     ``classification_reason``, ``narrowing_applied`` and ``pause_token`` are
-    inside the record hash whenever they are present, and the ClickHouse table
-    stores each in its own nullable column. Both ingest paths must agree
+    inside the record hash whenever they are present, and travel as top-level
+    fields in the Redis Stream entry and WORM batch. Both ingest paths must agree
     exactly on how they are read, or the same event would hash differently
     depending on which entry point produced it — so extraction lives here, once.
 
     A ``narrowing_applied`` that is not a mapping is treated as absent: the
-    column is populated from canonical JSON object text, and a scalar there
-    could not be rebuilt by ``mv_evidence_hash_verification``.
+    wire field carries canonical JSON object text, and a scalar value there
+    would violate the ``cage-audit/3.0`` header contract.
 
     Returns:
         ``(classification_reason, narrowing_applied, pause_token)``, each None
@@ -1517,17 +1517,17 @@ class EvidenceStreamSink:
             "hash_algorithm": _HASH_ALGORITHM,
             "canonicalization": _CANONICALIZATION,
             "evidence_class": _EVIDENCE_CLASS,
-            # "" at genesis; the sink maps it to NULL to satisfy
-            # CONSTRAINT chk_genesis_prev_hash.
+            # "" at genesis; downstream verifiers normalize None to "" when
+            # reconstructing the sequence-0 preimage.
             "prev_hash": effective_prev_hash,
             "record_hash": record_hash,
             "payload_json": payload_json,
         }
 
-        # Sparse members travel as top-level fields so the ClickHouse sink can
-        # populate its nullable columns without re-parsing the payload.
+        # Sparse members travel as top-level fields so EvidenceCustodian and
+        # CustodyVerifier can rebuild the header without re-parsing payload_json.
         # narrowing_applied is stored as canonical JSON text — the exact bytes
-        # that went into the hash — so the rebuild view can concatenate it raw.
+        # that went into the hash preimage.
         if classification_reason is not None:
             entry["classification_reason"] = classification_reason
         if narrowing_applied is not None:

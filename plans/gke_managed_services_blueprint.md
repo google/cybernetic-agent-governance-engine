@@ -70,7 +70,7 @@ There is no live production instance (AGENTS.md), so there's no dual-write or cu
 | C2 | DoWhy and consensus are separate pods | Both run in-process: [gatekeeper.py](../src/gateway/governance/causal/gatekeeper.py), [consensus/engine.py](../src/gateway/governance/consensus/engine.py). The GPU pool runs vLLM. | No new pods. Splitting either out needs a latency case (§4). |
 | C3 | PSC implies cluster mode | Valkey **Cluster Mode Disabled** is single-shard, uses PSC, and allows multi-key `EVAL` | `LUA_ATOMIC_CBF` semantics unchanged (D5) |
 | C4 | Basic and Standard HA behave the same | Async replication vs. total loss. Fence-epoch CAS, the regression check and `WAIT` + rollback already exist. | Verify them per tier with fault injection (§2.4) |
-| C8 | ClickHouse is WORM | The retention-locked GCS bucket is the record; ClickHouse is the query plane | §2.5 |
+| C8 | ClickHouse is WORM | The retention-locked GCS bucket is the record; ClickHouse serves Langfuse v3 trace analytics only (`langfuse_app` on `langfuse.*`) | §2.6 |
 
 ---
 
@@ -203,9 +203,9 @@ The per-tier fault-injection suite, in `tests/infrastructure/` for hermetic runs
 
 ### 2.6 ClickHouse and the WORM bucket (C8, 6e)
 
-- **System of record:** a retention-locked GCS bucket (`infra/modules/worm_bucket`, extracted from [:366](../infra/targets/gcp-cloudrun/main.tf#L366)). ClickHouse is only the query plane, fed by [clickhouse_sink.py](../src/compliance_bridge/clickhouse_sink.py).
+- **System of record:** a retention-locked GCS bucket (`infra/modules/worm_bucket`, extracted from [:366](../infra/targets/gcp-cloudrun/main.tf#L366)). ClickHouse (`infra/modules/clickhouse_operator`) serves Langfuse v3 trace analytics exclusively (`langfuse_app` on `langfuse.*`); the uninstantiated ClickHouse evidence sink (`372daad2^:src/compliance_bridge/clickhouse_sink.py`) was retired.
 - **prod:** ClickHouse operator, `ReplicatedMergeTree` + Keeper (3 nodes), local SSD for hot parts, GCS disk for the cold tier.
-- **dev/staging:** single node on local SSD. Losing it only loses the query plane.
+- **dev/staging:** single node on local SSD. Losing it affects Langfuse trace analytics only, never governance evidence in the WORM bucket.
 - Delete the Cloud Run ClickHouse VM ([clickhouse_vm.tf](../infra/targets/gcp-cloudrun/clickhouse_vm.tf)) and the in-cluster Helm module ([clickhouse](../infra/modules/clickhouse/main.tf)) once the operator is live.
 
 ---

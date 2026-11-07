@@ -118,34 +118,6 @@ variable "password_secret_key" {
   default     = "CLICKHOUSE_PASSWORD"
 }
 
-variable "evidence_database" {
-  description = "Database holding evidence_stream; must match deployment/clickhouse/evidence_stream_schema.sql."
-  type        = string
-  default     = "cage_evidence"
-
-  validation {
-    condition     = can(regex("^[a-z][a-z0-9_]{2,62}$", var.evidence_database)) && !contains(["default", "system"], var.evidence_database)
-    error_message = "evidence_database must be a lowercase identifier and must not be \"default\" or \"system\"."
-  }
-}
-
-variable "evidence_sink_username" {
-  description = "Least-privilege ClickHouse user for the compliance-bridge sink (INSERT on evidence_stream only)."
-  type        = string
-  default     = "cage_evidence_sink"
-
-  validation {
-    condition     = can(regex("^[a-z][a-z0-9_]{2,62}$", var.evidence_sink_username)) && var.evidence_sink_username != "default"
-    error_message = "evidence_sink_username must be a lowercase identifier and must not be the admin user \"default\"."
-  }
-}
-
-variable "evidence_sink_secret_name" {
-  description = "Kubernetes Secret (key CLICKHOUSE_PASSWORD) holding the evidence sink user's password."
-  type        = string
-  default     = "clickhouse-evidence-sink"
-}
-
 variable "langfuse_database" {
   description = "Dedicated ClickHouse database for Langfuse v3 trace analytics (never default or system)."
   type        = string

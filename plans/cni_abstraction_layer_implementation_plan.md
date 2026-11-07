@@ -4,8 +4,8 @@
 enforcement. Split across two PRs to isolate infrastructure risk from application changes.
 
 > [!IMPORTANT]
-> **PR 1 touches zero compliance bridge code.** No `types.py`, `main.py`, ClickHouse
-> schema, or Lula validation files change in PR 1. The compliance bridge is completely
+> **PR 1 touches zero compliance bridge code.** No `types.py`, `main.py`, or Lula
+> validation files change in PR 1. The compliance bridge is completely
 > out of scope until staging proves that `anetd` and AgentSight coexist cleanly.
 
 ---
@@ -15,7 +15,7 @@ enforcement. Split across two PRs to isolate infrastructure risk from applicatio
 **Scope: Infrastructure Foundation & Staging Validation only.**
 
 Manifest restructuring + Terraform DPv2 variable + staging activation.
-No compliance bridge, no ClickHouse schema, no new Lula validations.
+No compliance bridge, no new Lula validations.
 
 ---
 
@@ -164,7 +164,6 @@ Add to the "Optional GCP Integrations" table:
 | `src/compliance_bridge/` | ❌ Not touched |
 | `src/compliance_bridge/types.py` | ❌ Not touched — no AU-2/SI-7 additions |
 | `src/compliance_bridge/main.py` | ❌ Not touched — no `/v1/infra/events` |
-| ClickHouse schema / DDL | ❌ Not touched — no `evidence_class` column |
 | `compliance/lula/` | ❌ Not touched — existing gates unchanged |
 | Prod tfvars | ❌ Not touched — PR 2 only |
 
@@ -332,48 +331,31 @@ class InfraEvent(BaseModel):
 
 @app.post("/v1/infra/events", dependencies=[Depends(require_internal_token)])
 async def ingest_infra_event(event: InfraEvent) -> dict:
-    """Ingest a structured infrastructure event into ClickHouse (INFRA partition).
+    """Ingest a structured infrastructure event (INFRA telemetry class).
 
-    Events are written directly to ClickHouse under evidence_class='INFRA'.
-    They are NOT appended to the OSCAL ContextAccumulator hash chain — the hash
-    chain remains the AI governance evidence chain exclusively.
+    Events are emitted to structured Compliance Bridge logs under
+    evidence_class='INFRA' after secret scrubbing. They are NOT appended to the
+    OSCAL ContextAccumulator hash chain — the hash chain remains the AI
+    governance evidence chain exclusively.
     """
     ...
 ```
 
 Key constraints enforced in this endpoint:
-- Events are written to ClickHouse `evidence_class = 'INFRA'` — never to the OSCAL hash chain.
+- Events are emitted as structured INFRA telemetry logs (`evidence_class = 'INFRA'`) — never to the OSCAL hash chain.
 - `event_type` must match a key in `get_iso_control_map(region)` — unknown types are rejected with `422`.
 - `summary` is length-capped and stripped of credential-shaped tokens before persistence.
 - The endpoint is internal-only (Bearer token via `require_internal_token`).
 
 ---
 
-### PR 2 — ClickHouse Schema: `evidence_class` Partitioning
+### PR 2 — Evidence Class Separation (ClickHouse Evidence Schema Retired)
 
-#### [MODIFY] [`deployment/clickhouse/evidence_stream_schema.sql`](deployment/clickhouse/evidence_stream_schema.sql)
-
-Add `evidence_class` column to the evidence stream table:
-
-```sql
--- Add evidence_class to distinguish AI governance events from infrastructure events.
--- GOVERNANCE = existing audit workflow findings (OPA, NeMo, CBF, OSCAL, etc.)
--- INFRA      = AgentSight syscall/FIM events and Cilium L7 flow summaries
-ALTER TABLE cage_evidence.evidence_stream
-    ADD COLUMN IF NOT EXISTS evidence_class
-        Enum8('GOVERNANCE' = 1, 'INFRA' = 2) DEFAULT 'GOVERNANCE';
-
--- Materialized view for fast infra-only queries (AU-2 / SI-7 dashboards)
-CREATE MATERIALIZED VIEW IF NOT EXISTS cage_evidence.infra_events_mv
-ENGINE = MergeTree()
-ORDER BY (event_type, timestamp_utc)
-POPULATE AS
-SELECT *
-FROM cage_evidence.evidence_stream
-WHERE evidence_class = 'INFRA';
-```
-
-All existing rows default to `'GOVERNANCE'` — no backfill required, no data migration.
+The uninstantiated ClickHouse evidence schema (`372daad2^:deployment/clickhouse/evidence_stream_schema.sql`)
+and sink (`372daad2^:src/compliance_bridge/clickhouse_sink.py`) are retired so ClickHouse serves
+Langfuse v3 trace analytics exclusively (`langfuse_app` on `langfuse.*`). `/v1/infra/events`
+tags sanitized records with `evidence_class = "INFRA"` in structured Compliance Bridge logs,
+while AI governance evidence remains in Redis Streams (`cage:evidence:stream`) and GCS WORM custody.
 
 ---
 
@@ -461,12 +443,6 @@ Each gets `enable_dataplane_v2 = true` — but the flag only takes effect when a
 > the AgentSight probe set must be reduced (e.g. remove `NET_ADMIN` or `net_*` probes
 > that overlap with Cilium's datapath) before PR 2 is opened.
 
-> [!IMPORTANT]
-> **ClickHouse DDL migration procedure**: The `ALTER TABLE ADD COLUMN` is online in
-> ClickHouse (no table lock), but must be run against each shard before the
-> compliance bridge deployment that writes the new column is rolled out. Add a
-> migration step to the PR 2 deployment runbook.
-
 > [!NOTE]
 > **OSCAL SSP update required within 2 business days of PR 2 merge** per AGENTS.md
 > compliance artifact obligations. AU-2 and SI-7 are new NIST SP 800-53 control
@@ -488,7 +464,7 @@ PR 2 development, compliance bridge modifications, and production schema changes
 * **Compliance Baseline Integrity:** The existing suite of 31 Lula gates passes cleanly (`lula validate -f compliance/lula/`) with zero regressions.
 * **Cloud-Agnostic Baseline Safety:** `kubectl apply -f deployment/k8s/ --dry-run=client` succeeds against an uncustomized local cluster (such as Minikube or KinD) without failing on missing Cilium CRDs.
 
-PR 2 modifications—including the `src/compliance_bridge/types.py` control additions, the `/v1/infra/events` endpoint, ClickHouse DDL alterations, and production cluster migrations—will remain untouched until these checks are fully verified and signed off on staging.
+PR 2 modifications—including the `src/compliance_bridge/types.py` control additions, the `/v1/infra/events` endpoint, and production cluster migrations—will remain untouched until these checks are fully verified and signed off on staging.
 
 ### PR 1 — Verification Table & Staging Results
 
@@ -509,6 +485,5 @@ PR 2 modifications—including the `src/compliance_bridge/types.py` control addi
 |---|---|
 | `anetd` gate | New `lula-validation-cilium-dpv2.yaml` PASS on all prod clusters |
 | AU-2/SI-7 in types.py | `SUPPORTED_CONTROLS` includes `AU-2`, `SI-7` |
-| ClickHouse column | `DESCRIBE TABLE cage_evidence.evidence_stream` shows `evidence_class` |
 | `/v1/infra/events` | `POST` returns `200` for valid `agentsight_syscall` event |
 | OSCAL SSP | Updated within 2 business days of merge |

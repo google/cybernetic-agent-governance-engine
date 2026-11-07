@@ -48,6 +48,7 @@ pytestmark = [pytest.mark.unit, pytest.mark.local]
 
 _REPO = Path(__file__).resolve().parents[2]
 _CH_MAIN = _REPO / "infra/modules/clickhouse_operator/main.tf"
+_CH_VARS = _REPO / "infra/modules/clickhouse_operator/variables.tf"
 _CH_OUTPUTS = _REPO / "infra/modules/clickhouse_operator/outputs.tf"
 _LF_MAIN = _REPO / "infra/modules/langfuse_stack/main.tf"
 _LF_VARS = _REPO / "infra/modules/langfuse_stack/variables.tf"
@@ -268,6 +269,26 @@ def test_clickhouse_init_sql_configmap_creates_langfuse_database() -> None:
     init_dbs = _tf_heredoc(init_cm, "01_databases.sql")
     assert "CREATE DATABASE IF NOT EXISTS ${var.langfuse_database};" in init_dbs
     assert "02_evidence_stream_schema.sql" not in init_cm
+
+
+def test_clickhouse_operator_retires_evidence_sink_principal_and_secret() -> None:
+    combined = (
+        _CH_MAIN.read_text()
+        + "\n"
+        + _CH_VARS.read_text()
+        + "\n"
+        + _CH_OUTPUTS.read_text()
+    )
+    for retired in (
+        "evidence_sink_user.xml",
+        "CLICKHOUSE_EVIDENCE_SINK_PASSWORD",
+        "evidence_sink",
+        "cage_evidence",
+        "evidence_database",
+    ):
+        assert retired not in combined, (
+            f"Retired ClickHouse evidence token {retired!r} still present in clickhouse_operator"
+        )
 
 
 # ---------------------------------------------------------------------------

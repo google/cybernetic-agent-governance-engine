@@ -115,7 +115,7 @@ This document defines the **proof ceiling** — the maximum scope of what each t
 
 #### ✅ End-to-End Governance Decision Flow
 - **Invariant:** Request → Gateway → OPA → CBF → Consensus → Envelope → Actuator → Evidence Stream
-- **Proof Method:** Submit trade via `POST /v1/governed-advice`; verify evidence record in ClickHouse
+- **Proof Method:** Submit trade via `POST /v1/governed-advice`; verify evidence record in Redis Streams and GCS WORM custody
 - **Example:** [`docs/operations/GKE_TEST_RUNBOOK.md`](GKE_TEST_RUNBOOK.md)
 - **Guarantees:** All governance tiers execute in sequence; evidence chain is unbroken
 

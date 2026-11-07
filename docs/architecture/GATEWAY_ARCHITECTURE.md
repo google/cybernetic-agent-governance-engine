@@ -37,7 +37,7 @@ Both model pools are deployed on a dedicated GPU node pool (NVIDIA L4, `gpu-l4` 
 |---|---|---|
 | **Layer 1: Kernel** | `src/gateway/` | **STERA Admissibility Engine**, core governance dispatch loop, composition root (`governor/assembly.py`, `governor/bootstrap.py`), consensus engine, CBF engine, evidence accumulator, routing, audit rails. **Strictly domain-agnostic and vendor-neutral.** Must NEVER import from Layer 2, Layer 3, or Layer 4. |
 | **Layer 2: Domain Plugins** | `src/cage_{domain}/` | Domain-specific tiers (`ReadOnlyTier` / `MutatingTier`, ADR-009), domain action registries, ontologies, policies, and causal graphs. Handed to the kernel as data via `CagePlugin.contribute() -> PluginContribution` and fixed at startup by `assemble_governor()`. |
-| **Layer 3: Integrations & Rails** | `src/integrations/`, `src/compliance_bridge/` | External vendor normative/attestation adapters, cloud KMS providers (`src/integrations/{gcp,aws,azure}/kms_provider.py`), durable sinks (ClickHouse, GCS, S3), NeMo Guardrails, Langfuse telemetry. Communicates via canonical dataclasses. |
+| **Layer 3: Integrations & Rails** | `src/integrations/`, `src/compliance_bridge/` | External vendor normative/attestation adapters, cloud KMS providers (`src/integrations/{gcp,aws,azure}/kms_provider.py`), durable sinks (GCS, S3), NeMo Guardrails, Langfuse telemetry. Communicates via canonical dataclasses. |
 | **Layer 4: Reference Applications** | Application layer | End-user applications, domain agent graphs, and client interfaces. Consumes the Gateway over standard HTTP/FastMCP or gRPC protocols. |
 
 ---
@@ -494,7 +494,7 @@ While **Langfuse** serves as the regional operational LLM trace store, **Prometh
 | **FTRA Boundary Gate** ([`governor/metrics.py`](../../src/gateway/governance/governor/metrics.py), [`ftra/node_factory.py`](../../src/gateway/governance/ftra/node_factory.py)) | `cage_ftra_boundary_checks_total{result}`, `ftra_llm_parse_failures_total` | Pre-pipeline reachability outcomes (`passed`, `conditional_clear`, `hitl_required`, `error`) and LLM structured-output parse failures |
 | **Gateway Shared GCRA Rate Limiter** ([`rate_limit.py`](../../src/gateway/server/rate_limit.py), [`governance_middleware.py`](../../src/gateway/server/governance_middleware.py), [`mcp_tool_server.py`](../../src/gateway/server/mcp_tool_server.py)) | `cage_rate_limit_hits_total{route,scope}`, `cage_rate_limit_backend_errors_total{route}`, `mcp_rate_limit_active_buckets` | Shared Redis dual-bucket GCRA (`identity` + `principal`) rate-limit rejections, Redis fallback error counter, and fallback bucket gauge |
 
-Downstream evidence custody, cold-store verification, and ClickHouse analytical sink metrics are documented in [`EVIDENCE_CHAIN.md`](EVIDENCE_CHAIN.md) (§3–§4.2) and [`CLICKHOUSE_EVIDENCE_SINK.md`](CLICKHOUSE_EVIDENCE_SINK.md) (§6.3).
+Downstream evidence custody and cold-store verification metrics are documented in [`EVIDENCE_CHAIN.md`](EVIDENCE_CHAIN.md) (§3–§4.2).
 
 ---
 

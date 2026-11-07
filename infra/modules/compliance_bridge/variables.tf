@@ -150,7 +150,7 @@ variable "service_account_name" {
   }
 }
 
-# ─── Evidence WORM Cold Store & ClickHouse Query Plane (§2.6) ─────────────────
+# ─── Evidence WORM Cold Store (§2.6) ──────────────────────────────────────────
 
 variable "evidence_cold_store" {
   description = "Evidence cold store backend ('gcs', 's3', or 'null'). System of record is the retention-locked GCS WORM bucket ('gcs')."
@@ -168,53 +168,6 @@ variable "cmek_key_resource_name" {
   description = "Full Cloud KMS key resource name for CMEK encryption verification on the WORM bucket (POAM-014 / SC-28)."
   type        = string
   default     = ""
-}
-
-variable "clickhouse_host" {
-  description = "ClickHouse query-plane service hostname (fed by src/compliance_bridge/clickhouse_sink.py)."
-  type        = string
-  default     = "clickhouse"
-}
-
-variable "clickhouse_port" {
-  description = "ClickHouse query-plane HTTP port."
-  type        = string
-  default     = "8123"
-}
-
-variable "clickhouse_database" {
-  description = "ClickHouse query-plane database name (CLICKHOUSE_DATABASE). Must match deployment/clickhouse/evidence_stream_schema.sql."
-  type        = string
-  default     = "cage_evidence"
-}
-
-variable "clickhouse_enabled" {
-  description = "Enable the ClickHouse query-plane sink (CLICKHOUSE_ENABLED, read by src/compliance_bridge/clickhouse_sink.py)."
-  type        = bool
-  default     = true
-}
-
-variable "clickhouse_username" {
-  description = "Least-privilege ClickHouse user for the query-plane sink (CLICKHOUSE_USERNAME); INSERT on evidence_stream only, provisioned by the clickhouse_operator module. Never the admin user \"default\". The password is always taken from a Secret via secretKeyRef."
-  type        = string
-  default     = "cage_evidence_sink"
-
-  validation {
-    condition     = var.clickhouse_username != "default"
-    error_message = "clickhouse_username must not be the ClickHouse admin user \"default\"."
-  }
-}
-
-variable "clickhouse_password_secret_name" {
-  description = "Kubernetes Secret holding the ClickHouse password for clickhouse_username (never the admin password in advisor-secrets)."
-  type        = string
-  default     = "clickhouse-evidence-sink"
-}
-
-variable "clickhouse_password_secret_key" {
-  description = "Key within clickhouse_password_secret_name for the ClickHouse password."
-  type        = string
-  default     = "CLICKHOUSE_PASSWORD"
 }
 
 # ─── Evidence custody (EvidenceCustodian) ─────────────────────────────────────
