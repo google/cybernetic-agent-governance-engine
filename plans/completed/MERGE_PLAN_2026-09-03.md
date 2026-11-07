@@ -65,7 +65,7 @@ demolished, and nothing has to be reconciled twice.
 ### 1.3 Breaking changes
 
 The refactor carries **11 documented breaking changes**
-([`docs/BREAKING_CHANGES_v3.md`](docs/BREAKING_CHANGES_v3.md)). For a reference
+([`docs/BREAKING_CHANGES.md`](docs/BREAKING_CHANGES.md)). For a reference
 architecture these are **desirable** — they remove the legacy inline-dispatch
 design the project is deliberately moving away from. No deprecation window, no
 compatibility shims, no dual-path support.

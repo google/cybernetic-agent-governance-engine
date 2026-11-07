@@ -109,7 +109,7 @@ the adapter defaults or fixes in POAM-2026-113
 response that lost its `decision` key was previously admitted on a truthy
 `admitted` without passing through tri-state mapping or token minting; it now
 fails closed. Tracked as **BC-03** in
-[`docs/BREAKING_CHANGES_v3.md`](../../../docs/BREAKING_CHANGES_v3.md), with the
+[`docs/BREAKING_CHANGES.md`](../../../docs/BREAKING_CHANGES.md), with the
 `authority_record_id`-on-`ALLOW` requirement documented alongside it.
 
 ## Vendor isolation

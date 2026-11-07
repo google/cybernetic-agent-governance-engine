@@ -151,7 +151,7 @@ path as the sole live-write mechanism:
       to reflect that only schema v1.1 is supported for live evidence writes,
       within 2 business days of merge per [`AGENTS.md`](../AGENTS.md)
       Compliance Artifact Obligations
-- [x] Update [`docs/BREAKING_CHANGES_v3.md`](BREAKING_CHANGES_v3.md) — add a
+- [x] Update [`docs/BREAKING_CHANGES.md`](BREAKING_CHANGES.md) — add a
       new entry under "Removed Classes/Functions" for the v1.0 live-write
       path, cross-referencing this checklist
 - [x] Update [`CHANGELOG.md`](../CHANGELOG.md)'s `[3.0.1]` entry — move "Evidence
@@ -225,7 +225,7 @@ path as the sole live-write mechanism:
 
 ### Documentation Updates (Option B)
 
-- [x] [`docs/BREAKING_CHANGES_v3.md:65,83`](BREAKING_CHANGES_v3.md:65) — definitive
+- [x] [`docs/BREAKING_CHANGES.md:65,83`](BREAKING_CHANGES.md:65) — definitive
       documentation that `update_state()` is renamed to `_update_state_unsafe()`
 - [x] ``docs/MIGRATION_GUIDE_v3.md`` — updated
       documentation for `atomic_verify_and_commit()`
@@ -246,7 +246,7 @@ Compliance/Security/regulatory-owner sign-off gates in
       for all three items, and countersigned the CR-3 design decision
 - [x] **Documentation completeness verification** — every item under
       each item's "Documentation Updates" section is complete:
-      `docs/BREAKING_CHANGES_v3.md`, `docs/MIGRATION_GUIDE_v3.md`,
+      `docs/BREAKING_CHANGES.md`, `docs/MIGRATION_GUIDE_v3.md`,
       `CHANGELOG.md`, and the relevant `compliance/oscal/` component (CR-1)
 - [x] **Full test suite passes** — per
       [`AGENTS.md`](../AGENTS.md) Test Execution standard, run

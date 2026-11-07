@@ -76,7 +76,7 @@ All four are owned by
 `_REDIS_KEY_LOCAL_DEBITS`, `LUA_TRIM_DEBITS_BY_SEQUENCE` and both
 `trim_local_debits_through_sequence` helpers are deleted. No migration is
 provided: this is a reference architecture, and the Redis key change is
-recorded in [`BREAKING_CHANGES_v3.md`](../BREAKING_CHANGES_v3.md).
+recorded in [`BREAKING_CHANGES.md`](../BREAKING_CHANGES.md).
 
 ### 2. The commit script nets in-script, in O(1), against one snapshot generation
 
@@ -280,7 +280,7 @@ Every failure mode over-restricts.
 ## Consequences
 
 - Breaking for deployments: the Redis key set changes; running clusters must
-  delete `cbf:local_debits` (runbook note in `BREAKING_CHANGES_v3.md`). A
+  delete `cbf:local_debits` (runbook note in `BREAKING_CHANGES.md`). A
   snapshot replaced between read and commit now denies with
   `SNAPSHOT_CHANGED` instead of being netted against the wrong generation.
 - Commit and rollback are O(1) in the number of outstanding debits; the

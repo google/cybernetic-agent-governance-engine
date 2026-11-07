@@ -1048,7 +1048,7 @@ says `ALLOW`, yet still fails closed. `authority_state_version` is nullable.
 > longer accepted; `decision` is mandatory and its absence fails closed rather
 > than admitting. The `authority_record_id`-on-`ALLOW` requirement is documented
 > alongside it. See **BC-03** in
-> [`docs/BREAKING_CHANGES_v3.md`](BREAKING_CHANGES_v3.md).
+> [`docs/BREAKING_CHANGES.md`](BREAKING_CHANGES.md).
 
 ---
 

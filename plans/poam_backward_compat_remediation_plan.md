@@ -244,7 +244,7 @@ migrated together in a single commit. Records written before the change would fa
 verification — but the same is already true after any pod restart, and no signed external
 attestation of these digests exists in this repository. The correct move is a clean break
 plus a documented `BREAKING CHANGE:` footer, exactly as was done for
-`normative_provider.py` (see [`docs/BREAKING_CHANGES_v3.md:226-237`](docs/BREAKING_CHANGES_v3.md:226)).
+`normative_provider.py` (see [`docs/BREAKING_CHANGES.md:226-237`](docs/BREAKING_CHANGES.md:226)).
 
 **Remediation.** Migrate these atomically — all in one commit, no partial state:
 
@@ -352,7 +352,7 @@ Three factual claims in [`docs/POAM.md:77`](docs/POAM.md:77) do not match the co
    under the AGENTS.md posture there is no such blocker. There is no adopter deployment whose
    chains would be invalidated, and the repository has already shipped an equivalent
    canonicalization break for `normative_provider.py`
-   ([`docs/BREAKING_CHANGES_v3.md:226`](docs/BREAKING_CHANGES_v3.md:226)).
+   ([`docs/BREAKING_CHANGES.md:226`](docs/BREAKING_CHANGES.md:226)).
 
 **Remediation.** Rewrite the POAM-2026-060 row to state the corrected count, split the
 remaining scope into "migrated" and "frozen for WORM signature verification (1 site)", and
@@ -396,7 +396,7 @@ helper cannot even be reached by production code.
 4. Delete [`tests/test_dual_schema_verification.py`](tests/test_dual_schema_verification.py)
    and fold any still-relevant hash-determinism assertions into
    [`tests/test_evidence_stream.py`](tests/test_evidence_stream.py).
-5. Note that [`docs/BREAKING_CHANGES_v3.md:192-199`](docs/BREAKING_CHANGES_v3.md:192) describes
+5. Note that [`docs/BREAKING_CHANGES.md:192-199`](docs/BREAKING_CHANGES.md:192) describes
    CR-1 as requiring a "data-migration completeness gate … before it can ship." That gate is
    an artifact of the production-deployment framing and is void under the current AGENTS.md
    posture; update that paragraph accordingly.
@@ -831,7 +831,7 @@ contain the described code.
 Per [`AGENTS.md`](AGENTS.md) *Commit Message Standard*, each step should be a separate
 Conventional Commit on its own `refactor/` or `fix/` branch, squash-merged. Breaking changes
 require both the `!` marker and a `BREAKING CHANGE:` footer, and must be documented in
-[`docs/BREAKING_CHANGES_v3.md`](docs/BREAKING_CHANGES_v3.md).
+[`docs/BREAKING_CHANGES.md`](docs/BREAKING_CHANGES.md).
 
 Suggested subjects (all ≤ 72 chars, imperative, no trailing period):
 

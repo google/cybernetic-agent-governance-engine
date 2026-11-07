@@ -581,7 +581,7 @@ mandatory "Reference Architecture Note", covering:
 - [`docs/architecture/CLICKHOUSE_EVIDENCE_SINK.md`](../docs/architecture/CLICKHOUSE_EVIDENCE_SINK.md) — the "Source of Truth" line points at the old path.
 - [`docs/architecture/AUDIT_LOG_SCHEMA.md`](../docs/architecture/AUDIT_LOG_SCHEMA.md) — module paths.
 - [`docs/technical-report/03-TECHNOLOGY-STACK.md`](../docs/technical-report/03-TECHNOLOGY-STACK.md) and [`08-DEPLOYMENT-INFRASTRUCTURE.md`](../docs/technical-report/08-DEPLOYMENT-INFRASTRUCTURE.md) — reference the contract rather than describing GCS as *the* storage layer.
-- [`docs/BREAKING_CHANGES_v3.md`](../docs/BREAKING_CHANGES_v3.md) and `CHANGELOG.md` — record AW-1 … AW-8 (§6).
+- [`docs/BREAKING_CHANGES.md`](../docs/BREAKING_CHANGES.md) and `CHANGELOG.md` — record AW-1 … AW-8 (§6).
 
 ---
 
@@ -782,7 +782,7 @@ contradict the code — not because a deployment depends on them.
 Each entry below is a deliberate break. It is listed here because it **removes a
 design the project is moving away from** — the break is the deliverable, not a
 side effect to be managed. Every entry is recorded in
-[`docs/BREAKING_CHANGES_v3.md`](../docs/BREAKING_CHANGES_v3.md) and `CHANGELOG.md`
+[`docs/BREAKING_CHANGES.md`](../docs/BREAKING_CHANGES.md) and `CHANGELOG.md`
 before its PR merges, and **none receives a shim, alias, deprecation window, or
 fallback read**.
 
@@ -935,7 +935,7 @@ The programme is complete when all of the following hold simultaneously.
 
 **Legibility**
 
-- [ ] AW-1 … AW-8 documented in [`docs/BREAKING_CHANGES_v3.md`](../docs/BREAKING_CHANGES_v3.md) and `CHANGELOG.md`.
+- [ ] AW-1 … AW-8 documented in [`docs/BREAKING_CHANGES.md`](../docs/BREAKING_CHANGES.md) and `CHANGELOG.md`.
 - [ ] `AGENTS.md` canonical-namespace table lists every new path and contains no row for a path that no longer exists.
 - [ ] `docs/architecture/VENDOR_NEUTRALITY_CONTRACT.md` exists, carries the Reference Architecture Note, and includes the per-backend atomicity honesty table.
 - [ ] OSCAL component definitions and Lula validations updated per [§8](#8-compliance-artifact-obligations).

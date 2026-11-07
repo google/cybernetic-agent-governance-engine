@@ -51,7 +51,7 @@ Full detail lives in [`CONTRIBUTING.md`](CONTRIBUTING.md#commit-message-standard
 
 **Rules:**
 - Imperative mood ("add", not "added"/"adds"); no trailing period.
-- Breaking changes: `!` after type/scope, plus a `BREAKING CHANGE:` footer (both must be present together).
+- Breaking changes: `!` after type/scope, plus a `BREAKING CHANGE:` footer (both must be present together), and an indexed entry under `# Unreleased (v<next_major>.x)` in [`docs/BREAKING_CHANGES.md`](docs/BREAKING_CHANGES.md).
 - PR titles become squash-merge commit messages and must follow this format.
 
 ---
@@ -243,6 +243,8 @@ All imports and test mocks must use these canonical locations:
 ## Documentation Standards
 
 Keep documentation synchronized with code changes in the same PR. Cite specific file paths, configuration keys, and line numbers. Do not claim speculative future-state behaviors as current reality.
+
+- **Version-Neutral Living Filenames**: Never embed CAGE major/minor version suffixes (`_v3`, `-v4`, etc.) in living documentation filenames; organize versioned history under `# v<major>.x` and `# Unreleased (v<next_major>.x)` sections inside [`docs/BREAKING_CHANGES.md`](docs/BREAKING_CHANGES.md) (enforced by Gate G9 in [`scripts/check_doc_references.py`](scripts/check_doc_references.py)).
 
 ---
 

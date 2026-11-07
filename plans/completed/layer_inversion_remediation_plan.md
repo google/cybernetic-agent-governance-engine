@@ -585,7 +585,7 @@ what was true at the time. Do not rewrite history to match new names.
 
 | Document | Change |
 |---|---|
-| [`BREAKING_CHANGES_v3.md`](../docs/BREAKING_CHANGES_v3.md) | New BC entries for every `!` commit above |
+| [`BREAKING_CHANGES.md`](../docs/BREAKING_CHANGES.md) | New BC entries for every `!` commit above |
 | [`API_MAP_EXTERNAL.md:972`](../docs/API_MAP_EXTERNAL.md:972) | Update the finding-code table |
 | [`CAGE_OPEN_INTEROP_SPEC.md:1509`](../docs/CAGE_OPEN_INTEROP_SPEC.md:1509) | Update the verdict-mapping table |
 | [`EXTENSIBILITY_ARCHITECTURE.md`](../docs/architecture/EXTENSIBILITY_ARCHITECTURE.md) | Document the seams package and DI requirement |

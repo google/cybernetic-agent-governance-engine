@@ -469,6 +469,6 @@ Re-run a search for each dead path from §2 and each contradiction from §8 to c
 Two things the series would benefit from that do not exist in any form today:
 
 1. **A layer-boundary diagram** in TR-02 showing Layer 1 ↔ 2 ↔ 3 ↔ 4 with the permitted import directions and the Gate G3 arrow — this single diagram would carry most of the v3 architectural story.
-2. **A "what changed in v3.0.0" appendix** cross-referencing [`docs/BREAKING_CHANGES_v3.md`](../docs/BREAKING_CHANGES_v3.md), listing the module relocations (§2 table), the tier-model change, and the domain-plugin extraction — so readers of the v2-era text can orient themselves.
+2. **A "what changed in v3.0.0" appendix** cross-referencing [`docs/BREAKING_CHANGES.md`](../docs/BREAKING_CHANGES.md), listing the module relocations (§2 table), the tier-model change, and the domain-plugin extraction — so readers of the v2-era text can orient themselves.
 
 Per the AGENTS.md documentation standard, both should be written as illustrative reference-architecture material, and all long-form edits should be applied in small chunks rather than monolithic rewrites.

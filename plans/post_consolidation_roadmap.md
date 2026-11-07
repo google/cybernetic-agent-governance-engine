@@ -133,7 +133,7 @@ available and should be used.
 | **B1** | Update [`README.md`](../README.md) for Layer 1/2 architecture | **P0** | High — first thing an adopter reads | Medium | S | Blocks B3 |
 | **B2** | Fix broken/stale doc links from consolidation | **P0** | Medium — credibility | Medium | XS–S | — |
 | **B3** | Author plugin-authoring + migration guide | **P1** | High — adoption enabler | Medium | M | — |
-| **B4** | Finalise [`docs/BREAKING_CHANGES_v3.md`](../docs/BREAKING_CHANGES_v3.md) status blocks | **P1** | Medium | Low | S | — |
+| **B4** | Finalise [`docs/BREAKING_CHANGES.md`](../docs/BREAKING_CHANGES.md) status blocks | **P1** | Medium | Low | S | — |
 | **C1** | Full integration suite vs live GKE dev | **P1** | High — end-to-end proof | Medium | M | — |
 | **C2** | Regional compliance posture validation | **P1** | High — the compliance demo | Medium | S–M | Needs A1 |
 | **C3** | Staging lifecycle validation run | **P2** | Medium | Low | S | Needs A2, C1 |
@@ -609,7 +609,7 @@ a public contract.
 
 **Document 2 — `docs/MIGRATION_v3.md`**
 
-[`docs/BREAKING_CHANGES_v3.md`](../docs/BREAKING_CHANGES_v3.md) is 697 lines and
+[`docs/BREAKING_CHANGES.md`](../docs/BREAKING_CHANGES.md) is 697 lines and
 enumerates 11+ breaking changes with IDs (`SR-#`, `MR-#`, `CR-#`, `FF-#`,
 `EV-#`, `BC-##`). It is a *reference*, not a *path*. The migration guide should
 be the path:
@@ -624,7 +624,7 @@ be the path:
    migration, already performed.
 4. **Receipt-consumer guidance** for `schema_version` v1/v2 → v3 and the
    `tier_failures` addition to `proof_hash`.
-5. **Explicit non-migration.** [`docs/BREAKING_CHANGES_v3.md`](../docs/BREAKING_CHANGES_v3.md:91)
+5. **Explicit non-migration.** [`docs/BREAKING_CHANGES.md`](../docs/BREAKING_CHANGES.md:91)
    already says adopters should wait for the full PR sequence before upgrading.
    That sequence has now landed. Say so — the guide's most valuable sentence may
    be "the wait is over, here is the destination."
@@ -652,7 +652,7 @@ be the path:
 
 ### 4.6 B4 — Breaking-changes status reconciliation (P1)
 
-[`docs/BREAKING_CHANGES_v3.md`](../docs/BREAKING_CHANGES_v3.md:53) contains
+[`docs/BREAKING_CHANGES.md`](../docs/BREAKING_CHANGES.md:53) contains
 stale status blocks — the PR A section still reads *"Status: In progress on
 branch `refactor/domain-pipeline-extract`"* and *"restored in PR C"*. Those
 branches no longer exist; that work is on `main` at `e56802a`.
@@ -1205,7 +1205,7 @@ directly advances the roadmap's stated optimisation target.
 **Breaking-change posture.** None of these removals needs a deprecation path.
 If relocating `src/governed_financial_advisor/` to `examples/` breaks an
 import for someone, that is an acceptable and even useful outcome — it is
-exactly the class of change [`docs/BREAKING_CHANGES_v3.md`](../docs/BREAKING_CHANGES_v3.md)
+exactly the class of change [`docs/BREAKING_CHANGES.md`](../docs/BREAKING_CHANGES.md)
 exists to record. Document it there and move on.
 
 ---

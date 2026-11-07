@@ -756,7 +756,7 @@ resource "google_container_node_pool" "extra_pools" {
 # ─── Dedicated Least-Privilege GKE Node Service Account (AC-6, POAM-2026-187) ─
 # Replaces the implicit Compute Engine default service account
 # (<PROJECT_NUMBER>-compute@developer.gserviceaccount.com) across every GKE
-# node_config block (`CP-5` in docs/BREAKING_CHANGES_v3.md).
+# node_config block (`CP-5` in docs/BREAKING_CHANGES.md).
 #
 # Decision A3 (Minimal IAM roles on the dedicated node GSA):
 #   Grants only roles/container.defaultNodeServiceAccount (Cloud Logging,

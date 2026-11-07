@@ -553,7 +553,7 @@ def _build_standing(
 > documented at [`contracts.py:96-102`](../src/gateway/governance/contracts.py:96).
 > Bump `schema_version` to `"v3"` so the discontinuity is machine-detectable in
 > the evidence chain, and record it in [`CHANGELOG.md`](../CHANGELOG.md) and
-> [`docs/BREAKING_CHANGES_v3.md`](../docs/BREAKING_CHANGES_v3.md).
+> [`docs/BREAKING_CHANGES.md`](../docs/BREAKING_CHANGES.md).
 
 **T-A8 — Add the G6 CI gate.**
 
@@ -651,7 +651,7 @@ uv run pytest tests/ --run-integration -v --tb=short
 - [ ] **G6 passes and is blocking** in [`ci.yml`](../.github/workflows/ci.yml).
 - [ ] Exactly one code path debits `safety:current_cash`, asserted by `test_phase2_debits_exactly_once`.
 - [ ] The legacy inline blocks and `ENABLE_LEGACY_TRADE_DISPATCH` are **deleted**, not disabled.
-- [ ] [`CHANGELOG.md`](../CHANGELOG.md) and [`docs/BREAKING_CHANGES_v3.md`](../docs/BREAKING_CHANGES_v3.md) record the `proof_hash` / schema v3 discontinuity.
+- [ ] [`CHANGELOG.md`](../CHANGELOG.md) and [`docs/BREAKING_CHANGES.md`](../docs/BREAKING_CHANGES.md) record the `proof_hash` / schema v3 discontinuity.
 - [ ] Full suite: `uv run pytest tests/ -m "local or unit" -n auto --dist=loadfile --tb=short` — no new failures vs. the §2.3 baseline.
 - [ ] `uv run ruff check . && uv run ruff format --check . && uv run mypy src/`.
 
@@ -2194,7 +2194,7 @@ intends.
 | same | C | Rewrite the `InvariantModel` section for the declarative shape; document that non-affine barriers are a kernel RFC |
 | same | D | Add the healthcare worked example as the canonical onboarding path |
 | [`CHANGELOG.md`](../CHANGELOG.md) | every PR | Conventional-Commit-derived entry; PR A must record the `proof_hash` / schema v3 discontinuity |
-| [`docs/BREAKING_CHANGES_v3.md`](../docs/BREAKING_CHANGES_v3.md) | A, C | Receipt schema v3; module relocations and the parameter renames |
+| [`docs/BREAKING_CHANGES.md`](../docs/BREAKING_CHANGES.md) | A, C | Receipt schema v3; module relocations and the parameter renames |
 | [`README.md`](../README.md) | D | Update the "supported domains" statement |
 | [`COMPLIANCE.md`](../COMPLIANCE.md) | C | Reflect the moved module paths in the control narrative summary |
 | [`docs/POAM.md`](../docs/POAM.md) | C | Update POAM-023 module paths; record commit SHA, Lula result, closure date if closed |
