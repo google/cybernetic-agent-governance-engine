@@ -201,7 +201,7 @@ props:
 - Lula OSCAL validations ([`compliance/lula/`](../../compliance/lula/))
 - STPA compiler output ([`config/stpa_control_structure.yaml`](../../config/stpa_control_structure.yaml))
 - Langfuse traces (control telemetry)
-- AgentSight syscall audits (AU-2, SI-7)
+- AgentSight syscall audits (AU-2, SI-7) — *not in force at HEAD (`POAM-021` reopened 2026-11-05, `POAM-2026-193`)*
 
 ---
 

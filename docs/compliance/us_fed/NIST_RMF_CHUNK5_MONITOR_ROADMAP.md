@@ -60,8 +60,8 @@ The standalone OTel Collector (`opentelemetry-collector-contrib`) has been **dep
 **DEFER Queue Monitoring (v2.0.0 — AARM-V7):**
 [`src/gateway/governance/defer_queue.py`](../../../src/gateway/governance/defer_queue.py) implements the DEFER state machine for confidence-starved contexts. Redis db=1 (noeviction policy) stores deferred governance decisions pending human review. The DEFER queue is monitored via SSE events (`DEFER_QUEUED`, `DEFER_RESOLVED`) published to the `GovernanceEventBus` and visible in the AgentSight KernelDashboard. Queue depth and resolution latency are tracked as OTel metrics.
 
-**AgentSight UI Phase 1 (v2.0.0):**
-`src/agentsight-ui/` — React/Vite frontend with eBPF kernel observability. `deployment/agentsight/agentsight-config.yaml` deploys an eBPF daemon targeting `python3` processes, intercepting SSL/TLS via OpenSSL uprobes and monitoring syscalls (`execve`, `openat`, `connect`, `socket`, `bind`). **✅ POAM-021 RESOLVED:** Exporter is configured as `type: "remote"`, targeting `http://agentsight-dashboard:8080`. The prior gap (console mode) has been corrected. `KernelDashboard.tsx` displays real-time governance events, DEFER queue state, and eBPF syscall telemetry.
+**AgentSight UI (`src/agentsight-ui/`) — eBPF Collector Not in Force (`POAM-021` reopened 2026-11-05):**
+`src/agentsight-ui/` builds a static React/Vite frontend (`KernelDashboard.tsx`) consuming SSE governance events. The eBPF collector (`deployment/agentsight/agentsight-config.yaml` / `deployment/k8s/agentsight-daemon.yaml`) is **not in force**: `agentsight-config.yaml` belongs only to Compose and targets a static nginx container (`http://agentsight-dashboard:8080`), while `deployment/k8s/agentsight-daemon.yaml` is outside Terraform state and has been refused by Binary Authorization on staging since 2026-09-06 (Cloud Audit Logs). `POAM-021` was reopened on 2026-11-05 and is tracked alongside `POAM-2026-193`.
 
 **SSE Real-Time Event Bus:**
 `src/compliance_bridge/sse_events.py` implements a `GovernanceEventBus` that fans `AUDIT_FINDING` and `GOVERNANCE_VIOLATION` events to all connected SSE clients via `GET /v1/events/stream`, consumed by `KernelDashboard.tsx`.
@@ -71,7 +71,7 @@ The standalone OTel Collector (`opentelemetry-collector-contrib`) has been **dep
 | #      | Gap                                                                          | SP 800-137 Requirement                                            | Severity |
 | ------ | ---------------------------------------------------------------------------- | ----------------------------------------------------------------- | -------- |
 | G7.1-1 | No documented ISCM Strategy document (SP 800-137 §3.1)                       | Documented strategy with monitoring scope, frequencies, and roles | Critical |
-| ~~G7.1-2~~ | ~~AgentSight exporter set to `console` — remote dashboard not confirmed active~~ **✅ RESOLVED (POAM-021):** Exporter is `type: "remote"` targeting `http://agentsight-dashboard:8080`. | Continuous monitoring of process-level behavior | ~~High~~ **Closed** |
+| G7.1-2 | **Reopened 2026-11-05 (`POAM-021`, `POAM-2026-193`):** Agent workloads are not monitored at the process or network-verdict level by an in-state control (`deployment/k8s/agentsight-daemon.yaml` is outside Terraform state and refused by Binary Authorization on staging). | Continuous monitoring of process-level behavior | **High (Open)** |
 | ~~G7.1-3~~ | ~~OTel collector is single-replica — no HA or failover~~ | **Closed** — standalone OTel Collector deprecated 2026-05-31; Langfuse integrated OTLP ingestion used directly. | ~~High~~ **Closed** |
 | G7.1-4 | No Prometheus/Grafana metrics pipeline — only Langfuse traces                | Infrastructure-level metrics monitoring                           | Medium   |
 | G7.1-5 | `TRACE_SAMPLING_RATE` set to `0.01` (1%) in deploy_sw.py substitutions       | Sufficient coverage for security monitoring                       | Medium   |
@@ -80,7 +80,7 @@ The standalone OTel Collector (`opentelemetry-collector-contrib`) has been **dep
 #### Recommendations
 
 1. **Create `compliance/continuous-monitoring/ISCM_STRATEGY.md`** (ISSO responsible): Document monitoring scope, tools, frequencies (real-time: OTel/SSE, 60s: SC-4 watch, 6h: Lula audit, daily: Langfuse metrics), roles, and SP 800-137 alignment. Reference control families AU, SI, and CA.
-2. ~~**Activate AgentSight remote dashboard**~~ **✅ RESOLVED (POAM-021):** Already configured as `type: "remote"` in `agentsight-config.yaml`.
+2. **Remediate `POAM-021` and `POAM-2026-193`:** Replace the unmanaged `deployment/k8s/agentsight-daemon.yaml` manifest with an in-state workload monitoring control outside the agent's trust domain.
 3. ~~**Scale OTel Collector to 2 replicas**~~ **Closed** — standalone collector deprecated; Langfuse integrated OTLP ingestion used directly.
 4. **Increase `TRACE_SAMPLING_RATE` to `0.10` (10%)** for security-relevant spans (governance, OPA, NeMo). Use tail-based sampling for error traces.
 5. **Deploy kube-state-metrics + Prometheus** for infrastructure-layer monitoring to complement Langfuse application-layer traces.
@@ -451,7 +451,7 @@ The **Cybernetic Governance Engine (CAGE)** is a GKE-hosted AI governance platfo
 - ISCM monitoring tools exist (OTel direct Langfuse OTLP, Lula CronJob 15 manifests, SSE, AgentSight eBPF): +8 points
 - Periodic assessment cadence exists (6h Lula Critical, daily High, weekly Medium, 60s SC-4 watch): +5 points
 - Alert/notification pipeline exists (Slack/PagerDuty capable): +5 points
-- **✅ RESOLVED (POAM-021):** AgentSight exporter confirmed as `"remote"` mode targeting `http://agentsight-dashboard:8080`
+- **Reopened 2026-11-05 (`POAM-021`, `POAM-2026-193`):** AgentSight eBPF collector is not in force (`deployment/k8s/agentsight-daemon.yaml` is unmanaged out-of-state and refused by Binary Authorization on staging)
 - **v2.0.0 additions:** DEFER queue monitoring (AARM-V7), SHA-256 hash-chained context accumulator (AARM-V1), KMS batch-signed OSCAL artifacts, SR 26-2 framework adopted, CSA AARM v1.0 11-vector threat coverage
 - Deducted: No ISCM strategy doc (−20), no POA&M (−20), no status reporting format (−10), no decommission controls (−10), no SP 800-53 ongoing assessment (−25)
 

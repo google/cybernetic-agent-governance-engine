@@ -33,7 +33,7 @@ All GCP IAM service accounts for CAGE are managed via Terraform (`infra/targets/
 | `cage-compliance-bridge-sa` | `roles/storage.objectCreator`, `roles/storage.objectViewer` | Compliance bridge: writes OSCAL artifacts to GCS |
 | `cage-lula-sa` | `roles/container.viewer` | Lula: read-only cluster inspection for validation manifests |
 | `cage-vllm-sa` | `roles/storage.objectViewer` | vLLM: reads model weights from GCS |
-| `cage-agentsight-sa` | `roles/logging.logWriter`, `roles/monitoring.metricWriter` | AgentSight: writes eBPF telemetry to Cloud Logging |
+| `cage-agentsight` (`iam.tf`) | `roles/logging.logWriter`, `roles/monitoring.metricWriter` | **Unused at HEAD (`POAM-2026-169` Instance 16, `POAM-2026-193`):** provisioned in `infra/targets/gcp-gke/iam.tf` with no `roles/iam.workloadIdentityUser` binding and no in-state workload consumer (AgentSight eBPF telemetry is not in force; `POAM-021` reopened) |
 
 ### 2.3 Deactivation
 

@@ -8,7 +8,7 @@
 | **Document Series**  | CAGE Architecture Specification                                                   |
 | **Status**           | ACTIVE — v3.2.0 stable (GKE deployment verified)                                  |
 | **Canonical Path**   | `docs/architecture/AGENT_SYSTEM_ARCHITECTURE.md`                                  |
-| **References**       | `src/governed_financial_advisor/graph/`, `src/governed_financial_advisor/agents/`, [`GATEWAY_ARCHITECTURE.md`](GATEWAY_ARCHITECTURE.md) |
+| **References**       | `src/governed_financial_advisor/graph/`, `src/governed_financial_advisor/agents/`, [`GATEWAY_ARCHITECTURE.md`](GATEWAY_ARCHITECTURE.md), [`MODEL_BACKED_TIERS.md`](MODEL_BACKED_TIERS.md) |
 
 **Last Updated:** 2026-10-22
 
