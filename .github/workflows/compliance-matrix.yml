@@ -205,8 +205,9 @@ jobs:
         if: matrix.region == 'US_FED'
         env:
           # The version security-scan.yml's required OPA job runs the same
-          # `opa test` with. `latest` resolved to OPA 1.x, whose parser rejects
-          # the v0 syntax in config/opa/agent_catalog.rego.
+          # `opa test` with, so the two gates share one parser. `latest`
+          # floats across major versions: it once resolved to OPA 1.x, which
+          # rejected v0 rego that the required job accepted.
           OPA_VERSION: v0.61.0
           OPA_SHA256: 24a15b66a054b9e836a5dc1e07dff622999470eeb0c6e746340b4ccabde5663c
         run: |
