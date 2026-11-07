@@ -24,17 +24,31 @@ module "vpc_network" {
   count  = var.create_vpc_network ? 1 : 0
   source = "../../modules/vpc_network"
 
-  project_id           = var.project_id
-  environment          = var.environment
-  region               = var.region
-  network_name         = var.network != "" && var.network != "default" ? var.network : "cage-vpc-${var.environment}"
-  subnetwork_name      = var.subnetwork != "" && var.subnetwork != "default" ? var.subnetwork : "cage-subnet-${var.environment}"
-  subnet_cidr          = var.subnet_cidr
-  pod_cidr             = var.pod_cidr
-  service_cidr         = var.service_cidr
-  enable_audit_logging = var.enable_audit_logging
-  enable_psa           = true
-  enable_default_deny  = true
+  project_id             = var.project_id
+  environment            = var.environment
+  region                 = var.region
+  network_name           = var.network != "" && var.network != "default" ? var.network : "cage-vpc-${var.environment}"
+  subnetwork_name        = var.subnetwork != "" && var.subnetwork != "default" ? var.subnetwork : "cage-subnet-${var.environment}"
+  subnet_cidr            = var.subnet_cidr
+  pod_cidr               = var.pod_cidr
+  service_cidr           = var.service_cidr
+  pod_range_name         = coalesce(var.cluster_secondary_range_name, "gke-pods")
+  service_range_name     = coalesce(var.services_secondary_range_name, "gke-services")
+  enable_audit_logging   = var.enable_audit_logging
+  enable_psa             = true
+  enable_memorystore_psc = true
+  enable_default_deny    = true
+}
+
+locals {
+  effective_network_name    = var.create_vpc_network ? module.vpc_network[0].network_name : var.network
+  effective_subnetwork_name = var.create_vpc_network ? module.vpc_network[0].subnetwork_name : var.subnetwork
+  cloudsql_network_name     = var.create_vpc_network ? module.vpc_network[0].private_service_access_network_name : var.network
+  memorystore_network_name  = var.create_vpc_network ? module.vpc_network[0].memorystore_psc_network_name : var.network
+  gke_pods_range_name       = var.create_vpc_network ? module.vpc_network[0].pod_secondary_range_name : var.cluster_secondary_range_name
+  gke_services_range_name   = var.create_vpc_network ? module.vpc_network[0].service_secondary_range_name : var.services_secondary_range_name
+  gke_pod_cidr              = var.create_vpc_network ? null : var.pod_cidr
+  gke_service_cidr          = var.create_vpc_network ? null : var.service_cidr
 }
 
 # ─── 2. Binary Authorization Cluster Policy (CM-7, SI-7, §1.1, §5.4) ──────────

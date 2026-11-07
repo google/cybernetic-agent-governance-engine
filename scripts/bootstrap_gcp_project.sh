@@ -43,10 +43,13 @@
 #        resources (Cloud Build SA, KMS keyrings/keys that survive `terraform destroy`
 #        in GCP, Container Analysis note, and Binary Authorization attestor) into
 #        Terraform state after `terraform init`.
-#   PF10 Grant `roles/cloudkms.publicKeyViewer` to the deployer service account
-#        (when `--deployer-sa` is provided or active gcloud account is a GSA) so
+#   PF10 / EF7c
+#        Grant `roles/cloudkms.publicKeyViewer` (`PF10`, so
 #        `data.google_kms_crypto_key_version.binauthz_attestor` succeeds during
-#        `terraform plan`.
+#        `terraform plan`) and `roles/networkconnectivity.consumerNetworkAdmin`
+#        (`EF7c`, so `module.vpc_network` can manage the `gcp-memorystore`
+#        Service Connection Policy) to the deployer service account when
+#        `--deployer-sa` is provided or active gcloud account is a GSA.
 #
 # Usage:
 #   scripts/bootstrap_gcp_project.sh --project <project-id> [--env staging] [--region us-central1]
@@ -77,7 +80,8 @@ Options:
   --region=<region>       GCP region (default: us-central1)
   --bucket=<name>         Terraform state GCS bucket name (default: <project>-tfstate)
   --deployer-sa=<email>   Optional deployer service account email to grant
-                          roles/cloudkms.publicKeyViewer (PF10)
+                          roles/cloudkms.publicKeyViewer (PF10) and
+                          roles/networkconnectivity.consumerNetworkAdmin (EF7c)
   --import-state          Import existing foundational GCP resources into Terraform
                           state (run after 'terraform init') (PF3 / PF8)
   --tf-dir=<path>         Path to GKE Terraform target directory
@@ -493,7 +497,7 @@ if [[ "$ENV" != "dev" ]]; then
     --quiet >/dev/null
 fi
 
-# --- PF10: Ensure deployer service account has roles/cloudkms.publicKeyViewer ---
+# --- PF10 / EF7c: Ensure deployer SA has publicKeyViewer and consumerNetworkAdmin ---
 if [[ -z "$DEPLOYER_SA" ]]; then
   ACTIVE_ACCOUNT="$(gcloud config get-value account 2>/dev/null || true)"
   if [[ "$ACTIVE_ACCOUNT" == *.gserviceaccount.com ]]; then
@@ -506,6 +510,13 @@ if [[ -n "$DEPLOYER_SA" ]]; then
   gcloud projects add-iam-policy-binding "$PROJECT_ID" \
     --member="serviceAccount:${DEPLOYER_SA}" \
     --role="roles/cloudkms.publicKeyViewer" \
+    --condition=None \
+    --quiet >/dev/null
+
+  echo "🔑 [EF7c] Granting roles/networkconnectivity.consumerNetworkAdmin to deployer SA '${DEPLOYER_SA}'..."
+  gcloud projects add-iam-policy-binding "$PROJECT_ID" \
+    --member="serviceAccount:${DEPLOYER_SA}" \
+    --role="roles/networkconnectivity.consumerNetworkAdmin" \
     --condition=None \
     --quiet >/dev/null
 fi

@@ -341,7 +341,7 @@ If `kubectl` or Terraform's `kubernetes` / `helm` providers time out against the
 
 ### Deploying under a service account (`sa-cage-deployer`)
 
-When deploying under a service account, pass `--deployer-sa=<SA_EMAIL>` to [`scripts/bootstrap_gcp_project.sh`](../scripts/bootstrap_gcp_project.sh) (or run `bootstrap_gcp_project.sh` while authenticated as that service account) so `roles/cloudkms.publicKeyViewer` (`cloudkms.cryptoKeyVersions.viewPublicKey`, which is not included in `roles/cloudkms.admin` or `roles/editor`) is granted at the project level rather than on `binauthz-attestor` itself (which uses an authoritative `google_kms_crypto_key_iam_policy`). See [Unverified Deployer Service Account](../docs/operations/DEPLOYMENT_RULES.md#unverified-deployer-service-account-sa-cage-deployer).
+When deploying under a service account, pass `--deployer-sa=<SA_EMAIL>` to [`scripts/bootstrap_gcp_project.sh`](../scripts/bootstrap_gcp_project.sh) (or run `bootstrap_gcp_project.sh` while authenticated as that service account) so `roles/cloudkms.publicKeyViewer` (`cloudkms.cryptoKeyVersions.viewPublicKey`, which is not included in `roles/cloudkms.admin` or `roles/editor`) and `roles/networkconnectivity.consumerNetworkAdmin` (`networkconnectivity.serviceConnectionPolicies.*`, required to manage the `gcp-memorystore` Service Connection Policy in `module.vpc_network` and not included in `roles/compute.admin` or `roles/servicenetworking.networksAdmin`) are granted at the project level. See [Deployer Service Account](../docs/operations/DEPLOYMENT_RULES.md#deployer-service-account-sa-cage-deployer-and-partner-test-identity-cage-partner-harness).
 
 ### `linkerd-network-validator` CrashLoopBackOff (exit 95)
 

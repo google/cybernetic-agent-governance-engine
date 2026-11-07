@@ -148,15 +148,31 @@ variable "subnetwork" {
 }
 
 variable "pod_cidr" {
-  description = "CIDR block for pods"
+  description = "CIDR block for pods when GKE allocates the secondary range (must be null when cluster_secondary_range_name is set)"
   type        = string
   default     = "10.100.0.0/14"
+  nullable    = true
 }
 
 variable "service_cidr" {
-  description = "CIDR block for services"
+  description = "CIDR block for services when GKE allocates the secondary range (must be null when services_secondary_range_name is set)"
   type        = string
   default     = "10.104.0.0/20"
+  nullable    = true
+}
+
+variable "cluster_secondary_range_name" {
+  description = "Existing subnetwork secondary IP range name for GKE pods (when set, pod_cidr must be null)"
+  type        = string
+  default     = null
+  nullable    = true
+}
+
+variable "services_secondary_range_name" {
+  description = "Existing subnetwork secondary IP range name for GKE services (when set, service_cidr must be null)"
+  type        = string
+  default     = null
+  nullable    = true
 }
 
 variable "authorized_networks" {

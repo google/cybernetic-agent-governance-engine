@@ -254,6 +254,13 @@ def test_bootstrap_enables_all_21_required_apis_and_creates_foundational_resourc
         "--role=roles/cloudkms.publicKeyViewer"
     ) in calls
 
+    # EF7c: Deployer SA granted roles/networkconnectivity.consumerNetworkAdmin on the project.
+    assert (
+        "gcloud projects add-iam-policy-binding clean-proj-01 "
+        "--member=serviceAccount:sa-cage-deployer@clean-proj-01.iam.gserviceaccount.com "
+        "--role=roles/networkconnectivity.consumerNetworkAdmin"
+    ) in calls
+
 
 def test_bootstrap_import_state_imports_missing_and_skips_existing(
     tmp_path: Path,

@@ -69,17 +69,12 @@ resource "google_memorystore_instance" "instance" {
   kms_key                     = var.enable_cmek ? var.kms_key_id : null
   deletion_protection_enabled = var.deletion_protection_enabled
 
-  desired_psc_auto_connections {
+  desired_auto_created_endpoints {
     network    = local.network_link
     project_id = var.project_id
   }
 
   lifecycle {
-    ignore_changes = [
-      desired_psc_auto_connections,
-      desired_auto_created_endpoints,
-    ]
-
     precondition {
       condition     = (var.persistence_mode == "AOF") == (var.aof_append_fsync != null)
       error_message = "aof_append_fsync must be set when persistence_mode is AOF, and only then: AOF without it takes the service's default fsync, and a policy without AOF persists nothing."

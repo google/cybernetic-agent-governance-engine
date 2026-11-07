@@ -254,8 +254,10 @@ resource "google_container_cluster" "primary" {
 
   # IP allocation for pods and services
   ip_allocation_policy {
-    cluster_ipv4_cidr_block  = var.pod_cidr
-    services_ipv4_cidr_block = var.service_cidr
+    cluster_secondary_range_name  = var.cluster_secondary_range_name
+    services_secondary_range_name = var.services_secondary_range_name
+    cluster_ipv4_cidr_block       = var.cluster_secondary_range_name == null ? var.pod_cidr : null
+    services_ipv4_cidr_block      = var.services_secondary_range_name == null ? var.service_cidr : null
   }
 
   # Maintenance window
@@ -297,6 +299,16 @@ resource "google_container_cluster" "primary" {
       monitoring_config,
       resource_labels,
     ]
+
+    precondition {
+      condition     = var.cluster_secondary_range_name == null || var.pod_cidr == null
+      error_message = "cluster_secondary_range_name names an existing secondary range, so pod_cidr would be ignored: set pod_cidr = null (GKE takes the range's CIDR from the subnet)."
+    }
+
+    precondition {
+      condition     = var.services_secondary_range_name == null || var.service_cidr == null
+      error_message = "services_secondary_range_name names an existing secondary range, so service_cidr would be ignored: set service_cidr = null (GKE takes the range's CIDR from the subnet)."
+    }
   }
 
   depends_on = [

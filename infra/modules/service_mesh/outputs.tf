@@ -31,3 +31,8 @@ output "ready" {
   description = "Depend on this to order workloads after the proxy injector exists; pods created earlier run without a proxy."
   value       = helm_release.linkerd_control_plane.status
 }
+
+output "webhook_firewall_network" {
+  description = "VPC network on google_compute_firewall.mesh_webhooks"
+  value       = google_compute_firewall.mesh_webhooks.network
+}

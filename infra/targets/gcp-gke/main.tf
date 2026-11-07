@@ -144,11 +144,13 @@ module "gke" {
   enable_gcs_fuse_csi = var.enable_gcs_fuse_csi
 
   # Networking
-  network                = var.network
-  subnetwork             = var.subnetwork
-  pod_cidr               = var.pod_cidr
-  service_cidr           = var.service_cidr
-  master_ipv4_cidr_block = var.master_ipv4_cidr_block
+  network                       = local.effective_network_name
+  subnetwork                    = local.effective_subnetwork_name
+  cluster_secondary_range_name  = local.gke_pods_range_name
+  services_secondary_range_name = local.gke_services_range_name
+  pod_cidr                      = local.gke_pod_cidr
+  service_cidr                  = local.gke_service_cidr
+  master_ipv4_cidr_block        = var.master_ipv4_cidr_block
 }
 
 # ─── Create Namespace ─────────────────────────────────────────────────────────
@@ -182,6 +184,7 @@ module "service_mesh" {
   project_id             = var.project_id
   region                 = var.region
   environment            = var.environment
+  network                = local.effective_network_name
   master_ipv4_cidr_block = var.master_ipv4_cidr_block
   # proxy-init needs NET_ADMIN, which 'restricted' Pod Security forbids; the
   # CNI plugin sets up the redirect on the node instead.
@@ -396,7 +399,7 @@ module "cloudsql_postgres" {
   region             = var.region
   instance_name      = "cage-postgres-${var.environment}"
   database_version   = "POSTGRES_15"
-  authorized_network = var.network
+  authorized_network = local.cloudsql_network_name
 
   # §1.1 Infrastructure Posture:
   # dev: db-f1-micro, ZONAL
@@ -416,8 +419,6 @@ module "cloudsql_postgres" {
   user_name       = google_service_account.langfuse.email
   user_type       = "CLOUD_IAM_SERVICE_ACCOUNT"
   enable_iam_auth = true
-
-  depends_on = [module.gke]
 }
 
 # ─── Deploy Memorystore Instances (Valkey Cluster Mode Disabled) ───────────────
@@ -430,7 +431,7 @@ module "memorystore_governance" {
   environment = var.environment
   region      = var.region
   instance_id = var.memorystore_governance_instance_id != "" ? var.memorystore_governance_instance_id : "cage-valkey-gov-${var.environment}"
-  network_id  = var.network
+  network_id  = local.memorystore_network_name
 
   # §1.1 Infrastructure Posture:
   # dev: 0 replicas (saves 1s per commit on WAIT)
@@ -455,8 +456,6 @@ module "memorystore_governance" {
   # enforce_in_dev keeps persistence off.
   persistence_mode = local.enforcing_posture ? "AOF" : "DISABLED"
   aof_append_fsync = local.enforcing_posture ? "ALWAYS" : null
-
-  depends_on = [module.gke]
 }
 
 module "memorystore_app" {
@@ -466,7 +465,7 @@ module "memorystore_app" {
   environment = var.environment
   region      = var.region
   instance_id = var.memorystore_app_instance_id != "" ? var.memorystore_app_instance_id : "cage-valkey-app-${var.environment}"
-  network_id  = var.network
+  network_id  = local.memorystore_network_name
 
   # §1.1 Infrastructure Posture:
   # dev: 0 replicas
@@ -488,8 +487,6 @@ module "memorystore_app" {
   # No governance state lives here (D6), so persistence stays off, stated
   # explicitly rather than left to a default.
   persistence_mode = "DISABLED"
-
-  depends_on = [module.gke]
 }
 
 # ─── Evidence Stream Contract (gateway producer ↔ compliance-bridge custodian) ─

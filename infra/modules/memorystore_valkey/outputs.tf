@@ -79,3 +79,8 @@ output "aof_append_fsync" {
     p.mode == "AOF" ? [for a in p.aof_config : a.append_fsync] : []
   ]))
 }
+
+output "psc_network" {
+  description = "VPC network URI configured on desired_auto_created_endpoints"
+  value       = one(google_memorystore_instance.instance.desired_auto_created_endpoints[*].network)
+}
