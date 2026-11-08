@@ -106,7 +106,7 @@ Overall System Security Category: HIGH
 - NeMo Guardrails PII detection (16 entity types)
 - AgentSight eBPF kernel-level monitoring
 - OpenTelemetry audit trail to Langfuse
-- GKE hardened security contexts (`deployment/k8s/security-context-patch.yaml`)
+- GKE hardened security contexts (`infra/modules/k8s_namespace/main.tf` PSA `restricted` + workload module `security_context` blocks)
 - Terraform IaC for reproducible infrastructure
 
 ---
@@ -148,7 +148,7 @@ Vulnerabilities are mapped to open POA&M items and assessed threat scenarios:
 
 | Vuln ID  | Vulnerability Description                              | Threat IDs             | POAM Reference | CVSS Est.      |
 | -------- | ------------------------------------------------------ | ---------------------- | -------------- | -------------- |
-| VULN-001 | ~~No intra-cluster mTLS; shared HMAC authentication only~~ **CLOSED 2026-05-17** — Linkerd mTLS deployed via `deployment/k8s/linkerd-mtls-policy.yaml` | TH-001, TH-003, TH-005 | POAM-007 (Closed) | N/A (Remediated) |
+| VULN-001 | ~~No intra-cluster mTLS; shared HMAC authentication only~~ **CLOSED 2026-05-17** — Linkerd mTLS deployed (`infra/modules/service_mesh/main.tf`; originally `de5534ac:deployment/k8s/linkerd-mtls-policy.yaml`) | TH-001, TH-003, TH-005 | POAM-007 (Closed) | N/A (Remediated) |
 | VULN-002 | No account management procedures; ad-hoc provisioning  | TH-003, TH-008         | POAM-001       | 7.5 (High)     |
 | VULN-003 | Overly broad IAM bindings (roles/editor pattern)       | TH-003, TH-008         | POAM-002       | 8.1 (High)     |
 | VULN-004 | Audit trace generator uses synthetic mock traces       | TH-006                 | POAM-003       | 5.3 (Moderate) |
@@ -314,7 +314,7 @@ Per NIST SP 800-30 Rev. 1, four risk response options are available: Accept, Avo
 
 **Response:** Mitigate
 
-**Current Controls:** GKE security contexts (`deployment/k8s/security-context-patch.yaml`); NetworkPolicy default-deny
+**Current Controls:** GKE Pod Security Admission `restricted` (`infra/modules/k8s_namespace/main.tf`) and Terraform workload `security_context` (`infra/modules/gateway/main.tf`); NetworkPolicy default-deny (`infra/targets/gcp-gke/network_policy.tf`)
 
 **Recommended Actions:**
 

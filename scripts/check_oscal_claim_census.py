@@ -87,6 +87,9 @@ PINNED_CITE_PATH_RE = re.compile(
 CITED_REPO_PATH_RE = re.compile(
     r"^((?:src|infra|tests|compliance|deployment|scripts|config|docs|\.github|packages|proof)/[^\s:();,]+)"
 )
+PINNED_READ_BACK_REPO_PATH_RE = re.compile(
+    r"(?<![A-Za-z0-9_./:-])(?P<rev>[0-9a-f]{7,40}\^?):(?P<path>(?:src|infra|tests|compliance|deployment|scripts|config|docs|\.github|packages|proof)/[A-Za-z0-9_./-]+\.[A-Za-z0-9_]+)"
+)
 READ_BACK_REPO_PATH_RE = re.compile(
     r"(?<![A-Za-z0-9_./:-])((?:src|infra|tests|compliance|deployment|scripts|config|docs|\.github|packages|proof)/[A-Za-z0-9_./-]+\.[A-Za-z0-9_]+)"
 )
@@ -548,6 +551,13 @@ def validate_census(
                         )
 
         rb_check = read_back.get("check", "") if isinstance(read_back, dict) else ""
+        for mp_rb in PINNED_READ_BACK_REPO_PATH_RE.finditer(str(rb_check)):
+            rev = mp_rb.group("rev")
+            rel_path = mp_rb.group("path").rstrip(".,;")
+            if not _pinned_path_exists_in_git(rev, rel_path, repo_root):
+                errors.append(
+                    f"Row {idx} ({rid}): pinned read_back.check repository path does not resolve in git: {rev}:{rel_path}"
+                )
         for m_rb in READ_BACK_REPO_PATH_RE.finditer(str(rb_check)):
             rel_path = m_rb.group(1).rstrip(".,;")
             if not (repo_root / rel_path).exists():
@@ -803,10 +813,10 @@ def render_register_markdown(rows: list[dict[str, Any]]) -> str:
         "| **`POAM-021`** | `SI-4` | `2026-05-27` ([`docs/compliance/us_fed/POAM_US_FED.md:L76`](us_fed/POAM_US_FED.md#L76)) | **Out-of-state closure** (artifact outside Terraform state) | `system-security-plan.yaml#h8000003-0000-4000-8000-000000000004` (`au-2`), `sp800-53-component-definition.yaml#42c2150e-0256-4ef0-b49b-8a7ee847f9cc` (`si-4`) | Closed on unmanaged AgentSight daemon config (out of Terraform state, unbuilt `agentsight-bpf` image, posts to `/v1/infra/events` `F-85`). |"
     )
     lines.append(
-        "| **`POAM-2026-080`** | `IA-9` / `AC-3` / `SC-8` | `2026-09-27` ([`docs/POAM.md:L235`](../POAM.md#L235)) | **Out-of-state closure** (shadow manifest + loopback identity bypass) | `system-security-plan.yaml#g7000010-0000-4000-8000-000000000010`, `system-security-plan.yaml#p8000001-plat-sc8-8000-platform0001`; `sp800-53-component-definition.yaml#230de322-4b76-4a0d-b07d-267f4fa23769` (`sc-8`) | Closed citing unmanaged `linkerd-mtls-policy.yaml` (out of Terraform state; `infra/modules/service_mesh` omits OPA and NeMo `Server`/`AuthorizationPolicy`, `F-17`/`F-19`) and `WorkloadIdentityMiddleware` loopback header trust (`F-38`/`F-39`, `F-106`). |"
+        "| **`POAM-2026-080`** | `IA-9` / `AC-3` / `SC-8` | `2026-09-27` ([`docs/POAM.md:L235`](../POAM.md#L235)) | **Out-of-state closure** (shadow manifest + loopback identity bypass) | `system-security-plan.yaml#g7000010-0000-4000-8000-000000000010`, `system-security-plan.yaml#p8000001-plat-sc8-8000-platform0001`; `sp800-53-component-definition.yaml#230de322-4b76-4a0d-b07d-267f4fa23769` (`sc-8`) | Closed citing unmanaged `de5534ac:deployment/k8s/linkerd-mtls-policy.yaml` (out of Terraform state; `infra/modules/service_mesh` omits OPA and NeMo `Server`/`AuthorizationPolicy`, `F-17`/`F-19`) and `WorkloadIdentityMiddleware` loopback header trust (`F-38`/`F-39`, `F-106`, remediated in `#684`). |"
     )
     lines.append(
-        f"| **`POAM-2026-096`** | `CA-7` / `SI-10` | `2026-10-03` ([`docs/POAM.md:L245`](../POAM.md#L245)) | **Out-of-state / simulated closure** | `sp800-53-component-definition.yaml#17537e23-e213-4c9c-b583-68992eb29794` (`ca-7`) | Closed on unmanaged `reconciliation-worker.yaml` (reconciler KSA and workload moved into Terraform in `#664` at [`iam.tf:L341-L345`]({rel_root}/infra/targets/gcp-gke/iam.tf#L341-L345)), while `ReconciliationDaemon.from_env()` ([`daemon.py:L1015`]({rel_root}/src/gateway/governance/reconciliation/daemon.py#L1015)) defaults to `_DefaultSimulatedProvider` and discrepancy fencing emits no chained DB 1 evidence record (`F-86`). |"
+        f"| **`POAM-2026-096`** | `CA-7` / `SI-10` | `2026-10-03` ([`docs/POAM.md:L245`](../POAM.md#L245)) | **Out-of-state / simulated closure** | `sp800-53-component-definition.yaml#17537e23-e213-4c9c-b583-68992eb29794` (`ca-7`) | Closed on unmanaged `de5534ac:deployment/k8s/reconciliation-worker.yaml` (reconciler KSA and workload moved into Terraform in `#664` at [`iam.tf:L341-L345`]({rel_root}/infra/targets/gcp-gke/iam.tf#L341-L345)), while `ReconciliationDaemon.from_env()` ([`daemon.py:L1015`]({rel_root}/src/gateway/governance/reconciliation/daemon.py#L1015)) defaults to `_DefaultSimulatedProvider` and discrepancy fencing emits no chained DB 1 evidence record (`F-86`). |"
     )
     lines.append("")
     lines.append(

@@ -24,9 +24,8 @@
 # Provider: opa (inline Rego)
 #
 # References:
-#   - deployment/k8s/service-account.yaml — one named SA per workload (POAM-2026-079)
-#   - deployment/k8s/backend-deployment.yaml — serviceAccountName binding
-#   - deployment/terraform/iam.tf — GCP IAM bindings for workload identity
+#   - infra/targets/gcp-gke/iam.tf — one named ServiceAccount per workload & GCP IAM bindings (POAM-2026-079)
+#   - infra/modules/governed_advisor/main.tf — serviceAccountName binding
 #   - docs/POAM.md — POAM-001 (AC-2: no account management procedures)
 #
 # OSCAL Mapping:
@@ -51,7 +50,7 @@ component-definition:
         (3) No Pod may use the "default" ServiceAccount — all workloads must explicitly
             bind to a named, purpose-labeled ServiceAccount (enforces AC-2 individual
             accountability and least privilege).
-      References: deployment/k8s/service-account.yaml (one ServiceAccount per workload, POAM-2026-079), infra/targets/gcp-gke/iam.tf (GCP workload identity bindings). Remediates: POAM-001 — AC-2 account management procedures gap. See: compliance/continuous-monitoring/ISCM_STRATEGY.md — AC-2 monitoring cadence.
+      References: infra/targets/gcp-gke/iam.tf (one ServiceAccount per workload & GCP workload identity bindings, POAM-2026-079). Remediates: POAM-001 — AC-2 account management procedures gap. See: compliance/continuous-monitoring/ISCM_STRATEGY.md — AC-2 monitoring cadence.
   components:
   - uuid: afa8aab0-84e1-5b07-8b83-b3fb498629a8
     type: software

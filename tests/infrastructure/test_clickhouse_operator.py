@@ -46,7 +46,6 @@ from pathlib import Path
 
 import fakeredis.aioredis
 import pytest
-import yaml
 
 from src.gateway.governance.evidence.cold_store import (
     ColdStoreHealth,
@@ -71,7 +70,6 @@ _CH_OP_VARS = _REPO / "infra/modules/clickhouse_operator/variables.tf"
 _CH_OP_OUTPUTS = _REPO / "infra/modules/clickhouse_operator/outputs.tf"
 _GKE_CLUSTER_MAIN = _REPO / "infra/modules/gcp_gke_cluster/main.tf"
 _COMPLIANCE_BRIDGE_MAIN = _REPO / "infra/modules/compliance_bridge/main.tf"
-_LANGFUSE_DB_YAML = _REPO / "deployment/k8s/langfuse-db.yaml"
 
 
 def _extract_module_block(name: str, text: str) -> str:
@@ -388,47 +386,10 @@ def test_clickhouse_node_pool_and_pod_scheduling_isolation() -> None:
     assert 'value    = "clickhouse"' in ch_op_main
     assert 'effect   = "NoSchedule"' in ch_op_main
     assert 'key      = "cloud.google.com/gke-spot"' in ch_op_main
-    assert 'operator = "NotIn"' in ch_op_main
-
-    # Raw K8s manifest (deployment/k8s/langfuse-db.yaml) enforces the same guards
-    docs = [
-        d
-        for d in yaml.safe_load_all(_LANGFUSE_DB_YAML.read_text())
-        if isinstance(d, dict)
-    ]
-    stateful_sets = [d for d in docs if d.get("kind") == "StatefulSet"]
-    assert len(stateful_sets) == 1
-    pod_spec = stateful_sets[0]["spec"]["template"]["spec"]
-
-    tolerations = pod_spec.get("tolerations", [])
-    assert any(
-        t.get("key") == "workload"
-        and t.get("value") == "clickhouse"
-        and t.get("effect") == "NoSchedule"
-        for t in tolerations
-    ), (
-        f"Missing workload=clickhouse:NoSchedule toleration in langfuse-db.yaml: {tolerations}"
+    assert 'values   = ["true"]' in ch_op_main
+    assert ch_op_main.count('key      = "cloud.google.com/gke-spot"') >= 2, (
+        "Both ClickHouse and Keeper pod specs in clickhouse_operator/main.tf must enforce anti-Spot affinity"
     )
-
-    terms = (
-        pod_spec.get("affinity", {})
-        .get("nodeAffinity", {})
-        .get("requiredDuringSchedulingIgnoredDuringExecution", {})
-        .get("nodeSelectorTerms", [])
-    )
-    expressions = [expr for term in terms for expr in term.get("matchExpressions", [])]
-    assert any(
-        e.get("key") == "workload"
-        and e.get("operator") == "In"
-        and "clickhouse" in e.get("values", [])
-        for e in expressions
-    ), f"Missing workload=clickhouse nodeAffinity in langfuse-db.yaml: {expressions}"
-    assert any(
-        e.get("key") == "cloud.google.com/gke-spot"
-        and e.get("operator") == "NotIn"
-        and "true" in e.get("values", [])
-        for e in expressions
-    ), f"Missing anti-Spot nodeAffinity in langfuse-db.yaml: {expressions}"
 
 
 # ---------------------------------------------------------------------------

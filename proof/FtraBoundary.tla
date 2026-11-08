@@ -72,7 +72,7 @@ CONSTANTS
     CONFIDENCE_DEFER_FLOOR,     \* confidence.defer_floor x 100 (70)
     CONFIDENCE_ALLOW_FLOOR,     \* confidence.agent_threshold x 100 (95)
     Confidences,                \* explored confidence values (subset of 0..100)
-    NetworkPolicyApplied,       \* deployment/k8s/ftra-network-policy.yaml in force
+    NetworkPolicyApplied,       \* infra/targets/gcp-gke/network_policy.tf in force
     ControllerBoundaryEnabled   \* FtraStage in the governor (TRUE at HEAD)
 
 ASSUME Confidences \subseteq 0..100

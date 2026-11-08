@@ -402,26 +402,26 @@ if not _langfuse_host:
 
 ---
 
-### DEP-04 🟠 HIGH — `deployment/k8s/gateway.yaml` hardcodes `us-central1` and `CAGE_ENV: dev`
+### DEP-04 🟠 HIGH — `de5534ac:deployment/k8s/gateway.yaml` hardcodes `us-central1` and `CAGE_ENV: dev`
 
 | Attribute | Value |
 |-----------|-------|
-| **File** | `deployment/k8s/gateway.yaml:38` |
+| **File** | `de5534ac:deployment/k8s/gateway.yaml:38` |
 | **Violation** | Type B — K8s Manifests Without Jurisdictional Namespacing |
 | **Severity** | HIGH |
 | **Rule Violated** | R-7 |
 
 **Issue:** `GOOGLE_CLOUD_LOCATION: "us-central1"` and `CAGE_ENV: "dev"` are hardcoded. An EU_ECB deployment using this manifest would have its gateway pod routing GCP SDK calls to the wrong region. `CAGE_ENV: "dev"` prevents production-mode enforcement regardless of actual environment.
 
-**Remediation:** Convert to `deployment/k8s/gateway.yaml.tpl` with `${GOOGLE_CLOUD_LOCATION}` and `${CAGE_ENV}` substituted at deploy time from `CAGE_DEPLOYMENT_REGION`.
+**Remediation:** Convert to `de5534ac:deployment/k8s/gateway.yaml.tpl` with `${GOOGLE_CLOUD_LOCATION}` and `${CAGE_ENV}` substituted at deploy time from `CAGE_DEPLOYMENT_REGION`.
 
 ---
 
-### DEP-05 🟠 HIGH — `deployment/k8s/financial-advisor.yaml` hardcodes `us-central1`
+### DEP-05 🟠 HIGH — `de5534ac:deployment/k8s/financial-advisor.yaml` hardcodes `us-central1`
 
 | Attribute | Value |
 |-----------|-------|
-| **File** | `deployment/k8s/financial-advisor.yaml:98` |
+| **File** | `de5534ac:deployment/k8s/financial-advisor.yaml:98` |
 | **Violation** | Type B — K8s Manifests Without Jurisdictional Namespacing |
 | **Severity** | HIGH |
 | **Rule Violated** | R-7 |
@@ -432,11 +432,11 @@ if not _langfuse_host:
 
 ---
 
-### DEP-06 🟠 HIGH — `deployment/k8s/agentsight-daemon.yaml` deploys to wrong namespace; no GDPR guard
+### DEP-06 🟠 HIGH — `de5534ac:deployment/k8s/agentsight-daemon.yaml` deploys to wrong namespace; no GDPR guard
 
 | Attribute | Value |
 |-----------|-------|
-| **File** | `deployment/k8s/agentsight-daemon.yaml:15` |
+| **File** | `de5534ac:deployment/k8s/agentsight-daemon.yaml:15` |
 | **Violation** | Type B — K8s Manifests Without Jurisdictional Namespacing |
 | **Severity** | HIGH |
 | **Rule Violated** | R-3, R-7 |
@@ -447,11 +447,11 @@ if not _langfuse_host:
 
 ---
 
-### DEP-07 🟠 HIGH — `deployment/k8s/compliance-bridge.yaml` sets `OSCAL_S3_REGION: "auto"`
+### DEP-07 🟠 HIGH — `de5534ac:deployment/k8s/compliance-bridge.yaml` sets `OSCAL_S3_REGION: "auto"`
 
 | Attribute | Value |
 |-----------|-------|
-| **File** | `deployment/k8s/compliance-bridge.yaml:88` |
+| **File** | `de5534ac:deployment/k8s/compliance-bridge.yaml:88` |
 | **Violation** | Type B — K8s Manifests Without Jurisdictional Namespacing |
 | **Severity** | HIGH |
 | **Rule Violated** | R-3, R-4, R-7 |
@@ -598,7 +598,7 @@ lifecycle {
 
 | Attribute | Value |
 |-----------|-------|
-| **File** | `deployment/k8s/network-policy-hardening.yaml:27` |
+| **File** | `de5534ac:deployment/k8s/network-policy-hardening.yaml:27` |
 | **Violation** | Type B — K8s Manifests Without Jurisdictional Namespacing |
 | **Severity** | MEDIUM |
 | **Rule Violated** | R-2, R-8 |
@@ -613,7 +613,7 @@ lifecycle {
 
 | Attribute | Value |
 |-----------|-------|
-| **File** | `deployment/k8s/pod-security-admission.yaml:33` |
+| **File** | `de5534ac:deployment/k8s/pod-security-admission.yaml:33` |
 | **Violation** | Type B — K8s Manifests Without Jurisdictional Namespacing |
 | **Severity** | MEDIUM |
 | **Rule Violated** | R-2, R-8 |
@@ -624,11 +624,11 @@ lifecycle {
 
 ---
 
-### DEP-18 🟡 MEDIUM — `deployment/k8s/lula-cron.yaml` does not read `CAGE_DEPLOYMENT_REGION`
+### DEP-18 🟡 MEDIUM — `de5534ac:deployment/k8s/lula-cron.yaml` does not read `CAGE_DEPLOYMENT_REGION`
 
 | Attribute | Value |
 |-----------|-------|
-| **File** | `deployment/k8s/lula-cron.yaml:214` |
+| **File** | `de5534ac:deployment/k8s/lula-cron.yaml:214` |
 | **Violation** | Type B — K8s Manifests Without Jurisdictional Namespacing |
 | **Severity** | MEDIUM |
 | **Rule Violated** | R-7 |
@@ -746,13 +746,13 @@ lifecycle {
 | `scripts/automated_auditor.py` | 1 | 🟠 HIGH |
 | `scripts/verify_remote.py` | 1 | 🟡 MEDIUM |
 | `scripts/verify_all.py` | 1 | 🟢 LOW |
-| `deployment/k8s/gateway.yaml` | 1 | 🟠 HIGH |
-| `deployment/k8s/financial-advisor.yaml` | 1 | 🟠 HIGH |
-| `deployment/k8s/agentsight-daemon.yaml` | 1 | 🟠 HIGH |
-| `deployment/k8s/compliance-bridge.yaml` | 1 | 🟠 HIGH |
-| `deployment/k8s/network-policy-hardening.yaml` | 1 | 🟡 MEDIUM |
-| `deployment/k8s/pod-security-admission.yaml` | 1 | 🟡 MEDIUM |
-| `deployment/k8s/lula-cron.yaml` | 1 | 🟡 MEDIUM |
+| `de5534ac:deployment/k8s/gateway.yaml` | 1 | 🟠 HIGH |
+| `de5534ac:deployment/k8s/financial-advisor.yaml` | 1 | 🟠 HIGH |
+| `de5534ac:deployment/k8s/agentsight-daemon.yaml` | 1 | 🟠 HIGH |
+| `de5534ac:deployment/k8s/compliance-bridge.yaml` | 1 | 🟠 HIGH |
+| `de5534ac:deployment/k8s/network-policy-hardening.yaml` | 1 | 🟡 MEDIUM |
+| `de5534ac:deployment/k8s/pod-security-admission.yaml` | 1 | 🟡 MEDIUM |
+| `de5534ac:deployment/k8s/lula-cron.yaml` | 1 | 🟡 MEDIUM |
 | `deployment/opa_config.yaml` | 1 | 🟡 MEDIUM |
 | `infra/targets/gcp-gke/variables.tf` | 2 | 🟠 HIGH |
 | `infra/targets/gcp-gke/main.tf` | 2 | 🟠 HIGH |
@@ -1196,9 +1196,9 @@ The 66 findings across all four phases are not isolated defects — they reflect
 ### PATTERN-3: Static K8s Manifests with Hardcoded US Region Values
 
 **Manifestation:**
-- `deployment/k8s/gateway.yaml`: `GOOGLE_CLOUD_LOCATION: "us-central1"`, `CAGE_ENV: "dev"`
-- `deployment/k8s/financial-advisor.yaml`: `GOOGLE_CLOUD_LOCATION: "us-central1"`
-- `deployment/k8s/compliance-bridge.yaml`: `OSCAL_S3_REGION: "auto"`
+- `de5534ac:deployment/k8s/gateway.yaml`: `GOOGLE_CLOUD_LOCATION: "us-central1"`, `CAGE_ENV: "dev"`
+- `de5534ac:deployment/k8s/financial-advisor.yaml`: `GOOGLE_CLOUD_LOCATION: "us-central1"`
+- `de5534ac:deployment/k8s/compliance-bridge.yaml`: `OSCAL_S3_REGION: "auto"`
 - `infra/modules/app_secrets/main.tf`: `AWS_REGION = "us-east-1"`
 
 **Root cause:** The codebase has a pattern of using `.yaml.tpl` templates for some resources (e.g., `gateway-deployment.yaml.tpl`, `compliance-bridge-deployment.yaml.tpl`) but not for the most critical ones. This creates a two-tier system where some manifests are region-aware and others are not.
@@ -1256,9 +1256,9 @@ Findings are grouped into four priority tiers based on severity and deployment r
 | DEP-01 | `enable_nist_compliance` activated by `--env prod` | `deploy_all.sh` | S |
 | DEP-02 | `load_env()` does not propagate `CAGE_DEPLOYMENT_REGION` | `deploy_all.sh` | S |
 | DEP-03 | `automated_auditor.py` defaults to SaaS Langfuse | `scripts/automated_auditor.py` | S |
-| DEP-04 | `gateway.yaml` hardcodes `us-central1` and `CAGE_ENV: dev` | `deployment/k8s/gateway.yaml` | M |
-| DEP-05 | `financial-advisor.yaml` hardcodes `us-central1` | `deployment/k8s/financial-advisor.yaml` | M |
-| DEP-07 | `compliance-bridge.yaml` sets `OSCAL_S3_REGION: "auto"` | `deployment/k8s/compliance-bridge.yaml` | S |
+| DEP-04 | `gateway.yaml` hardcodes `us-central1` and `CAGE_ENV: dev` | `de5534ac:deployment/k8s/gateway.yaml` | M |
+| DEP-05 | `financial-advisor.yaml` hardcodes `us-central1` | `de5534ac:deployment/k8s/financial-advisor.yaml` | M |
+| DEP-07 | `compliance-bridge.yaml` sets `OSCAL_S3_REGION: "auto"` | `de5534ac:deployment/k8s/compliance-bridge.yaml` | S |
 | DEP-11 | `app_secrets/main.tf` hardcodes `AWS_REGION = "us-east-1"` | `infra/modules/app_secrets/main.tf` | S |
 | DEP-12 | No `eu-prod.tfvars` or `apac-prod.tfvars` | `infra/targets/gcp-gke/` | M |
 | FINDING-05 | ✅ Remediated — `sla_monitor.py` now calls region-aware `get_sla_seconds()` instead of the deprecated flat `EVIDENCE_SLA_SECONDS` | `src/compliance_bridge/sla_monitor.py` | S |
@@ -1274,8 +1274,8 @@ Findings are grouped into four priority tiers based on severity and deployment r
 | FINDING-07 | ✅ Remediated — `_resolve_pii_retention()` now resolves the citation from `constants.PII_RETENTION_AUTHORITY` at call time | `src/gateway/governance/schemas/thresholds.py` | S |
 | FINDING-08 | ✅ Remediated — `pii_audit_log()` now accepts a `region` param and emits the jurisdiction-specific citation | `src/gateway/governance/pii_sanitizer.py` | S |
 | FINDING-09 | ✅ Remediated — `get_hitl_sla_hours()` / `get_hitl_regulatory_citation()` / `get_injection_citation()` added | `src/gateway/governance/hitl_escalator.py` | S |
-| DEP-16 | NIST annotations on all K8s NetworkPolicy resources | `deployment/k8s/network-policy-hardening.yaml` | M |
-| DEP-17 | NIST SC-39 labels on all Namespace definitions | `deployment/k8s/pod-security-admission.yaml` | S |
+| DEP-16 | NIST annotations on all K8s NetworkPolicy resources | `de5534ac:deployment/k8s/network-policy-hardening.yaml` | M |
+| DEP-17 | NIST SC-39 labels on all Namespace definitions | `de5534ac:deployment/k8s/pod-security-admission.yaml` | S |
 | DEP-19 | OPA policy bundle has no jurisdiction-specific overlay | `deployment/opa_config.yaml` | L |
 | DEP-21 | AI 600-1 Lula validation runs universally in CI | `.github/workflows/ci.yml` | S |
 | DEP-22 | CBRN keyword check asserts `True` universally | `.github/workflows/ci.yml` | S |
@@ -1288,10 +1288,10 @@ Findings are grouped into four priority tiers based on severity and deployment r
 |----|---------|------|--------|
 | FINDING-06 | `/v1/controls` returns all frameworks to all regions | `src/compliance_bridge/main.py` | S |
 | FINDING-10 | `scrub_pii()` lacks GDPR Art. 17 audit trail | `src/governed_financial_advisor/utils/privacy.py` | S |
-| DEP-06 | AgentSight DaemonSet in wrong namespace; no GDPR guard | `deployment/k8s/agentsight-daemon.yaml` | M |
+| DEP-06 | AgentSight DaemonSet in wrong namespace; no GDPR guard | `de5534ac:deployment/k8s/agentsight-daemon.yaml` | M |
 | DEP-14 | `deploy_all.sh` usage text describes `prod` as "NIST compliance" | `deploy_all.sh` | S |
 | DEP-15 | `verify_remote.py` hardcodes `us-central1` fallback URL | `scripts/verify_remote.py` | S |
-| DEP-18 | Lula CronJob does not read `CAGE_DEPLOYMENT_REGION` | `deployment/k8s/lula-cron.yaml` | S |
+| DEP-18 | Lula CronJob does not read `CAGE_DEPLOYMENT_REGION` | `de5534ac:deployment/k8s/lula-cron.yaml` | S |
 | DEP-20 | Redis/PostgreSQL hardening only via `enable_nist_compliance` | `infra/targets/gcp-gke/main.tf` | M |
 | DOC-01 | `README.md` badge row presents NIST as co-equal with ISO 42001 | `README.md` | S |
 | DOC-02 | `README.md` compliance table has no "Jurisdiction" column | `README.md` | S |
@@ -1362,10 +1362,10 @@ Use this pattern as the template for the missing `eu-ecb-compliance-gate` and `a
 | DEP-01 | 🟠 HIGH | Deployment | `deploy_all.sh:238` | R-2,R-7 |
 | DEP-02 | 🟠 HIGH | Deployment | `deploy_all.sh:100` | R-7 |
 | DEP-03 | 🟠 HIGH | Deployment | `scripts/automated_auditor.py:56` | R-3,R-7 |
-| DEP-04 | 🟠 HIGH | Deployment | `deployment/k8s/gateway.yaml:38` | R-7 |
-| DEP-05 | 🟠 HIGH | Deployment | `deployment/k8s/financial-advisor.yaml:98` | R-7 |
-| DEP-06 | 🟠 HIGH | Deployment | `deployment/k8s/agentsight-daemon.yaml:15` | R-3,R-7 |
-| DEP-07 | 🟠 HIGH | Deployment | `deployment/k8s/compliance-bridge.yaml:88` | R-3,R-4,R-7 |
+| DEP-04 | 🟠 HIGH | Deployment | `de5534ac:deployment/k8s/gateway.yaml:38` | R-7 |
+| DEP-05 | 🟠 HIGH | Deployment | `de5534ac:deployment/k8s/financial-advisor.yaml:98` | R-7 |
+| DEP-06 | 🟠 HIGH | Deployment | `de5534ac:deployment/k8s/agentsight-daemon.yaml:15` | R-3,R-7 |
+| DEP-07 | 🟠 HIGH | Deployment | `de5534ac:deployment/k8s/compliance-bridge.yaml:88` | R-3,R-4,R-7 |
 | DEP-08 | 🟠 HIGH | Deployment | `infra/targets/gcp-gke/variables.tf:22` | R-3,R-4,R-7 |
 | DEP-09 | 🟠 HIGH | Deployment | `infra/targets/gcp-gke/variables.tf:546` | R-7 |
 | DEP-10 | 🟠 HIGH | Deployment | `infra/targets/gcp-gke/main.tf:129` | R-3,R-4 |
@@ -1374,9 +1374,9 @@ Use this pattern as the template for the missing `eu-ecb-compliance-gate` and `a
 | DEP-13 | 🟠 HIGH | Deployment | `.github/workflows/security-scan.yml:17` | R-3,R-4 |
 | DEP-14 | 🟡 MEDIUM | Deployment | `deploy_all.sh:49` | R-8 |
 | DEP-15 | 🟡 MEDIUM | Deployment | `scripts/verify_remote.py:31` | R-7 |
-| DEP-16 | 🟡 MEDIUM | Deployment | `deployment/k8s/network-policy-hardening.yaml:27` | R-2,R-8 |
-| DEP-17 | 🟡 MEDIUM | Deployment | `deployment/k8s/pod-security-admission.yaml:33` | R-2,R-8 |
-| DEP-18 | 🟡 MEDIUM | Deployment | `deployment/k8s/lula-cron.yaml:214` | R-7 |
+| DEP-16 | 🟡 MEDIUM | Deployment | `de5534ac:deployment/k8s/network-policy-hardening.yaml:27` | R-2,R-8 |
+| DEP-17 | 🟡 MEDIUM | Deployment | `de5534ac:deployment/k8s/pod-security-admission.yaml:33` | R-2,R-8 |
+| DEP-18 | 🟡 MEDIUM | Deployment | `de5534ac:deployment/k8s/lula-cron.yaml:214` | R-7 |
 | DEP-19 | 🟡 MEDIUM | Deployment | `deployment/opa_config.yaml:64` | R-7 |
 | DEP-20 | 🟡 MEDIUM | Deployment | `infra/targets/gcp-gke/main.tf:210` | R-3 |
 | DEP-21 | 🟡 MEDIUM | Deployment | `.github/workflows/ci.yml:119` | R-2 |

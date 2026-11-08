@@ -34,9 +34,9 @@
 # Provider: opa (inline Rego)
 #
 # References:
-#   - deployment/k8s/network-policy.yaml — default-deny-ingress NetworkPolicy
-#   - deployment/k8s/network-policy-hardening.yaml — hardened L3/L4 policies
-#   - deployment/k8s/opa.yaml — OPA Deployment
+#   - infra/targets/gcp-gke/network_policy.tf — default-deny and hardened L3/L4 NetworkPolicy definitions
+#   - infra/modules/service_mesh/main.tf & infra/modules/gateway/mesh-policy/ — Linkerd mTLS SPIFFE authorization policies
+#   - infra/modules/opa_policy/main.tf — OPA Deployment module
 #   - docs/POAM.md — POAM-007 (IA-3: Linkerd mTLS — CLOSED 2026-05-17)
 #
 # OSCAL Mapping:

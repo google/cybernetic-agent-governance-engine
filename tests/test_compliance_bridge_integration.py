@@ -111,7 +111,7 @@ SKIP_LANGFUSE = os.environ.get("SKIP_LANGFUSE_CHECKS", "").strip() == "1"
 
 # ---------------------------------------------------------------------------
 # Minimal valid OSCAL Assessment Results YAML.
-# Mirrors the structure produced by lula validate (lula-cron.yaml).
+# Mirrors the structure produced by `lula validate` (`.github/workflows/lula-validate.yml`).
 # Controls: A.5.2 (PASS), A.9.2 (FAIL) — triggers Step 4 critical alert path.
 # ---------------------------------------------------------------------------
 
@@ -779,8 +779,8 @@ class TestSSEStream:
 
 class TestLulaCronJobIntegration:
     """
-    Simulates a Lula CronJob run: posts the same OSCAL structure that
-    lula-cron.yaml produces (multi-finding, sequential controls).
+    Simulates a scheduled Lula validation run: posts the multi-finding OSCAL
+    Assessment Results structure produced by `lula validate`.
     """
 
     _LULA_OSCAL = """\
@@ -843,7 +843,7 @@ assessment-results:
         assert r2.status_code == 200
 
     def test_cron_style_audit_id_prefix_accepted(self, session):
-        """audit_id with 'cron-<timestamp>' prefix (as produced by lula-cron.yaml) must be accepted."""
+        """audit_id with 'cron-<timestamp>' prefix must be accepted."""
         ts = int(time.time())
         audit_id = f"cron-{ts}-{_uid()}"
         uid = _uid()

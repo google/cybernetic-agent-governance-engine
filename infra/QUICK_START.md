@@ -286,7 +286,7 @@ terraform apply -var-file=prod.tfvars \
 
 ```bash
 # Four dev profiles (dev, us-dev, eu-dev, apac-dev) set enable_pod_security_standards = false
-# (defaulting namespace admission to privileged; deployment/k8s/pod-security-admission.yaml is not applied by Terraform).
+# (defaulting namespace admission to privileged in infra/modules/k8s_namespace/main.tf).
 # For the Terraform namespace module:
 terraform apply -var-file=dev.tfvars \
   -var="enable_pod_security_standards=true" \
@@ -395,6 +395,6 @@ After validating the minimal stack:
 
 - [Deployment Guide](DEPLOYMENT_GUIDE.md) — full deployment reference
 - [Module Documentation](modules/) — individual module READMEs
-- [`deployment/README.md`](../deployment/README.md) — Kubernetes manifest reference
-- [`deployment/k8s/NAMESPACE-GUIDE.md`](../deployment/k8s/NAMESPACE-GUIDE.md) — namespace topology
+- [`deployment/README.md`](../deployment/README.md) — workload and container deployment reference
+- [`infra/modules/k8s_namespace/main.tf`](modules/k8s_namespace/main.tf) — namespace topology and Pod Security Admission labels
 - [`docs/operations/DEPLOYMENT_RULES.md`](../docs/operations/DEPLOYMENT_RULES.md) — Cloud Build requirement for GKE

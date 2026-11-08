@@ -738,8 +738,8 @@ such header is present and it is listed in `CAGE_TRUSTED_CLIENT_IDENTITIES`
 Otherwise the gateway returns `403`. `CAGE_TRUSTED_CLIENT_IDENTITIES` is
 required in every environment and the gateway always enforces workload
 identity (there is no permissive dev/test mode). The mesh policy in
-`deployment/k8s/linkerd-mtls-policy.yaml` enforces the same rule before the
-container.
+`infra/modules/gateway/mesh-policy/templates/policy.yaml` enforces the same rule
+before the container.
 
 Open paths (no identity needed): `GET /health`, `GET /healthz`, `GET /metrics`,
 `GET /governance/jwks` and `GET /governance/.well-known/jwks.json` — exact

@@ -22,12 +22,10 @@ Validates:
 
 from __future__ import annotations
 
-import os
 import ssl
 from pathlib import Path
 
 import pytest
-import yaml
 
 from src.gateway.infrastructure.tls_context import create_hardened_client_context
 
@@ -68,104 +66,77 @@ class TestTlsProtocolStandards:
 
 
 # ---------------------------------------------------------------------------
-# 2. Linkerd mTLS Policy Manifest Assertions (SC-8 / IA-3)
+# 2. Linkerd mTLS Terraform & Helm Mesh Policy Assertions (SC-8 / IA-3)
 # ---------------------------------------------------------------------------
 
 
 class TestLinkerdMtlsPolicyManifest:
-    """Validate that Kubernetes manifests configure Linkerd mTLS mesh policies."""
+    """Validate that Terraform and Helm mesh-policy templates configure Linkerd mTLS."""
 
     @pytest.fixture
-    def policy_manifest(self) -> list[dict]:
-        manifest_path = (
-            Path(__file__).resolve().parents[1]
-            / "deployment"
-            / "k8s"
-            / "linkerd-mtls-policy.yaml"
-        )
-        assert manifest_path.exists(), (
-            f"Missing Linkerd policy manifest: {manifest_path}"
-        )
-        with open(manifest_path, encoding="utf-8") as f:
-            docs = list(yaml.safe_load_all(f))
-        return [d for d in docs if d is not None]
+    def repo_root(self) -> Path:
+        return Path(__file__).resolve().parents[1]
 
-    def test_service_accounts_declare_sc8_and_poam011(
-        self, policy_manifest: list[dict]
+    @pytest.fixture
+    def policy_manifest(self, repo_root: Path) -> list[dict]:
+        from tests.test_gateway_mesh_policy import (
+            ADVISOR_IDENTITY,
+            _render_mesh_policy_chart,
+        )
+
+        docs = _render_mesh_policy_chart([ADVISOR_IDENTITY])
+        assert docs, "Rendered gateway mesh-policy chart produced zero documents"
+        return docs
+
+    def test_trusted_mesh_identities_resolve_to_declared_terraform_ksas(
+        self, repo_root: Path, policy_manifest: list[dict]
     ) -> None:
-        """Verify mesh ServiceAccounts have compliance annotations for SC-8 and POAM-011.
+        """Verify every SPIFFE identity trusted by MeshTLSAuthentication resolves to a Terraform KSA."""
+        import re
 
-        Mesh-only identities (OPA, NeMo) are declared in the policy manifest.
-        Workload KSAs (gateway, compliance bridge) are declared once, with their
-        Workload Identity bindings, in ``service-account.yaml`` (POAM-2026-079).
-        Every SPIFFE identity trusted by a MeshTLSAuthentication must resolve
-        to a declared ServiceAccount, so a trusted identity cannot silently
-        lose its compliance annotations by moving between manifests.
-        """
-        sa_manifest_path = (
-            Path(__file__).resolve().parents[1]
-            / "deployment"
-            / "k8s"
-            / "service-account.yaml"
+        iam_tf = (repo_root / "infra" / "targets" / "gcp-gke" / "iam.tf").read_text(
+            encoding="utf-8"
         )
-        with open(sa_manifest_path, encoding="utf-8") as f:
-            workload_docs = [d for d in yaml.safe_load_all(f) if d is not None]
+        main_tf = (repo_root / "infra" / "targets" / "gcp-gke" / "main.tf").read_text(
+            encoding="utf-8"
+        )
+        mesh_tf = (
+            repo_root / "infra" / "modules" / "service_mesh" / "main.tf"
+        ).read_text(encoding="utf-8")
 
-        policy_sas = [d for d in policy_manifest if d.get("kind") == "ServiceAccount"]
-        workload_sas = {
-            (d["metadata"]["name"], d["metadata"].get("namespace")): d
-            for d in workload_docs
-            if d.get("kind") == "ServiceAccount"
+        ksa_locals = dict(re.findall(r'\b(ksa_\w+)\s*=\s*"([^"]+)"', iam_tf))
+        declared_ksa_names = {
+            ksa_locals[ref]
+            for ref in re.findall(r"name\s*=\s*local\.(ksa_\w+)", iam_tf)
+            if ref in ksa_locals
         }
+        assert len(declared_ksa_names) >= 6, (
+            f"Expected Terraform workload KSAs in iam.tf, found {declared_ksa_names}"
+        )
 
-        trusted: set[tuple[str, str]] = set()
+        trusted_sa_names: set[str] = set()
         for doc in policy_manifest:
             if doc.get("kind") != "MeshTLSAuthentication":
                 continue
             for identity in doc.get("spec", {}).get("identities", []):
-                sa_name, namespace = identity.split(".")[:2]
-                trusted.add((sa_name, namespace))
-        assert trusted, "No MeshTLSAuthentication identities found"
+                sa_name = identity.split(".", 1)[0]
+                trusted_sa_names.add(sa_name)
+        assert trusted_sa_names, "No MeshTLSAuthentication identities found"
 
-        service_accounts = list(policy_sas)
-        policy_keys = {
-            (d["metadata"]["name"], d["metadata"].get("namespace")) for d in policy_sas
-        }
-        for key in sorted(trusted - policy_keys):
-            assert key in workload_sas, (
-                f"Trusted mesh identity {key[0]}.{key[1]} has no ServiceAccount "
-                "in linkerd-mtls-policy.yaml or service-account.yaml"
-            )
-            service_accounts.append(workload_sas[key])
-
-        assert len(service_accounts) >= 3, (
-            "Expected at least gateway, opa, and nemo ServiceAccounts"
+        missing = trusted_sa_names - declared_ksa_names
+        assert not missing, (
+            f"Trusted mesh identities missing from iam.tf terraform_workload_ksas: {missing}"
         )
 
-        for sa in service_accounts:
-            name = sa.get("metadata", {}).get("name", "unknown")
-            annotations = sa.get("metadata", {}).get("annotations", {})
-            controls = annotations.get("compliance.nist.gov/control", "")
-            poam = annotations.get("cage.io/poam", "")
-
-            assert "SC-8" in controls, (
-                f"ServiceAccount '{name}' missing SC-8 control annotation"
-            )
-            assert "POAM-011" in poam or "POAM-2026-011" in poam, (
-                f"ServiceAccount '{name}' missing POAM-011 tracking annotation"
-            )
+        # Namespace-level Linkerd mTLS injection and CAS root trust anchor (SC-8 / IA-3)
+        assert '"linkerd.io/inject" = "enabled"' in main_tf
+        assert (
+            'resource "google_privateca_certificate_authority" "mesh_root"' in mesh_tf
+        )
 
     def test_server_authorizations_require_mtls_authentication(
         self, policy_manifest: list[dict]
     ) -> None:
-        """Verify ServerAuthorizations in linkerd-mtls-policy enforce authenticated mTLS."""
-        server_auths = [
-            d
-            for d in policy_manifest
-            if d.get("kind")
-            in ("ServerAuthorization", "AuthorizationPolicy", "MeshTLSAuthentication")
-        ]
-        # Manifest defines Server / ServerAuthorization resources enforcing mesh mTLS
-        assert len(server_auths) > 0, (
-            "Expected ServerAuthorization or MeshTLS policies in manifest"
-        )
+        """Verify rendered mesh-policy chart defines Server, AuthorizationPolicy, and MeshTLSAuthentication."""
+        kinds = {d.get("kind") for d in policy_manifest}
+        assert {"Server", "AuthorizationPolicy", "MeshTLSAuthentication"} <= kinds

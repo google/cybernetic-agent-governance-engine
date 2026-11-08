@@ -16,7 +16,7 @@
 
 Runs scenarios S0, S1a, S1b, S1, S2, S3 and S4 from
 ``tests/test_trade_governance_e2e.py`` over the wire, from inside the mesh
-(``deployment/k8s/verify-trade-e2e-job.yaml`` runs it as ``cage-advisor-sa`` with a
+(``tests/e2e/fixtures/verify-trade-e2e-job.yaml`` runs it as ``cage-advisor-sa`` with a
 Linkerd proxy, so the gateway sees a real peer-verified ``l5d-client-id``).
 It also checks what the hermetic suite cannot: the gateway's JWKS holds only
 asymmetric keys with a ``kid``, and a signed ALLOW envelope verifies against a

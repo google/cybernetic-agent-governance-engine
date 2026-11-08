@@ -27,8 +27,8 @@ locals {
 
   # Kubernetes ServiceAccount names (KSAs), one per workload (POAM-2026-079).
   # The "-sa" suffix matches the Linkerd mesh identities in
-  # deployment/k8s/linkerd-mtls-policy.yaml, so one KSA carries both the
-  # Workload Identity and the SPIFFE identity of a workload.
+  # infra/modules/gateway/mesh-policy/templates/policy.yaml, so one KSA carries
+  # both the Workload Identity and the SPIFFE identity of a workload.
   ksa_gateway           = "cage-gateway-sa"
   ksa_advisor           = "cage-advisor-sa"
   ksa_reconciler        = "cage-reconciler-sa"
@@ -39,8 +39,7 @@ locals {
   ksa_langfuse          = "langfuse-sa"
   ksa_clickhouse        = "cage-clickhouse-sa"
 
-  # vLLM runs in var.namespace when deployed by Terraform and in
-  # "vllm-inference" when deployed from deployment/k8s/ manifests.
+  # vLLM runs in var.namespace by default; keep "vllm-inference" bound when dedicated GPU namespace isolation is enabled.
   vllm_workload_namespaces = distinct([var.namespace, "vllm-inference"])
 
   # Resolve default model bucket name when var.model_bucket_name is empty
@@ -89,7 +88,7 @@ resource "google_service_account" "vllm" {
 resource "google_service_account" "benchmark" {
   account_id   = local.sa_benchmark
   display_name = "CAGE Benchmark Service Account"
-  description  = "SA for the paper benchmark job (deployment/k8s/benchmark-job.yaml). Signs only with the benchmark-signing key, which no verifier trusts (POAM-2026-079)."
+  description  = "SA for the paper benchmark job (scripts/fixtures/benchmark/benchmark-job.yaml). Signs only with the benchmark-signing key, which no verifier trusts (POAM-2026-079)."
   project      = var.project_id
 }
 
@@ -357,6 +356,16 @@ locals {
       name    = local.ksa_clickhouse
       gsa     = google_service_account.clickhouse.email
       purpose = "query-plane"
+    }
+    benchmark = {
+      name    = local.ksa_benchmark
+      gsa     = google_service_account.benchmark.email
+      purpose = "paper-evaluation"
+    }
+    lula = {
+      name    = local.ksa_lula
+      gsa     = google_service_account.lula.email
+      purpose = "compliance-validation"
     }
   }
 }

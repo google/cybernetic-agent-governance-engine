@@ -23,7 +23,7 @@
 | **Rego**                      | OPA built-in        | Apache-2.0     | Policy-as-code; symbolic governance enforcement                                | Declarative, side-effect-free policy evaluation; `trade.governance` package; `deployment/system_authz.rego` |
 | **Colang 2.x**                | NeMo Guardrails 2.x | Apache-2.0     | Dialog-flow safety rails and guardrail definitions                             | Event-driven conversational safety rails; `config/rails/definitions.co`, `config/rails/main_logic.co` |
 | **HCL (Terraform)**           | $\ge 1.5$           | MPL-2.0 / BSL  | Infrastructure-as-code; GKE, IAM, secrets, storage provisioning                | Reproducible, auditable cloud topology; `infra/modules/`, `infra/targets/`         |
-| **YAML**                      | —                   | —              | Kubernetes manifests, OSCAL artifacts, Lula validations, Cloud Build pipelines | Industry standard declarative configuration; `deployment/k8s/`, `compliance/`      |
+| **YAML**                      | —                   | —              | Helm chart templates, OSCAL artifacts, Lula validations, Cloud Build pipelines | Industry standard declarative configuration; `infra/modules/gateway/`, `compliance/` |
 | **Protocol Buffers (proto3)** | proto3              | BSD-3-Clause   | gRPC interface definitions for gateway and NeMo communication                  | Strongly typed, backward-compatible cross-process communication; [`src/gateway/protos/gateway.proto`](../../src/gateway/protos/gateway.proto) |
 
 ---

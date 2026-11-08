@@ -38,7 +38,7 @@ resource "kubernetes_config_map_v1" "redis_ca" {
 }
 
 # Holds the non-secret KMS CryptoKeyVersion URI under the canonical secret key
-# expected by deployment/k8s/reconciliation-worker.yaml (POAM-2026-096).
+# expected by kubernetes_deployment.reconciliation_worker below (POAM-2026-096).
 resource "kubernetes_secret" "reconciliation_worker" {
   metadata {
     name      = "reconciliation-worker-secrets"

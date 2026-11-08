@@ -42,11 +42,26 @@ pytestmark = [pytest.mark.unit, pytest.mark.local]
 
 _REPO = Path(__file__).resolve().parents[2]
 _INFRA = _REPO / "infra"
-_K8S = _REPO / "deployment" / "k8s"
 _GKE = _INFRA / "targets" / "gcp-gke"
+_FIXTURE_ROOTS = (
+    _REPO / "tests" / "e2e" / "fixtures",
+    _REPO / "scripts" / "fixtures" / "benchmark",
+)
 
 _RETIRED_KSA = "financial-advisor-sa"
 _POD_KINDS = {"Deployment", "StatefulSet", "DaemonSet", "Job", "CronJob", "Pod"}
+_TF_WORKLOAD_TYPES = {
+    "kubernetes_deployment": "Deployment",
+    "kubernetes_deployment_v1": "Deployment",
+    "kubernetes_stateful_set": "StatefulSet",
+    "kubernetes_stateful_set_v1": "StatefulSet",
+    "kubernetes_daemon_set": "DaemonSet",
+    "kubernetes_daemon_set_v1": "DaemonSet",
+    "kubernetes_job": "Job",
+    "kubernetes_job_v1": "Job",
+    "kubernetes_cron_job": "CronJob",
+    "kubernetes_cron_job_v1": "CronJob",
+}
 
 # KSAs whose GSA may hold a KMS signer role on some key.
 _SIGNING_KSAS = {
@@ -81,6 +96,9 @@ _PLACEHOLDER = re.compile(r"\$\{[A-Z0-9_]+\}")
 
 def _tracked(*roots: Path) -> list[Path]:
     """Tracked and new, non-ignored files (generated/ and tfstate are gitignored)."""
+    existing_roots = [r for r in roots if r.exists()]
+    if not existing_roots:
+        return []
     out = subprocess.run(
         [
             "git",
@@ -90,7 +108,7 @@ def _tracked(*roots: Path) -> list[Path]:
             "--others",
             "--exclude-standard",
             "--",
-            *(str(r.relative_to(_REPO)) for r in roots),
+            *(str(r.relative_to(_REPO)) for r in existing_roots),
         ],
         cwd=_REPO,
         check=True,
@@ -104,17 +122,17 @@ def _tf_sources() -> list[Path]:
     return [p for p in _tracked(_INFRA) if p.suffix in {".tf", ".tfvars"}]
 
 
-def _manifests() -> list[Path]:
+def _fixture_manifests() -> list[Path]:
     return sorted(
-        p for p in _tracked(_K8S) if p.name.endswith((".yaml", ".yaml.tpl", ".yml"))
+        p
+        for p in _tracked(*_FIXTURE_ROOTS)
+        if p.name.endswith((".yaml", ".yaml.tpl", ".yml"))
     )
 
 
 def _load_docs(path: Path) -> list[dict]:
     text = path.read_text()
     if path.name.endswith(".tpl"):
-        # Render envsubst placeholders: whole-line blocks drop, inline values
-        # become a scalar. A manifest that still fails to parse fails the test.
         text = _PLACEHOLDER.sub("placeholder", _PLACEHOLDER_LINE.sub("", text))
     return [d for d in yaml.safe_load_all(text) if isinstance(d, dict)]
 
@@ -131,9 +149,197 @@ def _pod_spec(doc: dict) -> dict | None:
     return (spec.get("template") or {}).get("spec") or {}
 
 
+def _brace_block(text: str, start_idx: int) -> tuple[str, int]:
+    """Return balanced ``{ ... }`` body starting at or after ``start_idx``."""
+    open_idx = text.index("{", start_idx)
+    depth = 0
+    in_str = False
+    esc = False
+    for idx in range(open_idx, len(text)):
+        ch = text[idx]
+        if in_str:
+            if esc:
+                esc = False
+            elif ch == "\\":
+                esc = True
+            elif ch == '"':
+                in_str = False
+            continue
+        if ch == '"':
+            in_str = True
+        elif ch == "{":
+            depth += 1
+        elif ch == "}":
+            depth -= 1
+            if depth == 0:
+                return text[open_idx + 1 : idx], idx + 1
+    raise AssertionError(f"Unbalanced HCL block at {start_idx}")
+
+
+def _parse_iam_ksas() -> tuple[dict[str, dict], dict[str, str]]:
+    """Parse ``local.terraform_workload_ksas`` from ``infra/targets/gcp-gke/iam.tf``."""
+    iam_tf = (_GKE / "iam.tf").read_text()
+    sa_locals = dict(re.findall(r'^\s*(sa_\w+)\s*=\s*"([^"]+)"', iam_tf, re.M))
+    ksa_locals = dict(re.findall(r'^\s*(ksa_\w+)\s*=\s*"([^"]+)"', iam_tf, re.M))
+    gsa_accounts: dict[str, str] = {}
+    for m in re.finditer(r'resource\s+"google_service_account"\s+"(\w+)"\s*\{', iam_tf):
+        body, _ = _brace_block(iam_tf, m.start())
+        loc_acc = re.search(r"account_id\s*=\s*local\.(sa_\w+)", body)
+        lit_acc = re.search(r'account_id\s*=\s*"([^"]+)"', body)
+        if loc_acc and loc_acc.group(1) in sa_locals:
+            gsa_accounts[m.group(1)] = sa_locals[loc_acc.group(1)]
+        elif lit_acc:
+            gsa_accounts[m.group(1)] = lit_acc.group(1)
+
+    map_match = re.search(r"\bterraform_workload_ksas\s*=\s*\{", iam_tf)
+    assert map_match is not None, "local.terraform_workload_ksas missing from iam.tf"
+    map_body, _ = _brace_block(iam_tf, map_match.start())
+
+    key_to_ksa: dict[str, str] = {}
+    declared: dict[str, dict] = {}
+    pos = 0
+    entry_re = re.compile(r"^\s*(\w+)\s*=\s*\{", re.M)
+    while True:
+        em = entry_re.search(map_body, pos)
+        if not em:
+            break
+        key = em.group(1)
+        entry_body, pos = _brace_block(map_body, em.start())
+        name_m = re.search(r"name\s*=\s*local\.(ksa_\w+)", entry_body)
+        assert name_m is not None, f"KSA {key} missing local.ksa_* name"
+        ksa_name = ksa_locals[name_m.group(1)]
+        key_to_ksa[key] = ksa_name
+
+        annotations: dict[str, str] = {}
+        if not re.search(r"gsa\s*=\s*null\b", entry_body):
+            gsa_m = re.search(
+                r"gsa\s*=\s*google_service_account\.(\w+)\.email", entry_body
+            )
+            assert gsa_m is not None, f"Unrecognized gsa expression in KSA {key}"
+            account_id = gsa_accounts[gsa_m.group(1)]
+            annotations["iam.gke.io/gcp-service-account"] = (
+                f"{account_id}@project.iam.gserviceaccount.com"
+            )
+        declared[ksa_name] = {
+            "name": ksa_name,
+            "namespace": "governance-stack",
+            "annotations": annotations,
+        }
+    return declared, key_to_ksa
+
+
+def _module_default_strings(variables_tf: Path) -> dict[str, str]:
+    if not variables_tf.exists():
+        return {}
+    text = variables_tf.read_text()
+    defaults: dict[str, str] = {}
+    for m in re.finditer(r'variable\s+"(\w+)"\s*\{', text):
+        body, _ = _brace_block(text, m.start())
+        dm = re.search(r'default\s*=\s*"([^"]*)"', body)
+        if dm:
+            defaults[m.group(1)] = dm.group(1)
+    return defaults
+
+
+def _tf_workloads() -> list[tuple[str, dict, dict]]:
+    """Synthesize K8s-shaped workload tuples from GKE Terraform modules."""
+    _, key_to_ksa = _parse_iam_ksas()
+    main_tf = (_GKE / "main.tf").read_text()
+    out: list[tuple[str, dict, dict]] = []
+
+    for m in re.finditer(r'^\s*module\s+"(\w+)"\s*\{', main_tf, re.M):
+        mod_inst = m.group(1)
+        mod_call_body, _ = _brace_block(main_tf, m.start())
+        src_m = re.search(r'source\s*=\s*"\.\./\.\./modules/([^"]+)"', mod_call_body)
+        if not src_m:
+            continue
+        mod_dir = _INFRA / "modules" / src_m.group(1)
+        mod_main = mod_dir / "main.tf"
+        if not mod_main.exists():
+            continue
+
+        var_env = _module_default_strings(mod_dir / "variables.tf")
+        for vm in re.finditer(r'^\s*(\w+)\s*=\s*"([^"]*)"', mod_call_body, re.M):
+            var_env[vm.group(1)] = vm.group(2)
+
+        sa_m = re.search(
+            r'service_account_name\s*=\s*kubernetes_service_account\.workload\["(\w+)"\]\.metadata\[0\]\.name',
+            mod_call_body,
+        )
+        resolved_sa = (
+            key_to_ksa[sa_m.group(1)]
+            if sa_m
+            else var_env.get("service_account_name", "") or "default"
+        )
+
+        mod_text = mod_main.read_text()
+        for rm in re.finditer(
+            r'^\s*resource\s+"(kubernetes_\w+)"\s+"(\w+)"\s*\{', mod_text, re.M
+        ):
+            rtype, rname = rm.group(1), rm.group(2)
+            if rtype not in _TF_WORKLOAD_TYPES:
+                continue
+            rbody, _ = _brace_block(mod_text, rm.start())
+
+            meta_m = re.search(r"\bmetadata\s*\{", rbody)
+            w_name = rname
+            if meta_m:
+                meta_body, _ = _brace_block(rbody, meta_m.start())
+                nm = re.search(r"name\s*=\s*(.+)", meta_body)
+                if nm:
+                    raw = nm.group(1).strip().strip('"')
+                    for k, v in var_env.items():
+                        raw = raw.replace(f"var.{k}", v).replace(f"${{var.{k}}}", v)
+                    w_name = raw
+
+            sa_in_pod = resolved_sa if "service_account_name" in rbody else "default"
+            images = [
+                im.group(1).strip().strip('"')
+                for im in re.finditer(r"^\s*image\s*=\s*(.+)$", rbody, re.M)
+            ]
+            env_from = [
+                {"secretRef": {"name": sm.group(1)}}
+                for sm in re.finditer(
+                    r'secret_ref\s*\{\s*name\s*=\s*"([^"]+)"', rbody, re.S
+                )
+            ]
+            envs: list[dict] = []
+            for em in re.finditer(r"\benv\s*\{", rbody):
+                ebody, _ = _brace_block(rbody, em.start())
+                enm = re.search(r'name\s*=\s*"([^"]+)"', ebody)
+                if not enm:
+                    continue
+                entry: dict = {"name": enm.group(1)}
+                skm = re.search(
+                    r'secret_key_ref\s*\{[^}]*name\s*=\s*"([^"]+)"', ebody, re.S
+                )
+                if skm:
+                    entry["valueFrom"] = {"secretKeyRef": {"name": skm.group(1)}}
+                envs.append(entry)
+
+            doc = {
+                "kind": _TF_WORKLOAD_TYPES[rtype],
+                "metadata": {"name": w_name, "namespace": "governance-stack"},
+            }
+            pod = {
+                "serviceAccountName": sa_in_pod,
+                "containers": [
+                    {
+                        "name": rname,
+                        "image": " ".join(images),
+                        "envFrom": env_from,
+                        "env": envs,
+                    }
+                ],
+            }
+            rel = f"{mod_main.relative_to(_REPO)}#{mod_inst}.{rname}"
+            out.append((rel, doc, pod))
+    return out
+
+
 def _workloads() -> list[tuple[str, dict, dict]]:
-    out = []
-    for path in _manifests():
+    out = _tf_workloads()
+    for path in _fixture_manifests():
         for doc in _load_docs(path):
             pod = _pod_spec(doc)
             if pod is not None:
@@ -143,7 +349,10 @@ def _workloads() -> list[tuple[str, dict, dict]]:
 
 def _declared_ksas() -> dict[tuple[str, str], dict]:
     ksas: dict[tuple[str, str], dict] = {}
-    for path in _manifests():
+    iam_declared, _ = _parse_iam_ksas()
+    for ksa_name, meta in iam_declared.items():
+        ksas[(meta["namespace"], ksa_name)] = meta
+    for path in _fixture_manifests():
         for doc in _load_docs(path):
             if doc.get("kind") == "ServiceAccount":
                 meta = doc["metadata"]
@@ -159,8 +368,9 @@ def _declared_ksas() -> dict[tuple[str, str], dict]:
 
 
 def test_retired_shared_ksa_absent_from_infra_deployment_and_src() -> None:
+    assert not (_REPO / "deployment" / "k8s").exists()
     offenders = []
-    for p in _tracked(_INFRA, _REPO / "deployment", _REPO / "src"):
+    for p in _tracked(_INFRA, _REPO / "deployment", _REPO / "src", *_FIXTURE_ROOTS):
         if p.suffix not in {
             ".tf",
             ".tfvars",
@@ -184,18 +394,19 @@ def test_retired_shared_ksa_absent_from_infra_deployment_and_src() -> None:
 
 
 # ---------------------------------------------------------------------------
-# Manifests
+# Terraform & Fixture Workloads
 # ---------------------------------------------------------------------------
 
 
 def test_every_manifest_service_account_is_declared_per_namespace() -> None:
     declared = _declared_ksas()
-    linkerd_only = {"cage-opa-sa", "cage-nemo-sa"}
+    workloads = _workloads()
+    assert len(workloads) >= 12
     missing = []
-    for path, doc, pod in _workloads():
+    for path, doc, pod in workloads:
         ns = doc["metadata"].get("namespace", "")
         sa = pod.get("serviceAccountName", "default")
-        if sa == "default" or ns == "placeholder" or sa in linkerd_only:
+        if sa == "default" or ns == "placeholder":
             continue  # default KSA carries no cloud identity; templated namespace
         if (ns, sa) not in declared:
             missing.append(f"{path}: {ns}/{sa}")
@@ -213,6 +424,7 @@ def test_annotated_ksas_map_one_to_one_to_their_own_gsa() -> None:
             f"{ns}/{name} is bound to a GSA it does not own: {gsa}"
         )
         gsas.setdefault(local_part, set()).add(name)
+    assert len(gsas) >= 8
     assert all(len(v) == 1 for v in gsas.values()), (
         f"GSA shared by several KSAs: {gsas}"
     )
@@ -220,22 +432,30 @@ def test_annotated_ksas_map_one_to_one_to_their_own_gsa() -> None:
 
 def test_model_serving_pods_never_hold_a_signing_identity() -> None:
     offenders = []
+    checked = 0
     for path, doc, pod in _workloads():
         images = " ".join(c.get("image", "") for c in pod.get("containers", []))
         if "vllm" in images.lower() or "vllm" in doc["metadata"]["name"].lower():
+            checked += 1
             sa = pod.get("serviceAccountName", "default")
             if sa in _SIGNING_KSAS:
                 offenders.append(f"{path}: {sa}")
+    assert checked >= 2
     assert offenders == [], f"vLLM pods hold a signing identity: {offenders}"
 
 
-@pytest.mark.parametrize("prefix", ["langfuse", "frontend"])
+@pytest.mark.parametrize("prefix", ["langfuse", "agentsight-ui"])
 def test_telemetry_and_ui_pods_have_no_signing_identity(prefix: str) -> None:
-    offenders = [
-        f"{path}: {pod.get('serviceAccountName')}"
+    matched = [
+        (path, pod)
         for path, doc, pod in _workloads()
         if doc["metadata"]["name"].startswith(prefix)
-        and pod.get("serviceAccountName", "default") in _SIGNING_KSAS
+    ]
+    assert matched, f"No workload matched prefix {prefix!r}"
+    offenders = [
+        f"{path}: {pod.get('serviceAccountName')}"
+        for path, pod in matched
+        if pod.get("serviceAccountName", "default") in _SIGNING_KSAS
     ]
     assert offenders == [], f"{prefix} pods hold a signing identity: {offenders}"
 

@@ -54,7 +54,7 @@ The CAGE ISCM program implements a tiered monitoring architecture aligned to NIS
 | **Real-time**      | < 1 second         | OpenTelemetry spans with ISO 42001 governance stamps; OPA enforcement decisions inline                 | AC-3, AU-12, SI-4, AC-6 | OTel trace per request; governance decision log in Langfuse                      |
 | **Event-driven**   | Seconds            | SSE governance event bus (`src/compliance_bridge/sse_events.py`); IR notifications on policy violation | IR-6, SI-4, AU-9        | SSE event stream; compliance_bridge audit webhook                                |
 | **Periodic — 60s** | Every 60 seconds   | SC-4 real-time watch deployment; network policy enforcement check                                      | SC-4, CM-6, CM-7        | Watch pod logs; network policy admission events                                  |
-| **Periodic — 6h**  | Every 6 hours      | Lula CronJob OSCAL assessment (`deployment/k8s/lula-cron.yaml`); automated control validation          | CA-7, SI-7, CM-6        | OSCAL Assessment Results artifact; Lula pass/fail report                         |
+| **Periodic — 6h**  | Every 6 hours      | Lula OSCAL assessment (`src/compliance_bridge/lula_scheduler.py`; Terraform CronJob tracked under `POAM-2026-195`, replacing `de5534ac:deployment/k8s/lula-cron.yaml`); automated control validation | CA-7, SI-7, CM-6 | OSCAL Assessment Results artifact; Lula pass/fail report |
 | **Daily**          | Daily at 02:00 UTC | GitHub Actions security scan (`.github/workflows/security-scan.yml`); pip-audit + Trivy + OPA lint     | RA-5, CM-8, SI-2, CM-6  | pip-audit JSON, SARIF (GitHub Security tab), CycloneDX SBOM, dependency snapshot |
 | **Weekly**         | Every Monday       | Manual POA&M review by ISSO; triage of GitHub Security alerts                                          | CA-5, RA-3, PM-4        | Updated `docs/POAM.md`; risk register delta                                      |
 | **Monthly**        | First business day | Control effectiveness review; SSP currency check; Langfuse metric review                               | CA-7, PM-6, SA-11       | Monthly ISCM Report to System Owner and AO                                       |
@@ -69,14 +69,14 @@ The CAGE ISCM program implements a tiered monitoring architecture aligned to NIS
 | **OpenTelemetry (OTel)**     | Distributed tracing; per-request governance decision recording         | AU-12, SI-4, AU-9  | 90 days (Langfuse)                                 | `src/gateway/server/governance_middleware.py`                     |
 | **Langfuse**                 | LLM observability; evaluation scoring; prompt management               | AU-12, SA-11, SI-4 | 90 days                                            | `deployment/langfuse/`; `scripts/evaluate_langfuse_traces.py`     |
 | **OPA (Open Policy Agent)**  | Policy-as-code enforcement; rego-based access control decisions        | AC-3, CM-6, SI-7   | Policy logs: 30 days                               | `deployment/opa_config.yaml`; `deployment/system_authz.rego`      |
-| **Lula**                     | Automated OSCAL control validation against live Kubernetes resources   | CA-7, SI-7         | Assessment results: 1 year                         | `compliance/lula/`; `deployment/k8s/lula-cron.yaml`               |
+| **Lula**                     | Automated OSCAL control validation against live Kubernetes resources   | CA-7, SI-7         | Assessment results: 1 year                         | `compliance/lula/`; `src/compliance_bridge/lula_scheduler.py` (`POAM-2026-195`) |
 | **pip-audit**                | Python dependency CVE scanning against OSV/PyPI Advisory Database      | RA-5, SI-2         | Artifact: 90 days (GitHub)                         | `.github/workflows/security-scan.yml`                             |
 | **Trivy (Aqua Security)**    | Container image and filesystem vulnerability scanning; SBOM generation | RA-5, CM-8         | SARIF: GitHub Security tab; SBOM artifact: 90 days | `.github/workflows/security-scan.yml`                             |
 | **GitHub Advanced Security** | SARIF ingestion; secret scanning; code scanning alerts                 | RA-5, SI-3, SA-11  | Indefinite (GitHub)                                | GitHub repository Security tab                                    |
-| **GKE Network Policy**       | Layer 3/4 micro-segmentation between namespace workloads               | SC-7, AC-4, SC-4   | Network policy events: 30 days (Cloud Logging)     | `deployment/k8s/network-policy.yaml`                              |
+| **GKE Network Policy**       | Layer 3/4 micro-segmentation between namespace workloads               | SC-7, AC-4, SC-4   | Network policy events: 30 days (Cloud Logging)     | `infra/targets/gcp-gke/network_policy.tf`                         |
 | **Cloud Logging (GCP)**      | Centralized log aggregation for GKE workloads and GCP services         | AU-3, AU-6, AU-12  | 400 days (default GCP)                             | GCP Console; `infra/`                              |
 | **Lula + OSCAL**             | Component-level compliance evidence; assessment artifacts              | CA-7, CA-2, SA-11  | 3 years (FedRAMP standard)                         | `compliance/oscal/component-definition.yaml`                      |
-| **AgentSight**               | AI agent behavior monitoring; eBPF-based process and network telemetry | SI-4, AU-12, IR-5  | 30 days                                            | `deployment/agentsight/`; `deployment/k8s/agentsight-daemon.yaml` |
+| **AgentSight**               | AI agent behavior monitoring; eBPF-based process and network telemetry (`POAM-2026-193`) | SI-4, AU-12, IR-5 | 30 days | `deployment/agentsight/`; retired `de5534ac:deployment/k8s/agentsight-daemon.yaml` |
 
 ---
 
@@ -149,7 +149,7 @@ The following key performance indicators (KPIs) measure the effectiveness of the
 | 4   | **Mean Time to Remediate — CRITICAL CVE** | ≤ 24 hours      | POA&M delta: date identified → date closed for CRITICAL findings                | SI-2, RA-5  |
 | 5   | **Mean Time to Remediate — HIGH CVE**     | ≤ 30 days       | POA&M delta: date identified → date closed for HIGH findings                    | SI-2, RA-5  |
 | 6   | **SBOM Freshness**                        | ≤ 25 hours old  | Trivy CycloneDX SBOM artifact timestamp vs. current time                        | CM-8        |
-| 7   | **Lula OSCAL Control Pass Rate**          | ≥ 90%           | Lula CronJob results: passing validations / total validations                   | CA-7, SI-7  |
+| 7   | **Lula OSCAL Control Pass Rate**          | ≥ 90%           | Lula validation results: passing validations / total validations                | CA-7, SI-7  |
 | 8   | **Model Confidence Enforcement Rate**     | 100%            | Trades blocked when confidence < 0.95 / total low-confidence requests           | SA-11, CM-6 |
 | 9   | **Prompt Injection Block Rate**           | 100%            | Tier-1 keyword matches blocked / total Tier-1 detections                        | SI-3, AC-3  |
 | 10  | **POA&M Item Aging**                      | 0 items overdue | Count of POA&M items past scheduled completion date                             | CA-5, RA-3  |
@@ -158,7 +158,7 @@ The following key performance indicators (KPIs) measure the effectiveness of the
 
 - **Metrics 1–2:** Extracted from Langfuse and OPA decision logs via `scripts/automated_auditor.py` and `scripts/evaluate_langfuse_traces.py`
 - **Metrics 3–6:** Extracted from GitHub Actions workflow run history and artifact metadata
-- **Metrics 7:** Lula CronJob output (`deployment/k8s/lula-cron.yaml`) aggregated in OSCAL Assessment Results
+- **Metrics 7:** Lula assessment output (`src/compliance_bridge/lula_scheduler.py`; Terraform CronJob tracked under `POAM-2026-195`) aggregated in OSCAL Assessment Results
 - **Metrics 8–9:** Governance middleware telemetry from `src/gateway/server/governance_middleware.py`
 - **Metric 10:** Manual POA&M review from `docs/POAM.md` by ISSO
 

@@ -329,6 +329,11 @@ jobs:
         # byte-for-byte parity of docs/compliance/OSCAL_EVIDENCE_CLAIM_REGISTER.md.
         run: |
           uv run python scripts/check_oscal_claim_census.py --verify-rendered docs/compliance/OSCAL_EVIDENCE_CLAIM_REGISTER.md
+      - name: Kubernetes shadow-manifest absence & Terraform selector parity gate
+        # Ensures deployment/k8s/ remains retired and raises OrphanSelectorError
+        # if any selector in infra/ matches zero Terraform workload pod templates.
+        run: |
+          uv run python scripts/check_k8s_terraform_parity.py
 
   bare-kernel-smoke:
     name: "Bare-Kernel Smoke Test (Zero Cloud SDKs)"

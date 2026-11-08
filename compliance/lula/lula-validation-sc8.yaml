@@ -30,9 +30,9 @@
 # Provider: opa (inline Rego)
 #
 # References:
-#   - deployment/k8s/network-policy.yaml — default-deny-ingress NetworkPolicy
-#   - deployment/k8s/ingress.yaml — Ingress TLS configuration
-#   - deployment/k8s/backend-deployment.yaml — container security context
+#   - infra/targets/gcp-gke/network_policy.tf — default-deny and hardened NetworkPolicy definitions
+#   - infra/targets/gcp-gke/perimeter.tf — GKE Ingress managed TLS & Cloud Armor BackendConfig
+#   - infra/modules/governed_advisor/main.tf — container security context
 #   - infra/modules/gateway/main.tf — gateway-redis-ca ConfigMap & mount
 #   - infra/modules/compliance_bridge/main.tf — compliance-bridge-redis-ca ConfigMap & mount
 #   - docs/POAM.md — POAM-011 (SC-8: no TLS assertion in test suite), POAM-2026-086 (SC-8: Memorystore CA pinning)

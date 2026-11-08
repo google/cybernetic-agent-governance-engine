@@ -78,7 +78,7 @@ except WorkloadIdentityError as identity_exc:
     )
 ```
 
-`WorkloadIdentityMiddleware` is installed on the gateway root app in [`hybrid_server.py`](../../src/gateway/server/hybrid_server.py). It is the application half of a two-layer control; the mesh half is the Linkerd `Server` / `HTTPRoute` / `MeshTLSAuthentication` / `AuthorizationPolicy` set in [`deployment/k8s/linkerd-mtls-policy.yaml`](../../deployment/k8s/linkerd-mtls-policy.yaml) (Terraform: [`infra/modules/gateway/mesh-policy/`](../../infra/modules/gateway/mesh-policy)), which admits only the advisor identity to gated routes. The Linkerd control plane and CAS trust anchor are provisioned by [`infra/modules/service_mesh/`](../../infra/modules/service_mesh).
+`WorkloadIdentityMiddleware` is installed on the gateway root app in [`hybrid_server.py`](../../src/gateway/server/hybrid_server.py). It is the application half of a two-layer control; the mesh half is the Linkerd `Server` / `HTTPRoute` / `MeshTLSAuthentication` / `AuthorizationPolicy` set in [`infra/modules/gateway/mesh-policy/templates/policy.yaml`](../../infra/modules/gateway/mesh-policy/templates/policy.yaml) (provisioned by [`infra/modules/gateway/mesh-policy/`](../../infra/modules/gateway/mesh-policy)), which admits only the advisor identity to gated routes. The Linkerd control plane and CAS trust anchor are provisioned by [`infra/modules/service_mesh/`](../../infra/modules/service_mesh).
 
 **Security Boundary:**
 - **Trust Anchor:** Linkerd inbound mTLS termination proxy validates certificate chains against the mesh trust anchor (Google CAS) before forwarding to the gateway and setting `l5d-client-id`.

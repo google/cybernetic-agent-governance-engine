@@ -24,7 +24,7 @@
 # Provider: opa (inline Rego)
 #
 # References:
-#   - deployment/k8s/opa.yaml — OPA Deployment manifest
+#   - infra/modules/opa_policy/main.tf — OPA Deployment & ConfigMap module
 #   - deployment/opa_config.yaml — OPA bundle configuration
 #   - deployment/system_authz.rego — Canonical access enforcement policy
 #

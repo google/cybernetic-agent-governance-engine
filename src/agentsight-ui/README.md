@@ -150,7 +150,7 @@ docker build -t agentsight-ui .
 docker run -p 80:80 agentsight-ui
 ```
 
-In Kubernetes, the UI is deployed via [`deployment/k8s/frontend-deployment.yaml.tpl`](../../deployment/k8s/frontend-deployment.yaml.tpl). The nginx ingress routes:
+In Kubernetes, the UI is deployed via Terraform ([`infra/modules/agentsight_ui/main.tf`](../../infra/modules/agentsight_ui/main.tf)). The nginx ingress routes:
 
 - `/` → `agentsight-ui` service (port 80)
 - `/v1/` → `compliance-bridge` Python service (port 3001)

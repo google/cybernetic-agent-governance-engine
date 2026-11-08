@@ -184,8 +184,7 @@ test-partner:
 	@uv run pytest tests/ -m partner_integration --run-partner-integration -v
 
 ## Run Linkerd service-mesh conformance tests against a Linkerd-enabled cluster (kind or GKE)
-## Prerequisite: the governance-stack/cage-deployment ConfigMap (live runs read the region from it):
-##   envsubst '${CAGE_DEPLOYMENT_REGION}' < deployment/k8s/cage-deployment-configmap.yaml.tpl | kubectl apply -f -
+## Prerequisite: the governance-stack/cage-deployment ConfigMap (provisioned by infra/modules/deployment_config/main.tf)
 test-mesh:
 	@echo "==> Running Linkerd service-mesh conformance tests..."
 	@SKIP_PORT_FORWARD_CHECKS=1 uv run pytest tests/integration/test_linkerd_mesh_conformance.py --run-integration -n0 --no-cov -p no:langsmith -p no:langsmith_plugin -v
@@ -198,7 +197,7 @@ test-gke-e2e:
 	@test -n "$(REGISTRY_URL)" || { echo "REGISTRY_URL is required"; exit 1; }
 	@echo "==> Running live GKE trade-governance e2e Job..."
 	@kubectl delete job/$(E2E_JOB) -n $(E2E_NAMESPACE) --ignore-not-found --wait=true
-	@REGISTRY_URL="$(REGISTRY_URL)" envsubst '$${REGISTRY_URL}' < deployment/k8s/verify-trade-e2e-job.yaml | kubectl apply -f -
+	@REGISTRY_URL="$(REGISTRY_URL)" envsubst '$${REGISTRY_URL}' < tests/e2e/fixtures/verify-trade-e2e-job.yaml | kubectl apply -f -
 	@for i in $$(seq 1 180); do \
 	  if kubectl get job/$(E2E_JOB) -n $(E2E_NAMESPACE) -o jsonpath='{.status.conditions[?(@.type=="Complete")].status}' | grep -q True; then RC=0; break; fi; \
 	  if kubectl get job/$(E2E_JOB) -n $(E2E_NAMESPACE) -o jsonpath='{.status.conditions[?(@.type=="Failed")].status}' | grep -q True; then RC=1; break; fi; \

@@ -239,8 +239,8 @@ The journal is selected by environment, not by the presence of `REDIS_URL`
 `RedisLedgerJournal` (`sim:ledger:{invariant_id}`, ZSET by `submitted_at`),
 which the gateway and the compliance bridge share;
 `CAGE_SIM_SETTLEMENT_LAG_SECONDS` sets the lag. Both are set identically in
-[`gateway.yaml`](../../deployment/k8s/gateway.yaml) and
-[`reconciliation-worker.yaml`](../../deployment/k8s/reconciliation-worker.yaml).
+[`infra/modules/gateway/main.tf`](../../infra/modules/gateway/main.tf) and
+[`infra/modules/reconciliation_worker/main.tf`](../../infra/modules/reconciliation_worker/main.tf).
 Hermetic tests keep the default `InMemoryLedgerJournal`.
 
 On the finance side,

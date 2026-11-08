@@ -32,7 +32,6 @@
 # References:
 #   - infra/targets/gcp-gke/main.tf — GKE workload module definitions
 #   - infra/targets/gcp-gke/variables.tf — image_digests map & Binary Authorization validation
-#   - deployment/k8s/sbom-cronjob.yaml — SBOM/vulnerability scan CronJob
 #   - .github/workflows/security-scan.yml — CI Trivy container scanning
 #   - docs/POAM.md — POAM-2026-013, POAM-2026-083 (SI-2 / SI-7: digest pinning & Binary Authorization)
 #   - docs/POAM.md — POAM-2026-010 (RA-5: vulnerability scanning in CI)

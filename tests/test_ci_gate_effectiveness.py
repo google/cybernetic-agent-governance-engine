@@ -49,6 +49,7 @@ from scripts import (
     check_doc_references,
     check_domain_literals,
     check_import_boundaries,
+    check_k8s_terraform_parity,
     check_locked_yanks,
     check_locust_baseline,
     check_oscal_claim_census,
@@ -1449,3 +1450,163 @@ def test_gate_oscal_claim_census_rejects_drifted_hash_and_stale_register(
     assert check_oscal_claim_census.main(["--census", str(drifted_census)]) == 1, (
         "OSCAL census gate failed to reject planted description_sha256 drift"
     )
+
+
+def test_gate_k8s_terraform_parity_catches_shadow_manifests_and_orphan_selectors(
+    tmp_path: Path,
+) -> None:
+    """check_k8s_terraform_parity.py must run in ci.yml lint and reject shadow manifests + orphan selectors."""
+    ci_yaml = yaml.safe_load((WORKFLOWS_DIR / "ci.yml").read_text(encoding="utf-8"))
+    lint_steps = ci_yaml["jobs"]["lint"]["steps"]
+    assert any(
+        "scripts/check_k8s_terraform_parity.py" in step.get("run", "")
+        for step in lint_steps
+    ), "ci.yml lint job must run scripts/check_k8s_terraform_parity.py"
+
+    assert check_k8s_terraform_parity.main([]) == 0, (
+        "Live repository failed Kubernetes/Terraform selector parity gate"
+    )
+
+    # 1. Shadow deployment/k8s/ directory must fail with ShadowManifestError
+    shadow_repo = tmp_path / "shadow_repo"
+    (shadow_repo / "deployment" / "k8s").mkdir(parents=True)
+    (shadow_repo / "deployment" / "k8s" / "shadow.yaml").write_text(
+        "kind: Deployment\n", encoding="utf-8"
+    )
+    (shadow_repo / "infra").mkdir(parents=True)
+    with pytest.raises(check_k8s_terraform_parity.ShadowManifestError):
+        check_k8s_terraform_parity.verify_k8s_terraform_parity(
+            shadow_repo, enforce_floors=False
+        )
+    assert (
+        check_k8s_terraform_parity.main(
+            ["--repo-root", str(shadow_repo), "--no-floors"]
+        )
+        == 1
+    )
+
+    # 2. Valid synthetic infra/ passes with --no-floors, but fails corpus-floor check without --no-floors
+    synth_repo = tmp_path / "synth_repo"
+    mod_dir = synth_repo / "infra" / "modules" / "gateway"
+    mod_dir.mkdir(parents=True)
+    base_tf = """
+resource "kubernetes_deployment" "gateway" {
+  metadata { name = "gateway" }
+  spec {
+    template {
+      metadata {
+        labels = {
+          app  = "gateway"
+          role = "governance-gateway"
+        }
+      }
+    }
+  }
+}
+
+resource "kubernetes_service" "gateway" {
+  metadata { name = "gateway" }
+  spec {
+    selector = {
+      app = "gateway"
+    }
+  }
+}
+"""
+    (mod_dir / "main.tf").write_text(base_tf, encoding="utf-8")
+    assert (
+        check_k8s_terraform_parity.main(["--repo-root", str(synth_repo), "--no-floors"])
+        == 0
+    )
+    with pytest.raises(
+        check_k8s_terraform_parity.OrphanSelectorError, match="Corpus floor check"
+    ):
+        check_k8s_terraform_parity.verify_k8s_terraform_parity(
+            synth_repo, enforce_floors=True
+        )
+
+    # 3. Planted orphan NetworkPolicy spec.pod_selector must raise OrphanSelectorError
+    target_dir = synth_repo / "infra" / "targets" / "gcp-gke"
+    target_dir.mkdir(parents=True)
+    netpol_path = target_dir / "network_policy.tf"
+    netpol_path.write_text(
+        """
+resource "kubernetes_network_policy_v1" "orphan_spec" {
+  metadata { name = "orphan-spec" }
+  spec {
+    pod_selector {
+      match_labels = {
+        role = "sovereign-agent"
+      }
+    }
+  }
+}
+""",
+        encoding="utf-8",
+    )
+    with pytest.raises(
+        check_k8s_terraform_parity.OrphanSelectorError, match="sovereign-agent"
+    ):
+        check_k8s_terraform_parity.verify_k8s_terraform_parity(
+            synth_repo, enforce_floors=False
+        )
+
+    # 4. Planted orphan NetworkPolicy egress.to.pod_selector peer must raise OrphanSelectorError
+    netpol_path.write_text(
+        """
+resource "kubernetes_network_policy_v1" "orphan_peer" {
+  metadata { name = "orphan-peer" }
+  spec {
+    pod_selector {
+      match_labels = {
+        app = "gateway"
+      }
+    }
+    egress {
+      to {
+        pod_selector {
+          match_labels = {
+            app = "vllm-service"
+          }
+        }
+      }
+    }
+  }
+}
+""",
+        encoding="utf-8",
+    )
+    with pytest.raises(
+        check_k8s_terraform_parity.OrphanSelectorError, match="vllm-service"
+    ):
+        check_k8s_terraform_parity.verify_k8s_terraform_parity(
+            synth_repo, enforce_floors=False
+        )
+    netpol_path.unlink()
+
+    # 5. Planted orphan Helm PodMonitoring selector must raise OrphanSelectorError
+    chart_dir = mod_dir / "metrics-monitors" / "templates"
+    chart_dir.mkdir(parents=True)
+    (mod_dir / "metrics-monitors" / "Chart.yaml").write_text(
+        "apiVersion: v2\nname: metrics-monitors\nversion: 0.1.0\n",
+        encoding="utf-8",
+    )
+    (chart_dir / "monitors.yaml").write_text(
+        """
+apiVersion: monitoring.googleapis.com/v1
+kind: PodMonitoring
+metadata:
+  name: ghost-metrics
+spec:
+  selector:
+    matchLabels:
+      app: ghost-workload
+""",
+        encoding="utf-8",
+    )
+    with pytest.raises(
+        check_k8s_terraform_parity.OrphanSelectorError, match="ghost-workload"
+    ):
+        check_k8s_terraform_parity.verify_k8s_terraform_parity(
+            synth_repo, enforce_floors=False
+        )

@@ -51,11 +51,6 @@ verification_*.txt
 last_run_results.json
 gateway_rbac_fix.yaml
 
-# Generated Kubernetes manifests
-deployment/k8s/governed-financial-advisor.yaml
-deployment/k8s/vllm-deployment.yaml
-deployment/k8s/generated/
-
 # Traces
 *.parquet
 trace_*.parquet
@@ -144,7 +139,6 @@ check_vllm.py
 debug_*.py
 debug_output.txt
 deployment/create_admin.sql
-deployment/k8s/langfuse-secret.yaml
 deployment_patch.yaml
 existing_keys.txt
 new_keys.txt

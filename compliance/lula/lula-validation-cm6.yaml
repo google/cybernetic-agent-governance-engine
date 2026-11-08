@@ -38,8 +38,8 @@
 #
 # References:
 #   - config/governance_thresholds.json — Governance threshold settings
-#   - deployment/k8s/financial-advisor.yaml — Financial advisor deployment (mounts config)
-#   - docs/NIST_RMF_CHUNK1_CURRENT_STATE.md — CM-6 current state analysis
+#   - infra/modules/governed_advisor/main.tf — Financial advisor deployment module
+#   - docs/compliance/us_fed/NIST_RMF_CHUNK1_CURRENT_STATE.md — CM-6 current state analysis
 #
 # Namespace: governance-stack (confirmed from live cluster deployment snapshot)
 

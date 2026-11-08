@@ -22,7 +22,7 @@ All P1 paper-text fixes and the following P2 code fixes are included in this run
 | P2.2 | `fiscal_limit_guard.py` | Per-reservation TTL sentinel key (`fiscal:reservation:{uuid}`) |
 | P2.3 | `routing_seal.py` | Added `.replace(".", "-")` in `generate_seal()` |
 | P2.4 | `reconciliation_worker.py` | Added `GcsLedgerProvider` + registered `"gcs"` provider |
-| P2.5 | `deployment/k8s/reconciliation-worker.yaml` | New CronJob + Secret + CiliumNetworkPolicy |
+| P2.5 | `de5534ac:deployment/k8s/reconciliation-worker.yaml` | New CronJob + Secret + CiliumNetworkPolicy |
 | P2.6 | `safety_node.py` | Live risk-metric reads from Redis (`cbf:portfolio_drawdown`, `portfolio:daily_vol`) |
 | P2.7 | `src/gateway/governance/causal/gatekeeper.py` | `_MIN_CAUSAL_SAMPLES` guard before `backdoor.linear_regression` |
 | P2.8 | `measure_paper_metrics.py` | Re-enabled `measure_ungoverned_baseline` (was `_REMOVED_`) |

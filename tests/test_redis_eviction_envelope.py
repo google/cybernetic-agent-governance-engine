@@ -28,8 +28,8 @@ This test requires a live Redis instance (port-forwarded or local).
 Run with:  pytest tests/test_redis_eviction_envelope.py --run-integration
 
 Related:
-  - deployment/k8s/redis-config.yaml (ConfigMap with noeviction policy)
-  - deployment/k8s/redis-statefulset.yaml (Guaranteed QoS deployment)
+  - infra/modules/memorystore_valkey/main.tf (GKE Managed Memorystore for Valkey)
+  - docker-compose.yml (local Redis with --maxmemory-policy noeviction)
   - src/compliance_bridge/evidence_stream.py (db=1 consumer)
 """
 
@@ -49,7 +49,7 @@ import redis
 #   - Does not allow FLUSHDB / FLUSHALL rename tricks (standard Redis commands)
 #   - Enforces persistence and replication at the managed-service level
 #
-# GKE self-managed Redis StatefulSet (redis-config.yaml):
+# Local Compose / hermetic Redis (--maxmemory-policy noeviction):
 #   - Supports all CONFIG GET assertions and command renames.
 
 pytestmark = pytest.mark.integration

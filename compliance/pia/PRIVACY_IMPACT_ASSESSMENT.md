@@ -264,7 +264,7 @@ The 15 PII entity types enumerated in §2.2 are subject to NeMo Guardrails detec
 **Network Policy:**
 
 - Default-deny ingress and egress in `governance-stack` namespace
-- Explicit allowlisting per `deployment/k8s/network-policy.yaml`
+- Explicit allowlisting per `infra/targets/gcp-gke/network_policy.tf`
 
 ---
 

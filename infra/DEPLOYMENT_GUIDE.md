@@ -160,7 +160,7 @@ CAGE implements a **boot contract** requiring `CAGE_DEPLOYMENT_REGION` to be exp
 | `APAC_MAS` | `config/compliance/APAC_MAS_BASELINE.json` | MAS FEAT / MAS TRM Guidelines / ISO 42001 |
 
 **Already declared in all authoritative manifests:**
-- `deployment/k8s/gateway.yaml`
+- `infra/modules/gateway/main.tf` (via `var.cage_deployment_region` / `CAGE_DEPLOYMENT_REGION`)
 - `docker-compose.yml` — gateway and app services
 - `docker-compose.dev.yml` — gateway dev overlay
 

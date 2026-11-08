@@ -37,7 +37,7 @@ component-definition:
     remarks: |-
       Auto-converted from standalone lula validation format.
       Region: US_FED. Posture: nist-sp800-53.
-      Notes: System Constraint SC-4: Fiscal Limits and RBAC Enforcement. CRITICAL CONTROL — verified via Kubernetes ConfigMap label presence. The opa-compliance-status ConfigMap is created alongside the OPA Deployment during each deploy. Its absence or mislabelling indicates the enforcement layer was not correctly deployed. Any FAIL on this control triggers an immediate Slack/PagerDuty alert via compliance-bridge audit_workflow._step4_alert_on_critical_fail(). See: deployment/k8s/opa.yaml for label definitions. See: src/cage_finance/opa/trade_governance.rego
+      Notes: System Constraint SC-4: Fiscal Limits and RBAC Enforcement. CRITICAL CONTROL — verified via Kubernetes ConfigMap label presence. The opa-compliance-status ConfigMap is created alongside the OPA Deployment during each deploy. Its absence or mislabelling indicates the enforcement layer was not correctly deployed. Any FAIL on this control triggers an immediate Slack/PagerDuty alert via compliance-bridge audit_workflow._step4_alert_on_critical_fail(). See: infra/modules/opa_policy/main.tf for label definitions. See: src/cage_finance/opa/trade_governance.rego
            for the Rego rules enforcing SC-4.
       See: src/compliance_bridge/audit_workflow.py for the alert pipeline.
   components:

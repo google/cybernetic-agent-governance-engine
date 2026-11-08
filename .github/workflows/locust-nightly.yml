@@ -66,7 +66,7 @@ jobs:
         run: uv sync --all-groups --all-extras
       # Started after checkout (service containers start before it) so the
       # finance domain policy can be mounted. Same allowlist as
-      # deployment/k8s/opa.yaml: only trade_governance.rego is served.
+      # infra/modules/opa_policy/main.tf: only trade_governance.rego is served.
       - name: Start OPA with the finance domain policy
         run: |
           docker run -d --name opa -p 8181:8181 \

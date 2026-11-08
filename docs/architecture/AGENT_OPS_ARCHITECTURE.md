@@ -153,7 +153,7 @@ AgentSight is a React/Vite frontend (port 5173) backed by an eBPF DaemonSet that
 
 ### eBPF DaemonSet
 
-The eBPF DaemonSet ([`deployment/k8s/agentsight-daemon.yaml`](../../deployment/k8s/agentsight-daemon.yaml)) runs on every node in the `agentsight` namespace and intercepts:
+The reference eBPF DaemonSet (`de5534ac:deployment/k8s/agentsight-daemon.yaml`, retired with `deployment/k8s/` pending GKE Container-Optimized OS BTF/LSM feasibility verification under `POAM-2026-193`) is designed to run per node in the `agentsight` namespace and intercept:
 - **Encrypted Traffic (OpenSSL):** Captures raw LLM payloads at the network boundary before encryption.
 - **System Calls (Kernel):** Monitors `execve` (process creation), `openat` (file access), `connect` (network connections).
 - **Correlation:** The Gateway injects `X-Trace-Id` into every LLM request; AgentSight links kernel events to Langfuse traces.

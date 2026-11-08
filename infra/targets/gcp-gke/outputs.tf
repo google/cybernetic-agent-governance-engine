@@ -199,10 +199,11 @@ output "opa_endpoint" {
 }
 
 # ─── Signing keys (POAM-2026-079) ─────────────────────────────────────────────
-# Key version resource names for the manifest deployment path
-# (deployment/k8s/): the gateway reads KMS_GOVERNANCE_KEY / RECONCILER_KMS_KEY
-# from gateway-secrets. Never put them in advisor-secrets: the advisor loads it
-# via envFrom and refuses to start with a signing-key variable set.
+# Key version resource names wired into gateway-secrets and
+# reconciliation-worker-secrets by Terraform: the gateway reads
+# KMS_GOVERNANCE_KEY / RECONCILER_KMS_KEY from gateway-secrets. Never put them
+# in advisor-secrets: the advisor loads it via envFrom and refuses to start with
+# a signing-key variable set.
 
 output "gateway_seal_key_version" {
   description = "gateway-seal key version (KMS_GOVERNANCE_KEY for the gateway)"

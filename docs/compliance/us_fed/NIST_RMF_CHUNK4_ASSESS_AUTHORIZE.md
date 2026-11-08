@@ -182,7 +182,7 @@
 - `docs/proposals/004_risk_remediation_plan.md` describes three proposed architectural improvements (dynamic policy injection, stateful risk memory, GitOps workflow). This is a _proposal document_ — it identifies risks (latency, statelessness, race conditions) but does not constitute a POA&M with tracking IDs, milestones, or resource estimates.
 - **No SSP exists.** No FIPS 199 categorization document exists. No POA&M with formal tracking exists. No Risk Assessment Report (RAR) exists. No authorization letter exists.
 - The `compliance/` directory contains OSCAL Component Definition and Lula validations — these support the SSP but are not substitutes for the full authorization package.
-- [`deployment/k8s/oscal-artifact-secrets.yaml`](../../../deployment/k8s/oscal-artifact-secrets.yaml) exists — this manages secrets for OSCAL storage but is a deployment artifact, not an authorization artifact.
+- `de5534ac:deployment/k8s/oscal-artifact-secrets.yaml` exists — this manages secrets for OSCAL storage but is a deployment artifact, not an authorization artifact.
 
 **Gaps Identified:**
 
@@ -233,7 +233,7 @@
 
 **Current State:**
 
-- [`deployment/k8s/lula-cron.yaml`](../../../deployment/k8s/lula-cron.yaml) **exists** and implements a Kubernetes CronJob (`schedule: "0 */6 * * *"` — every 6 hours) running `lula validate` against all 4 ISO 42001 control manifests, writing OSCAL Assessment Result YAML, and POSTing to `POST /v1/audit/ingest` on the compliance-bridge. This is a **functional cATO triggering mechanism** for the 4 automated controls.
+- `de5534ac:deployment/k8s/lula-cron.yaml` **exists** and implements a Kubernetes CronJob (`schedule: "0 */6 * * *"` — every 6 hours) running `lula validate` against all 4 ISO 42001 control manifests, writing OSCAL Assessment Result YAML, and POSTing to `POST /v1/audit/ingest` on the compliance-bridge. This is a **functional cATO triggering mechanism** for the 4 automated controls.
 - A second Kubernetes Deployment `lula-sc4-watch` performs **real-time continuous monitoring** for SC-4 (OPA ConfigMap label), polling every 60 seconds with a liveness probe. This demonstrates near-event-driven continuous monitoring for a structural control.
 - The CronJob uses `concurrencyPolicy: Forbid` (prevents overlapping runs), `successfulJobsHistoryLimit: 3`, and `failedJobsHistoryLimit: 5`. The audit ID is the Unix timestamp, providing idempotency via the storage layer HEAD check.
 - [`src/compliance_bridge/audit_workflow.py`](../../../src/compliance_bridge/audit_workflow.py) Step 3b publishes `AUDIT_FINDING` events via SSE in real time — the KernelDashboard receives continuous audit state updates without polling.
@@ -245,15 +245,15 @@
 2. **No cATO boundary or scope document exists.** NIST SP 800-137 requires a documented Information Security Continuous Monitoring (ISCM) strategy defining: monitoring objectives, monitoring tiers (organization/mission/information system), monitoring frequencies, and reporting mechanisms. None exists.
 3. **Lula CronJob image uses a `${REGISTRY_URL}` template variable** — the actual image `${REGISTRY_URL}/lula:0.9.5` must be resolved at deployment time. If this variable is not substituted, the CronJob will fail silently. No CI check validates this substitution.
 4. **No alert escalation SLA is defined.** When `_step4_alert_on_critical_fail()` fires, alerts go to Slack/PagerDuty via `create_notifier()`. There is no documented SLA for alert acknowledgment, triage, and remediation — required for cATO.
-5. **The `lula-auditor` ServiceAccount RBAC** is defined in `deployment/k8s/lula-rbac.yaml` (referenced in lula-cron.yaml) — this grants Kubernetes API access for SC-4 validation. The actual RBAC permissions were not read — if over-privileged, this represents an IA-5/AC-6 gap.
+5. **The `lula-auditor` ServiceAccount RBAC** is defined in `de5534ac:deployment/k8s/lula-rbac.yaml` (referenced in lula-cron.yaml) — this grants Kubernetes API access for SC-4 validation. The actual RBAC permissions were not read — if over-privileged, this represents an IA-5/AC-6 gap.
 
 **Refactoring Recommendations:**
 
 1. Create `docs/compliance/us_fed/CONTINUOUS_MONITORING_STRATEGY.md` per NIST SP 800-137 Section 3: monitoring objectives (maintain ATO, detect control degradation), monitoring frequencies (Tier 3: every 6h for critical AI controls, daily for k8s runtime controls, quarterly for IAM/CM), reporting mechanisms (Langfuse compliance project + SSE dashboard), and ISCM program roles.
 2. Extend the Lula CronJob to cover SP 800-53 controls by adding new validation manifests for the top 10 automatable controls (AU-12, SC-8, AC-3, CM-6, RA-5, SI-4, IA-3, SC-7, CM-7, SA-9) to `compliance/lula/sp800-53/` and referencing them in the CronJob's `lula-validation-manifests` ConfigMap.
-3. Add a CI step that validates `${REGISTRY_URL}` substitution in `lula-cron.yaml` before deployment: `envsubst < deployment/k8s/lula-cron.yaml | kubectl apply --dry-run=client -f -`.
+3. Add a CI step that validates `${REGISTRY_URL}` substitution in `lula-cron.yaml` before deployment: `envsubst < de5534ac:deployment/k8s/lula-cron.yaml | kubectl apply --dry-run=client -f -`.
 4. Define alert response SLAs in `docs/compliance/us_fed/CONTINUOUS_MONITORING_STRATEGY.md`: CRITICAL control failures (A.9.2 PII leak, SC-4 OPA offline) → acknowledge within 15 minutes, remediate within 4 hours; HIGH control failures → acknowledge within 1 hour, remediate within 24 hours.
-5. Audit `deployment/k8s/lula-rbac.yaml` to ensure the `lula-auditor` ServiceAccount has only `get` and `list` permissions on ConfigMaps in the `default` namespace (for SC-4) — not cluster-wide read access — implementing least privilege (AC-6).
+5. Audit `de5534ac:deployment/k8s/lula-rbac.yaml` to ensure the `lula-auditor` ServiceAccount has only `get` and `list` permissions on ConfigMaps in the `default` namespace (for SC-4) — not cluster-wide read access — implementing least privilege (AC-6).
 
 ---
 
@@ -262,8 +262,8 @@
 **Current State:**
 
 - [`ARCHITECTURE.md`](../../architecture/ARCHITECTURE.md) (Revision 8, 2026-03-05) provides an extensive Mermaid component diagram showing: Frontend (agentsight-ui), governed-financial-advisor (LangGraph + FastAPI), green-stack-pipeline (KFP v2), gateway (MCP + OPA + NeMo), compliance-bridge (OSCAL pipeline), and infrastructure (Redis, OPA Server, NeMo, NGINX Gateway, vLLM pools, Langfuse, MinIO/GCS, Lula, OTel). Data flows are documented with protocol labels (REST+SSE, gRPC, HTTP, OTel traces, Langfuse SDK, boto3).
-- [`deployment/k8s/network-policy.yaml`](../../../deployment/k8s/network-policy.yaml) implements a default-deny ingress+egress policy for the `governance-stack` namespace with explicit allowlists: gateway port 8080 from `ingress-nginx` and orchestrators only; OPA port 8181 from governance-stack; Redis port 6379; OTLP ports 4317/4318; DNS port 53; vLLM port 8000. This is machine-readable boundary enforcement — **the strongest authorization boundary evidence in the system**.
-- [`deployment/k8s/ingress.yaml`](../../../deployment/k8s/ingress.yaml) defines a single ingress: `/agent` → `governed-financial-advisor:80`, `/` → `langfuse-web:80`. HSTS headers and CSP (`default-src 'self'`) are set. Note: `kubernetes.io/ingress.class: "gce"` conflicts with ADR-002 which mandates `nginx` — this is a staleness gap.
+- `de5534ac:deployment/k8s/network-policy.yaml` implements a default-deny ingress+egress policy for the `governance-stack` namespace with explicit allowlists: gateway port 8080 from `ingress-nginx` and orchestrators only; OPA port 8181 from governance-stack; Redis port 6379; OTLP ports 4317/4318; DNS port 53; vLLM port 8000. This is machine-readable boundary enforcement — **the strongest authorization boundary evidence in the system**.
+- `de5534ac:deployment/k8s/ingress.yaml` defines a single ingress: `/agent` → `governed-financial-advisor:80`, `/` → `langfuse-web:80`. HSTS headers and CSP (`default-src 'self'`) are set. Note: `kubernetes.io/ingress.class: "gce"` conflicts with ADR-002 which mandates `nginx` — this is a staleness gap.
 - [`deployment/terraform/networking.tf`](../../../infra/modules/gcp_gke_cluster/networking.tf) defines NAT router and NAT config for GKE egress (`ALL_SUBNETWORKS_ALL_IP_RANGES` → `AUTO_ONLY` NAT). NAT log config is enabled (`filter: ERRORS_ONLY`). This is minimalist — no VPC firewall rules, no private cluster configuration, no VPC Service Controls are defined in this file. The full network boundary relies on GKE's default network and the k8s NetworkPolicy.
 
 **Gaps Identified:**
@@ -277,7 +277,7 @@
 **Refactoring Recommendations:**
 
 1. Create `compliance/boundary/AUTHORIZATION_BOUNDARY.md` as a formal boundary document: include the `ARCHITECTURE.md` Mermaid diagram (or a simplified version), a narrative boundary description, a numbered list of all external interfaces (Langfuse Cloud API, GCS/GCS S3-compat, HuggingFace CDN, financial data APIs, Slack/PagerDuty), each with protocol, port, authentication mechanism, data sensitivity, and whether data crosses the authorization boundary.
-2. Update `deployment/k8s/ingress.yaml` to align with ADR-002: change `kubernetes.io/ingress.class: "gce"` to `kubernetes.io/ingress.class: "nginx"` (or use the `IngressClass` resource). Add TLS configuration with a certificate reference so the boundary's external interface is explicitly TLS-terminated.
+2. Update `de5534ac:deployment/k8s/ingress.yaml` to align with ADR-002: change `kubernetes.io/ingress.class: "gce"` to `kubernetes.io/ingress.class: "nginx"` (or use the `IngressClass` resource). Add TLS configuration with a certificate reference so the boundary's external interface is explicitly TLS-terminated.
 3. Create `deployment/k8s/mtls-policy.yaml` using Istio `PeerAuthentication` (if Istio is present) or add mutual TLS configuration to the nginx ingress for service-to-service communication. At minimum, document the mTLS gap in the POA&M as finding CAGE-2026-004.
 4. Update `deployment/terraform/networking.tf` to add `filter: "ALL"` to the NAT log config and add GCP VPC firewall rules explicitly allowing only the ports documented in `network-policy.yaml` — creating defense-in-depth at both the VM network layer and the Kubernetes network policy layer.
 5. Add an external interface inventory to `compliance/oscal/component-definition.yaml` using the `back-matter.resources` section with `type: external-interface` entries for each external dependency — this gives the OSCAL toolchain visibility into supply chain dependencies at the authorization package level.
@@ -307,7 +307,7 @@
 | Threshold Traceability Matrix         | Supporting          | ❌ Missing | `compliance/risk_acceptance/THRESHOLD_TRACEABILITY_MATRIX.md`                            |
 | System Description (ISO 42001)        | Supporting          | ✅ Exists  | `compliance/universal/SYSTEM_DESCRIPTION_ISO_42001.md`                                                   |
 | Deployment Decision Records (ADRs)    | Supporting          | ✅ Exists  | `docs/operations/DEPLOYMENT_DECISION_RECORD.md`                                                     |
-| Network Policy (machine-readable)     | Supporting          | ✅ Exists  | `deployment/k8s/network-policy.yaml`                                                     |
+| Network Policy (machine-readable)     | Supporting          | ✅ Exists  | `de5534ac:deployment/k8s/network-policy.yaml`                                                     |
 | Privacy Impact Assessment             | ⚠️ If PII processed | ❌ Missing | `compliance/pia/PRIVACY_IMPACT_ASSESSMENT.md`                                            |
 
 **Authorization Package Completeness: 5 of 21 artifacts exist (24%)**

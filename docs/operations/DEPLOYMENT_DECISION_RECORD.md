@@ -163,14 +163,14 @@ the GCFS sidecar injector (`gke-gcsfuse/volumes: "true"` pod annotation). This
 created a hard dependency on GKE and GCS-native APIs.
 
 **Decision:** Replace GCS Fuse CSI with vLLM's native `--load-format tensorizer`
-pointed at MinIO (in-cluster S3-compatible store, `governance-stack` namespace).
-A one-time GPU Job (``deployment/k8s/tensorize-job.yaml``)
+pointed at MinIO (in-cluster S3-compatible store, `governance-stack` namespace; superseded on `gcp-gke` by GCS `runai_streamer` in `infra/modules/vllm_inference/main.tf`).
+A one-time GPU Job (`de5534ac:deployment/k8s/tensorize-job.yaml`, retired with `deployment/k8s/`)
 serialises HuggingFace weights to TensorSerializer format and uploads them to the
 MinIO `vllm-models` bucket.
 
 ```bash
-# One-time tensorization
-kubectl apply -f deployment/k8s/tensorize-job.yaml -n governance-stack
+# Historical one-time tensorization (de5534ac:deployment/k8s/tensorize-job.yaml, retired)
+# Active gcp-gke target streams directly from gs:// via runai_streamer
 kubectl wait --for=condition=complete job/tensorize-weights \
   --timeout=30m -n governance-stack
 ```
@@ -200,7 +200,7 @@ portability across cloud providers.
 **Decision:** Replace proprietary extensions with portable equivalents:
 
 - `gke-l7-gxlb` GatewayClass → `nginx`
-  (``deployment/k8s/inference-gateway/gateway.yaml``)
+  (`de5534ac:deployment/k8s/inference-gateway/gateway.yaml`, retired with `deployment/k8s/`)
 - `kubernetes.io/ingress.class: gce` → `nginx` in AgentSight ingress
 - `cloud.google.com/gke-accelerator: nvidia-l4` node selectors →
   `nvidia.com/gpu.product: NVIDIA-L4` across all vLLM manifests

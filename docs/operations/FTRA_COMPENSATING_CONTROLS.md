@@ -65,28 +65,27 @@ to the same FTRA classification as in-graph requests. See POAM-2026-030-B.
 
 ### 1. NetworkPolicy (Defense-in-Depth)
 
-**File**: [`deployment/k8s/ftra-network-policy.yaml`](../../deployment/k8s/ftra-network-policy.yaml)
+**File**: [`infra/targets/gcp-gke/network_policy.tf`](../../infra/targets/gcp-gke/network_policy.tf) (superseding the retired interim manifest `de5534ac:deployment/k8s/ftra-network-policy.yaml`)
 
 **Purpose**: Restricts ingress to the `cage-gateway` pod to only allow traffic
-from governance-validated sources. This provides defense-in-depth against R-02
+from authorized governance sources (`governed-financial-advisor`, `compliance-bridge`, and external ingress). This provides defense-in-depth against R-02
 (post-classification plan mutation).
 
 **Policies**:
 
 | Policy Name | Description |
 |-------------|-------------|
-| `ftra-egress-lockdown` | Only allows ingress from pods with `governance-validated: "true"` label |
-| `ftra-allow-gfa-ingress` | Allows GFA pod (which has in-graph ftra_node) to reach gateway |
-| `ftra-allow-ingress-controller` | Allows ingress controller for external API access (subject to boundary check) |
+| `default-deny-ingress` | Denies all unapproved pod-to-pod ingress in `governance-stack` |
+| `gateway-ingress-l3-l4` | Allows only `governed-financial-advisor`, `compliance-bridge`, and approved ingress sources to reach `cage-gateway` |
 
 **Application**:
 
 ```bash
-# Apply the FTRA NetworkPolicy
-kubectl apply -f deployment/k8s/ftra-network-policy.yaml
+# Reconciled automatically via Terraform
+./deploy_all.sh --target gcp-gke --env staging --var project_id=<PROJECT_ID>
 
 # Verify the policies are active
-kubectl get networkpolicies -n governance-stack -l cage.io/component=ftra-interim-control
+kubectl get networkpolicies -n governance-stack
 ```
 
 **Verification**:

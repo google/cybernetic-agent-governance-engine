@@ -160,7 +160,7 @@ This document defines the **proof ceiling** — the maximum scope of what each t
 **Trigger conditions for requiring live GKE validation:**
 
 1. **New actuator integration** — Actuator dispatch code touches network sockets
-2. **Cilium NetworkPolicy changes** — L7 policy rules modified in `deployment/k8s/`
+2. **Dataplane V2 NetworkPolicy / FQDNNetworkPolicy changes** — policy rules modified in [`infra/targets/gcp-gke/network_policy.tf`](../../infra/targets/gcp-gke/network_policy.tf)
 3. **Redis Lua script changes** — DeferQueue approval logic or WATCH/MULTI/EXEC semantics
 4. **KMS key rotation** — New signing key deployed; signature verification must pass
 5. **OPA policy engine updates** — New Rego bundle deployed; decisions must match expected outcomes

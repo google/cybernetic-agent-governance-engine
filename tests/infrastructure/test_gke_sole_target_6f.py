@@ -33,16 +33,10 @@ pytestmark = [pytest.mark.unit, pytest.mark.local]
 REPO_ROOT = Path(__file__).resolve().parents[2]
 GKE_CLUSTER_MODULE_DIR = REPO_ROOT / "infra" / "modules" / "gcp_gke_cluster"
 GATEWAY_MODULE_DIR = REPO_ROOT / "infra" / "modules" / "gateway"
+RECONCILER_MODULE_DIR = REPO_ROOT / "infra" / "modules" / "reconciliation_worker"
 VLLM_MODULE_DIR = REPO_ROOT / "infra" / "modules" / "vllm_inference"
 GKE_TARGET_DIR = REPO_ROOT / "infra" / "targets" / "gcp-gke"
-K8S_DIR = REPO_ROOT / "deployment" / "k8s"
-CILIUM_DIR = K8S_DIR / "cilium"
 OSCAL_SSP_PATH = REPO_ROOT / "compliance" / "oscal" / "system-security-plan.yaml"
-
-
-def _load_yaml_docs(path: Path) -> list[dict[str, Any]]:
-    text = path.read_text(encoding="utf-8")
-    return [doc for doc in yaml.safe_load_all(text) if isinstance(doc, dict)]
 
 
 # ============================================================================
@@ -279,45 +273,20 @@ class TestNodePoolsAndAntiSpotAffinity:
         assert re.search(r"enable_general_spot_node_pool\s*=\s*false", dev_tfvars)
 
     def test_governance_workloads_have_anti_spot_node_affinity(self) -> None:
-        # 1. Gateway Deployment
-        gw_docs = _load_yaml_docs(K8S_DIR / "gateway.yaml")
-        gw_deploy = next(
-            d
-            for d in gw_docs
-            if d.get("kind") == "Deployment"
-            and d.get("metadata", {}).get("name") == "gateway"
-        )
-        gw_terms = gw_deploy["spec"]["template"]["spec"]["affinity"]["nodeAffinity"][
-            "requiredDuringSchedulingIgnoredDuringExecution"
-        ]["nodeSelectorTerms"]
-        assert any(
-            expr.get("key") == "cloud.google.com/gke-spot"
-            and expr.get("operator") == "NotIn"
-            and "true" in expr.get("values", [])
-            for term in gw_terms
-            for expr in term.get("matchExpressions", [])
-        ), "gateway Deployment must enforce cloud.google.com/gke-spot NotIn ['true']"
-
-        # 2. Reconciliation Worker Deployment (continuous loop; see manifest header)
-        rw_docs = _load_yaml_docs(K8S_DIR / "reconciliation-worker.yaml")
-        rw_deploy = next(
-            d
-            for d in rw_docs
-            if d.get("kind") == "Deployment"
-            and d.get("metadata", {}).get("name") == "reconciliation-worker"
-        )
-        rw_terms = rw_deploy["spec"]["template"]["spec"]["affinity"]["nodeAffinity"][
-            "requiredDuringSchedulingIgnoredDuringExecution"
-        ]["nodeSelectorTerms"]
-        assert any(
-            expr.get("key") == "cloud.google.com/gke-spot"
-            and expr.get("operator") == "NotIn"
-            and "true" in expr.get("values", [])
-            for term in rw_terms
-            for expr in term.get("matchExpressions", [])
-        ), (
-            "reconciliation-worker Deployment must enforce cloud.google.com/gke-spot NotIn ['true']"
-        )
+        assert not (REPO_ROOT / "deployment" / "k8s").exists()
+        for mod_name, mod_dir in (
+            ("gateway", GATEWAY_MODULE_DIR),
+            ("reconciliation-worker", RECONCILER_MODULE_DIR),
+        ):
+            mod_tf = (mod_dir / "main.tf").read_text(encoding="utf-8")
+            assert "required_during_scheduling_ignored_during_execution" in mod_tf, (
+                f"{mod_name} Terraform module must declare required node affinity"
+            )
+            assert 'key      = "cloud.google.com/gke-spot"' in mod_tf, (
+                f"{mod_name} Terraform module must forbid cloud.google.com/gke-spot"
+            )
+            assert 'operator = "NotIn"' in mod_tf
+            assert 'values   = ["true"]' in mod_tf
 
     def test_gateway_terraform_module_enforces_anti_spot_node_affinity(self) -> None:
         gateway_tf = (GATEWAY_MODULE_DIR / "main.tf").read_text(encoding="utf-8")
@@ -461,6 +430,328 @@ def _selector_matches(selector: dict[str, Any], labels: dict[str, str]) -> bool:
     return True
 
 
+def _find_hcl_subblocks(body: str, keyword: str) -> list[str]:
+    """Return top-level HCL block/map bodies matching `keyword` within `body`."""
+    results: list[str] = []
+    kw = keyword.rstrip(" =")
+    pattern = re.compile(rf"(?<![\w.-]){re.escape(kw)}(?:\s*=)?\s*\{{")
+    pos = 0
+    while pos < len(body):
+        match = pattern.search(body, pos)
+        if match is None:
+            break
+        # Ensure this match is at brace depth 0 of `body`
+        if body[: match.start()].count("{") != body[: match.start()].count("}"):
+            pos = match.end()
+            continue
+        brace_open = body.index("{", match.start())
+        depth = 0
+        end_idx = brace_open
+        for idx in range(brace_open, len(body)):
+            if body[idx] == "{":
+                depth += 1
+            elif body[idx] == "}":
+                depth -= 1
+                if depth == 0:
+                    end_idx = idx
+                    break
+        results.append(body[brace_open + 1 : end_idx])
+        pos = end_idx + 1
+    return results
+
+
+def _parse_hcl_kv_map(block_body: str) -> dict[str, str]:
+    pairs: dict[str, str] = {}
+    for line in block_body.splitlines():
+        stripped = line.split("#", 1)[0].strip()
+        m = re.match(r'^"?([A-Za-z0-9_./-]+)"?\s*=\s*"([^"]+)"\s*$', stripped)
+        if m:
+            pairs[m.group(1)] = m.group(2)
+    return pairs
+
+
+def _extract_tf_default_list(vars_tf: str, var_name: str) -> list[str]:
+    marker = f'variable "{var_name}"'
+    start = vars_tf.index(marker)
+    brace_open = vars_tf.index("{", start)
+    depth = 0
+    end_idx = brace_open
+    for idx in range(brace_open, len(vars_tf)):
+        if vars_tf[idx] == "{":
+            depth += 1
+        elif vars_tf[idx] == "}":
+            depth -= 1
+            if depth == 0:
+                end_idx = idx
+                break
+    var_block = vars_tf[brace_open + 1 : end_idx]
+    m = re.search(r"default\s*=\s*\[(.*?)\]", var_block, re.DOTALL)
+    assert m is not None, f"Missing default list for {var_name}"
+    return re.findall(r'"([^"]+)"', m.group(1))
+
+
+def _extract_tf_default_str(vars_tf: str, var_name: str) -> str:
+    marker = f'variable "{var_name}"'
+    start = vars_tf.index(marker)
+    brace_open = vars_tf.index("{", start)
+    depth = 0
+    end_idx = brace_open
+    for idx in range(brace_open, len(vars_tf)):
+        if vars_tf[idx] == "{":
+            depth += 1
+        elif vars_tf[idx] == "}":
+            depth -= 1
+            if depth == 0:
+                end_idx = idx
+                break
+    var_block = vars_tf[brace_open + 1 : end_idx]
+    m = re.search(r'default\s*=\s*"([^"]+)"', var_block)
+    assert m is not None, f"Missing default string for {var_name}"
+    return m.group(1)
+
+
+def _parse_pod_selector_hcl(sel_body: str) -> dict[str, Any]:
+    selector: dict[str, Any] = {}
+    for ml_body in _find_hcl_subblocks(sel_body, "match_labels"):
+        selector["matchLabels"] = _parse_hcl_kv_map(ml_body)
+    for ml_body in _find_hcl_subblocks(sel_body, "matchLabels"):
+        selector["matchLabels"] = _parse_hcl_kv_map(ml_body)
+    exprs: list[dict[str, Any]] = []
+    for me_body in _find_hcl_subblocks(sel_body, "match_expressions"):
+        key_m = re.search(r'key\s*=\s*"([^"]+)"', me_body)
+        op_m = re.search(r'operator\s*=\s*"([^"]+)"', me_body)
+        vals_m = re.search(r"values\s*=\s*\[(.*?)\]", me_body, re.DOTALL)
+        if key_m and op_m:
+            exprs.append(
+                {
+                    "key": key_m.group(1),
+                    "operator": op_m.group(1),
+                    "values": re.findall(r'"([^"]+)"', vals_m.group(1))
+                    if vals_m
+                    else [],
+                }
+            )
+    me_hdr = re.search(r"matchExpressions\s*=\s*\[", sel_body)
+    if me_hdr:
+        b_open = sel_body.index("[", me_hdr.start())
+        b_depth = 0
+        b_end = b_open
+        for idx in range(b_open, len(sel_body)):
+            if sel_body[idx] == "[":
+                b_depth += 1
+            elif sel_body[idx] == "]":
+                b_depth -= 1
+                if b_depth == 0:
+                    b_end = idx
+                    break
+        me_slice = sel_body[b_open + 1 : b_end]
+        for obj_m in re.finditer(r"\{([^{}]+)\}", me_slice):
+            obj = obj_m.group(1)
+            key_m = re.search(r'key\s*=\s*"([^"]+)"', obj)
+            op_m = re.search(r'operator\s*=\s*"([^"]+)"', obj)
+            vals_m = re.search(r"values\s*=\s*\[(.*?)\]", obj, re.DOTALL)
+            if key_m and op_m:
+                exprs.append(
+                    {
+                        "key": key_m.group(1),
+                        "operator": op_m.group(1),
+                        "values": re.findall(r'"([^"]+)"', vals_m.group(1))
+                        if vals_m
+                        else [],
+                    }
+                )
+    if exprs:
+        selector["matchExpressions"] = exprs
+    return selector
+
+
+def _load_terraform_egress_policies() -> tuple[
+    list[dict[str, Any]], list[dict[str, Any]]
+]:
+    """Synthesize Kubernetes NetworkPolicy + FQDNNetworkPolicy dicts from `network_policy.tf`."""
+    netpol_tf = (GKE_TARGET_DIR / "network_policy.tf").read_text(encoding="utf-8")
+    vars_tf = (GKE_TARGET_DIR / "variables.tf").read_text(encoding="utf-8")
+
+    kube_dns_cidr = _extract_tf_default_str(vars_tf, "kube_dns_cidr")
+    cidr_map = {
+        "var.kube_dns_cidr": kube_dns_cidr,
+        "local.governance_valkey_cidr": "10.128.0.50/32",
+        "local.app_valkey_cidr": "10.128.0.51/32",
+        "local.cloud_sql_cidr": "10.128.0.52/32",
+    }
+
+    netpols: list[dict[str, Any]] = []
+    res_re = re.compile(r'resource\s+"kubernetes_network_policy_v1"\s+"([^"]+)"\s*\{')
+    pos = 0
+    while pos < len(netpol_tf):
+        m = res_re.search(netpol_tf, pos)
+        if m is None:
+            break
+        brace_open = netpol_tf.index("{", m.start())
+        depth = 0
+        end_idx = brace_open
+        for idx in range(brace_open, len(netpol_tf)):
+            if netpol_tf[idx] == "{":
+                depth += 1
+            elif netpol_tf[idx] == "}":
+                depth -= 1
+                if depth == 0:
+                    end_idx = idx
+                    break
+        res_body = netpol_tf[brace_open + 1 : end_idx]
+        pos = end_idx + 1
+
+        meta_blocks = _find_hcl_subblocks(res_body, "metadata")
+        name_m = (
+            re.search(r'name\s*=\s*"([^"]+)"', meta_blocks[0]) if meta_blocks else None
+        )
+        np_name = name_m.group(1) if name_m else m.group(1)
+
+        spec_blocks = _find_hcl_subblocks(res_body, "spec")
+        assert spec_blocks, f"Missing spec block in {np_name}"
+        spec_body = spec_blocks[0]
+
+        ps_blocks = _find_hcl_subblocks(spec_body, "pod_selector")
+        pod_selector = _parse_pod_selector_hcl(ps_blocks[0]) if ps_blocks else {}
+
+        pt_m = re.search(r"policy_types\s*=\s*\[(.*?)\]", spec_body)
+        policy_types = re.findall(r'"([^"]+)"', pt_m.group(1)) if pt_m else ["Ingress"]
+
+        egress_rules: list[dict[str, Any]] = []
+        for eg_body in _find_hcl_subblocks(spec_body, "egress"):
+            ports = []
+            for p_body in _find_hcl_subblocks(eg_body, "ports"):
+                proto_m = re.search(r'protocol\s*=\s*"([^"]+)"', p_body)
+                port_m = re.search(r'port\s*=\s*"?(\d+)"?', p_body)
+                if port_m:
+                    ports.append(
+                        {
+                            "protocol": proto_m.group(1) if proto_m else "TCP",
+                            "port": int(port_m.group(1)),
+                        }
+                    )
+            to_peers: list[dict[str, Any]] = []
+            for to_body in _find_hcl_subblocks(eg_body, "to"):
+                peer: dict[str, Any] = {}
+                ip_blocks = _find_hcl_subblocks(to_body, "ip_block")
+                if ip_blocks:
+                    cidr_lit = re.search(r'cidr\s*=\s*"([^"]+)"', ip_blocks[0])
+                    cidr_ref = re.search(
+                        r"cidr\s*=\s*((?:var|local)\.[A-Za-z0-9_]+)", ip_blocks[0]
+                    )
+                    if cidr_lit:
+                        peer["ipBlock"] = {"cidr": cidr_lit.group(1)}
+                    elif cidr_ref:
+                        peer["ipBlock"] = {"cidr": cidr_map[cidr_ref.group(1)]}
+                ns_blocks = _find_hcl_subblocks(to_body, "namespace_selector")
+                if ns_blocks:
+                    peer["namespaceSelector"] = _parse_pod_selector_hcl(ns_blocks[0])
+                pod_blocks = _find_hcl_subblocks(to_body, "pod_selector")
+                if pod_blocks:
+                    peer["podSelector"] = _parse_pod_selector_hcl(pod_blocks[0])
+                to_peers.append(peer)
+
+            for dyn_body in _find_hcl_subblocks(eg_body, 'dynamic "to"'):
+                for ref in re.findall(r"((?:var|local)\.[A-Za-z0-9_]+)", dyn_body):
+                    if ref in cidr_map:
+                        to_peers.append({"ipBlock": {"cidr": cidr_map[ref]}})
+
+            egress_rules.append({"to": to_peers, "ports": ports})
+
+        netpols.append(
+            {
+                "apiVersion": "networking.k8s.io/v1",
+                "kind": "NetworkPolicy",
+                "metadata": {"name": np_name},
+                "spec": {
+                    "podSelector": pod_selector,
+                    "policyTypes": policy_types,
+                    "egress": egress_rules,
+                },
+            }
+        )
+
+    fqdnpols: list[dict[str, Any]] = []
+    fqdn_map_blocks = _find_hcl_subblocks(netpol_tf, "fqdn_network_policies =")
+    if not fqdn_map_blocks:
+        locals_blocks = _find_hcl_subblocks(netpol_tf, "locals")
+        for lb in locals_blocks:
+            fqdn_map_blocks.extend(_find_hcl_subblocks(lb, "fqdn_network_policies ="))
+    assert fqdn_map_blocks, "Missing fqdn_network_policies map in network_policy.tf"
+    fqdn_map_body = fqdn_map_blocks[0]
+
+    entry_re = re.compile(r"^\s*([a-z0-9_]+)\s*=\s*\{", re.MULTILINE)
+    epos = 0
+    while epos < len(fqdn_map_body):
+        em = entry_re.search(fqdn_map_body, epos)
+        if em is None:
+            break
+        if fqdn_map_body[: em.start()].count("{") != fqdn_map_body[: em.start()].count(
+            "}"
+        ):
+            epos = em.end()
+            continue
+        bopen = fqdn_map_body.index("{", em.start())
+        depth = 0
+        bend = bopen
+        for idx in range(bopen, len(fqdn_map_body)):
+            if fqdn_map_body[idx] == "{":
+                depth += 1
+            elif fqdn_map_body[idx] == "}":
+                depth -= 1
+                if depth == 0:
+                    bend = idx
+                    break
+        entry_body = fqdn_map_body[bopen + 1 : bend]
+        epos = bend + 1
+
+        api_v = re.search(r'apiVersion\s*=\s*"([^"]+)"', entry_body)
+        kind_m = re.search(r'kind\s*=\s*"([^"]+)"', entry_body)
+        meta_b = _find_hcl_subblocks(entry_body, "metadata =")
+        name_m = re.search(r'name\s*=\s*"([^"]+)"', meta_b[0]) if meta_b else None
+        spec_b = _find_hcl_subblocks(entry_body, "spec =")
+        assert spec_b, f"Missing spec in FQDN policy {em.group(1)}"
+        ps_b = _find_hcl_subblocks(spec_b[0], "podSelector =")
+        pod_sel = _parse_pod_selector_hcl(ps_b[0]) if ps_b else {}
+
+        for_var_m = re.search(r"for\s+fqdn\s+in\s+var\.([A-Za-z0-9_]+)\s*:", spec_b[0])
+        if for_var_m:
+            fqdns = _extract_tf_default_list(vars_tf, for_var_m.group(1))
+        else:
+            fqdns = re.findall(r'(?:name|pattern)\s*=\s*"([^"]+)"', spec_b[0])
+        matches = [
+            {"pattern": fqdn, "name": None}
+            if "*" in fqdn
+            else {"name": fqdn, "pattern": None}
+            for fqdn in fqdns
+        ]
+        port_m = re.search(r"port\s*=\s*(\d+)", spec_b[0])
+        proto_m = re.search(r'protocol\s*=\s*"([^"]+)"', spec_b[0])
+        fqdnpols.append(
+            {
+                "apiVersion": api_v.group(1) if api_v else "",
+                "kind": kind_m.group(1) if kind_m else "",
+                "metadata": {"name": name_m.group(1) if name_m else em.group(1)},
+                "spec": {
+                    "podSelector": pod_sel,
+                    "egress": [
+                        {
+                            "matches": matches,
+                            "ports": [
+                                {
+                                    "protocol": proto_m.group(1) if proto_m else "TCP",
+                                    "port": int(port_m.group(1)) if port_m else 443,
+                                }
+                            ],
+                        }
+                    ],
+                },
+            }
+        )
+
+    return netpols, fqdnpols
+
+
 def _evaluate_pod_egress(
     network_policies: list[dict[str, Any]],
     fqdn_policies: list[dict[str, Any]],
@@ -484,7 +775,7 @@ def _evaluate_pod_egress(
         fp
         for fp in fqdn_policies
         if _selector_matches(fp.get("spec", {}).get("podSelector", {}), pod_labels)
-        and "Egress" in fp.get("spec", {}).get("policyTypes", [])
+        and "Egress" in fp.get("spec", {}).get("policyTypes", ["Egress"])
     ]
 
     if not matching_netpols and not matching_fqdnpols:
@@ -493,7 +784,7 @@ def _evaluate_pod_egress(
     for np in matching_netpols:
         for rule in np.get("spec", {}).get("egress", []):
             ports_spec = rule.get("ports", [])
-            port_ok = any(
+            port_ok = not ports_spec or any(
                 int(p.get("port", -1)) == port
                 and p.get("protocol", "TCP").upper() == protocol.upper()
                 for p in ports_spec
@@ -518,14 +809,18 @@ def _evaluate_pod_egress(
                     "podSelector" in to_peer or "namespaceSelector" in to_peer
                 ) and dest_pod_labels is not None:
                     req_pod = to_peer.get("podSelector", {}).get("matchLabels", {})
-                    req_ns = to_peer.get("namespaceSelector", {}).get("matchLabels", {})
                     pod_match = all(
                         dest_pod_labels.get(k) == v for k, v in req_pod.items()
                     )
-                    ns_match = all(
-                        (dest_namespace_labels or {}).get(k) == v
-                        for k, v in req_ns.items()
-                    )
+                    if "namespaceSelector" in to_peer:
+                        req_ns = to_peer["namespaceSelector"].get("matchLabels", {})
+                        ns_match = dest_namespace_labels is not None and all(
+                            dest_namespace_labels.get(k) == v for k, v in req_ns.items()
+                        )
+                    else:
+                        # Kubernetes NetworkPolicy semantics: podSelector without
+                        # namespaceSelector matches pods in the SAME namespace only.
+                        ns_match = dest_namespace_labels is None
                     if pod_match and ns_match:
                         return True
 
@@ -540,6 +835,10 @@ def _evaluate_pod_egress(
                 )
                 if not port_ok:
                     continue
+                for match_entry in rule.get("matches", []):
+                    fqdn_pattern = match_entry.get("pattern") or match_entry.get("name")
+                    if fqdn_pattern and _fqdn_matches_pattern(dest_fqdn, fqdn_pattern):
+                        return True
                 for to_peer in rule.get("to", []):
                     for fqdn_pattern in to_peer.get("fqdns", []):
                         if _fqdn_matches_pattern(dest_fqdn, fqdn_pattern):
@@ -549,117 +848,97 @@ def _evaluate_pod_egress(
 
 
 class TestDataplaneV2AndFQDNNetworkPolicies:
-    """Verify §5.3 network policy migration from CiliumNetworkPolicy to NetworkPolicy + FQDNNetworkPolicy."""
+    """Verify §5.3 network policy migration from CiliumNetworkPolicy to NetworkPolicy + FQDNNetworkPolicy in `network_policy.tf`."""
 
-    @pytest.mark.parametrize(
-        "manifest_name",
-        [
-            "egress-lockdown.yaml",
-            "reconciliation-worker-egress.yaml",
-            "trivy-egress-fqdn.yaml",
-        ],
-    )
-    def test_no_cilium_network_policy_or_l7_rules_in_manifests(
-        self, manifest_name: str
-    ) -> None:
-        path = CILIUM_DIR / manifest_name
-        raw = path.read_text(encoding="utf-8")
-        docs = _load_yaml_docs(path)
-        assert docs, f"{manifest_name} must contain valid YAML documents"
+    def test_no_cilium_network_policy_or_l7_rules_in_terraform(self) -> None:
+        netpol_tf = (GKE_TARGET_DIR / "network_policy.tf").read_text(encoding="utf-8")
+        netpols, fqdnpols = _load_terraform_egress_policies()
+        assert len(netpols) >= 7
+        assert len(fqdnpols) >= 5
 
-        for doc in docs:
+        for doc in [*netpols, *fqdnpols]:
             kind = doc.get("kind")
             api_version = doc.get("apiVersion")
             assert kind in ("NetworkPolicy", "FQDNNetworkPolicy"), (
-                f"Unexpected kind {kind!r} in {manifest_name}; CiliumNetworkPolicy is prohibited"
+                f"Unexpected kind {kind!r}; CiliumNetworkPolicy is prohibited"
             )
             if kind == "NetworkPolicy":
                 assert api_version == "networking.k8s.io/v1"
             elif kind == "FQDNNetworkPolicy":
                 assert api_version == "networking.gke.io/v1alpha1"
                 for rule in doc.get("spec", {}).get("egress", []):
-                    for to_peer in rule.get("to", []):
-                        for fqdn in to_peer.get("fqdns", []):
-                            assert re.match(
-                                r"^(\*\.)?[a-zA-Z0-9-]+(\.[a-zA-Z0-9-]+)+$", fqdn
-                            ), (
-                                f"Invalid FQDN pattern {fqdn!r} in {manifest_name}: "
-                                "only exact FQDNs or single-label prefix wildcards (*.domain.tld) are valid"
-                            )
+                    for match_entry in rule.get("matches", []):
+                        fqdn = match_entry.get("pattern") or match_entry.get("name")
+                        assert fqdn and re.match(
+                            r"^(\*\.)?[a-zA-Z0-9-]+(\.[a-zA-Z0-9-]+)+$", fqdn
+                        ), (
+                            f"Invalid FQDN pattern {fqdn!r} in {doc['metadata']['name']}: "
+                            "only exact FQDNs or single-label prefix wildcards (*.domain.tld) are valid"
+                        )
 
-        assert "toFQDNs" not in raw
-        assert "toEndpoints" not in raw
-        assert "matchPattern" not in raw
-        assert "matchName" not in raw
+        assert "CiliumNetworkPolicy" not in netpol_tf
+        assert "cilium.io" not in netpol_tf
+        assert "toFQDNs" not in netpol_tf
+        assert "matchPattern" not in netpol_tf
+        assert "matchName" not in netpol_tf
 
     def test_dns_egress_never_opens_port_53_to_0_0_0_0_0(self) -> None:
-        all_policy_files = [
-            CILIUM_DIR / "egress-lockdown.yaml",
-            CILIUM_DIR / "reconciliation-worker-egress.yaml",
-            CILIUM_DIR / "trivy-egress-fqdn.yaml",
-            K8S_DIR / "network-policy.yaml",
-        ]
-        for policy_file in all_policy_files:
-            docs = _load_yaml_docs(policy_file)
-            for doc in docs:
-                if doc.get("kind") != "NetworkPolicy":
-                    continue
-                for rule in doc.get("spec", {}).get("egress", []):
-                    ports = [int(p.get("port", -1)) for p in rule.get("ports", [])]
-                    if 53 in ports:
-                        to_peers = rule.get("to", [])
-                        assert to_peers, (
-                            f"Port 53 rule in {policy_file.name} ({doc['metadata']['name']}) "
-                            "must specify explicit 'to:' peers (kube-dns or 169.254.169.254/32), "
-                            "never an unrestricted empty 'to' (0.0.0.0/0)"
-                        )
-                        for peer in to_peers:
-                            if "ipBlock" in peer:
-                                assert (
-                                    peer["ipBlock"]["cidr"] == "169.254.169.254/32"
-                                ), (
-                                    f"Port 53 ipBlock in {policy_file.name} must only target "
-                                    f"GKE NodeLocal DNSCache / Cloud DNS (169.254.169.254/32), got {peer['ipBlock']['cidr']}"
-                                )
-                            else:
-                                assert (
-                                    peer.get("podSelector", {})
-                                    .get("matchLabels", {})
-                                    .get("k8s-app")
-                                    == "kube-dns"
-                                ), (
-                                    f"Port 53 podSelector in {policy_file.name} must target k8s-app: kube-dns"
-                                )
+        netpols, _ = _load_terraform_egress_policies()
+        dns_rules_checked = 0
+        for doc in netpols:
+            for rule in doc.get("spec", {}).get("egress", []):
+                ports = [int(p.get("port", -1)) for p in rule.get("ports", [])]
+                if 53 in ports:
+                    dns_rules_checked += 1
+                    to_peers = rule.get("to", [])
+                    assert to_peers, (
+                        f"Port 53 rule in {doc['metadata']['name']} "
+                        "must specify explicit 'to' peers (kube-dns, node-local-dns, or 169.254.169.254/32), "
+                        "never an unrestricted empty 'to' (0.0.0.0/0)"
+                    )
+                    for peer in to_peers:
+                        if "ipBlock" in peer:
+                            assert peer["ipBlock"]["cidr"] == "169.254.169.254/32", (
+                                f"Port 53 ipBlock in {doc['metadata']['name']} must only target "
+                                f"GKE NodeLocal DNSCache / Cloud DNS (169.254.169.254/32), got {peer['ipBlock']['cidr']}"
+                            )
+                        else:
+                            assert peer.get("podSelector", {}).get(
+                                "matchLabels", {}
+                            ).get("k8s-app") in ("kube-dns", "node-local-dns"), (
+                                f"Port 53 podSelector in {doc['metadata']['name']} must target "
+                                "k8s-app in ('kube-dns', 'node-local-dns')"
+                            )
+        assert dns_rules_checked >= 4
 
     def test_memorystore_psc_ipblock_replaces_redis_stack_pod_selector(self) -> None:
-        for manifest_name in (
-            "egress-lockdown.yaml",
-            "reconciliation-worker-egress.yaml",
-        ):
-            raw = (CILIUM_DIR / manifest_name).read_text(encoding="utf-8")
-            assert "redis-stack" not in raw, (
-                f"{manifest_name} must not reference legacy in-cluster redis-stack pod"
-            )
-            docs = _load_yaml_docs(CILIUM_DIR / manifest_name)
-            netpols = [d for d in docs if d.get("kind") == "NetworkPolicy"]
-            redis_rules = [
-                rule
-                for np in netpols
-                for rule in np.get("spec", {}).get("egress", [])
-                if any(int(p.get("port", -1)) == 6379 for p in rule.get("ports", []))
+        netpol_tf = (GKE_TARGET_DIR / "network_policy.tf").read_text(encoding="utf-8")
+        # Strip comment lines before checking for legacy redis-stack references
+        non_comment = "\n".join(
+            line.split("#", 1)[0] for line in netpol_tf.splitlines()
+        )
+        assert "redis-stack" not in non_comment, (
+            "network_policy.tf must not reference legacy in-cluster redis-stack pod"
+        )
+        netpols, _ = _load_terraform_egress_policies()
+        redis_rules = [
+            rule
+            for np in netpols
+            for rule in np.get("spec", {}).get("egress", [])
+            if any(int(p.get("port", -1)) == 6379 for p in rule.get("ports", []))
+        ]
+        assert len(redis_rules) >= 4, (
+            "network_policy.tf must include port 6379 egress rules for Memorystore PSC"
+        )
+        for rule in redis_rules:
+            ip_blocks = [
+                peer["ipBlock"]["cidr"]
+                for peer in rule.get("to", [])
+                if "ipBlock" in peer
             ]
-            assert redis_rules, (
-                f"{manifest_name} must include a port 6379 egress rule for Memorystore PSC"
+            assert ip_blocks, (
+                "Every port 6379 rule in network_policy.tf must use an ip_block for Memorystore PSC"
             )
-            for rule in redis_rules:
-                ip_blocks = [
-                    peer["ipBlock"]["cidr"]
-                    for peer in rule.get("to", [])
-                    if "ipBlock" in peer
-                ]
-                assert ip_blocks, (
-                    f"Port 6379 rule in {manifest_name} must use an ipBlock for Memorystore PSC"
-                )
 
     def test_reconciliation_worker_egress_enforcement_probe_allows_and_blocks(
         self,
@@ -671,9 +950,7 @@ class TestDataplaneV2AndFQDNNetworkPolicies:
         - Blocks direct IP literal connection (`142.250.80.46:443`) bypassing DNS
         - Blocks external DNS (`8.8.8.8:53`) while allowing `kube-dns` and `169.254.169.254:53`
         """
-        docs = _load_yaml_docs(CILIUM_DIR / "reconciliation-worker-egress.yaml")
-        netpols = [d for d in docs if d.get("kind") == "NetworkPolicy"]
-        fqdnpols = [d for d in docs if d.get("kind") == "FQDNNetworkPolicy"]
+        netpols, fqdnpols = _load_terraform_egress_policies()
         worker_labels = {
             "app": "reconciliation-worker",
             "cage.io/account-purpose": "ledger-reconciliation",
@@ -691,7 +968,7 @@ class TestDataplaneV2AndFQDNNetworkPolicies:
             is True
         )
 
-        # 2. Allowed Memorystore PSC IP CIDR (10.128.0.0/20): 10.128.0.50:6379
+        # 2. Allowed Memorystore governance PSC /32 endpoint (10.128.0.50:6379)
         assert (
             _evaluate_pod_egress(
                 netpols, fqdnpols, worker_labels, dest_ip="10.128.0.50", port=6379
@@ -980,11 +1257,13 @@ class TestPerimeterControls:
             )
             assert "depends_on" not in ms_call
 
-    def test_ingress_manifest_includes_cloud_armor_backend_config(self) -> None:
-        docs = _load_yaml_docs(K8S_DIR / "ingress.yaml")
-        backend_configs = [d for d in docs if d.get("kind") == "BackendConfig"]
-        assert len(backend_configs) == 1
-        assert backend_configs[0]["spec"]["securityPolicy"]["name"] == "cage-waf-policy"
+    def test_perimeter_tf_defines_cloud_armor_backend_config_manifest(self) -> None:
+        perimeter_tf = (GKE_TARGET_DIR / "perimeter.tf").read_text(encoding="utf-8")
+        assert "gateway_backend_config_manifest = {" in perimeter_tf
+        assert 'apiVersion = "cloud.google.com/v1"' in perimeter_tf
+        assert 'kind       = "BackendConfig"' in perimeter_tf
+        assert 'name      = "gateway-backend-config"' in perimeter_tf
+        assert "google_compute_security_policy.gateway_armor[0].name" in perimeter_tf
 
 
 # ============================================================================
@@ -1178,10 +1457,8 @@ class TestVllmHfTokenRemovalAndGcsModelStreaming:
         assert '"169.254.169.252/32"' in netpol_tf
         assert 'port     = "988"' in netpol_tf
 
-        # 3. Behavioral evaluation of vLLM egress in deployment/k8s/cilium/egress-lockdown.yaml
-        docs = _load_yaml_docs(CILIUM_DIR / "egress-lockdown.yaml")
-        netpols = [d for d in docs if d.get("kind") == "NetworkPolicy"]
-        fqdnpols = [d for d in docs if d.get("kind") == "FQDNNetworkPolicy"]
+        # 3. Behavioral evaluation of vLLM egress in infra/targets/gcp-gke/network_policy.tf
+        netpols, fqdnpols = _load_terraform_egress_policies()
 
         for app_label in ("vllm-inference", "vllm-reasoning"):
             pod_labels = {"app": app_label, "component": "vllm-inference"}

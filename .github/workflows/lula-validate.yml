@@ -25,12 +25,12 @@ on:
   push:
     paths:
       - 'src/**'
-      - 'deployment/k8s/**'
+      - 'infra/**'
       - 'compliance/lula/**'
   pull_request:
     paths:
       - 'src/**'
-      - 'deployment/k8s/**'
+      - 'infra/**'
       - 'compliance/lula/**'
 
 # Default least-privilege permissions for every job in this workflow.
