@@ -191,6 +191,45 @@ locals {
   compliance_evidence_key_version = "${google_kms_crypto_key.compliance_evidence.id}/cryptoKeyVersions/1"
   benchmark_signing_key_version   = "${google_kms_crypto_key.benchmark_signing.id}/cryptoKeyVersions/1"
   binauthz_attestor_key_version   = "${google_kms_crypto_key.binauthz_attestor.id}/cryptoKeyVersions/1"
+
+  # PF8 in reverse (§10a, R-10): archive real PEM signing public keys (kid
+  # manifest) in the persistent evidence domain so signatures remain verifiable
+  # after workload cluster teardown or key rotation.
+  signing_key_manifest = {
+    "gateway-seal" = {
+      kid            = local.gateway_seal_key_version
+      key_version_id = local.gateway_seal_key_version
+      algorithm      = data.google_kms_crypto_key_version.gateway_seal.public_key[0].algorithm
+      public_key_pem = data.google_kms_crypto_key_version.gateway_seal.public_key[0].pem
+    }
+    "compliance-evidence" = {
+      kid            = local.compliance_evidence_key_version
+      key_version_id = local.compliance_evidence_key_version
+      algorithm      = data.google_kms_crypto_key_version.compliance_evidence.public_key[0].algorithm
+      public_key_pem = data.google_kms_crypto_key_version.compliance_evidence.public_key[0].pem
+    }
+    "reconciler-snapshot" = {
+      kid            = local.reconciler_snapshot_key_version
+      key_version_id = local.reconciler_snapshot_key_version
+      algorithm      = data.google_kms_crypto_key_version.reconciler_snapshot.public_key[0].algorithm
+      public_key_pem = data.google_kms_crypto_key_version.reconciler_snapshot.public_key[0].pem
+    }
+  }
+}
+
+data "google_kms_crypto_key_version" "gateway_seal" {
+  crypto_key = google_kms_crypto_key.gateway_seal.id
+  version    = 1
+}
+
+data "google_kms_crypto_key_version" "reconciler_snapshot" {
+  crypto_key = google_kms_crypto_key.reconciler_snapshot.id
+  version    = 1
+}
+
+data "google_kms_crypto_key_version" "compliance_evidence" {
+  crypto_key = google_kms_crypto_key.compliance_evidence.id
+  version    = 1
 }
 
 data "google_iam_policy" "signing_key" {

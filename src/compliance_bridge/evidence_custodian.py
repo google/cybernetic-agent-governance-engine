@@ -114,6 +114,16 @@ ATTESTATION_SCHEMA = "cage-evidence-batch/1"
 # ``gap.kind`` for a batch that starts a new chain at genesis after another
 # chain was custodied. Trim gaps carry ``expected_sequence`` and no kind.
 GAP_KIND_CHAIN_ROTATION = "CHAIN_ROTATION"
+GAP_KIND_BOUND_CHAIN_ROTATION = "BOUND_CHAIN_ROTATION"
+
+
+def _extract_genesis_rotation_binding(record: dict[str, Any]) -> tuple[str, str]:
+    """Extract (previous_chain_head_hash, previous_batch_attestation_digest) from a genesis record."""
+    prev_head = str(record.get("previous_chain_head_hash") or "").strip()
+    prev_att = str(record.get("previous_batch_attestation_digest") or "").strip()
+    return prev_head, prev_att
+
+
 # Every evidence-stream payload is PII-sanitized before it is hash-chained
 # (EvidenceStreamSink._append), so custodied objects are Internal and
 # PII-sanitized — not PII-free by construction for every possible input; see
@@ -573,7 +583,9 @@ class EvidenceCustodian:
             "entries_count": len(batch),
             "content_sha256": content_sha256,
             "data_key": data_key,
-            "gap": {"detected": gap, **expected} if gap else {"detected": False},
+            "gap": {"detected": gap, **expected}
+            if (gap or expected)
+            else {"detected": False},
             # Signed body asserts it is evidence; flipped below if unsigned.
             "signature_status": SIGNED,
             "evidentiary": True,
@@ -792,7 +804,7 @@ class EvidenceCustodian:
         att_chain_id = str(latest_att["chain_id"])
         att_first_seq = int(latest_att["first_sequence"])
         gap = latest_att.get("gap") or {}
-        if gap.get("detected"):
+        if gap.get("detected") or gap.get("kind") == GAP_KIND_BOUND_CHAIN_ROTATION:
             if "previous_chain_id" in gap:
                 return {
                     "chain_id": str(gap["previous_chain_id"]),
@@ -865,15 +877,42 @@ class EvidenceCustodian:
         elif is_genesis:
             if not cursor_chain:
                 return first_seq, False, {}
-            # A new chain at genesis after another chain was custodied: the
-            # producer started over (e.g. the stream was emptied), so whatever
-            # the old chain held beyond the cursor was lost before custody.
+            genesis_prev_head, genesis_prev_att = _extract_genesis_rotation_binding(
+                first
+            )
+            prior_hash = cursor.get("last_record_hash", "")
+            is_bound = bool(
+                genesis_prev_head
+                and genesis_prev_att
+                and prior_hash
+                and genesis_prev_head == prior_hash
+            )
             rotation: dict[str, Any] = {
-                "kind": GAP_KIND_CHAIN_ROTATION,
+                "kind": (
+                    GAP_KIND_BOUND_CHAIN_ROTATION
+                    if is_bound
+                    else GAP_KIND_CHAIN_ROTATION
+                ),
                 "previous_chain_id": cursor_chain,
                 "previous_last_sequence": int(cursor["last_sequence"]),
-                "previous_last_record_hash": cursor.get("last_record_hash", ""),
+                "previous_last_record_hash": prior_hash,
             }
+            if genesis_prev_head:
+                rotation["previous_chain_head_hash"] = genesis_prev_head
+            if genesis_prev_att:
+                rotation["previous_batch_attestation_digest"] = genesis_prev_att
+            if is_bound:
+                logger.info(
+                    "[EvidenceCustodian] BOUND_CHAIN_ROTATION: chain %s starts at "
+                    "genesis bound to custodied chain %s seq %d (head=%s…).",
+                    chain_id,
+                    cursor_chain,
+                    rotation["previous_last_sequence"],
+                    prior_hash[:16],
+                )
+                return first_seq, False, rotation
+            # Unbound or mismatched rotation: the producer started over without a
+            # complete matching genesis rotation binding.
             logger.critical(
                 "[EvidenceCustodian] GAP: chain %s starts at genesis after custodied "
                 "chain %s seq %d (chain rotation). Records after the cursor may "

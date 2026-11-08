@@ -70,6 +70,7 @@ SKIP_TELEMETRY=false
 SKIP_REBUILD=false
 NO_DESTROY=false
 FRESH_PROJECT=false
+ALLOW_LEGACY_LIEN_SURVIVOR=false
 PROJECT_ID="${GOOGLE_CLOUD_PROJECT:-}"
 BILLING_ACCOUNT_ID="${BILLING_ACCOUNT_ID:-}"
 REGION="${GOOGLE_CLOUD_LOCATION:-us-central1}"
@@ -122,10 +123,9 @@ while [[ $# -gt 0 ]]; do
       NO_DESTROY=true
       shift
       ;;
-    --fresh-project)
-      FRESH_PROJECT=true
-      shift
-      ;;
+    --fresh-project) FRESH_PROJECT=true; shift ;;
+    --allow-legacy-lien-survivor)
+      ALLOW_LEGACY_LIEN_SURVIVOR=true; shift ;;
     --fresh-project=*)
       FRESH_PROJECT=true
       PROJECT_ID="${1#*=}"
@@ -1075,7 +1075,7 @@ PERSISTENT_KMS_STATE_ADDRS=(
   "google_kms_crypto_key.benchmark_signing"
   "google_kms_crypto_key.binauthz_attestor"
   "google_kms_key_ring.signing"
-  "module.kms"
+  "module.kms" "module.evidence_domain" "module.worm_bucket"
 )
 
 detach_persistent_kms_state() {
@@ -1170,12 +1170,27 @@ if [[ "$FRESH_PROJECT" == "true" ]]; then
   fi
 
   remaining_buckets="$(gcloud storage buckets list --project="$PROJECT_ID" --format='value(name)' 2>/dev/null | grep -Ev "^(${PROJECT_ID}-tfstate|${PROJECT_ID}_cloudbuild)$" || true)"
+  has_retained_worm_buckets=false
+  if printf '%s\n' "$remaining_buckets" | grep -Eq "^(${PROJECT_ID}-evidence-worm-staging|${PROJECT_ID}-audit-logs-worm-staging)$"; then
+    info "PF9 persistent evidence-domain WORM bucket(s) retained by design (F-66 / F-94): $(printf '%s\n' "$remaining_buckets" | grep -E "^(${PROJECT_ID}-evidence-worm-staging|${PROJECT_ID}-audit-logs-worm-staging)$" | tr '\n' ' ')"
+    remaining_buckets="$(printf '%s\n' "$remaining_buckets" | grep -Ev "^(${PROJECT_ID}-evidence-worm-staging|${PROJECT_ID}-audit-logs-worm-staging)$" || true)"
+    has_retained_worm_buckets=true
+  fi
+  if [[ "$ALLOW_LEGACY_LIEN_SURVIVOR" == "true" && "$remaining_buckets" == *"langfuse-events-"* ]]; then
+    info "PF9 explicit known survivor (F-95 Decision 6, 2033-09-27 retention lock): $(printf '%s\n' "$remaining_buckets" | grep -E '^langfuse-events-' || true)"
+    remaining_buckets="$(printf '%s\n' "$remaining_buckets" | grep -Ev '^langfuse-events-' || true)"
+  fi
   if [[ -n "$remaining_buckets" ]]; then
     error "Surviving workload GCS bucket(s) after destroy: $remaining_buckets"
     ((SURVIVORS++)) || true
   fi
 
-  remaining_liens="$(gcloud alpha resource-manager liens list --project="$PROJECT_ID" --format='value(name)' 2>/dev/null || true)"
+  # Unexcused liens require explicit `gcloud alpha resource-manager liens delete` before project deletion.
+  remaining_liens="$(gcloud alpha resource-manager liens list --project="$PROJECT_ID" --format='value(name,restrictions)' 2>/dev/null || true)"
+  if [[ ( "$has_retained_worm_buckets" == "true" || "$ALLOW_LEGACY_LIEN_SURVIVOR" == "true" ) && "$remaining_liens" == *"storage.googleapis.com"* ]]; then
+    info "PF9 explicit known storage retention lien survivor (F-66 / F-95): $remaining_liens"
+    remaining_liens="$(printf '%s\n' "$remaining_liens" | grep -Ev 'storage\.googleapis\.com' || true)"
+  fi
   if [[ -n "$remaining_liens" ]]; then
     error "Surviving project deletion lien(s) after destroy: $remaining_liens"
     ((SURVIVORS++)) || true

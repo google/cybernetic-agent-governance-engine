@@ -317,24 +317,24 @@ removed {
 }
 
 # ─── Evidence WORM Bucket — System of Record (§1.1, §2.6, NIST AU-9) ─────────
-# Durable tamper-evident cold store for hash-chained governance evidence and
-# OSCAL assessment artifacts. ClickHouse is only the query plane (§2.6); losing
-# ClickHouse nodes never loses evidence persisted to this retention-locked bucket.
-# Its retention lock is the shared posture above (local.retention_period_seconds,
-# local.retention_locked).
+# Durable tamper-evident cold store in the persistent evidence custody boundary.
+# CMEK and WORM audit-log custody are coordinated via module.evidence_domain.
 module "worm_bucket" {
   source = "../../modules/worm_bucket"
 
-  project_id               = var.project_id
+  project_id               = local.evidence_project_id
   environment              = var.environment
   region                   = var.region
   cage_deployment_region   = var.cage_deployment_region
-  bucket_name              = "${var.project_id}-evidence-worm-${var.environment}"
+  bucket_name              = local.evidence_bucket_name
+  external_bucket_enabled  = var.external_evidence_domain_enabled
   enable_cmek              = var.enable_cmek
-  kms_key_id               = local.cmek_key_id
+  kms_key_id               = local.evidence_cmek_key_id
+  cmek_iam_ready           = module.evidence_domain.evidence_cmek_iam_ready
   retention_period_seconds = local.retention_period_seconds
   is_locked                = local.retention_locked
   force_destroy            = !local.enforcing_posture
+  depends_on               = [terraform_data.evidence_domain_isolation_guard]
 }
 
 
@@ -922,7 +922,7 @@ module "compliance_bridge" {
   oscal_s3_region            = var.region
   evidence_cold_store        = "gcs"
   evidence_cold_store_bucket = module.worm_bucket.bucket_name
-  cmek_key_resource_name     = var.enable_cmek ? local.cmek_key_id : ""
+  cmek_key_resource_name     = var.enable_cmek ? local.evidence_cmek_key_id : ""
   cage_env                   = var.environment
   deployment_config_map_name = module.deployment_config.config_map_name
 
@@ -1409,4 +1409,66 @@ resource "terraform_data" "inference_backend_guard" {
       error_message = "inference_backend = \"vllm\" needs enable_gpu_node_pool = true: the vLLM pods schedule only on the GPU pool. Keep the pool at min 0 to pay nothing while idle."
     }
   }
+}
+
+# ─── Persistent Evidence Custody Domain (§10a, R-10, F-66, F-94, F-97) ─────────
+
+locals {
+  evidence_project_id = coalesce(var.evidence_project_id, var.project_id)
+  evidence_bucket_name = (
+    var.evidence_bucket_name != ""
+    ? var.evidence_bucket_name
+    : "${local.evidence_project_id}-evidence-worm-${var.environment}"
+  )
+  require_separate_evidence_project = (
+    var.require_separate_evidence_project != null
+    ? var.require_separate_evidence_project
+    : (var.environment == "prod")
+  )
+  effective_kms_protection_level = (
+    var.kms_protection_level != ""
+    ? var.kms_protection_level
+    : (var.environment == "dev" ? "SOFTWARE" : "HSM")
+  )
+  evidence_cmek_key_id = var.enable_cmek ? module.evidence_domain.evidence_cmek_key_id : ""
+}
+
+resource "terraform_data" "evidence_domain_isolation_guard" {
+  lifecycle {
+    precondition {
+      condition     = !local.require_separate_evidence_project || var.external_evidence_domain_enabled || local.evidence_project_id != var.project_id
+      error_message = "[AU-9(4) / F-66 / F-97] Production evidence custody isolation requires external_evidence_domain_enabled = true or a dedicated evidence_project_id ('${local.evidence_project_id}') distinct from project_id ('${var.project_id}') so the workload deployer SA holds zero destroy path over evidence resources."
+    }
+
+    precondition {
+      condition     = !var.external_evidence_domain_enabled || !var.enable_cmek || var.external_evidence_cmek_key_id != ""
+      error_message = "[F-97] When external_evidence_domain_enabled = true and enable_cmek = true, external_evidence_cmek_key_id must be set to the external evidence CMEK CryptoKey ID."
+    }
+  }
+}
+
+module "evidence_domain" {
+  source = "../../modules/evidence_domain"
+
+  evidence_project_id               = coalesce(var.evidence_project_id, var.project_id)
+  workload_project_id               = var.project_id
+  environment                       = var.environment
+  region                            = var.region
+  cage_deployment_region            = var.cage_deployment_region
+  external_evidence_domain_enabled  = var.external_evidence_domain_enabled
+  external_evidence_cmek_key_id     = var.external_evidence_cmek_key_id
+  require_separate_evidence_project = local.require_separate_evidence_project
+  evidence_bucket_name              = module.worm_bucket.bucket_name
+  audit_logs_bucket_name            = var.audit_logs_bucket_name
+  retention_period_seconds          = local.retention_period_seconds
+  retention_locked                  = local.retention_locked
+  enable_cmek                       = var.enable_cmek
+  kms_protection_level              = local.effective_kms_protection_level
+  custodian_service_account_email   = google_service_account.compliance_bridge.email
+  audit_log_sink_writer_identities  = var.audit_log_sink_writer_identities
+  offline_verifier_principal        = var.offline_verifier_principal
+  deployer_service_account_email    = google_service_account.deployer.email
+  signing_key_manifest              = local.signing_key_manifest
+
+  isolation_guard_ready = terraform_data.evidence_domain_isolation_guard.id
 }

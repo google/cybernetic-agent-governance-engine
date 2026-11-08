@@ -298,13 +298,42 @@ import_foundational_state() {
     fi
   fi
 
+  import_evidence_domain_state
   echo "✅ Foundational state import pass complete."
 }
 
-if [[ "$IMPORT_STATE" == "true" ]]; then
-  import_foundational_state
-  exit 0
-fi
+if [[ "$IMPORT_STATE" == "true" ]]; then import_evidence_domain_state() {
+  if [[ "${TF_VAR_external_evidence_domain_enabled:-false}" == "true" ]]; then
+    return 0
+  fi
+  local ev_project="${TF_VAR_evidence_project_id:-$PROJECT_ID}"
+  local ev_keyring="cage-evidence-custody-keyring-${ENV}"
+  local ev_cmek="cage-evidence-cmek-key"
+  local ev_worm_bucket="${ev_project}-evidence-worm-${ENV}"
+  local ev_audit_bucket="${ev_project}-audit-logs-worm-${ENV}"
+
+  if gcloud kms keyrings describe "$ev_keyring" --location="$REGION" --project="$ev_project" >/dev/null 2>&1; then
+    import_if_missing       "module.evidence_domain.google_kms_key_ring.evidence_custody[0]"       "projects/${ev_project}/locations/${REGION}/keyRings/${ev_keyring}"
+    if gcloud kms keys describe "$ev_cmek" --keyring="$ev_keyring" --location="$REGION" --project="$ev_project" >/dev/null 2>&1; then
+      import_if_missing         "module.evidence_domain.google_kms_crypto_key.evidence_cmek[0]"         "projects/${ev_project}/locations/${REGION}/keyRings/${ev_keyring}/cryptoKeys/${ev_cmek}"
+      import_if_missing         "module.evidence_domain.google_kms_crypto_key_iam_binding.evidence_cmek_crypto_operator[0]"         "projects/${ev_project}/locations/${REGION}/keyRings/${ev_keyring}/cryptoKeys/${ev_cmek} roles/cloudkms.cryptoKeyEncrypterDecrypter"
+    fi
+  fi
+
+  if gcloud storage buckets describe "gs://${ev_worm_bucket}" --project="$ev_project" >/dev/null 2>&1; then
+    import_if_missing       "module.worm_bucket.google_storage_bucket.bucket[0]"       "${ev_worm_bucket}"
+    local latest_manifest
+    latest_manifest="$(gcloud storage ls "gs://${ev_worm_bucket}/trust-anchors/signing-key-manifest-*.json" 2>/dev/null | sort | tail -n 1 || true)"
+    if [[ -n "$latest_manifest" ]]; then
+      local manifest_obj="${latest_manifest#gs://${ev_worm_bucket}/}"
+      import_if_missing         "module.evidence_domain.google_storage_bucket_object.signing_key_manifest[0]"         "${ev_worm_bucket}/${manifest_obj}"
+    fi
+  fi
+
+  if gcloud storage buckets describe "gs://${ev_audit_bucket}" --project="$ev_project" >/dev/null 2>&1; then
+    import_if_missing       "module.evidence_domain.google_storage_bucket.audit_logs_worm[0]"       "${ev_audit_bucket}"
+  fi
+}; import_foundational_state; exit 0; fi
 
 # ---------------------------------------------------------------------------
 # Default Mode: Project Bootstrap (PF1, PF2, PF3, PF4, PF10)

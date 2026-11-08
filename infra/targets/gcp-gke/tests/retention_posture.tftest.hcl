@@ -75,6 +75,7 @@ override_module {
 
 variables {
   project_id          = "retention-test-project"
+  evidence_project_id = "retention-evidence-project"
   authorized_networks = [{ cidr = "203.0.113.7/32", display_name = "test" }]
 
   # A compliance posture needs distinct compliance telemetry keys (POAM-019).

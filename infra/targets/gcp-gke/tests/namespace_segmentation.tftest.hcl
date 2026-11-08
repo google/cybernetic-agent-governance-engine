@@ -318,6 +318,7 @@ run "prod_enables_dataplane_v2_logging_and_clickhouse_cold_tier_fqdn" {
   variables {
     environment              = "prod"
     enable_high_availability = true
+    evidence_project_id      = "seg-evidence-project"
   }
 
   assert {

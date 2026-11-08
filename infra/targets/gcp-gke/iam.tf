@@ -184,12 +184,16 @@ resource "google_project_iam_member" "reconciler_memorystore_user" {
 # ---------------------------------------------------------------------------
 
 resource "google_storage_bucket_iam_member" "compliance_bridge_worm_creator" {
+  count = var.external_evidence_domain_enabled ? 0 : 1
+
   bucket = module.worm_bucket.bucket_name
   role   = "roles/storage.objectCreator"
   member = "serviceAccount:${google_service_account.compliance_bridge.email}"
 }
 
 resource "google_storage_bucket_iam_member" "compliance_bridge_worm_viewer" {
+  count = var.external_evidence_domain_enabled ? 0 : 1
+
   bucket = module.worm_bucket.bucket_name
   role   = "roles/storage.objectViewer"
   member = "serviceAccount:${google_service_account.compliance_bridge.email}"

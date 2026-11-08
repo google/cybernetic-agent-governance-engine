@@ -1306,3 +1306,66 @@ variable "inference_stub_image" {
     error_message = "Under Binary Authorization, inference_stub_image must be pinned by @sha256: digest."
   }
 }
+
+# ─── Persistent Evidence Domain Configuration (§10a, R-10, F-66, F-94, F-97) ─
+
+variable "kms_protection_level" {
+  description = "Cloud KMS CryptoKey protection level (SOFTWARE or HSM). When empty, defaults to SOFTWARE in dev and HSM in staging/prod."
+  type        = string
+  default     = ""
+
+  validation {
+    condition     = contains(["", "SOFTWARE", "HSM"], var.kms_protection_level)
+    error_message = "kms_protection_level must be empty (auto-select by environment), SOFTWARE, or HSM."
+  }
+}
+
+variable "evidence_project_id" {
+  description = "Optional dedicated GCP project ID for the persistent evidence custody domain (e.g. '<PROJECT_ID>-evidence'). When null, defaults to var.project_id via coalesce(var.evidence_project_id, var.project_id)."
+  type        = string
+  default     = null
+  nullable    = true
+}
+
+variable "external_evidence_domain_enabled" {
+  description = "When true, the persistent evidence domain is managed in an external Terraform root (<PROJECT_ID>-evidence) and adopted read-only so workload cluster teardown (W) holds zero destroy path over WORM evidence buckets, Cloud Audit Logs buckets, or evidence CMEK keys (AU-9(4), F-66, F-94, F-97)."
+  type        = bool
+  default     = false
+}
+
+variable "external_evidence_cmek_key_id" {
+  description = "Resource ID of the externally managed evidence CMEK CryptoKey when external_evidence_domain_enabled = true and enable_cmek = true (F-97)."
+  type        = string
+  default     = ""
+}
+
+variable "require_separate_evidence_project" {
+  description = "When true (defaults to true in prod, false in dev/staging when null), enforces at plan time that external_evidence_domain_enabled = true or evidence_project_id != var.project_id so the workload deployer SA holds zero storage/KMS admin roles in the evidence domain (AU-9(4), F-66, F-97)."
+  type        = bool
+  default     = null
+  nullable    = true
+}
+
+variable "evidence_bucket_name" {
+  description = "Optional override for the WORM evidence bucket name (defaults to '<evidence_project_id>-evidence-worm-<environment>')."
+  type        = string
+  default     = ""
+}
+
+variable "audit_logs_bucket_name" {
+  description = "Optional override for the retention-locked Cloud Audit Logs WORM bucket name (audit-logs-worm, R-4)."
+  type        = string
+  default     = ""
+}
+
+variable "audit_log_sink_writer_identities" {
+  description = "Map of static sink names to Cloud Logging sink writer identities granted roles/storage.objectCreator on the retention-locked audit-logs-worm bucket (R-4)."
+  type        = map(string)
+  default     = {}
+}
+
+variable "offline_verifier_principal" {
+  description = "Optional IAM principal for the out-of-cluster CustodyVerifier granted roles/storage.objectViewer in the evidence domain."
+  type        = string
+  default     = ""
+}

@@ -80,7 +80,7 @@ import logging
 import os
 import re
 import sys
-from dataclasses import asdict, dataclass, field
+from dataclasses import asdict, dataclass, field, replace
 from typing import Any
 
 from src.gateway.governance.env_posture import is_enforcing
@@ -92,9 +92,11 @@ from src.gateway.governance.evidence.stream import verify_record
 from src.gateway.governance.kms_signer import KMSGovernanceSigner
 
 from .evidence_custodian import (
+    GAP_KIND_BOUND_CHAIN_ROTATION,
     GAP_KIND_CHAIN_ROTATION,
     EvidenceCustodyConfigError,
     NonEvidentiaryAttestationError,
+    _extract_genesis_rotation_binding,
     assert_citable,
 )
 from .kms_batch_signer import (
@@ -267,9 +269,28 @@ class VerifiedBatch:
     key_id: str
     gap_declared: bool
     gap_expected_sequence: int | None
-    # Set when the batch declares a CHAIN_ROTATION gap: the chain it replaced.
+    # Set when the batch declares a CHAIN_ROTATION or BOUND_CHAIN_ROTATION: the chain it replaced.
     rotated_from_chain_id: str | None = None
     rotated_from_last_sequence: int | None = None
+    rotated_from_last_record_hash: str | None = None
+    previous_chain_head_hash: str | None = None
+    previous_batch_attestation_digest: str | None = None
+    rotation_kind: str | None = None
+    bound_chain_rotation: bool = False
+    attestation_sha256: str = ""
+
+
+@dataclass(frozen=True)
+class BoundChainRotation:
+    """A chain rotation whose genesis record cryptographically binds the prior chain's head and batch attestation (F-94)."""
+
+    previous_chain_id: str
+    new_chain_id: str
+    previous_last_sequence: int
+    previous_chain_head_hash: str
+    previous_batch_attestation_digest: str
+    attestation_key: str
+    kind: str = GAP_KIND_BOUND_CHAIN_ROTATION
 
 
 @dataclass(frozen=True)
@@ -311,6 +332,7 @@ class CustodyVerificationReport:
     verified: list[VerifiedBatch] = field(default_factory=list)
     failures: list[VerificationFailure] = field(default_factory=list)
     declared_gaps: list[DeclaredGap] = field(default_factory=list)
+    bound_rotations: list[BoundChainRotation] = field(default_factory=list)
     non_evidentiary: list[str] = field(default_factory=list)
 
     @property
@@ -364,6 +386,7 @@ class CustodyVerificationReport:
             "verified": [asdict(b) for b in self.verified],
             "failures": [asdict(f) for f in self.failures],
             "declared_gaps": [asdict(g) for g in self.declared_gaps],
+            "bound_rotations": [asdict(r) for r in self.bound_rotations],
             "non_evidentiary": list(self.non_evidentiary),
         }
 
@@ -523,8 +546,10 @@ class CustodyVerifier:
         key = attestation_key
         if not key.endswith(_SIGNED_SUFFIX):
             raise _fail(key, "not a signed attestation key")
+        raw_att_bytes = await self._read(key, what="attestation")
+        attestation_sha256 = hashlib.sha256(raw_att_bytes).hexdigest()
         try:
-            att = json.loads(await self._read(key, what="attestation"))
+            att = json.loads(raw_att_bytes)
         except (UnicodeDecodeError, json.JSONDecodeError) as exc:
             raise _fail(key, "attestation is not valid JSON") from exc
         if not isinstance(att, dict):
@@ -572,7 +597,8 @@ class CustodyVerifier:
             raise _fail(key, "attestation gap field is malformed")
         gap_expected: int | None = None
         rotated_from: tuple[str, int] | None = None
-        if gap["detected"] and gap.get("kind") == GAP_KIND_CHAIN_ROTATION:
+        gap_kind = gap.get("kind")
+        if gap_kind in (GAP_KIND_CHAIN_ROTATION, GAP_KIND_BOUND_CHAIN_ROTATION):
             rotated_from = _rotation_origin(gap, chain_id, first_seq, first_prev, key)
         elif gap["detected"]:
             gap_expected = gap.get("expected_sequence")
@@ -623,6 +649,53 @@ class CustodyVerifier:
         if prev_hash != last_hash:
             raise _fail(data_key, "last record hash does not match the attestation")
 
+        genesis_prev_head = ""
+        genesis_prev_att = ""
+        if first_seq == 0 and lines:
+            genesis_prev_head, genesis_prev_att = _extract_genesis_rotation_binding(
+                lines[0]
+            )
+            if genesis_prev_head and (
+                len(genesis_prev_head) != 64
+                or any(c not in "0123456789abcdef" for c in genesis_prev_head)
+            ):
+                raise _fail(
+                    data_key,
+                    "genesis record has an invalid previous_chain_head_hash",
+                )
+            if genesis_prev_att and (
+                len(genesis_prev_att) != 64
+                or any(c not in "0123456789abcdef" for c in genesis_prev_att)
+            ):
+                raise _fail(
+                    data_key,
+                    "genesis record has an invalid previous_batch_attestation_digest",
+                )
+            if bool(genesis_prev_head) != bool(genesis_prev_att):
+                missing_field = (
+                    "previous_batch_attestation_digest"
+                    if not genesis_prev_att
+                    else "previous_chain_head_hash"
+                )
+                raise _fail(
+                    data_key,
+                    f"bound genesis rotation is missing {missing_field}",
+                )
+            if gap_kind == GAP_KIND_BOUND_CHAIN_ROTATION:
+                if not genesis_prev_head or not genesis_prev_att:
+                    raise _fail(
+                        key,
+                        "BOUND_CHAIN_ROTATION attestation lacks signed genesis rotation binding fields",
+                    )
+                if (
+                    gap.get("previous_chain_head_hash") != genesis_prev_head
+                    or gap.get("previous_batch_attestation_digest") != genesis_prev_att
+                ):
+                    raise _fail(
+                        key,
+                        "attestation rotation metadata disagrees with genesis record binding",
+                    )
+
         return VerifiedBatch(
             attestation_key=key,
             data_key=data_key,
@@ -637,6 +710,13 @@ class CustodyVerifier:
             gap_expected_sequence=gap_expected,
             rotated_from_chain_id=rotated_from[0] if rotated_from else None,
             rotated_from_last_sequence=rotated_from[1] if rotated_from else None,
+            rotated_from_last_record_hash=(
+                gap.get("previous_last_record_hash") if rotated_from else None
+            ),
+            previous_chain_head_hash=genesis_prev_head or None,
+            previous_batch_attestation_digest=genesis_prev_att or None,
+            rotation_kind=gap_kind if rotated_from else None,
+            attestation_sha256=attestation_sha256,
         )
 
     async def verify_all(self, prefix: str | None = None) -> CustodyVerificationReport:
@@ -749,24 +829,133 @@ class CustodyVerifier:
         for batch in report.verified:
             by_chain.setdefault(batch.chain_id, []).append(batch)
 
+        chain_tail: dict[str, VerifiedBatch] = {
+            cid: sorted(cbatches, key=lambda b: b.first_sequence)[-1]
+            for cid, cbatches in by_chain.items()
+            if cbatches
+        }
+        verified_index_by_key: dict[str, int] = {
+            b.attestation_key: idx for idx, b in enumerate(report.verified)
+        }
+
         for chain_id, batches in sorted(by_chain.items()):
             batches.sort(key=lambda b: b.first_sequence)
             expected_seq, expected_prev = 0, ""
             for batch in batches:
                 key = batch.attestation_key
-                if (
+                has_rotation_metadata = (
                     batch.rotated_from_chain_id is not None
                     and batch.rotated_from_last_sequence is not None
+                )
+                claims_genesis_binding = (
+                    batch.previous_chain_head_hash is not None
+                    or batch.previous_batch_attestation_digest is not None
+                    or batch.rotation_kind == GAP_KIND_BOUND_CHAIN_ROTATION
+                )
+                if batch.first_sequence == 0 and (
+                    has_rotation_metadata or claims_genesis_binding
                 ):
-                    report.declared_gaps.append(
-                        DeclaredGap(
-                            batch.rotated_from_chain_id,
-                            batch.rotated_from_last_sequence + 1,
+                    prior_tail: VerifiedBatch | None = None
+                    if batch.rotated_from_chain_id is not None:
+                        prior_tail = chain_tail.get(batch.rotated_from_chain_id)
+                    elif batch.previous_chain_head_hash is not None:
+                        prior_tail = next(
+                            (
+                                tail
+                                for cid, tail in chain_tail.items()
+                                if cid != chain_id
+                                and tail.last_record_hash
+                                == batch.previous_chain_head_hash
+                            ),
                             None,
-                            key,
-                            kind=GAP_KIND_CHAIN_ROTATION,
                         )
-                    )
+
+                    if claims_genesis_binding:
+                        if (
+                            not batch.previous_chain_head_hash
+                            or not batch.previous_batch_attestation_digest
+                        ):
+                            report.failures.append(
+                                VerificationFailure(
+                                    key,
+                                    "bound genesis rotation is missing previous_chain_head_hash or previous_batch_attestation_digest",
+                                )
+                            )
+                        elif prior_tail is None:
+                            report.failures.append(
+                                VerificationFailure(
+                                    key,
+                                    "bound genesis rotation references an unknown or unverified prior chain",
+                                )
+                            )
+                        elif (
+                            batch.previous_chain_head_hash
+                            != prior_tail.last_record_hash
+                        ):
+                            report.failures.append(
+                                VerificationFailure(
+                                    key,
+                                    "genesis previous_chain_head_hash does not match prior chain tail record_hash",
+                                )
+                            )
+                        elif (
+                            batch.rotated_from_last_sequence is not None
+                            and prior_tail.last_sequence
+                            != batch.rotated_from_last_sequence
+                        ) or (
+                            batch.rotated_from_last_record_hash is not None
+                            and batch.previous_chain_head_hash
+                            != batch.rotated_from_last_record_hash
+                        ):
+                            report.failures.append(
+                                VerificationFailure(
+                                    key,
+                                    "genesis rotation metadata disagrees with prior chain tail",
+                                )
+                            )
+                        elif (
+                            batch.previous_batch_attestation_digest
+                            != prior_tail.attestation_sha256
+                        ):
+                            report.failures.append(
+                                VerificationFailure(
+                                    key,
+                                    "genesis previous_batch_attestation_digest does not match prior chain tail attestation SHA-256",
+                                )
+                            )
+                        else:
+                            report.bound_rotations.append(
+                                BoundChainRotation(
+                                    previous_chain_id=prior_tail.chain_id,
+                                    new_chain_id=chain_id,
+                                    previous_last_sequence=prior_tail.last_sequence,
+                                    previous_chain_head_hash=batch.previous_chain_head_hash,
+                                    previous_batch_attestation_digest=batch.previous_batch_attestation_digest,
+                                    attestation_key=key,
+                                )
+                            )
+                            idx = verified_index_by_key.get(key)
+                            if idx is not None:
+                                report.verified[idx] = replace(
+                                    report.verified[idx],
+                                    rotated_from_chain_id=prior_tail.chain_id,
+                                    rotated_from_last_sequence=prior_tail.last_sequence,
+                                    rotated_from_last_record_hash=prior_tail.last_record_hash,
+                                    rotation_kind=GAP_KIND_BOUND_CHAIN_ROTATION,
+                                    bound_chain_rotation=True,
+                                )
+                    elif has_rotation_metadata:
+                        assert batch.rotated_from_chain_id is not None
+                        assert batch.rotated_from_last_sequence is not None
+                        report.declared_gaps.append(
+                            DeclaredGap(
+                                batch.rotated_from_chain_id,
+                                batch.rotated_from_last_sequence + 1,
+                                None,
+                                key,
+                                kind=GAP_KIND_CHAIN_ROTATION,
+                            )
+                        )
                 if batch.first_sequence < expected_seq:
                     report.failures.append(
                         VerificationFailure(

@@ -55,6 +55,7 @@ override_module {
 
 variables {
   project_id          = "posture-guards-test-project"
+  evidence_project_id = "posture-guards-evidence-project"
   authorized_networks = [{ cidr = "203.0.113.7/32", display_name = "test" }]
 
   enforce_in_dev = false

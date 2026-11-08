@@ -116,6 +116,7 @@ def _setup_fake_repo(
     evidence_verify_json: str = DEFAULT_EVIDENCE_VERIFY_JSON,
     evidence_verify_rc: int = 0,
     surviving_bucket: str = "",
+    surviving_lien: str = "",
 ) -> tuple[Path, Path, Path]:
     repo = tmp_path / "repo"
     (repo / "scripts").mkdir(parents=True, exist_ok=True)
@@ -288,7 +289,13 @@ if [[ "$*" == *"storage buckets list"* ]]; then
   echo "ephemeral-proj-99-tfstate"
   echo "ephemeral-proj-99_cloudbuild"
   if [[ -n "{surviving_bucket}" ]]; then
-    echo "{surviving_bucket}"
+    printf '%b\n' "{surviving_bucket}"
+  fi
+  exit 0
+fi
+if [[ "$*" == *"resource-manager liens list"* ]]; then
+  if [[ -n "{surviving_lien}" ]]; then
+    printf '%b\n' "{surviving_lien}"
   fi
   exit 0
 fi
@@ -1005,3 +1012,66 @@ def test_staging_lifecycle_stage5_rebuild_drift_fails_closed_after_final_destroy
     calls = log_file.read_text(encoding="utf-8")
     # Both initial teardown and post-rebuild final teardown must run
     assert calls.count("destroy -var-file=staging.tfvars") == 2
+
+
+def test_staging_lifecycle_fresh_project_retains_evidence_domain_worm_buckets_and_lien(
+    tmp_path: Path,
+) -> None:
+    repo, bin_dir, log_file = _setup_fake_repo(
+        tmp_path,
+        surviving_bucket="ephemeral-proj-99-evidence-worm-staging\nephemeral-proj-99-audit-logs-worm-staging",
+        surviving_lien="liens/p123-l1\tstorage.googleapis.com/buckets",
+    )
+    env = _base_env(bin_dir)
+    proc = subprocess.run(
+        [
+            "bash",
+            str(repo / "scripts" / "staging_lifecycle.sh"),
+            "--fresh-project=ephemeral-proj-99",
+            "--skip-lula",
+            "--skip-posture",
+            "--skip-live-sweep",
+            "--skip-telemetry",
+        ],
+        env=env,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert proc.returncode == 0, proc.stderr
+    assert (
+        "PF9 persistent evidence-domain WORM bucket(s) retained by design"
+        in proc.stdout
+    )
+    calls = log_file.read_text(encoding="utf-8")
+    assert "state rm module.evidence_domain" in calls
+    assert "state rm module.worm_bucket" in calls
+
+
+def test_staging_lifecycle_allow_legacy_lien_survivor_accepts_known_langfuse_events_bucket(
+    tmp_path: Path,
+) -> None:
+    repo, bin_dir, _ = _setup_fake_repo(
+        tmp_path,
+        surviving_bucket="langfuse-events-ephemeral-proj-99-deadbeef",
+        surviving_lien="liens/p123-l2\tstorage.googleapis.com/buckets",
+    )
+    env = _base_env(bin_dir)
+    proc = subprocess.run(
+        [
+            "bash",
+            str(repo / "scripts" / "staging_lifecycle.sh"),
+            "--fresh-project=ephemeral-proj-99",
+            "--allow-legacy-lien-survivor",
+            "--skip-lula",
+            "--skip-posture",
+            "--skip-live-sweep",
+            "--skip-telemetry",
+        ],
+        env=env,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert proc.returncode == 0, proc.stderr
+    assert "PF9 explicit known survivor" in proc.stdout
