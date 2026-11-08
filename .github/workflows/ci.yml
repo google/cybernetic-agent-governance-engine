@@ -534,7 +534,7 @@ jobs:
       - name: Validate AI 600-1 Lula manifest structure (stub syntax check)
         # Stub manifests use OSCAL component-definition structure (not standalone domain/provider).
         # The domain/provider are embedded inside back-matter.resources[].description.
-        # The manifests read a live deployment; `lula validate` runs only against one (compliance-matrix.yml, on demand).
+        # The manifests read a live deployment; `lula validate` runs only against one (scripts/staging_lifecycle.sh Phase 3).
         run: python3 scripts/check_ai600_lula_manifests.py
       - name: Enforce Lula stub count downward-only baseline & POAM linkage
         run: python3 scripts/check_lula_stub_count.py

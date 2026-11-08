@@ -77,7 +77,7 @@ MD_LINK_PATTERN = re.compile(r"\[([^\]]+)\]\(([^)]+)\)")
 INLINE_CODE_PATTERN = re.compile(r"`([^`\n]+)`")
 # Revision-pinned path: `<sha>:<path>` or `<sha>^:<path>`
 PINNED_PATH_PATTERN = re.compile(
-    r"^(?P<commit>[0-9a-f]{7,40})(?P<parent>\^?):(?P<path>[A-Za-z0-9_][A-Za-z0-9_./-]*)$"
+    r"^(?P<commit>[0-9a-f]{7,40})(?P<parent>\^?):(?P<path>(?:\.[A-Za-z0-9_]|[A-Za-z0-9_])[A-Za-z0-9_./-]*)$"
 )
 GIT_TIMEOUT_SECONDS = 30
 
@@ -1555,20 +1555,6 @@ def _check_lula_schema_version(repo_root: Path, schema_path: Path) -> list[Issue
                     "Version Hygiene",
                     rel,
                     f"Schema filename pins Lula {expected_ver}, which does not match scripts/verify_lula_assessment_results.py",
-                )
-            )
-
-    matrix_workflow = repo_root / ".github" / "workflows" / "compliance-matrix.yml"
-    if matrix_workflow.is_file():
-        wf_text = matrix_workflow.read_text(encoding="utf-8")
-        if expected_ver not in wf_text:
-            issues.append(
-                Issue(
-                    schema_path,
-                    1,
-                    "Version Hygiene",
-                    rel,
-                    f"Schema filename pins Lula {expected_ver}, which does not match LULA_VERSION in .github/workflows/compliance-matrix.yml",
                 )
             )
 

@@ -121,8 +121,10 @@ From the workflow files, not the API:
 | `MAS FEAT Compliance Posture (APAC_MAS only)` | `apac-mas-compliance.yml` | Runs on every PR |
 | `Compile STPA → Governance Artifacts` | `policy_compile.yml` | Path-filtered; only runs when STPA files change |
 
-`compliance-matrix.yml` runs only on demand, against a named deployment: every Lula manifest
-it validates reads a live deployment, so no pull request or push runs it (POAM-2026-169).
+Live Lula and regional posture validation runs against a deployed cluster via
+[`scripts/staging_lifecycle.sh`](../scripts/staging_lifecycle.sh) Phases 3–5 rather than in
+pull-request CI (the former on-demand `385e502e^:.github/workflows/compliance-matrix.yml`
+stub was retired; POAM-2026-169).
 
 > **Note on path-filtered workflows:** a path-filtered workflow that does not run reports no
 > check. None of them is required, so this does not block a merge.

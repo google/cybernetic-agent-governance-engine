@@ -374,7 +374,7 @@ export LANGFUSE_COMPLIANCE_SECRET_KEY="sk-lf-comp-mock"
 uv run python scripts/verify_langfuse_posture.py --dry-run --posture development
 ```
 
-The live check (no `--dry-run`) queries both Langfuse instances and fails unless each key pair reaches only its own project. It also needs `LANGFUSE_PROJECT_ID` and `LANGFUSE_COMPLIANCE_PROJECT_ID`, and checks both halves in every posture. It is Gate 0.3 of [`run_matrix_tests.sh`](../../scripts/run_matrix_tests.sh), which [`compliance-matrix.yml`](../../.github/workflows/compliance-matrix.yml) runs on demand against a named deployment.
+The live check (no `--dry-run`, `--posture staging` or `--posture production`) queries both Langfuse instances and fails unless each key pair reaches only its own project. It also needs `LANGFUSE_PROJECT_ID` and `LANGFUSE_COMPLIANCE_PROJECT_ID`, and checks both halves in every posture. It executes in Phase 4 of [`scripts/staging_lifecycle.sh`](../../scripts/staging_lifecycle.sh) against the live staging cluster.
 
 ### 2. Jurisdictional Region Derivation
 `GOOGLE_CLOUD_LOCATION` must be derived from `CAGE_DEPLOYMENT_REGION`:
