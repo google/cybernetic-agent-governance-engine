@@ -286,3 +286,13 @@ variable "trusted_infra_producers" {
   type        = list(string)
   default     = []
 }
+
+variable "trusted_mesh_identities" {
+  type    = list(string)
+  default = []
+}
+
+variable "auditor_mesh_identity" {
+  type    = string
+  default = ""
+}

@@ -115,7 +115,6 @@ enable_private_nodes                  = true  # REQUIRED: master_ipv4_cidr_block
 enable_dataplane_v2        = true
 enable_fqdn_network_policy = true
 
-
 # Authorized networks: who may reach the control plane. Deliberately not set here,
 # so no operator address is committed and nothing in this file can override yours.
 # Supply them with TF_VAR_authorized_networks or a --var-file after this profile:
@@ -194,7 +193,6 @@ force_redeploy = false
 # live agent (manual evaluation, demos); the GPU pool scales up on demand.
 inference_backend        = "none"
 enable_compliance_bridge = true
-enable_nemo_guardrails   = false
 
 # vLLM configuration — weights streamed from GCS model bucket via runai_streamer
 model_fast             = "gs://cage-models/Qwen/Qwen2.5-1.5B-Instruct"
@@ -203,10 +201,6 @@ served_model_fast      = "Qwen/Qwen2.5-1.5B-Instruct"
 served_model_reasoning = "deepseek-ai/DeepSeek-R1-Distill-Llama-8B"
 vllm_gpu_count         = 1
 vllm_replicas          = 1
-
-# NeMo Guardrails — use Cloud Build custom image (auto-built by deploy_sw.py)
-# Override via TF_VAR_nemo_image if you want a specific tag
-nemo_image = ""
 
 # Presidio images are mirrored into the project registry; their digests are rendered
 # into var.image_digests like every other image. Only the NeMo server reads them.

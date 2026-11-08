@@ -52,7 +52,7 @@ FIRST_PARTY_IMAGES=(
   "agentsight-ui|src/agentsight-ui/Dockerfile"
   "compliance-bridge|src/compliance_bridge/Dockerfile"
   "governed-financial-advisor|Dockerfile"
-  "nemo-guardrails|deployment/docker/Dockerfile.nemo"
+  "|deployment/docker/Dockerfile.nemo"
   "lula|deployment/docker/Dockerfile.lula"
   "inference-stub|src/integrations/inference_stub/Dockerfile"
 )
@@ -62,7 +62,7 @@ FIRST_PARTY_IMAGES=(
 # infra/targets/gcp-gke/main.tf), so staging under inference_backend = "none"
 # builds no vLLM, advisor or NeMo image. The in-cluster advisor consumes
 # governed-financial-advisor. ONLY_IMAGE=<name> builds one image and skips mirroring.
-ALL_IMAGES="gateway agentsight-ui compliance-bridge governed-financial-advisor nemo-guardrails vllm-streamer lula inference-stub"
+ALL_IMAGES="gateway agentsight-ui compliance-bridge governed-financial-advisor vllm-streamer lula inference-stub"
 IMAGES="${ONLY_IMAGE:-${IMAGES:-${ALL_IMAGES}}}"
 for wanted in ${IMAGES}; do
   if [[ " ${ALL_IMAGES} " != *" ${wanted} "* ]]; then

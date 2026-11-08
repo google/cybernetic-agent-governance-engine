@@ -17,6 +17,7 @@
 # directory per the POAM-2026-180 placement matrix in infra/targets/gcp-gke/main.tf.
 
 mock_provider "kubernetes" {}
+mock_provider "helm" {}
 
 variables {
   namespace                  = "governance-stack"

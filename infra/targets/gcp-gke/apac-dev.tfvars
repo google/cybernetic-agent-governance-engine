@@ -138,7 +138,6 @@ force_redeploy = true
 # ─── Services ─────────────────────────────────────────────────────────────────
 inference_backend        = "vllm"
 enable_compliance_bridge = true
-enable_nemo_guardrails   = false
 
 model_fast             = "gs://cage-models/Qwen/Qwen2.5-1.5B-Instruct"
 model_reasoning        = "gs://cage-models/deepseek-ai/DeepSeek-R1-Distill-Llama-8B"
@@ -146,8 +145,6 @@ served_model_fast      = "Qwen/Qwen2.5-1.5B-Instruct"
 served_model_reasoning = "deepseek-ai/DeepSeek-R1-Distill-Llama-8B"
 vllm_gpu_count         = 1
 vllm_replicas          = 1
-
-nemo_image = ""
 
 presidio_analyzer_image   = ""
 presidio_anonymizer_image = ""

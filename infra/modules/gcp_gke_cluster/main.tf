@@ -29,6 +29,9 @@ locals {
   # §3: general-spot pool (c3-highcpu-4, Spot, 0-5) enabled in staging only by default.
   enable_general_spot = var.enable_general_spot_node_pool != null ? var.enable_general_spot_node_pool : (var.environment == "staging")
 
+  # D-195-4 (R-5, F-78, F-87): Dataplane V2 observability requires Dataplane V2 itself.
+  dataplane_v2_policy_logging_enabled = var.enable_dataplane_v2 && var.enable_network_policy_logging
+
   # §3: ClickHouse pool sizing: 1 node in dev/staging, 3 nodes in prod (Keeper colocated).
   clickhouse_min_count     = var.clickhouse_node_pool_min_count != null ? var.clickhouse_node_pool_min_count : (var.environment == "prod" ? 3 : 1)
   clickhouse_max_count     = var.clickhouse_node_pool_max_count != null ? var.clickhouse_node_pool_max_count : (var.environment == "prod" ? 3 : 1)
@@ -237,17 +240,32 @@ resource "google_container_cluster" "primary" {
     }
   }
 
-  # ─── AU-9: Monitoring Configuration ─────────────────────────────────────────
-  # Staging / Prod: Managed Prometheus for compliance metrics
+  # ─── AU-9, SC-7: Monitoring & Dataplane V2 Observability (D-195-4, R-5) ─────
+  # Staging / Prod: Managed Prometheus for compliance metrics plus GKE Dataplane
+  # V2 advanced datapath observability (`enable_metrics` + Hubble `enable_relay`).
+  # Paired with the cluster-scoped `NetworkLogging/default` (`networking.gke.io/v1alpha1`)
+  # resource in `dataplane_v2_logging.tf`, this records L3/L4 allow and deny
+  # NetworkPolicy verdicts in Cloud Logging (`logs/policy-action`).
+  # Platform limitation (D-195-4, F-87): each GKE node logs up to 500 connections/s
+  # before dropping excess policy log entries (policies remain enforced; dropped
+  # counters appear on anetd `:9990/metrics` `policy_logging`), and Dataplane V2
+  # emits L3/L4 records only (Linkerd mTLS encrypts L7 payloads in transit).
   dynamic "monitoring_config" {
-    for_each = var.enable_audit_logging ? [1] : []
+    for_each = (var.enable_audit_logging || local.dataplane_v2_policy_logging_enabled) ? [1] : []
     content {
-      enable_components = [
+      enable_components = var.enable_audit_logging ? [
         "SYSTEM_COMPONENTS",
         "WORKLOADS"
-      ]
+      ] : ["SYSTEM_COMPONENTS"]
       managed_prometheus {
-        enabled = true
+        enabled = var.enable_audit_logging
+      }
+      dynamic "advanced_datapath_observability_config" {
+        for_each = local.dataplane_v2_policy_logging_enabled ? [1] : []
+        content {
+          enable_metrics = true
+          enable_relay   = true
+        }
       }
     }
   }

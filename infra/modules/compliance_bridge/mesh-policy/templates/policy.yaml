@@ -1,0 +1,186 @@
+# Copyright 2026 Google LLC
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     https://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+apiVersion: policy.linkerd.io/v1beta3
+kind: Server
+metadata:
+  name: compliance-bridge-http
+  namespace: {{ .Release.Namespace }}
+  labels:
+    app.kubernetes.io/managed-by: Helm
+    cage.io/component: z3n-mtls
+  annotations:
+    compliance.nist.gov/control: "SC-8,IA-3,AC-3,AC-4,AU-9"
+    cage.io/poam: "POAM-2026-080,POAM-2026-195"
+spec:
+  podSelector:
+    matchLabels:
+      app: compliance-bridge
+  port: 3001
+  proxyProtocol: HTTP/1
+---
+apiVersion: policy.linkerd.io/v1beta3
+kind: HTTPRoute
+metadata:
+  name: compliance-bridge-probe
+  namespace: {{ .Release.Namespace }}
+spec:
+  parentRefs:
+    - group: policy.linkerd.io
+      kind: Server
+      name: compliance-bridge-http
+  rules:
+    - matches:
+        - method: GET
+          path:
+            type: Exact
+            value: /health
+---
+apiVersion: policy.linkerd.io/v1beta3
+kind: HTTPRoute
+metadata:
+  name: compliance-bridge-infra-events
+  namespace: {{ .Release.Namespace }}
+spec:
+  parentRefs:
+    - group: policy.linkerd.io
+      kind: Server
+      name: compliance-bridge-http
+  rules:
+    - matches:
+        - method: POST
+          path:
+            type: Exact
+            value: /v1/infra/events
+        - method: GET
+          path:
+            type: PathPrefix
+            value: /v1/metrics/
+        - method: GET
+          path:
+            type: PathPrefix
+            value: /v1/compliance/
+        - method: GET
+          path:
+            type: PathPrefix
+            value: /v1/aarm/
+---
+apiVersion: policy.linkerd.io/v1beta3
+kind: HTTPRoute
+metadata:
+  name: compliance-bridge-internal
+  namespace: {{ .Release.Namespace }}
+spec:
+  parentRefs:
+    - group: policy.linkerd.io
+      kind: Server
+      name: compliance-bridge-http
+  rules:
+    - matches:
+        - path:
+            type: PathPrefix
+            value: /
+---
+apiVersion: policy.linkerd.io/v1alpha1
+kind: NetworkAuthentication
+metadata:
+  name: compliance-bridge-probe-network
+  namespace: {{ .Release.Namespace }}
+spec:
+  networks:
+    - cidr: 0.0.0.0/0
+    - cidr: ::/0
+---
+apiVersion: policy.linkerd.io/v1alpha1
+kind: AuthorizationPolicy
+metadata:
+  name: compliance-bridge-probe
+  namespace: {{ .Release.Namespace }}
+spec:
+  targetRef:
+    group: policy.linkerd.io
+    kind: HTTPRoute
+    name: compliance-bridge-probe
+  requiredAuthenticationRefs:
+    - group: policy.linkerd.io
+      kind: NetworkAuthentication
+      name: compliance-bridge-probe-network
+{{- if .Values.trustedIdentities }}
+---
+apiVersion: policy.linkerd.io/v1alpha1
+kind: MeshTLSAuthentication
+metadata:
+  name: compliance-bridge-trusted
+  namespace: {{ .Release.Namespace }}
+spec:
+  identities:
+{{- range .Values.trustedIdentities }}
+    - {{ . | quote }}
+{{- end }}
+---
+apiVersion: policy.linkerd.io/v1alpha1
+kind: AuthorizationPolicy
+metadata:
+  name: compliance-bridge-infra-events
+  namespace: {{ .Release.Namespace }}
+spec:
+  targetRef:
+    group: policy.linkerd.io
+    kind: HTTPRoute
+    name: compliance-bridge-infra-events
+  requiredAuthenticationRefs:
+    - group: policy.linkerd.io
+      kind: MeshTLSAuthentication
+      name: compliance-bridge-trusted
+---
+apiVersion: policy.linkerd.io/v1alpha1
+kind: AuthorizationPolicy
+metadata:
+  name: compliance-bridge-internal
+  namespace: {{ .Release.Namespace }}
+spec:
+  targetRef:
+    group: policy.linkerd.io
+    kind: HTTPRoute
+    name: compliance-bridge-internal
+  requiredAuthenticationRefs:
+    - group: policy.linkerd.io
+      kind: MeshTLSAuthentication
+      name: compliance-bridge-trusted
+{{- end }}
+{{- if .Values.auditorIdentity }}
+---
+apiVersion: policy.linkerd.io/v1alpha1
+kind: MeshTLSAuthentication
+metadata:
+  name: compliance-bridge-auditor
+  namespace: {{ .Release.Namespace }}
+spec:
+  identities:
+    - {{ .Values.auditorIdentity | quote }}
+---
+apiVersion: policy.linkerd.io/v1alpha1
+kind: AuthorizationPolicy
+metadata:
+  name: compliance-bridge-infra-events-auditor
+  namespace: {{ .Release.Namespace }}
+spec:
+  targetRef:
+    group: policy.linkerd.io
+    kind: HTTPRoute
+    name: compliance-bridge-infra-events
+  requiredAuthenticationRefs:
+    - group: policy.linkerd.io
+      kind: MeshTLSAuthentication
+      name: compliance-bridge-auditor
+{{- end }}

@@ -166,6 +166,19 @@ variable "enable_fqdn_network_policy" {
   default     = true
 }
 
+variable "enable_network_policy_logging" {
+  description = <<-EOT
+    Enable GKE Dataplane V2 network policy verdict logging (`NetworkLogging/default` allow+deny
+    in `projects/<PROJECT_ID>/logs/policy-action`) and cluster `advanced_datapath_observability_config`
+    (`D-195-4`, `R-5`, `F-78`, `F-87`). When null (default), follows `local.enforcing_posture`
+    (always on in staging and prod, and in dev with `enforce_in_dev = true`). Note GKE enforces
+    a 500 connections/s per-node drop logging floor before shedding policy log records while
+    continuing to enforce every NetworkPolicy.
+  EOT
+  type        = bool
+  default     = null
+}
+
 variable "release_channel" {
   description = "GKE release channel (REGULAR, STABLE, RAPID) to guarantee control-plane version >= 1.27.1-gke.400 for FQDNNetworkPolicy (§5.3)."
   type        = string
@@ -437,12 +450,6 @@ variable "clickhouse_storage_size" {
 
 # ─── NeMo Guardrails + Presidio Configuration ─────────────────────────────────
 
-variable "enable_nemo_guardrails" {
-  description = "Deploy the standalone NeMo Guardrails + Presidio server. Refused when true: only the gateway may reach the model backends (EA-1), so the server could never reach vLLM. Nothing in CAGE calls it; the gateway builds its rails in process."
-  type        = bool
-  default     = false
-}
-
 variable "image_digests" { # No default. Render it: PROJECT_ID=<project> scripts/render_image_digests.sh [short_sha], then pass the file it writes with -var-file.
   description = <<-EOT
     Container images pinned by digest (name -> repo@sha256:<64-hex>), required for
@@ -478,48 +485,6 @@ variable "image_digests" { # No default. Render it: PROJECT_ID=<project> scripts
       !endswith(ref, "@sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855")
     ])
     error_message = "image_digests contains sha256:e3b0c442...b855, the SHA-256 of empty input, which no image has: a placeholder, not a pin (POAM-2026-131). Render real digests: PROJECT_ID=<project> scripts/render_image_digests.sh [short_sha]."
-  }
-}
-
-variable "nemo_image" {
-  description = "NeMo Guardrails container image override (defaults to var.image_digests[\"nemo-guardrails\"])"
-  type        = string
-  default     = ""
-
-  validation {
-    condition = var.nemo_image == "" || (
-      !can(regex(":latest(@|$)", var.nemo_image)) &&
-      (!var.enable_binary_authorization || can(regex("^[^@\\s]+@sha256:[0-9a-f]{64}$", var.nemo_image)))
-    )
-    error_message = "nemo_image must not use :latest and, when enable_binary_authorization = true, must be pinned by @sha256:<64-hex> digest."
-  }
-}
-
-variable "presidio_analyzer_image" {
-  description = "Microsoft Presidio Analyzer container image override (defaults to var.image_digests[\"presidio-analyzer\"])"
-  type        = string
-  default     = ""
-
-  validation {
-    condition = var.presidio_analyzer_image == "" || (
-      !can(regex(":latest(@|$)", var.presidio_analyzer_image)) &&
-      (!var.enable_binary_authorization || can(regex("^[^@\\s]+@sha256:[0-9a-f]{64}$", var.presidio_analyzer_image)))
-    )
-    error_message = "presidio_analyzer_image must not use :latest and, when enable_binary_authorization = true, must be pinned by @sha256:<64-hex> digest."
-  }
-}
-
-variable "presidio_anonymizer_image" {
-  description = "Microsoft Presidio Anonymizer container image override (defaults to var.image_digests[\"presidio-anonymizer\"])"
-  type        = string
-  default     = ""
-
-  validation {
-    condition = var.presidio_anonymizer_image == "" || (
-      !can(regex(":latest(@|$)", var.presidio_anonymizer_image)) &&
-      (!var.enable_binary_authorization || can(regex("^[^@\\s]+@sha256:[0-9a-f]{64}$", var.presidio_anonymizer_image)))
-    )
-    error_message = "presidio_anonymizer_image must not use :latest and, when enable_binary_authorization = true, must be pinned by @sha256:<64-hex> digest."
   }
 }
 

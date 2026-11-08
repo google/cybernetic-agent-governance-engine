@@ -99,6 +99,7 @@ module "gke" {
   enable_private_nodes           = var.enable_private_nodes
   enable_dataplane_v2            = var.enable_dataplane_v2
   enable_fqdn_network_policy     = var.enable_fqdn_network_policy
+  enable_network_policy_logging  = local.network_policy_logging_enabled
   release_channel                = var.release_channel
   min_master_version             = var.min_master_version
   cluster_dns_provider           = var.cluster_dns_provider
@@ -169,9 +170,16 @@ module "namespace" {
   # exists have no proxy; restart them after the first mesh install. The
   # service_mesh module refuses pods created here without the proxy
   # (proxy_required_namespaces, POAM-2026-167).
-  annotations = {
-    "linkerd.io/inject" = "enabled"
-  }
+  annotations = merge(
+    {
+      "linkerd.io/inject" = "enabled"
+    },
+    local.dataplane_v2_network_logging_active ? {
+      # D-195-4 (R-5, F-87): keep governance-stack opted into GKE Dataplane V2
+      # denied-connection logging even if an operator sets delegate = true.
+      "policy.network.gke.io/enable-deny-logging" = "true"
+    } : {},
+  )
 
   depends_on = [module.gke]
 }
@@ -614,6 +622,7 @@ module "clickhouse_operator" {
   storage_size                      = var.clickhouse_storage_size
   storage_class                     = var.storage_class
   service_account_name              = kubernetes_service_account.workload["clickhouse"].metadata[0].name
+  keeper_service_account_name       = kubernetes_service_account.workload["clickhouse_keeper"].metadata[0].name
   cold_tier_bucket                  = local.clickhouse_cold_tier_enabled ? google_storage_bucket.clickhouse_tiering[0].name : ""
   cold_tier_credentials_secret_name = local.clickhouse_cold_tier_enabled ? kubernetes_secret.clickhouse_tiering_hmac[0].metadata[0].name : ""
 
@@ -622,7 +631,12 @@ module "clickhouse_operator" {
   cpu_limit      = var.enable_high_availability ? "3000m" : "2000m"
   memory_limit   = var.enable_high_availability ? "6Gi" : "4Gi"
 
-  depends_on = [module.gke, google_storage_bucket_iam_member.clickhouse_tiering_object_admin]
+  depends_on = [
+    module.gke,
+    google_storage_bucket_iam_member.clickhouse_tiering_object_admin,
+    kubernetes_service_account.workload["clickhouse"],
+    kubernetes_service_account.workload["clickhouse_keeper"],
+  ]
 }
 
 
@@ -680,57 +694,9 @@ locals {
     local.vllm_enabled && var.vllm_image == "" ? ["vllm-streamer"] : [],
     local.inference_stub_enabled && var.inference_stub_image == "" ? ["inference-stub"] : [],
     local.advisor_enabled ? ["governed-financial-advisor"] : [],
-    var.enable_nemo_guardrails && var.nemo_image == "" ? ["nemo-guardrails"] : [],
-    var.enable_nemo_guardrails && var.presidio_analyzer_image == "" ? ["presidio-analyzer"] : [],
-    var.enable_nemo_guardrails && var.presidio_anonymizer_image == "" ? ["presidio-anonymizer"] : [],
   )
 }
 
-# ─── Deploy NeMo Guardrails + Microsoft Presidio ───────────────────────────────
-# Refused at plan time (inference_backend_guard): only the gateway may reach
-# the model backends (EA-1), so this server could never reach vLLM. Nothing in
-# CAGE calls it; the gateway builds its rails in process.
-
-module "nemo_guardrails" {
-  count = var.enable_nemo_guardrails ? 1 : 0
-
-  source = "../../modules/nemo_guardrails"
-
-  namespace            = module.namespace.name
-  deployment_name      = "nemo-guardrails"
-  service_name         = "nemo-guardrails"
-  service_account_name = kubernetes_service_account.workload["nemo"].metadata[0].name
-  replicas             = var.enable_high_availability ? 2 : 1
-  enable_pdb           = var.enable_high_availability
-  environment          = var.environment
-
-  # NeMo container image pinned by @sha256: digest via var.image_digests
-  nemo_image = var.nemo_image != "" ? var.nemo_image : var.image_digests["nemo-guardrails"]
-
-  # Presidio images mirrored into Artifact Registry and pinned by @sha256: digest
-  presidio_analyzer_image   = var.presidio_analyzer_image != "" ? var.presidio_analyzer_image : var.image_digests["presidio-analyzer"]
-  presidio_anonymizer_image = var.presidio_anonymizer_image != "" ? var.presidio_anonymizer_image : var.image_digests["presidio-anonymizer"]
-
-  # LLM backend: NeMo rails call vLLM fast service for rail evaluation
-  llm_api_base   = local.vllm_fast_url
-  llm_api_key    = "EMPTY"
-  llm_model_name = var.served_model_fast
-
-  # Resource sizing
-  nemo_cpu_request    = "500m"
-  nemo_memory_request = "1Gi"
-  nemo_cpu_limit      = var.enable_high_availability ? "2000m" : ""
-  nemo_memory_limit   = var.enable_high_availability ? "4Gi" : ""
-
-  presidio_cpu_request    = "200m"
-  presidio_memory_request = "512Mi"
-  presidio_cpu_limit      = var.enable_high_availability ? "1000m" : ""
-  presidio_memory_limit   = var.enable_high_availability ? "2Gi" : ""
-
-  enable_security_context = local.enforcing_posture
-
-  depends_on = [module.gke, module.vllm, kubernetes_service_account.workload["nemo"]]
-}
 
 # Workload ServiceAccounts are defined per workload in iam.tf
 # (kubernetes_service_account.workload), each bound 1:1 to its own GSA.
@@ -951,6 +917,8 @@ module "compliance_bridge" {
   vllm_api_key               = ""
   alert_channel              = "console"
   oscal_s3_bucket            = module.worm_bucket.bucket_name
+  trusted_mesh_identities    = ["${local.ksa_gateway}.${module.namespace.name}.${module.service_mesh.identity_suffix}"]
+  auditor_mesh_identity      = "${local.ksa_lula}.${module.namespace.name}.${module.service_mesh.identity_suffix}"
   oscal_s3_region            = var.region
   evidence_cold_store        = "gcs"
   evidence_cold_store_bucket = module.worm_bucket.bucket_name
@@ -988,7 +956,7 @@ module "compliance_bridge" {
   operator_oidc_audience      = var.operator_oidc_audience
   operator_jwks_uri           = var.operator_jwks_uri
 
-  depends_on = [module.langfuse, module.vllm, module.worm_bucket, module.memorystore_governance]
+  depends_on = [module.langfuse, module.vllm, module.worm_bucket, module.memorystore_governance, module.service_mesh]
 }
 
 
@@ -1433,19 +1401,12 @@ resource "terraform_data" "control_plane_access_guard" {
 # moving them, and tests/infrastructure/test_guard_placement.py fails on a new one.
 
 # W6: what each inference backend deploys must be able to run. "vllm" schedules
-# its pods on the GPU pool, so it needs one (min 0 costs nothing while idle). The
-# standalone NeMo server is refused outright: it calls vLLM directly, and only
-# the gateway may reach the model backends (model-backend-ingress, EA-1).
+# its pods on the GPU pool, so it needs one (min 0 costs nothing while idle).
 resource "terraform_data" "inference_backend_guard" {
   lifecycle {
     precondition {
       condition     = !local.vllm_enabled || var.enable_gpu_node_pool
       error_message = "inference_backend = \"vllm\" needs enable_gpu_node_pool = true: the vLLM pods schedule only on the GPU pool. Keep the pool at min 0 to pay nothing while idle."
-    }
-
-    precondition {
-      condition     = !var.enable_nemo_guardrails
-      error_message = "enable_nemo_guardrails = true is refused: only the gateway may reach the model backends (model-backend-ingress admits TCP 8000 from app = \"gateway\" alone, EA-1), so the standalone NeMo server could never reach vLLM. Nothing in CAGE calls the server: the gateway builds its NeMo rails in process."
     }
   }
 }

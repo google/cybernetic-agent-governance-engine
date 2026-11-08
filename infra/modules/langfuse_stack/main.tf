@@ -106,7 +106,11 @@ resource "kubernetes_deployment" "langfuse_web" {
           app = "langfuse-web"
         }
         annotations = {
-          "config.linkerd.io/skip-outbound-ports" = "9000,5432,6379,3307"
+          # Keep ClickHouse native TCP (9000) inside Linkerd mTLS so ClickHouse
+          # Server/AuthorizationPolicy enforces langfuse-sa caller identity.
+          # Skip only external managed endpoints: Cloud SQL Auth Proxy loopback (5432),
+          # Memorystore Valkey (6379), and Cloud SQL server port (3307).
+          "config.linkerd.io/skip-outbound-ports" = "5432,6379,3307"
         }
       }
 
@@ -600,7 +604,11 @@ resource "kubernetes_deployment" "langfuse_worker" {
           app = "langfuse-worker"
         }
         annotations = {
-          "config.linkerd.io/skip-outbound-ports" = "9000,5432,6379,3307"
+          # Keep ClickHouse native TCP (9000) inside Linkerd mTLS so ClickHouse
+          # Server/AuthorizationPolicy enforces langfuse-sa caller identity.
+          # Skip only external managed endpoints: Cloud SQL Auth Proxy loopback (5432),
+          # Memorystore Valkey (6379), and Cloud SQL server port (3307).
+          "config.linkerd.io/skip-outbound-ports" = "5432,6379,3307"
         }
       }
 

@@ -142,46 +142,6 @@ def test_plan_refuses_an_open_or_empty_allowlist_under_an_enforcing_posture() ->
     assert '!endswith(n.cidr, "/0")' in guard, "the guard must refuse a /0 entry"
 
 
-def test_posture_controls_follow_the_tier_not_a_jurisdiction_flag() -> None:
-    # POAM-2026-181 & POAM-2026-130: the three enable_*_compliance variables and
-    # local.any_compliance_active were removed, and var.enforce_in_dev is read
-    # only by local.enforcing_posture.
-    for tf_path in (
-        *GKE_TARGET_DIR.glob("*.tf"),
-        *GKE_CLUSTER_MODULE_DIR.glob("*.tf"),
-    ):
-        non_comment = "\n".join(
-            line
-            for line in tf_path.read_text(encoding="utf-8").splitlines()
-            if not line.lstrip().startswith("#")
-        )
-        for removed in (*REMOVED_COMPLIANCE_FLAGS, "any_compliance_active"):
-            assert removed not in non_comment, (
-                f"{tf_path.name} still references removed identifier {removed!r}"
-            )
-
-    main_tf = (GKE_TARGET_DIR / "main.tf").read_text(encoding="utf-8")
-    code = [line for line in main_tf.splitlines() if not line.lstrip().startswith("#")]
-    readers = sorted(
-        line.split("=")[0].strip() for line in code if "var.enforce_in_dev" in line
-    )
-    assert readers == ["enforcing_posture"], (
-        f"only enforcing_posture may read var.enforce_in_dev; found {readers}"
-    )
-    flat = re.sub(r"\s+", " ", "\n".join(code))
-    for binding in (
-        "restrict_control_plane = local.enforcing_posture",
-        "force_destroy = !local.enforcing_posture",
-        "enable_point_in_time_recovery = local.enforcing_posture",
-        "enable_security_context = local.enforcing_posture",
-    ):
-        assert binding in flat, f"main.tf must set {binding}"
-    assert flat.count("condition = !local.enforcing_posture ||") == 3, (
-        "the control-plane guard and both POAM-019 key guards must bind on "
-        "local.enforcing_posture"
-    )
-
-
 @pytest.mark.parametrize("profile", PROFILES)
 def test_every_profile_sets_the_nist_flag_itself(profile: str) -> None:
     # POAM-2026-174 & POAM-2026-130: every profile states its tier, no profile

@@ -119,3 +119,13 @@ output "services_ipv4_cidr_block" {
   description = "Services IPv4 CIDR block on google_container_cluster.primary"
   value       = google_container_cluster.primary.ip_allocation_policy[0].services_ipv4_cidr_block
 }
+
+output "dataplane_v2_policy_logging_enabled" {
+  description = "Whether GKE Dataplane V2 advanced datapath observability (`enable_metrics` + `enable_relay`) is configured on `google_container_cluster.primary` (D-195-4, R-5, F-87; note 500 connections/s per-node policy-action logging floor)"
+  value = anytrue(flatten([
+    for m in google_container_cluster.primary.monitoring_config : [
+      for obs in m.advanced_datapath_observability_config :
+      obs.enable_metrics && obs.enable_relay
+    ]
+  ]))
+}

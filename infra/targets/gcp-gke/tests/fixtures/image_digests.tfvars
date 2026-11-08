@@ -38,7 +38,4 @@ image_digests = {
   "vllm-streamer"              = "registry.invalid/cage-test/vllm-streamer@sha256:deadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeef"
   "governed-financial-advisor" = "registry.invalid/cage-test/governed-financial-advisor@sha256:deadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeef"
   "inference-stub"             = "registry.invalid/cage-test/inference-stub@sha256:deadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeef"
-  "nemo-guardrails"            = "registry.invalid/cage-test/nemo-guardrails@sha256:deadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeef"
-  "presidio-analyzer"          = "registry.invalid/cage-test/presidio-analyzer@sha256:deadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeef"
-  "presidio-anonymizer"        = "registry.invalid/cage-test/presidio-anonymizer@sha256:deadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeef"
 }

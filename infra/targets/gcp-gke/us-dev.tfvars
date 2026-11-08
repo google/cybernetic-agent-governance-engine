@@ -152,7 +152,6 @@ force_redeploy = true
 # ─── Services ─────────────────────────────────────────────────────────────────
 inference_backend        = "vllm"
 enable_compliance_bridge = true
-enable_nemo_guardrails   = false
 
 # vLLM configuration — weights streamed from GCS model bucket via runai_streamer
 model_fast             = "gs://cage-models/Qwen/Qwen2.5-1.5B-Instruct"
@@ -161,10 +160,6 @@ served_model_fast      = "Qwen/Qwen2.5-1.5B-Instruct"
 served_model_reasoning = "deepseek-ai/DeepSeek-R1-Distill-Llama-8B"
 vllm_gpu_count         = 1
 vllm_replicas          = 1
-
-# NeMo Guardrails — use Cloud Build custom image (auto-built by deploy_sw.py)
-# Override via TF_VAR_nemo_image if you want a specific tag
-nemo_image = ""
 
 # Presidio — mirrored into Artifact Registry and pinned by @sha256: digest via var.image_digests
 presidio_analyzer_image   = ""

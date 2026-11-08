@@ -38,8 +38,8 @@ locals {
   ksa_benchmark         = "cage-benchmark-sa"
   ksa_langfuse          = "langfuse-sa"
   ksa_clickhouse        = "cage-clickhouse-sa"
+  ksa_clickhouse_keeper = "cage-clickhouse-keeper-sa"
   ksa_agentsight_ui     = "cage-agentsight-ui-sa"
-  ksa_nemo              = "cage-nemo-sa"
   ksa_inference_stub    = "cage-inference-stub-sa"
 
   # vLLM runs in var.namespace by default; keep "vllm-inference" bound when dedicated GPU namespace isolation is enabled.
@@ -365,6 +365,12 @@ locals {
       gsa     = google_service_account.clickhouse.email
       purpose = "query-plane"
     }
+    clickhouse_keeper = {
+      name    = local.ksa_clickhouse_keeper
+      gsa     = null # zero cloud identity; never shares ClickHouse cold-tier GSA (POAM-2026-080 / POAM-2026-195)
+      purpose = "query-plane-coordination"
+    }
+
     benchmark = {
       name    = local.ksa_benchmark
       gsa     = google_service_account.benchmark.email
@@ -379,11 +385,6 @@ locals {
       name    = local.ksa_agentsight_ui
       gsa     = null # zero cloud identity (AC-2 / POAM-2026-079)
       purpose = "ebpf-observability"
-    }
-    nemo = {
-      name    = local.ksa_nemo
-      gsa     = null # zero cloud identity (AC-2 / POAM-2026-079)
-      purpose = "guardrails"
     }
   }
 }

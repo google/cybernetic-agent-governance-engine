@@ -192,23 +192,6 @@ run "an_inference_stub_image_override_replaces_the_map_entry" {
   }
 }
 
-# EA-1: supplying the NeMo server's images does not unlock it; the plan
-# refuses the server because only the gateway may reach the model backends.
-run "nemo_server_is_refused_even_with_its_images" {
-  command = plan
-  variables {
-    inference_backend      = "vllm"
-    enable_nemo_guardrails = true
-    image_digests = merge(var.core, {
-      "vllm-streamer"              = "registry.invalid/cage-test/vllm-streamer@sha256:deadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeef"
-      "governed-financial-advisor" = "registry.invalid/cage-test/governed-financial-advisor@sha256:deadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeef"
-      "nemo-guardrails"            = "registry.invalid/cage-test/nemo-guardrails@sha256:deadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeef"
-      "presidio-analyzer"          = "registry.invalid/cage-test/presidio-analyzer@sha256:deadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeef"
-      "presidio-anonymizer"        = "registry.invalid/cage-test/presidio-anonymizer@sha256:deadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeef"
-    })
-  }
-  expect_failures = [terraform_data.inference_backend_guard]
-}
 
 run "no_bridge_needs_no_bridge_image" {
   command = plan

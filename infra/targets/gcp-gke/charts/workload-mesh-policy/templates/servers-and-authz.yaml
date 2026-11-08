@@ -1,0 +1,664 @@
+# Copyright 2026 Google LLC
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     https://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+# Deny-by-default Linkerd authorization across every non-gateway-HTTP workload
+# port in governance-stack (POAM-2026-080, POAM-2026-195, F-17, F-19, R-16, F-103).
+# Gateway HTTP port 8080 stays in infra/modules/gateway/mesh-policy/ (gateway-http).
+#
+# Kubelet HTTP health probes run unmeshed from the node IP (which GKE Dataplane V2
+# permits automatically while L3/L4 NetworkPolicy denies non-kubelet pods). Each
+# HTTP Server with a kubelet probe therefore splits its path space identically to
+# infra/modules/gateway/mesh-policy/:
+#   <workload>-probe   GET on the exact probe path ONLY -> NetworkAuthentication
+#   <workload>-gated   PathPrefix "/" (everything else) -> MeshTLSAuthentication ONLY
+---
+apiVersion: policy.linkerd.io/v1alpha1
+kind: NetworkAuthentication
+metadata:
+  name: workload-probe-network
+  namespace: {{ .Release.Namespace }}
+  labels:
+    app.kubernetes.io/managed-by: Helm
+    cage.io/component: z3n-mtls
+spec:
+  networks:
+    - cidr: 0.0.0.0/0
+    - cidr: ::/0
+---
+# ─── 1. Gateway gRPC (50051) & Metrics (9090) ─────────────────────────────────
+apiVersion: policy.linkerd.io/v1beta3
+kind: Server
+metadata:
+  name: gateway-grpc
+  namespace: {{ .Release.Namespace }}
+  labels:
+    app.kubernetes.io/managed-by: Helm
+    cage.io/component: z3n-mtls
+  annotations:
+    compliance.nist.gov/control: "SC-8,IA-3,AC-3,AC-4"
+    cage.io/poam: "POAM-2026-080,POAM-2026-195"
+spec:
+  podSelector:
+    matchLabels:
+      app: gateway
+  port: 50051
+  proxyProtocol: gRPC
+{{- if .Values.identities.gatewayGrpcClients }}
+---
+apiVersion: policy.linkerd.io/v1alpha1
+kind: MeshTLSAuthentication
+metadata:
+  name: gateway-grpc-clients
+  namespace: {{ .Release.Namespace }}
+spec:
+  identities:
+{{- range .Values.identities.gatewayGrpcClients }}
+    - {{ . | quote }}
+{{- end }}
+---
+apiVersion: policy.linkerd.io/v1alpha1
+kind: AuthorizationPolicy
+metadata:
+  name: gateway-grpc
+  namespace: {{ .Release.Namespace }}
+spec:
+  targetRef:
+    group: policy.linkerd.io
+    kind: Server
+    name: gateway-grpc
+  requiredAuthenticationRefs:
+    - group: policy.linkerd.io
+      kind: MeshTLSAuthentication
+      name: gateway-grpc-clients
+{{- end }}
+---
+apiVersion: policy.linkerd.io/v1beta3
+kind: Server
+metadata:
+  name: gateway-metrics
+  namespace: {{ .Release.Namespace }}
+  labels:
+    app.kubernetes.io/managed-by: Helm
+    cage.io/component: z3n-mtls
+spec:
+  podSelector:
+    matchLabels:
+      app: gateway
+  port: 9090
+  proxyProtocol: HTTP/1
+---
+apiVersion: policy.linkerd.io/v1beta3
+kind: HTTPRoute
+metadata:
+  name: gateway-metrics-scrape
+  namespace: {{ .Release.Namespace }}
+spec:
+  parentRefs:
+    - group: policy.linkerd.io
+      kind: Server
+      name: gateway-metrics
+  rules:
+    - matches:
+        - method: GET
+          path:
+            type: Exact
+            value: /metrics
+---
+apiVersion: policy.linkerd.io/v1alpha1
+kind: AuthorizationPolicy
+metadata:
+  name: gateway-metrics-scrape
+  namespace: {{ .Release.Namespace }}
+spec:
+  targetRef:
+    group: policy.linkerd.io
+    kind: HTTPRoute
+    name: gateway-metrics-scrape
+  requiredAuthenticationRefs:
+    - group: policy.linkerd.io
+      kind: NetworkAuthentication
+      name: workload-probe-network
+---
+# ─── 2. vLLM Model Backends (8000) — Strictly cage-gateway-sa ONLY (R-16, F-103) ─
+apiVersion: policy.linkerd.io/v1beta3
+kind: Server
+metadata:
+  name: model-backend-http
+  namespace: {{ .Release.Namespace }}
+  labels:
+    app.kubernetes.io/managed-by: Helm
+    cage.io/component: z3n-mtls
+  annotations:
+    compliance.nist.gov/control: "SC-8,IA-3,AC-3,AC-4"
+    cage.io/poam: "POAM-2026-080,POAM-2026-195"
+spec:
+  podSelector:
+    matchExpressions:
+      - key: app
+        operator: In
+        values:
+          - vllm-inference
+          - vllm-reasoning
+          - inference-stub
+  port: 8000
+  proxyProtocol: HTTP/1
+---
+apiVersion: policy.linkerd.io/v1beta3
+kind: HTTPRoute
+metadata:
+  name: vllm-probe
+  namespace: {{ .Release.Namespace }}
+spec:
+  parentRefs:
+    - group: policy.linkerd.io
+      kind: Server
+      name: model-backend-http
+  rules:
+    - matches:
+        - method: GET
+          path:
+            type: Exact
+            value: /health
+---
+apiVersion: policy.linkerd.io/v1beta3
+kind: HTTPRoute
+metadata:
+  name: vllm-gated
+  namespace: {{ .Release.Namespace }}
+spec:
+  parentRefs:
+    - group: policy.linkerd.io
+      kind: Server
+      name: model-backend-http
+  rules:
+    - matches:
+        - path:
+            type: PathPrefix
+            value: /
+---
+apiVersion: policy.linkerd.io/v1alpha1
+kind: AuthorizationPolicy
+metadata:
+  name: vllm-probe
+  namespace: {{ .Release.Namespace }}
+spec:
+  targetRef:
+    group: policy.linkerd.io
+    kind: HTTPRoute
+    name: vllm-probe
+  requiredAuthenticationRefs:
+    - group: policy.linkerd.io
+      kind: NetworkAuthentication
+      name: workload-probe-network
+{{- if .Values.identities.modelBackendClients }}
+---
+apiVersion: policy.linkerd.io/v1alpha1
+kind: MeshTLSAuthentication
+metadata:
+  name: model-backend-clients
+  namespace: {{ .Release.Namespace }}
+spec:
+  identities:
+{{- range .Values.identities.modelBackendClients }}
+    - {{ . | quote }}
+{{- end }}
+---
+apiVersion: policy.linkerd.io/v1alpha1
+kind: AuthorizationPolicy
+metadata:
+  name: vllm-gated
+  namespace: {{ .Release.Namespace }}
+  annotations:
+    compliance.nist.gov/control: "SC-8,IA-3,AC-3,AC-4"
+    cage.io/poam: "POAM-2026-080,POAM-2026-195"
+spec:
+  targetRef:
+    group: policy.linkerd.io
+    kind: HTTPRoute
+    name: vllm-gated
+  requiredAuthenticationRefs:
+    - group: policy.linkerd.io
+      kind: MeshTLSAuthentication
+      name: model-backend-clients
+{{- end }}
+---
+# ─── 6. ClickHouse Query Plane (HTTP 8123, TCP 9000, Interserver 9009) ────────
+apiVersion: policy.linkerd.io/v1beta3
+kind: Server
+metadata:
+  name: clickhouse-http
+  namespace: {{ .Release.Namespace }}
+  labels:
+    app.kubernetes.io/managed-by: Helm
+    cage.io/component: z3n-mtls
+  annotations:
+    compliance.nist.gov/control: "SC-8,IA-3,AC-3,AC-4,AU-9"
+    cage.io/poam: "POAM-2026-080,POAM-2026-195"
+spec:
+  podSelector:
+    matchLabels:
+      app: clickhouse
+  port: 8123
+  proxyProtocol: HTTP/1
+---
+apiVersion: policy.linkerd.io/v1beta3
+kind: HTTPRoute
+metadata:
+  name: clickhouse-probe
+  namespace: {{ .Release.Namespace }}
+spec:
+  parentRefs:
+    - group: policy.linkerd.io
+      kind: Server
+      name: clickhouse-http
+  rules:
+    - matches:
+        - method: GET
+          path:
+            type: Exact
+            value: /ping
+---
+apiVersion: policy.linkerd.io/v1beta3
+kind: HTTPRoute
+metadata:
+  name: clickhouse-http-gated
+  namespace: {{ .Release.Namespace }}
+spec:
+  parentRefs:
+    - group: policy.linkerd.io
+      kind: Server
+      name: clickhouse-http
+  rules:
+    - matches:
+        - path:
+            type: PathPrefix
+            value: /
+---
+apiVersion: policy.linkerd.io/v1alpha1
+kind: AuthorizationPolicy
+metadata:
+  name: clickhouse-probe
+  namespace: {{ .Release.Namespace }}
+spec:
+  targetRef:
+    group: policy.linkerd.io
+    kind: HTTPRoute
+    name: clickhouse-probe
+  requiredAuthenticationRefs:
+    - group: policy.linkerd.io
+      kind: NetworkAuthentication
+      name: workload-probe-network
+{{- if .Values.identities.clickhouseHttpClients }}
+---
+apiVersion: policy.linkerd.io/v1alpha1
+kind: MeshTLSAuthentication
+metadata:
+  name: clickhouse-http-clients
+  namespace: {{ .Release.Namespace }}
+spec:
+  identities:
+{{- range .Values.identities.clickhouseHttpClients }}
+    - {{ . | quote }}
+{{- end }}
+---
+apiVersion: policy.linkerd.io/v1alpha1
+kind: AuthorizationPolicy
+metadata:
+  name: clickhouse-http-gated
+  namespace: {{ .Release.Namespace }}
+spec:
+  targetRef:
+    group: policy.linkerd.io
+    kind: HTTPRoute
+    name: clickhouse-http-gated
+  requiredAuthenticationRefs:
+    - group: policy.linkerd.io
+      kind: MeshTLSAuthentication
+      name: clickhouse-http-clients
+{{- end }}
+---
+apiVersion: policy.linkerd.io/v1beta3
+kind: Server
+metadata:
+  name: clickhouse-tcp
+  namespace: {{ .Release.Namespace }}
+  labels:
+    app.kubernetes.io/managed-by: Helm
+    cage.io/component: z3n-mtls
+spec:
+  podSelector:
+    matchLabels:
+      app: clickhouse
+  port: 9000
+  proxyProtocol: opaque
+{{- if .Values.identities.clickhouseTcpClients }}
+---
+apiVersion: policy.linkerd.io/v1alpha1
+kind: MeshTLSAuthentication
+metadata:
+  name: clickhouse-tcp-clients
+  namespace: {{ .Release.Namespace }}
+spec:
+  identities:
+{{- range .Values.identities.clickhouseTcpClients }}
+    - {{ . | quote }}
+{{- end }}
+---
+apiVersion: policy.linkerd.io/v1alpha1
+kind: AuthorizationPolicy
+metadata:
+  name: clickhouse-tcp
+  namespace: {{ .Release.Namespace }}
+spec:
+  targetRef:
+    group: policy.linkerd.io
+    kind: Server
+    name: clickhouse-tcp
+  requiredAuthenticationRefs:
+    - group: policy.linkerd.io
+      kind: MeshTLSAuthentication
+      name: clickhouse-tcp-clients
+{{- end }}
+---
+apiVersion: policy.linkerd.io/v1beta3
+kind: Server
+metadata:
+  name: clickhouse-interserver
+  namespace: {{ .Release.Namespace }}
+  labels:
+    app.kubernetes.io/managed-by: Helm
+    cage.io/component: z3n-mtls
+spec:
+  podSelector:
+    matchLabels:
+      app: clickhouse
+  port: 9009
+  proxyProtocol: HTTP/1
+{{- if .Values.identities.clickhouseInterserverClients }}
+---
+apiVersion: policy.linkerd.io/v1alpha1
+kind: MeshTLSAuthentication
+metadata:
+  name: clickhouse-interserver-clients
+  namespace: {{ .Release.Namespace }}
+spec:
+  identities:
+{{- range .Values.identities.clickhouseInterserverClients }}
+    - {{ . | quote }}
+{{- end }}
+---
+apiVersion: policy.linkerd.io/v1alpha1
+kind: AuthorizationPolicy
+metadata:
+  name: clickhouse-interserver
+  namespace: {{ .Release.Namespace }}
+spec:
+  targetRef:
+    group: policy.linkerd.io
+    kind: Server
+    name: clickhouse-interserver
+  requiredAuthenticationRefs:
+    - group: policy.linkerd.io
+      kind: MeshTLSAuthentication
+      name: clickhouse-interserver-clients
+{{- end }}
+---
+# ─── 7. ClickHouse Keeper Coordination (client 9181, raft 9234) ───────────────
+apiVersion: policy.linkerd.io/v1beta3
+kind: Server
+metadata:
+  name: clickhouse-keeper-client
+  namespace: {{ .Release.Namespace }}
+  labels:
+    app.kubernetes.io/managed-by: Helm
+    cage.io/component: z3n-mtls
+spec:
+  podSelector:
+    matchLabels:
+      app: clickhouse-keeper
+  port: 9181
+  proxyProtocol: opaque
+{{- if .Values.identities.clickhouseKeeperClients }}
+---
+apiVersion: policy.linkerd.io/v1alpha1
+kind: MeshTLSAuthentication
+metadata:
+  name: clickhouse-keeper-client-authn
+  namespace: {{ .Release.Namespace }}
+spec:
+  identities:
+{{- range .Values.identities.clickhouseKeeperClients }}
+    - {{ . | quote }}
+{{- end }}
+---
+apiVersion: policy.linkerd.io/v1alpha1
+kind: AuthorizationPolicy
+metadata:
+  name: clickhouse-keeper-client
+  namespace: {{ .Release.Namespace }}
+spec:
+  targetRef:
+    group: policy.linkerd.io
+    kind: Server
+    name: clickhouse-keeper-client
+  requiredAuthenticationRefs:
+    - group: policy.linkerd.io
+      kind: MeshTLSAuthentication
+      name: clickhouse-keeper-client-authn
+{{- end }}
+---
+apiVersion: policy.linkerd.io/v1beta3
+kind: Server
+metadata:
+  name: clickhouse-keeper-raft
+  namespace: {{ .Release.Namespace }}
+  labels:
+    app.kubernetes.io/managed-by: Helm
+    cage.io/component: z3n-mtls
+spec:
+  podSelector:
+    matchLabels:
+      app: clickhouse-keeper
+  port: 9234
+  proxyProtocol: opaque
+{{- if .Values.identities.clickhouseKeeperRaftClients }}
+---
+apiVersion: policy.linkerd.io/v1alpha1
+kind: MeshTLSAuthentication
+metadata:
+  name: clickhouse-keeper-raft-authn
+  namespace: {{ .Release.Namespace }}
+spec:
+  identities:
+{{- range .Values.identities.clickhouseKeeperRaftClients }}
+    - {{ . | quote }}
+{{- end }}
+---
+apiVersion: policy.linkerd.io/v1alpha1
+kind: AuthorizationPolicy
+metadata:
+  name: clickhouse-keeper-raft
+  namespace: {{ .Release.Namespace }}
+spec:
+  targetRef:
+    group: policy.linkerd.io
+    kind: Server
+    name: clickhouse-keeper-raft
+  requiredAuthenticationRefs:
+    - group: policy.linkerd.io
+      kind: MeshTLSAuthentication
+      name: clickhouse-keeper-raft-authn
+{{- end }}
+---
+# ─── 8. Langfuse Web Telemetry Ingestion & Query API (3000) ───────────────────
+apiVersion: policy.linkerd.io/v1beta3
+kind: Server
+metadata:
+  name: langfuse-web-http
+  namespace: {{ .Release.Namespace }}
+  labels:
+    app.kubernetes.io/managed-by: Helm
+    cage.io/component: z3n-mtls
+  annotations:
+    compliance.nist.gov/control: "SC-8,IA-3,AC-3,AC-4,AU-9"
+    cage.io/poam: "POAM-2026-080,POAM-2026-195"
+spec:
+  podSelector:
+    matchLabels:
+      app: langfuse-web
+  port: 3000
+  proxyProtocol: HTTP/1
+---
+apiVersion: policy.linkerd.io/v1beta3
+kind: HTTPRoute
+metadata:
+  name: langfuse-web-probe
+  namespace: {{ .Release.Namespace }}
+spec:
+  parentRefs:
+    - group: policy.linkerd.io
+      kind: Server
+      name: langfuse-web-http
+  rules:
+    - matches:
+        - method: GET
+          path:
+            type: Exact
+            value: /api/public/health
+---
+apiVersion: policy.linkerd.io/v1beta3
+kind: HTTPRoute
+metadata:
+  name: langfuse-web-gated
+  namespace: {{ .Release.Namespace }}
+spec:
+  parentRefs:
+    - group: policy.linkerd.io
+      kind: Server
+      name: langfuse-web-http
+  rules:
+    - matches:
+        - path:
+            type: PathPrefix
+            value: /
+---
+apiVersion: policy.linkerd.io/v1alpha1
+kind: AuthorizationPolicy
+metadata:
+  name: langfuse-web-probe
+  namespace: {{ .Release.Namespace }}
+spec:
+  targetRef:
+    group: policy.linkerd.io
+    kind: HTTPRoute
+    name: langfuse-web-probe
+  requiredAuthenticationRefs:
+    - group: policy.linkerd.io
+      kind: NetworkAuthentication
+      name: workload-probe-network
+{{- if .Values.identities.langfuseWebClients }}
+---
+apiVersion: policy.linkerd.io/v1alpha1
+kind: MeshTLSAuthentication
+metadata:
+  name: langfuse-web-clients
+  namespace: {{ .Release.Namespace }}
+spec:
+  identities:
+{{- range .Values.identities.langfuseWebClients }}
+    - {{ . | quote }}
+{{- end }}
+---
+apiVersion: policy.linkerd.io/v1alpha1
+kind: AuthorizationPolicy
+metadata:
+  name: langfuse-web-gated
+  namespace: {{ .Release.Namespace }}
+spec:
+  targetRef:
+    group: policy.linkerd.io
+    kind: HTTPRoute
+    name: langfuse-web-gated
+  requiredAuthenticationRefs:
+    - group: policy.linkerd.io
+      kind: MeshTLSAuthentication
+      name: langfuse-web-clients
+{{- end }}
+---
+# ─── 9. Governed Financial Advisor (8080) — Deny-All Inbound ──────────────────
+# Zero AuthorizationPolicy references governed-advisor-http; no in-mesh caller
+# may reach the untrusted neural-plane pod inbound.
+apiVersion: policy.linkerd.io/v1beta3
+kind: Server
+metadata:
+  name: governed-advisor-http
+  namespace: {{ .Release.Namespace }}
+  labels:
+    app.kubernetes.io/managed-by: Helm
+    cage.io/component: z3n-mtls
+spec:
+  podSelector:
+    matchLabels:
+      app: governed-financial-advisor
+  port: 8080
+  proxyProtocol: HTTP/1
+---
+# ─── 10. AgentSight UI (8080) — Kubelet Exact "/" Probe Only ──────────────────
+# L3/L4 default-deny-ingress drops non-kubelet pod traffic; Linkerd exposes
+# only GET "/" so kubelet readiness/liveness succeeds without opening a mesh grant.
+apiVersion: policy.linkerd.io/v1beta3
+kind: Server
+metadata:
+  name: agentsight-ui-http
+  namespace: {{ .Release.Namespace }}
+  labels:
+    app.kubernetes.io/managed-by: Helm
+    cage.io/component: z3n-mtls
+spec:
+  podSelector:
+    matchLabels:
+      app: agentsight-ui
+  port: 8080
+  proxyProtocol: HTTP/1
+---
+apiVersion: policy.linkerd.io/v1beta3
+kind: HTTPRoute
+metadata:
+  name: agentsight-ui-probe
+  namespace: {{ .Release.Namespace }}
+spec:
+  parentRefs:
+    - group: policy.linkerd.io
+      kind: Server
+      name: agentsight-ui-http
+  rules:
+    - matches:
+        - method: GET
+          path:
+            type: Exact
+            value: /
+---
+apiVersion: policy.linkerd.io/v1alpha1
+kind: AuthorizationPolicy
+metadata:
+  name: agentsight-ui-probe
+  namespace: {{ .Release.Namespace }}
+spec:
+  targetRef:
+    group: policy.linkerd.io
+    kind: HTTPRoute
+    name: agentsight-ui-probe
+  requiredAuthenticationRefs:
+    - group: policy.linkerd.io
+      kind: NetworkAuthentication
+      name: workload-probe-network
