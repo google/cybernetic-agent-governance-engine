@@ -226,7 +226,7 @@ This repo uses a single generic Cloud Build template ([`deployment/docker/cloudb
 |---|---|---|
 | [`cloudbuild.image.yaml`](deployment/docker/cloudbuild.image.yaml) | `gateway`, `governed-financial-advisor`, `compliance-bridge`, `nemo-guardrails`, `agentsight-ui`, `cage-opa` | `_IMAGE_NAME`, `_DOCKERFILE`, `_SHORT_SHA` |
 | [`cloudbuild.vllm.yaml`](deployment/docker/cloudbuild.vllm.yaml) | `vllm-streamer` (`E2_HIGHCPU_32`, 40-minute timeout) | `_SHORT_SHA` |
-| [`cloudbuild.lula.yaml`](deployment/docker/cloudbuild.lula.yaml) | `lula` (`0.9.5`) | — |
+| [`cloudbuild.lula.yaml`](deployment/docker/cloudbuild.lula.yaml) | `lula` (`0.16.0`) | `_SHORT_SHA` |
 
 Every Cloud Build config enforces:
 - `serviceAccount: projects/$PROJECT_ID/serviceAccounts/cage-cloudbuild-${_ENVIRONMENT}@$PROJECT_ID.iam.gserviceaccount.com` — dedicated build identity (POAM-2026-083)

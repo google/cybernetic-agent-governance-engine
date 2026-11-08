@@ -32,6 +32,7 @@ locals {
   governance_valkey_cidr = "${module.memorystore_governance.primary_endpoint_ip}/32"
   app_valkey_cidr        = "${module.memorystore_app.primary_endpoint_ip}/32"
   cloud_sql_cidr         = "${module.cloudsql_postgres.private_ip_address}/32"
+  k8s_api_endpoint_cidr  = "${module.gke.cluster_endpoint}/32"
 
   # Canonical GKE FQDNNetworkPolicy (networking.gke.io/v1alpha1) manifests.
   # Parameterized strictly by tfvars FQDNs; identical structure in every posture.
@@ -985,6 +986,204 @@ resource "kubernetes_network_policy_v1" "vllm_egress_l3_l4" {
   }
 }
 
+# ─── 7. Lula Auditor CronJob Egress Isolation (CA-2, CA-7, SC-7, AC-4) ────────
+
+resource "kubernetes_network_policy_v1" "lula_audit_egress" {
+  metadata {
+    name      = "lula-audit-egress"
+    namespace = module.namespace.name
+    labels = {
+      app                            = "lula-audit"
+      "app.kubernetes.io/managed-by" = "terraform"
+      "cage.io/component"            = "z3n-egress"
+    }
+    annotations = {
+      "compliance.nist.gov/control"  = "SC-7,AC-4,CA-7"
+      "compliance.nist.gov/standard" = "SP-800-53-Rev5"
+    }
+  }
+
+  spec {
+    pod_selector {
+      match_labels = {
+        app = "lula-audit"
+      }
+    }
+    policy_types = ["Ingress", "Egress"]
+
+    # No ingress permitted — CronJob auditor initiates outbound checks only.
+
+    # 1. DNS resolution — kube-dns, node-local-dns, and Cloud DNS only (§5.3, §7)
+    egress {
+      to {
+        namespace_selector {
+          match_labels = {
+            "kubernetes.io/metadata.name" = "kube-system"
+          }
+        }
+        pod_selector {
+          match_labels = {
+            "k8s-app" = "kube-dns"
+          }
+        }
+      }
+      to {
+        namespace_selector {
+          match_labels = {
+            "kubernetes.io/metadata.name" = "kube-system"
+          }
+        }
+        pod_selector {
+          match_labels = {
+            "k8s-app" = "node-local-dns"
+          }
+        }
+      }
+      to {
+        ip_block {
+          cidr = var.kube_dns_cidr
+        }
+      }
+      ports {
+        protocol = "UDP"
+        port     = "53"
+      }
+      ports {
+        protocol = "TCP"
+        port     = "53"
+      }
+    }
+
+    # 2. Kubernetes API server (kubernetes domain validations)
+    egress {
+      to {
+        ip_block {
+          cidr = local.k8s_api_endpoint_cidr
+        }
+      }
+      to {
+        ip_block {
+          cidr = var.master_ipv4_cidr_block
+        }
+      }
+      dynamic "to" {
+        for_each = var.service_cidr != null ? [var.service_cidr] : []
+        content {
+          ip_block {
+            cidr = to.value
+          }
+        }
+      }
+      ports {
+        protocol = "TCP"
+        port     = "443"
+      }
+      ports {
+        protocol = "TCP"
+        port     = "6443"
+      }
+    }
+
+    # 3. Compliance bridge (api domain validations on 80/3001 + event sealing on 8085 + Linkerd 4143)
+    egress {
+      to {
+        pod_selector {
+          match_labels = {
+            app = "compliance-bridge"
+          }
+        }
+      }
+      ports {
+        protocol = "TCP"
+        port     = "80"
+      }
+      ports {
+        protocol = "TCP"
+        port     = "8085"
+      }
+      ports {
+        protocol = "TCP"
+        port     = "3001"
+      }
+      ports {
+        protocol = "TCP"
+        port     = "4143"
+      }
+    }
+
+    # 4. Gateway open probes + Linkerd inbound proxy
+    egress {
+      to {
+        pod_selector {
+          match_labels = {
+            app = "gateway"
+          }
+        }
+      }
+      ports {
+        protocol = "TCP"
+        port     = "8000"
+      }
+      ports {
+        protocol = "TCP"
+        port     = "8080"
+      }
+      ports {
+        protocol = "TCP"
+        port     = "4143"
+      }
+    }
+
+    # 5. Linkerd control plane in linkerd namespace
+    egress {
+      to {
+        namespace_selector {
+          match_labels = {
+            "kubernetes.io/metadata.name" = "linkerd"
+          }
+        }
+      }
+      ports {
+        protocol = "TCP"
+        port     = "8080"
+      }
+      ports {
+        protocol = "TCP"
+        port     = "8086"
+      }
+      ports {
+        protocol = "TCP"
+        port     = "8090"
+      }
+    }
+
+    # 6. GKE compute & Workload Identity metadata servers
+    egress {
+      to {
+        ip_block {
+          cidr = "169.254.169.254/32"
+        }
+      }
+      ports {
+        protocol = "TCP"
+        port     = "80"
+      }
+    }
+
+    egress {
+      to {
+        ip_block {
+          cidr = "169.254.169.252/32"
+        }
+      }
+      ports {
+        protocol = "TCP"
+        port     = "988"
+      }
+    }
+  }
+}
+
 # ─── 8. Materialize GKE FQDNNetworkPolicy Objects in Cluster (§5.3) ──────────
 
 resource "kubernetes_manifest" "fqdn_network_policy" {
@@ -1028,6 +1227,7 @@ resource "terraform_data" "network_policy_workload_rollout" {
     kubernetes_network_policy_v1.financial_advisor_egress_internal_only,
     kubernetes_network_policy_v1.reconciliation_worker_egress,
     kubernetes_network_policy_v1.vllm_egress_l3_l4,
+    kubernetes_network_policy_v1.lula_audit_egress,
     kubernetes_manifest.fqdn_network_policy,
   ]
 }

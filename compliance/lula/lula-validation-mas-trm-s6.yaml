@@ -13,6 +13,7 @@
 # limitations under the License.
 
 # lula-validation-mas-trm-s6.yaml
+# cage-status: planned
 # MAS TRM §6.3 — AI and Machine Learning Controls
 #
 # Asserts that the CAGE system satisfies the Monetary Authority of Singapore

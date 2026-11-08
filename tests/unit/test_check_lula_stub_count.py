@@ -747,7 +747,7 @@ class TestGdprArt22Posture:
         )
         assert req["uuid"] == "eu-ecb-req-0002-4000-8000-000000000002"
         props = {p["name"]: p["value"] for p in req["props"]}
-        assert props["implementation-status"] == "under-development"
+        assert props["implementation-status"] == "planned"
         assert props["subject-initiated-contest-status"] == "planned"
         assert props["compliance-bridge-art22-endpoint-status"] == "planned"
         assert "REQUIRE_APPROVAL" in req["description"]
@@ -875,3 +875,211 @@ class TestNothingSkippedSilently:
             "drafts/",
             "schemas/",
         ]
+
+
+class TestLulaSspStatusParity:
+    """Bidirectional # cage-status: planned <-> SSP implementation-status: planned parity."""
+
+    EXPECTED_PLANNED = frozenset(
+        {
+            "lula-validation-dora-art10.yaml",
+            "lula-validation-eu-ai-act-art9.yaml",
+            "lula-validation-gdpr-art22.yaml",
+            "lula-validation-mas-feat.yaml",
+            "lula-validation-mas-notice655.yaml",
+            "lula-validation-mas-trm-s6.yaml",
+            "lula-validation-ra5.yaml",
+        }
+    )
+
+    @staticmethod
+    def _write_ssp(
+        path: Path,
+        requirements: list[tuple[str, str, str]],
+    ) -> Path:
+        doc = {
+            "system-security-plan": {
+                "uuid": "aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee",
+                "control-implementation": {
+                    "description": "Synthetic SSP",
+                    "implemented-requirements": [
+                        {
+                            "uuid": f"00000000-0000-4000-8000-{idx:012d}",
+                            "control-id": cid,
+                            "description": desc,
+                            "props": [
+                                {"name": "implementation-status", "value": status}
+                            ],
+                        }
+                        for idx, (cid, status, desc) in enumerate(requirements, start=1)
+                    ],
+                },
+            }
+        }
+        path.write_text(yaml.safe_dump(doc, sort_keys=False), encoding="utf-8")
+        return path
+
+    @staticmethod
+    def _write_manifest(
+        path: Path,
+        *,
+        control_id: str = "syn-1",
+        planned: bool = False,
+        region: str = "US_FED",
+    ) -> Path:
+        body = _make_oscal_manifest(remarks=f"Region: {region}.")
+        body = body.replace("control-id: syn-1", f"control-id: {control_id}", 1)
+        header = f"# {path.name}\n"
+        if planned:
+            header += "# cage-status: planned\n"
+        path.write_text(header + body, encoding="utf-8")
+        return path
+
+    def test_live_repository_has_7_planned_and_26_active_with_zero_parity_errors(
+        self,
+    ) -> None:
+        yaml_files = sorted(LULA_DIR.glob("lula-validation-*.yaml"))
+        assert len(yaml_files) == 33
+        actual_planned = {
+            p.name
+            for p in yaml_files
+            if gate.has_planned_header(p.read_text(encoding="utf-8"))
+        }
+        assert actual_planned == self.EXPECTED_PLANNED
+        ssp_files = [
+            REPO_ROOT / "compliance/oscal/system-security-plan.yaml",
+            REPO_ROOT / "compliance/oscal/system-security-plan-eu-ecb.yaml",
+            REPO_ROOT / "compliance/oscal/system-security-plan-apac-mas.yaml",
+        ]
+        errors, planned_count, active_count = gate.check_lula_ssp_status_parity(
+            yaml_files, ssp_files
+        )
+        assert errors == []
+        assert planned_count == 7
+        assert active_count == 26
+
+    def test_lula_planned_header_with_ssp_implemented_fails_closed(
+        self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        lula_dir = tmp_path / "lula"
+        lula_dir.mkdir()
+        self._write_manifest(
+            lula_dir / "lula-validation-syn1.yaml", control_id="syn-1", planned=True
+        )
+        (lula_dir / ".stub-baseline").write_text("0\n", encoding="utf-8")
+        poam = tmp_path / "POAM.md"
+        poam.write_text("# POAM\n", encoding="utf-8")
+        ssp = self._write_ssp(
+            tmp_path / "system-security-plan.yaml",
+            [("syn-1", "implemented", "Implemented control.")],
+        )
+
+        rc = gate.main(
+            [
+                "--lula-dir",
+                str(lula_dir),
+                "--poam-files",
+                str(poam),
+                "--ssp-files",
+                str(ssp),
+            ]
+        )
+        err = capsys.readouterr().err
+        assert rc == 1
+        assert "Lula<->SSP status drift" in err
+        assert "has '# cage-status: planned'" in err
+
+    def test_ssp_planned_with_lula_missing_planned_header_fails_closed(
+        self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        lula_dir = tmp_path / "lula"
+        lula_dir.mkdir()
+        self._write_manifest(
+            lula_dir / "lula-validation-syn1.yaml", control_id="syn-1", planned=False
+        )
+        (lula_dir / ".stub-baseline").write_text("0\n", encoding="utf-8")
+        poam = tmp_path / "POAM.md"
+        poam.write_text("# POAM\n", encoding="utf-8")
+        ssp = self._write_ssp(
+            tmp_path / "system-security-plan.yaml",
+            [("syn-1", "planned", "Planned control.")],
+        )
+
+        rc = gate.main(
+            [
+                "--lula-dir",
+                str(lula_dir),
+                "--poam-files",
+                str(poam),
+                "--ssp-files",
+                str(ssp),
+            ]
+        )
+        err = capsys.readouterr().err
+        assert rc == 1
+        assert "Lula<->SSP status drift" in err
+        assert "lacks '# cage-status: planned'" in err
+
+    def test_unresolvable_control_id_fails_closed(self, tmp_path: Path) -> None:
+        m = self._write_manifest(
+            tmp_path / "lula-validation-orphan.yaml",
+            control_id="unknown-99",
+            planned=False,
+        )
+        ssp = self._write_ssp(
+            tmp_path / "system-security-plan.yaml",
+            [("syn-1", "implemented", "Implemented control.")],
+        )
+        errors, _, _ = gate.check_lula_ssp_status_parity([m], [ssp])
+        assert any("unresolved control-id" in e and "unknown-99" in e for e in errors)
+
+    def test_ssp_dangling_lula_manifest_reference_fails_closed(
+        self, tmp_path: Path
+    ) -> None:
+        m = self._write_manifest(
+            tmp_path / "lula-validation-syn1.yaml", control_id="syn-1", planned=False
+        )
+        ssp = self._write_ssp(
+            tmp_path / "system-security-plan.yaml",
+            [
+                ("syn-1", "implemented", "Backed by lula-validation-syn1.yaml."),
+                ("syn-2", "planned", "Backed by lula-validation-ghost.yaml."),
+            ],
+        )
+        errors, _, _ = gate.check_lula_ssp_status_parity([m], [ssp])
+        assert any(
+            "dangling reference" in e and "lula-validation-ghost.yaml" in e
+            for e in errors
+        )
+
+    def test_nist_enhancement_resolves_to_parent_control_and_catches_drift(
+        self, tmp_path: Path
+    ) -> None:
+        m = self._write_manifest(
+            tmp_path / "lula-validation-au12.yaml",
+            control_id="au-12.1",
+            planned=False,
+        )
+        ssp_ok = self._write_ssp(
+            tmp_path / "ssp-ok.yaml",
+            [("au-12", "implemented", "AU-12 audit generation.")],
+        )
+        ok_errors, planned, active = gate.check_lula_ssp_status_parity([m], [ssp_ok])
+        assert ok_errors == []
+        assert (planned, active) == (0, 1)
+
+        ssp_drift = self._write_ssp(
+            tmp_path / "ssp-drift.yaml",
+            [("au-12", "planned", "AU-12 planned.")],
+        )
+        drift_errors, _, _ = gate.check_lula_ssp_status_parity([m], [ssp_drift])
+        assert any("Lula<->SSP status drift" in e for e in drift_errors)
+
+    def test_missing_ssp_files_fails_closed(self, tmp_path: Path) -> None:
+        m = self._write_manifest(
+            tmp_path / "lula-validation-syn1.yaml", control_id="syn-1", planned=False
+        )
+        errors, _, _ = gate.check_lula_ssp_status_parity(
+            [m], [tmp_path / "does-not-exist.yaml"]
+        )
+        assert any("No OSCAL SSP files found" in e for e in errors)

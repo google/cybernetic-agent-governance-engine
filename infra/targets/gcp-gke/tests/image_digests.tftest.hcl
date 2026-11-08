@@ -83,6 +83,7 @@ variables {
     "clickhouse-server" = "registry.invalid/cage-test/clickhouse-server@sha256:deadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeef"
     "clickhouse-keeper" = "registry.invalid/cage-test/clickhouse-keeper@sha256:deadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeef"
     "compliance-bridge" = "registry.invalid/cage-test/compliance-bridge@sha256:deadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeef"
+    "lula"              = "registry.invalid/cage-test/lula@sha256:deadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeef"
   }
 }
 
@@ -95,6 +96,7 @@ run "staging_none_needs_only_the_images_it_deploys" {
     condition = toset(local.required_image_digests) == toset([
       "gateway", "opa", "agentsight-ui", "langfuse", "langfuse-worker",
       "cloud-sql-proxy", "clickhouse-server", "clickhouse-keeper", "compliance-bridge",
+      "lula",
     ])
     error_message = "staging under none must require exactly the images it deploys: no vLLM, advisor, NeMo or Presidio image"
   }

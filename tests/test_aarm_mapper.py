@@ -276,4 +276,40 @@ def test_overall_posture_labels(posture, description):
     )
 
 
+def test_not_applicable_findings_do_not_expose_vectors_unlike_error():
+    """Startup-grace NOT_APPLICABLE findings count as uncollected, whereas ERROR counts as failure."""
+    na_findings = [
+        OscalFinding(
+            control_id=cid,
+            result="NOT_APPLICABLE",
+            finding_id=f"na-{cid}",
+            safety_rate=None,
+            evidence_age_s=0.0,
+        )
+        for cid in ("A.5.2", "A.5.3", "A.8.4", "A.9.2")
+    ]
+    na_report = build_aarm_conformance_report(na_findings, audit_id="startup-grace-001")
+    assert na_report.exposed == 0
+    for vr in na_report.vectors:
+        assert vr.fail_count == 0
+        assert vr.status != "EXPOSED"
+
+    err_findings = [
+        OscalFinding(
+            control_id="A.8.4",
+            result="ERROR",
+            finding_id="err-A.8.4",
+            safety_rate=None,
+            evidence_age_s=None,
+        )
+    ]
+    err_report = build_aarm_conformance_report(
+        err_findings, audit_id="collector-err-001"
+    )
+    v7 = next(r for r in err_report.vectors if r.vector_id == "AARM-V7")
+    assert v7.fail_count == 1
+    assert v7.status == "EXPOSED"
+    assert err_report.exposed >= 1
+
+
 pytestmark = [pytest.mark.unit, pytest.mark.local]

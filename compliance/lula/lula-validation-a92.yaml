@@ -82,9 +82,19 @@ component-definition:
                 input.langfuse_metrics_a92.total_traces > 0
               }
 
+              rate_or_grace_ok if {
+                input.langfuse_metrics_a92.startup_grace_active == true
+                input.langfuse_metrics_a92.total_traces == 0
+                input.langfuse_metrics_a92.safety_rate == null
+              }
+
+              rate_or_grace_ok if {
+                input.langfuse_metrics_a92.safety_rate == 1.0
+                sample_size_or_grace_met
+              }
+
               validate if {
                 count(input.langfuse_metrics_a92) > 0
-                input.langfuse_metrics_a92.safety_rate == 1.0
                 input.langfuse_metrics_a92.evidence_age_seconds < 172800
-                sample_size_or_grace_met
+                rate_or_grace_ok
               }

@@ -542,6 +542,7 @@ _DEFAULT_TRUSTED_INFRA_PRODUCERS: frozenset[str] = frozenset(
         "cage-agentsight-sa.governance-stack.serviceaccount.identity.linkerd.cluster.local",
         "cilium-monitor-exporter.kube-system.serviceaccount.identity.linkerd.cluster.local",
         "cilium-monitor-exporter.governance-stack.serviceaccount.identity.linkerd.cluster.local",
+        "cage-lula-sa.governance-stack.serviceaccount.identity.linkerd.cluster.local",
     }
 )
 
@@ -549,6 +550,7 @@ _DEFAULT_TRUSTED_AUDIT_PRODUCERS: frozenset[str] = frozenset(
     {
         "lula-auditor.governance-stack.serviceaccount.identity.linkerd.cluster.local",
         "cage-lula-auditor-sa.governance-stack.serviceaccount.identity.linkerd.cluster.local",
+        "cage-lula-sa.governance-stack.serviceaccount.identity.linkerd.cluster.local",
     }
 )
 

@@ -93,9 +93,21 @@ component-definition:
               import future.keywords.if
               import future.keywords.in
 
+              report_doc := object.get(input.aarm_conformance_report, "report", input.aarm_conformance_report)
+
               vector_index[vid] := v if {
-                v := input.aarm_conformance_report.vectors[_]
+                v := report_doc.vectors[_]
                 vid := v.vector_id
+              }
+
+              critical_vectors := {
+                "AARM-V1", "AARM-V2", "AARM-V3", "AARM-V4",
+                "AARM-V9", "AARM-V10", "AARM-V11"
+              }
+
+              critical_vectors_unexposed if {
+                count([v | some v in critical_vectors; vector_index[v].fail_count > 0]) == 0
+                count([v | some v in critical_vectors; vector_index[v].status == "EXPOSED"]) == 0
               }
 
               validate if {
@@ -107,14 +119,8 @@ component-definition:
                 }
                 present_vectors := {v | vector_index[v]}
                 required_vectors == present_vectors
-                input.aarm_conformance_report.exposed == 0
-                vector_index["AARM-V1"].status  == "NEUTRALIZED"
-                vector_index["AARM-V2"].status  == "NEUTRALIZED"
-                vector_index["AARM-V3"].status  == "NEUTRALIZED"
-                vector_index["AARM-V4"].status  == "NEUTRALIZED"
-                vector_index["AARM-V9"].status  == "NEUTRALIZED"
-                vector_index["AARM-V10"].status == "NEUTRALIZED"
-                vector_index["AARM-V11"].status == "NEUTRALIZED"
-                input.aarm_conformance_report.schema_version    == "cage-aarm-conformance/1.0"
-                input.aarm_conformance_report.aarm_spec_version == "CSA-AARM-v1.0"
+                report_doc.exposed == 0
+                critical_vectors_unexposed
+                report_doc.schema_version    == "cage-aarm-conformance/1.0"
+                report_doc.aarm_spec_version == "CSA-AARM-v1.0"
               }

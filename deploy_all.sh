@@ -525,6 +525,10 @@ deploy_terraform_target() {
             -z "$(_effective_tf_var compliance_bridge_image "${tf_args[@]}")" ]]; then
         _images+=" compliance-bridge"
       fi
+      if [[ "$(_effective_tf_var enable_lula_cron "${tf_args[@]}")" != "false" &&
+            -z "$(_effective_tf_var lula_image "${tf_args[@]}")" ]]; then
+        _images+=" lula"
+      fi
       if [[ "$(_effective_tf_var inference_backend "${tf_args[@]}")" == "vllm" ]]; then
         _images+=" governed-financial-advisor"
         if [[ -z "$(_effective_tf_var vllm_image "${tf_args[@]}")" ]]; then

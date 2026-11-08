@@ -82,3 +82,15 @@ variable "cpu_limit" {
   type        = string
   default     = "500m"
 }
+
+variable "image_pull_policy" {
+  description = "Image pull policy for the OPA container"
+  type        = string
+  default     = "IfNotPresent"
+}
+
+variable "service_account_name" {
+  description = "Dedicated Kubernetes ServiceAccount for OPA pods (AC-2)."
+  type        = string
+  default     = ""
+}

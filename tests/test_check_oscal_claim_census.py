@@ -32,8 +32,8 @@ def test_committed_census_passes_validation_and_counts() -> None:
     errors = census_mod.validate_census(rows, extracted)
     assert errors == [], f"Unexpected census validation errors: {errors}"
 
-    assert len(extracted) == 192
-    assert len(rows) == 193
+    assert len(extracted) == 207
+    assert len(rows) == 208
 
     counts: dict[str, int] = {}
     for row in rows:
@@ -41,7 +41,7 @@ def test_committed_census_passes_validation_and_counts() -> None:
         counts[v] = counts.get(v, 0) + 1
 
     assert counts == {
-        "HOLDS": 24,
+        "HOLDS": 39,
         "WEAKER": 51,
         "NOT_IN_FORCE": 25,
         "INHERITED": 45,

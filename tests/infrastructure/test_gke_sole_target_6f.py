@@ -575,6 +575,9 @@ def _load_terraform_egress_policies() -> tuple[
         "local.governance_valkey_cidr": "10.128.0.50/32",
         "local.app_valkey_cidr": "10.128.0.51/32",
         "local.cloud_sql_cidr": "10.128.0.52/32",
+        "local.k8s_api_endpoint_cidr": "203.0.113.10/32",
+        "var.master_ipv4_cidr_block": "172.16.0.16/28",
+        "var.service_cidr": "10.120.0.0/20",
     }
 
     netpols: list[dict[str, Any]] = []

@@ -791,6 +791,7 @@ class InfraEvent(BaseModel):
         "agentsight_syscall",
         "agentsight_fim",
         "cilium_l7_flow",
+        "lula_audit",
     ]
     timestamp_utc: str = Field(
         ..., min_length=1, max_length=64
