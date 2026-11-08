@@ -43,6 +43,23 @@ resource "kubernetes_deployment" "compliance_bridge" {
       condition     = !var.enable_redis_tls || trimspace(var.redis_ca_pem) != ""
       error_message = "CAGE Invariant (SC-8 / POAM-2026-086): when enable_redis_tls=true, redis_ca_pem must be non-empty so the pod mounts /etc/cage/tls/redis/ca.pem and sets REDIS_CA_CERT_PATH."
     }
+
+    precondition {
+      condition = !contains(["staging", "prod", "production"], lower(var.cage_env)) || (
+        length([for id in var.trusted_operator_identities : trimspace(id) if trimspace(id) != ""]) > 0 &&
+        alltrue([
+          for id in var.trusted_operator_identities :
+          !startswith(trimspace(id), "spiffe://") &&
+          !startswith(trimspace(id), "principal://agents.") &&
+          !strcontains(trimspace(id), ".serviceaccount.identity.linkerd.") &&
+          !endswith(trimspace(id), ".svc.cluster.local")
+        ]) &&
+        startswith(trimspace(var.operator_oidc_issuer), "https://") &&
+        trimspace(var.operator_oidc_audience) != "" &&
+        startswith(trimspace(var.operator_jwks_uri), "https://")
+      )
+      error_message = "CAGE Invariant (AC-6 / IA-2 / POAM-2026-196): under an enforcing posture, compliance-bridge requires non-empty human trusted_operator_identities (no workload SVIDs), https:// operator_oidc_issuer, non-empty operator_oidc_audience, and https:// operator_jwks_uri."
+    }
   }
 
   metadata {
@@ -347,6 +364,32 @@ resource "kubernetes_deployment" "compliance_bridge" {
               name  = "REDIS_AUTH_MODE"
               value = var.redis_auth_mode
             }
+          }
+
+          # ─── Human Operator OIDC Identity (POAM-2026-196) ──────────────────
+          env {
+            name  = "CAGE_OPERATOR_IDENTITY_ALLOW_OIDC"
+            value = trimspace(var.operator_oidc_issuer) != "" ? "true" : "false"
+          }
+
+          env {
+            name  = "CAGE_TRUSTED_OPERATOR_IDENTITIES"
+            value = join(",", [for id in var.trusted_operator_identities : trimspace(id) if trimspace(id) != ""])
+          }
+
+          env {
+            name  = "CAGE_OPERATOR_OIDC_ISSUER"
+            value = var.operator_oidc_issuer
+          }
+
+          env {
+            name  = "CAGE_OPERATOR_OIDC_AUDIENCE"
+            value = var.operator_oidc_audience
+          }
+
+          env {
+            name  = "CAGE_OPERATOR_JWKS_URI"
+            value = var.operator_jwks_uri
           }
 
           env {

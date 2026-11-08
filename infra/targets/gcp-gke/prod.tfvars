@@ -133,3 +133,15 @@ served_model_fast      = "Qwen/Qwen2.5-1.5B-Instruct"
 served_model_reasoning = "deepseek-ai/DeepSeek-R1-Distill-Llama-8B"
 vllm_gpu_count         = 1
 vllm_replicas          = 2
+
+# ─── Human HITL Operator Identity (POAM-2026-196) ─────────────────────────────
+# Non-secret human OIDC allowlist and trust-anchor defaults; override in
+# terraform.auto.tfvars with your organization's real IdP issuer, JWKS URI, and
+# human risk-officer sub claims before production cutover.
+trusted_operator_identities = [
+  "risk-officer-primary@example.com",
+  "risk-officer-secondary@example.com",
+]
+operator_oidc_issuer   = "https://idp.cage.example"
+operator_oidc_audience = "cage-compliance-bridge"
+operator_jwks_uri      = "https://idp.cage.example/.well-known/jwks.json"

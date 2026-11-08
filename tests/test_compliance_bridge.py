@@ -360,6 +360,7 @@ class TestAuditIngestAuth:
     _AUTH_ENV = {
         "CAGE_INTERNAL_TOKEN": "secret-token",
         "CAGE_ENV": "staging",
+        "CAGE_TRUSTED_OPERATOR_IDENTITIES": "operator:auditor@example.org",
     }
 
     @pytest.fixture(autouse=True)

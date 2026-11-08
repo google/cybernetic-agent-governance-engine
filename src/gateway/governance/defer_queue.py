@@ -62,9 +62,10 @@ from datetime import datetime, timezone
 from enum import Enum
 from typing import Any
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
 
 from src.gateway.governance.contracts import ViolationKind
+from src.gateway.governance.env_posture import DeploymentPosture
 from src.gateway.infrastructure.redis_single_use import new_op_id
 
 logger = logging.getLogger(__name__)
@@ -287,51 +288,77 @@ class ApprovalRecord(BaseModel):
     """hex SHA-256 over the bound decision fields."""
 
     def verify_webauthn_challenge(self) -> bool:
-        """Verify WebAuthn challenge binding (v3.0+ audit fix).
+        """Verify WebAuthn CollectedClientData challenge binding (POAM-2026-196).
 
-        This method validates that the challenge embedded in client_data_json
-        matches the expected challenge_binding. It implements the cryptographic
-        verification flow required by the W3C WebAuthn specification.
+        Validates that ``client_data_json`` decodes to a W3C ``webauthn.get``
+        CollectedClientData JSON object whose base64url ``challenge`` decodes
+        to the exact 32-byte SHA-256 ``challenge_binding`` digest.
 
         Returns:
             True if verification succeeds, False otherwise.
-
-        Raises:
-            ValueError: If required fields are missing or malformed.
         """
         import base64
         import hashlib
 
-        if not self.client_data_json or not self.challenge_binding:
+        if (
+            not self.client_data_json
+            or not self.client_data_json.strip()
+            or not self.challenge_binding
+            or not self.challenge_binding.strip()
+        ):
             return False
 
         try:
-            # Decode client_data_json using canonical base64url padding
-            b64_str = self.client_data_json
+            b64_str = self.client_data_json.strip()
             pad = "=" * (-len(b64_str) % 4)
             client_data_bytes = base64.urlsafe_b64decode(b64_str + pad)
 
-            # Compute and cache the client_data_hash
             computed_hash = hashlib.sha256(client_data_bytes).hexdigest()
             if self.client_data_hash is None:
-                # Populate the hash field for backward compatibility
                 object.__setattr__(self, "client_data_hash", computed_hash)
 
-            # Parse the JSON and extract the challenge field
             client_data = json.loads(client_data_bytes.decode("utf-8"))
-            challenge_b64 = client_data.get("challenge", "")
+            if (
+                not isinstance(client_data, dict)
+                or client_data.get("type") != "webauthn.get"
+            ):
+                return False
 
-            # Decode the challenge using canonical base64url padding
+            challenge_b64 = client_data.get("challenge", "")
+            if not isinstance(challenge_b64, str) or not challenge_b64.strip():
+                return False
+
             pad_challenge = "=" * (-len(challenge_b64) % 4)
             challenge_bytes = base64.urlsafe_b64decode(challenge_b64 + pad_challenge)
 
-            # Compare against the expected challenge_binding
-            expected_bytes = bytes.fromhex(self.challenge_binding)
+            expected_bytes = bytes.fromhex(self.challenge_binding.strip())
+            if len(expected_bytes) != 32:
+                return False
             return challenge_bytes == expected_bytes
 
         except (ValueError, KeyError, json.JSONDecodeError) as exc:
             logger.warning("WebAuthn challenge verification failed: %s", exc)
             return False
+
+    @model_validator(mode="after")
+    def _validate_enforcing_webauthn_binding(self) -> ApprovalRecord:
+        """Require verified WebAuthn challenge binding in enforcing postures (POAM-2026-196)."""
+        if DeploymentPosture.from_env().is_enforcing():
+            if (
+                not self.client_data_json
+                or not self.client_data_json.strip()
+                or not self.challenge_binding
+                or not self.challenge_binding.strip()
+            ):
+                raise ValueError(
+                    "WebAuthn client_data_json and challenge_binding are mandatory "
+                    f"in enforcing postures for {self.approver_urn!r} (POAM-2026-196)"
+                )
+            if not self.verify_webauthn_challenge():
+                raise ValueError(
+                    f"WebAuthn challenge binding verification failed for {self.approver_urn!r}"
+                )
+        return self
 
 
 # ---------------------------------------------------------------------------
@@ -1194,8 +1221,24 @@ class DeferQueue:
         max_retries = 3
         base_jitter_ms = 5
 
+        enforcing = DeploymentPosture.from_env().is_enforcing()
+        if enforcing and (
+            not (record.client_data_json and record.client_data_json.strip())
+            or not (record.challenge_binding and record.challenge_binding.strip())
+        ):
+            logger.warning(
+                "[defer_queue] Missing mandatory WebAuthn challenge binding in enforcing posture: defer_id=%s approver=%s",
+                defer_id,
+                record.approver_urn,
+            )
+            raise ValueError(
+                "WebAuthn client_data_json and challenge_binding are mandatory "
+                f"in enforcing postures for {record.approver_urn!r} (POAM-2026-196)"
+            )
+
         if (
-            record.auth_method == "WEBAUTHN"
+            enforcing
+            or record.auth_method == "WEBAUTHN"
             or record.client_data_json is not None
             or record.challenge_binding is not None
         ) and not record.verify_webauthn_challenge():
@@ -1238,16 +1281,38 @@ class DeferQueue:
                 )
                 return (ApprovalStatus.NOT_FOUND, None)
 
-            # Separation-of-duties: the initiator who triggered the deferred action
-            # cannot approve their own token.
-            initiator = token.initiator_urn or token.opa_input_snapshot.get(
-                "initiator_urn"
+            # Separation-of-duties (POAM-2026-196, F-42): the initiator who
+            # triggered the deferred action cannot approve their own token.
+            initiator_urns: set[str] = set()
+            if isinstance(token.initiator_urn, str) and token.initiator_urn.strip():
+                initiator_urns.add(token.initiator_urn.strip())
+            snap = (
+                token.opa_input_snapshot
+                if isinstance(token.opa_input_snapshot, dict)
+                else {}
             )
-            if (
-                isinstance(initiator, str)
-                and initiator.strip()
-                and record.approver_urn == initiator.strip()
-            ):
+            snap_init = snap.get("initiator_urn")
+            if isinstance(snap_init, str) and snap_init.strip():
+                initiator_urns.add(snap_init.strip())
+            for _sub_key in ("params", "metadata"):
+                _sub = snap.get(_sub_key)
+                if isinstance(_sub, dict):
+                    for _field in (
+                        "initiator_urn",
+                        "_initiator_urn",
+                        "id1_user",
+                        "user_id",
+                        "actor_urn",
+                        "_caller_principal",
+                    ):
+                        _val = _sub.get(_field)
+                        if (
+                            isinstance(_val, str)
+                            and _val.strip()
+                            and _val.strip() != "anonymous"
+                        ):
+                            initiator_urns.add(_val.strip())
+            if record.approver_urn.strip() in initiator_urns:
                 logger.warning(
                     "[defer_queue] Separation-of-duties violation: initiator %s attempted to approve defer_id=%s",
                     record.approver_urn,

@@ -39,6 +39,15 @@ class DeploymentPosture(Enum):
     LOCAL = "local"
     CI = "ci"
 
+    @classmethod
+    def from_env(cls) -> DeploymentPosture:
+        """Resolve the active deployment posture from environment variables."""
+        return resolve_posture()
+
+    def is_enforcing(self) -> bool:
+        """Return True when this posture enforces production safety/telemetry controls."""
+        return self not in _PERMISSIVE_POSTURES
+
     @property
     def enforces_controls(self) -> bool:
         """Return True when this posture enforces production safety/telemetry controls."""

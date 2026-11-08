@@ -19,8 +19,8 @@
 # Launched by `make test-gke-e2e` / `./deploy_all.sh --verify-e2e`.
 #
 # Credentials come from the adopter-created Secret `cage-e2e-credentials`
-# (keys: internal-token, operator-principals, unmeshed-gateway-url) — never
-# literal values in this manifest.
+# (keys: operator-oidc-tokens, unmeshed-gateway-url) — never literal values
+# in this manifest.
 apiVersion: batch/v1
 kind: Job
 metadata:
@@ -72,16 +72,11 @@ spec:
                 secretKeyRef:
                   name: cage-e2e-credentials
                   key: unmeshed-gateway-url
-            - name: CAGE_E2E_INTERNAL_TOKEN
+            - name: CAGE_E2E_OPERATOR_OIDC_TOKENS
               valueFrom:
                 secretKeyRef:
                   name: cage-e2e-credentials
-                  key: internal-token
-            - name: CAGE_E2E_OPERATOR_PRINCIPALS
-              valueFrom:
-                secretKeyRef:
-                  name: cage-e2e-credentials
-                  key: operator-principals
+                  key: operator-oidc-tokens
             - name: LANGSMITH_TRACING
               value: "false"
             - name: LANGCHAIN_TRACING_V2

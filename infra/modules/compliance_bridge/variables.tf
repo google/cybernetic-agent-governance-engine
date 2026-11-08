@@ -256,3 +256,27 @@ variable "deployment_config_map_name" {
   description = "ConfigMap holding CAGE_DEPLOYMENT_REGION (output of modules/deployment_config)."
   type        = string
 }
+
+variable "trusted_operator_identities" {
+  description = "Allowlisted human OIDC operator sub claims permitted to approve HITL deferrals (CAGE_TRUSTED_OPERATOR_IDENTITIES; POAM-2026-196). Must be non-empty and contain no workload SVIDs under enforcing postures."
+  type        = list(string)
+  default     = []
+}
+
+variable "operator_oidc_issuer" {
+  description = "Expected OIDC issuer URL for human HITL operator JWTs (CAGE_OPERATOR_OIDC_ISSUER; POAM-2026-196)."
+  type        = string
+  default     = ""
+}
+
+variable "operator_oidc_audience" {
+  description = "Expected OIDC audience claim for human HITL operator JWTs (CAGE_OPERATOR_OIDC_AUDIENCE; POAM-2026-196)."
+  type        = string
+  default     = "cage-compliance-bridge"
+}
+
+variable "operator_jwks_uri" {
+  description = "Out-of-band HTTPS JWKS URI used to resolve kid-pinned public keys for human HITL operator JWTs (CAGE_OPERATOR_JWKS_URI; POAM-2026-196)."
+  type        = string
+  default     = ""
+}

@@ -1682,13 +1682,48 @@ class TestDeferQueueEndpoints:
             f"Expected DEFER_TOKEN_NOT_FOUND error, got {error!r}"
         )
 
-    def test_defer_escalate_unknown_id_returns_404(self, session):
-        r = session.post(
+    def test_defer_escalate_refuses_workload_svid_and_returns_404_for_human_oidc(
+        self, session
+    ):
+        import base64
+        import hashlib
+        import json
+
+        # POAM-2026-196 & POAM-2026-167: unproxied/workload l5d-client-id is refused (401/403)
+        r_svid = session.post(
             f"{BASE_URL}/v1/defer/definitely-not-real-{_uid()}/escalate",
             headers={
                 "l5d-client-id": "operator-tester.governance-stack.serviceaccount.identity.linkerd.cluster.local"
             },
             json={},
+            timeout=15,
+        )
+        assert r_svid.status_code in (401, 403), (
+            f"Workload/unproxied l5d-client-id on /escalate must return 401 or 403, got {r_svid.status_code}"
+        )
+
+        oidc_token = os.environ.get("CAGE_OPERATOR_OIDC_TOKEN", "").strip()
+        if not oidc_token:
+            return
+        digest = hashlib.sha256(b"cb-integration-404-probe").digest()
+        challenge_b64 = base64.urlsafe_b64encode(digest).rstrip(b"=").decode("ascii")
+        cdj = (
+            base64.urlsafe_b64encode(
+                json.dumps(
+                    {
+                        "type": "webauthn.get",
+                        "challenge": challenge_b64,
+                        "origin": "https://console.cage.example",
+                    }
+                ).encode("utf-8")
+            )
+            .rstrip(b"=")
+            .decode("ascii")
+        )
+        r = session.post(
+            f"{BASE_URL}/v1/defer/definitely-not-real-{_uid()}/escalate",
+            headers={"Authorization": f"Bearer {oidc_token}"},
+            json={"client_data_json": cdj, "challenge_binding": digest.hex()},
             timeout=15,
         )
         if r.status_code == 503:

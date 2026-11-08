@@ -49,6 +49,50 @@ POD_SERVER = ("10.112.0.42", 3001)
 OTHER_POD = ("10.112.3.7", 51000)
 
 
+def _configure_test_oidc_jwt(
+    monkeypatch: pytest.MonkeyPatch,
+    *,
+    sub: str,
+    trusted_identities: str,
+    kid: str = "test-operator-kid-1",
+    issuer: str = "https://idp.cage.example",
+    audience: str = "cage-compliance-bridge",
+) -> str:
+    """Mint a real ES256 JWT and configure out-of-band JWKS env vars for tests."""
+    import json
+    import time
+
+    import jwt as pyjwt
+    from cryptography.hazmat.primitives.asymmetric import ec
+
+    priv_key = ec.generate_private_key(ec.SECP256R1())
+    pub_jwk = json.loads(pyjwt.algorithms.ECAlgorithm.to_jwk(priv_key.public_key()))
+    pub_jwk["kid"] = kid
+    pub_jwk["use"] = "sig"
+    pub_jwk["alg"] = "ES256"
+
+    monkeypatch.setenv("CAGE_OPERATOR_IDENTITY_ALLOW_OIDC", "true")
+    monkeypatch.setenv("CAGE_OPERATOR_OIDC_ISSUER", issuer)
+    monkeypatch.setenv("CAGE_OPERATOR_OIDC_AUDIENCE", audience)
+    monkeypatch.setenv("CAGE_OPERATOR_JWKS_JSON", json.dumps({"keys": [pub_jwk]}))
+    monkeypatch.setenv("CAGE_TRUSTED_OPERATOR_IDENTITIES", trusted_identities)
+
+    now = int(time.time())
+    return pyjwt.encode(
+        {
+            "sub": sub,
+            "iss": issuer,
+            "aud": audience,
+            "iat": now - 5,
+            "nbf": now - 5,
+            "exp": now + 300,
+        },
+        priv_key,
+        algorithm="ES256",
+        headers={"kid": kid},
+    )
+
+
 def _make_mock_pipe():
     pipe = MagicMock()
     pipe.execute = AsyncMock(return_value=[])
@@ -108,14 +152,16 @@ class TestOperatorIdentityProvenance:
 
     @pytest.mark.asyncio
     async def test_oidc_fallback_channel_with_gated_env(self, monkeypatch):
-        """Verify OIDC fallback only activates with explicit env opt-in."""
-        monkeypatch.setenv("CAGE_OPERATOR_IDENTITY_ALLOW_OIDC", "true")
+        """Verify OIDC channel activates with explicit env opt-in and kid-verified JWT."""
+        signed_jwt = _configure_test_oidc_jwt(
+            monkeypatch,
+            sub="oidc-user@example.com",
+            trusted_identities="oidc-user@example.com",
+        )
 
         mock_request = MagicMock()
-        mock_request.headers = {"authorization": "Bearer mock-jwt-token"}
+        mock_request.headers = {"authorization": f"Bearer {signed_jwt}"}
         mock_request.attributes = None
-        mock_request.state = MagicMock()
-        mock_request.state.jwt_claims = {"sub": "oidc-user@example.com"}
 
         principal = await require_operator_identity(mock_request)
 
@@ -770,16 +816,15 @@ class TestApprovalRecordIntegrity:
         self, monkeypatch
     ):
         """When CAGE_TRUSTED_OPERATOR_IDENTITIES is set, OIDC sub claims must also be allowlisted."""
-        monkeypatch.setenv("CAGE_OPERATOR_IDENTITY_ALLOW_OIDC", "true")
-        monkeypatch.setenv(
-            "CAGE_TRUSTED_OPERATOR_IDENTITIES", "authorized-officer@example.com"
+        signed_jwt = _configure_test_oidc_jwt(
+            monkeypatch,
+            sub="unauthorized-user@example.com",
+            trusted_identities="authorized-officer@example.com",
         )
 
         mock_request = MagicMock()
-        mock_request.headers = {"authorization": "Bearer mock-jwt-token"}
+        mock_request.headers = {"authorization": f"Bearer {signed_jwt}"}
         mock_request.attributes = None
-        mock_request.state = MagicMock()
-        mock_request.state.jwt_claims = {"sub": "unauthorized-user@example.com"}
 
         with pytest.raises(HTTPException) as exc_info:
             await require_operator_identity(mock_request)
