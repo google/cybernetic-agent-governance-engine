@@ -42,7 +42,13 @@ class TradeOrder(BaseModel):
     """
 
     # User-provided fields
-    symbol: str = Field(..., description="Ticker symbol of the asset")
+    symbol: str = Field(
+        ...,
+        min_length=1,
+        max_length=5,
+        pattern=r"^[A-Z]{1,5}$",
+        description="Ticker symbol of the asset",
+    )
     amount: float | None = Field(default=None, description="Amount to trade")
     amount_minor: int | None = Field(
         default=None, description="Amount to trade in minor units (e.g. cents)."
@@ -118,13 +124,15 @@ class TradeOrder(BaseModel):
             )
         return v
 
-    @field_validator("symbol")
+    @field_validator("symbol", mode="before")
     @classmethod
     def validate_symbol(cls, v):  # type: ignore[no-untyped-def]
+        if not isinstance(v, str):
+            raise ValueError("Invalid symbol format. Must be 1-5 letters.")
         # Normalize to uppercase first
         v = v.upper()
         # Regex for Ticker Symbol (1-5 Uppercase letters)
-        if not re.match(r"^[A-Z]{1,5}$", v):
+        if not re.fullmatch(r"[A-Z]{1,5}", v):
             raise ValueError("Invalid symbol format. Must be 1-5 letters.")
         return v
 

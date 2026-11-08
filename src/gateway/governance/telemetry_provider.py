@@ -49,6 +49,7 @@ from __future__ import annotations
 import logging
 import os
 from abc import ABC, abstractmethod
+from collections.abc import Mapping
 from typing import Any
 
 import numpy as np
@@ -233,6 +234,40 @@ TELEMETRY_CREDENTIAL_VARS: tuple[str, str, str] = (
     "TELEMETRY_SECRET_KEY",
 )
 
+NEUTRAL_AGENT_TELEMETRY_CREDENTIAL_ENV_PAIRS: tuple[tuple[str, str], ...] = (
+    ("AGENT_TELEMETRY_PUBLIC_KEY", "AGENT_TELEMETRY_SECRET_KEY"),
+    ("ADVISOR_TELEMETRY_PUBLIC_KEY", "ADVISOR_TELEMETRY_SECRET_KEY"),
+)
+
+
+def find_colliding_agent_telemetry_env(
+    public_key: str,
+    secret_key: str,
+    environ: Mapping[str, str] | None = None,
+) -> tuple[str, str] | None:
+    """Return ``(gateway_var, agent_var)`` when non-empty gateway telemetry keys match agent/advisor keys (F-92)."""
+    env = os.environ if environ is None else environ
+    pub = public_key.strip()
+    sec = secret_key.strip()
+    if not pub and not sec:
+        return None
+
+    from src.integrations.telemetry_langfuse.provider import (
+        AGENT_TELEMETRY_CREDENTIAL_ENV_PAIRS,
+    )
+
+    for agent_pub_var, agent_sec_var in (
+        *NEUTRAL_AGENT_TELEMETRY_CREDENTIAL_ENV_PAIRS,
+        *AGENT_TELEMETRY_CREDENTIAL_ENV_PAIRS,
+    ):
+        agent_pub = env.get(agent_pub_var, "").strip()
+        if pub and agent_pub and pub == agent_pub:
+            return ("TELEMETRY_PUBLIC_KEY", agent_pub_var)
+        agent_sec = env.get(agent_sec_var, "").strip()
+        if sec and agent_sec and sec == agent_sec:
+            return ("TELEMETRY_SECRET_KEY", agent_sec_var)
+    return None
+
 
 def _telemetry_credentials() -> tuple[str, str, str]:
     """Return ``(host, public_key, secret_key)`` from ``TELEMETRY_*`` (stripped)."""
@@ -323,10 +358,12 @@ def get_telemetry_provider(
 
 __all__ = [
     "MIN_SAMPLES",
+    "NEUTRAL_AGENT_TELEMETRY_CREDENTIAL_ENV_PAIRS",
     "TELEMETRY_CREDENTIAL_VARS",
     "BaseTelemetryProvider",
     "ConfigurationError",
     "MockTelemetryProvider",
     "NullTelemetryProvider",
+    "find_colliding_agent_telemetry_env",
     "get_telemetry_provider",
 ]

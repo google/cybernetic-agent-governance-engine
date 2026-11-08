@@ -47,6 +47,7 @@ import re
 from collections.abc import Callable, Mapping, Sequence
 from collections.abc import Set as AbstractSet
 from pathlib import Path
+from types import MappingProxyType
 from typing import Any, Final
 
 import yaml
@@ -54,7 +55,11 @@ from opentelemetry import trace
 
 from src.gateway.governance.contracts import ConsensusContribution, CriticSpec
 from src.gateway.governance.critic_backend_factory import load_critic_backend
-from src.gateway.governance.feature_flags import consensus_critics_enabled
+from src.gateway.governance.env_posture import DeploymentPosture
+from src.gateway.governance.feature_flags import (
+    consensus_advisory_only_override,
+    consensus_critics_enabled,
+)
 from src.gateway.governance.inference_backend import inference_disabled
 from src.gateway.governance.jcs_canonicalizer import jcs_canonicalize_plan
 from src.gateway.governance.seams.critic import CriticBackend, CriticRequest
@@ -323,6 +328,8 @@ class ConsensusGate:
         high_stakes_actions: AbstractSet[str] = frozenset(),
         critic_backend: CriticBackend | None = None,
         critics_enabled: bool | None = None,
+        action_schemas: Mapping[str, Any] = MappingProxyType({}),
+        advisory_only: bool | None = None,
     ) -> None:
         self.critics: tuple[CriticSpec, ...] = tuple(critics)
         self.threshold: float = float(threshold)
@@ -330,6 +337,23 @@ class ConsensusGate:
             magnitude_extractor
         )
         self.high_stakes_actions: frozenset[str] = frozenset(high_stakes_actions)
+        self.action_schemas: Mapping[str, Any] = MappingProxyType(dict(action_schemas))
+        self._explicit_advisory_only: bool | None = advisory_only
+        env_advisory = consensus_advisory_only_override()
+        enforcing_posture = DeploymentPosture.from_env().is_enforcing()
+        if enforcing_posture:
+            if advisory_only is False:
+                raise RuntimeError(
+                    "ConsensusGate refuses advisory_only=False under an enforcing posture "
+                    "(F-54..F-56): LLM critics must run in advisory_only=True mode so they "
+                    "cannot substitute for human escalation."
+                )
+            if env_advisory is False:
+                raise RuntimeError(
+                    "ConsensusGate refuses CAGE_CONSENSUS_ADVISORY_ONLY=false under an "
+                    "enforcing posture (F-54..F-56): LLM critics must run in "
+                    "advisory_only=True mode so they cannot substitute for human escalation."
+                )
         # Resolved once, at composition time.
         # - By default (CAGE_CONSENSUS_CRITICS_ENABLED=false), a triggered
         #   check escalates deterministically with NOTIONAL_THRESHOLD_ESCALATION.
@@ -343,6 +367,12 @@ class ConsensusGate:
             if critics_enabled is None
             else bool(critics_enabled)
         )
+        if advisory_only is not None:
+            self.advisory_only: bool = bool(advisory_only)
+        elif env_advisory is not None:
+            self.advisory_only = env_advisory
+        else:
+            self.advisory_only = bool(enforcing_posture)
         self._inference_disabled: bool = inference_disabled()
         self._critic_backend: CriticBackend | None = None
         if self._critics_enabled and not self._inference_disabled:
@@ -367,6 +397,8 @@ class ConsensusGate:
             high_stakes_actions=contribution.high_stakes_actions,
             critic_backend=critic_backend,
             critics_enabled=critics_enabled,
+            action_schemas=contribution.action_schemas,
+            advisory_only=contribution.advisory_only,
         )
 
     def _resolve_critic_spec(self, critic: CriticSpec | str) -> CriticSpec | None:
@@ -672,8 +704,15 @@ class ConsensusGate:
                 decision = "ESCALATE"
                 reason = f"Escalated for human review. Votes: {votes}"
             elif all(v == "APPROVE" for v in votes):
-                decision = "APPROVE"
-                reason = "Unanimous approval from all configured critics."
+                if getattr(self, "advisory_only", False):
+                    decision = "ESCALATE"
+                    reason = (
+                        "Advisory-only critic approval — escalating for human review. "
+                        f"Votes: {votes}"
+                    )
+                else:
+                    decision = "APPROVE"
+                    reason = "Unanimous approval from all configured critics."
             else:
                 decision = "ESCALATE"
                 reason = f"Consensus unclear. Votes: {votes}"

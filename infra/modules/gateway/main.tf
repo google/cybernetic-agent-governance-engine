@@ -64,6 +64,44 @@ resource "kubernetes_deployment" "gateway" {
       condition     = !var.enable_redis_tls || trimspace(var.redis_ca_pem) != ""
       error_message = "CAGE Invariant (SC-8 / POAM-2026-086): when enable_redis_tls=true, redis_ca_pem must be non-empty so the pod mounts /etc/cage/tls/redis/ca.pem and sets REDIS_CA_CERT_PATH."
     }
+    precondition {
+      condition = (
+        (!local.is_prod_or_staging || (
+          trimspace(var.gateway_secret_name) != "" &&
+          var.gateway_secret_name != "advisor-secrets" &&
+          trimspace(local.telemetry_secret_name) != "" &&
+          var.telemetry_secret_name != "advisor-secrets" &&
+          local.telemetry_secret_name != "advisor-secrets" &&
+          (
+            trimspace(var.gateway_telemetry_public_key) == "" ||
+            trimspace(var.advisor_telemetry_public_key) == "" ||
+            var.gateway_telemetry_public_key != var.advisor_telemetry_public_key
+          )
+        )) &&
+        (!var.causal_tier_enabled || (
+          trimspace(local.telemetry_secret_name) != "" &&
+          var.telemetry_secret_name != "advisor-secrets" &&
+          local.telemetry_secret_name != "advisor-secrets" &&
+          var.causal_gatekeeper_strict_mode &&
+          (
+            !local.is_prod_or_staging ||
+            trimspace(var.advisor_telemetry_public_key) == "" ||
+            (
+              trimspace(var.gateway_telemetry_public_key) != "" &&
+              var.gateway_telemetry_public_key != var.advisor_telemetry_public_key
+            )
+          )
+        ))
+      )
+      error_message = "CAGE Invariant (F-84 / F-92 / R-2 / R-11): gateway telemetry credentials must never be shared with advisor-secrets or advisor telemetry keys in enforcing postures, and CAGE_CAUSAL_TIER_ENABLED=true requires a dedicated plane-only telemetry Secret (telemetry_secret_name != \"advisor-secrets\") and CAUSAL_GATEKEEPER_STRICT_MODE=true."
+    }
+    precondition {
+      condition = !var.consensus_critics_enabled || (
+        var.cage_inference_backend != "none" &&
+        (!local.is_prod_or_staging || var.consensus_advisory_only)
+      )
+      error_message = "CAGE Invariant (F-53..F-56 / R-11): CAGE_CONSENSUS_CRITICS_ENABLED=true requires an active inference backend (cage_inference_backend != \"none\") and, under an enforcing posture, consensus_advisory_only=true so model critics cannot replace human review."
+    }
   }
 
   metadata {
@@ -160,10 +198,10 @@ resource "kubernetes_deployment" "gateway" {
             name           = "metrics"
           }
 
-          # Secrets from gateway-secrets (R-2, F-43, F-84)
+          # Secrets from dedicated gateway Secret (R-2, F-84, F-92) — never advisor-secrets.
           env_from {
             secret_ref {
-              name = "gateway-secrets"
+              name = var.gateway_secret_name
             }
           }
 
@@ -230,7 +268,7 @@ resource "kubernetes_deployment" "gateway" {
             name = "OTEL_EXPORTER_OTLP_HEADERS"
             value_from {
               secret_key_ref {
-                name     = "gateway-secrets"
+                name     = var.gateway_secret_name
                 key      = "OTEL_EXPORTER_OTLP_HEADERS"
                 optional = true
               }
@@ -276,7 +314,7 @@ resource "kubernetes_deployment" "gateway" {
             name = "REDIS_PASSWORD"
             value_from {
               secret_key_ref {
-                name     = "gateway-secrets"
+                name     = var.gateway_secret_name
                 key      = "REDIS_PASSWORD"
                 optional = true
               }
@@ -320,10 +358,10 @@ resource "kubernetes_deployment" "gateway" {
             name  = "SERVICE_NAME"
             value = "hybrid-gateway"
           }
-          # Causal-tier telemetry (CTRL_TEL_003). The kernel reads only the
-          # vendor-neutral TELEMETRY_* names from gateway-secrets
-          # (isolated from the governed advisor Secret; R-2, F-84). Enforcing
-          # postures require CAGE_TELEMETRY_PROVIDER to be set explicitly.
+          # Causal-tier telemetry (CTRL_TEL_003 / F-92). The kernel reads only the
+          # vendor-neutral TELEMETRY_* names from the gateway-scoped Secret
+          # (isolated from advisor-secrets). Enforcing postures require
+          # CAGE_TELEMETRY_PROVIDER to be set explicitly.
           env {
             name  = "CAGE_TELEMETRY_PROVIDER"
             value = "remote"
@@ -336,8 +374,9 @@ resource "kubernetes_deployment" "gateway" {
             name = "TELEMETRY_PUBLIC_KEY"
             value_from {
               secret_key_ref {
-                name = "gateway-secrets"
-                key  = "TELEMETRY_PUBLIC_KEY"
+                name     = local.telemetry_secret_name
+                key      = "TELEMETRY_PUBLIC_KEY"
+                optional = !var.causal_tier_enabled
               }
             }
           }
@@ -345,10 +384,27 @@ resource "kubernetes_deployment" "gateway" {
             name = "TELEMETRY_SECRET_KEY"
             value_from {
               secret_key_ref {
-                name = "gateway-secrets"
-                key  = "TELEMETRY_SECRET_KEY"
+                name     = local.telemetry_secret_name
+                key      = "TELEMETRY_SECRET_KEY"
+                optional = !var.causal_tier_enabled
               }
             }
+          }
+          env {
+            name  = "CAGE_CAUSAL_TIER_ENABLED"
+            value = tostring(var.causal_tier_enabled)
+          }
+          env {
+            name  = "CAUSAL_GATEKEEPER_STRICT_MODE"
+            value = tostring(var.causal_gatekeeper_strict_mode)
+          }
+          env {
+            name  = "CAGE_CONSENSUS_CRITICS_ENABLED"
+            value = tostring(var.consensus_critics_enabled)
+          }
+          env {
+            name  = "CAGE_CONSENSUS_ADVISORY_ONLY"
+            value = tostring(local.consensus_advisory_only)
           }
           env {
             name  = "CAGE_DOMAIN"
@@ -672,4 +728,9 @@ resource "helm_release" "metrics_monitors" {
   })]
 
   depends_on = [kubernetes_service.gateway]
+}
+
+locals {
+  telemetry_secret_name   = trimspace(var.telemetry_secret_name) != "" ? var.telemetry_secret_name : var.gateway_secret_name
+  consensus_advisory_only = local.is_prod_or_staging ? true : var.consensus_advisory_only
 }

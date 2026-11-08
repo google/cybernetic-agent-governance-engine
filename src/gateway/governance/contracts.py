@@ -1061,12 +1061,24 @@ class ConsensusContribution:
 
     ``magnitude_extractor=None`` inherits ``PluginContribution.magnitude_extractor``
     at assembly; with neither, consensus sees magnitude 0.0.
+    ``action_schemas`` maps governed actions (or parameter names) to their
+    Pydantic schemas or JSON-Schema definitions so ``assemble_governor()`` can
+    verify that every critic ``context_keys`` entry is pattern-bound and
+    length-bounded before ``CAGE_CONSENSUS_CRITICS_ENABLED=true`` is admitted
+    (F-53..F-56, R-11).
+    ``advisory_only=True`` configures critic consensus in advisory-only
+    escalation mode so critic agreement informs rather than replaces human
+    review (F-56). ``advisory_only=None`` defers to ``CAGE_CONSENSUS_ADVISORY_ONLY``
+    and automatically resolves to ``True`` under enforcing postures; explicit
+    ``advisory_only=False`` is refused under enforcing postures (F-54..F-56).
     """
 
     critics: tuple[CriticSpec, ...]
     threshold: float
     magnitude_extractor: Callable[[Mapping[str, Any]], float] | None = None
     high_stakes_actions: frozenset[str] = frozenset()
+    action_schemas: Mapping[str, Any] = field(default_factory=dict)
+    advisory_only: bool | None = None
 
 
 class ConsensusProvider(Protocol):
