@@ -30,6 +30,7 @@ bash scripts/setup_git_hooks.sh
 
 This installs:
 - A **commit message template** (`.gitmessage`) shown in your editor on every `git commit`
+- A **pre-commit hook** synchronized with `.github/workflows/ci.yml` (`ruff`, `mypy`, license/marker checks, and deterministic `scripts/check_*.py` gates)
 - A **commit-msg hook** that rejects non-Conventional-Commits messages
 - A **pre-push hook** that checks the refs you push, not the branch you have checked out: it refuses any push to `main` or to a branch name the CI branch validator rejects (`rc-v*` included), and lets tags through
 

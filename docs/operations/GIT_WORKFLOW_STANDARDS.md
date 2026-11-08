@@ -47,12 +47,13 @@ Every engineer must run the following command once after cloning the repository:
 bash scripts/setup_git_hooks.sh
 ```
 
-This is not optional. The script installs two enforcement mechanisms that are
-prerequisites for contributing:
+This is not optional. The script installs three hooks and a commit template that
+are prerequisites for contributing:
 
 | Installed artifact | Location | Purpose |
 |---|---|---|
 | Commit message template | `.gitmessage` (via `git config commit.template`) | Pre-fills your editor with the required format on every `git commit` |
+| `pre-commit` hook | `.git/hooks/pre-commit` | Runs `ruff`, `mypy`, license/marker checks, and all deterministic `scripts/check_*.py` gates from `.github/workflows/ci.yml` |
 | `commit-msg` hook | `.git/hooks/commit-msg` | Validates the commit message before the commit is recorded |
 | `pre-push` hook | `.git/hooks/pre-push` | Refuses pushes to `main` and checks the name of every branch pushed (§1.3) |
 
@@ -95,6 +96,7 @@ After running the script, confirm the hooks are active:
 
 ```bash
 git config --get commit.template   # should print: /path/to/repo/.gitmessage
+ls -la .git/hooks/pre-commit       # should be executable
 ls -la .git/hooks/commit-msg       # should be executable
 ls -la .git/hooks/pre-push         # should be executable
 ```

@@ -105,6 +105,8 @@ def clone(tmp_path: Path) -> Clone:
         capture_output=True,
         text=True,
     )
+    assert os.access(work / ".git" / "hooks" / "pre-commit", os.X_OK)
+    assert os.access(work / ".git" / "hooks" / "commit-msg", os.X_OK)
     assert os.access(work / ".git" / "hooks" / "pre-push", os.X_OK)
     return repo
 
@@ -195,3 +197,83 @@ def test_deleting_main_from_a_feature_branch_is_refused(clone: Clone) -> None:
     assert result.returncode != 0
     assert PROTECTED_REFUSAL in _output(result)
     assert "refs/heads/main" in clone.remote_refs()
+
+
+def test_chained_wrapper_hooks_are_preserved(clone: Clone) -> None:
+    hooks_dir = clone.work / ".git" / "hooks"
+    wrapper_body = (
+        "#!/bin/sh\n"
+        'orig="$(dirname "$0")/pre-commit.chained"\n'
+        'if [ -x "$orig" ]; then exec "$orig" "$@"; fi\n'
+        "exit 0\n"
+    )
+    wrapper_path = hooks_dir / "pre-commit"
+    wrapper_path.write_text(wrapper_body, encoding="utf-8")
+    wrapper_path.chmod(0o755)
+
+    subprocess.run(
+        ["bash", str(INSTALLER)],
+        cwd=clone.work,
+        env=clone.env,
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+
+    assert wrapper_path.read_text(encoding="utf-8") == wrapper_body
+    chained = hooks_dir / "pre-commit.chained"
+    assert chained.is_file()
+    assert os.access(chained, os.X_OK)
+
+
+def test_installer_succeeds_from_linked_worktree(clone: Clone, tmp_path: Path) -> None:
+    wt_dir = tmp_path / "linked-wt"
+    clone.git("worktree", "add", "-b", "feat/worktree-hooks", str(wt_dir))
+
+    result = subprocess.run(
+        ["bash", str(INSTALLER)],
+        cwd=wt_dir,
+        env=clone.env,
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+
+    assert result.returncode == 0, _output(result)
+    assert os.access(clone.work / ".git" / "hooks" / "pre-commit", os.X_OK)
+
+
+def test_pre_commit_hook_rejects_unlicensed_source_file(clone: Clone) -> None:
+    import sys
+
+    venv_bin = clone.work / ".venv" / "bin"
+    venv_bin.mkdir(parents=True)
+    (venv_bin / "python").symlink_to(sys.executable)
+    for tool in ("ruff", "mypy"):
+        shim = venv_bin / tool
+        shim.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
+        shim.chmod(0o755)
+
+    scripts_dir = clone.work / "scripts"
+    scripts_dir.mkdir()
+    (scripts_dir / "check_import_boundaries.py").write_text(
+        "raise SystemExit(0)\n", encoding="utf-8"
+    )
+
+    src_dir = clone.work / "src"
+    src_dir.mkdir()
+    unlicensed = src_dir / "sample.py"
+    unlicensed.write_text("VALUE = 1\n", encoding="utf-8")
+
+    clone.git("add", "scripts/check_import_boundaries.py", "src/sample.py")
+    rejected = clone.git("commit", "-m", "feat: plant unlicensed file", check=False)
+    assert rejected.returncode != 0
+    assert "missing Apache 2.0 license header" in _output(rejected)
+
+    unlicensed.write_text(
+        "# Copyright 2026 Google LLC\n# Apache License, Version 2.0\nVALUE = 1\n",
+        encoding="utf-8",
+    )
+    clone.git("add", "src/sample.py")
+    accepted = clone.git("commit", "-m", "feat: add licensed file", check=False)
+    assert accepted.returncode == 0, _output(accepted)
