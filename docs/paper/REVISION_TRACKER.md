@@ -375,7 +375,7 @@ didn't match any registered provider — both claims became stale after code upd
 
 | # | Stale claim | Location | Correction |
 |---|---|---|---|
-| R1 | *"there is no Kubernetes manifest for it"* | §7.2 (line 520) | `deployment/k8s/reconciliation-worker.yaml` exists (383 lines: CronJob + Secret template + CiliumNetworkPolicy) |
+| R1 | *"there is no Kubernetes manifest for it"* | §7.2 (line 520) | `de5534ac:deployment/k8s/reconciliation-worker.yaml` exists (383 lines: CronJob + Secret template + CiliumNetworkPolicy) |
 | R2 | *"`RECONCILIATION_PROVIDER=gcs` setting does not match any key in the daemon's own provider registry"* | §7.2 (line 520) | `GcsLedgerProvider` is registered under `"gcs"` at `reconciliation_worker.py:1151-1152` |
 | R3 | *"Deploy the reconciliation daemon: Author a Kubernetes Deployment or CronJob manifest"* | §7.3 (line 547) | Manifest exists; reframed to: secret population only (POAM-2026-038) |
 | R4 | *"Fix the RECONCILIATION_PROVIDER mismatch"* | §7.3 (line 548) | Removed — already fixed (GcsLedgerProvider registered) |
@@ -384,7 +384,7 @@ didn't match any registered provider — both claims became stale after code upd
 
 | Item | Evidence |
 |---|---|
-| CronJob manifest exists | [`deployment/k8s/reconciliation-worker.yaml`](../../deployment/k8s/reconciliation-worker.yaml) — 383 lines including CiliumNetworkPolicy and Secret template |
+| CronJob manifest exists | `de5534ac:deployment/k8s/reconciliation-worker.yaml` — 383 lines including CiliumNetworkPolicy and Secret template |
 | GcsLedgerProvider registered | [`reconciliation_worker.py:1151-1152`](../../src/gateway/governance/reconciliation/daemon.py:1151): `"gcs": GcsLedgerProvider` in provider registry |
 | POAM-2026-038 tracking | [`docs/POAM.md`](../POAM.md) — secret population tracking |
 | Correction procedure | `scripts/_patch_paper.py` replacement blocks applied 2026-08-15 |

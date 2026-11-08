@@ -55,7 +55,7 @@ We use **vLLM** with its **native JSON-mode API** for structured output enforcem
 | **Fast / Governance** | `Qwen/Qwen2.5-1.5B-Instruct` (default `served_model_fast`) | GPU (NVIDIA L4) | Structured JSON (vLLM native JSON-mode API). |
 | **Guardrails** | NeMo Guardrails service            | CPU pod (0.5–1 vCPU, 1–2Gi RAM) | In-cluster, no GPU required.  |
 
-The reasoning model name (`deepseek-ai/DeepSeek-R1-Distill-Llama-8B`) is the default resolved by `create_nemo_manager()` via the `GUARDRAILS_MODEL_NAME` / `MODEL_FAST` env vars. Both fast and reasoning vLLM deployments are provisioned via Terraform ([`infra/modules/vllm_inference/main.tf`](../../infra/modules/vllm_inference/main.tf)); the served model IDs default to `served_model_fast` / `served_model_reasoning` in `infra/targets/gcp-gke/variables.tf`. Raw static vLLM manifests under `deployment/k8s/` have been retired.
+The reasoning model name (`deepseek-ai/DeepSeek-R1-Distill-Llama-8B`) is the default resolved by `create_nemo_manager()` via the `GUARDRAILS_MODEL_NAME` / `MODEL_FAST` env vars. Both fast and reasoning vLLM deployments are provisioned via Terraform ([`infra/modules/vllm_inference/main.tf`](../../infra/modules/vllm_inference/main.tf)); the served model IDs default to `served_model_fast` / `served_model_reasoning` in `infra/targets/gcp-gke/variables.tf`. Raw static vLLM manifests (`de5534ac:deployment/k8s/`) have been retired.
 
 ## Latency Budget Example
 
@@ -178,7 +178,7 @@ vLLM cold-start time is a critical secondary latency factor, especially because 
 - A non-`gs://` model path falls back to vLLM's `auto` load format.
 
 > [!NOTE]
-> The older MinIO + Tensorizer path ([`deployment/k8s/tensorize-job.yaml`](../../deployment/k8s/tensorize-job.yaml)) is not wired into the `gcp-gke` Terraform target, which streams from GCS as described above.
+> The older MinIO + Tensorizer path (`de5534ac:deployment/k8s/tensorize-job.yaml`, retired with `deployment/k8s/`) is not wired into the `gcp-gke` Terraform target, which streams from GCS as described above.
 
 ## Governor Pipeline Ordering (Two-Phase)
 

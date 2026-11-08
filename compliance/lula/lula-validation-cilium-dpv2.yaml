@@ -25,7 +25,7 @@
 #
 # References:
 #   - infra/modules/gcp_gke_cluster/main.tf — dataplane_v2_config block
-#   - deployment/k8s/cilium/ — GKE Dataplane V2 network policy overlay
+#   - infra/targets/gcp-gke/network_policy.tf — GKE Dataplane V2 NetworkPolicy & FQDNNetworkPolicy definitions
 #
 # OSCAL Mapping:
 #   component: gke-dataplane-v2

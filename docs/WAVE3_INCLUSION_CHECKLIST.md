@@ -89,7 +89,7 @@ into the main `v3.0.1` release scope rather than deferring to `v3.1.0`/`v4.0.0`.
 - [x] Verify no production evidence chains exist (reference impl only) —
       confirm via: (a) no live GKE deployment has ever had
       `EVIDENCE_STREAM_ENABLED=true` set outside of dev/test namespaces, per
-      [`config/thresholds/`](../config/thresholds/) / `deployment/k8s/` manifest
+      [`config/thresholds/`](../config/thresholds/) / `infra/modules/` (and retired `de5534ac:deployment/k8s/`) manifest
       review; (b) grep `compliance/` and `docs/POAM.md` for any reference to
       a real evidence-chain export or audit query having been run
 - [x] Document v1.1 as the canonical schema going forward — update the
@@ -174,7 +174,7 @@ path as the sole live-write mechanism:
       reference found was the test suite's own explicit opt-in fixture at
       [`tests/test_cybernetic_loop.py:294-299`](../tests/test_cybernetic_loop.py:294)
       (`enable_auto_apply` fixture monkeypatching `srv._NEMO_AUTO_APPLY = True`).
-      No `deployment/k8s/*.yaml` manifest sets `NEMO_AUTO_APPLY_ENABLED=true`
+      No `infra/modules/` workload module sets `NEMO_AUTO_APPLY_ENABLED=true`
 - [x] Document the propose/approve flow as canonical — documented in the module comment block at
       [`server.py:844-859`](../src/governed_financial_advisor/server.py:844)
 

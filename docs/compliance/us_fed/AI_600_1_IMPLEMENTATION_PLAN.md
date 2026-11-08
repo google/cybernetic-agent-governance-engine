@@ -86,7 +86,7 @@ All components listed below are in scope for AI 600-1. Components marked ★ car
 | TokenQuotaProxy | `src/gateway/governance/token_quota_proxy.py` | Environmental | BOTH |
 | RoutingSeal | `src/gateway/governance/routing_seal.py` | Information Security | BOTH |
 | vLLM Inference | `infra/modules/vllm_inference/main.tf` | Confabulation, IP, CBRN | PROD |
-| AgentSight Daemon | `deployment/k8s/agentsight-daemon.yaml` | Information Integrity | BOTH |
+| AgentSight Daemon | `de5534ac:deployment/k8s/agentsight-daemon.yaml` | Information Integrity | BOTH |
 | LangGraph Harness | `src/gateway/governance/langgraph_harness/` | Human-AI Config | BOTH |
 
 ---
@@ -345,7 +345,7 @@ no Langfuse scorer that records confabulation events for audit purposes.
 1. Add `CONFIDENCE_MIN_SCORE=0.95` to `advisor-secrets` Kubernetes Secret
    (do NOT hardcode in any manifest — use `secretKeyRef`).
 
-2. Update `deployment/k8s/financial-advisor.yaml` to mount `CONFIDENCE_MIN_SCORE`
+2. Update `de5534ac:deployment/k8s/financial-advisor.yaml` to mount `CONFIDENCE_MIN_SCORE`
    from `advisor-secrets`:
    ```yaml
    env:
@@ -665,7 +665,7 @@ assertions and pass in CI; AI 600-1 readiness reaches ≥ 85%.
 **POAM**: AI600-007 | **AI 600-1 ref**: §2.6 CBRN and Weapons of Mass Destruction
 **Controls**: NeMo Guardrails, Tier-1 keyword list
 
-**Current state**: `deployment/k8s/nemo.yaml` deploys NeMo Guardrails with financial
+**Current state**: `de5534ac:deployment/k8s/nemo.yaml` deploys NeMo Guardrails with financial
 domain rails. CBRN-specific Colang rail definitions are not present.
 
 **Dev tasks**:
@@ -717,7 +717,7 @@ domain rails. CBRN-specific Colang rail definitions are not present.
 
 **Prod tasks**:
 
-1. Update `deployment/k8s/nemo.yaml` to mount the updated Colang path including
+1. Update `de5534ac:deployment/k8s/nemo.yaml` to mount the updated Colang path including
    `cbrn_rails.co`. Rebuild the NeMo container via Cloud Build:
    ```bash
    gcloud builds submit --config deployment/docker/cloudbuild.gateway.yaml \
@@ -1265,7 +1265,7 @@ Kubernetes assertions. This is the final step before AI 600-1 release gate closu
 **POAM**: AI600-005 | **AI 600-1 ref**: §2.7 Information Integrity
 **Controls**: AgentSight daemon, KMS signing
 
-**Current state (`2026-11-05`)**: `deployment/k8s/agentsight-daemon.yaml` is a static manifest outside Terraform state, has been refused by Binary Authorization on staging since 2026-09-06 (Cloud Audit Logs), and is **not in force** (`POAM-021` reopened, `POAM-2026-193`). Furthermore, `POST /v1/infra/events` in [`src/compliance_bridge/main.py`](../../../src/compliance_bridge/main.py) logs caller-supplied events to container stdout only (after `#667` retired `4c48d107^:src/compliance_bridge/clickhouse_sink.py`) without verifying cryptographic provenance (`POAM-2026-193`).
+**Current state (`2026-11-05`)**: `de5534ac:deployment/k8s/agentsight-daemon.yaml` is a static manifest outside Terraform state, has been refused by Binary Authorization on staging since 2026-09-06 (Cloud Audit Logs), and is **not in force** (`POAM-021` reopened, `POAM-2026-193`). Furthermore, `POST /v1/infra/events` in [`src/compliance_bridge/main.py`](../../../src/compliance_bridge/main.py) logs caller-supplied events to container stdout only (after `#667` retired `4c48d107^:src/compliance_bridge/clickhouse_sink.py`) without verifying cryptographic provenance (`POAM-2026-193`).
 
 **Dev tasks**:
 
@@ -1344,7 +1344,7 @@ Kubernetes assertions. This is the final step before AI 600-1 release gate closu
 2. Write signed provenance records to the GCS WORM bucket under
    `provenance/<date>/<trace_id>.json`.
 
-3. Update `deployment/k8s/agentsight-daemon.yaml` to scrape provenance records
+3. Update `de5534ac:deployment/k8s/agentsight-daemon.yaml` to scrape provenance records
    from the gateway and display them in the AgentSight UI
    (`src/agentsight-ui/src/KernelDashboard.tsx`).
 
@@ -1540,7 +1540,7 @@ AI 600-1 §2.6 requires CBRN coverage for any GenAI system accessible to federal
    the standard ConfigMap update path. No new infrastructure required.
 
 6. Verify NeMo Guardrails CBRN rails are active in the live cluster
-   (`deployment/k8s/nemo.yaml` — `colang_path` must include CBRN rail definitions).
+   (`de5534ac:deployment/k8s/nemo.yaml` — `colang_path` must include CBRN rail definitions).
 
 **Commit message**:
 ```

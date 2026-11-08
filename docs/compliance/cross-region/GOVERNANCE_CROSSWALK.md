@@ -70,12 +70,12 @@ The **Safety Node** ([`src/governed_financial_advisor/graph/nodes/safety_node.py
 
 ### 3. Continuous Compliance Audit (Lula)
 
-The **Lula CronJob** ([`deployment/k8s/lula-cron.yaml`](../../../deployment/k8s/lula-cron.yaml)) runs every 6 hours and validates the **4 Active** Lula manifests (A.5.2, A.5.3, A.9.2, SC-4) against live cluster state and Langfuse evidence. There are 15 total manifests — 4 Active and 11 Stub (requiring cluster-specific configuration before activation). See [`compliance/lula/README.md`](../../../README.md) for the full status table with regional scope annotations. Findings are expressed as **OSCAL Assessment Results** and ingested back into Langfuse via the **compliance bridge audit workflow** ([`src/compliance_bridge/audit_workflow.py`](../../../src/compliance_bridge/audit_workflow.py)).
+CI workflows ([`.github/workflows/lula-validate.yml`](../../../.github/workflows/lula-validate.yml) and [`.github/workflows/lula2-pr-compliance.yml`](../../../.github/workflows/lula2-pr-compliance.yml)) validate the Lula manifests in [`compliance/lula/`](../../../compliance/lula/README.md) against repository and Terraform-reconciled specifications; the unmanaged `de5534ac:deployment/k8s/lula-cron.yaml` CronJob was retired with `deployment/k8s/` pending an in-state Terraform module (`POAM-2026-195`). Findings are expressed as **OSCAL Assessment Results** and ingested via the **compliance bridge audit workflow** ([`src/compliance_bridge/audit_workflow.py`](../../../src/compliance_bridge/audit_workflow.py)).
 
 Key components:
 
 - **compliance-bridge** (`src/compliance_bridge/`) — Python FastAPI service that aggregates Langfuse traces into a time-windowed `safety_rate` per ISO 42001 control, served via `/v1/metrics/{control_id}`.
-- **Lula RBAC** ([`deployment/k8s/lula-rbac.yaml`](../../../deployment/k8s/lula-rbac.yaml)) — Least-privilege `lula-auditor` ServiceAccount with `get/list/watch` scoped to `governance-stack` and `default` namespaces only.
+- **In-cluster Lula scheduling (`POAM-2026-195`)** — The unmanaged `de5534ac:deployment/k8s/lula-rbac.yaml` and `de5534ac:deployment/k8s/lula-cron.yaml` manifests were retired with `deployment/k8s/` pending Terraform provisioning.
 - **OSCAL Component Definition** ([`compliance/oscal/component-definition.yaml`](../../../compliance/oscal/component-definition.yaml)) — Machine-readable link between controls, implementations, and Lula validations.
 
 ### 4. Evidence-Age Staleness Guard

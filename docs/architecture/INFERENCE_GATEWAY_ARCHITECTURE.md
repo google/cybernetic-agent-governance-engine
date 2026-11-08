@@ -10,11 +10,11 @@ This document analyzes the feasibility and impact of migrating the current "Sove
 
 The `InferenceClient` (`src/integrations/inference_client/client.py`) supports routing traffic through the **Inference Gateway** (nginx GatewayClass) at the infrastructure layer when `VLLM_GATEWAY_URL` is set, enabling advanced traffic management, autoscaling, and priority handling critical for regulatory compliance. When it is unset — the default in the `gcp-gke` Terraform target (`vllm_gateway_url = ""`) — the client connects directly to the two vLLM Services. The client is a Layer 3 integration, installed with the `inference` extra and used only by the opt-in consensus critics. The kernel imports no model client (POAM-2026-168). For the consensus, causal, and dormant-feature placement and activation preconditions, see [`MODEL_BACKED_TIERS.md`](MODEL_BACKED_TIERS.md).
 
-**Status:** **OPTIONAL** — client-side Gateway Mode implemented; the `deployment/k8s/inference-gateway/` manifests are applied manually and are not provisioned by the `gcp-gke` Terraform target, which runs **DIRECT** mode by default
+**Status:** **OPTIONAL (CLIENT-ONLY)** — client-side Gateway Mode implemented in `InferenceClient`; the unaligned static manifests (`de5534ac:deployment/k8s/inference-gateway/`) were retired with `deployment/k8s/`, and the `gcp-gke` Terraform target runs **DIRECT** mode by default
 **Version:** v3.2.0
 **Last Updated:** 2026-10-22
 
-> **Update 2026-03-03:** The GatewayClass has been migrated from the GKE-proprietary `gke-l7-gxlb` to the portable `nginx` GatewayClass (see `deployment/k8s/inference-gateway/gateway.yaml`). Gateway API CRDs are now installed via Helm rather than the GKE-managed `gateway_api_config.channel`. This eliminates the hard GKE dependency while preserving all routing, priority, and autoscaling capabilities.
+> **Update 2026-03-03:** The historical Gateway design migrated from the GKE-proprietary `gke-l7-gxlb` to the portable `nginx` GatewayClass (`de5534ac:deployment/k8s/inference-gateway/gateway.yaml`, retired with `deployment/k8s/`). Gateway API CRDs are installed via Helm rather than the GKE-managed `gateway_api_config.channel`. This eliminates the hard GKE dependency while preserving routing, priority, and autoscaling capabilities when adopters provision Gateway API CRDs.
 
 > **Update 2026-05-31:** The OTel Collector sidecar has been **deprecated**. All telemetry now flows via direct Langfuse OTLP ingestion; the gateway manifests set `OTEL_EXPORTER_OTLP_ENDPOINT` to `http://langfuse-web.governance-stack.svc.cluster.local:3000/api/public/otel/v1/traces`. Remove any `OTEL_EXPORTER_OTLP_ENDPOINT` references pointing to a collector.
 
@@ -104,7 +104,7 @@ To adopt this without disrupting the current workflow, we recommend a phased app
 3.  Verify routing and priority handling.
 
 > [!WARNING]
-> The manifests in `deployment/k8s/inference-gateway/` have not been realigned with the Terraform-provisioned vLLM pools. `http-route.yaml` routes on an `x-model-id` header (which `InferenceClient` does not send) to model IDs (`deepseek-ai/DeepSeek-R1-Distill-Qwen-32B`, `Qwen/Qwen2.5-7B-Instruct`) and a `vllm-inference` Service that differ from the `gcp-gke` defaults (`served_model_reasoning`, `served_model_fast`, Service `vllm-service`), and the `pool-governance` InferencePool selects `app: vllm-governance`. Align them before cutover.
+> The historical static manifests (`de5534ac:deployment/k8s/inference-gateway/`) were never realigned with the Terraform-provisioned vLLM pools and were retired with `deployment/k8s/`. Before enabling `VLLM_GATEWAY_URL`, provision Gateway API resources from a dedicated Terraform module aligned with `served_model_reasoning`, `served_model_fast`, and Services `vllm-reasoning` / `vllm-service` (with selector parity verified by `scripts/check_k8s_terraform_parity.py`).
 
 ---
 
@@ -127,20 +127,16 @@ The Inference Gateway works in conjunction with the DEFER queue (AARM-V7) to han
 
 **Next Steps:**
 
-1.  Align `deployment/k8s/inference-gateway/` with the Terraform-provisioned Services and served model names (see the warning in §3).
-2.  Provision the Gateway resources from the `gcp-gke` Terraform target instead of a manual `kubectl apply`.
+1.  Author a Terraform module aligned with the `gcp-gke` vLLM Services (`vllm-reasoning`, `vllm-service`) and served model names (`served_model_reasoning`, `served_model_fast`), replacing the retired `de5534ac:deployment/k8s/inference-gateway/` reference manifests.
+2.  Provision the Gateway resources from `infra/targets/gcp-gke/` under selector parity enforcement (`scripts/check_k8s_terraform_parity.py`).
 
 ## 5. Deployment & Configuration Guide
 
-To deploy the Inference Gateway and configure the application:
+To deploy an Inference Gateway in an adopter cluster and configure the application:
 
-### Step 1: Apply Kubernetes Manifests
+### Step 1: Provision Gateway API Resources via Terraform
 
-Apply the manifests located in `deployment/k8s/inference-gateway/`. This will create the `Gateway`, `HTTPRoute`s, and `ReferenceGrant`.
-
-```bash
-kubectl apply -f deployment/k8s/inference-gateway/
-```
+Provision the `Gateway`, `HTTPRoute`s, and `InferencePool` resources via a dedicated Terraform module (referencing `de5534ac:deployment/k8s/inference-gateway/gateway.yaml` only as historical prior art, aligned to `app = "vllm-inference"` and `app = "vllm-reasoning"`).
 
 ### Step 2: Retrieve the Gateway IP Address
 

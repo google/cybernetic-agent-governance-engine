@@ -50,9 +50,7 @@ _CLOUDSQL_MAIN = _REPO / "infra/modules/cloudsql_postgres/main.tf"
 _CLOUDSQL_VARS = _REPO / "infra/modules/cloudsql_postgres/variables.tf"
 _LANGFUSE_STACK_MAIN = _REPO / "infra/modules/langfuse_stack/main.tf"
 _LANGFUSE_STACK_VARS = _REPO / "infra/modules/langfuse_stack/variables.tf"
-_LANGFUSE_DB_SECRETS = _REPO / "deployment/k8s/langfuse-db-secrets.yaml"
-_LANGFUSE_WEB_YAML = _REPO / "deployment/k8s/langfuse-web.yaml"
-_LANGFUSE_WORKER_YAML = _REPO / "deployment/k8s/langfuse-worker.yaml"
+_APP_SECRETS_MAIN = _REPO / "infra/modules/app_secrets/main.tf"
 
 
 def _extract_module_block(name: str, text: str) -> str:
@@ -162,10 +160,21 @@ def test_langfuse_stack_uses_cloudsql_proxy_sidecar() -> None:
 
 def test_no_static_db_password_anywhere() -> None:
     """Exit criteria (§6c): Langfuse up with no static DB password."""
-    # Manifests must not contain the static placeholder
-    secrets_yaml = _LANGFUSE_DB_SECRETS.read_text()
-    assert "<PG_PASSWORD>" not in secrets_yaml
-    assert "127.0.0.1:5432" in secrets_yaml
+    for tf_path in (
+        _LANGFUSE_STACK_MAIN,
+        _LANGFUSE_STACK_VARS,
+        _CLOUDSQL_MAIN,
+        _CLOUDSQL_VARS,
+        _APP_SECRETS_MAIN,
+        _GKE_MAIN,
+    ):
+        text = tf_path.read_text()
+        assert "<PG_PASSWORD>" not in text, (
+            f"{tf_path.relative_to(_REPO)} still contains <PG_PASSWORD>"
+        )
+
+    langfuse_main = _LANGFUSE_STACK_MAIN.read_text()
+    assert "127.0.0.1:5432" in langfuse_main
 
     # GKE main does not generate or pass random password
     gke_main = _GKE_MAIN.read_text()
@@ -204,12 +213,10 @@ def test_langfuse_workload_identity_and_iam_grants() -> None:
     )
 
 
-def test_k8s_manifests_include_cloudsql_proxy_sidecar() -> None:
-    """K8s raw manifests for Langfuse web and worker include cloud-sql-proxy container."""
-    web_yaml = _LANGFUSE_WEB_YAML.read_text()
-    worker_yaml = _LANGFUSE_WORKER_YAML.read_text()
-
-    assert "name: cloud-sql-proxy" in web_yaml
-    assert "--auto-iam-authn" in web_yaml
-    assert "name: cloud-sql-proxy" in worker_yaml
-    assert "--auto-iam-authn" in worker_yaml
+def test_langfuse_web_and_worker_deployments_both_include_cloudsql_proxy_sidecar() -> (
+    None
+):
+    """Both Langfuse web and worker Terraform Deployments include the cloud-sql-proxy sidecar."""
+    langfuse_main = _LANGFUSE_STACK_MAIN.read_text()
+    assert langfuse_main.count('name  = "cloud-sql-proxy"') >= 2
+    assert langfuse_main.count('"--auto-iam-authn"') >= 2

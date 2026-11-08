@@ -27,9 +27,8 @@ RUN git clone --depth 1 --branch v${LULA_VERSION} \
     -o /usr/local/bin/lula ./cmd/lula
 
 # ─── Stage 2: Runtime image ───────────────────────────────────────────────────
-# Minimal Alpine runtime providing /bin/sh, curl, jq, and pgrep (procps) required
-# by the lula-sc4-watch Deployment and lula-compliance-validator CronJob in
-# deployment/k8s/lula-cron.yaml, running as non-root 65532:65532.
+# Minimal Alpine runtime providing /bin/sh, curl, jq, and pgrep (procps) for
+# in-cluster Lula compliance validation jobs, running as non-root 65532:65532.
 FROM alpine:3.20
 
 RUN apk add --no-cache ca-certificates curl jq procps && \

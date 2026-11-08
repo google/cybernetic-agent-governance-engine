@@ -170,13 +170,13 @@ All Lula manifests include a cold-start grace period rule (< 6 hours post-deploy
 
 ### 3.1 What Capability Exists
 
-**Kubernetes Network Policy** (`deployment/k8s/network-policy.yaml`): Nine policy objects enforcing a default-deny model within the `governance-stack` namespace:
+**Kubernetes Network Policy** (`de5534ac:deployment/k8s/network-policy.yaml`): Nine policy objects enforcing a default-deny model within the `governance-stack` namespace:
 
 - Default deny all ingress and egress (policies 1 and 2)
 - Allow gateway ingress (port 8080) only from pods labeled `cage.io/role: orchestrator` or from the `ingress-nginx` namespace (policy 3)
 - Selective egress allows: OPA on 8181 (policy 4), Redis on 6379 (policy 5), DNS on 53 (policy 6), vLLM on 8000 (policy 7), OPA ingress health checks (policy 8), Langfuse OTLP on 3000 (policy 9) — **Note:** OTLP collector ports 4317/4318 removed; direct Langfuse OTLP ingestion used since 2026-05-31.
 
-**Linkerd mTLS + Cilium L7 egress lockdown** (v2.0.0, POAM-007 closed 2026-05-17): `deployment/k8s/linkerd-mtls-policy.yaml` enforces SPIFFE/SVID identity for Gateway→OPA and Gateway→NeMo paths. `deployment/k8s/cilium/egress-lockdown.yaml` enforces FQDN allowlist for all egress traffic, preventing lateral movement.
+**Linkerd mTLS + Cilium L7 egress lockdown** (v2.0.0, POAM-007 closed 2026-05-17): `de5534ac:deployment/k8s/linkerd-mtls-policy.yaml` enforces SPIFFE/SVID identity for Gateway→OPA and Gateway→NeMo paths. `de5534ac:deployment/k8s/cilium/egress-lockdown.yaml` enforces FQDN allowlist for all egress traffic, preventing lateral movement.
 
 **Terraform IAM** (`deployment/terraform/iam.tf`): GCP Workload Identity Federation for two service accounts:
 
@@ -216,7 +216,7 @@ Two deprecated stub packages exist for historical tracking: `finance` and `finan
 
 | Artifact                  | Location                                                                                                                                           | Role                                         |
 | ------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------- |
-| NetworkPolicy (9 objects) | [`deployment/k8s/network-policy.yaml`](../../../deployment/k8s/network-policy.yaml)                                                                         | Default-deny namespace isolation             |
+| NetworkPolicy (9 objects) | `de5534ac:deployment/k8s/network-policy.yaml`                                                                         | Default-deny namespace isolation             |
 | GCP Service Accounts      | [`deployment/terraform/iam.tf`](../../../infra/targets/gcp-gke/iam.tf)                                                                                       | Workload Identity for 2 SAs                  |
 | Cloud NAT                 | [`deployment/terraform/networking.tf`](../../../infra/modules/gcp_gke_cluster/networking.tf)                                                                         | Private egress for GKE nodes                 |
 | OPA config                | [`deployment/opa_config.yaml`](../../../deployment/opa_config.yaml)                                                                                         | Decision logs, cache, ISO labels             |
@@ -238,7 +238,7 @@ Two deprecated stub packages exist for historical tracking: `finance` and `finan
 
 **OTel export pipeline (v2.0.0):** The standalone OTel Collector (`opentelemetry-collector-contrib`) has been **deprecated 2026-05-31**. Services now export OTLP traces directly to Langfuse's integrated OTLP ingestion endpoint at `http://langfuse-web:3000/api/public/otel/v1/traces`. W3C `traceparent` propagation is preserved end-to-end.
 
-**AgentSight UI** (`src/agentsight-ui/`): Static React/Vite frontend (`KernelDashboard.tsx`) displaying governance events from the compliance-bridge SSE event bus. **Update 2026-11-05 (`POAM-021` reopened, `POAM-2026-193`):** the eBPF collector (`deployment/agentsight/agentsight-config.yaml` for Compose; `deployment/k8s/agentsight-daemon.yaml` for Kubernetes) is **not in force** — `agentsight-daemon.yaml` is outside Terraform state, has been refused by Binary Authorization on staging since 2026-09-06 (Cloud Audit Logs), and has no producer to `/v1/infra/events`.
+**AgentSight UI** (`src/agentsight-ui/`): Static React/Vite frontend (`KernelDashboard.tsx`) displaying governance events from the compliance-bridge SSE event bus. **Update 2026-11-05 (`POAM-021` reopened, `POAM-2026-193`):** the eBPF collector (`deployment/agentsight/agentsight-config.yaml` for Compose; `de5534ac:deployment/k8s/agentsight-daemon.yaml` for Kubernetes) is **not in force** — `agentsight-daemon.yaml` is outside Terraform state, has been refused by Binary Authorization on staging since 2026-09-06 (Cloud Audit Logs), and has no producer to `/v1/infra/events`.
 
 **Gateway telemetry** (`src/gateway/infrastructure/telemetry.py`): Factory function `get_tracer(name)` wrapping `opentelemetry.trace.get_tracer`. Gracefully degrades to a no-op stub when `opentelemetry-api` is absent. Used by `cbf.py` and other gateway modules (**v3.0.1:** `safety.py` removed).
 

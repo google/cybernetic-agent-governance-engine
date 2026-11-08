@@ -34,9 +34,6 @@ pytestmark = [pytest.mark.unit, pytest.mark.local]
 _REPO = Path(__file__).resolve().parents[2]
 _DOCKERFILE = _REPO / "src" / "gateway" / "Dockerfile"
 _MANIFESTS = [
-    _REPO / "deployment" / "k8s" / "gateway.yaml",
-    _REPO / "deployment" / "k8s" / "gateway.yaml.tpl",
-    _REPO / "deployment" / "k8s" / "gateway-deployment.yaml.tpl",
     _REPO / "infra" / "modules" / "gateway" / "main.tf",
 ]
 _REMOTE = re.compile(

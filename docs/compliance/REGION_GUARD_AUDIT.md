@@ -84,8 +84,8 @@
 
 | File | Purpose |
 |------|---------|
-| `deployment/k8s/gateway.yaml.tpl` | Gateway pod spec template |
-| `deployment/k8s/compliance-bridge-deployment.yaml.tpl` | Compliance-bridge pod spec template |
+| `de5534ac:deployment/k8s/gateway.yaml.tpl` | Gateway pod spec template |
+| `de5534ac:deployment/k8s/compliance-bridge-deployment.yaml.tpl` | Compliance-bridge pod spec template |
 
 ### 1.2 Classification Criteria
 
@@ -268,7 +268,7 @@ def _resolve_otlp_endpoint_and_headers() -> tuple[str, dict]:
 
 **Impact:** Every governance span produced by the gateway — including `cage.stpa_check`, `cage.confidence_check`, `governance.opa_check`, the per-tier domain spans `cage.tier.<tier_name>` (e.g. `cage.tier.cbf`, `cage.tier.fiscal`, `cage.tier.consensus`), `symbolic_governor.govern`, and `cage.validate_action` — is exported to a single `LANGFUSE_HOST` endpoint regardless of `CAGE_DEPLOYMENT_REGION`. These spans carry PII-adjacent metadata (agent IDs, tool names, parameter hashes, confidence scores, fiscal amounts). When deployed in EU_ECB or APAC_MAS, this constitutes an unrestricted cross-region data transfer in violation of GDPR Art. 44 and MAS TRM §4.2.
 
-The K8s manifest `deployment/k8s/gateway.yaml.tpl` hardcodes the OTLP endpoint to the cluster-local Langfuse instance (`langfuse-web.governance-stack.svc.cluster.local:3000`), which provides infrastructure-level isolation per cluster. However, `tracing_setup.py` overrides this with `LANGFUSE_HOST` from the environment without any region guard, meaning a misconfigured `LANGFUSE_HOST` pointing to a US endpoint would silently export EU/APAC spans cross-region.
+The K8s manifest `de5534ac:deployment/k8s/gateway.yaml.tpl` hardcodes the OTLP endpoint to the cluster-local Langfuse instance (`langfuse-web.governance-stack.svc.cluster.local:3000`), which provides infrastructure-level isolation per cluster. However, `tracing_setup.py` overrides this with `LANGFUSE_HOST` from the environment without any region guard, meaning a misconfigured `LANGFUSE_HOST` pointing to a US endpoint would silently export EU/APAC spans cross-region.
 
 **Required fix:** `_resolve_otlp_endpoint_and_headers()` must read `CAGE_DEPLOYMENT_REGION` and select from `LANGFUSE_HOST_US_FED`, `LANGFUSE_HOST_EU_ECB`, `LANGFUSE_HOST_APAC_MAS` env vars, or assert that `LANGFUSE_HOST` is consistent with the declared region.
 
@@ -598,7 +598,7 @@ env { name = "CAGE_DEPLOYMENT_REGION";   value = var.cage_deployment_region }
 | GUARDED-07 | `src/gateway/governance/constants.py` | 245–309 | In-memory singleton | — | ✅ GUARDED |
 | GUARDED-08 | `src/compliance_bridge/cmek_guard.py` | 93–94, 133–134 | Startup log | — | ✅ GUARDED |
 | GUARDED-09 | `infra/targets/gcp-gke/*.tfvars` | — | Terraform region decl. | — | ✅ GUARDED |
-| GUARDED-10 | `deployment/k8s/gateway.yaml.tpl` | 39–43 | K8s env var | — | ✅ GUARDED |
+| GUARDED-10 | `de5534ac:deployment/k8s/gateway.yaml.tpl` | 39–43 | K8s env var | — | ✅ GUARDED |
 | GAP-01 | `src/gateway/tracing_setup.py` | 54–98 | OTel OTLP export | **CRITICAL** | ❌ GAP |
 | GAP-02 | `src/gateway/governance/iso_control.py` | 125–144 | Redis Stream | **HIGH** | ❌ GAP |
 | GAP-03 | `src/gateway/infrastructure/redis_client.py` | 59–86 | Redis connection | **HIGH** | ❌ GAP |
@@ -872,9 +872,9 @@ The Langfuse S3-compatible storage bucket is auto-generated in the declared GCP 
 
 ---
 
-### GUARDED-10 — `deployment/k8s/gateway.yaml.tpl`: GOOGLE_CLOUD_LOCATION Substitution
+### GUARDED-10 — `de5534ac:deployment/k8s/gateway.yaml.tpl`: GOOGLE_CLOUD_LOCATION Substitution
 
-**File:** `deployment/k8s/gateway.yaml.tpl`
+**File:** `de5534ac:deployment/k8s/gateway.yaml.tpl`
 **Lines:** 39–43
 **Verdict:** ✅ GUARDED (infrastructure layer)
 

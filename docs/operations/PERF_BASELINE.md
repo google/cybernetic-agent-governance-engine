@@ -7,7 +7,7 @@
 
 ## 1. Why the Committing Path Must Be Measured at Fixed Replicas
 
-Historically, [`scripts/run_gke_load_test.sh`](../../scripts/run_gke_load_test.sh) applied [`deployment/k8s/gateway-hpa.yaml`](../../deployment/k8s/gateway-hpa.yaml) during the load test and exercised only the non-committing preview route (`POST /governance/validate-action` and `GET /health`) via [`GovernanceUser`](../../tests/load/locustfile.py). That masked four multi-replica bottlenecks on the committing path:
+Historically, [`scripts/run_gke_load_test.sh`](../../scripts/run_gke_load_test.sh) applied `de5534ac:deployment/k8s/gateway-hpa.yaml` during the load test and exercised only the non-committing preview route (`POST /governance/validate-action` and `GET /health`) via [`GovernanceUser`](../../tests/load/locustfile.py). That masked four multi-replica bottlenecks on the committing path:
 
 1. **Synchronous KMS RPCs & Event-Loop Blocking**: Minting a routing seal during `SymbolicGovernor.govern()` invokes Cloud KMS signing and key-metadata lookups.
 2. **Evidence Stream Compare-and-Append Contention**: [`EvidenceStreamSink`](../../src/gateway/governance/evidence/stream.py) appends hash-chained `cage-audit/3.0` records via a Redis compare-and-append script; concurrent pods contend on the single stream head (`cage_evidence_append_conflicts_total`).

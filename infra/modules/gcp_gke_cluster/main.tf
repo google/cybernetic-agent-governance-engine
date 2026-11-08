@@ -322,8 +322,8 @@ resource "google_container_cluster" "primary" {
 # Langfuse, compliance-bridge, and reconciler).
 #
 # SC-39 Architecture Note (Kubernetes Baseline vs. GEAP MicroVM Mode):
-#   - CAGE's Kubernetes manifests (`deployment/k8s/`) enforce baseline Pod
-#     Security Standards (`restricted`) on any Kubernetes cluster. In the
+#   - CAGE's Terraform namespace module (`infra/modules/k8s_namespace/main.tf`)
+#     enforces Pod Security Standards (`restricted`) on GKE workloads. In the
 #     `gcp-gke` deployment target (`infra/targets/gcp-gke/`) with
 #     `advisor_runtime = "geap"` (`infra/modules/gcp_geap_advisor/`), agent
 #     applications execute in GEAP Agent Runtime (Vertex AI Agent Engine / Agent

@@ -23,7 +23,7 @@ Runs three adversarial scenarios and one compliant baseline. **Only Tier 0 is re
 | 1 | Confidence threshold | **Emulated:** the example's own check against `governance_thresholds.json`; the governor's confidence stage is not called |
 | 2 | STPA Rego rules | **Emulated:** a Python re-implementation of `config/opa/generated_stpa_policy.rego`; OPA is not called |
 | 3 | Keyword scan | **Emulated:** Tier-1 keywords from `governance_thresholds.json`; the gateway's injection detector is not called |
-| 4 | Cilium L7 egress | **Simulated:** mirrors the FQDN rules in `deployment/k8s/cilium/egress-lockdown.yaml`; no network policy is evaluated |
+| 4 | Cilium L7 egress | **Simulated:** mirrors the FQDN rules in `infra/targets/gcp-gke/network_policy.tf` (`gateway_egress_fqdn`); no network policy is evaluated |
 
 ## Quick Start
 
@@ -116,9 +116,9 @@ To test the **live** stack (with OPA server, Redis, NeMo Guardrails integrated i
 # Compile fresh artifacts (includes langgraph Saga nodes)
 uv run python -m src.gateway.governance.stpa_compiler compile
 
-# Deploy to governance-stack
-kubectl apply -f deployment/k8s/linkerd-mtls-policy.yaml
-kubectl apply -f deployment/k8s/cilium/egress-lockdown.yaml
+# Provision Linkerd mesh policy (`infra/modules/gateway/mesh-policy/`) and
+# GKE Dataplane V2 FQDN egress policy (`infra/targets/gcp-gke/network_policy.tf`)
+./deploy_all.sh --target gcp-gke --env staging --var project_id=<PROJECT_ID>
 
 # Verify governance edges
 linkerd viz authz deployment/opa-service -n governance-stack

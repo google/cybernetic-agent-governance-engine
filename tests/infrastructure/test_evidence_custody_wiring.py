@@ -19,7 +19,7 @@ GOVERNANCE Memorystore instance. The compliance bridge's EvidenceCustodian reads
 that stream, re-verifies the chain, signs per-batch attestations with
 EVIDENCE_KMS_KEY and writes batches to the WORM bucket.
 
-Enforces, for both Terraform (infra/) and raw manifests (deployment/k8s/):
+Enforces across Terraform (infra/) and Lula validations:
 
 1. Gateway and bridge share one evidence-stream contract (URL, db, key) that
    points at the governance instance, with the same TLS / IAM auth mode.
@@ -55,7 +55,6 @@ _BRIDGE_VARS = _REPO / "infra/modules/compliance_bridge/variables.tf"
 _LULA_SC8 = _REPO / "compliance/lula/lula-validation-sc8.yaml"
 _CH_SINK = _REPO / "src/compliance_bridge/clickhouse_sink.py"
 _CH_SCHEMA = _REPO / "deployment/clickhouse/evidence_stream_schema.sql"
-_K8S = _REPO / "deployment/k8s"
 
 _GATEWAY_FORBIDDEN_ENV = (
     "EVIDENCE_COLD_STORE",
@@ -64,8 +63,6 @@ _GATEWAY_FORBIDDEN_ENV = (
     "EVIDENCE_STREAM_KMS_SIGN",
 )
 _DELETED_ENV = ("EVIDENCE_STREAM_KMS_SIGN", "EVIDENCE_COLD_STORE_FLUSH_SECONDS")
-
-_PLACEHOLDER_LINE = re.compile(r"^\s*\$\{[A-Z0-9_]+\}\s*$", re.M)
 
 
 # ---------------------------------------------------------------------------
@@ -103,28 +100,6 @@ def _tf_attr(block: str, attr: str) -> str:
     m = re.search(rf"^\s*{attr}\s*=\s*(.+)$", block, re.M)
     assert m, f"{attr} not set in block"
     return m.group(1).strip()
-
-
-def _load_manifest(path: Path) -> list[dict]:
-    text = path.read_text()
-    if path.name.endswith(".tpl"):
-        text = re.sub(
-            r"\$\{[A-Z0-9_]+(:-[^}]*)?\}",
-            "placeholder",
-            _PLACEHOLDER_LINE.sub("", text),
-        )
-    return [d for d in yaml.safe_load_all(text) if isinstance(d, dict)]
-
-
-def _container_env(path: Path, deployment: str) -> dict[str, dict]:
-    for doc in _load_manifest(path):
-        if doc.get("kind") == "Deployment" and doc["metadata"]["name"] == deployment:
-            container = doc["spec"]["template"]["spec"]["containers"][0]
-            return {e["name"]: e for e in container.get("env", [])}
-    raise AssertionError(f"Deployment {deployment} not found in {path}")
-
-
-_GATEWAY_MANIFESTS = ["gateway.yaml", "gateway.yaml.tpl", "gateway-deployment.yaml.tpl"]
 
 
 # ---------------------------------------------------------------------------
@@ -304,15 +279,6 @@ def test_gateway_gsa_holds_no_worm_bucket_iam() -> None:
     ):
         if "module.worm_bucket" in m.group(0):
             assert "google_service_account.gateway" not in m.group(0), m.group(1)
-
-
-@pytest.mark.parametrize("manifest", _GATEWAY_MANIFESTS)
-def test_gateway_manifests_are_producer_only(manifest: str) -> None:
-    env = _container_env(_K8S / manifest, "gateway")
-    leaked = [name for name in _GATEWAY_FORBIDDEN_ENV if name in env]
-    assert leaked == [], f"{manifest}: gateway receives custody env {leaked}"
-    assert env["EVIDENCE_STREAM_ENABLED"]["value"] == "true"
-    assert env["EVIDENCE_CHAIN_BLOCKING"]["value"] == "true"
 
 
 # ---------------------------------------------------------------------------
@@ -499,17 +465,6 @@ def test_bridge_fqdn_policy_allows_gcs_and_kms() -> None:
         assert f'"{fqdn}"' in variables
 
 
-def test_manifest_bridge_egress_allowlist_covers_redis() -> None:
-    docs = _load_manifest(_K8S / "network-policy-hardening.yaml")
-    policy = next(
-        d for d in docs if d["metadata"]["name"] == "compliance-bridge-egress-allowlist"
-    )
-    ports = {
-        p["port"] for rule in policy["spec"]["egress"] for p in rule.get("ports", [])
-    }
-    assert 6379 in ports
-
-
 # ---------------------------------------------------------------------------
 # 4. Bridge env: WORM custody only (ClickHouse evidence sink retired)
 # ---------------------------------------------------------------------------
@@ -564,40 +519,19 @@ def test_evidence_kms_key_description_has_no_hmac_fallback() -> None:
     assert "unsigned" in block
 
 
-@pytest.mark.parametrize(
-    "gateway_manifest,bridge_manifest",
-    [
-        ("gateway.yaml", "compliance-bridge.yaml"),
-        ("gateway-deployment.yaml.tpl", "compliance-bridge-deployment.yaml.tpl"),
-    ],
-)
-def test_manifest_bridge_reads_the_gateway_stream(
-    gateway_manifest: str, bridge_manifest: str
-) -> None:
-    gw = _container_env(_K8S / gateway_manifest, "gateway")
-    br = _container_env(_K8S / bridge_manifest, "compliance-bridge")
-    for name in (
-        "EVIDENCE_STREAM_REDIS_URL",
-        "EVIDENCE_STREAM_REDIS_DB",
-        "EVIDENCE_STREAM_KEY",
-    ):
-        assert gw[name] == br[name], (
-            f"{name} drifts between {gateway_manifest} and {bridge_manifest}"
-        )
-    assert br["EVIDENCE_STREAM_ENABLED"]["value"] == "true"
-    assert br["EVIDENCE_CUSTODY_INTERVAL_S"]["value"] == "60"
-    assert br["EVIDENCE_VERIFY_INTERVAL_S"]["value"] == "300"
-    assert br["EVIDENCE_VERIFY_PREFIX"]["value"] == "evidence"
-
-
 # ---------------------------------------------------------------------------
 # 5. Deleted knobs are set nowhere
 # ---------------------------------------------------------------------------
 
 
 def test_deleted_evidence_env_vars_are_not_set_anywhere() -> None:
+    assert not (_REPO / "deployment" / "k8s").exists()
     offenders = []
-    for root in (_REPO / "infra", _K8S):
+    for root in (
+        _REPO / "infra",
+        _REPO / "tests" / "e2e" / "fixtures",
+        _REPO / "scripts" / "fixtures" / "benchmark",
+    ):
         for path in root.rglob("*"):
             if path.is_file() and path.suffix in {
                 ".tf",

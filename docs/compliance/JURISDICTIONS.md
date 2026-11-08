@@ -49,7 +49,7 @@ Governance events emitted by US_FED deployments that map to registered controls:
 | `linkerd_mtls` | SC-8 | Linkerd proxy sidecar | `nist.SC-8.passed` |
 | `cilium_l7_egress` | SC-7 | *Not in force (`POAM-2026-169` Instance 16, `POAM-2026-195`): no producer emits this event and no Cilium L7 policy is in state* | `nist.SC-7.passed` |
 | `cilium_l7_flow` | SC-7 | *Not in force (`POAM-2026-169` Instance 16): mapped in [`src/gateway/governance/iso_control.py`](../../src/gateway/governance/iso_control.py) and [`src/compliance_bridge/types.py`](../../src/compliance_bridge/types.py), but no producer emits it and GKE Dataplane V2 provides L3/L4 policy logging rather than Cilium L7 flow exports* | `nist.SC-7.passed` |
-| `agentsight_syscall` | AU-2 | *Not in force (`POAM-021` reopened, `POAM-2026-193`): `deployment/k8s/agentsight-daemon.yaml` is unmanaged and refused by Binary Authorization on staging; no producer emits this event* | `nist.AU-2.passed` |
+| `agentsight_syscall` | AU-2 | *Not in force (`POAM-021` reopened, `POAM-2026-193`): `de5534ac:deployment/k8s/agentsight-daemon.yaml` was unmanaged, refused by Binary Authorization on staging, and retired with `deployment/k8s/`; no producer emits this event* | `nist.AU-2.passed` |
 | `agentsight_fim` | SI-7 | *Not in force (`POAM-021` reopened, `POAM-2026-193`): no producer emits this event* | `nist.SI-7.passed` |
 | `ftra_boundary_check` | SI-10 | FTRA boundary check (value validation by STPA/OPA; see [FTRA_SCOPE.md](../governance/FTRA_SCOPE.md)) | `nist.SI-10.passed` |
 

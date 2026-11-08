@@ -29,18 +29,16 @@ Covers:
   - ``src/integrations/gcp/kms_provider.py``:
       * ``cage_kms_rpc_total{op}`` increments on ``get_crypto_key_version``,
         ``sign``, ``get_public_key``, and ``list_crypto_key_versions``;
-  - Kubernetes & Lula manifests:
-      * ``deployment/k8s/gateway.yaml``, ``gateway.yaml.tpl``,
-        ``gateway-deployment.yaml.tpl``, and ``infra/modules/gateway/main.tf``
-        declare containerPort ``9090`` (``metrics``), Service label
-        ``app: gateway``, Service port ``9090`` (``metrics``), and
-        ``config.linkerd.io/skip-inbound-ports: "9090"``;
-      * ``deployment/k8s/gateway-servicemonitor.yaml`` defines both
-        ``ServiceMonitor/stera-gateway-monitor`` and
+  - Terraform & Lula manifests:
+      * ``infra/modules/gateway/main.tf`` declares containerPort ``9090``
+        (``metrics``), Service label ``app = "gateway"``, Service port ``9090``
+        (``metrics``), and ``config.linkerd.io/skip-inbound-ports = "9090"``;
+      * ``infra/modules/gateway/metrics-monitors/templates/monitors.yaml``
+        defines both ``ServiceMonitor/stera-gateway-monitor`` and
         ``PodMonitoring/gateway-metrics`` selecting ``app: gateway`` on port
         ``metrics``;
-      * ``compliance/lula/lula-validation-metrics.yaml`` validates both
-        ``stera-gateway-monitor`` and ``gateway-metrics`` under ``au-12``.
+      * ``compliance/lula/lula-validation-metrics.yaml`` validates
+        ``gateway-metrics`` under ``au-12``.
 """
 
 from __future__ import annotations
@@ -315,50 +313,63 @@ def test_gcp_kms_provider_increments_rpc_counter_by_operation() -> None:
 
 
 # ---------------------------------------------------------------------------
-# 5. Kubernetes, ServiceMonitor, PodMonitoring, and Lula manifest contracts
+# 5. Terraform, ServiceMonitor, PodMonitoring, and Lula manifest contracts
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.parametrize(
-    "rel_path",
-    [
-        "deployment/k8s/gateway.yaml",
-        "deployment/k8s/gateway.yaml.tpl",
-        "deployment/k8s/gateway-deployment.yaml.tpl",
-    ],
-)
-def test_gateway_manifests_expose_metrics_port_and_linkerd_bypass(
-    rel_path: str,
-) -> None:
-    docs = [
-        d
-        for d in yaml.safe_load_all((_REPO / rel_path).read_text(encoding="utf-8"))
-        if d
-    ]
-    deploy = next(d for d in docs if d.get("kind") == "Deployment")
-    service = next(d for d in docs if d.get("kind") == "Service")
+def _render_metrics_monitors_chart(namespace: str = "governance-stack") -> list[dict]:
+    """Deterministically render infra/modules/gateway/metrics-monitors/templates/monitors.yaml."""
+    import re
 
-    pod_meta = deploy["spec"]["template"]["metadata"]
-    assert (
-        pod_meta.get("annotations", {}).get("config.linkerd.io/skip-inbound-ports")
-        == "9090"
+    chart_dir = _REPO / "infra/modules/gateway/metrics-monitors"
+    values = yaml.safe_load((chart_dir / "values.yaml").read_text(encoding="utf-8"))
+    tpl = (chart_dir / "templates/monitors.yaml").read_text(encoding="utf-8")
+    rendered = "\n".join(
+        line for line in tpl.splitlines() if not line.strip().startswith("{{-")
     )
+    rendered = rendered.replace("{{ .Release.Namespace }}", namespace)
+    rendered = re.sub(
+        r"\{\{\s*\.Values\.podMonitoring\.interval\s*\|\s*quote\s*\}\}",
+        f'"{values["podMonitoring"]["interval"]}"',
+        rendered,
+    )
+    rendered = re.sub(
+        r"\{\{\s*\.Values\.podMonitoring\.timeout\s*\|\s*quote\s*\}\}",
+        f'"{values["podMonitoring"]["timeout"]}"',
+        rendered,
+    )
+    rendered = re.sub(
+        r"\{\{\s*\.Values\.serviceMonitor\.interval\s*\|\s*quote\s*\}\}",
+        f'"{values["serviceMonitor"]["interval"]}"',
+        rendered,
+    )
+    rendered = re.sub(
+        r"\{\{\s*\.Values\.serviceMonitor\.scrapeTimeout\s*\|\s*quote\s*\}\}",
+        f'"{values["serviceMonitor"]["scrapeTimeout"]}"',
+        rendered,
+    )
+    return [d for d in yaml.safe_load_all(rendered) if isinstance(d, dict)]
 
-    container = deploy["spec"]["template"]["spec"]["containers"][0]
-    ports = {p["name"]: p["containerPort"] for p in container["ports"]}
-    assert ports.get("metrics") == 9090
 
-    envs = {e["name"]: e.get("value") for e in container.get("env", [])}
-    assert envs.get("CAGE_METRICS_PORT") == "9090"
+def test_gateway_terraform_exposes_metrics_port_and_linkerd_bypass() -> None:
+    main_tf = (_REPO / "infra/modules/gateway/main.tf").read_text(encoding="utf-8")
+    assert '"config.linkerd.io/skip-inbound-ports" = "9090"' in main_tf
+    assert "container_port = 9090" in main_tf
+    assert 'name           = "metrics"' in main_tf
+    assert 'name  = "CAGE_METRICS_PORT"' in main_tf
 
-    assert service["metadata"].get("labels", {}).get("app") == "gateway"
-    svc_ports = {p["name"]: p["port"] for p in service["spec"]["ports"]}
-    assert svc_ports.get("metrics") == 9090
+    svc_start = main_tf.index('resource "kubernetes_service" "gateway"')
+    svc_block = main_tf[
+        svc_start : main_tf.index("\n# ─── PodDisruptionBudget", svc_start)
+    ]
+    assert 'app = "gateway"' in svc_block
+    assert "port        = 9090" in svc_block
+    assert "target_port = 9090" in svc_block
+    assert 'name        = "metrics"' in svc_block
 
 
 def test_gateway_servicemonitor_and_podmonitoring_select_gateway() -> None:
-    path = _REPO / "deployment" / "k8s" / "gateway-servicemonitor.yaml"
-    docs = [d for d in yaml.safe_load_all(path.read_text(encoding="utf-8")) if d]
+    docs = _render_metrics_monitors_chart()
     assert len(docs) == 2
 
     sm = next(d for d in docs if d.get("kind") == "ServiceMonitor")
@@ -399,97 +410,47 @@ def test_lula_validation_metrics_covers_in_state_podmonitoring() -> None:
     assert 'count(input["gateway-metrics"]) > 0' in rego
 
 
-@pytest.mark.parametrize(
-    "rel_path",
-    [
-        "deployment/k8s/gateway.yaml",
-        "deployment/k8s/gateway.yaml.tpl",
-        "deployment/k8s/gateway-deployment.yaml.tpl",
-    ],
-)
-def test_gateway_manifests_configure_startup_probe_prestop_and_thread_limits(
-    rel_path: str,
-) -> None:
-    docs = [
-        d
-        for d in yaml.safe_load_all((_REPO / rel_path).read_text(encoding="utf-8"))
-        if d
-    ]
-    deploy = next(d for d in docs if d.get("kind") == "Deployment")
-    container = deploy["spec"]["template"]["spec"]["containers"][0]
-
-    envs = {e["name"]: e.get("value") for e in container.get("env", [])}
-    assert envs.get("OMP_NUM_THREADS") == "2"
-    assert envs.get("OPENBLAS_NUM_THREADS") == "2"
-
-    pre_stop = container["lifecycle"]["preStop"]["exec"]["command"]
-    assert pre_stop == ["/bin/sh", "-c", "sleep 5"]
-
-    for probe_name in ("startupProbe", "livenessProbe", "readinessProbe"):
-        probe = container[probe_name]
-        assert probe["httpGet"]["path"] == "/health"
-        assert probe["httpGet"]["port"] == 8080
-
-    assert container["startupProbe"]["periodSeconds"] == 5
-    assert container["startupProbe"]["failureThreshold"] == 30
-
-
-def test_gateway_hpa_uses_gmp_loop_lag_metric_and_defines_pdb() -> None:
-    path = _REPO / "deployment" / "k8s" / "gateway-hpa.yaml"
-    docs = [d for d in yaml.safe_load_all(path.read_text(encoding="utf-8")) if d]
-    assert len(docs) == 2
-
-    hpa = next(d for d in docs if d.get("kind") == "HorizontalPodAutoscaler")
-    assert hpa["apiVersion"] == "autoscaling/v2"
-    assert hpa["spec"]["minReplicas"] == 2
-    assert hpa["spec"]["maxReplicas"] == 5
-    metrics = hpa["spec"]["metrics"]
-    assert len(metrics) == 1
-    assert metrics[0]["type"] == "Pods"
-    assert (
-        metrics[0]["pods"]["metric"]["name"]
-        == "prometheus.googleapis.com|cage_event_loop_lag_seconds|gauge"
-    )
-    assert metrics[0]["pods"]["target"] == {
-        "type": "AverageValue",
-        "averageValue": "50m",
-    }
-
-    pdb = next(d for d in docs if d.get("kind") == "PodDisruptionBudget")
-    assert pdb["apiVersion"] == "policy/v1"
-    assert pdb["metadata"]["name"] == "gateway-pdb"
-    assert pdb["spec"]["minAvailable"] == 1
-    assert pdb["spec"]["selector"]["matchLabels"] == {"app": "gateway"}
-
-
 def test_gateway_terraform_module_wires_probes_pdb_loop_lag_hpa_and_podmonitoring() -> (
     None
 ):
     main_tf = (_REPO / "infra/modules/gateway/main.tf").read_text(encoding="utf-8")
     vars_tf = (_REPO / "infra/modules/gateway/variables.tf").read_text(encoding="utf-8")
-    tpl = (
-        _REPO / "infra/modules/gateway/metrics-monitors/templates/monitors.yaml"
-    ).read_text(encoding="utf-8")
 
-    assert 'name  = "OMP_NUM_THREADS"' in main_tf
-    assert 'name  = "OPENBLAS_NUM_THREADS"' in main_tf
-    assert "startup_probe {" in main_tf
-    assert "liveness_probe {" in main_tf
-    assert "readiness_probe {" in main_tf
-    assert "pre_stop {" in main_tf
+    assert not (_REPO / "deployment" / "k8s").exists()
+    assert 'name  = "OMP_NUM_THREADS"\n            value = "2"' in main_tf
+    assert 'name  = "OPENBLAS_NUM_THREADS"\n            value = "2"' in main_tf
+    assert 'command = ["/bin/sh", "-c", "sleep 5"]' in main_tf
+
+    for probe_header in ("startup_probe {", "liveness_probe {", "readiness_probe {"):
+        idx = main_tf.index(probe_header)
+        probe_block = main_tf[idx : idx + 260]
+        assert 'path = "/health"' in probe_block
+        assert "port = 8080" in probe_block
+
+    startup_idx = main_tf.index("startup_probe {")
+    startup_block = main_tf[startup_idx : startup_idx + 260]
+    assert "period_seconds    = 5" in startup_block
+    assert "failure_threshold = 30" in startup_block
+
     assert 'resource "kubernetes_pod_disruption_budget_v1" "gateway"' in main_tf
     assert "count = var.replicas >= 2 ? 1 : 0" in main_tf
+    assert 'name      = "gateway-pdb"' in main_tf
+    assert "min_available = 1" in main_tf
+
     assert 'resource "kubernetes_horizontal_pod_autoscaler_v2" "gateway"' in main_tf
+    assert "min_replicas = max(2, var.replicas)" in main_tf
+    assert "max_replicas = var.max_replicas" in main_tf
     assert "prometheus.googleapis.com|cage_event_loop_lag_seconds|gauge" in main_tf
+    assert 'type          = "AverageValue"' in main_tf
+    assert "average_value = var.autoscaling_target_loop_lag" in main_tf
     assert 'variable "enable_autoscaling"' in vars_tf
+    assert 'variable "max_replicas"' in vars_tf
+    assert "default     = 5" in vars_tf
     assert 'variable "autoscaling_target_loop_lag"' in vars_tf
+    assert 'default     = "50m"' in vars_tf
     assert 'resource "helm_release" "metrics_monitors"' in main_tf
     assert 'variable "enable_pod_monitoring"' in vars_tf
     assert 'variable "enable_service_monitor"' in vars_tf
-    assert "kind: PodMonitoring" in tpl
-    assert "name: gateway-metrics" in tpl
-    assert "kind: ServiceMonitor" in tpl
-    assert "name: stera-gateway-monitor" in tpl
 
 
 def test_reconciliation_worker_managed_in_terraform_state_poam_096() -> None:

@@ -31,7 +31,6 @@ on:
       - "config/compliance/**"
       - "config/thresholds/**"
       - "config/oscal/**"
-      - "deployment/k8s/**"
       - "infra/**"
       - ".github/workflows/**"
 
@@ -72,7 +71,7 @@ jobs:
           BASE_REF: ${{ github.base_ref }}
         run: |
           CHANGED=$(git diff --name-only "origin/${BASE_REF}...HEAD" | \
-            grep -E "^(compliance/|src/gateway/governance/|src/compliance_bridge/|config/compliance/|config/thresholds/|config/oscal/|deployment/k8s/|infra/|\.github/workflows/)" || test $? -eq 1)
+            grep -E "^(compliance/|src/gateway/governance/|src/compliance_bridge/|config/compliance/|config/thresholds/|config/oscal/|infra/|\.github/workflows/)" || test $? -eq 1)
           if [ -n "$CHANGED" ]; then
             echo "Compliance-relevant files changed in this PR:"
             echo "$CHANGED"

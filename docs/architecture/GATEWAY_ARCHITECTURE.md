@@ -24,7 +24,7 @@ The Hybrid Gateway Service operates as the central orchestrator and compliance e
 - **Reasoning Model Pool**: Handles deep planning, multi-step analysis, complex reasoning, and chain-of-thought generation.
 - **Governance Model Pool**: Handles rapid policy checks, safety filtering, content moderation, and multi-model consensus evaluation.
 
-Both model pools are deployed on a dedicated GPU node pool (NVIDIA L4, `gpu-l4` in the `gcp-gke` target). Specific model weights, container images, and serving parameters are configured declaratively via Kubernetes manifests (`deployment/k8s/`).
+Both model pools are deployed on a dedicated GPU node pool (NVIDIA L4, `gpu-l4` in the `gcp-gke` target). Specific model weights, container images, and serving parameters are configured declaratively via Terraform ([`infra/modules/vllm_inference/main.tf`](../../infra/modules/vllm_inference/main.tf)).
 
 ### Trust Boundaries
 
@@ -327,7 +327,7 @@ The single choke point for tool-level governance validation. Mounted under `/gov
 
 ### 5.1 Network & Egress Security
 
-- **Linkerd mTLS**: All service-to-service communication is encrypted via mutual TLS (POAM-007); Linkerd `Server` / `MeshTLSAuthentication` / `AuthorizationPolicy` resources ([`deployment/k8s/linkerd-mtls-policy.yaml`](../../deployment/k8s/linkerd-mtls-policy.yaml)) admit only the expected workload identities, and the control plane and Google CAS trust anchor are provisioned by [`infra/modules/service_mesh`](../../infra/modules/service_mesh/).
+- **Linkerd mTLS**: All service-to-service communication is encrypted via mutual TLS (POAM-007); Linkerd `Server` / `MeshTLSAuthentication` / `AuthorizationPolicy` resources ([`infra/modules/gateway/mesh-policy/templates/policy.yaml`](../../infra/modules/gateway/mesh-policy/templates/policy.yaml)) admit only the expected workload identities, and the control plane and Google CAS trust anchor are provisioned by [`infra/modules/service_mesh`](../../infra/modules/service_mesh/).
 - **FQDN Egress Lockdown**: Kubernetes `NetworkPolicy` plus GKE `FQDNNetworkPolicy` on Dataplane V2 enforce an approved egress allowlist; DNS egress is restricted to kube-dns and Cloud DNS:
   - Inference & model APIs: approved model serving and provider endpoints
   - Telemetry & logging: `us.i.posthog.com`, `cloud.langfuse.com`

@@ -253,7 +253,7 @@ def _scan_prompt_injection(prompt: str) -> list[str]:
 
 # ---------------------------------------------------------------------------
 # Cilium L7 egress emulator
-# Mirrors: deployment/k8s/cilium-egress-lockdown.yaml
+# Mirrors: infra/targets/gcp-gke/network_policy.tf (gateway_egress_fqdn)
 # ---------------------------------------------------------------------------
 
 _APPROVED_FQDNS = {

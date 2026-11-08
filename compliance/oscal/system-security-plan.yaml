@@ -3,7 +3,7 @@ system-security-plan:
   metadata:
     title: CAGE System Security Plan (US_FED — NIST SP 800-53 Rev 5 HIGH)
     published: '2026-03-06T00:00:00Z'
-    last-modified: '2026-11-07T21:54:42Z'
+    last-modified: '2026-11-08T00:56:56Z'
     version: 1.0.1-draft+stpa
     oscal-version: 1.0.4
     remarks: 'This System Security Plan (SSP) documents the security controls implemented
@@ -382,14 +382,14 @@ system-security-plan:
         value: Google Kubernetes Engine (GKE)
       - name: network-policy-enforced
         value: 'true'
-        remarks: deployment/k8s/network-policy.yaml
+        remarks: infra/targets/gcp-gke/network_policy.tf
       - name: poam-gap-mtls
         value: POAM-013
         remarks: mTLS between services pending — NetworkPolicy is primary control
     network-architecture:
       description: 'CAGE is deployed in a single GKE cluster spanning multiple availability
         zones. All inter-service communication is restricted to the governance-stack
-        namespace via Kubernetes NetworkPolicy (deployment/k8s/network-policy.yaml).
+        namespace via Kubernetes NetworkPolicy (infra/targets/gcp-gke/network_policy.tf).
         Inbound traffic is routed through a Cloud Load Balancer to the CAGE gateway
         service. Outbound traffic egresses via Cloud NAT (nat-config-{region}) for
         controlled egress to the endpoints on each workload''s FQDN allowlist; model
@@ -1139,9 +1139,9 @@ system-security-plan:
 
           Cloud KMS RPC counter (cage_kms_rpc_total{op} in src/integrations/gcp/kms_provider.py).
 
-          Scraped by Prometheus ServiceMonitor (stera-gateway-monitor) and GKE Managed
+          Scraped by GKE Managed Prometheus PodMonitoring (gateway-metrics) in
 
-          Prometheus PodMonitoring (gateway-metrics) in deployment/k8s/gateway-servicemonitor.yaml,
+          infra/modules/gateway/metrics-monitors/templates/monitors.yaml,
 
           and verified by compliance/lula/lula-validation-metrics.yaml.
 
@@ -1413,10 +1413,10 @@ system-security-plan:
       description: 'Transmission confidentiality and integrity is implemented across
         external and intra-cluster boundaries. All external communications use TLS
         1.3 (gateway ingress, LLM API egress, Langfuse OTel export). Kubernetes NetworkPolicy
-        (deployment/k8s/network-policy.yaml) restricts intra-cluster traffic to authorized
-        service pairs only, and Linkerd service mesh enforces pod-to-pod mutual TLS
-        (mTLS) with Google CAS-backed trust anchors (infra/modules/service_mesh/main.tf)
-        and Server/AuthorizationPolicy/HTTPRoute access controls (deployment/k8s/linkerd-mtls-policy.yaml;
+        (infra/targets/gcp-gke/network_policy.tf) restricts intra-cluster traffic
+        to authorized service pairs only, and Linkerd service mesh enforces pod-to-pod
+        mutual TLS (mTLS) with Google CAS-backed trust anchors (infra/modules/service_mesh/main.tf)
+        and Server/AuthorizationPolicy/HTTPRoute access controls (infra/modules/gateway/mesh-policy/templates/policy.yaml;
         POAM-013 and POAM-2026-080 closed).
 
         '
@@ -1465,7 +1465,7 @@ system-security-plan:
         \ Rev 5 (FedRAMP baseline)\n          Framework reference: https://csrc.nist.gov/publications/detail/sp/800-53/rev-5/final\n\
         \          System: CAGE Financial Advisor v1.1.0\n          UCAs encoded:\
         \ 12\n          Hazards modelled: 7\n          Safety constraints: 3\n   \
-        \       Last compiled: 2026-11-07T21:54:42Z\n\n          UCA-to-Control mapping\
+        \       Last compiled: 2026-11-08T00:56:56Z\n\n          UCA-to-Control mapping\
         \ (NIST SP 800-53 Rev 5 (FedRAMP baseline)):\n            UCA-1 (unsafe_action):\
         \ Agent executes write operation without a signed approval token.\n  → NIST:\
         \ ac-3 (Access Enforcement), sc-4 (Information in Shared System Resources\
@@ -1509,7 +1509,7 @@ system-security-plan:
       - name: hazard-count
         value: '7'
       - name: last-compiled
-        value: '2026-11-07T21:54:42Z'
+        value: '2026-11-08T00:56:56Z'
       - name: target-framework
         value: NIST SP 800-53 Rev 5 (FedRAMP baseline)
       - name: artifact-opa

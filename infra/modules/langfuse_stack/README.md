@@ -221,14 +221,12 @@ s3_region   = "us-central1"   # must match actual GCS bucket region
 
 ## HPA (autoscaling)
 
-The worker HPA (`langfuse-worker-hpa.yaml`) scales 2–15 replicas at 70% CPU / 80% memory utilisation. It is applied separately from this Terraform module via `deployment/k8s/langfuse-worker-hpa.yaml`.
+Worker replica counts are configured directly on this module via `worker_replicas` in [`main.tf`](main.tf) (the retired static HPA manifest `de5534ac:deployment/k8s/langfuse-worker-hpa.yaml` was removed with `deployment/k8s/`).
 
 ---
 
 ## See Also
 
-- [`deployment/k8s/langfuse-web.yaml`](../../../deployment/k8s/langfuse-web.yaml) — static Langfuse Web manifest
-- [`deployment/k8s/langfuse-worker.yaml`](../../../deployment/k8s/langfuse-worker.yaml) — static Langfuse Worker manifest
-- [`deployment/k8s/langfuse-worker-hpa.yaml`](../../../deployment/k8s/langfuse-worker-hpa.yaml) — HPA
+- [`infra/modules/langfuse_stack/main.tf`](main.tf) — Langfuse Web & Worker Terraform Deployments
 - [`infra/modules/cloudsql_postgres/main.tf`](../cloudsql_postgres/main.tf) — Cloud SQL PostgreSQL module
 - [`infra/modules/clickhouse_operator/README.md`](../clickhouse_operator/README.md) — ClickHouse Operator & Query-Plane module

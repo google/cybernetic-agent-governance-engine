@@ -2,10 +2,10 @@
 
 AgentSight is a kernel-level observability tool that uses eBPF probes to intercept SSL/TLS traffic and monitor system calls made by Python agent processes — without modifying application code.
 
-CAGE deploys AgentSight in two modes:
+CAGE deploys AgentSight via:
 
 1. **Local Docker Compose** — `docker-compose.agentsight.yaml` (this directory)
-2. **Kubernetes DaemonSet** — `deployment/k8s/agentsight-daemon.yaml` (in-cluster)
+2. **AgentSight UI on GKE** — [`infra/modules/agentsight_ui/main.tf`](../../infra/modules/agentsight_ui/main.tf) (the unmanaged eBPF DaemonSet `de5534ac:deployment/k8s/agentsight-daemon.yaml` was retired with `deployment/k8s/` pending Terraform module `POAM-2026-193`)
 
 ---
 
@@ -31,7 +31,7 @@ The daemon exports correlated traces to an AgentSight UI backend over HTTP.
 - **Root / privileged container** (eBPF program loading requires `SYS_ADMIN`)
 - **OpenSSL ≥ 3.x** on the target host (library path: `/usr/lib/x86_64-linux-gnu/libssl.so.3`)
 
-> **EU_ECB / APAC_MAS note:** SSL interception captures all pod-level network traffic, which may include personal data. A DPIA (GDPR Art. 35) or equivalent privacy impact assessment is required before deploying to EU_ECB or APAC_MAS. See `deployment/k8s/agentsight-daemon.yaml` DEP-06 comment for details.
+> **EU_ECB / APAC_MAS note:** SSL interception captures all pod-level network traffic, which may include personal data. A DPIA (GDPR Art. 35) or equivalent privacy impact assessment is required before deploying to EU_ECB or APAC_MAS (originally noted as DEP-06 in retired `de5534ac:deployment/k8s/agentsight-daemon.yaml`).
 
 ---
 
@@ -123,45 +123,16 @@ No standalone Jaeger or OpenTelemetry Collector is deployed.
 
 ---
 
-## Kubernetes DaemonSet
+## Kubernetes DaemonSet (`POAM-2026-193`)
 
-For in-cluster deployment, see [`deployment/k8s/agentsight-daemon.yaml`](../k8s/agentsight-daemon.yaml).
+The unmanaged `de5534ac:deployment/k8s/agentsight-daemon.yaml` DaemonSet was retired with `deployment/k8s/`; first-class Terraform provisioning of the eBPF DaemonSet is tracked under `POAM-2026-193`. The AgentSight UI frontend is reconciled by Terraform via [`infra/modules/agentsight_ui/main.tf`](../../infra/modules/agentsight_ui/main.tf).
 
-### Namespace
+### Namespace Requirements (`POAM-2026-193`)
 
-The DaemonSet runs in the `agentsight` namespace (not `governance-stack`). The `agentsight` namespace must have PSA label `privileged` applied because the DaemonSet requires `hostPID=true`, `hostNetwork=true`, and `privileged=true`.
-
-```bash
-# Create namespace with privileged PSA (required before applying the DaemonSet)
-kubectl create namespace agentsight
-kubectl label namespace agentsight \
-  pod-security.kubernetes.io/enforce=privileged \
-  pod-security.kubernetes.io/warn=privileged
-```
-
-### Apply
-
-```bash
-kubectl apply -f deployment/k8s/agentsight-daemon.yaml
-```
-
-### In-cluster exporter endpoint
-
-The in-cluster daemon config exports to the AgentSight UI backend in `governance-stack`:
+When provisioned in-cluster, the DaemonSet runs in an isolated `agentsight` namespace (not `governance-stack`) with PSA label `privileged` (`hostPID=true`, `hostNetwork=true`, `privileged=true`) and exports to:
 
 ```
 endpoint: "http://agentsight-ui.governance-stack.svc.cluster.local:8080"
-```
-
-### Tolerations
-
-The DaemonSet tolerates all taints (`operator: Exists`) so it runs on GPU nodes and Spot nodes as well as standard nodes.
-
-### Resource limits
-
-```
-requests: cpu=50m, memory=64Mi
-limits:   cpu=200m, memory=256Mi
 ```
 
 ---
@@ -208,8 +179,7 @@ sudo yum install kernel-devel-$(uname -r)
 
 ## Related Files
 
-- [`deployment/k8s/agentsight-daemon.yaml`](../k8s/agentsight-daemon.yaml) — Kubernetes DaemonSet + ConfigMap
-- [`deployment/k8s/agentsight-ui.yaml.tpl`](../k8s/agentsight-ui.yaml.tpl) — AgentSight UI Deployment template
+- [`infra/modules/agentsight_ui/main.tf`](../../infra/modules/agentsight_ui/main.tf) — AgentSight UI Terraform Deployment
 - [`deployment/agentsight/agentsight-config.yaml`](agentsight-config.yaml) — daemon configuration
 - [`deployment/agentsight/docker-compose.agentsight.yaml`](docker-compose.agentsight.yaml) — local Compose stack
 - [`docs/operations/HOW_TO_DEMO_OBSERVABILITY.md`](../../docs/operations/HOW_TO_DEMO_OBSERVABILITY.md) — observability demo guide

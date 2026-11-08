@@ -158,4 +158,4 @@ The `PlaceboTreatmentRefuter` runs 50 simulations on a row permutation of the tr
 
 - **A.1 AI System Lifecycle:** Managed via the LangGraph workflow ([`src/governed_financial_advisor/graph/graph.py`](../../../src/governed_financial_advisor/graph/graph.py)).
 - **A.2 Data Quality:** Enforced via `GeneratedSTPAValidator` checks on data inputs (e.g., latency thresholds, order volume fractions). The 8-tier governance pipeline (FTRA + 7 in-pipeline tiers via [`src/gateway/governance/governor/stages/stpa.py`](../../../src/gateway/governance/governor/stages/stpa.py)) provides the primary runtime enforcement layer.
-- **A.5.2/A.5.3/A.9.2/SC-4:** Automatically validated every 6 hours by the Lula CronJob ([`deployment/k8s/lula-cron.yaml`](../../../deployment/k8s/lula-cron.yaml)).
+- **A.5.2/A.5.3/A.9.2/SC-4:** Validated in CI via [`.github/workflows/lula-validate.yml`](../../../.github/workflows/lula-validate.yml) and [`.github/workflows/lula2-pr-compliance.yml`](../../../.github/workflows/lula2-pr-compliance.yml) (the unmanaged `de5534ac:deployment/k8s/lula-cron.yaml` CronJob was retired with `deployment/k8s/` pending Terraform provisioning under `POAM-2026-195`).

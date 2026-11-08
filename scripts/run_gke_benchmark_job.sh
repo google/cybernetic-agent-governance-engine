@@ -16,7 +16,7 @@
 # Manual report tool: runs the paper benchmark as an in-cluster Job and copies
 # its artifacts to docs/paper/measurements/<date>-<sha>/. Not run in CI.
 #
-# The Job runs against a throwaway Redis (deployment/k8s/benchmark-redis.yaml,
+# The Job runs against a throwaway Redis (scripts/fixtures/benchmark/benchmark-redis.yaml,
 # one primary + one replica) that this script creates first and always deletes
 # on exit. It never touches the shared redis-master.
 #
@@ -51,9 +51,9 @@ export REGISTRY_URL GOOGLE_CLOUD_PROJECT
 
 NAMESPACE="${NAMESPACE:-governance-stack}"
 JOB_NAME="cage-paper-benchmark"
-REDIS_MANIFEST="deployment/k8s/benchmark-redis.yaml"
-ACCESS_MANIFEST="deployment/k8s/benchmark-access.yaml"
-JOB_MANIFEST="deployment/k8s/benchmark-job.yaml"
+REDIS_MANIFEST="scripts/fixtures/benchmark/benchmark-redis.yaml"
+ACCESS_MANIFEST="scripts/fixtures/benchmark/benchmark-access.yaml"
+JOB_MANIFEST="scripts/fixtures/benchmark/benchmark-job.yaml"
 GIT_SHA=$(git rev-parse --short HEAD)
 IMAGE_TAG="${IMAGE_TAG:-${GIT_SHA}}"
 # Binary Authorization admits digest references only, so resolve the tag.

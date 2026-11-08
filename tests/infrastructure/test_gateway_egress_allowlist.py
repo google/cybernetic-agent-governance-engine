@@ -15,8 +15,9 @@
 
 On GKE, model inference stays in the cluster and the external-provider backend
 is compose-only (AG-7), so an allowlisted provider FQDN is egress surface that
-serves nothing. The Terraform default and the static manifest the SSP cites as
-SC-7 evidence must agree, and neither may list a provider.
+serves nothing. The Terraform default, every environment ``.tfvars`` profile,
+and ``gateway_egress_fqdn_allowlist`` in ``network_policy.tf`` must name zero
+external model providers.
 """
 
 from __future__ import annotations
@@ -25,13 +26,13 @@ import re
 from pathlib import Path
 
 import pytest
-import yaml
 
 pytestmark = [pytest.mark.unit, pytest.mark.local]
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
-VARIABLES = REPO_ROOT / "infra" / "targets" / "gcp-gke" / "variables.tf"
-MANIFEST = REPO_ROOT / "deployment" / "k8s" / "cilium" / "egress-lockdown.yaml"
+GKE_DIR = REPO_ROOT / "infra" / "targets" / "gcp-gke"
+VARIABLES = GKE_DIR / "variables.tf"
+NETWORK_POLICY = GKE_DIR / "network_policy.tf"
 
 MODEL_PROVIDER_FQDNS = {
     "api.openai.com",
@@ -47,26 +48,41 @@ def _terraform_default() -> set[str]:
     return set(re.findall(r'"([^"]+)"', block[block.index("default") :]))
 
 
-def _static_manifest() -> set[str]:
-    docs = [d for d in yaml.safe_load_all(MANIFEST.read_text(encoding="utf-8")) if d]
-    policy = next(
-        d
-        for d in docs
-        if d.get("kind") == "FQDNNetworkPolicy"
-        and d["metadata"]["name"] == "gateway-egress-fqdn-allowlist"
-    )
-    return {
-        fqdn
-        for rule in policy["spec"]["egress"]
-        for peer in rule.get("to", [])
-        for fqdn in peer.get("fqdns", [])
-    }
+def _gateway_fqdn_policy_block() -> str:
+    text = NETWORK_POLICY.read_text(encoding="utf-8")
+    start = text.index("gateway_egress_fqdn_allowlist = {")
+    pos = text.index("{", start) + 1
+    depth = 1
+    while depth:
+        if text[pos] == "{":
+            depth += 1
+        elif text[pos] == "}":
+            depth -= 1
+        pos += 1
+    return text[start:pos]
 
 
 def test_gateway_allowlists_name_no_model_provider() -> None:
-    assert not _terraform_default() & MODEL_PROVIDER_FQDNS
-    assert not _static_manifest() & MODEL_PROVIDER_FQDNS
+    defaults = _terraform_default()
+    assert defaults, "gateway_egress_allowed_fqdns default must be non-empty"
+    assert not (defaults & MODEL_PROVIDER_FQDNS)
+
+    for tfvars in sorted(GKE_DIR.glob("*.tfvars")):
+        text = tfvars.read_text(encoding="utf-8")
+        m = re.search(
+            r"gateway_egress_allowed_fqdns\s*=\s*\[(.*?)\]",
+            text,
+            re.S,
+        )
+        if m is not None:
+            entries = set(re.findall(r'"([^"]+)"', m.group(1)))
+            assert not (entries & MODEL_PROVIDER_FQDNS), (
+                f"{tfvars.name} allowlists external model provider: {entries & MODEL_PROVIDER_FQDNS}"
+            )
 
 
-def test_terraform_default_and_static_manifest_agree() -> None:
-    assert _terraform_default() == _static_manifest()
+def test_gateway_fqdn_policy_sources_strictly_from_variable() -> None:
+    block = _gateway_fqdn_policy_block()
+    assert "for fqdn in var.gateway_egress_allowed_fqdns" in block
+    for fqdn in MODEL_PROVIDER_FQDNS:
+        assert fqdn not in block

@@ -4,7 +4,7 @@
 
 [Lula](https://docs.lula.dev/) is a compliance-as-code tool that evaluates OSCAL (Open Security Controls Assessment Language) component definitions against live system state. It supports multiple **domain** backends (Kubernetes, API, file) and uses **OPA Rego** as the policy evaluation engine.
 
-In this project, Lula is run as a Kubernetes CronJob (`deployment/k8s/lula-cron.yaml`) that periodically validates that compliance controls are satisfied against the live cluster state and running services.
+In this project, Lula validations (`compliance/lula/lula-validation-*.yaml`) evaluate compliance controls against the live cluster state and running services (`src/compliance_bridge/lula_scheduler.py`; standalone Terraform CronJob tracked under `POAM-2026-195`, replacing retired `de5534ac:deployment/k8s/lula-cron.yaml`).
 
 ---
 
@@ -98,7 +98,7 @@ Each deployment region has a dedicated OSCAL System Security Plan:
 | **EU_ECB** | [`compliance/oscal/system-security-plan-eu-ecb.yaml`](../oscal/system-security-plan-eu-ecb.yaml) | EU AI Act / GDPR Art. 22 / DORA |
 | **APAC_MAS** | [`compliance/oscal/system-security-plan-apac-mas.yaml`](../oscal/system-security-plan-apac-mas.yaml) | MAS FEAT / MAS Notice 655 / MAS TRM §6.3 |
 
-Region selection is controlled exclusively by `CAGE_DEPLOYMENT_REGION`. The Lula CronJob (`deployment/k8s/lula-cron.yaml`) reads this variable to determine which jurisdiction-specific manifests to include in each run.
+Region selection is controlled exclusively by `CAGE_DEPLOYMENT_REGION`. The Lula scheduler (`src/compliance_bridge/lula_scheduler.py`; standalone Terraform CronJob tracked under `POAM-2026-195`) reads this variable to determine which jurisdiction-specific manifests to include in each run.
 
 ---
 
@@ -181,7 +181,7 @@ lula validate -f compliance/lula/lula-validation-sc4.yaml --kubeconfig ~/.kube/c
 
 ### In-cluster (via CronJob)
 
-The static manifest `deployment/k8s/lula-cron.yaml` defines a CronJob for Lula validations, and `#664` (`372daad2`) migrated all 33 `compliance/lula/lula-validation-*.yaml` files to the Lula v0.16.0 `resource-rule` / `requests` schema (`tests/test_lula_v0160_schema.py`), but `lula-cron.yaml` is not yet in Terraform state (`POAM-2026-195`), 5 validations carry `.stub-baseline` stub markers (`scripts/check_lula_stub_count.py`), and the AgentSight eBPF collector is not in force (`POAM-021` reopened, `POAM-2026-193`).
+`#664` (`372daad2`) migrated all 33 `compliance/lula/lula-validation-*.yaml` files to the Lula v0.16.0 `resource-rule` / `requests` schema (`tests/test_lula_v0160_schema.py`), and unmanaged `de5534ac:deployment/k8s/lula-cron.yaml` (`de5534ac:deployment/k8s/lula-rbac.yaml`) has been retired alongside the shadow manifest tree; migrating the standalone Lula auditor `CronJob` and read-only RBAC into Terraform state is tracked under `POAM-2026-195`, 5 validations carry `.stub-baseline` stub markers (`scripts/check_lula_stub_count.py`), and the AgentSight eBPF collector is not in force (`POAM-021` reopened, `POAM-2026-193`).
 
 ---
 
@@ -189,11 +189,11 @@ The static manifest `deployment/k8s/lula-cron.yaml` defines a CronJob for Lula v
 
 Each stub file contains `# TODO:` comments with the specific steps required. The general process is:
 
-1. **Confirm the resource name** — check the relevant `deployment/k8s/*.yaml` manifest
-2. **Confirm the namespace** — check `deployment/k8s/NAMESPACE-GUIDE.md`
+1. **Confirm the resource name** — check the relevant Terraform workload module in `infra/modules/` and `infra/targets/gcp-gke/`
+2. **Confirm the namespace** — check `infra/modules/k8s_namespace/main.tf` and `infra/targets/gcp-gke/main.tf`
 3. **Update the validation file** — replace placeholder names and `# TODO:` namespace values
 4. **Test locally** — `lula validate -f compliance/lula/lula-validation-<control>.yaml`
-5. **Add to the CronJob** — update `deployment/k8s/lula-cron.yaml` to include the new file
+5. **Register for scheduled execution** — include the validation in the Lula runner configuration (`src/compliance_bridge/lula_scheduler.py` / Terraform CronJob under `POAM-2026-195`)
 6. **Update this table** — change status from 🔶 Stub to ✅ Active
 
 ### Activating EU_ECB Stubs
@@ -287,9 +287,7 @@ See [`compliance/continuous-monitoring/ISCM_STRATEGY.md`](../continuous-monitori
 ## Related Documentation
 
 - [`compliance/continuous-monitoring/ISCM_STRATEGY.md`](../continuous-monitoring/ISCM_STRATEGY.md) — Information System Continuous Monitoring Strategy
-- [`docs/POAM.md`](../../docs/POAM.md) — Plan of Action and Milestones (POAM items for stub activation)
-- [`deployment/k8s/lula-cron.yaml`](../../deployment/k8s/lula-cron.yaml) — Kubernetes CronJob for automated validation
-- [`deployment/k8s/lula-rbac.yaml`](../../deployment/k8s/lula-rbac.yaml) — RBAC for Lula cluster access
+- [`docs/POAM.md`](../../docs/POAM.md) — Plan of Action and Milestones (POAM items for stub activation, including `POAM-2026-195` for the Terraform Lula CronJob replacing retired `de5534ac:deployment/k8s/lula-cron.yaml` and `de5534ac:deployment/k8s/lula-rbac.yaml`)
 - [`deployment/docker/Dockerfile.lula`](../../deployment/docker/Dockerfile.lula) — Lula container image
 - [`compliance/oscal/system-security-plan.yaml`](../oscal/system-security-plan.yaml) — US_FED SSP (NIST SP 800-53 Rev 5 HIGH)
 - [`compliance/oscal/system-security-plan-eu-ecb.yaml`](../oscal/system-security-plan-eu-ecb.yaml) — EU_ECB SSP (EU AI Act / GDPR / DORA)

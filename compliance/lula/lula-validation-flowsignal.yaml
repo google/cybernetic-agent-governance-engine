@@ -35,7 +35,7 @@
 #   component: cage-gateway
 #   control: A.8.4 (ISO 42001 — AI System Operation Controls)
 #
-# Namespace: governance-stack (confirmed from deployment/k8s/gateway-deployment.yaml.tpl)
+# Namespace: governance-stack (confirmed from infra/modules/gateway/main.tf)
 
 component-definition:
   uuid: f1025a8c-4d3e-5a99-8b2f-c418e7f92d1a

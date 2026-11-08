@@ -10,7 +10,7 @@
 | Pod | cage-paper-benchmark-fvjnr |
 | Namespace | governance-stack |
 | Job | cage-paper-benchmark |
-| Redis | Throwaway `benchmark-redis` (deployment/k8s/benchmark-redis.yaml): 1 primary + 1 replica, no persistence, `gcr.io/laah-cybernetics/redis@sha256:41a05f1df0e41913c765714bcc4e2b7b61bad98686c3f8577fb5370306bd1efe` |
+| Redis | Throwaway `benchmark-redis` (de5534ac:deployment/k8s/benchmark-redis.yaml): 1 primary + 1 replica, no persistence, `gcr.io/laah-cybernetics/redis@sha256:41a05f1df0e41913c765714bcc4e2b7b61bad98686c3f8577fb5370306bd1efe` |
 | Replication wait | `CAGE_REDIS_WAIT_REPLICAS=1` |
 | OPA | gcr.io/laah-cybernetics/opa@sha256:bd9909283897aaf8e4409efb6fcb049f08fe6466f32467545157b66a39f4879f |
 | Consensus backend | vllm-reasoning `deepseek-ai/DeepSeek-R1-Distill-Llama-8B` (gcr.io/laah-cybernetics/vllm-streamer@sha256:12e2a7f6320d54d5f098d28bc20f8104676c4e2058cc69436587912151b738e3) |

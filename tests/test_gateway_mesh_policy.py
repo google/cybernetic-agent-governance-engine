@@ -43,15 +43,10 @@ from src.gateway.server.workload_identity import (
 pytestmark = [pytest.mark.unit, pytest.mark.local]
 
 _REPO = Path(__file__).resolve().parents[1]
-_RAW_POLICY = _REPO / "deployment" / "k8s" / "linkerd-mtls-policy.yaml"
 _CHART = _REPO / "infra" / "modules" / "gateway" / "mesh-policy"
 _MESH_MODULE = _REPO / "infra" / "modules" / "service_mesh"
 _GKE_MAIN = _REPO / "infra" / "targets" / "gcp-gke" / "main.tf"
 _GATEWAY_MODULE = _REPO / "infra" / "modules" / "gateway" / "main.tf"
-_RAW_GATEWAYS = [
-    _REPO / "deployment" / "k8s" / "gateway.yaml",
-    _REPO / "deployment" / "k8s" / "gateway.yaml.tpl",
-]
 
 ADVISOR_IDENTITY = (
     "cage-advisor-sa.governance-stack.serviceaccount.identity.linkerd.cluster.local"
@@ -75,8 +70,54 @@ _SERVED = {
 # ---------------------------------------------------------------------------
 
 
-def _docs(path: Path) -> list[dict]:
-    return [d for d in yaml.safe_load_all(path.read_text()) if d]
+def _render_mesh_policy_chart(
+    trusted_identities: list[str] | None = None,
+    namespace: str = "governance-stack",
+) -> list[dict]:
+    """Deterministically render infra/modules/gateway/mesh-policy/templates/policy.yaml."""
+    values = yaml.safe_load((_CHART / "values.yaml").read_text(encoding="utf-8"))
+    open_paths: list[str] = list(values["openExactPaths"])
+    identities: list[str] = (
+        list(values["trustedIdentities"])
+        if trusted_identities is None
+        else list(trusted_identities)
+    )
+    tpl = (_CHART / "templates" / "policy.yaml").read_text(encoding="utf-8")
+    rendered = tpl.replace("{{ .Release.Namespace }}", namespace)
+
+    open_block = "".join(
+        f"        - path:\n            type: Exact\n            value: {json_or_quote}\n"
+        for json_or_quote in [f'"{p}"' for p in open_paths]
+    )
+    rendered = re.sub(
+        r"\{\{- range \.Values\.openExactPaths \}\}.*?\{\{- end \}\}\n",
+        open_block,
+        rendered,
+        flags=re.S,
+    )
+
+    id_block = "".join(f'    - "{ident}"\n' for ident in identities)
+    rendered = re.sub(
+        r"\{\{- range \.Values\.trustedIdentities \}\}.*?\{\{- end \}\}\n",
+        id_block,
+        rendered,
+        flags=re.S,
+    )
+    if identities:
+        rendered = re.sub(
+            r"\{\{- if \.Values\.trustedIdentities \}\}\n(.*?)\{\{- end \}\}",
+            r"\1",
+            rendered,
+            flags=re.S,
+        )
+    else:
+        rendered = re.sub(
+            r"\{\{- if \.Values\.trustedIdentities \}\}\n.*?\{\{- end \}\}",
+            "",
+            rendered,
+            flags=re.S,
+        )
+    return [d for d in yaml.safe_load_all(rendered) if isinstance(d, dict)]
 
 
 def _by(docs: list[dict], kind: str, name: str) -> dict:
@@ -100,7 +141,7 @@ def open_route_paths(route: dict) -> set[str]:
 
 
 def gateway_policy_violations(docs: list[dict]) -> list[str]:
-    """Every way the raw gateway policy can drift from the app's policy."""
+    """Every way the rendered gateway policy can drift from the app's policy."""
     problems: list[str] = []
     exact = open_route_paths(_by(docs, "HTTPRoute", "gateway-open"))
     if exact != set(OPEN_EXACT_PATHS):
@@ -144,22 +185,33 @@ def served_version_violations(text: str) -> list[str]:
 
 
 # ---------------------------------------------------------------------------
-# Raw manifests
+# Rendered Helm mesh-policy chart
 # ---------------------------------------------------------------------------
 
 
-def test_raw_gateway_policy_matches_app_policy() -> None:
-    assert gateway_policy_violations(_docs(_RAW_POLICY)) == []
+def test_rendered_gateway_policy_matches_app_policy() -> None:
+    docs = _render_mesh_policy_chart([ADVISOR_IDENTITY])
+    assert gateway_policy_violations(docs) == []
 
 
-def test_raw_policy_does_not_trust_the_gateway_itself() -> None:
-    docs = _docs(_RAW_POLICY)
+def test_rendered_policy_does_not_trust_the_gateway_itself() -> None:
+    docs = _render_mesh_policy_chart([ADVISOR_IDENTITY])
     authn = _by(docs, "MeshTLSAuthentication", "gateway-trusted-clients")
     assert GATEWAY_IDENTITY not in authn["spec"]["identities"]
 
 
+def test_rendered_policy_denies_all_gated_routes_when_identities_empty() -> None:
+    docs = _render_mesh_policy_chart([])
+    assert [
+        d
+        for d in docs
+        if d["metadata"]["name"] == "gateway-gated"
+        and d["kind"] == "AuthorizationPolicy"
+    ] == []
+
+
 def test_open_route_allows_any_network_only_for_open_paths() -> None:
-    docs = _docs(_RAW_POLICY)
+    docs = _render_mesh_policy_chart([ADVISOR_IDENTITY])
     policy = _by(docs, "AuthorizationPolicy", "gateway-open")
     assert policy["spec"]["targetRef"]["name"] == "gateway-open"
     assert [r["kind"] for r in policy["spec"]["requiredAuthenticationRefs"]] == [
@@ -177,28 +229,13 @@ def test_open_route_allows_any_network_only_for_open_paths() -> None:
     assert [p["metadata"]["name"] for p in network_policies] == ["gateway-open"]
 
 
-@pytest.mark.parametrize("path", _RAW_GATEWAYS, ids=lambda p: p.name)
-def test_raw_gateway_trusts_exactly_the_policy_identities(path: Path) -> None:
-    text = path.read_text()
-    values = re.findall(
-        r"- name: CAGE_TRUSTED_CLIENT_IDENTITIES\n(?:\s*#.*\n)*\s*value: \"([^\"]+)\"",
-        text,
-    )
-    assert values == [ADVISOR_IDENTITY]
-    assert all(_LINKERD_IDENTITY.match(v) for v in values[0].split(","))
-
-
-@pytest.mark.parametrize("path", _RAW_GATEWAYS, ids=lambda p: p.name)
-def test_raw_gateway_has_no_ingress_hmac_secret(path: Path) -> None:
-    text = path.read_text()
-    assert "CAGE_ROUTING_SEAL_SECRET" not in text
-    assert "cage-routing-seal" not in text
+def test_advisor_linkerd_identity_matches_format_regex() -> None:
+    assert _LINKERD_IDENTITY.match(ADVISOR_IDENTITY)
 
 
 def test_all_linkerd_objects_use_served_api_versions() -> None:
-    sources = list((_REPO / "deployment").rglob("*.yaml")) + list(
-        (_REPO / "infra").rglob("templates/*.yaml")
-    )
+    sources = list((_REPO / "infra").rglob("templates/*.yaml"))
+    assert sources, "expected Helm template files under infra/"
     bad = {
         str(p.relative_to(_REPO)): v
         for p in sources
@@ -236,6 +273,7 @@ def test_gateway_module_wires_identities_not_hmac() -> None:
     assert 'name  = "CAGE_TRUSTED_CLIENT_IDENTITIES"' in text
     assert 'join(",", var.trusted_client_identities)' in text
     assert "CAGE_ROUTING_SEAL_SECRET" not in text
+    assert "cage-routing-seal" not in text
     assert 'resource "helm_release" "mesh_policy"' in text
 
 
@@ -318,7 +356,7 @@ def test_no_ingress_hmac_secret_in_infra() -> None:
 
 
 def _mutated(mutate) -> list[dict]:
-    docs = _docs(_RAW_POLICY)
+    docs = _render_mesh_policy_chart([ADVISOR_IDENTITY])
     mutate(docs)
     return docs
 

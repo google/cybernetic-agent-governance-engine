@@ -190,7 +190,7 @@ grep -E "oscal-(a52|a53|a92|sc4)" lula-poam-evidence.log
 # Expected: four result file paths written to /results/parts/
 ```
 
-> **Note:** Individual control `validate` failures (OPA returning `false`) do not cause the job to exit non-zero — the `|| true` in [`deployment/k8s/lula-cron.yaml`](../../../deployment/k8s/lula-cron.yaml) is intentional. The OSCAL result file captures pass/fail per control. The job exits non-zero only if the compliance-bridge ingest returns a non-200 HTTP status.
+> **Note:** Individual control `validate` failures (OPA returning `false`) do not cause the job to exit non-zero — the `|| true` in `de5534ac:deployment/k8s/lula-cron.yaml` is intentional. The OSCAL result file captures pass/fail per control. The job exits non-zero only if the compliance-bridge ingest returns a non-200 HTTP status.
 
 ---
 
@@ -239,9 +239,9 @@ kubectl logs job/lula-post-rename-validation -n governance-stack | head -50
 ```
 
 Common causes:
-- `lula-validation-manifests` ConfigMap missing or malformed — re-apply [`deployment/k8s/lula-cron.yaml`](../../../deployment/k8s/lula-cron.yaml):
+- `lula-validation-manifests` ConfigMap missing or malformed — re-apply `de5534ac:deployment/k8s/lula-cron.yaml`:
   ```bash
-  kubectl apply -f deployment/k8s/lula-cron.yaml
+  kubectl apply -f de5534ac:deployment/k8s/lula-cron.yaml
   ```
 - RBAC insufficient — verify `lula-auditor` ServiceAccount has the required ClusterRole:
   ```bash
@@ -343,8 +343,8 @@ See [`compliance/lula/README.md`](../../../README.md) for the full validation co
 | [`docs/operations/DEPLOYMENT_RULES.md`](../../operations/DEPLOYMENT_RULES.md) | Deployment rules, procedures, and operational constraints |
 | [`docs/POAM.md`](../cross-region/POAM.md) | Plan of Action and Milestones |
 | [`compliance/lula/README.md`](../../../README.md) | Lula validation coverage and activation guide |
-| [`deployment/k8s/lula-cron.yaml`](../../../deployment/k8s/lula-cron.yaml) | CronJob manifest (lula-audit + lula-sc4-watch) |
-| [`deployment/k8s/lula-rbac.yaml`](../../../deployment/k8s/lula-rbac.yaml) | RBAC for lula-auditor ServiceAccount |
+| `de5534ac:deployment/k8s/lula-cron.yaml` | CronJob manifest (lula-audit + lula-sc4-watch) |
+| `de5534ac:deployment/k8s/lula-rbac.yaml` | RBAC for lula-auditor ServiceAccount |
 | [`compliance/sar/SAR_2026Q1.md`](../../../compliance/sar/SAR_2026Q1.md) | Security Assessment Report (pre-ATO gap assessment) |
 | [`compliance/continuous-monitoring/ISCM_STRATEGY.md`](../../../compliance/continuous-monitoring/ISCM_STRATEGY.md) | ISCM cadence and escalation procedures |
 

@@ -309,8 +309,8 @@ resource "google_compute_security_policy" "gateway_armor" {
 
 locals {
   # §5.4: GKE BackendConfig manifest binding Cloud Armor securityPolicy to the
-  # gateway Service (matched by cloud.google.com/backend-config annotation in
-  # deployment/k8s/gateway.yaml and deployment/k8s/ingress.yaml).
+  # gateway Service (matched by cloud.google.com/backend-config annotation on
+  # kubernetes_service.gateway in infra/modules/gateway/main.tf).
   gateway_backend_config_manifest = {
     apiVersion = "cloud.google.com/v1"
     kind       = "BackendConfig"

@@ -203,21 +203,9 @@ Triggers: every push to `main`/`feature/**`, every PR to `main`, daily at 02:00 
 
 **Note:** Grype CVE failures are currently warnings (not hard failures) until POAM-010 is formally resolved and a CVE remediation process is established.
 
-### 5b. Kubernetes CronJob
+### 5b. Retired Unmanaged Kubernetes CronJob
 
-**File:** [`deployment/k8s/sbom-cronjob.yaml`](../../deployment/k8s/sbom-cronjob.yaml)  
-**Name:** `cage-sbom-generator`  
-**Namespace:** `cage-compliance`  
-**Schedule:** `0 2 * * *` (02:00 UTC daily)
-
-**What it does:**
-
-1. Reads the image list from the `cage-sbom-image-list` ConfigMap
-2. For each CAGE container image, runs `syft <image> -o cyclonedx-json`
-3. Uploads all CycloneDX JSON SBOMs to GCS: `gs://cage-compliance-sboms/sbom/<YYYY/MM/DD>/`
-4. Writes a MANIFEST.txt summarizing all scanned images and component counts
-
-**RBAC:** The `sbom-generator` ServiceAccount has read-only access to pods and configmaps (ClusterRole `sbom-generator-readonly`). GCS upload uses Workload Identity (no key files).
+The legacy unmanaged shadow manifest `de5534ac:deployment/k8s/sbom-cronjob.yaml` (`cage-sbom-generator` in `cage-compliance`) was never part of Terraform state and has been retired. Container and filesystem SBOM generation and CVE scanning run in GitHub Actions (`.github/workflows/sbom.yml` and `.github/workflows/security-scan.yml`) and Cloud Build (`deployment/docker/cloudbuild.image.yaml`) against digest-pinned Artifact Registry images.
 
 ---
 

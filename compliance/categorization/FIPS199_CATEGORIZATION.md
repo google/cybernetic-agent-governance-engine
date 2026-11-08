@@ -142,7 +142,7 @@ CAGE presents novel security categorization challenges due to its AI-native arch
 
 - **Model Output Integrity:** LLM outputs are non-deterministic; integrity controls must address prompt injection, hallucination, and adversarial manipulation
 - **Governance Bypass Risk:** The `CAGE_ROUTING_SEAL_SECRET` bypass mechanism (POAM-012) represents a critical integrity risk that elevates the effective integrity impact
-- **Multi-Agent Trust:** Agent-to-agent communication is protected by both HMAC routing seal and Linkerd mTLS (POAM-007 Closed 2026-05-17 via `deployment/k8s/linkerd-mtls-policy.yaml`), providing defense-in-depth for intra-cluster inter-service integrity
+- **Multi-Agent Trust:** Agent-to-agent communication is protected by Linkerd mTLS (`infra/modules/service_mesh/main.tf`, `infra/modules/gateway/mesh-policy/templates/policy.yaml`; POAM-007 Closed 2026-05-17 originally via `de5534ac:deployment/k8s/linkerd-mtls-policy.yaml`), providing defense-in-depth for intra-cluster inter-service integrity
 
 ### 6.2 PII Processing Scope
 

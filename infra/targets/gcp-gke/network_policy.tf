@@ -545,13 +545,6 @@ resource "kubernetes_network_policy_v1" "gateway_egress_l3_l4" {
       to {
         pod_selector {
           match_labels = {
-            app = "vllm-service"
-          }
-        }
-      }
-      to {
-        pod_selector {
-          match_labels = {
             app = "vllm-inference"
           }
         }
@@ -792,113 +785,7 @@ resource "kubernetes_network_policy_v1" "financial_advisor_egress_internal_only"
   }
 }
 
-# ─── 4. Sovereign Agent Internal-Only Egress (§5.3) ───────────────────────────
-
-resource "kubernetes_network_policy_v1" "agent_egress_internal_only" {
-  metadata {
-    name      = "agent-egress-internal-only"
-    namespace = module.namespace.name
-    labels = {
-      "app.kubernetes.io/managed-by" = "terraform"
-      "cage.io/component"            = "z3n-egress"
-    }
-    annotations = {
-      "compliance.nist.gov/control"  = "SC-7,AC-4,SI-3,SC-39"
-      "compliance.nist.gov/standard" = "SP-800-53-Rev5"
-      "cage.io/poam"                 = "POAM-007"
-    }
-  }
-
-  spec {
-    pod_selector {
-      match_labels = {
-        role = "sovereign-agent"
-      }
-    }
-    policy_types = ["Egress"]
-
-    # DNS — kube-dns and Cloud DNS only (§5.3, §7)
-    egress {
-      to {
-        namespace_selector {
-          match_labels = {
-            "kubernetes.io/metadata.name" = "kube-system"
-          }
-        }
-        pod_selector {
-          match_labels = {
-            "k8s-app" = "kube-dns"
-          }
-        }
-      }
-      to {
-        namespace_selector {
-          match_labels = {
-            "kubernetes.io/metadata.name" = "kube-system"
-          }
-        }
-        pod_selector {
-          match_labels = {
-            "k8s-app" = "node-local-dns"
-          }
-        }
-      }
-      to {
-        ip_block {
-          cidr = var.kube_dns_cidr
-        }
-      }
-      ports {
-        protocol = "UDP"
-        port     = "53"
-      }
-      ports {
-        protocol = "TCP"
-        port     = "53"
-      }
-    }
-
-    # OPA policy evaluation
-    egress {
-      to {
-        pod_selector {
-          match_labels = {
-            app = "opa"
-          }
-        }
-      }
-      ports {
-        protocol = "TCP"
-        port     = "8181"
-      }
-      ports {
-        protocol = "TCP"
-        port     = "4143"
-      }
-    }
-
-    # CAGE Gateway (orchestration return path)
-    egress {
-      to {
-        pod_selector {
-          match_labels = {
-            app = "gateway"
-          }
-        }
-      }
-      ports {
-        protocol = "TCP"
-        port     = "8080"
-      }
-      ports {
-        protocol = "TCP"
-        port     = "4143"
-      }
-    }
-  }
-}
-
-# ─── 5. Reconciliation Worker Egress Isolation (C7, §5.3, §7) ─────────────────
+# ─── 4. Reconciliation Worker Egress Isolation (C7, §5.3, §7) ─────────────────
 # Allows ONLY:
 #   1. DNS to kube-dns / Cloud DNS (port 53 UDP/TCP)
 #   2. Memorystore governance PSC endpoint ip_block on TLS port 6379
@@ -1139,7 +1026,6 @@ resource "terraform_data" "network_policy_workload_rollout" {
     kubernetes_network_policy_v1.gateway_egress_l3_l4,
     kubernetes_network_policy_v1.compliance_bridge_egress_l3_l4,
     kubernetes_network_policy_v1.financial_advisor_egress_internal_only,
-    kubernetes_network_policy_v1.agent_egress_internal_only,
     kubernetes_network_policy_v1.reconciliation_worker_egress,
     kubernetes_network_policy_v1.vllm_egress_l3_l4,
     kubernetes_manifest.fqdn_network_policy,

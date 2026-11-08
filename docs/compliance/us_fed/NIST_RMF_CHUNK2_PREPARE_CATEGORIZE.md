@@ -93,7 +93,7 @@ _(NIST SP 800-37 §2.3 — identifying controls that are inherited from the plat
 
 - **`compliance/oscal/component-definition.yaml`** (all 163 lines) defines 3 software components — TypeScript Governance Gateway (A.5.2, A.5.3), OPA Policy Engine (SC-4), and NeMo Guardrails + Presidio (A.9.2). Every `implemented-requirements` entry uses `role-id: provider` (line 41), meaning all 4 controls are claimed as system-provided. There are **no `inherited` control designations** and no Common Control Provider (CCP) entries anywhere in the file.
 
-- The `responsible-roles` section uses only a single generic `role-id: provider` — there is no distinction between controls the CAGE system itself provides and controls inherited from the GKE platform (e.g., physical security, network segmentation via `deployment/k8s/network-policy.yaml`, node OS hardening, GCS encryption-at-rest).
+- The `responsible-roles` section uses only a single generic `role-id: provider` — there is no distinction between controls the CAGE system itself provides and controls inherited from the GKE platform (e.g., physical security, network segmentation via `de5534ac:deployment/k8s/network-policy.yaml`, node OS hardening, GCS encryption-at-rest).
 
 - The OSCAL `component-definition` structure chosen (OSCAL 1.0.4) supports the `control-implementation` → `implemented-requirements` → `by-components` → `implementation-status` field which could carry `status: inherited | planned | implemented | partial`, but this field is absent from all 4 implemented requirements.
 
@@ -194,7 +194,7 @@ _(Recording the FIPS 199 categorization result in a machine-readable OSCAL artif
 2. **No `security-impact-level` Element:** The OSCAL 1.0.4 schema defines `security-impact-level` with sub-elements `security-objective-confidentiality`, `security-objective-integrity`, `security-objective-availability` (each accepting `fips-199-low | fips-199-moderate | fips-199-high`). This element is absent from all existing OSCAL files.
 3. **No OSCAL `import-profile` for SP 800-53 Moderate Baseline:** Without a profile import, automated tools cannot determine which SP 800-53 controls apply to this system. The OSCAL component definition is self-contained with no baseline reference.
 4. **No Leveraged Authorizations:** An OSCAL SSP should list `leveraged-authorizations` for cloud platform controls inherited from GKE/Google Cloud (FedRAMP P-ATO), enabling auditors to trace inherited control coverage automatically.
-5. **Lula Validation Scope Limited to 4 Controls:** The Lula CronJob (`deployment/k8s/lula-cron.yaml`) validates only A.5.2, A.5.3, A.9.2, and SC-4. An OSCAL SSP linked to the SP 800-53 Moderate baseline would identify 100+ controls requiring validation, enabling expansion of the Lula test suite systematically.
+5. **Lula Validation Scope Limited to 4 Controls:** The Lula CronJob (`de5534ac:deployment/k8s/lula-cron.yaml`) validates only A.5.2, A.5.3, A.9.2, and SC-4. An OSCAL SSP linked to the SP 800-53 Moderate baseline would identify 100+ controls requiring validation, enabling expansion of the Lula test suite systematically.
 
 ### Refactoring Recommendations
 
@@ -220,7 +220,7 @@ _(Recording the FIPS 199 categorization result in a machine-readable OSCAL artif
    ```
 2. **Add `security-impact-level` to the existing `compliance/oscal/component-definition.yaml` `metadata.remarks`** as a stopgap human-readable reference until the full SSP is created: `remarks: "Pending FIPS 199 formal categorization — provisional: C=Moderate, I=High, A=Moderate"`.
 3. **Link the SSP to the component definition** — add an `import-component-definition` reference in the OSCAL SSP pointing to `compliance/oscal/component-definition.yaml`, so the 4 existing implemented requirements flow into the SSP's control implementation section.
-4. **Extend the Lula CronJob manifest** (`deployment/k8s/lula-cron.yaml`) to also validate against the new OSCAL SSP, using `lula validate --input compliance/oscal/system-security-plan.yaml` so the categorization metadata is included in the automated audit scope.
+4. **Extend the Lula CronJob manifest** (`de5534ac:deployment/k8s/lula-cron.yaml`) to also validate against the new OSCAL SSP, using `lula validate --input compliance/oscal/system-security-plan.yaml` so the categorization metadata is included in the automated audit scope.
 5. **Create `compliance/oscal/profiles/cage-moderate-tailored.yaml`** — an OSCAL profile that imports the SP 800-53 Rev. 5 Moderate baseline and applies CAGE-specific tailoring (scoping out PE controls fully inherited from GKE, adding AI-specific overlays for SR 11-7 and ISO 42001 controls).
 
 ---

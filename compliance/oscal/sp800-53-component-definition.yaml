@@ -270,8 +270,8 @@ component-definition:
                    (cage_kms_rpc_total{op} in src/integrations/gcp/kms_provider.py). Because
                    the metrics listener runs on its own daemon thread and bypasses the
                    Linkerd inbound proxy on port 9090 (config.linkerd.io/skip-inbound-ports),
-                   GKE Managed Prometheus (PodMonitoring gateway-metrics and ServiceMonitor
-                   stera-gateway-monitor in deployment/k8s/gateway-servicemonitor.yaml,
+                   GKE Managed Prometheus (PodMonitoring gateway-metrics in
+                   infra/modules/gateway/metrics-monitors/templates/monitors.yaml,
                    validated by compliance/lula/lula-validation-metrics.yaml) can scrape
                    safety-gate, evidence-stream, and loop-lag telemetry even when the
                    asyncio event loop is contended.
@@ -304,12 +304,12 @@ component-definition:
                 - href: "../../src/gateway/observability/loop_monitor.py"
                   rel: implementation
                   text: "Out-of-band Prometheus metrics HTTP server and asyncio event-loop lag monitor"
-                - href: "../../deployment/k8s/gateway-servicemonitor.yaml"
+                - href: "../../infra/modules/gateway/metrics-monitors/templates/monitors.yaml"
                   rel: implementation
-                  text: "Prometheus ServiceMonitor (stera-gateway-monitor) and GMP PodMonitoring (gateway-metrics)"
+                  text: "GMP PodMonitoring (gateway-metrics)"
                 - href: "../../compliance/lula/lula-validation-metrics.yaml"
                   rel: reference
-                  text: "Lula automated validation for AU-12 Prometheus ServiceMonitor and GMP PodMonitoring"
+                  text: "Lula automated validation for AU-12 GMP PodMonitoring"
 
             - uuid: "c3-au10-attestation-2026-0909"
               control-id: au-10
@@ -420,7 +420,7 @@ component-definition:
               description: |
                 Continuous ground-truth reconciliation keeps verified CBF state fresh
                 (POAM-2026-096). The reconciliation worker
-                (deployment/k8s/reconciliation-worker.yaml) runs as a single-replica
+                (infra/modules/reconciliation_worker/main.tf) runs as a single-replica
                 Deployment in loop mode, polling every 60 s against a 300 s verified-state
                 TTL, and run_loop() (src/gateway/governance/reconciliation/daemon.py)
                 refuses to start when the TTL is less than twice the poll interval, so
@@ -435,9 +435,9 @@ component-definition:
                 - name: poam-reference
                   value: "POAM-2026-096"
               links:
-                - href: "../../deployment/k8s/reconciliation-worker.yaml"
+                - href: "../../infra/modules/reconciliation_worker/main.tf"
                   rel: implementation
-                  text: "Reconciler Deployment (loop mode)"
+                  text: "Reconciler Deployment module (loop mode)"
                 - href: "../../src/gateway/governance/reconciliation/daemon.py"
                   rel: implementation
                   text: "run_loop() TTL/poll guard and floor branch"
@@ -1081,7 +1081,7 @@ component-definition:
 
                 Workload least privilege: each workload runs as its own Kubernetes
                 service account bound 1:1 to its own GCP service account
-                (infra/targets/gcp-gke/iam.tf, deployment/k8s/service-account.yaml). The
+                (infra/targets/gcp-gke/iam.tf). The
                 advisor, model-serving (vLLM), telemetry and UI workloads hold no KMS
                 signer role; only the gateway signs with gateway-seal (POAM-2026-079
                 closed).
@@ -1141,7 +1141,8 @@ component-definition:
 
                 2. **Linkerd Service Mesh mTLS Foundation**:
                    Linkerd enforces pod-to-pod mutual TLS (mTLS) across all in-cluster
-                   communication (deployment/k8s/linkerd-mtls-policy.yaml). Every pod
+                   communication (infra/modules/service_mesh/main.tf,
+                   infra/modules/gateway/mesh-policy/templates/policy.yaml). Every pod
                    receives a SPIFFE ID in the format:
                    spiffe://<trust-domain>/ns/<namespace>/sa/<service-account>
 
@@ -1190,9 +1191,9 @@ component-definition:
                 - href: "../../src/gateway/server/workload_identity.py"
                   rel: implementation
                   text: "Gateway workload identity enforcement and extraction (WorkloadIdentityMiddleware, extract_client_identity)"
-                - href: "../../deployment/k8s/linkerd-mtls-policy.yaml"
+                - href: "../../infra/modules/gateway/mesh-policy/templates/policy.yaml"
                   rel: configuration
-                  text: "Linkerd SPIFFE trust domain and mTLS policy"
+                  text: "Linkerd SPIFFE trust domain and gateway mTLS authorization policy"
                 - href: "../../src/compliance_bridge/auth.py"
                   rel: implementation
                   text: "require_operator_identity() SVID extraction for approval path"
@@ -1239,8 +1240,9 @@ component-definition:
                 Continuous monitoring is automated via the 5-step audit pipeline in
                 src/compliance_bridge/audit_workflow.py: (1) collect OTel spans from
                 Langfuse, (2) evaluate control safety rates, (3) generate OSCAL Assessment
-                Results, (4) store to MinIO/GCS, (5) alert on failures. The pipeline
-                runs every 6 hours via deployment/k8s/lula-cron.yaml (Kubernetes CronJob).
+                Results, (4) store to MinIO/GCS, (5) alert on failures. Lula validations are
+                scheduled via src/compliance_bridge/lula_scheduler.py (standalone Terraform
+                CronJob tracked under POAM-2026-195).
                 Lula validation manifests in compliance/lula/ provide automated control
                 assertions (lula-validation-au12.yaml, lula-validation-ac3.yaml,
                 lula-validation-ra5.yaml, lula-validation-cm6.yaml, lula-validation-ir6.yaml).
@@ -1589,7 +1591,7 @@ component-definition:
         Cloud Load Balancer boundary protection, GCP Workload Identity Federation
         for authentication, and TLS termination at the load balancer for
         transmission confidentiality. Supplemented by Kubernetes-layer controls
-        defined in deployment/k8s/.
+        defined in infra/targets/gcp-gke/ and infra/modules/.
       purpose: >
         Provides platform-level inherited security controls that the application
         components rely upon. Network boundary protection, identity and
@@ -1609,12 +1611,12 @@ component-definition:
                 Boundary protection is inherited from GKE VPC-native networking and
                 Google Cloud Load Balancer. All ingress traffic is routed through the
                 Cloud Load Balancer, which terminates TLS and applies Cloud Armor WAF
-                rules. Kubernetes network policies in deployment/k8s/network-policy.yaml
-                and deployment/k8s/network-policy-hardening.yaml restrict pod-to-pod
-                communication to explicitly declared paths. The compliance namespace is
-                isolated via Kubernetes NetworkPolicy; only the compliance-bridge pod
-                may reach the MinIO/GCS storage endpoints. Pod Security Admission
-                in deployment/k8s/pod-security-admission.yaml enforces restricted policy.
+                rules. Kubernetes network policies in infra/targets/gcp-gke/network_policy.tf
+                restrict pod-to-pod communication to explicitly declared paths. The
+                compliance namespace is isolated via Kubernetes NetworkPolicy; only the
+                compliance-bridge pod may reach the MinIO/GCS storage endpoints. Pod
+                Security Admission in infra/modules/k8s_namespace/main.tf enforces
+                restricted policy.
               props:
                 - name: implementation-status
                   value: inherited
@@ -1637,8 +1639,9 @@ component-definition:
                    Federation. Each Kubernetes Service Account is bound to a GCP IAM Service
                    Account via Workload Identity, providing cryptographically verifiable
                    identity for all pod-level API calls to GCP services. Cluster authentication
-                   is managed via GKE cluster RBAC (deployment/k8s/lula-rbac.yaml,
-                   deployment/k8s/service-account.yaml). Human operator access to the GKE
+                   is managed via GKE cluster RBAC and per-workload ServiceAccounts
+                   (infra/targets/gcp-gke/iam.tf; standalone Lula RBAC tracked under
+                   POAM-2026-195). Human operator access to the GKE
                    cluster requires GCP IAM authentication with MFA enforced at the
                    organizational policy level. GCP Identity-Aware Proxy (IAP) protects
                    any externally accessible management endpoints.
@@ -1718,7 +1721,7 @@ component-definition:
                 - href: "../../src/compliance_bridge/auth.py"
                   rel: implementation
                   text: "require_operator_identity() SPIFFE/OIDC extraction"
-                - href: "../../deployment/k8s/linkerd-mtls-policy.yaml"
+                - href: "../../infra/modules/service_mesh/main.tf"
                   rel: configuration
                   text: "Linkerd mTLS SPIFFE trust domain configuration"
 
@@ -1727,7 +1730,7 @@ component-definition:
               description: |
                 Transmission confidentiality and integrity is inherited from GCP TLS
                 termination at the Cloud Load Balancer. HTTPS is enforced on all ingress
-                via deployment/k8s/ingress.yaml with TLS certificates managed by Google-
+                via infra/targets/gcp-gke/perimeter.tf with TLS certificates managed by Google-
                 managed SSL certificates. Internal cluster communication between pods uses
                 Kubernetes service mesh with mTLS enforced at the service level where
                 sensitive data (audit logs, PII detection results) transits the network.

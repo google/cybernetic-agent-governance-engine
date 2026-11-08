@@ -23,7 +23,7 @@
 #    shape as reconciliation-worker-egress-fqdn
 #    (infra/targets/gcp-gke/network_policy.tf).
 # 2. OPA: the Linkerd Server opa-server-8181 denies every identity not named
-#    by an AuthorizationPolicy (deployment/k8s/linkerd-mtls-policy.yaml
+#    by an AuthorizationPolicy (infra/modules/gateway/mesh-policy/templates/policy.yaml
 #    authorizes the gateway and compliance bridge). --unmocked queries OPA
 #    directly as cage-benchmark-sa, so it gets its own grant.
 apiVersion: networking.gke.io/v1alpha1

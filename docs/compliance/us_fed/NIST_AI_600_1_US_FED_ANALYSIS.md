@@ -456,12 +456,12 @@ CAGE's agentic AI risk surface is **unusually broad** because:
 **CAGE Applicability:** **Critical** — CAGE's governance pipeline is itself a security control. Attacks that compromise the governance pipeline (jailbreaking OPA policies, extracting the HMAC seal secret via model inference, or bypassing NeMo Guardrails) directly undermine the security of the entire financial advisory system.
 
 **Current Coverage:**
-- **Linkerd mTLS** (`POAM-007` closed on HMAC retirement): intra-cluster mTLS across meshed pods (`deployment/k8s/linkerd-mtls-policy.yaml` and `deployment/k8s/cilium/egress-lockdown.yaml` are outside Terraform state and tracked under `POAM-2026-080`, `POAM-2026-096`, and `POAM-2026-195`)
+- **Linkerd mTLS** (`POAM-007` closed on HMAC retirement): intra-cluster mTLS across meshed pods (`de5534ac:deployment/k8s/linkerd-mtls-policy.yaml` and `de5534ac:deployment/k8s/cilium/egress-lockdown.yaml` are outside Terraform state and tracked under `POAM-2026-080`, `POAM-2026-096`, and `POAM-2026-195`)
 - **OPA circuit breaker:** Fail-DENY after 5 failures, 30s recovery — prevents governance bypass via OPA unavailability (OPA pod authentication and bundle lockdown tracked under `POAM-2026-195`)
 - **Asymmetric governance seal:** KMS HSM-backed JWT seal (`KMSGovernanceSigner`)
 - **Cloud KMS HSM-backed signing:** Asymmetric governance verdict and evidence batch signing
 - **Aho-Corasick keyword scan:** Tier-1 injection detection
-- **AgentSight eBPF daemon *(not in force — `POAM-021` reopened 2026-11-05, `POAM-2026-193`)*:** `deployment/k8s/agentsight-daemon.yaml` is outside Terraform state and refused by Binary Authorization on staging
+- **AgentSight eBPF daemon *(not in force — `POAM-021` reopened 2026-11-05, `POAM-2026-193`)*:** `de5534ac:deployment/k8s/agentsight-daemon.yaml` is outside Terraform state and refused by Binary Authorization on staging
 
 **Gaps:**
 1. **No model extraction attack testing.** AI 600-1 §2.9 flags model extraction (stealing model weights via repeated inference queries) as an AI-specific security risk. There is no test for model extraction resistance in the red team dataset.

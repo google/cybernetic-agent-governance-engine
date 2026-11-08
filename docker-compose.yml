@@ -25,7 +25,7 @@ services:
       - "/policies"
     volumes:
       # Mount ONLY the active domain's Rego bundle (single-domain-per-process
-      # isolation matching deployment/k8s/opa.yaml: finance mounts
+      # isolation matching infra/modules/opa_policy/main.tf: finance mounts
       # cage_finance/opa, healthcare mounts cage_healthcare/opa).
       - ./src/cage_${CAGE_DOMAIN:-finance}/opa:/policies:ro
     ports:

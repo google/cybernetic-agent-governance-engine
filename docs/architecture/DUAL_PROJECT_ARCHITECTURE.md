@@ -103,29 +103,38 @@ Two distinct Kubernetes secrets are provisioned by Terraform ([`app_secrets/main
 
 Source: [`app_secrets/main.tf` L42-69](../../infra/modules/app_secrets/main.tf#L42-L69) (advisor-secrets) and [`app_secrets/main.tf` L71-84](../../infra/modules/app_secrets/main.tf#L71-L84) (compliance-secrets).
 
-> **Note:** the compliance bridge does not read the application-project keys from `advisor-secrets`. Its deployment resolves `LANGFUSE_PUBLIC_KEY` / `LANGFUSE_SECRET_KEY` from a separate `langfuse-secrets` object, which the `app_secrets` Terraform module does not provision — see [`compliance-bridge.yaml` L61-73](../../deployment/k8s/compliance-bridge.yaml#L61-L73) and the GKE target's [`compliance_bridge` module](../../infra/modules/compliance_bridge/main.tf#L112-L130).
+> **Note:** the compliance bridge does not read the application-project keys from `advisor-secrets`. Its deployment resolves `LANGFUSE_PUBLIC_KEY` / `LANGFUSE_SECRET_KEY` from a separate `langfuse-secrets` object, which the `app_secrets` Terraform module does not provision — see the GKE target's [`compliance_bridge/main.tf` L143-L161](../../infra/modules/compliance_bridge/main.tf#L143-L161).
 
 ### 3.2 Compliance Bridge Pod (Dual Credential Mount)
 
-The compliance bridge K8s deployment ([`compliance-bridge.yaml`](../../deployment/k8s/compliance-bridge.yaml)) mounts both secret objects:
+The compliance bridge K8s deployment ([`infra/modules/compliance_bridge/main.tf`](../../infra/modules/compliance_bridge/main.tf)) mounts both secret objects:
 
-```yaml
+```hcl
 # Main Langfuse project (application performance metrics)
-- name: LANGFUSE_PUBLIC_KEY
-  valueFrom:
-    secretKeyRef:
-      name: langfuse-secrets      # ← Application project
-      key: public-key
+env {
+  name = "LANGFUSE_PUBLIC_KEY"
+  value_from {
+    secret_key_ref {
+      name = "langfuse-secrets" # ← Application project
+      key  = "public-key"
+    }
+  }
+}
 # ...
 # Dedicated Langfuse compliance project (audit traces isolated from app metrics)
-- name: LANGFUSE_COMPLIANCE_PUBLIC_KEY
-  valueFrom:
-    secretKeyRef:
-      name: langfuse-compliance-secrets   # ← Compliance project
-      key: public-key
+env {
+  name = "LANGFUSE_COMPLIANCE_PUBLIC_KEY"
+  value_from {
+    secret_key_ref {
+      name     = "langfuse-compliance-secrets" # ← Compliance project
+      key      = "public-key"
+      optional = true
+    }
+  }
+}
 ```
 
-Source: [`compliance-bridge.yaml` L61-85](../../deployment/k8s/compliance-bridge.yaml#L61-L85).
+Source: [`compliance_bridge/main.tf` L143-L183](../../infra/modules/compliance_bridge/main.tf#L143-L183).
 
 ### 3.3 Python Client Factories (Explicit Separation)
 
@@ -296,7 +305,7 @@ This would be a Terraform infrastructure change, not a code change. The Python c
 | [NIST_RMF_CHUNK4](../compliance/us_fed/NIST_RMF_CHUNK4_ASSESS_AUTHORIZE.md)                | Documents the silent failure gap                       |
 | [EXTENSIBILITY_ARCHITECTURE.md §2.4](EXTENSIBILITY_ARCHITECTURE.md)      | References telemetry isolation as implementation requirement |
 | [infra/ENV_INTEGRATION.md](../../infra/ENV_INTEGRATION.md)                | Credential mapping for both projects                   |
-| [compliance-bridge.yaml](../../deployment/k8s/compliance-bridge.yaml)     | K8s deployment with dual secret mounts                 |
+| [compliance_bridge/main.tf](../../infra/modules/compliance_bridge/main.tf) | Terraform K8s deployment with dual secret mounts       |
 | [app_secrets/main.tf](../../infra/modules/app_secrets/main.tf)            | Terraform provisioning of separate K8s secrets         |
 | [POAM_US_FED.md](../compliance/us_fed/POAM_US_FED.md)                                       | POAM-018 / POAM-019 — NIST AU-9, SC-7 aspect           |
 | [POAM_ISO42001.md](../compliance/universal/POAM_ISO42001.md)                                | POAM-018 / POAM-019 — ISO 42001 §A.9.4 aspect          |

@@ -99,7 +99,7 @@
 **Current State:**
 
 - `compliance/oscal/component-definition.yaml` defines 3 software components (TypeScript Gateway, OPA, NeMo+Presidio) mapped to 4 ISO 42001 controls (A.5.2, A.5.3, SC-4, A.9.2). Uses OSCAL 1.0.4 schema. No SP 800-53 control source is referenced — all `source:` fields point to the ISO 42001 URL.
-- `compliance/lula/` — **15 automated validation manifests** drive continuous compliance checks across ISO 42001, NIST SP 800-53, and CSA AARM controls. Cadence tiers enforced by `lula_scheduler.py`: Critical=6h, High=daily, Medium=weekly. CronJob defined in `deployment/k8s/lula-cron.yaml`.
+- `compliance/lula/` — **15 automated validation manifests** drive continuous compliance checks across ISO 42001, NIST SP 800-53, and CSA AARM controls. Cadence tiers enforced by `lula_scheduler.py`: Critical=6h, High=daily, Medium=weekly. CronJob defined in `de5534ac:deployment/k8s/lula-cron.yaml`.
 - `src/compliance_bridge/oscal_parser.py` provides deterministic OSCAL Assessment Result YAML parsing with strict Pydantic validation. Used by `audit_workflow.py` to ingest Lula output.
 - The Langfuse compliance project (dual-project architecture) acts as a continuous evidence store, with 5-minute TTL caching in `metrics.py`.
 
@@ -116,7 +116,7 @@
 
 1. **Create CA-5 POA&M:** Create `docs/POAM.md` with a table format: Weakness ID | Control | Description | Responsible Party | Scheduled Completion | Resources Required | Status. Populate with gaps from Chunks 2–3.
 2. **Add SP 800-53 Lula validations:** Create `compliance/lula/lula-validation-ac3.yaml` (kubernetes domain checking `system_authz.rego` is mounted), `lula-validation-au12.yaml` (api domain checking OTel collector is reachable), and `lula-validation-si2.yaml` (checking image scan results). Add these to `compliance/oscal/component-definition.yaml` with `source: "https://csrc.nist.gov/publications/detail/sp/800-53/rev-5/final"`.
-3. **Create CA-7 Continuous Monitoring Plan:** Create `docs/Continuous_Monitoring_Plan.md` specifying Lula CronJob frequency (every 6h per `deployment/k8s/lula-cron.yaml`), alert thresholds, and escalation contacts.
+3. **Create CA-7 Continuous Monitoring Plan:** Create `docs/Continuous_Monitoring_Plan.md` specifying Lula CronJob frequency (every 6h per `de5534ac:deployment/k8s/lula-cron.yaml`), alert thresholds, and escalation contacts.
 4. **Create CA-3 System Interconnection Register:** Create `docs/System_Interconnection_Agreements.md` listing all external system connections with data flow, protection measures, and authorization status.
 
 ---
@@ -148,7 +148,7 @@
 2. **Implement CM-3 change control:** Add a required PR review rule in `.github/` for changes to `config/governance_thresholds.json`, `deployment/system_authz.rego`, and `compliance/lula/` — require at least one Security Owner approval via `CODEOWNERS`.
 3. **Pin container images:** In `Dockerfile`, `Dockerfile.nemo`, `Dockerfile.vllm`, replace `FROM image:tag` with `FROM image:tag@sha256:<digest>` for all base images.
 4. **Create CM-2 baseline document:** Create `docs/Configuration_Baseline.md` listing Kubernetes version, Python version, key library versions (from `pyproject.toml`), and OPA version. Establish process to update on each deployment.
-5. **Add CM-7 port inventory:** Document all intra-cluster ports in `docs/Network_Architecture.md` derived from `deployment/k8s/network-policy.yaml` — ports 8080, 8181, 6379, 4317, 4318, 8000, 53.
+5. **Add CM-7 port inventory:** Document all intra-cluster ports in `docs/Network_Architecture.md` derived from `de5534ac:deployment/k8s/network-policy.yaml` — ports 8080, 8181, 6379, 4317, 4318, 8000, 53.
 
 ---
 
@@ -248,8 +248,8 @@
 
 **Current State:**
 
-- `deployment/k8s/network-policy.yaml` implements 9 Kubernetes NetworkPolicy objects with default-deny ingress and egress. Explicit allow rules for: gateway ingress (port 8080, from `cage.io/role=orchestrator` pods only), OPA (8181), Redis (6379), DNS (53/UDP), vLLM (8000), Langfuse OTLP (3000). **Note:** OTLP collector ports 4317/4318 removed — standalone OTel Collector deprecated 2026-05-31. This is a strong boundary protection implementation.
-- **v2.0.0 — Linkerd mTLS + Cilium L7 egress lockdown (POAM-007 closed 2026-05-17):** [`deployment/k8s/linkerd-mtls-policy.yaml`](../../../deployment/k8s/linkerd-mtls-policy.yaml) enforces SPIFFE/SVID identity for Gateway→OPA and Gateway→NeMo paths via Server + AuthorizationPolicy + MeshTLSAuthentication resources. ``deployment/k8s/cilium/egress-lockdown.yaml`` enforces FQDN allowlist for all egress traffic. This addresses SC-8(1) and IA-3 gaps identified in the prior version.
+- `de5534ac:deployment/k8s/network-policy.yaml` implements 9 Kubernetes NetworkPolicy objects with default-deny ingress and egress. Explicit allow rules for: gateway ingress (port 8080, from `cage.io/role=orchestrator` pods only), OPA (8181), Redis (6379), DNS (53/UDP), vLLM (8000), Langfuse OTLP (3000). **Note:** OTLP collector ports 4317/4318 removed — standalone OTel Collector deprecated 2026-05-31. This is a strong boundary protection implementation.
+- **v2.0.0 — Linkerd mTLS + Cilium L7 egress lockdown (POAM-007 closed 2026-05-17):** `de5534ac:deployment/k8s/linkerd-mtls-policy.yaml` enforces SPIFFE/SVID identity for Gateway→OPA and Gateway→NeMo paths via Server + AuthorizationPolicy + MeshTLSAuthentication resources. ``de5534ac:deployment/k8s/cilium/egress-lockdown.yaml`` enforces FQDN allowlist for all egress traffic. This addresses SC-8(1) and IA-3 gaps identified in the prior version.
 - `deployment/terraform/networking.tf` provisions a GCP Cloud NAT and Cloud Router for controlled egress. NAT logging is enabled (`filter = "ERRORS_ONLY"`). All subnets use Cloud NAT for outbound connectivity (no direct internet IPs on nodes).
 - `src/gateway/server/governance_middleware.py` enforces `X-CAGE-Routing-Seal` HMAC-SHA256 on the request body. Enforcement mode (enforce vs. log) is configurable via `CAGE_SEAL_ENFORCEMENT` env var. If `CAGE_ROUTING_SEAL_SECRET` is not set, the check is bypassed with a warning — this is a gap in production hardening.
 - [`src/gateway/governance/safety/cbf_engine.py`](../../../src/gateway/governance/safety/cbf_engine.py) implements the Control Barrier Function with SC-relevant safety attributes (`iso42001.control = "A.4.2"` stamped on OTel spans). (**v3.0.1:** `safety.py` removed)
@@ -257,7 +257,7 @@
 **Gaps:**
 
 1. **SC-8 / SC-8(1) (Transmission Confidentiality and Integrity / Cryptographic Protection):** No evidence of TLS enforcement between services within the cluster. NetworkPolicy restricts who can connect on which ports but does not enforce TLS. gRPC protos in `src/gateway/protos/` do not appear to use TLS credentials in the generated stubs reviewed.
-2. **SC-12 (Cryptographic Key Establishment and Management):** No key management plan. HMAC secrets (`GOVERNANCE_SALT`, `CAGE_ROUTING_SEAL_SECRET`, `OPA_AUTH_TOKEN`) are managed via Kubernetes Secrets (`deployment/k8s/oscal-artifact-secrets.yaml`). No HSM or KMS-backed key storage verified in Terraform. No key rotation automation.
+2. **SC-12 (Cryptographic Key Establishment and Management):** No key management plan. HMAC secrets (`GOVERNANCE_SALT`, `CAGE_ROUTING_SEAL_SECRET`, `OPA_AUTH_TOKEN`) are managed via Kubernetes Secrets (`de5534ac:deployment/k8s/oscal-artifact-secrets.yaml`). No HSM or KMS-backed key storage verified in Terraform. No key rotation automation.
 3. **SC-13 (Cryptographic Protection):** HMAC-SHA256 is used for integrity; OTel transport may be unencrypted within the cluster. No FIPS 140-3 validated cryptographic module reference.
 4. **SC-17 (Public Key Infrastructure Certificates):** No PKI or certificate management infrastructure. Kubernetes Ingress TLS certificate management is not defined in the reviewed Terraform or k8s manifests.
 5. **SC-23 (Session Authenticity):** No TLS session management — see SC-8. Stateless API with no session tokens.

@@ -112,7 +112,7 @@ for f in files:
 
 ### Automated validation (Kubernetes CronJob)
 
-The Lula CronJob in [`deployment/k8s/lula-cron.yaml`](../../deployment/k8s/lula-cron.yaml) runs validation every 6 hours and stores results to MinIO/GCS. Results are ingested by the compliance bridge audit workflow.
+Lula validations are invoked periodically (`src/compliance_bridge/lula_scheduler.py`; standalone Terraform CronJob tracked under `POAM-2026-195`, replacing retired `de5534ac:deployment/k8s/lula-cron.yaml`) and store OSCAL Assessment Results ingested by the compliance bridge audit workflow.
 
 ---
 

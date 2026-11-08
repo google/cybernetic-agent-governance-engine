@@ -162,7 +162,7 @@ The [`SymbolicGovernor`](../../src/gateway/governance/governor/pipeline.py) pipe
 > "Out-of-process isolation handled at the container network interface (CNI) kernel edge"
 
 **Current state:**
-CAGE enforces at the Redis database commit tier (application-layer substrate), not at the CNI/eBPF layer. The routing seal ([`routing_seal.py`](../../src/gateway/governance/routing_seal.py)) provides cryptographic enforcement at the application boundary. At the mesh layer, Linkerd `Server` / `AuthorizationPolicy` / `MeshTLSAuthentication` resources ([`linkerd-mtls-policy.yaml`](../../deployment/k8s/linkerd-mtls-policy.yaml)) already restrict which workload identities can reach the gateway — this enforces *caller identity* before packets reach the container, but not the governance seal requirement.
+CAGE enforces at the Redis database commit tier (application-layer substrate), not at the CNI/eBPF layer. The routing seal ([`routing_seal.py`](../../src/gateway/governance/routing_seal.py)) provides cryptographic enforcement at the application boundary. At the mesh layer, Linkerd `Server` / `AuthorizationPolicy` / `MeshTLSAuthentication` resources ([`policy.yaml`](../../infra/modules/gateway/mesh-policy/templates/policy.yaml)) already restrict which workload identities can reach the gateway — this enforces *caller identity* before packets reach the container, but not the governance seal requirement.
 
 **What is missing:**
 1. A **container network policy** (e.g., Kubernetes NetworkPolicy, Cilium NetworkPolicy) that enforces that only traffic bearing a valid routing seal can reach the governed actuator endpoints.
@@ -224,8 +224,8 @@ The following work items are ordered by strategic priority. Items marked **[BLOC
 
 | Work Item | Priority | Owner | Files |
 |---|---|---|---|
-| Container Network Policy for seal enforcement | LOW | TBD | `deployment/k8s/network-policy-seal.yaml` (new) |
-| Service Mesh Authorization Policy (Istio / Linkerd / Cilium) | LOW | TBD | `deployment/k8s/authz-policy-seal.yaml` (new) |
+| Container Network Policy for seal enforcement | LOW | TBD | Extend [`infra/targets/gcp-gke/network_policy.tf`](../../infra/targets/gcp-gke/network_policy.tf) |
+| Service Mesh Authorization Policy (Istio / Linkerd / Cilium) | LOW | TBD | Extend [`infra/modules/gateway/mesh-policy/templates/policy.yaml`](../../infra/modules/gateway/mesh-policy/templates/policy.yaml) |
 | Positioning material correction | LOW | TBD | Update `docs/architecture/` to accurately reflect enforcement layer |
 
 ---

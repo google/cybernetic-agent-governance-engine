@@ -27,8 +27,8 @@
 # References:
 #   - src/compliance_bridge/notifier.py — Incident notification dispatcher
 #   - src/compliance_bridge/audit_workflow.py — Compliance audit + alert pipeline
-#   - deployment/k8s/compliance-bridge.yaml — compliance-bridge Deployment manifest
-#   - docs/ROLES_AND_RESPONSIBILITIES.md — IR-6 ISSO/ISSM responsibilities
+#   - infra/modules/compliance_bridge/main.tf — compliance-bridge Deployment module
+#   - docs/compliance/ROLES_AND_RESPONSIBILITIES.md — IR-6 ISSO/ISSM responsibilities
 #
 # Namespace: governance-stack (confirmed from live cluster deployment snapshot)
 

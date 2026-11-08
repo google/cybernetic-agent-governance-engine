@@ -214,29 +214,29 @@ In production, the GFA routes to dual vLLM Kubernetes Services:
 | `vllm-reasoning` | `app=vllm-reasoning` | 8000 | `DeepSeek-R1-Distill-Llama-8B` |
 | `vllm-inference` | `app=vllm-inference` | 8000 | `Meta-Llama-3.1-8B-Instruct` |
 
-The GFA Deployment manifest ([`deployment/k8s/financial-advisor.yaml`](../../../deployment/k8s/financial-advisor.yaml)) configures:
+The GFA Terraform module ([`infra/modules/governed_advisor/main.tf`](../../../infra/modules/governed_advisor/main.tf)) configures:
 
 ```yaml
 env:
   - name: VLLM_REASONING_API_BASE
     value: "http://vllm-reasoning:8000/v1"
   - name: VLLM_FAST_API_BASE
-    value: "http://vllm-inference:8000/v1"
+    value: "http://vllm-service:8000/v1"
   - name: GATEWAY_API_BASE
     value: "http://cage-gateway:8080"
 ```
 
-### 5.3 Sample Kubernetes Overlay
+### 5.3 Kubernetes Resources (Terraform)
 
 The GFA requires the following Kubernetes resources:
 
-| Resource | Manifest | Purpose |
+| Resource | Module / File | Purpose |
 |---|---|---|
-| **Deployment** | `deployment/k8s/financial-advisor.yaml` | GFA FastAPI pods (1 replica) |
+| **Deployment** | [`infra/modules/governed_advisor/main.tf`](../../../infra/modules/governed_advisor/main.tf) | GFA FastAPI pods |
 | **Service** | Same file | ClusterIP on port 80 |
-| **Secrets** | `advisor-secrets` | `CAGE_API_KEY`, `LANGFUSE_PUBLIC_KEY`, `LANGFUSE_SECRET_KEY` |
+| **Secrets** | `advisor-secrets` ([`infra/modules/app_secrets/main.tf`](../../../infra/modules/app_secrets/main.tf)) | `CAGE_API_KEY`, `LANGFUSE_PUBLIC_KEY`, `LANGFUSE_SECRET_KEY` |
 | **ConfigMap** | `governance-thresholds` | Mounted at `config/governance_thresholds.json` |
-| **NetworkPolicy** | `deployment/k8s/network-policy.yaml` | Ingress from `ingress-nginx` only |
+| **NetworkPolicy** | [`infra/targets/gcp-gke/network_policy.tf`](../../../infra/targets/gcp-gke/network_policy.tf) | Ingress/egress segmentation |
 
 ### 5.4 Dependency Graph
 

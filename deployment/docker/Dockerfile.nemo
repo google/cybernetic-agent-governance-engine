@@ -91,7 +91,7 @@ WORKDIR /app
 
 # Runtime interpreter plus the C++ runtime that native wheels link against.
 # `apk upgrade` picks up fixes published since the base digest was cut.
-# Non-root user matching runAsUser: 1000 in deployment/k8s/nemo.yaml.
+# Non-root user matching run_as_user = 1000 in infra/modules/nemo_guardrails/main.tf.
 # Application files stay root-owned, so the process cannot modify its own code.
 RUN apk upgrade --no-cache \
     && apk add --no-cache ca-certificates-bundle python-3.12 libstdc++ libgcc tzdata \
