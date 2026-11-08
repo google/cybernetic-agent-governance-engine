@@ -1610,3 +1610,50 @@ spec:
         check_k8s_terraform_parity.verify_k8s_terraform_parity(
             synth_repo, enforce_floors=False
         )
+
+
+def test_setup_git_hooks_precommit_matches_ci_deterministic_gates() -> None:
+    """scripts/setup_git_hooks.sh must run ruff, mypy, and every deterministic gate script in ci.yml."""
+    ci_yaml = yaml.safe_load((WORKFLOWS_DIR / "ci.yml").read_text(encoding="utf-8"))
+    hooks_installer = (REPO_ROOT / "scripts" / "setup_git_hooks.sh").read_text(
+        encoding="utf-8"
+    )
+
+    deterministic_jobs = (
+        "lint",
+        "agent-state-schema-check",
+        "stpa-freshness-check",
+        "lula-ai600-validation",
+    )
+    script_re = re.compile(r"\bscripts/[A-Za-z0-9_]+\.py\b")
+    ci_scripts: set[str] = set()
+    for job_name in deterministic_jobs:
+        job = ci_yaml["jobs"].get(job_name)
+        assert isinstance(job, dict), f"Missing job {job_name!r} in ci.yml"
+        for step in job.get("steps", []) or []:
+            if isinstance(step, dict) and isinstance(step.get("run"), str):
+                ci_scripts.update(script_re.findall(step["run"]))
+
+    assert len(ci_scripts) >= 21, (
+        f"Expected at least 21 deterministic scripts in ci.yml, found {len(ci_scripts)}: {sorted(ci_scripts)}"
+    )
+    missing_scripts = sorted(s for s in ci_scripts if s not in hooks_installer)
+    assert not missing_scripts, (
+        "scripts/setup_git_hooks.sh pre-commit hook is missing deterministic ci.yml gate script(s): "
+        f"{missing_scripts}"
+    )
+
+    for required_token in (
+        '"${repo_ruff}" check .',
+        '"${repo_ruff}" format --check .',
+        '"${repo_mypy}" src/',
+        "--verify-rendered docs/compliance/OSCAL_EVIDENCE_CLAIM_REGISTER.md",
+        "generate_agent_state_schema.py --check",
+        "Apache License",
+        "selection_markers",
+        "nemo-rails-configmap.yaml",
+        "lula-validation-",
+    ):
+        assert required_token in hooks_installer, (
+            f"scripts/setup_git_hooks.sh missing required pre-commit token: {required_token!r}"
+        )
