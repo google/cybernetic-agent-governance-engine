@@ -118,7 +118,6 @@ _install_stubs()
 # Patch the lifespan-related background tasks before importing main so the
 # module-level ``app`` object is created without actually starting threads.
 with (
-    patch("src.compliance_bridge.lula_scheduler.run_lula_scheduler", new=AsyncMock()),
     patch("src.compliance_bridge.sla_monitor.run_sla_monitor", new=AsyncMock()),
 ):
     # These patches prevent import-time side-effects in submodules that
@@ -299,20 +298,32 @@ class TestAuditIngestAsyncSchema:
     _MINIMAL_OSCAL = "component-definition:\n  uuid: test-uuid\n"
 
     def setup_method(self) -> None:
-        """Bypass the internal-token auth dependency for all tests in this class."""
-        from src.compliance_bridge.auth import require_internal_token  # noqa: PLC0415
+        """Override the mesh producer auth dependency to isolate response schema checks."""
+        from src.compliance_bridge.auth import (  # noqa: PLC0415
+            ProducerPrincipal,
+            require_audit_ingest_producer,
+        )
 
-        # Override the dependency to return a dummy token without validation.
-        async def _no_auth() -> str:
-            return "test-token"
+        async def _stub_producer() -> ProducerPrincipal:
+            return ProducerPrincipal(
+                linkerd_id="lula-auditor.governance-stack.serviceaccount.identity.linkerd.cluster.local",
+                spiffe_id="spiffe://cluster.local/ns/governance-stack/sa/lula-auditor",
+                service_account="lula-auditor",
+                namespace="governance-stack",
+                trust_domain="cluster.local",
+                channel_provenance="LINKERD_MTLS",
+                auth_principal_hash="0" * 64,
+            )
 
-        app.dependency_overrides[require_internal_token] = _no_auth
+        app.dependency_overrides[require_audit_ingest_producer] = _stub_producer
 
     def teardown_method(self) -> None:
         """Restore original dependency overrides after each test."""
-        from src.compliance_bridge.auth import require_internal_token  # noqa: PLC0415
+        from src.compliance_bridge.auth import (  # noqa: PLC0415
+            require_audit_ingest_producer,
+        )
 
-        app.dependency_overrides.pop(require_internal_token, None)
+        app.dependency_overrides.pop(require_audit_ingest_producer, None)
 
     def test_background_ingest_returns_200(self, client: TestClient) -> None:
         response = client.post(

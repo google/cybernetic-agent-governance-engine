@@ -46,7 +46,15 @@ from contextlib import asynccontextmanager
 from datetime import datetime, timezone
 from typing import TYPE_CHECKING, Any, Literal
 
-from fastapi import BackgroundTasks, Depends, FastAPI, HTTPException, Query, Request
+from fastapi import (
+    BackgroundTasks,
+    Depends,
+    FastAPI,
+    Header,
+    HTTPException,
+    Query,
+    Request,
+)
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_validator
@@ -76,15 +84,27 @@ def _ensure_langfuse_imported() -> None:
 from .audit_workflow import run_audit_workflow
 from .auth import (
     OperatorPrincipal,
+    ProducerPrincipal,
     ensure_human_operator_principal,
+    require_audit_ingest_producer,
     require_human_operator_identity,
+    require_infra_event_producer,
     require_internal_token,
     require_operator_identity,
     validate_operator_identity_posture,
 )
 from .cer_index import CERIndex
 from .cmek_guard import validate_cmek_configuration
-from .lula_scheduler import run_lula_scheduler
+from .infra_custody import (
+    DEFAULT_INFRA_STREAM_KEY,
+    IDEMPOTENCY_KEY_PATTERN,
+    INFRA_INLINE_FLUSH_ENV,
+    INFRA_STREAM_KEY_ENV,
+    InfraCustodyError,
+    InfraEvidenceChain,
+    InfraIdempotencyConflictError,
+    is_inline_custody_flush_enabled,
+)
 from .metrics import get_compliance_metrics
 from .oscal_exporter import build_oscal_assessment_results, findings_from_metrics_dict
 from .sla_monitor import run_sla_monitor
@@ -185,21 +205,63 @@ async def lifespan(app: FastAPI):  # type: ignore[no-untyped-def]
     # store, active KMS signer); otherwise startup fails.
     # ------------------------------------------------------------------
     from src.gateway.governance.env_posture import is_enforcing
+    from src.gateway.server.workload_identity import (
+        ALLOW_DEV_LOOPBACK_IDENTITY_ENV,
+        is_dev_loopback_identity_allowed,
+    )
 
     from .evidence_custodian import EvidenceCustodian, EvidenceCustodyConfigError
     from .evidence_verifier import CustodyVerifier
 
+    if os.environ.get(ALLOW_DEV_LOOPBACK_IDENTITY_ENV, "").strip().lower() in {
+        "1",
+        "true",
+        "yes",
+        "on",
+    } and not is_dev_loopback_identity_allowed(os.environ):
+        raise RuntimeError(
+            f"{ALLOW_DEV_LOOPBACK_IDENTITY_ENV}=true is forbidden when is_enforcing() "
+            "is True or CAGE_ENV is not 'dev'/'development' (POAM-2026-167 / LT-1)."
+        )
+
     _custodian: EvidenceCustodian | None = None
     _custody_task: asyncio.Task | None = None
+    _infra_custodian: EvidenceCustodian | None = None
+    _infra_custody_task: asyncio.Task | None = None
+    _infra_chain: InfraEvidenceChain | None = None
     _verifier: CustodyVerifier | None = None
     _verify_task: asyncio.Task | None = None
     app.state.evidence_verifier = None
+    if not hasattr(app.state, "infra_evidence_chain"):
+        app.state.infra_evidence_chain = None
+    if not hasattr(app.state, "infra_evidence_custodian"):
+        app.state.infra_evidence_custodian = None
+
     if os.environ.get("EVIDENCE_STREAM_ENABLED", "false").lower() == "true":
         try:
             _custodian = EvidenceCustodian.from_env()
+            _infra_stream_key = (
+                os.environ.get(INFRA_STREAM_KEY_ENV, DEFAULT_INFRA_STREAM_KEY).strip()
+                or DEFAULT_INFRA_STREAM_KEY
+            )
+            _infra_custodian = EvidenceCustodian.from_env(stream_key=_infra_stream_key)
+            if getattr(app.state, "infra_evidence_chain", None) is None and (
+                os.environ.get("EVIDENCE_STREAM_REDIS_URL")
+                or os.environ.get("REDIS_URL")
+            ):
+                try:
+                    _infra_chain = InfraEvidenceChain.from_env()
+                except InfraCustodyError as infra_err:
+                    raise EvidenceCustodyConfigError(str(infra_err)) from infra_err
             _verifier = CustodyVerifier.from_env()
         except EvidenceCustodyConfigError as cfg_err:
             if is_enforcing():
+                if _infra_chain is not None:
+                    await _infra_chain.aclose()
+                if _infra_custodian is not None and _infra_custodian is not _custodian:
+                    await _infra_custodian.aclose()
+                if _custodian is not None:
+                    await _custodian.aclose()
                 logger.critical("🚨 STARTUP FAILURE: evidence custody: %s", cfg_err)
                 raise RuntimeError(str(cfg_err)) from cfg_err
             logger.warning(
@@ -220,6 +282,18 @@ async def lifespan(app: FastAPI):  # type: ignore[no-untyped-def]
             _custodian.run_forever(), name="evidence-custodian"
         )
         logger.info("✅ Evidence custodian started")
+    if _infra_custodian is not None:
+        app.state.infra_evidence_custodian = _infra_custodian
+        if _infra_custodian is not _custodian:
+            _infra_custody_task = asyncio.create_task(
+                _infra_custodian.run_forever(), name="infra-evidence-custodian"
+            )
+            logger.info("✅ INFRA evidence custodian started")
+    if _infra_chain is not None:
+        app.state.infra_evidence_chain = _infra_chain
+        logger.info(
+            "✅ INFRA evidence chain ready (stream=%s)", _infra_chain.stream_key
+        )
     if _verifier is not None:
         app.state.evidence_verifier = _verifier
         _verify_task = asyncio.create_task(
@@ -271,7 +345,6 @@ async def lifespan(app: FastAPI):  # type: ignore[no-untyped-def]
 
     # Start background tasks
     _sla_task = asyncio.create_task(run_sla_monitor(), name="sla-monitor")
-    _lula_task = asyncio.create_task(run_lula_scheduler(), name="lula-scheduler")
 
     logger.info(
         "✅ compliance-bridge ready on port %s. Supported controls: %s",
@@ -281,7 +354,12 @@ async def lifespan(app: FastAPI):  # type: ignore[no-untyped-def]
     try:
         yield
     finally:
-        for _task in (_sla_task, _lula_task, _custody_task, _verify_task):
+        for _task in (
+            _sla_task,
+            _custody_task,
+            _infra_custody_task,
+            _verify_task,
+        ):
             if _task is None:
                 continue
             _task.cancel()
@@ -290,6 +368,13 @@ async def lifespan(app: FastAPI):  # type: ignore[no-untyped-def]
             except asyncio.CancelledError:
                 pass
         app.state.evidence_verifier = None
+        if _infra_chain is not None:
+            app.state.infra_evidence_chain = None
+            await _infra_chain.aclose()
+        if _infra_custodian is not None:
+            app.state.infra_evidence_custodian = None
+            if _infra_custodian is not _custodian:
+                await _infra_custodian.aclose()
         if _custodian is not None:
             await _custodian.aclose()
         logger.info("🛑 compliance-bridge shutting down.")
@@ -686,24 +771,59 @@ async def get_metrics_summary(
 # ---------------------------------------------------------------------------
 
 
-class InfraEvent(BaseModel):
-    """Structured infrastructure event from AgentSight or Cilium monitor exporter.
+_INFRA_CONTROL_CHARS = re.compile(r"[\x00-\x1f\x7f]")
 
-    Fields must be pre-normalized by the emitting agent — no raw kernel structs.
-    event_type must be one of the registered _JURISDICTIONAL_CONTROL_MAP keys.
+
+class InfraEvent(BaseModel):
+    """Structured infrastructure event from an authorized mesh producer.
+
+    Workload identity (``source``, ``namespace``, and transport-attested
+    ``pod_name``) is derived from the verified Linkerd producer SVID rather
+    than trusted from request JSON (``F-85`` / ``R-3``). Optional ``source``,
+    ``namespace``, and ``pod_name`` fields, if supplied, must match the
+    verified principal (and ``pod_name`` requires a transport pod SVID) or the
+    request is rejected with HTTP 403.
     """
+
+    model_config = ConfigDict(extra="forbid")
 
     event_type: Literal[
         "agentsight_syscall",
         "agentsight_fim",
         "cilium_l7_flow",
     ]
-    source: str = Field(..., max_length=128)
-    pod_name: str = Field(..., max_length=128)
-    namespace: str = Field(..., max_length=64)
-    timestamp_utc: str = Field(..., max_length=64)  # ISO 8601
-    summary: str = Field(..., max_length=512)
-    control_hint: str = Field(..., max_length=32)
+    timestamp_utc: str = Field(
+        ..., min_length=1, max_length=64
+    )  # Unverified producer claim
+    summary: str = Field(..., min_length=1, max_length=512)
+    control_hint: str = Field(..., min_length=1, max_length=32)
+    source: str | None = Field(default=None, min_length=1, max_length=128)
+    pod_name: str | None = Field(default=None, min_length=1, max_length=128)
+    namespace: str | None = Field(default=None, min_length=1, max_length=64)
+    idempotency_key: str | None = Field(default=None, min_length=1, max_length=128)
+
+    @field_validator("timestamp_utc")
+    @classmethod
+    def _validate_timestamp_utc(cls, value: str) -> str:
+        if _INFRA_CONTROL_CHARS.search(value):
+            raise ValueError("timestamp_utc must not contain ASCII control characters")
+        normalized = value[:-1] + "+00:00" if value.endswith("Z") else value
+        try:
+            parsed = datetime.fromisoformat(normalized)
+        except ValueError as exc:
+            raise ValueError(
+                "timestamp_utc must be a valid ISO-8601 timestamp"
+            ) from exc
+        if parsed.tzinfo is None:
+            raise ValueError("timestamp_utc must include an explicit timezone offset")
+        return value
+
+    @field_validator("summary", "control_hint", "source", "pod_name", "namespace")
+    @classmethod
+    def _reject_control_characters(cls, value: str | None) -> str | None:
+        if value is not None and _INFRA_CONTROL_CHARS.search(value):
+            raise ValueError("field must not contain ASCII control characters")
+        return value
 
 
 _CREDENTIAL_PATTERN = re.compile(
@@ -711,20 +831,110 @@ _CREDENTIAL_PATTERN = re.compile(
 )
 
 
+def _resolve_inline_custody_flusher(app_state: Any, *, flush_inline: bool) -> Any:
+    """Resolve inline WORM custody flusher, failing closed with HTTP 503 when required."""
+    custom_flusher = getattr(app_state, "infra_custody_flusher", None)
+    if callable(custom_flusher):
+        return custom_flusher
+    if not flush_inline:
+        return None
+    inline_custodian = getattr(app_state, "infra_evidence_custodian", None)
+    if inline_custodian is None:
+        raise HTTPException(
+            status_code=503,
+            detail={
+                "error": "INFRA_CUSTODY_UNAVAILABLE",
+                "message": (
+                    f"{INFRA_INLINE_FLUSH_ENV}=true (default under enforcing "
+                    "postures) requires an active INFRA EvidenceCustodian"
+                ),
+            },
+        )
+
+    async def _flush_worm() -> bool:
+        outcome = await inline_custodian.flush_once()
+        return outcome.entries >= 0
+
+    return _flush_worm
+
+
 @app.post(
     "/v1/infra/events",
     tags=["telemetry"],
     summary="Ingest a structured infrastructure telemetry event",
-    dependencies=[Depends(require_internal_token)],
 )
-async def ingest_infra_event(event: InfraEvent) -> dict:
-    """Ingest a structured infrastructure telemetry event (INFRA class).
+async def ingest_infra_event(
+    request: Request,
+    event: InfraEvent,
+    producer: ProducerPrincipal = Depends(require_infra_event_producer),
+    idempotency_key_header: str | None = Header(default=None, alias="Idempotency-Key"),
+) -> dict[str, Any]:
+    """Seal and durably persist a mesh-authenticated ``INFRA`` evidence event.
 
-    Events are validated against the regional control map, scrubbed of secret
-    patterns, and emitted as structured INFRA telemetry logs. They are NOT
-    appended to the OSCAL ContextAccumulator hash chain — the hash chain
-    remains the AI governance evidence chain exclusively.
+    Authenticates the emitting daemon via verified Linkerd workload identity,
+    derives ``source``/``namespace``/``pod_name`` from the mesh SVID (refusing
+    caller-asserted mismatches or unverified pod claims with HTTP 403), stamps
+    server-side ``received_at_utc`` while retaining ``timestamp_utc`` strictly
+    as ``producer_timestamp_utc``, computes a reproducible ``cage-audit/3.0``
+    ``record_hash`` over canonical RFC 8785 JCS JSON covering all payload fields
+    including ``summary``, appends to the durable ``INFRA`` hash-chain stream
+    covered by ``compliance-evidence`` batch attestations, flushes inline to
+    WORM under enforcing postures, enforces per-producer ``Idempotency-Key``
+    deduplication, and returns HTTP 503 if Redis or WORM custody fails
+    (``F-85`` / ``R-3``).
     """
+    if event.source is not None and event.source != producer.service_account:
+        raise HTTPException(
+            status_code=403,
+            detail={
+                "error": "PRODUCER_IDENTITY_MISMATCH",
+                "message": (
+                    "Caller-supplied 'source' does not match verified mesh "
+                    f"ServiceAccount '{producer.service_account}'"
+                ),
+            },
+        )
+    if event.namespace is not None and event.namespace != producer.namespace:
+        raise HTTPException(
+            status_code=403,
+            detail={
+                "error": "PRODUCER_IDENTITY_MISMATCH",
+                "message": (
+                    "Caller-supplied 'namespace' does not match verified mesh "
+                    f"namespace '{producer.namespace}'"
+                ),
+            },
+        )
+    if event.pod_name is not None:
+        if producer.verified_pod_name is None:
+            raise HTTPException(
+                status_code=403,
+                detail={
+                    "error": "UNVERIFIED_POD_CLAIM",
+                    "message": (
+                        "Caller-supplied 'pod_name' refused: ServiceAccount-scoped "
+                        "Linkerd mTLS does not attest pod identity without a "
+                        "transport pod SVID"
+                    ),
+                },
+            )
+        if event.pod_name != producer.verified_pod_name:
+            raise HTTPException(
+                status_code=403,
+                detail={
+                    "error": "PRODUCER_IDENTITY_MISMATCH",
+                    "message": (
+                        "Caller-supplied 'pod_name' does not match transport-verified "
+                        "pod SVID"
+                    ),
+                },
+            )
+
+    derived_source = producer.service_account
+    derived_namespace = producer.namespace
+    derived_pod_name = producer.verified_pod_name
+    pod_name_verified = producer.verified_pod_name is not None
+
     active_region = os.environ.get("CAGE_DEPLOYMENT_REGION", "US_FED").strip().upper()
     iso_map = get_iso_control_map(active_region)
 
@@ -740,49 +950,108 @@ async def ingest_infra_event(event: InfraEvent) -> dict:
             },
         )
 
-    # Scrub potential credential leaks from summary
+    header_key = (
+        idempotency_key_header.strip() if idempotency_key_header is not None else None
+    )
+    body_key = (
+        event.idempotency_key.strip() if event.idempotency_key is not None else None
+    )
+    if header_key is not None and body_key is not None and header_key != body_key:
+        raise HTTPException(
+            status_code=400,
+            detail={
+                "error": "IDEMPOTENCY_KEY_MISMATCH",
+                "message": (
+                    "Idempotency-Key header and body idempotency_key must match "
+                    "when both are supplied"
+                ),
+            },
+        )
+    effective_idem_key = header_key if header_key is not None else body_key
+    if effective_idem_key is not None and not IDEMPOTENCY_KEY_PATTERN.fullmatch(
+        effective_idem_key
+    ):
+        raise HTTPException(
+            status_code=400,
+            detail={
+                "error": "INVALID_IDEMPOTENCY_KEY",
+                "message": "Idempotency-Key must match ^[A-Za-z0-9._:-]{1,128}$",
+            },
+        )
+
     scrubbed_summary = _CREDENTIAL_PATTERN.sub("[REDACTED]", event.summary)[:512]
-
-    # Map control_id
     control_id = iso_map[event.event_type]
+    received_at_utc = (
+        datetime.now(tz=timezone.utc)
+        .isoformat(timespec="milliseconds")
+        .replace("+00:00", "Z")
+    )
 
-    # Deterministic event hash
-    event_id = hashlib.sha256(
-        f"{event.event_type}:{event.pod_name}:{event.timestamp_utc}:{time.monotonic()}".encode()
-    ).hexdigest()
+    chain: InfraEvidenceChain | None = getattr(
+        request.app.state, "infra_evidence_chain", None
+    )
+    if chain is None:
+        logger.error(
+            "[infra/events] Refusing INFRA event: durable INFRA evidence chain is unconfigured"
+        )
+        raise HTTPException(
+            status_code=503,
+            detail={
+                "error": "INFRA_CUSTODY_UNAVAILABLE",
+                "message": "Durable INFRA evidence custody stream is not available",
+            },
+        )
 
-    payload_dict = {
-        "event_type": event.event_type,
-        "source": event.source,
-        "pod_name": event.pod_name,
-        "namespace": event.namespace,
-        "summary": scrubbed_summary,
-        "control_hint": event.control_hint,
-    }
+    flush_inline = is_inline_custody_flush_enabled()
+    custody_flusher = _resolve_inline_custody_flusher(
+        request.app.state, flush_inline=flush_inline
+    )
 
-    record = {
-        "schema": "cage-audit/3.0",
-        "chain_id": "00000000-0000-0000-0000-000000000000",
-        "sequence": 0,
-        "timestamp_utc": event.timestamp_utc,
-        "event_type": event.event_type,
-        "control_id": control_id,
-        "trace_id": f"infra-{event.pod_name}-{event_id[:16]}",
-        "evidence_class": "INFRA",
-        "payload_json": json.dumps(payload_dict),
-        "record_hash": event_id,
-    }
+    try:
+        receipt = await chain.append_durable(
+            event_type=event.event_type,
+            control_id=control_id,
+            control_hint=event.control_hint,
+            scrubbed_summary=scrubbed_summary,
+            producer_timestamp_utc=event.timestamp_utc,
+            received_at_utc=received_at_utc,
+            producer_id=producer.linkerd_id,
+            producer_svid=producer.spiffe_id,
+            source=derived_source,
+            namespace=derived_namespace,
+            pod_name=derived_pod_name,
+            pod_name_verified=pod_name_verified,
+            idempotency_key=effective_idem_key,
+            custody_flusher=custody_flusher,
+        )
+    except InfraIdempotencyConflictError as exc:
+        raise HTTPException(
+            status_code=409,
+            detail={
+                "error": "IDEMPOTENCY_KEY_CONFLICT",
+                "message": str(exc),
+            },
+        ) from exc
+    except InfraCustodyError as exc:
+        logger.error("[infra/events] Durable INFRA persistence failed: %s", exc)
+        raise HTTPException(
+            status_code=503,
+            detail={
+                "error": "INFRA_CUSTODY_UNAVAILABLE",
+                "message": str(exc),
+            },
+        ) from exc
+    except Exception as exc:
+        logger.error("[infra/events] Unexpected INFRA persistence failure: %s", exc)
+        raise HTTPException(
+            status_code=503,
+            detail={
+                "error": "INFRA_CUSTODY_UNAVAILABLE",
+                "message": "Unexpected durable INFRA persistence failure",
+            },
+        ) from exc
 
-    sanitized_record_json = json.dumps(record).replace("\n", "").replace("\r", "")
-    logger.info("[infra/events] Ingested INFRA event: %s", sanitized_record_json)
-
-    return {
-        "status": "INGESTED",
-        "event_id": event_id,
-        "event_type": event.event_type,
-        "control_id": control_id,
-        "evidence_class": "INFRA",
-    }
+    return receipt.to_response()
 
 
 # ---------------------------------------------------------------------------
@@ -1189,14 +1458,28 @@ class AuditIngestRequest(BaseModel):
     audit_id: str | None = None
 
 
-async def _run_audit_workflow_background(oscal_yaml: str, audit_id: str) -> None:
+async def _run_audit_workflow_background(
+    oscal_yaml: str,
+    audit_id: str,
+    producer: ProducerPrincipal | None = None,
+) -> None:
     """Wrapper to run the audit workflow asynchronously in a background task."""
+    prov = (
+        {
+            "producer_svid": producer.spiffe_id,
+            "producer_source": producer.service_account,
+            "producer_namespace": producer.namespace,
+        }
+        if producer is not None
+        else {}
+    )
     try:
         result = await run_audit_workflow(oscal_yaml, audit_id)
         payload = {
             "phase": "done",
             "status": "ok",
             "audit_id": audit_id,
+            **prov,
             "findings_count": result["findings_count"],
             "artifact_key": result["artifact_key"],
             "ingested": result["ingested"],
@@ -1216,6 +1499,8 @@ async def _run_audit_workflow_background(oscal_yaml: str, audit_id: str) -> None
         }
         _set_audit_status(audit_id, payload)
     except ValueError as exc:
+        from src.gateway.governance.env_posture import is_enforcing
+
         logger.error("[compliance-bridge] Async Audit ingest parse error: %s", exc)
         _set_audit_status(
             audit_id,
@@ -1226,7 +1511,11 @@ async def _run_audit_workflow_background(oscal_yaml: str, audit_id: str) -> None
                 "message": str(exc),
             },
         )
+        if is_enforcing():
+            raise
     except Exception as exc:
+        from src.gateway.governance.env_posture import is_enforcing
+
         logger.error("[compliance-bridge] Async Audit ingest failed: %s", exc)
         _set_audit_status(
             audit_id,
@@ -1237,16 +1526,19 @@ async def _run_audit_workflow_background(oscal_yaml: str, audit_id: str) -> None
                 "message": str(exc),
             },
         )
+        if is_enforcing():
+            raise
 
 
 @app.post("/v1/audit/ingest", tags=["compliance"], summary="Ingest OSCAL audit result")
 async def audit_ingest(
+    request: Request,
     body: AuditIngestRequest,
     background_tasks: BackgroundTasks,
     background: bool = Query(
         default=False, description="Run ingestion in the background asynchronously"
     ),
-    _auth: str = Depends(require_internal_token),
+    producer: ProducerPrincipal = Depends(require_audit_ingest_producer),
 ) -> JSONResponse:
     if not body.oscal_yaml or not body.oscal_yaml.strip():
         raise HTTPException(
@@ -1264,19 +1556,109 @@ async def audit_ingest(
         else f"auto-{int(time.time() * 1000)}"
     )
 
+    flush_inline = is_inline_custody_flush_enabled()
+    if flush_inline:
+        from .oscal_parser import parse_oscal_yaml
+
+        try:
+            await asyncio.to_thread(parse_oscal_yaml, body.oscal_yaml)
+        except ValueError as exc:
+            logger.error("[compliance-bridge] Audit ingest parse error: %s", exc)
+            raise HTTPException(
+                status_code=422,
+                detail={"error": "OSCAL_PARSE_ERROR", "message": str(exc)},
+            ) from exc
+
+        chain: InfraEvidenceChain | None = getattr(
+            request.app.state, "infra_evidence_chain", None
+        )
+        if chain is None:
+            logger.error(
+                "[audit/ingest] Refusing audit ingest: durable INFRA evidence chain is unconfigured"
+            )
+            raise HTTPException(
+                status_code=503,
+                detail={
+                    "error": "INFRA_CUSTODY_UNAVAILABLE",
+                    "message": "Durable INFRA evidence custody stream is not available",
+                },
+            )
+        custody_flusher = _resolve_inline_custody_flusher(
+            request.app.state, flush_inline=True
+        )
+        active_region = (
+            os.environ.get("CAGE_DEPLOYMENT_REGION", "US_FED").strip().upper()
+        )
+        iso_map = get_iso_control_map(active_region)
+        audit_control_id = iso_map.get("context_accumulate", "CA-7")
+        yaml_sha256 = hashlib.sha256(body.oscal_yaml.encode()).hexdigest()
+        received_at_utc = (
+            datetime.now(tz=timezone.utc)
+            .isoformat(timespec="milliseconds")
+            .replace("+00:00", "Z")
+        )
+        try:
+            await chain.append_durable(
+                event_type="context_accumulate",
+                control_id=audit_control_id,
+                control_hint=audit_control_id,
+                scrubbed_summary=f"audit_ingest audit_id={audit_id[:128]} sha256={yaml_sha256}",
+                producer_timestamp_utc=received_at_utc,
+                received_at_utc=received_at_utc,
+                producer_id=producer.linkerd_id,
+                producer_svid=producer.spiffe_id,
+                source=producer.service_account,
+                namespace=producer.namespace,
+                pod_name=producer.verified_pod_name,
+                pod_name_verified=producer.verified_pod_name is not None,
+                custody_flusher=custody_flusher,
+            )
+        except InfraCustodyError as exc:
+            logger.error("[audit/ingest] Durable custody flush failed: %s", exc)
+            raise HTTPException(
+                status_code=503,
+                detail={
+                    "error": "INFRA_CUSTODY_UNAVAILABLE",
+                    "message": str(exc),
+                },
+            ) from exc
+        except Exception as exc:
+            logger.error(
+                "[audit/ingest] Unexpected custody persistence failure: %s", exc
+            )
+            raise HTTPException(
+                status_code=503,
+                detail={
+                    "error": "INFRA_CUSTODY_UNAVAILABLE",
+                    "message": "Unexpected durable custody persistence failure",
+                },
+            ) from exc
+
     # Register the audit as "running" immediately so GET /v1/audit/status
     # returns a meaningful state even before the pipeline completes.
-    _set_audit_status(audit_id, {"phase": "running", "audit_id": audit_id})
+    _set_audit_status(
+        audit_id,
+        {
+            "phase": "running",
+            "audit_id": audit_id,
+            "producer_svid": producer.spiffe_id,
+            "producer_source": producer.service_account,
+            "producer_namespace": producer.namespace,
+        },
+    )
 
     if background:
         background_tasks.add_task(
-            _run_audit_workflow_background, body.oscal_yaml, audit_id
+            _run_audit_workflow_background, body.oscal_yaml, audit_id, producer
         )
         return JSONResponse(
             content={
                 "phase": "running",
                 "status": "ok",
                 "audit_id": audit_id,
+                "producer_svid": producer.spiffe_id,
+                "producer_source": producer.service_account,
+                "producer_namespace": producer.namespace,
                 "findings_count": 0,
                 "alerted": False,
                 "remediation_sent": False,
@@ -1291,6 +1673,9 @@ async def audit_ingest(
             "phase": "done",
             "status": "ok",
             "audit_id": audit_id,
+            "producer_svid": producer.spiffe_id,
+            "producer_source": producer.service_account,
+            "producer_namespace": producer.namespace,
             "findings_count": result["findings_count"],
             "artifact_key": result["artifact_key"],
             "ingested": result["ingested"],
@@ -1329,6 +1714,25 @@ async def audit_ingest(
             detail={"error": "OSCAL_PARSE_ERROR", "message": str(exc)},
         )
     except Exception as exc:
+        from src.gateway.governance.evidence.cold_store import ColdStoreError
+
+        if isinstance(exc, ColdStoreError):
+            logger.error(
+                "[compliance-bridge] Audit cold-store persistence failed: %s", exc
+            )
+            _set_audit_status(
+                audit_id,
+                {
+                    "phase": "error",
+                    "audit_id": audit_id,
+                    "error": "INFRA_CUSTODY_UNAVAILABLE",
+                    "message": str(exc),
+                },
+            )
+            raise HTTPException(
+                status_code=503,
+                detail={"error": "INFRA_CUSTODY_UNAVAILABLE", "message": str(exc)},
+            ) from exc
         logger.error("[compliance-bridge] Audit ingest failed: %s", exc)
         _set_audit_status(
             audit_id,

@@ -336,11 +336,12 @@ class EvidenceCustodian:
         self._batch_size = batch_size
         self._require_signature = require_signature
         self._interval_s = interval_s
+        self._flush_lock = asyncio.Lock()
 
     # -- construction -------------------------------------------------------
 
     @classmethod
-    def from_env(cls) -> EvidenceCustodian:
+    def from_env(cls, *, stream_key: str | None = None) -> EvidenceCustodian:
         """Build a custodian from the environment, failing closed when enforcing.
 
         Raises:
@@ -380,13 +381,23 @@ class EvidenceCustodian:
         except RuntimeError as exc:
             raise EvidenceCustodyConfigError(str(exc)) from exc
 
+        resolved_stream_key = (
+            stream_key
+            if stream_key is not None
+            else os.environ.get("EVIDENCE_STREAM_KEY", DEFAULT_STREAM_KEY)
+        ).strip()
+        if not resolved_stream_key:
+            raise EvidenceCustodyConfigError(
+                "EVIDENCE_STREAM_KEY (or stream_key) must not be empty."
+            )
+
         return cls(
             redis=build_async_redis(
                 redis_url, db=int(os.environ.get("EVIDENCE_STREAM_REDIS_DB", "1"))
             ),
             cold_store=cold_store,
             signer=signer,
-            stream_key=os.environ.get("EVIDENCE_STREAM_KEY", DEFAULT_STREAM_KEY),
+            stream_key=resolved_stream_key,
             batch_size=int(
                 os.environ.get("EVIDENCE_CUSTODY_BATCH_SIZE", str(DEFAULT_BATCH_SIZE))
             ),
@@ -399,13 +410,22 @@ class EvidenceCustodian:
     # -- custody cycle ------------------------------------------------------
 
     async def flush_once(self) -> CustodyOutcome:
-        """Run one custody cycle. See the module docstring for the algorithm.
+        """Run one custody cycle serialized under an instance-level lock.
+
+        Serializing ``flush_once`` ensures concurrent background
+        (:meth:`run_forever`) and inline HTTP ingestion flushes on the same
+        custodian instance never overlap Redis Stream sequence ranges.
 
         Raises:
             EvidenceCustodyIntegrityError: A record failed re-verification.
             RuntimeError: Signing failed while signatures are required.
             ColdStoreError: The WORM write failed (cursor not advanced).
         """
+        async with self._flush_lock:
+            return await self._flush_once_locked()
+
+    async def _flush_once_locked(self) -> CustodyOutcome:
+        """Execute one serialized custody cycle. See module docstring for algorithm."""
         cursor = await self._redis.hgetall(self._cursor_key)
         last_id = cursor.get("last_id", "")
         pending_end_id = cursor.get("pending_end_id", "")

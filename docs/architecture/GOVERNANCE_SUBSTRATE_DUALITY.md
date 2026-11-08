@@ -172,7 +172,7 @@ opportunity.
                                                                     ▼
                                               [compliance_bridge: oscal_exporter.py,
                                                aarm_report_generator.py,
-                                               lula_scheduler.py]
+                                               audit_workflow.py]
 ```
 
 The right side of this diagram — compliance evidence flowing back to the
@@ -182,7 +182,7 @@ Governance Layer — is **already implemented** in `src/compliance_bridge/`:
 |---|---|---|
 | OSCAL 1.1.2 Assessment Results | `GET /v1/oscal/assessment-results` | [`src/compliance_bridge/oscal_exporter.py`](../../src/compliance_bridge/oscal_exporter.py) |
 | CSA AARM Conformance Report | `GET /v1/aarm/conformance-report` | [`src/compliance_bridge/aarm_report_generator.py`](../../src/compliance_bridge/aarm_report_generator.py) |
-| Lula validation scheduling | Background scheduler | [`src/compliance_bridge/lula_scheduler.py`](../../src/compliance_bridge/lula_scheduler.py) |
+| Lula validation scheduling | Standalone meshed CronJob (`POAM-2026-195`, retiring `385e502e:src/compliance_bridge/lula_scheduler.py`) | [`compliance/lula/README.md`](../../compliance/lula/README.md) |
 | KMS-signed audit trail | `audit:state_ledger` Redis list | [`src/gateway/governance/kms_signer.py`](../../src/gateway/governance/kms_signer.py) |
 | Real-time governance events | SSE stream | [`src/compliance_bridge/sse_events.py`](../../src/compliance_bridge/sse_events.py) |
 

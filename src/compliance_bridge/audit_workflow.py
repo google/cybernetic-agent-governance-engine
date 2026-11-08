@@ -250,8 +250,17 @@ async def _step1_persist_artifact(
     oscal_yaml: str,
     audit_id: str,
 ) -> str | None:
-    """Returns artifact key on success, None if storage is unconfigured or fails."""
+    """Persist OSCAL artifact to cold storage (fail-closed under enforcing postures)."""
+    from src.gateway.governance.env_posture import is_enforcing
+    from src.gateway.governance.evidence.cold_store import ColdStoreError
+
+    enforcing = is_enforcing()
     if not _is_cold_store_configured():
+        if enforcing:
+            raise ColdStoreError(
+                "EVIDENCE_COLD_STORE is not configured for durable WORM storage "
+                "under an enforcing posture (ISO 42001 A.7.5)."
+            )
         logger.warning(
             "[audit_workflow] EVIDENCE_COLD_STORE not configured for durable storage — skipping artifact persistence. "
             "Set EVIDENCE_COLD_STORE to 'gcs' or 's3' with regional bucket configuration "
@@ -263,6 +272,12 @@ async def _step1_persist_artifact(
         key = await put_oscal_artifact(audit_id, oscal_yaml)
         return key
     except Exception as exc:
+        if enforcing:
+            if isinstance(exc, ColdStoreError):
+                raise
+            raise ColdStoreError(
+                f"Artifact persistence failed under enforcing posture: {exc}"
+            ) from exc
         logger.warning(
             "[audit_workflow] Artifact persistence failed (non-fatal): %s", exc
         )
@@ -869,6 +884,15 @@ async def run_audit_workflow(oscal_yaml: str, audit_id: str) -> dict:
                 chain_artifact_key,
             )
         except Exception as exc:
+            from src.gateway.governance.env_posture import is_enforcing
+            from src.gateway.governance.evidence.cold_store import ColdStoreError
+
+            if is_enforcing():
+                if isinstance(exc, ColdStoreError):
+                    raise
+                raise ColdStoreError(
+                    f"Context chain persistence failed under enforcing posture: {exc}"
+                ) from exc
             logger.warning(
                 "[audit_workflow] Context chain persistence failed (non-fatal): %s", exc
             )

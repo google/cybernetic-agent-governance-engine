@@ -320,7 +320,8 @@ Port-forward logs are written to `/tmp/pf-*.log`.
 | `test_provider_05_live.py`            | `partner_integration` / `live_external` / `partner` | Provider 05 VEIP v0.2: key manifest root verification, all eight warrant scenarios, JCAR-001 alignment |
 | `test_provider_05_blueprint_live.py`  | `live_external` / `partner` | Provider 05 VEIP v0.3 blueprint registry. Not deployed, so outside the partner harness |
 | `test_actuator_01_live.py`            | `partner_integration` / `live_external` / `partner` | Actuator 01 execution gateway, mTLS wire dispatch, quorum signatures, JCS canonicalization |
-| `test_compliance_bridge_infra_events.py` | `unit` / `local`         | `POST /v1/infra/events` — Bearer auth, secret scrubbing, 422 on unregistered event type or cross-jurisdiction mismatch, `evidence_class='INFRA'` persistence |
+| `test_compliance_bridge_infra_events.py` | `unit` / `local`         | `POST /v1/infra/events` — Linkerd mesh producer auth, secret scrubbing, 422 on unregistered event type, durable `evidence_class='INFRA'` persistence |
+| `test_infra_events_custody.py`           | `unit` / `local`         | `F-85` / `R-3` custody suite — mesh identity auth & spoofing rejection (`401`/`403`) on `/v1/infra/events` and `/v1/audit/ingest`, server `received_at_utc`, deterministic full-payload `record_hash` + `prev_hash` chain + `EvidenceCustodian`/`CustodyVerifier` round-trip, fail-closed `503`, and `Idempotency-Key` replay/conflict |
 | `test_agent_accuracy.py`              | `integration`              | End-to-end agent response accuracy                                 |
 | `test_agent_performance.py`           | `integration` / `slow`     | Latency and throughput benchmarks                                  |
 | `test_gateway_client_perf.py`         | `integration` / `slow`     | `GatewayClient` performance under concurrent load                  |

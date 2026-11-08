@@ -71,16 +71,31 @@ def client():
 
         # Reset audit status store between tests
         from src.compliance_bridge import main as bridge_main
-        from src.compliance_bridge.auth import require_internal_token
+        from src.compliance_bridge.auth import (
+            ProducerPrincipal,
+            require_audit_ingest_producer,
+            require_internal_token,
+        )
         from src.compliance_bridge.main import app
 
+        stub_producer = ProducerPrincipal(
+            linkerd_id="lula-auditor.governance-stack.serviceaccount.identity.linkerd.cluster.local",
+            spiffe_id="spiffe://cluster.local/ns/governance-stack/sa/lula-auditor",
+            service_account="lula-auditor",
+            namespace="governance-stack",
+            trust_domain="cluster.local",
+            channel_provenance="LINKERD_MTLS",
+            auth_principal_hash="0" * 64,
+        )
         bridge_main._audit_status.clear()
         app.dependency_overrides[require_internal_token] = lambda: "test-token"
+        app.dependency_overrides[require_audit_ingest_producer] = lambda: stub_producer
         try:
             with TestClient(app, raise_server_exceptions=True) as c:
                 yield c
         finally:
             app.dependency_overrides.pop(require_internal_token, None)
+            app.dependency_overrides.pop(require_audit_ingest_producer, None)
 
 
 # ---------------------------------------------------------------------------

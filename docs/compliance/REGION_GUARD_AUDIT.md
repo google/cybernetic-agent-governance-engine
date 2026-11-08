@@ -439,7 +439,7 @@ These locations perform pure computation or local filesystem operations with no 
 | N/A-04 | [`src/gateway/governance/governor/governor.py`](../../src/gateway/governance/governor/governor.py) | 110–823 | Governance orchestration; delegates all storage to other modules |
 | N/A-05 | [`src/gateway/infrastructure/telemetry.py`](../../src/gateway/infrastructure/telemetry.py) | 28–45 | OTel tracer factory (`get_tracer()`); no storage writes |
 | N/A-06 | [`src/compliance_bridge/context_accumulator.py`](../../src/compliance_bridge/context_accumulator.py) | 1–366 | SHA-256 hash chain computation; serialization delegated to `audit_workflow.py` |
-| N/A-07 | [`src/compliance_bridge/lula_scheduler.py`](../../src/compliance_bridge/lula_scheduler.py) | 1–309 | Runs `lula validate` subprocess and POSTs to loopback `localhost:3001`; no cross-region I/O |
+| N/A-07 | `385e502e:src/compliance_bridge/lula_scheduler.py` *(retired)* | 1–309 | Retired in-bridge scheduler (replaced by standalone meshed Lula CronJob under `POAM-2026-195`) |
 | N/A-08 | [`src/compliance_bridge/kms_batch_signer.py`](../../src/compliance_bridge/kms_batch_signer.py) | 1–378 | Async KMS signing queue; signs records in-memory, writes signatures back via callback; no direct storage writes |
 | N/A-09 | [`src/gateway/governance/hitl_escalator.py`](../../src/gateway/governance/hitl_escalator.py) | 183–230 | `escalate_to_human()` writes to structured log only; no direct storage writes |
 | N/A-10 | [`config/settings.py`](../../config/settings.py) | 30–131 | Configuration class; reads env vars, no storage writes |
@@ -619,7 +619,7 @@ env { name = "CAGE_DEPLOYMENT_REGION";   value = var.cage_deployment_region }
 | N/A-04 | `src/gateway/governance/governor/governor.py` | 110–823 | Orchestration only | — | ➖ N/A |
 | N/A-05 | `src/gateway/infrastructure/telemetry.py` | 28–45 | Tracer factory | — | ➖ N/A |
 | N/A-06 | `src/compliance_bridge/context_accumulator.py` | 1–366 | Pure computation | — | ➖ N/A |
-| N/A-07 | `src/compliance_bridge/lula_scheduler.py` | 1–309 | Loopback HTTP only | — | ➖ N/A |
+| N/A-07 | `385e502e:src/compliance_bridge/lula_scheduler.py` | 1–309 | Retired (`POAM-2026-195`) | — | ➖ N/A |
 | N/A-08 | `src/compliance_bridge/kms_batch_signer.py` | 1–378 | In-memory queue | — | ➖ N/A |
 | N/A-09 | `src/gateway/governance/hitl_escalator.py` | 183–230 | Log only | — | ➖ N/A |
 | N/A-10 | `config/settings.py` | 30–131 | Config reads only | — | ➖ N/A |

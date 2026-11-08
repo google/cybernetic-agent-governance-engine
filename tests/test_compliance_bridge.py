@@ -202,16 +202,33 @@ def client():
         mock_lf = MagicMock()
         MockLangfuse.return_value = mock_lf
 
-        from src.compliance_bridge.auth import require_internal_token
+        from src.compliance_bridge.auth import (
+            ProducerPrincipal,
+            require_audit_ingest_producer,
+            require_internal_token,
+        )
         from src.compliance_bridge.main import app
 
-        # Override auth so business-logic tests are not blocked by C-07.
+        test_audit_producer = ProducerPrincipal(
+            linkerd_id="lula-auditor.governance-stack.serviceaccount.identity.linkerd.cluster.local",
+            spiffe_id="spiffe://cluster.local/ns/governance-stack/sa/lula-auditor",
+            service_account="lula-auditor",
+            namespace="governance-stack",
+            trust_domain="cluster.local",
+            channel_provenance="LINKERD_MTLS",
+            auth_principal_hash="0" * 64,
+        )
+        # Override auth so business-logic tests focus on endpoint payloads.
         app.dependency_overrides[require_internal_token] = lambda: "test-token"
+        app.dependency_overrides[require_audit_ingest_producer] = lambda: (
+            test_audit_producer
+        )
         try:
             with TestClient(app, raise_server_exceptions=True) as c:
                 yield c
         finally:
             app.dependency_overrides.pop(require_internal_token, None)
+            app.dependency_overrides.pop(require_audit_ingest_producer, None)
 
 
 class TestHealthEndpoint:
@@ -388,47 +405,89 @@ class TestAuditIngestAuth:
         ):
             yield
 
-    def test_missing_token_returns_401_when_token_configured(self):
-        """Without a bearer token the endpoint must return 401."""
+    _POD_IP = "10.24.1.7"
+    _LULA_ID = (
+        "lula-auditor.governance-stack.serviceaccount.identity.linkerd.cluster.local"
+    )
+    _ADVISOR_ID = (
+        "cage-advisor-sa.governance-stack.serviceaccount.identity.linkerd.cluster.local"
+    )
+
+    def test_missing_mesh_identity_returns_401(self):
+        """Without a verified Linkerd producer header the endpoint must return 401."""
         with patch("src.compliance_bridge.main.Langfuse") as MockLangfuse:
             MockLangfuse.return_value = MagicMock()
             with patch.dict(os.environ, self._AUTH_ENV, clear=False):
                 from src.compliance_bridge.main import app
 
-                with TestClient(app, raise_server_exceptions=True) as c:
+                with TestClient(
+                    app,
+                    client=(self._POD_IP, 50000),
+                    base_url=f"http://{self._POD_IP}:3001",
+                    raise_server_exceptions=True,
+                ) as c:
                     response = c.post(
                         "/v1/audit/ingest",
                         json={"oscal_yaml": "  ", "audit_id": "auth-test"},
                     )
                 assert response.status_code == 401
 
-    def test_wrong_token_returns_401(self):
-        """A bearer token that does not match the configured secret must return 401."""
+    def test_shared_bearer_token_alone_returns_401(self):
+        """F-85: CAGE_INTERNAL_TOKEN alone cannot authenticate /v1/audit/ingest."""
         with patch("src.compliance_bridge.main.Langfuse") as MockLangfuse:
             MockLangfuse.return_value = MagicMock()
             with patch.dict(os.environ, self._AUTH_ENV, clear=False):
                 from src.compliance_bridge.main import app
 
-                with TestClient(app, raise_server_exceptions=True) as c:
-                    response = c.post(
-                        "/v1/audit/ingest",
-                        headers={"Authorization": "Bearer wrong-token"},
-                        json={"oscal_yaml": "  ", "audit_id": "auth-test"},
-                    )
-                assert response.status_code == 401
-
-    def test_correct_token_passes_auth_layer(self):
-        """A valid bearer token must pass auth (business logic then handles the request)."""
-        with patch("src.compliance_bridge.main.Langfuse") as MockLangfuse:
-            MockLangfuse.return_value = MagicMock()
-            with patch.dict(os.environ, self._AUTH_ENV, clear=False):
-                from src.compliance_bridge.main import app
-
-                with TestClient(app, raise_server_exceptions=True) as c:
-                    # Empty oscal_yaml → 400 from business logic, NOT 401 from auth.
+                with TestClient(
+                    app,
+                    client=(self._POD_IP, 50000),
+                    base_url=f"http://{self._POD_IP}:3001",
+                    raise_server_exceptions=True,
+                ) as c:
                     response = c.post(
                         "/v1/audit/ingest",
                         headers={"X-Cage-Internal-Token": "secret-token"},
+                        json={"oscal_yaml": "  ", "audit_id": "auth-test"},
+                    )
+                assert response.status_code == 401
+
+    def test_untrusted_mesh_workload_returns_403(self):
+        """Authorized mesh callers outside CAGE_TRUSTED_AUDIT_PRODUCERS return 403."""
+        with patch("src.compliance_bridge.main.Langfuse") as MockLangfuse:
+            MockLangfuse.return_value = MagicMock()
+            with patch.dict(os.environ, self._AUTH_ENV, clear=False):
+                from src.compliance_bridge.main import app
+
+                with TestClient(
+                    app,
+                    client=(self._POD_IP, 50000),
+                    base_url=f"http://{self._POD_IP}:3001",
+                    raise_server_exceptions=True,
+                ) as c:
+                    response = c.post(
+                        "/v1/audit/ingest",
+                        headers={"l5d-client-id": self._ADVISOR_ID},
+                        json={"oscal_yaml": "  ", "audit_id": "auth-test"},
+                    )
+                assert response.status_code == 403
+
+    def test_verified_lula_auditor_mesh_identity_passes_auth_layer(self):
+        """Pod-local Linkerd lula-auditor identity passes auth (400 on blank YAML)."""
+        with patch("src.compliance_bridge.main.Langfuse") as MockLangfuse:
+            MockLangfuse.return_value = MagicMock()
+            with patch.dict(os.environ, self._AUTH_ENV, clear=False):
+                from src.compliance_bridge.main import app
+
+                with TestClient(
+                    app,
+                    client=(self._POD_IP, 50000),
+                    base_url=f"http://{self._POD_IP}:3001",
+                    raise_server_exceptions=True,
+                ) as c:
+                    response = c.post(
+                        "/v1/audit/ingest",
+                        headers={"l5d-client-id": self._LULA_ID},
                         json={"oscal_yaml": "  ", "audit_id": "auth-test"},
                     )
                 assert response.status_code == 400
