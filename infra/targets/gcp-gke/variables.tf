@@ -777,6 +777,32 @@ variable "compliance_bridge_image" {
   }
 }
 
+variable "enable_lula_cron" {
+  description = "Deploy the periodic in-cluster Lula compliance auditor CronJob (CA-2 / CA-7)."
+  type        = bool
+  default     = true
+}
+
+variable "lula_image" {
+  description = "Lula auditor container image override (defaults to var.image_digests[\"lula\"])."
+  type        = string
+  default     = ""
+
+  validation {
+    condition = var.lula_image == "" || (
+      !can(regex(":latest(@|$)", var.lula_image)) &&
+      (!var.enable_binary_authorization || can(regex("^[^@\\s]+@sha256:[0-9a-f]{64}$", var.lula_image)))
+    )
+    error_message = "lula_image must not use :latest and, when enable_binary_authorization = true, must be pinned by @sha256:<64-hex> digest."
+  }
+}
+
+variable "lula_schedule" {
+  description = "Cron schedule for the in-cluster Lula compliance auditor CronJob."
+  type        = string
+  default     = "*/15 * * * *"
+}
+
 variable "trusted_operator_identities" {
   description = "Allowlisted human OIDC operator sub claims permitted to approve HITL deferrals on compliance-bridge (CAGE_TRUSTED_OPERATOR_IDENTITIES; POAM-2026-196)."
   type        = list(string)

@@ -466,7 +466,7 @@ system-security-plan:
         AI classification documented under Annex III §5(b).
       props:
       - name: implementation-status
-        value: under-development
+        value: planned
       - name: regulatory-citation
         value: EU AI Act Art. 9 (Regulation (EU) 2024/1689)
       responsible-roles:
@@ -477,7 +477,7 @@ system-security-plan:
         description: Risk management system documented in compliance artifacts. Lula
           validation provides automated continuous compliance assertion.
         implementation-status:
-          state: under-development
+          state: planned
         links:
         - href: ../../compliance/lula/lula-validation-eu-ai-act-art9.yaml
           rel: reference
@@ -496,7 +496,7 @@ system-security-plan:
         are planned (POAM EU-006).
       props:
       - name: implementation-status
-        value: under-development
+        value: planned
       - name: subject-initiated-contest-status
         value: planned
       - name: compliance-bridge-art22-endpoint-status
@@ -515,7 +515,7 @@ system-security-plan:
           Subject-initiated Art. 22(3) contest on request and the GET /v1/compliance/gdpr/art22
           Lula status endpoint are planned (POAM EU-006).
         implementation-status:
-          state: under-development
+          state: planned
         links:
         - href: ../../compliance/lula/lula-validation-gdpr-art22.yaml
           rel: reference
@@ -527,7 +527,7 @@ system-security-plan:
         system operational.
       props:
       - name: implementation-status
-        value: under-development
+        value: planned
       - name: regulatory-citation
         value: DORA Art. 10 (Regulation (EU) 2022/2554)
       responsible-roles:
@@ -538,7 +538,7 @@ system-security-plan:
         description: Compliance Bridge audit workflow provides DORA-compliant ICT
           audit logging. GCS bucket in europe-west1 ensures data residency.
         implementation-status:
-          state: under-development
+          state: planned
         links:
         - href: ../../compliance/lula/lula-validation-dora-art10.yaml
           rel: reference

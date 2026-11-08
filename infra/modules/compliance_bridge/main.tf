@@ -366,6 +366,14 @@ resource "kubernetes_deployment" "compliance_bridge" {
             }
           }
 
+          dynamic "env" {
+            for_each = length([for id in var.trusted_infra_producers : trimspace(id) if trimspace(id) != ""]) > 0 ? [1] : []
+            content {
+              name  = "CAGE_TRUSTED_INFRA_PRODUCERS"
+              value = join(",", [for id in var.trusted_infra_producers : trimspace(id) if trimspace(id) != ""])
+            }
+          }
+
           # ─── Human Operator OIDC Identity (POAM-2026-196) ──────────────────
           env {
             name  = "CAGE_OPERATOR_IDENTITY_ALLOW_OIDC"
@@ -503,6 +511,13 @@ resource "kubernetes_service" "compliance_bridge" {
       target_port = 3001
       protocol    = "TCP"
       name        = "http"
+    }
+
+    port {
+      port        = 8085
+      target_port = 3001
+      protocol    = "TCP"
+      name        = "infra-http"
     }
 
     selector = {

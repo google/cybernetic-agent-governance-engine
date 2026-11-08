@@ -115,6 +115,7 @@ FIRST_PARTY_IMAGES=(
   "governed-financial-advisor"
   "nemo-guardrails"
   "vllm-streamer"
+  "lula"
 )
 
 THIRD_PARTY_TAGGED_IMAGES=(

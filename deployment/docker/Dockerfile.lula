@@ -12,31 +12,37 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-FROM golang:1.22-alpine AS builder
+# Two-stage build on the same digest-pinned Wolfi base as the gateway, advisor,
+# nemo, and compliance-bridge images (zero mutable floating tags).
+ARG WOLFI_BASE=cgr.dev/chainguard/wolfi-base@sha256:f15fea2f49cb14dceaea491fcbde0d35e0c190126a744ac05a9838440d47d994
 
-ARG LULA_VERSION=0.9.5
+# ─── Stage 1: Fetch and verify pinned Lula CLI binary ────────────────────────
+# Official Lula Go CLI (OSCAL validator): https://github.com/defenseunicorns-labs/lula1
+# NOTE: github.com/defenseunicorns/lula is a TypeScript npm package (lula2), not this tool.
+FROM ${WOLFI_BASE} AS builder
 
-RUN apk add --no-cache git ca-certificates
+ARG LULA_VERSION=0.16.0
+ARG LULA_SHA256=5581257b6d0bf446e0a6ca3598de1697565f343f40e73055d0320a11d3a8c25e
 
-WORKDIR /build
+RUN apk upgrade --no-cache && \
+    apk add --no-cache ca-certificates curl && \
+    curl -fsSL \
+      "https://github.com/defenseunicorns-labs/lula1/releases/download/v${LULA_VERSION}/lula_v${LULA_VERSION}_Linux_amd64" \
+      -o /usr/local/bin/lula && \
+    echo "${LULA_SHA256}  /usr/local/bin/lula" | sha256sum -c - && \
+    chmod 0755 /usr/local/bin/lula
 
-RUN git clone --depth 1 --branch v${LULA_VERSION} \
-    https://github.com/defenseunicorns/lula.git . && \
-    CGO_ENABLED=0 GOOS=linux GOARCH=amd64 \
-    go build -ldflags="-s -w -X github.com/defenseunicorns/lula/src/cmd.version=v${LULA_VERSION}" \
-    -o /usr/local/bin/lula ./cmd/lula
-
-# ─── Stage 2: Runtime image ───────────────────────────────────────────────────
-# Minimal Alpine runtime providing /bin/sh, curl, jq, and pgrep (procps) for
+# ─── Stage 2: Wolfi runtime image ────────────────────────────────────────────
+# Minimal Wolfi runtime providing /bin/sh, ca-certificates, curl, and jq for
 # in-cluster Lula compliance validation jobs, running as non-root 65532:65532.
-FROM alpine:3.20
+FROM ${WOLFI_BASE}
 
-RUN apk add --no-cache ca-certificates curl jq procps && \
-    addgroup -g 65532 -S nonroot && \
-    adduser -u 65532 -S -G nonroot -h /home/nonroot nonroot
+RUN apk upgrade --no-cache && \
+    apk add --no-cache ca-certificates curl jq && \
+    (grep -q '^nonroot:' /etc/group || addgroup -g 65532 nonroot) && \
+    (grep -q '^nonroot:' /etc/passwd || adduser -D -H -u 65532 -G nonroot -s /sbin/nologin nonroot)
 
 COPY --from=builder /usr/local/bin/lula /usr/local/bin/lula
 
 USER 65532:65532
 ENTRYPOINT ["/usr/local/bin/lula"]
-

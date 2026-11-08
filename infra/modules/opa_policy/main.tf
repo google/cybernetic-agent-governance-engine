@@ -92,6 +92,9 @@ resource "kubernetes_deployment" "opa" {
       }
 
       spec {
+        service_account_name            = var.service_account_name != "" ? var.service_account_name : null
+        automount_service_account_token = false
+
         security_context {
           run_as_non_root = true
           run_as_user     = 65534
@@ -101,8 +104,9 @@ resource "kubernetes_deployment" "opa" {
         }
 
         container {
-          name  = "opa"
-          image = var.image
+          name              = "opa"
+          image             = var.image
+          image_pull_policy = var.image_pull_policy
 
           args = concat(
             [

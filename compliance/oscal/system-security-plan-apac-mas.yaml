@@ -278,7 +278,7 @@ system-security-plan:
         threshold. Transparency reporting every 180 days per APAC_MAS_BASELINE.json.
       props:
       - name: implementation-status
-        value: under-development
+        value: planned
       - name: regulatory-citation
         value: MAS FEAT Principles (November 2019)
       responsible-roles:
@@ -289,7 +289,7 @@ system-security-plan:
         description: FEAT fairness assessment engine provides automated bias testing.
           Lula validation asserts fairness metrics within threshold.
         implementation-status:
-          state: under-development
+          state: planned
         links:
         - href: ../../compliance/lula/lula-validation-mas-feat.yaml
           rel: reference
@@ -301,7 +301,7 @@ system-security-plan:
         and reviewed annually.
       props:
       - name: implementation-status
-        value: under-development
+        value: planned
       - name: regulatory-citation
         value: MAS Notice 655 — Technology Risk Management
       responsible-roles:
@@ -313,7 +313,7 @@ system-security-plan:
           technology audit logging. GCS bucket in asia-southeast1 ensures data residency
           per MAS TRM §4.2.
         implementation-status:
-          state: under-development
+          state: planned
         links:
         - href: ../../compliance/lula/lula-validation-mas-notice655.yaml
           rel: reference
@@ -327,7 +327,7 @@ system-security-plan:
         Data residency within asia-southeast1 is a deployment requirement.
       props:
       - name: implementation-status
-        value: under-development
+        value: planned
       - name: regulatory-citation
         value: MAS TRM Guidelines §6.3 — AI and Machine Learning Controls
       responsible-roles:
@@ -338,7 +338,7 @@ system-security-plan:
         description: AI governance framework satisfies TRM §6.3 requirements. Lula
           validation asserts confidence threshold and data residency.
         implementation-status:
-          state: under-development
+          state: planned
         links:
         - href: ../../compliance/lula/lula-validation-mas-trm-s6.yaml
           rel: reference

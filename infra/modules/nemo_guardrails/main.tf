@@ -73,6 +73,9 @@ resource "kubernetes_deployment" "nemo_guardrails" {
       }
 
       spec {
+        service_account_name            = var.service_account_name != "" ? var.service_account_name : null
+        automount_service_account_token = false
+
         dynamic "security_context" {
           for_each = var.enable_security_context ? [1] : []
           content {

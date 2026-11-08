@@ -13,6 +13,7 @@
 # limitations under the License.
 
 # lula-validation-gdpr-art22.yaml
+# cage-status: planned
 # GDPR Art. 22 — Human Oversight of Automated Individual Decision-Making
 #
 # Asserts that the CAGE system enforces human oversight for automated

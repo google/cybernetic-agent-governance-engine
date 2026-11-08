@@ -3,7 +3,7 @@ system-security-plan:
   metadata:
     title: CAGE System Security Plan (US_FED — NIST SP 800-53 Rev 5 HIGH)
     published: '2026-03-06T00:00:00Z'
-    last-modified: '2026-11-08T11:53:26Z'
+    last-modified: '2026-11-08T13:26:12Z'
     version: 1.0.1-draft+stpa
     oscal-version: 1.0.4
     remarks: 'This System Security Plan (SSP) documents the security controls implemented
@@ -1448,6 +1448,185 @@ system-security-plan:
           '
         implementation-status:
           state: implemented
+    - uuid: g7000011-0000-4000-8000-000000000011
+      control-id: ia-3
+      description: Device identification and authentication is enforced across governance-stack
+        workloads via Linkerd mutual TLS workload identities (CAGE_TRUSTED_CLIENT_IDENTITIES),
+        in-state OPA access evaluation, and Kubernetes NetworkPolicy isolation, validated
+        by compliance/lula/lula-validation-ia3.yaml.
+      props:
+      - name: implementation-status
+        value: implemented
+      - name: lula-validation
+        value: compliance/lula/lula-validation-ia3.yaml
+      responsible-roles:
+      - role-id: compliance-engineer
+    - uuid: g7000012-0000-4000-8000-000000000012
+      control-id: sc-4
+      description: Information in shared system resources and session isolation are
+        enforced via the in-state OPA service and active domain Rego policy ConfigMap
+        (opa-policies), validated by compliance/lula/lula-validation-sc4.yaml.
+      props:
+      - name: implementation-status
+        value: implemented
+      - name: lula-validation
+        value: compliance/lula/lula-validation-sc4.yaml
+      responsible-roles:
+      - role-id: compliance-engineer
+    - uuid: g7000013-0000-4000-8000-000000000013
+      control-id: si-2
+      description: Container image flaw remediation and immutable @sha256 digest pinning
+        (with mutable :latest tags rejected) are enforced across governance-stack
+        deployments, validated by compliance/lula/lula-validation-si2.yaml.
+      props:
+      - name: implementation-status
+        value: implemented
+      - name: lula-validation
+        value: compliance/lula/lula-validation-si2.yaml
+      responsible-roles:
+      - role-id: compliance-engineer
+    - uuid: g7000014-0000-4000-8000-000000000014
+      control-id: ctrl-ftra-001
+      description: Framed Transitions & Reachable Actions (FTRA) Tier 0.5 action reachability
+        enforcement is active in the governance-stack gateway deployment, validated
+        by compliance/lula/lula-validation-ftra.yaml.
+      props:
+      - name: implementation-status
+        value: implemented
+      - name: lula-validation
+        value: compliance/lula/lula-validation-ftra.yaml
+      responsible-roles:
+      - role-id: compliance-engineer
+    - uuid: g7000015-0000-4000-8000-000000000015
+      control-id: A.4
+      description: ISO/IEC 42001 Annex A.4 resource and token quota governance is
+        enforced via Redis-backed gateway quota state and active OPA policy ConfigMap
+        bindings, validated by compliance/lula/lula-validation-iso001-token-quota.yaml.
+      props:
+      - name: implementation-status
+        value: implemented
+      - name: lula-validation
+        value: compliance/lula/lula-validation-iso001-token-quota.yaml
+      responsible-roles:
+      - role-id: compliance-engineer
+    - uuid: g7000016-0000-4000-8000-000000000016
+      control-id: A.5.2
+      description: ISO/IEC 42001 Annex A.5.2 social impact and prompt-safety rate
+        monitoring is continuously evaluated from the custody-chain metrics endpoint
+        (/v1/metrics/A.5.2) by compliance/lula/lula-validation-a52.yaml.
+      props:
+      - name: implementation-status
+        value: implemented
+      - name: lula-validation
+        value: compliance/lula/lula-validation-a52.yaml
+      responsible-roles:
+      - role-id: compliance-engineer
+    - uuid: g7000017-0000-4000-8000-000000000017
+      control-id: A.5.3
+      description: ISO/IEC 42001 Annex A.5.3 AI governance logging and safety-rate
+        monitoring is continuously evaluated from the custody-chain metrics endpoint
+        (/v1/metrics/A.5.3) by compliance/lula/lula-validation-a53.yaml.
+      props:
+      - name: implementation-status
+        value: implemented
+      - name: lula-validation
+        value: compliance/lula/lula-validation-a53.yaml
+      responsible-roles:
+      - role-id: compliance-engineer
+    - uuid: g7000018-0000-4000-8000-000000000018
+      control-id: A.8.4
+      description: ISO/IEC 42001 Annex A.8.4 fail-closed token quota proxy and secret-reference
+        isolation controls are enforced on the gateway deployment, validated by compliance/lula/lula-validation-flowsignal.yaml
+        and compliance/lula/lula-validation-tqp007.yaml.
+      props:
+      - name: implementation-status
+        value: implemented
+      - name: lula-validation
+        value: compliance/lula/lula-validation-tqp007.yaml
+      responsible-roles:
+      - role-id: compliance-engineer
+    - uuid: g7000019-0000-4000-8000-000000000019
+      control-id: A.9.2
+      description: ISO/IEC 42001 Annex A.9.2 supplier data-transfer PII redaction
+        safety rate is continuously evaluated from the custody-chain metrics endpoint
+        (/v1/metrics/A.9.2) by compliance/lula/lula-validation-a92.yaml.
+      props:
+      - name: implementation-status
+        value: implemented
+      - name: lula-validation
+        value: compliance/lula/lula-validation-a92.yaml
+      responsible-roles:
+      - role-id: compliance-engineer
+    - uuid: g7000020-0000-4000-8000-000000000020
+      control-id: aarm-vectors
+      description: CSA Autonomous Agent Risk Management (AARM) 11-vector threat conformance
+        is evaluated on demand via compliance-bridge (/v1/aarm/conformance-report)
+        and validated by compliance/lula/lula-validation-aarm-vectors.yaml.
+      props:
+      - name: implementation-status
+        value: implemented
+      - name: lula-validation
+        value: compliance/lula/lula-validation-aarm-vectors.yaml
+      responsible-roles:
+      - role-id: compliance-engineer
+    - uuid: g7000021-0000-4000-8000-000000000021
+      control-id: ai600-cbrn
+      description: NIST AI 600-1 CBRN / hazardous capability screening is enforced
+        by the deterministic Aho-Corasick heuristic gate in the gateway deployment,
+        validated by compliance/lula/lula-validation-ai600-cbrn.yaml.
+      props:
+      - name: implementation-status
+        value: implemented
+      - name: lula-validation
+        value: compliance/lula/lula-validation-ai600-cbrn.yaml
+      responsible-roles:
+      - role-id: compliance-engineer
+    - uuid: g7000022-0000-4000-8000-000000000022
+      control-id: ai600-confabulation
+      description: NIST AI 600-1 confabulation mitigation binds the gateway deployment
+        to deterministic OPA policy evaluation (OPA_URL), validated by compliance/lula/lula-validation-ai600-confabulation.yaml.
+      props:
+      - name: implementation-status
+        value: implemented
+      - name: lula-validation
+        value: compliance/lula/lula-validation-ai600-confabulation.yaml
+      responsible-roles:
+      - role-id: compliance-engineer
+    - uuid: g7000023-0000-4000-8000-000000000023
+      control-id: ai600-data-privacy
+      description: NIST AI 600-1 data privacy header sanitization (OTEL_INSTRUMENTATION_HTTP_CAPTURE_HEADERS_SANITIZE_FIELDS)
+        is enforced on the gateway deployment, validated by compliance/lula/lula-validation-ai600-data-privacy.yaml.
+      props:
+      - name: implementation-status
+        value: implemented
+      - name: lula-validation
+        value: compliance/lula/lula-validation-ai600-data-privacy.yaml
+      responsible-roles:
+      - role-id: compliance-engineer
+    - uuid: g7000024-0000-4000-8000-000000000024
+      control-id: ai600-human-ai-config
+      description: NIST AI 600-1 human-AI configuration and strict Control Barrier
+        Function mode (CAGE_CBF_STRICT_MODE) are enforced on the gateway deployment,
+        validated by compliance/lula/lula-validation-ai600-human-ai-config.yaml.
+      props:
+      - name: implementation-status
+        value: implemented
+      - name: lula-validation
+        value: compliance/lula/lula-validation-ai600-human-ai-config.yaml
+      responsible-roles:
+      - role-id: compliance-engineer
+    - uuid: g7000025-0000-4000-8000-000000000025
+      control-id: ai600-prompt-injection
+      description: NIST AI 600-1 prompt injection defense and trusted caller identity
+        binding (CAGE_TRUSTED_CLIENT_IDENTITIES) are enforced on the gateway deployment,
+        validated by compliance/lula/lula-validation-ai600-prompt-injection.yaml.
+      props:
+      - name: implementation-status
+        value: implemented
+      - name: lula-validation
+        value: compliance/lula/lula-validation-ai600-prompt-injection.yaml
+      responsible-roles:
+      - role-id: compliance-engineer
     - uuid: g7000099-stpa-4000-8000-compiler00001
       control-id: sa-11
       description: "The STPA-to-Policy Compiler implements a deterministic, design-time\
@@ -1463,7 +1642,7 @@ system-security-plan:
         \ Rev 5 (FedRAMP baseline)\n          Framework reference: https://csrc.nist.gov/publications/detail/sp/800-53/rev-5/final\n\
         \          System: CAGE Financial Advisor v1.1.0\n          UCAs encoded:\
         \ 12 (6 enforcing server-bound, 6 advisory)\n          Hazards modelled: 7\n\
-        \          Safety constraints: 3\n          Last compiled: 2026-11-08T11:53:26Z\n\
+        \          Safety constraints: 3\n          Last compiled: 2026-11-08T13:26:12Z\n\
         \n          UCA-to-Control mapping (NIST SP 800-53 Rev 5 (FedRAMP baseline)):\n\
         \            UCA-1 (unsafe_action): Agent executes write operation without\
         \ a human approval token.\n  → NIST: ac-3 (Access Enforcement), sc-4 (Information\
@@ -1513,7 +1692,7 @@ system-security-plan:
       - name: hazard-count
         value: '7'
       - name: last-compiled
-        value: '2026-11-08T11:53:26Z'
+        value: '2026-11-08T13:26:12Z'
       - name: target-framework
         value: NIST SP 800-53 Rev 5 (FedRAMP baseline)
       - name: artifact-python

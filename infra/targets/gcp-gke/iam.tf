@@ -38,6 +38,9 @@ locals {
   ksa_benchmark         = "cage-benchmark-sa"
   ksa_langfuse          = "langfuse-sa"
   ksa_clickhouse        = "cage-clickhouse-sa"
+  ksa_opa               = "cage-opa-sa"
+  ksa_agentsight_ui     = "cage-agentsight-ui-sa"
+  ksa_nemo              = "cage-nemo-sa"
 
   # vLLM runs in var.namespace by default; keep "vllm-inference" bound when dedicated GPU namespace isolation is enabled.
   vllm_workload_namespaces = distinct([var.namespace, "vllm-inference"])
@@ -366,6 +369,21 @@ locals {
       name    = local.ksa_lula
       gsa     = google_service_account.lula.email
       purpose = "compliance-validation"
+    }
+    opa = {
+      name    = local.ksa_opa
+      gsa     = null # zero cloud identity (AC-2 / POAM-2026-079)
+      purpose = "policy-evaluation"
+    }
+    agentsight_ui = {
+      name    = local.ksa_agentsight_ui
+      gsa     = null # zero cloud identity (AC-2 / POAM-2026-079)
+      purpose = "ebpf-observability"
+    }
+    nemo = {
+      name    = local.ksa_nemo
+      gsa     = null # zero cloud identity (AC-2 / POAM-2026-079)
+      purpose = "guardrails"
     }
   }
 }

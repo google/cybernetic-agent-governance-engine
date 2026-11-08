@@ -659,6 +659,7 @@ locals {
   required_image_digests = concat(
     ["gateway", "opa", "agentsight-ui", "langfuse", "langfuse-worker", "cloud-sql-proxy", "clickhouse-server", "clickhouse-keeper"],
     (var.enable_compliance_bridge || var.enable_reconciliation_worker) && var.compliance_bridge_image == "" ? ["compliance-bridge"] : [],
+    var.enable_lula_cron && var.lula_image == "" ? ["lula"] : [],
     local.vllm_enabled && var.vllm_image == "" ? ["vllm-streamer"] : [],
     local.advisor_enabled ? ["governed-financial-advisor"] : [],
     var.enable_nemo_guardrails && var.nemo_image == "" ? ["nemo-guardrails"] : [],
@@ -676,12 +677,13 @@ module "nemo_guardrails" {
 
   source = "../../modules/nemo_guardrails"
 
-  namespace       = module.namespace.name
-  deployment_name = "nemo-guardrails"
-  service_name    = "nemo-guardrails"
-  replicas        = var.enable_high_availability ? 2 : 1
-  enable_pdb      = var.enable_high_availability
-  environment     = var.environment
+  namespace            = module.namespace.name
+  deployment_name      = "nemo-guardrails"
+  service_name         = "nemo-guardrails"
+  service_account_name = kubernetes_service_account.workload["nemo"].metadata[0].name
+  replicas             = var.enable_high_availability ? 2 : 1
+  enable_pdb           = var.enable_high_availability
+  environment          = var.environment
 
   # NeMo container image pinned by @sha256: digest via var.image_digests
   nemo_image = var.nemo_image != "" ? var.nemo_image : var.image_digests["nemo-guardrails"]
@@ -708,7 +710,7 @@ module "nemo_guardrails" {
 
   enable_security_context = local.enforcing_posture
 
-  depends_on = [module.gke, module.vllm]
+  depends_on = [module.gke, module.vllm, kubernetes_service_account.workload["nemo"]]
 }
 
 # Workload ServiceAccounts are defined per workload in iam.tf
@@ -934,6 +936,14 @@ module "compliance_bridge" {
   service_account_name = kubernetes_service_account.workload["compliance_bridge"].metadata[0].name
   evidence_kms_key     = local.compliance_evidence_key_version
 
+  trusted_infra_producers = [
+    "agentsight-daemon.${module.namespace.name}.${module.service_mesh.identity_suffix}",
+    "cage-agentsight-sa.${module.namespace.name}.${module.service_mesh.identity_suffix}",
+    "cilium-monitor-exporter.kube-system.${module.service_mesh.identity_suffix}",
+    "cilium-monitor-exporter.${module.namespace.name}.${module.service_mesh.identity_suffix}",
+    "${local.ksa_lula}.${module.namespace.name}.${module.service_mesh.identity_suffix}",
+  ]
+
   # POAM-2026-196: Human operator OIDC trust-anchor and allowlist configuration.
   trusted_operator_identities = var.trusted_operator_identities
   operator_oidc_issuer        = var.operator_oidc_issuer
@@ -967,12 +977,13 @@ resource "terraform_data" "domain_opa_policies_guard" {
 module "opa" {
   source = "../../modules/opa_policy"
 
-  namespace    = module.namespace.name
-  image        = var.image_digests["opa"]
-  replicas     = var.enable_high_availability ? 2 : 1
-  policy_files = local.domain_opa_policies
+  namespace            = module.namespace.name
+  image                = var.image_digests["opa"]
+  replicas             = var.enable_high_availability ? 2 : 1
+  policy_files         = local.domain_opa_policies
+  service_account_name = kubernetes_service_account.workload["opa"].metadata[0].name
 
-  depends_on = [module.gke, terraform_data.domain_opa_policies_guard]
+  depends_on = [module.gke, terraform_data.domain_opa_policies_guard, kubernetes_service_account.workload["opa"]]
 }
 
 # ─── Deploy Gateway ─────────────────────────────────────────────────────────────
@@ -1118,11 +1129,34 @@ module "governed_advisor" {
 module "agentsight_ui" {
   source = "../../modules/agentsight_ui"
 
-  namespace = module.namespace.name
-  image     = var.image_digests["agentsight-ui"]
-  replicas  = 1
+  namespace            = module.namespace.name
+  image                = var.image_digests["agentsight-ui"]
+  replicas             = 1
+  service_account_name = kubernetes_service_account.workload["agentsight_ui"].metadata[0].name
 
-  depends_on = [module.gke]
+  depends_on = [module.gke, kubernetes_service_account.workload["agentsight_ui"]]
+}
+
+# ─── Deploy In-Cluster Lula Compliance Auditor (CA-2 / CA-7) ──────────────────
+
+module "lula_cron" {
+  count  = var.enable_lula_cron ? 1 : 0
+  source = "../../modules/lula_cron"
+
+  namespace                    = module.namespace.name
+  image                        = var.lula_image != "" ? var.lula_image : var.image_digests["lula"]
+  service_account_name         = kubernetes_service_account.workload["lula"].metadata[0].name
+  schedule                     = var.lula_schedule
+  lula_manifests_dir           = "${path.module}/../../../compliance/lula"
+  compliance_bridge_events_url = "http://compliance-bridge.${module.namespace.name}.svc.cluster.local:8085/v1/infra/events"
+  network_policy_hash          = local.network_policy_spec_hash
+
+  depends_on = [
+    module.gke,
+    module.namespace,
+    module.service_mesh,
+    kubernetes_service_account.workload["lula"],
+  ]
 }
 
 # ─── Deployment Jurisdiction ──────────────────────────────────────────────────

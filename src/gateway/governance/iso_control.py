@@ -265,6 +265,7 @@ _UNIVERSAL_CONTROL_MAP: dict[str, str] = {
     # CAGE v2.0.0+ — AARM primitives
     "context_accumulate": "A.5.3",  # Context Accumulator chain node — Logging & Monitoring
     "defer_parking": "A.8.4",  # DEFER state machine — AI System Operation Controls
+    "lula_audit": "A.5.3",  # Periodic in-cluster Lula compliance validation
 }
 
 _JURISDICTIONAL_CONTROL_MAP: dict[str, dict[str, str]] = {

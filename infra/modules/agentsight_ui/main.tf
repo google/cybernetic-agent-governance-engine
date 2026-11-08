@@ -51,6 +51,9 @@ resource "kubernetes_deployment" "agentsight_ui" {
       }
 
       spec {
+        service_account_name            = var.service_account_name != "" ? var.service_account_name : null
+        automount_service_account_token = false
+
         security_context {
           run_as_non_root = true
           run_as_user     = 1000

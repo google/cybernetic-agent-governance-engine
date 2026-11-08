@@ -479,8 +479,11 @@ def build_aarm_conformance_report(
             elif result == "PASS":
                 control_results[ctrl_id] = "PASS"
                 pass_count += 1
+            elif result == "NOT_APPLICABLE":
+                control_results[ctrl_id] = "NOT_APPLICABLE"
+                not_found += 1
             else:
-                control_results[ctrl_id] = result  # "FAIL" or "NOT_APPLICABLE"
+                control_results[ctrl_id] = result  # "FAIL" or "ERROR"
                 fail_count += 1
 
         total_controls = pass_count + fail_count + not_found

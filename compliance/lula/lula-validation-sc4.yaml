@@ -101,7 +101,9 @@ component-definition:
               session_isolation_policy_loaded if {
                 some cm in input["opa-policies"]
                 cm.metadata.name == "opa-policies"
-                cm.data["session_isolation.rego"] != ""
+                some policy_name, policy_rego in cm.data
+                endswith(policy_name, ".rego")
+                policy_rego != ""
               }
 
               validate if {

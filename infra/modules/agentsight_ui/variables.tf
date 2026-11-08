@@ -27,3 +27,9 @@ variable "replicas" {
   type        = number
   default     = 1
 }
+
+variable "service_account_name" {
+  description = "Dedicated Kubernetes ServiceAccount for AgentSight UI pods (AC-2)."
+  type        = string
+  default     = ""
+}

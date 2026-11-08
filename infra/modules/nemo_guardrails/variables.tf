@@ -175,3 +175,9 @@ variable "tolerations" {
   type        = list(map(string))
   default     = []
 }
+
+variable "service_account_name" {
+  description = "Dedicated Kubernetes ServiceAccount for NeMo Guardrails pods (AC-2)."
+  type        = string
+  default     = ""
+}

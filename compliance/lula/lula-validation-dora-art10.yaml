@@ -13,6 +13,7 @@
 # limitations under the License.
 
 # lula-validation-dora-art10.yaml
+# cage-status: planned
 # DORA Art. 10 — ICT Operational Resilience and Audit Logging
 #
 # Asserts that the CAGE system maintains ICT operational resilience
