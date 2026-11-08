@@ -17,80 +17,34 @@ variable "namespace" {
   type        = string
 }
 
-variable "image" {
-  description = "OPA container image"
-  type        = string
-  default     = "openpolicyagent/opa:1.2.0-static@sha256:cc4efcabce6d6ebfa2dc8efdb2edaf4dbdeaa4e11f2be5a4a01a6661c82fc1b8"
-}
-
-variable "replicas" {
-  description = "Number of replicas"
-  type        = number
-  default     = 1
-}
-
 variable "create_policy_configmap" {
-  description = "Create ConfigMap for policies"
+  description = "Create read-only ConfigMap for domain Rego policies mounted into the gateway OPA sidecar"
   type        = bool
   default     = true
 }
 
 variable "create_config_configmap" {
-  description = "Create ConfigMap for OPA config"
+  description = "Create ConfigMap for OPA runtime configuration (enabled by default for console decision logs, F-102)"
   type        = bool
-  default     = false
+  default     = true
 }
 
 variable "policy_files" {
-  description = "Map of policy filenames to policy content"
+  description = "Map of policy filenames to Rego policy content"
   type        = map(string)
   default     = {}
 }
 
 variable "opa_config" {
-  description = "OPA configuration YAML content"
+  description = "OPA configuration YAML content (console decision logs enabled by default per F-102)"
   type        = string
-  default     = ""
-}
+  default     = <<-EOT
+    decision_logs:
+      console: true
+  EOT
 
-variable "service_type" {
-  description = "Kubernetes service type"
-  type        = string
-  default     = "ClusterIP"
-}
-
-variable "memory_request" {
-  description = "Memory request"
-  type        = string
-  default     = "128Mi"
-}
-
-variable "cpu_request" {
-  description = "CPU request"
-  type        = string
-  default     = "100m"
-}
-
-variable "memory_limit" {
-  description = "Memory limit"
-  type        = string
-  default     = "256Mi"
-}
-
-variable "cpu_limit" {
-  description = "CPU limit"
-  type        = string
-  default     = "500m"
-}
-
-variable "image_pull_policy" {
-  description = "Image pull policy for the OPA container"
-  type        = string
-  default     = "IfNotPresent"
-}
-
-variable "service_account_name" {
-  description = "Dedicated Kubernetes ServiceAccount for OPA pods (AC-2)."
-  type        = string
-  default     = ""
+  validation {
+    condition     = trimspace(var.opa_config) != ""
+    error_message = "opa_config must not be empty; F-102 requires structured OPA runtime configuration (decision_logs.console = true)."
+  }
 }

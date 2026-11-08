@@ -64,7 +64,7 @@ terraform apply -var-file=prod.tfvars
 - ✅ vLLM inference engines (fast and reasoning) and the advisor, only with `inference_backend = "vllm"`
 - ✅ Langfuse stack (observability, database, ClickHouse, UI)
 - ✅ Compliance bridge (Langfuse-to-Lula dynamic bootstrapping)
-- ✅ OPA policy engine
+- ✅ OPA UDS sidecar inside gateway pod (read-only policy, `system.authz`, and console decision-log ConfigMaps)
 
 ## Inference Backend
 

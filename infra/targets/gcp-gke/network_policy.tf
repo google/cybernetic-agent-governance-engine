@@ -523,25 +523,8 @@ resource "kubernetes_network_policy_v1" "gateway_egress_l3_l4" {
       }
     }
 
-    # Internal governance services (OPA, vLLM, NeMo, Langfuse OTLP) + Linkerd inbound proxy (4143)
-    egress {
-      to {
-        pod_selector {
-          match_labels = {
-            app = "opa"
-          }
-        }
-      }
-      ports {
-        protocol = "TCP"
-        port     = "8181"
-      }
-      ports {
-        protocol = "TCP"
-        port     = "4143"
-      }
-    }
-
+    # Internal governance services (vLLM, NeMo, Langfuse OTLP) + Linkerd inbound proxy (4143).
+    # OPA runs inside the gateway pod over an in-pod Unix domain socket (D-195-3).
     egress {
       to {
         pod_selector {

@@ -22,6 +22,19 @@ variable "image" {
   type        = string
 }
 
+variable "opa_image" {
+  description = "Digest-pinned OPA static container image for the in-pod UDS sidecar (F-19, D-195-3)"
+  type        = string
+
+  validation {
+    condition = (
+      !can(regex(":latest(@|$)", var.opa_image)) &&
+      can(regex("^[^@\\s]+@sha256:[0-9a-f]{64}$", var.opa_image))
+    )
+    error_message = "opa_image must be pinned by @sha256:<64-hex> digest and must not use :latest."
+  }
+}
+
 variable "replicas" {
   description = "Number of pod replicas"
   type        = number
@@ -105,7 +118,68 @@ variable "cage_env" {
 }
 
 variable "opa_url" {
-  type = string
+  description = "OPA sidecar Unix-socket URL (http+unix://<urlencoded-socket-path>; D-195-3)"
+  type        = string
+  default     = "http+unix://%2Fvar%2Frun%2Fopa%2Fopa.sock"
+
+  validation {
+    condition     = startswith(var.opa_url, "http+unix://")
+    error_message = "opa_url must use an in-pod Unix domain socket (http+unix://...); network TCP OPA endpoints are retired (D-195-3)."
+  }
+}
+
+variable "opa_policies_config_map_name" {
+  description = "Read-only domain Rego policies ConfigMap mounted into the OPA sidecar"
+  type        = string
+  default     = "opa-policies"
+}
+
+variable "opa_system_authz_config_map_name" {
+  description = "Read-only system.authz ConfigMap locking the OPA policy/data store at runtime (R-15)"
+  type        = string
+  default     = "opa-system-authz"
+}
+
+variable "opa_config_config_map_name" {
+  description = "Read-only OPA runtime configuration ConfigMap (decision_logs.console = true, F-102)"
+  type        = string
+  default     = "opa-config"
+}
+
+variable "opa_bundle_sha256" {
+  description = "SHA-256 digest of OPA policy/authz/config ConfigMaps to trigger pod rollout on policy updates"
+  type        = string
+  default     = ""
+}
+
+variable "opa_policy_files" {
+  description = "Map of domain Rego policy filenames mounted into the OPA sidecar ConfigMap (POAM-2026-198)"
+  type        = map(string)
+  default     = {}
+}
+
+variable "opa_cpu_request" {
+  description = "CPU request for the OPA UDS sidecar container"
+  type        = string
+  default     = "100m"
+}
+
+variable "opa_cpu_limit" {
+  description = "CPU limit for the OPA UDS sidecar container"
+  type        = string
+  default     = "500m"
+}
+
+variable "opa_memory_request" {
+  description = "Memory request for the OPA UDS sidecar container"
+  type        = string
+  default     = "128Mi"
+}
+
+variable "opa_memory_limit" {
+  description = "Memory limit for the OPA UDS sidecar container"
+  type        = string
+  default     = "256Mi"
 }
 
 variable "governance_salt" {

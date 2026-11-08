@@ -34,8 +34,54 @@ spec:
       serviceAccountName: cage-benchmark-sa
       securityContext:
         runAsNonRoot: true
+        fsGroup: 1000
         seccompProfile:
           type: RuntimeDefault
+      initContainers:
+        - name: opa
+          image: ${OPA_BENCHMARK_IMAGE}
+          imagePullPolicy: Always
+          restartPolicy: Always
+          args:
+            - run
+            - --server
+            - --addr=unix:///var/run/opa/opa.sock
+            - --authorization=basic
+            - --config-file=/config/opa_config.yaml
+            - --ignore=..*
+            - /etc/opa/authz/system_authz.rego
+            - /policies
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            runAsNonRoot: true
+            runAsUser: 1000
+            runAsGroup: 1000
+            capabilities:
+              drop:
+                - ALL
+            seccompProfile:
+              type: RuntimeDefault
+          volumeMounts:
+            - name: opa-socket
+              mountPath: /var/run/opa
+              readOnly: false
+            - name: opa-policies
+              mountPath: /policies
+              readOnly: true
+            - name: opa-system-authz
+              mountPath: /etc/opa/authz
+              readOnly: true
+            - name: opa-config
+              mountPath: /config
+              readOnly: true
+          resources:
+            requests:
+              cpu: "100m"
+              memory: "128Mi"
+            limits:
+              cpu: "500m"
+              memory: "256Mi"
       containers:
         - name: benchmark-runner
           # BENCHMARK_IMAGE, GOOGLE_CLOUD_PROJECT and CAGE_ENVIRONMENT are
@@ -135,7 +181,7 @@ spec:
             # Real backends for --unmocked. Both consensus fallbacks point at
             # vllm-reasoning, the only vLLM deployment the runner scales up.
             - name: OPA_URL
-              value: "http://opa.governance-stack.svc.cluster.local:8181"
+              value: "http+unix://%2Fvar%2Frun%2Fopa%2Fopa.sock"
             - name: VLLM_REASONING_API_BASE
               value: "http://vllm-reasoning.governance-stack.svc.cluster.local:8000/v1"
             - name: VLLM_FAST_API_BASE
@@ -182,11 +228,28 @@ spec:
             seccompProfile:
               type: RuntimeDefault
           volumeMounts:
+            - name: opa-socket
+              mountPath: /var/run/opa
+              readOnly: false
             - name: red-team-datasets-vol
               mountPath: /app/tests/red_team
             - name: benchmark-scripts-vol
               mountPath: /app/scripts
       volumes:
+        - name: opa-socket
+          emptyDir: {}
+        - name: opa-policies
+          configMap:
+            name: opa-policies
+            defaultMode: 0444
+        - name: opa-system-authz
+          configMap:
+            name: opa-system-authz
+            defaultMode: 0444
+        - name: opa-config
+          configMap:
+            name: opa-config
+            defaultMode: 0444
         - name: red-team-datasets-vol
           configMap:
             name: red-team-datasets

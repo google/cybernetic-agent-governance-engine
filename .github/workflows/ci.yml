@@ -848,8 +848,12 @@ jobs:
             docker compose logs --no-color || true
             exit 1
           fi
-          # Verify single-domain policy isolation: finance mounts trade.governance only
-          policies_json=$(curl -sf -H "Authorization: Bearer ${OPA_AUTH_TOKEN}" "${OPA_URL}/v1/policies")
+          # Verify OPA TCP :8181 is NOT exposed on the host and finance mounts trade.governance only on the internal Compose network
+          if curl -sf --connect-timeout 2 http://127.0.0.1:8181/health >/dev/null 2>&1; then
+            echo "::error::OPA TCP :8181 must not be exposed on the host in docker-compose.yml"
+            exit 1
+          fi
+          policies_json=$(docker compose exec -T gateway python -c "import os, urllib.request; req = urllib.request.Request('http://opa:8181/v1/policies', headers={'Authorization': 'Bearer ' + os.environ['OPA_AUTH_TOKEN']}); print(urllib.request.urlopen(req, timeout=5).read().decode())")
           echo "$policies_json" | grep -q "trade"
           if echo "$policies_json" | grep -q "dosing"; then
             echo "::error::Cross-domain policy leak: dosing.governance loaded under CAGE_DOMAIN=finance"
@@ -1019,7 +1023,11 @@ jobs:
             docker compose logs --no-color || true
             exit 1
           fi
-          policies_json=$(curl -sf -H "Authorization: Bearer ${OPA_AUTH_TOKEN}" "${OPA_URL}/v1/policies")
+          if curl -sf --connect-timeout 2 http://127.0.0.1:8181/health >/dev/null 2>&1; then
+            echo "::error::OPA TCP :8181 must not be exposed on the host in docker-compose.yml"
+            exit 1
+          fi
+          policies_json=$(docker compose exec -T gateway python -c "import os, urllib.request; req = urllib.request.Request('http://opa:8181/v1/policies', headers={'Authorization': 'Bearer ' + os.environ['OPA_AUTH_TOKEN']}); print(urllib.request.urlopen(req, timeout=5).read().decode())")
           echo "$policies_json" | grep -q "dosing"
           if echo "$policies_json" | grep -q "trade_governance"; then
             echo "::error::Cross-domain policy leak: trade_governance.rego loaded under CAGE_DOMAIN=healthcare"

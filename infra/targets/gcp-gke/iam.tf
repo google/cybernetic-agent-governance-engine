@@ -38,7 +38,6 @@ locals {
   ksa_benchmark         = "cage-benchmark-sa"
   ksa_langfuse          = "langfuse-sa"
   ksa_clickhouse        = "cage-clickhouse-sa"
-  ksa_opa               = "cage-opa-sa"
   ksa_agentsight_ui     = "cage-agentsight-ui-sa"
   ksa_nemo              = "cage-nemo-sa"
 
@@ -369,11 +368,6 @@ locals {
       name    = local.ksa_lula
       gsa     = google_service_account.lula.email
       purpose = "compliance-validation"
-    }
-    opa = {
-      name    = local.ksa_opa
-      gsa     = null # zero cloud identity (AC-2 / POAM-2026-079)
-      purpose = "policy-evaluation"
     }
     agentsight_ui = {
       name    = local.ksa_agentsight_ui

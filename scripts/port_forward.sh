@@ -136,7 +136,7 @@ fi
 # ── Action: Status ───────────────────────────────────────────────────────────
 if [[ "$ACTION" == "status" ]]; then
   echo "[port-forward] Checking port reachability for context $CURRENT_CONTEXT (env: $TARGET_ENV):"
-  for port in 8181 3001 3000 8001 8000 8080 3002 8081 6379; do
+  for port in 3001 3000 8001 8000 8080 3002 8081 6379; do
     if nc -w 2 -z localhost "$port" 2>/dev/null; then
       echo "  ✅ localhost:$port reachable"
     else
@@ -203,7 +203,7 @@ has_desired_replicas() {
 # Query existing services once with 15s timeout
 EXISTING_SVCS=$(kubectl get svc -n "$NS" --request-timeout=15s -o jsonpath='{.items[*].metadata.name}' 2>/dev/null || echo "")
 
-start_pf opa          opa                       8181  8181  # OPA policy engine
+# OPA runs off the pod network as a UDS sidecar in deploy/gateway (no Kubernetes Service).
 start_pf langfuse     langfuse-web              3001  3000  # Langfuse API (LLM judge evaluation)
 start_pf langfuse-web langfuse-web              3000  3000  # Langfuse UI (NextAuth)
 
@@ -253,7 +253,7 @@ echo "[port-forward] Waiting for readiness (3s)..."
 sleep 3
 
 echo "[port-forward] Status checks:"
-CHECK_PORTS=(8181 3001 3000 8080 3002 8081 6379)
+CHECK_PORTS=(3001 3000 8080 3002 8081 6379)
 if [[ "$HAS_VLLM_FAST" == "true" ]]; then
   CHECK_PORTS+=(8001)
 fi

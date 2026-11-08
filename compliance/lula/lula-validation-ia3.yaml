@@ -16,57 +16,27 @@
 # NIST SP 800-53 Rev 5 — IA-3: Device Identification and Authentication
 #
 # POAM-007 STATUS: CLOSED 2026-05-17
-# Linkerd mTLS has been implemented across all intra-cluster service
-# communication in the governance-stack namespace.  This validation has been
-# updated from the previous compensating-control assertion (NetworkPolicy +
-# OPA + intent annotation) to assert the actual Linkerd mTLS posture.
-#
-# Asserts that:
-#   1. The Linkerd control-plane namespace exists (linkerd namespace present).
-#   2. All Deployments in governance-stack carry the
-#      linkerd.io/inject: enabled annotation on their pod template, confirming
-#      the Linkerd proxy sidecar is injected for mTLS.
-#   3. The default-deny-ingress NetworkPolicy still exists as a defence-in-depth
-#      L3/L4 control (retained post-mTLS per security hardening policy).
-#   4. The OPA Deployment is running (policy-based access enforcement layer).
-#
-# Domain: kubernetes → Deployments, NetworkPolicies, Namespaces
-# Provider: opa (inline Rego)
+# Asserts Linkerd mTLS workload identity enforcement on the gateway Deployment,
+# L3/L4 NetworkPolicy isolation, and in-pod OPA UDS sidecar isolation (zero TCP
+# listener ports, --addr=unix:///var/run/opa/opa.sock, --authorization=basic).
 #
 # References:
-#   - infra/targets/gcp-gke/network_policy.tf — default-deny and hardened L3/L4 NetworkPolicy definitions
+#   - infra/targets/gcp-gke/network_policy.tf — default-deny and L3/L4 NetworkPolicy definitions
 #   - infra/modules/service_mesh/main.tf & infra/modules/gateway/mesh-policy/ — Linkerd mTLS SPIFFE authorization policies
-#   - infra/modules/opa_policy/main.tf — OPA Deployment module
+#   - infra/modules/gateway/main.tf — Gateway UDS OPA sidecar
 #   - docs/POAM.md — POAM-007 (IA-3: Linkerd mTLS — CLOSED 2026-05-17)
-#
-# OSCAL Mapping:
-#   component: cage-gateway
-#   control: ia-3
-#
-# Namespace: governance-stack (confirmed from live cluster deployment snapshot)
 
 component-definition:
   uuid: f9dc196a-c256-50dc-8884-955eb90df5a6
   metadata:
     title: CAGE Validation — IA3
-    last-modified: '2026-07-01T13:18:54Z'
-    version: 1.0.0
+    last-modified: '2026-11-08T00:00:00Z'
+    version: 1.1.0
     oscal-version: 1.1.2
     remarks: |-
-      Auto-converted from standalone lula validation format.
       Region: US_FED. Posture: nist-sp800-53.
-      Notes: NIST SP 800-53 Rev 5 IA-3: Device Identification and Authentication. POAM-007 CLOSED 2026-05-17 — Linkerd mTLS implemented. Namespace: governance-stack (confirmed from live cluster deployment snapshot).
-      This validation was updated from the previous compensating-control assertion (NetworkPolicy + OPA + intent annotation) to assert the actual Linkerd mTLS posture following POAM-007 closure.
-      Linkerd provides per-pod cryptographic identity via SPIFFE/X.509 certificates issued by the Linkerd certificate authority.  The linkerd.io/inject: "enabled" annotation on pod templates causes the Linkerd admission webhook to inject the proxy sidecar, which transparently upgrades all intra-cluster TCP connections to mTLS.  This provides cryptographic device identity verification for all service-to-service communication within governance-stack.
-      Retained controls (defence-in-depth):
-        - default-deny-ingress NetworkPolicy (L3/L4 isolation)
-        - OPA Deployment (policy-based access enforcement on every request)
-
-      Evidence:
-        - Linkerd namespace existence confirms control-plane is deployed
-        - linkerd.io/inject: "enabled" on all pod templates confirms proxy injection
-        - NetworkPolicy and OPA assertions confirm defence-in-depth layers are live
-
+      Notes: NIST SP 800-53 Rev 5 IA-3: Device Identification and Authentication. POAM-007 CLOSED 2026-05-17 — Linkerd mTLS implemented. Namespace: governance-stack.
+      Asserts Linkerd mTLS CAGE_TRUSTED_CLIENT_IDENTITIES enforcement on the gateway Deployment, active NetworkPolicy isolation, and in-pod OPA UDS sidecar execution with zero TCP listener ports (D-195-3).
       See: docs/POAM.md — POAM-007 (IA-3: Linkerd mTLS — CLOSED 2026-05-17). See: compliance/continuous-monitoring/ISCM_STRATEGY.md — IA-3 monitoring cadence.
   components:
   - uuid: fb5c6ee6-5166-560c-afa9-9327e94bb14b
@@ -119,7 +89,7 @@ component-definition:
               import future.keywords.if
               import future.keywords.in
 
-              # IA-3: Device Identification and Authentication — Linkerd mTLS (POAM-007 / POAM-2026-080)
+              # IA-3: Device Identification and Authentication — Linkerd mTLS & OPA UDS Sidecar
               gateway_mtls_identity_enforced if {
                 some deploy in input["cage-deployments"]
                 deploy.metadata.name == "gateway"
@@ -129,10 +99,15 @@ component-definition:
                 env.value != ""
               }
 
-              opa_running if {
+              opa_uds_sidecar_running if {
                 some deploy in input["cage-deployments"]
-                deploy.metadata.name == "opa-service"
+                deploy.metadata.name == "gateway"
                 deploy.status.readyReplicas >= 1
+                some opa in deploy.spec.template.spec.containers
+                opa.name == "opa"
+                "--addr=unix:///var/run/opa/opa.sock" in opa.args
+                "--authorization=basic" in opa.args
+                count(object.get(opa, "ports", [])) == 0
               }
 
               network_isolation_present if {
@@ -144,6 +119,6 @@ component-definition:
                 count(input["cage-deployments"]) > 0
                 count(input["cage-network-policies"]) > 0
                 gateway_mtls_identity_enforced
-                opa_running
+                opa_uds_sidecar_running
                 network_isolation_present
               }

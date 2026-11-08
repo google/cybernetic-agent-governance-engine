@@ -15,32 +15,26 @@
 # lula-validation-ac3.yaml
 # NIST SP 800-53 Rev 5 — AC-3: Access Enforcement
 #
-# Asserts that the OPA (Open Policy Agent) Deployment is running and ready
-# in the cluster. OPA is the primary access enforcement mechanism, evaluating
-# every trade and governance request against the canonical Rego policy in
-# deployment/system_authz.rego.
-#
-# Domain: kubernetes → OPA Deployment
-# Provider: opa (inline Rego)
+# Asserts that the gateway Deployment runs the read-only OPA Unix-socket
+# sidecar (--addr=unix:///var/run/opa/opa.sock, --authorization=basic, zero TCP
+# ports) and mounts the read-only opa-policies and opa-system-authz ConfigMaps
+# in governance-stack (D-195-3, F-19, F-102, R-15).
 #
 # References:
-#   - infra/modules/opa_policy/main.tf — OPA Deployment & ConfigMap module
-#   - deployment/opa_config.yaml — OPA bundle configuration
-#   - deployment/system_authz.rego — Canonical access enforcement policy
-#
-# Namespace: governance-stack (confirmed from live cluster deployment snapshot)
+#   - infra/modules/opa_policy/main.tf — OPA policy, system.authz & config ConfigMaps
+#   - infra/modules/gateway/main.tf — Gateway UDS OPA sidecar container
+#   - src/cage_finance/opa/trade_governance.rego — Active domain trade RBAC policy
 
 component-definition:
   uuid: bf1cba97-1e27-5806-b6f5-f04499ef0a96
   metadata:
     title: CAGE Validation — AC3
-    last-modified: '2026-07-01T13:18:54Z'
-    version: 1.0.0
+    last-modified: '2026-11-08T00:00:00Z'
+    version: 1.1.0
     oscal-version: 1.1.2
     remarks: |-
-      Auto-converted from standalone lula validation format.
       Region: US_FED. Posture: nist-sp800-53.
-      Notes: NIST SP 800-53 Rev 5 AC-3: Access Enforcement. Namespace: governance-stack (confirmed from live cluster deployment snapshot). Automated verification that OPA is live and enforcing access control policies for every governance decision. The canonical Rego policy (deployment/system_authz.rego) implements RBAC-based trade limits: junior traders ≤ $5k, senior traders ≤ $500k, with fail-closed defaults for all unrecognized roles or actions. This validation also checks the opa-compliance-status ConfigMap label to confirm the ISO 42001 compliance configuration is applied (mirrors lula-validation-sc4.yaml). See: compliance/continuous-monitoring/ISCM_STRATEGY.md — AC-3 monitoring cadence.
+      Notes: NIST SP 800-53 Rev 5 AC-3: Access Enforcement. Namespace: governance-stack. Automated verification that the gateway Deployment runs its in-pod OPA sidecar over a shared Unix domain socket (http+unix://%2Fvar%2Frun%2Fopa%2Fopa.sock) with --authorization=basic, readOnlyRootFilesystem, and zero TCP listener ports, backed by ISO 42001-labelled opa-policies and opa-system-authz ConfigMaps. See: compliance/continuous-monitoring/ISCM_STRATEGY.md — AC-3 monitoring cadence.
   components:
   - uuid: 319247ba-1fb5-5c62-99a7-24771b750845
     type: software
@@ -69,14 +63,14 @@ component-definition:
           type: kubernetes
           kubernetes-spec:
             resources:
-              - name: opa-deployment
+              - name: gateway-deployment
                 resource-rule:
                   group: apps
                   version: v1
                   resource: deployments
                   namespaces:
                     - governance-stack
-              - name: opa-policies
+              - name: opa-configmaps
                 resource-rule:
                   group: ""
                   version: v1
@@ -92,26 +86,45 @@ component-definition:
               import future.keywords.if
               import future.keywords.in
 
-              # AC-3: Access Enforcement
-              # Verifies the in-state opa-service Deployment is ready and the in-state
-              # opa-policies ConfigMap contains active Rego policy bundles.
-              opa_deployment_ready if {
-                some deploy in input["opa-deployment"]
-                deploy.metadata.name == "opa-service"
+              # AC-3: Access Enforcement — Gateway UDS OPA Sidecar & Immutable Bundle
+              gateway_opa_uds_sidecar_ready if {
+                some deploy in input["gateway-deployment"]
+                deploy.metadata.name == "gateway"
                 deploy.status.readyReplicas >= 1
+                some gw in deploy.spec.template.spec.containers
+                gw.name == "gateway"
+                some env in gw.env
+                env.name == "OPA_URL"
+                env.value == "http+unix://%2Fvar%2Frun%2Fopa%2Fopa.sock"
+                some opa in deploy.spec.template.spec.containers
+                opa.name == "opa"
+                "--addr=unix:///var/run/opa/opa.sock" in opa.args
+                "--authorization=basic" in opa.args
+                opa.securityContext.readOnlyRootFilesystem == true
+                count(object.get(opa, "ports", [])) == 0
               }
 
               opa_policies_loaded if {
-                some cm in input["opa-policies"]
+                some cm in input["opa-configmaps"]
                 cm.metadata.name == "opa-policies"
+                cm.metadata.labels["compliance.iso42001/enabled"] == "true"
                 some policy_name, policy_rego in cm.data
                 endswith(policy_name, ".rego")
                 policy_rego != ""
               }
 
+              opa_system_authz_loaded if {
+                some cm in input["opa-configmaps"]
+                cm.metadata.name == "opa-system-authz"
+                cm.metadata.labels["compliance.iso42001/enabled"] == "true"
+                contains(cm.data["system_authz.rego"], "package system.authz")
+                contains(cm.data["system_authz.rego"], "default allow := false")
+              }
+
               validate if {
-                count(input["opa-deployment"]) > 0
-                count(input["opa-policies"]) > 0
-                opa_deployment_ready
+                count(input["gateway-deployment"]) > 0
+                count(input["opa-configmaps"]) > 0
+                gateway_opa_uds_sidecar_ready
                 opa_policies_loaded
+                opa_system_authz_loaded
               }

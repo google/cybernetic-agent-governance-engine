@@ -91,6 +91,9 @@ def test_docker_compose_opa_mounts_and_ignore_flag() -> None:
     )
     healthcheck_cmd: list[str] = opa_svc.get("healthcheck", {}).get("test", [])
     assert "--ignore=.*" in healthcheck_cmd, "opa healthcheck must include --ignore=.*"
+    assert "ports" not in opa_svc, (
+        "opa service in docker-compose.yml must stay on the internal Compose network with no host port exposure"
+    )
 
     gw_svc = compose["services"]["gateway"]
     gw_volumes: list[str] = gw_svc.get("volumes", [])
@@ -105,7 +108,7 @@ def test_docker_compose_opa_mounts_and_ignore_flag() -> None:
 @pytest.mark.parametrize(
     "compose_relpath,service_names",
     [
-        ("docker-compose.yml", ("gateway", "app")),
+        ("docker-compose.yml", ("gateway",)),
         ("docker-compose.dev.yml", ("gateway",)),
     ],
 )
@@ -131,6 +134,15 @@ def test_docker_compose_opa_url_is_base_url_without_path(
             base, uds = _opa_endpoint()
             assert base == "http://opa:8181"
             assert uds is None
+
+    if compose_relpath == "docker-compose.yml":
+        app_env = _extract_env_dict(compose["services"]["app"].get("environment", []))
+        assert "OPA_URL" not in app_env, (
+            "app service must not carry OPA_URL; advisor routes via GATEWAY_URL (D-195-3)"
+        )
+        assert "OPA_AUTH_TOKEN" not in app_env, (
+            "app service must not carry OPA_AUTH_TOKEN (D-195-3)"
+        )
 
 
 def test_env_examples_define_valid_opa_base_url_and_token() -> None:

@@ -59,6 +59,9 @@ _ROUTABLE_VERDICTS = frozenset(
     }
 )
 
+#: Canonical advisory decisions returned by ``POST /governance/policy-precheck``.
+_POLICY_PRECHECK_DECISIONS = frozenset({"ALLOW", "DENY", "MANUAL_REVIEW"})
+
 
 def _violations(response: httpx.Response) -> list[str]:
     try:
@@ -212,6 +215,74 @@ class GatewayClient:
         )
         response.raise_for_status()
         return response.json()["active_hash"]
+
+    @side_effect_node(kind="api_call", external_system="gateway_api")
+    async def evaluate_policy_dry_run(
+        self,
+        action: str,
+        params: Mapping[str, Any] | None = None,
+        timeout: float = 5.0,
+    ) -> str:
+        """Run a side-effect-free OPA policy pre-check via the gateway (D-195-3).
+
+        Calls ``POST /governance/policy-precheck`` so the advisor never holds
+        ``OPA_URL`` or opens a direct network connection to OPA; the gateway
+        binds server-authoritative inputs, evaluates the active domain's Rego
+        policy over its in-pod Unix socket, and returns an unsigned advisory
+        decision (``ALLOW``, ``DENY``, or ``MANUAL_REVIEW``). Any transport,
+        HTTP, or schema failure fails closed to ``"DENY"``.
+        """
+        clean_action = action.strip() if isinstance(action, str) else ""
+        if not clean_action:
+            return "DENY"
+        clean_params = (
+            {k: v for k, v in params.items() if k != "action"}
+            if isinstance(params, Mapping)
+            else {}
+        )
+        try:
+            client = await self._ensure_client()
+            headers = self._build_headers()
+            payload = {"action": clean_action, "params": clean_params}
+
+            async def _post() -> httpx.Response:
+                return await client.post(
+                    "/governance/policy-precheck",
+                    json=payload,
+                    headers=headers,
+                    timeout=timeout,
+                )
+
+            response = await _post_with_retries(
+                _post, retry_statuses=frozenset({429, 503})
+            )
+            response.raise_for_status()
+            body = response.json()
+            if not isinstance(body, dict) or body.get("dry_run") is not True:
+                logger.warning(
+                    "policy-precheck returned malformed body for action=%s: %r",
+                    clean_action,
+                    body,
+                )
+                return "DENY"
+            decision = body.get("decision")
+            if isinstance(decision, str):
+                normalized = decision.strip().upper()
+                if normalized in _POLICY_PRECHECK_DECISIONS:
+                    return normalized
+            logger.warning(
+                "policy-precheck returned unknown decision for action=%s: %r",
+                clean_action,
+                decision,
+            )
+            return "DENY"
+        except Exception as exc:
+            logger.error(
+                "Gateway policy-precheck failed for action=%s; failing closed: %s",
+                clean_action,
+                exc,
+            )
+            return "DENY"
 
     @side_effect_node(kind="api_call", external_system="gateway_api")
     async def validate_action(
