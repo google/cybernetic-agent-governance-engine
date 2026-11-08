@@ -53,7 +53,8 @@ import json
 import logging
 import os
 import uuid
-from datetime import datetime, timedelta, timezone
+from collections.abc import Mapping
+from datetime import datetime, timezone
 from typing import Any
 
 from src.gateway.governance.inference_backend import (
@@ -144,7 +145,7 @@ def _validate_langfuse_credentials() -> None:
         if not os.environ.get(var):
             missing.append(var)
 
-    # Application project credentials (used by _make_app_langfuse / _fetch_failing_traces)
+    # Application project credentials (mounted for operational telemetry isolation)
     for var in ("LANGFUSE_PUBLIC_KEY", "LANGFUSE_SECRET_KEY"):
         if not os.environ.get(var):
             missing.append(var)
@@ -192,8 +193,8 @@ def _make_compliance_langfuse():  # type: ignore[no-untyped-def]
     )
 
 
-# Short timeout for Langfuse SDK calls in audit_workflow — prevents _fetch_failing_traces
-# and flush() from blocking the synchronous ingest for >30s when Langfuse is slow.
+# Short timeout for Langfuse SDK calls in audit_workflow — prevents compliance
+# score flush() from blocking audit ingestion for >30s when Langfuse is slow.
 _LANGFUSE_SDK_TIMEOUT_S: float = float(os.environ.get("LANGFUSE_API_TIMEOUT_S", "8"))
 
 
@@ -220,17 +221,6 @@ def _flush_with_timeout(
             "some events may be dropped (non-fatal).",
             timeout,
         )
-
-
-def _make_app_langfuse():  # type: ignore[no-untyped-def]
-    import httpx
-
-    return _get_langfuse_class()(
-        public_key=os.environ.get("LANGFUSE_PUBLIC_KEY", ""),
-        secret_key=os.environ.get("LANGFUSE_SECRET_KEY", ""),
-        host=os.environ.get("LANGFUSE_HOST", "https://cloud.langfuse.com"),
-        httpx_client=httpx.Client(timeout=_LANGFUSE_SDK_TIMEOUT_S),
-    )
 
 
 # ---------------------------------------------------------------------------
@@ -428,42 +418,89 @@ async def _fetch_failing_traces(
     control_id: str,
     limit: int = 10,
 ) -> list[dict]:
-    """Fetch failing traces from the app Langfuse project for evidence."""
+    """Fetch blocking `cage_evidence` custody records for `control_id` over 24h.
+
+    Reads exclusively from the authoritative Redis DB 1 + WORM `.ndjson`
+    custody chain rather than advisor-writable Langfuse traces (`R-16`, `F-103`).
+    """
+    from .metrics import (
+        _get_record_field,
+        _is_passing_evidence_record,
+        _parse_evidence_payload,
+        _query_cage_evidence_records,
+    )
 
     def _sync() -> list[dict]:
-        app_lf = _make_app_langfuse()
-        since = datetime.now(tz=timezone.utc) - timedelta(hours=24)
         try:
-            response = app_lf.api.trace.list(
-                tags=[f"control:{control_id}"],
-                from_timestamp=since,
-                limit=limit * 2,
+            records = _query_cage_evidence_records(
+                control_id=control_id,
+                window_hours=24,
+                limit=max(limit * 4, 50),
             )
-            results = []
-            for t in response.data or []:
-                metadata = t.metadata or {}
-                outcome = (
-                    metadata.get("iso_42001_outcome")
-                    if isinstance(metadata, dict)
-                    else None
-                )
-                if outcome != "PASSED":
-                    results.append(
-                        {
-                            "id": t.id,
-                            "input": json.dumps(t.input or "")[:250],
-                            "output": json.dumps(t.output or "")[:250],
-                            "metadata": metadata if isinstance(metadata, dict) else {},
-                        }
-                    )
-            return results[:limit]
         except Exception as exc:
             logger.warning(
-                "[audit_workflow] Failed to fetch failing traces for %s: %s",
+                "[audit_workflow] Failed to fetch blocking cage_evidence records for %s: %s",
                 control_id,
                 exc,
             )
             return []
+
+        results: list[dict] = []
+        for rec in records:
+            if _is_passing_evidence_record(rec):
+                continue
+            payload = _parse_evidence_payload(rec)
+            receipt = payload.get("receipt")
+            receipt_map = receipt if isinstance(receipt, Mapping) else {}
+            event_type = str(
+                _get_record_field(rec, "event_type")
+                or _get_record_field(rec, "type")
+                or payload.get("event_type")
+                or payload.get("type")
+                or "UNKNOWN"
+            )
+            record_hash = str(_get_record_field(rec, "record_hash") or "")
+            rec_id = str(
+                _get_record_field(rec, "trace_id")
+                or payload.get("trace_id")
+                or (record_hash[:16] if record_hash else "")
+                or _get_record_field(rec, "stream_id")
+                or "unknown"
+            )
+            input_val = (
+                payload.get("action")
+                or payload.get("act")
+                or receipt_map.get("action")
+                or event_type
+            )
+            output_val = (
+                payload.get("refusal_reason")
+                or receipt_map.get("refusal_reason")
+                or payload.get("defer_reason")
+                or payload.get("classification_reason")
+                or payload.get("violated_rule")
+                or receipt_map.get("violated_rule")
+                or payload.get("reason")
+                or payload.get("detail")
+                or payload.get("verdict")
+                or payload.get("decision")
+                or payload.get("outcome")
+                or payload.get("status")
+                or payload
+            )
+            results.append(
+                {
+                    "id": rec_id,
+                    "event_type": event_type,
+                    "record_hash": record_hash,
+                    "input": json.dumps(input_val, default=str)[:250],
+                    "output": json.dumps(output_val, default=str)[:250],
+                    "metadata": payload,
+                }
+            )
+            if len(results) >= limit:
+                break
+        return results
 
     return await asyncio.to_thread(_sync)
 
@@ -475,11 +512,11 @@ def _build_remediation_prompt(
 ) -> str:
     if failing_traces:
         trace_list = "\n".join(
-            f'  - Trace {t["id"]}:\n    input="{t["input"]}"\n    output="{t["output"]}"'
+            f'  - Evidence {t["id"]}:\n    input="{t["input"]}"\n    output="{t["output"]}"'
             for t in failing_traces
         )
     else:
-        trace_list = "  (no failing traces available in the 24h evidence window)"
+        trace_list = "  (no blocking cage_evidence records in the 24h evidence window)"
 
     safety_str = (
         f"{finding.safety_rate * 100:.2f}%"
@@ -496,14 +533,14 @@ FAILED CONTROL
   Safety Rate:  {safety_str} (required: ≥ 99%)
   Remarks:      {finding.remarks or "none provided"}
 
-EVIDENCE — Failing traces from the last 24 hours
+EVIDENCE — Blocking cage_evidence records from the last 24 hours
 {trace_list}
 
 CODEBASE REFERENCE (use these paths in your fix)
   - Production gateway (Python):      src/gateway/server/hybrid_server.py
-  - Financial advisor graph:          src/governed_financial_advisor/graph/
-  - OPA trade policy (Rego):          config/opa/trade_policy.rego
-  - System authorization policy:      deployment/system_authz.rego
+  - Core governance engine:           src/gateway/governance/
+  - Domain plugins & OPA policies:    src/cage_<domain>/opa/
+  - Reference advisor application:    src/governed_financial_advisor/graph/
   - Compliance bridge (Python):       src/compliance_bridge/
   - ISO 42001 control validators:     compliance/lula/
   - OSCAL component definition:       compliance/oscal/component-definition.yaml

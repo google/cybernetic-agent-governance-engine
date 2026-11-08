@@ -263,7 +263,7 @@ For deep-dive architectural specifications, refer to the corresponding canonical
 | 10 | **Evidence Chain** | Cryptographic Hash Chaining, Streams & Compliance-Bridge Custody | [`EVIDENCE_CHAIN.md`](EVIDENCE_CHAIN.md) |
 | 11 | **Cryptographic Signer** | Cloud KMS HSM Provider, RFC 8785 JCS & Key Manifests | [`CRYPTOGRAPHIC_SIGNER_ENGINE.md`](CRYPTOGRAPHIC_SIGNER_ENGINE.md) |
 | 12 | **Extensibility Architecture** | Tier Contract (`ReadOnlyTier` / `MutatingTier`), Seams & Vendor Neutrality | [`EXTENSIBILITY_ARCHITECTURE.md`](EXTENSIBILITY_ARCHITECTURE.md) |
-| 13 | **Dual-Project Architecture** | Sovereign Regional Langfuse Telemetry & Operational Isolation | [`DUAL_PROJECT_ARCHITECTURE.md`](DUAL_PROJECT_ARCHITECTURE.md) |
+| 13 | **Langfuse Tenant Isolation** | Logical Langfuse Tenant Project Isolation (Operational Telemetry vs. Compliance Scoring) | [`LANGFUSE_PROJECT_ISOLATION.md`](LANGFUSE_PROJECT_ISOLATION.md) |
 | 14 | **Inference Gateway** | Split-Brain vLLM Serving Topology & Model Router | [`INFERENCE_GATEWAY_ARCHITECTURE.md`](INFERENCE_GATEWAY_ARCHITECTURE.md) |
 | 15 | **Agent Identity Binding** | Canonical Linkerd mTLS Identity Extraction, DPoP Binding & A2A Prefix Authorization | [`AGENT_IDENTITY_BINDING_SPEC.md`](AGENT_IDENTITY_BINDING_SPEC.md) |
 | 16 | **Evaluation & Skill Certification** | Split-Plane Offline Skill Evaluation (`src/eval_harness/`), ATIF, Double Ratchet Anchors, GEPA Reflective Optimizer & RLVR/DPO | [`EVALUATION_AND_ALIGNMENT_HARNESS.md`](EVALUATION_AND_ALIGNMENT_HARNESS.md) |

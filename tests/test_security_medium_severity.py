@@ -257,17 +257,19 @@ class TestM10SafetyRateMetric:
         )
         assert m.safety_rate is None
 
-    def test_metrics_module_uses_limit_100(self):
-        # M-10: Langfuse API enforces a maximum of 100 traces per request.
-        # The limit was corrected from 1000 → 100 to comply with the API constraint.
+    def test_metrics_module_reads_custody_chain_not_langfuse_api(self):
+        # M-10 / F-113: Compliance-bridge metrics derive strictly from bounded
+        # custody-chain evidence (GCS WORM archive + Redis DB 1 stream), never
+        # unbounded or mutable Langfuse trace.list queries.
         import inspect
 
         from src.compliance_bridge import metrics
 
         source = inspect.getsource(metrics)
-        assert "limit=100" in source, (
-            "Langfuse trace list must use limit=100 (API maximum)"
-        )
+        assert "from langfuse" not in source
+        assert "trace.list" not in source
+        assert "EVIDENCE_ARCHIVE_BUCKET" in source
+        assert "cage:evidence:stream" in source
 
 
 # ---------------------------------------------------------------------------

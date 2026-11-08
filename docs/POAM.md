@@ -1992,7 +1992,7 @@ Nothing else read the flag. The earlier `staging.tfvars` comment saying it turns
    - the cluster module README;
    - `deploy_all.sh`'s DEP-01 comment and messages;
    - the DEP-01 decision record in [`DEPLOYMENT_DECISION_RECORD.md`](operations/DEPLOYMENT_DECISION_RECORD.md);
-   - `DEPLOYMENT_RULES.md`, `JURISDICTION_INVENTORY.md`, `GKE_TEST_RUNBOOK.md` and `DUAL_PROJECT_ARCHITECTURE.md`;
+   - `DEPLOYMENT_RULES.md`, `JURISDICTION_INVENTORY.md`, `GKE_TEST_RUNBOOK.md` and `LANGFUSE_PROJECT_ISOLATION.md`;
    - `BREAKING_CHANGES.md` CP-3.
 6. **Resolved in `POAM-2026-130` (same PR):**
    - the three flags and `any_compliance_active` are deleted and replaced by `variable "enforce_in_dev"`;

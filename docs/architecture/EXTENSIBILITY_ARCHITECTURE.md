@@ -836,7 +836,7 @@ For any private partner integration:
 | [NEURO_SYMBOLIC_GOVERNANCE.md](../governance/NEURO_SYMBOLIC_GOVERNANCE.md)       | SymbolicGovernor pipeline deep-dive                     |
 | [FORMAL_VERIFICATION.md](FORMAL_VERIFICATION.md)                      | Formal verification and completeness proofs             |
 | [config/compliance/README.md](../../config/compliance/README.md)   | Regional profile specification and authoring guide      |
-| [DUAL_PROJECT_ARCHITECTURE.md](DUAL_PROJECT_ARCHITECTURE.md)         | Dual-project telemetry isolation design and threat model |
+| [LANGFUSE_PROJECT_ISOLATION.md](LANGFUSE_PROJECT_ISOLATION.md)       | Langfuse logical tenant project isolation and threat model |
 | [PHYSICAL_AI_GOVERNANCE_FRAMEWORK.md](PHYSICAL_AI_GOVERNANCE_FRAMEWORK.md) | Physical-AI domain plugin (barriers, tiers, overlays)   |
 
 - **Compliance Baselines**: Profiles (`US_FED_BASELINE.json`, `EU_ECB_BASELINE.json`, `APAC_MAS_BASELINE.json`) dictate the active normative overlay.

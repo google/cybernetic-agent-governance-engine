@@ -177,7 +177,7 @@ See [GOVERNANCE_CROSSWALK.md](compliance/cross-region/GOVERNANCE_CROSSWALK.md) f
 | File | Description |
 |---|---|
 | [ARCHITECTURE.md](architecture/ARCHITECTURE.md) | Full system architecture |
-| [DUAL_PROJECT_ARCHITECTURE.md](architecture/DUAL_PROJECT_ARCHITECTURE.md) | Dual-project architecture |
+| [LANGFUSE_PROJECT_ISOLATION.md](architecture/LANGFUSE_PROJECT_ISOLATION.md) | Langfuse logical tenant project isolation (operational LLM telemetry vs. compliance advisory scoring) |
 | [EXTENSIBILITY_ARCHITECTURE.md](architecture/EXTENSIBILITY_ARCHITECTURE.md) | Extensibility architecture |
 | [AGENT_OPS_ARCHITECTURE.md](architecture/AGENT_OPS_ARCHITECTURE.md) | Agent operations architecture |
 | [GATEWAY_ARCHITECTURE.md](architecture/GATEWAY_ARCHITECTURE.md) | **Layer 1 kernel** architecture — CBF layer, routing seal, governance pipeline |
