@@ -14,8 +14,8 @@
 
 """Meta-check regression suite ensuring every CI and Makefile gate actually enforces.
 
-Covers all 20 workflows in ``.github/workflows/*.yml`` (19 gate workflows + 1 release
-workflow ``publish-client-sdk.yml``) plus ``Makefile`` and ``scripts/run_matrix_tests.sh``:
+Covers all 19 workflows in ``.github/workflows/*.yml`` (18 gate workflows + 1 release
+workflow ``publish-client-sdk.yml``) plus ``Makefile`` and ``scripts/staging_lifecycle.sh``:
 
 1. Complete workflow inventory & classification (fails if a new workflow is added
    without being registered).
@@ -70,9 +70,9 @@ REPO_ROOT = Path(__file__).resolve().parent.parent
 WORKFLOWS_DIR = REPO_ROOT / ".github" / "workflows"
 MAKEFILE_PATH = REPO_ROOT / "Makefile"
 GITLEAKS_TOML_PATH = REPO_ROOT / ".gitleaks.toml"
-MATRIX_SCRIPT_PATH = REPO_ROOT / "scripts" / "run_matrix_tests.sh"
+STAGING_LIFECYCLE_PATH = REPO_ROOT / "scripts" / "staging_lifecycle.sh"
 
-# Complete classification of all 20 workflows in .github/workflows/
+# Complete classification of all 19 workflows in .github/workflows/
 NON_GATE_WORKFLOWS: frozenset[str] = frozenset(
     {
         "publish-client-sdk.yml",  # Tag/manual release workflow building & pushing cage-client wheel/GHCR package
@@ -85,7 +85,6 @@ GATE_WORKFLOWS: frozenset[str] = frozenset(
         "ci-integration.yml",
         "ci-partner-integration.yml",
         "ci.yml",
-        "compliance-matrix.yml",
         "dependency-review.yml",
         "eu-ecb-compliance.yml",
         "license_guard.yml",
@@ -153,7 +152,7 @@ def test_workflow_inventory_is_complete_and_classified() -> None:
         "Register new workflows in GATE_WORKFLOWS and add adversarial gate tests."
     )
     assert not missing, f"Classified workflow(s) missing from disk: {missing}"
-    assert len(on_disk) == 20, f"Expected 20 workflows, found {len(on_disk)}"
+    assert len(on_disk) == 19, f"Expected 19 workflows, found {len(on_disk)}"
 
     # Verify publish-client-sdk.yml is genuinely a release workflow, not a disguised test gate
     pub_data = yaml.safe_load(
@@ -1094,61 +1093,18 @@ def test_gate_hermetic_environment_script_catches_planted_ml_package() -> None:
     assert "ML packages installed in hermetic mode" in proc.stderr
 
 
-def test_gate_compliance_matrix_script_has_valid_paths_and_no_silent_skips() -> None:
-    """`scripts/run_matrix_tests.sh` must reference existing Rego/test paths and fail closed on missing test files."""
-    script_text = MATRIX_SCRIPT_PATH.read_text(encoding="utf-8")
-    assert "tests/core" not in script_text, (
-        "scripts/run_matrix_tests.sh must not reference non-existent tests/core/"
+def test_retired_compliance_matrix_folded_into_staging_lifecycle_gate_w(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """`compliance-matrix.yml` and `run_matrix_tests.sh` are retired into `staging_lifecycle.sh` Phases 3-5."""
+    assert not (WORKFLOWS_DIR / "compliance-matrix.yml").exists(), (
+        "compliance-matrix.yml stub was retired into scripts/staging_lifecycle.sh"
     )
-    assert (
-        "src/governed_financial_advisor/governance/policy/trade_governance.rego"
-        not in script_text
-    ), "scripts/run_matrix_tests.sh must use canonical src/cage_finance/opa/ path"
-    assert (REPO_ROOT / "tests" / "test_symbolic_governor.py").is_file()
-    assert (REPO_ROOT / "tests" / "infrastructure" / "test_data_residency.py").is_file()
-    assert (REPO_ROOT / "src" / "cage_finance" / "opa").is_dir()
-    assert 'warn "Gate 0.1 SKIPPED' not in script_text
-    assert 'warn "Gate 1.2 SKIPPED' not in script_text
-
-
-def _compliance_matrix_workflow() -> dict[str, Any]:
-    data = yaml.safe_load(
-        (WORKFLOWS_DIR / "compliance-matrix.yml").read_text(encoding="utf-8")
+    assert not (REPO_ROOT / "scripts" / "run_matrix_tests.sh").exists(), (
+        "scripts/run_matrix_tests.sh was retired into scripts/staging_lifecycle.sh"
     )
-    assert isinstance(data, dict), "compliance-matrix.yml did not parse as a mapping"
-    return data
 
-
-def _workflow_step(job: dict[str, Any], name: str) -> dict[str, Any]:
-    for step in job["steps"]:
-        if step.get("name") == name:
-            return step
-    raise AssertionError(f"step {name!r} not found")
-
-
-def test_gate_compliance_matrix_runs_only_against_a_named_deployment() -> None:
-    """Compliance Matrix runs on demand only, against one named deployment.
-
-    Every Lula manifest reads a running deployment, so a push- or PR-triggered
-    run could only fail or, before #664's assessment check, print
-    not-satisfied results as passes (POAM-2026-169, instance 6).
-    """
-    data = _compliance_matrix_workflow()
-    triggers = data.get("on") or data.get(True) or {}
-    assert set(triggers) == {"workflow_dispatch", "workflow_call"}, sorted(triggers)
-    for trigger in ("workflow_dispatch", "workflow_call"):
-        inputs = triggers[trigger]["inputs"]
-        for name in ("deployment", "region", "cage_env"):
-            assert inputs[name]["required"] is True, (trigger, name)
-
-    jobs = data["jobs"]
-    assert jobs, "compliance-matrix.yml defines no jobs"
-    for job_id, job in jobs.items():
-        assert job.get("environment") == "${{ inputs.deployment }}", job_id
-        assert "strategy" not in job, f"{job_id} must target one deployment"
-
-    # The design's premise. A manifest that stops reading a live deployment
-    # belongs in a pull-request workflow instead.
+    # Every Lula manifest targets a live-cluster domain (kubernetes or api), evaluated in Gate W Phase 3.
     domain_type = re.compile(r"domain:\s*\n\s*type:\s*([A-Za-z0-9_-]+)")
     manifests = sorted(
         (REPO_ROOT / "compliance" / "lula").glob("lula-validation-*.yaml")
@@ -1158,67 +1114,34 @@ def test_gate_compliance_matrix_runs_only_against_a_named_deployment() -> None:
         types = set(domain_type.findall(manifest.read_text(encoding="utf-8")))
         assert types and types <= {"kubernetes", "api"}, (manifest.name, types)
 
-    # A Langfuse dry-run checks only that variables are set, so it cannot fail
-    # wherever they are. Gate 0.3 runs the live check against the deployment.
+    # No workflow may run verify_langfuse_posture.py in --dry-run mode.
     for workflow in sorted(WORKFLOWS_DIR.glob("*.yml")):
-        text = workflow.read_text(encoding="utf-8")
-        assert "verify_langfuse_posture.py --dry-run" not in text, workflow.name
-    script_text = MATRIX_SCRIPT_PATH.read_text(encoding="utf-8")
-    assert "verify_langfuse_posture.py --posture" in script_text
+        wf_text = workflow.read_text(encoding="utf-8")
+        assert "verify_langfuse_posture.py --dry-run" not in wf_text, workflow.name
+
+    script_text = STAGING_LIFECYCLE_PATH.read_text(encoding="utf-8")
+    assert "tests/core" not in script_text
+    assert (
+        "src/governed_financial_advisor/governance/policy/trade_governance.rego"
+        not in script_text
+    )
+    assert 'verify_langfuse_posture.py" --posture staging' in script_text
     assert "--dry-run" not in script_text
+    assert 'test_data_residency.py" --run-integration' in script_text
+    assert "plan -detailed-exitcode" in script_text
+    assert "--from=cronjob/lula-audit" in script_text
+    assert "/v1/evidence/verify?require_citable=true" in script_text
+    assert "prometheus.googleapis.com/cage_" in script_text
 
-
-def test_gate_compliance_matrix_fails_closed_without_deployment_credentials(
-    tmp_path: Path,
-) -> None:
-    """The credentials step fails, naming each missing input, unless the deployment provides all of them."""
-    job = _compliance_matrix_workflow()["jobs"]["live-posture"]
-    step = _workflow_step(job, "Require the deployment's credentials")
-    required = sorted(set(step["env"]) - {"DEPLOYMENT"})
-    assert {"KUBECONFIG_DATA", "LANGFUSE_COMPLIANCE_PROJECT_ID"} <= set(required)
-    suite_env = set(_workflow_step(job, "Run the live posture suite")["env"])
-    assert set(required) - {"KUBECONFIG_DATA"} <= suite_env
-
-    def run_step(
-        values: dict[str, str],
-    ) -> tuple[subprocess.CompletedProcess[str], Path]:
-        github_env = tmp_path / "github_env"
-        github_env.write_text("", encoding="utf-8")
-        env = {
-            "PATH": os.environ.get("PATH", "/usr/bin:/bin"),
-            "RUNNER_TEMP": str(tmp_path),
-            "GITHUB_ENV": str(github_env),
-            "DEPLOYMENT": "planted",
-            **values,
-        }
-        proc = subprocess.run(
-            ["bash", "--noprofile", "--norc", "-eo", "pipefail", "-c", step["run"]],
-            env=env,
-            capture_output=True,
-            text=True,
-            check=False,
-        )
-        return proc, github_env
-
-    proc, github_env = run_step({})
-    assert proc.returncode != 0
-    assert "nothing was checked" in proc.stdout
-    for name in required:
-        assert name in proc.stdout, name
-    assert github_env.read_text(encoding="utf-8") == ""
-
-    provided = {name: f"value-for-{name}" for name in required}
-    for dropped in required:
-        proc, _ = run_step({k: v for k, v in provided.items() if k != dropped})
-        assert proc.returncode != 0, f"passed without {dropped}"
-        assert dropped in proc.stdout, dropped
-
-    proc, github_env = run_step(provided)
-    assert proc.returncode == 0, proc.stdout + proc.stderr
-    kubeconfig = tmp_path / "kubeconfig"
-    assert github_env.read_text(encoding="utf-8").strip() == f"KUBECONFIG={kubeconfig}"
-    assert kubeconfig.read_text(encoding="utf-8") == "value-for-KUBECONFIG_DATA\n"
-    assert kubeconfig.stat().st_mode & 0o777 == 0o600
+    # --posture staging must enforce PROD_EXTRA_VARS (LANGFUSE_COMPLIANCE_PROJECT_ID).
+    for var in verify_langfuse_posture.BASE_REQUIRED_VARS:
+        monkeypatch.setenv(var, f"val-{var}")
+    for var in verify_langfuse_posture.LIVE_EXTRA_VARS:
+        monkeypatch.setenv(var, f"val-{var}")
+    monkeypatch.delenv("LANGFUSE_COMPLIANCE_PROJECT_ID", raising=False)
+    assert verify_langfuse_posture.check_env_vars("staging", live=True) is False
+    monkeypatch.setenv("LANGFUSE_COMPLIANCE_PROJECT_ID", "proj-compliance-01")
+    assert verify_langfuse_posture.check_env_vars("staging", live=True) is True
 
 
 def test_gate_tlc_model_check_rejects_unpinned_tlc_verdicts(

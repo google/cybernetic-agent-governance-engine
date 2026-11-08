@@ -20,7 +20,7 @@ Verifies that Langfuse credentials are correctly isolated between
 the cage-project (observability) and cage-compliance (compliance) postures.
 
 Usage:
-    python scripts/verify_langfuse_posture.py [--dry-run] [--posture development|production]
+    python scripts/verify_langfuse_posture.py [--dry-run] [--posture development|staging|production]
 
 Environment variables (live check; a dry-run only checks they are set):
     LANGFUSE_PROJECT_ID            Project the core keys must reach, and the compliance keys must not
@@ -59,7 +59,7 @@ LIVE_EXTRA_VARS = ["LANGFUSE_PROJECT_ID", "LANGFUSE_COMPLIANCE_PROJECT_ID"]
 
 def check_env_vars(posture: str, *, live: bool = False) -> bool:
     required = BASE_REQUIRED_VARS[:]
-    if posture == "production":
+    if posture in {"staging", "production"}:
         required.extend(PROD_EXTRA_VARS)
     if live:
         required.extend(v for v in LIVE_EXTRA_VARS if v not in required)
@@ -160,7 +160,7 @@ def main() -> None:
     )
     parser.add_argument(
         "--posture",
-        choices=["development", "production"],
+        choices=["development", "staging", "production"],
         default=os.getenv("POSTURE", "development"),
         help="Environment posture to validate (default: $POSTURE or 'development')",
     )

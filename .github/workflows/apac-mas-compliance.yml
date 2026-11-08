@@ -73,7 +73,7 @@ jobs:
 
       - name: Validate MAS FEAT Lula manifest structure
         # Validates YAML structure of MAS FEAT Lula stubs.
-        # The manifests read a live deployment; `lula validate` runs only against one (compliance-matrix.yml, on demand).
+        # The manifests read a live deployment; `lula validate` runs only against one (scripts/staging_lifecycle.sh Phase 3).
         run: |
           python3 - <<'PYEOF'
           import yaml, sys, pathlib
@@ -179,4 +179,4 @@ jobs:
   # "context" was cosmetic — neither job read the region). ci.yml's Lula stub
   # gate parses every manifest. No pull-request workflow runs the `lula`
   # binary, because every manifest reads a live deployment
-  # (compliance-matrix.yml runs them on demand against one).
+  # (scripts/staging_lifecycle.sh Phases 4–5 run them against a live cluster).
