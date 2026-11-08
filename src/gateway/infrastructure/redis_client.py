@@ -638,3 +638,61 @@ def build_async_redis(
         ssl_cert_reqs=cert_reqs,
         ssl_ca_certs=ca_certs,
     )
+
+
+def build_sync_redis(
+    url: str, *, db: int | None = None, socket_timeout: float = 3.0
+) -> Any:
+    """Build a synchronous ``redis.Redis`` for ``url`` with TLS, IAM auth, and explicit ``db``."""
+    from urllib.parse import unquote, urlparse
+
+    import redis as sync_redis
+
+    from src.gateway.infrastructure.redis_credential_factory import (
+        get_redis_credential_provider,
+    )
+
+    parsed = urlparse(url)
+    if parsed.scheme not in ("redis", "rediss"):
+        raise ValueError(f"Unsupported Redis URL scheme: {parsed.scheme!r}")
+
+    if db is not None:
+        effective_db = int(db)
+    else:
+        path_db = (parsed.path or "").strip("/")
+        if path_db.isdigit():
+            effective_db = int(path_db)
+        else:
+            effective_db = int(os.environ.get("REDIS_DB", "0"))
+
+    use_tls = parsed.scheme == "rediss" or os.environ.get("REDIS_TLS", "").lower() in (
+        "true",
+        "1",
+        "yes",
+    )
+    cert_reqs, ca_certs = resolve_redis_tls(use_tls)
+
+    cred_provider = get_redis_credential_provider()
+    password = None
+    if cred_provider is None:
+        password = (
+            unquote(parsed.password)
+            if parsed.password
+            else os.environ.get("REDIS_PASSWORD") or None
+        )
+
+    redis_kwargs: dict[str, Any] = {
+        "host": parsed.hostname or "localhost",
+        "port": parsed.port or 6379,
+        "db": effective_db,
+        "password": password,
+        "credential_provider": cred_provider,
+        "decode_responses": True,
+        "socket_connect_timeout": 3.0,
+        "socket_timeout": socket_timeout,
+        "ssl": use_tls,
+    }
+    if use_tls:
+        redis_kwargs["ssl_cert_reqs"] = cert_reqs
+        redis_kwargs["ssl_ca_certs"] = ca_certs
+    return sync_redis.Redis(**redis_kwargs)

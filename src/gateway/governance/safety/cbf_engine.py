@@ -1343,6 +1343,48 @@ return {1, status, tostring(restored), new_epoch, tostring(current), tostring(re
 
         raise RuntimeError("Unreachable CBF self-reported read state.")
 
+    async def _read_active_reconciliation_fence(self) -> tuple[int, str] | None:
+        """Return ``(fence_epoch, fence_id)`` if an active reconciliation discrepancy fence is set."""
+        if redis_client is None:
+            return None
+        from src.gateway.governance.reconciliation.daemon import active_fence_key
+
+        try:
+            client = await _get_raw_redis(redis_client)
+            if _is_mock(client):
+                return None
+            marker_raw = client.get(active_fence_key(self._invariant.invariant_id))
+            if inspect.isawaitable(marker_raw):
+                marker_raw = await marker_raw
+            if isinstance(marker_raw, (str, bytes)) and marker_raw:
+                parsed = json.loads(marker_raw)
+                if isinstance(parsed, dict):
+                    ep = parsed.get("fence_epoch")
+                    fid = parsed.get("fence_id")
+                    if (
+                        isinstance(ep, int)
+                        and not isinstance(ep, bool)
+                        and ep >= 1
+                        and isinstance(fid, str)
+                        and fid.strip()
+                    ):
+                        return (ep, fid.strip())
+            cbf_epoch_raw = client.get("safety:cbf_fence_epoch")
+            if inspect.isawaitable(cbf_epoch_raw):
+                cbf_epoch_raw = await cbf_epoch_raw
+            if isinstance(cbf_epoch_raw, (int, str, bytes)) and not isinstance(
+                cbf_epoch_raw, bool
+            ):
+                ep_int = int(cbf_epoch_raw)
+                if ep_int >= 1:
+                    return (
+                        ep_int,
+                        f"{self._invariant.invariant_id}:epoch:{ep_int}",
+                    )
+        except Exception:
+            return None
+        return None
+
     async def _resolve_ground_truth_balance(self) -> tuple[float, dict[str, Any]]:
         state = await self._read_cbf_state_atomic()
 
@@ -1391,7 +1433,15 @@ return {1, status, tostring(restored), new_epoch, tostring(current), tostring(re
                     state.get("reason") or f"reconciled snapshot rejected ({source})"
                 )
             else:
-                fallback_reason = "reconciliation unavailable"
+                active_fence = await self._read_active_reconciliation_fence()
+                if active_fence is not None:
+                    f_epoch, f_id = active_fence
+                    fallback_reason = (
+                        "reconciliation unavailable; "
+                        f"RECONCILIATION_FENCE_ACTIVE (fence_id={f_id}, fence_epoch={f_epoch})"
+                    )
+                else:
+                    fallback_reason = "reconciliation unavailable"
             from src.gateway.governance.governor.governor import GovernanceError
 
             raise GovernanceError(
@@ -1484,11 +1534,20 @@ return {1, status, tostring(restored), new_epoch, tostring(current), tostring(re
                     "CBF check rejected: epoch regression — %s", epoch_reason
                 )
                 return result
-            reason = state.get("reason") or (
-                "unverified self_reported balance in strict mode"
-                if balance_source == "self_reported"
-                else f"reconciled state rejected ({balance_source})"
-            )
+            reason = state.get("reason")
+            if not reason:
+                if balance_source == "self_reported":
+                    active_fence = await self._read_active_reconciliation_fence()
+                    if active_fence is not None:
+                        f_epoch, f_id = active_fence
+                        reason = (
+                            "unverified self_reported balance in strict mode; "
+                            f"RECONCILIATION_FENCE_ACTIVE (fence_id={f_id}, fence_epoch={f_epoch})"
+                        )
+                    else:
+                        reason = "unverified self_reported balance in strict mode"
+                else:
+                    reason = f"reconciled state rejected ({balance_source})"
             result = (
                 f"[{GovernanceControl.TRADITIONAL_MRM_VALIDATION.value}] "
                 f"{_mrm_meta['primary_framework']} Violation: "

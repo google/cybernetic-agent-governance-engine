@@ -763,6 +763,238 @@ def _check_cbf_rollback(
     return problems
 
 
+_RECONCILIATION_FENCE_MARKERS: tuple[str, ...] = (
+    "RECONCILIATION_FENCE_ACTIVE",
+    "RECONCILIATION_DISCREPANCY_FENCE",
+    "reconciliation_fence",
+    "Discrepancy spike detected",
+    "below barrier floor",
+    "CBF_EPOCH_CONTENDED",
+    "FENCE_ADVANCED",
+)
+
+_FENCE_ID_RE = re.compile(r"\bfence_id=([A-Za-z0-9_.:-]+)")
+_FENCE_EPOCH_RE = re.compile(r"\bfence_epoch=(-?\d+)\b")
+_FENCE_ADVANCED_RE = re.compile(r"FENCE_ADVANCED:\s*expected\s*\d+,\s*got\s*(-?\d+)")
+
+
+def _check_reconciliation_discrepancy_fence(
+    payload: Mapping[str, Any],
+    meta: Mapping[str, Any],
+    *,
+    seen_fence_ids: set[str],
+    seen_fence_epochs_by_invariant: dict[str, int],
+) -> tuple[list[str], int | None, str | None, str | None]:
+    """Check R-7 / F-86 invariants on a ``RECONCILIATION_DISCREPANCY_FENCE`` payload."""
+    problems: list[str] = []
+
+    ctrl = (
+        payload.get("controlId") or payload.get("control_id") or meta.get("control_id")
+    )
+    if ctrl != "CA-7":
+        problems.append(
+            f"RECONCILIATION_DISCREPANCY_FENCE control_id is {ctrl!r}, expected 'CA-7'"
+        )
+
+    fence_epoch = payload.get("fence_epoch")
+    valid_epoch: int | None = None
+    if (
+        not isinstance(fence_epoch, int)
+        or isinstance(fence_epoch, bool)
+        or fence_epoch < 1
+    ):
+        problems.append(
+            f"RECONCILIATION_DISCREPANCY_FENCE invalid fence_epoch {fence_epoch!r}"
+        )
+    else:
+        valid_epoch = fence_epoch
+
+    fence_id = payload.get("fence_id")
+    valid_fence_id: str | None = None
+    if not isinstance(fence_id, str) or not fence_id.strip():
+        problems.append(
+            f"RECONCILIATION_DISCREPANCY_FENCE missing/invalid fence_id {fence_id!r}"
+        )
+    elif fence_id in seen_fence_ids:
+        problems.append(
+            f"duplicate RECONCILIATION_DISCREPANCY_FENCE fence_id {fence_id!r}"
+        )
+    else:
+        valid_fence_id = fence_id
+
+    invariant_id = payload.get("invariant_id")
+    valid_invariant_id: str | None = None
+    if not isinstance(invariant_id, str) or not invariant_id.strip():
+        problems.append(
+            f"RECONCILIATION_DISCREPANCY_FENCE missing/invalid invariant_id {invariant_id!r}"
+        )
+    else:
+        valid_invariant_id = invariant_id
+
+    if valid_invariant_id is not None and valid_epoch is not None:
+        prev_epoch = seen_fence_epochs_by_invariant.get(valid_invariant_id)
+        if prev_epoch is not None and valid_epoch <= prev_epoch:
+            problems.append(
+                f"RECONCILIATION_DISCREPANCY_FENCE non-monotonic fence_epoch for {valid_invariant_id}: {prev_epoch} -> {valid_epoch}"
+            )
+
+    discrepancy_count = payload.get("discrepancy_count")
+    valid_count: int | None = None
+    if (
+        not isinstance(discrepancy_count, int)
+        or isinstance(discrepancy_count, bool)
+        or discrepancy_count < 1
+    ):
+        problems.append(
+            f"RECONCILIATION_DISCREPANCY_FENCE invalid discrepancy_count {discrepancy_count!r}"
+        )
+    else:
+        valid_count = discrepancy_count
+
+    reasons = payload.get("reasons")
+    if (
+        not isinstance(reasons, list)
+        or not reasons
+        or any(not isinstance(r, str) or not r.strip() for r in reasons)
+    ):
+        problems.append(
+            f"RECONCILIATION_DISCREPANCY_FENCE missing/invalid reasons {reasons!r}"
+        )
+    elif valid_count is not None and len(reasons) != valid_count:
+        problems.append(
+            f"RECONCILIATION_DISCREPANCY_FENCE reasons length {len(reasons)} != discrepancy_count {valid_count}"
+        )
+
+    digests = payload.get("discrepancy_digests")
+    if (
+        not isinstance(digests, list)
+        or not digests
+        or any(not _is_hex64(d) for d in digests)
+    ):
+        problems.append(
+            f"RECONCILIATION_DISCREPANCY_FENCE missing/invalid discrepancy_digests {digests!r}"
+        )
+    elif valid_count is not None and len(digests) != valid_count:
+        problems.append(
+            f"RECONCILIATION_DISCREPANCY_FENCE discrepancy_digests length {len(digests)} != discrepancy_count {valid_count}"
+        )
+
+    snapshot_digest = payload.get("custodian_snapshot_digest")
+    if not _is_hex64(snapshot_digest):
+        problems.append(
+            f"RECONCILIATION_DISCREPANCY_FENCE missing/invalid custodian_snapshot_digest {snapshot_digest!r}"
+        )
+
+    ts_utc = payload.get("timestamp_utc")
+    if not isinstance(ts_utc, str) or not ts_utc.strip():
+        problems.append(
+            f"RECONCILIATION_DISCREPANCY_FENCE missing/invalid timestamp_utc {ts_utc!r}"
+        )
+
+    return problems, valid_epoch, valid_fence_id, valid_invariant_id
+
+
+def _extract_fence_citation(
+    texts: Iterable[Any],
+    tier_failures: Any,
+    standing_snapshot: Any,
+) -> tuple[bool, str | None, Any]:
+    """Extract ``(cited, fence_id, fence_epoch)`` from genuine RefusalReceipt fields."""
+    collected_texts: list[str] = [t for t in texts if isinstance(t, str) and t]
+    state_dicts: list[Mapping[str, Any]] = []
+    if isinstance(standing_snapshot, Mapping):
+        state_dicts.append(standing_snapshot)
+    if isinstance(tier_failures, list):
+        for tf in tier_failures:
+            if isinstance(tf, Mapping):
+                desc = tf.get("rule_description")
+                if isinstance(desc, str) and desc:
+                    collected_texts.append(desc)
+                gov_state = tf.get("governing_state")
+                if isinstance(gov_state, Mapping):
+                    state_dicts.append(gov_state)
+
+    cited = any(
+        marker in text
+        for text in collected_texts
+        for marker in _RECONCILIATION_FENCE_MARKERS
+    )
+    if not cited:
+        for st in state_dicts:
+            if st.get("reconciliation_fenced") is True:
+                cited = True
+                break
+
+    if not cited:
+        return (False, None, None)
+
+    fence_id: str | None = None
+    fence_epoch: Any = None
+    for text in collected_texts:
+        if fence_id is None:
+            m_id = _FENCE_ID_RE.search(text)
+            if m_id is not None:
+                fence_id = m_id.group(1)
+        if fence_epoch is None:
+            m_ep = _FENCE_EPOCH_RE.search(text)
+            if m_ep is not None:
+                fence_epoch = int(m_ep.group(1))
+            else:
+                m_adv = _FENCE_ADVANCED_RE.search(text)
+                if m_adv is not None:
+                    fence_epoch = int(m_adv.group(1))
+
+    for st in state_dicts:
+        if fence_id is None and st.get("fence_id") is not None:
+            raw_fid = st.get("fence_id")
+            fence_id = str(raw_fid) if isinstance(raw_fid, str) else ""
+        if fence_epoch is None and st.get("fence_epoch") is not None:
+            fence_epoch = st.get("fence_epoch")
+
+    return (True, fence_id, fence_epoch)
+
+
+def _verify_reconciliation_fence_citation(
+    event_type: str,
+    *,
+    fence_id: str | None,
+    fence_epoch: Any,
+    caused_fence_ids: set[str],
+    caused_fence_epochs: set[int],
+) -> list[str]:
+    """Verify that a refusal citing a reconciliation fence has a preceding cause record."""
+    problems: list[str] = []
+    has_id = fence_id is not None
+    has_epoch = fence_epoch is not None
+
+    if has_id:
+        if not isinstance(fence_id, str) or not fence_id.strip():
+            problems.append(f"{event_type} invalid fence_id {fence_id!r}")
+        elif fence_id not in caused_fence_ids:
+            problems.append(
+                f"{event_type} for fence_id {fence_id!r} has no preceding RECONCILIATION_DISCREPANCY_FENCE record"
+            )
+
+    if has_epoch:
+        if (
+            not isinstance(fence_epoch, int)
+            or isinstance(fence_epoch, bool)
+            or fence_epoch < 1
+        ):
+            problems.append(f"{event_type} invalid fence_epoch {fence_epoch!r}")
+        elif fence_epoch not in caused_fence_epochs:
+            problems.append(
+                f"{event_type} for fence_epoch {fence_epoch} has no preceding RECONCILIATION_DISCREPANCY_FENCE record"
+            )
+
+    if not has_id and not has_epoch and not caused_fence_epochs:
+        problems.append(
+            f"{event_type} cites reconciliation fence without a preceding RECONCILIATION_DISCREPANCY_FENCE record"
+        )
+
+    return problems
+
+
 # ---------------------------------------------------------------------------
 # Stream-level conformance entry point
 # ---------------------------------------------------------------------------
@@ -774,6 +1006,7 @@ def check_stream(
     expected_thresholds_digest: str | None = None,
     expected_refusal_hashes: Iterable[str] = (),
     expected_refusal_count: int | None = None,
+    expected_fence_epochs: Iterable[int] = (),
     publish_failures: int = 0,
     require_thresholds_loaded: bool = False,
     require_settled: bool = False,
@@ -813,6 +1046,9 @@ def check_stream(
     confirmed_debits: set[str] = set()
 
     observed_refusal_hashes: set[str] = set()
+    caused_fence_ids: set[str] = set()
+    caused_fence_epochs: set[int] = set()
+    seen_fence_epochs_by_invariant: dict[str, int] = {}
 
     for index, raw_record in enumerate(records):
         rec_problems, meta, payload = verify_chain_record(raw_record)
@@ -1207,6 +1443,21 @@ def check_stream(
                 )
             else:
                 observed_refusal_hashes.add(str(ph))
+            if isinstance(receipt, Mapping):
+                cited_fence, cited_fid, cited_epoch = _extract_fence_citation(
+                    (receipt.get("violated_rule"),),
+                    receipt.get("tier_failures"),
+                    receipt.get("standing_snapshot"),
+                )
+                if cited_fence:
+                    for detail in _verify_reconciliation_fence_citation(
+                        event_type,
+                        fence_id=cited_fid,
+                        fence_epoch=cited_epoch,
+                        caused_fence_ids=caused_fence_ids,
+                        caused_fence_epochs=caused_fence_epochs,
+                    ):
+                        findings.append(Finding(index, "reconciliation_fence", detail))
 
         elif event_type == "GOVERNANCE_REFUSAL_RECEIPT":
             ph = payload.get("proof_hash") or payload.get("receipt_digest")
@@ -1220,6 +1471,20 @@ def check_stream(
                 )
             else:
                 observed_refusal_hashes.add(str(ph))
+            cited_fence, cited_fid, cited_epoch = _extract_fence_citation(
+                (payload.get("violated_rule"), payload.get("refusal_reason")),
+                payload.get("tier_failures"),
+                payload.get("standing_snapshot"),
+            )
+            if cited_fence:
+                for detail in _verify_reconciliation_fence_citation(
+                    event_type,
+                    fence_id=cited_fid,
+                    fence_epoch=cited_epoch,
+                    caused_fence_ids=caused_fence_ids,
+                    caused_fence_epochs=caused_fence_epochs,
+                ):
+                    findings.append(Finding(index, "reconciliation_fence", detail))
 
         # -- Invariant 5: a refusal-triggered quarantine follows its refusal --
         elif event_type == "WORKLOAD_QUARANTINE_RECEIPT":
@@ -1236,6 +1501,29 @@ def check_stream(
                         f"WORKLOAD_QUARANTINE_RECEIPT names refusal {str(ph)[:16]}... with no earlier refusal record",
                     )
                 )
+
+        # -- Invariant 6 (R-7 / F-86): Chained reconciliation discrepancy fence --
+        elif event_type == "RECONCILIATION_DISCREPANCY_FENCE":
+            (
+                fence_problems,
+                valid_epoch,
+                valid_fence_id,
+                valid_invariant_id,
+            ) = _check_reconciliation_discrepancy_fence(
+                payload,
+                meta,
+                seen_fence_ids=caused_fence_ids,
+                seen_fence_epochs_by_invariant=seen_fence_epochs_by_invariant,
+            )
+            for detail in fence_problems:
+                findings.append(Finding(index, "reconciliation_fence", detail))
+            if not fence_problems:
+                if valid_fence_id is not None:
+                    caused_fence_ids.add(valid_fence_id)
+                if valid_epoch is not None:
+                    caused_fence_epochs.add(valid_epoch)
+                    if valid_invariant_id is not None:
+                        seen_fence_epochs_by_invariant[valid_invariant_id] = valid_epoch
 
     # -- Post-stream completeness checks --
     if require_thresholds_loaded and not seen_thresholds_loaded:
@@ -1279,5 +1567,15 @@ def check_stream(
                 f"observed {len(observed_refusal_hashes)} distinct refusal(s) < expected {expected_refusal_count}",
             )
         )
+
+    for expected_epoch in expected_fence_epochs:
+        if expected_epoch not in caused_fence_epochs:
+            findings.append(
+                Finding(
+                    -1,
+                    "reconciliation_fence",
+                    f"expected RECONCILIATION_DISCREPANCY_FENCE for fence_epoch {expected_epoch} missing from stream",
+                )
+            )
 
     return findings

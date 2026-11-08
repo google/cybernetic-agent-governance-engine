@@ -59,6 +59,16 @@ class GovernanceTierFailure:
     governing_state: dict[str, Any] = field(default_factory=dict)
     protected_consequence: str = ""  # What consequence would have formed
 
+    def to_dict(self) -> dict[str, Any]:
+        """Serialize this tier failure record to a JSON-compatible dictionary."""
+        return {
+            "tier": self.tier,
+            "control_id": self.control_id,
+            "rule_description": self.rule_description,
+            "governing_state": dict(self.governing_state),
+            "protected_consequence": self.protected_consequence,
+        }
+
 
 @dataclass(frozen=True)
 class RefusalReceipt:
@@ -161,6 +171,26 @@ class RefusalReceipt:
         except Exception:
             return False
         return hmac.compare_digest(self.proof_hash, expected)
+
+    def to_dict(self) -> dict[str, Any]:
+        """Serialize this refusal receipt to a JSON-compatible dictionary."""
+        return {
+            "thread_id": self.thread_id,
+            "action": self.action,
+            "violated_tier": self.violated_tier,
+            "violated_rule": self.violated_rule,
+            "standing_at_refusal": dict(self.standing_at_refusal),
+            "timestamp": self.timestamp,
+            "proof_hash": self.proof_hash,
+            "schema_version": self.schema_version,
+            "attempted_params": dict(self.attempted_params),
+            "standing_snapshot": dict(self.standing_snapshot),
+            "control_id": self.control_id,
+            "protected_consequence": self.protected_consequence,
+            "non_formation_proof": self.non_formation_proof,
+            "tier_failures": [tf.to_dict() for tf in self.tier_failures],
+            "reliance": [dict(record) for record in self.reliance],
+        }
 
     def __post_init__(self) -> None:
         if not self.proof_hash:

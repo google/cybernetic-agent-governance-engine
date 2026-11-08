@@ -2395,3 +2395,281 @@ async def start_evidence_sink() -> EvidenceStreamSink | None:
             "(permissive posture only)."
         )
     return sink
+
+
+RECONCILIATION_DISCREPANCY_FENCE_EVENT_TYPE = "RECONCILIATION_DISCREPANCY_FENCE"
+
+
+def append_evidence_record_sync(
+    redis_client: Any,
+    event: dict[str, Any],
+    *,
+    stream_key: str | None = None,
+    max_len: int | None = None,
+) -> EvidenceCommitResult:
+    """Synchronously seal and compare-and-append ``event`` to ``cage:evidence:stream``.
+
+    Used by synchronous control-loop daemons (such as ``GroundTruthReconciler``
+    when fencing the gateway on a custodian discrepancy) that hold a synchronous
+    Redis client and must atomically append a hash-chained ``cage-audit/3.0``
+    record without depending on an active asyncio event loop.
+
+    Uses the identical JCS canonicalization, ``_link_hash`` preimage, head
+    verification, and ``_APPEND_BATCH_SCRIPT`` Lua compare-and-append as
+    :class:`EvidenceStreamSink`.
+
+    Raises:
+        EvidenceChainUnavailableError: Redis is absent/unreachable, or CAS
+            exhausted ``_MAX_APPEND_ATTEMPTS``.
+        EvidenceChainCorruptError: The existing stream head fails integrity
+            verification.
+    """
+    if redis_client is None:
+        raise EvidenceChainUnavailableError(
+            "Cannot append evidence record: Redis client is None."
+        )
+
+    target_stream_key = stream_key or _STREAM_KEY
+    target_max_len = max_len if max_len is not None else _MAX_LEN
+
+    from src.gateway.governance.pii_sanitizer import _get_pii_sanitizer
+
+    sanitized_event = _get_pii_sanitizer().sanitize_dict(event)
+    normalized_event = _normalize_for_jcs(sanitized_event)
+    payload_json = jcs_canonicalize_plan(normalized_event).decode("utf-8")
+    event_type = str(event.get("type", "UNKNOWN"))
+    control_id = str(event.get("controlId") or event.get("control_id") or "")
+    trace_id = current_trace_id()
+    classification_reason, narrowing_applied, pause_token = _extract_sparse_header(
+        event
+    )
+
+    for attempt in range(_MAX_APPEND_ATTEMPTS):
+        try:
+            entries = redis_client.xrevrange(
+                target_stream_key, max="+", min="-", count=1
+            )
+        except Exception as exc:
+            raise EvidenceChainUnavailableError(
+                f"Failed to read evidence chain head from {target_stream_key}: {exc}",
+                exc,
+            ) from exc
+
+        if not isinstance(entries, (list, tuple)):
+            raise EvidenceChainUnavailableError(
+                f"Invalid xrevrange response from {target_stream_key}: {type(entries).__name__}"
+            )
+
+        if not entries:
+            chain_id = str(uuid.uuid4())
+            prev_hash = ""
+            sequence = 0
+        else:
+            _msg_id, raw_fields = entries[0]
+            if not isinstance(raw_fields, dict):
+                raise EvidenceChainCorruptError(
+                    f"Evidence chain head in {target_stream_key} has non-dict fields."
+                )
+            fields = {_as_str(k): _as_str(v) for k, v in raw_fields.items()}
+            chain_id = fields.get("chain_id") or ""
+            record_hash_head = fields.get("record_hash") or ""
+            sequence_raw = fields.get("sequence")
+            if not chain_id:
+                raise EvidenceChainCorruptError(
+                    f"Evidence chain head in {target_stream_key} is missing chain_id."
+                )
+            if len(record_hash_head) != 64 or any(
+                c not in "0123456789abcdef" for c in record_hash_head
+            ):
+                raise EvidenceChainCorruptError(
+                    f"Evidence chain head in {target_stream_key} has invalid record_hash {record_hash_head!r}."
+                )
+            if sequence_raw is None:
+                raise EvidenceChainCorruptError(
+                    f"Evidence chain head in {target_stream_key} is missing sequence."
+                )
+            try:
+                last_sequence = int(sequence_raw)
+            except (TypeError, ValueError) as exc:
+                raise EvidenceChainCorruptError(
+                    f"Evidence chain head in {target_stream_key} has non-integer sequence {sequence_raw!r}."
+                ) from exc
+            if last_sequence < 0:
+                raise EvidenceChainCorruptError(
+                    f"Evidence chain head in {target_stream_key} has negative sequence {last_sequence}."
+                )
+            head_prev_hash = fields.get("prev_hash")
+            if head_prev_hash is None:
+                raise EvidenceChainCorruptError(
+                    f"Evidence chain head in {target_stream_key} is missing prev_hash."
+                )
+            verdict = verify_record(fields, head_prev_hash)
+            if not verdict.valid:
+                raise EvidenceChainCorruptError(
+                    f"Evidence chain head in {target_stream_key} failed hash verification: {verdict.error}"
+                )
+            prev_hash = record_hash_head
+            sequence = last_sequence + 1
+
+        timestamp = datetime.now(tz=timezone.utc)
+        record_hash = _link_hash(
+            prev_hash=prev_hash,
+            sequence=sequence,
+            event_type=event_type,
+            control_id=control_id,
+            payload_json=payload_json,
+            chain_id=chain_id,
+            trace_id=trace_id,
+            classification_reason=classification_reason,
+            narrowing_applied=narrowing_applied,
+            pause_token=pause_token,
+        )
+
+        entry: dict[str, str] = {
+            "schema": _SCHEMA,
+            "chain_id": chain_id,
+            "sequence": str(sequence),
+            "timestamp_utc": timestamp.isoformat(),
+            "event_type": event_type,
+            "control_id": control_id,
+            "trace_id": trace_id,
+            "hash_algorithm": _HASH_ALGORITHM,
+            "canonicalization": _CANONICALIZATION,
+            "evidence_class": _EVIDENCE_CLASS,
+            "prev_hash": prev_hash,
+            "record_hash": record_hash,
+            "payload_json": payload_json,
+        }
+        if classification_reason is not None:
+            entry["classification_reason"] = classification_reason
+        if narrowing_applied is not None:
+            entry["narrowing_applied"] = jcs_canonicalize_plan(
+                _normalize_for_jcs(narrowing_applied)
+            ).decode("utf-8")
+        if pause_token is not None:
+            entry["pause_token"] = pause_token
+
+        record_args: list[str] = [str(len(entry) * 2)]
+        for name, value in entry.items():
+            record_args.extend((name, value))
+
+        args = (
+            chain_id,
+            str(sequence),
+            prev_hash,
+            str(target_max_len),
+            "1",
+            record_hash,
+            entry["timestamp_utc"],
+            *record_args,
+        )
+
+        try:
+            raw_res = redis_client.eval(
+                _APPEND_BATCH_SCRIPT, 1, target_stream_key, *args
+            )
+        except Exception as exc:
+            raise EvidenceChainUnavailableError(
+                f"Failed to append evidence record to {target_stream_key}: {exc}",
+                exc,
+            ) from exc
+
+        if not isinstance(raw_res, (list, tuple)) or not raw_res:
+            raise EvidenceChainUnavailableError(
+                f"Unexpected CAS reply from {target_stream_key}: {raw_res!r}"
+            )
+
+        status = _as_str(raw_res[0])
+        if status in ("OK", "ALREADY") and len(raw_res) >= 2:
+            if _evidence_sink is not None:
+                _evidence_sink._chain_restored = False
+            msg_id = _as_str(raw_res[1])
+            return EvidenceCommitResult(
+                success=True,
+                evidence_id=msg_id,
+                commit_timestamp=timestamp,
+                hash=record_hash,
+                sequence=sequence,
+            )
+        if status != "CONFLICT":
+            raise EvidenceChainUnavailableError(
+                f"Unexpected CAS status {status!r} from {target_stream_key}"
+            )
+
+        if attempt + 1 < _MAX_APPEND_ATTEMPTS:
+            cap = min(
+                _CONFLICT_BACKOFF_CAP_S,
+                _CONFLICT_BACKOFF_BASE_S * (2**attempt),
+            )
+            jitter_s = (secrets.randbelow(1000) / 1000.0) * cap
+            time.sleep(jitter_s)
+
+    raise EvidenceChainUnavailableError(
+        f"Evidence append lost the chain head race {_MAX_APPEND_ATTEMPTS} "
+        f"times on {target_stream_key}; refusing to fork the chain."
+    )
+
+
+class EvidenceStreamClient:
+    """Synchronous Redis Stream evidence producer client bound to ``EVIDENCE_STREAM_REDIS_DB`` (default DB 1).
+
+    Used by synchronous workers (such as ``GroundTruthReconciler``) so every
+    hash-chained evidence record lands on the authoritative DB 1 evidence
+    stream consumed by ``EvidenceCustodian`` rather than operational DB 0.
+    """
+
+    def __init__(
+        self,
+        redis_client: Any,
+        *,
+        redis_url: str = "",
+        redis_db: int = 1,
+        stream_key: str = "cage:evidence:stream",
+        max_len: int = _MAX_LEN,
+    ) -> None:
+        self._redis = redis_client
+        self._redis_url = redis_url
+        self._redis_db = int(redis_db)
+        self._stream_key = stream_key
+        self._max_len = int(max_len)
+
+    @property
+    def redis_db(self) -> int:
+        return self._redis_db
+
+    @property
+    def redis_url(self) -> str:
+        return self._redis_url
+
+    @property
+    def stream_key(self) -> str:
+        return self._stream_key
+
+    def ingest_sync(self, event: dict[str, Any]) -> EvidenceCommitResult:
+        """Append ``event`` atomically to the hash-chained evidence stream."""
+        return append_evidence_record_sync(
+            self._redis,
+            event,
+            stream_key=self._stream_key,
+            max_len=self._max_len,
+        )
+
+    @classmethod
+    def from_env(cls) -> EvidenceStreamClient:
+        """Build a synchronous evidence client connected to ``EVIDENCE_STREAM_REDIS_DB`` (default ``1``)."""
+        from src.gateway.infrastructure.redis_client import build_sync_redis
+
+        evidence_url = os.environ.get("EVIDENCE_STREAM_REDIS_URL") or os.environ.get(
+            "REDIS_URL", "redis://localhost:6379"
+        )
+        evidence_db = int(os.environ.get("EVIDENCE_STREAM_REDIS_DB", "1"))
+        stream_key = os.environ.get("EVIDENCE_STREAM_KEY", "cage:evidence:stream")
+        max_len = int(os.environ.get("EVIDENCE_STREAM_MAX_LEN", str(_MAX_LEN)))
+        client = build_sync_redis(evidence_url, db=evidence_db)
+        return cls(
+            client,
+            redis_url=evidence_url,
+            redis_db=evidence_db,
+            stream_key=stream_key,
+            max_len=max_len,
+        )
