@@ -32,7 +32,8 @@
 #               attested mirror, e.g. gcr.io/<project>/redis@sha256:..., when the
 #               cluster enforces Binary Authorization).
 #
-# The paper metrics run --unmocked, so OPA and vllm-reasoning must be serving.
+# The paper metrics run --unmocked, so gateway (supplying the attested OPA sidecar image
+# and read-only opa-* ConfigMaps) and vllm-reasoning must be serving.
 # Scale vllm-reasoning up before the run and back to 0 afterwards:
 #   kubectl scale deployment/vllm-reasoning -n governance-stack --replicas=1
 
@@ -76,7 +77,13 @@ case "${BENCHMARK_SCOPE}" in
            SCOPE_NOTE="; adversarial deflection and benign FPR not measured" ;;
   *) echo -e "${RED}❌ BENCHMARK_SCOPE must be full or latency.${NC}"; exit 1 ;;
 esac
-export BENCHMARK_IMAGE BENCHMARK_REDIS_IMAGE CAGE_ENVIRONMENT PAPER_METRICS_FLAGS
+OPA_BENCHMARK_IMAGE=$(kubectl get deployment gateway -n "${NAMESPACE}" \
+  -o jsonpath='{.spec.template.spec.containers[?(@.name=="opa")].image}' 2>/dev/null || true)
+if [ -z "${OPA_BENCHMARK_IMAGE}" ]; then
+  echo -e "${RED}❌ Could not resolve gateway OPA sidecar image from deployment/gateway in ${NAMESPACE}.${NC}"
+  exit 1
+fi
+export BENCHMARK_IMAGE OPA_BENCHMARK_IMAGE BENCHMARK_REDIS_IMAGE CAGE_ENVIRONMENT PAPER_METRICS_FLAGS
 
 # Render a manifest, substituting only the named variables (python3, so the
 # runner does not depend on gettext's envsubst; the Job's own ${BACKEND_URL}-
@@ -106,7 +113,7 @@ cleanup() {
 }
 trap cleanup EXIT
 
-for dep in opa-service vllm-reasoning; do
+for dep in gateway vllm-reasoning; do
   ready=$(kubectl get deployment "${dep}" -n "${NAMESPACE}" -o jsonpath='{.status.readyReplicas}' 2>/dev/null || true)
   if [ -z "${ready}" ] || [ "${ready}" = "0" ]; then
     echo -e "${RED}❌ ${dep} has no ready replicas; --unmocked needs it serving.${NC}"
@@ -141,7 +148,7 @@ kubectl rollout status deployment/benchmark-redis-replica -n "${NAMESPACE}" --ti
 REDIS_IMAGE=$(kubectl get deployment benchmark-redis-primary -n "${NAMESPACE}" \
   -o jsonpath='{.spec.template.spec.containers[0].image}')
 
-# 3. Access grants (Cloud KMS egress, OPA authorization), ConfigMaps and the Job.
+# 3. Access grants (Cloud KMS egress), ConfigMaps and the Job (OPA runs over UDS inside the Job pod).
 kubectl apply -f "${ACCESS_MANIFEST}" -n "${NAMESPACE}"
 echo -e "${CYAN}📦 [Step 3/6] Refreshing ConfigMaps and applying ${JOB_MANIFEST}...${NC}"
 kubectl create configmap red-team-datasets \
@@ -154,7 +161,7 @@ kubectl create configmap benchmark-scripts \
   --from-file=scripts/measure_reconciliation_metrics.py \
   -n "${NAMESPACE}" --dry-run=client -o yaml | kubectl apply -f -
 
-render "${JOB_MANIFEST}" BENCHMARK_IMAGE GOOGLE_CLOUD_PROJECT CAGE_ENVIRONMENT PAPER_METRICS_FLAGS \
+render "${JOB_MANIFEST}" BENCHMARK_IMAGE OPA_BENCHMARK_IMAGE GOOGLE_CLOUD_PROJECT CAGE_ENVIRONMENT PAPER_METRICS_FLAGS \
   | kubectl apply -n "${NAMESPACE}" -f -
 
 echo -e "${CYAN}⏳ [Step 4/6] Waiting for benchmark pod to start...${NC}"
@@ -216,7 +223,7 @@ for artifact in cage_paper_metrics.json cage_paper_metrics.txt \
   fi
 done
 
-OPA_IMAGE=$(kubectl get pods -l app=opa -n "${NAMESPACE}" \
+OPA_IMAGE=$(kubectl get pods -l app=gateway -n "${NAMESPACE}" \
   -o jsonpath='{.items[0].status.containerStatuses[?(@.name=="opa")].imageID}' 2>/dev/null || echo unknown)
 VLLM_IMAGE=$(kubectl get pods -l app=vllm-reasoning -n "${NAMESPACE}" \
   -o jsonpath='{.items[0].status.containerStatuses[?(@.name=="vllm")].imageID}' 2>/dev/null || echo unknown)

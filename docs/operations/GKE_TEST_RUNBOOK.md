@@ -30,7 +30,7 @@
 GKE ([`infra/targets/gcp-gke/main.tf`](../../infra/targets/gcp-gke/main.tf)) is the sole cloud deployment target across three postures ([`us-dev.tfvars`](../../infra/targets/gcp-gke/us-dev.tfvars), [`staging.tfvars`](../../infra/targets/gcp-gke/staging.tfvars), [`prod.tfvars`](../../infra/targets/gcp-gke/prod.tfvars)):
 - **Control Plane & Datapath**: Zonal (`us-central1-a`) in `dev` and `staging`; regional (`us-central1`) in `prod`. GKE Dataplane V2 (`datapath_provider = "ADVANCED_DATAPATH"`) and `enable_fqdn_network_policy = true` are active in all postures.
 - **Four Node Pools**:
-  1. `general`: `e2-standard-4` (`dev`/`staging`, 1–5 nodes, `pd-standard`) or `e2-standard-8` (`prod`, 3–10 nodes, `pd-ssd`). Runs the governance workloads (`gateway`, `compliance-bridge`, `reconciler`, `opa`, `langfuse`, and `governed-financial-advisor` when `inference_backend = "vllm"`). The gateway still keeps pod-local state, so it runs a fixed replica count with no autoscaler (see [`DEPLOYMENT_DECISION_RECORD.md`](DEPLOYMENT_DECISION_RECORD.md) §5).
+  1. `general`: `e2-standard-4` (`dev`/`staging`, 1–5 nodes, `pd-standard`) or `e2-standard-8` (`prod`, 3–10 nodes, `pd-ssd`). Runs the governance workloads (`gateway` with its in-pod `opa` UDS sidecar, `compliance-bridge`, `reconciler`, `langfuse`, and `governed-financial-advisor` when `inference_backend = "vllm"`). The gateway still keeps pod-local state, so it runs a fixed replica count with no autoscaler (see [`DEPLOYMENT_DECISION_RECORD.md`](DEPLOYMENT_DECISION_RECORD.md) §5).
   2. `general-spot`: `c3-highcpu-4` (`staging` only, 0–5 Spot nodes, tainted `cloud.google.com/gke-spot=true:NoSchedule`). Governance, stateful, and vLLM workloads enforce anti-Spot `nodeAffinity` (`cloud.google.com/gke-spot NotIn ["true"]`) so only fault-tolerant batch jobs (`cage-paper-benchmark`, Lula validation) schedule on Spot capacity.
   3. `gpu-l4`: `g2-standard-8` (1× `nvidia-l4`, Spot disabled in all postures, GCFS image streaming enabled, 0–2 scale-to-zero in `dev`/`staging`, 2–5 in `prod`). Staging's pool is one zone (`us-central1-a`) and starts at 0 nodes.
   4. `clickhouse`: `n2-standard-4` with local NVMe SSD, tainted `workload=clickhouse:NoSchedule` (`1` node in `dev`/`staging`, `3` nodes in `prod`).
@@ -46,7 +46,8 @@ kubectl get pods -n governance-stack -o wide
 ```
 
 Expected container counts per pod in `governance-stack` (`linkerd.io/inject: enabled`):
-- `gateway`, `compliance-bridge`, `opa`, and `governed-financial-advisor` when `inference_backend = "vllm"`: **`2/2` Ready** (application container + `linkerd-proxy`).
+- `gateway`: **`3/3` Ready** (`gateway` + `opa` UDS sidecar + `linkerd-proxy`).
+- `compliance-bridge`, and `governed-financial-advisor` when `inference_backend = "vllm"`: **`2/2` Ready** (application container + `linkerd-proxy`).
 - `langfuse-web`, `langfuse-worker`: **`3/3` Ready** (application container + `cloud-sql-proxy` + `linkerd-proxy`).
 
 ### Managing the Port-Forward Daemon
@@ -104,7 +105,6 @@ pkill -f "kubectl port-forward"
 | **Governed Financial Advisor** | `http://localhost:8081` | `svc/governed-financial-advisor:80` | Zero-cloud-identity backend (`cage-advisor-sa`) |
 | **Compliance Bridge** | `http://localhost:3002` | `svc/compliance-bridge:80` (container `:3001`) | Signs evidence via `EVIDENCE_KMS_KEY` |
 | **Langfuse UI & API** | `http://localhost:3000`, `http://localhost:3001` | `svc/langfuse-web:3000` | Primary (`:3000`) and Compliance (`:3001`) local forward mappings |
-| **OPA Policy Engine** | `http://localhost:8181` | `svc/opa:8181` | Rego evaluation endpoint |
 | **vLLM Fast (`Qwen/Qwen2.5-1.5B-Instruct`)** | `http://localhost:8001`, `http://localhost:18081/v1` | `svc/vllm-service:8000` | 1x NVIDIA L4 GPU; auto-wakes on eval (`dev_gpu_toggle.sh`) |
 | **vLLM Reasoning (`deepseek-ai/DeepSeek-R1-Distill-Llama-8B`)** | `http://localhost:8000`, `http://localhost:18082/v1` | `svc/vllm-reasoning:8000` | 1x NVIDIA L4 GPU; auto-wakes on eval (`dev_gpu_toggle.sh`) |
 | **ClickHouse (Langfuse OLAP)** *(optional manual forward)* | `http://localhost:8123`, `localhost:9000` | `svc/clickhouse:8123` | `kubectl port-forward -n governance-stack svc/clickhouse 8123:8123` |
@@ -172,7 +172,7 @@ Asymmetric signing keys (`EC_SIGN_P256_SHA256`) live in keyring `cage-signing-<e
 - **`binauthz-attestor`**: Used exclusively by the dedicated Cloud Build service account (`cage-cloudbuild-<env>@<project>.iam.gserviceaccount.com`) via [`deployment/docker/cloudbuild.image.yaml`](../../deployment/docker/cloudbuild.image.yaml), [`scripts/build_images.sh`](../../scripts/build_images.sh), [`scripts/mirror_and_attest_images.sh`](../../scripts/mirror_and_attest_images.sh), and [`scripts/attest_image.sh`](../../scripts/attest_image.sh) (`gcloud beta container binauthz attestations sign-and-create` + fail-closed `binauthz attestations list` verification) to sign Binary Authorization attestations for every container image digest in `var.image_digests`, which [`scripts/render_image_digests.sh`](../../scripts/render_image_digests.sh) renders per deployment for exactly the images the profile deploys (no committed digests, POAM-2026-131).
 
 **Local Workstation KMS Verification:**
-- In [`tests/conftest.py`](../../tests/conftest.py), running client test commands with `CAGE_ENV=test` allows the test harness to use software-backed signing for local assertions while directing HTTP traffic to live cluster endpoints (`BACKEND_URL=http://localhost:8081`, `GATEWAY_URL=http://localhost:8080`, `OPA_URL=http://localhost:8181`).
+- In [`tests/conftest.py`](../../tests/conftest.py), running client test commands with `CAGE_ENV=test` allows the test harness to use software-backed signing for local assertions while directing HTTP traffic to live cluster endpoints (`BACKEND_URL=http://localhost:8081`, `GATEWAY_URL=http://localhost:8080`).
 - To verify Gateway responses signed by the live cluster's `gateway-seal` KMS key, fetch the public key via the Gateway JWKS endpoint (`curl -s http://localhost:8080/governance/.well-known/jwks.json`) or extract the cached PEM from the pod:
   ```bash
   kubectl exec -n governance-stack deploy/gateway -c gateway -- cat /tmp/kms_governance_public.pem > /tmp/kms_governance_public.pem
@@ -418,7 +418,7 @@ When a query is submitted to `POST http://localhost:8081/agent/query` (`Authoriz
    - Checkpoints conversation state in `memorystore_app` (`cage-valkey-app-<env>`).
 2. **Linkerd mTLS & Synchronous Governance Gate (`gateway`, KSA `cage-gateway-sa`)**:
    - Every proposed tool execution or state mutation traverses the Linkerd service mesh with verified mTLS identity `l5d-client-id: cage-advisor-sa.governance-stack.serviceaccount.identity.linkerd.cluster.local` into `gateway` (`ConsequenceGateway` / `SymbolicGovernor`).
-   - `gateway` evaluates OPA Rego policies (`svc/opa:8181`), enforces Control Barrier Functions (`CBF`) against `memorystore_governance` (`cage-valkey-gov-<env>`, verifying synchronous `WAIT 1 100` replication), and signs the cryptographic seal using the HSM-backed `gateway-seal` KMS key (`KMS_GOVERNANCE_KEY`).
+   - `gateway` evaluates OPA Rego policies over its in-pod UDS sidecar (`http+unix://%2Fvar%2Frun%2Fopa%2Fopa.sock`), enforces Control Barrier Functions (`CBF`) against `memorystore_governance` (`cage-valkey-gov-<env>`, verifying synchronous `WAIT 1 100` replication), and signs the cryptographic seal using the HSM-backed `gateway-seal` KMS key (`KMS_GOVERNANCE_KEY`).
 3. **Native OTLP Trace Ingestion into Langfuse (`langfuse-web` / `langfuse-worker`, KSA `langfuse-sa`)**:
    - OpenTelemetry spans from `governed-financial-advisor` and `gateway` export directly to `http://langfuse-web.governance-stack.svc.cluster.local:3000/api/public/otel/v1/traces` using derived Basic-Auth headers (`OTEL_EXPORTER_OTLP_HEADERS`), persisting metadata in Cloud SQL PG15 (`cage-postgres-<env>` via `cloud-sql-proxy --auto-iam-authn`) and analytical trace events in ClickHouse (`svc/clickhouse:8123`).
 
@@ -428,7 +428,7 @@ When a query is submitted to `POST http://localhost:8081/agent/query` (`Authoriz
 
 #### Option A: Automated One-Command Runner ([`scripts/run_langfuse_eval_test.sh`](../../scripts/run_langfuse_eval_test.sh))
 [`scripts/run_langfuse_eval_test.sh`](../../scripts/run_langfuse_eval_test.sh) automates the full evaluation lifecycle:
-1. Waits for `governed-financial-advisor`, `gateway`, `vllm-reasoning`, `opa-service`, and `langfuse-web` pods to be `Running`.
+1. Waits for `governed-financial-advisor`, `gateway` (including its `opa` UDS sidecar), `vllm-reasoning`, and `langfuse-web` pods to be `Running`.
 2. Starts auto-reconnecting port-forwards (`8081→80`, `8080→8080`, `8000→8000`, `8001→8000`, `3000→3000`, `3001→3000`, `8181→8181`) and health-gates each HTTP endpoint.
 3. Seeds `safety:current_cash = 10000000` in `memorystore_governance` via `kubectl exec deploy/gateway` (using IAM auth + TLS).
 4. Runs `tests/test_langfuse_evaluation.py::test_langfuse_llm_judge_evaluation` and prints a structured post-run report of mean scores, per-query scores, governance blocks, and Langfuse score-posting telemetry.

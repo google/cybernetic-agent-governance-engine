@@ -138,12 +138,16 @@ resource "kubernetes_deployment" "gateway" {
           } : {},
           var.redis_ca_pem != "" ? {
             "cage.io/redis-ca-sha256" = sha256(var.redis_ca_pem)
+          } : {},
+          var.opa_bundle_sha256 != "" ? {
+            "cage.io/opa-bundle-sha256" = var.opa_bundle_sha256
           } : {}
         )
       }
 
       spec {
-        service_account_name = var.service_account_name
+        service_account_name             = var.service_account_name
+        termination_grace_period_seconds = 35
 
         # §3, §7 Pitfalls: Governance-critical gateway pods must NEVER schedule on Spot nodes.
         affinity {
@@ -163,6 +167,7 @@ resource "kubernetes_deployment" "gateway" {
         security_context {
           run_as_non_root = true
           run_as_user     = 1000
+          fs_group        = 1000
           seccomp_profile {
             type = "RuntimeDefault"
           }
@@ -520,6 +525,11 @@ resource "kubernetes_deployment" "gateway" {
             name  = "OPENBLAS_NUM_THREADS"
             value = "2"
           }
+          volume_mount {
+            name       = "opa-socket"
+            mount_path = "/var/run/opa"
+            read_only  = false
+          }
           dynamic "volume_mount" {
             for_each = var.redis_ca_pem != "" ? [1] : []
             content {
@@ -573,6 +583,151 @@ resource "kubernetes_deployment" "gateway" {
               cpu    = "2000m"
               memory = "4Gi"
             }
+          }
+        }
+
+        # OPA Unix-socket sidecar (F-19, F-102, R-15, D-195-3):
+        # Zero TCP listener ports, read-only policy/authz/config ConfigMaps,
+        # --authorization=basic blocking runtime PUT/PATCH/DELETE mutations,
+        # static /opa check probes, and 15s shutdown wait/grace outliving the
+        # gateway container's 5s pre_stop drain window.
+        container {
+          name              = "opa"
+          image             = var.opa_image
+          image_pull_policy = "Always"
+
+          args = [
+            "run",
+            "--server",
+            "--addr=unix:///var/run/opa/opa.sock",
+            "--authorization=basic",
+            "--config-file=/config/opa_config.yaml",
+            "--shutdown-wait-period=15",
+            "--shutdown-grace-period=15",
+            "--ignore=..*",
+            "/etc/opa/authz/system_authz.rego",
+            "/policies",
+          ]
+
+          security_context {
+            allow_privilege_escalation = false
+            read_only_root_filesystem  = true
+            run_as_non_root            = true
+            run_as_user                = 1000
+            run_as_group               = 1000
+            seccomp_profile {
+              type = "RuntimeDefault"
+            }
+            capabilities {
+              drop = ["ALL"]
+            }
+          }
+
+          lifecycle {
+            pre_stop {
+              exec {
+                command = [
+                  "/opa",
+                  "check",
+                  "--ignore=..*",
+                  "/etc/opa/authz/system_authz.rego",
+                  "/policies",
+                ]
+              }
+            }
+          }
+
+          readiness_probe {
+            exec {
+              command = [
+                "/opa",
+                "check",
+                "--ignore=..*",
+                "/etc/opa/authz/system_authz.rego",
+                "/policies",
+              ]
+            }
+            initial_delay_seconds = 2
+            period_seconds        = 10
+            failure_threshold     = 3
+            timeout_seconds       = 5
+          }
+
+          liveness_probe {
+            exec {
+              command = [
+                "/opa",
+                "check",
+                "--ignore=..*",
+                "/etc/opa/authz/system_authz.rego",
+                "/policies",
+              ]
+            }
+            initial_delay_seconds = 5
+            period_seconds        = 20
+            failure_threshold     = 3
+            timeout_seconds       = 5
+          }
+
+          volume_mount {
+            name       = "opa-socket"
+            mount_path = "/var/run/opa"
+            read_only  = false
+          }
+          volume_mount {
+            name       = "opa-policies"
+            mount_path = "/policies"
+            read_only  = true
+          }
+          volume_mount {
+            name       = "opa-system-authz"
+            mount_path = "/etc/opa/authz"
+            read_only  = true
+          }
+          volume_mount {
+            name       = "opa-config"
+            mount_path = "/config"
+            read_only  = true
+          }
+
+          resources {
+            requests = {
+              cpu    = var.opa_cpu_request
+              memory = var.opa_memory_request
+            }
+            limits = {
+              cpu    = var.opa_cpu_limit
+              memory = var.opa_memory_limit
+            }
+          }
+        }
+
+        volume {
+          name = "opa-socket"
+          empty_dir {}
+        }
+
+        volume {
+          name = "opa-policies"
+          config_map {
+            name         = var.opa_policies_config_map_name
+            default_mode = "0444"
+          }
+        }
+
+        volume {
+          name = "opa-system-authz"
+          config_map {
+            name         = var.opa_system_authz_config_map_name
+            default_mode = "0444"
+          }
+        }
+
+        volume {
+          name = "opa-config"
+          config_map {
+            name         = var.opa_config_config_map_name
+            default_mode = "0444"
           }
         }
 

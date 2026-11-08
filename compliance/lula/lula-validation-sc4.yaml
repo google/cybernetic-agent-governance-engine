@@ -15,31 +15,26 @@
 # lula-validation-sc4.yaml
 # System Constraint SC-4 — Fiscal Limits and RBAC
 #
-# Asserts that the OPA policy engine is actively deployed in the cluster
-# with ISO 42001 compliance labels present on its ConfigMap.
-# This is a CRITICAL control — verifies that the fiscal/RBAC enforcement
-# layer is live, not just configured.
+# Asserts that the gateway Deployment runs the OPA Unix-socket sidecar with
+# --authorization=basic and that ISO 42001 compliance labels and Rego bundles
+# are present on ConfigMap/opa-policies and ConfigMap/opa-system-authz.
 #
-# Domain: kubernetes → OPA ConfigMap labels (cluster-internal, no HTTP)
-# Provider: opa (inline Rego)
-#
-# Note: SC-4 uses a kubernetes domain (not api), so no service URL is needed.
-# FAIL on this control triggers an immediate alert via compliance-bridge
-# (Python FastAPI) audit_workflow.py — see src/compliance_bridge/audit_workflow.py
+# References:
+#   - infra/modules/opa_policy/main.tf — ISO 42001-labelled OPA ConfigMaps
+#   - infra/modules/gateway/main.tf — Gateway UDS OPA sidecar
+#   - src/cage_finance/opa/trade_governance.rego — Fiscal/RBAC Rego rules
+#   - src/compliance_bridge/audit_workflow.py — Critical FAIL alert pipeline
 
 component-definition:
   uuid: c69e1b4c-8d52-5a8b-8e3b-9736eb9fbe23
   metadata:
     title: CAGE Validation — SC4
-    last-modified: '2026-10-25T23:30:57Z'
-    version: 1.0.0
+    last-modified: '2026-11-08T00:00:00Z'
+    version: 1.1.0
     oscal-version: 1.1.2
     remarks: |-
-      Auto-converted from standalone lula validation format.
       Region: US_FED. Posture: nist-sp800-53.
-      Notes: System Constraint SC-4: Fiscal Limits and RBAC Enforcement. CRITICAL CONTROL — verified via Kubernetes ConfigMap label presence. The opa-compliance-status ConfigMap is created alongside the OPA Deployment during each deploy. Its absence or mislabelling indicates the enforcement layer was not correctly deployed. Any FAIL on this control triggers an immediate Slack/PagerDuty alert via compliance-bridge audit_workflow._step4_alert_on_critical_fail(). See: infra/modules/opa_policy/main.tf for label definitions. See: src/cage_finance/opa/trade_governance.rego
-           for the Rego rules enforcing SC-4.
-      See: src/compliance_bridge/audit_workflow.py for the alert pipeline.
+      Notes: System Constraint SC-4: Fiscal Limits and RBAC Enforcement. CRITICAL CONTROL — verified via the gateway OPA UDS sidecar and ISO 42001-labelled opa-policies and opa-system-authz ConfigMaps in governance-stack. Any FAIL on this control triggers an immediate alert via compliance-bridge audit_workflow._step4_alert_on_critical_fail(). See: infra/modules/opa_policy/main.tf for label definitions. See: src/cage_finance/opa/trade_governance.rego for the Rego rules enforcing SC-4. See: src/compliance_bridge/audit_workflow.py for the alert pipeline.
   components:
   - uuid: 3c6ec14f-85af-5735-8a1b-dacc49e1abdc
     type: software
@@ -68,14 +63,14 @@ component-definition:
           type: kubernetes
           kubernetes-spec:
             resources:
-              - name: opa-deployment
+              - name: gateway-deployment
                 resource-rule:
                   group: apps
                   version: v1
                   resource: deployments
                   namespaces:
                     - governance-stack
-              - name: opa-policies
+              - name: opa-configmaps
                 resource-rule:
                   group: ""
                   version: v1
@@ -91,24 +86,37 @@ component-definition:
               import future.keywords.if
               import future.keywords.in
 
-              # SC-4: Information in Shared Resources — Session Isolation & Fiscal Limits via OPA
-              opa_service_ready if {
-                some deploy in input["opa-deployment"]
-                deploy.metadata.name == "opa-service"
+              # SC-4: Information in Shared Resources — Session Isolation & Fiscal Limits via OPA UDS Sidecar
+              gateway_opa_sidecar_ready if {
+                some deploy in input["gateway-deployment"]
+                deploy.metadata.name == "gateway"
                 deploy.status.readyReplicas >= 1
+                some opa in deploy.spec.template.spec.containers
+                opa.name == "opa"
+                "--addr=unix:///var/run/opa/opa.sock" in opa.args
+                "--authorization=basic" in opa.args
               }
 
               session_isolation_policy_loaded if {
-                some cm in input["opa-policies"]
+                some cm in input["opa-configmaps"]
                 cm.metadata.name == "opa-policies"
+                cm.metadata.labels["compliance.iso42001/enabled"] == "true"
                 some policy_name, policy_rego in cm.data
                 endswith(policy_name, ".rego")
                 policy_rego != ""
               }
 
+              system_authz_immutable if {
+                some cm in input["opa-configmaps"]
+                cm.metadata.name == "opa-system-authz"
+                cm.metadata.labels["compliance.iso42001/enabled"] == "true"
+                contains(cm.data["system_authz.rego"], "package system.authz")
+              }
+
               validate if {
-                count(input["opa-deployment"]) > 0
-                count(input["opa-policies"]) > 0
-                opa_service_ready
+                count(input["gateway-deployment"]) > 0
+                count(input["opa-configmaps"]) > 0
+                gateway_opa_sidecar_ready
                 session_isolation_policy_loaded
+                system_authz_immutable
               }

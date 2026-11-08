@@ -142,11 +142,6 @@ while IFS= read -r line || [ -n "$line" ]; do
                 export TF_VAR_cold_tier_bucket="$var_value"
                 ;;
             
-            # OPA
-            OPA_URL)
-                export TF_VAR_opa_url="$var_value"
-                ;;
-            
             # Redis
             REDIS_URL)
                 export TF_VAR_redis_url="$var_value"

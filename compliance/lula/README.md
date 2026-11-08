@@ -29,10 +29,10 @@ In this project, Lula validations (`compliance/lula/lula-validation-*.yaml`) eva
 
 | Validation File                                          | Control | Standard             | Region Scope | Status    | Description                                                        |
 | -------------------------------------------------------- | ------- | -------------------- | ------------ | --------- | ------------------------------------------------------------------ |
-| [`lula-validation-sc4.yaml`](lula-validation-sc4.yaml)   | SC-4    | NIST SP 800-53       | US_FED       | ✅ Active | Fiscal Limits and RBAC — OPA ConfigMap label present in `governance-stack` namespace |
+| [`lula-validation-sc4.yaml`](lula-validation-sc4.yaml)   | SC-4    | NIST SP 800-53       | US_FED       | ✅ Active | Fiscal Limits and RBAC — Gateway OPA UDS sidecar & ISO 42001 `opa-policies`/`opa-system-authz` ConfigMaps in `governance-stack` |
 | [`lula-validation-cilium-dpv2.yaml`](lula-validation-cilium-dpv2.yaml) | SC-7 | NIST SP 800-53 | US_FED | ✅ Active | Boundary Protection — GKE Dataplane V2 anetd DaemonSet health in `kube-system` |
 | [`lula-validation-ac2.yaml`](lula-validation-ac2.yaml)   | AC-2    | NIST SP 800-53       | US_FED       | 🔶 Stub   | Account Management — ServiceAccount lifecycle in `governance-stack` |
-| [`lula-validation-ac3.yaml`](lula-validation-ac3.yaml)   | AC-3    | NIST SP 800-53 Rev 5 | US_FED       | 🔶 Stub   | Access Enforcement — OPA Deployment + ConfigMap check              |
+| [`lula-validation-ac3.yaml`](lula-validation-ac3.yaml)   | AC-3    | NIST SP 800-53 Rev 5 | US_FED       | 🔶 Stub   | Access Enforcement — Gateway OPA UDS sidecar + read-only ConfigMap check |
 | [`lula-validation-au12.yaml`](lula-validation-au12.yaml) | AU-12   | NIST SP 800-53 Rev 5 | US_FED       | ✅ Active | Audit Record Generation — verifies gateway blocking hash-chain (`EVIDENCE_CHAIN_BLOCKING=true`) and `compliance-bridge` durable WORM cold-store (`EVIDENCE_COLD_STORE`) |
 | [`lula-validation-metrics.yaml`](lula-validation-metrics.yaml) | AU-12 | NIST SP 800-53 Rev 5 | US_FED | ✅ Active | Prometheus Metrics Scrape — verifies Terraform-reconciled `gateway-metrics` GMP `PodMonitoring` (`infra/modules/gateway/metrics-monitors/`) targeting `app=gateway` on port `metrics` (`/metrics`) in `governance-stack` |
 | [`lula-validation-cm6.yaml`](lula-validation-cm6.yaml)   | CM-6    | NIST SP 800-53 Rev 5 | US_FED       | 🔶 Stub   | Configuration Settings — Governance ConfigMaps present             |

@@ -136,7 +136,11 @@ def test_ac3_and_sc4_target_in_state_opa_resources_not_deleted_configmap() -> No
         assert "opa-compliance-status" not in desc, (
             f"{fname} must not target deleted ConfigMap/opa-compliance-status"
         )
-        assert "opa-service" in desc
+        assert "opa-service" not in desc, (
+            f"{fname} must not target retired standalone Deployment/opa-service"
+        )
+        assert "gateway" in desc
+        assert "--addr=unix:///var/run/opa/opa.sock" in desc
         assert "opa-policies" in desc
 
 

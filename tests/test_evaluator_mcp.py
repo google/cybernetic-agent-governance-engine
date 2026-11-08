@@ -14,13 +14,12 @@
 
 import asyncio
 import logging
+import os
+import sys
 
 import pytest
 
 pytestmark = pytest.mark.integration
-
-import os
-import sys
 
 # Adjust path
 sys.path.append(os.getcwd())
@@ -28,7 +27,9 @@ sys.path.append(os.getcwd())
 from src.governed_financial_advisor.agents.evaluator.agent import (
     check_market_status,
     simulate_governance_check,
-    verify_policy_opa,
+)
+from src.governed_financial_advisor.infrastructure.gateway_client import (
+    GatewayClient,
 )
 
 logging.basicConfig(level=logging.INFO)
@@ -37,7 +38,9 @@ logger = logging.getLogger("TestEvaluatorMCP")
 
 @pytest.mark.asyncio
 async def test_evaluator_tools():
-    logger.info("--- Testing Evaluator Agent Tools (MCP Integration) ---")
+    logger.info(
+        "--- Testing Evaluator Agent Tools (MCP & Gateway Precheck Integration) ---"
+    )
 
     # 1. Check Market Status
     logger.info("1. Testing check_market_status...")
@@ -55,13 +58,13 @@ async def test_evaluator_tools():
     assert res is not None, "simulate_governance_check returned None"
     logger.info(f"✅ Governance Check Result: {res}")
 
-    # 3. Verify Policy
-    logger.info("3. Testing verify_policy_opa...")
-    res = await verify_policy_opa(
-        action="execute_trade", params={"symbol": "AAPL", "amount": 1000}
+    # 3. Verify Policy Dry-Run via Gateway /governance/policy-precheck
+    logger.info("3. Testing GatewayClient.evaluate_policy_dry_run...")
+    decision = await GatewayClient().evaluate_policy_dry_run(
+        "execute_trade", {"symbol": "AAPL", "amount": 1000, "currency": "USD"}
     )
-    assert res is not None, "verify_policy_opa returned None"
-    logger.info(f"✅ Policy Check Result: {res}")
+    assert decision in {"ALLOW", "DENY", "MANUAL_REVIEW"}
+    logger.info(f"✅ Policy Precheck Decision: {decision}")
 
 
 if __name__ == "__main__":

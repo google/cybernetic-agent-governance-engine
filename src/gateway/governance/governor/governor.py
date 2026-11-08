@@ -27,7 +27,7 @@ import inspect
 import json
 import logging
 import time
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
 from typing import TYPE_CHECKING, Any, NoReturn
 
 from opentelemetry import trace
@@ -148,6 +148,19 @@ class SymbolicGovernor:
 
     def registered_tier_names(self) -> list[str]:
         return [t.tier_name for t in self.tiers]
+
+    async def bind_server_inputs(
+        self, action: str, params: Mapping[str, Any]
+    ) -> dict[str, Any]:
+        """Resolve server-authoritative parameters for ``action`` before evaluation.
+
+        Strips kernel-owned security keys (``approval_token``, ``semantic_score``,
+        ``prompt_injection_verified``) and any domain ``ServerInputResolver``
+        owned keys (e.g. ``trader_role``, ``trader_id``) from caller ``params``
+        and stamps their server-verified values so advisory prechecks and
+        committing runs evaluate identical authoritative inputs (F-100).
+        """
+        return await bind_server_inputs(self._components.server_inputs, action, params)
 
     async def validate_action(
         self,

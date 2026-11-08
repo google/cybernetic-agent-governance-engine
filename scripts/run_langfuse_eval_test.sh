@@ -74,7 +74,6 @@ REQUIRED_POD_SELECTORS=(
   "gateway"
   "vllm-inference"
   "vllm-reasoning"
-  "opa-service"
   "langfuse-web"
 )
 
@@ -178,14 +177,13 @@ start_pf() {
 # IMPORTANT:
 #   - svc/langfuse-web listens on port 3000 (forwarded to both :3000 for SDK
 #     and :3001 for OTLP trace export default in test_langfuse_evaluation.py).
-#   - svc/opa is the Kubernetes Service name for deployment/opa-service.
+#   - OPA runs inside deploy/gateway over a Unix socket (no standalone svc/opa).
 start_pf backend      governed-financial-advisor  8081 80     required
 start_pf gateway      gateway                     8080 8080   required
 start_pf vllm-fast    vllm-service                8001 8000   required
 start_pf vllm-reason  vllm-reasoning              8000 8000   required
 start_pf langfuse     langfuse-web                3000 3000   required
 start_pf langfuse-otel langfuse-web               3001 3000   required
-start_pf opa          opa                         8181 8181   required
 
 # ── Best-effort port-forwards (test degrades gracefully without these) ─────
 if kubectl get svc -n "$NS" redis &>/dev/null; then
@@ -264,7 +262,6 @@ check_service 8081 "Backend (governed-financial-advisor)" "http://localhost:8081
 check_service 8080 "Gateway (governance engine)"          "http://localhost:8080/health"
 check_service 8001 "vLLM fast inference (Qwen)"           "http://localhost:8001/v1/models"
 check_service 8000 "vLLM reasoning (DeepSeek R1)"         "http://localhost:8000/v1/models"
-check_service 8181 "OPA policy engine"                    "http://localhost:8181/health"
 check_service 3000 "Langfuse web"                         "http://localhost:3000"
 
 if [[ ${#health_failures[@]} -gt 0 ]]; then

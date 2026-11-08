@@ -363,7 +363,6 @@ Run `bash scripts/port_forward_dev.sh` to start all with auto-reconnect.
 
 | Service | Local Port | K8s Service | Remote Port |
 |---------|------------|-------------|-------------|
-| OPA | 8181 | `opa` | 8181 |
 | Langfuse API | 3001 | `langfuse-web` | 3000 |
 | Langfuse UI | 3000 | `langfuse-web` | 3000 |
 | vLLM fast | 8001 | `vllm-service` | 8000 |

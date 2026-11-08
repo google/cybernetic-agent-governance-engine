@@ -108,11 +108,6 @@ variable "langfuse_compliance_secret_key" {
   default   = ""
 }
 
-variable "opa_url" {
-  type    = string
-  default = ""
-}
-
 variable "model_fast" {
   type    = string
   default = "Qwen/Qwen2.5-1.5B-Instruct"

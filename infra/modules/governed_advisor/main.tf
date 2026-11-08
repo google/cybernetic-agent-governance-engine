@@ -170,12 +170,6 @@ resource "kubernetes_deployment" "governed_advisor" {
             value = var.vllm_gateway_url
           }
 
-          # Policy Engine
-          env {
-            name  = "OPA_URL"
-            value = var.opa_url
-          }
-
           # Observability: Langfuse
           env {
             name  = "LANGCHAIN_TRACING_V2"

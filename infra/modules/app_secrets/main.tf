@@ -192,19 +192,6 @@ resource "kubernetes_config_map" "advisor_config" {
   }
 }
 
-resource "kubernetes_secret" "opa_configuration" {
-  metadata {
-    name      = "opa-configuration"
-    namespace = var.namespace
-  }
 
-  data = {
-    "opa_config.yaml" = <<-EOT
-services:
-  default_service:
-    url: \${var.opa_url}
-EOT
-  }
-}
 
 

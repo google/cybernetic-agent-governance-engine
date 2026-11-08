@@ -26,3 +26,31 @@ output "metrics_monitors_release_name" {
   description = "Helm release name managing PodMonitoring/gateway-metrics and optional ServiceMonitor (R-6, F-91)."
   value       = length(helm_release.metrics_monitors) > 0 ? helm_release.metrics_monitors[0].name : ""
 }
+
+output "opa_policies_config_map_name" {
+  description = "Name of the OPA domain policies ConfigMap mounted into the gateway pod's OPA sidecar"
+  value = one([
+    for v in kubernetes_deployment.gateway.spec[0].template[0].spec[0].volume :
+    v.config_map[0].name
+    if v.name == "opa-policies"
+  ])
+}
+
+output "opa_bundle_sha256" {
+  description = "SHA-256 digest of the OPA bundle stamped on the gateway pod template"
+  value       = var.opa_bundle_sha256
+}
+
+output "opa_uds_url" {
+  description = "OPA_URL configured on the gateway container (in-pod Unix domain socket)"
+  value = one([
+    for e in kubernetes_deployment.gateway.spec[0].template[0].spec[0].container[0].env :
+    e.value
+    if e.name == "OPA_URL"
+  ])
+}
+
+output "opa_sidecar_policy_files" {
+  description = "Domain Rego policy files mounted into the gateway OPA UDS sidecar via opa-policies (POAM-2026-198)"
+  value       = var.opa_policy_files
+}

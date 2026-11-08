@@ -12,10 +12,12 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-# POAM-2026-198: Verify dynamic multi-domain OPA ConfigMap discovery in GKE.
+# POAM-2026-198 & OP-1: Verify dynamic multi-domain OPA ConfigMap discovery in GKE
+# mounted into module.gateway's OPA UDS sidecar.
 # Asserts both positive and negative bundle membership across healthcare and
-# finance domains, and verifies that stub domains without .rego policies
-# (physical_ai) fail closed at terraform plan via the opa_policies precondition.
+# finance domains against module.gateway's OPA ConfigMap/sidecar outputs, and
+# verifies that stub domains without .rego policies (physical_ai) fail closed at
+# terraform plan via domain_opa_policies_guard and opa_policies preconditions.
 
 mock_provider "google" {}
 mock_provider "helm" {}
@@ -48,9 +50,13 @@ variables {
 
   langfuse_compliance_public_key = "fake-compliance-public-key"
   langfuse_compliance_secret_key = "fake-compliance-secret-key"
+  trusted_operator_identities    = ["alice@example.org"]
+  operator_oidc_issuer           = "https://idp.example.org"
+  operator_oidc_audience         = "cage-compliance-bridge"
+  operator_jwks_uri              = "https://idp.example.org/.well-known/jwks.json"
 }
 
-run "healthcare_mounts_dosing_not_trade" {
+run "healthcare_mounts_dosing_not_trade_in_gateway_sidecar" {
   command = plan
 
   variables {
@@ -58,22 +64,32 @@ run "healthcare_mounts_dosing_not_trade" {
   }
 
   assert {
-    condition     = contains(keys(module.opa.policy_files_data), "dosing_governance.rego")
-    error_message = "healthcare domain must mount dosing_governance.rego"
+    condition = (
+      module.gateway.opa_policies_config_map_name == "opa-policies" &&
+      module.gateway.opa_uds_url == "http+unix://%2Fvar%2Frun%2Fopa%2Fopa.sock" &&
+      module.gateway.opa_bundle_sha256 == module.opa.bundle_sha256 &&
+      can(regex("^[0-9a-f]{64}$", module.gateway.opa_bundle_sha256))
+    )
+    error_message = "module.gateway must mount opa-policies over UDS and stamp the healthcare bundle SHA-256"
   }
 
   assert {
-    condition     = !contains(keys(module.opa.policy_files_data), "trade_governance.rego")
-    error_message = "healthcare domain must not mount trade_governance.rego"
+    condition     = contains(keys(module.gateway.opa_sidecar_policy_files), "dosing_governance.rego")
+    error_message = "healthcare domain must mount dosing_governance.rego in module.gateway's OPA sidecar"
   }
 
   assert {
-    condition     = !contains(keys(module.opa.policy_files_data), "dosing_governance_test.rego")
-    error_message = "healthcare domain must exclude *_test.rego from the runtime OPA ConfigMap"
+    condition     = !contains(keys(module.gateway.opa_sidecar_policy_files), "trade_governance.rego")
+    error_message = "healthcare domain must not mount trade_governance.rego in module.gateway's OPA sidecar"
+  }
+
+  assert {
+    condition     = !contains(keys(module.gateway.opa_sidecar_policy_files), "dosing_governance_test.rego")
+    error_message = "healthcare domain must exclude *_test.rego from module.gateway's runtime OPA sidecar ConfigMap"
   }
 }
 
-run "finance_mounts_trade_not_dosing" {
+run "finance_mounts_trade_not_dosing_in_gateway_sidecar" {
   command = plan
 
   variables {
@@ -81,13 +97,23 @@ run "finance_mounts_trade_not_dosing" {
   }
 
   assert {
-    condition     = contains(keys(module.opa.policy_files_data), "trade_governance.rego")
-    error_message = "finance domain must mount trade_governance.rego"
+    condition = (
+      module.gateway.opa_policies_config_map_name == "opa-policies" &&
+      module.gateway.opa_uds_url == "http+unix://%2Fvar%2Frun%2Fopa%2Fopa.sock" &&
+      module.gateway.opa_bundle_sha256 == module.opa.bundle_sha256 &&
+      can(regex("^[0-9a-f]{64}$", module.gateway.opa_bundle_sha256))
+    )
+    error_message = "module.gateway must mount opa-policies over UDS and stamp the finance bundle SHA-256"
   }
 
   assert {
-    condition     = !contains(keys(module.opa.policy_files_data), "dosing_governance.rego")
-    error_message = "finance domain must not mount dosing_governance.rego"
+    condition     = contains(keys(module.gateway.opa_sidecar_policy_files), "trade_governance.rego")
+    error_message = "finance domain must mount trade_governance.rego in module.gateway's OPA sidecar"
+  }
+
+  assert {
+    condition     = !contains(keys(module.gateway.opa_sidecar_policy_files), "dosing_governance.rego")
+    error_message = "finance domain must not mount dosing_governance.rego in module.gateway's OPA sidecar"
   }
 }
 

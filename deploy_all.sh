@@ -149,7 +149,7 @@ load_env() {
 
     # ── Non-secret infrastructure variables (safe to export broadly) ──────
     local _env _namespace _registry _storage _cold_tier
-    local _opa _redis _s3_ep _s3_bkt
+    local _redis _s3_ep _s3_bkt
     local _model_reasoning _model_fast _model_consensus
     local _project _region
 
@@ -158,7 +158,6 @@ load_env() {
     _registry=$(_read_env_var REGISTRY_URL)
     _storage=$(_read_env_var STORAGE_BACKEND)
     _cold_tier=$(_read_env_var COLD_TIER_BUCKET)
-    _opa=$(_read_env_var OPA_URL)
     _redis=$(_read_env_var REDIS_URL)
     _s3_ep=$(_read_env_var S3_ENDPOINT_URL)
     _s3_bkt=$(_read_env_var S3_BUCKET_NAME)
@@ -179,7 +178,6 @@ load_env() {
     [[ -n "$_registry" ]]       && export TF_VAR_registry_url="$_registry"
     [[ -n "$_storage" ]]        && export TF_VAR_storage_backend="$_storage"
     [[ -n "$_cold_tier" ]]      && export TF_VAR_cold_tier_bucket="$_cold_tier"
-    [[ -n "$_opa" ]]            && export TF_VAR_opa_url="$_opa"
     [[ -n "$_redis" ]]          && export TF_VAR_redis_url="$_redis"
     [[ -n "$_s3_ep" ]]          && export TF_VAR_minio_endpoint="$_s3_ep"
     [[ -n "$_s3_bkt" ]]         && export TF_VAR_minio_bucket="$_s3_bkt"

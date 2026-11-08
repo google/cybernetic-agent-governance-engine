@@ -23,16 +23,12 @@ services:
       - "--addr=:8181"
       - "--ignore=.*"
       - "/policies"
+    # Bound to the internal Compose network only (no host port exposure; OP-1).
     volumes:
       # Mount ONLY the active domain's Rego bundle (single-domain-per-process
       # isolation matching infra/modules/opa_policy/main.tf: finance mounts
       # cage_finance/opa, healthcare mounts cage_healthcare/opa).
       - ./src/cage_${CAGE_DOMAIN:-finance}/opa:/policies:ro
-    ports:
-      # HIGH-01 FIX: Restrict OPA to localhost only — prevents unauthenticated
-      # access from external processes on the host. Inter-service communication
-      # within the Docker network uses the internal port directly (no host binding needed).
-      - "127.0.0.1:8181:8181"
     healthcheck:
       test: [ "CMD", "/opa", "check", "--ignore=.*", "/policies" ]
       interval: 5s
@@ -113,11 +109,10 @@ services:
       - SERVICE_NAME=financial-advisor
       - GOOGLE_CLOUD_PROJECT=${GOOGLE_CLOUD_PROJECT:-}
       - GOOGLE_CLOUD_LOCATION=${GOOGLE_CLOUD_LOCATION:-us-central1}
-      - OPA_URL=http://opa:8181
-      - OPA_AUTH_TOKEN=${OPA_AUTH_TOKEN:?OPA_AUTH_TOKEN must be set in .env}
       - MODEL_FAST=${MODEL_FAST:?MODEL_FAST must be set in the environment}
       - MODEL_REASONING=${MODEL_REASONING:?MODEL_REASONING must be set in the environment}
       - VLLM_FAST_API_BASE=http://vllm-fast:8000/v1
+      - GATEWAY_URL=http://gateway:8080
       - GATEWAY_HOST=gateway
       - GATEWAY_PORT=8080
       - OTEL_TRACES_EXPORTER=${OTEL_TRACES_EXPORTER:-none}

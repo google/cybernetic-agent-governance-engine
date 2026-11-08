@@ -108,7 +108,7 @@ output "deployment_summary" {
     clickhouse_service     = module.clickhouse_operator.service_name
     clickhouse_engine      = module.clickhouse_operator.table_engine
     langfuse_url           = module.langfuse.web_url
-    opa_endpoint           = module.opa.endpoint_url
+    opa_uds_socket         = module.opa.uds_socket_path
   }
 }
 
@@ -177,11 +177,6 @@ output "langfuse_secret_key" {
   description = "Langfuse API secret key"
   value       = module.langfuse.secret_key
   sensitive   = true
-}
-
-output "opa_endpoint" {
-  description = "OPA policy engine endpoint"
-  value       = module.opa.endpoint_url
 }
 
 # ─── Signing keys (POAM-2026-079) ─────────────────────────────────────────────

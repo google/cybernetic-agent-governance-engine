@@ -1072,12 +1072,6 @@ variable "cold_tier_bucket" {
   default     = "cage-cold-tier"
 }
 
-variable "opa_url" {
-  description = "OPA policy engine URL (from OPA_URL)"
-  type        = string
-  default     = ""
-}
-
 variable "redis_url" {
   description = "Redis connection URL (from REDIS_URL)"
   type        = string

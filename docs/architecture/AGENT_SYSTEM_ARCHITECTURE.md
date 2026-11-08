@@ -312,11 +312,10 @@ The reviewer may supply `max_slippage_pct` in the resume payload to tighten slip
 
 ## 8. EvaluatorAgent & EvaluatorAuditor
 
-`EvaluatorAgent` (`build_evaluator_agent()`) binds 4 async tools:
+`EvaluatorAgent` (`build_evaluator_agent()`) binds 3 async tools (advisory dry-run Rego prechecks use [`GatewayClient.evaluate_policy_dry_run()`](../../src/governed_financial_advisor/infrastructure/gateway_client.py) → `POST /governance/policy-precheck`, never a direct OPA network call):
 1. `check_market_status`: Verifies market open and ticker tradability (gateway MCP tool).
-2. `verify_policy_opa`: Direct HTTP call to OPA's REST API at `OPA_URL`; any error returns `DENY`.
-3. `simulate_governance_check`: Dry-run preview in the gateway's governor (gateway MCP tool); it does not enforce.
-4. `safety_intervention`: Calls the gateway's `trigger_safety_intervention` tool.
+2. `simulate_governance_check`: Dry-run preview in the gateway's governor (gateway MCP tool); it does not enforce.
+3. `safety_intervention`: Calls the gateway's `trigger_safety_intervention` tool.
 
 The advisor's `POST /tools/execute` endpoint (`src/governed_financial_advisor/tools/api.py`) forwards `simulate_governance_check`, `verify_content_safety`, `evaluate_policy` and `execute_trade` to the gateway through `GatewayClient.execute_tool()`; the advisor does not run NeMo content-safety checks for these tools in-process. The evaluator's verdict is advisory and unsigned — the only signature in state (`governance_signature`) comes from the gateway via `safety_check`. Post-hoc trace auditing is performed by `EvaluatorAuditor.audit_trace()` in `src/governed_financial_advisor/agents/evaluator/auditor.py`.
 

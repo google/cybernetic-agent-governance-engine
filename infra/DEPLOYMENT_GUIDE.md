@@ -221,7 +221,7 @@ docker compose up
 | `vllm_inference` | vLLM deployments with dedicated GPU node pools (`g2-standard-8`, NVIDIA L4) |
 | `langfuse_stack` | Self-hosted Langfuse v3 stack |
 | `compliance_bridge` | Langfuse-to-Lula compliance audit bridge |
-| `opa_policy` | Open Policy Agent engine |
+| `opa_policy` | Read-only OPA Rego policy, `system.authz`, and console decision-log ConfigMaps mounted by the `gateway` UDS sidecar |
 | `gateway` | CAGE Hybrid Inference & Governance Gateway |
 | `governed_advisor` | Governed Financial Advisor (in-cluster GKE Deployment) |
 

@@ -84,10 +84,6 @@ variable "vllm_gateway_url" {
   default = ""
 }
 
-variable "opa_url" {
-  type = string
-}
-
 variable "langfuse_host" {
   type = string
 }

@@ -201,10 +201,9 @@ The following `.env` variables are automatically mapped to Terraform variables:
 
 | .env Variable | Terraform Variable | Description |
 |---------------|-------------------|-------------|
-| `OPA_URL` | `opa_url` | OPA base URL, no path (the gateway derives the decision path from the active domain's `DomainConfig.opa_package`) |
 | `REDIS_URL` | `redis_url` | Redis connection URL |
 
-`VLLM_*` in `.env` configure Docker Compose only. On gcp-gke the vLLM endpoints follow `inference_backend` (see [`targets/gcp-gke/README.md`](targets/gcp-gke/README.md)). The `vllm_reasoning_url`, `vllm_fast_url` and `vllm_gateway_url` variables this table used to list were never read, and are removed (POAM-2026-136). `minio_endpoint` and `minio_bucket` were retired with `2bacc478:infra/targets/agnostic/` (`POAM-2026-185`).
+`OPA_URL` and `VLLM_*` in `.env` configure Docker Compose only. On `gcp-gke`, OPA runs inside the gateway pod over an in-pod Unix domain socket (`http+unix://%2Fvar%2Frun%2Fopa%2Fopa.sock`) with no Kubernetes `Service` or `opa_url` Terraform variable (`OP-1`). On gcp-gke the vLLM endpoints follow `inference_backend` (see [`targets/gcp-gke/README.md`](targets/gcp-gke/README.md)). The `vllm_reasoning_url`, `vllm_fast_url` and `vllm_gateway_url` variables this table used to list were never read, and are removed (POAM-2026-136). `minio_endpoint` and `minio_bucket` were retired with `2bacc478:infra/targets/agnostic/` (`POAM-2026-185`).
 
 ### General Configuration
 

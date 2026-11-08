@@ -954,7 +954,7 @@ module "compliance_bridge" {
 }
 
 
-# ─── Deploy OPA Policy Engine ──────────────────────────────────────────────────
+# ─── OPA Read-Only Bundle ConfigMaps (Gateway UDS Sidecar, D-195-3) ───────────
 
 locals {
   domain_opa_dir = "${path.module}/../../../src/cage_${var.cage_domain}/opa"
@@ -977,13 +977,10 @@ resource "terraform_data" "domain_opa_policies_guard" {
 module "opa" {
   source = "../../modules/opa_policy"
 
-  namespace            = module.namespace.name
-  image                = var.image_digests["opa"]
-  replicas             = var.enable_high_availability ? 2 : 1
-  policy_files         = local.domain_opa_policies
-  service_account_name = kubernetes_service_account.workload["opa"].metadata[0].name
+  namespace    = module.namespace.name
+  policy_files = local.domain_opa_policies
 
-  depends_on = [module.gke, terraform_data.domain_opa_policies_guard, kubernetes_service_account.workload["opa"]]
+  depends_on = [module.namespace, terraform_data.domain_opa_policies_guard]
 }
 
 # ─── Deploy Gateway ─────────────────────────────────────────────────────────────
@@ -994,6 +991,7 @@ module "gateway" {
   namespace                      = module.namespace.name
   deployment_config_map_name     = module.deployment_config.config_map_name
   image                          = var.image_digests["gateway"]
+  opa_image                      = var.image_digests["opa"]
   replicas                       = var.enable_high_availability ? 2 : 1
   project_id                     = var.project_id
   region                         = var.region
@@ -1009,17 +1007,22 @@ module "gateway" {
   redis_auth_mode                = local.governance_redis_auth
 
   # Evidence stream producer — identical contract to the compliance bridge.
-  evidence_stream_redis_url = local.evidence_stream_redis_url
-  evidence_stream_redis_db  = local.evidence_stream_redis_db
-  evidence_stream_key       = local.evidence_stream_key
-  cage_inference_backend    = var.inference_backend
-  vllm_base_url             = local.vllm_fast_url
-  vllm_reasoning_api_base   = local.vllm_reasoning_url
-  vllm_fast_api_base        = local.vllm_fast_url
-  vllm_api_key              = local.vllm_api_key
-  guardrails_model_name     = var.served_model_fast
-  opa_url                   = "http://${module.opa.service_name}.${module.namespace.name}.svc.cluster.local:8181"
-  governance_salt           = var.governance_salt
+  evidence_stream_redis_url        = local.evidence_stream_redis_url
+  evidence_stream_redis_db         = local.evidence_stream_redis_db
+  evidence_stream_key              = local.evidence_stream_key
+  cage_inference_backend           = var.inference_backend
+  vllm_base_url                    = local.vllm_fast_url
+  vllm_reasoning_api_base          = local.vllm_reasoning_url
+  vllm_fast_api_base               = local.vllm_fast_url
+  vllm_api_key                     = local.vllm_api_key
+  guardrails_model_name            = var.served_model_fast
+  opa_url                          = module.opa.uds_url
+  opa_policies_config_map_name     = module.opa.policies_config_map_name
+  opa_system_authz_config_map_name = module.opa.system_authz_config_map_name
+  opa_config_config_map_name       = module.opa.config_config_map_name
+  opa_bundle_sha256                = module.opa.bundle_sha256
+  opa_policy_files                 = module.opa.policy_files_data
+  governance_salt                  = var.governance_salt
 
   # POAM-2026-080: only the advisor's mesh identity may call gated routes.
   # The gateway does not call itself, so its own identity is not listed.
@@ -1105,7 +1108,6 @@ module "governed_advisor" {
   vllm_base_url              = local.vllm_fast_url
   vllm_fast_api_base         = local.vllm_fast_url
   vllm_reasoning_api_base    = local.vllm_reasoning_url
-  opa_url                    = "http://${module.opa.service_name}.${module.namespace.name}.svc.cluster.local:8181"
   # Langfuse web service exposes port 3000 (not 80) — corrected from initial misconfiguration.
   langfuse_host = "http://${module.langfuse.web_service_name}.${module.namespace.name}.svc.cluster.local:3000"
   gateway_url   = "http://${module.gateway.service_name}.${module.namespace.name}.svc.cluster.local:8080"
@@ -1121,7 +1123,7 @@ module "governed_advisor" {
     var.langfuse_public_key != "" ? "Authorization=Basic ${base64encode("${var.langfuse_public_key}:${var.langfuse_secret_key}")}" : ""
   )
 
-  depends_on = [module.gateway, module.langfuse, module.vllm, module.opa, module.service_mesh]
+  depends_on = [module.gateway, module.langfuse, module.vllm, module.service_mesh]
 }
 
 # ─── Deploy AgentSight UI ─────────────────────────────────────────────────────
@@ -1263,7 +1265,6 @@ module "app_secrets" {
   langfuse_compliance_public_key = var.langfuse_compliance_public_key
   langfuse_compliance_secret_key = var.langfuse_compliance_secret_key
 
-  opa_url = "http://${module.opa.service_name}.${module.namespace.name}.svc.cluster.local:8181"
 
   cage_deployment_region = var.cage_deployment_region
 

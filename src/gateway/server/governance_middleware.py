@@ -45,7 +45,7 @@ from fastapi.encoders import jsonable_encoder
 from fastapi.responses import JSONResponse
 from opentelemetry import context as otel_context
 from opentelemetry.propagate import extract as otel_extract
-from pydantic import BaseModel, field_validator
+from pydantic import BaseModel, Field, field_validator
 
 from src.gateway.governance.decisions import GovernanceDecision
 from src.gateway.governance.evidence.stream import get_evidence_sink
@@ -54,6 +54,8 @@ from src.gateway.governance.governor.approval import PostHitlApproval
 from src.gateway.governance.governor.errors import GovernanceDeferred
 from src.gateway.governance.governor.governor import GovernanceError, SymbolicGovernor
 from src.gateway.governance.governor.metrics import governor_metrics
+from src.gateway.governance.governor.pipeline import OpaVerdict
+from src.gateway.governance.governor.stages.opa import decode_opa_verdict
 from src.gateway.governance.iso_control import stamp_iso_control
 from src.gateway.governance.jcs_canonicalizer import jcs_canonicalize_plan
 from src.gateway.governance.kms_signer import get_governance_signer
@@ -477,6 +479,27 @@ class ValidateActionRequest(BaseModel):
         return v
 
 
+class PolicyPrecheckRequest(BaseModel):
+    """Payload for POST /governance/policy-precheck (advisory OPA dry-run)."""
+
+    action: str
+    params: dict[str, Any] = Field(default_factory=dict)
+
+    @field_validator("action")
+    @classmethod
+    def _reject_blank_action(cls, v: str) -> str:
+        cleaned = v.strip()
+        if not cleaned:
+            raise ValueError("action must be a non-empty string")
+        return cleaned
+
+    @field_validator("params")
+    @classmethod
+    def _reject_non_finite_floats(cls, v: dict[str, Any]) -> dict[str, Any]:
+        _check_non_finite_recursive(v, "params")
+        return v
+
+
 # ---------------------------------------------------------------------------
 # P6 — Signed OSCAL compliance receipt on GovernanceError (hard refusal)
 # ---------------------------------------------------------------------------
@@ -753,6 +776,85 @@ async def get_jwks_well_known() -> JSONResponse:
     behaviour is identical between the two paths.
     """
     return await get_jwks_endpoint()
+
+
+@governance_app.post("/policy-precheck")
+async def policy_precheck_endpoint(
+    request: Request,
+    body: PolicyPrecheckRequest,
+) -> JSONResponse:
+    """Side-effect-free OPA policy pre-check over the gateway's UDS sidecar (D-195-3, F-100).
+
+    Binds server-authoritative parameters via ``governor.bind_server_inputs()``
+    (resolving ``trader_role``, ``approval_token``, ``semantic_score``, etc. and
+    stripping spoofed caller values) before evaluating the active domain's Rego
+    package via ``governor.components.opa.evaluate_policy()``. Caller workload
+    identity is enforced by ``WorkloadIdentityMiddleware`` and principal rate
+    limits match ``/governance/validate-action``.
+
+    Invariants (ADR-008):
+        - Never mints a routing seal or signs a governance envelope.
+        - Never mutates CBF state, fiscal reservations, or ``DeferQueue``.
+        - Overrides spoofed caller server-bound inputs via ``bind_server_inputs()``.
+        - Fails closed to ``"DENY"`` on any OPA error or undecodable verdict.
+    """
+    rl_res = await _check_validate_action_rate_limit(request)
+    if inspect.isawaitable(rl_res):
+        rl_res = await rl_res
+    if isinstance(rl_res, bool):
+        rl_verdict = RateLimitVerdict(
+            allowed=rl_res, retry_after_seconds=1 if not rl_res else 0
+        )
+    else:
+        rl_verdict = rl_res
+    if not rl_verdict.allowed:
+        retry_after = max(1, int(rl_verdict.retry_after_seconds or 1))
+        return JSONResponse(
+            status_code=429,
+            headers={"Retry-After": str(retry_after)},
+            content={
+                "error": "rate_limit_exceeded",
+                "scope": rl_verdict.scope or "principal",
+                "retry_after_seconds": retry_after,
+            },
+        )
+
+    governor = governor_of(request.app)  # fail closed if governor not assembled
+    carrier = dict(request.headers)
+    remote_ctx = otel_extract(carrier)
+    token = otel_context.attach(remote_ctx)
+    try:
+        try:
+            bound_params = await governor.bind_server_inputs(body.action, body.params)
+            # body.action always overrides any caller-supplied "action" inside params.
+            opa_payload: dict[str, Any] = {**bound_params, "action": body.action}
+            raw_result = await governor.components.opa.evaluate_policy(opa_payload)
+            verdict = decode_opa_verdict(raw_result)
+        except Exception as exc:
+            logger.error(
+                "OPA policy-precheck failed for action=%s: %s", body.action, exc
+            )
+            verdict = OpaVerdict.DENY
+
+        if verdict is OpaVerdict.ALLOW:
+            decision = "ALLOW"
+        elif verdict is OpaVerdict.MANUAL_REVIEW:
+            decision = "MANUAL_REVIEW"
+        else:
+            decision = "DENY"
+
+        return JSONResponse(
+            status_code=200,
+            content={
+                "schema_version": "1.0.0",
+                "action": body.action,
+                "decision": decision,
+                "dry_run": True,
+                "advisory": True,
+            },
+        )
+    finally:
+        otel_context.detach(token)
 
 
 @governance_app.post("/validate-action")
