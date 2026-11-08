@@ -401,7 +401,7 @@ def _opa_endpoint() -> tuple[str, str | None]:
 
 
 def _decision_path(package: str) -> str:
-    """``trade.governance`` → ``/v1/data/trade/governance``."""
+    """``example.governance`` → ``/v1/data/example/governance``."""
     return "/v1/data/" + package.replace(".", "/")
 
 

@@ -195,25 +195,25 @@ jobs:
 
       - name: OPA check all Rego files
         run: |
-          opa check \
-            compliance/postures/us_fed/opa/ \
-            src/cage_finance/opa/ \
-            config/opa/ \
-            deployment/
+          shopt -s nullglob
+          domain_opa_dirs=(src/cage_*/opa)
+          if [[ ${#domain_opa_dirs[@]} -eq 0 ]]; then
+            echo "::error::No domain OPA directories found under src/cage_*/opa"
+            exit 1
+          fi
+          opa check compliance/postures/us_fed/opa/ "${domain_opa_dirs[@]}"
 
       - name: Run OPA tests
         run: |
+          shopt -s nullglob
+          domain_opa_dirs=(src/cage_*/opa)
           if find . -name "*_test.rego" -not -path "*/node_modules/*" \
                | grep -q .; then
-            # Pass both the test-file directory AND the policy-file directory so
-            # that data.trade.governance (declared in
-            # src/cage_finance/opa/trade_governance.rego)
-            # is visible to the test bundle in compliance/postures/us_fed/opa/.
-            opa test \
-              compliance/postures/us_fed/opa/ \
-              src/cage_finance/opa/ \
-              config/opa/ \
-              -v
+            # Pass compliance posture tests together with every domain plugin's
+            # src/cage_*/opa/ bundle so all domain packages (e.g.
+            # trade.governance and dosing.governance) and their *_test.rego
+            # suites are evaluated in CI.
+            opa test compliance/postures/us_fed/opa/ "${domain_opa_dirs[@]}" -v
           else
             echo "::error::No OPA test files found"
             exit 1

@@ -4,7 +4,7 @@ component-definition:
     title: Cybernetic Governance Engine — ISO 42001 AIMS Component Definition
     version: 1.0.0
     oscal-version: 1.0.4
-    last-modified: '2026-11-08T00:56:56Z'
+    last-modified: '2026-11-05T21:08:32Z'
     remarks: 'This component definition maps technical enforcement components to ISO/IEC
       42001:2023 Annex A controls. Each implemented requirement links to a Lula validation
       manifest for automated continuous compliance.
@@ -77,10 +77,9 @@ component-definition:
   - uuid: f6a7b8c9-d0e1-2345-fabc-456789012345
     title: Open Policy Agent (OPA)
     type: software
-    description: 'OPA evaluates Rego policies (trade_governance.rego, system_authz.rego)
-      on every trade execution request. Enforces RBAC role limits, fiscal thresholds,
-      and semantic shielding rules. Decision logs are emitted to stdout and captured
-      by Cloud Logging.
+    description: 'OPA evaluates Rego policies (trade_governance.rego) on every trade
+      execution request. Enforces RBAC role limits, fiscal thresholds, and semantic
+      shielding rules. Decision logs are emitted to stdout and captured by Cloud Logging.
 
       '
     purpose: 'Provides deterministic, auditable policy enforcement independent of
@@ -622,12 +621,12 @@ component-definition:
     title: STPA-to-Policy Compiler
     type: software
     description: 'CLI compiler (src/gateway/governance/stpa_compiler.py) that ingests
-      config/stpa_control_structure.yaml and generates deterministic OPA Rego and
-      Python validator artifacts enforcing STAMP/STPA UCAs at runtime. Eliminates
-      manual policy drift by treating the YAML as the single authoritative source
-      of truth. System: CAGE Financial Advisor v1.1.0.'
+      config/stpa/ and generates deterministic Python validator artifacts enforcing
+      STAMP/STPA UCAs at runtime. Eliminates manual policy drift by treating the YAML
+      as the single authoritative source of truth. System: CAGE Financial Advisor
+      v1.1.0.'
     purpose: Provides compile-time enforcement of STPA UCAs, bridging design-time
-      hazard analysis (MIT STAMP methodology) with runtime OPA/Python governance controls.
+      hazard analysis (MIT STAMP methodology) with runtime Python governance controls.
       Closes the compliance loop between safety engineering artefacts and live cluster
       enforcement policies.
     responsible-roles:
@@ -638,9 +637,9 @@ component-definition:
     - name: source-file
       value: src/gateway/governance/stpa_compiler.py
     - name: control-structure-input
-      value: config/stpa_control_structure.yaml
+      value: config/stpa/
     - name: last-compiled
-      value: '2026-11-08T00:56:56Z'
+      value: '2026-11-05T21:08:32Z'
     - name: uca-count
       value: '12'
     control-implementations:
@@ -651,7 +650,7 @@ component-definition:
       - uuid: d4000099-stpa-4000-8000-0000000
         control-id: A.8.4
         description: 'STPA compiler generates deterministic enforcement artifacts
-          for A.8.4 (AI System Operation — Runtime operational controls) from config/stpa_control_structure.yaml.
+          for A.8.4 (AI System Operation — Runtime operational controls) from config/stpa/.
           UCAs: UCA-1, UCA-12, UCA-13, UCA-2, UCA-4, UCA-5, UCA-6, UCA-8, UCA-9.'
         remarks: Implemented via stpa_compiler.py compile command. Re-run on any YAML
           change to keep artifacts in sync.
@@ -659,13 +658,13 @@ component-definition:
         control-id: A.9.4
         description: 'STPA compiler generates deterministic enforcement artifacts
           for A.9.4 (Monitoring and measurement — Live telemetry validation) from
-          config/stpa_control_structure.yaml. UCAs: UCA-10.'
+          config/stpa/. UCAs: UCA-10.'
         remarks: Implemented via stpa_compiler.py compile command. Re-run on any YAML
           change to keep artifacts in sync.
       - uuid: d4000099-stpa-4000-8000-0002002
         control-id: A.6.2
         description: 'STPA compiler generates deterministic enforcement artifacts
-          for A.6.2 (AI System Lifecycle — Design and development controls) from config/stpa_control_structure.yaml.
+          for A.6.2 (AI System Lifecycle — Design and development controls) from config/stpa/.
           UCAs: UCA-12, UCA-13, UCA-2, UCA-5, UCA-6.'
         remarks: Implemented via stpa_compiler.py compile command. Re-run on any YAML
           change to keep artifacts in sync.
@@ -673,14 +672,14 @@ component-definition:
         control-id: A.9.2
         description: 'STPA compiler generates deterministic enforcement artifacts
           for A.9.2 (Data transfer to suppliers and third parties / PII protection)
-          from config/stpa_control_structure.yaml. UCAs: UCA-3.'
+          from config/stpa/. UCAs: UCA-3.'
         remarks: Implemented via stpa_compiler.py compile command. Re-run on any YAML
           change to keep artifacts in sync.
       - uuid: d4000099-stpa-4000-8000-0004004
         control-id: A.5.2
         description: 'STPA compiler generates deterministic enforcement artifacts
           for A.5.2 (Social impact — AI system impact on society and environment)
-          from config/stpa_control_structure.yaml. UCAs: UCA-7.'
+          from config/stpa/. UCAs: UCA-7.'
         remarks: Implemented via stpa_compiler.py compile command. Re-run on any YAML
           change to keep artifacts in sync.
   - uuid: ftra0001-4e47-bbc8-irreversibility01
@@ -700,7 +699,7 @@ component-definition:
     - name: source-file
       value: src/gateway/governance/governor/stages/ftra.py
     - name: last-compiled
-      value: '2026-11-08T00:56:56Z'
+      value: '2026-11-05T21:08:32Z'
     control-implementations:
     - uuid: ftra0001-ctrl-impl-8000-classifier01
       source: https://csrc.nist.gov/projects/cprt/api/cprt/framework/version/SP_800_53_5_1_1/home
@@ -718,15 +717,15 @@ component-definition:
           and the domain OPA policy (src/cage_finance/opa/trade_governance.rego).
           Prompt injection is screened on every input by the deterministic Stage 1
           keyword scan (ac_keyword_scan in src/gateway/governance/text_filter.py,
-          run by the LangGraph input rail node and the inference proxy). UCA-7 compiles
-          only to OPA (stpa_violation_uca_7 in config/opa/generated_stpa_policy.rego,
-          which denies a prompt_injection_check whose semantic_score exceeds the UCA's
-          threshold); the optional NeMo Colang rails add LLM-backed screening only
-          when CAGE_NEMO_ENABLED=true. Before parking a REQUIRE_APPROVAL token for
-          human review, run_pipeline() previews every claiming phase-2 barrier side-effect-free
-          (Phase2Mode.PREVIEW in src/gateway/governance/governor/pipeline.py), denying
-          outright on HARD barrier breaches and recording NARROWABLE barrier bounds
-          (Violation.bound in src/gateway/governance/contracts.py) on the DeferToken
+          run by the LangGraph input rail node and the inference proxy). UCA-7 is
+          enforced on the Python STPA path (_check_core_uca_7 in src/gateway/governance/stpa_validator.py,
+          which denies a prompt_injection_check whose server-bound semantic_score
+          exceeds the UCA's threshold); the optional NeMo Colang rails add LLM-backed
+          screening only when CAGE_NEMO_ENABLED=true. Before parking a REQUIRE_APPROVAL
+          token for human review, run_pipeline() previews every claiming phase-2 barrier
+          side-effect-free (Phase2Mode.PREVIEW in src/gateway/governance/governor/pipeline.py),
+          denying outright on HARD barrier breaches and recording NARROWABLE barrier
+          bounds (Violation.bound in src/gateway/governance/contracts.py) on the DeferToken
           snapshot. The registry's manifest_sha256 (registry_digest in src/gateway/governance/ftra/classifier.py)
           covers the autonomous_envelope together with the terminals, so a tampered
           ceiling fails the load-time integrity check.

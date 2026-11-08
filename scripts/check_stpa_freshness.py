@@ -71,46 +71,60 @@ from pathlib import Path
 
 _REPO_ROOT = Path(__file__).resolve().parents[1]
 
-# Multi-source directories — core_system.yaml + domain STPA YAML files.
+# Multi-source directories — core_system.yaml + discovered domain STPA YAML dirs.
 _SOURCE_DIR = _REPO_ROOT / "config" / "stpa"
 _DOMAIN_STPA_DIRS: list[Path] = [
-    _REPO_ROOT / "src" / "cage_finance" / "config" / "stpa",
+    d
+    for d in sorted((_REPO_ROOT / "src").glob("cage_*/config/stpa"))
+    if any(d.glob("*.yaml"))
 ]
-# Fallback single-file path for environments that have not yet migrated.
-_SOURCE_LEGACY = _REPO_ROOT / "config" / "stpa_control_structure.yaml"
 
 _OSCAL_SSP = _REPO_ROOT / "compliance" / "oscal" / "system-security-plan.yaml"
 _OSCAL_COMP_DEF = _REPO_ROOT / "compliance" / "oscal" / "component-definition.yaml"
 _OSCAL_PATCH = _REPO_ROOT / "compliance" / "oscal" / "stpa_compiler_ssp_patch.yaml"
 
-_GENERATED_ARTIFACTS: list[Path] = [
-    _REPO_ROOT / "src" / "cage_finance" / "stpa" / "uca_rules.py",
-    _REPO_ROOT / "src" / "cage_finance" / "stpa" / "saga_nodes.py",
-    _REPO_ROOT / "src" / "cage_finance" / "stpa" / "terminal_registry.json",
-    _REPO_ROOT / "src" / "gateway" / "governance" / "terminal_action_registry.json",
-    _REPO_ROOT / "config" / "opa" / "generated_stpa_policy.rego",
-    _REPO_ROOT / "config" / "rails" / "generated_stpa_rails.co",
-    _REPO_ROOT / "config" / "sandbox" / "generated_sandbox_policy.yaml",
-    _OSCAL_SSP,
-    _OSCAL_COMP_DEF,
-    _OSCAL_PATCH,
-]
-
 _CORE = "core"
-_FINANCE = "finance"
 
-#: How each artifact is produced: (source set, compiler target). The source
-#: set ``core`` is ``config/stpa/*.yaml``; ``finance`` is the finance domain's
-#: ``config/stpa/*.yaml``.
-_ARTIFACT_RECIPES: dict[Path, tuple[str, str]] = {
-    _GENERATED_ARTIFACTS[0]: (_FINANCE, "python"),
-    _GENERATED_ARTIFACTS[1]: (_FINANCE, "langgraph"),
-    _GENERATED_ARTIFACTS[2]: (_FINANCE, "ftra"),
-    _GENERATED_ARTIFACTS[3]: (_CORE, "ftra"),
-    _GENERATED_ARTIFACTS[4]: (_CORE, "opa"),
-    _GENERATED_ARTIFACTS[5]: (_CORE, "nemo"),
-    _GENERATED_ARTIFACTS[6]: (_CORE, "sandbox"),
-}
+
+def _domain_key_for(stpa_dir: Path) -> str:
+    return stpa_dir.parent.parent.name.removeprefix("cage_")
+
+
+def _build_artifact_recipes(
+    domain_dirs: list[Path],
+) -> tuple[list[Path], dict[Path, tuple[str, str]]]:
+    artifacts: list[Path] = []
+    recipes: dict[Path, tuple[str, str]] = {}
+    for d_dir in domain_dirs:
+        key = _domain_key_for(d_dir)
+        out_dir = d_dir.parent.parent / "stpa"
+        for filename, target in (
+            ("uca_rules.py", "python"),
+            ("saga_nodes.py", "langgraph"),
+            ("terminal_registry.json", "ftra"),
+        ):
+            art = out_dir / filename
+            artifacts.append(art)
+            recipes[art] = (key, target)
+    core_ftra = (
+        _REPO_ROOT / "src" / "gateway" / "governance" / "terminal_action_registry.json"
+    )
+    core_nemo = _REPO_ROOT / "config" / "rails" / "generated_stpa_rails.co"
+    core_sandbox = _REPO_ROOT / "config" / "sandbox" / "generated_sandbox_policy.yaml"
+    for art, target in (
+        (core_ftra, "ftra"),
+        (core_nemo, "nemo"),
+        (core_sandbox, "sandbox"),
+    ):
+        artifacts.append(art)
+        recipes[art] = (_CORE, target)
+    artifacts.extend([_OSCAL_SSP, _OSCAL_COMP_DEF, _OSCAL_PATCH])
+    return artifacts, recipes
+
+
+_BUILT_RECIPES = _build_artifact_recipes(_DOMAIN_STPA_DIRS)
+_GENERATED_ARTIFACTS: list[Path] = _BUILT_RECIPES[0]
+_ARTIFACT_RECIPES: dict[Path, tuple[str, str]] = _BUILT_RECIPES[1]
 
 #: Targets whose written form is passed through ``ruff format`` by the compiler.
 _RUFF_FORMATTED = frozenset({"python", "langgraph"})
@@ -205,8 +219,8 @@ def _regenerate_all() -> dict[Path, str | None]:
         return unavailable
 
     source_dirs = {_CORE: _SOURCE_DIR}
-    if _DOMAIN_STPA_DIRS:
-        source_dirs[_FINANCE] = _DOMAIN_STPA_DIRS[0]
+    for d_dir in _DOMAIN_STPA_DIRS:
+        source_dirs[_domain_key_for(d_dir)] = d_dir
     generators = {
         "opa": stpa_compiler.generate_opa,
         "nemo": stpa_compiler.generate_nemo,
@@ -437,21 +451,13 @@ def check_freshness(
       embedded ``Generated:`` stamp (or file mtime) must not pre-date the
       newest source file mtime.
     """
-    if _SOURCE_DIR.exists():
-        source_files = sorted(_SOURCE_DIR.rglob("*.yaml"))
-        for d_dir in _DOMAIN_STPA_DIRS:
-            if d_dir.exists():
-                source_files.extend(sorted(d_dir.rglob("*.yaml")))
-        source_label = (
-            f"directory {_SOURCE_DIR.relative_to(_REPO_ROOT)} + domain STPA dirs"
-        )
-    elif _SOURCE_LEGACY.exists():
-        source_files = [_SOURCE_LEGACY]
-        source_label = str(_SOURCE_LEGACY.relative_to(_REPO_ROOT))
-    else:
-        return [
-            f"STPA source not found: neither {_SOURCE_DIR} nor {_SOURCE_LEGACY} exists"
-        ]
+    if not _SOURCE_DIR.exists():
+        return [f"STPA source directory not found: {_SOURCE_DIR}"]
+    source_files = sorted(_SOURCE_DIR.rglob("*.yaml"))
+    for d_dir in _DOMAIN_STPA_DIRS:
+        if d_dir.exists():
+            source_files.extend(sorted(d_dir.rglob("*.yaml")))
+    source_label = f"directory {_SOURCE_DIR.relative_to(_REPO_ROOT)} + domain STPA dirs"
     if not source_files:
         return [f"No YAML files found under {_SOURCE_DIR}"]
 

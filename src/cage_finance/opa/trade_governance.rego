@@ -100,6 +100,7 @@ allow = "DENY" if {
 #   APAC_MAS: MAS TRM §11 / MAS Notice 655 (system integrity)
 # ---------------------------------------------------------------------------
 allow = "MANUAL_REVIEW" if {
+	input.action != "prompt_injection_check"
 	input.claimed_authorization_present == true
 
 	# amount != 0: when amount IS zero the fail-closed rule below takes
@@ -130,6 +131,7 @@ allow = "MANUAL_REVIEW" if {
 #   APAC_MAS: MAS TRM §11 / MAS Notice 655 (system integrity)
 # ---------------------------------------------------------------------------
 allow = "DENY" if {
+	input.action != "prompt_injection_check"
 	input.claimed_authorization_present == true
 	input.amount == 0
 }
@@ -273,14 +275,30 @@ allow = "DENY" if {
 # (From: finance_policy.rego — governance violation rules)
 # ---------------------------------------------------------------------------
 
-allow = "GOVERNANCE_VIOLATION" if {
-	input.action == "prompt_injection_check"
+_prompt_injection_violation if {
 	input.semantic_score > 0.85
+}
+
+_prompt_injection_violation if {
+	is_string(input.content)
+	contains(lower(input.content), "system override")
+}
+
+_prompt_injection_violation if {
+	input.prompt_injection_verified == false
 }
 
 allow = "GOVERNANCE_VIOLATION" if {
 	input.action == "prompt_injection_check"
-	contains(lower(input.content), "system override")
+	_prompt_injection_violation
+}
+
+allow = "ALLOW" if {
+	input.action == "prompt_injection_check"
+	is_number(input.semantic_score)
+	input.semantic_score <= 0.85
+	not _prompt_injection_violation
+	not input.claimed_authorization_present
 }
 
 # ---------------------------------------------------------------------------

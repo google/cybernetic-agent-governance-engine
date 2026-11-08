@@ -27,7 +27,7 @@ from collections.abc import Awaitable, Callable, Coroutine, Mapping, Sequence
 from dataclasses import dataclass, field
 from enum import StrEnum
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, Protocol, runtime_checkable
+from typing import TYPE_CHECKING, Any, Literal, Protocol, runtime_checkable
 
 if TYPE_CHECKING:
     from mcp.server.fastmcp import FastMCP
@@ -517,6 +517,9 @@ class MutatingTier(GovernanceTier):
 
 CAGE_PLUGIN_API_VERSION = "2.0"
 
+PluginMaturity = Literal["production", "stub"]
+VALID_PLUGIN_MATURITIES: frozenset[str] = frozenset({"production", "stub"})
+
 
 @dataclass(frozen=True)
 class DomainConfig:
@@ -536,7 +539,7 @@ class DomainConfig:
     Attributes:
         ftra_registry_path: FTRA terminal registry JSON for this domain's actions.
         opa_package: Dotted Rego package holding this domain's decision, e.g.
-            ``"trade.governance"``.
+            ``"example.governance"``.
         opa_required_rules: Rule names the package must define, e.g.
             ``("allow",)``. Must be non-empty.
         causal_graph_path: Causal graph YAML for the causal gatekeeper, or
@@ -851,6 +854,14 @@ class PluginContribution:
     consequence_magnitudes: tuple[ConsequenceMagnitude, ...] = ()
     required_tiers: frozenset[str] = frozenset()
     disabled_tiers: tuple[Any, ...] = ()
+    maturity: PluginMaturity = "production"
+
+    def __post_init__(self) -> None:
+        if self.maturity not in VALID_PLUGIN_MATURITIES:
+            raise ValueError(
+                f"PluginContribution {self.domain!r}: maturity must be one of "
+                f"{sorted(VALID_PLUGIN_MATURITIES)}, got {self.maturity!r}"
+            )
 
 
 @runtime_checkable
@@ -862,6 +873,8 @@ class CagePlugin(Protocol):
     * ``name`` must equal the entry-point name (verified at load time).
     * ``api_version`` must be compatible with ``CAGE_PLUGIN_API_VERSION``;
       incompatible plugins are rejected fail-closed at startup.
+    * ``maturity`` declares whether the plugin is ``"production"`` or ``"stub"``
+      (POAM-2026-198); stub plugins are rejected under enforcing postures.
     * ``domain_config`` names the kernel-consumed config for this domain.
       ``None`` means the domain is not yet runnable; loading it fails closed.
     * ``contribute()`` returns data only. It must not mutate process-global
@@ -877,6 +890,7 @@ class CagePlugin(Protocol):
     name: str
     api_version: str
     domain_config: DomainConfig | None
+    maturity: PluginMaturity = "production"
 
     def contribute(self) -> PluginContribution:
         """Return this plugin's tiers, invariants, tools and hooks."""
@@ -889,7 +903,8 @@ def validate_plugin(plugin: object, entry_point_name: str) -> CagePlugin:
     Raises:
         TypeError: If the object does not satisfy the ``CagePlugin`` protocol.
         ValueError: If the plugin's ``name`` does not match the entry-point
-            name, or its ``api_version`` major version is incompatible.
+            name, its ``api_version`` major version is incompatible, or its
+            ``maturity`` is not a valid :data:`PluginMaturity`.
     """
     if not isinstance(plugin, CagePlugin):
         raise TypeError(
@@ -904,6 +919,11 @@ def validate_plugin(plugin: object, entry_point_name: str) -> CagePlugin:
         raise ValueError(
             f"plugin '{plugin.name}' api_version {plugin.api_version} is "
             f"incompatible with kernel {CAGE_PLUGIN_API_VERSION}"
+        )
+    if plugin.maturity not in VALID_PLUGIN_MATURITIES:
+        raise ValueError(
+            f"plugin '{plugin.name}' maturity {plugin.maturity!r} must be one of "
+            f"{sorted(VALID_PLUGIN_MATURITIES)}"
         )
     return plugin
 

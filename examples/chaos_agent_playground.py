@@ -23,8 +23,8 @@ Simulates adversarial attack scenarios against the CAGE governance stack and
 renders a live terminal trace of each interception layer in action.
 
 NO external services required — runs entirely locally using the real
-GeneratedSTPAValidator (compiled from config/stpa_control_structure.yaml)
-and an inline OPA Rego emulator that mirrors generated_stpa_policy.rego.
+GeneratedSTPAValidator (compiled from src/cage_finance/config/stpa/trade_hazards.yaml)
+and an inline OPA policy emulator.
 
 Usage:
     # Run all scenarios interactively (with pause between each)
@@ -51,10 +51,10 @@ Architecture:
     playground never calls the governor, OPA, consensus, CBF or a model.
 
     Tier 0 ─ REAL: GeneratedSTPAValidator, the finance plugin's validator
-             (compiled from config/stpa_control_structure.yaml)
+             (compiled from src/cage_finance/config/stpa/trade_hazards.yaml)
     Tier 1 ─ EMULATED: confidence threshold check
-    Tier 2 ─ EMULATED: STPA Rego rules re-implemented in Python
-             (mirrors generated_stpa_policy.rego; OPA is not called)
+    Tier 2 ─ EMULATED: OPA policy rules re-implemented in Python
+             (mirrors trade_governance.rego; OPA is not called)
     Tier 3 ─ EMULATED: keyword scan (the gateway's injection detector is
              not called)
     Tier 4 ─ SIMULATED: Cilium L7 egress allowlist (no network policy is
@@ -139,7 +139,7 @@ _MIN_CASH: float = _FINANCE["cbf"]["min_cash_balance"]  # 1000.0
 
 
 # ---------------------------------------------------------------------------
-# Load the real generated validator (compiled from stpa_control_structure.yaml)
+# Load the real generated validator (compiled from trade_hazards.yaml)
 # ---------------------------------------------------------------------------
 try:
     from src.cage_finance.stpa import GeneratedSTPAValidator
@@ -152,7 +152,7 @@ except Exception as _exc:
 
 
 # ---------------------------------------------------------------------------
-# Load the compiled Saga nodes (generated from stpa_control_structure.yaml)
+# Load the compiled Saga nodes (generated from trade_hazards.yaml)
 # ---------------------------------------------------------------------------
 try:
     from src.cage_finance.stpa import (
@@ -170,7 +170,7 @@ except Exception as _exc:
 
 # ---------------------------------------------------------------------------
 # Inline OPA Rego emulator
-# Mirrors: config/opa/generated_stpa_policy.rego + trade_governance.rego
+# Mirrors: src/cage_finance/opa/trade_governance.rego
 # ---------------------------------------------------------------------------
 
 
@@ -611,7 +611,7 @@ def _run_scenario(
     # ── Tier 0: STPA Python Validator ────────────────────────────────────────
     tier_name = (
         "REAL · GeneratedSTPAValidator  "
-        "[the finance plugin's validator, compiled from stpa_control_structure.yaml]"
+        "[the finance plugin's validator, compiled from trade_hazards.yaml]"
     )
     if _VALIDATOR_AVAILABLE:
         stpa_viols = [
@@ -662,7 +662,7 @@ def _run_scenario(
     opa_decision, opa_viols = _opa_emulate(s.action, s.params)
     tier_name = (
         "EMULATED · STPA Rego rules re-implemented in Python  "
-        "[mirrors generated_stpa_policy.rego; OPA is not called]"
+        "[mirrors trade_governance.rego; OPA is not called]"
     )
     if opa_viols:
         _tier_header(2, tier_name, f"DENY ({len(opa_viols)} rule(s))")
@@ -1019,7 +1019,7 @@ def main() -> int:
             f"  Validator    : {'real GeneratedSTPAValidator ✓' if _VALIDATOR_AVAILABLE else 'unavailable — inline fallback'}"
         )
     )
-    print(DIM(f"  OPA mode     : inline emulator (mirrors generated_stpa_policy.rego)"))
+    print(DIM("  OPA mode     : inline emulator (mirrors trade_governance.rego)"))
     print(
         DIM(
             f"  Network mode : Cilium L7 emulator (mirrors cilium-egress-lockdown.yaml)"

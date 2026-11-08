@@ -76,7 +76,7 @@ def _flat(text: str) -> str:
 def _production_targets() -> set[str]:
     """Enforcement targets of the control structure the exporter exports by default."""
     paths = [
-        REPO_ROOT / "config" / "stpa_control_structure.yaml",
+        *sorted((REPO_ROOT / "config" / "stpa").glob("*.yaml")),
         *sorted((REPO_ROOT / "src").glob("cage_*/config/stpa/*.yaml")),
     ]
     return _enforcement_targets(load_control_structures(paths).unsafe_control_actions)
@@ -195,7 +195,7 @@ def _committed_ftra_si10(artifact: str) -> str:
 def test_ftra_si10_says_uca7_compiles_only_to_opa(statement: str) -> None:
     text = _flat(statement)
     assert NEMO_RAILS not in text
-    assert "UCA-7 compiles only to OPA" in text
+    assert "UCA-7 is enforced on the Python STPA path" in text
     assert "NeMo" not in text or NEMO_QUALIFIER in text
 
 

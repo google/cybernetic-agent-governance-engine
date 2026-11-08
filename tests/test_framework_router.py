@@ -58,7 +58,7 @@ _COMPLIANCE_DIR = _REPO_ROOT / "config" / "compliance"
 
 _SUPPORTED_FRAMEWORKS = ["NIST", "ISO42001", "EU_AI_ACT", "MAS_FEAT"]
 
-# UCA IDs present in config/stpa_control_structure.yaml
+# UCA IDs present in config/stpa/core_system.yaml + domain STPA YAML
 _EXPECTED_UCAS = [f"UCA-{i}" for i in range(1, 10)]  # UCA-1 … UCA-9
 
 _REQUIRED_JSON_KEYS = {

@@ -691,7 +691,9 @@ async def main() -> None:
 
         broker_actuator = BrokerActuator()
         registry = ActuatorRegistry()
-        registry.register(broker_actuator, claims={"payment.release", "execute_trade"})
+        registry.register(
+            broker_actuator, claims={"payment.release", "account.transfer"}
+        )
 
         # 4A. Unclaimed action lookup refuses pre-dispatch
         unclaimed = registry.get_actuator("DELETE_ACCOUNT")

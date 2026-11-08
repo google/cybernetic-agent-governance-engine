@@ -191,7 +191,7 @@ The governance pipeline is a **8-tier two-phase symbolic governor** (`proof/mode
 | Tier | Phase | Gate | Control | Source |
 |------|-------|------|---------|--------|
 | 0.5 | Phase 1 (read-only) | FTRA reachability & structural path boundary gate | `CTRL_FTRA_001` | `src/gateway/governance/governor/stages/ftra.py` |
-| 1 | Phase 1 (read-only) | STPA Unsafe Control Action validation | UCA-* (from `config/stpa_control_structure.yaml`) | `src/gateway/governance/stpa_validator.py` |
+| 1 | Phase 1 (read-only) | STPA Unsafe Control Action validation | UCA-* (from [`config/stpa/core_system.yaml`](../../config/stpa/core_system.yaml)) | `src/gateway/governance/stpa_validator.py` |
 | 3b | Phase 1 (read-only) | OPA policy engine | `CTRL_OPA_005` | `src/gateway/core/policy.py` |
 | 2 | Phase 1 (read-only) | Agentic model confidence threshold (`AGENT_CONFIDENCE_THRESHOLD=0.95`) | `CTRL_AGT_001` | `src/gateway/governance/governor/stages/confidence.py` |
 | 5 | Phase 1 (read-only) | Multi-agent consensus (≥$10,000 USD) | ISO 42001 A.8.4 | `src/gateway/governance/consensus/engine.py` |

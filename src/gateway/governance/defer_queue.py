@@ -26,7 +26,7 @@ Architecture:
   threshold (default: 0.70 — see UCA-7 in ontology.py).
 
   Confidence-Starvation Boundary (approved architectural decision, CAGE v0.1.0):
-    ≥ 0.95  →  ALLOW/DENY (Autonomous Clearance via system_authz.rego)
+    ≥ 0.95  →  ALLOW/DENY (Autonomous Clearance via ConfidenceStage)
     0.70-0.95 -> MANUAL_REVIEW (human operator sign-off required)
     < 0.70  →  DEFER (context fundamentally corrupted or missing critical state;
                         forcing human review at this confidence creates operational

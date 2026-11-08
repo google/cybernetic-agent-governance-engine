@@ -351,8 +351,8 @@ class MockTraceSource(TraceSource):
                     "end_time": 101,
                 },
                 {
-                    "name": "tool.execution.execute_trade",
-                    "attributes": {"action": "execute_trade"},
+                    "name": "tool.execution.dispatch_order",
+                    "attributes": {"action": "dispatch_order"},
                     "start_time": 102,
                     "end_time": 200,
                 },
@@ -365,8 +365,8 @@ class MockTraceSource(TraceSource):
             "trace_id": "t2",
             "spans": [
                 {
-                    "name": "tool.execution.execute_trade",
-                    "attributes": {"action": "execute_trade"},
+                    "name": "tool.execution.dispatch_order",
+                    "attributes": {"action": "dispatch_order"},
                     "start_time": 300,
                     "end_time": 400,
                 }
@@ -384,8 +384,8 @@ class MockTraceSource(TraceSource):
                     "end_time": 501,
                 },
                 {
-                    "name": "tool.execution.execute_trade",
-                    "attributes": {"action": "execute_trade"},
+                    "name": "tool.execution.dispatch_order",
+                    "attributes": {"action": "dispatch_order"},
                     "start_time": 502,
                     "end_time": 600,
                 },

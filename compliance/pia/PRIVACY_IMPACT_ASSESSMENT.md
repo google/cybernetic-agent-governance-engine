@@ -257,7 +257,7 @@ The 15 PII entity types enumerated in §2.2 are subject to NeMo Guardrails detec
 
 **OPA Policy Enforcement:**
 
-- Every API request evaluated against `deployment/system_authz.rego`
+- Every API request evaluated against `src/cage_finance/opa/trade_governance.rego`
 - Role-based trade limits: junior traders ≤$5k, senior traders ≤$500k
 - Fail-closed defaults: unrecognized roles denied all access
 
@@ -370,7 +370,7 @@ The CAGE system employs NVIDIA NeMo Guardrails with a PII detection and redactio
 ### 11.2 Prompt Engineering Minimization
 
 - System prompt templates (`config/rails/`) are designed to elicit financial advisory responses without requiring users to disclose sensitive PII
-- OPA Rego policies (`deployment/system_authz.rego`) evaluate trade authorization based on user role and trade parameters — not raw financial account identifiers
+- OPA Rego policies (`src/cage_finance/opa/trade_governance.rego`) evaluate trade authorization based on user role and trade parameters — not raw financial account identifiers
 
 ### 11.3 Telemetry Minimization
 

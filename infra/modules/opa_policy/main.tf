@@ -31,6 +31,13 @@ resource "kubernetes_config_map" "opa_policies" {
   }
 
   data = var.policy_files
+
+  lifecycle {
+    precondition {
+      condition     = length(var.policy_files) > 0
+      error_message = "OPA policy bundle cannot be empty; the active cage_domain must ship at least one non-test .rego policy under src/cage_<domain>/opa/ (POAM-2026-198)."
+    }
+  }
 }
 
 # ConfigMap for OPA configuration

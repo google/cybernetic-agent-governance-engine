@@ -26,6 +26,7 @@ class ValidPlugin:
     name = "test"
     api_version = "2.0"
     domain_config = None
+    maturity = "production"
 
     def contribute(self):
         return PluginContribution(domain=self.name)
@@ -35,6 +36,7 @@ class WrongNamePlugin:
     name = "wrong"
     api_version = "2.0"
     domain_config = None
+    maturity = "production"
 
     def contribute(self):
         return PluginContribution(domain=self.name)
@@ -44,6 +46,7 @@ class IncompatibleVersionPlugin:
     name = "test"
     api_version = "3.0"
     domain_config = None
+    maturity = "production"
 
     def contribute(self):
         return PluginContribution(domain=self.name)
@@ -53,6 +56,7 @@ class MinorVersionOkPlugin:
     name = "test"
     api_version = "2.5"
     domain_config = None
+    maturity = "production"
 
     def contribute(self):
         return PluginContribution(domain=self.name)
@@ -149,6 +153,7 @@ class PreTierSplitPlugin:
     name = "test"
     api_version = "1.0"
     domain_config = None
+    maturity = "production"
 
     def contribute(self):
         return PluginContribution(domain=self.name)

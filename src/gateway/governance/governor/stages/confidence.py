@@ -53,8 +53,31 @@ class ConfidenceStage(Stage):
             )
 
             _confidence_valid = True
+            _semantic_score = ctx.params.get("semantic_score")
+            _injection_flagged = ctx.params.get(
+                "prompt_injection_verified"
+            ) is False or (
+                isinstance(_semantic_score, (int, float))
+                and not isinstance(_semantic_score, bool)
+                and not math.isnan(_semantic_score)
+                and _semantic_score > 0.85
+            )
 
-            if confidence_score is None:
+            if _injection_flagged:
+                violations.append(
+                    Violation(
+                        tier="governance",
+                        code="CONFIDENCE_INVALID",
+                        message=(
+                            f"[{GovernanceControl.AGENT_CONFIDENCE_THRESHOLD.value}] "
+                            f"{_conf_meta['primary_framework']} Confidence Violation: "
+                            "Prompt injection detected; self-reported confidence rejected"
+                        ),
+                        kind=ViolationKind.HARD,
+                    )
+                )
+                _confidence_valid = False
+            elif confidence_score is None:
                 violations.append(
                     Violation(
                         tier="governance",

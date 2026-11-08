@@ -382,39 +382,10 @@ class TestGeneratedSTPAValidator:
 class TestGeneratedPolicyArtifacts:
     """Structural tests for non-Python generated governance artifacts."""
 
-    def test_generated_stpa_rego_exists(self) -> None:
-        """config/opa/generated_stpa_policy.rego must exist."""
-        assert _REGO_POLICY.exists(), (
-            f"{_REGO_POLICY} not found. generated_stpa_policy.rego must be present."
-        )
-
-    def test_generated_stpa_rego_contains_package_declaration(self) -> None:
-        """generated_stpa_policy.rego must have a 'package' statement."""
-        if not _REGO_POLICY.exists():
-            pytest.skip(f"{_REGO_POLICY} not found")
-        content = _REGO_POLICY.read_text()
-        assert "package" in content, (
-            f"generated_stpa_policy.rego must contain a 'package' declaration, "
-            f"got first 200 chars: {content[:200]!r}"
-        )
-
-    def test_generated_stpa_rego_contains_stpa_allow(self) -> None:
-        """generated_stpa_policy.rego must define an stpa_allow rule."""
-        if not _REGO_POLICY.exists():
-            pytest.skip(f"{_REGO_POLICY} not found")
-        content = _REGO_POLICY.read_text()
-        assert "stpa_allow" in content, (
-            "generated_stpa_policy.rego must define 'stpa_allow' rule"
-        )
-
-    def test_generated_stpa_rego_is_nonempty(self) -> None:
-        """generated_stpa_policy.rego must have substantial content."""
-        if not _REGO_POLICY.exists():
-            pytest.skip(f"{_REGO_POLICY} not found")
-        content = _REGO_POLICY.read_text()
-        assert len(content.strip()) >= 50, (
-            f"generated_stpa_policy.rego must have at least 50 characters, "
-            f"got {len(content.strip())}"
+    def test_generated_stpa_rego_not_emitted_by_default(self) -> None:
+        """config/opa/generated_stpa_policy.rego must not exist (single STPA Python path, F-102)."""
+        assert not _REGO_POLICY.exists(), (
+            f"{_REGO_POLICY} should not be generated on disk; core UCAs execute in STPAValidator."
         )
 
     def test_generated_stpa_rails_exists(self) -> None:

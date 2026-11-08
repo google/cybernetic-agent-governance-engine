@@ -58,34 +58,32 @@ def test_merge_determinism_independent_of_file_order():
 
 @pytest.mark.local
 @pytest.mark.unit
-def test_merge_union_of_single_file_matches_monolithic():
-    stpa_dir = _REPO_ROOT / "config" / "stpa"
-    split_files = sorted(stpa_dir.rglob("*.yaml"))
-
-    cs_merged = load_control_structures(split_files)
-
-    monolithic_path = _REPO_ROOT / "config" / "stpa_control_structure.yaml"
-    cs_mono = load_control_structure(monolithic_path)
-
-    # Same hazard IDs (order-independent)
-    assert set(h.id for h in cs_merged.hazards) == set(h.id for h in cs_mono.hazards)
-
-    # Same UCA IDs (order-independent)
-    assert set(u.id for u in cs_merged.unsafe_control_actions) == set(
-        u.id for u in cs_mono.unsafe_control_actions
+def test_merge_core_and_domain_sources_preserves_disjoint_union():
+    core_path = _REPO_ROOT / "config" / "stpa" / "core_system.yaml"
+    trade_path = (
+        _REPO_ROOT / "src" / "cage_finance" / "config" / "stpa" / "trade_hazards.yaml"
     )
 
-    # Same hazard refs on each UCA
+    cs_core = load_control_structure(core_path)
+    cs_trade = load_control_structure(trade_path)
+    cs_merged = load_control_structures([core_path, trade_path])
+
+    assert {h.id for h in cs_merged.hazards} == {
+        *(h.id for h in cs_core.hazards),
+        *(h.id for h in cs_trade.hazards),
+    }
+    assert {u.id for u in cs_merged.unsafe_control_actions} == {
+        *(u.id for u in cs_core.unsafe_control_actions),
+        *(u.id for u in cs_trade.unsafe_control_actions),
+    }
+    expected_refs = {
+        u.id: sorted(u.hazard_refs)
+        for u in (*cs_core.unsafe_control_actions, *cs_trade.unsafe_control_actions)
+    }
     merged_refs = {
         u.id: sorted(u.hazard_refs) for u in cs_merged.unsafe_control_actions
     }
-    mono_refs = {u.id: sorted(u.hazard_refs) for u in cs_mono.unsafe_control_actions}
-    assert merged_refs == mono_refs
-
-    # Same control action names
-    merged_ca_names = sorted([ca["name"] for ca in cs_merged.control_actions])
-    mono_ca_names = sorted([ca["name"] for ca in cs_mono.control_actions])
-    assert merged_ca_names == mono_ca_names
+    assert merged_refs == expected_refs
 
 
 @pytest.mark.local
@@ -242,7 +240,7 @@ safety_constraints: []
 @pytest.mark.local
 @pytest.mark.unit
 def test_load_control_structures_single_file_is_passthrough():
-    single_path = _REPO_ROOT / "config" / "stpa_control_structure.yaml"
+    single_path = _REPO_ROOT / "config" / "stpa" / "core_system.yaml"
 
     cs_list = load_control_structures([single_path])
     cs_single = load_control_structure(single_path)

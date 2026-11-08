@@ -185,6 +185,7 @@ unsafe_control_actions:
   - id: UCA-3
     action: execute_trade
     uca_type: unsafe_action
+    advisory: true
     hazard_refs: [H-3]
     description: "Agent outputs PII to user interface."
     # FTRA: execute_trade — same classification as UCA-2 (most restrictive wins).
@@ -197,6 +198,7 @@ unsafe_control_actions:
   - id: UCA-4
     action: execute_trade
     uca_type: stopped_too_soon
+    advisory: true
     hazard_refs: [H-2]
     description: "Agent debits account but fails to credit asset (atomic failure)."
     # FTRA: execute_trade — irreversible external financial commitment.
@@ -265,6 +267,7 @@ unsafe_control_actions:
   - id: UCA-8
     action: execute_trade
     uca_type: wrong_timing
+    advisory: true
     hazard_refs: [H-1, H-2]
     description: "Agent executes trade before risk assessment is complete."
     # FTRA: execute_trade — irreversible external financial commitment.
@@ -277,6 +280,7 @@ unsafe_control_actions:
   - id: UCA-9
     action: execute_trade
     uca_type: wrong_timing
+    advisory: true
     hazard_refs: [H-1]
     description: "Agent executes trade with compliance check bypassed."
     # FTRA: execute_trade — irreversible external financial commitment.
@@ -289,6 +293,7 @@ unsafe_control_actions:
   - id: UCA-10
     action: check_balance
     uca_type: wrong_timing
+    advisory: true
     hazard_refs: [H-2]
     description: "Agent reads account balance with stale connection data."
     # FTRA: check_balance is a benign read — no external state modification.
@@ -303,6 +308,7 @@ unsafe_control_actions:
   - id: UCA-12
     action: execute_trade_bounded
     uca_type: unsafe_action
+    advisory: true
     hazard_refs: [H-1, H-4]
     description: "Agent executes bounded trade when bounding contracts B1-B10 fail validation. Phase 5: execute_trade_bounded is EXTERNALLY_REVERSIBLE when B10 rollback window validation passes, enabling HITL review without confidence hard-gate per VEC-004. When B10 fails (closed rollback window), the bounding tier raises a HITL violation (B10_ROLLBACK_WINDOW_CLOSED) and the request parks for human approval, as an irreversible action would."
     terminal_classification: EXTERNALLY_REVERSIBLE

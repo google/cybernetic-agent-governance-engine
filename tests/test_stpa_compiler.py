@@ -66,6 +66,7 @@ control_actions:
       - name: token
         type: string
         required: true
+        server_bound: true
 
 unsafe_control_actions:
   - id: UCA-1
@@ -124,7 +125,7 @@ safety_constraints: []
 """
 
 _FULL_YAML_PATH = (
-    Path(__file__).resolve().parents[1] / "config" / "stpa_control_structure.yaml"
+    Path(__file__).resolve().parents[1] / "config" / "stpa" / "core_system.yaml"
 )
 _FINANCE_YAML_PATH = (
     Path(__file__).resolve().parents[1]
@@ -382,6 +383,8 @@ class TestGeneratedCodeInjection:
     def test_saga_action_non_identifier_rejected(self) -> None:
         raw = yaml.safe_load(_MINIMAL_YAML)
         uca = raw["unsafe_control_actions"][0]
+        raw["control_actions"][0]["params"][0]["server_bound"] = False
+        uca["advisory"] = True
         uca["enforcement"] = ["langgraph"]
         uca.pop("opa_rule", None)
         uca["langgraph_saga"] = {
@@ -394,6 +397,7 @@ class TestGeneratedCodeInjection:
     @staticmethod
     def _mcp_saga_raw(mcp_arguments: list[str] | None) -> dict:
         raw = yaml.safe_load(_MINIMAL_YAML)
+        raw["control_actions"][0]["params"][0]["server_bound"] = False
         uca = raw["unsafe_control_actions"][0]
         uca["enforcement"] = ["langgraph"]
         uca.pop("opa_rule", None)
@@ -773,6 +777,7 @@ control_actions:
       - name: signal_strength
         type: float
         required: false
+        server_bound: true
 
 unsafe_control_actions:
   - id: UCA-LT1
@@ -864,6 +869,22 @@ class TestCompositeGrammar:
 
     def _cs(self, composite: str) -> ControlStructureModel:
         raw = yaml.safe_load(_MINIMAL_YAML)
+        raw["control_actions"][0]["params"].extend(
+            [
+                {
+                    "name": "order_size",
+                    "type": "float",
+                    "required": True,
+                    "server_bound": True,
+                },
+                {
+                    "name": "daily_vol",
+                    "type": "float",
+                    "required": True,
+                    "server_bound": True,
+                },
+            ]
+        )
         raw["unsafe_control_actions"][0]["condition"] = {"composite": composite}
         return ControlStructureModel(**raw)
 
@@ -1016,6 +1037,28 @@ class TestEqualsOperatorAndTypeSafety:
 
     def test_equals_literal_string_bool_numeric_opa_and_python(self) -> None:
         raw = yaml.safe_load(_MINIMAL_YAML)
+        raw["control_actions"][0]["params"].extend(
+            [
+                {
+                    "name": "status",
+                    "type": "string",
+                    "required": True,
+                    "server_bound": True,
+                },
+                {
+                    "name": "bypass_flag",
+                    "type": "bool",
+                    "required": True,
+                    "server_bound": True,
+                },
+                {
+                    "name": "code",
+                    "type": "float",
+                    "required": True,
+                    "server_bound": True,
+                },
+            ]
+        )
         raw["unsafe_control_actions"] = [
             {
                 "id": "UCA-EQ-STR",
@@ -1090,6 +1133,14 @@ class TestEqualsOperatorAndTypeSafety:
 
     def test_single_key_threshold_ref_rejects_boolean_and_non_numeric(self) -> None:
         raw = yaml.safe_load(_MINIMAL_YAML)
+        raw["control_actions"][0]["params"].append(
+            {
+                "name": "latency_ms",
+                "type": "float",
+                "required": True,
+                "server_bound": True,
+            }
+        )
         raw["system"]["domain"] = "finance"
         raw["unsafe_control_actions"] = [
             {
@@ -1135,6 +1186,83 @@ class TestEqualsOperatorAndTypeSafety:
         assert (
             v_lt_bool is not None and "Invalid non-numeric param" in v_lt_bool.message
         )
+
+
+class TestEnforcingUcasReadServerBoundParams:
+    """R-13 / F-99 / F-102: Enforcing UCAs must read only server_bound: true params."""
+
+    def test_enforcing_uca_reading_caller_supplied_param_rejected(self) -> None:
+        raw = yaml.safe_load(_MINIMAL_YAML)
+        raw["control_actions"][0]["params"][0]["server_bound"] = False
+        with pytest.raises(ValueError, match="server_bound: true"):
+            ControlStructureModel(**raw)
+
+    def test_advisory_uca_reading_caller_supplied_param_accepted(self) -> None:
+        raw = yaml.safe_load(_MINIMAL_YAML)
+        raw["control_actions"][0]["params"][0]["server_bound"] = False
+        raw["unsafe_control_actions"][0]["advisory"] = True
+        cs = ControlStructureModel(**raw)
+        assert cs.unsafe_control_actions[0].advisory is True
+
+    def test_enforcing_composite_uca_requires_both_params_server_bound(self) -> None:
+        raw = yaml.safe_load(_MINIMAL_YAML)
+        raw["control_actions"][0]["params"] = [
+            {
+                "name": "order_size",
+                "type": "float",
+                "required": True,
+                "server_bound": True,
+            },
+            {
+                "name": "daily_vol",
+                "type": "float",
+                "required": True,
+                "server_bound": False,
+            },
+        ]
+        raw["unsafe_control_actions"][0]["condition"] = {
+            "composite": "order_size > threshold_ref(stpa.max_fraction) * daily_vol"
+        }
+        with pytest.raises(ValueError, match="daily_vol"):
+            ControlStructureModel(**raw)
+
+    def test_shipped_ucas_partition_into_server_bound_enforcing_and_advisory(
+        self,
+    ) -> None:
+        cs = _load_full_cs()
+        enforcing_ids = {u.id for u in cs.unsafe_control_actions if not u.advisory}
+        advisory_ids = {u.id for u in cs.unsafe_control_actions if u.advisory}
+        assert {"UCA-1", "UCA-2", "UCA-5", "UCA-6", "UCA-7", "UCA-13"} <= enforcing_ids
+        assert advisory_ids == {"UCA-3", "UCA-4", "UCA-8", "UCA-9", "UCA-10", "UCA-12"}
+
+    def test_compile_does_not_write_opa_by_default(self, tmp_path: Path) -> None:
+        yaml_file = tmp_path / "cs.yaml"
+        yaml_file.write_text(_MINIMAL_YAML)
+        nemo_out = tmp_path / "out.co"
+        py_out = tmp_path / "out.py"
+        lg_out = tmp_path / "saga.py"
+        ftra_out = tmp_path / "ftra.json"
+        sb_out = tmp_path / "sandbox.yaml"
+        ret = main(
+            [
+                "compile",
+                "--input",
+                str(yaml_file),
+                "--nemo-out",
+                str(nemo_out),
+                "--python-out",
+                str(py_out),
+                "--langgraph-out",
+                str(lg_out),
+                "--ftra-out",
+                str(ftra_out),
+                "--sandbox-out",
+                str(sb_out),
+            ]
+        )
+        assert ret == 0
+        assert py_out.exists()
+        assert not (tmp_path / "generated_stpa_policy.rego").exists()
 
 
 pytestmark = [pytest.mark.unit, pytest.mark.local]

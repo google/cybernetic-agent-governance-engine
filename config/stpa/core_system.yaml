@@ -59,6 +59,7 @@ control_actions:
       - name: approval_token
         type: string
         required: true
+        server_bound: true
       - name: table
         type: string
         required: true
@@ -75,6 +76,7 @@ control_actions:
       - name: semantic_score
         type: float
         required: false
+        server_bound: true
 
   - name: modify_governance_policy
     description: "Modify active OPA Rego policy or governance rules at runtime."
@@ -124,7 +126,7 @@ unsafe_control_actions:
     action: write_db
     uca_type: unsafe_action
     hazard_refs: [H-1]
-    description: "Agent executes write operation without a signed approval token."
+    description: "Agent executes write operation without a human approval token."
     # FTRA: write_db commits a durable record to the production database.
     # Once written, the record cannot be silently undone — it requires an explicit
     # compensating write (audit trail preserved).  Classified IRREVERSIBLE_TERMINAL.
@@ -135,7 +137,7 @@ unsafe_control_actions:
     enforcement: [opa, python, sandbox]
     opa_rule:
       decision: DENY
-      message: "UCA-1: write_db requires a signed approval_token."
+      message: "UCA-1: write_db requires an approval_token."
     sandbox_rule:
       allowed_endpoints:
         - "https://cage-gateway.internal/v1/mcp/tools/call/write_db"
@@ -158,7 +160,7 @@ unsafe_control_actions:
       param: semantic_score
       operator: greater_than
       threshold: 0.85
-    enforcement: [opa]
+    enforcement: [opa, python]
     opa_rule:
       decision: GOVERNANCE_VIOLATION
       message: "UCA-7: Prompt injection detected — governance violation."
@@ -169,6 +171,6 @@ unsafe_control_actions:
 safety_constraints:
   - id: SC-1
     uca_ref: UCA-1
-    description: "The Agent must never execute a write to production DB without a signed approval token."
+    description: "The Agent must never execute a write to production DB without a human approval token."
     logic: "has_approval_token == True"
     scope: [write_db, delete_db]

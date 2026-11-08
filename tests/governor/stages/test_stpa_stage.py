@@ -167,3 +167,41 @@ def test_issue_473_stpa_validator_normalization_token_and_core_rule_preservation
         ]
     )
     assert len(shadowing_validator.validate("write_db", {})) == 1
+
+
+def test_core_uca_7_enforced_on_python_stpa_path():
+    """F-102 / R-13: UCA-7 executes on the single Python STPA path (`CORE_UCA_RULES`)."""
+    validator = STPAValidator()
+
+    # Above 0.85 threshold -> HARD violation STPA_UCA_7
+    violations_high = validator.validate(
+        "prompt_injection_check", {"semantic_score": 0.90}
+    )
+    assert len(violations_high) == 1
+    assert violations_high[0].code == "STPA_UCA_7"
+    assert violations_high[0].kind == ViolationKind.HARD
+
+    # At or below 0.85 threshold -> allowed
+    assert validator.validate("prompt_injection_check", {"semantic_score": 0.85}) == []
+    assert validator.validate("prompt_injection_check", {"semantic_score": 0.10}) == []
+
+    # Missing, boolean, non-numeric, or non-finite semantic_score -> fails closed
+    for bad_score in (
+        {},
+        {"semantic_score": None},
+        {"semantic_score": True},
+        {"semantic_score": "high"},
+        {"semantic_score": float("nan")},
+        {"semantic_score": float("inf")},
+    ):
+        v = validator.validate("prompt_injection_check", bad_score)
+        assert len(v) == 1 and v[0].code == "STPA_UCA_7"
+
+
+def test_uca_1_message_does_not_claim_signed_token():
+    """R-13: UCA-1 checks structural token prefix without claiming cryptographic signature verification."""
+    validator = STPAValidator()
+    violations = validator.validate("write_db", {})
+    assert len(violations) == 1
+    assert violations[0].code == "STPA_UCA_1"
+    assert "signed" not in violations[0].message.lower()

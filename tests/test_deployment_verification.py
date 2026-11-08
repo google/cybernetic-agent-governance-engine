@@ -49,7 +49,6 @@ class TestDeploymentConfig(unittest.TestCase):
     def test_deploy_script_paths(self):
         """Verifies that the paths referenced in deploy_all.py exist."""
         # This is a static check of the expectations
-        self.assertTrue(os.path.exists("deployment/system_authz.rego"))
         self.assertTrue(os.path.exists("deployment/opa_config.yaml"))
         self.assertTrue(os.path.exists("src/cage_finance/opa/trade_governance.rego"))
         self.assertTrue(os.path.exists("deployment/service.yaml"))

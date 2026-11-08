@@ -612,7 +612,7 @@ profile:
       # AC-3: Access Enforcement mechanism
       - param-id: "ac-3_prm_1"
         values:
-          - "Open Policy Agent (OPA) Rego policy evaluation (trade_governance.rego, system_authz.rego) with fiscal role limits: junior $5,000/$10,000 single/daily; senior $500,000/$1,000,000"
+          - "Open Policy Agent (OPA) Rego policy evaluation (trade_governance.rego) with fiscal role limits: junior $5,000/$10,000 single/daily; senior $500,000/$1,000,000"
         remarks: >
           AC-3 enforcement is implemented via deterministic OPA policy evaluation,
           not LLM judgment. This provides auditable, reproducible access decisions

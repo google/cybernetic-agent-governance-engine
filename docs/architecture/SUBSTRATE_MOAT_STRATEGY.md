@@ -49,7 +49,7 @@ The startup posture check ([`posture.py`](../../src/gateway/governance/governor/
 The matrix claims CAGE uses **machine-readable hazard models compiled into hard OPA Rego AST and math-backed Control Barrier Functions**.
 
 **STPA-to-OPA compiler:**  
-[`stpa_compiler.py`](../../src/gateway/governance/stpa_compiler.py) ingests `config/stpa_control_structure.yaml` and emits deterministic OPA Rego policies (`config/opa/generated_stpa_policy.rego`), NeMo Colang rails (`config/rails/generated_stpa_rails.co`), and per-domain UCA rules, LangGraph saga compensators and FTRA terminal registries compiled into each domain plugin package (e.g. `src/cage_finance/stpa/`). The UCAs are compiled — not interpreted at runtime — into hard Rego rules with `default stpa_allow = false` (fail-closed).
+[`stpa_compiler.py`](../../src/gateway/governance/stpa_compiler.py) ingests [`config/stpa/core_system.yaml`](../../config/stpa/core_system.yaml) (and domain STPA YAML) and emits NeMo Colang rails (`config/rails/generated_stpa_rails.co`), and per-domain UCA rules, LangGraph saga compensators and FTRA terminal registries compiled into each domain plugin package (e.g. `src/cage_finance/stpa/`). The UCAs are compiled — not interpreted at runtime — into hard Rego rules with `default stpa_allow = false` (fail-closed).
 
 **Control Barrier Function (math-backed):**  
 [`cbf_engine.py`](../../src/gateway/governance/safety/cbf_engine.py:18) implements the discrete-time CBF from Ames et al. (IEEE TAC 2017):
@@ -177,7 +177,7 @@ CAGE enforces at the Redis database commit tier (application-layer substrate), n
 > "Translate those abstract specifications into CAGE's hard OPA Rego AST matrices and Control Barrier Functions natively inside your CI/CD pipelines."
 
 **Current state:**  
-[`stpa_compiler.py`](../../src/gateway/governance/stpa_compiler.py) provides the compilation pipeline from `stpa_control_structure.yaml` to OPA Rego, NeMo Colang, per-domain UCA rules, and LangGraph Saga compensators. However, this compiler takes CAGE's own YAML format as input — it cannot accept ACS or AAIF specifications directly.
+[`stpa_compiler.py`](../../src/gateway/governance/stpa_compiler.py) provides the compilation pipeline from [`config/stpa/core_system.yaml`](../../config/stpa/core_system.yaml) (and per-domain STPA YAML) to NeMo Colang, per-domain UCA rules, FTRA registries, and LangGraph Saga compensators. However, this compiler takes CAGE's own YAML format as input — it cannot accept ACS or AAIF specifications directly.
 
 **What is missing:**
 1. A **CI/CD Integration Hook** — a GitHub Actions workflow step that accepts an ACS/AAIF spec file, runs it through the ingress adapter (Gap 1), and then through `stpa_compiler.py` to produce compiled enforcement artifacts.
@@ -308,7 +308,7 @@ When implementing the Phase 1 ingress adapters:
 | US FED Baseline | [`config/compliance/US_FED_BASELINE.json`](../../config/compliance/US_FED_BASELINE.json) |
 | EU ECB Baseline | [`config/compliance/EU_ECB_BASELINE.json`](../../config/compliance/EU_ECB_BASELINE.json) |
 | APAC MAS Baseline | [`config/compliance/APAC_MAS_BASELINE.json`](../../config/compliance/APAC_MAS_BASELINE.json) |
-| STPA Control Structure | [`config/stpa_control_structure.yaml`](../../config/stpa_control_structure.yaml) |
+| STPA Control Structure | [`config/stpa/core_system.yaml`](../../config/stpa/core_system.yaml) |
 
 ---
 

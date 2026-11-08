@@ -48,11 +48,7 @@ def main():
 
     if not cbf_file.exists():
         print(f"❌ CBF file not found at expected location: {cbf_file}")
-        print("   Looking for old location...")
-        cbf_file = repo_root / "src" / "cage_finance" / "safety" / "cbf.py"
-        if not cbf_file.exists():
-            print(f"❌ CBF file not found at old location either: {cbf_file}")
-            return 1
+        return 1
 
     try:
         lua_script = extract_lua_script(cbf_file)

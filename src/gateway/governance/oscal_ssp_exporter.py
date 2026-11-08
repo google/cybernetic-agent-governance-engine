@@ -16,9 +16,10 @@
 OSCAL SSP Exporter
 ==================
 
-Reads the active ``config/stpa_control_structure.yaml`` (compiler output)
+Reads the active ``config/stpa/`` and domain STPA YAML sources
 and surgically patches the existing OSCAL artifacts to reflect the runtime
-state of the STPA compiler, closing the compliance loop.
+state of the STPA compiler and live ``assemble_governor()`` server inputs,
+closing the compliance loop.
 
 What it does
 ------------
@@ -57,7 +58,7 @@ Usage::
 
     # Point at a non-default control structure
     python -m src.gateway.governance.oscal_ssp_exporter export \\
-        --input path/to/stpa_control_structure.yaml
+        --input config/stpa/core_system.yaml
 
 Exit codes:
     0  Patch applied (or dry-run OK).
@@ -77,6 +78,7 @@ import shutil
 import sys
 import tempfile
 import textwrap
+from collections.abc import Mapping
 from pathlib import Path
 from typing import Any
 
@@ -96,7 +98,6 @@ logger = logging.getLogger("oscal_ssp_exporter")
 # ---------------------------------------------------------------------------
 
 _REPO_ROOT = Path(__file__).resolve().parents[3]
-_DEFAULT_INPUT = _REPO_ROOT / "config" / "stpa_control_structure.yaml"
 _DEFAULT_INPUT_DIR = _REPO_ROOT / "config" / "stpa"
 _DEFAULT_SSP = _REPO_ROOT / "compliance" / "oscal" / "system-security-plan.yaml"
 _DEFAULT_EU_SSP = (
@@ -156,9 +157,9 @@ _FTRA_SI10_DESCRIPTION = (
     "(SI-10) is enforced by the domain STPA UCA rules and the domain OPA policy. "
     "Prompt injection is screened on every input by the deterministic Stage 1 "
     "keyword scan (ac_keyword_scan in src/gateway/governance/text_filter.py, run by "
-    "the LangGraph input rail node and the inference proxy). UCA-7 compiles only to "
-    "OPA (stpa_violation_uca_7 in config/opa/generated_stpa_policy.rego, which denies "
-    "a prompt_injection_check whose semantic_score exceeds the UCA's threshold); the "
+    "the LangGraph input rail node and the inference proxy). UCA-7 is enforced on the "
+    "Python STPA path (_check_core_uca_7 in src/gateway/governance/stpa_validator.py, "
+    "which denies a prompt_injection_check whose server-bound semantic_score exceeds the UCA's threshold); the "
     "optional NeMo Colang rails add LLM-backed screening only when "
     "CAGE_NEMO_ENABLED=true. "
     "Before parking a REQUIRE_APPROVAL token for human review, run_pipeline() previews "
@@ -528,6 +529,165 @@ def _enforcement_targets(ucas: list[UCAModel]) -> set[str]:
     return targets
 
 
+_COMPOSITE_RE = re.compile(
+    r"^([A-Za-z_][A-Za-z0-9_]*)\s*>\s*threshold_ref\([A-Za-z0-9_.]+\)\s*\*\s*([A-Za-z_][A-Za-z0-9_]*)$"
+)
+
+
+def _live_registered_server_inputs() -> dict[str, frozenset[str]]:
+    """Inspect live ``assemble_governor()`` across installed production plugins.
+
+    Returns a mapping from governed action name to the ``owned_keys`` registered
+    by real ``ServerInputResolver`` instances in ``assemble_governor()`` (kernel
+    core resolvers plus ``maturity == "production"`` domain plugins).
+    """
+    import importlib.metadata
+
+    from src.gateway.governance.env_posture import DeploymentPosture
+    from src.gateway.governance.governor.assembly import (
+        DecisionFlags,
+        assemble_governor,
+    )
+    from src.gateway.governance.jurisdiction import JurisdictionContribution
+    from src.gateway.governance.plugin_loader import load_domain_plugin
+    from src.gateway.governance.schemas import thresholds as _thresholds_mod
+
+    class _InspectorPolicyClient:
+        async def evaluate_policy(
+            self, input_data: dict[str, Any], current_latency_ms: float = 0.0
+        ) -> str:
+            return "DENY"
+
+        async def verify_domain_policy(
+            self, package: str, required_rules: tuple[str, ...]
+        ) -> None:
+            return None
+
+        async def close(self) -> None:
+            return None
+
+    class _InspectorWarrantSource:
+        @property
+        def provider_name(self) -> str:
+            return "oscal_inspector"
+
+        async def fetch(self, norm_id: str) -> Any:
+            return None
+
+    jurisdiction = JurisdictionContribution(region=_thresholds_mod.THRESHOLDS.region)
+    flags = DecisionFlags(defer=True, narrow=True)
+    opa = _InspectorPolicyClient()
+    warrant_source = _InspectorWarrantSource()
+
+    merged: dict[str, set[str]] = {}
+    base_gov = assemble_governor(
+        [],
+        opa=opa,
+        posture=DeploymentPosture.DEV,
+        jurisdiction=jurisdiction,
+        flags=flags,
+        warrant_source=warrant_source,
+    )
+    for action, resolver in base_gov.components.server_inputs.items():
+        merged.setdefault(action, set()).update(resolver.owned_keys)
+
+    eps = sorted(
+        importlib.metadata.entry_points(group="cage.plugins"),
+        key=lambda ep: ep.name,
+    )
+    for ep in eps:
+        plugin = load_domain_plugin(ep.name)
+        if getattr(plugin, "maturity", "production") != "production":
+            continue
+        gov = assemble_governor(
+            [plugin],
+            opa=opa,
+            posture=DeploymentPosture.DEV,
+            jurisdiction=jurisdiction,
+            flags=flags,
+            warrant_source=warrant_source,
+        )
+        for action, resolver in gov.components.server_inputs.items():
+            merged.setdefault(action, set()).update(resolver.owned_keys)
+
+    return {action: frozenset(keys) for action, keys in merged.items()}
+
+
+def _uca_implementation_state(
+    uca: UCAModel,
+    cs: ControlStructureModel,
+    *,
+    live_server_inputs: Mapping[str, frozenset[str]] | None = None,
+) -> str:
+    """Return ``'implemented'``, ``'partial'``, or ``'planned'`` for *uca*.
+
+    * ``'partial'`` when ``uca.advisory`` is True or Python enforcement is absent.
+    * ``'implemented'`` only when every ``server_bound: true`` parameter read by
+      *uca* is backed by a live ``ServerInputResolver`` in ``assemble_governor()``.
+    * ``'planned'`` when YAML claims non-advisory ``server_bound: true`` without
+      a registered ``ServerInputResolver`` (never credited as ``implemented``).
+    """
+    if getattr(uca, "advisory", False):
+        return "partial"
+    if "python" not in _enforcement_targets([uca]):
+        return "partial"
+    action_spec = next(
+        (a for a in cs.control_actions if a.get("name") == uca.action), None
+    )
+    if action_spec is None:
+        return "planned"
+    sb_params = {
+        str(p.get("name"))
+        for p in (action_spec.get("params") or [])
+        if isinstance(p, dict) and p.get("server_bound") is True
+    }
+    if not sb_params:
+        return "planned"
+    decl_params = {
+        str(p.get("name"))
+        for p in (action_spec.get("params") or [])
+        if isinstance(p, dict)
+    }
+    resolved_inputs = (
+        _live_registered_server_inputs()
+        if live_server_inputs is None
+        else live_server_inputs
+    )
+    registered_keys = resolved_inputs.get(uca.action, frozenset())
+
+    cond = uca.condition
+    if cond.param is not None:
+        if cond.param not in sb_params:
+            return "planned"
+        return "implemented" if cond.param in registered_keys else "planned"
+    if cond.composite is not None:
+        m = _COMPOSITE_RE.match(cond.composite.strip())
+        if m:
+            lhs, rhs = m.group(1), m.group(2)
+            if rhs not in sb_params or lhs not in (sb_params | decl_params):
+                return "planned"
+            required_live = {rhs}
+            if lhs in sb_params:
+                required_live.add(lhs)
+            return (
+                "implemented" if required_live.issubset(registered_keys) else "planned"
+            )
+    return "planned"
+
+
+def _verify_uca_enforced_and_server_bound(
+    uca: UCAModel,
+    cs: ControlStructureModel,
+    *,
+    live_server_inputs: Mapping[str, frozenset[str]] | None = None,
+) -> bool:
+    """Return True iff *uca* has ``'implemented'`` live server-bound enforcement."""
+    return (
+        _uca_implementation_state(uca, cs, live_server_inputs=live_server_inputs)
+        == "implemented"
+    )
+
+
 class FrameworkRouter:
     """Load and cache an external JSON framework routing table.
 
@@ -624,14 +784,34 @@ class FrameworkRouter:
             artifacts=self.artifacts_for(mapped) or "none",
         )
 
-    def build_summary(self, ucas: list[UCAModel]) -> str:
+    def build_summary(
+        self,
+        ucas: list[UCAModel],
+        cs: ControlStructureModel | None = None,
+        *,
+        live_server_inputs: Mapping[str, frozenset[str]] | None = None,
+    ) -> str:
         """Build a full prose cross-walk of all UCAs for this framework."""
+        resolved_inputs = (
+            _live_registered_server_inputs()
+            if (cs is not None and live_server_inputs is None)
+            else live_server_inputs
+        )
         lines = []
         for uca in ucas:
             controls = self.controls_for_uca(uca.id)
             ctrl_str = ", ".join(f"{c} ({self.describe(c)})" for c in controls)
+            posture_tag = ""
+            if cs is not None:
+                state = _uca_implementation_state(
+                    uca, cs, live_server_inputs=resolved_inputs
+                )
+                if state == "partial":
+                    posture_tag = " [advisory — partial]"
+                elif state == "planned":
+                    posture_tag = " [unregistered server_bound — planned]"
             lines.append(
-                f"  {uca.id} ({uca.uca_type}): {uca.description}\n"
+                f"  {uca.id} ({uca.uca_type}){posture_tag}: {uca.description}\n"
                 f"    → {self.framework_id}: {ctrl_str}"
             )
         return "\n".join(lines)
@@ -801,12 +981,13 @@ def generate_ssp_patch(
     target_framework: str = "NIST",
     *,
     now: str | None = None,
+    live_server_inputs: Mapping[str, frozenset[str]] | None = None,
 ) -> dict[str, Any]:
     """
     Generate the OSCAL ``implemented-requirement`` block for the STPA compiler.
 
     Args:
-        cs: The loaded ControlStructureModel from stpa_control_structure.yaml.
+        cs: The loaded ControlStructureModel from ``config/stpa/`` and domain YAML.
         target_framework: Output framework for the UCA cross-walk narrative.
             One of ``"NIST"`` (default, FedRAMP/SP 800-53),
             ``"ISO42001"`` (global baseline),
@@ -819,34 +1000,66 @@ def generate_ssp_patch(
     """
     now = now or _now_iso()
 
+    resolved_inputs = (
+        _live_registered_server_inputs()
+        if live_server_inputs is None
+        else live_server_inputs
+    )
+
     # Load the external framework routing table — zero hardcoded dicts in Python.
     router = FrameworkRouter.get(target_framework)
 
-    uca_prose = router.build_summary(cs.unsafe_control_actions)
+    uca_prose = router.build_summary(
+        cs.unsafe_control_actions, cs=cs, live_server_inputs=resolved_inputs
+    )
     framework_label = router.label
     framework_source = router.source
     all_framework_controls = router.all_controls(cs.unsafe_control_actions)
 
+    uca_states = {
+        u.id: _uca_implementation_state(u, cs, live_server_inputs=resolved_inputs)
+        for u in cs.unsafe_control_actions
+    }
+    enforcing_ucas = [
+        u for u in cs.unsafe_control_actions if uca_states[u.id] == "implemented"
+    ]
+    advisory_ucas = [
+        u for u in cs.unsafe_control_actions if uca_states[u.id] != "implemented"
+    ]
+
     # Build by-components entries — one per referenced control.
-    # Narrative prose is rendered by the FrameworkRouter from the external JSON template.
+    # A control is "implemented" only when >=1 mapped UCA has a live ServerInputResolver;
+    # advisory-only controls are "partial", and unregistered server_bound claims are "planned".
     by_components = []
     for i, ctrl in enumerate(all_framework_controls):
+        mapped_ctrl = [
+            u
+            for u in cs.unsafe_control_actions
+            if ctrl in router.controls_for_uca(u.id)
+        ]
+        mapped_states = {uca_states[u.id] for u in mapped_ctrl}
+        if "implemented" in mapped_states:
+            ctrl_state = "implemented"
+        elif "partial" in mapped_states:
+            ctrl_state = "partial"
+        else:
+            ctrl_state = "planned"
         by_components.append(
             {
                 "component-uuid": _STPA_COMPONENT_UUID,
                 "uuid": f"{_STPA_BY_COMP_UUID[:-4]}{i:04d}",
                 "description": router.format_narrative(ctrl, cs.unsafe_control_actions),
-                "implementation-status": {"state": "implemented"},
+                "implementation-status": {"state": ctrl_state},
                 "links": [
                     {
-                        "href": "../../config/stpa_control_structure.yaml",
+                        "href": "../../config/stpa/core_system.yaml",
                         "rel": "reference",
                         "text": "STPA control structure YAML (source of truth)",
                     },
                     {
-                        "href": "../../config/opa/generated_stpa_policy.rego",
+                        "href": "../../src/gateway/governance/stpa_validator.py",
                         "rel": "reference",
-                        "text": "Generated OPA Rego policy",
+                        "text": "STPA Python validator",
                     },
                 ],
             }
@@ -870,6 +1083,13 @@ def generate_ssp_patch(
         if nemo_ucas
         else []
     )
+    all_states = set(uca_states.values())
+    if enforcing_ucas:
+        overall_status = "implemented"
+    elif "partial" in all_states:
+        overall_status = "partial"
+    else:
+        overall_status = "planned"
 
     requirement: dict[str, Any] = {
         "uuid": _STPA_IMPL_UUID,
@@ -882,16 +1102,15 @@ def generate_ssp_patch(
             specifications and the actual code running in the cluster.
 
             Compiler source: src/gateway/governance/stpa_compiler.py
-            Control structure (source of truth): config/stpa_control_structure.yaml
+            Control structure (source of truth): config/stpa/
             Generated artifacts:
-              - config/opa/generated_stpa_policy.rego    (OPA Rego — {_targeting("opa")} UCAs)
-{nemo_artifact_line}              - src/gateway/governance/stpa_validator.py (Python — {_targeting("python")} UCAs)
+{nemo_artifact_line}              - src/gateway/governance/stpa_validator.py (Python — {_targeting("python")} UCAs: {len(enforcing_ucas)} enforcing, {len(advisory_ucas)} advisory)
               - config/sandbox/generated_sandbox_policy.yaml (Sandbox — {len([u for u in cs.unsafe_control_actions if u.sandbox_rule is not None])} UCAs)
 
             Target compliance framework: {framework_label}
             Framework reference: {framework_source}
             System: {cs.system.name} v{cs.system.version}
-            UCAs encoded: {len(cs.unsafe_control_actions)}
+            UCAs encoded: {len(cs.unsafe_control_actions)} ({len(enforcing_ucas)} enforcing server-bound, {len(advisory_ucas)} advisory)
             Hazards modelled: {len(cs.hazards)}
             Safety constraints: {len(cs.safety_constraints)}
             Last compiled: {now}
@@ -900,13 +1119,14 @@ def generate_ssp_patch(
             {uca_prose}
         """).strip(),
         "props": [
-            {"name": "implementation-status", "value": "implemented"},
+            {"name": "implementation-status", "value": overall_status},
             {"name": "stpa-compiler-version", "value": cs.system.version},
             {"name": "uca-count", "value": str(len(cs.unsafe_control_actions))},
+            {"name": "enforcing-uca-count", "value": str(len(enforcing_ucas))},
+            {"name": "advisory-uca-count", "value": str(len(advisory_ucas))},
             {"name": "hazard-count", "value": str(len(cs.hazards))},
             {"name": "last-compiled", "value": now},
             {"name": "target-framework", "value": framework_label},
-            {"name": "artifact-opa", "value": "config/opa/generated_stpa_policy.rego"},
             *nemo_artifact_props,
             {
                 "name": "artifact-python",
@@ -957,7 +1177,7 @@ def generate_component_entry(
                 "control-id": ctrl,
                 "description": (
                     f"STPA compiler generates deterministic enforcement artifacts for "
-                    f"{ctrl} ({iso_router.describe(ctrl)}) from config/stpa_control_structure.yaml. "
+                    f"{ctrl} ({iso_router.describe(ctrl)}) from config/stpa/. "
                     f"UCAs: {', '.join(uca_list)}."
                 ),
                 "remarks": (
@@ -972,12 +1192,11 @@ def generate_component_entry(
     kinds = [
         label
         for target, label in (
-            ("opa", "OPA Rego"),
             ("nemo", "NeMo Colang"),
             ("python", "Python validator"),
         )
         if target in targeted
-    ]
+    ] or ["Python validator"]
     kinds_prose = (
         ", ".join(kinds[:-1]) + f", and {kinds[-1]}"
         if len(kinds) > 2
@@ -991,7 +1210,7 @@ def generate_component_entry(
         "type": "software",
         "description": (
             f"CLI compiler (src/gateway/governance/stpa_compiler.py) that ingests "
-            f"config/stpa_control_structure.yaml and generates deterministic {kinds_prose} "
+            f"config/stpa/ and generates deterministic {kinds_prose} "
             f"artifacts enforcing STAMP/STPA UCAs at "
             f"runtime. Eliminates manual policy drift by treating the YAML as the single "
             f"authoritative source of truth. System: {cs.system.name} v{cs.system.version}."
@@ -1008,7 +1227,7 @@ def generate_component_entry(
             {"name": "source-file", "value": "src/gateway/governance/stpa_compiler.py"},
             {
                 "name": "control-structure-input",
-                "value": "config/stpa_control_structure.yaml",
+                "value": "config/stpa/",
             },
             {"name": "last-compiled", "value": now},
             {"name": "uca-count", "value": str(len(cs.unsafe_control_actions))},
@@ -1322,7 +1541,7 @@ def _write_standalone_patch(
     doc = {
         "stpa-compiler-ssp-patch": {
             "generated": now or _now_iso(),
-            "source": "config/stpa_control_structure.yaml",
+            "source": "config/stpa/",
             "system": cs.system.name,
             "version": cs.system.version,
             "implemented-requirement": patch_block,
@@ -1451,10 +1670,11 @@ def render_default_oscal_artifacts(
     }
     try:
         if cs is None:
+            core_yamls = sorted(_DEFAULT_INPUT_DIR.rglob("*.yaml"))
             domain_yamls = sorted(
                 (_REPO_ROOT / "src").glob("cage_*/config/stpa/*.yaml")
             )
-            cs = load_control_structures([_DEFAULT_INPUT, *domain_yamls])
+            cs = load_control_structures([*core_yamls, *domain_yamls])
         ok, rendered = _render_targets_in_memory(
             cs=cs,
             ssp_path=ssp_path,
@@ -1480,9 +1700,9 @@ def _build_parser() -> argparse.ArgumentParser:
         prog="oscal_ssp_exporter",
         description=textwrap.dedent(
             """\
-            OSCAL SSP Exporter — reads the active stpa_control_structure.yaml
+            OSCAL SSP Exporter — reads the active config/stpa/ and domain STPA YAML sources
             and patches the existing OSCAL SSP with a generated implemented-requirement
-            block, closing the safety-to-compliance loop.
+            block verified against live assemble_governor() server inputs.
             """
         ),
         formatter_class=argparse.RawDescriptionHelpFormatter,
@@ -1498,9 +1718,12 @@ def _build_parser() -> argparse.ArgumentParser:
     exp.add_argument(
         "--input",
         type=Path,
-        default=_DEFAULT_INPUT,
+        default=None,
         metavar="YAML",
-        help=f"Control structure YAML (default: {_DEFAULT_INPUT})",
+        help=(
+            "Explicit single control structure YAML (default: merge "
+            f"{_DEFAULT_INPUT_DIR}/*.yaml + src/cage_*/config/stpa/*.yaml)"
+        ),
     )
     exp.add_argument(
         "--input-dir",
@@ -1641,11 +1864,12 @@ def cmd_export(args: argparse.Namespace) -> int:
                 args.input_dir,
             )
             cs = load_control_structures(yaml_files)
-        elif args.input.resolve() == _DEFAULT_INPUT.resolve():
+        elif args.input is None:
+            core_yamls = sorted(_DEFAULT_INPUT_DIR.rglob("*.yaml"))
             domain_yamls = sorted(
                 (_REPO_ROOT / "src").glob("cage_*/config/stpa/*.yaml")
             )
-            cs = load_control_structures([args.input, *domain_yamls])
+            cs = load_control_structures([*core_yamls, *domain_yamls])
         else:
             cs = load_control_structure(args.input)
     except Exception as exc:

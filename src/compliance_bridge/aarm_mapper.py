@@ -294,7 +294,6 @@ AARM_THREAT_VECTORS: dict[str, AARMVector] = {
         ],
         implementation_files=[
             "src/cage_finance/opa/trade_governance.rego",
-            "deployment/system_authz.rego",
             "config/agent_scope.yaml",
         ],
         notes=(

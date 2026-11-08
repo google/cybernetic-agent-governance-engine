@@ -379,7 +379,7 @@ deny[msg] if {
 
 ### 3.4 Preventing POLICY_DRIFT_VIOLATION
 
-[`ControlRegistry`](../../src/gateway/governance/constants.py) exposes `active_hash`, a deterministic hash of the active regional compliance profile. [`scripts/check_policy_drift.py`](../../scripts/check_policy_drift.py) compares the compiled OPA artifact hash against that value and against the committed baseline in `config/opa/.policy_hash`. Ephemeral instance IDs must **not** appear in policy bodies, or every pod restart registers as drift:
+[`ControlRegistry`](../../src/gateway/governance/constants.py) exposes `active_hash`, a deterministic hash of the active regional compliance profile. [`scripts/check_policy_drift.py`](../../scripts/check_policy_drift.py) verifies active domain OPA bundles, STPA compilation, and `ControlRegistry.active_hash` parity against the regional compliance baseline. Ephemeral instance IDs must **not** appear in policy bodies, or every pod restart registers as drift:
 
 ```python
 # ❌ DRIFT-INDUCING: Exact SPIFFE ID in policy
