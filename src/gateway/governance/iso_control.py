@@ -13,15 +13,16 @@
 # limitations under the License.
 
 """
-ISO 42001 OTel Evidence Tagging
+ISO 42001 OTel Telemetry Tagging
 ================================
-Mirrors ``stampIsoControl()`` from the TypeScript governance layer:
-  src/gateway/src/governance/middleware/stpaGovernanceMiddleware.ts
+Stamps ISO/IEC 42001:2023 Annex A attributes on operational OTel spans emitted
+by the Python governance gateway (`src/gateway/server/inference_proxy.py` and
+`src/gateway/server/`).
 
-Every governance decision (PASS / BLOCK / REDACT) must call
-:func:`stamp_iso_control` so that OTel spans flowing to the Telemetry OTLP
-collector carry a consistent ISO 42001 audit trail that the compliance-bridge
-can aggregate.
+Operational OTel spans flow to the telemetry collector for trace visibility,
+while authoritative compliance metrics are computed by `src/compliance_bridge/`
+over the signed, hash-chained Redis DB 1 (`cage:evidence:stream`) and GCS WORM
+`.ndjson` custody chain (`R-2`, `R-16`, `F-84`, `F-103`).
 
 Attribute schema (6 mandatory attributes):
     iso42001.control        — Annex A control ID string, e.g. "A.6.1.2"
