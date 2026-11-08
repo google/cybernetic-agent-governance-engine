@@ -40,6 +40,7 @@ locals {
   ksa_clickhouse        = "cage-clickhouse-sa"
   ksa_agentsight_ui     = "cage-agentsight-ui-sa"
   ksa_nemo              = "cage-nemo-sa"
+  ksa_inference_stub    = "cage-inference-stub-sa"
 
   # vLLM runs in var.namespace by default; keep "vllm-inference" bound when dedicated GPU namespace isolation is enabled.
   vllm_workload_namespaces = distinct([var.namespace, "vllm-inference"])
@@ -333,6 +334,11 @@ locals {
       name    = local.ksa_advisor
       gsa     = null # zero cloud identity (POAM-2026-079)
       purpose = "governed-advisor"
+    }
+    inference_stub = {
+      name    = local.ksa_inference_stub
+      gsa     = null # zero cloud identity; deterministic non-prod E2E stub (POAM-2026-191)
+      purpose = "e2e-inference-stub"
     }
     compliance_bridge = {
       name    = local.ksa_compliance_bridge

@@ -527,11 +527,19 @@ deploy_terraform_target() {
             -z "$(_effective_tf_var lula_image "${tf_args[@]}")" ]]; then
         _images+=" lula"
       fi
-      if [[ "$(_effective_tf_var inference_backend "${tf_args[@]}")" == "vllm" ]]; then
+      local _inference_backend _enable_e2e_advisor
+      _inference_backend="$(_effective_tf_var inference_backend "${tf_args[@]}")"
+      _enable_e2e_advisor="$(_effective_tf_var enable_e2e_advisor "${tf_args[@]}")"
+      if [[ "$_inference_backend" == "vllm" &&
+            -z "$(_effective_tf_var vllm_image "${tf_args[@]}")" ]]; then
+        _images+=" vllm-streamer"
+      fi
+      if [[ "$_inference_backend" == "vllm" || "$_enable_e2e_advisor" == "true" ]]; then
         _images+=" governed-financial-advisor"
-        if [[ -z "$(_effective_tf_var vllm_image "${tf_args[@]}")" ]]; then
-          _images+=" vllm-streamer"
-        fi
+      fi
+      if [[ "$_enable_e2e_advisor" == "true" && "$_inference_backend" != "vllm" &&
+            -z "$(_effective_tf_var inference_stub_image "${tf_args[@]}")" ]]; then
+        _images+=" inference-stub"
       fi
       if [[ "$(_effective_tf_var enable_nemo_guardrails "${tf_args[@]}")" == "true" &&
             -z "$(_effective_tf_var nemo_image "${tf_args[@]}")" ]]; then

@@ -97,10 +97,14 @@ resource "kubernetes_deployment" "gateway" {
     }
     precondition {
       condition = !var.consensus_critics_enabled || (
-        var.cage_inference_backend != "none" &&
+        !contains(["none", "stub"], var.cage_inference_backend) &&
         (!local.is_prod_or_staging || var.consensus_advisory_only)
       )
-      error_message = "CAGE Invariant (F-53..F-56 / R-11): CAGE_CONSENSUS_CRITICS_ENABLED=true requires an active inference backend (cage_inference_backend != \"none\") and, under an enforcing posture, consensus_advisory_only=true so model critics cannot replace human review."
+      error_message = "CAGE Invariant (F-53..F-56 / R-11): CAGE_CONSENSUS_CRITICS_ENABLED=true requires an active semantic inference backend (cage_inference_backend not in [\"none\", \"stub\"]) and, under an enforcing posture, consensus_advisory_only=true so model critics cannot replace human review."
+    }
+    precondition {
+      condition     = var.cage_inference_backend != "stub" || !contains(["prod", "production"], lower(trimspace(var.cage_env)))
+      error_message = "CAGE Invariant (POAM-2026-191): CAGE_INFERENCE_BACKEND=stub is an opt-in non-production E2E backend and is refused when cage_env is prod or production."
     }
   }
 

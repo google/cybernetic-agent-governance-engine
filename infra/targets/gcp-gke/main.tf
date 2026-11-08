@@ -633,18 +633,35 @@ module "clickhouse_operator" {
 # not exist crash-loops. The GPU pool stays (min 0), so moving to "vllm" is a
 # variable change and an apply, not an infrastructure rebuild.
 locals {
-  vllm_enabled = var.inference_backend == "vllm"
+  vllm_enabled           = var.inference_backend == "vllm"
+  inference_stub_enabled = var.enable_e2e_advisor && !local.vllm_enabled
 
-  # The advisor calls the model services directly, not through the gateway's
-  # inference proxy. That is by design: the agent reasons freely and is
-  # constrained when it acts, at the gateway's action boundary.
-  advisor_enabled = local.vllm_enabled
+  # POAM-2026-191 (F-30..F-33): decouple advisor deployment from GPU vLLM so
+  # non-production E2E runs (-var enable_e2e_advisor=true) exercise the full
+  # gated loop against the deterministic CPU inference-stub backend.
+  advisor_enabled = local.vllm_enabled || var.enable_e2e_advisor
 
+  effective_inference_backend = local.inference_stub_enabled ? "stub" : var.inference_backend
+
+  # In-cluster vLLM URLs (empty unless vllm is deployed). Only the gateway may
+  # reach them (model-backend-ingress, EA-1).
   vllm_fast_url      = local.vllm_enabled ? "http://vllm-service.${module.namespace.name}.svc.cluster.local:8000/v1" : ""
   vllm_reasoning_url = local.vllm_enabled ? "http://vllm-reasoning.${module.namespace.name}.svc.cluster.local:8000/v1" : ""
-  # In-cluster vLLM runs without --api-key; the gateway and bridge still
-  # require a non-empty VLLM_API_KEY whenever a backend is configured.
-  vllm_api_key = local.vllm_enabled ? "EMPTY" : ""
+
+  # Gateway upstream model URLs: forward to deterministic inference-stub in
+  # opt-in E2E mode when vLLM is absent, otherwise to in-cluster vLLM.
+  inference_stub_url          = local.inference_stub_enabled ? "http://inference-stub.${module.namespace.name}.svc.cluster.local:8000/v1" : ""
+  gateway_model_fast_url      = local.inference_stub_enabled ? local.inference_stub_url : local.vllm_fast_url
+  gateway_model_reasoning_url = local.inference_stub_enabled ? local.inference_stub_url : local.vllm_reasoning_url
+  # In-cluster vLLM and inference-stub run without --api-key; startup requires a
+  # non-empty placeholder whenever an upstream backend is configured.
+  gateway_model_api_key = (local.vllm_enabled || local.inference_stub_enabled) ? "EMPTY" : ""
+
+  # R-16 / F-103: Advisor inference ALWAYS routes through the gateway's
+  # OpenAI-compatible /v1/chat/completions proxy so Stage-1 scanning (A.5.2),
+  # TokenQuotaProxy (TQP-007), and PII scrubbing (A.9.2) sit on the live path.
+  advisor_inference_url     = local.advisor_enabled ? "http://${module.gateway.service_name}.${module.namespace.name}.svc.cluster.local:8080/v1" : ""
+  advisor_inference_api_key = local.advisor_enabled ? "EMPTY" : ""
 }
 
 # ─── Images Each Profile Deploys (POAM-2026-131) ──────────────────────────────
@@ -661,6 +678,7 @@ locals {
     (var.enable_compliance_bridge || var.enable_reconciliation_worker) && var.compliance_bridge_image == "" ? ["compliance-bridge"] : [],
     var.enable_lula_cron && var.lula_image == "" ? ["lula"] : [],
     local.vllm_enabled && var.vllm_image == "" ? ["vllm-streamer"] : [],
+    local.inference_stub_enabled && var.inference_stub_image == "" ? ["inference-stub"] : [],
     local.advisor_enabled ? ["governed-financial-advisor"] : [],
     var.enable_nemo_guardrails && var.nemo_image == "" ? ["nemo-guardrails"] : [],
     var.enable_nemo_guardrails && var.presidio_analyzer_image == "" ? ["presidio-analyzer"] : [],
@@ -669,8 +687,9 @@ locals {
 }
 
 # ─── Deploy NeMo Guardrails + Microsoft Presidio ───────────────────────────────
-# Optional and off by default: nothing in CAGE calls this server, because the
-# gateway builds its rails in process. It needs inference_backend = "vllm".
+# Refused at plan time (inference_backend_guard): only the gateway may reach
+# the model backends (EA-1), so this server could never reach vLLM. Nothing in
+# CAGE calls it; the gateway builds its rails in process.
 
 module "nemo_guardrails" {
   count = var.enable_nemo_guardrails ? 1 : 0
@@ -842,6 +861,22 @@ module "vllm_reasoning" {
   depends_on = [module.gke, kubernetes_service_account.workload["vllm"]]
 }
 
+# ─── Deploy Deterministic Inference Stub (opt-in non-prod E2E, POAM-2026-191) ─
+
+module "inference_stub" {
+  count = local.inference_stub_enabled ? 1 : 0
+
+  source = "../../modules/inference_stub"
+
+  namespace            = module.namespace.name
+  image                = var.inference_stub_image != "" ? var.inference_stub_image : var.image_digests["inference-stub"]
+  environment          = var.environment
+  service_account_name = kubernetes_service_account.workload["inference_stub"].metadata[0].name
+  network_policy_hash  = local.network_policy_spec_hash
+
+  depends_on = [module.gke, module.service_mesh, kubernetes_service_account.workload["inference_stub"]]
+}
+
 # ─── Deploy Langfuse Observability ─────────────────────────────────────────────
 
 module "langfuse" {
@@ -905,12 +940,15 @@ module "compliance_bridge" {
   langfuse_host = "http://${module.langfuse.web_service_name}.${module.namespace.name}.svc.cluster.local:3000"
   replicas      = var.enable_high_availability ? 2 : 1
 
-  remediation_model          = var.served_model_fast
-  remediation_max_tokens     = "2048"
-  remediation_timeout_ms     = "30000"
-  cage_inference_backend     = var.inference_backend
-  vllm_base_url              = local.vllm_fast_url
-  vllm_api_key               = local.vllm_api_key
+  remediation_model      = var.served_model_fast
+  remediation_max_tokens = "2048"
+  remediation_timeout_ms = "30000"
+  # EA-1: model backends admit TCP 8000 from the gateway alone
+  # (model-backend-ingress), so the bridge has no model to call. "none" records
+  # the remediation advisory as not performed instead of dialling a dropped URL.
+  cage_inference_backend     = "none"
+  vllm_base_url              = ""
+  vllm_api_key               = ""
   alert_channel              = "console"
   oscal_s3_bucket            = module.worm_bucket.bucket_name
   oscal_s3_region            = var.region
@@ -1010,11 +1048,11 @@ module "gateway" {
   evidence_stream_redis_url        = local.evidence_stream_redis_url
   evidence_stream_redis_db         = local.evidence_stream_redis_db
   evidence_stream_key              = local.evidence_stream_key
-  cage_inference_backend           = var.inference_backend
-  vllm_base_url                    = local.vllm_fast_url
-  vllm_reasoning_api_base          = local.vllm_reasoning_url
-  vllm_fast_api_base               = local.vllm_fast_url
-  vllm_api_key                     = local.vllm_api_key
+  cage_inference_backend           = local.effective_inference_backend
+  vllm_base_url                    = local.gateway_model_fast_url
+  vllm_reasoning_api_base          = local.gateway_model_reasoning_url
+  vllm_fast_api_base               = local.gateway_model_fast_url
+  vllm_api_key                     = local.gateway_model_api_key
   guardrails_model_name            = var.served_model_fast
   opa_url                          = module.opa.uds_url
   opa_policies_config_map_name     = module.opa.policies_config_map_name
@@ -1050,7 +1088,7 @@ module "gateway" {
   enable_pod_monitoring  = true
   enable_service_monitor = var.enable_service_monitor
 
-  depends_on = [module.app_secrets, module.opa, module.vllm, module.memorystore_governance, module.service_mesh]
+  depends_on = [module.app_secrets, module.opa, module.vllm, module.inference_stub, module.memorystore_governance, module.service_mesh]
 }
 
 # ─── Deploy Ground-Truth Reconciliation Worker (POAM-2026-096, F-86, CA-7) ────
@@ -1105,9 +1143,11 @@ module "governed_advisor" {
   model_fast                 = var.served_model_fast
   model_reasoning            = var.served_model_reasoning
   model_consensus            = var.served_model_reasoning
-  vllm_base_url              = local.vllm_fast_url
-  vllm_fast_api_base         = local.vllm_fast_url
-  vllm_reasoning_api_base    = local.vllm_reasoning_url
+  vllm_base_url              = local.advisor_inference_url
+  vllm_fast_api_base         = local.advisor_inference_url
+  vllm_reasoning_api_base    = local.advisor_inference_url
+  vllm_gateway_url           = local.advisor_inference_url
+  vllm_api_key               = local.advisor_inference_api_key
   # Langfuse web service exposes port 3000 (not 80) — corrected from initial misconfiguration.
   langfuse_host = "http://${module.langfuse.web_service_name}.${module.namespace.name}.svc.cluster.local:3000"
   gateway_url   = "http://${module.gateway.service_name}.${module.namespace.name}.svc.cluster.local:8080"
@@ -1115,6 +1155,7 @@ module "governed_advisor" {
   # advisor refuses to start if a signing-key variable is set.
   service_account_name = kubernetes_service_account.workload["advisor"].metadata[0].name
   cage_env             = var.environment
+  enable_e2e_mode      = var.enable_e2e_advisor
 
   # K-4: wire OTLP auth header so governed-financial-advisor traces reach
   # Langfuse rather than returning 401 Unauthorized.
@@ -1123,7 +1164,7 @@ module "governed_advisor" {
     var.langfuse_public_key != "" ? "Authorization=Basic ${base64encode("${var.langfuse_public_key}:${var.langfuse_secret_key}")}" : ""
   )
 
-  depends_on = [module.gateway, module.langfuse, module.vllm, module.service_mesh]
+  depends_on = [module.gateway, module.langfuse, module.vllm, module.inference_stub, module.service_mesh]
 }
 
 # ─── Deploy AgentSight UI ─────────────────────────────────────────────────────
@@ -1393,8 +1434,8 @@ resource "terraform_data" "control_plane_access_guard" {
 
 # W6: what each inference backend deploys must be able to run. "vllm" schedules
 # its pods on the GPU pool, so it needs one (min 0 costs nothing while idle). The
-# standalone NeMo server calls the in-cluster vLLM service, so under "none" it
-# would crash-loop instead of being absent.
+# standalone NeMo server is refused outright: it calls vLLM directly, and only
+# the gateway may reach the model backends (model-backend-ingress, EA-1).
 resource "terraform_data" "inference_backend_guard" {
   lifecycle {
     precondition {
@@ -1403,8 +1444,8 @@ resource "terraform_data" "inference_backend_guard" {
     }
 
     precondition {
-      condition     = !var.enable_nemo_guardrails || local.vllm_enabled
-      error_message = "enable_nemo_guardrails = true needs inference_backend = \"vllm\": the standalone NeMo server calls the in-cluster vLLM service, so without it the server would crash-loop. Nothing in CAGE calls the server; leave it off unless you need it."
+      condition     = !var.enable_nemo_guardrails
+      error_message = "enable_nemo_guardrails = true is refused: only the gateway may reach the model backends (model-backend-ingress admits TCP 8000 from app = \"gateway\" alone, EA-1), so the standalone NeMo server could never reach vLLM. Nothing in CAGE calls the server: the gateway builds its NeMo rails in process."
     }
   }
 }

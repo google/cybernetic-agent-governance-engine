@@ -265,12 +265,13 @@ def test_posture_check_nemo_rails_backend_rejects_nemo_without_inference(
     components = MagicMock()
 
     monkeypatch.setenv("CAGE_NEMO_ENABLED", "true")
-    monkeypatch.setenv("CAGE_INFERENCE_BACKEND", "none")
-    with pytest.raises(
-        RuntimeError,
-        match="CAGE_NEMO_ENABLED=true requires an inference backend, but CAGE_INFERENCE_BACKEND=none",
-    ):
-        _check_nemo_rails_backend(components)
+    for non_semantic in ("none", "stub"):
+        monkeypatch.setenv("CAGE_INFERENCE_BACKEND", non_semantic)
+        with pytest.raises(
+            RuntimeError,
+            match=f"CAGE_NEMO_ENABLED=true requires a semantic inference backend, but CAGE_INFERENCE_BACKEND={non_semantic}",
+        ):
+            _check_nemo_rails_backend(components)
 
     monkeypatch.setenv("CAGE_NEMO_ENABLED", "false")
     _check_nemo_rails_backend(components)

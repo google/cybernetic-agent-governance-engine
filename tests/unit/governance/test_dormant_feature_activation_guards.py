@@ -255,7 +255,7 @@ def test_gateway_deployment_has_causal_and_consensus_lifecycle_preconditions() -
 
     # Consensus critics precondition (F-53..F-56)
     assert "!var.consensus_critics_enabled" in joined
-    assert 'var.cage_inference_backend != "none"' in joined
+    assert '!contains(["none", "stub"], var.cage_inference_backend)' in joined
     assert "var.consensus_advisory_only" in joined
     assert "F-53..F-56" in joined
 

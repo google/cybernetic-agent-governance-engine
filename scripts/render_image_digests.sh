@@ -116,6 +116,7 @@ FIRST_PARTY_IMAGES=(
   "nemo-guardrails"
   "vllm-streamer"
   "lula"
+  "inference-stub"
 )
 
 THIRD_PARTY_TAGGED_IMAGES=(

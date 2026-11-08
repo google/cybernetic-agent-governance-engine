@@ -37,8 +37,9 @@ from src.gateway.governance.content_safety import (
 )
 from src.gateway.governance.feature_flags import nemo_rails_enabled
 from src.gateway.governance.inference_backend import (
+    InferenceBackend,
     InferenceBackendUnavailable,
-    inference_disabled,
+    resolve_inference_backend,
 )
 
 
@@ -69,10 +70,16 @@ def semantic_rails_refusal() -> tuple[str, str] | None:
     - ``CAGE_NEMO_ENABLED`` off returns ``CONTENT_SAFETY_RAILS_DISABLED``,
       because the rails were not asked for.
     """
-    if inference_disabled():
+    backend = resolve_inference_backend()
+    if backend is InferenceBackend.NONE:
         return (
             CONTENT_SAFETY_NO_INFERENCE_BACKEND,
             "CAGE_INFERENCE_BACKEND=none: no semantic rails are built.",
+        )
+    if backend is InferenceBackend.STUB:
+        return (
+            CONTENT_SAFETY_NO_INFERENCE_BACKEND,
+            "CAGE_INFERENCE_BACKEND=stub: deterministic stub carries no semantic rail model.",
         )
     if not nemo_rails_enabled():
         return (

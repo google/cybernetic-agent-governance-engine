@@ -188,11 +188,20 @@ def proxy_deps(monkeypatch):
 
     monkeypatch.setattr(_nemo_mgr, "initialize_rails", _mock_init_rails)
 
+    evidence_sink = MagicMock(name="stub_evidence_sink")
+    evidence_sink._running = True
+    evidence_sink.ingest_sync = AsyncMock(return_value="1-0")
+    evidence_sink.ingest = AsyncMock(return_value="1-0")
+    monkeypatch.setattr(
+        _mod.inference_app.state, "evidence_sink", evidence_sink, raising=False
+    )
+
     yield {
         "app": _mod.inference_app,
         "module": _mod,
         "quota_proxy": quota_proxy,
         "uca_logger": uca_logger,
+        "evidence_sink": evidence_sink,
         "http_client": http_client,
     }
 

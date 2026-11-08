@@ -52,8 +52,8 @@ for _p in [str(_REPO_ROOT), str(_REPO_ROOT / "src")]:
     if _p not in sys.path:
         sys.path.insert(0, _p)
 
-from fastapi import FastAPI, Request
-from fastapi.responses import JSONResponse
+from fastapi import BackgroundTasks, FastAPI, Request
+from fastapi.responses import JSONResponse, StreamingResponse
 from starlette.middleware.base import BaseHTTPMiddleware
 
 from src.gateway.infrastructure.telemetry_client import configure_telemetry
@@ -140,6 +140,8 @@ async def _gateway_lifespan(app: FastAPI):  # type: ignore[no-untyped-def]
         # first request. Fails startup under an enforcing posture if Redis is
         # unreachable.
         evidence_sink = await start_evidence_sink()
+        app.state.evidence_sink = evidence_sink
+        inference_app.state.evidence_sink = evidence_sink
 
         # ── Pre-warm and share NeMo Rails ──────────────────────────────────────
         # Under ``none`` no rails are built: NeMo is off and visible, and
@@ -1032,7 +1034,21 @@ async def apply_nemo_refinement(
     }
 
 
-# Inference proxy handles /v1/chat/completions
+# Canonical OpenAI-compatible inference proxy route (R-16 / F-103): allows
+# governed workloads configured with base_url="http://<gateway>:8080/v1" and
+# GatewayClient.chat() to invoke POST /v1/chat/completions directly while
+# preserving the legacy /inference mount for existing callers.
+@root_app.post("/v1/chat/completions", response_model=None)
+async def root_chat_completions(
+    request: Request,
+    background_tasks: BackgroundTasks,
+) -> JSONResponse | StreamingResponse:
+    from src.gateway.server.inference_proxy import chat_completions
+
+    return await chat_completions(request, background_tasks)
+
+
+# Legacy mount preserved at /inference/v1/chat/completions
 root_app.mount("/inference", inference_app)
 
 # Governance middleware handles /governance/validate-action

@@ -24,6 +24,7 @@ from pydantic import BaseModel
 
 from src.cage_finance.models.trade_order import TradeOrder
 from src.gateway.governance.content_safety import is_safe_verdict
+from src.gateway.infrastructure.privacy import scrub_pii
 from src.gateway.observability.attributes import (
     OBSERVATION_INPUT,
     OBSERVATION_NAME,
@@ -39,6 +40,32 @@ _tracer = otel_trace.get_tracer("gfa.tools")
 _gateway_client = GatewayClient()
 
 logger = logging.getLogger("ToolsRouter")
+
+_STRUCTURED_PARAM_KEYS: frozenset[str] = frozenset(
+    {
+        "symbol",
+        "currency",
+        "side",
+        "type",
+        "transaction_id",
+        "deferred_id",
+        "approval_token",
+        "target_tool",
+    }
+)
+
+
+def _scrub_tool_params(value: Any, *, key: str = "") -> Any:
+    """Defensively scrub PII from free-form string tool arguments while preserving numeric/structured types."""
+    if key in _STRUCTURED_PARAM_KEYS:
+        return value
+    if isinstance(value, str):
+        return scrub_pii(value)
+    if isinstance(value, dict):
+        return {k: _scrub_tool_params(v, key=str(k)) for k, v in value.items()}
+    if isinstance(value, list):
+        return [_scrub_tool_params(item) for item in value]
+    return value
 
 
 async def _gateway_tool(tool_name: str, params: dict[str, Any]) -> str:
@@ -85,7 +112,7 @@ async def execute_tool_endpoint(  # type: ignore[no-untyped-def]
     try:
         output = None
         tool = request.tool_name
-        params = request.params
+        params = _scrub_tool_params(request.params)
 
         # --- Dispatcher ---
 
@@ -147,7 +174,9 @@ async def execute_tool_endpoint(  # type: ignore[no-untyped-def]
             # execution to the gateway's execute_trade_action tool: governor
             # pipeline, seal issue/consume and ActuatorRegistry dispatch all
             # happen in the gateway process (ADR-008, POAM-2026-079).
-            order = TradeOrder(**params)
+            deferred_id = params.get("deferred_id")
+            order_params = {k: v for k, v in params.items() if k != "deferred_id"}
+            order = TradeOrder(**order_params)
             with _tracer.start_as_current_span("cage.tool_execute") as root_span:
                 root_span.set_attribute("cage.tool_name", "execute_trade")
                 root_span.set_attribute("cage.governance", True)
@@ -166,20 +195,20 @@ async def execute_tool_endpoint(  # type: ignore[no-untyped-def]
                     ),
                 )
                 t0 = time.perf_counter()
-                output = await _gateway_tool(
-                    "execute_trade_action",
-                    {
-                        "symbol": order.symbol,
-                        "amount": order.amount,
-                        "currency": order.currency,
-                        "confidence": order.confidence,
-                        "transaction_id": order.transaction_id,
-                        # The gateway values the portfolio itself for a sell,
-                        # and binds trader_role / trader_id from this
-                        # service's verified workload identity.
-                        "side": order.side or "buy",
-                    },
-                )
+                trade_payload: dict[str, Any] = {
+                    "symbol": order.symbol,
+                    "amount": order.amount,
+                    "currency": order.currency,
+                    "confidence": order.confidence,
+                    "transaction_id": order.transaction_id,
+                    # The gateway values the portfolio itself for a sell,
+                    # and binds trader_role / trader_id from this
+                    # service's verified workload identity.
+                    "side": order.side or "buy",
+                }
+                if deferred_id:
+                    trade_payload["deferred_id"] = str(deferred_id)
+                output = await _gateway_tool("execute_trade_action", trade_payload)
                 root_span.set_attribute(
                     "cage.total_latency_ms",
                     round((time.perf_counter() - t0) * 1000, 2),

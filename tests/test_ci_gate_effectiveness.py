@@ -541,8 +541,29 @@ def test_gate_marker_contract_rejects_unmarked_test() -> None:
         name = "test_missing_marker"
         keywords: dict[str, Any] = {}
 
+        def iter_markers(self) -> Any:
+            return iter(())
+
     with pytest.raises(pytest.UsageError, match="carry no selection marker"):
         tests_conftest._assert_selection_markers([_FakeUnmarkedItem()])
+
+
+def test_gate_marker_contract_ignores_parent_directory_names() -> None:
+    """A directory named like a marker (``tests/unit/``, ``tests/integration/``)
+    puts that name in ``item.keywords``. It must not satisfy the contract:
+    ``-m`` matches applied markers only, so such a test is never selected."""
+    from tests import conftest as tests_conftest
+
+    class _FakeDirectoryKeywordItem:
+        nodeid = "tests/integration/test_planted.py::test_directory_name_only"
+        name = "test_directory_name_only"
+        keywords: dict[str, Any] = {"integration": True, "unit": True}
+
+        def iter_markers(self) -> Any:
+            return iter(())
+
+    with pytest.raises(pytest.UsageError, match="carry no selection marker"):
+        tests_conftest._assert_selection_markers([_FakeDirectoryKeywordItem()])
 
 
 def test_gate_bandit_catches_planted_b310_in_scripts(tmp_path: Path) -> None:

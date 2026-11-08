@@ -151,6 +151,7 @@ def make_governor(
     posture: DeploymentPosture = DeploymentPosture.DEV,
     magnitude_extractor: Any = None,
     server_inputs: Any = None,
+    execution_ledger: Any = None,
 ) -> SymbolicGovernor:
     """Build a governor from explicit parts; unspecified parts are permissive mocks.
 
@@ -159,7 +160,9 @@ def make_governor(
     ``magnitude_extractor`` (conditional FTRA; ``None`` clears nothing).
     Unset ``safety_filter`` / ``consensus`` keep the deny-by-default nulls.
     ``server_inputs`` maps an action to its server-input resolver (none by
-    default: caller params pass through unchanged).
+    default: caller params pass through unchanged). Unset ``execution_ledger``
+    keeps the Redis-less ledger, which refuses every claim under an enforcing
+    posture.
     """
     opa = opa if opa is not None else allow_opa()
     stpa_validator = stpa_validator if stpa_validator is not None else clean_stpa()
@@ -168,6 +171,8 @@ def make_governor(
         extra["safety_filter"] = safety_filter
     if consensus is not None:
         extra["consensus"] = consensus
+    if execution_ledger is not None:
+        extra["execution_ledger"] = execution_ledger
     components = GovernorComponents(
         opa=opa,
         core_stages=(

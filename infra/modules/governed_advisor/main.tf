@@ -22,6 +22,13 @@ terraform {
 }
 
 resource "kubernetes_deployment" "governed_advisor" {
+  lifecycle {
+    precondition {
+      condition     = !var.enable_e2e_mode || !contains(["prod", "production"], lower(trimspace(var.cage_env)))
+      error_message = "CAGE Invariant (POAM-2026-191): enable_e2e_advisor is a non-production verification switch and is refused when cage_env is prod or production."
+    }
+  }
+
   metadata {
     name      = "governed-financial-advisor"
     namespace = var.namespace
@@ -140,7 +147,11 @@ resource "kubernetes_deployment" "governed_advisor" {
             value = var.model_consensus
           }
 
-          # vLLM Inference Endpoints
+          # Inference Endpoints (routed via Gateway /v1/chat/completions proxy on GKE, R-16 / F-103)
+          env {
+            name  = "VLLM_API_URL"
+            value = var.vllm_base_url
+          }
           env {
             name  = "VLLM_BASE_URL"
             value = var.vllm_base_url

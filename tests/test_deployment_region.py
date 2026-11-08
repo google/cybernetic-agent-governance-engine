@@ -38,9 +38,18 @@ pytestmark = [pytest.mark.unit, pytest.mark.local]
 _REPO_ROOT = pathlib.Path(__file__).resolve().parent.parent
 
 
-def _item(*markers: str) -> SimpleNamespace:
-    """Minimal stand-in for ``pytest.Item`` (only ``keywords``/``nodeid`` used)."""
-    return SimpleNamespace(keywords=set(markers), nodeid="tests/x.py::test_x")
+def _item(*markers: str, parents: tuple[str, ...] = ()) -> SimpleNamespace:
+    """Minimal stand-in for ``pytest.Item``.
+
+    ``markers`` are the applied markers; ``parents`` are parent node names
+    (directories, modules), which pytest also puts in ``item.keywords``.
+    """
+    applied = [SimpleNamespace(name=name) for name in markers]
+    return SimpleNamespace(
+        keywords={*markers, *parents},
+        nodeid="tests/x.py::test_x",
+        iter_markers=lambda: iter(applied),
+    )
 
 
 # ── Region table ──────────────────────────────────────────────────────────────
@@ -162,6 +171,15 @@ def test_live_region_marker_filters_against_the_deployment() -> None:
     reason = dr.live_region_mismatch(live_eu, "US_FED")
     assert reason is not None and "configured for US_FED" in reason
     assert dr.live_region_mismatch(_item("e2e"), "APAC_MAS") is None
+
+
+def test_parent_directory_names_never_make_a_hermetic_test_live() -> None:
+    """A unit/local test under ``tests/integration/`` or ``tests/e2e/`` carries
+    the directory name as a keyword; it stays hermetic and region-pinned."""
+    hermetic = _item("unit", "local", parents=("integration", "e2e", "eu_ecb"))
+    assert dr.is_live_test(hermetic) is False
+    assert dr.marked_region(hermetic) is None
+    assert dr.live_region_mismatch(hermetic, "APAC_MAS") is None
 
 
 # ── conftest fixtures ─────────────────────────────────────────────────────────

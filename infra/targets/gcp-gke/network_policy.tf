@@ -543,6 +543,13 @@ resource "kubernetes_network_policy_v1" "gateway_egress_l3_l4" {
       to {
         pod_selector {
           match_labels = {
+            app = "inference-stub"
+          }
+        }
+      }
+      to {
+        pod_selector {
+          match_labels = {
             app = "nemo-guardrails"
           }
         }
@@ -1167,6 +1174,58 @@ resource "kubernetes_network_policy_v1" "lula_audit_egress" {
   }
 }
 
+# ─── 7b. Model Backend TCP 8000 Ingress Isolation (R-16 / F-103 / EA-1) ──────
+# Only the gateway pod (app = "gateway") may connect to vLLM or the
+# deterministic E2E inference stub on TCP 8000 (and Linkerd inbound 4143).
+# Direct pod-to-model traffic from governed-financial-advisor or other
+# workloads is denied at L3/L4 so Stage 1 scanning, TokenQuotaProxy, and
+# output PII scrubbing on POST /v1/chat/completions cannot be bypassed.
+
+resource "kubernetes_network_policy_v1" "model_backend_ingress" {
+  metadata {
+    name      = "model-backend-ingress"
+    namespace = module.namespace.name
+    labels = {
+      "app.kubernetes.io/managed-by" = "terraform"
+      "cage.io/component"            = "z3n-ingress"
+    }
+    annotations = {
+      "compliance.nist.gov/control"  = "SC-7,AC-4"
+      "compliance.nist.gov/standard" = "SP-800-53-Rev5"
+      "cage.io/poam"                 = "POAM-2026-191"
+    }
+  }
+
+  spec {
+    pod_selector {
+      match_expressions {
+        key      = "app"
+        operator = "In"
+        values   = ["vllm-inference", "vllm-reasoning", "inference-stub"]
+      }
+    }
+    policy_types = ["Ingress"]
+
+    ingress {
+      from {
+        pod_selector {
+          match_labels = {
+            app = "gateway"
+          }
+        }
+      }
+      ports {
+        protocol = "TCP"
+        port     = "8000"
+      }
+      ports {
+        protocol = "TCP"
+        port     = "4143"
+      }
+    }
+  }
+}
+
 # ─── 8. Materialize GKE FQDNNetworkPolicy Objects in Cluster (§5.3) ──────────
 
 resource "kubernetes_manifest" "fqdn_network_policy" {
@@ -1196,6 +1255,7 @@ resource "terraform_data" "network_policy_workload_rollout" {
     rollout_command = "kubectl rollout restart ${join(" ", concat(
       ["deployment/gateway"],
       length(module.governed_advisor) > 0 ? ["deployment/governed-financial-advisor"] : [],
+      length(module.inference_stub) > 0 ? ["deployment/inference-stub"] : [],
       var.enable_compliance_bridge ? ["deployment/compliance-bridge"] : [],
       var.enable_reconciliation_worker ? ["deployment/reconciliation-worker"] : [],
     ))} -n ${module.namespace.name}"
@@ -1210,6 +1270,7 @@ resource "terraform_data" "network_policy_workload_rollout" {
     kubernetes_network_policy_v1.financial_advisor_egress_internal_only,
     kubernetes_network_policy_v1.reconciliation_worker_egress,
     kubernetes_network_policy_v1.vllm_egress_l3_l4,
+    kubernetes_network_policy_v1.model_backend_ingress,
     kubernetes_network_policy_v1.lula_audit_egress,
     kubernetes_manifest.fqdn_network_policy,
   ]

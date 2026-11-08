@@ -60,7 +60,9 @@ from src.gateway.governance.feature_flags import (
     consensus_advisory_only_override,
     consensus_critics_enabled,
 )
-from src.gateway.governance.inference_backend import inference_disabled
+from src.gateway.governance.inference_backend import (
+    semantic_model_disabled as inference_disabled,
+)
 from src.gateway.governance.jcs_canonicalizer import jcs_canonicalize_plan
 from src.gateway.governance.seams.critic import CriticBackend, CriticRequest
 from src.gateway.infrastructure.telemetry_client import genai_span
@@ -602,7 +604,7 @@ class ConsensusGate:
                 "status": "DENY",
                 "decision": "DENY",
                 "reason": (
-                    "No inference backend (CAGE_INFERENCE_BACKEND=none): consensus "
+                    "No semantic inference backend (CAGE_INFERENCE_BACKEND=none/stub): consensus "
                     "needs model critics, so no critic was consulted."
                 ),
                 "reason_code": CONSENSUS_NO_INFERENCE_BACKEND,

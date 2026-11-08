@@ -42,9 +42,8 @@ import logging
 import os
 
 from src.gateway.governance.inference_backend import (
-    INFERENCE_BACKEND_NONE,
     INFERENCE_BACKEND_URL_MISSING,
-    inference_disabled,
+    semantic_model_reason_code,
 )
 
 from .aarm_mapper import (
@@ -240,12 +239,13 @@ async def enrich_report_with_narratives(
         or "default"
     )
 
-    if inference_disabled() or not vllm_base:
+    backend_reason = semantic_model_reason_code()
+    if backend_reason is not None or not vllm_base:
         logger.info(
             "[aarm_report_generator] %s — using deterministic template "
             "narratives for all vectors",
-            INFERENCE_BACKEND_NONE
-            if inference_disabled()
+            backend_reason
+            if backend_reason is not None
             else INFERENCE_BACKEND_URL_MISSING,
         )
         return {r.vector_id: _template_narrative(r) for r in report.vectors}

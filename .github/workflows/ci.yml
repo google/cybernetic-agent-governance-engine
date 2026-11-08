@@ -1119,3 +1119,7 @@ jobs:
         run: terraform -chdir=infra/modules/app_secrets init -backend=false -input=false
       - name: Run terraform test against the app_secrets module
         run: terraform -chdir=infra/modules/app_secrets test
+      - name: Initialise the inference_stub module without a backend
+        run: terraform -chdir=infra/modules/inference_stub init -backend=false -input=false
+      - name: Run terraform test against the inference_stub module
+        run: terraform -chdir=infra/modules/inference_stub test
