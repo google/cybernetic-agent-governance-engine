@@ -52,6 +52,7 @@ from fastapi import BackgroundTasks, FastAPI, HTTPException, Request
 from fastapi.responses import JSONResponse, StreamingResponse
 from opentelemetry import trace
 
+from src.gateway.governance.evidence.stream import EvidenceChainUnavailableError
 from src.gateway.governance.inference_backend import (
     INFERENCE_BACKEND_NONE,
     INFERENCE_BACKEND_URL_MISSING,
@@ -191,7 +192,17 @@ def _resolve_backend_url(model_id: str) -> str:
             no endpoint is configured for the model.
     """
     base = config_manager.get("VLLM_BASE_URL")
-    if "deepseek" in model_id.lower() or "reasoning" in model_id.lower():
+    configured_reasoning = (
+        config_manager.get("MODEL_REASONING")
+        or config_manager.get("VLLM_REASONING_MODEL")
+        or ""
+    ).strip()
+    is_reasoning_model = (
+        "deepseek" in model_id.lower()
+        or "reasoning" in model_id.lower()
+        or (bool(configured_reasoning) and model_id == configured_reasoning)
+    )
+    if is_reasoning_model:
         url = config_manager.get("VLLM_REASONING_API_BASE", base)
     else:
         url = config_manager.get("VLLM_FAST_API_BASE", base)
@@ -212,6 +223,14 @@ def _backend_unavailable_response(reason_code: str, message: str) -> JSONRespons
             "reason_code": reason_code,
             "message": message,
         },
+    )
+
+
+def _evidence_unavailable_response(exc: EvidenceChainUnavailableError) -> JSONResponse:
+    """Return the 503 for a refusal whose evidence could not be committed."""
+    return JSONResponse(
+        status_code=503,
+        content={"error": "evidence_chain_unavailable", "detail": str(exc)},
     )
 
 
@@ -253,6 +272,193 @@ async def _mask_output(rails: Any, text: str) -> str:
     )
 
     return await verify_and_mask_semantic_output(rails, text)
+
+
+async def _mask_json_value(rails: Any, value: Any) -> tuple[Any, bool]:
+    """Mask only ``str`` leaves inside parsed JSON so structure/numbers survive."""
+    if isinstance(value, str):
+        masked = await _mask_output(rails, value)
+        masked_str = masked if isinstance(masked, str) else str(masked)
+        return masked_str, masked_str != value
+    if isinstance(value, list):
+        modified = False
+        out_list: list[Any] = []
+        for item in value:
+            new_item, item_mod = await _mask_json_value(rails, item)
+            out_list.append(new_item)
+            modified = modified or item_mod
+        return out_list, modified
+    if isinstance(value, dict):
+        modified = False
+        out_dict: dict[str, Any] = {}
+        for key, item in value.items():
+            new_item, item_mod = await _mask_json_value(rails, item)
+            out_dict[str(key)] = new_item
+            modified = modified or item_mod
+        return out_dict, modified
+    return value, False
+
+
+async def _mask_tool_arguments(rails: Any, raw_args: str) -> tuple[str, bool]:
+    """Sanitize ``tool_calls[].function.arguments`` without corrupting JSON numbers.
+
+    ``scrub_pii`` replaces bare 9-to-16-digit sequences with unquoted tokens
+    such as ``[REDACTED-PHONE-UCA-3]``, which breaks valid JSON numeric fields
+    when applied to raw JSON text. Parsing first restricts masking to string
+    leaves while keeping numeric, boolean, and structural tokens valid JSON.
+    """
+    try:
+        parsed = json.loads(raw_args)
+    except (json.JSONDecodeError, TypeError):
+        masked = await _mask_output(rails, raw_args)
+        masked_str = masked.strip() if isinstance(masked, str) else str(masked)
+        return masked_str, masked_str != raw_args
+
+    sanitized, modified = await _mask_json_value(rails, parsed)
+    if not modified:
+        return raw_args, False
+    return json.dumps(sanitized), True
+
+
+def _extract_message_content_text(content: Any) -> str:
+    """Extract text from an OpenAI string or multi-part content array."""
+    if isinstance(content, str):
+        return content
+    if isinstance(content, list):
+        parts: list[str] = []
+        for part in content:
+            if isinstance(part, dict) and isinstance(part.get("text"), str):
+                parts.append(part["text"])
+            elif isinstance(part, str):
+                parts.append(part)
+        return " ".join(parts)
+    return ""
+
+
+def _extract_scannable_messages_text(messages: Any) -> str:
+    """Collect all scannable text from messages and assistant tool_calls."""
+    if not isinstance(messages, list):
+        return ""
+    fragments: list[str] = []
+    for msg in messages:
+        if not isinstance(msg, dict):
+            continue
+        text = _extract_message_content_text(msg.get("content"))
+        if text:
+            fragments.append(text)
+        tool_calls = msg.get("tool_calls")
+        if isinstance(tool_calls, list):
+            for tc in tool_calls:
+                if not isinstance(tc, dict):
+                    continue
+                fn = tc.get("function")
+                if isinstance(fn, dict):
+                    if isinstance(fn.get("name"), str):
+                        fragments.append(fn["name"])
+                    if isinstance(fn.get("arguments"), str):
+                        fragments.append(fn["arguments"])
+    return " ".join(fragments)
+
+
+def _resolve_proxy_trace_id(request: Request, body: Any, span: Any) -> str:
+    """Guarantee a non-empty trace_id for cage-audit/3.0 DDL compliance."""
+    try:
+        span_ctx = span.get_span_context() if span is not None else None
+        if span_ctx is not None and getattr(span_ctx, "is_valid", False):
+            trace_int = int(getattr(span_ctx, "trace_id", 0) or 0)
+            if trace_int > 0:
+                return f"{trace_int:032x}"
+    except Exception:
+        pass
+    hdr = request.headers.get("x-cage-trace-id")
+    if hdr and hdr.strip():
+        return hdr.strip()
+    if isinstance(body, dict):
+        raw = body.get("trace_id") or body.get("thread_id")
+        if isinstance(raw, str) and raw.strip():
+            return raw.strip()
+    return str(_uuid.uuid4())
+
+
+async def _emit_proxy_evidence(
+    request: Request,
+    *,
+    span: Any,
+    body: Any,
+    event_type: str,
+    control_id: str,
+    status_code: int,
+    reason: str,
+    model_id: str,
+    agent_id: str | None = None,
+    extra: dict[str, Any] | None = None,
+) -> None:
+    """Commit a fail-closed inference-proxy refusal to ``cage_evidence``.
+
+    Routes through :func:`commit_decision_evidence` so that when
+    :func:`is_evidence_chain_blocking` is ``True``, a missing, stopped, or
+    failing evidence sink raises :class:`EvidenceChainUnavailableError`
+    instead of returning an un-evidenced 403/429 refusal.
+    """
+    from src.gateway.governance.evidence.stream import (
+        commit_decision_evidence,
+        get_evidence_sink,
+        is_evidence_chain_blocking,
+    )
+
+    blocking = is_evidence_chain_blocking()
+    app_state = getattr(getattr(request, "app", None), "state", None)
+    sink = getattr(app_state, "evidence_sink", None)
+    if sink is None:
+        sink = get_evidence_sink()
+    if not blocking and (sink is None or not getattr(sink, "_running", False)):
+        return
+
+    event: dict[str, Any] = {
+        "type": event_type,
+        "control_id": control_id,
+        "trace_id": _resolve_proxy_trace_id(request, body, span),
+        "decision": "DENY",
+        "surface": "inference_proxy",
+        "status_code": status_code,
+        "model": model_id,
+        "reason": scrub_pii(reason),
+        "timestamp": datetime.now(timezone.utc).isoformat(),
+    }
+    if agent_id:
+        event["agent_id"] = agent_id
+    if extra:
+        event.update(extra)
+
+    try:
+        if blocking:
+            await commit_decision_evidence(
+                event,
+                label=event_type,
+                sink=sink,
+                sentinel_unset=False,
+            )
+        else:
+            ingest_res = sink.ingest(event)
+            if inspect.isawaitable(ingest_res):
+                await ingest_res
+    except EvidenceChainUnavailableError:
+        logger.error(
+            "Inference proxy evidence emission failed closed (control=%s)",
+            control_id,
+        )
+        if blocking:
+            raise
+    except Exception as exc:
+        logger.error(
+            "Inference proxy evidence emission failed (control=%s): %s",
+            control_id,
+            exc,
+        )
+        if blocking:
+            raise EvidenceChainUnavailableError(
+                f"Evidence sink failed to commit {event_type}: {exc}", exc
+            ) from exc
 
 
 @inference_app.post("/v1/chat/completions")
@@ -329,23 +535,38 @@ async def chat_completions(
         # system-only, assistant-only, and mixed message sets are all governed.
         last_user_msg = next(
             (
-                m.get("content", "")
+                text
                 for m in reversed(messages)
-                if m.get("role") == "user" and m.get("content")
+                if isinstance(m, dict)
+                and m.get("role") == "user"
+                and (text := _extract_message_content_text(m.get("content")))
             ),
             "",
         )
 
-        # Build a combined text representation of ALL messages for Ingress Stage 1 scan.
-        # This prevents system-only or assistant-only requests from bypassing
-        # the keyword filter (GHSA-hfqj-24cj-693g).
-        all_messages_text = " ".join(
-            m.get("content", "") for m in messages if isinstance(m.get("content"), str)
-        )
+        # Build a combined text representation of ALL messages (including multi-part
+        # content arrays and prior tool_calls arguments) for Ingress Stage 1 scan.
+        # This prevents system-only, assistant-only, or structured content arrays
+        # from bypassing the keyword filter (GHSA-hfqj-24cj-693g).
+        all_messages_text = _extract_scannable_messages_text(messages)
 
         # 1. Ingress Stage 1 keyword scan — applied to ALL messages, not just user role.
         if ac_keyword_scan(all_messages_text):
             stamp_iso_control(span, ingress_stage=1, control="A.5.2", outcome="BLOCK")
+            try:
+                await _emit_proxy_evidence(
+                    request,
+                    span=span,
+                    body=body,
+                    event_type="INFERENCE_PROXY_BLOCK",
+                    control_id="A.5.2",
+                    status_code=403,
+                    reason="Ingress Stage 1 keyword match",
+                    model_id=model_id,
+                    extra={"iso42001_control": "A.5.2", "ingress_stage": 1},
+                )
+            except EvidenceChainUnavailableError as exc:
+                return _evidence_unavailable_response(exc)
             blocked = _create_blocked_response("Ingress Stage 1 keyword match")
             return JSONResponse(content=blocked, status_code=403)
         stamp_iso_control(span, ingress_stage=1, control="A.5.2", outcome="PASS")
@@ -386,6 +607,21 @@ async def chat_completions(
             redis_client=shared_redis,
         ):
             stamp_iso_control(span, ingress_stage=1, control="SC-7", outcome="BLOCK")
+            try:
+                await _emit_proxy_evidence(
+                    request,
+                    span=span,
+                    body=body,
+                    event_type="INFERENCE_PROXY_BLOCK",
+                    control_id="SC-7",
+                    status_code=403,
+                    reason="Workload SVID or thread is quarantined",
+                    model_id=model_id,
+                    agent_id=agent_id,
+                    extra={"thread_id": request_thread_id},
+                )
+            except EvidenceChainUnavailableError as exc:
+                return _evidence_unavailable_response(exc)
             return JSONResponse(
                 content={
                     "error": "workload_quarantined",
@@ -438,10 +674,33 @@ async def chat_completions(
         )
         if not quota_result.allowed:
             stamp_iso_control(span, ingress_stage=2, control="A.4", outcome="BLOCK")
-            # Awaited inline — WORM write must complete before 429 is
-            # returned to guarantee ISO 42001 Clause 6.1 audit lineage
+            # Awaited inline — WORM and evidence stream writes must complete before
+            # 429 is returned to guarantee ISO 42001 Clause 6.1 / R-16 audit lineage
             # survives spot-instance eviction.
             await _get_uca_logger().log_quota_exceeded(quota_result, body)
+            try:
+                await _emit_proxy_evidence(
+                    request,
+                    span=span,
+                    body=body,
+                    event_type="TOKEN_QUOTA_DENIED",
+                    control_id="TQP-007",
+                    status_code=429,
+                    reason=str(quota_result.block_reason or "quota_exceeded"),
+                    model_id=model_id,
+                    agent_id=agent_id,
+                    extra={
+                        "governance_control_id": "CTRL_TQP_007",
+                        "iso42001_control": "A.4",
+                        "aarm_ref": "A.8.4",
+                        "step_count": quota_result.step_count,
+                        "accumulated_tokens": quota_result.accumulated_tokens,
+                        "quota_max_steps": quota_result.step_quota_max,
+                        "quota_max_tokens": quota_result.token_quota_max,
+                    },
+                )
+            except EvidenceChainUnavailableError as exc:
+                return _evidence_unavailable_response(exc)
             return JSONResponse(
                 content={
                     "error": "quota_exceeded",
@@ -482,6 +741,18 @@ async def chat_completions(
                     stamp_iso_control(
                         span, ingress_stage=3, control="A.6.1.2", outcome="BLOCK"
                     )
+                    await _emit_proxy_evidence(
+                        request,
+                        span=span,
+                        body=body,
+                        event_type="INFERENCE_PROXY_BLOCK",
+                        control_id="A.6.1.2",
+                        status_code=403,
+                        reason=str(nemo_result.reason),
+                        model_id=model_id,
+                        agent_id=agent_id,
+                        extra={"iso42001_control": "A.6.1.2", "ingress_stage": 3},
+                    )
                     blocked = _create_blocked_response(nemo_result.reason)
                     return JSONResponse(content=blocked, status_code=403)
                 stamp_iso_control(
@@ -494,6 +765,15 @@ async def chat_completions(
             target_url = f"{api_base.rstrip('/')}/chat/completions"
             raw_client = _get_http_client()
             client = await raw_client if inspect.isawaitable(raw_client) else raw_client
+        except EvidenceChainUnavailableError as exc:
+            await _get_token_quota_proxy().rollback_step(
+                agent_id, reserved_tokens=token_delta
+            )
+            logger.error(
+                "Inference proxy refusal failed closed: evidence chain unavailable: %s",
+                exc,
+            )
+            return _evidence_unavailable_response(exc)
         except InferenceBackendUnavailable as exc:
             await _get_token_quota_proxy().rollback_step(
                 agent_id, reserved_tokens=token_delta
@@ -610,13 +890,10 @@ async def chat_completions(
                         raw_args = tc_entry["arguments"]
                         safe_args_str = raw_args
                         if raw_args:
-                            safe_args = await _mask_output(rails, raw_args)
-                            safe_args_str = (
-                                safe_args.strip()
-                                if isinstance(safe_args, str)
-                                else str(safe_args)
+                            safe_args_str, was_modified = await _mask_tool_arguments(
+                                rails, raw_args
                             )
-                            if safe_args_str != raw_args:
+                            if was_modified:
                                 tool_calls_modified = True
                         sanitized_tool_calls.append(
                             {
@@ -768,14 +1045,12 @@ async def chat_completions(
                             and "arguments" in tool_call["function"]
                         ):
                             raw_args = tool_call["function"]["arguments"]
-                            if raw_args:
-                                safe_args = await _mask_output(rails, raw_args)
-                                tool_call["function"]["arguments"] = (
-                                    safe_args.strip()
-                                    if isinstance(safe_args, str)
-                                    else str(safe_args)
+                            if raw_args and isinstance(raw_args, str):
+                                safe_args_str, _ = await _mask_tool_arguments(
+                                    rails, raw_args
                                 )
-                elif message.get("content"):
+                                tool_call["function"]["arguments"] = safe_args_str
+                if isinstance(message.get("content"), str) and message["content"]:
                     safe_content = await _mask_output(rails, message["content"])
                     message["content"] = safe_content
         except Exception:

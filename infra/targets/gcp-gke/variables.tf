@@ -438,7 +438,7 @@ variable "clickhouse_storage_size" {
 # ─── NeMo Guardrails + Presidio Configuration ─────────────────────────────────
 
 variable "enable_nemo_guardrails" {
-  description = "Deploy the standalone NeMo Guardrails + Presidio server. Optional: nothing in CAGE calls it (the gateway builds its rails in process), and it needs inference_backend = \"vllm\"."
+  description = "Deploy the standalone NeMo Guardrails + Presidio server. Refused when true: only the gateway may reach the model backends (EA-1), so the server could never reach vLLM. Nothing in CAGE calls it; the gateway builds its rails in process."
   type        = bool
   default     = false
 }
@@ -534,6 +534,12 @@ variable "inference_backend" {
     condition     = contains(["none", "vllm"], var.inference_backend)
     error_message = "inference_backend must be \"none\" or \"vllm\" on GKE. \"external\" is compose-only: the cluster denies external egress by default and the advisor's egress is internal-only, so reaching a third-party model provider would mean weakening that control."
   }
+}
+
+variable "enable_e2e_advisor" {
+  description = "Opt-in non-production verification switch (POAM-2026-191, S-12): deploys the in-cluster governed-financial-advisor routed through the gateway /v1/chat/completions proxy alongside the deterministic inference-stub backend when inference_backend = \"none\", without provisioning GPU vLLM pods. Never set in committed .tfvars profiles; refused in prod/production."
+  type        = bool
+  default     = false
 }
 
 # Replaced by inference_backend. Kept only so that a profile still setting it
@@ -1318,4 +1324,20 @@ variable "enable_service_monitor" {
   description = "Deploy Prometheus Operator ServiceMonitor/stera-gateway-monitor alongside GKE Managed Prometheus PodMonitoring/gateway-metrics when monitoring.coreos.com/v1 CRDs are installed (R-6, F-91)."
   type        = bool
   default     = false
+}
+
+variable "inference_stub_image" {
+  description = "Optional container image override for the deterministic E2E inference stub. When empty (default), var.image_digests[\"inference-stub\"] is used."
+  type        = string
+  default     = ""
+
+  validation {
+    condition     = var.inference_stub_image == "" || !can(regex(":latest$", var.inference_stub_image))
+    error_message = "inference_stub_image must not use the mutable :latest tag."
+  }
+
+  validation {
+    condition     = var.inference_stub_image == "" || !var.enable_binary_authorization || can(regex("@sha256:[0-9a-f]{64}$", var.inference_stub_image))
+    error_message = "Under Binary Authorization, inference_stub_image must be pinned by @sha256: digest."
+  }
 }

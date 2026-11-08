@@ -58,9 +58,8 @@ from datetime import datetime, timezone
 from typing import Any
 
 from src.gateway.governance.inference_backend import (
-    INFERENCE_BACKEND_NONE,
     INFERENCE_BACKEND_URL_MISSING,
-    inference_disabled,
+    semantic_model_reason_code,
 )
 
 
@@ -743,11 +742,12 @@ def _advisory_disposition(alerted: bool, alert_targets: list[str]) -> dict | Non
     }
     if not alerted or not alert_targets:
         return {**base, "advisor_status": ADVISOR_NOT_REQUIRED}
-    if inference_disabled():
+    backend_reason = semantic_model_reason_code()
+    if backend_reason is not None:
         return {
             **base,
             "advisor_status": ADVISOR_NOT_PERFORMED,
-            "advisor_reason_code": INFERENCE_BACKEND_NONE,
+            "advisor_reason_code": backend_reason,
         }
     if not os.environ.get("VLLM_BASE_URL"):
         return {

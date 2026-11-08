@@ -149,7 +149,52 @@ run "a_vllm_image_override_replaces_the_map_entry" {
   }
 }
 
-run "nemo_requires_its_server_and_presidio_images" {
+run "e2e_advisor_requires_stub_and_advisor_images" {
+  command = plan
+  variables {
+    enable_e2e_advisor = true
+    image_digests      = var.core
+  }
+  expect_failures = [var.image_digests]
+}
+
+run "e2e_advisor_with_both_images_plans" {
+  command = plan
+  variables {
+    enable_e2e_advisor = true
+    image_digests = merge(var.core, {
+      "inference-stub"             = "registry.invalid/cage-test/inference-stub@sha256:deadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeef"
+      "governed-financial-advisor" = "registry.invalid/cage-test/governed-financial-advisor@sha256:deadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeef"
+    })
+  }
+  assert {
+    condition = (
+      contains(local.required_image_digests, "inference-stub") &&
+      contains(local.required_image_digests, "governed-financial-advisor") &&
+      !contains(local.required_image_digests, "vllm-streamer")
+    )
+    error_message = "enable_e2e_advisor under none must require inference-stub and governed-financial-advisor, not vllm-streamer"
+  }
+}
+
+run "an_inference_stub_image_override_replaces_the_map_entry" {
+  command = plan
+  variables {
+    enable_e2e_advisor   = true
+    inference_stub_image = "registry.invalid/cage-test/inference-stub@sha256:deadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeef"
+    image_digests = merge(var.core, {
+      "governed-financial-advisor" = "registry.invalid/cage-test/governed-financial-advisor@sha256:deadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeef"
+    })
+  }
+  assert {
+    condition     = !contains(local.required_image_digests, "inference-stub")
+    error_message = "an explicit inference_stub_image must replace the inference-stub map entry"
+  }
+}
+
+# EA-1: supplying the NeMo server's images does not unlock it; the plan
+# refuses the server because only the gateway may reach the model backends.
+run "nemo_server_is_refused_even_with_its_images" {
   command = plan
   variables {
     inference_backend      = "vllm"
@@ -157,9 +202,12 @@ run "nemo_requires_its_server_and_presidio_images" {
     image_digests = merge(var.core, {
       "vllm-streamer"              = "registry.invalid/cage-test/vllm-streamer@sha256:deadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeef"
       "governed-financial-advisor" = "registry.invalid/cage-test/governed-financial-advisor@sha256:deadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeef"
+      "nemo-guardrails"            = "registry.invalid/cage-test/nemo-guardrails@sha256:deadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeef"
+      "presidio-analyzer"          = "registry.invalid/cage-test/presidio-analyzer@sha256:deadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeef"
+      "presidio-anonymizer"        = "registry.invalid/cage-test/presidio-anonymizer@sha256:deadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeef"
     })
   }
-  expect_failures = [var.image_digests]
+  expect_failures = [terraform_data.inference_backend_guard]
 }
 
 run "no_bridge_needs_no_bridge_image" {

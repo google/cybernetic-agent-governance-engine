@@ -75,12 +75,12 @@ variable "redis_password" {
 }
 
 variable "cage_inference_backend" {
-  description = "CAGE_INFERENCE_BACKEND for the gateway: \"none\", \"external\" or \"vllm\". Targets may narrow this; gcp-gke refuses \"external\"."
+  description = "CAGE_INFERENCE_BACKEND for the gateway: \"none\", \"stub\", \"external\" or \"vllm\". Targets may narrow this; gcp-gke refuses \"external\" and refuses \"stub\" in production."
   type        = string
 
   validation {
-    condition     = contains(["none", "external", "vllm"], var.cage_inference_backend)
-    error_message = "cage_inference_backend must be \"none\", \"external\" or \"vllm\"."
+    condition     = contains(["none", "stub", "external", "vllm"], var.cage_inference_backend)
+    error_message = "cage_inference_backend must be \"none\", \"stub\", \"external\" or \"vllm\"."
   }
 }
 

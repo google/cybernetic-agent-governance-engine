@@ -110,7 +110,7 @@ force_redeploy = true
 # ─── Services ─────────────────────────────────────────────────────────────────
 inference_backend        = "vllm"
 enable_compliance_bridge = true
-enable_nemo_guardrails   = true
+enable_nemo_guardrails   = false
 
 # vLLM configuration — weights streamed from GCS model bucket via runai_streamer
 model_fast             = "gs://cage-models/Qwen/Qwen2.5-1.5B-Instruct"

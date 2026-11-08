@@ -54,6 +54,7 @@ FIRST_PARTY_IMAGES=(
   "governed-financial-advisor|Dockerfile"
   "nemo-guardrails|deployment/docker/Dockerfile.nemo"
   "lula|deployment/docker/Dockerfile.lula"
+  "inference-stub|src/integrations/inference_stub/Dockerfile"
 )
 
 # Which first-party images to build, space-separated. deploy_all.sh passes the
@@ -61,7 +62,7 @@ FIRST_PARTY_IMAGES=(
 # infra/targets/gcp-gke/main.tf), so staging under inference_backend = "none"
 # builds no vLLM, advisor or NeMo image. The in-cluster advisor consumes
 # governed-financial-advisor. ONLY_IMAGE=<name> builds one image and skips mirroring.
-ALL_IMAGES="gateway agentsight-ui compliance-bridge governed-financial-advisor nemo-guardrails vllm-streamer lula"
+ALL_IMAGES="gateway agentsight-ui compliance-bridge governed-financial-advisor nemo-guardrails vllm-streamer lula inference-stub"
 IMAGES="${ONLY_IMAGE:-${IMAGES:-${ALL_IMAGES}}}"
 for wanted in ${IMAGES}; do
   if [[ " ${ALL_IMAGES} " != *" ${wanted} "* ]]; then

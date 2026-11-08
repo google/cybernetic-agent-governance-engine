@@ -211,12 +211,17 @@ def _check_consensus_critics_backend(components: GovernorComponents) -> None:
     ``CONSENSUS_NO_INFERENCE_BACKEND`` if critics are on and no model exists.
     """
     from src.gateway.governance.feature_flags import consensus_critics_enabled
-    from src.gateway.governance.inference_backend import inference_disabled
+    from src.gateway.governance.inference_backend import (
+        resolve_inference_backend,
+        semantic_model_disabled,
+    )
 
-    if consensus_critics_enabled() and inference_disabled():
+    if consensus_critics_enabled() and semantic_model_disabled():
+        backend = resolve_inference_backend()
+        backend_val = backend.value if backend is not None else "none"
         raise RuntimeError(
-            "CAGE_CONSENSUS_CRITICS_ENABLED=true requires an inference backend, "
-            "but CAGE_INFERENCE_BACKEND=none"
+            "CAGE_CONSENSUS_CRITICS_ENABLED=true requires a semantic inference backend, "
+            f"but CAGE_INFERENCE_BACKEND={backend_val}"
         )
 
 
@@ -229,12 +234,34 @@ def _check_nemo_rails_backend(components: GovernorComponents) -> None:
     rails this configuration leaves off.
     """
     from src.gateway.governance.feature_flags import nemo_rails_enabled
-    from src.gateway.governance.inference_backend import inference_disabled
+    from src.gateway.governance.inference_backend import (
+        resolve_inference_backend,
+        semantic_model_disabled,
+    )
 
-    if nemo_rails_enabled() and inference_disabled():
+    if nemo_rails_enabled() and semantic_model_disabled():
+        backend = resolve_inference_backend()
+        backend_val = backend.value if backend is not None else "none"
         raise RuntimeError(
-            "CAGE_NEMO_ENABLED=true requires an inference backend, "
-            "but CAGE_INFERENCE_BACKEND=none"
+            "CAGE_NEMO_ENABLED=true requires a semantic inference backend, "
+            f"but CAGE_INFERENCE_BACKEND={backend_val}"
+        )
+
+
+def _check_stub_inference_backend(components: GovernorComponents) -> None:
+    """Refuse deterministic ``stub`` backend in PRODUCTION posture (POAM-2026-191)."""
+    from src.gateway.governance.inference_backend import (
+        InferenceBackend,
+        resolve_inference_backend,
+    )
+
+    if (
+        components.posture is DeploymentPosture.PRODUCTION
+        and resolve_inference_backend() is InferenceBackend.STUB
+    ):
+        raise RuntimeError(
+            "CAGE_INFERENCE_BACKEND=stub is a non-production E2E conformance backend "
+            "and is refused in PRODUCTION posture (S-12 / POAM-2026-191)"
         )
 
 
@@ -278,6 +305,7 @@ CHECKS: tuple[tuple[str, Callable[[GovernorComponents], None]], ...] = (
     ("jurisdiction_requirements", _check_jurisdiction_requirements),
     ("consensus_critics_backend", _check_consensus_critics_backend),
     ("nemo_rails_backend", _check_nemo_rails_backend),
+    ("stub_inference_backend", _check_stub_inference_backend),
     ("kms_signing_mode", _check_kms_signing_mode),
     ("kms_ready", _check_kms_ready),
     ("redis_ready", _check_redis_ready),

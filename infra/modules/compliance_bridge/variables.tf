@@ -92,13 +92,13 @@ variable "remediation_timeout_ms" {
 }
 
 variable "cage_inference_backend" {
-  description = "CAGE_INFERENCE_BACKEND for the bridge: \"none\", \"external\", \"vllm\", or empty for unset (the behaviour from before the setting existed). Under \"none\" no remediation advisory is attempted."
+  description = "CAGE_INFERENCE_BACKEND for the bridge: \"none\", \"stub\", \"external\", \"vllm\", or empty for unset (the behaviour from before the setting existed). Under \"none\" or \"stub\" no LLM remediation advisory is attempted."
   type        = string
   default     = ""
 
   validation {
-    condition     = contains(["", "none", "external", "vllm"], var.cage_inference_backend)
-    error_message = "cage_inference_backend must be empty, \"none\", \"external\" or \"vllm\"."
+    condition     = contains(["", "none", "stub", "external", "vllm"], var.cage_inference_backend)
+    error_message = "cage_inference_backend must be empty, \"none\", \"stub\", \"external\" or \"vllm\"."
   }
 }
 

@@ -199,9 +199,11 @@ from src.governed_financial_advisor.infrastructure.llm.models import chat_model
 def create_execution_analyst_agent(model_name: str = Config.MODEL_REASONING):  # type: ignore[assignment, no-untyped-def]
     """Factory to create execution analyst agent.
 
-    Uses VLLM_REASONING_API_BASE for the inference endpoint — the gateway
-    (GATEWAY_API_BASE / GATEWAY_URL) is an MCP/governance gateway, not an
-    OpenAI-compatible LLM endpoint, so pointing the LLM client there returns 404.
+    Uses VLLM_REASONING_API_BASE for the OpenAI-compatible inference endpoint.
+    On GKE (R-16 / F-103), VLLM_REASONING_API_BASE points at the gateway's
+    /v1/chat/completions inference proxy (http://gateway.<ns>.svc.cluster.local:8080/v1)
+    so Stage-1 prompt scanning (A.5.2), TokenQuotaProxy (TQP-007), and PII
+    scrubbing (A.9.2) run on the live advisor model path.
 
     Uses vLLM's guided_json FSM decoder (extra_body={"guided_json": schema}) to
     guarantee the output conforms to ExecutionPlan without any tool-calling path.

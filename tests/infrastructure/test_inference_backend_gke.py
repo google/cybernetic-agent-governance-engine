@@ -104,6 +104,8 @@ def test_every_profile_names_its_backend_and_drops_enable_vllm(profile: str) -> 
     text = _read(GKE / profile)
     assert _setting(text, "enable_vllm") is None, f"{profile} still sets enable_vllm"
     assert _setting(text, "inference_backend") in {"none", "vllm"}, profile
+    # The plan refuses the standalone NeMo server (EA-1).
+    assert _setting(text, "enable_nemo_guardrails") in {None, "false"}, profile
 
 
 def test_staging_is_the_profile_without_a_model() -> None:
@@ -186,11 +188,27 @@ def test_every_profile_starts_with_zero_gpus_and_lists_only_verified_l4_zones(
 
 
 def test_model_workloads_are_counted_on_the_backend() -> None:
-    assert re.search(r'vllm_enabled\s*=\s*var\.inference_backend == "vllm"', MAIN)
-    assert re.search(r"advisor_enabled\s*=\s*local\.vllm_enabled", MAIN)
+    assert re.search(
+        r'^\s*vllm_enabled\s*=\s*var\.inference_backend == "vllm"\s*$',
+        MAIN,
+        re.MULTILINE,
+    )
+    assert re.search(
+        r"^\s*inference_stub_enabled\s*=\s*var\.enable_e2e_advisor && !local\.vllm_enabled\s*$",
+        MAIN,
+        re.MULTILINE,
+    )
+    # F-31: whole-line match so re-welding or rewriting advisor_enabled fails closed.
+    assert re.search(
+        r"^\s*advisor_enabled\s*=\s*local\.vllm_enabled \|\| var\.enable_e2e_advisor\s*$",
+        MAIN,
+        re.MULTILINE,
+    )
     for name in ("vllm", "vllm_reasoning"):
         block = _block(MAIN, f'module "{name}" {{')
         assert "count = local.vllm_enabled ? 1 : 0" in block, name
+    stub = _block(MAIN, 'module "inference_stub" {')
+    assert "count = local.inference_stub_enabled ? 1 : 0" in stub
     gke = _block(MAIN, 'module "governed_advisor" {')
     assert "count  = local.advisor_enabled ? 1 : 0" in gke
 
@@ -200,18 +218,71 @@ def test_no_workload_is_pointed_at_vllm_outside_the_backend_locals() -> None:
     locals_block = _block(MAIN, "locals {\n  vllm_enabled")
     rest = MAIN.replace(locals_block, "")
     assert "vllm-service." not in rest and "vllm-reasoning." not in rest
-    assert 'vllm_api_key = local.vllm_enabled ? "EMPTY" : ""' in locals_block
+    assert "local.vllm_api_key" not in MAIN, "the bridge was its only reader"
+    assert (
+        'gateway_model_api_key = (local.vllm_enabled || local.inference_stub_enabled) ? "EMPTY" : ""'
+        in locals_block
+    )
 
 
 def test_gateway_and_bridge_are_told_the_backend() -> None:
     gateway = _squash(_block(MAIN, 'module "gateway" {'))
     bridge = _squash(_block(MAIN, 'module "compliance_bridge" {'))
-    for block in (gateway, bridge):
-        assert "cage_inference_backend = var.inference_backend" in block
-        assert "vllm_api_key = local.vllm_api_key" in block
+    assert "cage_inference_backend = local.effective_inference_backend" in gateway
+    # F-33: gateway upstream locals separate stub vs vLLM. EA-1: the model
+    # backends admit only the gateway, so the bridge is given no model at all.
+    assert "vllm_base_url = local.gateway_model_fast_url" in gateway
+    assert "vllm_reasoning_api_base = local.gateway_model_reasoning_url" in gateway
+    assert "vllm_fast_api_base = local.gateway_model_fast_url" in gateway
+    assert "vllm_api_key = local.gateway_model_api_key" in gateway
+    assert 'cage_inference_backend = "none"' in bridge
+    assert 'vllm_base_url = ""' in bridge
+    assert 'vllm_api_key = ""' in bridge
     module_main = _read(REPO_ROOT / "infra" / "modules" / "gateway" / "main.tf")
     for env in ("CAGE_INFERENCE_BACKEND", "VLLM_API_KEY"):
         assert f'name  = "{env}"' in module_main, env
+
+
+def test_advisor_routes_inference_through_gateway_proxy_and_keeps_e2e_flag_opt_in() -> (
+    None
+):
+    # R-16 / F-103: advisor VLLM_API_URL / VLLM_BASE_URL route via gateway:8080/v1.
+    locals_block = _squash(_block(MAIN, "locals {\n  vllm_enabled"))
+    assert (
+        "advisor_inference_url = local.advisor_enabled ? "
+        '"http://${module.gateway.service_name}.${module.namespace.name}.svc.cluster.local:8080/v1" : ""'
+    ) in locals_block
+    advisor = _squash(_block(MAIN, 'module "governed_advisor" {'))
+    assert "vllm_base_url = local.advisor_inference_url" in advisor
+    assert "vllm_fast_api_base = local.advisor_inference_url" in advisor
+    assert "vllm_reasoning_api_base = local.advisor_inference_url" in advisor
+    assert "vllm_api_key = local.advisor_inference_api_key" in advisor
+    advisor_module = _read(
+        REPO_ROOT / "infra" / "modules" / "governed_advisor" / "main.tf"
+    )
+    for env in ("VLLM_API_URL", "VLLM_BASE_URL", "OPENAI_API_BASE"):
+        assert f'name  = "{env}"' in advisor_module
+
+    # S-12: enable_e2e_advisor defaults to false and never appears in committed .tfvars.
+    e2e_var = _squash(_block(VARIABLES, 'variable "enable_e2e_advisor"'))
+    assert "default = false" in e2e_var
+    for profile in [*PROFILES, "terraform.auto.tfvars.example"]:
+        assert _setting(_read(GKE / profile), "enable_e2e_advisor") is None, profile
+
+    # F-30: deploy_all.sh builds advisor under vllm or enable_e2e_advisor, vllm-streamer only under vllm.
+    deploy_sh = _read(REPO_ROOT / "deploy_all.sh")
+    assert (
+        '_enable_e2e_advisor="$(_effective_tf_var enable_e2e_advisor "${tf_args[@]}")"'
+        in deploy_sh
+    )
+    assert (
+        'if [[ "$_inference_backend" == "vllm" || "$_enable_e2e_advisor" == "true" ]]; then'
+        in deploy_sh
+    )
+
+    # F-34: CI terraform-test job runs infra/modules/inference_stub test.
+    ci_yml = _read(REPO_ROOT / ".github" / "workflows" / "ci.yml")
+    assert "terraform -chdir=infra/modules/inference_stub test" in ci_yml
 
 
 def test_switching_backend_changes_no_cluster_or_node_pool_input() -> None:
@@ -223,7 +294,10 @@ def test_switching_backend_changes_no_cluster_or_node_pool_input() -> None:
 def test_plan_refuses_backends_that_cannot_run() -> None:
     guard = _squash(_block(MAIN, 'resource "terraform_data" "inference_backend_guard"'))
     assert "condition = !local.vllm_enabled || var.enable_gpu_node_pool" in guard
-    assert "condition = !var.enable_nemo_guardrails || local.vllm_enabled" in guard
+    # EA-1: the standalone NeMo server calls vLLM directly, and only the
+    # gateway may reach the model backends, so the plan refuses it outright.
+    assert "condition = !var.enable_nemo_guardrails" in guard
+    assert "only the gateway may reach the model backends" in guard
 
 
 def test_nemo_server_is_off_by_default() -> None:

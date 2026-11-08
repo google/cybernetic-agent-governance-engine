@@ -21,14 +21,20 @@ model exists at all.
 - ``none``: no model. OPA, CBF, STPA, the evidence chain and HITL run as
   usual. Every model-dependent check refuses with its own reason code instead
   of admitting or reaching for a default URL, and no NeMo rails are built.
+- ``stub``: deterministic OpenAI-compatible test/staging stub backend
+  (POAM-2026-191). The gateway inference proxy forwards ``/v1/chat/completions``
+  to ``VLLM_BASE_URL`` (the ``inference-stub`` Service), while semantic LLM
+  rails, LLM consensus critics, and LLM remediation narratives stay off just as
+  under ``none``. Refused in ``PRODUCTION`` posture.
 - ``external``: a model served outside the cluster.
 - ``vllm``: in-cluster vLLM.
 
-``external`` and ``vllm`` both need ``VLLM_BASE_URL`` and ``VLLM_API_KEY``.
+``stub``, ``external`` and ``vllm`` all need ``VLLM_BASE_URL`` and
+``VLLM_API_KEY``.
 
 Unset keeps the behaviour from before this setting existed: a backend is
-required. ``none`` is always explicit and never inferred from a missing URL.
-An unknown value fails startup.
+required. ``none`` and ``stub`` are always explicit and never inferred from a
+missing URL. An unknown value fails startup.
 """
 
 from __future__ import annotations
@@ -42,6 +48,7 @@ ENV_VAR: Final[str] = "CAGE_INFERENCE_BACKEND"
 
 # Reason codes for model-dependent paths that cannot run.
 INFERENCE_BACKEND_NONE: Final[str] = "INFERENCE_BACKEND_NONE"
+INFERENCE_BACKEND_STUB: Final[str] = "INFERENCE_BACKEND_STUB"
 INFERENCE_BACKEND_URL_MISSING: Final[str] = "INFERENCE_BACKEND_URL_MISSING"
 
 
@@ -49,6 +56,7 @@ class InferenceBackend(str, Enum):
     """Where model inference comes from, if anywhere."""
 
     NONE = "none"
+    STUB = "stub"
     EXTERNAL = "external"
     VLLM = "vllm"
 
@@ -76,7 +84,7 @@ def resolve_inference_backend(
 
     Raises:
         InferenceBackendConfigError: for a value that is not ``none``,
-            ``external`` or ``vllm``.
+            ``stub``, ``external`` or ``vllm``.
     """
     env = os.environ if environ is None else environ
     raw = env.get(ENV_VAR)
@@ -92,8 +100,28 @@ def resolve_inference_backend(
 
 
 def inference_disabled(environ: Mapping[str, str] | None = None) -> bool:
-    """True when the process runs with no model (``CAGE_INFERENCE_BACKEND=none``)."""
+    """True when the process runs with no model endpoint (``CAGE_INFERENCE_BACKEND=none``)."""
     return resolve_inference_backend(environ) is InferenceBackend.NONE
+
+
+def semantic_model_disabled(environ: Mapping[str, str] | None = None) -> bool:
+    """True when no semantic LLM exists (``none`` or deterministic ``stub``)."""
+    return resolve_inference_backend(environ) in (
+        InferenceBackend.NONE,
+        InferenceBackend.STUB,
+    )
+
+
+def semantic_model_reason_code(
+    environ: Mapping[str, str] | None = None,
+) -> str | None:
+    """Return the reason code when semantic LLM features are off by backend, else ``None``."""
+    backend = resolve_inference_backend(environ)
+    if backend is InferenceBackend.NONE:
+        return INFERENCE_BACKEND_NONE
+    if backend is InferenceBackend.STUB:
+        return INFERENCE_BACKEND_STUB
+    return None
 
 
 def require_backend_settings(get: Callable[[str], str | None]) -> None:

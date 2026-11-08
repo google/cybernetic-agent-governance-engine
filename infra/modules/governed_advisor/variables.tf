@@ -151,6 +151,12 @@ variable "cage_env" {
   default     = "development"
 }
 
+variable "enable_e2e_mode" {
+  description = "True when deployed via opt-in non-production enable_e2e_advisor verification mode (POAM-2026-191). Refused in prod/production via Deployment precondition."
+  type        = bool
+  default     = false
+}
+
 variable "service_account_name" {
   description = "Kubernetes ServiceAccount the pods run as. Must be the advisor's own KSA, which has no Google service account (POAM-2026-079). No default: a missing identity fails the plan."
   type        = string

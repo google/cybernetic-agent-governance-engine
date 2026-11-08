@@ -81,16 +81,24 @@ run "staging_none_deploys_no_model_workloads" {
     error_message = "inference_backend = none must deploy no vLLM"
   }
   assert {
-    condition     = length(module.governed_advisor) == 0
-    error_message = "inference_backend = none must deploy no advisor"
+    condition     = length(module.governed_advisor) == 0 && length(module.inference_stub) == 0
+    error_message = "inference_backend = none with enable_e2e_advisor = false must deploy neither advisor nor inference_stub"
   }
   assert {
     condition     = length(module.nemo_guardrails) == 0
     error_message = "staging must deploy no NeMo server"
   }
   assert {
-    condition     = local.vllm_fast_url == "" && local.vllm_reasoning_url == "" && local.vllm_api_key == ""
-    error_message = "under none no workload is pointed at a model service"
+    condition = (
+      local.vllm_fast_url == "" &&
+      local.vllm_reasoning_url == "" &&
+      local.gateway_model_api_key == "" &&
+      local.advisor_inference_api_key == "" &&
+      local.gateway_model_fast_url == "" &&
+      local.advisor_inference_url == "" &&
+      local.effective_inference_backend == "none"
+    )
+    error_message = "under default none no workload is pointed at a model service or stub"
   }
 }
 
@@ -100,17 +108,116 @@ run "flip_to_vllm_brings_up_model_and_advisor" {
     inference_backend = "vllm"
   }
   assert {
-    condition     = length(module.vllm) == 1 && length(module.vllm_reasoning) == 1
-    error_message = "vllm must deploy both vLLM services"
+    condition     = length(module.vllm) == 1 && length(module.vllm_reasoning) == 1 && length(module.inference_stub) == 0
+    error_message = "vllm must deploy both vLLM services and zero inference_stub"
   }
   assert {
     condition     = length(module.governed_advisor) == 1
     error_message = "vllm must deploy the in-cluster advisor"
   }
   assert {
-    condition     = local.vllm_api_key == "EMPTY" && startswith(local.vllm_fast_url, "http://vllm-service.")
-    error_message = "vllm must give the gateway and bridge a URL and a non-empty key"
+    condition     = local.gateway_model_api_key == "EMPTY" && local.advisor_inference_api_key == "EMPTY" && startswith(local.vllm_fast_url, "http://vllm-service.")
+    error_message = "vllm must give the gateway a URL and non-empty key while compliance-bridge runs without an LLM backend"
   }
+  assert {
+    condition     = local.advisor_inference_url == "http://gateway.governance-stack.svc.cluster.local:8080/v1"
+    error_message = "advisor VLLM_API_URL / VLLM_BASE_URL must route through the gateway /v1/chat/completions proxy (R-16 / F-103)"
+  }
+}
+
+run "staging_e2e_advisor_deploys_stub_and_routes_advisor_through_gateway_proxy" {
+  command = plan
+  variables {
+    enable_e2e_advisor = true
+  }
+  assert {
+    condition     = length(module.vllm) == 0 && length(module.vllm_reasoning) == 0
+    error_message = "enable_e2e_advisor under inference_backend = none must deploy zero GPU vLLM pods"
+  }
+  assert {
+    condition     = length(module.inference_stub) == 1 && length(module.governed_advisor) == 1
+    error_message = "enable_e2e_advisor must deploy both inference_stub and governed_advisor"
+  }
+  assert {
+    condition = (
+      local.effective_inference_backend == "stub" &&
+      local.gateway_model_fast_url == "http://inference-stub.governance-stack.svc.cluster.local:8000/v1" &&
+      local.gateway_model_reasoning_url == "http://inference-stub.governance-stack.svc.cluster.local:8000/v1" &&
+      local.gateway_model_api_key == "EMPTY" &&
+      local.advisor_inference_api_key == "EMPTY" &&
+      local.vllm_fast_url == ""
+    )
+    error_message = "gateway must point upstream at inference-stub with CAGE_INFERENCE_BACKEND=stub while direct vLLM locals stay empty (F-33)"
+  }
+  assert {
+    condition     = local.advisor_inference_url == "http://gateway.governance-stack.svc.cluster.local:8080/v1"
+    error_message = "stub-driven advisor must call the gateway /v1/chat/completions inference proxy, never inference-stub directly (R-16 / F-103)"
+  }
+}
+
+run "gateway_module_refuses_stub_backend_in_prod" {
+  command = plan
+
+  module {
+    source = "../../modules/gateway"
+  }
+
+  variables {
+    namespace                      = "governance-stack"
+    deployment_config_map_name     = "cage-deployment"
+    image                          = "registry.invalid/cage-test/gateway@sha256:deadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeef"
+    opa_image                      = "registry.invalid/cage-test/opa@sha256:deadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeef"
+    project_id                     = "w6-test-project"
+    region                         = "us-central1"
+    redis_host                     = "10.10.0.5"
+    governance_redis_replica_count = 1
+    evidence_stream_redis_url      = "redis://10.10.0.5:6379"
+    evidence_stream_redis_db       = 1
+    evidence_stream_key            = "cage:evidence:stream"
+    cage_inference_backend         = "stub"
+    cage_env                       = "prod"
+    vllm_base_url                  = "http://inference-stub.governance-stack.svc.cluster.local:8000/v1"
+    vllm_reasoning_api_base        = "http://inference-stub.governance-stack.svc.cluster.local:8000/v1"
+    vllm_fast_api_base             = "http://inference-stub.governance-stack.svc.cluster.local:8000/v1"
+    vllm_api_key                   = "EMPTY"
+    guardrails_model_name          = "Qwen/Qwen2.5-1.5B-Instruct"
+    opa_url                        = "http+unix://%2Fvar%2Frun%2Fopa%2Fopa.sock"
+    governance_salt                = "test-governance-salt-0123456789abcdef"
+    trusted_client_identities      = ["cage-advisor-sa.governance-stack.serviceaccount.identity.linkerd.cluster.local"]
+    service_account_name           = "cage-gateway-sa"
+    reconciler_kms_key             = "projects/w6-test-project/locations/us-central1/keyRings/r/cryptoKeys/k/cryptoKeyVersions/1"
+  }
+
+  expect_failures = [kubernetes_deployment.gateway]
+}
+
+run "governed_advisor_module_refuses_e2e_mode_in_prod" {
+  command = plan
+
+  module {
+    source = "../../modules/governed_advisor"
+  }
+
+  variables {
+    namespace                  = "governance-stack"
+    deployment_config_map_name = "cage-deployment"
+    image                      = "registry.invalid/cage-test/governed-financial-advisor@sha256:deadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeef"
+    project_id                 = "w6-test-project"
+    region                     = "us-central1"
+    redis_host                 = "10.10.0.6"
+    model_fast                 = "Qwen/Qwen2.5-1.5B-Instruct"
+    model_reasoning            = "deepseek-ai/DeepSeek-R1-Distill-Llama-8B"
+    model_consensus            = "deepseek-ai/DeepSeek-R1-Distill-Llama-8B"
+    vllm_base_url              = "http://gateway.governance-stack.svc.cluster.local:8080/v1"
+    vllm_fast_api_base         = "http://gateway.governance-stack.svc.cluster.local:8080/v1"
+    vllm_reasoning_api_base    = "http://gateway.governance-stack.svc.cluster.local:8080/v1"
+    langfuse_host              = "http://langfuse-web.governance-stack.svc.cluster.local:3000"
+    service_account_name       = "cage-advisor-sa"
+    cage_env                   = "prod"
+    enable_e2e_mode            = true
+  }
+
+  expect_failures = [kubernetes_deployment.governed_advisor]
 }
 
 run "external_is_refused_on_gke" {
@@ -154,16 +261,15 @@ run "nemo_server_without_vllm_is_refused" {
   expect_failures = [terraform_data.inference_backend_guard]
 }
 
-run "nemo_server_with_vllm_is_allowed" {
+# EA-1: only the gateway may reach the model backends, so the standalone NeMo
+# server is refused even where vLLM runs.
+run "nemo_server_with_vllm_is_refused" {
   command = plan
   variables {
     inference_backend      = "vllm"
     enable_nemo_guardrails = true
   }
-  assert {
-    condition     = length(module.nemo_guardrails) == 1
-    error_message = "the optional NeMo server must still deploy when asked, under vllm"
-  }
+  expect_failures = [terraform_data.inference_backend_guard]
 }
 
 run "kms_module_grants_cmek_to_memorystore_and_redis_p4sas" {
@@ -414,5 +520,42 @@ run "datastore_egress_follows_endpoints" {
       ])) == toset(["10.20.1.11/32"])
     )
     error_message = "per-workload NetworkPolicies must derive their Valkey /32 CIDRs from the governance and app endpoints"
+  }
+}
+
+# R-16 / F-103 / EA-1: the model backends (GPU vLLM and the E2E inference stub)
+# admit TCP 8000, and Linkerd's inbound proxy port 4143, from gateway pods only,
+# so no other workload can reach a model without crossing the inference proxy.
+run "model_backends_admit_only_the_gateway" {
+  command = plan
+  variables {
+    enable_e2e_advisor = true
+  }
+  assert {
+    condition = (
+      tolist(kubernetes_network_policy_v1.model_backend_ingress.spec[0].policy_types) == tolist(["Ingress"]) &&
+      kubernetes_network_policy_v1.model_backend_ingress.spec[0].pod_selector[0].match_expressions[0].key == "app" &&
+      kubernetes_network_policy_v1.model_backend_ingress.spec[0].pod_selector[0].match_expressions[0].operator == "In" &&
+      toset(kubernetes_network_policy_v1.model_backend_ingress.spec[0].pod_selector[0].match_expressions[0].values) == toset(["vllm-inference", "vllm-reasoning", "inference-stub"])
+    )
+    error_message = "model-backend-ingress must select the vllm-inference, vllm-reasoning and inference-stub pods for Ingress"
+  }
+  assert {
+    condition = (
+      length(kubernetes_network_policy_v1.model_backend_ingress.spec[0].ingress) == 1 &&
+      alltrue([
+        for rule in kubernetes_network_policy_v1.model_backend_ingress.spec[0].ingress :
+        length(rule.from) == 1 &&
+        length(rule.from[0].namespace_selector) == 0 &&
+        length(rule.from[0].ip_block) == 0 &&
+        tomap(rule.from[0].pod_selector[0].match_labels) == tomap({ app = "gateway" }) &&
+        toset([for p in rule.ports : "${p.protocol}/${p.port}"]) == toset(["TCP/8000", "TCP/4143"])
+      ])
+    )
+    error_message = "model-backend-ingress must admit only app=gateway pods, on TCP 8000 and 4143"
+  }
+  assert {
+    condition     = module.inference_stub[0].pod_labels == tomap({ app = "inference-stub" })
+    error_message = "the inference stub pods must carry the app=inference-stub label model-backend-ingress selects"
   }
 }

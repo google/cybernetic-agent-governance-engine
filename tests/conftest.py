@@ -73,6 +73,7 @@ from tests.fixtures.dotenv_guard import (
     refusal,
     search_starts,
 )
+from tests.fixtures.selection_flags import applied_marker_names
 
 os.environ.setdefault("LANGCHAIN_TRACING_V2", "false")
 os.environ.setdefault("LANGSMITH_TRACING", "false")
@@ -610,7 +611,7 @@ def _assert_selection_markers(items: list[pytest.Item]) -> None:
         module_path = str(item.nodeid).split("::", 1)[0]
         if module_path in MARKER_GUARD_EXEMPT_MODULES:
             continue
-        if SELECTION_MARKERS & set(item.keywords):
+        if SELECTION_MARKERS & applied_marker_names(item):
             continue
         offenders.setdefault(module_path, []).append(item.name)
 
@@ -700,21 +701,24 @@ def pytest_collection_modifyitems(
         marked_region(item)  # fail closed on ambiguous region markers
         if (reason := live_region_mismatch(item, session_region)) is not None:
             item.add_marker(pytest.mark.skip(reason=reason))
-        if "integration" in item.keywords and not run_integration:
+        # Applied markers only: a directory such as tests/integration/ must not
+        # skip the hermetic (unit/local) tests it holds.
+        marks = applied_marker_names(item)
+        if "integration" in marks and not run_integration:
             item.add_marker(skip_integration)
-        if "live_external" in item.keywords and not live_external_enabled(
-            item.keywords,
+        if "live_external" in marks and not live_external_enabled(
+            marks,
             run_live_external=run_live_external,
             run_partner_integration=run_partner_integration,
         ):
             item.add_marker(skip_live_external)
-        if "partner_integration" in item.keywords and not (
+        if "partner_integration" in marks and not (
             run_partner_integration or run_live_external
         ):
             item.add_marker(skip_partner_integration)
-        if "chaos" in item.keywords and not run_chaos:
+        if "chaos" in marks and not run_chaos:
             item.add_marker(skip_chaos)
-        if "e2e" in item.keywords and not run_e2e:
+        if "e2e" in marks and not run_e2e:
             item.add_marker(skip_e2e)
 
 

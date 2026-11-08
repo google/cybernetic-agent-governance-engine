@@ -138,7 +138,7 @@ force_redeploy = true
 # ─── Services ─────────────────────────────────────────────────────────────────
 inference_backend        = "vllm"
 enable_compliance_bridge = true
-enable_nemo_guardrails   = true
+enable_nemo_guardrails   = false
 
 model_fast             = "gs://cage-models/Qwen/Qwen2.5-1.5B-Instruct"
 model_reasoning        = "gs://cage-models/deepseek-ai/DeepSeek-R1-Distill-Llama-8B"

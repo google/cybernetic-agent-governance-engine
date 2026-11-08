@@ -30,12 +30,16 @@ import pytest
 from src.gateway.governance.content_safety import CONTENT_SAFETY_NO_INFERENCE_BACKEND
 from src.gateway.governance.inference_backend import (
     ENV_VAR,
+    INFERENCE_BACKEND_NONE,
+    INFERENCE_BACKEND_STUB,
     InferenceBackend,
     InferenceBackendConfigError,
     InferenceBackendUnavailable,
     inference_disabled,
     require_backend_settings,
     resolve_inference_backend,
+    semantic_model_disabled,
+    semantic_model_reason_code,
 )
 
 pytestmark = [pytest.mark.unit, pytest.mark.local]
@@ -57,6 +61,8 @@ def backend_none(monkeypatch):
     ("raw", "expected"),
     [
         ("none", InferenceBackend.NONE),
+        ("stub", InferenceBackend.STUB),
+        (" STUB ", InferenceBackend.STUB),
         ("external", InferenceBackend.EXTERNAL),
         ("vllm", InferenceBackend.VLLM),
         (" VLLM ", InferenceBackend.VLLM),
@@ -71,6 +77,23 @@ def test_unset_selector_is_not_none() -> None:
     """``none`` is explicit, never inferred from a missing setting or URL."""
     assert resolve_inference_backend({}) is None
     assert inference_disabled({}) is False
+    assert semantic_model_disabled({}) is False
+    assert semantic_model_reason_code({}) is None
+
+
+def test_stub_enables_proxy_forwarding_but_disables_semantic_models() -> None:
+    """``stub`` keeps /v1/chat/completions forwarding on while disabling NeMo/critics/advisories."""
+    stub_env = {ENV_VAR: "stub"}
+    none_env = {ENV_VAR: "none"}
+    vllm_env = {ENV_VAR: "vllm"}
+    assert inference_disabled(stub_env) is False
+    assert inference_disabled(none_env) is True
+    assert semantic_model_disabled(stub_env) is True
+    assert semantic_model_disabled(none_env) is True
+    assert semantic_model_disabled(vllm_env) is False
+    assert semantic_model_reason_code(stub_env) == INFERENCE_BACKEND_STUB
+    assert semantic_model_reason_code(none_env) == INFERENCE_BACKEND_NONE
+    assert semantic_model_reason_code(vllm_env) is None
 
 
 def test_unknown_selector_value_is_a_config_error() -> None:
@@ -148,7 +171,7 @@ async def test_mcp_startup_fails_on_unknown_backend(monkeypatch) -> None:
     init_rails.assert_not_called()
 
 
-@pytest.mark.parametrize("backend", ["vllm", "external", None])
+@pytest.mark.parametrize("backend", ["vllm", "stub", "external", None])
 @pytest.mark.asyncio
 async def test_mcp_startup_requires_a_url_unless_none(monkeypatch, backend) -> None:
     import src.gateway.server.mcp_tool_server as mod
@@ -203,9 +226,13 @@ async def test_gateway_startup_under_none_builds_no_rails(
 # ---------------------------------------------------------------------------
 
 
-def test_rail_factory_builds_no_rails_under_none(backend_none) -> None:
+@pytest.mark.parametrize("disabled_backend", ["none", "stub"])
+def test_rail_factory_builds_no_rails_under_none_or_stub(
+    monkeypatch: pytest.MonkeyPatch, disabled_backend: str
+) -> None:
     from src.gateway.governance import semantic_rail_factory as factory
 
+    monkeypatch.setenv(ENV_VAR, disabled_backend)
     for build in (
         factory.initialize_semantic_rails,
         factory.create_semantic_rail_manager,

@@ -68,7 +68,7 @@ terraform apply -var-file=prod.tfvars
 
 ## Inference Backend
 
-`inference_backend` decides which model-dependent workloads exist, not only how they are configured. It also sets `CAGE_INFERENCE_BACKEND` on the gateway and the compliance bridge.
+`inference_backend` decides which model-dependent workloads exist, not only how they are configured. It also sets `CAGE_INFERENCE_BACKEND` on the gateway. The compliance bridge always gets `"none"`: the model backends admit only the gateway (EA-1 in [`BREAKING_CHANGES.md`](../../../docs/BREAKING_CHANGES.md)), so the bridge records its remediation advisory as not performed.
 
 | `inference_backend` | Deploys | For |
 |---|---|---|
@@ -80,9 +80,10 @@ terraform apply -var-file=prod.tfvars
 - **The GPU pool uses pool-wide total counts (`total_min_node_count` / `total_max_node_count`, `location_policy = "ANY"`) and `initial_node_count = 0` across every profile.** Listing all verified L4 + `g2-standard-8` zones in each region (`us-central1-a/b/c`, `europe-west1-b/c`, `asia-southeast1-a/b/c`) gives Cluster Autoscaler capacity fallback on a zonal stockout without multiplying counts, and requesting zero nodes at create avoids creation-time stockout failures. The undeployed `prod` profiles also leave `gpu_node_pool_min_count = 0` until a live production cluster sets its own floor.
 - **`"external"` is compose-only.** The cluster denies external egress by default (L3/L4 default-deny, plus a per-workload FQDN egress allowlist), and the advisor's egress is cluster-internal only. Reaching a third-party model provider would mean opening that control for the agent, so the plan refuses `"external"` on GKE. Allowing it later would be a deliberate decision with its own entry, not a deployment convenience.
 - **Where no zone offers an L4, `external` is the only live agent.** In `europe-west1`, `-b` and `-c` offer both `nvidia-l4` and `g2-standard-8` while `-d` offers neither (POAM-2026-132, closed). In a jurisdiction whose region has no L4 zone at all, the only way to see a live agent is the compose stack with `CAGE_INFERENCE_BACKEND=external`.
-- **The advisor calls its models directly, by design.** It does not go through the gateway's inference proxy. That looks like a bypass, but it is the architecture: the agent reasons freely and is constrained when it acts, at the gateway's action boundary.
+- **The advisor reaches its models only through the gateway.** Its model base URLs point at the gateway's `POST /v1/chat/completions` proxy (`local.advisor_inference_url`), and the `model-backend-ingress` NetworkPolicy admits TCP 8000 on the `vllm-inference`, `vllm-reasoning` and `inference-stub` pods from `app = "gateway"` alone. Stage 1 prompt scanning, the token quota and output PII masking therefore run on every advisor completion (EA-1).
+- **`enable_e2e_advisor` runs the advisor without a GPU.** Under `"none"`, `enable_e2e_advisor = true` deploys the advisor and the deterministic CPU `inference-stub` backend (`CAGE_INFERENCE_BACKEND=stub`) behind the same gateway proxy, for end-to-end verification. It needs `image_digests["inference-stub"]`, is never set in a committed profile, and the plan refuses it in `prod` / `production` (EA-2).
 - **`enable_vllm` is removed.** A profile that still sets it fails the plan with a message that names `inference_backend` (AG-7 in [`BREAKING_CHANGES.md`](../../../docs/BREAKING_CHANGES.md)).
-- **The standalone NeMo server** (`enable_nemo_guardrails`, off by default) needs `"vllm"`, because it calls the in-cluster vLLM service. Nothing in CAGE calls the server: the gateway builds its rails in process.
+- **The standalone NeMo server is refused.** `enable_nemo_guardrails = true` fails the plan: the server calls vLLM directly, and only the gateway may reach the model backends (EA-1). Nothing in CAGE calls the server: the gateway builds its rails in process.
 
 The backend each need uses is below. The integration tiers are not built yet; this is the split they are designed around.
 

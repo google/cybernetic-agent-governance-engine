@@ -115,6 +115,14 @@ def test_healthy_production_posture_passes(healthy: pytest.MonkeyPatch) -> None:
     assert_production_posture(_PROD, components=_components())
 
 
+def test_staging_posture_allows_stub_inference_backend(
+    healthy: pytest.MonkeyPatch,
+) -> None:
+    healthy.setenv("CAGE_INFERENCE_BACKEND", "stub")
+    staging = DeploymentPosture.STAGING
+    assert_production_posture(staging, components=_components(staging))
+
+
 @pytest.mark.parametrize(
     ("check", "breakage"),
     [
@@ -167,6 +175,17 @@ def test_healthy_production_posture_passes(healthy: pytest.MonkeyPatch) -> None:
                 mp.setenv("CAGE_CONSENSUS_CRITICS_ENABLED", "true"),
                 mp.setenv("CAGE_INFERENCE_BACKEND", "none"),
             ),
+        ),
+        (
+            "consensus_critics_backend.*CAGE_INFERENCE_BACKEND=stub",
+            lambda mp: (
+                mp.setenv("CAGE_CONSENSUS_CRITICS_ENABLED", "true"),
+                mp.setenv("CAGE_INFERENCE_BACKEND", "stub"),
+            ),
+        ),
+        (
+            "stub_inference_backend.*CAGE_INFERENCE_BACKEND=stub",
+            lambda mp: mp.setenv("CAGE_INFERENCE_BACKEND", "stub"),
         ),
         (
             "dev_loopback_identity.*CAGE_ALLOW_DEV_LOOPBACK_IDENTITY=true",

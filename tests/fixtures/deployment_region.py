@@ -37,6 +37,8 @@ import subprocess
 
 import pytest
 
+from tests.fixtures.selection_flags import applied_marker_names
+
 REGION_ENV_VAR = "CAGE_DEPLOYMENT_REGION"
 DEPLOYMENT_CONFIG_MAP = "cage-deployment"
 DEFAULT_NAMESPACE = "governance-stack"
@@ -146,9 +148,8 @@ def marked_region(item: pytest.Item) -> str | None:
     Raises:
         pytest.UsageError: the item carries more than one region marker.
     """
-    regions = {
-        region for marker, region in REGION_MARKERS.items() if marker in item.keywords
-    }
+    marks = applied_marker_names(item)
+    regions = {region for marker, region in REGION_MARKERS.items() if marker in marks}
     if len(regions) > 1:
         raise pytest.UsageError(
             f"{item.nodeid} carries several region markers ({sorted(regions)}); "
@@ -160,7 +161,7 @@ def marked_region(item: pytest.Item) -> str | None:
 
 def is_live_test(item: pytest.Item) -> bool:
     """True when the item exercises the deployed stack."""
-    return bool(LIVE_MARKERS & set(item.keywords))
+    return bool(LIVE_MARKERS & applied_marker_names(item))
 
 
 def live_region_mismatch(item: pytest.Item, session_region: str) -> str | None:
