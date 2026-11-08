@@ -21,7 +21,12 @@ import pytest
 sys.path.append(os.getcwd())
 
 # red_team is used for dedicated security CI pipelines
-pytestmark = [pytest.mark.red_team, pytest.mark.unit, pytest.mark.local]
+pytestmark = [
+    pytest.mark.red_team,
+    pytest.mark.unit,
+    pytest.mark.local,
+    pytest.mark.usefixtures("connected_evidence_sink"),
+]
 from unittest.mock import AsyncMock, MagicMock
 
 from src.cage_finance.stpa.uca_rules import GeneratedSTPAValidator

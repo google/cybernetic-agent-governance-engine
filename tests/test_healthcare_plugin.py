@@ -25,6 +25,7 @@ import pytest
 
 @pytest.mark.healthcare
 @pytest.mark.local
+@pytest.mark.usefixtures("connected_evidence_sink")
 class TestHealthcarePlugin:
     """Healthcare plugin local tests."""
 

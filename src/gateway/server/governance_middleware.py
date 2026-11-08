@@ -645,12 +645,19 @@ async def _emit_refusal_receipt(
         )
 
     # Publish to evidence stream
+    from src.gateway.governance.evidence.stream import (
+        commit_decision_evidence,
+        is_evidence_chain_blocking,
+    )
+
     try:
         sink = get_evidence_sink()
-        has_redis = getattr(sink, "_redis", None) is not None
-        msg_id = await sink.ingest(receipt_payload)
-        if has_redis and msg_id is None:
-            governor_metrics().evidence_publish_failure("refusal_receipt")
+        await commit_decision_evidence(
+            receipt_payload,
+            label="GOVERNANCE_REFUSAL_RECEIPT",
+            sink=sink,
+            sentinel_unset=False,
+        )
         # MED-7 fix: a successfully emitted refusal receipt is not an error —
         # logging it at ERROR level polluted error dashboards with normal events.
         logger.info(
@@ -666,11 +673,13 @@ async def _emit_refusal_receipt(
         governor_metrics().evidence_publish_failure("refusal_receipt")
         logger.error(
             "❌ [P6] Failed to emit OSCAL refusal receipt for action '%s' "
-            "(receipt_id=%s): %s — GovernanceError will still propagate.",
+            "(receipt_id=%s): %s",
             action_id,
             receipt_id,
             emit_exc,
         )
+        if is_evidence_chain_blocking():
+            raise
     return proof_hash
 
 
@@ -887,15 +896,29 @@ async def validate_action_endpoint(
         return JSONResponse(content=envelope.to_dict(include_signature=True))
 
     except GovernanceError as exc:
-        # P6: emit a signed OSCAL compliance receipt for every hard refusal.
-        # Errors during emission are logged but do NOT suppress the refusal.
-        emitted = await _emit_refusal_receipt(
-            action_id=body.action,
-            refusal_reason=str(exc),
-            oscal_control_ref="SC-4",
-            params=body.params,
-            receipt=exc.receipt,
+        from src.gateway.governance.evidence.stream import (
+            EvidenceChainUnavailableError,
         )
+
+        # P6: emit a signed OSCAL compliance receipt for every hard refusal.
+        # Under EVIDENCE_CHAIN_BLOCKING=true, a failed evidence write returns 503
+        # rather than an un-evidenced 403 refusal.
+        try:
+            emitted = await _emit_refusal_receipt(
+                action_id=body.action,
+                refusal_reason=str(exc),
+                oscal_control_ref="SC-4",
+                params=body.params,
+                receipt=exc.receipt,
+            )
+        except EvidenceChainUnavailableError as emit_exc:
+            return JSONResponse(
+                status_code=503,
+                content={
+                    "error": "evidence_chain_unavailable",
+                    "detail": str(emit_exc),
+                },
+            )
 
         # ADR-008 Phase 3: Return complete refusal contract
         refusal_content: dict[str, Any] = {
@@ -916,7 +939,19 @@ async def validate_action_endpoint(
             status_code=403,
             content=refusal_content,
         )
-    except Exception:
+    except Exception as exc:
+        from src.gateway.governance.evidence.stream import (
+            EvidenceChainUnavailableError,
+        )
+
+        if isinstance(exc, EvidenceChainUnavailableError):
+            return JSONResponse(
+                status_code=503,
+                content={
+                    "error": "evidence_chain_unavailable",
+                    "detail": str(exc),
+                },
+            )
         logger.error("❌ validate_action internal error", exc_info=True)
         raise HTTPException(status_code=500, detail="Internal governance error")
     finally:

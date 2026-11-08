@@ -137,6 +137,11 @@ def _make_hybrid_stubs() -> dict:
                 )
             )
         ),
+        # Dedicated Prometheus metrics listener & loop lag monitor
+        "src.gateway.observability.loop_monitor": MagicMock(
+            start_metrics_http_server=MagicMock(return_value=MagicMock()),
+            run_loop_lag_monitor=AsyncMock(),
+        ),
     }
 
 
@@ -460,6 +465,34 @@ async def test_lifespan_aborts_when_governor_posture_is_refused(
     activate.assert_awaited_once()
     assert served is False
     start_all.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_lifespan_aborts_when_metrics_server_fails_in_production(monkeypatch):
+    """A RuntimeError from start_metrics_http_server aborts startup before serving."""
+    monkeypatch.setenv("CAGE_ENV", "production")
+    stubs = _make_hybrid_stubs()
+    stubs[
+        "src.gateway.observability.loop_monitor"
+    ].start_metrics_http_server = MagicMock(
+        side_effect=RuntimeError("Dedicated Prometheus metrics server failed to bind")
+    )
+    activate = stubs["src.gateway.server.mcp_tool_server"]._activate_domain
+    sys.modules.pop("src.gateway.server.hybrid_server", None)
+
+    with patch.dict("sys.modules", stubs):
+        from src.gateway.server.hybrid_server import _gateway_lifespan
+
+        app_mock = MagicMock()
+        app_mock.state = MagicMock()
+        served = False
+
+        with pytest.raises(RuntimeError, match="metrics server failed to bind"):
+            async with _gateway_lifespan(app_mock):
+                served = True
+
+    assert served is False
+    activate.assert_not_awaited()
 
 
 # ---------------------------------------------------------------------------

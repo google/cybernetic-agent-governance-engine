@@ -555,3 +555,47 @@ class TestExecuteToolEndpointWorkloadIdentity:
             res = await mod.execute_tool_endpoint(body, req)
             assert res["status"] == "SUCCESS"
             assert "INTERVENTION_ACK" in res["output"]
+
+    @pytest.mark.asyncio
+    async def test_execute_tool_maps_evidence_chain_unavailable_to_503(
+        self, monkeypatch
+    ):
+        import json
+        import sys
+
+        from src.gateway.governance.evidence.stream import (
+            EvidenceChainUnavailableError,
+        )
+
+        trusted_id = "governed-financial-advisor.governance-stack.serviceaccount.identity.linkerd.cluster.local"
+        monkeypatch.setenv("CAGE_TRUSTED_CLIENT_IDENTITIES", trusted_id)
+        with patch.dict("sys.modules", _mcp_import_stubs()):
+            sys.modules.pop("src.gateway.server.mcp_tool_server", None)
+            import src.gateway.server.mcp_tool_server as mod
+
+            mod._rate_limit_buckets = {}
+            gov = _mock_governor()
+            gov.verify = AsyncMock(
+                side_effect=EvidenceChainUnavailableError("Redis stream down")
+            )
+            mod.app.state.governor = gov
+
+            req = MagicMock()
+            req.scope = {
+                "headers": [(b"l5d-client-id", trusted_id.encode("latin-1"))],
+                "client": ("10.112.0.43", 50000),
+                "server": ("10.112.0.43", 8080),
+            }
+            req.client = MagicMock(host="127.0.0.1")
+            body = mod.ToolExecutionRequest(
+                tool_name="simulate_governance_check",
+                params={"target_tool": "execute_trade", "target_params": {}},
+            )
+            res = await mod.execute_tool_endpoint(body, req)
+            assert res.status_code == 503
+            payload = json.loads(bytes(res.body))
+            assert payload["status"] == "ERROR"
+            assert payload["error"] == "evidence_chain_unavailable"
+            assert (
+                "EvidenceChainUnavailableError: Redis stream down" in payload["detail"]
+            )

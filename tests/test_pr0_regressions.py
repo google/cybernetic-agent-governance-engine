@@ -28,7 +28,11 @@ from src.cage_finance.tiers.consensus_tier import ConsensusTierPlugin
 from src.gateway.governance import GovernanceError
 from tests.fixtures.governor import make_governor
 
-pytestmark = [pytest.mark.unit, pytest.mark.local]
+pytestmark = [
+    pytest.mark.unit,
+    pytest.mark.local,
+    pytest.mark.usefixtures("connected_evidence_sink"),
+]
 
 
 def _create_safe_ftra_result():

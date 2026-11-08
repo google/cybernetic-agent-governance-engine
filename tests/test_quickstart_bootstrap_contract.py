@@ -360,9 +360,10 @@ def test_quickstart_smoke_workflow_exercises_live_seal_and_ledger_replay() -> No
         "quickstart-smoke must invoke verify_and_consume_seal twice on the same seal to test Theorem 5.3 burn-first replay"
     )
     assert '"replay attack detected" in exc.reason' in script
+    assert '--expected-refusal-hash "$first_deny_hash"' in script
     assert '--expected-refusal-hash "$dup_refusal_hash"' in script
     assert '--expected-refusal-hash "$refusal_hash"' in script
-    assert "--expected-refusal-count 2" in script
+    assert "--expected-refusal-count 3" in script
     assert 'counts["ACTUATION_RECEIPT"] == 1' in script
     assert 'counts["GOVERNANCE_SEAL_CONSUMED"] == 2' in script
 

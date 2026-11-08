@@ -629,11 +629,11 @@ def validate_evidence_stream_preconditions() -> None:
 def is_evidence_chain_blocking() -> bool:
     """Return True if evidence chain blocking mode is enabled.
 
-    When blocking mode is enabled, seal issuance blocks until evidence is
-    committed to the durable evidence stream. This prevents overclaiming
-    evidence-of-execution (risk R-06).
+    When blocking mode is enabled, seal issuance and refusal/deferral commits
+    block until evidence is committed to the durable evidence stream. This
+    prevents overclaiming evidence-of-execution (risk R-06).
     """
-    return _EVIDENCE_CHAIN_BLOCKING
+    return os.environ.get("EVIDENCE_CHAIN_BLOCKING", "true").lower() == "true"
 
 
 def is_evidence_stream_enabled() -> bool:
@@ -2281,6 +2281,84 @@ def get_evidence_sink() -> EvidenceStreamSink:
     if _evidence_sink is None:
         _evidence_sink = EvidenceStreamSink()
     return _evidence_sink
+
+
+async def commit_decision_evidence(
+    event: dict[str, Any],
+    *,
+    label: str,
+    sink: Any | None = None,
+    sentinel_unset: bool = True,
+) -> None:
+    """Commit primary decision/refusal/deferral evidence according to blocking posture.
+
+    When :func:`is_evidence_chain_blocking` is ``True``, commits synchronously
+    through :meth:`EvidenceStreamSink.ingest_sync` (failing closed with
+    :class:`EvidenceChainUnavailableError` even when ``sink._redis is None``).
+    Supports test doubles that override ``sink.ingest`` on an instance or pass
+    a mock sink. When blocking mode is disabled, falls back to ``sink.ingest``.
+    """
+    from inspect import iscoroutinefunction
+
+    resolved_sink = get_evidence_sink() if (sink is None and sentinel_unset) else sink
+    if resolved_sink is None:
+        raise EvidenceChainUnavailableError(
+            f"Evidence sink is None; cannot commit {label}"
+        )
+
+    if is_evidence_chain_blocking():
+        if isinstance(resolved_sink, EvidenceStreamSink):
+            if (
+                "ingest" in resolved_sink.__dict__
+                and "ingest_sync" not in resolved_sink.__dict__
+            ):
+                try:
+                    msg_id = await resolved_sink.ingest(event)
+                except EvidenceChainUnavailableError:
+                    raise
+                except Exception as exc:
+                    raise EvidenceChainUnavailableError(
+                        f"Evidence sink failed to commit {label}: {exc}",
+                        exc,
+                    ) from exc
+                if msg_id is None:
+                    raise EvidenceChainUnavailableError(
+                        f"Evidence sink failed to commit {label}"
+                    )
+                return
+            await resolved_sink.ingest_sync(event)
+            return
+
+        if iscoroutinefunction(getattr(resolved_sink, "ingest_sync", None)):
+            try:
+                await resolved_sink.ingest_sync(event)
+            except EvidenceChainUnavailableError:
+                raise
+            except Exception as exc:
+                raise EvidenceChainUnavailableError(
+                    f"Evidence sink failed to commit {label}: {exc}",
+                    exc,
+                ) from exc
+            return
+
+        try:
+            msg_id = await resolved_sink.ingest(event)
+        except EvidenceChainUnavailableError:
+            raise
+        except Exception as exc:
+            raise EvidenceChainUnavailableError(
+                f"Evidence sink failed to commit {label}: {exc}",
+                exc,
+            ) from exc
+        if msg_id is None:
+            raise EvidenceChainUnavailableError(
+                f"Evidence sink failed to commit {label}"
+            )
+        return
+
+    msg_id = await resolved_sink.ingest(event)
+    if getattr(resolved_sink, "_redis", None) is not None and msg_id is None:
+        raise EvidenceChainUnavailableError(f"Evidence sink failed to commit {label}")
 
 
 async def start_evidence_sink() -> EvidenceStreamSink | None:

@@ -93,7 +93,11 @@ from tests.fixtures.governor import (
     default_classifier,
 )
 
-pytestmark = [pytest.mark.unit, pytest.mark.local]
+pytestmark = [
+    pytest.mark.unit,
+    pytest.mark.local,
+    pytest.mark.usefixtures("connected_evidence_sink"),
+]
 
 _REPO = pathlib.Path(__file__).resolve().parents[2]
 _NOW = datetime(2026, 10, 1, 12, 0, tzinfo=timezone.utc)

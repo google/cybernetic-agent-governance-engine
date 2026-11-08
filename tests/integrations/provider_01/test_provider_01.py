@@ -35,7 +35,12 @@ from src.gateway.governance.contracts import ConsequenceMagnitude, MagnitudePath
 from src.integrations.provider_01.provider import Provider01NormativeProvider
 
 # Hermetic: tests FlowSignal adapter with mocks, no live services.
-pytestmark = [pytest.mark.unit, pytest.mark.local, pytest.mark.partner]
+pytestmark = [
+    pytest.mark.unit,
+    pytest.mark.local,
+    pytest.mark.partner,
+    pytest.mark.usefixtures("connected_evidence_sink"),
+]
 
 _MAGNITUDES = ConsequenceMagnitudes(
     (

@@ -32,7 +32,11 @@ from tests.fixtures.approval import granted_approval
 from tests.fixtures.governor import make_governor
 
 # Test markers per AGENTS.md
-pytestmark = [pytest.mark.unit, pytest.mark.local]
+pytestmark = [
+    pytest.mark.unit,
+    pytest.mark.local,
+    pytest.mark.usefixtures("connected_evidence_sink"),
+]
 
 
 @pytest.fixture

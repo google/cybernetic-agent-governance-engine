@@ -33,7 +33,11 @@ from src.gateway.governance.routing_seal import SymbolicGovernorViolation
 from src.gateway.governance.seams.actuation import ActuationReceipt
 from tests.fixtures.trade_inputs import trade_governor
 
-pytestmark = [pytest.mark.unit, pytest.mark.local]
+pytestmark = [
+    pytest.mark.unit,
+    pytest.mark.local,
+    pytest.mark.usefixtures("connected_evidence_sink"),
+]
 
 
 _SEAL = "seal-under-test"

@@ -546,8 +546,9 @@ def test_every_open_path_is_a_real_gateway_route() -> None:
     """A stale open-list entry would silently widen the unauthenticated surface."""
     from src.gateway.server.hybrid_server import root_app
 
+    assert "/metrics" not in OPEN_EXACT_PATHS
     routes = _route_paths(root_app.routes)
-    missing = sorted(p for p in OPEN_EXACT_PATHS - {"/metrics"} if p not in routes)
+    missing = sorted(p for p in OPEN_EXACT_PATHS if p not in routes)
     assert missing == []
     # The PAUSE routes are gone with the verdict; nothing under /v1/pause may exist.
     assert not any(r.startswith("/v1/pause") for r in routes)

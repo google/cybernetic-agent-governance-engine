@@ -60,7 +60,11 @@ from src.gateway.governance.schemas.thresholds import load_and_validate_threshol
 from src.gateway.governance.seams.ground_truth import FaultMode
 from tests.fixtures.trade_inputs import trade_governor
 
-pytestmark = [pytest.mark.unit, pytest.mark.local]
+pytestmark = [
+    pytest.mark.unit,
+    pytest.mark.local,
+    pytest.mark.usefixtures("connected_evidence_sink"),
+]
 
 _UCA_13 = "STPA_UCA_UCA_13"
 _OPEN_NAV = 100_000.0

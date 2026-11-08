@@ -231,16 +231,38 @@ async def test_warrant_ineligible_defers_without_spending_or_committing() -> Non
     assert all(isinstance(v, dict) for v in event["violations"])
 
 
-async def test_deferral_evidence_failure_is_counted_and_still_defers() -> None:
+async def test_deferral_evidence_failure_blocks_by_default_and_defers_when_non_blocking() -> (
+    None
+):
     governor, _ = _governor(_revoked())
     sink = _sink()
     sink.ingest.side_effect = RuntimeError("sink down")
     metrics = MagicMock()
+    from src.gateway.governance.evidence.stream import EvidenceChainUnavailableError
+
     with (
         patch(_SINK, return_value=sink),
         patch(
             "src.gateway.governance.governor.verdicts.governor_metrics",
             return_value=metrics,
+        ),
+    ):
+        with pytest.raises(EvidenceChainUnavailableError, match="sink down"):
+            await governor.revalidate_post_hitl(
+                _ACTION, dict(_TRADE), approval=granted_approval("PASS")
+            )
+    metrics.evidence_publish_failure.assert_called_once_with("deferral")
+
+    metrics.reset_mock()
+    with (
+        patch(_SINK, return_value=sink),
+        patch(
+            "src.gateway.governance.governor.verdicts.governor_metrics",
+            return_value=metrics,
+        ),
+        patch(
+            "src.gateway.governance.evidence.stream.is_evidence_chain_blocking",
+            return_value=False,
         ),
     ):
         with pytest.raises(GovernanceDeferred):

@@ -149,10 +149,15 @@ def start_metrics_http_server(
     """Start the out-of-band Prometheus HTTP server on its own daemon thread.
 
     Reads ``CAGE_METRICS_PORT`` (default ``9090``) when ``port`` is ``None``.
-    Returns ``None`` when ``port <= 0``, when ``prometheus_client`` is not
-    installed, or when the port cannot be bound (logged as a warning so tests
-    running multiple lifespans in one process do not crash).
+    Under an enforcing posture (:func:`is_enforcing`), disabling the listener
+    (``port <= 0``), missing ``prometheus_client``, or failing to bind the port
+    raises :class:`RuntimeError` so AU-12 telemetry cannot silently vanish. In
+    non-enforcing postures, returns ``None`` with a log message so hermetic
+    tests running multiple lifespans in one process do not crash.
     """
+    from src.gateway.governance.env_posture import is_enforcing
+
+    enforcing = is_enforcing()
     if port is None:
         raw_port = os.getenv("CAGE_METRICS_PORT", str(DEFAULT_METRICS_PORT)).strip()
         try:
@@ -166,12 +171,22 @@ def start_metrics_http_server(
             port = DEFAULT_METRICS_PORT
 
     if port <= 0:
+        if enforcing:
+            raise RuntimeError(
+                f"Prometheus metrics HTTP server cannot be disabled (CAGE_METRICS_PORT={port}) "
+                "under an enforcing posture."
+            )
         logger.info(
             "Prometheus metrics HTTP server disabled (CAGE_METRICS_PORT=%d)", port
         )
         return None
 
     if start_http_server is None:
+        if enforcing:
+            raise RuntimeError(
+                f"prometheus_client is required under an enforcing posture to bind "
+                f"Prometheus metrics HTTP server on {addr}:{port}."
+            )
         logger.debug(
             "prometheus_client not available — skipping metrics HTTP server on port %d",
             port,
@@ -181,6 +196,11 @@ def start_metrics_http_server(
     try:
         result = start_http_server(port, addr=addr)
     except OSError as exc:
+        if enforcing:
+            raise RuntimeError(
+                f"Failed to bind Prometheus metrics server on {addr}:{port} "
+                f"under an enforcing posture: {exc}"
+            ) from exc
         logger.warning(
             "⚠️ Could not bind Prometheus metrics server on %s:%d (%s) — continuing without dedicated metrics listener",
             addr,

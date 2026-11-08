@@ -63,7 +63,11 @@ from src.gateway.infrastructure.redis_replication import (
 )
 from tests.fixtures.replicated_valkey import ReplicatedValkey, build_client
 
-pytestmark = [pytest.mark.unit, pytest.mark.local]
+pytestmark = [
+    pytest.mark.unit,
+    pytest.mark.local,
+    pytest.mark.usefixtures("connected_evidence_sink"),
+]
 
 STRICT = ReplicationPolicy(replicas=1, timeout_ms=100, strict=True)
 LENIENT = ReplicationPolicy(replicas=1, timeout_ms=100, strict=False)

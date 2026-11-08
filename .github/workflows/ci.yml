@@ -875,26 +875,39 @@ jobs:
           # would run, as docs/QUICKSTART.md §3 sends them.
           mcp_resp=$(scripts/compose_gateway_call.sh /mcp/ '{"jsonrpc":"2.0","id":1,"method":"tools/list","params":{}}')
           echo "$mcp_resp" | grep -q "execute_trade"
-          # Verify live OPA + Governor DENY inside the running gateway container
-          docker compose exec -T gateway python -c "
-          import asyncio
-          from src.gateway.governance.governor.errors import GovernanceError
-          from src.gateway.server.mcp_tool_server import _activate_domain
-          async def main():
-              gov = await _activate_domain()
-              try:
-                  res = await gov.validate_action('execute_trade', {'symbol': 'AAPL', 'amount': 0, 'role': 'junior', 'claimed_authorization_present': True})
-              except GovernanceError as exc:
-                  assert 'CTRL_OPA_005' in str(exc) or 'Denied' in str(exc), f'Unexpected GovernanceError: {exc}'
-                  print('✅ Live containerized finance first-DENY verified:', exc)
-                  return
-              assert isinstance(res, dict) and res.get('verdict') == 'DENY', f'Expected GovernanceError or DENY dict, got {res}'
-          asyncio.run(main())
-          "
+          # Verify live OPA + Governor DENY through the running HTTP gateway (/governance/validate-action)
+          first_deny_hash=$(docker compose exec -T gateway python -c '
+          import json, re, urllib.error, urllib.request
+          req = urllib.request.Request(
+              "http://127.0.0.1:8080/governance/validate-action",
+              data=json.dumps({"action": "execute_trade", "params": {"symbol": "AAPL", "amount": 0, "role": "junior", "claimed_authorization_present": True}}).encode(),
+              method="POST",
+              headers={
+                  "Accept": "application/json",
+                  "Content-Type": "application/json",
+                  "l5d-client-id": "cage-advisor-sa.governance-stack.serviceaccount.identity.linkerd.cluster.local",
+              },
+          )
+          try:
+              with urllib.request.urlopen(req, timeout=30) as resp:
+                  raise AssertionError(f"Expected HTTP 403 DENIED, got HTTP {resp.status}: {resp.read().decode()}")
+          except urllib.error.HTTPError as err:
+              body = json.loads(err.read().decode())
+              assert err.code == 403, f"Expected HTTP 403, got {err.code}: {body}"
+              assert body.get("verdict") == "DENIED", body
+              assert "CTRL_OPA_005" in json.dumps(body) or "Denied" in json.dumps(body), body
+              ph = body.get("proof_hash", "")
+              assert re.fullmatch(r"[0-9a-f]{64}", ph), body
+              print(ph)
+          ')
+          test -n "$first_deny_hash"
+          printf "%s" "$first_deny_hash" > /tmp/first_deny_hash
+          echo "✅ Live containerized finance first-DENY verified (proof_hash=${first_deny_hash:0:16}...)"
       - name: Verify live Compose evidence stream with check_trace_conformance.py --stream
         run: |
           # Identified calls go from inside the gateway container (POAM-2026-167).
           call=scripts/compose_gateway_call.sh
+          first_deny_hash=$(cat /tmp/first_deny_hash)
           policy_json=$($call /governance/policy-version)
           thresholds_digest=$(python3 -c 'import json, re, sys; d = json.loads(sys.argv[1])["thresholds_digest"]; assert re.fullmatch(r"[0-9a-f]{64}", d), d; print(d)' "$policy_json")
 
@@ -982,9 +995,10 @@ jobs:
             --stream \
             --require-thresholds-loaded \
             --expected-thresholds-digest "$thresholds_digest" \
+            --expected-refusal-hash "$first_deny_hash" \
             --expected-refusal-hash "$dup_refusal_hash" \
             --expected-refusal-hash "$refusal_hash" \
-            --expected-refusal-count 2 \
+            --expected-refusal-count 3 \
             --require-settled \
             /tmp/compose_evidence_stream.jsonl
       - name: Verify Healthcare Domain Container Isolation & Handshake
@@ -1010,21 +1024,33 @@ jobs:
             echo "::error::Cross-domain tool leak: execute_trade exposed under CAGE_DOMAIN=healthcare"
             exit 1
           fi
-          docker compose exec -T gateway python -c "
-          import asyncio
-          from src.gateway.governance.governor.errors import GovernanceError
-          from src.gateway.server.mcp_tool_server import _activate_domain
-          async def main():
-              gov = await _activate_domain()
-              try:
-                  res = await gov.validate_action('administer_dose', {'patient_id': 'P001', 'medication': 'vancomycin', 'dose_mg': 999.0, 'contraindication_present': True})
-              except GovernanceError as exc:
-                  assert 'CTRL_OPA_005' in str(exc) or 'Denied' in str(exc), f'Unexpected GovernanceError: {exc}'
-                  print('✅ Live containerized healthcare first-DENY verified:', exc)
-                  return
-              assert isinstance(res, dict) and res.get('verdict') == 'DENY', f'Expected GovernanceError or DENY dict, got {res}'
-          asyncio.run(main())
-          "
+          docker compose exec -T gateway python -c '
+          import json, re, redis, urllib.error, urllib.request
+          req = urllib.request.Request(
+              "http://127.0.0.1:8080/governance/validate-action",
+              data=json.dumps({"action": "administer_dose", "params": {"patient_id": "P001", "medication": "vancomycin", "dose_mg": 999.0, "contraindication_present": True}}).encode(),
+              method="POST",
+              headers={
+                  "Accept": "application/json",
+                  "Content-Type": "application/json",
+                  "l5d-client-id": "cage-advisor-sa.governance-stack.serviceaccount.identity.linkerd.cluster.local",
+              },
+          )
+          try:
+              with urllib.request.urlopen(req, timeout=30) as resp:
+                  raise AssertionError(f"Expected HTTP 403 DENIED, got HTTP {resp.status}: {resp.read().decode()}")
+          except urllib.error.HTTPError as err:
+              body = json.loads(err.read().decode())
+              assert err.code == 403, f"Expected HTTP 403, got {err.code}: {body}"
+              assert body.get("verdict") == "DENIED", body
+              assert "CTRL_OPA_005" in json.dumps(body) or "Denied" in json.dumps(body), body
+              ph = body.get("proof_hash", "")
+              assert re.fullmatch(r"[0-9a-f]{64}", ph), body
+              r = redis.Redis.from_url("redis://redis:6379/1", decode_responses=True)
+              entries = [json.dumps(fields) for _id, fields in r.xrange("cage:evidence:stream", "-", "+")]
+              assert any(ph in entry for entry in entries), f"Healthcare refusal proof_hash {ph} missing from cage:evidence:stream"
+              print("✅ Live containerized healthcare first-DENY verified and hash-chained:", ph[:16])
+          '
       - name: Run Quickstart Step 4 (examples/governance_demo.py --no-pause)
         run: |
           uv run python examples/governance_demo.py --no-pause

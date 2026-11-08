@@ -45,7 +45,11 @@ from src.gateway.governance.null_components import (
 from tests.fixtures.approval import granted_approval
 from tests.fixtures.governor import allow_opa, clean_stpa
 
-pytestmark = [pytest.mark.unit, pytest.mark.local]
+pytestmark = [
+    pytest.mark.unit,
+    pytest.mark.local,
+    pytest.mark.usefixtures("connected_evidence_sink"),
+]
 
 _POSTURE = DeploymentPosture.TEST
 _FLAGS = DecisionFlags(defer=False, narrow=False)

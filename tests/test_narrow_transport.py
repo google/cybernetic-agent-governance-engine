@@ -56,6 +56,8 @@ from src.gateway.governance.decisions import GovernanceDecision
 from src.gateway.governance.narrow_receipt import narrow_receipt_key
 from tests.fixtures.trade_inputs import trade_governor
 
+pytestmark = [pytest.mark.usefixtures("connected_evidence_sink")]
+
 
 @pytest.mark.unit
 @pytest.mark.asyncio
