@@ -58,8 +58,8 @@ FIRST_PARTY_IMAGES=(
 # Which first-party images to build, space-separated. deploy_all.sh passes the
 # images the profile deploys (local.required_image_digests in
 # infra/targets/gcp-gke/main.tf), so staging under inference_backend = "none"
-# builds no vLLM, advisor or NeMo image. Both advisor runtimes (geap and gke)
-# consume the advisor image. ONLY_IMAGE=<name> builds one image and skips mirroring.
+# builds no vLLM, advisor or NeMo image. The in-cluster advisor consumes
+# governed-financial-advisor. ONLY_IMAGE=<name> builds one image and skips mirroring.
 ALL_IMAGES="gateway agentsight-ui compliance-bridge governed-financial-advisor nemo-guardrails vllm-streamer"
 IMAGES="${ONLY_IMAGE:-${IMAGES:-${ALL_IMAGES}}}"
 for wanted in ${IMAGES}; do

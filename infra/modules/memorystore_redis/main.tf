@@ -23,7 +23,7 @@ terraform {
 }
 
 locals {
-  instance_name = var.name != "" ? var.name : "cage-redis-${var.environment}"
+  instance_name  = var.name != "" ? var.name : "cage-redis-${var.environment}"
   effective_tier = var.replica_count > 0 ? "STANDARD_HA" : var.redis_tier
 }
 

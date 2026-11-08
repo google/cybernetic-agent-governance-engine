@@ -81,7 +81,7 @@ run "staging_none_deploys_no_model_workloads" {
     error_message = "inference_backend = none must deploy no vLLM"
   }
   assert {
-    condition     = length(module.governed_advisor) == 0 && length(module.gcp_geap_advisor) == 0
+    condition     = length(module.governed_advisor) == 0
     error_message = "inference_backend = none must deploy no advisor"
   }
   assert {
@@ -91,10 +91,6 @@ run "staging_none_deploys_no_model_workloads" {
   assert {
     condition     = local.vllm_fast_url == "" && local.vllm_reasoning_url == "" && local.vllm_api_key == ""
     error_message = "under none no workload is pointed at a model service"
-  }
-  assert {
-    condition     = output.advisor_runtime == "none" && output.geap_agent_principal == ""
-    error_message = "outputs must report the absent advisor"
   }
 }
 
@@ -108,24 +104,12 @@ run "flip_to_vllm_brings_up_model_and_advisor" {
     error_message = "vllm must deploy both vLLM services"
   }
   assert {
-    condition     = length(module.gcp_geap_advisor) == 1 && length(module.governed_advisor) == 0
-    error_message = "vllm must deploy the advisor on the configured runtime (geap by default)"
+    condition     = length(module.governed_advisor) == 1
+    error_message = "vllm must deploy the in-cluster advisor"
   }
   assert {
     condition     = local.vllm_api_key == "EMPTY" && startswith(local.vllm_fast_url, "http://vllm-service.")
     error_message = "vllm must give the gateway and bridge a URL and a non-empty key"
-  }
-}
-
-run "vllm_on_gke_runtime" {
-  command = plan
-  variables {
-    inference_backend = "vllm"
-    advisor_runtime   = "gke"
-  }
-  assert {
-    condition     = length(module.governed_advisor) == 1 && length(module.gcp_geap_advisor) == 0
-    error_message = "advisor_runtime = gke must deploy the in-cluster advisor only"
   }
 }
 
@@ -179,17 +163,6 @@ run "nemo_server_with_vllm_is_allowed" {
   assert {
     condition     = length(module.nemo_guardrails) == 1
     error_message = "the optional NeMo server must still deploy when asked, under vllm"
-  }
-}
-
-run "none_on_gke_runtime_deploys_no_advisor" {
-  command = plan
-  variables {
-    advisor_runtime = "gke"
-  }
-  assert {
-    condition     = length(module.governed_advisor) == 0 && length(module.gcp_geap_advisor) == 0
-    error_message = "inference_backend = none must deploy no advisor on either runtime"
   }
 }
 

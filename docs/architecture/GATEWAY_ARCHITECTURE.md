@@ -465,7 +465,6 @@ The ingress adapter layer normalizes external governance signals from heterogene
 | **ACS Adapter** | [`acs_adapter.py`](../../src/gateway/governance/ingress/acs_adapter.py) | Ingests ACS (Agent Capability Statement) declarations |
 | **OSCAL Adapter** | [`oscal_adapter.py`](../../src/gateway/governance/ingress/oscal_adapter.py) | Parses OSCAL component definitions and assessment results into internal policy objects |
 | **Lula Adapter** | [`lula_adapter.py`](../../src/gateway/governance/ingress/lula_adapter.py) | Ingests Lula validation results and maps them to CAGE control verdicts |
-| **AGW Service Extension Adapter** | [`agw_adapter.py`](../../src/gateway/governance/ingress/agw_adapter.py) | Evaluates Google Agent Gateway (`ext_authz`) callouts via [`AgwAdapter.evaluate_request_authz()`](../../src/gateway/governance/ingress/agw_adapter.py), verifies tri-identity OIDC context (`GeapTriIdentityContext`, `validate_oidc_token()`), and injects `X-CAGE-Routing-Seal` on approval |
 | **Policy Translator** | [`policy_translator.py`](../../src/gateway/governance/ingress/policy_translator.py) | Translates between OSCAL/Lula/AAIF representations and OPA Rego |
 
 ### 7.2 FTRA Commencement Reachability Gate (`src/gateway/governance/ftra/`)

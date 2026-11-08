@@ -1219,10 +1219,10 @@ class TestPhaseEPlatformNarratives:
         sc8_req = next(r for r in impl_reqs if r["control-id"] == "sc-8")
         assert "Linkerd" in sc8_req["description"]
 
-        # Verify SC-39 mentions GEAP Agent Runtime MicroVM isolation and GKE Pod Security
+        # Verify SC-39 mentions GKE Pod Security Standards and gVisor sandboxing (and not retired GEAP Agent Runtime)
         sc39_req = next(r for r in impl_reqs if r["control-id"] == "sc-39")
-        assert "GEAP Agent Runtime" in sc39_req["description"]
-        assert "MicroVM" in sc39_req["description"]
+        assert "gvisor" in sc39_req["description"].lower()
+        assert "GEAP Agent Runtime" not in sc39_req["description"]
 
 
 # ---------------------------------------------------------------------------

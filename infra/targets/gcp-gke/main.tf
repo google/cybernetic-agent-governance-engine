@@ -651,8 +651,8 @@ locals {
 # The keys var.image_digests must hold. Each entry follows the count of the
 # module that reads it, so an absent workload needs no image: staging under
 # inference_backend = "none" renders no vLLM, advisor or NeMo image. An explicit
-# *_image override replaces the map entry it would otherwise read. Both advisor
-# runtimes (geap and gke) consume the advisor image. deploy_all.sh selects the
+# *_image override replaces the map entry it would otherwise read. The in-cluster
+# advisor consumes the advisor image. deploy_all.sh selects the
 # images to build from the same profile variables; scripts/render_image_digests.sh
 # must be able to render every name here.
 locals {
@@ -995,10 +995,6 @@ module "gateway" {
   trusted_client_identities = [
     "${local.ksa_advisor}.${module.namespace.name}.${module.service_mesh.identity_suffix}",
   ]
-  # Trust the GEAP agent principal only while a GEAP advisor is deployed.
-  trusted_geap_principals = local.advisor_enabled && var.advisor_runtime == "geap" ? [
-    "principal://agents.global.org-${var.gcp_organization_id}/governed-financial-advisor",
-  ] : []
 
   # K-4: wire OTLP auth header so Langfuse trace ingestion returns 200, not 401.
   # If an explicit override is provided use it; otherwise derive from the
@@ -1058,43 +1054,11 @@ module "reconciliation_worker" {
   depends_on = [module.deployment_config, module.memorystore_governance, module.service_mesh]
 }
 
-# ─── Deploy Governed Financial Advisor (GEAP Agent Runtime for GCP) ──────────
-# Both advisor runtimes exist only with a model backend (local.advisor_enabled).
-
-module "gcp_geap_advisor" {
-  count  = local.advisor_enabled && var.advisor_runtime == "geap" ? 1 : 0
-  source = "../../modules/gcp_geap_advisor"
-
-  project_id              = var.project_id
-  organization_id         = var.gcp_organization_id
-  region                  = var.region
-  image                   = var.image_digests["governed-financial-advisor"]
-  vpc_network             = var.network
-  vpc_subnetwork          = var.subnetwork
-  kms_key_name            = local.cmek_key_id
-  enable_logging          = "true"
-  redis_host              = module.memorystore_app.primary_endpoint_ip
-  redis_port              = tostring(module.memorystore_app.primary_endpoint_port)
-  model_fast              = var.served_model_fast
-  model_reasoning         = var.served_model_reasoning
-  model_consensus         = var.served_model_reasoning
-  vllm_base_url           = local.vllm_fast_url
-  vllm_fast_api_base      = local.vllm_fast_url
-  vllm_reasoning_api_base = local.vllm_reasoning_url
-  opa_url                 = "http://${module.opa.service_name}.${module.namespace.name}.svc.cluster.local:8181"
-  langfuse_host           = "http://${module.langfuse.web_service_name}.${module.namespace.name}.svc.cluster.local:3000"
-  gateway_url             = "http://${module.gateway.service_name}.${module.namespace.name}.svc.cluster.local:8080"
-  cage_env                = var.environment
-
-  otel_exporter_otlp_headers = var.otel_exporter_otlp_headers != "" ? var.otel_exporter_otlp_headers : (
-    var.langfuse_public_key != "" ? "Authorization=Basic ${base64encode("${var.langfuse_public_key}:${var.langfuse_secret_key}")}" : ""
-  )
-
-  depends_on = [module.gateway, module.langfuse, module.vllm, module.opa, module.service_mesh]
-}
+# ─── Deploy Governed Financial Advisor (in-cluster GKE Deployment) ───────────
+# The advisor exists only with a model backend (local.advisor_enabled).
 
 module "governed_advisor" {
-  count  = local.advisor_enabled && var.advisor_runtime == "gke" ? 1 : 0
+  count  = local.advisor_enabled ? 1 : 0
   source = "../../modules/governed_advisor"
 
   namespace                  = module.namespace.name

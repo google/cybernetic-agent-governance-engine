@@ -99,7 +99,6 @@ Current state of the handshake:
 - [`src/gateway/governance/ingress/oscal_adapter.py`](../../src/gateway/governance/ingress/oscal_adapter.py) — `translate_oscal()` maps OSCAL implemented-requirements to CAGE UCAs via `_OSCAL_STATUS_TO_UCA_TYPE`
 - [`src/gateway/governance/ingress/lula_adapter.py`](../../src/gateway/governance/ingress/lula_adapter.py) — `translate_lula()` extracts OPA Rego modules and Kubernetes resource specs from Lula validation manifests
 - [`src/gateway/governance/ingress/aaif_adapter.py`](../../src/gateway/governance/ingress/aaif_adapter.py) — `translate_aaif()` maps AAIF stage names to CAGE tiers
-- [`src/gateway/governance/ingress/agw_adapter.py`](../../src/gateway/governance/ingress/agw_adapter.py) — `AgwAdapter` with OIDC token validation for Agent Gateway Protocol absorption
 
 The remaining gap is a `POST /governance/ingest-policy` CI/CD-callable endpoint (not yet implemented) and a bidirectional push webhook from CAGE to the Governance Layer.
 

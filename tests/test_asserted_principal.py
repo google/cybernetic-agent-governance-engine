@@ -21,7 +21,7 @@ Covers the wire and authentication contracts in
 * A request carrying a verified OIDC JWT (resolved out-of-band by ``kid``)
   propagates that authenticated principal end-to-end (``user_context``,
   ``principal_verified_context=True``, ``x-cage-principal``,
-  ``x-cage-principal-verified="true"``, ``x-geap-user-id``, and span
+  ``x-cage-principal-verified="true"``, and span
   attributes ``enduser.id`` + ``cage.principal.verified=True``).
 * A request whose body ``user_id`` disagrees with the verified OIDC claim is
   refused with HTTP 403 before graph execution.
@@ -31,8 +31,8 @@ Covers the wire and authentication contracts in
   ``CAGE_ALLOW_ASSERTED_PRINCIPAL=true``), and is explicitly marked unverified
   (``cage.principal.verified=False``, ``x-cage-principal-verified="false"``)
   in permissive postures (``dev`` / ``test`` / ``ci``).
-* ``x-cage-principal`` and ``x-geap-user-id`` are sanitized and truncated by
-  one helper that matches the gateway's ``sanitize_principal``.
+* ``x-cage-principal`` is sanitized and truncated by one helper that matches
+  the gateway's ``sanitize_principal``.
 """
 
 from __future__ import annotations
@@ -240,7 +240,6 @@ def query_client(
     advisor_server: Any, stub_cache: MagicMock, monkeypatch: pytest.MonkeyPatch
 ) -> tuple[TestClient, _CapturingGraph]:
     monkeypatch.setenv("CAGE_API_KEY", _API_KEY)
-    monkeypatch.delenv("CAGE_ADVISOR_RUNTIME", raising=False)
     monkeypatch.delenv("CAGE_USER_OIDC_ISSUER", raising=False)
     monkeypatch.delenv("CAGE_USER_OIDC_AUDIENCE", raising=False)
     monkeypatch.delenv("CAGE_USER_OIDC_JWKS_JSON", raising=False)
@@ -364,7 +363,6 @@ class TestAuthenticatedPrincipalBinding:
         monkeypatch.setenv("CAGE_USER_OIDC_ISSUER", _OIDC_ISSUER)
         monkeypatch.setenv("CAGE_USER_OIDC_AUDIENCE", _OIDC_AUDIENCE)
         monkeypatch.setenv("CAGE_USER_OIDC_JWKS_JSON", json.dumps({_OIDC_KID: pub_pem}))
-        monkeypatch.setenv("CAGE_ADVISOR_RUNTIME", "geap")
 
         token = _mint_user_jwt(priv, sub="user:alice@example.com")
         resp = client.post(
@@ -383,7 +381,6 @@ class TestAuthenticatedPrincipalBinding:
         assert call["principal_verified"] is True
         assert call["headers"]["x-cage-principal"] == "user:alice@example.com"
         assert call["headers"]["x-cage-principal-verified"] == "true"
-        assert call["headers"]["x-geap-user-id"] == "user:alice@example.com"
 
     def test_verified_user_token_header_with_api_key_omitting_body_user_id(
         self,
@@ -695,50 +692,29 @@ def _headers_for(principal: str, *, verified: bool = False) -> dict[str, str]:
 
 
 class TestPrincipalHeaders:
-    """x-cage-principal and x-geap-user-id share one sanitizer and cap."""
+    """x-cage-principal shares one sanitizer and 64-char cap with the gateway."""
 
-    def test_both_headers_are_sanitized_and_truncated_identically(
-        self, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
-        monkeypatch.setenv("CAGE_ADVISOR_RUNTIME", "geap")
+    def test_principal_header_is_sanitized_and_truncated_identically(self) -> None:
         hostile = "bad\nheader\x00value!" + "x" * 100
         headers = _headers_for(hostile, verified=True)
 
         expected = gateway_sanitize(hostile)
         assert headers["x-cage-principal"] == expected
         assert headers["x-cage-principal-verified"] == "true"
-        assert headers["x-geap-user-id"] == expected
         assert len(expected) == PRINCIPAL_MAX_LEN
         assert re.fullmatch(PRINCIPAL_PATTERN, expected)
         assert expected.startswith("bad_header_value_x")
 
-    def test_long_principal_is_capped_at_64_in_both_headers(
-        self, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
-        monkeypatch.setenv("CAGE_ADVISOR_RUNTIME", "geap")
+    def test_long_principal_is_capped_at_64(self) -> None:
         headers = _headers_for("u" * 100)
         assert headers["x-cage-principal"] == "u" * PRINCIPAL_MAX_LEN
         assert headers["x-cage-principal-verified"] == "false"
-        assert headers["x-geap-user-id"] == "u" * PRINCIPAL_MAX_LEN
 
     @pytest.mark.parametrize("unusable", ["!!!", "   ", "", "\n\x00"])
-    def test_unusable_principal_sends_neither_header(
-        self, monkeypatch: pytest.MonkeyPatch, unusable: str
-    ) -> None:
-        monkeypatch.setenv("CAGE_ADVISOR_RUNTIME", "geap")
+    def test_unusable_principal_sends_no_principal_headers(self, unusable: str) -> None:
         headers = _headers_for(unusable)
         assert "x-cage-principal" not in headers
         assert "x-cage-principal-verified" not in headers
-        assert "x-geap-user-id" not in headers
-
-    def test_geap_user_header_only_on_geap_runtime(
-        self, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
-        monkeypatch.delenv("CAGE_ADVISOR_RUNTIME", raising=False)
-        headers = _headers_for("investor-42", verified=True)
-        assert headers["x-cage-principal"] == "investor-42"
-        assert headers["x-cage-principal-verified"] == "true"
-        assert "x-geap-user-id" not in headers
 
     @pytest.mark.parametrize("raw", _SANITIZER_CORPUS)
     def test_helper_matches_gateway_sanitizer(self, raw: str) -> None:

@@ -116,7 +116,6 @@ The matrix claims CAGE uses a **4-state asymmetric router** where high-confidenc
 | Policy Translation Pipeline | [`policy_translator.py`](../../src/gateway/governance/ingress/policy_translator.py) | ✅ Implemented |
 | OSCAL Adapter | [`oscal_adapter.py`](../../src/gateway/governance/ingress/oscal_adapter.py) | ✅ Implemented |
 | Lula Adapter | [`lula_adapter.py`](../../src/gateway/governance/ingress/lula_adapter.py) | ✅ Implemented |
-| AGW Adapter | [`agw_adapter.py`](../../src/gateway/governance/ingress/agw_adapter.py) | ✅ Implemented |
 
 **Remaining gap:** A unified CI/CD-callable `POST /governance/ingest-policy` HTTP endpoint that orchestrates the full translation pipeline into compiled enforcement artifacts is not yet implemented.
 
@@ -399,14 +398,10 @@ This positioning is credible because AGW explicitly supports **Service Extension
 **Revised CISO Narrative:**
 > "Google Agent Gateway secures the network perimeter — who your agents are and what endpoints they can reach. CAGE secures the consequence layer — what those agents can actually write to your authoritative state stores, regardless of what the network layer permitted. Run both. AGW is your identity and network moat; CAGE is your state and invariant moat."
 
-### 9.6 Gap 6: AGW Service Extension & GEAP Integration (SHIPPED — Hybrid Defense-in-Depth)
+### 9.6 Gap 6: Mesh Workload Identity & Cryptographic Routing Seal Enforcement
 
 **Architecture & Implementation:**
-CAGE integrates with Google Agent Gateway's Service Extensions mechanism and the Google Enterprise Agent Platform (GEAP — see [`GEAP_INTEGRATION_ARCHITECTURE.md`](GEAP_INTEGRATION_ARCHITECTURE.md)). Service Extensions allow AGW to delegate authorization decisions to [`AgwAdapter.evaluate_request_authz()`](../../src/gateway/governance/ingress/agw_adapter.py) — making CAGE the semantic and state-tier governance layer that AGW calls before allowing egress MCP traffic. On approval, the adapter verifies tri-identity OIDC context (`GeapTriIdentityContext`, `validate_oidc_token()`) and injects the `X-CAGE-Routing-Seal` header so the backend FastMCP tool server ([`FastMcpSealVerificationMiddleware`](../../src/integrations/gcp_geap/runtime_guards.py)) verifies governance authority before executing the tool.
-
-**Shipped modules:**
-1. **AGW Service Extension Adapter** — [`agw_adapter.py`](../../src/gateway/governance/ingress/agw_adapter.py) (`AgwAdapter`, `GeapTriIdentityContext`, `evaluate_request_authz()`).
-2. **Vertex AI Agent Engine Runtime & Terraform Module** — [`geap_app.py`](../../src/governed_financial_advisor/geap_app.py) (`GovernedFinancialAdvisorGeapApp`), [`runtime_guards.py`](../../src/integrations/gcp_geap/runtime_guards.py) (`FastMcpSealVerificationMiddleware`, `GovernedMemoryBankGuard`), and [`infra/modules/gcp_geap_advisor/`](../../infra/modules/gcp_geap_advisor/main.tf) (`fail_open = false` Service Extension callout).
+CAGE enforces zero-trust ingress and egress authority directly in-cluster without depending on an external Agent Gateway (`ext_authz`) callout. [`WorkloadIdentityMiddleware`](../../src/gateway/server/workload_identity.py) authenticates every caller via Linkerd mTLS (`l5d-client-id`), and on approval the governance kernel mints a single-use KMS-signed `X-CAGE-Routing-Seal` verified by [`verify_and_consume_seal()`](../../src/gateway/governance/routing_seal.py) before any downstream tool or actuator mutates state (`AR-1`).
 
 ### 9.7 Updated Competitive Matrix — Four-Way Comparison
 
@@ -438,7 +433,7 @@ CAGE integrates with Google Agent Gateway's Service Extensions mechanism and the
 
 Standalone evaluation frameworks (e.g., academic benchmarks, LLM-as-a-judge harnesses) suffer from **Eval-Prod Drift**: models and agent skills are evaluated offline against heuristic reward models that differ from the hard state invariants enforced in production, and uncalibrated LLM judges frequently collapse into vacuous always-pass graders. Conversely, standalone runtime firewalls block bad actions in flight (`DENY`) without producing structured counterfactual preference data or paired skill-lift diagnostics.
 
-CAGE bridges both markets with a **hard system cut** separating the online runtime kernel (`src/gateway/`) from the standalone offline evaluation and skill certification plane ([`src/eval_harness/`](../../src/eval_harness/__init__.py); see [`EVALUATION_AND_ALIGNMENT_HARNESS.md`](EVALUATION_AND_ALIGNMENT_HARNESS.md) and [`GEAP_INTEGRATION_ARCHITECTURE.md`](GEAP_INTEGRATION_ARCHITECTURE.md)):
+CAGE bridges both markets with a **hard system cut** separating the online runtime kernel (`src/gateway/`) from the standalone offline evaluation and skill certification plane ([`src/eval_harness/`](../../src/eval_harness/__init__.py); see [`EVALUATION_AND_ALIGNMENT_HARNESS.md`](EVALUATION_AND_ALIGNMENT_HARNESS.md)):
 
 1. **Split-Plane Decoupling (Zero Online Coupling):** [`scripts/check_import_boundaries.py`](../../scripts/check_import_boundaries.py) (`OFFLINE_EVAL_PATTERN`) forbids `src/gateway/` from importing `src/eval_harness/`, and [`src/gateway/Dockerfile`](../../src/gateway/Dockerfile) excludes `src/eval_harness/` from the runtime container image. [`FoundationModelEvalHarness`](../../src/eval_harness/harness.py) runs either in **standalone trace-only mode (`governor=None`)** with zero Redis/OPA dependencies or in **governance-replay mode (`governor=<SymbolicGovernor>`)** under `Profile.DRY_RUN`.
 2. **Stage 0 Static `SKILL.md` Linter & Length-Bias Orthogonalization:** [`lint_skill_markdown()`](../../src/eval_harness/static_linter.py) and [`lint_skill_file()`](../../src/eval_harness/static_linter.py) audit skill specifications at zero LLM cost across six structural/safety dimensions (`structural_integrity`, `routing_clarity`, `actionability`, `tool_cohesiveness`, `robustness_recovery`, `safety_restraint`) and apply an `information_density_multiplier` to penalize verbose markdown dumps.

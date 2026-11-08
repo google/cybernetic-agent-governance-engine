@@ -16,7 +16,6 @@ infra/
 │   ├── compliance_bridge/
 │   ├── deployment_config/
 │   ├── gateway/
-│   ├── gcp_geap_advisor/
 │   ├── gcp_gke_cluster/
 │   ├── governed_advisor/
 │   ├── k8s_namespace/
@@ -224,7 +223,7 @@ docker compose up
 | `compliance_bridge` | Langfuse-to-Lula compliance audit bridge |
 | `opa_policy` | Open Policy Agent engine |
 | `gateway` | CAGE Hybrid Inference & Governance Gateway |
-| `governed_advisor` / `gcp_geap_advisor` | Governed Financial Advisor (GKE or Vertex AI Agent Engine runtime) |
+| `governed_advisor` | Governed Financial Advisor (in-cluster GKE Deployment) |
 
 ---
 

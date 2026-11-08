@@ -334,7 +334,7 @@ PLATFORM_CONTROL_NARRATIVES: dict[str, dict[str, dict[str, str]]] = {
         "sc-39": {
             "uuid": _PLATFORM_SC39_IMPL_UUID,
             "control-id": "sc-39",
-            "title": "Process Isolation — Universal Kubernetes Pod Security & Optional GCP (GEAP MicroVM / GKE) Deployment Mode",
+            "title": "Process Isolation — Universal Kubernetes Pod Security & Optional GCP (GKE) Deployment Mode",
             "status": "implemented",
             "narrative": (
                 "CAGE is a cloud-agnostic governance engine whose baseline process isolation is "
@@ -345,13 +345,9 @@ PLATFORM_CONTROL_NARRATIVES: dict[str, dict[str, dict[str, str]]] = {
                 "and `seccompProfile: RuntimeDefault` (`infra/modules/compliance_bridge/main.tf`, "
                 "`infra/modules/gateway/main.tf`). When deployed on the `gcp-gke` target "
                 "(`infra/targets/gcp-gke/`), CAGE adds target-specific split-plane isolation: "
-                '(1) Agent Application Plane (Optional GEAP Agent Runtime mode, `advisor_runtime = "geap"` '
-                "via `infra/modules/gcp_geap_advisor/main.tf`): Untrusted agent orchestration and "
-                "tool-calling workloads execute on Vertex AI Agent Engine (Agent Substrate) with "
-                "hardware-enforced MicroVM isolation (dedicated guest Linux kernel per agent sandbox), "
-                "eliminating the need for nested-virtualization `runtimeClassName: microvm` pods on GKE "
-                '(while `advisor_runtime = "gke"` runs the advisor as a standard '
-                "`restricted` Kubernetes Deployment via `infra/modules/governed_advisor/main.tf`). "
+                "(1) Agent Application Plane (`gcp-gke` mode): The advisor runs in-cluster as a "
+                "`restricted` Kubernetes Deployment with zero signing authority "
+                "(`infra/modules/governed_advisor/main.tf`). "
                 "(2) Governance Control Plane (`gcp-gke` mode): Stateless governance-stack pods "
                 "(`gateway`, `compliance-bridge`, `opa`, `reconciliation-worker`) support optional "
                 "`runtimeClassName: gvisor` user-space kernel sandboxing on E2 CPU node pools "
@@ -365,7 +361,7 @@ PLATFORM_CONTROL_NARRATIVES: dict[str, dict[str, dict[str, str]]] = {
             "evidence": (
                 "infra/modules/k8s_namespace/main.tf, infra/modules/gateway/main.tf, "
                 "infra/modules/compliance_bridge/main.tf, infra/modules/governed_advisor/main.tf, "
-                "infra/modules/gcp_geap_advisor/main.tf, infra/modules/gcp_gke_cluster/main.tf"
+                "infra/modules/gcp_gke_cluster/main.tf"
             ),
             "poam_refs": "POAM-009 (SC-39)",
         },

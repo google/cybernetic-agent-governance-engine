@@ -191,15 +191,8 @@ def test_model_workloads_are_counted_on_the_backend() -> None:
     for name in ("vllm", "vllm_reasoning"):
         block = _block(MAIN, f'module "{name}" {{')
         assert "count = local.vllm_enabled ? 1 : 0" in block, name
-    geap = _block(MAIN, 'module "gcp_geap_advisor" {')
     gke = _block(MAIN, 'module "governed_advisor" {')
-    assert (
-        'count  = local.advisor_enabled && var.advisor_runtime == "geap" ? 1 : 0'
-        in geap
-    )
-    assert (
-        'count  = local.advisor_enabled && var.advisor_runtime == "gke" ? 1 : 0' in gke
-    )
+    assert "count  = local.advisor_enabled ? 1 : 0" in gke
 
 
 def test_no_workload_is_pointed_at_vllm_outside_the_backend_locals() -> None:
@@ -219,14 +212,6 @@ def test_gateway_and_bridge_are_told_the_backend() -> None:
     module_main = _read(REPO_ROOT / "infra" / "modules" / "gateway" / "main.tf")
     for env in ("CAGE_INFERENCE_BACKEND", "VLLM_API_KEY"):
         assert f'name  = "{env}"' in module_main, env
-
-
-def test_geap_principal_is_trusted_only_while_a_geap_advisor_exists() -> None:
-    gateway = _squash(_block(MAIN, 'module "gateway" {'))
-    assert (
-        'trusted_geap_principals = local.advisor_enabled && var.advisor_runtime == "geap"'
-        in gateway
-    )
 
 
 def test_switching_backend_changes_no_cluster_or_node_pool_input() -> None:

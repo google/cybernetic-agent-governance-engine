@@ -294,11 +294,6 @@ variable "deployment_config_map_name" {
   type        = string
 }
 
-variable "trusted_geap_principals" {
-  description = "Optional list of GEAP Agent Identity (ID-2) principals ('principal://agents.global.org-<id>/<agent>') required in addition to Linkerd mTLS when advisor runs on GEAP Agent Runtime."
-  type        = list(string)
-  default     = []
-}
 
 variable "enable_autoscaling" {
   description = "Enable HorizontalPodAutoscaler (autoscaling/v2) keyed on GMP pod metric prometheus.googleapis.com|cage_event_loop_lag_seconds|gauge when replicas >= 2."

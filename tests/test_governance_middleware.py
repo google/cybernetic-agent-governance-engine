@@ -930,53 +930,6 @@ class TestValidateActionCanonicalEnvelope:
         assert data.get("envelope_version") == "3.0"
         assert data["payload"]["verdict"] == "ALLOW"
 
-    def test_agw_request_authz_uses_governor_from_app_state(
-        self, client_for_external_hold, mock_kms_signer
-    ):
-        """POST /agw/request-authz resolves governor via governor_of(request.app)."""
-        from src.gateway.governance.ingress.agw_adapter import (
-            AgwRequestAuthzDecision,
-            GeapTriIdentityContext,
-        )
-
-        mock_gov = _mock_governor()
-        fake_decision = AgwRequestAuthzDecision(
-            allowed=True,
-            http_status=200,
-            decision="ALLOW",
-            headers_to_inject={"X-CAGE-Routing-Seal": "agw-seal-123"},
-            agent_id="spiffe://cluster.local/ns/default/sa/agent",
-            tool_name="execute_trade",
-            tri_identity=GeapTriIdentityContext(
-                user_id="user-1",
-                agent_principal="spiffe://cluster.local/ns/default/sa/agent",
-            ),
-            reason="Approved",
-        )
-        mock_adapter = MagicMock()
-        mock_adapter.evaluate_request_authz = AsyncMock(return_value=fake_decision)
-
-        with (
-            _installed_governor(mock_gov),
-            patch(
-                "src.gateway.governance.ingress.agw_adapter.get_agw_adapter",
-                return_value=mock_adapter,
-            ),
-        ):
-            resp = client_for_external_hold.post(
-                "/agw/request-authz",
-                json={"tool_name": "execute_trade", "parameters": {"amount": 100}},
-            )
-
-        assert resp.status_code == 200
-        data = resp.json()
-        assert data["decision"] == "ALLOW"
-        assert data["tri_identity"]["user_verified"] is False
-        mock_adapter.evaluate_request_authz.assert_awaited_once_with(
-            {"tool_name": "execute_trade", "parameters": {"amount": 100}},
-            governor=mock_gov,
-        )
-
     def test_validate_action_returns_503_when_governor_raises_evidence_chain_unavailable(
         self, client_for_external_hold, mock_kms_signer
     ):

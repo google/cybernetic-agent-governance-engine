@@ -149,11 +149,7 @@ class GatewayMCPClient:
         return self._connect_lock
 
     def _build_headers(self) -> dict[str, str]:
-        headers: dict[str, str] = {}
-        id2_token = os.environ.get("CAGE_GEAP_ID2_OIDC_TOKEN", "").strip()
-        if id2_token:
-            headers["Authorization"] = f"Bearer {id2_token}"
-        return headers
+        return {}
 
     def _build_http_client(self) -> httpx.AsyncClient:
         return httpx.AsyncClient(

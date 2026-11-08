@@ -18,7 +18,7 @@ The advisor resolves an end-user principal into a :class:`PrincipalIdentity`
 (``user_id``, ``verified``, ``kid``):
 
 * When an out-of-band ``kid``-resolved user OIDC JWT is presented
-  (``X-CAGE-User-Token``, ``X-GEAP-User-Assertion``, or ``Authorization: Bearer <jwt>``
+  (``X-CAGE-User-Token`` or ``Authorization: Bearer <jwt>``
   when ``CAGE_USER_OIDC_ISSUER`` is configured), the advisor verifies the token
   against its out-of-band trust anchor manifest, checks that any caller-supplied
   ``QueryRequest.user_id`` matches the verified subject claim, and marks
@@ -30,8 +30,7 @@ The advisor resolves an end-user principal into a :class:`PrincipalIdentity`
   forward with ``verified=False``.
 
 The advisor forwards the resolved principal to the gateway as ``x-cage-principal``,
-``x-cage-principal-verified`` (``"true"`` or ``"false"``), and, on GEAP Agent
-Runtime, as ``x-geap-user-id``.
+``x-cage-principal-verified`` (``"true"`` or ``"false"``).
 
 The charset and length cap mirror the gateway's ``x-cage-principal`` sanitizer
 (``sanitize_principal`` in ``src/gateway/server/rate_limit.py``), so a value

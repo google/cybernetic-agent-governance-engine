@@ -385,11 +385,11 @@ class VertexGenAIEvalBackend(EvalBackendProtocol):
         min_weighted_agreement: float = 0.70,
         explicit_rubric_scores: Mapping[str, float] | None = None,
     ) -> SimulatedEvalGateResult:
-        """Execute GEAP's Simulated Evaluation CI/CD PR Gate (GEAP Tour Slides 24 & 31).
+        """Execute the Vertex AI GenAI Eval Simulated CI/CD PR Gate.
 
         Enforces three fail-closed gates before allowing a PR merge / production deploy:
         1. **Double Ratchet Anchor Calibration**: ``anchor_calibration.valid`` must be ``True``.
-        2. **GEAP 1-5 PointwiseMetric Rubric & 4-Bucket Skill Lift**: Mean rubric score
+        2. **Vertex AI 1-5 PointwiseMetric Rubric & 4-Bucket Skill Lift**: Mean rubric score
            (1.0 to 5.0 scale, default threshold ``>= 3.0``) and ``mean_composite_lift >= min_composite_lift``.
         3. **Zero Eval-Prod Drift Invariant Gate**: Every ``with_skill`` trajectory must clear
            ``SymbolicGovernor`` (`Profile.DRY_RUN`) and deterministic drawback detectors with
@@ -397,7 +397,7 @@ class VertexGenAIEvalBackend(EvalBackendProtocol):
         """
         if min_rubric_score < 1.0 or min_rubric_score > 5.0:
             raise ValueError(
-                "min_rubric_score must be on the GEAP 1.0-5.0 PointwiseMetric scale"
+                "min_rubric_score must be on the 1.0-5.0 PointwiseMetric scale"
             )
 
         anchor_cal = self.calibrate_on_vertex_anchor_dataset(
@@ -418,7 +418,7 @@ class VertexGenAIEvalBackend(EvalBackendProtocol):
             state_reducer=state_reducer,
         )
 
-        # Compute GEAP 1.0-5.0 PointwiseMetric score (either from explicit Vertex rubric scores
+        # Compute 1.0-5.0 PointwiseMetric score (either from explicit Vertex rubric scores
         # or mapped linearly from [0.0, 1.0] composite_score -> [1.0, 5.0])
         if explicit_rubric_scores:
             scores_1_to_5 = [float(v) for v in explicit_rubric_scores.values()]
@@ -478,7 +478,7 @@ class VertexGenAIEvalBackend(EvalBackendProtocol):
 
 @dataclass(frozen=True)
 class SimulatedEvalGateResult:
-    """Verdict from GEAP's Simulated Evaluation CI/CD Gate hardened with CAGE invariants."""
+    """Verdict from the Vertex AI GenAI Eval Simulated CI/CD Gate hardened with CAGE invariants."""
 
     passed: bool
     skill_name: str

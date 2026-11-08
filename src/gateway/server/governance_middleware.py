@@ -960,16 +960,3 @@ async def validate_action_endpoint(
 
 # POST /governance/state-commitments — generic state-commitment service.
 governance_app.include_router(state_commitment_router)
-
-
-@governance_app.post("/agw/request-authz")
-async def evaluate_agw_request_authz(request: Request) -> JSONResponse:
-    """Evaluate a GEAP Agent Gateway (AGW) HTTP ext_authz callout via AgwAdapter."""
-    from dataclasses import asdict
-
-    from src.gateway.governance.ingress.agw_adapter import get_agw_adapter
-
-    payload = await request.json()
-    gov = governor_of(request.app)
-    decision = await get_agw_adapter().evaluate_request_authz(payload, governor=gov)
-    return JSONResponse(status_code=decision.http_status, content=asdict(decision))
