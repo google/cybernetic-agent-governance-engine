@@ -113,7 +113,6 @@ FIRST_PARTY_IMAGES=(
   "agentsight-ui"
   "compliance-bridge"
   "governed-financial-advisor"
-  "nemo-guardrails"
   "vllm-streamer"
   "lula"
   "inference-stub"

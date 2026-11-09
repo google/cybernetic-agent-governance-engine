@@ -83,7 +83,7 @@ terraform apply -var-file=prod.tfvars
 - **The advisor reaches its models only through the gateway.** Its model base URLs point at the gateway's `POST /v1/chat/completions` proxy (`local.advisor_inference_url`), and the `model-backend-ingress` NetworkPolicy admits TCP 8000 on the `vllm-inference`, `vllm-reasoning` and `inference-stub` pods from `app = "gateway"` alone. Stage 1 prompt scanning, the token quota and output PII masking therefore run on every advisor completion (EA-1).
 - **`enable_e2e_advisor` runs the advisor without a GPU.** Under `"none"`, `enable_e2e_advisor = true` deploys the advisor and the deterministic CPU `inference-stub` backend (`CAGE_INFERENCE_BACKEND=stub`) behind the same gateway proxy, for end-to-end verification. It needs `image_digests["inference-stub"]`, is never set in a committed profile, and the plan refuses it in `prod` / `production` (EA-2).
 - **`enable_vllm` is removed.** A profile that still sets it fails the plan with a message that names `inference_backend` (AG-7 in [`BREAKING_CHANGES.md`](../../../docs/BREAKING_CHANGES.md)).
-- **The standalone NeMo server is refused.** `enable_nemo_guardrails = true` fails the plan: the server calls vLLM directly, and only the gateway may reach the model backends (EA-1). Nothing in CAGE calls the server: the gateway builds its rails in process.
+- **No standalone NeMo server on GKE.** Only the gateway may reach the model backends (`model-backend-ingress`, EA-1), and the gateway builds its NeMo rails in process (`NS-1` retired the unused standalone GKE target wiring).
 
 The backend each need uses is below. The integration tiers are not built yet; this is the split they are designed around.
 

@@ -678,6 +678,70 @@ def test_linkerd_manifests_accepted_by_apiserver(linkerd_mesh_fixture) -> None:
         assert res.returncode == 0
 
 
+def test_companion_mesh_charts_accepted_by_linkerd_webhook(
+    linkerd_mesh_fixture,
+) -> None:
+    """Verify compliance-bridge and workload-mesh-policy Helm charts pass linkerd-policy-validator webhook."""
+    if shutil.which("helm") is None:
+        pytest.skip("helm binary not installed; skipping companion chart render check.")
+    suffix = f"{NAMESPACE}.serviceaccount.identity.linkerd.cluster.local"
+    cb_chart = REPO_ROOT / "infra" / "modules" / "compliance_bridge" / "mesh-policy"
+    cb_rendered = subprocess.run(
+        [
+            "helm",
+            "template",
+            "compliance-bridge-mesh-policy",
+            str(cb_chart),
+            "--namespace",
+            NAMESPACE,
+            "--set-string",
+            f"trustedIdentities[0]=cage-gateway-sa.{suffix}",
+            "--set-string",
+            f"auditorIdentity=cage-lula-auditor-sa.{suffix}",
+        ],
+        capture_output=True,
+        text=True,
+        timeout=30,
+        check=True,
+    ).stdout
+    _kubectl("apply", "--dry-run=server", "-f", "-", input_text=cb_rendered)
+
+    wl_chart = (
+        REPO_ROOT / "infra" / "targets" / "gcp-gke" / "charts" / "workload-mesh-policy"
+    )
+    wl_rendered = subprocess.run(
+        [
+            "helm",
+            "template",
+            "workload-mesh-policy",
+            str(wl_chart),
+            "--namespace",
+            NAMESPACE,
+            "--set-string",
+            f"identities.gatewayGrpcClients[0]={ADVISOR_SPIFFE_ID}",
+            "--set-string",
+            f"identities.modelBackendClients[0]=cage-gateway-sa.{suffix}",
+            "--set-string",
+            f"identities.clickhouseHttpClients[0]=cage-compliance-bridge-sa.{suffix}",
+            "--set-string",
+            f"identities.clickhouseTcpClients[0]=langfuse-sa.{suffix}",
+            "--set-string",
+            f"identities.clickhouseInterserverClients[0]=cage-clickhouse-sa.{suffix}",
+            "--set-string",
+            f"identities.clickhouseKeeperClients[0]=cage-clickhouse-sa.{suffix}",
+            "--set-string",
+            f"identities.clickhouseKeeperRaftClients[0]=cage-clickhouse-keeper-sa.{suffix}",
+            "--set-string",
+            f"identities.langfuseWebClients[0]=cage-gateway-sa.{suffix}",
+        ],
+        capture_output=True,
+        text=True,
+        timeout=30,
+        check=True,
+    ).stdout
+    _kubectl("apply", "--dry-run=server", "-f", "-", input_text=wl_rendered)
+
+
 def test_trusted_advisor_sa_reaches_gated_and_open_routes(linkerd_mesh_fixture) -> None:
     """Verify cage-advisor-sa is admitted to both open and gated routes on hybrid_server:root_app."""
     status_open, body_open = _exec_http_get("advisor-mesh-client", "/healthz")

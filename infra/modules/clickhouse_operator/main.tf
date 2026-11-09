@@ -238,7 +238,7 @@ resource "kubernetes_stateful_set" "clickhouse_keeper" {
       }
 
       spec {
-        service_account_name = var.service_account_name != "" ? var.service_account_name : null
+        service_account_name = var.keeper_service_account_name != "" ? var.keeper_service_account_name : null
 
         # §3, §7: Schedule strictly onto tainted clickhouse node pool (never general or Spot)
         toleration {

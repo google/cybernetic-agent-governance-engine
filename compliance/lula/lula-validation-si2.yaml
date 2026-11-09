@@ -120,7 +120,7 @@ component-definition:
                 "governed-financial-advisor",
                 "vllm-inference",
                 "vllm-reasoning",
-                "nemo-guardrails",
+                "inference-stub",
                 "compliance-bridge",
               }
 

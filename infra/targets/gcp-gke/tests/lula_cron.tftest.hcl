@@ -106,10 +106,9 @@ run "staging_plans_lula_cron_active_specs_and_dedicated_ksas" {
   assert {
     condition = (
       kubernetes_service_account.workload["lula"].metadata[0].name == "cage-lula-sa" &&
-      kubernetes_service_account.workload["agentsight_ui"].metadata[0].name == "cage-agentsight-ui-sa" &&
-      kubernetes_service_account.workload["nemo"].metadata[0].name == "cage-nemo-sa"
+      kubernetes_service_account.workload["agentsight_ui"].metadata[0].name == "cage-agentsight-ui-sa"
     )
-    error_message = "AC-2: lula, agentsight_ui, and nemo must each have a dedicated non-default KSA (OPA runs inside the gateway pod under cage-gateway-sa)"
+    error_message = "AC-2: lula and agentsight_ui must each have a dedicated non-default KSA (OPA runs inside the gateway pod under cage-gateway-sa)"
   }
 
   assert {

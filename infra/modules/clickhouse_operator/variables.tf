@@ -100,6 +100,12 @@ variable "service_account_name" {
   default     = ""
 }
 
+variable "keeper_service_account_name" {
+  description = "Dedicated zero-cloud-identity Kubernetes ServiceAccount for ClickHouse Keeper quorum pods (never shares the ClickHouse server cold-tier GSA; POAM-2026-080 / POAM-2026-195)."
+  type        = string
+  default     = ""
+}
+
 variable "hot_to_cold_move_factor" {
   description = "Free-space ratio on hot local SSD below which parts automatically move to the GCS cold tier"
   type        = number

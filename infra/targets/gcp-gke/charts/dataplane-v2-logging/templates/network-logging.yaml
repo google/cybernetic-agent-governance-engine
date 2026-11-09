@@ -1,0 +1,40 @@
+# Copyright 2026 Google LLC
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     https://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+# D-195-4 (R-5, F-78, F-87): GKE Dataplane V2 NetworkPolicy verdict logging.
+# GKE automatically creates a cluster-scoped singleton `NetworkLogging` named
+# `default` on Dataplane V2 clusters; `dataplane_v2_logging.tf` labels and
+# annotates that singleton for Helm adoption before installing this chart, and
+# `helm.sh/resource-policy: keep` preserves the GKE-owned singleton on uninstall.
+# Logs stream to Cloud Logging `projects/<PROJECT_ID>/logs/policy-action`
+# (`resource.type="k8s_node"`). Note GKE caps node policy logging at 500
+# connections/s per node before shedding excess log entries (NetworkPolicies
+# remain enforced; dropped counts appear on `anetd` `:9990/metrics`
+# `policy_logging`).
+apiVersion: networking.gke.io/v1alpha1
+kind: NetworkLogging
+metadata:
+  name: default
+  annotations:
+    "helm.sh/resource-policy": keep
+    "compliance.nist.gov/control": "SC-7,AU-2,AU-12,SI-4"
+    "compliance.nist.gov/standard": "SP-800-53-Rev5"
+    "cage.io/poam": "POAM-2026-195"
+spec:
+  cluster:
+    allow:
+      log: {{ .Values.logAllow }}
+      delegate: {{ .Values.delegateAllow }}
+    deny:
+      log: {{ .Values.logDeny }}
+      delegate: {{ .Values.delegateDeny }}

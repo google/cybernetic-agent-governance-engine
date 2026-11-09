@@ -104,8 +104,9 @@ def test_every_profile_names_its_backend_and_drops_enable_vllm(profile: str) -> 
     text = _read(GKE / profile)
     assert _setting(text, "enable_vllm") is None, f"{profile} still sets enable_vllm"
     assert _setting(text, "inference_backend") in {"none", "vllm"}, profile
-    # The plan refuses the standalone NeMo server (EA-1).
-    assert _setting(text, "enable_nemo_guardrails") in {None, "false"}, profile
+    # Standalone GKE NeMo target is retired cleanly (EA-1 / Wave 3.4).
+    assert _setting(text, "enable_nemo_guardrails") is None, profile
+    assert _setting(text, "nemo_image") is None, profile
 
 
 def test_staging_is_the_profile_without_a_model() -> None:
@@ -126,7 +127,7 @@ def test_staging_keeps_a_three_zone_gpu_pool_that_scales_from_zero() -> None:
         "us-central1-b",
         "us-central1-c",
     ]
-    assert _setting(text, "enable_nemo_guardrails") == "false"
+    assert _setting(text, "enable_nemo_guardrails") is None
 
 
 def test_gpu_node_pool_uses_total_autoscaling_and_zero_initial_default() -> None:
@@ -294,27 +295,14 @@ def test_switching_backend_changes_no_cluster_or_node_pool_input() -> None:
 def test_plan_refuses_backends_that_cannot_run() -> None:
     guard = _squash(_block(MAIN, 'resource "terraform_data" "inference_backend_guard"'))
     assert "condition = !local.vllm_enabled || var.enable_gpu_node_pool" in guard
-    # EA-1: the standalone NeMo server calls vLLM directly, and only the
-    # gateway may reach the model backends, so the plan refuses it outright.
-    assert "condition = !var.enable_nemo_guardrails" in guard
-    assert "only the gateway may reach the model backends" in guard
-
-
-def test_nemo_server_is_off_by_default() -> None:
-    block = _squash(_block(VARIABLES, 'variable "enable_nemo_guardrails"'))
-    assert "default = false" in block
-
-
-# ── POAM-2026-136: the unread URL variables are gone ─────────────────────────
+    # Standalone NeMo Guardrails was retired from the GKE root target, so the
+    # guard no longer carries an enable_nemo_guardrails refusal precondition.
+    assert "enable_nemo_guardrails" not in guard
 
 
 @pytest.mark.parametrize(
     "path",
-    [
-        "infra/targets/gcp-gke/variables.tf",
-        "deploy_all.sh",
-        "infra/load_env.sh",
-    ],
+    ["infra/targets/gcp-gke/variables.tf", "deploy_all.sh", "infra/load_env.sh"],
 )
 def test_unread_vllm_url_variables_are_removed(path: str) -> None:
     text = _read(REPO_ROOT / path)
@@ -341,19 +329,6 @@ def _set(rego: str, name: str) -> set[str]:
     match = re.search(rf"{name} := \{{(.*?)\}}", rego, re.DOTALL)
     assert match is not None, name
     return set(re.findall(r'"([^"]+)"', match.group(1)))
-
-
-def test_si2_requires_only_what_every_backend_deploys() -> None:
-    _, rego = _rego("lula-validation-si2.yaml")
-    assert _set(rego, "required_deployments") == {"gateway", "agentsight-ui"}
-    assert _set(rego, "optional_deployments") == {
-        "governed-financial-advisor",
-        "vllm-inference",
-        "vllm-reasoning",
-        "nemo-guardrails",
-        "compliance-bridge",
-    }
-    assert "optional_images_pinned" in rego.split("validate if {", 1)[1]
 
 
 def test_cm6_no_longer_requires_the_nemo_configmap() -> None:

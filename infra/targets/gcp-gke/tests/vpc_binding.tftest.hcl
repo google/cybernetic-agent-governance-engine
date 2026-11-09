@@ -390,11 +390,11 @@ run "datastore_egress_across_vpc_binding" {
 
   assert {
     condition = (
-      contains(flatten([for r in kubernetes_network_policy_v1.datastore_egress.spec[0].egress : [for t in r.to : t.ip_block[0].cidr]]), "10.0.0.45/32") &&
-      contains(flatten([for r in kubernetes_network_policy_v1.datastore_egress.spec[0].egress : [for t in r.to : t.ip_block[0].cidr]]), "10.0.0.112/32") &&
-      contains(flatten([for r in kubernetes_network_policy_v1.datastore_egress.spec[0].egress : [for t in r.to : t.ip_block[0].cidr]]), "10.17.0.3/32")
+      contains(flatten([for r in kubernetes_network_policy_v1.gateway_egress_l3_l4.spec[0].egress : [for t in r.to : try(t.ip_block[0].cidr, "")]]), "10.0.0.45/32") &&
+      contains(flatten([for r in kubernetes_network_policy_v1.langfuse_egress_l3_l4.spec[0].egress : [for t in r.to : try(t.ip_block[0].cidr, "")]]), "10.0.0.112/32") &&
+      contains(flatten([for r in kubernetes_network_policy_v1.langfuse_egress_l3_l4.spec[0].egress : [for t in r.to : try(t.ip_block[0].cidr, "")]]), "10.17.0.3/32")
     )
-    error_message = "kubernetes_network_policy_v1.datastore_egress must allow egress to the custom-VPC /32 endpoints"
+    error_message = "per-workload egress policies must allow egress to the custom-VPC /32 endpoints"
   }
 
   assert {

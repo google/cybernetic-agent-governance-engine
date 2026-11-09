@@ -105,6 +105,23 @@ variable "enable_fqdn_network_policy" {
   default     = true
 }
 
+variable "enable_network_policy_logging" {
+  description = <<-EOT
+    Enable GKE Dataplane V2 advanced datapath observability (`enable_metrics = true`,
+    `enable_relay = true`) to complement the cluster-scoped `NetworkLogging` (`default`,
+    `networking.gke.io/v1alpha1`) policy-verdict configuration (`D-195-4`, `R-5`, `F-78`,
+    `F-87`). When enabled alongside `NetworkLogging/default`, GKE exports L3/L4 allow and
+    deny NetworkPolicy verdicts to Cloud Logging (`projects/<PROJECT_ID>/logs/policy-action`,
+    `resource.type = "k8s_node"`). Note GKE enforces a per-node rate limit floor of 500
+    connections/s before dropping policy-action log records (NetworkPolicies remain enforced),
+    and Dataplane V2 produces L3/L4 flow/verdict telemetry only because Linkerd mTLS encrypts
+    L7 payloads in transit.
+  EOT
+  type        = bool
+  default     = false
+  nullable    = false
+}
+
 variable "release_channel" {
   description = "GKE release channel (REGULAR, STABLE, RAPID) to guarantee control-plane version >= 1.27.1-gke.400 for FQDNNetworkPolicy (§5.3)."
   type        = string

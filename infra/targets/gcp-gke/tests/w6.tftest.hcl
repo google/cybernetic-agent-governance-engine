@@ -85,10 +85,6 @@ run "staging_none_deploys_no_model_workloads" {
     error_message = "inference_backend = none with enable_e2e_advisor = false must deploy neither advisor nor inference_stub"
   }
   assert {
-    condition     = length(module.nemo_guardrails) == 0
-    error_message = "staging must deploy no NeMo server"
-  }
-  assert {
     condition = (
       local.vllm_fast_url == "" &&
       local.vllm_reasoning_url == "" &&
@@ -253,24 +249,9 @@ run "vllm_without_gpu_pool_is_refused" {
   expect_failures = [terraform_data.inference_backend_guard]
 }
 
-run "nemo_server_without_vllm_is_refused" {
-  command = plan
-  variables {
-    enable_nemo_guardrails = true
-  }
-  expect_failures = [terraform_data.inference_backend_guard]
-}
 
 # EA-1: only the gateway may reach the model backends, so the standalone NeMo
 # server is refused even where vLLM runs.
-run "nemo_server_with_vllm_is_refused" {
-  command = plan
-  variables {
-    inference_backend      = "vllm"
-    enable_nemo_guardrails = true
-  }
-  expect_failures = [terraform_data.inference_backend_guard]
-}
 
 run "kms_module_grants_cmek_to_memorystore_and_redis_p4sas" {
   command = plan
@@ -467,23 +448,28 @@ run "datastore_egress_follows_endpoints" {
   assert {
     condition = (
       toset(flatten([
-        for r in kubernetes_network_policy_v1.datastore_egress.spec[0].egress : [
+        for r in kubernetes_network_policy_v1.gateway_egress_l3_l4.spec[0].egress : [
           for t in r.to : t.ip_block[0].cidr if length(t.ip_block) > 0
         ] if contains([for p in r.ports : p.port], "6379")
-      ])) == toset(["10.20.1.11/32", "10.20.2.22/32"])
+      ])) == toset(["10.20.1.11/32"]) &&
+      toset(flatten([
+        for r in kubernetes_network_policy_v1.langfuse_egress_l3_l4.spec[0].egress : [
+          for t in r.to : t.ip_block[0].cidr if length(t.ip_block) > 0
+        ] if contains([for p in r.ports : p.port], "6379")
+      ])) == toset(["10.20.2.22/32"])
     )
-    error_message = "kubernetes_network_policy_v1.datastore_egress must allow TCP 6379 to both Valkey /32 endpoints"
+    error_message = "per-workload egress policies must allow TCP 6379 to respective Valkey /32 endpoints"
   }
 
   assert {
     condition = (
       toset(flatten([
-        for r in kubernetes_network_policy_v1.datastore_egress.spec[0].egress : [
+        for r in kubernetes_network_policy_v1.langfuse_egress_l3_l4.spec[0].egress : [
           for t in r.to : t.ip_block[0].cidr if length(t.ip_block) > 0
         ] if contains([for p in r.ports : p.port], "3307") && contains([for p in r.ports : p.port], "5432")
       ])) == toset(["10.20.3.33/32"])
     )
-    error_message = "kubernetes_network_policy_v1.datastore_egress must allow TCP 3307 and 5432 to the Cloud SQL /32 endpoint"
+    error_message = "kubernetes_network_policy_v1.langfuse_egress_l3_l4 must allow TCP 3307 and 5432 to the Cloud SQL /32 endpoint"
   }
 
   assert {
@@ -508,18 +494,18 @@ run "datastore_egress_follows_endpoints" {
           for t in r.to : t.ip_block[0].cidr if length(t.ip_block) > 0
         ] if contains([for p in r.ports : p.port], "6379")
       ])) == toset(["10.20.1.11/32"]) &&
-      toset(flatten([
+      length(flatten([
         for r in kubernetes_network_policy_v1.financial_advisor_egress_internal_only.spec[0].egress : [
           for t in r.to : t.ip_block[0].cidr if length(t.ip_block) > 0
         ] if contains([for p in r.ports : p.port], "6379")
-      ])) == toset(["10.20.2.22/32"]) &&
+      ])) == 0 &&
       toset(flatten([
         for r in kubernetes_network_policy_v1.reconciliation_worker_egress.spec[0].egress : [
           for t in r.to : t.ip_block[0].cidr if length(t.ip_block) > 0
         ] if contains([for p in r.ports : p.port], "6379")
       ])) == toset(["10.20.1.11/32"])
     )
-    error_message = "per-workload NetworkPolicies must derive their Valkey /32 CIDRs from the governance and app endpoints"
+    error_message = "per-workload NetworkPolicies must bind governance Valkey (/32) only to gateway, compliance-bridge, and reconciliation-worker, with zero Valkey egress for governed-financial-advisor (POAM-2026-195)"
   }
 }
 

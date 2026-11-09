@@ -525,3 +525,17 @@ resource "kubernetes_service" "compliance_bridge" {
     }
   }
 }
+
+resource "helm_release" "mesh_policy" {
+  name            = "compliance-bridge-mesh-policy"
+  chart           = "${path.module}/mesh-policy"
+  namespace       = var.namespace
+  upgrade_install = true
+  atomic          = true
+  cleanup_on_fail = true
+
+  values = [yamlencode({
+    trustedIdentities = var.trusted_mesh_identities
+    auditorIdentity   = var.auditor_mesh_identity
+  })]
+}

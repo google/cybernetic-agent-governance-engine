@@ -434,3 +434,157 @@ def test_detects_an_unserved_authorization_policy_version() -> None:
     assert served_version_violations(planted) == [
         "AuthorizationPolicy policy.linkerd.io/v1beta2"
     ]
+
+
+def _render_compliance_bridge_mesh_chart(
+    trusted_identities: list[str],
+    auditor_identity: str = "",
+    namespace: str = "governance-stack",
+) -> list[dict]:
+    chart = _REPO / "infra" / "modules" / "compliance_bridge" / "mesh-policy"
+    tpl = (chart / "templates" / "policy.yaml").read_text(encoding="utf-8")
+    rendered = tpl.replace("{{ .Release.Namespace }}", namespace)
+    id_block = "".join(f'    - "{ident}"\n' for ident in trusted_identities)
+    rendered = re.sub(
+        r"\{\{- range \.Values\.trustedIdentities \}\}.*?\{\{- end \}\}\n",
+        id_block,
+        rendered,
+        flags=re.S,
+    )
+    rendered = re.sub(
+        r"\{\{- if \.Values\.trustedIdentities \}\}\n(.*?)\{\{- end \}\}",
+        r"\1" if trusted_identities else "",
+        rendered,
+        flags=re.S,
+    )
+    rendered = rendered.replace(
+        "{{ .Values.auditorIdentity | quote }}", f'"{auditor_identity}"'
+    )
+    rendered = re.sub(
+        r"\{\{- if \.Values\.auditorIdentity \}\}\n(.*?)\{\{- end \}\}",
+        r"\1" if auditor_identity else "",
+        rendered,
+        flags=re.S,
+    )
+    return [d for d in yaml.safe_load_all(rendered) if isinstance(d, dict)]
+
+
+def _render_workload_mesh_chart(
+    identities_by_group: dict[str, list[str]],
+    namespace: str = "governance-stack",
+) -> list[dict]:
+    chart = _REPO / "infra" / "targets" / "gcp-gke" / "charts" / "workload-mesh-policy"
+    tpl = (chart / "templates" / "servers-and-authz.yaml").read_text(encoding="utf-8")
+    rendered = tpl.replace("{{ .Release.Namespace }}", namespace)
+    for key, idents in identities_by_group.items():
+        id_block = "".join(f'    - "{ident}"\n' for ident in idents)
+        rendered = re.sub(
+            rf"\{{\{{- range \.Values\.identities\.{re.escape(key)} \}}\}}.*?\{{\{{- end \}}\}}\n",
+            id_block,
+            rendered,
+            flags=re.S,
+        )
+        rendered = re.sub(
+            rf"\{{\{{- if \.Values\.identities\.{re.escape(key)} \}}\}}\n(.*?)\{{\{{- end \}}\}}",
+            r"\1" if idents else "",
+            rendered,
+            flags=re.S,
+        )
+    return [d for d in yaml.safe_load_all(rendered) if isinstance(d, dict)]
+
+
+def _assert_linkerd_webhook_invariants(docs: list[dict]) -> None:
+    """Enforce linkerd-policy-validator.linkerd.io single-authn and SPIFFE SAN rules."""
+    for doc in docs:
+        kind = doc["kind"]
+        name = doc["metadata"]["name"]
+        if kind == "AuthorizationPolicy":
+            refs = doc["spec"]["requiredAuthenticationRefs"]
+            mtls_refs = [r for r in refs if r["kind"] == "MeshTLSAuthentication"]
+            assert len(mtls_refs) <= 1, (
+                f"AuthorizationPolicy/{name} sets {len(mtls_refs)} MeshTLSAuthentication "
+                "refs; Linkerd policy webhook rejects > 1"
+            )
+            assert len(refs) >= 1, f"AuthorizationPolicy/{name} has empty authn refs"
+        elif kind == "MeshTLSAuthentication":
+            idents = doc["spec"].get("identities", [])
+            assert idents, f"MeshTLSAuthentication/{name} must list >= 1 identity"
+            for ident in idents:
+                assert _LINKERD_IDENTITY.match(ident), (
+                    f"MeshTLSAuthentication/{name} has invalid SPIFFE SAN: {ident!r}"
+                )
+
+
+def test_all_three_mesh_charts_obey_linkerd_policy_webhook_invariants() -> None:
+    suffix = "governance-stack.serviceaccount.identity.linkerd.cluster.local"
+    lula_id = f"cage-lula-auditor-sa.{suffix}"
+    bridge_id = f"cage-compliance-bridge-sa.{suffix}"
+
+    gw_docs = _render_mesh_policy_chart([ADVISOR_IDENTITY])
+    _assert_linkerd_webhook_invariants(gw_docs)
+
+    cb_docs = _render_compliance_bridge_mesh_chart(
+        trusted_identities=[GATEWAY_IDENTITY],
+        auditor_identity=lula_id,
+    )
+    _assert_linkerd_webhook_invariants(cb_docs)
+    assert (
+        _by(cb_docs, "AuthorizationPolicy", "compliance-bridge-infra-events")["spec"][
+            "targetRef"
+        ]["name"]
+        == "compliance-bridge-infra-events"
+    )
+    assert (
+        _by(cb_docs, "AuthorizationPolicy", "compliance-bridge-infra-events-auditor")[
+            "spec"
+        ]["targetRef"]["name"]
+        == "compliance-bridge-infra-events"
+    )
+    assert [
+        r["name"]
+        for r in _by(cb_docs, "AuthorizationPolicy", "compliance-bridge-internal")[
+            "spec"
+        ]["requiredAuthenticationRefs"]
+    ] == ["compliance-bridge-trusted"]
+
+    cb_auditor_only = _render_compliance_bridge_mesh_chart(
+        trusted_identities=[],
+        auditor_identity=lula_id,
+    )
+    _assert_linkerd_webhook_invariants(cb_auditor_only)
+
+    cb_no_auditor = _render_compliance_bridge_mesh_chart(
+        trusted_identities=[GATEWAY_IDENTITY],
+        auditor_identity="",
+    )
+    _assert_linkerd_webhook_invariants(cb_no_auditor)
+
+    wl_docs = _render_workload_mesh_chart(
+        {
+            "gatewayGrpcClients": [ADVISOR_IDENTITY],
+            "modelBackendClients": [GATEWAY_IDENTITY],
+            "clickhouseHttpClients": [
+                bridge_id,
+                f"langfuse-sa.{suffix}",
+                f"cage-clickhouse-sa.{suffix}",
+            ],
+            "clickhouseTcpClients": [
+                f"langfuse-sa.{suffix}",
+                f"cage-clickhouse-sa.{suffix}",
+            ],
+            "clickhouseInterserverClients": [f"cage-clickhouse-sa.{suffix}"],
+            "clickhouseKeeperClients": [
+                f"cage-clickhouse-sa.{suffix}",
+                f"cage-clickhouse-keeper-sa.{suffix}",
+            ],
+            "clickhouseKeeperRaftClients": [f"cage-clickhouse-keeper-sa.{suffix}"],
+            "langfuseWebClients": [
+                GATEWAY_IDENTITY,
+                bridge_id,
+                ADVISOR_IDENTITY,
+                f"cage-reconciler-sa.{suffix}",
+                f"langfuse-sa.{suffix}",
+            ],
+        }
+    )
+    _assert_linkerd_webhook_invariants(wl_docs)

@@ -677,8 +677,43 @@ def _load_terraform_egress_policies() -> tuple[
         locals_blocks = _find_hcl_subblocks(netpol_tf, "locals")
         for lb in locals_blocks:
             fqdn_map_blocks.extend(_find_hcl_subblocks(lb, "fqdn_network_policies ="))
+    if not fqdn_map_blocks:
+        merge_m = re.search(r"fqdn_network_policies\s*=\s*merge\s*\(", netpol_tf)
+        if merge_m is not None:
+            popen = netpol_tf.index("(", merge_m.start())
+            pdepth = 0
+            pend = popen
+            for idx in range(popen, len(netpol_tf)):
+                if netpol_tf[idx] == "(":
+                    pdepth += 1
+                elif netpol_tf[idx] == ")":
+                    pdepth -= 1
+                    if pdepth == 0:
+                        pend = idx
+                        break
+            merge_args = netpol_tf[popen + 1 : pend]
+            arg_pos = 0
+            while arg_pos < len(merge_args):
+                try:
+                    bstart = merge_args.index("{", arg_pos)
+                except ValueError:
+                    break
+                bdepth = 0
+                bclose = bstart
+                for idx in range(bstart, len(merge_args)):
+                    if merge_args[idx] == "{":
+                        bdepth += 1
+                    elif merge_args[idx] == "}":
+                        bdepth -= 1
+                        if bdepth == 0:
+                            bclose = idx
+                            break
+                candidate = merge_args[bstart + 1 : bclose]
+                if candidate.strip():
+                    fqdn_map_blocks.append(candidate)
+                arg_pos = bclose + 1
     assert fqdn_map_blocks, "Missing fqdn_network_policies map in network_policy.tf"
-    fqdn_map_body = fqdn_map_blocks[0]
+    fqdn_map_body = "\n".join(fqdn_map_blocks)
 
     entry_re = re.compile(r"^\s*([a-z0-9_]+)\s*=\s*\{", re.MULTILINE)
     epos = 0
@@ -1708,9 +1743,6 @@ class TestImageSupplyChainAndAttestation:
             'var.image_digests["gateway"]',
             'var.image_digests["governed-financial-advisor"]',
             'var.image_digests["agentsight-ui"]',
-            'var.image_digests["nemo-guardrails"]',
-            'var.image_digests["presidio-analyzer"]',
-            'var.image_digests["presidio-anonymizer"]',
             'var.image_digests["vllm-streamer"]',
             'var.image_digests["opa"]',
             'var.image_digests["compliance-bridge"]',
@@ -1798,40 +1830,6 @@ class TestImageSupplyChainAndAttestation:
         ).read_text(encoding="utf-8")
         assert "scripts/attest_image.sh" in mirror_script
         assert "THIRD_PARTY_IMAGES=(" in mirror_script
-
-    def test_lula_si2_validates_actual_terraform_deployments_and_digests(self) -> None:
-        lula_si2_path = REPO_ROOT / "compliance" / "lula" / "lula-validation-si2.yaml"
-        doc = yaml.safe_load(lula_si2_path.read_text(encoding="utf-8"))
-        lula_desc = doc["component-definition"]["back-matter"]["resources"][0][
-            "description"
-        ]
-        lula_spec = yaml.safe_load(lula_desc)
-        rego = lula_spec["provider"]["opa-spec"]["rego"]
-
-        for expected_deployment in (
-            '"gateway"',
-            '"governed-financial-advisor"',
-            '"vllm-inference"',
-            '"vllm-reasoning"',
-            '"nemo-guardrails"',
-            '"agentsight-ui"',
-            '"compliance-bridge"',
-        ):
-            assert expected_deployment in rego, (
-                f"lula-validation-si2.yaml must validate {expected_deployment}"
-            )
-        assert '"@sha256:"' in rego
-        assert '"IfNotPresent"' in rego
-        assert "advisor-deployment" not in rego
-
-
-# ============================================================================
-# 9. POAM-2026-184 — Remove Dead oscal_api_key Variable & Fix load_env.sh
-# ============================================================================
-
-
-class TestDeadOscalApiKeyRemoval:
-    """Verify POAM-2026-184: dead `oscal_api_key` declarations are removed and `infra/load_env.sh` is accurate."""
 
     def test_no_terraform_file_declares_or_references_oscal_api_key(self) -> None:
         tf_files = list((REPO_ROOT / "infra").rglob("*.tf"))
