@@ -39,6 +39,7 @@ from urllib.request import Request, urlopen
 
 _HEX64_RE = re.compile(r"^[0-9a-f]{64}$")
 DEFAULT_TIMEOUT_SECONDS = 120
+DEFAULT_GOVERNANCE_STREAM_KEY = "cage:evidence:stream"
 
 
 class WormAnchorError(ValueError):
@@ -59,6 +60,7 @@ class WormChainAnchor:
     verified_batches: int
     bound_rotations: int
     declared_gaps: int
+    stream_key: str = ""
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)
@@ -155,7 +157,11 @@ def fetch_verify_report_kubectl(
     return doc
 
 
-def extract_chain_anchor(report: Mapping[str, Any]) -> WormChainAnchor:
+def extract_chain_anchor(
+    report: Mapping[str, Any],
+    *,
+    stream_key: str | None = DEFAULT_GOVERNANCE_STREAM_KEY,
+) -> WormChainAnchor:
     """Resolve the active unreplaced chain tail batch from a citable verification report."""
     if report.get("ok") is not True or report.get("citable") is not True:
         raise WormAnchorError(
@@ -200,12 +206,31 @@ def extract_chain_anchor(report: Mapping[str, Any]) -> WormChainAnchor:
     if not isinstance(verified, list) or len(verified) == 0:
         raise WormAnchorError("WORM archive contains 0 verified signed batches")
 
-    by_chain: dict[str, list[Mapping[str, Any]]] = {}
-    superseded_chains: set[str] = set()
-
     for idx, item in enumerate(verified):
         if not isinstance(item, Mapping):
             raise WormAnchorError(f"verified[{idx}] is not an object")
+
+    target_stream = (stream_key or "").strip()
+    any_stream_key_present = any(
+        bool(str(item.get("stream_key") or "").strip()) for item in verified
+    )
+    if target_stream and any_stream_key_present:
+        candidate_batches = [
+            item
+            for item in verified
+            if str(item.get("stream_key") or "").strip() == target_stream
+        ]
+        if not candidate_batches:
+            raise WormAnchorError(
+                f"WORM archive contains 0 verified signed batches for stream_key={target_stream!r}"
+            )
+    else:
+        candidate_batches = list(verified)
+
+    by_chain: dict[str, list[Mapping[str, Any]]] = {}
+    superseded_chains: set[str] = set()
+
+    for idx, item in enumerate(candidate_batches):
         cid = str(item.get("chain_id") or "").strip()
         if not cid:
             raise WormAnchorError(f"verified[{idx}] is missing non-empty chain_id")
@@ -220,7 +245,7 @@ def extract_chain_anchor(report: Mapping[str, Any]) -> WormChainAnchor:
     for rot in bound_rotations_raw:
         if isinstance(rot, Mapping):
             prev_cid = str(rot.get("previous_chain_id") or "").strip()
-            if prev_cid:
+            if prev_cid and prev_cid in by_chain:
                 superseded_chains.add(prev_cid)
 
     active_chains = [cid for cid in by_chain if cid not in superseded_chains]
@@ -261,6 +286,8 @@ def extract_chain_anchor(report: Mapping[str, Any]) -> WormChainAnchor:
             f"Tail batch sequence range [{first_seq}, {last_seq}] is invalid"
         )
 
+    resolved_stream_key = str(tail.get("stream_key") or target_stream).strip()
+
     return WormChainAnchor(
         chain_id=active_cid,
         first_sequence=first_seq,
@@ -272,10 +299,13 @@ def extract_chain_anchor(report: Mapping[str, Any]) -> WormChainAnchor:
         verified_batches=len(verified),
         bound_rotations=len(bound_rotations_raw),
         declared_gaps=gap_count,
+        stream_key=resolved_stream_key,
     )
 
 
 def main(argv: list[str] | None = None) -> int:
+    import os
+
     parser = argparse.ArgumentParser(
         description="Extract the cryptographic WORM chain-tail anchor for bound genesis rotation."
     )
@@ -323,6 +353,15 @@ def main(argv: list[str] | None = None) -> int:
         default=None,
         help="Optional path to write the JSON anchor artifact",
     )
+    parser.add_argument(
+        "--stream-key",
+        type=str,
+        default=os.environ.get("EVIDENCE_STREAM_KEY", DEFAULT_GOVERNANCE_STREAM_KEY),
+        help=(
+            "Target Redis Stream key when multiple custodied streams share one WORM prefix "
+            f"(default: {DEFAULT_GOVERNANCE_STREAM_KEY})"
+        ),
+    )
     args = parser.parse_args(argv)
 
     try:
@@ -335,9 +374,6 @@ def main(argv: list[str] | None = None) -> int:
         elif args.kubectl:
             report = fetch_verify_report_kubectl(args.namespace, timeout_s=args.timeout)
         else:
-            env_url = ""
-            import os
-
             env_url = os.environ.get("COMPLIANCE_BRIDGE_URL", "").strip()
             if env_url:
                 report = fetch_verify_report_http(env_url, timeout_s=args.timeout)
@@ -349,7 +385,7 @@ def main(argv: list[str] | None = None) -> int:
         if not isinstance(report, Mapping):
             raise WormAnchorError("Verification report must be a JSON object")
 
-        anchor = extract_chain_anchor(report)
+        anchor = extract_chain_anchor(report, stream_key=args.stream_key)
         if args.output is not None:
             args.output.parent.mkdir(parents=True, exist_ok=True)
             args.output.write_text(

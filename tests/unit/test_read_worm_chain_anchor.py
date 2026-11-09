@@ -225,3 +225,39 @@ def test_cli_writes_anchor_json_and_prints_env_exports(
     assert written["chain_id"] == "chain42"
     assert written["last_record_hash"] == HASH_A
     assert written["attestation_sha256"] == ATTEST_A
+
+
+def test_extract_chain_anchor_disambiguates_governance_vs_infra_stream() -> None:
+    gov_batch = {
+        **_make_batch("gov-chain-1", 0, 5, HASH_A, ATTEST_A),
+        "stream_key": "cage:evidence:stream",
+    }
+    infra_batch = {
+        **_make_batch("infra-chain-1", 0, 2, HASH_B, ATTEST_B),
+        "stream_key": "cage:evidence:infra:stream",
+    }
+    report = {
+        "ok": True,
+        "citable": True,
+        "verified": [gov_batch, infra_batch],
+        "failures": [],
+        "declared_gaps": [],
+        "bound_rotations": [],
+        "non_evidentiary": [],
+    }
+    anchor = extract_chain_anchor(report)
+    assert anchor.chain_id == "gov-chain-1"
+    assert anchor.last_record_hash == HASH_A
+    assert anchor.attestation_sha256 == ATTEST_A
+    assert anchor.stream_key == "cage:evidence:stream"
+    # Archive-wide verified count preserved so PRE_WORM_BATCH_COUNT + 1 stays aligned.
+    assert anchor.verified_batches == 2
+
+    infra_anchor = extract_chain_anchor(report, stream_key="cage:evidence:infra:stream")
+    assert infra_anchor.chain_id == "infra-chain-1"
+    assert infra_anchor.last_record_hash == HASH_B
+
+    with pytest.raises(
+        WormAnchorError, match="0 verified signed batches for stream_key"
+    ):
+        extract_chain_anchor(report, stream_key="cage:evidence:nonexistent")

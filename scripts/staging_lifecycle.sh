@@ -336,13 +336,16 @@ stop_staging_port_forward() {
   fi
 }
 
+FRESH_PROJECT_TARGET_MODE="fresh_project_clean_room"
+PRE_RUN_INVENTORY_JSON="$ARCHIVE_DIR/pre-run-project-inventory.json"
+
 write_gate_w_archive_manifest() {
   local exit_code="$1"
   local git_sha git_short_sha target_mode
   git_sha="$(git -C "$REPO_ROOT" rev-parse HEAD 2>/dev/null || echo "")"
   git_short_sha="$(git -C "$REPO_ROOT" rev-parse --short HEAD 2>/dev/null || echo "")"
   if [[ "$FRESH_PROJECT" == "true" ]]; then
-    target_mode="fresh_project_clean_room"
+    target_mode="$FRESH_PROJECT_TARGET_MODE"
   else
     target_mode="existing_operated_project"
   fi
@@ -388,6 +391,7 @@ write_gate_w_archive_manifest() {
   MANIFEST_PRE_HEAD="${PRE_WORM_HEAD_HASH:-}" \
   MANIFEST_PRE_ATTEST="${PRE_WORM_ATTESTATION_DIGEST:-}" \
   MANIFEST_POST_BOUND_VERIFIED="$POST_REBUILD_BOUND_ROTATION_VERIFIED" \
+  MANIFEST_PRE_INVENTORY_JSON="$PRE_RUN_INVENTORY_JSON" \
   MANIFEST_SUITES_JSONL="$PYTEST_SUITES_JSONL" \
   MANIFEST_OUT="$ARCHIVE_DIR/manifest.json" \
   python3 - <<'PY' || true
@@ -452,6 +456,16 @@ if suites_path.is_file():
         if line.strip():
             suites.append(json.loads(line))
 
+pre_inventory = None
+inv_path_raw = os.environ.get("MANIFEST_PRE_INVENTORY_JSON", "").strip()
+if inv_path_raw:
+    inv_path = Path(inv_path_raw)
+    if inv_path.is_file():
+        try:
+            pre_inventory = json.loads(inv_path.read_text(encoding="utf-8"))
+        except Exception:
+            pre_inventory = None
+
 planned_specs = [
     s for s in os.environ.get("MANIFEST_LULA_PLANNED", "").splitlines() if s.strip()
 ]
@@ -468,6 +482,7 @@ manifest = {
     "region": os.environ.get("MANIFEST_REGION", ""),
     "cage_deployment_region": os.environ.get("MANIFEST_CAGE_REGION", "US_FED"),
     "deployment_target_mode": os.environ.get("MANIFEST_TARGET_MODE", ""),
+    "pre_existing_project_state": pre_inventory,
     "startup_grace_hours": _i("MANIFEST_STARTUP_GRACE"),
     "enable_e2e_advisor": _b("MANIFEST_ENABLE_E2E"),
     "allow_partner_outage": _b("MANIFEST_ALLOW_PARTNER_OUTAGE"),
@@ -489,6 +504,16 @@ manifest = {
         "pre_teardown_head_hash": os.environ.get("MANIFEST_PRE_HEAD", ""),
         "pre_teardown_attestation_digest": os.environ.get("MANIFEST_PRE_ATTEST", ""),
         "post_rebuild_bound_rotation_verified": _b("MANIFEST_POST_BOUND_VERIFIED"),
+        "rotation_binding_scope": {
+            "covered": [
+                "operator_orchestrated_rebuild_of_cage_evidence_stream",
+            ],
+            "not_covered": [
+                "retroactive_binding_of_existing_worm_chain_rotations",
+                "unorchestrated_empty_redis_stream_cold_start_on_operated_clusters",
+                "infra_evidence_stream_cross_rebuild_binding",
+            ],
+        },
     },
 }
 
@@ -1071,7 +1096,118 @@ if [[ "$FRESH_PROJECT" == "true" ]]; then
   echo -e "${CYAN}╚══════════════════════════════════════════════════════════════════╝${RESET}"
   echo ""
 
-  if ! gcloud projects describe "$PROJECT_ID" >/dev/null 2>&1; then
+  if gcloud projects describe "$PROJECT_ID" >/dev/null 2>&1; then
+    info "Project '$PROJECT_ID' already exists — capturing pre-Phase-0 inventory snapshot..."
+    _pre_services="$(gcloud services list --enabled --project="$PROJECT_ID" --format='value(config.name)' 2>/dev/null || true)"
+    _pre_buckets="$(gcloud storage buckets list --project="$PROJECT_ID" --format='value(name)' 2>/dev/null || true)"
+    _pre_repos="$(gcloud artifacts repositories list --project="$PROJECT_ID" --format='value(name)' 2>/dev/null || true)"
+    _pre_keyrings="$(gcloud kms keyrings list --location="$REGION" --project="$PROJECT_ID" --format='value(name)' 2>/dev/null || true)"
+    _pre_attestors="$(gcloud container binauthz attestors list --project="$PROJECT_ID" --format='value(name)' 2>/dev/null || true)"
+    _pre_sas="$(gcloud iam service-accounts list --project="$PROJECT_ID" --format='value(email)' 2>/dev/null || true)"
+    _pre_clusters="$(gcloud container clusters list --project="$PROJECT_ID" --format='value(name)' 2>/dev/null || true)"
+    _pre_sql="$(gcloud sql instances list --project="$PROJECT_ID" --format='value(name)' 2>/dev/null || true)"
+    _pre_vpcs="$(gcloud compute networks list --project="$PROJECT_ID" --format='value(name)' 2>/dev/null || true)"
+    FRESH_PROJECT_TARGET_MODE="$(
+      PRE_INV_OUT="$PRE_RUN_INVENTORY_JSON" \
+      PRE_INV_PROJECT="$PROJECT_ID" \
+      PRE_INV_SERVICES="$_pre_services" \
+      PRE_INV_BUCKETS="$_pre_buckets" \
+      PRE_INV_REPOS="$_pre_repos" \
+      PRE_INV_KEYRINGS="$_pre_keyrings" \
+      PRE_INV_ATTESTORS="$_pre_attestors" \
+      PRE_INV_SAS="$_pre_sas" \
+      PRE_INV_CLUSTERS="$_pre_clusters" \
+      PRE_INV_SQL="$_pre_sql" \
+      PRE_INV_VPCS="$_pre_vpcs" \
+      python3 - <<'PY'
+from datetime import datetime, timezone
+import json
+import os
+from pathlib import Path
+
+
+def _lines(key: str) -> list[str]:
+    return sorted({s.strip() for s in os.environ.get(key, "").splitlines() if s.strip()})
+
+
+proj = os.environ["PRE_INV_PROJECT"]
+services = _lines("PRE_INV_SERVICES")
+buckets = _lines("PRE_INV_BUCKETS")
+repos = _lines("PRE_INV_REPOS")
+keyrings = _lines("PRE_INV_KEYRINGS")
+attestors = [a for a in _lines("PRE_INV_ATTESTORS") if a != "built-by-cloud-build"]
+custom_sas = [
+    sa for sa in _lines("PRE_INV_SAS") if sa.endswith(f"@{proj}.iam.gserviceaccount.com")
+]
+clusters = _lines("PRE_INV_CLUSTERS")
+sql_instances = _lines("PRE_INV_SQL")
+custom_vpcs = [v for v in _lines("PRE_INV_VPCS") if v != "default"]
+
+has_prior_cage_residue = any(
+    (
+        buckets,
+        repos,
+        keyrings,
+        attestors,
+        custom_sas,
+        clusters,
+        sql_instances,
+        custom_vpcs,
+    )
+)
+mode = (
+    "fresh_project_with_phase0_kms_residue"
+    if has_prior_cage_residue
+    else "fresh_project_clean_room"
+)
+payload = {
+    "captured_at_utc": datetime.now(tz=timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
+    "project_pre_existed": True,
+    "has_prior_cage_residue": has_prior_cage_residue,
+    "enabled_services_count": len(services),
+    "gcs_buckets": buckets,
+    "artifact_repositories": repos,
+    "kms_keyrings": keyrings,
+    "binauthz_attestors": attestors,
+    "custom_service_accounts": custom_sas,
+    "gke_clusters": clusters,
+    "cloud_sql_instances": sql_instances,
+    "custom_vpcs": custom_vpcs,
+}
+out = Path(os.environ["PRE_INV_OUT"])
+out.parent.mkdir(parents=True, exist_ok=True)
+out.write_text(json.dumps(payload, indent=2) + "\n", encoding="utf-8")
+print(mode)
+PY
+    )"
+    if [[ "$FRESH_PROJECT_TARGET_MODE" != "fresh_project_clean_room" ]]; then
+      warn "Pre-Phase-0 residue detected in '$PROJECT_ID'; recording deployment_target_mode=${FRESH_PROJECT_TARGET_MODE} in manifest.json."
+    fi
+  else
+    python3 - "$PRE_RUN_INVENTORY_JSON" <<'PY'
+from datetime import datetime, timezone
+import json
+import sys
+from pathlib import Path
+
+payload = {
+    "captured_at_utc": datetime.now(tz=timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
+    "project_pre_existed": False,
+    "has_prior_cage_residue": False,
+    "enabled_services_count": 0,
+    "gcs_buckets": [],
+    "artifact_repositories": [],
+    "kms_keyrings": [],
+    "binauthz_attestors": [],
+    "custom_service_accounts": [],
+    "gke_clusters": [],
+    "cloud_sql_instances": [],
+    "custom_vpcs": [],
+}
+out = Path(sys.argv[1])
+out.parent.mkdir(parents=True, exist_ok=True)
+out.write_text(json.dumps(payload, indent=2) + "\n", encoding="utf-8")
+PY
     info "Creating GCP project '$PROJECT_ID'..."
     gcloud projects create "$PROJECT_ID" --name="CAGE Ephemeral Staging" --quiet
   fi

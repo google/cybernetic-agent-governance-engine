@@ -278,6 +278,7 @@ class VerifiedBatch:
     rotation_kind: str | None = None
     bound_chain_rotation: bool = False
     attestation_sha256: str = ""
+    stream_key: str = ""
 
 
 @dataclass(frozen=True)
@@ -696,6 +697,9 @@ class CustodyVerifier:
                         "attestation rotation metadata disagrees with genesis record binding",
                     )
 
+        raw_stream_key = att.get("stream_key")
+        stream_key = raw_stream_key.strip() if isinstance(raw_stream_key, str) else ""
+
         return VerifiedBatch(
             attestation_key=key,
             data_key=data_key,
@@ -717,6 +721,7 @@ class CustodyVerifier:
             previous_batch_attestation_digest=genesis_prev_att or None,
             rotation_kind=gap_kind if rotated_from else None,
             attestation_sha256=attestation_sha256,
+            stream_key=stream_key,
         )
 
     async def verify_all(self, prefix: str | None = None) -> CustodyVerificationReport:
