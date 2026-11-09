@@ -136,7 +136,7 @@ variable "release_channel" {
 variable "min_master_version" {
   description = "Minimum GKE control-plane version (>= 1.27.1-gke.400 required for FQDNNetworkPolicy — §5.3)."
   type        = string
-  default     = "1.28"
+  default     = null
 }
 
 variable "cluster_dns_provider" {
@@ -475,3 +475,9 @@ variable "node_pools" {
 }
 
 
+
+variable "create_cloud_nat" {
+  description = "Create a dedicated Cloud Router and Cloud NAT inside the GKE module. Set false when module.vpc_network already owns the regional ALL_SUBNETWORKS_ALL_IP_RANGES Cloud NAT on the custom VPC."
+  type        = bool
+  default     = true
+}

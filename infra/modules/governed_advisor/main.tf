@@ -100,10 +100,6 @@ resource "kubernetes_deployment" "governed_advisor" {
             name  = "PORT"
             value = "8080"
           }
-          env {
-            name  = "DEPLOY_TIMESTAMP"
-            value = timestamp()
-          }
 
           # Infrastructure
           env {

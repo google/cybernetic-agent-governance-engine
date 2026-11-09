@@ -42,6 +42,11 @@ PII_PATTERNS = {
     "PHONE": r"\b(?:\+?1[-. ]?)?\(?([0-9]{3})\)?[-. ]?([0-9]{3})[-. ]?([0-9]{4})\b",
 }
 
+_CANONICAL_UUID_RE = re.compile(
+    r"(?<![0-9A-Za-z-])[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}(?![0-9A-Za-z-])"
+)
+
+
 # ---------------------------------------------------------------------------
 # FINDING-10 (LOW) — Jurisdictional erasure audit citation map
 #
@@ -56,13 +61,26 @@ _ERASURE_CITATION: dict[str, str] = {
 }
 
 
+def _scrub_span(span: str, seen_entities: set[str]) -> str:
+    scrubbed = span
+    for entity, pattern in PII_PATTERNS.items():
+        new_text = re.sub(pattern, f"[REDACTED-{entity}-UCA-3]", scrubbed)
+        if new_text != scrubbed:
+            seen_entities.add(entity)
+        scrubbed = new_text
+    return scrubbed
+
+
 def scrub_pii(
     text: str,
     emit_jurisdiction_audit: bool = False,
 ) -> str:
     """Deterministic PII scrubbing utility.
 
-    Transforms sensitive data into non-identifying tokens.
+    Transforms sensitive data into non-identifying tokens while preserving
+    canonical RFC-4122 ``8-4-4-4-12`` hex UUIDs (such as ``defer_id``,
+    ``transaction_id``, and ``trace_id``) whose 16-char ``8-4-4`` or ``4-12``
+    groups happen to consist solely of decimal digits.
 
     FINDING-10 (LOW): Added ``emit_jurisdiction_audit`` parameter.  When True
     and CAGE_DEPLOYMENT_REGION is EU_ECB or APAC_MAS, emits a structured audit
@@ -80,14 +98,19 @@ def scrub_pii(
     if not isinstance(text, str):
         return text
 
-    scrubbed = text
-    redacted_entities: list[str] = []
+    seen_entities: set[str] = set()
+    out_parts: list[str] = []
+    cursor = 0
+    for match in _CANONICAL_UUID_RE.finditer(text):
+        if match.start() > cursor:
+            out_parts.append(_scrub_span(text[cursor : match.start()], seen_entities))
+        out_parts.append(match.group(0))
+        cursor = match.end()
+    if cursor < len(text):
+        out_parts.append(_scrub_span(text[cursor:], seen_entities))
 
-    for entity, pattern in PII_PATTERNS.items():
-        new_text = re.sub(pattern, f"[REDACTED-{entity}-UCA-3]", scrubbed)
-        if new_text != scrubbed:
-            redacted_entities.append(entity)
-        scrubbed = new_text
+    scrubbed = "".join(out_parts)
+    redacted_entities = [entity for entity in PII_PATTERNS if entity in seen_entities]
 
     # Jurisdictional audit trail (R-3, R-4)
     if emit_jurisdiction_audit and redacted_entities:

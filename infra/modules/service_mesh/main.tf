@@ -137,12 +137,15 @@ resource "google_privateca_ca_pool" "mesh" {
 # The mesh trust anchor. CAS generates and keeps the key in a Google-managed
 # HSM; only the public certificate leaves CAS (identityTrustAnchorsPEM below).
 resource "google_privateca_certificate_authority" "mesh_root" {
-  pool                     = google_privateca_ca_pool.mesh.name
-  certificate_authority_id = "cage-mesh-root-${var.environment}"
-  project                  = var.project_id
-  location                 = var.region
-  type                     = "SELF_SIGNED"
-  lifetime                 = "315360000s" # 10 years
+  pool                                   = google_privateca_ca_pool.mesh.name
+  certificate_authority_id               = "cage-mesh-root-${var.environment}"
+  project                                = var.project_id
+  location                               = var.region
+  type                                   = "SELF_SIGNED"
+  lifetime                               = "315360000s" # 10 years
+  deletion_protection                    = var.enable_deletion_protection
+  ignore_active_certificates_on_deletion = !var.enable_deletion_protection
+  skip_grace_period                      = !var.enable_deletion_protection
 
   config {
     subject_config {

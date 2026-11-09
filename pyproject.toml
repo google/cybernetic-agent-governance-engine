@@ -194,6 +194,8 @@ compliance = [
     "PyYAML>=6.0.0",
     "dowhy>=0.12",
     "google-cloud-kms>=2.24.0",
+    # PyJWT[crypto]: required by src/compliance_bridge/oidc_verifier.py (HITL OIDC verification).
+    "PyJWT[crypto]>=2.9.0",
 ]
 
 langfuse = [

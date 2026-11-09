@@ -680,6 +680,15 @@ resource "kubernetes_stateful_set" "clickhouse" {
             }
           }
 
+          # GCE ext4 Persistent Disks mount with `lost+found` inside
+          # /var/lib/clickhouse, causing ClickHouse /entrypoint.sh to skip
+          # /docker-entrypoint-initdb.d unless this flag is set. Every statement
+          # in 01_databases.sql uses IF NOT EXISTS so re-execution is idempotent.
+          env {
+            name  = "CLICKHOUSE_ALWAYS_RUN_INITDB_SCRIPTS"
+            value = "true"
+          }
+
           env {
             name = "CLICKHOUSE_PASSWORD"
             value_from {

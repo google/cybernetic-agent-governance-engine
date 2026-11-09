@@ -188,17 +188,22 @@ def test_modules_own_redis_ca_configmap_mount_annotation_and_revision_limit(
     module_file: Path, app_name: str
 ) -> None:
     text = module_file.read_text()
+    assert "mount_redis_ca = var.enable_redis_tls" in text
     cm_block = _block(text, 'resource "kubernetes_config_map_v1" "redis_ca"')
-    assert 'count = var.redis_ca_pem != "" ? 1 : 0' in cm_block
+    assert "count = local.mount_redis_ca ? 1 : 0" in cm_block
     assert f'name      = "{app_name}-redis-ca"' in cm_block
     assert '"ca.pem" = var.redis_ca_pem' in cm_block
 
     assert "revision_history_limit = 3" in text
-    assert '"cage.io/redis-ca-sha256" = sha256(var.redis_ca_pem)' in text
+    assert (
+        '"cage.io/redis-ca-sha256" = local.mount_redis_ca ? sha256(var.redis_ca_pem) : ""'
+        in text
+        or '"cage.io/redis-ca-sha256" = sha256(var.redis_ca_pem)' in text
+    )
     assert '!var.enable_redis_tls || trimspace(var.redis_ca_pem) != ""' in text
 
     vm_match = re.search(
-        r'dynamic "volume_mount" \{\s*for_each = var\.redis_ca_pem != "" \? \[1\] : \[\]\s*content \{(.*?)\}\s*\}',
+        r'dynamic "volume_mount" \{\s*for_each = local\.mount_redis_ca \? \[1\] : \[\]\s*content \{(.*?)\}\s*\}',
         text,
         re.S,
     )
@@ -208,7 +213,7 @@ def test_modules_own_redis_ca_configmap_mount_annotation_and_revision_limit(
     assert "read_only  = true" in vm_match.group(1)
 
     vol_match = re.search(
-        r'dynamic "volume" \{\s*for_each = var\.redis_ca_pem != "" \? \[1\] : \[\]\s*content \{(.*?)\}\s*\}',
+        r'dynamic "volume" \{\s*for_each = local\.mount_redis_ca \? \[1\] : \[\]\s*content \{(.*?)\}\s*\}',
         text,
         re.S,
     )

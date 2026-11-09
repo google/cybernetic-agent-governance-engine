@@ -13,6 +13,7 @@
 # limitations under the License.
 
 resource "google_compute_router" "router" {
+  count = var.create_cloud_nat ? 1 : 0
 
   name    = "nat-router-${var.region}"
   region  = var.region
@@ -27,8 +28,9 @@ resource "google_compute_router" "router" {
 # ─── Cloud NAT ────────────────────────────────────────────────────────────────
 
 resource "google_compute_router_nat" "nat" {
+  count                              = var.create_cloud_nat ? 1 : 0
   name                               = "nat-config-${var.region}"
-  router                             = google_compute_router.router.name
+  router                             = google_compute_router.router[0].name
   region                             = var.region
   project                            = var.project_id
   nat_ip_allocate_option             = "AUTO_ONLY"

@@ -300,6 +300,8 @@ run "staging_enables_dataplane_v2_policy_verdict_logging" {
       local.dataplane_v2_network_logging_active &&
       module.gke.dataplane_v2_policy_logging_enabled &&
       length(helm_release.dataplane_v2_network_logging) == 1 &&
+      helm_release.dataplane_v2_network_logging[0].namespace == "kube-system" &&
+      helm_release.dataplane_v2_network_logging[0].namespace != var.namespace &&
       length(kubernetes_labels.dataplane_v2_network_logging_helm_adopt) == 1 &&
       length(kubernetes_annotations.dataplane_v2_network_logging_helm_adopt) == 1 &&
       yamldecode(helm_release.dataplane_v2_network_logging[0].values[0]).logAllow == true &&
@@ -308,7 +310,7 @@ run "staging_enables_dataplane_v2_policy_verdict_logging" {
       yamldecode(helm_release.dataplane_v2_network_logging[0].values[0]).delegateDeny == false &&
       kubernetes_network_policy_v1.default_deny_ingress.metadata[0].annotations["policy.network.gke.io/enable-logging"] == "true"
     )
-    error_message = "staging must enable GKE Dataplane V2 observability + NetworkLogging/default allow/deny policy verdict logging"
+    error_message = "staging must enable GKE Dataplane V2 observability + NetworkLogging/default allow/deny policy verdict logging in kube-system"
   }
 }
 

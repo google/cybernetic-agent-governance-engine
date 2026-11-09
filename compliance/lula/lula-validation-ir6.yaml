@@ -85,6 +85,8 @@ component-definition:
         provider:
           type: opa
           opa-spec:
+            output:
+              validation: lula.validate
             rego: |
               package lula
 

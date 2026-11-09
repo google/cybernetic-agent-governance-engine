@@ -145,6 +145,7 @@ module "gke" {
   enable_gcs_fuse_csi = var.enable_gcs_fuse_csi
 
   # Networking
+  create_cloud_nat              = !var.create_vpc_network
   network                       = local.effective_network_name
   subnetwork                    = local.effective_subnetwork_name
   cluster_secondary_range_name  = local.gke_pods_range_name
@@ -188,6 +189,8 @@ module "namespace" {
 
 module "service_mesh" {
   source = "../../modules/service_mesh"
+
+  enable_deletion_protection = var.enable_deletion_protection
 
   project_id             = var.project_id
   region                 = var.region
@@ -1145,7 +1148,7 @@ module "agentsight_ui" {
   replicas             = 1
   service_account_name = kubernetes_service_account.workload["agentsight_ui"].metadata[0].name
 
-  depends_on = [module.gke, kubernetes_service_account.workload["agentsight_ui"]]
+  depends_on = [module.gke, module.service_mesh, kubernetes_service_account.workload["agentsight_ui"]]
 }
 
 # ─── Deploy In-Cluster Lula Compliance Auditor (CA-2 / CA-7) ──────────────────

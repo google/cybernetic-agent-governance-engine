@@ -401,6 +401,13 @@ def _extract_guided_schema(body: Mapping[str, Any]) -> Mapping[str, Any] | None:
         nested = extra.get("guided_json")
         if isinstance(nested, Mapping):
             return nested
+        if isinstance(nested, str):
+            try:
+                parsed = json.loads(nested)
+                if isinstance(parsed, Mapping):
+                    return parsed
+            except json.JSONDecodeError:
+                return None
     resp_fmt = body.get("response_format")
     if isinstance(resp_fmt, Mapping):
         fmt_type = resp_fmt.get("type")
@@ -485,7 +492,7 @@ def _render_guided_json(schema: Mapping[str, Any], scenario: ResolvedScenario) -
     props = schema.get("properties")
     prop_keys = set(props.keys()) if isinstance(props, Mapping) else set()
     if (
-        {"steps", "rationale"} <= prop_keys
+        "steps" in prop_keys
         or {"orders", "confidence_score"} <= prop_keys
         or "plan_id" in prop_keys
     ):

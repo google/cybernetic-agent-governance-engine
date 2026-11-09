@@ -78,53 +78,172 @@ repo_mypy="$(resolve_tool mypy)"
 
 cd "${top}"
 
-"${repo_ruff}" check .
-"${repo_ruff}" format --check .
-"${repo_mypy}" src/
+common_git_dir="$(git rev-parse --path-format=absolute --git-common-dir 2>/dev/null || git rev-parse --git-common-dir)"
+audit_branch="$(git symbolic-ref --short HEAD 2>/dev/null || echo detached)"
+audit_tree="$(git write-tree 2>/dev/null || echo unknown)"
+inline_progress_file="$(mktemp "${TMPDIR:-/tmp}/cage-precommit-inline.XXXXXX")"
 
-for gate_script in \
-  scripts/check_import_boundaries.py \
-  scripts/check_posture_guard_integrity.py \
-  scripts/check_model_free_install.py \
-  scripts/check_conformance_sync.py \
-  scripts/check_client_sdk_sync.py \
-  scripts/check_domain_literals.py \
-  scripts/check_telemetry_literals.py \
-  scripts/check_vendor_brands.py \
-  scripts/check_project_id_hygiene.py \
-  scripts/check_doc_references.py \
-  scripts/check_partner_headers.py \
-  scripts/check_yaml_unique_keys.py \
-  scripts/check_write_only_state.py \
-  scripts/check_daemon_lifespans.py \
-  scripts/check_lula_stub_count.py \
-  scripts/check_poam_lula_divergence.py \
-  scripts/check_producer_consumer_keys.py \
-  scripts/check_k8s_terraform_parity.py \
-  scripts/check_stpa_freshness.py \
+gate_scripts=(
+  scripts/check_import_boundaries.py
+  scripts/check_posture_guard_integrity.py
+  scripts/check_model_free_install.py
+  scripts/check_conformance_sync.py
+  scripts/check_client_sdk_sync.py
+  scripts/check_domain_literals.py
+  scripts/check_telemetry_literals.py
+  scripts/check_vendor_brands.py
+  scripts/check_project_id_hygiene.py
+  scripts/check_doc_references.py
+  scripts/check_partner_headers.py
+  scripts/check_yaml_unique_keys.py
+  scripts/check_write_only_state.py
+  scripts/check_daemon_lifespans.py
+  scripts/check_lula_stub_count.py
+  scripts/check_poam_lula_divergence.py
+  scripts/check_producer_consumer_keys.py
+  scripts/check_k8s_terraform_parity.py
+  scripts/check_stpa_freshness.py
   scripts/check_ai600_lula_manifests.py
-do
+)
+
+gates_total=7  # ruff_check + ruff_format + mypy + 4 inline checks
+for gate_script in "${gate_scripts[@]}"; do
   if [[ -f "${gate_script}" ]]; then
-    "${repo_py}" "${gate_script}"
+    gates_total=$((gates_total + 1))
+  fi
+done
+if [[ -f "scripts/check_oscal_claim_census.py" ]]; then
+  gates_total=$((gates_total + 1))
+fi
+if [[ -f "scripts/generate_agent_state_schema.py" ]]; then
+  gates_total=$((gates_total + 1))
+fi
+
+gates_passed=0
+current_gate="setup"
+
+record_precommit_audit() {
+  local rc="$1"
+  if [[ -f "${inline_progress_file}" ]]; then
+    local inline_done inline_current
+    inline_done="$(sed -n '1p' "${inline_progress_file}" 2>/dev/null || echo 0)"
+    inline_current="$(sed -n '2p' "${inline_progress_file}" 2>/dev/null || echo "")"
+    if [[ "${inline_done}" =~ ^[0-9]+$ ]]; then
+      gates_passed=$((gates_passed + inline_done))
+    fi
+    if [[ -n "${inline_current}" ]]; then
+      current_gate="${inline_current}"
+    fi
+    rm -f "${inline_progress_file}"
+  fi
+
+  AUDIT_LOG_PATH="${common_git_dir}/cage-precommit-audit.log" \
+  AUDIT_BRANCH="${audit_branch}" \
+  AUDIT_TREE="${audit_tree}" \
+  AUDIT_RC="${rc}" \
+  AUDIT_PASSED="${gates_passed}" \
+  AUDIT_TOTAL="${gates_total}" \
+  AUDIT_FAILED_GATE="${current_gate}" \
+  "${repo_py}" - <<'AUDIT_PY' || true
+from datetime import datetime, timezone
+import os
+import pathlib
+import sys
+
+log_path = pathlib.Path(os.environ["AUDIT_LOG_PATH"])
+branch = os.environ["AUDIT_BRANCH"]
+tree = os.environ["AUDIT_TREE"]
+rc = int(os.environ["AUDIT_RC"])
+passed = int(os.environ["AUDIT_PASSED"])
+total = int(os.environ["AUDIT_TOTAL"])
+failed_gate = os.environ["AUDIT_FAILED_GATE"]
+status = "pass" if rc == 0 else "fail"
+ts = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+
+existing_lines: list[str] = []
+if log_path.is_file():
+    existing_lines = log_path.read_text(encoding="utf-8", errors="replace").splitlines()
+
+had_leak_guard = False
+premature_marker = f"\tbranch={branch}\ttree={tree}\tgates=9/9\tleak_guard=pass"
+if existing_lines and premature_marker in existing_lines[-1]:
+    existing_lines.pop()
+    had_leak_guard = True
+
+parts = [
+    ts,
+    f"branch={branch}",
+    f"tree={tree}",
+    f"status={status}",
+    f"exit_code={rc}",
+    f"gates={passed}/{total}",
+]
+if rc != 0:
+    parts.append(f"failed_gate={failed_gate}")
+if had_leak_guard:
+    parts.append("leak_guard=pass")
+
+existing_lines.append("\t".join(parts))
+log_path.parent.mkdir(parents=True, exist_ok=True)
+log_path.write_text("\n".join(existing_lines) + "\n", encoding="utf-8")
+
+short_tree = tree[:8]
+if rc == 0:
+    sys.stdout.write(
+        f"✅ pre-commit: {passed}/{total} deterministic gates passed "
+        f"(status=pass, exit_code=0, branch={branch}, tree={short_tree})\n"
+    )
+else:
+    sys.stderr.write(
+        f"❌ pre-commit: gate '{failed_gate}' failed after {passed}/{total} gates "
+        f"(status=fail, exit_code={rc}, branch={branch}, tree={short_tree})\n"
+    )
+AUDIT_PY
+}
+trap 'record_precommit_audit "$?"' EXIT
+
+run_gate() {
+  current_gate="$1"
+  shift
+  "$@"
+  gates_passed=$((gates_passed + 1))
+}
+
+run_gate "ruff_check" "${repo_ruff}" check .
+run_gate "ruff_format" "${repo_ruff}" format --check .
+run_gate "mypy" "${repo_mypy}" src/
+
+for gate_script in "${gate_scripts[@]}"; do
+  if [[ -f "${gate_script}" ]]; then
+    run_gate "${gate_script#scripts/}" "${repo_py}" "${gate_script}"
   fi
 done
 
 if [[ -f "scripts/check_oscal_claim_census.py" ]]; then
-  "${repo_py}" scripts/check_oscal_claim_census.py \
+  run_gate "check_oscal_claim_census.py" "${repo_py}" scripts/check_oscal_claim_census.py \
     --verify-rendered docs/compliance/OSCAL_EVIDENCE_CLAIM_REGISTER.md
 fi
 
 if [[ -f "scripts/generate_agent_state_schema.py" ]]; then
-  "${repo_py}" scripts/generate_agent_state_schema.py --check
+  run_gate "generate_agent_state_schema.py" "${repo_py}" scripts/generate_agent_state_schema.py --check
 fi
 
-"${repo_py}" - <<'PY'
+INLINE_PROGRESS_FILE="${inline_progress_file}" "${repo_py}" - <<'PY'
 import ast
+import os
 import pathlib
 import re
 import sys
 
+progress_path = pathlib.Path(os.environ["INLINE_PROGRESS_FILE"])
+
+
+def _set_progress(done: int, current: str) -> None:
+    progress_path.write_text(f"{done}\n{current}\n", encoding="utf-8")
+
+
 # 1. Apache 2.0 license header check (matches .github/workflows/ci.yml license-check)
+_set_progress(0, "license_headers")
 missing_headers: list[str] = []
 src_root = pathlib.Path("src")
 if src_root.is_dir():
@@ -140,6 +259,7 @@ if missing_headers:
     sys.exit(1)
 
 # 2. Pytest selection-marker contract check (matches tests/conftest.py SELECTION_MARKERS)
+_set_progress(1, "pytest_selection_markers")
 selection_markers = {
     "unit",
     "local",
@@ -215,6 +335,7 @@ if offenders:
     sys.exit(1)
 
 # 3. NeMo actions.py ConfigMap snapshot freshness (matches ci.yml nemo-freshness-check)
+_set_progress(2, "nemo_configmap_freshness")
 configmap_path = pathlib.Path("infra/modules/nemo_guardrails/nemo-rails-configmap.yaml")
 canonical_path = pathlib.Path("config/rails/actions.py")
 if configmap_path.is_file() and canonical_path.is_file():
@@ -242,6 +363,7 @@ if configmap_path.is_file() and canonical_path.is_file():
         sys.exit(1)
 
 # 4. Lula manifest README count parity (matches ci.yml lula-ai600-validation)
+_set_progress(3, "lula_readme_parity")
 lula_dir = pathlib.Path("compliance/lula")
 lula_readme = lula_dir / "README.md"
 if lula_dir.is_dir() and lula_readme.is_file():
@@ -254,6 +376,8 @@ if lula_dir.is_dir() and lula_readme.is_file():
             f"pre-commit: compliance/lula manifest count ({disk_count}) != README unique references ({len(readme_names)}).\n"
         )
         sys.exit(1)
+
+_set_progress(4, "complete")
 PY
 HOOK
 

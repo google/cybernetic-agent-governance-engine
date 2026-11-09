@@ -309,7 +309,7 @@ def test_no_ca_private_key_is_generated_by_terraform() -> None:
 def test_mesh_trust_anchor_lives_in_cas() -> None:
     text = (_MESH_MODULE / "main.tf").read_text()
     assert 'resource "google_privateca_certificate_authority" "mesh_root"' in text
-    assert 'type                     = "SELF_SIGNED"' in text
+    assert re.search(r'\btype\s*=\s*"SELF_SIGNED"', text)
     assert (
         "identityTrustAnchorsPEM = google_privateca_certificate_authority.mesh_root.pem_ca_certificates[0]"
         in text

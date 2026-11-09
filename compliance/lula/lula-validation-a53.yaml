@@ -67,34 +67,38 @@ component-definition:
         provider:
           type: opa
           opa-spec:
+            output:
+              validation: lula.validate
             rego: |
               package lula
 
               import future.keywords.if
 
+              metrics_doc := object.get(input.langfuse_metrics_a53, "response", input.langfuse_metrics_a53)
+
               # A.5.3: Logging and Monitoring
               sample_size_or_grace_met if {
-                input.langfuse_metrics_a53.startup_grace_active == true
+                metrics_doc.startup_grace_active == true
               }
 
               sample_size_or_grace_met if {
-                input.langfuse_metrics_a53.startup_grace_active == false
-                input.langfuse_metrics_a53.total_traces > 100
+                metrics_doc.startup_grace_active == false
+                metrics_doc.total_traces > 100
               }
 
               rate_or_grace_ok if {
-                input.langfuse_metrics_a53.startup_grace_active == true
-                input.langfuse_metrics_a53.total_traces == 0
-                input.langfuse_metrics_a53.safety_rate == null
+                metrics_doc.startup_grace_active == true
+                metrics_doc.total_traces == 0
+                metrics_doc.safety_rate == null
               }
 
               rate_or_grace_ok if {
-                input.langfuse_metrics_a53.safety_rate >= 0.98
+                metrics_doc.safety_rate >= 0.98
                 sample_size_or_grace_met
               }
 
               validate if {
                 count(input.langfuse_metrics_a53) > 0
-                input.langfuse_metrics_a53.evidence_age_seconds < 172800
+                metrics_doc.evidence_age_seconds < 172800
                 rate_or_grace_ok
               }

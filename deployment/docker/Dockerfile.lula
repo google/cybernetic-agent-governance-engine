@@ -26,6 +26,7 @@ ARG LULA_SHA256=5581257b6d0bf446e0a6ca3598de1697565f343f40e73055d0320a11d3a8c25e
 
 RUN apk upgrade --no-cache && \
     apk add --no-cache ca-certificates curl && \
+    mkdir -p /usr/local/bin && \
     curl -fsSL \
       "https://github.com/defenseunicorns-labs/lula1/releases/download/v${LULA_VERSION}/lula_v${LULA_VERSION}_Linux_amd64" \
       -o /usr/local/bin/lula && \

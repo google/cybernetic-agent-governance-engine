@@ -1,0 +1,141 @@
+# Copyright 2026 Google LLC
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     https://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+{{- if ne .Release.Namespace "kube-system" }}{{ fail (printf "cage-dataplane-v2-logging must be installed in kube-system (got %q): its reconcile Job sets linkerd.io/inject=disabled, which ValidatingAdmissionPolicy/cage-mesh-proxy-required denies in meshed namespaces" .Release.Namespace) }}{{- end }}
+{{- if and .Values.reconcilerImage (contains "@sha256:" .Values.reconcilerImage) }}
+# Helm v3 `install` records pre-existing adopted objects in the release manifest
+# without patching their `spec` on revision 1 (`existingResourceConflict`), so
+# GKE's pre-created `NetworkLogging/default` singleton retains `log: false`
+# unless explicitly patched. This least-privilege hook reconciles `spec.cluster`
+# on both initial install and every upgrade.
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: cage-dpv2-logging-reconciler
+  namespace: {{ .Release.Namespace }}
+  annotations:
+    "helm.sh/hook": post-install,post-upgrade
+    "helm.sh/hook-weight": "-5"
+    "helm.sh/hook-delete-policy": before-hook-creation,hook-succeeded
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: cage-dpv2-logging-reconciler
+  annotations:
+    "helm.sh/hook": post-install,post-upgrade
+    "helm.sh/hook-weight": "-5"
+    "helm.sh/hook-delete-policy": before-hook-creation,hook-succeeded
+rules:
+  - apiGroups: ["networking.gke.io"]
+    resources: ["networkloggings"]
+    resourceNames: ["default"]
+    verbs: ["get", "patch"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: cage-dpv2-logging-reconciler
+  annotations:
+    "helm.sh/hook": post-install,post-upgrade
+    "helm.sh/hook-weight": "-4"
+    "helm.sh/hook-delete-policy": before-hook-creation,hook-succeeded
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: cage-dpv2-logging-reconciler
+subjects:
+  - kind: ServiceAccount
+    name: cage-dpv2-logging-reconciler
+    namespace: {{ .Release.Namespace }}
+---
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: cage-dpv2-logging-reconcile
+  namespace: {{ .Release.Namespace }}
+  annotations:
+    "helm.sh/hook": post-install,post-upgrade
+    "helm.sh/hook-weight": "0"
+    "helm.sh/hook-delete-policy": before-hook-creation,hook-succeeded
+spec:
+  backoffLimit: 3
+  activeDeadlineSeconds: 90
+  template:
+    metadata:
+      annotations:
+        linkerd.io/inject: disabled
+    spec:
+      serviceAccountName: cage-dpv2-logging-reconciler
+      automountServiceAccountToken: true
+      restartPolicy: Never
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1000
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: reconcile
+          image: {{ .Values.reconcilerImage | quote }}
+          command:
+            - /app/.venv/bin/python
+            - -c
+            - |
+              import json, os, pathlib, ssl, urllib.request
+              sa = pathlib.Path("/var/run/secrets/kubernetes.io/serviceaccount")
+              token = (sa / "token").read_text().strip()
+              ctx = ssl.create_default_context(cafile=str(sa / "ca.crt"))
+              host = os.environ["KUBERNETES_SERVICE_HOST"]
+              port = os.environ["KUBERNETES_SERVICE_PORT"]
+              url = f"https://{host}:{port}/apis/networking.gke.io/v1alpha1/networkloggings/default"
+              body = json.dumps({
+                  "spec": {
+                      "cluster": {
+                          "allow": {"log": {{ if .Values.logAllow }}True{{ else }}False{{ end }}, "delegate": {{ if .Values.delegateAllow }}True{{ else }}False{{ end }}},
+                          "deny": {"log": {{ if .Values.logDeny }}True{{ else }}False{{ end }}, "delegate": {{ if .Values.delegateDeny }}True{{ else }}False{{ end }}},
+                      }
+                  }
+              }).encode()
+              req = urllib.request.Request(
+                  url,
+                  data=body,
+                  method="PATCH",
+                  headers={
+                      "Authorization": f"Bearer {token}",
+                      "Content-Type": "application/merge-patch+json",
+                      "Accept": "application/json",
+                  },
+              )
+              with urllib.request.urlopen(req, context=ctx, timeout=15) as resp:
+                  out = json.loads(resp.read().decode())
+              spec = out.get("spec", {}).get("cluster", {})
+              assert spec.get("allow", {}).get("log") is {{ if .Values.logAllow }}True{{ else }}False{{ end }}, spec
+              assert spec.get("deny", {}).get("log") is {{ if .Values.logDeny }}True{{ else }}False{{ end }}, spec
+              print("Reconciled NetworkLogging/default:", json.dumps(spec))
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            runAsNonRoot: true
+            runAsUser: 1000
+            capabilities:
+              drop: ["ALL"]
+            seccompProfile:
+              type: RuntimeDefault
+          resources:
+            requests:
+              cpu: 50m
+              memory: 64Mi
+            limits:
+              cpu: 200m
+              memory: 128Mi
+{{- end }}
