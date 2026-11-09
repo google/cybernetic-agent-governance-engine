@@ -889,8 +889,11 @@ def test_compliance_bridge_gmp_podmonitoring_and_promql_alert_policy_wiring() ->
     alert_tf = (repo / "infra/targets/gcp-gke/lula_alerting.tf").read_text(
         encoding="utf-8"
     )
-    assert alert_tf.count("condition_prometheus_query_language {") == 2
-    assert alert_tf.count("disable_metric_validation = true") == 2
+    assert alert_tf.count("condition_prometheus_query_language {") == 1
+    assert alert_tf.count("disable_metric_validation = true") == 1
+    assert (
+        'resource "google_monitoring_alert_policy" "lula_audit_pod_restart"' in alert_tf
+    )
 
     lifecycle_sh = (repo / "scripts/staging_lifecycle.sh").read_text(encoding="utf-8")
     assert '"google_storage_bucket.langfuse_event_upload"' in lifecycle_sh

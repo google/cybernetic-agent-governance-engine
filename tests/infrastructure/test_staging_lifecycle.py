@@ -802,7 +802,7 @@ def test_staging_lifecycle_fresh_project_fails_on_surviving_workload_bucket(
 ) -> None:
     repo, bin_dir, _ = _setup_fake_repo(
         tmp_path,
-        surviving_bucket="langfuse-event-upload-ephemeral-proj-99-deadbeef",
+        surviving_bucket="ephemeral-proj-99-models",
     )
     env = _base_env(bin_dir)
     proc = subprocess.run(
@@ -823,6 +823,34 @@ def test_staging_lifecycle_fresh_project_fails_on_surviving_workload_bucket(
     )
     assert proc.returncode != 0
     assert "Surviving workload GCS bucket(s) after destroy" in proc.stderr
+
+
+def test_staging_lifecycle_fresh_project_retains_locked_langfuse_event_upload_bucket(
+    tmp_path: Path,
+) -> None:
+    repo, bin_dir, _ = _setup_fake_repo(
+        tmp_path,
+        surviving_bucket="langfuse-event-upload-ephemeral-proj-99-deadbeef",
+    )
+    env = _base_env(bin_dir)
+    proc = subprocess.run(
+        [
+            "bash",
+            str(repo / "scripts" / "staging_lifecycle.sh"),
+            "--fresh-project=ephemeral-proj-99",
+            "--skip-lula",
+            "--skip-posture",
+            "--skip-live-sweep",
+            "--skip-telemetry",
+            "--skip-rebuild",
+        ],
+        env=env,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert proc.returncode == 0, proc.stderr
+    assert "POAM-2026-159" in proc.stdout
 
 
 def test_staging_lifecycle_fails_closed_when_lula_exits_zero_with_not_satisfied(

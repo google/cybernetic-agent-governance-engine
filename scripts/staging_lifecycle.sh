@@ -1698,9 +1698,14 @@ if [[ "$FRESH_PROJECT" == "true" ]]; then
 
   remaining_buckets="$(gcloud storage buckets list --project="$PROJECT_ID" --format='value(name)' 2>/dev/null | grep -Ev "^(${PROJECT_ID}-tfstate|${PROJECT_ID}_cloudbuild)$" || true)"
   has_retained_worm_buckets=false
-  if printf '%s\n' "$remaining_buckets" | grep -Eq "^(${PROJECT_ID}-evidence-worm-staging|${PROJECT_ID}-audit-logs-worm-staging|langfuse-event-upload-${PROJECT_ID}-[0-9a-f]{8})$"; then
-    info "PF9 persistent 1-day-retention-locked staging bucket(s) retained by design (F-66 / F-94 / POAM-2026-159): $(printf '%s\n' "$remaining_buckets" | grep -E "^(${PROJECT_ID}-evidence-worm-staging|${PROJECT_ID}-audit-logs-worm-staging|langfuse-event-upload-${PROJECT_ID}-[0-9a-f]{8})$" | tr '\n' ' ')"
-    remaining_buckets="$(printf '%s\n' "$remaining_buckets" | grep -Ev "^(${PROJECT_ID}-evidence-worm-staging|${PROJECT_ID}-audit-logs-worm-staging|langfuse-event-upload-${PROJECT_ID}-[0-9a-f]{8})$" || true)"
+  if printf '%s\n' "$remaining_buckets" | grep -Eq "^(${PROJECT_ID}-evidence-worm-staging|${PROJECT_ID}-audit-logs-worm-staging)$"; then
+    info "PF9 persistent evidence-domain WORM bucket(s) retained by design (F-66 / F-94): $(printf '%s\n' "$remaining_buckets" | grep -E "^(${PROJECT_ID}-evidence-worm-staging|${PROJECT_ID}-audit-logs-worm-staging)$" | tr '\n' ' ')"
+    remaining_buckets="$(printf '%s\n' "$remaining_buckets" | grep -Ev "^(${PROJECT_ID}-evidence-worm-staging|${PROJECT_ID}-audit-logs-worm-staging)$" || true)"
+    has_retained_worm_buckets=true
+  fi
+  if printf '%s\n' "$remaining_buckets" | grep -Eq "^langfuse-event-upload-${PROJECT_ID}-[0-9a-f]{8}$"; then
+    info "PF9 persistent 1-day-retention-locked Langfuse upload bucket retained by design (POAM-2026-159): $(printf '%s\n' "$remaining_buckets" | grep -E "^langfuse-event-upload-${PROJECT_ID}-[0-9a-f]{8}$" | tr '\n' ' ')"
+    remaining_buckets="$(printf '%s\n' "$remaining_buckets" | grep -Ev "^langfuse-event-upload-${PROJECT_ID}-[0-9a-f]{8}$" || true)"
     has_retained_worm_buckets=true
   fi
   if [[ "$ALLOW_LEGACY_LIEN_SURVIVOR" == "true" && "$remaining_buckets" == *"langfuse-events-"* ]]; then

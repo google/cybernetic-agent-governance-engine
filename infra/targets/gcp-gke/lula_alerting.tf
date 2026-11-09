@@ -54,25 +54,48 @@ resource "google_monitoring_alert_policy" "lula_audit_failure" {
   }
 
   conditions {
-    display_name = "Lula not-satisfied or missing corpus-floor controls > 0"
+    display_name = "Lula not-satisfied controls > 0 or 2x-schedule dead-man switch breach > 0"
 
     condition_prometheus_query_language {
-      query                     = "cage_lula_audit_not_satisfied_controls{namespace=\"${module.namespace.name}\"} > 0"
+      query                     = "(cage_lula_audit_not_satisfied_controls{namespace=\"${module.namespace.name}\"} > 0) or (increase(cage_lula_audit_deadman_breaches_total{namespace=\"${module.namespace.name}\"}[5m]) > 0)"
       duration                  = "0s"
       evaluation_interval       = "60s"
       disable_metric_validation = true
     }
   }
 
-  conditions {
-    display_name = "Lula 2x-schedule dead-man switch breach > 0"
+  depends_on = [module.gke]
+}
 
-    condition_prometheus_query_language {
-      query                     = "increase(cage_lula_audit_deadman_breaches_total{namespace=\"${module.namespace.name}\"}[5m]) > 0"
-      duration                  = "0s"
-      evaluation_interval       = "60s"
-      disable_metric_validation = true
-    }
+resource "google_monitoring_alert_policy" "lula_audit_pod_restart" {
+  count = var.enable_lula_cron && local.enforcing_posture ? 1 : 0
+
+  project               = var.project_id
+  display_name          = "${var.cluster_name} - Lula Compliance Auditor Pod Restart (A.5.3)"
+  combiner              = "OR"
+  enabled               = true
+  severity              = "CRITICAL"
+  notification_channels = var.lula_alert_notification_channels
+
+  user_labels = {
+    owner       = trimspace(var.lula_alert_owner)
+    component   = "compliance-auditor"
+    control     = "a-5-3"
+    environment = var.environment
+  }
+
+  documentation {
+    mime_type = "text/markdown"
+    content   = <<-EOT
+      ## CAGE In-Cluster Lula Auditor Pod Restart Alert (ISO/IEC 42001 A.5.3 / NIST CA-7)
+
+      - **Owner:** `${trimspace(var.lula_alert_owner)}`
+      - **Cluster:** `${var.cluster_name}` (`${var.namespace}`)
+
+      Fires when `kubernetes.io/container/restart_count` increases for `lula-audit` pods.
+      Separated from `lula_audit_failure` because Cloud Monitoring restricts
+      `prometheus_query_language` alert policies to a single condition.
+    EOT
   }
 
   conditions {
