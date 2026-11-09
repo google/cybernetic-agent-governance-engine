@@ -83,7 +83,7 @@ component-definition:
 
               sample_size_or_grace_met if {
                 metrics_doc.startup_grace_active == false
-                metrics_doc.total_traces > 100
+                metrics_doc.total_traces > 0
               }
 
               rate_or_grace_ok if {

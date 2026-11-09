@@ -68,6 +68,11 @@ resource "kubernetes_deployment" "compliance_bridge" {
       )
       error_message = "CAGE Invariant (AC-6 / IA-2 / POAM-2026-196): under an enforcing posture, compliance-bridge requires non-empty human trusted_operator_identities (no workload SVIDs), https:// operator_oidc_issuer, non-empty operator_oidc_audience, and https:// operator_jwks_uri."
     }
+
+    precondition {
+      condition     = !contains(["prod", "production"], lower(var.cage_env)) || (!var.enable_e2e_mode && trimspace(var.operator_jwks_json) == "")
+      error_message = "CAGE Invariant (POAM-2026-191 / POAM-2026-196): enable_e2e_mode and operator_jwks_json are non-production verification switches and are refused when cage_env is prod or production."
+    }
   }
 
   metadata {
@@ -426,6 +431,14 @@ resource "kubernetes_deployment" "compliance_bridge" {
           env {
             name  = "CAGE_OPERATOR_JWKS_URI"
             value = var.operator_jwks_uri
+          }
+
+          dynamic "env" {
+            for_each = trimspace(var.operator_jwks_json) != "" ? [1] : []
+            content {
+              name  = "CAGE_OPERATOR_JWKS_JSON"
+              value = trimspace(var.operator_jwks_json)
+            }
           }
 
           env {

@@ -884,8 +884,11 @@ module "langfuse" {
   web_memory_request    = "256Mi"
   worker_memory_request = "256Mi"
 
-  langfuse_public_key = var.langfuse_public_key
-  langfuse_secret_key = var.langfuse_secret_key
+  langfuse_public_key            = var.langfuse_public_key
+  langfuse_secret_key            = var.langfuse_secret_key
+  langfuse_compliance_project_id = "cage-compliance"
+  langfuse_compliance_public_key = var.langfuse_compliance_public_key
+  langfuse_compliance_secret_key = var.langfuse_compliance_secret_key
 
   langfuse_init_user_email    = var.langfuse_init_user_email
   langfuse_init_user_password = var.langfuse_init_user_password
@@ -959,6 +962,8 @@ module "compliance_bridge" {
   operator_oidc_issuer        = var.operator_oidc_issuer
   operator_oidc_audience      = var.operator_oidc_audience
   operator_jwks_uri           = var.operator_jwks_uri
+  enable_e2e_mode             = var.enable_e2e_advisor
+  operator_jwks_json          = var.enable_e2e_advisor ? trimspace(var.e2e_operator_jwks_json) : ""
 
   depends_on = [module.langfuse, module.vllm, module.worm_bucket, module.memorystore_governance, module.service_mesh]
 }

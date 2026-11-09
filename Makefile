@@ -189,23 +189,15 @@ test-mesh:
 	@echo "==> Running Linkerd service-mesh conformance tests..."
 	@SKIP_PORT_FORWARD_CHECKS=1 uv run pytest tests/integration/test_linkerd_mesh_conformance.py --run-integration -n0 --no-cov -p no:langsmith -p no:langsmith_plugin -v
 
-## Run the live GKE trade-governance e2e suite (tests/e2e/) as an in-cluster, meshed Job.
-## Requires REGISTRY_URL and the adopter-created Secret cage-e2e-credentials.
-E2E_JOB ?= cage-verify-trade-e2e
+## Run the live GKE trade-governance e2e suite (tests/e2e/) across Linkerd mTLS + NetworkPolicy boundaries.
+## Accepts E2E_PRIVATE_KEY_FILE=<path> or CAGE_E2E_OPERATOR_OIDC_TOKENS=<tok1,tok2>.
 E2E_NAMESPACE ?= governance-stack
 test-gke-e2e:
-	@test -n "$(REGISTRY_URL)" || { echo "REGISTRY_URL is required"; exit 1; }
-	@echo "==> Running live GKE trade-governance e2e Job..."
-	@kubectl delete job/$(E2E_JOB) -n $(E2E_NAMESPACE) --ignore-not-found --wait=true
-	@REGISTRY_URL="$(REGISTRY_URL)" envsubst '$${REGISTRY_URL}' < tests/e2e/fixtures/verify-trade-e2e-job.yaml | kubectl apply -f -
-	@for i in $$(seq 1 180); do \
-	  if kubectl get job/$(E2E_JOB) -n $(E2E_NAMESPACE) -o jsonpath='{.status.conditions[?(@.type=="Complete")].status}' | grep -q True; then RC=0; break; fi; \
-	  if kubectl get job/$(E2E_JOB) -n $(E2E_NAMESPACE) -o jsonpath='{.status.conditions[?(@.type=="Failed")].status}' | grep -q True; then RC=1; break; fi; \
-	  RC=2; sleep 5; \
-	done; \
-	kubectl logs job/$(E2E_JOB) -n $(E2E_NAMESPACE) -c verify-trade-e2e --tail=-1 || true; \
-	if [ "$$RC" = "2" ]; then echo "e2e Job timed out"; fi; \
-	exit $$RC
+	@echo "==> Running live GKE trade-governance e2e suite..."
+	@uv run python tests/e2e/run_gke_e2e_suite.py --full-e2e \
+	  --namespace "$(E2E_NAMESPACE)" \
+	  --adapter-commit "$$(git rev-parse --short HEAD 2>/dev/null || echo 0000000)" \
+	  $$(if [ -n "$(E2E_PRIVATE_KEY_FILE)" ]; then echo --private-key-file "$(E2E_PRIVATE_KEY_FILE)"; fi)
 
 ## Run live external service tests (e.g. Google CAS certificate issuance)
 test-live:

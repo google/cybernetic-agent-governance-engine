@@ -299,3 +299,23 @@ variable "langfuse_init_project_id" {
   type        = string
   default     = ""
 }
+
+variable "langfuse_compliance_project_id" {
+  description = "Isolated compliance tenant project ID seeded at startup alongside langfuse_init_project_id (POAM-018 / POAM-019)"
+  type        = string
+  default     = ""
+}
+
+variable "langfuse_compliance_public_key" {
+  description = "Pre-existing public key for the isolated compliance tenant project (optional)"
+  type        = string
+  sensitive   = true
+  default     = ""
+}
+
+variable "langfuse_compliance_secret_key" {
+  description = "Pre-existing secret key for the isolated compliance tenant project (optional)"
+  type        = string
+  sensitive   = true
+  default     = ""
+}

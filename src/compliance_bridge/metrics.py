@@ -41,6 +41,7 @@ import json
 import logging
 import os
 import re
+import threading
 from collections.abc import Mapping
 from datetime import datetime, timedelta, timezone
 from typing import Any
@@ -135,10 +136,16 @@ def _get_grace_status() -> dict[str, float | bool]:
 # ---------------------------------------------------------------------------
 
 _metrics_cache: TTLCache[str, ComplianceMetrics] = TTLCache(maxsize=32, ttl=300)
+_raw_custody_cache: TTLCache[tuple[int, str, str, str], list[dict[str, Any]]] = (
+    TTLCache(maxsize=8, ttl=30)
+)
+_raw_custody_lock = threading.Lock()
 
 
 def invalidate_compliance_metrics_cache(control_id: str | None = None) -> None:
     """Invalidate cached compliance metrics globally or for a single control."""
+    with _raw_custody_lock:
+        _raw_custody_cache.clear()
     if control_id is None:
         _metrics_cache.clear()
         return
@@ -160,6 +167,8 @@ PASSING_EVIDENCE_EVENT_TYPES: frozenset[str] = frozenset(
         "GOVERNANCE_SETTLEMENT",
         "CONSEQUENCE_GATEWAY_DECISION",
         "CBF_COMMIT",
+        "INFERENCE_PROXY_STAGE1_PASS",
+        "INFERENCE_PROXY_PII_SCRUB_PASS",
     }
 )
 
@@ -172,10 +181,31 @@ BLOCKING_EVIDENCE_EVENT_TYPES: frozenset[str] = frozenset(
         "ACTUATION_REFUSAL_RECEIPT",
         "ACTUATION_INDETERMINATE_RECEIPT",
         "CONSEQUENCE_GATEWAY_REFUSAL",
+        "INFERENCE_PROXY_BLOCK",
+        "TOKEN_QUOTA_DENIED",
         "CBF_ROLLBACK",
         "WORKLOAD_QUARANTINE_RECEIPT",
         "GOVERNANCE_VIOLATION",
     }
+)
+
+PREVENTIVE_ENFORCEMENT_EVENT_TYPES: frozenset[str] = frozenset(
+    {
+        "GOVERNANCE_REFUSAL",
+        "GOVERNANCE_REFUSAL_RECEIPT",
+        "GOVERNANCE_DEFERRAL",
+        "DEFER_PARKED",
+        "CONSEQUENCE_GATEWAY_REFUSAL",
+        "INFERENCE_PROXY_BLOCK",
+        "TOKEN_QUOTA_DENIED",
+    }
+)
+
+_CONTROL_FAILURE_EVENT_TOKENS: tuple[str, ...] = (
+    "ROLLBACK",
+    "QUARANTINE",
+    "VIOLATION",
+    "FENCE",
 )
 
 _BLOCKING_EVENT_TOKENS: tuple[str, ...] = (
@@ -298,8 +328,30 @@ def _normalize_control_id(raw: Any) -> str:
     return cleaned
 
 
+_INTERNAL_CONTROL_TO_FRAMEWORKS: dict[str, frozenset[str]] = {
+    "agentic_scope_statement": frozenset({"A.5.3", "A.8.4", "SC-4"}),
+    "CTRL_OPA_005": frozenset({"A.5.3", "A.8.4", "SC-4", "AC-3"}),
+    "CTRL_AGT_001": frozenset({"A.5.3", "A.8.4"}),
+    "CTRL_WAL_002": frozenset({"A.5.3", "A.8.4"}),
+    "CTRL_TQP_007": frozenset({"A.5.3", "TQP-007"}),
+    "TQP-007": frozenset({"A.5.3", "TQP-007"}),
+    "CTRL_FTRA_001": frozenset({"A.5.3", "A.8.4"}),
+    "CTRL_FRIA_006": frozenset({"A.5.2", "A.5.3"}),
+}
+
+
+def _candidate_matches_target(raw_candidate: str, target: str) -> bool:
+    norm = _normalize_control_id(raw_candidate)
+    if not norm:
+        return False
+    if norm == target:
+        return True
+    mapped = _INTERNAL_CONTROL_TO_FRAMEWORKS.get(norm)
+    return bool(mapped and target in mapped)
+
+
 def _record_matches_control(record: Mapping[str, Any] | Any, control_id: str) -> bool:
-    """Return True when `record` is explicitly attributed to `control_id`."""
+    """Return True when `record` is attributed to `control_id` (directly or via Layer 1 `GovernanceControl`)."""
     target = _normalize_control_id(control_id)
     if not target:
         return False
@@ -322,11 +374,11 @@ def _record_matches_control(record: Mapping[str, Any] | Any, control_id: str) ->
 
     for candidate in candidates:
         if isinstance(candidate, str):
-            if _normalize_control_id(candidate) == target:
+            if _candidate_matches_target(candidate, target):
                 return True
         elif isinstance(candidate, (list, tuple, set, frozenset)):
             for item in candidate:
-                if _normalize_control_id(item) == target:
+                if isinstance(item, str) and _candidate_matches_target(item, target):
                     return True
 
     for tf_list in (
@@ -335,8 +387,9 @@ def _record_matches_control(record: Mapping[str, Any] | Any, control_id: str) ->
     ):
         if isinstance(tf_list, (list, tuple)):
             for tf in tf_list:
-                if isinstance(tf, Mapping) and (
-                    _normalize_control_id(tf.get("control_id")) == target
+                tf_cid = tf.get("control_id") if isinstance(tf, Mapping) else None
+                if isinstance(tf_cid, str) and _candidate_matches_target(
+                    tf_cid, target
                 ):
                     return True
     return False
@@ -575,6 +628,97 @@ def _is_passing_evidence_record(record: Mapping[str, Any] | Any) -> bool:
         _get_record_field(record, "evidence_class") or ""
     ).upper() == "INFRA" and bool(raw_event_type):
         return True
+
+    return False
+
+
+_PREVENTIVE_ENFORCEMENT_VERDICTS: frozenset[str] = frozenset(
+    {
+        "DENY",
+        "BLOCK",
+        "BLOCKED",
+        "REFUSED",
+        "DEFER",
+        "HOLD",
+        "REQUIRE_APPROVAL",
+        "REJECTED",
+    }
+)
+
+_EXPLICIT_CONTROL_FAILURE_VERDICTS: frozenset[str] = frozenset(
+    {
+        "FAIL",
+        "FAILED",
+        "ERROR",
+        "ROLLED_BACK",
+        "ROLLED_BACK_UNLEDGERED",
+        "NOOP",
+        "UNKNOWN",
+        "INDETERMINATE",
+        "VIOLATION",
+        "NOT-SATISFIED",
+    }
+)
+
+
+def _is_control_effective_record(record: Mapping[str, Any] | Any) -> bool:
+    """Return True when `record` proves the control operated effectively.
+
+    Admitted passes (`_is_passing_evidence_record() is True`) and intentional,
+    fail-closed preventive enforcement (`GOVERNANCE_REFUSAL`, `GOVERNANCE_DEFERRAL`,
+    `DEFER_PARKED`, `INFERENCE_PROXY_BLOCK`, `TOKEN_QUOTA_DENIED`,
+    `CONSEQUENCE_GATEWAY_REFUSAL`, or `GOVERNANCE_DECISION` with `DENY`/`DEFER`)
+    both demonstrate active control enforcement. Operational/integrity failures
+    (`lula_audit FAIL`, `CBF_ROLLBACK`, `GOVERNANCE_VIOLATION`, `WORKLOAD_QUARANTINE_RECEIPT`,
+    `ACTUATION_REFUSAL_RECEIPT`, `ACTUATION_INDETERMINATE_RECEIPT`, discrepancy
+    fences, `cilium_flow_denied`, and `FAIL`/`ERROR`/`ROLLED_BACK` outcomes)
+    return False.
+    """
+    if _is_passing_evidence_record(record):
+        return True
+
+    payload = _parse_evidence_payload(record)
+    raw_event_type = str(
+        _get_record_field(record, "event_type")
+        or _get_record_field(record, "type")
+        or payload.get("event_type")
+        or payload.get("type")
+        or ""
+    ).strip()
+
+    if raw_event_type == "cilium_flow_denied" or raw_event_type.lower() == "lula_audit":
+        return False
+
+    event_type = raw_event_type.upper()
+    if event_type in {
+        "CBF_ROLLBACK",
+        "WORKLOAD_QUARANTINE_RECEIPT",
+        "GOVERNANCE_VIOLATION",
+        "ACTUATION_REFUSAL_RECEIPT",
+        "ACTUATION_INDETERMINATE_RECEIPT",
+        "ACTUATION_RECEIPT",
+        "GOVERNANCE_SETTLEMENT",
+    } or any(tok in event_type for tok in _CONTROL_FAILURE_EVENT_TOKENS):
+        return False
+
+    for key in ("verdict", "decision", "outcome", "status", "result"):
+        val = payload.get(key)
+        if val is None:
+            val = _get_record_field(record, key)
+        if isinstance(val, str) and val.strip():
+            if val.strip().upper() in _EXPLICIT_CONTROL_FAILURE_VERDICTS:
+                return False
+
+    if event_type in PREVENTIVE_ENFORCEMENT_EVENT_TYPES:
+        return True
+
+    if event_type in {"GOVERNANCE_DECISION", "CONSEQUENCE_GATEWAY_DECISION"}:
+        for key in ("verdict", "decision", "outcome", "status", "result"):
+            val = payload.get(key)
+            if val is None:
+                val = _get_record_field(record, key)
+            if isinstance(val, str) and val.strip():
+                return val.strip().upper() in _PREVENTIVE_ENFORCEMENT_VERDICTS
 
     return False
 
@@ -842,39 +986,75 @@ def _query_cage_evidence_records(
             )
         return []
 
-    combined_raw: list[dict[str, Any]] = []
+    store_mod = type(cold_store).__module__ if cold_store is not None else ""
+    use_snapshot_cache = (
+        not store_mod.startswith("tests.")
+        and not store_mod.startswith("unittest.")
+        and not getattr(_build_evidence_sync_redis, "__module__", "").startswith(
+            "unittest."
+        )
+    )
+    bucket_id = str(
+        getattr(
+            cold_store,
+            "_bucket_name",
+            getattr(
+                cold_store, "bucket", os.environ.get("EVIDENCE_ARCHIVE_BUCKET", "")
+            ),
+        )
+    )
+    raw_cache_key = (
+        window_hours,
+        type(cold_store).__qualname__ if cold_store is not None else "none",
+        bucket_id,
+        redis_url,
+    )
 
-    if cold_store is not None:
-        try:
-            archived = _run_coro_sync(
-                _read_cold_store_records_async(cold_store, window_start, now)
-            )
-            combined_raw.extend(archived)
-        except Exception as exc:
-            if enforcing:
-                raise
-            logger.warning(
-                "[metrics] Failed to read WORM custody archive for control %s: %s",
-                control_id,
-                exc,
-            )
+    combined_raw: list[dict[str, Any]] | None = None
+    if use_snapshot_cache:
+        with _raw_custody_lock:
+            cached_raw = _raw_custody_cache.get(raw_cache_key)
+            if cached_raw is not None:
+                combined_raw = list(cached_raw)
 
-    if redis_url:
-        try:
-            hot_records = _read_redis_stream_records(
-                redis_url=redis_url,
-                window_start=window_start,
-                limit=limit,
-            )
-            combined_raw.extend(hot_records)
-        except Exception as exc:
-            if enforcing:
-                raise
-            logger.warning(
-                "[metrics] Failed to read Redis DB 1 custody stream for control %s: %s",
-                control_id,
-                exc,
-            )
+    if combined_raw is None:
+        fetched_raw: list[dict[str, Any]] = []
+        if cold_store is not None:
+            try:
+                archived = _run_coro_sync(
+                    _read_cold_store_records_async(cold_store, window_start, now)
+                )
+                fetched_raw.extend(archived)
+            except Exception as exc:
+                if enforcing:
+                    raise
+                logger.warning(
+                    "[metrics] Failed to read WORM custody archive for control %s: %s",
+                    control_id,
+                    exc,
+                )
+
+        if redis_url:
+            try:
+                hot_records = _read_redis_stream_records(
+                    redis_url=redis_url,
+                    window_start=window_start,
+                    limit=limit,
+                )
+                fetched_raw.extend(hot_records)
+            except Exception as exc:
+                if enforcing:
+                    raise
+                logger.warning(
+                    "[metrics] Failed to read Redis DB 1 custody stream for control %s: %s",
+                    control_id,
+                    exc,
+                )
+
+        combined_raw = fetched_raw
+        if use_snapshot_cache:
+            with _raw_custody_lock:
+                _raw_custody_cache[raw_cache_key] = list(fetched_raw)
 
     seen_keys: set[tuple[str, ...]] = set()
     matched: list[tuple[datetime, dict[str, Any]]] = []
@@ -921,8 +1101,8 @@ def _fetch_from_evidence_stream_sync(
             continue
 
         total_traces += 1
-        is_passing = _is_passing_evidence_record(record)
-        if is_passing:
+        is_effective = _is_control_effective_record(record)
+        if is_effective:
             passed_traces += 1
 
         record_payload = _parse_evidence_payload(record)
@@ -933,7 +1113,7 @@ def _fetch_from_evidence_stream_sync(
             or record_payload.get("type")
             or ""
         ).strip()
-        if not (rec_event_type.lower() == "lula_audit" and not is_passing):
+        if not (rec_event_type.lower() == "lula_audit" and not is_effective):
             if record_date is not None and record_date > last_event_date:
                 last_event_date = record_date
 

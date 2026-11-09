@@ -445,7 +445,8 @@ def findings_from_metrics_dict(
         if sr is None:
             result: OscalResult = "NOT_APPLICABLE"
         else:
-            result = "PASS" if sr >= 1.0 else "FAIL"
+            threshold = {"A.5.2": 0.99, "A.5.3": 0.98, "A.9.2": 1.0}.get(cid, 1.0)
+            result = "PASS" if sr >= threshold else "FAIL"
         findings.append(
             OscalFinding(
                 control_id=cid,

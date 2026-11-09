@@ -795,9 +795,26 @@ async def test_proxy_enforces_stage1_block_quota_429_and_forwards_clean_stub_tur
             and p.get("control_id") == "TQP-007"
             and p.get("governance_control_id") == "CTRL_TQP_007"
         ]
+        a52_passes = [
+            p
+            for p in payloads
+            if p.get("type") == "INFERENCE_PROXY_STAGE1_PASS"
+            and p.get("control_id") == "A.5.2"
+        ]
+        a92_passes = [
+            p
+            for p in payloads
+            if p.get("type") == "INFERENCE_PROXY_PII_SCRUB_PASS"
+            and p.get("control_id") == "A.9.2"
+        ]
         assert len(a52_blocks) == 2
         assert len(tqp_denials) == 1
-        assert all(p.get("trace_id") for p in (*a52_blocks, *tqp_denials))
+        assert len(a52_passes) == 1
+        assert len(a92_passes) == 1
+        assert all(
+            p.get("trace_id")
+            for p in (*a52_blocks, *tqp_denials, *a52_passes, *a92_passes)
+        )
     finally:
         await stub_client.aclose()
         await sink.stop()

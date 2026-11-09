@@ -12,84 +12,89 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-# Live trade-governance e2e verification (tests/e2e/test_gke_trade_flow.py).
+# Live in-mesh trade-governance & inference-proxy E2E Job template.
 #
-# Runs in-mesh as the advisor's workload identity, so the gateway authenticates
-# it exactly as it authenticates the advisor (peer-verified l5d-client-id).
-# Launched by `make test-gke-e2e` / `./deploy_all.sh --verify-e2e`.
+# Runs inside the Linkerd mesh as `cage-advisor-sa` with label
+# `app: governed-financial-advisor`, inheriting the advisor's exact
+# peer-verified SPIFFE identity and per-workload NetworkPolicy egress to
+# `gateway:8080` while keeping the short-lived Job pod out of
+# `Service/governed-financial-advisor` endpoints (`readinessProbe` exits 1).
 #
-# Credentials come from the adopter-created Secret `cage-e2e-credentials`
-# (keys: operator-oidc-tokens, unmeshed-gateway-url) — never literal values
-# in this manifest.
+# Rendered and orchestrated by `tests/e2e/run_gke_e2e_suite.py` (`make test-gke-e2e`
+# and `scripts/staging_lifecycle.sh --enable-e2e-advisor`).
 apiVersion: batch/v1
 kind: Job
 metadata:
-  name: cage-verify-trade-e2e
-  namespace: governance-stack
+  name: ${JOB_NAME}
+  namespace: ${NAMESPACE}
   labels:
-    app.kubernetes.io/name: cage-verify-trade-e2e
+    app.kubernetes.io/name: ${JOB_NAME}
     app.kubernetes.io/part-of: cybernetic-governance-engine
 spec:
   backoffLimit: 0
-  ttlSecondsAfterFinished: 86400
+  ttlSecondsAfterFinished: 600
   template:
     metadata:
       labels:
-        app: cage-verify-trade-e2e
+        app: governed-financial-advisor
+        cage.io/e2e-job: ${JOB_NAME}
       annotations:
         linkerd.io/inject: enabled
-        # Let the Job complete: the proxy exits when the test container does.
         config.alpha.linkerd.io/proxy-wait-before-exit-seconds: "0"
     spec:
       restartPolicy: Never
       serviceAccountName: cage-advisor-sa
       securityContext:
         runAsNonRoot: true
+        runAsUser: 1000
         seccompProfile:
           type: RuntimeDefault
       containers:
         - name: verify-trade-e2e
-          image: ${REGISTRY_URL}/governed-financial-advisor:latest
-          imagePullPolicy: Always
-          command: ["/bin/bash", "-c"]
-          args:
-            - |
-              set -eo pipefail
-              cd /app
-              status=0
-              python3 -m pytest tests/e2e/test_gke_trade_flow.py --run-e2e \
-                -n0 --no-cov -p no:langsmith -p no:langsmith_plugin -v --tb=short || status=$?
-              # Stop the Linkerd proxy so the Job can terminate.
-              curl -fsS -X POST http://localhost:4191/shutdown || true
-              exit "$status"
+          image: ${WORKLOAD_IMAGE}
+          imagePullPolicy: IfNotPresent
+          command: ["/app/.venv/bin/python", "/e2e/in_mesh_runner.py"]
           env:
+            - name: CAGE_E2E_PHASE
+              value: "${E2E_PHASE}"
             - name: CAGE_E2E_GATEWAY_URL
-              value: "http://gateway.governance-stack.svc.cluster.local:8080"
-            - name: CAGE_E2E_BRIDGE_URL
-              value: "http://compliance-bridge.governance-stack.svc.cluster.local"
-            - name: CAGE_E2E_UNMESHED_GATEWAY_URL
-              valueFrom:
-                secretKeyRef:
-                  name: cage-e2e-credentials
-                  key: unmeshed-gateway-url
-            - name: CAGE_E2E_OPERATOR_OIDC_TOKENS
-              valueFrom:
-                secretKeyRef:
-                  name: cage-e2e-credentials
-                  key: operator-oidc-tokens
+              value: "http://gateway.${NAMESPACE}.svc.cluster.local:8080"
+            - name: CAGE_E2E_MODEL_NAME
+              value: "${E2E_MODEL_NAME}"
+            - name: CAGE_E2E_REQUIRE_INFERENCE_PROXY
+              value: "${REQUIRE_INFERENCE_PROXY}"
+            - name: CAGE_E2E_DEFERRED_IDS_JSON
+              value: '${DEFERRED_IDS_JSON}'
             - name: LANGSMITH_TRACING
               value: "false"
             - name: LANGCHAIN_TRACING_V2
               value: "false"
+          readinessProbe:
+            exec:
+              command: ["/app/.venv/bin/python", "-c", "raise SystemExit(1)"]
+            initialDelaySeconds: 1
+            periodSeconds: 30
+          volumeMounts:
+            - name: e2e-runner
+              mountPath: /e2e
+              readOnly: true
           securityContext:
             allowPrivilegeEscalation: false
             readOnlyRootFilesystem: false
+            runAsNonRoot: true
+            runAsUser: 1000
             capabilities:
               drop: ["ALL"]
+            seccompProfile:
+              type: RuntimeDefault
           resources:
             requests:
-              cpu: "250m"
-              memory: "512Mi"
+              cpu: "100m"
+              memory: "256Mi"
             limits:
-              cpu: "1000m"
-              memory: "1Gi"
+              cpu: "500m"
+              memory: "512Mi"
+      volumes:
+        - name: e2e-runner
+          configMap:
+            name: ${CONFIGMAP_NAME}

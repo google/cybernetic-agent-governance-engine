@@ -461,6 +461,67 @@ async def _emit_proxy_evidence(
             ) from exc
 
 
+async def _emit_proxy_pass_evidence(
+    request: Request,
+    *,
+    span: Any,
+    body: Any,
+    model_id: str,
+    agent_id: str | None = None,
+    pii_redacted: bool = False,
+) -> None:
+    """Append hash-chained A.5.2 (Stage 1) and A.9.2 (Stage 4 PII) pass records when an evidence sink is running."""
+    from src.gateway.governance.evidence.stream import get_evidence_sink
+
+    app_state = getattr(getattr(request, "app", None), "state", None)
+    sink = getattr(app_state, "evidence_sink", None)
+    if sink is None:
+        sink = get_evidence_sink()
+    if sink is None or not getattr(sink, "_running", False):
+        return
+
+    trace_id = _resolve_proxy_trace_id(request, body, span)
+    now_iso = datetime.now(timezone.utc).isoformat()
+    stage1_event: dict[str, Any] = {
+        "type": "INFERENCE_PROXY_STAGE1_PASS",
+        "control_id": "A.5.2",
+        "trace_id": trace_id,
+        "decision": "PASS",
+        "surface": "inference_proxy",
+        "status_code": 200,
+        "model": model_id,
+        "reason": "Ingress Stage 1 keyword scan clean",
+        "timestamp": now_iso,
+    }
+    pii_event: dict[str, Any] = {
+        "type": "INFERENCE_PROXY_PII_SCRUB_PASS",
+        "control_id": "A.9.2",
+        "trace_id": trace_id,
+        "decision": "PASS",
+        "surface": "inference_proxy",
+        "status_code": 200,
+        "model": model_id,
+        "pii_redacted": bool(pii_redacted),
+        "reason": "Stage 4 output PII sanitization verified",
+        "timestamp": now_iso,
+    }
+    if agent_id:
+        stage1_event["agent_id"] = agent_id
+        pii_event["agent_id"] = agent_id
+
+    for ev in (stage1_event, pii_event):
+        try:
+            ingest_res = sink.ingest(ev)
+            if inspect.isawaitable(ingest_res):
+                await ingest_res
+        except Exception as exc:
+            logger.warning(
+                "Inference proxy pass-evidence emission failed (control=%s): %s",
+                ev["control_id"],
+                exc,
+            )
+
+
 @inference_app.post("/v1/chat/completions")
 async def chat_completions(
     request: Request,
@@ -939,6 +1000,14 @@ async def chat_completions(
                                 "total_tokens": 0,
                             },
                         }
+                        await _emit_proxy_pass_evidence(
+                            request,
+                            span=span,
+                            body=body,
+                            model_id=model_id,
+                            agent_id=agent_id,
+                            pii_redacted=True,
+                        )
                         return JSONResponse(content=filtered_response)
 
                 # Apply NeMo output filtering to the assembled content
@@ -973,6 +1042,14 @@ async def chat_completions(
                                 "total_tokens": 0,
                             },
                         }
+                        await _emit_proxy_pass_evidence(
+                            request,
+                            span=span,
+                            body=body,
+                            model_id=model_id,
+                            agent_id=agent_id,
+                            pii_redacted=True,
+                        )
                         return JSONResponse(content=filtered_response)
             except Exception:
                 if not stream_backend_error:
@@ -980,6 +1057,15 @@ async def chat_completions(
                         agent_id, reserved_tokens=token_delta
                     )
                 raise
+
+            await _emit_proxy_pass_evidence(
+                request,
+                span=span,
+                body=body,
+                model_id=model_id,
+                agent_id=agent_id,
+                pii_redacted=False,
+            )
 
             # Content passed output filtering — re-stream the collected chunks
             async def _replay_chunks() -> AsyncIterator[bytes]:
@@ -1030,6 +1116,7 @@ async def chat_completions(
             raise HTTPException(status_code=500, detail=safe_err)
 
         # 6. Output filtering / PII masking
+        non_stream_pii_redacted = False
         try:
             if vllm_response.get("choices"):
                 choice = vllm_response["choices"][0]
@@ -1046,12 +1133,17 @@ async def chat_completions(
                         ):
                             raw_args = tool_call["function"]["arguments"]
                             if raw_args and isinstance(raw_args, str):
-                                safe_args_str, _ = await _mask_tool_arguments(
+                                safe_args_str, args_mod = await _mask_tool_arguments(
                                     rails, raw_args
                                 )
+                                if args_mod:
+                                    non_stream_pii_redacted = True
                                 tool_call["function"]["arguments"] = safe_args_str
                 if isinstance(message.get("content"), str) and message["content"]:
-                    safe_content = await _mask_output(rails, message["content"])
+                    orig_content = message["content"]
+                    safe_content = await _mask_output(rails, orig_content)
+                    if safe_content != orig_content:
+                        non_stream_pii_redacted = True
                     message["content"] = safe_content
         except Exception:
             await _get_token_quota_proxy().rollback_step(
@@ -1069,4 +1161,12 @@ async def chat_completions(
                 "gen_ai.response.model", vllm_response.get("model", model_id)
             )
 
+        await _emit_proxy_pass_evidence(
+            request,
+            span=span,
+            body=body,
+            model_id=model_id,
+            agent_id=agent_id,
+            pii_redacted=non_stream_pii_redacted,
+        )
         return JSONResponse(content=vllm_response)

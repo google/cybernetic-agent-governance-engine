@@ -292,6 +292,18 @@ variable "operator_jwks_uri" {
   default     = ""
 }
 
+variable "operator_jwks_json" {
+  description = "Optional non-production out-of-band public JWKS JSON ({kid: public_pem}) for E2E human HITL verification (CAGE_OPERATOR_JWKS_JSON; POAM-2026-191 / POAM-2026-196). Refused in prod/production."
+  type        = string
+  default     = ""
+}
+
+variable "enable_e2e_mode" {
+  description = "True when deployed via opt-in non-production enable_e2e_advisor verification mode (POAM-2026-191). Refused in prod/production."
+  type        = bool
+  default     = false
+}
+
 variable "trusted_infra_producers" {
   description = "Optional explicit list of Linkerd/SPIFFE producer identities authorized to POST /v1/infra/events (CAGE_TRUSTED_INFRA_PRODUCERS). When empty, unset so compliance-bridge uses its built-in defaults."
   type        = list(string)

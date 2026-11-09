@@ -148,11 +148,14 @@ def _base_env(bin_dir: Path, **overrides: str) -> dict[str, str]:
             "TF_VAR_authorized_networks",
             "TF_VAR_startup_grace_hours",
             "TF_VAR_enable_e2e_advisor",
+            "TF_VAR_e2e_operator_jwks_json",
             "TF_VAR_evidence_previous_chain_head_hash",
             "TF_VAR_evidence_previous_batch_attestation_digest",
             "EVIDENCE_PREVIOUS_CHAIN_HEAD_HASH",
             "EVIDENCE_PREVIOUS_BATCH_ATTESTATION_DIGEST",
             "CAGE_GATE_W_ARCHIVE_DIR",
+            "CAGE_HERMETIC_PYTEST_WRAPPER",
+            "CAGE_E2E_SUITE_SCRIPT",
             "DEPLOYER_EGRESS_IP",
             "COMPLIANCE_BRIDGE_URL",
             "CAGE_AUDIT_CORROBORATION_SCRIPT",
@@ -607,7 +610,7 @@ def test_staging_lifecycle_happy_path_passes_and_destroys_with_rendered_digests(
     assert "verify_langfuse_posture.py --posture staging" in calls
     assert "--dry-run" not in calls
     # Phase 5 live sweeps + Cloud Monitoring GMP timeSeries.list + WORM /v1/evidence/verify
-    assert "-m live_external --run-live-external" in calls
+    assert "-m live_external and not partner --run-live-external" in calls
     assert "-m integration --run-integration" in calls
     assert "-m partner_integration --run-partner-integration" in calls
     assert "monitoring.googleapis.com/v3/projects/demo-staging-proj/timeSeries" in calls
@@ -1527,3 +1530,92 @@ def test_staging_lifecycle_enable_e2e_advisor_and_allow_partner_outage_manifest_
     )
     assert manifest_unwaived["partner_conformance_status"] == "failed"
     assert manifest_unwaived["overall_status"] == "FAIL"
+
+
+def test_staging_lifecycle_clean_room_dotenv_isolation_wrapper_and_e2e_suite_wiring(
+    tmp_path: Path,
+) -> None:
+    repo, bin_dir, log_file = _setup_fake_repo(tmp_path)
+    # Seed a conflicting .env pointing at an operated project/registry to prove
+    # --fresh-project isolates project_id, registry_url, and LIVE_ENV_FILE.
+    (repo / ".env").write_text(
+        "GOOGLE_CLOUD_PROJECT=operated-legacy-proj\n"
+        "REGISTRY_URL=gcr.io/operated-legacy-proj\n"
+        "LANGFUSE_HOST=http://langfuse-web.legacy.svc.cluster.local:3000\n",
+        encoding="utf-8",
+    )
+    e2e_stub = repo / "tests" / "e2e" / "run_gke_e2e_suite.py"
+    e2e_stub.parent.mkdir(parents=True, exist_ok=True)
+    e2e_stub.write_text("# stub\n", encoding="utf-8")
+
+    # Extend uv stub to emit fake JWKS on --generate-ephemeral-jwks
+    uv_path = bin_dir / "uv"
+    uv_body = uv_path.read_text(encoding="utf-8")
+    uv_body = uv_body.replace(
+        f'echo "uv $*" >> "{log_file}"\n',
+        f'echo "uv $*" >> "{log_file}"\n'
+        'if [[ "$*" == *"--generate-ephemeral-jwks"* ]]; then\n'
+        '  echo \'{"keys":[{"crv":"P-256","kid":"cage-e2e-op-1","kty":"EC","x":"AA","y":"BB"}]}\'\n'
+        "  exit 0\n"
+        "fi\n"
+        'if [[ "$*" == *"run_gke_e2e_suite.py"* ]]; then\n'
+        "  echo '{\"passed\": true}'\n"
+        "  exit 0\n"
+        "fi\n",
+    )
+    _write_executable(uv_path, uv_body)
+
+    wrapper = tmp_path / "hermetic_wrapper.sh"
+    _write_executable(
+        wrapper,
+        f"""#!/usr/bin/env bash
+echo "wrapper $*" >> "{log_file}"
+echo "collected 3 items"
+echo "3 passed in 0.05s"
+exit 0
+""",
+    )
+
+    archive_dir = tmp_path / "archive-clean-room"
+    env = _base_env(
+        bin_dir,
+        CAGE_HERMETIC_PYTEST_WRAPPER=str(wrapper),
+    )
+    proc = subprocess.run(
+        [
+            "bash",
+            str(repo / "scripts" / "staging_lifecycle.sh"),
+            "--fresh-project=ephemeral-proj-99",
+            "--enable-e2e-advisor",
+            f"--archive-dir={archive_dir}",
+            "--skip-telemetry",
+            "--skip-rebuild",
+        ],
+        env=env,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert proc.returncode == 0, proc.stderr
+    calls = log_file.read_text(encoding="utf-8")
+    assert "--var project_id=ephemeral-proj-99" in calls
+    assert "--var registry_url=" in calls
+    assert "operated-legacy-proj" not in calls
+    assert (
+        "wrapper env CAGE_DEPLOYMENT_REGION=US_FED ./.venv/bin/pytest tests/ -m us_fed"
+        in calls
+    )
+    assert (
+        "wrapper env CAGE_DEPLOYMENT_REGION=EU_ECB ./.venv/bin/pytest tests/ -m eu_ecb"
+        in calls
+    )
+    assert (
+        "wrapper env CAGE_DEPLOYMENT_REGION=APAC_MAS ./.venv/bin/pytest tests/ -m apac_mas"
+        in calls
+    )
+    assert "--generate-ephemeral-jwks" in calls
+    assert "--seed-only" in calls
+    assert "--full-e2e" in calls
+    assert "e2e_operator_jwks_json=" in calls
+    # .env restored intact on disk
+    assert (repo / ".env").is_file()

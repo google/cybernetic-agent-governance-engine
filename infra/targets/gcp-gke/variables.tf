@@ -507,6 +507,17 @@ variable "enable_e2e_advisor" {
   default     = false
 }
 
+variable "e2e_operator_jwks_json" {
+  description = "Optional non-production out-of-band public JWKS JSON ({kid: public_pem}) for ephemeral E2E human HITL verification when enable_e2e_advisor = true (POAM-2026-191 / POAM-2026-196). Never set in committed .tfvars profiles; refused in prod/production or when enable_e2e_advisor = false."
+  type        = string
+  default     = ""
+
+  validation {
+    condition     = trimspace(var.e2e_operator_jwks_json) == "" || (var.enable_e2e_advisor && !contains(["prod", "production"], lower(var.environment)))
+    error_message = "e2e_operator_jwks_json is only valid when enable_e2e_advisor = true in non-production postures (never prod/production)."
+  }
+}
+
 # Replaced by inference_backend. Kept only so that a profile still setting it
 # fails with a migration message rather than Terraform's undeclared-variable error.
 variable "enable_vllm" {

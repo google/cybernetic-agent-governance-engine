@@ -117,3 +117,47 @@ run "development_posture_allows_empty_operator_identities" {
     error_message = "development posture must allow empty operator OIDC config"
   }
 }
+
+run "staging_e2e_operator_jwks_json_wires_env_var" {
+  command = plan
+
+  variables {
+    enable_e2e_mode    = true
+    operator_jwks_json = "{\"cage-e2e-op-1\":\"-----BEGIN PUBLIC KEY-----\\ntest\\n-----END PUBLIC KEY-----\\n\"}"
+  }
+
+  assert {
+    condition = contains(
+      [for e in kubernetes_deployment.compliance_bridge.spec[0].template[0].spec[0].container[0].env : e.name],
+      "CAGE_OPERATOR_JWKS_JSON"
+    )
+    error_message = "staging enable_e2e_mode must wire CAGE_OPERATOR_JWKS_JSON into compliance-bridge"
+  }
+}
+
+run "prod_refuses_enable_e2e_mode" {
+  command = plan
+
+  variables {
+    cage_env        = "prod"
+    enable_e2e_mode = true
+  }
+
+  expect_failures = [
+    kubernetes_deployment.compliance_bridge,
+  ]
+}
+
+run "prod_refuses_operator_jwks_json" {
+  command = plan
+
+  variables {
+    cage_env           = "prod"
+    operator_jwks_json = "{\"cage-e2e-op-1\":\"test\"}"
+  }
+
+  expect_failures = [
+    kubernetes_deployment.compliance_bridge,
+  ]
+}
+
