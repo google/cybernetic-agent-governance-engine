@@ -307,3 +307,9 @@ variable "auditor_mesh_identity" {
   type    = string
   default = ""
 }
+
+variable "enable_pod_monitoring" {
+  description = "Deploy GKE Managed Prometheus PodMonitoring/compliance-bridge-metrics via the local metrics-monitors chart (CA-7, AU-12)."
+  type        = bool
+  default     = true
+}

@@ -45,10 +45,10 @@ resource "google_monitoring_alert_policy" "lula_audit_failure" {
       - **Schedule:** `${var.lula_schedule}` (`2 x schedule` = `1800s` dead-man window)
 
       Fires when:
-      1. `prometheus.googleapis.com/cage_lula_audit_not_satisfied_controls/gauge > 0`
+      1. `cage_lula_audit_not_satisfied_controls > 0`
          (including `< 26` active-manifest corpus-floor breaches),
-      2. `prometheus.googleapis.com/cage_lula_audit_deadman_breaches_total/counter`
-         increases because no clean `lula_audit PASS` completed within `2 x schedule`, or
+      2. `increase(cage_lula_audit_deadman_breaches_total[5m]) > 0`
+         because no clean `lula_audit PASS` completed within `2 x schedule`, or
       3. `kubernetes.io/container/restart_count` increases for `lula-audit` pods.
     EOT
   }
@@ -56,32 +56,22 @@ resource "google_monitoring_alert_policy" "lula_audit_failure" {
   conditions {
     display_name = "Lula not-satisfied or missing corpus-floor controls > 0"
 
-    condition_threshold {
-      filter          = "resource.type = \"prometheus_target\" AND resource.labels.namespace = \"${module.namespace.name}\" AND metric.type = \"prometheus.googleapis.com/cage_lula_audit_not_satisfied_controls/gauge\""
-      comparison      = "COMPARISON_GT"
-      threshold_value = 0
-      duration        = "0s"
-
-      aggregations {
-        alignment_period   = "60s"
-        per_series_aligner = "ALIGN_MAX"
-      }
+    condition_prometheus_query_language {
+      query                     = "cage_lula_audit_not_satisfied_controls{namespace=\"${module.namespace.name}\"} > 0"
+      duration                  = "0s"
+      evaluation_interval       = "60s"
+      disable_metric_validation = true
     }
   }
 
   conditions {
     display_name = "Lula 2x-schedule dead-man switch breach > 0"
 
-    condition_threshold {
-      filter          = "resource.type = \"prometheus_target\" AND resource.labels.namespace = \"${module.namespace.name}\" AND metric.type = \"prometheus.googleapis.com/cage_lula_audit_deadman_breaches_total/counter\""
-      comparison      = "COMPARISON_GT"
-      threshold_value = 0
-      duration        = "0s"
-
-      aggregations {
-        alignment_period   = "300s"
-        per_series_aligner = "ALIGN_DELTA"
-      }
+    condition_prometheus_query_language {
+      query                     = "increase(cage_lula_audit_deadman_breaches_total{namespace=\"${module.namespace.name}\"}[5m]) > 0"
+      duration                  = "0s"
+      evaluation_interval       = "60s"
+      disable_metric_validation = true
     }
   }
 
@@ -100,4 +90,6 @@ resource "google_monitoring_alert_policy" "lula_audit_failure" {
       }
     }
   }
+
+  depends_on = [module.gke]
 }

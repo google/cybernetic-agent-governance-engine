@@ -948,6 +948,27 @@ resource "kubernetes_network_policy_v1" "compliance_bridge_ingress" {
         port     = "4143"
       }
     }
+
+    # GKE Managed Prometheus scrape (CA-7 / AU-12): metrics ports 9090 / 4191 ONLY.
+    ingress {
+      from {
+        namespace_selector {
+          match_expressions {
+            key      = "kubernetes.io/metadata.name"
+            operator = "In"
+            values   = ["gmp-system", "kube-system"]
+          }
+        }
+      }
+      ports {
+        protocol = "TCP"
+        port     = "9090"
+      }
+      ports {
+        protocol = "TCP"
+        port     = "4191"
+      }
+    }
   }
 }
 

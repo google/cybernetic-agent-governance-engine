@@ -120,9 +120,11 @@ run "staging_plans_lula_cron_active_specs_and_dedicated_ksas" {
     condition = (
       length(google_monitoring_alert_policy.lula_audit_failure) == 1 &&
       google_monitoring_alert_policy.lula_audit_failure[0].user_labels["owner"] == "platform-compliance-oncall" &&
-      strcontains(google_monitoring_alert_policy.lula_audit_failure[0].documentation[0].content, "platform-compliance-oncall")
+      strcontains(google_monitoring_alert_policy.lula_audit_failure[0].documentation[0].content, "platform-compliance-oncall") &&
+      google_monitoring_alert_policy.lula_audit_failure[0].conditions[0].condition_prometheus_query_language[0].disable_metric_validation == true &&
+      google_monitoring_alert_policy.lula_audit_failure[0].conditions[1].condition_prometheus_query_language[0].disable_metric_validation == true
     )
-    error_message = "CA-7: enforcing compliance-bridge deployments must provision google_monitoring_alert_policy.lula_audit_failure naming lula_alert_owner"
+    error_message = "CA-7: enforcing compliance-bridge deployments must provision google_monitoring_alert_policy.lula_audit_failure with PromQL conditions (disable_metric_validation=true) naming lula_alert_owner"
   }
 }
 

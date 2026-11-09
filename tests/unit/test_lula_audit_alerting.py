@@ -828,3 +828,82 @@ class TestLulaAuditDeadManSwitch:
             await sla_mod._check_sla_once()
 
         mock_notifier.send_critical_alert.assert_not_called()
+
+
+def test_compliance_bridge_gmp_podmonitoring_and_promql_alert_policy_wiring() -> None:
+    """compliance-bridge exposes :9090 metrics with GMP PodMonitoring and PromQL disable_metric_validation."""
+    import base64
+    import re
+    from pathlib import Path
+
+    import yaml
+
+    repo = Path(__file__).resolve().parents[2]
+    cb_tf = (repo / "infra/modules/compliance_bridge/main.tf").read_text(
+        encoding="utf-8"
+    )
+    assert '"config.linkerd.io/skip-inbound-ports" = "9090"' in cb_tf
+    assert "container_port = 9090" in cb_tf
+    assert 'name  = "CAGE_METRICS_PORT"' in cb_tf
+    assert 'name            = "compliance-bridge-metrics-monitors"' in cb_tf
+
+    chart_dir = repo / "infra/modules/compliance_bridge/metrics-monitors"
+    values = yaml.safe_load((chart_dir / "values.yaml").read_text(encoding="utf-8"))
+    tpl = (chart_dir / "templates/monitors.yaml").read_text(encoding="utf-8")
+    rendered = re.sub(r"\{\{-?\s*if\s+[^}]+\}\}\n?", "", tpl)
+    rendered = re.sub(r"\{\{-?\s*end\s*\}\}\n?", "", rendered)
+    rendered = re.sub(
+        r"\{\{\s*\.Release\.Namespace\s*\}\}", "governance-stack", rendered
+    )
+    rendered = re.sub(
+        r"\{\{\s*\.Values\.podMonitoring\.interval\s*\|\s*quote\s*\}\}",
+        f'"{values["podMonitoring"]["interval"]}"',
+        rendered,
+    )
+    rendered = re.sub(
+        r"\{\{\s*\.Values\.podMonitoring\.timeout\s*\|\s*quote\s*\}\}",
+        f'"{values["podMonitoring"]["timeout"]}"',
+        rendered,
+    )
+    pm = yaml.safe_load(rendered)
+    assert pm["kind"] == "PodMonitoring"
+    assert pm["metadata"]["name"] == "compliance-bridge-metrics"
+    assert pm["spec"]["selector"]["matchLabels"] == {"app": "compliance-bridge"}
+    assert pm["spec"]["endpoints"][0]["port"] == "metrics"
+    assert pm["spec"]["endpoints"][0]["path"] == "/metrics"
+
+    netpol_tf = (repo / "infra/targets/gcp-gke/network_policy.tf").read_text(
+        encoding="utf-8"
+    )
+    cb_ing_start = netpol_tf.index(
+        'resource "kubernetes_network_policy_v1" "compliance_bridge_ingress"'
+    )
+    cb_ing_end = netpol_tf.index(
+        'resource "kubernetes_network_policy_v1" "compliance_bridge_egress_l3_l4"',
+        cb_ing_start,
+    )
+    cb_ing = netpol_tf[cb_ing_start:cb_ing_end]
+    assert '"gmp-system"' in cb_ing
+    assert 'port     = "9090"' in cb_ing
+
+    alert_tf = (repo / "infra/targets/gcp-gke/lula_alerting.tf").read_text(
+        encoding="utf-8"
+    )
+    assert alert_tf.count("condition_prometheus_query_language {") == 2
+    assert alert_tf.count("disable_metric_validation = true") == 2
+
+    lifecycle_sh = (repo / "scripts/staging_lifecycle.sh").read_text(encoding="utf-8")
+    assert '"google_storage_bucket.langfuse_event_upload"' in lifecycle_sh
+    assert '"random_id.bucket_suffix"' in lifecycle_sh
+    assert "langfuse-event-upload-${PROJECT_ID}-[0-9a-f]{8}" in lifecycle_sh
+
+    bootstrap_sh = (repo / "scripts/bootstrap_gcp_project.sh").read_text(
+        encoding="utf-8"
+    )
+    assert '"random_id.bucket_suffix"' in bootstrap_sh
+    assert '"google_storage_bucket.langfuse_event_upload"' in bootstrap_sh
+    # Verify exact HashiCorp random_id base64url import encoding (live state: fe82cebc -> _oLOvA):
+    assert (
+        base64.urlsafe_b64encode(bytes.fromhex("fe82cebc")).decode("ascii").rstrip("=")
+        == "_oLOvA"
+    )
