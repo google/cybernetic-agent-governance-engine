@@ -416,6 +416,36 @@ def test_scenario_tags_deferred_redemption_guided_json_and_tool_turn() -> None:
     assert parsed_plan["orders"][0]["ticker"] == "BTC"
     assert parsed_plan["risk_assessment"] == "RESTRICTED_ASSET"
 
+    # Stringified extra_body.guided_json and minimal steps-only schemas also emit non-empty steps.
+    steps_only_dec = resolve_chat_completion(
+        {
+            "messages": [{"role": "user", "content": "Buy $1,200 of AAPL"}],
+            "extra_body": {
+                "guided_json": json.dumps(
+                    {
+                        "type": "object",
+                        "properties": {
+                            "steps": {
+                                "type": "array",
+                                "items": {
+                                    "type": "object",
+                                    "properties": {
+                                        "action": {"enum": ["execute_trade"]},
+                                    },
+                                },
+                            }
+                        },
+                        "required": ["steps"],
+                    }
+                )
+            },
+        }
+    )
+    assert steps_only_dec.content is not None
+    parsed_steps_only = json.loads(steps_only_dec.content)
+    assert len(parsed_steps_only["steps"]) >= 3
+    assert parsed_steps_only["steps"][-1]["action"] == "execute_trade"
+
     # Market-only node bound to read tools chooses a read-only market tool.
     market_dec = resolve_chat_completion(
         {

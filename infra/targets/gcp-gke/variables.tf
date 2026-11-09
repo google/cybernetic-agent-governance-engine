@@ -188,7 +188,7 @@ variable "release_channel" {
 variable "min_master_version" {
   description = "Minimum GKE control-plane version (>= 1.27.1-gke.400 required for FQDNNetworkPolicy — §5.3)."
   type        = string
-  default     = "1.28"
+  default     = null
 }
 
 variable "cluster_dns_provider" {

@@ -1481,7 +1481,7 @@ class TestVllmHfTokenRemovalAndGcsModelStreaming:
         # 1. Terraform materializes local.fqdn_network_policies via kubernetes_manifest
         assert 'resource "kubernetes_manifest" "fqdn_network_policy"' in netpol_tf
         assert "for_each = local.fqdn_network_policies" in netpol_tf
-        assert "manifest = each.value" in netpol_tf
+        assert re.search(r"manifest\s*=\s*each\.value", netpol_tf)
 
         # 2. Terraform defines vllm_egress_l3_l4 and vllm_egress_fqdn
         assert (

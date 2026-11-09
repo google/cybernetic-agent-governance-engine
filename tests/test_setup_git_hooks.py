@@ -277,3 +277,101 @@ def test_pre_commit_hook_rejects_unlicensed_source_file(clone: Clone) -> None:
     clone.git("add", "src/sample.py")
     accepted = clone.git("commit", "-m", "feat: add licensed file", check=False)
     assert accepted.returncode == 0, _output(accepted)
+
+
+def test_poam_2026_200_precommit_audit_log_records_fail_and_pass_after_chained_exec(
+    clone: Clone,
+) -> None:
+    import sys
+
+    hooks_dir = clone.work / ".git" / "hooks"
+    # Simulate an outer chained wrapper that writes a premature gates=9/9 pass
+    # line BEFORE exec'ing pre-commit.chained (POAM-2026-200).
+    wrapper_body = (
+        "#!/bin/sh\n"
+        "set -eu\n"
+        'common_dir="$(git rev-parse --path-format=absolute --git-common-dir 2>/dev/null || git rev-parse --git-common-dir)"\n'
+        'branch="$(git symbolic-ref --short HEAD 2>/dev/null || echo detached)"\n'
+        'tree_sha="$(git write-tree 2>/dev/null || echo unknown)"\n'
+        'printf \'2026-11-09T00:00:00Z\\tbranch=%s\\ttree=%s\\tgates=9/9\\tleak_guard=pass\\n\' "$branch" "$tree_sha" >> "$common_dir/cage-precommit-audit.log"\n'
+        'orig="$(dirname "$0")/pre-commit.chained"\n'
+        'if [ -x "$orig" ]; then exec "$orig" "$@"; fi\n'
+        "exit 0\n"
+    )
+    wrapper_path = hooks_dir / "pre-commit"
+    wrapper_path.write_text(wrapper_body, encoding="utf-8")
+    wrapper_path.chmod(0o755)
+
+    subprocess.run(
+        ["bash", str(INSTALLER)],
+        cwd=clone.work,
+        env=clone.env,
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+
+    venv_bin = clone.work / ".venv" / "bin"
+    venv_bin.mkdir(parents=True)
+    (venv_bin / "python").symlink_to(sys.executable)
+    for tool in ("ruff", "mypy"):
+        shim = venv_bin / tool
+        shim.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
+        shim.chmod(0o755)
+
+    scripts_dir = clone.work / "scripts"
+    scripts_dir.mkdir()
+    (scripts_dir / "check_import_boundaries.py").write_text(
+        "raise SystemExit(0)\n", encoding="utf-8"
+    )
+    src_dir = clone.work / "src"
+    src_dir.mkdir()
+    sample = src_dir / "sample.py"
+    sample.write_text("VALUE = 1\n", encoding="utf-8")
+
+    clone.git("add", "scripts/check_import_boundaries.py", "src/sample.py")
+    rejected = clone.git("commit", "-m", "feat: fail license gate", check=False)
+    assert rejected.returncode != 0
+
+    audit_log = clone.work / ".git" / "cage-precommit-audit.log"
+    lines = audit_log.read_text(encoding="utf-8").splitlines()
+    assert len(lines) == 1, lines
+    assert "gates=9/9" not in lines[0]
+    assert "status=fail" in lines[0]
+    assert "exit_code=1" in lines[0]
+    assert "gates=4/8" in lines[0]
+    assert "failed_gate=license_headers" in lines[0]
+    assert "leak_guard=pass" in lines[0]
+
+    sample.write_text(
+        "# Copyright 2026 Google LLC\n# Apache License, Version 2.0\nVALUE = 1\n",
+        encoding="utf-8",
+    )
+    clone.git("add", "src/sample.py")
+    accepted = clone.git("commit", "-m", "feat: pass all gates", check=False)
+    assert accepted.returncode == 0, _output(accepted)
+
+    lines_after = audit_log.read_text(encoding="utf-8").splitlines()
+    assert len(lines_after) == 2, lines_after
+    assert "gates=9/9" not in lines_after[1]
+    assert "status=pass" in lines_after[1]
+    assert "exit_code=0" in lines_after[1]
+    assert "gates=8/8" in lines_after[1]
+    assert "failed_gate=" not in lines_after[1]
+    assert "leak_guard=pass" in lines_after[1]
+
+
+def test_dataplane_v2_reconcile_hook_chart_has_kube_system_namespace_guard() -> None:
+    template_path = (
+        Path(__file__).resolve().parents[1]
+        / "infra"
+        / "targets"
+        / "gcp-gke"
+        / "charts"
+        / "dataplane-v2-logging"
+        / "templates"
+        / "reconcile-hook.yaml"
+    )
+    content = template_path.read_text(encoding="utf-8")
+    assert '{{- if ne .Release.Namespace "kube-system" }}' in content
+    assert "ValidatingAdmissionPolicy/cage-mesh-proxy-required" in content

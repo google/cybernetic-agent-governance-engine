@@ -56,3 +56,9 @@ variable "proxy_required_namespaces" {
   type        = list(string)
   default     = []
 }
+
+variable "enable_deletion_protection" {
+  description = "Protect the mesh root CA from accidental Terraform destruction in production; false in ephemeral dev/staging lifecycle tiers."
+  type        = bool
+  default     = true
+}

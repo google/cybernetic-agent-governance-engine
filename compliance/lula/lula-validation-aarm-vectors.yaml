@@ -87,13 +87,16 @@ component-definition:
         provider:
           type: opa
           opa-spec:
+            output:
+              validation: lula.validate
             rego: |
               package lula
 
               import future.keywords.if
               import future.keywords.in
 
-              report_doc := object.get(input.aarm_conformance_report, "report", input.aarm_conformance_report)
+              api_payload := object.get(input.aarm_conformance_report, "response", input.aarm_conformance_report)
+              report_doc := object.get(api_payload, "report", api_payload)
 
               vector_index[vid] := v if {
                 v := report_doc.vectors[_]

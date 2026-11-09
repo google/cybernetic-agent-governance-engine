@@ -48,7 +48,7 @@ resource "kubernetes_labels" "dataplane_v2_network_logging_helm_adopt" {
 
   api_version   = "networking.gke.io/v1alpha1"
   kind          = "NetworkLogging"
-  field_manager = "terraform-cage-dataplane-v2-logging"
+  field_manager = "terraform-cage-dpv2-logging-labels"
   force         = true
 
   metadata {
@@ -67,7 +67,7 @@ resource "kubernetes_annotations" "dataplane_v2_network_logging_helm_adopt" {
 
   api_version   = "networking.gke.io/v1alpha1"
   kind          = "NetworkLogging"
-  field_manager = "terraform-cage-dataplane-v2-logging"
+  field_manager = "terraform-cage-dpv2-logging-annotations"
   force         = true
 
   metadata {
@@ -95,10 +95,11 @@ resource "helm_release" "dataplane_v2_network_logging" {
 
   values = [
     yamlencode({
-      logAllow      = true
-      delegateAllow = false
-      logDeny       = true
-      delegateDeny  = false
+      logAllow        = true
+      delegateAllow   = false
+      logDeny         = true
+      delegateDeny    = false
+      reconcilerImage = try(var.image_digests["gateway"], "")
     }),
   ]
 

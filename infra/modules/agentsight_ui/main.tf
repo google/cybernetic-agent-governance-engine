@@ -130,10 +130,13 @@ resource "kubernetes_service" "agentsight_ui" {
       app       = "agentsight-ui"
       component = "ebpf-observability"
     }
+    annotations = {
+      "cage.io/internal-only" = "true"
+    }
   }
 
   spec {
-    type = "LoadBalancer"
+    type = "ClusterIP"
 
     port {
       port        = 8080

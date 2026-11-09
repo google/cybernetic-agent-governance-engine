@@ -68,19 +68,19 @@ component-definition:
     description: The Cybernetic AI Governance Engine (CAGE) — AI governance gateway, compliance bridge, and governed financial
       advisor.
     control-implementations:
-    - uuid: b5e9a3d2-7f0c-5d84-cb29-a30f5b8d9e1f
+    - uuid: b5e9a3d2-7f0c-5d84-8b29-a30f5b8d9e1f
       source: https://www.iso.org/standard/81230.html
       description: 'Control implementation for FlowSignal Integration (FLOWSIGNAL-001). Region: ALL. Posture: iso42001.'
       implemented-requirements:
-      - uuid: c6f0b4e3-8a1d-5e95-dc3a-b41a6c9e0f2a
+      - uuid: c6f0b4e3-8a1d-5e95-9c3a-b41a6c9e0f2a
         control-id: A.8.4
         description: Automated lula validation for FlowSignal Integration (FLOWSIGNAL-001).
         links:
-        - href: '#d7a1c5f4-9b2e-5fa6-ed4b-c52b7d0a1f3b'
+        - href: '#d7a1c5f4-9b2e-5fa6-ad4b-c52b7d0a1f3b'
           rel: lula
   back-matter:
     resources:
-    - uuid: d7a1c5f4-9b2e-5fa6-ed4b-c52b7d0a1f3b
+    - uuid: d7a1c5f4-9b2e-5fa6-ad4b-c52b7d0a1f3b
       title: Lula Validation — FlowSignal Integration (FLOWSIGNAL-001)
       rlinks:
       - href: lula.dev
@@ -99,6 +99,8 @@ component-definition:
         provider:
           type: opa
           opa-spec:
+            output:
+              validation: lula.validate
             rego: |
               package lula
 

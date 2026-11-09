@@ -16,3 +16,4 @@ logAllow: true
 delegateAllow: false
 logDeny: true
 delegateDeny: false
+reconcilerImage: ""

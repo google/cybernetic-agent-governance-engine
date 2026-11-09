@@ -21,8 +21,16 @@ terraform {
   }
 }
 
+
+locals {
+  # Keep count/for_each/annotation keys deterministic at plan time when
+  # Memorystore's managed_server_ca is (known after apply); the Deployment
+  # precondition still enforces trimspace(var.redis_ca_pem) != "" at apply.
+  mount_redis_ca = var.enable_redis_tls ? true : (var.redis_ca_pem != "")
+}
+
 resource "kubernetes_config_map_v1" "redis_ca" {
-  count = var.redis_ca_pem != "" ? 1 : 0
+  count = local.mount_redis_ca ? 1 : 0
 
   metadata {
     name      = "compliance-bridge-redis-ca"
@@ -89,7 +97,7 @@ resource "kubernetes_deployment" "compliance_bridge" {
         labels = {
           app = "compliance-bridge"
         }
-        annotations = var.redis_ca_pem != "" ? {
+        annotations = local.mount_redis_ca ? {
           "cage.io/redis-ca-sha256" = sha256(var.redis_ca_pem)
         } : {}
       }
@@ -351,7 +359,7 @@ resource "kubernetes_deployment" "compliance_bridge" {
           }
 
           dynamic "env" {
-            for_each = var.redis_ca_pem != "" ? [1] : []
+            for_each = local.mount_redis_ca ? [1] : []
             content {
               name  = "REDIS_CA_CERT_PATH"
               value = "/etc/cage/tls/redis/ca.pem"
@@ -429,7 +437,7 @@ resource "kubernetes_deployment" "compliance_bridge" {
           }
 
           dynamic "volume_mount" {
-            for_each = var.redis_ca_pem != "" ? [1] : []
+            for_each = local.mount_redis_ca ? [1] : []
             content {
               name       = "redis-ca"
               mount_path = "/etc/cage/tls/redis"
@@ -484,7 +492,7 @@ resource "kubernetes_deployment" "compliance_bridge" {
         }
 
         dynamic "volume" {
-          for_each = var.redis_ca_pem != "" ? [1] : []
+          for_each = local.mount_redis_ca ? [1] : []
           content {
             name = "redis-ca"
             config_map {

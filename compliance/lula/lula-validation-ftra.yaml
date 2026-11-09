@@ -54,7 +54,7 @@ component-definition:
       POAM: POAM-2026-030
       Region: Universal (ALL)
   components:
-  - uuid: 9d8b5a03-4e6f-5b2c-0d9e-3f7a2c4b6d8e
+  - uuid: 9d8b5a03-4e6f-5b2c-8d9e-3f7a2c4b6d8e
     type: software
     title: CAGE Cybernetic Governance Engine
     description: |
@@ -63,7 +63,7 @@ component-definition:
       implements the FTRA Tier 0.5 gate for forward-looking trajectory
       reachability analysis.
     control-implementations:
-    - uuid: 0e9c6b14-5f7a-6c3d-1e0f-4a8b3d5c7e9f
+    - uuid: 0e9c6b14-5f7a-4c3d-9e0f-4a8b3d5c7e9f
       source: https://pages.nist.gov/OSCAL/resources/concepts/layer/assessment/assessment-plan/
       description: |
         Control implementation for FTRA Tier 0.5 Gate (CTRL_FTRA_001).
@@ -77,7 +77,7 @@ component-definition:
         Phase: 3.4 (FTRA Tests and NetworkPolicy Interim Control)
         Region: Universal (ALL)
       implemented-requirements:
-      - uuid: 1f0d7c25-6a8b-7d4e-2f1a-5b9c4e6d8f0a
+      - uuid: 1f0d7c25-6a8b-4d4e-af1a-5b9c4e6d8f0a
         control-id: ctrl-ftra-001
         description: |
           FTRA Tier 0.5 Gate — Forward-Looking Trajectory Reachability Analyzer
@@ -96,11 +96,11 @@ component-definition:
 
           Risks mitigated: R-02 (Trust Boundary Mutation), R-03 (Trust Boundary Bypass)
         links:
-        - href: '#2a1e8d36-7b9c-8e5f-3a2b-6c0d5f7e9a1b'
+        - href: '#2a1e8d36-7b9c-4e5f-ba2b-6c0d5f7e9a1b'
           rel: lula
   back-matter:
     resources:
-    - uuid: 2a1e8d36-7b9c-8e5f-3a2b-6c0d5f7e9a1b
+    - uuid: 2a1e8d36-7b9c-4e5f-ba2b-6c0d5f7e9a1b
       title: Lula Validation — FTRA Tier 0.5 Gate
       rlinks:
       - href: lula.dev
@@ -119,6 +119,8 @@ component-definition:
         provider:
           type: opa
           opa-spec:
+            output:
+              validation: lula.validate
             rego: |
               package lula
 

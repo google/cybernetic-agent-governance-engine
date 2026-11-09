@@ -50,3 +50,22 @@ def test_email_pattern_no_quadratic_backtracking():
         f"scrub_pii took {elapsed:.2f}s — regex backtracking regressed"
     )
     assert result == payload  # no email present, nothing redacted
+
+
+@pytest.mark.local
+def test_canonical_uuid_with_16_digit_prefix_or_suffix_is_not_corrupted_as_credit_card():
+    # Regression for 84119661-6585-4371-ab77-f4f1ecb70374: an 8-4-4 all-digit
+    # UUID prefix has 16 decimal digits before '-ab77-...' and previously matched
+    # PII_PATTERNS['CREDIT_CARD'] via the '-' word boundary, corrupting defer_id.
+    payload = (
+        '{"deferred_id": "84119661-6585-4371-ab77-f4f1ecb70374", '
+        '"oscal_uuid": "00000000-0000-4000-8000-000000000001", '
+        '"card": "4111-1111-1111-1111"}'
+    )
+    scrubbed = scrub_pii(payload)
+    assert '"deferred_id": "84119661-6585-4371-ab77-f4f1ecb70374"' in scrubbed
+    assert '"oscal_uuid": "00000000-0000-4000-8000-000000000001"' in scrubbed
+    assert '"card": "[REDACTED-CREDIT_CARD-UCA-3]"' in scrubbed
+    # Malformed hyphen-concatenated card+UUID must NOT bypass redaction:
+    joined = scrub_pii("4111-1111-1111-1111-84119661-6585-4371-ab77-f4f1ecb70374")
+    assert "[REDACTED-CREDIT_CARD-UCA-3]" in joined

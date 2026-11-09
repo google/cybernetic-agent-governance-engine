@@ -253,10 +253,7 @@ resource "google_container_cluster" "primary" {
   dynamic "monitoring_config" {
     for_each = (var.enable_audit_logging || local.dataplane_v2_policy_logging_enabled) ? [1] : []
     content {
-      enable_components = var.enable_audit_logging ? [
-        "SYSTEM_COMPONENTS",
-        "WORKLOADS"
-      ] : ["SYSTEM_COMPONENTS"]
+      enable_components = ["SYSTEM_COMPONENTS"]
       managed_prometheus {
         enabled = var.enable_audit_logging
       }

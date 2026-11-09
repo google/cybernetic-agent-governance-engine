@@ -945,6 +945,7 @@ compliance = [
     { name = "dowhy" },
     { name = "google-cloud-kms" },
     { name = "google-cloud-storage" },
+    { name = "pyjwt", extra = ["crypto"] },
     { name = "pyyaml" },
 ]
 finance = [
@@ -1080,6 +1081,7 @@ requires-dist = [
     { name = "protobuf", marker = "extra == 'gateway'", specifier = ">=5.26.1,<7.0.0" },
     { name = "pyahocorasick", marker = "extra == 'gateway'", specifier = ">=2.0.0" },
     { name = "pydantic", specifier = ">=2.10.6" },
+    { name = "pyjwt", extras = ["crypto"], marker = "extra == 'compliance'", specifier = ">=2.9.0" },
     { name = "pyjwt", extras = ["crypto"], marker = "extra == 'gateway'", specifier = ">=2.9.0" },
     { name = "python-dotenv", specifier = ">=1.0.1" },
     { name = "python-json-logger", specifier = ">=2.0.7" },

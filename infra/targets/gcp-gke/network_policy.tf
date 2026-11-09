@@ -2420,12 +2420,118 @@ resource "kubernetes_network_policy_v1" "lula_audit_egress" {
 }
 
 
+
+# ─── 13b. AgentSight UI Egress (DNS + Linkerd Control Plane Only) ────────────
+# `agentsight-ui` executes in the `linkerd.io/inject = enabled` governance-stack
+# namespace, so its Linkerd sidecar requires control-plane egress (`destination`
+# `:8086`, `identity` `:8080`, `policy-controller` `:8090`) and cluster DNS to
+# flip Ready 2/2 while retaining zero egress to datastores, workloads, or WAN.
+
+resource "kubernetes_network_policy_v1" "agentsight_ui_egress_l3_l4" {
+  metadata {
+    name      = "agentsight-ui-egress-l3-l4"
+    namespace = module.namespace.name
+    labels = {
+      app                            = "agentsight-ui"
+      "app.kubernetes.io/managed-by" = "terraform"
+      "cage.io/component"            = "z3n-egress"
+    }
+    annotations = merge(
+      {
+        "compliance.nist.gov/control"  = "SC-7,SC-8,AC-4"
+        "compliance.nist.gov/standard" = "SP-800-53-Rev5"
+        "cage.io/poam"                 = "POAM-2026-195"
+      },
+      local.network_policy_logging_annotation,
+    )
+  }
+
+  spec {
+    pod_selector {
+      match_labels = {
+        app = "agentsight-ui"
+      }
+    }
+
+    policy_types = ["Egress"]
+
+    # Cluster DNS (`kube-dns` / `node-local-dns`) in `kube-system` + ClusterIP CIDR
+    egress {
+      to {
+        namespace_selector {
+          match_labels = {
+            "kubernetes.io/metadata.name" = "kube-system"
+          }
+        }
+        pod_selector {
+          match_labels = {
+            "k8s-app" = "kube-dns"
+          }
+        }
+      }
+      to {
+        namespace_selector {
+          match_labels = {
+            "kubernetes.io/metadata.name" = "kube-system"
+          }
+        }
+        pod_selector {
+          match_labels = {
+            "k8s-app" = "node-local-dns"
+          }
+        }
+      }
+      to {
+        ip_block {
+          cidr = var.kube_dns_cidr
+        }
+      }
+      ports {
+        protocol = "UDP"
+        port     = "53"
+      }
+      ports {
+        protocol = "TCP"
+        port     = "53"
+      }
+    }
+
+    # Linkerd mTLS control-plane services (`identity`, `destination`, `policy`)
+    egress {
+      to {
+        namespace_selector {
+          match_labels = {
+            "kubernetes.io/metadata.name" = "linkerd"
+          }
+        }
+      }
+      ports {
+        protocol = "TCP"
+        port     = "8080"
+      }
+      ports {
+        protocol = "TCP"
+        port     = "8086"
+      }
+      ports {
+        protocol = "TCP"
+        port     = "8090"
+      }
+      ports {
+        protocol = "TCP"
+        port     = "443"
+      }
+    }
+  }
+}
+
 # ─── 14. Materialize GKE FQDNNetworkPolicy Objects in Cluster (§5.3) ─────────
 
 resource "kubernetes_manifest" "fqdn_network_policy" {
   for_each = local.fqdn_network_policies
 
-  manifest = each.value
+  manifest        = each.value
+  computed_fields = ["spec.egress"]
 
   depends_on = [module.gke, module.namespace]
 }
@@ -2482,6 +2588,7 @@ resource "terraform_data" "network_policy_workload_rollout" {
     kubernetes_network_policy_v1.clickhouse_keeper_ingress,
     kubernetes_network_policy_v1.clickhouse_keeper_egress_l3_l4,
     kubernetes_network_policy_v1.lula_audit_egress,
+    kubernetes_network_policy_v1.agentsight_ui_egress_l3_l4,
     kubernetes_manifest.fqdn_network_policy,
   ]
 }
