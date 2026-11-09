@@ -435,7 +435,8 @@ component-definition:
               remarks: >
                 CAGE RESPONSIBILITY: CAGE is responsible for logical data sanitization
                 (database records, GCS objects, Kubernetes secrets) prior to system
-                decommission. See docs/DECOMMISSION_CHECKLIST.md.
+                decommission. The repository does not yet carry a decommission checklist,
+                so adopters supply their own sanitization procedure.
 
             - uuid: "g6000023-0000-4000-8000-000000000023"
               control-id: "mp-7"
@@ -566,9 +567,10 @@ component-definition:
               responsible-roles:
                 - role-id: common-control-provider
               remarks: >
-                CAGE RESPONSIBILITY: CAGE maintains separate personnel security
-                procedures for its own personnel (documented in docs/ROLES_AND_RESPONSIBILITIES.md).
-                This inherited control covers GCP data center staff only.
+                CAGE RESPONSIBILITY: Personnel security for the staff who operate a CAGE
+                deployment belongs to the adopting organization; the repository does not
+                document personnel security procedures. This inherited control covers GCP
+                data center staff only.
 
             - uuid: "g6000032-0000-4000-8000-000000000032"
               control-id: "ps-3"
@@ -776,7 +778,7 @@ component-definition:
                 CAGE RESPONSIBILITY: (1) Enforce MFA for all privileged (admin) access to
                 GKE cluster and GCP console via Organization Policy.
                 (2) Configure Workload Identity bindings for cage service accounts
-                (deployment/terraform/iam.tf).
+                (infra/targets/gcp-gke/iam.tf).
                 (3) Implement and document least-privilege IAM role assignments.
                 (4) Review IAM role bindings quarterly per AC-2 account management.
                 (5) Implement API key management for external client applications.
@@ -822,11 +824,13 @@ component-definition:
               control-id: "cp-7"
               description: >
                 GKE supports multi-zone cluster configuration providing alternate processing
-                capability within the same GCP region. CAGE's GKE cluster spans at least
-                2 availability zones as configured in deployment/terraform/gke.tf, ensuring
-                that a single zone failure does not interrupt CAGE operations. GCP regional
-                infrastructure provides the physical separation between zones (distinct power,
-                cooling, and network paths per GCP infrastructure design).
+                capability within the same GCP region. In the prod profile CAGE's GKE cluster
+                is regional (is_regional in infra/modules/gcp_gke_cluster/main.tf defaults to
+                true when the environment is prod), so its nodes span the region's zones and a
+                single zone failure need not interrupt CAGE operations; dev and staging
+                clusters are zonal. GCP regional infrastructure provides the physical
+                separation between zones (distinct power, cooling, and network paths per GCP
+                infrastructure design).
               props:
                 - name: implementation-status
                   value: "shared"
@@ -837,8 +841,8 @@ component-definition:
                 GCP RESPONSIBILITY: Provides multi-zone GKE cluster capability and physical
                 zone separation within GCP regions. Guarantees zone-level failure isolation.
 
-                CAGE RESPONSIBILITY: (1) Configure GKE node pool with multi-zone topology
-                spreading (deployment/terraform/gke.tf).
+                CAGE RESPONSIBILITY: (1) Run the regional GKE cluster of the prod profile
+                (infra/modules/gcp_gke_cluster/main.tf) where zone-failure tolerance is required.
                 (2) Configure pod anti-affinity rules to distribute CAGE workloads across zones.
                 (3) Verify multi-zone failover via disaster recovery testing (CP-4).
                 (4) Establish and test RTO/RPO objectives for zone failure scenarios.
@@ -869,7 +873,8 @@ component-definition:
                 Backup data encryption with GCP-managed or CMEK keys.
 
                 CAGE RESPONSIBILITY: (1) Enable and configure Cloud SQL automated backups
-                with appropriate retention period (deployment/terraform/cloudsql.tf).
+                with appropriate retention period (backup_configuration in
+                infra/modules/cloudsql_postgres/main.tf).
                 (2) Enable GCS object versioning on all audit log buckets.
                 (3) Backup Terraform state to a separate GCS bucket with versioning.
                 (4) Test database restore quarterly and document results.
@@ -930,11 +935,6 @@ component-definition:
         rlinks:
           - href: "compliance/oscal/sp800053-profile.yaml"
             media-type: "application/yaml"
-      - uuid: "y8000005-0000-4000-8000-000000000005"
-        title: "CAGE Decommission Checklist (SP 800-88)"
-        rlinks:
-          - href: "docs/DECOMMISSION_CHECKLIST.md"
-            media-type: "text/markdown"
       - uuid: "y8000006-0000-4000-8000-000000000006"
         title: "NIST SP 800-37 Rev 2 — Risk Management Framework"
         rlinks:

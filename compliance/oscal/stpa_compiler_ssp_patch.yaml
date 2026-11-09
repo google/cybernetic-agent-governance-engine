@@ -1,25 +1,29 @@
 stpa-compiler-ssp-patch:
-  generated: '2026-11-05T21:08:32Z'
+  generated: '2026-11-08T19:00:34Z'
   source: config/stpa/
   system: CAGE Financial Advisor
   version: 1.1.0
   implemented-requirement:
     uuid: g7000099-stpa-4000-8000-compiler00001
     control-id: sa-11
-    description: "The STPA-to-Policy Compiler implements a deterministic, design-time\
-      \ safety\n          control that translates STAMP/STPA Unsafe Control Action\
-      \ (UCA) analysis\n          directly into runtime-enforceable governance artifacts.\
-      \ This eliminates the\n          \"Natural Language Tax\" — the compliance gap\
-      \ between human-readable safety\n          specifications and the actual code\
-      \ running in the cluster.\n\n          Compiler source: src/gateway/governance/stpa_compiler.py\n\
-      \          Control structure (source of truth): config/stpa/\n          Generated\
-      \ artifacts:\n            - src/gateway/governance/stpa_validator.py (Python\
-      \ — 12 UCAs: 6 enforcing, 6 advisory)\n            - config/sandbox/generated_sandbox_policy.yaml\
-      \ (Sandbox — 2 UCAs)\n\n          Target compliance framework: NIST SP 800-53\
-      \ Rev 5 (FedRAMP baseline)\n          Framework reference: https://csrc.nist.gov/publications/detail/sp/800-53/rev-5/final\n\
+    description: "The STPA-to-Policy Compiler deterministically compiles the merged\
+      \ STAMP/STPA\n          Unsafe Control Action (UCA) specifications into governance\
+      \ artifacts whose\n          freshness CI checks (scripts/check_stpa_freshness.py).\
+      \ A UCA's Python rule\n          enforces at runtime only when every input it\
+      \ reads is bound server-side by a\n          ServerInputResolver registered\
+      \ in assemble_governor(); rules keyed on\n          caller-asserted flags are\
+      \ advisory, so this control is implemented only\n          when every UCA enforces.\n\
+      \n          Compiler source: src/gateway/governance/stpa_compiler.py\n     \
+      \     Control structure sources: config/stpa/ and each domain's src/cage_*/config/stpa/\n\
+      \          Generated artifacts:\n            - Python rules: src/cage_finance/stpa/uca_rules.py\
+      \ (generated Python UCA rules), src/gateway/governance/stpa_validator.py (STPA\
+      \ validator) (12 UCAs: 6 enforcing, 6 advisory)\n            - config/sandbox/generated_sandbox_policy.yaml\
+      \ (sandbox metadata for 2 UCAs; design-time reference, not read at runtime)\n\
+      \n          Target compliance framework: NIST SP 800-53 Rev 5 (FedRAMP baseline)\n\
+      \          Framework reference: https://csrc.nist.gov/publications/detail/sp/800-53/rev-5/final\n\
       \          System: CAGE Financial Advisor v1.1.0\n          UCAs encoded: 12\
       \ (6 enforcing server-bound, 6 advisory)\n          Hazards modelled: 7\n  \
-      \        Safety constraints: 3\n          Last compiled: 2026-11-05T21:08:32Z\n\
+      \        Safety constraints: 3\n          Last compiled: 2026-11-08T19:00:34Z\n\
       \n          UCA-to-Control mapping (NIST SP 800-53 Rev 5 (FedRAMP baseline)):\n\
       \            UCA-1 (unsafe_action): Agent executes write operation without a\
       \ human approval token.\n  → NIST: ac-3 (Access Enforcement), sc-4 (Information\
@@ -57,7 +61,7 @@ stpa-compiler-ssp-patch:
       \ Settings)"
     props:
     - name: implementation-status
-      value: implemented
+      value: partial
     - name: stpa-compiler-version
       value: 1.1.0
     - name: uca-count
@@ -69,7 +73,7 @@ stpa-compiler-ssp-patch:
     - name: hazard-count
       value: '7'
     - name: last-compiled
-      value: '2026-11-05T21:08:32Z'
+      value: '2026-11-08T19:00:34Z'
     - name: target-framework
       value: NIST SP 800-53 Rev 5 (FedRAMP baseline)
     - name: artifact-python
@@ -83,12 +87,13 @@ stpa-compiler-ssp-patch:
     by-components:
     - component-uuid: e5000099-stpa-4000-8000-compiler00001
       uuid: h8000099-stpa-4000-8000-compiler00000
-      description: 'STPA compiler enforces AC-3 (Access Enforcement) via generated
-        artifacts: src/cage_finance/stpa/uca_rules.py (generated Python UCA rules),
-        src/gateway/governance/stpa_validator.py (STPA validator). UCAs covered: UCA-1,
-        UCA-12, UCA-3, UCA-5, UCA-8, UCA-9.'
+      description: 'STPA compiler maps AC-3 (Access Enforcement) via generated artifacts:
+        src/cage_finance/stpa/uca_rules.py (generated Python UCA rules), src/gateway/governance/stpa_validator.py
+        (STPA validator). UCAs covered: UCA-1, UCA-12, UCA-3, UCA-5, UCA-8, UCA-9.
+        Server-bound enforcing UCAs: UCA-1, UCA-5; advisory UCAs (not server-bound):
+        UCA-12, UCA-3, UCA-8, UCA-9.'
       implementation-status:
-        state: implemented
+        state: partial
       links:
       - href: ../../config/stpa/core_system.yaml
         rel: reference
@@ -98,10 +103,12 @@ stpa-compiler-ssp-patch:
         text: STPA Python validator
     - component-uuid: e5000099-stpa-4000-8000-compiler00001
       uuid: h8000099-stpa-4000-8000-compiler00001
-      description: 'STPA compiler enforces SC-4 (Information in Shared System Resources
+      description: 'STPA compiler maps SC-4 (Information in Shared System Resources
         / Fiscal Limits) via generated artifacts: src/cage_finance/stpa/uca_rules.py
         (generated Python UCA rules), src/gateway/governance/stpa_validator.py (STPA
-        validator). UCAs covered: UCA-1, UCA-13, UCA-5, UCA-6, UCA-7.'
+        validator). UCAs covered: UCA-1, UCA-13, UCA-5, UCA-6, UCA-7. Server-bound
+        enforcing UCAs: UCA-1, UCA-13, UCA-5, UCA-6, UCA-7; advisory UCAs (not server-bound):
+        none.'
       implementation-status:
         state: implemented
       links:
@@ -113,12 +120,13 @@ stpa-compiler-ssp-patch:
         text: STPA Python validator
     - component-uuid: e5000099-stpa-4000-8000-compiler00001
       uuid: h8000099-stpa-4000-8000-compiler00002
-      description: 'STPA compiler enforces CM-6 (Configuration Settings) via generated
+      description: 'STPA compiler maps CM-6 (Configuration Settings) via generated
         artifacts: src/cage_finance/stpa/uca_rules.py (generated Python UCA rules),
         src/gateway/governance/stpa_validator.py (STPA validator). UCAs covered: UCA-10,
-        UCA-13, UCA-2, UCA-9.'
+        UCA-13, UCA-2, UCA-9. Server-bound enforcing UCAs: UCA-13, UCA-2; advisory
+        UCAs (not server-bound): UCA-10, UCA-9.'
       implementation-status:
-        state: implemented
+        state: partial
       links:
       - href: ../../config/stpa/core_system.yaml
         rel: reference
@@ -128,9 +136,10 @@ stpa-compiler-ssp-patch:
         text: STPA Python validator
     - component-uuid: e5000099-stpa-4000-8000-compiler00001
       uuid: h8000099-stpa-4000-8000-compiler00003
-      description: 'STPA compiler enforces SI-4 (System Monitoring) via generated
-        artifacts: src/cage_finance/stpa/uca_rules.py (generated Python UCA rules),
-        src/gateway/governance/stpa_validator.py (STPA validator). UCAs covered: UCA-10.'
+      description: 'STPA compiler maps SI-4 (System Monitoring) via generated artifacts:
+        src/cage_finance/stpa/uca_rules.py (generated Python UCA rules), src/gateway/governance/stpa_validator.py
+        (STPA validator). UCAs covered: UCA-10. Server-bound enforcing UCAs: none;
+        advisory UCAs (not server-bound): UCA-10.'
       implementation-status:
         state: partial
       links:
@@ -142,12 +151,13 @@ stpa-compiler-ssp-patch:
         text: STPA Python validator
     - component-uuid: e5000099-stpa-4000-8000-compiler00001
       uuid: h8000099-stpa-4000-8000-compiler00004
-      description: 'STPA compiler enforces SA-11 (Developer Testing and Evaluation)
-        via generated artifacts: src/cage_finance/stpa/uca_rules.py (generated Python
+      description: 'STPA compiler maps SA-11 (Developer Testing and Evaluation) via
+        generated artifacts: src/cage_finance/stpa/uca_rules.py (generated Python
         UCA rules), src/gateway/governance/stpa_validator.py (STPA validator). UCAs
-        covered: UCA-12, UCA-2, UCA-8.'
+        covered: UCA-12, UCA-2, UCA-8. Server-bound enforcing UCAs: UCA-2; advisory
+        UCAs (not server-bound): UCA-12, UCA-8.'
       implementation-status:
-        state: implemented
+        state: partial
       links:
       - href: ../../config/stpa/core_system.yaml
         rel: reference
@@ -157,10 +167,11 @@ stpa-compiler-ssp-patch:
         text: STPA Python validator
     - component-uuid: e5000099-stpa-4000-8000-compiler00001
       uuid: h8000099-stpa-4000-8000-compiler00005
-      description: 'STPA compiler enforces SC-28 (Protection of Information at Rest)
-        via generated artifacts: src/cage_finance/stpa/uca_rules.py (generated Python
+      description: 'STPA compiler maps SC-28 (Protection of Information at Rest) via
+        generated artifacts: src/cage_finance/stpa/uca_rules.py (generated Python
         UCA rules), src/gateway/governance/stpa_validator.py (STPA validator). UCAs
-        covered: UCA-3.'
+        covered: UCA-3. Server-bound enforcing UCAs: none; advisory UCAs (not server-bound):
+        UCA-3.'
       implementation-status:
         state: partial
       links:
@@ -172,10 +183,11 @@ stpa-compiler-ssp-patch:
         text: STPA Python validator
     - component-uuid: e5000099-stpa-4000-8000-compiler00001
       uuid: h8000099-stpa-4000-8000-compiler00006
-      description: 'STPA compiler enforces SI-7 (Software, Firmware, and Information
-        Integrity) via generated artifacts: src/cage_finance/stpa/uca_rules.py (generated
-        Python UCA rules), src/gateway/governance/stpa_validator.py (STPA validator).
-        UCAs covered: UCA-4.'
+      description: 'STPA compiler maps SI-7 (Software, Firmware, and Information Integrity)
+        via generated artifacts: src/cage_finance/stpa/uca_rules.py (generated Python
+        UCA rules), src/gateway/governance/stpa_validator.py (STPA validator). UCAs
+        covered: UCA-4. Server-bound enforcing UCAs: none; advisory UCAs (not server-bound):
+        UCA-4.'
       implementation-status:
         state: partial
       links:
@@ -187,9 +199,10 @@ stpa-compiler-ssp-patch:
         text: STPA Python validator
     - component-uuid: e5000099-stpa-4000-8000-compiler00001
       uuid: h8000099-stpa-4000-8000-compiler00007
-      description: 'STPA compiler enforces AU-10 (Non-Repudiation) via generated artifacts:
+      description: 'STPA compiler maps AU-10 (Non-Repudiation) via generated artifacts:
         src/cage_finance/stpa/uca_rules.py (generated Python UCA rules), src/gateway/governance/stpa_validator.py
-        (STPA validator). UCAs covered: UCA-4.'
+        (STPA validator). UCAs covered: UCA-4. Server-bound enforcing UCAs: none;
+        advisory UCAs (not server-bound): UCA-4.'
       implementation-status:
         state: partial
       links:
@@ -201,10 +214,11 @@ stpa-compiler-ssp-patch:
         text: STPA Python validator
     - component-uuid: e5000099-stpa-4000-8000-compiler00001
       uuid: h8000099-stpa-4000-8000-compiler00008
-      description: 'STPA compiler enforces SI-3 (Malicious Code Protection) via generated
+      description: 'STPA compiler maps SI-3 (Malicious Code Protection) via generated
         artifacts: src/cage_finance/stpa/uca_rules.py (generated Python UCA rules),
         src/gateway/governance/stpa_validator.py (STPA validator). UCAs covered: UCA-6,
-        UCA-7.'
+        UCA-7. Server-bound enforcing UCAs: UCA-6, UCA-7; advisory UCAs (not server-bound):
+        none.'
       implementation-status:
         state: implemented
       links:
@@ -218,15 +232,15 @@ stpa-compiler-ssp-patch:
     uuid: e5000099-stpa-4000-8000-compiler00001
     title: STPA-to-Policy Compiler
     type: software
-    description: 'CLI compiler (src/gateway/governance/stpa_compiler.py) that ingests
-      config/stpa/ and generates deterministic Python validator artifacts enforcing
-      STAMP/STPA UCAs at runtime. Eliminates manual policy drift by treating the YAML
-      as the single authoritative source of truth. System: CAGE Financial Advisor
-      v1.1.0.'
-    purpose: Provides compile-time enforcement of STPA UCAs, bridging design-time
-      hazard analysis (MIT STAMP methodology) with runtime Python governance controls.
-      Closes the compliance loop between safety engineering artefacts and live cluster
-      enforcement policies.
+    description: 'CLI compiler (src/gateway/governance/stpa_compiler.py) that compiles
+      config/stpa/ and the domain control structures into deterministic Python validator
+      artifacts mapped to STAMP/STPA UCAs. A UCA''s Python rule enforces at runtime
+      only when every input it reads is bound server-side; rules keyed on caller-asserted
+      flags are advisory. System: CAGE Financial Advisor v1.1.0.'
+    purpose: Provides deterministic compile-time translation of STPA UCAs, bridging
+      design-time hazard analysis (MIT STAMP methodology) with runtime Python governance
+      controls wherever a rule's inputs are bound server-side; CI checks the generated
+      artifacts for drift from the YAML.
     responsible-roles:
     - role-id: compliance-engineer
     props:
@@ -237,46 +251,67 @@ stpa-compiler-ssp-patch:
     - name: control-structure-input
       value: config/stpa/
     - name: last-compiled
-      value: '2026-11-05T21:08:32Z'
+      value: '2026-11-08T19:00:34Z'
     - name: uca-count
       value: '12'
     control-implementations:
     - uuid: c3000099-stpa-4000-8000-compiler00001
       source: https://www.iso.org/standard/81230.html
-      description: ISO/IEC 42001:2023 controls implemented by the STPA compiler
+      description: ISO/IEC 42001:2023 controls the STPA compiler maps UCAs to
       implemented-requirements:
       - uuid: d4000099-stpa-4000-8000-0000000
         control-id: A.8.4
-        description: 'STPA compiler generates deterministic enforcement artifacts
-          for A.8.4 (AI System Operation — Runtime operational controls) from config/stpa/.
-          UCAs: UCA-1, UCA-12, UCA-13, UCA-2, UCA-4, UCA-5, UCA-6, UCA-8, UCA-9.'
-        remarks: Implemented via stpa_compiler.py compile command. Re-run on any YAML
-          change to keep artifacts in sync.
+        description: 'STPA compiler maps A.8.4 (AI System Operation — Runtime operational
+          controls) to UCAs UCA-1, UCA-12, UCA-13, UCA-2, UCA-4, UCA-5, UCA-6, UCA-8,
+          UCA-9, compiled from config/stpa/ and the domain control structures. Server-bound
+          enforcing UCAs: UCA-1, UCA-13, UCA-2, UCA-5, UCA-6; advisory UCAs (not server-bound):
+          UCA-12, UCA-4, UCA-8, UCA-9.'
+        props:
+        - name: implementation-status
+          value: partial
+        remarks: Compiled by stpa_compiler.py; scripts/check_stpa_freshness.py fails
+          CI when a generated artifact drifts from its YAML source.
       - uuid: d4000099-stpa-4000-8000-0001001
         control-id: A.9.4
-        description: 'STPA compiler generates deterministic enforcement artifacts
-          for A.9.4 (Monitoring and measurement — Live telemetry validation) from
-          config/stpa/. UCAs: UCA-10.'
-        remarks: Implemented via stpa_compiler.py compile command. Re-run on any YAML
-          change to keep artifacts in sync.
+        description: 'STPA compiler maps A.9.4 (Monitoring and measurement — Live
+          telemetry validation) to UCAs UCA-10, compiled from config/stpa/ and the
+          domain control structures. Server-bound enforcing UCAs: none; advisory UCAs
+          (not server-bound): UCA-10.'
+        props:
+        - name: implementation-status
+          value: partial
+        remarks: Compiled by stpa_compiler.py; scripts/check_stpa_freshness.py fails
+          CI when a generated artifact drifts from its YAML source.
       - uuid: d4000099-stpa-4000-8000-0002002
         control-id: A.6.2
-        description: 'STPA compiler generates deterministic enforcement artifacts
-          for A.6.2 (AI System Lifecycle — Design and development controls) from config/stpa/.
-          UCAs: UCA-12, UCA-13, UCA-2, UCA-5, UCA-6.'
-        remarks: Implemented via stpa_compiler.py compile command. Re-run on any YAML
-          change to keep artifacts in sync.
+        description: 'STPA compiler maps A.6.2 (AI System Lifecycle — Design and development
+          controls) to UCAs UCA-12, UCA-13, UCA-2, UCA-5, UCA-6, compiled from config/stpa/
+          and the domain control structures. Server-bound enforcing UCAs: UCA-13,
+          UCA-2, UCA-5, UCA-6; advisory UCAs (not server-bound): UCA-12.'
+        props:
+        - name: implementation-status
+          value: partial
+        remarks: Compiled by stpa_compiler.py; scripts/check_stpa_freshness.py fails
+          CI when a generated artifact drifts from its YAML source.
       - uuid: d4000099-stpa-4000-8000-0003003
         control-id: A.9.2
-        description: 'STPA compiler generates deterministic enforcement artifacts
-          for A.9.2 (Data transfer to suppliers and third parties / PII protection)
-          from config/stpa/. UCAs: UCA-3.'
-        remarks: Implemented via stpa_compiler.py compile command. Re-run on any YAML
-          change to keep artifacts in sync.
+        description: 'STPA compiler maps A.9.2 (Data transfer to suppliers and third
+          parties / PII protection) to UCAs UCA-3, compiled from config/stpa/ and
+          the domain control structures. Server-bound enforcing UCAs: none; advisory
+          UCAs (not server-bound): UCA-3.'
+        props:
+        - name: implementation-status
+          value: partial
+        remarks: Compiled by stpa_compiler.py; scripts/check_stpa_freshness.py fails
+          CI when a generated artifact drifts from its YAML source.
       - uuid: d4000099-stpa-4000-8000-0004004
         control-id: A.5.2
-        description: 'STPA compiler generates deterministic enforcement artifacts
-          for A.5.2 (Social impact — AI system impact on society and environment)
-          from config/stpa/. UCAs: UCA-7.'
-        remarks: Implemented via stpa_compiler.py compile command. Re-run on any YAML
-          change to keep artifacts in sync.
+        description: 'STPA compiler maps A.5.2 (Social impact — AI system impact on
+          society and environment) to UCAs UCA-7, compiled from config/stpa/ and the
+          domain control structures. Server-bound enforcing UCAs: UCA-7; advisory
+          UCAs (not server-bound): none.'
+        props:
+        - name: implementation-status
+          value: implemented
+        remarks: Compiled by stpa_compiler.py; scripts/check_stpa_freshness.py fails
+          CI when a generated artifact drifts from its YAML source.

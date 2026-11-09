@@ -58,8 +58,21 @@ _COMPLIANCE_DIR = _REPO_ROOT / "config" / "compliance"
 
 _SUPPORTED_FRAMEWORKS = ["NIST", "ISO42001", "EU_AI_ACT", "MAS_FEAT"]
 
-# UCA IDs present in config/stpa/core_system.yaml + domain STPA YAML
-_EXPECTED_UCAS = [f"UCA-{i}" for i in range(1, 10)]  # UCA-1 … UCA-9
+
+def _active_uca_ids() -> list[str]:
+    """UCA ids of the control structure the OSCAL exporter exports by default."""
+    from src.gateway.governance.stpa_compiler import load_control_structures
+
+    paths = [
+        *sorted((_REPO_ROOT / "config" / "stpa").glob("*.yaml")),
+        *sorted((_REPO_ROOT / "src").glob("cage_*/config/stpa/*.yaml")),
+    ]
+    return [u.id for u in load_control_structures(paths).unsafe_control_actions]
+
+
+# UCA IDs present in config/stpa/ + every domain's STPA YAML (POAM-2026-188):
+# read from the active control structures, never a hard-coded range.
+_EXPECTED_UCAS = _active_uca_ids()
 
 _REQUIRED_JSON_KEYS = {
     "_schema_version",

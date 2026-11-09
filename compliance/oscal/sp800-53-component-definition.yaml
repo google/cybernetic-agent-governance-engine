@@ -48,16 +48,18 @@ component-definition:
       title: "Governance Gateway"
       type: software
       description: >
-        Python FastAPI gateway providing three-tier semantic shielding and
-        deny-by-default ingress authentication by Linkerd mTLS workload
-        identity (src/gateway/server/workload_identity.py). Implements
-        OPA-backed RBAC enforcement, OTel-based audit trail generation, and
-        KMS-signed routing seals on governance decisions.
+        Python FastAPI gateway providing deny-by-default ingress authentication
+        by Linkerd mTLS workload identity (src/gateway/server/workload_identity.py).
+        It runs the governance pipeline (FTRA, STPA, the domain OPA policy and
+        domain tiers) on governed actions, records each decision in a hash-chained
+        evidence stream, and binds each KMS-signed routing seal to its committed
+        evidence record.
       purpose: >
-        Acts as the primary ingress enforcement layer for all AI governance
-        requests. Enforces access control via OPA, generates ISO 42001
-        6-attribute evidence stamps on every governance decision, and
-        admits only callers whose mesh-verified workload identity is trusted.
+        Acts as the primary enforcement layer for governed agent actions.
+        Enforces access control on those actions, records every governance
+        decision as hash-chained evidence (ISO 42001 attributes are also stamped
+        on its telemetry spans), and admits only callers whose mesh-verified
+        workload identity is trusted.
       responsible-roles:
         - role-id: provider
       control-implementations:
@@ -68,91 +70,105 @@ component-definition:
             - uuid: "12e40b44-a5eb-4e0d-b319-42bab7d5d10a"
               control-id: ac-3
               description: |
-                AC-3 (Access Enforcement) is implemented across three operative layers:
+                AC-3 (Access Enforcement) is implemented in three layers. Status is partial
+                until the open items listed at the end are closed.
 
-                1. Kernel-Level Workload Identity & Linkerd Mesh Access Policy (2026-09-22
-                   BREAKING CHANGE): Before any handler runs, WorkloadIdentityMiddleware and
-                   extract_client_identity(scope) (src/gateway/server/workload_identity.py)
-                   reject with 403/401 every request outside a small exact open-path list
-                   (health, metrics, JWKS; no prefixes) unless its Linkerd-verified
-                   l5d-client-id (<sa>.<ns>.serviceaccount.identity.linkerd.<trust-domain>):
-                   - is present as a single header in ASGI scope,
-                   - arrives on a pod-local connection (is_pod_local_connection), where only
-                     the pod's own Linkerd inbound proxy writes the header and an admission
-                     policy refuses governance pods created without the proxy (POAM-2026-167),
+                1. Workload identity at the gateway and the mesh: before any handler runs,
+                   WorkloadIdentityMiddleware and extract_client_identity(scope)
+                   (src/gateway/server/workload_identity.py) reject with 401/403 every request
+                   outside an exact open-path list (health and JWKS paths only; no prefixes;
+                   /metrics is served on port 9090, not 8080) unless its Linkerd l5d-client-id
+                   (<sa>.<ns>.serviceaccount.identity.linkerd.<trust-domain>):
+                   - is present as a single header,
+                   - arrives on a pod-local connection (is_pod_local_connection: the TCP peer is
+                     the pod's own non-loopback IP, which only the pod's Linkerd inbound proxy
+                     uses; loopback peers, including kubectl port-forward, are refused),
                    - matches Linkerd workload identity syntax, and
-                   - is listed in CAGE_TRUSTED_CLIENT_IDENTITIES (required and enforced in
-                     every environment), verified in CI by
-                     tests/integration/test_linkerd_mesh_conformance.py (POAM-2026-080 closed).
-                   At the service-mesh layer, Linkerd AuthorizationPolicy and
-                   MeshTLSAuthentication resources
-                   (infra/modules/gateway/mesh-policy/templates/policy.yaml,
-                   infra/modules/service_mesh/main.tf) restrict inbound mTLS connections to
-                   authorized workload service accounts before traffic reaches the gateway
-                   container. HTTP header-based identity parsing (X-Agent-ID, X-SPIFFE-ID) and
-                   anonymous fallback were removed; unauthenticated requests fail closed
-                   (401/403), eliminating header spoofing attack surface.
+                   - is listed in CAGE_TRUSTED_CLIENT_IDENTITIES, which is required in every
+                     environment; Terraform lists only the advisor's identity
+                     (infra/targets/gcp-gke/main.tf).
+                   A ValidatingAdmissionPolicy (infra/modules/service_mesh/main.tf) refuses
+                   governance-namespace pods created without the Linkerd proxy. The gateway's
+                   Linkerd Server, HTTPRoute, AuthorizationPolicy and MeshTLSAuthentication
+                   resources (infra/modules/gateway/mesh-policy/templates/policy.yaml, installed
+                   by infra/modules/gateway/main.tf) admit only those identities on gated
+                   routes. CI's mesh-conformance job renders that chart on kind with stock
+                   Linkerd (not the CAS-rooted install), boots the gateway image, and checks
+                   that an untrusted service account and a port-forwarded request carrying a
+                   forged l5d-client-id are refused on a gated route
+                   (tests/integration/test_linkerd_mesh_conformance.py). Header-based identity
+                   (X-Agent-ID, X-SPIFFE-ID) and anonymous fallback were removed.
 
-                2. OPA RBAC & Claimed-Action Policy Enforcement: Every inbound API request is
-                   evaluated against domain governance policies
-                   (src/cage_finance/opa/trade_governance.rego,
-                   src/cage_healthcare/opa/dosing_governance.rego),
-                   with allow/deny decisions recorded in structured audit logs with full
-                   request context and caller identity. Every governor pipeline run (including
-                   Profile.POST_HITL in SymbolicGovernor.revalidate_post_hitl()) verifies that
-                   the action is in governor.claimed_actions
-                   (src/gateway/governance/governor/pipeline.py), refusing unclaimed actions
-                   with ADR009_ACTION_NOT_CLAIMED ([ACTION_NOT_CLAIMED]), and
-                   assemble_governor() (src/gateway/governance/governor/assembly.py) verifies
-                   at startup that every claimed action is registered in the FTRA terminal
-                   registry.
+                2. Policy enforcement on governed actions: every action submitted to the
+                   governor runs the FTRA, STPA and OPA stages
+                   (src/gateway/governance/governor/pipeline.py), and an action a domain tier
+                   claims also runs that domain's tiers. The OPA stage
+                   (src/gateway/governance/governor/stages/opa.py) queries the active domain's
+                   package, which Terraform loads into the in-cluster OPA from
+                   src/cage_<domain>/opa/ (finance: src/cage_finance/opa/trade_governance.rego);
+                   an OPA DENY or an OPA failure is a HARD violation. FTRA sends an action
+                   absent from the domain's terminal registry to human approval
+                   (FTRA_UNREGISTERED_ACTION), and assemble_governor()
+                   (src/gateway/governance/governor/assembly.py) refuses to start when an
+                   IRREVERSIBLE_TERMINAL action in the registry is claimed by no tier. With
+                   EVIDENCE_CHAIN_BLOCKING=true (Terraform's setting), a DENY is returned only
+                   after its GOVERNANCE_REFUSAL record is committed to the hash-chained evidence
+                   stream (see AU-12).
 
-                3. Dual-Control Quorum & Single-Commit HITL Approval Binding:
-                   - Endpoint authentication (Work Item 2, 2026-09-07): All defer escalation
-                     endpoints require cryptographically-verified operator identity. Both
-                     /v1/defer/escalate (src/compliance_bridge/main.py) and /v1/defer/inject
-                     enforce Depends(require_internal_token); no /v1/defer/ route is reachable
-                     without authentication in production (CAGE_ENV=prod/staging).
-                   - Quorum enforcement: DeferQueue.approve()
-                     (src/gateway/governance/defer_queue.py) enforces distinctness of
-                     approver_urn values via WATCH/MULTI/EXEC atomic transactions, rejecting
-                     duplicate approvals from the same principal with ALREADY_APPROVED.
-                     Required quorum is auto-computed from defer_reason (quorum-3 for
-                     FTRA_IRREVERSIBLE_TERMINAL, EXTERNAL_VALIDATION, EXTERNAL_HOLD, and
-                     WARRANT_INELIGIBLE; quorum-2 for all others), and defer_inject rejects
-                     quorum-3 reasons or partially approved tokens.
-                   - Approval binding (D-H, 2026-10-01): DeferQueue.approve() stamps each
-                     ApprovalRecord server-side with approved_barrier_preview (overwriting any
-                     client-supplied value). consume_approval() refuses a token whose approvals
-                     are bound to a different snapshot, and
+                3. Dual-control approval and single-commit binding:
+                   - Human approval: POST /v1/defer/{defer_id}/escalate
+                     (src/compliance_bridge/main.py) authenticates the approver with
+                     require_human_operator_identity() (src/compliance_bridge/auth.py): an OIDC
+                     JWT verified against out-of-band, kid-resolved keys
+                     (src/compliance_bridge/oidc_verifier.py) whose sub must be in
+                     CAGE_TRUSTED_OPERATOR_IDENTITIES. Workload SVIDs are refused with 403. The
+                     bridge refuses to start in an enforcing posture when the allowlist is empty
+                     or holds a workload identity, and the Terraform plan refuses the same
+                     (infra/modules/compliance_bridge/main.tf). Enforcing postures require each
+                     approval to carry a WebAuthn client_data_json bound to a 32-byte
+                     challenge_binding. /v1/defer/{defer_id}/inject requires the internal token,
+                     which Terraform stores only in the compliance bridge's own Secret
+                     (infra/modules/app_secrets/main.tf); it refuses quorum-3 reasons and
+                     partially approved tokens and never produces a redeemable approval.
+                   - Quorum: DeferQueue.approve() (src/gateway/governance/defer_queue.py)
+                     requires distinct approver_urn values under WATCH/MULTI/EXEC (a repeat is
+                     ALREADY_APPROVED) and refuses approval by the token's initiator_urn, which
+                     _park_defer_context() takes from the verified caller identity when one is
+                     present. Required quorum follows the defer_reason: 3 for
+                     FTRA_IRREVERSIBLE_TERMINAL, EXTERNAL_VALIDATION, EXTERNAL_HOLD and
+                     WARRANT_INELIGIBLE, 2 for all others.
+                   - Approval binding: approve() stamps each ApprovalRecord with the token's
+                     barrier snapshot (approved_barrier_preview); consume_approval() refuses
+                     approvals bound to a different snapshot, and
                      SymbolicGovernor.revalidate_post_hitl() refuses the committing run with
-                     GovernanceError [APPROVAL_CONTEXT_DRIFT] when an approval given against
-                     PASS meets barriers that now refuse; no routing seal is minted and phase-2
-                     commits are rolled back (verified by tests/test_trade_governance_e2e.py).
-                   - Single-commit execution and advisory narrowing (Phases 2-3, 2026-10-01):
-                     Pre-flight validation (SymbolicGovernor.validate_action in
-                     src/gateway/governance/governor/governor.py) runs under Profile.DRY_RUN,
-                     mutates no state, and mints no GovernanceSeal. When human approval is
-                     required (REQUIRE_APPROVAL), validate_action() parks a DeferToken
-                     (DeferReason.HITL_REQUIRED) in DeferQueue and returns deferred_id;
-                     execute_trade_action(..., deferred_id=...)
-                     (src/cage_finance/tools/tool_provider.py) is the sole committing path:
-                     enforce_approved_governance()
+                     [APPROVAL_CONTEXT_DRIFT] when barriers that passed at approval now refuse,
+                     and mints no seal (tests/test_trade_governance_e2e.py).
+                   - Single commit: SymbolicGovernor.validate_action()
+                     (src/gateway/governance/governor/governor.py) runs under Profile.DRY_RUN,
+                     mints no seal, and parks REQUIRE_APPROVAL verdicts as
+                     DeferReason.HITL_REQUIRED tokens. execute_trade_action(...,
+                     deferred_id=...) (src/cage_finance/tools/tool_provider.py) is the only
+                     committing path: enforce_approved_governance()
                      (src/gateway/server/governance_middleware.py) checks the approved token
-                     without spending it (DeferQueue.redeemable_approval()) and hands
-                     SymbolicGovernor.revalidate_post_hitl() an unspent PostHitlApproval. The
-                     governor spends it atomically (DeferQueue.consume_approval(), RESOLVED to
-                     CONSUMED CAS) only after every stage passes and before the seal is minted,
-                     so a DENY spends it, a warrant-ineligible DEFER leaves it redeemable
-                     (POAM-2026-104), and concurrent redemptions seal at most once. When
-                     narrowing is enabled, any narrow_hint / narrowed_params is dry-run
-                     re-verified before surfacing (_reverified_narrow_hint) and re-verified in
-                     full by the single committing run (_sealed_narrow with tamper-evident
-                     issue_narrow_receipt in src/gateway/governance/narrow_receipt.py inside
-                     ReservationScope).
+                     without spending it (DeferQueue.redeemable_approval()), and
+                     revalidate_post_hitl() decides first and spends second: a clean run spends
+                     the approval with a RESOLVED to CONSUMED compare-and-set before the seal is
+                     minted, so concurrent redemptions seal at most once; a DENY spends it; a
+                     warrant-ineligible DEFER leaves it redeemable. When narrowing is enabled, a
+                     narrow_hint is dry-run re-verified before it is surfaced
+                     (_reverified_narrow_hint) and re-verified in full by the committing run
+                     (_sealed_narrow with issue_narrow_receipt in
+                     src/gateway/governance/narrow_receipt.py, inside ReservationScope).
+
+                Open: OPA's REST API takes no authentication, and only the gateway has Linkerd
+                Server and AuthorizationPolicy resources, so another pod in the namespace can
+                call OPA or replace its policy (POAM-2026-195, POAM-2026-080). The pod-local
+                identity check and human-only approval have not been verified on a deployed
+                cluster (POAM-2026-167, POAM-2026-196). The operator identities and OIDC issuer
+                in the committed tfvars are example values that an adopter replaces.
               props:
                 - name: implementation-status
-                  value: implemented
+                  value: partial
                 - name: control-origination
                   value: system-specific
                 - name: dual-control-implementation-date
@@ -166,7 +182,7 @@ component-definition:
               links:
                 - href: "https://csrc.nist.gov/projects/cprt/api/cprt/framework/version/SP_800_53_5_1_1/home?element=AC-3"
                   rel: reference
-                - href: "#9fbe4cdd-f9b0-4635-bc7d-6a3a3beae05a"
+                - href: "#a08c55f1-6d12-445d-b4ae-a99c8b573935"
                   rel: lula
                 - href: "../../src/gateway/server/workload_identity.py"
                   rel: implementation
@@ -192,100 +208,90 @@ component-definition:
                 - href: "../../tests/test_trade_governance_e2e.py"
                   rel: test
                   text: "Approval binding to the approved barrier snapshot (APPROVAL_CONTEXT_DRIFT)"
+                - href: "../../tests/unit/governance/test_hitl_operator_identity.py"
+                  rel: test
+                  text: "Human-only OIDC approval, WebAuthn binding, empty-allowlist refusal, self-approval refusal"
+                - href: "../../tests/test_workload_identity_middleware.py"
+                  rel: test
+                  text: "Pod-local l5d-client-id check, loopback refusal and allowlist enforcement"
 
             - uuid: "4ccc6861-3f69-476a-9ff2-cbd215b18d46"
               control-id: au-12
               description: |
-                Audit record generation is implemented via OpenTelemetry spans in
-                src/gateway/infrastructure/telemetry.py and the provenance chain in
-                src/gateway/governance/provenance_chain.py. CAGE provides two distinct
-                auditing modes to support different consistency/availability trade-offs:
+                Audit record generation has one authoritative record and two telemetry channels.
+                Status is partial until custody of the record is verified on a deployed cluster
+                (POAM-2026-084).
 
-                1. DECISION-TIME AUDIT (fire-and-forget, default mode):
-                   Records governance decisions asynchronously via OTel spans. Every
-                   governance decision emits a span containing ISO 42001 6-attribute
-                   evidence stamps: control_id, decision_outcome, timestamp_utc,
-                   request_id, user_role, and enforcement_tier. This mode prioritizes
-                   availability — the routing seal is issued immediately after the
-                   governance decision, without waiting for audit record persistence.
-                   Spans are exported to Langfuse asynchronously for retention.
-                   Domain tiers (like the financial package) are injected dynamically
-                   via plugin registration, and the active tier list is logged at startup.
+                1. AUTHORITATIVE RECORD (hash-chained evidence stream): the gateway's
+                   EvidenceStreamSink (src/gateway/governance/evidence/stream.py) appends
+                   governance decisions, refusals, deferrals, settlements and actuation receipts
+                   to a Redis Stream on the governance Memorystore instance; each record is RFC
+                   8785 JCS-canonicalized (jcs_canonicalize_plan) and linked to its predecessor
+                   by SHA-256 (record_hash, prev_hash). EVIDENCE_CHAIN_BLOCKING defaults to true
+                   and Terraform sets it (infra/modules/gateway/main.tf); an enforcing posture
+                   refuses to start with it off unless CAGE_ALLOW_NONBLOCKING_PROD=true. With it
+                   on:
+                   - generate_seal_with_evidence() (src/gateway/governance/routing_seal.py)
+                     mints a routing seal only after the decision's evidence record is
+                     committed, binds that record_hash into the seal, and raises
+                     EvidenceChainUnavailableError (no seal) when the commit fails;
+                   - publish_refusal() and publish_deferral()
+                     (src/gateway/governance/governor/verdicts.py) commit GOVERNANCE_REFUSAL and
+                     GOVERNANCE_DEFERRAL records synchronously through
+                     commit_decision_evidence(). A failed write logs at ERROR, increments
+                     cage_governance_evidence_publish_failures_total{kind}
+                     (src/gateway/governance/governor/metrics.py) and fails the request (HTTP
+                     503 on POST /governance/validate-action and POST /tools/execute); a
+                     deferral whose record fails is unparked.
+                   The compliance bridge's EvidenceCustodian re-verifies the chain, KMS-signs
+                   each batch and writes it to the retention-locked WORM bucket, and
+                   CustodyVerifier re-verifies the archive on a schedule (see AU-9, AU-9(3) and
+                   AU-10). Decisions use the five-value vocabulary ALLOW, DENY, DEFER, NARROW
+                   and REQUIRE_APPROVAL (GovernanceDecision in
+                   src/gateway/governance/decisions.py); PAUSE was removed and a transient fault
+                   is a DENY with a refusal receipt.
 
-                2. EVIDENCE-OF-EXECUTION AUDIT (blocking mode, EVIDENCE_CHAIN_BLOCKING=true):
-                   Ensures evidence commit before seal issuance, providing stronger
-                   non-repudiation guarantees. When enabled via the EVIDENCE_CHAIN_BLOCKING
-                   environment variable, the provenance chain (provenance_chain.py) must
-                   successfully persist the evidence record to the backing store before
-                   the routing seal is computed and returned. This mode ties the
-                   cryptographic seal directly to a committed evidence record, ensuring
-                   that no seal can exist without a corresponding audit trail entry.
-                   The evidence record includes a hash-linked chain for time-correlation.
+                2. WARRANT RELIANCE: when a region marks a norm requires_warrant, the
+                   RelianceRecord for each warranted norm
+                   (src/gateway/governance/warrant/reliance.py) is bound into the decision's
+                   evidence record (see AU-10). No Terraform profile configures a warrant source
+                   (CAGE_WARRANT_SOURCE), and the US_FED and APAC_MAS baselines declare no
+                   warranted norm, so the reference deployment writes no reliance records.
 
-                Key distinction: Decision-time audit records WHAT was decided; evidence-
-                of-execution audit proves THAT the decision was recorded before action.
-                The blocking mode satisfies AU-12(1) system-wide/time-correlated audit
-                trail requirements through hash-linked evidence chain correlation.
+                3. DECISION-TIME TELEMETRY (non-authoritative): the gateway exports OTel spans
+                   over OTLP to the in-cluster Langfuse
+                   (src/gateway/infrastructure/telemetry.py), and stamp_iso_control()
+                   (src/gateway/governance/iso_control.py) adds the iso42001.control,
+                   ingress_stage, outcome, timestamp, gateway_version and evidence_chain
+                   attributes. The gateway uses its own telemetry key pair, kept out of the
+                   advisor's Secret (infra/modules/gateway/main.tf). Spans are operational
+                   telemetry, not evidence for this control: they are not hash-chained or
+                   retention-locked, and nothing reconciles them against the evidence stream.
 
-                Refusal and deferral parity (0cdb5aaa, #427): a DENY writes a
-                GOVERNANCE_REFUSAL record and a DEFER or REQUIRE_APPROVAL writes a
-                hash-chained GOVERNANCE_DEFERRAL record (verdicts.publish_refusal /
-                publish_deferral in src/gateway/governance/governor/verdicts.py).
-                These writes are non-blocking, because neither outcome executes
-                anything, but a failed write is never silent: it logs at ERROR and
-                increments cage_governance_evidence_publish_failures_total{kind}
-                (src/gateway/governance/governor/metrics.py; a no-op when
-                prometheus_client is absent).
+                4. OPERATIONAL METRICS: the gateway serves Prometheus metrics on
+                   CAGE_METRICS_PORT (9090) from a daemon thread started in _gateway_lifespan
+                   (src/gateway/observability/loop_monitor.py,
+                   src/gateway/server/hybrid_server.py), including the 250 ms event-loop lag
+                   histogram cage_event_loop_lag_seconds and the Cloud KMS RPC counter
+                   cage_kms_rpc_total{op} (src/integrations/gcp/kms_provider.py); an enforcing
+                   posture refuses to start if the metrics server cannot start. Port 9090
+                   bypasses the Linkerd inbound proxy (config.linkerd.io/skip-inbound-ports),
+                   and /metrics is not served on port 8080. Terraform installs
+                   PodMonitoring/gateway-metrics
+                   (infra/modules/gateway/metrics-monitors/templates/monitors.yaml);
+                   compliance/lula/lula-validation-metrics.yaml checks that the object exists
+                   with the expected selector and endpoint, not that samples arrive.
 
-                The backward-compatibility remediation (BC-01–BC-08, 2026-08-27) removed
-                all dual-schema machinery (v1.0/v1.1 support) from the evidence pipeline
-                and compliance-bridge. Hash-chain canonicalization in evidence_stream.py
-                and context_accumulator.py now uses RFC 8785 JCS (jcs_canonicalize_plan)
-                exclusively, with a /2.0 schema sentinel. The five canonical decision values
-                (ALLOW, DENY, DEFER, NARROW, REQUIRE_APPROVAL) are enforced in
-                provenance_chain.py (VALID_DECISIONS, derived from the GovernanceDecision
-                enum). PAUSE was removed on 2026-10-01: a transient infrastructure fault
-                is a DENY with a refusal receipt; historical PAUSE records remain readable
-                (provenance_chain.LEGACY_PAUSE) but cannot be newly built. The compliance-bridge aggregates
-                spans into OSCAL Assessment Results via audit_workflow.py.
-
-                3. WARRANT & EXTERNAL ATTESTATION AUDIT (Phase 5b C3, POAM-2026-072; POAM-2026-169 #6):
-                   External warrant reliance operations generate structured audit records
-                   capturing provider_name, observation timestamp (observed_at), freshness
-                   window (age_seconds, max_age_seconds), verification status, and negative
-                   outcomes. The ExternalAttestation dataclass (src/gateway/governance/attestation.py)
-                   includes a dedicated provider_name field for first-class provider attribution,
-                   and WarrantSource / RelianceRecord (src/gateway/governance/warrant/reliance.py,
-                   src/gateway/governance/warrant/verifier.py) bind external warrant reliance
-                   outcomes (VERIFIED, UNVERIFIED, and INELIGIBLE_STALE on stale or failed
-                   re-fetch) into both the signed GovernanceEnvelope (WARRANT attestation) and
-                   the hash-linked evidence chain, preserving verification and freshness
-                   failures as first-class evidence for non-repudiation analysis (AU-10
-                   correlation). Background AttestationAggregator polling was retired from
-                   gateway lifespan under POAM-2026-169 #6 because its cache had no runtime
-                   reader.
-
-                4. OPERATIONAL & SAFETY TELEMETRY SCRAPE (Prometheus / GKE Managed Prometheus):
-                   The gateway starts an out-of-band Prometheus WSGI HTTP server on
-                   CAGE_METRICS_PORT (default 9090) during _gateway_lifespan
-                   (src/gateway/observability/loop_monitor.py, src/gateway/server/hybrid_server.py)
-                   alongside a 250 ms asyncio event-loop lag monitor recording scheduling
-                   drift in cage_event_loop_lag_seconds, and Cloud KMS RPC counters
-                   (cage_kms_rpc_total{op} in src/integrations/gcp/kms_provider.py). Because
-                   the metrics listener runs on its own daemon thread and bypasses the
-                   Linkerd inbound proxy on port 9090 (config.linkerd.io/skip-inbound-ports),
-                   GKE Managed Prometheus (PodMonitoring gateway-metrics in
-                   infra/modules/gateway/metrics-monitors/templates/monitors.yaml,
-                   validated by compliance/lula/lula-validation-metrics.yaml) can scrape
-                   safety-gate, evidence-stream, and loop-lag telemetry even when the
-                   asyncio event loop is contended.
+                Open: live staging verification of signed attestations in the WORM bucket
+                (POAM-2026-084); staging keeps WORM objects for 1 day inside the ephemeral
+                workload project, and signing-key manifests are not archived (POAM-2026-197).
               props:
                 - name: implementation-status
-                  value: implemented
+                  value: partial
                 - name: control-origination
                   value: system-specific
                 - name: evidence-chain-blocking
-                  value: "configurable via EVIDENCE_CHAIN_BLOCKING env var"
+                  value: "true by default and in Terraform; enforcing postures refuse false unless CAGE_ALLOW_NONBLOCKING_PROD=true"
                 - name: au-12-1-enhancement
                   value: "hash-linked evidence chain provides time-correlated audit trail"
                 - name: jcs-canonicalization
@@ -299,7 +305,7 @@ component-definition:
                   rel: reference
                 - href: "#a08c55f1-6d12-445d-b4ae-a99c8b573935"
                   rel: lula
-                - href: "../../src/gateway/governance/attestation.py"
+                - href: "../../src/gateway/governance/seams/attestation.py"
                   rel: implementation
                   text: "ExternalAttestation dataclass with provider_name field"
                 - href: "../../src/gateway/governance/warrant/reliance.py"
@@ -313,78 +319,84 @@ component-definition:
                   text: "GMP PodMonitoring (gateway-metrics)"
                 - href: "../../compliance/lula/lula-validation-metrics.yaml"
                   rel: reference
-                  text: "Lula automated validation for AU-12 GMP PodMonitoring"
+                  text: "Lula presence check for PodMonitoring/gateway-metrics"
+                - href: "../../src/gateway/governance/evidence/stream.py"
+                  rel: implementation
+                  text: "EvidenceStreamSink hash chain and commit_decision_evidence()"
+                - href: "../../src/gateway/governance/routing_seal.py"
+                  rel: implementation
+                  text: "generate_seal_with_evidence() seal-after-commit gate"
+                - href: "../../tests/test_evidence_chain_blocking.py"
+                  rel: test
+                  text: "Blocking evidence commit before seal issuance"
+                - href: "../../tests/test_refusal_receipt_ingestion.py"
+                  rel: test
+                  text: "Refusal receipts recorded in the evidence stream"
 
             - uuid: "c3-au10-attestation-2026-0909"
               control-id: au-10
               description: |
-                Non-repudiation of external warrant reliance is implemented via dedicated
-                provider attribution and tamper-evident evidence binding on the live
-                governance decision path. The ExternalAttestation dataclass
-                (src/gateway/governance/attestation.py) includes a first-class provider_name
-                field recording the originating provider for unambiguous attribution in
-                multi-provider environments, while WarrantSource and RelianceRecord
-                (src/gateway/governance/warrant/reliance.py,
-                src/gateway/governance/warrant/verifier.py) construct complete reliance
-                records for both positive (VERIFIED) and negative (UNVERIFIED,
-                INELIGIBLE_STALE) outcomes so fetch, freshness, and signature-verification
-                failures enter the hash-linked evidence chain and signed GovernanceEnvelope
-                with the same completeness as verified warrants (POAM-2026-072; background
-                AttestationAggregator polling was retired from gateway lifespan under
-                POAM-2026-169 #6 because its cache had no runtime reader).
+                Non-repudiation of external warrant reliance is implemented in the governance
+                pipeline but is not exercised by the reference deployment, so status is partial.
+                No Terraform profile sets a warrant source (CAGE_WARRANT_SOURCE), and the US_FED
+                and APAC_MAS baselines declare no warranted norm. The EU_ECB baseline marks
+                confidence.min_trade_confidence requires_warrant, and assemble_governor()
+                (src/gateway/governance/governor/assembly.py) refuses to start when a warranted
+                norm has no WarrantSource.
 
-                Warrant reliance (0cdb5aaa, #427; VEIP v0.2 conformance 2026-10-10):
-                for a warranted norm, the RelianceRecord
-                (src/gateway/governance/warrant/reliance.py) naming the warrant_id,
-                declared digest, standing and provider_name is bound into the routing
-                seal's evidence record and covered by record_hash, so the seal commits
-                to the reliance the decision made; under VEIP v0.2
-                (src/gateway/governance/warrant/trust_anchor.py, POAM-2026-104 closed
-                2026-10-10) the record and the envelope's WARRANT attestation carry
-                status VERIFIED once the Ed25519 warrant signature is verified against
-                a kid-resolved VerifiedKeyManifest anchored to an out-of-band
-                WarrantTrustAnchor (or UNVERIFIED when unsigned or signature
-                verification fails). Since 9ddefb8c
-                (#430) the record also carries observed_at (CAGE's receipt time of
-                the warrant state), age_seconds and max_age_seconds, so the seal
-                commits to how fresh the relied-on state was; a warrant older than
-                the 60 s window whose re-fetch failed (or whose v0.2 issuer
-                state_as_of exceeds 60 s) is recorded as
-                INELIGIBLE_STALE (src/gateway/governance/warrant/cache.py,
-                src/gateway/governance/warrant/verifier.py).
-                Since POAM-2026-111 (2026-10-07) the hash-chained record carries
-                every Warrant Contract v0.1 evidence field (warrant_id, norm_id,
-                digest as warrant_digest, reliance_status, governing_version as
-                warrant_governing_version, residual_risk_ref recorded opaquely,
-                attested_at) plus issuing_authority, authority_basis,
-                revocation_ref and required_governing_version (the version the
-                binding requires, kept apart from the version the warrant
-                declares), and the envelope WARRANT attestation is derived from
-                the same record (its metadata equals the record), so the signed
-                envelope and the evidence chain cannot disagree (AU-3, AU-10).
+                When a norm requires a warrant, the kernel warrant stage records one
+                RelianceRecord per warranted norm (src/gateway/governance/warrant/reliance.py)
+                for eligible and ineligible outcomes alike. The record carries provider_name,
+                the warrant_id and the issuer-declared warrant_digest, reliance_status (ELIGIBLE
+                or an INELIGIBLE_* reason such as INELIGIBLE_AUTHENTICITY or INELIGIBLE_STALE),
+                verification_status, the governing version the binding requires and the one the
+                warrant declares, issuing_authority, authority_basis, revocation_ref,
+                residual_risk_ref (recorded opaquely), attested_at, and CAGE's receipt time and
+                freshness (observed_at, age_seconds, max_age_seconds). The record is bound into
+                the decision's hash-chained evidence record, and the signed GovernanceEnvelope's
+                WARRANT attestation is built from the same record (an ExternalAttestation,
+                src/gateway/governance/seams/attestation.py, whose metadata equals the record),
+                so the envelope and the chain cannot disagree (AU-3).
 
-                This remediation (Phase 5b C3, POAM-2026-072, closed 2026-09-09) addresses
-                defect patterns where provider identity was inferred from ambient context
-                or where fetch failures produced ephemeral logs rather than durable evidence
-                records suitable for compliance reporting and incident investigation.
+                A warrant state is relied on for at most 60 s: a cached warrant older than that
+                whose re-fetch fails, or a VEIP v0.2 warrant whose issuer state_as_of is older
+                than that, is INELIGIBLE_STALE (src/gateway/governance/warrant/cache.py,
+                src/gateway/governance/warrant/verifier.py). verification_status is VERIFIED
+                only after the Ed25519 warrant signature verifies against a key resolved by kid
+                from a VerifiedKeyManifest anchored to an out-of-band WarrantTrustAnchor
+                (src/gateway/governance/warrant/trust_anchor.py); otherwise it is UNVERIFIED,
+                and an unknown kid, a digest mismatch or a failed signature makes the warrant
+                ineligible (INELIGIBLE_AUTHENTICITY). ExternalAttestation carries a first-class
+                provider_name, so a provider's failure is attributed without parsing
+                attestation_type. Background AttestationAggregator polling was removed from the
+                gateway lifespan because nothing read its cache (POAM-2026-169 #6).
+
+                Custody of the evidence follows AU-9 and AU-10 (3513ab15): live staging
+                verification of signed attestations is pending (POAM-2026-084).
               props:
                 - name: implementation-status
-                  value: implemented
+                  value: partial
                 - name: control-origination
                   value: system-specific
                 - name: poam-reference
-                  value: "POAM-2026-072"
+                  value: "POAM-2026-084"
                 - name: phase-5b-c3-implementation-date
                   value: "2026-09-09"
               links:
                 - href: "https://csrc.nist.gov/projects/cprt/api/cprt/framework/version/SP_800_53_5_1_1/home?element=AU-10"
                   rel: reference
-                - href: "../../src/gateway/governance/attestation.py"
+                - href: "../../src/gateway/governance/seams/attestation.py"
                   rel: implementation
                   text: "ExternalAttestation.provider_name first-class field"
                 - href: "../../src/gateway/governance/warrant/reliance.py"
                   rel: implementation
                   text: "RelianceRecord binding external warrant reliance into signed GovernanceEnvelope and hash-linked evidence chain"
+                - href: "../../tests/governor/test_warrant_evidence_binding.py"
+                  rel: test
+                  text: "Reliance records bound into seal, deferral and refusal evidence"
+                - href: "../../tests/governor/test_warrant_freshness.py"
+                  rel: test
+                  text: "60 s reliance window and INELIGIBLE_STALE"
 
             - uuid: "0c2d40d7-0d19-4b9d-9afa-6c80967b31b4"
               control-id: sc-13
@@ -423,17 +435,26 @@ component-definition:
               control-id: ca-7
               description: |
                 Continuous ground-truth reconciliation keeps verified CBF state fresh
-                (POAM-2026-096). The reconciliation worker
-                (infra/modules/reconciliation_worker/main.tf) runs as a single-replica
-                Deployment in loop mode, polling every 60 s against a 300 s verified-state
-                TTL, and run_loop() (src/gateway/governance/reconciliation/daemon.py)
-                refuses to start when the TTL is less than twice the poll interval, so
-                verified state cannot lapse between runs. When the discrepancy guard trips,
-                the daemon records the failure, advances the fence epoch, and invalidates
-                state; it never writes the CBF state key from an unverified reading.
+                (POAM-2026-096, open). Terraform deploys the reconciliation worker
+                (infra/modules/reconciliation_worker/main.tf, on by default through
+                enable_reconciliation_worker) as a single-replica Deployment with the Recreate
+                strategy. It runs GroundTruthReconciler.run_loop()
+                (src/gateway/governance/reconciliation/daemon.py) every 60 s against a 300 s
+                verified-state TTL, and run_loop() refuses to start when the TTL is less than
+                twice the poll interval, so one missed poll does not expire a signed snapshot.
+                The worker signs snapshots with the reconciler-snapshot KMS key under its own
+                service account. When the discrepancy guard trips, the daemon first advances the
+                fence epoch, invalidates the verified state and records an active-fence marker,
+                then appends a RECONCILIATION_DISCREPANCY_FENCE record (KMS-signed under an
+                enforcing posture) to the hash-chained evidence stream; the gateway stays fenced
+                if that append fails, and the failure is counted. The daemon never writes the
+                CBF state key from an unverified reading. Status is partial: the worker reads a
+                simulated ground-truth provider (RECONCILIATION_PROVIDER=simulated; from_env()
+                builds _DefaultSimulatedProvider), and the loop has not been verified running on
+                a deployed cluster.
               props:
                 - name: implementation-status
-                  value: implemented
+                  value: partial
                 - name: control-origination
                   value: system-specific
                 - name: poam-reference
@@ -449,6 +470,9 @@ component-definition:
                   rel: test
                 - href: "../../tests/test_reconciliation_discrepancy_floor.py"
                   rel: test
+                - href: "../../tests/test_reconciler_chained_fences.py"
+                  rel: test
+                  text: "Hash-chained RECONCILIATION_DISCREPANCY_FENCE records; fence holds when the append fails"
 
             - uuid: "943496c8-5b07-48e4-a175-731366d416fa"
               control-id: si-10
@@ -476,31 +500,38 @@ component-definition:
             - uuid: "bcb59824-06a7-5be1-b456-29504bf608fa"
               control-id: si-10
               description: |
-                Governed trades execute at most once per idempotency key.
-                execute_trade_action (src/cage_finance/tools/tool_provider.py) refuses a
-                trade without a UUIDv4 or UUIDv5 transaction_id and claims the key in the
-                kernel ExecutionLedger (src/gateway/governance/execution_idempotency.py;
-                governor.components.execution_ledger, built by assemble_governor) before
-                governance runs: Redis SET NX EX with a per-attempt token claims it, and a
-                Lua compare-and-set on that token records EXECUTED, BLOCKED or UNKNOWN
-                with the outcome text. A resubmitted key is neither governed nor
-                dispatched through the ActuatorRegistry again: it receives the recorded
-                outcome, or UnsettledDuplicate while the first attempt runs or its
-                outcome is UNKNOWN, and the refusal is recorded in the evidence stream
-                as a GOVERNANCE_REFUSAL_RECEIPT (AC-3). An UNKNOWN actuation keeps the
-                claim pending reconciliation. Only a resubmission carrying an approval
-                (deferred_id) may re-claim a key whose attempt was BLOCKED; the gateway
-                verifies and spends the approval before anything runs. Without
-                Redis an enforcing posture refuses the trade; only DEV, TEST and CI fall
-                back to a process-local registry. The broker order carries the
-                transaction_id as client_order_id. GatewayMCPClient
-                (src/gateway/infrastructure/mcp_client.py) resends a tool call only when
-                nothing was sent or the gateway annotates the tool readOnlyHint or
-                idempotentHint, and otherwise raises MCPToolOutcomeUnknownError for the
-                caller to reconcile.
+                Governed trades execute at most once per transaction_id while the ledger
+                remembers the key. execute_trade_action
+                (src/cage_finance/tools/tool_provider.py) refuses a trade without a UUIDv4 or
+                UUIDv5 transaction_id and, before governance runs, claims the key in the kernel
+                ExecutionLedger (src/gateway/governance/execution_idempotency.py;
+                governor.components.execution_ledger, built by assemble_governor on the
+                gateway's shared Redis client, the governance Memorystore instance in
+                Terraform): Redis SET NX EX with a per-attempt token claims it, and a Lua
+                compare-and-set on that token records EXECUTED, BLOCKED or UNKNOWN with the
+                outcome text. execute_trade keys are namespaced by action, not by caller, so a
+                resubmission collides whichever path it takes. A resubmitted key is neither
+                governed nor dispatched through the ActuatorRegistry again: it receives the
+                recorded outcome, or UnsettledDuplicate while the first attempt runs or its
+                outcome is UNKNOWN, and the refusal is committed to the evidence stream as a
+                GOVERNANCE_REFUSAL_RECEIPT (AC-3). An UNKNOWN actuation keeps the claim pending
+                reconciliation. Only a resubmission carrying an approval (deferred_id) may
+                re-claim a key whose attempt was BLOCKED; the gateway verifies and spends the
+                approval before anything runs. Without Redis an enforcing posture refuses the
+                trade; only DEV, TEST and CI fall back to a process-local registry. The broker
+                order carries the transaction_id as client_order_id
+                (src/cage_finance/tools/trade_executor.py). GatewayMCPClient
+                (src/gateway/infrastructure/mcp_client.py) resends a tool call only when nothing
+                was sent or the gateway annotates the tool readOnlyHint or idempotentHint, and
+                otherwise raises MCPToolOutcomeUnknownError for the caller to reconcile. Status
+                is partial because the guarantee is bounded: a key is remembered for
+                DEFAULT_TTL_SECONDS (7 days), after which only the broker's client_order_id
+                deduplication remains, and claim writes are not acknowledged by a replica, so a
+                Valkey failover that loses a recent claim leaves the same broker deduplication
+                as the only guard.
               props:
                 - name: implementation-status
-                  value: implemented
+                  value: partial
                 - name: control-origination
                   value: system-specific
               links:
@@ -517,6 +548,9 @@ component-definition:
                   rel: test
                 - href: "../../tests/governance/test_execution_idempotency.py"
                   rel: test
+                - href: "../../tests/test_mcp_client_outcomes.py"
+                  rel: test
+                  text: "GatewayMCPClient resend policy and MCPToolOutcomeUnknownError"
 
             - uuid: "2de236dc-7f43-4ec2-939e-febbed7f1a5c"
               control-id: au-10
@@ -727,33 +761,35 @@ component-definition:
             - uuid: "c5c6-ia5-kms-lifecycle-00001111"
               control-id: ia-5
               description: |
-                Authenticator management is implemented via multi-vendor KMS support
-                ('gcp', 'aws', 'azure') through BaseKMSProvider abstraction
-                (src/gateway/governance/kms_provider.py). Key lifecycle management follows
-                documented rotation schedules in docs/operations/KEY_ROTATION.md: 90-day
-                rotation for Cloud KMS HSM keys, 30-day rotation for HMAC routing seal
-                secrets. RawMessageSigner dependency injection (src/gateway/governance/raw_signer_protocol.py)
-                decouples cryptographic execution from key lifecycle, enabling zero-downtime
-                key rotation without code changes. Multi-vendor support allows cryptographic
-                operations to remain vendor-neutral at the application layer while enforcing
-                jurisdiction-specific key residency requirements (US Federal: Cloud KMS in
-                us-central1, EU ECB: AWS KMS in eu-west-1, APAC MAS: Azure Key Vault in
-                southeastasia). Emergency key revocation procedures documented in
-                docs/operations/KEY_ROTATION.md include immediate rotation triggers
-                (detected key compromise, cryptographic algorithm deprecation, regulatory
-                mandate) and fail-closed behavior (expired or revoked keys rejected with
-                structured audit trail).
+                Authenticator management for signing keys is partial. Signing goes through the
+                BaseKMSProvider abstraction (src/gateway/governance/kms_signer.py), with
+                provider implementations for Cloud KMS, AWS KMS and Azure Key Vault
+                (src/integrations/gcp/kms_provider.py, src/integrations/aws/kms_provider.py,
+                src/integrations/azure/kms_provider.py), and RawMessageSigner dependency
+                injection (src/gateway/governance/raw_signer_protocol.py) lets a signer be
+                replaced without code changes. The reference Terraform provisions Cloud KMS keys
+                only: the asymmetric signing keys in infra/targets/gcp-gke/kms_signing.tf
+                (gateway-seal, reconciler-snapshot, compliance-evidence, benchmark-signing) and
+                the CMEK key ring, for which a plan-time precondition in
+                infra/modules/kms/main.tf refuses us-central1 for EU_ECB and APAC_MAS. The
+                signing keys have no rotation period. docs/operations/KEY_ROTATION.md describes
+                an illustrative manual 90-day rotation with JWKS overlap and an emergency
+                revocation runbook; nothing records or checks that a rotation took place.
+                Verifiers resolve keys strictly by kid (src/gateway/governance/jwks.py), so a
+                seal without a kid, or whose kid matches no published key, fails verification.
+                The HMAC routing-seal secret is retired; HMAC remains only as a dev-posture seal
+                fallback that enforcing postures refuse at startup (see SC-12).
               props:
                 - name: implementation-status
-                  value: implemented
+                  value: partial
                 - name: control-origination
                   value: system-specific
                 - name: kms-rotation-schedule-hsm
-                  value: "90-day"
+                  value: "90-day manual runbook; no automated rotation or rotation record"
                 - name: kms-rotation-schedule-hmac
-                  value: "30-day"
+                  value: "none; HMAC routing-seal secret retired"
                 - name: multi-vendor-kms
-                  value: "gcp, aws, azure"
+                  value: "gcp, aws, azure providers in code; reference Terraform provisions Cloud KMS only"
               links:
                 - href: "https://csrc.nist.gov/projects/cprt/api/cprt/framework/version/SP_800_53_5_1_1/home?element=IA-5"
                   rel: reference
@@ -763,9 +799,12 @@ component-definition:
                 - href: "../../src/gateway/governance/raw_signer_protocol.py"
                   rel: implementation
                   text: "RawMessageSigner protocol abstraction"
-                - href: "../../src/gateway/governance/kms_provider.py"
+                - href: "../../src/gateway/governance/kms_signer.py"
                   rel: implementation
                   text: "BaseKMSProvider multi-vendor abstraction"
+                - href: "../../infra/targets/gcp-gke/kms_signing.tf"
+                  rel: configuration
+                  text: "Cloud KMS asymmetric signing keys (no rotation period)"
 
             - uuid: "3a85d9c6-8e4b-5d72-a0a5-9f6b0e7d4a3b"
               control-id: si-7
@@ -883,39 +922,72 @@ component-definition:
             - uuid: "8e46d991-dd78-416a-897d-f909cb63be8d"
               control-id: si-10
               description: |
-                Information input validation runs in-process on every input. The governed
-                agent's input rail node (src/gateway/governance/langgraph_harness/nemo_node_factory.py)
-                replaces each user message with its Presidio-redacted text (12 identity
-                entity types: PERSON, EMAIL_ADDRESS, PHONE_NUMBER, CREDIT_CARD, CRYPTO,
-                US_SSN, US_ITIN, US_PASSPORT, US_BANK_NUMBER, US_DRIVER_LICENSE, IBAN_CODE,
-                IP_ADDRESS), failing closed in enforcing postures when redaction raises, and
-                blocks input that matches the Stage 1 keyword list (tier1_keywords in
-                config/governance_thresholds.json). The gateway's inference proxy
-                (src/gateway/server/inference_proxy.py) runs the same keyword scan over
-                every message of every request and stamps the outcome on the request's
-                OTel span. A Presidio engine that fails to initialise leaves input
-                unredacted instead of failing closed (POAM-2026-147).
+                Information input validation for the governed advisor's conversation is
+                deterministic and in-process, but it runs inside the advisor, not in the
+                governance plane, so status is partial. The advisor's LangGraph input rail
+                (create_nemo_guardrail_node in
+                src/gateway/governance/langgraph_harness/nemo_node_factory.py, wired by
+                src/governed_financial_advisor/graph/nodes/guardrail_node.py) replaces each user
+                message with its Presidio-redacted text (12 identity entity types: PERSON,
+                EMAIL_ADDRESS, PHONE_NUMBER, CREDIT_CARD, CRYPTO, US_SSN, US_ITIN, US_PASSPORT,
+                US_BANK_NUMBER, US_DRIVER_LICENSE, IBAN_CODE, IP_ADDRESS;
+                src/integrations/presidio/redactor.py), failing closed in enforcing postures
+                when redaction raises, and blocks input that matches the Stage 1 keyword list
+                (tier1_keywords in config/governance_thresholds.json). A Presidio engine that
+                fails to initialise leaves input unredacted instead of failing closed
+                (POAM-2026-147, open). The gateway's inference proxy
+                (src/gateway/server/inference_proxy.py) runs the same keyword scan over every
+                message of each request it receives and stamps the outcome on the request's OTel
+                span, but the reference deployment does not route the advisor's model calls
+                through it: Terraform points the advisor at the vLLM services directly
+                (infra/targets/gcp-gke/main.tf), and the namespace NetworkPolicy allows that
+                path (infra/targets/gcp-gke/network_policy.tf). Neither screen writes its
+                outcome to the evidence stream. At the action boundary, the gateway's
+                server-input binding inspects the string parameters of every governed action for
+                the same keywords and for injection markers, and a detection makes the
+                confidence stage deny the action (inspect_prompt_injection_params in
+                src/gateway/governance/governor/server_inputs.py).
               props:
                 - name: implementation-status
-                  value: implemented
+                  value: partial
                 - name: control-origination
                   value: system-specific
               links:
                 - href: "https://csrc.nist.gov/projects/cprt/api/cprt/framework/version/SP_800_53_5_1_1/home?element=SI-10"
                   rel: reference
+                - href: "../../src/gateway/governance/langgraph_harness/nemo_node_factory.py"
+                  rel: implementation
+                  text: "Advisor input and output rail nodes (Presidio redaction, Stage 1 keyword scan)"
+                - href: "../../src/gateway/governance/governor/server_inputs.py"
+                  rel: implementation
+                  text: "Server-side injection inspection of governed action parameters"
+                - href: "../../tests/test_nemo_pii_redaction.py"
+                  rel: test
+                - href: "../../tests/test_server_inputs.py"
+                  rel: test
 
             - uuid: "b1f022fc-e7f1-45e6-8972-9f5ab16f99fa"
               control-id: si-3
               description: |
                 Partial. On the input side the Stage 1 keyword scan blocks known
-                prompt-injection, jailbreak and control-override phrases at the governed
-                agent's input rail and at the gateway's inference proxy before any model
-                sees them, and the proxy stamps each outcome on the request's OTel span.
-                On the output side only PII scrubbing is deterministic: the output rail
-                node scrubs every agent answer and returns the blocked sentinel on any
-                error, but no deterministic check screens model output for harmful content.
-                The optional NeMo Colang rails add an LLM jailbreak check and output judge
-                only when CAGE_NEMO_ENABLED=true; this statement does not rely on them.
+                prompt-injection, jailbreak and control-override phrases in the governed
+                advisor's own input rail
+                (src/gateway/governance/langgraph_harness/nemo_node_factory.py) before its
+                agents see them, and in the gateway's inference proxy
+                (src/gateway/server/inference_proxy.py) for requests sent to it, which stamps
+                each outcome on the request's OTel span. The reference Terraform sends the
+                advisor's model calls to vLLM directly, not through the proxy
+                (infra/targets/gcp-gke/main.tf), so for the deployed advisor only its own input
+                rail screens prompts. At the action boundary the gateway inspects the string
+                parameters of every governed action for the same phrases and injection markers
+                and denies the action on a match
+                (src/gateway/governance/governor/server_inputs.py). On the output side only PII
+                scrubbing is deterministic: the advisor's output rail node runs Presidio
+                redaction and regex scrubbing on every agent answer and returns the blocked
+                sentinel on any error, but no deterministic check screens model output for
+                harmful content. The optional NeMo Colang rails add an LLM jailbreak check and
+                output judge only when CAGE_NEMO_ENABLED=true; this statement does not rely on
+                them.
               props:
                 - name: implementation-status
                   value: partial
@@ -955,77 +1027,117 @@ component-definition:
                 FTRA (Tier 0.5) classifies each tool call against the digest-covered terminal
                 registry (src/gateway/governance/ftra/classifier.py) and routes irreversible or
                 unregistered actions to human review; a registered terminal clears autonomously
-                only inside its signed autonomous envelope with a known, finite, positive
-                magnitude (src/gateway/governance/ftra/autonomy.py). Parameter value validation
-                (SI-10) is enforced by STPA UCA rules (src/cage_finance/stpa/uca_rules.py) and the
-                domain OPA policy (src/cage_finance/opa/trade_governance.rego). Prompt injection
-                is screened on every input by the deterministic Stage 1 keyword scan
-                (ac_keyword_scan in src/gateway/governance/text_filter.py, run by the LangGraph
-                input rail node and the inference proxy). UCA-7 is enforced on the Python STPA
-                path (_check_core_uca_7 in src/gateway/governance/stpa_validator.py, bound by
-                PromptInjectionInputResolver in src/gateway/governance/governor/server_inputs.py,
-                which denies a prompt_injection_check whose server-bound semantic_score exceeds
-                the UCA's threshold); the
-                optional NeMo Colang rails add LLM-backed screening only when
-                CAGE_NEMO_ENABLED=true.
-                Before parking a REQUIRE_APPROVAL token for human review, run_pipeline() previews
-                every claiming phase-2 mutating barrier side-effect-free (Phase2Mode.PREVIEW /
-                _preview_mutating in src/gateway/governance/governor/pipeline.py): a HARD barrier
-                breach (such as CBF_BARRIER_VIOLATED) denies the request before a human reviewer
-                is paged (hard_preview_denies_before_hitl in proof/model.py), while a NARROWABLE
-                barrier breach (such as FISCAL_LIMIT_EXCEEDED) records barrier_preview=FAIL and
-                barrier_preview_violations with Violation.bound (src/gateway/governance/contracts.py)
-                on the DeferToken snapshot without holding a Redis reservation across human review
-                time (PREVIEW_IS_PURE). Multi-critic consensus evaluation in
-                src/gateway/governance/consensus/engine.py enforces strict critic vote parsing
-                (_parse_critic_vote), per-critic context_keys parameter allowlisting, RFC 8785
-                canonical JSON parameter delimiting (<params_json>...</params_json>), and pinned
-                gateway prompt fields (role, action, action_type, magnitude) so untrusted agent
-                parameters cannot override critic instructions or induce fail-open vote
-                misinterpretation (POAM-2026-081). The FTRA terminal registry's manifest_sha256
-                (registry_digest in src/gateway/governance/ftra/classifier.py) covers the
-                autonomous_envelope together with the terminals, so a tampered ceiling fails the
-                load-time integrity check; an envelope without a digest, or with a non-finite,
-                non-positive or malformed max_magnitude, refuses to load.
+                only inside its autonomous envelope with a known, finite, positive magnitude
+                (src/gateway/governance/ftra/autonomy.py). FTRA validates no parameter values;
+                status is partial because the checks that do are only partly independent of the
+                caller. Parameter values are checked by the STPA UCA rules
+                (src/cage_finance/stpa/uca_rules.py) and the domain OPA policy
+                (src/cage_finance/opa/trade_governance.rego). Only inputs marked server_bound
+                (in finance: portfolio_total, drawdown, latency_ms, order_size, daily_vol and
+                trader_role; src/cage_finance/config/stpa/trade_hazards.yaml) are measured or
+                bound by the gateway; other UCA inputs, such as risk_assessed,
+                compliance_checked and confidence, are taken from the caller. The OPA policy
+                runs in an OPA whose REST API takes no authentication (POAM-2026-195). Prompt
+                injection is screened by the deterministic Stage 1 keyword scan (ac_keyword_scan
+                in src/gateway/governance/text_filter.py) in the governed advisor's LangGraph
+                input rail and in the gateway's inference proxy, which the reference
+                deployment's advisor does not call (see 8e46d991); at the action boundary the
+                gateway's server-input binding inspects every governed action's string
+                parameters and denies the action on a detection
+                (src/gateway/governance/governor/server_inputs.py). UCA-7 is enforced on the
+                Python STPA path for the prompt_injection_check action:
+                PromptInjectionInputResolver (src/gateway/governance/governor/server_inputs.py)
+                strips any caller-supplied semantic_score and recomputes it from deterministic
+                server-side inspection, and _check_core_uca_7
+                (src/gateway/governance/stpa_validator.py) denies a missing score or one above
+                the UCA's threshold. The optional NeMo Colang rails add LLM-backed screening
+                only when CAGE_NEMO_ENABLED=true. Before parking a REQUIRE_APPROVAL token for
+                human review, run_pipeline() previews every claiming phase-2 mutating barrier
+                side-effect-free (Phase2Mode.PREVIEW / _preview_mutating in
+                src/gateway/governance/governor/pipeline.py): a HARD barrier breach (such as
+                CBF_BARRIER_VIOLATED) denies the request before a human reviewer is paged
+                (hard_preview_denies_before_hitl in proof/model.py), while a NARROWABLE barrier
+                breach (such as FISCAL_LIMIT_EXCEEDED) records barrier_preview=FAIL and
+                barrier_preview_violations with Violation.bound
+                (src/gateway/governance/contracts.py) on the DeferToken snapshot without holding
+                a Redis reservation across human review time (PREVIEW_IS_PURE,
+                tests/governor/test_cbf_preview_purity.py). Multi-critic consensus evaluation in
+                src/gateway/governance/consensus/engine.py parses critic votes strictly
+                (_parse_critic_vote), allowlists per-critic context_keys, delimits parameters as
+                RFC 8785 canonical JSON (<params_json>...</params_json>), and pins the gateway
+                prompt fields (role, action, action_type, magnitude) so untrusted agent
+                parameters cannot override critic instructions (POAM-2026-081); the reference
+                Terraform leaves the critics off (CAGE_CONSENSUS_CRITICS_ENABLED=false). The
+                FTRA terminal registry's manifest_sha256 (registry_digest in
+                src/gateway/governance/ftra/classifier.py) covers the autonomous_envelope
+                together with the terminals, so an edited ceiling fails the load-time integrity
+                check, and an envelope without a digest, or with a non-finite, non-positive or
+                malformed max_magnitude, refuses to load. The digest is unkeyed and stored in
+                the same file; out-of-band tamper resistance needs FTRA_EXPECTED_MANIFEST_SHA256
+                or the CI stpa-freshness-check, and no Terraform profile sets that pin.
               props:
                 - name: implementation-status
-                  value: implemented
+                  value: partial
                 - name: control-origination
                   value: system-specific
               links:
                 - href: "https://csrc.nist.gov/projects/cprt/api/cprt/framework/version/SP_800_53_5_1_1/home?element=SI-10"
                   rel: reference
+                - href: "../../tests/test_ftra_conditional_clearance.py"
+                  rel: test
+                  text: "Envelope clearance, digest coverage and refusal to load malformed envelopes"
+                - href: "../../tests/test_server_inputs.py"
+                  rel: test
+                  text: "Server-bound inputs and UCA-7 semantic_score recomputation"
 
             - uuid: "ac030001-ftra-8000-envelope000001"
               control-id: ac-3
               description: |
-                FTRA boundary enforcement (src/gateway/governance/governor/stages/ftra.py) classifies
-                every action against the active domain's signed terminal registry and names the
-                provenance of the decision (FtraBoundaryResult.from_classification in
+                FTRA boundary enforcement (src/gateway/governance/governor/stages/ftra.py)
+                classifies every action against the active domain's digest-covered terminal
+                registry and names the provenance of the decision
+                (FtraBoundaryResult.from_classification in
                 src/gateway/governance/ftra/models.py): FTRA_REGISTERED_IRREVERSIBLE,
                 FTRA_REGISTERED_EXTERNALLY_REVERSIBLE, FTRA_UNREGISTERED_ACTION and
-                FTRA_REGISTRY_ENTRY_INVALID require human approval; FTRA_REGISTRY_UNAVAILABLE
-                (unreadable registry) is a HARD deny. Pre-flight validation
-                (SymbolicGovernor.validate_action in src/gateway/governance/governor/governor.py)
-                runs under Profile.DRY_RUN, mints no seal, and parks REQUIRE_APPROVAL verdicts as
-                DeferReason.HITL_REQUIRED tokens in DeferQueue returning deferred_id. A single
+                FTRA_REGISTRY_ENTRY_INVALID require human approval, except that a registered
+                terminal inside its autonomous envelope clears without one (AC-6);
+                FTRA_REGISTRY_UNAVAILABLE (unreadable registry) is a HARD deny. Pre-flight
+                validation (SymbolicGovernor.validate_action in
+                src/gateway/governance/governor/governor.py) runs under Profile.DRY_RUN, mints
+                no seal, and parks REQUIRE_APPROVAL verdicts as DeferReason.HITL_REQUIRED tokens
+                in DeferQueue, returning deferred_id. Only distinct human operators
+                authenticated by OIDC can approve a token, through POST
+                /v1/defer/{defer_id}/escalate on the compliance bridge (AC-3, IA-2); dev-mode
+                synthetic approvers need CAGE_ENV=dev and an explicit opt-in. A single
                 committing run executes per trade: execute_trade_action(..., deferred_id=...)
                 invokes SymbolicGovernor.revalidate_post_hitl() under Profile.POST_HITL, which
-                spends the approval atomically via DeferQueue.consume_approval() only when the
-                run seals (a warrant-ineligible DEFER leaves it redeemable) (stage_runs_under
-                in src/gateway/governance/governor/pipeline.py; proved in proof/model.py). Any
-                narrow_hint / narrowed_params attached to REQUIRE_APPROVAL is advisory, dry-run
-                re-verified before surfacing (_reverified_narrow_hint) and re-verified in full by
-                the committing run (_sealed_narrow with issue_narrow_receipt inside
-                ReservationScope).
+                decides first and spends second: a clean run spends the approval atomically
+                (DeferQueue.consume_approval()) before the seal is minted, a DENY spends it, and
+                a warrant-ineligible DEFER leaves it redeemable. The stages each profile runs
+                are fixed by stage_runs_under in src/gateway/governance/governor/pipeline.py and
+                mirrored in proof/model.py. Any narrow_hint / narrowed_params attached to
+                REQUIRE_APPROVAL is advisory, dry-run re-verified before surfacing
+                (_reverified_narrow_hint) and re-verified in full by the committing run
+                (_sealed_narrow with issue_narrow_receipt inside ReservationScope).
               props:
                 - name: implementation-status
-                  value: implemented
+                  value: partial
                 - name: control-origination
                   value: system-specific
               links:
                 - href: "https://csrc.nist.gov/projects/cprt/api/cprt/framework/version/SP_800_53_5_1_1/home?element=AC-3"
                   rel: reference
+                - href: "../../tests/governor/stages/test_ftra_stage.py"
+                  rel: test
+                - href: "../../tests/test_ftra_conditional_clearance.py"
+                  rel: test
+                  text: "Provenance codes, unavailable registry is HARD, unregistered never clears"
+                - href: "../../tests/governor/test_post_hitl_approval_spend.py"
+                  rel: test
+                  text: "Approval spent once by the committing run; DEFER leaves it redeemable"
+                - href: "../../tests/unit/governance/test_hitl_operator_identity.py"
+                  rel: test
+                  text: "Only allowlisted human OIDC operators can approve"
 
             - uuid: "ac060001-ftra-8000-envelope000001"
               control-id: ac-6
@@ -1046,6 +1158,9 @@ component-definition:
               links:
                 - href: "https://csrc.nist.gov/projects/cprt/api/cprt/framework/version/SP_800_53_5_1_1/home?element=AC-6"
                   rel: reference
+                - href: "../../tests/test_ftra_conditional_clearance.py"
+                  rel: test
+                  text: "Envelope clearance, never clears outside its conditions, plan analyzer uses the same predicate"
 
     # -----------------------------------------------------------------------
     # Component 4: OPA Policy Engine (src/cage_finance/opa/trade_governance.rego)
@@ -1056,10 +1171,12 @@ component-definition:
       title: "OPA Policy Engine"
       type: software
       description: >
-        Open Policy Agent evaluating Rego policies (src/cage_finance/opa/trade_governance.rego) on
-        every trade execution and governance request. Enforces RBAC role limits,
-        fiscal thresholds, and request authentication. Decision logs are emitted
-        to stdout and captured by Cloud Logging.
+        Open Policy Agent evaluating the active domain's Rego policy (finance:
+        src/cage_finance/opa/trade_governance.rego) as a stage of the governor
+        pipeline for every action submitted to the governor. Enforces
+        role-graduated trade limits and asset rules. The reference Terraform runs
+        OPA without a decision-log configuration and without REST API
+        authentication (POAM-2026-195).
       purpose: >
         Provides deterministic, auditable policy enforcement independent of the
         LLM reasoning layer. Least-privilege access and RBAC are enforced via
@@ -1075,43 +1192,71 @@ component-definition:
             - uuid: "d3a6a007-74a4-4c0f-b2ba-d68bb2c395ff"
               control-id: ac-6
               description: |
-                Least privilege is enforced via OPA Rego policy in src/cage_finance/opa/trade_governance.rego.
-                The policy grants permissions based on user role (junior_analyst, senior_analyst,
-                compliance_officer, admin) with graduated fiscal limits: junior analysts are
-                limited to $5,000 per trade and $10,000 daily aggregate; senior analysts to
-                $500,000 and $1,000,000 respectively. Fiscal limit checks in src/cage_finance/opa/trade_governance.rego
-                enforce per-user-class constraints. Users cannot escalate their own permissions;
-                all role assignments are managed via Kubernetes RBAC and propagated to OPA
-                via environment configuration.
+                Least privilege for trading is enforced by the active domain's OPA policy,
+                src/cage_finance/opa/trade_governance.rego, which Terraform loads into the
+                in-cluster OPA (infra/targets/gcp-gke/main.tf) and the governor's OPA stage
+                queries for every action submitted to the governor. It defines two roles: junior
+                traders are allowed up to $5,000 per trade, routed to manual review up to
+                $10,000 and denied above; senior traders are allowed up to $500,000, routed to
+                manual review up to $1,000,000 and denied above. A missing or unknown role is
+                denied for every action except market_analysis. The gateway binds trader_role
+                server-side from the caller's verified mesh identity (TraderRoleBindings in
+                src/cage_finance/tools/trader_binding.py, configured by
+                CAGE_TRADER_ROLE_BINDINGS); the caller cannot name its own role, and with no
+                bindings configured, as in the reference Terraform, every verified identity is
+                junior. Status is partial: OPA's REST API takes no authentication and has no
+                Linkerd Server policy, so another pod in the namespace could replace the loaded
+                policy (POAM-2026-195).
 
-                Workload least privilege: each workload runs as its own Kubernetes
-                service account bound 1:1 to its own GCP service account
-                (infra/targets/gcp-gke/iam.tf). The
-                advisor, model-serving (vLLM), telemetry and UI workloads hold no KMS
-                signer role; only the gateway signs with gateway-seal (POAM-2026-079
-                closed).
+                Workload least privilege: each workload runs as its own Kubernetes service
+                account; those that call Google APIs are bound 1:1 to their own GCP service
+                account (infra/targets/gcp-gke/iam.tf), and the advisor and OPA have no cloud
+                identity. The advisor, model-serving (vLLM), telemetry and UI workloads hold no
+                KMS signer role; only the gateway signs with gateway-seal
+                (infra/targets/gcp-gke/kms_signing.tf; POAM-2026-079 closed), and
+                tests/infrastructure/test_workload_identity_partition.py fails the build if a
+                KMS role is granted at keyring or project scope.
               props:
                 - name: implementation-status
-                  value: implemented
+                  value: partial
                 - name: control-origination
                   value: system-specific
               links:
                 - href: "https://csrc.nist.gov/projects/cprt/api/cprt/framework/version/SP_800_53_5_1_1/home?element=AC-6"
                   rel: reference
+                - href: "../../src/cage_finance/opa/trade_governance.rego"
+                  rel: implementation
+                  text: "Role-graduated trade limits"
+                - href: "../../src/cage_finance/tools/trader_binding.py"
+                  rel: implementation
+                  text: "Server-side trader_role binding from verified identity"
+                - href: "../../tests/cage_finance/test_trader_binding.py"
+                  rel: test
+                - href: "../../tests/infrastructure/test_workload_identity_partition.py"
+                  rel: test
 
             - uuid: "f919c0a0-f04d-4925-8605-6a759f9ee94e"
               control-id: ac-3
               description: |
-                Access enforcement is implemented via OPA allow/deny decisions logged with
-                a full audit trail in src/cage_finance/opa/trade_governance.rego. Every request is
-                evaluated against the current policy; denied requests are logged with
-                the reason (insufficient_role, fiscal_limit_exceeded, invalid_seal) and
-                returned as structured JSON with HTTP 403. Audit logs include user identity,
-                resource requested, decision outcome, and applicable policy rules. The
-                compliance bridge ingests OPA decision logs into OSCAL Assessment Results.
+                Access enforcement decisions on governed actions come from the governor's OPA
+                stage (src/gateway/governance/governor/stages/opa.py), which queries the active
+                domain's package (finance: src/cage_finance/opa/trade_governance.rego); an OPA
+                DENY or an OPA failure is a HARD violation and the action is refused. The audit
+                trail of a refusal is the hash-chained evidence stream: handle_deny() builds a
+                refusal receipt naming the violated tier and violation codes and commits it as a
+                GOVERNANCE_REFUSAL record (publish_refusal in
+                src/gateway/governance/governor/verdicts.py), blocking under
+                EVIDENCE_CHAIN_BLOCKING=true, which Terraform sets. POST
+                /governance/validate-action returns HTTP 403 with the violations and the
+                receipt's proof_hash, or 503 when the record cannot be committed. The compliance
+                bridge re-verifies, KMS-signs and archives these records (see AU-9 and AU-10).
+                OPA itself keeps no decision log (Terraform runs it without a config file;
+                infra/modules/opa_policy/main.tf), and nothing ingests OPA decision logs. Status
+                is partial: live verification of evidence custody is pending (POAM-2026-084),
+                and OPA's REST API takes no authentication (POAM-2026-195).
               props:
                 - name: implementation-status
-                  value: implemented
+                  value: partial
                 - name: control-origination
                   value: system-specific
               links:
@@ -1119,69 +1264,60 @@ component-definition:
                   rel: reference
                 - href: "#a08c55f1-6d12-445d-b4ae-a99c8b573935"
                   rel: lula
+                - href: "../../src/gateway/governance/governor/verdicts.py"
+                  rel: implementation
+                  text: "handle_deny() and publish_refusal()"
+                - href: "../../tests/test_refusal_receipt_ingestion.py"
+                  rel: test
 
             - uuid: "5f386745-cdda-431b-adec-850cdd899f3e"
               control-id: ia-3
               description: |
-                **IA-3 Device Identification and Authentication** is implemented through
-                cryptographic SPIFFE SVID extraction from mTLS substrate across all
-                ingress and inter-service communication paths:
+                **IA-3 Device Identification and Authentication** uses Linkerd mTLS workload
+                identity; status is partial.
 
-                1. **Kernel-Level Workload Identity Extraction (2026-09-22 Extension)**:
-                   The Linkerd mTLS mesh policy has been extended to all public ingress
-                   agent paths via strict workload identity validation. Under Linkerd mTLS,
-                   the Linkerd inbound proxy terminates TLS and sets `l5d-client-id`
-                   (`<sa>.<ns>.serviceaccount.identity.linkerd.<trust-domain>`). Gateway ingress
-                   authentication and caller identity extraction live in
-                   src/gateway/server/workload_identity.py (`WorkloadIdentityMiddleware` and
-                   `extract_client_identity(scope)`), eliminating header-based identity spoofing
-                   attack surface.
+                1. **Linkerd identity** (infra/modules/service_mesh/main.tf): every meshed pod
+                   gets a 24 h workload certificate from an identity issuer (48 h, renewed by
+                   cert-manager) chained to a Google CAS root, and a ValidatingAdmissionPolicy
+                   refuses governance-namespace pods created without the proxy. Traffic between
+                   meshed pods is mutual TLS. The inbound proxy sets `l5d-client-id` to the
+                   caller's verified identity
+                   (`<sa>.<ns>.serviceaccount.identity.linkerd.<trust-domain>`) or removes it.
 
-                   Extraction and enforcement functions:
-                   - `WorkloadIdentityMiddleware`: Deny-by-default ASGI middleware enforcing `CAGE_TRUSTED_CLIENT_IDENTITIES` in every environment
-                   - `extract_client_identity(scope)`: FastAPI/Uvicorn inference proxy and gateway caller identity extraction from `l5d-client-id`
-                   - Both validate the Linkerd identity syntax and fail closed on missing or untrusted identities
+                2. **Gateway ingress** (POAM-2026-080): `WorkloadIdentityMiddleware` and
+                   `extract_client_identity(scope)` (src/gateway/server/workload_identity.py)
+                   trust `l5d-client-id` only on a pod-local connection (the TCP peer is the
+                   pod's own non-loopback IP; loopback peers such as kubectl port-forward are
+                   refused), check its syntax, and admit only identities in
+                   `CAGE_TRUSTED_CLIENT_IDENTITIES`, which is required in every environment.
+                   Requests without a verified identity fail closed (401/403). The gateway's
+                   mesh policy chart (infra/modules/gateway/mesh-policy/templates/policy.yaml)
+                   admits only the trusted identities on gated routes at the mesh layer. The
+                   former HMAC request seal (CAGE_ROUTING_SEAL_SECRET) is removed.
 
-                   Requests without a verified Linkerd workload identity fail closed (403/401).
+                3. **Compliance bridge** (src/compliance_bridge/auth.py): `l5d-client-id` is
+                   accepted only from a pod-local connection (401 otherwise) and converted to a
+                   canonical spiffe:// URI; the client-controllable x-cage-source-principal
+                   header is never accepted as an identity. POST /v1/infra/events and POST
+                   /v1/audit/ingest derive the producer from that verified identity and admit
+                   only allowlisted producers. The approval path (POST
+                   /v1/defer/{defer_id}/escalate) refuses workload identities and requires a
+                   human OIDC identity (IA-2), so a workload certificate never authenticates a
+                   human approver.
 
-                2. **Linkerd Service Mesh mTLS Foundation**:
-                   Linkerd enforces pod-to-pod mutual TLS (mTLS) across all in-cluster
-                   communication (infra/modules/service_mesh/main.tf,
-                   infra/modules/gateway/mesh-policy/templates/policy.yaml). Every pod
-                   receives a SPIFFE ID in the format:
-                   spiffe://<trust-domain>/ns/<namespace>/sa/<service-account>
-
-                3. **Gateway Workload-Identity Ingress Check** (POAM-2026-080):
-                   The gateway trusts the l5d-client-id header set by its Linkerd inbound
-                   proxy after mTLS, only on a connection from inside the pod (the proxy
-                   connects from the pod's own address; POAM-2026-167), and admits only identities in
-                   CAGE_TRUSTED_CLIENT_IDENTITIES (src/gateway/server/workload_identity.py),
-                   which is required and enforced in every environment.
-                   Linkerd identities are DNS-style
-                   (<sa>.<ns>.serviceaccount.identity.linkerd.<trust-domain>). The former
-                   HMAC request seal (CAGE_ROUTING_SEAL_SECRET) is removed.
-
-                4. **Dual-Layer Identity Model**:
-                   Workload SVID authenticates the device/channel (IA-3); OIDC sub identifies
-                   the human operator in shared-console scenarios (IA-2). This separation
-                   enables cryptographically verifiable device authentication independent of
-                   operator identity.
-
-                5. **Compliance Bridge Operator Path**:
-                   The require_operator_identity() function (src/compliance_bridge/auth.py)
-                   extracts SVID from request.attributes.source.principal (gRPC transport) or
-                   Linkerd's proxy-verified l5d-client-id header (converted to a canonical
-                   spiffe:// URI), extending mTLS workload identity to the defer escalation
-                   approval path. The header is accepted only on a connection from inside
-                   the pod, and refused with 401 from any other peer (POAM-2026-167).
-                   Self-asserted x-cage-source-principal headers are rejected.
-
-                BREAKING CHANGE (2026-09-22): Removed X-Agent-ID and X-SPIFFE-ID header
-                parsing. All requests must present a verified Linkerd mTLS workload identity.
+                BREAKING CHANGE (2026-09-22): Removed X-Agent-ID and X-SPIFFE-ID header parsing.
+                All requests must present a verified Linkerd mTLS workload identity.
                 Anonymous/unauthenticated requests fail closed (403/401).
+
+                Open: only the gateway has Linkerd Server and AuthorizationPolicy resources;
+                OPA, NeMo and the compliance bridge have none, and OPA's REST API takes no
+                authentication (POAM-2026-195, POAM-2026-080). CI's mesh-conformance job
+                exercises the gateway chart and image on kind with stock Linkerd
+                (tests/integration/test_linkerd_mesh_conformance.py); the checks have not been
+                run on a deployed, CAS-rooted cluster (POAM-2026-167).
               props:
                 - name: implementation-status
-                  value: implemented
+                  value: partial
                 - name: control-origination
                   value: system-specific
                 - name: operator-path-extension-date
@@ -1201,10 +1337,15 @@ component-definition:
                   text: "Linkerd SPIFFE trust domain and gateway mTLS authorization policy"
                 - href: "../../src/compliance_bridge/auth.py"
                   rel: implementation
-                  text: "require_operator_identity() SVID extraction for approval path"
+                  text: "Pod-local l5d-client-id check, producer mesh identity, human-only approval path"
                 - href: "../../tests/test_inference_proxy_extended.py"
                   rel: test
                   text: "SPIFFE enforcement and fail-closed device authentication tests"
+                - href: "../../tests/test_workload_identity_middleware.py"
+                  rel: test
+                - href: "../../tests/integration/test_linkerd_mesh_conformance.py"
+                  rel: test
+                  text: "kind + stock Linkerd: chart rendering, untrusted identity and forged header refused"
 
     # -----------------------------------------------------------------------
     # Component 4: Compliance Bridge (src/compliance_bridge/)
@@ -1215,16 +1356,16 @@ component-definition:
       title: "Compliance Bridge"
       type: software
       description: >
-        Automated OSCAL audit pipeline providing continuous monitoring, audit
-        information protection, and incident reporting. Runs a 5-step assessment
-        workflow every 6 hours via Kubernetes CronJob. Stores OSCAL Assessment
-        Results to MinIO/GCS and delivers real-time compliance events via SSE
-        and Slack/PagerDuty notifications.
+        Compliance service and evidence custodian: it re-verifies the gateway's
+        evidence chain, KMS-signs each batch and archives it to a retention-locked
+        WORM bucket, records Lula results and infrastructure events on hash chains,
+        monitors evidence age, and reports through a configurable notifier
+        (console in the reference Terraform) and an SSE event stream.
       purpose: >
         Operationalizes continuous compliance monitoring by automating the
         collect-analyze-report cycle. Protects audit integrity through object
-        storage with locking. Ensures security-relevant events are reported to
-        responsible parties within SLA-defined timeframes.
+        storage with locking. Raises alerts when a control's evidence exceeds its
+        SLA age.
       responsible-roles:
         - role-id: provider
       props:
@@ -1242,24 +1383,41 @@ component-definition:
             - uuid: "356c3f20-ff82-4a9e-9b62-83c0aa240df1"
               control-id: ca-7
               description: |
-                Continuous monitoring is automated via the 5-step audit pipeline in
-                src/compliance_bridge/audit_workflow.py: (1) collect OTel spans from
-                Langfuse, (2) evaluate control safety rates, (3) generate OSCAL Assessment
-                Results, (4) store to MinIO/GCS, (5) alert on failures. Lula validations are
-                scheduled via a standalone Terraform CronJob tracked under POAM-2026-195
-                (retiring 385e502e:src/compliance_bridge/lula_scheduler.py).
-                Lula validation manifests in compliance/lula/ provide automated control
-                assertions (lula-validation-au12.yaml, lula-validation-ac3.yaml,
-                lula-validation-ra5.yaml, lula-validation-cm6.yaml, lula-validation-ir6.yaml).
-                Monitoring status is streamed in real-time via src/compliance_bridge/sse_events.py.
-                Formal-model conformance: every governor decision and actuation emits a
-                GOVERNANCE_TRACE evidence event (src/gateway/governance/governor/trace.py), and
-                scripts/check_trace_conformance.py checks an exported stream against
-                proof/model.py (reachability, seal-before-execution, single-use seals). The
-                check runs on demand over exports; it is not yet scheduled.
+                Continuous monitoring in the compliance bridge is partial.
+                - In-cluster Lula auditor: Terraform deploys a CronJob
+                  (infra/modules/lula_cron/main.tf, on by default, every 15 minutes by default)
+                  that runs lula validate on every manifest in compliance/lula/ not marked `#
+                  cage-status: planned` and posts a pass/fail summary to POST /v1/infra/events,
+                  which records it on the INFRA hash chain under the auditor's verified mesh
+                  identity. Of the linked manifests, lula-validation-ra5.yaml is planned, and
+                  lula-validation-cm6.yaml is active but checks for a ConfigMap nothing creates
+                  (POAM-2026-151), so the auditor's summary cannot report a full pass until it
+                  is repointed.
+                - Evidence age: the bridge lifespan runs the SLA monitor
+                  (src/compliance_bridge/sla_monitor.py) every 5 minutes over per-control
+                  metrics computed from the custody chain (src/compliance_bridge/metrics.py) and
+                  alerts through the configured notifier when a control's newest evidence
+                  exceeds its SLA.
+                - Custody verification: CustodyVerifier re-verifies archived evidence batches on
+                  a schedule (see AU-10).
+                - Lula results ingestion: src/compliance_bridge/audit_workflow.py processes
+                  OSCAL results submitted to POST /v1/audit/ingest by an allowlisted Lula mesh
+                  identity. It stores the raw YAML, parses findings, appends them to a SHA-256
+                  hash-chained ContextAccumulator, scores them in the Langfuse compliance
+                  project, alerts on FAIL findings for critical controls, and, with a model
+                  backend configured, drafts a remediation advisory for human review. The
+                  Terraform CronJob does not submit to this endpoint.
+                - Status events stream to dashboards over SSE
+                  (src/compliance_bridge/sse_events.py).
+                - Formal-model conformance: every governor decision and actuation emits a
+                  GOVERNANCE_TRACE evidence event (src/gateway/governance/governor/trace.py),
+                  and scripts/check_trace_conformance.py checks an exported stream against
+                  proof/model.py (reachability, seal-before-execution, single-use seals). CI's
+                  quickstart-smoke job runs it against a Docker Compose stack's evidence stream;
+                  nothing runs it against a deployed cluster.
               props:
                 - name: implementation-status
-                  value: implemented
+                  value: partial
                 - name: control-origination
                   value: system-specific
               links:
@@ -1267,6 +1425,12 @@ component-definition:
                   rel: reference
                 - href: "#1c436570-b67f-4857-bbbf-d1ba683dae25"
                   rel: lula
+                - href: "../../infra/modules/lula_cron/main.tf"
+                  rel: implementation
+                  text: "In-cluster Lula auditor CronJob"
+                - href: "../../src/compliance_bridge/sla_monitor.py"
+                  rel: implementation
+                  text: "Evidence-age SLA monitor"
 
             - uuid: "80d95b3a-12ae-4dd4-8db4-b52661335fa4"
               control-id: au-9
@@ -1468,17 +1632,23 @@ component-definition:
             - uuid: "07769d00-7959-4cfe-86aa-972a537952d5"
               control-id: ir-6
               description: |
-                Incident reporting is implemented via src/compliance_bridge/notifier.py,
-                which delivers Slack and PagerDuty notifications when control safety rates
-                fall below threshold or critical failures are detected. Real-time security
-                events are streamed to subscribing dashboards via the SSE event bus in
-                src/compliance_bridge/sse_events.py. The notification pipeline triggers
-                on: (1) PII safety_rate < 1.0, (2) overall compliance score < 0.95,
-                (3) Lula validation failures, (4) OPA pod unavailability. Incident tickets
-                include OSCAL control ID, failure evidence, and remediation guidance links.
+                Incident reporting is partial. src/compliance_bridge/notifier.py delivers alerts
+                to the console, Slack, PagerDuty or a generic webhook, chosen by ALERT_CHANNEL.
+                The reference Terraform sets alert_channel = "console"
+                (infra/targets/gcp-gke/main.tf), so alerts are structured log lines on the
+                bridge's stdout and no Slack or PagerDuty delivery is configured. Two producers
+                raise alerts: the evidence-age SLA monitor
+                (src/compliance_bridge/sla_monitor.py), every 5 minutes, when a control's newest
+                custody-chain evidence exceeds its SLA; and
+                src/compliance_bridge/audit_workflow.py, for FAIL findings on critical controls
+                in Lula results submitted to POST /v1/audit/ingest. No alert fires on the PII
+                safety rate, an overall compliance score or OPA availability. Governance events
+                stream to subscribed dashboards over SSE (src/compliance_bridge/sse_events.py).
+                The linked Lula manifest (lula-validation-ir6.yaml) checks only that the
+                compliance-bridge Deployment has a ready replica.
               props:
                 - name: implementation-status
-                  value: implemented
+                  value: partial
                 - name: control-origination
                   value: system-specific
               links:
@@ -1496,9 +1666,9 @@ component-definition:
       type: software
       description: >
         System-Theoretic Process Analysis (STPA) hazard validator with Control
-        Barrier Function (CBF) real-time monitoring. Performs continuous risk
-        assessment of AI inference outputs and enforces safety envelopes on
-        all governance decisions. Implemented in src/gateway/governance/stpa_validator.py
+        Barrier Function (CBF) safety envelopes. Evaluates unsafe-control-action
+        rules and barrier constraints on governed actions. Implemented in
+        src/gateway/governance/stpa_validator.py
         and src/gateway/governance/safety/cbf_engine.py (settlement-aware debit
         ledger in src/gateway/governance/safety/debit_ledger.py, ADR-010).
       purpose: >
@@ -1516,39 +1686,49 @@ component-definition:
             - uuid: "6020e394-0647-480b-b9e5-2f05b6cb360c"
               control-id: ra-3
               description: |
-                Risk assessment is implemented via STPA hazard analysis in
-                src/gateway/governance/stpa_validator.py. The validator identifies
-                unsafe control actions (UCAs) using the STPA methodology: for each
-                control action, it evaluates four UCA types (provided, not-provided,
-                too-early/too-late, stopped-too-soon/applied-too-long). Control Barrier
-                Functions (CBF) in src/gateway/governance/safety/cbf_engine.py define
-                formal discrete-time safety constraints (h(S(t+1)) >= (1 - gamma) h(S(t)))
-                and commit them (as well as LUA_ROLLBACK_CBF rollbacks) in one Redis Lua
-                hop with the fence-epoch check, followed by Redis WAIT on the same pinned
-                write socket via src/gateway/infrastructure/redis_replication.py. In
-                reconciled mode the hop nets the custodian-attested scalar against the
-                settlement-aware local-debit ledger (cbf:debits, cbf:debits:total in
-                src/gateway/governance/safety/debit_ledger.py): debits are ledgered by
-                debit_id when admitted, retired exactly and idempotently on rollback, and
-                settled by the reconciler (src/gateway/governance/reconciliation/daemon.py)
-                only up to the custodian's signed settled_through minus a clock-skew
-                margin, so the settlement-lag double-spend window is closed (ADR-010,
-                POAM-2026-087). Model risk for execute_trade is assessed by the DoWhy causal
-                gatekeeper (src/gateway/governance/causal/gatekeeper.py) and its background
-                world-model refresher (src/gateway/governance/causal/world_model_refresher.py,
-                20 s refresh cadence, 60 s verdict TTL via causal.cache_ttl_seconds, and 300 s
-                telemetry freshness bound via telemetry.max_staleness_seconds) on live telemetry
-                supplied to src/cage_finance/tiers/causal_tier.py by get_telemetry_provider();
-                in enforcing postures every failure is a HARD deny, with distinct codes for
-                a missing feed (CAUSAL_TELEMETRY_UNAVAILABLE) and the bootstrap window below
-                causal.min_samples (CAUSAL_INSUFFICIENT_SAMPLES), and synthetic telemetry is
-                never substituted (POAM-2026-088). Safety parameters (thresholds, envelope
-                bounds) are defined in config/governance_thresholds.json and config/safety_params.json.
-                Risk findings are documented in docs/security/STPA_ANALYSIS.md and tracked
-                in docs/POAM.md.
+                Risk assessment for governed actions combines STPA unsafe-control-action (UCA)
+                rules, a control barrier function and an optional causal tier; status is
+                partial. STPAValidator (src/gateway/governance/stpa_validator.py) evaluates the
+                kernel's hand-written core rules (UCA-1 on write_db, UCA-7 on
+                prompt_injection_check) and the active domain's compiled rules (finance:
+                src/cage_finance/stpa/uca_rules.py, generated from
+                src/cage_finance/config/stpa/trade_hazards.yaml) on every governed action. Rule
+                inputs marked server_bound are measured or bound by the gateway
+                (portfolio_total, drawdown, latency_ms, order_size, daily_vol and trader_role in
+                finance; approval_token and semantic_score for the core rules); the remaining
+                inputs, such as risk_assessed, compliance_checked and confidence, come from the
+                caller, so rules keyed on them constrain only what the caller asserts. Control
+                Barrier Functions in src/gateway/governance/safety/cbf_engine.py define the
+                discrete-time safety constraint (h(S(t+1)) >= (1 - gamma) h(S(t))) and commit it
+                (as well as LUA_ROLLBACK_CBF rollbacks) in one Redis Lua hop with the
+                fence-epoch check, followed by Redis WAIT on the same pinned write socket via
+                src/gateway/infrastructure/redis_replication.py. In reconciled mode the hop nets
+                the custodian-attested scalar against the settlement-aware local-debit ledger
+                (cbf:debits, cbf:debits:total in src/gateway/governance/safety/debit_ledger.py):
+                debits are ledgered by debit_id when admitted, retired exactly and idempotently
+                on rollback, and settled by the reconciler
+                (src/gateway/governance/reconciliation/daemon.py) only up to the custodian's
+                signed settled_through minus a clock-skew margin (ADR-010, POAM-2026-087); the
+                reference reconciler reads a simulated ground-truth provider (see CA-7
+                17537e23). The DoWhy causal gatekeeper
+                (src/gateway/governance/causal/gatekeeper.py, with
+                src/gateway/governance/causal/world_model_refresher.py and
+                src/cage_finance/tiers/causal_tier.py) assesses model risk for execute_trade
+                only when CAGE_CAUSAL_TIER_ENABLED=true. The reference Terraform leaves it off
+                (causal_tier_enabled defaults to false in infra/modules/gateway/variables.tf,
+                and infra/targets/gcp-gke/main.tf does not set it), so the finance plugin
+                installs a disabled causal tier. When it is on, an enforcing posture requires
+                CAUSAL_GATEKEEPER_STRICT_MODE=true and live telemetry credentials, the Terraform
+                plan requires a telemetry Secret other than the advisor's, every causal failure
+                is a HARD deny with a distinct code (CAUSAL_TELEMETRY_UNAVAILABLE,
+                CAUSAL_INSUFFICIENT_SAMPLES), and synthetic telemetry is never substituted
+                (POAM-2026-088). Safety parameters (thresholds, envelope bounds) are defined in
+                config/governance_thresholds.json and config/safety_params.json. Hazard analysis
+                is documented in docs/security/STPA_ANALYSIS.md and findings are tracked in
+                docs/POAM.md.
               props:
                 - name: implementation-status
-                  value: implemented
+                  value: partial
                 - name: control-origination
                   value: system-specific
               links:
@@ -1560,22 +1740,30 @@ component-definition:
             - uuid: "42c2150e-0256-4ef0-b49b-8a7ee847f9cc"
               control-id: si-4
               description: |
-                System monitoring is implemented via CBF real-time monitoring of all
-                inference outputs against safety envelopes defined in
-                src/gateway/governance/safety/cbf_engine.py, and by the reconciliation
-                daemon's discrepancy guard (src/gateway/governance/reconciliation/daemon.py),
-                which refuses and fences any custodian snapshot that moves outside the
-                band of the gateway's own state plus its unsettled debits by more than
-                max(reconciliation.discrepancy_ratio x |baseline|,
-                reconciliation.discrepancy_abs_floor). The symbolic governor tracks violations
-                of fiscal limits, content safety thresholds, and STPA-derived constraints
-                on a per-request basis. Safety envelope violations are logged as OTel spans
-                with severity=WARNING or CRITICAL and trigger the compliance bridge alerting
-                pipeline. The automated auditor in scripts/automated_auditor.py performs
-                periodic assessment of monitoring coverage across all controlled components.
+                System monitoring is partial. The CBF barrier
+                (src/gateway/governance/safety/cbf_engine.py) is evaluated on every governed
+                action a domain tier routes through it (finance: execute_trade state
+                transitions), not on model outputs, and refuses a transition that would leave
+                the safety envelope. The reconciliation daemon's discrepancy guard
+                (src/gateway/governance/reconciliation/daemon.py) refuses and fences any
+                custodian snapshot that moves outside the band of the gateway's own state plus
+                its unsettled debits by more than max(reconciliation.discrepancy_ratio x
+                |baseline|, reconciliation.discrepancy_abs_floor). The symbolic governor records
+                each request's tier violations (for example fiscal limits and STPA constraints).
+                The authoritative record of these events is the hash-chained evidence stream:
+                every DENY writes a GOVERNANCE_REFUSAL record, a CBF rollback writes a
+                CBF_ROLLBACK record, and a fence writes a RECONCILIATION_DISCREPANCY_FENCE
+                record. CBF violations are also emitted as OTel span events with severity
+                WARNING or CRITICAL; these are telemetry only and feed no alerting. The
+                compliance bridge's evidence-age SLA monitor
+                (src/compliance_bridge/sla_monitor.py) computes per-control metrics from the
+                custody chain every 5 minutes and alerts through the configured notifier
+                (console in the reference Terraform) when a control's evidence goes stale.
+                scripts/automated_auditor.py runs only when invoked by hand; nothing schedules
+                it.
               props:
                 - name: implementation-status
-                  value: implemented
+                  value: partial
                 - name: control-origination
                   value: system-specific
               links:
@@ -1593,9 +1781,9 @@ component-definition:
       description: >
         Google Cloud Platform / Google Kubernetes Engine infrastructure providing
         inherited security controls. Includes VPC-native GKE networking with
-        Cloud Load Balancer boundary protection, GCP Workload Identity Federation
-        for authentication, and TLS termination at the load balancer for
-        transmission confidentiality. Supplemented by Kubernetes-layer controls
+        private nodes and GCP Workload Identity Federation for workload
+        authentication; the reference Terraform deploys no external load
+        balancer or Ingress. Supplemented by Kubernetes-layer controls
         defined in infra/targets/gcp-gke/ and infra/modules/.
       purpose: >
         Provides platform-level inherited security controls that the application
@@ -1613,20 +1801,27 @@ component-definition:
             - uuid: "2d27d190-b3da-49f4-bd39-1d4f25f5d20a"
               control-id: sc-7
               description: |
-                Boundary protection is inherited from GKE VPC-native networking and
-                Google Cloud Load Balancer. All ingress traffic is routed through the
-                Cloud Load Balancer, which terminates TLS and applies Cloud Armor WAF
-                rules. Kubernetes network policies in infra/targets/gcp-gke/network_policy.tf
-                restrict pod-to-pod communication to explicitly declared paths. The
-                compliance namespace is isolated via Kubernetes NetworkPolicy; only the
-                compliance-bridge pod may reach the MinIO/GCS storage endpoints. Pod
-                Security Admission in infra/modules/k8s_namespace/main.tf enforces
-                restricted policy.
+                Boundary protection combines GCP platform controls with customer-configured
+                Kubernetes policy; status is partial. The GKE cluster runs on a dedicated VPC
+                (module.vpc_network in infra/targets/gcp-gke/perimeter.tf), with private nodes
+                in the staging and prod profiles. The reference Terraform deploys no external
+                load balancer or Ingress: the gateway Service is ClusterIP
+                (infra/modules/gateway/main.tf). It creates a Cloud Armor policy and can reserve
+                a global address, but attaches the policy to no backend, and VPC Service
+                Controls are off by default (enable_vpc_sc). NetworkPolicies in
+                infra/targets/gcp-gke/network_policy.tf deny egress outside the namespace except
+                DNS, allow data-store egress only to the live Memorystore and Cloud SQL endpoint
+                addresses, and add per-workload egress rules and an FQDNNetworkPolicy allowlist
+                for external names; they still let every pod in the namespace reach every other
+                pod and define no default-deny ingress (POAM-2026-195). All workloads share one
+                namespace. Pod Security Admission labels from
+                infra/modules/k8s_namespace/main.tf enforce the restricted profile where
+                enable_pod_security_standards is set, as the staging and prod tfvars do.
               props:
                 - name: implementation-status
-                  value: inherited
+                  value: partial
                 - name: control-origination
-                  value: inherited
+                  value: hybrid
                 - name: inherited-from
                   value: "GCP/GKE Platform — Google Cloud Common Controls Package"
               links:
@@ -1636,84 +1831,59 @@ component-definition:
             - uuid: "ca8f96e2-69a3-4d6b-980c-962e73e075d8"
               control-id: ia-2
               description: |
-                **IA-2 Identification and Authentication (Organizational Users)** is
-                implemented through multi-layer cryptographic identity extraction:
+                **IA-2 Identification and Authentication (Organizational Users)** is partial.
 
-                1. **GCP/GKE Platform Layer (inherited)**:
-                   Identification and authentication is inherited from GCP Workload Identity
-                   Federation. Each Kubernetes Service Account is bound to a GCP IAM Service
-                   Account via Workload Identity, providing cryptographically verifiable
-                   identity for all pod-level API calls to GCP services. Cluster authentication
-                   is managed via GKE cluster RBAC and per-workload ServiceAccounts
-                   (infra/targets/gcp-gke/iam.tf; standalone Lula RBAC tracked under
-                   POAM-2026-195). Human operator access to the GKE
-                   cluster requires GCP IAM authentication with MFA enforced at the
-                   organizational policy level. GCP Identity-Aware Proxy (IAP) protects
-                   any externally accessible management endpoints.
+                1. **Platform (inherited and customer-configured)**: workloads that call Google
+                   APIs run as their own Kubernetes service account bound 1:1 through Workload
+                   Identity to a dedicated GCP service account (infra/targets/gcp-gke/iam.tf);
+                   the advisor's and OPA's service accounts have no cloud identity. Human access
+                   to the GKE control plane uses GCP IAM. Multi-factor authentication for those
+                   users is an organization policy outside this repository, and the reference
+                   Terraform configures no Identity-Aware Proxy.
 
-                2. **Kernel-Level Workload Identity Extraction (2026-09-22 Extension)**:
-                   All public inference and AGW ingress endpoints enforce Linkerd mTLS
-                   workload identity authentication and caller identity extraction (`l5d-client-id`,
-                   `<sa>.<ns>.serviceaccount.identity.linkerd.<trust-domain>`) via
-                   src/gateway/server/workload_identity.py. This provides fail-closed
-                   cryptographic identity verification at the transport/proxy layer, eliminating
-                   header-based identity assertion attack surface.
+                2. **Workload callers**: every gateway endpoint except health and JWKS requires
+                   a Linkerd mTLS workload identity (`l5d-client-id`,
+                   `<sa>.<ns>.serviceaccount.identity.linkerd.<trust-domain>`) from the
+                   pod-local proxy that is listed in `CAGE_TRUSTED_CLIENT_IDENTITIES`
+                   (`WorkloadIdentityMiddleware` and `extract_client_identity(scope)` in
+                   src/gateway/server/workload_identity.py; see AC-3 and IA-3). X-Agent-ID and
+                   X-SPIFFE-ID header parsing was removed; requests without a verified identity
+                   fail closed (403/401).
 
-                   Extraction and enforcement paths:
-                   - `WorkloadIdentityMiddleware`: ASGI ingress middleware enforcing `CAGE_TRUSTED_CLIENT_IDENTITIES` in every environment
-                   - `extract_client_identity(scope)`: FastAPI/Uvicorn inference proxy and gateway caller identity extraction
+                3. **Human operators on the approval path**: POST /v1/defer/{defer_id}/escalate
+                   accepts only a human operator identity (require_human_operator_identity() in
+                   src/compliance_bridge/auth.py):
 
-                   BREAKING CHANGE: Removed X-Agent-ID and X-SPIFFE-ID header parsing.
-                   All requests must present a verified Linkerd mTLS workload identity.
-                   Unauthenticated requests fail closed (403/401).
+                   a. OIDC JWT, enabled when an issuer is configured
+                      (CAGE_OPERATOR_IDENTITY_ALLOW_OIDC, set by
+                      infra/modules/compliance_bridge/main.tf): the signature is verified
+                      against keys resolved by kid from an out-of-band key set, an https:// JWKS
+                      URI in Terraform, never from the token
+                      (src/compliance_bridge/oidc_verifier.py); iss, aud and exp are checked,
+                      and the sub must be in CAGE_TRUSTED_OPERATOR_IDENTITIES. The principal
+                      hash is the SHA-256 of the sub.
 
-                3. **Application-Level Operator Identification**:
-                   Human operator identity for defer escalation approval path is extracted via
-                   require_operator_identity() (src/compliance_bridge/auth.py). Identity
-                   precedence is fail-closed and evaluated (not negotiated):
+                   b. Workload identities (SVIDs, or a sub that looks like one) are refused with
+                      403, and the bridge refuses to start in an enforcing posture with an empty
+                      allowlist or a workload entry in it.
 
-                   a. SPIFFE SVID (primary): Extracted from mTLS client certificate SAN via
-                      Linkerd service mesh. SVID format: spiffe://<trust-domain>/ns/<namespace>/sa/<service-account>.
-                      The identity is populated by the Linkerd inbound proxy into the
-                      l5d-client-id header (or request.attributes.source.principal on gRPC),
-                      accepted only on a connection from inside the pod (POAM-2026-167),
-                      and optionally checked against CAGE_TRUSTED_OPERATOR_IDENTITIES.
-                      Principal hash derived via SHA-256 of complete SVID URI.
+                   c. Dev-mode synthetic principals require CAGE_ENV=dev and
+                      CAGE_OPERATOR_IDENTITY_ALLOW_DEV_SYNTHETIC=true and carry the reserved
+                      urn:cage:dev: prefix; enforcing postures never yield them.
 
-                   b. OIDC JWT (gated fallback): Only accepted when CAGE_OPERATOR_IDENTITY_ALLOW_OIDC=true.
-                      Identity extracted from JWT 'sub' claim validated via JWKS or upstream middleware.
-                      Principal hash derived via SHA-256 of sub claim value.
+                The request body may not assert identity (DeferEscalateRequest forbids
+                operator_urn, session_id and auth_method). Enforcing postures require a WebAuthn
+                client_data_json bound to a 32-byte challenge_binding, and DeferQueue.approve()
+                (src/gateway/governance/defer_queue.py) records the verified principal hash
+                (auth_principal_hash) in each ApprovalRecord and refuses approval by the
+                request's initiator.
 
-                   c. Dev-mode synthetic: Requires dual-condition opt-in (CAGE_ENV=dev AND
-                      CAGE_OPERATOR_IDENTITY_ALLOW_DEV_SYNTHETIC=true). All synthetic principals
-                      carry auth_method="DEV_SYNTHETIC" and reserved urn:cage:dev: prefix
-                      enforcement (line 157-161). Production (CAGE_ENV=prod) never yields
-                      synthetic principals.
-
-                Identity rejection rules: Request-body identity assertion is forbidden
-                (breaking change from prior self-asserted operator_urn/session_id fields
-                removed from DeferEscalateRequest, line 1542). If no valid identity source
-                exists, require_operator_identity() fails closed with HTTP 401 (line 171-175).
-                Identity conflicts (SVID present but parse failure) degrade to next channel
-                with warning logs (line 125-126).
-
-                Principal hash binding: The auth_principal_hash field in ApprovalRecord
-                (src/gateway/governance/defer_queue.py:447, line 1580) is derived from the
-                verified credential subject, not caller-supplied session_id. This hash
-                provides tamper-evident binding between the approval record and the
-                transport-layer authentication substrate.
-
-                4. **Alignment with IA-3 Device Authentication**:
-                   SPIFFE SVID extraction provides dual-layer identity binding: IA-3 (device/workload
-                   via mTLS certificate) and IA-2 (operator via OIDC sub). The kernel-level
-                   SPIFFE extraction (2026-09-22) extends existing workload identity to all
-                   ingress paths, ensuring cryptographic device authentication independent of
-                   operator identity. Workload SVID authenticates the channel
-                (pod-to-pod mTLS via Linkerd); OIDC sub identifies the human operator in
-                shared-console scenarios where multiple operators use the same service account.
+                Open: human-only approval has not been verified on a deployed cluster
+                (POAM-2026-196), and the operator identities and OIDC issuer in the committed
+                tfvars are example values that an adopter replaces.
               props:
                 - name: implementation-status
-                  value: implemented
+                  value: partial
                 - name: control-origination
                   value: hybrid
                 - name: inherited-from
@@ -1725,28 +1895,42 @@ component-definition:
                   rel: reference
                 - href: "../../src/compliance_bridge/auth.py"
                   rel: implementation
-                  text: "require_operator_identity() SPIFFE/OIDC extraction"
+                  text: "require_human_operator_identity() OIDC operator authentication"
                 - href: "../../infra/modules/service_mesh/main.tf"
                   rel: configuration
                   text: "Linkerd mTLS SPIFFE trust domain configuration"
+                - href: "../../src/compliance_bridge/oidc_verifier.py"
+                  rel: implementation
+                  text: "Out-of-band kid-resolved OIDC JWT verification"
+                - href: "../../tests/unit/governance/test_hitl_operator_identity.py"
+                  rel: test
 
             - uuid: "230de322-4b76-4a0d-b07d-267f4fa23769"
               control-id: sc-8
               description: |
-                Transmission confidentiality and integrity is inherited from GCP TLS
-                termination at the Cloud Load Balancer. HTTPS is enforced on all ingress
-                via infra/targets/gcp-gke/perimeter.tf with TLS certificates managed by Google-
-                managed SSL certificates. Internal cluster communication between pods uses
-                Kubernetes service mesh with mTLS enforced at the service level where
-                sensitive data (audit logs, PII detection results) transits the network.
-                The GCP load balancer enforces TLS 1.2 minimum with strong cipher suites.
-                All data in transit to external services (Langfuse, Slack, PagerDuty) uses
-                HTTPS with certificate validation enforced by the HTTP client libraries.
+                Transmission confidentiality and integrity combine GCP platform encryption with
+                customer-configured mesh and data-store settings; status is partial. The
+                reference Terraform deploys no external load balancer, Ingress, managed
+                certificate or SSL policy, so it terminates no external TLS. Inside the cluster,
+                Linkerd (infra/modules/service_mesh/main.tf) gives every meshed pod a 24 h
+                workload certificate from an identity issuer (48 h) chained to a Google CAS
+                root, so traffic between meshed pods is mutual TLS, and a
+                ValidatingAdmissionPolicy refuses governance-namespace pods created without the
+                proxy. Only the gateway has Linkerd Server and AuthorizationPolicy resources
+                that require an authenticated mesh identity
+                (infra/modules/gateway/mesh-policy/templates/policy.yaml); other workloads have
+                none (POAM-2026-195). The governance Memorystore instance uses
+                server-authenticated transit encryption, and the gateway, reconciler and
+                compliance bridge pin its CA; the application Memorystore instance has transit
+                encryption disabled; Cloud SQL accepts only encrypted connections
+                (infra/modules/cloudsql_postgres/main.tf). The gateway exports OTLP to the
+                in-cluster Langfuse over plain HTTP (infra/modules/gateway/main.tf), and no
+                Slack or PagerDuty channel is configured.
               props:
                 - name: implementation-status
-                  value: inherited
+                  value: partial
                 - name: control-origination
-                  value: inherited
+                  value: hybrid
                 - name: inherited-from
                   value: "GCP/GKE Platform — Google Cloud Common Controls Package"
               links:

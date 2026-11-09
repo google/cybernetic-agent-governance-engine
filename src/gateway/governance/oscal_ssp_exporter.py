@@ -33,6 +33,10 @@ What it does
 4. Emits a standalone ``compliance/oscal/stpa_compiler_ssp_patch.yaml``
    containing only the generated block — useful for diff-review without
    viewing the full 1 100-line SSP.
+5. Applies the output's narrative source (``config/oscal/narratives/<output
+   stem>.json``): restated hand-authored blocks, matched by UUID, and the
+   domain-specific statement prose of generated components. A block named
+   there is owned by the exporter; edit the JSON, never the YAML (F-82).
 
 Design decisions
 ----------------
@@ -44,7 +48,8 @@ Design decisions
   at the end of ``implemented-requirements`` and is always safe to diff.
 * **Idempotent**: the exporter checks for an existing
   ``stpa-compiler-sa-1`` requirement ID before inserting; re-running
-  overwrites only the generated block, not hand-authored content.
+  overwrites only the generated blocks and the blocks its narrative source
+  names, never other hand-authored content.
 * **Fail-closed on schema errors**: if the SSP fails to load or the
   generated block fails Pydantic validation, the exporter aborts without
   writing any files.
@@ -145,31 +150,39 @@ _FTRA_SI10_IMPL_UUID = "si100001-ftra-8000-classifier00001"
 #: SI-10 statement for the FTRA component. FTRA validates no parameter values
 #: (docs/governance/FTRA_SCOPE.md); it names where value validation lives.
 #: This is seed text: the kernel may name no domain path (Gate G3), so it names
-#: the domain's rules generically. The committed statement in
-#: component-definition.yaml names the files, and an export keeps it
-#: (_keep_statement_text).
+#: the domain's rules generically. The narrative source for
+#: component-definition.yaml supplies the domain-specific statement
+#: (_NARRATIVE_PROSE_SLOTS); the seed is used only when it supplies none.
 _FTRA_SI10_DESCRIPTION = (
     "FTRA (Tier 0.5) classifies each tool call against the digest-covered terminal "
     "registry (src/gateway/governance/ftra/classifier.py) and routes irreversible or "
     "unregistered actions to human review; a registered terminal clears autonomously "
-    "only inside its signed autonomous envelope with a known, finite, positive "
-    "magnitude (src/gateway/governance/ftra/autonomy.py). Parameter value validation "
-    "(SI-10) is enforced by the domain STPA UCA rules and the domain OPA policy. "
-    "Prompt injection is screened on every input by the deterministic Stage 1 "
-    "keyword scan (ac_keyword_scan in src/gateway/governance/text_filter.py, run by "
-    "the LangGraph input rail node and the inference proxy). UCA-7 is enforced on the "
-    "Python STPA path (_check_core_uca_7 in src/gateway/governance/stpa_validator.py, "
-    "which denies a prompt_injection_check whose server-bound semantic_score exceeds the UCA's threshold); the "
-    "optional NeMo Colang rails add LLM-backed screening only when "
-    "CAGE_NEMO_ENABLED=true. "
-    "Before parking a REQUIRE_APPROVAL token for human review, run_pipeline() previews "
-    "every claiming phase-2 barrier side-effect-free (Phase2Mode.PREVIEW in "
+    "only inside its autonomous envelope with a known, finite, positive magnitude "
+    "(src/gateway/governance/ftra/autonomy.py). Parameter value validation (SI-10) "
+    "is delegated to the domain STPA UCA rules, whose security-critical inputs are "
+    "bound server-side by domain ServerInputResolvers, and to the domain OPA policy "
+    "running as a read-only Unix-domain-socket sidecar inside the gateway pod. UCA-7 "
+    "is enforced on the Python STPA path (_check_core_uca_7 in "
+    "src/gateway/governance/stpa_validator.py), which denies a prompt_injection_check "
+    "whose semantic_score, bound server-side by deterministic prompt-injection "
+    "inspection (src/gateway/governance/governor/server_inputs.py), exceeds the UCA's "
+    "threshold. The deterministic Stage 1 keyword scan (ac_keyword_scan in "
+    "src/gateway/governance/text_filter.py) screens requests routed through the "
+    "gateway inference proxy (src/gateway/server/inference_proxy.py), which Terraform "
+    "configures as the sole model endpoint reachable by in-cluster agent pods (live "
+    "cluster verification pending, POAM-2026-191), and runs in the agent-side "
+    "LangGraph input rail. The optional NeMo Colang rails add LLM-backed screening "
+    "only when CAGE_NEMO_ENABLED=true on a semantic model backend. Before parking a "
+    "REQUIRE_APPROVAL token for human review, run_pipeline() previews every claiming "
+    "phase-2 barrier side-effect-free (Phase2Mode.PREVIEW in "
     "src/gateway/governance/governor/pipeline.py), denying outright on HARD barrier "
     "breaches and recording NARROWABLE barrier bounds (Violation.bound in "
     "src/gateway/governance/contracts.py) on the DeferToken snapshot. "
     "The registry's manifest_sha256 (registry_digest in "
     "src/gateway/governance/ftra/classifier.py) covers the autonomous_envelope together "
-    "with the terminals, so a tampered ceiling fails the load-time integrity check."
+    "with the terminals, so an in-file edit to a ceiling fails the load-time integrity "
+    "check; a re-hashed edit is refused only when the out-of-band "
+    "FTRA_EXPECTED_MANIFEST_SHA256 pin is set."
 )
 
 # ---------------------------------------------------------------------------
@@ -255,146 +268,160 @@ PLATFORM_CONTROL_NARRATIVES: dict[str, dict[str, dict[str, str]]] = {
         "sc-7": {
             "uuid": _PLATFORM_SC7_IMPL_UUID,
             "control-id": "sc-7",
-            "title": "Boundary Protection — GKE Dataplane V2 (Cilium/eBPF) NetworkPolicy & FQDNNetworkPolicy Egress Lockdown",
-            "status": "implemented",
+            "title": "Boundary Protection — GKE Dataplane V2 Per-Workload Segmentation & Default-Deny Ingress/Egress (FQDN L7 Filtering & Live Verification Pending)",
+            "status": "partial",
             "narrative": (
-                "L3/L4 and FQDN-resolved IP egress boundaries are enforced on governance-stack "
-                "pods by Kubernetes NetworkPolicy (networking.k8s.io/v1) and GKE FQDNNetworkPolicy "
-                "(networking.gke.io/v1alpha1) resources reconciled by Terraform in "
-                "infra/targets/gcp-gke/network_policy.tf on GKE Dataplane V2 (Cilium/eBPF). "
-                "Standard Kubernetes NetworkPolicies in infra/targets/gcp-gke/network_policy.tf provide "
-                "external L3/L4 default-deny, restrict port 53 DNS egress strictly to kube-system "
-                "(k8s-app: kube-dns) and the Cloud DNS metadata IP (169.254.169.254/32), and scope "
-                "managed data-store egress (datastore_egress) to the live Cloud SQL private IP (/32) "
-                "and Memorystore for Valkey PSC endpoint IPs (/32); "
-                "GKE Dataplane V2 (Cilium) snoops DNS responses from kube-dns or Cloud DNS and "
-                "programs the resolved IP addresses into Cilium's eBPF policy map in real time. "
-                "Scope note: GKE FQDNNetworkPolicy v1alpha1 enforces at L3/L4 on DNS-resolved IPs "
-                "and does not perform L7 HTTP-method or DNS-query-pattern filtering; L7 HTTP-method "
-                "enforcement is not claimed by this control implementation. Gateway pods may reach "
-                "only the FQDNs on their allowlist (gateway_fqdn_egress in "
-                "infra/targets/gcp-gke/network_policy.tf): "
-                "required GCP service APIs (*.googleapis.com), observability telemetry and the OFAC "
-                "sanctions APIs. No model provider is listed, although the *.googleapis.com "
-                "wildcard also matches Google's model API (POAM-2026-152). "
-                "Sovereign agent and financial advisor pods are denied external internet egress "
-                "(advisor_internal_only and sovereign_agent_internal_only in "
-                "infra/targets/gcp-gke/network_policy.tf); per-workload intra-namespace segmentation "
-                "replacing the shared intra-namespace allow rule is tracked under POAM-2026-195."
+                "Ingress and external egress in the governance-stack namespace are default-deny "
+                "on GKE Dataplane V2 (Cilium/eBPF) through Kubernetes NetworkPolicy "
+                "(networking.k8s.io/v1), GKE FQDNNetworkPolicy (networking.gke.io/v1alpha1) and "
+                "Dataplane V2 NetworkLogging resources reconciled by Terraform in "
+                "infra/targets/gcp-gke/network_policy.tf and "
+                "infra/targets/gcp-gke/dataplane_v2_logging.tf. default_deny_ingress and "
+                "default_deny_external_egress block unpermitted pod-to-pod and external flows, "
+                "per-workload policies scope Cloud SQL and Memorystore for Valkey /32 PSC "
+                "endpoints strictly to their declared consumers (excluding the governed advisor "
+                "from Valkey, POAM-2026-190, POAM-2026-195), and model_backend_ingress admits "
+                "TCP 8000 solely from app=gateway while routing in-cluster advisor completions "
+                "through the gateway /v1/chat/completions proxy (POAM-2026-191). External HTTPS "
+                "egress exists only where a workload FQDNNetworkPolicy allows it (the gateway, "
+                "compliance-bridge, reconciliation-worker, vLLM, ClickHouse tiering and "
+                "telemetry-stack allowlists); the governed financial advisor has none. Open gaps "
+                "keep this control partial: FQDNNetworkPolicy enforces at L3/L4 on DNS-resolved "
+                "IPs without L7 HTTP-method filtering and the gateway allowlist's "
+                "*.googleapis.com entry also matches Google's model API (POAM-2026-152), and "
+                "live deployed-cluster drop/allow corroboration for POAM-2026-190, POAM-2026-191 "
+                "and POAM-2026-195 remains pending Gate W."
             ),
-            "evidence": "infra/targets/gcp-gke/network_policy.tf",
-            "poam_refs": "POAM-007 (IA-3), POAM-2026-152 (SC-7), POAM-2026-195 (SC-7)",
+            "evidence": (
+                "infra/targets/gcp-gke/network_policy.tf, "
+                "infra/targets/gcp-gke/tests/namespace_segmentation.tftest.hcl, "
+                "tests/infrastructure/test_gateway_egress_allowlist.py"
+            ),
+            "poam_refs": (
+                "POAM-2026-152 (SC-7), POAM-2026-190 (SC-7), POAM-2026-191 (SC-7), "
+                "POAM-2026-195 (SC-7/AC-4)"
+            ),
         },
         "sc-8": {
             "uuid": _PLATFORM_SC8_IMPL_UUID,
             "control-id": "sc-8",
-            "title": "Transmission Confidentiality and Integrity — Linkerd mTLS",
-            "status": "implemented",
+            "title": "Transmission Confidentiality and Integrity — Linkerd mTLS, OPA UDS Sidecar & Managed Data-Plane TLS (App Cache TLS, TLS 1.3 Floor & Live Verification Pending)",
+            "status": "partial",
             "narrative": (
                 "Pods in the governance-stack namespace are meshed by Linkerd "
-                "(linkerd.io/inject=enabled), which Terraform installs with "
-                "infra/modules/service_mesh, and an admission policy from the same module "
-                "refuses any pod created there without the Linkerd proxy, including while "
-                "the fail-open proxy injector is down (POAM-2026-167). Pod-to-pod traffic is "
-                "mutual TLS between Linkerd "
-                "proxies. Each proxy certificate names the pod's Kubernetes ServiceAccount "
-                "(<sa>.<namespace>.serviceaccount.identity.linkerd.cluster.local), lives in "
-                "memory only, and is re-issued every 24 hours. The trust anchor is a Google "
-                "Certificate Authority Service root CA whose key is generated and held by CAS; "
-                "the intermediate issuer certificate is obtained by cert-manager through a CSR "
-                "and rotated every 48 hours, so no CA private key exists in Terraform state or "
-                "in the repository. The gateway's HTTP port is deny by default: the Helm chart in "
-                "infra/modules/gateway/mesh-policy/templates/policy.yaml installs a Linkerd "
-                "Server/HTTPRoute/AuthorizationPolicy set admitting only cage-advisor-sa outside a "
-                "short list of open paths, and the gateway repeats the check on the "
-                "l5d-client-id header in every environment, accepting the header only on a "
-                "connection from inside the pod, where its own Linkerd proxy writes it "
-                "(src/gateway/server/workload_identity.py; the compliance bridge's operator "
-                "path applies the same rule, POAM-2026-167; dedicated Linkerd Server/AuthorizationPolicy "
-                "resources for OPA, NeMo, and compliance-bridge are tracked under POAM-2026-195). "
-                "Managed data-plane connections "
-                "enforce in-transit TLS: dual Memorystore for Valkey instances (governance and app) "
-                "enforce transit_encryption_mode=SERVER_AUTHENTICATION over Private Service Connect, "
-                "verified under every enforcing posture (is_enforcing()), CA from REDIS_CA_CERT_PATH "
+                "(linkerd.io/inject=enabled) with defaultInboundPolicy=all-authenticated via "
+                "infra/modules/service_mesh, and a ValidatingAdmissionPolicy "
+                "(charts/mesh-proxy-required) refuses any pod created there without the "
+                "Linkerd proxy, including while the fail-open proxy injector is down (live "
+                "verification pending, POAM-2026-167). Pod-to-pod traffic is mutual TLS using "
+                "24-hour in-memory workload certificates signed through a 48-hour Google "
+                "Certificate Authority Service intermediate CSR flow, while OPA runs inside the "
+                "gateway pod over a non-networked Unix domain socket "
+                "(infra/modules/gateway/main.tf). Per-route Linkerd Server, HTTPRoute and "
+                "AuthorizationPolicy resources in "
+                "infra/modules/gateway/mesh-policy/templates/policy.yaml, "
+                "infra/modules/compliance_bridge/mesh-policy/templates/policy.yaml and "
+                "infra/targets/gcp-gke/charts/workload-mesh-policy/templates/servers-and-authz.yaml "
+                "restrict L7 HTTP and ClickHouse TCP 9000 callers by ServiceAccount identity, "
+                "backed by src/gateway/server/workload_identity.py on the gateway. Governance "
+                "Memorystore for Valkey enforces transit_encryption_mode=SERVER_AUTHENTICATION "
+                "over Private Service Connect with REDIS_CA_CERT_PATH "
                 "(infra/modules/memorystore_valkey/main.tf, "
-                "src/gateway/infrastructure/redis_client.py), and Cloud SQL PostgreSQL enforces "
-                "ssl_mode=ENCRYPTED_ONLY via the Cloud SQL Auth Proxy sidecar "
-                "(infra/modules/cloudsql_postgres/main.tf). Verified by automated Linkerd mesh "
-                "conformance tests (tests/integration/test_linkerd_mesh_conformance.py), Redis TLS "
-                "verification tests (tests/test_redis_async_builder.py), and live CAS "
-                "issuance tests (tests/live/test_cas_mesh_issuer_live.py) (POAM-2026-080, POAM-2026-086)."
+                "src/gateway/infrastructure/redis_client.py; POAM-2026-086), and Cloud SQL "
+                "PostgreSQL enforces ssl_mode=ENCRYPTED_ONLY "
+                "(infra/modules/cloudsql_postgres/main.tf). Open gaps keep this control "
+                "partial: the application Memorystore instance (memorystore_app in "
+                "infra/targets/gcp-gke/main.tf) runs with transit encryption and authentication "
+                "disabled; live deployed-cluster verification of mesh mTLS and L7 authorization "
+                "remains pending (POAM-2026-080, POAM-2026-195); and outbound Python HTTP "
+                "clients use default SSL contexts with a TLS 1.2 floor because "
+                "create_hardened_client_context in src/gateway/infrastructure/tls_context.py "
+                "has no production call site (POAM-2026-011)."
             ),
             "evidence": (
                 "infra/modules/service_mesh/main.tf, infra/modules/gateway/mesh-policy/templates/policy.yaml, "
+                "infra/modules/compliance_bridge/mesh-policy/templates/policy.yaml, "
+                "infra/targets/gcp-gke/charts/workload-mesh-policy/templates/servers-and-authz.yaml, "
                 "infra/modules/memorystore_valkey/main.tf, infra/modules/cloudsql_postgres/main.tf, "
                 "tests/integration/test_linkerd_mesh_conformance.py, "
+                "tests/infrastructure/test_mesh_proxy_required_policy.py, "
                 "tests/test_redis_async_builder.py"
             ),
-            "poam_refs": "POAM-007 (IA-3), POAM-011 (SC-8), POAM-2026-080 (IA-9), POAM-2026-086 (SC-8), POAM-2026-195 (SC-8)",
+            "poam_refs": (
+                "POAM-011 (SC-8), POAM-2026-011 (SC-8), POAM-2026-080 (IA-9/SC-8), "
+                "POAM-2026-086 (SC-8), POAM-2026-167 (IA-9/SC-8), POAM-2026-195 (SC-8)"
+            ),
         },
         "sc-39": {
             "uuid": _PLATFORM_SC39_IMPL_UUID,
             "control-id": "sc-39",
-            "title": "Process Isolation — Universal Kubernetes Pod Security & Optional GCP (GKE) Deployment Mode",
-            "status": "implemented",
+            "title": "Process Isolation — Pod Security Standards, Hardened Container Contexts & Tainted Node Pools (GKE Sandbox Not Enabled)",
+            "status": "partial",
             "narrative": (
-                "CAGE is a cloud-agnostic governance engine whose baseline process isolation is "
-                "enforced across Kubernetes deployments (`infra/modules/` and `infra/targets/gcp-gke/`) via "
-                "universal Kubernetes Pod Security Standards (`restricted` profile in "
-                "`infra/modules/k8s_namespace/main.tf`), non-root execution (`runAsNonRoot: true`, "
-                '`runAsUser: 1000`), `allowPrivilegeEscalation: false`, `capabilities: drop: ["ALL"]`, '
-                "and `seccompProfile: RuntimeDefault` (`infra/modules/compliance_bridge/main.tf`, "
-                "`infra/modules/gateway/main.tf`). When deployed on the `gcp-gke` target "
-                "(`infra/targets/gcp-gke/`), CAGE adds target-specific split-plane isolation: "
-                "(1) Agent Application Plane (`gcp-gke` mode): The advisor runs in-cluster as a "
-                "`restricted` Kubernetes Deployment with zero signing authority "
-                "(`infra/modules/governed_advisor/main.tf`). "
-                "(2) Governance Control Plane (`gcp-gke` mode): Stateless governance-stack pods "
-                "(`gateway`, `compliance-bridge`, `opa`, `reconciliation-worker`) support optional "
-                "`runtimeClassName: gvisor` user-space kernel sandboxing on E2 CPU node pools "
-                "(`enable_gvisor_sandbox` in `infra/modules/gcp_gke_cluster/main.tf`). (3) GPU Inference "
-                "& Stateful Storage Plane (`gcp-gke` mode): Hardware-bound workloads (`vllm` on `gpu-l4` "
-                "`g2-standard-8` NVIDIA L4 nodes and `clickhouse` on local-NVMe nodes) are isolated on "
-                "dedicated tainted node pools (`nvidia.com/gpu=present:NoSchedule` and "
-                "`workload=clickhouse:NoSchedule`) on native container runtime to preserve direct PCIe "
-                "GPU passthrough and NVMe block I/O."
+                "Process isolation on the gcp-gke target rests on Kubernetes controls declared "
+                "in Terraform. Pod Security Admission labels enforce the restricted profile on "
+                "governance-stack when enable_pod_security_standards is true "
+                "(infra/modules/k8s_namespace/main.tf; set in the staging, prod, eu-prod and "
+                "apac-prod tfvars and off in the dev profiles), and every Terraform workload "
+                "module sets run_as_non_root, allow_privilege_escalation = false, drops ALL "
+                "capabilities and uses the RuntimeDefault seccomp profile (for example "
+                "infra/modules/gateway/main.tf, infra/modules/compliance_bridge/main.tf and "
+                "infra/modules/governed_advisor/main.tf, which runs the governed advisor "
+                "in-cluster as a Kubernetes Deployment). Hardware-bound workloads are isolated "
+                "on dedicated tainted node pools in infra/modules/gcp_gke_cluster/main.tf: vLLM "
+                "on g2-standard-8 NVIDIA L4 nodes (nvidia.com/gpu=present:NoSchedule) and "
+                "ClickHouse on local-SSD nodes (workload=clickhouse:NoSchedule). Open gap "
+                "keeping this control partial: GKE Sandbox (gVisor) is not enabled. "
+                "enable_gvisor_sandbox sets only the COS_CONTAINERD image type and a node "
+                "label, the node_config.sandbox_config block that provides the gvisor "
+                "RuntimeClass is not configured (it needs the google-beta provider), and no "
+                "Terraform workload sets runtimeClassName, so containers share the node kernel."
             ),
             "evidence": (
                 "infra/modules/k8s_namespace/main.tf, infra/modules/gateway/main.tf, "
                 "infra/modules/compliance_bridge/main.tf, infra/modules/governed_advisor/main.tf, "
-                "infra/modules/gcp_gke_cluster/main.tf"
+                "infra/modules/gcp_gke_cluster/main.tf, "
+                "tests/infrastructure/test_gke_sole_target_6f.py"
             ),
-            "poam_refs": "POAM-009 (SC-39)",
+            "poam_refs": "",
         },
         "si-3": {
             "uuid": _PLATFORM_SI3_IMPL_UUID,
             "control-id": "si-3",
-            "title": "Malicious Code Protection — Immutable Root Filesystem & Signed Digest Pinning",
-            "status": "implemented",
+            "title": "Malicious Code Protection — Digest Pinning & Binary Authorization Attestation (Read-Only Root Filesystem & CVE Admission Gate Pending)",
+            "status": "partial",
             "narrative": (
-                "All governance-stack containers enforce `readOnlyRootFilesystem: true` in their "
-                "securityContext, preventing runtime modification of container image layers. Writable "
-                "data is isolated to explicitly-mounted emptyDir volumes (tmpfs-backed, ephemeral). "
-                "This immutability boundary prevents malware persistence, fileless attack staging, "
-                "and post-compromise binary implantation. Container supply-chain integrity is enforced "
-                "via `var.image_digests` (`@sha256:` digest pinning in `infra/targets/gcp-gke/variables.tf` "
-                "with fail-closed validation rejecting tag-only or `:latest` references when "
-                "`enable_binary_authorization = true`), Cloud KMS asymmetric signing "
-                "(`google_kms_crypto_key.binauthz_attestor` wired as `pkix_public_key` into "
-                "`google_binary_authorization_attestor.build_attestor` in `infra/targets/gcp-gke/perimeter.tf`), "
-                "Cloud Build digest attestation (`gcloud container binauthz attestations sign-and-create` across "
-                "`deployment/docker/cloudbuild.*.yaml`, `scripts/build_images.sh`, and "
-                "`scripts/mirror_and_attest_images.sh`), and Artifact Registry vulnerability scanning "
-                "(block on CRITICAL/HIGH CVEs). Note: Live staging cluster verification of mirrored "
-                "third-party digests and Binary Authorization admission enforcement is tracked under "
-                "POAM-2026-083 (referencing POAM-2026-013)."
+                "Container supply-chain integrity on the gcp-gke target is enforced at plan and "
+                "admission time. var.image_digests in infra/targets/gcp-gke/variables.tf "
+                "rejects tag-only, :latest and empty-digest image references (exercised by "
+                "infra/targets/gcp-gke/tests/image_digests.tftest.hcl). The Binary "
+                "Authorization policy in infra/targets/gcp-gke/perimeter.tf requires an "
+                "attestation from google_binary_authorization_attestor.build_attestor, whose "
+                "signing key is the Cloud KMS asymmetric key "
+                "google_kms_crypto_key.binauthz_attestor "
+                "(infra/targets/gcp-gke/kms_signing.tf), with evaluation_mode "
+                "REQUIRE_ATTESTATION and enforcement_mode ENFORCED_BLOCK_AND_AUDIT_LOG; images "
+                "are attested by the build helpers (deployment/docker/cloudbuild.image.yaml, "
+                "scripts/build_images.sh, scripts/mirror_and_attest_images.sh, "
+                "scripts/attest_image.sh). CI runs pip-audit and a Trivy filesystem scan "
+                "(CRITICAL,HIGH) over the repository (.github/workflows/security-scan.yml). "
+                "Open gaps keep this control partial: attestation does not depend on a "
+                "vulnerability-scan result, so admission does not block images with "
+                "CRITICAL/HIGH CVEs; read_only_root_filesystem = true is set only by the "
+                "gateway OPA sidecar, the non-production inference stub, the reconciliation "
+                "worker and the Lula audit CronJob (infra/modules/gateway/main.tf, "
+                "infra/modules/inference_stub/main.tf, "
+                "infra/modules/reconciliation_worker/main.tf, infra/modules/lula_cron/main.tf), "
+                "while the main gateway container, compliance-bridge, governed advisor and the "
+                "remaining workload modules leave the root filesystem writable; and admission "
+                "enforcement on a deployed cluster is unverified (POAM-2026-083)."
             ),
             "evidence": (
-                "infra/targets/gcp-gke/perimeter.tf; infra/targets/gcp-gke/kms_signing.tf; "
-                "infra/targets/gcp-gke/variables.tf; infra/modules/vllm_inference/main.tf; "
-                "compliance/lula/lula-validation-si2.yaml"
+                "infra/targets/gcp-gke/perimeter.tf, infra/targets/gcp-gke/kms_signing.tf, "
+                "infra/targets/gcp-gke/variables.tf, "
+                "infra/targets/gcp-gke/tests/image_digests.tftest.hcl"
             ),
-            "poam_refs": "POAM-010 (SI-3), POAM-2026-013 (SI-2), POAM-2026-083 (SI-3/SI-7)",
+            "poam_refs": "POAM-2026-083 (SI-3/SI-7)",
         },
     },
 }
@@ -442,7 +469,11 @@ def generate_platform_control_narratives(
                     {"name": "implementation-status", "value": meta["status"]},
                     {"name": "deployment-platform", "value": platform},
                     {"name": "evidence-file", "value": meta["evidence"]},
-                    {"name": "poam-refs", "value": meta["poam_refs"]},
+                    *(
+                        [{"name": "poam-refs", "value": meta["poam_refs"]}]
+                        if meta["poam_refs"]
+                        else []
+                    ),
                 ],
                 "responsible-roles": [{"role-id": "system-administrator"}],
             }
@@ -688,6 +719,37 @@ def _verify_uca_enforced_and_server_bound(
     )
 
 
+def _rollup_state(states: list[str]) -> str:
+    """Roll per-UCA states up to one OSCAL implementation state.
+
+    ``implemented`` only when every UCA enforces; ``planned`` when none
+    enforces or runs at all; ``partial`` otherwise (some UCA enforces, or an
+    advisory rule runs on caller-asserted inputs).
+    """
+    unique = set(states)
+    if unique and unique <= {"implemented"}:
+        return "implemented"
+    if unique & {"implemented", "partial"}:
+        return "partial"
+    return "planned"
+
+
+def _enforcement_split_sentence(ucas: list[UCAModel], states: Mapping[str, str]) -> str:
+    """Name which of *ucas* enforce server-side and which do not (by-component prose)."""
+    enforcing = [u.id for u in ucas if states[u.id] == "implemented"]
+    advisory = [u.id for u in ucas if states[u.id] == "partial"]
+    unbound = [u.id for u in ucas if states[u.id] == "planned"]
+    parts = [
+        f"Server-bound enforcing UCAs: {', '.join(enforcing) or 'none'}",
+        f"advisory UCAs (not server-bound): {', '.join(advisory) or 'none'}",
+    ]
+    if unbound:
+        parts.append(
+            f"server_bound inputs without a registered resolver: {', '.join(unbound)}"
+        )
+    return "; ".join(parts) + "."
+
+
 class FrameworkRouter:
     """Load and cache an external JSON framework routing table.
 
@@ -827,83 +889,6 @@ class FrameworkRouter:
 
 
 # ---------------------------------------------------------------------------
-# Z3N Network Hardening — SC-7 / SC-8 SSP narrative mapping
-# ---------------------------------------------------------------------------
-
-NETWORK_HARDENING_MAPPINGS: dict[str, dict[str, str]] = {
-    "sc-8": {
-        "title": "Transmission Confidentiality and Integrity — Linkerd mTLS",
-        "implemented_by": "Linkerd Service Mesh (Server + HTTPRoute + AuthorizationPolicy + MeshTLSAuthentication), trust anchor in Google CAS",
-        "status": "partial",
-        "evidence_file": "infra/modules/gateway/mesh-policy/templates/policy.yaml",
-        "iso_clause": "A.7.5 (Cryptographic Controls), A.8.4 (AI System Operation)",
-        "narrative": (
-            "Pods in the governance-stack namespace are meshed by Linkerd "
-            "(linkerd.io/inject=enabled), which Terraform installs with "
-            "infra/modules/service_mesh, and an admission policy from the same module "
-            "refuses any pod created there without the Linkerd proxy (POAM-2026-167). "
-            "Pod-to-pod traffic is mutual TLS between Linkerd "
-            "proxies. Each proxy certificate names the pod's Kubernetes ServiceAccount "
-            "(<sa>.<namespace>.serviceaccount.identity.linkerd.cluster.local), lives in "
-            "memory only, and is re-issued every 24 hours. The trust anchor is a Google "
-            "Certificate Authority Service root CA whose key is generated and held by CAS; "
-            "the intermediate issuer certificate is obtained by cert-manager through a CSR "
-            "and rotated every 48 hours, so no CA private key exists in Terraform state or "
-            "in the repository. The gateway's HTTP port is deny by default: the Helm chart in "
-            "infra/modules/gateway/mesh-policy/templates/policy.yaml installs a Linkerd "
-            "Server/HTTPRoute/AuthorizationPolicy set admitting only cage-advisor-sa outside a "
-            "short list of open paths, and the gateway repeats the check on the "
-            "l5d-client-id header, accepted only on a connection from inside the pod "
-            "(src/gateway/server/workload_identity.py, POAM-2026-167; dedicated OPA, NeMo, "
-            "and compliance-bridge Server policies are tracked under POAM-2026-195). Status "
-            "is partial until the mesh is applied and verified in a deployed environment "
-            "(POAM-2026-080)."
-        ),
-        "poam_refs": "POAM-007 (IA-3), POAM-011 (SC-8), POAM-2026-080 (IA-9), POAM-2026-195 (SC-8)",
-        "poam_status": "OPEN — POAM-2026-080: mesh defined in infra/modules/service_mesh, not yet applied and verified",
-    },
-    "sc-7": {
-        "title": "Boundary Protection — GKE Dataplane V2 (Cilium/eBPF) NetworkPolicy & FQDNNetworkPolicy Egress Lockdown",
-        "implemented_by": "GKE Dataplane V2 (Cilium/eBPF) NetworkPolicy + FQDNNetworkPolicy (L3/L4 + FQDN-resolved IP rules)",
-        "status": "implemented",
-        "evidence_file": "infra/targets/gcp-gke/network_policy.tf",
-        "iso_clause": "A.6.2 (AI System Lifecycle), A.8.4 (AI System Operation)",
-        "narrative": (
-            "L3/L4 and FQDN-resolved IP egress boundaries are enforced on governance-stack "
-            "pods by Kubernetes NetworkPolicy (networking.k8s.io/v1) and GKE FQDNNetworkPolicy "
-            "(networking.gke.io/v1alpha1) resources reconciled by Terraform in "
-            "infra/targets/gcp-gke/network_policy.tf on GKE Dataplane V2 (Cilium/eBPF). "
-            "Standard Kubernetes NetworkPolicies in infra/targets/gcp-gke/network_policy.tf provide "
-            "external L3/L4 default-deny, restrict port 53 DNS egress strictly to kube-system "
-            "(k8s-app: kube-dns) and the Cloud DNS metadata IP (169.254.169.254/32), and scope "
-            "managed data-store egress (datastore_egress) to the live Cloud SQL private IP (/32) "
-            "and Memorystore for Valkey PSC endpoint IPs (/32); "
-            "GKE Dataplane V2 (Cilium) snoops DNS responses from kube-dns or Cloud DNS and "
-            "programs the resolved IP addresses into Cilium's eBPF policy map in real time. "
-            "Scope note: GKE FQDNNetworkPolicy v1alpha1 enforces at L3/L4 on DNS-resolved IPs "
-            "and does not perform L7 HTTP-method or DNS-query-pattern filtering; L7 HTTP-method "
-            "enforcement is not claimed by this control implementation. Gateway pods may reach "
-            "only the FQDNs on their allowlist (gateway_fqdn_egress in "
-            "infra/targets/gcp-gke/network_policy.tf): "
-            "required GCP service APIs (*.googleapis.com), observability telemetry and the OFAC "
-            "sanctions APIs. No model provider is listed, although the *.googleapis.com "
-            "wildcard also matches Google's model API (POAM-2026-152). "
-            "Sovereign agent and financial advisor pods are denied external internet egress; "
-            "per-workload intra-namespace segmentation is tracked under POAM-2026-195."
-        ),
-        "poam_refs": "POAM-007 (IA-3), POAM-2026-152 (SC-7), POAM-2026-195 (SC-7)",
-        "poam_status": "CLOSED — GKE Dataplane V2 NetworkPolicy + FQDNNetworkPolicy egress lockdown implemented",
-    },
-}
-
-# Stable UUIDs for Z3N SSP blocks
-_Z3N_SC8_IMPL_UUID = "g7000098-z3n-sc8-8000-linkerd000001"
-_Z3N_SC7_IMPL_UUID = "g7000097-z3n-sc7-8000-cilium0000001"
-_Z3N_SC8_BY_COMP_UUID = "h8000098-z3n-sc8-8000-linkerd000001"
-_Z3N_SC7_BY_COMP_UUID = "h8000097-z3n-sc7-8000-cilium0000001"
-
-
-# ---------------------------------------------------------------------------
 # Patch block generator
 # ---------------------------------------------------------------------------
 
@@ -1027,9 +1012,9 @@ def generate_ssp_patch(
         u for u in cs.unsafe_control_actions if uca_states[u.id] != "implemented"
     ]
 
-    # Build by-components entries — one per referenced control.
-    # A control is "implemented" only when >=1 mapped UCA has a live ServerInputResolver;
-    # advisory-only controls are "partial", and unregistered server_bound claims are "planned".
+    # Build by-components entries — one per referenced control. A control is
+    # "implemented" only when every mapped UCA has live server-bound enforcement
+    # (_rollup_state); each row names which of its UCAs enforce and which do not.
     by_components = []
     for i, ctrl in enumerate(all_framework_controls):
         mapped_ctrl = [
@@ -1037,18 +1022,16 @@ def generate_ssp_patch(
             for u in cs.unsafe_control_actions
             if ctrl in router.controls_for_uca(u.id)
         ]
-        mapped_states = {uca_states[u.id] for u in mapped_ctrl}
-        if "implemented" in mapped_states:
-            ctrl_state = "implemented"
-        elif "partial" in mapped_states:
-            ctrl_state = "partial"
-        else:
-            ctrl_state = "planned"
+        ctrl_state = _rollup_state([uca_states[u.id] for u in mapped_ctrl])
         by_components.append(
             {
                 "component-uuid": _STPA_COMPONENT_UUID,
                 "uuid": f"{_STPA_BY_COMP_UUID[:-4]}{i:04d}",
-                "description": router.format_narrative(ctrl, cs.unsafe_control_actions),
+                "description": (
+                    router.format_narrative(ctrl, cs.unsafe_control_actions)
+                    + " "
+                    + _enforcement_split_sentence(mapped_ctrl, uca_states)
+                ),
                 "implementation-status": {"state": ctrl_state},
                 "links": [
                     {
@@ -1083,29 +1066,31 @@ def generate_ssp_patch(
         if nemo_ucas
         else []
     )
-    all_states = set(uca_states.values())
-    if enforcing_ucas:
-        overall_status = "implemented"
-    elif "partial" in all_states:
-        overall_status = "partial"
-    else:
-        overall_status = "planned"
+    overall_status = _rollup_state(list(uca_states.values()))
+    sandbox_ucas = len(
+        [u for u in cs.unsafe_control_actions if u.sandbox_rule is not None]
+    )
+    python_artifacts = router.enforcement_artifacts.get(
+        "python", "src/gateway/governance/stpa_validator.py"
+    )
 
     requirement: dict[str, Any] = {
         "uuid": _STPA_IMPL_UUID,
         "control-id": "sa-11",  # SA-11 Developer Testing — closest NIST anchor for compiler-as-control
         "description": textwrap.dedent(f"""\
-            The STPA-to-Policy Compiler implements a deterministic, design-time safety
-            control that translates STAMP/STPA Unsafe Control Action (UCA) analysis
-            directly into runtime-enforceable governance artifacts. This eliminates the
-            "Natural Language Tax" — the compliance gap between human-readable safety
-            specifications and the actual code running in the cluster.
+            The STPA-to-Policy Compiler deterministically compiles the merged STAMP/STPA
+            Unsafe Control Action (UCA) specifications into governance artifacts whose
+            freshness CI checks (scripts/check_stpa_freshness.py). A UCA's Python rule
+            enforces at runtime only when every input it reads is bound server-side by a
+            ServerInputResolver registered in assemble_governor(); rules keyed on
+            caller-asserted flags are advisory, so this control is implemented only
+            when every UCA enforces.
 
             Compiler source: src/gateway/governance/stpa_compiler.py
-            Control structure (source of truth): config/stpa/
+            Control structure sources: config/stpa/ and each domain's src/cage_*/config/stpa/
             Generated artifacts:
-{nemo_artifact_line}              - src/gateway/governance/stpa_validator.py (Python — {_targeting("python")} UCAs: {len(enforcing_ucas)} enforcing, {len(advisory_ucas)} advisory)
-              - config/sandbox/generated_sandbox_policy.yaml (Sandbox — {len([u for u in cs.unsafe_control_actions if u.sandbox_rule is not None])} UCAs)
+{nemo_artifact_line}              - Python rules: {python_artifacts} ({_targeting("python")} UCAs: {len(enforcing_ucas)} enforcing, {len(advisory_ucas)} advisory)
+              - config/sandbox/generated_sandbox_policy.yaml (sandbox metadata for {sandbox_ucas} UCAs; design-time reference, not read at runtime)
 
             Target compliance framework: {framework_label}
             Framework reference: {framework_source}
@@ -1151,23 +1136,35 @@ def generate_component_entry(
     cs: ControlStructureModel,
     *,
     now: str | None = None,
+    live_server_inputs: Mapping[str, frozenset[str]] | None = None,
 ) -> dict[str, Any]:
     """
     Generate a new OSCAL component entry for the STPA compiler itself,
     to be merged into component-definition.yaml.
 
     The ISO 42001 Annex A control mapping is loaded from the external
-    ``config/oscal/framework_mappings/ISO_42001.json`` routing table.
+    ``config/oscal/framework_mappings/ISO_42001.json`` routing table. Each
+    requirement's implementation status rolls up the live per-UCA states
+    (:func:`_uca_implementation_state`, :func:`_rollup_state`).
     """
     now = now or _now_iso()
+    resolved_inputs = (
+        _live_registered_server_inputs()
+        if live_server_inputs is None
+        else live_server_inputs
+    )
+    uca_states = {
+        u.id: _uca_implementation_state(u, cs, live_server_inputs=resolved_inputs)
+        for u in cs.unsafe_control_actions
+    }
     # Load ISO 42001 mappings from external routing table
     iso_router = FrameworkRouter.get("ISO42001")
     all_iso = iso_router.all_controls(cs.unsafe_control_actions)
 
     impl_requirements = []
     for i, ctrl in enumerate(all_iso):
-        uca_list = [
-            u.id
+        mapped = [
+            u
             for u in cs.unsafe_control_actions
             if ctrl in iso_router.controls_for_uca(u.id)
         ]
@@ -1176,13 +1173,20 @@ def generate_component_entry(
                 "uuid": f"{_STPA_REQ_UUID_PREFIX}-{i:04d}00{i}",
                 "control-id": ctrl,
                 "description": (
-                    f"STPA compiler generates deterministic enforcement artifacts for "
-                    f"{ctrl} ({iso_router.describe(ctrl)}) from config/stpa/. "
-                    f"UCAs: {', '.join(uca_list)}."
+                    f"STPA compiler maps {ctrl} ({iso_router.describe(ctrl)}) to "
+                    f"UCAs {', '.join(u.id for u in mapped)}, compiled from config/stpa/ "
+                    f"and the domain control structures. "
+                    f"{_enforcement_split_sentence(mapped, uca_states)}"
                 ),
+                "props": [
+                    {
+                        "name": "implementation-status",
+                        "value": _rollup_state([uca_states[u.id] for u in mapped]),
+                    },
+                ],
                 "remarks": (
-                    "Implemented via stpa_compiler.py compile command. "
-                    "Re-run on any YAML change to keep artifacts in sync."
+                    "Compiled by stpa_compiler.py; scripts/check_stpa_freshness.py fails "
+                    "CI when a generated artifact drifts from its YAML source."
                 ),
             }
         )
@@ -1209,17 +1213,18 @@ def generate_component_entry(
         "title": "STPA-to-Policy Compiler",
         "type": "software",
         "description": (
-            f"CLI compiler (src/gateway/governance/stpa_compiler.py) that ingests "
-            f"config/stpa/ and generates deterministic {kinds_prose} "
-            f"artifacts enforcing STAMP/STPA UCAs at "
-            f"runtime. Eliminates manual policy drift by treating the YAML as the single "
-            f"authoritative source of truth. System: {cs.system.name} v{cs.system.version}."
+            f"CLI compiler (src/gateway/governance/stpa_compiler.py) that compiles "
+            f"config/stpa/ and the domain control structures into deterministic "
+            f"{kinds_prose} artifacts mapped to STAMP/STPA UCAs. A UCA's Python rule "
+            f"enforces at runtime only when every input it reads is bound server-side; "
+            f"rules keyed on caller-asserted flags are advisory. "
+            f"System: {cs.system.name} v{cs.system.version}."
         ),
         "purpose": (
-            "Provides compile-time enforcement of STPA UCAs, bridging design-time "
-            f"hazard analysis (MIT STAMP methodology) with runtime {runtime_prose} "
-            "governance controls. Closes the compliance loop between safety engineering "
-            "artefacts and live cluster enforcement policies."
+            "Provides deterministic compile-time translation of STPA UCAs, bridging "
+            "design-time hazard analysis (MIT STAMP methodology) with runtime "
+            f"{runtime_prose} governance controls wherever a rule's inputs are bound "
+            "server-side; CI checks the generated artifacts for drift from the YAML."
         ),
         "responsible-roles": [{"role-id": "compliance-engineer"}],
         "props": [
@@ -1236,14 +1241,18 @@ def generate_component_entry(
             {
                 "uuid": _STPA_CTRL_IMPL_UUID,
                 "source": "https://www.iso.org/standard/81230.html",
-                "description": "ISO/IEC 42001:2023 controls implemented by the STPA compiler",
+                "description": "ISO/IEC 42001:2023 controls the STPA compiler maps UCAs to",
                 "implemented-requirements": impl_requirements,
             }
         ],
     }
 
 
-def generate_ftra_component_entry(*, now: str | None = None) -> dict[str, Any]:
+def generate_ftra_component_entry(
+    *,
+    now: str | None = None,
+    si10_description: str | None = None,
+) -> dict[str, Any]:
     """
     Generate the OSCAL component entry for the FTRA Irreversibility Classifier,
     to be merged into component-definition.yaml.
@@ -1251,6 +1260,10 @@ def generate_ftra_component_entry(*, now: str | None = None) -> dict[str, Any]:
     Returns a component dict with its SI-10 control implementation. FTRA claims
     no AC-4: it never rejected undeclared parameters in production (the schema
     validator that could have was never registered and has been removed).
+    *si10_description* is the domain-specific SI-10 statement from the narrative
+    source (:data:`_NARRATIVE_PROSE_SLOTS`); without one the kernel seed is used.
+    SI-10 is ``partial``: value validation is delegated to domain UCA rules that
+    are advisory where their inputs are caller-asserted.
     """
     now = now or _now_iso()
 
@@ -1263,7 +1276,7 @@ def generate_ftra_component_entry(*, now: str | None = None) -> dict[str, Any]:
             "classifies each tool call against the active domain's digest-covered "
             "terminal registry, records the registry provenance of the classification, "
             "and lets a registered terminal clear without a human only inside its "
-            "signed autonomous envelope. It validates no parameter values; value "
+            "digest-covered autonomous envelope. It validates no parameter values; value "
             "policy is owned by STPA UCA rules and the domain OPA policy "
             "(docs/governance/FTRA_SCOPE.md)."
         ),
@@ -1287,9 +1300,9 @@ def generate_ftra_component_entry(*, now: str | None = None) -> dict[str, Any]:
                     {
                         "uuid": _FTRA_SI10_IMPL_UUID,
                         "control-id": "si-10",
-                        "description": _FTRA_SI10_DESCRIPTION,
+                        "description": si10_description or _FTRA_SI10_DESCRIPTION,
                         "props": [
-                            {"name": "implementation-status", "value": "implemented"},
+                            {"name": "implementation-status", "value": "partial"},
                             {"name": "control-origination", "value": "system-specific"},
                         ],
                         "links": [
@@ -1306,6 +1319,185 @@ def generate_ftra_component_entry(*, now: str | None = None) -> dict[str, Any]:
 
 
 # ---------------------------------------------------------------------------
+# Narrative sources — hand-authored blocks brought under the exporter (F-82)
+# ---------------------------------------------------------------------------
+
+#: One narrative source per canonical exporter output, named after the output's
+#: stem: ``config/oscal/narratives/system-security-plan.json`` patches
+#: ``compliance/oscal/system-security-plan.yaml``. Each holds data the kernel
+#: may not (domain paths, Gate G3; vendor names, Gate G8).
+_NARRATIVES_DIR: Path = _REPO_ROOT / "config" / "oscal" / "narratives"
+
+_NARRATIVE_KEYS = frozenset({"_comment", "nodes", "set_parameters", "remove"})
+
+#: Statements inside exporter-generated components whose prose comes from the
+#: narrative source. Only ``description`` may be supplied for them; the
+#: exporter keeps owning their structure, status and other props.
+_NARRATIVE_PROSE_SLOTS = frozenset({_FTRA_SI10_IMPL_UUID})
+
+
+def _canonical_outputs() -> frozenset[Path]:
+    return frozenset(
+        [(_REPO_ROOT / p["ssp_path"]).resolve() for p in REGIONAL_PROFILES.values()]
+        + [_DEFAULT_COMP_DEF.resolve()]
+    )
+
+
+def narrative_source_for(target: Path) -> Path | None:
+    """Return the narrative source of a canonical exporter output, if it has one.
+
+    Non-canonical paths (``--ssp`` copies, test fixtures) never get one, so the
+    UUIDs a source names are always resolved against the document they belong to.
+    """
+    resolved = target.resolve()
+    if resolved not in _canonical_outputs():
+        return None
+    source = _NARRATIVES_DIR / f"{resolved.stem}.json"
+    return source if source.is_file() else None
+
+
+def load_narrative_source(source: Path) -> dict[str, Any]:
+    """Load and validate a narrative source; raise ``ValueError`` on bad shape."""
+    data = json.loads(source.read_text(encoding="utf-8"))
+    if not isinstance(data, dict):
+        raise ValueError(f"{source}: a narrative source must be a JSON object")
+    unknown = sorted(set(data) - _NARRATIVE_KEYS)
+    if unknown:
+        raise ValueError(f"{source}: unknown top-level keys {unknown}")
+    nodes = data.get("nodes", {})
+    if not isinstance(nodes, dict) or not all(
+        isinstance(fields, dict) and fields for fields in nodes.values()
+    ):
+        raise ValueError(f"{source}: 'nodes' must map uuid -> non-empty field object")
+    for uid, fields in nodes.items():
+        if "uuid" in fields:
+            raise ValueError(f"{source}: node {uid} may not replace its uuid")
+        if uid in _NARRATIVE_PROSE_SLOTS and (
+            set(fields) != {"description"} or not isinstance(fields["description"], str)
+        ):
+            raise ValueError(
+                f"{source}: generated statement {uid} accepts only 'description'"
+            )
+    params = data.get("set_parameters", {})
+    if not isinstance(params, dict) or not all(
+        isinstance(v, list) and all(isinstance(x, str) for x in v)
+        for v in params.values()
+    ):
+        raise ValueError(f"{source}: 'set_parameters' must map param-id -> [str]")
+    remove = data.get("remove", [])
+    if not isinstance(remove, list) or not all(isinstance(u, str) for u in remove):
+        raise ValueError(f"{source}: 'remove' must be a list of uuids")
+    return data
+
+
+def _index_uuid_nodes(node: Any, index: dict[str, list[dict[str, Any]]]) -> None:
+    if isinstance(node, dict):
+        uid = node.get("uuid")
+        if isinstance(uid, str):
+            index.setdefault(uid, []).append(node)
+        for value in node.values():
+            _index_uuid_nodes(value, index)
+    elif isinstance(node, list):
+        for item in node:
+            _index_uuid_nodes(item, index)
+
+
+def _collect_uuids(blocks: Any) -> frozenset[str]:
+    index: dict[str, list[dict[str, Any]]] = {}
+    _index_uuid_nodes(blocks, index)
+    return frozenset(index)
+
+
+def _drop_uuid_items(node: Any, doomed: set[str]) -> None:
+    if isinstance(node, dict):
+        for value in node.values():
+            _drop_uuid_items(value, doomed)
+    elif isinstance(node, list):
+        node[:] = [
+            item
+            for item in node
+            if not (isinstance(item, dict) and item.get("uuid") in doomed)
+        ]
+        for item in node:
+            _drop_uuid_items(item, doomed)
+
+
+def _set_parameter_nodes(node: Any, found: dict[str, list[dict[str, Any]]]) -> None:
+    if isinstance(node, dict):
+        for key, value in node.items():
+            if key == "set-parameters" and isinstance(value, list):
+                for param in value:
+                    if isinstance(param, dict) and isinstance(
+                        param.get("param-id"), str
+                    ):
+                        found.setdefault(param["param-id"], []).append(param)
+            else:
+                _set_parameter_nodes(value, found)
+    elif isinstance(node, list):
+        for item in node:
+            _set_parameter_nodes(item, found)
+
+
+def apply_narrative_source(
+    doc: dict[str, Any],
+    data: dict[str, Any],
+    *,
+    generated_uuids: frozenset[str],
+    source: Path,
+) -> None:
+    """Apply a loaded narrative source to the OSCAL document *doc*, in place.
+
+    Each ``nodes`` entry replaces the listed fields of the node with that UUID
+    wholesale; a field set to ``null`` is deleted. ``remove`` drops list items
+    by UUID and ``set_parameters`` replaces a set-parameter's ``values``.
+    Fails closed (``ValueError``) when a named UUID or param-id does not match
+    exactly one node, or when an entry targets an exporter-generated block
+    other than a :data:`_NARRATIVE_PROSE_SLOTS` statement: every entry must
+    resolve, and no block gets two sources.
+    """
+    nodes: dict[str, dict[str, Any]] = data.get("nodes", {})
+    remove: list[str] = data.get("remove", [])
+    clash = sorted(
+        (set(nodes) | set(remove)) & (generated_uuids - _NARRATIVE_PROSE_SLOTS)
+    )
+    if clash:
+        raise ValueError(f"{source}: names exporter-generated blocks {clash}")
+    index: dict[str, list[dict[str, Any]]] = {}
+    _index_uuid_nodes(doc, index)
+    for uid in sorted(set(nodes) | set(remove)):
+        hits = len(index.get(uid, []))
+        if hits != 1:
+            raise ValueError(f"{source}: uuid {uid} matches {hits} nodes, expected 1")
+    for uid, fields in nodes.items():
+        node = index[uid][0]
+        for field, value in fields.items():
+            if value is None:
+                node.pop(field, None)
+            else:
+                node[field] = copy.deepcopy(value)
+    if remove:
+        _drop_uuid_items(doc, set(remove))
+    params: dict[str, list[str]] = data.get("set_parameters", {})
+    found: dict[str, list[dict[str, Any]]] = {}
+    _set_parameter_nodes(doc, found)
+    for param_id, values in params.items():
+        hits = len(found.get(param_id, []))
+        if hits != 1:
+            raise ValueError(
+                f"{source}: set-parameter {param_id} matches {hits} nodes, expected 1"
+            )
+        found[param_id][0]["values"] = list(values)
+
+
+def _prose_slot(narratives: Path | None, uuid: str) -> str | None:
+    """Return the narrative-source description for a generated statement, if any."""
+    if narratives is None:
+        return None
+    entry = load_narrative_source(narratives).get("nodes", {}).get(uuid)
+    return None if entry is None else str(entry["description"])
+
+
+# ---------------------------------------------------------------------------
 # SSP patch application (idempotent)
 # ---------------------------------------------------------------------------
 
@@ -1319,6 +1511,7 @@ def _apply_ssp_patch(
     dry_run: bool = False,
     *,
     now: str | None = None,
+    narratives: Path | None = None,
 ) -> bool:
     """
     Load the existing SSP YAML, inject/replace patch blocks, write back.
@@ -1327,6 +1520,9 @@ def _apply_ssp_patch(
         ssp_path: Path to the SSP YAML file.
         patch_blocks: List of OSCAL implemented-requirement dicts to inject.
         dry_run: If True, do not write files.
+        narratives: The SSP's narrative source (:func:`narrative_source_for`),
+            applied after the generated blocks; a malformed or stale source
+            aborts the patch without writing.
 
     Returns True if the SSP was modified (or would have been in dry-run).
     """
@@ -1362,6 +1558,20 @@ def _apply_ssp_patch(
     ssp["system-security-plan"]["control-implementation"][
         "implemented-requirements"
     ] = impl_reqs
+
+    # Apply the narrative source: it may name hand-authored blocks only.
+    if narratives is not None:
+        try:
+            apply_narrative_source(
+                ssp,
+                load_narrative_source(narratives),
+                generated_uuids=_collect_uuids(patch_blocks)
+                | {_STPA_IMPL_MARKER, *platform_uuids},
+                source=narratives,
+            )
+        except ValueError as exc:
+            logger.error("Narrative source rejected: %s", exc)
+            return False
 
     # Update metadata timestamps
     now = now or _now_iso()
@@ -1452,40 +1662,22 @@ def _apply_component_patch(
     return True
 
 
-def _keep_statement_text(existing: dict[str, Any], entry: dict[str, Any]) -> None:
-    """Carry each statement's text in ``existing`` over to ``entry``, in place.
-
-    component-definition.yaml is maintained by hand. The exporter owns a
-    generated component's structure and machine fields (``props`` such as
-    ``last-compiled``), not its prose: the seed text it generates may name no
-    domain path (Gate G3), so overwriting a statement that names the active
-    domain's files would replace specific prose with generic text. Statements
-    are matched by implemented-requirement UUID; one with no text is seeded,
-    so deleting a ``description`` re-seeds it.
-    """
-    kept = {
-        req["uuid"]: req["description"]
-        for impl in existing.get("control-implementations") or []
-        for req in impl.get("implemented-requirements") or []
-        if req.get("uuid") and req.get("description")
-    }
-    for impl in entry.get("control-implementations") or []:
-        for req in impl.get("implemented-requirements") or []:
-            if req.get("uuid") in kept:
-                req["description"] = kept[req["uuid"]]
-
-
 def _apply_ftra_component_patch(
     comp_path: Path,
     ftra_component_entry: dict[str, Any],
     dry_run: bool = False,
     *,
     now: str | None = None,
+    narratives: Path | None = None,
 ) -> bool:
     """Inject/replace the FTRA component in component-definition.yaml.
 
-    The text of a statement already in the file is kept
-    (:func:`_keep_statement_text`); everything else is replaced.
+    The generated component replaces the committed one wholesale; its SI-10
+    prose comes from the narrative source (``si10_description`` of
+    :func:`generate_ftra_component_entry`), never from the committed YAML.
+    This is the last component-definition step, so the narrative source
+    (*narratives*) is applied here, after both generated components are in
+    place; a malformed or stale source aborts the patch without writing.
     """
     if not comp_path.exists():
         logger.warning("Component definition not found at %s — skipping", comp_path)
@@ -1500,17 +1692,27 @@ def _apply_ftra_component_patch(
         logger.error("Cannot navigate component-definition: %s", exc)
         return False
 
-    ftra_component_entry = copy.deepcopy(ftra_component_entry)
-    existing = next(
-        (c for c in components if c.get("uuid") == _FTRA_COMPONENT_UUID), None
-    )
-    if existing is not None:
-        _keep_statement_text(existing, ftra_component_entry)
-
     # Remove existing FTRA component (idempotent)
     components = [c for c in components if c.get("uuid") != _FTRA_COMPONENT_UUID]
-    components.append(ftra_component_entry)
+    components.append(copy.deepcopy(ftra_component_entry))
     comp_def["component-definition"]["components"] = components
+
+    if narratives is not None:
+        generated = [
+            c
+            for c in components
+            if c.get("uuid") in {_STPA_COMPONENT_UUID, _FTRA_COMPONENT_UUID}
+        ]
+        try:
+            apply_narrative_source(
+                comp_def,
+                load_narrative_source(narratives),
+                generated_uuids=_collect_uuids(generated),
+                source=narratives,
+            )
+        except ValueError as exc:
+            logger.error("Narrative source rejected: %s", exc)
+            return False
 
     now = now or _now_iso()
     comp_def["component-definition"]["metadata"]["last-modified"] = now
@@ -1604,11 +1806,30 @@ def _render_targets_in_memory(
     platform: str | None,
     now: str | None = None,
 ) -> tuple[bool, dict[Path, str]]:
-    """Render target OSCAL YAML artifacts into memory without modifying files on disk."""
+    """Render target OSCAL YAML artifacts into memory without modifying files on disk.
+
+    Narrative sources are resolved from the canonical target paths
+    (:func:`narrative_source_for`), never from the temporary copies.
+    """
     now = now or _now_iso()
-    stpa_patch_block = generate_ssp_patch(cs, target_framework=framework_key, now=now)
-    component_entry = generate_component_entry(cs, now=now)
-    ftra_component_entry = generate_ftra_component_entry(now=now)
+    live_inputs = _live_registered_server_inputs()
+    comp_narratives = (
+        narrative_source_for(comp_def_path) if comp_def_path is not None else None
+    )
+    try:
+        si10_description = _prose_slot(comp_narratives, _FTRA_SI10_IMPL_UUID)
+    except ValueError as exc:
+        logger.error("Narrative source rejected: %s", exc)
+        return False, {}
+    stpa_patch_block = generate_ssp_patch(
+        cs, target_framework=framework_key, now=now, live_server_inputs=live_inputs
+    )
+    component_entry = generate_component_entry(
+        cs, now=now, live_server_inputs=live_inputs
+    )
+    ftra_component_entry = generate_ftra_component_entry(
+        now=now, si10_description=si10_description
+    )
     platform_narratives = generate_platform_control_narratives(platform)
     all_patch_blocks = [stpa_patch_block, *platform_narratives]
 
@@ -1620,7 +1841,13 @@ def _render_targets_in_memory(
             return False, {}
         tmp_ssp = tmp_dir / "ssp.yaml"
         shutil.copyfile(ssp_path, tmp_ssp)
-        if not _apply_ssp_patch(tmp_ssp, all_patch_blocks, dry_run=False, now=now):
+        if not _apply_ssp_patch(
+            tmp_ssp,
+            all_patch_blocks,
+            dry_run=False,
+            now=now,
+            narratives=narrative_source_for(ssp_path),
+        ):
             return False, {}
         rendered[ssp_path] = tmp_ssp.read_text(encoding="utf-8")
 
@@ -1628,12 +1855,16 @@ def _render_targets_in_memory(
             if comp_def_path.exists():
                 tmp_comp = tmp_dir / "comp.yaml"
                 shutil.copyfile(comp_def_path, tmp_comp)
-                _apply_component_patch(
+                if not _apply_component_patch(
                     tmp_comp, component_entry, dry_run=False, now=now
-                )
-                _apply_ftra_component_patch(
-                    tmp_comp, ftra_component_entry, dry_run=False, now=now
-                )
+                ) or not _apply_ftra_component_patch(
+                    tmp_comp,
+                    ftra_component_entry,
+                    dry_run=False,
+                    now=now,
+                    narratives=comp_narratives,
+                ):
+                    return False, {}
                 rendered[comp_def_path] = tmp_comp.read_text(encoding="utf-8")
             else:
                 logger.warning(
@@ -1887,36 +2118,6 @@ def cmd_export(args: argparse.Namespace) -> int:
 
     now = _now_iso()
 
-    if args.dry_run:
-        stpa_patch_block = generate_ssp_patch(
-            cs, target_framework=framework_key, now=now
-        )
-        component_entry = generate_component_entry(cs, now=now)
-        ftra_component_entry = generate_ftra_component_entry(now=now)
-        platform_narratives = generate_platform_control_narratives(platform)
-        all_patch_blocks = [stpa_patch_block, *platform_narratives]
-        ok_ssp = _apply_ssp_patch(ssp_path, all_patch_blocks, dry_run=True, now=now)
-        if comp_def_path is not None:
-            _apply_component_patch(
-                comp_def_path, component_entry, dry_run=True, now=now
-            )
-            _apply_ftra_component_patch(
-                comp_def_path, ftra_component_entry, dry_run=True, now=now
-            )
-        if patch_out_path is not None:
-            _write_standalone_patch(
-                patch_out_path,
-                stpa_patch_block,
-                component_entry,
-                cs,
-                dry_run=True,
-                now=now,
-            )
-        if not ok_ssp:
-            print("⚠️  SSP patch failed — check logs above.", file=sys.stderr)
-            return 1
-        return 0
-
     ok_ssp, rendered = _render_targets_in_memory(
         cs=cs,
         ssp_path=ssp_path,
@@ -1929,6 +2130,16 @@ def cmd_export(args: argparse.Namespace) -> int:
     if not ok_ssp:
         print("⚠️  SSP patch failed — check logs above.", file=sys.stderr)
         return 1
+
+    if args.dry_run:
+        for target in rendered:
+            logger.info("[DRY-RUN] Would update %s", target)
+        if patch_out_path is not None and patch_out_path in rendered:
+            print("\n" + "=" * 80)
+            print("STANDALONE PATCH (dry-run)")
+            print("=" * 80)
+            print(rendered[patch_out_path])
+        return 0
 
     if getattr(args, "check", False):
         expected_targets = [

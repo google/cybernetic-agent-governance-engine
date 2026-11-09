@@ -26,6 +26,7 @@ Covers:
 
 from __future__ import annotations
 
+import json
 from pathlib import Path
 
 import pytest
@@ -39,7 +40,9 @@ from src.compliance_bridge.types import (
 )
 from src.gateway.governance.oscal_ssp_exporter import (
     _FTRA_COMPONENT_UUID,
+    _FTRA_SI10_DESCRIPTION,
     _FTRA_SI10_IMPL_UUID,
+    _PLATFORM_SC7_IMPL_UUID,
     _STPA_COMPONENT_UUID,
     _STPA_IMPL_MARKER,
     FrameworkRouter,
@@ -47,10 +50,13 @@ from src.gateway.governance.oscal_ssp_exporter import (
     _apply_ftra_component_patch,
     _apply_ssp_patch,
     _write_standalone_patch,
+    apply_narrative_source,
     generate_component_entry,
     generate_ftra_component_entry,
     generate_ssp_patch,
+    load_narrative_source,
     main,
+    narrative_source_for,
 )
 from src.gateway.governance.stpa_compiler import (
     ControlStructureModel,
@@ -848,10 +854,12 @@ class TestApplyFtraComponentPatch:
         ]
         assert len(ftra_components) == 1  # exactly one, not two
 
-    def test_keeps_a_hand_maintained_statement(self, tmp_path: Path) -> None:
-        """component-definition.yaml is maintained by hand: an export keeps a
-        statement's text (it may name the domain's files, which the kernel's
-        seed text cannot) and still refreshes the machine fields."""
+    def test_hand_edited_statement_is_replaced_by_the_generated_one(
+        self, tmp_path: Path
+    ) -> None:
+        """F-82: a hand edit to the generated FTRA statement does not survive an
+        export; the statement text comes from ``si10_description`` (the
+        narrative source) or the kernel seed, never from the committed YAML."""
         comp_file = tmp_path / "comp.yaml"
         comp_file.write_text(_MINIMAL_COMP_DEF)
         _apply_ftra_component_patch(comp_file, generate_ftra_component_entry())
@@ -859,47 +867,34 @@ class TestApplyFtraComponentPatch:
         _si10(_ftra(doc))["description"] = "Hand-maintained statement."
         comp_file.write_text(yaml.safe_dump(doc, sort_keys=False))
 
-        stamp = {"name": "last-compiled", "value": "2099-01-01T00:00:00Z"}
-        entry = generate_ftra_component_entry()
-        entry["props"] = [
-            stamp if p["name"] == "last-compiled" else p for p in entry["props"]
-        ]
+        entry = generate_ftra_component_entry(si10_description="Narrative statement.")
         _apply_ftra_component_patch(comp_file, entry)
 
         ftra = _ftra(yaml.safe_load(comp_file.read_text()))
-        assert _si10(ftra)["description"] == "Hand-maintained statement."
-        assert stamp in ftra["props"]
-        # The caller's entry is not modified.
-        assert _si10(entry)["description"] != "Hand-maintained statement."
+        assert _si10(ftra)["description"] == "Narrative statement."
 
-    def test_seeds_a_statement_with_no_text(self, tmp_path: Path) -> None:
-        comp_file = tmp_path / "comp.yaml"
-        comp_file.write_text(_MINIMAL_COMP_DEF)
-        _apply_ftra_component_patch(comp_file, generate_ftra_component_entry())
-        doc = yaml.safe_load(comp_file.read_text())
-        del _si10(_ftra(doc))["description"]
-        comp_file.write_text(yaml.safe_dump(doc, sort_keys=False))
+    def test_seed_is_used_without_a_narrative_statement(self) -> None:
+        si10 = _si10(generate_ftra_component_entry())
+        assert si10["description"] == _FTRA_SI10_DESCRIPTION
+        props = {p["name"]: p["value"] for p in si10["props"]}
+        assert props["implementation-status"] == "partial"
 
-        entry = generate_ftra_component_entry()
-        _apply_ftra_component_patch(comp_file, entry)
-
-        seeded = _si10(_ftra(yaml.safe_load(comp_file.read_text())))["description"]
-        assert seeded == _si10(entry)["description"]
-
-    def test_export_keeps_the_committed_si10_statement(self, tmp_path: Path) -> None:
-        """Regression: an export replaced the committed SI-10 statement, which
-        names the domain's UCA rules and OPA policy files, with the kernel's
-        domain-agnostic seed text."""
+    def test_export_takes_the_si10_statement_from_the_narrative_source(self) -> None:
+        """The committed FTRA SI-10 statement names the domain's files because
+        the narrative source supplies it, not because a hand edit was kept."""
         root = Path(__file__).resolve().parents[1]
-        committed = (root / "compliance/oscal/component-definition.yaml").read_text()
-        comp_file = tmp_path / "component-definition.yaml"
-        comp_file.write_text(committed)
-        before = _si10(_ftra(yaml.safe_load(committed)))["description"]
-
-        _apply_ftra_component_patch(comp_file, generate_ftra_component_entry())
-
-        after = _si10(_ftra(yaml.safe_load(comp_file.read_text())))["description"]
-        assert after == before
+        source = narrative_source_for(
+            root / "compliance/oscal/component-definition.yaml"
+        )
+        assert source is not None
+        expected = load_narrative_source(source)["nodes"][_FTRA_SI10_IMPL_UUID][
+            "description"
+        ]
+        committed = yaml.safe_load(
+            (root / "compliance/oscal/component-definition.yaml").read_text()
+        )
+        assert _si10(_ftra(committed))["description"] == expected
+        assert "src/cage_finance/stpa/uca_rules.py" in expected
 
 
 def _ftra(comp_def: dict) -> dict:
@@ -989,25 +984,46 @@ class TestControlMeta:
 
 
 class TestUcaMappings:
-    def test_all_production_ucas_have_nist_mapping(self) -> None:
+    @pytest.mark.parametrize("framework", ["NIST", "ISO42001", "EU_AI_ACT", "MAS_FEAT"])
+    def test_every_active_uca_maps_in_every_framework(self, framework: str) -> None:
+        """POAM-2026-188: an active UCA with no mapping emits an empty crosswalk line."""
         if not _FULL_YAML_PATH.exists():
             pytest.skip("Production YAML not found.")
         cs = _load_full_cs()
-        nist_mappings = FrameworkRouter.get("NIST").uca_mappings
+        mappings = FrameworkRouter.get(framework).uca_mappings
         for uca in cs.unsafe_control_actions:
-            assert uca.id in nist_mappings, (
-                f"{uca.id} missing NIST mapping in nist_mappings"
-            )
+            assert mappings.get(uca.id), f"{uca.id} has no {framework} mapping"
 
-    def test_all_production_ucas_have_iso_mapping(self) -> None:
-        if not _FULL_YAML_PATH.exists():
-            pytest.skip("Production YAML not found.")
-        cs = _load_full_cs()
-        iso_mappings = FrameworkRouter.get("ISO42001").uca_mappings
-        for uca in cs.unsafe_control_actions:
-            assert uca.id in iso_mappings, (
-                f"{uca.id} missing ISO mapping in iso_mappings"
-            )
+    @pytest.mark.parametrize(
+        ("ssp_name", "framework_id"),
+        [
+            ("system-security-plan.yaml", "NIST"),
+            ("system-security-plan-eu-ecb.yaml", "EU_AI_ACT"),
+            ("system-security-plan-apac-mas.yaml", "MAS_FEAT"),
+        ],
+    )
+    def test_committed_ssps_have_no_empty_crosswalk_line(
+        self, ssp_name: str, framework_id: str
+    ) -> None:
+        """POAM-2026-188: no committed SA-11 block carries an empty ``→ <FW>:`` line."""
+        ssp = yaml.safe_load(
+            (
+                Path(__file__).resolve().parents[1] / "compliance" / "oscal" / ssp_name
+            ).read_text(encoding="utf-8")
+        )
+        reqs = ssp["system-security-plan"]["control-implementation"][
+            "implemented-requirements"
+        ]
+        sa11 = next(r for r in reqs if r["uuid"] == _STPA_IMPL_MARKER)
+        prefix = f"→ {framework_id}:"
+        lines = [
+            line.strip()
+            for line in sa11["description"].splitlines()
+            if line.strip().startswith(prefix)
+        ]
+        assert lines
+        for line in lines:
+            assert line.removeprefix(prefix).strip(), f"{ssp_name}: empty {line!r}"
 
     def test_nist_controls_in_descriptions(self) -> None:
         nist_mappings = FrameworkRouter.get("NIST").uca_mappings
@@ -1352,8 +1368,33 @@ class TestServerBoundAndAdvisoryOscalExport:
         by_ctrl = dict(zip(controls, block["by-components"], strict=True))
         assert by_ctrl["si-4"]["implementation-status"]["state"] == "partial"
         assert by_ctrl["sc-28"]["implementation-status"]["state"] == "partial"
-        assert by_ctrl["ac-3"]["implementation-status"]["state"] == "implemented"
+        # AC-3 maps enforcing UCA-1/UCA-5 and advisory UCA-3/8/9/12: partial.
+        assert by_ctrl["ac-3"]["implementation-status"]["state"] == "partial"
+        advisory = (
+            by_ctrl["ac-3"]["description"]
+            .split("advisory UCAs (not server-bound):", 1)[1]
+            .rstrip(".")
+        )
+        assert {u.strip() for u in advisory.split(",")} == {
+            "UCA-3",
+            "UCA-8",
+            "UCA-9",
+            "UCA-12",
+        }
+        # SI-3 maps only UCA-6 and UCA-7, both bound server-side.
         assert by_ctrl["si-3"]["implementation-status"]["state"] == "implemented"
+        assert props["implementation-status"] == "partial"
+
+    def test_control_with_one_enforcing_and_one_advisory_uca_is_partial(self) -> None:
+        """Regression (SA11-SYSTEMIC): one enforcing UCA must not mark a control
+        implemented while another UCA mapped to it is advisory."""
+        from src.gateway.governance.oscal_ssp_exporter import _rollup_state
+
+        assert _rollup_state(["implemented", "partial"]) == "partial"
+        assert _rollup_state(["implemented", "planned"]) == "partial"
+        assert _rollup_state(["implemented", "implemented"]) == "implemented"
+        assert _rollup_state(["planned"]) == "planned"
+        assert _rollup_state([]) == "planned"
 
     def test_yaml_server_bound_without_registered_resolver_not_credited_implemented(
         self, minimal_cs: ControlStructureModel
@@ -1420,6 +1461,190 @@ class TestServerBoundAndAdvisoryOscalExport:
         assert props["implementation-status"] == "implemented"
         for bc in block["by-components"]:
             assert bc["implementation-status"]["state"] == "implemented"
+
+
+class TestNarrativeSources:
+    """F-82: hand-authored blocks the exporter owns through config/oscal/narratives/."""
+
+    @staticmethod
+    def _doc() -> dict:
+        return {
+            "plan": {
+                "reqs": [
+                    {"uuid": "req-1", "description": "old", "remarks": "stale"},
+                    {"uuid": "req-2", "description": "keep"},
+                ],
+                "set-parameters": [{"param-id": "p-1", "values": ["old"]}],
+                "back-matter": {"resources": [{"uuid": "res-1"}, {"uuid": "res-2"}]},
+            }
+        }
+
+    def test_replaces_fields_deletes_null_drops_items_and_sets_params(self) -> None:
+        doc = self._doc()
+        data = {
+            "nodes": {"req-1": {"description": "new", "remarks": None}},
+            "set_parameters": {"p-1": ["new"]},
+            "remove": ["res-1"],
+        }
+        apply_narrative_source(
+            doc, data, generated_uuids=frozenset(), source=Path("n.json")
+        )
+        plan = doc["plan"]
+        assert plan["reqs"][0] == {"uuid": "req-1", "description": "new"}
+        assert plan["reqs"][1] == {"uuid": "req-2", "description": "keep"}
+        assert plan["set-parameters"][0]["values"] == ["new"]
+        assert plan["back-matter"]["resources"] == [{"uuid": "res-2"}]
+
+    @pytest.mark.parametrize(
+        "data",
+        [
+            {"nodes": {"req-missing": {"description": "x"}}},
+            {"remove": ["res-missing"]},
+            {"set_parameters": {"p-missing": ["x"]}},
+        ],
+    )
+    def test_entry_that_matches_nothing_fails_closed(self, data: dict) -> None:
+        with pytest.raises(ValueError, match="matches 0 nodes"):
+            apply_narrative_source(
+                self._doc(), data, generated_uuids=frozenset(), source=Path("n.json")
+            )
+
+    def test_duplicate_uuid_fails_closed(self) -> None:
+        doc = self._doc()
+        doc["plan"]["reqs"].append({"uuid": "req-1", "description": "twin"})
+        with pytest.raises(ValueError, match="matches 2 nodes"):
+            apply_narrative_source(
+                doc,
+                {"nodes": {"req-1": {"description": "x"}}},
+                generated_uuids=frozenset(),
+                source=Path("n.json"),
+            )
+
+    def test_generated_block_cannot_be_targeted(self) -> None:
+        with pytest.raises(ValueError, match="exporter-generated"):
+            apply_narrative_source(
+                self._doc(),
+                {"nodes": {"req-1": {"description": "x"}}},
+                generated_uuids=frozenset({"req-1"}),
+                source=Path("n.json"),
+            )
+
+    @pytest.mark.parametrize(
+        "payload",
+        [
+            {"unexpected": {}},
+            {"nodes": {"req-1": {"uuid": "other"}}},
+            {"nodes": {"req-1": {}}},
+            {"nodes": {_FTRA_SI10_IMPL_UUID: {"description": "x", "props": []}}},
+            {"set_parameters": {"p-1": "not-a-list"}},
+            {"remove": "res-1"},
+        ],
+    )
+    def test_malformed_source_is_rejected(self, tmp_path: Path, payload: dict) -> None:
+        source = tmp_path / "narratives.json"
+        source.write_text(json.dumps(payload))
+        with pytest.raises(ValueError):
+            load_narrative_source(source)
+
+    def test_only_canonical_outputs_have_narrative_sources(
+        self, tmp_path: Path
+    ) -> None:
+        root = Path(__file__).resolve().parents[1]
+        canonical = root / "compliance" / "oscal" / "component-definition.yaml"
+        assert narrative_source_for(canonical) is not None
+        copy = tmp_path / "component-definition.yaml"
+        copy.write_text(canonical.read_text())
+        assert narrative_source_for(copy) is None
+
+    def test_ssp_patch_with_stale_source_writes_nothing(self, tmp_path: Path) -> None:
+        ssp_file = tmp_path / "ssp.yaml"
+        ssp_file.write_text(_MINIMAL_SSP)
+        source = tmp_path / "narratives.json"
+        source.write_text(json.dumps({"nodes": {"gone-0001": {"description": "x"}}}))
+        assert not _apply_ssp_patch(ssp_file, [], narratives=source)
+        assert ssp_file.read_text() == _MINIMAL_SSP
+
+    def test_ssp_patch_applies_source_to_a_hand_authored_block(
+        self, tmp_path: Path
+    ) -> None:
+        ssp_file = tmp_path / "ssp.yaml"
+        ssp_file.write_text(_MINIMAL_SSP)
+        source = tmp_path / "narratives.json"
+        source.write_text(
+            json.dumps(
+                {
+                    "nodes": {
+                        "existing-req-0001": {
+                            "description": "Restated.",
+                            "props": [
+                                {"name": "implementation-status", "value": "partial"}
+                            ],
+                        }
+                    }
+                }
+            )
+        )
+        assert _apply_ssp_patch(ssp_file, [], narratives=source)
+        req = yaml.safe_load(ssp_file.read_text())["system-security-plan"][
+            "control-implementation"
+        ]["implemented-requirements"][0]
+        assert req["description"] == "Restated."
+        assert req["props"] == [{"name": "implementation-status", "value": "partial"}]
+
+    def test_platform_block_cannot_be_overridden(self, tmp_path: Path) -> None:
+        from src.gateway.governance.oscal_ssp_exporter import (
+            generate_platform_control_narratives,
+        )
+
+        ssp_file = tmp_path / "ssp.yaml"
+        ssp_file.write_text(_MINIMAL_SSP)
+        source = tmp_path / "narratives.json"
+        source.write_text(
+            json.dumps({"nodes": {_PLATFORM_SC7_IMPL_UUID: {"description": "x"}}})
+        )
+        blocks = generate_platform_control_narratives("gcp-gke")
+        assert not _apply_ssp_patch(ssp_file, blocks, narratives=source)
+
+    @pytest.mark.parametrize(
+        "output",
+        [
+            "system-security-plan.yaml",
+            "system-security-plan-eu-ecb.yaml",
+            "system-security-plan-apac-mas.yaml",
+            "component-definition.yaml",
+        ],
+    )
+    def test_committed_outputs_carry_their_narrative_source(self, output: str) -> None:
+        """Every field a narrative source sets is what the committed YAML says,
+        so a hand edit to an exporter-owned block shows up here and in
+        ``export --check``."""
+        root = Path(__file__).resolve().parents[1]
+        target = root / "compliance" / "oscal" / output
+        source = narrative_source_for(target)
+        if source is None:
+            pytest.skip(f"{output} has no narrative source")
+        data = load_narrative_source(source)
+        index: dict[str, dict] = {}
+
+        def walk(node: object) -> None:
+            if isinstance(node, dict):
+                if isinstance(node.get("uuid"), str):
+                    index[node["uuid"]] = node
+                for value in node.values():
+                    walk(value)
+            elif isinstance(node, list):
+                for item in node:
+                    walk(item)
+
+        walk(yaml.safe_load(target.read_text(encoding="utf-8")))
+        for uid, fields in data.get("nodes", {}).items():
+            for field, value in fields.items():
+                if value is None:
+                    assert field not in index[uid], (uid, field)
+                else:
+                    assert index[uid][field] == value, (uid, field)
+        for uid in data.get("remove", []):
+            assert uid not in index, uid
 
 
 pytestmark = [pytest.mark.unit, pytest.mark.local]
