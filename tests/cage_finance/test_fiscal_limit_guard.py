@@ -11,6 +11,7 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
+# Closure regression guard for: POAM-2026-058, POAM-2026-067
 
 """
 Unit tests for FiscalLimitGuard — multi-agent collision prevention.
@@ -538,3 +539,38 @@ def test_sync_client_lifecycle() -> None:
         assert await guard.current_spend_usd() == pytest.approx(600.0)
 
     asyncio.run(run())
+
+
+@pytest.mark.asyncio
+async def test_release_targets_reserved_window_key_not_rolled_over_day(
+    guard: FiscalLimitGuard, redis_client: fakeredis.aioredis.FakeRedis
+) -> None:
+    """POAM-2026-058 / POAM-2026-067: release targets the reserved window.
+
+    Releasing a reservation after a UTC day rollover must decrement the exact
+    ``token.window_key`` captured at reservation time (an expired prior-day
+    counter clamps at 0, never negative) and must never touch the new day's
+    counter. ``release()`` without a token is a ``TypeError``: there is no
+    fallback that recomputes today's window.
+    """
+    day1_key = "fiscal:daily_limit:2026-11-05"
+    day2_key = "fiscal:daily_limit:2026-11-06"
+
+    with patch.object(FiscalLimitGuard, "_window_key", return_value=day1_key):
+        day1_token = await guard.reserve(agent_id="agent-day1", amount_usd=100_000.0)
+        assert not day1_token.rejected
+        assert day1_token.window_key == day1_key
+
+    # UTC rollover: the prior-day counter's TTL expires while day 2 accumulates.
+    await redis_client.delete(day1_key)
+    with patch.object(FiscalLimitGuard, "_window_key", return_value=day2_key):
+        day2_token = await guard.reserve(agent_id="agent-day2", amount_usd=200_000.0)
+        assert not day2_token.rejected
+        assert day2_token.window_key == day2_key
+
+        assert await guard.release(day1_token) == 0.0
+        assert int(await redis_client.get(day1_key) or 0) == 0
+        assert await guard.current_spend_usd() == pytest.approx(200_000.0)
+
+    with pytest.raises(TypeError):
+        await guard.release()  # type: ignore[call-arg]

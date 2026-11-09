@@ -1,3 +1,4 @@
+# Closure regression guard for: POAM-2026-050
 """NARROW from ``validate_action`` is an unsealed, re-verified candidate.
 
 proof/model.py defines NARROW as: (a) every violation is NARROWABLE, (b) a

@@ -11,6 +11,7 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
+# Closure regression guard for: POAM-2026-036, POAM-2026-074
 import pytest
 
 """Tests for prompt injection detector — AI 600-1 §2.3 (Data Poisoning).

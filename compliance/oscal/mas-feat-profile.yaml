@@ -35,3 +35,8 @@ profile:
       include-all: {}
   modify:
     set-parameters: []
+  back-matter:
+    resources:
+      - uuid: "mas-feat-catalog-stub"
+        title: "MAS FEAT Principles & Notice 655 Control Catalog Stub"
+        description: "Placeholder back-matter resource referenced by this stub profile until the full MAS FEAT OSCAL catalog is authored."

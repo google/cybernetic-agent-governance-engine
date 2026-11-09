@@ -11,6 +11,7 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
+# Closure regression guard for: POAM-2026-112
 
 """
 Tests for canonical RFC 8785 envelope transport (ADR-008 Phase 3).

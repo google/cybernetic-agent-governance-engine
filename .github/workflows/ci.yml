@@ -332,6 +332,12 @@ jobs:
         # byte-for-byte parity of docs/compliance/OSCAL_EVIDENCE_CLAIM_REGISTER.md.
         run: |
           uv run python scripts/check_oscal_claim_census.py --verify-rendered docs/compliance/OSCAL_EVIDENCE_CLAIM_REGISTER.md
+      - name: POA&M closure-evidence & Lula/OSCAL divergence gate
+        # Enforces PR-9 four-check gate across all 6 POA&M trackers (summary tables
+        # and ### POAM-... detail sections), Lula v0.16.0 manifests, EVIDENCE_STORE_REGISTRY
+        # lifetime/custody rules, and OSCAL claim-census parity (zero waivers).
+        run: |
+          uv run python scripts/check_poam_lula_divergence.py
       - name: Kubernetes shadow-manifest absence & Terraform selector parity gate
         # Ensures deployment/k8s/ remains retired and raises OrphanSelectorError
         # if any selector in infra/ matches zero Terraform workload pod templates.

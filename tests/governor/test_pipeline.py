@@ -11,6 +11,7 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
+# Closure regression guard for: POAM-2026-056
 
 """Fail-closed contract tests for ``run_pipeline``.
 

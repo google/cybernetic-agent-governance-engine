@@ -11,6 +11,7 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
+# Closure regression guard for: CAGE-SEC-003, POAM-2026-052, POAM-2026-066
 
 """
 tests/test_defer_queue.py — Unit tests for the DEFER state machine primitive (CAGE v0.1.0).

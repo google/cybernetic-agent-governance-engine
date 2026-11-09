@@ -661,3 +661,245 @@ def test_version_hygiene_rejects_lula_schema_version_drift(tmp_path: Path) -> No
         issues[0].target == "compliance/lula/schemas/lula_v0170_validation.schema.json"
     )
     assert "Lula v0.17.0" in issues[0].reason
+
+
+# ---------------------------------------------------------------------------
+# PR-9 / CE-1 / F-64 (CE-M7): Compliance scope, OSCAL/Lula YAML, Ring 3 census
+# ---------------------------------------------------------------------------
+
+
+def test_doc_scope_includes_all_six_poam_and_oscal_register_docs() -> None:
+    expected = {
+        "docs/POAM.md",
+        "docs/BREAKING_CHANGES.md",
+        "docs/compliance/OSCAL_EVIDENCE_CLAIM_REGISTER.md",
+        "docs/compliance/cross-region/POAM_INDEX.md",
+        "docs/compliance/us_fed/POAM_US_FED.md",
+        "docs/compliance/universal/POAM_ISO42001.md",
+        "docs/compliance/eu_ecb/POAM_EU_ECB.md",
+        "docs/compliance/apac_mas/POAM_APAC_MAS.md",
+    }
+    assert expected <= set(g9.DOC_SCOPE)
+
+
+def test_oscal_and_lula_yaml_rejects_duplicate_mapping_keys(tmp_path: Path) -> None:
+    oscal_dir = tmp_path / "compliance" / "oscal"
+    lula_dir = tmp_path / "compliance" / "lula"
+    oscal_dir.mkdir(parents=True)
+    lula_dir.mkdir(parents=True)
+
+    (oscal_dir / "sp800-53-component-definition.yaml").write_text(
+        "component-definition:\n"
+        "  uuid: 11111111-1111-4111-8111-111111111111\n"
+        "  components:\n"
+        "    - uuid: a\n"
+        "  components:\n"
+        "    - uuid: b\n",
+        encoding="utf-8",
+    )
+    (lula_dir / "lula-validation-dup.yaml").write_text(
+        "component-definition:\n"
+        "  uuid: 22222222-2222-4222-8222-222222222222\n"
+        "  back-matter:\n"
+        "    resources:\n"
+        "      - uuid: 33333333-3333-4333-8333-333333333333\n"
+        "        description: |\n"
+        "          domain:\n"
+        "            type: kubernetes\n"
+        "          provider:\n"
+        "            type: opa\n"
+        "          provider:\n"
+        "            type: opa\n",
+        encoding="utf-8",
+    )
+
+    issues = g9.audit_oscal_and_lula_yaml(tmp_path)
+    by_type = [(i.source_file.name, i.reference_type) for i in issues]
+    assert ("sp800-53-component-definition.yaml", "YAML Duplicate Key") in by_type
+    assert ("lula-validation-dup.yaml", "YAML Duplicate Key") in by_type
+
+
+def test_oscal_yaml_rejects_dangling_fragment_local_href_and_docs_proof_packages_paths(
+    tmp_path: Path,
+) -> None:
+    """OSCAL YAML hrefs and narrative paths cover docs/, proof/, and packages/ without KNOWN_DOCUMENTED_GAPS waivers."""
+    oscal_dir = tmp_path / "compliance" / "oscal"
+    src_dir = tmp_path / "src" / "gateway"
+    docs_dir = tmp_path / "docs"
+    proof_dir = tmp_path / "proof"
+    pkg_dir = tmp_path / "packages" / "cage-client"
+    for d in (oscal_dir, src_dir, docs_dir, proof_dir, pkg_dir):
+        d.mkdir(parents=True)
+    (src_dir / "real.py").write_text("x = 1\n", encoding="utf-8")
+    (docs_dir / "existing_guide.md").write_text("# guide\n", encoding="utf-8")
+    (proof_dir / "real_proof.py").write_text("x = 1\n", encoding="utf-8")
+    (pkg_dir / "pyproject.toml").write_text("[project]\n", encoding="utf-8")
+
+    waived_gap_path = "compliance/oscal/sp80053-profile.yaml"
+    assert waived_gap_path in g9.KNOWN_DOCUMENTED_GAPS
+    waived_narrative = "scripts/generate_sar.py"
+    assert waived_narrative in g9.KNOWN_DOCUMENTED_GAPS
+
+    (oscal_dir / "eu-ai-act-profile.yaml").write_text(
+        "profile:\n"
+        "  uuid: 44444444-4444-4444-8444-444444444444\n"
+        "  imports:\n"
+        f"    - href: {waived_gap_path}\n"
+        "    - href: '#missing-uuid-999'\n"
+        "    - href: '#present-uuid-001'\n"
+        "  metadata:\n"
+        "    remarks: >-\n"
+        "      Valid src/gateway/real.py, docs/existing_guide.md, proof/real_proof.py, packages/cage-client/pyproject.toml "
+        f"vs missing {waived_narrative}, docs/missing_doc.md, proof/missing_proof.py, packages/cage-client/missing.py.\n"
+        "  back-matter:\n"
+        "    resources:\n"
+        "      - uuid: present-uuid-001\n"
+        "        rlinks:\n"
+        "          - href: https://example.org/spec\n",
+        encoding="utf-8",
+    )
+
+    issues = g9.audit_oscal_and_lula_yaml(tmp_path)
+    got = {(i.reference_type, i.target) for i in issues}
+    assert ("OSCAL Href Path", waived_gap_path) in got
+    assert ("OSCAL Href Fragment", "#missing-uuid-999") in got
+    assert ("OSCAL File Path", waived_narrative) in got
+    assert ("OSCAL File Path", "docs/missing_doc.md") in got
+    assert ("OSCAL File Path", "proof/missing_proof.py") in got
+    assert ("OSCAL File Path", "packages/cage-client/missing.py") in got
+    assert not any(
+        good in i.target
+        for i in issues
+        for good in (
+            "real.py",
+            "existing_guide.md",
+            "real_proof.py",
+            "pyproject.toml",
+            "present-uuid-001",
+        )
+    )
+
+
+def test_census_non_implemented_holds_read_back_paths_are_verified(
+    tmp_path: Path,
+) -> None:
+    """Non-implemented HOLDS rows in evidence_claim_census.jsonl must have read_back.check paths verified."""
+    import json
+
+    import scripts.check_oscal_claim_census as census_mod
+
+    oscal_dir = tmp_path / "compliance" / "oscal"
+    oscal_dir.mkdir(parents=True)
+    (tmp_path / "proof").mkdir()
+    (tmp_path / "proof" / "real_inv.py").write_text("x = 1\n", encoding="utf-8")
+
+    row_ok = {
+        "id": "sp800-53-component-definition.yaml#ok-partial-001",
+        "verdict": "HOLDS",
+        "disposition": "holds",
+        "status_extracted": "partial",
+        "custody": {"grade": "PLANE"},
+        "lifetime": {"grade": "OUTLIVES"},
+        "read_back": {
+            "grade": "OBSERVES",
+            "check": "proof/real_inv.py:1",
+        },
+        "cites": ["proof/real_inv.py:1"],
+        "evidence_named": ["proof/real_inv.py"],
+        "description_sha256": "a" * 64,
+    }
+    row_bad = {
+        "id": "sp800-53-component-definition.yaml#bad-partial-002",
+        "verdict": "HOLDS",
+        "disposition": "holds",
+        "status_extracted": "partial",
+        "custody": {"grade": "PLANE"},
+        "lifetime": {"grade": "OUTLIVES"},
+        "read_back": {
+            "grade": "OBSERVES",
+            "check": "docs/nonexistent_runbook.md and packages/cage-conformance/missing.py",
+        },
+        "cites": [],
+        "evidence_named": ["proof/missing_oracle.py"],
+        "description_sha256": "b" * 64,
+    }
+    census_file = oscal_dir / "evidence_claim_census.jsonl"
+    census_file.write_text(
+        json.dumps(row_ok) + "\n" + json.dumps(row_bad) + "\n",
+        encoding="utf-8",
+    )
+
+    g9_issues = g9.audit_oscal_and_lula_yaml(tmp_path)
+    g9_targets = {
+        i.target for i in g9_issues if i.reference_type == "Census HOLDS Path"
+    }
+    assert g9_targets == {
+        "docs/nonexistent_runbook.md",
+        "packages/cage-conformance/missing.py",
+        "proof/missing_oracle.py",
+    }
+
+    extracted = {
+        row_ok["id"]: {"description_sha256": "a" * 64, "status": "partial"},
+        row_bad["id"]: {"description_sha256": "b" * 64, "status": "partial"},
+    }
+    c_errs = census_mod.validate_census(
+        [
+            row_ok,
+            row_bad,
+            {
+                "id": "SA11-SYSTEMIC",
+                "verdict": "NOT_IN_FORCE",
+                "disposition": "restate",
+                "custody": {"grade": "n/a"},
+                "read_back": {"grade": "NONE", "check": "none"},
+                "lifetime": {"grade": "n/a"},
+                "cites": [],
+                "description_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+            },
+        ],
+        extracted,
+        tmp_path,
+    )
+    assert any("docs/nonexistent_runbook.md" in e for e in c_errs)
+    assert any("packages/cage-conformance/missing.py" in e for e in c_errs)
+    assert any("proof/missing_oracle.py" in e for e in c_errs)
+
+
+def test_ring3_census_claim_ids_and_summary_tables_enforced(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    oscal_dir = tmp_path / "compliance" / "oscal"
+    oscal_dir.mkdir(parents=True)
+    (oscal_dir / "evidence_claim_census.jsonl").write_text(
+        '{"id": "component-definition.yaml#good-001", "verdict": "HOLDS"}\n'
+        '{"id": "system-security-plan.yaml#weak-002", "verdict": "WEAKER"}\n',
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(g9, "REPO_ROOT", tmp_path)
+    g9._load_census_index.cache_clear()
+
+    sec = tmp_path / "SECURITY.md"
+    sec.write_text(
+        "## Hardening\n\n"
+        "### Implemented Controls Summary\n\n"
+        "| Control | Census Claim ID | Notes |\n"
+        "|---|---|---|\n"
+        "| Valid row | `component-definition.yaml#good-001` | Enforced |\n"
+        "| Uncited row | -- | Enforced without census ID |\n"
+        "| Unknown ID | `component-definition.yaml#ghost-999` | Bad ID |\n"
+        "| Unqualified weak | `system-security-plan.yaml#weak-002` | Claims full coverage |\n"
+        "| Qualified weak | `system-security-plan.yaml#weak-002` | Gap tracked under POAM-2026-195 (open) |\n",
+        encoding="utf-8",
+    )
+    issues = audit_markdown_file(sec)
+    got = [(i.line_number, i.reference_type, i.target) for i in issues]
+    assert got == [
+        (
+            8,
+            "Uncited Control Claim",
+            "| Uncited row | -- | Enforced without census ID |",
+        ),
+        (9, "Census Claim ID", "component-definition.yaml#ghost-999"),
+        (10, "Census Claim ID", "system-security-plan.yaml#weak-002"),
+    ]

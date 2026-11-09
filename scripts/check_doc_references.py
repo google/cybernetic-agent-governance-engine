@@ -40,6 +40,7 @@ from __future__ import annotations
 import argparse
 import ast
 import functools
+import json
 import re
 import shutil
 import subprocess
@@ -47,10 +48,42 @@ import sys
 import tempfile
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Any
 
 import tomllib
+import yaml
 
 REPO_ROOT = Path.cwd().resolve()
+
+
+class _DuplicateKeyRejectingLoader(yaml.SafeLoader):
+    """YAML SafeLoader that raises ConstructorError with 1-indexed line info on duplicate keys."""
+
+
+def _construct_no_dup_yaml_mapping(
+    loader: _DuplicateKeyRejectingLoader,
+    node: yaml.MappingNode,
+    deep: bool = False,
+) -> dict[Any, Any]:
+    mapping: dict[Any, Any] = {}
+    for key_node, value_node in node.value:
+        key = loader.construct_object(key_node, deep=deep)
+        if key in mapping:
+            line_1 = (key_node.start_mark.line + 1) if key_node.start_mark else 1
+            raise yaml.constructor.ConstructorError(
+                "while constructing a mapping",
+                node.start_mark,
+                f"duplicate YAML mapping key {key!r} at line {line_1}",
+                key_node.start_mark,
+            )
+        mapping[key] = loader.construct_object(value_node, deep=deep)
+    return mapping
+
+
+_DuplicateKeyRejectingLoader.add_constructor(
+    yaml.resolver.BaseResolver.DEFAULT_MAPPING_TAG,
+    _construct_no_dup_yaml_mapping,
+)
 
 # The gate's scope, and the only copy of it: CI gate G9 and `make docs-check`
 # run this script without --path. CHANGELOG.md and docs/partners/** are outside
@@ -65,6 +98,11 @@ DOC_SCOPE = (
     "docs/POAM.md",
     "docs/BREAKING_CHANGES.md",
     "docs/compliance/OSCAL_EVIDENCE_CLAIM_REGISTER.md",
+    "docs/compliance/cross-region/POAM_INDEX.md",
+    "docs/compliance/us_fed/POAM_US_FED.md",
+    "docs/compliance/universal/POAM_ISO42001.md",
+    "docs/compliance/eu_ecb/POAM_EU_ECB.md",
+    "docs/compliance/apac_mas/POAM_APAC_MAS.md",
     "docs/architecture",
     "compliance",
     "infra",
@@ -383,8 +421,8 @@ def _parse_line_spec(spec: str) -> list[tuple[int, int]]:
 def find_markdown_files() -> list[Path]:
     """Collect all target Markdown files as resolved paths."""
     files: list[Path] = []
-    for root in DOC_ROOTS:
-        resolved = root.resolve()
+    for entry in DOC_SCOPE:
+        resolved = (REPO_ROOT / entry).resolve()
         if resolved.is_file() and resolved.suffix == ".md":
             files.append(resolved)
         elif resolved.is_dir():
@@ -1425,7 +1463,509 @@ def audit_markdown_file(path: Path) -> list[Issue]:
         # 4. Historical assertions require state-serial, audit-log, or git/run history evidence (POAM-2026-169)
         issues.extend(_audit_historical_assertions(path, line_idx, line))
 
+    # 5. Ring 3 OSCAL census claim ID resolution & summary-table binding (F-64 / PR-9)
+    issues.extend(_audit_ring3_census_claims(path, lines))
+
     return issues
+
+
+CENSUS_ID_PATTERN = re.compile(
+    r"(?:compliance/oscal/)?(?P<cid>(?:"
+    r"system-security-plan(?:-eu-ecb|-apac-mas)?\.yaml"
+    r"|(?:sp800-53-)?component-definition\.yaml"
+    r"|common-controls-catalog\.yaml"
+    r"|stpa_compiler_ssp_patch\.yaml"
+    r"|eu-ai-act-profile\.yaml"
+    r"|mas-feat-profile\.yaml"
+    r")#[A-Za-z0-9_.-]+|\bSA11-SYSTEMIC\b)"
+)
+
+_CENSUS_WEAK_QUALIFIER_RE = re.compile(
+    r"(?:\bWEAKER\b|\bNOT_IN_FORCE\b|\bnot\s+in\s+force\b|\breopened\b|\bopen\b|\bstub\b"
+    r"|\bpartially[- ]implemented\b|\bwithdrawn\b|\bPOAM-\d|\bEU-(?:[A-Z]+-)?\d|\bMAS-(?:[A-Z]+-)?\d|\bAI600-\d)",
+    re.IGNORECASE,
+)
+
+_OSCAL_PINNED_PATH_RE = re.compile(
+    r"(?<![A-Za-z0-9_./:-])(?P<commit>[0-9a-f]{7,40})(?P<parent>\^?):"
+    r"(?P<path>(?:src|tests|infra|deployment|compliance|config|scripts|\.github|docs|proof|packages)/[A-Za-z0-9_./-]+)"
+)
+
+_OSCAL_REPO_PATH_RE = re.compile(
+    r"(?<![A-Za-z0-9_./:-])(?P<path>(?:src|tests|infra|deployment|compliance|config|scripts|\.github|docs|proof|packages)/"
+    r"(?:[A-Za-z0-9_.*{}-]+/)*(?:Dockerfile(?![.A-Za-z0-9_-])|[A-Za-z0-9_.*{}-]+\.[a-z0-9]+))"
+)
+
+
+@functools.lru_cache(maxsize=8)
+def _load_census_index(repo_root: Path) -> dict[str, str] | None:
+    """Load `{claim_id: verdict}` from `compliance/oscal/evidence_claim_census.jsonl`, or None if absent."""
+    census_file = repo_root / "compliance" / "oscal" / "evidence_claim_census.jsonl"
+    if not census_file.is_file():
+        return None
+    index: dict[str, str] = {}
+    for raw_line in census_file.read_text(encoding="utf-8").splitlines():
+        s = raw_line.strip()
+        if not s:
+            continue
+        obj = json.loads(s)
+        cid = str(obj.get("id", ""))
+        if cid:
+            index[cid] = str(obj.get("verdict", ""))
+    return index
+
+
+def _is_ring3_summary_section(path: Path, h2: str, h3: str) -> bool:
+    name = path.name
+    if name == "SECURITY.md":
+        return h3.startswith("### Implemented Controls Summary")
+    if name == "COMPLIANCE.md":
+        return h3.startswith(("### 1.1 ", "### 1.2 ", "### 1.3 ", "### 1.4 "))
+    if name == "POAM.md":
+        return h2.startswith("## Security Strengths") and not h3
+    return False
+
+
+def _audit_ring3_census_claims(path: Path, lines: list[str]) -> list[Issue]:
+    """Resolve cited OSCAL census claim IDs and require IDs on Ring 3 control summary rows."""
+    issues: list[Issue] = []
+    census_idx = _load_census_index(REPO_ROOT.resolve())
+    in_fence = False
+    h2 = ""
+    h3 = ""
+    seen_table_header_in_section = False
+
+    for line_idx, line in enumerate(lines, start=1):
+        stripped = line.strip()
+        if stripped.startswith("```"):
+            in_fence = not in_fence
+            continue
+        if in_fence:
+            continue
+
+        if stripped.startswith("## ") and not stripped.startswith("### "):
+            h2 = stripped
+            h3 = ""
+            seen_table_header_in_section = False
+            continue
+        if stripped.startswith("### "):
+            h3 = stripped
+            seen_table_header_in_section = False
+            continue
+
+        matched_cids: list[str] = []
+        for m in CENSUS_ID_PATTERN.finditer(line):
+            cid = m.group("cid")
+            if re.search(r"#L\d+(?:-L\d+)?$", cid):
+                continue
+            matched_cids.append(cid)
+            if census_idx is not None:
+                if cid not in census_idx:
+                    issues.append(
+                        Issue(
+                            path,
+                            line_idx,
+                            "Census Claim ID",
+                            cid,
+                            f"Census claim ID '{cid}' not found in compliance/oscal/evidence_claim_census.jsonl",
+                        )
+                    )
+                else:
+                    verdict = census_idx[cid]
+                    if (
+                        verdict in {"WEAKER", "NOT_IN_FORCE"}
+                        and path.name != "OSCAL_EVIDENCE_CLAIM_REGISTER.md"
+                        and not _CENSUS_WEAK_QUALIFIER_RE.search(line)
+                    ):
+                        issues.append(
+                            Issue(
+                                path,
+                                line_idx,
+                                "Census Claim ID",
+                                cid,
+                                f"Present-tense claim cites '{cid}' (verdict={verdict}) without qualification",
+                            )
+                        )
+
+        if _is_ring3_summary_section(path, h2, h3):
+            if stripped.startswith("|"):
+                if re.match(r"^\|\s*[-:]+", stripped):
+                    continue
+                if not seen_table_header_in_section:
+                    seen_table_header_in_section = True
+                    continue
+                if not matched_cids:
+                    issues.append(
+                        Issue(
+                            path,
+                            line_idx,
+                            "Uncited Control Claim",
+                            stripped[:90],
+                            "Ring 3 control summary row must cite a resolvable OSCAL census claim ID (F-64)",
+                        )
+                    )
+            elif seen_table_header_in_section and not stripped:
+                seen_table_header_in_section = False
+
+    return issues
+
+
+def _verify_pinned_path_in_root(
+    repo_root: Path, commit: str, parent: str, path: str
+) -> tuple[bool, str]:
+    unavailable = _history_unavailable(repo_root)
+    if unavailable:
+        return False, unavailable
+    if not _git(repo_root, "cat-file", "-e", f"{commit}^{{commit}}")[0]:
+        return False, f"'{commit}' is not a commit in this repository"
+    if not _git(repo_root, "merge-base", "--is-ancestor", commit, "HEAD")[0]:
+        return False, f"commit '{commit}' is not an ancestor of HEAD"
+    revision = f"{commit}{parent}"
+    if not _git(repo_root, "cat-file", "-e", f"{revision}:{path}")[0]:
+        return False, f"'{path}' does not exist at {revision}"
+    return True, ""
+
+
+def _find_line_1(raw_lines: list[str], needle: str) -> int:
+    if needle:
+        for idx, rl in enumerate(raw_lines, start=1):
+            if needle in rl:
+                return idx
+    return 1
+
+
+def _audit_oscal_prose_paths(
+    y_file: Path,
+    raw_lines: list[str],
+    text: str,
+    repo_root: Path,
+    seen_checked: set[str],
+) -> list[Issue]:
+    issues: list[Issue] = []
+    pinned_spans: list[tuple[int, int]] = []
+    for pm in _OSCAL_PINNED_PATH_RE.finditer(text):
+        token = pm.group(0).rstrip(".,;:)")
+        pm_clean = PINNED_PATH_PATTERN.match(token)
+        if not pm_clean:
+            continue
+        pinned_spans.append((pm.start(), pm.end()))
+        if token in seen_checked:
+            continue
+        seen_checked.add(token)
+        ok, reason = _verify_pinned_path_in_root(
+            repo_root, pm_clean["commit"], pm_clean["parent"], pm_clean["path"]
+        )
+        if not ok:
+            issues.append(
+                Issue(
+                    y_file,
+                    _find_line_1(raw_lines, token),
+                    "OSCAL Pinned Path",
+                    token,
+                    reason,
+                )
+            )
+
+    for rm in _OSCAL_REPO_PATH_RE.finditer(text):
+        if any(ps <= rm.start() and rm.end() <= pe for ps, pe in pinned_spans):
+            continue
+        cand = rm.group("path").rstrip(".,;:)")
+        if is_template_or_pattern(cand):
+            continue
+        if cand != "Dockerfile" and not cand.endswith("/Dockerfile"):
+            if Path(cand).suffix not in CONCRETE_EXTENSIONS:
+                continue
+        if cand in seen_checked:
+            continue
+        seen_checked.add(cand)
+        if not (repo_root / cand).exists():
+            issues.append(
+                Issue(
+                    y_file,
+                    _find_line_1(raw_lines, cand),
+                    "OSCAL File Path",
+                    cand,
+                    f"OSCAL narrative path '{cand}' does not exist on disk (no KNOWN_DOCUMENTED_GAPS waiver)",
+                )
+            )
+    return issues
+
+
+def _walk_oscal_node(
+    node: Any,
+    y_file: Path,
+    raw_lines: list[str],
+    bm_uuids: set[str],
+    seen_paths: set[str],
+    root: Path,
+    issues: list[Issue],
+) -> None:
+    if isinstance(node, dict):
+        for k, v in node.items():
+            if k == "href" and isinstance(v, str):
+                href_val = v.strip()
+                if (
+                    not href_val
+                    or href_val == "lula.dev"
+                    or href_val.startswith(
+                        ("http://", "https://", "mailto:", "urn:", "lula://")
+                    )
+                    or is_template_or_pattern(href_val)
+                ):
+                    continue
+                if href_val.startswith("#"):
+                    if href_val[1:] not in bm_uuids:
+                        issues.append(
+                            Issue(
+                                y_file,
+                                _find_line_1(raw_lines, href_val),
+                                "OSCAL Href Fragment",
+                                href_val,
+                                f"OSCAL fragment '{href_val}' missing from back-matter.resources in {y_file.name}",
+                            )
+                        )
+                else:
+                    clean_href = href_val.split("#", 1)[0].strip()
+                    norm_href = clean_href.removeprefix("./")
+                    rel_cand = y_file.parent / clean_href
+                    root_cand = root / norm_href
+                    if not rel_cand.exists() and not root_cand.exists():
+                        issues.append(
+                            Issue(
+                                y_file,
+                                _find_line_1(raw_lines, href_val),
+                                "OSCAL Href Path",
+                                href_val,
+                                f"OSCAL local href '{clean_href}' does not exist on disk (no KNOWN_DOCUMENTED_GAPS waiver)",
+                            )
+                        )
+            elif k in {"description", "remarks"} and isinstance(v, str):
+                issues.extend(
+                    _audit_oscal_prose_paths(y_file, raw_lines, v, root, seen_paths)
+                )
+            else:
+                _walk_oscal_node(
+                    v, y_file, raw_lines, bm_uuids, seen_paths, root, issues
+                )
+    elif isinstance(node, list):
+        for item in node:
+            _walk_oscal_node(
+                item, y_file, raw_lines, bm_uuids, seen_paths, root, issues
+            )
+
+
+def _audit_census_holds_paths(census_file: Path, repo_root: Path) -> list[Issue]:
+    """Verify read_back.check and evidence_named paths on all HOLDS census rows (including non-implemented)."""
+    issues: list[Issue] = []
+    raw_lines = census_file.read_text(encoding="utf-8").splitlines()
+    for line_idx, raw_line in enumerate(raw_lines, start=1):
+        stripped = raw_line.strip()
+        if not stripped:
+            continue
+        try:
+            row = json.loads(stripped)
+        except json.JSONDecodeError as err:
+            issues.append(
+                Issue(census_file, line_idx, "Census JSON", census_file.name, str(err))
+            )
+            continue
+        if row.get("verdict") != "HOLDS":
+            continue
+        read_back = row.get("read_back")
+        rb_check = read_back.get("check", "") if isinstance(read_back, dict) else ""
+        blobs = [str(rb_check), *(str(x) for x in (row.get("evidence_named") or []))]
+        seen_row: set[str] = set()
+        for blob in blobs:
+            for iss in _audit_oscal_prose_paths(
+                census_file, [raw_line], blob, repo_root, seen_row
+            ):
+                issues.append(
+                    Issue(
+                        census_file,
+                        line_idx,
+                        "Census HOLDS Path",
+                        iss.target,
+                        f"{row.get('id')}: {iss.reason}",
+                    )
+                )
+    return issues
+
+
+def audit_oscal_and_lula_yaml(
+    repo_root: Path | None = None,
+    scoped_files: list[Path] | None = None,
+) -> list[Issue]:
+    """Validate duplicate-key-free YAML syntax, #uuid hrefs, local hrefs, and narrative paths
+    across `compliance/oscal/*.yaml`, `compliance/lula/*.yaml`, and HOLDS census rows."""
+    root = (repo_root or REPO_ROOT).resolve()
+    issues: list[Issue] = []
+    oscal_dir = root / "compliance" / "oscal"
+    lula_dir = root / "compliance" / "lula"
+    scope_set = (
+        {p.resolve() for p in scoped_files} if scoped_files is not None else None
+    )
+
+    oscal_files = (
+        sorted(p.resolve() for p in oscal_dir.glob("*.y*ml") if p.is_file())
+        if oscal_dir.is_dir()
+        else []
+    )
+    lula_files = (
+        sorted(p.resolve() for p in lula_dir.glob("*.y*ml") if p.is_file())
+        if lula_dir.is_dir()
+        else []
+    )
+    if scope_set is not None:
+        oscal_files = [p for p in oscal_files if p in scope_set]
+        lula_files = [p for p in lula_files if p in scope_set]
+
+    for y_file in lula_files:
+        raw = y_file.read_text(encoding="utf-8")
+        raw_lines = raw.splitlines()
+        try:
+            doc = yaml.load(raw, Loader=_DuplicateKeyRejectingLoader)  # nosec B506  # SafeLoader subclass rejecting duplicate keys
+        except yaml.YAMLError as err:
+            mark = getattr(err, "problem_mark", None)
+            ln = (mark.line + 1) if mark is not None else 1
+            ref_t = (
+                "YAML Duplicate Key"
+                if "duplicate YAML mapping key" in str(err)
+                else "YAML Syntax"
+            )
+            issues.append(Issue(y_file, ln, ref_t, y_file.name, str(err)))
+            continue
+        if not isinstance(doc, dict):
+            continue
+        comp_def = doc.get("component-definition")
+        if not isinstance(comp_def, dict):
+            continue
+        lula_seen_paths: set[str] = set()
+        meta = comp_def.get("metadata")
+        if isinstance(meta, dict) and isinstance(meta.get("remarks"), str):
+            issues.extend(
+                _audit_oscal_prose_paths(
+                    y_file, raw_lines, meta["remarks"], root, lula_seen_paths
+                )
+            )
+        bm = comp_def.get("back-matter")
+        resources = bm.get("resources") if isinstance(bm, dict) else []
+        bm_uuids: set[str] = set()
+        for res in resources if isinstance(resources, list) else []:
+            if not isinstance(res, dict):
+                continue
+            ruuid = res.get("uuid")
+            if isinstance(ruuid, str) and ruuid:
+                bm_uuids.add(ruuid)
+            desc = res.get("description")
+            if isinstance(desc, str) and ("domain:" in desc or "provider:" in desc):
+                try:
+                    yaml.load(desc, Loader=_DuplicateKeyRejectingLoader)  # nosec B506  # SafeLoader subclass rejecting duplicate keys
+                except yaml.YAMLError as err:
+                    ref_t = (
+                        "YAML Duplicate Key"
+                        if "duplicate YAML mapping key" in str(err)
+                        else "YAML Syntax"
+                    )
+                    issues.append(
+                        Issue(
+                            y_file,
+                            _find_line_1(raw_lines, str(ruuid or "description")),
+                            ref_t,
+                            f"{y_file.name}#{ruuid}",
+                            f"Embedded Lula resource YAML error: {err}",
+                        )
+                    )
+        for comp in comp_def.get("components") or []:
+            if not isinstance(comp, dict):
+                continue
+            for ci in comp.get("control-implementations") or []:
+                if not isinstance(ci, dict):
+                    continue
+                for ir in ci.get("implemented-requirements") or []:
+                    if not isinstance(ir, dict):
+                        continue
+                    for lnk in ir.get("links") or []:
+                        if isinstance(lnk, dict):
+                            href = str(lnk.get("href", "")).strip()
+                            if href.startswith("#") and href[1:] not in bm_uuids:
+                                issues.append(
+                                    Issue(
+                                        y_file,
+                                        _find_line_1(raw_lines, href),
+                                        "Lula Href Fragment",
+                                        href,
+                                        f"Fragment '{href}' missing from back-matter.resources in {y_file.name}",
+                                    )
+                                )
+
+    for y_file in oscal_files:
+        raw = y_file.read_text(encoding="utf-8")
+        raw_lines = raw.splitlines()
+        try:
+            doc = yaml.load(raw, Loader=_DuplicateKeyRejectingLoader)  # nosec B506  # SafeLoader subclass rejecting duplicate keys
+        except yaml.YAMLError as err:
+            mark = getattr(err, "problem_mark", None)
+            ln = (mark.line + 1) if mark is not None else 1
+            ref_t = (
+                "YAML Duplicate Key"
+                if "duplicate YAML mapping key" in str(err)
+                else "YAML Syntax"
+            )
+            issues.append(Issue(y_file, ln, ref_t, y_file.name, str(err)))
+            continue
+        if not isinstance(doc, dict):
+            continue
+
+        bm_uuids = set()
+        for top_val in doc.values():
+            if isinstance(top_val, dict):
+                bm = top_val.get("back-matter")
+                resources = bm.get("resources") if isinstance(bm, dict) else []
+                if isinstance(resources, list):
+                    for res in resources:
+                        if isinstance(res, dict) and isinstance(res.get("uuid"), str):
+                            bm_uuids.add(str(res["uuid"]))
+
+        seen_paths: set[str] = set()
+        _walk_oscal_node(doc, y_file, raw_lines, bm_uuids, seen_paths, root, issues)
+
+    census_file = oscal_dir / "evidence_claim_census.jsonl"
+    if census_file.is_file() and (
+        scope_set is None or census_file.resolve() in scope_set
+    ):
+        issues.extend(_audit_census_holds_paths(census_file.resolve(), root))
+
+    return issues
+
+
+def _resolve_scoped_yaml_files(path_args: list[str]) -> tuple[bool, list[Path]]:
+    """Return `(run_yaml_audit, matched_yaml_files)` for `--path` invocations."""
+    root = REPO_ROOT.resolve()
+    oscal_dir = (root / "compliance" / "oscal").resolve()
+    lula_dir = (root / "compliance" / "lula").resolve()
+    matched: list[Path] = []
+    for raw_path in path_args:
+        cand = Path(raw_path)
+        prefix = cand.resolve() if cand.is_absolute() else (root / cand).resolve()
+        if prefix.is_file() and prefix.suffix in {".yaml", ".yml", ".jsonl"}:
+            if oscal_dir in prefix.parents or lula_dir in prefix.parents:
+                matched.append(prefix)
+        elif prefix.is_dir():
+            for y_dir in (oscal_dir, lula_dir):
+                if y_dir.is_dir() and (
+                    prefix == y_dir
+                    or prefix in y_dir.parents
+                    or y_dir in prefix.parents
+                ):
+                    scan_root = prefix if y_dir in prefix.parents else y_dir
+                    matched.extend(
+                        p.resolve() for p in scan_root.glob("*.y*ml") if p.is_file()
+                    )
+                    matched.extend(
+                        p.resolve() for p in scan_root.glob("*.jsonl") if p.is_file()
+                    )
+    deduped = sorted(set(matched))
+    return bool(deduped), deduped
 
 
 HISTORICAL_CLAIM_PATTERN = re.compile(
@@ -1736,16 +2276,22 @@ def main(argv: list[str] | None = None) -> int:
     )
     args = parser.parse_args(argv)
 
+    run_yaml = False
+    scoped_yaml: list[Path] | None = None
     if args.path:
         files = resolve_scoped_markdown_files(args.path)
+        run_yaml, matched_yaml = _resolve_scoped_yaml_files(args.path)
+        scoped_yaml = matched_yaml
         print("Scoped to: " + ", ".join(args.path))
     else:
         files = find_markdown_files()
+        run_yaml = True
+        scoped_yaml = None
 
     all_issues: list[Issue] = []
 
     print(f"Auditing {len(files)} documentation files...")
-    if len(files) == 0:
+    if len(files) == 0 and not run_yaml:
         msg = "No documentation files matched the requested scope.\n"
         if args.output:
             args.output.parent.mkdir(parents=True, exist_ok=True)
@@ -1757,6 +2303,11 @@ def main(argv: list[str] | None = None) -> int:
     for f in files:
         file_issues = audit_markdown_file(f)
         all_issues.extend(file_issues)
+
+    if run_yaml:
+        all_issues.extend(
+            audit_oscal_and_lula_yaml(REPO_ROOT, scoped_files=scoped_yaml)
+        )
 
     if not args.path:
         all_issues.extend(audit_version_hygiene(REPO_ROOT))

@@ -35,3 +35,8 @@ profile:
       include-all: {}
   modify:
     set-parameters: []
+  back-matter:
+    resources:
+      - uuid: "eu-ai-act-catalog-stub"
+        title: "EU AI Act (Reg 2024/1689) Control Catalog Stub"
+        description: "Placeholder back-matter resource referenced by this stub profile until the full EU AI Act OSCAL catalog is authored."

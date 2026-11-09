@@ -854,22 +854,29 @@ def test_gate_lula_manifests_and_readme_count_catches_planted_defect(
 
 
 def test_gate_poam_lula_divergence_catches_planted_uncovered_finding() -> None:
-    """`scripts/check_poam_lula_divergence.py` must flag a closed POAM finding that has no matching Lula file."""
+    """`scripts/check_poam_lula_divergence.py` Check 1 must reject closed findings lacking finding-ID-bound runnable evidence, even when a same-control Lula file exists."""
     planted_poam = (
         "## Closed Findings\n\n"
         "| ID | Control | Description | Closed |\n"
         "|---|---|---|---|\n"
-        "| POAM-2026-999 | ZZ-99 | Planted uncovered finding | 2026-10-30 |\n"
+        "| POAM-2026-998 | ZZ-99 | Planted uncovered finding with unknown control | 2026-10-30 |\n"
+        "| POAM-2026-999 | SC-4 | Planted closed SC-4 row relying only on control-name match | 2026-10-30 |\n"
     )
-    findings = check_poam_lula_divergence.parse_closed_findings(planted_poam)
-    assert len(findings) == 1
-    lula_stems = check_poam_lula_divergence.get_lula_file_stems(
-        REPO_ROOT / "compliance" / "lula"
+    rows, parse_errs = check_poam_lula_divergence._parse_primary_poam_text(
+        planted_poam, "docs/POAM.md"
     )
-    controls = check_poam_lula_divergence.split_controls(findings[0]["control"])
-    assert (
-        check_poam_lula_divergence.find_matching_lula_stems(controls, lula_stems) == []
-    )
+    assert parse_errs == []
+    assert [r.finding_id for r in rows] == ["POAM-2026-998", "POAM-2026-999"]
+    active_lula, lula_errs = check_poam_lula_divergence._load_active_lula_set(REPO_ROOT)
+    assert lula_errs == []
+    assert "compliance/lula/lula-validation-sc4.yaml" in active_lula
+    ci_scripts = check_poam_lula_divergence._ci_referenced_scripts(REPO_ROOT)
+    for row in rows:
+        errs = check_poam_lula_divergence._audit_check1_read_back_for_row(
+            REPO_ROOT, row, active_lula, ci_scripts
+        )
+        assert errs, f"Expected Check 1 failure on {row.finding_id}"
+        assert "[Check 1: Read-Back]" in errs[0]
 
 
 def test_gate_cbrn_keyword_check_enforces_threshold_invariants() -> None:

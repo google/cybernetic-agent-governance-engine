@@ -357,10 +357,13 @@ async def test_compliance_bridge_lifespan_invokes_kms_guard_in_all_enforcing_pos
 ) -> None:
     """compliance_bridge lifespan calls assert_kms_active_in_production() in staging, production, and prod."""
     from src.compliance_bridge import main as cb_main
+    from src.compliance_bridge.audit_workflow import LANGFUSE_CREDENTIAL_ENV_VARS
     from src.compliance_bridge.kms_batch_signer import AsyncBatchSigner
 
     monkeypatch.setenv("CAGE_ENV", cage_env)
     monkeypatch.setenv("EVIDENCE_STREAM_ENABLED", "true")
+    for var in LANGFUSE_CREDENTIAL_ENV_VARS:
+        monkeypatch.setenv(var, f"synthetic-{var.lower()}")
 
     custodian = MagicMock()
     custodian.run_forever = AsyncMock(return_value=None)
