@@ -586,8 +586,6 @@ deploy_terraform_target() {
       --import-state
   fi
   
-  # Run Terraform plan
-  header "Terraform Plan"
   # Filter out -auto-approve from plan args (it's only for apply)
   plan_args=()
   auto_approve=false
@@ -598,6 +596,34 @@ deploy_terraform_target() {
       plan_args+=("$arg")
     fi
   done
+
+  # EF4 / EF6 (POAM-2026-164): When module.gke does not yet exist in state (fresh
+  # project or post-destroy rebuild), provision the GCP cluster foundation first
+  # with bootstrap_without_cluster=true so Stage 2 can construct live Kubernetes
+  # and Helm REST clients against module.gke.cluster_endpoint.
+  if [[ "$target" == "gcp-gke" ]] && ! terraform -chdir="$tf_dir" state list 2>/dev/null | grep -q '^module\.gke\.'; then
+    header "Stage 1 Terraform Plan & Apply (GKE Cluster Foundation — EF4 / EF6)"
+    local stage1_plan_args=(
+      "${plan_args[@]}"
+      "-var=bootstrap_without_cluster=true"
+      "-target=module.gke"
+      "-target=module.evidence_domain"
+      "-target=module.worm_bucket"
+    )
+    terraform -chdir="$tf_dir" plan "${stage1_plan_args[@]}" -out=tfplan.stage1
+    if [[ "$auto_approve" == "true" ]]; then
+      terraform -chdir="$tf_dir" apply tfplan.stage1
+    else
+      echo ""
+      echo "Review the Stage 1 GKE foundation plan above. Press Enter to apply or Ctrl+C to cancel."
+      read -r
+      terraform -chdir="$tf_dir" apply tfplan.stage1
+    fi
+    rm -f "$tf_dir/tfplan.stage1"
+  fi
+
+  # Run Terraform plan
+  header "Terraform Plan"
   terraform -chdir="$tf_dir" plan "${plan_args[@]}" -out=tfplan
 
   # Apply Terraform configuration

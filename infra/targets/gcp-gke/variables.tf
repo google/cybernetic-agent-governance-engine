@@ -1431,3 +1431,11 @@ variable "startup_grace_hours" {
     error_message = "startup_grace_hours must be a non-negative integer."
   }
 }
+
+variable "bootstrap_without_cluster" {
+  description = "Set true only during foundational GCP state import and Stage 1 GKE cluster creation before module.gke exists in state (EF4 / EF6, POAM-2026-164)."
+  type        = bool
+  default     = false
+  nullable    = false
+}
+

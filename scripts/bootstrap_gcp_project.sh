@@ -201,6 +201,7 @@ import_foundational_state() {
     "-var=project_id=${PROJECT_ID}"
     "-var=environment=${ENV}"
     "-var=region=${REGION}"
+    "-var=bootstrap_without_cluster=true"
   )
   # POAM-2026-130, 181: enable_nist_compliance was removed; staging and prod
   # enforce via local.enforcing_posture directly from environment=${ENV} above,
@@ -352,7 +353,7 @@ if [[ "$IMPORT_STATE" == "true" ]]; then import_evidence_domain_state() {
 }; import_foundational_state; exit 0; fi
 
 # ---------------------------------------------------------------------------
-# Default Mode: Project Bootstrap (PF1, PF2, PF3, PF4, PF10)
+# Default Mode: Project Bootstrap (PF1, PF2, PF3, PF4, PF10, EF8a)
 # ---------------------------------------------------------------------------
 echo "🚀 Bootstrapping GCP project '${PROJECT_ID}' (env=${ENV}, region=${REGION})..."
 
@@ -372,6 +373,7 @@ REQUIRED_APIS=(
   "binaryauthorization.googleapis.com"
   "containeranalysis.googleapis.com"
   "memorystore.googleapis.com"
+  "redis.googleapis.com"
   "sqladmin.googleapis.com"
   "servicenetworking.googleapis.com"
   "networkconnectivity.googleapis.com"
@@ -392,6 +394,17 @@ for ((i = 1; i < ${#REQUIRED_APIS[@]}; i += MAX_SERVICES_BATCH_SIZE)); do
   api_batch=("${REQUIRED_APIS[@]:i:MAX_SERVICES_BATCH_SIZE}")
   gcloud services enable "${api_batch[@]}" --project="$PROJECT_ID" --quiet
 done
+
+# --- EF8a: Materialize Google-managed service agents (P4SAs) before CMEK IAM bindings ---
+echo "🤖 [EF8a] Materializing Google-managed service agents on '${PROJECT_ID}'..."
+for p4sa_service in \
+  "sqladmin.googleapis.com" \
+  "memorystore.googleapis.com" \
+  "redis.googleapis.com" \
+  "container.googleapis.com"; do
+  gcloud beta services identity create --service="$p4sa_service" --project="$PROJECT_ID" --quiet >/dev/null 2>&1 || true
+done
+gcloud storage service-agent --project="$PROJECT_ID" --quiet >/dev/null 2>&1 || true
 
 # --- PF2: Ensure remote Terraform state GCS bucket exists ---
 echo "🪣 [PF2] Ensuring Terraform state bucket 'gs://${STATE_BUCKET}' exists..."

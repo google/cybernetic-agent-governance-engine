@@ -19,18 +19,18 @@ provider "google" {
   billing_project       = var.project_id
 }
 
-# Kubernetes provider (uses GKE cluster credentials)
+# Kubernetes provider (uses GKE cluster credentials; statically stubbed when bootstrap_without_cluster=true prior to Stage 1 module.gke creation)
 provider "kubernetes" {
-  host                   = "https://${module.gke.cluster_endpoint}"
+  host                   = var.bootstrap_without_cluster ? "https://127.0.0.1:65535" : "https://${module.gke.cluster_endpoint}"
   token                  = data.google_client_config.default.access_token
-  cluster_ca_certificate = base64decode(module.gke.cluster_ca_certificate)
+  cluster_ca_certificate = var.bootstrap_without_cluster ? "" : base64decode(module.gke.cluster_ca_certificate)
 }
 
-# Helm provider (uses GKE cluster credentials)
+# Helm provider (uses GKE cluster credentials; statically stubbed when bootstrap_without_cluster=true prior to Stage 1 module.gke creation)
 provider "helm" {
   kubernetes {
-    host                   = "https://${module.gke.cluster_endpoint}"
+    host                   = var.bootstrap_without_cluster ? "https://127.0.0.1:65535" : "https://${module.gke.cluster_endpoint}"
     token                  = data.google_client_config.default.access_token
-    cluster_ca_certificate = base64decode(module.gke.cluster_ca_certificate)
+    cluster_ca_certificate = var.bootstrap_without_cluster ? "" : base64decode(module.gke.cluster_ca_certificate)
   }
 }
