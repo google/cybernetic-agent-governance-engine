@@ -166,6 +166,11 @@ resource "kubernetes_deployment" "compliance_bridge" {
           }
 
           env {
+            name  = "STARTUP_GRACE_HOURS"
+            value = tostring(var.startup_grace_hours)
+          }
+
+          env {
             name = "LANGFUSE_PUBLIC_KEY"
             value_from {
               secret_key_ref {

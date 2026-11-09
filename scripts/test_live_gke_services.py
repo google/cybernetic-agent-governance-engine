@@ -1,4 +1,17 @@
 #!/usr/bin/env python3
+# Copyright 2026 Google LLC
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     https://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
 """
 Live GKE Service Smoke Test
 Tests connectivity to all port-forwarded services from the staging cluster.
@@ -118,7 +131,81 @@ def test_redis():
             return False
 
 
-def test_http_service(name, url, timeout=5, deployment_name=None):
+def _cluster_reachable(namespace: str = "governance-stack") -> bool:
+    """Return True if core gateway deployment is readable in the target namespace."""
+    return _get_deployment_replicas("gateway", namespace=namespace) is not None
+
+
+def test_opa_uds_sidecar(namespace: str = "governance-stack") -> bool:
+    """Verify the in-pod OPA UDS sidecar (/var/run/opa/opa.sock) and /governance/jwks."""
+    print("\n=== OPA UDS Sidecar (/var/run/opa/opa.sock) & Gateway JWKS ===")
+    uds_probe = (
+        "import http.client, json, socket, sys\n"
+        "class UDSConn(http.client.HTTPConnection):\n"
+        "    def connect(self):\n"
+        "        self.sock = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)\n"
+        "        self.sock.settimeout(5)\n"
+        "        self.sock.connect('/var/run/opa/opa.sock')\n"
+        "c = UDSConn('localhost')\n"
+        "c.request('GET', '/health')\n"
+        "r = c.getresponse()\n"
+        "r.read()\n"
+        "if r.status != 200:\n"
+        "    sys.exit(f'OPA UDS /health HTTP {r.status}')\n"
+        "c.request('GET', '/v1/policies')\n"
+        "r2 = c.getresponse()\n"
+        "doc = json.loads(r2.read().decode('utf-8'))\n"
+        "policies = doc.get('result') or []\n"
+        "if r2.status != 200 or len(policies) == 0:\n"
+        "    sys.exit(f'OPA UDS /v1/policies empty or HTTP {r2.status}')\n"
+        "print(json.dumps({'uds_health': r.status, 'loaded_policies': len(policies)}))\n"
+    )
+    try:
+        res = subprocess.run(
+            [
+                "kubectl",
+                "exec",
+                "-n",
+                namespace,
+                "deploy/gateway",
+                "-c",
+                "gateway",
+                "--",
+                "python3",
+                "-c",
+                uds_probe,
+            ],
+            capture_output=True,
+            text=True,
+            timeout=15,
+            check=False,
+        )
+        if res.returncode != 0:
+            print(
+                f"✗ OPA UDS sidecar check failed: {res.stderr.strip() or res.stdout.strip()}"
+            )
+            return False
+        print(f"✓ OPA UDS sidecar: {res.stdout.strip()}")
+
+        jwks_resp = httpx.get("http://localhost:8080/governance/jwks", timeout=5)
+        if jwks_resp.status_code != 200:
+            print(f"✗ Gateway /governance/jwks HTTP {jwks_resp.status_code}")
+            return False
+        keys = jwks_resp.json().get("keys", [])
+        print(f"✓ Gateway /governance/jwks: {len(keys)} key(s) published")
+        return len(keys) >= 1
+    except Exception as e:
+        print(f"✗ OPA UDS / Gateway JWKS check failed: {e}")
+        return False
+
+
+def test_http_service(
+    name,
+    url,
+    timeout=5,
+    deployment_name=None,
+    required_env="REQUIRE_VLLM_GPUS",
+):
     """Test HTTP service connectivity"""
     print(f"\n=== {name} ({url}) ===")
     try:
@@ -131,11 +218,16 @@ def test_http_service(name, url, timeout=5, deployment_name=None):
             print(f"✓ Response (non-JSON): {response.text[:100]}")
         return response.status_code < 400
     except Exception as e:
-        if deployment_name and os.getenv("REQUIRE_VLLM_GPUS", "0") != "1":
+        if deployment_name and os.getenv(required_env, "0") != "1":
             replicas = _get_deployment_replicas(deployment_name)
-            if replicas == 0:
+            if replicas == 0 or (replicas is None and _cluster_reachable()):
+                state_desc = (
+                    "scaled to 0 replicas"
+                    if replicas == 0
+                    else "not deployed (inference_backend=none)"
+                )
                 print(
-                    f"✓ {name} scaled to 0 replicas in governance-stack (scale-to-zero GPU posture)"
+                    f"✓ {name} {state_desc} in governance-stack (opt-in via {required_env}=1)"
                 )
                 return True
         print(f"✗ {name} failed: {e}")
@@ -176,14 +268,17 @@ def main():
     # Test Redis / Memorystore
     results["redis"] = test_redis()
 
-    # Test HTTP services
-    results["opa"] = test_http_service("OPA", "http://localhost:8181/health")
+    # Test OPA UDS sidecar + HTTP services
+    results["opa_uds"] = test_opa_uds_sidecar()
     results["langfuse_health"] = test_http_service(
         "Langfuse Health", "http://localhost:3001/api/public/health"
     )
     results["gateway"] = test_http_service("Gateway", "http://localhost:8080/health")
     results["backend"] = test_http_service(
-        "Backend/GFA", "http://localhost:8081/health"
+        "Backend/GFA",
+        "http://localhost:8081/health",
+        deployment_name="governed-financial-advisor",
+        required_env="REQUIRE_E2E_ADVISOR",
     )
     results["compliance"] = test_http_service(
         "Compliance Bridge", "http://localhost:3002/health"

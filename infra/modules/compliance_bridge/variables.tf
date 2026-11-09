@@ -129,6 +129,17 @@ variable "cage_env" {
   default     = "development"
 }
 
+variable "startup_grace_hours" {
+  description = "Hours after deployment start during which empty compliance metrics report startup_grace_active = true (STARTUP_GRACE_HOURS). Set to 0 during Gate W so all Lula API-domain controls evaluate in non-grace enforcing mode."
+  type        = number
+  default     = 6
+
+  validation {
+    condition     = var.startup_grace_hours >= 0 && floor(var.startup_grace_hours) == var.startup_grace_hours
+    error_message = "startup_grace_hours must be a non-negative integer."
+  }
+}
+
 # K-3 / Track 6d (§5.2): EVIDENCE_KMS_KEY for the compliance-bridge KMSBatchSigner.
 # Separate from the gateway's KMS_GOVERNANCE_KEY and the reconciler's RECONCILER_KMS_KEY.
 # There is no HMAC fallback: empty is allowed only in dev/test/ci postures, where

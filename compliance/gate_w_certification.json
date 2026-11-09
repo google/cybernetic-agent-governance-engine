@@ -1,0 +1,14 @@
+{
+  "schema_version": "1.0",
+  "status": "PENDING_INITIAL_CERTIFICATION",
+  "owner": "@lahlfors",
+  "cadence_days": 90,
+  "last_verified_utc": null,
+  "expires_at_utc": null,
+  "certified_git_sha": null,
+  "deployment_target_mode": null,
+  "archive_worm_uri": null,
+  "archive_manifest_sha256": null,
+  "partner_conformance_status": null,
+  "notes": "Initial Gate W certification pending P1 clean-room execution of scripts/staging_lifecycle.sh. Once status transitions to CERTIFIED, expires_at_utc may be at most cadence_days (90d) after last_verified_utc and scheduled CI fails closed on expiry."
+}

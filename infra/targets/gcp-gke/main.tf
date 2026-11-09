@@ -927,6 +927,7 @@ module "compliance_bridge" {
   evidence_cold_store_bucket = module.worm_bucket.bucket_name
   cmek_key_resource_name     = var.enable_cmek ? local.evidence_cmek_key_id : ""
   cage_env                   = var.environment
+  startup_grace_hours        = var.startup_grace_hours
   deployment_config_map_name = module.deployment_config.config_map_name
 
   # EvidenceCustodian: same governance Memorystore instance, db, key, TLS and
