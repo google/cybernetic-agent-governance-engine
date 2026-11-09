@@ -1,0 +1,375 @@
+#!/usr/bin/env python3
+# Copyright 2026 Google LLC
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     https://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+"""Extract the cryptographic WORM chain-tail anchor for bound genesis rotation (F-94, R-10).
+
+Reads a ``CustodyVerificationReport`` from ``GET /v1/evidence/verify?require_citable=true``
+(via HTTP URL, ``kubectl exec``, file path, or stdin), verifies that the archive is
+``ok`` and ``citable`` with zero failures, zero declared gaps, and zero unsigned
+batches, resolves the single active unreplaced chain head across any prior
+``BOUND_CHAIN_ROTATION`` links, and emits the 64-hex ``last_record_hash`` and
+``attestation_sha256`` required to bind a rebuilt cluster's genesis record.
+"""
+
+from __future__ import annotations
+
+import argparse
+import json
+import re
+import subprocess
+import sys
+from collections.abc import Mapping
+from dataclasses import asdict, dataclass
+from pathlib import Path
+from typing import Any
+from urllib.parse import urlparse
+from urllib.request import Request, urlopen
+
+_HEX64_RE = re.compile(r"^[0-9a-f]{64}$")
+DEFAULT_TIMEOUT_SECONDS = 120
+
+
+class WormAnchorError(ValueError):
+    """Raised when a citable WORM chain-tail anchor cannot be extracted safely."""
+
+
+@dataclass(frozen=True)
+class WormChainAnchor:
+    """Cryptographic anchor of the active tail batch in the WORM evidence archive."""
+
+    chain_id: str
+    first_sequence: int
+    last_sequence: int
+    last_record_hash: str
+    attestation_sha256: str
+    attestation_key: str
+    data_key: str
+    verified_batches: int
+    bound_rotations: int
+    declared_gaps: int
+
+    def to_dict(self) -> dict[str, Any]:
+        return asdict(self)
+
+    def to_env_lines(self) -> str:
+        return "\n".join(
+            [
+                f"EVIDENCE_PREVIOUS_CHAIN_HEAD_HASH={self.last_record_hash}",
+                f"EVIDENCE_PREVIOUS_BATCH_ATTESTATION_DIGEST={self.attestation_sha256}",
+                f"TF_VAR_evidence_previous_chain_head_hash={self.last_record_hash}",
+                f"TF_VAR_evidence_previous_batch_attestation_digest={self.attestation_sha256}",
+                f"WORM_ANCHOR_CHAIN_ID={self.chain_id}",
+                f"WORM_ANCHOR_LAST_SEQUENCE={self.last_sequence}",
+                f"WORM_ANCHOR_VERIFIED_BATCHES={self.verified_batches}",
+                f"WORM_ANCHOR_BOUND_ROTATIONS={self.bound_rotations}",
+            ]
+        )
+
+
+def _validate_http_url(url: str) -> str:
+    parsed = urlparse(url)
+    if parsed.scheme not in {"http", "https"} or not parsed.netloc:
+        raise WormAnchorError(
+            f"Invalid compliance-bridge URL {url!r}: scheme must be http or https"
+        )
+    return url
+
+
+def fetch_verify_report_http(
+    bridge_url: str, *, timeout_s: int = DEFAULT_TIMEOUT_SECONDS
+) -> dict[str, Any]:
+    """Fetch ``GET /v1/evidence/verify?require_citable=true`` over HTTP/HTTPS."""
+    base = bridge_url.rstrip("/")
+    url = _validate_http_url(f"{base}/v1/evidence/verify?require_citable=true")
+    req = Request(url, headers={"Accept": "application/json"}, method="GET")
+    with urlopen(req, timeout=timeout_s) as resp:  # nosec B310  # scheme validated to http/https above
+        if resp.status != 200:
+            raise WormAnchorError(f"HTTP {resp.status} from {url}")
+        raw = resp.read().decode("utf-8")
+    try:
+        doc = json.loads(raw)
+    except json.JSONDecodeError as exc:
+        raise WormAnchorError(f"Invalid JSON from {url}: {exc}") from exc
+    if not isinstance(doc, dict):
+        raise WormAnchorError(
+            f"Expected JSON object from {url}, got {type(doc).__name__}"
+        )
+    return doc
+
+
+def fetch_verify_report_kubectl(
+    namespace: str = "governance-stack",
+    *,
+    timeout_s: int = DEFAULT_TIMEOUT_SECONDS,
+) -> dict[str, Any]:
+    """Fetch ``GET /v1/evidence/verify?require_citable=true`` via in-cluster compliance-bridge pod."""
+    inline_py = (
+        "import sys, urllib.request; "
+        f"resp = urllib.request.urlopen('http://127.0.0.1:3001/v1/evidence/verify?require_citable=true', timeout={int(timeout_s)}); "
+        "sys.exit(1) if resp.status != 200 else sys.stdout.write(resp.read().decode('utf-8'))"
+    )
+    proc = subprocess.run(
+        [
+            "kubectl",
+            "exec",
+            "-n",
+            namespace,
+            "deploy/compliance-bridge",
+            "--",
+            "python3",
+            "-c",
+            inline_py,
+        ],
+        capture_output=True,
+        text=True,
+        timeout=timeout_s + 30,
+        check=False,
+    )
+    if proc.returncode != 0 or not proc.stdout.strip():
+        detail = (proc.stderr or proc.stdout).strip()
+        raise WormAnchorError(
+            f"kubectl exec /v1/evidence/verify failed (rc={proc.returncode}): {detail}"
+        )
+    try:
+        doc = json.loads(proc.stdout)
+    except json.JSONDecodeError as exc:
+        raise WormAnchorError(
+            f"Invalid JSON from kubectl exec /v1/evidence/verify: {exc}"
+        ) from exc
+    if not isinstance(doc, dict):
+        raise WormAnchorError(
+            f"Expected JSON object from kubectl exec, got {type(doc).__name__}"
+        )
+    return doc
+
+
+def extract_chain_anchor(report: Mapping[str, Any]) -> WormChainAnchor:
+    """Resolve the active unreplaced chain tail batch from a citable verification report."""
+    if report.get("ok") is not True or report.get("citable") is not True:
+        raise WormAnchorError(
+            f"WORM archive is not citable (ok={report.get('ok')!r}, citable={report.get('citable')!r})"
+        )
+
+    failures = report.get("failures", [])
+    if not isinstance(failures, list) or len(failures) != 0:
+        raise WormAnchorError(
+            f"WORM archive has {len(failures) if isinstance(failures, list) else 'invalid'} failure(s)"
+        )
+
+    declared_gaps = report.get("declared_gaps", [])
+    gaps_legacy = report.get("gaps", [])
+    gap_count = max(
+        len(declared_gaps)
+        if isinstance(declared_gaps, list)
+        else int(declared_gaps or 0),
+        len(gaps_legacy) if isinstance(gaps_legacy, list) else int(gaps_legacy or 0),
+    )
+    if gap_count != 0:
+        raise WormAnchorError(
+            f"WORM archive has {gap_count} declared gap(s); refusing to anchor on a gapped chain"
+        )
+
+    non_evidentiary = report.get("non_evidentiary", [])
+    unsigned_legacy = report.get("unsigned", [])
+    unsigned_count = max(
+        len(non_evidentiary)
+        if isinstance(non_evidentiary, list)
+        else int(non_evidentiary or 0),
+        len(unsigned_legacy)
+        if isinstance(unsigned_legacy, list)
+        else int(unsigned_legacy or 0),
+    )
+    if unsigned_count != 0:
+        raise WormAnchorError(
+            f"WORM archive contains {unsigned_count} unsigned non-evidentiary batch(es)"
+        )
+
+    verified = report.get("verified")
+    if not isinstance(verified, list) or len(verified) == 0:
+        raise WormAnchorError("WORM archive contains 0 verified signed batches")
+
+    by_chain: dict[str, list[Mapping[str, Any]]] = {}
+    superseded_chains: set[str] = set()
+
+    for idx, item in enumerate(verified):
+        if not isinstance(item, Mapping):
+            raise WormAnchorError(f"verified[{idx}] is not an object")
+        cid = str(item.get("chain_id") or "").strip()
+        if not cid:
+            raise WormAnchorError(f"verified[{idx}] is missing non-empty chain_id")
+        by_chain.setdefault(cid, []).append(item)
+        rotated_from = str(item.get("rotated_from_chain_id") or "").strip()
+        if rotated_from:
+            superseded_chains.add(rotated_from)
+
+    bound_rotations_raw = report.get("bound_rotations", [])
+    if not isinstance(bound_rotations_raw, list):
+        raise WormAnchorError("bound_rotations must be a list")
+    for rot in bound_rotations_raw:
+        if isinstance(rot, Mapping):
+            prev_cid = str(rot.get("previous_chain_id") or "").strip()
+            if prev_cid:
+                superseded_chains.add(prev_cid)
+
+    active_chains = [cid for cid in by_chain if cid not in superseded_chains]
+    if len(active_chains) == 0:
+        raise WormAnchorError(
+            "Cyclic or empty chain rotation graph: zero unreplaced active chains found"
+        )
+    if len(active_chains) > 1:
+        raise WormAnchorError(
+            f"Ambiguous multi-head WORM archive: {len(active_chains)} unreplaced chains ({sorted(active_chains)})"
+        )
+
+    active_cid = active_chains[0]
+    chain_batches = sorted(
+        by_chain[active_cid],
+        key=lambda b: (
+            int(b.get("first_sequence", -1)),
+            int(b.get("last_sequence", -1)),
+        ),
+    )
+    tail = chain_batches[-1]
+
+    last_record_hash = str(tail.get("last_record_hash") or "").strip().lower()
+    attestation_sha256 = str(tail.get("attestation_sha256") or "").strip().lower()
+    if not _HEX64_RE.match(last_record_hash):
+        raise WormAnchorError(
+            f"Tail batch last_record_hash is missing or not a 64-hex SHA-256 digest: {last_record_hash!r}"
+        )
+    if not _HEX64_RE.match(attestation_sha256):
+        raise WormAnchorError(
+            f"Tail batch attestation_sha256 is missing or not a 64-hex SHA-256 digest: {attestation_sha256!r}"
+        )
+
+    first_seq = int(tail.get("first_sequence", -1))
+    last_seq = int(tail.get("last_sequence", -1))
+    if first_seq < 0 or last_seq < first_seq:
+        raise WormAnchorError(
+            f"Tail batch sequence range [{first_seq}, {last_seq}] is invalid"
+        )
+
+    return WormChainAnchor(
+        chain_id=active_cid,
+        first_sequence=first_seq,
+        last_sequence=last_seq,
+        last_record_hash=last_record_hash,
+        attestation_sha256=attestation_sha256,
+        attestation_key=str(tail.get("attestation_key") or ""),
+        data_key=str(tail.get("data_key") or ""),
+        verified_batches=len(verified),
+        bound_rotations=len(bound_rotations_raw),
+        declared_gaps=gap_count,
+    )
+
+
+def main(argv: list[str] | None = None) -> int:
+    parser = argparse.ArgumentParser(
+        description="Extract the cryptographic WORM chain-tail anchor for bound genesis rotation."
+    )
+    src_group = parser.add_mutually_exclusive_group()
+    src_group.add_argument(
+        "--from-stdin",
+        action="store_true",
+        help="Read GET /v1/evidence/verify JSON payload from stdin",
+    )
+    src_group.add_argument(
+        "--report-file",
+        type=Path,
+        help="Read GET /v1/evidence/verify JSON payload from a file",
+    )
+    src_group.add_argument(
+        "--bridge-url",
+        type=str,
+        help="Compliance bridge base URL (e.g. http://localhost:3002)",
+    )
+    src_group.add_argument(
+        "--kubectl",
+        action="store_true",
+        help="Query deploy/compliance-bridge in-cluster via kubectl exec",
+    )
+    parser.add_argument(
+        "--namespace",
+        default="governance-stack",
+        help="Kubernetes namespace when --kubectl is used (default: governance-stack)",
+    )
+    parser.add_argument(
+        "--timeout",
+        type=int,
+        default=DEFAULT_TIMEOUT_SECONDS,
+        help=f"Verification HTTP timeout in seconds (default: {DEFAULT_TIMEOUT_SECONDS})",
+    )
+    parser.add_argument(
+        "--format",
+        choices=("json", "env"),
+        default="json",
+        help="Stdout output format (default: json)",
+    )
+    parser.add_argument(
+        "--output",
+        type=Path,
+        default=None,
+        help="Optional path to write the JSON anchor artifact",
+    )
+    args = parser.parse_args(argv)
+
+    try:
+        if args.from_stdin:
+            report = json.loads(sys.stdin.read())
+        elif args.report_file is not None:
+            report = json.loads(args.report_file.read_text(encoding="utf-8"))
+        elif args.bridge_url:
+            report = fetch_verify_report_http(args.bridge_url, timeout_s=args.timeout)
+        elif args.kubectl:
+            report = fetch_verify_report_kubectl(args.namespace, timeout_s=args.timeout)
+        else:
+            env_url = ""
+            import os
+
+            env_url = os.environ.get("COMPLIANCE_BRIDGE_URL", "").strip()
+            if env_url:
+                report = fetch_verify_report_http(env_url, timeout_s=args.timeout)
+            else:
+                report = fetch_verify_report_kubectl(
+                    args.namespace, timeout_s=args.timeout
+                )
+
+        if not isinstance(report, Mapping):
+            raise WormAnchorError("Verification report must be a JSON object")
+
+        anchor = extract_chain_anchor(report)
+        if args.output is not None:
+            args.output.parent.mkdir(parents=True, exist_ok=True)
+            args.output.write_text(
+                json.dumps(anchor.to_dict(), indent=2, sort_keys=True) + "\n",
+                encoding="utf-8",
+            )
+        if args.format == "env":
+            print(anchor.to_env_lines())
+        else:
+            print(json.dumps(anchor.to_dict(), indent=2, sort_keys=True))
+        return 0
+    except (
+        WormAnchorError,
+        json.JSONDecodeError,
+        OSError,
+        subprocess.SubprocessError,
+    ) as exc:
+        print(f"ERROR: {exc}", file=sys.stderr)
+        return 1
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

@@ -344,3 +344,63 @@ run "evidence_domain_rejects_resource_path_in_public_key_pem" {
 
   expect_failures = [google_storage_bucket_object.signing_key_manifest]
 }
+
+run "bound_genesis_rotation_wires_prior_head_and_attestation_to_gateway" {
+  command = plan
+
+  override_data {
+    target          = module.evidence_domain.data.google_project.evidence[0]
+    override_during = plan
+    values = {
+      number = "123456789012"
+    }
+  }
+
+  variables {
+    evidence_previous_chain_head_hash          = "1111111111111111111111111111111111111111111111111111111111111111"
+    evidence_previous_batch_attestation_digest = "2222222222222222222222222222222222222222222222222222222222222222"
+  }
+
+  assert {
+    condition     = module.gateway.evidence_previous_chain_head_hash == "1111111111111111111111111111111111111111111111111111111111111111" && module.gateway.evidence_previous_batch_attestation_digest == "2222222222222222222222222222222222222222222222222222222222222222"
+    error_message = "gcp-gke must propagate paired 64-hex bound-genesis rotation digests into gateway container EVIDENCE_PREVIOUS_* env vars (F-94)"
+  }
+}
+
+run "bound_genesis_rotation_refuses_unpaired_or_malformed_digests" {
+  command = plan
+
+  module {
+    source = "../../modules/gateway"
+  }
+
+  variables {
+    namespace                                  = "governance-stack"
+    deployment_config_map_name                 = "cage-deployment"
+    image                                      = "registry.invalid/cage-test/gateway@sha256:deadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeef"
+    opa_image                                  = "registry.invalid/cage-test/opa@sha256:deadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeef"
+    project_id                                 = "evidence-test-project"
+    region                                     = "us-central1"
+    redis_host                                 = "10.10.0.5"
+    governance_redis_replica_count             = 1
+    evidence_stream_redis_url                  = "redis://10.10.0.5:6379"
+    evidence_stream_redis_db                   = 1
+    evidence_stream_key                        = "cage:evidence:stream"
+    evidence_previous_chain_head_hash          = "1111111111111111111111111111111111111111111111111111111111111111"
+    evidence_previous_batch_attestation_digest = ""
+    cage_inference_backend                     = "none"
+    vllm_base_url                              = ""
+    vllm_reasoning_api_base                    = ""
+    vllm_fast_api_base                         = ""
+    vllm_api_key                               = ""
+    cage_env                                   = "staging"
+    guardrails_model_name                      = "Qwen/Qwen2.5-1.5B-Instruct"
+    opa_url                                    = "http+unix://%2Fvar%2Frun%2Fopa%2Fopa.sock"
+    governance_salt                            = "test-governance-salt-0123456789abcdef"
+    trusted_client_identities                  = ["cage-advisor-sa.governance-stack.serviceaccount.identity.linkerd.cluster.local"]
+    service_account_name                       = "cage-gateway-sa"
+    reconciler_kms_key                         = "projects/evidence-test-project/locations/us-central1/keyRings/r/cryptoKeys/k/cryptoKeyVersions/1"
+  }
+
+  expect_failures = [kubernetes_deployment.gateway]
+}
