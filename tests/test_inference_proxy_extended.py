@@ -195,6 +195,11 @@ def proxy_deps(monkeypatch):
     monkeypatch.setattr(
         _mod.inference_app.state, "evidence_sink", evidence_sink, raising=False
     )
+    monkeypatch.setattr(_mod.inference_app.state, "redis", None, raising=False)
+    monkeypatch.setattr(
+        "src.gateway.governance.quarantine_actuator._default_quarantine_redis",
+        None,
+    )
 
     yield {
         "app": _mod.inference_app,

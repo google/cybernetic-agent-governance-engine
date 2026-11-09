@@ -1465,10 +1465,13 @@ module "evidence_domain" {
   enable_cmek                       = var.enable_cmek
   kms_protection_level              = local.effective_kms_protection_level
   custodian_service_account_email   = google_service_account.compliance_bridge.email
-  audit_log_sink_writer_identities  = var.audit_log_sink_writer_identities
-  offline_verifier_principal        = var.offline_verifier_principal
-  deployer_service_account_email    = google_service_account.deployer.email
-  signing_key_manifest              = local.signing_key_manifest
+  audit_log_sink_writer_identities = merge(
+    var.audit_log_sink_writer_identities,
+    local.managed_audit_log_sink_writer_identities,
+  )
+  offline_verifier_principal     = var.offline_verifier_principal
+  deployer_service_account_email = google_service_account.deployer.email
+  signing_key_manifest           = local.signing_key_manifest
 
   isolation_guard_ready = terraform_data.evidence_domain_isolation_guard.id
 }

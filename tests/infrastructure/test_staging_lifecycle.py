@@ -29,6 +29,7 @@ pytestmark = [pytest.mark.unit, pytest.mark.local]
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 LIFECYCLE_SCRIPT = REPO_ROOT / "scripts" / "staging_lifecycle.sh"
+CORROBORATION_SCRIPT = REPO_ROOT / "scripts" / "verify_audit_corroboration.py"
 
 DEFAULT_JOB_LOGS = (
     "assessment-results:\n"
@@ -108,7 +109,8 @@ def _setup_fake_repo(
     pytest_rc: int = 0,
     pytest_summary: str = "5 passed in 0.12s",
     langfuse_rc: int = 0,
-    audit_corroboration_rc: int | None = None,
+    audit_corroboration_rc: int = 0,
+    include_audit_corroboration_script: bool = True,
     plan_rc: int = 0,
     rebuild_plan_rc: int = 0,
     monitoring_json: str = DEFAULT_MONITORING_JSON,
@@ -135,9 +137,9 @@ def _setup_fake_repo(
         '{"image_digests": {}}\n', encoding="utf-8"
     )
 
-    if audit_corroboration_rc is not None:
-        (repo / "scripts" / "verify_audit_corroboration.py").write_text(
-            "#!/usr/bin/env python3\n", encoding="utf-8"
+    if include_audit_corroboration_script:
+        shutil.copy2(
+            CORROBORATION_SCRIPT, repo / "scripts" / "verify_audit_corroboration.py"
         )
 
     log_file = tmp_path / "calls.log"
@@ -380,7 +382,7 @@ exit {lula_rc}
 """,
     )
 
-    corroboration_exit = 0 if audit_corroboration_rc is None else audit_corroboration_rc
+    corroboration_exit = audit_corroboration_rc
     _write_executable(
         bin_dir / "uv",
         f"""#!/usr/bin/env bash
@@ -484,6 +486,7 @@ def test_staging_lifecycle_happy_path_passes_and_destroys_with_rendered_digests(
     assert "-m partner_integration --run-partner-integration" in calls
     assert "monitoring.googleapis.com/v3/projects/demo-staging-proj/timeSeries" in calls
     assert "/v1/evidence/verify?require_citable=true" in calls
+    assert "verify_audit_corroboration.py --project demo-staging-proj" in calls
     # Phase 6: Stage 4 (--import-state), Stage 5 (SKIP_BUILD=true clean rebuild), Stage 6 (final destroy)
     assert "--import-state" in calls
     assert "SKIP_BUILD=true | BOOTSTRAP_IMPORT_STATE=true" in calls
@@ -986,6 +989,31 @@ def test_staging_lifecycle_executes_pluggable_as6_corroboration_hook_and_fails_c
         "verify_audit_corroboration.py --project demo-staging-proj"
         in log_file.read_text(encoding="utf-8")
     )
+
+
+def test_staging_lifecycle_fails_closed_when_audit_corroboration_script_missing(
+    tmp_path: Path,
+) -> None:
+    repo, bin_dir, _ = _setup_fake_repo(
+        tmp_path, include_audit_corroboration_script=False
+    )
+    env = _base_env(bin_dir, GOOGLE_CLOUD_PROJECT="demo-staging-proj")
+    proc = subprocess.run(
+        [
+            "bash",
+            str(repo / "scripts" / "staging_lifecycle.sh"),
+            "--skip-lula",
+            "--skip-posture",
+            "--skip-live-sweep",
+            "--skip-rebuild",
+        ],
+        env=env,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert proc.returncode != 0
+    assert "Required AS-6 Cloud Audit Log corroboration script missing" in proc.stderr
 
 
 def test_staging_lifecycle_stage5_rebuild_drift_fails_closed_after_final_destroy(

@@ -243,6 +243,76 @@ structure a caller or partner supplied, such as a refusal's
 `attempted_params` or an actuator's findings, can still carry one of these
 keys with any value, and the oracle reports that record like any other.
 
+### 4.7 Cloud Audit Log Corroboration & AgentSight Disposition (`AS-1` / `AS-6`)
+
+CAGE replaces in-cluster privileged kernel tracing (retired AgentSight eBPF) with
+out-of-cluster GCP Cloud Audit Log corroboration (`AS-1` decisions `D-AS-1`..`D-AS-8`):
+
+- **`D-AS-1` (Retire Privileged In-Cluster eBPF Collector)**: The AgentSight
+  `DaemonSet` (`privileged: true`, `hostPID: true`, `CAP_BPF` / `CAP_SYS_ADMIN`)
+  is retired from `governance-stack` (`POAM-2026-082`, `POAM-2026-192`). Running
+  a root-equivalent collector inside the workload cluster violated Pod Security
+  Standards `restricted` admission and placed the auditor inside the workload
+  blast radius.
+- **`D-AS-2` (Retire Unauthenticated UI & Public LoadBalancer Surface)**: The
+  unauthenticated `agentsight-ui` workload and external `LoadBalancer` service
+  are removed from active GKE profiles (`POAM-2026-187`).
+- **`D-AS-3` (Revoke Workload-DaemonSet WORM Write Authority)**: Workload
+  collectors hold zero direct IAM grants on WORM storage; only
+  [`EvidenceCustodian`](../../src/compliance_bridge/evidence_custodian.py)
+  (`cage-compliance-bridge`) holds append-only `roles/storage.objectCreator` in
+  the persistent evidence domain (`AU-9(4)`).
+- **`D-AS-4` (Route Infrastructure & Lula Events Through `/v1/infra/events`)**:
+  Infrastructure posture and in-cluster `CronJob/lula-audit` observations enter
+  the hash-chained `INFRA` Redis Stream via Linkerd mTLS-authenticated
+  `POST /v1/infra/events` ([`infra_custody.py`](../../src/compliance_bridge/infra_custody.py),
+  [`main.py`](../../src/compliance_bridge/main.py)) and are batch-attested by
+  `EvidenceCustodian` (`POAM-2026-162`, `POAM-2026-195`).
+- **`D-AS-5` (Enable Cloud KMS `DATA_READ` Audit Logging & WORM Sinks)**:
+  [`kms_signing.tf`](../../infra/targets/gcp-gke/kms_signing.tf) provisions
+  `google_project_iam_audit_config.kms_signing_audit` (`DATA_READ`,
+  `ADMIN_READ`, `DATA_WRITE` on `cloudkms.googleapis.com`) and project-level
+  Cloud Logging sinks (`google_logging_project_sink.kms_asymmetric_sign` and
+  `google_logging_project_sink.admin_activity`) routing directly to
+  `module.evidence_domain.audit_logs_worm_bucket_name` (CMEK-encrypted,
+  retention-locked WORM bucket in [`infra/modules/evidence_domain/`](../../infra/modules/evidence_domain/main.tf)),
+  closing `POAM-2026-169` Instance 11.
+- **`D-AS-6` (Bidirectional KMS Preimage Corroboration)**:
+  [`audit_corroboration.py`](../../packages/cage-conformance/src/cage_conformance/audit_corroboration.py)
+  (`cage-conformance verify-audit-corroboration --audit-logs`)
+  verifies 1-to-1 bidirectional correspondence between signed CAGE artifacts
+  (`gateway-seal`, `compliance-evidence`, `reconciler-snapshot`) and Cloud KMS
+  `AsymmetricSign` records over the exact RFC 4648 base64 SHA-256 signing
+  preimage digest (`compute_kms_preimage_digest_b64`: RFC 8785 `jcs_bytes` over
+  the unsigned `cage-evidence-batch/1` attestation body, `snapshot_signing_payload`,
+  or JCS seal body, and `<b64_header>.<b64_payload>` ASCII signing input for
+  compact JWS seals), enforces per-key caller service-account isolation, and
+  checks timestamp skew (`created_at_utc` / `iat` / `verified_at` within
+  `max_skew_seconds`, default `300 s`).
+- **`D-AS-7` (Control-Plane & `governance-stack` Mutation Detection)**:
+  `_classify_control_plane_mutation()` flags unauthorized GCP Admin Activity
+  mutations (KMS key/IAM changes, WORM bucket/IAM/retention changes, GKE cluster
+  mutations, service-account key minting, audit sink tampering) and GKE
+  `k8s.io` API mutating calls (`create`, `update`, `patch`, `delete`,
+  `deletecollection`, `bind`, `escalate`, `impersonate`) targeting
+  `namespaces/governance-stack` workloads, Secrets, ConfigMaps, ServiceAccounts,
+  RBAC, NetworkPolicies, or cluster-scoped RBAC/admission webhooks by any
+  principal outside `trusted_deployer_principals` (`POAM-2026-192`).
+- **`D-AS-8` (Fail-Closed Gate W Phase 5 Enforcement)**:
+  [`scripts/verify_audit_corroboration.py`](../../scripts/verify_audit_corroboration.py)
+  runs in [`scripts/staging_lifecycle.sh`](../../scripts/staging_lifecycle.sh)
+  Phase 5 alongside `GET /v1/evidence/verify?require_citable=true` before
+  cluster teardown.
+
+**Operational Metrics vs. Evidentiary Non-Repudiation (`R-9` Comparison-Owed Note)**:
+GKE Managed Prometheus metrics (`cage_evidence_*`, `cage_custody_batches_total`,
+`cage_kms_rpc_total`) provide operational pipeline health and alerting (NIST
+SP 800-53 AU-12) and are intentionally non-evidentiary. Cryptographic
+non-repudiation and out-of-cluster tamper detection rest exclusively on
+`CustodyVerifier` + `verify_audit_corroboration` over WORM-archived batches and
+Cloud Audit Logs; neither Prometheus counters nor retired AgentSight syscall
+telemetry claims are cited as integrity proof (`R-9`).
+
 ## 5. Configuration Contracts & Runtime Matrix
 
 Shared (gateway and compliance bridge):

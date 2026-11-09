@@ -1021,11 +1021,11 @@ if not has_custody_ack:
       else
         success "Cloud Audit Log corroboration hook passed"
       fi
-    elif [[ -n "${CAGE_AUDIT_CORROBORATION_SCRIPT:-}" ]]; then
-      error "Configured CAGE_AUDIT_CORROBORATION_SCRIPT does not exist: ${CAGE_AUDIT_CORROBORATION_SCRIPT}"
-      ((TELEMETRY_FAILURES++)) || true
     else
-      info "Optional AS-6 corroboration script not yet present (${AUDIT_CORROBORATION_SCRIPT}); skipping."
+      # AS-6: Phase 5 Cloud Audit Log corroboration is mandatory alongside /v1/evidence/verify
+      error "Required AS-6 Cloud Audit Log corroboration script missing: ${AUDIT_CORROBORATION_SCRIPT}"
+      error "Ensure scripts/verify_audit_corroboration.py is present in REPO_ROOT"
+      ((TELEMETRY_FAILURES++)) || true
     fi
   else
     warn "Phase 5 GMP telemetry & WORM verification skipped (--skip-telemetry flag)"
@@ -1223,7 +1223,7 @@ if [[ "$SKIP_LIVE_SWEEP" == "false" ]]; then
   echo -e "${GREEN}║    ✅  Live external, integration & partner conformance passed    ║${RESET}"
 fi
 if [[ "$SKIP_TELEMETRY" == "false" ]]; then
-  echo -e "${GREEN}║    ✅  GMP timeSeries.list & WORM /v1/evidence/verify passed      ║${RESET}"
+  echo -e "${GREEN}║    ✅  GMP, WORM /v1/evidence/verify & KMS audit logs passed      ║${RESET}"
 fi
 echo -e "${GREEN}║    ✅  Ephemeral staging cluster destroyed cleanly                ║${RESET}"
 echo -e "${GREEN}╚══════════════════════════════════════════════════════════════════╝${RESET}"

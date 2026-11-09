@@ -232,3 +232,13 @@ output "signing_key_manifest_object_name" {
   description = "GCS object path of the archived signing public key (kid) manifest."
   value       = module.evidence_domain.signing_key_manifest_object_name
 }
+
+output "kms_signing_audit_sink_writer_identity" {
+  description = "Writer identity of the KMS AsymmetricSign audit-log sink (AS-6). module.evidence_domain grants it objectCreator on the audit-logs bucket; an external evidence domain must grant it out of band. Empty when the sinks are disabled."
+  value       = local.kms_audit_logs_enabled ? google_logging_project_sink.kms_asymmetric_sign[0].writer_identity : ""
+}
+
+output "admin_activity_audit_sink_writer_identity" {
+  description = "Writer identity of the Admin Activity audit-log sink (AS-6). module.evidence_domain grants it objectCreator on the audit-logs bucket; an external evidence domain must grant it out of band. Empty when the sinks are disabled."
+  value       = local.kms_audit_logs_enabled ? google_logging_project_sink.admin_activity[0].writer_identity : ""
+}

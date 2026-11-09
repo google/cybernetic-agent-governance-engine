@@ -21,12 +21,16 @@
     cage-conformance attest report.json --output attested.json [--token-file FILE]
     cage-conformance verify-report report.json [--parties parties.json]
     cage-conformance diagnose-receipt [receipt.json | -] [--json]
+    cage-conformance verify-audit-corroboration --audit-logs audit.jsonl
+        [--evidence attestations.jsonl] [--seals seals.jsonl] [--snapshots snapshots.jsonl]
 
 Every identity field is required and has no default, so a report never claims
 an identity the runner did not state. ``audience`` prints the audience an OIDC
 token must carry to attest a report; ``attest`` verifies such a token (read
 from ``--token-file`` or ``$CAGE_CONFORMANCE_OIDC_TOKEN``, never from the
-command line) and binds it to the report. Exit codes: ``verify`` and
+command line) and binds it to the report. ``verify-audit-corroboration``
+corroborates HSM-signed artifacts against exported Cloud Audit Logs (``AS-6``).
+Exit codes: ``verify``, ``verify-audit-corroboration`` and
 ``diagnose-receipt`` return 0 on agreement/conformance, 1 on mismatch, 2 on
 unreadable input or bad arguments. ``audience``, ``attest`` and
 ``verify-report`` return 0 on success and 2 otherwise.
@@ -59,6 +63,18 @@ from .attestation import (
     is_attested,
     parse_parties,
     validate_attested_report,
+)
+from .audit_corroboration import (
+    COMPLIANCE_EVIDENCE_KEY,
+    DEFAULT_MAX_CLOCK_SKEW_SECONDS,
+    GATEWAY_SEAL_KEY,
+    KNOWN_SIGNING_KEYS,
+    RECONCILER_SNAPSHOT_KEY,
+    SignedArtifactRef,
+    expected_key_callers_for_project,
+    extract_signed_artifacts,
+    parse_json_documents,
+    verify_audit_corroboration,
 )
 from .receipt_diagnostic import (
     add_diagnose_receipt_arguments,
@@ -393,6 +409,161 @@ def _diagnose_receipt(args: argparse.Namespace) -> int:
     return run_diagnose_receipt(args.receipt, as_json=args.as_json)
 
 
+#: Artifact input flag and the signing key its documents were produced under.
+_AUDIT_ARTIFACT_INPUTS: tuple[tuple[str, str], ...] = (
+    ("evidence", COMPLIANCE_EVIDENCE_KEY),
+    ("seals", GATEWAY_SEAL_KEY),
+    ("snapshots", RECONCILER_SNAPSHOT_KEY),
+)
+
+
+def _add_audit_corroboration_parser(subparsers: argparse._SubParsersAction) -> None:
+    corroborate = subparsers.add_parser(
+        "verify-audit-corroboration",
+        help=(
+            "Corroborate HSM-signed CAGE artifacts against exported Cloud KMS "
+            "AsymmetricSign and Admin Activity audit logs (AS-6)"
+        ),
+        allow_abbrev=False,
+    )
+    corroborate.add_argument(
+        "--audit-logs",
+        nargs="+",
+        type=Path,
+        required=True,
+        metavar="FILE",
+        help="Exported Cloud Audit Log entries as JSON or JSON Lines ('-' reads stdin)",
+    )
+    corroborate.add_argument(
+        "--evidence",
+        nargs="+",
+        type=Path,
+        default=[],
+        metavar="FILE",
+        help="cage-evidence-batch/1 attestations (compliance-evidence key)",
+    )
+    corroborate.add_argument(
+        "--seals",
+        nargs="+",
+        type=Path,
+        default=[],
+        metavar="FILE",
+        help="Routing seals and governance decision records (gateway-seal key)",
+    )
+    corroborate.add_argument(
+        "--snapshots",
+        nargs="+",
+        type=Path,
+        default=[],
+        metavar="FILE",
+        help="Ground-truth snapshots and discrepancy fences (reconciler-snapshot key)",
+    )
+    corroborate.add_argument(
+        "--project-id",
+        default=None,
+        help="Pin each key's caller to its exact workload service account here",
+    )
+    corroborate.add_argument(
+        "--expected-caller",
+        action="append",
+        default=[],
+        metavar="KEY=PRINCIPAL",
+        help="Override one signing key's expected caller (repeatable)",
+    )
+    corroborate.add_argument(
+        "--trusted-deployer",
+        action="append",
+        default=[],
+        metavar="PRINCIPAL",
+        help="Principal allowed to mutate the control plane (repeatable)",
+    )
+    corroborate.add_argument(
+        "--key-family",
+        action="append",
+        choices=sorted(KNOWN_SIGNING_KEYS),
+        default=[],
+        help=(
+            "Corroborate this key family in both directions (repeatable; "
+            "default: the families whose artifacts are supplied)"
+        ),
+    )
+    corroborate.add_argument(
+        "--max-skew-seconds",
+        type=float,
+        default=DEFAULT_MAX_CLOCK_SKEW_SECONDS,
+        help=(
+            "Maximum artifact-to-AsymmetricSign timestamp skew "
+            f"(default: {DEFAULT_MAX_CLOCK_SKEW_SECONDS:g}s)"
+        ),
+    )
+    corroborate.add_argument(
+        "--output", type=Path, default=None, help="Write the JSON report here"
+    )
+    corroborate.add_argument(
+        "--json",
+        dest="as_json",
+        action="store_true",
+        help="Print the JSON report instead of the summary",
+    )
+
+
+def _read_documents(paths: Sequence[Path]) -> list[dict[str, Any]]:
+    documents: list[dict[str, Any]] = []
+    for path in paths:
+        if str(path) == "-":
+            documents.extend(parse_json_documents(sys.stdin.read(), "<stdin>"))
+        else:
+            documents.extend(
+                parse_json_documents(path.read_text(encoding="utf-8"), str(path))
+            )
+    return documents
+
+
+def _verify_audit_corroboration(args: argparse.Namespace) -> int:
+    artifacts: list[SignedArtifactRef] = []
+    supplied_families: set[str] = set()
+    for attribute, key_family in _AUDIT_ARTIFACT_INPUTS:
+        paths = getattr(args, attribute)
+        if paths:
+            supplied_families.add(key_family)
+            artifacts.extend(
+                extract_signed_artifacts(_read_documents(paths), key_family)
+            )
+
+    callers = (
+        expected_key_callers_for_project(args.project_id) if args.project_id else {}
+    )
+    for spec in args.expected_caller:
+        key_family, separator, principal = spec.partition("=")
+        if (
+            not separator
+            or key_family.strip() not in KNOWN_SIGNING_KEYS
+            or not principal.strip()
+        ):
+            raise ValueError(
+                f"invalid --expected-caller {spec!r}; expected KEY=PRINCIPAL with "
+                f"KEY in {sorted(KNOWN_SIGNING_KEYS)}"
+            )
+        callers[key_family.strip()] = principal.strip()
+
+    report = verify_audit_corroboration(
+        _read_documents(args.audit_logs),
+        signed_artifacts=artifacts,
+        expected_key_callers=callers,
+        trusted_deployer_principals=args.trusted_deployer,
+        corroborated_key_families=set(args.key_family) or supplied_families,
+        max_skew_seconds=args.max_skew_seconds,
+    )
+    report_json = json.dumps(report.to_dict(), indent=2)
+    if args.output is not None:
+        args.output.write_text(report_json + "\n", encoding="utf-8")
+    if args.as_json:
+        print(report_json)
+    else:
+        print("\n".join(report.summary_lines("cage-conformance audit corroboration")))
+    return 0 if report.corroborated else 1
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(
         prog="cage-conformance",
@@ -444,6 +615,7 @@ def main(argv: list[str] | None = None) -> int:
         allow_abbrev=False,
     )
     add_diagnose_receipt_arguments(diagnose_parser)
+    _add_audit_corroboration_parser(subparsers)
 
     args = parser.parse_args(argv)
     commands = {
@@ -452,6 +624,7 @@ def main(argv: list[str] | None = None) -> int:
         "attest": _attest,
         "verify-report": _verify_report,
         "diagnose-receipt": _diagnose_receipt,
+        "verify-audit-corroboration": _verify_audit_corroboration,
     }
     try:
         return commands[args.command](args)

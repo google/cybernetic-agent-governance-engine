@@ -99,6 +99,104 @@ run "staging_single_project_binds_gcs_service_agent_and_hsm_cmek" {
     condition     = data.google_kms_crypto_key_version.gateway_seal.version == 1 && data.google_kms_crypto_key_version.compliance_evidence.version == 1 && data.google_kms_crypto_key_version.reconciler_snapshot.version == 1
     error_message = "kms_signing.tf must resolve real PEM public keys via data.google_kms_crypto_key_version version 1 for all three governance signers"
   }
+  assert {
+    condition     = length(google_project_iam_audit_config.kms_signing_audit) == 1 && google_logging_project_sink.kms_asymmetric_sign[0].destination == "storage.googleapis.com/evidence-test-project-audit-logs-worm-staging" && google_logging_project_sink.admin_activity[0].destination == "storage.googleapis.com/evidence-test-project-audit-logs-worm-staging"
+    error_message = "staging must enable KMS DATA_READ audit config and route both kms_asymmetric_sign and admin_activity sinks directly to module.evidence_domain.audit_logs_worm_bucket_name"
+  }
+  assert {
+    condition     = toset(keys(module.evidence_domain.audit_log_sink_writers)) == toset(["kms_signing_audit", "admin_activity_audit"])
+    error_message = "module.evidence_domain must grant objectCreator on audit-logs-worm using static sink keys known at plan time"
+  }
+  assert {
+    condition     = google_logging_project_sink.admin_activity[0].filter == "logName=\"projects/evidence-test-project/logs/cloudaudit.googleapis.com%2Factivity\""
+    error_message = "the Admin Activity sink filter must interpolate var.project_id and carry no literal interpolation sequence"
+  }
+}
+
+run "dev_with_enforce_in_dev_enables_kms_audit_sinks" {
+  command = plan
+
+  override_data {
+    target          = module.evidence_domain.data.google_project.evidence[0]
+    override_during = plan
+    values = {
+      number = "123456789012"
+    }
+  }
+
+  variables {
+    environment           = "dev"
+    enable_kms_audit_logs = false
+    inference_backend     = "none"
+    enable_gpu_node_pool  = false
+    enforce_in_dev        = true
+  }
+
+  assert {
+    condition     = length(google_project_iam_audit_config.kms_signing_audit) == 1 && length(google_logging_project_sink.kms_asymmetric_sign) == 1 && toset(keys(module.evidence_domain.audit_log_sink_writers)) == toset(["kms_signing_audit", "admin_activity_audit"])
+    error_message = "an enforcing dev posture (enforce_in_dev = true) must enable KMS Data Access audit logging and both audit-log sinks"
+  }
+}
+
+run "extra_sink_writer_identities_cannot_override_managed_sinks" {
+  command = plan
+
+  override_data {
+    target          = module.evidence_domain.data.google_project.evidence[0]
+    override_during = plan
+    values = {
+      number = "123456789012"
+    }
+  }
+
+  override_resource {
+    target          = google_logging_project_sink.kms_asymmetric_sign
+    override_during = plan
+    values = {
+      writer_identity = "serviceAccount:kms-sink-writer@evidence-test-project.iam.gserviceaccount.com"
+    }
+  }
+
+  variables {
+    audit_log_sink_writer_identities = {
+      kms_signing_audit = "serviceAccount:rogue-writer@evidence-test-project.iam.gserviceaccount.com"
+      org_audit         = "serviceAccount:org-sink-writer@evidence-test-project.iam.gserviceaccount.com"
+    }
+  }
+
+  assert {
+    condition     = toset(keys(module.evidence_domain.audit_log_sink_writers)) == toset(["kms_signing_audit", "admin_activity_audit", "org_audit"])
+    error_message = "extra audit_log_sink_writer_identities must add grants alongside the managed AS-6 sink keys"
+  }
+  assert {
+    condition     = module.evidence_domain.audit_log_sink_writers["kms_signing_audit"] == "serviceAccount:kms-sink-writer@evidence-test-project.iam.gserviceaccount.com"
+    error_message = "an extra audit_log_sink_writer_identities entry must never replace the managed KMS sink's writer identity"
+  }
+}
+
+run "dev_disables_kms_audit_sinks_by_default_without_computed_for_each_errors" {
+  command = plan
+
+  override_data {
+    target          = module.evidence_domain.data.google_project.evidence[0]
+    override_during = plan
+    values = {
+      number = "123456789012"
+    }
+  }
+
+  variables {
+    environment           = "dev"
+    enable_kms_audit_logs = false
+    inference_backend     = "none"
+    enable_gpu_node_pool  = false
+    enforce_in_dev        = false
+  }
+
+  assert {
+    condition     = length(google_project_iam_audit_config.kms_signing_audit) == 0 && length(google_logging_project_sink.kms_asymmetric_sign) == 0 && length(google_logging_project_sink.admin_activity) == 0 && length(module.evidence_domain.audit_log_sink_writers) == 0
+    error_message = "dev must omit KMS audit config and Cloud Logging sinks when enable_kms_audit_logs = false"
+  }
 }
 
 run "prod_refuses_single_project_evidence_domain_without_external_or_distinct_project" {

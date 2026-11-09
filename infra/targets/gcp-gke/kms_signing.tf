@@ -257,3 +257,75 @@ resource "google_kms_crypto_key_iam_policy" "signing_key" {
   crypto_key_id = each.value.key
   policy_data   = data.google_iam_policy.signing_key[each.key].policy_data
 }
+
+# ---------------------------------------------------------------------------
+# Cloud KMS signing and Admin Activity audit-log sinks (AS-6 / AU-2, AU-6,
+# AU-9, AU-12 / POAM-2026-169 Instance 11, POAM-2026-192, POAM-2026-197)
+#
+# Cloud KMS records AsymmetricSign in DATA_READ Data Access logs, which GCP
+# leaves disabled by default, and _Default keeps logs for only 30 days. The
+# audit config below enables Data Access logging for cloudkms.googleapis.com
+# in every enforcing posture, and two sinks export the signing keyring's
+# AsymmetricSign records and the project's Admin Activity records (including
+# GKE k8s.io writes) into module.evidence_domain's retention-locked
+# audit-logs bucket, the only audit-log archive. Gate W Phase 5 reads both
+# back through scripts/verify_audit_corroboration.py.
+#
+# Each sink writes as its own unique writer identity. module.evidence_domain
+# grants it objectCreator on the bucket through a map keyed by the static sink
+# names below, so the grant's for_each keys are known at plan time although
+# writer_identity is only known after apply. An external evidence domain
+# grants the two writer identities (see outputs.tf) out of band.
+# ---------------------------------------------------------------------------
+
+locals {
+  kms_audit_logs_enabled = local.enforcing_posture || var.enable_kms_audit_logs
+
+  managed_audit_log_sink_writer_identities = local.kms_audit_logs_enabled ? {
+    kms_signing_audit    = google_logging_project_sink.kms_asymmetric_sign[0].writer_identity
+    admin_activity_audit = google_logging_project_sink.admin_activity[0].writer_identity
+  } : {}
+}
+
+resource "google_project_iam_audit_config" "kms_signing_audit" {
+  count   = local.kms_audit_logs_enabled ? 1 : 0
+  project = var.project_id
+  service = "cloudkms.googleapis.com"
+
+  audit_log_config {
+    log_type = "ADMIN_READ"
+  }
+
+  audit_log_config {
+    log_type = "DATA_READ"
+  }
+
+  audit_log_config {
+    log_type = "DATA_WRITE"
+  }
+}
+
+resource "google_logging_project_sink" "kms_asymmetric_sign" {
+  count                  = local.kms_audit_logs_enabled ? 1 : 0
+  name                   = "cage-kms-signing-audit-${var.environment}"
+  project                = var.project_id
+  destination            = "storage.googleapis.com/${module.evidence_domain.audit_logs_worm_bucket_name}"
+  unique_writer_identity = true
+
+  filter = join(" AND ", [
+    "logName=\"projects/${var.project_id}/logs/cloudaudit.googleapis.com%2Fdata_access\"",
+    "protoPayload.serviceName=\"cloudkms.googleapis.com\"",
+    "protoPayload.methodName=\"AsymmetricSign\"",
+    "protoPayload.resourceName:\"${google_kms_key_ring.signing.id}/cryptoKeys/\"",
+  ])
+}
+
+resource "google_logging_project_sink" "admin_activity" {
+  count                  = local.kms_audit_logs_enabled ? 1 : 0
+  name                   = "cage-admin-activity-audit-${var.environment}"
+  project                = var.project_id
+  destination            = "storage.googleapis.com/${module.evidence_domain.audit_logs_worm_bucket_name}"
+  unique_writer_identity = true
+
+  filter = "logName=\"projects/${var.project_id}/logs/cloudaudit.googleapis.com%2Factivity\""
+}

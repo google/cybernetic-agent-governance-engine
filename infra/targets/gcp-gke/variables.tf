@@ -1359,7 +1359,7 @@ variable "audit_logs_bucket_name" {
 }
 
 variable "audit_log_sink_writer_identities" {
-  description = "Map of static sink names to Cloud Logging sink writer identities granted roles/storage.objectCreator on the retention-locked audit-logs-worm bucket (R-4)."
+  description = "Additional static sink names mapped to Cloud Logging sink writer identities granted roles/storage.objectCreator on the retention-locked audit-logs-worm bucket (R-4). The AS-6 sinks in kms_signing.tf are granted automatically under the kms_signing_audit and admin_activity_audit keys, which this map cannot override."
   type        = map(string)
   default     = {}
 }
@@ -1368,4 +1368,11 @@ variable "offline_verifier_principal" {
   description = "Optional IAM principal for the out-of-cluster CustodyVerifier granted roles/storage.objectViewer in the evidence domain."
   type        = string
   default     = ""
+}
+
+variable "enable_kms_audit_logs" {
+  description = "Enable Cloud KMS Data Access audit logging (DATA_READ records AsymmetricSign) and the Cloud Logging sinks that export KMS signing and Admin Activity records into the evidence domain's retention-locked audit-logs bucket (AS-6, POAM-2026-169 Instance 11). Always on in enforcing postures (staging, prod, or dev with enforce_in_dev = true); set true to opt a permissive dev stack in."
+  type        = bool
+  default     = false
+  nullable    = false
 }

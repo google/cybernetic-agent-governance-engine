@@ -90,3 +90,8 @@ output "managed_custody_resource_count" {
   description = "Count of managed custody KMS/bucket/manifest resources planned in this module (0 when external_evidence_domain_enabled = true)."
   value       = length(google_kms_crypto_key.evidence_cmek) + length(google_storage_bucket.audit_logs_worm) + length(google_storage_bucket_object.signing_key_manifest)
 }
+
+output "audit_log_sink_writers" {
+  description = "Writer identities granted roles/storage.objectCreator on audit-logs-worm, keyed by static sink name."
+  value       = { for name, grant in google_storage_bucket_iam_member.audit_log_sink_writer : name => grant.member }
+}
