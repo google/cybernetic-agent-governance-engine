@@ -1619,3 +1619,59 @@ exit 0
     assert "e2e_operator_jwks_json=" in calls
     # .env restored intact on disk
     assert (repo / ".env").is_file()
+    manifest = json.loads((archive_dir / "manifest.json").read_text(encoding="utf-8"))
+    assert manifest["deployment_target_mode"] == "fresh_project_clean_room"
+    assert manifest["pre_existing_project_state"]["project_pre_existed"] is False
+    assert (
+        "operator_orchestrated_rebuild_of_cage_evidence_stream"
+        in manifest["worm_continuity"]["rotation_binding_scope"]["covered"]
+    )
+    assert (
+        "unorchestrated_empty_redis_stream_cold_start_on_operated_clusters"
+        in manifest["worm_continuity"]["rotation_binding_scope"]["not_covered"]
+    )
+
+
+def test_staging_lifecycle_records_phase0_kms_residue_when_project_pre_exists(
+    tmp_path: Path,
+) -> None:
+    repo, bin_dir, _ = _setup_fake_repo(tmp_path)
+    gcloud_path = bin_dir / "gcloud"
+    gcloud_body = gcloud_path.read_text(encoding="utf-8")
+    gcloud_body = gcloud_body.replace(
+        'if [[ "$*" == *"projects describe"* ]]; then\n  exit 1\nfi',
+        'if [[ "$*" == *"projects describe"* ]]; then\n  exit 0\nfi\n'
+        'if [[ "$*" == *"kms keyrings list"* ]]; then\n'
+        '  echo "projects/ephemeral-proj-99/locations/us-central1/keyRings/cage-signing-staging"\n'
+        "  exit 0\n"
+        "fi",
+    )
+    _write_executable(gcloud_path, gcloud_body)
+
+    archive_dir = tmp_path / "archive-kms-residue"
+    proc = subprocess.run(
+        [
+            "bash",
+            str(repo / "scripts" / "staging_lifecycle.sh"),
+            "--fresh-project=ephemeral-proj-99",
+            f"--archive-dir={archive_dir}",
+            "--skip-lula",
+            "--skip-posture",
+            "--skip-live-sweep",
+            "--skip-telemetry",
+            "--skip-rebuild",
+        ],
+        env=_base_env(bin_dir),
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert proc.returncode == 0, proc.stderr
+    manifest = json.loads((archive_dir / "manifest.json").read_text(encoding="utf-8"))
+    assert manifest["deployment_target_mode"] == "fresh_project_with_phase0_kms_residue"
+    pre_state = manifest["pre_existing_project_state"]
+    assert pre_state["project_pre_existed"] is True
+    assert pre_state["has_prior_cage_residue"] is True
+    assert pre_state["kms_keyrings"] == [
+        "projects/ephemeral-proj-99/locations/us-central1/keyRings/cage-signing-staging"
+    ]

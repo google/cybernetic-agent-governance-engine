@@ -162,3 +162,25 @@ def test_pending_status_fails_when_poam_closes_citing_gate_w_or_codeowners_missi
     err = capsys.readouterr().err
     assert "CODEOWNERS" in err
     assert "cannot remain PENDING_INITIAL_CERTIFICATION" in err
+
+
+def test_certified_record_accepts_phase0_kms_residue_target_mode(
+    tmp_path: Path,
+) -> None:
+    rec = _valid_certified()
+    rec["deployment_target_mode"] = "fresh_project_with_phase0_kms_residue"
+    cert_file, codeowners_file, poam_file = _write_fixture(tmp_path, rec)
+    rc = main(
+        [
+            "--cert-file",
+            str(cert_file),
+            "--codeowners-file",
+            str(codeowners_file),
+            "--poam-file",
+            str(poam_file),
+            "--now-utc",
+            "2026-11-11T00:00:00Z",
+            "--require-certified",
+        ]
+    )
+    assert rc == 0

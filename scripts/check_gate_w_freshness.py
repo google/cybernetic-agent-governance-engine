@@ -48,7 +48,11 @@ DEFAULT_POAM_FILE = REPO_ROOT / "docs" / "POAM.md"
 MAX_CADENCE_DAYS = 90
 VALID_STATUSES = frozenset({"PENDING_INITIAL_CERTIFICATION", "CERTIFIED"})
 VALID_TARGET_MODES = frozenset(
-    {"fresh_project_clean_room", "existing_operated_project"}
+    {
+        "fresh_project_clean_room",
+        "fresh_project_with_phase0_kms_residue",
+        "existing_operated_project",
+    }
 )
 VALID_PARTNER_STATUSES = frozenset({"passed", "unreachable_waived"})
 
