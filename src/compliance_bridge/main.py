@@ -81,7 +81,7 @@ def _ensure_langfuse_imported() -> None:
         Langfuse = _LF
 
 
-from .audit_workflow import run_audit_workflow
+from .audit_workflow import run_audit_workflow, validate_langfuse_credentials
 from .auth import (
     OperatorPrincipal,
     ProducerPrincipal,
@@ -223,6 +223,10 @@ async def lifespan(app: FastAPI):  # type: ignore[no-untyped-def]
             f"{ALLOW_DEV_LOOPBACK_IDENTITY_ENV}=true is forbidden when is_enforcing() "
             "is True or CAGE_ENV is not 'dev'/'development' (POAM-2026-167 / LT-1)."
         )
+
+    # POAM-018: fail closed on missing Langfuse credentials before any custody
+    # client, background task or connection is created.
+    validate_langfuse_credentials()
 
     _custodian: EvidenceCustodian | None = None
     _custody_task: asyncio.Task | None = None

@@ -11,6 +11,7 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
+# Closure regression guard for: POAM-2026-158
 """W6: on GKE, ``inference_backend`` decides what is deployed (AG-7).
 
 ``"none"`` deploys nothing that needs a model: no vLLM, no advisor and no NeMo
@@ -305,6 +306,7 @@ def test_plan_refuses_backends_that_cannot_run() -> None:
     ["infra/targets/gcp-gke/variables.tf", "deploy_all.sh", "infra/load_env.sh"],
 )
 def test_unread_vllm_url_variables_are_removed(path: str) -> None:
+    """POAM-2026-136: unread vLLM URL variables and TF_VAR_ exports stay deleted."""
     text = _read(REPO_ROOT / path)
     for name in ("vllm_fast_url", "vllm_reasoning_url", "vllm_gateway_url"):
         assert f'variable "{name}"' not in text and f"TF_VAR_{name}" not in text, (

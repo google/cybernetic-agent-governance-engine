@@ -11,6 +11,7 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
+# Closure regression guard for: POAM-2026-116, POAM-2026-133
 
 """Tests for scripts/check_repo_rules.py (POAM-2026-169, POAM-2026-170).
 

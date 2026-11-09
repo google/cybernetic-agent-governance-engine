@@ -57,6 +57,7 @@ from fastapi.testclient import TestClient
 from starlette.datastructures import Headers
 
 from src.compliance_bridge import main as bridge_main
+from src.compliance_bridge.audit_workflow import LANGFUSE_CREDENTIAL_ENV_VARS
 from src.compliance_bridge.auth import (
     TRUSTED_AUDIT_PRODUCERS_ENV,
     TRUSTED_INFRA_PRODUCERS_ENV,
@@ -1452,6 +1453,9 @@ class TestFailClosedPersistenceAndIdempotency:
         monkeypatch.setenv(
             "CAGE_TRUSTED_OPERATOR_IDENTITIES", "operator:auditor@example.org"
         )
+        # Synthetic, non-secret values satisfying the POAM-018 lifespan pre-flight.
+        for var in LANGFUSE_CREDENTIAL_ENV_VARS:
+            monkeypatch.setenv(var, f"synthetic-{var.lower()}")
         monkeypatch.delenv(INFRA_INLINE_FLUSH_ENV, raising=False)
 
         class _InMemoryGcsWormStore:

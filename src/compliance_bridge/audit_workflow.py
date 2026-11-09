@@ -109,67 +109,58 @@ logger = logging.getLogger(__name__)
 
 
 # ---------------------------------------------------------------------------
-# HIGH-05: Langfuse credential startup validation
-# Warns at module import time if compliance or app Langfuse credentials are
-# absent so that missing config is surfaced immediately rather than silently
-# producing empty audit metrics.
+# POAM-018: Langfuse credential startup validation
+# Invoked from the compliance-bridge FastAPI ``lifespan`` (main.py) on every
+# startup, never at import time, so the posture it enforces is the posture the
+# service actually starts under.
 # ---------------------------------------------------------------------------
 
-# POAM-018 flag: _CAGE_ENV_STRICT determines whether missing compliance credentials
-# are a RuntimeError (production) or a WARNING (development/test).
-# Unknown or missing environment names are treated as production (fail secure).
-_CAGE_ENV_STRICT = os.environ.get(
-    "CAGE_ENV", os.environ.get("ENVIRONMENT", "prod")
-).lower()  # Default to "prod" to fail-secure: missing CAGE_ENV must not silently disable enforcement
-_CAGE_ENV_IS_DEV = _CAGE_ENV_STRICT in ("dev", "development", "test", "ci")
-
-
-def _validate_langfuse_credentials() -> None:
-    """Validate Langfuse credential env vars at startup (POAM-018).
-
-    - In **non-development environments**: raises ``RuntimeError`` if compliance
-      or application Langfuse credentials are absent.  This causes a fast-fail
-      at service startup, making missing config visible immediately rather than
-      silently producing empty audit metrics for the entire deployment lifetime.
-    - In **development/test environments**: emits a WARNING log instead of
-      raising, preserving developer UX for local runs without credentials.
-
-    POAM-018: AU-9 / §A.9.4 — Langfuse compliance project credentials fail
-    silently when absent.  This guard closes that gap.
-    """
-    missing: list[str] = []
-
+LANGFUSE_CREDENTIAL_ENV_VARS: tuple[str, ...] = (
     # Compliance project credentials (used by _make_compliance_langfuse)
-    for var in ("LANGFUSE_COMPLIANCE_PUBLIC_KEY", "LANGFUSE_COMPLIANCE_SECRET_KEY"):
-        if not os.environ.get(var):
-            missing.append(var)
+    "LANGFUSE_COMPLIANCE_PUBLIC_KEY",
+    "LANGFUSE_COMPLIANCE_SECRET_KEY",
+    # Application project credentials (operational telemetry isolation)
+    "LANGFUSE_PUBLIC_KEY",
+    "LANGFUSE_SECRET_KEY",
+)
 
-    # Application project credentials (mounted for operational telemetry isolation)
-    for var in ("LANGFUSE_PUBLIC_KEY", "LANGFUSE_SECRET_KEY"):
-        if not os.environ.get(var):
-            missing.append(var)
 
+def validate_langfuse_credentials(env: Mapping[str, str] | None = None) -> None:
+    """Fail closed on missing Langfuse credentials under an enforcing posture (POAM-018).
+
+    Posture is resolved on every call through ``is_enforcing()``
+    (``src/gateway/governance/env_posture.py``). Every posture except ``dev``,
+    ``test`` and ``ci`` (including ``local``, ``staging``, ``production``, an
+    unset ``CAGE_ENV``/``ENVIRONMENT`` and any unknown value) raises
+    ``RuntimeError`` naming each missing variable. The permissive postures log
+    a ``[POAM-018]`` WARNING instead, so hermetic runs start without credentials.
+
+    Args:
+        env: Environment mapping to validate; defaults to ``os.environ``.
+
+    Raises:
+        RuntimeError: A credential is missing or empty under an enforcing posture.
+    """
+    from src.gateway.governance.env_posture import is_enforcing
+
+    source = os.environ if env is None else env
+    missing = [var for var in LANGFUSE_CREDENTIAL_ENV_VARS if not source.get(var)]
     if not missing:
         return
 
     msg = (
         f"Langfuse compliance credentials not configured — audit metrics will not be "
         f"recorded.  Missing: {', '.join(missing)}.  "
-        f"(LANGFUSE_HOST defaults to https://cloud.langfuse.com if unset.)  "
         f"Set these env vars through the K8s Secret 'advisor-secrets'. "
         f"(POAM-018 / AU-9 / ISO 42001 §A.9.4)"
     )
 
-    if _CAGE_ENV_IS_DEV:
-        logger.warning("[POAM-018] %s", msg)
-    else:
+    if is_enforcing(source):
         raise RuntimeError(
             f"[POAM-018] {msg}  "
             "To bypass in local dev, set CAGE_ENV=development or ENVIRONMENT=development."
         )
-
-
-_validate_langfuse_credentials()
+    logger.warning("[POAM-018] %s", msg)
 
 
 # ---------------------------------------------------------------------------

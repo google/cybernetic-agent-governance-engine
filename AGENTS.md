@@ -172,15 +172,15 @@ Full detail lives in [`docs/operations/DEPLOYMENT_RULES.md`](docs/operations/DEP
 
 ## Compliance Artifact Obligations
 
-- **NIST SP 800-53 control changes**: An OSCAL component update in `compliance/oscal/` is required within 2 business days of PR merge.
+- **NIST SP 800-53 & OSCAL control changes**: Update the relevant OSCAL component/SSP narratives under `compliance/oscal/` within 2 business days of PR merge, refresh any drifted `description_sha256` entries in [`compliance/oscal/evidence_claim_census.jsonl`](compliance/oscal/evidence_claim_census.jsonl), and regenerate [`docs/compliance/OSCAL_EVIDENCE_CLAIM_REGISTER.md`](docs/compliance/OSCAL_EVIDENCE_CLAIM_REGISTER.md) via `uv run python scripts/check_oscal_claim_census.py --render docs/compliance/OSCAL_EVIDENCE_CLAIM_REGISTER.md`.
 - **Kubernetes resources**: Update Lula validations in `compliance/lula/` when adding or removing resources referenced by Lula assertion files.
-- **POAM remediations**: Update [`docs/POAM.md`](docs/POAM.md) with: commit SHA, Lula result, closure date.
+- **POAM remediations**: Update [`docs/POAM.md`](docs/POAM.md) (and any paired regional POA&M + [`docs/compliance/cross-region/POAM_INDEX.md`](docs/compliance/cross-region/POAM_INDEX.md)) with commit SHA, runnable finding-ID-bound test/tftest/active-Lula/CI-gate evidence, and actual closure date; verify all four closure/OSCAL checks pass (`uv run python scripts/check_poam_lula_divergence.py` — read-back, detail-section parity, store lifetime on open and closed rows, custody, and census parity; zero waivers).
 - **STPA source modifications**: Regenerate STPA artifacts before committing (`uv run python scripts/check_stpa_freshness.py`).
 
 ### OSCAL & POAM Synchronization Guardrails
 - **OSCAL Exporter CLI Contract**: Always invoke the exporter using default discovery mode (`uv run python -m src.gateway.governance.oscal_ssp_exporter export`). Do not pass `--ssp` unless explicitly targeting a non-canonical schema path.
 - **No Backdated POAM Closures**: POAM closure dates ([`docs/POAM.md`](docs/POAM.md)) must reflect the actual calendar date of artifact verification/generation, never backdated or estimated past dates.
-- **Pre-Closure Verification**: An OSCAL SSP export must successfully compile and pass test suites ([`tests/test_oscal_ssp_exporter.py`](tests/test_oscal_ssp_exporter.py)) before corresponding POAM items can be marked CLOSED.
+- **Pre-Closure Verification**: An OSCAL SSP export (`--check` across `US_FED`, `EU_ECB`, `APAC_MAS`), [`tests/test_oscal_ssp_exporter.py`](tests/test_oscal_ssp_exporter.py), [`scripts/check_poam_lula_divergence.py`](scripts/check_poam_lula_divergence.py), and [`scripts/check_doc_references.py`](scripts/check_doc_references.py) must all pass before corresponding POAM items can be marked CLOSED.
 
 ---
 

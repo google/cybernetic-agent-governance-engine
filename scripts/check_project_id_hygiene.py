@@ -22,6 +22,10 @@ manifests, or documentation.
 Historical measurement records under docs/paper/measurements/2026-*/ and
 historical planning documents under plans/ are excluded to preserve provenance.
 
+Tracked Terraform state (``*.tfstate`` and ``*.tfstate.*`` backups) is always a
+violation, wherever it lives: state files carry provisioned credentials
+(POAM-2026-071), so ``.gitignore`` keeping them untracked is enforced here.
+
 Exit code 0 on clean scan, 1 on violation.
 """
 
@@ -30,6 +34,7 @@ from __future__ import annotations
 import argparse
 import subprocess
 import sys
+from collections.abc import Sequence
 from pathlib import Path
 
 PROHIBITED_IDENTIFIERS = [
@@ -59,6 +64,59 @@ def get_tracked_files() -> list[str]:
         ]
 
 
+def is_terraform_state_path(rel_path: str) -> bool:
+    """Return True for Terraform state files and their backups (``*.tfstate`` / ``*.tfstate.*backup``)."""
+    name = Path(rel_path).name
+    if name.endswith((".tfstate", ".tfstate.backup", ".tfstate.lock.info")):
+        return True
+    stem, sep, tail = name.partition(".tfstate.")
+    return bool(
+        sep
+        and stem
+        and all(
+            part.isdigit() or part in {"backup", "bak", "tmp"}
+            for part in tail.split(".")
+        )
+    )
+
+
+def scan_tracked_files(
+    repo_root: Path,
+    tracked_files: list[str],
+    prohibited_identifiers: Sequence[str] = PROHIBITED_IDENTIFIERS,
+) -> list[tuple[str, int, str]]:
+    """Return ``(path, line, text)`` for every violation in ``tracked_files``.
+
+    A tracked Terraform state file is reported (line 0) whether or not it exists
+    on disk, since being tracked is the violation. Every other file outside
+    ``EXCLUDED_PATH_PREFIXES`` is scanned line by line for the identifiers.
+    """
+    violations: list[tuple[str, int, str]] = []
+    for rel_path in tracked_files:
+        if is_terraform_state_path(rel_path):
+            violations.append(
+                (rel_path, 0, "tracked Terraform state file (POAM-2026-071)")
+            )
+            continue
+        if any(rel_path.startswith(prefix) for prefix in EXCLUDED_PATH_PREFIXES):
+            continue
+
+        file_path = repo_root / rel_path
+        if not file_path.is_file():
+            continue
+
+        try:
+            content = file_path.read_text(encoding="utf-8", errors="ignore")
+        except OSError:
+            continue
+
+        for line_num, line in enumerate(content.splitlines(), start=1):
+            for ident in prohibited_identifiers:
+                if ident in line:
+                    violations.append((rel_path, line_num, line.strip()))
+    return violations
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(
         description="Check for maintainer project ID leaks"
@@ -67,25 +125,7 @@ def main() -> int:
     args = parser.parse_args()
 
     tracked_files = get_tracked_files()
-    violations: list[tuple[str, int, str]] = []
-
-    for rel_path in tracked_files:
-        if any(rel_path.startswith(prefix) for prefix in EXCLUDED_PATH_PREFIXES):
-            continue
-
-        file_path = Path(rel_path)
-        if not file_path.is_file():
-            continue
-
-        try:
-            content = file_path.read_text(encoding="utf-8", errors="ignore")
-        except Exception:
-            continue
-
-        for line_num, line in enumerate(content.splitlines(), start=1):
-            for ident in PROHIBITED_IDENTIFIERS:
-                if ident in line:
-                    violations.append((rel_path, line_num, line.strip()))
+    violations = scan_tracked_files(Path("."), tracked_files)
 
     if violations:
         print(

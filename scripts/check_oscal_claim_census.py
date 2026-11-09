@@ -88,10 +88,10 @@ CITED_REPO_PATH_RE = re.compile(
     r"^((?:src|infra|tests|compliance|deployment|scripts|config|docs|\.github|packages|proof)/[^\s:();,]+)"
 )
 PINNED_READ_BACK_REPO_PATH_RE = re.compile(
-    r"(?<![A-Za-z0-9_./:-])(?P<rev>[0-9a-f]{7,40}\^?):(?P<path>(?:src|infra|tests|compliance|deployment|scripts|config|docs|\.github|packages|proof)/[A-Za-z0-9_./-]+\.[A-Za-z0-9_]+)"
+    r"(?<![A-Za-z0-9_./:-])(?P<rev>[0-9a-f]{7,40}\^?):(?P<path>(?:src|infra|tests|compliance|deployment|scripts|config|docs|\.github|packages|proof)/(?:[A-Za-z0-9_./-]+/)?(?:Dockerfile(?![.A-Za-z0-9_-])|[A-Za-z0-9_./-]+\.[A-Za-z0-9_]+))"
 )
 READ_BACK_REPO_PATH_RE = re.compile(
-    r"(?<![A-Za-z0-9_./:-])((?:src|infra|tests|compliance|deployment|scripts|config|docs|\.github|packages|proof)/[A-Za-z0-9_./-]+\.[A-Za-z0-9_]+)"
+    r"(?<![A-Za-z0-9_./:-])((?:src|infra|tests|compliance|deployment|scripts|config|docs|\.github|packages|proof)/(?:[A-Za-z0-9_./-]+/)?(?:Dockerfile(?![.A-Za-z0-9_-])|[A-Za-z0-9_./-]+\.[A-Za-z0-9_]+))"
 )
 
 
@@ -551,19 +551,34 @@ def validate_census(
                         )
 
         rb_check = read_back.get("check", "") if isinstance(read_back, dict) else ""
-        for mp_rb in PINNED_READ_BACK_REPO_PATH_RE.finditer(str(rb_check)):
-            rev = mp_rb.group("rev")
-            rel_path = mp_rb.group("path").rstrip(".,;")
-            if not _pinned_path_exists_in_git(rev, rel_path, repo_root):
-                errors.append(
-                    f"Row {idx} ({rid}): pinned read_back.check repository path does not resolve in git: {rev}:{rel_path}"
-                )
-        for m_rb in READ_BACK_REPO_PATH_RE.finditer(str(rb_check)):
-            rel_path = m_rb.group(1).rstrip(".,;")
-            if not (repo_root / rel_path).exists():
-                errors.append(
-                    f"Row {idx} ({rid}): read_back.check repository path does not exist: {rel_path}"
-                )
+        rb_blobs: list[tuple[str, str]] = [("read_back.check", str(rb_check))]
+        if verdict == "HOLDS":
+            if isinstance(read_back, dict) and read_back.get("note"):
+                rb_blobs.append(("read_back.note", str(read_back.get("note"))))
+            for ev_item in row.get("evidence_named") or []:
+                rb_blobs.append(("evidence_named", str(ev_item)))
+        for field_label, blob_str in rb_blobs:
+            pinned_spans: list[tuple[int, int]] = []
+            for mp_rb in PINNED_READ_BACK_REPO_PATH_RE.finditer(blob_str):
+                pinned_spans.append((mp_rb.start(), mp_rb.end()))
+                rev = mp_rb.group("rev")
+                rel_path = mp_rb.group("path").rstrip(".,;")
+                if not _pinned_path_exists_in_git(rev, rel_path, repo_root):
+                    errors.append(
+                        f"Row {idx} ({rid}): pinned {field_label} repository path does not resolve in git: {rev}:{rel_path}"
+                    )
+            for m_rb in READ_BACK_REPO_PATH_RE.finditer(blob_str):
+                if any(
+                    ps <= m_rb.start() and m_rb.end() <= pe for ps, pe in pinned_spans
+                ):
+                    continue
+                rel_path = m_rb.group(1).rstrip(".,;")
+                if any(ch in rel_path for ch in ("<", ">", "{", "}", "*")):
+                    continue
+                if not (repo_root / rel_path).exists():
+                    errors.append(
+                        f"Row {idx} ({rid}): {field_label} repository path does not exist: {rel_path}"
+                    )
 
     census_oscal_ids = set(by_id.keys()) - {"SA11-SYSTEMIC"}
     extracted_ids = set(extracted.keys())

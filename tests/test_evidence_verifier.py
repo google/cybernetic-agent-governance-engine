@@ -914,10 +914,14 @@ class TestComplianceBridgeEndpoints:
 
         from fastapi.testclient import TestClient
 
+        from src.compliance_bridge.audit_workflow import LANGFUSE_CREDENTIAL_ENV_VARS
         from src.compliance_bridge.main import app
 
         monkeypatch.setenv("CAGE_ENV", "staging")
         monkeypatch.setenv("EVIDENCE_STREAM_ENABLED", "true")
+        # Synthetic, non-secret values satisfying the POAM-018 lifespan pre-flight.
+        for var in LANGFUSE_CREDENTIAL_ENV_VARS:
+            monkeypatch.setenv(var, f"synthetic-{var.lower()}")
         monkeypatch.setattr(
             "src.gateway.governance.evidence.factory.get_cold_store",
             _NonNullStore,

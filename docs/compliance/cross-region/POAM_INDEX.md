@@ -19,13 +19,14 @@ This index provides a single-page view across all four POAM files. It is the aut
 
 | File | Region Scope | Primary Framework | Entries | Open | In Progress | Closed |
 |---|---|---|---|---|---|---|
-| [`compliance/universal/POAM_ISO42001.md`](../universal/POAM_ISO42001.md) | ALL | ISO/IEC 42001:2023 | 8 | 3 | 1 | 4 |
-| [`compliance/us_fed/POAM_US_FED.md`](../us_fed/POAM_US_FED.md) | US_FED | NIST SP 800-53 Rev. 5 + NIST AI 600-1 | 30 | 13 | 8 | 9 |
-| [`compliance/eu_ecb/POAM_EU_ECB.md`](../eu_ecb/POAM_EU_ECB.md) | EU_ECB | EU AI Act / DORA / GDPR | 5 | 4 | 1 | 0 |
-| [`compliance/apac_mas/POAM_APAC_MAS.md`](../apac_mas/POAM_APAC_MAS.md) | APAC_MAS | MAS FEAT / Notice 655 / TRM | 4 | 4 | 0 | 0 |
-| **Total** | | | **47** | **24** | **10** | **13** |
+| [`compliance/universal/POAM_ISO42001.md`](../universal/POAM_ISO42001.md) | ALL | ISO/IEC 42001:2023 | 8 | 5 | 1 | 2 |
+| [`compliance/us_fed/POAM_US_FED.md`](../us_fed/POAM_US_FED.md) | US_FED | NIST SP 800-53 Rev. 5 + NIST AI 600-1 | 30 | 16 | 8 | 6 |
+| [`compliance/eu_ecb/POAM_EU_ECB.md`](../eu_ecb/POAM_EU_ECB.md) | EU_ECB | EU AI Act / DORA / GDPR | 6 | 1 | 5 | 0 |
+| [`compliance/apac_mas/POAM_APAC_MAS.md`](../apac_mas/POAM_APAC_MAS.md) | APAC_MAS | MAS FEAT / Notice 655 / TRM | 4 | 1 | 3 | 0 |
+| **Raw Row Sum** | | | **48** | **23** | **17** | **8** |
+| **Deduplicated Total** | | | **46** | **23** | **17** | **6** |
 
-> **Note:** POAM-018 and POAM-019 appear in both `POAM_US_FED.md` (NIST AU-9/SC-7 aspect) and `POAM_ISO42001.md` (ISO 42001 §A.9.4 universal aspect). They are counted once in the totals above (under ISO42001). POAM-022 appears in `POAM_US_FED.md` (NIST SA-9/CA-7 aspect) and is cross-referenced to `POAM_EU_ECB.md#EU-001` (EU AI Act Art. 27 aspect). `POAM_US_FED.md` v2.2 (2026-06-15) added 7 NIST AI 600-1 items (AI600-001 through AI600-007), raising the US_FED entry count from 23 to 30.
+> **Note:** POAM-018 and POAM-019 appear in both `POAM_US_FED.md` (NIST AU-9/SC-7 aspect) and `POAM_ISO42001.md` (ISO 42001 §A.9.4 universal aspect). Both are High and Closed; the **Deduplicated Total** counts them once (under ISO42001), the **Raw Row Sum** counts every row. Both totals are checked against the trackers by `scripts/check_poam_lula_divergence.py`. POAM-022 appears in `POAM_US_FED.md` (NIST SA-9/CA-7 aspect) and is cross-referenced to `POAM_EU_ECB.md#EU-001` (EU AI Act Art. 27 aspect). `POAM_US_FED.md` v2.2 (2026-06-15) added 7 NIST AI 600-1 items (AI600-001 through AI600-007), raising the US_FED entry count from 23 to 30.
 
 ---
 
@@ -76,10 +77,10 @@ Which ISO 42001 Annex A controls and Clauses have POAM entries vs. which are unt
 | Severity | ISO42001 (ALL) | US_FED SP800-53 | US_FED AI600-1 | EU_ECB | APAC_MAS | Total |
 |---|---|---|---|---|---|---|
 | **Critical** | 0 | 4 | 2 | 1 | 0 | 7 |
-| **High** | 2 | 12 | 5 | 2 | 2 | 23 |
-| **Moderate** | 5 | 6 | 0 | 2 | 2 | 15 |
+| **High** | 2 | 11 | 5 | 2 | 2 | 22 |
+| **Moderate** | 5 | 6 | 0 | 3 | 2 | 16 |
 | **Low** | 1 | 0 | 0 | 0 | 0 | 1 |
-| **Total** | 8 | 22 | 7 | 5 | 4 | 46 |
+| **Total** | 8 | 21 | 7 | 6 | 4 | 46 |
 
 > **Note:** POAM-012 (SC-12, High) closed 2026-06-08 — `routing_seal.py` fail-fast guard implemented (Sprint 1, BLOCKER-02) and `CAGE_SEAL_ENFORCEMENT=log` bypass guard added (BLOCKER-03). US_FED SP800-53 open count reduced from 12 to 11. Seven NIST AI 600-1 items (AI600-001 through AI600-007) added in POAM_US_FED v2.1 (2026-06-15).
 
@@ -89,12 +90,12 @@ Which ISO 42001 Annex A controls and Clauses have POAM entries vs. which are unt
 
 | Status | ISO42001 (ALL) | US_FED SP800-53 | US_FED AI600-1 | EU_ECB | APAC_MAS | Total |
 |---|---|---|---|---|---|---|
-| **Open** | 7 | 11 | 2 | 4 | 4 | 28 |
-| **In Progress** | 1 | 3 | 5 | 1 | 0 | 10 |
-| **Closed** | 0 | 7 | 0 | 0 | 0 | 7 |
-| **Total** | 8 | 21 | 7 | 5 | 4 | 45 |
+| **Open** | 5 | 14 | 2 | 1 | 1 | 23 |
+| **In Progress** | 1 | 3 | 5 | 5 | 3 | 17 |
+| **Closed** | 2 | 4 | 0 | 0 | 0 | 6 |
+| **Total** | 8 | 21 | 7 | 6 | 4 | 46 |
 
-> **Note:** Totals above reflect POAM-012 closure (2026-06-08), the addition of 7 NIST AI 600-1 items in POAM_US_FED v2.1 (2026-06-15), POAM-017 closure (2026-10-30), and POAM-021 reopening (2026-11-05). The File Registry table counts 30 entries for US_FED (23 SP 800-53 + 7 AI 600-1). Excluding POAM-018 and POAM-019 (counted once under ISO42001), the Status Summary reflects 21 SP 800-53 entries (11 Open, 3 In Progress, 7 Closed) plus 7 AI 600-1 entries.
+> **Note:** Totals above reflect POAM-012 closure (2026-06-08), the addition of 7 NIST AI 600-1 items in POAM_US_FED v2.1 (2026-06-15), POAM-017 closure (2026-10-30), and POAM-021 reopening (2026-11-05). The File Registry table counts 30 entries for US_FED (23 SP 800-53 + 7 AI 600-1). Excluding POAM-018 and POAM-019 (counted once under ISO42001), the Status Summary reflects 21 SP 800-53 entries (11 Open, 3 In Progress, 7 Closed) plus 7 AI 600-1 entries. The 2026-11-08 closure-evidence audit withdrew six closures that cited no runnable evidence: POAM-003, POAM-007 and POAM-020 (US_FED) and POAM-023 and POAM-024 (ISO42001), with POAM-021 (US_FED) already reopened; EU-006 is counted from its addition. Columns are deduplicated (POAM-018/019 under ISO42001).
 
 ---
 
@@ -105,21 +106,22 @@ Which POAM entries have a corresponding Lula validation manifest:
 | Lula Manifest | Region | ISO 42001 Control | NIST Control | POAM Entries Covered |
 |---|---|---|---|---|
 | [`lula-validation-a52.yaml`](../../../compliance/lula/lula-validation-a52.yaml) | ALL | §A.5.2 | — | POAM-001 (US_FED), MAS-001 (APAC_MAS) |
-| [`lula-validation-a53.yaml`](../../../compliance/lula/lula-validation-a53.yaml) | ALL | §A.5.3 | AU-12 | POAM-003 (US_FED, Closed) |
+| [`lula-validation-a53.yaml`](../../../compliance/lula/lula-validation-a53.yaml) | ALL | §A.5.3 | AU-12 | POAM-003 (US_FED, Open — operational telemetry only) |
 | [`lula-validation-a92.yaml`](../../../compliance/lula/lula-validation-a92.yaml) | ALL | §A.9.2 | — | — |
 | [`lula-validation-aarm-vectors.yaml`](../../../compliance/lula/lula-validation-aarm-vectors.yaml) | ALL | §A.5.2, §A.9.4 | — | — |
 | [`lula-validation-sc4.yaml`](../../../compliance/lula/lula-validation-sc4.yaml) | US_FED | §A.6.1 | SC-4 | POAM-012 (US_FED) |
 | [`lula-validation-ac2.yaml`](../../../compliance/lula/lula-validation-ac2.yaml) | US_FED | §A.9.2 | AC-2 | POAM-001 (US_FED) |
 | [`lula-validation-ac3.yaml`](../../../compliance/lula/lula-validation-ac3.yaml) | US_FED | §A.9.2 | AC-3 | POAM-002 (US_FED) |
-| [`lula-validation-au12.yaml`](../../../compliance/lula/lula-validation-au12.yaml) | US_FED | §A.9.4 | AU-12 | POAM-003 (US_FED, Closed) |
+| [`lula-validation-au12.yaml`](../../../compliance/lula/lula-validation-au12.yaml) | US_FED | §A.9.4 | AU-12 | POAM-003 (US_FED, Open) |
+| [`lula-validation-metrics.yaml`](../../../compliance/lula/lula-validation-metrics.yaml) | US_FED | §A.9.4 | AU-12 | — (Prometheus GMP `PodMonitoring`, operational telemetry) |
 | [`lula-validation-cm6.yaml`](../../../compliance/lula/lula-validation-cm6.yaml) | US_FED | §10.2 | CM-6 | — |
-| [`lula-validation-ia3.yaml`](../../../compliance/lula/lula-validation-ia3.yaml) | US_FED | §A.9.3 | IA-3 | POAM-007 (US_FED, Closed) |
+| [`lula-validation-ia3.yaml`](../../../compliance/lula/lula-validation-ia3.yaml) | US_FED | §A.9.3 | IA-3 | POAM-007 (US_FED, Open; 🔶 Stub) |
 | [`lula-validation-ia5.yaml`](../../../compliance/lula/lula-validation-ia5.yaml) | US_FED | §A.9.3 | IA-5 | — |
 | [`lula-validation-ir6.yaml`](../../../compliance/lula/lula-validation-ir6.yaml) | US_FED | §6.1 | IR-6 | POAM-008 (US_FED) |
 | [`lula-validation-ra5.yaml`](../../../compliance/lula/lula-validation-ra5.yaml) | US_FED | §A.8.3 | RA-5 | POAM-010 (US_FED, Closed) |
 | [`lula-validation-sc8.yaml`](../../../compliance/lula/lula-validation-sc8.yaml) | US_FED | §A.9.3 | SC-8 | POAM-011 (US_FED) |
 | [`lula-validation-si2.yaml`](../../../compliance/lula/lula-validation-si2.yaml) | US_FED | §A.8.3 | SI-2 | POAM-013, POAM-017, POAM-023 (US_FED) |
-| *(to be created)* `lula-validation-tqp007.yaml` | ALL | §A.4 | SC-5 | ISO-001, ISO-004 |
+| [`lula-validation-tqp007.yaml`](../../../compliance/lula/lula-validation-tqp007.yaml) | ALL | §A.4 / §A.8.4 | SC-5 | ISO-001, ISO-004 |
 
 ---
 
@@ -137,4 +139,4 @@ Which POAM entries have a corresponding Lula validation manifest:
 
 ---
 
-_This index is updated whenever any POAM file is modified. Last updated: 2026-11-07._
+_This index is updated whenever any POAM file is modified. Last updated: 2026-11-08._

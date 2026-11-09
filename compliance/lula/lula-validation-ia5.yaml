@@ -28,7 +28,7 @@
 #
 # References:
 #   - infra/modules/app_secrets/main.tf — Kubernetes Secret & secretKeyRef wiring
-#   - infra/targets/gcp-gke/secrets.tf — GCP Secret Manager bindings
+#   - infra/targets/gcp-gke/kms_signing.tf — Cloud KMS keyrings and IAM bindings
 #   - docs/POAM.md — POAM-2026-080 (cage-routing-seal HMAC ingress secret retired)
 #
 # OSCAL Mapping:

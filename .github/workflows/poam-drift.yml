@@ -22,11 +22,6 @@ concurrency:
 
 
 on:
-  # REMOVED SCHEDULE: this is a deterministic function of repo content
-  # (check_poam_lula_divergence.py reads docs/POAM.md and compliance/lula/).
-  # The pull_request trigger already runs on changes to those exact paths,
-  # so the nightly cron re-computed an identical answer on an unchanged tree.
-  # Verified offline: 36 covered, 14 skipped, 0 uncovered, exit 0.
   pull_request:
     paths:
       - 'docs/POAM.md'
@@ -35,6 +30,21 @@ on:
       - 'compliance/oscal/**'
       - 'scripts/check_poam_lula_divergence.py'
       - 'scripts/check_oscal_claim_census.py'
+      - 'tests/test_check_poam_lula_divergence.py'
+      - 'tests/test_check_oscal_claim_census.py'
+      - '.github/workflows/poam-drift.yml'
+  push:
+    branches: [main]
+    paths:
+      - 'docs/POAM.md'
+      - 'docs/compliance/**'
+      - 'compliance/lula/**'
+      - 'compliance/oscal/**'
+      - 'scripts/check_poam_lula_divergence.py'
+      - 'scripts/check_oscal_claim_census.py'
+      - 'tests/test_check_poam_lula_divergence.py'
+      - 'tests/test_check_oscal_claim_census.py'
+      - '.github/workflows/poam-drift.yml'
 
 # Default least-privilege permissions for every job in this workflow.
 permissions:
@@ -59,7 +69,10 @@ jobs:
           python-version-file: 'pyproject.toml'
       - name: Sync dependencies
         run: uv sync --locked --group test --no-install-project
-      - name: Run POAM drift and OSCAL claim census checks
+      - name: Run four-check POA&M closure & OSCAL claim gate (CE-1)
         run: |
           uv run python scripts/check_poam_lula_divergence.py
           uv run python scripts/check_oscal_claim_census.py --verify-rendered docs/compliance/OSCAL_EVIDENCE_CLAIM_REGISTER.md
+      - name: Run gate contract & bypass-closure unit tests
+        run: |
+          uv run pytest --noconftest tests/test_check_poam_lula_divergence.py tests/test_check_oscal_claim_census.py -q --no-cov -p no:langsmith -p no:langsmith_plugin

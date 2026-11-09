@@ -26,25 +26,25 @@ The Cybernetic Agent Governance Engine (CAGE) splits its internal control framew
 
 > **Scope: Universal — applies to ALL `CAGE_DEPLOYMENT_REGION` values (US_FED, EU_ECB, APAC_MAS)**
 
-| System Layer | Component / Routine | Governing Framework | CAGE Control ID | Technical Artifact |
-| --- | --- | --- | --- | --- |
-| **Autonomous Engine** | LLM Routers & Execution Trust Thresholds | **ISO/IEC 42001 §A.5.2** (AI Management System) | `CTRL_AGT_001` | `src/gateway/governance/governor/governor.py` |
-| **Autonomous Engine** | LangGraph SAGA WAL Router + Atomic Rollback Patterns | **ISO/IEC 42001 §A.8.4** | `CTRL_WAL_002` | `src/cage_finance/stpa/saga_nodes.py` |
-| **Autonomous Engine** | DoWhy Live Telemetry Placebo Simulation (50-run loop) | **ISO/IEC 42001 §A.9.4** | `CTRL_TEL_003` | `src/gateway/governance/causal/gatekeeper.py` |
-| **AARM Primitives** | Cryptographic Hash-Chained Context Accumulator | **CSA AARM-V1** · **ISO/IEC 42001 §A.5.3** | `CTRL_CTX_007` | `src/compliance_bridge/context_accumulator.py` |
-| **AARM Primitives** | DEFER State Machine (Confidence-Starvation Boundary) | **CSA AARM-V7** · **ISO/IEC 42001 §A.8.4** | `CTRL_DFR_008` | `src/gateway/governance/defer_queue.py` |
-| **AARM Primitives** | 11-Vector AARM Threat Conformance Report | **CSA AARM v1.0** | `CTRL_AARM_009` | `src/compliance_bridge/aarm_mapper.py` |
-| **Security Gates** | Open Policy Agent (OPA) Guardrail & Constraints | **ISO/IEC 42001 §A.6.1** (Enterprise Policy) | `CTRL_OPA_005` | `src/gateway/governance/governor/stages/opa.py` |
+| System Layer | Component / Routine | Governing Framework | CAGE Control ID | Census Claim ID | Technical Artifact |
+| --- | --- | --- | --- | --- | --- |
+| **Autonomous Engine** | LLM Routers & Execution Trust Thresholds | **ISO/IEC 42001 §A.5.2** (AI Management System) | `CTRL_AGT_001` | `component-definition.yaml#d4e5f6a7-b8c9-0123-defa-234567890123` (partially-implemented) | `src/gateway/governance/governor/governor.py` |
+| **Autonomous Engine** | LangGraph SAGA WAL Router + Atomic Rollback Patterns | **ISO/IEC 42001 §A.8.4** | `CTRL_WAL_002` | `component-definition.yaml#d4000099-stpa-4000-8000-0000000` (partially-implemented) | `src/cage_finance/stpa/saga_nodes.py` |
+| **Autonomous Engine** | DoWhy Live Telemetry Placebo Simulation (50-run loop) | **ISO/IEC 42001 §A.9.4** | `CTRL_TEL_003` | `sp800-53-component-definition.yaml#6020e394-0647-480b-b9e5-2f05b6cb360c` (partially-implemented) | `src/gateway/governance/causal/gatekeeper.py` |
+| **AARM Primitives** | Cryptographic Hash-Chained Context Accumulator | **CSA AARM-V1** · **ISO/IEC 42001 §A.5.3** | `CTRL_CTX_007` | `component-definition.yaml#aarm2026-v1-memory-poisoning` (partially-implemented) | `src/compliance_bridge/context_accumulator.py` |
+| **AARM Primitives** | DEFER State Machine (Confidence-Starvation Boundary) | **CSA AARM-V7** · **ISO/IEC 42001 §A.8.4** | `CTRL_DFR_008` | `component-definition.yaml#aarm2026-v7-context-overflow` (partially-implemented) | `src/gateway/governance/defer_queue.py` |
+| **AARM Primitives** | 11-Vector AARM Threat Conformance Report | **CSA AARM v1.0** | `CTRL_AARM_009` | `component-definition.yaml#aarm2026-v2-goal-hijacking` (partially-implemented) | `src/compliance_bridge/aarm_mapper.py` |
+| **Security Gates** | Open Policy Agent (OPA) Guardrail & Constraints | **ISO/IEC 42001 §A.6.1** (Enterprise Policy) | `CTRL_OPA_005` | `component-definition.yaml#b8c9d0e1-f2a3-4567-bcde-678901234567` | `src/gateway/governance/governor/stages/opa.py` |
 
 ### 1.2 US_FED Only Controls (NIST SP 800-53 / AI 600-1)
 
 > **Scope: US_FED only — applies when `CAGE_DEPLOYMENT_REGION=US_FED`**
 
-| System Layer | Component / Routine | Governing Framework | CAGE Control ID | Technical Artifact |
-| --- | --- | --- | --- | --- |
-| **Statistical Code** | Control Barrier Function ($h(x)$ formula & $\gamma$ decay) | **SR 26-2 §IV.B** (Model Risk Management) | `CTRL_MRM_004` | `src/gateway/governance/safety/cbf_engine.py` |
-| **Statistical Code** | DoWhy Causal Inference Model Graph & Regression Coefficients | **SR 26-2 §IV.B** (Model Risk Management) | `CTRL_MRM_004` | `src/gateway/governance/causal/gatekeeper.py` |
-| **Infrastructure** | GKE Clusters, Workload Identity, Pod Networking | **NIST RMF (SP 800-37)** · **FedRAMP HIGH** | *Out of Code Scope* | `infra/modules/gcp_gke_cluster/` |
+| System Layer | Component / Routine | Governing Framework | CAGE Control ID | Census Claim ID | Technical Artifact |
+| --- | --- | --- | --- | --- | --- |
+| **Statistical Code** | Control Barrier Function ($h(x)$ formula & $\gamma$ decay) | **SR 26-2 §IV.B** (Model Risk Management) | `CTRL_MRM_004` | `sp800-53-component-definition.yaml#42c2150e-0256-4ef0-b49b-8a7ee847f9cc` (partially-implemented) | `src/gateway/governance/safety/cbf_engine.py` |
+| **Statistical Code** | DoWhy Causal Inference Model Graph & Regression Coefficients | **SR 26-2 §IV.B** (Model Risk Management) | `CTRL_MRM_004` | `sp800-53-component-definition.yaml#6020e394-0647-480b-b9e5-2f05b6cb360c` (partially-implemented) | `src/gateway/governance/causal/gatekeeper.py` |
+| **Infrastructure** | GKE Clusters, Workload Identity, Pod Networking | **NIST RMF (SP 800-37)** · **FedRAMP HIGH** | *Out of Code Scope* | `system-security-plan.yaml#g7000001-0000-4000-8000-000000000001` (partially-implemented) | `infra/modules/gcp_gke_cluster/` |
 
 > **Note:** SR 26-2 has no legal force outside the US Federal Reserve system. The `EU_ECB_BASELINE.json` and `APAC_MAS_BASELINE.json` profiles suppress SR 26-2 telemetry via the `_NO_LEGAL_FORCE_MARKER` sentinel (see docs/compliance/cross-region/JURISDICTIONAL_SEPARATION_ANALYSIS.md).
 
@@ -52,20 +52,20 @@ The Cybernetic Agent Governance Engine (CAGE) splits its internal control framew
 
 > **Scope: EU_ECB only — applies when `CAGE_DEPLOYMENT_REGION=EU_ECB`**
 
-| System Layer | Component / Routine | Governing Framework | CAGE Control ID | Technical Artifact |
-| --- | --- | --- | --- | --- |
-| **Autonomous Engine** | `fria` tier — Fundamental Rights Impact Assessment (FRIA) currency + provider validation (phase 1, after `causal`) | **EU AI Act Art. 27** | `CTRL_FRIA_006` | `src/gateway/governance/jurisdiction/eu_ai_act/fria_tier.py` |
-| **Autonomous Engine** | LangGraph SAGA WAL Router (DORA operational resilience) | **DORA Article 12** | `CTRL_WAL_002` | `src/cage_finance/stpa/saga_nodes.py` |
-| **Autonomous Engine** | DoWhy Live Telemetry (DORA ICT continuity) | **DORA Article 10** | `CTRL_TEL_003` | `src/gateway/governance/causal/gatekeeper.py` |
+| System Layer | Component / Routine | Governing Framework | CAGE Control ID | Census Claim ID | Technical Artifact |
+| --- | --- | --- | --- | --- | --- |
+| **Autonomous Engine** | `fria` tier — Fundamental Rights Impact Assessment (FRIA) currency + provider validation (phase 1, after `causal`) | **EU AI Act Art. 27** | `CTRL_FRIA_006` | `system-security-plan-eu-ecb.yaml#eu-ecb-req-0004-4000-8000-000000000004` | `src/gateway/governance/jurisdiction/eu_ai_act/fria_tier.py` |
+| **Autonomous Engine** | LangGraph SAGA WAL Router (DORA operational resilience) | **DORA Article 12** | `CTRL_WAL_002` | `component-definition.yaml#d4000099-stpa-4000-8000-0000000` (partially-implemented) | `src/cage_finance/stpa/saga_nodes.py` |
+| **Autonomous Engine** | DoWhy Live Telemetry (DORA ICT continuity; compliance-bridge endpoint open under `EU-DORA-001`) | **DORA Article 10** | `CTRL_TEL_003` | `system-security-plan-eu-ecb.yaml#eu-ecb-req-0003-4000-8000-000000000003` | `src/gateway/governance/causal/gatekeeper.py` |
 
 ### 1.4 APAC_MAS Only Controls (MAS FEAT / MAS Notice 655 / MAS TRM)
 
 > **Scope: APAC_MAS only — applies when `CAGE_DEPLOYMENT_REGION=APAC_MAS`**
 
-| System Layer | Component / Routine | Governing Framework | CAGE Control ID | Technical Artifact |
-| --- | --- | --- | --- | --- |
-| **Statistical Code** | Control Barrier Function (MAS FEAT fairness boundary) | **MAS FEAT Principles** | `CTRL_MRM_004` | `src/gateway/governance/safety/cbf_engine.py` |
-| **Statistical Code** | DoWhy Causal Inference (MAS FEAT accountability) | **MAS FEAT Principles** | `CTRL_MRM_004` | `src/gateway/governance/causal/gatekeeper.py` |
+| System Layer | Component / Routine | Governing Framework | CAGE Control ID | Census Claim ID | Technical Artifact |
+| --- | --- | --- | --- | --- | --- |
+| **Statistical Code** | Control Barrier Function (MAS FEAT fairness boundary) | **MAS FEAT Principles** | `CTRL_MRM_004` | `system-security-plan-apac-mas.yaml#h8000099-stpa-4000-8000-compiler00001` | `src/gateway/governance/safety/cbf_engine.py` |
+| **Statistical Code** | DoWhy Causal Inference (MAS FEAT accountability) | **MAS FEAT Principles** | `CTRL_MRM_004` | `system-security-plan-apac-mas.yaml#h8000099-stpa-4000-8000-compiler00000` | `src/gateway/governance/causal/gatekeeper.py` |
 
 ### 1.5 Summary Mapping for Examiners
 

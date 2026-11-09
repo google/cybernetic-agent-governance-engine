@@ -11,6 +11,7 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
+# Closure regression guard for: POAM-2026-046, POAM-2026-063
 
 """
 Unit tests for Provider03NormativeProvider adapter (CAGE-REM-006).

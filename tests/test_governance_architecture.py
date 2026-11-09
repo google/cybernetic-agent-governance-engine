@@ -11,6 +11,7 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
+# Closure regression guard for: POAM-2026-068
 
 """
 Architecture Guardrail Tests — Decoupled Governance Abstraction
@@ -417,3 +418,36 @@ def test_consequence_gateway_never_imports_from_integrations():
         "import kernel modules, never the reverse.\n\n"
         "Violations:\n" + "\n".join(violations)
     )
+
+
+# ---------------------------------------------------------------------------
+# Test 7 — POAM-2026-068: ControlRegistry refuses startup on missing profile
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize("region", ["US_FED", "EU_ECB", "APAC_MAS"])
+def test_control_registry_missing_profile_raises_runtime_error(
+    region: str, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """POAM-2026-068: a missing regional profile fails startup, with no legacy fallback.
+
+    Even with a ``control_mappings.json`` beside an empty compliance directory,
+    ``ControlRegistry`` must raise rather than load non-regional citations.
+    """
+    from src.gateway.governance.constants import ControlRegistry
+
+    assert not hasattr(ControlRegistry, "_LEGACY_PATH")
+
+    (tmp_path / "control_mappings.json").write_text("{}", encoding="utf-8")
+    empty_compliance_dir = tmp_path / "compliance"
+    empty_compliance_dir.mkdir()
+
+    monkeypatch.setenv("CAGE_DEPLOYMENT_REGION", region)
+    monkeypatch.setattr(ControlRegistry, "_COMPLIANCE_DIR", empty_compliance_dir)
+    monkeypatch.setattr(ControlRegistry, "_instance", None)
+
+    with pytest.raises(
+        RuntimeError,
+        match=rf"regional profile not found at .*{region}_BASELINE\.json",
+    ):
+        ControlRegistry()
