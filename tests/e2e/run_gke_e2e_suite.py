@@ -212,7 +212,6 @@ def render_e2e_job_manifest(
     raw = template_path.read_text(encoding="utf-8")
     replacements = {
         "${JOB_NAME}": job_name,
-        "${NAMESPACE}": namespace,
         "${WORKLOAD_IMAGE}": workload_image,
         "${E2E_PHASE}": phase,
         "${E2E_MODEL_NAME}": model_name,
@@ -223,6 +222,14 @@ def render_e2e_job_manifest(
         "${CONFIGMAP_NAME}": configmap_name,
     }
     rendered = raw
+    if namespace != "governance-stack":
+        rendered = rendered.replace(
+            "namespace: governance-stack", f"namespace: {namespace}"
+        )
+        rendered = rendered.replace(
+            "gateway.governance-stack.svc.cluster.local",
+            f"gateway.{namespace}.svc.cluster.local",
+        )
     for placeholder, val in replacements.items():
         rendered = rendered.replace(placeholder, val)
     return rendered

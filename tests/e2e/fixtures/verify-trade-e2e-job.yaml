@@ -26,7 +26,7 @@ apiVersion: batch/v1
 kind: Job
 metadata:
   name: ${JOB_NAME}
-  namespace: ${NAMESPACE}
+  namespace: governance-stack
   labels:
     app.kubernetes.io/name: ${JOB_NAME}
     app.kubernetes.io/part-of: cybernetic-governance-engine
@@ -58,7 +58,7 @@ spec:
             - name: CAGE_E2E_PHASE
               value: "${E2E_PHASE}"
             - name: CAGE_E2E_GATEWAY_URL
-              value: "http://gateway.${NAMESPACE}.svc.cluster.local:8080"
+              value: "http://gateway.governance-stack.svc.cluster.local:8080"
             - name: CAGE_E2E_MODEL_NAME
               value: "${E2E_MODEL_NAME}"
             - name: CAGE_E2E_REQUIRE_INFERENCE_PROXY
