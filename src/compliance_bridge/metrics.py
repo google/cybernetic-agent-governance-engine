@@ -40,6 +40,7 @@ import hashlib
 import json
 import logging
 import os
+import re
 from collections.abc import Mapping
 from datetime import datetime, timedelta, timezone
 from typing import Any
@@ -134,6 +135,17 @@ def _get_grace_status() -> dict[str, float | bool]:
 # ---------------------------------------------------------------------------
 
 _metrics_cache: TTLCache[str, ComplianceMetrics] = TTLCache(maxsize=32, ttl=300)
+
+
+def invalidate_compliance_metrics_cache(control_id: str | None = None) -> None:
+    """Invalidate cached compliance metrics globally or for a single control."""
+    if control_id is None:
+        _metrics_cache.clear()
+        return
+    prefix = f"{_normalize_control_id(control_id)}:"
+    for key in list(_metrics_cache.keys()):
+        if key.startswith(prefix):
+            _metrics_cache.pop(key, None)
 
 
 # ---------------------------------------------------------------------------
@@ -330,6 +342,164 @@ def _record_matches_control(record: Mapping[str, Any] | Any, control_id: str) ->
     return False
 
 
+_LULA_PASS_PREFIX_RE = re.compile(r"\blula_audit\s+pass\s*:", re.IGNORECASE)
+_LULA_FAIL_PREFIX_RE = re.compile(r"\blula_audit\s+fail\b", re.IGNORECASE)
+_LULA_RATIO_RE = re.compile(
+    r"\blula_audit\s+(?:pass|fail)\s*:\s*(\d+)\s*/\s*(\d+)\b",
+    re.IGNORECASE,
+)
+_LULA_FAILED_COUNT_RE = re.compile(r"\b(\d+)\s+failed\b", re.IGNORECASE)
+_LULA_NOT_SATISFIED_COUNT_RE = re.compile(r"\b(\d+)\s+not-satisfied\b", re.IGNORECASE)
+_LULA_ZERO_NOT_SATISFIED_RE = re.compile(r"\b0\s+not-satisfied\b", re.IGNORECASE)
+
+
+def _coerce_optional_int(value: Any) -> tuple[bool, int | None]:
+    """Parse an optional integer field, returning `(valid, parsed_or_none)`."""
+    if value is None:
+        return True, None
+    if isinstance(value, bool):
+        return False, None
+    if isinstance(value, int):
+        return True, value
+    if isinstance(value, str):
+        text = value.strip()
+        if not text:
+            return True, None
+        try:
+            return True, int(text)
+        except ValueError:
+            return False, None
+    return False, None
+
+
+def _has_nonempty_failed_controls(value: Any) -> bool:
+    """Return True when `failed_controls` is non-empty or malformed."""
+    if value is None:
+        return False
+    if isinstance(value, str):
+        stripped = value.strip()
+        if not stripped or stripped == "[]":
+            return False
+        try:
+            parsed = json.loads(stripped)
+        except ValueError:
+            return True
+        if isinstance(parsed, list):
+            return len(parsed) > 0
+        return bool(parsed)
+    if isinstance(value, (list, tuple, set, frozenset)):
+        return len(value) > 0
+    return bool(value)
+
+
+def _lula_min_manifests_floor() -> int:
+    """Return the minimum active Lula manifest floor (never below 1)."""
+    raw = os.environ.get("LULA_AUDIT_MIN_MANIFESTS", "26").strip()
+    try:
+        return max(1, int(raw))
+    except ValueError:
+        return 26
+
+
+def _is_passing_lula_audit(
+    record: Mapping[str, Any] | Any,
+    payload: dict[str, Any],
+) -> bool:
+    """Fail-closed classifier for `lula_audit` INFRA custody records (A.5.3)."""
+    raw_failed = payload.get("failed_count")
+    if raw_failed is None:
+        raw_failed = _get_record_field(record, "failed_count")
+    ok_failed, failed_count = _coerce_optional_int(raw_failed)
+    if not ok_failed or (failed_count is not None and failed_count != 0):
+        return False
+
+    raw_not_sat = payload.get("not_satisfied_count")
+    if raw_not_sat is None:
+        raw_not_sat = _get_record_field(record, "not_satisfied_count")
+    ok_not_sat, not_satisfied_count = _coerce_optional_int(raw_not_sat)
+    if not ok_not_sat or (not_satisfied_count is not None and not_satisfied_count != 0):
+        return False
+
+    raw_failed_controls = payload.get("failed_controls")
+    if raw_failed_controls is None:
+        raw_failed_controls = _get_record_field(record, "failed_controls")
+    if _has_nonempty_failed_controls(raw_failed_controls):
+        return False
+
+    raw_eval = payload.get("evaluated_count")
+    if raw_eval is None:
+        raw_eval = _get_record_field(record, "evaluated_count")
+    ok_eval, evaluated_count = _coerce_optional_int(raw_eval)
+    if not ok_eval or (evaluated_count is not None and evaluated_count < 1):
+        return False
+
+    raw_sat = payload.get("satisfied_count")
+    if raw_sat is None:
+        raw_sat = _get_record_field(record, "satisfied_count")
+    ok_sat, satisfied_count = _coerce_optional_int(raw_sat)
+    if not ok_sat or (satisfied_count is not None and satisfied_count < 0):
+        return False
+
+    for key in ("verdict", "decision", "outcome", "status", "result"):
+        val = payload.get(key)
+        if val is None:
+            val = _get_record_field(record, key)
+        if isinstance(val, str) and val.strip():
+            if val.strip().upper() in _BLOCKING_VERDICTS:
+                return False
+    if payload.get("accepted") is False:
+        return False
+
+    summaries: list[str] = []
+    for cand in (
+        _get_record_field(record, "scrubbed_summary"),
+        _get_record_field(record, "summary"),
+        payload.get("summary"),
+    ):
+        if isinstance(cand, str) and cand.strip():
+            summaries.append(cand.strip())
+
+    if not summaries:
+        return False
+
+    saw_pass_prefix = False
+    for text in summaries:
+        if _LULA_FAIL_PREFIX_RE.search(text):
+            return False
+        for m_fc in _LULA_FAILED_COUNT_RE.finditer(text):
+            if int(m_fc.group(1)) > 0:
+                return False
+        for m_ns in _LULA_NOT_SATISFIED_COUNT_RE.finditer(text):
+            if int(m_ns.group(1)) > 0:
+                return False
+        residual = _LULA_ZERO_NOT_SATISFIED_RE.sub("", text.lower())
+        if "not-satisfied" in residual:
+            return False
+        if _LULA_PASS_PREFIX_RE.search(text):
+            saw_pass_prefix = True
+        m_ratio = _LULA_RATIO_RE.search(text)
+        if m_ratio is not None:
+            ratio_sat = int(m_ratio.group(1))
+            ratio_eval = int(m_ratio.group(2))
+            if ratio_eval < 1 or ratio_sat < ratio_eval:
+                return False
+            if evaluated_count is None:
+                evaluated_count = ratio_eval
+            if satisfied_count is None:
+                satisfied_count = ratio_sat
+
+    if not saw_pass_prefix:
+        return False
+
+    min_manifests = _lula_min_manifests_floor()
+    if evaluated_count is None or evaluated_count < min_manifests:
+        return False
+    if satisfied_count is not None and satisfied_count < evaluated_count:
+        return False
+
+    return True
+
+
 def _is_passing_evidence_record(record: Mapping[str, Any] | Any) -> bool:
     """Classify whether an authoritative `cage_evidence` record represents a passing outcome.
 
@@ -339,6 +509,9 @@ def _is_passing_evidence_record(record: Mapping[str, Any] | Any) -> bool:
         `ACTUATION_INDETERMINATE_RECEIPT`, `CONSEQUENCE_GATEWAY_REFUSAL`,
         `CBF_ROLLBACK`, `WORKLOAD_QUARANTINE_RECEIPT`, `GOVERNANCE_VIOLATION`,
         discrepancy fences, and INFRA `cilium_flow_denied`) always return False.
+      - `lula_audit`: passes iff structured counts and `summary`/`scrubbed_summary`
+        prove a clean `lula_audit PASS:` with zero failed/not-satisfied controls
+        and `evaluated_count >= LULA_AUDIT_MIN_MANIFESTS` (`>= 1`).
       - `ACTUATION_RECEIPT`: passes iff `outcome == "ACCEPTED"` (or `accepted is True`
         when `outcome` is omitted); any `outcome != "ACCEPTED"` returns False.
       - `GOVERNANCE_SEAL_CONSUMED`: spent cryptographic seal (`phase == "EXECUTED"`,
@@ -359,6 +532,9 @@ def _is_passing_evidence_record(record: Mapping[str, Any] | Any) -> bool:
 
     if raw_event_type == "cilium_flow_denied":
         return False
+
+    if raw_event_type.lower() == "lula_audit":
+        return _is_passing_lula_audit(record, payload)
 
     event_type = raw_event_type.upper()
     if event_type in BLOCKING_EVIDENCE_EVENT_TYPES or any(
@@ -745,11 +921,21 @@ def _fetch_from_evidence_stream_sync(
             continue
 
         total_traces += 1
-        if record_date is not None and record_date > last_event_date:
-            last_event_date = record_date
-
-        if _is_passing_evidence_record(record):
+        is_passing = _is_passing_evidence_record(record)
+        if is_passing:
             passed_traces += 1
+
+        record_payload = _parse_evidence_payload(record)
+        rec_event_type = str(
+            _get_record_field(record, "event_type")
+            or _get_record_field(record, "type")
+            or record_payload.get("event_type")
+            or record_payload.get("type")
+            or ""
+        ).strip()
+        if not (rec_event_type.lower() == "lula_audit" and not is_passing):
+            if record_date is not None and record_date > last_event_date:
+                last_event_date = record_date
 
     blocked_traces = total_traces - passed_traces
     # Return None when no evidence records exist — 1.0 would be a false-positive score
@@ -824,3 +1010,44 @@ async def get_compliance_metrics(
         )
     _metrics_cache[cache_key] = result
     return result
+
+
+def get_last_passing_lula_audit_age_seconds(
+    window_hours: int = 24,
+) -> tuple[float | None, str | None]:
+    """Return `(age_seconds, last_pass_iso_utc)` of the newest passing `lula_audit` record.
+
+    Scans `A.5.3` custody records over `window_hours` and considers only
+    `event_type == "lula_audit"` records where `_is_passing_evidence_record(rec)`
+    is `True`. Failing or corpus-floor-breaching `lula_audit` runs never reset
+    this age, preventing metric poisoning from silencing the dead-man's switch.
+    Returns `(None, None)` when no passing `lula_audit` exists in the window.
+    """
+    records = _query_cage_evidence_records("A.5.3", window_hours=window_hours)
+    latest_pass_ts: datetime | None = None
+
+    for rec in records:
+        payload = _parse_evidence_payload(rec)
+        raw_event_type = str(
+            _get_record_field(rec, "event_type")
+            or _get_record_field(rec, "type")
+            or payload.get("event_type")
+            or payload.get("type")
+            or ""
+        ).strip()
+        if raw_event_type.lower() != "lula_audit":
+            continue
+        if not _is_passing_evidence_record(rec):
+            continue
+        rec_ts = _parse_evidence_timestamp(rec)
+        if rec_ts is None:
+            continue
+        if latest_pass_ts is None or rec_ts > latest_pass_ts:
+            latest_pass_ts = rec_ts
+
+    if latest_pass_ts is None:
+        return (None, None)
+
+    now = datetime.now(tz=timezone.utc)
+    age_seconds = max(0.0, (now - latest_pass_ts).total_seconds())
+    return (age_seconds, latest_pass_ts.isoformat())

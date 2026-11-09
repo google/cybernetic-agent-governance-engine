@@ -640,6 +640,59 @@ def collect_producers(
                 if isinstance(item, (ast.FunctionDef, ast.AsyncFunctionDef)):
                     _scan_function_for_events(item, mod, modules, catalog)
 
+    # Index INFRA stream producer keys from InfraEvent + InfraEvidenceChain.append_durable
+    cb_main = modules.get("src.compliance_bridge.main")
+    infra_mod = modules.get("src.compliance_bridge.infra_custody")
+    if (
+        cb_main is not None
+        and infra_mod is not None
+        and "InfraEvent" in cb_main.classes
+        and "InfraEvidenceChain" in infra_mod.classes
+    ):
+        infra_ev_types: set[str] = set()
+        for item in cb_main.classes["InfraEvent"].body:
+            if (
+                isinstance(item, ast.AnnAssign)
+                and isinstance(item.target, ast.Name)
+                and item.target.id == "event_type"
+            ):
+                infra_ev_types.update(_extract_literal_strings(item.annotation))
+        infra_keys: set[str] = set()
+        for item in infra_mod.classes["InfraEvidenceChain"].body:
+            if (
+                isinstance(item, (ast.FunctionDef, ast.AsyncFunctionDef))
+                and item.name == "append_durable"
+            ):
+                for stmt in ast.walk(item):
+                    if isinstance(stmt, (ast.Assign, ast.AnnAssign)):
+                        tgt = (
+                            stmt.targets[0]
+                            if isinstance(stmt, ast.Assign)
+                            else stmt.target
+                        )
+                        val = stmt.value
+                        if (
+                            isinstance(tgt, ast.Name)
+                            and tgt.id == "payload_dict"
+                            and isinstance(val, ast.Dict)
+                        ):
+                            infra_keys.update(
+                                _extract_dict_node_keys(
+                                    val, infra_mod, modules, catalog
+                                )
+                            )
+                        elif (
+                            isinstance(tgt, ast.Subscript)
+                            and isinstance(tgt.value, ast.Name)
+                            and tgt.value.id == "payload_dict"
+                        ):
+                            infra_keys.update(
+                                _resolve_expr_strings(tgt.slice, infra_mod, modules)
+                            )
+        if infra_ev_types and infra_keys:
+            for et in infra_ev_types:
+                catalog.event_keys.setdefault(et, set()).update(infra_keys)
+
     return catalog
 
 

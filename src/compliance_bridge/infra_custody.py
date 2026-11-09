@@ -35,7 +35,7 @@ import os
 import re
 import secrets
 import uuid
-from collections.abc import Awaitable, Callable, Mapping
+from collections.abc import Awaitable, Callable, Mapping, Sequence
 from dataclasses import dataclass
 from typing import Any
 
@@ -191,6 +191,11 @@ def compute_request_fingerprint(
     namespace: str,
     pod_name: str | None,
     pod_name_verified: bool,
+    evaluated_count: int | None = None,
+    satisfied_count: int | None = None,
+    not_satisfied_count: int | None = None,
+    failed_count: int | None = None,
+    failed_controls: Sequence[str] | None = None,
 ) -> str:
     """Compute a deterministic SHA-256 fingerprint of a producer's event claim.
 
@@ -198,20 +203,29 @@ def compute_request_fingerprint(
     carrying the same ``Idempotency-Key`` at a later instant matches its first
     attempt while rejecting any mutation to ``summary`` or other claim fields.
     """
-    body = canonical_payload_json(
-        {
-            "control_hint": control_hint,
-            "control_id": control_id,
-            "event_type": event_type,
-            "namespace": namespace,
-            "pod_name": pod_name,
-            "pod_name_verified": pod_name_verified,
-            "producer_svid": producer_svid,
-            "producer_timestamp_utc": producer_timestamp_utc,
-            "source": source,
-            "summary": summary,
-        }
-    )
+    claim: dict[str, Any] = {
+        "control_hint": control_hint,
+        "control_id": control_id,
+        "event_type": event_type,
+        "namespace": namespace,
+        "pod_name": pod_name,
+        "pod_name_verified": pod_name_verified,
+        "producer_svid": producer_svid,
+        "producer_timestamp_utc": producer_timestamp_utc,
+        "source": source,
+        "summary": summary,
+    }
+    if evaluated_count is not None:
+        claim["evaluated_count"] = evaluated_count
+    if satisfied_count is not None:
+        claim["satisfied_count"] = satisfied_count
+    if not_satisfied_count is not None:
+        claim["not_satisfied_count"] = not_satisfied_count
+    if failed_count is not None:
+        claim["failed_count"] = failed_count
+    if failed_controls is not None:
+        claim["failed_controls"] = [str(item) for item in failed_controls]
+    body = canonical_payload_json(claim)
     return hashlib.sha256(body.encode()).hexdigest()
 
 
@@ -483,6 +497,11 @@ class InfraEvidenceChain:
         pod_name_verified: bool,
         idempotency_key: str | None = None,
         custody_flusher: CustodyFlusher | None = None,
+        evaluated_count: int | None = None,
+        satisfied_count: int | None = None,
+        not_satisfied_count: int | None = None,
+        failed_count: int | None = None,
+        failed_controls: Sequence[str] | None = None,
     ) -> InfraCustodyReceipt:
         """Seal and durably persist an ``INFRA`` event, or replay idempotently.
 
@@ -503,6 +522,11 @@ class InfraEvidenceChain:
             namespace=namespace,
             pod_name=pod_name,
             pod_name_verified=pod_name_verified,
+            evaluated_count=evaluated_count,
+            satisfied_count=satisfied_count,
+            not_satisfied_count=not_satisfied_count,
+            failed_count=failed_count,
+            failed_controls=failed_controls,
         )
         idem_redis_key = (
             _idempotency_redis_key(self._stream_key, producer_svid, idempotency_key)
@@ -595,6 +619,18 @@ class InfraEvidenceChain:
                 }
                 if idempotency_key is not None:
                     payload_dict["idempotency_key"] = idempotency_key
+                if evaluated_count is not None:
+                    payload_dict["evaluated_count"] = evaluated_count
+                if satisfied_count is not None:
+                    payload_dict["satisfied_count"] = satisfied_count
+                if not_satisfied_count is not None:
+                    payload_dict["not_satisfied_count"] = not_satisfied_count
+                if failed_count is not None:
+                    payload_dict["failed_count"] = failed_count
+                if failed_controls is not None:
+                    payload_dict["failed_controls"] = [
+                        str(item) for item in failed_controls
+                    ]
 
                 payload_json = canonical_payload_json(payload_dict)
                 trace_id = self._trace_id_factory()

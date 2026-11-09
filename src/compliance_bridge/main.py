@@ -56,7 +56,7 @@ from fastapi import (
     Request,
 )
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, Response
 from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_validator
 from sse_starlette.sse import EventSourceResponse
 
@@ -105,7 +105,8 @@ from .infra_custody import (
     InfraIdempotencyConflictError,
     is_inline_custody_flush_enabled,
 )
-from .metrics import get_compliance_metrics
+from .metrics import get_compliance_metrics, invalidate_compliance_metrics_cache
+from .notifier import create_notifier
 from .oscal_exporter import build_oscal_assessment_results, findings_from_metrics_dict
 from .sla_monitor import run_sla_monitor
 from .sse_events import event_bus
@@ -113,6 +114,7 @@ from .types import (
     CRITICAL_CONTROLS,
     SUPPORTED_CONTROLS,
     ComplianceMetrics,
+    OscalFinding,
     get_control_meta,
     get_iso_control_map,
 )
@@ -558,6 +560,20 @@ async def health() -> dict:
     }
 
 
+@app.get("/metrics", tags=["health"], include_in_schema=False)
+async def prometheus_metrics() -> Response:
+    """Expose Prometheus collector metrics when `prometheus_client` is installed."""
+    try:
+        from prometheus_client import CONTENT_TYPE_LATEST, REGISTRY, generate_latest
+
+        return Response(
+            content=generate_latest(REGISTRY),
+            media_type=CONTENT_TYPE_LATEST,
+        )
+    except ImportError:  # pragma: no cover - optional runtime dependency
+        return Response(content=b"", media_type="text/plain; version=0.0.4")
+
+
 # ---------------------------------------------------------------------------
 # GET /v1/controls  (Service Group 1.2)
 #
@@ -777,6 +793,61 @@ async def get_metrics_summary(
 
 _INFRA_CONTROL_CHARS = re.compile(r"[\x00-\x1f\x7f]")
 
+_DEFAULT_LULA_AUDIT_MIN_MANIFESTS = 26
+LULA_AUDIT_MIN_MANIFESTS: int = int(
+    os.environ.get("LULA_AUDIT_MIN_MANIFESTS", str(_DEFAULT_LULA_AUDIT_MIN_MANIFESTS))
+)
+
+
+def _resolve_lula_audit_min_manifests() -> int:
+    """Resolve active Lula manifest corpus floor from env or module constant."""
+    raw_env = os.environ.get("LULA_AUDIT_MIN_MANIFESTS")
+    if raw_env is not None and raw_env.strip():
+        return max(1, int(raw_env.strip()))
+    return max(1, int(LULA_AUDIT_MIN_MANIFESTS))
+
+
+LULA_AUDIT_RUNS_TOTAL: Any = None
+LULA_AUDIT_EVALUATED_MANIFESTS: Any = None
+LULA_AUDIT_NOT_SATISFIED_CONTROLS: Any = None
+LULA_AUDIT_LAST_PASS_TIMESTAMP_SECONDS: Any = None
+try:
+    from prometheus_client import REGISTRY as _PROM_REGISTRY
+    from prometheus_client import Counter as _PromCounter
+    from prometheus_client import Gauge as _PromGauge
+
+    def _bridge_counter(name: str, doc: str, labels: list[str] | None = None) -> Any:
+        try:
+            return _PromCounter(name, doc, labels or [])
+        except ValueError:
+            return _PROM_REGISTRY._names_to_collectors.get(name)
+
+    def _bridge_gauge(name: str, doc: str) -> Any:
+        try:
+            return _PromGauge(name, doc)
+        except ValueError:
+            return _PROM_REGISTRY._names_to_collectors.get(name)
+
+    LULA_AUDIT_RUNS_TOTAL = _bridge_counter(
+        "cage_lula_audit_runs_total",
+        "Total in-cluster Lula compliance audit runs ingested by outcome",
+        ["outcome"],
+    )
+    LULA_AUDIT_EVALUATED_MANIFESTS = _bridge_gauge(
+        "cage_lula_audit_evaluated_manifests",
+        "Number of Lula validation manifests evaluated in the latest lula_audit run",
+    )
+    LULA_AUDIT_NOT_SATISFIED_CONTROLS = _bridge_gauge(
+        "cage_lula_audit_not_satisfied_controls",
+        "Number of not-satisfied or missing corpus-floor controls in the latest lula_audit run",
+    )
+    LULA_AUDIT_LAST_PASS_TIMESTAMP_SECONDS = _bridge_gauge(
+        "cage_lula_audit_last_pass_timestamp_seconds",
+        "Unix timestamp (UTC seconds) of the most recent clean passing lula_audit run",
+    )
+except ImportError:  # pragma: no cover - optional runtime dependency
+    pass
+
 
 class InfraEvent(BaseModel):
     """Structured infrastructure event from an authorized mesh producer.
@@ -806,6 +877,11 @@ class InfraEvent(BaseModel):
     pod_name: str | None = Field(default=None, min_length=1, max_length=128)
     namespace: str | None = Field(default=None, min_length=1, max_length=64)
     idempotency_key: str | None = Field(default=None, min_length=1, max_length=128)
+    evaluated_count: int | None = Field(default=None, ge=0)
+    satisfied_count: int | None = Field(default=None, ge=0)
+    failed_count: int | None = Field(default=None, ge=0)
+    not_satisfied_count: int | None = Field(default=None, ge=0)
+    failed_controls: tuple[str, ...] | list[str] | None = Field(default=None)
 
     @field_validator("timestamp_utc")
     @classmethod
@@ -829,6 +905,28 @@ class InfraEvent(BaseModel):
         if value is not None and _INFRA_CONTROL_CHARS.search(value):
             raise ValueError("field must not contain ASCII control characters")
         return value
+
+    @field_validator("failed_controls")
+    @classmethod
+    def _validate_failed_controls(
+        cls, value: tuple[str, ...] | list[str] | None
+    ) -> list[str] | None:
+        if value is None:
+            return None
+        if len(value) > 256:
+            raise ValueError("failed_controls must contain at most 256 items")
+        cleaned: list[str] = []
+        for item in value:
+            if not isinstance(item, str) or not item.strip():
+                raise ValueError("failed_controls entries must be non-empty strings")
+            if len(item) > 128:
+                raise ValueError("failed_controls entries must be <= 128 characters")
+            if _INFRA_CONTROL_CHARS.search(item):
+                raise ValueError(
+                    "failed_controls entries must not contain ASCII control characters"
+                )
+            cleaned.append(item.strip())
+        return cleaned
 
 
 _CREDENTIAL_PATTERN = re.compile(
@@ -985,6 +1083,11 @@ async def ingest_infra_event(
         )
 
     scrubbed_summary = _CREDENTIAL_PATTERN.sub("[REDACTED]", event.summary)[:512]
+    scrubbed_failed_controls = (
+        [_CREDENTIAL_PATTERN.sub("[REDACTED]", c)[:128] for c in event.failed_controls]
+        if event.failed_controls is not None
+        else None
+    )
     control_id = iso_map[event.event_type]
     received_at_utc = (
         datetime.now(tz=timezone.utc)
@@ -1028,6 +1131,11 @@ async def ingest_infra_event(
             pod_name_verified=pod_name_verified,
             idempotency_key=effective_idem_key,
             custody_flusher=custody_flusher,
+            evaluated_count=event.evaluated_count,
+            satisfied_count=event.satisfied_count,
+            not_satisfied_count=event.not_satisfied_count,
+            failed_count=event.failed_count,
+            failed_controls=scrubbed_failed_controls,
         )
     except InfraIdempotencyConflictError as exc:
         raise HTTPException(
@@ -1056,7 +1164,192 @@ async def ingest_infra_event(
             },
         ) from exc
 
+    invalidate_compliance_metrics_cache(control_id)
+    if event.event_type == "lula_audit":
+        await _handle_lula_audit_post_custody(
+            event=event,
+            scrubbed_summary=scrubbed_summary,
+            scrubbed_failed_controls=scrubbed_failed_controls,
+            receipt_hash=receipt.record_hash,
+            idempotent_replay=receipt.idempotent_replay,
+        )
+
     return receipt.to_response()
+
+
+_LULA_SUMMARY_RATIO_RE = re.compile(
+    r"\blula_audit\s+(PASS|FAIL)\s*:\s*(\d+)\s*/\s*(\d+)\b",
+    re.IGNORECASE,
+)
+_LULA_SUMMARY_FAILED_BLOCK_RE = re.compile(
+    r"\((\d+)\s+failed:\s*([^)]*)\)",
+    re.IGNORECASE,
+)
+_LULA_SUMMARY_NOT_SAT_RE = re.compile(
+    r"\b(\d+)\s+not-satisfied\b",
+    re.IGNORECASE,
+)
+_LULA_SUMMARY_ZERO_NOT_SAT_RE = re.compile(
+    r"\b0\s+not-satisfied\b",
+    re.IGNORECASE,
+)
+
+
+async def _handle_lula_audit_post_custody(
+    *,
+    event: InfraEvent,
+    scrubbed_summary: str,
+    scrubbed_failed_controls: list[str] | None,
+    receipt_hash: str,
+    idempotent_replay: bool,
+) -> None:
+    """Update Lula Prometheus metrics and dispatch critical alerts on any failure."""
+    min_manifests = _resolve_lula_audit_min_manifests()
+    m_ratio = _LULA_SUMMARY_RATIO_RE.search(scrubbed_summary)
+    m_failed_block = _LULA_SUMMARY_FAILED_BLOCK_RE.search(scrubbed_summary)
+    m_not_sat = _LULA_SUMMARY_NOT_SAT_RE.search(scrubbed_summary)
+
+    evaluated_count = (
+        event.evaluated_count
+        if event.evaluated_count is not None
+        else (int(m_ratio.group(3)) if m_ratio is not None else 0)
+    )
+    satisfied_count = (
+        event.satisfied_count
+        if event.satisfied_count is not None
+        else (int(m_ratio.group(2)) if m_ratio is not None else 0)
+    )
+
+    if scrubbed_failed_controls is not None:
+        failed_controls_list = [c for c in scrubbed_failed_controls if c]
+    elif m_failed_block is not None:
+        failed_controls_list = [
+            _CREDENTIAL_PATTERN.sub("[REDACTED]", c.strip())[:128]
+            for c in m_failed_block.group(2).split(",")
+            if c.strip()
+        ]
+    else:
+        failed_controls_list = []
+
+    not_satisfied = max(
+        event.not_satisfied_count or 0,
+        event.failed_count or 0,
+        max(0, evaluated_count - satisfied_count),
+        len(failed_controls_list),
+        int(m_failed_block.group(1)) if m_failed_block is not None else 0,
+        int(m_not_sat.group(1)) if m_not_sat is not None else 0,
+    )
+
+    summary_upper = scrubbed_summary.upper()
+    has_pass_prefix = bool(
+        re.search(r"\blula_audit\s+pass\s*:", scrubbed_summary, re.IGNORECASE)
+    )
+    residual_not_sat = "not-satisfied" in _LULA_SUMMARY_ZERO_NOT_SAT_RE.sub(
+        "", scrubbed_summary.lower()
+    )
+    corpus_floor_breach = evaluated_count < min_manifests
+    summary_indicated_fail = (
+        "FAIL" in summary_upper or not has_pass_prefix or residual_not_sat
+    )
+    is_clean_pass = (
+        not corpus_floor_breach
+        and not_satisfied == 0
+        and len(failed_controls_list) == 0
+        and satisfied_count >= evaluated_count
+        and not summary_indicated_fail
+    )
+
+    effective_not_satisfied_gauge = (
+        0
+        if is_clean_pass
+        else max(
+            not_satisfied,
+            max(0, min_manifests - evaluated_count) if corpus_floor_breach else 0,
+            1,
+        )
+    )
+
+    if LULA_AUDIT_EVALUATED_MANIFESTS is not None:
+        LULA_AUDIT_EVALUATED_MANIFESTS.set(float(evaluated_count))
+    if LULA_AUDIT_NOT_SATISFIED_CONTROLS is not None:
+        LULA_AUDIT_NOT_SATISFIED_CONTROLS.set(float(effective_not_satisfied_gauge))
+    if not idempotent_replay and LULA_AUDIT_RUNS_TOTAL is not None:
+        LULA_AUDIT_RUNS_TOTAL.labels(outcome="pass" if is_clean_pass else "fail").inc()
+    if is_clean_pass and LULA_AUDIT_LAST_PASS_TIMESTAMP_SECONDS is not None:
+        LULA_AUDIT_LAST_PASS_TIMESTAMP_SECONDS.set(
+            datetime.now(tz=timezone.utc).timestamp()
+        )
+
+    if is_clean_pass or idempotent_replay:
+        return
+
+    reasons: list[str] = []
+    if corpus_floor_breach:
+        reasons.append(
+            f"corpus-floor breach: evaluated_count={evaluated_count} < "
+            f"LULA_AUDIT_MIN_MANIFESTS={min_manifests}"
+        )
+    if not_satisfied > 0:
+        reasons.append(f"not_satisfied={not_satisfied}")
+    if failed_controls_list:
+        reasons.append(f"failed_controls={','.join(failed_controls_list)}")
+    if summary_indicated_fail and not reasons:
+        reasons.append("summary reported non-passing outcome")
+
+    reason_text = "; ".join(reasons)
+    logger.critical(
+        "[infra/events] 🚨 CRITICAL lula_audit FAILURE sealed to WORM "
+        "(record_hash=%s, evaluated=%d, satisfied=%d, min_manifests=%d, %s): %s",
+        receipt_hash,
+        evaluated_count,
+        satisfied_count,
+        min_manifests,
+        reason_text,
+        scrubbed_summary,
+    )
+
+    denom = max(evaluated_count, min_manifests, 1)
+    effective_rate = round(min(1.0, max(0.0, satisfied_count / denom)), 4)
+    findings: list[OscalFinding] = [
+        OscalFinding(
+            control_id="A.5.3",
+            result="FAIL",
+            finding_id=f"lula-audit-a53-{receipt_hash[:12]}",
+            remarks=(
+                f"In-cluster Lula compliance audit failed ({reason_text}). "
+                f"Summary: {scrubbed_summary} | record_hash={receipt_hash}"
+            ),
+            safety_rate=effective_rate,
+        )
+    ]
+    for idx, failed_ctrl in enumerate(failed_controls_list):
+        findings.append(
+            OscalFinding(
+                control_id=failed_ctrl,
+                result="FAIL",
+                finding_id=(
+                    f"lula-audit-{idx}-{_filename_token(failed_ctrl)[:48]}-"
+                    f"{receipt_hash[:8]}"
+                ),
+                remarks=(
+                    f"In-cluster Lula validation '{failed_ctrl}' not-satisfied "
+                    f"(sealed record_hash={receipt_hash})."
+                ),
+                safety_rate=0.0,
+            )
+        )
+
+    audit_id = f"lula-audit-{receipt_hash[:16]}"
+    try:
+        notifier = create_notifier()
+        await notifier.send_critical_alert(findings, audit_id)
+    except Exception as notify_exc:
+        logger.error(
+            "[infra/events] Notifier transport failed after CRITICAL lula_audit log "
+            "(record_hash=%s): %s",
+            receipt_hash,
+            notify_exc,
+        )
 
 
 # ---------------------------------------------------------------------------

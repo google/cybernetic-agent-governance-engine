@@ -774,6 +774,26 @@ variable "lula_schedule" {
   default     = "*/15 * * * *"
 }
 
+variable "lula_alert_notification_channels" {
+  description = "Cloud Monitoring notification channel resource names attached to the Lula compliance audit AlertPolicy (CA-7 / IR-4)."
+  type        = list(string)
+  default     = []
+}
+
+variable "lula_alert_owner" {
+  description = "Named on-call team or owner label responsible for triaging Lula compliance audit alerts (CA-7 / IR-4)."
+  type        = string
+  default     = "platform-compliance-oncall"
+
+  validation {
+    condition = (
+      trimspace(var.lula_alert_owner) != "" &&
+      can(regex("^[a-z0-9][a-z0-9_-]{0,62}$", trimspace(var.lula_alert_owner)))
+    )
+    error_message = "lula_alert_owner must be a non-empty lowercase GCP label identifier (1-63 chars matching ^[a-z0-9][a-z0-9_-]{0,62}$)."
+  }
+}
+
 variable "trusted_operator_identities" {
   description = "Allowlisted human OIDC operator sub claims permitted to approve HITL deferrals on compliance-bridge (CAGE_TRUSTED_OPERATOR_IDENTITIES; POAM-2026-196)."
   type        = list(string)
