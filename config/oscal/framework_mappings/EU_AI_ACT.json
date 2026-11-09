@@ -42,6 +42,14 @@
       "Art. 9",
       "Art. 17"
     ],
+    "UCA-10": [
+      "Art. 9(2)(b)",
+      "Art. 12"
+    ],
+    "UCA-12": [
+      "Art. 9(5)",
+      "Art. 14"
+    ],
     "UCA-13": [
       "Art. 9(5)",
       "Art. 14"
@@ -59,5 +67,9 @@
     "Annex III §5(b)": "High-Risk AI Classification — Creditworthiness and credit scoring",
     "GDPR Art. 22": "Automated Individual Decision-Making Including Profiling"
   },
-  "narrative_template": "STPA compiler enforces {control_id} ({control_description}) via generated artifacts under EU AI Act High-Risk AI obligations. UCAs covered: {uca_list}."
+  "enforcement_artifacts": {
+    "nemo": "config/rails/generated_stpa_rails.co (NeMo Colang)",
+    "python": "src/cage_finance/stpa/uca_rules.py (generated Python UCA rules), src/gateway/governance/stpa_validator.py (STPA validator)"
+  },
+  "narrative_template": "STPA compiler maps {control_id} ({control_description}) under EU AI Act High-Risk AI obligations via generated artifacts: {artifacts}. UCAs covered: {uca_list}."
 }

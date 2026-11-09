@@ -43,9 +43,9 @@ def test_committed_census_passes_validation_and_counts() -> None:
     assert counts == {
         "HOLDS": 39,
         "WEAKER": 51,
-        "NOT_IN_FORCE": 25,
+        "NOT_IN_FORCE": 24,
         "INHERITED": 45,
-        "ROLLUP": 34,
+        "ROLLUP": 35,
         "NOT_A_CLAIM": 14,
     }
 

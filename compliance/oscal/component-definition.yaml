@@ -4,7 +4,7 @@ component-definition:
     title: Cybernetic Governance Engine — ISO 42001 AIMS Component Definition
     version: 1.0.0
     oscal-version: 1.0.4
-    last-modified: '2026-11-05T21:08:32Z'
+    last-modified: '2026-11-08T22:59:18Z'
     remarks: 'This component definition maps technical enforcement components to ISO/IEC
       42001:2023 Annex A controls. Each implemented requirement links to a Lula validation
       manifest for automated continuous compliance.
@@ -261,10 +261,20 @@ component-definition:
           verify_and_consume_seal) and enforced in src/gateway/governance/consequence_gateway.py.
       - uuid: aarm2026-v4-cross-agent
         control-id: SC-8
-        description: AARM-V4 Cross-Agent Propagation neutralized by FiscalLimitGuard
-          atomic pre-reservation (Redis WATCH/MULTI/EXEC) and Linkerd mTLS for all
-          intra-cluster agent communications.
-        remarks: 'FiscalLimitGuard: src/gateway/governance/fiscal_limit_guard.py.'
+        description: 'AARM-V4 Cross-Agent Propagation is reduced, not eliminated:
+          FiscalLimitGuard (src/cage_finance/safety/fiscal_limit_guard.py) reserves
+          spend against the daily fiscal cap in one atomic Lua script on the governance
+          Valkey, so concurrent agents cannot jointly overspend the cap, while Linkerd
+          mTLS (defaultInboundPolicy=all-authenticated in infra/modules/service_mesh/main.tf)
+          and per-workload NetworkPolicy plus Linkerd Server/HTTPRoute/AuthorizationPolicy
+          resources (infra/targets/gcp-gke/network_policy.tf, infra/modules/gateway/mesh-policy/templates/policy.yaml,
+          infra/modules/compliance_bridge/mesh-policy/templates/policy.yaml, infra/targets/gcp-gke/charts/workload-mesh-policy/templates/servers-and-authz.yaml)
+          segment pod-to-pod and data-store flows in configuration; live deployed-cluster
+          verification of mesh mTLS and per-workload drop/allow enforcement remains
+          pending Gate W (POAM-2026-080, POAM-2026-195).'
+        remarks: 'FiscalLimitGuard: src/cage_finance/safety/fiscal_limit_guard.py
+          (tests/cage_finance/test_fiscal_limit_guard.py). Mesh & segmentation: infra/modules/service_mesh/main.tf,
+          infra/targets/gcp-gke/network_policy.tf.'
       - uuid: aarm2026-v7-context-overflow
         control-id: A.8.4
         description: AARM-V7 Context Window Overflow neutralized by DEFER State Machine.
@@ -480,42 +490,20 @@ component-definition:
   - uuid: b6b7-2026-cer-disclosure-00001111aaaa
     title: Compliance Evidence Repository (CER) Disclosure Infrastructure
     type: software
-    description: 'CER Disclosure Infrastructure providing tamper-evident, content-addressed
-      evidence disclosure to external normative providers and auditors. Implements
-      a three-posture disclosure model: PUBLIC (unrestricted access, public internet
-      distribution), PRIVATE (authenticated access only, no public distribution),
-      and EMBARGO (time-locked disclosure with explicit release date). Evidence records
-      are indexed via SHA-256 and SHA-512 multihash identifiers, stored in write-once
-      evidence repositories (GCS/S3), and disclosed via signed manifest files containing
-      content-addressing metadata. Disclosure posture is determined at evidence capture
-      time and enforced cryptographically through access control and distribution
-      policies.
-
-      '
-    purpose: 'Provides verifiable evidence disclosure to normative providers (FlowSignal,
-      external auditors) while maintaining confidentiality boundaries appropriate
-      to each deployment region''s regulatory posture. Implements ISO 42001 §A.8.4
-      operational transparency requirements — specifically the mandate that AI system
-      operation controls are auditable by authorized external parties. Satisfies NIST
-      SP 800-53 AU-16 (Cross-Organizational Audit Information Sharing) for US_FED
-      deployments.
-
-      '
+    description: 'Planned Compliance Evidence Repository (CER) disclosure capability:
+      a three-posture (PUBLIC, PRIVATE, EMBARGO) model for disclosing content-addressed
+      evidence to normative providers and auditors through signed manifests. None
+      of it is implemented: no disclosure or evidence-index module, CAGE_CER_DISCLOSURE_POSTURE
+      setting, multihash index or manifest store exists in src/ or infra/. Governance
+      evidence today is the hash-chained evidence stream that the compliance bridge
+      batch-signs into the WORM archive.'
+    purpose: Records the intended ISO 42001 A.8.4 operational-transparency capability
+      so that it is not mistaken for an implemented one.
     responsible-roles:
     - role-id: provider
     props:
     - name: software-version
-      value: 0.1.0
-    - name: source-file-disclosure
-      value: src/gateway/governance/evidence/disclosure.py
-    - name: source-file-exporter
-      value: src/gateway/governance/oscal_ssp_exporter.py
-    - name: source-file-index
-      value: src/gateway/governance/evidence/index.py
-    - name: hash-algorithms
-      value: SHA-256, SHA-512
-    - name: content-addressing-scheme
-      value: multihash (sha256- / sha512- prefix)
+      value: 0.0.0 (planned; not implemented)
     control-implementations:
     - uuid: b6b7-ctrl-impl-iso42001-00001111
       source: https://www.iso.org/standard/81230.html
@@ -524,40 +512,17 @@ component-definition:
       implemented-requirements:
       - uuid: b6b7-req-a84-cer-00001111
         control-id: A.8.4
-        description: 'CER Disclosure Infrastructure implements ISO 42001 §A.8.4 operational
-          transparency by providing tamper-evident evidence disclosure to authorized
-          normative providers and auditors. Three disclosure postures satisfy regional
-          regulatory requirements: PUBLIC posture (unrestricted access, content-addressed
-          manifest files distributed via public URLs) satisfies open-governance mandates
-          in US_FED deployments where OMB A-130 requires transparency-by-default for
-          federal AI systems. PRIVATE posture (authenticated access only, no public
-          distribution) satisfies EU_ECB data minimization requirements under GDPR
-          Article 5(1)(c) where evidence disclosure is limited to authorized supervisory
-          authorities. EMBARGO posture (time-locked disclosure with explicit release
-          date) satisfies APAC_MAS pre-approval requirements where evidence must be
-          retained internally until regulatory clearance is granted. Evidence records
-          are indexed via SHA-256 and SHA-512 multihash identifiers (multihash format:
-          sha256-<hex-digest> / sha512-<hex-digest>), ensuring content-addressable
-          verification across organizational boundaries. Disclosure manifest files
-          are cryptographically signed via KMS to prevent tampering and provide non-repudiation.
-          This implements ISO 42001 §A.8.4 AI System Operation Controls — specifically
-          the requirement that operational evidence is available to authorized parties
-          in a verifiable, tamper-evident format.
-
-          '
-        remarks: 'Disclosure posture is determined at evidence capture time via CAGE_CER_DISCLOSURE_POSTURE
-          environment variable (PUBLIC | PRIVATE | EMBARGO). Posture enforcement is
-          cryptographic — PUBLIC evidence is written to publicly-readable GCS/S3 buckets
-          with unrestricted IAM policies, PRIVATE evidence requires authenticated
-          access tokens, EMBARGO evidence carries time-lock metadata enforced at manifest
-          generation. Reference architecture: adopters should adapt disclosure postures,
-          hash algorithms, and content-addressing schemes to their regulatory environments.
-          Default posture is PRIVATE (fail-closed on disclosure).
-
-          '
-        links:
-        - href: ../../compliance/lula/lula-validation-cer-disclosure.yaml
-          rel: lula
+        description: Not implemented. The ISO 42001 A.8.4 evidence-disclosure capability
+          described by this component (PUBLIC, PRIVATE and EMBARGO postures; SHA-256/SHA-512
+          multihash indexing; KMS-signed disclosure manifests) has no code, configuration
+          or validation in the repository.
+        remarks: Building it needs disclosure and index modules plus a check that
+          fetches a published manifest, verifies its KMS signature by kid against
+          an out-of-band key manifest, recomputes each record's multihash and confirms
+          posture behaviour.
+        props:
+        - name: implementation-status
+          value: planned
   - uuid: tls-infra-2026-0827-sc8-000000000001
     title: TLS Infrastructure
     type: software
@@ -620,15 +585,15 @@ component-definition:
   - uuid: e5000099-stpa-4000-8000-compiler00001
     title: STPA-to-Policy Compiler
     type: software
-    description: 'CLI compiler (src/gateway/governance/stpa_compiler.py) that ingests
-      config/stpa/ and generates deterministic Python validator artifacts enforcing
-      STAMP/STPA UCAs at runtime. Eliminates manual policy drift by treating the YAML
-      as the single authoritative source of truth. System: CAGE Financial Advisor
-      v1.1.0.'
-    purpose: Provides compile-time enforcement of STPA UCAs, bridging design-time
-      hazard analysis (MIT STAMP methodology) with runtime Python governance controls.
-      Closes the compliance loop between safety engineering artefacts and live cluster
-      enforcement policies.
+    description: 'CLI compiler (src/gateway/governance/stpa_compiler.py) that compiles
+      config/stpa/ and the domain control structures into deterministic Python validator
+      artifacts mapped to STAMP/STPA UCAs. A UCA''s Python rule enforces at runtime
+      only when every input it reads is bound server-side; rules keyed on caller-asserted
+      flags are advisory. System: CAGE Financial Advisor v1.1.0.'
+    purpose: Provides deterministic compile-time translation of STPA UCAs, bridging
+      design-time hazard analysis (MIT STAMP methodology) with runtime Python governance
+      controls wherever a rule's inputs are bound server-side; CI checks the generated
+      artifacts for drift from the YAML.
     responsible-roles:
     - role-id: compliance-engineer
     props:
@@ -639,56 +604,77 @@ component-definition:
     - name: control-structure-input
       value: config/stpa/
     - name: last-compiled
-      value: '2026-11-05T21:08:32Z'
+      value: '2026-11-08T22:59:18Z'
     - name: uca-count
       value: '12'
     control-implementations:
     - uuid: c3000099-stpa-4000-8000-compiler00001
       source: https://www.iso.org/standard/81230.html
-      description: ISO/IEC 42001:2023 controls implemented by the STPA compiler
+      description: ISO/IEC 42001:2023 controls the STPA compiler maps UCAs to
       implemented-requirements:
       - uuid: d4000099-stpa-4000-8000-0000000
         control-id: A.8.4
-        description: 'STPA compiler generates deterministic enforcement artifacts
-          for A.8.4 (AI System Operation — Runtime operational controls) from config/stpa/.
-          UCAs: UCA-1, UCA-12, UCA-13, UCA-2, UCA-4, UCA-5, UCA-6, UCA-8, UCA-9.'
-        remarks: Implemented via stpa_compiler.py compile command. Re-run on any YAML
-          change to keep artifacts in sync.
+        description: 'STPA compiler maps A.8.4 (AI System Operation — Runtime operational
+          controls) to UCAs UCA-1, UCA-12, UCA-13, UCA-2, UCA-4, UCA-5, UCA-6, UCA-8,
+          UCA-9, compiled from config/stpa/ and the domain control structures. Server-bound
+          enforcing UCAs: UCA-1, UCA-13, UCA-2, UCA-5, UCA-6; advisory UCAs (not server-bound):
+          UCA-12, UCA-4, UCA-8, UCA-9.'
+        props:
+        - name: implementation-status
+          value: partial
+        remarks: Compiled by stpa_compiler.py; scripts/check_stpa_freshness.py fails
+          CI when a generated artifact drifts from its YAML source.
       - uuid: d4000099-stpa-4000-8000-0001001
         control-id: A.9.4
-        description: 'STPA compiler generates deterministic enforcement artifacts
-          for A.9.4 (Monitoring and measurement — Live telemetry validation) from
-          config/stpa/. UCAs: UCA-10.'
-        remarks: Implemented via stpa_compiler.py compile command. Re-run on any YAML
-          change to keep artifacts in sync.
+        description: 'STPA compiler maps A.9.4 (Monitoring and measurement — Live
+          telemetry validation) to UCAs UCA-10, compiled from config/stpa/ and the
+          domain control structures. Server-bound enforcing UCAs: none; advisory UCAs
+          (not server-bound): UCA-10.'
+        props:
+        - name: implementation-status
+          value: partial
+        remarks: Compiled by stpa_compiler.py; scripts/check_stpa_freshness.py fails
+          CI when a generated artifact drifts from its YAML source.
       - uuid: d4000099-stpa-4000-8000-0002002
         control-id: A.6.2
-        description: 'STPA compiler generates deterministic enforcement artifacts
-          for A.6.2 (AI System Lifecycle — Design and development controls) from config/stpa/.
-          UCAs: UCA-12, UCA-13, UCA-2, UCA-5, UCA-6.'
-        remarks: Implemented via stpa_compiler.py compile command. Re-run on any YAML
-          change to keep artifacts in sync.
+        description: 'STPA compiler maps A.6.2 (AI System Lifecycle — Design and development
+          controls) to UCAs UCA-12, UCA-13, UCA-2, UCA-5, UCA-6, compiled from config/stpa/
+          and the domain control structures. Server-bound enforcing UCAs: UCA-13,
+          UCA-2, UCA-5, UCA-6; advisory UCAs (not server-bound): UCA-12.'
+        props:
+        - name: implementation-status
+          value: partial
+        remarks: Compiled by stpa_compiler.py; scripts/check_stpa_freshness.py fails
+          CI when a generated artifact drifts from its YAML source.
       - uuid: d4000099-stpa-4000-8000-0003003
         control-id: A.9.2
-        description: 'STPA compiler generates deterministic enforcement artifacts
-          for A.9.2 (Data transfer to suppliers and third parties / PII protection)
-          from config/stpa/. UCAs: UCA-3.'
-        remarks: Implemented via stpa_compiler.py compile command. Re-run on any YAML
-          change to keep artifacts in sync.
+        description: 'STPA compiler maps A.9.2 (Data transfer to suppliers and third
+          parties / PII protection) to UCAs UCA-3, compiled from config/stpa/ and
+          the domain control structures. Server-bound enforcing UCAs: none; advisory
+          UCAs (not server-bound): UCA-3.'
+        props:
+        - name: implementation-status
+          value: partial
+        remarks: Compiled by stpa_compiler.py; scripts/check_stpa_freshness.py fails
+          CI when a generated artifact drifts from its YAML source.
       - uuid: d4000099-stpa-4000-8000-0004004
         control-id: A.5.2
-        description: 'STPA compiler generates deterministic enforcement artifacts
-          for A.5.2 (Social impact — AI system impact on society and environment)
-          from config/stpa/. UCAs: UCA-7.'
-        remarks: Implemented via stpa_compiler.py compile command. Re-run on any YAML
-          change to keep artifacts in sync.
+        description: 'STPA compiler maps A.5.2 (Social impact — AI system impact on
+          society and environment) to UCAs UCA-7, compiled from config/stpa/ and the
+          domain control structures. Server-bound enforcing UCAs: UCA-7; advisory
+          UCAs (not server-bound): none.'
+        props:
+        - name: implementation-status
+          value: implemented
+        remarks: Compiled by stpa_compiler.py; scripts/check_stpa_freshness.py fails
+          CI when a generated artifact drifts from its YAML source.
   - uuid: ftra0001-4e47-bbc8-irreversibility01
     title: FTRA Irreversibility Classifier
     type: software
     description: 'Forward-Looking Trajectory Reachability Analyzer (FTRA, Tier 0.5):
       classifies each tool call against the active domain''s digest-covered terminal
       registry, records the registry provenance of the classification, and lets a
-      registered terminal clear without a human only inside its signed autonomous
+      registered terminal clear without a human only inside its digest-covered autonomous
       envelope. It validates no parameter values; value policy is owned by STPA UCA
       rules and the domain OPA policy (docs/governance/FTRA_SCOPE.md).'
     purpose: Irreversibility classification and autonomous-envelope gating for tool
@@ -699,7 +685,7 @@ component-definition:
     - name: source-file
       value: src/gateway/governance/governor/stages/ftra.py
     - name: last-compiled
-      value: '2026-11-05T21:08:32Z'
+      value: '2026-11-08T22:59:18Z'
     control-implementations:
     - uuid: ftra0001-ctrl-impl-8000-classifier01
       source: https://csrc.nist.gov/projects/cprt/api/cprt/framework/version/SP_800_53_5_1_1/home
@@ -711,27 +697,39 @@ component-definition:
         description: FTRA (Tier 0.5) classifies each tool call against the digest-covered
           terminal registry (src/gateway/governance/ftra/classifier.py) and routes
           irreversible or unregistered actions to human review; a registered terminal
-          clears autonomously only inside its signed autonomous envelope with a known,
-          finite, positive magnitude (src/gateway/governance/ftra/autonomy.py). Parameter
-          value validation (SI-10) is enforced by STPA UCA rules (src/cage_finance/stpa/uca_rules.py)
-          and the domain OPA policy (src/cage_finance/opa/trade_governance.rego).
-          Prompt injection is screened on every input by the deterministic Stage 1
-          keyword scan (ac_keyword_scan in src/gateway/governance/text_filter.py,
-          run by the LangGraph input rail node and the inference proxy). UCA-7 is
-          enforced on the Python STPA path (_check_core_uca_7 in src/gateway/governance/stpa_validator.py,
-          which denies a prompt_injection_check whose server-bound semantic_score
-          exceeds the UCA's threshold); the optional NeMo Colang rails add LLM-backed
-          screening only when CAGE_NEMO_ENABLED=true. Before parking a REQUIRE_APPROVAL
-          token for human review, run_pipeline() previews every claiming phase-2 barrier
-          side-effect-free (Phase2Mode.PREVIEW in src/gateway/governance/governor/pipeline.py),
-          denying outright on HARD barrier breaches and recording NARROWABLE barrier
-          bounds (Violation.bound in src/gateway/governance/contracts.py) on the DeferToken
-          snapshot. The registry's manifest_sha256 (registry_digest in src/gateway/governance/ftra/classifier.py)
-          covers the autonomous_envelope together with the terminals, so a tampered
-          ceiling fails the load-time integrity check.
+          clears autonomously only inside its autonomous envelope with a known, finite,
+          positive magnitude (src/gateway/governance/ftra/autonomy.py). Parameter
+          value validation (SI-10) is delegated to the finance STPA UCA rules (src/cage_finance/stpa/uca_rules.py)
+          and the domain OPA policy (src/cage_finance/opa/trade_governance.rego, mounted
+          read-only into the gateway pod's Unix-domain-socket OPA sidecar via infra/modules/opa_policy/main.tf
+          and infra/modules/gateway/main.tf with system.authz refusing runtime policy
+          writes; live verification pending, POAM-2026-195). Finance UCA rules UCA-2,
+          UCA-3, UCA-4, UCA-5, UCA-6, UCA-8, UCA-9, UCA-10, UCA-12 and UCA-13 bind
+          their security-critical inputs server-side via FinanceServerInputResolver
+          (src/cage_finance/server_inputs.py). UCA-7 is enforced on the Python STPA
+          path (_check_core_uca_7 in src/gateway/governance/stpa_validator.py), which
+          denies a prompt_injection_check whose semantic_score, bound server-side
+          by deterministic prompt-injection inspection (src/gateway/governance/governor/server_inputs.py),
+          exceeds the UCA's threshold. The deterministic Stage 1 keyword scan (ac_keyword_scan
+          in src/gateway/governance/text_filter.py) screens requests routed through
+          the gateway inference proxy (src/gateway/server/inference_proxy.py), which
+          Terraform configures as the sole model endpoint reachable by the governed
+          advisor (live cluster verification pending, POAM-2026-191), and runs in
+          the advisor's LangGraph input rail. The optional NeMo Colang rails add LLM-backed
+          screening only when CAGE_NEMO_ENABLED=true on a semantic model backend.
+          Before parking a REQUIRE_APPROVAL token for human review, run_pipeline()
+          previews every claiming phase-2 barrier side-effect-free (Phase2Mode.PREVIEW
+          in src/gateway/governance/governor/pipeline.py), denying outright on HARD
+          barrier breaches and recording NARROWABLE barrier bounds (Violation.bound
+          in src/gateway/governance/contracts.py) on the DeferToken snapshot. The
+          registry's manifest_sha256 (registry_digest in src/gateway/governance/ftra/classifier.py)
+          covers the autonomous_envelope together with the terminals, so an in-file
+          edit to a ceiling fails the load-time integrity check; a re-hashed edit
+          is refused only when FTRA_EXPECTED_MANIFEST_SHA256 is pinned, which infra/
+          does not set.
         props:
         - name: implementation-status
-          value: implemented
+          value: partial
         - name: control-origination
           value: system-specific
         links:

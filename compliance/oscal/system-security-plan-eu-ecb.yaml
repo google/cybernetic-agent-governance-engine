@@ -3,7 +3,7 @@ system-security-plan:
   metadata:
     title: CAGE System Security Plan (EU_ECB — EU AI Act / GDPR / DORA)
     published: '2026-06-15T00:00:00Z'
-    last-modified: '2026-11-05T21:08:46Z'
+    last-modified: '2026-11-09T00:02:22Z'
     version: 1.0.0-draft+stpa
     oscal-version: 1.0.4
     remarks: 'This System Security Plan (SSP) documents the compliance controls implemented
@@ -573,7 +573,7 @@ system-security-plan:
           proof/model.py claims post_hitl_rechecks_jurisdiction and approval_answers_only_its_holds
           hold, with runtime parity in tests/test_formal_profile_parity.py.'
         implementation-status:
-          state: implemented
+          state: partially-implemented
         links:
         - href: ../../compliance/lula/lula-validation-eu-fria.yaml
           rel: reference
@@ -638,7 +638,7 @@ system-security-plan:
           test_missing_regional_file_fails_closed). Remediation recorded as POAM-2026-102
           in docs/POAM.md.
         implementation-status:
-          state: implemented
+          state: partially-implemented
         links:
         - href: ../../tests/governor/test_regional_overlay.py
           rel: reference
@@ -660,7 +660,7 @@ system-security-plan:
         the floor is gated by the warrant reliance gate (eu-ecb-req-0007).'
       props:
       - name: implementation-status
-        value: implemented
+        value: partial
       - name: cage-control-id
         value: CTRL_AGT_001
       - name: applicable-regions
@@ -674,7 +674,7 @@ system-security-plan:
           (test_plugin_wires_the_effective_floor_and_gamma) and tests/governor/test_jurisdiction_wiring.py
           (trade_confidence tier present in the assembled pipeline).
         implementation-status:
-          state: implemented
+          state: partially-implemented
         links:
         - href: ../../tests/cage_finance/test_trade_confidence_tier.py
           rel: reference
@@ -709,7 +709,7 @@ system-security-plan:
         so the evidence shows how fresh the relied-on warrant state was.'
       props:
       - name: implementation-status
-        value: implemented
+        value: partial
       - name: regulatory-citation
         value: NIST SP 800-53 Rev 5 AC-3 (Access Enforcement)
       - name: applicable-regions
@@ -787,7 +787,7 @@ system-security-plan:
           STALE_STATE, TAMPERED_SIGNATURE, UNKNOWN_KID, MISSING) produce the expected
           reliance and verification statuses.'
         implementation-status:
-          state: implemented
+          state: partially-implemented
         links:
         - href: ../../tests/governor/test_warrant_reliance_gate.py
           rel: reference
@@ -809,34 +809,40 @@ system-security-plan:
           text: VEIP v0.2 Tier 1 over-the-wire conformance suite
     - uuid: g7000099-stpa-4000-8000-compiler00001
       control-id: sa-11
-      description: "The STPA-to-Policy Compiler implements a deterministic, design-time\
-        \ safety\n          control that translates STAMP/STPA Unsafe Control Action\
-        \ (UCA) analysis\n          directly into runtime-enforceable governance artifacts.\
-        \ This eliminates the\n          \"Natural Language Tax\" — the compliance\
-        \ gap between human-readable safety\n          specifications and the actual\
-        \ code running in the cluster.\n\n          Compiler source: src/gateway/governance/stpa_compiler.py\n\
-        \          Control structure (source of truth): config/stpa/\n          Generated\
-        \ artifacts:\n            - src/gateway/governance/stpa_validator.py (Python\
-        \ — 12 UCAs: 6 enforcing, 6 advisory)\n            - config/sandbox/generated_sandbox_policy.yaml\
-        \ (Sandbox — 2 UCAs)\n\n          Target compliance framework: EU AI Act (Regulation\
-        \ (EU) 2024/1689) High-Risk AI — Annex III §5(b)\n          Framework reference:\
-        \ https://eur-lex.europa.eu/legal-content/EN/TXT/?uri=CELEX%3A32024R1689\n\
+      description: "The STPA-to-Policy Compiler deterministically compiles the merged\
+        \ STAMP/STPA\n          Unsafe Control Action (UCA) specifications into governance\
+        \ artifacts whose\n          freshness CI checks (scripts/check_stpa_freshness.py).\
+        \ A UCA's Python rule\n          enforces at runtime only when every input\
+        \ it reads is bound server-side by a\n          ServerInputResolver registered\
+        \ in assemble_governor(); rules keyed on\n          caller-asserted flags\
+        \ are advisory, so this control is implemented only\n          when every\
+        \ UCA enforces.\n\n          Compiler source: src/gateway/governance/stpa_compiler.py\n\
+        \          Control structure sources: config/stpa/ and each domain's src/cage_*/config/stpa/\n\
+        \          Generated artifacts:\n            - Python rules: src/cage_finance/stpa/uca_rules.py\
+        \ (generated Python UCA rules), src/gateway/governance/stpa_validator.py (STPA\
+        \ validator) (12 UCAs: 6 enforcing, 6 advisory)\n            - config/sandbox/generated_sandbox_policy.yaml\
+        \ (sandbox metadata for 2 UCAs; design-time reference, not read at runtime)\n\
+        \n          Target compliance framework: EU AI Act (Regulation (EU) 2024/1689)\
+        \ High-Risk AI — Annex III §5(b)\n          Framework reference: https://eur-lex.europa.eu/legal-content/EN/TXT/?uri=CELEX%3A32024R1689\n\
         \          System: CAGE Financial Advisor v1.1.0\n          UCAs encoded:\
         \ 12 (6 enforcing server-bound, 6 advisory)\n          Hazards modelled: 7\n\
-        \          Safety constraints: 3\n          Last compiled: 2026-11-05T21:08:46Z\n\
+        \          Safety constraints: 3\n          Last compiled: 2026-11-09T00:02:22Z\n\
         \n          UCA-to-Control mapping (EU AI Act (Regulation (EU) 2024/1689)\
         \ High-Risk AI — Annex III §5(b)):\n            UCA-1 (unsafe_action): Agent\
         \ executes write operation without a human approval token.\n  → EU_AI_ACT:\
         \ Art. 9(5) (Risk Management — Residual risk mitigation measures), Art. 14\
         \ (Human Oversight — Technical measures to enable oversight)\nUCA-10 (wrong_timing)\
         \ [advisory — partial]: Agent reads account balance with stale connection\
-        \ data.\n  → EU_AI_ACT: \nUCA-12 (unsafe_action) [advisory — partial]: Agent\
-        \ executes bounded trade when bounding contracts B1-B10 fail validation. Phase\
-        \ 5: execute_trade_bounded is EXTERNALLY_REVERSIBLE when B10 rollback window\
-        \ validation passes, enabling HITL review without confidence hard-gate per\
-        \ VEC-004. When B10 fails (closed rollback window), the bounding tier raises\
-        \ a HITL violation (B10_ROLLBACK_WINDOW_CLOSED) and the request parks for\
-        \ human approval, as an irreversible action would.\n  → EU_AI_ACT: \nUCA-13\
+        \ data.\n  → EU_AI_ACT: Art. 9(2)(b) (Risk Controls — Identification of known\
+        \ and foreseeable risks), Art. 12 (Record-Keeping and Automatic Logging Obligations)\n\
+        UCA-12 (unsafe_action) [advisory — partial]: Agent executes bounded trade\
+        \ when bounding contracts B1-B10 fail validation. Phase 5: execute_trade_bounded\
+        \ is EXTERNALLY_REVERSIBLE when B10 rollback window validation passes, enabling\
+        \ HITL review without confidence hard-gate per VEC-004. When B10 fails (closed\
+        \ rollback window), the bounding tier raises a HITL violation (B10_ROLLBACK_WINDOW_CLOSED)\
+        \ and the request parks for human approval, as an irreversible action would.\n\
+        \  → EU_AI_ACT: Art. 9(5) (Risk Management — Residual risk mitigation measures),\
+        \ Art. 14 (Human Oversight — Technical measures to enable oversight)\nUCA-13\
         \ (unsafe_action): Agent executes sell order exceeding the allowable fraction\
         \ of portfolio value.\n  → EU_AI_ACT: Art. 9(5) (Risk Management — Residual\
         \ risk mitigation measures), Art. 14 (Human Oversight — Technical measures\
@@ -867,7 +873,7 @@ system-security-plan:
         \ System for High-Risk AI), Art. 17 (Quality Management System (QMS) Requirements)"
       props:
       - name: implementation-status
-        value: implemented
+        value: partial
       - name: stpa-compiler-version
         value: 1.1.0
       - name: uca-count
@@ -879,7 +885,7 @@ system-security-plan:
       - name: hazard-count
         value: '7'
       - name: last-compiled
-        value: '2026-11-05T21:08:46Z'
+        value: '2026-11-09T00:02:22Z'
       - name: target-framework
         value: EU AI Act (Regulation (EU) 2024/1689) High-Risk AI — Annex III §5(b)
       - name: artifact-python
@@ -893,65 +899,12 @@ system-security-plan:
       by-components:
       - component-uuid: e5000099-stpa-4000-8000-compiler00001
         uuid: h8000099-stpa-4000-8000-compiler00000
-        description: 'STPA compiler enforces Art. 9(5) (Risk Management — Residual
-          risk mitigation measures) via generated artifacts under EU AI Act High-Risk
-          AI obligations. UCAs covered: UCA-1, UCA-13, UCA-6, UCA-7.'
-        implementation-status:
-          state: implemented
-        links:
-        - href: ../../config/stpa/core_system.yaml
-          rel: reference
-          text: STPA control structure YAML (source of truth)
-        - href: ../../src/gateway/governance/stpa_validator.py
-          rel: reference
-          text: STPA Python validator
-      - component-uuid: e5000099-stpa-4000-8000-compiler00001
-        uuid: h8000099-stpa-4000-8000-compiler00001
-        description: 'STPA compiler enforces Art. 14 (Human Oversight — Technical
-          measures to enable oversight) via generated artifacts under EU AI Act High-Risk
-          AI obligations. UCAs covered: UCA-1, UCA-13, UCA-5, UCA-6, UCA-8.'
-        implementation-status:
-          state: implemented
-        links:
-        - href: ../../config/stpa/core_system.yaml
-          rel: reference
-          text: STPA control structure YAML (source of truth)
-        - href: ../../src/gateway/governance/stpa_validator.py
-          rel: reference
-          text: STPA Python validator
-      - component-uuid: e5000099-stpa-4000-8000-compiler00001
-        uuid: h8000099-stpa-4000-8000-compiler00002
-        description: 'STPA compiler enforces Art. 10(3) (Data Governance — Examination
-          of data for bias) via generated artifacts under EU AI Act High-Risk AI obligations.
-          UCAs covered: UCA-2.'
-        implementation-status:
-          state: implemented
-        links:
-        - href: ../../config/stpa/core_system.yaml
-          rel: reference
-          text: STPA control structure YAML (source of truth)
-        - href: ../../src/gateway/governance/stpa_validator.py
-          rel: reference
-          text: STPA Python validator
-      - component-uuid: e5000099-stpa-4000-8000-compiler00001
-        uuid: h8000099-stpa-4000-8000-compiler00003
-        description: 'STPA compiler enforces Art. 17 (Quality Management System (QMS)
-          Requirements) via generated artifacts under EU AI Act High-Risk AI obligations.
-          UCAs covered: UCA-2, UCA-4, UCA-9.'
-        implementation-status:
-          state: implemented
-        links:
-        - href: ../../config/stpa/core_system.yaml
-          rel: reference
-          text: STPA control structure YAML (source of truth)
-        - href: ../../src/gateway/governance/stpa_validator.py
-          rel: reference
-          text: STPA Python validator
-      - component-uuid: e5000099-stpa-4000-8000-compiler00001
-        uuid: h8000099-stpa-4000-8000-compiler00004
-        description: 'STPA compiler enforces Art. 10(5) (Data Governance — Personal
-          data and data minimisation) via generated artifacts under EU AI Act High-Risk
-          AI obligations. UCAs covered: UCA-3.'
+        description: 'STPA compiler maps Art. 9(5) (Risk Management — Residual risk
+          mitigation measures) under EU AI Act High-Risk AI obligations via generated
+          artifacts: src/cage_finance/stpa/uca_rules.py (generated Python UCA rules),
+          src/gateway/governance/stpa_validator.py (STPA validator). UCAs covered:
+          UCA-1, UCA-12, UCA-13, UCA-6, UCA-7. Server-bound enforcing UCAs: UCA-1,
+          UCA-13, UCA-6, UCA-7; advisory UCAs (not server-bound): UCA-12.'
         implementation-status:
           state: partial
         links:
@@ -962,10 +915,79 @@ system-security-plan:
           rel: reference
           text: STPA Python validator
       - component-uuid: e5000099-stpa-4000-8000-compiler00001
+        uuid: h8000099-stpa-4000-8000-compiler00001
+        description: 'STPA compiler maps Art. 14 (Human Oversight — Technical measures
+          to enable oversight) under EU AI Act High-Risk AI obligations via generated
+          artifacts: src/cage_finance/stpa/uca_rules.py (generated Python UCA rules),
+          src/gateway/governance/stpa_validator.py (STPA validator). UCAs covered:
+          UCA-1, UCA-12, UCA-13, UCA-5, UCA-6, UCA-8. Server-bound enforcing UCAs:
+          UCA-1, UCA-13, UCA-5, UCA-6; advisory UCAs (not server-bound): UCA-12, UCA-8.'
+        implementation-status:
+          state: partial
+        links:
+        - href: ../../config/stpa/core_system.yaml
+          rel: reference
+          text: STPA control structure YAML (source of truth)
+        - href: ../../src/gateway/governance/stpa_validator.py
+          rel: reference
+          text: STPA Python validator
+      - component-uuid: e5000099-stpa-4000-8000-compiler00001
+        uuid: h8000099-stpa-4000-8000-compiler00002
+        description: 'STPA compiler maps Art. 9(2)(b) (Risk Controls — Identification
+          of known and foreseeable risks) under EU AI Act High-Risk AI obligations
+          via generated artifacts: src/cage_finance/stpa/uca_rules.py (generated Python
+          UCA rules), src/gateway/governance/stpa_validator.py (STPA validator). UCAs
+          covered: UCA-10, UCA-5. Server-bound enforcing UCAs: UCA-5; advisory UCAs
+          (not server-bound): UCA-10.'
+        implementation-status:
+          state: partial
+        links:
+        - href: ../../config/stpa/core_system.yaml
+          rel: reference
+          text: STPA control structure YAML (source of truth)
+        - href: ../../src/gateway/governance/stpa_validator.py
+          rel: reference
+          text: STPA Python validator
+      - component-uuid: e5000099-stpa-4000-8000-compiler00001
+        uuid: h8000099-stpa-4000-8000-compiler00003
+        description: 'STPA compiler maps Art. 12 (Record-Keeping and Automatic Logging
+          Obligations) under EU AI Act High-Risk AI obligations via generated artifacts:
+          src/cage_finance/stpa/uca_rules.py (generated Python UCA rules), src/gateway/governance/stpa_validator.py
+          (STPA validator). UCAs covered: UCA-10, UCA-4. Server-bound enforcing UCAs:
+          none; advisory UCAs (not server-bound): UCA-10, UCA-4.'
+        implementation-status:
+          state: partial
+        links:
+        - href: ../../config/stpa/core_system.yaml
+          rel: reference
+          text: STPA control structure YAML (source of truth)
+        - href: ../../src/gateway/governance/stpa_validator.py
+          rel: reference
+          text: STPA Python validator
+      - component-uuid: e5000099-stpa-4000-8000-compiler00001
+        uuid: h8000099-stpa-4000-8000-compiler00004
+        description: 'STPA compiler maps Art. 10(3) (Data Governance — Examination
+          of data for bias) under EU AI Act High-Risk AI obligations via generated
+          artifacts: src/cage_finance/stpa/uca_rules.py (generated Python UCA rules),
+          src/gateway/governance/stpa_validator.py (STPA validator). UCAs covered:
+          UCA-2. Server-bound enforcing UCAs: UCA-2; advisory UCAs (not server-bound):
+          none.'
+        implementation-status:
+          state: implemented
+        links:
+        - href: ../../config/stpa/core_system.yaml
+          rel: reference
+          text: STPA control structure YAML (source of truth)
+        - href: ../../src/gateway/governance/stpa_validator.py
+          rel: reference
+          text: STPA Python validator
+      - component-uuid: e5000099-stpa-4000-8000-compiler00001
         uuid: h8000099-stpa-4000-8000-compiler00005
-        description: 'STPA compiler enforces GDPR Art. 22 (Automated Individual Decision-Making
-          Including Profiling) via generated artifacts under EU AI Act High-Risk AI
-          obligations. UCAs covered: UCA-3.'
+        description: 'STPA compiler maps Art. 17 (Quality Management System (QMS)
+          Requirements) under EU AI Act High-Risk AI obligations via generated artifacts:
+          src/cage_finance/stpa/uca_rules.py (generated Python UCA rules), src/gateway/governance/stpa_validator.py
+          (STPA validator). UCAs covered: UCA-2, UCA-4, UCA-9. Server-bound enforcing
+          UCAs: UCA-2; advisory UCAs (not server-bound): UCA-4, UCA-9.'
         implementation-status:
           state: partial
         links:
@@ -977,9 +999,12 @@ system-security-plan:
           text: STPA Python validator
       - component-uuid: e5000099-stpa-4000-8000-compiler00001
         uuid: h8000099-stpa-4000-8000-compiler00006
-        description: 'STPA compiler enforces Art. 12 (Record-Keeping and Automatic
-          Logging Obligations) via generated artifacts under EU AI Act High-Risk AI
-          obligations. UCAs covered: UCA-4.'
+        description: 'STPA compiler maps Art. 10(5) (Data Governance — Personal data
+          and data minimisation) under EU AI Act High-Risk AI obligations via generated
+          artifacts: src/cage_finance/stpa/uca_rules.py (generated Python UCA rules),
+          src/gateway/governance/stpa_validator.py (STPA validator). UCAs covered:
+          UCA-3. Server-bound enforcing UCAs: none; advisory UCAs (not server-bound):
+          UCA-3.'
         implementation-status:
           state: partial
         links:
@@ -991,11 +1016,14 @@ system-security-plan:
           text: STPA Python validator
       - component-uuid: e5000099-stpa-4000-8000-compiler00001
         uuid: h8000099-stpa-4000-8000-compiler00007
-        description: 'STPA compiler enforces Art. 9(2)(b) (Risk Controls — Identification
-          of known and foreseeable risks) via generated artifacts under EU AI Act
-          High-Risk AI obligations. UCAs covered: UCA-5.'
+        description: 'STPA compiler maps GDPR Art. 22 (Automated Individual Decision-Making
+          Including Profiling) under EU AI Act High-Risk AI obligations via generated
+          artifacts: src/cage_finance/stpa/uca_rules.py (generated Python UCA rules),
+          src/gateway/governance/stpa_validator.py (STPA validator). UCAs covered:
+          UCA-3. Server-bound enforcing UCAs: none; advisory UCAs (not server-bound):
+          UCA-3.'
         implementation-status:
-          state: implemented
+          state: partial
         links:
         - href: ../../config/stpa/core_system.yaml
           rel: reference
@@ -1005,9 +1033,12 @@ system-security-plan:
           text: STPA Python validator
       - component-uuid: e5000099-stpa-4000-8000-compiler00001
         uuid: h8000099-stpa-4000-8000-compiler00008
-        description: 'STPA compiler enforces Annex III §5(b) (High-Risk AI Classification
-          — Creditworthiness and credit scoring) via generated artifacts under EU
-          AI Act High-Risk AI obligations. UCAs covered: UCA-7.'
+        description: 'STPA compiler maps Annex III §5(b) (High-Risk AI Classification
+          — Creditworthiness and credit scoring) under EU AI Act High-Risk AI obligations
+          via generated artifacts: src/cage_finance/stpa/uca_rules.py (generated Python
+          UCA rules), src/gateway/governance/stpa_validator.py (STPA validator). UCAs
+          covered: UCA-7. Server-bound enforcing UCAs: UCA-7; advisory UCAs (not server-bound):
+          none.'
         implementation-status:
           state: implemented
         links:
@@ -1019,9 +1050,11 @@ system-security-plan:
           text: STPA Python validator
       - component-uuid: e5000099-stpa-4000-8000-compiler00001
         uuid: h8000099-stpa-4000-8000-compiler00009
-        description: 'STPA compiler enforces Art. 9 (Risk Management System for High-Risk
-          AI) via generated artifacts under EU AI Act High-Risk AI obligations. UCAs
-          covered: UCA-8, UCA-9.'
+        description: 'STPA compiler maps Art. 9 (Risk Management System for High-Risk
+          AI) under EU AI Act High-Risk AI obligations via generated artifacts: src/cage_finance/stpa/uca_rules.py
+          (generated Python UCA rules), src/gateway/governance/stpa_validator.py (STPA
+          validator). UCAs covered: UCA-8, UCA-9. Server-bound enforcing UCAs: none;
+          advisory UCAs (not server-bound): UCA-8, UCA-9.'
         implementation-status:
           state: partial
         links:

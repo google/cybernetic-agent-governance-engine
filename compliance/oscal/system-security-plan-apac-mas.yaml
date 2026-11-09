@@ -3,7 +3,7 @@ system-security-plan:
   metadata:
     title: CAGE System Security Plan (APAC_MAS — MAS FEAT / MAS Notice 655 / MAS TRM)
     published: '2026-06-15T00:00:00Z'
-    last-modified: '2026-11-05T21:08:46Z'
+    last-modified: '2026-11-09T00:02:28Z'
     version: 1.0.0-draft+stpa
     oscal-version: 1.0.4
     remarks: 'This System Security Plan (SSP) documents the compliance controls implemented
@@ -403,7 +403,7 @@ system-security-plan:
           test_missing_regional_file_fails_closed). Remediation recorded as POAM-2026-102
           in docs/POAM.md.
         implementation-status:
-          state: implemented
+          state: partially-implemented
         links:
         - href: ../../tests/governor/test_regional_overlay.py
           rel: reference
@@ -423,7 +423,7 @@ system-security-plan:
         in this region and no warrant source is needed.'
       props:
       - name: implementation-status
-        value: implemented
+        value: partial
       - name: cage-control-id
         value: CTRL_AGT_001
       - name: applicable-regions
@@ -437,45 +437,51 @@ system-security-plan:
           (test_plugin_wires_the_effective_floor_and_gamma) and tests/governor/test_jurisdiction_wiring.py
           (trade_confidence tier present in the assembled pipeline).
         implementation-status:
-          state: implemented
+          state: partially-implemented
         links:
         - href: ../../tests/cage_finance/test_trade_confidence_tier.py
           rel: reference
           text: TradeConfidenceTier tests
     - uuid: g7000099-stpa-4000-8000-compiler00001
       control-id: sa-11
-      description: "The STPA-to-Policy Compiler implements a deterministic, design-time\
-        \ safety\n          control that translates STAMP/STPA Unsafe Control Action\
-        \ (UCA) analysis\n          directly into runtime-enforceable governance artifacts.\
-        \ This eliminates the\n          \"Natural Language Tax\" — the compliance\
-        \ gap between human-readable safety\n          specifications and the actual\
-        \ code running in the cluster.\n\n          Compiler source: src/gateway/governance/stpa_compiler.py\n\
-        \          Control structure (source of truth): config/stpa/\n          Generated\
-        \ artifacts:\n            - src/gateway/governance/stpa_validator.py (Python\
-        \ — 12 UCAs: 6 enforcing, 6 advisory)\n            - config/sandbox/generated_sandbox_policy.yaml\
-        \ (Sandbox — 2 UCAs)\n\n          Target compliance framework: MAS FEAT Principles\
-        \ (Fairness, Ethics, Accountability, Transparency)\n          Framework reference:\
-        \ https://www.mas.gov.sg/publications/monographs-or-information-paper/2019/feat-principles\n\
+      description: "The STPA-to-Policy Compiler deterministically compiles the merged\
+        \ STAMP/STPA\n          Unsafe Control Action (UCA) specifications into governance\
+        \ artifacts whose\n          freshness CI checks (scripts/check_stpa_freshness.py).\
+        \ A UCA's Python rule\n          enforces at runtime only when every input\
+        \ it reads is bound server-side by a\n          ServerInputResolver registered\
+        \ in assemble_governor(); rules keyed on\n          caller-asserted flags\
+        \ are advisory, so this control is implemented only\n          when every\
+        \ UCA enforces.\n\n          Compiler source: src/gateway/governance/stpa_compiler.py\n\
+        \          Control structure sources: config/stpa/ and each domain's src/cage_*/config/stpa/\n\
+        \          Generated artifacts:\n            - Python rules: src/cage_finance/stpa/uca_rules.py\
+        \ (generated Python UCA rules), src/gateway/governance/stpa_validator.py (STPA\
+        \ validator) (12 UCAs: 6 enforcing, 6 advisory)\n            - config/sandbox/generated_sandbox_policy.yaml\
+        \ (sandbox metadata for 2 UCAs; design-time reference, not read at runtime)\n\
+        \n          Target compliance framework: MAS FEAT Principles (Fairness, Ethics,\
+        \ Accountability, Transparency)\n          Framework reference: https://www.mas.gov.sg/publications/monographs-or-information-paper/2019/feat-principles\n\
         \          System: CAGE Financial Advisor v1.1.0\n          UCAs encoded:\
         \ 12 (6 enforcing server-bound, 6 advisory)\n          Hazards modelled: 7\n\
-        \          Safety constraints: 3\n          Last compiled: 2026-11-05T21:08:46Z\n\
+        \          Safety constraints: 3\n          Last compiled: 2026-11-09T00:02:28Z\n\
         \n          UCA-to-Control mapping (MAS FEAT Principles (Fairness, Ethics,\
         \ Accountability, Transparency)):\n            UCA-1 (unsafe_action): Agent\
         \ executes write operation without a human approval token.\n  → MAS_FEAT:\
         \ Accountability A1 (Clear roles and responsibilities for AI decision-making),\
         \ Ethics E3 (AI system operates within defined boundaries and scope)\nUCA-10\
         \ (wrong_timing) [advisory — partial]: Agent reads account balance with stale\
-        \ connection data.\n  → MAS_FEAT: \nUCA-12 (unsafe_action) [advisory — partial]:\
-        \ Agent executes bounded trade when bounding contracts B1-B10 fail validation.\
-        \ Phase 5: execute_trade_bounded is EXTERNALLY_REVERSIBLE when B10 rollback\
-        \ window validation passes, enabling HITL review without confidence hard-gate\
-        \ per VEC-004. When B10 fails (closed rollback window), the bounding tier\
-        \ raises a HITL violation (B10_ROLLBACK_WINDOW_CLOSED) and the request parks\
-        \ for human approval, as an irreversible action would.\n  → MAS_FEAT: \nUCA-13\
-        \ (unsafe_action): Agent executes sell order exceeding the allowable fraction\
-        \ of portfolio value.\n  → MAS_FEAT: Ethics E3 (AI system operates within\
-        \ defined boundaries and scope), Accountability A3 (Human accountability for\
-        \ AI-assisted recommendations)\nUCA-2 (wrong_timing): Agent executes trade\
+        \ connection data.\n  → MAS_FEAT: Accountability A2 (Audit trail and record-keeping\
+        \ for AI decisions), Transparency T2 (Regular reporting of AI performance\
+        \ and limitations)\nUCA-12 (unsafe_action) [advisory — partial]: Agent executes\
+        \ bounded trade when bounding contracts B1-B10 fail validation. Phase 5: execute_trade_bounded\
+        \ is EXTERNALLY_REVERSIBLE when B10 rollback window validation passes, enabling\
+        \ HITL review without confidence hard-gate per VEC-004. When B10 fails (closed\
+        \ rollback window), the bounding tier raises a HITL violation (B10_ROLLBACK_WINDOW_CLOSED)\
+        \ and the request parks for human approval, as an irreversible action would.\n\
+        \  → MAS_FEAT: Ethics E3 (AI system operates within defined boundaries and\
+        \ scope), Accountability A3 (Human accountability for AI-assisted recommendations)\n\
+        UCA-13 (unsafe_action): Agent executes sell order exceeding the allowable\
+        \ fraction of portfolio value.\n  → MAS_FEAT: Ethics E3 (AI system operates\
+        \ within defined boundaries and scope), Accountability A3 (Human accountability\
+        \ for AI-assisted recommendations)\nUCA-2 (wrong_timing): Agent executes trade\
         \ with stale market data (latency > threshold).\n  → MAS_FEAT: Fairness F1\
         \ (AI system is regularly tested for bias across protected attributes), Transparency\
         \ T1 (AI system outputs are explainable to affected parties)\nUCA-3 (unsafe_action)\
@@ -504,7 +510,7 @@ system-security-plan:
         \ T2 (Regular reporting of AI performance and limitations)"
       props:
       - name: implementation-status
-        value: implemented
+        value: partial
       - name: stpa-compiler-version
         value: 1.1.0
       - name: uca-count
@@ -516,7 +522,7 @@ system-security-plan:
       - name: hazard-count
         value: '7'
       - name: last-compiled
-        value: '2026-11-05T21:08:46Z'
+        value: '2026-11-09T00:02:28Z'
       - name: target-framework
         value: MAS FEAT Principles (Fairness, Ethics, Accountability, Transparency)
       - name: artifact-python
@@ -530,73 +536,11 @@ system-security-plan:
       by-components:
       - component-uuid: e5000099-stpa-4000-8000-compiler00001
         uuid: h8000099-stpa-4000-8000-compiler00000
-        description: 'STPA compiler enforces MAS FEAT Accountability A1 via generated
-          governance artifacts. UCAs covered: UCA-1, UCA-5, UCA-8, UCA-9.'
-        implementation-status:
-          state: implemented
-        links:
-        - href: ../../config/stpa/core_system.yaml
-          rel: reference
-          text: STPA control structure YAML (source of truth)
-        - href: ../../src/gateway/governance/stpa_validator.py
-          rel: reference
-          text: STPA Python validator
-      - component-uuid: e5000099-stpa-4000-8000-compiler00001
-        uuid: h8000099-stpa-4000-8000-compiler00001
-        description: 'STPA compiler enforces MAS FEAT Ethics E3 via generated governance
-          artifacts. UCAs covered: UCA-1, UCA-13, UCA-6, UCA-7.'
-        implementation-status:
-          state: implemented
-        links:
-        - href: ../../config/stpa/core_system.yaml
-          rel: reference
-          text: STPA control structure YAML (source of truth)
-        - href: ../../src/gateway/governance/stpa_validator.py
-          rel: reference
-          text: STPA Python validator
-      - component-uuid: e5000099-stpa-4000-8000-compiler00001
-        uuid: h8000099-stpa-4000-8000-compiler00002
-        description: 'STPA compiler enforces MAS FEAT Accountability A3 via generated
-          governance artifacts. UCAs covered: UCA-13, UCA-6.'
-        implementation-status:
-          state: implemented
-        links:
-        - href: ../../config/stpa/core_system.yaml
-          rel: reference
-          text: STPA control structure YAML (source of truth)
-        - href: ../../src/gateway/governance/stpa_validator.py
-          rel: reference
-          text: STPA Python validator
-      - component-uuid: e5000099-stpa-4000-8000-compiler00001
-        uuid: h8000099-stpa-4000-8000-compiler00003
-        description: 'STPA compiler enforces MAS FEAT Fairness F1 via generated governance
-          artifacts. UCAs covered: UCA-2, UCA-7.'
-        implementation-status:
-          state: implemented
-        links:
-        - href: ../../config/stpa/core_system.yaml
-          rel: reference
-          text: STPA control structure YAML (source of truth)
-        - href: ../../src/gateway/governance/stpa_validator.py
-          rel: reference
-          text: STPA Python validator
-      - component-uuid: e5000099-stpa-4000-8000-compiler00001
-        uuid: h8000099-stpa-4000-8000-compiler00004
-        description: 'STPA compiler enforces MAS FEAT Transparency T1 via generated
-          governance artifacts. UCAs covered: UCA-2, UCA-4.'
-        implementation-status:
-          state: implemented
-        links:
-        - href: ../../config/stpa/core_system.yaml
-          rel: reference
-          text: STPA control structure YAML (source of truth)
-        - href: ../../src/gateway/governance/stpa_validator.py
-          rel: reference
-          text: STPA Python validator
-      - component-uuid: e5000099-stpa-4000-8000-compiler00001
-        uuid: h8000099-stpa-4000-8000-compiler00005
-        description: 'STPA compiler enforces MAS FEAT Ethics E2 via generated governance
-          artifacts. UCAs covered: UCA-3, UCA-8.'
+        description: 'STPA compiler maps MAS FEAT Accountability A1 (Clear roles and
+          responsibilities for AI decision-making) via generated artifacts: src/cage_finance/stpa/uca_rules.py
+          (generated Python UCA rules), src/gateway/governance/stpa_validator.py (STPA
+          validator). UCAs covered: UCA-1, UCA-5, UCA-8, UCA-9. Server-bound enforcing
+          UCAs: UCA-1, UCA-5; advisory UCAs (not server-bound): UCA-8, UCA-9.'
         implementation-status:
           state: partial
         links:
@@ -607,9 +551,93 @@ system-security-plan:
           rel: reference
           text: STPA Python validator
       - component-uuid: e5000099-stpa-4000-8000-compiler00001
+        uuid: h8000099-stpa-4000-8000-compiler00001
+        description: 'STPA compiler maps MAS FEAT Ethics E3 (AI system operates within
+          defined boundaries and scope) via generated artifacts: src/cage_finance/stpa/uca_rules.py
+          (generated Python UCA rules), src/gateway/governance/stpa_validator.py (STPA
+          validator). UCAs covered: UCA-1, UCA-12, UCA-13, UCA-6, UCA-7. Server-bound
+          enforcing UCAs: UCA-1, UCA-13, UCA-6, UCA-7; advisory UCAs (not server-bound):
+          UCA-12.'
+        implementation-status:
+          state: partial
+        links:
+        - href: ../../config/stpa/core_system.yaml
+          rel: reference
+          text: STPA control structure YAML (source of truth)
+        - href: ../../src/gateway/governance/stpa_validator.py
+          rel: reference
+          text: STPA Python validator
+      - component-uuid: e5000099-stpa-4000-8000-compiler00001
+        uuid: h8000099-stpa-4000-8000-compiler00002
+        description: 'STPA compiler maps MAS FEAT Accountability A2 (Audit trail and
+          record-keeping for AI decisions) via generated artifacts: src/cage_finance/stpa/uca_rules.py
+          (generated Python UCA rules), src/gateway/governance/stpa_validator.py (STPA
+          validator). UCAs covered: UCA-10, UCA-4. Server-bound enforcing UCAs: none;
+          advisory UCAs (not server-bound): UCA-10, UCA-4.'
+        implementation-status:
+          state: partial
+        links:
+        - href: ../../config/stpa/core_system.yaml
+          rel: reference
+          text: STPA control structure YAML (source of truth)
+        - href: ../../src/gateway/governance/stpa_validator.py
+          rel: reference
+          text: STPA Python validator
+      - component-uuid: e5000099-stpa-4000-8000-compiler00001
+        uuid: h8000099-stpa-4000-8000-compiler00003
+        description: 'STPA compiler maps MAS FEAT Transparency T2 (Regular reporting
+          of AI performance and limitations) via generated artifacts: src/cage_finance/stpa/uca_rules.py
+          (generated Python UCA rules), src/gateway/governance/stpa_validator.py (STPA
+          validator). UCAs covered: UCA-10, UCA-3, UCA-9. Server-bound enforcing UCAs:
+          none; advisory UCAs (not server-bound): UCA-10, UCA-3, UCA-9.'
+        implementation-status:
+          state: partial
+        links:
+        - href: ../../config/stpa/core_system.yaml
+          rel: reference
+          text: STPA control structure YAML (source of truth)
+        - href: ../../src/gateway/governance/stpa_validator.py
+          rel: reference
+          text: STPA Python validator
+      - component-uuid: e5000099-stpa-4000-8000-compiler00001
+        uuid: h8000099-stpa-4000-8000-compiler00004
+        description: 'STPA compiler maps MAS FEAT Accountability A3 (Human accountability
+          for AI-assisted recommendations) via generated artifacts: src/cage_finance/stpa/uca_rules.py
+          (generated Python UCA rules), src/gateway/governance/stpa_validator.py (STPA
+          validator). UCAs covered: UCA-12, UCA-13, UCA-6. Server-bound enforcing
+          UCAs: UCA-13, UCA-6; advisory UCAs (not server-bound): UCA-12.'
+        implementation-status:
+          state: partial
+        links:
+        - href: ../../config/stpa/core_system.yaml
+          rel: reference
+          text: STPA control structure YAML (source of truth)
+        - href: ../../src/gateway/governance/stpa_validator.py
+          rel: reference
+          text: STPA Python validator
+      - component-uuid: e5000099-stpa-4000-8000-compiler00001
+        uuid: h8000099-stpa-4000-8000-compiler00005
+        description: 'STPA compiler maps MAS FEAT Fairness F1 (AI system is regularly
+          tested for bias across protected attributes) via generated artifacts: src/cage_finance/stpa/uca_rules.py
+          (generated Python UCA rules), src/gateway/governance/stpa_validator.py (STPA
+          validator). UCAs covered: UCA-2, UCA-7. Server-bound enforcing UCAs: UCA-2,
+          UCA-7; advisory UCAs (not server-bound): none.'
+        implementation-status:
+          state: implemented
+        links:
+        - href: ../../config/stpa/core_system.yaml
+          rel: reference
+          text: STPA control structure YAML (source of truth)
+        - href: ../../src/gateway/governance/stpa_validator.py
+          rel: reference
+          text: STPA Python validator
+      - component-uuid: e5000099-stpa-4000-8000-compiler00001
         uuid: h8000099-stpa-4000-8000-compiler00006
-        description: 'STPA compiler enforces MAS FEAT Transparency T2 via generated
-          governance artifacts. UCAs covered: UCA-3, UCA-9.'
+        description: 'STPA compiler maps MAS FEAT Transparency T1 (AI system outputs
+          are explainable to affected parties) via generated artifacts: src/cage_finance/stpa/uca_rules.py
+          (generated Python UCA rules), src/gateway/governance/stpa_validator.py (STPA
+          validator). UCAs covered: UCA-2, UCA-4. Server-bound enforcing UCAs: UCA-2;
+          advisory UCAs (not server-bound): UCA-4.'
         implementation-status:
           state: partial
         links:
@@ -621,8 +649,11 @@ system-security-plan:
           text: STPA Python validator
       - component-uuid: e5000099-stpa-4000-8000-compiler00001
         uuid: h8000099-stpa-4000-8000-compiler00007
-        description: 'STPA compiler enforces MAS FEAT Accountability A2 via generated
-          governance artifacts. UCAs covered: UCA-4.'
+        description: 'STPA compiler maps MAS FEAT Ethics E2 (AI system reasoning is
+          sound and can be explained) via generated artifacts: src/cage_finance/stpa/uca_rules.py
+          (generated Python UCA rules), src/gateway/governance/stpa_validator.py (STPA
+          validator). UCAs covered: UCA-3, UCA-8. Server-bound enforcing UCAs: none;
+          advisory UCAs (not server-bound): UCA-3, UCA-8.'
         implementation-status:
           state: partial
         links:
@@ -634,8 +665,11 @@ system-security-plan:
           text: STPA Python validator
       - component-uuid: e5000099-stpa-4000-8000-compiler00001
         uuid: h8000099-stpa-4000-8000-compiler00008
-        description: 'STPA compiler enforces MAS FEAT Fairness F2 via generated governance
-          artifacts. UCAs covered: UCA-5.'
+        description: 'STPA compiler maps MAS FEAT Fairness F2 (Fairness metrics are
+          defined, measured, and reported) via generated artifacts: src/cage_finance/stpa/uca_rules.py
+          (generated Python UCA rules), src/gateway/governance/stpa_validator.py (STPA
+          validator). UCAs covered: UCA-5. Server-bound enforcing UCAs: UCA-5; advisory
+          UCAs (not server-bound): none.'
         implementation-status:
           state: implemented
         links:

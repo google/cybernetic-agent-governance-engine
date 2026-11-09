@@ -46,7 +46,7 @@ component-definition:
         - Real-time Slack/PagerDuty alerting via notifier.py
         - Compliance audit workflow with critical-failure alerting via audit_workflow.py
         - The /v1/metrics/* API endpoints consumed by other Lula validations
-      IR-6 requires that security incidents be reported to appropriate organizational officials and external authorities within defined timeframes — the compliance-bridge is the automated first-responder for this requirement. See: compliance/continuous-monitoring/ISCM_STRATEGY.md — IR-6 monitoring cadence. See: docs/ROLES_AND_RESPONSIBILITIES.md — ISSO/ISSM incident response chain.
+      IR-6 requires that security incidents be reported to appropriate organizational officials and external authorities within defined timeframes — the compliance-bridge is the automated first-responder for this requirement. See: compliance/continuous-monitoring/ISCM_STRATEGY.md — IR-6 monitoring cadence. See: docs/operations/JURISDICTION_INVENTORY.md — ISSO/ISSM incident response chain.
   components:
   - uuid: cd3eece5-1330-586c-9103-aa82e530c38f
     type: software

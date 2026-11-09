@@ -3,7 +3,7 @@ system-security-plan:
   metadata:
     title: CAGE System Security Plan (US_FED — NIST SP 800-53 Rev 5 HIGH)
     published: '2026-03-06T00:00:00Z'
-    last-modified: '2026-11-08T13:26:12Z'
+    last-modified: '2026-11-08T22:59:18Z'
     version: 1.0.1-draft+stpa
     oscal-version: 1.0.4
     remarks: 'This System Security Plan (SSP) documents the security controls implemented
@@ -405,10 +405,10 @@ system-security-plan:
       - uuid: c3000001-0000-4000-8000-000000000001
         description: CAGE network architecture diagram
         links:
-        - href: docs/GATEWAY_ARCHITECTURE.md
+        - href: docs/architecture/GATEWAY_ARCHITECTURE.md
           rel: reference
           text: Gateway Architecture Documentation
-        - href: docs/INFERENCE_GATEWAY_ARCHITECTURE.md
+        - href: docs/architecture/INFERENCE_GATEWAY_ARCHITECTURE.md
           rel: reference
           text: Inference Gateway Architecture
     data-flow:
@@ -915,9 +915,9 @@ system-security-plan:
           '
         implementation-status:
           state: partially-implemented
-        remarks: Formal review procedures documented in docs/ROLES_AND_RESPONSIBILITIES.md;
-          automated review workflow pending POAM-001. Credential broker integration
-          verified in tests/test_execution_actuator_broker.py
+        remarks: Formal review procedures documented in docs/README.md; automated
+          review workflow pending POAM-001. Credential broker integration verified
+          in tests/test_execution_actuator_broker.py
     - uuid: g7000002-0000-4000-8000-000000000002
       control-id: ac-3
       description: 'Access enforcement is implemented via Open Policy Agent (OPA)
@@ -970,7 +970,7 @@ system-security-plan:
         '
       props:
       - name: implementation-status
-        value: implemented
+        value: partial
       responsible-roles:
       - role-id: compliance-engineer
       by-components:
@@ -982,7 +982,7 @@ system-security-plan:
 
           '
         implementation-status:
-          state: implemented
+          state: partially-implemented
         links:
         - href: ../../compliance/lula/lula-validation-ac3.yaml
           rel: reference
@@ -1001,7 +1001,7 @@ system-security-plan:
         '
       props:
       - name: implementation-status
-        value: implemented
+        value: partial
       - name: ai-specific-events
         value: ai-governance-decision, policy-violation, prompt-injection-attempt
       responsible-roles:
@@ -1015,7 +1015,7 @@ system-security-plan:
 
           '
         implementation-status:
-          state: implemented
+          state: partially-implemented
       - component-uuid: e5000005-0000-4000-8000-000000000005
         uuid: h8000003-0000-4000-8000-000000000004
         description: 'AgentSight eBPF monitor captures kernel-level syscall events
@@ -1023,7 +1023,7 @@ system-security-plan:
 
           '
         implementation-status:
-          state: implemented
+          state: partially-implemented
     - uuid: g7000004-0000-4000-8000-000000000004
       control-id: au-12
       description: "Audit record generation is implemented through two distinct auditing\
@@ -1064,7 +1064,7 @@ system-security-plan:
         \ is bound into the routing seal's evidence record under record_hash (src/gateway/governance/warrant/reliance.py).\n"
       props:
       - name: implementation-status
-        value: implemented
+        value: partial
       - name: evidence-chain-blocking
         value: configurable via EVIDENCE_CHAIN_BLOCKING environment variable
       - name: auditing-modes
@@ -1094,7 +1094,7 @@ system-security-plan:
 
           '
         implementation-status:
-          state: implemented
+          state: partially-implemented
         links:
         - href: ../../compliance/lula/lula-validation-au12.yaml
           rel: reference
@@ -1146,7 +1146,7 @@ system-security-plan:
 
           '
         implementation-status:
-          state: implemented
+          state: partially-implemented
         links:
         - href: ../../src/gateway/governance/provenance_chain.py
           rel: reference
@@ -1225,7 +1225,7 @@ system-security-plan:
         '
       props:
       - name: implementation-status
-        value: implemented
+        value: partial
       responsible-roles:
       - role-id: system-admin
       by-components:
@@ -1241,7 +1241,7 @@ system-security-plan:
 
           '
         implementation-status:
-          state: implemented
+          state: partially-implemented
         remarks: Branch rename from rc-v0.1.0 to main completed 2026-06-05. This constitutes
           a CM-2/CM-6 configuration baseline change. Authoritative branch is now main.
         links:
@@ -1280,16 +1280,16 @@ system-security-plan:
     - uuid: g7000007-0000-4000-8000-000000000007
       control-id: ir-1
       description: 'Incident response policy and procedures are documented in the
-        CAGE Incident Response Plan referenced in docs/NIST_RMF_CHUNK3_SELECT_IMPLEMENT.md
+        CAGE Incident Response Plan referenced in docs/compliance/us_fed/NIST_RMF_CHUNK3_SELECT_IMPLEMENT.md
         and the ISCM strategy (compliance/continuous-monitoring/ISCM_STRATEGY.md).
         The policy establishes: incident classification (P1/P2/P3), response time
-        objectives, escalation procedures, and roles/responsibilities per docs/ROLES_AND_RESPONSIBILITIES.md.
+        objectives, escalation procedures, and roles/responsibilities per docs/README.md.
         Policy review occurs annually and upon significant system change.
 
         '
       props:
       - name: implementation-status
-        value: implemented
+        value: partial
       responsible-roles:
       - role-id: isso
       by-components:
@@ -1301,7 +1301,7 @@ system-security-plan:
 
           '
         implementation-status:
-          state: implemented
+          state: partially-implemented
     - uuid: g7000008-0000-4000-8000-000000000008
       control-id: ir-6
       description: 'Incident reporting is partially implemented. The Compliance Bridge
@@ -1421,7 +1421,7 @@ system-security-plan:
         '
       props:
       - name: implementation-status
-        value: implemented
+        value: partial
       - name: poam-reference
         value: POAM-013, POAM-2026-080
       - name: current-capability
@@ -1439,7 +1439,7 @@ system-security-plan:
 
           '
         implementation-status:
-          state: implemented
+          state: partially-implemented
       - component-uuid: e5000001-0000-4000-8000-000000000001
         uuid: h8000010-0000-4000-8000-000000000012
         description: 'CAGE Gateway enforces TLS 1.3 for all inbound client connections
@@ -1447,7 +1447,7 @@ system-security-plan:
 
           '
         implementation-status:
-          state: implemented
+          state: partially-implemented
     - uuid: g7000011-0000-4000-8000-000000000011
       control-id: ia-3
       description: Device identification and authentication is enforced across governance-stack
@@ -1629,20 +1629,24 @@ system-security-plan:
       - role-id: compliance-engineer
     - uuid: g7000099-stpa-4000-8000-compiler00001
       control-id: sa-11
-      description: "The STPA-to-Policy Compiler implements a deterministic, design-time\
-        \ safety\n          control that translates STAMP/STPA Unsafe Control Action\
-        \ (UCA) analysis\n          directly into runtime-enforceable governance artifacts.\
-        \ This eliminates the\n          \"Natural Language Tax\" — the compliance\
-        \ gap between human-readable safety\n          specifications and the actual\
-        \ code running in the cluster.\n\n          Compiler source: src/gateway/governance/stpa_compiler.py\n\
-        \          Control structure (source of truth): config/stpa/\n          Generated\
-        \ artifacts:\n            - src/gateway/governance/stpa_validator.py (Python\
-        \ — 12 UCAs: 6 enforcing, 6 advisory)\n            - config/sandbox/generated_sandbox_policy.yaml\
-        \ (Sandbox — 2 UCAs)\n\n          Target compliance framework: NIST SP 800-53\
-        \ Rev 5 (FedRAMP baseline)\n          Framework reference: https://csrc.nist.gov/publications/detail/sp/800-53/rev-5/final\n\
+      description: "The STPA-to-Policy Compiler deterministically compiles the merged\
+        \ STAMP/STPA\n          Unsafe Control Action (UCA) specifications into governance\
+        \ artifacts whose\n          freshness CI checks (scripts/check_stpa_freshness.py).\
+        \ A UCA's Python rule\n          enforces at runtime only when every input\
+        \ it reads is bound server-side by a\n          ServerInputResolver registered\
+        \ in assemble_governor(); rules keyed on\n          caller-asserted flags\
+        \ are advisory, so this control is implemented only\n          when every\
+        \ UCA enforces.\n\n          Compiler source: src/gateway/governance/stpa_compiler.py\n\
+        \          Control structure sources: config/stpa/ and each domain's src/cage_*/config/stpa/\n\
+        \          Generated artifacts:\n            - Python rules: src/cage_finance/stpa/uca_rules.py\
+        \ (generated Python UCA rules), src/gateway/governance/stpa_validator.py (STPA\
+        \ validator) (12 UCAs: 6 enforcing, 6 advisory)\n            - config/sandbox/generated_sandbox_policy.yaml\
+        \ (sandbox metadata for 2 UCAs; design-time reference, not read at runtime)\n\
+        \n          Target compliance framework: NIST SP 800-53 Rev 5 (FedRAMP baseline)\n\
+        \          Framework reference: https://csrc.nist.gov/publications/detail/sp/800-53/rev-5/final\n\
         \          System: CAGE Financial Advisor v1.1.0\n          UCAs encoded:\
         \ 12 (6 enforcing server-bound, 6 advisory)\n          Hazards modelled: 7\n\
-        \          Safety constraints: 3\n          Last compiled: 2026-11-08T13:26:12Z\n\
+        \          Safety constraints: 3\n          Last compiled: 2026-11-08T22:59:18Z\n\
         \n          UCA-to-Control mapping (NIST SP 800-53 Rev 5 (FedRAMP baseline)):\n\
         \            UCA-1 (unsafe_action): Agent executes write operation without\
         \ a human approval token.\n  → NIST: ac-3 (Access Enforcement), sc-4 (Information\
@@ -1680,7 +1684,7 @@ system-security-plan:
         \ ac-3 (Access Enforcement), cm-6 (Configuration Settings)"
       props:
       - name: implementation-status
-        value: implemented
+        value: partial
       - name: stpa-compiler-version
         value: 1.1.0
       - name: uca-count
@@ -1692,7 +1696,7 @@ system-security-plan:
       - name: hazard-count
         value: '7'
       - name: last-compiled
-        value: '2026-11-08T13:26:12Z'
+        value: '2026-11-08T22:59:18Z'
       - name: target-framework
         value: NIST SP 800-53 Rev 5 (FedRAMP baseline)
       - name: artifact-python
@@ -1706,12 +1710,13 @@ system-security-plan:
       by-components:
       - component-uuid: e5000099-stpa-4000-8000-compiler00001
         uuid: h8000099-stpa-4000-8000-compiler00000
-        description: 'STPA compiler enforces AC-3 (Access Enforcement) via generated
-          artifacts: src/cage_finance/stpa/uca_rules.py (generated Python UCA rules),
-          src/gateway/governance/stpa_validator.py (STPA validator). UCAs covered:
-          UCA-1, UCA-12, UCA-3, UCA-5, UCA-8, UCA-9.'
+        description: 'STPA compiler maps AC-3 (Access Enforcement) via generated artifacts:
+          src/cage_finance/stpa/uca_rules.py (generated Python UCA rules), src/gateway/governance/stpa_validator.py
+          (STPA validator). UCAs covered: UCA-1, UCA-12, UCA-3, UCA-5, UCA-8, UCA-9.
+          Server-bound enforcing UCAs: UCA-1, UCA-5; advisory UCAs (not server-bound):
+          UCA-12, UCA-3, UCA-8, UCA-9.'
         implementation-status:
-          state: implemented
+          state: partial
         links:
         - href: ../../config/stpa/core_system.yaml
           rel: reference
@@ -1721,10 +1726,12 @@ system-security-plan:
           text: STPA Python validator
       - component-uuid: e5000099-stpa-4000-8000-compiler00001
         uuid: h8000099-stpa-4000-8000-compiler00001
-        description: 'STPA compiler enforces SC-4 (Information in Shared System Resources
+        description: 'STPA compiler maps SC-4 (Information in Shared System Resources
           / Fiscal Limits) via generated artifacts: src/cage_finance/stpa/uca_rules.py
           (generated Python UCA rules), src/gateway/governance/stpa_validator.py (STPA
-          validator). UCAs covered: UCA-1, UCA-13, UCA-5, UCA-6, UCA-7.'
+          validator). UCAs covered: UCA-1, UCA-13, UCA-5, UCA-6, UCA-7. Server-bound
+          enforcing UCAs: UCA-1, UCA-13, UCA-5, UCA-6, UCA-7; advisory UCAs (not server-bound):
+          none.'
         implementation-status:
           state: implemented
         links:
@@ -1736,12 +1743,13 @@ system-security-plan:
           text: STPA Python validator
       - component-uuid: e5000099-stpa-4000-8000-compiler00001
         uuid: h8000099-stpa-4000-8000-compiler00002
-        description: 'STPA compiler enforces CM-6 (Configuration Settings) via generated
+        description: 'STPA compiler maps CM-6 (Configuration Settings) via generated
           artifacts: src/cage_finance/stpa/uca_rules.py (generated Python UCA rules),
           src/gateway/governance/stpa_validator.py (STPA validator). UCAs covered:
-          UCA-10, UCA-13, UCA-2, UCA-9.'
+          UCA-10, UCA-13, UCA-2, UCA-9. Server-bound enforcing UCAs: UCA-13, UCA-2;
+          advisory UCAs (not server-bound): UCA-10, UCA-9.'
         implementation-status:
-          state: implemented
+          state: partial
         links:
         - href: ../../config/stpa/core_system.yaml
           rel: reference
@@ -1751,10 +1759,10 @@ system-security-plan:
           text: STPA Python validator
       - component-uuid: e5000099-stpa-4000-8000-compiler00001
         uuid: h8000099-stpa-4000-8000-compiler00003
-        description: 'STPA compiler enforces SI-4 (System Monitoring) via generated
-          artifacts: src/cage_finance/stpa/uca_rules.py (generated Python UCA rules),
-          src/gateway/governance/stpa_validator.py (STPA validator). UCAs covered:
-          UCA-10.'
+        description: 'STPA compiler maps SI-4 (System Monitoring) via generated artifacts:
+          src/cage_finance/stpa/uca_rules.py (generated Python UCA rules), src/gateway/governance/stpa_validator.py
+          (STPA validator). UCAs covered: UCA-10. Server-bound enforcing UCAs: none;
+          advisory UCAs (not server-bound): UCA-10.'
         implementation-status:
           state: partial
         links:
@@ -1766,12 +1774,13 @@ system-security-plan:
           text: STPA Python validator
       - component-uuid: e5000099-stpa-4000-8000-compiler00001
         uuid: h8000099-stpa-4000-8000-compiler00004
-        description: 'STPA compiler enforces SA-11 (Developer Testing and Evaluation)
+        description: 'STPA compiler maps SA-11 (Developer Testing and Evaluation)
           via generated artifacts: src/cage_finance/stpa/uca_rules.py (generated Python
           UCA rules), src/gateway/governance/stpa_validator.py (STPA validator). UCAs
-          covered: UCA-12, UCA-2, UCA-8.'
+          covered: UCA-12, UCA-2, UCA-8. Server-bound enforcing UCAs: UCA-2; advisory
+          UCAs (not server-bound): UCA-12, UCA-8.'
         implementation-status:
-          state: implemented
+          state: partial
         links:
         - href: ../../config/stpa/core_system.yaml
           rel: reference
@@ -1781,10 +1790,11 @@ system-security-plan:
           text: STPA Python validator
       - component-uuid: e5000099-stpa-4000-8000-compiler00001
         uuid: h8000099-stpa-4000-8000-compiler00005
-        description: 'STPA compiler enforces SC-28 (Protection of Information at Rest)
+        description: 'STPA compiler maps SC-28 (Protection of Information at Rest)
           via generated artifacts: src/cage_finance/stpa/uca_rules.py (generated Python
           UCA rules), src/gateway/governance/stpa_validator.py (STPA validator). UCAs
-          covered: UCA-3.'
+          covered: UCA-3. Server-bound enforcing UCAs: none; advisory UCAs (not server-bound):
+          UCA-3.'
         implementation-status:
           state: partial
         links:
@@ -1796,10 +1806,11 @@ system-security-plan:
           text: STPA Python validator
       - component-uuid: e5000099-stpa-4000-8000-compiler00001
         uuid: h8000099-stpa-4000-8000-compiler00006
-        description: 'STPA compiler enforces SI-7 (Software, Firmware, and Information
+        description: 'STPA compiler maps SI-7 (Software, Firmware, and Information
           Integrity) via generated artifacts: src/cage_finance/stpa/uca_rules.py (generated
           Python UCA rules), src/gateway/governance/stpa_validator.py (STPA validator).
-          UCAs covered: UCA-4.'
+          UCAs covered: UCA-4. Server-bound enforcing UCAs: none; advisory UCAs (not
+          server-bound): UCA-4.'
         implementation-status:
           state: partial
         links:
@@ -1811,10 +1822,10 @@ system-security-plan:
           text: STPA Python validator
       - component-uuid: e5000099-stpa-4000-8000-compiler00001
         uuid: h8000099-stpa-4000-8000-compiler00007
-        description: 'STPA compiler enforces AU-10 (Non-Repudiation) via generated
-          artifacts: src/cage_finance/stpa/uca_rules.py (generated Python UCA rules),
-          src/gateway/governance/stpa_validator.py (STPA validator). UCAs covered:
-          UCA-4.'
+        description: 'STPA compiler maps AU-10 (Non-Repudiation) via generated artifacts:
+          src/cage_finance/stpa/uca_rules.py (generated Python UCA rules), src/gateway/governance/stpa_validator.py
+          (STPA validator). UCAs covered: UCA-4. Server-bound enforcing UCAs: none;
+          advisory UCAs (not server-bound): UCA-4.'
         implementation-status:
           state: partial
         links:
@@ -1826,10 +1837,11 @@ system-security-plan:
           text: STPA Python validator
       - component-uuid: e5000099-stpa-4000-8000-compiler00001
         uuid: h8000099-stpa-4000-8000-compiler00008
-        description: 'STPA compiler enforces SI-3 (Malicious Code Protection) via
-          generated artifacts: src/cage_finance/stpa/uca_rules.py (generated Python
-          UCA rules), src/gateway/governance/stpa_validator.py (STPA validator). UCAs
-          covered: UCA-6, UCA-7.'
+        description: 'STPA compiler maps SI-3 (Malicious Code Protection) via generated
+          artifacts: src/cage_finance/stpa/uca_rules.py (generated Python UCA rules),
+          src/gateway/governance/stpa_validator.py (STPA validator). UCAs covered:
+          UCA-6, UCA-7. Server-bound enforcing UCAs: UCA-6, UCA-7; advisory UCAs (not
+          server-bound): none.'
         implementation-status:
           state: implemented
         links:
@@ -1841,149 +1853,141 @@ system-security-plan:
           text: STPA Python validator
     - uuid: p7000001-plat-sc7-8000-platform0001
       control-id: sc-7
-      description: 'L3/L4 and FQDN-resolved IP egress boundaries are enforced on governance-stack
-        pods by Kubernetes NetworkPolicy (networking.k8s.io/v1) and GKE FQDNNetworkPolicy
-        (networking.gke.io/v1alpha1) resources reconciled by Terraform in infra/targets/gcp-gke/network_policy.tf
-        on GKE Dataplane V2 (Cilium/eBPF). Standard Kubernetes NetworkPolicies in
-        infra/targets/gcp-gke/network_policy.tf provide external L3/L4 default-deny,
-        restrict port 53 DNS egress strictly to kube-system (k8s-app: kube-dns) and
-        the Cloud DNS metadata IP (169.254.169.254/32), and scope managed data-store
-        egress (datastore_egress) to the live Cloud SQL private IP (/32) and Memorystore
-        for Valkey PSC endpoint IPs (/32); GKE Dataplane V2 (Cilium) snoops DNS responses
-        from kube-dns or Cloud DNS and programs the resolved IP addresses into Cilium''s
-        eBPF policy map in real time. Scope note: GKE FQDNNetworkPolicy v1alpha1 enforces
-        at L3/L4 on DNS-resolved IPs and does not perform L7 HTTP-method or DNS-query-pattern
-        filtering; L7 HTTP-method enforcement is not claimed by this control implementation.
-        Gateway pods may reach only the FQDNs on their allowlist (gateway_fqdn_egress
-        in infra/targets/gcp-gke/network_policy.tf): required GCP service APIs (*.googleapis.com),
-        observability telemetry and the OFAC sanctions APIs. No model provider is
-        listed, although the *.googleapis.com wildcard also matches Google''s model
-        API (POAM-2026-152). Sovereign agent and financial advisor pods are denied
-        external internet egress (advisor_internal_only and sovereign_agent_internal_only
-        in infra/targets/gcp-gke/network_policy.tf); per-workload intra-namespace
-        segmentation replacing the shared intra-namespace allow rule is tracked under
-        POAM-2026-195.'
+      description: 'Ingress and external egress in the governance-stack namespace
+        are default-deny on GKE Dataplane V2 (Cilium/eBPF) through Kubernetes NetworkPolicy
+        (networking.k8s.io/v1), GKE FQDNNetworkPolicy (networking.gke.io/v1alpha1)
+        and Dataplane V2 NetworkLogging resources reconciled by Terraform in infra/targets/gcp-gke/network_policy.tf
+        and infra/targets/gcp-gke/dataplane_v2_logging.tf. default_deny_ingress and
+        default_deny_external_egress block unpermitted pod-to-pod and external flows,
+        per-workload policies scope Cloud SQL and Memorystore for Valkey /32 PSC endpoints
+        strictly to their declared consumers (excluding the governed advisor from
+        Valkey, POAM-2026-190, POAM-2026-195), and model_backend_ingress admits TCP
+        8000 solely from app=gateway while routing in-cluster advisor completions
+        through the gateway /v1/chat/completions proxy (POAM-2026-191). External HTTPS
+        egress exists only where a workload FQDNNetworkPolicy allows it (the gateway,
+        compliance-bridge, reconciliation-worker, vLLM, ClickHouse tiering and telemetry-stack
+        allowlists); the governed financial advisor has none. Open gaps keep this
+        control partial: FQDNNetworkPolicy enforces at L3/L4 on DNS-resolved IPs without
+        L7 HTTP-method filtering and the gateway allowlist''s *.googleapis.com entry
+        also matches Google''s model API (POAM-2026-152), and live deployed-cluster
+        drop/allow corroboration for POAM-2026-190, POAM-2026-191 and POAM-2026-195
+        remains pending Gate W.'
       props:
       - name: implementation-status
-        value: implemented
+        value: partial
       - name: deployment-platform
         value: gcp-gke
       - name: evidence-file
-        value: infra/targets/gcp-gke/network_policy.tf
+        value: infra/targets/gcp-gke/network_policy.tf, infra/targets/gcp-gke/tests/namespace_segmentation.tftest.hcl,
+          tests/infrastructure/test_gateway_egress_allowlist.py
       - name: poam-refs
-        value: POAM-007 (IA-3), POAM-2026-152 (SC-7), POAM-2026-195 (SC-7)
+        value: POAM-2026-152 (SC-7), POAM-2026-190 (SC-7), POAM-2026-191 (SC-7), POAM-2026-195
+          (SC-7/AC-4)
       responsible-roles:
       - role-id: system-administrator
     - uuid: p8000001-plat-sc8-8000-platform0001
       control-id: sc-8
-      description: 'Pods in the governance-stack namespace are meshed by Linkerd (linkerd.io/inject=enabled),
-        which Terraform installs with infra/modules/service_mesh, and an admission
-        policy from the same module refuses any pod created there without the Linkerd
-        proxy, including while the fail-open proxy injector is down (POAM-2026-167).
-        Pod-to-pod traffic is mutual TLS between Linkerd proxies. Each proxy certificate
-        names the pod''s Kubernetes ServiceAccount (<sa>.<namespace>.serviceaccount.identity.linkerd.cluster.local),
-        lives in memory only, and is re-issued every 24 hours. The trust anchor is
-        a Google Certificate Authority Service root CA whose key is generated and
-        held by CAS; the intermediate issuer certificate is obtained by cert-manager
-        through a CSR and rotated every 48 hours, so no CA private key exists in Terraform
-        state or in the repository. The gateway''s HTTP port is deny by default: the
-        Helm chart in infra/modules/gateway/mesh-policy/templates/policy.yaml installs
-        a Linkerd Server/HTTPRoute/AuthorizationPolicy set admitting only cage-advisor-sa
-        outside a short list of open paths, and the gateway repeats the check on the
-        l5d-client-id header in every environment, accepting the header only on a
-        connection from inside the pod, where its own Linkerd proxy writes it (src/gateway/server/workload_identity.py;
-        the compliance bridge''s operator path applies the same rule, POAM-2026-167;
-        dedicated Linkerd Server/AuthorizationPolicy resources for OPA, NeMo, and
-        compliance-bridge are tracked under POAM-2026-195). Managed data-plane connections
-        enforce in-transit TLS: dual Memorystore for Valkey instances (governance
-        and app) enforce transit_encryption_mode=SERVER_AUTHENTICATION over Private
-        Service Connect, verified under every enforcing posture (is_enforcing()),
-        CA from REDIS_CA_CERT_PATH (infra/modules/memorystore_valkey/main.tf, src/gateway/infrastructure/redis_client.py),
-        and Cloud SQL PostgreSQL enforces ssl_mode=ENCRYPTED_ONLY via the Cloud SQL
-        Auth Proxy sidecar (infra/modules/cloudsql_postgres/main.tf). Verified by
-        automated Linkerd mesh conformance tests (tests/integration/test_linkerd_mesh_conformance.py),
-        Redis TLS verification tests (tests/test_redis_async_builder.py), and live
-        CAS issuance tests (tests/live/test_cas_mesh_issuer_live.py) (POAM-2026-080,
-        POAM-2026-086).'
+      description: 'Pods in the governance-stack namespace are meshed by Linkerd (linkerd.io/inject=enabled)
+        with defaultInboundPolicy=all-authenticated via infra/modules/service_mesh,
+        and a ValidatingAdmissionPolicy (charts/mesh-proxy-required) refuses any pod
+        created there without the Linkerd proxy, including while the fail-open proxy
+        injector is down (live verification pending, POAM-2026-167). Pod-to-pod traffic
+        is mutual TLS using 24-hour in-memory workload certificates signed through
+        a 48-hour Google Certificate Authority Service intermediate CSR flow, while
+        OPA runs inside the gateway pod over a non-networked Unix domain socket (infra/modules/gateway/main.tf).
+        Per-route Linkerd Server, HTTPRoute and AuthorizationPolicy resources in infra/modules/gateway/mesh-policy/templates/policy.yaml,
+        infra/modules/compliance_bridge/mesh-policy/templates/policy.yaml and infra/targets/gcp-gke/charts/workload-mesh-policy/templates/servers-and-authz.yaml
+        restrict L7 HTTP and ClickHouse TCP 9000 callers by ServiceAccount identity,
+        backed by src/gateway/server/workload_identity.py on the gateway. Governance
+        Memorystore for Valkey enforces transit_encryption_mode=SERVER_AUTHENTICATION
+        over Private Service Connect with REDIS_CA_CERT_PATH (infra/modules/memorystore_valkey/main.tf,
+        src/gateway/infrastructure/redis_client.py; POAM-2026-086), and Cloud SQL
+        PostgreSQL enforces ssl_mode=ENCRYPTED_ONLY (infra/modules/cloudsql_postgres/main.tf).
+        Open gaps keep this control partial: the application Memorystore instance
+        (memorystore_app in infra/targets/gcp-gke/main.tf) runs with transit encryption
+        and authentication disabled; live deployed-cluster verification of mesh mTLS
+        and L7 authorization remains pending (POAM-2026-080, POAM-2026-195); and outbound
+        Python HTTP clients use default SSL contexts with a TLS 1.2 floor because
+        create_hardened_client_context in src/gateway/infrastructure/tls_context.py
+        has no production call site (POAM-2026-011).'
       props:
       - name: implementation-status
-        value: implemented
+        value: partial
       - name: deployment-platform
         value: gcp-gke
       - name: evidence-file
         value: infra/modules/service_mesh/main.tf, infra/modules/gateway/mesh-policy/templates/policy.yaml,
+          infra/modules/compliance_bridge/mesh-policy/templates/policy.yaml, infra/targets/gcp-gke/charts/workload-mesh-policy/templates/servers-and-authz.yaml,
           infra/modules/memorystore_valkey/main.tf, infra/modules/cloudsql_postgres/main.tf,
-          tests/integration/test_linkerd_mesh_conformance.py, tests/test_redis_async_builder.py
+          tests/integration/test_linkerd_mesh_conformance.py, tests/infrastructure/test_mesh_proxy_required_policy.py,
+          tests/test_redis_async_builder.py
       - name: poam-refs
-        value: POAM-007 (IA-3), POAM-011 (SC-8), POAM-2026-080 (IA-9), POAM-2026-086
-          (SC-8), POAM-2026-195 (SC-8)
+        value: POAM-011 (SC-8), POAM-2026-011 (SC-8), POAM-2026-080 (IA-9/SC-8), POAM-2026-086
+          (SC-8), POAM-2026-167 (IA-9/SC-8), POAM-2026-195 (SC-8)
       responsible-roles:
       - role-id: system-administrator
     - uuid: p9000001-plat-sc39-8000-platform001
       control-id: sc-39
-      description: 'CAGE is a cloud-agnostic governance engine whose baseline process
-        isolation is enforced across Kubernetes deployments (`infra/modules/` and
-        `infra/targets/gcp-gke/`) via universal Kubernetes Pod Security Standards
-        (`restricted` profile in `infra/modules/k8s_namespace/main.tf`), non-root
-        execution (`runAsNonRoot: true`, `runAsUser: 1000`), `allowPrivilegeEscalation:
-        false`, `capabilities: drop: ["ALL"]`, and `seccompProfile: RuntimeDefault`
-        (`infra/modules/compliance_bridge/main.tf`, `infra/modules/gateway/main.tf`).
-        When deployed on the `gcp-gke` target (`infra/targets/gcp-gke/`), CAGE adds
-        target-specific split-plane isolation: (1) Agent Application Plane (`gcp-gke`
-        mode): The advisor runs in-cluster as a `restricted` Kubernetes Deployment
-        with zero signing authority (`infra/modules/governed_advisor/main.tf`). (2)
-        Governance Control Plane (`gcp-gke` mode): Stateless governance-stack pods
-        (`gateway`, `compliance-bridge`, `opa`, `reconciliation-worker`) support optional
-        `runtimeClassName: gvisor` user-space kernel sandboxing on E2 CPU node pools
-        (`enable_gvisor_sandbox` in `infra/modules/gcp_gke_cluster/main.tf`). (3)
-        GPU Inference & Stateful Storage Plane (`gcp-gke` mode): Hardware-bound workloads
-        (`vllm` on `gpu-l4` `g2-standard-8` NVIDIA L4 nodes and `clickhouse` on local-NVMe
-        nodes) are isolated on dedicated tainted node pools (`nvidia.com/gpu=present:NoSchedule`
-        and `workload=clickhouse:NoSchedule`) on native container runtime to preserve
-        direct PCIe GPU passthrough and NVMe block I/O.'
+      description: 'Process isolation on the gcp-gke target rests on Kubernetes controls
+        declared in Terraform. Pod Security Admission labels enforce the restricted
+        profile on governance-stack when enable_pod_security_standards is true (infra/modules/k8s_namespace/main.tf;
+        set in the staging, prod, eu-prod and apac-prod tfvars and off in the dev
+        profiles), and every Terraform workload module sets run_as_non_root, allow_privilege_escalation
+        = false, drops ALL capabilities and uses the RuntimeDefault seccomp profile
+        (for example infra/modules/gateway/main.tf, infra/modules/compliance_bridge/main.tf
+        and infra/modules/governed_advisor/main.tf, which runs the governed advisor
+        in-cluster as a Kubernetes Deployment). Hardware-bound workloads are isolated
+        on dedicated tainted node pools in infra/modules/gcp_gke_cluster/main.tf:
+        vLLM on g2-standard-8 NVIDIA L4 nodes (nvidia.com/gpu=present:NoSchedule)
+        and ClickHouse on local-SSD nodes (workload=clickhouse:NoSchedule). Open gap
+        keeping this control partial: GKE Sandbox (gVisor) is not enabled. enable_gvisor_sandbox
+        sets only the COS_CONTAINERD image type and a node label, the node_config.sandbox_config
+        block that provides the gvisor RuntimeClass is not configured (it needs the
+        google-beta provider), and no Terraform workload sets runtimeClassName, so
+        containers share the node kernel.'
       props:
       - name: implementation-status
-        value: implemented
+        value: partial
       - name: deployment-platform
         value: gcp-gke
       - name: evidence-file
         value: infra/modules/k8s_namespace/main.tf, infra/modules/gateway/main.tf,
           infra/modules/compliance_bridge/main.tf, infra/modules/governed_advisor/main.tf,
-          infra/modules/gcp_gke_cluster/main.tf
-      - name: poam-refs
-        value: POAM-009 (SC-39)
+          infra/modules/gcp_gke_cluster/main.tf, tests/infrastructure/test_gke_sole_target_6f.py
       responsible-roles:
       - role-id: system-administrator
     - uuid: s3000001-plat-si3-8000-platform0001
       control-id: si-3
-      description: 'All governance-stack containers enforce `readOnlyRootFilesystem:
-        true` in their securityContext, preventing runtime modification of container
-        image layers. Writable data is isolated to explicitly-mounted emptyDir volumes
-        (tmpfs-backed, ephemeral). This immutability boundary prevents malware persistence,
-        fileless attack staging, and post-compromise binary implantation. Container
-        supply-chain integrity is enforced via `var.image_digests` (`@sha256:` digest
-        pinning in `infra/targets/gcp-gke/variables.tf` with fail-closed validation
-        rejecting tag-only or `:latest` references when `enable_binary_authorization
-        = true`), Cloud KMS asymmetric signing (`google_kms_crypto_key.binauthz_attestor`
-        wired as `pkix_public_key` into `google_binary_authorization_attestor.build_attestor`
-        in `infra/targets/gcp-gke/perimeter.tf`), Cloud Build digest attestation (`gcloud
-        container binauthz attestations sign-and-create` across `deployment/docker/cloudbuild.*.yaml`,
-        `scripts/build_images.sh`, and `scripts/mirror_and_attest_images.sh`), and
-        Artifact Registry vulnerability scanning (block on CRITICAL/HIGH CVEs). Note:
-        Live staging cluster verification of mirrored third-party digests and Binary
-        Authorization admission enforcement is tracked under POAM-2026-083 (referencing
-        POAM-2026-013).'
+      description: 'Container supply-chain integrity on the gcp-gke target is enforced
+        at plan and admission time. var.image_digests in infra/targets/gcp-gke/variables.tf
+        rejects tag-only, :latest and empty-digest image references (exercised by
+        infra/targets/gcp-gke/tests/image_digests.tftest.hcl). The Binary Authorization
+        policy in infra/targets/gcp-gke/perimeter.tf requires an attestation from
+        google_binary_authorization_attestor.build_attestor, whose signing key is
+        the Cloud KMS asymmetric key google_kms_crypto_key.binauthz_attestor (infra/targets/gcp-gke/kms_signing.tf),
+        with evaluation_mode REQUIRE_ATTESTATION and enforcement_mode ENFORCED_BLOCK_AND_AUDIT_LOG;
+        images are attested by the build helpers (deployment/docker/cloudbuild.image.yaml,
+        scripts/build_images.sh, scripts/mirror_and_attest_images.sh, scripts/attest_image.sh).
+        CI runs pip-audit and a Trivy filesystem scan (CRITICAL,HIGH) over the repository
+        (.github/workflows/security-scan.yml). Open gaps keep this control partial:
+        attestation does not depend on a vulnerability-scan result, so admission does
+        not block images with CRITICAL/HIGH CVEs; read_only_root_filesystem = true
+        is set only by the gateway OPA sidecar, the non-production inference stub,
+        the reconciliation worker and the Lula audit CronJob (infra/modules/gateway/main.tf,
+        infra/modules/inference_stub/main.tf, infra/modules/reconciliation_worker/main.tf,
+        infra/modules/lula_cron/main.tf), while the main gateway container, compliance-bridge,
+        governed advisor and the remaining workload modules leave the root filesystem
+        writable; and admission enforcement on a deployed cluster is unverified (POAM-2026-083).'
       props:
       - name: implementation-status
-        value: implemented
+        value: partial
       - name: deployment-platform
         value: gcp-gke
       - name: evidence-file
-        value: infra/targets/gcp-gke/perimeter.tf; infra/targets/gcp-gke/kms_signing.tf;
-          infra/targets/gcp-gke/variables.tf; infra/modules/vllm_inference/main.tf;
-          compliance/lula/lula-validation-si2.yaml
+        value: infra/targets/gcp-gke/perimeter.tf, infra/targets/gcp-gke/kms_signing.tf,
+          infra/targets/gcp-gke/variables.tf, infra/targets/gcp-gke/tests/image_digests.tftest.hcl
       - name: poam-refs
-        value: POAM-010 (SI-3), POAM-2026-013 (SI-2), POAM-2026-083 (SI-3/SI-7)
+        value: POAM-2026-083 (SI-3/SI-7)
       responsible-roles:
       - role-id: system-administrator
   back-matter:
@@ -2021,12 +2025,12 @@ system-security-plan:
     - uuid: z9000007-0000-4000-8000-000000000007
       title: CAGE Roles and Responsibilities
       rlinks:
-      - href: docs/ROLES_AND_RESPONSIBILITIES.md
+      - href: docs/README.md
         media-type: text/markdown
     - uuid: z9000008-0000-4000-8000-000000000008
       title: CAGE Decommission Checklist (SP 800-88)
       rlinks:
-      - href: docs/DECOMMISSION_CHECKLIST.md
+      - href: docs/README.md
         media-type: text/markdown
     - uuid: z9000009-0000-4000-8000-000000000009
       title: Lula AC-3 Validation Manifest

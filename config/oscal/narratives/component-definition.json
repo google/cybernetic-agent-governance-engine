@@ -1,0 +1,33 @@
+{
+  "_comment": "Narrative source for compliance/oscal/component-definition.yaml, applied by src/gateway/governance/oscal_ssp_exporter.py on every export (F-82). Each node entry replaces the listed fields of the OSCAL node with that uuid; a null field is deleted. The FTRA SI-10 entry is the domain-specific prose of an exporter-generated statement, which the kernel seed may not name (Gate G3). Edit this file, never the generated YAML.",
+  "nodes": {
+    "si100001-ftra-8000-classifier00001": {
+      "description": "FTRA (Tier 0.5) classifies each tool call against the digest-covered terminal registry (src/gateway/governance/ftra/classifier.py) and routes irreversible or unregistered actions to human review; a registered terminal clears autonomously only inside its autonomous envelope with a known, finite, positive magnitude (src/gateway/governance/ftra/autonomy.py). Parameter value validation (SI-10) is delegated to the finance STPA UCA rules (src/cage_finance/stpa/uca_rules.py) and the domain OPA policy (src/cage_finance/opa/trade_governance.rego, mounted read-only into the gateway pod's Unix-domain-socket OPA sidecar via infra/modules/opa_policy/main.tf and infra/modules/gateway/main.tf with system.authz refusing runtime policy writes; live verification pending, POAM-2026-195). Finance UCA rules UCA-2, UCA-3, UCA-4, UCA-5, UCA-6, UCA-8, UCA-9, UCA-10, UCA-12 and UCA-13 bind their security-critical inputs server-side via FinanceServerInputResolver (src/cage_finance/server_inputs.py). UCA-7 is enforced on the Python STPA path (_check_core_uca_7 in src/gateway/governance/stpa_validator.py), which denies a prompt_injection_check whose semantic_score, bound server-side by deterministic prompt-injection inspection (src/gateway/governance/governor/server_inputs.py), exceeds the UCA's threshold. The deterministic Stage 1 keyword scan (ac_keyword_scan in src/gateway/governance/text_filter.py) screens requests routed through the gateway inference proxy (src/gateway/server/inference_proxy.py), which Terraform configures as the sole model endpoint reachable by the governed advisor (live cluster verification pending, POAM-2026-191), and runs in the advisor's LangGraph input rail. The optional NeMo Colang rails add LLM-backed screening only when CAGE_NEMO_ENABLED=true on a semantic model backend. Before parking a REQUIRE_APPROVAL token for human review, run_pipeline() previews every claiming phase-2 barrier side-effect-free (Phase2Mode.PREVIEW in src/gateway/governance/governor/pipeline.py), denying outright on HARD barrier breaches and recording NARROWABLE barrier bounds (Violation.bound in src/gateway/governance/contracts.py) on the DeferToken snapshot. The registry's manifest_sha256 (registry_digest in src/gateway/governance/ftra/classifier.py) covers the autonomous_envelope together with the terminals, so an in-file edit to a ceiling fails the load-time integrity check; a re-hashed edit is refused only when FTRA_EXPECTED_MANIFEST_SHA256 is pinned, which infra/ does not set."
+    },
+    "aarm2026-v4-cross-agent": {
+      "description": "AARM-V4 Cross-Agent Propagation is reduced, not eliminated: FiscalLimitGuard (src/cage_finance/safety/fiscal_limit_guard.py) reserves spend against the daily fiscal cap in one atomic Lua script on the governance Valkey, so concurrent agents cannot jointly overspend the cap, while Linkerd mTLS (defaultInboundPolicy=all-authenticated in infra/modules/service_mesh/main.tf) and per-workload NetworkPolicy plus Linkerd Server/HTTPRoute/AuthorizationPolicy resources (infra/targets/gcp-gke/network_policy.tf, infra/modules/gateway/mesh-policy/templates/policy.yaml, infra/modules/compliance_bridge/mesh-policy/templates/policy.yaml, infra/targets/gcp-gke/charts/workload-mesh-policy/templates/servers-and-authz.yaml) segment pod-to-pod and data-store flows in configuration; live deployed-cluster verification of mesh mTLS and per-workload drop/allow enforcement remains pending Gate W (POAM-2026-080, POAM-2026-195).",
+      "remarks": "FiscalLimitGuard: src/cage_finance/safety/fiscal_limit_guard.py (tests/cage_finance/test_fiscal_limit_guard.py). Mesh & segmentation: infra/modules/service_mesh/main.tf, infra/targets/gcp-gke/network_policy.tf."
+    },
+    "b6b7-2026-cer-disclosure-00001111aaaa": {
+      "description": "Planned Compliance Evidence Repository (CER) disclosure capability: a three-posture (PUBLIC, PRIVATE, EMBARGO) model for disclosing content-addressed evidence to normative providers and auditors through signed manifests. None of it is implemented: no disclosure or evidence-index module, CAGE_CER_DISCLOSURE_POSTURE setting, multihash index or manifest store exists in src/ or infra/. Governance evidence today is the hash-chained evidence stream that the compliance bridge batch-signs into the WORM archive.",
+      "purpose": "Records the intended ISO 42001 A.8.4 operational-transparency capability so that it is not mistaken for an implemented one.",
+      "props": [
+        {
+          "name": "software-version",
+          "value": "0.0.0 (planned; not implemented)"
+        }
+      ]
+    },
+    "b6b7-req-a84-cer-00001111": {
+      "description": "Not implemented. The ISO 42001 A.8.4 evidence-disclosure capability described by this component (PUBLIC, PRIVATE and EMBARGO postures; SHA-256/SHA-512 multihash indexing; KMS-signed disclosure manifests) has no code, configuration or validation in the repository.",
+      "props": [
+        {
+          "name": "implementation-status",
+          "value": "planned"
+        }
+      ],
+      "remarks": "Building it needs disclosure and index modules plus a check that fetches a published manifest, verifies its KMS signature by kid against an out-of-band key manifest, recomputes each record's multihash and confirms posture behaviour.",
+      "links": null
+    }
+  }
+}

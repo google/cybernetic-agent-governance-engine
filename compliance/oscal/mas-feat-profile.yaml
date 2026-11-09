@@ -31,7 +31,7 @@ profile:
       This profile covers APAC_MAS deployments only (CAGE_DEPLOYMENT_REGION=APAC_MAS).
       Key frameworks: MAS FEAT Principles (2018), MAS Notice 655, MAS TRM §4.2.
   imports:
-    - href: "#mas-feat-catalog-stub"
+    - href: ""
       include-all: {}
   modify:
     set-parameters: []

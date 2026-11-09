@@ -77,5 +77,5 @@
     "nemo": "config/rails/generated_stpa_rails.co (NeMo Colang)",
     "python": "src/cage_finance/stpa/uca_rules.py (generated Python UCA rules), src/gateway/governance/stpa_validator.py (STPA validator)"
   },
-  "narrative_template": "STPA compiler enforces {control_id_upper} ({control_description}) via generated artifacts: {artifacts}. UCAs covered: {uca_list}."
+  "narrative_template": "STPA compiler maps {control_id_upper} ({control_description}) via generated artifacts: {artifacts}. UCAs covered: {uca_list}."
 }
