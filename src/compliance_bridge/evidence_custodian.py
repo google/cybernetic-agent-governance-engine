@@ -45,14 +45,18 @@ Custody cycle (:meth:`EvidenceCustodian.flush_once`)
 5. Re-verify every record's hash and ``prev_hash`` link. Any mismatch raises
    :class:`EvidenceCustodyIntegrityError`: nothing is written and the cursor
    does not move, so custody stays stuck until an operator investigates.
-6. Sign the attestation. Under an enforcing posture a signing failure writes
-   nothing and does not advance. In a permissive posture without an active
-   signer the attestation is written **non-evidentiary** (see below).
+6. Stamp ``created_at_utc`` (RFC 3339 UTC, the signing attempt's instant) and
+   sign the attestation. Cloud Audit Log corroboration (``AS-6``) compares
+   this stamp with the ``AsymmetricSign`` record's timestamp. Under an
+   enforcing posture a signing failure writes nothing and does not advance.
+   In a permissive posture without an active signer the attestation is
+   written **non-evidentiary** (see below).
 7. ``put_if_absent`` the NDJSON batch, then its attestation, each through
    :func:`~src.gateway.governance.evidence.cold_store.put_if_absent_verified`:
    a pre-existing object is read back and must hold the same bytes (for the
-   attestation: the same body, ignoring the non-deterministic signature).
-   Anything else is an integrity failure, never a silent "already written".
+   attestation: the same body, ignoring the non-deterministic signature and
+   ``created_at_utc``). Anything else is an integrity failure, never a silent
+   "already written".
 8. Advance the cursor and clear ``pending_end_id``.
 
 Object layout
@@ -280,11 +284,16 @@ def _ndjson(entries: list[tuple[str, dict[str, str]]]) -> bytes:
 
 
 def _same_attestation_body(stored: bytes, supplied: bytes) -> bool:
-    """True if two attestations differ at most in their signature value.
+    """True if two attestations differ at most in signature and ``created_at_utc``.
 
-    KMS ECDSA signatures are randomized, so a retry after a crash between the
-    attestation write and the cursor update re-signs an identical body. That
-    is the same evidence; any other difference is a conflict.
+    KMS ECDSA signatures are randomized and ``created_at_utc`` stamps each
+    signing attempt, so a retry after a crash between the attestation write
+    and the cursor update re-signs the same batch with a new signature and a
+    later stamp. That is the same evidence, and the stored attestation stands.
+    The retry's own ``AsymmetricSign`` call then matches no archived artifact,
+    which Cloud Audit Log corroboration reports (``UNMATCHED_KMS_SIGN_EVENT``)
+    for an operator to reconcile with the crash. Any other difference is a
+    conflict.
     """
     try:
         stored_body = json.loads(stored)
@@ -293,8 +302,9 @@ def _same_attestation_body(stored: bytes, supplied: bytes) -> bool:
         return False
     if not isinstance(stored_body, dict) or not isinstance(supplied_body, dict):
         return False
-    stored_body.pop("signature", None)
-    supplied_body.pop("signature", None)
+    for volatile_field in ("signature", "created_at_utc"):
+        stored_body.pop(volatile_field, None)
+        supplied_body.pop(volatile_field, None)
     return stored_body == supplied_body
 
 
@@ -572,6 +582,9 @@ class EvidenceCustodian:
         data_key = f"{base}.ndjson"
         attestation: dict[str, Any] = {
             "schema": ATTESTATION_SCHEMA,
+            "created_at_utc": datetime.now(timezone.utc)
+            .isoformat(timespec="microseconds")
+            .replace("+00:00", "Z"),
             "chain_id": chain_id,
             "stream_key": self._stream_key,
             "first_sequence": first_seq,

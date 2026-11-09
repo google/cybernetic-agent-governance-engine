@@ -363,6 +363,11 @@ async def _gateway_lifespan(app: FastAPI):  # type: ignore[no-untyped-def]
         except asyncio.CancelledError:
             pass
 
+    bind_quarantine_redis(None)
+    app.state.redis = None
+    inference_app.state.redis = None
+    governance_app.state.redis = None
+    mcp_app.state.redis = None
     if shared_redis is not None and hasattr(shared_redis, "aclose"):
         try:
             await shared_redis.aclose()
