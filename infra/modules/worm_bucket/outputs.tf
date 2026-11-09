@@ -14,30 +14,43 @@
 
 output "bucket_name" {
   description = "Name of the retention-locked WORM bucket"
-  value       = google_storage_bucket.bucket.name
+  value       = var.external_bucket_enabled ? data.google_storage_bucket.external[0].name : google_storage_bucket.bucket[0].name
 }
 
 output "bucket_id" {
   description = "ID of the retention-locked WORM bucket"
-  value       = google_storage_bucket.bucket.id
+  value       = var.external_bucket_enabled ? data.google_storage_bucket.external[0].id : google_storage_bucket.bucket[0].id
 }
 
 output "bucket_url" {
   description = "URL of the retention-locked WORM bucket (gs://<name>)"
-  value       = google_storage_bucket.bucket.url
+  value       = var.external_bucket_enabled ? data.google_storage_bucket.external[0].url : google_storage_bucket.bucket[0].url
 }
 
 output "bucket_self_link" {
   description = "Self-link URI of the retention-locked WORM bucket"
-  value       = google_storage_bucket.bucket.self_link
+  value       = var.external_bucket_enabled ? data.google_storage_bucket.external[0].self_link : google_storage_bucket.bucket[0].self_link
 }
 
 output "retention_period_seconds" {
   description = "Retention period the bucket's retention policy enforces, in seconds"
-  value       = google_storage_bucket.bucket.retention_policy[0].retention_period
+  value = (
+    var.external_bucket_enabled
+    ? try(data.google_storage_bucket.external[0].retention_policy[0].retention_period, var.retention_period_seconds)
+    : google_storage_bucket.bucket[0].retention_policy[0].retention_period
+  )
 }
 
 output "retention_locked" {
   description = "Whether the bucket's retention policy is locked (irreversible)"
-  value       = google_storage_bucket.bucket.retention_policy[0].is_locked
+  value = (
+    var.external_bucket_enabled
+    ? try(data.google_storage_bucket.external[0].retention_policy[0].is_locked, var.is_locked)
+    : google_storage_bucket.bucket[0].retention_policy[0].is_locked
+  )
+}
+
+output "managed_bucket_count" {
+  description = "Count of managed GCS bucket resources planned in this module (0 when external_bucket_enabled = true)."
+  value       = length(google_storage_bucket.bucket)
 }

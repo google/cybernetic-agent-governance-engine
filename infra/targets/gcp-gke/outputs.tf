@@ -210,3 +210,25 @@ output "cloudbuild_service_account_email" {
   description = "Dedicated Cloud Build service account email for building and attesting container images (POAM-2026-083)"
   value       = google_service_account.cloudbuild.email
 }
+
+# ─── Persistent Evidence Domain Outputs (§10a, R-10, F-66, F-94, F-97) ───────
+
+output "evidence_project_id" {
+  description = "GCP project ID of the persistent evidence custody boundary."
+  value       = module.evidence_domain.evidence_project_id
+}
+
+output "evidence_cmek_key_id" {
+  description = "Resource ID of the dedicated evidence CMEK CryptoKey (120-day destroy_scheduled_duration, F-97)."
+  value       = module.evidence_domain.evidence_cmek_key_id
+}
+
+output "audit_logs_worm_bucket_name" {
+  description = "Name of the retention-locked Cloud Audit Logs WORM bucket in the evidence domain."
+  value       = module.evidence_domain.audit_logs_worm_bucket_name
+}
+
+output "signing_key_manifest_object_name" {
+  description = "GCS object path of the archived signing public key (kid) manifest."
+  value       = module.evidence_domain.signing_key_manifest_object_name
+}

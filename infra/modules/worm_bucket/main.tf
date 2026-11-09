@@ -27,7 +27,19 @@ locals {
   force_destroy = var.force_destroy != null ? var.force_destroy : (var.environment != "prod")
 }
 
+resource "terraform_data" "cmek_iam_ready" {
+  count = var.external_bucket_enabled ? 0 : 1
+  input = var.cmek_iam_ready
+}
+
+data "google_storage_bucket" "external" {
+  count = var.external_bucket_enabled ? 1 : 0
+  name  = local.bucket_name
+}
+
 resource "google_storage_bucket" "bucket" {
+  count = var.external_bucket_enabled ? 0 : 1
+
   name          = local.bucket_name
   location      = var.region
   project       = var.project_id
@@ -49,8 +61,6 @@ resource "google_storage_bucket" "bucket" {
 
   # AU-9: WORM retention — 2555 days (7 years) immutable retention in prod,
   # short lock in staging, unlocked in dev (§1.1, §2.6).
-  # Prevents deletion before the retention period expires.
-  # When is_locked is true, the policy cannot be reduced or removed.
   retention_policy {
     retention_period = var.retention_period_seconds
     is_locked        = var.is_locked
@@ -75,8 +85,12 @@ resource "google_storage_bucket" "bucket" {
     var.labels
   )
 
+  depends_on = [terraform_data.cmek_iam_ready]
+
   # Jurisdictional data-residency guard (GDPR Art. 44, MAS TRM §4.2, NIST SC-7)
   lifecycle {
+    prevent_destroy = true
+
     precondition {
       condition = (
         (var.cage_deployment_region == "EU_ECB" && can(regex("^europe-", var.region))) ||
@@ -87,4 +101,3 @@ resource "google_storage_bucket" "bucket" {
     }
   }
 }
-

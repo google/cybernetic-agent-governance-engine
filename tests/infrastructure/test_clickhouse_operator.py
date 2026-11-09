@@ -123,7 +123,7 @@ def test_worm_bucket_configured_as_system_of_record() -> None:
 
     assert 'source = "../../modules/worm_bucket"' in block
     assert "enable_cmek              = var.enable_cmek" in block
-    assert "kms_key_id               = local.cmek_key_id" in block
+    assert "kms_key_id               = local.evidence_cmek_key_id" in block
 
     # Posture matrix (§1.1), shared with the Langfuse event-upload bucket through
     # one pair of locals (POAM-2026-159; tests/retention_posture.tftest.hcl
@@ -286,7 +286,8 @@ def test_clickhouse_tiering_bucket_is_dedicated_unlocked_and_cmek() -> None:
 
     # Distinct name from the WORM bucket (and a guard precondition).
     assert '"${var.project_id}-clickhouse-tiering-${var.environment}"' in bucket
-    assert '"${var.project_id}-evidence-worm-${var.environment}"' in worm
+    assert "bucket_name              = local.evidence_bucket_name" in worm
+    assert '"${local.evidence_project_id}-evidence-worm-${var.environment}"' in gke_main
     assert "!= module.worm_bucket.bucket_name" in bucket
 
     # Not retention-locked: no retention policy and no lock at all.

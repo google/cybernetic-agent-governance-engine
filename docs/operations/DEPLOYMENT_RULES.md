@@ -199,22 +199,13 @@ old bucket is unlocked unless `enforce_in_dev = true` (`eu-dev`, `apac-dev`),
 and can be removed by hand: `gcloud storage buckets update gs://<old-bucket> --clear-retention-period`,
 then `gcloud storage rm --recursive gs://<old-bucket>`.
 
-**What a full staging teardown still meets.** A walk project created after this
-change needs no migration, and objects in both buckets become deletable a day
-after they are written. `terraform destroy -var-file=staging.tfvars` still does
-not complete, for reasons this change leaves alone:
+**Persistent Evidence Custody Domain (`infra/modules/evidence_domain/`, `F-66`, `F-94`, `F-97`) & Bound Genesis Rotation.**
+Instead of waiting for a 24-hour staging retention floor or manually deleting WORM objects during workload teardown, long-lived evidence custody is isolated from the ephemeral workload stack:
 
-- The five signing keys in [`kms_signing.tf`](../../infra/targets/gcp-gke/kms_signing.tf)
-  set `prevent_destroy = true`, so Terraform rejects any destroy plan that
-  includes them.
-- In staging, neither retention-locked bucket sets `force_destroy`, so the
-  provider refuses to delete either one while it holds objects; the WORM bucket
-  also keeps noncurrent versions. Once the lock has expired, empty both first:
-  `gcloud storage rm --all-versions "gs://<bucket>/**"`.
-- Google documents removing a project lien as a step for a project owner or an
-  organization administrator (`gcloud alpha resource-manager liens list`, then
-  `gcloud alpha resource-manager liens delete`). Check for the lien once the
-  buckets are gone.
+- The retention-locked WORM evidence bucket (`module.worm_bucket`), the retention-locked Cloud Audit Logs bucket (`audit-logs-worm` in [`infra/modules/evidence_domain/main.tf`](../../infra/modules/evidence_domain/main.tf)), the dedicated 120-day evidence CMEK key (`google_kms_crypto_key.evidence_cmek`, `destroy_scheduled_duration = "10368000s"`), and the content-addressed signing public key (`kid`) manifest (`gs://<evidence-bucket>/trust-anchors/signing-key-manifest-<sha256>.json`, populated from `data.google_kms_crypto_key_version`) reside in the persistent evidence custody boundary (`evidence_project_id = coalesce(var.evidence_project_id, var.project_id)`, e.g. `<PROJECT_ID>-evidence`) with `lifecycle { prevent_destroy = true }`.
+- The five signing keys in [`kms_signing.tf`](../../infra/targets/gcp-gke/kms_signing.tf) and the persistent evidence domain (`module.evidence_domain`, `module.worm_bucket`) set `prevent_destroy = true`. Ephemeral workload teardown (`W`, [`scripts/staging_lifecycle.sh`](../../scripts/staging_lifecycle.sh)) detaches persistent KMS and evidence-domain state before destroying the GKE workload stack, and [`scripts/bootstrap_gcp_project.sh`](../../scripts/bootstrap_gcp_project.sh) `--import-state` re-imports surviving custody resources prior to rebuild (or `external_evidence_domain_enabled = true` adopts an external custody root read-only so `sa-cage-deployer` holds zero destroy path per `AU-9(4)`). Never run manual recursive object deletion against WORM evidence or audit-log buckets (`F-66`).
+- When a rebuilt workload cluster starts a new Redis evidence stream at sequence `0`, bind its genesis record to the prior chain's last attested head and signed batch attestation in the persistent WORM bucket via `EVIDENCE_PREVIOUS_CHAIN_HEAD_HASH` and `EVIDENCE_PREVIOUS_BATCH_ATTESTATION_DIGEST` (or `EvidenceStreamSink.bind_genesis_rotation`). Both fields are stamped into the `cage-audit/3.0` header before `_link_hash()`, and `CustodyVerifier.verify_all` (`src.compliance_bridge.evidence_verifier.CustodyVerifier`) verifies `BOUND_CHAIN_ROTATION` against both `prior_tail.last_record_hash` and `prior_tail.attestation_sha256` (`F-94`).
+- For in-place staging rebuilds where the legacy `2033-09-27` retention-locked `langfuse-events-*` bucket and its `storage.googleapis.com` lien remain in `<PROJECT_ID>`, pass `--allow-legacy-lien-survivor` to [`scripts/staging_lifecycle.sh`](../../scripts/staging_lifecycle.sh) so `PF9` records them as explicit known survivors while still failing closed on any unexpected cluster, Cloud SQL, or workload bucket survivor (`F-95`).
 
 ---
 

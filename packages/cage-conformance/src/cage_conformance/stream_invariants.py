@@ -280,6 +280,8 @@ def compute_cage_audit_hash(
     classification_reason: str | None = None,
     narrowing_applied: Mapping[str, Any] | None = None,
     pause_token: str | None = None,
+    previous_chain_head_hash: str | None = None,
+    previous_batch_attestation_digest: str | None = None,
 ) -> str:
     """Recompute the ``cage-audit/3.0`` record hash from wire header + payload."""
     header: dict[str, Any] = {
@@ -298,6 +300,10 @@ def compute_cage_audit_hash(
         header["narrowing_applied"] = dict(narrowing_applied)
     if pause_token is not None:
         header["pause_token"] = pause_token
+    if previous_chain_head_hash is not None:
+        header["previous_chain_head_hash"] = previous_chain_head_hash
+    if previous_batch_attestation_digest is not None:
+        header["previous_batch_attestation_digest"] = previous_batch_attestation_digest
     material = (
         prev_hash.encode("utf-8") + jcs_bytes(header) + payload_json.encode("utf-8")
     )
@@ -427,6 +433,22 @@ def verify_chain_record(
         problems.append(("chain_schema", "pause_token must be str"))
         pause_token = None
 
+    previous_chain_head_hash = entry.get("previous_chain_head_hash")
+    if previous_chain_head_hash is not None and not isinstance(
+        previous_chain_head_hash, str
+    ):
+        problems.append(("chain_schema", "previous_chain_head_hash must be str"))
+        previous_chain_head_hash = None
+
+    previous_batch_attestation_digest = entry.get("previous_batch_attestation_digest")
+    if previous_batch_attestation_digest is not None and not isinstance(
+        previous_batch_attestation_digest, str
+    ):
+        problems.append(
+            ("chain_schema", "previous_batch_attestation_digest must be str")
+        )
+        previous_batch_attestation_digest = None
+
     if payload_obj is not None and "type" in payload_obj:
         if str(payload_obj["type"]) != event_type:
             problems.append(
@@ -448,6 +470,8 @@ def verify_chain_record(
             classification_reason=classification_reason,
             narrowing_applied=narrowing_applied,
             pause_token=pause_token,
+            previous_chain_head_hash=previous_chain_head_hash,
+            previous_batch_attestation_digest=previous_batch_attestation_digest,
         )
         if computed != record_hash:
             problems.append(

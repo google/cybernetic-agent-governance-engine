@@ -377,6 +377,10 @@ class EvidenceRecord:
     narrowing_applied: dict[str, Any] | None = None
     pause_token: str | None = None
 
+    # Bound genesis rotation fields (F-94, R-10)
+    previous_chain_head_hash: str | None = None
+    previous_batch_attestation_digest: str | None = None
+
     def to_dict(self) -> dict[str, Any]:
         """Serialize to dict for Redis storage or JSON encoding."""
         result: dict[str, Any] = {
@@ -401,6 +405,12 @@ class EvidenceRecord:
             result["narrowing_applied"] = self.narrowing_applied
         if self.pause_token is not None:
             result["pause_token"] = self.pause_token
+        if self.previous_chain_head_hash is not None:
+            result["previous_chain_head_hash"] = self.previous_chain_head_hash
+        if self.previous_batch_attestation_digest is not None:
+            result["previous_batch_attestation_digest"] = (
+                self.previous_batch_attestation_digest
+            )
         return result
 
     @classmethod
@@ -432,6 +442,10 @@ class EvidenceRecord:
             classification_reason=data.get("classification_reason"),
             narrowing_applied=data.get("narrowing_applied"),
             pause_token=data.get("pause_token"),
+            previous_chain_head_hash=data.get("previous_chain_head_hash"),
+            previous_batch_attestation_digest=data.get(
+                "previous_batch_attestation_digest"
+            ),
         )
 
 
@@ -687,6 +701,8 @@ def _link_hash(
     classification_reason: str | None = None,
     narrowing_applied: dict[str, Any] | None = None,
     pause_token: str | None = None,
+    previous_chain_head_hash: str | None = None,
+    previous_batch_attestation_digest: str | None = None,
 ) -> str:
     """Compute a stream entry's ``record_hash`` over its header + payload.
 
@@ -746,6 +762,12 @@ def _link_hash(
         header_dict["narrowing_applied"] = narrowing_applied
     if pause_token is not None:
         header_dict["pause_token"] = pause_token
+    if previous_chain_head_hash is not None:
+        header_dict["previous_chain_head_hash"] = previous_chain_head_hash
+    if previous_batch_attestation_digest is not None:
+        header_dict["previous_batch_attestation_digest"] = (
+            previous_batch_attestation_digest
+        )
 
     header_bytes = jcs_canonicalize_plan(header_dict)
     return _sha256(
@@ -866,6 +888,10 @@ def verify_record(
         if isinstance(narrowing_applied, str):
             narrowing_applied = json.loads(narrowing_applied)
         pause_token = record_dict.get("pause_token")
+        previous_chain_head_hash = record_dict.get("previous_chain_head_hash")
+        previous_batch_attestation_digest = record_dict.get(
+            "previous_batch_attestation_digest"
+        )
 
         # Compute hash using current algorithm
         computed_hash = _link_hash(
@@ -879,6 +905,8 @@ def verify_record(
             classification_reason=classification_reason,
             narrowing_applied=narrowing_applied,
             pause_token=pause_token,
+            previous_chain_head_hash=previous_chain_head_hash,
+            previous_batch_attestation_digest=previous_batch_attestation_digest,
         )
 
         # Verify hash matches
@@ -1118,6 +1146,8 @@ class EvidenceStreamSink:
         max_batch_size: int | None = None,
         max_wait_ms: float | None = None,
         queue_size: int | None = None,
+        previous_chain_head_hash: str | None = None,
+        previous_batch_attestation_digest: str | None = None,
     ) -> None:
         self._redis_url = redis_url
         self._redis_db = redis_db
@@ -1160,9 +1190,36 @@ class EvidenceStreamSink:
         self._stopping = False
         self._chain_lock = asyncio.Lock()
 
+        self._previous_chain_head_hash: str | None = (
+            previous_chain_head_hash
+            if previous_chain_head_hash is not None
+            else (
+                os.environ.get("EVIDENCE_PREVIOUS_CHAIN_HEAD_HASH", "").strip() or None
+            )
+        )
+        self._previous_batch_attestation_digest: str | None = (
+            previous_batch_attestation_digest
+            if previous_batch_attestation_digest is not None
+            else (
+                os.environ.get("EVIDENCE_PREVIOUS_BATCH_ATTESTATION_DIGEST", "").strip()
+                or None
+            )
+        )
+
         self._queue: asyncio.Queue[_QueuedEvidenceItem | None] | None = None
         self._queue_loop: asyncio.AbstractEventLoop | None = None
         self._appender_task: asyncio.Task[None] | None = None
+
+    def bind_genesis_rotation(
+        self,
+        previous_chain_head_hash: str,
+        previous_batch_attestation_digest: str = "",
+    ) -> None:
+        """Bind sequence 0 to the prior chain's last attested head and batch attestation digest (F-94, R-10)."""
+        self._previous_chain_head_hash = previous_chain_head_hash.strip() or None
+        self._previous_batch_attestation_digest = (
+            previous_batch_attestation_digest.strip() or None
+        )
 
     def _ensure_queue(self) -> asyncio.Queue[_QueuedEvidenceItem | None]:
         """Return the bounded producer queue for the active event loop."""
@@ -1493,6 +1550,26 @@ class EvidenceStreamSink:
         effective_sequence = self._sequence if sequence is None else sequence
         effective_trace_id = current_trace_id() if trace_id is None else trace_id
 
+        # F-94 / R-10: Resolve bound genesis rotation fields BEFORE _link_hash so
+        # both pointers are cryptographically covered by record_hash and batch signatures.
+        genesis_prev_head: str | None = None
+        genesis_prev_att_digest: str | None = None
+        if effective_sequence == 0:
+            raw_prev_head = (
+                event.get("previous_chain_head_hash")
+                or self._previous_chain_head_hash
+                or ""
+            )
+            raw_prev_att = (
+                event.get("previous_batch_attestation_digest")
+                or self._previous_batch_attestation_digest
+                or ""
+            )
+            if raw_prev_head:
+                genesis_prev_head = str(raw_prev_head).strip() or None
+            if raw_prev_att:
+                genesis_prev_att_digest = str(raw_prev_att).strip() or None
+
         record_hash = _link_hash(
             prev_hash=effective_prev_hash,
             sequence=effective_sequence,
@@ -1504,6 +1581,8 @@ class EvidenceStreamSink:
             classification_reason=classification_reason,
             narrowing_applied=narrowing_applied,
             pause_token=pause_token,
+            previous_chain_head_hash=genesis_prev_head,
+            previous_batch_attestation_digest=genesis_prev_att_digest,
         )
 
         entry: dict[str, str] = {
@@ -1536,6 +1615,10 @@ class EvidenceStreamSink:
             ).decode("utf-8")
         if pause_token is not None:
             entry["pause_token"] = pause_token
+        if genesis_prev_head is not None:
+            entry["previous_chain_head_hash"] = genesis_prev_head
+        if genesis_prev_att_digest is not None:
+            entry["previous_batch_attestation_digest"] = genesis_prev_att_digest
 
         return entry, record_hash
 

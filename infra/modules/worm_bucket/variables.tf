@@ -33,6 +33,12 @@ variable "bucket_name" {
   default     = ""
 }
 
+variable "external_bucket_enabled" {
+  description = "When true, adopt an existing out-of-band WORM bucket via data.google_storage_bucket rather than managing it in workload Terraform state (AU-9(4), F-66)."
+  type        = bool
+  default     = false
+}
+
 variable "enable_cmek" {
   description = "Enable Customer-Managed Encryption Key (CMEK)"
   type        = bool
@@ -42,6 +48,12 @@ variable "enable_cmek" {
 variable "kms_key_id" {
   description = "KMS crypto key ID for CMEK encryption"
   type        = string
+  default     = null
+}
+
+variable "cmek_iam_ready" {
+  description = "Optional dependency token ensuring KMS cryptoKeyEncrypterDecrypter IAM is bound to the GCS service agent before bucket creation."
+  type        = any
   default     = null
 }
 
@@ -85,4 +97,3 @@ variable "labels" {
   type        = map(string)
   default     = {}
 }
-

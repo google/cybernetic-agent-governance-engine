@@ -935,3 +935,228 @@ class TestComplianceBridgeEndpoints:
         ):
             with TestClient(app):
                 pass
+
+
+class TestBoundGenesisRotation:
+    """F-94 / R-10: Cryptographically bound genesis rotation across cluster rebuilds."""
+
+    @pytest.mark.asyncio
+    async def test_bound_genesis_rotation_across_cluster_rebuild_is_verified_and_citable(
+        self, server, store, signer, provider
+    ):
+        old = await _sink(server)
+        custodian = _custodian(server, store, signer)
+        await _ingest(old, 3)
+        first_outcome = await custodian.flush_once()
+        old_att_bytes = store._entries[first_outcome.attestation_key]
+        old_att = json.loads(old_att_bytes)
+        old_head_hash = old_att["last_record_hash"]
+        old_att_digest = hashlib.sha256(old_att_bytes).hexdigest()
+
+        # Simulate ephemeral workload cluster teardown & rebuild (Redis wiped, WORM persists).
+        await _redis(server).flushdb()
+        await asyncio.sleep(0.002)
+
+        new = EvidenceStreamSink(
+            stream_key=STREAM_KEY,
+            previous_chain_head_hash=old_head_hash,
+            previous_batch_attestation_digest=old_att_digest,
+        )
+        new._redis = _redis(server)
+        await _ingest(new, 2)
+        second_outcome = await custodian.flush_once()
+        assert second_outcome.gap is False
+
+        report = await _verifier(store, provider).verify_all()
+        assert report.ok, _reasons(report)
+        assert report.citable is True
+        assert report.declared_gaps == []
+        assert len(report.bound_rotations) == 1
+        rot = report.bound_rotations[0]
+        assert rot.kind == "BOUND_CHAIN_ROTATION"
+        assert rot.previous_chain_id == old.chain_id
+        assert rot.new_chain_id == new.chain_id
+        assert rot.previous_last_sequence == 2
+        assert rot.previous_chain_head_hash == old_head_hash
+        assert rot.previous_batch_attestation_digest == old_att_digest
+        assert len(report.assert_citable()) == 2
+
+    @pytest.mark.asyncio
+    async def test_mismatched_previous_chain_head_hash_fails_verification(
+        self, server, store, signer, provider
+    ):
+        old = await _sink(server)
+        custodian = _custodian(server, store, signer)
+        await _ingest(old, 2)
+        first_outcome = await custodian.flush_once()
+        old_att_digest = hashlib.sha256(
+            store._entries[first_outcome.attestation_key]
+        ).hexdigest()
+
+        await _redis(server).delete(STREAM_KEY, f"{STREAM_KEY}:head")
+        await asyncio.sleep(0.002)
+
+        new = EvidenceStreamSink(
+            stream_key=STREAM_KEY,
+            previous_chain_head_hash="f" * 64,
+            previous_batch_attestation_digest=old_att_digest,
+        )
+        new._redis = _redis(server)
+        await _ingest(new, 1)
+        await custodian.flush_once()
+
+        report = await _verifier(store, provider).verify_all()
+        assert report.ok is False
+        assert report.citable is False
+        assert report.bound_rotations == []
+        with pytest.raises(ev.EvidenceVerificationError):
+            report.assert_citable()
+
+    @pytest.mark.asyncio
+    async def test_missing_or_mismatched_previous_batch_attestation_digest_fails_closed(
+        self, server, store, signer, provider
+    ):
+        old = await _sink(server)
+        custodian = _custodian(server, store, signer)
+        await _ingest(old, 2)
+        first_outcome = await custodian.flush_once()
+        old_att = json.loads(store._entries[first_outcome.attestation_key])
+        old_head_hash = old_att["last_record_hash"]
+
+        # 1) Missing previous_batch_attestation_digest when previous_chain_head_hash is set
+        await _redis(server).flushdb()
+        await asyncio.sleep(0.002)
+        missing_att_sink = EvidenceStreamSink(
+            stream_key=STREAM_KEY,
+            previous_chain_head_hash=old_head_hash,
+        )
+        missing_att_sink._redis = _redis(server)
+        await _ingest(missing_att_sink, 1)
+        await custodian.flush_once()
+
+        report_missing = await _verifier(store, provider).verify_all()
+        assert report_missing.ok is False
+        assert report_missing.citable is False
+        assert "missing previous_batch_attestation_digest" in _reasons(report_missing)
+
+        # 2) Mismatched previous_batch_attestation_digest (wrong 64-hex digest)
+        store._entries.clear()
+        await _redis(server).flushdb()
+        old2 = await _sink(server)
+        custodian2 = _custodian(server, store, signer)
+        await _ingest(old2, 2)
+        first2 = await custodian2.flush_once()
+        head2 = json.loads(store._entries[first2.attestation_key])["last_record_hash"]
+
+        await _redis(server).flushdb()
+        await asyncio.sleep(0.002)
+        bad_att_sink = EvidenceStreamSink(
+            stream_key=STREAM_KEY,
+            previous_chain_head_hash=head2,
+            previous_batch_attestation_digest="e" * 64,
+        )
+        bad_att_sink._redis = _redis(server)
+        await _ingest(bad_att_sink, 1)
+        await custodian2.flush_once()
+
+        report_bad = await _verifier(store, provider).verify_all()
+        assert report_bad.ok is False
+        assert report_bad.citable is False
+        assert (
+            "previous_batch_attestation_digest does not match prior chain tail attestation SHA-256"
+            in _reasons(report_bad)
+        )
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        "tampered_field",
+        ["previous_chain_head_hash", "previous_batch_attestation_digest"],
+    )
+    async def test_tampering_with_genesis_rotation_fields_breaks_record_hash_and_fails(
+        self, server, store, signer, provider, tampered_field
+    ):
+        old = await _sink(server)
+        custodian = _custodian(server, store, signer)
+        await _ingest(old, 2)
+        first_outcome = await custodian.flush_once()
+        old_att_bytes = store._entries[first_outcome.attestation_key]
+        old_head_hash = json.loads(old_att_bytes)["last_record_hash"]
+        old_att_digest = hashlib.sha256(old_att_bytes).hexdigest()
+
+        await _redis(server).flushdb()
+        await asyncio.sleep(0.002)
+
+        new = EvidenceStreamSink(
+            stream_key=STREAM_KEY,
+            previous_chain_head_hash=old_head_hash,
+            previous_batch_attestation_digest=old_att_digest,
+        )
+        new._redis = _redis(server)
+        await _ingest(new, 1)
+
+        await old.stop()
+        await new.stop()
+
+        # 1) Tamper in Redis BEFORE custodian signs: EvidenceCustodian.flush_once()
+        # immediately halts custody with Hash mismatch because _link_hash binds both fields.
+        entries = await _redis(server).xrange(STREAM_KEY)
+        msg_id, fields = entries[0]
+        original_fields = {
+            (k.decode() if isinstance(k, bytes) else k): (
+                v.decode() if isinstance(v, bytes) else v
+            )
+            for k, v in fields.items()
+        }
+        mutated = dict(original_fields)
+        mutated[tampered_field] = "0" * 64
+        await _redis(server).xdel(STREAM_KEY, msg_id)
+        await _redis(server).xadd(STREAM_KEY, mutated, id=msg_id)
+
+        from src.compliance_bridge.evidence_custodian import (
+            EvidenceCustodyIntegrityError,
+        )
+
+        with pytest.raises(EvidenceCustodyIntegrityError, match="Hash mismatch"):
+            await custodian.flush_once()
+
+        # 2) Restore valid entry, flush to cold store, then tamper with the archived
+        # .ndjson genesis record (even re-signing the attestation over the tampered bytes):
+        # CustodyVerifier.verify_all() independently fails with Hash mismatch.
+        await _redis(server).xdel(STREAM_KEY, msg_id)
+        await _redis(server).xadd(STREAM_KEY, original_fields, id=msg_id)
+        second_outcome = await custodian.flush_once()
+        ndjson_lines = (
+            store._entries[second_outcome.data_key].decode("utf-8").splitlines()
+        )
+        gen_rec = json.loads(ndjson_lines[0])
+        gen_rec[tampered_field] = "0" * 64
+        tampered_ndjson = (json.dumps(gen_rec) + "\n").encode("utf-8")
+        store._entries[second_outcome.data_key] = tampered_ndjson
+        att = json.loads(store._entries[second_outcome.attestation_key])
+        att.pop("signature", None)
+        att["content_sha256"] = hashlib.sha256(tampered_ndjson).hexdigest()
+        att["byte_length"] = len(tampered_ndjson)
+        att["signature"] = await custodian._sign(att)
+        store._entries[second_outcome.attestation_key] = json.dumps(att).encode("utf-8")
+
+        report = await _verifier(store, provider).verify_all()
+        assert report.ok is False
+        assert report.citable is False
+        assert "Hash mismatch" in _reasons(report)
+
+    @pytest.mark.asyncio
+    async def test_malformed_previous_chain_head_hash_on_genesis_fails(
+        self, server, store, signer, provider
+    ):
+        sink = EvidenceStreamSink(
+            stream_key=STREAM_KEY,
+            previous_chain_head_hash="not-a-64-char-hex-digest",
+            previous_batch_attestation_digest="a" * 64,
+        )
+        sink._redis = _redis(server)
+        await _ingest(sink, 1)
+        await _custodian(server, store, signer).flush_once()
+
+        report = await _verifier(store, provider).verify_all()
+        assert not report.ok
+        assert "invalid previous_chain_head_hash" in _reasons(report)
