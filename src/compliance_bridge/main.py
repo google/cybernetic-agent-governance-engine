@@ -349,6 +349,32 @@ async def lifespan(app: FastAPI):  # type: ignore[no-untyped-def]
     # and must never contain workload identities (spiffe:// or Linkerd SAs).
     validate_operator_identity_posture()
 
+    # Dedicated out-of-band Prometheus WSGI listener (mirrors gateway :9090 GMP scrape).
+    import socket as _socket
+
+    from src.gateway.governance.env_posture import is_enforcing as _is_enforcing
+    from src.gateway.observability.loop_monitor import start_metrics_http_server
+
+    _cb_metrics_addr = "0.0.0.0"  # nosec B104  # GMP scrape binds container interface when port is configured
+    _cb_metrics_port_raw = os.environ.get("COMPLIANCE_BRIDGE_METRICS_PORT")
+    if _cb_metrics_port_raw is not None and _cb_metrics_port_raw.strip():
+        try:
+            _cb_metrics_port: int | None = int(_cb_metrics_port_raw.strip())
+        except ValueError:
+            _cb_metrics_port = 9091
+    elif os.environ.get("CAGE_METRICS_PORT", "").strip():
+        _cb_metrics_port = None
+    elif _is_enforcing():
+        _cb_metrics_addr = "127.0.0.1"
+        with _socket.socket(_socket.AF_INET, _socket.SOCK_STREAM) as _ephem_sock:
+            _ephem_sock.bind(("127.0.0.1", 0))
+            _cb_metrics_port = int(_ephem_sock.getsockname()[1])
+    else:
+        _cb_metrics_port = 0
+    app.state.metrics_server = start_metrics_http_server(
+        port=_cb_metrics_port, addr=_cb_metrics_addr
+    )
+
     # Start background tasks
     _sla_task = asyncio.create_task(run_sla_monitor(), name="sla-monitor")
 
@@ -373,6 +399,10 @@ async def lifespan(app: FastAPI):  # type: ignore[no-untyped-def]
                 await _task
             except asyncio.CancelledError:
                 pass
+        _metrics_srv = getattr(app.state, "metrics_server", None)
+        if _metrics_srv is not None:
+            _metrics_srv.stop()
+            app.state.metrics_server = None
         app.state.evidence_verifier = None
         if _infra_chain is not None:
             app.state.infra_evidence_chain = None

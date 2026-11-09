@@ -226,24 +226,37 @@ class TestStateCommitmentService:
     async def test_uuid_that_trips_card_regex_still_binds_via_linkage_digest(
         self,
     ) -> None:
-        """uuid4 values whose 8-4-4 groups are all digits match the card regex.
-
-        The informational ``linkage`` object is sanitized like any field, but
-        ``linkageDigest`` survives and binds the record to the exact step.
-        """
-        colliding = "44845531-3164-4232-a812-73c6e3dfa067"
-        linkage = _linkage(step_id=colliding)
+        """Canonical UUIDs survive uncorrupted while redacted non-UUID stepIds still bind via linkageDigest."""
+        canonical_uuid = "44845531-3164-4232-a812-73c6e3dfa067"
+        uuid_linkage = _linkage(step_id=canonical_uuid)
         redis = _fake_redis()
-        receipt = await StateCommitmentService(_sink(redis)).commit_state(
-            {"loop_count": 1}, linkage=linkage
+        uuid_receipt = await StateCommitmentService(_sink(redis)).commit_state(
+            {"loop_count": 1}, linkage=uuid_linkage
         )
         ((_sid, fields),) = await redis.xrange(STREAM_KEY)
-        payload = json.loads(fields["payload_json"])
-        assert payload["linkage"]["stepId"] != colliding  # sanitized in transit
-        assert payload["linkageDigest"] == linkage_digest(linkage)
-        assert verify_state_commitment(receipt.state_hash, payload, linkage=linkage)
+        uuid_payload = json.loads(fields["payload_json"])
+        assert uuid_payload["linkage"]["stepId"] == canonical_uuid
+        assert uuid_payload["linkageDigest"] == linkage_digest(uuid_linkage)
+        assert verify_state_commitment(
+            uuid_receipt.state_hash, uuid_payload, linkage=uuid_linkage
+        )
+
+        # Non-UUID stepId containing a card number is redacted in transit, yet linkageDigest still binds:
+        card_step_id = "step-4111-1111-1111-1111"
+        card_linkage = _linkage(step_id=card_step_id)
+        redis2 = _fake_redis()
+        card_receipt = await StateCommitmentService(_sink(redis2)).commit_state(
+            {"loop_count": 2}, linkage=card_linkage
+        )
+        ((_sid2, fields2),) = await redis2.xrange(STREAM_KEY)
+        card_payload = json.loads(fields2["payload_json"])
+        assert card_payload["linkage"]["stepId"] != card_step_id
+        assert card_payload["linkageDigest"] == linkage_digest(card_linkage)
+        assert verify_state_commitment(
+            card_receipt.state_hash, card_payload, linkage=card_linkage
+        )
         assert not verify_state_commitment(
-            receipt.state_hash, payload, linkage=_linkage(step_id="other")
+            card_receipt.state_hash, card_payload, linkage=_linkage(step_id="other")
         )
 
 

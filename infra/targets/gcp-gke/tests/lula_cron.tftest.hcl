@@ -119,10 +119,14 @@ run "staging_plans_lula_cron_active_specs_and_dedicated_ksas" {
   assert {
     condition = (
       length(google_monitoring_alert_policy.lula_audit_failure) == 1 &&
+      length(google_monitoring_alert_policy.lula_audit_failure[0].conditions) == 1 &&
       google_monitoring_alert_policy.lula_audit_failure[0].user_labels["owner"] == "platform-compliance-oncall" &&
-      strcontains(google_monitoring_alert_policy.lula_audit_failure[0].documentation[0].content, "platform-compliance-oncall")
+      strcontains(google_monitoring_alert_policy.lula_audit_failure[0].documentation[0].content, "platform-compliance-oncall") &&
+      google_monitoring_alert_policy.lula_audit_failure[0].conditions[0].condition_prometheus_query_language[0].disable_metric_validation == true &&
+      length(google_monitoring_alert_policy.lula_audit_pod_restart) == 1 &&
+      google_monitoring_alert_policy.lula_audit_pod_restart[0].user_labels["owner"] == "platform-compliance-oncall"
     )
-    error_message = "CA-7: enforcing compliance-bridge deployments must provision google_monitoring_alert_policy.lula_audit_failure naming lula_alert_owner"
+    error_message = "CA-7: enforcing deployments must provision single-condition PromQL lula_audit_failure (disable_metric_validation=true) and lula_audit_pod_restart naming lula_alert_owner"
   }
 }
 
@@ -174,9 +178,11 @@ run "custom_lula_alert_owner_and_channels_propagate" {
     condition = (
       google_monitoring_alert_policy.lula_audit_failure[0].user_labels["owner"] == "secops-compliance-oncall" &&
       strcontains(google_monitoring_alert_policy.lula_audit_failure[0].documentation[0].content, "secops-compliance-oncall") &&
-      contains(google_monitoring_alert_policy.lula_audit_failure[0].notification_channels, "projects/lula-cron-test-project/notificationChannels/12345")
+      contains(google_monitoring_alert_policy.lula_audit_failure[0].notification_channels, "projects/lula-cron-test-project/notificationChannels/12345") &&
+      google_monitoring_alert_policy.lula_audit_pod_restart[0].user_labels["owner"] == "secops-compliance-oncall" &&
+      contains(google_monitoring_alert_policy.lula_audit_pod_restart[0].notification_channels, "projects/lula-cron-test-project/notificationChannels/12345")
     )
-    error_message = "custom lula_alert_owner and lula_alert_notification_channels must propagate into google_monitoring_alert_policy.lula_audit_failure"
+    error_message = "custom lula_alert_owner and lula_alert_notification_channels must propagate into both Lula alert policies"
   }
 }
 

@@ -69,3 +69,20 @@ def test_canonical_uuid_with_16_digit_prefix_or_suffix_is_not_corrupted_as_credi
     # Malformed hyphen-concatenated card+UUID must NOT bypass redaction:
     joined = scrub_pii("4111-1111-1111-1111-84119661-6585-4371-ab77-f4f1ecb70374")
     assert "[REDACTED-CREDIT_CARD-UCA-3]" in joined
+
+
+@pytest.mark.unit
+@pytest.mark.local
+def test_privacy_shares_single_canonical_patterns_with_pii_sanitizer() -> None:
+    """privacy.py and pii_sanitizer.py must share one set of compiled regex objects."""
+    from src.gateway.governance import pii_sanitizer
+    from src.gateway.infrastructure import privacy
+
+    assert privacy._CANONICAL_UUID_RE is pii_sanitizer.CANONICAL_UUID_RE
+    assert privacy._COMPILED_PII_PATTERNS["SSN"] is pii_sanitizer.SSN_PATTERN
+    assert (
+        privacy._COMPILED_PII_PATTERNS["CREDIT_CARD"]
+        is pii_sanitizer.CREDIT_CARD_PATTERN
+    )
+    assert privacy._COMPILED_PII_PATTERNS["EMAIL"] is pii_sanitizer.EMAIL_PATTERN
+    assert privacy._COMPILED_PII_PATTERNS["PHONE"] is pii_sanitizer.PHONE_PATTERN

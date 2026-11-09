@@ -28,23 +28,31 @@ import logging
 import os
 import re
 
+from src.gateway.governance.pii_sanitizer import (
+    CANONICAL_UUID_RE,
+    CREDIT_CARD_PATTERN,
+    EMAIL_PATTERN,
+    PHONE_PATTERN,
+    SSN_PATTERN,
+    redact_preserving_uuids,
+)
+
 logger = logging.getLogger("GoverningFinancialAdvisor.Utils.Privacy")
 
-# Deterministic patterns for Zero-Trust Redaction (Defense-in-Depth)
-PII_PATTERNS = {
-    "SSN": r"\b\d{3}[- ]?\d{2}[- ]?\d{4}\b",
-    # Local part and domain are length-bounded (RFC 5321: local ≤64, domain
-    # ≤255). The unbounded ``+`` form let a crafted no-TLD string like
-    # "a@a.a.a.…!" force O(n²) backtracking in re.sub, stalling the event loop
-    # (scrub_pii runs inline on unauthenticated /v1/chat/completions input).
-    "EMAIL": r"\b[A-Za-z0-9._%+-]{1,64}@[A-Za-z0-9.-]{1,255}\.[A-Z|a-z]{2,}\b",
-    "CREDIT_CARD": r"\b(?:\d[ -]*?){13,16}\b",
-    "PHONE": r"\b(?:\+?1[-. ]?)?\(?([0-9]{3})\)?[-. ]?([0-9]{3})[-. ]?([0-9]{4})\b",
+# Shared compiled patterns from src.gateway.governance.pii_sanitizer (single
+# canonical regex and UUID-preservation implementation across Layer 1).
+_COMPILED_PII_PATTERNS: dict[str, re.Pattern[str]] = {
+    "SSN": SSN_PATTERN,
+    "EMAIL": EMAIL_PATTERN,
+    "CREDIT_CARD": CREDIT_CARD_PATTERN,
+    "PHONE": PHONE_PATTERN,
 }
 
-_CANONICAL_UUID_RE = re.compile(
-    r"(?<![0-9A-Za-z-])[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}(?![0-9A-Za-z-])"
-)
+PII_PATTERNS: dict[str, str] = {
+    entity: pattern.pattern for entity, pattern in _COMPILED_PII_PATTERNS.items()
+}
+
+_CANONICAL_UUID_RE = CANONICAL_UUID_RE
 
 
 # ---------------------------------------------------------------------------
@@ -63,8 +71,8 @@ _ERASURE_CITATION: dict[str, str] = {
 
 def _scrub_span(span: str, seen_entities: set[str]) -> str:
     scrubbed = span
-    for entity, pattern in PII_PATTERNS.items():
-        new_text = re.sub(pattern, f"[REDACTED-{entity}-UCA-3]", scrubbed)
+    for entity, pattern in _COMPILED_PII_PATTERNS.items():
+        new_text = pattern.sub(f"[REDACTED-{entity}-UCA-3]", scrubbed)
         if new_text != scrubbed:
             seen_entities.add(entity)
         scrubbed = new_text
@@ -75,12 +83,11 @@ def scrub_pii(
     text: str,
     emit_jurisdiction_audit: bool = False,
 ) -> str:
-    """Deterministic PII scrubbing utility.
+    """Deterministic PII scrubbing utility backed by shared ``pii_sanitizer`` primitives.
 
     Transforms sensitive data into non-identifying tokens while preserving
     canonical RFC-4122 ``8-4-4-4-12`` hex UUIDs (such as ``defer_id``,
-    ``transaction_id``, and ``trace_id``) whose 16-char ``8-4-4`` or ``4-12``
-    groups happen to consist solely of decimal digits.
+    ``transaction_id``, and ``trace_id``) via :func:`redact_preserving_uuids`.
 
     FINDING-10 (LOW): Added ``emit_jurisdiction_audit`` parameter.  When True
     and CAGE_DEPLOYMENT_REGION is EU_ECB or APAC_MAS, emits a structured audit
@@ -99,18 +106,12 @@ def scrub_pii(
         return text
 
     seen_entities: set[str] = set()
-    out_parts: list[str] = []
-    cursor = 0
-    for match in _CANONICAL_UUID_RE.finditer(text):
-        if match.start() > cursor:
-            out_parts.append(_scrub_span(text[cursor : match.start()], seen_entities))
-        out_parts.append(match.group(0))
-        cursor = match.end()
-    if cursor < len(text):
-        out_parts.append(_scrub_span(text[cursor:], seen_entities))
-
-    scrubbed = "".join(out_parts)
-    redacted_entities = [entity for entity in PII_PATTERNS if entity in seen_entities]
+    scrubbed = redact_preserving_uuids(
+        text, lambda span: _scrub_span(span, seen_entities)
+    )
+    redacted_entities = [
+        entity for entity in _COMPILED_PII_PATTERNS if entity in seen_entities
+    ]
 
     # Jurisdictional audit trail (R-3, R-4)
     if emit_jurisdiction_audit and redacted_entities:

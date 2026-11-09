@@ -45,44 +45,57 @@ resource "google_monitoring_alert_policy" "lula_audit_failure" {
       - **Schedule:** `${var.lula_schedule}` (`2 x schedule` = `1800s` dead-man window)
 
       Fires when:
-      1. `prometheus.googleapis.com/cage_lula_audit_not_satisfied_controls/gauge > 0`
+      1. `cage_lula_audit_not_satisfied_controls > 0`
          (including `< 26` active-manifest corpus-floor breaches),
-      2. `prometheus.googleapis.com/cage_lula_audit_deadman_breaches_total/counter`
-         increases because no clean `lula_audit PASS` completed within `2 x schedule`, or
+      2. `increase(cage_lula_audit_deadman_breaches_total[5m]) > 0`
+         because no clean `lula_audit PASS` completed within `2 x schedule`, or
       3. `kubernetes.io/container/restart_count` increases for `lula-audit` pods.
     EOT
   }
 
   conditions {
-    display_name = "Lula not-satisfied or missing corpus-floor controls > 0"
+    display_name = "Lula not-satisfied controls > 0 or 2x-schedule dead-man switch breach > 0"
 
-    condition_threshold {
-      filter          = "resource.type = \"prometheus_target\" AND resource.labels.namespace = \"${module.namespace.name}\" AND metric.type = \"prometheus.googleapis.com/cage_lula_audit_not_satisfied_controls/gauge\""
-      comparison      = "COMPARISON_GT"
-      threshold_value = 0
-      duration        = "0s"
-
-      aggregations {
-        alignment_period   = "60s"
-        per_series_aligner = "ALIGN_MAX"
-      }
+    condition_prometheus_query_language {
+      query                     = "(cage_lula_audit_not_satisfied_controls{namespace=\"${module.namespace.name}\"} > 0) or (increase(cage_lula_audit_deadman_breaches_total{namespace=\"${module.namespace.name}\"}[5m]) > 0)"
+      duration                  = "0s"
+      evaluation_interval       = "60s"
+      disable_metric_validation = true
     }
   }
 
-  conditions {
-    display_name = "Lula 2x-schedule dead-man switch breach > 0"
+  depends_on = [module.gke]
+}
 
-    condition_threshold {
-      filter          = "resource.type = \"prometheus_target\" AND resource.labels.namespace = \"${module.namespace.name}\" AND metric.type = \"prometheus.googleapis.com/cage_lula_audit_deadman_breaches_total/counter\""
-      comparison      = "COMPARISON_GT"
-      threshold_value = 0
-      duration        = "0s"
+resource "google_monitoring_alert_policy" "lula_audit_pod_restart" {
+  count = var.enable_lula_cron && local.enforcing_posture ? 1 : 0
 
-      aggregations {
-        alignment_period   = "300s"
-        per_series_aligner = "ALIGN_DELTA"
-      }
-    }
+  project               = var.project_id
+  display_name          = "${var.cluster_name} - Lula Compliance Auditor Pod Restart (A.5.3)"
+  combiner              = "OR"
+  enabled               = true
+  severity              = "CRITICAL"
+  notification_channels = var.lula_alert_notification_channels
+
+  user_labels = {
+    owner       = trimspace(var.lula_alert_owner)
+    component   = "compliance-auditor"
+    control     = "a-5-3"
+    environment = var.environment
+  }
+
+  documentation {
+    mime_type = "text/markdown"
+    content   = <<-EOT
+      ## CAGE In-Cluster Lula Auditor Pod Restart Alert (ISO/IEC 42001 A.5.3 / NIST CA-7)
+
+      - **Owner:** `${trimspace(var.lula_alert_owner)}`
+      - **Cluster:** `${var.cluster_name}` (`${var.namespace}`)
+
+      Fires when `kubernetes.io/container/restart_count` increases for `lula-audit` pods.
+      Separated from `lula_audit_failure` because Cloud Monitoring restricts
+      `prometheus_query_language` alert policies to a single condition.
+    EOT
   }
 
   conditions {
@@ -100,4 +113,6 @@ resource "google_monitoring_alert_policy" "lula_audit_failure" {
       }
     }
   }
+
+  depends_on = [module.gke]
 }

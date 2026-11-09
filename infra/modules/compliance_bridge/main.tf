@@ -97,9 +97,14 @@ resource "kubernetes_deployment" "compliance_bridge" {
         labels = {
           app = "compliance-bridge"
         }
-        annotations = local.mount_redis_ca ? {
-          "cage.io/redis-ca-sha256" = sha256(var.redis_ca_pem)
-        } : {}
+        annotations = merge(
+          {
+            "config.linkerd.io/skip-inbound-ports" = "9090"
+          },
+          local.mount_redis_ca ? {
+            "cage.io/redis-ca-sha256" = sha256(var.redis_ca_pem)
+          } : {},
+        )
       }
 
       spec {
@@ -121,6 +126,11 @@ resource "kubernetes_deployment" "compliance_bridge" {
           port {
             container_port = 3001
             name           = "http"
+          }
+
+          port {
+            container_port = 9090
+            name           = "metrics"
           }
 
           env_from {
@@ -146,6 +156,11 @@ resource "kubernetes_deployment" "compliance_bridge" {
           env {
             name  = "PORT"
             value = "3001"
+          }
+
+          env {
+            name  = "CAGE_METRICS_PORT"
+            value = "9090"
           }
 
           env {
@@ -533,6 +548,13 @@ resource "kubernetes_service" "compliance_bridge" {
       name        = "infra-http"
     }
 
+    port {
+      port        = 9090
+      target_port = 9090
+      protocol    = "TCP"
+      name        = "metrics"
+    }
+
     selector = {
       app = "compliance-bridge"
     }
@@ -550,5 +572,21 @@ resource "helm_release" "mesh_policy" {
   values = [yamlencode({
     trustedIdentities = var.trusted_mesh_identities
     auditorIdentity   = var.auditor_mesh_identity
+  })]
+}
+
+resource "helm_release" "metrics_monitors" {
+  count           = var.enable_pod_monitoring ? 1 : 0
+  name            = "compliance-bridge-metrics-monitors"
+  chart           = "${path.module}/metrics-monitors"
+  namespace       = var.namespace
+  upgrade_install = true
+  atomic          = true
+  cleanup_on_fail = true
+
+  values = [yamlencode({
+    podMonitoring = {
+      enabled = true
+    }
   })]
 }

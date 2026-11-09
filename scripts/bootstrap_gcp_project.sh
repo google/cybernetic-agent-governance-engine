@@ -333,6 +333,22 @@ if [[ "$IMPORT_STATE" == "true" ]]; then import_evidence_domain_state() {
   if gcloud storage buckets describe "gs://${ev_audit_bucket}" --project="$ev_project" >/dev/null 2>&1; then
     import_if_missing       "module.evidence_domain.google_storage_bucket.audit_logs_worm[0]"       "${ev_audit_bucket}"
   fi
+
+  if [[ "$ENV" != "dev" ]]; then
+    local lf_bucket
+    lf_bucket="$(gcloud storage buckets list --project="$PROJECT_ID" --format='value(name)' 2>/dev/null | grep -E "^langfuse-event-upload-${PROJECT_ID}-[0-9a-f]{8}$" | sort | tail -n 1 || true)"
+    if [[ -n "$lf_bucket" ]]; then
+      local lf_hex="${lf_bucket##*-}"
+      local lf_b64
+      lf_b64="$(python3 -c 'import base64, sys; print(base64.urlsafe_b64encode(bytes.fromhex(sys.argv[1])).decode("ascii").rstrip("="))' "$lf_hex")"
+      import_if_missing \
+        "random_id.bucket_suffix" \
+        "$lf_b64"
+      import_if_missing \
+        "google_storage_bucket.langfuse_event_upload" \
+        "$lf_bucket"
+    fi
+  fi
 }; import_foundational_state; exit 0; fi
 
 # ---------------------------------------------------------------------------

@@ -178,38 +178,75 @@ def _is_bic_key(key: str) -> bool:
     return bool(_BIC_KEY.search(snake))
 
 
-_PII_PATTERNS: list[tuple[re.Pattern[str], str | Callable[[re.Match[str]], str]]] = [
-    # SSN: 9 digits in NNN-NN-NNNN or NNNNNNNNN format.
-    # Excludes invalid ranges: 000, 666, 9xx area codes.
+CANONICAL_UUID_RE: re.Pattern[str] = re.compile(
+    r"(?<![0-9A-Za-z-])[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}(?![0-9A-Za-z-])"
+)
+
+# SSN: 9 digits in NNN-NN-NNNN or NNNNNNNNN format.
+# Excludes invalid ranges: 000, 666, 9xx area codes.
+SSN_PATTERN: re.Pattern[str] = re.compile(
+    r"\b(?!000|666|9\d{2})\d{3}[-\s]?(?!00)\d{2}[-\s]?(?!0000)\d{4}\b"
+)
+
+# Credit card: Visa, MC (51-55 and 2221-2720), Amex, Discover, JCB, Diners.
+# Allows optional spaces or dashes between 4-digit groups (e.g. 4111-1111-1111-1111).
+CREDIT_CARD_PATTERN: re.Pattern[str] = re.compile(
+    r"\b(?:"
+    # Visa: 16 digits in four 4-digit groups separated by [-\s]?. A
+    # 12-digit form is not a valid Visa length and matched UUID
+    # segments (e.g. "4365-4282-8412" inside a uuid4), corrupting
+    # identifiers in evidence records.
+    r"4\d{3}(?:[-\s]?\d{4}){3}"
+    # Mastercard: 51-55 or 2221-2720 + 12 more digits
+    r"|(?:5[1-5]\d{2}|2(?:22[1-9]|2[3-9]\d|[3-6]\d{2}|7[01]\d|720))(?:[-\s]?\d{4}){3}"
+    # Amex: 34 or 37 + 13 more digits (15 total, groups 4-6-5)
+    r"|3[47]\d{2}[-\s]?\d{6}[-\s]?\d{5}"
+    # Diners: 300-305 or 36x or 38x + 11 more digits (14 total)
+    r"|3(?:0[0-5]|[68]\d)\d{11}"
+    # Discover: 6011 or 65xx + 12 more digits (16 total)
+    r"|6(?:011|5\d{2})(?:[-\s]?\d{4}){3}"
+    # JCB: 2131, 1800, or 35xxx + 11 more digits (15-16 total)
+    r"|(?:2131|1800|35\d{3})\d{11}"
+    r")\b"
+)
+
+# Email address: RFC 5321 simplified. Local part and domain are length-bounded
+# (RFC 5321: local <=64, domain <=255) — the unbounded ``+`` form let a crafted
+# no-TLD string ("a@a.a.a.…!") drive O(n^2) backtracking in re.sub.
+EMAIL_PATTERN: re.Pattern[str] = re.compile(
+    r"\b[A-Za-z0-9._%+\-]{1,64}@[A-Za-z0-9.\-]{1,255}\.[A-Za-z]{2,}\b"
+)
+
+# Phone: US/international formats with optional country code (+1 or 1).
+# Uses (?<!\w) instead of \b so that '+' before the digit is included in the match.
+PHONE_PATTERN: re.Pattern[str] = re.compile(
+    r"(?<!\w)(?:\+?1[-.\s]?)?\(?\d{3}\)?[-.\s]?\d{3}[-.\s]?\d{4}\b"
+)
+
+_CREDENTIAL_PATTERNS: list[
+    tuple[re.Pattern[str], str | Callable[[re.Match[str]], str]]
+] = [
+    # API keys and Bearer tokens: Langfuse (pk-lf-*, sk-lf-*), HuggingFace
+    # (hf_*), and generic Bearer tokens (run before UUID preservation so opaque
+    # ``Bearer <uuid>`` tokens are still scrubbed).
     (
-        re.compile(r"\b(?!000|666|9\d{2})\d{3}[-\s]?(?!00)\d{2}[-\s]?(?!0000)\d{4}\b"),
-        "[REDACTED_SSN]",
+        re.compile(r"\b(?:pk-lf-|sk-lf-|hf_|Bearer\s+)[A-Za-z0-9_\-]{8,}\b"),
+        "[REDACTED_API_KEY]",
     ),
-    # Credit card: Visa, MC, Amex, Discover, JCB, Diners.
-    # Allows optional spaces or dashes between 4-digit groups (e.g. 4111-1111-1111-1111).
-    # Pattern: leading prefix digits followed by remaining digits with optional separators.
+    # Compact JWS/JWT tokens (R5: ConsequenceToken leakage mitigation).
     (
         re.compile(
-            r"\b(?:"
-            # Visa: 16 digits in four 4-digit groups separated by [-\s]?. A
-            # 12-digit form is not a valid Visa length and matched UUID
-            # segments (e.g. "4365-4282-8412" inside a uuid4), corrupting
-            # identifiers in evidence records.
-            r"4\d{3}(?:[-\s]?\d{4}){3}"
-            # Mastercard: 51-55 + 14 more digits
-            r"|5[1-5]\d{2}(?:[-\s]?\d{4}){3}"
-            # Amex: 34 or 37 + 13 more digits (15 total, groups 4-6-5)
-            r"|3[47]\d{2}[-\s]?\d{6}[-\s]?\d{5}"
-            # Diners: 300-305 or 36x or 38x + 11 more digits (14 total)
-            r"|3(?:0[0-5]|[68]\d)\d{11}"
-            # Discover: 6011 or 65xx + 12 more digits (16 total)
-            r"|6(?:011|5\d{2})(?:[-\s]?\d{4}){3}"
-            # JCB: 2131, 1800, or 35xxx + 11 more digits (15-16 total)
-            r"|(?:2131|1800|35\d{3})\d{11}"
-            r")\b"
+            r"\beyJ[A-Za-z0-9_\-]{17,}\.[A-Za-z0-9_\-]{20,}\.[A-Za-z0-9_\-]{20,}(?![A-Za-z0-9_\-])"
         ),
-        "[REDACTED_CC]",
+        "[REDACTED_JWS]",
     ),
+]
+
+_SPAN_PII_PATTERNS: list[
+    tuple[re.Pattern[str], str | Callable[[re.Match[str]], str]]
+] = [
+    (SSN_PATTERN, "[REDACTED_SSN]"),
+    (CREDIT_CARD_PATTERN, "[REDACTED_CC]"),
     # M-14: IBAN — International Bank Account Number (up to 34 alphanumeric chars).
     # Format: 2-letter country code + 2 check digits + up to 30 BBAN chars.
     (
@@ -218,42 +255,34 @@ _PII_PATTERNS: list[tuple[re.Pattern[str], str | Callable[[re.Match[str]], str]]
     ),
     # M-14: SWIFT/BIC code (ISO 9362), only when labelled — see _BIC_LABELLED.
     (_BIC_LABELLED, _redact_labelled_bic),
-    # Email address: RFC 5321 simplified.  Local part and domain are
-    # length-bounded (RFC 5321: local ≤64, domain ≤255) — the unbounded ``+``
-    # form let a crafted no-TLD string ("a@a.a.a.…!") drive O(n²) backtracking
-    # in re.sub, which stalls the sanitizer on attacker-supplied text.
-    (
-        re.compile(r"\b[A-Za-z0-9._%+\-]{1,64}@[A-Za-z0-9.\-]{1,255}\.[A-Za-z]{2,}\b"),
-        "[REDACTED_EMAIL]",
-    ),
-    # Phone: US/international formats with optional country code (+1 or 1).
-    # Uses (?<!\w) instead of \b so that '+' before the digit is included in the match.
-    (
-        re.compile(r"(?<!\w)(?:\+?1[-.\s]?)?\(?\d{3}\)?[-.\s]?\d{3}[-.\s]?\d{4}\b"),
-        "[REDACTED_PHONE]",
-    ),
-    # API keys and Bearer tokens: Langfuse (pk-lf-*, sk-lf-*), HuggingFace
-    # (hf_*), and generic Bearer tokens.
-    (
-        re.compile(r"\b(?:pk-lf-|sk-lf-|hf_|Bearer\s+)[A-Za-z0-9_\-]{8,}\b"),
-        "[REDACTED_API_KEY]",
-    ),
-    # Compact JWS/JWT tokens (R5: ConsequenceToken leakage mitigation).
-    # Pattern: three base64url segments separated by dots, with the first segment
-    # starting with eyJ (base64url-encoded '{"' JSON header prefix).
-    # Minimum segment lengths prevent false positives on dotted identifiers:
-    #   - Header: ≥20 chars (typical JWT header is ~36 chars encoded)
-    #   - Payload: ≥20 chars
-    #   - Signature: ≥20 chars (typical RS256 signature is ~342 chars)
-    # The eyJ anchor ensures we don't redact semantic version strings (1.2.3),
-    # module paths (src.gateway.governance), or UUIDs (which contain hyphens, not dots).
-    (
-        re.compile(
-            r"\beyJ[A-Za-z0-9_\-]{17,}\.[A-Za-z0-9_\-]{20,}\.[A-Za-z0-9_\-]{20,}(?![A-Za-z0-9_\-])"
-        ),
-        "[REDACTED_JWS]",
-    ),
+    (EMAIL_PATTERN, "[REDACTED_EMAIL]"),
+    (PHONE_PATTERN, "[REDACTED_PHONE]"),
 ]
+
+_PII_PATTERNS: list[tuple[re.Pattern[str], str | Callable[[re.Match[str]], str]]] = [
+    *_SPAN_PII_PATTERNS,
+    *_CREDENTIAL_PATTERNS,
+]
+
+
+def redact_preserving_uuids(text: str, transform_span: Callable[[str], str]) -> str:
+    """Apply ``transform_span`` to non-UUID text spans while preserving canonical UUIDs.
+
+    Shared by :class:`PIISanitizer` and :func:`src.gateway.infrastructure.privacy.scrub_pii`
+    so correlation identifiers (``defer_id``, ``trace_id``, ``transaction_id``,
+    OSCAL UUIDs) whose ``8-4-4`` or ``4-12`` hex groups contain only decimal digits
+    are never mangled by credit-card or numeric PII patterns.
+    """
+    out_parts: list[str] = []
+    cursor = 0
+    for match in CANONICAL_UUID_RE.finditer(text):
+        if match.start() > cursor:
+            out_parts.append(transform_span(text[cursor : match.start()]))
+        out_parts.append(match.group(0))
+        cursor = match.end()
+    if cursor < len(text):
+        out_parts.append(transform_span(text[cursor:]))
+    return "".join(out_parts)
 
 
 # ---------------------------------------------------------------------------
@@ -278,33 +307,29 @@ _KEY_DENYLIST: set[str] = {
 }
 
 
+def _apply_span_pii_patterns(span: str) -> str:
+    result = span
+    for pattern, replacement in _SPAN_PII_PATTERNS:
+        result = pattern.sub(replacement, result)
+    return result
+
+
 class PIISanitizer:
     """Pre-ledger regex sanitization pipeline for ISO 42001 Annex A.6.
 
-    Applies all five PII patterns sequentially to the input string.
-    Each pattern is applied via ``re.sub()`` — the output of one pattern
-    is the input to the next.
-
+    Applies credential patterns followed by UUID-preserving PII span redaction.
     Thread-safe: all state is in compiled regex objects (immutable after init).
     """
 
     def sanitize(self, text: str) -> str:
-        """Sanitize *text* by redacting all detected PII patterns.
-
-        Args:
-            text: The input string to sanitize.  May be any length.
-
-        Returns:
-            A new string with all detected PII replaced by redaction tokens.
-            Returns the original string unchanged if no patterns match.
-            Returns an empty string if *text* is empty.
-        """
+        """Sanitize *text* by redacting all detected PII patterns while preserving canonical UUIDs."""
         if not text:
             return text
 
         result = text
-        for pattern, replacement in _PII_PATTERNS:
+        for pattern, replacement in _CREDENTIAL_PATTERNS:
             result = pattern.sub(replacement, result)
+        result = redact_preserving_uuids(result, _apply_span_pii_patterns)
 
         if result != text:
             logger.debug(

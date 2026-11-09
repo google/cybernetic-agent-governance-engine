@@ -399,3 +399,32 @@ def test_sanitize_dict_recurses_into_tuples_and_mappings(
         "email": "[REDACTED_EMAIL]",
         "token": "[REDACTED_TOKEN]",
     }
+
+
+@pytest.mark.unit
+@pytest.mark.local
+@pytest.mark.parametrize(
+    "uuid_val",
+    [
+        "41112222-3333-4444-ab77-f4f1ecb70374",  # Visa 4xxx 8-4-4 prefix
+        "51234567-8901-2345-ab77-f4f1ecb70374",  # MC 51-55 8-4-4 prefix
+        "22210000-0000-0000-ab77-f4f1ecb70374",  # MC 2221-2720 8-4-4 prefix
+        "60112222-3333-4444-ab77-f4f1ecb70374",  # Discover 6011 8-4-4 prefix
+        "65112222-3333-4444-ab77-f4f1ecb70374",  # Discover 65xx 8-4-4 prefix
+        "84119661-6585-4371-ab77-f4f1ecb70374",  # 16-digit 8-4-4 prefix
+    ],
+)
+def test_canonical_uuids_preserved_while_cards_and_bearer_uuids_redacted(
+    sanitizer: PIISanitizer,
+    uuid_val: str,
+) -> None:
+    """Canonical 8-4-4-4-12 UUIDs survive intact in evidence payloads while cards and Bearer UUIDs redact."""
+    record = {
+        "defer_id": uuid_val,
+        "summary": f"trace={uuid_val} card=2221-0000-0000-0000",
+        "auth_header": f"Bearer {uuid_val}",
+    }
+    sanitized = sanitizer.sanitize_dict(record)
+    assert sanitized["defer_id"] == uuid_val
+    assert sanitized["summary"] == f"trace={uuid_val} card=[REDACTED_CC]"
+    assert sanitized["auth_header"] == "[REDACTED_API_KEY]"

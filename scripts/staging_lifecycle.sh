@@ -1515,6 +1515,7 @@ PERSISTENT_KMS_STATE_ADDRS=(
   "google_kms_crypto_key.binauthz_attestor"
   "google_kms_key_ring.signing"
   "module.kms" "module.evidence_domain" "module.worm_bucket"
+  "google_storage_bucket.langfuse_event_upload" "random_id.bucket_suffix"
 )
 
 detach_persistent_kms_state() {
@@ -1700,6 +1701,11 @@ if [[ "$FRESH_PROJECT" == "true" ]]; then
   if printf '%s\n' "$remaining_buckets" | grep -Eq "^(${PROJECT_ID}-evidence-worm-staging|${PROJECT_ID}-audit-logs-worm-staging)$"; then
     info "PF9 persistent evidence-domain WORM bucket(s) retained by design (F-66 / F-94): $(printf '%s\n' "$remaining_buckets" | grep -E "^(${PROJECT_ID}-evidence-worm-staging|${PROJECT_ID}-audit-logs-worm-staging)$" | tr '\n' ' ')"
     remaining_buckets="$(printf '%s\n' "$remaining_buckets" | grep -Ev "^(${PROJECT_ID}-evidence-worm-staging|${PROJECT_ID}-audit-logs-worm-staging)$" || true)"
+    has_retained_worm_buckets=true
+  fi
+  if printf '%s\n' "$remaining_buckets" | grep -Eq "^langfuse-event-upload-${PROJECT_ID}-[0-9a-f]{8}$"; then
+    info "PF9 persistent 1-day-retention-locked Langfuse upload bucket retained by design (POAM-2026-159): $(printf '%s\n' "$remaining_buckets" | grep -E "^langfuse-event-upload-${PROJECT_ID}-[0-9a-f]{8}$" | tr '\n' ' ')"
+    remaining_buckets="$(printf '%s\n' "$remaining_buckets" | grep -Ev "^langfuse-event-upload-${PROJECT_ID}-[0-9a-f]{8}$" || true)"
     has_retained_worm_buckets=true
   fi
   if [[ "$ALLOW_LEGACY_LIEN_SURVIVOR" == "true" && "$remaining_buckets" == *"langfuse-events-"* ]]; then
