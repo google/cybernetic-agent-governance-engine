@@ -115,6 +115,15 @@ run "staging_plans_lula_cron_active_specs_and_dedicated_ksas" {
     condition     = kubernetes_network_policy_v1.lula_audit_egress.metadata[0].name == "lula-audit-egress"
     error_message = "SC-7: lula-audit-egress NetworkPolicy must be planned in governance-stack"
   }
+
+  assert {
+    condition = (
+      length(google_monitoring_alert_policy.lula_audit_failure) == 1 &&
+      google_monitoring_alert_policy.lula_audit_failure[0].user_labels["owner"] == "platform-compliance-oncall" &&
+      strcontains(google_monitoring_alert_policy.lula_audit_failure[0].documentation[0].content, "platform-compliance-oncall")
+    )
+    error_message = "CA-7: enforcing compliance-bridge deployments must provision google_monitoring_alert_policy.lula_audit_failure naming lula_alert_owner"
+  }
 }
 
 run "disabling_lula_cron_drops_lula_from_required_image_digests" {
@@ -151,4 +160,32 @@ run "lula_image_latest_tag_is_refused" {
   }
 
   expect_failures = [var.lula_image]
+}
+
+run "custom_lula_alert_owner_and_channels_propagate" {
+  command = plan
+
+  variables {
+    lula_alert_owner                 = "secops-compliance-oncall"
+    lula_alert_notification_channels = ["projects/lula-cron-test-project/notificationChannels/12345"]
+  }
+
+  assert {
+    condition = (
+      google_monitoring_alert_policy.lula_audit_failure[0].user_labels["owner"] == "secops-compliance-oncall" &&
+      strcontains(google_monitoring_alert_policy.lula_audit_failure[0].documentation[0].content, "secops-compliance-oncall") &&
+      contains(google_monitoring_alert_policy.lula_audit_failure[0].notification_channels, "projects/lula-cron-test-project/notificationChannels/12345")
+    )
+    error_message = "custom lula_alert_owner and lula_alert_notification_channels must propagate into google_monitoring_alert_policy.lula_audit_failure"
+  }
+}
+
+run "empty_lula_alert_owner_is_refused" {
+  command = plan
+
+  variables {
+    lula_alert_owner = "   "
+  }
+
+  expect_failures = [var.lula_alert_owner]
 }

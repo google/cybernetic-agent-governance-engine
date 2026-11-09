@@ -13,12 +13,13 @@
 # limitations under the License.
 
 """
-sla_monitor.py — Evidence Age SLA Background Monitor  (Capability 2.5)
+sla_monitor.py — Evidence Age SLA & Lula Dead-Man's Switch Monitor  (Capability 2.5)
 
 Implements NIST SP 800-53 CA-7 (Continuous Monitoring) by periodically
 polling per-control compliance metrics and firing notifier alerts when
 evidence age exceeds the per-control SLA for the active deployment region
-(see get_sla_seconds() in types.py).
+(see get_sla_seconds() in types.py), alongside a `2 x schedule` dead-man's
+switch over the most recent PASSING `lula_audit` custody record.
 
 Lifecycle:
   - Started as an asyncio background task in compliance_bridge/main.py lifespan.
@@ -28,6 +29,8 @@ Lifecycle:
     any jurisdictional controls for the active region — FINDING-05).
   - On SLA breach, calls notifier.send_critical_alert() with a synthetic
     OscalFinding (result="FAIL", remarks="Evidence SLA breach").
+  - Enforces a `2 x schedule` dead-man's switch (`LULA_AUDIT_MAX_AGE_SECONDS`,
+    default 1800s = 2 x 15m) over `get_last_passing_lula_audit_age_seconds()`.
   - Startup grace period is respected — no alerts during grace window.
 
 Environment variables:
@@ -38,26 +41,65 @@ Environment variables:
                                         resolution in main.py).
   EVIDENCE_SLA_POLL_INTERVAL_SECONDS — poll cadence (default: 300)
   EVIDENCE_SLA_DISABLED              — set to "1" to disable the monitor
+  LULA_AUDIT_MAX_AGE_SECONDS         — max age of last passing lula_audit (default: 1800)
+  LULA_AUDIT_DEADMAN_DISABLED        — set to "1" to opt out of dead-man's switch
 """
 
 from __future__ import annotations
 
 import asyncio
+import inspect
 import logging
 import os
 from datetime import datetime, timezone
+from typing import Any
 
-from .metrics import get_compliance_metrics
+from .metrics import get_compliance_metrics, get_last_passing_lula_audit_age_seconds
 from .notifier import create_notifier
 from .types import OscalFinding, get_sla_seconds
 
 logger = logging.getLogger(__name__)
 
 _DEFAULT_POLL_INTERVAL = 300  # 5 minutes
+_DEFAULT_LULA_AUDIT_MAX_AGE_SECONDS = 1800  # 2 x 15m CronJob/lula-audit schedule
+LULA_AUDIT_MAX_AGE_SECONDS: int = int(
+    os.environ.get(
+        "LULA_AUDIT_MAX_AGE_SECONDS", str(_DEFAULT_LULA_AUDIT_MAX_AGE_SECONDS)
+    )
+)
+
+LULA_AUDIT_DEADMAN_BREACHES_TOTAL: Any = None
+try:
+    from prometheus_client import REGISTRY as _PROM_REGISTRY
+    from prometheus_client import Counter as _PromCounter
+
+    def _deadman_counter(name: str, doc: str) -> Any:
+        try:
+            return _PromCounter(name, doc)
+        except ValueError:
+            return _PROM_REGISTRY._names_to_collectors.get(name)
+
+    LULA_AUDIT_DEADMAN_BREACHES_TOTAL = _deadman_counter(
+        "cage_lula_audit_deadman_breaches_total",
+        "Total breaches of the 2x-schedule in-cluster Lula audit dead-man's switch",
+    )
+except ImportError:  # pragma: no cover - optional runtime dependency
+    pass
 
 
 def _is_disabled() -> bool:
     return os.environ.get("EVIDENCE_SLA_DISABLED", "").strip() == "1"
+
+
+def _is_lula_deadman_disabled() -> bool:
+    return os.environ.get("LULA_AUDIT_DEADMAN_DISABLED", "").strip() == "1"
+
+
+def _lula_audit_max_age_seconds() -> int:
+    raw = os.environ.get("LULA_AUDIT_MAX_AGE_SECONDS")
+    if raw is not None and raw.strip():
+        return int(raw.strip())
+    return int(LULA_AUDIT_MAX_AGE_SECONDS)
 
 
 def _poll_interval() -> int:
@@ -85,13 +127,106 @@ def _active_sla_seconds() -> dict[str, int]:
     return get_sla_seconds(region)
 
 
-async def _check_sla_once() -> list[str]:
-    """Check all SLA-gated controls. Returns list of breached control IDs."""
-    breached: list[str] = []
+async def _check_lula_audit_deadman(
+    *,
+    startup_grace_active: bool | None = None,
+) -> OscalFinding | None:
+    """Check the `2 x schedule` dead-man's switch for passing `lula_audit` runs."""
+    if _is_lula_deadman_disabled():
+        return None
 
-    for control_id, sla_seconds in _active_sla_seconds().items():
+    if startup_grace_active is None:
+        try:
+            a53_metrics = await get_compliance_metrics("A.5.3", window_hours=24)
+            startup_grace_active = bool(a53_metrics.startup_grace_active)
+        except Exception as exc:
+            logger.warning(
+                "[sla_monitor] Failed to read A.5.3 startup grace status: %s", exc
+            )
+            startup_grace_active = False
+
+    if startup_grace_active:
+        logger.debug(
+            "[sla_monitor] Startup grace active — skipping lula-audit dead-man check."
+        )
+        return None
+
+    max_age_seconds = _lula_audit_max_age_seconds()
+    window_hours = max(24, int((max_age_seconds // 3600) + 2))
+    read_error: str | None = None
+    try:
+        res = await asyncio.to_thread(
+            get_last_passing_lula_audit_age_seconds, window_hours
+        )
+        if inspect.isawaitable(res):
+            res = await res
+        age_seconds, last_pass_utc = res
+    except Exception as exc:
+        logger.error(
+            "[sla_monitor] Failed to query last passing lula_audit custody age: %s",
+            exc,
+        )
+        age_seconds, last_pass_utc = None, None
+        read_error = str(exc)
+
+    if age_seconds is not None and age_seconds <= max_age_seconds:
+        return None
+
+    now_ts = int(datetime.now(tz=timezone.utc).timestamp())
+    if age_seconds is None:
+        detail = (
+            f"custody query error ({read_error})"
+            if read_error
+            else f"no passing lula_audit record found in last {window_hours}h"
+        )
+        remarks = (
+            f"Lula dead-man's switch breach (2x schedule = {max_age_seconds}s): "
+            f"{detail}. CronJob/lula-audit may be suspended, failing closed, or "
+            "emitting only failing runs."
+        )
+    else:
+        remarks = (
+            f"Lula dead-man's switch breach: last passing lula_audit was "
+            f"{age_seconds:.0f}s ago (max_age={max_age_seconds}s, "
+            f"last_pass_utc={last_pass_utc})."
+        )
+
+    finding = OscalFinding(
+        control_id="A.5.3",
+        result="FAIL",
+        finding_id=f"lula-audit-deadman-{now_ts}",
+        evidence_age_s=age_seconds,
+        remarks=remarks,
+        safety_rate=0.0,
+    )
+
+    if LULA_AUDIT_DEADMAN_BREACHES_TOTAL is not None:
+        LULA_AUDIT_DEADMAN_BREACHES_TOTAL.inc()
+
+    logger.critical("[sla_monitor] 🚨 %s", remarks)
+    audit_id = f"lula-audit-deadman-{now_ts}"
+    try:
+        notifier = create_notifier()
+        await notifier.send_critical_alert([finding], audit_id)
+    except Exception as exc:
+        logger.error(
+            "[sla_monitor] Failed to send lula-audit-deadman critical alert: %s", exc
+        )
+
+    return finding
+
+
+async def _check_sla_once() -> list[str]:
+    """Check all SLA-gated controls and the `2 x schedule` Lula dead-man's switch."""
+    breached: list[str] = []
+    sla_map = _active_sla_seconds()
+    a53_grace_active: bool | None = None
+
+    for control_id, sla_seconds in sla_map.items():
         try:
             metrics = await get_compliance_metrics(control_id, window_hours=24)
+            if control_id == "A.5.3":
+                a53_grace_active = bool(metrics.startup_grace_active)
 
             # Respect startup grace — no alerts while the system is warming up
             if metrics.startup_grace_active:
@@ -119,6 +254,9 @@ async def _check_sla_once() -> list[str]:
                 control_id,
                 exc,
             )
+
+    if "A.5.3" in sla_map:
+        await _check_lula_audit_deadman(startup_grace_active=a53_grace_active)
 
     return breached
 
@@ -191,7 +329,10 @@ async def run_sla_monitor() -> None:
         while True:
             await asyncio.sleep(poll_interval)
             try:
+                sla_keys = set(_active_sla_seconds().keys())
                 breached = await _check_sla_once()
+                if "A.5.3" not in sla_keys:
+                    await _check_lula_audit_deadman()
                 if breached:
                     await _fire_sla_alerts(breached)
                 else:

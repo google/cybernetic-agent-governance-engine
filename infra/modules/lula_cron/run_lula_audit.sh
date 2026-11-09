@@ -83,7 +83,18 @@ fi
 payload=$(jq -nc \
   --arg ts "$ts" \
   --arg summary "$summary" \
-  '{event_type: "lula_audit", timestamp_utc: $ts, summary: $summary, control_hint: "A.5.3"}')
+  --argjson evaluated_count "$total" \
+  --argjson satisfied_count "$passed" \
+  --arg failed_csv "$failed_list" \
+  '{
+    event_type: "lula_audit",
+    timestamp_utc: $ts,
+    summary: $summary,
+    control_hint: "A.5.3",
+    evaluated_count: $evaluated_count,
+    satisfied_count: $satisfied_count,
+    failed_controls: (if $failed_csv == "" then [] else ($failed_csv | split(",")) end)
+  }')
 
 idem_raw="lula-audit-${HOSTNAME:-run}-${ts}"
 idem_key=$(printf '%s' "$idem_raw" | tr -cd 'A-Za-z0-9_.:-' | cut -c1-120)
