@@ -1409,3 +1409,14 @@ variable "enable_kms_audit_logs" {
   default     = false
   nullable    = false
 }
+
+variable "startup_grace_hours" {
+  description = "Cold-start grace window in hours for compliance-bridge metrics (STARTUP_GRACE_HOURS). Defaults to 6 for normal rollouts; Gate W sets 0 so Lula API-domain validations evaluate outside grace."
+  type        = number
+  default     = 6
+
+  validation {
+    condition     = var.startup_grace_hours >= 0 && floor(var.startup_grace_hours) == var.startup_grace_hours
+    error_message = "startup_grace_hours must be a non-negative integer."
+  }
+}

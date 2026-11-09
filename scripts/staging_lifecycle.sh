@@ -71,6 +71,9 @@ SKIP_REBUILD=false
 NO_DESTROY=false
 FRESH_PROJECT=false
 ALLOW_LEGACY_LIEN_SURVIVOR=false
+ENABLE_E2E_ADVISOR=false
+ALLOW_PARTNER_OUTAGE=false
+ARCHIVE_DIR="${CAGE_GATE_W_ARCHIVE_DIR:-}"
 PROJECT_ID="${GOOGLE_CLOUD_PROJECT:-}"
 BILLING_ACCOUNT_ID="${BILLING_ACCOUNT_ID:-}"
 REGION="${GOOGLE_CLOUD_LOCATION:-us-central1}"
@@ -87,6 +90,11 @@ Options:
                            provisioning and verify post-destroy cleanliness
   --billing-account=<id>   Billing account ID to link when creating a fresh project
   --project=<id>           GCP project ID (default: \$GOOGLE_CLOUD_PROJECT)
+  --archive-dir=<path>     Output directory for the Gate W evidence archive & manifest.json
+                           (default: artifacts/w-run-<UTC>)
+  --enable-e2e-advisor     Opt-in non-production E2E advisor + deterministic inference-stub mode
+  --allow-partner-outage   Record partner_conformance_status=unreachable_waived if partner
+                           sandbox is unreachable instead of aborting the rest of Gate W
   --skip-lula              Skip Phase 3 Lula validation
   --skip-posture           Skip Phase 4 region posture, residency, and Langfuse checks
   --skip-live-sweep        Skip Phase 5 live_external, integration, and conformance sweeps
@@ -126,6 +134,18 @@ while [[ $# -gt 0 ]]; do
     --fresh-project) FRESH_PROJECT=true; shift ;;
     --allow-legacy-lien-survivor)
       ALLOW_LEGACY_LIEN_SURVIVOR=true; shift ;;
+    --enable-e2e-advisor)
+      ENABLE_E2E_ADVISOR=true; shift ;;
+    --allow-partner-outage)
+      ALLOW_PARTNER_OUTAGE=true; shift ;;
+    --archive-dir=*)
+      ARCHIVE_DIR="${1#*=}"
+      shift
+      ;;
+    --archive-dir)
+      ARCHIVE_DIR="${2:-}"
+      shift 2
+      ;;
     --fresh-project=*)
       FRESH_PROJECT=true
       PROJECT_ID="${1#*=}"
@@ -188,6 +208,21 @@ fi
 export GOOGLE_CLOUD_PROJECT="$PROJECT_ID"
 export GOOGLE_CLOUD_LOCATION="$REGION"
 export TF_VAR_project_id="$PROJECT_ID"
+# Gate W runs in non-grace enforcing mode by default (Memo §2) unless explicitly overridden.
+export TF_VAR_startup_grace_hours="${TF_VAR_startup_grace_hours:-0}"
+
+DEPLOY_EXTRA_ARGS=()
+if [[ "$ENABLE_E2E_ADVISOR" == "true" ]]; then
+  export TF_VAR_enable_e2e_advisor="true"
+  DEPLOY_EXTRA_ARGS+=("--var" "enable_e2e_advisor=true")
+fi
+
+if [[ -z "$ARCHIVE_DIR" ]]; then
+  ARCHIVE_DIR="$REPO_ROOT/artifacts/w-run-$(date -u +%Y%m%dT%H%M%SZ)"
+fi
+mkdir -p "$ARCHIVE_DIR/lula" "$ARCHIVE_DIR/worm"
+PYTEST_SUITES_JSONL="$ARCHIVE_DIR/pytest-suites.jsonl"
+: > "$PYTEST_SUITES_JSONL"
 
 DRIFT_FAILURES=0
 READINESS_FAILED=false
@@ -197,6 +232,11 @@ SWEEP_FAILURES=0
 TELEMETRY_FAILURES=0
 REBUILD_FAILURES=0
 PORT_FORWARD_ACTIVE=false
+PARTNER_CONFORMANCE_STATUS="not_run"
+POST_REBUILD_BOUND_ROTATION_VERIFIED=false
+LULA_HOST_EVALUATED_COUNT=0
+LULA_PLANNED_SPECS_LIST=()
+LULA_API_SPECS_LIST=()
 
 stop_staging_port_forward() {
   if [[ "$PORT_FORWARD_ACTIVE" == "true" && -x "$REPO_ROOT/scripts/port_forward_staging.sh" ]]; then
@@ -204,7 +244,175 @@ stop_staging_port_forward() {
     PORT_FORWARD_ACTIVE=false
   fi
 }
-trap stop_staging_port_forward EXIT
+
+write_gate_w_archive_manifest() {
+  local exit_code="$1"
+  local git_sha git_short_sha target_mode
+  git_sha="$(git -C "$REPO_ROOT" rev-parse HEAD 2>/dev/null || echo "")"
+  git_short_sha="$(git -C "$REPO_ROOT" rev-parse --short HEAD 2>/dev/null || echo "")"
+  if [[ "$FRESH_PROJECT" == "true" ]]; then
+    target_mode="fresh_project_clean_room"
+  else
+    target_mode="existing_operated_project"
+  fi
+  local planned_joined=""
+  if [[ ${#LULA_PLANNED_SPECS_LIST[@]} -gt 0 ]]; then
+    planned_joined="$(printf '%s\n' "${LULA_PLANNED_SPECS_LIST[@]}")"
+  fi
+  local api_joined=""
+  if [[ ${#LULA_API_SPECS_LIST[@]} -gt 0 ]]; then
+    api_joined="$(printf '%s\n' "${LULA_API_SPECS_LIST[@]}")"
+  fi
+
+  MANIFEST_EXIT_CODE="$exit_code" \
+  MANIFEST_GIT_SHA="$git_sha" \
+  MANIFEST_GIT_SHORT_SHA="$git_short_sha" \
+  MANIFEST_PROJECT_ID="$PROJECT_ID" \
+  MANIFEST_REGION="$REGION" \
+  MANIFEST_CAGE_REGION="${CAGE_DEPLOYMENT_REGION:-US_FED}" \
+  MANIFEST_TARGET_MODE="$target_mode" \
+  MANIFEST_STARTUP_GRACE="${TF_VAR_startup_grace_hours:-0}" \
+  MANIFEST_ENABLE_E2E="$ENABLE_E2E_ADVISOR" \
+  MANIFEST_ALLOW_PARTNER_OUTAGE="$ALLOW_PARTNER_OUTAGE" \
+  MANIFEST_ALLOW_LEGACY_SURVIVOR="$ALLOW_LEGACY_LIEN_SURVIVOR" \
+  MANIFEST_SKIP_LULA="$SKIP_LULA" \
+  MANIFEST_SKIP_POSTURE="$SKIP_POSTURE" \
+  MANIFEST_SKIP_LIVE_SWEEP="$SKIP_LIVE_SWEEP" \
+  MANIFEST_SKIP_TELEMETRY="$SKIP_TELEMETRY" \
+  MANIFEST_SKIP_REBUILD="$SKIP_REBUILD" \
+  MANIFEST_NO_DESTROY="$NO_DESTROY" \
+  MANIFEST_DRIFT_FAILURES="$DRIFT_FAILURES" \
+  MANIFEST_READINESS_FAILED="$READINESS_FAILED" \
+  MANIFEST_LULA_FAILURES="$LULA_FAILURES" \
+  MANIFEST_POSTURE_FAILURES="$POSTURE_FAILURES" \
+  MANIFEST_SWEEP_FAILURES="$SWEEP_FAILURES" \
+  MANIFEST_TELEMETRY_FAILURES="$TELEMETRY_FAILURES" \
+  MANIFEST_REBUILD_FAILURES="$REBUILD_FAILURES" \
+  MANIFEST_LULA_HOST_COUNT="$LULA_HOST_EVALUATED_COUNT" \
+  MANIFEST_LULA_PLANNED="$planned_joined" \
+  MANIFEST_LULA_API="$api_joined" \
+  MANIFEST_PARTNER_STATUS="$PARTNER_CONFORMANCE_STATUS" \
+  MANIFEST_PRE_CHAIN_ID="${PRE_WORM_CHAIN_ID:-}" \
+  MANIFEST_PRE_BATCHES="${PRE_WORM_BATCH_COUNT:-0}" \
+  MANIFEST_PRE_HEAD="${PRE_WORM_HEAD_HASH:-}" \
+  MANIFEST_PRE_ATTEST="${PRE_WORM_ATTESTATION_DIGEST:-}" \
+  MANIFEST_POST_BOUND_VERIFIED="$POST_REBUILD_BOUND_ROTATION_VERIFIED" \
+  MANIFEST_SUITES_JSONL="$PYTEST_SUITES_JSONL" \
+  MANIFEST_OUT="$ARCHIVE_DIR/manifest.json" \
+  python3 - <<'PY' || true
+from datetime import datetime, timezone
+import json
+import os
+from pathlib import Path
+
+
+def _b(key: str) -> bool:
+    return os.environ.get(key, "false").strip().lower() == "true"
+
+
+def _i(key: str) -> int:
+    try:
+        return int(os.environ.get(key, "0").strip() or "0")
+    except ValueError:
+        return 0
+
+
+exit_code = _i("MANIFEST_EXIT_CODE")
+any_skip = any(
+    _b(k)
+    for k in (
+        "MANIFEST_SKIP_LULA",
+        "MANIFEST_SKIP_POSTURE",
+        "MANIFEST_SKIP_LIVE_SWEEP",
+        "MANIFEST_SKIP_TELEMETRY",
+        "MANIFEST_SKIP_REBUILD",
+        "MANIFEST_NO_DESTROY",
+    )
+)
+phase_failures = {
+    "drift": _i("MANIFEST_DRIFT_FAILURES"),
+    "readiness_failed": _b("MANIFEST_READINESS_FAILED"),
+    "lula": _i("MANIFEST_LULA_FAILURES"),
+    "posture": _i("MANIFEST_POSTURE_FAILURES"),
+    "sweep": _i("MANIFEST_SWEEP_FAILURES"),
+    "telemetry": _i("MANIFEST_TELEMETRY_FAILURES"),
+    "rebuild": _i("MANIFEST_REBUILD_FAILURES"),
+}
+has_failures = (
+    exit_code != 0
+    or phase_failures["readiness_failed"]
+    or any(
+        v > 0
+        for k, v in phase_failures.items()
+        if k != "readiness_failed" and isinstance(v, int)
+    )
+)
+if has_failures:
+    overall = "FAIL"
+elif any_skip:
+    overall = "PARTIAL_PASS"
+else:
+    overall = "PASS"
+
+suites = []
+suites_path = Path(os.environ["MANIFEST_SUITES_JSONL"])
+if suites_path.is_file():
+    for line in suites_path.read_text(encoding="utf-8").splitlines():
+        if line.strip():
+            suites.append(json.loads(line))
+
+planned_specs = [
+    s for s in os.environ.get("MANIFEST_LULA_PLANNED", "").splitlines() if s.strip()
+]
+api_specs = [
+    s for s in os.environ.get("MANIFEST_LULA_API", "").splitlines() if s.strip()
+]
+
+manifest = {
+    "schema_version": "1.0",
+    "generated_at_utc": datetime.now(tz=timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
+    "git_commit_sha": os.environ.get("MANIFEST_GIT_SHA", ""),
+    "git_short_sha": os.environ.get("MANIFEST_GIT_SHORT_SHA", ""),
+    "project_id": os.environ.get("MANIFEST_PROJECT_ID", ""),
+    "region": os.environ.get("MANIFEST_REGION", ""),
+    "cage_deployment_region": os.environ.get("MANIFEST_CAGE_REGION", "US_FED"),
+    "deployment_target_mode": os.environ.get("MANIFEST_TARGET_MODE", ""),
+    "startup_grace_hours": _i("MANIFEST_STARTUP_GRACE"),
+    "enable_e2e_advisor": _b("MANIFEST_ENABLE_E2E"),
+    "allow_partner_outage": _b("MANIFEST_ALLOW_PARTNER_OUTAGE"),
+    "allow_legacy_lien_survivor": _b("MANIFEST_ALLOW_LEGACY_SURVIVOR"),
+    "exit_code": exit_code,
+    "overall_status": overall,
+    "full_unskipped_gate_w": not any_skip,
+    "phase_failures": phase_failures,
+    "lula": {
+        "evaluated_host_specs": _i("MANIFEST_LULA_HOST_COUNT"),
+        "planned_specs": planned_specs,
+        "api_specs": api_specs,
+    },
+    "pytest_suites": suites,
+    "partner_conformance_status": os.environ.get("MANIFEST_PARTNER_STATUS", "not_run"),
+    "worm_continuity": {
+        "pre_teardown_chain_id": os.environ.get("MANIFEST_PRE_CHAIN_ID", ""),
+        "pre_teardown_verified_batches": _i("MANIFEST_PRE_BATCHES"),
+        "pre_teardown_head_hash": os.environ.get("MANIFEST_PRE_HEAD", ""),
+        "pre_teardown_attestation_digest": os.environ.get("MANIFEST_PRE_ATTEST", ""),
+        "post_rebuild_bound_rotation_verified": _b("MANIFEST_POST_BOUND_VERIFIED"),
+    },
+}
+
+out_path = Path(os.environ["MANIFEST_OUT"])
+out_path.parent.mkdir(parents=True, exist_ok=True)
+out_path.write_text(json.dumps(manifest, indent=2) + "\n", encoding="utf-8")
+PY
+}
+
+on_lifecycle_exit() {
+  local rc=$?
+  stop_staging_port_forward
+  write_gate_w_archive_manifest "$rc"
+}
+trap on_lifecycle_exit EXIT
 
 start_staging_port_forward() {
   if [[ "$PORT_FORWARD_ACTIVE" == "false" && -x "$REPO_ROOT/scripts/port_forward_staging.sh" ]]; then
@@ -239,6 +447,9 @@ build_tf_var_args() {
     "-var=region=${REGION}"
     "-var=cage_deployment_region=${CAGE_DEPLOYMENT_REGION:-US_FED}"
   )
+  if [[ "$ENABLE_E2E_ADVISOR" == "true" ]]; then
+    TF_VAR_ARGS+=("-var=enable_e2e_advisor=true")
+  fi
   if [[ -n "$DIGESTS_FILE" ]]; then
     TF_VAR_ARGS+=("-var-file=${DIGESTS_FILE}")
   fi
@@ -265,7 +476,8 @@ run_zero_drift_plan() {
   fi
 }
 
-# Reusable fail-closed pytest runner requiring exit code 0 AND >= 1 passed test.
+# Reusable fail-closed pytest runner requiring exit code 0 AND >= 1 passed test,
+# recording collected vs. executed/skipped/deselected counts in $PYTEST_SUITES_JSONL.
 run_pytest_require_passed() {
   local label="$1"
   shift
@@ -277,41 +489,149 @@ run_pytest_require_passed() {
   cmd_rc=${PIPESTATUS[0]}
   set -e
 
-  if [[ $cmd_rc -ne 0 ]]; then
-    error "${label}: pytest exited non-zero (rc=${cmd_rc})."
-    rm -f "$tmp_out"
-    return 1
-  fi
-
   local passed_count=""
-  if ! passed_count="$(python3 - "$tmp_out" <<'PY'
+  local parse_rc=0
+  set +e
+  passed_count="$(python3 - "$tmp_out" "$label" "$cmd_rc" "$PYTEST_SUITES_JSONL" <<'PY'
+import json
 import re
 import sys
 from pathlib import Path
 
 raw = Path(sys.argv[1]).read_text(encoding="utf-8", errors="replace")
+label = sys.argv[2]
+cmd_rc = int(sys.argv[3])
+jsonl_path = Path(sys.argv[4])
+
 clean = re.sub(r"\x1b\[[0-9;]*m", "", raw)
+collected_match = re.findall(r"\bcollected\s+(\d+)\s+items?\b", clean)
+collected = int(collected_match[-1]) if collected_match else None
+
 passed = 0
-bad = False
+failed = 0
+skipped = 0
+deselected = 0
+errors = 0
+
 for line in reversed(clean.splitlines()):
-    m = re.search(r"\b(\d+)\s+passed\b", line)
-    if m:
-        passed = int(m.group(1))
-        if re.search(r"\b[1-9]\d*\s+(?:failed|error|errors)\b", line):
-            bad = True
+    if re.search(r"\b\d+\s+(?:passed|failed|skipped|deselected|error|errors)\b", line):
+        m_p = re.search(r"\b(\d+)\s+passed\b", line)
+        m_f = re.search(r"\b(\d+)\s+failed\b", line)
+        m_s = re.search(r"\b(\d+)\s+skipped\b", line)
+        m_d = re.search(r"\b(\d+)\s+deselected\b", line)
+        m_e = re.search(r"\b(\d+)\s+errors?\b", line)
+        if m_p:
+            passed = int(m_p.group(1))
+        if m_f:
+            failed = int(m_f.group(1))
+        if m_s:
+            skipped = int(m_s.group(1))
+        if m_d:
+            deselected = int(m_d.group(1))
+        if m_e:
+            errors = int(m_e.group(1))
         break
-if bad or passed < 1:
+
+if collected is None:
+    collected = passed + failed + skipped + deselected + errors
+
+record = {
+    "label": label,
+    "rc": cmd_rc,
+    "collected": collected,
+    "passed": passed,
+    "skipped": skipped,
+    "deselected": deselected,
+    "failed": failed + errors,
+}
+with jsonl_path.open("a", encoding="utf-8") as fh:
+    fh.write(json.dumps(record) + "\n")
+
+if cmd_rc != 0 or failed > 0 or errors > 0 or passed < 1:
     sys.exit(1)
 print(passed)
 PY
-  )"; then
+  )"
+  parse_rc=$?
+  set -e
+  rm -f "$tmp_out"
+
+  if [[ $cmd_rc -ne 0 ]]; then
+    error "${label}: pytest exited non-zero (rc=${cmd_rc})."
+    return 1
+  fi
+  if [[ $parse_rc -ne 0 ]]; then
     error "${label}: vacuous pytest run (0 passed tests detected; all skipped, deselected, or unexecuted)."
-    rm -f "$tmp_out"
     return 1
   fi
 
-  rm -f "$tmp_out"
   success "${label}: ${passed_count} test(s) executed and passed."
+  return 0
+}
+
+verify_non_grace_posture() {
+  local verify_timeout="${EVIDENCE_VERIFY_TIMEOUT_SECONDS:-30}"
+  info "Verifying non-grace enforcing posture via GET /v1/metrics/A.5.3 (startup_grace_active must be false)..."
+  local metrics_raw=""
+  local fetch_rc=0
+  set +e
+  if [[ -n "${COMPLIANCE_BRIDGE_URL:-}" ]]; then
+    metrics_raw="$(python3 - "${COMPLIANCE_BRIDGE_URL}" "${verify_timeout}" <<'PY'
+import sys
+from urllib.parse import urlparse
+from urllib.request import urlopen
+
+base = sys.argv[1].rstrip("/")
+timeout_s = int(sys.argv[2])
+url = f"{base}/v1/metrics/A.5.3"
+if urlparse(url).scheme not in {"http", "https"}:
+    raise SystemExit(f"Invalid COMPLIANCE_BRIDGE_URL scheme: {url!r}")
+with urlopen(url, timeout=timeout_s) as resp:  # nosec B310  # scheme validated to http/https above
+    if resp.status != 200:
+        raise SystemExit(f"HTTP {resp.status} from {url}")
+    sys.stdout.write(resp.read().decode("utf-8"))
+PY
+    )"
+    fetch_rc=$?
+  else
+    metrics_raw="$(kubectl exec -n "$NAMESPACE" deploy/compliance-bridge -- \
+      python3 -c "import sys, urllib.request; resp = urllib.request.urlopen('http://127.0.0.1:3001/v1/metrics/A.5.3', timeout=${verify_timeout}); sys.exit(1) if resp.status != 200 else sys.stdout.write(resp.read().decode('utf-8'))")"
+    fetch_rc=$?
+  fi
+  set -e
+
+  if [[ $fetch_rc -ne 0 || -z "$metrics_raw" ]]; then
+    error "Phase 3 non-grace posture check FAILED: GET /v1/metrics/A.5.3 failed or returned empty payload (rc=${fetch_rc})."
+    return 1
+  fi
+
+  if ! METRICS_RAW="$metrics_raw" python3 - <<'PY'; then
+import json
+import os
+import sys
+
+try:
+    doc = json.loads(os.environ["METRICS_RAW"])
+except Exception as exc:
+    print(f"invalid JSON from /v1/metrics/A.5.3: {exc}", file=sys.stderr)
+    sys.exit(1)
+
+if not isinstance(doc, dict):
+    print("response from /v1/metrics/A.5.3 is not a JSON object", file=sys.stderr)
+    sys.exit(1)
+
+grace_active = doc.get("startup_grace_active")
+if grace_active is not False:
+    print(
+        f"startup_grace_active={grace_active!r} (expected False; Gate W requires STARTUP_GRACE_HOURS=0 so API-domain Lula checks cannot pass on cold-start grace)",
+        file=sys.stderr,
+    )
+    sys.exit(1)
+PY
+    error "Phase 3 non-grace posture check FAILED: compliance-bridge reported startup_grace_active != false."
+    return 1
+  fi
+  success "Phase 3 non-grace posture verified (startup_grace_active=false)."
   return 0
 }
 
@@ -386,6 +706,9 @@ PY
   fi
 
   LAST_EVIDENCE_VERIFY_JSON="$verify_raw"
+  local worm_slug
+  worm_slug="$(printf '%s' "$label" | tr -cs 'A-Za-z0-9._-' '-' | sed 's/^-//;s/-$//' | tr '[:upper:]' '[:lower:]')"
+  printf '%s\n' "$verify_raw" > "$ARCHIVE_DIR/worm/${worm_slug}.json"
 
   local summary=""
   if ! summary="$(VERIFY_RAW="$verify_raw" python3 - "$require_bound_rotation" "$expected_prior_head" "$expected_prior_attestation" "$min_verified_batches" <<'PY'
@@ -627,7 +950,7 @@ echo -e "${CYAN}╚════════════════════�
 echo ""
 
 info "Deploying staging with full security posture..."
-if ! "$REPO_ROOT/deploy_all.sh" --target gcp-gke --env staging --auto-approve; then
+if ! "$REPO_ROOT/deploy_all.sh" --target gcp-gke --env staging --auto-approve ${DEPLOY_EXTRA_ARGS[@]+"${DEPLOY_EXTRA_ARGS[@]}"}; then
   error "Staging provision failed. Check Terraform output above."
   exit 1
 fi
@@ -844,6 +1167,10 @@ if [[ "$READINESS_FAILED" == "false" ]]; then
       return 0
     }
 
+    if ! verify_non_grace_posture; then
+      ((LULA_FAILURES++)) || true
+    fi
+
     planned_specs=()
     api_specs=()
     evaluated_count=0
@@ -866,18 +1193,31 @@ if [[ "$READINESS_FAILED" == "false" ]]; then
         fi
         info "Validating host Kubernetes-domain spec: ${base_name}"
         ((evaluated_count++)) || true
-        rm -f "$assessment_out"
-        if ! lula validate -f "$validation_file" -o "$assessment_out"; then
+        spec_stem="${base_name%.yaml}"
+        spec_stem="${spec_stem#lula-validation-}"
+        per_spec_out="$ARCHIVE_DIR/lula/assessment-results-${spec_stem}.yaml"
+        rm -f "$assessment_out" "$per_spec_out"
+        if ! lula validate -f "$validation_file" -o "$per_spec_out"; then
           error "Lula validation failed: ${base_name}"
           ((LULA_FAILURES++)) || true
-        elif ! verify_lula_assessment_file "$assessment_out" "${base_name}"; then
+        elif ! verify_lula_assessment_file "$per_spec_out" "${base_name}"; then
           error "Lula validation verdict not-satisfied or 0 observations: ${base_name}"
           ((LULA_FAILURES++)) || true
+        else
+          cp -f "$per_spec_out" "$assessment_out"
         fi
       done
 
+      LULA_HOST_EVALUATED_COUNT=$evaluated_count
+      LULA_PLANNED_SPECS_LIST=(${planned_specs[@]+"${planned_specs[@]}"})
+      LULA_API_SPECS_LIST=(${api_specs[@]+"${api_specs[@]}"})
+      : > "$ARCHIVE_DIR/lula/planned-lula-specs.txt"
+      for planned_spec in ${planned_specs[@]+"${planned_specs[@]}"}; do
+        printf '%s\n' "$planned_spec" >> "$ARCHIVE_DIR/lula/planned-lula-specs.txt"
+      done
+
       info "Planned Lula specs skipped (${#planned_specs[@]}): ${planned_specs[*]:-none}"
-      for planned_spec in "${planned_specs[@]}"; do
+      for planned_spec in ${planned_specs[@]+"${planned_specs[@]}"}; do
         info "  [planned] ${planned_spec}"
       done
 
@@ -949,6 +1289,7 @@ if errors:
       fi
 
       job_logs="$(kubectl logs job/lula-gate-w -n "$NAMESPACE" --all-containers=true 2>&1 || echo "")"
+      printf '%s\n' "$job_logs" > "$ARCHIVE_DIR/lula/job-lula-gate-w.log"
       if ! printf '%s' "$job_logs" | python3 -c '
 import re
 import sys
@@ -1077,12 +1418,27 @@ if not has_custody_ack:
       ((SWEEP_FAILURES++)) || true
     fi
 
+    if [[ "$ENABLE_E2E_ADVISOR" == "true" ]]; then
+      info "Running live governed-advisor E2E sweep (-m e2e --run-e2e)..."
+      if ! run_pytest_require_passed "Phase 5 e2e advisor sweep" \
+        env -u CAGE_DEPLOYMENT_REGION uv run pytest "$REPO_ROOT/tests/e2e/" -m e2e --run-e2e -v --tb=short; then
+        ((SWEEP_FAILURES++)) || true
+      fi
+    fi
+
     info "Running live partner conformance sweep (-m partner_integration --run-partner-integration)..."
-    if ! run_pytest_require_passed "Phase 5 partner conformance sweep" \
+    if run_pytest_require_passed "Phase 5 partner conformance sweep" \
       uv run pytest "$REPO_ROOT/tests/" -m partner_integration --run-partner-integration -p tests.fixtures.require_live -n 0 -v --tb=short; then
+      PARTNER_CONFORMANCE_STATUS="passed"
+    elif [[ "$ALLOW_PARTNER_OUTAGE" == "true" ]]; then
+      PARTNER_CONFORMANCE_STATUS="unreachable_waived"
+      warn "Phase 5 partner conformance sweep failed with --allow-partner-outage; recording partner_conformance_status=unreachable_waived in manifest.json (POAM-2026-163 remains uncertified)."
+    else
+      PARTNER_CONFORMANCE_STATUS="failed"
       ((SWEEP_FAILURES++)) || true
     fi
   else
+    PARTNER_CONFORMANCE_STATUS="skipped_flag"
     warn "Phase 5 live test sweeps skipped (--skip-live-sweep flag)"
   fi
 
@@ -1184,6 +1540,9 @@ run_terraform_destroy() {
     "-var=region=${REGION}"
     "-var=cage_deployment_region=${CAGE_DEPLOYMENT_REGION:-US_FED}"
   )
+  if [[ "$ENABLE_E2E_ADVISOR" == "true" ]]; then
+    destroy_args+=("-var=enable_e2e_advisor=true")
+  fi
   if [[ -n "$DIGESTS_FILE" ]]; then
     destroy_args+=("-var-file=${DIGESTS_FILE}")
   fi
@@ -1260,7 +1619,7 @@ if ! has_gate_failures && [[ "$SKIP_REBUILD" == "false" ]]; then
       info "Stage 5 bound genesis rotation enabled (prior chain=${PRE_WORM_CHAIN_ID}, head=${PRE_WORM_HEAD_HASH:0:12}...)"
     fi
     if ! env SKIP_BUILD=true BOOTSTRAP_IMPORT_STATE=true \
-      "$REPO_ROOT/deploy_all.sh" --target gcp-gke --env staging --auto-approve; then
+      "$REPO_ROOT/deploy_all.sh" --target gcp-gke --env staging --auto-approve ${DEPLOY_EXTRA_ARGS[@]+"${DEPLOY_EXTRA_ARGS[@]}"}; then
       error "Stage 5 clean rebuild FAILED."
       ((REBUILD_FAILURES++)) || true
     elif ! run_zero_drift_plan "Stage 5 rebuild"; then
@@ -1290,6 +1649,7 @@ if ! has_gate_failures && [[ "$SKIP_REBUILD" == "false" ]]; then
             error "Stage 5b post-rebuild cross-teardown WORM chain continuity FAILED."
             ((REBUILD_FAILURES++)) || true
           else
+            POST_REBUILD_BOUND_ROTATION_VERIFIED=true
             AUDIT_CORROBORATION_SCRIPT="${CAGE_AUDIT_CORROBORATION_SCRIPT:-$REPO_ROOT/scripts/verify_audit_corroboration.py}"
             if [[ ! -f "$AUDIT_CORROBORATION_SCRIPT" ]]; then
               error "Stage 5b required AS-6 Cloud Audit Log corroboration script missing: ${AUDIT_CORROBORATION_SCRIPT}"

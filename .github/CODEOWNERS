@@ -41,6 +41,7 @@
 /src/integrations/                      @lahlfors
 /src/compliance_bridge/                 @lahlfors
 /compliance/                            @lahlfors
+/compliance/gate_w_certification.json   @lahlfors
 /contrib/                               @lahlfors
 
 # Offline Evaluation & Certification Plane

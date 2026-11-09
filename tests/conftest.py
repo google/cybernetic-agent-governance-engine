@@ -648,6 +648,73 @@ def _assert_selection_markers(items: list[pytest.Item]) -> None:
     raise pytest.UsageError("\n".join(lines))
 
 
+_LIVE_SUITE_MARKER_FLAGS: tuple[tuple[str, str], ...] = (
+    ("integration", "--run-integration"),
+    ("live_external", "--run-live-external"),
+    ("partner_integration", "--run-partner-integration"),
+    ("e2e", "--run-e2e"),
+    ("chaos", "--run-chaos"),
+)
+_AUTOSKIPPED_LIVE_COUNTS = pytest.StashKey[dict[str, int]]()
+_DESELECTED_LIVE_COUNTS = pytest.StashKey[dict[str, int]]()
+
+
+def format_unexecuted_live_suites_notice(
+    autoskipped: dict[str, int],
+    deselected: dict[str, int],
+) -> list[str]:
+    """Build terminal notice lines for opt-in live suites omitted from the session."""
+    lines: list[str] = []
+    for marker_name, cli_flag in _LIVE_SUITE_MARKER_FLAGS:
+        skipped_n = int(autoskipped.get(marker_name, 0))
+        deselected_n = int(deselected.get(marker_name, 0))
+        if skipped_n <= 0 and deselected_n <= 0:
+            continue
+        parts: list[str] = []
+        if skipped_n > 0:
+            parts.append(f"{skipped_n} auto-skipped")
+        if deselected_n > 0:
+            parts.append(f"{deselected_n} deselected")
+        detail = ", ".join(parts)
+        lines.append(
+            f"  [NOT EXECUTED] @{marker_name}: {detail} — pass {cli_flag} against a live target to execute"
+        )
+    return lines
+
+
+def pytest_deselected(items: list[pytest.Item]) -> None:
+    """Track opt-in live suites excluded by `-m` / `-k` selection so omission is visible."""
+    if not items:
+        return
+    config = items[0].config
+    deselected = config.stash.setdefault(_DESELECTED_LIVE_COUNTS, {})
+    for item in items:
+        marks = applied_marker_names(item)
+        for marker_name, _cli_flag in _LIVE_SUITE_MARKER_FLAGS:
+            if marker_name in marks:
+                deselected[marker_name] = deselected.get(marker_name, 0) + 1
+
+
+def pytest_terminal_summary(
+    terminalreporter: pytest.TerminalReporter,
+    exitstatus: int,
+    config: pytest.Config,
+) -> None:
+    """Emit a controller-only summary whenever opt-in live suites were omitted."""
+    del exitstatus
+    if hasattr(config, "workerinput"):
+        return
+    lines = format_unexecuted_live_suites_notice(
+        config.stash.get(_AUTOSKIPPED_LIVE_COUNTS, {}),
+        config.stash.get(_DESELECTED_LIVE_COUNTS, {}),
+    )
+    if not lines:
+        return
+    terminalreporter.section("live / opt-in suites not executed", sep="-")
+    for line in lines:
+        terminalreporter.write_line(line)
+
+
 def pytest_collection_modifyitems(
     config: pytest.Config, items: list[pytest.Item]
 ) -> None:
@@ -696,6 +763,7 @@ def pytest_collection_modifyitems(
     from tests.fixtures.selection_flags import live_external_enabled
 
     session_region = config.stash[_SESSION_REGION]
+    autoskipped = config.stash.setdefault(_AUTOSKIPPED_LIVE_COUNTS, {})
 
     for item in items:
         marked_region(item)  # fail closed on ambiguous region markers
@@ -706,20 +774,27 @@ def pytest_collection_modifyitems(
         marks = applied_marker_names(item)
         if "integration" in marks and not run_integration:
             item.add_marker(skip_integration)
+            autoskipped["integration"] = autoskipped.get("integration", 0) + 1
         if "live_external" in marks and not live_external_enabled(
             marks,
             run_live_external=run_live_external,
             run_partner_integration=run_partner_integration,
         ):
             item.add_marker(skip_live_external)
+            autoskipped["live_external"] = autoskipped.get("live_external", 0) + 1
         if "partner_integration" in marks and not (
             run_partner_integration or run_live_external
         ):
             item.add_marker(skip_partner_integration)
+            autoskipped["partner_integration"] = (
+                autoskipped.get("partner_integration", 0) + 1
+            )
         if "chaos" in marks and not run_chaos:
             item.add_marker(skip_chaos)
+            autoskipped["chaos"] = autoskipped.get("chaos", 0) + 1
         if "e2e" in marks and not run_e2e:
             item.add_marker(skip_e2e)
+            autoskipped["e2e"] = autoskipped.get("e2e", 0) + 1
 
 
 # ── OPA reachability fixtures ────────────────────────────────────────────────

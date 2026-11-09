@@ -146,10 +146,13 @@ def _base_env(bin_dir: Path, **overrides: str) -> dict[str, str]:
         if k
         not in {
             "TF_VAR_authorized_networks",
+            "TF_VAR_startup_grace_hours",
+            "TF_VAR_enable_e2e_advisor",
             "TF_VAR_evidence_previous_chain_head_hash",
             "TF_VAR_evidence_previous_batch_attestation_digest",
             "EVIDENCE_PREVIOUS_CHAIN_HEAD_HASH",
             "EVIDENCE_PREVIOUS_BATCH_ATTESTATION_DIGEST",
+            "CAGE_GATE_W_ARCHIVE_DIR",
             "DEPLOYER_EGRESS_IP",
             "COMPLIANCE_BRIDGE_URL",
             "CAGE_AUDIT_CORROBORATION_SCRIPT",
@@ -179,9 +182,11 @@ def _setup_fake_repo(
     init_restart_count: int = 0,
     lula_rc: int = 0,
     lula_state: str = "satisfied",
+    startup_grace_active: bool = False,
     job_exit_code: int = 0,
     job_logs: str = DEFAULT_JOB_LOGS,
     pytest_rc: int = 0,
+    partner_pytest_rc: int | None = None,
     pytest_summary: str = "5 passed in 0.12s",
     langfuse_rc: int = 0,
     audit_corroboration_rc: int = 0,
@@ -317,6 +322,16 @@ def _setup_fake_repo(
         encoding="utf-8",
     )
     (fixtures_dir / "job_logs.txt").write_text(job_logs, encoding="utf-8")
+    (fixtures_dir / "metrics_a53.json").write_text(
+        json.dumps(
+            {
+                "control_id": "A.5.3",
+                "startup_grace_active": startup_grace_active,
+                "startup_grace_remaining_hours": 6.0 if startup_grace_active else 0.0,
+            }
+        ),
+        encoding="utf-8",
+    )
     (fixtures_dir / "evidence_verify.json").write_text(
         evidence_verify_json, encoding="utf-8"
     )
@@ -355,6 +370,10 @@ exit 0
         """#!/usr/bin/env bash
 if [[ "$*" == *"rev-parse --short HEAD"* ]]; then
   echo "abc1234"
+  exit 0
+fi
+if [[ "$*" == *"rev-parse HEAD"* ]]; then
+  echo "abc1234567890abcdef1234567890abcdef12345"
   exit 0
 fi
 exit 0
@@ -424,6 +443,10 @@ if [[ "$*" == *"logs job/lula-gate-w"* ]]; then
   cat "{fixtures_dir / "job_logs.txt"}"
   exit 0
 fi
+if [[ "$*" == *"exec"* && "$*" == *"deploy/compliance-bridge"* && "$*" == *"/v1/metrics/A.5.3"* ]]; then
+  cat "{fixtures_dir / "metrics_a53.json"}"
+  exit 0
+fi
 if [[ "$*" == *"exec"* && "$*" == *"deploy/compliance-bridge"* ]]; then
   if [[ -f "{rebuilt_flag}" ]]; then
     cat "{fixtures_dir / "evidence_verify_post.json"}"
@@ -477,6 +500,7 @@ exit {lula_rc}
         if post_rebuild_audit_corroboration_rc is None
         else post_rebuild_audit_corroboration_rc
     )
+    effective_partner_rc = pytest_rc if partner_pytest_rc is None else partner_pytest_rc
     _write_executable(
         bin_dir / "uv",
         f"""#!/usr/bin/env bash
@@ -489,6 +513,11 @@ if [[ "$*" == *"verify_audit_corroboration.py"* ]]; then
     exit {post_corroboration_exit}
   fi
   exit {corroboration_exit}
+fi
+if [[ "$*" == *"pytest"* && "$*" == *"--run-partner-integration"* ]]; then
+  echo "============================= test session starts ============================="
+  echo "{pytest_summary}"
+  exit {effective_partner_rc}
 fi
 if [[ "$*" == *"pytest"* ]]; then
   echo "============================= test session starts ============================="
@@ -1311,3 +1340,162 @@ def test_staging_lifecycle_stage5b_fails_closed_when_post_rebuild_audit_corrobor
     calls = log_file.read_text(encoding="utf-8")
     assert calls.count("verify_audit_corroboration.py --project demo-staging-proj") == 2
     assert calls.count("destroy -var-file=staging.tfvars") == 2
+
+
+def test_staging_lifecycle_archive_manifest_stamps_existing_vs_fresh_target_mode_and_suite_counts(
+    tmp_path: Path,
+) -> None:
+    repo, bin_dir, _ = _setup_fake_repo(
+        tmp_path,
+        pytest_summary="collected 9 items\n5 passed, 2 skipped, 2 deselected in 0.12s",
+    )
+    (repo / "compliance" / "lula" / "lula-validation-ra5.yaml").write_text(
+        "# cage-status: planned\n  type: kubernetes\n",
+        encoding="utf-8",
+    )
+    archive_existing = tmp_path / "archive-existing"
+    env = _base_env(bin_dir, GOOGLE_CLOUD_PROJECT="demo-staging-proj")
+    proc = subprocess.run(
+        [
+            "bash",
+            str(repo / "scripts" / "staging_lifecycle.sh"),
+            f"--archive-dir={archive_existing}",
+        ],
+        env=env,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert proc.returncode == 0, proc.stderr
+
+    manifest = json.loads(
+        (archive_existing / "manifest.json").read_text(encoding="utf-8")
+    )
+    assert manifest["deployment_target_mode"] == "existing_operated_project"
+    assert manifest["overall_status"] == "PASS"
+    assert manifest["full_unskipped_gate_w"] is True
+    assert manifest["startup_grace_hours"] == 0
+    assert manifest["partner_conformance_status"] == "passed"
+    assert manifest["worm_continuity"]["post_rebuild_bound_rotation_verified"] is True
+    assert manifest["worm_continuity"]["pre_teardown_head_hash"] == DEFAULT_PRE_HASH
+    assert (archive_existing / "lula" / "assessment-results-sample.yaml").is_file()
+    assert (archive_existing / "lula" / "planned-lula-specs.txt").read_text(
+        encoding="utf-8"
+    ).strip() == "lula-validation-ra5.yaml"
+    assert (archive_existing / "lula" / "job-lula-gate-w.log").is_file()
+    assert any((archive_existing / "worm").glob("*.json"))
+    assert len(manifest["pytest_suites"]) >= 7
+    first_suite = manifest["pytest_suites"][0]
+    assert first_suite["collected"] == 9
+    assert first_suite["passed"] == 5
+    assert first_suite["skipped"] == 2
+    assert first_suite["deselected"] == 2
+
+    archive_fresh = tmp_path / "archive-fresh"
+    proc_fresh = subprocess.run(
+        [
+            "bash",
+            str(repo / "scripts" / "staging_lifecycle.sh"),
+            "--fresh-project=ephemeral-proj-99",
+            f"--archive-dir={archive_fresh}",
+            "--skip-lula",
+            "--skip-posture",
+            "--skip-live-sweep",
+            "--skip-telemetry",
+            "--skip-rebuild",
+        ],
+        env=_base_env(bin_dir),
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert proc_fresh.returncode == 0, proc_fresh.stderr
+    manifest_fresh = json.loads(
+        (archive_fresh / "manifest.json").read_text(encoding="utf-8")
+    )
+    assert manifest_fresh["deployment_target_mode"] == "fresh_project_clean_room"
+    assert manifest_fresh["overall_status"] == "PARTIAL_PASS"
+    assert manifest_fresh["full_unskipped_gate_w"] is False
+
+
+def test_staging_lifecycle_fails_closed_when_startup_grace_active_true(
+    tmp_path: Path,
+) -> None:
+    repo, bin_dir, _ = _setup_fake_repo(tmp_path, startup_grace_active=True)
+    archive_dir = tmp_path / "archive-grace-fail"
+    proc = subprocess.run(
+        [
+            "bash",
+            str(repo / "scripts" / "staging_lifecycle.sh"),
+            f"--archive-dir={archive_dir}",
+            "--skip-posture",
+            "--skip-live-sweep",
+            "--skip-telemetry",
+            "--skip-rebuild",
+        ],
+        env=_base_env(bin_dir, GOOGLE_CLOUD_PROJECT="demo-staging-proj"),
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert proc.returncode != 0
+    assert "startup_grace_active != false" in proc.stderr
+    manifest = json.loads((archive_dir / "manifest.json").read_text(encoding="utf-8"))
+    assert manifest["overall_status"] == "FAIL"
+    assert manifest["phase_failures"]["lula"] >= 1
+
+
+def test_staging_lifecycle_enable_e2e_advisor_and_allow_partner_outage_manifest_recording(
+    tmp_path: Path,
+) -> None:
+    repo, bin_dir, log_file = _setup_fake_repo(tmp_path, partner_pytest_rc=1)
+    archive_waived = tmp_path / "archive-partner-waived"
+    proc_waived = subprocess.run(
+        [
+            "bash",
+            str(repo / "scripts" / "staging_lifecycle.sh"),
+            "--enable-e2e-advisor",
+            "--allow-partner-outage",
+            f"--archive-dir={archive_waived}",
+            "--skip-lula",
+            "--skip-posture",
+            "--skip-telemetry",
+            "--skip-rebuild",
+        ],
+        env=_base_env(bin_dir, GOOGLE_CLOUD_PROJECT="demo-staging-proj"),
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert proc_waived.returncode == 0, proc_waived.stderr
+    calls = log_file.read_text(encoding="utf-8")
+    assert "--var enable_e2e_advisor=true" in calls
+    assert "-m e2e --run-e2e" in calls
+    manifest_waived = json.loads(
+        (archive_waived / "manifest.json").read_text(encoding="utf-8")
+    )
+    assert manifest_waived["enable_e2e_advisor"] is True
+    assert manifest_waived["partner_conformance_status"] == "unreachable_waived"
+
+    archive_unwaived = tmp_path / "archive-partner-unwaived"
+    proc_unwaived = subprocess.run(
+        [
+            "bash",
+            str(repo / "scripts" / "staging_lifecycle.sh"),
+            f"--archive-dir={archive_unwaived}",
+            "--skip-lula",
+            "--skip-posture",
+            "--skip-telemetry",
+            "--skip-rebuild",
+        ],
+        env=_base_env(bin_dir, GOOGLE_CLOUD_PROJECT="demo-staging-proj"),
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert proc_unwaived.returncode != 0
+    manifest_unwaived = json.loads(
+        (archive_unwaived / "manifest.json").read_text(encoding="utf-8")
+    )
+    assert manifest_unwaived["partner_conformance_status"] == "failed"
+    assert manifest_unwaived["overall_status"] == "FAIL"
