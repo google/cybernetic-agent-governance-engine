@@ -199,6 +199,16 @@ load_env() {
     [[ -n "$_project" ]]        && export TF_VAR_project_id="$_project"
     [[ -n "$_region" ]]         && export TF_VAR_region="$_region"
 
+    local _prev_chain_head _prev_batch_attest
+    _prev_chain_head=$(_read_env_var EVIDENCE_PREVIOUS_CHAIN_HEAD_HASH)
+    _prev_batch_attest=$(_read_env_var EVIDENCE_PREVIOUS_BATCH_ATTESTATION_DIGEST)
+    if [[ -z "${TF_VAR_evidence_previous_chain_head_hash:-}" && -n "$_prev_chain_head" ]]; then
+      export TF_VAR_evidence_previous_chain_head_hash="$_prev_chain_head"
+    fi
+    if [[ -z "${TF_VAR_evidence_previous_batch_attestation_digest:-}" && -n "$_prev_batch_attest" ]]; then
+      export TF_VAR_evidence_previous_batch_attestation_digest="$_prev_batch_attest"
+    fi
+
     # Propagate service account impersonation if configured in .env or gcloud
     local _impersonate
     _impersonate=$(_read_env_var GOOGLE_IMPERSONATE_SERVICE_ACCOUNT)

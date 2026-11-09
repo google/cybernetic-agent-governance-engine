@@ -153,6 +153,24 @@ def test_modules_export_stream_contract_env(module_file: Path) -> None:
     assert env.get("REDIS_TLS") == "tostring(var.enable_redis_tls)"
     assert env.get("REDIS_CA_CERT_PATH") == '"/etc/cage/tls/redis/ca.pem"'
     assert env.get("REDIS_AUTH_MODE") == "var.redis_auth_mode"
+    if module_file == _GATEWAY_MOD:
+        assert (
+            env.get("EVIDENCE_PREVIOUS_CHAIN_HEAD_HASH")
+            == "var.evidence_previous_chain_head_hash"
+        )
+        assert (
+            env.get("EVIDENCE_PREVIOUS_BATCH_ATTESTATION_DIGEST")
+            == "var.evidence_previous_batch_attestation_digest"
+        )
+        gw_call = _block(_GKE_MAIN.read_text(), 'module "gateway"')
+        assert (
+            _tf_attr(gw_call, "evidence_previous_chain_head_hash")
+            == "var.evidence_previous_chain_head_hash"
+        )
+        assert (
+            _tf_attr(gw_call, "evidence_previous_batch_attestation_digest")
+            == "var.evidence_previous_batch_attestation_digest"
+        )
 
 
 @pytest.mark.parametrize("vars_file", [_GATEWAY_VARS, _BRIDGE_VARS])

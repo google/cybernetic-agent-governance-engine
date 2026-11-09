@@ -114,6 +114,16 @@ resource "kubernetes_deployment" "gateway" {
       condition     = var.cage_inference_backend != "stub" || !contains(["prod", "production"], lower(trimspace(var.cage_env)))
       error_message = "CAGE Invariant (POAM-2026-191): CAGE_INFERENCE_BACKEND=stub is an opt-in non-production E2E backend and is refused when cage_env is prod or production."
     }
+    precondition {
+      condition = (
+        (trimspace(var.evidence_previous_chain_head_hash) == "" && trimspace(var.evidence_previous_batch_attestation_digest) == "") ||
+        (
+          can(regex("^[0-9a-f]{64}$", trimspace(var.evidence_previous_chain_head_hash))) &&
+          can(regex("^[0-9a-f]{64}$", trimspace(var.evidence_previous_batch_attestation_digest)))
+        )
+      )
+      error_message = "CAGE Invariant (F-94 / R-10): evidence_previous_chain_head_hash and evidence_previous_batch_attestation_digest must either both be empty or both be lowercase 64-character hex SHA-256 digests."
+    }
   }
 
   metadata {
@@ -527,6 +537,14 @@ resource "kubernetes_deployment" "gateway" {
           env {
             name  = "EVIDENCE_STREAM_KEY"
             value = var.evidence_stream_key
+          }
+          env {
+            name  = "EVIDENCE_PREVIOUS_CHAIN_HEAD_HASH"
+            value = var.evidence_previous_chain_head_hash
+          }
+          env {
+            name  = "EVIDENCE_PREVIOUS_BATCH_ATTESTATION_DIGEST"
+            value = var.evidence_previous_batch_attestation_digest
           }
           # Cap BLAS/OpenMP worker pools to the 2-CPU container limit (2000m).
           env {

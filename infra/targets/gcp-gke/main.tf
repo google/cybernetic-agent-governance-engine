@@ -1016,22 +1016,24 @@ module "gateway" {
   redis_auth_mode                = local.governance_redis_auth
 
   # Evidence stream producer — identical contract to the compliance bridge.
-  evidence_stream_redis_url        = local.evidence_stream_redis_url
-  evidence_stream_redis_db         = local.evidence_stream_redis_db
-  evidence_stream_key              = local.evidence_stream_key
-  cage_inference_backend           = local.effective_inference_backend
-  vllm_base_url                    = local.gateway_model_fast_url
-  vllm_reasoning_api_base          = local.gateway_model_reasoning_url
-  vllm_fast_api_base               = local.gateway_model_fast_url
-  vllm_api_key                     = local.gateway_model_api_key
-  guardrails_model_name            = var.served_model_fast
-  opa_url                          = module.opa.uds_url
-  opa_policies_config_map_name     = module.opa.policies_config_map_name
-  opa_system_authz_config_map_name = module.opa.system_authz_config_map_name
-  opa_config_config_map_name       = module.opa.config_config_map_name
-  opa_bundle_sha256                = module.opa.bundle_sha256
-  opa_policy_files                 = module.opa.policy_files_data
-  governance_salt                  = var.governance_salt
+  evidence_stream_redis_url                  = local.evidence_stream_redis_url
+  evidence_stream_redis_db                   = local.evidence_stream_redis_db
+  evidence_stream_key                        = local.evidence_stream_key
+  evidence_previous_chain_head_hash          = var.evidence_previous_chain_head_hash
+  evidence_previous_batch_attestation_digest = var.evidence_previous_batch_attestation_digest
+  cage_inference_backend                     = local.effective_inference_backend
+  vllm_base_url                              = local.gateway_model_fast_url
+  vllm_reasoning_api_base                    = local.gateway_model_reasoning_url
+  vllm_fast_api_base                         = local.gateway_model_fast_url
+  vllm_api_key                               = local.gateway_model_api_key
+  guardrails_model_name                      = var.served_model_fast
+  opa_url                                    = module.opa.uds_url
+  opa_policies_config_map_name               = module.opa.policies_config_map_name
+  opa_system_authz_config_map_name           = module.opa.system_authz_config_map_name
+  opa_config_config_map_name                 = module.opa.config_config_map_name
+  opa_bundle_sha256                          = module.opa.bundle_sha256
+  opa_policy_files                           = module.opa.policy_files_data
+  governance_salt                            = var.governance_salt
 
   # POAM-2026-080: only the advisor's mesh identity may call gated routes.
   # The gateway does not call itself, so its own identity is not listed.

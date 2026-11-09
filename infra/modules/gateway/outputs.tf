@@ -54,3 +54,21 @@ output "opa_sidecar_policy_files" {
   description = "Domain Rego policy files mounted into the gateway OPA UDS sidecar via opa-policies (POAM-2026-198)"
   value       = var.opa_policy_files
 }
+
+output "evidence_previous_chain_head_hash" {
+  description = "EVIDENCE_PREVIOUS_CHAIN_HEAD_HASH configured on the gateway container for bound genesis rotation (F-94 / R-10)"
+  value = one([
+    for e in kubernetes_deployment.gateway.spec[0].template[0].spec[0].container[0].env :
+    e.value
+    if e.name == "EVIDENCE_PREVIOUS_CHAIN_HEAD_HASH"
+  ])
+}
+
+output "evidence_previous_batch_attestation_digest" {
+  description = "EVIDENCE_PREVIOUS_BATCH_ATTESTATION_DIGEST configured on the gateway container for bound genesis rotation (F-94 / R-10)"
+  value = one([
+    for e in kubernetes_deployment.gateway.spec[0].template[0].spec[0].container[0].env :
+    e.value
+    if e.name == "EVIDENCE_PREVIOUS_BATCH_ATTESTATION_DIGEST"
+  ])
+}

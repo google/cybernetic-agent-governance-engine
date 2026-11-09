@@ -361,6 +361,18 @@ variable "evidence_stream_key" {
   }
 }
 
+variable "evidence_previous_chain_head_hash" {
+  description = "Optional 64-hex SHA-256 record_hash of the prior chain's final custodied record for bound genesis rotation across cluster rebuilds (EVIDENCE_PREVIOUS_CHAIN_HEAD_HASH, F-94 / R-10). Must be paired with evidence_previous_batch_attestation_digest."
+  type        = string
+  default     = ""
+}
+
+variable "evidence_previous_batch_attestation_digest" {
+  description = "Optional 64-hex SHA-256 digest of the prior chain's final signed batch attestation for bound genesis rotation across cluster rebuilds (EVIDENCE_PREVIOUS_BATCH_ATTESTATION_DIGEST, F-94 / R-10). Must be paired with evidence_previous_chain_head_hash."
+  type        = string
+  default     = ""
+}
+
 # Name of the cage-deployment ConfigMap (modules/deployment_config). Passing
 # it (rather than hardcoding the name) makes the dependency explicit.
 variable "deployment_config_map_name" {

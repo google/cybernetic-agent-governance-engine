@@ -30,6 +30,12 @@ pytestmark = [pytest.mark.unit, pytest.mark.local]
 REPO_ROOT = Path(__file__).resolve().parents[2]
 LIFECYCLE_SCRIPT = REPO_ROOT / "scripts" / "staging_lifecycle.sh"
 CORROBORATION_SCRIPT = REPO_ROOT / "scripts" / "verify_audit_corroboration.py"
+ANCHOR_SCRIPT = REPO_ROOT / "scripts" / "read_worm_chain_anchor.py"
+
+DEFAULT_PRE_HASH = "1" * 64
+DEFAULT_PRE_ATTEST = "2" * 64
+DEFAULT_POST_HASH = "3" * 64
+DEFAULT_POST_ATTEST = "4" * 64
 
 DEFAULT_JOB_LOGS = (
     "assessment-results:\n"
@@ -45,9 +51,71 @@ DEFAULT_EVIDENCE_VERIFY_JSON = json.dumps(
     {
         "ok": True,
         "citable": True,
-        "verified": [{"batch_id": "batch-001"}],
+        "verified": [
+            {
+                "attestation_key": "evidence-stream/2026/11/09/chain01/000000000000-000000000005.ndjson.attestation.json",
+                "data_key": "evidence-stream/2026/11/09/chain01/000000000000-000000000005.ndjson",
+                "chain_id": "chain01",
+                "first_sequence": 0,
+                "last_sequence": 5,
+                "entries": 6,
+                "first_prev_hash": "",
+                "last_record_hash": DEFAULT_PRE_HASH,
+                "attestation_sha256": DEFAULT_PRE_ATTEST,
+                "bound_chain_rotation": False,
+            }
+        ],
         "failures": [],
         "declared_gaps": [],
+        "bound_rotations": [],
+        "non_evidentiary": [],
+    }
+)
+
+DEFAULT_POST_REBUILD_EVIDENCE_VERIFY_JSON = json.dumps(
+    {
+        "ok": True,
+        "citable": True,
+        "verified": [
+            {
+                "attestation_key": "evidence-stream/2026/11/09/chain01/000000000000-000000000005.ndjson.attestation.json",
+                "data_key": "evidence-stream/2026/11/09/chain01/000000000000-000000000005.ndjson",
+                "chain_id": "chain01",
+                "first_sequence": 0,
+                "last_sequence": 5,
+                "entries": 6,
+                "first_prev_hash": "",
+                "last_record_hash": DEFAULT_PRE_HASH,
+                "attestation_sha256": DEFAULT_PRE_ATTEST,
+                "bound_chain_rotation": False,
+            },
+            {
+                "attestation_key": "evidence-stream/2026/11/09/chain02/000000000000-000000000001.ndjson.attestation.json",
+                "data_key": "evidence-stream/2026/11/09/chain02/000000000000-000000000001.ndjson",
+                "chain_id": "chain02",
+                "first_sequence": 0,
+                "last_sequence": 1,
+                "entries": 2,
+                "first_prev_hash": "",
+                "last_record_hash": DEFAULT_POST_HASH,
+                "attestation_sha256": DEFAULT_POST_ATTEST,
+                "rotated_from_chain_id": "chain01",
+                "bound_chain_rotation": True,
+            },
+        ],
+        "failures": [],
+        "declared_gaps": [],
+        "bound_rotations": [
+            {
+                "previous_chain_id": "chain01",
+                "new_chain_id": "chain02",
+                "previous_last_sequence": 5,
+                "previous_chain_head_hash": DEFAULT_PRE_HASH,
+                "previous_batch_attestation_digest": DEFAULT_PRE_ATTEST,
+                "attestation_key": "evidence-stream/2026/11/09/chain02/000000000000-000000000001.ndjson.attestation.json",
+                "kind": "BOUND_CHAIN_ROTATION",
+            }
+        ],
         "non_evidentiary": [],
     }
 )
@@ -78,15 +146,22 @@ def _base_env(bin_dir: Path, **overrides: str) -> dict[str, str]:
         if k
         not in {
             "TF_VAR_authorized_networks",
+            "TF_VAR_evidence_previous_chain_head_hash",
+            "TF_VAR_evidence_previous_batch_attestation_digest",
+            "EVIDENCE_PREVIOUS_CHAIN_HEAD_HASH",
+            "EVIDENCE_PREVIOUS_BATCH_ATTESTATION_DIGEST",
             "DEPLOYER_EGRESS_IP",
             "COMPLIANCE_BRIDGE_URL",
             "CAGE_AUDIT_CORROBORATION_SCRIPT",
+            "CAGE_WORM_ANCHOR_SCRIPT",
             "CAGE_DEPLOYMENT_REGION",
             "GOOGLE_CLOUD_PROJECT",
             "BILLING_ACCOUNT_ID",
         }
     }
     clean["PATH"] = f"{bin_dir}:{os.environ.get('PATH', '')}"
+    clean["CAGE_PRE_TEARDOWN_FLUSH_WAIT_SECONDS"] = "0"
+    clean["CAGE_POST_REBUILD_CUSTODY_WAIT_SECONDS"] = "0"
     clean.update(overrides)
     return clean
 
@@ -110,12 +185,14 @@ def _setup_fake_repo(
     pytest_summary: str = "5 passed in 0.12s",
     langfuse_rc: int = 0,
     audit_corroboration_rc: int = 0,
+    post_rebuild_audit_corroboration_rc: int | None = None,
     include_audit_corroboration_script: bool = True,
     plan_rc: int = 0,
     rebuild_plan_rc: int = 0,
     monitoring_json: str = DEFAULT_MONITORING_JSON,
     monitoring_rc: int = 0,
     evidence_verify_json: str = DEFAULT_EVIDENCE_VERIFY_JSON,
+    post_rebuild_evidence_verify_json: str = DEFAULT_POST_REBUILD_EVIDENCE_VERIFY_JSON,
     evidence_verify_rc: int = 0,
     surviving_bucket: str = "",
     surviving_lien: str = "",
@@ -127,6 +204,7 @@ def _setup_fake_repo(
     tf_dir.mkdir(parents=True, exist_ok=True)
 
     shutil.copy2(LIFECYCLE_SCRIPT, repo / "scripts" / "staging_lifecycle.sh")
+    shutil.copy2(ANCHOR_SCRIPT, repo / "scripts" / "read_worm_chain_anchor.py")
     (repo / "compliance" / "lula" / "lula-validation-sample.yaml").write_text(
         "kind: LulaValidation\n", encoding="utf-8"
     )
@@ -242,6 +320,10 @@ def _setup_fake_repo(
     (fixtures_dir / "evidence_verify.json").write_text(
         evidence_verify_json, encoding="utf-8"
     )
+    (fixtures_dir / "evidence_verify_post.json").write_text(
+        post_rebuild_evidence_verify_json, encoding="utf-8"
+    )
+    rebuilt_flag = fixtures_dir / "rebuilt_flag"
     (fixtures_dir / "monitoring.json").write_text(monitoring_json, encoding="utf-8")
     plan_counter_file = fixtures_dir / "tf_plan_count"
     plan_counter_file.write_text("0", encoding="utf-8")
@@ -249,7 +331,7 @@ def _setup_fake_repo(
     _write_executable(
         repo / "deploy_all.sh",
         f"""#!/usr/bin/env bash
-echo "deploy_all.sh $* | SKIP_BUILD=${{SKIP_BUILD:-}} | BOOTSTRAP_IMPORT_STATE=${{BOOTSTRAP_IMPORT_STATE:-}} | TF_VAR_authorized_networks=${{TF_VAR_authorized_networks:-}}" >> "{log_file}"
+echo "deploy_all.sh $* | SKIP_BUILD=${{SKIP_BUILD:-}} | BOOTSTRAP_IMPORT_STATE=${{BOOTSTRAP_IMPORT_STATE:-}} | TF_VAR_authorized_networks=${{TF_VAR_authorized_networks:-}} | TF_VAR_evidence_previous_chain_head_hash=${{TF_VAR_evidence_previous_chain_head_hash:-}} | TF_VAR_evidence_previous_batch_attestation_digest=${{TF_VAR_evidence_previous_batch_attestation_digest:-}}" >> "{log_file}"
 exit 0
 """,
     )
@@ -258,6 +340,9 @@ exit 0
         repo / "scripts" / "bootstrap_gcp_project.sh",
         f"""#!/usr/bin/env bash
 echo "bootstrap_gcp_project.sh $*" >> "{log_file}"
+if [[ "$*" == *"--import-state"* ]]; then
+  touch "{rebuilt_flag}"
+fi
 exit 0
 """,
     )
@@ -291,13 +376,13 @@ if [[ "$*" == *"storage buckets list"* ]]; then
   echo "ephemeral-proj-99-tfstate"
   echo "ephemeral-proj-99_cloudbuild"
   if [[ -n "{surviving_bucket}" ]]; then
-    printf '%b\n' "{surviving_bucket}"
+    printf '%b\\n' "{surviving_bucket}"
   fi
   exit 0
 fi
 if [[ "$*" == *"resource-manager liens list"* ]]; then
   if [[ -n "{surviving_lien}" ]]; then
-    printf '%b\n' "{surviving_lien}"
+    printf '%b\\n' "{surviving_lien}"
   fi
   exit 0
 fi
@@ -340,7 +425,11 @@ if [[ "$*" == *"logs job/lula-gate-w"* ]]; then
   exit 0
 fi
 if [[ "$*" == *"exec"* && "$*" == *"deploy/compliance-bridge"* ]]; then
-  cat "{fixtures_dir / "evidence_verify.json"}"
+  if [[ -f "{rebuilt_flag}" ]]; then
+    cat "{fixtures_dir / "evidence_verify_post.json"}"
+  else
+    cat "{fixtures_dir / "evidence_verify.json"}"
+  fi
   exit {evidence_verify_rc}
 fi
 echo '{{}}'
@@ -383,6 +472,11 @@ exit {lula_rc}
     )
 
     corroboration_exit = audit_corroboration_rc
+    post_corroboration_exit = (
+        audit_corroboration_rc
+        if post_rebuild_audit_corroboration_rc is None
+        else post_rebuild_audit_corroboration_rc
+    )
     _write_executable(
         bin_dir / "uv",
         f"""#!/usr/bin/env bash
@@ -391,6 +485,9 @@ if [[ "$*" == *"verify_langfuse_posture.py"* ]]; then
   exit {langfuse_rc}
 fi
 if [[ "$*" == *"verify_audit_corroboration.py"* ]]; then
+  if [[ -f "{rebuilt_flag}" ]]; then
+    exit {post_corroboration_exit}
+  fi
   exit {corroboration_exit}
 fi
 if [[ "$*" == *"pytest"* ]]; then
@@ -486,10 +583,15 @@ def test_staging_lifecycle_happy_path_passes_and_destroys_with_rendered_digests(
     assert "-m partner_integration --run-partner-integration" in calls
     assert "monitoring.googleapis.com/v3/projects/demo-staging-proj/timeSeries" in calls
     assert "/v1/evidence/verify?require_citable=true" in calls
-    assert "verify_audit_corroboration.py --project demo-staging-proj" in calls
-    # Phase 6: Stage 4 (--import-state), Stage 5 (SKIP_BUILD=true clean rebuild), Stage 6 (final destroy)
+    assert calls.count("verify_audit_corroboration.py --project demo-staging-proj") == 2
+    # Phase 6: Stage 4 (--import-state), Stage 5 (SKIP_BUILD=true clean rebuild + bound genesis), Stage 6 (final destroy)
     assert "--import-state" in calls
     assert "SKIP_BUILD=true | BOOTSTRAP_IMPORT_STATE=true" in calls
+    assert f"TF_VAR_evidence_previous_chain_head_hash={DEFAULT_PRE_HASH}" in calls
+    assert (
+        f"TF_VAR_evidence_previous_batch_attestation_digest={DEFAULT_PRE_ATTEST}"
+        in calls
+    )
     assert calls.count("destroy -var-file=staging.tfvars") == 2
     # PF8: Persistent KMS resources detached before destroy
     assert "state rm google_kms_key_ring.signing" in calls
@@ -1103,3 +1205,109 @@ def test_staging_lifecycle_allow_legacy_lien_survivor_accepts_known_langfuse_eve
     )
     assert proc.returncode == 0, proc.stderr
     assert "PF9 explicit known survivor" in proc.stdout
+
+
+@pytest.mark.parametrize(
+    ("post_rebuild_payload", "expected_fragment"),
+    [
+        (
+            {
+                "ok": True,
+                "citable": True,
+                "verified": json.loads(DEFAULT_POST_REBUILD_EVIDENCE_VERIFY_JSON)[
+                    "verified"
+                ],
+                "failures": [],
+                "declared_gaps": [],
+                "bound_rotations": [],
+                "non_evidentiary": [],
+            },
+            "bound_rotations=0 (expected >= 1 across teardown boundary)",
+        ),
+        (
+            {
+                "ok": True,
+                "citable": True,
+                "verified": json.loads(DEFAULT_POST_REBUILD_EVIDENCE_VERIFY_JSON)[
+                    "verified"
+                ],
+                "failures": [],
+                "declared_gaps": [],
+                "bound_rotations": [
+                    {
+                        "previous_chain_id": "legacy-chain",
+                        "new_chain_id": "chain01",
+                        "previous_last_sequence": 1,
+                        "previous_chain_head_hash": "9" * 64,
+                        "previous_batch_attestation_digest": "8" * 64,
+                        "kind": "BOUND_CHAIN_ROTATION",
+                    }
+                ],
+                "non_evidentiary": [],
+            },
+            "bound_rotations did not bind expected pre-teardown chain head",
+        ),
+        (
+            json.loads(DEFAULT_EVIDENCE_VERIFY_JSON),
+            "verified=1 (expected >= 2)",
+        ),
+    ],
+)
+def test_staging_lifecycle_stage5b_fails_closed_when_post_rebuild_worm_lacks_bound_rotation(
+    tmp_path: Path, post_rebuild_payload: dict[str, object], expected_fragment: str
+) -> None:
+    repo, bin_dir, log_file = _setup_fake_repo(
+        tmp_path,
+        post_rebuild_evidence_verify_json=json.dumps(post_rebuild_payload),
+    )
+    env = _base_env(bin_dir, GOOGLE_CLOUD_PROJECT="demo-staging-proj")
+    proc = subprocess.run(
+        [
+            "bash",
+            str(repo / "scripts" / "staging_lifecycle.sh"),
+            "--skip-lula",
+            "--skip-posture",
+            "--skip-live-sweep",
+        ],
+        env=env,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert proc.returncode != 0
+    assert expected_fragment in proc.stderr
+    assert (
+        "Stage 5b post-rebuild cross-teardown WORM chain continuity FAILED"
+        in proc.stderr
+    )
+    calls = log_file.read_text(encoding="utf-8")
+    assert calls.count("destroy -var-file=staging.tfvars") == 2
+
+
+def test_staging_lifecycle_stage5b_fails_closed_when_post_rebuild_audit_corroboration_fails(
+    tmp_path: Path,
+) -> None:
+    repo, bin_dir, log_file = _setup_fake_repo(
+        tmp_path,
+        audit_corroboration_rc=0,
+        post_rebuild_audit_corroboration_rc=1,
+    )
+    env = _base_env(bin_dir, GOOGLE_CLOUD_PROJECT="demo-staging-proj")
+    proc = subprocess.run(
+        [
+            "bash",
+            str(repo / "scripts" / "staging_lifecycle.sh"),
+            "--skip-lula",
+            "--skip-posture",
+            "--skip-live-sweep",
+        ],
+        env=env,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert proc.returncode != 0
+    assert "Stage 5b post-rebuild Cloud Audit Log corroboration FAILED" in proc.stderr
+    calls = log_file.read_text(encoding="utf-8")
+    assert calls.count("verify_audit_corroboration.py --project demo-staging-proj") == 2
+    assert calls.count("destroy -var-file=staging.tfvars") == 2

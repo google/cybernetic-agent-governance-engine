@@ -315,23 +315,58 @@ PY
   return 0
 }
 
+LAST_EVIDENCE_VERIFY_JSON=""
+
 verify_worm_evidence_chain() {
   local label="$1"
-  info "Verifying WORM custody chain (${label}) via GET /v1/evidence/verify?require_citable=true..."
+  shift || true
+  local require_bound_rotation="false"
+  local expected_prior_head=""
+  local expected_prior_attestation=""
+  local min_verified_batches=1
+
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --require-bound-rotation)
+        require_bound_rotation="true"
+        shift
+        ;;
+      --expected-prior-head=*)
+        expected_prior_head="${1#*=}"
+        shift
+        ;;
+      --expected-prior-attestation=*)
+        expected_prior_attestation="${1#*=}"
+        shift
+        ;;
+      --min-verified-batches=*)
+        min_verified_batches="${1#*=}"
+        shift
+        ;;
+      *)
+        error "verify_worm_evidence_chain: unknown flag $1"
+        return 1
+        ;;
+    esac
+  done
+
+  local verify_timeout="${EVIDENCE_VERIFY_TIMEOUT_SECONDS:-120}"
+  info "Verifying WORM custody chain (${label}) via GET /v1/evidence/verify?require_citable=true (timeout=${verify_timeout}s)..."
   local verify_raw=""
   local fetch_rc=0
   set +e
   if [[ -n "${COMPLIANCE_BRIDGE_URL:-}" ]]; then
-    verify_raw="$(python3 - "${COMPLIANCE_BRIDGE_URL}" <<'PY'
+    verify_raw="$(python3 - "${COMPLIANCE_BRIDGE_URL}" "${verify_timeout}" <<'PY'
 import sys
 from urllib.parse import urlparse
 from urllib.request import urlopen
 
 base = sys.argv[1].rstrip("/")
+timeout_s = int(sys.argv[2])
 url = f"{base}/v1/evidence/verify?require_citable=true"
 if urlparse(url).scheme not in {"http", "https"}:
     raise SystemExit(f"Invalid COMPLIANCE_BRIDGE_URL scheme: {url!r}")
-with urlopen(url, timeout=15) as resp:  # nosec B310
+with urlopen(url, timeout=timeout_s) as resp:  # nosec B310  # scheme validated to http/https above
     if resp.status != 200:
         raise SystemExit(f"HTTP {resp.status} from {url}")
     sys.stdout.write(resp.read().decode("utf-8"))
@@ -340,7 +375,7 @@ PY
     fetch_rc=$?
   else
     verify_raw="$(kubectl exec -n "$NAMESPACE" deploy/compliance-bridge -- \
-      python3 -c 'import sys, urllib.request; resp = urllib.request.urlopen("http://127.0.0.1:3001/v1/evidence/verify?require_citable=true", timeout=15); sys.exit(1) if resp.status != 200 else sys.stdout.write(resp.read().decode("utf-8"))')"
+      python3 -c "import sys, urllib.request; resp = urllib.request.urlopen('http://127.0.0.1:3001/v1/evidence/verify?require_citable=true', timeout=${verify_timeout}); sys.exit(1) if resp.status != 200 else sys.stdout.write(resp.read().decode('utf-8'))")"
     fetch_rc=$?
   fi
   set -e
@@ -350,10 +385,19 @@ PY
     return 1
   fi
 
+  LAST_EVIDENCE_VERIFY_JSON="$verify_raw"
+
   local summary=""
-  if ! summary="$(printf '%s' "$verify_raw" | python3 -c '
+  if ! summary="$(VERIFY_RAW="$verify_raw" python3 - "$require_bound_rotation" "$expected_prior_head" "$expected_prior_attestation" "$min_verified_batches" <<'PY'
 import json
+import os
 import sys
+
+require_bound_rotation = sys.argv[1].lower() == "true"
+expected_prior_head = sys.argv[2].strip().lower()
+expected_prior_attestation = sys.argv[3].strip().lower()
+min_verified_batches = int(sys.argv[4])
+
 
 def _count(val, field):
     if isinstance(val, bool):
@@ -364,8 +408,9 @@ def _count(val, field):
         return len(val)
     raise ValueError(f"{field} must be list or int, got {type(val).__name__}")
 
+
 try:
-    data = json.load(sys.stdin)
+    data = json.loads(os.environ["VERIFY_RAW"])
 except Exception as exc:
     print(f"invalid JSON from /v1/evidence/verify: {exc}", file=sys.stderr)
     sys.exit(1)
@@ -375,7 +420,11 @@ if not isinstance(data, dict):
     sys.exit(1)
 
 if data.get("ok") is not True or data.get("citable") is not True:
-    print("archive not ok/citable (ok=%s, citable=%s)" % (data.get("ok"), data.get("citable")), file=sys.stderr)
+    print(
+        "archive not ok/citable (ok=%s, citable=%s)"
+        % (data.get("ok"), data.get("citable")),
+        file=sys.stderr,
+    )
     sys.exit(1)
 
 verified = _count(data.get("verified", []), "verified")
@@ -388,23 +437,57 @@ unsigned = max(
     _count(data.get("non_evidentiary", []), "non_evidentiary"),
     _count(data.get("unsigned", []), "unsigned"),
 )
+bound_rotations_raw = data.get("bound_rotations", [])
+bound_rotations = _count(bound_rotations_raw, "bound_rotations")
 
 errors = []
 if verified <= 0:
     errors.append(f"verified={verified} (expected > 0)")
+elif verified < min_verified_batches:
+    errors.append(f"verified={verified} (expected >= {min_verified_batches})")
 if failures != 0:
     errors.append(f"failures={failures} (expected 0)")
 if gaps != 0:
     errors.append(f"gaps={gaps} (expected 0)")
 if unsigned != 0:
     errors.append(f"unsigned={unsigned} (expected 0)")
+if require_bound_rotation:
+    if bound_rotations < 1:
+        errors.append(
+            f"bound_rotations={bound_rotations} (expected >= 1 across teardown boundary)"
+        )
+    elif expected_prior_head or expected_prior_attestation:
+        matched = False
+        if isinstance(bound_rotations_raw, list):
+            for rot in bound_rotations_raw:
+                if not isinstance(rot, dict):
+                    continue
+                head_ok = (
+                    not expected_prior_head
+                    or str(rot.get("previous_chain_head_hash", "")).strip().lower()
+                    == expected_prior_head
+                )
+                att_ok = (
+                    not expected_prior_attestation
+                    or str(rot.get("previous_batch_attestation_digest", "")).strip().lower()
+                    == expected_prior_attestation
+                )
+                if head_ok and att_ok:
+                    matched = True
+                    break
+        if not matched:
+            errors.append(
+                "bound_rotations did not bind expected pre-teardown chain head / attestation digest"
+            )
 
 if errors:
     print("; ".join(errors), file=sys.stderr)
     sys.exit(1)
 
-print(f"verified={verified}, failures={failures}, gaps={gaps}, unsigned={unsigned}")
-'
+print(
+    f"verified={verified}, bound_rotations={bound_rotations}, failures={failures}, gaps={gaps}, unsigned={unsigned}"
+)
+PY
   )"; then
     error "${label}: WORM evidence verification FAILED."
     return 1
@@ -1113,6 +1196,48 @@ run_terraform_destroy() {
   success "Staging environment destroyed successfully (${label})"
 }
 
+PRE_WORM_HEAD_HASH=""
+PRE_WORM_ATTESTATION_DIGEST=""
+PRE_WORM_CHAIN_ID=""
+PRE_WORM_BATCH_COUNT=0
+
+if ! has_gate_failures && [[ "$SKIP_REBUILD" == "false" && "$SKIP_TELEMETRY" == "false" ]]; then
+  info "Phase 6 pre-teardown: quiescing evidence-stream producers before capturing final WORM anchor..."
+  kubectl scale deploy/gateway deploy/reconciliation-worker -n "$NAMESPACE" --replicas=0 >/dev/null 2>&1 || true
+  if [[ "${CAGE_PRE_TEARDOWN_FLUSH_WAIT_SECONDS:-5}" -gt 0 ]]; then
+    sleep "${CAGE_PRE_TEARDOWN_FLUSH_WAIT_SECONDS:-5}"
+  fi
+  ANCHOR_SCRIPT="${CAGE_WORM_ANCHOR_SCRIPT:-$REPO_ROOT/scripts/read_worm_chain_anchor.py}"
+  if [[ ! -f "$ANCHOR_SCRIPT" ]]; then
+    error "Required WORM chain anchor helper missing: ${ANCHOR_SCRIPT}"
+    ((REBUILD_FAILURES++)) || true
+  elif ! verify_worm_evidence_chain "Phase 6 pre-teardown quiesced anchor"; then
+    error "Phase 6 pre-teardown WORM verification FAILED prior to anchor capture."
+    ((REBUILD_FAILURES++)) || true
+  else
+    anchor_env=""
+    if ! anchor_env="$(printf '%s' "$LAST_EVIDENCE_VERIFY_JSON" | python3 "$ANCHOR_SCRIPT" --from-stdin --format env)"; then
+      error "Phase 6 pre-teardown WORM anchor extraction FAILED."
+      ((REBUILD_FAILURES++)) || true
+    else
+      while IFS='=' read -r _ak _av; do
+        case "$_ak" in
+          EVIDENCE_PREVIOUS_CHAIN_HEAD_HASH) PRE_WORM_HEAD_HASH="$_av" ;;
+          EVIDENCE_PREVIOUS_BATCH_ATTESTATION_DIGEST) PRE_WORM_ATTESTATION_DIGEST="$_av" ;;
+          WORM_ANCHOR_CHAIN_ID) PRE_WORM_CHAIN_ID="$_av" ;;
+          WORM_ANCHOR_VERIFIED_BATCHES) PRE_WORM_BATCH_COUNT="$_av" ;;
+        esac
+      done <<< "$anchor_env"
+      if [[ -z "$PRE_WORM_HEAD_HASH" || -z "$PRE_WORM_ATTESTATION_DIGEST" ]]; then
+        error "Phase 6 pre-teardown WORM anchor returned empty head hash or attestation digest."
+        ((REBUILD_FAILURES++)) || true
+      else
+        success "Captured pre-teardown WORM anchor: chain=${PRE_WORM_CHAIN_ID}, batches=${PRE_WORM_BATCH_COUNT}, head=${PRE_WORM_HEAD_HASH:0:12}..., attestation=${PRE_WORM_ATTESTATION_DIGEST:0:12}..."
+      fi
+    fi
+  fi
+fi
+
 detach_persistent_kms_state
 run_terraform_destroy "initial teardown"
 
@@ -1129,6 +1254,11 @@ if ! has_gate_failures && [[ "$SKIP_REBUILD" == "false" ]]; then
   else
     success "Stage 4 (--import-state) completed."
     info "Stage 5: Running clean rebuild from imported foundational state..."
+    if [[ -n "$PRE_WORM_HEAD_HASH" && -n "$PRE_WORM_ATTESTATION_DIGEST" ]]; then
+      export TF_VAR_evidence_previous_chain_head_hash="$PRE_WORM_HEAD_HASH"
+      export TF_VAR_evidence_previous_batch_attestation_digest="$PRE_WORM_ATTESTATION_DIGEST"
+      info "Stage 5 bound genesis rotation enabled (prior chain=${PRE_WORM_CHAIN_ID}, head=${PRE_WORM_HEAD_HASH:0:12}...)"
+    fi
     if ! env SKIP_BUILD=true BOOTSTRAP_IMPORT_STATE=true \
       "$REPO_ROOT/deploy_all.sh" --target gcp-gke --env staging --auto-approve; then
       error "Stage 5 clean rebuild FAILED."
@@ -1138,11 +1268,47 @@ if ! has_gate_failures && [[ "$SKIP_REBUILD" == "false" ]]; then
       ((REBUILD_FAILURES++)) || true
     else
       success "Stage 5 clean rebuild and zero-drift read-back passed."
+      if [[ "$SKIP_TELEMETRY" == "false" ]]; then
+        info "Stage 5b: Verifying post-rebuild BOUND_CHAIN_ROTATION continuity and AS-6 KMS audit corroboration..."
+        gcloud container clusters get-credentials cage-staging \
+          --zone="$ZONE" \
+          --project="$PROJECT_ID"
+        if ! kubectl rollout status deployment/gateway -n "$NAMESPACE" --timeout=180s >/dev/null || \
+           ! kubectl rollout status deployment/compliance-bridge -n "$NAMESPACE" --timeout=180s >/dev/null; then
+          error "Stage 5b post-rebuild core workload rollout readiness FAILED."
+          ((REBUILD_FAILURES++)) || true
+        else
+          if [[ "${CAGE_POST_REBUILD_CUSTODY_WAIT_SECONDS:-10}" -gt 0 ]]; then
+            sleep "${CAGE_POST_REBUILD_CUSTODY_WAIT_SECONDS:-10}"
+          fi
+          min_post_batches=$((PRE_WORM_BATCH_COUNT + 1))
+          if ! verify_worm_evidence_chain "Stage 5b post-rebuild cross-teardown archive" \
+            --require-bound-rotation \
+            --expected-prior-head="$PRE_WORM_HEAD_HASH" \
+            --expected-prior-attestation="$PRE_WORM_ATTESTATION_DIGEST" \
+            --min-verified-batches="$min_post_batches"; then
+            error "Stage 5b post-rebuild cross-teardown WORM chain continuity FAILED."
+            ((REBUILD_FAILURES++)) || true
+          else
+            AUDIT_CORROBORATION_SCRIPT="${CAGE_AUDIT_CORROBORATION_SCRIPT:-$REPO_ROOT/scripts/verify_audit_corroboration.py}"
+            if [[ ! -f "$AUDIT_CORROBORATION_SCRIPT" ]]; then
+              error "Stage 5b required AS-6 Cloud Audit Log corroboration script missing: ${AUDIT_CORROBORATION_SCRIPT}"
+              ((REBUILD_FAILURES++)) || true
+            elif ! uv run python "$AUDIT_CORROBORATION_SCRIPT" --project "$PROJECT_ID"; then
+              error "Stage 5b post-rebuild Cloud Audit Log corroboration FAILED: ${AUDIT_CORROBORATION_SCRIPT}"
+              ((REBUILD_FAILURES++)) || true
+            else
+              success "Stage 5b cross-teardown BOUND_CHAIN_ROTATION and Cloud Audit Log corroboration passed."
+            fi
+          fi
+        fi
+      fi
     fi
 
     info "Stage 6: Running final teardown after rebuild verification..."
     detach_persistent_kms_state
     run_terraform_destroy "post-rebuild final teardown"
+    unset TF_VAR_evidence_previous_chain_head_hash TF_VAR_evidence_previous_batch_attestation_digest
   fi
 elif [[ "$SKIP_REBUILD" == "true" ]]; then
   warn "Phase 6 Stages 4–5 (--import-state + clean rebuild) skipped (--skip-rebuild flag)"
