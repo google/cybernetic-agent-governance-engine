@@ -41,6 +41,7 @@ EXPECTED_APIS = {
     "binaryauthorization.googleapis.com",
     "containeranalysis.googleapis.com",
     "memorystore.googleapis.com",
+    "redis.googleapis.com",
     "sqladmin.googleapis.com",
     "servicenetworking.googleapis.com",
     "networkconnectivity.googleapis.com",
@@ -261,6 +262,16 @@ def test_bootstrap_enables_all_21_required_apis_and_creates_foundational_resourc
         "--role=roles/networkconnectivity.consumerNetworkAdmin"
     ) in calls
 
+    # EF8a: Google-managed service agents materialized before CMEK IAM bindings.
+    for svc in (
+        "sqladmin.googleapis.com",
+        "memorystore.googleapis.com",
+        "redis.googleapis.com",
+        "container.googleapis.com",
+    ):
+        assert f"gcloud beta services identity create --service={svc}" in calls
+    assert "gcloud storage service-agent --project=clean-proj-01" in calls
+
 
 def test_bootstrap_import_state_imports_missing_and_skips_existing(
     tmp_path: Path,
@@ -301,8 +312,9 @@ def test_bootstrap_import_state_imports_missing_and_skips_existing(
     assert proc.returncode == 0, proc.stderr
 
     calls = log_file.read_text(encoding="utf-8")
-    # Already in state -> must NOT be re-imported.
+    # Already in state -> must NOT be re-imported; EF4 flag passed to terraform import.
     assert "import" in calls
+    assert "-var=bootstrap_without_cluster=true" in calls
     assert "google_service_account.cloudbuild" not in calls
     assert "google_kms_key_ring.signing " not in calls
 

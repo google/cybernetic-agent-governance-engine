@@ -50,6 +50,9 @@ _SHARED_CLUSTERS = {"cage-dev": {"dev.tfvars", "us-dev.tfvars"}}
 
 _TERRAFORM_STUB = """#!/bin/sh
 echo "terraform $*" >> "$STUB_LOG"
+if [ "$2 $3" = "state list" ] && [ "${CLUSTER_IN_STATE:-1}" = 1 ]; then
+  echo "module.gke.google_container_cluster.primary"
+fi
 """
 # `gcloud storage ls` succeeds only when the test plants the legacy state file;
 # `gcloud container images describe` answers every image with one fixed digest.
@@ -376,3 +379,22 @@ def test_skip_build_outside_a_git_checkout_names_the_fix(deploy) -> None:
     assert result.returncode != 0
     assert "--image-sha" in result.stderr
     assert not [c for c in calls if c.startswith("terraform ")]
+
+
+def test_fresh_state_without_gke_runs_stage1_foundation_then_full_plan(deploy) -> None:
+    _, run = deploy
+    result, calls = run("--env", "staging", extra_env={"CLUSTER_IN_STATE": "0"})
+    assert result.returncode == 0, result.stderr
+    plans = [c for c in calls if c.startswith("terraform ") and " plan " in c]
+    assert len(plans) == 2, calls
+    assert "-var=bootstrap_without_cluster=true" in plans[0]
+    assert "-target=module.gke" in plans[0]
+    assert "-target=module.evidence_domain" in plans[0]
+    assert "-target=module.worm_bucket" in plans[0]
+    assert "-out=tfplan.stage1" in plans[0]
+    assert "bootstrap_without_cluster" not in plans[1]
+    assert "-out=tfplan" in plans[1]
+    applies = [c for c in calls if c.startswith("terraform ") and " apply " in c]
+    assert len(applies) == 2, calls
+    assert applies[0].endswith(" apply tfplan.stage1")
+    assert applies[1].endswith(" apply -parallelism=1 tfplan")

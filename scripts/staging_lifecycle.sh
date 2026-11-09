@@ -212,6 +212,13 @@ export TF_VAR_project_id="$PROJECT_ID"
 export TF_VAR_region="$REGION"
 export TF_VAR_registry_url=""
 unset REGISTRY_URL || true
+# Keep direct `terraform plan` (run_zero_drift_plan) and `terraform destroy`
+# in exact parity with deploy_all.sh's load_env() TF_VAR_* mappings (POAM-019).
+[[ -z "${TF_VAR_governance_salt+x}" && -n "${GOVERNANCE_SALT:-}" ]] && export TF_VAR_governance_salt="$GOVERNANCE_SALT"
+[[ -z "${TF_VAR_langfuse_public_key+x}" && -n "${LANGFUSE_PUBLIC_KEY:-}" ]] && export TF_VAR_langfuse_public_key="$LANGFUSE_PUBLIC_KEY"
+[[ -z "${TF_VAR_langfuse_secret_key+x}" && -n "${LANGFUSE_SECRET_KEY:-}" ]] && export TF_VAR_langfuse_secret_key="$LANGFUSE_SECRET_KEY"
+[[ -z "${TF_VAR_langfuse_compliance_public_key+x}" && -n "${LANGFUSE_COMPLIANCE_PUBLIC_KEY:-}" ]] && export TF_VAR_langfuse_compliance_public_key="$LANGFUSE_COMPLIANCE_PUBLIC_KEY"
+[[ -z "${TF_VAR_langfuse_compliance_secret_key+x}" && -n "${LANGFUSE_COMPLIANCE_SECRET_KEY:-}" ]] && export TF_VAR_langfuse_compliance_secret_key="$LANGFUSE_COMPLIANCE_SECRET_KEY"
 # Gate W runs in non-grace enforcing mode by default (Memo §2) unless explicitly overridden.
 export TF_VAR_startup_grace_hours="${TF_VAR_startup_grace_hours:-0}"
 
@@ -1758,6 +1765,9 @@ run_terraform_destroy() {
   fi
   if [[ -n "$DIGESTS_FILE" ]]; then
     destroy_args+=("-var-file=${DIGESTS_FILE}")
+  fi
+  if ! terraform -chdir="$TF_DIR" state list 2>/dev/null | grep -q '^module\.gke\.'; then
+    destroy_args+=("-var=bootstrap_without_cluster=true")
   fi
 
   info "Destroying staging cluster (${label}, enable_deletion_protection=false)..."
