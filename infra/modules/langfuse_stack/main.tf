@@ -31,6 +31,107 @@ locals {
   # When constructing the DATABASE_URL, '@' in the username must be URL-encoded as '%40' for Prisma parsing.
   encoded_iam_user       = replace(var.cloudsql_iam_user, "@", "%40")
   effective_database_url = var.enable_cloudsql_proxy ? "postgresql://${local.encoded_iam_user}:unused@127.0.0.1:5432/${var.cloudsql_database_name}?sslmode=disable" : var.database_url
+  seed_compliance_project = (
+    trimspace(var.langfuse_compliance_project_id) != "" &&
+    trimspace(var.langfuse_compliance_public_key) != "" &&
+    trimspace(var.langfuse_compliance_secret_key) != ""
+  )
+  compliance_seed_js = <<-JS
+    const crypto = require("crypto");
+    const { spawnSync } = require("child_process");
+    const net = require("net");
+
+    const orgId = (process.env.LANGFUSE_INIT_ORG_ID || "CAGE").trim();
+    const orgName = (process.env.LANGFUSE_INIT_ORG_NAME || "CAGE").trim();
+    const projId = (process.env.LANGFUSE_COMPLIANCE_INIT_PROJECT_ID || "").trim();
+    const pk = (process.env.LANGFUSE_COMPLIANCE_INIT_PUBLIC_KEY || "").trim();
+    const sk = (process.env.LANGFUSE_COMPLIANCE_INIT_SECRET_KEY || "").trim();
+    const salt = (process.env.SALT || "").trim();
+    const dbUrl = (process.env.DIRECT_URL || process.env.DATABASE_URL || "").trim();
+
+    if (!projId || !pk || !sk) {
+      process.exit(0);
+    }
+    if (!salt || !dbUrl) {
+      console.error("[CAGE Langfuse Init] Missing SALT or DATABASE_URL for compliance project seed.");
+      process.exit(1);
+    }
+    const safeId = /^[A-Za-z0-9_.:-]+$/;
+    if (!safeId.test(orgId) || !safeId.test(orgName) || !safeId.test(projId) || !safeId.test(pk)) {
+      console.error("[CAGE Langfuse Init] Unsafe identifier characters in org/project/publicKey.");
+      process.exit(1);
+    }
+
+    const saltHex = crypto.createHash("sha256").update(salt, "utf8").digest("hex");
+    const fastHash = crypto.createHash("sha256").update(sk).update(saltHex).digest("hex");
+    const hashedSk = "sha256-fast:" + fastHash;
+    const displaySk = (sk.length >= 10 ? sk.slice(0, 6) + "..." + sk.slice(-4) : "sk-lf-...****").replace(/'/g, "");
+
+    const sql = [
+      "INSERT INTO organizations (id, name, created_at, updated_at)",
+      "VALUES ('" + orgId + "', '" + orgName + "', NOW(), NOW())",
+      "ON CONFLICT (id) DO NOTHING;",
+      "INSERT INTO projects (id, name, org_id, created_at, updated_at, has_traces)",
+      "VALUES ('" + projId + "', '" + projId + "', '" + orgId + "', NOW(), NOW(), false)",
+      "ON CONFLICT (id) DO NOTHING;",
+      "DELETE FROM api_keys",
+      "WHERE (fast_hashed_secret_key = '" + fastHash + "' OR hashed_secret_key = '" + hashedSk + "')",
+      "  AND public_key <> '" + pk + "';",
+      "INSERT INTO api_keys (",
+      "  id, created_at, note, public_key, hashed_secret_key, fast_hashed_secret_key,",
+      "  display_secret_key, project_id, scope, is_in_app_agent_key",
+      ") VALUES (",
+      "  'cage_comp_apikey_00000001', NOW(), 'Provisioned CAGE Compliance Tenant Key',",
+      "  '" + pk + "', '" + hashedSk + "', '" + fastHash + "', '" + displaySk + "',",
+      "  '" + projId + "', 'PROJECT'::\"ApiKeyScope\", false",
+      ") ON CONFLICT (public_key) DO UPDATE SET",
+      "  hashed_secret_key      = EXCLUDED.hashed_secret_key,",
+      "  fast_hashed_secret_key = EXCLUDED.fast_hashed_secret_key,",
+      "  display_secret_key     = EXCLUDED.display_secret_key,",
+      "  project_id             = EXCLUDED.project_id,",
+      "  scope                  = EXCLUDED.scope;"
+    ].join("\n");
+
+    const res = spawnSync("prisma", ["db", "execute", "--stdin", "--url", dbUrl], {
+      input: sql,
+      encoding: "utf8",
+      stdio: ["pipe", "inherit", "inherit"]
+    });
+    if (res.status !== 0) {
+      console.error("[CAGE Langfuse Init] prisma db execute failed with status", res.status);
+      process.exit(res.status || 1);
+    }
+
+    const redisHost = (process.env.REDIS_HOST || "").trim();
+    const redisPort = parseInt(process.env.REDIS_PORT || "6379", 10);
+    if (redisHost && Number.isFinite(redisPort)) {
+      const sock = net.createConnection({ host: redisHost, port: redisPort }, () => {
+        const key = "api-key:" + fastHash;
+        sock.write("*2\r\n$3\r\nDEL\r\n$" + Buffer.byteLength(key) + "\r\n" + key + "\r\n*1\r\n$4\r\nQUIT\r\n");
+      });
+      sock.setTimeout(1500, () => sock.destroy());
+      sock.on("error", () => sock.destroy());
+      sock.on("close", () => {
+        console.log("[CAGE Langfuse Init] Provisioned isolated compliance project '" + projId + "'.");
+        process.exit(0);
+      });
+    } else {
+      console.log("[CAGE Langfuse Init] Provisioned isolated compliance project '" + projId + "'.");
+    }
+  JS
+}
+
+resource "kubernetes_config_map_v1" "langfuse_compliance_init" {
+  count = local.seed_compliance_project ? 1 : 0
+
+  metadata {
+    name      = "langfuse-compliance-init"
+    namespace = var.namespace
+  }
+
+  data = {
+    "seed_compliance_project.js" = local.compliance_seed_js
+  }
 }
 
 # Generate Langfuse secrets
@@ -63,19 +164,25 @@ resource "kubernetes_secret" "langfuse_secrets" {
     namespace = var.namespace
   }
 
-  data = {
-    "nextauth-secret"          = random_id.nextauth_secret.hex
-    "salt"                     = random_id.salt.hex
-    "encryption-key"           = random_id.encryption_key.hex
-    "public-key"               = coalesce(var.langfuse_public_key, random_id.public_key.hex)
-    "secret-key"               = coalesce(var.langfuse_secret_key, random_id.secret_key.hex)
-    "init-user-password"       = var.langfuse_init_user_password
-    "clickhouse-password"      = var.clickhouse_password
-    "clickhouse-migration-url" = var.clickhouse_migration_url
-    "s3-access-key"            = var.s3_access_key
-    "s3-secret-key"            = var.s3_secret_key
-    "redis-connection-string"  = var.redis_connection_string
-  }
+  data = merge(
+    {
+      "nextauth-secret"          = random_id.nextauth_secret.hex
+      "salt"                     = random_id.salt.hex
+      "encryption-key"           = random_id.encryption_key.hex
+      "public-key"               = coalesce(var.langfuse_public_key, random_id.public_key.hex)
+      "secret-key"               = coalesce(var.langfuse_secret_key, random_id.secret_key.hex)
+      "init-user-password"       = var.langfuse_init_user_password
+      "clickhouse-password"      = var.clickhouse_password
+      "clickhouse-migration-url" = var.clickhouse_migration_url
+      "s3-access-key"            = var.s3_access_key
+      "s3-secret-key"            = var.s3_secret_key
+      "redis-connection-string"  = var.redis_connection_string
+    },
+    local.seed_compliance_project ? {
+      "compliance-public-key" = var.langfuse_compliance_public_key
+      "compliance-secret-key" = var.langfuse_compliance_secret_key
+    } : {},
+  )
 }
 
 # Langfuse Web Deployment
@@ -105,13 +212,18 @@ resource "kubernetes_deployment" "langfuse_web" {
         labels = {
           app = "langfuse-web"
         }
-        annotations = {
-          # Keep ClickHouse native TCP (9000) inside Linkerd mTLS so ClickHouse
-          # Server/AuthorizationPolicy enforces langfuse-sa caller identity.
-          # Skip only external managed endpoints: Cloud SQL Auth Proxy loopback (5432),
-          # Memorystore Valkey (6379), and Cloud SQL server port (3307).
-          "config.linkerd.io/skip-outbound-ports" = "5432,6379,3307"
-        }
+        annotations = merge(
+          {
+            # Keep ClickHouse native TCP (9000) inside Linkerd mTLS so ClickHouse
+            # Server/AuthorizationPolicy enforces langfuse-sa caller identity.
+            # Skip only external managed endpoints: Cloud SQL Auth Proxy loopback (5432),
+            # Memorystore Valkey (6379), and Cloud SQL server port (3307).
+            "config.linkerd.io/skip-outbound-ports" = "5432,6379,3307"
+          },
+          local.seed_compliance_project ? {
+            "cage.io/compliance-seed-sha256" = sha256(local.compliance_seed_js)
+          } : {},
+        )
       }
 
       spec {
@@ -128,6 +240,11 @@ resource "kubernetes_deployment" "langfuse_web" {
         container {
           name  = "langfuse-web"
           image = var.langfuse_image
+          args = local.seed_compliance_project ? [
+            "/bin/sh",
+            "-c",
+            "node /etc/cage/langfuse-init/seed_compliance_project.js && if [ -n \"$NEXT_PUBLIC_LANGFUSE_CLOUD_REGION\" ]; then exec node --import dd-trace/initialize.mjs ./web/server.js --keepAliveTimeout 110000; else exec node ./web/server.js --keepAliveTimeout 110000; fi",
+          ] : null
 
           security_context {
             allow_privilege_escalation = false
@@ -225,6 +342,40 @@ resource "kubernetes_deployment" "langfuse_web" {
                 secret_key_ref {
                   name = kubernetes_secret.langfuse_secrets.metadata[0].name
                   key  = "secret-key"
+                }
+              }
+            }
+          }
+
+          dynamic "env" {
+            for_each = local.seed_compliance_project ? [1] : []
+            content {
+              name  = "LANGFUSE_COMPLIANCE_INIT_PROJECT_ID"
+              value = trimspace(var.langfuse_compliance_project_id)
+            }
+          }
+
+          dynamic "env" {
+            for_each = local.seed_compliance_project ? [1] : []
+            content {
+              name = "LANGFUSE_COMPLIANCE_INIT_PUBLIC_KEY"
+              value_from {
+                secret_key_ref {
+                  name = kubernetes_secret.langfuse_secrets.metadata[0].name
+                  key  = "compliance-public-key"
+                }
+              }
+            }
+          }
+
+          dynamic "env" {
+            for_each = local.seed_compliance_project ? [1] : []
+            content {
+              name = "LANGFUSE_COMPLIANCE_INIT_SECRET_KEY"
+              value_from {
+                secret_key_ref {
+                  name = kubernetes_secret.langfuse_secrets.metadata[0].name
+                  key  = "compliance-secret-key"
                 }
               }
             }
@@ -509,6 +660,15 @@ resource "kubernetes_deployment" "langfuse_web" {
             period_seconds        = 10
             failure_threshold     = 30
           }
+
+          dynamic "volume_mount" {
+            for_each = local.seed_compliance_project ? [1] : []
+            content {
+              name       = "langfuse-compliance-init"
+              mount_path = "/etc/cage/langfuse-init"
+              read_only  = true
+            }
+          }
         }
 
         dynamic "container" {
@@ -542,6 +702,16 @@ resource "kubernetes_deployment" "langfuse_web" {
                 cpu    = "200m"
                 memory = "256Mi"
               }
+            }
+          }
+        }
+
+        dynamic "volume" {
+          for_each = local.seed_compliance_project ? [1] : []
+          content {
+            name = "langfuse-compliance-init"
+            config_map {
+              name = kubernetes_config_map_v1.langfuse_compliance_init[0].metadata[0].name
             }
           }
         }

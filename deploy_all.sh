@@ -173,31 +173,31 @@ load_env() {
     # Same rationale as project_id — region has no default in variables.tf.
     _region=$(_read_env_var GOOGLE_CLOUD_LOCATION)
 
-    [[ -n "$_env" ]]            && export TF_VAR_environment="$_env"
-    [[ -n "$_namespace" ]]      && export TF_VAR_namespace="$_namespace"
-    [[ -n "$_registry" ]]       && export TF_VAR_registry_url="$_registry"
-    [[ -n "$_storage" ]]        && export TF_VAR_storage_backend="$_storage"
-    [[ -n "$_cold_tier" ]]      && export TF_VAR_cold_tier_bucket="$_cold_tier"
-    [[ -n "$_redis" ]]          && export TF_VAR_redis_url="$_redis"
-    [[ -n "$_s3_ep" ]]          && export TF_VAR_minio_endpoint="$_s3_ep"
-    [[ -n "$_s3_bkt" ]]         && export TF_VAR_minio_bucket="$_s3_bkt"
+    [[ -z "${TF_VAR_environment+x}" && -n "$_env" ]]       && export TF_VAR_environment="$_env"
+    [[ -z "${TF_VAR_namespace+x}" && -n "$_namespace" ]]   && export TF_VAR_namespace="$_namespace"
+    [[ -z "${TF_VAR_registry_url+x}" && -n "$_registry" ]] && export TF_VAR_registry_url="$_registry"
+    [[ -z "${TF_VAR_storage_backend+x}" && -n "$_storage" ]] && export TF_VAR_storage_backend="$_storage"
+    [[ -z "${TF_VAR_cold_tier_bucket+x}" && -n "$_cold_tier" ]] && export TF_VAR_cold_tier_bucket="$_cold_tier"
+    [[ -z "${TF_VAR_redis_url+x}" && -n "$_redis" ]]       && export TF_VAR_redis_url="$_redis"
+    [[ -z "${TF_VAR_minio_endpoint+x}" && -n "$_s3_ep" ]]  && export TF_VAR_minio_endpoint="$_s3_ep"
+    [[ -z "${TF_VAR_minio_bucket+x}" && -n "$_s3_bkt" ]]   && export TF_VAR_minio_bucket="$_s3_bkt"
     if [[ -n "$_model_reasoning" ]]; then
       if [[ "$_model_reasoning" == gs://* ]]; then
-        export TF_VAR_model_reasoning="$_model_reasoning"
+        [[ -z "${TF_VAR_model_reasoning+x}" ]] && export TF_VAR_model_reasoning="$_model_reasoning"
       else
-        export TF_VAR_served_model_reasoning="$_model_reasoning"
+        [[ -z "${TF_VAR_served_model_reasoning+x}" ]] && export TF_VAR_served_model_reasoning="$_model_reasoning"
       fi
     fi
     if [[ -n "$_model_fast" ]]; then
       if [[ "$_model_fast" == gs://* ]]; then
-        export TF_VAR_model_fast="$_model_fast"
+        [[ -z "${TF_VAR_model_fast+x}" ]] && export TF_VAR_model_fast="$_model_fast"
       else
-        export TF_VAR_served_model_fast="$_model_fast"
+        [[ -z "${TF_VAR_served_model_fast+x}" ]] && export TF_VAR_served_model_fast="$_model_fast"
       fi
     fi
-    [[ -n "$_model_consensus" ]] && export TF_VAR_model_consensus="$_model_consensus"
-    [[ -n "$_project" ]]        && export TF_VAR_project_id="$_project"
-    [[ -n "$_region" ]]         && export TF_VAR_region="$_region"
+    [[ -z "${TF_VAR_model_consensus+x}" && -n "$_model_consensus" ]] && export TF_VAR_model_consensus="$_model_consensus"
+    [[ -z "${TF_VAR_project_id+x}" && -n "$_project" ]]   && export TF_VAR_project_id="$_project"
+    [[ -z "${TF_VAR_region+x}" && -n "$_region" ]]        && export TF_VAR_region="$_region"
 
     local _prev_chain_head _prev_batch_attest
     _prev_chain_head=$(_read_env_var EVIDENCE_PREVIOUS_CHAIN_HEAD_HASH)

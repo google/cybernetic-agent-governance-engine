@@ -267,3 +267,93 @@ class TestEUECBResidencyArtifacts:
             assert bad not in data_str, (
                 f"EU_ECB_BASELINE.json must not reference non-EU region '{bad}'"
             )
+
+
+_NON_US_REGIONS = (
+    "europe-",
+    "asia-",
+    "australia-",
+    "southamerica-",
+    "me-",
+    "africa-",
+)
+
+
+@pytest.mark.us_fed
+@pytest.mark.integration
+class TestUSFEDDeployedResidency:
+    """Live data-residency verification for US_FED deployments (FedRAMP / NIST SP 800-53 SA-9(5)).
+
+    Executes when the deployed cluster's ``cage-deployment`` ConfigMap sets
+    ``CAGE_DEPLOYMENT_REGION=US_FED`` (e.g. Gate W staging in ``us-central1``).
+    """
+
+    def test_google_cloud_location_is_us_region(self) -> None:
+        """GOOGLE_CLOUD_LOCATION must resolve to a US region and never EU/APAC."""
+        location = os.environ.get("GOOGLE_CLOUD_LOCATION", "").strip().lower()
+        if not location:
+            pytest.skip("GOOGLE_CLOUD_LOCATION not set — skipping location check")
+        assert location == "us" or location.startswith("us-"), (
+            f"GOOGLE_CLOUD_LOCATION must be in 'us' / 'us-*' for US_FED, got {location!r}"
+        )
+        for bad in _NON_US_REGIONS:
+            assert bad not in location, (
+                f"GOOGLE_CLOUD_LOCATION must not reference non-US region '{bad}', got {location!r}"
+            )
+
+    def test_bucket_env_vars_do_not_reference_non_us_regions(self) -> None:
+        """Configured bucket/path env vars must never embed EU or APAC regions."""
+        for var in (
+            "EVIDENCE_ARCHIVE_BUCKET",
+            "OSCAL_S3_BUCKET",
+            "COLD_TIER_BUCKET",
+            "GCS_BUCKET_PATH",
+            "EVIDENCE_GCS_PATH",
+        ):
+            val = os.environ.get(var, "").strip().lower()
+            if not val:
+                continue
+            for bad in _NON_US_REGIONS:
+                assert bad not in val, (
+                    f"{var} must not reference non-US region '{bad}' under US_FED, got {val!r}"
+                )
+
+    def test_live_worm_bucket_resides_in_us_region(self) -> None:
+        """Verify the live GCS evidence WORM bucket location is confined to US."""
+        import subprocess
+
+        project = os.environ.get("GOOGLE_CLOUD_PROJECT", "").strip()
+        bucket = os.environ.get("EVIDENCE_ARCHIVE_BUCKET", "").strip()
+        if not bucket and project:
+            env_name = os.environ.get("CAGE_ENV", "staging").strip() or "staging"
+            if env_name in ("staging", "prod", "dev"):
+                bucket = f"{project}-evidence-worm-{env_name}"
+        if not bucket:
+            pytest.skip(
+                "Neither EVIDENCE_ARCHIVE_BUCKET nor GOOGLE_CLOUD_PROJECT set for live bucket check"
+            )
+
+        cmd = [
+            "gcloud",
+            "storage",
+            "buckets",
+            "describe",
+            f"gs://{bucket}",
+            "--format=value(location)",
+        ]
+        if project:
+            cmd.extend(["--project", project])
+        proc = subprocess.run(
+            cmd, capture_output=True, text=True, timeout=30, check=False
+        )
+        assert proc.returncode == 0, (
+            f"Failed to describe live US_FED WORM bucket gs://{bucket}: {proc.stderr.strip()}"
+        )
+        loc = proc.stdout.strip().lower()
+        assert loc == "us" or loc.startswith("us-"), (
+            f"Live US_FED WORM bucket gs://{bucket} must reside in US / us-*, got {loc!r}"
+        )
+        for bad in _NON_US_REGIONS:
+            assert bad not in loc, (
+                f"Live US_FED WORM bucket gs://{bucket} violates US residency: {loc!r}"
+            )

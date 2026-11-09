@@ -101,3 +101,18 @@ run "staging_explicit_distinct_gateway_and_advisor_telemetry_keys_succeeds" {
     error_message = "app_secrets and compliance_bridge must plan cleanly when distinct telemetry keys and human operators are supplied"
   }
 }
+
+run "staging_compliance_seed_and_e2e_operator_jwks_plan_cleanly" {
+  command = plan
+
+  variables {
+    enable_e2e_advisor     = true
+    e2e_operator_jwks_json = "{\"cage-e2e-op-1\":\"-----BEGIN PUBLIC KEY-----\\ntest\\n-----END PUBLIC KEY-----\\n\"}"
+  }
+
+  assert {
+    condition     = length(module.langfuse) > 0 && length(module.compliance_bridge) == 1
+    error_message = "langfuse compliance project seeding and staging e2e_operator_jwks_json must plan cleanly"
+  }
+}
+

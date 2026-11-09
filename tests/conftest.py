@@ -1214,123 +1214,14 @@ def requires_port_forward(pytestconfig, backend_url: str) -> None:
                 "✅ [pytest bootstrap] GKE PostgreSQL Langfuse compliance project and keys seeded successfully."
             )
         else:
-            # Cloud SQL posture: verify if pk_comp/sk_comp works; if 401, fall back to
-            # LANGFUSE_INIT_PROJECT_PUBLIC_KEY / LANGFUSE_PUBLIC_KEY provisioned in Cloud SQL.
-            try:
-                probe = requests.get(
-                    f"{langfuse_host.rstrip('/')}/api/public/projects",
-                    auth=(pk_comp, sk_comp),
-                    timeout=5,
-                )
-                if probe.status_code == 401:
-                    init_pk = os.environ.get("LANGFUSE_PUBLIC_KEY", "")
-                    init_sk = os.environ.get("LANGFUSE_SECRET_KEY", "")
-                    if init_pk and init_sk:
-                        pk_comp, sk_comp = init_pk, init_sk
-                        os.environ["LANGFUSE_COMPLIANCE_PUBLIC_KEY"] = pk_comp
-                        os.environ["LANGFUSE_COMPLIANCE_SECRET_KEY"] = sk_comp
-                        print(
-                            "🗄️ [pytest bootstrap] Cloud SQL posture: aligned LANGFUSE_COMPLIANCE_* keys with initialized project keys."
-                        )
-            except Exception:
-                pass
-
-        # 2. Update Kubernetes Secret if out of date
-        try:
-            res = subprocess.run(
-                [
-                    "kubectl",
-                    "get",
-                    "secret",
-                    "langfuse-compliance-secrets",
-                    "-n",
-                    "governance-stack",
-                    "-o",
-                    "json",
-                ],
-                capture_output=True,
-                text=True,
-                check=True,
-            )
-            secret_data = json.loads(res.stdout).get("data", {})
-            existing_pub = base64.b64decode(secret_data.get("public-key", "")).decode(
-                "utf-8"
-            )
-        except Exception:
-            secret_data = {}
-            existing_pub = None
-
-        if existing_pub != pk_comp:
+            # Cloud SQL posture: module.langfuse_stack seeds the isolated
+            # cage-compliance project and API keys at pod startup. Never copy
+            # operational LANGFUSE_PUBLIC_KEY / LANGFUSE_SECRET_KEY into
+            # LANGFUSE_COMPLIANCE_* or mutate Secret/langfuse-compliance-secrets
+            # out-of-band (which collapses POAM-018 / POAM-019 isolation and
+            # introduces Terraform configuration drift).
             print(
-                f"🔄 [pytest bootstrap] Langfuse compliance secret out-of-date ({existing_pub}). Updating secret..."
-            )
-            secret_manifest = {
-                "apiVersion": "v1",
-                "kind": "Secret",
-                "metadata": {
-                    "name": "langfuse-compliance-secrets",
-                    "namespace": "governance-stack",
-                },
-                "type": "Opaque",
-                "data": {
-                    "LANGFUSE_COMPLIANCE_PUBLIC_KEY": base64.b64encode(
-                        pk_comp.encode()
-                    ).decode(),
-                    "LANGFUSE_COMPLIANCE_SECRET_KEY": base64.b64encode(
-                        sk_comp.encode()
-                    ).decode(),
-                    "LANGFUSE_HOST": base64.b64encode(
-                        b"http://langfuse-web.governance-stack.svc.cluster.local:3000"
-                    ).decode(),
-                    "public-key": base64.b64encode(pk_comp.encode()).decode(),
-                    "secret-key": base64.b64encode(sk_comp.encode()).decode(),
-                },
-            }
-            subprocess.run(
-                ["kubectl", "apply", "-f", "-"],
-                input=json.dumps(secret_manifest),
-                text=True,
-                check=True,
-                capture_output=True,
-            )
-            print("✅ [pytest bootstrap] Langfuse compliance secret updated.")
-
-            # Trigger Rollout Restart for compliance-bridge
-            print(
-                "🔄 [pytest bootstrap] Triggering rollout restart of deployment/compliance-bridge..."
-            )
-            subprocess.run(
-                [
-                    "kubectl",
-                    "rollout",
-                    "restart",
-                    "deployment/compliance-bridge",
-                    "-n",
-                    "governance-stack",
-                ],
-                check=True,
-                capture_output=True,
-            )
-            print("⏳ [pytest bootstrap] Waiting for rollout restart to complete...")
-            subprocess.run(
-                [
-                    "kubectl",
-                    "rollout",
-                    "status",
-                    "deployment/compliance-bridge",
-                    "-n",
-                    "governance-stack",
-                    "--timeout=120s",
-                ],
-                check=True,
-                capture_output=True,
-            )
-            print(
-                "✅ [pytest bootstrap] compliance-bridge deployment successfully restarted and ready."
-            )
-        else:
-            print(
-                "✅ [pytest bootstrap] Langfuse compliance secret is already up-to-date in GKE."
+                "✅ [pytest bootstrap] Cloud SQL posture: preserving isolated LANGFUSE_COMPLIANCE_* credentials."
             )
 
         # 3. Inject keys into os.environ for integration tests

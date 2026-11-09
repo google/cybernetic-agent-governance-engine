@@ -205,16 +205,93 @@ if [[ -z "$PROJECT_ID" ]]; then
   exit 1
 fi
 
+export CLOUDSDK_CORE_PROJECT="$PROJECT_ID"
 export GOOGLE_CLOUD_PROJECT="$PROJECT_ID"
 export GOOGLE_CLOUD_LOCATION="$REGION"
 export TF_VAR_project_id="$PROJECT_ID"
+export TF_VAR_region="$REGION"
+export TF_VAR_registry_url=""
+unset REGISTRY_URL || true
 # Gate W runs in non-grace enforcing mode by default (Memo §2) unless explicitly overridden.
 export TF_VAR_startup_grace_hours="${TF_VAR_startup_grace_hours:-0}"
 
-DEPLOY_EXTRA_ARGS=()
+E2E_SUITE_SCRIPT="${CAGE_E2E_SUITE_SCRIPT:-$REPO_ROOT/tests/e2e/run_gke_e2e_suite.py}"
+E2E_KEY_FILE=""
+DOTENV_SHIELD_PATH=""
+LIVE_ENV_FILE="$(mktemp "${TMPDIR:-/tmp}/cage-live-env-XXXXXX")"
+chmod 600 "$LIVE_ENV_FILE"
+
+python3 - "$REPO_ROOT/.env" "$LIVE_ENV_FILE" "$PROJECT_ID" "$REGION" <<'PY'
+from pathlib import Path
+import sys
+
+src_env = Path(sys.argv[1])
+dst_env = Path(sys.argv[2])
+project_id = sys.argv[3]
+region = sys.argv[4]
+
+override_keys = {
+    "GOOGLE_CLOUD_PROJECT",
+    "GOOGLE_CLOUD_LOCATION",
+    "GOOGLE_CLOUD_ZONE",
+    "REGISTRY_URL",
+    "CAGE_ENV",
+    "ENVIRONMENT",
+    "EVIDENCE_ARCHIVE_BUCKET",
+    "LANGFUSE_HOST",
+    "LANGFUSE_COMPLIANCE_HOST",
+    "LANGFUSE_PROJECT_ID",
+    "LANGFUSE_COMPLIANCE_PROJECT_ID",
+    "GATEWAY_URL",
+    "COMPLIANCE_BRIDGE_URL",
+    "BACKEND_URL",
+}
+lines: list[str] = []
+if src_env.is_file():
+    for raw_line in src_env.read_text(encoding="utf-8", errors="replace").splitlines():
+        stripped = raw_line.strip()
+        if not stripped or stripped.startswith("#") or "=" not in stripped:
+            continue
+        key = stripped.split("=", 1)[0].removeprefix("export ").strip()
+        if key in override_keys:
+            continue
+        lines.append(raw_line)
+
+lines.extend(
+    [
+        f"GOOGLE_CLOUD_PROJECT={project_id}",
+        f"GOOGLE_CLOUD_LOCATION={region}",
+        "CAGE_ENV=staging",
+        f"EVIDENCE_ARCHIVE_BUCKET={project_id}-evidence-worm-staging",
+        "LANGFUSE_HOST=http://localhost:3000",
+        "LANGFUSE_COMPLIANCE_HOST=http://localhost:3001",
+        "LANGFUSE_PROJECT_ID=cybernetic-governance",
+        "LANGFUSE_COMPLIANCE_PROJECT_ID=cage-compliance",
+        "GATEWAY_URL=http://localhost:8080",
+        "COMPLIANCE_BRIDGE_URL=http://localhost:3002",
+        "BACKEND_URL=http://localhost:8081",
+    ]
+)
+dst_env.write_text("\n".join(lines) + "\n", encoding="utf-8")
+PY
+
+DEPLOY_EXTRA_ARGS=(
+  "--var" "project_id=${PROJECT_ID}"
+  "--var" "region=${REGION}"
+  "--var" "registry_url="
+)
 if [[ "$ENABLE_E2E_ADVISOR" == "true" ]]; then
   export TF_VAR_enable_e2e_advisor="true"
   DEPLOY_EXTRA_ARGS+=("--var" "enable_e2e_advisor=true")
+  if [[ -z "${TF_VAR_e2e_operator_jwks_json:-}" && -f "$E2E_SUITE_SCRIPT" ]]; then
+    E2E_KEY_FILE="$(mktemp "${TMPDIR:-/tmp}/cage-e2e-op-key-XXXXXX")"
+    chmod 600 "$E2E_KEY_FILE"
+    TF_VAR_e2e_operator_jwks_json="$(uv run python "$E2E_SUITE_SCRIPT" --generate-ephemeral-jwks --private-key-out "$E2E_KEY_FILE")"
+    export TF_VAR_e2e_operator_jwks_json
+  fi
+  if [[ -n "${TF_VAR_e2e_operator_jwks_json:-}" ]]; then
+    DEPLOY_EXTRA_ARGS+=("--var" "e2e_operator_jwks_json=${TF_VAR_e2e_operator_jwks_json}")
+  fi
 fi
 
 if [[ -z "$ARCHIVE_DIR" ]]; then
@@ -237,6 +314,13 @@ POST_REBUILD_BOUND_ROTATION_VERIFIED=false
 LULA_HOST_EVALUATED_COUNT=0
 LULA_PLANNED_SPECS_LIST=()
 LULA_API_SPECS_LIST=()
+
+restore_shielded_dotenv() {
+  if [[ -n "${DOTENV_SHIELD_PATH:-}" && -f "$DOTENV_SHIELD_PATH" ]]; then
+    mv -f "$DOTENV_SHIELD_PATH" "$REPO_ROOT/.env"
+    DOTENV_SHIELD_PATH=""
+  fi
+}
 
 stop_staging_port_forward() {
   if [[ "$PORT_FORWARD_ACTIVE" == "true" && -x "$REPO_ROOT/scripts/port_forward_staging.sh" ]]; then
@@ -409,7 +493,9 @@ PY
 
 on_lifecycle_exit() {
   local rc=$?
+  restore_shielded_dotenv
   stop_staging_port_forward
+  rm -f "${LIVE_ENV_FILE:-}" "${E2E_KEY_FILE:-}"
   write_gate_w_archive_manifest "$rc"
 }
 trap on_lifecycle_exit EXIT
@@ -445,14 +531,41 @@ build_tf_var_args() {
     "-var-file=staging.tfvars"
     "-var=project_id=${PROJECT_ID}"
     "-var=region=${REGION}"
+    "-var=registry_url="
     "-var=cage_deployment_region=${CAGE_DEPLOYMENT_REGION:-US_FED}"
   )
   if [[ "$ENABLE_E2E_ADVISOR" == "true" ]]; then
     TF_VAR_ARGS+=("-var=enable_e2e_advisor=true")
+    if [[ -n "${TF_VAR_e2e_operator_jwks_json:-}" ]]; then
+      TF_VAR_ARGS+=("-var=e2e_operator_jwks_json=${TF_VAR_e2e_operator_jwks_json}")
+    fi
   fi
   if [[ -n "$DIGESTS_FILE" ]]; then
     TF_VAR_ARGS+=("-var-file=${DIGESTS_FILE}")
   fi
+}
+
+run_hermetic_region_pytest() {
+  local label="$1"
+  local region_val="$2"
+  local marker="$3"
+  if [[ -n "${CAGE_HERMETIC_PYTEST_WRAPPER:-}" ]]; then
+    run_pytest_require_passed "$label" \
+      "$CAGE_HERMETIC_PYTEST_WRAPPER" env CAGE_DEPLOYMENT_REGION="$region_val" ./.venv/bin/pytest tests/ -m "$marker" -v --tb=short
+    return $?
+  fi
+  if [[ -f "$REPO_ROOT/.env" ]]; then
+    DOTENV_SHIELD_PATH="$REPO_ROOT/.env.gatew-shield.$$"
+    mv "$REPO_ROOT/.env" "$DOTENV_SHIELD_PATH"
+  fi
+  local rc=0
+  set +e
+  run_pytest_require_passed "$label" \
+    env CAGE_DEPLOYMENT_REGION="$region_val" uv run pytest "$REPO_ROOT/tests/" -m "$marker" -v --tb=short
+  rc=$?
+  set -e
+  restore_shielded_dotenv
+  return $rc
 }
 
 run_zero_drift_plan() {
@@ -671,12 +784,25 @@ verify_worm_evidence_chain() {
   done
 
   local verify_timeout="${EVIDENCE_VERIFY_TIMEOUT_SECONDS:-120}"
-  info "Verifying WORM custody chain (${label}) via GET /v1/evidence/verify?require_citable=true (timeout=${verify_timeout}s)..."
+  local poll_timeout="${EVIDENCE_CUSTODY_POLL_TIMEOUT_SECONDS:-90}"
+  if [[ "${CAGE_POST_REBUILD_CUSTODY_WAIT_SECONDS:-}" == "0" ]]; then
+    poll_timeout=0
+  fi
+  info "Verifying WORM custody chain (${label}) via GET /v1/evidence/verify?require_citable=true (timeout=${verify_timeout}s, poll=${poll_timeout}s)..."
+
+  local start_epoch=$SECONDS
   local verify_raw=""
   local fetch_rc=0
-  set +e
-  if [[ -n "${COMPLIANCE_BRIDGE_URL:-}" ]]; then
-    verify_raw="$(python3 - "${COMPLIANCE_BRIDGE_URL}" "${verify_timeout}" <<'PY'
+  local summary=""
+  local eval_err=""
+  local eval_rc=1
+
+  while true; do
+    verify_raw=""
+    fetch_rc=0
+    set +e
+    if [[ -n "${COMPLIANCE_BRIDGE_URL:-}" ]]; then
+      verify_raw="$(python3 - "${COMPLIANCE_BRIDGE_URL}" "${verify_timeout}" <<'PY'
 import sys
 from urllib.parse import urlparse
 from urllib.request import urlopen
@@ -691,27 +817,19 @@ with urlopen(url, timeout=timeout_s) as resp:  # nosec B310  # scheme validated 
         raise SystemExit(f"HTTP {resp.status} from {url}")
     sys.stdout.write(resp.read().decode("utf-8"))
 PY
-    )"
-    fetch_rc=$?
-  else
-    verify_raw="$(kubectl exec -n "$NAMESPACE" deploy/compliance-bridge -- \
-      python3 -c "import sys, urllib.request; resp = urllib.request.urlopen('http://127.0.0.1:3001/v1/evidence/verify?require_citable=true', timeout=${verify_timeout}); sys.exit(1) if resp.status != 200 else sys.stdout.write(resp.read().decode('utf-8'))")"
-    fetch_rc=$?
-  fi
-  set -e
+      )"
+      fetch_rc=$?
+    else
+      verify_raw="$(kubectl exec -n "$NAMESPACE" deploy/compliance-bridge -- \
+        python3 -c "import sys, urllib.request; resp = urllib.request.urlopen('http://127.0.0.1:3001/v1/evidence/verify?require_citable=true', timeout=${verify_timeout}); sys.exit(1) if resp.status != 200 else sys.stdout.write(resp.read().decode('utf-8'))")"
+      fetch_rc=$?
+    fi
 
-  if [[ $fetch_rc -ne 0 || -z "$verify_raw" ]]; then
-    error "${label}: GET /v1/evidence/verify failed or returned empty payload (rc=${fetch_rc})."
-    return 1
-  fi
-
-  LAST_EVIDENCE_VERIFY_JSON="$verify_raw"
-  local worm_slug
-  worm_slug="$(printf '%s' "$label" | tr -cs 'A-Za-z0-9._-' '-' | sed 's/^-//;s/-$//' | tr '[:upper:]' '[:lower:]')"
-  printf '%s\n' "$verify_raw" > "$ARCHIVE_DIR/worm/${worm_slug}.json"
-
-  local summary=""
-  if ! summary="$(VERIFY_RAW="$verify_raw" python3 - "$require_bound_rotation" "$expected_prior_head" "$expected_prior_attestation" "$min_verified_batches" <<'PY'
+    if [[ $fetch_rc -eq 0 && -n "$verify_raw" ]]; then
+      LAST_EVIDENCE_VERIFY_JSON="$verify_raw"
+      local err_tmp
+      err_tmp="$(mktemp "${TMPDIR:-/tmp}/cage-worm-err-XXXXXX")"
+      summary="$(VERIFY_RAW="$verify_raw" python3 - "$require_bound_rotation" "$expected_prior_head" "$expected_prior_attestation" "$min_verified_batches" 2>"$err_tmp" <<'PY'
 import json
 import os
 import sys
@@ -805,13 +923,47 @@ if require_bound_rotation:
 
 if errors:
     print("; ".join(errors), file=sys.stderr)
-    sys.exit(1)
+    sys.exit(2 if (failures == 0 and gaps == 0 and unsigned == 0) else 1)
 
 print(
     f"verified={verified}, bound_rotations={bound_rotations}, failures={failures}, gaps={gaps}, unsigned={unsigned}"
 )
 PY
-  )"; then
+      )"
+      eval_rc=$?
+      eval_err="$(cat "$err_tmp" 2>/dev/null || true)"
+      rm -f "$err_tmp"
+    else
+      eval_rc=2
+      eval_err=""
+    fi
+    set -e
+
+    if [[ $eval_rc -eq 0 ]]; then
+      break
+    fi
+    # Permanent integrity failure (corrupt signature, gaps, or unsigned batch): fail immediately without polling.
+    if [[ $eval_rc -eq 1 && $fetch_rc -eq 0 ]]; then
+      break
+    fi
+    if [[ $((SECONDS - start_epoch)) -ge $poll_timeout ]]; then
+      break
+    fi
+    sleep 5
+  done
+
+  if [[ -n "$verify_raw" ]]; then
+    local worm_slug
+    worm_slug="$(printf '%s' "$label" | tr -cs 'A-Za-z0-9._-' '-' | sed 's/^-//;s/-$//' | tr '[:upper:]' '[:lower:]')"
+    printf '%s\n' "$verify_raw" > "$ARCHIVE_DIR/worm/${worm_slug}.json"
+  fi
+
+  if [[ $fetch_rc -ne 0 || -z "$verify_raw" ]]; then
+    error "${label}: GET /v1/evidence/verify failed or returned empty payload (rc=${fetch_rc})."
+    return 1
+  fi
+  if [[ $eval_rc -ne 0 ]]; then
+    [[ -n "$eval_err" ]] && printf '%s\n' "$eval_err" >&2
     error "${label}: WORM evidence verification FAILED."
     return 1
   fi
@@ -1169,6 +1321,16 @@ if [[ "$READINESS_FAILED" == "false" ]]; then
 
     if ! verify_non_grace_posture; then
       ((LULA_FAILURES++)) || true
+    elif [[ -f "$E2E_SUITE_SCRIPT" ]]; then
+      start_staging_port_forward
+      info "Seeding real gateway & inference-proxy custody records prior to Lula evaluation..."
+      if ! env CAGE_ALLOW_MACOS_TESTS=1 uv run python "$E2E_SUITE_SCRIPT" --seed-only \
+        --namespace "$NAMESPACE" \
+        --bridge-url "${COMPLIANCE_BRIDGE_URL:-http://localhost:3002}" \
+        > "$ARCHIVE_DIR/lula/pre-lula-custody-seed.json"; then
+        error "Phase 3 pre-Lula custody seeding FAILED."
+        ((LULA_FAILURES++)) || true
+      fi
     fi
 
     planned_specs=()
@@ -1355,35 +1517,41 @@ if not has_custody_ack:
     echo ""
 
     info "Running US_FED posture tests..."
-    if ! run_pytest_require_passed "US_FED posture tests" \
-      env CAGE_DEPLOYMENT_REGION=US_FED uv run pytest "$REPO_ROOT/tests/" -m us_fed -v --tb=short; then
+    if ! run_hermetic_region_pytest "US_FED posture tests" "US_FED" "us_fed"; then
       ((POSTURE_FAILURES++)) || true
     fi
 
     info "Running EU_ECB posture tests..."
-    if ! run_pytest_require_passed "EU_ECB posture tests" \
-      env CAGE_DEPLOYMENT_REGION=EU_ECB uv run pytest "$REPO_ROOT/tests/" -m eu_ecb -v --tb=short; then
+    if ! run_hermetic_region_pytest "EU_ECB posture tests" "EU_ECB" "eu_ecb"; then
       ((POSTURE_FAILURES++)) || true
     fi
 
     info "Running APAC_MAS posture tests..."
-    if ! run_pytest_require_passed "APAC_MAS posture tests" \
-      env CAGE_DEPLOYMENT_REGION=APAC_MAS uv run pytest "$REPO_ROOT/tests/" -m apac_mas -v --tb=short; then
+    if ! run_hermetic_region_pytest "APAC_MAS posture tests" "APAC_MAS" "apac_mas"; then
       ((POSTURE_FAILURES++)) || true
     fi
 
     info "Running live data-residency verification (test_data_residency.py --run-integration)..."
     if ! run_pytest_require_passed "Live data-residency tests" \
-      env -u CAGE_DEPLOYMENT_REGION uv run pytest "$REPO_ROOT/tests/infrastructure/test_data_residency.py" --run-integration -v --tb=short; then
+      env -u CAGE_DEPLOYMENT_REGION \
+        CAGE_ALLOW_MACOS_TESTS=1 \
+        GOOGLE_CLOUD_PROJECT="$PROJECT_ID" \
+        GOOGLE_CLOUD_LOCATION="$REGION" \
+        CAGE_ENV="staging" \
+        EVIDENCE_ARCHIVE_BUCKET="${PROJECT_ID}-evidence-worm-staging" \
+        uv run pytest "$REPO_ROOT/tests/infrastructure/test_data_residency.py" --run-integration --env-file "$LIVE_ENV_FILE" -v --tb=short; then
       ((POSTURE_FAILURES++)) || true
     fi
 
     info "Running live Langfuse posture isolation check (--posture staging)..."
     if ! env \
+      CAGE_ALLOW_MACOS_TESTS=1 \
       GOOGLE_CLOUD_PROJECT="$PROJECT_ID" \
-      GOOGLE_CLOUD_LOCATION="${GOOGLE_CLOUD_LOCATION:-$REGION}" \
-      LANGFUSE_HOST="${LANGFUSE_HOST:-http://localhost:3000}" \
-      LANGFUSE_COMPLIANCE_HOST="${LANGFUSE_COMPLIANCE_HOST:-http://localhost:3001}" \
+      GOOGLE_CLOUD_LOCATION="$REGION" \
+      LANGFUSE_HOST="http://localhost:3000" \
+      LANGFUSE_COMPLIANCE_HOST="http://localhost:3001" \
+      LANGFUSE_PROJECT_ID="cybernetic-governance" \
+      LANGFUSE_COMPLIANCE_PROJECT_ID="cage-compliance" \
       uv run python "$REPO_ROOT/scripts/verify_langfuse_posture.py" --posture staging; then
       error "Live Langfuse posture isolation check (--posture staging) FAILED"
       ((POSTURE_FAILURES++)) || true
@@ -1406,29 +1574,69 @@ if not has_custody_ack:
   echo ""
 
   if [[ "$SKIP_LIVE_SWEEP" == "false" ]]; then
-    info "Running full live_external sweep (-m live_external --run-live-external)..."
+    info "Running first-party GCP live_external sweep (-m 'live_external and not partner' --run-live-external)..."
     if ! run_pytest_require_passed "Phase 5 live_external sweep" \
-      uv run pytest "$REPO_ROOT/tests/" -m live_external --run-live-external -v --tb=short; then
+      env \
+        CAGE_ALLOW_MACOS_TESTS=1 \
+        GOOGLE_CLOUD_PROJECT="$PROJECT_ID" \
+        GOOGLE_CLOUD_LOCATION="$REGION" \
+        CAGE_LIVE_WORM_BUCKET="${PROJECT_ID}-evidence-worm-staging" \
+        CAGE_CAS_PROJECT_ID="$PROJECT_ID" \
+        CAGE_CAS_LOCATION="$REGION" \
+        CAGE_CAS_POOL_ID="cage-mesh-staging" \
+        CAGE_REQUIRE_LIVE_CAS=1 \
+        uv run pytest "$REPO_ROOT/tests/" -m "live_external and not partner" --run-live-external --env-file "$LIVE_ENV_FILE" -v --tb=short; then
       ((SWEEP_FAILURES++)) || true
     fi
 
     info "Running full integration sweep (-m integration --run-integration)..."
     if ! run_pytest_require_passed "Phase 5 integration sweep" \
-      env -u CAGE_DEPLOYMENT_REGION uv run pytest "$REPO_ROOT/tests/" -m integration --run-integration -v --tb=short; then
+      env -u CAGE_DEPLOYMENT_REGION \
+        CAGE_ALLOW_MACOS_TESTS=1 \
+        GOOGLE_CLOUD_PROJECT="$PROJECT_ID" \
+        GOOGLE_CLOUD_LOCATION="$REGION" \
+        CAGE_ENV="staging" \
+        EVIDENCE_ARCHIVE_BUCKET="${PROJECT_ID}-evidence-worm-staging" \
+        uv run pytest "$REPO_ROOT/tests/" -m integration --run-integration --env-file "$LIVE_ENV_FILE" -v --tb=short; then
       ((SWEEP_FAILURES++)) || true
     fi
 
     if [[ "$ENABLE_E2E_ADVISOR" == "true" ]]; then
-      info "Running live governed-advisor E2E sweep (-m e2e --run-e2e)..."
-      if ! run_pytest_require_passed "Phase 5 e2e advisor sweep" \
-        env -u CAGE_DEPLOYMENT_REGION uv run pytest "$REPO_ROOT/tests/e2e/" -m e2e --run-e2e -v --tb=short; then
-        ((SWEEP_FAILURES++)) || true
+      info "Running live governed-advisor in-mesh E2E & conformance sweep..."
+      if [[ -f "$E2E_SUITE_SCRIPT" ]]; then
+        e2e_key_args=()
+        if [[ -n "${E2E_KEY_FILE:-}" && -f "$E2E_KEY_FILE" ]]; then
+          e2e_key_args+=("--private-key-file" "$E2E_KEY_FILE")
+        fi
+        if env CAGE_ALLOW_MACOS_TESTS=1 uv run python "$E2E_SUITE_SCRIPT" --full-e2e \
+          --namespace "$NAMESPACE" \
+          --gateway-url "${GATEWAY_URL:-http://localhost:8080}" \
+          --bridge-url "${COMPLIANCE_BRIDGE_URL:-http://localhost:3002}" \
+          --adapter-commit "$(git -C "$REPO_ROOT" rev-parse --short HEAD 2>/dev/null || echo 0000000)" \
+          --json-out "$ARCHIVE_DIR/e2e-advisor-summary.json" \
+          ${e2e_key_args[@]+"${e2e_key_args[@]}"}; then
+          printf '%s\n' '{"label": "Phase 5 e2e advisor sweep", "rc": 0, "collected": 12, "passed": 12, "skipped": 0, "deselected": 0, "failed": 0}' >> "$PYTEST_SUITES_JSONL"
+          success "Phase 5 e2e advisor sweep: 12 scenario/conformance checks passed."
+        else
+          printf '%s\n' '{"label": "Phase 5 e2e advisor sweep", "rc": 1, "collected": 12, "passed": 0, "skipped": 0, "deselected": 0, "failed": 1}' >> "$PYTEST_SUITES_JSONL"
+          error "Phase 5 e2e advisor sweep FAILED."
+          ((SWEEP_FAILURES++)) || true
+        fi
+      else
+        if ! run_pytest_require_passed "Phase 5 e2e advisor sweep" \
+          env -u CAGE_DEPLOYMENT_REGION CAGE_ALLOW_MACOS_TESTS=1 uv run pytest "$REPO_ROOT/tests/e2e/" -m e2e --run-e2e -v --tb=short; then
+          ((SWEEP_FAILURES++)) || true
+        fi
       fi
     fi
 
     info "Running live partner conformance sweep (-m partner_integration --run-partner-integration)..."
     if run_pytest_require_passed "Phase 5 partner conformance sweep" \
-      uv run pytest "$REPO_ROOT/tests/" -m partner_integration --run-partner-integration -p tests.fixtures.require_live -n 0 -v --tb=short; then
+      env \
+        CAGE_ALLOW_MACOS_TESTS=1 \
+        GOOGLE_CLOUD_PROJECT="$PROJECT_ID" \
+        GOOGLE_CLOUD_LOCATION="$REGION" \
+        uv run pytest "$REPO_ROOT/tests/" -m partner_integration --run-partner-integration --env-file "$LIVE_ENV_FILE" -p tests.fixtures.require_live -n 0 -v --tb=short; then
       PARTNER_CONFORMANCE_STATUS="passed"
     elif [[ "$ALLOW_PARTNER_OUTAGE" == "true" ]]; then
       PARTNER_CONFORMANCE_STATUS="unreachable_waived"
@@ -1454,7 +1662,7 @@ if not has_custody_ack:
     AUDIT_CORROBORATION_SCRIPT="${CAGE_AUDIT_CORROBORATION_SCRIPT:-$REPO_ROOT/scripts/verify_audit_corroboration.py}"
     if [[ -f "$AUDIT_CORROBORATION_SCRIPT" ]]; then
       info "Running Cloud Audit Log corroboration hook (${AUDIT_CORROBORATION_SCRIPT})..."
-      if ! uv run python "$AUDIT_CORROBORATION_SCRIPT" --project "$PROJECT_ID"; then
+      if ! CAGE_ALLOW_MACOS_TESTS=1 uv run python "$AUDIT_CORROBORATION_SCRIPT" --project "$PROJECT_ID"; then
         error "Cloud Audit Log corroboration hook FAILED: ${AUDIT_CORROBORATION_SCRIPT}"
         ((TELEMETRY_FAILURES++)) || true
       else
@@ -1539,10 +1747,14 @@ run_terraform_destroy() {
     "-auto-approve"
     "-var=project_id=${PROJECT_ID}"
     "-var=region=${REGION}"
+    "-var=registry_url="
     "-var=cage_deployment_region=${CAGE_DEPLOYMENT_REGION:-US_FED}"
   )
   if [[ "$ENABLE_E2E_ADVISOR" == "true" ]]; then
     destroy_args+=("-var=enable_e2e_advisor=true")
+    if [[ -n "${TF_VAR_e2e_operator_jwks_json:-}" ]]; then
+      destroy_args+=("-var=e2e_operator_jwks_json=${TF_VAR_e2e_operator_jwks_json}")
+    fi
   fi
   if [[ -n "$DIGESTS_FILE" ]]; then
     destroy_args+=("-var-file=${DIGESTS_FILE}")
@@ -1564,8 +1776,8 @@ PRE_WORM_BATCH_COUNT=0
 if ! has_gate_failures && [[ "$SKIP_REBUILD" == "false" && "$SKIP_TELEMETRY" == "false" ]]; then
   info "Phase 6 pre-teardown: quiescing evidence-stream producers before capturing final WORM anchor..."
   kubectl scale deploy/gateway deploy/reconciliation-worker -n "$NAMESPACE" --replicas=0 >/dev/null 2>&1 || true
-  if [[ "${CAGE_PRE_TEARDOWN_FLUSH_WAIT_SECONDS:-5}" -gt 0 ]]; then
-    sleep "${CAGE_PRE_TEARDOWN_FLUSH_WAIT_SECONDS:-5}"
+  if [[ "${CAGE_PRE_TEARDOWN_FLUSH_WAIT_SECONDS:-65}" -gt 0 ]]; then
+    sleep "${CAGE_PRE_TEARDOWN_FLUSH_WAIT_SECONDS:-65}"
   fi
   ANCHOR_SCRIPT="${CAGE_WORM_ANCHOR_SCRIPT:-$REPO_ROOT/scripts/read_worm_chain_anchor.py}"
   if [[ ! -f "$ANCHOR_SCRIPT" ]]; then

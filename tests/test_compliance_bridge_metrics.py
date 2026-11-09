@@ -383,16 +383,15 @@ class TestFetchFromEvidenceStreamSync:
             _make_evidence_record(
                 now,
                 control_id="A.5.2",
-                event_type="ACTUATION_RECEIPT",
-                verdict=None,
-                extra_payload={"accepted": True, "outcome": "ACCEPTED"},
+                event_type="GOVERNANCE_REFUSAL",
+                verdict="DENY",
                 sequence=3,
             ),
             _make_evidence_record(
                 now,
                 control_id="A.5.2",
-                event_type="GOVERNANCE_REFUSAL",
-                verdict="DENY",
+                event_type="CBF_ROLLBACK",
+                verdict="ROLLED_BACK",
                 sequence=4,
             ),
         ]
@@ -402,13 +401,65 @@ class TestFetchFromEvidenceStreamSync:
         assert result.blocked_traces == 1
         assert result.safety_rate == 0.75
 
+    def test_preventive_deny_and_defer_count_as_effective_control_execution(
+        self,
+    ) -> None:
+        now = datetime.now(tz=timezone.utc)
+        records = [
+            _make_evidence_record(
+                now,
+                control_id="agentic_scope_statement",
+                event_type="GOVERNANCE_DECISION",
+                verdict="ALLOW",
+                sequence=1,
+            ),
+            _make_evidence_record(
+                now,
+                control_id="CTRL_OPA_005",
+                event_type="GOVERNANCE_REFUSAL",
+                verdict="DENY",
+                sequence=2,
+            ),
+            _make_evidence_record(
+                now,
+                control_id="CTRL_OPA_005",
+                event_type="GOVERNANCE_DEFERRAL",
+                verdict="REQUIRE_APPROVAL",
+                sequence=3,
+            ),
+            _make_evidence_record(
+                now,
+                control_id="A.5.2",
+                event_type="INFERENCE_PROXY_BLOCK",
+                verdict="DENY",
+                sequence=4,
+            ),
+            _make_evidence_record(
+                now,
+                control_id="A.5.2",
+                event_type="INFERENCE_PROXY_STAGE1_PASS",
+                verdict="PASS",
+                sequence=5,
+            ),
+        ]
+        a53 = self._run_fetch(records=records, control_id="A.5.3")
+        assert a53.total_traces == 3
+        assert a53.passed_traces == 3
+        assert a53.blocked_traces == 0
+        assert a53.safety_rate == 1.0
+
+        a52 = self._run_fetch(records=records, control_id="A.5.2")
+        assert a52.total_traces == 2
+        assert a52.passed_traces == 2
+        assert a52.safety_rate == 1.0
+
     def test_safety_rate_rounds_to_four_decimals(self) -> None:
         now = datetime.now(tz=timezone.utc)
         records = [
             _make_evidence_record(now, verdict="ALLOW", sequence=1),
             _make_evidence_record(now, verdict="ALLOW", sequence=2),
             _make_evidence_record(
-                now, event_type="GOVERNANCE_REFUSAL", verdict="DENY", sequence=3
+                now, event_type="GOVERNANCE_VIOLATION", verdict="VIOLATION", sequence=3
             ),
         ]
         result = self._run_fetch(records=records)
