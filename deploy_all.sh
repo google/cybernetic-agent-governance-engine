@@ -629,7 +629,7 @@ deploy_terraform_target() {
   # Apply Terraform configuration
   if [[ "$auto_approve" == "true" ]]; then
     header "Terraform Apply (auto-approved)"
-    terraform -chdir="$tf_dir" apply -parallelism=1 tfplan
+    terraform -chdir="$tf_dir" apply tfplan
   else
     header "Terraform Apply"
     echo ""

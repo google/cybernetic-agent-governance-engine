@@ -299,6 +299,42 @@ import_foundational_state() {
     fi
   fi
 
+  # 5. Workload Identity Pool & OIDC Provider (GCP IAM retains deleted pools/providers
+  # in DELETED tombstone state for 30 days, blocking re-creation on rebuilds).
+  local wif_pool_state
+  wif_pool_state="$(gcloud iam workload-identity-pools describe "github-actions" --location="global" --project="$PROJECT_ID" --format='value(state)' 2>/dev/null || true)"
+  if [[ "$wif_pool_state" == "DELETED" ]]; then
+    echo "  ♻️  Undeleting tombstoned Workload Identity Pool 'github-actions'..."
+    gcloud iam workload-identity-pools undelete "github-actions" --location="global" --project="$PROJECT_ID" --quiet >/dev/null
+    for _ in {1..15}; do
+      wif_pool_state="$(gcloud iam workload-identity-pools describe "github-actions" --location="global" --project="$PROJECT_ID" --format='value(state)' 2>/dev/null || true)"
+      [[ "$wif_pool_state" == "ACTIVE" ]] && break
+      sleep 1
+    done
+  fi
+  if [[ -n "$wif_pool_state" ]]; then
+    import_if_missing \
+      "google_iam_workload_identity_pool.github_actions" \
+      "projects/${PROJECT_ID}/locations/global/workloadIdentityPools/github-actions"
+
+    local wif_prov_state
+    wif_prov_state="$(gcloud iam workload-identity-pools providers describe "github" --workload-identity-pool="github-actions" --location="global" --project="$PROJECT_ID" --format='value(state)' 2>/dev/null || true)"
+    if [[ "$wif_prov_state" == "DELETED" ]]; then
+      echo "  ♻️  Undeleting tombstoned Workload Identity Provider 'github'..."
+      gcloud iam workload-identity-pools providers undelete "github" --workload-identity-pool="github-actions" --location="global" --project="$PROJECT_ID" --quiet >/dev/null
+      for _ in {1..15}; do
+        wif_prov_state="$(gcloud iam workload-identity-pools providers describe "github" --workload-identity-pool="github-actions" --location="global" --project="$PROJECT_ID" --format='value(state)' 2>/dev/null || true)"
+        [[ "$wif_prov_state" == "ACTIVE" ]] && break
+        sleep 1
+      done
+    fi
+    if [[ -n "$wif_prov_state" ]]; then
+      import_if_missing \
+        "google_iam_workload_identity_pool_provider.github" \
+        "projects/${PROJECT_ID}/locations/global/workloadIdentityPools/github-actions/providers/github"
+    fi
+  fi
+
   import_evidence_domain_state
   echo "✅ Foundational state import pass complete."
 }
@@ -323,12 +359,9 @@ if [[ "$IMPORT_STATE" == "true" ]]; then import_evidence_domain_state() {
 
   if gcloud storage buckets describe "gs://${ev_worm_bucket}" --project="$ev_project" >/dev/null 2>&1; then
     import_if_missing       "module.worm_bucket.google_storage_bucket.bucket[0]"       "${ev_worm_bucket}"
-    local latest_manifest
-    latest_manifest="$(gcloud storage ls "gs://${ev_worm_bucket}/trust-anchors/signing-key-manifest-*.json" 2>/dev/null | sort | tail -n 1 || true)"
-    if [[ -n "$latest_manifest" ]]; then
-      local manifest_obj="${latest_manifest#gs://${ev_worm_bucket}/}"
-      import_if_missing         "module.evidence_domain.google_storage_bucket_object.signing_key_manifest[0]"         "${ev_worm_bucket}/${manifest_obj}"
-    fi
+    # Note: google_storage_bucket_object does not support `terraform import` in
+    # hashicorp/google; signing_key_manifest sets deletion_policy = "ABANDON"
+    # and writes a non-destructive versioned object on rebuilds.
   fi
 
   if gcloud storage buckets describe "gs://${ev_audit_bucket}" --project="$ev_project" >/dev/null 2>&1; then
@@ -442,6 +475,28 @@ if ! gcloud storage buckets describe "gs://${CB_BUCKET}" --project="$PROJECT_ID"
     --quiet
 fi
 
+# Retry IAM policy bindings against newly created service accounts so GCP IAM
+# global eventual consistency (~1-5s after service-accounts create) never fails
+# Phase 0 with INVALID_ARGUMENT: Service account ... does not exist.
+retry_gcloud_iam() {
+  local max_attempts=5
+  local attempt=1
+  local sleep_s="${BOOTSTRAP_IAM_RETRY_BASE_SLEEP:-2}"
+  while true; do
+    if "$@"; then
+      return 0
+    fi
+    if (( attempt >= max_attempts )); then
+      echo "❌ IAM policy binding failed after ${max_attempts} attempts: $*" >&2
+      return 1
+    fi
+    echo "⏳ Waiting ${sleep_s}s for GCP IAM service-account propagation (attempt ${attempt}/${max_attempts})..." >&2
+    sleep "$sleep_s"
+    attempt=$((attempt + 1))
+    sleep_s=$((sleep_s * 2))
+  done
+}
+
 # --- PF3: Pre-create Cloud Build SA, KMS binauthz-attestor key, and BinAuthz attestor ---
 echo "🔐 [PF3] Ensuring dedicated Cloud Build service account '${CB_SA_EMAIL}' exists..."
 if ! gcloud iam service-accounts describe "$CB_SA_EMAIL" --project="$PROJECT_ID" >/dev/null 2>&1; then
@@ -456,14 +511,14 @@ for role in \
   "roles/logging.logWriter" \
   "roles/artifactregistry.writer" \
   "roles/containeranalysis.occurrences.editor"; do
-  gcloud projects add-iam-policy-binding "$PROJECT_ID" \
+  retry_gcloud_iam gcloud projects add-iam-policy-binding "$PROJECT_ID" \
     --member="serviceAccount:${CB_SA_EMAIL}" \
     --role="$role" \
     --condition=None \
     --quiet >/dev/null
 done
 
-gcloud storage buckets add-iam-policy-binding "gs://${CB_BUCKET}" \
+retry_gcloud_iam gcloud storage buckets add-iam-policy-binding "gs://${CB_BUCKET}" \
   --member="serviceAccount:${CB_SA_EMAIL}" \
   --role="roles/storage.objectViewer" \
   --quiet >/dev/null
@@ -495,7 +550,7 @@ for kms_role in \
   "roles/cloudkms.signer" \
   "roles/cloudkms.publicKeyViewer" \
   "roles/cloudkms.viewer"; do
-  gcloud kms keys add-iam-policy-binding "binauthz-attestor" \
+  retry_gcloud_iam gcloud kms keys add-iam-policy-binding "binauthz-attestor" \
     --keyring="$SIGNING_KEYRING" \
     --location="$REGION" \
     --project="$PROJECT_ID" \
@@ -548,7 +603,7 @@ if [[ "$ENV" != "dev" ]]; then
       --quiet
   fi
 
-  gcloud container binauthz attestors add-iam-policy-binding \
+  retry_gcloud_iam gcloud container binauthz attestors add-iam-policy-binding \
     "projects/${PROJECT_ID}/attestors/${ATTESTOR_ID}" \
     --member="serviceAccount:${CB_SA_EMAIL}" \
     --role="roles/binaryauthorization.attestorsViewer" \

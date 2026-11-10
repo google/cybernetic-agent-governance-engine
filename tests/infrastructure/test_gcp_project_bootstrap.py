@@ -339,6 +339,112 @@ def test_bootstrap_import_state_imports_missing_and_skips_existing(
         "google_binary_authorization_attestor.build_attestor[0] "
         "projects/recycled-proj/attestors/cage-build-attestor-staging"
     ) in calls
+    # google_storage_bucket_object does not support terraform import; must not be imported.
+    assert "signing_key_manifest" not in calls
+
+
+def test_bootstrap_retries_transient_iam_sa_propagation_failure(
+    tmp_path: Path,
+) -> None:
+    bin_dir, log_file = _make_stub_bins(tmp_path, describe_exists=False)
+    marker = tmp_path / "iam_first_attempt"
+    gcloud_path = bin_dir / "gcloud"
+    gcloud_body = gcloud_path.read_text(encoding="utf-8").replace(
+        "exit 0\n",
+        f"""if [[ "$*" == *"add-iam-policy-binding"* && ! -f "{marker}" ]]; then
+  touch "{marker}"
+  echo "ERROR: (gcloud.projects.add-iam-policy-binding) INVALID_ARGUMENT: Service account cage-cloudbuild-staging@clean-proj-02.iam.gserviceaccount.com does not exist." >&2
+  exit 1
+fi
+exit 0
+""",
+    )
+    _write_executable(gcloud_path, gcloud_body)
+
+    env = {
+        **os.environ,
+        "PATH": f"{bin_dir}:{os.environ.get('PATH', '')}",
+        "BOOTSTRAP_IAM_RETRY_BASE_SLEEP": "0",
+    }
+    proc = subprocess.run(
+        [
+            "bash",
+            str(BOOTSTRAP_SCRIPT),
+            "--project=clean-proj-02",
+            "--env=staging",
+            "--region=us-central1",
+        ],
+        env=env,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert proc.returncode == 0, proc.stderr
+    assert "Waiting 0s for GCP IAM service-account propagation" in proc.stderr
+    calls = log_file.read_text(encoding="utf-8")
+    assert calls.count("--role=roles/logging.logWriter") == 2
+
+
+def test_bootstrap_import_state_undeletes_tombstoned_wif_pool_and_provider(
+    tmp_path: Path,
+) -> None:
+    bin_dir, log_file = _make_stub_bins(tmp_path, describe_exists=False)
+    pool_undel = tmp_path / "pool_undeleted"
+    prov_undel = tmp_path / "prov_undeleted"
+    gcloud_path = bin_dir / "gcloud"
+    gcloud_body = gcloud_path.read_text(encoding="utf-8").replace(
+        'if [[ "$*" == *" describe "* ]]; then\n  exit 1\nfi',
+        f"""if [[ "$*" == *"workload-identity-pools undelete"* ]]; then
+  touch "{pool_undel}"
+  exit 0
+fi
+if [[ "$*" == *"workload-identity-pools providers undelete"* ]]; then
+  touch "{prov_undel}"
+  exit 0
+fi
+if [[ "$*" == *"workload-identity-pools providers describe"* ]]; then
+  if [[ -f "{prov_undel}" ]]; then echo "ACTIVE"; else echo "DELETED"; fi
+  exit 0
+fi
+if [[ "$*" == *"workload-identity-pools describe"* ]]; then
+  if [[ -f "{pool_undel}" ]]; then echo "ACTIVE"; else echo "DELETED"; fi
+  exit 0
+fi
+if [[ "$*" == *" describe "* ]]; then
+  exit 1
+fi""",
+    )
+    _write_executable(gcloud_path, gcloud_body)
+
+    tf_dir = tmp_path / "tf"
+    tf_dir.mkdir(parents=True, exist_ok=True)
+    proc = subprocess.run(
+        [
+            "bash",
+            str(BOOTSTRAP_SCRIPT),
+            "--project=recycled-wif-proj",
+            "--env=staging",
+            "--region=us-central1",
+            f"--tf-dir={tf_dir}",
+            "--import-state",
+        ],
+        env={**os.environ, "PATH": f"{bin_dir}:{os.environ.get('PATH', '')}"},
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert proc.returncode == 0, proc.stderr
+    calls = log_file.read_text(encoding="utf-8")
+    assert "workload-identity-pools undelete github-actions" in calls
+    assert "workload-identity-pools providers undelete github" in calls
+    assert (
+        "google_iam_workload_identity_pool.github_actions "
+        "projects/recycled-wif-proj/locations/global/workloadIdentityPools/github-actions"
+    ) in calls
+    assert (
+        "google_iam_workload_identity_pool_provider.github "
+        "projects/recycled-wif-proj/locations/global/workloadIdentityPools/github-actions/providers/github"
+    ) in calls
 
 
 def test_gen_tfvars_succeeds_without_kms_governance_key_and_omits_undeclared_var(

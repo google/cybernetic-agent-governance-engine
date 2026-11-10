@@ -177,6 +177,12 @@ variable "s3_region" {
   default     = "us-east-1"
 }
 
+variable "use_google_cloud_storage" {
+  description = "Enable native Google Cloud Storage (@google-cloud/storage) via GKE Workload Identity / ADC instead of S3-interop HMAC keys (required when constraints/iam.disableServiceAccountKeyCreation is enforced)."
+  type        = bool
+  default     = false
+}
+
 variable "nextauth_url" {
   description = "NextAuth URL (external URL of Langfuse)"
   type        = string

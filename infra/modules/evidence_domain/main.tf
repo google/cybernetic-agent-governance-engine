@@ -224,10 +224,11 @@ resource "google_storage_bucket" "audit_logs_worm" {
 resource "google_storage_bucket_object" "signing_key_manifest" {
   count = !var.external_evidence_domain_enabled && length(keys(var.signing_key_manifest)) > 0 ? 1 : 0
 
-  name         = local.signing_key_manifest_object_name
-  bucket       = var.evidence_bucket_name
-  content_type = "application/json"
-  content      = local.signing_key_manifest_json
+  name            = local.signing_key_manifest_object_name
+  bucket          = var.evidence_bucket_name
+  content_type    = "application/json"
+  content         = local.signing_key_manifest_json
+  deletion_policy = "ABANDON"
 
   lifecycle {
     create_before_destroy = true

@@ -341,39 +341,28 @@ module "worm_bucket" {
 }
 
 
-# ─── GCS S3-compatible HMAC Keys (Langfuse Blob Storage) ─────────────────────
-
-resource "google_service_account" "langfuse_gcs" {
-  account_id   = "langfuse-gcs-${var.environment}"
-  display_name = "Langfuse GCS S3-compatible access"
-  project      = var.project_id
-}
-
-# B5 fix — least-privilege objectUser on the Langfuse event-upload bucket. The
-# role can create, read, list, overwrite and delete objects; the bucket's
-# retention policy refuses an overwrite or a delete until the object is older
-# than local.retention_period_seconds.
+# ─── GCS Workload Identity IAM (Langfuse Event Upload Storage) ───────────────
+# Native Google Cloud Storage (@google-cloud/storage via GKE Workload Identity on
+# google_service_account.langfuse) avoids service-account HMAC keys so clean-room
+# projects enforcing constraints/iam.disableServiceAccountKeyCreation provision
+# cleanly. Least-privilege bucket-scoped roles only; the bucket's retention
+# policy refuses overwrites or deletes until local.retention_period_seconds.
 resource "google_storage_bucket_iam_member" "langfuse_gcs_creator" {
   bucket = google_storage_bucket.langfuse_event_upload.name
   role   = "roles/storage.objectUser"
-  member = "serviceAccount:${google_service_account.langfuse_gcs.email}"
+  member = "serviceAccount:${google_service_account.langfuse.email}"
 }
 
 resource "google_storage_bucket_iam_member" "langfuse_gcs_reader" {
   bucket = google_storage_bucket.langfuse_event_upload.name
   role   = "roles/storage.legacyBucketReader"
-  member = "serviceAccount:${google_service_account.langfuse_gcs.email}"
+  member = "serviceAccount:${google_service_account.langfuse.email}"
 }
 
 resource "google_storage_bucket_iam_member" "langfuse_gcs_viewer" {
   bucket = google_storage_bucket.langfuse_event_upload.name
   role   = "roles/storage.objectViewer"
-  member = "serviceAccount:${google_service_account.langfuse_gcs.email}"
-}
-
-resource "google_storage_hmac_key" "langfuse_key" {
-  service_account_email = google_service_account.langfuse_gcs.email
-  project               = var.project_id
+  member = "serviceAccount:${google_service_account.langfuse.email}"
 }
 
 # ─── Cloud Build IAM — Artifact Registry push permission ─────────────────────
@@ -402,13 +391,17 @@ resource "google_project_iam_member" "compliance_bridge_sa_artifactregistry_writ
 # dev plan enforce, is now var.enforce_in_dev. A tfvars file that still sets
 # a removed flag gets a "Value for undeclared variable" warning and is ignored.
 
+resource "random_id" "cloudsql_suffix" {
+  byte_length = 4
+}
+
 module "cloudsql_postgres" {
   source = "../../modules/cloudsql_postgres"
 
   project_id         = var.project_id
   environment        = var.environment
   region             = var.region
-  instance_name      = "cage-postgres-${var.environment}"
+  instance_name      = "cage-postgres-${var.environment}-${random_id.cloudsql_suffix.hex}"
   database_version   = "POSTGRES_15"
   authorized_network = local.cloudsql_network_name
 
@@ -869,12 +862,14 @@ module "langfuse" {
   redis_host               = module.memorystore_app.primary_endpoint_ip
   redis_port               = tostring(module.memorystore_app.primary_endpoint_port)
 
-  # S3-compatible blob storage via GCS HMAC keys
-  s3_endpoint   = var.langfuse_s3_endpoint
-  s3_bucket     = var.langfuse_s3_bucket != "" ? var.langfuse_s3_bucket : google_storage_bucket.langfuse_event_upload.name
-  s3_access_key = var.langfuse_s3_access_key != "" ? var.langfuse_s3_access_key : google_storage_hmac_key.langfuse_key.access_id
-  s3_secret_key = var.langfuse_s3_secret_key != "" ? var.langfuse_s3_secret_key : google_storage_hmac_key.langfuse_key.secret
-  s3_region     = var.region
+  # Native GCS via GKE Workload Identity by default (zero HMAC / SA keys);
+  # falls back to explicit S3 credentials only when var.langfuse_s3_access_key != "".
+  use_google_cloud_storage = var.langfuse_s3_access_key == ""
+  s3_endpoint              = var.langfuse_s3_endpoint
+  s3_bucket                = var.langfuse_s3_bucket != "" ? var.langfuse_s3_bucket : google_storage_bucket.langfuse_event_upload.name
+  s3_access_key            = var.langfuse_s3_access_key
+  s3_secret_key            = var.langfuse_s3_secret_key
+  s3_region                = var.region
 
   nextauth_url          = var.langfuse_nextauth_url
   web_replicas          = var.enable_high_availability ? 2 : 1
@@ -897,7 +892,15 @@ module "langfuse" {
   langfuse_init_org_id        = "CAGE"
   langfuse_init_org_name      = "CAGE"
 
-  depends_on = [module.cloudsql_postgres, module.clickhouse_operator, module.memorystore_app, google_storage_hmac_key.langfuse_key, module.gke]
+  depends_on = [
+    module.cloudsql_postgres,
+    module.clickhouse_operator,
+    module.memorystore_app,
+    google_storage_bucket_iam_member.langfuse_gcs_creator,
+    google_storage_bucket_iam_member.langfuse_gcs_reader,
+    google_storage_bucket_iam_member.langfuse_gcs_viewer,
+    module.gke,
+  ]
 }
 
 # ─── Deploy Compliance Bridge ───────────────────────────────────────────────────

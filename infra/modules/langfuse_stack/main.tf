@@ -491,22 +491,32 @@ resource "kubernetes_deployment" "langfuse_web" {
             value = "debug"
           }
 
-          # S3 Blob Storage via GCS HMAC S3-interop (required for web→worker event queue).
-          # Force path-style addressing: GCS S3-interop does not support virtual-hosted-style
-          # (https://bucket.storage.googleapis.com) reliably inside GKE — use path-style
-          # (https://storage.googleapis.com/bucket) which is the documented GCS S3 API form.
+          # Event upload blob storage: native GCS via GKE Workload Identity when
+          # var.use_google_cloud_storage = true (zero SA/HMAC keys), or S3-compatible
+          # endpoint (MinIO / custom S3) when var.use_google_cloud_storage = false.
           env {
             name  = "LANGFUSE_S3_EVENT_UPLOAD_ENABLED"
             value = "true"
           }
 
-          env {
-            name  = "LANGFUSE_S3_EVENT_UPLOAD_FORCE_PATH_STYLE"
-            value = "true"
+          dynamic "env" {
+            for_each = var.use_google_cloud_storage ? [1] : []
+            content {
+              name  = "LANGFUSE_USE_GOOGLE_CLOUD_STORAGE"
+              value = "true"
+            }
           }
 
           dynamic "env" {
-            for_each = var.s3_endpoint != "" ? [1] : []
+            for_each = !var.use_google_cloud_storage ? [1] : []
+            content {
+              name  = "LANGFUSE_S3_EVENT_UPLOAD_FORCE_PATH_STYLE"
+              value = "true"
+            }
+          }
+
+          dynamic "env" {
+            for_each = !var.use_google_cloud_storage && var.s3_endpoint != "" ? [1] : []
             content {
               name  = "LANGFUSE_S3_EVENT_UPLOAD_ENDPOINT"
               value = var.s3_endpoint
@@ -521,11 +531,12 @@ resource "kubernetes_deployment" "langfuse_web" {
             }
           }
 
-          # GCS S3-interop ignores region but AWS SDK requires a non-empty value;
-          # "auto" is accepted by the SDK and ignored by GCS.
-          env {
-            name  = "LANGFUSE_S3_EVENT_UPLOAD_REGION"
-            value = "auto"
+          dynamic "env" {
+            for_each = !var.use_google_cloud_storage ? [1] : []
+            content {
+              name  = "LANGFUSE_S3_EVENT_UPLOAD_REGION"
+              value = "auto"
+            }
           }
 
           dynamic "env" {
@@ -914,22 +925,32 @@ resource "kubernetes_deployment" "langfuse_worker" {
             value = "debug"
           }
 
-          # S3 Blob Storage via GCS HMAC S3-interop (required for web→worker event queue).
-          # Force path-style addressing: GCS S3-interop does not support virtual-hosted-style
-          # (https://bucket.storage.googleapis.com) reliably inside GKE — use path-style
-          # (https://storage.googleapis.com/bucket) which is the documented GCS S3 API form.
+          # Event upload blob storage: native GCS via GKE Workload Identity when
+          # var.use_google_cloud_storage = true (zero SA/HMAC keys), or S3-compatible
+          # endpoint (MinIO / custom S3) when var.use_google_cloud_storage = false.
           env {
             name  = "LANGFUSE_S3_EVENT_UPLOAD_ENABLED"
             value = "true"
           }
 
-          env {
-            name  = "LANGFUSE_S3_EVENT_UPLOAD_FORCE_PATH_STYLE"
-            value = "true"
+          dynamic "env" {
+            for_each = var.use_google_cloud_storage ? [1] : []
+            content {
+              name  = "LANGFUSE_USE_GOOGLE_CLOUD_STORAGE"
+              value = "true"
+            }
           }
 
           dynamic "env" {
-            for_each = var.s3_endpoint != "" ? [1] : []
+            for_each = !var.use_google_cloud_storage ? [1] : []
+            content {
+              name  = "LANGFUSE_S3_EVENT_UPLOAD_FORCE_PATH_STYLE"
+              value = "true"
+            }
+          }
+
+          dynamic "env" {
+            for_each = !var.use_google_cloud_storage && var.s3_endpoint != "" ? [1] : []
             content {
               name  = "LANGFUSE_S3_EVENT_UPLOAD_ENDPOINT"
               value = var.s3_endpoint
@@ -944,11 +965,12 @@ resource "kubernetes_deployment" "langfuse_worker" {
             }
           }
 
-          # GCS S3-interop ignores region but AWS SDK requires a non-empty value;
-          # "auto" is accepted by the SDK and ignored by GCS.
-          env {
-            name  = "LANGFUSE_S3_EVENT_UPLOAD_REGION"
-            value = "auto"
+          dynamic "env" {
+            for_each = !var.use_google_cloud_storage ? [1] : []
+            content {
+              name  = "LANGFUSE_S3_EVENT_UPLOAD_REGION"
+              value = "auto"
+            }
           }
 
           dynamic "env" {

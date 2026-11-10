@@ -169,13 +169,13 @@ presidio_anonymizer_image = ""
 # Update langfuse_nextauth_url to the actual US cluster ingress URL after deploy
 langfuse_nextauth_url = "http://localhost:3000"
 
-# ─── Langfuse S3-compatible storage (US: GCS bucket in us-central1) ───────────
-# GCS HMAC keys and bucket are created in us-central1 via var.region above.
+# ─── Langfuse event storage (US: GCS bucket in us-central1 via Workload Identity)
+# Native GCS access uses google_service_account.langfuse Workload Identity when keys are empty.
 # The bucket name is auto-generated: langfuse-event-upload-${project_id}-${random_hex}
 langfuse_s3_endpoint   = "https://storage.googleapis.com"
 langfuse_s3_bucket     = "" # Auto-generated from GCS bucket resource
-langfuse_s3_access_key = "" # Auto-generated from google_storage_hmac_key
-langfuse_s3_secret_key = "" # Auto-generated from google_storage_hmac_key
+langfuse_s3_access_key = "" # Empty selects native GCS Workload Identity (no HMAC key)
+langfuse_s3_secret_key = "" # Empty selects native GCS Workload Identity (no HMAC key)
 
 # ─── Langfuse Project Configuration (Dev: single project is sufficient) ────────
 # Dev posture intentionally uses ONE Langfuse project ("cybernetic-governance")

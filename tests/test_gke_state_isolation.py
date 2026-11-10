@@ -397,4 +397,5 @@ def test_fresh_state_without_gke_runs_stage1_foundation_then_full_plan(deploy) -
     applies = [c for c in calls if c.startswith("terraform ") and " apply " in c]
     assert len(applies) == 2, calls
     assert applies[0].endswith(" apply tfplan.stage1")
-    assert applies[1].endswith(" apply -parallelism=1 tfplan")
+    assert applies[1].endswith(" apply tfplan")
+    assert "-parallelism=1" not in applies[1]
