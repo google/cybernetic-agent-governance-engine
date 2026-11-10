@@ -68,14 +68,17 @@ locals {
     var.offline_verifier_principal != "" ? [var.offline_verifier_principal] : [],
   ))
 
-  signing_key_manifest_json = jsonencode({
-    schema                 = "cage-signing-key-manifest/1"
-    evidence_project_id    = var.evidence_project_id
-    workload_project_id    = var.workload_project_id
-    environment            = var.environment
-    cage_deployment_region = var.cage_deployment_region
-    keys                   = var.signing_key_manifest
-  })
+  signing_key_manifest_json = jsonencode(merge(
+    {
+      schema                 = "cage-signing-key-manifest/1"
+      evidence_project_id    = var.evidence_project_id
+      workload_project_id    = var.workload_project_id
+      environment            = var.environment
+      cage_deployment_region = var.cage_deployment_region
+      keys                   = var.signing_key_manifest
+    },
+    var.deployment_epoch_id != "" ? { deployment_epoch_id = var.deployment_epoch_id } : {},
+  ))
 
   # Content-addressed manifest object name so key rotation appends a new
   # immutable versioned object in the WORM-locked bucket without colliding

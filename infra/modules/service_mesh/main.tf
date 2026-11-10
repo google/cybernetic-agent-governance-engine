@@ -60,7 +60,7 @@ locals {
   linkerd_cni_namespace    = "linkerd-cni"
   cas_issuer_ksa           = "cage-cas-issuer"
   identity_issuer_dns_name = "identity.${local.linkerd_namespace}.${var.cluster_domain}"
-  ca_pool_id               = "cage-mesh-${var.environment}"
+  ca_pool_id               = var.ca_pool_id != "" ? var.ca_pool_id : "cage-mesh-${var.environment}"
 }
 
 # ─── Certificate Authority Service ────────────────────────────────────────────

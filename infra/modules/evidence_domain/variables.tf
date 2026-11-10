@@ -147,3 +147,9 @@ variable "isolation_guard_ready" {
   type        = string
   default     = ""
 }
+
+variable "deployment_epoch_id" {
+  description = "Optional ephemeral deployment epoch identifier included in signing_key_manifest_json so teardown/rebuild cycles against a retention-locked WORM bucket append a distinct content-addressed manifest object instead of overwriting an unexpired object."
+  type        = string
+  default     = ""
+}

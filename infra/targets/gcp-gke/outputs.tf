@@ -242,3 +242,8 @@ output "admin_activity_audit_sink_writer_identity" {
   description = "Writer identity of the Admin Activity audit-log sink (AS-6). module.evidence_domain grants it objectCreator on the audit-logs bucket; an external evidence domain must grant it out of band. Empty when the sinks are disabled."
   value       = local.kms_audit_logs_enabled ? google_logging_project_sink.admin_activity[0].writer_identity : ""
 }
+
+output "service_mesh_ca_pool_name" {
+  description = "Short Google CAS CaPool resource name backing Linkerd mesh identity issuance."
+  value       = module.service_mesh.ca_pool_name
+}

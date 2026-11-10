@@ -187,6 +187,10 @@ module "namespace" {
 
 # ─── Service Mesh (Linkerd, trust anchor in Google CAS) ──────────────────────
 
+resource "random_id" "mesh_ca_pool_suffix" {
+  byte_length = 4
+}
+
 module "service_mesh" {
   source = "../../modules/service_mesh"
 
@@ -195,6 +199,7 @@ module "service_mesh" {
   project_id             = var.project_id
   region                 = var.region
   environment            = var.environment
+  ca_pool_id             = "cage-mesh-${var.environment}-${random_id.mesh_ca_pool_suffix.hex}"
   network                = local.effective_network_name
   master_ipv4_cidr_block = var.master_ipv4_cidr_block
   # proxy-init needs NET_ADMIN, which 'restricted' Pod Security forbids; the
@@ -1486,6 +1491,7 @@ module "evidence_domain" {
   offline_verifier_principal     = var.offline_verifier_principal
   deployer_service_account_email = google_service_account.deployer.email
   signing_key_manifest           = local.signing_key_manifest
+  deployment_epoch_id            = random_id.mesh_ca_pool_suffix.hex
 
   isolation_guard_ready = terraform_data.evidence_domain_isolation_guard.id
 }

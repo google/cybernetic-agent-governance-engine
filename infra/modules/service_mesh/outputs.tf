@@ -22,6 +22,11 @@ output "ca_pool_id" {
   value       = google_privateca_ca_pool.mesh.id
 }
 
+output "ca_pool_name" {
+  description = "Short CaPool resource name (e.g. cage-mesh-staging-<hex>) for CAS API calls."
+  value       = google_privateca_ca_pool.mesh.name
+}
+
 output "identity_suffix" {
   description = "Suffix of every Linkerd workload identity: <sa>.<namespace>.<identity_suffix> (the l5d-client-id format)."
   value       = "serviceaccount.identity.linkerd.${var.cluster_domain}"

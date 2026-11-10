@@ -309,6 +309,45 @@ run "evidence_domain_key_rotation_produces_distinct_manifest_object_key" {
   }
 }
 
+run "evidence_domain_ephemeral_epoch_produces_distinct_manifest_object_key" {
+  command = apply
+
+  module {
+    source = "../../modules/evidence_domain"
+  }
+
+  override_data {
+    target = data.google_project.evidence[0]
+    values = {
+      number = "987654321098"
+    }
+  }
+
+  variables {
+    evidence_project_id             = "evidence-custody-proj"
+    workload_project_id             = "workload-ephemeral-proj"
+    environment                     = "staging"
+    region                          = "us-central1"
+    cage_deployment_region          = "US_FED"
+    evidence_bucket_name            = "evidence-custody-proj-cage-evidence-worm"
+    custodian_service_account_email = "cage-compliance-bridge@workload-ephemeral-proj.iam.gserviceaccount.com"
+    deployment_epoch_id             = "a1b2c3d4"
+    signing_key_manifest = {
+      "gateway-seal" = {
+        kid            = "projects/workload-ephemeral-proj/locations/us-central1/keyRings/cage-signing-staging/cryptoKeys/gateway-seal/cryptoKeyVersions/1"
+        key_version_id = "projects/workload-ephemeral-proj/locations/us-central1/keyRings/cage-signing-staging/cryptoKeys/gateway-seal/cryptoKeyVersions/1"
+        algorithm      = "EC_SIGN_P256_SHA256"
+        public_key_pem = "-----BEGIN PUBLIC KEY-----\nMFkwEwYHKoZIzj0CAQYIKoZIzj0DAQcDQgAEgatewayv1testkey000000000001\n-----END PUBLIC KEY-----\n"
+      }
+    }
+  }
+
+  assert {
+    condition     = output.signing_key_manifest_object_name != run.evidence_domain_module_applies_gcs_agent_and_pem_versioned_manifest.signing_key_manifest_object_name
+    error_message = "ephemeral deployment_epoch_id must write a distinct append-only WORM manifest object path even when KMS key versions are unchanged"
+  }
+}
+
 run "evidence_domain_rejects_resource_path_in_public_key_pem" {
   command = plan
 
