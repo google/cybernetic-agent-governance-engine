@@ -44,7 +44,7 @@ variable "service_account_name" {
 variable "schedule" {
   description = "Cron schedule expression for periodic in-cluster Lula compliance validation."
   type        = string
-  default     = "*/15 * * * *"
+  default     = "0 */6 * * *"
 }
 
 variable "lula_manifests_dir" {

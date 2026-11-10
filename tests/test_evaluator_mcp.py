@@ -36,6 +36,19 @@ logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger("TestEvaluatorMCP")
 
 
+_ENFORCING_UNMESHED = (
+    os.environ.get("CAGE_ENV", "").strip().lower() in ("staging", "prod", "production")
+    and os.environ.get("CAGE_IN_MESH", "").strip() != "1"
+)
+
+
+@pytest.mark.skipif(
+    _ENFORCING_UNMESHED,
+    reason=(
+        "Gateway /mcp/ and /governance/policy-precheck require in-mesh Linkerd mTLS "
+        "workload identity in staging/prod (verified in-mesh by run_gke_e2e_suite.py)."
+    ),
+)
 @pytest.mark.asyncio
 async def test_evaluator_tools():
     logger.info(

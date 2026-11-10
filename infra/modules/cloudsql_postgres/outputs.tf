@@ -40,11 +40,13 @@ output "database_name" {
 output "user_name" {
   description = "Created database user name"
   value       = google_sql_user.db_user.name
+  depends_on  = [terraform_data.grant_iam_db_superuser]
 }
 
 output "iam_user_name" {
   description = "IAM user name formatted for PostgreSQL"
   value       = local.effective_user_name
+  depends_on  = [terraform_data.grant_iam_db_superuser]
 }
 
 output "point_in_time_recovery_enabled" {

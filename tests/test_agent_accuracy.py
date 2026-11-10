@@ -19,10 +19,6 @@ import uuid
 
 import pytest
 import requests
-from dotenv import load_dotenv
-
-# Load env vars
-load_dotenv()
 
 pytestmark = pytest.mark.integration
 
@@ -249,6 +245,21 @@ def query_agent(prompt: str):
                 return None
 
 
+_ENFORCING_POSTURE = os.environ.get("CAGE_ENV", "").strip().lower() in (
+    "staging",
+    "prod",
+    "production",
+)
+
+
+@pytest.mark.skipif(
+    _ENFORCING_POSTURE
+    and not os.environ.get("CAGE_USER_OIDC_PRIVATE_KEY_PEM", "").strip(),
+    reason=(
+        "Enforcing posture requires CAGE_USER_OIDC_PRIVATE_KEY_PEM to mint "
+        "verified end-user OIDC tokens for POST /agent/query."
+    ),
+)
 @pytest.mark.skipif(
     not _backend_reachable(),
     reason="Backend not available — set BACKEND_URL to a live server",

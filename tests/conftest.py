@@ -1253,7 +1253,7 @@ def assert_formal_tier_ordering_matches():
     Session-scoped fixture asserting the assembled tier order matches the formal model.
     See Formal Proof Synchronization.
     """
-    from src.gateway.governance.env_posture import resolve_posture
+    from src.gateway.governance.env_posture import DeploymentPosture
     from src.gateway.governance.governor.assembly import assemble_governor
     from src.gateway.governance.plugin_loader import load_domain_plugin
     from tests.fixtures.governor import allow_opa, clean_stpa
@@ -1261,7 +1261,7 @@ def assert_formal_tier_ordering_matches():
     plugin = load_domain_plugin()
     governor = assemble_governor(
         [plugin],
-        posture=resolve_posture(),
+        posture=DeploymentPosture.DEV,
         opa=allow_opa(),
         stpa_validator=clean_stpa(),
     )

@@ -257,11 +257,21 @@ def _resolve_gateway_image() -> str:
     )
 
 
+_INITIAL_CAGE_ENV = os.environ.get("CAGE_ENV", "").strip().lower()
+
+
 def _require_linkerd_cluster() -> None:
     """Ensure a Kubernetes cluster with Linkerd policy CRDs is reachable."""
     require_cluster = os.environ.get(
         "CAGE_REQUIRE_LINKERD_CLUSTER", "0"
     ).strip().lower() in ("1", "true", "yes")
+    cage_env = _INITIAL_CAGE_ENV or os.environ.get("CAGE_ENV", "").strip().lower()
+    if cage_env in ("staging", "prod", "production") and not require_cluster:
+        pytest.skip(
+            f"Skipping destructive kind Linkerd probe harness when CAGE_ENV={cage_env!r} "
+            "(live GKE mesh conformance is verified non-destructively by run_gke_e2e_suite.py; "
+            "set CAGE_REQUIRE_LINKERD_CLUSTER=1 to force)."
+        )
 
     if shutil.which("kubectl") is None:
         if require_cluster:

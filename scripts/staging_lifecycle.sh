@@ -222,7 +222,7 @@ unset REGISTRY_URL || true
 export TF_VAR_startup_grace_hours="${TF_VAR_startup_grace_hours:-0}"
 
 E2E_SUITE_SCRIPT="${CAGE_E2E_SUITE_SCRIPT:-$REPO_ROOT/tests/e2e/run_gke_e2e_suite.py}"
-E2E_KEY_FILE=""
+E2E_KEY_FILE="${CAGE_E2E_KEY_FILE:-}"
 DOTENV_SHIELD_PATH=""
 LIVE_ENV_FILE="$(mktemp "${TMPDIR:-/tmp}/cage-live-env-XXXXXX")"
 chmod 600 "$LIVE_ENV_FILE"
@@ -250,7 +250,7 @@ override_keys = {
     "LANGFUSE_COMPLIANCE_PROJECT_ID",
     "GATEWAY_URL",
     "COMPLIANCE_BRIDGE_URL",
-    "BACKEND_URL",
+    "BACKEND_URL", "KMS_GOVERNANCE_KEY", "COMPLIANCE_BRIDGE_INTERNAL_TOKEN", "CAGE_API_KEY",
 }
 lines: list[str] = []
 if src_env.is_file():
@@ -269,13 +269,13 @@ lines.extend(
         f"GOOGLE_CLOUD_LOCATION={region}",
         "CAGE_ENV=staging",
         f"EVIDENCE_ARCHIVE_BUCKET={project_id}-evidence-worm-staging",
-        "LANGFUSE_HOST=http://localhost:3000",
-        "LANGFUSE_COMPLIANCE_HOST=http://localhost:3001",
+        f"KMS_GOVERNANCE_KEY=projects/{project_id}/locations/{region}/keyRings/cage-signing-staging/cryptoKeys/gateway-seal/cryptoKeyVersions/1",
+        "LANGFUSE_HOST=http://localhost:3000", "LANGFUSE_COMPLIANCE_HOST=http://localhost:3001",
         "LANGFUSE_PROJECT_ID=cybernetic-governance",
         "LANGFUSE_COMPLIANCE_PROJECT_ID=cage-compliance",
         "GATEWAY_URL=http://localhost:8080",
         "COMPLIANCE_BRIDGE_URL=http://localhost:3002",
-        "BACKEND_URL=http://localhost:8081",
+        "BACKEND_URL=http://localhost:8081", "COMPLIANCE_BRIDGE_INTERNAL_TOKEN=",
     ]
 )
 dst_env.write_text("\n".join(lines) + "\n", encoding="utf-8")
@@ -527,7 +527,7 @@ on_lifecycle_exit() {
   local rc=$?
   restore_shielded_dotenv
   stop_staging_port_forward
-  rm -f "${LIVE_ENV_FILE:-}" "${E2E_KEY_FILE:-}"
+  rm -f "${LIVE_ENV_FILE:-}"; [[ -z "${CAGE_E2E_KEY_FILE:-}" ]] && rm -f "${E2E_KEY_FILE:-}" || true
   write_gate_w_archive_manifest "$rc"
 }
 trap on_lifecycle_exit EXIT
@@ -1026,10 +1026,10 @@ print(start.strftime("%Y-%m-%dT%H:%M:%SZ"), now.strftime("%Y-%m-%dT%H:%M:%SZ"))
   local ts_raw=""
   local curl_rc=0
   set +e
-  ts_raw="$(curl -fsSL -G \
+  ts_raw="$(curl --http1.1 -fsSL -G \
     "https://monitoring.googleapis.com/v3/projects/${PROJECT_ID}/timeSeries" \
     -H "Authorization: Bearer ${access_token}" \
-    --data-urlencode 'filter=metric.type = starts_with("prometheus.googleapis.com/cage_")' \
+    --data-urlencode 'filter=metric.type = "prometheus.googleapis.com/cage_evidence_verified_batches/gauge"' \
     --data-urlencode "interval.startTime=${start_time}" \
     --data-urlencode "interval.endTime=${end_time}" 2>/dev/null)"
   curl_rc=$?
@@ -1272,7 +1272,7 @@ if [[ "$DRIFT_FAILURES" -eq 0 ]]; then
     --project="$PROJECT_ID"
 
   info "Waiting for all pods in ${NAMESPACE} to be Ready (timeout: 5 minutes)..."
-  if ! kubectl wait --for=condition=Ready pods --all \
+  if ! kubectl wait --for=condition=Ready pods -l '!job-name' \
     -n "$NAMESPACE" \
     --timeout=300s; then
     error "Timed out waiting for pods in ${NAMESPACE} to become Ready."
@@ -1682,7 +1682,7 @@ if not has_custody_ack:
         GOOGLE_CLOUD_LOCATION="$REGION" \
         CAGE_ENV="staging" \
         EVIDENCE_ARCHIVE_BUCKET="${PROJECT_ID}-evidence-worm-staging" \
-        uv run pytest "$REPO_ROOT/tests/infrastructure/test_data_residency.py" --run-integration --env-file "$LIVE_ENV_FILE" -v --tb=short; then
+        uv run --env-file "$LIVE_ENV_FILE" pytest "$REPO_ROOT/tests/infrastructure/test_data_residency.py" --run-integration -v --tb=short; then
       ((POSTURE_FAILURES++)) || true
     fi
 
@@ -1723,24 +1723,24 @@ if not has_custody_ack:
         CAGE_ALLOW_MACOS_TESTS=1 \
         GOOGLE_CLOUD_PROJECT="$PROJECT_ID" \
         GOOGLE_CLOUD_LOCATION="$REGION" \
-        CAGE_LIVE_WORM_BUCKET="${PROJECT_ID}-evidence-worm-staging" \
+        CAGE_LIVE_WORM_BUCKET="${PROJECT_ID}-evidence-worm-staging" KMS_GOVERNANCE_KEY="projects/${PROJECT_ID}/locations/${REGION}/keyRings/cage-signing-staging/cryptoKeys/gateway-seal/cryptoKeyVersions/1" \
         CAGE_CAS_PROJECT_ID="$PROJECT_ID" \
         CAGE_CAS_LOCATION="$REGION" \
         CAGE_CAS_POOL_ID="$(terraform -chdir="$TF_DIR" output -raw service_mesh_ca_pool_name 2>/dev/null || echo "cage-mesh-staging")" \
         CAGE_REQUIRE_LIVE_CAS=1 \
-        uv run pytest "$REPO_ROOT/tests/" -m "live_external and not partner" --run-live-external --env-file "$LIVE_ENV_FILE" -v --tb=short; then
+        uv run --env-file "$LIVE_ENV_FILE" pytest "$REPO_ROOT/tests/" -m "live_external and not partner" --run-live-external -n 0 -v --tb=short; then
       ((SWEEP_FAILURES++)) || true
     fi
 
     info "Running full integration sweep (-m integration --run-integration)..."
     if ! run_pytest_require_passed "Phase 5 integration sweep" \
       env -u CAGE_DEPLOYMENT_REGION \
-        CAGE_ALLOW_MACOS_TESTS=1 \
+        CAGE_ALLOW_MACOS_TESTS=1 KMS_GOVERNANCE_KEY="projects/${PROJECT_ID}/locations/${REGION}/keyRings/cage-signing-staging/cryptoKeys/gateway-seal/cryptoKeyVersions/1" \
         GOOGLE_CLOUD_PROJECT="$PROJECT_ID" \
         GOOGLE_CLOUD_LOCATION="$REGION" \
-        CAGE_ENV="staging" \
+        CAGE_ENV="staging" COMPLIANCE_BRIDGE_INTERNAL_TOKEN="$(kubectl get secret compliance-bridge-secrets -n "$NAMESPACE" -o jsonpath='{.data.COMPLIANCE_BRIDGE_INTERNAL_TOKEN}' 2>/dev/null | base64 --decode || true)" \
         EVIDENCE_ARCHIVE_BUCKET="${PROJECT_ID}-evidence-worm-staging" \
-        uv run pytest "$REPO_ROOT/tests/" -m integration --run-integration --env-file "$LIVE_ENV_FILE" -v --tb=short; then
+        uv run --env-file "$LIVE_ENV_FILE" pytest "$REPO_ROOT/tests/" --ignore="$REPO_ROOT/tests/integration/test_linkerd_mesh_conformance.py" -m integration --run-integration -v --tb=short; then
       ((SWEEP_FAILURES++)) || true
     fi
 
@@ -1779,7 +1779,7 @@ if not has_custody_ack:
         CAGE_ALLOW_MACOS_TESTS=1 \
         GOOGLE_CLOUD_PROJECT="$PROJECT_ID" \
         GOOGLE_CLOUD_LOCATION="$REGION" \
-        uv run pytest "$REPO_ROOT/tests/" -m partner_integration --run-partner-integration --env-file "$LIVE_ENV_FILE" -p tests.fixtures.require_live -n 0 -v --tb=short; then
+        uv run --env-file "$LIVE_ENV_FILE" pytest "$REPO_ROOT/tests/" -m partner_integration --run-partner-integration -p tests.fixtures.require_live -n 0 -v --tb=short; then
       PARTNER_CONFORMANCE_STATUS="passed"
     elif [[ "$ALLOW_PARTNER_OUTAGE" == "true" ]]; then
       PARTNER_CONFORMANCE_STATUS="unreachable_waived"

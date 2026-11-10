@@ -185,7 +185,9 @@ class GatewayMCPClient:
         if stack is not None:
             try:
                 await stack.aclose()
-            except Exception as exc:
+            except BaseException as exc:
+                if isinstance(exc, (KeyboardInterrupt, SystemExit)):
+                    raise
                 logger.debug("Ignoring error while closing stale MCP stack: %s", exc)
 
     async def _open_session_unlocked(self) -> ClientSession:
@@ -223,14 +225,16 @@ class GatewayMCPClient:
                 self.mcp_url,
             )
             return self.session
-        except Exception:
+        except BaseException:
             self.session = None
             self._http_client = None
             self._exit_stack = None
             self._write_stream = None
             try:
                 await stack.aclose()
-            except Exception as close_exc:
+            except BaseException as close_exc:
+                if isinstance(close_exc, (KeyboardInterrupt, SystemExit)):
+                    raise
                 logger.debug("Error closing failed MCP stack: %s", close_exc)
             raise
 

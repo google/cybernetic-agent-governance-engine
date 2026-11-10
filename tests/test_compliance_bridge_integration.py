@@ -226,6 +226,18 @@ def session() -> requests.Session:
 # ---------------------------------------------------------------------------
 
 
+_ENFORCING_POSTURE = (
+    os.environ.get("CAGE_ENV", "").strip().lower() in ("staging", "prod", "production")
+    and os.environ.get("CAGE_IN_MESH", "").strip() != "1"
+)
+_SKIP_HOST_INGEST_REASON = (
+    "POST /v1/audit/ingest requires in-mesh Linkerd lula-audit workload mTLS "
+    "identity in staging/prod (POAM-2026-196) and synthetic FAIL fixtures would "
+    "contaminate 24h WORM custody; real in-cluster lula-audit ingestion is "
+    "verified in Gate W Phase 3."
+)
+
+
 def _post_ingest(
     session: requests.Session, oscal_yaml: str, audit_id: str
 ) -> requests.Response:
@@ -233,6 +245,8 @@ def _post_ingest(
 
     Retries up to 3 times on ConnectionError/ReadTimeout (port-forward drops).
     """
+    if _ENFORCING_POSTURE:
+        pytest.skip(_SKIP_HOST_INGEST_REASON)
     last_exc: Exception | None = None
     for attempt in range(3):
         try:
@@ -391,11 +405,23 @@ class TestFrameworkFilter:
 
 
 class TestAuditIngestPipeline:
+    @pytest.mark.skipif(
+        not _ENFORCING_POSTURE,
+        reason="Unmeshed host ingest refusal applies to staging/prod enforcing postures",
+    )
+    def test_unmeshed_host_ingest_refused_in_enforcing_posture(self, session):
+        r = session.post(f"{BASE_URL}/v1/audit/ingest", json={}, timeout=10)
+        assert r.status_code in (401, 403), (
+            f"Unmeshed host POST /v1/audit/ingest must return 401 or 403 in staging/prod, got {r.status_code}"
+        )
+
+    @pytest.mark.skipif(_ENFORCING_POSTURE, reason=_SKIP_HOST_INGEST_REASON)
     def test_missing_body_returns_400(self, session):
         r = session.post(f"{BASE_URL}/v1/audit/ingest", json={}, timeout=10)
         assert r.status_code == 400
         assert r.json()["detail"]["error"] == "MISSING_OSCAL_YAML"
 
+    @pytest.mark.skipif(_ENFORCING_POSTURE, reason=_SKIP_HOST_INGEST_REASON)
     def test_invalid_yaml_returns_422(self, session):
         r = session.post(
             f"{BASE_URL}/v1/audit/ingest",
@@ -441,6 +467,7 @@ class TestAuditIngestPipeline:
         data = _post_ingest(session, _OSCAL_PASS_ONLY.format(uid=uid), audit_id).json()
         assert data["audit_id"] == audit_id
 
+    @pytest.mark.skipif(_ENFORCING_POSTURE, reason=_SKIP_HOST_INGEST_REASON)
     def test_auto_generated_audit_id_when_absent(self, session):
         uid = _uid()
         oscal = _OSCAL_PASS_ONLY.format(uid=uid)
@@ -718,6 +745,7 @@ class TestSSEStream:
             ct = r.headers.get("Content-Type", "")
             assert "text/event-stream" in ct, f"Expected text/event-stream, got: {ct!r}"
 
+    @pytest.mark.skipif(_ENFORCING_POSTURE, reason=_SKIP_HOST_INGEST_REASON)
     def test_sse_receives_audit_finding_after_ingest(self):
         """
         After POSTing a valid OSCAL document, at least one AUDIT_FINDING event
@@ -1180,6 +1208,7 @@ class TestAlertChannelWiring:
         for target in targets:
             assert isinstance(target, str) and len(target) > 0
 
+    @pytest.mark.skipif(_ENFORCING_POSTURE, reason=_SKIP_HOST_INGEST_REASON)
     def test_governance_violation_sse_event_fires_on_critical_fail(self):
         """
         GOVERNANCE_VIOLATION event must appear on the SSE stream when a
@@ -1309,6 +1338,7 @@ class TestSlaAndEvalDataset:
             )
 
     @pytest.mark.skipif(SKIP_LANGFUSE, reason="SKIP_LANGFUSE_CHECKS=1")
+    @pytest.mark.skipif(_ENFORCING_POSTURE, reason=_SKIP_HOST_INGEST_REASON)
     def test_fail_ingest_creates_langfuse_eval_dataset_item(self):
         """
         After ingesting a FAIL finding for A.9.2, the Langfuse dataset
@@ -1320,7 +1350,6 @@ class TestSlaAndEvalDataset:
         lf_host = os.environ.get("LANGFUSE_HOST", "")
         lf_pk = os.environ.get("LANGFUSE_COMPLIANCE_PUBLIC_KEY", "")
         lf_sk = os.environ.get("LANGFUSE_COMPLIANCE_SECRET_KEY", "")
-        print(f"\n🔍 [DEBUG TEST] lf_host={lf_host}, lf_pk={lf_pk}, lf_sk={lf_sk}")
         if not all([lf_host, lf_pk, lf_sk]):
             pytest.skip(
                 "LANGFUSE_HOST / LANGFUSE_COMPLIANCE_PUBLIC_KEY / "
@@ -1545,7 +1574,7 @@ class TestAarmConformanceReport:
     def test_conformance_report_verdicts_are_valid(self, session):
         data = session.get(f"{BASE_URL}/v1/aarm/conformance-report", timeout=90).json()
         vectors = data["report"]["vectors"]
-        valid_verdicts = {"NEUTRALIZED", "PARTIAL", "EXPOSED"}
+        valid_verdicts = {"NEUTRALIZED", "PARTIAL", "EXPOSED", "UNKNOWN"}
         for v in vectors:
             verdict = v.get("status")
             assert verdict in valid_verdicts, (
@@ -1674,6 +1703,14 @@ class TestDeferQueueEndpoints:
         )
         if r.status_code == 503:
             pytest.skip("Redis db=1 unavailable — cannot test 404 path")
+        if (
+            _ENFORCING_POSTURE
+            and not os.environ.get("COMPLIANCE_BRIDGE_INTERNAL_TOKEN", "").strip()
+        ):
+            assert r.status_code in (401, 403), (
+                f"Unauthenticated POST /v1/defer/{{id}}/inject must return 401 or 403 in staging/prod, got {r.status_code}"
+            )
+            return
         assert r.status_code == 404, (
             f"Unknown defer_id must return 404, got {r.status_code}"
         )

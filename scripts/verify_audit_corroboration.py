@@ -101,6 +101,9 @@ def _https_json(
     payload: dict[str, Any] | None = None,
     timeout_s: float = 30.0,
 ) -> dict[str, Any]:
+    import time
+    import urllib.error
+
     parsed = urllib.parse.urlparse(url)
     if parsed.scheme != "https" or not parsed.netloc:
         raise ValueError(f"refusing non-https URL {url!r}")
@@ -109,9 +112,26 @@ def _https_json(
     if payload is not None:
         headers["Content-Type"] = "application/json"
         data = json.dumps(payload).encode("utf-8")
-    request = urllib.request.Request(url, data=data, headers=headers, method=method)
-    with urllib.request.urlopen(request, timeout=timeout_s) as response:  # nosec B310  # https scheme verified above
-        body = json.loads(response.read().decode("utf-8"))
+
+    raw = b""
+    for attempt in range(4):
+        request = urllib.request.Request(url, data=data, headers=headers, method=method)
+        try:
+            with urllib.request.urlopen(request, timeout=timeout_s) as response:  # nosec B310  # https scheme verified above
+                raw = response.read()
+            break
+        except urllib.error.HTTPError as exc:
+            if exc.code in {429, 500, 502, 503, 504} and attempt < 3:
+                time.sleep(float(2**attempt))
+                continue
+            raise
+        except urllib.error.URLError:
+            if attempt < 3:
+                time.sleep(float(2**attempt))
+                continue
+            raise
+
+    body = json.loads(raw.decode("utf-8"))
     if not isinstance(body, dict):
         raise ValueError(f"expected a JSON object from {parsed.netloc}{parsed.path}")
     return body

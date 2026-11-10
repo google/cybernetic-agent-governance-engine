@@ -1052,7 +1052,7 @@ def _query_cage_evidence_records(
                 )
 
         combined_raw = fetched_raw
-        if use_snapshot_cache:
+        if use_snapshot_cache and fetched_raw:
             with _raw_custody_lock:
                 _raw_custody_cache[raw_cache_key] = list(fetched_raw)
 
@@ -1188,7 +1188,8 @@ async def get_compliance_metrics(
         result = await asyncio.to_thread(
             _fetch_from_evidence_stream_sync, control_id, window_hours
         )
-    _metrics_cache[cache_key] = result
+    if result.total_traces > 0:
+        _metrics_cache[cache_key] = result
     return result
 
 

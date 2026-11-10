@@ -460,3 +460,9 @@ variable "consensus_advisory_only" {
   type        = bool
   default     = false
 }
+
+variable "use_mock_broker" {
+  description = "Enable simulated MockBrokerActuator for execute_trade in non-production environments (USE_MOCK_BROKER). Must be false in production."
+  type        = bool
+  default     = false
+}
