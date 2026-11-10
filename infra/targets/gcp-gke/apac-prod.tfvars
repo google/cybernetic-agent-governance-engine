@@ -159,13 +159,13 @@ vllm_replicas          = 2 # HA for production (MAS TRM §7.2)
 # Update langfuse_nextauth_url to the actual APAC cluster ingress URL after deploy
 langfuse_nextauth_url = "http://localhost:3000"
 
-# ─── Langfuse S3-compatible storage (APAC: GCS bucket in asia-southeast1) ─────
-# GCS HMAC keys and bucket are created in asia-southeast1 via var.region above.
+# ─── Langfuse event storage (APAC: GCS bucket in asia-southeast1 via Workload Identity)
+# Native GCS access uses google_service_account.langfuse Workload Identity when keys are empty.
 # The bucket name is auto-generated: langfuse-event-upload-${project_id}-${random_hex}
 langfuse_s3_endpoint   = "https://storage.googleapis.com"
 langfuse_s3_bucket     = "" # Auto-generated from GCS bucket resource
-langfuse_s3_access_key = "" # Auto-generated from google_storage_hmac_key
-langfuse_s3_secret_key = "" # Auto-generated from google_storage_hmac_key
+langfuse_s3_access_key = "" # Empty selects native GCS Workload Identity (no HMAC key)
+langfuse_s3_secret_key = "" # Empty selects native GCS Workload Identity (no HMAC key)
 
 # ─── Human HITL Operator Identity (POAM-2026-196) ─────────────────────────────
 # Non-secret human OIDC allowlist and trust-anchor defaults; override in

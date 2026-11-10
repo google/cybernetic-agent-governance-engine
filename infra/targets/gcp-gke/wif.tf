@@ -137,7 +137,7 @@ resource "google_service_account_iam_binding" "gateway_partner_token_creator" {
 # Authoritative key-level policy on the dedicated actuator-01-signing KMS key:
 # grants signing and public-key read access exclusively to cage-partner-harness.
 data "google_iam_policy" "partner_harness_kms_signer" {
-  count = var.partner_harness_kms_key != "" ? 1 : 0
+  count = var.partner_harness_kms_keyring != "" && var.partner_harness_kms_key != "" ? 1 : 0
 
   binding {
     role    = "roles/cloudkms.signer"
@@ -156,7 +156,7 @@ data "google_iam_policy" "partner_harness_kms_signer" {
 }
 
 resource "google_kms_crypto_key_iam_policy" "partner_harness_kms_signer" {
-  count         = var.partner_harness_kms_key != "" ? 1 : 0
+  count         = var.partner_harness_kms_keyring != "" && var.partner_harness_kms_key != "" ? 1 : 0
   crypto_key_id = "projects/${var.project_id}/locations/${var.region}/keyRings/${var.partner_harness_kms_keyring}/cryptoKeys/${var.partner_harness_kms_key}"
   policy_data   = data.google_iam_policy.partner_harness_kms_signer[0].policy_data
 }

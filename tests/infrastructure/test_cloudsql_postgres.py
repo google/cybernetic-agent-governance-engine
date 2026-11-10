@@ -220,3 +220,18 @@ def test_langfuse_web_and_worker_deployments_both_include_cloudsql_proxy_sidecar
     langfuse_main = _LANGFUSE_STACK_MAIN.read_text()
     assert langfuse_main.count('name  = "cloud-sql-proxy"') >= 2
     assert langfuse_main.count('"--auto-iam-authn"') >= 2
+
+
+def test_langfuse_gcs_uses_workload_identity_without_hmac_key() -> None:
+    """Langfuse event uploads use native GCS via GKE Workload Identity (no SA HMAC keys)."""
+    gke_main = _GKE_MAIN.read_text()
+    assert 'resource "google_storage_hmac_key" "langfuse_key"' not in gke_main
+    assert 'resource "google_service_account" "langfuse_gcs"' not in gke_main
+    assert (
+        'member = "serviceAccount:${google_service_account.langfuse.email}"' in gke_main
+    )
+    lf_block = _extract_module_block("langfuse", gke_main)
+    assert 'use_google_cloud_storage = var.langfuse_s3_access_key == ""' in lf_block
+
+    langfuse_main = _LANGFUSE_STACK_MAIN.read_text()
+    assert langfuse_main.count('name  = "LANGFUSE_USE_GOOGLE_CLOUD_STORAGE"') == 2

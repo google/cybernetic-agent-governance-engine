@@ -113,6 +113,7 @@ def test_audit_logs_worm_bucket_and_versioned_pem_signing_key_manifest() -> None
     assert manifest_match is not None, (
         "google_storage_bucket_object.signing_key_manifest not found"
     )
+    assert 'deletion_policy = "ABANDON"' in manifest_match.group(1)
     assert "create_before_destroy = true" in manifest_match.group(1)
     assert "prevent_destroy = true" not in manifest_match.group(1)
     assert "-----BEGIN PUBLIC KEY-----" in manifest_match.group(1)

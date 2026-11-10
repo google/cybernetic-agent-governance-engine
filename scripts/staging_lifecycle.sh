@@ -1110,6 +1110,7 @@ if [[ "$FRESH_PROJECT" == "true" ]]; then
     FRESH_PROJECT_TARGET_MODE="$(
       PRE_INV_OUT="$PRE_RUN_INVENTORY_JSON" \
       PRE_INV_PROJECT="$PROJECT_ID" \
+      PRE_INV_REGION="$REGION" \
       PRE_INV_SERVICES="$_pre_services" \
       PRE_INV_BUCKETS="$_pre_buckets" \
       PRE_INV_REPOS="$_pre_repos" \
@@ -1121,8 +1122,7 @@ if [[ "$FRESH_PROJECT" == "true" ]]; then
       PRE_INV_VPCS="$_pre_vpcs" \
       python3 - <<'PY'
 from datetime import datetime, timezone
-import json
-import os
+import json, os, subprocess
 from pathlib import Path
 
 
@@ -1130,31 +1130,30 @@ def _lines(key: str) -> list[str]:
     return sorted({s.strip() for s in os.environ.get(key, "").splitlines() if s.strip()})
 
 
+def _gcloud(args: list[str]) -> list[str]:
+    r = subprocess.run(["gcloud", *args], capture_output=True, text=True, check=False)
+    return sorted({s.strip() for s in r.stdout.splitlines() if s.strip()}) if r.returncode == 0 else []
+
+
 proj = os.environ["PRE_INV_PROJECT"]
+region = os.environ["PRE_INV_REGION"]
 services = _lines("PRE_INV_SERVICES")
 buckets = _lines("PRE_INV_BUCKETS")
 repos = _lines("PRE_INV_REPOS")
 keyrings = _lines("PRE_INV_KEYRINGS")
+kms_keys = sorted({
+    k
+    for kr in keyrings
+    for k in _gcloud(["kms", "keys", "list", f"--keyring={kr}", f"--location={region}", f"--project={proj}", "--format=value(name)"])
+})
+worm_objs = [o for o in _gcloud(["storage", "ls", f"gs://{proj}-evidence-worm-staging/evidence-stream/**", f"--project={proj}"]) if not o.endswith("/:")]
 attestors = [a for a in _lines("PRE_INV_ATTESTORS") if a != "built-by-cloud-build"]
-custom_sas = [
-    sa for sa in _lines("PRE_INV_SAS") if sa.endswith(f"@{proj}.iam.gserviceaccount.com")
-]
+custom_sas = [sa for sa in _lines("PRE_INV_SAS") if sa.endswith(f"@{proj}.iam.gserviceaccount.com")]
 clusters = _lines("PRE_INV_CLUSTERS")
 sql_instances = _lines("PRE_INV_SQL")
 custom_vpcs = [v for v in _lines("PRE_INV_VPCS") if v != "default"]
 
-has_prior_cage_residue = any(
-    (
-        buckets,
-        repos,
-        keyrings,
-        attestors,
-        custom_sas,
-        clusters,
-        sql_instances,
-        custom_vpcs,
-    )
-)
+has_prior_cage_residue = any((buckets, repos, keyrings, kms_keys, attestors, custom_sas, clusters, sql_instances, custom_vpcs))
 mode = (
     "fresh_project_with_phase0_kms_residue"
     if has_prior_cage_residue
@@ -1166,8 +1165,10 @@ payload = {
     "has_prior_cage_residue": has_prior_cage_residue,
     "enabled_services_count": len(services),
     "gcs_buckets": buckets,
+    "pre_run_evidence_stream_object_count": len(worm_objs),
     "artifact_repositories": repos,
     "kms_keyrings": keyrings,
+    "kms_crypto_keys": kms_keys,
     "binauthz_attestors": attestors,
     "custom_service_accounts": custom_sas,
     "gke_clusters": clusters,
@@ -1186,8 +1187,7 @@ PY
   else
     python3 - "$PRE_RUN_INVENTORY_JSON" <<'PY'
 from datetime import datetime, timezone
-import json
-import sys
+import json, sys
 from pathlib import Path
 
 payload = {
@@ -1195,9 +1195,9 @@ payload = {
     "project_pre_existed": False,
     "has_prior_cage_residue": False,
     "enabled_services_count": 0,
-    "gcs_buckets": [],
+    "gcs_buckets": [], "pre_run_evidence_stream_object_count": 0,
     "artifact_repositories": [],
-    "kms_keyrings": [],
+    "kms_keyrings": [], "kms_crypto_keys": [],
     "binauthz_attestors": [],
     "custom_service_accounts": [],
     "gke_clusters": [],

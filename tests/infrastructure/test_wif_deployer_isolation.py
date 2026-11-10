@@ -133,3 +133,19 @@ def test_github_deployer_ref_variable_forbids_wildcards() -> None:
     assert 'default     = "refs/heads/main"' in variables_text
     assert 'startswith(var.github_deployer_ref, "refs/heads/")' in variables_text
     assert '!endswith(var.github_deployer_ref, "*")' in variables_text
+
+
+def test_partner_harness_kms_key_defaults_empty_for_clean_projects() -> None:
+    variables_text = VARIABLES_TF.read_text(encoding="utf-8")
+    match = re.search(
+        r'variable\s+"partner_harness_kms_key"\s*\{(.*?)\n\}',
+        variables_text,
+        re.DOTALL,
+    )
+    assert match is not None
+    assert 'default     = ""' in match.group(1)
+    wif_text = WIF_TF.read_text(encoding="utf-8")
+    assert (
+        'var.partner_harness_kms_keyring != "" && var.partner_harness_kms_key != ""'
+        in wif_text
+    )

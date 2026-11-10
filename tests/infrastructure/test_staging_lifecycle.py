@@ -1644,6 +1644,10 @@ def test_staging_lifecycle_records_phase0_kms_residue_when_project_pre_exists(
         'if [[ "$*" == *"kms keyrings list"* ]]; then\n'
         '  echo "projects/ephemeral-proj-99/locations/us-central1/keyRings/cage-signing-staging"\n'
         "  exit 0\n"
+        "fi\n"
+        'if [[ "$*" == *"kms keys list"* ]]; then\n'
+        '  echo "projects/ephemeral-proj-99/locations/us-central1/keyRings/cage-signing-staging/cryptoKeys/binauthz-attestor"\n'
+        "  exit 0\n"
         "fi",
     )
     _write_executable(gcloud_path, gcloud_body)
@@ -1672,6 +1676,10 @@ def test_staging_lifecycle_records_phase0_kms_residue_when_project_pre_exists(
     pre_state = manifest["pre_existing_project_state"]
     assert pre_state["project_pre_existed"] is True
     assert pre_state["has_prior_cage_residue"] is True
+    assert pre_state["pre_run_evidence_stream_object_count"] == 0
     assert pre_state["kms_keyrings"] == [
         "projects/ephemeral-proj-99/locations/us-central1/keyRings/cage-signing-staging"
+    ]
+    assert pre_state["kms_crypto_keys"] == [
+        "projects/ephemeral-proj-99/locations/us-central1/keyRings/cage-signing-staging/cryptoKeys/binauthz-attestor"
     ]

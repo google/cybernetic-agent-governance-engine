@@ -1318,7 +1318,7 @@ variable "partner_harness_kms_keyring" {
 variable "partner_harness_kms_key" {
   description = "Cloud KMS CryptoKey name granted to cage-partner-harness for CI partner integration signing (POAM-2026-165). Empty string skips the key binding."
   type        = string
-  default     = "actuator-01-signing"
+  default     = ""
 }
 
 # ─── Pre-W Evidence Survival: Reconciler & GMP PodMonitoring (PR-11) ──────────

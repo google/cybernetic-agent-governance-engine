@@ -55,7 +55,7 @@ CAGE_DEPLOYMENT_REGION=US_FED ./deploy_all.sh --target gcp-gke --env prod \
 3. Runs `terraform init` and `terraform plan` in the target directory
 4. Pre-builds all container images via Cloud Build (`scripts/build_images.sh`)
    before `terraform apply` to eliminate race conditions
-5. Runs `terraform apply -parallelism=1` (serialised to avoid K8s API thrashing)
+5. Runs `terraform apply` (Stage 1 cluster foundation first when `module.gke` is absent from state, followed by full Stage 2 apply)
 6. Prints `terraform output deployment_summary`
 
 ### Terraform State Backends
