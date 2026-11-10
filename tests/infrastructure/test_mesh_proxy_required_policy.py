@@ -158,3 +158,7 @@ def test_target_requires_the_proxy_in_the_namespace_it_meshes() -> None:
     assert '"linkerd.io/inject" = "enabled"' in namespace
     mesh = _block(target, "module", "service_mesh", "")
     assert "proxy_required_namespaces = [var.namespace]" in mesh
+    assert (
+        'ca_pool_id             = "cage-mesh-${var.environment}-${random_id.mesh_ca_pool_suffix.hex}"'
+        in mesh
+    )

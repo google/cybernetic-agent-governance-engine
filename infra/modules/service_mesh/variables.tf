@@ -62,3 +62,9 @@ variable "enable_deletion_protection" {
   type        = bool
   default     = true
 }
+
+variable "ca_pool_id" {
+  description = "Optional explicit Google CAS CaPool ID. Google CAS permanently forbids reusing deleted CaPool IDs in the same project/region, so ephemeral deployments pass a random-suffixed ID."
+  type        = string
+  default     = ""
+}

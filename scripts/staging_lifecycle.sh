@@ -1726,7 +1726,7 @@ if not has_custody_ack:
         CAGE_LIVE_WORM_BUCKET="${PROJECT_ID}-evidence-worm-staging" \
         CAGE_CAS_PROJECT_ID="$PROJECT_ID" \
         CAGE_CAS_LOCATION="$REGION" \
-        CAGE_CAS_POOL_ID="cage-mesh-staging" \
+        CAGE_CAS_POOL_ID="$(terraform -chdir="$TF_DIR" output -raw service_mesh_ca_pool_name 2>/dev/null || echo "cage-mesh-staging")" \
         CAGE_REQUIRE_LIVE_CAS=1 \
         uv run pytest "$REPO_ROOT/tests/" -m "live_external and not partner" --run-live-external --env-file "$LIVE_ENV_FILE" -v --tb=short; then
       ((SWEEP_FAILURES++)) || true
@@ -1805,7 +1805,7 @@ if not has_custody_ack:
     AUDIT_CORROBORATION_SCRIPT="${CAGE_AUDIT_CORROBORATION_SCRIPT:-$REPO_ROOT/scripts/verify_audit_corroboration.py}"
     if [[ -f "$AUDIT_CORROBORATION_SCRIPT" ]]; then
       info "Running Cloud Audit Log corroboration hook (${AUDIT_CORROBORATION_SCRIPT})..."
-      if ! CAGE_ALLOW_MACOS_TESTS=1 uv run python "$AUDIT_CORROBORATION_SCRIPT" --project "$PROJECT_ID"; then
+      if ! CAGE_ALLOW_MACOS_TESTS=1 uv run python "$AUDIT_CORROBORATION_SCRIPT" --project "$PROJECT_ID" --output "$ARCHIVE_DIR/audit-corroboration-phase5.json"; then
         error "Cloud Audit Log corroboration hook FAILED: ${AUDIT_CORROBORATION_SCRIPT}"
         ((TELEMETRY_FAILURES++)) || true
       else
@@ -2013,7 +2013,7 @@ if ! has_gate_failures && [[ "$SKIP_REBUILD" == "false" ]]; then
             if [[ ! -f "$AUDIT_CORROBORATION_SCRIPT" ]]; then
               error "Stage 5b required AS-6 Cloud Audit Log corroboration script missing: ${AUDIT_CORROBORATION_SCRIPT}"
               ((REBUILD_FAILURES++)) || true
-            elif ! uv run python "$AUDIT_CORROBORATION_SCRIPT" --project "$PROJECT_ID"; then
+            elif ! CAGE_ALLOW_MACOS_TESTS=1 uv run python "$AUDIT_CORROBORATION_SCRIPT" --project "$PROJECT_ID" --output "$ARCHIVE_DIR/audit-corroboration-stage5b.json"; then
               error "Stage 5b post-rebuild Cloud Audit Log corroboration FAILED: ${AUDIT_CORROBORATION_SCRIPT}"
               ((REBUILD_FAILURES++)) || true
             else
