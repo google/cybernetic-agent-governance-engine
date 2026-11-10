@@ -110,3 +110,81 @@ def test_webauthn_binding_and_url_scheme_validation() -> None:
     assert validate_http_url("http://localhost:3002/") == "http://localhost:3002"
     with pytest.raises(ValueError, match="http:// or https://"):
         validate_http_url("file:///etc/passwd")
+
+
+def test_standalone_sys_path_resolves_cage_conformance() -> None:
+    import sys
+
+    from cage_conformance.runner import HttpResponse
+
+    from tests.e2e import run_gke_e2e_suite
+
+    assert str(run_gke_e2e_suite._CONFORMANCE_SRC) in sys.path
+    resp = HttpResponse(status_code=200, headers={}, body=b"{}")
+    assert resp.status_code == 200
+
+
+def test_wait_for_seeded_metrics_polls_v1_metrics_endpoint(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import inspect
+
+    import httpx
+
+    from tests.e2e import run_gke_e2e_suite
+
+    sig = inspect.signature(run_gke_e2e_suite._wait_for_seeded_metrics)
+    assert sig.parameters["timeout_seconds"].default == 120
+
+    seen_urls: list[str] = []
+    call_counts: dict[str, int] = {}
+
+    class _FakeResponse:
+        def __init__(self, status_code: int, payload: dict[str, object]) -> None:
+            self.status_code = status_code
+            self._payload = payload
+
+        def json(self) -> dict[str, object]:
+            return self._payload
+
+    class _FakeClient:
+        def __init__(self, *args: object, **kwargs: object) -> None:
+            del args, kwargs
+
+        def __enter__(self) -> _FakeClient:
+            return self
+
+        def __exit__(self, *args: object) -> None:
+            del args
+
+        def get(self, url: str) -> _FakeResponse:
+            seen_urls.append(url)
+            call_counts[url] = call_counts.get(url, 0) + 1
+            if call_counts[url] == 1:
+                return _FakeResponse(
+                    200,
+                    {
+                        "total_traces": 0,
+                        "safety_rate": 1.0,
+                        "startup_grace_active": False,
+                    },
+                )
+            return _FakeResponse(
+                200,
+                {"total_traces": 2, "safety_rate": 1.0, "startup_grace_active": False},
+            )
+
+    monkeypatch.setattr(httpx, "Client", _FakeClient)
+    monkeypatch.setattr(run_gke_e2e_suite.time, "sleep", lambda _s: None)
+
+    ready = run_gke_e2e_suite._wait_for_seeded_metrics(
+        "http://localhost:3002/",
+        ["A.5.2", "A.5.3", "A.9.2"],
+    )
+    assert set(ready) == {"A.5.2", "A.5.3", "A.9.2"}
+    assert all("/api/v1/compliance/metrics/" not in u for u in seen_urls)
+    assert set(seen_urls) == {
+        "http://localhost:3002/v1/metrics/A.5.2",
+        "http://localhost:3002/v1/metrics/A.5.3",
+        "http://localhost:3002/v1/metrics/A.9.2",
+    }

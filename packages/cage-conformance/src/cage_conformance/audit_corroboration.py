@@ -813,6 +813,76 @@ def _classify_control_plane_mutation(
     return None
 
 
+_GCP_SERVICE_AGENT_MANAGER_PRINCIPAL = (
+    "service-agent-manager@system.gserviceaccount.com"
+)
+_GCP_P4SA_MEMBER_RE = re.compile(
+    r"^serviceaccount:service-\d+@[a-z0-9-]+\.iam\.gserviceaccount\.com$"
+)
+_GCP_SERVICE_AGENT_ROLE_RE = re.compile(
+    r"^roles/[a-z0-9.]*serviceagent$", re.IGNORECASE
+)
+
+
+def _is_gcp_service_agent_bootstrap(
+    proto: Mapping[str, Any],
+    *,
+    service_name: str,
+    method_name: str,
+    principal: str,
+    status_code: int,
+) -> bool:
+    """True only for Google platform P4SA IAM bootstrap during API enablement.
+
+    Enabling GCP APIs on a fresh project causes Google's internal
+    ``service-agent-manager@system.gserviceaccount.com`` to bind per-product
+    service agents (``service-<project_number>@*.iam.gserviceaccount.com``) to
+    their ``roles/*ServiceAgent`` role via ``SetIamPolicy`` (plus transient
+    gRPC ``INVALID_ARGUMENT``/``ABORTED`` optimistic-lock retries with empty
+    ``policyDelta`` when APIs are enabled in parallel). Any ``auditConfigDeltas``,
+    ``REMOVE`` actions, non-P4SA members, or non-``*ServiceAgent`` roles fail
+    closed as ``UNAUTHORIZED_CONTROL_PLANE_MUTATION``.
+    """
+    if principal != _GCP_SERVICE_AGENT_MANAGER_PRINCIPAL:
+        return False
+    if service_name.lower() != "cloudresourcemanager.googleapis.com":
+        return False
+    if method_name.lower().rsplit(".", 1)[-1] != "setiampolicy":
+        return False
+
+    service_data = proto.get("serviceData")
+    policy_delta = (
+        service_data.get("policyDelta") if isinstance(service_data, Mapping) else None
+    )
+
+    if status_code in {3, 10}:
+        if not isinstance(policy_delta, Mapping):
+            return True
+        return not policy_delta.get("auditConfigDeltas") and not policy_delta.get(
+            "bindingDeltas"
+        )
+
+    if status_code != 0 or not isinstance(policy_delta, Mapping):
+        return False
+    if policy_delta.get("auditConfigDeltas"):
+        return False
+    binding_deltas = policy_delta.get("bindingDeltas")
+    if not isinstance(binding_deltas, list) or not binding_deltas:
+        return False
+    for delta in binding_deltas:
+        if not isinstance(delta, Mapping):
+            return False
+        if str(delta.get("action", "")).upper() != "ADD":
+            return False
+        member = str(delta.get("member", "")).strip().lower()
+        role = str(delta.get("role", "")).strip()
+        if not _GCP_P4SA_MEMBER_RE.fullmatch(member):
+            return False
+        if not _GCP_SERVICE_AGENT_ROLE_RE.fullmatch(role):
+            return False
+    return True
+
+
 def parse_cloud_audit_log_entry(
     entry: Mapping[str, Any],
 ) -> KmsSignLogEvent | ControlPlaneMutationEvent | None:
@@ -862,6 +932,14 @@ def parse_cloud_audit_log_entry(
         or "cloudaudit.googleapis.com/activity" in log_name
     )
     if not is_admin_activity:
+        return None
+    if _is_gcp_service_agent_bootstrap(
+        proto,
+        service_name=service_name,
+        method_name=method_name,
+        principal=principal,
+        status_code=status_code,
+    ):
         return None
     reason = _classify_control_plane_mutation(
         service_name, method_name, resource_name, principal

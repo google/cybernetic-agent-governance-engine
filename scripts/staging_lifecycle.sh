@@ -1484,7 +1484,6 @@ if [[ "$READINESS_FAILED" == "false" ]]; then
       error "No Lula validation files found in compliance/lula/"
       ((LULA_FAILURES++)) || true
     else
-      assessment_out="$REPO_ROOT/compliance/lula/assessment-results.yaml"
       for validation_file in "${validation_files[@]}"; do
         base_name="$(basename "$validation_file")"
         if grep -Eq '^#[[:space:]]*cage-status:[[:space:]]*planned([[:space:]]|$)' "$validation_file"; then
@@ -1501,15 +1500,13 @@ if [[ "$READINESS_FAILED" == "false" ]]; then
         spec_stem="${base_name%.yaml}"
         spec_stem="${spec_stem#lula-validation-}"
         per_spec_out="$ARCHIVE_DIR/lula/assessment-results-${spec_stem}.yaml"
-        rm -f "$assessment_out" "$per_spec_out"
+        rm -f "$per_spec_out"
         if ! lula validate -f "$validation_file" -o "$per_spec_out"; then
           error "Lula validation failed: ${base_name}"
           ((LULA_FAILURES++)) || true
         elif ! verify_lula_assessment_file "$per_spec_out" "${base_name}"; then
           error "Lula validation verdict not-satisfied or 0 observations: ${base_name}"
           ((LULA_FAILURES++)) || true
-        else
-          cp -f "$per_spec_out" "$assessment_out"
         fi
       done
 
