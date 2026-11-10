@@ -1703,3 +1703,100 @@ def test_destroy_sigpipe_safe_and_gke_neg_ignore_annotations() -> None:
     ).read_text(encoding="utf-8")
     assert "ignore_annotations" in providers_tf
     assert "^cloud\\\\.google\\\\.com/neg(-status)?$" in providers_tf
+
+
+def test_pf9_manifest_distinguishes_preexisting_vs_retained_by_design_buckets_and_skip_provision(
+    tmp_path: Path,
+) -> None:
+    repo, bin_dir, log_file = _setup_fake_repo(tmp_path)
+    gcloud_path = bin_dir / "gcloud"
+    gcloud_body = gcloud_path.read_text(encoding="utf-8")
+    # Pre-existing project starts with evidence-worm-staging + tfstate; post-destroy also
+    # holds a newly created 1-day-locked langfuse-event-upload-<proj>-a1b2c3d4 bucket.
+    marker_file = tmp_path / "provisioned.marker"
+    gcloud_body = gcloud_body.replace(
+        'if [[ "$*" == *"projects describe"* ]]; then\n  exit 1\nfi',
+        'if [[ "$*" == *"projects describe"* ]]; then\n  exit 0\nfi\n'
+        'if [[ "$*" == *"storage buckets list"* ]]; then\n'
+        '  echo "ephemeral-proj-99-tfstate"\n'
+        '  echo "ephemeral-proj-99-evidence-worm-staging"\n'
+        f'  if [[ -f "{marker_file}" ]]; then\n'
+        '    echo "langfuse-event-upload-ephemeral-proj-99-a1b2c3d4"\n'
+        "  fi\n"
+        "  exit 0\n"
+        "fi",
+    )
+    _write_executable(gcloud_path, gcloud_body)
+
+    deploy_path = repo / "deploy_all.sh"
+    deploy_body = deploy_path.read_text(encoding="utf-8")
+    deploy_body = deploy_body.replace(
+        "exit 0",
+        f'touch "{marker_file}"\nexit 0',
+    )
+    _write_executable(deploy_path, deploy_body)
+
+    archive_dir = tmp_path / "archive-pf9-diff"
+    proc = subprocess.run(
+        [
+            "bash",
+            str(repo / "scripts" / "staging_lifecycle.sh"),
+            "--fresh-project=ephemeral-proj-99",
+            f"--archive-dir={archive_dir}",
+            "--skip-lula",
+            "--skip-posture",
+            "--skip-live-sweep",
+            "--skip-telemetry",
+            "--skip-rebuild",
+        ],
+        env=_base_env(bin_dir),
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert proc.returncode == 0, proc.stderr
+    manifest = json.loads((archive_dir / "manifest.json").read_text(encoding="utf-8"))
+    pre_state = manifest["pre_existing_project_state"]
+    post_state = manifest["post_destroy_project_state"]
+    assert pre_state is not None and post_state is not None
+    assert post_state["buckets_pre_existed"] == [
+        "ephemeral-proj-99-evidence-worm-staging",
+        "ephemeral-proj-99-tfstate",
+    ]
+    assert post_state["buckets_created_and_retained_this_run"] == [
+        "langfuse-event-upload-ephemeral-proj-99-a1b2c3d4"
+    ]
+    assert post_state["buckets_retained_by_design"]["langfuse_retention_locked"] == [
+        "langfuse-event-upload-ephemeral-proj-99-a1b2c3d4"
+    ]
+    assert post_state["buckets_unexpected_survivors"] == []
+
+    # Verify --skip-provision skips deploy_all.sh and marks full_unskipped_gate_w = False.
+    log_file.write_text("", encoding="utf-8")
+    archive_skip_prov = tmp_path / "archive-skip-prov"
+    proc_skip = subprocess.run(
+        [
+            "bash",
+            str(repo / "scripts" / "staging_lifecycle.sh"),
+            "--project=ephemeral-proj-99",
+            f"--archive-dir={archive_skip_prov}",
+            "--skip-provision",
+            "--skip-lula",
+            "--skip-posture",
+            "--skip-live-sweep",
+            "--skip-telemetry",
+            "--skip-rebuild",
+            "--no-destroy",
+        ],
+        env=_base_env(bin_dir),
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert proc_skip.returncode == 0, proc_skip.stderr
+    assert "deploy_all.sh" not in log_file.read_text(encoding="utf-8")
+    manifest_skip = json.loads(
+        (archive_skip_prov / "manifest.json").read_text(encoding="utf-8")
+    )
+    assert manifest_skip["overall_status"] == "PARTIAL_PASS"
+    assert manifest_skip["full_unskipped_gate_w"] is False

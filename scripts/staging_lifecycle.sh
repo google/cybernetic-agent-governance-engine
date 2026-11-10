@@ -63,7 +63,7 @@ CYAN='\033[0;36m'
 RESET='\033[0m'
 
 # ─── Parse arguments ──────────────────────────────────────────────────────────
-SKIP_LULA=false
+SKIP_PROVISION=false; SKIP_LULA=false
 SKIP_POSTURE=false
 SKIP_LIVE_SWEEP=false
 SKIP_TELEMETRY=false
@@ -93,8 +93,8 @@ Options:
   --archive-dir=<path>     Output directory for the Gate W evidence archive & manifest.json
                            (default: artifacts/w-run-<UTC>)
   --enable-e2e-advisor     Opt-in non-production E2E advisor + deterministic inference-stub mode
-  --allow-partner-outage   Record partner_conformance_status=unreachable_waived if partner
-                           sandbox is unreachable instead of aborting the rest of Gate W
+  --allow-partner-outage   Record partner_conformance_status=unreachable_waived on partner outage
+  --skip-provision         Skip Phase 0–1 provisioning (resume validation on running cluster)
   --skip-lula              Skip Phase 3 Lula validation
   --skip-posture           Skip Phase 4 region posture, residency, and Langfuse checks
   --skip-live-sweep        Skip Phase 5 live_external, integration, and conformance sweeps
@@ -107,10 +107,9 @@ EOF
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
+    --skip-provision) SKIP_PROVISION=true; shift ;;
     --skip-lula)
-      SKIP_LULA=true
-      shift
-      ;;
+      SKIP_LULA=true; shift ;;
     --skip-posture)
       SKIP_POSTURE=true
       shift
@@ -369,7 +368,7 @@ write_gate_w_archive_manifest() {
   MANIFEST_ENABLE_E2E="$ENABLE_E2E_ADVISOR" \
   MANIFEST_ALLOW_PARTNER_OUTAGE="$ALLOW_PARTNER_OUTAGE" \
   MANIFEST_ALLOW_LEGACY_SURVIVOR="$ALLOW_LEGACY_LIEN_SURVIVOR" \
-  MANIFEST_SKIP_LULA="$SKIP_LULA" \
+  MANIFEST_SKIP_PROVISION="$SKIP_PROVISION" MANIFEST_SKIP_LULA="$SKIP_LULA" \
   MANIFEST_SKIP_POSTURE="$SKIP_POSTURE" \
   MANIFEST_SKIP_LIVE_SWEEP="$SKIP_LIVE_SWEEP" \
   MANIFEST_SKIP_TELEMETRY="$SKIP_TELEMETRY" \
@@ -416,7 +415,7 @@ exit_code = _i("MANIFEST_EXIT_CODE")
 any_skip = any(
     _b(k)
     for k in (
-        "MANIFEST_SKIP_LULA",
+        "MANIFEST_SKIP_PROVISION", "MANIFEST_SKIP_LULA",
         "MANIFEST_SKIP_POSTURE",
         "MANIFEST_SKIP_LIVE_SWEEP",
         "MANIFEST_SKIP_TELEMETRY",
@@ -456,15 +455,15 @@ if suites_path.is_file():
         if line.strip():
             suites.append(json.loads(line))
 
-pre_inventory = None
-inv_path_raw = os.environ.get("MANIFEST_PRE_INVENTORY_JSON", "").strip()
-if inv_path_raw:
-    inv_path = Path(inv_path_raw)
-    if inv_path.is_file():
-        try:
-            pre_inventory = json.loads(inv_path.read_text(encoding="utf-8"))
-        except Exception:
-            pre_inventory = None
+def _opt_json(p: Path | None):
+    try:
+        return json.loads(p.read_text(encoding="utf-8")) if p and p.is_file() else None
+    except Exception:
+        return None
+
+inv_raw = os.environ.get("MANIFEST_PRE_INVENTORY_JSON", "").strip()
+pre_inventory = _opt_json(Path(inv_raw) if inv_raw else None)
+post_inventory = _opt_json(Path(os.environ["MANIFEST_OUT"]).parent / "post-destroy-project-inventory.json")
 
 planned_specs = [
     s for s in os.environ.get("MANIFEST_LULA_PLANNED", "").splitlines() if s.strip()
@@ -483,6 +482,7 @@ manifest = {
     "cage_deployment_region": os.environ.get("MANIFEST_CAGE_REGION", "US_FED"),
     "deployment_target_mode": os.environ.get("MANIFEST_TARGET_MODE", ""),
     "pre_existing_project_state": pre_inventory,
+    "post_destroy_project_state": post_inventory,
     "startup_grace_hours": _i("MANIFEST_STARTUP_GRACE"),
     "enable_e2e_advisor": _b("MANIFEST_ENABLE_E2E"),
     "allow_partner_outage": _b("MANIFEST_ALLOW_PARTNER_OUTAGE"),
@@ -1089,7 +1089,7 @@ check_gate_failures() {
 }
 
 # ─── Phase 0 (Optional): Fresh-Project Bootstrap ──────────────────────────────
-if [[ "$FRESH_PROJECT" == "true" ]]; then
+if [[ "$FRESH_PROJECT" == "true" && "$SKIP_PROVISION" == "false" ]]; then
   echo ""
   echo -e "${CYAN}╔══════════════════════════════════════════════════════════════════╗${RESET}"
   echo -e "${CYAN}║  Phase 0: Fresh-project bootstrap (${PROJECT_ID})                ║${RESET}"
@@ -1243,13 +1243,12 @@ echo -e "${CYAN}╔════════════════════�
 echo -e "${CYAN}║  Phase 1: Provisioning staging + zero-drift read-back            ║${RESET}"
 echo -e "${CYAN}╚══════════════════════════════════════════════════════════════════╝${RESET}"
 echo ""
-if [[ "$FRESH_PROJECT" == "true" && -z "${TF_VAR_evidence_previous_chain_head_hash:-}" ]]; then _anchor_script="${CAGE_WORM_ANCHOR_SCRIPT:-$REPO_ROOT/scripts/read_worm_chain_anchor.py}"; if [[ -f "$_anchor_script" ]]; then _anchor_py="$REPO_ROOT/.venv/bin/python"; [[ -x "$_anchor_py" ]] || _anchor_py="python3"; _pre_worm_exp="$(GOOGLE_API_USE_CLIENT_CERTIFICATE=false "$_anchor_py" "$_anchor_script" --gcs-bucket="${PROJECT_ID}-evidence-worm-staging" --gcs-project="$PROJECT_ID" --kms-key="projects/${PROJECT_ID}/locations/${REGION}/keyRings/cage-signing-staging/cryptoKeys/compliance-evidence/cryptoKeyVersions/1" --pre-run-inventory="$PRE_RUN_INVENTORY_JSON" --stream-key="cage:evidence:stream" --if-exists --format=export)" || exit 1; eval "$_pre_worm_exp"; fi; fi
-info "Deploying staging with full security posture..."
+if [[ "$FRESH_PROJECT" == "true" && "$SKIP_PROVISION" == "false" && -z "${TF_VAR_evidence_previous_chain_head_hash:-}" ]]; then _anchor_script="${CAGE_WORM_ANCHOR_SCRIPT:-$REPO_ROOT/scripts/read_worm_chain_anchor.py}"; if [[ -f "$_anchor_script" ]]; then _anchor_py="$REPO_ROOT/.venv/bin/python"; [[ -x "$_anchor_py" ]] || _anchor_py="python3"; _pre_worm_exp="$(GOOGLE_API_USE_CLIENT_CERTIFICATE=false "$_anchor_py" "$_anchor_script" --gcs-bucket="${PROJECT_ID}-evidence-worm-staging" --gcs-project="$PROJECT_ID" --kms-key="projects/${PROJECT_ID}/locations/${REGION}/keyRings/cage-signing-staging/cryptoKeys/compliance-evidence/cryptoKeyVersions/1" --pre-run-inventory="$PRE_RUN_INVENTORY_JSON" --stream-key="cage:evidence:stream" --if-exists --format=export)" || exit 1; eval "$_pre_worm_exp"; fi; fi
+if [[ "$SKIP_PROVISION" == "false" ]]; then info "Deploying staging with full security posture..."
 if ! "$REPO_ROOT/deploy_all.sh" --target gcp-gke --env staging --auto-approve ${DEPLOY_EXTRA_ARGS[@]+"${DEPLOY_EXTRA_ARGS[@]}"}; then
   error "Staging provision failed. Check Terraform output above."
   exit 1
 fi
-
 success "Staging environment provisioned successfully"
 
 if ! run_zero_drift_plan "Phase 1"; then
@@ -1257,6 +1256,7 @@ if ! run_zero_drift_plan "Phase 1"; then
   READINESS_FAILED=true
   error "Post-apply zero-drift check FAILED — skipping validation phases and proceeding to teardown."
 fi
+else warn "Phase 0–1 provisioning and zero-drift read-back skipped (--skip-provision flag)"; fi
 
 # ─── Phase 2: Dynamic Workload Readiness & restartCount == 0 (FAIL CLOSED) ───
 if [[ "$DRIFT_FAILURES" -eq 0 ]]; then
@@ -2085,6 +2085,85 @@ if [[ "$FRESH_PROJECT" == "true" ]]; then
     error "Surviving project deletion lien(s) after destroy: $remaining_liens"
     ((SURVIVORS++)) || true
   fi
+
+  _post_all_buckets="$(gcloud storage buckets list --project="$PROJECT_ID" --format='value(name)' 2>/dev/null || true)"
+  _post_all_liens="$(gcloud alpha resource-manager liens list --project="$PROJECT_ID" --format='value(name,restrictions)' 2>/dev/null || true)"
+  POST_INV_OUT="$ARCHIVE_DIR/post-destroy-project-inventory.json" \
+  POST_INV_PRE="$PRE_RUN_INVENTORY_JSON" \
+  POST_INV_PROJECT="$PROJECT_ID" \
+  POST_INV_ALLOW_LEGACY="$ALLOW_LEGACY_LIEN_SURVIVOR" \
+  POST_INV_ALL_BUCKETS="$_post_all_buckets" \
+  POST_INV_UNEXPECTED_BUCKETS="$remaining_buckets" \
+  POST_INV_CLUSTERS="$remaining_clusters" \
+  POST_INV_SQL="$remaining_sql" \
+  POST_INV_ALL_LIENS="$_post_all_liens" \
+  POST_INV_UNEXPECTED_LIENS="$remaining_liens" \
+  python3 - <<'PY' || true
+from datetime import datetime, timezone
+import json, os, re, subprocess
+from pathlib import Path
+
+
+def _lines(key: str) -> list[str]:
+    return sorted({s.strip() for s in os.environ.get(key, "").splitlines() if s.strip()})
+
+
+def _gcloud(args: list[str]) -> list[str]:
+    r = subprocess.run(["gcloud", *args], capture_output=True, text=True, check=False)
+    return sorted({s.strip() for s in r.stdout.splitlines() if s.strip()}) if r.returncode == 0 else []
+
+
+proj = os.environ["POST_INV_PROJECT"]
+allow_legacy = os.environ.get("POST_INV_ALLOW_LEGACY", "false").lower() == "true"
+all_buckets = _lines("POST_INV_ALL_BUCKETS")
+unexpected_buckets = _lines("POST_INV_UNEXPECTED_BUCKETS")
+
+pre_buckets: set[str] = set()
+pre_path = Path(os.environ.get("POST_INV_PRE", ""))
+if pre_path.is_file():
+    try:
+        pre_doc = json.loads(pre_path.read_text(encoding="utf-8"))
+        if isinstance(pre_doc, dict):
+            pre_buckets = {str(b) for b in pre_doc.get("gcs_buckets", []) if b}
+    except Exception:
+        pre_buckets = set()
+
+langfuse_re = re.compile(rf"^langfuse-event-upload-{re.escape(proj)}-[0-9a-f]{{8}}$")
+retained_by_design = {
+    "bootstrap_foundation": [b for b in all_buckets if b in {f"{proj}-tfstate", f"{proj}_cloudbuild"}],
+    "evidence_custody_worm": [b for b in all_buckets if b in {f"{proj}-evidence-worm-staging", f"{proj}-audit-logs-worm-staging"}],
+    "langfuse_retention_locked": [b for b in all_buckets if langfuse_re.match(b)],
+    "legacy_waived": [b for b in all_buckets if allow_legacy and b.startswith("langfuse-events-")],
+}
+worm_objs = [o for o in _gcloud(["storage", "ls", f"gs://{proj}-evidence-worm-staging/evidence-stream/**", f"--project={proj}"]) if not o.endswith("/:")]
+custom_sas = [sa for sa in _gcloud(["iam", "service-accounts", "list", f"--project={proj}", "--format=value(email)"]) if sa.endswith(f"@{proj}.iam.gserviceaccount.com")]
+custom_vpcs = [v for v in _gcloud(["compute", "networks", "list", f"--project={proj}", "--format=value(name)"]) if v != "default"]
+
+all_liens = _lines("POST_INV_ALL_LIENS")
+unexpected_liens = _lines("POST_INV_UNEXPECTED_LIENS")
+retained_liens = sorted(set(all_liens) - set(unexpected_liens))
+
+payload = {
+    "captured_at_utc": datetime.now(tz=timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
+    "gcs_buckets": all_buckets,
+    "buckets_pre_existed": sorted(b for b in all_buckets if b in pre_buckets),
+    "buckets_created_and_retained_this_run": sorted(
+        b for b in all_buckets if b not in pre_buckets and b not in set(unexpected_buckets)
+    ),
+    "buckets_retained_by_design": retained_by_design,
+    "buckets_unexpected_survivors": unexpected_buckets,
+    "post_run_evidence_stream_object_count": len(worm_objs),
+    "gke_clusters": _lines("POST_INV_CLUSTERS"),
+    "cloud_sql_instances": _lines("POST_INV_SQL"),
+    "custom_vpcs": custom_vpcs,
+    "custom_service_accounts": custom_sas,
+    "project_liens_retained_by_design": retained_liens,
+    "project_liens_unexpected_survivors": unexpected_liens,
+}
+out = Path(os.environ["POST_INV_OUT"])
+out.parent.mkdir(parents=True, exist_ok=True)
+out.write_text(json.dumps(payload, indent=2) + "\n", encoding="utf-8")
+PY
 
   if [[ $SURVIVORS -gt 0 ]]; then
     error "Fresh-project post-destroy cleanliness verification FAILED ($SURVIVORS survivor category(s))."
