@@ -439,55 +439,19 @@ for p4sa_service in \
 done
 gcloud storage service-agent --project="$PROJECT_ID" --quiet >/dev/null 2>&1 || true
 
-# --- PF2: Ensure remote Terraform state GCS bucket exists ---
-echo "🪣 [PF2] Ensuring Terraform state bucket 'gs://${STATE_BUCKET}' exists..."
-if ! gcloud storage buckets describe "gs://${STATE_BUCKET}" --project="$PROJECT_ID" >/dev/null 2>&1; then
-  gcloud storage buckets create "gs://${STATE_BUCKET}" \
-    --project="$PROJECT_ID" \
-    --location="$REGION" \
-    --uniform-bucket-level-access \
-    --public-access-prevention \
-    --quiet
-fi
-gcloud storage buckets update "gs://${STATE_BUCKET}" \
-  --project="$PROJECT_ID" \
-  --versioning \
-  --quiet
-
-# --- PF4: Ensure Artifact Registry gcr.io repository & Cloud Build staging bucket exist ---
-echo "📦 [PF4] Ensuring Artifact Registry 'gcr.io' Docker repository and Cloud Build staging bucket exist..."
-if ! gcloud artifacts repositories describe "gcr.io" --location="us" --project="$PROJECT_ID" >/dev/null 2>&1; then
-  gcloud artifacts repositories create "gcr.io" \
-    --repository-format=docker \
-    --location="us" \
-    --description="Container Registry compatibility repository for gcr.io/${PROJECT_ID}" \
-    --project="$PROJECT_ID" \
-    --quiet
-fi
-
-CB_BUCKET="${PROJECT_ID}_cloudbuild"
-if ! gcloud storage buckets describe "gs://${CB_BUCKET}" --project="$PROJECT_ID" >/dev/null 2>&1; then
-  gcloud storage buckets create "gs://${CB_BUCKET}" \
-    --project="$PROJECT_ID" \
-    --location="$REGION" \
-    --uniform-bucket-level-access \
-    --public-access-prevention \
-    --quiet
-fi
-
-# Retry IAM policy bindings against newly created service accounts so GCP IAM
-# global eventual consistency (~1-5s after service-accounts create) never fails
-# Phase 0 with INVALID_ARGUMENT: Service account ... does not exist.
+# Retry newly enabled GCP API resource creations and IAM policy bindings so
+# global Service Usage / IAM propagation (~5-30s on brand-new projects) never
+# aborts Phase 0 with transient PERMISSION_DENIED or INVALID_ARGUMENT errors.
 retry_gcloud_iam() {
-  local max_attempts=5
+  local max_attempts=6
   local attempt=1
-  local sleep_s="${BOOTSTRAP_IAM_RETRY_BASE_SLEEP:-2}"
+  local sleep_s="${BOOTSTRAP_IAM_RETRY_BASE_SLEEP:-3}"
   while true; do
     if "$@"; then
       return 0
     fi
     if (( attempt >= max_attempts )); then
-      echo "❌ IAM policy binding failed after ${max_attempts} attempts: $*" >&2
+      echo "❌ Bootstrap operation failed after ${max_attempts} attempts: $*" >&2
       return 1
     fi
     echo "⏳ Waiting ${sleep_s}s for GCP IAM service-account propagation (attempt ${attempt}/${max_attempts})..." >&2
@@ -497,10 +461,46 @@ retry_gcloud_iam() {
   done
 }
 
+# --- PF2: Ensure remote Terraform state GCS bucket exists ---
+echo "🪣 [PF2] Ensuring Terraform state bucket 'gs://${STATE_BUCKET}' exists..."
+if ! gcloud storage buckets describe "gs://${STATE_BUCKET}" --project="$PROJECT_ID" >/dev/null 2>&1; then
+  retry_gcloud_iam gcloud storage buckets create "gs://${STATE_BUCKET}" \
+    --project="$PROJECT_ID" \
+    --location="$REGION" \
+    --uniform-bucket-level-access \
+    --public-access-prevention \
+    --quiet
+fi
+retry_gcloud_iam gcloud storage buckets update "gs://${STATE_BUCKET}" \
+  --project="$PROJECT_ID" \
+  --versioning \
+  --quiet
+
+# --- PF4: Ensure Artifact Registry gcr.io repository & Cloud Build staging bucket exist ---
+echo "📦 [PF4] Ensuring Artifact Registry 'gcr.io' Docker repository and Cloud Build staging bucket exist..."
+if ! gcloud artifacts repositories describe "gcr.io" --location="us" --project="$PROJECT_ID" >/dev/null 2>&1; then
+  retry_gcloud_iam gcloud artifacts repositories create "gcr.io" \
+    --repository-format=docker \
+    --location="us" \
+    --description="Container Registry compatibility repository for gcr.io/${PROJECT_ID}" \
+    --project="$PROJECT_ID" \
+    --quiet
+fi
+
+CB_BUCKET="${PROJECT_ID}_cloudbuild"
+if ! gcloud storage buckets describe "gs://${CB_BUCKET}" --project="$PROJECT_ID" >/dev/null 2>&1; then
+  retry_gcloud_iam gcloud storage buckets create "gs://${CB_BUCKET}" \
+    --project="$PROJECT_ID" \
+    --location="$REGION" \
+    --uniform-bucket-level-access \
+    --public-access-prevention \
+    --quiet
+fi
+
 # --- PF3: Pre-create Cloud Build SA, KMS binauthz-attestor key, and BinAuthz attestor ---
 echo "🔐 [PF3] Ensuring dedicated Cloud Build service account '${CB_SA_EMAIL}' exists..."
 if ! gcloud iam service-accounts describe "$CB_SA_EMAIL" --project="$PROJECT_ID" >/dev/null 2>&1; then
-  gcloud iam service-accounts create "$CB_SA_NAME" \
+  retry_gcloud_iam gcloud iam service-accounts create "$CB_SA_NAME" \
     --project="$PROJECT_ID" \
     --display-name="CAGE Cloud Build Service Account (${ENV})" \
     --description="Dedicated least-privilege Cloud Build identity for building, pushing, and attesting container images with the binauthz-attestor KMS key (SI-7 / CM-7 / AC-6 / POAM-2026-083)." \
@@ -525,7 +525,7 @@ retry_gcloud_iam gcloud storage buckets add-iam-policy-binding "gs://${CB_BUCKET
 
 echo "🔑 [PF3] Ensuring KMS KeyRing '${SIGNING_KEYRING}' and asymmetric key 'binauthz-attestor' exist..."
 if ! gcloud kms keyrings describe "$SIGNING_KEYRING" --location="$REGION" --project="$PROJECT_ID" >/dev/null 2>&1; then
-  gcloud kms keyrings create "$SIGNING_KEYRING" \
+  retry_gcloud_iam gcloud kms keyrings create "$SIGNING_KEYRING" \
     --location="$REGION" \
     --project="$PROJECT_ID" \
     --quiet
@@ -535,7 +535,7 @@ if ! gcloud kms keys describe "binauthz-attestor" \
   --keyring="$SIGNING_KEYRING" \
   --location="$REGION" \
   --project="$PROJECT_ID" >/dev/null 2>&1; then
-  gcloud kms keys create "binauthz-attestor" \
+  retry_gcloud_iam gcloud kms keys create "binauthz-attestor" \
     --keyring="$SIGNING_KEYRING" \
     --location="$REGION" \
     --project="$PROJECT_ID" \
@@ -567,13 +567,13 @@ if [[ "$ENV" != "dev" ]]; then
       -H "Authorization: Bearer ${ACCESS_TOKEN}" \
       "https://containeranalysis.googleapis.com/v1/projects/${PROJECT_ID}/notes/${NOTE_ID}" || echo "000")"
     if [[ "$NOTE_STATUS" != "200" ]]; then
-      curl -sS -f -X POST \
+      retry_gcloud_iam curl -sS -f -X POST \
         -H "Authorization: Bearer ${ACCESS_TOKEN}" \
         -H "Content-Type: application/json" \
         "https://containeranalysis.googleapis.com/v1/projects/${PROJECT_ID}/notes?noteId=${NOTE_ID}" \
         -d "{\"name\":\"projects/${PROJECT_ID}/notes/${NOTE_ID}\",\"attestation\":{\"hint\":{\"humanReadableName\":\"CAGE Cloud Build Attestor (${ENV})\"}}}" >/dev/null
     fi
-    curl -sS -f -X POST \
+    retry_gcloud_iam curl -sS -f -X POST \
       -H "Authorization: Bearer ${ACCESS_TOKEN}" \
       -H "Content-Type: application/json" \
       "https://containeranalysis.googleapis.com/v1/projects/${PROJECT_ID}/notes/${NOTE_ID}:setIamPolicy" \
@@ -581,7 +581,7 @@ if [[ "$ENV" != "dev" ]]; then
   fi
 
   if ! gcloud container binauthz attestors describe "$ATTESTOR_ID" --project="$PROJECT_ID" >/dev/null 2>&1; then
-    gcloud container binauthz attestors create "$ATTESTOR_ID" \
+    retry_gcloud_iam gcloud container binauthz attestors create "$ATTESTOR_ID" \
       --project="$PROJECT_ID" \
       --attestation-authority-note="$NOTE_ID" \
       --attestation-authority-note-project="$PROJECT_ID" \
@@ -592,7 +592,7 @@ if [[ "$ENV" != "dev" ]]; then
     --project="$PROJECT_ID" \
     --format='value(userOwnedGrafeasNote.publicKeys.id)' 2>/dev/null || true)"
   if [[ "$EXISTING_KEYS" != *"binauthz-attestor/cryptoKeyVersions/1"* ]]; then
-    gcloud container binauthz attestors public-keys add \
+    retry_gcloud_iam gcloud container binauthz attestors public-keys add \
       --attestor="$ATTESTOR_ID" \
       --project="$PROJECT_ID" \
       --keyversion-project="$PROJECT_ID" \
@@ -620,14 +620,14 @@ fi
 
 if [[ -n "$DEPLOYER_SA" ]]; then
   echo "🔑 [PF10] Granting roles/cloudkms.publicKeyViewer to deployer SA '${DEPLOYER_SA}'..."
-  gcloud projects add-iam-policy-binding "$PROJECT_ID" \
+  retry_gcloud_iam gcloud projects add-iam-policy-binding "$PROJECT_ID" \
     --member="serviceAccount:${DEPLOYER_SA}" \
     --role="roles/cloudkms.publicKeyViewer" \
     --condition=None \
     --quiet >/dev/null
 
   echo "🔑 [EF7c] Granting roles/networkconnectivity.consumerNetworkAdmin to deployer SA '${DEPLOYER_SA}'..."
-  gcloud projects add-iam-policy-binding "$PROJECT_ID" \
+  retry_gcloud_iam gcloud projects add-iam-policy-binding "$PROJECT_ID" \
     --member="serviceAccount:${DEPLOYER_SA}" \
     --role="roles/networkconnectivity.consumerNetworkAdmin" \
     --condition=None \
