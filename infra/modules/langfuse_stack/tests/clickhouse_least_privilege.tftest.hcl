@@ -43,6 +43,10 @@ run "scoped_langfuse_clickhouse_configuration_passes" {
     condition     = var.clickhouse_db == "langfuse"
     error_message = "clickhouse_db must default to langfuse"
   }
+  assert {
+    condition     = kubernetes_config_map_v1.langfuse_startup.metadata[0].name == "langfuse-startup"
+    error_message = "langfuse_stack must plan ConfigMap/langfuse-startup with backing-store readiness preflight"
+  }
 }
 
 run "clickhouse_user_default_is_refused" {
