@@ -528,9 +528,19 @@ async def _run() -> dict[str, Any]:
             prefixes = sorted(out.split(":", 1)[0] for out in race_outputs)
             assert prefixes == ["BLOCKED", "EXECUTED"], race_outputs
 
+            substrate_responses: dict[str, dict[str, Any]] = {}
+            for sub_path in ("/governance/policy-version", "/governance/jwks"):
+                sub_resp = await client.get(sub_path)
+                substrate_responses[sub_path] = {
+                    "status_code": sub_resp.status_code,
+                    "headers": dict(sub_resp.headers),
+                    "body_b64": base64.b64encode(sub_resp.content).decode("ascii"),
+                }
+
             return {
                 "phase": "phase_b",
                 "passed": True,
+                "substrate_responses": substrate_responses,
                 "scenarios_passed": [
                     "s2_approved_token_executes_once",
                     "s2_approval_rejects_grown_amount",
@@ -995,21 +1005,53 @@ def main(argv: Sequence[str] | None = None) -> int:
         deferred_ids=deferred_ids,
     )
 
-    from tests.e2e.advisor_proxy_conformance import main as conformance_main
+    from cage_conformance.runner import HttpResponse
 
-    conf_rc = conformance_main(
-        [
-            "--gateway-url",
-            args.gateway_url,
-            "--bridge-url",
-            args.bridge_url,
-            "--adapter-commit",
-            args.adapter_commit,
-            "--json",
-        ]
+    from tests.e2e.advisor_proxy_conformance import (
+        AdvisorE2EConformanceSummary,
+        verify_advisor_e2e_endpoint,
+        verify_live_bridge_health,
     )
-    if conf_rc != 0:
-        raise RuntimeError(f"advisor_proxy_conformance exited with status {conf_rc}")
+
+    in_mesh_map = dict(phase_b.get("substrate_responses") or {})
+    mesh_gateway_url = f"http://gateway.{args.namespace}.svc.cluster.local:8080"
+
+    def _in_mesh_requester(
+        method: str,
+        url: str,
+        headers: dict[str, str] | Any,
+        body: bytes | None,
+        timeout_s: float,
+    ) -> HttpResponse:
+        del headers, body, timeout_s
+        if method.upper() != "GET":
+            raise RuntimeError(f"Unexpected method {method!r} for {url!r}")
+        path = urllib.parse.urlparse(url).path
+        entry = in_mesh_map.get(path)
+        if not isinstance(entry, dict):
+            raise RuntimeError(f"Missing in-mesh capture for path {path!r}")
+        return HttpResponse(
+            status_code=int(entry["status_code"]),
+            headers=dict(entry.get("headers") or {}),
+            body=base64.b64decode(str(entry["body_b64"]).encode("ascii")),
+        )
+
+    endpoint_report = verify_advisor_e2e_endpoint(
+        mesh_gateway_url,
+        http_requester=_in_mesh_requester,
+        adapter_commit=args.adapter_commit,
+    )
+    bridge_health = verify_live_bridge_health(args.bridge_url)
+    conf_summary = AdvisorE2EConformanceSummary(
+        endpoint_report=endpoint_report,
+        stream_report=None,
+        trace_report=None,
+        bridge_health=bridge_health,
+    )
+    if not conf_summary.passed:
+        raise RuntimeError(
+            f"advisor_proxy_conformance failed: {conf_summary.failed_assertions()}"
+        )
 
     summary = {
         "passed": True,

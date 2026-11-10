@@ -1059,6 +1059,7 @@ module "gateway" {
   # gateway telemetry keypair (never shared with advisor-secrets).
   otel_exporter_otlp_headers = local.effective_gateway_otlp_headers
   reconciliation_provider    = "simulated"
+  use_mock_broker            = var.environment != "prod"
   cage_kms_provider          = "gcp"
 
   # POAM-2026-079: own identity; signs seals with gateway-seal and trusts

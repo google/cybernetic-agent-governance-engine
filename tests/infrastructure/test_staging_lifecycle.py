@@ -1210,7 +1210,7 @@ def test_staging_lifecycle_fresh_project_retains_evidence_domain_worm_buckets_an
     repo, bin_dir, log_file = _setup_fake_repo(
         tmp_path,
         surviving_bucket="ephemeral-proj-99-evidence-worm-staging\nephemeral-proj-99-audit-logs-worm-staging",
-        surviving_lien="liens/p123-l1\tstorage.googleapis.com/buckets",
+        surviving_lien="liens/p123-l1\tstorage.googleapis.com\tresourcemanager.projects.delete",
     )
     env = _base_env(bin_dir)
     proc = subprocess.run(
@@ -1244,7 +1244,7 @@ def test_staging_lifecycle_allow_legacy_lien_survivor_accepts_known_langfuse_eve
     repo, bin_dir, _ = _setup_fake_repo(
         tmp_path,
         surviving_bucket="langfuse-events-ephemeral-proj-99-deadbeef",
-        surviving_lien="liens/p123-l2\tstorage.googleapis.com/buckets",
+        surviving_lien="liens/p123-l2\tstorage.googleapis.com\tresourcemanager.projects.delete",
     )
     env = _base_env(bin_dir)
     proc = subprocess.run(

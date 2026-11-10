@@ -744,3 +744,25 @@ class TestGetComplianceMetricsAndAuditWorkflow:
         assert "src/cage_<domain>/opa/" in prompt
         assert "trade_governance.rego" not in prompt
         assert "trade_policy.rego" not in prompt
+
+    @pytest.mark.asyncio
+    async def test_empty_window_is_not_cached_across_cold_start_seeding(self) -> None:
+        now = datetime.now(tz=timezone.utc)
+        import src.compliance_bridge.metrics as metrics_mod
+
+        metrics_mod._metrics_cache.clear()
+        with patch(
+            "src.compliance_bridge.metrics._query_cage_evidence_records",
+            side_effect=[
+                [],
+                [_make_evidence_record(now, control_id="A.5.3", verdict="ALLOW")],
+            ],
+        ) as mock_query:
+            cold = await metrics_mod.get_compliance_metrics("A.5.3", window_hours=24)
+            seeded = await metrics_mod.get_compliance_metrics("A.5.3", window_hours=24)
+
+        assert cold.total_traces == 0
+        assert cold.safety_rate is None
+        assert seeded.total_traces == 1
+        assert seeded.safety_rate == 1.0
+        assert mock_query.call_count == 2

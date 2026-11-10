@@ -271,6 +271,10 @@ resource "kubernetes_deployment" "gateway" {
             value = var.enable_logging
           }
           env {
+            name  = "USE_MOCK_BROKER"
+            value = tostring(var.use_mock_broker)
+          }
+          env {
             name  = "LANGCHAIN_TRACING_V2"
             value = "false"
           }

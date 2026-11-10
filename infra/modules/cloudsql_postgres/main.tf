@@ -82,9 +82,10 @@ resource "google_sql_database_instance" "postgres" {
 }
 
 resource "google_sql_database" "db" {
-  name     = var.database_name
-  instance = google_sql_database_instance.postgres.name
-  project  = var.project_id
+  name            = var.database_name
+  instance        = google_sql_database_instance.postgres.name
+  project         = var.project_id
+  deletion_policy = "ABANDON"
 }
 
 locals {
@@ -93,9 +94,33 @@ locals {
 }
 
 resource "google_sql_user" "db_user" {
-  name     = local.effective_user_name
-  instance = google_sql_database_instance.postgres.name
-  password = var.user_type == "BUILT_IN" ? var.user_password : null
-  type     = var.user_type
-  project  = var.project_id
+  name            = local.effective_user_name
+  instance        = google_sql_database_instance.postgres.name
+  password        = var.user_type == "BUILT_IN" ? var.user_password : null
+  type            = var.user_type
+  project         = var.project_id
+  deletion_policy = "ABANDON"
+}
+
+resource "terraform_data" "grant_iam_db_superuser" {
+  count = var.user_type == "CLOUD_IAM_SERVICE_ACCOUNT" ? 1 : 0
+
+  triggers_replace = [
+    google_sql_database_instance.postgres.id,
+    google_sql_user.db_user.name,
+  ]
+
+  provisioner "local-exec" {
+    environment = {
+      SQL_USER     = google_sql_user.db_user.name
+      SQL_INSTANCE = google_sql_database_instance.postgres.name
+      SQL_PROJECT  = var.project_id
+    }
+    command = "gcloud sql users assign-roles \"$SQL_USER\" --instance=\"$SQL_INSTANCE\" --project=\"$SQL_PROJECT\" --type=CLOUD_IAM_SERVICE_ACCOUNT --database-roles=cloudsqlsuperuser --quiet"
+  }
+
+  depends_on = [
+    google_sql_database.db,
+    google_sql_user.db_user,
+  ]
 }

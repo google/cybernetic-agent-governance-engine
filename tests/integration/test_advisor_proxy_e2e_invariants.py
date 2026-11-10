@@ -292,7 +292,21 @@ async def _real_opa_uds_sidecar() -> AsyncIterator[str]:
     container_name: str | None = None
 
     opa_bin = shutil.which("opa")
+    if (
+        sys.platform == "darwin"
+        and os.environ.get("CAGE_ALLOW_MACOS_OPA", "").strip() != "1"
+    ):
+        opa_bin = None
     docker_bin = shutil.which("docker")
+    if docker_bin is not None:
+        daemon_probe = subprocess.run(
+            [docker_bin, "info"],
+            check=False,
+            capture_output=True,
+            timeout=5,
+        )
+        if daemon_probe.returncode != 0:
+            docker_bin = None
     try:
         if opa_bin:
             proc = subprocess.Popen(
@@ -332,6 +346,11 @@ async def _real_opa_uds_sidecar() -> AsyncIterator[str]:
                 ],
                 check=True,
                 capture_output=True,
+            )
+        elif sys.platform == "darwin":
+            pytest.skip(
+                "Local OPA UDS sidecar requires Linux/CI, a running Docker daemon, "
+                "or CAGE_ALLOW_MACOS_OPA=1 on macOS."
             )
         else:
             pytest.fail(

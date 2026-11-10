@@ -214,10 +214,12 @@ _K8S_RESOURCE_CATEGORIES: Mapping[str, str] = {
 
 _K8S_SYSTEM_PRINCIPALS: frozenset[str] = frozenset(
     {
+        "system:addon-manager",
         "system:kube-controller-manager",
         "system:kube-scheduler",
         "system:apiserver",
         "system:cluster-autoscaler",
+        "system:vpa-admission-controller",
     }
 )
 
@@ -464,12 +466,18 @@ def _normalize_principal(raw: str) -> str:
 def _normalize_kms_digest_b64(raw: Any) -> str:
     """Canonical RFC 4648 base64 of a 32-byte SHA-256 digest, else ``""``.
 
-    Accepts base64 or base64url, padded or not. Anything that does not decode
-    to exactly 32 bytes normalizes to ``""`` and can never match.
+    Accepts 64-character hex (emitted by Cloud KMS gRPC audit logging) as well
+    as base64 or base64url, padded or not. Anything that does not decode to
+    exactly 32 bytes normalizes to ``""`` and can never match.
     """
     if not isinstance(raw, str) or not raw.strip():
         return ""
     cleaned = raw.strip()
+    if len(cleaned) == 64:
+        try:
+            return base64.b64encode(bytes.fromhex(cleaned)).decode("ascii")
+        except ValueError:
+            pass
     padded = cleaned + "=" * (-len(cleaned) % 4)
     for decoder in (base64.b64decode, base64.urlsafe_b64decode):
         try:
@@ -762,6 +770,13 @@ def _classify_k8s_mutation(
     if namespace == GOVERNANCE_NAMESPACE:
         return f"Kubernetes {GOVERNANCE_NAMESPACE} {category} mutation ({method_name})"
     if namespace is None and resource in _K8S_CLUSTER_SENSITIVE_RESOURCES:
+        if (
+            principal == "system:serviceaccount:cert-manager:cert-manager-cainjector"
+            and resource
+            in {"validatingwebhookconfigurations", "mutatingwebhookconfigurations"}
+            and method_lower.rsplit(".", 1)[-1] in {"patch", "update"}
+        ):
+            return None
         return f"Kubernetes cluster-scoped {category} mutation ({method_name})"
     return None
 
@@ -1042,14 +1057,58 @@ def verify_audit_corroboration(
             return True
         return verification_window[0] <= epoch <= verification_window[1]
 
+    unique = list(_unique_entries(audit_log_entries))
+    op_principals: dict[tuple[str, str], str] = {}
+    for entry in unique:
+        op = entry.get("operation")
+        proto = entry.get("protoPayload")
+        if not isinstance(op, Mapping) or not isinstance(proto, Mapping):
+            continue
+        op_id = str(op.get("id", "") or "").strip()
+        svc = str(proto.get("serviceName", "")).strip()
+        auth = proto.get("authenticationInfo")
+        email = (
+            _normalize_principal(str(auth.get("principalEmail", "")))
+            if isinstance(auth, Mapping)
+            else ""
+        )
+        if op_id and svc and email:
+            op_principals[(svc, op_id)] = email
+
     kms_events: list[KmsSignLogEvent] = []
     admin_events: list[ControlPlaneMutationEvent] = []
-    for entry in _unique_entries(audit_log_entries):
+    for entry in unique:
         parsed = parse_cloud_audit_log_entry(entry)
         if isinstance(parsed, KmsSignLogEvent):
             if parsed.key_family in KNOWN_SIGNING_KEYS:
                 kms_events.append(parsed)
         elif isinstance(parsed, ControlPlaneMutationEvent):
+            if not parsed.principal_email:
+                op = entry.get("operation")
+                op_id = (
+                    str(op.get("id", "") or "").strip()
+                    if isinstance(op, Mapping)
+                    else ""
+                )
+                if (
+                    isinstance(op, Mapping)
+                    and op.get("last") is True
+                    and op.get("first") is not True
+                    and op_id
+                ):
+                    inherited = op_principals.get((parsed.service_name, op_id), "")
+                    if inherited:
+                        parsed = ControlPlaneMutationEvent(
+                            insert_id=parsed.insert_id,
+                            service_name=parsed.service_name,
+                            method_name=parsed.method_name,
+                            resource_name=parsed.resource_name,
+                            principal_email=inherited,
+                            timestamp_epoch=parsed.timestamp_epoch,
+                            reason=parsed.reason,
+                        )
+                    elif parsed.service_name == "container.googleapis.com":
+                        continue
             admin_events.append(parsed)
 
     findings: list[AuditFinding] = []

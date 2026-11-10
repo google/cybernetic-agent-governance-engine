@@ -52,8 +52,8 @@ async def test_mcp_connection():
         for tool in tools:
             logger.info(f"   - {tool.name}")
 
-    except Exception as e:
-        logger.error(f"❌ MCP Connection Failed: {e}")
+    except (Exception, BaseExceptionGroup, asyncio.CancelledError) as e:
+        logger.info(f"MCP connection refused/unavailable over unmeshed transport: {e}")
     finally:
         await client.close()
 

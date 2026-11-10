@@ -876,6 +876,104 @@ class TestCliAndLiveRunner:
                 == 0
             )
 
+    def test_live_gcp_hex_digest_cainjector_and_gke_lro_completion_corroborate(
+        self,
+    ) -> None:
+        import base64
+
+        compact_jws, jws_digest_b64 = _make_compact_jws(GATEWAY_KEY_V1)
+        jws_digest_hex = base64.b64decode(jws_digest_b64).hex()
+        deployer = f"sa-cage-deployer@{PROJECT_ID}.iam.gserviceaccount.com"
+
+        entries = [
+            _kms_sign_log(
+                insert_id="kms-hex-1",
+                resource_name=GATEWAY_KEY_V1,
+                principal=GATEWAY_SA,
+                timestamp="2026-04-06T18:26:41Z",
+                digest_b64=jws_digest_hex,
+            ),
+            {
+                "insertId": "cainjector-webhook",
+                "timestamp": "2026-04-06T18:26:42Z",
+                "protoPayload": {
+                    "@type": "type.googleapis.com/google.cloud.audit.AuditLog",
+                    "serviceName": "k8s.io",
+                    "methodName": "io.k8s.admissionregistration.v1.validatingwebhookconfigurations.patch",
+                    "resourceName": "admissionregistration.k8s.io/v1/validatingwebhookconfigurations/linkerd-policy-validator-k8s-io",
+                    "authenticationInfo": {
+                        "principalEmail": "system:serviceaccount:cert-manager:cert-manager-cainjector"
+                    },
+                },
+            },
+            {
+                "insertId": "gke-lro-first",
+                "timestamp": "2026-04-06T18:20:00Z",
+                "operation": {"id": "operation-123", "first": True},
+                "protoPayload": {
+                    "@type": "type.googleapis.com/google.cloud.audit.AuditLog",
+                    "serviceName": "container.googleapis.com",
+                    "methodName": "google.container.v1.ClusterManager.CreateCluster",
+                    "resourceName": f"projects/{PROJECT_ID}/zones/us-central1-a/clusters/cage-staging",
+                    "authenticationInfo": {"principalEmail": deployer},
+                },
+            },
+            {
+                "insertId": "gke-lro-last",
+                "timestamp": "2026-04-06T18:25:00Z",
+                "operation": {"id": "operation-123", "last": True},
+                "protoPayload": {
+                    "@type": "type.googleapis.com/google.cloud.audit.AuditLog",
+                    "serviceName": "container.googleapis.com",
+                    "methodName": "google.container.v1.ClusterManager.CreateCluster",
+                    "resourceName": f"projects/{PROJECT_ID}/zones/us-central1-a/clusters/cage-staging",
+                    "authenticationInfo": {"principalEmail": ""},
+                },
+            },
+        ]
+        report = verify_audit_corroboration(
+            entries,
+            signed_artifacts=extract_signed_artifacts(
+                [{"decision_id": "d-hex", "routing_seal": compact_jws}],
+                GATEWAY_SEAL_KEY,
+            ),
+            trusted_deployer_principals=frozenset({deployer}),
+        )
+        assert report.corroborated is True
+        assert report.matched_pairs == 1
+        assert report.findings == ()
+
+        # Non-webhook mutation by cert-manager-cainjector must still fail closed
+        rogue_cainjector = [
+            *entries,
+            {
+                "insertId": "cainjector-secret",
+                "timestamp": "2026-04-06T18:26:43Z",
+                "protoPayload": {
+                    "@type": "type.googleapis.com/google.cloud.audit.AuditLog",
+                    "serviceName": "k8s.io",
+                    "methodName": "io.k8s.core.v1.secrets.patch",
+                    "resourceName": "core/v1/namespaces/governance-stack/secrets/gateway-secrets",
+                    "authenticationInfo": {
+                        "principalEmail": "system:serviceaccount:cert-manager:cert-manager-cainjector"
+                    },
+                },
+            },
+        ]
+        rogue_report = verify_audit_corroboration(
+            rogue_cainjector,
+            signed_artifacts=extract_signed_artifacts(
+                [{"decision_id": "d-hex", "routing_seal": compact_jws}],
+                GATEWAY_SEAL_KEY,
+            ),
+            trusted_deployer_principals=frozenset({deployer}),
+        )
+        assert rogue_report.corroborated is False
+        assert any(
+            f.code == "UNAUTHORIZED_CONTROL_PLANE_MUTATION"
+            for f in rogue_report.findings
+        )
+
 
 class TestTerraformAuditLogSinkAlignment:
     """Verify kms_signing.tf routes directly into module.evidence_domain without collisions."""

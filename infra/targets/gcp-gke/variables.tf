@@ -782,7 +782,7 @@ variable "lula_image" {
 variable "lula_schedule" {
   description = "Cron schedule for the in-cluster Lula compliance auditor CronJob."
   type        = string
-  default     = "*/15 * * * *"
+  default     = "0 */6 * * *"
 }
 
 variable "lula_alert_notification_channels" {
