@@ -119,6 +119,148 @@ locals {
       console.log("[CAGE Langfuse Init] Provisioned isolated compliance project '" + projId + "'.");
     }
   JS
+  startup_wait_js    = <<-JS
+    const { spawnSync } = require("child_process");
+    const http = require("http");
+    const net = require("net");
+    const { URL } = require("url");
+
+    const wantPrisma = process.argv.includes("--prisma");
+    const deadline = Date.now() + 180000;
+
+    function sleep(ms) {
+      return new Promise((resolve) => setTimeout(resolve, ms));
+    }
+
+    function tcpProbe(host, port, timeoutMs) {
+      return new Promise((resolve) => {
+        const sock = net.createConnection({ host, port: Number(port) });
+        let done = false;
+        const finish = (ok) => {
+          if (!done) {
+            done = true;
+            sock.destroy();
+            resolve(ok);
+          }
+        };
+        sock.setTimeout(timeoutMs || 2000, () => finish(false));
+        sock.on("connect", () => finish(true));
+        sock.on("error", () => finish(false));
+      });
+    }
+
+    function httpClickhouseSelect1(chUrl, user, password, timeoutMs) {
+      return new Promise((resolve) => {
+        let parsed;
+        try {
+          parsed = new URL("/?query=SELECT%201", chUrl);
+        } catch (_) {
+          return resolve(false);
+        }
+        const headers = {};
+        if (user) headers["X-ClickHouse-User"] = user;
+        if (password) headers["X-ClickHouse-Key"] = password;
+        const req = http.get(parsed, { headers, timeout: timeoutMs || 3000 }, (res) => {
+          res.resume();
+          resolve(res.statusCode === 200);
+        });
+        req.on("timeout", () => {
+          req.destroy();
+          resolve(false);
+        });
+        req.on("error", () => resolve(false));
+      });
+    }
+
+    async function main() {
+      const redisHost = (process.env.REDIS_HOST || "").trim();
+      const redisPort = parseInt(process.env.REDIS_PORT || "6379", 10);
+      const dbUrl = (process.env.DIRECT_URL || process.env.DATABASE_URL || "").trim();
+      const chUrl = (process.env.CLICKHOUSE_URL || "").trim();
+      const chMigUrl = (process.env.CLICKHOUSE_MIGRATION_URL || "").trim();
+      const chUser = (process.env.CLICKHOUSE_USER || "").trim();
+      const chPass = process.env.CLICKHOUSE_PASSWORD || "";
+
+      let dbHost = "127.0.0.1";
+      let dbPort = 5432;
+      if (dbUrl) {
+        try {
+          const u = new URL(dbUrl);
+          if (u.hostname) dbHost = u.hostname;
+          if (u.port) dbPort = parseInt(u.port, 10);
+        } catch (_) {}
+      }
+
+      let chTcpHost = "";
+      let chTcpPort = 9000;
+      if (chMigUrl) {
+        try {
+          const u = new URL(chMigUrl.replace(/^clickhouse:/, "http:"));
+          if (u.hostname) chTcpHost = u.hostname;
+          if (u.port) chTcpPort = parseInt(u.port, 10);
+        } catch (_) {}
+      }
+
+      while (Date.now() < deadline) {
+        if (redisHost && Number.isFinite(redisPort)) {
+          if (!(await tcpProbe(redisHost, redisPort, 2000))) {
+            await sleep(2000);
+            continue;
+          }
+        }
+        if (chTcpHost && Number.isFinite(chTcpPort)) {
+          if (!(await tcpProbe(chTcpHost, chTcpPort, 2000))) {
+            await sleep(2000);
+            continue;
+          }
+        }
+        if (chUrl) {
+          if (!(await httpClickhouseSelect1(chUrl, chUser, chPass, 3000))) {
+            await sleep(2000);
+            continue;
+          }
+        }
+        if (dbUrl) {
+          if (!(await tcpProbe(dbHost, dbPort, 2000))) {
+            await sleep(2000);
+            continue;
+          }
+          if (wantPrisma) {
+            const res = spawnSync("prisma", ["db", "execute", "--stdin", "--url", dbUrl], {
+              input: "SELECT 1;\n",
+              encoding: "utf8",
+              stdio: ["pipe", "pipe", "pipe"],
+              timeout: 10000
+            });
+            if (res.status !== 0) {
+              await sleep(2000);
+              continue;
+            }
+          }
+        }
+        console.log("[CAGE Langfuse Startup] Backing stores ready (Postgres, ClickHouse, Redis).");
+        process.exit(0);
+      }
+      console.error("[CAGE Langfuse Startup] Timed out waiting for backing stores after 180s.");
+      process.exit(1);
+    }
+
+    main().catch((err) => {
+      console.error("[CAGE Langfuse Startup] Unexpected error:", err);
+      process.exit(1);
+    });
+  JS
+}
+
+resource "kubernetes_config_map_v1" "langfuse_startup" {
+  metadata {
+    name      = "langfuse-startup"
+    namespace = var.namespace
+  }
+
+  data = {
+    "wait_for_backing_stores.js" = local.startup_wait_js
+  }
 }
 
 resource "kubernetes_config_map_v1" "langfuse_compliance_init" {
@@ -219,6 +361,7 @@ resource "kubernetes_deployment" "langfuse_web" {
             # Skip only external managed endpoints: Cloud SQL Auth Proxy loopback (5432),
             # Memorystore Valkey (6379), and Cloud SQL server port (3307).
             "config.linkerd.io/skip-outbound-ports" = "5432,6379,3307"
+            "cage.io/startup-wait-sha256"           = sha256(local.startup_wait_js)
           },
           local.seed_compliance_project ? {
             "cage.io/compliance-seed-sha256" = sha256(local.compliance_seed_js)
@@ -238,13 +381,14 @@ resource "kubernetes_deployment" "langfuse_web" {
         }
 
         container {
-          name  = "langfuse-web"
-          image = var.langfuse_image
-          args = local.seed_compliance_project ? [
-            "/bin/sh",
-            "-c",
-            "node /etc/cage/langfuse-init/seed_compliance_project.js && if [ -n \"$NEXT_PUBLIC_LANGFUSE_CLOUD_REGION\" ]; then exec node --import dd-trace/initialize.mjs ./web/server.js --keepAliveTimeout 110000; else exec node ./web/server.js --keepAliveTimeout 110000; fi",
-          ] : null
+          name    = "langfuse-web"
+          image   = var.langfuse_image
+          command = ["dumb-init", "--", "/bin/sh", "-c"]
+          args = [
+            local.seed_compliance_project
+            ? "node /etc/cage/langfuse-startup/wait_for_backing_stores.js --prisma && exec ./web/entrypoint.sh /bin/sh -c 'node /etc/cage/langfuse-init/seed_compliance_project.js && if [ -n \"$NEXT_PUBLIC_LANGFUSE_CLOUD_REGION\" ]; then exec node --import dd-trace/initialize.mjs ./web/server.js --keepAliveTimeout 110000; else exec node ./web/server.js --keepAliveTimeout 110000; fi'"
+            : "node /etc/cage/langfuse-startup/wait_for_backing_stores.js --prisma && exec ./web/entrypoint.sh /bin/sh -c 'if [ -n \"$NEXT_PUBLIC_LANGFUSE_CLOUD_REGION\" ]; then exec node --import dd-trace/initialize.mjs ./web/server.js --keepAliveTimeout 110000; else exec node ./web/server.js --keepAliveTimeout 110000; fi'"
+          ]
 
           security_context {
             allow_privilege_escalation = false
@@ -657,7 +801,7 @@ resource "kubernetes_deployment" "langfuse_web" {
               path = "/api/public/health"
               port = 3000
             }
-            initial_delay_seconds = 60
+            initial_delay_seconds = 180
             period_seconds        = 10
             failure_threshold     = 10
           }
@@ -669,7 +813,13 @@ resource "kubernetes_deployment" "langfuse_web" {
             }
             initial_delay_seconds = 15
             period_seconds        = 10
-            failure_threshold     = 30
+            failure_threshold     = 36
+          }
+
+          volume_mount {
+            name       = "langfuse-startup"
+            mount_path = "/etc/cage/langfuse-startup"
+            read_only  = true
           }
 
           dynamic "volume_mount" {
@@ -714,6 +864,13 @@ resource "kubernetes_deployment" "langfuse_web" {
                 memory = "256Mi"
               }
             }
+          }
+        }
+
+        volume {
+          name = "langfuse-startup"
+          config_map {
+            name = kubernetes_config_map_v1.langfuse_startup.metadata[0].name
           }
         }
 
@@ -790,6 +947,7 @@ resource "kubernetes_deployment" "langfuse_worker" {
           # Skip only external managed endpoints: Cloud SQL Auth Proxy loopback (5432),
           # Memorystore Valkey (6379), and Cloud SQL server port (3307).
           "config.linkerd.io/skip-outbound-ports" = "5432,6379,3307"
+          "cage.io/startup-wait-sha256"           = sha256(local.startup_wait_js)
         }
       }
 
@@ -805,8 +963,12 @@ resource "kubernetes_deployment" "langfuse_worker" {
         }
 
         container {
-          name  = "langfuse-worker"
-          image = var.langfuse_worker_image
+          name    = "langfuse-worker"
+          image   = var.langfuse_worker_image
+          command = ["dumb-init", "--", "/bin/sh", "-c"]
+          args = [
+            "node /etc/cage/langfuse-startup/wait_for_backing_stores.js && exec ./worker/entrypoint.sh node worker/dist/index.js"
+          ]
 
           security_context {
             allow_privilege_escalation = false
@@ -1055,6 +1217,12 @@ resource "kubernetes_deployment" "langfuse_worker" {
               cpu    = var.worker_cpu_limit
             }
           }
+
+          volume_mount {
+            name       = "langfuse-startup"
+            mount_path = "/etc/cage/langfuse-startup"
+            read_only  = true
+          }
         }
 
         dynamic "container" {
@@ -1089,6 +1257,13 @@ resource "kubernetes_deployment" "langfuse_worker" {
                 memory = "256Mi"
               }
             }
+          }
+        }
+
+        volume {
+          name = "langfuse-startup"
+          config_map {
+            name = kubernetes_config_map_v1.langfuse_startup.metadata[0].name
           }
         }
       }
