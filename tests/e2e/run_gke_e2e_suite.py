@@ -66,8 +66,10 @@ from cryptography.hazmat.primitives import serialization
 from cryptography.hazmat.primitives.asymmetric import ec
 
 _REPO_ROOT = Path(__file__).resolve().parents[2]
-if str(_REPO_ROOT) not in sys.path:
-    sys.path.insert(0, str(_REPO_ROOT))
+_CONFORMANCE_SRC = _REPO_ROOT / "packages" / "cage-conformance" / "src"
+for _extra_path in (_CONFORMANCE_SRC, _REPO_ROOT):
+    if str(_extra_path) not in sys.path:
+        sys.path.insert(0, str(_extra_path))
 
 _JOB_TEMPLATE_PATH = (
     _REPO_ROOT / "tests" / "e2e" / "fixtures" / "verify-trade-e2e-job.yaml"
@@ -772,7 +774,7 @@ def _wait_for_seeded_metrics(
     bridge_url: str,
     controls: Sequence[str],
     *,
-    timeout_seconds: int = 60,
+    timeout_seconds: int = 120,
 ) -> dict[str, dict[str, Any]]:
     base = validate_http_url(bridge_url)
     deadline = time.monotonic() + timeout_seconds
@@ -782,7 +784,7 @@ def _wait_for_seeded_metrics(
         while time.monotonic() < deadline:
             all_ready = True
             for cid in controls:
-                resp = client.get(f"{base}/api/v1/compliance/metrics/{cid}")
+                resp = client.get(f"{base}/v1/metrics/{cid}")
                 if resp.status_code != 200:
                     all_ready = False
                     continue

@@ -974,6 +974,207 @@ class TestCliAndLiveRunner:
             for f in rogue_report.findings
         )
 
+    def test_fresh_project_gcp_service_agent_bootstrap_corroborates_and_escalation_fails_closed(
+        self,
+    ) -> None:
+        compact_jws, jws_digest_b64 = _make_compact_jws(GATEWAY_KEY_V1)
+        deployer = f"sa-cage-deployer@{PROJECT_ID}.iam.gserviceaccount.com"
+        base_entries: list[dict[str, Any]] = [
+            _kms_sign_log(
+                insert_id="kms-p4sa-1",
+                resource_name=GATEWAY_KEY_V1,
+                principal=GATEWAY_SA,
+                timestamp="2026-04-06T18:26:42Z",
+                digest_b64=jws_digest_b64,
+            ),
+            {
+                "insertId": "p4sa-add-memorystore",
+                "timestamp": "2026-04-06T18:20:00Z",
+                "protoPayload": {
+                    "@type": "type.googleapis.com/google.cloud.audit.AuditLog",
+                    "serviceName": "cloudresourcemanager.googleapis.com",
+                    "methodName": "SetIamPolicy",
+                    "resourceName": f"projects/{PROJECT_ID}",
+                    "authenticationInfo": {
+                        "principalEmail": "service-agent-manager@system.gserviceaccount.com"
+                    },
+                    "status": {},
+                    "serviceData": {
+                        "policyDelta": {
+                            "bindingDeltas": [
+                                {
+                                    "action": "ADD",
+                                    "member": "serviceAccount:service-123456789012@gcp-sa-memorystore.iam.gserviceaccount.com",
+                                    "role": "roles/memorystore.serviceAgent",
+                                },
+                                {
+                                    "action": "ADD",
+                                    "member": "serviceAccount:service-123456789012@gcp-sa-gkenode.iam.gserviceaccount.com",
+                                    "role": "roles/container.defaultNodeServiceAgent",
+                                },
+                            ]
+                        }
+                    },
+                },
+            },
+            {
+                "insertId": "p4sa-retry-aborted",
+                "timestamp": "2026-04-06T18:20:01Z",
+                "protoPayload": {
+                    "@type": "type.googleapis.com/google.cloud.audit.AuditLog",
+                    "serviceName": "cloudresourcemanager.googleapis.com",
+                    "methodName": "SetIamPolicy",
+                    "resourceName": f"projects/{PROJECT_ID}",
+                    "authenticationInfo": {
+                        "principalEmail": "service-agent-manager@system.gserviceaccount.com"
+                    },
+                    "status": {"code": 10, "message": "ABORTED"},
+                    "serviceData": None,
+                },
+            },
+            {
+                "insertId": "p4sa-retry-invalid-arg",
+                "timestamp": "2026-04-06T18:20:02Z",
+                "protoPayload": {
+                    "@type": "type.googleapis.com/google.cloud.audit.AuditLog",
+                    "serviceName": "cloudresourcemanager.googleapis.com",
+                    "methodName": "SetIamPolicy",
+                    "resourceName": f"projects/{PROJECT_ID}",
+                    "authenticationInfo": {
+                        "principalEmail": "service-agent-manager@system.gserviceaccount.com"
+                    },
+                    "status": {"code": 3, "message": "INVALID_ARGUMENT"},
+                    "serviceData": None,
+                },
+            },
+        ]
+        artifacts = extract_signed_artifacts(
+            [{"decision_id": "d-p4sa", "routing_seal": compact_jws}],
+            GATEWAY_SEAL_KEY,
+        )
+        ok_report = verify_audit_corroboration(
+            base_entries,
+            signed_artifacts=artifacts,
+            trusted_deployer_principals=frozenset({deployer}),
+        )
+        assert ok_report.corroborated is True
+        assert ok_report.findings == ()
+
+        bad_cases: list[dict[str, Any]] = [
+            # 1. Privilege escalation role (roles/owner)
+            {
+                "insertId": "p4sa-owner-role",
+                "timestamp": "2026-04-06T18:21:00Z",
+                "protoPayload": {
+                    "@type": "type.googleapis.com/google.cloud.audit.AuditLog",
+                    "serviceName": "cloudresourcemanager.googleapis.com",
+                    "methodName": "SetIamPolicy",
+                    "resourceName": f"projects/{PROJECT_ID}",
+                    "authenticationInfo": {
+                        "principalEmail": "service-agent-manager@system.gserviceaccount.com"
+                    },
+                    "status": {},
+                    "serviceData": {
+                        "policyDelta": {
+                            "bindingDeltas": [
+                                {
+                                    "action": "ADD",
+                                    "member": "serviceAccount:service-123456789012@gcp-sa-memorystore.iam.gserviceaccount.com",
+                                    "role": "roles/owner",
+                                }
+                            ]
+                        }
+                    },
+                },
+            },
+            # 2. Non-P4SA member bound to a ServiceAgent role
+            {
+                "insertId": "p4sa-non-p4sa-member",
+                "timestamp": "2026-04-06T18:21:01Z",
+                "protoPayload": {
+                    "@type": "type.googleapis.com/google.cloud.audit.AuditLog",
+                    "serviceName": "cloudresourcemanager.googleapis.com",
+                    "methodName": "SetIamPolicy",
+                    "resourceName": f"projects/{PROJECT_ID}",
+                    "authenticationInfo": {
+                        "principalEmail": "service-agent-manager@system.gserviceaccount.com"
+                    },
+                    "status": {},
+                    "serviceData": {
+                        "policyDelta": {
+                            "bindingDeltas": [
+                                {
+                                    "action": "ADD",
+                                    "member": f"serviceAccount:cage-gateway@{PROJECT_ID}.iam.gserviceaccount.com",
+                                    "role": "roles/memorystore.serviceAgent",
+                                }
+                            ]
+                        }
+                    },
+                },
+            },
+            # 3. Audit-config tampering (auditConfigDeltas non-empty)
+            {
+                "insertId": "p4sa-audit-config-tamper",
+                "timestamp": "2026-04-06T18:21:02Z",
+                "protoPayload": {
+                    "@type": "type.googleapis.com/google.cloud.audit.AuditLog",
+                    "serviceName": "cloudresourcemanager.googleapis.com",
+                    "methodName": "SetIamPolicy",
+                    "resourceName": f"projects/{PROJECT_ID}",
+                    "authenticationInfo": {
+                        "principalEmail": "service-agent-manager@system.gserviceaccount.com"
+                    },
+                    "status": {},
+                    "serviceData": {
+                        "policyDelta": {
+                            "auditConfigDeltas": [
+                                {
+                                    "action": "REMOVE",
+                                    "service": "cloudkms.googleapis.com",
+                                }
+                            ],
+                            "bindingDeltas": [
+                                {
+                                    "action": "ADD",
+                                    "member": "serviceAccount:service-123456789012@gcp-sa-memorystore.iam.gserviceaccount.com",
+                                    "role": "roles/memorystore.serviceAgent",
+                                }
+                            ],
+                        }
+                    },
+                },
+            },
+            # 4. PERMISSION_DENIED (status.code == 7) must not be silently dropped
+            {
+                "insertId": "p4sa-perm-denied",
+                "timestamp": "2026-04-06T18:21:03Z",
+                "protoPayload": {
+                    "@type": "type.googleapis.com/google.cloud.audit.AuditLog",
+                    "serviceName": "cloudresourcemanager.googleapis.com",
+                    "methodName": "SetIamPolicy",
+                    "resourceName": f"projects/{PROJECT_ID}",
+                    "authenticationInfo": {
+                        "principalEmail": "service-agent-manager@system.gserviceaccount.com"
+                    },
+                    "status": {"code": 7, "message": "PERMISSION_DENIED"},
+                    "serviceData": None,
+                },
+            },
+        ]
+        for bad_entry in bad_cases:
+            bad_report = verify_audit_corroboration(
+                [*base_entries, bad_entry],
+                signed_artifacts=artifacts,
+                trusted_deployer_principals=frozenset({deployer}),
+            )
+            assert bad_report.corroborated is False, bad_entry["insertId"]
+            assert any(
+                f.code == "UNAUTHORIZED_CONTROL_PLANE_MUTATION"
+                and f.subject == bad_entry["insertId"]
+                for f in bad_report.findings
+            )
+
 
 class TestTerraformAuditLogSinkAlignment:
     """Verify kms_signing.tf routes directly into module.evidence_domain without collisions."""
