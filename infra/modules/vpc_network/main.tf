@@ -167,6 +167,10 @@ resource "google_service_networking_connection" "private_service_access" {
   network                 = google_compute_network.vpc.id
   service                 = "servicenetworking.googleapis.com"
   reserved_peering_ranges = [google_compute_global_address.private_ip_alloc[0].name]
+  # Cloud SQL retains soft-deleted producer reservations on servicenetworking.googleapis.com
+  # after sql.instances.delete returns (Error code 9 on DeleteConnection); abandoning the
+  # peering record on destroy lets private_ip_alloc and google_compute_network.vpc tear down cleanly.
+  deletion_policy = "ABANDON"
 }
 
 # ─── Network Connectivity Service Connection Policy (Memorystore PSC) ────────

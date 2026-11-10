@@ -1491,6 +1491,7 @@ module "evidence_domain" {
   offline_verifier_principal     = var.offline_verifier_principal
   deployer_service_account_email = google_service_account.deployer.email
   signing_key_manifest           = local.signing_key_manifest
+  deployment_epoch_id            = random_id.mesh_ca_pool_suffix.hex
 
   isolation_guard_ready = terraform_data.evidence_domain_isolation_guard.id
 }

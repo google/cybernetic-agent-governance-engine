@@ -165,3 +165,29 @@ def test_deployment_rules_forbids_manual_worm_deletion_and_documents_ed1_in_brea
 
     breaking_text = BREAKING_CHANGES_MD.read_text(encoding="utf-8")
     assert "| **ED-1** |" in breaking_text
+
+
+def test_ephemeral_rebuild_manifest_epoch_and_psa_abandon_policy() -> None:
+    """Ephemeral rebuilds must never overwrite WORM trust-anchor manifests or stall on Cloud SQL PSA GC."""
+    ev_main = (EVIDENCE_DOMAIN_DIR / "main.tf").read_text(encoding="utf-8")
+    ev_vars = (EVIDENCE_DOMAIN_DIR / "variables.tf").read_text(encoding="utf-8")
+    gke_main = (GKE_TARGET_DIR / "main.tf").read_text(encoding="utf-8")
+    vpc_main = (REPO_ROOT / "infra" / "modules" / "vpc_network" / "main.tf").read_text(
+        encoding="utf-8"
+    )
+
+    assert 'variable "deployment_epoch_id"' in ev_vars
+    assert "deployment_epoch_id = var.deployment_epoch_id" in ev_main
+    assert (
+        "deployment_epoch_id            = random_id.mesh_ca_pool_suffix.hex" in gke_main
+    )
+
+    psa_match = re.search(
+        r'resource\s+"google_service_networking_connection"\s+"private_service_access"\s*\{(.*?)\n\}',
+        vpc_main,
+        re.DOTALL,
+    )
+    assert psa_match is not None, (
+        "google_service_networking_connection.private_service_access not found"
+    )
+    assert 'deletion_policy = "ABANDON"' in psa_match.group(1)
