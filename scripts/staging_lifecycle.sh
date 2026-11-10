@@ -2076,7 +2076,7 @@ if [[ "$FRESH_PROJECT" == "true" ]]; then
   fi
 
   # Unexcused liens require explicit `gcloud alpha resource-manager liens delete` before project deletion.
-  remaining_liens="$(gcloud alpha resource-manager liens list --project="$PROJECT_ID" --format='value(name,restrictions)' 2>/dev/null || true)"
+  remaining_liens="$(gcloud alpha resource-manager liens list --project="$PROJECT_ID" --format='value(name,origin,restrictions)' 2>/dev/null || true)"
   if [[ ( "$has_retained_worm_buckets" == "true" || "$ALLOW_LEGACY_LIEN_SURVIVOR" == "true" ) && "$remaining_liens" == *"storage.googleapis.com"* ]]; then
     info "PF9 explicit known storage retention lien survivor (F-66 / F-95): $remaining_liens"
     remaining_liens="$(printf '%s\n' "$remaining_liens" | grep -Ev 'storage\.googleapis\.com' || true)"
@@ -2087,7 +2087,7 @@ if [[ "$FRESH_PROJECT" == "true" ]]; then
   fi
 
   _post_all_buckets="$(gcloud storage buckets list --project="$PROJECT_ID" --format='value(name)' 2>/dev/null || true)"
-  _post_all_liens="$(gcloud alpha resource-manager liens list --project="$PROJECT_ID" --format='value(name,restrictions)' 2>/dev/null || true)"
+  _post_all_liens="$(gcloud alpha resource-manager liens list --project="$PROJECT_ID" --format='value(name,origin,restrictions)' 2>/dev/null || true)"
   POST_INV_OUT="$ARCHIVE_DIR/post-destroy-project-inventory.json" \
   POST_INV_PRE="$PRE_RUN_INVENTORY_JSON" \
   POST_INV_PROJECT="$PROJECT_ID" \
