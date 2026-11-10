@@ -1683,3 +1683,23 @@ def test_staging_lifecycle_records_phase0_kms_residue_when_project_pre_exists(
     assert pre_state["kms_crypto_keys"] == [
         "projects/ephemeral-proj-99/locations/us-central1/keyRings/cage-signing-staging/cryptoKeys/binauthz-attestor"
     ]
+
+
+def test_destroy_sigpipe_safe_and_gke_neg_ignore_annotations() -> None:
+    repo_root = Path(__file__).resolve().parents[2]
+    lifecycle_sh = (repo_root / "scripts" / "staging_lifecycle.sh").read_text(
+        encoding="utf-8"
+    )
+    assert "state list 2>/dev/null | grep -q" not in lifecycle_sh, (
+        "piping terraform state list into grep -q triggers SIGPIPE (exit 141) under set -o pipefail"
+    )
+    assert (
+        'grep -q \'^module\\.gke\\.\' <<<"$(terraform -chdir="$TF_DIR" state list 2>/dev/null || true)"'
+        in lifecycle_sh
+    )
+
+    providers_tf = (
+        repo_root / "infra" / "targets" / "gcp-gke" / "providers.tf"
+    ).read_text(encoding="utf-8")
+    assert "ignore_annotations" in providers_tf
+    assert "^cloud\\\\.google\\\\.com/neg(-status)?$" in providers_tf

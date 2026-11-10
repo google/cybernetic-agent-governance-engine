@@ -261,3 +261,99 @@ def test_extract_chain_anchor_disambiguates_governance_vs_infra_stream() -> None
         WormAnchorError, match="0 verified signed batches for stream_key"
     ):
         extract_chain_anchor(report, stream_key="cage:evidence:nonexistent")
+
+
+def test_main_export_format_and_if_exists_modes(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    empty_inv = tmp_path / "inv-zero.json"
+    empty_inv.write_text(
+        json.dumps({"pre_run_evidence_stream_object_count": 0}),
+        encoding="utf-8",
+    )
+    assert (
+        main(
+            [
+                "--gcs-bucket=unused-bucket",
+                f"--pre-run-inventory={empty_inv}",
+                "--if-exists",
+                "--format=export",
+            ]
+        )
+        == 0
+    )
+    assert capsys.readouterr().out == ""
+
+    infra_only_report = tmp_path / "infra-only.json"
+    infra_only_report.write_text(
+        json.dumps(
+            {
+                "ok": True,
+                "citable": True,
+                "verified": [
+                    {
+                        **_make_batch("infra-chain", 0, 0, HASH_B, ATTEST_B),
+                        "stream_key": "cage:evidence:infra:stream",
+                    }
+                ],
+                "failures": [],
+                "declared_gaps": [],
+                "bound_rotations": [],
+                "non_evidentiary": [],
+            }
+        ),
+        encoding="utf-8",
+    )
+    assert (
+        main(
+            [
+                f"--report-file={infra_only_report}",
+                "--stream-key=cage:evidence:stream",
+                "--if-exists",
+                "--format=export",
+            ]
+        )
+        == 0
+    )
+    assert capsys.readouterr().out == ""
+
+    gov_report = tmp_path / "gov.json"
+    gov_report.write_text(
+        json.dumps(
+            {
+                "ok": True,
+                "citable": True,
+                "verified": [
+                    {
+                        **_make_batch("gov-chain", 0, 0, HASH_A, ATTEST_A),
+                        "stream_key": "cage:evidence:stream",
+                    }
+                ],
+                "failures": [],
+                "declared_gaps": [],
+                "bound_rotations": [],
+                "non_evidentiary": [],
+            }
+        ),
+        encoding="utf-8",
+    )
+    nonzero_inv = tmp_path / "inv-two.json"
+    nonzero_inv.write_text(
+        json.dumps({"pre_run_evidence_stream_object_count": 2}),
+        encoding="utf-8",
+    )
+    assert (
+        main(
+            [
+                f"--report-file={gov_report}",
+                f"--pre-run-inventory={nonzero_inv}",
+                "--stream-key=cage:evidence:stream",
+                "--if-exists",
+                "--format=export",
+            ]
+        )
+        == 0
+    )
+    out = capsys.readouterr().out
+    assert f"export TF_VAR_evidence_previous_chain_head_hash={HASH_A}" in out
+    assert f"export TF_VAR_evidence_previous_batch_attestation_digest={ATTEST_A}" in out

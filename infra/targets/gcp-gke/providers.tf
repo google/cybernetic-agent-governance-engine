@@ -24,6 +24,10 @@ provider "kubernetes" {
   host                   = var.bootstrap_without_cluster ? "https://127.0.0.1:65535" : "https://${module.gke.cluster_endpoint}"
   token                  = data.google_client_config.default.access_token
   cluster_ca_certificate = var.bootstrap_without_cluster ? "" : base64decode(module.gke.cluster_ca_certificate)
+
+  ignore_annotations = [
+    "^cloud\\.google\\.com/neg(-status)?$",
+  ]
 }
 
 # Helm provider (uses GKE cluster credentials; statically stubbed when bootstrap_without_cluster=true prior to Stage 1 module.gke creation)

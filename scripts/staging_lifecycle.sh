@@ -1243,7 +1243,7 @@ echo -e "${CYAN}╔════════════════════�
 echo -e "${CYAN}║  Phase 1: Provisioning staging + zero-drift read-back            ║${RESET}"
 echo -e "${CYAN}╚══════════════════════════════════════════════════════════════════╝${RESET}"
 echo ""
-
+if [[ "$FRESH_PROJECT" == "true" && -z "${TF_VAR_evidence_previous_chain_head_hash:-}" ]]; then _anchor_script="${CAGE_WORM_ANCHOR_SCRIPT:-$REPO_ROOT/scripts/read_worm_chain_anchor.py}"; if [[ -f "$_anchor_script" ]]; then _anchor_py="$REPO_ROOT/.venv/bin/python"; [[ -x "$_anchor_py" ]] || _anchor_py="python3"; _pre_worm_exp="$(GOOGLE_API_USE_CLIENT_CERTIFICATE=false "$_anchor_py" "$_anchor_script" --gcs-bucket="${PROJECT_ID}-evidence-worm-staging" --gcs-project="$PROJECT_ID" --kms-key="projects/${PROJECT_ID}/locations/${REGION}/keyRings/cage-signing-staging/cryptoKeys/compliance-evidence/cryptoKeyVersions/1" --pre-run-inventory="$PRE_RUN_INVENTORY_JSON" --stream-key="cage:evidence:stream" --if-exists --format=export)" || exit 1; eval "$_pre_worm_exp"; fi; fi
 info "Deploying staging with full security posture..."
 if ! "$REPO_ROOT/deploy_all.sh" --target gcp-gke --env staging --auto-approve ${DEPLOY_EXTRA_ARGS[@]+"${DEPLOY_EXTRA_ARGS[@]}"}; then
   error "Staging provision failed. Check Terraform output above."
@@ -1902,7 +1902,7 @@ run_terraform_destroy() {
   if [[ -n "$DIGESTS_FILE" ]]; then
     destroy_args+=("-var-file=${DIGESTS_FILE}")
   fi
-  if ! terraform -chdir="$TF_DIR" state list 2>/dev/null | grep -q '^module\.gke\.'; then
+  if ! grep -q '^module\.gke\.' <<<"$(terraform -chdir="$TF_DIR" state list 2>/dev/null || true)"; then
     destroy_args+=("-var=bootstrap_without_cluster=true")
   fi
 

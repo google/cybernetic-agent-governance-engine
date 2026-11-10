@@ -79,6 +79,18 @@ class WormChainAnchor:
             ]
         )
 
+    def to_export_lines(self) -> str:
+        if not _HEX64_RE.match(self.last_record_hash) or not _HEX64_RE.match(
+            self.attestation_sha256
+        ):
+            raise WormAnchorError("Refusing shell export for non-hex64 anchor digest")
+        return "\n".join(
+            [
+                f"export TF_VAR_evidence_previous_chain_head_hash={self.last_record_hash}",
+                f"export TF_VAR_evidence_previous_batch_attestation_digest={self.attestation_sha256}",
+            ]
+        )
+
 
 def _validate_http_url(url: str) -> str:
     parsed = urlparse(url)
@@ -107,6 +119,63 @@ def fetch_verify_report_http(
     if not isinstance(doc, dict):
         raise WormAnchorError(
             f"Expected JSON object from {url}, got {type(doc).__name__}"
+        )
+    return doc
+
+
+def fetch_verify_report_gcs(
+    gcs_bucket: str,
+    *,
+    gcs_project: str,
+    kms_key: str,
+    timeout_s: int = DEFAULT_TIMEOUT_SECONDS,
+) -> dict[str, Any]:
+    """Run ``src.compliance_bridge.evidence_verifier --json`` directly against GCS + Cloud KMS."""
+    import os
+
+    bucket = gcs_bucket.strip()
+    project = gcs_project.strip()
+    key = kms_key.strip()
+    if not bucket or not project or not key:
+        raise WormAnchorError(
+            "--gcs-bucket requires non-empty --gcs-project and --kms-key"
+        )
+    repo_root = Path(__file__).resolve().parents[1]
+    child_env = dict(os.environ)
+    child_env.update(
+        {
+            "EVIDENCE_COLD_STORE": "gcs",
+            "EVIDENCE_COLD_STORE_BUCKET": bucket,
+            "GOOGLE_CLOUD_PROJECT": project,
+            "CAGE_KMS_PROVIDER": "gcp",
+            "EVIDENCE_KMS_KEY": key,
+            "GOOGLE_API_USE_CLIENT_CERTIFICATE": "false",
+        }
+    )
+    proc = subprocess.run(
+        [sys.executable, "-m", "src.compliance_bridge.evidence_verifier", "--json"],
+        cwd=str(repo_root),
+        env=child_env,
+        capture_output=True,
+        text=True,
+        timeout=timeout_s,
+        check=False,
+    )
+    raw = proc.stdout.strip()
+    if not raw:
+        detail = proc.stderr.strip() or f"exit code {proc.returncode}"
+        raise WormAnchorError(
+            f"GCS CustodyVerifier returned empty stdout for gs://{bucket}: {detail}"
+        )
+    try:
+        doc = json.loads(raw)
+    except json.JSONDecodeError as exc:
+        raise WormAnchorError(
+            f"Invalid JSON from GCS CustodyVerifier for gs://{bucket}: {exc}"
+        ) from exc
+    if not isinstance(doc, dict):
+        raise WormAnchorError(
+            f"Expected JSON object from GCS CustodyVerifier, got {type(doc).__name__}"
         )
     return doc
 
@@ -303,6 +372,37 @@ def extract_chain_anchor(
     )
 
 
+def _has_no_stream_batches_yet(
+    report: Mapping[str, Any], *, stream_key: str | None
+) -> bool:
+    """Return True only when the archive is healthy/empty for ``stream_key``."""
+    if report.get("ok") is not True:
+        return False
+    if (
+        report.get("failures")
+        or report.get("declared_gaps")
+        or report.get("non_evidentiary")
+    ):
+        return False
+    verified = report.get("verified")
+    if not isinstance(verified, list) or len(verified) == 0:
+        return True
+    target = (stream_key or "").strip()
+    if not target:
+        return False
+    any_stream_key_present = any(
+        isinstance(item, Mapping) and bool(str(item.get("stream_key") or "").strip())
+        for item in verified
+    )
+    if not any_stream_key_present:
+        return False
+    return not any(
+        isinstance(item, Mapping)
+        and str(item.get("stream_key") or "").strip() == target
+        for item in verified
+    )
+
+
 def main(argv: list[str] | None = None) -> int:
     import os
 
@@ -330,6 +430,34 @@ def main(argv: list[str] | None = None) -> int:
         action="store_true",
         help="Query deploy/compliance-bridge in-cluster via kubectl exec",
     )
+    src_group.add_argument(
+        "--gcs-bucket",
+        type=str,
+        help="Verify a GCS WORM bucket directly via CustodyVerifier + Cloud KMS",
+    )
+    parser.add_argument(
+        "--gcs-project",
+        type=str,
+        default="",
+        help="GCP project ID when --gcs-bucket is used",
+    )
+    parser.add_argument(
+        "--kms-key",
+        type=str,
+        default="",
+        help="Cloud KMS CryptoKeyVersion resource name when --gcs-bucket is used",
+    )
+    parser.add_argument(
+        "--pre-run-inventory",
+        type=Path,
+        default=None,
+        help="Optional pre-run-project-inventory.json path; skips GCS query when pre_run_evidence_stream_object_count == 0",
+    )
+    parser.add_argument(
+        "--if-exists",
+        action="store_true",
+        help="Exit 0 with empty stdout when the target stream has 0 custodied batches yet",
+    )
     parser.add_argument(
         "--namespace",
         default="governance-stack",
@@ -343,7 +471,7 @@ def main(argv: list[str] | None = None) -> int:
     )
     parser.add_argument(
         "--format",
-        choices=("json", "env"),
+        choices=("json", "env", "export"),
         default="json",
         help="Stdout output format (default: json)",
     )
@@ -365,6 +493,21 @@ def main(argv: list[str] | None = None) -> int:
     args = parser.parse_args(argv)
 
     try:
+        if args.pre_run_inventory is not None:
+            if not args.pre_run_inventory.is_file():
+                if args.if_exists:
+                    return 0
+                raise WormAnchorError(
+                    f"Pre-run inventory file not found: {args.pre_run_inventory}"
+                )
+            inv = json.loads(args.pre_run_inventory.read_text(encoding="utf-8"))
+            if (
+                isinstance(inv, Mapping)
+                and int(inv.get("pre_run_evidence_stream_object_count", 0) or 0) == 0
+                and args.if_exists
+            ):
+                return 0
+
         if args.from_stdin:
             report = json.loads(sys.stdin.read())
         elif args.report_file is not None:
@@ -373,6 +516,13 @@ def main(argv: list[str] | None = None) -> int:
             report = fetch_verify_report_http(args.bridge_url, timeout_s=args.timeout)
         elif args.kubectl:
             report = fetch_verify_report_kubectl(args.namespace, timeout_s=args.timeout)
+        elif args.gcs_bucket:
+            report = fetch_verify_report_gcs(
+                args.gcs_bucket,
+                gcs_project=args.gcs_project,
+                kms_key=args.kms_key,
+                timeout_s=args.timeout,
+            )
         else:
             env_url = os.environ.get("COMPLIANCE_BRIDGE_URL", "").strip()
             if env_url:
@@ -385,6 +535,11 @@ def main(argv: list[str] | None = None) -> int:
         if not isinstance(report, Mapping):
             raise WormAnchorError("Verification report must be a JSON object")
 
+        if args.if_exists and _has_no_stream_batches_yet(
+            report, stream_key=args.stream_key
+        ):
+            return 0
+
         anchor = extract_chain_anchor(report, stream_key=args.stream_key)
         if args.output is not None:
             args.output.parent.mkdir(parents=True, exist_ok=True)
@@ -394,6 +549,13 @@ def main(argv: list[str] | None = None) -> int:
             )
         if args.format == "env":
             print(anchor.to_env_lines())
+        elif args.format == "export":
+            print(
+                f"[INFO] Pre-existing WORM chain anchor resolved for {anchor.stream_key or args.stream_key}: "
+                f"chain={anchor.chain_id}, batches={anchor.verified_batches}, head={anchor.last_record_hash[:12]}...",
+                file=sys.stderr,
+            )
+            print(anchor.to_export_lines())
         else:
             print(json.dumps(anchor.to_dict(), indent=2, sort_keys=True))
         return 0
