@@ -463,3 +463,44 @@ def test_gen_tfvars_succeeds_without_kms_governance_key_and_omits_undeclared_var
     rendered = out_file.read_text(encoding="utf-8")
     assert "otel_exporter_otlp_headers" in rendered
     assert "kms_governance_key" not in rendered
+
+
+def test_bootstrap_retries_transient_artifact_registry_api_propagation(
+    tmp_path: Path,
+) -> None:
+    bin_dir, log_file = _make_stub_bins(tmp_path, describe_exists=False)
+    marker = tmp_path / "ar_first_attempt"
+    gcloud_path = bin_dir / "gcloud"
+    gcloud_body = gcloud_path.read_text(encoding="utf-8").replace(
+        "exit 0\n",
+        f"""if [[ "$*" == *"artifacts repositories create"* && ! -f "{marker}" ]]; then
+  touch "{marker}"
+  echo "ERROR: (gcloud.artifacts.repositories.create) PERMISSION_DENIED: Permission 'artifactregistry.repositories.create' denied" >&2
+  exit 1
+fi
+exit 0
+""",
+    )
+    _write_executable(gcloud_path, gcloud_body)
+
+    env = {
+        **os.environ,
+        "PATH": f"{bin_dir}:{os.environ.get('PATH', '')}",
+        "BOOTSTRAP_IAM_RETRY_BASE_SLEEP": "0",
+    }
+    proc = subprocess.run(
+        [
+            "bash",
+            str(BOOTSTRAP_SCRIPT),
+            "--project=clean-proj-03",
+            "--env=staging",
+            "--region=us-central1",
+        ],
+        env=env,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert proc.returncode == 0, proc.stderr
+    calls = log_file.read_text(encoding="utf-8")
+    assert calls.count("artifacts repositories create gcr.io") == 2
