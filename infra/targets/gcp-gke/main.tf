@@ -391,13 +391,17 @@ resource "google_project_iam_member" "compliance_bridge_sa_artifactregistry_writ
 # dev plan enforce, is now var.enforce_in_dev. A tfvars file that still sets
 # a removed flag gets a "Value for undeclared variable" warning and is ignored.
 
+resource "random_id" "cloudsql_suffix" {
+  byte_length = 4
+}
+
 module "cloudsql_postgres" {
   source = "../../modules/cloudsql_postgres"
 
   project_id         = var.project_id
   environment        = var.environment
   region             = var.region
-  instance_name      = "cage-postgres-${var.environment}"
+  instance_name      = "cage-postgres-${var.environment}-${random_id.cloudsql_suffix.hex}"
   database_version   = "POSTGRES_15"
   authorized_network = local.cloudsql_network_name
 

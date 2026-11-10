@@ -299,6 +299,42 @@ import_foundational_state() {
     fi
   fi
 
+  # 5. Workload Identity Pool & OIDC Provider (GCP IAM retains deleted pools/providers
+  # in DELETED tombstone state for 30 days, blocking re-creation on rebuilds).
+  local wif_pool_state
+  wif_pool_state="$(gcloud iam workload-identity-pools describe "github-actions" --location="global" --project="$PROJECT_ID" --format='value(state)' 2>/dev/null || true)"
+  if [[ "$wif_pool_state" == "DELETED" ]]; then
+    echo "  ♻️  Undeleting tombstoned Workload Identity Pool 'github-actions'..."
+    gcloud iam workload-identity-pools undelete "github-actions" --location="global" --project="$PROJECT_ID" --quiet >/dev/null
+    for _ in {1..15}; do
+      wif_pool_state="$(gcloud iam workload-identity-pools describe "github-actions" --location="global" --project="$PROJECT_ID" --format='value(state)' 2>/dev/null || true)"
+      [[ "$wif_pool_state" == "ACTIVE" ]] && break
+      sleep 1
+    done
+  fi
+  if [[ -n "$wif_pool_state" ]]; then
+    import_if_missing \
+      "google_iam_workload_identity_pool.github_actions" \
+      "projects/${PROJECT_ID}/locations/global/workloadIdentityPools/github-actions"
+
+    local wif_prov_state
+    wif_prov_state="$(gcloud iam workload-identity-pools providers describe "github" --workload-identity-pool="github-actions" --location="global" --project="$PROJECT_ID" --format='value(state)' 2>/dev/null || true)"
+    if [[ "$wif_prov_state" == "DELETED" ]]; then
+      echo "  ♻️  Undeleting tombstoned Workload Identity Provider 'github'..."
+      gcloud iam workload-identity-pools providers undelete "github" --workload-identity-pool="github-actions" --location="global" --project="$PROJECT_ID" --quiet >/dev/null
+      for _ in {1..15}; do
+        wif_prov_state="$(gcloud iam workload-identity-pools providers describe "github" --workload-identity-pool="github-actions" --location="global" --project="$PROJECT_ID" --format='value(state)' 2>/dev/null || true)"
+        [[ "$wif_prov_state" == "ACTIVE" ]] && break
+        sleep 1
+      done
+    fi
+    if [[ -n "$wif_prov_state" ]]; then
+      import_if_missing \
+        "google_iam_workload_identity_pool_provider.github" \
+        "projects/${PROJECT_ID}/locations/global/workloadIdentityPools/github-actions/providers/github"
+    fi
+  fi
+
   import_evidence_domain_state
   echo "✅ Foundational state import pass complete."
 }

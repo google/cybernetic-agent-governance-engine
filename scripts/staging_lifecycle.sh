@@ -1866,7 +1866,7 @@ PERSISTENT_KMS_STATE_ADDRS=(
   "google_kms_crypto_key.binauthz_attestor"
   "google_kms_key_ring.signing"
   "module.kms" "module.evidence_domain" "module.worm_bucket"
-  "google_storage_bucket.langfuse_event_upload" "random_id.bucket_suffix"
+  "google_storage_bucket.langfuse_event_upload" "random_id.bucket_suffix" "google_iam_workload_identity_pool_provider.github" "google_iam_workload_identity_pool.github_actions"
 )
 
 detach_persistent_kms_state() {

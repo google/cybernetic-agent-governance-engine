@@ -83,6 +83,10 @@ def test_cloudsql_postgres_module_configured() -> None:
     block = _extract_module_block("cloudsql_postgres", gke_main)
 
     assert 'source = "../../modules/cloudsql_postgres"' in block
+    assert (
+        'instance_name      = "cage-postgres-${var.environment}-${random_id.cloudsql_suffix.hex}"'
+        in block
+    )
     assert 'database_version   = "POSTGRES_15"' in block
     assert "authorized_network = local.cloudsql_network_name" in block
     assert (
