@@ -625,9 +625,12 @@ def test_staging_lifecycle_happy_path_passes_and_destroys_with_rendered_digests(
         in calls
     )
     assert calls.count("destroy -var-file=staging.tfvars") == 2
-    # PF8: Persistent KMS resources detached before destroy
+    # PF8: Persistent KMS + BinAuthz resources detached before destroy
     assert "state rm google_kms_key_ring.signing" in calls
     assert "state rm google_kms_crypto_key.binauthz_attestor" in calls
+    assert "state rm google_binary_authorization_attestor.build_attestor" in calls
+    assert "state rm google_container_analysis_note.build_attestor_note" in calls
+    assert "state rm google_service_account.cloudbuild" in calls
     assert "state rm module.kms" in calls
     assert "enable_nist_compliance" not in calls
     assert "image_digests.abc1234.tfvars.json" in calls
@@ -1800,3 +1803,41 @@ def test_pf9_manifest_distinguishes_preexisting_vs_retained_by_design_buckets_an
     )
     assert manifest_skip["overall_status"] == "PARTIAL_PASS"
     assert manifest_skip["full_unskipped_gate_w"] is False
+
+
+def test_staging_lifecycle_stage5b_seeds_post_rebuild_custody_before_worm_verification(
+    tmp_path: Path,
+) -> None:
+    repo, bin_dir, log_file = _setup_fake_repo(tmp_path)
+    e2e_stub = repo / "tests" / "e2e" / "run_gke_e2e_suite.py"
+    e2e_stub.parent.mkdir(parents=True, exist_ok=True)
+    e2e_stub.write_text("# stub\n", encoding="utf-8")
+    archive_dir = tmp_path / "archive-stage5b-seed"
+    env = _base_env(
+        bin_dir,
+        GOOGLE_CLOUD_PROJECT="demo-staging-proj",
+        TF_VAR_e2e_operator_jwks_json='{"keys":[]}',
+    )
+    proc = subprocess.run(
+        [
+            "bash",
+            str(repo / "scripts" / "staging_lifecycle.sh"),
+            "--enable-e2e-advisor",
+            "--skip-lula",
+            "--skip-posture",
+            "--skip-live-sweep",
+            f"--archive-dir={archive_dir}",
+        ],
+        env=env,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert proc.returncode == 0, proc.stderr
+    assert (archive_dir / "post-rebuild-custody-seed.json").is_file()
+    calls = log_file.read_text(encoding="utf-8")
+    assert "rollout status deployment/governed-financial-advisor" in calls
+    assert "rollout status deployment/inference-stub" in calls
+    assert "run_gke_e2e_suite.py --seed-only" in calls
+    manifest = json.loads((archive_dir / "manifest.json").read_text(encoding="utf-8"))
+    assert manifest["worm_continuity"]["post_rebuild_bound_rotation_verified"] is True
