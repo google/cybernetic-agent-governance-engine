@@ -74,7 +74,7 @@ jobs:
           # Dependabot: dependabot/(ecosystem)/(group-or-package)
           PATTERN='^(feat|fix|docs|refactor|ci|test|chore|spike)/[a-z0-9]([a-z0-9-]{0,28}[a-z0-9])?$|^hotfix/v?[0-9]+\.[0-9]+\.[0-9]+-[a-z0-9]([a-z0-9-]{0,28}[a-z0-9])?$|^dependabot/[a-z0-9._/-]+$'
           
-          if ! echo "$BRANCH_NAME" | grep -qE "$PATTERN"; then
+          if ! grep -qE "$PATTERN" <<<"$BRANCH_NAME"; then
             echo "::error::Branch name '$BRANCH_NAME' does not follow the project's naming convention."
             echo "::error::See AGENTS.md § Branch Naming & Merge Strategy for rules."
             echo ""
@@ -860,15 +860,16 @@ jobs:
             exit 1
           fi
           policies_json=$(docker compose exec -T gateway python -c "import os, urllib.request; req = urllib.request.Request('http://opa:8181/v1/policies', headers={'Authorization': 'Bearer ' + os.environ['OPA_AUTH_TOKEN']}); print(urllib.request.urlopen(req, timeout=5).read().decode())")
-          echo "$policies_json" | grep -q "trade"
-          if echo "$policies_json" | grep -q "dosing"; then
+          grep -q "trade" <<<"$policies_json"
+          if grep -q "dosing" <<<"$policies_json"; then
             echo "::error::Cross-domain policy leak: dosing.governance loaded under CAGE_DOMAIN=finance"
             exit 1
           fi
       - name: Verify containerized Gateway /health, /mcp/, and assert First-DENY
         run: |
           set -a; source .env; set +a
-          curl -sf http://127.0.0.1:8080/health | grep -q '"status":"ok"'
+          health_resp=$(curl -sf http://127.0.0.1:8080/health)
+          grep -q '"status":"ok"' <<<"$health_resp"
           echo "✅ Containerized Gateway /health is ready"
           # The gateway believes l5d-client-id only on a connection from inside its
           # own pod, where the Linkerd proxy runs (POAM-2026-167). From the runner,
@@ -892,7 +893,7 @@ jobs:
           # Identified calls go from inside the gateway container, where the proxy
           # would run, as docs/QUICKSTART.md §3 sends them.
           mcp_resp=$(scripts/compose_gateway_call.sh /mcp/ '{"jsonrpc":"2.0","id":1,"method":"tools/list","params":{}}')
-          echo "$mcp_resp" | grep -q "execute_trade"
+          grep -q "execute_trade" <<<"$mcp_resp"
           # Verify live OPA + Governor DENY through the running HTTP gateway (/governance/validate-action)
           first_deny_hash=$(docker compose exec -T gateway python -c '
           import json, re, urllib.error, urllib.request
@@ -1034,15 +1035,16 @@ jobs:
             exit 1
           fi
           policies_json=$(docker compose exec -T gateway python -c "import os, urllib.request; req = urllib.request.Request('http://opa:8181/v1/policies', headers={'Authorization': 'Bearer ' + os.environ['OPA_AUTH_TOKEN']}); print(urllib.request.urlopen(req, timeout=5).read().decode())")
-          echo "$policies_json" | grep -q "dosing"
-          if echo "$policies_json" | grep -q "trade_governance"; then
+          grep -q "dosing" <<<"$policies_json"
+          if grep -q "trade_governance" <<<"$policies_json"; then
             echo "::error::Cross-domain policy leak: trade_governance.rego loaded under CAGE_DOMAIN=healthcare"
             exit 1
           fi
-          curl -sf http://127.0.0.1:8080/health | grep -q '"status":"ok"'
+          health_resp=$(curl -sf http://127.0.0.1:8080/health)
+          grep -q '"status":"ok"' <<<"$health_resp"
           mcp_resp=$(scripts/compose_gateway_call.sh /mcp/ '{"jsonrpc":"2.0","id":1,"method":"tools/list","params":{}}')
-          echo "$mcp_resp" | grep -q "administer_dose"
-          if echo "$mcp_resp" | grep -q "execute_trade"; then
+          grep -q "administer_dose" <<<"$mcp_resp"
+          if grep -q "execute_trade" <<<"$mcp_resp"; then
             echo "::error::Cross-domain tool leak: execute_trade exposed under CAGE_DOMAIN=healthcare"
             exit 1
           fi

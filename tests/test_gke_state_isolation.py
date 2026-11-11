@@ -52,6 +52,10 @@ _TERRAFORM_STUB = """#!/bin/sh
 echo "terraform $*" >> "$STUB_LOG"
 if [ "$2 $3" = "state list" ] && [ "${CLUSTER_IN_STATE:-1}" = 1 ]; then
   echo "module.gke.google_container_cluster.primary"
+  if [ "${LARGE_MANAGED_STATE:-0}" = 1 ]; then
+    echo "module.cloudsql_postgres.google_sql_database_instance.postgres"
+    awk 'BEGIN { for (i = 0; i < 2500; i++) printf "module.workload.kubernetes_config_map.item_%04d\n", i }'
+  fi
 fi
 if [ "$2 $3" = "state show" ] && [ -n "${SQL_SUFFIX_HEX:-}" ]; then
   echo 'resource "random_id" "cloudsql_suffix" {'
@@ -449,5 +453,33 @@ def test_cloudsql_lro_poll_drop_imports_runnable_instance_and_retries_apply(
         "module.cloudsql_postgres.google_sql_database_instance.postgres "
         "projects/proj-x/instances/cage-postgres-staging-60879e64"
     ) in imports[0]
+    applies = [c for c in calls if c.startswith("terraform ") and " apply " in c]
+    assert len(applies) == 2
+
+
+def test_large_state_list_does_not_trigger_sigpipe_false_import_or_stage1(
+    deploy,
+) -> None:
+    """Ensure >128KB `terraform state list` never triggers SIGPIPE (141) under pipefail."""
+    _, run = deploy
+    result, calls = run(
+        "--env",
+        "staging",
+        "--auto-approve",
+        extra_env={
+            "FAIL_FIRST_APPLY": "1",
+            "LARGE_MANAGED_STATE": "1",
+            "SQL_SUFFIX_HEX": "23719e04",
+            "SQL_DESCRIBE_STATE": "RUNNABLE",
+            "DEPLOY_CLOUDSQL_RETRY_SLEEP": "0",
+        },
+    )
+    assert result.returncode == 0, result.stderr
+    stage1_plans = [
+        c for c in calls if c.startswith("terraform ") and "-out=tfplan.stage1" in c
+    ]
+    assert stage1_plans == []
+    imports = [c for c in calls if c.startswith("terraform ") and " import " in c]
+    assert imports == []
     applies = [c for c in calls if c.startswith("terraform ") and " apply " in c]
     assert len(applies) == 2

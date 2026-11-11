@@ -107,11 +107,10 @@ _read_env_var() {
   local var_name="$1"
   local value
   # grep for the line, strip comments, strip surrounding quotes
-  value=$(grep -E "^${var_name}=" "$REPO_ROOT/.env" 2>/dev/null \
-    | head -1 \
+  value=$(grep -m 1 -E "^${var_name}=" "$REPO_ROOT/.env" 2>/dev/null \
     | sed "s/^${var_name}=//" \
     | sed "s/^['\"]//;s/['\"]$//" \
-    | sed 's/[[:space:]]*#.*//')
+    | sed 's/[[:space:]]*#.*//' || true)
   printf '%s' "$value"
 }
 
@@ -601,7 +600,7 @@ deploy_terraform_target() {
   # project or post-destroy rebuild), provision the GCP cluster foundation first
   # with bootstrap_without_cluster=true so Stage 2 can construct live Kubernetes
   # and Helm REST clients against module.gke.cluster_endpoint.
-  if [[ "$target" == "gcp-gke" ]] && ! terraform -chdir="$tf_dir" state list 2>/dev/null | grep -q '^module\.gke\.'; then
+  if [[ "$target" == "gcp-gke" ]] && ! grep -q '^module\.gke\.' <<<"$(terraform -chdir="$tf_dir" state list 2>/dev/null || true)"; then
     header "Stage 1 Terraform Plan & Apply (GKE Cluster Foundation — EF4 / EF6)"
     local stage1_plan_args=(
       "${plan_args[@]}"
@@ -635,7 +634,7 @@ deploy_terraform_target() {
         warn "Initial Terraform apply interrupted; reconciling any in-flight Cloud SQL LRO before single retry..."
         local _sql_suffix
         _sql_suffix="$(terraform -chdir="$tf_dir" state show -no-color random_id.cloudsql_suffix 2>/dev/null | awk '$1 == "hex" { gsub(/"/, "", $3); print $3 }')"
-        if [[ -n "$_sql_suffix" ]] && ! terraform -chdir="$tf_dir" state list 2>/dev/null | grep -q '^module\.cloudsql_postgres\.google_sql_database_instance\.postgres$'; then
+        if [[ -n "$_sql_suffix" ]] && ! grep -q '^module\.cloudsql_postgres\.google_sql_database_instance\.postgres$' <<<"$(terraform -chdir="$tf_dir" state list 2>/dev/null || true)"; then
           local _sql_inst="cage-postgres-${_tier}-${_sql_suffix}"
           local _sql_state=""
           local _sql_poll_sleep="${DEPLOY_CLOUDSQL_RETRY_SLEEP:-10}"

@@ -392,16 +392,16 @@ COMMIT_MSG_FILE="$1"
 COMMIT_MSG=$(cat "$COMMIT_MSG_FILE")
 
 # Strip comment lines
-SUBJECT=$(echo "$COMMIT_MSG" | grep -v '^#' | head -1)
+SUBJECT=$(grep -m 1 -v '^#' <<<"$COMMIT_MSG" || true)
 
 # Allow empty (amend with no message change) and merge commits
-if [[ -z "$SUBJECT" ]] || echo "$SUBJECT" | grep -qE '^Merge '; then
+if [[ -z "$SUBJECT" ]] || grep -qE '^Merge ' <<<"$SUBJECT"; then
   exit 0
 fi
 
 PATTERN='^(feat|fix|docs|style|refactor|perf|test|chore|ci|revert)(\([a-z0-9/_-]+\))?(!)?: .{1,72}$'
 
-if ! echo "$SUBJECT" | grep -qE "$PATTERN"; then
+if ! grep -qE "$PATTERN" <<<"$SUBJECT"; then
   echo ""
   echo "❌  Commit message does not follow Conventional Commits format."
   echo ""
@@ -499,7 +499,7 @@ while read -r _local_ref local_oid remote_ref _remote_oid; do
   fi
 
   # Check 2: the branch name the remote will hold.
-  if ! printf '%s\n' "$branch" | grep -qE "$PATTERN"; then
+  if ! grep -qE "$PATTERN" <<<"$branch"; then
     refuse_name "$branch"
     status=1
   fi
