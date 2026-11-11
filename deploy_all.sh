@@ -107,11 +107,10 @@ _read_env_var() {
   local var_name="$1"
   local value
   # grep for the line, strip comments, strip surrounding quotes
-  value=$(grep -E "^${var_name}=" "$REPO_ROOT/.env" 2>/dev/null \
-    | head -1 \
+  value=$(grep -m 1 -E "^${var_name}=" "$REPO_ROOT/.env" 2>/dev/null \
     | sed "s/^${var_name}=//" \
     | sed "s/^['\"]//;s/['\"]$//" \
-    | sed 's/[[:space:]]*#.*//')
+    | sed 's/[[:space:]]*#.*//' || true)
   printf '%s' "$value"
 }
 

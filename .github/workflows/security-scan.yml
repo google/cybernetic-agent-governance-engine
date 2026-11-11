@@ -207,8 +207,7 @@ jobs:
         run: |
           shopt -s nullglob
           domain_opa_dirs=(src/cage_*/opa)
-          if find . -name "*_test.rego" -not -path "*/node_modules/*" \
-               | grep -q .; then
+          if [[ -n "$(find . -name "*_test.rego" -not -path "*/node_modules/*" -print -quit)" ]]; then
             # Pass compliance posture tests together with every domain plugin's
             # src/cage_*/opa/ bundle so all domain packages (e.g.
             # trade.governance and dosing.governance) and their *_test.rego

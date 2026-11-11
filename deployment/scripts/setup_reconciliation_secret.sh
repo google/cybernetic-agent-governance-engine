@@ -88,7 +88,7 @@ echo ""
 echo_info "Verifying secret contents..."
 SECRET_KEYS=$(kubectl get secret "${SECRET_NAME}" -n "${NAMESPACE}" -o jsonpath='{.data}' 2>/dev/null | jq -r 'keys[]' 2>/dev/null || echo "")
 
-if echo "${SECRET_KEYS}" | grep -q "reconciler-kms-key"; then
+if grep -q "reconciler-kms-key" <<<"${SECRET_KEYS}"; then
   echo_info "✓ reconciler-kms-key key present"
 else
   echo_error "✗ reconciler-kms-key key missing"

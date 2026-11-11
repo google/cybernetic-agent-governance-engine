@@ -69,6 +69,14 @@ resource "google_container_analysis_note" "build_attestor_note" {
       human_readable_name = "CAGE Cloud Build Attestor (${var.environment})"
     }
   }
+
+  # Deleting a Grafeas ATTESTATION_AUTHORITY note cascade-deletes every signed
+  # occurrence beneath it, disabling Binary Authorization admission for all
+  # attested images project-wide (SI-7 / CM-7). Pair with kms_signing.tf's
+  # prevent_destroy guards so teardown requires explicit state detachment.
+  lifecycle {
+    prevent_destroy = true
+  }
 }
 
 resource "google_binary_authorization_attestor" "build_attestor" {
@@ -86,6 +94,10 @@ resource "google_binary_authorization_attestor" "build_attestor" {
         signature_algorithm = data.google_kms_crypto_key_version.binauthz_attestor[0].public_key[0].algorithm
       }
     }
+  }
+
+  lifecycle {
+    prevent_destroy = true
   }
 }
 

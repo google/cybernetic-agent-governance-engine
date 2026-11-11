@@ -96,7 +96,8 @@ fi
 log_info "Host Ollama is active and listening at http://localhost:11434 (external to containers)."
 
 # Verify target model is present on the host
-if ! curl -s http://localhost:11434/api/tags | grep -q "qwen2.5:3b"; then
+_ollama_tags="$(curl -s http://localhost:11434/api/tags || true)"
+if ! grep -q "qwen2.5:3b" <<<"$_ollama_tags"; then
     log_warn "Model qwen2.5:3b not found in host Ollama. Pulling now (this may take a few minutes)..."
     if ! ollama pull qwen2.5:3b; then
         log_error "Failed to pull qwen2.5:3b on host. Run manually: ollama pull qwen2.5:3b"

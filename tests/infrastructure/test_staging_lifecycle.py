@@ -1841,3 +1841,61 @@ def test_staging_lifecycle_stage5b_seeds_post_rebuild_custody_before_worm_verifi
     assert "run_gke_e2e_suite.py --seed-only" in calls
     manifest = json.loads((archive_dir / "manifest.json").read_text(encoding="utf-8"))
     assert manifest["worm_continuity"]["post_rebuild_bound_rotation_verified"] is True
+
+
+def test_binauthz_note_and_attestor_declare_prevent_destroy() -> None:
+    """Deleting `build_attestor_note` cascade-deletes all Grafeas image attestations."""
+    import re
+
+    perimeter_tf = (
+        REPO_ROOT / "infra" / "targets" / "gcp-gke" / "perimeter.tf"
+    ).read_text(encoding="utf-8")
+    for resource_type, resource_name in (
+        ("google_container_analysis_note", "build_attestor_note"),
+        ("google_binary_authorization_attestor", "build_attestor"),
+    ):
+        pattern = re.compile(
+            rf'resource\s+"{resource_type}"\s+"{resource_name}"\s*\{{(?P<body>.*?)\n\}}',
+            re.DOTALL,
+        )
+        match = pattern.search(perimeter_tf)
+        assert match is not None, (
+            f"missing {resource_type}.{resource_name} in perimeter.tf"
+        )
+        assert "prevent_destroy = true" in match.group("body"), (
+            f"{resource_type}.{resource_name} must set lifecycle.prevent_destroy = true"
+        )
+
+
+def test_no_piped_grep_quiet_under_pipefail_across_repo_scripts_and_workflows() -> None:
+    """Prevent `| grep -q` SIGPIPE (141) inversions under `set -o pipefail`."""
+    import re
+
+    piped_grep_q = re.compile(
+        r"(?<!\|)\|(?!\|)\s*grep(?:\s+-[A-Za-z]+)*\s+(?:-[A-Za-z]*q\b|--quiet\b)"
+    )
+    candidates = [
+        REPO_ROOT / "deploy_all.sh",
+        *sorted((REPO_ROOT / "scripts").rglob("*.sh")),
+        *sorted((REPO_ROOT / "deployment" / "scripts").rglob("*.sh")),
+        *sorted((REPO_ROOT / ".github" / "workflows").glob("*.yml")),
+    ]
+    offenders: list[str] = []
+    for path in candidates:
+        if not path.is_file():
+            continue
+        lines = path.read_text(encoding="utf-8").splitlines()
+        for lineno, raw_line in enumerate(lines, start=1):
+            stripped = raw_line.strip()
+            if stripped.startswith("#"):
+                continue
+            prev_line = lines[lineno - 2] if lineno >= 2 else ""
+            joined = (
+                f"{prev_line.rstrip()[:-1]} {stripped}"
+                if prev_line.rstrip().endswith("\\")
+                else raw_line
+            )
+            if piped_grep_q.search(joined):
+                rel = path.relative_to(REPO_ROOT)
+                offenders.append(f"{rel}:{lineno}: {stripped}")
+    assert offenders == [], f"Found SIGPIPE-prone `| grep -q` pipeline(s): {offenders}"

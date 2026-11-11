@@ -2092,22 +2092,42 @@ if [[ "$FRESH_PROJECT" == "true" ]]; then
 
   remaining_buckets="$(gcloud storage buckets list --project="$PROJECT_ID" --format='value(name)' 2>/dev/null | grep -Ev "^(${PROJECT_ID}-tfstate|${PROJECT_ID}_cloudbuild)$" || true)"
   has_retained_worm_buckets=false
-  if printf '%s\n' "$remaining_buckets" | grep -Eq "^(${PROJECT_ID}-evidence-worm-staging|${PROJECT_ID}-audit-logs-worm-staging)$"; then
-    info "PF9 persistent evidence-domain WORM bucket(s) retained by design (F-66 / F-94): $(printf '%s\n' "$remaining_buckets" | grep -E "^(${PROJECT_ID}-evidence-worm-staging|${PROJECT_ID}-audit-logs-worm-staging)$" | tr '\n' ' ')"
-    remaining_buckets="$(printf '%s\n' "$remaining_buckets" | grep -Ev "^(${PROJECT_ID}-evidence-worm-staging|${PROJECT_ID}-audit-logs-worm-staging)$" || true)"
+  if grep -Eq "^(${PROJECT_ID}-evidence-worm-staging|${PROJECT_ID}-audit-logs-worm-staging)$" <<<"$remaining_buckets"; then
+    info "PF9 persistent evidence-domain WORM bucket(s) retained by design (F-66 / F-94): $(grep -E "^(${PROJECT_ID}-evidence-worm-staging|${PROJECT_ID}-audit-logs-worm-staging)$" <<<"$remaining_buckets" | tr '\n' ' ')"
+    remaining_buckets="$(grep -Ev "^(${PROJECT_ID}-evidence-worm-staging|${PROJECT_ID}-audit-logs-worm-staging)$" <<<"$remaining_buckets" || true)"
     has_retained_worm_buckets=true
   fi
-  if printf '%s\n' "$remaining_buckets" | grep -Eq "^langfuse-event-upload-${PROJECT_ID}-[0-9a-f]{8}$"; then
-    info "PF9 persistent 1-day-retention-locked Langfuse upload bucket retained by design (POAM-2026-159): $(printf '%s\n' "$remaining_buckets" | grep -E "^langfuse-event-upload-${PROJECT_ID}-[0-9a-f]{8}$" | tr '\n' ' ')"
-    remaining_buckets="$(printf '%s\n' "$remaining_buckets" | grep -Ev "^langfuse-event-upload-${PROJECT_ID}-[0-9a-f]{8}$" || true)"
+  if grep -Eq "^langfuse-event-upload-${PROJECT_ID}-[0-9a-f]{8}$" <<<"$remaining_buckets"; then
+    info "PF9 persistent 1-day-retention-locked Langfuse upload bucket retained by design (POAM-2026-159): $(grep -E "^langfuse-event-upload-${PROJECT_ID}-[0-9a-f]{8}$" <<<"$remaining_buckets" | tr '\n' ' ')"
+    remaining_buckets="$(grep -Ev "^langfuse-event-upload-${PROJECT_ID}-[0-9a-f]{8}$" <<<"$remaining_buckets" || true)"
     has_retained_worm_buckets=true
   fi
   if [[ "$ALLOW_LEGACY_LIEN_SURVIVOR" == "true" && "$remaining_buckets" == *"langfuse-events-"* ]]; then
-    info "PF9 explicit known survivor (F-95 Decision 6, 2033-09-27 retention lock): $(printf '%s\n' "$remaining_buckets" | grep -E '^langfuse-events-' || true)"
-    remaining_buckets="$(printf '%s\n' "$remaining_buckets" | grep -Ev '^langfuse-events-' || true)"
+    info "PF9 explicit known survivor (F-95 Decision 6, 2033-09-27 retention lock): $(grep -E '^langfuse-events-' <<<"$remaining_buckets" || true)"
+    remaining_buckets="$(grep -Ev '^langfuse-events-' <<<"$remaining_buckets" || true)"
   fi
   if [[ -n "$remaining_buckets" ]]; then
     error "Surviving workload GCS bucket(s) after destroy: $remaining_buckets"
+    ((SURVIVORS++)) || true
+  fi
+
+  remaining_sas="$(gcloud iam service-accounts list --project="$PROJECT_ID" --format='value(email)' 2>/dev/null | grep -E "@${PROJECT_ID}\\.iam\\.gserviceaccount\\.com$" || true)"
+  if grep -Fxq "cage-cloudbuild@${PROJECT_ID}.iam.gserviceaccount.com" <<<"$remaining_sas"; then
+    info "PF9 persistent Cloud Build SA retained by design (PF3 / PF8): cage-cloudbuild@${PROJECT_ID}.iam.gserviceaccount.com"
+    remaining_sas="$(grep -Fxv "cage-cloudbuild@${PROJECT_ID}.iam.gserviceaccount.com" <<<"$remaining_sas" || true)"
+  fi
+  if [[ -n "$remaining_sas" ]]; then
+    error "Surviving workload service account(s) after destroy: $remaining_sas"
+    ((SURVIVORS++)) || true
+  fi
+
+  remaining_attestors="$(gcloud container binauthz attestors list --project="$PROJECT_ID" --format='value(name)' 2>/dev/null || true)"
+  if grep -Fxq "projects/${PROJECT_ID}/attestors/cage-build-attestor-staging" <<<"$remaining_attestors"; then
+    info "PF9 persistent Binary Authorization attestor & Grafeas note retained by design (PF3 / PF8): projects/${PROJECT_ID}/attestors/cage-build-attestor-staging"
+    remaining_attestors="$(grep -Fxv "projects/${PROJECT_ID}/attestors/cage-build-attestor-staging" <<<"$remaining_attestors" || true)"
+  fi
+  if [[ -n "$remaining_attestors" ]]; then
+    error "Surviving unexpected Binary Authorization attestor(s) after destroy: $remaining_attestors"
     ((SURVIVORS++)) || true
   fi
 
@@ -2115,7 +2135,7 @@ if [[ "$FRESH_PROJECT" == "true" ]]; then
   remaining_liens="$(gcloud alpha resource-manager liens list --project="$PROJECT_ID" --format='value(name,origin,restrictions)' 2>/dev/null || true)"
   if [[ ( "$has_retained_worm_buckets" == "true" || "$ALLOW_LEGACY_LIEN_SURVIVOR" == "true" ) && "$remaining_liens" == *"storage.googleapis.com"* ]]; then
     info "PF9 explicit known storage retention lien survivor (F-66 / F-95): $remaining_liens"
-    remaining_liens="$(printf '%s\n' "$remaining_liens" | grep -Ev 'storage\.googleapis\.com' || true)"
+    remaining_liens="$(grep -Ev 'storage\.googleapis\.com' <<<"$remaining_liens" || true)"
   fi
   if [[ -n "$remaining_liens" ]]; then
     error "Surviving project deletion lien(s) after destroy: $remaining_liens"
@@ -2130,6 +2150,8 @@ if [[ "$FRESH_PROJECT" == "true" ]]; then
   POST_INV_ALLOW_LEGACY="$ALLOW_LEGACY_LIEN_SURVIVOR" \
   POST_INV_ALL_BUCKETS="$_post_all_buckets" \
   POST_INV_UNEXPECTED_BUCKETS="$remaining_buckets" \
+  POST_INV_UNEXPECTED_SAS="$remaining_sas" \
+  POST_INV_UNEXPECTED_ATTESTORS="$remaining_attestors" \
   POST_INV_CLUSTERS="$remaining_clusters" \
   POST_INV_SQL="$remaining_sql" \
   POST_INV_ALL_LIENS="$_post_all_liens" \
@@ -2153,6 +2175,8 @@ proj = os.environ["POST_INV_PROJECT"]
 allow_legacy = os.environ.get("POST_INV_ALLOW_LEGACY", "false").lower() == "true"
 all_buckets = _lines("POST_INV_ALL_BUCKETS")
 unexpected_buckets = _lines("POST_INV_UNEXPECTED_BUCKETS")
+unexpected_sas = _lines("POST_INV_UNEXPECTED_SAS")
+unexpected_attestors = _lines("POST_INV_UNEXPECTED_ATTESTORS")
 
 pre_buckets: set[str] = set()
 pre_path = Path(os.environ.get("POST_INV_PRE", ""))
@@ -2173,6 +2197,9 @@ retained_by_design = {
 }
 worm_objs = [o for o in _gcloud(["storage", "ls", f"gs://{proj}-evidence-worm-staging/evidence-stream/**", f"--project={proj}"]) if not o.endswith("/:")]
 custom_sas = [sa for sa in _gcloud(["iam", "service-accounts", "list", f"--project={proj}", "--format=value(email)"]) if sa.endswith(f"@{proj}.iam.gserviceaccount.com")]
+retained_sas = sorted(set(custom_sas) - set(unexpected_sas))
+all_attestors = _gcloud(["container", "binauthz", "attestors", "list", f"--project={proj}", "--format=value(name)"])
+retained_attestors = sorted(set(all_attestors) - set(unexpected_attestors))
 custom_vpcs = [v for v in _gcloud(["compute", "networks", "list", f"--project={proj}", "--format=value(name)"]) if v != "default"]
 
 all_liens = _lines("POST_INV_ALL_LIENS")
@@ -2193,6 +2220,15 @@ payload = {
     "cloud_sql_instances": _lines("POST_INV_SQL"),
     "custom_vpcs": custom_vpcs,
     "custom_service_accounts": custom_sas,
+    "service_accounts_retained_by_design": retained_sas,
+    "service_accounts_unexpected_survivors": unexpected_sas,
+    "binauthz_attestors_retained_by_design": retained_attestors,
+    "binauthz_attestors_unexpected_survivors": unexpected_attestors,
+    "grafeas_notes_retained_by_design": (
+        [f"projects/{proj}/notes/cage-build-attestor-note-staging"]
+        if retained_attestors
+        else []
+    ),
     "project_liens_retained_by_design": retained_liens,
     "project_liens_unexpected_survivors": unexpected_liens,
 }
