@@ -91,7 +91,7 @@ resource "helm_release" "dataplane_v2_network_logging" {
   upgrade_install = true
   atomic          = true
   cleanup_on_fail = true
-  timeout         = 120
+  timeout         = 360
 
   values = [
     yamlencode({
@@ -105,6 +105,8 @@ resource "helm_release" "dataplane_v2_network_logging" {
 
   depends_on = [
     module.gke,
+    module.service_mesh,
+    module.gateway,
     kubernetes_labels.dataplane_v2_network_logging_helm_adopt,
     kubernetes_annotations.dataplane_v2_network_logging_helm_adopt,
   ]

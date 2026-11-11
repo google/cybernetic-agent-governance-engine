@@ -375,3 +375,4 @@ def test_dataplane_v2_reconcile_hook_chart_has_kube_system_namespace_guard() -> 
     content = template_path.read_text(encoding="utf-8")
     assert '{{- if ne .Release.Namespace "kube-system" }}' in content
     assert "ValidatingAdmissionPolicy/cage-mesh-proxy-required" in content
+    assert "activeDeadlineSeconds: 300" in content
