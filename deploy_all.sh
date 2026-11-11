@@ -629,13 +629,47 @@ deploy_terraform_target() {
   # Apply Terraform configuration
   if [[ "$auto_approve" == "true" ]]; then
     header "Terraform Apply (auto-approved)"
-    terraform -chdir="$tf_dir" apply tfplan
+    if ! terraform -chdir="$tf_dir" apply tfplan; then
+      rm -f "$tf_dir/tfplan"
+      if [[ "$target" == "gcp-gke" ]]; then
+        warn "Initial Terraform apply interrupted; reconciling any in-flight Cloud SQL LRO before single retry..."
+        local _sql_suffix
+        _sql_suffix="$(terraform -chdir="$tf_dir" state show -no-color random_id.cloudsql_suffix 2>/dev/null | awk '$1 == "hex" { gsub(/"/, "", $3); print $3 }')"
+        if [[ -n "$_sql_suffix" ]] && ! terraform -chdir="$tf_dir" state list 2>/dev/null | grep -q '^module\.cloudsql_postgres\.google_sql_database_instance\.postgres$'; then
+          local _sql_inst="cage-postgres-${_tier}-${_sql_suffix}"
+          local _sql_state=""
+          local _sql_poll_sleep="${DEPLOY_CLOUDSQL_RETRY_SLEEP:-10}"
+          for _ in $(seq 1 36); do
+            _sql_state="$(gcloud sql instances describe "$_sql_inst" --project="$_project" --format='value(state)' 2>/dev/null || true)"
+            if [[ -z "$_sql_state" || "$_sql_state" == "RUNNABLE" || "$_sql_state" == "FAILED" ]]; then
+              break
+            fi
+            info "Waiting for in-flight Cloud SQL instance ${_sql_inst} (state=${_sql_state})..."
+            sleep "$_sql_poll_sleep"
+          done
+          if [[ "$_sql_state" == "RUNNABLE" ]]; then
+            info "Importing completed Cloud SQL instance ${_sql_inst} into Terraform state..."
+            terraform -chdir="$tf_dir" import "${plan_args[@]}" \
+              module.cloudsql_postgres.google_sql_database_instance.postgres \
+              "projects/${_project}/instances/${_sql_inst}"
+          fi
+        fi
+        header "Terraform Plan (retry 1/1)"
+        terraform -chdir="$tf_dir" plan "${plan_args[@]}" -out=tfplan
+        header "Terraform Apply (retry 1/1, auto-approved)"
+        terraform -chdir="$tf_dir" apply tfplan
+      else
+        exit 1
+      fi
+    fi
+    rm -f "$tf_dir/tfplan"
   else
     header "Terraform Apply"
     echo ""
     echo "Review the plan above. Press Enter to apply or Ctrl+C to cancel."
     read -r
     terraform -chdir="$tf_dir" apply tfplan
+    rm -f "$tf_dir/tfplan"
   fi
   
   success "Infrastructure deployment complete!"

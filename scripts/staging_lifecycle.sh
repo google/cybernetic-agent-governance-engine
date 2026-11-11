@@ -2049,6 +2049,10 @@ if [[ "$FRESH_PROJECT" == "true" ]]; then
   if [[ -n "$remaining_sql" ]]; then
     error "Surviving Cloud SQL instance(s) after destroy: $remaining_sql"
     ((SURVIVORS++)) || true
+    for _orphan_sql in $remaining_sql; do
+      warn "Reclaiming orphaned Cloud SQL instance '${_orphan_sql}' after recording PF9 failure..."
+      gcloud sql instances delete "$_orphan_sql" --project="$PROJECT_ID" --quiet >/dev/null 2>&1 || true
+    done
   fi
 
   remaining_buckets="$(gcloud storage buckets list --project="$PROJECT_ID" --format='value(name)' 2>/dev/null | grep -Ev "^(${PROJECT_ID}-tfstate|${PROJECT_ID}_cloudbuild)$" || true)"
