@@ -53,6 +53,18 @@ echo "terraform $*" >> "$STUB_LOG"
 if [ "$2 $3" = "state list" ] && [ "${CLUSTER_IN_STATE:-1}" = 1 ]; then
   echo "module.gke.google_container_cluster.primary"
 fi
+if [ "$2 $3" = "state show" ] && [ -n "${SQL_SUFFIX_HEX:-}" ]; then
+  echo 'resource "random_id" "cloudsql_suffix" {'
+  echo '  hex = "'"${SQL_SUFFIX_HEX}"'"'
+  echo '}'
+fi
+if [ "$2" = "apply" ] && [ "$3" = "tfplan" ] && [ "${FAIL_FIRST_APPLY:-0}" = 1 ]; then
+  if [ ! -f "$HOME/.first_apply_failed" ]; then
+    touch "$HOME/.first_apply_failed"
+    echo "Error: Error waiting for Create Instance:" >&2
+    exit 1
+  fi
+fi
 """
 # `gcloud storage ls` succeeds only when the test plants the legacy state file;
 # `gcloud container images describe` answers every image with one fixed digest.
@@ -64,6 +76,18 @@ if [ "$1 $2" = "storage ls" ]; then
 fi
 if [ "$1 $2 $3" = "container images describe" ]; then
   echo "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+fi
+if [ "$1 $2 $3" = "sql instances describe" ] && [ -n "${SQL_DESCRIBE_STATE:-}" ]; then
+  if [ "${SQL_DESCRIBE_STATE}" = "PENDING_THEN_RUNNABLE" ]; then
+    if [ ! -f "$HOME/.sql_polled_once" ]; then
+      touch "$HOME/.sql_polled_once"
+      echo "PENDING_CREATE"
+    else
+      echo "RUNNABLE"
+    fi
+  else
+    echo "${SQL_DESCRIBE_STATE}"
+  fi
 fi
 exit 0
 """
@@ -399,3 +423,31 @@ def test_fresh_state_without_gke_runs_stage1_foundation_then_full_plan(deploy) -
     assert applies[0].endswith(" apply tfplan.stage1")
     assert applies[1].endswith(" apply tfplan")
     assert "-parallelism=1" not in applies[1]
+
+
+def test_cloudsql_lro_poll_drop_imports_runnable_instance_and_retries_apply(
+    deploy,
+) -> None:
+    _, run = deploy
+    result, calls = run(
+        "--env",
+        "staging",
+        "--auto-approve",
+        extra_env={
+            "FAIL_FIRST_APPLY": "1",
+            "SQL_SUFFIX_HEX": "60879e64",
+            "SQL_DESCRIBE_STATE": "PENDING_THEN_RUNNABLE",
+            "DEPLOY_CLOUDSQL_RETRY_SLEEP": "0",
+        },
+    )
+    assert result.returncode == 0, result.stderr
+    sql_describes = [c for c in calls if c.startswith("gcloud sql instances describe")]
+    assert len(sql_describes) == 2
+    imports = [c for c in calls if c.startswith("terraform ") and " import " in c]
+    assert len(imports) == 1
+    assert (
+        "module.cloudsql_postgres.google_sql_database_instance.postgres "
+        "projects/proj-x/instances/cage-postgres-staging-60879e64"
+    ) in imports[0]
+    applies = [c for c in calls if c.startswith("terraform ") and " apply " in c]
+    assert len(applies) == 2
