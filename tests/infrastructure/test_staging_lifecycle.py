@@ -1899,3 +1899,90 @@ def test_no_piped_grep_quiet_under_pipefail_across_repo_scripts_and_workflows() 
                 rel = path.relative_to(REPO_ROOT)
                 offenders.append(f"{rel}:{lineno}: {stripped}")
     assert offenders == [], f"Found SIGPIPE-prone `| grep -q` pipeline(s): {offenders}"
+
+
+def test_pf9_accepts_live_gcloud_wire_names_for_cloudbuild_sa_and_attestors_and_rejects_workload_sa(
+    tmp_path: Path,
+) -> None:
+    repo, bin_dir, _ = _setup_fake_repo(tmp_path)
+    gcloud_path = bin_dir / "gcloud"
+    orig_gcloud = gcloud_path.read_text(encoding="utf-8")
+    _write_executable(
+        gcloud_path,
+        orig_gcloud.removesuffix("exit 0\n")
+        + """if [[ "$*" == *"iam service-accounts list"* ]]; then
+  echo "cage-cloudbuild-staging@ephemeral-proj-99.iam.gserviceaccount.com"
+  if [[ -n "${EXTRA_SA:-}" ]]; then
+    echo "${EXTRA_SA}"
+  fi
+  exit 0
+fi
+if [[ "$*" == *"container binauthz attestors list"* ]]; then
+  echo "built-by-cloud-build"
+  echo "cage-build-attestor-staging"
+  if [[ -n "${EXTRA_ATTESTOR:-}" ]]; then
+    echo "${EXTRA_ATTESTOR}"
+  fi
+  exit 0
+fi
+exit 0
+""",
+    )
+    archive_ok = tmp_path / "archive-pf9-ok"
+    proc_ok = subprocess.run(
+        [
+            "bash",
+            str(repo / "scripts" / "staging_lifecycle.sh"),
+            "--fresh-project=ephemeral-proj-99",
+            "--skip-lula",
+            "--skip-posture",
+            "--skip-live-sweep",
+            "--skip-telemetry",
+            "--skip-rebuild",
+            f"--archive-dir={archive_ok}",
+        ],
+        env=_base_env(bin_dir),
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert proc_ok.returncode == 0, proc_ok.stderr
+    post_ok = json.loads((archive_ok / "manifest.json").read_text(encoding="utf-8"))[
+        "post_destroy_project_state"
+    ]
+    assert post_ok["service_accounts_retained_by_design"] == [
+        "cage-cloudbuild-staging@ephemeral-proj-99.iam.gserviceaccount.com"
+    ]
+    assert post_ok["service_accounts_unexpected_survivors"] == []
+    assert post_ok["binauthz_attestors_retained_by_design"] == [
+        "built-by-cloud-build",
+        "cage-build-attestor-staging",
+    ]
+    assert post_ok["binauthz_attestors_unexpected_survivors"] == []
+    assert post_ok["grafeas_notes_retained_by_design"] == [
+        "projects/ephemeral-proj-99/notes/cage-build-attestor-note-staging"
+    ]
+
+    archive_bad = tmp_path / "archive-pf9-bad"
+    proc_bad = subprocess.run(
+        [
+            "bash",
+            str(repo / "scripts" / "staging_lifecycle.sh"),
+            "--fresh-project=ephemeral-proj-99",
+            "--skip-lula",
+            "--skip-posture",
+            "--skip-live-sweep",
+            "--skip-telemetry",
+            "--skip-rebuild",
+            f"--archive-dir={archive_bad}",
+        ],
+        env=_base_env(
+            bin_dir,
+            EXTRA_SA="cage-gateway-staging@ephemeral-proj-99.iam.gserviceaccount.com",
+        ),
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert proc_bad.returncode != 0
+    assert "Surviving workload service account(s) after destroy" in proc_bad.stderr
