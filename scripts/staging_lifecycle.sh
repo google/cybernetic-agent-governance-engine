@@ -2112,9 +2112,9 @@ if [[ "$FRESH_PROJECT" == "true" ]]; then
   fi
 
   remaining_sas="$(gcloud iam service-accounts list --project="$PROJECT_ID" --format='value(email)' 2>/dev/null | grep -E "@${PROJECT_ID}\\.iam\\.gserviceaccount\\.com$" || true)"
-  if grep -Fxq "cage-cloudbuild@${PROJECT_ID}.iam.gserviceaccount.com" <<<"$remaining_sas"; then
-    info "PF9 persistent Cloud Build SA retained by design (PF3 / PF8): cage-cloudbuild@${PROJECT_ID}.iam.gserviceaccount.com"
-    remaining_sas="$(grep -Fxv "cage-cloudbuild@${PROJECT_ID}.iam.gserviceaccount.com" <<<"$remaining_sas" || true)"
+  if grep -Fxq "cage-cloudbuild-staging@${PROJECT_ID}.iam.gserviceaccount.com" <<<"$remaining_sas"; then
+    info "PF9 persistent Cloud Build SA retained by design (PF3 / PF8): cage-cloudbuild-staging@${PROJECT_ID}.iam.gserviceaccount.com"
+    remaining_sas="$(grep -Fxv "cage-cloudbuild-staging@${PROJECT_ID}.iam.gserviceaccount.com" <<<"$remaining_sas" || true)"
   fi
   if [[ -n "$remaining_sas" ]]; then
     error "Surviving workload service account(s) after destroy: $remaining_sas"
@@ -2122,9 +2122,10 @@ if [[ "$FRESH_PROJECT" == "true" ]]; then
   fi
 
   remaining_attestors="$(gcloud container binauthz attestors list --project="$PROJECT_ID" --format='value(name)' 2>/dev/null || true)"
-  if grep -Fxq "projects/${PROJECT_ID}/attestors/cage-build-attestor-staging" <<<"$remaining_attestors"; then
-    info "PF9 persistent Binary Authorization attestor & Grafeas note retained by design (PF3 / PF8): projects/${PROJECT_ID}/attestors/cage-build-attestor-staging"
-    remaining_attestors="$(grep -Fxv "projects/${PROJECT_ID}/attestors/cage-build-attestor-staging" <<<"$remaining_attestors" || true)"
+  _allowed_attestor_re="^(projects/${PROJECT_ID}/attestors/)?(built-by-cloud-build|cage-build-attestor-staging)$"
+  if grep -Eq "$_allowed_attestor_re" <<<"$remaining_attestors"; then
+    info "PF9 persistent Binary Authorization attestor(s) & Grafeas note retained by design (PF3 / PF8): $(grep -E "$_allowed_attestor_re" <<<"$remaining_attestors" | tr '\n' ' ')"
+    remaining_attestors="$(grep -Ev "$_allowed_attestor_re" <<<"$remaining_attestors" || true)"
   fi
   if [[ -n "$remaining_attestors" ]]; then
     error "Surviving unexpected Binary Authorization attestor(s) after destroy: $remaining_attestors"
@@ -2226,7 +2227,7 @@ payload = {
     "binauthz_attestors_unexpected_survivors": unexpected_attestors,
     "grafeas_notes_retained_by_design": (
         [f"projects/{proj}/notes/cage-build-attestor-note-staging"]
-        if retained_attestors
+        if any(a.endswith("cage-build-attestor-staging") for a in retained_attestors)
         else []
     ),
     "project_liens_retained_by_design": retained_liens,
