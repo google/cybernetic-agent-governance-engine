@@ -70,7 +70,7 @@ metadata:
     "helm.sh/hook-delete-policy": before-hook-creation,hook-succeeded
 spec:
   backoffLimit: 3
-  activeDeadlineSeconds: 90
+  activeDeadlineSeconds: 300
   template:
     metadata:
       annotations:
@@ -133,8 +133,8 @@ spec:
               type: RuntimeDefault
           resources:
             requests:
-              cpu: 50m
-              memory: 64Mi
+              cpu: 10m
+              memory: 32Mi
             limits:
               cpu: 200m
               memory: 128Mi

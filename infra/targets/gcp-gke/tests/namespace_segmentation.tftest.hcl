@@ -302,6 +302,7 @@ run "staging_enables_dataplane_v2_policy_verdict_logging" {
       length(helm_release.dataplane_v2_network_logging) == 1 &&
       helm_release.dataplane_v2_network_logging[0].namespace == "kube-system" &&
       helm_release.dataplane_v2_network_logging[0].namespace != var.namespace &&
+      helm_release.dataplane_v2_network_logging[0].timeout == 360 &&
       length(kubernetes_labels.dataplane_v2_network_logging_helm_adopt) == 1 &&
       length(kubernetes_annotations.dataplane_v2_network_logging_helm_adopt) == 1 &&
       yamldecode(helm_release.dataplane_v2_network_logging[0].values[0]).logAllow == true &&
