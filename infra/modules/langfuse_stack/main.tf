@@ -126,7 +126,7 @@ locals {
     const { URL } = require("url");
 
     const wantPrisma = process.argv.includes("--prisma");
-    const deadline = Date.now() + 180000;
+    const deadline = Date.now() + 420000;
 
     function sleep(ms) {
       return new Promise((resolve) => setTimeout(resolve, ms));
@@ -241,7 +241,7 @@ locals {
         console.log("[CAGE Langfuse Startup] Backing stores ready (Postgres, ClickHouse, Redis).");
         process.exit(0);
       }
-      console.error("[CAGE Langfuse Startup] Timed out waiting for backing stores after 180s.");
+      console.error("[CAGE Langfuse Startup] Timed out waiting for backing stores after 420s.");
       process.exit(1);
     }
 
@@ -801,7 +801,7 @@ resource "kubernetes_deployment" "langfuse_web" {
               path = "/api/public/health"
               port = 3000
             }
-            initial_delay_seconds = 180
+            initial_delay_seconds = 420
             period_seconds        = 10
             failure_threshold     = 10
           }
@@ -813,7 +813,7 @@ resource "kubernetes_deployment" "langfuse_web" {
             }
             initial_delay_seconds = 15
             period_seconds        = 10
-            failure_threshold     = 36
+            failure_threshold     = 54
           }
 
           volume_mount {

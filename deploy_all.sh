@@ -606,6 +606,8 @@ deploy_terraform_target() {
       "${plan_args[@]}"
       "-var=bootstrap_without_cluster=true"
       "-target=module.gke"
+      "-target=module.memorystore_governance"
+      "-target=module.memorystore_app"
       "-target=module.evidence_domain"
       "-target=module.worm_bucket"
     )
