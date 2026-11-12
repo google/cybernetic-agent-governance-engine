@@ -357,3 +357,51 @@ def test_main_export_format_and_if_exists_modes(
     out = capsys.readouterr().out
     assert f"export TF_VAR_evidence_previous_chain_head_hash={HASH_A}" in out
     assert f"export TF_VAR_evidence_previous_batch_attestation_digest={ATTEST_A}" in out
+
+
+def test_all_streams_emits_governance_and_infra_anchors(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    dual_report = tmp_path / "dual.json"
+    dual_report.write_text(
+        json.dumps(
+            {
+                "ok": True,
+                "citable": True,
+                "verified": [
+                    {
+                        **_make_batch("gov-chain-9", 0, 3, HASH_A, ATTEST_A),
+                        "stream_key": "cage:evidence:stream",
+                    },
+                    {
+                        **_make_batch("infra-chain-9", 0, 0, HASH_B, ATTEST_B),
+                        "stream_key": "cage:evidence:infra:stream",
+                    },
+                ],
+                "failures": [],
+                "declared_gaps": [],
+                "bound_rotations": [],
+                "non_evidentiary": [],
+            }
+        ),
+        encoding="utf-8",
+    )
+    assert main([f"--report-file={dual_report}", "--all-streams", "--format=env"]) == 0
+    env_out = capsys.readouterr().out
+    assert f"EVIDENCE_PREVIOUS_CHAIN_HEAD_HASH={HASH_A}" in env_out
+    assert f"EVIDENCE_PREVIOUS_BATCH_ATTESTATION_DIGEST={ATTEST_A}" in env_out
+    assert f"INFRA_EVIDENCE_PREVIOUS_CHAIN_HEAD_HASH={HASH_B}" in env_out
+    assert f"INFRA_EVIDENCE_PREVIOUS_BATCH_ATTESTATION_DIGEST={ATTEST_B}" in env_out
+    assert "WORM_ANCHOR_CHAIN_ID=gov-chain-9" in env_out
+    assert "INFRA_WORM_ANCHOR_CHAIN_ID=infra-chain-9" in env_out
+
+    assert (
+        main([f"--report-file={dual_report}", "--all-streams", "--format=export"]) == 0
+    )
+    exp_out = capsys.readouterr().out
+    assert f"export TF_VAR_evidence_previous_chain_head_hash={HASH_A}" in exp_out
+    assert f"export TF_VAR_infra_evidence_previous_chain_head_hash={HASH_B}" in exp_out
+    assert (
+        f"export TF_VAR_infra_evidence_previous_batch_attestation_digest={ATTEST_B}"
+        in exp_out
+    )

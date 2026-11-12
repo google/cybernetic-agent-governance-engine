@@ -978,6 +978,9 @@ module "compliance_bridge" {
   enable_e2e_mode             = var.enable_e2e_advisor
   operator_jwks_json          = var.enable_e2e_advisor ? trimspace(var.e2e_operator_jwks_json) : ""
 
+  infra_evidence_previous_chain_head_hash          = var.infra_evidence_previous_chain_head_hash
+  infra_evidence_previous_batch_attestation_digest = var.infra_evidence_previous_batch_attestation_digest
+
   depends_on = [module.langfuse, module.vllm, module.worm_bucket, module.memorystore_governance, module.service_mesh]
 }
 

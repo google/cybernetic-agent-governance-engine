@@ -1624,3 +1624,176 @@ class TestFailClosedPersistenceAndIdempotency:
         custodian = EvidenceCustodian.from_env(stream_key=DEFAULT_INFRA_STREAM_KEY)
         assert custodian._stream_key == DEFAULT_INFRA_STREAM_KEY
         assert custodian._cursor_key == f"{DEFAULT_INFRA_STREAM_KEY}:custody"
+
+
+class TestInfraBoundGenesisRotation:
+    """POAM-2026-205: Cross-rebuild bound genesis rotation for cage:evidence:infra:stream."""
+
+    def test_rejects_unpaired_or_malformed_genesis_rotation_digests(self) -> None:
+        from src.compliance_bridge.infra_custody import InfraCustodyError
+
+        redis = fakeredis.FakeAsyncRedis(decode_responses=True)
+        with pytest.raises(InfraCustodyError, match="both"):
+            InfraEvidenceChain(
+                redis,
+                previous_chain_head_hash="a" * 64,
+                previous_batch_attestation_digest=None,
+            )
+        with pytest.raises(InfraCustodyError, match="64-hex"):
+            InfraEvidenceChain(
+                redis,
+                previous_chain_head_hash="Z" * 64,
+                previous_batch_attestation_digest="b" * 64,
+            )
+
+    @pytest.mark.asyncio
+    async def test_bound_genesis_rotation_preserves_citability_while_unbound_wipe_fails_closed(
+        self,
+    ) -> None:
+        from scripts.read_worm_chain_anchor import extract_chain_anchor
+
+        class _InMemoryWormStore:
+            backend_id = "gcs"
+
+            def __init__(self) -> None:
+                self._objects: dict[str, bytes] = {}
+
+            async def put_if_absent(
+                self, key: str, content: bytes, metadata: dict[str, str] | None = None
+            ) -> tuple[ColdStoreReceipt, bool]:
+                created = key not in self._objects
+                if created:
+                    self._objects[key] = bytes(content)
+                stored = self._objects[key]
+                receipt = ColdStoreReceipt(
+                    uri=f"gs://test-worm/{key}",
+                    key=key,
+                    content_sha256=hashlib.sha256(stored).hexdigest(),
+                    backend_id=self.backend_id,
+                    written_at=datetime.now(timezone.utc),
+                )
+                return receipt, created
+
+            async def get(self, key: str) -> bytes:
+                return self._objects[key]
+
+            async def list_keys(self, prefix: str = "") -> list[str]:
+                return sorted(k for k in self._objects if k.startswith(prefix))
+
+        provider = SoftwareEd25519Provider(key_id=KID)
+        signer = KMSGovernanceSigner(
+            provider=provider, public_key_pem=provider.get_public_key_pem()
+        )
+        att_verifier = build_attestation_verifier({KID: provider.get_public_key_pem()})
+
+        # 1. Incarnation 1 flushes an INFRA batch into WORM cold store.
+        worm_bound = _InMemoryWormStore()
+        srv1 = fakeredis.FakeServer()
+        chain1 = InfraEvidenceChain(
+            fakeredis.FakeAsyncRedis(server=srv1, decode_responses=True)
+        )
+        cust1 = EvidenceCustodian(
+            fakeredis.FakeAsyncRedis(server=srv1, decode_responses=True),
+            worm_bound,  # type: ignore[arg-type]
+            signer,
+            stream_key=DEFAULT_INFRA_STREAM_KEY,
+            require_signature=True,
+        )
+        await chain1.append_durable(
+            event_type="lula_audit",
+            control_id="A.5.3",
+            control_hint="A.5.3",
+            scrubbed_summary="lula_audit PASS: 26/26 active validations satisfied",
+            producer_timestamp_utc="2026-11-12T14:00:00Z",
+            received_at_utc="2026-11-12T14:00:01Z",
+            producer_id=LULA_L5D,
+            producer_svid="spiffe://cluster.local/ns/governance-stack/sa/cage-lula-sa",
+            source="cage-lula-sa",
+            namespace="governance-stack",
+            pod_name=None,
+            pod_name_verified=False,
+            custody_flusher=cust1.flush_once,
+        )
+        rep1 = await CustodyVerifier(
+            worm_bound,  # type: ignore[arg-type]
+            att_verifier,
+        ).verify_for_citation()
+        assert rep1.ok and rep1.citable
+        anchor = extract_chain_anchor(
+            rep1.to_dict(), stream_key=DEFAULT_INFRA_STREAM_KEY
+        )
+
+        # 2. Operator-orchestrated rebuild (fresh Redis + explicit prior anchor) -> BOUND_CHAIN_ROTATION, citable=True.
+        srv2 = fakeredis.FakeServer()
+        chain2 = InfraEvidenceChain(
+            fakeredis.FakeAsyncRedis(server=srv2, decode_responses=True),
+            previous_chain_head_hash=anchor.last_record_hash,
+            previous_batch_attestation_digest=anchor.attestation_sha256,
+        )
+        cust2 = EvidenceCustodian(
+            fakeredis.FakeAsyncRedis(server=srv2, decode_responses=True),
+            worm_bound,  # type: ignore[arg-type]
+            signer,
+            stream_key=DEFAULT_INFRA_STREAM_KEY,
+            require_signature=True,
+        )
+        await chain2.append_durable(
+            event_type="lula_audit",
+            control_id="A.5.3",
+            control_hint="A.5.3",
+            scrubbed_summary="lula_audit PASS: 26/26 active validations satisfied",
+            producer_timestamp_utc="2026-11-12T15:00:00Z",
+            received_at_utc="2026-11-12T15:00:01Z",
+            producer_id=LULA_L5D,
+            producer_svid="spiffe://cluster.local/ns/governance-stack/sa/cage-lula-sa",
+            source="cage-lula-sa",
+            namespace="governance-stack",
+            pod_name=None,
+            pod_name_verified=False,
+            custody_flusher=cust2.flush_once,
+        )
+        rep2 = await CustodyVerifier(
+            worm_bound,  # type: ignore[arg-type]
+            att_verifier,
+        ).verify_for_citation()
+        assert rep2.ok is True
+        assert rep2.citable is True
+        assert len(rep2.declared_gaps) == 0
+        assert len(rep2.bound_rotations) == 1
+        assert rep2.bound_rotations[0].previous_chain_id == chain1.chain_id
+        assert rep2.bound_rotations[0].new_chain_id == chain2.chain_id
+
+        # 3. Unorchestrated Redis wipe (no prior anchor supplied) -> unbound CHAIN_ROTATION fails closed (citable=False).
+        srv3 = fakeredis.FakeServer()
+        chain3_unbound = InfraEvidenceChain(
+            fakeredis.FakeAsyncRedis(server=srv3, decode_responses=True)
+        )
+        cust3 = EvidenceCustodian(
+            fakeredis.FakeAsyncRedis(server=srv3, decode_responses=True),
+            worm_bound,  # type: ignore[arg-type]
+            signer,
+            stream_key=DEFAULT_INFRA_STREAM_KEY,
+            require_signature=True,
+        )
+        await chain3_unbound.append_durable(
+            event_type="lula_audit",
+            control_id="A.5.3",
+            control_hint="A.5.3",
+            scrubbed_summary="post-wipe unbound event",
+            producer_timestamp_utc="2026-11-12T16:00:00Z",
+            received_at_utc="2026-11-12T16:00:01Z",
+            producer_id=LULA_L5D,
+            producer_svid="spiffe://cluster.local/ns/governance-stack/sa/cage-lula-sa",
+            source="cage-lula-sa",
+            namespace="governance-stack",
+            pod_name=None,
+            pod_name_verified=False,
+            custody_flusher=cust3.flush_once,
+        )
+        from src.compliance_bridge.evidence_verifier import EvidenceVerificationError
+
+        with pytest.raises(EvidenceVerificationError, match="declared"):
+            await CustodyVerifier(
+                worm_bound,  # type: ignore[arg-type]
+                att_verifier,
+            ).verify_for_citation()

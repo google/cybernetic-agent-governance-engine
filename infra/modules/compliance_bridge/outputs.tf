@@ -26,3 +26,14 @@ output "endpoint_url" {
   description = "Compliance bridge endpoint URL"
   value       = "http://${kubernetes_service.compliance_bridge.metadata[0].name}.${var.namespace}.svc.cluster.local:3001"
 }
+
+output "infra_evidence_previous_chain_head_hash" {
+  description = "Configured INFRA_EVIDENCE_PREVIOUS_CHAIN_HEAD_HASH value on compliance-bridge."
+  value       = trimspace(var.infra_evidence_previous_chain_head_hash)
+}
+
+output "infra_evidence_previous_batch_attestation_digest" {
+  description = "Configured INFRA_EVIDENCE_PREVIOUS_BATCH_ATTESTATION_DIGEST value on compliance-bridge."
+  value       = trimspace(var.infra_evidence_previous_batch_attestation_digest)
+}
+

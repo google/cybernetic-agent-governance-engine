@@ -396,13 +396,20 @@ run "bound_genesis_rotation_wires_prior_head_and_attestation_to_gateway" {
   }
 
   variables {
-    evidence_previous_chain_head_hash          = "1111111111111111111111111111111111111111111111111111111111111111"
-    evidence_previous_batch_attestation_digest = "2222222222222222222222222222222222222222222222222222222222222222"
+    evidence_previous_chain_head_hash                = "1111111111111111111111111111111111111111111111111111111111111111"
+    evidence_previous_batch_attestation_digest       = "2222222222222222222222222222222222222222222222222222222222222222"
+    infra_evidence_previous_chain_head_hash          = "3333333333333333333333333333333333333333333333333333333333333333"
+    infra_evidence_previous_batch_attestation_digest = "4444444444444444444444444444444444444444444444444444444444444444"
   }
 
   assert {
     condition     = module.gateway.evidence_previous_chain_head_hash == "1111111111111111111111111111111111111111111111111111111111111111" && module.gateway.evidence_previous_batch_attestation_digest == "2222222222222222222222222222222222222222222222222222222222222222"
     error_message = "gcp-gke must propagate paired 64-hex bound-genesis rotation digests into gateway container EVIDENCE_PREVIOUS_* env vars (F-94)"
+  }
+
+  assert {
+    condition     = module.compliance_bridge[0].infra_evidence_previous_chain_head_hash == "3333333333333333333333333333333333333333333333333333333333333333" && module.compliance_bridge[0].infra_evidence_previous_batch_attestation_digest == "4444444444444444444444444444444444444444444444444444444444444444"
+    error_message = "gcp-gke must propagate paired 64-hex bound-genesis rotation digests into compliance-bridge INFRA_EVIDENCE_PREVIOUS_* env vars (POAM-2026-205)"
   }
 }
 

@@ -469,6 +469,16 @@ resource "kubernetes_deployment" "compliance_bridge" {
             }
           }
 
+          env {
+            name  = "INFRA_EVIDENCE_PREVIOUS_CHAIN_HEAD_HASH"
+            value = trimspace(var.infra_evidence_previous_chain_head_hash)
+          }
+
+          env {
+            name  = "INFRA_EVIDENCE_PREVIOUS_BATCH_ATTESTATION_DIGEST"
+            value = trimspace(var.infra_evidence_previous_batch_attestation_digest)
+          }
+
           dynamic "volume_mount" {
             for_each = local.mount_redis_ca ? [1] : []
             content {
