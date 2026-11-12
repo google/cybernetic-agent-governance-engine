@@ -417,6 +417,8 @@ def test_fresh_state_without_gke_runs_stage1_foundation_then_full_plan(deploy) -
     assert len(plans) == 2, calls
     assert "-var=bootstrap_without_cluster=true" in plans[0]
     assert "-target=module.gke" in plans[0]
+    assert "-target=module.memorystore_governance" in plans[0]
+    assert "-target=module.memorystore_app" in plans[0]
     assert "-target=module.evidence_domain" in plans[0]
     assert "-target=module.worm_bucket" in plans[0]
     assert "-out=tfplan.stage1" in plans[0]
