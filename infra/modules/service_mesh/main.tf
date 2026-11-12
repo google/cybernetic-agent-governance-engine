@@ -179,7 +179,7 @@ resource "google_privateca_certificate_authority" "mesh_root" {
 # to this GSA, which may only request certificates from the mesh pool.
 
 resource "google_service_account" "cas_issuer" {
-  account_id   = "cage-cas-issuer"
+  account_id   = var.cas_issuer_account_id != "" ? var.cas_issuer_account_id : "cage-cas-issuer"
   project      = var.project_id
   display_name = "CAGE mesh CAS issuer"
   description  = "cert-manager google-cas-issuer. Requests the Linkerd identity issuer certificate from the mesh CA pool only (POAM-2026-080)."
@@ -380,6 +380,28 @@ resource "time_sleep" "linkerd_cni_repair_guard_enforced" {
   }
 }
 
+# cert-manager-google-cas-issuer v0.13.0 marks a CertificateRequest permanently
+# Failed (PermanentError) after ~60s of 403 iam.serviceAccounts.getAccessToken
+# responses, placing Certificate/linkerd-identity-issuer into cert-manager's
+# 1-hour failure backoff. Wait for GKE Workload Identity and Private CA IAM
+# bindings to propagate before creating the Certificate resource (runs in
+# parallel with Cloud SQL and Memorystore provisioning, adding zero Stage 2
+# wall-clock latency).
+resource "time_sleep" "cas_issuer_iam_propagation" {
+  create_duration = "90s"
+
+  triggers = {
+    gsa_unique_id = google_service_account.cas_issuer.unique_id
+    gsa_email     = google_service_account.cas_issuer.email
+    ca_pool       = google_privateca_ca_pool.mesh.id
+  }
+
+  depends_on = [
+    google_service_account_iam_binding.cas_issuer_workload_identity,
+    google_privateca_ca_pool_iam_member.cas_issuer_requester,
+  ]
+}
+
 # GoogleCASIssuer + the linkerd-identity-issuer Certificate. Rendered from a
 # local chart because their CRDs do not exist until cert-manager and the CAS
 # issuer are installed, which kubernetes_manifest cannot plan around.
@@ -401,6 +423,7 @@ resource "helm_release" "mesh_identity" {
   depends_on = [
     helm_release.cas_issuer,
     google_privateca_certificate_authority.mesh_root,
+    time_sleep.cas_issuer_iam_propagation,
   ]
 }
 

@@ -68,3 +68,14 @@ variable "ca_pool_id" {
   type        = string
   default     = ""
 }
+
+variable "cas_issuer_account_id" {
+  description = "Optional explicit GCP Service Account ID (6-30 lowercase chars) for cert-manager google-cas-issuer. Ephemeral/rebuildable deployments pass a random-suffixed ID so recreating the mesh never reuses a recently deleted GSA email whose negative IAM cache outlives google-cas-issuer's ~60s PermanentError retry window."
+  type        = string
+  default     = ""
+
+  validation {
+    condition     = var.cas_issuer_account_id == "" || can(regex("^[a-z][-a-z0-9]{4,28}[a-z0-9]$", var.cas_issuer_account_id))
+    error_message = "cas_issuer_account_id must be empty or a valid 6-30 character GCP service account ID (^[a-z][-a-z0-9]{4,28}[a-z0-9]$)."
+  }
+}

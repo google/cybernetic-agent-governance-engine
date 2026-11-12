@@ -192,14 +192,14 @@ resource "random_id" "mesh_ca_pool_suffix" {
 }
 
 module "service_mesh" {
-  source = "../../modules/service_mesh"
-
+  source                     = "../../modules/service_mesh"
   enable_deletion_protection = var.enable_deletion_protection
 
   project_id             = var.project_id
   region                 = var.region
   environment            = var.environment
   ca_pool_id             = "cage-mesh-${var.environment}-${random_id.mesh_ca_pool_suffix.hex}"
+  cas_issuer_account_id  = "cage-cas-issuer-${random_id.mesh_ca_pool_suffix.hex}"
   network                = local.effective_network_name
   master_ipv4_cidr_block = var.master_ipv4_cidr_block
   # proxy-init needs NET_ADMIN, which 'restricted' Pod Security forbids; the
