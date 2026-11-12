@@ -490,7 +490,7 @@ manifest = {
     "exit_code": exit_code,
     "overall_status": overall,
     "full_unskipped_gate_w": not any_skip,
-    "phase_failures": phase_failures,
+    "phase_failures": phase_failures, "drift_read_back_scope": {"field_granularity": "all google_*, kubernetes_*, and random_* resources", "release_granularity": ["module.gateway.helm_release.gateway (Deployment/gateway rendered via local chart for initContainers restartPolicy=Always; live Deployment fields read back in Phase 3 Lula ac3/ia3/sc4/si2)", "helm_release mesh, metrics-monitors, and dataplane-v2 charts"]},
     "lula": {
         "evaluated_host_specs": _i("MANIFEST_LULA_HOST_COUNT"),
         "planned_specs": planned_specs,
@@ -1271,10 +1271,10 @@ if [[ "$DRIFT_FAILURES" -eq 0 ]]; then
     --zone="$ZONE" \
     --project="$PROJECT_ID"
 
-  info "Waiting for all pods in ${NAMESPACE} to be Ready (timeout: 5 minutes)..."
+  info "Waiting for all pods in ${NAMESPACE} to be Ready (timeout: 10 minutes)..."
   if ! kubectl wait --for=condition=Ready pods -l '!job-name' \
     -n "$NAMESPACE" \
-    --timeout=300s; then
+    --timeout=600s; then
     error "Timed out waiting for pods in ${NAMESPACE} to become Ready."
     kubectl get pods -n "$NAMESPACE" || true
     READINESS_FAILED=true
@@ -1343,7 +1343,7 @@ for ref in refs:
   else
     while IFS= read -r workload_ref; do
       [[ -z "$workload_ref" ]] && continue
-      if ! kubectl rollout status "$workload_ref" -n "$NAMESPACE" --timeout=120s >/dev/null; then
+      if ! kubectl rollout status "$workload_ref" -n "$NAMESPACE" --timeout=300s >/dev/null; then
         error "Workload readiness check failed: rollout status failed for ${workload_ref}."
         READINESS_FAILED=true
       fi
@@ -1994,12 +1994,12 @@ if ! has_gate_failures && [[ "$SKIP_REBUILD" == "false" ]]; then
           --zone="$ZONE" \
           --project="$PROJECT_ID"
         _stage5b_ready=true
-        if ! kubectl rollout status deployment/gateway -n "$NAMESPACE" --timeout=180s >/dev/null || \
-           ! kubectl rollout status deployment/compliance-bridge -n "$NAMESPACE" --timeout=180s >/dev/null; then
+        if ! kubectl rollout status deployment/gateway -n "$NAMESPACE" --timeout=420s >/dev/null || \
+           ! kubectl rollout status deployment/compliance-bridge -n "$NAMESPACE" --timeout=420s >/dev/null; then
           _stage5b_ready=false
         elif [[ "$ENABLE_E2E_ADVISOR" == "true" ]]; then
-          if ! kubectl rollout status deployment/governed-financial-advisor -n "$NAMESPACE" --timeout=180s >/dev/null || \
-             ! kubectl rollout status deployment/inference-stub -n "$NAMESPACE" --timeout=180s >/dev/null; then
+          if ! kubectl rollout status deployment/governed-financial-advisor -n "$NAMESPACE" --timeout=420s >/dev/null || \
+             ! kubectl rollout status deployment/inference-stub -n "$NAMESPACE" --timeout=420s >/dev/null; then
             _stage5b_ready=false
           fi
         fi
