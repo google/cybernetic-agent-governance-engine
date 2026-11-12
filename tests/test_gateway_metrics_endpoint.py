@@ -354,8 +354,8 @@ def _render_metrics_monitors_chart(namespace: str = "governance-stack") -> list[
 def test_gateway_terraform_exposes_metrics_port_and_linkerd_bypass() -> None:
     main_tf = (_REPO / "infra/modules/gateway/main.tf").read_text(encoding="utf-8")
     assert '"config.linkerd.io/skip-inbound-ports" = "9090"' in main_tf
-    assert "container_port = 9090" in main_tf
-    assert 'name           = "metrics"' in main_tf
+    assert "containerPort = 9090" in main_tf
+    assert 'name          = "metrics"' in main_tf
     assert 'name  = "CAGE_METRICS_PORT"' in main_tf
 
     svc_start = main_tf.index('resource "kubernetes_service" "gateway"')
@@ -417,20 +417,21 @@ def test_gateway_terraform_module_wires_probes_pdb_loop_lag_hpa_and_podmonitorin
     vars_tf = (_REPO / "infra/modules/gateway/variables.tf").read_text(encoding="utf-8")
 
     assert not (_REPO / "deployment" / "k8s").exists()
-    assert 'name  = "OMP_NUM_THREADS"\n            value = "2"' in main_tf
-    assert 'name  = "OPENBLAS_NUM_THREADS"\n            value = "2"' in main_tf
+    assert 'name  = "OMP_NUM_THREADS"\n          value = "2"' in main_tf
+    assert 'name  = "OPENBLAS_NUM_THREADS"\n          value = "2"' in main_tf
     assert 'command = ["/bin/sh", "-c", "sleep 5"]' in main_tf
 
-    for probe_header in ("startup_probe {", "liveness_probe {", "readiness_probe {"):
-        idx = main_tf.index(probe_header)
-        probe_block = main_tf[idx : idx + 260]
+    app_slice = main_tf[main_tf.index("gateway_app_container = {") :]
+    for probe_header in ("startupProbe = {", "livenessProbe = {", "readinessProbe = {"):
+        idx = app_slice.index(probe_header)
+        probe_block = app_slice[idx : idx + 260]
         assert 'path = "/health"' in probe_block
         assert "port = 8080" in probe_block
 
-    startup_idx = main_tf.index("startup_probe {")
-    startup_block = main_tf[startup_idx : startup_idx + 260]
-    assert "period_seconds    = 5" in startup_block
-    assert "failure_threshold = 30" in startup_block
+    startup_idx = app_slice.index("startupProbe = {")
+    startup_block = app_slice[startup_idx : startup_idx + 260]
+    assert "periodSeconds    = 5" in startup_block
+    assert "failureThreshold = 30" in startup_block
 
     assert 'resource "kubernetes_pod_disruption_budget_v1" "gateway"' in main_tf
     assert "count = var.replicas >= 2 ? 1 : 0" in main_tf

@@ -19,7 +19,8 @@ output "service_name" {
 
 output "deployment_name" {
   description = "The name of the Gateway deployment"
-  value       = kubernetes_deployment.gateway.metadata[0].name
+  value       = local.gateway_deployment_manifest.metadata.name
+  depends_on  = [helm_release.gateway]
 }
 
 output "metrics_monitors_release_name" {
@@ -30,8 +31,8 @@ output "metrics_monitors_release_name" {
 output "opa_policies_config_map_name" {
   description = "Name of the OPA domain policies ConfigMap mounted into the gateway pod's OPA sidecar"
   value = one([
-    for v in kubernetes_deployment.gateway.spec[0].template[0].spec[0].volume :
-    v.config_map[0].name
+    for v in local.gateway_deployment_manifest.spec.template.spec.volumes :
+    try(v.configMap.name, "")
     if v.name == "opa-policies"
   ])
 }
@@ -44,8 +45,8 @@ output "opa_bundle_sha256" {
 output "opa_uds_url" {
   description = "OPA_URL configured on the gateway container (in-pod Unix domain socket)"
   value = one([
-    for e in kubernetes_deployment.gateway.spec[0].template[0].spec[0].container[0].env :
-    e.value
+    for e in local.gateway_deployment_manifest.spec.template.spec.containers[0].env :
+    try(e.value, "")
     if e.name == "OPA_URL"
   ])
 }
@@ -58,8 +59,8 @@ output "opa_sidecar_policy_files" {
 output "evidence_previous_chain_head_hash" {
   description = "EVIDENCE_PREVIOUS_CHAIN_HEAD_HASH configured on the gateway container for bound genesis rotation (F-94 / R-10)"
   value = one([
-    for e in kubernetes_deployment.gateway.spec[0].template[0].spec[0].container[0].env :
-    e.value
+    for e in local.gateway_deployment_manifest.spec.template.spec.containers[0].env :
+    try(e.value, "")
     if e.name == "EVIDENCE_PREVIOUS_CHAIN_HEAD_HASH"
   ])
 }
@@ -67,8 +68,8 @@ output "evidence_previous_chain_head_hash" {
 output "evidence_previous_batch_attestation_digest" {
   description = "EVIDENCE_PREVIOUS_BATCH_ATTESTATION_DIGEST configured on the gateway container for bound genesis rotation (F-94 / R-10)"
   value = one([
-    for e in kubernetes_deployment.gateway.spec[0].template[0].spec[0].container[0].env :
-    e.value
+    for e in local.gateway_deployment_manifest.spec.template.spec.containers[0].env :
+    try(e.value, "")
     if e.name == "EVIDENCE_PREVIOUS_BATCH_ATTESTATION_DIGEST"
   ])
 }

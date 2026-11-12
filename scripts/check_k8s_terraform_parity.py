@@ -738,8 +738,46 @@ def _extract_tf_items_from_file(
                         )
 
         elif block.header == "locals":
-            # Inspect embedded FQDNNetworkPolicy objects inside local maps.
+            # Inspect embedded workload manifests (e.g., Deployment rendered via
+            # local Helm chart for native sidecars) and FQDNNetworkPolicy maps.
             for outer in _iter_blocks(block.body, tf_file, block.start_line):
+                outer_kv = _parse_kv_map(outer.body, var_env)
+                outer_kind = outer_kv.get("kind")
+                if outer_kind in {
+                    "Deployment",
+                    "StatefulSet",
+                    "DaemonSet",
+                    "Job",
+                    "CronJob",
+                }:
+                    pseudo_type = (
+                        "kubernetes_cron_job"
+                        if outer_kind == "CronJob"
+                        else "kubernetes_deployment"
+                    )
+                    labels = _extract_workload_labels(
+                        pseudo_type, outer, tf_file, var_env
+                    )
+                    if not labels:
+                        raise OrphanSelectorError(
+                            f"Workload local.{outer.header} at {tf_file}:{outer.start_line} "
+                            f"declares no template.metadata.labels"
+                        )
+                    workloads.append(
+                        WorkloadTemplate(
+                            resource_type=f"local:{outer_kind}",
+                            resource_name=outer.header,
+                            instance_id=(
+                                f"{instance_prefix}.local.{outer.header}"
+                                if instance_prefix
+                                else f"local.{outer.header}"
+                            ),
+                            source_file=tf_file,
+                            line=outer.start_line,
+                            labels=labels,
+                        )
+                    )
+                    continue
                 for entry in _iter_blocks(outer.body, tf_file, outer.start_line):
                     entry_kv = _parse_kv_map(entry.body, var_env)
                     if entry_kv.get("kind") != "FQDNNetworkPolicy":

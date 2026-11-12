@@ -1986,3 +1986,50 @@ exit 0
     )
     assert proc_bad.returncode != 0
     assert "Surviving workload service account(s) after destroy" in proc_bad.stderr
+
+
+def test_staging_lifecycle_cold_node_sidecar_timeouts_and_drift_read_back_scope(
+    tmp_path: Path,
+) -> None:
+    """POAM-2026-203: Phase 2/Stage 5b timeouts tolerate cold-node native-sidecar sequencing and manifest records drift_read_back_scope."""
+    repo, bin_dir, log_file = _setup_fake_repo(tmp_path)
+    archive_dir = tmp_path / "archive-drift-scope"
+    proc = subprocess.run(
+        [
+            "bash",
+            str(repo / "scripts" / "staging_lifecycle.sh"),
+            "--skip-lula",
+            "--skip-posture",
+            "--skip-live-sweep",
+            "--skip-telemetry",
+            f"--archive-dir={archive_dir}",
+        ],
+        env=_base_env(bin_dir, GOOGLE_CLOUD_PROJECT="demo-staging-proj"),
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert proc.returncode == 0, proc.stderr
+    calls = log_file.read_text(encoding="utf-8")
+    assert (
+        "kubectl wait --for=condition=Ready pods -l !job-name -n governance-stack --timeout=600s"
+        in calls
+    )
+    assert (
+        "kubectl rollout status deployment/gateway -n governance-stack --timeout=300s"
+        in calls
+    )
+    lifecycle_sh = (REPO_ROOT / "scripts" / "staging_lifecycle.sh").read_text(
+        encoding="utf-8"
+    )
+    assert (
+        'kubectl rollout status deployment/gateway -n "$NAMESPACE" --timeout=420s'
+        in lifecycle_sh
+    )
+    manifest = json.loads((archive_dir / "manifest.json").read_text(encoding="utf-8"))
+    scope = manifest["drift_read_back_scope"]
+    assert "google_*" in scope["field_granularity"]
+    assert any(
+        "module.gateway.helm_release.gateway" in entry
+        for entry in scope["release_granularity"]
+    )

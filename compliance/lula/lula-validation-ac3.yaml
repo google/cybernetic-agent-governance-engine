@@ -98,8 +98,9 @@ component-definition:
                 some env in gw.env
                 env.name == "OPA_URL"
                 env.value == "http+unix://%2Fvar%2Frun%2Fopa%2Fopa.sock"
-                some opa in deploy.spec.template.spec.containers
+                some opa in object.get(deploy.spec.template.spec, "initContainers", [])
                 opa.name == "opa"
+                opa.restartPolicy == "Always"
                 "--addr=unix:///var/run/opa/opa.sock" in opa.args
                 "--authorization=basic" in opa.args
                 opa.securityContext.readOnlyRootFilesystem == true

@@ -184,7 +184,7 @@ run "gateway_module_refuses_stub_backend_in_prod" {
     reconciler_kms_key             = "projects/w6-test-project/locations/us-central1/keyRings/r/cryptoKeys/k/cryptoKeyVersions/1"
   }
 
-  expect_failures = [kubernetes_deployment.gateway]
+  expect_failures = [helm_release.gateway]
 }
 
 run "governed_advisor_module_refuses_e2e_mode_in_prod" {

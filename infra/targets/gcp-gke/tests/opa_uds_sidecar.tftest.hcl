@@ -265,58 +265,61 @@ run "gateway_embeds_readonly_opa_uds_sidecar_with_zero_tcp_ports" {
 
   assert {
     condition = (
-      length(kubernetes_deployment.gateway.spec[0].template[0].spec[0].container) == 2 &&
-      kubernetes_deployment.gateway.spec[0].template[0].spec[0].container[0].name == "gateway" &&
-      kubernetes_deployment.gateway.spec[0].template[0].spec[0].container[1].name == "opa" &&
-      tonumber(kubernetes_deployment.gateway.spec[0].template[0].spec[0].termination_grace_period_seconds) >= 30 &&
-      kubernetes_deployment.gateway.spec[0].template[0].metadata[0].annotations["cage.io/opa-bundle-sha256"] == var.gateway_base.opa_bundle_sha256 &&
+      length(yamldecode(helm_release.gateway.values[0]).manifest.spec.template.spec.initContainers) == 1 &&
+      yamldecode(helm_release.gateway.values[0]).manifest.spec.template.spec.initContainers[0].name == "opa" &&
+      yamldecode(helm_release.gateway.values[0]).manifest.spec.template.spec.initContainers[0].restartPolicy == "Always" &&
+      length(yamldecode(helm_release.gateway.values[0]).manifest.spec.template.spec.containers) == 1 &&
+      yamldecode(helm_release.gateway.values[0]).manifest.spec.template.spec.containers[0].name == "gateway" &&
+      tonumber(yamldecode(helm_release.gateway.values[0]).manifest.spec.template.spec.terminationGracePeriodSeconds) >= 30 &&
+      yamldecode(helm_release.gateway.values[0]).manifest.spec.template.metadata.annotations["cage.io/opa-bundle-sha256"] == var.gateway_base.opa_bundle_sha256 &&
       one([
-        for e in kubernetes_deployment.gateway.spec[0].template[0].spec[0].container[0].env :
-        e.value if e.name == "OPA_URL"
+        for e in yamldecode(helm_release.gateway.values[0]).manifest.spec.template.spec.containers[0].env :
+        try(e.value, "") if e.name == "OPA_URL"
       ]) == "http+unix://%2Fvar%2Frun%2Fopa%2Fopa.sock"
     )
-    error_message = "gateway Deployment must run gateway + opa sidecar with OPA_URL over UDS, >=30s grace period, and opa-bundle-sha256 rollout annotation"
+    error_message = "gateway Deployment must run opa as a Kubernetes native sidecar (initContainers restartPolicy=Always) + gateway app container with OPA_URL over UDS, >=30s grace period, and opa-bundle-sha256 rollout annotation"
   }
 
   assert {
     condition = (
-      length(kubernetes_deployment.gateway.spec[0].template[0].spec[0].container[1].port) == 0 &&
-      contains(kubernetes_deployment.gateway.spec[0].template[0].spec[0].container[1].args, "--addr=unix:///var/run/opa/opa.sock") &&
-      contains(kubernetes_deployment.gateway.spec[0].template[0].spec[0].container[1].args, "--authorization=basic") &&
-      contains(kubernetes_deployment.gateway.spec[0].template[0].spec[0].container[1].args, "--config-file=/config/opa_config.yaml") &&
-      contains(kubernetes_deployment.gateway.spec[0].template[0].spec[0].container[1].args, "--shutdown-wait-period=15") &&
-      contains(kubernetes_deployment.gateway.spec[0].template[0].spec[0].container[1].args, "--shutdown-grace-period=15") &&
-      contains(kubernetes_deployment.gateway.spec[0].template[0].spec[0].container[1].args, "/etc/opa/authz/system_authz.rego") &&
-      !anytrue([for a in kubernetes_deployment.gateway.spec[0].template[0].spec[0].container[1].args : startswith(a, "--diagnostic-addr")]) &&
-      kubernetes_deployment.gateway.spec[0].template[0].spec[0].container[1].readiness_probe[0].exec[0].command[0] == "/opa" &&
-      kubernetes_deployment.gateway.spec[0].template[0].spec[0].container[1].liveness_probe[0].exec[0].command[0] == "/opa" &&
-      kubernetes_deployment.gateway.spec[0].template[0].spec[0].container[1].lifecycle[0].pre_stop[0].exec[0].command[0] == "/opa" &&
-      kubernetes_deployment.gateway.spec[0].template[0].spec[0].container[1].security_context[0].read_only_root_filesystem == true &&
-      kubernetes_deployment.gateway.spec[0].template[0].spec[0].container[1].security_context[0].allow_privilege_escalation == false &&
-      kubernetes_deployment.gateway.spec[0].template[0].spec[0].container[1].security_context[0].run_as_non_root == true &&
-      tostring(kubernetes_deployment.gateway.spec[0].template[0].spec[0].container[1].security_context[0].run_as_user) == "1000" &&
-      tostring(kubernetes_deployment.gateway.spec[0].template[0].spec[0].container[1].security_context[0].run_as_group) == "1000"
+      length(try(yamldecode(helm_release.gateway.values[0]).manifest.spec.template.spec.initContainers[0].ports, [])) == 0 &&
+      contains(yamldecode(helm_release.gateway.values[0]).manifest.spec.template.spec.initContainers[0].args, "--addr=unix:///var/run/opa/opa.sock") &&
+      contains(yamldecode(helm_release.gateway.values[0]).manifest.spec.template.spec.initContainers[0].args, "--authorization=basic") &&
+      contains(yamldecode(helm_release.gateway.values[0]).manifest.spec.template.spec.initContainers[0].args, "--config-file=/config/opa_config.yaml") &&
+      contains(yamldecode(helm_release.gateway.values[0]).manifest.spec.template.spec.initContainers[0].args, "--shutdown-wait-period=15") &&
+      contains(yamldecode(helm_release.gateway.values[0]).manifest.spec.template.spec.initContainers[0].args, "--shutdown-grace-period=15") &&
+      contains(yamldecode(helm_release.gateway.values[0]).manifest.spec.template.spec.initContainers[0].args, "/etc/opa/authz/system_authz.rego") &&
+      !anytrue([for a in yamldecode(helm_release.gateway.values[0]).manifest.spec.template.spec.initContainers[0].args : startswith(a, "--diagnostic-addr")]) &&
+      yamldecode(helm_release.gateway.values[0]).manifest.spec.template.spec.initContainers[0].startupProbe.exec.command[0] == "/opa" &&
+      yamldecode(helm_release.gateway.values[0]).manifest.spec.template.spec.initContainers[0].readinessProbe.exec.command[0] == "/opa" &&
+      yamldecode(helm_release.gateway.values[0]).manifest.spec.template.spec.initContainers[0].livenessProbe.exec.command[0] == "/opa" &&
+      yamldecode(helm_release.gateway.values[0]).manifest.spec.template.spec.initContainers[0].lifecycle.preStop.exec.command[0] == "/opa" &&
+      yamldecode(helm_release.gateway.values[0]).manifest.spec.template.spec.initContainers[0].securityContext.readOnlyRootFilesystem == true &&
+      yamldecode(helm_release.gateway.values[0]).manifest.spec.template.spec.initContainers[0].securityContext.allowPrivilegeEscalation == false &&
+      yamldecode(helm_release.gateway.values[0]).manifest.spec.template.spec.initContainers[0].securityContext.runAsNonRoot == true &&
+      tostring(yamldecode(helm_release.gateway.values[0]).manifest.spec.template.spec.initContainers[0].securityContext.runAsUser) == "1000" &&
+      tostring(yamldecode(helm_release.gateway.values[0]).manifest.spec.template.spec.initContainers[0].securityContext.runAsGroup) == "1000"
     )
-    error_message = "opa sidecar must bind only unix:///var/run/opa/opa.sock with --authorization=basic, static /opa probes, drain flags, zero ports, no --diagnostic-addr, and readOnlyRootFilesystem"
+    error_message = "opa native sidecar must bind only unix:///var/run/opa/opa.sock with --authorization=basic, static /opa startup/readiness/liveness probes, drain flags, zero ports, no --diagnostic-addr, and readOnlyRootFilesystem"
   }
 
   assert {
     condition = (
       contains([
-        for vm in kubernetes_deployment.gateway.spec[0].template[0].spec[0].container[1].volume_mount :
-        "${vm.name}:${vm.mount_path}:${coalesce(vm.read_only, false)}"
+        for vm in yamldecode(helm_release.gateway.values[0]).manifest.spec.template.spec.initContainers[0].volumeMounts :
+        "${vm.name}:${vm.mountPath}:${coalesce(vm.readOnly, false)}"
       ], "opa-policies:/policies:true") &&
       contains([
-        for vm in kubernetes_deployment.gateway.spec[0].template[0].spec[0].container[1].volume_mount :
-        "${vm.name}:${vm.mount_path}:${coalesce(vm.read_only, false)}"
+        for vm in yamldecode(helm_release.gateway.values[0]).manifest.spec.template.spec.initContainers[0].volumeMounts :
+        "${vm.name}:${vm.mountPath}:${coalesce(vm.readOnly, false)}"
       ], "opa-system-authz:/etc/opa/authz:true") &&
       contains([
-        for vm in kubernetes_deployment.gateway.spec[0].template[0].spec[0].container[1].volume_mount :
-        "${vm.name}:${vm.mount_path}:${coalesce(vm.read_only, false)}"
+        for vm in yamldecode(helm_release.gateway.values[0]).manifest.spec.template.spec.initContainers[0].volumeMounts :
+        "${vm.name}:${vm.mountPath}:${coalesce(vm.readOnly, false)}"
       ], "opa-config:/config:true") &&
       toset([for p in kubernetes_service.gateway.spec[0].port : tonumber(p.port)]) == toset([8080, 50051, 9090])
     )
-    error_message = "opa sidecar ConfigMap mounts must be read_only and gateway Service must never expose port 8181"
+    error_message = "opa sidecar ConfigMap mounts must be readOnly and gateway Service must never expose port 8181"
   }
 }
 

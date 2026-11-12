@@ -143,6 +143,9 @@ component-definition:
                     every container in deploy.spec.template.spec.containers {
                       pinned_by_digest(container.image)
                     }
+                    every ic in object.get(deploy.spec.template.spec, "initContainers", []) {
+                      pinned_by_digest(ic.image)
+                    }
                   }
                 }
               }
@@ -154,6 +157,9 @@ component-definition:
                     every container in deploy.spec.template.spec.containers {
                       pinned_by_digest(container.image)
                     }
+                    every ic in object.get(deploy.spec.template.spec, "initContainers", []) {
+                      pinned_by_digest(ic.image)
+                    }
                   }
                 }
               }
@@ -163,6 +169,10 @@ component-definition:
                   every container in deploy.spec.template.spec.containers {
                     pinned_by_digest(container.image)
                     container.imagePullPolicy in {"Always", "IfNotPresent"}
+                  }
+                  every ic in object.get(deploy.spec.template.spec, "initContainers", []) {
+                    pinned_by_digest(ic.image)
+                    ic.imagePullPolicy in {"Always", "IfNotPresent"}
                   }
                 }
               }

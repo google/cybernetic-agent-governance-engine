@@ -441,5 +441,5 @@ run "bound_genesis_rotation_refuses_unpaired_or_malformed_digests" {
     reconciler_kms_key                         = "projects/evidence-test-project/locations/us-central1/keyRings/r/cryptoKeys/k/cryptoKeyVersions/1"
   }
 
-  expect_failures = [kubernetes_deployment.gateway]
+  expect_failures = [helm_release.gateway]
 }

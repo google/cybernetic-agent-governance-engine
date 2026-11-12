@@ -228,12 +228,12 @@ def _assemble_test_plugin(
 
 
 def test_gateway_deployment_has_causal_and_consensus_lifecycle_preconditions() -> None:
-    """Both dormant-feature guards live on kubernetes_deployment.gateway lifecycle."""
+    """Both dormant-feature guards live on helm_release.gateway lifecycle."""
     text = _GATEWAY_MAIN_TF.read_text(encoding="utf-8")
     gateway_blocks = [
         b
         for b in _top_level_blocks(text)
-        if b.startswith('resource "kubernetes_deployment" "gateway"')
+        if b.startswith('resource "helm_release" "gateway"')
     ]
     assert len(gateway_blocks) == 1
     lifecycles = [
@@ -282,10 +282,11 @@ def test_gateway_deployment_mounts_gateway_secrets_and_telemetry_keys() -> None:
     gateway_blocks = [
         b
         for b in _top_level_blocks(text)
-        if b.startswith('resource "kubernetes_deployment" "gateway"')
+        if b.startswith('resource "helm_release" "gateway"')
     ]
     assert len(gateway_blocks) == 1
-    spec_text = gateway_blocks[0].split("metadata {", 1)[1]
+    app_idx = text.index("gateway_app_container = {")
+    spec_text = text[app_idx : text.index("gateway_volumes = concat")]
     assert 'name = "advisor-secrets"' not in spec_text
     assert "name = var.gateway_secret_name" in spec_text
     assert 'key      = "TELEMETRY_PUBLIC_KEY"' in spec_text

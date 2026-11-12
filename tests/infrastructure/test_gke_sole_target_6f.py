@@ -276,12 +276,11 @@ class TestNodePoolsAndAntiSpotAffinity:
             ("reconciliation-worker", RECONCILER_MODULE_DIR),
         ):
             mod_tf = (mod_dir / "main.tf").read_text(encoding="utf-8")
-            assert "required_during_scheduling_ignored_during_execution" in mod_tf, (
-                f"{mod_name} Terraform module must declare required node affinity"
-            )
-            assert 'key      = "cloud.google.com/gke-spot"' in mod_tf, (
-                f"{mod_name} Terraform module must forbid cloud.google.com/gke-spot"
-            )
+            assert (
+                "required_during_scheduling_ignored_during_execution" in mod_tf
+                or "requiredDuringSchedulingIgnoredDuringExecution" in mod_tf
+            ), f"{mod_name} Terraform module must declare required node affinity"
+            assert 'key      = "cloud.google.com/gke-spot"' in mod_tf, mod_name
             assert 'operator = "NotIn"' in mod_tf
             assert 'values   = ["true"]' in mod_tf
 

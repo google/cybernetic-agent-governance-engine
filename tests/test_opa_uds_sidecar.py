@@ -332,11 +332,13 @@ class TestOpaOffNetworkStaticContracts:
         gw_main = (REPO_ROOT / "infra/modules/gateway/main.tf").read_text(
             encoding="utf-8"
         )
+        assert 'restartPolicy   = "Always"' in gw_main
+        assert "initContainers = [local.opa_native_sidecar_container]" in gw_main
         assert "--addr=unix:///var/run/opa/opa.sock" in gw_main
         assert "--authorization=basic" in gw_main
         assert "--shutdown-wait-period=15" in gw_main
         assert "--shutdown-grace-period=15" in gw_main
-        assert "termination_grace_period_seconds = 35" in gw_main
+        assert "terminationGracePeriodSeconds = 35" in gw_main
         assert '"/opa"' in gw_main
         assert "--diagnostic-addr" not in gw_main
 
@@ -459,6 +461,8 @@ class TestOpaOffNetworkStaticContracts:
                 )
             rego = desc["provider"]["opa-spec"]["rego"]
             assert "--addr=unix:///var/run/opa/opa.sock" in rego, lula_name
+            assert "initContainers" in rego, lula_name
+            assert 'opa.restartPolicy == "Always"' in rego, lula_name
             assert "opa-service" not in rego, lula_name
 
         breaking = (REPO_ROOT / "docs" / "BREAKING_CHANGES.md").read_text(
