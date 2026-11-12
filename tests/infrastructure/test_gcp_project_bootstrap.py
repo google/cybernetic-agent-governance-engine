@@ -262,15 +262,17 @@ def test_bootstrap_enables_all_21_required_apis_and_creates_foundational_resourc
         "--role=roles/networkconnectivity.consumerNetworkAdmin"
     ) in calls
 
-    # EF8a: Google-managed service agents materialized before CMEK IAM bindings.
+    # EF8a: Google-managed service agents materialized before CMEK / sink IAM bindings.
     for svc in (
         "sqladmin.googleapis.com",
         "memorystore.googleapis.com",
         "redis.googleapis.com",
         "container.googleapis.com",
+        "logging.googleapis.com",
     ):
         assert f"gcloud beta services identity create --service={svc}" in calls
     assert "gcloud storage service-agent --project=clean-proj-01" in calls
+    assert "gcloud logging settings describe --project=clean-proj-01" in calls
 
 
 def test_bootstrap_import_state_imports_missing_and_skips_existing(

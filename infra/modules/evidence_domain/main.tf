@@ -26,6 +26,10 @@ terraform {
       source  = "hashicorp/google"
       version = "~> 6.43"
     }
+    time = {
+      source  = "hashicorp/time"
+      version = "~> 0.12"
+    }
   }
 }
 
@@ -258,6 +262,18 @@ resource "google_storage_bucket_iam_member" "custodian_object_creator" {
   member = "serviceAccount:${var.custodian_service_account_email}"
 }
 
+# Wait 30s after Cloud Logging mints a sink's unique_writer_identity
+# (service-<PROJECT_NUMBER>@gcp-sa-logging.iam.gserviceaccount.com) before
+# binding GCS bucket IAM on brand-new zero-state projects (POAM-2026-206).
+resource "time_sleep" "audit_log_sink_writer_propagation" {
+  for_each        = var.external_evidence_domain_enabled ? {} : var.audit_log_sink_writer_identities
+  create_duration = "30s"
+
+  triggers = {
+    writer = each.value
+  }
+}
+
 # Log sink writer identities (keyed by static sink names): append-only
 # `roles/storage.objectCreator` on the retention-locked `audit-logs-worm` bucket (R-4).
 resource "google_storage_bucket_iam_member" "audit_log_sink_writer" {
@@ -265,7 +281,7 @@ resource "google_storage_bucket_iam_member" "audit_log_sink_writer" {
 
   bucket = google_storage_bucket.audit_logs_worm[0].name
   role   = "roles/storage.objectCreator"
-  member = each.value
+  member = time_sleep.audit_log_sink_writer_propagation[each.key].triggers["writer"]
 }
 
 # Out-of-cluster CustodyVerifier principal: read-only `roles/storage.objectViewer`
