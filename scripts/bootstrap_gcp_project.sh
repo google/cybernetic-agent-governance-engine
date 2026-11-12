@@ -428,16 +428,18 @@ for ((i = 1; i < ${#REQUIRED_APIS[@]}; i += MAX_SERVICES_BATCH_SIZE)); do
   gcloud services enable "${api_batch[@]}" --project="$PROJECT_ID" --quiet
 done
 
-# --- EF8a: Materialize Google-managed service agents (P4SAs) before CMEK IAM bindings ---
+# --- EF8a: Materialize Google-managed service agents (P4SAs) before CMEK / sink IAM bindings ---
 echo "🤖 [EF8a] Materializing Google-managed service agents on '${PROJECT_ID}'..."
 for p4sa_service in \
   "sqladmin.googleapis.com" \
   "memorystore.googleapis.com" \
   "redis.googleapis.com" \
-  "container.googleapis.com"; do
+  "container.googleapis.com" \
+  "logging.googleapis.com"; do
   gcloud beta services identity create --service="$p4sa_service" --project="$PROJECT_ID" --quiet >/dev/null 2>&1 || true
 done
 gcloud storage service-agent --project="$PROJECT_ID" --quiet >/dev/null 2>&1 || true
+gcloud logging settings describe --project="$PROJECT_ID" --quiet >/dev/null 2>&1 || true
 
 # Retry newly enabled GCP API resource creations and IAM policy bindings so
 # global Service Usage / IAM propagation (~5-30s on brand-new projects) never

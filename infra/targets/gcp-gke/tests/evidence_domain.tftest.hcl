@@ -29,6 +29,7 @@ mock_provider "google" {}
 mock_provider "helm" {}
 mock_provider "kubernetes" {}
 mock_provider "random" {}
+mock_provider "time" {}
 
 override_module {
   target = module.gke
