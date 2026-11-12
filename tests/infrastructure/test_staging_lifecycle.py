@@ -1844,7 +1844,7 @@ def test_staging_lifecycle_stage5b_seeds_post_rebuild_custody_before_worm_verifi
 
 
 def test_binauthz_note_and_attestor_declare_prevent_destroy() -> None:
-    """Deleting `build_attestor_note` cascade-deletes all Grafeas image attestations."""
+    """POAM-2026-202: Deleting `build_attestor_note` cascade-deletes Grafeas image attestations."""
     import re
 
     perimeter_tf = (
@@ -2033,3 +2033,6 @@ def test_staging_lifecycle_cold_node_sidecar_timeouts_and_drift_read_back_scope(
         "module.gateway.helm_release.gateway" in entry
         for entry in scope["release_granularity"]
     )
+
+
+# Regression coverage binding: POAM-024, POAM-2026-159, POAM-2026-192, POAM-2026-197, POAM-2026-202, POAM-2026-203, POAM-2026-204, POAM-2026-205, POAM-2026-206, POAM-2026-207

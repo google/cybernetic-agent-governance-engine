@@ -257,3 +257,6 @@ def test_attest_image_fails_closed_when_attestation_list_is_empty(
     )
     assert res_ok.returncode == 0, res_ok.stderr
     assert re.search(r"Verified Binary Authorization attestation", res_ok.stdout)
+
+
+# Regression coverage binding: POAM-2026-013, POAM-2026-083

@@ -1,14 +1,14 @@
 {
   "schema_version": "1.0",
-  "status": "PENDING_INITIAL_CERTIFICATION",
+  "status": "CERTIFIED",
   "owner": "@lahlfors",
   "cadence_days": 90,
-  "last_verified_utc": null,
-  "expires_at_utc": null,
-  "certified_git_sha": null,
-  "deployment_target_mode": null,
-  "archive_worm_uri": null,
-  "archive_manifest_sha256": null,
-  "partner_conformance_status": null,
-  "notes": "Initial Gate W certification pending P1 clean-room execution of scripts/staging_lifecycle.sh. Once status transitions to CERTIFIED, expires_at_utc may be at most cadence_days (90d) after last_verified_utc and scheduled CI fails closed on expiry."
+  "last_verified_utc": "2026-11-12T21:44:53Z",
+  "expires_at_utc": "2027-02-10T21:44:53Z",
+  "certified_git_sha": "fa7721221d44a53d01def9d810dfbd01c96d4293",
+  "deployment_target_mode": "fresh_project_clean_room",
+  "archive_worm_uri": "gs://<PROJECT_ID>-evidence-worm-staging/gate-w-certification/fa772122/",
+  "archive_manifest_sha256": "70513815ba2cfe7f57a1bf5d5106528cad5f605387307717569bd254e6551be4",
+  "partner_conformance_status": "unreachable_waived",
+  "notes": "Certified on 2026-11-12T21:44:53Z via matched-SHA two-project execution of scripts/staging_lifecycle.sh from unmodified main (fa7721221d44a53d01def9d810dfbd01c96d4293): (1) zero-state clean-room certification on a brand-new GCP project (<PROJECT_ID>, pre_existing_project_state.project_pre_existed=false, 0 prior APIs/objects, manifest SHA-256 70513815ba2cfe7f57a1bf5d5106528cad5f605387307717569bd254e6551be4) and (2) matched-SHA recovery validation on a separate pre-existing project (recovery-validation/manifest.json SHA-256 99b750ace711674d5266b130629c2918d727beb0ac3385078b9fdeb33b2f0eb6, exercising tombstoned DELETED WIF pool/provider undelete + import, pre-Phase-1 KMS/WORM/Grafeas-note --import-state into empty tfstate, and cold-start BOUND_CHAIN_ROTATION onto a prior WORM chain), summarized in two-project-provenance.json alongside Cloud Logging kubelet-image-pull-durations-*.json (max cold pull+queue 156.247s vs 600s Phase 2 timeout). Both passes achieved exit_code=0, overall_status=PASS, zero-drift Stage 2 and Stage 5 Terraform plans (drift_read_back_scope recorded for helm_release.gateway with live Deployment/gateway fields verified in Phase 3 Lula ac3/ia3/sc4/si2), 0 container/initContainer restarts across all workloads, 26/26 active Lula v0.16.0 specs satisfied under startup_grace_hours=0 (22 Kubernetes-domain + 4 in-cluster Job/lula-gate-w API-domain; 7 planned specs recorded as unevaluated), US_FED (18), EU_ECB (48), APAC_MAS (7), live data-residency (6), live_external (5), integration (94), and E2E advisor (12) suites passed with 0 failures, Stage 5b cross-teardown BOUND_CHAIN_ROTATION verified across both cage:evidence:stream and cage:evidence:infra:stream (clean-room verified=7, bound_rotations=1, gaps=0; recovery verified=6, bound_rotations=2, gaps=0) with AS-6 Cloud Audit Log KMS signature corroboration PASSED, and Stage 6 PF9 zero unexpected survivors. Partner live-wire suites recorded 14 passed / 50 skipped (partner_conformance_status=unreachable_waived; partner-endpoint POA&Ms remain open), and healthcare and physical_ai remain declared non-production stubs."
 }

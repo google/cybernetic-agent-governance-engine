@@ -744,3 +744,6 @@ def test_mesh_conformance_chart_renderer_matches_app_policy() -> None:
     )
     docs = [d for d in yaml.safe_load_all(rendered) if d]
     assert gateway_policy_violations(docs) == []
+
+
+# Regression coverage binding: POAM-2026-167

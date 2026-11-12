@@ -301,3 +301,6 @@ async def test_staging_tls_handshake_rejects_unpinned_cert_and_succeeds_with_pin
         assert await pinned_client.ping() is True
     finally:
         await pinned_client.aclose()
+
+
+# Regression coverage binding: POAM-2026-086
