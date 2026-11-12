@@ -646,6 +646,126 @@ class TestOPAClientVerifyDomainPolicy:
             == "Bearer my-secret-token"
         )
 
+    @pytest.mark.asyncio
+    async def test_connect_error_retries_until_uds_socket_ready_within_deadline(
+        self,
+    ) -> None:
+        """POAM-2026-203: transient httpx.ConnectError on UDS retries until socket binds."""
+        with patch("src.gateway.core.policy.Config") as mock_cfg:
+            mock_cfg.OPA_URL = "http+unix://%2Fvar%2Frun%2Fopa%2Fopa.sock"
+            mock_cfg.OPA_AUTH_TOKEN = ""
+            client = OPAClient()
+        ok_resp = MagicMock()
+        ok_resp.status_code = 200
+        ok_resp.raise_for_status = MagicMock()
+        ok_resp.json = MagicMock(
+            return_value={"result": [_module("trade.governance", "allow")]}
+        )
+        mock_http = AsyncMock()
+        mock_http.get = AsyncMock(
+            side_effect=[
+                httpx.ConnectError("[Errno 2] No such file or directory"),
+                httpx.ConnectError("[Errno 2] No such file or directory"),
+                ok_resp,
+            ]
+        )
+        sleep_mock = AsyncMock()
+        with (
+            patch.object(client, "_get_client", return_value=mock_http),
+            patch("src.gateway.core.policy.asyncio.sleep", sleep_mock),
+        ):
+            await client.verify_domain_policy(
+                "trade.governance", ("allow",), connect_deadline_seconds=5.0
+            )
+        assert mock_http.get.call_count == 3
+        assert sleep_mock.await_count == 2
+
+    @pytest.mark.asyncio
+    async def test_connect_error_fails_closed_when_deadline_expires(self) -> None:
+        """POAM-2026-203: persistent ConnectError fails closed once deadline elapses."""
+        client, http = self._client_returning(
+            exc=httpx.ConnectError("[Errno 2] No such file or directory")
+        )
+        clock_ticks = iter([100.0, 100.1, 100.3, 101.5])
+        sleep_mock = AsyncMock()
+        with (
+            patch.object(client, "_get_client", return_value=http),
+            patch("src.gateway.core.policy.time.monotonic", side_effect=clock_ticks),
+            patch("src.gateway.core.policy.asyncio.sleep", sleep_mock),
+        ):
+            with pytest.raises(OPAPolicyMismatchError, match="cannot verify"):
+                await client.verify_domain_policy(
+                    "trade.governance", ("allow",), connect_deadline_seconds=1.0
+                )
+        assert http.get.call_count == 3
+        assert sleep_mock.await_count == 2
+
+    @pytest.mark.asyncio
+    async def test_bundle_mismatch_and_non_connect_errors_never_retry(self) -> None:
+        """POAM-2026-203: wrong Rego package, missing rule, HTTP error, or timeout fails immediately on call 1."""
+        sleep_mock = AsyncMock()
+
+        # 1. Wrong Rego bundle (finance loaded when healthcare expected) -> 1 call, 0 sleeps
+        client_pkg, http_pkg = self._client_returning(
+            {"result": [_module("trade.governance", "allow")]}
+        )
+        with (
+            patch.object(client_pkg, "_get_client", return_value=http_pkg),
+            patch("src.gateway.core.policy.asyncio.sleep", sleep_mock),
+        ):
+            with pytest.raises(
+                OPAPolicyMismatchError,
+                match="no module declaring package 'dosing.governance'",
+            ):
+                await client_pkg.verify_domain_policy(
+                    "dosing.governance", ("allow",), connect_deadline_seconds=15.0
+                )
+        assert http_pkg.get.call_count == 1
+        assert sleep_mock.await_count == 0
+
+        # 2. Missing required rule -> 1 call, 0 sleeps
+        client_rule, http_rule = self._client_returning(
+            {"result": [_module("trade.governance", "allowed_roles")]}
+        )
+        with (
+            patch.object(client_rule, "_get_client", return_value=http_rule),
+            patch("src.gateway.core.policy.asyncio.sleep", sleep_mock),
+        ):
+            with pytest.raises(
+                OPAPolicyMismatchError, match=r"lacks required rules \['allow'\]"
+            ):
+                await client_rule.verify_domain_policy(
+                    "trade.governance", ("allow",), connect_deadline_seconds=15.0
+                )
+        assert http_rule.get.call_count == 1
+        assert sleep_mock.await_count == 0
+
+        # 3. HTTP 500 -> 1 call, 0 sleeps
+        client_500, http_500 = self._client_returning({"error": "boom"}, status=500)
+        with (
+            patch.object(client_500, "_get_client", return_value=http_500),
+            patch("src.gateway.core.policy.asyncio.sleep", sleep_mock),
+        ):
+            with pytest.raises(OPAPolicyMismatchError, match="cannot verify"):
+                await client_500.verify_domain_policy(
+                    "trade.governance", ("allow",), connect_deadline_seconds=15.0
+                )
+        assert http_500.get.call_count == 1
+        assert sleep_mock.await_count == 0
+
+        # 4. ReadTimeout (transport connected, server hung) -> 1 call, 0 sleeps
+        client_to, http_to = self._client_returning(exc=httpx.ReadTimeout("timed out"))
+        with (
+            patch.object(client_to, "_get_client", return_value=http_to),
+            patch("src.gateway.core.policy.asyncio.sleep", sleep_mock),
+        ):
+            with pytest.raises(OPAPolicyMismatchError, match="cannot verify"):
+                await client_to.verify_domain_policy(
+                    "trade.governance", ("allow",), connect_deadline_seconds=15.0
+                )
+        assert http_to.get.call_count == 1
+        assert sleep_mock.await_count == 0
+
 
 # ===========================================================================
 # TestOPAClientEvaluatePolicy

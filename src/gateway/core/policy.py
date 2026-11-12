@@ -559,7 +559,11 @@ class OPAClient:
             self._http_client = None
 
     async def verify_domain_policy(
-        self, package: str, required_rules: tuple[str, ...]
+        self,
+        package: str,
+        required_rules: tuple[str, ...],
+        *,
+        connect_deadline_seconds: float | None = None,
     ) -> None:
         """Fail closed unless OPA has ``package`` loaded with every required rule.
 
@@ -567,18 +571,62 @@ class OPAClient:
         so the check works whether policies were loaded from files or bundles
         (policy IDs are file paths and are not checked).
 
+        Transport ``httpx.ConnectError`` (for example, an in-pod UDS socket not
+        yet bound while the OPA sidecar finishes binding) is retried up to a
+        bounded deadline; any HTTP status error, timeout, malformed payload,
+        wrong Rego package, or missing rule fails closed immediately without
+        retry.
+
         Raises:
-            OPAPolicyMismatchError: OPA unreachable, non-2xx, malformed payload,
-                package not loaded, or a required rule missing.
+            OPAPolicyMismatchError: OPA unreachable past connect deadline,
+                non-2xx, malformed payload, package not loaded, or a required
+                rule missing.
         """
         try:
-            base, _ = self._resolve_endpoint()
-            headers = {}
-            if self.auth_token:
-                headers["Authorization"] = f"Bearer {self.auth_token}"
-            response = await self._get_client().get(
-                f"{base}/v1/policies", headers=headers, timeout=5.0
-            )
+            base, uds_socket_path = self._resolve_endpoint()
+        except Exception as exc:
+            raise OPAPolicyMismatchError(
+                f"cannot verify OPA package {package!r}: {exc}"
+            ) from exc
+
+        if connect_deadline_seconds is not None:
+            deadline_s = max(0.0, float(connect_deadline_seconds))
+        else:
+            raw_deadline = os.environ.get("CAGE_OPA_CONNECT_DEADLINE_SECONDS")
+            if raw_deadline is not None and raw_deadline.strip() != "":
+                try:
+                    deadline_s = max(0.0, float(raw_deadline))
+                except ValueError as exc:
+                    raise OPAPolicyMismatchError(
+                        f"invalid CAGE_OPA_CONNECT_DEADLINE_SECONDS={raw_deadline!r}: {exc}"
+                    ) from exc
+            else:
+                deadline_s = 15.0 if uds_socket_path else 0.0
+
+        headers: dict[str, str] = {}
+        if self.auth_token:
+            headers["Authorization"] = f"Bearer {self.auth_token}"
+
+        deadline = time.monotonic() + deadline_s
+        while True:
+            try:
+                response = await self._get_client().get(
+                    f"{base}/v1/policies", headers=headers, timeout=5.0
+                )
+                break
+            except httpx.ConnectError as exc:
+                remaining = deadline - time.monotonic()
+                if remaining <= 0.0:
+                    raise OPAPolicyMismatchError(
+                        f"cannot verify OPA package {package!r}: {exc}"
+                    ) from exc
+                await asyncio.sleep(min(0.2, remaining))
+            except Exception as exc:
+                raise OPAPolicyMismatchError(
+                    f"cannot verify OPA package {package!r}: {exc}"
+                ) from exc
+
+        try:
             response.raise_for_status()
             modules = response.json()["result"]
             defined = _rules_in_package(modules, package)

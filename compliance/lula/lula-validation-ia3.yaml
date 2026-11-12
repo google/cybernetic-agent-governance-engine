@@ -105,8 +105,9 @@ component-definition:
                 some deploy in input["cage-deployments"]
                 deploy.metadata.name == "gateway"
                 deploy.status.readyReplicas >= 1
-                some opa in deploy.spec.template.spec.containers
+                some opa in object.get(deploy.spec.template.spec, "initContainers", [])
                 opa.name == "opa"
+                opa.restartPolicy == "Always"
                 "--addr=unix:///var/run/opa/opa.sock" in opa.args
                 "--authorization=basic" in opa.args
                 count(object.get(opa, "ports", [])) == 0

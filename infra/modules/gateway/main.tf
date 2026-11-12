@@ -59,7 +59,7 @@ resource "kubernetes_config_map_v1" "redis_ca" {
   }
 }
 
-resource "kubernetes_deployment" "gateway" {
+resource "helm_release" "gateway" {
   lifecycle {
     precondition {
       condition = (
@@ -126,653 +126,674 @@ resource "kubernetes_deployment" "gateway" {
     }
   }
 
-  metadata {
-    name      = "gateway"
-    namespace = var.namespace
-    labels = {
-      app = "gateway"
+  name      = "gateway-deployment"
+  chart     = "${path.module}/deployment"
+  namespace = var.namespace
+  wait      = false
+
+  values = [yamlencode({
+    manifest = local.gateway_deployment_manifest
+  })]
+
+  depends_on = [kubernetes_config_map_v1.redis_ca]
+}
+
+locals {
+  opa_check_command = [
+    "/opa",
+    "check",
+    "--ignore=..*",
+    "/etc/opa/authz/system_authz.rego",
+    "/policies",
+  ]
+
+  # OPA Unix-socket native sidecar (F-19, F-102, R-15, D-195-3):
+  # Declared in initContainers with restartPolicy = "Always" (Kubernetes 1.29+
+  # native sidecar; rendered via a local Helm chart because hashicorp/kubernetes
+  # 2.x omits restart_policy on init_container). Kubelet pulls and starts opa
+  # and waits for its startupProbe before starting gateway, and keeps opa
+  # running across gateway's preStop drain window on termination.
+  opa_native_sidecar_container = {
+    name            = "opa"
+    image           = var.opa_image
+    imagePullPolicy = "Always"
+    restartPolicy   = "Always"
+    args = [
+      "run",
+      "--server",
+      "--addr=unix:///var/run/opa/opa.sock",
+      "--authorization=basic",
+      "--config-file=/config/opa_config.yaml",
+      "--shutdown-wait-period=15",
+      "--shutdown-grace-period=15",
+      "--ignore=..*",
+      "/etc/opa/authz/system_authz.rego",
+      "/policies",
+    ]
+    securityContext = {
+      allowPrivilegeEscalation = false
+      readOnlyRootFilesystem   = true
+      runAsNonRoot             = true
+      runAsUser                = 1000
+      runAsGroup               = 1000
+      seccompProfile = {
+        type = "RuntimeDefault"
+      }
+      capabilities = {
+        drop = ["ALL"]
+      }
+    }
+    lifecycle = {
+      preStop = {
+        exec = {
+          command = local.opa_check_command
+        }
+      }
+    }
+    startupProbe = {
+      exec = {
+        command = local.opa_check_command
+      }
+      periodSeconds    = 1
+      failureThreshold = 30
+      timeoutSeconds   = 5
+    }
+    readinessProbe = {
+      exec = {
+        command = local.opa_check_command
+      }
+      initialDelaySeconds = 2
+      periodSeconds       = 10
+      failureThreshold    = 3
+      timeoutSeconds      = 5
+    }
+    livenessProbe = {
+      exec = {
+        command = local.opa_check_command
+      }
+      initialDelaySeconds = 5
+      periodSeconds       = 20
+      failureThreshold    = 3
+      timeoutSeconds      = 5
+    }
+    volumeMounts = [
+      {
+        name      = "opa-socket"
+        mountPath = "/var/run/opa"
+        readOnly  = false
+      },
+      {
+        name      = "opa-policies"
+        mountPath = "/policies"
+        readOnly  = true
+      },
+      {
+        name      = "opa-system-authz"
+        mountPath = "/etc/opa/authz"
+        readOnly  = true
+      },
+      {
+        name      = "opa-config"
+        mountPath = "/config"
+        readOnly  = true
+      },
+    ]
+    resources = {
+      requests = {
+        cpu    = var.opa_cpu_request
+        memory = var.opa_memory_request
+      }
+      limits = {
+        cpu    = var.opa_cpu_limit
+        memory = var.opa_memory_limit
+      }
     }
   }
 
-  wait_for_rollout = false
+  gateway_app_container = {
+    name            = "gateway"
+    image           = var.image
+    imagePullPolicy = "Always"
+    securityContext = {
+      allowPrivilegeEscalation = false
+      runAsNonRoot             = true
+      runAsUser                = 1000
+      seccompProfile = {
+        type = "RuntimeDefault"
+      }
+      capabilities = {
+        drop = ["ALL"]
+      }
+    }
+    ports = [
+      {
+        containerPort = 8080
+        name          = "http"
+        protocol      = "TCP"
+      },
+      {
+        containerPort = 50051
+        name          = "grpc"
+        protocol      = "TCP"
+      },
+      {
+        containerPort = 9090
+        name          = "metrics"
+        protocol      = "TCP"
+      },
+    ]
+    # Secrets from dedicated gateway Secret (R-2, F-84, F-92) — never advisor-secrets.
+    envFrom = [
+      {
+        secretRef = {
+          name = var.gateway_secret_name
+        }
+      },
+    ]
+    env = concat(
+      [
+        # Deployment jurisdiction: single source is the cage-deployment
+        # ConfigMap (modules/deployment_config). optional = false: a pod
+        # never starts without a declared region.
+        {
+          name = "CAGE_DEPLOYMENT_REGION"
+          valueFrom = {
+            configMapKeyRef = {
+              name     = var.deployment_config_map_name
+              key      = "CAGE_DEPLOYMENT_REGION"
+              optional = false
+            }
+          }
+        },
+        {
+          name  = "PORT"
+          value = "8080"
+        },
+        {
+          name  = "GATEWAY_GRPC_PORT"
+          value = "50051"
+        },
+        {
+          name  = "CAGE_METRICS_PORT"
+          value = "9090"
+        },
+        {
+          name  = "GOOGLE_CLOUD_PROJECT"
+          value = var.project_id
+        },
+        {
+          name  = "GOOGLE_CLOUD_LOCATION"
+          value = var.region
+        },
+        {
+          name  = "ENABLE_LOGGING"
+          value = var.enable_logging
+        },
+        {
+          name  = "USE_MOCK_BROKER"
+          value = tostring(var.use_mock_broker)
+        },
+        {
+          name  = "LANGCHAIN_TRACING_V2"
+          value = "false"
+        },
+        {
+          name  = "LANGSMITH_TRACING"
+          value = "false"
+        },
+        {
+          name  = "OTEL_TRACES_EXPORTER"
+          value = "otlp"
+        },
+        {
+          name = "OTEL_EXPORTER_OTLP_ENDPOINT"
+          # Langfuse v3 native OTLP ingestion — no separate OTel Collector deployed.
+          value = "http://langfuse-web.${var.namespace}.svc.cluster.local:3000/api/public/otel/v1/traces"
+        },
+        {
+          name  = "OTEL_EXPORTER_OTLP_PROTOCOL"
+          value = "http/protobuf"
+        },
+        {
+          name = "OTEL_EXPORTER_OTLP_HEADERS"
+          valueFrom = {
+            secretKeyRef = {
+              name     = var.gateway_secret_name
+              key      = "OTEL_EXPORTER_OTLP_HEADERS"
+              optional = true
+            }
+          }
+        },
+        {
+          name  = "OTEL_PYTHON_INSTRUMENTATION_HTTPX_CAPTURE_REQUEST_BODY"
+          value = "true"
+        },
+        {
+          name  = "OTEL_PYTHON_INSTRUMENTATION_HTTPX_CAPTURE_RESPONSE_BODY"
+          value = "true"
+        },
+        {
+          name  = "OTEL_INSTRUMENTATION_GENAI_CAPTURE_MESSAGE_CONTENT"
+          value = "true"
+        },
+        {
+          name  = "OTEL_PYTHON_EXCLUDED_URLS"
+          value = var.otel_python_excluded_urls
+        },
+        {
+          name  = "OTEL_INSTRUMENTATION_HTTP_CAPTURE_HEADERS_SERVER_REQUEST"
+          value = "content-type,accept,user-agent,x-request-id,x-goog-authenticated-user-email"
+        },
+        {
+          name  = "OTEL_INSTRUMENTATION_HTTP_CAPTURE_HEADERS_SERVER_RESPONSE"
+          value = "content-type,content-length"
+        },
+        {
+          name  = "OTEL_INSTRUMENTATION_HTTP_CAPTURE_HEADERS_SANITIZE_FIELDS"
+          value = ".*session.*,.*token.*,authorization,set-cookie,cookie,x-api-key,proxy-authorization"
+        },
+        {
+          name  = "REDIS_PORT"
+          value = var.redis_port
+        },
+        {
+          name  = "REDIS_HOST"
+          value = var.redis_host
+        },
+        {
+          name = "REDIS_PASSWORD"
+          valueFrom = {
+            secretKeyRef = {
+              name     = var.gateway_secret_name
+              key      = "REDIS_PASSWORD"
+              optional = true
+            }
+          }
+        },
+        {
+          name  = "REDIS_URL"
+          value = "redis://${var.redis_host}:${var.redis_port}"
+        },
+        {
+          name  = "CAGE_INFERENCE_BACKEND"
+          value = var.cage_inference_backend
+        },
+        {
+          name  = "VLLM_BASE_URL"
+          value = var.vllm_base_url
+        },
+        {
+          # Not a credential for in-cluster vLLM, which runs without
+          # --api-key; startup requires it whenever a backend is set.
+          name  = "VLLM_API_KEY"
+          value = var.vllm_api_key
+        },
+        {
+          name  = "VLLM_GATEWAY_URL"
+          value = var.vllm_gateway_url
+        },
+        {
+          name  = "VLLM_REASONING_API_BASE"
+          value = var.vllm_reasoning_api_base
+        },
+        {
+          name  = "VLLM_FAST_API_BASE"
+          value = var.vllm_fast_api_base
+        },
+        {
+          name  = "GUARDRAILS_MODEL_NAME"
+          value = var.guardrails_model_name
+        },
+        {
+          name  = "SERVICE_NAME"
+          value = "hybrid-gateway"
+        },
+        # Causal-tier telemetry (CTRL_TEL_003 / F-92). The kernel reads only the
+        # vendor-neutral TELEMETRY_* names from the gateway-scoped Secret
+        # (isolated from advisor-secrets). Enforcing postures require
+        # CAGE_TELEMETRY_PROVIDER to be set explicitly.
+        {
+          name  = "CAGE_TELEMETRY_PROVIDER"
+          value = "remote"
+        },
+        {
+          name  = "TELEMETRY_HOST"
+          value = "http://langfuse-web.${var.namespace}.svc.cluster.local:3000"
+        },
+        {
+          name = "TELEMETRY_PUBLIC_KEY"
+          valueFrom = {
+            secretKeyRef = {
+              name     = local.telemetry_secret_name
+              key      = "TELEMETRY_PUBLIC_KEY"
+              optional = !var.causal_tier_enabled
+            }
+          }
+        },
+        {
+          name = "TELEMETRY_SECRET_KEY"
+          valueFrom = {
+            secretKeyRef = {
+              name     = local.telemetry_secret_name
+              key      = "TELEMETRY_SECRET_KEY"
+              optional = !var.causal_tier_enabled
+            }
+          }
+        },
+        {
+          name  = "CAGE_CAUSAL_TIER_ENABLED"
+          value = tostring(var.causal_tier_enabled)
+        },
+        {
+          name  = "CAUSAL_GATEKEEPER_STRICT_MODE"
+          value = tostring(var.causal_gatekeeper_strict_mode)
+        },
+        {
+          name  = "CAGE_CONSENSUS_CRITICS_ENABLED"
+          value = tostring(var.consensus_critics_enabled)
+        },
+        {
+          name  = "CAGE_CONSENSUS_ADVISORY_ONLY"
+          value = tostring(local.consensus_advisory_only)
+        },
+        {
+          name  = "CAGE_DOMAIN"
+          value = var.cage_domain
+        },
+        {
+          name  = "CAGE_ENV"
+          value = var.cage_env
+        },
+        {
+          name  = "ENVIRONMENT"
+          value = var.cage_env
+        },
+        {
+          name  = "OPA_URL"
+          value = var.opa_url
+        },
+        {
+          name  = "CAGE_OPA_CONNECT_DEADLINE_SECONDS"
+          value = "15"
+        },
+        # POAM-2026-080: deny-by-default ingress. Every path except the open
+        # list requires one of these mesh identities in l5d-client-id.
+        {
+          name  = "CAGE_TRUSTED_CLIENT_IDENTITIES"
+          value = join(",", var.trusted_client_identities)
+        },
+        {
+          name  = "RECONCILIATION_PROVIDER"
+          value = var.reconciliation_provider
+        },
+        {
+          name  = "KMS_GOVERNANCE_KEY"
+          value = var.kms_governance_key
+        },
+        {
+          name  = "RECONCILER_KMS_KEY"
+          value = var.reconciler_kms_key
+        },
+        {
+          name  = "CAGE_KMS_PROVIDER"
+          value = var.cage_kms_provider
+        },
+        # Track 6b Posture & Memorystore Invariants (§1.2, §2.1)
+        {
+          name  = "CAGE_CBF_STRICT_MODE"
+          value = tostring(local.cbf_strict_mode)
+        },
+        {
+          name  = "CAGE_STRICT_REPLICATION"
+          value = tostring(local.strict_replication)
+        },
+        {
+          name  = "CAGE_REDIS_SYNCHRONOUS_REPLICATION"
+          value = tostring(local.redis_synchronous_replication)
+        },
+        {
+          name  = "CAGE_REDIS_WAIT_REPLICAS"
+          value = tostring(local.redis_wait_replicas)
+        },
+        {
+          name  = "CAGE_REDIS_WAIT_TIMEOUT_MS"
+          value = tostring(local.redis_wait_timeout_ms)
+        },
+        {
+          name  = "CAGE_RECONCILIATION_REPLAY_DEFENSE"
+          value = tostring(local.reconciliation_replay_defense)
+        },
+        {
+          name  = "REDIS_TLS"
+          value = tostring(var.enable_redis_tls)
+        },
+        # Evidence stream producer. The gateway appends unsigned hash-chained
+        # records only; custody (chain re-verification, batch signing with
+        # EVIDENCE_KMS_KEY, WORM writes) is the compliance bridge's job, so no
+        # EVIDENCE_COLD_STORE*, EVIDENCE_KMS_KEY or WORM IAM reaches this pod.
+        {
+          name  = "EVIDENCE_STREAM_ENABLED"
+          value = "true"
+        },
+        {
+          name  = "EVIDENCE_CHAIN_BLOCKING"
+          value = "true"
+        },
+        {
+          name  = "EVIDENCE_STREAM_REDIS_URL"
+          value = var.evidence_stream_redis_url
+        },
+        {
+          name  = "EVIDENCE_STREAM_REDIS_DB"
+          value = tostring(var.evidence_stream_redis_db)
+        },
+        {
+          name  = "EVIDENCE_STREAM_KEY"
+          value = var.evidence_stream_key
+        },
+        {
+          name  = "EVIDENCE_PREVIOUS_CHAIN_HEAD_HASH"
+          value = var.evidence_previous_chain_head_hash
+        },
+        {
+          name  = "EVIDENCE_PREVIOUS_BATCH_ATTESTATION_DIGEST"
+          value = var.evidence_previous_batch_attestation_digest
+        },
+        # Cap BLAS/OpenMP worker pools to the 2-CPU container limit (2000m).
+        {
+          name  = "OMP_NUM_THREADS"
+          value = "2"
+        },
+        {
+          name  = "OPENBLAS_NUM_THREADS"
+          value = "2"
+        },
+      ],
+      local.mount_redis_ca ? [
+        {
+          name  = "REDIS_CA_CERT_PATH"
+          value = "/etc/cage/tls/redis/ca.pem"
+        },
+      ] : [],
+      var.redis_auth_mode != "" ? [
+        {
+          name  = "REDIS_AUTH_MODE"
+          value = var.redis_auth_mode
+        },
+      ] : [],
+    )
+    volumeMounts = concat(
+      [
+        {
+          name      = "opa-socket"
+          mountPath = "/var/run/opa"
+          readOnly  = false
+        },
+      ],
+      local.mount_redis_ca ? [
+        {
+          name      = "redis-ca"
+          mountPath = "/etc/cage/tls/redis"
+          readOnly  = true
+        },
+      ] : [],
+    )
+    lifecycle = {
+      preStop = {
+        exec = {
+          command = ["/bin/sh", "-c", "sleep 5"]
+        }
+      }
+    }
+    startupProbe = {
+      httpGet = {
+        path = "/health"
+        port = 8080
+      }
+      periodSeconds    = 5
+      failureThreshold = 30
+      timeoutSeconds   = 5
+    }
+    livenessProbe = {
+      httpGet = {
+        path = "/health"
+        port = 8080
+      }
+      initialDelaySeconds = 15
+      periodSeconds       = 20
+      failureThreshold    = 3
+      timeoutSeconds      = 5
+    }
+    readinessProbe = {
+      httpGet = {
+        path = "/health"
+        port = 8080
+      }
+      initialDelaySeconds = 10
+      periodSeconds       = 10
+      failureThreshold    = 3
+      timeoutSeconds      = 5
+    }
+    resources = {
+      requests = {
+        cpu    = "1000m"
+        memory = "2Gi"
+      }
+      limits = {
+        cpu    = "2000m"
+        memory = "4Gi"
+      }
+    }
+  }
 
-  spec {
-    replicas               = var.replicas
-    revision_history_limit = 3
+  gateway_volumes = concat(
+    [
+      {
+        name     = "opa-socket"
+        emptyDir = {}
+      },
+      {
+        name = "opa-policies"
+        configMap = {
+          name        = var.opa_policies_config_map_name
+          defaultMode = 292 # 0444 octal
+        }
+      },
+      {
+        name = "opa-system-authz"
+        configMap = {
+          name        = var.opa_system_authz_config_map_name
+          defaultMode = 292 # 0444 octal
+        }
+      },
+      {
+        name = "opa-config"
+        configMap = {
+          name        = var.opa_config_config_map_name
+          defaultMode = 292 # 0444 octal
+        }
+      },
+    ],
+    local.mount_redis_ca ? [
+      {
+        name = "redis-ca"
+        configMap = {
+          name = kubernetes_config_map_v1.redis_ca[0].metadata[0].name
+        }
+      },
+    ] : [],
+  )
 
-    selector {
-      match_labels = {
+  gateway_deployment_manifest = {
+    apiVersion = "apps/v1"
+    kind       = "Deployment"
+    metadata = {
+      name      = "gateway"
+      namespace = var.namespace
+      labels = {
         app = "gateway"
       }
     }
-
-    template {
-      metadata {
-        labels = {
+    spec = {
+      replicas             = var.replicas
+      revisionHistoryLimit = 3
+      selector = {
+        matchLabels = {
           app = "gateway"
         }
-        annotations = merge(
-          {
-            "config.linkerd.io/skip-inbound-ports" = "9090"
-          },
-          var.network_policy_hash != "" ? {
-            "cage.io/network-policy-hash" = var.network_policy_hash
-          } : {},
-          local.mount_redis_ca ? {
-            "cage.io/redis-ca-sha256" = sha256(var.redis_ca_pem)
-          } : {},
-          var.opa_bundle_sha256 != "" ? {
-            "cage.io/opa-bundle-sha256" = var.opa_bundle_sha256
-          } : {}
-        )
       }
-
-      spec {
-        service_account_name             = var.service_account_name
-        termination_grace_period_seconds = 35
-
-        # §3, §7 Pitfalls: Governance-critical gateway pods must NEVER schedule on Spot nodes.
-        affinity {
-          node_affinity {
-            required_during_scheduling_ignored_during_execution {
-              node_selector_term {
-                match_expressions {
-                  key      = "cloud.google.com/gke-spot"
-                  operator = "NotIn"
-                  values   = ["true"]
-                }
-              }
-            }
+      template = {
+        metadata = {
+          labels = {
+            app = "gateway"
           }
+          annotations = merge(
+            {
+              "config.linkerd.io/skip-inbound-ports" = "9090"
+            },
+            var.network_policy_hash != "" ? {
+              "cage.io/network-policy-hash" = var.network_policy_hash
+            } : {},
+            local.mount_redis_ca ? {
+              "cage.io/redis-ca-sha256" = sha256(var.redis_ca_pem)
+            } : {},
+            var.opa_bundle_sha256 != "" ? {
+              "cage.io/opa-bundle-sha256" = var.opa_bundle_sha256
+            } : {}
+          )
         }
-
-        security_context {
-          run_as_non_root = true
-          run_as_user     = 1000
-          fs_group        = 1000
-          seccomp_profile {
-            type = "RuntimeDefault"
-          }
-        }
-
-        container {
-          name              = "gateway"
-          image             = var.image
-          image_pull_policy = "Always"
-
-          security_context {
-            allow_privilege_escalation = false
-            run_as_non_root            = true
-            run_as_user                = 1000
-            seccomp_profile {
-              type = "RuntimeDefault"
-            }
-            capabilities {
-              drop = ["ALL"]
-            }
-          }
-
-          port {
-            container_port = 8080
-            name           = "http"
-          }
-          port {
-            container_port = 50051
-            name           = "grpc"
-          }
-          port {
-            container_port = 9090
-            name           = "metrics"
-          }
-
-          # Secrets from dedicated gateway Secret (R-2, F-84, F-92) — never advisor-secrets.
-          env_from {
-            secret_ref {
-              name = var.gateway_secret_name
-            }
-          }
-
-          # Deployment jurisdiction: single source is the cage-deployment
-          # ConfigMap (modules/deployment_config). optional = false: a pod
-          # never starts without a declared region.
-          env {
-            name = "CAGE_DEPLOYMENT_REGION"
-            value_from {
-              config_map_key_ref {
-                name     = var.deployment_config_map_name
-                key      = "CAGE_DEPLOYMENT_REGION"
-                optional = false
-              }
-            }
-          }
-
-          env {
-            name  = "PORT"
-            value = "8080"
-          }
-          env {
-            name  = "GATEWAY_GRPC_PORT"
-            value = "50051"
-          }
-          env {
-            name  = "CAGE_METRICS_PORT"
-            value = "9090"
-          }
-          env {
-            name  = "GOOGLE_CLOUD_PROJECT"
-            value = var.project_id
-          }
-          env {
-            name  = "GOOGLE_CLOUD_LOCATION"
-            value = var.region
-          }
-          env {
-            name  = "ENABLE_LOGGING"
-            value = var.enable_logging
-          }
-          env {
-            name  = "USE_MOCK_BROKER"
-            value = tostring(var.use_mock_broker)
-          }
-          env {
-            name  = "LANGCHAIN_TRACING_V2"
-            value = "false"
-          }
-          env {
-            name  = "LANGSMITH_TRACING"
-            value = "false"
-          }
-          env {
-            name  = "OTEL_TRACES_EXPORTER"
-            value = "otlp"
-          }
-          env {
-            name = "OTEL_EXPORTER_OTLP_ENDPOINT"
-            # Langfuse v3 native OTLP ingestion — no separate OTel Collector deployed.
-            value = "http://langfuse-web.${var.namespace}.svc.cluster.local:3000/api/public/otel/v1/traces"
-          }
-          env {
-            name  = "OTEL_EXPORTER_OTLP_PROTOCOL"
-            value = "http/protobuf"
-          }
-          env {
-            name = "OTEL_EXPORTER_OTLP_HEADERS"
-            value_from {
-              secret_key_ref {
-                name     = var.gateway_secret_name
-                key      = "OTEL_EXPORTER_OTLP_HEADERS"
-                optional = true
-              }
-            }
-          }
-          env {
-            name  = "OTEL_PYTHON_INSTRUMENTATION_HTTPX_CAPTURE_REQUEST_BODY"
-            value = "true"
-          }
-          env {
-            name  = "OTEL_PYTHON_INSTRUMENTATION_HTTPX_CAPTURE_RESPONSE_BODY"
-            value = "true"
-          }
-          env {
-            name  = "OTEL_INSTRUMENTATION_GENAI_CAPTURE_MESSAGE_CONTENT"
-            value = "true"
-          }
-          env {
-            name  = "OTEL_PYTHON_EXCLUDED_URLS"
-            value = var.otel_python_excluded_urls
-          }
-          env {
-            name  = "OTEL_INSTRUMENTATION_HTTP_CAPTURE_HEADERS_SERVER_REQUEST"
-            value = "content-type,accept,user-agent,x-request-id,x-goog-authenticated-user-email"
-          }
-          env {
-            name  = "OTEL_INSTRUMENTATION_HTTP_CAPTURE_HEADERS_SERVER_RESPONSE"
-            value = "content-type,content-length"
-          }
-          env {
-            name  = "OTEL_INSTRUMENTATION_HTTP_CAPTURE_HEADERS_SANITIZE_FIELDS"
-            value = ".*session.*,.*token.*,authorization,set-cookie,cookie,x-api-key,proxy-authorization"
-          }
-          env {
-            name  = "REDIS_PORT"
-            value = var.redis_port
-          }
-          env {
-            name  = "REDIS_HOST"
-            value = var.redis_host
-          }
-          env {
-            name = "REDIS_PASSWORD"
-            value_from {
-              secret_key_ref {
-                name     = var.gateway_secret_name
-                key      = "REDIS_PASSWORD"
-                optional = true
-              }
-            }
-          }
-          env {
-            name  = "REDIS_URL"
-            value = "redis://${var.redis_host}:${var.redis_port}"
-          }
-          env {
-            name  = "CAGE_INFERENCE_BACKEND"
-            value = var.cage_inference_backend
-          }
-          env {
-            name  = "VLLM_BASE_URL"
-            value = var.vllm_base_url
-          }
-          env {
-            # Not a credential for in-cluster vLLM, which runs without
-            # --api-key; startup requires it whenever a backend is set.
-            name  = "VLLM_API_KEY"
-            value = var.vllm_api_key
-          }
-          env {
-            name  = "VLLM_GATEWAY_URL"
-            value = var.vllm_gateway_url
-          }
-          env {
-            name  = "VLLM_REASONING_API_BASE"
-            value = var.vllm_reasoning_api_base
-          }
-          env {
-            name  = "VLLM_FAST_API_BASE"
-            value = var.vllm_fast_api_base
-          }
-          env {
-            name  = "GUARDRAILS_MODEL_NAME"
-            value = var.guardrails_model_name
-          }
-          env {
-            name  = "SERVICE_NAME"
-            value = "hybrid-gateway"
-          }
-          # Causal-tier telemetry (CTRL_TEL_003 / F-92). The kernel reads only the
-          # vendor-neutral TELEMETRY_* names from the gateway-scoped Secret
-          # (isolated from advisor-secrets). Enforcing postures require
-          # CAGE_TELEMETRY_PROVIDER to be set explicitly.
-          env {
-            name  = "CAGE_TELEMETRY_PROVIDER"
-            value = "remote"
-          }
-          env {
-            name  = "TELEMETRY_HOST"
-            value = "http://langfuse-web.${var.namespace}.svc.cluster.local:3000"
-          }
-          env {
-            name = "TELEMETRY_PUBLIC_KEY"
-            value_from {
-              secret_key_ref {
-                name     = local.telemetry_secret_name
-                key      = "TELEMETRY_PUBLIC_KEY"
-                optional = !var.causal_tier_enabled
-              }
-            }
-          }
-          env {
-            name = "TELEMETRY_SECRET_KEY"
-            value_from {
-              secret_key_ref {
-                name     = local.telemetry_secret_name
-                key      = "TELEMETRY_SECRET_KEY"
-                optional = !var.causal_tier_enabled
-              }
-            }
-          }
-          env {
-            name  = "CAGE_CAUSAL_TIER_ENABLED"
-            value = tostring(var.causal_tier_enabled)
-          }
-          env {
-            name  = "CAUSAL_GATEKEEPER_STRICT_MODE"
-            value = tostring(var.causal_gatekeeper_strict_mode)
-          }
-          env {
-            name  = "CAGE_CONSENSUS_CRITICS_ENABLED"
-            value = tostring(var.consensus_critics_enabled)
-          }
-          env {
-            name  = "CAGE_CONSENSUS_ADVISORY_ONLY"
-            value = tostring(local.consensus_advisory_only)
-          }
-          env {
-            name  = "CAGE_DOMAIN"
-            value = var.cage_domain
-          }
-          env {
-            name  = "CAGE_ENV"
-            value = var.cage_env
-          }
-          env {
-            name  = "ENVIRONMENT"
-            value = var.cage_env
-          }
-          env {
-            name  = "OPA_URL"
-            value = var.opa_url
-          }
-          # POAM-2026-080: deny-by-default ingress. Every path except the open
-          # list requires one of these mesh identities in l5d-client-id.
-          env {
-            name  = "CAGE_TRUSTED_CLIENT_IDENTITIES"
-            value = join(",", var.trusted_client_identities)
-          }
-          env {
-            name  = "RECONCILIATION_PROVIDER"
-            value = var.reconciliation_provider
-          }
-          env {
-            name  = "KMS_GOVERNANCE_KEY"
-            value = var.kms_governance_key
-          }
-          env {
-            name  = "RECONCILER_KMS_KEY"
-            value = var.reconciler_kms_key
-          }
-          env {
-            name  = "CAGE_KMS_PROVIDER"
-            value = var.cage_kms_provider
-          }
-          # Track 6b Posture & Memorystore Invariants (§1.2, §2.1)
-          env {
-            name  = "CAGE_CBF_STRICT_MODE"
-            value = tostring(local.cbf_strict_mode)
-          }
-          env {
-            name  = "CAGE_STRICT_REPLICATION"
-            value = tostring(local.strict_replication)
-          }
-          env {
-            name  = "CAGE_REDIS_SYNCHRONOUS_REPLICATION"
-            value = tostring(local.redis_synchronous_replication)
-          }
-          env {
-            name  = "CAGE_REDIS_WAIT_REPLICAS"
-            value = tostring(local.redis_wait_replicas)
-          }
-          env {
-            name  = "CAGE_REDIS_WAIT_TIMEOUT_MS"
-            value = tostring(local.redis_wait_timeout_ms)
-          }
-          env {
-            name  = "CAGE_RECONCILIATION_REPLAY_DEFENSE"
-            value = tostring(local.reconciliation_replay_defense)
-          }
-          env {
-            name  = "REDIS_TLS"
-            value = tostring(var.enable_redis_tls)
-          }
-          dynamic "env" {
-            for_each = local.mount_redis_ca ? [1] : []
-            content {
-              name  = "REDIS_CA_CERT_PATH"
-              value = "/etc/cage/tls/redis/ca.pem"
-            }
-          }
-          dynamic "env" {
-            for_each = var.redis_auth_mode != "" ? [1] : []
-            content {
-              name  = "REDIS_AUTH_MODE"
-              value = var.redis_auth_mode
-            }
-          }
-          # Evidence stream producer. The gateway appends unsigned hash-chained
-          # records only; custody (chain re-verification, batch signing with
-          # EVIDENCE_KMS_KEY, WORM writes) is the compliance bridge's job, so no
-          # EVIDENCE_COLD_STORE*, EVIDENCE_KMS_KEY or WORM IAM reaches this pod.
-          env {
-            name  = "EVIDENCE_STREAM_ENABLED"
-            value = "true"
-          }
-          env {
-            name  = "EVIDENCE_CHAIN_BLOCKING"
-            value = "true"
-          }
-          env {
-            name  = "EVIDENCE_STREAM_REDIS_URL"
-            value = var.evidence_stream_redis_url
-          }
-          env {
-            name  = "EVIDENCE_STREAM_REDIS_DB"
-            value = tostring(var.evidence_stream_redis_db)
-          }
-          env {
-            name  = "EVIDENCE_STREAM_KEY"
-            value = var.evidence_stream_key
-          }
-          env {
-            name  = "EVIDENCE_PREVIOUS_CHAIN_HEAD_HASH"
-            value = var.evidence_previous_chain_head_hash
-          }
-          env {
-            name  = "EVIDENCE_PREVIOUS_BATCH_ATTESTATION_DIGEST"
-            value = var.evidence_previous_batch_attestation_digest
-          }
-          # Cap BLAS/OpenMP worker pools to the 2-CPU container limit (2000m).
-          env {
-            name  = "OMP_NUM_THREADS"
-            value = "2"
-          }
-          env {
-            name  = "OPENBLAS_NUM_THREADS"
-            value = "2"
-          }
-          volume_mount {
-            name       = "opa-socket"
-            mount_path = "/var/run/opa"
-            read_only  = false
-          }
-          dynamic "volume_mount" {
-            for_each = local.mount_redis_ca ? [1] : []
-            content {
-              name       = "redis-ca"
-              mount_path = "/etc/cage/tls/redis"
-              read_only  = true
-            }
-          }
-          lifecycle {
-            pre_stop {
-              exec {
-                command = ["/bin/sh", "-c", "sleep 5"]
-              }
-            }
-          }
-          startup_probe {
-            http_get {
-              path = "/health"
-              port = 8080
-            }
-            period_seconds    = 5
-            failure_threshold = 30
-            timeout_seconds   = 5
-          }
-          liveness_probe {
-            http_get {
-              path = "/health"
-              port = 8080
-            }
-            initial_delay_seconds = 15
-            period_seconds        = 20
-            failure_threshold     = 3
-            timeout_seconds       = 5
-          }
-          readiness_probe {
-            http_get {
-              path = "/health"
-              port = 8080
-            }
-            initial_delay_seconds = 10
-            period_seconds        = 10
-            failure_threshold     = 3
-            timeout_seconds       = 5
-          }
-          resources {
-            requests = {
-              cpu    = "1000m"
-              memory = "2Gi"
-            }
-            limits = {
-              cpu    = "2000m"
-              memory = "4Gi"
-            }
-          }
-        }
-
-        # OPA Unix-socket sidecar (F-19, F-102, R-15, D-195-3):
-        # Zero TCP listener ports, read-only policy/authz/config ConfigMaps,
-        # --authorization=basic blocking runtime PUT/PATCH/DELETE mutations,
-        # static /opa check probes, and 15s shutdown wait/grace outliving the
-        # gateway container's 5s pre_stop drain window.
-        container {
-          name              = "opa"
-          image             = var.opa_image
-          image_pull_policy = "Always"
-
-          args = [
-            "run",
-            "--server",
-            "--addr=unix:///var/run/opa/opa.sock",
-            "--authorization=basic",
-            "--config-file=/config/opa_config.yaml",
-            "--shutdown-wait-period=15",
-            "--shutdown-grace-period=15",
-            "--ignore=..*",
-            "/etc/opa/authz/system_authz.rego",
-            "/policies",
-          ]
-
-          security_context {
-            allow_privilege_escalation = false
-            read_only_root_filesystem  = true
-            run_as_non_root            = true
-            run_as_user                = 1000
-            run_as_group               = 1000
-            seccomp_profile {
-              type = "RuntimeDefault"
-            }
-            capabilities {
-              drop = ["ALL"]
-            }
-          }
-
-          lifecycle {
-            pre_stop {
-              exec {
-                command = [
-                  "/opa",
-                  "check",
-                  "--ignore=..*",
-                  "/etc/opa/authz/system_authz.rego",
-                  "/policies",
+        spec = {
+          serviceAccountName            = var.service_account_name
+          terminationGracePeriodSeconds = 35
+          # §3, §7 Pitfalls: Governance-critical gateway pods must NEVER schedule on Spot nodes.
+          affinity = {
+            nodeAffinity = {
+              requiredDuringSchedulingIgnoredDuringExecution = {
+                nodeSelectorTerms = [
+                  {
+                    matchExpressions = [
+                      {
+                        key      = "cloud.google.com/gke-spot"
+                        operator = "NotIn"
+                        values   = ["true"]
+                      },
+                    ]
+                  },
                 ]
               }
             }
           }
-
-          readiness_probe {
-            exec {
-              command = [
-                "/opa",
-                "check",
-                "--ignore=..*",
-                "/etc/opa/authz/system_authz.rego",
-                "/policies",
-              ]
-            }
-            initial_delay_seconds = 2
-            period_seconds        = 10
-            failure_threshold     = 3
-            timeout_seconds       = 5
-          }
-
-          liveness_probe {
-            exec {
-              command = [
-                "/opa",
-                "check",
-                "--ignore=..*",
-                "/etc/opa/authz/system_authz.rego",
-                "/policies",
-              ]
-            }
-            initial_delay_seconds = 5
-            period_seconds        = 20
-            failure_threshold     = 3
-            timeout_seconds       = 5
-          }
-
-          volume_mount {
-            name       = "opa-socket"
-            mount_path = "/var/run/opa"
-            read_only  = false
-          }
-          volume_mount {
-            name       = "opa-policies"
-            mount_path = "/policies"
-            read_only  = true
-          }
-          volume_mount {
-            name       = "opa-system-authz"
-            mount_path = "/etc/opa/authz"
-            read_only  = true
-          }
-          volume_mount {
-            name       = "opa-config"
-            mount_path = "/config"
-            read_only  = true
-          }
-
-          resources {
-            requests = {
-              cpu    = var.opa_cpu_request
-              memory = var.opa_memory_request
-            }
-            limits = {
-              cpu    = var.opa_cpu_limit
-              memory = var.opa_memory_limit
+          securityContext = {
+            runAsNonRoot = true
+            runAsUser    = 1000
+            fsGroup      = 1000
+            seccompProfile = {
+              type = "RuntimeDefault"
             }
           }
-        }
-
-        volume {
-          name = "opa-socket"
-          empty_dir {}
-        }
-
-        volume {
-          name = "opa-policies"
-          config_map {
-            name         = var.opa_policies_config_map_name
-            default_mode = "0444"
-          }
-        }
-
-        volume {
-          name = "opa-system-authz"
-          config_map {
-            name         = var.opa_system_authz_config_map_name
-            default_mode = "0444"
-          }
-        }
-
-        volume {
-          name = "opa-config"
-          config_map {
-            name         = var.opa_config_config_map_name
-            default_mode = "0444"
-          }
-        }
-
-        dynamic "volume" {
-          for_each = local.mount_redis_ca ? [1] : []
-          content {
-            name = "redis-ca"
-            config_map {
-              name = kubernetes_config_map_v1.redis_ca[0].metadata[0].name
-            }
-          }
+          initContainers = [local.opa_native_sidecar_container]
+          containers     = [local.gateway_app_container]
+          volumes        = local.gateway_volumes
         }
       }
     }
@@ -845,6 +866,8 @@ resource "kubernetes_pod_disruption_budget_v1" "gateway" {
 resource "kubernetes_horizontal_pod_autoscaler_v2" "gateway" {
   count = var.enable_autoscaling && var.replicas >= 2 ? 1 : 0
 
+  depends_on = [helm_release.gateway]
+
   metadata {
     name      = "gateway-hpa"
     namespace = var.namespace
@@ -860,7 +883,7 @@ resource "kubernetes_horizontal_pod_autoscaler_v2" "gateway" {
     scale_target_ref {
       api_version = "apps/v1"
       kind        = "Deployment"
-      name        = kubernetes_deployment.gateway.metadata[0].name
+      name        = local.gateway_deployment_manifest.metadata.name
     }
 
     metric {

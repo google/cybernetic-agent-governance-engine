@@ -335,6 +335,81 @@ def _tf_workloads() -> list[tuple[str, dict, dict]]:
             }
             rel = f"{mod_main.relative_to(_REPO)}#{mod_inst}.{rname}"
             out.append((rel, doc, pod))
+
+        # Also inspect local Helm-rendered workload manifests (e.g.,
+        # gateway_deployment_manifest rendered by helm_release.gateway for
+        # Kubernetes native sidecars).
+        for hm in re.finditer(
+            r'^\s*resource\s+"helm_release"\s+"(\w+)"\s*\{', mod_text, re.M
+        ):
+            hname = hm.group(1)
+            hbody, _ = _brace_block(mod_text, hm.start())
+            lm = re.search(r"manifest\s*=\s*local\.(\w+)", hbody)
+            if not lm:
+                continue
+            local_name = lm.group(1)
+            m_local = re.search(
+                rf"^\s*{re.escape(local_name)}\s*=\s*\{{", mod_text, re.M
+            )
+            if not m_local:
+                continue
+            lbody, _ = _brace_block(mod_text, m_local.start())
+            kind_m = re.search(r'^\s*kind\s*=\s*"(\w+)"', lbody, re.M)
+            w_kind = kind_m.group(1) if kind_m else "Deployment"
+            if w_kind not in _POD_KINDS:
+                continue
+            meta_m = re.search(r"\bmetadata\s*=\s*\{", lbody)
+            w_name = hname
+            if meta_m:
+                meta_body, _ = _brace_block(lbody, meta_m.start())
+                nm = re.search(r"name\s*=\s*(.+)", meta_body)
+                if nm:
+                    raw = nm.group(1).strip().strip('"')
+                    for k, v in var_env.items():
+                        raw = raw.replace(f"var.{k}", v).replace(f"${{var.{k}}}", v)
+                    w_name = raw
+            sa_in_pod = (
+                resolved_sa
+                if ("serviceAccountName" in lbody or "service_account_name" in lbody)
+                else "default"
+            )
+            images = [
+                im.group(1).strip().strip('"')
+                for im in re.finditer(r"^\s*image\s*=\s*(.+)$", mod_text, re.M)
+            ]
+            env_from = [
+                {"secretRef": {"name": sm.group(1)}}
+                for sm in re.finditer(
+                    r'secretRef\s*=\s*\{\s*name\s*=\s*"([^"]+)"', mod_text, re.S
+                )
+            ]
+            envs = []
+            for em in re.finditer(r"\{\s*name\s*=\s*\"([A-Z][A-Z0-9_]*)\"", mod_text):
+                ebody, _ = _brace_block(mod_text, em.start())
+                entry = {"name": em.group(1)}
+                skm = re.search(
+                    r'secretKeyRef\s*=\s*\{[^}]*name\s*=\s*"([^"]+)"', ebody, re.S
+                )
+                if skm:
+                    entry["valueFrom"] = {"secretKeyRef": {"name": skm.group(1)}}
+                envs.append(entry)
+            doc = {
+                "kind": w_kind,
+                "metadata": {"name": w_name, "namespace": "governance-stack"},
+            }
+            pod = {
+                "serviceAccountName": sa_in_pod,
+                "containers": [
+                    {
+                        "name": hname,
+                        "image": " ".join(images),
+                        "envFrom": env_from,
+                        "env": envs,
+                    }
+                ],
+            }
+            rel = f"{mod_main.relative_to(_REPO)}#{mod_inst}.{hname}"
+            out.append((rel, doc, pod))
     return out
 
 

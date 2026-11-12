@@ -212,7 +212,7 @@ def test_modules_own_redis_ca_configmap_mount_annotation_and_revision_limit(
     assert f'name      = "{app_name}-redis-ca"' in cm_block
     assert '"ca.pem" = var.redis_ca_pem' in cm_block
 
-    assert "revision_history_limit = 3" in text
+    assert "revision_history_limit = 3" in text or "revisionHistoryLimit = 3" in text
     assert (
         '"cage.io/redis-ca-sha256" = local.mount_redis_ca ? sha256(var.redis_ca_pem) : ""'
         in text
@@ -224,18 +224,34 @@ def test_modules_own_redis_ca_configmap_mount_annotation_and_revision_limit(
         r'dynamic "volume_mount" \{\s*for_each = local\.mount_redis_ca \? \[1\] : \[\]\s*content \{(.*?)\}\s*\}',
         text,
         re.S,
+    ) or re.search(
+        r"local\.mount_redis_ca \? \[\s*\{(.*?)\}\s*,?\s*\] : \[\]",
+        text[text.index("volumeMounts = concat") :]
+        if "volumeMounts = concat" in text
+        else "",
+        re.S,
     )
-    assert vm_match, f"{module_file}: missing redis-ca dynamic volume_mount"
-    assert 'name       = "redis-ca"' in vm_match.group(1)
-    assert 'mount_path = "/etc/cage/tls/redis"' in vm_match.group(1)
-    assert "read_only  = true" in vm_match.group(1)
+    assert vm_match, f"{module_file}: missing redis-ca conditional volume_mount"
+    assert 'name       = "redis-ca"' in vm_match.group(
+        1
+    ) or 'name      = "redis-ca"' in vm_match.group(1)
+    assert 'mount_path = "/etc/cage/tls/redis"' in vm_match.group(
+        1
+    ) or 'mountPath = "/etc/cage/tls/redis"' in vm_match.group(1)
+    assert "read_only  = true" in vm_match.group(
+        1
+    ) or "readOnly  = true" in vm_match.group(1)
 
     vol_match = re.search(
         r'dynamic "volume" \{\s*for_each = local\.mount_redis_ca \? \[1\] : \[\]\s*content \{(.*?)\}\s*\}',
         text,
         re.S,
+    ) or re.search(
+        r"local\.mount_redis_ca \? \[\s*\{(.*?)\}\s*,?\s*\] : \[\]",
+        text[text.index("gateway_volumes") :] if "gateway_volumes" in text else "",
+        re.S,
     )
-    assert vol_match, f"{module_file}: missing redis-ca dynamic volume"
+    assert vol_match, f"{module_file}: missing redis-ca conditional volume"
     assert 'name = "redis-ca"' in vol_match.group(1)
     assert (
         "name = kubernetes_config_map_v1.redis_ca[0].metadata[0].name"
