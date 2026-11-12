@@ -1439,3 +1439,16 @@ variable "bootstrap_without_cluster" {
   nullable    = false
 }
 
+variable "infra_evidence_previous_chain_head_hash" {
+  description = "Optional 64-hex SHA-256 record_hash of the prior INFRA chain's final custodied record for bound genesis rotation across cluster rebuilds (POAM-2026-205). Must be paired with infra_evidence_previous_batch_attestation_digest."
+  type        = string
+  default     = ""
+}
+
+variable "infra_evidence_previous_batch_attestation_digest" {
+  description = "Optional 64-hex SHA-256 digest of the prior INFRA chain's final signed batch attestation for bound genesis rotation across cluster rebuilds (POAM-2026-205). Must be paired with infra_evidence_previous_chain_head_hash."
+  type        = string
+  default     = ""
+}
+
+

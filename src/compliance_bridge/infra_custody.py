@@ -64,9 +64,14 @@ DEFAULT_INFRA_STREAM_MAXLEN = 100_000
 INFRA_IDEMPOTENCY_TTL_S_ENV = "INFRA_EVENT_IDEMPOTENCY_TTL_S"
 DEFAULT_INFRA_IDEMPOTENCY_TTL_S = 86_400
 INFRA_INLINE_FLUSH_ENV = "INFRA_EVIDENCE_INLINE_FLUSH"
+INFRA_PREVIOUS_CHAIN_HEAD_HASH_ENV = "INFRA_EVIDENCE_PREVIOUS_CHAIN_HEAD_HASH"
+INFRA_PREVIOUS_BATCH_ATTESTATION_DIGEST_ENV = (
+    "INFRA_EVIDENCE_PREVIOUS_BATCH_ATTESTATION_DIGEST"
+)
 INFRA_EVIDENCE_CLASS = "INFRA"
 
 IDEMPOTENCY_KEY_PATTERN = re.compile(r"^[A-Za-z0-9._:-]{1,128}\Z")
+_HEX64_PATTERN = re.compile(r"^[0-9a-f]{64}\Z")
 
 
 def is_inline_custody_flush_enabled(env: Mapping[str, str] | None = None) -> bool:
@@ -157,6 +162,31 @@ def canonical_payload_json(payload: Mapping[str, Any]) -> str:
     return canonical_str
 
 
+def _normalize_genesis_rotation_pair(
+    previous_chain_head_hash: str | None,
+    previous_batch_attestation_digest: str | None,
+) -> tuple[str | None, str | None]:
+    head = (previous_chain_head_hash or "").strip()
+    att = (previous_batch_attestation_digest or "").strip()
+    if not head and not att:
+        return None, None
+    if not head or not att:
+        raise InfraCustodyError(
+            "INFRA bound genesis rotation requires both "
+            f"{INFRA_PREVIOUS_CHAIN_HEAD_HASH_ENV} and "
+            f"{INFRA_PREVIOUS_BATCH_ATTESTATION_DIGEST_ENV} to be set together"
+        )
+    if not _HEX64_PATTERN.match(head):
+        raise InfraCustodyError(
+            f"{INFRA_PREVIOUS_CHAIN_HEAD_HASH_ENV} must be a lowercase 64-hex SHA-256 digest"
+        )
+    if not _HEX64_PATTERN.match(att):
+        raise InfraCustodyError(
+            f"{INFRA_PREVIOUS_BATCH_ATTESTATION_DIGEST_ENV} must be a lowercase 64-hex SHA-256 digest"
+        )
+    return head, att
+
+
 def compute_infra_record_hash(
     *,
     prev_hash: str,
@@ -166,6 +196,8 @@ def compute_infra_record_hash(
     payload_json: str,
     chain_id: str,
     trace_id: str,
+    previous_chain_head_hash: str | None = None,
+    previous_batch_attestation_digest: str | None = None,
 ) -> str:
     """Deterministically compute the ``cage-audit/3.0`` ``record_hash``."""
     return _link_hash(
@@ -176,6 +208,8 @@ def compute_infra_record_hash(
         payload_json=payload_json,
         chain_id=chain_id,
         trace_id=trace_id,
+        previous_chain_head_hash=previous_chain_head_hash,
+        previous_batch_attestation_digest=previous_batch_attestation_digest,
     )
 
 
@@ -253,15 +287,22 @@ class InfraEvidenceChain:
         idempotency_ttl_s: int = DEFAULT_INFRA_IDEMPOTENCY_TTL_S,
         chain_id_factory: Callable[[], str] | None = None,
         trace_id_factory: Callable[[], str] | None = None,
+        previous_chain_head_hash: str | None = None,
+        previous_batch_attestation_digest: str | None = None,
     ) -> None:
         if redis is None:
             raise InfraCustodyError("InfraEvidenceChain requires a live Redis client")
+        prev_head, prev_att = _normalize_genesis_rotation_pair(
+            previous_chain_head_hash, previous_batch_attestation_digest
+        )
         self._redis = redis
         self._stream_key = stream_key
         self._max_len = max(1, max_len)
         self._idempotency_ttl_s = max(60, idempotency_ttl_s)
         self._chain_id_factory = chain_id_factory or (lambda: str(uuid.uuid4()))
         self._trace_id_factory = trace_id_factory or current_trace_id
+        self._previous_chain_head_hash: str | None = prev_head
+        self._previous_batch_attestation_digest: str | None = prev_att
         self._chain_id: str = ""
         self._prev_hash: str = ""
         self._sequence: int = 0
@@ -297,11 +338,17 @@ class InfraEvidenceChain:
                 INFRA_IDEMPOTENCY_TTL_S_ENV, str(DEFAULT_INFRA_IDEMPOTENCY_TTL_S)
             )
         )
+        prev_head, prev_att = _normalize_genesis_rotation_pair(
+            os.environ.get(INFRA_PREVIOUS_CHAIN_HEAD_HASH_ENV),
+            os.environ.get(INFRA_PREVIOUS_BATCH_ATTESTATION_DIGEST_ENV),
+        )
         return cls(
             build_async_redis(redis_url, db=redis_db),
             stream_key=stream_key,
             max_len=max_len,
             idempotency_ttl_s=ttl_s,
+            previous_chain_head_hash=prev_head,
+            previous_batch_attestation_digest=prev_att,
         )
 
     @property
@@ -646,6 +693,17 @@ class InfraEvidenceChain:
                         sequence = self._sequence
                         chain_id = self._chain_id
 
+                        genesis_prev_head: str | None = None
+                        genesis_prev_att: str | None = None
+                        if (
+                            sequence == 0
+                            and prev_hash == ""
+                            and self._previous_chain_head_hash is not None
+                            and self._previous_batch_attestation_digest is not None
+                        ):
+                            genesis_prev_head = self._previous_chain_head_hash
+                            genesis_prev_att = self._previous_batch_attestation_digest
+
                         record_hash = compute_infra_record_hash(
                             prev_hash=prev_hash,
                             sequence=sequence,
@@ -654,6 +712,8 @@ class InfraEvidenceChain:
                             payload_json=payload_json,
                             chain_id=chain_id,
                             trace_id=trace_id,
+                            previous_chain_head_hash=genesis_prev_head,
+                            previous_batch_attestation_digest=genesis_prev_att,
                         )
                         entry: dict[str, str] = {
                             "schema": _SCHEMA,
@@ -670,6 +730,14 @@ class InfraEvidenceChain:
                             "record_hash": record_hash,
                             "payload_json": payload_json,
                         }
+                        if (
+                            genesis_prev_head is not None
+                            and genesis_prev_att is not None
+                        ):
+                            entry["previous_chain_head_hash"] = genesis_prev_head
+                            entry["previous_batch_attestation_digest"] = (
+                                genesis_prev_att
+                            )
                         verdict = verify_record(entry, prev_hash)
                         if not verdict.valid:
                             raise InfraCustodyError(

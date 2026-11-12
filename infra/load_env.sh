@@ -162,6 +162,12 @@ while IFS= read -r line || [ -n "$line" ]; do
             EVIDENCE_PREVIOUS_BATCH_ATTESTATION_DIGEST)
                 export TF_VAR_evidence_previous_batch_attestation_digest="$var_value"
                 ;;
+            INFRA_EVIDENCE_PREVIOUS_CHAIN_HEAD_HASH)
+                export TF_VAR_infra_evidence_previous_chain_head_hash="$var_value"
+                ;;
+            INFRA_EVIDENCE_PREVIOUS_BATCH_ATTESTATION_DIGEST)
+                export TF_VAR_infra_evidence_previous_batch_attestation_digest="$var_value"
+                ;;
         esac
     fi
 done < "$PROJECT_ROOT/$ENV_FILE"

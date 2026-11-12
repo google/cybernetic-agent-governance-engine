@@ -507,11 +507,11 @@ manifest = {
         "rotation_binding_scope": {
             "covered": [
                 "operator_orchestrated_rebuild_of_cage_evidence_stream",
+                "operator_orchestrated_rebuild_of_infra_evidence_stream",
             ],
             "not_covered": [
                 "retroactive_binding_of_existing_worm_chain_rotations",
                 "unorchestrated_empty_redis_stream_cold_start_on_operated_clusters",
-                "infra_evidence_stream_cross_rebuild_binding",
             ],
         },
     },
@@ -1243,7 +1243,7 @@ echo -e "${CYAN}╔════════════════════�
 echo -e "${CYAN}║  Phase 1: Provisioning staging + zero-drift read-back            ║${RESET}"
 echo -e "${CYAN}╚══════════════════════════════════════════════════════════════════╝${RESET}"
 echo ""
-if [[ "$FRESH_PROJECT" == "true" && "$SKIP_PROVISION" == "false" && -z "${TF_VAR_evidence_previous_chain_head_hash:-}" ]]; then _anchor_script="${CAGE_WORM_ANCHOR_SCRIPT:-$REPO_ROOT/scripts/read_worm_chain_anchor.py}"; if [[ -f "$_anchor_script" ]]; then _anchor_py="$REPO_ROOT/.venv/bin/python"; [[ -x "$_anchor_py" ]] || _anchor_py="python3"; _pre_worm_exp="$(GOOGLE_API_USE_CLIENT_CERTIFICATE=false "$_anchor_py" "$_anchor_script" --gcs-bucket="${PROJECT_ID}-evidence-worm-staging" --gcs-project="$PROJECT_ID" --kms-key="projects/${PROJECT_ID}/locations/${REGION}/keyRings/cage-signing-staging/cryptoKeys/compliance-evidence/cryptoKeyVersions/1" --pre-run-inventory="$PRE_RUN_INVENTORY_JSON" --stream-key="cage:evidence:stream" --if-exists --format=export)" || exit 1; eval "$_pre_worm_exp"; fi; fi
+if [[ "$FRESH_PROJECT" == "true" && "$SKIP_PROVISION" == "false" && -z "${TF_VAR_evidence_previous_chain_head_hash:-}" ]]; then _anchor_script="${CAGE_WORM_ANCHOR_SCRIPT:-$REPO_ROOT/scripts/read_worm_chain_anchor.py}"; if [[ -f "$_anchor_script" ]]; then _anchor_py="$REPO_ROOT/.venv/bin/python"; [[ -x "$_anchor_py" ]] || _anchor_py="python3"; _pre_worm_exp="$(GOOGLE_API_USE_CLIENT_CERTIFICATE=false "$_anchor_py" "$_anchor_script" --gcs-bucket="${PROJECT_ID}-evidence-worm-staging" --gcs-project="$PROJECT_ID" --kms-key="projects/${PROJECT_ID}/locations/${REGION}/keyRings/cage-signing-staging/cryptoKeys/compliance-evidence/cryptoKeyVersions/1" --pre-run-inventory="$PRE_RUN_INVENTORY_JSON" --all-streams --if-exists --format=export)" || exit 1; eval "$_pre_worm_exp"; fi; fi
 if [[ "$SKIP_PROVISION" == "false" ]]; then info "Deploying staging with full security posture..."
 if ! "$REPO_ROOT/deploy_all.sh" --target gcp-gke --env staging --auto-approve ${DEPLOY_EXTRA_ARGS[@]+"${DEPLOY_EXTRA_ARGS[@]}"}; then
   error "Staging provision failed. Check Terraform output above."
@@ -1920,9 +1920,13 @@ PRE_WORM_HEAD_HASH=""
 PRE_WORM_ATTESTATION_DIGEST=""
 PRE_WORM_CHAIN_ID=""
 PRE_WORM_BATCH_COUNT=0
+PRE_INFRA_WORM_HEAD_HASH=""
+PRE_INFRA_WORM_ATTESTATION_DIGEST=""
+PRE_INFRA_WORM_CHAIN_ID=""
 
 if ! has_gate_failures && [[ "$SKIP_REBUILD" == "false" && "$SKIP_TELEMETRY" == "false" ]]; then
   info "Phase 6 pre-teardown: quiescing evidence-stream producers before capturing final WORM anchor..."
+  kubectl patch cronjob lula-audit -n "$NAMESPACE" -p '{"spec":{"suspend":true}}' >/dev/null 2>&1 || true
   kubectl scale deploy/gateway deploy/reconciliation-worker -n "$NAMESPACE" --replicas=0 >/dev/null 2>&1 || true
   if [[ "${CAGE_PRE_TEARDOWN_FLUSH_WAIT_SECONDS:-65}" -gt 0 ]]; then
     sleep "${CAGE_PRE_TEARDOWN_FLUSH_WAIT_SECONDS:-65}"
@@ -1936,7 +1940,7 @@ if ! has_gate_failures && [[ "$SKIP_REBUILD" == "false" && "$SKIP_TELEMETRY" == 
     ((REBUILD_FAILURES++)) || true
   else
     anchor_env=""
-    if ! anchor_env="$(printf '%s' "$LAST_EVIDENCE_VERIFY_JSON" | python3 "$ANCHOR_SCRIPT" --from-stdin --format env)"; then
+    if ! anchor_env="$(printf '%s' "$LAST_EVIDENCE_VERIFY_JSON" | python3 "$ANCHOR_SCRIPT" --from-stdin --all-streams --format env)"; then
       error "Phase 6 pre-teardown WORM anchor extraction FAILED."
       ((REBUILD_FAILURES++)) || true
     else
@@ -1946,6 +1950,9 @@ if ! has_gate_failures && [[ "$SKIP_REBUILD" == "false" && "$SKIP_TELEMETRY" == 
           EVIDENCE_PREVIOUS_BATCH_ATTESTATION_DIGEST) PRE_WORM_ATTESTATION_DIGEST="$_av" ;;
           WORM_ANCHOR_CHAIN_ID) PRE_WORM_CHAIN_ID="$_av" ;;
           WORM_ANCHOR_VERIFIED_BATCHES) PRE_WORM_BATCH_COUNT="$_av" ;;
+          INFRA_EVIDENCE_PREVIOUS_CHAIN_HEAD_HASH) PRE_INFRA_WORM_HEAD_HASH="$_av" ;;
+          INFRA_EVIDENCE_PREVIOUS_BATCH_ATTESTATION_DIGEST) PRE_INFRA_WORM_ATTESTATION_DIGEST="$_av" ;;
+          INFRA_WORM_ANCHOR_CHAIN_ID) PRE_INFRA_WORM_CHAIN_ID="$_av" ;;
         esac
       done <<< "$anchor_env"
       if [[ -z "$PRE_WORM_HEAD_HASH" || -z "$PRE_WORM_ATTESTATION_DIGEST" ]]; then
@@ -1953,6 +1960,9 @@ if ! has_gate_failures && [[ "$SKIP_REBUILD" == "false" && "$SKIP_TELEMETRY" == 
         ((REBUILD_FAILURES++)) || true
       else
         success "Captured pre-teardown WORM anchor: chain=${PRE_WORM_CHAIN_ID}, batches=${PRE_WORM_BATCH_COUNT}, head=${PRE_WORM_HEAD_HASH:0:12}..., attestation=${PRE_WORM_ATTESTATION_DIGEST:0:12}..."
+        if [[ -n "$PRE_INFRA_WORM_HEAD_HASH" && -n "$PRE_INFRA_WORM_ATTESTATION_DIGEST" ]]; then
+          info "Captured pre-teardown INFRA WORM anchor: chain=${PRE_INFRA_WORM_CHAIN_ID}, head=${PRE_INFRA_WORM_HEAD_HASH:0:12}..."
+        fi
       fi
     fi
   fi
@@ -1978,6 +1988,11 @@ if ! has_gate_failures && [[ "$SKIP_REBUILD" == "false" ]]; then
       export TF_VAR_evidence_previous_chain_head_hash="$PRE_WORM_HEAD_HASH"
       export TF_VAR_evidence_previous_batch_attestation_digest="$PRE_WORM_ATTESTATION_DIGEST"
       info "Stage 5 bound genesis rotation enabled (prior chain=${PRE_WORM_CHAIN_ID}, head=${PRE_WORM_HEAD_HASH:0:12}...)"
+    fi
+    if [[ -n "$PRE_INFRA_WORM_HEAD_HASH" && -n "$PRE_INFRA_WORM_ATTESTATION_DIGEST" ]]; then
+      export TF_VAR_infra_evidence_previous_chain_head_hash="$PRE_INFRA_WORM_HEAD_HASH"
+      export TF_VAR_infra_evidence_previous_batch_attestation_digest="$PRE_INFRA_WORM_ATTESTATION_DIGEST"
+      info "Stage 5 INFRA bound genesis rotation enabled (prior chain=${PRE_INFRA_WORM_CHAIN_ID}, head=${PRE_INFRA_WORM_HEAD_HASH:0:12}...)"
     fi
     if ! env SKIP_BUILD=true BOOTSTRAP_IMPORT_STATE=true \
       "$REPO_ROOT/deploy_all.sh" --target gcp-gke --env staging --auto-approve ${DEPLOY_EXTRA_ARGS[@]+"${DEPLOY_EXTRA_ARGS[@]}"}; then
@@ -2059,7 +2074,7 @@ if ! has_gate_failures && [[ "$SKIP_REBUILD" == "false" ]]; then
     info "Stage 6: Running final teardown after rebuild verification..."
     detach_persistent_kms_state
     run_terraform_destroy "post-rebuild final teardown"
-    unset TF_VAR_evidence_previous_chain_head_hash TF_VAR_evidence_previous_batch_attestation_digest
+    unset TF_VAR_evidence_previous_chain_head_hash TF_VAR_evidence_previous_batch_attestation_digest TF_VAR_infra_evidence_previous_chain_head_hash TF_VAR_infra_evidence_previous_batch_attestation_digest
   fi
 elif [[ "$SKIP_REBUILD" == "true" ]]; then
   warn "Phase 6 Stages 4–5 (--import-state + clean rebuild) skipped (--skip-rebuild flag)"

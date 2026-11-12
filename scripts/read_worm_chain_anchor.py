@@ -42,6 +42,9 @@ DEFAULT_TIMEOUT_SECONDS = 120
 DEFAULT_GOVERNANCE_STREAM_KEY = "cage:evidence:stream"
 
 
+DEFAULT_INFRA_STREAM_KEY = "cage:evidence:infra:stream"
+
+
 class WormAnchorError(ValueError):
     """Raised when a citable WORM chain-tail anchor cannot be extracted safely."""
 
@@ -66,6 +69,19 @@ class WormChainAnchor:
         return asdict(self)
 
     def to_env_lines(self) -> str:
+        if self.stream_key == DEFAULT_INFRA_STREAM_KEY:
+            return "\n".join(
+                [
+                    f"INFRA_EVIDENCE_PREVIOUS_CHAIN_HEAD_HASH={self.last_record_hash}",
+                    f"INFRA_EVIDENCE_PREVIOUS_BATCH_ATTESTATION_DIGEST={self.attestation_sha256}",
+                    f"TF_VAR_infra_evidence_previous_chain_head_hash={self.last_record_hash}",
+                    f"TF_VAR_infra_evidence_previous_batch_attestation_digest={self.attestation_sha256}",
+                    f"INFRA_WORM_ANCHOR_CHAIN_ID={self.chain_id}",
+                    f"INFRA_WORM_ANCHOR_LAST_SEQUENCE={self.last_sequence}",
+                    f"INFRA_WORM_ANCHOR_VERIFIED_BATCHES={self.verified_batches}",
+                    f"INFRA_WORM_ANCHOR_BOUND_ROTATIONS={self.bound_rotations}",
+                ]
+            )
         return "\n".join(
             [
                 f"EVIDENCE_PREVIOUS_CHAIN_HEAD_HASH={self.last_record_hash}",
@@ -84,6 +100,13 @@ class WormChainAnchor:
             self.attestation_sha256
         ):
             raise WormAnchorError("Refusing shell export for non-hex64 anchor digest")
+        if self.stream_key == DEFAULT_INFRA_STREAM_KEY:
+            return "\n".join(
+                [
+                    f"export TF_VAR_infra_evidence_previous_chain_head_hash={self.last_record_hash}",
+                    f"export TF_VAR_infra_evidence_previous_batch_attestation_digest={self.attestation_sha256}",
+                ]
+            )
         return "\n".join(
             [
                 f"export TF_VAR_evidence_previous_chain_head_hash={self.last_record_hash}",
@@ -490,6 +513,11 @@ def main(argv: list[str] | None = None) -> int:
             f"(default: {DEFAULT_GOVERNANCE_STREAM_KEY})"
         ),
     )
+    parser.add_argument(
+        "--all-streams",
+        action="store_true",
+        help="Resolve anchors for both governance (cage:evidence:stream) and infra (cage:evidence:infra:stream) streams in one pass",
+    )
     args = parser.parse_args(argv)
 
     try:
@@ -534,6 +562,59 @@ def main(argv: list[str] | None = None) -> int:
 
         if not isinstance(report, Mapping):
             raise WormAnchorError("Verification report must be a JSON object")
+
+        if args.all_streams:
+            verified_raw = report.get("verified")
+            any_tagged = isinstance(verified_raw, list) and any(
+                isinstance(it, Mapping)
+                and bool(str(it.get("stream_key") or "").strip())
+                for it in verified_raw
+            )
+            gov_key = (
+                os.environ.get(
+                    "EVIDENCE_STREAM_KEY", DEFAULT_GOVERNANCE_STREAM_KEY
+                ).strip()
+                or DEFAULT_GOVERNANCE_STREAM_KEY
+            )
+            infra_key = (
+                os.environ.get(
+                    "INFRA_EVIDENCE_STREAM_KEY", DEFAULT_INFRA_STREAM_KEY
+                ).strip()
+                or DEFAULT_INFRA_STREAM_KEY
+            )
+            candidate_keys = [gov_key, infra_key] if any_tagged else [gov_key]
+            anchors: list[WormChainAnchor] = []
+            for sk in candidate_keys:
+                is_optional_infra = sk == infra_key and any_tagged
+                if (args.if_exists or is_optional_infra) and _has_no_stream_batches_yet(
+                    report, stream_key=sk
+                ):
+                    continue
+                anchors.append(extract_chain_anchor(report, stream_key=sk))
+            if not anchors:
+                return 0
+            if args.output is not None:
+                args.output.parent.mkdir(parents=True, exist_ok=True)
+                args.output.write_text(
+                    json.dumps([a.to_dict() for a in anchors], indent=2, sort_keys=True)
+                    + "\n",
+                    encoding="utf-8",
+                )
+            if args.format == "env":
+                print("\n".join(a.to_env_lines() for a in anchors))
+            elif args.format == "export":
+                for a in anchors:
+                    print(
+                        f"[INFO] Pre-existing WORM chain anchor resolved for {a.stream_key}: "
+                        f"chain={a.chain_id}, batches={a.verified_batches}, head={a.last_record_hash[:12]}...",
+                        file=sys.stderr,
+                    )
+                print("\n".join(a.to_export_lines() for a in anchors))
+            else:
+                print(
+                    json.dumps([a.to_dict() for a in anchors], indent=2, sort_keys=True)
+                )
+            return 0
 
         if args.if_exists and _has_no_stream_batches_yet(
             report, stream_key=args.stream_key

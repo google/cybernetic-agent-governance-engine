@@ -325,3 +325,32 @@ variable "enable_pod_monitoring" {
   type        = bool
   default     = true
 }
+
+variable "infra_evidence_previous_chain_head_hash" {
+  description = "Optional 64-hex SHA-256 record_hash of the prior INFRA chain's final custodied record for bound genesis rotation across cluster rebuilds (INFRA_EVIDENCE_PREVIOUS_CHAIN_HEAD_HASH, POAM-2026-205). Must be paired with infra_evidence_previous_batch_attestation_digest."
+  type        = string
+  default     = ""
+
+  validation {
+    condition = (
+      (trimspace(var.infra_evidence_previous_chain_head_hash) == "" && trimspace(var.infra_evidence_previous_batch_attestation_digest) == "") ||
+      (
+        can(regex("^[0-9a-f]{64}$", trimspace(var.infra_evidence_previous_chain_head_hash))) &&
+        can(regex("^[0-9a-f]{64}$", trimspace(var.infra_evidence_previous_batch_attestation_digest)))
+      )
+    )
+    error_message = "CAGE Invariant (F-94 / R-10 / POAM-2026-205): infra_evidence_previous_chain_head_hash and infra_evidence_previous_batch_attestation_digest must either both be empty or both be lowercase 64-character hex SHA-256 digests."
+  }
+}
+
+variable "infra_evidence_previous_batch_attestation_digest" {
+  description = "Optional 64-hex SHA-256 digest of the prior INFRA chain's final signed batch attestation for bound genesis rotation across cluster rebuilds (INFRA_EVIDENCE_PREVIOUS_BATCH_ATTESTATION_DIGEST, POAM-2026-205). Must be paired with infra_evidence_previous_chain_head_hash."
+  type        = string
+  default     = ""
+
+  validation {
+    condition     = trimspace(var.infra_evidence_previous_batch_attestation_digest) == "" || can(regex("^[0-9a-f]{64}$", trimspace(var.infra_evidence_previous_batch_attestation_digest)))
+    error_message = "infra_evidence_previous_batch_attestation_digest must be empty or a lowercase 64-character hex SHA-256 digest."
+  }
+}
+
