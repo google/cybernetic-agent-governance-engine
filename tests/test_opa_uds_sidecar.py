@@ -898,3 +898,34 @@ class TestServerBoundPolicyPrecheckEndpoint:
                         )
                         == "DENY"
                     )
+
+
+def test_gateway_helm_template_preserves_newline_after_license_comment() -> None:
+    """``{{- toYaml ... }}`` immediately after a ``#`` comment chomps the
+    trailing newline and glues ``apiVersion: apps/v1`` onto the comment line.
+    """
+    tpl_path = (
+        REPO_ROOT
+        / "infra"
+        / "modules"
+        / "gateway"
+        / "deployment"
+        / "templates"
+        / "deployment.yaml"
+    )
+    tpl_text = tpl_path.read_text(encoding="utf-8")
+    assert "{{ toYaml .Values.manifest }}" in tpl_text
+    assert "{{- toYaml" not in tpl_text
+
+    # Simulate Go text/template rendering of deployment.yaml and parse as YAML.
+    sample_manifest = {
+        "apiVersion": "apps/v1",
+        "kind": "Deployment",
+        "metadata": {"name": "gateway", "namespace": "governance-stack"},
+    }
+    rendered = tpl_text.replace(
+        "{{ toYaml .Values.manifest }}",
+        yaml.safe_dump(sample_manifest, sort_keys=False).rstrip("\n"),
+    )
+    parsed = yaml.safe_load(rendered)
+    assert parsed == sample_manifest
