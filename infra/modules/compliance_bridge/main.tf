@@ -18,15 +18,15 @@ terraform {
       source  = "hashicorp/kubernetes"
       version = "~> 2.23"
     }
+    helm = {
+      source  = "hashicorp/helm"
+      version = "~> 2.11"
+    }
   }
 }
 
-
 locals {
-  # Keep count/for_each/annotation keys deterministic at plan time when
-  # Memorystore's managed_server_ca is (known after apply); the Deployment
-  # precondition still enforces trimspace(var.redis_ca_pem) != "" at apply.
-  mount_redis_ca = var.enable_redis_tls ? true : (var.redis_ca_pem != "")
+  mount_redis_ca = var.enable_redis_tls ? true : (var.redis_ca_pem != "") # deterministic at plan time
 }
 
 resource "kubernetes_config_map_v1" "redis_ca" {
@@ -104,7 +104,7 @@ resource "kubernetes_deployment" "compliance_bridge" {
         }
         annotations = merge(
           {
-            "config.linkerd.io/skip-inbound-ports" = "9090"
+            # TCP 9090 stays behind Linkerd Server/compliance-bridge-metrics.
           },
           local.mount_redis_ca ? {
             "cage.io/redis-ca-sha256" = sha256(var.redis_ca_pem)

@@ -662,3 +662,115 @@ spec:
     - group: policy.linkerd.io
       kind: NetworkAuthentication
       name: workload-probe-network
+---
+# ─── 11. Linkerd Proxy Admin (4191) — Explicit Scrape, Probe & Loopback Policy ─
+# Under defaultInboundPolicy = "all-authenticated", chart port 4191 explicitly in
+# Terraform/Helm state rather than relying on linkerd2-proxy's implicit built-in
+# admin exception:
+#   - GET /metrics, /live, /ready -> workload-probe-network (L3/L4 NetworkPolicy
+#     restricts non-kubelet ingress on 4191 to gmp-system and kube-system)
+#   - POST /shutdown -> loopback-network ONLY (127.0.0.0/8, ::1/128 for pod-local
+#     graceful drain)
+#   - All other admin paths (/logging, /env.json, etc.) have no HTTPRoute and
+#     are denied (403/404) by default.
+apiVersion: policy.linkerd.io/v1alpha1
+kind: NetworkAuthentication
+metadata:
+  name: loopback-network
+  namespace: {{ .Release.Namespace }}
+  labels:
+    app.kubernetes.io/managed-by: Helm
+    cage.io/component: z3n-mtls
+spec:
+  networks:
+    - cidr: 127.0.0.0/8
+    - cidr: ::1/128
+---
+apiVersion: policy.linkerd.io/v1beta3
+kind: Server
+metadata:
+  name: linkerd-admin
+  namespace: {{ .Release.Namespace }}
+  labels:
+    app.kubernetes.io/managed-by: Helm
+    cage.io/component: z3n-mtls
+spec:
+  podSelector:
+    matchExpressions:
+      - key: app
+        operator: Exists
+  port: 4191
+  proxyProtocol: HTTP/1
+---
+apiVersion: policy.linkerd.io/v1beta3
+kind: HTTPRoute
+metadata:
+  name: linkerd-admin-scrape-and-probes
+  namespace: {{ .Release.Namespace }}
+spec:
+  parentRefs:
+    - group: policy.linkerd.io
+      kind: Server
+      name: linkerd-admin
+  rules:
+    - matches:
+        - method: GET
+          path:
+            type: Exact
+            value: /metrics
+        - method: GET
+          path:
+            type: Exact
+            value: /live
+        - method: GET
+          path:
+            type: Exact
+            value: /ready
+---
+apiVersion: policy.linkerd.io/v1alpha1
+kind: AuthorizationPolicy
+metadata:
+  name: linkerd-admin-scrape-and-probes
+  namespace: {{ .Release.Namespace }}
+spec:
+  targetRef:
+    group: policy.linkerd.io
+    kind: HTTPRoute
+    name: linkerd-admin-scrape-and-probes
+  requiredAuthenticationRefs:
+    - group: policy.linkerd.io
+      kind: NetworkAuthentication
+      name: workload-probe-network
+---
+apiVersion: policy.linkerd.io/v1beta3
+kind: HTTPRoute
+metadata:
+  name: linkerd-admin-loopback-shutdown
+  namespace: {{ .Release.Namespace }}
+spec:
+  parentRefs:
+    - group: policy.linkerd.io
+      kind: Server
+      name: linkerd-admin
+  rules:
+    - matches:
+        - method: POST
+          path:
+            type: Exact
+            value: /shutdown
+---
+apiVersion: policy.linkerd.io/v1alpha1
+kind: AuthorizationPolicy
+metadata:
+  name: linkerd-admin-loopback-shutdown
+  namespace: {{ .Release.Namespace }}
+spec:
+  targetRef:
+    group: policy.linkerd.io
+    kind: HTTPRoute
+    name: linkerd-admin-loopback-shutdown
+  requiredAuthenticationRefs:
+    - group: policy.linkerd.io
+      kind: NetworkAuthentication
+      name: loopback-network
+

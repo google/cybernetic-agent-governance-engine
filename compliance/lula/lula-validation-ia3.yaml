@@ -89,6 +89,7 @@ component-definition:
               package lula
 
               import future.keywords.if
+              import future.keywords.every
               import future.keywords.in
 
               # IA-3: Device Identification and Authentication — Linkerd mTLS & OPA UDS Sidecar
@@ -99,6 +100,17 @@ component-definition:
                 some env in container.env
                 env.name == "CAGE_TRUSTED_CLIENT_IDENTITIES"
                 env.value != ""
+              }
+
+              no_inbound_mesh_port_bypass if {
+                every req_name in {"gateway", "compliance-bridge"} {
+                  matching := [d | some d in input["cage-deployments"]; d.metadata.name == req_name]
+                  count(matching) >= 1
+                  every deploy in matching {
+                    annotations := object.get(deploy.spec.template.metadata, "annotations", {})
+                    not annotations["config.linkerd.io/skip-inbound-ports"]
+                  }
+                }
               }
 
               opa_uds_sidecar_running if {
@@ -122,6 +134,7 @@ component-definition:
                 count(input["cage-deployments"]) > 0
                 count(input["cage-network-policies"]) > 0
                 gateway_mtls_identity_enforced
+                no_inbound_mesh_port_bypass
                 opa_uds_sidecar_running
                 network_isolation_present
               }

@@ -275,12 +275,18 @@ component-definition:
                    histogram cage_event_loop_lag_seconds and the Cloud KMS RPC counter
                    cage_kms_rpc_total{op} (src/integrations/gcp/kms_provider.py); an enforcing
                    posture refuses to start if the metrics server cannot start. Port 9090
-                   bypasses the Linkerd inbound proxy (config.linkerd.io/skip-inbound-ports),
-                   and /metrics is not served on port 8080. Terraform installs
-                   PodMonitoring/gateway-metrics
-                   (infra/modules/gateway/metrics-monitors/templates/monitors.yaml);
-                   compliance/lula/lula-validation-metrics.yaml checks that the object exists
-                   with the expected selector and endpoint, not that samples arrive.
+                   traverses the Linkerd inbound proxy under Server/gateway-metrics
+                   (infra/targets/gcp-gke/charts/workload-mesh-policy/templates/servers-and-authz.yaml,
+                   Exact GET /metrics from NetworkAuthentication/workload-probe-network; no
+                   config.linkerd.io/skip-inbound-ports), and /metrics is not served without
+                   mesh identity on port 8080. Terraform installs PodMonitoring/gateway-metrics
+                   (infra/modules/gateway/metrics-monitors/templates/monitors.yaml) and
+                   google_monitoring_alert_policy.prometheus_metrics_scrape_liveness
+                   (infra/targets/gcp-gke/metrics_alerting.tf) on up{job="gateway-metrics"} and
+                   cage_event_loop_lag_seconds_count absence; compliance/lula/lula-validation-metrics.yaml
+                   checks that the PodMonitoring object exists with the expected selector and
+                   endpoint, while live GMP sample arrival under Server/gateway-metrics awaits
+                   certification.
 
                 Open: live staging verification of signed attestations in the WORM bucket
                 (POAM-2026-084); staging keeps WORM objects for 1 day inside the ephemeral

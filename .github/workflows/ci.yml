@@ -788,7 +788,7 @@ jobs:
           export PATH="$HOME/.linkerd2/bin:$PATH"
           kubectl apply --server-side -f https://github.com/kubernetes-sigs/gateway-api/releases/download/v1.5.1/standard-install.yaml
           linkerd install --crds | kubectl apply -f -
-          linkerd install | kubectl apply -f -
+          linkerd install --set proxy.defaultInboundPolicy=all-authenticated | kubectl apply -f -
           linkerd check
       - name: Provision cage-deployment ConfigMap and render gateway mesh-policy chart
         # Live runs read the session region from cage-deployment

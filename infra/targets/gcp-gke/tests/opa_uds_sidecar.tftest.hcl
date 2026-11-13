@@ -272,12 +272,16 @@ run "gateway_embeds_readonly_opa_uds_sidecar_with_zero_tcp_ports" {
       yamldecode(helm_release.gateway.values[0]).manifest.spec.template.spec.containers[0].name == "gateway" &&
       tonumber(yamldecode(helm_release.gateway.values[0]).manifest.spec.template.spec.terminationGracePeriodSeconds) >= 30 &&
       yamldecode(helm_release.gateway.values[0]).manifest.spec.template.metadata.annotations["cage.io/opa-bundle-sha256"] == var.gateway_base.opa_bundle_sha256 &&
+      !contains(
+        keys(yamldecode(helm_release.gateway.values[0]).manifest.spec.template.metadata.annotations),
+        "config.linkerd.io/skip-inbound-ports",
+      ) &&
       one([
         for e in yamldecode(helm_release.gateway.values[0]).manifest.spec.template.spec.containers[0].env :
         try(e.value, "") if e.name == "OPA_URL"
       ]) == "http+unix://%2Fvar%2Frun%2Fopa%2Fopa.sock"
     )
-    error_message = "gateway Deployment must run opa as a Kubernetes native sidecar (initContainers restartPolicy=Always) + gateway app container with OPA_URL over UDS, >=30s grace period, and opa-bundle-sha256 rollout annotation"
+    error_message = "gateway Deployment must run opa as a Kubernetes native sidecar (initContainers restartPolicy=Always) + gateway app container with OPA_URL over UDS, >=30s grace period, opa-bundle-sha256 rollout annotation, and zero skip-inbound-ports bypass"
   }
 
   assert {

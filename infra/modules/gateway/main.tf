@@ -748,9 +748,6 @@ locals {
             app = "gateway"
           }
           annotations = merge(
-            {
-              "config.linkerd.io/skip-inbound-ports" = "9090"
-            },
             var.network_policy_hash != "" ? {
               "cage.io/network-policy-hash" = var.network_policy_hash
             } : {},
