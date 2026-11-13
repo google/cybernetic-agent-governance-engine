@@ -198,6 +198,7 @@ def _setup_fake_repo(
     plan_rc: int = 0,
     rebuild_plan_rc: int = 0,
     monitoring_json: str = DEFAULT_MONITORING_JSON,
+    bridge_monitoring_json: str | None = None,
     monitoring_rc: int = 0,
     evidence_verify_json: str = DEFAULT_EVIDENCE_VERIFY_JSON,
     post_rebuild_evidence_verify_json: str = DEFAULT_POST_REBUILD_EVIDENCE_VERIFY_JSON,
@@ -343,6 +344,10 @@ def _setup_fake_repo(
     )
     rebuilt_flag = fixtures_dir / "rebuilt_flag"
     (fixtures_dir / "monitoring.json").write_text(monitoring_json, encoding="utf-8")
+    (fixtures_dir / "bridge_monitoring.json").write_text(
+        monitoring_json if bridge_monitoring_json is None else bridge_monitoring_json,
+        encoding="utf-8",
+    )
     plan_counter_file = fixtures_dir / "tf_plan_count"
     plan_counter_file.write_text("0", encoding="utf-8")
 
@@ -560,7 +565,11 @@ exit 0
         f"""#!/usr/bin/env bash
 if [[ "$*" == *"monitoring.googleapis.com"* ]]; then
   echo "curl $*" >> "{log_file}"
-  cat "{fixtures_dir / "monitoring.json"}"
+  if [[ "$*" == *"cage_evidence_verified_batches"* ]]; then
+    cat "{fixtures_dir / "bridge_monitoring.json"}"
+  else
+    cat "{fixtures_dir / "monitoring.json"}"
+  fi
   exit {monitoring_rc}
 fi
 echo "203.0.113.42"
@@ -1040,7 +1049,39 @@ def test_staging_lifecycle_fails_closed_when_gmp_timeseries_empty(
         check=False,
     )
     assert proc.returncode != 0
-    assert "0 timeSeries returned for prometheus.googleapis.com/cage_*" in proc.stderr
+    assert (
+        "0 timeSeries returned for prometheus.googleapis.com/cage_event_loop_lag_seconds/histogram"
+        in proc.stderr
+    )
+
+
+def test_staging_lifecycle_fails_closed_when_bridge_gmp_timeseries_empty(
+    tmp_path: Path,
+) -> None:
+    repo, bin_dir, _ = _setup_fake_repo(
+        tmp_path,
+        bridge_monitoring_json=json.dumps({"timeSeries": []}),
+    )
+    env = _base_env(bin_dir, GOOGLE_CLOUD_PROJECT="demo-staging-proj")
+    proc = subprocess.run(
+        [
+            "bash",
+            str(repo / "scripts" / "staging_lifecycle.sh"),
+            "--skip-lula",
+            "--skip-posture",
+            "--skip-live-sweep",
+            "--skip-rebuild",
+        ],
+        env=env,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert proc.returncode != 0
+    assert (
+        "0 timeSeries returned for prometheus.googleapis.com/cage_evidence_verified_batches/gauge"
+        in proc.stderr
+    )
 
 
 @pytest.mark.parametrize(

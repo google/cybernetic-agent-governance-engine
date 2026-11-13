@@ -31,8 +31,9 @@ Covers:
         ``sign``, ``get_public_key``, and ``list_crypto_key_versions``;
   - Terraform & Lula manifests:
       * ``infra/modules/gateway/main.tf`` declares containerPort ``9090``
-        (``metrics``), Service label ``app = "gateway"``, Service port ``9090``
-        (``metrics``), and ``config.linkerd.io/skip-inbound-ports = "9090"``;
+        (``metrics``), Service label ``app = "gateway"``, and Service port
+        ``9090`` (``metrics``) behind Linkerd ``Server/gateway-metrics`` (no
+        ``skip-inbound-ports`` bypass);
       * ``infra/modules/gateway/metrics-monitors/templates/monitors.yaml``
         defines both ``ServiceMonitor/stera-gateway-monitor`` and
         ``PodMonitoring/gateway-metrics`` selecting ``app: gateway`` on port
@@ -351,12 +352,47 @@ def _render_metrics_monitors_chart(namespace: str = "governance-stack") -> list[
     return [d for d in yaml.safe_load_all(rendered) if isinstance(d, dict)]
 
 
-def test_gateway_terraform_exposes_metrics_port_and_linkerd_bypass() -> None:
+def test_gateway_terraform_exposes_metrics_port_behind_linkerd_server() -> None:
     main_tf = (_REPO / "infra/modules/gateway/main.tf").read_text(encoding="utf-8")
-    assert '"config.linkerd.io/skip-inbound-ports" = "9090"' in main_tf
+    assert "skip-inbound-ports" not in main_tf
     assert "containerPort = 9090" in main_tf
     assert 'name          = "metrics"' in main_tf
     assert 'name  = "CAGE_METRICS_PORT"' in main_tf
+
+    wl_policy_raw = (
+        _REPO
+        / "infra/targets/gcp-gke/charts/workload-mesh-policy/templates/servers-and-authz.yaml"
+    ).read_text(encoding="utf-8")
+    wl_docs = [
+        yaml.safe_load(chunk.replace("{{ .Release.Namespace }}", "governance-stack"))
+        for chunk in wl_policy_raw.split("\n---\n")
+        if "gateway-metrics" in chunk
+    ]
+    gw_metrics_srv = next(
+        d
+        for d in wl_docs
+        if isinstance(d, dict)
+        and d.get("kind") == "Server"
+        and d.get("metadata", {}).get("name") == "gateway-metrics"
+    )
+    assert gw_metrics_srv["spec"]["port"] == 9090
+    gw_metrics_route = next(
+        d
+        for d in wl_docs
+        if isinstance(d, dict)
+        and d.get("kind") == "HTTPRoute"
+        and d.get("metadata", {}).get("name") == "gateway-metrics-scrape"
+    )
+    assert gw_metrics_route["spec"]["rules"] == [
+        {
+            "matches": [
+                {
+                    "method": "GET",
+                    "path": {"type": "Exact", "value": "/metrics"},
+                }
+            ]
+        }
+    ]
 
     svc_start = main_tf.index('resource "kubernetes_service" "gateway"')
     svc_block = main_tf[

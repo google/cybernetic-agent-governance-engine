@@ -588,3 +588,93 @@ def test_all_three_mesh_charts_obey_linkerd_policy_webhook_invariants() -> None:
         }
     )
     _assert_linkerd_webhook_invariants(wl_docs)
+
+    for docs_set, srv_name, route_name, net_auth_name in (
+        (
+            wl_docs,
+            "gateway-metrics",
+            "gateway-metrics-scrape",
+            "workload-probe-network",
+        ),
+        (
+            cb_docs,
+            "compliance-bridge-metrics",
+            "compliance-bridge-metrics-scrape",
+            "compliance-bridge-probe-network",
+        ),
+    ):
+        srv = _by(docs_set, "Server", srv_name)
+        assert srv["spec"]["port"] == 9090
+        assert srv["spec"]["proxyProtocol"] == "HTTP/1"
+        route = _by(docs_set, "HTTPRoute", route_name)
+        assert route["spec"]["rules"] == [
+            {
+                "matches": [
+                    {
+                        "path": {"type": "Exact", "value": "/metrics"},
+                        "method": "GET",
+                    }
+                ]
+            }
+        ]
+        authz = _by(docs_set, "AuthorizationPolicy", route_name)
+        assert authz["spec"]["targetRef"]["name"] == route_name
+        assert [r["name"] for r in authz["spec"]["requiredAuthenticationRefs"]] == [
+            net_auth_name
+        ]
+
+    admin_srv = _by(wl_docs, "Server", "linkerd-admin")
+    assert admin_srv["spec"]["port"] == 4191
+    assert admin_srv["spec"]["podSelector"] == {
+        "matchExpressions": [{"key": "app", "operator": "Exists"}]
+    }
+    assert admin_srv["spec"]["proxyProtocol"] == "HTTP/1"
+    admin_scrape = _by(wl_docs, "HTTPRoute", "linkerd-admin-scrape-and-probes")
+    assert admin_scrape["spec"]["rules"] == [
+        {
+            "matches": [
+                {"method": "GET", "path": {"type": "Exact", "value": "/metrics"}},
+                {"method": "GET", "path": {"type": "Exact", "value": "/live"}},
+                {"method": "GET", "path": {"type": "Exact", "value": "/ready"}},
+            ]
+        }
+    ]
+    admin_shutdown = _by(wl_docs, "HTTPRoute", "linkerd-admin-loopback-shutdown")
+    assert admin_shutdown["spec"]["rules"] == [
+        {
+            "matches": [
+                {"method": "POST", "path": {"type": "Exact", "value": "/shutdown"}}
+            ]
+        }
+    ]
+    loopback_net = _by(wl_docs, "NetworkAuthentication", "loopback-network")
+    assert loopback_net["spec"]["networks"] == [
+        {"cidr": "127.0.0.0/8"},
+        {"cidr": "::1/128"},
+    ]
+    assert [
+        r["name"]
+        for r in _by(wl_docs, "AuthorizationPolicy", "linkerd-admin-loopback-shutdown")[
+            "spec"
+        ]["requiredAuthenticationRefs"]
+    ] == ["loopback-network"]
+
+    mesh_tf = (_REPO / "infra/modules/service_mesh/main.tf").read_text(encoding="utf-8")
+    assert 'defaultInboundPolicy = "all-authenticated"' in mesh_tf
+    assert "all-unauthenticated" not in mesh_tf
+
+    metrics_alert_tf = (_REPO / "infra/targets/gcp-gke/metrics_alerting.tf").read_text(
+        encoding="utf-8"
+    )
+    assert (
+        'resource "google_monitoring_alert_policy" "prometheus_metrics_scrape_liveness"'
+        in metrics_alert_tf
+    )
+    assert 'up{job=\\"gateway-metrics\\"' in metrics_alert_tf
+    assert "absent_over_time(cage_event_loop_lag_seconds_count{" in metrics_alert_tf
+    assert 'up{job=\\"compliance-bridge-metrics\\"' in metrics_alert_tf
+    assert (
+        "absent_over_time(cage_lula_audit_not_satisfied_controls{" in metrics_alert_tf
+    )
+    assert "absent_over_time(cage_evidence_verified_batches{" in metrics_alert_tf
+    assert metrics_alert_tf.count("condition_prometheus_query_language {") == 1

@@ -436,19 +436,26 @@ resource "helm_release" "linkerd_control_plane" {
   wait       = true
   timeout    = 600
 
-  values = [yamlencode({
-    clusterDomain           = var.cluster_domain
-    identityTrustDomain     = var.cluster_domain
-    identityTrustAnchorsPEM = google_privateca_certificate_authority.mesh_root.pem_ca_certificates[0]
-    identity = {
-      # The chart still creates linkerd-identity-trust-roots from
-      # identityTrustAnchorsPEM; the issuer keypair comes from the
-      # cert-manager Secret instead of Helm values.
-      externalCA = false
-      issuer     = { scheme = "kubernetes.io/tls" }
-    }
-    cniEnabled = var.enable_cni
-  })]
+  values = [
+    yamlencode({
+      clusterDomain       = var.cluster_domain
+      identityTrustDomain = var.cluster_domain
+      identity = {
+        # The chart still creates linkerd-identity-trust-roots from
+        # identityTrustAnchorsPEM; the issuer keypair comes from the
+        # cert-manager Secret instead of Helm values.
+        externalCA = false
+        issuer     = { scheme = "kubernetes.io/tls" }
+      }
+      proxy = {
+        defaultInboundPolicy = "all-authenticated"
+      }
+      cniEnabled = var.enable_cni
+    }),
+    yamlencode({
+      identityTrustAnchorsPEM = google_privateca_certificate_authority.mesh_root.pem_ca_certificates[0]
+    }),
+  ]
 
   depends_on = [
     helm_release.linkerd_crds,

@@ -1023,47 +1023,47 @@ print(start.strftime("%Y-%m-%dT%H:%M:%SZ"), now.strftime("%Y-%m-%dT%H:%M:%SZ"))
   start_time="${interval_bounds%% *}"
   end_time="${interval_bounds##* }"
 
-  local ts_raw=""
-  local curl_rc=0
-  set +e
-  ts_raw="$(curl --http1.1 -fsSL -G \
-    "https://monitoring.googleapis.com/v3/projects/${PROJECT_ID}/timeSeries" \
-    -H "Authorization: Bearer ${access_token}" \
-    --data-urlencode 'filter=metric.type = "prometheus.googleapis.com/cage_evidence_verified_batches/gauge"' \
-    --data-urlencode "interval.startTime=${start_time}" \
-    --data-urlencode "interval.endTime=${end_time}" 2>/dev/null)"
-  curl_rc=$?
-  set -e
-
-  if [[ $curl_rc -ne 0 || -z "$ts_raw" ]]; then
-    error "Cloud Monitoring read-back FAILED: projects.timeSeries.list HTTP request failed (rc=${curl_rc})."
-    return 1
-  fi
-
-  local series_count=""
-  if ! series_count="$(printf '%s' "$ts_raw" | python3 -c '
-import json
-import sys
-
+  local metric_type total_series=0
+  for metric_type in \
+    "prometheus.googleapis.com/cage_event_loop_lag_seconds/histogram" \
+    "prometheus.googleapis.com/cage_evidence_verified_batches/gauge"; do
+    local ts_raw="" curl_rc=0
+    set +e
+    ts_raw="$(curl --http1.1 -fsSL -G \
+      "https://monitoring.googleapis.com/v3/projects/${PROJECT_ID}/timeSeries" \
+      -H "Authorization: Bearer ${access_token}" \
+      --data-urlencode "filter=metric.type = \"${metric_type}\"" \
+      --data-urlencode "interval.startTime=${start_time}" \
+      --data-urlencode "interval.endTime=${end_time}" 2>/dev/null)"
+    curl_rc=$?
+    set -e
+    if [[ $curl_rc -ne 0 || -z "$ts_raw" ]]; then
+      error "Cloud Monitoring read-back FAILED for ${metric_type}: projects.timeSeries.list HTTP request failed (rc=${curl_rc})."
+      return 1
+    fi
+    local series_count=""
+    if ! series_count="$(printf '%s' "$ts_raw" | python3 -c '
+import json, sys
+metric_name = sys.argv[1]
 try:
     payload = json.load(sys.stdin)
 except Exception as exc:
-    print(f"invalid JSON from Cloud Monitoring timeSeries.list: {exc}", file=sys.stderr)
+    print(f"invalid JSON from Cloud Monitoring timeSeries.list ({metric_name}): {exc}", file=sys.stderr)
     sys.exit(1)
-
 series = payload.get("timeSeries") if isinstance(payload, dict) else None
 if not isinstance(series, list) or len(series) == 0:
-    print("0 timeSeries returned for prometheus.googleapis.com/cage_* over the last 30 minutes", file=sys.stderr)
+    print(f"0 timeSeries returned for {metric_name} over the last 30 minutes", file=sys.stderr)
     sys.exit(1)
-
 print(len(series))
-'
-  )"; then
-    error "Cloud Monitoring read-back FAILED: zero prometheus.googleapis.com/cage_* timeSeries observed."
-    return 1
-  fi
-
-  success "Cloud Monitoring read-back passed: ${series_count} prometheus.googleapis.com/cage_* timeSeries active."
+' "$metric_type"
+    )"; then
+      error "Cloud Monitoring read-back FAILED: zero ${metric_type} timeSeries observed."
+      return 1
+    fi
+    info "Cloud Monitoring read-back verified ${series_count} active series for ${metric_type}."
+    total_series=$((total_series + series_count))
+  done
+  success "Cloud Monitoring read-back passed: ${total_series} prometheus.googleapis.com/cage_* timeSeries active across gateway and compliance-bridge."
   return 0
 }
 

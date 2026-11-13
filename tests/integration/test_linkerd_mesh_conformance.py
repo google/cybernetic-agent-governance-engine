@@ -51,6 +51,7 @@ from __future__ import annotations
 import json
 import os
 import pathlib
+import re
 import shutil
 import socket
 import subprocess
@@ -345,6 +346,42 @@ def linkerd_mesh_fixture():
     )
     _kubectl("apply", "-f", "-", input_text=rendered_policy)
 
+    suffix = f"{NAMESPACE}.serviceaccount.identity.linkerd.cluster.local"
+    wl_tpl = (
+        REPO_ROOT
+        / "infra"
+        / "targets"
+        / "gcp-gke"
+        / "charts"
+        / "workload-mesh-policy"
+        / "templates"
+        / "servers-and-authz.yaml"
+    ).read_text(encoding="utf-8")
+    wl_rendered_policy = wl_tpl.replace("{{ .Release.Namespace }}", NAMESPACE)
+    for key, ident in (
+        ("gatewayGrpcClients", ADVISOR_SPIFFE_ID),
+        ("modelBackendClients", f"cage-gateway-sa.{suffix}"),
+        ("clickhouseHttpClients", f"cage-compliance-bridge-sa.{suffix}"),
+        ("clickhouseTcpClients", f"langfuse-sa.{suffix}"),
+        ("clickhouseInterserverClients", f"cage-clickhouse-sa.{suffix}"),
+        ("clickhouseKeeperClients", f"cage-clickhouse-sa.{suffix}"),
+        ("clickhouseKeeperRaftClients", f"cage-clickhouse-keeper-sa.{suffix}"),
+        ("langfuseWebClients", f"cage-gateway-sa.{suffix}"),
+    ):
+        wl_rendered_policy = re.sub(
+            rf"\{{\{{- range \.Values\.identities\.{re.escape(key)} \}}\}}.*?\{{\{{- end \}}\}}\n",
+            f'    - "{ident}"\n',
+            wl_rendered_policy,
+            flags=re.S,
+        )
+        wl_rendered_policy = re.sub(
+            rf"\{{\{{- if \.Values\.identities\.{re.escape(key)} \}}\}}\n(.*?)\{{\{{- end \}}\}}",
+            r"\1",
+            wl_rendered_policy,
+            flags=re.S,
+        )
+    _kubectl("apply", "-f", "-", input_text=wl_rendered_policy)
+
     opa_configmap = {
         "apiVersion": "v1",
         "kind": "ConfigMap",
@@ -357,6 +394,18 @@ def linkerd_mesh_fixture():
         },
     }
     _kubectl("apply", "-f", "-", input_text=yaml.safe_dump(opa_configmap))
+
+    uncharted_server_script = (
+        "from http.server import BaseHTTPRequestHandler, HTTPServer\n"
+        "class H(BaseHTTPRequestHandler):\n"
+        "    def do_GET(self):\n"
+        "        self.send_response(200)\n"
+        "        self.end_headers()\n"
+        "        self.wfile.write(b'ok')\n"
+        "    def log_message(self, *a):\n"
+        "        pass\n"
+        "HTTPServer(('0.0.0.0', 8099), H).serve_forever()\n"
+    )
 
     probe_workloads_yaml = textwrap.dedent(
         f"""\
@@ -437,7 +486,7 @@ def linkerd_mesh_fixture():
                     - name: CAGE_ALLOW_DEV_LOOPBACK_IDENTITY
                       value: "false"
                     - name: CAGE_METRICS_PORT
-                      value: "0"
+                      value: "9090"
                     - name: CAGE_DOMAIN
                       value: "finance"
                     - name: CAGE_DEPLOYMENT_REGION
@@ -465,6 +514,8 @@ def linkerd_mesh_fixture():
                   ports:
                     - name: http
                       containerPort: 8080
+                    - name: metrics
+                      containerPort: 9090
                   readinessProbe:
                     httpGet:
                       path: /healthz
@@ -507,6 +558,9 @@ def linkerd_mesh_fixture():
             - name: http
               port: 8080
               targetPort: http
+            - name: metrics
+              port: 9090
+              targetPort: metrics
         ---
         apiVersion: v1
         kind: Pod
@@ -569,6 +623,85 @@ def linkerd_mesh_fixture():
                 seccompProfile:
                   type: RuntimeDefault
               command: ["python", "-c", "import time; time.sleep(3600)"]
+        ---
+        apiVersion: v1
+        kind: Pod
+        metadata:
+          name: unmeshed-gmp-scraper
+          namespace: {NAMESPACE}
+          annotations:
+            linkerd.io/inject: disabled
+        spec:
+          securityContext:
+            runAsNonRoot: true
+            runAsUser: 1000
+            seccompProfile:
+              type: RuntimeDefault
+          containers:
+            - name: client
+              image: {gateway_image}
+              imagePullPolicy: IfNotPresent
+              securityContext:
+                allowPrivilegeEscalation: false
+                capabilities:
+                  drop:
+                    - ALL
+                privileged: false
+                readOnlyRootFilesystem: true
+                runAsNonRoot: true
+                runAsUser: 1000
+                seccompProfile:
+                  type: RuntimeDefault
+              command: ["python", "-c", "import time; time.sleep(3600)"]
+        ---
+        apiVersion: v1
+        kind: Pod
+        metadata:
+          name: uncharted-mesh-target
+          namespace: {NAMESPACE}
+          labels:
+            app: uncharted-probe
+          annotations:
+            linkerd.io/inject: enabled
+        spec:
+          serviceAccountName: cage-vllm-sa
+          securityContext:
+            runAsNonRoot: true
+            runAsUser: 1000
+            seccompProfile:
+              type: RuntimeDefault
+          containers:
+            - name: server
+              image: {gateway_image}
+              imagePullPolicy: IfNotPresent
+              ports:
+                - name: http
+                  containerPort: 8099
+              securityContext:
+                allowPrivilegeEscalation: false
+                capabilities:
+                  drop:
+                    - ALL
+                privileged: false
+                readOnlyRootFilesystem: true
+                runAsNonRoot: true
+                runAsUser: 1000
+                seccompProfile:
+                  type: RuntimeDefault
+              command: ["python", "-c", {json.dumps(uncharted_server_script)}]
+        ---
+        apiVersion: v1
+        kind: Service
+        metadata:
+          name: uncharted-mesh-target
+          namespace: {NAMESPACE}
+        spec:
+          selector:
+            app: uncharted-probe
+          ports:
+            - name: http
+              port: 8099
+              targetPort: 8099
         """
     )
     try:
@@ -615,6 +748,8 @@ def linkerd_mesh_fixture():
             "--for=condition=Ready",
             "pod/advisor-mesh-client",
             "pod/vllm-mesh-client",
+            "pod/unmeshed-gmp-scraper",
+            "pod/uncharted-mesh-target",
             "-n",
             NAMESPACE,
             "--timeout=180s",
@@ -630,6 +765,9 @@ def linkerd_mesh_fixture():
             "configmap/gateway-mesh-probe-opa-policy",
             "pod/advisor-mesh-client",
             "pod/vllm-mesh-client",
+            "pod/unmeshed-gmp-scraper",
+            "pod/uncharted-mesh-target",
+            "service/uncharted-mesh-target",
             "-n",
             NAMESPACE,
             "--ignore-not-found=true",
@@ -907,3 +1045,156 @@ def test_port_forward_loopback_forged_l5d_client_id_rejected_by_middleware(
             pf_proc.wait(timeout=5)
         except subprocess.TimeoutExpired:
             pf_proc.kill()
+
+
+def _exec_http_url(
+    pod_name: str,
+    url: str,
+    method: str = "GET",
+) -> tuple[int, str]:
+    """Execute an HTTP request from inside a probe pod to an arbitrary cluster URL."""
+    script = textwrap.dedent(
+        f"""\
+        import http.client, json, urllib.request, urllib.error
+        url = {json.dumps(url)}
+        assert url.startswith(("http://", "https://"))
+        req = urllib.request.Request(url, method={json.dumps(method)})
+        try:
+            with urllib.request.urlopen(req, timeout=10) as resp:
+                print(json.dumps({{"status": resp.status, "body": resp.read().decode("utf-8", "replace")}}))
+        except urllib.error.HTTPError as exc:
+            print(json.dumps({{"status": exc.code, "body": exc.read().decode("utf-8", "replace")}}))
+        except (urllib.error.URLError, http.client.RemoteDisconnected, ConnectionError) as exc:
+            print(json.dumps({{"status": 0, "body": repr(exc)}}))
+        """
+    )
+    res = _kubectl(
+        "exec",
+        pod_name,
+        "-n",
+        NAMESPACE,
+        "-c",
+        "client",
+        "--",
+        "python",
+        "-c",
+        script,
+    )
+    payload = json.loads(res.stdout.strip().splitlines()[-1])
+    return int(payload["status"]), str(payload["body"])
+
+
+def test_metrics_port_9090_enforces_get_metrics_only_and_default_inbound_all_authenticated(
+    linkerd_mesh_fixture,
+) -> None:
+    """Verify :9090 traverses Linkerd Server/gateway-metrics (no skip-inbound-ports) and defaultInboundPolicy=all-authenticated blocks unmeshed callers on uncharted ports."""
+    for resource in (
+        "server.policy.linkerd.io/gateway-metrics",
+        "httproute.policy.linkerd.io/gateway-metrics-scrape",
+        "authorizationpolicy.policy.linkerd.io/gateway-metrics-scrape",
+        "server.policy.linkerd.io/linkerd-admin",
+        "httproute.policy.linkerd.io/linkerd-admin-scrape-and-probes",
+        "httproute.policy.linkerd.io/linkerd-admin-loopback-shutdown",
+        "networkauthentication.policy.linkerd.io/loopback-network",
+    ):
+        res = _kubectl("get", resource, "-n", NAMESPACE)
+        assert res.returncode == 0
+
+    metrics_base = f"http://gateway-mesh-probe.{NAMESPACE}.svc.cluster.local:9090"
+
+    status, body = _exec_http_url(
+        "unmeshed-gmp-scraper",
+        f"{metrics_base}/metrics",
+        method="GET",
+    )
+    assert status == 200, f"expected 200 on GET /metrics:9090, got {status}: {body}"
+    assert "# HELP" in body
+    assert "cage_event_loop_lag_seconds" in body
+
+    # Under skip-inbound-ports=9090, prometheus_client serves metrics for ANY GET path
+    # (including /healthz -> 200). With Server/gateway-metrics + HTTPRoute Exact /metrics,
+    # Linkerd rejects non-/metrics paths and non-GET methods before reaching the listener.
+    non_metrics_status, non_metrics_body = _exec_http_url(
+        "unmeshed-gmp-scraper",
+        f"{metrics_base}/healthz",
+        method="GET",
+    )
+    assert non_metrics_status in (403, 404), (
+        f"expected Linkerd route rejection on GET /healthz:9090, got {non_metrics_status}: {non_metrics_body}"
+    )
+
+    post_status, post_body = _exec_http_url(
+        "unmeshed-gmp-scraper",
+        f"{metrics_base}/metrics",
+        method="POST",
+    )
+    assert post_status in (403, 404, 405), (
+        f"expected Linkerd method rejection on POST /metrics:9090, got {post_status}: {post_body}"
+    )
+
+    # Port 4191 (Server/linkerd-admin): GET /metrics, /live, /ready allowed;
+    # remote POST /shutdown (loopback-only) and uncharted /env.json denied.
+    gw_ip_res = _kubectl(
+        "get",
+        "pods",
+        "-l",
+        "app=gateway",
+        "-n",
+        NAMESPACE,
+        "-o",
+        "jsonpath={.items[0].status.podIP}",
+    )
+    gw_pod_ip = gw_ip_res.stdout.strip()
+    assert gw_pod_ip, "expected non-empty gateway-mesh-probe pod IP"
+    admin_base = f"http://{gw_pod_ip}:4191"
+
+    for admin_path in ("/metrics", "/live", "/ready"):
+        adm_status, adm_body = _exec_http_url(
+            "unmeshed-gmp-scraper",
+            f"{admin_base}{admin_path}",
+            method="GET",
+        )
+        assert adm_status == 200, (
+            f"expected 200 on GET {admin_path}:4191, got {adm_status}: {adm_body}"
+        )
+
+    shutdown_status, shutdown_body = _exec_http_url(
+        "unmeshed-gmp-scraper",
+        f"{admin_base}/shutdown",
+        method="POST",
+    )
+    assert shutdown_status in (403, 404), (
+        f"expected remote POST /shutdown:4191 to be denied, got {shutdown_status}: {shutdown_body}"
+    )
+
+    env_status, env_body = _exec_http_url(
+        "unmeshed-gmp-scraper",
+        f"{admin_base}/env.json",
+        method="GET",
+    )
+    assert env_status in (403, 404), (
+        f"expected GET /env.json:4191 to be denied, got {env_status}: {env_body}"
+    )
+
+    # Uncharted port 8099 (no Linkerd Server CRD): meshed mTLS caller succeeds under
+    # proxy.defaultInboundPolicy=all-authenticated, whereas unmeshed plaintext caller fails.
+    uncharted_url = f"http://uncharted-mesh-target.{NAMESPACE}.svc.cluster.local:8099/"
+    meshed_status, meshed_body = _exec_http_url(
+        "advisor-mesh-client",
+        uncharted_url,
+        method="GET",
+    )
+    assert meshed_status == 200, (
+        f"expected meshed mTLS caller to pass all-authenticated on uncharted port, got {meshed_status}: {meshed_body}"
+    )
+    assert meshed_body.strip() == "ok"
+
+    unmeshed_status, unmeshed_body = _exec_http_url(
+        "unmeshed-gmp-scraper",
+        uncharted_url,
+        method="GET",
+    )
+    assert unmeshed_status in (0, 403), (
+        f"expected unmeshed caller to be denied by defaultInboundPolicy=all-authenticated, got {unmeshed_status}: {unmeshed_body}"
+    )
+    assert unmeshed_body.strip() != "ok"

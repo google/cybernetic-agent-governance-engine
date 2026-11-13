@@ -49,6 +49,10 @@ run "listed_namespaces_get_the_policy" {
     condition     = tolist(yamldecode(helm_release.mesh_proxy_required[0].values[0]).namespaces) == tolist(["governance-stack"])
     error_message = "the policy must bind exactly the namespaces listed in proxy_required_namespaces"
   }
+  assert {
+    condition     = yamldecode(helm_release.linkerd_control_plane.values[0]).proxy.defaultInboundPolicy == "all-authenticated"
+    error_message = "Linkerd control plane must enforce proxy.defaultInboundPolicy = all-authenticated"
+  }
 }
 
 run "no_namespaces_install_no_policy" {

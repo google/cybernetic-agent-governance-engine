@@ -842,10 +842,15 @@ def test_compliance_bridge_gmp_podmonitoring_and_promql_alert_policy_wiring() ->
     cb_tf = (repo / "infra/modules/compliance_bridge/main.tf").read_text(
         encoding="utf-8"
     )
-    assert '"config.linkerd.io/skip-inbound-ports" = "9090"' in cb_tf
+    assert "skip-inbound-ports" not in cb_tf
     assert "container_port = 9090" in cb_tf
     assert 'name  = "CAGE_METRICS_PORT"' in cb_tf
     assert 'name            = "compliance-bridge-metrics-monitors"' in cb_tf
+    cb_mesh = (
+        repo / "infra/modules/compliance_bridge/mesh-policy/templates/policy.yaml"
+    ).read_text(encoding="utf-8")
+    assert "name: compliance-bridge-metrics" in cb_mesh
+    assert "name: compliance-bridge-metrics-scrape" in cb_mesh
 
     chart_dir = repo / "infra/modules/compliance_bridge/metrics-monitors"
     values = yaml.safe_load((chart_dir / "values.yaml").read_text(encoding="utf-8"))

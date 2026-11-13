@@ -45,8 +45,14 @@ run "enforcing_valid_human_operator_identities_plans" {
   command = plan
 
   assert {
-    condition     = kubernetes_deployment.compliance_bridge.metadata[0].name == "compliance-bridge"
-    error_message = "compliance-bridge deployment must plan cleanly when human operator OIDC config is valid"
+    condition = (
+      kubernetes_deployment.compliance_bridge.metadata[0].name == "compliance-bridge" &&
+      !contains(
+        keys(coalesce(kubernetes_deployment.compliance_bridge.spec[0].template[0].metadata[0].annotations, tomap({}))),
+        "config.linkerd.io/skip-inbound-ports",
+      )
+    )
+    error_message = "compliance-bridge deployment must plan cleanly with zero config.linkerd.io/skip-inbound-ports bypass"
   }
 }
 
