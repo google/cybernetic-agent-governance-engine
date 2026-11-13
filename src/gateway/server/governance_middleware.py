@@ -61,6 +61,7 @@ from src.gateway.governance.jcs_canonicalizer import jcs_canonicalize_plan
 from src.gateway.governance.kms_signer import get_governance_signer
 from src.gateway.governance.prompt_injection_detector import detect_indirect_injection
 from src.gateway.governance.text_filter import ac_keyword_scan
+from src.gateway.observability.mcp_tracing import sanitize_trace_carrier
 from src.gateway.server.app_state import governor_of
 from src.gateway.server.state_commitment_api import (
     router as state_commitment_router,
@@ -820,7 +821,7 @@ async def policy_precheck_endpoint(
         )
 
     governor = governor_of(request.app)  # fail closed if governor not assembled
-    carrier = dict(request.headers)
+    carrier = sanitize_trace_carrier(request.headers)
     remote_ctx = otel_extract(carrier)
     token = otel_context.attach(remote_ctx)
     try:
@@ -931,7 +932,7 @@ async def validate_action_endpoint(
     # cage.opa_action_check, cage.routing_seal) are children of the GFA's
     # cage.tool_execute span in Telemetry — not orphaned fragments.
     governor = governor_of(request.app)  # fail closed before any evaluation
-    carrier = dict(request.headers)
+    carrier = sanitize_trace_carrier(request.headers)
     remote_ctx = otel_extract(carrier)
     token = otel_context.attach(remote_ctx)
 

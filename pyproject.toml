@@ -19,7 +19,9 @@ dependencies = [
     # in the decision path (POAM-2026-168). scripts/check_model_free_install.py
     # fails the build if this install, or the gateway image's, resolves one.
     # Core OTEL — shared across gateway, advisor, compliance
-    "opentelemetry-api>=1.38.0",
+    # opentelemetry-api>=1.45.2: fixes CVE-2026-126360 / GHSA-mf5v-w3w3-f6cg
+    # (TraceContextTextMapPropagator.extract() ReDoS on crafted traceparent).
+    "opentelemetry-api>=1.45.2",
     "opentelemetry-sdk>=1.38.0",
     "opentelemetry-exporter-otlp>=1.38.0",
     "opentelemetry-semantic-conventions-ai>=0.4.0",
@@ -337,8 +339,9 @@ constraint-dependencies = [
     "soupsieve>=4.0.0",
 ]
 override-dependencies = [
-    # Force patched opentelemetry (>=1.45.1 / >=0.66b0) past google-adk's <=1.42.1 pin (CVE-2026-114603)
-    "opentelemetry-api>=1.45.1",
+    # Force patched opentelemetry (>=1.45.2 / >=1.45.1 / >=0.66b0) past google-adk's <=1.42.1 pin
+    # (CVE-2026-114603, CVE-2026-126360 / GHSA-mf5v-w3w3-f6cg)
+    "opentelemetry-api>=1.45.2",
     "opentelemetry-sdk>=1.45.1",
     "opentelemetry-semantic-conventions>=0.66b0",
     # Force patched pillow (>=13.0.0) past fastembed's <13.0 pin (GHSA-78g4-xqwv-q3g8)
