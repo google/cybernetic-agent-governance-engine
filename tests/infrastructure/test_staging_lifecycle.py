@@ -2076,4 +2076,92 @@ def test_staging_lifecycle_cold_node_sidecar_timeouts_and_drift_read_back_scope(
     )
 
 
+def test_staging_lifecycle_archives_kubelet_pull_durations_and_worm_objects(
+    tmp_path: Path,
+) -> None:
+    """Gate W archives kubelet-image-pull-durations.json, manifest kubelet_image_pull_summary, and worm-objects/."""
+    repo, bin_dir, log_file = _setup_fake_repo(tmp_path)
+    gcloud_path = bin_dir / "gcloud"
+    gcloud_body = gcloud_path.read_text(encoding="utf-8")
+    fake_pulled_logs = json.dumps(
+        [
+            {
+                "timestamp": "2026-11-13T19:20:00Z",
+                "jsonPayload": {
+                    "involvedObject": {"name": "governed-financial-advisor-abc"},
+                    "message": 'Successfully pulled image "gcr.io/demo-staging-proj/governed-financial-advisor@sha256:1234" in 1m2.79s (2m17.2s including waiting). Image size: 907480806 bytes.',
+                    "reason": "Pulled",
+                },
+            },
+            {
+                "timestamp": "2026-11-13T19:20:05Z",
+                "jsonPayload": {
+                    "involvedObject": {"name": "gateway-xyz"},
+                    "message": 'Container image "gcr.io/demo-staging-proj/gateway@sha256:5678" already present on machine and can be accessed by the pod',
+                    "reason": "Pulled",
+                },
+            },
+        ]
+    )
+    pulled_fixture = tmp_path / "pulled_logs.json"
+    pulled_fixture.write_text(fake_pulled_logs, encoding="utf-8")
+    gcloud_body = gcloud_body.replace(
+        f'echo "gcloud $*" >> "{log_file}"\n',
+        f'echo "gcloud $*" >> "{log_file}"\n'
+        'if [[ "$*" == *"logging read"* ]]; then\n'
+        f'  cat "{pulled_fixture}"\n'
+        "  exit 0\n"
+        "fi\n",
+    )
+    _write_executable(gcloud_path, gcloud_body)
+
+    corroboration_stub = tmp_path / "corroboration_ok.py"
+    corroboration_stub.write_text(
+        "import sys, pathlib; pathlib.Path(sys.argv[sys.argv.index('--output') + 1]).write_text('{\"ok\":true}')\n",
+        encoding="utf-8",
+    )
+    worm_anchor_stub = tmp_path / "worm_anchor_ok.py"
+    worm_anchor_stub.write_text(
+        "print('{\"streams\":{}}')\n",
+        encoding="utf-8",
+    )
+
+    archive_dir = tmp_path / "archive-pull-durations"
+    proc = subprocess.run(
+        [
+            "bash",
+            str(repo / "scripts" / "staging_lifecycle.sh"),
+            "--skip-lula",
+            "--skip-posture",
+            "--skip-live-sweep",
+            "--skip-rebuild",
+            f"--archive-dir={archive_dir}",
+        ],
+        env=_base_env(
+            bin_dir,
+            GOOGLE_CLOUD_PROJECT="demo-staging-proj",
+            CAGE_AUDIT_CORROBORATION_SCRIPT=str(corroboration_stub),
+            CAGE_WORM_ANCHOR_SCRIPT=str(worm_anchor_stub),
+        ),
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert proc.returncode == 0, proc.stderr
+    assert (archive_dir / "kubelet-image-pull-durations.json").is_file()
+    manifest = json.loads((archive_dir / "manifest.json").read_text(encoding="utf-8"))
+    summary = manifest["kubelet_image_pull_summary"]
+    assert summary is not None
+    assert summary["total_pulled_events"] == 2
+    assert summary["cold_registry_pulls"] == 1
+    assert summary["cached_image_hits"] == 1
+    assert summary["max_single_container_pull_including_queue_seconds"] == 137.2
+    assert summary["pulls"][0]["image"] == "governed-financial-advisor"
+    assert summary["pulls"][0]["pull_seconds"] == 62.79
+    calls = log_file.read_text(encoding="utf-8")
+    assert (
+        "gcloud storage rsync -r gs://demo-staging-proj-evidence-worm-staging" in calls
+    )
+
+
 # Regression coverage binding: POAM-024, POAM-2026-159, POAM-2026-192, POAM-2026-197, POAM-2026-202, POAM-2026-203, POAM-2026-204, POAM-2026-205, POAM-2026-206, POAM-2026-207
