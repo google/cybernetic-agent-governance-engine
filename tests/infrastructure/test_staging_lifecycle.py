@@ -159,6 +159,7 @@ def _base_env(bin_dir: Path, **overrides: str) -> dict[str, str]:
             "DEPLOYER_EGRESS_IP",
             "COMPLIANCE_BRIDGE_URL",
             "CAGE_AUDIT_CORROBORATION_SCRIPT",
+            "CAGE_BINAUTHZ_PROBE_SCRIPT",
             "CAGE_WORM_ANCHOR_SCRIPT",
             "CAGE_DEPLOYMENT_REGION",
             "GOOGLE_CLOUD_PROJECT",
@@ -2162,6 +2163,129 @@ def test_staging_lifecycle_archives_kubelet_pull_durations_and_worm_objects(
     assert (
         "gcloud storage rsync -r gs://demo-staging-proj-evidence-worm-staging" in calls
     )
+
+
+def test_staging_lifecycle_enforces_binauthz_negative_probe_and_records_disclosures(
+    tmp_path: Path,
+) -> None:
+    """Phase 4 fails closed when BinAuthz negative probe fails, and manifest records probe + plain-English boundary disclosures."""
+    repo, bin_dir, _ = _setup_fake_repo(tmp_path)
+    wrapper = tmp_path / "hermetic_wrapper.sh"
+    _write_executable(
+        wrapper,
+        """#!/usr/bin/env bash
+echo "collected 3 items"
+echo "3 passed in 0.05s"
+exit 0
+""",
+    )
+
+    uv_path = bin_dir / "uv"
+    base_uv = uv_path.read_text(encoding="utf-8")
+
+    # 1. Passing BinAuthz negative probe (--namespace default) writes binauthz-negative-probe.json -> manifest embeds probe + disclosures
+    pass_probe_json = '{"namespace":"default","passed":true,"pod_admitted":false,"webhook_verified":true}'
+    _write_executable(
+        uv_path,
+        base_uv.replace(
+            'if [[ "$*" == *"verify_langfuse_posture.py"* ]]; then\n',
+            'if [[ "$*" == *"verify_binauthz_negative_probe.py"* ]]; then\n'
+            '  [[ "$*" == *"--namespace default"* ]] || { echo "expected --namespace default, got $*" >&2; exit 2; }\n'
+            "  out_next=false\n"
+            '  for arg in "$@"; do\n'
+            '    if [[ "$out_next" == "true" ]]; then\n'
+            f"      printf '%s\\n' '{pass_probe_json}' > \"$arg\"\n"
+            "      break\n"
+            "    fi\n"
+            '    [[ "$arg" == "--output" ]] && out_next=true\n'
+            "  done\n"
+            "  exit 0\n"
+            "fi\n"
+            'if [[ "$*" == *"verify_langfuse_posture.py"* ]]; then\n',
+        ),
+    )
+    archive_ok = tmp_path / "archive-binauthz-ok"
+    proc_ok = subprocess.run(
+        [
+            "bash",
+            str(repo / "scripts" / "staging_lifecycle.sh"),
+            "--skip-lula",
+            "--skip-live-sweep",
+            "--skip-telemetry",
+            "--skip-rebuild",
+            f"--archive-dir={archive_ok}",
+        ],
+        env=_base_env(
+            bin_dir,
+            GOOGLE_CLOUD_PROJECT="demo-staging-proj",
+            CAGE_HERMETIC_PYTEST_WRAPPER=str(wrapper),
+        ),
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert proc_ok.returncode == 0, proc_ok.stderr
+    manifest_ok = json.loads((archive_ok / "manifest.json").read_text(encoding="utf-8"))
+    assert manifest_ok["binauthz_negative_probe"] == {
+        "namespace": "default",
+        "passed": True,
+        "pod_admitted": False,
+        "webhook_verified": True,
+    }
+    disclosures = manifest_ok["verification_boundary_disclosures"]
+    assert "no client SDK at all" in disclosures["advisor_sdk_coverage_history"]
+    assert (
+        "newly covered starting in #736" in disclosures["advisor_sdk_coverage_history"]
+    )
+    assert (
+        "Verdict.DEFER -> defer_node cannot be reached in US_FED"
+        in disclosures["us_fed_defer_verdict_boundary"]
+    )
+    assert (
+        "validated out-of-band in the live TCP rehearsal"
+        in disclosures["us_fed_defer_verdict_boundary"]
+    )
+
+    # 2. Failing BinAuthz negative probe (e.g. unattested pod admitted) fails Gate W closed
+    _write_executable(
+        uv_path,
+        base_uv.replace(
+            'if [[ "$*" == *"verify_langfuse_posture.py"* ]]; then\n',
+            'if [[ "$*" == *"verify_binauthz_negative_probe.py"* ]]; then\n'
+            "  exit 1\n"
+            "fi\n"
+            'if [[ "$*" == *"verify_langfuse_posture.py"* ]]; then\n',
+        ),
+    )
+    archive_bad = tmp_path / "archive-binauthz-bad"
+    proc_bad = subprocess.run(
+        [
+            "bash",
+            str(repo / "scripts" / "staging_lifecycle.sh"),
+            "--skip-lula",
+            "--skip-live-sweep",
+            "--skip-telemetry",
+            "--skip-rebuild",
+            f"--archive-dir={archive_bad}",
+        ],
+        env=_base_env(
+            bin_dir,
+            GOOGLE_CLOUD_PROJECT="demo-staging-proj",
+            CAGE_HERMETIC_PYTEST_WRAPPER=str(wrapper),
+        ),
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert proc_bad.returncode != 0
+    assert (
+        "Binary Authorization negative unattested-pod probe FAILED" in proc_bad.stderr
+    )
+    manifest_bad = json.loads(
+        (archive_bad / "manifest.json").read_text(encoding="utf-8")
+    )
+    assert manifest_bad["overall_status"] == "FAIL"
+    assert manifest_bad["phase_failures"]["posture"] >= 1
 
 
 # Regression coverage binding: POAM-024, POAM-2026-159, POAM-2026-192, POAM-2026-197, POAM-2026-202, POAM-2026-203, POAM-2026-204, POAM-2026-205, POAM-2026-206, POAM-2026-207

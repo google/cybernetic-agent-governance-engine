@@ -514,7 +514,7 @@ manifest = {
                 "unorchestrated_empty_redis_stream_cold_start_on_operated_clusters",
             ],
         },
-    }, "kubelet_image_pull_summary": _opt_json(Path(os.environ["MANIFEST_OUT"]).parent / "kubelet-image-pull-summary.json"),
+    }, "kubelet_image_pull_summary": _opt_json(Path(os.environ["MANIFEST_OUT"]).parent / "kubelet-image-pull-summary.json"), "binauthz_negative_probe": _opt_json(Path(os.environ["MANIFEST_OUT"]).parent / "binauthz-negative-probe.json"), "verification_boundary_disclosures": {"advisor_sdk_coverage_history": "Prior to PR #736 (5bbc8540), tests/e2e/run_gke_e2e_suite.py exercised no client SDK at all — raw httpx requests verified via server-side GovernanceEnvelopeBuilder — so the GatewayClient / cage-client==0.3.0 in-mesh Cloud KMS ES256 path is newly covered starting in #736 rather than re-verified from fa772122.", "us_fed_defer_verdict_boundary": "Verdict.DEFER -> defer_node cannot be reached in US_FED where execute_trade is IRREVERSIBLE_TERMINAL (execute_trade_bounded is EXTERNALLY_REVERSIBLE, requires_warrant=False) and ClassificationEngine ranks HITL (REQUIRE_APPROVAL) ahead of DEFERRABLE (DEFER); DEFER was therefore validated out-of-band in the live TCP rehearsal rather than in the certified US_FED GKE run."},
 }
 
 out_path = Path(os.environ["MANIFEST_OUT"])
@@ -1696,7 +1696,7 @@ if not has_custody_ack:
       error "Live Langfuse posture isolation check (--posture staging) FAILED"
       ((POSTURE_FAILURES++)) || true
     fi
-
+    if ! env CAGE_ALLOW_MACOS_TESTS=1 uv run python "${CAGE_BINAUTHZ_PROBE_SCRIPT:-$REPO_ROOT/scripts/verify_binauthz_negative_probe.py}" --namespace default --output "$ARCHIVE_DIR/binauthz-negative-probe.json"; then error "Binary Authorization negative unattested-pod probe FAILED"; ((POSTURE_FAILURES++)) || true; fi
     if [[ $POSTURE_FAILURES -eq 0 ]]; then
       success "Region posture, live data-residency, and Langfuse isolation validation complete"
     else
