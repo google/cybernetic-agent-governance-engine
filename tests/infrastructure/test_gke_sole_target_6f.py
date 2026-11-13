@@ -1924,3 +1924,6 @@ class TestAgnosticTargetEliminated:
                 assert phrase not in text, (
                     f"{rel} still contains stale deployment claim {phrase!r} after POAM-2026-185"
                 )
+
+
+# Regression coverage binding: POAM-2026-135, POAM-2026-184, POAM-2026-185, POAM-2026-189

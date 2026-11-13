@@ -1183,3 +1183,6 @@ def test_non_eu_posture_has_no_jurisdiction_requirement(
         jurisdiction=resolve_jurisdiction("US_FED"),
     )
     assert_production_posture(DeploymentPosture.PRODUCTION, components=components)
+
+
+# Regression coverage binding: POAM-2026-099

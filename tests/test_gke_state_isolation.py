@@ -485,3 +485,6 @@ def test_large_state_list_does_not_trigger_sigpipe_false_import_or_stage1(
     assert imports == []
     applies = [c for c in calls if c.startswith("terraform ") and " apply " in c]
     assert len(applies) == 2
+
+
+# Regression coverage binding: POAM-2026-207

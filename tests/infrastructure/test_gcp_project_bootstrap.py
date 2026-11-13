@@ -506,3 +506,6 @@ exit 0
     assert proc.returncode == 0, proc.stderr
     calls = log_file.read_text(encoding="utf-8")
     assert calls.count("artifacts repositories create gcr.io") == 2
+
+
+# Regression coverage binding: POAM-2026-206

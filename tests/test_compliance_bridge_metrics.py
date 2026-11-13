@@ -766,3 +766,6 @@ class TestGetComplianceMetricsAndAuditWorkflow:
         assert seeded.total_traces == 1
         assert seeded.safety_rate == 1.0
         assert mock_query.call_count == 2
+
+
+# Regression coverage binding: POAM-2026-146

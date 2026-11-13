@@ -407,3 +407,5 @@ run "datastore_egress_across_vpc_binding" {
     error_message = "default_deny_external_egress must remain independent of data-store endpoints across the VPC binding"
   }
 }
+
+# Regression coverage binding: POAM-2026-173, POAM-2026-190

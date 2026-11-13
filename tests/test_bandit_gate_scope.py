@@ -187,3 +187,6 @@ def test_bandit_full_scan_covers_src_and_scripts_cleanly() -> None:
     assert total_loc > 25_000, (
         f"Expected Bandit to scan >25,000 LOC across src/ and scripts/, got {total_loc}"
     )
+
+
+# Regression coverage binding: POAM-2026-163

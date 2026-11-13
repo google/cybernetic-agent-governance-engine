@@ -343,3 +343,6 @@ class TestWorldModelVerdict:
         import json
 
         assert WorldModelVerdict.from_payload(json.loads(verdict.to_json())) == verdict
+
+
+# Regression coverage binding: POAM-2026-085

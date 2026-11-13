@@ -280,3 +280,6 @@ def test_checker_reports_only_unexplained_suppressions(
         assert problems == []
     else:
         assert len(problems) == 1, problems
+
+
+# Regression coverage binding: POAM-2026-016, POAM-2026-161

@@ -1603,3 +1603,6 @@ def test_setup_git_hooks_precommit_matches_ci_deterministic_gates() -> None:
         assert required_token in hooks_installer, (
             f"scripts/setup_git_hooks.sh missing required pre-commit token: {required_token!r}"
         )
+
+
+# Regression coverage binding: POAM-2026-150, POAM-2026-160
