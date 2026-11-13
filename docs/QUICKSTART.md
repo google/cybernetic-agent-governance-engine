@@ -245,6 +245,7 @@ Each posture resolves thresholds from `config/thresholds/<REGION>_BASELINE.json`
 
 ## Next Steps
 
+- **Independently verify CAGE's claims (auditor & security-reviewer guide)**: See [`docs/EVALUATOR_GUIDE.md`](EVALUATOR_GUIDE.md)
 - **Deploy to GKE**: See [`infra/QUICK_START.md`](../infra/QUICK_START.md)
 - **Understand Layer 1 kernel architecture**: See [`docs/architecture/GATEWAY_ARCHITECTURE.md`](architecture/GATEWAY_ARCHITECTURE.md)
 - **Understand Layer 4 reference application**: See [`docs/examples/governed-financial-advisor/ARCHITECTURE.md`](examples/governed-financial-advisor/ARCHITECTURE.md)

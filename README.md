@@ -52,7 +52,7 @@ Governance claims are worth what you can check. CAGE emits a `GOVERNANCE_TRACE` 
 uv run python scripts/check_trace_conformance.py
 ```
 
-The verifier in [`proof/`](proof/) has no dependency on `src/`, so a trace from any engine can be checked against the same state machine. Mediation coverage is machine-verified by exhaustive model checking rather than asserted in prose.
+The verifier in [`proof/`](proof/) has no dependency on `src/`, so a trace from any engine can be checked against the same state machine. Mediation coverage is machine-verified by exhaustive model checking rather than asserted in prose. For step-by-step independent verification across offline conformance, local Docker Compose, and clean-room GKE certification (plus a conservative coverage matrix and WORM blast-radius warnings), see [`docs/EVALUATOR_GUIDE.md`](docs/EVALUATOR_GUIDE.md).
 
 ## Architecture in one pass
 
