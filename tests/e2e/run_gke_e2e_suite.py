@@ -206,6 +206,7 @@ def render_e2e_job_manifest(
     require_inference_proxy: bool,
     deferred_ids: dict[str, str] | None,
     configmap_name: str,
+    require_advisor_sdk: bool = False,
     template_path: Path = _JOB_TEMPLATE_PATH,
 ) -> str:
     """Render `verify-trade-e2e-job.yaml` without shell interpolation."""
@@ -218,6 +219,7 @@ def render_e2e_job_manifest(
         "${E2E_PHASE}": phase,
         "${E2E_MODEL_NAME}": model_name,
         "${REQUIRE_INFERENCE_PROXY}": "true" if require_inference_proxy else "false",
+        "${REQUIRE_ADVISOR_SDK}": "true" if require_advisor_sdk else "false",
         "${DEFERRED_IDS_JSON}": json.dumps(
             deferred_ids or {}, separators=(",", ":"), sort_keys=True
         ),
@@ -248,6 +250,7 @@ import os
 import sys
 import urllib.parse
 import uuid
+from pathlib import Path
 from typing import Any
 from unittest.mock import patch
 
@@ -373,6 +376,97 @@ async def _verify_jwks_and_envelope(client: httpx.AsyncClient) -> int:
     return len(keys)
 
 
+async def _exercise_advisor_sdk_in_mesh(gateway_url: str) -> dict[str, Any]:
+    import cage_client
+    from cage_client import RoutingSealVerificationError
+    from src.governed_financial_advisor.graph.nodes.safety_node import safety_check_node
+    from src.governed_financial_advisor.infrastructure.gateway_client import GatewayClient
+
+    sdk_origin = Path(cage_client.__file__).resolve().as_posix()
+    assert "site-packages/" in sdk_origin, f"Expected installed cage-client wheel, got {sdk_origin}"
+
+    os.environ["GATEWAY_URL"] = gateway_url
+    GatewayClient._instance = None
+    gw_client = GatewayClient()
+    try:
+        # 1. ALLOW via safety_check_node -> GatewayClient -> CageClient (Cloud KMS ES256 JWKS) -> execute_tool
+        s_allow = await safety_check_node(
+            {
+                "consecutive_denials": 0,
+                "execution_plan_output": {"action": "execute_trade", **_trade(500.0)},
+            }
+        )
+        assert s_allow["safety_status"] == "APPROVED", s_allow
+        assert s_allow.get("governance_signature"), s_allow
+        assert s_allow.get("routing_verdict_cache") is not None, s_allow
+
+        exec_res = await gw_client.execute_tool(
+            "execute_trade_action",
+            {"transaction_id": str(uuid.uuid4()), **_trade(500.0)},
+        )
+        assert exec_res.get("status") == "SUCCESS" and str(
+            exec_res.get("output", "")
+        ).startswith("EXECUTED"), exec_res
+
+        # 2. REQUIRE_APPROVAL via CageClient DeferralPending (#673) -> GatewayClient (#732) -> safety_check_node (#672)
+        req_res = await gw_client.validate_action("execute_trade", _trade(7_500.0))
+        assert req_res["verdict"] == "REQUIRE_APPROVAL", req_res
+        assert req_res["signature"]["algorithm"] == "ES256", req_res["signature"]
+        sdk_deferred_id = str(req_res["deferred_id"])
+        assert sdk_deferred_id
+
+        s_req = await safety_check_node(
+            {
+                "consecutive_denials": 0,
+                "execution_plan_output": {"action": "execute_trade", **_trade(7_500.0)},
+            }
+        )
+        assert s_req["safety_status"] == "APPROVED", s_req
+        assert s_req.get("deferred_id"), s_req
+        assert s_req.get("routing_verdict_cache") is None, s_req
+
+        # 3. DENY HTTP 403 refusal receipt via CageClient PolicyViolationException -> safety_check_node BLOCKED
+        s_deny = await safety_check_node(
+            {
+                "consecutive_denials": 0,
+                "execution_plan_output": {"action": "execute_trade", **_trade(50_000.0)},
+            }
+        )
+        assert s_deny["safety_status"] == "BLOCKED", s_deny
+        assert s_deny["consecutive_denials"] == 1, s_deny
+
+        # 4. Tampered Cloud KMS ES256 envelope rejected fail-closed by CageClient
+        http = await gw_client._ensure_client()
+        sdk = await gw_client._ensure_sdk(http, 30.0)
+        raw_resp = await http.post(
+            "/governance/validate-action",
+            json={"action": "market_analysis", "params": {"symbol": "AAPL", "confidence": 0.99}},
+        )
+        assert raw_resp.status_code == 200, raw_resp.text
+        tampered_doc = raw_resp.json()
+        tampered_doc["subject"]["action"] = "execute_trade"
+        tampered_http = httpx.Response(200, content=json.dumps(tampered_doc).encode("utf-8"))
+        try:
+            await sdk._handle_allow_response(
+                tampered_http,
+                action="market_analysis",
+                parameters={"symbol": "AAPL", "confidence": 0.99},
+            )
+            raise AssertionError("Expected RoutingSealVerificationError on tampered KMS envelope")
+        except RoutingSealVerificationError:
+            pass
+
+        return {
+            "passed": True,
+            "cage_client_version": str(getattr(cage_client, "__version__", "unknown")),
+            "installed_from_site_packages": True,
+            "sdk_deferred_id": sdk_deferred_id,
+        }
+    finally:
+        await gw_client.close()
+        GatewayClient._instance = None
+
+
 async def _exercise_inference_proxy(
     client: httpx.AsyncClient, model_name: str, require_proxy: bool
 ) -> dict[str, Any]:
@@ -412,6 +506,7 @@ async def _run() -> dict[str, Any]:
     gateway_url = _validate_url(os.environ["CAGE_E2E_GATEWAY_URL"])
     model_name = os.environ.get("CAGE_E2E_MODEL_NAME", "Qwen/Qwen2.5-1.5B-Instruct").strip()
     require_proxy = os.environ.get("CAGE_E2E_REQUIRE_INFERENCE_PROXY", "false").lower() == "true"
+    require_advisor_sdk = os.environ.get("CAGE_E2E_REQUIRE_ADVISOR_SDK", "false").lower() == "true"
 
     async with httpx.AsyncClient(base_url=gateway_url, timeout=60.0) as client:
         if phase == "seed":
@@ -441,6 +536,9 @@ async def _run() -> dict[str, Any]:
         if phase == "phase_a":
             key_count = await _verify_jwks_and_envelope(client)
             proxy_info = await _exercise_inference_proxy(client, model_name, require_proxy)
+            sdk_info: dict[str, Any] | None = None
+            if require_advisor_sdk:
+                sdk_info = await _exercise_advisor_sdk_in_mesh(gateway_url)
 
             # S1a: small autonomous trade allows and executes once
             s1a_params = _trade(500.0)
@@ -480,26 +578,36 @@ async def _run() -> dict[str, Any]:
             assert "deferred_id" not in s4_body
 
             # Park three deferrals for host-side 2-human OIDC + WebAuthn quorum approval
+            # (when advisor SDK is active, s2_single_use reuses the deferred_id verified via CageClient)
             mid_params = _trade(7_500.0)
+            s2_single_id = (
+                str(sdk_info["sdk_deferred_id"])
+                if sdk_info and sdk_info.get("sdk_deferred_id")
+                else await _park_deferral(client, mid_params)
+            )
             deferred_ids = {
-                "s2_single_use": await _park_deferral(client, mid_params),
+                "s2_single_use": s2_single_id,
                 "s2_grown_amount": await _park_deferral(client, mid_params),
                 "s3_concurrent_replay": await _park_deferral(client, mid_params),
             }
+            scenarios = [
+                "jwks_asymmetric_only",
+                "allow_envelope_kid_verified",
+                "inference_proxy_stage1_and_stage4",
+                "s1a_small_junior_trade",
+                "s1b_mid_junior_opa_review",
+                "s1_unapproved_token_blocked",
+                "s4_oversized_junior_denied",
+            ]
+            if sdk_info is not None:
+                scenarios.append("advisor_sdk_jwks_and_safety_node")
             return {
                 "phase": "phase_a",
                 "passed": True,
                 "jwks_keys": key_count,
                 "inference_proxy": proxy_info,
-                "scenarios_passed": [
-                    "jwks_asymmetric_only",
-                    "allow_envelope_kid_verified",
-                    "inference_proxy_stage1_and_stage4",
-                    "s1a_small_junior_trade",
-                    "s1b_mid_junior_opa_review",
-                    "s1_unapproved_token_blocked",
-                    "s4_oversized_junior_denied",
-                ],
+                "advisor_sdk_conformance": sdk_info,
+                "scenarios_passed": scenarios,
                 "deferred_ids": deferred_ids,
             }
 
@@ -675,6 +783,7 @@ def _run_in_mesh_phase(
     phase: str,
     model_name: str,
     require_inference_proxy: bool,
+    require_advisor_sdk: bool = False,
     deferred_ids: dict[str, str] | None = None,
     timeout_seconds: int = 240,
 ) -> dict[str, Any]:
@@ -694,6 +803,7 @@ def _run_in_mesh_phase(
         phase=phase,
         model_name=model_name,
         require_inference_proxy=require_inference_proxy,
+        require_advisor_sdk=require_advisor_sdk,
         deferred_ids=deferred_ids,
         configmap_name=cm_name,
     )
@@ -985,6 +1095,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         phase="phase_a",
         model_name=cluster_cfg["model_name"],
         require_inference_proxy=True,
+        require_advisor_sdk=bool(cluster_cfg["advisor_deployed"]),
     )
     _verify_s0_unmeshed_refusal(args.gateway_url)
     deferred_ids: dict[str, str] = phase_a["deferred_ids"]

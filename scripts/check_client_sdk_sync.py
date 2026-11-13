@@ -172,9 +172,10 @@ def wheel_and_retirement_violations(repo_root: Path = REPO_ROOT) -> list[str]:
         data = tomllib.loads(pyproject_path.read_text(encoding="utf-8"))
         sources = data.get("tool", {}).get("uv", {}).get("sources", {})
         cage_source = sources.get("cage-client")
-        if not isinstance(cage_source, dict) or not str(
-            cage_source.get("url", "")
-        ).endswith(".whl"):
+        wheel_url = (
+            str(cage_source.get("url", "")) if isinstance(cage_source, dict) else ""
+        )
+        if not isinstance(cage_source, dict) or not wheel_url.endswith(".whl"):
             errors.append(
                 "pyproject.toml [tool.uv.sources].cage-client must pin a built .whl URL "
                 f"(got {cage_source!r})"
@@ -183,6 +184,17 @@ def wheel_and_retirement_violations(repo_root: Path = REPO_ROOT) -> list[str]:
             errors.append(
                 "pyproject.toml [tool.uv.sources].cage-client must not use a local path source"
             )
+        pkg_pyproject = repo_root / "packages" / "cage-client" / "pyproject.toml"
+        if wheel_url.endswith(".whl") and pkg_pyproject.is_file():
+            pkg_data = tomllib.loads(pkg_pyproject.read_text(encoding="utf-8"))
+            pkg_version = str(pkg_data.get("project", {}).get("version", "")).strip()
+            wheel_name = wheel_url.rsplit("/", 1)[-1]
+            expected_prefix = f"cage_client-{pkg_version}-"
+            if pkg_version and not wheel_name.startswith(expected_prefix):
+                errors.append(
+                    f"packages/cage-client/pyproject.toml version {pkg_version!r} "
+                    f"does not match pinned wheel {wheel_name!r} in pyproject.toml"
+                )
 
     for scan_rel in (Path("src"), Path("examples")):
         scan_dir = repo_root / scan_rel
@@ -220,6 +232,48 @@ def wheel_and_retirement_violations(repo_root: Path = REPO_ROOT) -> list[str]:
             )
 
     return errors
+
+
+def installed_wheel_parity_violations(
+    package_dir: Path, installed_dir: Path | None
+) -> list[str]:
+    """Verify SHA-256 byte parity between ``packages/cage-client/src/cage_client`` and an installed wheel."""
+    if installed_dir is None or not installed_dir.is_dir() or not package_dir.is_dir():
+        return []
+    src_files = collect_files(package_dir)
+    wheel_files = collect_files(installed_dir)
+    errors: list[str] = []
+    for rel_path in sorted(set(src_files) | set(wheel_files)):
+        if rel_path not in wheel_files:
+            errors.append(
+                f"{PACKAGE_REL / rel_path}: present in working tree but missing from installed cage-client wheel"
+            )
+            continue
+        if rel_path not in src_files:
+            errors.append(
+                f"{rel_path}: present in installed cage-client wheel but missing from {PACKAGE_REL}"
+            )
+            continue
+        src_sha = _sha256(src_files[rel_path])
+        wheel_sha = _sha256(wheel_files[rel_path])
+        if src_sha != wheel_sha:
+            errors.append(
+                f"{PACKAGE_REL / rel_path}: SHA-256 {src_sha[:12]} diverges from installed cage-client wheel {wheel_sha[:12]} "
+                "(cut and pin a new release wheel whenever packages/cage-client changes)"
+            )
+    return errors
+
+
+def _resolve_installed_wheel_dir() -> Path | None:
+    import importlib.util
+
+    spec = importlib.util.find_spec("cage_client")
+    if spec is None or not spec.origin:
+        return None
+    origin_parent = Path(spec.origin).resolve().parent
+    if "site-packages" not in origin_parent.as_posix():
+        return None
+    return origin_parent
 
 
 def _build_parser() -> argparse.ArgumentParser:
@@ -274,7 +328,16 @@ def main(argv: Sequence[str] | None = None) -> int:
     pkg_import_errors, pkg_imports = import_violations_with_stats(
         package_dir, display_base=repo_root
     )
-    errors = wheel_and_retirement_violations(repo_root) + pkg_import_errors
+    wheel_parity_errors = (
+        installed_wheel_parity_violations(package_dir, _resolve_installed_wheel_dir())
+        if is_live_repo
+        else []
+    )
+    errors = (
+        wheel_and_retirement_violations(repo_root)
+        + pkg_import_errors
+        + wheel_parity_errors
+    )
 
     if not errors and package_dir.is_dir():
         pkg_count = len(collect_py_files(package_dir))

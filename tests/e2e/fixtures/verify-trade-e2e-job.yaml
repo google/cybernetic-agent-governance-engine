@@ -63,6 +63,8 @@ spec:
               value: "${E2E_MODEL_NAME}"
             - name: CAGE_E2E_REQUIRE_INFERENCE_PROXY
               value: "${REQUIRE_INFERENCE_PROXY}"
+            - name: CAGE_E2E_REQUIRE_ADVISOR_SDK
+              value: "${REQUIRE_ADVISOR_SDK}"
             - name: CAGE_E2E_DEFERRED_IDS_JSON
               value: '${DEFERRED_IDS_JSON}'
             - name: LANGSMITH_TRACING

@@ -514,7 +514,7 @@ manifest = {
                 "unorchestrated_empty_redis_stream_cold_start_on_operated_clusters",
             ],
         },
-    },
+    }, "kubelet_image_pull_summary": _opt_json(Path(os.environ["MANIFEST_OUT"]).parent / "kubelet-image-pull-summary.json"),
 }
 
 out_path = Path(os.environ["MANIFEST_OUT"])
@@ -2258,6 +2258,75 @@ PY
     exit 1
   fi
   success "Fresh-project post-destroy verification passed (zero workload survivors or deletion liens)"
+fi
+
+if [[ -n "$PROJECT_ID" && "$SKIP_TELEMETRY" == "false" ]]; then
+  info "Archiving kubelet image-pull durations and WORM evidence objects into '$ARCHIVE_DIR'..."
+  gcloud logging read 'resource.type="k8s_pod" AND jsonPayload.reason="Pulled"' \
+    --project="$PROJECT_ID" --limit=1000 --format=json \
+    > "$ARCHIVE_DIR/kubelet-image-pull-durations.json" 2>/dev/null || true
+  PULL_RAW_JSON="$ARCHIVE_DIR/kubelet-image-pull-durations.json" \
+  PULL_SUMMARY_OUT="$ARCHIVE_DIR/kubelet-image-pull-summary.json" \
+  python3 - <<'PY' || true
+import json, os, re
+from pathlib import Path
+
+raw_path = Path(os.environ["PULL_RAW_JSON"])
+out_path = Path(os.environ["PULL_SUMMARY_OUT"])
+if not raw_path.is_file() or not raw_path.read_text(encoding="utf-8").strip():
+    raise SystemExit(0)
+rows = json.loads(raw_path.read_text(encoding="utf-8"))
+if not isinstance(rows, list):
+    raise SystemExit(0)
+
+dur_re = re.compile(r"^(?:(\d+)h)?(?:(\d+)m(?!s))?(?:(\d+(?:\.\d+)?)s)?(?:(\d+(?:\.\d+)?)ms)?$")
+pull_re = re.compile(r'Successfully pulled image "([^"]+)" in ([0-9a-z.]+) \(([0-9a-z.]+) including waiting\)')
+
+def _dur(val: str) -> float:
+    m = dur_re.match(val)
+    if not m:
+        return 0.0
+    h, mins, s, ms = m.groups()
+    return round((int(h or 0) * 3600) + (int(mins or 0) * 60) + float(s or 0.0) + (float(ms or 0.0) / 1000.0), 3)
+
+pulls = []
+cached = 0
+for r in rows:
+    if not isinstance(r, dict):
+        continue
+    jp = r.get("jsonPayload") or {}
+    msg = str(jp.get("message") or "")
+    m = pull_re.search(msg)
+    if m:
+        img_full, p_raw, t_raw = m.groups()
+        img = img_full.rsplit("/", 1)[-1].split("@", 1)[0].split(":", 1)[0]
+        pulls.append(
+            {
+                "timestamp": str(r.get("timestamp") or jp.get("lastTimestamp") or ""),
+                "pod": str((jp.get("involvedObject") or {}).get("name") or ""),
+                "image": img,
+                "pull_seconds": _dur(p_raw),
+                "total_including_queue_seconds": _dur(t_raw),
+            }
+        )
+    elif "already present on machine" in msg:
+        cached += 1
+
+pulls.sort(key=lambda x: x["timestamp"])
+summary = {
+    "total_pulled_events": len(rows),
+    "cold_registry_pulls": len(pulls),
+    "cached_image_hits": cached,
+    "max_single_container_pull_including_queue_seconds": max(
+        (p["total_including_queue_seconds"] for p in pulls), default=0.0
+    ),
+    "phase2_wait_timeout_seconds": 600,
+    "pulls": pulls,
+}
+out_path.write_text(json.dumps(summary, indent=2) + "\n", encoding="utf-8")
+PY
+  mkdir -p "$ARCHIVE_DIR/worm-objects"
+  gcloud storage rsync -r "gs://${PROJECT_ID}-evidence-worm-staging" "$ARCHIVE_DIR/worm-objects" --quiet >/dev/null 2>&1 || true
 fi
 
 check_gate_failures

@@ -148,3 +148,49 @@ def test_fails_when_src_imports_retired_gateway_client(tmp_path: Path) -> None:
     assert any(
         "imports retired mirror 'src.gateway.client.core'" in err for err in errors
     )
+
+
+def test_fails_when_package_version_drifts_from_pinned_wheel_url(
+    tmp_path: Path,
+) -> None:
+    """Bumping packages/cage-client/pyproject.toml without updating the pinned wheel fails closed."""
+    repo = _make_fake_repo(tmp_path)
+    pkg_pyproject = repo / "packages" / "cage-client" / "pyproject.toml"
+    pkg_pyproject.write_text(
+        '[project]\nname = "cage-client"\nversion = "0.4.0"\n',
+        encoding="utf-8",
+    )
+    errors = sdk_gate.wheel_and_retirement_violations(repo)
+    assert any("version '0.4.0' does not match pinned wheel" in err for err in errors)
+
+
+def test_installed_wheel_parity_passes_on_matching_tree_and_fails_on_drift(
+    tmp_path: Path,
+) -> None:
+    """installed_wheel_parity_violations verifies SHA-256 parity against site-packages/cage_client."""
+    repo = _make_fake_repo(tmp_path / "repo")
+    pkg = repo / "packages" / "cage-client" / "src" / "cage_client"
+    wheel_dir = tmp_path / "site-packages" / "cage_client"
+    wheel_dir.mkdir(parents=True)
+    for rel, src_path in sdk_gate.collect_files(pkg).items():
+        dst = wheel_dir / rel
+        dst.parent.mkdir(parents=True, exist_ok=True)
+        dst.write_bytes(src_path.read_bytes())
+
+    assert sdk_gate.installed_wheel_parity_violations(pkg, wheel_dir) == []
+
+    # Mutating working-tree source without cutting a new wheel fails closed
+    (pkg / "core.py").write_text(
+        "import httpx\nclass CageClient:\n    x = 1\n", encoding="utf-8"
+    )
+    drift_errors = sdk_gate.installed_wheel_parity_violations(pkg, wheel_dir)
+    assert any(
+        "diverges from installed cage-client wheel" in err for err in drift_errors
+    )
+
+    # Extra file in working tree missing from wheel fails closed
+    (pkg / "extra.py").write_text("VALUE = 1\n", encoding="utf-8")
+    missing_errors = sdk_gate.installed_wheel_parity_violations(pkg, wheel_dir)
+    assert any(
+        "missing from installed cage-client wheel" in err for err in missing_errors
+    )

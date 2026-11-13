@@ -188,3 +188,53 @@ def test_wait_for_seeded_metrics_polls_v1_metrics_endpoint(
         "http://localhost:3002/v1/metrics/A.5.3",
         "http://localhost:3002/v1/metrics/A.9.2",
     }
+
+
+def test_render_e2e_job_manifest_propagates_require_advisor_sdk_and_runner_parses() -> (
+    None
+):
+    import ast
+
+    from tests.e2e import run_gke_e2e_suite
+
+    ast.parse(run_gke_e2e_suite._IN_MESH_RUNNER_SOURCE)
+    assert "_exercise_advisor_sdk_in_mesh" in run_gke_e2e_suite._IN_MESH_RUNNER_SOURCE
+    assert "GatewayClient" in run_gke_e2e_suite._IN_MESH_RUNNER_SOURCE
+    assert "safety_check_node" in run_gke_e2e_suite._IN_MESH_RUNNER_SOURCE
+    assert "RoutingSealVerificationError" in run_gke_e2e_suite._IN_MESH_RUNNER_SOURCE
+
+    rendered_true = render_e2e_job_manifest(
+        job_name="cage-verify-trade-e2e-a",
+        namespace="governance-stack",
+        workload_image="us-central1-docker.pkg.dev/proj/cage-images/advisor@sha256:abc",
+        phase="phase_a",
+        model_name="Qwen/Qwen2.5-1.5B-Instruct",
+        require_inference_proxy=True,
+        require_advisor_sdk=True,
+        deferred_ids={},
+        configmap_name="cage-verify-trade-e2e-a-runner",
+    )
+    assert "${" not in rendered_true
+    doc_true = yaml.safe_load(rendered_true)
+    env_map = {
+        item["name"]: item["value"]
+        for item in doc_true["spec"]["template"]["spec"]["containers"][0]["env"]
+    }
+    assert env_map["CAGE_E2E_REQUIRE_ADVISOR_SDK"] == "true"
+
+    rendered_false = render_e2e_job_manifest(
+        job_name="cage-verify-trade-e2e-a",
+        namespace="governance-stack",
+        workload_image="us-central1-docker.pkg.dev/proj/cage-images/gateway@sha256:def",
+        phase="phase_a",
+        model_name="Qwen/Qwen2.5-1.5B-Instruct",
+        require_inference_proxy=False,
+        deferred_ids={},
+        configmap_name="cage-verify-trade-e2e-a-runner",
+    )
+    doc_false = yaml.safe_load(rendered_false)
+    env_map_false = {
+        item["name"]: item["value"]
+        for item in doc_false["spec"]["template"]["spec"]["containers"][0]["env"]
+    }
+    assert env_map_false["CAGE_E2E_REQUIRE_ADVISOR_SDK"] == "false"
