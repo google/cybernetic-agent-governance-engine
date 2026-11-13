@@ -53,36 +53,37 @@ In this project, Lula validations (`compliance/lula/lula-validation-*.yaml`) eva
 | Validation File                                                          | Control         | Standard             | Region Scope | Status    | Description                                                        |
 | ------------------------------------------------------------------------ | --------------- | -------------------- | ------------ | --------- | ------------------------------------------------------------------ |
 | [`lula-validation-eu-fria.yaml`](lula-validation-eu-fria.yaml)           | Art. 27        | EU AI Act            | EU_ECB       | ✅ Active | FRIA Gating (EU-001) — asserts gateway_running, normative_provider_not_static, normative_endpoint_set, region_is_eu_ecb (the region that assembles the `fria` tier) |
-| [`lula-validation-eu-ai-act-art9.yaml`](lula-validation-eu-ai-act-art9.yaml) | Art. 9     | EU AI Act            | EU_ECB       | 🔶 Stub   | Risk Management System — compliance-bridge endpoint check          |
-| [`lula-validation-gdpr-art22.yaml`](lula-validation-gdpr-art22.yaml)     | Art. 22         | GDPR                 | EU_ECB       | 🔶 Stub   | Automated Decision-Making — human oversight endpoint check         |
-| [`lula-validation-dora-art10.yaml`](lula-validation-dora-art10.yaml)     | Art. 10         | DORA                 | EU_ECB       | 🔶 Stub   | ICT Resilience Testing — audit logging endpoint check              |
+| [`lula-validation-eu-ai-act-art9.yaml`](lula-validation-eu-ai-act-art9.yaml) | Art. 9     | EU AI Act            | EU_ECB       | ⚪ Adopter-Operated (`not-applicable`) | Institutional Risk Management System — illustrative template for adopters wiring a GRC endpoint |
+| [`lula-validation-gdpr-art22.yaml`](lula-validation-gdpr-art22.yaml)     | Art. 22         | GDPR                 | EU_ECB       | 🔶 Stub   | Automated Decision-Making (`planned` `EU-006`) — runtime `REQUIRE_APPROVAL` dual-control oversight is `implemented`; Art. 22(3) subject contestation & `/v1/compliance/gdpr/art22` endpoint check remain `planned` |
+| [`lula-validation-dora-art10.yaml`](lula-validation-dora-art10.yaml)     | Art. 10         | DORA                 | EU_ECB       | ⚪ Adopter-Operated (`not-applicable`) | Institutional ICT Detection & Incident Classification — illustrative template for supervised financial-entity SOC integration |
 
 ### APAC_MAS Controls (MAS FEAT / MAS Notice 655 / MAS TRM — APAC_MAS only)
 
 | Validation File                                                              | Control          | Standard             | Region Scope | Status  | Description                                                                |
 | ---------------------------------------------------------------------------- | ---------------- | -------------------- | ------------ | ------- | -------------------------------------------------------------------------- |
-| [`lula-validation-mas-feat.yaml`](lula-validation-mas-feat.yaml)             | MAS FEAT         | MAS FEAT Principles  | APAC_MAS     | 🔶 Stub | Fairness, Ethics, Accountability, Transparency — `demographic_parity_gap ≤ 0.08`, 180-day transparency report |
-| [`lula-validation-mas-notice655.yaml`](lula-validation-mas-notice655.yaml)   | MAS Notice 655   | MAS Notice 655       | APAC_MAS     | 🔶 Stub | Technology Risk Management — `data_residency_region = "asia-southeast1"`   |
-| [`lula-validation-mas-trm-s6.yaml`](lula-validation-mas-trm-s6.yaml)         | MAS TRM §6.3     | MAS TRM              | APAC_MAS     | 🔶 Stub | AI/ML Controls — `confidence_threshold ≥ 0.96`                             |
+| [`lula-validation-mas-feat.yaml`](lula-validation-mas-feat.yaml)             | MAS FEAT         | MAS FEAT Principles  | APAC_MAS     | ⚪ Adopter-Operated (`not-applicable`) | Institutional Fairness, Ethics, Accountability, Transparency — illustrative template (`demographic_parity_gap ≤ 0.08`, 180-day report) |
+| [`lula-validation-mas-notice655.yaml`](lula-validation-mas-notice655.yaml)   | MAS Notice 655   | MAS Notice 655       | APAC_MAS     | ⚪ Adopter-Operated (`not-applicable`) | Institutional Technology Risk Management — illustrative template (`data_residency_region = "asia-southeast1"`) |
+| [`lula-validation-mas-trm-s6.yaml`](lula-validation-mas-trm-s6.yaml)         | MAS TRM §6.3     | MAS TRM              | APAC_MAS     | ⚪ Adopter-Operated (`not-applicable`) | Institutional AI/ML MRM Boundary — illustrative template (`0.96` runtime floor enforced under `ctrl-agt-001`) |
 
 **Legend:**
 
 - ✅ **Active** — Validation is production-ready and enabled in the Lula CronJob
-- 🔶 **Stub** — Validation logic is complete but requires cluster-specific namespace/resource name configuration before activation (see `# TODO:` comments in each file)
+- 🔶 **Stub** — Validation logic is complete but requires cluster-specific namespace/resource name configuration or a planned endpoint (`ra5`, `gdpr-art22`) before activation
+- ⚪ **Adopter-Operated (`not-applicable`)** — Institutional governance/GRC/SOC obligation outside the standalone CAGE software boundary (`# cage-status: not-applicable`); retained as an illustrative reference template for deploying institutions
 - **Region Scope:** `ALL` = applies to US_FED, EU_ECB, and APAC_MAS deployments; `US_FED` = applies only when `CAGE_DEPLOYMENT_REGION=US_FED`; `EU_ECB` = applies only when `CAGE_DEPLOYMENT_REGION=EU_ECB`; `APAC_MAS` = applies only when `CAGE_DEPLOYMENT_REGION=APAC_MAS`
 
 ### Posture Architecture Alignment
 
-The active/stub split is **intentional and aligned with the posture architecture**:
+The active/stub/adopter-operated split is **intentional and aligned with the posture architecture**:
 
 - **7 Active (ALL scope):** ISO 42001 universal controls (A.5.2, A.5.3, A.9.2) + TokenQuotaProxy fail-closed (A.8.4 / CTRL_TQP_007) + Token Quota OPA Injection (A.4 / ISO-001) + FTRA Tier 0.5 Gate (CTRL_FTRA_001) + FlowSignal Integration (A.8.4 / FLOWSIGNAL-001) — production-ready across all deployment regions
 - **4 Active (US_FED scope):** SC-4 fiscal limits (`lula-validation-sc4.yaml`), SC-7 GKE Dataplane V2 boundary protection (`lula-validation-cilium-dpv2.yaml`), AU-12 audit record generation (`lula-validation-au12.yaml`), and AU-12 Prometheus metrics scrape (`lula-validation-metrics.yaml`) — production-ready for US Federal deployments
 - **1 Active (EU_ECB scope):** EU AI Act Art. 27 FRIA gating (`lula-validation-eu-fria.yaml`) — production-ready for EU_ECB deployments
 - **1 Stub (ALL scope):** CSA AARM vectors — universal but requires cluster configuration. **Note:** This validation is listed as `Status: 🔶 Stub` and counted as 1 stub (ALL scope). It is NOT counted as an active validation for release gate purposes until real assertions replace the stub. See CA-05 remediation note below.
-- **9 Stub (US_FED scope):** NIST SP 800-53 controls — US Federal only; carry substantive fail-closed Rego assertions and require cluster-specific namespace/resource configuration before CronJob activation
-- **5 Stub (US_FED scope):** NIST AI 600-1 controls — Phase-0 placeholder Rego stubs tracked by `compliance/lula/.stub-baseline` (`5`, downward-only ratchet in `scripts/check_lula_stub_count.py`), whereas the other 16 `🔶 Stub` rows across all scopes join the 12 `✅ Active` rows as 28 substantive fail-closed Rego manifests awaiting CronJob or compliance-bridge endpoint wiring
-- **3 Stub (EU_ECB scope):** EU AI Act / GDPR / DORA controls — EU regional only; require cluster-specific resource configuration and live compliance-bridge endpoints
-- **3 Stub (APAC_MAS scope):** MAS FEAT / MAS Notice 655 / MAS TRM §6.3 controls — APAC regional only; require cluster-specific configuration and `data_residency_region = "asia-southeast1"` assertion
+- **9 Stub (US_FED scope):** NIST SP 800-53 controls — US Federal only; carry substantive fail-closed Rego assertions (`ra5` remains `# cage-status: planned` under `POAM-010`)
+- **5 Stub (US_FED scope):** NIST AI 600-1 controls — Phase-0 placeholder Rego stubs tracked by `compliance/lula/.stub-baseline` (`5`, downward-only ratchet in `scripts/check_lula_stub_count.py`)
+- **1 Stub + 2 Adopter-Operated (EU_ECB scope):** GDPR Art. 22 (`planned` under `EU-006` for subject-initiated Art. 22(3) contestation & `/v1/compliance/gdpr/art22`, while runtime `REQUIRE_APPROVAL` dual-control oversight is `implemented`), plus illustrative adopter-operated templates for EU AI Act Art. 9 and DORA Art. 10 (`not-applicable`)
+- **3 Adopter-Operated (APAC_MAS scope):** Illustrative adopter-operated templates for MAS FEAT, MAS Notice 655, and MAS TRM §6.3 (`not-applicable`; runtime `0.96` trade-confidence floor enforced under `ctrl-agt-001`)
 
 The 10 US_FED NIST SP 800-53 stubs represent an **implementation gap** tracked as open POAM items in [`docs/POAM.md`](../../docs/POAM.md) (see POAM-2026-010, POAM-2026-011, POAM-2026-012, POAM-2026-013): activating all 10 would raise NIST SP 800-53 Lula coverage from 3/13 to 13/13 manifests, directly supporting the US_FED release gate. The CSA AARM stub (1 manifest, ALL scope) is a separate gap affecting all regions.
 

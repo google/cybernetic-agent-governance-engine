@@ -13,7 +13,8 @@
 # limitations under the License.
 
 # lula-validation-dora-art10.yaml
-# cage-status: planned
+# cage-status: not-applicable
+# control-origination: adopter-operated (illustrative template; see system-security-plan-eu-ecb.yaml)
 # DORA Art. 10 — ICT Operational Resilience and Audit Logging
 #
 # Asserts that the CAGE system maintains ICT operational resilience

@@ -3,7 +3,7 @@ system-security-plan:
   metadata:
     title: CAGE System Security Plan (APAC_MAS — MAS FEAT / MAS Notice 655 / MAS TRM)
     published: '2026-06-15T00:00:00Z'
-    last-modified: '2026-11-09T00:02:28Z'
+    last-modified: '2026-11-13T00:54:26Z'
     version: 1.0.0-draft+stpa
     oscal-version: 1.0.4
     remarks: 'This System Security Plan (SSP) documents the compliance controls implemented
@@ -144,17 +144,23 @@ system-security-plan:
         value: PDPA Part IV — access, correction, withdrawal of consent
     components:
     - uuid: apac-mas-comp-0001-4000-8000-000000000001
-      type: software
-      title: CAGE MAS FEAT Fairness Assessment Engine
-      description: 'MAS FEAT Principles implementation via the Compliance Bridge fairness
-        workflow (the EU AI Act FRIA tier is not assembled under APAC_MAS). Performs
-        regular Fairness Impact Assessments across protected characteristics (gender,
-        race, ethnicity, age, disability, nationality, religion, marital_status per
-        APAC_MAS_BASELINE.json). Demographic parity gap threshold: 8% (FEAT F2).'
-      purpose: Satisfies MAS FEAT Principles F1 (regular bias testing) and F2 (quantitative
-        fairness metrics) for AI systems in financial services.
+      type: policy
+      title: Adopter-Operated MAS FEAT Governance and Fairness Assessment Boundary
+      description: Institutional obligation (adopter-operated; not-applicable to the
+        standalone CAGE software boundary). MAS FEAT Principles (Fairness F1/F2 demographic
+        bias testing across PDPA-governed customer cohorts, Ethics E1 board-approved
+        ethical principles, Accountability A1/A3 internal and external authority sign-off,
+        and Transparency T1/T2 180-day customer/supervisor disclosures) bind the MAS-regulated
+        financial institution and require real demographic cohort distributions and
+        board/CRO sign-off outside the CAGE software boundary (the EU AI Act FRIA
+        tier is not assembled under APAC_MAS). CAGE supplies the offline evaluation
+        harness (src/eval_harness/) and deterministic runtime barriers as technical
+        inputs.
+      purpose: Documents the institutional boundary and concrete adopter integration
+        steps for MAS FEAT Principles F1/F2, E1, A1, and T2 in Singapore financial-institution
+        deployments.
       status:
-        state: under-development
+        state: operational
       responsible-roles:
       - role-id: ai-model-operator
       props:
@@ -165,20 +171,27 @@ system-security-plan:
         value: '0.08'
       - name: transparency-report-interval-days
         value: '180'
+      - name: control-origination
+        value: adopter-operated
       links:
       - href: ../../compliance/lula/lula-validation-mas-feat.yaml
         rel: lula
-        text: 'Lula validation: MAS FEAT Fairness Assessment'
+        text: 'Illustrative adopter Lula template: MAS FEAT Fairness Assessment'
     - uuid: apac-mas-comp-0002-4000-8000-000000000002
-      type: software
-      title: CAGE MAS Notice 655 Audit Logging
-      description: MAS Notice 655 Technology Risk Management audit logging implemented
-        via the Compliance Bridge audit workflow. Audit logs stored in asia-southeast1
-        GCS buckets with 5-year retention for significant technology incidents.
-      purpose: Satisfies MAS Notice 655 §4.3 audit logging and §5.1 technology risk
-        management framework requirements.
+      type: policy
+      title: Adopter-Operated MAS Notice 655 Technology Risk Management Boundary
+      description: 'Institutional obligation (adopter-operated; not-applicable to
+        the standalone CAGE software boundary). MAS Notice 655 (Cyber Hygiene and
+        Technology Risk Management: enterprise critical-system RTO certification,
+        1-hour significant IT incident notification to MAS, privileged-account governance,
+        and independent TRM audit sign-off) governs the licensed financial institution''s
+        enterprise IT estate. CAGE produces KMS-signed decision and infrastructure
+        custody batches archived to the adopter''s asia-southeast1 WORM domain.'
+      purpose: Documents the institutional boundary and concrete adopter integration
+        steps for MAS Notice 655 technology risk management and asia-southeast1 audit
+        retention.
       status:
-        state: under-development
+        state: operational
       responsible-roles:
       - role-id: trm-officer
       props:
@@ -188,27 +201,30 @@ system-security-plan:
         value: '5'
       - name: storage-region
         value: asia-southeast1
+      - name: control-origination
+        value: adopter-operated
       links:
       - href: ../../compliance/lula/lula-validation-mas-notice655.yaml
         rel: lula
-        text: 'Lula validation: MAS Notice 655 Audit Logging'
+        text: 'Illustrative adopter Lula template: MAS Notice 655 Audit Logging'
     - uuid: apac-mas-comp-0003-4000-8000-000000000003
-      type: software
-      title: CAGE MAS TRM §6.3 AI Controls
-      description: MAS TRM Guidelines §6.3 AI and Machine Learning Controls implemented
-        via the AI governance framework. Since commit ecca70b9 the 0.96 trade-confidence
-        floor (APAC_MAS_BASELINE.json domains.finance.confidence.min_trade_confidence.value)
-        is enforced for trade execution by src/cage_finance/tiers/trade_confidence_tier.py,
-        and trades at or above domains.finance.consensus.threshold_usd = 8500.0 (SGD
-        11,500 / USD 8,500 equivalent) deterministically escalate to human review
-        with NOTIONAL_THRESHOLD_ESCALATION (REQUIRE_APPROVAL) by default (CAGE_CONSENSUS_CRITICS_ENABLED=false),
-        or consult multi-model critic consensus when CAGE_CONSENSUS_CRITICS_ENABLED=true
-        (src/cage_finance/tiers/consensus_tier.py). Model performance monitoring with
-        drift detection.
-      purpose: Satisfies MAS TRM §6.3 AI governance framework, model risk management,
-        and §4.2 data residency requirements.
+      type: policy
+      title: Adopter-Operated MAS TRM §6.3 Institutional Model Risk Management Boundary
+      description: Institutional obligation (adopter-operated; not-applicable to the
+        standalone CAGE software boundary). MAS TRM Guidelines §6.3 require a financial-institution-wide
+        AI/ML model risk management (MRM) framework covering enterprise model inventory,
+        independent model validation sign-off, ENRM environmental risk scoping, and
+        production model-drift governance. CAGE's in-repo technical controls — the
+        0.96 APAC_MAS trade-confidence floor (APAC_MAS_BASELINE.json domains.finance.confidence.min_trade_confidence.value,
+        enforced since ecca70b9 by src/cage_finance/tiers/trade_confidence_tier.py)
+        and the USD 8,500 (SGD 11,500) consensus escalation threshold (src/cage_finance/tiers/consensus_tier.py)
+        — are implemented by apac-mas-comp-0004 and graded under ctrl-agt-001 and
+        cm-6 below.
+      purpose: Documents the institutional MRM boundary for MAS TRM §6.3 while cross-referencing
+        CAGE''s runtime 0.96 trade-confidence floor (ctrl-agt-001) and APAC_MAS threshold
+        overlay (cm-6).
       status:
-        state: under-development
+        state: operational
       responsible-roles:
       - role-id: ai-model-operator
       props:
@@ -220,10 +236,12 @@ system-security-plan:
         value: '11500'
       - name: max-latency-ms
         value: '175'
+      - name: control-origination
+        value: adopter-operated
       links:
       - href: ../../compliance/lula/lula-validation-mas-trm-s6.yaml
         rel: lula
-        text: 'Lula validation: MAS TRM §6.3 AI Controls'
+        text: 'Illustrative adopter Lula template: MAS TRM §6.3 AI Controls'
     - uuid: apac-mas-comp-0004-4000-8000-000000000004
       type: software
       title: CAGE Regional Finance Threshold Overlay and Trade-Confidence Tier
@@ -273,12 +291,25 @@ system-security-plan:
     implemented-requirements:
     - uuid: apac-mas-req-0001-4000-8000-000000000001
       control-id: mas-feat
-      description: MAS FEAT Principles implemented via the Compliance Bridge fairness
-        workflow. Annual Fairness Impact Assessment with 8% demographic parity gap
-        threshold. Transparency reporting every 180 days per APAC_MAS_BASELINE.json.
+      description: 'Not applicable to the standalone CAGE software boundary (control-origination:
+        adopter-operated). MAS FEAT Principles (Fairness F1/F2 quantitative demographic
+        parity testing across PDPA-governed customer cohorts, Ethics E1 board-approved
+        ethical standards, Accountability A1/A3 internal and external authority sign-off,
+        and Transparency T1/T2 180-day customer/supervisor disclosures) bind the MAS-regulated
+        financial institution and require real customer demographic distributions
+        and institutional governance sign-off outside the reference engine. Adopter
+        implementation steps: (1) execute periodic Fairness Impact Assessments (demographic
+        parity gap <= 0.08 across protected cohorts per APAC_MAS_BASELINE.json under
+        PDPA proxy-variable governance) over institution-held production outcomes
+        using src/eval_harness/; (2) obtain board/CRO FEAT accountability sign-off
+        and publish 180-day T1/T2 disclosures; (3) optionally expose institutional
+        FIA attestation status at GET /v1/compliance/mas/feat if activating the illustrative
+        lula-validation-mas-feat.yaml template.'
       props:
       - name: implementation-status
-        value: planned
+        value: not-applicable
+      - name: control-origination
+        value: adopter-operated
       - name: regulatory-citation
         value: MAS FEAT Principles (November 2019)
       responsible-roles:
@@ -286,22 +317,38 @@ system-security-plan:
       by-components:
       - component-uuid: apac-mas-comp-0001-4000-8000-000000000001
         uuid: apac-mas-bycomp-0001-4000-8000-000000000001
-        description: FEAT fairness assessment engine provides automated bias testing.
-          Lula validation asserts fairness metrics within threshold.
+        description: 'Adopter-operated MAS FEAT fairness and governance boundary.
+          CAGE supplies offline evaluation tooling (src/eval_harness/) and deterministic
+          runtime barriers; the MAS-regulated financial institution runs demographic
+          FIA evaluations, obtains board/CRO sign-off, and publishes customer disclosures.
+          The linked Lula manifest (# cage-status: not-applicable) is retained as
+          an illustrative template.'
         implementation-status:
-          state: planned
+          state: not-applicable
         links:
         - href: ../../compliance/lula/lula-validation-mas-feat.yaml
           rel: reference
-          text: Lula automated validation for MAS FEAT
+          text: Illustrative adopter Lula template for MAS FEAT
     - uuid: apac-mas-req-0002-4000-8000-000000000002
       control-id: mas-notice-655
-      description: MAS Notice 655 audit logging implemented via Compliance Bridge.
-        Logs stored in asia-southeast1 with 5-year retention. TRM framework documented
-        and reviewed annually.
+      description: 'Not applicable to the standalone CAGE software boundary (control-origination:
+        adopter-operated). MAS Notice 655 (Cyber Hygiene and Technology Risk Management:
+        enterprise critical-system RTO certification, 1-hour significant IT incident
+        notification to MAS, privileged-account governance, and independent TRM audit
+        certification) governs the licensed financial institution''s enterprise IT
+        estate rather than an embedded governance service. Adopter implementation
+        steps: (1) deploy CAGE in asia-southeast1 (MAS TRM §4.2) with a persistent
+        >=2555-day retention-locked WORM evidence domain (EVIDENCE_ARCHIVE_BUCKET)
+        verified via CustodyVerifier; (2) integrate CAGE into the institution''s MAS
+        Notice 655 RTO/DR drills, 1-hour MAS incident-notification runbook, and accredited
+        TRM audit scope; (3) optionally expose institutional certification status
+        at GET /v1/compliance/mas/notice655 if activating the illustrative lula-validation-mas-notice655.yaml
+        template.'
       props:
       - name: implementation-status
-        value: planned
+        value: not-applicable
+      - name: control-origination
+        value: adopter-operated
       - name: regulatory-citation
         value: MAS Notice 655 — Technology Risk Management
       responsible-roles:
@@ -309,25 +356,42 @@ system-security-plan:
       by-components:
       - component-uuid: apac-mas-comp-0002-4000-8000-000000000002
         uuid: apac-mas-bycomp-0002-4000-8000-000000000002
-        description: Compliance Bridge audit workflow provides Notice 655-compliant
-          technology audit logging. GCS bucket in asia-southeast1 ensures data residency
-          per MAS TRM §4.2.
+        description: 'Adopter-operated MAS Notice 655 technology risk management boundary.
+          CAGE produces KMS-signed WORM decision and infrastructure custody batches
+          in asia-southeast1; the licensed financial institution operates RTO certification,
+          1-hour MAS incident reporting, and annual TRM audit review. The linked Lula
+          manifest (# cage-status: not-applicable) is retained as an illustrative
+          template.'
         implementation-status:
-          state: planned
+          state: not-applicable
         links:
         - href: ../../compliance/lula/lula-validation-mas-notice655.yaml
           rel: reference
-          text: Lula automated validation for MAS Notice 655
+          text: Illustrative adopter Lula template for MAS Notice 655
     - uuid: apac-mas-req-0003-4000-8000-000000000003
       control-id: mas-trm-s6
-      description: MAS TRM §6.3 AI governance framework. The 0.96 confidence floor
-        is enforced for trade execution since commit ecca70b9 (see the ctrl-agt-001
-        requirement below). The compliance-bridge evidence endpoint asserted by the
-        Lula manifest (/v1/compliance/mas/trm-s6) is not yet implemented (APAC-MAS-TRM-001).
-        Data residency within asia-southeast1 is a deployment requirement.
+      description: 'Not applicable to the standalone CAGE software boundary (control-origination:
+        adopter-operated). MAS TRM Guidelines §6.3 mandate an enterprise-wide AI/ML
+        model risk management (MRM) programme — model inventory registration, independent
+        model-validation team sign-off, ENRM environmental risk scoping, and ongoing
+        production model-drift governance — operated by the MAS-regulated financial
+        institution. CAGE''s in-repo technical runtime threshold — the 0.96 APAC_MAS
+        trade-confidence floor enforced for trade execution since commit ecca70b9
+        (config/thresholds/APAC_MAS_BASELINE.json domains.finance.confidence.min_trade_confidence.value,
+        src/cage_finance/tiers/trade_confidence_tier.py) alongside the USD 8,500 (SGD
+        11,500) consensus escalation threshold — is implemented and graded under the
+        ctrl-agt-001 (apac-mas-req-0005-4000-8000-000000000005) and cm-6 (apac-mas-req-0004-4000-8000-000000000004)
+        requirements below. Adopter implementation steps: (1) register the governed
+        model and APAC_MAS_BASELINE.json thresholds in the institution''s MRM inventory;
+        (2) complete independent pre-deployment model validation, ENRM scoping, and
+        asia-southeast1 drift monitoring; (3) optionally expose MRM validation currency
+        at GET /v1/compliance/mas/trm-s6 if activating the illustrative lula-validation-mas-trm-s6.yaml
+        template.'
       props:
       - name: implementation-status
-        value: planned
+        value: not-applicable
+      - name: control-origination
+        value: adopter-operated
       - name: regulatory-citation
         value: MAS TRM Guidelines §6.3 — AI and Machine Learning Controls
       responsible-roles:
@@ -335,14 +399,17 @@ system-security-plan:
       by-components:
       - component-uuid: apac-mas-comp-0003-4000-8000-000000000003
         uuid: apac-mas-bycomp-0003-4000-8000-000000000003
-        description: AI governance framework satisfies TRM §6.3 requirements. Lula
-          validation asserts confidence threshold and data residency.
+        description: 'Adopter-operated MAS TRM §6.3 model risk management boundary;
+          in-repo runtime enforcement of the 0.96 trade-confidence floor and APAC_MAS
+          finance thresholds is cross-referenced under ctrl-agt-001 and cm-6. The
+          linked Lula manifest (# cage-status: not-applicable) is retained as an illustrative
+          template.'
         implementation-status:
-          state: planned
+          state: not-applicable
         links:
         - href: ../../compliance/lula/lula-validation-mas-trm-s6.yaml
           rel: reference
-          text: Lula automated validation for MAS TRM §6.3
+          text: Illustrative adopter Lula template for MAS TRM §6.3
     - uuid: apac-mas-req-0004-4000-8000-000000000004
       control-id: cm-6
       description: 'Configuration settings (NIST SP 800-53 CM-6). The effective APAC_MAS
@@ -461,7 +528,7 @@ system-security-plan:
         \ Accountability, Transparency)\n          Framework reference: https://www.mas.gov.sg/publications/monographs-or-information-paper/2019/feat-principles\n\
         \          System: CAGE Financial Advisor v1.1.0\n          UCAs encoded:\
         \ 12 (6 enforcing server-bound, 6 advisory)\n          Hazards modelled: 7\n\
-        \          Safety constraints: 3\n          Last compiled: 2026-11-09T00:02:28Z\n\
+        \          Safety constraints: 3\n          Last compiled: 2026-11-13T00:54:26Z\n\
         \n          UCA-to-Control mapping (MAS FEAT Principles (Fairness, Ethics,\
         \ Accountability, Transparency)):\n            UCA-1 (unsafe_action): Agent\
         \ executes write operation without a human approval token.\n  → MAS_FEAT:\
@@ -522,7 +589,7 @@ system-security-plan:
       - name: hazard-count
         value: '7'
       - name: last-compiled
-        value: '2026-11-09T00:02:28Z'
+        value: '2026-11-13T00:54:26Z'
       - name: target-framework
         value: MAS FEAT Principles (Fairness, Ethics, Accountability, Transparency)
       - name: artifact-python

@@ -15,12 +15,12 @@
 locals {
   all_lula_files = fileset(var.lula_manifests_dir, "lula-validation-*.yaml")
 
-  # Exclude aspirational specs explicitly marked `# cage-status: planned` so the
-  # in-cluster CronJob evaluates only active controls implemented at HEAD.
+  # Exclude non-active specs explicitly marked `# cage-status: planned` or
+  # `# cage-status: not-applicable` so CronJob/lula-audit evaluates only active controls.
   active_lula_specs = {
     for f in local.all_lula_files :
     f => file("${var.lula_manifests_dir}/${f}")
-    if !can(regex("(?m)^#[[:space:]]*cage-status:[[:space:]]*planned([[:space:]]|$)", file("${var.lula_manifests_dir}/${f}")))
+    if !can(regex("(?m)^#[[:space:]]*cage-status:[[:space:]]*(planned|not-applicable)([[:space:]]|$)", file("${var.lula_manifests_dir}/${f}")))
   }
 
   events_url = (

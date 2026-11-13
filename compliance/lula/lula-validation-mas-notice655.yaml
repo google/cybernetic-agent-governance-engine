@@ -13,7 +13,8 @@
 # limitations under the License.
 
 # lula-validation-mas-notice655.yaml
-# cage-status: planned
+# cage-status: not-applicable
+# control-origination: adopter-operated (illustrative template; see system-security-plan-apac-mas.yaml)
 # MAS Notice 655 — Technology Risk Management Audit Logging
 #
 # Asserts that the CAGE system maintains comprehensive audit logging

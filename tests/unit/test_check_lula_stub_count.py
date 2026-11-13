@@ -747,15 +747,20 @@ class TestGdprArt22Posture:
         )
         assert req["uuid"] == "eu-ecb-req-0002-4000-8000-000000000002"
         props = {p["name"]: p["value"] for p in req["props"]}
-        assert props["implementation-status"] == "planned"
+        assert props["implementation-status"] == "partially-implemented"
+        assert props["system-triggered-oversight-status"] == "implemented"
         assert props["subject-initiated-contest-status"] == "planned"
         assert props["compliance-bridge-art22-endpoint-status"] == "planned"
         assert "REQUIRE_APPROVAL" in req["description"]
         assert "EU-006" in req["description"]
 
-        by_comp = req["by-components"][0]
-        assert "REQUIRE_APPROVAL" in by_comp["description"]
-        assert "planned" in by_comp["description"].lower()
+        assert len(req["by-components"]) == 2
+        by_comp_impl = req["by-components"][0]
+        assert by_comp_impl["implementation-status"]["state"] == "implemented"
+        assert "REQUIRE_APPROVAL" in by_comp_impl["description"]
+        by_comp_planned = req["by-components"][1]
+        assert by_comp_planned["implementation-status"]["state"] == "planned"
+        assert "lula-validation-gdpr-art22.yaml" in by_comp_planned["description"]
 
     def test_gdpr_art22_and_human_ai_config_lula_manifests_drop_dead_hitl_escalator(
         self,
@@ -878,17 +883,21 @@ class TestNothingSkippedSilently:
 
 
 class TestLulaSspStatusParity:
-    """Bidirectional # cage-status: planned <-> SSP implementation-status: planned parity."""
+    """Bidirectional # cage-status <-> SSP implementation-status parity."""
 
     EXPECTED_PLANNED = frozenset(
         {
+            "lula-validation-gdpr-art22.yaml",
+            "lula-validation-ra5.yaml",
+        }
+    )
+    EXPECTED_NOT_APPLICABLE = frozenset(
+        {
             "lula-validation-dora-art10.yaml",
             "lula-validation-eu-ai-act-art9.yaml",
-            "lula-validation-gdpr-art22.yaml",
             "lula-validation-mas-feat.yaml",
             "lula-validation-mas-notice655.yaml",
             "lula-validation-mas-trm-s6.yaml",
-            "lula-validation-ra5.yaml",
         }
     )
 
@@ -925,6 +934,7 @@ class TestLulaSspStatusParity:
         *,
         control_id: str = "syn-1",
         planned: bool = False,
+        not_applicable: bool = False,
         region: str = "US_FED",
     ) -> Path:
         body = _make_oscal_manifest(remarks=f"Region: {region}.")
@@ -932,10 +942,12 @@ class TestLulaSspStatusParity:
         header = f"# {path.name}\n"
         if planned:
             header += "# cage-status: planned\n"
+        if not_applicable:
+            header += "# cage-status: not-applicable\n"
         path.write_text(header + body, encoding="utf-8")
         return path
 
-    def test_live_repository_has_7_planned_and_26_active_with_zero_parity_errors(
+    def test_live_repository_has_2_planned_5_not_applicable_and_26_active_with_zero_parity_errors(
         self,
     ) -> None:
         yaml_files = sorted(LULA_DIR.glob("lula-validation-*.yaml"))
@@ -945,18 +957,42 @@ class TestLulaSspStatusParity:
             for p in yaml_files
             if gate.has_planned_header(p.read_text(encoding="utf-8"))
         }
+        actual_not_applicable = {
+            p.name
+            for p in yaml_files
+            if gate.has_not_applicable_header(p.read_text(encoding="utf-8"))
+        }
         assert actual_planned == self.EXPECTED_PLANNED
+        assert actual_not_applicable == self.EXPECTED_NOT_APPLICABLE
         ssp_files = [
             REPO_ROOT / "compliance/oscal/system-security-plan.yaml",
             REPO_ROOT / "compliance/oscal/system-security-plan-eu-ecb.yaml",
             REPO_ROOT / "compliance/oscal/system-security-plan-apac-mas.yaml",
         ]
-        errors, planned_count, active_count = gate.check_lula_ssp_status_parity(
+        errors, non_active_count, active_count = gate.check_lula_ssp_status_parity(
             yaml_files, ssp_files
         )
         assert errors == []
-        assert planned_count == 7
+        assert non_active_count == 7
         assert active_count == 26
+
+    def test_ssp_not_applicable_with_lula_missing_not_applicable_header_fails_closed(
+        self, tmp_path: Path
+    ) -> None:
+        m = self._write_manifest(
+            tmp_path / "lula-validation-syn1.yaml",
+            control_id="syn-1",
+            planned=True,
+        )
+        ssp = self._write_ssp(
+            tmp_path / "system-security-plan.yaml",
+            [("syn-1", "not-applicable", "Adopter-operated institutional control.")],
+        )
+        errors, _, _ = gate.check_lula_ssp_status_parity([m], [ssp])
+        assert any(
+            "has '# cage-status: planned'" in e and "not-applicable" in e
+            for e in errors
+        )
 
     def test_lula_planned_header_with_ssp_implemented_fails_closed(
         self, tmp_path: Path, capsys: pytest.CaptureFixture[str]

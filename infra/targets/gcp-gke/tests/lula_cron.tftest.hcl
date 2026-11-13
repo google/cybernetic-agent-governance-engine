@@ -87,7 +87,7 @@ run "staging_plans_lula_cron_active_specs_and_dedicated_ksas" {
 
   assert {
     condition     = module.lula_cron[0].active_spec_count == 26
-    error_message = "ConfigMap/lula-active-validations must include all 26 active Lula specs and exclude the 7 `# cage-status: planned` specs"
+    error_message = "ConfigMap/lula-active-validations must include all 26 active Lula specs and exclude the 7 planned/not-applicable specs"
   }
 
   assert {
@@ -100,7 +100,7 @@ run "staging_plans_lula_cron_active_specs_and_dedicated_ksas" {
       !contains(module.lula_cron[0].active_spec_names, "lula-validation-mas-notice655.yaml") &&
       !contains(module.lula_cron[0].active_spec_names, "lula-validation-mas-trm-s6.yaml")
     )
-    error_message = "planned Lula specs must never be mounted into ConfigMap/lula-active-validations"
+    error_message = "planned and not-applicable Lula specs must never be mounted into ConfigMap/lula-active-validations"
   }
 
   assert {
