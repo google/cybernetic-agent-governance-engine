@@ -33,6 +33,8 @@ Architecture Note:
 
 import json
 import logging
+from collections.abc import Mapping
+from typing import Any
 
 from opentelemetry import trace
 from opentelemetry.trace.propagation.tracecontext import TraceContextTextMapPropagator
@@ -46,6 +48,31 @@ from src.gateway.observability.attributes import (
 logger = logging.getLogger("Gateway.MCP.Tracing")
 tracer = trace.get_tracer("mcp.server.tools")
 propagator = TraceContextTextMapPropagator()
+
+# CVE-2026-126360 / GHSA-mf5v-w3w3-f6cg defense-in-depth bounds on W3C Trace
+# Context carriers (including JSON MCP `_otel_carrier` payloads that can carry
+# embedded newlines and arbitrarily long strings).
+MAX_TRACEPARENT_LENGTH = 512
+MAX_TRACESTATE_LENGTH = 4096
+
+
+def sanitize_trace_carrier(carrier: Any) -> dict[str, str]:
+    """Filter an untrusted trace carrier to bounded, single-line string values."""
+    if not isinstance(carrier, Mapping):
+        return {}
+    clean: dict[str, str] = {}
+    for raw_key, raw_val in carrier.items():
+        if not isinstance(raw_key, str) or not isinstance(raw_val, str):
+            continue
+        if "\r" in raw_val or "\n" in raw_val:
+            continue
+        key_lower = raw_key.lower()
+        if key_lower == "traceparent" and len(raw_val) > MAX_TRACEPARENT_LENGTH:
+            continue
+        if key_lower == "tracestate" and len(raw_val) > MAX_TRACESTATE_LENGTH:
+            continue
+        clean[raw_key] = raw_val
+    return clean
 
 
 def patch_mcp_tools(mcp_server) -> None:  # type: ignore[no-untyped-def]
@@ -62,8 +89,8 @@ def patch_mcp_tools(mcp_server) -> None:  # type: ignore[no-untyped-def]
     async def traced_call_tool(name, arguments, context=None, convert_result=False):  # type: ignore[no-untyped-def]
         # 1. Extract carrier BEFORE Pydantic validation strips it.
         # Create a shallow copy to avoid mutating the caller's dict.
-        arguments = {**arguments}
-        carrier = arguments.pop("_otel_carrier", None) or {}
+        arguments = {**arguments} if isinstance(arguments, Mapping) else {}
+        carrier = sanitize_trace_carrier(arguments.pop("_otel_carrier", None))
         otel_ctx = propagator.extract(carrier)
 
         # 2. Create a child span linked to the caller's trace
