@@ -17,10 +17,11 @@
 The safety node submits the proposed trade to the gateway's
 ``POST /governance/validate-action`` through the advisor's standard
 ``GatewayClient``. These tests drive the real ``GatewayClient`` over an
-``httpx.MockTransport`` so the node's handling of each gateway response is
-observed end to end — including every fail-closed path (denial, HTTP error,
-timeout, unreachable gateway, non-APPROVED verdicts, and DEFER payloads
-missing a valid ``defer_token``).
+``httpx.MockTransport`` whose verdicts ``SignedGatewayStub`` signs, so the
+advisor's ``cage-client`` envelope verification runs and the node's handling
+of each gateway response is observed end to end — including every fail-closed
+path (denial, HTTP error, timeout, unreachable gateway, non-APPROVED verdicts,
+and DEFER payloads missing a valid ``defer_token``).
 """
 
 from __future__ import annotations
@@ -38,6 +39,7 @@ from src.governed_financial_advisor.graph.nodes.safety_node import (
     safety_check_node,
 )
 from src.governed_financial_advisor.infrastructure.gateway_client import GatewayClient
+from tests.fixtures.signed_gateway import SignedGatewayStub
 
 pytestmark = [pytest.mark.unit, pytest.mark.local]
 
@@ -45,8 +47,16 @@ Handler = Callable[[httpx.Request], httpx.Response]
 
 
 @pytest.fixture
-def gateway() -> Iterator[Callable[[Handler], list[httpx.Request]]]:
-    """Install a MockTransport behind the GatewayClient singleton."""
+def signed_gateway() -> SignedGatewayStub:
+    """The stub that signs this test's validate-action verdicts."""
+    return SignedGatewayStub()
+
+
+@pytest.fixture
+def gateway(
+    signed_gateway: SignedGatewayStub,
+) -> Iterator[Callable[[Handler], list[httpx.Request]]]:
+    """Install a signing MockTransport behind the GatewayClient singleton."""
     GatewayClient._instance = None
 
     def install(handler: Handler) -> list[httpx.Request]:
@@ -58,7 +68,8 @@ def gateway() -> Iterator[Callable[[Handler], list[httpx.Request]]]:
 
         client = GatewayClient()
         client._http = httpx.AsyncClient(
-            transport=httpx.MockTransport(recording), base_url="http://gateway.test"
+            transport=httpx.MockTransport(signed_gateway.transport_handler(recording)),
+            base_url="http://gateway.test",
         )
         return seen
 
@@ -89,7 +100,6 @@ def _approved_envelope() -> dict[str, Any]:
     return {
         "envelope_version": "3.0",
         "envelope_id": "env-1",
-        "signature": "sig-abc",
         "payload": {"verdict": "ALLOW", "violations": [], "latency_ms": 4.2},
     }
 
@@ -109,7 +119,6 @@ def _defer_envelope(
     return {
         "envelope_version": "3.0",
         "envelope_id": "env-defer-1",
-        "signature": "sig-defer",
         "payload": payload,
     }
 
@@ -144,7 +153,9 @@ class TestSafetyNodeGatewayCall:
 
 class TestSafetyNodeVerdicts:
     @pytest.mark.asyncio
-    async def test_approved_verdict_approves_and_resets_denials(self, gateway) -> None:
+    async def test_approved_verdict_approves_and_resets_denials(
+        self, gateway, signed_gateway: SignedGatewayStub
+    ) -> None:
         gateway(lambda r: httpx.Response(200, json=_approved_envelope()))
 
         result = await safety_check_node(_trade_state(consecutive_denials=1))
@@ -152,7 +163,8 @@ class TestSafetyNodeVerdicts:
         assert result["safety_status"] == "APPROVED"
         assert result["consecutive_denials"] == 0
         assert result["last_violation"] is None
-        assert result["governance_signature"] == "sig-abc"
+        # The verified envelope's base64url signature, not its signature block.
+        assert result["governance_signature"] == signed_gateway.signature_values()[0]
 
     @pytest.mark.parametrize(
         "body",
@@ -308,20 +320,15 @@ class TestSafetyNodeFailClosed:
             {
                 "envelope_version": "3.0",
                 "envelope_id": "env-legacy",
-                "signature": "sig-legacy",
                 "payload": {"verdict": "DEFER", "defer_id": "legacy-only"},
             },
-            _defer_envelope(defer_token=""),
             _defer_envelope(defer_token="   "),
-            _defer_envelope(defer_token=None),
             _defer_envelope(defer_token=123),
         ],
         ids=[
             "legacy-defer-id-flat",
             "legacy-defer-id-envelope",
-            "empty-defer-token",
             "blank-defer-token",
-            "null-defer-token",
             "non-string-defer-token",
         ],
     )
@@ -337,6 +344,23 @@ class TestSafetyNodeFailClosed:
         assert result["consecutive_denials"] == 1
         assert result["last_violation"]["reason_code"] == "NOT_APPROVED"
         assert result["last_violation"]["recoverable"] is False
+
+    @pytest.mark.parametrize(
+        "defer_token", ["", None], ids=["empty-defer-token", "null-defer-token"]
+    )
+    @pytest.mark.asyncio
+    async def test_defer_without_any_ticket_fails_closed(
+        self, gateway, defer_token: Any
+    ) -> None:
+        """The SDK will not mediate a DEFER that names no ticket at all."""
+        gateway(lambda r: httpx.Response(200, json=_defer_envelope(defer_token)))
+
+        result = await safety_check_node(_trade_state(consecutive_denials=0))
+
+        assert result["safety_status"] == "BLOCKED"
+        assert result["consecutive_denials"] == 1
+        assert result["last_violation"]["reason_code"] == "GOVERNANCE_DENIED"
+        assert "no routable verdict" in result["last_violation"]["evidence"]
 
     @pytest.mark.parametrize(
         "body",

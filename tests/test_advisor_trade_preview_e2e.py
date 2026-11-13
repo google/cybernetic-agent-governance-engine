@@ -109,8 +109,17 @@ def region(request: pytest.FixtureRequest, monkeypatch: pytest.MonkeyPatch) -> s
 
 
 @pytest.fixture
-async def advisor(gw: Gateway) -> AsyncIterator[Gateway]:  # noqa: F811
-    """Route the advisor's ``GatewayClient`` singleton to the gateway app."""
+async def advisor(
+    gw: Gateway,  # noqa: F811
+    monkeypatch: pytest.MonkeyPatch,
+) -> AsyncIterator[Gateway]:
+    """Route the advisor's ``GatewayClient`` singleton to the gateway app.
+
+    The gateway signs its envelopes with a real ES256 key published in its
+    JWKS: the advisor verifies every envelope through the ``cage-client``
+    wheel before it routes on the verdict.
+    """
+    _install_es256_signer(monkeypatch)
     GatewayClient._instance = None
     gw.http.headers[CLIENT_IDENTITY_HEADER] = ADVISOR  # mesh workload identity
     GatewayClient()._http = gw.http
@@ -462,8 +471,14 @@ async def test_low_confidence_defer_flows_through_safety_and_defer_node_e2e(
     safety_out = await safety_check_node(initial_state)
 
     # 1. Verify the real HTTP 200 signed v3.0 GovernanceEnvelope on the wire via out-of-band kid.
-    assert len(wire_responses) == 1
-    wire_resp = wire_responses[0]
+    #    The advisor fetched the gateway JWKS to verify it before routing.
+    paths = [r.request.url.path for r in wire_responses]
+    assert "/governance/.well-known/jwks.json" in paths
+    previews = [
+        r for r in wire_responses if r.request.url.path == "/governance/validate-action"
+    ]
+    assert len(previews) == 1
+    wire_resp = previews[0]
     assert wire_resp.status_code == 200
     raw_envelope = wire_resp.json()
     assert raw_envelope["envelope_version"] == "3.0"

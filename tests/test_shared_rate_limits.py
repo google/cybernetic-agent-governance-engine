@@ -354,10 +354,14 @@ class TestGatewayClientPrincipalAndRetries:
                 return httpx.Response(503, json={"error": "service_unavailable"})
             return httpx.Response(200, json=envelope)
 
+        from tests.fixtures.signed_gateway import SignedGatewayStub
+
         client = GatewayClient()
         old_http = client._http
         client._http = httpx.AsyncClient(
-            transport=httpx.MockTransport(_handler),
+            transport=httpx.MockTransport(
+                SignedGatewayStub().transport_handler(_handler)
+            ),
             base_url="http://gateway.test",
         )
         try:

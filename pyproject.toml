@@ -63,6 +63,7 @@ test = [
     # The coverage plugin behind CI's --cov gate: a test tool, not a runtime
     # dependency (it was in the base install until POAM-2026-168).
     "pytest-cov>=7.1.0",
+    "cage-client==0.3.0",
 ]
 dev = [
     { include-group = "test" },
@@ -160,6 +161,8 @@ inference = [
 
 advisor = [
     "cybernetic-governance-engine[finance]",
+    # Installed from the published release wheel via [tool.uv.sources] (never source tree / mirror).
+    "cage-client==0.3.0",
     # litellm: model alias registry in src/governed_financial_advisor/infrastructure/llm/config.py
     "litellm>=1.104.0",
     "langgraph>=1.1.0",
@@ -217,7 +220,6 @@ line-length = 88
 target-version = "py310"
 exclude = [
     "src/gateway/governance/vendor",
-    "src/gateway/client/_jcs",
     "packages/cage-client/src/cage_client/_jcs",
     ".github/",
 ]
@@ -298,7 +300,6 @@ exclude = [
     "src/gateway/protos/",
     "src/agentsight-ui/gateway_protos/",
     "src/gateway/governance/vendor/",
-    "src/gateway/client/_jcs/",
     "packages/cage-client/src/cage_client/_jcs/",
 ]
 
@@ -347,6 +348,7 @@ override-dependencies = [
 ]
 
 [tool.uv.sources]
+cage-client = { url = "https://github.com/google/cybernetic-agent-governance-engine/releases/download/client-v0.3.0/cage_client-0.3.0-py3-none-any.whl" }
 en-core-web-sm = { url = "https://github.com/explosion/spacy-models/releases/download/en_core_web_sm-3.8.0/en_core_web_sm-3.8.0-py3-none-any.whl" }
 
 [project.scripts]

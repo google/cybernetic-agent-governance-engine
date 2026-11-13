@@ -22,13 +22,17 @@ component-definition:
   uuid: "8a9f5c3d-2b1e-4f7a-9c8d-5e6f7a8b9c0d"
   metadata:
     title: "CAGE Client SDK — Out-of-Process PEP Client Component Definition"
-    version: "1.2.0"
+    version: "1.3.0"
     oscal-version: "1.0.4"
-    last-modified: "2026-11-07T00:35:00Z"
+    last-modified: "2026-11-13T02:55:00Z"
     remarks: >
       This component definition maps the Python CAGE Client SDK
-      (packages/cage-client/, mirrored 1-to-1 at src/gateway/client/ via
-      scripts/check_client_sdk_sync.py) to NIST SP 800-53 Rev 5 controls. The
+      (packages/cage-client/) to NIST SP 800-53 Rev 5 controls.
+      packages/cage-client/ is the SDK's only source tree: in-repo consumers,
+      including the reference advisor's GatewayClient
+      (src/governed_financial_advisor/infrastructure/gateway_client.py),
+      install the built release wheel, and scripts/check_client_sdk_sync.py
+      fails if an in-tree copy reappears. The
       SDK acts as an out-of-process HTTP Policy Enforcement Point (PEP) that
       mediates action execution against the central CAGE Governance Gateway
       Policy Decision Point (PDP) over TLS/mTLS (AC-3, SC-8), propagates W3C

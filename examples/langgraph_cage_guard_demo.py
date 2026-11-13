@@ -64,14 +64,13 @@ from unittest.mock import AsyncMock, MagicMock
 _REPO_ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(_REPO_ROOT))
 
+from cage_client.adapters.langgraph import cage_guard
+from cage_client.core import CageClient
+from cage_client.envelope import GovernanceEnvelope
+from cage_client.exceptions import DeferralPending, PolicyViolationException
 from langgraph.checkpoint.memory import MemorySaver
 from langgraph.graph import END, StateGraph
 from langgraph.types import Command, interrupt
-
-from src.gateway.client.adapters.langgraph import cage_guard
-from src.gateway.client.core import CageClient
-from src.gateway.client.envelope import GovernanceEnvelope
-from src.gateway.client.exceptions import DeferralPending, PolicyViolationException
 
 # ---------------------------------------------------------------------------
 # Terminal colours (no external deps — pure ANSI)

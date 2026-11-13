@@ -22,7 +22,8 @@ financial advisor) and the kernel (the gateway):
 * the advisor refuses to boot with a signing-key variable;
 * the advisor's graph routes on the evaluator verdict alone — it signs nothing;
 * every governed tool call and post-HITL re-validation crosses the network to
-  the gateway, and anything other than an explicit approval blocks;
+  the gateway, and anything other than an explicit approval, in an envelope
+  the advisor verified through the ``cage-client`` wheel, blocks;
 * the gateway's REST tool dispatch reaches plugin-registered tools, so trades
   run through ``execute_trade_action`` and the ``ActuatorRegistry``;
 * seal and envelope verification reject unknown key IDs instead of falling
@@ -39,6 +40,8 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import httpx
 import pytest
 
+from tests.fixtures.signed_gateway import SignedGatewayStub
+
 pytestmark = [pytest.mark.unit, pytest.mark.local]
 
 _REPO = Path(__file__).resolve().parents[1]
@@ -49,12 +52,14 @@ _ADVISOR = _REPO / "src" / "governed_financial_advisor"
 # governor, and the trade actuator path.
 _FORBIDDEN_PREFIXES = (
     "src.gateway.governance.governor",
+    "src.gateway.governance.governance_envelope",
     "src.gateway.governance.routing_seal",
     "src.gateway.governance.kms_signer",
     "src.gateway.governance.signer_factory",
     "src.gateway.governance.jwks",
     "src.gateway.governance.execution_actuator",
     "src.gateway.governance.defer_queue",
+    "src.gateway.client",
     "src.gateway.server.app_state",
     "src.integrations.nemo",
     "src.cage_finance.tools.trade_executor",
@@ -200,13 +205,15 @@ async def test_evaluator_node_returns_no_signature() -> None:
 
 
 def _client_with(handler) -> object:
+    """The advisor's GatewayClient over a MockTransport whose verdicts are signed."""
     from src.governed_financial_advisor.infrastructure.gateway_client import (
         GatewayClient,
     )
 
     client = GatewayClient()
     client._http = httpx.AsyncClient(
-        base_url="http://gateway", transport=httpx.MockTransport(handler)
+        base_url="http://gateway",
+        transport=httpx.MockTransport(SignedGatewayStub().transport_handler(handler)),
     )
     return client
 
@@ -248,14 +255,32 @@ async def test_validate_action_returns_require_approval_with_deferred_id() -> No
 
 @pytest.mark.asyncio
 async def test_validate_action_unwraps_allow_envelope() -> None:
-    envelope = {
-        "envelope_version": "3.0",
-        "envelope_type": "cage_governance_decision",
-        "payload": {"verdict": "ALLOW", "violations": []},
-    }
-    client = _client_with(lambda request: httpx.Response(200, json=envelope))
+    client = _client_with(
+        lambda request: httpx.Response(200, json={"verdict": "ALLOW", "violations": []})
+    )
     result = await client.validate_action("execute_trade", {})
     assert result["verdict"] == "ALLOW"
+    assert result["signature"]["algorithm"] == "EdDSA"
+
+
+@pytest.mark.asyncio
+async def test_validate_action_refuses_an_envelope_signed_by_an_unknown_key() -> None:
+    """A well-formed envelope signed outside the gateway's JWKS is never routed."""
+    from cage_client import RoutingSealVerificationError
+
+    rogue = SignedGatewayStub()  # same kid, different private key
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        sent = json.loads(request.content)
+        return httpx.Response(
+            200,
+            json=rogue.envelope(
+                sent["action"], sent["params"], {"verdict": "ALLOW", "violations": []}
+            ),
+        )
+
+    with pytest.raises(RoutingSealVerificationError):
+        await _client_with(handler).validate_action("execute_trade", {"amount": 1.0})
 
 
 @pytest.mark.asyncio

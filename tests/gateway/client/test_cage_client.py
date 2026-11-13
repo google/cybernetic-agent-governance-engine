@@ -18,15 +18,14 @@ Includes respx transport-level tests, cryptographic envelope verification and
 JWKS trust-anchor tests, RFC 8785 JCS parity checks against the kernel
 canonicalizer, and live FastAPI ASGI tests mounting the real ``governance_app``
 at ``/governance`` (with real EC P-256 ``ES256`` and ``SoftwareEd25519Provider``
-``EdDSA`` signing + ``GET /governance/.well-known/jwks.json``) across both
-``src.gateway.client`` and standalone ``cage_client``.
+``EdDSA`` signing + ``GET /governance/.well-known/jwks.json``) against the
+installed ``cage_client`` wheel.
 """
 
 from __future__ import annotations
 
 import base64
 import json
-import sys
 from collections.abc import AsyncIterator
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -36,24 +35,24 @@ from unittest.mock import AsyncMock, MagicMock
 import httpx
 import pytest
 import respx
-from cryptography.hazmat.primitives import hashes, serialization
-from cryptography.hazmat.primitives.asymmetric import ec, ed25519, rsa, utils
-from fastapi import FastAPI
-
-from src.gateway.client._jcs import canonicalize as client_jcs_canonicalize
-from src.gateway.client.core import CageClient, enforce_verification_posture
-from src.gateway.client.crypto import (
+from cage_client._jcs import canonicalize as client_jcs_canonicalize
+from cage_client.core import CageClient, enforce_verification_posture
+from cage_client.crypto import (
     compute_expected_action_hash,
     verify_envelope_signature,
 )
-from src.gateway.client.envelope import ExecutionGrant, GovernanceEnvelope
-from src.gateway.client.exceptions import (
+from cage_client.envelope import ExecutionGrant, GovernanceEnvelope
+from cage_client.exceptions import (
     CageGatewayError,
     DeferralPending,
     PolicyViolationException,
     RoutingSealVerificationError,
 )
-from src.gateway.client.transport import create_mtls_transport
+from cage_client.transport import create_mtls_transport
+from cryptography.hazmat.primitives import hashes, serialization
+from cryptography.hazmat.primitives.asymmetric import ec, ed25519, rsa, utils
+from fastapi import FastAPI
+
 from src.gateway.governance import jwks as gov_jwks
 from src.gateway.governance.contracts import (
     GovernanceTierFailure,
@@ -71,15 +70,6 @@ from src.gateway.governance.kms_signer import (
     SoftwareEd25519Provider,
 )
 from src.gateway.server.governance_middleware import governance_app
-
-# Load standalone packages/cage-client/src/cage_client alongside src.gateway.client
-_STANDALONE_SRC = (
-    Path(__file__).resolve().parents[3] / "packages" / "cage-client" / "src"
-)
-if str(_STANDALONE_SRC) not in sys.path:
-    sys.path.insert(0, str(_STANDALONE_SRC))
-
-import cage_client as standalone_cage_client  # noqa: E402
 
 pytestmark = [pytest.mark.unit, pytest.mark.local, pytest.mark.asyncio]
 
@@ -179,7 +169,7 @@ def patched_httpx_no_http2(monkeypatch: pytest.MonkeyPatch) -> None:
         return httpx.AsyncHTTPTransport(http2=False)
 
     monkeypatch.setattr(
-        "src.gateway.client.transport.create_mtls_transport", mock_create_mtls_transport
+        "cage_client.transport.create_mtls_transport", mock_create_mtls_transport
     )
 
     original_async_client = httpx.AsyncClient
@@ -754,19 +744,11 @@ def test_jcs_parity_against_kernel_canonicalizer() -> None:
     ]
     for action, params in vectors:
         kernel_bytes = jcs_canonicalize_plan({"action": action, "params": params})
-        mirror_bytes = client_jcs_canonicalize({"action": action, "params": params})
-        standalone_bytes = standalone_cage_client._jcs.canonicalize(
-            {"action": action, "params": params}
-        )
-        assert mirror_bytes == kernel_bytes
-        assert standalone_bytes == kernel_bytes
+        client_bytes = client_jcs_canonicalize({"action": action, "params": params})
+        assert client_bytes == kernel_bytes
 
         expected_hash = builder._compute_action_hash(action, params)
         assert compute_expected_action_hash(action, params) == expected_hash
-        assert (
-            standalone_cage_client.compute_expected_action_hash(action, params)
-            == expected_hash
-        )
 
 
 @respx.mock
@@ -1497,13 +1479,9 @@ def live_governance_asgi(
             delattr(governance_app.state, "governor")
 
 
-async def _make_asgi_client(
-    client_cls: Any,
-    root_app: FastAPI,
-    **kwargs: Any,
-) -> Any:
-    """Bind CageClient (kernel mirror or standalone package) to httpx.ASGITransport."""
-    client = client_cls(gateway_url="https://cage-asgi.example.test", **kwargs)
+async def _make_asgi_client(root_app: FastAPI, **kwargs: Any) -> CageClient:
+    """Bind the installed wheel's CageClient to httpx.ASGITransport."""
+    client = CageClient(gateway_url="https://cage-asgi.example.test", **kwargs)
     await client._client.aclose()
     client._client = httpx.AsyncClient(
         transport=httpx.ASGITransport(app=root_app),
@@ -1512,19 +1490,13 @@ async def _make_asgi_client(
     return client
 
 
-@pytest.mark.parametrize(
-    "client_cls",
-    [CageClient, standalone_cage_client.CageClient],
-    ids=["kernel_mirror", "standalone_pkg"],
-)
 async def test_live_asgi_all_seven_gateway_outcomes(
-    client_cls: Any,
     live_governance_asgi: tuple[FastAPI, MagicMock, str],
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """Verify both synced CageClient classes with real JWKS + ES256/EdDSA verification across all 7 outcomes."""
+    """Verify the wheel's CageClient with real JWKS + ES256/EdDSA verification across all 7 outcomes."""
     root_app, mock_governor, expected_alg = live_governance_asgi
-    client = await _make_asgi_client(client_cls, root_app)
+    client = await _make_asgi_client(root_app)
 
     try:
         # 1. ALLOW (HTTP 200 signed top-level GovernanceEnvelope + external_attestations)
@@ -1574,9 +1546,7 @@ async def test_live_asgi_all_seven_gateway_outcomes(
             "constraints_applied": ["amount<=10000"],
             "execution_allowed": True,
         }
-        with pytest.raises(
-            (PolicyViolationException, standalone_cage_client.PolicyViolationException)
-        ) as narrow_exc:
+        with pytest.raises(PolicyViolationException) as narrow_exc:
             await client.validate_action(
                 action="query_portfolio",
                 parameters={"symbol": "AAPL", "amount": 50000},
@@ -1606,9 +1576,7 @@ async def test_live_asgi_all_seven_gateway_outcomes(
             "classification_reason": "hitl_violation",
             "narrowed_params": None,
         }
-        with pytest.raises(
-            (DeferralPending, standalone_cage_client.DeferralPending)
-        ) as hitl_exc:
+        with pytest.raises(DeferralPending) as hitl_exc:
             await client.validate_action(
                 action="query_portfolio",
                 parameters={"symbol": "AAPL", "amount": 75000},
@@ -1623,9 +1591,7 @@ async def test_live_asgi_all_seven_gateway_outcomes(
             "deferred_id": None,
             "classification_reason": "hitl_store_unavailable",
         }
-        with pytest.raises(
-            (CageGatewayError, standalone_cage_client.CageGatewayError)
-        ) as unpersisted_exc:
+        with pytest.raises(CageGatewayError) as unpersisted_exc:
             await client.validate_action(
                 action="query_portfolio",
                 parameters={"symbol": "AAPL", "amount": 75000},
@@ -1633,7 +1599,7 @@ async def test_live_asgi_all_seven_gateway_outcomes(
             )
         assert not isinstance(
             unpersisted_exc.value,
-            (DeferralPending, standalone_cage_client.DeferralPending),
+            DeferralPending,
         )
 
         # 4. Internal DEFER (HTTP 200 signed GovernanceEnvelope with defer_token)
@@ -1652,9 +1618,7 @@ async def test_live_asgi_all_seven_gateway_outcomes(
             "deferrable": True,
             "retry_after_seconds": 300,
         }
-        with pytest.raises(
-            (DeferralPending, standalone_cage_client.DeferralPending)
-        ) as defer_exc:
+        with pytest.raises(DeferralPending) as defer_exc:
             await client.validate_action(
                 action="query_portfolio",
                 parameters={"symbol": "AAPL", "amount": 500},
@@ -1675,9 +1639,7 @@ async def test_live_asgi_all_seven_gateway_outcomes(
             "deferrable": True,
             "retry_after_seconds": 300,
         }
-        with pytest.raises(
-            (DeferralPending, standalone_cage_client.DeferralPending)
-        ) as ext_hold_exc:
+        with pytest.raises(DeferralPending) as ext_hold_exc:
             await client.validate_action(
                 action="query_portfolio",
                 parameters={"symbol": "AAPL", "amount": 500},
@@ -1699,9 +1661,7 @@ async def test_live_asgi_all_seven_gateway_outcomes(
                 )
             ],
         }
-        with pytest.raises(
-            (PolicyViolationException, standalone_cage_client.PolicyViolationException)
-        ) as env_deny_exc:
+        with pytest.raises(PolicyViolationException) as env_deny_exc:
             await client.validate_action(
                 action="query_portfolio",
                 parameters={"symbol": "AAPL", "amount": 90000},
@@ -1736,9 +1696,7 @@ async def test_live_asgi_all_seven_gateway_outcomes(
             receipt=real_receipt,
             violations=["[CBF_HARD_BARRIER] Barrier invariant breached"],
         )
-        with pytest.raises(
-            (PolicyViolationException, standalone_cage_client.PolicyViolationException)
-        ) as hard_deny_exc:
+        with pytest.raises(PolicyViolationException) as hard_deny_exc:
             await client.validate_action(
                 action="query_portfolio",
                 parameters={"symbol": "AAPL", "amount": 999999},
@@ -1766,23 +1724,14 @@ async def test_live_asgi_all_seven_gateway_outcomes(
             "src.gateway.governance.kms_signer.get_governance_signer",
             lambda: inactive_signer,
         )
-        with pytest.raises(
-            (
-                RoutingSealVerificationError,
-                standalone_cage_client.RoutingSealVerificationError,
-            )
-        ):
+        with pytest.raises(RoutingSealVerificationError):
             await client.validate_action(
                 action="query_portfolio",
                 parameters={"symbol": "AAPL", "amount": 50},
                 agent_id="agent-asgi-01",
             )
 
-        dev_opt_out_client = await _make_asgi_client(
-            client_cls,
-            root_app,
-            verify_signature=False,
-        )
+        dev_opt_out_client = await _make_asgi_client(root_app, verify_signature=False)
         try:
             unsigned_env = await dev_opt_out_client.validate_action(
                 action="query_portfolio",
@@ -1795,3 +1744,16 @@ async def test_live_asgi_all_seven_gateway_outcomes(
             await dev_opt_out_client.aclose()
     finally:
         await client.aclose()
+
+
+def test_cage_client_resolves_from_installed_wheel_with_py_typed() -> None:
+    """Ensure cage_client imports from the installed wheel (site-packages), not a source tree."""
+    import cage_client as installed
+
+    mod_path = Path(installed.__file__ or "").resolve()
+    assert "site-packages" in mod_path.parts, (
+        f"Expected wheel install in site-packages, got {mod_path}"
+    )
+    assert (mod_path.parent / "py.typed").is_file(), (
+        f"Missing py.typed in installed wheel: {mod_path.parent}"
+    )

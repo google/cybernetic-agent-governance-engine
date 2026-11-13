@@ -531,7 +531,7 @@ class TestDPoPValidator:
 
     def test_partial_mtls_transport_fails_closed(self, tmp_path):
         """create_mtls_transport raises ValueError when only cert_path or key_path is given."""
-        from src.gateway.client.transport import create_mtls_transport
+        from cage_client.transport import create_mtls_transport
 
         cert_file = tmp_path / "client.crt"
         key_file = tmp_path / "client.key"
