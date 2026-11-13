@@ -298,7 +298,7 @@ async def _run_with_mock_handler(
 
 def test_standalone_exports() -> None:
     """Verify all top-level symbols export correctly."""
-    assert cage_client.__version__ == "0.2.0"
+    assert cage_client.__version__ == "0.3.0"
     assert cage_client.CageClient is CageClient
     assert cage_client.GovernanceEnvelope is GovernanceEnvelope
     assert cage_client.JwksKeyResolver is JwksKeyResolver
@@ -312,7 +312,7 @@ def test_standalone_exports() -> None:
 
 
 def test_routing_seal_secret_rejected() -> None:
-    """Verify CageClient v0.2.0 rejects removed routing_seal_secret parameter."""
+    """Verify CageClient v0.3.0 rejects removed routing_seal_secret parameter."""
     with pytest.raises(TypeError):
         CageClient(
             gateway_url="https://cage-gateway.example.com",
@@ -338,7 +338,7 @@ def test_pyproject_declares_cryptography_and_docs_describe_envelope_verification
     pyproject_data = tomllib.loads(
         (subpackage_root / "pyproject.toml").read_text(encoding="utf-8")
     )
-    assert pyproject_data["project"]["version"] == "0.2.0"
+    assert pyproject_data["project"]["version"] == "0.3.0"
     runtime_deps = pyproject_data["project"]["dependencies"]
     assert any(dep.startswith("cryptography>=41.0.0") for dep in runtime_deps), (
         f"cryptography>=41.0.0 must be declared in pyproject.toml: {runtime_deps}"
