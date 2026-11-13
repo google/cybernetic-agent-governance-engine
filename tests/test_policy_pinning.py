@@ -250,54 +250,45 @@ def test_policy_version_get_endpoint(registry):
 @pytest.mark.asyncio
 async def test_gateway_client_recovery_loop_on_policy_drift():
     """GatewayClient should fetch active version and retry once on 403 Substrate drift."""
+    import json
+
     import httpx
-    import respx
 
     from src.governed_financial_advisor.infrastructure.gateway_client import (
         GatewayClient,
     )
+    from tests.fixtures.signed_gateway import SignedGatewayStub
 
-    client = GatewayClient()
-    client._base_url = "http://localhost:8080"
-    client._http = httpx.AsyncClient(base_url="http://localhost:8080")
+    calls: list[tuple[str, str]] = []
+    pins: list[str | None] = []
 
-    with respx.mock(base_url="http://localhost:8080") as mock_api:
-        # Mock the sequential post response: 403 on first call, 200 on second call
-        call_count = 0
-
-        def response_callback(request):
-            nonlocal call_count
-            call_count += 1
-            if call_count == 1:
-                return httpx.Response(
-                    status_code=403,
-                    json={
-                        "verdict": "DENIED",
-                        "violations": [
-                            "Substrate Policy Drift Detected. Session pinned to version signature 'stale'"
-                        ],
-                    },
-                )
-            else:
-                return httpx.Response(
-                    status_code=200,
-                    json={
-                        "verdict": "ALLOW",
-                        "violations": [],
-                        "latency_ms": 10.0,
-                    },
-                )
-
-        mock_api.post("/governance/validate-action").mock(side_effect=response_callback)
-
-        # Discovery GET endpoint returns fresh hash
-        mock_api.get("/governance/policy-version").mock(
-            return_value=httpx.Response(
-                status_code=200, json={"active_hash": "fresh-hash-12345"}
+    def handler(request: httpx.Request) -> httpx.Response:
+        calls.append((request.method, request.url.path))
+        if request.url.path == "/governance/policy-version":
+            return httpx.Response(200, json={"active_hash": "fresh-hash-12345"})
+        pins.append(json.loads(request.content)["policy_version_id"])
+        if len(pins) == 1:
+            return httpx.Response(
+                status_code=403,
+                json={
+                    "verdict": "DENIED",
+                    "violations": [
+                        "Substrate Policy Drift Detected. Session pinned to version signature 'stale'"
+                    ],
+                },
             )
+        return httpx.Response(
+            status_code=200,
+            json={"verdict": "ALLOW", "violations": [], "latency_ms": 10.0},
         )
 
-        # Call validate_action
+    GatewayClient._instance = None
+    client = GatewayClient()
+    client._http = httpx.AsyncClient(
+        transport=httpx.MockTransport(SignedGatewayStub().transport_handler(handler)),
+        base_url="http://localhost:8080",
+    )
+    try:
         res = await client.validate_action(
             action="execute_trade",
             params={"amount": 100},
@@ -305,8 +296,16 @@ async def test_gateway_client_recovery_loop_on_policy_drift():
         )
 
         assert res["verdict"] == "ALLOW"
-        # Verify 3 calls total: 2 POSTs and 1 GET
-        assert len(mock_api.calls) == 3
+        # Two previews around one discovery GET; the replay carries the fresh pin.
+        assert calls == [
+            ("POST", "/governance/validate-action"),
+            ("GET", "/governance/policy-version"),
+            ("POST", "/governance/validate-action"),
+        ]
+        assert pins == ["stale-hash", "fresh-hash-12345"]
+    finally:
+        await client.close()
+        GatewayClient._instance = None
 
 
 def _stub_pipeline(mock_result):

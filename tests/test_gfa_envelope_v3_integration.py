@@ -13,319 +13,228 @@
 # limitations under the License.
 
 """
-Regression test suite for GFA GovernanceEnvelope v3.0 integration.
+GovernanceEnvelope v3.0 handling in the advisor's ``GatewayClient``.
 
-This suite verifies the silent denial bug fix where `GatewayClient.validate_action()`
-was incorrectly parsing v3.0 envelopes, resulting in `result.get("verdict", "DENIED")`
-evaluating to "DENIED" because the verdict was nested at `result["payload"]["verdict"]`.
-
-Tests:
-1. test_gfa_unwraps_v3_envelope_correctly: Verifies APPROVED verdict unwrapping
-2. test_gfa_raises_permission_error_on_denied_verdict: Verifies DENIED raises PermissionError
-3. test_gfa_preserves_envelope_metadata: Verifies envelope metadata is retained
-4. test_gfa_falls_back_gracefully_on_legacy_flat_dict: Backward compatibility check
+``GatewayClient.validate_action()`` delegates the exchange to the installed
+``cage-client`` wheel, which verifies the envelope's out-of-band ``kid``
+signature, ``expires_at`` freshness and ``subject.action_hash`` binding. These
+tests drive the real client over an ``httpx.MockTransport`` and check that a
+verified envelope is unwrapped into the advisor's routing dictionary, and that
+an unsigned or tampered answer is never routed.
 """
 
-from unittest.mock import AsyncMock, patch
+from __future__ import annotations
 
+import json
+from collections.abc import Callable
+
+import httpx
 import pytest
+from cage_client import RoutingSealVerificationError
 
 from src.governed_financial_advisor.infrastructure.gateway_client import GatewayClient
+from tests.fixtures.signed_gateway import SignedGatewayStub
 
 pytestmark = [pytest.mark.unit, pytest.mark.local]
 
-
-@pytest.fixture
-def mock_v3_envelope_approved():
-    """Mock HTTP response with v3.0 envelope containing APPROVED verdict."""
-    return {
-        "envelope_version": "3.0",
-        "envelope_type": "cage_governance_decision",
-        "envelope_id": "env-test-12345",
-        "issued_at": "2026-09-14T21:00:00.000Z",
-        "expires_at": "2026-09-14T21:05:00.000Z",
-        "issuer": {
-            "service": "cage-gateway",
-            "instance_id": "gke-test-abc123",
-            "region": "us-central1",
-        },
-        "subject": {
-            "action": "execute_trade",
-            "action_hash": "sha256:abc123def456",
-            "consequence_ceiling": "LOW_INFORMATIONAL",
-            "target_route": "local://default",
-            "executor_id": "kernel",
-        },
-        "governance_context": {
-            "policy_version": "sha256:policy-v1",
-            "tiers_passed": ["stpa", "cbf", "opa", "consensus"],
-            "deployment_region": "US_FED",
-        },
-        "payload": {
-            "verdict": "ALLOW",
-            "violations": [],
-            "latency_ms": 42.5,
-        },
-        "external_attestations": [],
-        "signature": {
-            "algorithm": "ES256",
-            "kid": "key-123",
-            "value": "base64url-signature-value",
-        },
-    }
+Handler = Callable[[httpx.Request], httpx.Response]
 
 
-@pytest.fixture
-def mock_v3_envelope_denied():
-    """Mock HTTP response with v3.0 envelope containing DENIED verdict."""
-    return {
-        "envelope_version": "3.0",
-        "envelope_type": "cage_governance_decision",
-        "envelope_id": "env-test-67890",
-        "issued_at": "2026-09-14T21:00:00.000Z",
-        "expires_at": "2026-09-14T21:05:00.000Z",
-        "issuer": {
-            "service": "cage-gateway",
-            "instance_id": "gke-test-abc123",
-            "region": "us-central1",
-        },
-        "subject": {
-            "action": "execute_trade",
-            "action_hash": "sha256:xyz789",
-            "consequence_ceiling": "LOW_INFORMATIONAL",
-            "target_route": "local://default",
-            "executor_id": "kernel",
-        },
-        "governance_context": {
-            "policy_version": "sha256:policy-v1",
-            "tiers_passed": ["stpa"],
-            "deployment_region": "US_FED",
-        },
-        "payload": {
-            "verdict": "DENIED",
-            "seal": "",
-            "violations": ["OPA policy violation: trade_amount exceeds limit"],
-            "latency_ms": 15.2,
-        },
-        "external_attestations": [],
-    }
+def _client(handler: Handler, *, sign: bool = True) -> GatewayClient:
+    GatewayClient._instance = None
+    transport_handler = (
+        SignedGatewayStub().transport_handler(handler) if sign else handler
+    )
+    client = GatewayClient()
+    client._http = httpx.AsyncClient(
+        transport=httpx.MockTransport(transport_handler),
+        base_url="http://gateway.test",
+    )
+    return client
 
 
-@pytest.fixture
-def mock_legacy_flat_response():
-    """Mock HTTP response with legacy flat dictionary (pre-v3.0)."""
-    return {
-        "verdict": "ALLOW",
-        "violations": [],
-        "latency_ms": 30.0,
-    }
+@pytest.fixture(autouse=True)
+def _reset_singleton():
+    yield
+    GatewayClient._instance = None
 
 
 @pytest.mark.asyncio
-async def test_gfa_unwraps_v3_envelope_correctly(mock_v3_envelope_approved):
-    """
-    Test that GatewayClient correctly unwraps a v3.0 envelope with APPROVED verdict.
+async def test_gfa_unwraps_v3_envelope_correctly() -> None:
+    """A verified ALLOW envelope is unwrapped: payload fields plus provenance."""
+    client = _client(
+        lambda request: httpx.Response(
+            200,
+            json={
+                "envelope_id": "env-test-12345",
+                "payload": {"verdict": "ALLOW", "violations": [], "latency_ms": 42.5},
+            },
+        )
+    )
 
-    This test verifies the fix for the silent denial bug where the client
-    incorrectly parsed `result.get("verdict", "DENIED")` from the outer envelope
-    instead of unwrapping `result["payload"]["verdict"]`.
+    result = await client.validate_action(
+        "execute_trade", {"symbol": "AAPL", "amount": 1000}
+    )
 
-    Expected behavior:
-    - Verdict should be "ALLOW" (from payload)
-    - Seal should be present (from payload)
-    - Envelope metadata should be merged into the result
-    """
-    client = GatewayClient()
+    assert result["verdict"] == "ALLOW"
+    assert "seal" not in result
+    assert result["violations"] == []
+    assert result["latency_ms"] == 42.5
+    assert result["envelope_id"] == "env-test-12345"
+    assert result["envelope_version"] == "3.0"
+    assert result["issuer"]["service"] == "cage-gateway"
+    assert result["subject"]["action"] == "execute_trade"
+    assert result["governance_context"]["tiers_passed"] == ["stpa"]
 
-    with patch.object(
-        client, "_ensure_client", return_value=AsyncMock()
-    ) as mock_client_factory:
-        mock_http = mock_client_factory.return_value
-        mock_response = AsyncMock()
-        mock_response.status_code = 200
-        mock_response.json = lambda: mock_v3_envelope_approved
-        mock_response.raise_for_status = lambda: None
-        mock_http.post.return_value = mock_response
 
-        result = await client.validate_action(
-            "execute_trade", {"symbol": "AAPL", "amount": 1000}
+@pytest.mark.asyncio
+async def test_gfa_raises_permission_error_on_denied_verdict() -> None:
+    """A verified DENIED envelope raises PermissionError naming the violation."""
+    client = _client(
+        lambda request: httpx.Response(
+            200,
+            json={
+                "verdict": "DENIED",
+                "violations": ["OPA policy violation: trade_amount exceeds limit"],
+                "latency_ms": 15.2,
+            },
+        )
+    )
+
+    with pytest.raises(PermissionError) as exc_info:
+        await client.validate_action(
+            "execute_trade", {"symbol": "AAPL", "amount": 999999}
         )
 
-        # Verify unwrapping occurred correctly
-        assert result["verdict"] == "ALLOW", "Verdict should be unwrapped from payload"
-        assert "seal" not in result, "validate-action never carries a seal"
-        assert result["violations"] == [], "Violations should be unwrapped from payload"
-        assert result["latency_ms"] == 42.5, "Latency should be unwrapped from payload"
-
-        # Verify envelope metadata is preserved
-        assert result["envelope_id"] == "env-test-12345"
-        assert result["envelope_version"] == "3.0"
-        assert result["issuer"]["service"] == "cage-gateway"
-        assert result["subject"]["action"] == "execute_trade"
-        assert result["governance_context"]["tiers_passed"] == [
-            "stpa",
-            "cbf",
-            "opa",
-            "consensus",
-        ]
+    assert "execute_trade" in str(exc_info.value)
+    assert "trade_amount exceeds limit" in str(exc_info.value)
 
 
 @pytest.mark.asyncio
-async def test_gfa_raises_permission_error_on_denied_verdict(mock_v3_envelope_denied):
-    """
-    Test that GatewayClient raises PermissionError on DENIED verdict from v3.0 envelope.
+async def test_gfa_preserves_envelope_metadata() -> None:
+    """Envelope metadata sits alongside the payload fields in the result."""
+    client = _client(
+        lambda request: httpx.Response(
+            200, json={"verdict": "ALLOW", "violations": [], "latency_ms": 12.0}
+        )
+    )
 
-    Expected behavior:
-    - PermissionError should be raised
-    - Error message should contain the action name and violations
-    """
+    result = await client.validate_action("execute_trade", {"symbol": "AAPL"})
+
+    for field in (
+        "envelope_id",
+        "envelope_version",
+        "issuer",
+        "subject",
+        "signature",
+        "governance_context",
+        "external_attestations",
+        "verdict",
+        "violations",
+        "latency_ms",
+    ):
+        assert field in result
+    assert "seal" not in result
+    assert set(result["signature"]) == {"algorithm", "kid", "value"}
+
+
+@pytest.mark.asyncio
+async def test_gfa_refuses_an_unsigned_legacy_flat_dict() -> None:
+    """A pre-v3.0 flat verdict carries no signature, so it is never routed."""
+    client = _client(
+        lambda request: httpx.Response(
+            200, json={"verdict": "ALLOW", "violations": [], "latency_ms": 30.0}
+        ),
+        sign=False,
+    )
+
+    with pytest.raises(PermissionError, match="no routable verdict"):
+        await client.validate_action("execute_trade", {"symbol": "AAPL"})
+
+
+@pytest.mark.asyncio
+async def test_gfa_refuses_a_tampered_envelope() -> None:
+    """A DENIED envelope rewritten to ALLOW after signing fails verification."""
+    stub = SignedGatewayStub()
+
+    def tampered(request: httpx.Request) -> httpx.Response:
+        sent = json.loads(request.content)
+        envelope = stub.envelope(
+            sent["action"], sent["params"], {"verdict": "DENIED", "violations": ["no"]}
+        )
+        envelope["payload"] = {"verdict": "ALLOW", "violations": []}
+        return httpx.Response(200, json=envelope)
+
+    GatewayClient._instance = None
     client = GatewayClient()
+    client._http = httpx.AsyncClient(
+        transport=httpx.MockTransport(stub.transport_handler(tampered)),
+        base_url="http://gateway.test",
+    )
 
-    with patch.object(
-        client, "_ensure_client", return_value=AsyncMock()
-    ) as mock_client_factory:
-        mock_http = mock_client_factory.return_value
-        mock_response = AsyncMock()
-        mock_response.status_code = 200
-        mock_response.json = lambda: mock_v3_envelope_denied
-        mock_response.raise_for_status = lambda: None
-        mock_http.post.return_value = mock_response
+    with pytest.raises(RoutingSealVerificationError):
+        await client.validate_action("execute_trade", {"symbol": "AAPL"})
 
-        with pytest.raises(PermissionError) as exc_info:
-            await client.validate_action(
-                "execute_trade", {"symbol": "AAPL", "amount": 999999}
+
+@pytest.mark.asyncio
+async def test_gfa_refuses_an_envelope_bound_to_other_params() -> None:
+    """An envelope signed for different parameters fails the subject binding."""
+    stub = SignedGatewayStub()
+
+    def substituted(request: httpx.Request) -> httpx.Response:
+        sent = json.loads(request.content)
+        return httpx.Response(
+            200,
+            json=stub.envelope(
+                sent["action"], {"symbol": "AAPL", "amount": 1}, {"verdict": "ALLOW"}
+            ),
+        )
+
+    GatewayClient._instance = None
+    client = GatewayClient()
+    client._http = httpx.AsyncClient(
+        transport=httpx.MockTransport(stub.transport_handler(substituted)),
+        base_url="http://gateway.test",
+    )
+
+    with pytest.raises(RoutingSealVerificationError):
+        await client.validate_action(
+            "execute_trade", {"symbol": "AAPL", "amount": 9000}
+        )
+
+
+@pytest.mark.asyncio
+async def test_gfa_unwraps_v3_envelope_on_retry_path() -> None:
+    """A policy-drift 403 replays with the fresh pin and the replay is verified."""
+    pins: list[str | None] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path == "/governance/policy-version":
+            return httpx.Response(200, json={"active_hash": "sha256:policy-v2"})
+        pins.append(json.loads(request.content)["policy_version_id"])
+        if len(pins) == 1:
+            return httpx.Response(
+                403,
+                json={
+                    "violations": [
+                        "Substrate Policy Drift Detected: policy version mismatch"
+                    ]
+                },
             )
+        return httpx.Response(
+            200,
+            json={
+                "envelope_id": "env-test-12345",
+                "payload": {"verdict": "ALLOW", "violations": [], "latency_ms": 18.0},
+            },
+        )
 
-        # Verify error message contains violations
-        assert "execute_trade" in str(exc_info.value)
-        assert "trade_amount exceeds limit" in str(exc_info.value)
+    client = _client(handler)
+    result = await client.validate_action(
+        "execute_trade", {"symbol": "AAPL"}, policy_version_id="sha256:policy-v1"
+    )
 
-
-@pytest.mark.asyncio
-async def test_gfa_preserves_envelope_metadata(mock_v3_envelope_approved):
-    """
-    Test that envelope metadata (envelope_id, version, subject, etc.) is preserved.
-
-    Expected behavior:
-    - All top-level envelope fields are merged into the returned dictionary
-    - Payload fields are at the top level (verdict, violations, latency_ms)
-    - Envelope metadata is accessible alongside payload data
-    """
-    client = GatewayClient()
-
-    with patch.object(
-        client, "_ensure_client", return_value=AsyncMock()
-    ) as mock_client_factory:
-        mock_http = mock_client_factory.return_value
-        mock_response = AsyncMock()
-        mock_response.status_code = 200
-        mock_response.json = lambda: mock_v3_envelope_approved
-        mock_response.raise_for_status = lambda: None
-        mock_http.post.return_value = mock_response
-
-        result = await client.validate_action("execute_trade", {"symbol": "AAPL"})
-
-        # Verify envelope metadata
-        assert "envelope_id" in result
-        assert "envelope_version" in result
-        assert "issuer" in result
-        assert "subject" in result
-        assert "signature" in result
-        assert "governance_context" in result
-        assert "external_attestations" in result
-
-        # Verify payload data is at top level
-        assert "verdict" in result
-        assert "seal" not in result
-        assert "violations" in result
-        assert "latency_ms" in result
-
-
-@pytest.mark.asyncio
-async def test_gfa_falls_back_gracefully_on_legacy_flat_dict(mock_legacy_flat_response):
-    """
-    Test backward compatibility with legacy flat dictionary responses (pre-v3.0).
-
-    If the gateway returns a flat dict without envelope_version, the client
-    should process it as-is without attempting to unwrap.
-
-    Expected behavior:
-    - Verdict is read directly from top-level "verdict" key
-    - No unwrapping occurs
-    - No errors are raised
-    """
-    client = GatewayClient()
-
-    with patch.object(
-        client, "_ensure_client", return_value=AsyncMock()
-    ) as mock_client_factory:
-        mock_http = mock_client_factory.return_value
-        mock_response = AsyncMock()
-        mock_response.status_code = 200
-        mock_response.json = lambda: mock_legacy_flat_response
-        mock_response.raise_for_status = lambda: None
-        mock_http.post.return_value = mock_response
-
-        result = await client.validate_action("execute_trade", {"symbol": "AAPL"})
-
-        # Verify legacy flat response is processed correctly
-        assert result["verdict"] == "ALLOW"
-        assert result["violations"] == []
-        assert result["latency_ms"] == 30.0
-
-        # Verify no envelope metadata is present (legacy format)
-        assert "envelope_id" not in result
-        assert "envelope_version" not in result
-
-
-@pytest.mark.asyncio
-async def test_gfa_unwraps_v3_envelope_on_retry_path(mock_v3_envelope_approved):
-    """
-    Test that v3.0 envelope unwrapping also works in the retry path (policy drift recovery).
-
-    Expected behavior:
-    - 403 with drift violation triggers retry
-    - Retry response with v3.0 envelope is correctly unwrapped
-    - APPROVED verdict is returned after unwrapping
-    """
-    client = GatewayClient()
-
-    # First response: 403 with drift violation
-    first_response_json = {
-        "violations": ["Substrate Policy Drift Detected: policy version mismatch"]
-    }
-
-    # Policy version response
-    policy_version_response = {"active_hash": "sha256:policy-v2"}
-
-    with patch.object(
-        client, "_ensure_client", return_value=AsyncMock()
-    ) as mock_client_factory:
-        mock_http = mock_client_factory.return_value
-
-        # Mock first POST (403 response)
-        first_response = AsyncMock()
-        first_response.status_code = 403
-        first_response.json = lambda: first_response_json
-
-        # Mock GET /governance/policy-version
-        policy_response = AsyncMock()
-        policy_response.json = lambda: policy_version_response
-        policy_response.raise_for_status = lambda: None
-
-        # Mock retry POST (200 with v3.0 envelope)
-        retry_response = AsyncMock()
-        retry_response.status_code = 200
-        retry_response.json = lambda: mock_v3_envelope_approved
-        retry_response.raise_for_status = lambda: None
-
-        # Configure mock HTTP client
-        mock_http.post.side_effect = [first_response, retry_response]
-        mock_http.get.return_value = policy_response
-
-        result = await client.validate_action("execute_trade", {"symbol": "AAPL"})
-
-        # Verify unwrapping occurred correctly on retry path
-        assert result["verdict"] == "ALLOW"
-        assert result["envelope_id"] == "env-test-12345"
-        assert result["envelope_version"] == "3.0"
+    assert pins == ["sha256:policy-v1", "sha256:policy-v2"]
+    assert result["verdict"] == "ALLOW"
+    assert result["envelope_id"] == "env-test-12345"
+    assert result["envelope_version"] == "3.0"

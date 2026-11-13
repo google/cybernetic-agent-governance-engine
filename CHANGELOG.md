@@ -9,6 +9,15 @@ Versions follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Changed
+
+- **The reference advisor verifies every gateway envelope through the published `cage-client` wheel, and the in-tree `src/gateway/client/` mirror is retired** (`feat(advisor)`, [`gateway_client.py`](src/governed_financial_advisor/infrastructure/gateway_client.py), [`safety_node.py`](src/governed_financial_advisor/graph/nodes/safety_node.py), [`check_client_sdk_sync.py`](scripts/check_client_sdk_sync.py), [`TECH_STACK.md`](docs/architecture/TECH_STACK.md)).
+  - `GatewayClient.validate_action()` now delegates to `cage_client.CageClient`, which resolves the gateway's signing key by `kid` from `GET /governance/.well-known/jwks.json` and checks the envelope's signature, `expires_at` and `subject.action_hash` before the advisor routes on its verdict. Before this change the advisor read the verdict out of the envelope without checking the signature. An envelope that fails verification raises `RoutingSealVerificationError`, which the safety node records as a non-recoverable `GATEWAY_ERROR`.
+  - A transport adapter sends the SDK's requests through the advisor's own HTTP client, so the trace-context and `x-cage-principal` headers, the 429/503 retry budget and the policy-drift replay with a refreshed `policy_version_id` are unchanged. A DEFER that names no ticket at all is now refused as "no routable verdict" (`GOVERNANCE_DENIED`), because the SDK will not mediate it.
+  - `governance_signature` records each verified envelope's `signature.value`. It had recorded the Python repr of the signature block.
+  - The advisor and test dependencies install `cage-client==0.3.0` from the `client-v0.3.0` release wheel. `check_client_sdk_sync.py` fails if a source file reappears under `src/gateway/client/`, if anything under `src/` or `examples/` imports it, if the advisor's `GatewayClient` stops importing `cage_client`, or if the `cage-client` source in `pyproject.toml` stops being a built `.whl` URL.
+  - The advisor tests sign their mock verdicts with an Ed25519 key published as a JWKS ([`signed_gateway.py`](tests/fixtures/signed_gateway.py)) instead of returning unsigned bodies, and new tests refuse unsigned, tampered, parameter-substituted and unknown-key envelopes. [`test_external_sdk_consumer.py`](tests/integration/test_external_sdk_consumer.py) runs the wheel in an isolated interpreter that cannot import the repository, against the gateway app served over loopback TCP.
+
 ---
 
 ## [4.1.0] - 2026-11-12

@@ -28,8 +28,9 @@ Before the fix, ``trade_contract``:
   ``venue``, ``agent_id``, ``transaction_id``, ...).
 
 The safety-node tests drive the real ``GatewayClient`` over an
-``httpx.MockTransport``, so every fail-closed path of a multi-step plan is
-observed end to end.
+``httpx.MockTransport`` whose verdicts ``SignedGatewayStub`` signs, so the
+advisor's ``cage-client`` envelope verification runs and every fail-closed
+path of a multi-step plan is observed end to end.
 """
 
 from __future__ import annotations
@@ -65,6 +66,7 @@ from src.governed_financial_advisor.graph.nodes.trade_contract import (
     trade_params,
 )
 from src.governed_financial_advisor.infrastructure.gateway_client import GatewayClient
+from tests.fixtures.signed_gateway import SignedGatewayStub
 
 pytestmark = [pytest.mark.unit, pytest.mark.local]
 
@@ -421,8 +423,16 @@ async def test_tool_guard_previews_the_order_without_its_transaction_id(
 
 
 @pytest.fixture
-def gateway() -> Iterator[Callable[[Handler], list[httpx.Request]]]:
-    """Install a MockTransport behind the GatewayClient singleton."""
+def signed_gateway() -> SignedGatewayStub:
+    """The stub that signs this test's validate-action verdicts."""
+    return SignedGatewayStub()
+
+
+@pytest.fixture
+def gateway(
+    signed_gateway: SignedGatewayStub,
+) -> Iterator[Callable[[Handler], list[httpx.Request]]]:
+    """Install a signing MockTransport behind the GatewayClient singleton."""
     GatewayClient._instance = None
 
     def install(handler: Handler) -> list[httpx.Request]:
@@ -434,7 +444,8 @@ def gateway() -> Iterator[Callable[[Handler], list[httpx.Request]]]:
 
         client = GatewayClient()
         client._http = httpx.AsyncClient(
-            transport=httpx.MockTransport(recording), base_url="http://gateway.test"
+            transport=httpx.MockTransport(signed_gateway.transport_handler(recording)),
+            base_url="http://gateway.test",
         )
         return seen
 
@@ -454,11 +465,10 @@ def _by_symbol(answers: dict[str, Handler]) -> Handler:
     return lambda request: answers[_symbol_of(request)](request)
 
 
-def _allow(signature: str) -> Handler:
+def _allow(tag: str) -> Handler:
     body = {
         "envelope_version": "3.0",
-        "envelope_id": f"env-{signature}",
-        "signature": signature,
+        "envelope_id": f"env-{tag}",
         "payload": {"verdict": "ALLOW", "violations": []},
     }
     return lambda request: httpx.Response(200, json=body)
@@ -473,7 +483,6 @@ def _defer(ticket: str) -> Handler:
     body = {
         "envelope_version": "3.0",
         "envelope_id": f"env-{ticket}",
-        "signature": f"sig-{ticket}",
         "payload": {
             "verdict": "DEFER",
             "defer_token": ticket,
@@ -590,7 +599,9 @@ async def test_a_refused_first_step_is_not_followed_by_more_requests(
 
 
 @pytest.mark.asyncio
-async def test_every_step_allowed_approves_without_caching(gateway) -> None:
+async def test_every_step_allowed_approves_without_caching(
+    gateway, signed_gateway: SignedGatewayStub
+) -> None:
     seen = gateway(_by_symbol({"AAA": _allow("sig-a"), "BBB": _allow("sig-b")}))
     state = _two_step_state(consecutive_denials=1)
 
@@ -600,14 +611,18 @@ async def test_every_step_allowed_approves_without_caching(gateway) -> None:
     assert out["consecutive_denials"] == 0
     assert out["last_violation"] is None
     assert out["routing_verdict_cache"] is None
-    assert out["governance_signature"] == "sig-a,sig-b"
+    # Each step's verified signature value, in plan order.
+    assert out["governance_signature"] == ",".join(signed_gateway.signature_values())
+    assert len(signed_gateway.issued) == 2
     assert [json.loads(r.content)["params"] for r in seen] == extract_trade_steps(
         state["execution_plan_output"]
     )
 
 
 @pytest.mark.asyncio
-async def test_a_single_step_allow_is_still_cached(gateway) -> None:
+async def test_a_single_step_allow_is_still_cached(
+    gateway, signed_gateway: SignedGatewayStub
+) -> None:
     gateway(_allow("sig-a"))
 
     out = await safety_check_node(
@@ -616,7 +631,7 @@ async def test_a_single_step_allow_is_still_cached(gateway) -> None:
 
     assert out["safety_status"] == "APPROVED"
     assert out["routing_verdict_cache"] is not None
-    assert out["governance_signature"] == "sig-a"
+    assert out["governance_signature"] == signed_gateway.signature_values()[0]
 
 
 @pytest.mark.asyncio
@@ -652,7 +667,6 @@ async def test_a_legacy_defer_id_without_defer_token_blocks_closed(gateway) -> N
     legacy = {
         "envelope_version": "3.0",
         "envelope_id": "env-legacy",
-        "signature": "sig-legacy",
         "payload": {"verdict": "DEFER", "defer_id": "legacy-ticket"},
     }
     gateway(_by_symbol({"AAA": _allow("sig-a"), "BBB": _respond(200, legacy)}))

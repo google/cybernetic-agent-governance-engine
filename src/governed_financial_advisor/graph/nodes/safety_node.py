@@ -57,6 +57,7 @@ infinite replanning loops.
 from __future__ import annotations
 
 import logging
+from collections.abc import Mapping
 from typing import Any, Literal
 
 import httpx
@@ -88,6 +89,14 @@ def _violations_of(response: httpx.Response) -> str:
     except Exception:
         violations = ["governance denied"]
     return "; ".join(str(v) for v in violations)
+
+
+def _signature_value(result: Mapping[str, Any]) -> str:
+    """The base64url ``signature.value`` of a verified gateway envelope, or ``""``."""
+    signature = result.get("signature")
+    if isinstance(signature, Mapping):
+        return str(signature.get("value") or "")
+    return str(signature or "")
 
 
 def _blocked(
@@ -321,7 +330,7 @@ async def safety_check_node(state: AgentState) -> dict[str, Any]:
             "safety_status": "APPROVED",
             "consecutive_denials": 0,
             "last_violation": None,
-            "governance_signature": str(reused.get("signature") or ""),
+            "governance_signature": _signature_value(reused),
             "routing_verdict_cache": cached_cache,
         }
 
@@ -361,7 +370,7 @@ async def safety_check_node(state: AgentState) -> dict[str, Any]:
         if len(trades) == 1 and routed[0].get("verdict") == GovernanceDecision.ALLOW
         else None
     )
-    signatures = [str(result.get("signature") or "") for result in routed]
+    signatures = [_signature_value(result) for result in routed]
     out: dict[str, Any] = {
         "safety_status": "APPROVED",
         "consecutive_denials": 0,

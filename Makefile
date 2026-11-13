@@ -349,7 +349,7 @@ check-agent-state-schema: ## Verify AgentState schema freshness
 	@uv run python scripts/generate_agent_state_schema.py --check
 
 .PHONY: check-client-sdk-sync
-check-client-sdk-sync: ## Verify src/gateway/client/ and packages/cage-client/src/cage_client/ are byte-identical
+check-client-sdk-sync: ## Verify src/gateway/client/ retirement and standalone cage-client wheel isolation
 	@uv run python scripts/check_client_sdk_sync.py --verbose
 
 .PHONY: build-client-sdk

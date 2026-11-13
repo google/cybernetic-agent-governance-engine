@@ -16,7 +16,9 @@
 
 ``gateway_tool_guard`` gates the data-analyst and governed-trader tool
 executors on ``POST /governance/validate-action``. These tests drive the real
-``GatewayClient`` over an ``httpx.MockTransport`` and assert that the wrapped
+``GatewayClient`` over an ``httpx.MockTransport`` whose verdicts are signed by
+``SignedGatewayStub`` (the advisor verifies every envelope through the
+``cage-client`` wheel) and assert that the wrapped
 node runs only when every tool call is routed ALLOW or NARROW, that a
 single-call REQUIRE_APPROVAL parks for a human (only when the guard is
 ``approvable``), that an approved ``deferred_id`` is forwarded to the tool
@@ -42,6 +44,7 @@ from src.governed_financial_advisor.graph.governance.tool_guard import (
     gateway_tool_guard,
 )
 from src.governed_financial_advisor.infrastructure.gateway_client import GatewayClient
+from tests.fixtures.signed_gateway import SignedGatewayStub
 
 pytestmark = [pytest.mark.unit, pytest.mark.local]
 
@@ -58,8 +61,14 @@ _REQUIRE_APPROVAL = {
 
 @pytest.fixture
 def gateway() -> Iterator[Callable[[Handler], list[httpx.Request]]]:
-    """Install a MockTransport behind the GatewayClient singleton."""
+    """Install a signing MockTransport behind the GatewayClient singleton.
+
+    ``SignedGatewayStub`` signs each 200 verdict a handler returns, so the
+    advisor's cage-client envelope verification runs for real. JWKS fetches
+    are answered by the stub and are not recorded.
+    """
     GatewayClient._instance = None
+    stub = SignedGatewayStub()
 
     def install(handler: Handler) -> list[httpx.Request]:
         seen: list[httpx.Request] = []
@@ -70,7 +79,8 @@ def gateway() -> Iterator[Callable[[Handler], list[httpx.Request]]]:
 
         client = GatewayClient()
         client._http = httpx.AsyncClient(
-            transport=httpx.MockTransport(recording), base_url="http://gateway.test"
+            transport=httpx.MockTransport(stub.transport_handler(recording)),
+            base_url="http://gateway.test",
         )
         return seen
 

@@ -34,7 +34,7 @@ Enforced Contracts (Zero Baseline / Zero Waivers):
    may only read payload keys emitted by at least one stream producer (or wire
    header keys emitted by ``EvidenceStreamSink``).
 3. **GovernanceEnvelope Sub-Block Key Parity**: Client SDK envelope consumers
-   (``packages/cage-client/src/cage_client/`` and ``src/gateway/client/``) may
+   (``packages/cage-client/src/cage_client/``) may
    only declare ``GovernanceEnvelope`` model fields emitted by
    ``GovernanceEnvelope.to_dict()`` and may only read keys on ``issuer``,
    ``subject``, ``governance_context``, and ``signature`` emitted by the
@@ -60,7 +60,9 @@ DEFAULT_REPO_ROOT = Path(__file__).resolve().parents[1]
 # Non-vacuous floors when scanning the repository corpus.
 MIN_PRODUCED_EVENT_TYPES = 12
 MIN_STREAM_CONSUMER_FILES = 3
-MIN_ENVELOPE_CONSUMER_FILES = 4
+# envelope.py and core.py in packages/cage-client/, the SDK's only source tree
+# since the src/gateway/client/ mirror was retired.
+MIN_ENVELOPE_CONSUMER_FILES = 2
 MIN_VERIFIED_KEY_READS = 40
 
 EVENT_TYPE_RE = re.compile(r"^[A-Z][A-Z0-9_]{2,}$")
@@ -1121,10 +1123,7 @@ def check_envelope_consumers(
     }
     exec_grant_keys = catalog.to_dict_keys.get("ExecutionGrant", set())
 
-    target_prefixes = (
-        "packages/cage-client/src/cage_client/",
-        "src/gateway/client/",
-    )
+    target_prefixes = ("packages/cage-client/src/cage_client/",)
 
     for mod in sorted(modules.values(), key=lambda m: m.rel_path):
         if not mod.rel_path.startswith(target_prefixes):

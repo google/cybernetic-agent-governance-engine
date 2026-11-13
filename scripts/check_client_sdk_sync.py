@@ -13,22 +13,21 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Keep packages/cage-client a byte-identical, standalone copy of src/gateway/client/.
+"""Enforce standalone ``cage-client`` wheel isolation and retirement of ``src/gateway/client/``.
 
-Both the in-tree mirror (``src/gateway/client/``) and the distributable wheel
-source (``packages/cage-client/src/cage_client/``) ship the exact same Policy
-Enforcement Point (PEP) client SDK. This zero-waiver gate fails if:
+Following ``client-v0.3.0`` and the advisor SDK refactor, ``packages/cage-client/``
+is the sole source tree for ``cage-client`` and in-repo consumers depend on the
+built release wheel (never on ``packages/cage-client/src/`` or a second copy).
+This zero-waiver gate fails if:
 
-1. the set of files under ``src/gateway/client/`` (every file, not only ``.py``
-   modules; ``__pycache__`` excluded) does not match
-   ``packages/cage-client/src/cage_client/`` 1-to-1 (missing or extra files in
-   either tree);
-2. any paired file differs byte-for-byte (SHA-256);
-3. any ``.py`` module in either client tree imports ``src`` or ``proof``
-   (absolute monorepo imports would break standalone ``cage-client`` installs).
-
-Every file is compared, so nothing in either tree can drift without the gate
-seeing it. Zero waivers and zero allowlists are permitted.
+1. the retired in-tree mirror ``src/gateway/client/`` reappears;
+2. ``packages/cage-client/src/cage_client/`` is missing ``py.typed`` or drops
+   below its module/import corpus floor;
+3. any ``.py`` module in ``packages/cage-client/src/cage_client/`` imports
+   ``src`` or ``proof`` (absolute monorepo imports break standalone installs);
+4. ``pyproject.toml`` binds ``cage-client`` to a local source path instead of a
+   built ``.whl`` URL in ``[tool.uv.sources]``; or
+5. any Python module under ``src/`` or ``examples/`` imports ``src.gateway.client``.
 
 Usage:
     uv run python scripts/check_client_sdk_sync.py --verbose
@@ -43,11 +42,15 @@ import sys
 from collections.abc import Sequence
 from pathlib import Path
 
+import tomllib
+
 REPO_ROOT = Path(__file__).resolve().parent.parent
-KERNEL_REL = Path("src/gateway/client")
+RETIRED_MIRROR_REL = Path("src/gateway/client")
 PACKAGE_REL = Path("packages/cage-client/src/cage_client")
-KERNEL_SRC = REPO_ROOT / KERNEL_REL
 PACKAGE_SRC = REPO_ROOT / PACKAGE_REL
+ADVISOR_CLIENT_REL = Path(
+    "src/governed_financial_advisor/infrastructure/gateway_client.py"
+)
 
 FORBIDDEN_ROOTS: frozenset[str] = frozenset({"src", "proof"})
 MIN_EXPECTED_REPO_MODULES = 8
@@ -75,53 +78,6 @@ def collect_py_files(root: Path) -> dict[Path, Path]:
         for rel_path, full_path in collect_files(root).items()
         if rel_path.suffix == ".py"
     }
-
-
-def sync_violations(repo_root: Path = REPO_ROOT) -> list[str]:
-    """Return violations for missing, extra, or byte-divergent files in either tree."""
-    kernel_dir = repo_root / KERNEL_REL
-    package_dir = repo_root / PACKAGE_REL
-    errors: list[str] = []
-
-    if not kernel_dir.is_dir():
-        errors.append(f"{KERNEL_REL} does not exist")
-    if not package_dir.is_dir():
-        errors.append(f"{PACKAGE_REL} does not exist")
-    if errors:
-        return errors
-
-    kernel_files = collect_files(kernel_dir)
-    package_files = collect_files(package_dir)
-
-    if not any(rel_path.suffix == ".py" for rel_path in kernel_files):
-        errors.append(f"no .py modules found under {KERNEL_REL}")
-    if not any(rel_path.suffix == ".py" for rel_path in package_files):
-        errors.append(f"no .py modules found under {PACKAGE_REL}")
-    if errors:
-        return errors
-
-    all_rel_paths = sorted(set(kernel_files) | set(package_files))
-    for rel_path in all_rel_paths:
-        in_kernel = rel_path in kernel_files
-        in_package = rel_path in package_files
-        if in_kernel and not in_package:
-            errors.append(
-                f"{PACKAGE_REL / rel_path} is missing (present at {KERNEL_REL / rel_path})"
-            )
-            continue
-        if in_package and not in_kernel:
-            errors.append(
-                f"{KERNEL_REL / rel_path} is missing (extra file at {PACKAGE_REL / rel_path})"
-            )
-            continue
-        kernel_sha = _sha256(kernel_files[rel_path])
-        package_sha = _sha256(package_files[rel_path])
-        if kernel_sha != package_sha:
-            errors.append(
-                f"{PACKAGE_REL / rel_path} differs from {KERNEL_REL / rel_path} "
-                f"(sha256 {package_sha[:12]} != {kernel_sha[:12]})"
-            )
-    return errors
 
 
 def _extract_root_imports(tree: ast.AST) -> list[tuple[int, str]]:
@@ -177,12 +133,100 @@ def import_violations(
     return errors
 
 
+def wheel_and_retirement_violations(repo_root: Path = REPO_ROOT) -> list[str]:
+    """Verify mirror retirement, py.typed presence, wheel URL binding, and advisor SDK usage."""
+    errors: list[str] = []
+    retired_dir = repo_root / RETIRED_MIRROR_REL
+    package_dir = repo_root / PACKAGE_REL
+
+    # Bytecode left in __pycache__ by an earlier checkout is not importable
+    # without its source, so only a real file brings the mirror back.
+    mirror_files = (
+        sorted(
+            path.relative_to(repo_root).as_posix()
+            for path in retired_dir.rglob("*")
+            if path.is_file() and "__pycache__" not in path.parts
+        )
+        if retired_dir.is_dir()
+        else []
+    )
+    if mirror_files:
+        errors.append(
+            f"{RETIRED_MIRROR_REL} exists (retired in-tree SDK mirror must stay removed; "
+            f"depend on the built cage-client wheel instead): {', '.join(mirror_files[:5])}"
+        )
+    if not package_dir.is_dir():
+        errors.append(f"{PACKAGE_REL} does not exist")
+        return errors
+
+    package_files = collect_files(package_dir)
+    if not any(rel_path.suffix == ".py" for rel_path in package_files):
+        errors.append(f"no .py modules found under {PACKAGE_REL}")
+    if Path("py.typed") not in package_files:
+        errors.append(
+            f"{PACKAGE_REL / 'py.typed'} is missing (PEP 561 marker required)"
+        )
+
+    pyproject_path = repo_root / "pyproject.toml"
+    if pyproject_path.is_file():
+        data = tomllib.loads(pyproject_path.read_text(encoding="utf-8"))
+        sources = data.get("tool", {}).get("uv", {}).get("sources", {})
+        cage_source = sources.get("cage-client")
+        if not isinstance(cage_source, dict) or not str(
+            cage_source.get("url", "")
+        ).endswith(".whl"):
+            errors.append(
+                "pyproject.toml [tool.uv.sources].cage-client must pin a built .whl URL "
+                f"(got {cage_source!r})"
+            )
+        if isinstance(cage_source, dict) and "path" in cage_source:
+            errors.append(
+                "pyproject.toml [tool.uv.sources].cage-client must not use a local path source"
+            )
+
+    for scan_rel in (Path("src"), Path("examples")):
+        scan_dir = repo_root / scan_rel
+        if not scan_dir.is_dir():
+            continue
+        for _, py_path in collect_py_files(scan_dir).items():
+            disp = py_path.relative_to(repo_root)
+            try:
+                tree = ast.parse(
+                    py_path.read_text(encoding="utf-8"), filename=str(py_path)
+                )
+            except (OSError, SyntaxError) as exc:
+                errors.append(f"{disp}: failed to parse Python AST: {exc}")
+                continue
+            for lineno, mod_name in _extract_root_imports(tree):
+                if mod_name == "src.gateway.client" or mod_name.startswith(
+                    "src.gateway.client."
+                ):
+                    errors.append(
+                        f"{disp}:{lineno}: imports retired mirror {mod_name!r} "
+                        "(import 'cage_client' from the installed wheel instead)"
+                    )
+
+    advisor_client = repo_root / ADVISOR_CLIENT_REL
+    if advisor_client.is_file():
+        tree = ast.parse(
+            advisor_client.read_text(encoding="utf-8"), filename=str(advisor_client)
+        )
+        root_mods = {
+            mod_name.split(".")[0] for _, mod_name in _extract_root_imports(tree)
+        }
+        if "cage_client" not in root_mods:
+            errors.append(
+                f"{ADVISOR_CLIENT_REL} must import 'cage_client' so the advisor exercises the built SDK wheel"
+            )
+
+    return errors
+
+
 def _build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         description=(
-            "Zero-waiver sync gate ensuring src/gateway/client/ and "
-            "packages/cage-client/src/cage_client/ are 1-to-1 byte-identical "
-            "and free of monorepo src/ or proof/ imports."
+            "Zero-waiver gate enforcing src/gateway/client/ retirement, "
+            "standalone packages/cage-client/ isolation, and built-wheel consumption."
         )
     )
     parser.add_argument(
@@ -200,13 +244,13 @@ def _build_parser() -> argparse.ArgumentParser:
         "--min-modules",
         type=int,
         default=None,
-        help="Minimum synced Python modules expected in each client tree.",
+        help="Minimum Python modules expected in packages/cage-client/src/cage_client/.",
     )
     parser.add_argument(
         "--min-imports",
         type=int,
         default=None,
-        help="Minimum top-level imports expected across each client tree.",
+        help="Minimum top-level imports expected across packages/cage-client/src/cage_client/.",
     )
     return parser
 
@@ -226,51 +270,47 @@ def main(argv: Sequence[str] | None = None) -> int:
         else (MIN_EXPECTED_REPO_IMPORTS if is_live_repo else 1)
     )
 
-    kernel_dir = repo_root / KERNEL_REL
     package_dir = repo_root / PACKAGE_REL
-
     pkg_import_errors, pkg_imports = import_violations_with_stats(
         package_dir, display_base=repo_root
     )
-    kern_import_errors, kern_imports = import_violations_with_stats(
-        kernel_dir, display_base=repo_root
-    )
-    errors = sync_violations(repo_root) + pkg_import_errors + kern_import_errors
+    errors = wheel_and_retirement_violations(repo_root) + pkg_import_errors
 
-    if not errors and kernel_dir.is_dir() and package_dir.is_dir():
-        kernel_count = len(collect_py_files(kernel_dir))
-        if kernel_count < min_modules:
+    if not errors and package_dir.is_dir():
+        pkg_count = len(collect_py_files(package_dir))
+        if pkg_count < min_modules:
             errors.append(
-                f"vacuous/blind corpus floor failure: synced modules {kernel_count} < minimum expected {min_modules}"
+                f"vacuous/blind corpus floor failure: cage_client modules {pkg_count} < minimum expected {min_modules}"
             )
-        if pkg_imports < min_imports or kern_imports < min_imports:
+        if pkg_imports < min_imports:
             errors.append(
                 f"vacuous/blind corpus floor failure: recognized root imports "
-                f"(kernel={kern_imports}, package={pkg_imports}) < minimum expected {min_imports}"
+                f"(package={pkg_imports}) < minimum expected {min_imports}"
             )
 
-    if args.verbose and kernel_dir.is_dir() and package_dir.is_dir():
-        kernel_files = collect_files(kernel_dir)
+    if args.verbose and package_dir.is_dir():
         package_files = collect_files(package_dir)
         print(
-            f"Scanning client SDK trees: {len(kernel_files)} file(s) in {KERNEL_REL}, "
-            f"{len(package_files)} file(s) in {PACKAGE_REL} ({pkg_imports} root imports)..."
+            f"Scanning standalone client SDK: {len(package_files)} file(s) in {PACKAGE_REL} "
+            f"({pkg_imports} root imports)..."
         )
-        if not errors:
-            for rel_path, full_path in kernel_files.items():
-                print(f"  ✓ {rel_path} (sha256:{_sha256(full_path)[:12]})")
+        for rel_path, full_path in sorted(package_files.items()):
+            print(f"  ✓ {rel_path} (sha256:{_sha256(full_path)[:12]})")
 
     if errors:
-        for error in errors:
-            print(f"❌ {error}", file=sys.stderr)
+        print(
+            f"❌ cage-client standalone wheel gate failed with {len(errors)} violation(s):",
+            file=sys.stderr,
+        )
+        for err in errors:
+            print(f"  - {err}", file=sys.stderr)
         return 1
 
-    file_count = len(collect_files(kernel_dir))
-    module_count = len(collect_py_files(kernel_dir))
+    py_count = len(collect_py_files(package_dir))
+    total_count = len(collect_files(package_dir))
     print(
-        f"✅ cage-client sync: {file_count} files byte-identical "
-        f"({module_count} Python modules), "
-        f"{pkg_imports} root imports verified, no src/ or proof/ imports"
+        f"✅ cage-client standalone wheel gate: {total_count} files ({py_count} Python modules), "
+        f"{pkg_imports} root imports verified, src/gateway/client/ retired, built .whl source pinned"
     )
     return 0
 

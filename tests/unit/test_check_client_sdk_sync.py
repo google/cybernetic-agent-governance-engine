@@ -12,7 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Unit tests for the zero-waiver client SDK parity gate (check_client_sdk_sync.py)."""
+"""Unit tests for ``scripts/check_client_sdk_sync.py`` standalone wheel & mirror-retirement gate."""
 
 from __future__ import annotations
 
@@ -20,197 +20,131 @@ from pathlib import Path
 
 import pytest
 
-from scripts.check_client_sdk_sync import (
-    KERNEL_REL,
-    KERNEL_SRC,
-    PACKAGE_REL,
-    PACKAGE_SRC,
-    REPO_ROOT,
-    import_violations,
-    main,
-    sync_violations,
-)
+import scripts.check_client_sdk_sync as sdk_gate
 
 pytestmark = [pytest.mark.unit, pytest.mark.local]
 
 
-def _seed_synced_repo(tmp_path: Path) -> tuple[Path, Path]:
-    """Create minimal byte-identical kernel and standalone client trees."""
-    kernel_dir = tmp_path / KERNEL_REL
-    package_dir = tmp_path / PACKAGE_REL
-    for base in (kernel_dir, package_dir):
-        (base / "adapters").mkdir(parents=True, exist_ok=True)
-        (base / "__init__.py").write_text(
-            '"""Client package."""\nfrom .core import CageClient\n',
-            encoding="utf-8",
-        )
-        (base / "core.py").write_text(
-            "import json\nimport httpx\n\nclass CageClient:\n    pass\n",
-            encoding="utf-8",
-        )
-        (base / "adapters" / "__init__.py").write_text("", encoding="utf-8")
-        (base / "adapters" / "langgraph.py").write_text(
-            "from ..core import CageClient\n",
-            encoding="utf-8",
-        )
-    return kernel_dir, package_dir
-
-
-def test_real_repository_client_sdk_trees_are_in_sync() -> None:
-    """Real repository src/gateway/client/ and packages/cage-client/ must pass with 0 waivers."""
-    assert sync_violations(REPO_ROOT) == []
-    assert import_violations(PACKAGE_SRC, display_base=REPO_ROOT) == []
-    assert import_violations(KERNEL_SRC, display_base=REPO_ROOT) == []
-    assert main(["--repo-root", str(REPO_ROOT), "--verbose"]) == 0
-
-
-def test_identical_temp_trees_pass_and_ignore_pycache(
-    tmp_path: Path, capsys: pytest.CaptureFixture[str]
-) -> None:
-    """Identical .py sets pass even when __pycache__ artifacts exist on one side."""
-    kernel_dir, _ = _seed_synced_repo(tmp_path)
-    pycache_dir = kernel_dir / "__pycache__"
-    pycache_dir.mkdir()
-    (pycache_dir / "core.cpython-312.pyc").write_bytes(b"\x00\x01\x02")
-    (pycache_dir / "stale_helper.py").write_text("x = 1\n", encoding="utf-8")
-
-    assert sync_violations(tmp_path) == []
-    assert main(["--repo-root", str(tmp_path), "--verbose"]) == 0
-    captured = capsys.readouterr()
-    assert "4 files byte-identical (4 Python modules)" in captured.out
-    assert "✓ core.py" in captured.out
-
-
-def test_byte_divergent_module_fails_with_sha256_mismatch(
-    tmp_path: Path, capsys: pytest.CaptureFixture[str]
-) -> None:
-    """Any byte divergence between paired modules fails with SHA-256 diagnostics."""
-    _, package_dir = _seed_synced_repo(tmp_path)
-    (package_dir / "core.py").write_text(
-        "import json\nimport httpx\n\nclass CageClient:\n    DRIFT = True\n",
+def _make_fake_repo(
+    tmp_path: Path,
+    *,
+    wheel_url: str = "https://example.com/releases/download/client-v0.3.0/cage_client-0.3.0-py3-none-any.whl",
+    include_py_typed: bool = True,
+    recreate_retired_mirror: bool = False,
+) -> Path:
+    pkg = tmp_path / "packages" / "cage-client" / "src" / "cage_client"
+    pkg.mkdir(parents=True)
+    (pkg / "__init__.py").write_text(
+        "import json\nfrom .core import CageClient\n__all__ = ['CageClient']\n",
         encoding="utf-8",
     )
-
-    errors = sync_violations(tmp_path)
-    assert len(errors) == 1
-    assert (
-        "packages/cage-client/src/cage_client/core.py differs from src/gateway/client/core.py"
-        in errors[0]
+    (pkg / "core.py").write_text(
+        "import httpx\nclass CageClient:\n    pass\n",
+        encoding="utf-8",
     )
-    assert "sha256" in errors[0]
+    if include_py_typed:
+        (pkg / "py.typed").write_text("", encoding="utf-8")
+    if recreate_retired_mirror:
+        mirror = tmp_path / "src" / "gateway" / "client"
+        mirror.mkdir(parents=True)
+        (mirror / "__init__.py").write_text("# stale mirror\n", encoding="utf-8")
 
-    assert main(["--repo-root", str(tmp_path)]) == 1
-    assert "differs from" in capsys.readouterr().err
+    advisor = (
+        tmp_path
+        / "src"
+        / "governed_financial_advisor"
+        / "infrastructure"
+        / "gateway_client.py"
+    )
+    advisor.parent.mkdir(parents=True)
+    advisor.write_text("from cage_client import CageClient\n", encoding="utf-8")
+
+    (tmp_path / "pyproject.toml").write_text(
+        f'[project]\nname = "demo"\nversion = "1.0.0"\n'
+        f'[tool.uv.sources]\ncage-client = {{ url = "{wheel_url}" }}\n',
+        encoding="utf-8",
+    )
+    return tmp_path
 
 
-def test_missing_and_extra_modules_fail(tmp_path: Path) -> None:
-    """Modules present in only one tree are reported symmetrically."""
-    kernel_dir, package_dir = _seed_synced_repo(tmp_path)
-    (kernel_dir / "new_kernel_only.py").write_text("X = 1\n", encoding="utf-8")
-    (package_dir / "orphan_pkg_only.py").write_text("Y = 2\n", encoding="utf-8")
+def test_real_repository_passes_with_zero_violations() -> None:
+    """Live repository passes standalone wheel & mirror-retirement checks."""
+    assert sdk_gate.main(["--verbose"]) == 0
 
-    errors = sync_violations(tmp_path)
-    assert len(errors) == 2
+
+def test_fails_when_retired_mirror_reappears(tmp_path: Path) -> None:
+    """Recreating src/gateway/client/ fails closed."""
+    repo = _make_fake_repo(tmp_path, recreate_retired_mirror=True)
+    errors = sdk_gate.wheel_and_retirement_violations(repo)
+    assert any("src/gateway/client exists" in err for err in errors)
+
+
+def test_stale_bytecode_alone_does_not_revive_the_mirror(tmp_path: Path) -> None:
+    """__pycache__ left by an earlier checkout is not importable and passes."""
+    repo = _make_fake_repo(tmp_path)
+    cache = repo / "src" / "gateway" / "client" / "__pycache__"
+    cache.mkdir(parents=True)
+    (cache / "core.cpython-312.pyc").write_bytes(b"\x00")
+    assert sdk_gate.wheel_and_retirement_violations(repo) == []
+
+
+def test_fails_when_the_advisor_stops_importing_the_wheel(tmp_path: Path) -> None:
+    """The advisor's GatewayClient must import cage_client."""
+    repo = _make_fake_repo(tmp_path)
+    (
+        repo
+        / "src"
+        / "governed_financial_advisor"
+        / "infrastructure"
+        / "gateway_client.py"
+    ).write_text("import httpx\n", encoding="utf-8")
+    errors = sdk_gate.wheel_and_retirement_violations(repo)
+    assert any("must import 'cage_client'" in err for err in errors)
+
+
+def test_fails_when_py_typed_missing(tmp_path: Path) -> None:
+    """Missing PEP 561 py.typed marker in packages/cage-client fails closed."""
+    repo = _make_fake_repo(tmp_path, include_py_typed=False)
+    errors = sdk_gate.wheel_and_retirement_violations(repo)
+    assert any("py.typed is missing" in err for err in errors)
+
+
+def test_fails_when_pyproject_uses_local_path_instead_of_wheel(tmp_path: Path) -> None:
+    """Binding cage-client to a local path rather than a built .whl URL fails closed."""
+    repo = _make_fake_repo(tmp_path)
+    (repo / "pyproject.toml").write_text(
+        '[project]\nname = "demo"\nversion = "1.0.0"\n'
+        '[tool.uv.sources]\ncage-client = { path = "packages/cage-client" }\n',
+        encoding="utf-8",
+    )
+    errors = sdk_gate.wheel_and_retirement_violations(repo)
+    assert any("must pin a built .whl URL" in err for err in errors)
+    assert any("must not use a local path source" in err for err in errors)
+
+
+def test_fails_when_package_imports_monorepo_src_or_proof(tmp_path: Path) -> None:
+    """Importing src.* or proof.* inside packages/cage-client fails closed."""
+    repo = _make_fake_repo(tmp_path)
+    pkg = repo / "packages" / "cage-client" / "src" / "cage_client"
+    (pkg / "leak.py").write_text(
+        "from src.gateway.governance.decisions import GovernanceDecision\n",
+        encoding="utf-8",
+    )
+    pkg_errors = sdk_gate.import_violations(pkg, display_base=repo)
     assert any(
-        "packages/cage-client/src/cage_client/new_kernel_only.py is missing" in err
-        for err in errors
+        "imports 'src.gateway.governance.decisions'" in err for err in pkg_errors
     )
+
+
+def test_fails_when_src_imports_retired_gateway_client(tmp_path: Path) -> None:
+    """Importing src.gateway.client anywhere under src/ or examples/ fails closed."""
+    repo = _make_fake_repo(tmp_path)
+    ex = repo / "examples"
+    ex.mkdir()
+    (ex / "demo.py").write_text(
+        "from src.gateway.client.core import CageClient\n", encoding="utf-8"
+    )
+    errors = sdk_gate.wheel_and_retirement_violations(repo)
     assert any(
-        "src/gateway/client/orphan_pkg_only.py is missing (extra file" in err
-        for err in errors
+        "imports retired mirror 'src.gateway.client.core'" in err for err in errors
     )
-
-
-def test_non_python_files_are_compared_not_skipped(tmp_path: Path) -> None:
-    """A non-.py file (marker, data) present in one tree or differing fails the gate."""
-    kernel_dir, package_dir = _seed_synced_repo(tmp_path)
-    marker = "# Marker file for PEP 561.\n\n"
-    (package_dir / "py.typed").write_text(marker, encoding="utf-8")
-
-    errors = sync_violations(tmp_path)
-    assert errors == [
-        "src/gateway/client/py.typed is missing "
-        "(extra file at packages/cage-client/src/cage_client/py.typed)"
-    ]
-
-    (kernel_dir / "py.typed").write_text(marker, encoding="utf-8")
-    assert sync_violations(tmp_path) == []
-
-    (kernel_dir / "adapters" / "schema.json").write_text('{"v": 1}\n', encoding="utf-8")
-    (package_dir / "adapters" / "schema.json").write_text(
-        '{"v": 2}\n', encoding="utf-8"
-    )
-    errors = sync_violations(tmp_path)
-    assert len(errors) == 1
-    assert (
-        "packages/cage-client/src/cage_client/adapters/schema.json differs from "
-        "src/gateway/client/adapters/schema.json" in errors[0]
-    )
-    assert main(["--repo-root", str(tmp_path)]) == 1
-
-
-def test_missing_or_empty_directories_fail_closed(tmp_path: Path) -> None:
-    """Missing or empty client directories never pass vacuously."""
-    missing_errors = sync_violations(tmp_path)
-    assert len(missing_errors) == 2
-    assert main(["--repo-root", str(tmp_path)]) == 1
-
-    (tmp_path / KERNEL_REL).mkdir(parents=True)
-    (tmp_path / PACKAGE_REL).mkdir(parents=True)
-    empty_errors = sync_violations(tmp_path)
-    assert len(empty_errors) == 2
-    assert any("no .py modules found" in err for err in empty_errors)
-
-
-def test_forbidden_monorepo_imports_detected_while_relative_imports_allowed(
-    tmp_path: Path,
-) -> None:
-    """Absolute imports from 'src' or 'proof' fail; relative and third-party imports pass."""
-    kernel_dir, package_dir = _seed_synced_repo(tmp_path)
-    bad_code = (
-        "import httpx\n"
-        "import src.gateway.governance\n"
-        "from src.gateway.client.envelope import GovernanceEnvelope\n"
-        "from proof.model import TIER_LABELS\n"
-        "from .core import CageClient\n"
-    )
-    (kernel_dir / "bad_imports.py").write_text(bad_code, encoding="utf-8")
-    (package_dir / "bad_imports.py").write_text(bad_code, encoding="utf-8")
-
-    pkg_errors = import_violations(package_dir, display_base=tmp_path)
-    assert len(pkg_errors) == 3
-    assert any("imports 'src.gateway.governance'" in err for err in pkg_errors)
-    assert any("imports 'src.gateway.client.envelope'" in err for err in pkg_errors)
-    assert any("imports 'proof.model'" in err for err in pkg_errors)
-    assert main(["--repo-root", str(tmp_path)]) == 1
-
-
-def test_syntax_error_in_client_module_fails_closed(tmp_path: Path) -> None:
-    """Unparseable Python source fails import_violations closed instead of crashing."""
-    _, package_dir = _seed_synced_repo(tmp_path)
-    (package_dir / "broken.py").write_text("def broken(:\n", encoding="utf-8")
-
-    errors = import_violations(package_dir, display_base=tmp_path)
-    assert len(errors) == 1
-    assert "failed to parse Python AST" in errors[0]
-
-
-def test_vacuous_import_or_module_corpus_floor_fails_closed(
-    tmp_path: Path,
-    capsys: pytest.CaptureFixture[str],
-) -> None:
-    """Synced trees with 0 root imports or fewer modules than --min-modules fail closed."""
-    kernel_dir = tmp_path / KERNEL_REL
-    package_dir = tmp_path / PACKAGE_REL
-    for base in (kernel_dir, package_dir):
-        base.mkdir(parents=True)
-        (base / "__init__.py").write_text("X = 1\n", encoding="utf-8")
-
-    assert main(["--repo-root", str(tmp_path)]) == 1
-    captured = capsys.readouterr()
-    assert "recognized root imports" in captured.err
-
-    _seed_synced_repo(tmp_path)
-    assert main(["--repo-root", str(tmp_path), "--min-modules", "8"]) == 1
-    captured = capsys.readouterr()
-    assert "synced modules 4 < minimum expected 8" in captured.err

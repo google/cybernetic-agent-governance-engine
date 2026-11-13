@@ -23,11 +23,10 @@ from typing import Any
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
-
-from src.gateway.client.adapters.langgraph import cage_guard
-from src.gateway.client.core import CageClient
-from src.gateway.client.envelope import GovernanceEnvelope
-from src.gateway.client.exceptions import (
+from cage_client.adapters.langgraph import cage_guard
+from cage_client.core import CageClient
+from cage_client.envelope import GovernanceEnvelope
+from cage_client.exceptions import (
     DeferralPending,
     PolicyViolationException,
 )
