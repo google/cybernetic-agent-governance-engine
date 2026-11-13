@@ -3,7 +3,7 @@ system-security-plan:
   metadata:
     title: CAGE System Security Plan (EU_ECB — EU AI Act / GDPR / DORA)
     published: '2026-06-15T00:00:00Z'
-    last-modified: '2026-11-09T00:02:22Z'
+    last-modified: '2026-11-13T00:54:23Z'
     version: 1.0.0-draft+stpa
     oscal-version: 1.0.4
     remarks: 'This System Security Plan (SSP) documents the compliance controls implemented
@@ -145,16 +145,22 @@ system-security-plan:
         value: Art. 15 (access), Art. 17 (erasure), Art. 22 (automated decisions)
     components:
     - uuid: eu-ecb-comp-0001-4000-8000-000000000001
-      type: software
-      title: CAGE EU AI Act Risk Management System
-      description: EU AI Act Art. 9 risk management system implemented via the Compliance
-        Bridge service. Maintains documented risk assessments, residual risk acceptance
-        records, and post-market monitoring data for the High-Risk AI classification
-        under Annex III §5(b).
-      purpose: Satisfies EU AI Act Art. 9 mandatory risk management system requirement
-        for High-Risk AI systems in financial services.
+      type: policy
+      title: Adopter-Operated EU AI Act Art. 9 Risk Management System Boundary
+      description: Institutional obligation (adopter-operated; not-applicable to the
+        standalone CAGE software boundary). EU AI Act Art. 9 mandates an organizational,
+        lifecycle-spanning Risk Management System (known/foreseeable risk register,
+        residual-risk acceptance sign-off by designated human risk officers, and Art.
+        9(4) / Art. 61 post-market monitoring) operated by the regulated provider
+        or deployer institution rather than self-attested by an embedded governance
+        engine. CAGE supplies machine-verifiable technical inputs to that institutional
+        programme (STPA/FTRA hazard artifacts in config/stpa/ and src/cage_finance/stpa/uca_rules.py,
+        plus KMS-signed EvidenceStream WORM batches verified by CustodyVerifier).
+      purpose: Documents the institutional boundary and concrete adopter integration
+        steps for EU AI Act Art. 9 risk management in High-Risk AI deployments (Annex
+        III §5(b)).
       status:
-        state: under-development
+        state: operational
       responsible-roles:
       - role-id: ai-model-operator
       props:
@@ -162,10 +168,12 @@ system-security-plan:
         value: Art. 9 — Risk Management System
       - name: high-risk-classification
         value: Annex III §5(b) — financial services
+      - name: control-origination
+        value: adopter-operated
       links:
       - href: ../../compliance/lula/lula-validation-eu-ai-act-art9.yaml
         rel: lula
-        text: 'Lula validation: EU AI Act Art. 9 Risk Management'
+        text: 'Illustrative adopter Lula template: EU AI Act Art. 9 Risk Management'
     - uuid: eu-ecb-comp-0002-4000-8000-000000000002
       type: software
       title: CAGE GDPR Art. 22 Human Oversight Controls
@@ -186,12 +194,14 @@ system-security-plan:
         ViolationKind.HITL (REQUIRE_APPROVAL), whereas sub-0.70 DEFER (CONFIDENCE_BELOW_THRESHOLD
         / TRADE_CONFIDENCE_BELOW_FLOOR) and WARRANT_INELIGIBLE are turn-terminal epistemic/reliance
         holds rather than Art. 22 human-approval gates. Subject-initiated contest
-        on request (GDPR Art. 22(3)) and GET /v1/compliance/gdpr/art22 on compliance-bridge
+        on request (GDPR Art. 22(3), requiring adopter data-controller intake plus
+        contestation workflow) and GET /v1/compliance/gdpr/art22 on compliance-bridge
         are planned (POAM EU-006).
-      purpose: Satisfies GDPR Art. 22(2)(b) safeguards for automated individual decision-making
-        with legal or similarly significant effects.
+      purpose: Enforces GDPR Art. 22(2)(b) / Art. 22(3) system-triggered human-intervention
+        safeguards in runtime governance while tracking post-decision subject contestation
+        and status telemetry under POAM EU-006.
       status:
-        state: under-development
+        state: operational
       responsible-roles:
       - role-id: dpo
       props:
@@ -199,33 +209,44 @@ system-security-plan:
         value: Art. 22 — Automated Individual Decision-Making
       - name: consensus-threshold-eur
         value: '7500'
+      - name: control-origination
+        value: shared
       links:
       - href: ../../compliance/lula/lula-validation-gdpr-art22.yaml
         rel: lula
-        text: 'Lula validation: GDPR Art. 22 Human Oversight'
+        text: 'Lula validation (planned EU-006): GDPR Art. 22 Human Oversight'
     - uuid: eu-ecb-comp-0003-4000-8000-000000000003
-      type: software
-      title: CAGE DORA Art. 10 ICT Audit Logging
-      description: DORA Art. 10 ICT operational resilience implemented via the Compliance
-        Bridge audit workflow. Audit logs stored in europe-west1 GCS buckets with
-        5-year retention for major ICT incidents.
-      purpose: Satisfies DORA Art. 10 ICT operational resilience testing and audit
-        logging requirements for financial entities supervised by ECB.
+      type: policy
+      title: Adopter-Operated DORA Art. 10 ICT Detection and Incident Classification
+        Boundary
+      description: Institutional obligation (adopter-operated; not-applicable to the
+        standalone CAGE software boundary). DORA (Regulation (EU) 2022/2554) Art.
+        10–11 and Art. 17–19 require supervised financial entities to operate enterprise-wide
+        ICT anomaly detection, major ICT-related incident classification, and 24h/72h
+        competent-authority reporting across their production SOC/SIEM estate. CAGE
+        produces KMS-signed decision and infrastructure custody batches (EvidenceStream
+        and InfraEvidenceChain archived to the adopter's europe-west1 WORM domain)
+        for ingestion into the institution's DORA monitoring pipeline.
+      purpose: Documents the institutional boundary and concrete adopter integration
+        steps for DORA Art. 10 ICT detection and operational resilience logging in
+        ECB-supervised financial entities.
       status:
-        state: under-development
+        state: operational
       responsible-roles:
       - role-id: isso
       props:
       - name: dora-article
-        value: Art. 10 — ICT Operational Resilience Testing
+        value: Art. 10 — ICT Operational Resilience Detection and Logging
       - name: log-retention-years
         value: '5'
       - name: storage-region
         value: europe-west1
+      - name: control-origination
+        value: adopter-operated
       links:
       - href: ../../compliance/lula/lula-validation-dora-art10.yaml
         rel: lula
-        text: 'Lula validation: DORA Art. 10 ICT Audit Logging'
+        text: 'Illustrative adopter Lula template: DORA Art. 10 ICT Audit Logging'
     - uuid: eu-ecb-comp-0004-4000-8000-000000000004
       type: software
       title: CAGE EU AI Act Art. 27 FRIA Jurisdiction Tier
@@ -461,12 +482,24 @@ system-security-plan:
     implemented-requirements:
     - uuid: eu-ecb-req-0001-4000-8000-000000000001
       control-id: eu-ai-act-art9
-      description: EU AI Act Art. 9 Risk Management System implemented via Compliance
-        Bridge service. Annual risk reassessment required per Art. 9(4). High-Risk
-        AI classification documented under Annex III §5(b).
+      description: 'Not applicable to the standalone CAGE software boundary (control-origination:
+        adopter-operated). EU AI Act Art. 9 mandates an organizational, lifecycle-spanning
+        Risk Management System — including an institution-maintained known/foreseeable
+        risk register, residual-risk acceptance sign-off by human risk officers, and
+        annual Art. 9(4) / Art. 61 post-market monitoring reassessment — operated
+        by the regulated provider or deployer institution under Annex III §5(b). Adopter
+        implementation steps: (1) maintain an institutional Art. 9 risk register and
+        residual-risk sign-off workflow in the adopter''s GRC system; (2) ingest CAGE''s
+        compiled STPA/FTRA hazard artifacts (config/stpa/, src/cage_finance/stpa/uca_rules.py)
+        and KMS-signed EvidenceStream WORM batches (verified via CustodyVerifier)
+        into that register; (3) optionally expose institutional GRC reassessment currency
+        behind GET /v1/compliance/eu-ai-act/art9 if activating the illustrative lula-validation-eu-ai-act-art9.yaml
+        template.'
       props:
       - name: implementation-status
-        value: planned
+        value: not-applicable
+      - name: control-origination
+        value: adopter-operated
       - name: regulatory-citation
         value: EU AI Act Art. 9 (Regulation (EU) 2024/1689)
       responsible-roles:
@@ -474,29 +507,40 @@ system-security-plan:
       by-components:
       - component-uuid: eu-ecb-comp-0001-4000-8000-000000000001
         uuid: eu-ecb-bycomp-0001-4000-8000-000000000001
-        description: Risk management system documented in compliance artifacts. Lula
-          validation provides automated continuous compliance assertion.
+        description: 'Adopter-operated institutional risk management boundary. CAGE
+          ships deterministic STPA/FTRA runtime barriers and signed WORM custody batches
+          as technical inputs; the institution operates the Art. 9 risk register,
+          residual-risk sign-off, and annual reassessment cadence. The linked Lula
+          manifest (# cage-status: not-applicable) is retained as an illustrative
+          template for adopters who wire a GRC status endpoint.'
         implementation-status:
-          state: planned
+          state: not-applicable
         links:
         - href: ../../compliance/lula/lula-validation-eu-ai-act-art9.yaml
           rel: reference
-          text: Lula automated validation for EU AI Act Art. 9
+          text: Illustrative adopter Lula template for EU AI Act Art. 9
     - uuid: eu-ecb-req-0002-4000-8000-000000000002
       control-id: gdpr-art22
-      description: GDPR Art. 22 system-triggered human oversight is enforced via REQUIRE_APPROVAL
-        (EUR 7,500 consensus threshold in src/cage_finance/tiers/consensus_tier.py;
-        [0.70, 0.95) universal confidence band in src/gateway/governance/governor/stages/confidence.py;
+      description: 'Partially implemented (shared CAGE runtime + adopter controller
+        boundary). Implemented in CAGE runtime: system-triggered human intervention
+        under GDPR Art. 22(2)(b) / Art. 22(3) is enforced via REQUIRE_APPROVAL (EUR
+        7,500 consensus threshold in src/cage_finance/tiers/consensus_tier.py; [0.70,
+        0.95) universal confidence band in src/gateway/governance/governor/stages/confidence.py;
         [0.70, 0.97) EU_ECB trade-confidence band in src/cage_finance/tiers/trade_confidence_tier.py)
-        with distinct-principal dual-control quorum in DeferQueue (src/gateway/governance/defer_queue.py)
-        and POST_HITL drift revalidation (SymbolicGovernor.revalidate_post_hitl()).
+        with distinct-principal dual-control human operator quorum in DeferQueue (src/gateway/governance/defer_queue.py)
+        and single-use POST_HITL drift revalidation (SymbolicGovernor.revalidate_post_hitl()).
         Sub-0.70 DEFER and WARRANT_INELIGIBLE are turn-terminal epistemic/reliance
-        holds rather than Art. 22 human-approval gates. Subject-initiated Art. 22(3)
-        point-of-view / contestation on request and GET /v1/compliance/gdpr/art22
-        are planned (POAM EU-006).
+        holds rather than Art. 22 human-approval gates. Planned / adopter-paired scope
+        (POAM EU-006): subject-initiated Art. 22(3) point-of-view and post-decision
+        contestation on request (requiring data-controller intake) and GET /v1/compliance/gdpr/art22
+        on compliance-bridge remain planned.'
       props:
       - name: implementation-status
-        value: planned
+        value: partially-implemented
+      - name: control-origination
+        value: shared
+      - name: system-triggered-oversight-status
+        value: implemented
       - name: subject-initiated-contest-status
         value: planned
       - name: compliance-bridge-art22-endpoint-status
@@ -508,26 +552,58 @@ system-security-plan:
       by-components:
       - component-uuid: eu-ecb-comp-0002-4000-8000-000000000002
         uuid: eu-ecb-bycomp-0002-4000-8000-000000000002
-        description: REQUIRE_APPROVAL escalations (consensus_tier.py, confidence.py,
-          trade_confidence_tier.py) park tokens in DeferQueue for distinct-principal
-          dual-control approval (DeferQueue.approve()) and single-use consumption
-          with POST_HITL drift revalidation (DeferQueue.consume_approval(), SymbolicGovernor.revalidate_post_hitl()).
-          Subject-initiated Art. 22(3) contest on request and the GET /v1/compliance/gdpr/art22
-          Lula status endpoint are planned (POAM EU-006).
+        description: 'Implemented runtime human-intervention gate: REQUIRE_APPROVAL
+          escalations (src/cage_finance/tiers/consensus_tier.py, src/gateway/governance/governor/stages/confidence.py,
+          src/cage_finance/tiers/trade_confidence_tier.py) park tokens in DeferQueue
+          (src/gateway/governance/defer_queue.py) for distinct-principal dual-control
+          human OIDC + WebAuthn approval (DeferQueue.approve()) and single-use consumption
+          with POST_HITL drift revalidation (DeferQueue.consume_approval(), SymbolicGovernor.revalidate_post_hitl()),
+          verified in tests/test_defer_dual_control_auth.py, tests/test_defer_queue_quorum.py,
+          tests/test_defer_queue_single_use.py, tests/test_hitl_toctou_revalidation.py,
+          tests/governor/test_post_hitl_approval_spend.py, tests/governor/test_regional_overlay.py,
+          and tests/cage_finance/test_trade_confidence_tier.py.'
+        implementation-status:
+          state: implemented
+        links:
+        - href: ../../tests/test_defer_dual_control_auth.py
+          rel: reference
+          text: Dual-control distinct-principal HITL tests
+        - href: ../../tests/test_hitl_toctou_revalidation.py
+          rel: reference
+          text: POST_HITL drift revalidation tests
+      - component-uuid: eu-ecb-comp-0002-4000-8000-000000000002
+        uuid: eu-ecb-bycomp-0002-4000-8000-000000000022
+        description: 'Planned subject-initiated contestation and compliance-bridge
+          status endpoint (POAM EU-006 in docs/compliance/eu_ecb/POAM_EU_ECB.md):
+          GDPR Art. 22(3) post-decision data-subject point-of-view / contestation
+          intake (paired with the deploying data controller''s customer portal) and
+          GET /v1/compliance/gdpr/art22 targeted by lula-validation-gdpr-art22.yaml
+          (# cage-status: planned).'
         implementation-status:
           state: planned
         links:
         - href: ../../compliance/lula/lula-validation-gdpr-art22.yaml
           rel: reference
-          text: Lula automated validation for GDPR Art. 22
+          text: Planned Lula automated validation for GDPR Art. 22 (EU-006)
     - uuid: eu-ecb-req-0003-4000-8000-000000000003
       control-id: dora-art10
-      description: DORA Art. 10 ICT audit logging implemented via Compliance Bridge.
-        Logs stored in europe-west1 with 5-year retention. Incident classification
-        system operational.
+      description: 'Not applicable to the standalone CAGE software boundary (control-origination:
+        adopter-operated). DORA (Regulation (EU) 2022/2554) Art. 10–11 and Art. 17–19
+        impose enterprise-wide ICT anomaly detection, major ICT-related incident classification,
+        and 24h/72h ECB/competent-authority incident reporting obligations on the
+        supervised financial entity''s SOC/SIEM rather than on an embedded governance
+        kernel. Adopter implementation steps: (1) provision a persistent >=2555-day
+        retention-locked europe-west1 WORM evidence domain (EVIDENCE_ARCHIVE_BUCKET)
+        and export KMS-signed EvidenceStream / InfraEvidenceChain batches plus Cloud
+        Audit Logs into the financial entity''s enterprise SIEM/SOC; (2) configure
+        DORA Art. 18 major-incident thresholds and Art. 19 supervisory reporting workflows;
+        (3) optionally expose SOC resilience telemetry status at GET /v1/compliance/dora/art10
+        if activating the illustrative lula-validation-dora-art10.yaml template.'
       props:
       - name: implementation-status
-        value: planned
+        value: not-applicable
+      - name: control-origination
+        value: adopter-operated
       - name: regulatory-citation
         value: DORA Art. 10 (Regulation (EU) 2022/2554)
       responsible-roles:
@@ -535,14 +611,17 @@ system-security-plan:
       by-components:
       - component-uuid: eu-ecb-comp-0003-4000-8000-000000000003
         uuid: eu-ecb-bycomp-0003-4000-8000-000000000003
-        description: Compliance Bridge audit workflow provides DORA-compliant ICT
-          audit logging. GCS bucket in europe-west1 ensures data residency.
+        description: 'Adopter-operated ICT detection and incident-classification boundary.
+          CAGE produces KMS-signed WORM decision and infrastructure batches in europe-west1;
+          the supervised financial entity operates SIEM correlation, incident classification,
+          and DORA regulatory reporting. The linked Lula manifest (# cage-status:
+          not-applicable) is retained as an illustrative template.'
         implementation-status:
-          state: planned
+          state: not-applicable
         links:
         - href: ../../compliance/lula/lula-validation-dora-art10.yaml
           rel: reference
-          text: Lula automated validation for DORA Art. 10
+          text: Illustrative adopter Lula template for DORA Art. 10
     - uuid: eu-ecb-req-0004-4000-8000-000000000004
       control-id: eu-ai-act-art27
       description: 'EU AI Act Art. 27 FRIA (CTRL_FRIA_006) is enforced by the fria
@@ -826,7 +905,7 @@ system-security-plan:
         \ High-Risk AI — Annex III §5(b)\n          Framework reference: https://eur-lex.europa.eu/legal-content/EN/TXT/?uri=CELEX%3A32024R1689\n\
         \          System: CAGE Financial Advisor v1.1.0\n          UCAs encoded:\
         \ 12 (6 enforcing server-bound, 6 advisory)\n          Hazards modelled: 7\n\
-        \          Safety constraints: 3\n          Last compiled: 2026-11-09T00:02:22Z\n\
+        \          Safety constraints: 3\n          Last compiled: 2026-11-13T00:54:23Z\n\
         \n          UCA-to-Control mapping (EU AI Act (Regulation (EU) 2024/1689)\
         \ High-Risk AI — Annex III §5(b)):\n            UCA-1 (unsafe_action): Agent\
         \ executes write operation without a human approval token.\n  → EU_AI_ACT:\
@@ -885,7 +964,7 @@ system-security-plan:
       - name: hazard-count
         value: '7'
       - name: last-compiled
-        value: '2026-11-09T00:02:22Z'
+        value: '2026-11-13T00:54:23Z'
       - name: target-framework
         value: EU AI Act (Regulation (EU) 2024/1689) High-Risk AI — Annex III §5(b)
       - name: artifact-python

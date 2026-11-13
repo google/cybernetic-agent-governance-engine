@@ -13,7 +13,8 @@
 # limitations under the License.
 
 # lula-validation-mas-trm-s6.yaml
-# cage-status: planned
+# cage-status: not-applicable
+# control-origination: adopter-operated (illustrative template; see system-security-plan-apac-mas.yaml)
 # MAS TRM §6.3 — AI and Machine Learning Controls
 #
 # Asserts that the CAGE system satisfies the Monetary Authority of Singapore

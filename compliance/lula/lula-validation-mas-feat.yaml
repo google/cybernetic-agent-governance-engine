@@ -13,7 +13,8 @@
 # limitations under the License.
 
 # lula-validation-mas-feat.yaml
-# cage-status: planned
+# cage-status: not-applicable
+# control-origination: adopter-operated (illustrative template; see system-security-plan-apac-mas.yaml)
 # MAS FEAT — Fairness, Ethics, Accountability, Transparency Assessment
 #
 # Asserts that the CAGE system satisfies the Monetary Authority of Singapore

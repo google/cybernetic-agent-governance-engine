@@ -124,6 +124,9 @@ _DEFAULT_RELATIVE_SSP_FILES: tuple[Path, ...] = (
 )
 
 _PLANNED_HEADER_RE = re.compile(r"(?m)^#[ \t]*cage-status:[ \t]*planned(?:[ \t]|$)")
+_NOT_APPLICABLE_HEADER_RE = re.compile(
+    r"(?m)^#[ \t]*cage-status:[ \t]*not-applicable(?:[ \t]|$)"
+)
 _REGION_RE = re.compile(r"\bRegion\s*:\s*([A-Za-z0-9_-]+)")
 
 # ---------------------------------------------------------------------------
@@ -607,13 +610,27 @@ def check_poam_coverage(
 
 
 # ---------------------------------------------------------------------------
-# Bidirectional # cage-status: planned <-> SSP implementation-status parity
+# Bidirectional # cage-status <-> SSP implementation-status parity
 # ---------------------------------------------------------------------------
 
 
 def has_planned_header(raw_text: str) -> bool:
     """Return True when a Lula manifest carries ``# cage-status: planned``."""
     return bool(_PLANNED_HEADER_RE.search(raw_text))
+
+
+def has_not_applicable_header(raw_text: str) -> bool:
+    """Return True when a Lula manifest carries ``# cage-status: not-applicable``."""
+    return bool(_NOT_APPLICABLE_HEADER_RE.search(raw_text))
+
+
+def extract_cage_status(raw_text: str) -> str:
+    """Return ``'not-applicable'``, ``'planned'``, or ``'active'`` for a Lula manifest."""
+    if has_not_applicable_header(raw_text):
+        return "not-applicable"
+    if has_planned_header(raw_text):
+        return "planned"
+    return "active"
 
 
 def normalize_ssp_control_id(raw: str) -> str:
@@ -661,16 +678,26 @@ def _extract_ssp_node_status(node: dict[str, Any]) -> str | None:
 
 def _extract_manifest_controls_and_region(
     path: Path,
-) -> tuple[bool, list[str], str | None, list[str]]:
-    """Return ``(is_planned, control_ids, region, parse_errors)`` for ``path``."""
+) -> tuple[str, list[str], str | None, list[str]]:
+    """Return ``(cage_status, control_ids, region, parse_errors)`` for ``path``."""
     raw_text = path.read_text(encoding="utf-8")
-    is_planned = has_planned_header(raw_text)
+    cage_status = extract_cage_status(raw_text)
+    if has_planned_header(raw_text) and has_not_applicable_header(raw_text):
+        return (
+            cage_status,
+            [],
+            None,
+            [
+                f"{path.name}: conflicting '# cage-status: planned' and "
+                f"'# cage-status: not-applicable' headers"
+            ],
+        )
     try:
         doc = yaml.safe_load(raw_text)
     except yaml.YAMLError as exc:
-        return is_planned, [], None, [f"{path.name}: YAML parse error: {exc}"]
+        return cage_status, [], None, [f"{path.name}: YAML parse error: {exc}"]
     if not isinstance(doc, dict):
-        return is_planned, [], None, [f"{path.name}: document is not a YAML mapping"]
+        return cage_status, [], None, [f"{path.name}: document is not a YAML mapping"]
 
     control_ids: list[str] = []
     region: str | None = None
@@ -707,7 +734,7 @@ def _extract_manifest_controls_and_region(
 
     if not control_ids:
         return (
-            is_planned,
+            cage_status,
             [],
             region,
             [
@@ -715,7 +742,7 @@ def _extract_manifest_controls_and_region(
                 f"(cannot resolve SSP status parity)"
             ],
         )
-    return is_planned, control_ids, region, []
+    return cage_status, control_ids, region, []
 
 
 def _select_target_ssp_names(
@@ -732,24 +759,63 @@ def _select_target_ssp_names(
     return list(available_names)
 
 
+def _effective_ssp_status_for_manifest(
+    req_status: str | None,
+    bycomp_lula_status: dict[str, str],
+    manifest_name: str,
+) -> str | None:
+    """Resolve the SSP status governing ``manifest_name`` (supporting split controls)."""
+    if req_status in ("partially-implemented", "partial"):
+        bc_st = bycomp_lula_status.get(manifest_name)
+        if bc_st in ("planned", "not-applicable"):
+            return bc_st
+    return req_status
+
+
+def _parity_mismatch_message(
+    manifest_name: str,
+    manifest_status: str,
+    ssp_name: str,
+    ssp_raw_cid: str,
+    eff_status: str | None,
+) -> str | None:
+    if eff_status is None:
+        return (
+            f"Lula<->SSP missing status: {ssp_name} control {ssp_raw_cid!r} "
+            f"(backing {manifest_name}) has no implementation-status."
+        )
+    if (
+        manifest_status in ("planned", "not-applicable")
+        and eff_status != manifest_status
+    ):
+        return (
+            f"Lula<->SSP status drift: {manifest_name} has "
+            f"'# cage-status: {manifest_status}' but {ssp_name} control "
+            f"{ssp_raw_cid!r} has implementation-status={eff_status!r} "
+            f"(expected {manifest_status!r})."
+        )
+    if manifest_status != "planned" and eff_status == "planned":
+        return (
+            f"Lula<->SSP status drift: {ssp_name} control {ssp_raw_cid!r} has "
+            f"implementation-status='planned' while {manifest_name} lacks "
+            f"'# cage-status: planned'."
+        )
+    if manifest_status != "not-applicable" and eff_status == "not-applicable":
+        return (
+            f"Lula<->SSP status drift: {ssp_name} control {ssp_raw_cid!r} has "
+            f"implementation-status='not-applicable' while {manifest_name} lacks "
+            f"'# cage-status: not-applicable'."
+        )
+    return None
+
+
 def check_lula_ssp_status_parity(
     manifest_files: Sequence[Path],
     ssp_files: Sequence[Path],
 ) -> tuple[list[str], int, int]:
-    """Enforce bidirectional ``# cage-status: planned`` <-> SSP ``planned`` parity.
+    """Enforce bidirectional ``# cage-status`` <-> SSP ``implementation-status`` parity.
 
-    Returns ``(errors, planned_count, active_count)``.
-    Fails closed when:
-    - No readable SSP files exist;
-    - Any Lula manifest lacks a resolvable ``control-id`` in its target SSP(s);
-    - A Lula manifest has ``# cage-status: planned`` while its SSP control is
-      not ``implementation-status: planned``;
-    - An SSP control backed by a Lula manifest (by normalized ``control-id`` or
-      explicit ``lula-validation-*.yaml`` reference) has
-      ``implementation-status: planned`` while that Lula manifest lacks
-      ``# cage-status: planned`` (or vice-versa);
-    - An SSP control cites a ``lula-validation-*.yaml`` filename that does not
-      exist in the scanned manifest set.
+    Returns ``(errors, non_active_count, active_count)``.
     """
     errors: list[str] = []
     existing_ssps = [p for p in ssp_files if p.is_file()]
@@ -761,10 +827,10 @@ def check_lula_ssp_status_parity(
             0,
         )
 
-    # Parse all SSP implemented-requirements:
-    # ssp_name -> norm_cid -> list[(raw_cid, status, cited_lula_names)]
-    ssp_index: dict[str, dict[str, list[tuple[str, str | None, set[str]]]]] = {}
-    ssp_all_reqs: list[tuple[str, str, str, str | None, set[str]]] = []
+    ssp_index: dict[
+        str, dict[str, list[tuple[str, str | None, set[str], dict[str, str]]]]
+    ] = {}
+    ssp_all_reqs: list[tuple[str, str, str, str | None, set[str], dict[str, str]]] = []
 
     for ssp_path in existing_ssps:
         try:
@@ -785,7 +851,7 @@ def check_lula_ssp_status_parity(
             )
             continue
 
-        per_ssp: dict[str, list[tuple[str, str | None, set[str]]]] = {}
+        per_ssp: dict[str, list[tuple[str, str | None, set[str], dict[str, str]]]] = {}
         for req in reqs:
             if not isinstance(req, dict) or not req.get("control-id"):
                 continue
@@ -794,38 +860,56 @@ def check_lula_ssp_status_parity(
             req_status = _extract_ssp_node_status(req)
             raw_req_dump = yaml.safe_dump(req, sort_keys=False)
             cited_lula = set(_MANIFEST_NAME_RE.findall(raw_req_dump))
-            per_ssp.setdefault(norm_cid, []).append((raw_cid, req_status, cited_lula))
+            bycomp_lula_status: dict[str, str] = {}
+            for bc in req.get("by-components") or []:
+                if not isinstance(bc, dict):
+                    continue
+                bc_st = _extract_ssp_node_status(bc)
+                if bc_st:
+                    bc_dump = yaml.safe_dump(bc, sort_keys=False)
+                    for bc_m in _MANIFEST_NAME_RE.findall(bc_dump):
+                        bycomp_lula_status[bc_m] = bc_st
+            per_ssp.setdefault(norm_cid, []).append(
+                (raw_cid, req_status, cited_lula, bycomp_lula_status)
+            )
             ssp_all_reqs.append(
-                (ssp_path.name, raw_cid, norm_cid, req_status, cited_lula)
+                (
+                    ssp_path.name,
+                    raw_cid,
+                    norm_cid,
+                    req_status,
+                    cited_lula,
+                    bycomp_lula_status,
+                )
             )
         ssp_index[ssp_path.name] = per_ssp
 
     if errors:
         return errors, 0, 0
 
-    manifest_by_name: dict[str, tuple[bool, list[str], str | None]] = {}
+    manifest_by_name: dict[str, tuple[str, list[str], str | None]] = {}
     manifests_by_region_and_cid: dict[tuple[str, str], list[str]] = {}
-    planned_count = 0
+    non_active_count = 0
     active_count = 0
     available_ssp_names = list(ssp_index.keys())
 
     # 1. Forward check: every Lula manifest -> target SSP requirement(s)
     for m_path in sorted(manifest_files, key=lambda p: p.name):
-        is_planned, cids, region, m_errs = _extract_manifest_controls_and_region(m_path)
-        if is_planned:
-            planned_count += 1
-        else:
+        m_status, cids, region, m_errs = _extract_manifest_controls_and_region(m_path)
+        if m_status == "active":
             active_count += 1
+        else:
+            non_active_count += 1
         if m_errs:
             errors.extend(m_errs)
             continue
 
-        manifest_by_name[m_path.name] = (is_planned, cids, region)
+        manifest_by_name[m_path.name] = (m_status, cids, region)
         target_ssps = _select_target_ssp_names(region, available_ssp_names)
 
         for raw_cid in cids:
             norm_cid = normalize_ssp_control_id(raw_cid)
-            matched_entries: list[tuple[str, str, str | None]] = []
+            matched_entries: list[tuple[str, str, str | None, dict[str, str]]] = []
             m_nist_enh = re.fullmatch(r"([a-z]{2}-\d+)\.\d+", norm_cid)
             parent_nist_cid = m_nist_enh.group(1) if m_nist_enh else None
             for ssp_name in target_ssps:
@@ -838,18 +922,19 @@ def check_lula_ssp_status_parity(
                 manifests_by_region_and_cid.setdefault(
                     (ssp_name, lookup_cid), []
                 ).append(m_path.name)
-                for ssp_raw_cid, ssp_status, _ in per_ssp.get(lookup_cid, []):
-                    matched_entries.append((ssp_name, ssp_raw_cid, ssp_status))
+                for ssp_raw_cid, ssp_status, _, bc_map in per_ssp.get(lookup_cid, []):
+                    matched_entries.append((ssp_name, ssp_raw_cid, ssp_status, bc_map))
 
-            # Fallback search across remaining SSPs only when region was unset/custom
             if not matched_entries and region not in ("EU_ECB", "APAC_MAS"):
                 for ssp_name in available_ssp_names:
                     if ssp_name in target_ssps:
                         continue
-                    for ssp_raw_cid, ssp_status, _ in ssp_index.get(ssp_name, {}).get(
-                        norm_cid, []
-                    ):
-                        matched_entries.append((ssp_name, ssp_raw_cid, ssp_status))
+                    for ssp_raw_cid, ssp_status, _, bc_map in ssp_index.get(
+                        ssp_name, {}
+                    ).get(norm_cid, []):
+                        matched_entries.append(
+                            (ssp_name, ssp_raw_cid, ssp_status, bc_map)
+                        )
                         manifests_by_region_and_cid.setdefault(
                             (ssp_name, norm_cid), []
                         ).append(m_path.name)
@@ -862,28 +947,26 @@ def check_lula_ssp_status_parity(
                 )
                 continue
 
-            for ssp_name, ssp_raw_cid, ssp_status in matched_entries:
-                if ssp_status is None:
-                    errors.append(
-                        f"Lula<->SSP missing status: {ssp_name} control {ssp_raw_cid!r} "
-                        f"(backing {m_path.name}) has no implementation-status."
-                    )
-                elif is_planned and ssp_status != "planned":
-                    errors.append(
-                        f"Lula<->SSP status drift: {m_path.name} has '# cage-status: planned' "
-                        f"but {ssp_name} control {ssp_raw_cid!r} has "
-                        f"implementation-status={ssp_status!r} (expected 'planned')."
-                    )
-                elif not is_planned and ssp_status == "planned":
-                    errors.append(
-                        f"Lula<->SSP status drift: {ssp_name} control {ssp_raw_cid!r} has "
-                        f"implementation-status='planned' while {m_path.name} lacks "
-                        f"'# cage-status: planned'."
-                    )
+            for ssp_name, ssp_raw_cid, ssp_status, bc_map in matched_entries:
+                eff_status = _effective_ssp_status_for_manifest(
+                    ssp_status, bc_map, m_path.name
+                )
+                msg = _parity_mismatch_message(
+                    m_path.name, m_status, ssp_name, ssp_raw_cid, eff_status
+                )
+                if msg:
+                    errors.append(msg)
 
     # 2. Reverse check: every SSP requirement citing or backed by a Lula manifest
     seen_errors = set(errors)
-    for ssp_name, ssp_raw_cid, norm_cid, ssp_status, cited_lula in ssp_all_reqs:
+    for (
+        ssp_name,
+        ssp_raw_cid,
+        norm_cid,
+        ssp_status,
+        cited_lula,
+        bc_map,
+    ) in ssp_all_reqs:
         backing_names = set(manifests_by_region_and_cid.get((ssp_name, norm_cid), []))
         for cited_name in sorted(cited_lula):
             if cited_name not in manifest_by_name:
@@ -898,27 +981,16 @@ def check_lula_ssp_status_parity(
                 backing_names.add(cited_name)
 
         for m_name in sorted(backing_names):
-            m_planned, _, _ = manifest_by_name[m_name]
-            if ssp_status == "planned" and not m_planned:
-                msg = (
-                    f"Lula<->SSP status drift: {ssp_name} control {ssp_raw_cid!r} has "
-                    f"implementation-status='planned' while {m_name} lacks "
-                    f"'# cage-status: planned'."
-                )
-                if msg not in seen_errors:
-                    errors.append(msg)
-                    seen_errors.add(msg)
-            elif ssp_status != "planned" and m_planned:
-                msg = (
-                    f"Lula<->SSP status drift: {m_name} has '# cage-status: planned' "
-                    f"but {ssp_name} control {ssp_raw_cid!r} has "
-                    f"implementation-status={ssp_status!r} (expected 'planned')."
-                )
-                if msg not in seen_errors:
-                    errors.append(msg)
-                    seen_errors.add(msg)
+            m_status, _, _ = manifest_by_name[m_name]
+            eff_status = _effective_ssp_status_for_manifest(ssp_status, bc_map, m_name)
+            mismatch = _parity_mismatch_message(
+                m_name, m_status, ssp_name, ssp_raw_cid, eff_status
+            )
+            if mismatch and mismatch not in seen_errors:
+                errors.append(mismatch)
+                seen_errors.add(mismatch)
 
-    return errors, planned_count, active_count
+    return errors, non_active_count, active_count
 
 
 # ---------------------------------------------------------------------------

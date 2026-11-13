@@ -13,7 +13,8 @@
 # limitations under the License.
 
 # lula-validation-eu-ai-act-art9.yaml
-# cage-status: planned
+# cage-status: not-applicable
+# control-origination: adopter-operated (illustrative template; see system-security-plan-eu-ecb.yaml)
 # EU AI Act Art. 9 — Risk Management System for High-Risk AI
 #
 # Asserts that the CAGE compliance bridge reports an active risk management

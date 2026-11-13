@@ -1486,7 +1486,7 @@ if [[ "$READINESS_FAILED" == "false" ]]; then
     else
       for validation_file in "${validation_files[@]}"; do
         base_name="$(basename "$validation_file")"
-        if grep -Eq '^#[[:space:]]*cage-status:[[:space:]]*planned([[:space:]]|$)' "$validation_file"; then
+        if grep -Eq '^#[[:space:]]*cage-status:[[:space:]]*(planned|not-applicable)([[:space:]]|$)' "$validation_file"; then
           planned_specs+=("$base_name")
           continue
         fi

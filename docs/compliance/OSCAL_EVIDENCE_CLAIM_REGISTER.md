@@ -1,28 +1,28 @@
-# OSCAL Evidence-Claim Sweep Register (Rings 1 & 2 — 208 Entries, Generated)
+# OSCAL Evidence-Claim Sweep Register (Rings 1 & 2 — 209 Entries, Generated)
 
 **Source of truth:** [`compliance/oscal/evidence_claim_census.jsonl`](../../compliance/oscal/evidence_claim_census.jsonl) | **Generator & Validator:** [`scripts/check_oscal_claim_census.py`](../../scripts/check_oscal_claim_census.py) | **POA&M trackers:** [`docs/POAM.md`](../POAM.md) · [`docs/compliance/us_fed/POAM_US_FED.md`](us_fed/POAM_US_FED.md)
 
 ## 1. Executive Summary & Cross-Tabulation
 
-Across all 7 structured OSCAL files (`207` entries plus `SA11-SYSTEMIC` = **`208` entries**), **`114` entries are substantively graded CAGE claims** (`39 HOLDS` / `34.2%`, `51 WEAKER`, `24 NOT_IN_FORCE`), alongside **`45 INHERITED`** (`common-controls-catalog.yaml`), **`35 ROLLUP`** (`29` generated `SA-11` by-components evaluated together under `SA11-SYSTEMIC` plus `6` duplicate `component-definition.yaml` entries), and **`14 NOT_A_CLAIM`** (`planned` or `under-development`).
+Across all 7 structured OSCAL files (`208` entries plus `SA11-SYSTEMIC` = **`209` entries**), **`116` entries are substantively graded CAGE claims** (`41 HOLDS` / `35.3%`, `51 WEAKER`, `24 NOT_IN_FORCE`), alongside **`45 INHERITED`** (`common-controls-catalog.yaml`), **`35 ROLLUP`** (`29` generated `SA-11` by-components evaluated together under `SA11-SYSTEMIC` plus `6` duplicate `component-definition.yaml` entries), and **`13 NOT_A_CLAIM`** (`planned` or `under-development`).
 
 | Slice | OSCAL File(s) | Entries | `HOLDS` | `WEAKER` | `NOT_IN_FORCE` | `INHERITED` | `ROLLUP` | `NOT_A_CLAIM` | `w_binding=true` | Reopen |
 |---|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|
 | **Ring 1a** | [`system-security-plan.yaml`](../../compliance/oscal/system-security-plan.yaml) (`US_FED`) | 54 | 16 | 19 | 8 | 0 | 9 | 2 | 24 | 2 |
-| **Ring 1b** | [`system-security-plan-eu-ecb.yaml`](../../compliance/oscal/system-security-plan-eu-ecb.yaml), [`system-security-plan-apac-mas.yaml`](../../compliance/oscal/system-security-plan-apac-mas.yaml) + `SA11-SYSTEMIC` | 46 | 9 | 6 | 0 | 0 | 19 | 12 | 1 | 0 |
+| **Ring 1b** | [`system-security-plan-eu-ecb.yaml`](../../compliance/oscal/system-security-plan-eu-ecb.yaml), [`system-security-plan-apac-mas.yaml`](../../compliance/oscal/system-security-plan-apac-mas.yaml) + `SA11-SYSTEMIC` | 47 | 11 | 6 | 0 | 0 | 19 | 11 | 1 | 0 |
 | **Ring 2a** | [`sp800-53-component-definition.yaml`](../../compliance/oscal/sp800-53-component-definition.yaml) | 34 | 14 | 13 | 7 | 0 | 0 | 0 | 6 | 1 |
 | **Ring 2b** | [`component-definition.yaml`](../../compliance/oscal/component-definition.yaml), [`stpa_compiler_ssp_patch.yaml`](../../compliance/oscal/stpa_compiler_ssp_patch.yaml) | 29 | 0 | 13 | 9 | 0 | 7 | 0 | 6 | 1 |
 | **Ring 2c** | [`common-controls-catalog.yaml`](../../compliance/oscal/common-controls-catalog.yaml) | 45 | 0 | 0 | 0 | 45 | 0 | 0 | 0 | 0 |
-| **Total** | **All 7 OSCAL structured files + `SA11-SYSTEMIC`** | **208** | **39** | **51** | **24** | **45** | **35** | **14** | **37** | **4** |
+| **Total** | **All 7 OSCAL structured files + `SA11-SYSTEMIC`** | **209** | **41** | **51** | **24** | **45** | **35** | **13** | **37** | **4** |
 
-### Read-Back x Verdict (114 Substantively Graded Entries: `HOLDS` + `WEAKER` + `NOT_IN_FORCE`)
+### Read-Back x Verdict (116 Substantively Graded Entries: `HOLDS` + `WEAKER` + `NOT_IN_FORCE`)
 
 | `read_back` Grade | `HOLDS` | `WEAKER` | `NOT_IN_FORCE` | Total | Rate Holding |
 |---|---:|---:|---:|---:|---:|
-| **`OBSERVES`** (behavioural / runtime check exists) | 36 | 38 | 6 | 80 | 45.0% |
+| **`OBSERVES`** (behavioural / runtime check exists) | 38 | 38 | 6 | 82 | 46.3% |
 | **`PRESENCE`** (static / shape / consistency check only) | 3 | 9 | 5 | 17 | 17.6% |
 | **`NONE`** (no check or schema-broken Lula check) | 0 | 4 | 13 | 17 | 0.0% |
-| **Total** | **39** | **51** | **24** | **114** | **34.2%** |
+| **Total** | **41** | **51** | **24** | **116** | **35.3%** |
 
 ### Baseline Sweep Reopenings (Classified by Closure-Failure Shape)
 
@@ -103,10 +103,12 @@ Across all 7 structured OSCAL files (`207` entries plus `SA11-SYSTEMIC` = **`208
 
 **`NOT_A_CLAIM` entries (`2`, `planned` or `not-applicable`):** `g7000009-0000-4000-8000-000000000009` (`ra-5`, `planned`), `h8000009-0000-4000-8000-000000000010` (`ra-5`, `planned`).
 
-## 3. Ring 1b — `system-security-plan-eu-ecb.yaml`, `system-security-plan-apac-mas.yaml` & `SA11-SYSTEMIC` (46 entries)
+## 3. Ring 1b — `system-security-plan-eu-ecb.yaml`, `system-security-plan-apac-mas.yaml` & `SA11-SYSTEMIC` (47 entries)
 
 | ID | Ctrl | Component / Status | Claim | Custody | Read-Back | Lifetime | `w_binding` | Verdict / Disp. | `read_back_to_hold` (What Read-Back Makes It Hold) |
 |---|---|---|---|---|---|---|---|---|---|
+| `eu-ecb-req-0002-4000-8000-000000000002` | `gdpr-art22` | req (`partially-i…`) | GDPR Art. 22 split: system-triggered REQUIRE_APPROVAL (>= EUR 7,500 threshold, [0.70… | **`CONFIG`**: System-triggered REQUIRE_APPROVAL, DeferQueue dual-control human quorum, a… | **`OBSERVES`**: tests/test_defer_dual_control_auth.py; tests/test_defer_queue_quorum.py; t… | **`REPO`**: claim rests on code/config at a commit | **`False`** | **`HOLDS`** (`holds`) | — |
+| `eu-ecb-bycomp-0002-4000-8000-00000000…` | `gdpr-art22` | CAGE GDPR Art. 22 Human… (`implemented`) | Implemented runtime human-intervention gate: REQUIRE_APPROVAL escalations park token… | **`CONFIG`**: Code and EU_ECB regional baseline config at a commit. | **`OBSERVES`**: tests/test_defer_dual_control_auth.py; tests/test_defer_queue_quorum.py; t… | **`REPO`**: claim rests on code/config at a commit | **`False`** | **`HOLDS`** (`holds`) | — |
 | `apac-mas-req-0004-4000-8000-000000000…` | `cm-6` | req (`implemented`) | Effective APAC_MAS finance values (gamma 0.55, drawdown 0.045, consensus 8500, UCA-5… | **`CONFIG`**: Values in config/thresholds/APAC_MAS_BASELINE.json:19-44 and code. latency… | **`OBSERVES`**: tests/governor/test_regional_overlay.py:158-207 (APAC_MAS effective values… | **`REPO`**: claim rests on code/config at a commit | **`False`** | **`HOLDS`** (`holds`) | — |
 | `apac-mas-bycomp-0004-4000-8000-000000…` | `cm-6` | CAGE Regional Finance T… (`partially-i…`) | Each fail-closed overlay path and the effective APAC_MAS values are observed in four… | **`CONFIG`**: claim rests on overlay/assembly code and the regional baseline file | **`OBSERVES`**: tests/governor/test_regional_overlay.py:119-121 (missing file), :124-127 (… | **`REPO`**: claim rests on code/config at a commit | **`False`** | **`HOLDS`** (`holds`) | — |
 | `eu-ecb-req-0005-4000-8000-000000000005` | `cm-6` | req (`implemented`) | Effective EU_ECB finance values (gamma 0.6, drawdown 0.04, consensus 7500, UCA-5 3.5… | **`CONFIG`**: Values in config/thresholds/EU_ECB_BASELINE.json:20-46 and code. latency_m… | **`OBSERVES`**: tests/governor/test_regional_overlay.py:158-207 (EU_ECB effective values i… | **`REPO`**: claim rests on code/config at a commit | **`False`** | **`HOLDS`** (`holds`) | — |
@@ -125,7 +127,7 @@ Across all 7 structured OSCAL files (`207` entries plus `SA11-SYSTEMIC` = **`208
 
 **`ROLLUP` entries (`19`, graded under `SA11-SYSTEMIC` in §3, disposition `restate`):** `h8000099-stpa-4000-8000-compiler00000` (`sa-11`), `h8000099-stpa-4000-8000-compiler00001` (`sa-11`), `h8000099-stpa-4000-8000-compiler00002` (`sa-11`), `h8000099-stpa-4000-8000-compiler00003` (`sa-11`), `h8000099-stpa-4000-8000-compiler00004` (`sa-11`), `h8000099-stpa-4000-8000-compiler00005` (`sa-11`), `h8000099-stpa-4000-8000-compiler00006` (`sa-11`), `h8000099-stpa-4000-8000-compiler00007` (`sa-11`), `h8000099-stpa-4000-8000-compiler00008` (`sa-11`), `h8000099-stpa-4000-8000-compiler00009` (`sa-11`), `h8000099-stpa-4000-8000-compiler00000` (`sa-11`), `h8000099-stpa-4000-8000-compiler00001` (`sa-11`), `h8000099-stpa-4000-8000-compiler00002` (`sa-11`), `h8000099-stpa-4000-8000-compiler00003` (`sa-11`), `h8000099-stpa-4000-8000-compiler00004` (`sa-11`), `h8000099-stpa-4000-8000-compiler00005` (`sa-11`), `h8000099-stpa-4000-8000-compiler00006` (`sa-11`), `h8000099-stpa-4000-8000-compiler00007` (`sa-11`), `h8000099-stpa-4000-8000-compiler00008` (`sa-11`).
 
-**`NOT_A_CLAIM` entries (`12`, `planned` or `not-applicable`):** `apac-mas-req-0001-4000-8000-000000000001` (`mas-feat`, `planned`), `apac-mas-bycomp-0001-4000-8000-000000000001` (`mas-feat`, `planned`), `apac-mas-req-0002-4000-8000-000000000002` (`mas-notice-655`, `planned`), `apac-mas-bycomp-0002-4000-8000-000000000002` (`mas-notice-655`, `planned`), `apac-mas-req-0003-4000-8000-000000000003` (`mas-trm-s6`, `planned`), `apac-mas-bycomp-0003-4000-8000-000000000003` (`mas-trm-s6`, `planned`), `eu-ecb-req-0001-4000-8000-000000000001` (`eu-ai-act-art9`, `planned`), `eu-ecb-bycomp-0001-4000-8000-000000000001` (`eu-ai-act-art9`, `planned`), `eu-ecb-req-0002-4000-8000-000000000002` (`gdpr-art22`, `planned`), `eu-ecb-bycomp-0002-4000-8000-000000000002` (`gdpr-art22`, `planned`), `eu-ecb-req-0003-4000-8000-000000000003` (`dora-art10`, `planned`), `eu-ecb-bycomp-0003-4000-8000-000000000003` (`dora-art10`, `planned`).
+**`NOT_A_CLAIM` entries (`11`, `planned` or `not-applicable`):** `apac-mas-req-0001-4000-8000-000000000001` (`mas-feat`, `not-applicable`), `apac-mas-bycomp-0001-4000-8000-000000000001` (`mas-feat`, `not-applicable`), `apac-mas-req-0002-4000-8000-000000000002` (`mas-notice-655`, `not-applicable`), `apac-mas-bycomp-0002-4000-8000-000000000002` (`mas-notice-655`, `not-applicable`), `apac-mas-req-0003-4000-8000-000000000003` (`mas-trm-s6`, `not-applicable`), `apac-mas-bycomp-0003-4000-8000-000000000003` (`mas-trm-s6`, `not-applicable`), `eu-ecb-req-0001-4000-8000-000000000001` (`eu-ai-act-art9`, `not-applicable`), `eu-ecb-bycomp-0001-4000-8000-000000000001` (`eu-ai-act-art9`, `not-applicable`), `eu-ecb-bycomp-0002-4000-8000-000000000022` (`gdpr-art22`, `planned`), `eu-ecb-req-0003-4000-8000-000000000003` (`dora-art10`, `not-applicable`), `eu-ecb-bycomp-0003-4000-8000-000000000003` (`dora-art10`, `not-applicable`).
 
 ## 4. Ring 2a — `sp800-53-component-definition.yaml` (34 entries)
 
