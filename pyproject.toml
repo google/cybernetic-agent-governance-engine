@@ -1,6 +1,6 @@
 [project]
 name = "cybernetic-governance-engine"
-version = "4.0.0"
+version = "4.1.0"
 description = "CAGE — Cybernetic AI Governance Engine"
 authors = [{ name = "Google LLC" }]
 license = "Apache-2.0"

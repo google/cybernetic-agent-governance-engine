@@ -195,7 +195,7 @@ The policy-enforcement-point client is shipped as a standalone, independently in
 
 | Attribute | Value |
 | --------- | ----- |
-| **Distribution name** | `cage-client` v0.2.0 (Apache-2.0) |
+| **Distribution name** | `cage-client` v0.3.0 (Apache-2.0) |
 | **Source root** | [`packages/cage-client/src/cage_client/`](../../packages/cage-client/src/cage_client) |
 | **Runtime dependencies** | `httpx>=0.27.0`, `pydantic>=2.0.0`, `cryptography>=41.0.0` — three packages only |
 | **Optional extras** | `langgraph` (`langgraph`, `langchain-core`), `http2` (`h2`), `all` |

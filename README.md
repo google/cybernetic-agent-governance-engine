@@ -68,18 +68,18 @@ By default every tier is deterministic and needs no model. `consensus` escalates
 
 - **Kernel** — domain- and vendor-neutral enforcement. Import boundaries are enforced in CI, not by convention.
 - **Domain plugins** — `finance` ([`src/cage_finance/`](src/cage_finance/)) is the sole finalized, production-eligible domain configuration; `healthcare` ([`src/cage_healthcare/`](src/cage_healthcare/)) and `physical_ai` ([`src/cage_physical_ai/`](src/cage_physical_ai/)) ship as non-production reference stubs (`POAM-2026-076`–`078`, `POAM-2026-198`). Exactly one domain is active per process.
-- **Adapters** — LangGraph today, via [`packages/cage-client`](packages/cage-client/) ([GitHub Packages](https://github.com/orgs/google/packages?repo_name=cybernetic-agent-governance-engine) · [GitHub Releases](https://github.com/google/cybernetic-agent-governance-engine/releases/tag/client-v0.2.0)).
+- **Adapters** — LangGraph today, via [`packages/cage-client`](packages/cage-client/) ([GitHub Packages](https://github.com/orgs/google/packages?repo_name=cybernetic-agent-governance-engine) · [GitHub Releases](https://github.com/google/cybernetic-agent-governance-engine/releases/tag/client-v0.3.0)).
 
 Deeper material lives in [`docs/architecture/`](docs/architecture/), and the formal guarantees — control barrier functions, reachability analysis, the correctness invariants — are documented in [`docs/architecture/`](docs/architecture/) with proofs under [`proof/`](proof/).
 
 ## Using with LangGraph (`cage-client`)
 
-Install the lightweight `cage-client` Policy Enforcement Point (PEP) SDK from [GitHub Packages](https://github.com/orgs/google/packages?repo_name=cybernetic-agent-governance-engine), [GitHub Releases](https://github.com/google/cybernetic-agent-governance-engine/releases/tag/client-v0.2.0), or directly via `pip` / `uv`:
+Install the lightweight `cage-client` Policy Enforcement Point (PEP) SDK from [GitHub Packages](https://github.com/orgs/google/packages?repo_name=cybernetic-agent-governance-engine), [GitHub Releases](https://github.com/google/cybernetic-agent-governance-engine/releases/tag/client-v0.3.0), or directly via `pip` / `uv`:
 
 ```bash
 pip install "cage-client[langgraph] @ git+https://github.com/google/cybernetic-agent-governance-engine.git#subdirectory=packages/cage-client"
 # Or install the pre-built release wheel directly:
-pip install https://github.com/google/cybernetic-agent-governance-engine/releases/download/v3.2.0/cage_client-0.2.0-py3-none-any.whl
+pip install https://github.com/google/cybernetic-agent-governance-engine/releases/download/client-v0.3.0/cage_client-0.3.0-py3-none-any.whl
 ```
 
 Decorate any LangGraph node with `@cage_guard` to route tool execution through the CAGE Gateway:
