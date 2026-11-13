@@ -1696,7 +1696,7 @@ if not has_custody_ack:
       error "Live Langfuse posture isolation check (--posture staging) FAILED"
       ((POSTURE_FAILURES++)) || true
     fi
-    if ! env CAGE_ALLOW_MACOS_TESTS=1 uv run python "${CAGE_BINAUTHZ_PROBE_SCRIPT:-$REPO_ROOT/scripts/verify_binauthz_negative_probe.py}" --namespace "$NAMESPACE" --output "$ARCHIVE_DIR/binauthz-negative-probe.json"; then error "Binary Authorization negative unattested-pod probe FAILED"; ((POSTURE_FAILURES++)) || true; fi
+    if ! env CAGE_ALLOW_MACOS_TESTS=1 uv run python "${CAGE_BINAUTHZ_PROBE_SCRIPT:-$REPO_ROOT/scripts/verify_binauthz_negative_probe.py}" --namespace default --output "$ARCHIVE_DIR/binauthz-negative-probe.json"; then error "Binary Authorization negative unattested-pod probe FAILED"; ((POSTURE_FAILURES++)) || true; fi
     if [[ $POSTURE_FAILURES -eq 0 ]]; then
       success "Region posture, live data-residency, and Langfuse isolation validation complete"
     else

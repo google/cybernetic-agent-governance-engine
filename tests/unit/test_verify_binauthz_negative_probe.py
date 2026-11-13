@@ -40,10 +40,9 @@ _WHITELISTED_PREFIXES = (
 def test_unattested_pod_manifest_satisfies_restricted_pss_and_non_whitelisted_image() -> (
     None
 ):
-    manifest = binauthz_probe.build_unattested_pod_manifest(
-        namespace="governance-stack"
-    )
+    manifest = binauthz_probe.build_unattested_pod_manifest()
     assert manifest["kind"] == "Pod"
+    assert manifest["metadata"]["namespace"] == "default"
     assert manifest["metadata"]["annotations"]["linkerd.io/inject"] == "disabled"
     pod_sc = manifest["spec"]["securityContext"]
     assert pod_sc["runAsNonRoot"] is True
@@ -60,6 +59,11 @@ def test_unattested_pod_manifest_satisfies_restricted_pss_and_non_whitelisted_im
     assert ctr_sc["runAsNonRoot"] is True
     assert ctr_sc["capabilities"]["drop"] == ["ALL"]
     assert ctr_sc["seccompProfile"]["type"] == "RuntimeDefault"
+
+
+def test_unattested_pod_manifest_refuses_meshed_governance_stack_namespace() -> None:
+    with pytest.raises(ValueError, match="cage-mesh-proxy-required"):
+        binauthz_probe.build_unattested_pod_manifest(namespace="governance-stack")
 
 
 def test_negative_probe_passes_on_imagepolicywebhook_rejection(
@@ -90,10 +94,11 @@ def test_negative_probe_passes_on_imagepolicywebhook_rejection(
 
     monkeypatch.setattr(binauthz_probe.subprocess, "run", _fake_run)
     out = tmp_path / "probe.json"
-    rc = binauthz_probe.main(["--namespace", "governance-stack", "--output", str(out)])
+    rc = binauthz_probe.main(["--output", str(out)])
     assert rc == 0
     doc = json.loads(out.read_text(encoding="utf-8"))
     assert doc["passed"] is True
+    assert doc["namespace"] == "default"
     assert doc["pod_admitted"] is False
     assert doc["webhook_verified"] is True
     assert len(calls) == 2
@@ -118,7 +123,7 @@ def test_negative_probe_fails_closed_and_cleans_up_when_pod_is_admitted(
 
     monkeypatch.setattr(binauthz_probe.subprocess, "run", _fake_run)
     out = tmp_path / "probe-admitted.json"
-    rc = binauthz_probe.main(["--namespace", "governance-stack", "--output", str(out)])
+    rc = binauthz_probe.main(["--namespace", "default", "--output", str(out)])
     assert rc == 1
     doc = json.loads(out.read_text(encoding="utf-8"))
     assert doc["passed"] is False
@@ -131,6 +136,7 @@ def test_negative_probe_fails_closed_and_cleans_up_when_pod_is_admitted(
     "stderr_msg",
     [
         'Error from server (Forbidden): pods "cage-binauthz-unattested-probe" is forbidden: violates PodSecurity "restricted:latest"',
+        'The pods "cage-binauthz-unattested-probe" is invalid: ValidatingAdmissionPolicy "cage-mesh-proxy-required" with binding "cage-mesh-proxy-required" denied request: pods in this namespace must run the Linkerd proxy',
         "The connection to the server 10.0.0.2:443 was refused",
     ],
 )
@@ -151,7 +157,7 @@ def test_negative_probe_fails_closed_when_rejection_is_not_binauthz(
 
     monkeypatch.setattr(binauthz_probe.subprocess, "run", _fake_run)
     out = tmp_path / "probe-wrong-err.json"
-    rc = binauthz_probe.main(["--namespace", "governance-stack", "--output", str(out)])
+    rc = binauthz_probe.main(["--namespace", "custom-ns", "--output", str(out)])
     assert rc == 1
     doc = json.loads(out.read_text(encoding="utf-8"))
     assert doc["passed"] is False

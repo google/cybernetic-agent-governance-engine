@@ -194,6 +194,23 @@ def validate_certification(
             f"got {manifest_sha!r}"
         )
 
+    release_url = payload.get("archive_release_url")
+    if (
+        not isinstance(release_url, str)
+        or not release_url.startswith("https://github.com/")
+        or "/releases/download/" not in release_url
+    ):
+        errors.append(
+            "CERTIFIED record requires public GitHub Release asset archive_release_url "
+            f"(https://github.com/.../releases/download/...), got {release_url!r}"
+        )
+
+    archive_sha = payload.get("archive_sha256")
+    if not isinstance(archive_sha, str) or not _SHA64_RE.match(archive_sha):
+        errors.append(
+            f"CERTIFIED record requires 64-char hex archive_sha256, got {archive_sha!r}"
+        )
+
     partner_status = payload.get("partner_conformance_status")
     if partner_status not in VALID_PARTNER_STATUSES:
         errors.append(

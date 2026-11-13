@@ -46,6 +46,7 @@ DEFAULT_UNATTESTED_IMAGE = (
     "cgr.dev/chainguard/wolfi-base@"
     "sha256:f15fea2f49cb14dceaea491fcbde0d35e0c190126a744ac05a9838440d47d994"
 )
+DEFAULT_PROBE_NAMESPACE = "default"
 DEFAULT_POD_NAME = "cage-binauthz-unattested-probe"
 
 _BINAUTHZ_MARKERS: tuple[str, ...] = (
@@ -58,11 +59,26 @@ _BINAUTHZ_MARKERS: tuple[str, ...] = (
 
 def build_unattested_pod_manifest(
     *,
-    namespace: str,
+    namespace: str = DEFAULT_PROBE_NAMESPACE,
     pod_name: str = DEFAULT_POD_NAME,
     image: str = DEFAULT_UNATTESTED_IMAGE,
 ) -> dict[str, Any]:
-    """Build a restricted-PSS-compliant Pod manifest using an unattested digest."""
+    """Build a restricted-PSS-compliant Pod manifest using an unattested digest.
+
+    Targets a non-meshed namespace (``default`` by default) because
+    ``ValidatingAdmissionPolicy/cage-mesh-proxy-required`` (MI-3) binds
+    ``governance-stack`` and denies ``linkerd.io/inject=disabled`` pods in-process
+    before ``imagepolicywebhook.image-policy.k8s.io`` is reached, whereas
+    ``google_binary_authorization_policy.cluster_policy`` enforces
+    ``REQUIRE_ATTESTATION`` / ``ENFORCED_BLOCK_AND_AUDIT_LOG`` cluster-wide.
+    """
+    if namespace == "governance-stack":
+        raise ValueError(
+            "Binary Authorization negative probe must target a non-meshed namespace "
+            "(e.g. 'default'), not 'governance-stack': ValidatingAdmissionPolicy/"
+            "cage-mesh-proxy-required denies linkerd.io/inject=disabled pods before "
+            "Binary Authorization admission runs."
+        )
     return {
         "apiVersion": "v1",
         "kind": "Pod",
@@ -110,7 +126,7 @@ def build_unattested_pod_manifest(
 
 def run_negative_probe(
     *,
-    namespace: str,
+    namespace: str = DEFAULT_PROBE_NAMESPACE,
     pod_name: str = DEFAULT_POD_NAME,
     image: str = DEFAULT_UNATTESTED_IMAGE,
     kubectl_bin: str | None = None,
@@ -185,8 +201,12 @@ def run_negative_probe(
             "rejection_excerpt": combined[:500],
         }
 
-    pod_security_blocked = "podsecurity" in combined_lower
-    webhook_matched = not pod_security_blocked and any(
+    non_binauthz_policy_blocked = (
+        "podsecurity" in combined_lower
+        or "cage-mesh-proxy-required" in combined_lower
+        or "must run the linkerd proxy" in combined_lower
+    )
+    webhook_matched = not non_binauthz_policy_blocked and any(
         marker in combined_lower for marker in _BINAUTHZ_MARKERS
     )
     passed = bool(webhook_matched)
@@ -213,8 +233,8 @@ def _build_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument(
         "--namespace",
-        default="governance-stack",
-        help="Target Kubernetes namespace (default: governance-stack).",
+        default=DEFAULT_PROBE_NAMESPACE,
+        help="Non-meshed Kubernetes namespace for probe admission (default: default).",
     )
     parser.add_argument(
         "--image",

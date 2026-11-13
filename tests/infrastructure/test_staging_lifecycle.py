@@ -2183,13 +2183,14 @@ exit 0
     uv_path = bin_dir / "uv"
     base_uv = uv_path.read_text(encoding="utf-8")
 
-    # 1. Passing BinAuthz negative probe writes binauthz-negative-probe.json -> manifest embeds probe + disclosures
-    pass_probe_json = '{"passed":true,"pod_admitted":false,"webhook_verified":true}'
+    # 1. Passing BinAuthz negative probe (--namespace default) writes binauthz-negative-probe.json -> manifest embeds probe + disclosures
+    pass_probe_json = '{"namespace":"default","passed":true,"pod_admitted":false,"webhook_verified":true}'
     _write_executable(
         uv_path,
         base_uv.replace(
             'if [[ "$*" == *"verify_langfuse_posture.py"* ]]; then\n',
             'if [[ "$*" == *"verify_binauthz_negative_probe.py"* ]]; then\n'
+            '  [[ "$*" == *"--namespace default"* ]] || { echo "expected --namespace default, got $*" >&2; exit 2; }\n'
             "  out_next=false\n"
             '  for arg in "$@"; do\n'
             '    if [[ "$out_next" == "true" ]]; then\n'
@@ -2226,6 +2227,7 @@ exit 0
     assert proc_ok.returncode == 0, proc_ok.stderr
     manifest_ok = json.loads((archive_ok / "manifest.json").read_text(encoding="utf-8"))
     assert manifest_ok["binauthz_negative_probe"] == {
+        "namespace": "default",
         "passed": True,
         "pod_admitted": False,
         "webhook_verified": True,

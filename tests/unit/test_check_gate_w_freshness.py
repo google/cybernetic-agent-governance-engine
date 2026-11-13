@@ -58,6 +58,8 @@ def _valid_certified() -> dict[str, object]:
         "certified_git_sha": "a" * 40,
         "deployment_target_mode": "fresh_project_clean_room",
         "archive_worm_uri": "gs://demo-worm-bucket/gate-w/2026-11-10/manifest.json",
+        "archive_release_url": "https://github.com/google/cybernetic-agent-governance-engine/releases/download/v4.1.0/gate-w-demo.tar.gz",
+        "archive_sha256": "c" * 64,
         "archive_manifest_sha256": "b" * 64,
         "partner_conformance_status": "passed",
     }
@@ -184,3 +186,28 @@ def test_certified_record_accepts_phase0_kms_residue_target_mode(
         ]
     )
     assert rc == 0
+
+
+def test_certified_record_requires_public_release_archive_url_and_sha256(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    bad = _valid_certified()
+    bad["archive_release_url"] = "gs://private-only-bucket/archive.tar.gz"
+    bad["archive_sha256"] = "short"
+    cert_file, codeowners_file, poam_file = _write_fixture(tmp_path, bad)
+    rc = main(
+        [
+            "--cert-file",
+            str(cert_file),
+            "--codeowners-file",
+            str(codeowners_file),
+            "--poam-file",
+            str(poam_file),
+            "--now-utc",
+            "2026-11-11T00:00:00Z",
+        ]
+    )
+    assert rc == 1
+    err = capsys.readouterr().err
+    assert "archive_release_url" in err
+    assert "archive_sha256" in err
