@@ -119,10 +119,27 @@ jobs:
 
       - name: Build CAGE Conformance Verifier Wheel & Sdist
         if: github.event_name == 'workflow_dispatch' || startsWith(github.ref, 'refs/tags/conformance-v')
+        env:
+          COMMIT_SHA: ${{ github.sha }}
         run: |
           cd packages/cage-conformance
           rm -rf dist
           uv build
+          CONF_VERSION=$(python3 -c 'import tomllib; print(tomllib.load(open("pyproject.toml", "rb"))["project"]["version"])')
+          SDIST_VENV="$(mktemp -d)/sdist-venv"
+          uv venv "$SDIST_VENV"
+          uv pip install --python "$SDIST_VENV/bin/python" --no-deps dist/cage_conformance-"${CONF_VERSION}".tar.gz
+          "$SDIST_VENV/bin/cage-conformance" --version | grep -Fx "cage-conformance ${CONF_VERSION}"
+          "$SDIST_VENV/bin/cage-conformance" verify \
+            --trace src/cage_conformance/vectors/trace_v1.json \
+            --provider-id cage-conformance-sdist-smoke \
+            --adapter-author-org "Google LLC" \
+            --counterparty-org "Google LLC" \
+            --adapter-version "$CONF_VERSION" \
+            --adapter-commit "${COMMIT_SHA::12}" \
+            --runner-org "Google LLC" \
+            --runner-identity "publish-client-sdk@github-actions"
+          rm -rf "$(dirname "$SDIST_VENV")"
 
       - name: Log in to GitHub Container Registry (GHCR)
         if: >-
@@ -155,21 +172,38 @@ jobs:
 
       - name: Publish CAGE Conformance Verifier to GitHub Packages (GHCR)
         if: github.event_name == 'workflow_dispatch' || startsWith(github.ref, 'refs/tags/conformance-v')
+        env:
+          COMMIT_SHA: ${{ github.sha }}
         run: |
           CONF_VERSION=$(python3 -c 'import tomllib; print(tomllib.load(open("packages/cage-conformance/pyproject.toml", "rb"))["project"]["version"])')
           CONF_IMAGE="ghcr.io/google/cybernetic-agent-governance-engine/cage-conformance"
           cat > packages/cage-conformance/Dockerfile.pkg <<'EOF'
-          FROM scratch
+          FROM python:3.12-slim
           LABEL org.opencontainers.image.title="cage-conformance"
           LABEL org.opencontainers.image.description="Standalone Conformance Verifier for CAGE Governance Traces, Evidence Streams, and Partner Endpoints"
           LABEL org.opencontainers.image.source="https://github.com/google/cybernetic-agent-governance-engine"
           LABEL org.opencontainers.image.licenses="Apache-2.0"
           COPY dist/ /dist/
+          RUN pip install --no-cache-dir --no-deps /dist/*.whl
+          USER 65532:65532
+          ENTRYPOINT ["cage-conformance"]
           EOF
           docker build -f packages/cage-conformance/Dockerfile.pkg -t "${CONF_IMAGE}:${CONF_VERSION}" -t "${CONF_IMAGE}:latest" packages/cage-conformance
+          rm -f packages/cage-conformance/Dockerfile.pkg
+          docker run --rm "${CONF_IMAGE}:${CONF_VERSION}" --version | grep -Fx "cage-conformance ${CONF_VERSION}"
+          docker run --rm \
+            -v "$PWD/packages/cage-conformance/src/cage_conformance/vectors:/vectors:ro" \
+            "${CONF_IMAGE}:${CONF_VERSION}" verify \
+            --trace /vectors/trace_v1.json \
+            --provider-id cage-conformance-ghcr-smoke \
+            --adapter-author-org "Google LLC" \
+            --counterparty-org "Google LLC" \
+            --adapter-version "$CONF_VERSION" \
+            --adapter-commit "${COMMIT_SHA::12}" \
+            --runner-org "Google LLC" \
+            --runner-identity "publish-client-sdk@github-actions"
           docker push "${CONF_IMAGE}:${CONF_VERSION}"
           docker push "${CONF_IMAGE}:latest"
-          rm -f packages/cage-conformance/Dockerfile.pkg
 
       - name: Publish cage-client to PyPI (OIDC Trusted Publishing)
         if: vars.PYPI_TRUSTED_PUBLISHING_ENABLED == 'true' && startsWith(github.ref, 'refs/tags/client-v')

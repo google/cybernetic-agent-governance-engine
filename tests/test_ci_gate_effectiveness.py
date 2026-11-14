@@ -1680,12 +1680,24 @@ def test_publish_client_sdk_tag_version_guard_and_per_tag_scoping(
     assert "refs/tags/client-v" in ghcr_client_if
     assert "refs/tags/conformance-v" not in ghcr_client_if
 
-    ghcr_conf_if = str(
-        by_name["Publish CAGE Conformance Verifier to GitHub Packages (GHCR)"]["if"]
+    build_conf_run = str(
+        by_name["Build CAGE Conformance Verifier Wheel & Sdist"]["run"]
     )
+    assert 'dist/cage_conformance-"${CONF_VERSION}".tar.gz' in build_conf_run
+    assert "verify" in build_conf_run
+    assert "${{" not in build_conf_run
+
+    ghcr_conf = by_name["Publish CAGE Conformance Verifier to GitHub Packages (GHCR)"]
+    ghcr_conf_if = str(ghcr_conf["if"])
     assert "workflow_dispatch" in ghcr_conf_if
     assert "refs/tags/conformance-v" in ghcr_conf_if
     assert "refs/tags/client-v" not in ghcr_conf_if
+    ghcr_conf_run = str(ghcr_conf["run"])
+    assert "FROM python:3.12-slim" in ghcr_conf_run
+    assert 'ENTRYPOINT ["cage-conformance"]' in ghcr_conf_run
+    assert "FROM scratch" not in ghcr_conf_run
+    assert "${{" not in ghcr_conf_run
+    assert ghcr_conf_run.index("docker run --rm") < ghcr_conf_run.index("docker push")
 
     # PyPI publish steps scoped strictly to their own release tag (never cross-published or dispatched)
     pypi_client_if = str(
