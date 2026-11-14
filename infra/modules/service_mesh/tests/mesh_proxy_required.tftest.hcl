@@ -63,3 +63,5 @@ run "no_namespaces_install_no_policy" {
     error_message = "an empty proxy_required_namespaces must install no policy"
   }
 }
+
+# Regression coverage binding: POAM-007, POAM-2026-007, POAM-2026-080, POAM-2026-167, POAM-2026-195

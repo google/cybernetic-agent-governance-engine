@@ -190,8 +190,8 @@ class TestLiveRepositoryStubGate:
         unique_names = set(re.findall(r"lula-validation-[a-z0-9_-]*\.yaml", readme))
         disk_names = {p.name for p in LULA_DIR.glob("lula-validation-*.yaml")}
         assert unique_names == disk_names
-        assert "**4 Active (US_FED scope):**" in readme
-        assert "**9 Stub (US_FED scope):**" in readme
+        assert "**8 Active (US_FED scope):**" in readme
+        assert "**5 Remaining Unverified / Planned (US_FED scope):**" in readme
         assert "compliance/lula/.stub-baseline" in readme
 
 
