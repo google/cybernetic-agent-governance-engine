@@ -59,8 +59,12 @@ Rules Enforced
 - **Rule C (Middleware threshold/bound guard fallthrough to downstream dispatch):**
   1. Recognizes ASGI middleware ``__call__(self, scope, receive, send)``,
      Starlette ``BaseHTTPMiddleware`` ``dispatch(self, request, call_next)``,
-     and ``@app.middleware(...)`` handlers across ``src/``, enforcing a
-     non-vacuous corpus floor (``MIN_EXPECTED_MIDDLEWARE_HANDLERS``).
+     and ``@app.middleware(...)`` handlers across ``src/``, enforcing both a
+     non-vacuous corpus floor (``MIN_EXPECTED_MIDDLEWARE_HANDLERS``) and a
+     two-ways-of-counting cross-check against every in-tree ``*Middleware`` /
+     ``BaseHTTPMiddleware`` class, ``add_middleware(...)`` registration, and
+     ``@*.middleware(...)`` decorator so newly added middleware with an
+     unrecognized signature fails closed rather than silently escaping audit.
   2. Flags any security guard call (``assert_*``, ``validate_*``, ``verify_*``,
      ``enforce_*``, ``check_*``, ``require_*``, or indexed posture guard) gated
      by a size/length/count bound comparison (``<``, ``<=``, ``>``, ``>=`` — on
@@ -1607,6 +1611,28 @@ def _audit_middleware_spec(
             rejected_ids |= _collect_request_terminating_if_ids([stmt], spec)
 
 
+THIRD_PARTY_MIDDLEWARE_PACKAGES: frozenset[str] = frozenset(
+    {"fastapi", "starlette", "uvicorn", "opentelemetry", "asgi_correlation_id"}
+)
+
+
+def _collect_third_party_middleware_imports(tree: ast.Module) -> set[str]:
+    """Return imported symbol/module names originating from external ASGI frameworks."""
+    external: set[str] = set()
+    for node in ast.walk(tree):
+        if isinstance(node, ast.ImportFrom) and node.level == 0 and node.module:
+            top_pkg = node.module.split(".", 1)[0]
+            if top_pkg in THIRD_PARTY_MIDDLEWARE_PACKAGES:
+                for alias in node.names:
+                    external.add(alias.asname or alias.name)
+        elif isinstance(node, ast.Import):
+            for alias in node.names:
+                top_pkg = alias.name.split(".", 1)[0]
+                if top_pkg in THIRD_PARTY_MIDDLEWARE_PACKAGES:
+                    external.add(alias.asname or top_pkg)
+    return external
+
+
 def _walk_rule_c(
     tree: ast.Module,
     *,
@@ -1616,12 +1642,18 @@ def _walk_rule_c(
     posture_raising_targets: set[str],
     broad_enforcing_guards: set[str],
     violations: list[PostureGuardViolation],
+    recognized_classes: set[str],
+    recognized_funcs: set[tuple[str, str, int]],
     verbose: bool,
 ) -> int:
-    """Audit middleware handlers in ``tree`` for Rule C and return handler count."""
+    """Audit middleware handlers in ``tree`` for Rule C and record recognized targets."""
     count = 0
     for spec in _iter_middleware_specs(tree):
         count += 1
+        if spec.cls_name is not None:
+            recognized_classes.add(spec.cls_name)
+        else:
+            recognized_funcs.add((file_label, spec.fn_node.name, spec.fn_node.lineno))
         _audit_middleware_spec(
             spec,
             file_label=file_label,
@@ -1633,6 +1665,125 @@ def _walk_rule_c(
             verbose=verbose,
         )
     return count
+
+
+def _cross_check_middleware_inventory(
+    parsed_modules: Sequence[tuple[str, ast.Module]],
+    *,
+    module_aliases: dict[str, dict[str, str]],
+    corpus_defined_classes: set[str],
+    recognized_classes: set[str],
+    recognized_funcs: set[tuple[str, str, int]],
+    violations: list[PostureGuardViolation],
+    verbose: bool,
+) -> None:
+    """Cross-check Rule C handler detection against independent middleware declarations/registrations.
+
+    Ensures a newly added ``*Middleware`` / ``BaseHTTPMiddleware`` class,
+    in-tree ``add_middleware(...)`` target, or ``@*.middleware(...)`` function
+    whose signature is missed by ``_iter_middleware_specs`` fails closed instead
+    of escaping audit while existing handlers satisfy the numeric floor.
+    """
+    flagged_class_defs: set[tuple[str, str]] = set()
+    for file_label, tree in parsed_modules:
+        alias_map = module_aliases[file_label]
+        third_party_imports = _collect_third_party_middleware_imports(tree)
+
+        for node in ast.walk(tree):
+            if isinstance(node, ast.ClassDef):
+                is_named_or_subclassed_mw = node.name.endswith("Middleware") or any(
+                    "Middleware" in ast.unparse(base) for base in node.bases
+                )
+                if (
+                    is_named_or_subclassed_mw
+                    and node.name not in recognized_classes
+                    and (file_label, node.name) not in flagged_class_defs
+                ):
+                    flagged_class_defs.add((file_label, node.name))
+                    v = PostureGuardViolation(
+                        rule="Rule C (unrecognized middleware registration)",
+                        file_path=file_label,
+                        line_number=node.lineno,
+                        end_line_number=node.lineno,
+                        target=node.name,
+                        detail=(
+                            f"middleware class {node.name} at line {node.lineno} was "
+                            f"not matched by Rule C handler signature detector"
+                        ),
+                    )
+                    violations.append(v)
+                    if verbose:
+                        print(f"❌ {v.format_line_span()} [{v.rule}]: {v.detail}")
+
+            elif (
+                isinstance(node, ast.Call)
+                and isinstance(node.func, ast.Attribute)
+                and node.func.attr == "add_middleware"
+                and node.args
+            ):
+                arg0 = node.args[0]
+                raw_name: str | None = None
+                is_external = False
+                if isinstance(arg0, ast.Name):
+                    raw_name = alias_map.get(arg0.id, arg0.id)
+                    if (
+                        raw_name not in corpus_defined_classes
+                        and arg0.id in third_party_imports
+                    ):
+                        is_external = True
+                elif isinstance(arg0, ast.Attribute):
+                    raw_name = arg0.attr
+                    if (
+                        raw_name not in corpus_defined_classes
+                        and isinstance(arg0.value, ast.Name)
+                        and arg0.value.id in third_party_imports
+                    ):
+                        is_external = True
+                if (
+                    raw_name is not None
+                    and not is_external
+                    and raw_name not in recognized_classes
+                ):
+                    v = PostureGuardViolation(
+                        rule="Rule C (unrecognized middleware registration)",
+                        file_path=file_label,
+                        line_number=node.lineno,
+                        end_line_number=node.lineno,
+                        target=f"add_middleware({raw_name})",
+                        detail=(
+                            f"add_middleware({raw_name}) at line {node.lineno} registers "
+                            f"a class not matched by Rule C handler signature detector"
+                        ),
+                    )
+                    violations.append(v)
+                    if verbose:
+                        print(f"❌ {v.format_line_span()} [{v.rule}]: {v.detail}")
+
+            elif isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                is_mw_decorated = any(
+                    isinstance(dec, ast.Call)
+                    and isinstance(dec.func, ast.Attribute)
+                    and dec.func.attr == "middleware"
+                    for dec in node.decorator_list
+                )
+                if (
+                    is_mw_decorated
+                    and (file_label, node.name, node.lineno) not in recognized_funcs
+                ):
+                    v = PostureGuardViolation(
+                        rule="Rule C (unrecognized middleware registration)",
+                        file_path=file_label,
+                        line_number=node.lineno,
+                        end_line_number=node.lineno,
+                        target=f"{node.name}()",
+                        detail=(
+                            f"@middleware function {node.name}() at line {node.lineno} "
+                            f"was not matched by Rule C handler signature detector"
+                        ),
+                    )
+                    violations.append(v)
+                    if verbose:
+                        print(f"❌ {v.format_line_span()} [{v.rule}]: {v.detail}")
 
 
 def _analyze_parsed_modules(
@@ -1650,10 +1801,15 @@ def _analyze_parsed_modules(
         tuple[str, str], list[tuple[str, ast.FunctionDef | ast.AsyncFunctionDef]]
     ] = {}
     module_aliases: dict[str, dict[str, str]] = {}
+    corpus_defined_classes: set[str] = set()
 
-    # Pass 1: Index posture-gated raising functions/methods and broad enforcing guards.
+    # Pass 1: Index posture-gated raising functions/methods, broad enforcing guards,
+    # and all in-tree class definitions across the scanned corpus.
     for file_label, tree in parsed_modules:
         module_aliases[file_label] = _build_import_aliases(tree)
+        for walked in ast.walk(tree):
+            if isinstance(walked, ast.ClassDef):
+                corpus_defined_classes.add(walked.name)
         for node in tree.body:
             if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
                 top_level_funcs.setdefault(node.name, []).append((file_label, node))
@@ -1729,6 +1885,8 @@ def _analyze_parsed_modules(
 
     top_func_names = set(top_level_funcs)
     violations: list[PostureGuardViolation] = []
+    recognized_mw_classes: set[str] = set()
+    recognized_mw_funcs: set[tuple[str, str, int]] = set()
     middleware_count = 0
 
     # Pass 2: Audit all call sites and middleware handlers for Rules A, B, and C.
@@ -1760,8 +1918,20 @@ def _analyze_parsed_modules(
             posture_raising_targets=posture_raising_targets,
             broad_enforcing_guards=broad_enforcing_guards,
             violations=violations,
+            recognized_classes=recognized_mw_classes,
+            recognized_funcs=recognized_mw_funcs,
             verbose=verbose,
         )
+
+    _cross_check_middleware_inventory(
+        parsed_modules,
+        module_aliases=module_aliases,
+        corpus_defined_classes=corpus_defined_classes,
+        recognized_classes=recognized_mw_classes,
+        recognized_funcs=recognized_mw_funcs,
+        violations=violations,
+        verbose=verbose,
+    )
 
     if verbose:
         print(

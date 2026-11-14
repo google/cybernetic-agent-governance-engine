@@ -930,3 +930,73 @@ async def inline_guard_mw(request, call_next):
 def test_rule_c_allows_fail_closed_413_remediations(remediated_body: str) -> None:
     """Failing closed with 413 (without calling self.app) when exceeding _MAX_MCP_INSPECT_BYTES passes Rule C."""
     assert scan_source(_MCP_QUARANTINE_MIDDLEWARE_HEADER + remediated_body) == []
+
+
+def test_rule_c_inventory_cross_check_catches_unrecognized_new_middleware_above_floor() -> (
+    None
+):
+    """Even when >= 2 valid middlewares satisfy the numeric floor, adding an unrecognized *Middleware,
+    add_middleware(...) target, or @app.middleware(...) function fails closed."""
+    code = """
+class ValidOneMiddleware:
+    def __init__(self, app):
+        self.app = app
+    async def __call__(self, scope, receive, send):
+        await self.app(scope, receive, send)
+
+class ValidTwoGuard(BaseHTTPMiddleware):
+    async def dispatch(self, request, call_next):
+        return await call_next(request)
+
+class VarargsAuditMiddleware:
+    def __init__(self, app):
+        self.app = app
+    async def __call__(self, *args):
+        await self.app(*args)
+
+class OpaqueIngressFilter:
+    def __init__(self, app):
+        self.app = app
+    async def __call__(self, s, r, snd):
+        await self.app(s, r, snd)
+
+app.add_middleware(OpaqueIngressFilter)
+
+@app.middleware("http")
+async def varargs_http_mw(*args):
+    return None
+"""
+    violations = scan_source(code)
+    assert len(violations) == 3
+    assert all(
+        v.rule == "Rule C (unrecognized middleware registration)" for v in violations
+    )
+    assert {v.target for v in violations} == {
+        "VarargsAuditMiddleware",
+        "add_middleware(OpaqueIngressFilter)",
+        "varargs_http_mw()",
+    }
+
+
+def test_rule_c_inventory_cross_check_allows_third_party_and_aliased_in_tree_middleware(
+    tmp_path: Path,
+) -> None:
+    """Third-party CORSMiddleware imports and valid cross-module aliased in-tree middlewares pass."""
+    pkg = tmp_path / "pkg"
+    pkg.mkdir()
+    (pkg / "mw.py").write_text(
+        "class WorkloadIdentityMiddleware:\n"
+        "    def __init__(self, app):\n"
+        "        self.app = app\n"
+        "    async def __call__(self, scope, receive, send):\n"
+        "        await self.app(scope, receive, send)\n",
+        encoding="utf-8",
+    )
+    (pkg / "server.py").write_text(
+        "from fastapi.middleware.cors import CORSMiddleware\n"
+        "from pkg.mw import WorkloadIdentityMiddleware as WIM\n"
+        "app.add_middleware(CORSMiddleware, allow_origins=[])\n"
+        "app.add_middleware(WIM)\n",
+        encoding="utf-8",
+    )
+    assert scan_tree(tmp_path) == []
