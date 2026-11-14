@@ -47,6 +47,7 @@ import os
 import subprocess
 import sys
 import uuid
+import zipfile
 from collections.abc import Iterator
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
@@ -366,17 +367,64 @@ async def test_live_unserved_routes_fail_closed(
     assert (seal.error or "").startswith("HTTP 404"), seal.error
 
 
-_CONFORMANCE_SRC = (
-    Path(__file__).resolve().parents[3] / "packages" / "cage-conformance" / "src"
-)
+_CONFORMANCE_PKG = Path(__file__).resolve().parents[3] / "packages" / "cage-conformance"
+_CONFORMANCE_SRC = _CONFORMANCE_PKG / "src"
+
+
+def _stage_conformance_wheel(tmp_path: Path) -> Path:
+    """Unpack cage-conformance from the published GitHub Release wheel (on conformance-v* tags) or a fresh wheel build."""
+    wheel_dir = tmp_path / "wheel_dist"
+    wheel_dir.mkdir(parents=True, exist_ok=True)
+    git_ref = os.environ.get("GITHUB_REF", "")
+    explicit_wheel = os.environ.get("CAGE_CONFORMANCE_WHEEL", "").strip()
+    if explicit_wheel:
+        wheel_path = Path(explicit_wheel)
+    elif git_ref.startswith("refs/tags/conformance-v"):
+        tag = git_ref.removeprefix("refs/tags/")
+        version = tag.removeprefix("conformance-v")
+        repo = os.environ.get(
+            "GITHUB_REPOSITORY", "google/cybernetic-agent-governance-engine"
+        )
+        wheel_name = f"cage_conformance-{version}-py3-none-any.whl"
+        wheel_url = f"https://github.com/{repo}/releases/download/{tag}/{wheel_name}"
+        with httpx.Client(follow_redirects=True, timeout=_TIMEOUT) as client:
+            resp = client.get(wheel_url)
+        assert resp.status_code == 200, (
+            f"Failed to download release wheel {wheel_url}: HTTP {resp.status_code}"
+        )
+        wheel_path = wheel_dir / wheel_name
+        wheel_path.write_bytes(resp.content)
+    else:
+        build_proc = subprocess.run(  # noqa: S603 - fixed uv build invocation
+            ["uv", "build", "--wheel", "--out-dir", str(wheel_dir)],
+            cwd=str(_CONFORMANCE_PKG),
+            capture_output=True,
+            text=True,
+            timeout=60,
+            check=False,
+        )
+        assert build_proc.returncode == 0, build_proc.stdout + build_proc.stderr
+        wheels = sorted(wheel_dir.glob("cage_conformance-*.whl"))
+        assert len(wheels) == 1, f"Expected 1 built wheel, found {wheels}"
+        wheel_path = wheels[0]
+
+    site_dir = tmp_path / "wheel_site"
+    with zipfile.ZipFile(wheel_path) as zf:
+        zf.extractall(site_dir)
+    assert (site_dir / "cage_conformance" / "runner.py").is_file()
+    assert (
+        site_dir / "cage_conformance" / "vectors" / "provider_01_v02.json"
+    ).is_file()
+    return site_dir
 
 
 def test_cage_conformance_endpoint_profile_provider_01_v02(
     credentials: _Credentials, tmp_path: Path
 ) -> None:
-    """Standalone cage-conformance verify --endpoint passes all 6 live wire checks."""
-    if str(_CONFORMANCE_SRC) not in sys.path:
-        sys.path.insert(0, str(_CONFORMANCE_SRC))
+    """Standalone cage-conformance verify --endpoint passes all 6 live wire checks from the packaged wheel."""
+    wheel_site = _stage_conformance_wheel(tmp_path)
+    if str(wheel_site) not in sys.path:
+        sys.path.insert(0, str(wheel_site))
     from cage_conformance import validate_report
 
     api_key_file = tmp_path / "api_key.secret"
@@ -393,7 +441,7 @@ def test_cage_conformance_endpoint_profile_provider_01_v02(
         for key, value in os.environ.items()
         if not key.startswith(("CAGE_CONFORMANCE_", "CAGE_NORMATIVE_"))
     }
-    child_env["PYTHONPATH"] = str(_CONFORMANCE_SRC)
+    child_env["PYTHONPATH"] = str(wheel_site)
 
     proc = subprocess.run(  # noqa: S603 - fixed argv, credentials passed via 0600 files
         [
@@ -426,6 +474,7 @@ def test_cage_conformance_endpoint_profile_provider_01_v02(
             "--output",
             str(report_file),
         ],
+        cwd=str(tmp_path),
         capture_output=True,
         text=True,
         env=child_env,
