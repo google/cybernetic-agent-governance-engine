@@ -541,3 +541,216 @@ async def test_key_schema_format(
     stored_binding, _, op_id = stored_value.rpartition(":")
     assert stored_binding == binding
     assert len(op_id) == 32
+
+
+# ---------------------------------------------------------------------------
+# Test 11: Receipt-validity-bounded TTL (POAM-2026-156 item 2)
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_consume_once_ttl_override_and_store_floor(
+    redis_client: fakeredis.aioredis.FakeRedis,
+) -> None:
+    """consume_once(..., ttl_seconds=...) honors longer receipt validity and enforces store.ttl_seconds floor."""
+    store = ConsequenceAuthorityStore(
+        redis_client=redis_client,
+        replication=ReplicationPolicy.standalone(),
+        ttl_seconds=90,
+    )
+    assert store.ttl_seconds == 90
+    binding = ConsequenceAuthorityStore.binding_hash(
+        thread_id="thread-ttl",
+        actor_id="agent-alpha",
+        action_digest="a" * 64,
+        state_version="v1",
+    )
+
+    assert await store.consume_once("rec-ttl-630", binding, ttl_seconds=630) is True
+    ttl_long = await redis_client.ttl("consequence:token:rec-ttl-630")
+    assert 625 <= ttl_long <= 630
+
+    # Shorter override than store.ttl_seconds (90s) is clamped up to 90s so marker outlives 60s token
+    assert await store.consume_once("rec-ttl-short", binding, ttl_seconds=25) is True
+    ttl_floor = await redis_client.ttl("consequence:token:rec-ttl-short")
+    assert 85 <= ttl_floor <= 90
+
+
+@pytest.mark.asyncio
+async def test_consume_once_replicated_path_honors_ttl_override(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Replica-acknowledged _consume_acknowledged also retains marker for custom ttl_seconds."""
+    from tests.fixtures.replicated_valkey import ReplicatedValkey, build_client
+
+    for name in ("REDIS_PASSWORD", "REDIS_TLS", "REDIS_AUTH_MODE", "REDIS_IAM_AUTH"):
+        monkeypatch.delenv(name, raising=False)
+    server = await ReplicatedValkey(replicas=1).start()
+    client = build_client(server)
+    try:
+        store = ConsequenceAuthorityStore(
+            redis_client=client,
+            replication=ReplicationPolicy(replicas=1, timeout_ms=100, strict=True),
+            ttl_seconds=90,
+        )
+        binding = ConsequenceAuthorityStore.binding_hash(
+            thread_id="thread-rep-ttl",
+            actor_id="agent-alpha",
+            action_digest="b" * 64,
+            state_version="v1",
+        )
+        import time as _time
+
+        assert await store.consume_once("rec-rep-630", binding, ttl_seconds=630) is True
+        now_mono = _time.monotonic()
+        primary_ttl = server.primary.expiry["consequence:token:rec-rep-630"] - now_mono
+        replica_ttl = (
+            server.replicas[0].expiry["consequence:token:rec-rep-630"] - now_mono
+        )
+        assert 625 <= primary_ttl <= 631
+        assert 625 <= replica_ttl <= 631
+    finally:
+        await client.aclose()
+        await server.stop()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("bad_ttl", [True, False, 0, -10, "600", 90.5])
+async def test_consume_once_and_init_reject_invalid_ttl_seconds(
+    redis_client: fakeredis.aioredis.FakeRedis,
+    bad_ttl: object,
+) -> None:
+    """Boolean, non-int, or non-positive ttl_seconds raise ValueError fail-closed."""
+    with pytest.raises(ValueError, match="ttl_seconds"):
+        ConsequenceAuthorityStore(
+            redis_client=redis_client,
+            replication=ReplicationPolicy.standalone(),
+            ttl_seconds=bad_ttl,  # type: ignore[arg-type]
+        )
+
+    store = ConsequenceAuthorityStore(
+        redis_client=redis_client,
+        replication=ReplicationPolicy.standalone(),
+        ttl_seconds=90,
+    )
+    binding = ConsequenceAuthorityStore.binding_hash("t", "a", "d" * 64, "1")
+    with pytest.raises(ValueError, match="ttl_seconds"):
+        await store.consume_once(
+            "rec-bad-ttl",
+            binding,
+            ttl_seconds=bad_ttl,  # type: ignore[arg-type]
+        )
+
+
+@pytest.mark.asyncio
+async def test_gateway_retains_600s_receipt_marker_and_refuses_expired_rec_exp_before_redis(
+    redis_client: fakeredis.aioredis.FakeRedis,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """POAM-2026-156 item 2: ConsequenceGateway sizes marker >=630s for 600s receipt and blocks rec_exp <= now before Redis."""
+    import hashlib
+
+    from src.gateway.governance.consequence_gateway import (
+        ConsequenceDecision,
+        ConsequenceGateway,
+    )
+    from src.gateway.governance.consequence_magnitude import ConsequenceMagnitudes
+    from src.gateway.governance.consequence_token import ConsequenceToken
+    from src.gateway.governance.contracts import ConsequenceMagnitude
+    from src.gateway.governance.evidence.stream import EvidenceStreamSink
+    from src.gateway.governance.jcs_canonicalizer import jcs_canonicalize_plan
+    from src.gateway.governance.kms_signer import (
+        KMSGovernanceSigner,
+        SoftwareEd25519Provider,
+    )
+
+    sink = EvidenceStreamSink()
+    sink._redis = fakeredis.aioredis.FakeRedis(decode_responses=True)
+    sink._running = True
+    monkeypatch.setattr("src.gateway.governance.evidence.stream._evidence_sink", sink)
+
+    try:
+        signer = KMSGovernanceSigner(
+            provider=SoftwareEd25519Provider(key_id="gw-rec-exp-test")
+        )
+        magnitudes = ConsequenceMagnitudes((ConsequenceMagnitude("deploy_model", ()),))
+        payload = {"action": "deploy_model", "version": "1.0"}
+        digest = hashlib.sha256(jcs_canonicalize_plan(payload)).hexdigest()
+
+        # 1. Defense-in-depth: rec_exp == now at Step 6 blocks BEFORE touching Redis
+        mock_store = AsyncMock(spec=ConsequenceAuthorityStore)
+        mock_store.ttl_seconds = 90
+        gw_mock = ConsequenceGateway(
+            store=mock_store, signer=signer, magnitudes=magnitudes
+        )
+        with patch(
+            "src.gateway.governance.consequence_token.time.time", return_value=2000
+        ):
+            edge_token = await ConsequenceToken.mint(
+                sub="agent-1",
+                tid="thread-1",
+                rec="rec-edge-exp",
+                act=digest,
+                ttl_seconds=60,
+                receipt_expires_at=2005,
+                signer=signer,
+            )
+        # Verify at t=2005 passes verify() (now > rec_exp is False), then Step 6 sees rec_exp <= now!
+        with (
+            patch(
+                "src.gateway.governance.consequence_token.time.time", return_value=2005
+            ),
+            patch(
+                "src.gateway.governance.consequence_gateway.time.time",
+                return_value=2005,
+            ),
+        ):
+            edge_eval = await gw_mock.evaluate(edge_token, payload)
+        assert edge_eval.decision == ConsequenceDecision.BLOCK
+        assert edge_eval.reason_code == "TOKEN_INVALID"
+        mock_store.consume_once.assert_not_called()
+
+        # 2. 600s receipt produces >=630s marker TTL and blocks second token minted at +120s
+        import time as _time
+
+        store = ConsequenceAuthorityStore(
+            redis_client=redis_client,
+            replication=ReplicationPolicy.standalone(),
+            ttl_seconds=90,
+        )
+        gateway = ConsequenceGateway(store=store, signer=signer, magnitudes=magnitudes)
+        t0 = int(_time.time())
+        key = "consequence:token:rec-600s-kernel"
+        with patch("time.time", return_value=t0):
+            tok_1 = await ConsequenceToken.mint(
+                sub="agent-1",
+                tid="thread-1",
+                rec="rec-600s-kernel",
+                act=digest,
+                ttl_seconds=60,
+                receipt_expires_at=t0 + 600,
+                signer=signer,
+            )
+            ev_1 = await gateway.evaluate(tok_1, payload)
+            assert ev_1.decision == ConsequenceDecision.EXECUTE
+            ttl_at_t0 = await redis_client.ttl(key)
+            assert ttl_at_t0 >= 630
+
+        # Advance global clock by +120s (past 90s default window; fakeredis evaluates expiry against time.time())
+        t1 = t0 + 120
+        with patch("time.time", return_value=t1):
+            assert await redis_client.ttl(key) >= 505
+            tok_2 = await ConsequenceToken.mint(
+                sub="agent-1",
+                tid="thread-1",
+                rec="rec-600s-kernel",
+                act=digest,
+                ttl_seconds=60,
+                receipt_expires_at=t0 + 600,
+                signer=signer,
+            )
+            ev_2 = await gateway.evaluate(tok_2, payload)
+        assert ev_2.decision == ConsequenceDecision.BLOCK
+        assert ev_2.reason_code == "ALREADY_CONSUMED"
+    finally:
+        await sink.stop()

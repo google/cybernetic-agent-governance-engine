@@ -65,6 +65,7 @@ async def mint_consequence_token_finding(
     magnitudes: ConsequenceMagnitudes | None,
     authority_state_version: str | None = None,
     ttl_seconds: int = 60,
+    receipt_expires_at: int | None = None,
 ) -> dict[str, Any]:
     """Mint a ConsequenceToken and return it as a finding dict.
 
@@ -86,6 +87,8 @@ async def mint_consequence_token_finding(
             without one) refuses every mint.
         authority_state_version: Optional authority state version.
         ttl_seconds: Token time-to-live (default 60s).
+        receipt_expires_at: Optional epoch-second upper bound of the upstream
+            authority receipt's validity window.
 
     Returns:
         A finding dict with code=CONSEQUENCE_TOKEN, severity=info, and the JWS
@@ -112,6 +115,14 @@ async def mint_consequence_token_finding(
             )
         if not action_payload:
             raise ValueError("action_payload is required")
+        if receipt_expires_at is not None and (
+            isinstance(receipt_expires_at, bool)
+            or not isinstance(receipt_expires_at, int)
+            or receipt_expires_at <= 0
+        ):
+            raise ValueError(
+                f"receipt_expires_at must be a positive int, got {receipt_expires_at!r}"
+            )
 
         # Reject IEEE-754 unsafe integers (|v| > 2^53 - 1) and non-finite floats
         # before RFC 8785 JCS canonicalization so two distinct large integers
@@ -140,18 +151,22 @@ async def mint_consequence_token_finding(
             act=action_digest,
             ver=authority_state_version,
             ttl_seconds=ttl_seconds,
+            receipt_expires_at=receipt_expires_at,
             signer=signer,
         )
 
         # Return as an informational finding (does NOT block; admitted=True in caller)
         # The token travels with the execution plan to the consequence gateway
-        return {
+        finding: dict[str, Any] = {
             "code": FINDING_CODE_CONSEQUENCE_TOKEN,
             "severity": "info",
             "token": token,
             "authority_record_id": authority_record_id,
             "message": "ConsequenceToken minted for post-validation consequence enforcement",
         }
+        if receipt_expires_at is not None:
+            finding["receipt_expires_at"] = receipt_expires_at
+        return finding
 
     except Exception as exc:
         # Mint failure: fail-closed (return a blocking finding, not a silent admit)

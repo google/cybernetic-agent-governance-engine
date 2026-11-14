@@ -38,6 +38,7 @@ from __future__ import annotations
 
 import hashlib
 import logging
+import time
 from dataclasses import dataclass
 from enum import Enum
 from typing import TYPE_CHECKING
@@ -61,6 +62,11 @@ if TYPE_CHECKING:
     from src.gateway.governance.kms_signer import KMSGovernanceSigner
 
 logger = logging.getLogger("Gateway.Governance.ConsequenceGateway")
+
+# Clock-skew margin added on top of remaining upstream receipt validity so a
+# consumption marker never expires before an upstream receipt's own validity
+# window closes across nodes with bounded clock drift.
+_RECEIPT_VALIDITY_SKEW_BUFFER_SECONDS = 30
 
 
 class ConsequenceDecision(str, Enum):
@@ -171,6 +177,7 @@ class ConsequenceGateway:
             "sub": getattr(claims, "sub", None),
             "act": getattr(claims, "act", None),
             "ver": getattr(claims, "ver", None),
+            "rec_exp": getattr(claims, "rec_exp", None),
             "recomputed_digest": recomputed_digest,
         }
         from src.gateway.governance.governor.metrics import mark_request_evidenced
@@ -310,6 +317,43 @@ class ConsequenceGateway:
             )
 
         # Step 6: atomic single-use consumption
+        # When the token carries an upstream receipt validity upper bound
+        # (claims.rec_exp), refuse already-expired receipts before touching
+        # Redis and retain the single-use marker across the entire remaining
+        # receipt validity + skew buffer AND at least the store's token-lifetime
+        # floor (POAM-2026-156 item 2).
+        consume_ttl_seconds: int | None = None
+        if claims.rec_exp is not None:
+            now = int(time.time())
+            if claims.rec_exp <= now:
+                logger.warning(
+                    "[ConsequenceGateway] Authority receipt expired before consumption "
+                    "rec=%s rec_exp=%d now=%d",
+                    claims.rec,
+                    claims.rec_exp,
+                    now,
+                )
+                return await self._emit_evaluation(
+                    ConsequenceEvaluation(
+                        decision=ConsequenceDecision.BLOCK,
+                        reason_code="TOKEN_INVALID",
+                        detail=(
+                            f"Authority receipt expired: rec_exp={claims.rec_exp}, now={now}"
+                        ),
+                    ),
+                    claims=claims,
+                    recomputed_digest=recomputed_digest,
+                )
+            store_floor = (
+                self._store.ttl_seconds
+                if isinstance(getattr(self._store, "ttl_seconds", None), int)
+                else 90
+            )
+            consume_ttl_seconds = max(
+                store_floor,
+                (claims.rec_exp - now) + _RECEIPT_VALIDITY_SKEW_BUFFER_SECONDS,
+            )
+
         # Binding hash combines thread_id, actor_id, action_digest, state_version
         # Mapping: claims.tid→thread_id, claims.sub→actor_id, claims.act→action_digest, claims.ver→state_version
         binding = ConsequenceAuthorityStore.binding_hash(
@@ -320,7 +364,12 @@ class ConsequenceGateway:
         )
 
         try:
-            consumed = await self._store.consume_once(claims.rec, binding)
+            if consume_ttl_seconds is not None:
+                consumed = await self._store.consume_once(
+                    claims.rec, binding, ttl_seconds=consume_ttl_seconds
+                )
+            else:
+                consumed = await self._store.consume_once(claims.rec, binding)
         except ConsumptionNotReplicatedError as exc:
             # Strict replication and the marker was not replica-acknowledged:
             # a failover could lose it. The marker stays, so the record stays
