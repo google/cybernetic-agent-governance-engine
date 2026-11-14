@@ -22,8 +22,11 @@ partners were missing, and the flag it passed left every partner test skipped,
 so an ``all`` run would have reported success without testing anything.
 
 These tests pin the workflow to ``scripts/partner_harness.py`` and to the live
-tests themselves, and check the two mechanisms that make a run able to fail:
-the ``--run-partner-integration`` flag semantics and the ``require_live`` plugin.
+tests themselves, check the ``--run-partner-integration`` flag semantics and the
+``require_live`` plugin, and enforce Decision D2: the weekly Monday schedule runs
+``PROVISIONED_PARTNERS`` failing closed while explicitly disclosing every
+unprovisioned partner as ``NOT RUN`` with its blocker in both stdout and
+``$GITHUB_STEP_SUMMARY``.
 """
 
 from __future__ import annotations
@@ -55,6 +58,7 @@ _NON_SECRET_ENV = {
     "PROVIDER_01_GCP_ID_TOKEN",
 }
 _MINT_STEP = "Mint provider_01 Cloud Run ID token"
+_UNPROVISIONED_EXPECTED = ("provider_02", "provider_03", "provider_07", "actuator_01")
 
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
@@ -94,6 +98,21 @@ def _files_under(target: str) -> list[Path]:
 
 def _gate(partner: str, key: str) -> str:
     return f"${{{{ matrix.partner == '{partner}' && secrets.{key} || '' }}}}"
+
+
+def _assert_provisioned_disclosure_complete(text: str) -> None:
+    """Contract validator for ``provisioned`` scope disclosure output."""
+    assert "Partner Harness Scope: 3 of 7 partners selected (mode: provisioned)" in text
+    assert "SELECTED (3 of 7): provider_01, provider_05, provider_08" in text
+    assert (
+        "NOT RUN (4 of 7): provider_02, provider_03, provider_07, actuator_01" in text
+    )
+    assert "7 of 7 partners selected" not in text
+    for partner in harness.PROVISIONED_PARTNERS:
+        assert f"| `{partner}` | SELECTED |" in text
+    for partner, reason in harness.UNPROVISIONED_PARTNER_REASONS.items():
+        assert f"| `{partner}` | NOT RUN |" in text
+        assert reason in text
 
 
 # ── --run-partner-integration enables partner tests ───────────────────────────
@@ -206,20 +225,169 @@ def test_without_require_live_a_skip_passes(tmp_path: Path) -> None:
 
 
 def test_matrix_selection() -> None:
+    assert harness.matrix("") == ["provider_01", "provider_05", "provider_08"]
+    assert harness.matrix("provisioned") == [
+        "provider_01",
+        "provider_05",
+        "provider_08",
+    ]
+    assert harness.matrix("") == harness.matrix("provisioned")
     assert harness.matrix("all") == list(harness.PARTNER_TARGETS)
-    assert harness.matrix("") == list(harness.PARTNER_TARGETS)
+    assert len(harness.matrix("all")) == 7
     assert harness.matrix("provider_07") == ["provider_07"]
     with pytest.raises(ValueError, match="unknown partner"):
         harness.matrix("provider_04")
+
+
+def test_provisioned_and_unprovisioned_partition_partner_targets() -> None:
+    """PROVISIONED_PARTNERS and UNPROVISIONED_PARTNER_REASONS must partition PARTNER_TARGETS."""
+    assert harness.PROVISIONED_PARTNERS == ("provider_01", "provider_05", "provider_08")
+    assert tuple(harness.UNPROVISIONED_PARTNER_REASONS) == _UNPROVISIONED_EXPECTED
+    assert len(harness.PROVISIONED_PARTNERS) == len(set(harness.PROVISIONED_PARTNERS))
+    assert set(harness.PROVISIONED_PARTNERS) | set(
+        harness.UNPROVISIONED_PARTNER_REASONS
+    ) == set(harness.PARTNER_TARGETS)
+    assert (
+        set(harness.PROVISIONED_PARTNERS) & set(harness.UNPROVISIONED_PARTNER_REASONS)
+        == set()
+    )
+    for partner, reason in harness.UNPROVISIONED_PARTNER_REASONS.items():
+        assert reason.strip(), f"empty unprovisioned reason for {partner}"
+    harness.validate_partner_partition()
+
+
+def test_partition_validation_rejects_planted_defects(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Adding/removing/overlapping a partner without updating both sets must fail closed."""
+    # Planted defect M1: new partner added to PARTNER_TARGETS without updating partition
+    monkeypatch.setitem(
+        harness.PARTNER_TARGETS, "provider_09", "tests/integrations/provider_09"
+    )
+    with pytest.raises(RuntimeError, match="must partition PARTNER_TARGETS"):
+        harness.matrix("provisioned")
+    monkeypatch.undo()
+
+    # Planted defect M2: partner listed in both PROVISIONED_PARTNERS and UNPROVISIONED_PARTNER_REASONS
+    monkeypatch.setattr(
+        harness,
+        "PROVISIONED_PARTNERS",
+        ("provider_01", "provider_02", "provider_05", "provider_08"),
+    )
+    with pytest.raises(RuntimeError, match="both PROVISIONED_PARTNERS and"):
+        harness.disclosure("provisioned")
+    monkeypatch.undo()
+
+    # Planted defect M3: unprovisioned partner dropped from UNPROVISIONED_PARTNER_REASONS
+    shrunk_reasons = {
+        k: v
+        for k, v in harness.UNPROVISIONED_PARTNER_REASONS.items()
+        if k != "actuator_01"
+    }
+    monkeypatch.setattr(harness, "UNPROVISIONED_PARTNER_REASONS", shrunk_reasons)
+    with pytest.raises(RuntimeError, match="must partition PARTNER_TARGETS"):
+        harness.disclosure("provisioned")
+    monkeypatch.undo()
+
+    # Planted defect M4: duplicate entry in PROVISIONED_PARTNERS
+    monkeypatch.setattr(
+        harness,
+        "PROVISIONED_PARTNERS",
+        ("provider_01", "provider_01", "provider_05", "provider_08"),
+    )
+    with pytest.raises(RuntimeError, match="duplicate entries"):
+        harness.validate_partner_partition()
+    monkeypatch.undo()
+
+    # Planted defect M5: blank blocker reason for an unprovisioned partner
+    monkeypatch.setitem(harness.UNPROVISIONED_PARTNER_REASONS, "provider_03", "   ")
+    with pytest.raises(RuntimeError, match="blank reason"):
+        harness.disclosure("provisioned")
+
+
+def test_disclosure_provisioned_names_counts_and_every_unprovisioned_blocker(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """Provisioned/schedule disclosure explicitly reports 3 of 7 run and 4 of 7 NOT RUN."""
+    rendered = harness.disclosure("provisioned")
+    assert harness.disclosure("") == rendered
+    _assert_provisioned_disclosure_complete(rendered)
+
+    assert harness.main(["disclosure", "provisioned"]) == 0
+    assert capsys.readouterr().out == rendered + "\n"
+
+    all_rendered = harness.disclosure("all")
+    assert "Partner Harness Scope: 7 of 7 partners selected (mode: all)" in all_rendered
+    assert "NOT RUN (0 of 7): none" in all_rendered
+
+    single_rendered = harness.disclosure("provider_01")
+    assert (
+        "Partner Harness Scope: 1 of 7 partners selected (mode: provider_01)"
+        in single_rendered
+    )
+    assert (
+        "NOT RUN (6 of 7): provider_02, provider_03, provider_05, "
+        "provider_07, provider_08, actuator_01" in single_rendered
+    )
+
+
+@pytest.mark.parametrize("omitted_partner", _UNPROVISIONED_EXPECTED)
+def test_disclosure_contract_fails_when_any_unprovisioned_partner_is_omitted(
+    omitted_partner: str,
+) -> None:
+    """Mutating disclosure to drop any unprovisioned partner or its reason fails the check."""
+    valid = harness.disclosure("provisioned")
+    without_row = "\n".join(
+        line
+        for line in valid.splitlines()
+        if not line.startswith(f"| `{omitted_partner}` |")
+    )
+    with pytest.raises(AssertionError):
+        _assert_provisioned_disclosure_complete(without_row)
+
+    reason = harness.UNPROVISIONED_PARTNER_REASONS[omitted_partner]
+    without_reason = valid.replace(reason, "omitted")
+    with pytest.raises(AssertionError):
+        _assert_provisioned_disclosure_complete(without_reason)
 
 
 @pytest.mark.parametrize(
     ("argv", "returncode", "stdout"),
     [
         (["matrix", "all"], 0, json.dumps(list(harness.PARTNER_TARGETS)) + "\n"),
+        (
+            ["matrix", "provisioned"],
+            0,
+            json.dumps(list(harness.PROVISIONED_PARTNERS)) + "\n",
+        ),
+        (["matrix", ""], 0, json.dumps(list(harness.PROVISIONED_PARTNERS)) + "\n"),
         (["matrix", "actuator_01"], 0, '["actuator_01"]\n'),
         (["target", "provider_08"], 0, "tests/integrations/provider_08\n"),
         (["target", "all"], 2, ""),
+        (["target", "provisioned"], 2, ""),
+        (
+            ["verdict", "provisioned"],
+            0,
+            "PASSED: 3 of 7 partners verified over the wire; 4 of 7 NOT RUN (unprovisioned)\n",
+        ),
+        (
+            ["verdict", ""],
+            0,
+            "PASSED: 3 of 7 partners verified over the wire; 4 of 7 NOT RUN (unprovisioned)\n",
+        ),
+        (
+            ["verdict", "all"],
+            0,
+            "PASSED: 7 of 7 partners verified over the wire; 0 of 7 NOT RUN\n",
+        ),
+        (
+            ["verdict", "provider_01"],
+            0,
+            "PASSED: 1 of 7 partners (provider_01) verified over the wire; "
+            "6 of 7 NOT RUN (excluded from selection)\n",
+        ),
+        (["disclosure", "provider_04"], 2, ""),
+        (["verdict", "provider_04"], 2, ""),
         (["matrix", '"]; echo'], 2, ""),
         (["matrix"], 2, ""),
     ],
@@ -245,7 +413,12 @@ def test_partner_tables_agree() -> None:
 
 def test_dispatch_choices_are_the_partner_list() -> None:
     inputs = _on_block(_workflow())["workflow_dispatch"]["inputs"]
-    assert inputs["partner_filter"]["options"] == ["all", *harness.PARTNER_TARGETS]
+    assert inputs["partner_filter"]["default"] == "provisioned"
+    assert inputs["partner_filter"]["options"] == [
+        "provisioned",
+        "all",
+        *harness.PARTNER_TARGETS,
+    ]
 
 
 def test_runs_weekly() -> None:
@@ -260,7 +433,19 @@ def test_each_partner_selection_has_its_own_concurrency_group() -> None:
     concurrency = _workflow()["concurrency"]
     assert concurrency["cancel-in-progress"] is False, "never cancel a running check"
     group = concurrency["group"]
-    assert "inputs.partner_filter" in group and "github.ref" in group, group
+    assert (
+        "inputs.partner_filter || 'provisioned'" in group and "github.ref" in group
+    ), group
+
+
+def test_no_run_step_interpolates_github_inputs_directly() -> None:
+    """zizmor template-injection hygiene: pass inputs via step env:, never inside run:."""
+    for job_name, job in _workflow()["jobs"].items():
+        for step in job["steps"]:
+            run_script = step.get("run", "")
+            assert "inputs." not in run_script, (
+                f"{job_name}/{step.get('name')} interpolates inputs.* in run:"
+            )
 
 
 def test_every_target_exists_and_selects_partner_tests() -> None:
@@ -411,14 +596,115 @@ def test_the_run_can_fail() -> None:
         "-p tests.fixtures.require_live",
     ):
         assert required in run, required
-    select = _workflow()["jobs"]["select"]["steps"][-1]["run"]
-    assert "scripts/partner_harness.py matrix" in select
+    select_step = _workflow()["jobs"]["select"]["steps"][-1]
+    assert select_step["env"] == {"SELECTION": "${{ inputs.partner_filter }}"}
+    select = select_step["run"]
+    assert 'scripts/partner_harness.py matrix "${SELECTION:-provisioned}"' in select
+    assert 'scripts/partner_harness.py disclosure "${SELECTION:-provisioned}"' in select
+    assert '>> "$GITHUB_STEP_SUMMARY"' in select
 
 
 def test_verdict_requires_every_partner_job() -> None:
     verdict = _workflow()["jobs"]["verdict"]
     assert verdict["needs"] == "live"
     assert verdict["if"] == "always()"
-    (step,) = verdict["steps"]
-    assert step["env"] == {"LIVE_RESULT": "${{ needs.live.result }}"}
-    assert '"$LIVE_RESULT" != "success"' in step["run"]
+    checkout_step, gate_step = verdict["steps"]
+    assert checkout_step["uses"].startswith("actions/checkout@")
+    assert re.search(r"@[0-9a-f]{40}$", checkout_step["uses"])
+    assert checkout_step["with"] == {"persist-credentials": False}
+    assert gate_step["env"] == {
+        "LIVE_RESULT": "${{ needs.live.result }}",
+        "SELECTION": "${{ inputs.partner_filter }}",
+    }
+    assert (
+        'scripts/partner_harness.py disclosure "${SELECTION:-provisioned}"'
+        in gate_step["run"]
+    )
+    assert (
+        'scripts/partner_harness.py verdict "${SELECTION:-provisioned}"'
+        in gate_step["run"]
+    )
+    assert '>> "$GITHUB_STEP_SUMMARY"' in gate_step["run"]
+    assert '"$LIVE_RESULT" != "success"' in gate_step["run"]
+    assert "exit 1" in gate_step["run"]
+
+
+def test_select_and_verdict_shell_scripts_execute_end_to_end(tmp_path: Path) -> None:
+    """Execute the actual workflow shell scripts for schedule pass and fail-closed verdict."""
+    doc = _workflow()
+    select_script = doc["jobs"]["select"]["steps"][-1]["run"]
+    verdict_script = doc["jobs"]["verdict"]["steps"][-1]["run"]
+
+    gh_output = tmp_path / "github_output.txt"
+    select_summary = tmp_path / "select_summary.md"
+    select_proc = subprocess.run(  # noqa: S603 - fixed bash -eo pipefail invocation
+        ["bash", "-eo", "pipefail", "-c", select_script],
+        cwd=_REPO_ROOT,
+        env={
+            **os.environ,
+            "SELECTION": "",
+            "GITHUB_OUTPUT": str(gh_output),
+            "GITHUB_STEP_SUMMARY": str(select_summary),
+        },
+        capture_output=True,
+        text=True,
+        timeout=30,
+        check=False,
+    )
+    assert select_proc.returncode == 0, select_proc.stderr
+    assert (
+        gh_output.read_text(encoding="utf-8").strip()
+        == 'partners=["provider_01", "provider_05", "provider_08"]'
+    )
+    _assert_provisioned_disclosure_complete(select_proc.stdout)
+    _assert_provisioned_disclosure_complete(select_summary.read_text(encoding="utf-8"))
+
+    # Verdict when all 3 provisioned partners succeed: passes and prints explicit 3 of 7 / 4 of 7
+    pass_summary = tmp_path / "verdict_pass_summary.md"
+    pass_proc = subprocess.run(  # noqa: S603 - fixed bash -eo pipefail invocation
+        ["bash", "-eo", "pipefail", "-c", verdict_script],
+        cwd=_REPO_ROOT,
+        env={
+            **os.environ,
+            "SELECTION": "",
+            "LIVE_RESULT": "success",
+            "GITHUB_STEP_SUMMARY": str(pass_summary),
+        },
+        capture_output=True,
+        text=True,
+        timeout=30,
+        check=False,
+    )
+    assert pass_proc.returncode == 0, pass_proc.stderr
+    expected_pass = (
+        "PASSED: 3 of 7 partners verified over the wire; 4 of 7 NOT RUN (unprovisioned)"
+    )
+    assert expected_pass in pass_proc.stdout
+    _assert_provisioned_disclosure_complete(pass_proc.stdout)
+    pass_summary_text = pass_summary.read_text(encoding="utf-8")
+    _assert_provisioned_disclosure_complete(pass_summary_text)
+    assert expected_pass in pass_summary_text
+
+    # Verdict when any selected partner fails or skips: still writes disclosure, exits 1
+    fail_summary = tmp_path / "verdict_fail_summary.md"
+    fail_proc = subprocess.run(  # noqa: S603 - fixed bash -eo pipefail invocation
+        ["bash", "-eo", "pipefail", "-c", verdict_script],
+        cwd=_REPO_ROOT,
+        env={
+            **os.environ,
+            "SELECTION": "",
+            "LIVE_RESULT": "failure",
+            "GITHUB_STEP_SUMMARY": str(fail_summary),
+        },
+        capture_output=True,
+        text=True,
+        timeout=30,
+        check=False,
+    )
+    assert fail_proc.returncode == 1
+    assert (
+        "At least one partner job did not pass (result: failure)." in fail_proc.stderr
+    )
+    _assert_provisioned_disclosure_complete(fail_proc.stdout)
+    _assert_provisioned_disclosure_complete(fail_summary.read_text(encoding="utf-8"))
+    assert expected_pass not in fail_proc.stdout
