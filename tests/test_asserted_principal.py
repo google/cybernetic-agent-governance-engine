@@ -33,6 +33,10 @@ Covers the wire and authentication contracts in
   in permissive postures (``dev`` / ``test`` / ``ci``).
 * ``x-cage-principal`` is sanitized and truncated by one helper that matches
   the gateway's ``sanitize_principal``.
+* A checkpointed conversation thread continues only for the principal whose
+  turn started it on ``POST /agent/query``, default threads are isolated per
+  principal (``advisor_session_<user_id>``) and cannot be pre-claimed, and
+  ownerless populated checkpoints fail closed.
 """
 
 from __future__ import annotations
@@ -43,7 +47,7 @@ import time
 from collections.abc import Iterator
 from pathlib import Path
 from types import SimpleNamespace
-from typing import Any
+from typing import Annotated, Any, TypedDict
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import jwt as pyjwt
@@ -52,6 +56,10 @@ from cryptography.hazmat.primitives import serialization
 from cryptography.hazmat.primitives.asymmetric import rsa
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 from fastapi.testclient import TestClient
+from langchain_core.messages import AIMessage, AnyMessage, HumanMessage
+from langgraph.checkpoint.memory import MemorySaver
+from langgraph.graph import END, START, StateGraph
+from langgraph.graph.message import add_messages
 from opentelemetry.sdk.trace import TracerProvider
 from opentelemetry.sdk.trace.export import SimpleSpanProcessor
 from opentelemetry.sdk.trace.export.in_memory_span_exporter import (
@@ -66,6 +74,7 @@ from src.gateway.observability.attributes import (
 from src.gateway.server.rate_limit import sanitize_principal as gateway_sanitize
 from src.governed_financial_advisor.infrastructure.auth import (
     PrincipalIdentity,
+    require_thread_owner,
     requires_verified_principal,
     verify_user_oidc_token,
 )
@@ -181,6 +190,32 @@ class TestQueryRequestPrincipal:
             ch for ch in charset if gateway_sanitize(f"a{ch}a") == f"a{ch}a"
         }
         assert allowed == survives_gateway
+
+    @pytest.mark.parametrize(
+        "bad_thread_id",
+        ["", "   ", "\t\n", "t" * 129],
+    )
+    def test_empty_whitespace_or_overlong_thread_id_is_rejected(
+        self, bad_thread_id: str
+    ) -> None:
+        with pytest.raises(ValidationError) as exc_info:
+            QueryRequest(
+                prompt="Tell me about ETFs",
+                user_id="investor-42",
+                thread_id=bad_thread_id,
+            )
+        assert [e["loc"] for e in exc_info.value.errors()] == [("thread_id",)]
+
+    def test_thread_id_strips_surrounding_whitespace_and_allows_none(self) -> None:
+        omitted = QueryRequest(prompt="Tell me about ETFs", user_id="investor-42")
+        assert omitted.thread_id is None
+
+        trimmed = QueryRequest(
+            prompt="Tell me about ETFs",
+            user_id="investor-42",
+            thread_id="  thread-99  ",
+        )
+        assert trimmed.thread_id == "thread-99"
 
 
 # ---------------------------------------------------------------------------
@@ -632,6 +667,15 @@ class TestQuerySpanMarksPrincipalVerification:
         (span,) = exporter.get_finished_spans()
         assert span.attributes[SPAN_ATTR_ENDUSER_ID] == "investor-42"
         assert span.attributes[SPAN_ATTR_CAGE_PRINCIPAL_VERIFIED] is False
+        assert span.attributes["thread.id"] == "advisor_session_investor-42"
+        assert (
+            graph.calls[0]["config"]["configurable"]["thread_id"]
+            == "advisor_session_investor-42"
+        )
+        assert (
+            stub_cache.get.await_args.kwargs["governance_context"]["thread_id"]
+            == "advisor_session_investor-42"
+        )
         assert SPAN_ATTR_CAGE_PRINCIPAL_VERIFIED == "cage.principal.verified"
         assert SPAN_ATTR_ENDUSER_ID == "enduser.id"
 
@@ -674,6 +718,177 @@ class TestQuerySpanMarksPrincipalVerification:
         (span,) = exporter.get_finished_spans()
         assert span.attributes[SPAN_ATTR_ENDUSER_ID] == "user:alice@example.com"
         assert span.attributes[SPAN_ATTR_CAGE_PRINCIPAL_VERIFIED] is True
+
+
+# ---------------------------------------------------------------------------
+# Conversation thread ownership
+# ---------------------------------------------------------------------------
+
+
+class _EchoState(TypedDict):
+    messages: Annotated[list[AnyMessage], add_messages]
+    user_id: str
+
+
+class _OwnerlessEchoState(TypedDict, total=False):
+    messages: Annotated[list[AnyMessage], add_messages]
+    user_id: str
+
+
+def _echo_history(state: _EchoState) -> dict[str, Any]:
+    """Answer with every user prompt the thread's checkpoint holds."""
+    prompts = [m.content for m in state["messages"] if isinstance(m, HumanMessage)]
+    return {"messages": [AIMessage(content=" | ".join(map(str, prompts)))]}
+
+
+def _checkpointed_graph() -> Any:
+    builder = StateGraph(_EchoState)
+    builder.add_node("echo", _echo_history)
+    builder.add_edge(START, "echo")
+    builder.add_edge("echo", END)
+    return builder.compile(checkpointer=MemorySaver())
+
+
+@pytest.fixture
+def checkpointed_client(
+    advisor_server: Any,
+    query_client: tuple[TestClient, _CapturingGraph],
+    monkeypatch: pytest.MonkeyPatch,
+) -> TestClient:
+    client, _ = query_client
+    monkeypatch.setattr(
+        advisor_server.app.state, "graph", _checkpointed_graph(), raising=False
+    )
+    return client
+
+
+def _ask(client: TestClient, prompt: str, user_id: str, **extra: Any) -> Any:
+    return client.post(
+        "/agent/query",
+        json={"prompt": prompt, "user_id": user_id, **extra},
+        headers=_AUTH,
+    )
+
+
+class TestThreadOwnership:
+    """A checkpointed thread continues only for the principal who started it."""
+
+    def test_other_principal_cannot_continue_a_thread(
+        self, checkpointed_client: TestClient, stub_cache: MagicMock
+    ) -> None:
+        client = checkpointed_client
+        first = _ask(client, "My account is 12345", "alice", thread_id="t-1")
+        assert first.status_code == 200
+        stub_cache.get.reset_mock()
+
+        intruder = _ask(client, "Repeat my last message", "bob", thread_id="t-1")
+        assert intruder.status_code == 403
+        assert "12345" not in intruder.text
+        # Ownership check runs before any cache lookup.
+        stub_cache.get.assert_not_awaited()
+
+        # Nothing from the refused turn reached alice's checkpoint.
+        again = _ask(client, "What did I say?", "alice", thread_id="t-1")
+        assert again.status_code == 200
+        assert again.json()["response"] == "My account is 12345 | What did I say?"
+
+    def test_default_thread_is_per_principal(
+        self, checkpointed_client: TestClient
+    ) -> None:
+        client = checkpointed_client
+        assert _ask(client, "My account is 12345", "alice").status_code == 200
+
+        bob = _ask(client, "Hello", "bob")
+        assert bob.status_code == 200
+        assert bob.json()["response"] == "Hello"
+
+        alice_second = _ask(client, "Follow up", "alice")
+        assert alice_second.status_code == 200
+        assert alice_second.json()["response"] == "My account is 12345 | Follow up"
+
+    async def test_pre_claiming_other_principals_default_thread_is_refused(
+        self, checkpointed_client: TestClient
+    ) -> None:
+        """bob cannot squat advisor_session_alice before alice's first turn."""
+        # Direct unit check: rejected even without a BaseCheckpointSaver.
+        with pytest.raises(PermissionError, match="advisor_session_"):
+            await require_thread_owner(
+                SimpleNamespace(), "advisor_session_alice", "bob"
+            )
+
+        client = checkpointed_client
+        squat = _ask(
+            client,
+            "Pre-claim alice session",
+            "bob",
+            thread_id="advisor_session_alice",
+        )
+        assert squat.status_code == 403
+
+        # alice can still start and continue her own default session unhindered.
+        alice_first = _ask(client, "Alice first turn", "alice")
+        assert alice_first.status_code == 200
+        assert alice_first.json()["response"] == "Alice first turn"
+
+        alice_explicit = _ask(
+            client,
+            "Alice second turn",
+            "alice",
+            thread_id="advisor_session_alice",
+        )
+        assert alice_explicit.status_code == 200
+        assert (
+            alice_explicit.json()["response"] == "Alice first turn | Alice second turn"
+        )
+
+    async def test_ownerless_populated_checkpoint_is_refused(
+        self,
+        advisor_server: Any,
+        query_client: tuple[TestClient, _CapturingGraph],
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """A pre-migration populated checkpoint with no user_id fails closed."""
+        builder = StateGraph(_OwnerlessEchoState)
+        builder.add_node("echo", _echo_history)  # type: ignore[arg-type]
+        builder.add_edge(START, "echo")
+        builder.add_edge("echo", END)
+        graph = builder.compile(checkpointer=MemorySaver())
+
+        await graph.aupdate_state(
+            {"configurable": {"thread_id": "legacy-thread"}},
+            {"messages": [HumanMessage(content="Pre-migration secret 98765")]},
+        )
+        await graph.aupdate_state(
+            {"configurable": {"thread_id": "empty-owner-thread"}},
+            {
+                "messages": [HumanMessage(content="Empty owner secret")],
+                "user_id": "",
+            },
+        )
+
+        with pytest.raises(PermissionError, match="another principal"):
+            await require_thread_owner(graph, "legacy-thread", "alice")
+        with pytest.raises(PermissionError, match="another principal"):
+            await require_thread_owner(graph, "empty-owner-thread", "alice")
+
+        client, _ = query_client
+        monkeypatch.setattr(advisor_server.app.state, "graph", graph, raising=False)
+        resp = _ask(client, "Read history", "alice", thread_id="legacy-thread")
+        assert resp.status_code == 403
+        assert "98765" not in resp.text
+
+    def test_whitespace_only_thread_id_returns_422(
+        self, query_client: tuple[TestClient, _CapturingGraph]
+    ) -> None:
+        client, graph = query_client
+        resp = client.post(
+            "/agent/query",
+            json={"prompt": "Hello", "user_id": "alice", "thread_id": "   "},
+            headers=_AUTH,
+        )
+        assert resp.status_code == 422
+        assert [d["loc"] for d in resp.json()["detail"]] == [["body", "thread_id"]]
+        assert graph.calls == []
 
 
 # ---------------------------------------------------------------------------

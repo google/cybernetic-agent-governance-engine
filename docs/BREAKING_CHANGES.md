@@ -1165,8 +1165,14 @@ This ships with the `POAM-2026-195` (`#699` `dd272b23`) and `POAM-2026-203` (`#7
 
 # Unreleased (v5.x)
 
-> *No unreleased breaking changes are currently queued for `v5.x`. Every breaking commit (`!` + `BREAKING CHANGE:` footer) landed after `v4.1.0` must add an indexed entry here.*
+## Unreleased — Governed Financial Advisor Per-Principal Conversation Thread Ownership
+
+This binds stateful LangGraph conversation threads on `POST /agent/query` to the resolved end-user principal and retires the shared `"default_thread"` checkpoint default.
+
+| Item | Area | Clean Break Description | Architectural Rationale | Failure Mode on Stale Caller |
+|---|---|---|---|---|
+| **AS-1** | `POST /agent/query` session ownership & `QueryRequest.thread_id` ([`auth.py`](../src/governed_financial_advisor/infrastructure/auth.py), [`query.py`](../src/governed_financial_advisor/models/query.py), [`server.py`](../src/governed_financial_advisor/server.py)) | [`QueryRequest.thread_id`](../src/governed_financial_advisor/models/query.py) changes from `"default_thread"` to `None` (`str \| None`, trimmed, `1..128` non-whitespace characters when supplied), resolved per principal in [`query_agent()`](../src/governed_financial_advisor/server.py) as `f"advisor_session_{principal.user_id}"` across OpenTelemetry spans, [`QueryCache`](../src/governed_financial_advisor/infrastructure/query_cache.py) governance context, and LangGraph `configurable.thread_id`. [`require_thread_owner()`](../src/governed_financial_advisor/infrastructure/auth.py) runs before cache lookup or `graph.ainvoke()`, refusing (HTTP `403` / `PermissionError`) any `advisor_session_*` `thread_id` that does not match `f"advisor_session_{principal.user_id}"` (preventing default-thread pre-claiming) and any populated [`BaseCheckpointSaver`](../src/governed_financial_advisor/infrastructure/auth.py) checkpoint whose `values["user_id"]` is absent, empty, or owned by another principal. | Previously, omitting `thread_id` routed all principals into a single `"default_thread"` checkpoint, and `POST /agent/query` passed caller-chosen `thread_id` values straight to LangGraph without verifying ownership, allowing one principal to read and append to another principal's conversation history or squat on their default thread. | In-process callers inspecting `QueryRequest(...).thread_id` when omitted observe `None` instead of `"default_thread"`. Passing an empty, whitespace-only, or `> 128`-character `thread_id` fails Pydantic validation (`ValidationError` / HTTP `422`). Continuing a `thread_id` started by another principal, targeting `advisor_session_<other_user>`, or resuming a pre-migration populated checkpoint that lacks `user_id` returns HTTP `403` (`PermissionError`). |
 
 ---
 
-**Last updated:** November 12, 2026
+**Last updated:** November 13, 2026
