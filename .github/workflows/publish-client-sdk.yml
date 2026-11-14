@@ -129,7 +129,7 @@ jobs:
           SDIST_VENV="$(mktemp -d)/sdist-venv"
           uv venv "$SDIST_VENV"
           uv pip install --python "$SDIST_VENV/bin/python" --no-deps dist/cage_conformance-"${CONF_VERSION}".tar.gz
-          "$SDIST_VENV/bin/cage-conformance" --version | grep -Fx "cage-conformance ${CONF_VERSION}"
+          "$SDIST_VENV/bin/cage-conformance" --version | grep -Fx "${CONF_VERSION}"
           "$SDIST_VENV/bin/cage-conformance" verify \
             --trace src/cage_conformance/vectors/trace_v1.json \
             --provider-id cage-conformance-sdist-smoke \
@@ -190,7 +190,7 @@ jobs:
           EOF
           docker build -f packages/cage-conformance/Dockerfile.pkg -t "${CONF_IMAGE}:${CONF_VERSION}" -t "${CONF_IMAGE}:latest" packages/cage-conformance
           rm -f packages/cage-conformance/Dockerfile.pkg
-          docker run --rm "${CONF_IMAGE}:${CONF_VERSION}" --version | grep -Fx "cage-conformance ${CONF_VERSION}"
+          docker run --rm "${CONF_IMAGE}:${CONF_VERSION}" --version | grep -Fx "${CONF_VERSION}"
           docker run --rm \
             -v "$PWD/packages/cage-conformance/src/cage_conformance/vectors:/vectors:ro" \
             "${CONF_IMAGE}:${CONF_VERSION}" verify \

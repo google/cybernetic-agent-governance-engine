@@ -1680,10 +1680,24 @@ def test_publish_client_sdk_tag_version_guard_and_per_tag_scoping(
     assert "refs/tags/client-v" in ghcr_client_if
     assert "refs/tags/conformance-v" not in ghcr_client_if
 
+    ver_proc = subprocess.run(
+        [sys.executable, "-m", "cage_conformance.cli", "--version"],
+        cwd=REPO_ROOT,
+        env={
+            **os.environ,
+            "PYTHONPATH": str(REPO_ROOT / "packages" / "cage-conformance" / "src"),
+        },
+        capture_output=True,
+        text=True,
+        check=True,
+    )
+    assert ver_proc.stdout.strip() == conf_ver
+
     build_conf_run = str(
         by_name["Build CAGE Conformance Verifier Wheel & Sdist"]["run"]
     )
     assert 'dist/cage_conformance-"${CONF_VERSION}".tar.gz' in build_conf_run
+    assert 'grep -Fx "${CONF_VERSION}"' in build_conf_run
     assert "verify" in build_conf_run
     assert "${{" not in build_conf_run
 
@@ -1695,6 +1709,7 @@ def test_publish_client_sdk_tag_version_guard_and_per_tag_scoping(
     ghcr_conf_run = str(ghcr_conf["run"])
     assert "FROM python:3.12-slim" in ghcr_conf_run
     assert 'ENTRYPOINT ["cage-conformance"]' in ghcr_conf_run
+    assert 'grep -Fx "${CONF_VERSION}"' in ghcr_conf_run
     assert "FROM scratch" not in ghcr_conf_run
     assert "${{" not in ghcr_conf_run
     assert ghcr_conf_run.index("docker run --rm") < ghcr_conf_run.index("docker push")
