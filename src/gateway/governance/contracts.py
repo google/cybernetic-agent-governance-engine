@@ -521,6 +521,34 @@ PluginMaturity = Literal["production", "stub"]
 VALID_PLUGIN_MATURITIES: frozenset[str] = frozenset({"production", "stub"})
 
 
+CanaryProbeRoute = Literal["/governance/validate-action", "/governance/policy-precheck"]
+VALID_CANARY_PROBE_ROUTES: frozenset[str] = frozenset(
+    {"/governance/validate-action", "/governance/policy-precheck"}
+)
+
+
+@dataclass(frozen=True)
+class CanaryProbe:
+    """Declarative synthetic governed canary probe owned by the active domain.
+
+    Executed once per minute by the in-mesh ``gateway-canary`` workload so
+    ``gateway_zero_permitted_requests`` distinguishes an idle cluster from a
+    total-denial outage without polluting Lula compliance counts.
+    """
+
+    route: CanaryProbeRoute
+    action: str
+    params: Mapping[str, Any]
+
+    def __post_init__(self) -> None:
+        if self.route not in VALID_CANARY_PROBE_ROUTES:
+            raise ValueError(
+                f"CanaryProbe.route must be one of {sorted(VALID_CANARY_PROBE_ROUTES)}, got {self.route!r}"
+            )
+        if not isinstance(self.action, str) or not self.action.strip():
+            raise ValueError("CanaryProbe.action must be a non-empty string")
+
+
 @dataclass(frozen=True)
 class DomainConfig:
     """Kernel-consumed configuration owned by the single active domain.
@@ -544,12 +572,15 @@ class DomainConfig:
             ``("allow",)``. Must be non-empty.
         causal_graph_path: Causal graph YAML for the causal gatekeeper, or
             ``None`` if the domain has no causal tier.
+        canary_probe: Non-mutating governed request executed by the synthetic
+            in-mesh liveness canary, or ``None`` for stub domains.
     """
 
     ftra_registry_path: Path
     opa_package: str
     opa_required_rules: tuple[str, ...]
     causal_graph_path: Path | None = None
+    canary_probe: CanaryProbe | None = None
 
 
 @runtime_checkable

@@ -1063,6 +1063,13 @@ module "gateway" {
     "${local.ksa_advisor}.${module.namespace.name}.${module.service_mesh.identity_suffix}",
   ]
 
+  # SI-4 / AU-5: separate canary identity scoped strictly to the active domain's
+  # CanaryProbe POST route and stamped "canary": true in custody evidence so
+  # synthetic liveness probes never count toward Lula trace-volume thresholds.
+  canary_client_identities = var.enable_gateway_canary ? [
+    "${local.ksa_gateway_canary}.${module.namespace.name}.${module.service_mesh.identity_suffix}",
+  ] : []
+
   # K-4 / R-2 / F-84: derive OTLP auth header exclusively from the dedicated
   # gateway telemetry keypair (never shared with advisor-secrets).
   otel_exporter_otlp_headers = local.effective_gateway_otlp_headers

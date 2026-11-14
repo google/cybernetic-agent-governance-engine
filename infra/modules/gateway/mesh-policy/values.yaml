@@ -15,6 +15,9 @@
 # Supplied by infra/modules/gateway; empty renders nothing callable.
 trustedIdentities: []
 
+# Dedicated Linkerd identities restricted strictly to Exact POST canary routes.
+canaryIdentities: []
+
 # Must match OPEN_EXACT_PATHS in src/gateway/server/workload_identity.py.
 # tests/test_gateway_mesh_policy.py fails if they drift. Only exact paths can
 # be open; there is no prefix form.

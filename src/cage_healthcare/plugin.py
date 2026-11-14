@@ -48,6 +48,11 @@ class HealthcareCagePlugin(contracts.CagePlugin):
         ftra_registry_path=_CONFIG_DIR / "ftra" / "terminal_registry.json",
         opa_package="dosing.governance",
         opa_required_rules=("allow",),
+        canary_probe=contracts.CanaryProbe(
+            route="/governance/policy-precheck",
+            action="administer_dose",
+            params={"dose_mg": 10.0},
+        ),
     )
 
     def contribute(self) -> contracts.PluginContribution:

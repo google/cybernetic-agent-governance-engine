@@ -73,6 +73,7 @@ _SERVED = {
 def _render_mesh_policy_chart(
     trusted_identities: list[str] | None = None,
     namespace: str = "governance-stack",
+    canary_identities: list[str] | None = None,
 ) -> list[dict]:
     """Deterministically render infra/modules/gateway/mesh-policy/templates/policy.yaml."""
     values = yaml.safe_load((_CHART / "values.yaml").read_text(encoding="utf-8"))
@@ -81,6 +82,11 @@ def _render_mesh_policy_chart(
         list(values["trustedIdentities"])
         if trusted_identities is None
         else list(trusted_identities)
+    )
+    canaries: list[str] = (
+        list(values.get("canaryIdentities", []))
+        if canary_identities is None
+        else list(canary_identities)
     )
     tpl = (_CHART / "templates" / "policy.yaml").read_text(encoding="utf-8")
     rendered = tpl.replace("{{ .Release.Namespace }}", namespace)
@@ -113,6 +119,28 @@ def _render_mesh_policy_chart(
     else:
         rendered = re.sub(
             r"\{\{- if \.Values\.trustedIdentities \}\}\n.*?\{\{- end \}\}",
+            "",
+            rendered,
+            flags=re.S,
+        )
+
+    canary_block = "".join(f'    - "{ident}"\n' for ident in canaries)
+    rendered = re.sub(
+        r"\{\{- range \.Values\.canaryIdentities \}\}.*?\{\{- end \}\}\n",
+        canary_block,
+        rendered,
+        flags=re.S,
+    )
+    if canaries:
+        rendered = re.sub(
+            r"\{\{- if \.Values\.canaryIdentities \}\}\n(.*?)\{\{- end \}\}",
+            r"\1",
+            rendered,
+            flags=re.S,
+        )
+    else:
+        rendered = re.sub(
+            r"\{\{- if \.Values\.canaryIdentities \}\}\n.*?\{\{- end \}\}",
             "",
             rendered,
             flags=re.S,
@@ -208,6 +236,29 @@ def test_rendered_policy_denies_all_gated_routes_when_identities_empty() -> None
         if d["metadata"]["name"] == "gateway-gated"
         and d["kind"] == "AuthorizationPolicy"
     ] == []
+
+
+def test_canary_mesh_route_admits_only_exact_probe_posts() -> None:
+    canary_id = "cage-gateway-canary-sa.governance-stack.serviceaccount.identity.linkerd.cluster.local"
+    docs = _render_mesh_policy_chart([ADVISOR_IDENTITY], canary_identities=[canary_id])
+    # Full gateway-gated route remains strictly advisor-only.
+    assert gateway_policy_violations(docs) == []
+    canary_route = _by(docs, "HTTPRoute", "gateway-canary")
+    matches = [m for r in canary_route["spec"]["rules"] for m in r["matches"]]
+    assert matches == [
+        {
+            "method": "POST",
+            "path": {"type": "Exact", "value": "/governance/validate-action"},
+        },
+        {
+            "method": "POST",
+            "path": {"type": "Exact", "value": "/governance/policy-precheck"},
+        },
+    ]
+    canary_auth = _by(docs, "MeshTLSAuthentication", "gateway-canary-clients")
+    assert canary_auth["spec"]["identities"] == [canary_id]
+    canary_policy = _by(docs, "AuthorizationPolicy", "gateway-canary")
+    assert canary_policy["spec"]["targetRef"]["name"] == "gateway-canary"
 
 
 def test_open_route_allows_any_network_only_for_open_paths() -> None:
@@ -519,9 +570,14 @@ def test_all_three_mesh_charts_obey_linkerd_policy_webhook_invariants() -> None:
     suffix = "governance-stack.serviceaccount.identity.linkerd.cluster.local"
     lula_id = f"cage-lula-auditor-sa.{suffix}"
     bridge_id = f"cage-compliance-bridge-sa.{suffix}"
+    canary_id = f"cage-gateway-canary-sa.{suffix}"
 
     gw_docs = _render_mesh_policy_chart([ADVISOR_IDENTITY])
     _assert_linkerd_webhook_invariants(gw_docs)
+    gw_canary_docs = _render_mesh_policy_chart(
+        [ADVISOR_IDENTITY], canary_identities=[canary_id]
+    )
+    _assert_linkerd_webhook_invariants(gw_canary_docs)
 
     cb_docs = _render_compliance_bridge_mesh_chart(
         trusted_identities=[GATEWAY_IDENTITY],

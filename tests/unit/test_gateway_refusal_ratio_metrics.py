@@ -521,3 +521,306 @@ class TestSustainedRefusalRatioAlertTerraformContract:
         # Recovery: as soon as permitted traffic resumes (> 0), both conditions clear.
         assert ratio_fires(0.0, 1.0, sustained_s=900) is False
         assert zero_permitted_fires(1.0, sustained_s=900) is False
+
+
+CANARY_ID = "cage-gateway-canary-sa.governance-stack.serviceaccount.identity.linkerd.cluster.local"
+
+
+class TestSyntheticMeshCanaryAndComplianceExclusion:
+    """Verify synthetic in-mesh canary lockdown and exclusion from Lula compliance counts."""
+
+    def test_canary_identity_disjoint_and_restricted_to_canary_routes(self) -> None:
+        from src.gateway.server.workload_identity import is_canary_request
+
+        # Overlapping trusted and canary identities must fail closed at policy construction.
+        with pytest.raises(ValueError, match="disjoint"):
+            IdentityPolicy(
+                trusted=frozenset({ADVISOR}),
+                canary=frozenset({ADVISOR}),
+            )
+
+        policy = IdentityPolicy(
+            trusted=frozenset({ADVISOR}),
+            canary=frozenset({CANARY_ID}),
+        )
+        registry = CollectorRegistry()
+        metrics = governor_metrics(registry)
+        observed_canary_flags: list[bool] = []
+
+        async def _probe_handler(_request: Request) -> JSONResponse:
+            observed_canary_flags.append(is_canary_request())
+            return JSONResponse({"decision": "ALLOW"}, status_code=200)
+
+        inner = Starlette(
+            routes=[
+                Route(
+                    "/governance/validate-action",
+                    _probe_handler,
+                    methods=["POST", "GET"],
+                ),
+                Route("/governance/policy-precheck", _probe_handler, methods=["POST"]),
+                Route("/tools/execute", _probe_handler, methods=["POST"]),
+                Route("/mcp/", _probe_handler, methods=["POST"]),
+                Route("/v1/chat/completions", _probe_handler, methods=["POST"]),
+            ]
+        )
+        client = TestClient(
+            WorkloadIdentityMiddleware(inner, policy, metrics=metrics),
+            client=PROXY_PEER,
+            base_url=f"http://{POD_IP}:8080",
+        )
+        canary_headers = {CLIENT_IDENTITY_HEADER: CANARY_ID}
+        advisor_headers = {CLIENT_IDENTITY_HEADER: ADVISOR}
+
+        # Canary identity is permitted ONLY on POST /governance/validate-action and
+        # POST /governance/policy-precheck, with is_canary_request() == True.
+        assert (
+            client.post(
+                "/governance/validate-action", headers=canary_headers
+            ).status_code
+            == 200
+        )
+        assert (
+            client.post(
+                "/governance/policy-precheck", headers=canary_headers
+            ).status_code
+            == 200
+        )
+        # Advisor identity on the same route has is_canary_request() == False.
+        assert (
+            client.post(
+                "/governance/validate-action", headers=advisor_headers
+            ).status_code
+            == 200
+        )
+        assert observed_canary_flags == [True, True, False]
+
+        # Canary identity MUST be refused 403 on GET and on every other gated surface.
+        assert (
+            client.get(
+                "/governance/validate-action", headers=canary_headers
+            ).status_code
+            == 403
+        )
+        assert client.post("/tools/execute", headers=canary_headers).status_code == 403
+        assert client.post("/mcp/", headers=canary_headers).status_code == 403
+        assert (
+            client.post("/v1/chat/completions", headers=canary_headers).status_code
+            == 403
+        )
+
+        assert _counter_value(registry, "permitted") == 3.0
+        assert _counter_value(registry, "blocked") == 4.0
+
+    def test_evidence_sink_stamps_canary_and_strips_spoofed_canary_flag(self) -> None:
+        import json
+
+        from src.gateway.governance.evidence.stream import EvidenceStreamSink
+        from src.gateway.server.workload_identity import _serving
+
+        sink = EvidenceStreamSink()
+
+        # 1. Under verified canary identity, _prepare_item stamps "canary": true.
+        with _serving(CANARY_ID, canary=True):
+            canary_item = sink._prepare_item(
+                {
+                    "type": "GOVERNANCE_TRACE",
+                    "controlId": "A.5.3",
+                    "verdict": "ALLOW",
+                },
+                future=None,
+            )
+        canary_payload = json.loads(canary_item.payload_json)
+        assert canary_payload["canary"] is True
+
+        # 2. Under non-canary identity, a spoofed top-level "canary": True is stripped!
+        with _serving(ADVISOR, canary=False):
+            spoofed_item = sink._prepare_item(
+                {
+                    "type": "GOVERNANCE_REFUSAL",
+                    "controlId": "A.5.3",
+                    "verdict": "DENY",
+                    "canary": True,
+                },
+                future=None,
+            )
+        spoofed_payload = json.loads(spoofed_item.payload_json)
+        assert "canary" not in spoofed_payload
+
+    def test_compliance_bridge_excludes_canary_records_from_lula_volume_thresholds(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """150 canary probes must yield total_traces == 0 and safety_rate is None on idle cluster."""
+        import json
+        from datetime import datetime, timezone
+
+        from src.compliance_bridge import metrics as cb_metrics
+
+        now_iso = datetime.now(tz=timezone.utc).isoformat()
+        synthetic_stream: list[tuple[str, dict[str, str]]] = []
+
+        # Seed 150 canary records across A.5.3, A.5.2, and A.9.2 (> 101 trace threshold).
+        for idx in range(150):
+            ctrl = ("A.5.3", "A.5.2", "A.9.2")[idx % 3]
+            payload = {
+                "type": "GOVERNANCE_DECISION",
+                "controlId": ctrl,
+                "verdict": "ALLOW",
+                "canary": True,
+                "timestamp_utc": now_iso,
+            }
+            synthetic_stream.append(
+                (
+                    f"1700000000{idx:03d}-0",
+                    {
+                        "chain_id": "test-chain",
+                        "sequence": str(idx),
+                        "timestamp_utc": now_iso,
+                        "event_type": "GOVERNANCE_DECISION",
+                        "control_id": ctrl,
+                        "payload_json": json.dumps(payload),
+                    },
+                )
+            )
+
+        class _FakeRedis:
+            def xrevrange(
+                self, _key: str, _max: str, _min: str, count: int = 1000
+            ) -> list[tuple[str, dict[str, str]]]:
+                if _key != "cage:evidence:stream":
+                    return []
+                return list(reversed(synthetic_stream))[:count]
+
+            def close(self) -> None:
+                pass
+
+        monkeypatch.setenv("EVIDENCE_STREAM_REDIS_URL", "redis://localhost:6379/1")
+        monkeypatch.delenv("EVIDENCE_COLD_STORE", raising=False)
+        monkeypatch.delenv("EVIDENCE_ARCHIVE_BUCKET", raising=False)
+        monkeypatch.setattr(
+            cb_metrics, "_build_evidence_sync_redis", lambda *_a, **_kw: _FakeRedis()
+        )
+        cb_metrics._metrics_cache.clear()
+        with cb_metrics._raw_custody_lock:
+            cb_metrics._raw_custody_cache.clear()
+
+        for ctrl in ("A.5.3", "A.5.2", "A.9.2"):
+            res = cb_metrics._fetch_from_evidence_stream_sync(ctrl, window_hours=24)
+            assert res.total_traces == 0, f"{ctrl} counted synthetic canary traces"
+            assert res.safety_rate is None, f"{ctrl} fabricated safety_rate from canary"
+
+        # Now append 1 real passing trace and 1 real failing trace attempting to
+        # smuggle nested params={"canary": True}: both MUST be counted!
+        for seq_offset, (verdict, event_type) in enumerate(
+            [("ALLOW", "GOVERNANCE_DECISION"), ("FAIL", "GOVERNANCE_VIOLATION")],
+            start=200,
+        ):
+            real_payload = {
+                "type": event_type,
+                "controlId": "A.5.3",
+                "verdict": verdict,
+                "params": {"canary": True},
+                "timestamp_utc": now_iso,
+            }
+            synthetic_stream.append(
+                (
+                    f"1700000000{seq_offset:03d}-0",
+                    {
+                        "chain_id": "test-chain",
+                        "sequence": str(seq_offset),
+                        "timestamp_utc": now_iso,
+                        "event_type": event_type,
+                        "control_id": "A.5.3",
+                        "payload_json": json.dumps(real_payload),
+                    },
+                )
+            )
+
+        with cb_metrics._raw_custody_lock:
+            cb_metrics._raw_custody_cache.clear()
+
+        mixed = cb_metrics._fetch_from_evidence_stream_sync("A.5.3", window_hours=24)
+        assert mixed.total_traces == 2
+        assert mixed.passed_traces == 1
+        assert mixed.blocked_traces == 1
+        assert mixed.safety_rate == 0.5
+
+    @pytest.mark.asyncio
+    async def test_canary_probe_runner_handles_domain_probes_and_failures(self) -> None:
+        import httpx
+
+        from src.gateway.canary import run_canary_probe_once
+        from src.gateway.governance.plugin_loader import load_domain_plugin
+
+        finance_probe = load_domain_plugin("finance").domain_config.canary_probe
+        healthcare_probe = load_domain_plugin("healthcare").domain_config.canary_probe
+        assert finance_probe is not None
+        assert healthcare_probe is not None
+        assert finance_probe.route == "/governance/validate-action"
+        assert healthcare_probe.route == "/governance/policy-precheck"
+
+        def _healthy_handler(request: httpx.Request) -> httpx.Response:
+            if request.url.path == "/governance/validate-action":
+                return httpx.Response(
+                    200,
+                    json={"payload": {"governance": {"verdict": "ALLOW"}}},
+                )
+            return httpx.Response(
+                200,
+                json={"decision": "ALLOW", "dry_run": True},
+            )
+
+        async with httpx.AsyncClient(
+            transport=httpx.MockTransport(_healthy_handler)
+        ) as client:
+            assert (
+                await run_canary_probe_once(
+                    client, "http://gateway.local:8080", finance_probe
+                )
+                is True
+            )
+            assert (
+                await run_canary_probe_once(
+                    client, "http://gateway.local:8080", healthcare_probe
+                )
+                is True
+            )
+
+        def _broken_opa_handler(_request: httpx.Request) -> httpx.Response:
+            return httpx.Response(200, json={"decision": "DENY", "dry_run": True})
+
+        async with httpx.AsyncClient(
+            transport=httpx.MockTransport(_broken_opa_handler)
+        ) as client:
+            assert (
+                await run_canary_probe_once(
+                    client, "http://gateway.local:8080", healthcare_probe
+                )
+                is False
+            )
+
+    def test_canary_probe_scope_rejects_non_probe_actions(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        from src.gateway.server.governance_middleware import _enforce_canary_probe_scope
+        from src.gateway.server.workload_identity import _serving
+
+        monkeypatch.setenv("CAGE_DOMAIN", "finance")
+        with _serving(CANARY_ID, canary=True):
+            # Finance canary probe is POST /governance/validate-action with action="market_analysis".
+            assert (
+                _enforce_canary_probe_scope(
+                    "/governance/validate-action", "market_analysis"
+                )
+                is None
+            )
+            # Mutating action on the allowed route must be refused 403.
+            blocked_mutating = _enforce_canary_probe_scope(
+                "/governance/validate-action", "execute_trade"
+            )
+            assert blocked_mutating is not None and blocked_mutating.status_code == 403
+            # Wrong route for finance canary must also be refused 403.
+            blocked_route = _enforce_canary_probe_scope(
+                "/governance/policy-precheck", "market_analysis"
+            )
+            assert blocked_route is not None and blocked_route.status_code == 403

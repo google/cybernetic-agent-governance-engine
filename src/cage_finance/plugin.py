@@ -50,6 +50,7 @@ from src.gateway.governance.consensus.engine import (
 )
 from src.gateway.governance.contracts import (
     CagePlugin,
+    CanaryProbe,
     DomainConfig,
     PluginContribution,
 )
@@ -90,6 +91,11 @@ class FinanceCagePlugin(CagePlugin):
         causal_graph_path=Path(__file__).resolve().parent
         / "config"
         / "causal_graph.yaml",
+        canary_probe=CanaryProbe(
+            route="/governance/validate-action",
+            action="market_analysis",
+            params={"symbol": "AAPL", "confidence": 0.99},
+        ),
     )
 
     def contribute(self) -> PluginContribution:

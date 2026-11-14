@@ -695,6 +695,46 @@ def collect_producers(
             for et in infra_ev_types:
                 catalog.event_keys.setdefault(et, set()).update(infra_keys)
 
+    # Index sink-wide producer keys stamped onto effective_event inside
+    # EvidenceStreamSink._prepare_item (e.g., server-authoritative "canary").
+    stream_mod = modules.get("src.gateway.governance.evidence.stream")
+    if stream_mod is not None and "EvidenceStreamSink" in stream_mod.classes:
+        sink_keys: set[str] = set()
+        for item in stream_mod.classes["EvidenceStreamSink"].body:
+            if (
+                isinstance(item, (ast.FunctionDef, ast.AsyncFunctionDef))
+                and item.name == "_prepare_item"
+            ):
+                for stmt in ast.walk(item):
+                    if isinstance(stmt, (ast.Assign, ast.AnnAssign)):
+                        tgt = (
+                            stmt.targets[0]
+                            if isinstance(stmt, ast.Assign)
+                            else stmt.target
+                        )
+                        val = stmt.value
+                        if (
+                            isinstance(tgt, ast.Name)
+                            and tgt.id == "effective_event"
+                            and isinstance(val, ast.Dict)
+                        ):
+                            sink_keys.update(
+                                _extract_dict_node_keys(
+                                    val, stream_mod, modules, catalog
+                                )
+                            )
+                        elif (
+                            isinstance(tgt, ast.Subscript)
+                            and isinstance(tgt.value, ast.Name)
+                            and tgt.value.id == "effective_event"
+                        ):
+                            sink_keys.update(
+                                _resolve_expr_strings(tgt.slice, stream_mod, modules)
+                            )
+        if sink_keys:
+            for keys in catalog.event_keys.values():
+                keys.update(sink_keys)
+
     return catalog
 
 

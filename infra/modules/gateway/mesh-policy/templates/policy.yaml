@@ -116,3 +116,52 @@ spec:
       kind: MeshTLSAuthentication
       name: gateway-trusted-clients
 {{- end }}
+{{- if .Values.canaryIdentities }}
+---
+apiVersion: policy.linkerd.io/v1beta3
+kind: HTTPRoute
+metadata:
+  name: gateway-canary
+  namespace: {{ .Release.Namespace }}
+spec:
+  parentRefs:
+    - group: policy.linkerd.io
+      kind: Server
+      name: gateway-http
+  rules:
+    - matches:
+        - method: POST
+          path:
+            type: Exact
+            value: "/governance/validate-action"
+        - method: POST
+          path:
+            type: Exact
+            value: "/governance/policy-precheck"
+---
+apiVersion: policy.linkerd.io/v1alpha1
+kind: MeshTLSAuthentication
+metadata:
+  name: gateway-canary-clients
+  namespace: {{ .Release.Namespace }}
+spec:
+  identities:
+{{- range .Values.canaryIdentities }}
+    - {{ . | quote }}
+{{- end }}
+---
+apiVersion: policy.linkerd.io/v1alpha1
+kind: AuthorizationPolicy
+metadata:
+  name: gateway-canary
+  namespace: {{ .Release.Namespace }}
+spec:
+  targetRef:
+    group: policy.linkerd.io
+    kind: HTTPRoute
+    name: gateway-canary
+  requiredAuthenticationRefs:
+    - group: policy.linkerd.io
+      kind: MeshTLSAuthentication
+      name: gateway-canary-clients
+{{- end }}

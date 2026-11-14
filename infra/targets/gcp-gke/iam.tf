@@ -328,6 +328,8 @@ resource "google_storage_bucket_iam_member" "cloudbuild_source_viewer" {
 # ---------------------------------------------------------------------------
 
 locals {
+  ksa_gateway_canary = "cage-gateway-canary-sa"
+
   terraform_workload_ksas = {
     gateway = {
       name    = local.ksa_gateway
@@ -389,6 +391,11 @@ locals {
       name    = local.ksa_agentsight_ui
       gsa     = null # zero cloud identity (AC-2 / POAM-2026-079)
       purpose = "ebpf-observability"
+    }
+    gateway_canary = {
+      name    = local.ksa_gateway_canary
+      gsa     = null # zero cloud identity; Linkerd mTLS SPIFFE identity only (AC-2 / SI-4)
+      purpose = "liveness-canary"
     }
   }
 }

@@ -124,6 +124,10 @@ resource "helm_release" "gateway" {
       )
       error_message = "CAGE Invariant (F-94 / R-10): evidence_previous_chain_head_hash and evidence_previous_batch_attestation_digest must either both be empty or both be lowercase 64-character hex SHA-256 digests."
     }
+    precondition {
+      condition     = length(setintersection(toset(var.trusted_client_identities), toset(var.canary_client_identities))) == 0
+      error_message = "CAGE Invariant (POAM-2026-080 / SI-4): canary_client_identities must be disjoint from trusted_client_identities so real workloads are never classified as synthetic canary traffic and the canary never receives full trusted-client route scope."
+    }
   }
 
   name      = "gateway-deployment"
@@ -523,6 +527,10 @@ locals {
           value = join(",", var.trusted_client_identities)
         },
         {
+          name  = "CAGE_CANARY_CLIENT_IDENTITIES"
+          value = join(",", var.canary_client_identities)
+        },
+        {
           name  = "RECONCILIATION_PROVIDER"
           value = var.reconciliation_provider
         },
@@ -912,6 +920,7 @@ resource "helm_release" "mesh_policy" {
 
   values = [yamlencode({
     trustedIdentities = var.trusted_client_identities
+    canaryIdentities  = var.canary_client_identities
   })]
 }
 

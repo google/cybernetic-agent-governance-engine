@@ -1451,4 +1451,16 @@ variable "infra_evidence_previous_batch_attestation_digest" {
   default     = ""
 }
 
+variable "enable_gateway_canary" {
+  description = "Deploy the in-mesh synthetic governed liveness canary (Deployment/gateway-canary under cage-gateway-canary-sa) that sends one non-mutating governed request per minute so gateway_zero_permitted_requests distinguishes a sustain-denial outage from an idle cluster without counting toward Lula trace-volume thresholds (SI-4 / AU-5)."
+  type        = bool
+  default     = true
+  nullable    = false
+}
 
+variable "gateway_canary_interval_seconds" {
+  description = "Probe cadence in seconds for Deployment/gateway-canary (must be >= 5; enforced via Deployment precondition)."
+  type        = number
+  default     = 60
+  nullable    = false
+}

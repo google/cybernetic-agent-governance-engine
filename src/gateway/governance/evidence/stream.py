@@ -1630,16 +1630,30 @@ class EvidenceStreamSink:
     ) -> _QueuedEvidenceItem:
         """Sanitize, normalize, and JCS-encode ``event`` on the producer side."""
         from src.gateway.governance.pii_sanitizer import _get_pii_sanitizer
+        from src.gateway.server.workload_identity import is_canary_request
 
-        sanitized_event = _get_pii_sanitizer().sanitize_dict(event)
+        # Server-authoritative synthetic canary binding: stamp ``canary=True``
+        # exclusively from Linkerd-verified canary identity, and strip any
+        # caller/event ``canary`` key on non-canary requests so workloads can
+        # never forge ``canary=True`` to hide from Lula compliance counts.
+        if is_canary_request():
+            effective_event: dict[str, Any] = {**event, "canary": True}
+        elif "canary" in event:
+            effective_event = {k: v for k, v in event.items() if k != "canary"}
+        else:
+            effective_event = event
+
+        sanitized_event = _get_pii_sanitizer().sanitize_dict(effective_event)
         normalized_event = _normalize_for_jcs(sanitized_event)
         payload_json = jcs_canonicalize_plan(normalized_event).decode("utf-8")
 
-        event_type = str(event.get("type", "UNKNOWN"))
-        control_id = str(event.get("controlId") or event.get("control_id") or "")
+        event_type = str(effective_event.get("type", "UNKNOWN"))
+        control_id = str(
+            effective_event.get("controlId") or effective_event.get("control_id") or ""
+        )
         trace_id = current_trace_id()
         return _QueuedEvidenceItem(
-            event=event,
+            event=effective_event,
             payload_json=payload_json,
             event_type=event_type,
             control_id=control_id,

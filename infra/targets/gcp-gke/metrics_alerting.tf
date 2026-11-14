@@ -130,10 +130,17 @@ resource "google_monitoring_alert_policy" "prometheus_metrics_scrape_liveness" {
 #   1. gateway_sustained_refusal_ratio (180s duration, >= 5 req / 5m floor):
 #      pages quickly during the initial retry burst of a total-denial event or
 #      an active adversarial flood, without false-paging on single-shot probes.
-#   2. gateway_zero_permitted_requests (900s duration, no volume floor):
-#      prevents the alert from clearing itself as the outage deepens and callers
-#      stop retrying / open circuit breakers, dropping total traffic below the
-#      5 req / 5m floor while permitted throughput remains 0.
+#   2. gateway_zero_permitted_requests (900s duration, no volume floor, gated on
+#      var.enable_gateway_canary): prevents the alert from clearing itself as
+#      the outage deepens and callers stop retrying / open circuit breakers,
+#      dropping total traffic below the 5 req / 5m floor while permitted
+#      throughput remains 0. Backed by Deployment/gateway-canary (1 governed
+#      in-mesh probe / min under cage-gateway-canary-sa) so idle overnight
+#      clusters continue permitting 1 probe/min without false-paging, while
+#      EvidenceStreamSink stamps "canary": true and compliance-bridge excludes
+#      canary records from Lula volume thresholds and safety_rate. If
+#      enable_gateway_canary = false, this policy is omitted so quiet periods
+#      do not page.
 
 resource "google_monitoring_alert_policy" "gateway_sustained_refusal_ratio" {
   count = local.enforcing_posture ? 1 : 0
@@ -165,9 +172,7 @@ resource "google_monitoring_alert_policy" "gateway_sustained_refusal_ratio" {
       gateway requests arrive within `5m` and the `blocked` share stays
       `>= ${local.gateway_refusal_ratio_threshold}` for `180s` (`OPEN_EXACT_PATHS`
       such as `/health`, `/healthz`, and JWKS are excluded so kubelet probes
-      never dilute the denominator). Paired with `gateway_zero_permitted_requests`
-      (`rate(permitted) == 0` over `900s`) so paging persists if callers back off
-      below the `${local.gateway_refusal_ratio_min_requests}` req / `5m` floor.
+      never dilute the denominator).${var.enable_gateway_canary ? " Paired with `gateway_zero_permitted_requests` (`rate(permitted) == 0` over `900s`, backed by `Deployment/gateway-canary`) so paging persists if callers back off below the `${local.gateway_refusal_ratio_min_requests}` req / `5m` floor." : ""}
 
       ### Triage Checklist
       1. **Fail-closed dependency outage (gateway alive, `/healthz` = `200`, routes `403`/`503`):**
@@ -195,7 +200,7 @@ resource "google_monitoring_alert_policy" "gateway_sustained_refusal_ratio" {
 }
 
 resource "google_monitoring_alert_policy" "gateway_zero_permitted_requests" {
-  count = local.enforcing_posture ? 1 : 0
+  count = local.enforcing_posture && var.enable_gateway_canary ? 1 : 0
 
   project               = var.project_id
   display_name          = "${var.cluster_name} - Gateway Zero Permitted Gated Requests for 15m (SI-4 / AU-5)"
@@ -219,13 +224,17 @@ resource "google_monitoring_alert_policy" "gateway_zero_permitted_requests" {
       - **Owner:** `${trimspace(var.lula_alert_owner)}`
       - **Cluster:** `${var.cluster_name}` (`${var.namespace}`)
       - **Metric:** `cage_gateway_gated_requests_total{outcome="permitted"}` on `PodMonitoring/gateway-metrics` (`:9090/metrics`)
+      - **Synthetic Liveness Canary:** `Deployment/gateway-canary` (`cage-gateway-canary-sa`, 1 governed request / `${var.gateway_canary_interval_seconds}s`)
 
       Fires when `sum(rate(cage_gateway_gated_requests_total{outcome="permitted"}[5m])) == 0`
-      continuously for `900s` (`15m`) with no minimum request floor. Closes the
-      second stage of a total-denial outage after upstream callers stop retrying
-      or trip circuit breakers and gated traffic drops below the
-      `${local.gateway_refusal_ratio_min_requests}` req / `5m` floor of
-      `gateway_sustained_refusal_ratio` while zero requests are succeeding.
+      continuously for `900s` (`15m`) while `Deployment/gateway-canary` is
+      configured to send one in-mesh governed probe every
+      `${var.gateway_canary_interval_seconds}s`. Because idle clusters still
+      permit the synthetic canary (whose custody-chain records are stamped
+      `"canary": true` and excluded from Lula trace-volume thresholds), zero
+      permitted throughput over `15m` unambiguously indicates either a sustained
+      gateway fail-closed outage after external callers backed off or a broken
+      in-mesh canary path.
     EOT
   }
 

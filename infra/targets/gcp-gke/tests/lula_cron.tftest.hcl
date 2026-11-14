@@ -152,9 +152,30 @@ run "staging_plans_lula_cron_active_specs_and_dedicated_ksas" {
       google_monitoring_alert_policy.gateway_zero_permitted_requests[0].conditions[0].condition_prometheus_query_language[0].duration == "900s" &&
       strcontains(google_monitoring_alert_policy.gateway_zero_permitted_requests[0].conditions[0].condition_prometheus_query_language[0].query, "rate(cage_gateway_gated_requests_total") &&
       strcontains(google_monitoring_alert_policy.gateway_zero_permitted_requests[0].conditions[0].condition_prometheus_query_language[0].query, "outcome=\"permitted\"") &&
-      strcontains(google_monitoring_alert_policy.gateway_zero_permitted_requests[0].conditions[0].condition_prometheus_query_language[0].query, "== 0")
+      strcontains(google_monitoring_alert_policy.gateway_zero_permitted_requests[0].conditions[0].condition_prometheus_query_language[0].query, "== 0") &&
+      length(kubernetes_deployment_v1.gateway_canary) == 1 &&
+      kubernetes_service_account.workload["gateway_canary"].metadata[0].name == "cage-gateway-canary-sa" &&
+      length(coalesce(kubernetes_service_account.workload["gateway_canary"].metadata[0].annotations, tomap({}))) == 0 &&
+      kubernetes_network_policy_v1.gateway_canary_egress.metadata[0].name == "gateway-canary-egress"
     )
-    error_message = "CA-7 / AU-12 / SI-4: enforcing deployments must provision single-condition PromQL lula_audit_failure, lula_audit_pod_restart, prometheus_metrics_scrape_liveness, gateway_sustained_refusal_ratio, and gateway_zero_permitted_requests naming lula_alert_owner"
+    error_message = "CA-7 / AU-12 / SI-4: enforcing deployments must provision single-condition PromQL lula_audit_failure, lula_audit_pod_restart, prometheus_metrics_scrape_liveness, gateway_sustained_refusal_ratio, gateway_zero_permitted_requests, and in-mesh Deployment/gateway-canary under cage-gateway-canary-sa"
+  }
+}
+
+run "disabling_gateway_canary_omits_zero_permitted_alert_policy" {
+  command = plan
+
+  variables {
+    enable_gateway_canary = false
+  }
+
+  assert {
+    condition = (
+      length(kubernetes_deployment_v1.gateway_canary) == 0 &&
+      length(google_monitoring_alert_policy.gateway_zero_permitted_requests) == 0 &&
+      length(google_monitoring_alert_policy.gateway_sustained_refusal_ratio) == 1
+    )
+    error_message = "enable_gateway_canary = false must omit both Deployment/gateway-canary and gateway_zero_permitted_requests so quiet periods never false-page without a canary"
   }
 }
 
