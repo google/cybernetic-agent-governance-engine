@@ -42,11 +42,15 @@ Identity Federation (``scripts/partner_harness.py``):
 from __future__ import annotations
 
 import hashlib
+import json
 import os
+import subprocess
+import sys
 import uuid
 from collections.abc import Iterator
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
+from pathlib import Path
 from typing import Any
 from unittest.mock import patch
 
@@ -360,3 +364,85 @@ async def test_live_unserved_routes_fail_closed(
     seal = await provider.submit_evidence("thread-cage-live-unserved", _EMPTY_SHA256)
     assert seal.seal_hash == ""
     assert (seal.error or "").startswith("HTTP 404"), seal.error
+
+
+_CONFORMANCE_SRC = (
+    Path(__file__).resolve().parents[3] / "packages" / "cage-conformance" / "src"
+)
+
+
+def test_cage_conformance_endpoint_profile_provider_01_v02(
+    credentials: _Credentials, tmp_path: Path
+) -> None:
+    """Standalone cage-conformance verify --endpoint passes all 6 live wire checks."""
+    if str(_CONFORMANCE_SRC) not in sys.path:
+        sys.path.insert(0, str(_CONFORMANCE_SRC))
+    from cage_conformance import validate_report
+
+    api_key_file = tmp_path / "api_key.secret"
+    api_key_file.write_text(credentials.api_key, encoding="utf-8")
+    api_key_file.chmod(0o600)
+
+    id_token_file = tmp_path / "gcp_id_token.secret"
+    id_token_file.write_text(credentials.id_token, encoding="utf-8")
+    id_token_file.chmod(0o600)
+
+    report_file = tmp_path / "provider_01_conformance_report.json"
+    child_env = {
+        key: value
+        for key, value in os.environ.items()
+        if not key.startswith(("CAGE_CONFORMANCE_", "CAGE_NORMATIVE_"))
+    }
+    child_env["PYTHONPATH"] = str(_CONFORMANCE_SRC)
+
+    proc = subprocess.run(  # noqa: S603 - fixed argv, credentials passed via 0600 files
+        [
+            sys.executable,
+            "-m",
+            "cage_conformance.cli",
+            "verify",
+            "--endpoint",
+            credentials.endpoint,
+            "--profile",
+            "provider-01-v0.2",
+            "--api-key-file",
+            str(api_key_file),
+            "--gcp-id-token-file",
+            str(id_token_file),
+            "--provider-id",
+            "provider_01",
+            "--adapter-author-org",
+            "Google LLC",
+            "--counterparty-org",
+            "Provider 01 Partner",
+            "--adapter-version",
+            "0.4.1",
+            "--adapter-commit",
+            "5595a82e",
+            "--runner-org",
+            "Google LLC",
+            "--runner-identity",
+            "ci-partner-harness@cage.local",
+            "--output",
+            str(report_file),
+        ],
+        capture_output=True,
+        text=True,
+        env=child_env,
+        timeout=60,
+        check=False,
+    )
+    assert proc.returncode == 0, proc.stdout + proc.stderr
+
+    report = validate_report(json.loads(report_file.read_text(encoding="utf-8")))
+    assert report.conformant is True, report.to_dict()
+    assert report.checked == 6
+    assert [a.assertion_id for a in report.assertions] == [
+        "CASE-1A",
+        "CASE-1B",
+        "CASE-1C",
+        "CASE-1D",
+        "CASE-1E",
+        "CASE-1F",
+    ]
+    assert all(a.passed for a in report.assertions)

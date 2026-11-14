@@ -1143,3 +1143,56 @@ jobs:
         run: terraform -chdir=infra/modules/inference_stub init -backend=false -input=false
       - name: Run terraform test against the inference_stub module
         run: terraform -chdir=infra/modules/inference_stub test
+
+  conformance-oidc-smoke:
+    name: "Conformance OIDC Attestation Smoke"
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    if: >-
+      github.event_name != 'pull_request' ||
+      github.event.pull_request.head.repo.full_name == github.repository
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Set up Python
+        uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
+        with:
+          python-version-file: "pyproject.toml"
+      - name: Install cage-conformance with attest extra
+        run: python -m pip install './packages/cage-conformance[attest]'
+      - name: Verify trace, mint GitHub OIDC token, attest, and verify report
+        env:
+          ADAPTER_COMMIT: ${{ github.sha }}
+        run: |
+          umask 077
+          cage-conformance verify \
+            --trace packages/cage-conformance/src/cage_conformance/vectors/trace_v1.json \
+            --provider-id cage-kernel \
+            --adapter-author-org "Google LLC" \
+            --counterparty-org "Example Deployer" \
+            --adapter-version 4.1.0 \
+            --adapter-commit "${ADAPTER_COMMIT}" \
+            --runner-org "Google LLC" \
+            --runner-identity "github-actions@cage.local" \
+            --output "${RUNNER_TEMP}/report.json"
+
+          AUD="$(cage-conformance audience "${RUNNER_TEMP}/report.json")"
+          test -n "${AUD}"
+          curl -sSf -H "Authorization: bearer ${ACTIONS_ID_TOKEN_REQUEST_TOKEN}" \
+            "${ACTIONS_ID_TOKEN_REQUEST_URL}&audience=${AUD}" \
+            | python3 -c 'import json, sys; print(json.load(sys.stdin)["value"])' > "${RUNNER_TEMP}/oidc.jwt"
+
+          cage-conformance attest "${RUNNER_TEMP}/report.json" \
+            --token-file "${RUNNER_TEMP}/oidc.jwt" \
+            --output "${RUNNER_TEMP}/attested.json"
+          rm -f "${RUNNER_TEMP}/oidc.jwt"
+
+          VERIFY_OUT="$(cage-conformance verify-report "${RUNNER_TEMP}/attested.json")"
+          echo "${VERIFY_OUT}"
+          grep -q "conformant=True" <<<"${VERIFY_OUT}"
+          grep -q "posture=AUTHOR_SELF_TEST" <<<"${VERIFY_OUT}"
