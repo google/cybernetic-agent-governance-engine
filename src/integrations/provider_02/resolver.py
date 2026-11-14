@@ -22,7 +22,9 @@ The resolver:
 - Accepts ContentAddress or string inputs, parsing before network calls
 - Rejects COMMITMENT-kind addresses (hmac-sha256) at the boundary
 - Implements ETag-based caching with no TTL (content is immutable)
-- Unconditionally re-verifies digest integrity of returned payloads
+- Unconditionally extracts the inner or direct `cer.governed.execution.v1` CER
+  and re-verifies its RFC 8785 JCS SHA-256 digest (failing closed with
+  `CER_UNSUPPORTED_BUNDLE_TYPE` on non-governed bundle types)
 - Returns structured CERResolution with fail-closed error semantics
 
 Architecture precedent: follows the returning-convention pattern established
@@ -39,12 +41,114 @@ from typing import Any
 import httpx
 
 from src.gateway.governance.content_address import ContentAddress, ContentAddressKind
+from src.gateway.governance.jcs_canonicalizer import jcs_canonicalize_plan
 from src.gateway.governance.seams.attestation import AttestationStatus
+from src.integrations.provider_02.governed_cer import CER_BUNDLE_TYPE
 
 logger = logging.getLogger("cage.provider_02_resolver")
 
 # URL path template - single source of truth for CER resolution endpoint construction
 _CER_RESOLUTION_PATH_TEMPLATE = "/v1/resolve/cer/{hash}"
+
+
+def _verify_cer_payload(address: ContentAddress, body: Any) -> dict[str, Any] | None:
+    """Verify the inner or direct governed-execution CER against ``address``.
+
+    Supports both the ``GET /v1/resolve/cer/:certificateHash`` resolution
+    envelope (``{"bundle": <cer>, "certificateHash": "sha256:...", ...}``) and
+    a direct CER JSON object (``{"bundleType": "cer.governed.execution.v1", ...}``).
+
+    Returns:
+        ``None`` when ``body`` carries a ``cer.governed.execution.v1`` CER whose
+        RFC 8785 JCS SHA-256 digest matches ``address``; otherwise a structured
+        fail-closed finding dictionary.
+    """
+    if not isinstance(body, dict):
+        return {
+            "code": "CER_MALFORMED_REF",
+            "message": "Malformed CER response: expected JSON object",
+            "retryable": False,
+        }
+
+    expected_hashes = {f"sha256:{address.hex_digest}", address.hex_digest}
+
+    bundle_candidate = body.get("bundle")
+    if isinstance(bundle_candidate, dict) and "bundleType" in bundle_candidate:
+        if "ok" in body and body["ok"] is not True:
+            return {
+                "code": "CER_MALFORMED_REF",
+                "message": f"Resolution envelope reported ok={body['ok']!r}",
+                "retryable": False,
+            }
+        if "certificateHash" in body:
+            outer_hash = body["certificateHash"]
+            if not isinstance(outer_hash, str) or outer_hash not in expected_hashes:
+                return {
+                    "code": "CER_DIGEST_MISMATCH",
+                    "message": (
+                        f"Resolution envelope certificateHash mismatch: "
+                        f"expected sha256:{address.hex_digest}, got {outer_hash!r}"
+                    ),
+                    "retryable": False,
+                }
+        cer: dict[str, Any] = bundle_candidate
+    elif "bundleType" in body:
+        cer = body
+    else:
+        return {
+            "code": "CER_MALFORMED_REF",
+            "message": (
+                "Response does not contain a typed CER bundle (missing bundleType)"
+            ),
+            "retryable": False,
+        }
+
+    bundle_type = cer.get("bundleType")
+    if bundle_type != CER_BUNDLE_TYPE:
+        return {
+            "code": "CER_UNSUPPORTED_BUNDLE_TYPE",
+            "message": (
+                f"Unsupported CER bundleType {bundle_type!r}; "
+                f"only {CER_BUNDLE_TYPE!r} has a verified digest preimage contract"
+            ),
+            "retryable": False,
+        }
+
+    if "certificateHash" in cer:
+        inner_hash = cer["certificateHash"]
+        if not isinstance(inner_hash, str) or inner_hash not in expected_hashes:
+            return {
+                "code": "CER_DIGEST_MISMATCH",
+                "message": (
+                    f"CER certificateHash mismatch: "
+                    f"expected sha256:{address.hex_digest}, got {inner_hash!r}"
+                ),
+                "retryable": False,
+            }
+
+    try:
+        canonical_bytes = jcs_canonicalize_plan(
+            {k: v for k, v in cer.items() if k != "certificateHash"}
+        )
+    except (TypeError, ValueError) as exc:
+        return {
+            "code": "CER_MALFORMED_REF",
+            "message": f"CER payload failed JCS canonicalization: {exc}",
+            "retryable": False,
+        }
+
+    computed_digest = hashlib.sha256(canonical_bytes).hexdigest()
+    if f"sha256:{computed_digest}" != address.canonical:
+        return {
+            "code": "CER_DIGEST_MISMATCH",
+            "message": (
+                f"Content digest mismatch: expected {address.canonical}, "
+                f"computed sha256:{computed_digest}"
+            ),
+            "retryable": False,
+        }
+
+    return None
 
 
 @dataclass(frozen=True)
@@ -58,7 +162,7 @@ class CERResolution:
         signature_checked: Set to True only by Phase 3 (signature verification)
         etag: HTTP ETag header value for cache revalidation
         from_cache: True if this result came from the in-process cache
-        evidence: The raw CER payload body
+        evidence: Parsed JSON resolution payload (envelope or bare CER)
         links: Extracted links (self, keyManifest, verify, humanVerifier)
         anchors: Transparency log anchors (captured verbatim, unvalidated)
         timestamps: RFC 3161 timestamps (captured verbatim, unvalidated)
@@ -200,8 +304,21 @@ class Provider02CERResolver:
             client = await self._ensure_client()
             response = await client.get(url, headers=headers)
 
-            # Handle 304 Not Modified - return from cache
+            # Handle 304 Not Modified - re-verify cached entry before returning
             if response.status_code == 304 and cached:
+                cached_finding = _verify_cer_payload(address, cached.body)
+                if cached_finding is not None:
+                    self._cache.pop(address.canonical, None)
+                    logger.error(
+                        f"Cached CER failed digest re-verification for {address.canonical}: "
+                        f"{cached_finding['code']}"
+                    )
+                    return CERResolution(
+                        address=address,
+                        status=AttestationStatus.ERROR.value,
+                        resolved=False,
+                        findings=[cached_finding],
+                    )
                 logger.debug(f"Cache hit for {address.canonical}")
                 return CERResolution(
                     address=address,
@@ -306,30 +423,18 @@ class Provider02CERResolver:
                     ],
                 )
 
-            # Unconditional digest re-verification
-            # Hash the raw response bytes, not the re-serialized parse
-            raw_bytes = response.content
-            computed_digest = hashlib.sha256(raw_bytes).hexdigest()
-
-            if computed_digest != address.hex_digest:
+            # Unconditional inner/direct governed CER extraction and JCS digest verification
+            finding = _verify_cer_payload(address, body)
+            if finding is not None:
                 logger.error(
-                    f"Digest mismatch for {address.canonical}: "
-                    f"expected {address.hex_digest}, got {computed_digest}"
+                    f"CER verification failed for {address.canonical} "
+                    f"({finding['code']}): {finding['message']}"
                 )
                 return CERResolution(
                     address=address,
                     status=AttestationStatus.ERROR.value,
                     resolved=False,
-                    findings=[
-                        {
-                            "code": "CER_DIGEST_MISMATCH",
-                            "message": (
-                                f"Content digest mismatch: expected {address.hex_digest}, "
-                                f"computed {computed_digest}"
-                            ),
-                            "retryable": False,
-                        }
-                    ],
+                    findings=[finding],
                 )
 
             # Extract structured fields
