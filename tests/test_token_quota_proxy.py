@@ -110,7 +110,24 @@ async def test_check_and_increment_allowed() -> None:
     assert result.allowed is True
     assert result.step_count == 3
     assert result.accumulated_tokens == 200
+    assert result.tokens_remaining == 4800
     assert result.block_reason is None
+
+
+@pytest.mark.local
+def test_quota_check_result_tokens_remaining_clamped_to_zero() -> None:
+    """QuotaCheckResult.tokens_remaining returns max(0, token_quota_max - accumulated_tokens)."""
+    res = QuotaCheckResult(
+        allowed=False,
+        agent_id="agent-clamp",
+        step_count=5,
+        accumulated_tokens=1200,
+        step_quota_max=10,
+        token_quota_max=1000,
+        block_reason="token_count",
+        session_ttl=60,
+    )
+    assert res.tokens_remaining == 0
 
 
 # ---------------------------------------------------------------------------

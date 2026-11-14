@@ -185,6 +185,11 @@ class QuotaCheckResult:
     block_reason: str | None
     session_ttl: int
 
+    @property
+    def tokens_remaining(self) -> int:
+        """Non-negative remaining token budget for this session."""
+        return max(0, self.token_quota_max - self.accumulated_tokens)
+
 
 # ---------------------------------------------------------------------------
 # TokenQuotaProxy
