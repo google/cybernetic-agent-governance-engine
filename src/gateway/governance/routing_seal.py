@@ -579,6 +579,9 @@ async def generate_seal_with_evidence(
             evidence_event["reliance"] = reliance_evidence
             span.set_attribute("cage.seal.reliance_count", len(reliance_evidence))
 
+        from src.gateway.governance.governor.metrics import mark_request_evidenced
+
+        mark_request_evidenced()
         sink = es.get_evidence_sink()
         record_hash: str | None = None  # Will be set if evidence commit succeeds
 
@@ -1343,27 +1346,35 @@ async def verify_and_consume_seal(
         "decision_record_hash": decision_record_hash,
         "timestamp_utc": datetime.now(tz=timezone.utc).isoformat(),
     }
-    sink = es.get_evidence_sink()
-    has_redis = getattr(sink, "_redis", None) is not None
-    if has_redis or getattr(sink, "is_running", False):
-        try:
-            msg_id = await sink.ingest(consumed_event)
-            if has_redis and msg_id is None:
-                raise EvidenceChainUnavailableError(
-                    "evidence sink failed to append GOVERNANCE_SEAL_CONSUMED"
-                )
-        except Exception as exc:
-            from src.gateway.governance.governor.metrics import governor_metrics
+    from src.gateway.governance.governor.metrics import (
+        governor_metrics,
+        mark_request_evidenced,
+    )
 
-            governor_metrics().evidence_publish_failure("seal_consumed")
-            if es.is_evidence_chain_blocking():
-                raise SymbolicGovernorViolation(
-                    f"seal consumption evidence commit failed: {exc}", action
-                ) from exc
-            logger.warning(
-                "⚠️ Failed to record GOVERNANCE_SEAL_CONSUMED (non-blocking): %s",
-                exc,
+    mark_request_evidenced()
+    sink = es.get_evidence_sink()
+    try:
+        if es.is_evidence_chain_blocking():
+            await es.commit_decision_evidence(
+                consumed_event,
+                label="GOVERNANCE_SEAL_CONSUMED",
+                sink=sink,
+                sentinel_unset=False,
             )
+        elif getattr(sink, "_redis", None) is not None or getattr(
+            sink, "is_running", False
+        ):
+            await sink.ingest(consumed_event)
+    except Exception as exc:
+        governor_metrics().evidence_publish_failure("seal_consumed")
+        if es.is_evidence_chain_blocking():
+            raise SymbolicGovernorViolation(
+                f"seal consumption evidence commit failed: {exc}", action
+            ) from exc
+        logger.warning(
+            "⚠️ Failed to record GOVERNANCE_SEAL_CONSUMED (non-blocking): %s",
+            exc,
+        )
 
     # This caller owns the seal: the model's SEAL_ISSUED -> EXECUTED step.
     # Best effort; the trace never changes the authorisation decided above.

@@ -444,12 +444,14 @@ async def _emit_proxy_evidence(
         get_evidence_sink,
         is_evidence_chain_blocking,
     )
+    from src.gateway.governance.governor.metrics import (
+        governor_metrics,
+        mark_request_evidenced,
+    )
 
+    mark_request_evidenced()
     blocking = is_evidence_chain_blocking()
-    app_state = getattr(getattr(request, "app", None), "state", None)
-    sink = getattr(app_state, "evidence_sink", None)
-    if sink is None:
-        sink = get_evidence_sink()
+    sink = get_evidence_sink()
     if not blocking and (sink is None or not getattr(sink, "_running", False)):
         return
 
@@ -482,6 +484,7 @@ async def _emit_proxy_evidence(
             if inspect.isawaitable(ingest_res):
                 await ingest_res
     except EvidenceChainUnavailableError:
+        governor_metrics().evidence_publish_failure("inference_proxy_refusal")
         logger.error(
             "Inference proxy evidence emission failed closed (control=%s)",
             control_id,
@@ -489,6 +492,7 @@ async def _emit_proxy_evidence(
         if blocking:
             raise
     except Exception as exc:
+        governor_metrics().evidence_publish_failure("inference_proxy_refusal")
         logger.error(
             "Inference proxy evidence emission failed (control=%s): %s",
             control_id,
@@ -509,14 +513,28 @@ async def _emit_proxy_pass_evidence(
     agent_id: str | None = None,
     pii_redacted: bool = False,
 ) -> None:
-    """Append hash-chained A.5.2 (Stage 1) and A.9.2 (Stage 4 PII) pass records when an evidence sink is running."""
-    from src.gateway.governance.evidence.stream import get_evidence_sink
+    """Commit hash-chained A.5.2 (Stage 1) and A.9.2 (Stage 4 PII) pass records.
 
-    app_state = getattr(getattr(request, "app", None), "state", None)
-    sink = getattr(app_state, "evidence_sink", None)
-    if sink is None:
-        sink = get_evidence_sink()
-    if sink is None or not getattr(sink, "_running", False):
+    When :func:`is_evidence_chain_blocking` is ``True``, routes both pass
+    records through :func:`commit_decision_evidence` so a missing, stopped,
+    disconnected, or corrupt evidence sink raises
+    :class:`EvidenceChainUnavailableError` (HTTP ``503``) before any completion
+    bytes are returned to the caller (POAM-2026-217).
+    """
+    from src.gateway.governance.evidence.stream import (
+        commit_decision_evidence,
+        get_evidence_sink,
+        is_evidence_chain_blocking,
+    )
+    from src.gateway.governance.governor.metrics import (
+        governor_metrics,
+        mark_request_evidenced,
+    )
+
+    mark_request_evidenced()
+    blocking = is_evidence_chain_blocking()
+    sink = get_evidence_sink()
+    if not blocking and (sink is None or not getattr(sink, "_running", False)):
         return
 
     trace_id = _resolve_proxy_trace_id(request, body, span)
@@ -550,15 +568,39 @@ async def _emit_proxy_pass_evidence(
 
     for ev in (stage1_event, pii_event):
         try:
-            ingest_res = sink.ingest(ev)
-            if inspect.isawaitable(ingest_res):
-                await ingest_res
+            if blocking:
+                await commit_decision_evidence(
+                    ev,
+                    label=str(ev["type"]),
+                    sink=sink,
+                    sentinel_unset=False,
+                )
+            else:
+                ingest_res = sink.ingest(ev)
+                msg_id = (
+                    await ingest_res if inspect.isawaitable(ingest_res) else ingest_res
+                )
+                if msg_id is None and getattr(sink, "_redis", None) is not None:
+                    governor_metrics().evidence_publish_failure("inference_proxy_pass")
+        except EvidenceChainUnavailableError:
+            governor_metrics().evidence_publish_failure("inference_proxy_pass")
+            logger.error(
+                "Inference proxy pass-evidence emission failed closed (control=%s)",
+                ev["control_id"],
+            )
+            if blocking:
+                raise
         except Exception as exc:
-            logger.warning(
+            governor_metrics().evidence_publish_failure("inference_proxy_pass")
+            logger.error(
                 "Inference proxy pass-evidence emission failed (control=%s): %s",
                 ev["control_id"],
                 exc,
             )
+            if blocking:
+                raise EvidenceChainUnavailableError(
+                    f"Evidence sink failed to commit {ev['type']}: {exc}", exc
+                ) from exc
 
 
 @inference_app.post("/v1/chat/completions")
@@ -1089,6 +1131,16 @@ async def chat_completions(
                             pii_redacted=True,
                         )
                         return JSONResponse(content=filtered_response)
+            except EvidenceChainUnavailableError as exc:
+                if not stream_backend_error:
+                    await _get_token_quota_proxy().rollback_step(
+                        agent_id, reserved_tokens=token_delta
+                    )
+                logger.error(
+                    "Inference proxy streaming pass failed closed: evidence chain unavailable: %s",
+                    exc,
+                )
+                return _evidence_unavailable_response(exc)
             except Exception:
                 if not stream_backend_error:
                     await _get_token_quota_proxy().rollback_step(
@@ -1096,14 +1148,25 @@ async def chat_completions(
                     )
                 raise
 
-            await _emit_proxy_pass_evidence(
-                request,
-                span=span,
-                body=body,
-                model_id=model_id,
-                agent_id=agent_id,
-                pii_redacted=False,
-            )
+            try:
+                await _emit_proxy_pass_evidence(
+                    request,
+                    span=span,
+                    body=body,
+                    model_id=model_id,
+                    agent_id=agent_id,
+                    pii_redacted=False,
+                )
+            except EvidenceChainUnavailableError as exc:
+                if not stream_backend_error:
+                    await _get_token_quota_proxy().rollback_step(
+                        agent_id, reserved_tokens=token_delta
+                    )
+                logger.error(
+                    "Inference proxy streaming pass failed closed: evidence chain unavailable: %s",
+                    exc,
+                )
+                return _evidence_unavailable_response(exc)
 
             # Content passed output filtering — re-stream the collected chunks
             async def _replay_chunks() -> AsyncIterator[bytes]:
@@ -1210,12 +1273,22 @@ async def chat_completions(
                 "gen_ai.response.model", vllm_response.get("model", model_id)
             )
 
-        await _emit_proxy_pass_evidence(
-            request,
-            span=span,
-            body=body,
-            model_id=model_id,
-            agent_id=agent_id,
-            pii_redacted=non_stream_pii_redacted,
-        )
+        try:
+            await _emit_proxy_pass_evidence(
+                request,
+                span=span,
+                body=body,
+                model_id=model_id,
+                agent_id=agent_id,
+                pii_redacted=non_stream_pii_redacted,
+            )
+        except EvidenceChainUnavailableError as exc:
+            await _get_token_quota_proxy().rollback_step(
+                agent_id, reserved_tokens=token_delta
+            )
+            logger.error(
+                "Inference proxy pass failed closed: evidence chain unavailable: %s",
+                exc,
+            )
+            return _evidence_unavailable_response(exc)
         return JSONResponse(content=vllm_response)

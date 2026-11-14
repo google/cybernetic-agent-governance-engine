@@ -852,8 +852,9 @@ async def e2e_stack(
     monkeypatch.setattr(rs.es, "get_evidence_sink", lambda: sink)
     monkeypatch.setattr(rs.es, "is_evidence_chain_blocking", lambda: True)
     monkeypatch.setattr(gm, "get_evidence_sink", lambda: sink)
-    inference_proxy.inference_app.state.evidence_sink = sink
-    inference_proxy.inference_app.state.redis = stream_redis
+    monkeypatch.setattr(
+        inference_proxy.inference_app.state, "redis", stream_redis, raising=False
+    )
     await publish_thresholds_loaded(sink)
 
     # Real TokenQuotaProxy backed by fakeredis; generous initial budget for E2E turns.
@@ -1086,9 +1087,6 @@ async def e2e_stack(
 def _merge_proxy_and_mcp() -> Starlette:
     """Expose ``POST /v1/chat/completions`` alongside ``mcp_tool_server.app`` routes."""
     combined = FastAPI(title="CAGE E2E Gateway Surface")
-    combined.state.evidence_sink = getattr(
-        inference_proxy.inference_app.state, "evidence_sink", None
-    )
     combined.state.redis = getattr(inference_proxy.inference_app.state, "redis", None)
 
     @combined.post("/v1/chat/completions", response_model=None)

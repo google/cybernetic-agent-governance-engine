@@ -41,7 +41,11 @@ from unittest.mock import patch
 import pytest
 from freezegun import freeze_time
 
-pytestmark = [pytest.mark.unit, pytest.mark.local]
+pytestmark = [
+    pytest.mark.unit,
+    pytest.mark.local,
+    pytest.mark.usefixtures("connected_evidence_sink"),
+]
 
 # A committed evidence record hash. Evidence binding is required by default,
 # so every seal that is expected to verify carries one.

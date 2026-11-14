@@ -173,6 +173,9 @@ class ConsequenceGateway:
             "ver": getattr(claims, "ver", None),
             "recomputed_digest": recomputed_digest,
         }
+        from src.gateway.governance.governor.metrics import mark_request_evidenced
+
+        mark_request_evidenced()
         blocking = is_evidence_chain_blocking()
         try:
             sink = get_evidence_sink()

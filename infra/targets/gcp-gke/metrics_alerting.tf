@@ -34,6 +34,8 @@ locals {
     "absent_over_time(cage_gateway_gated_requests_total{namespace=\"${module.namespace.name}\",outcome=\"permitted\"}[5m])",
     "absent_over_time(cage_gateway_canary_requests_total{namespace=\"${module.namespace.name}\",outcome=\"blocked\"}[5m])",
     "absent_over_time(cage_gateway_canary_requests_total{namespace=\"${module.namespace.name}\",outcome=\"permitted\"}[5m])",
+    "absent_over_time(cage_gateway_evidence_records_appended_total{namespace=\"${module.namespace.name}\"}[5m])",
+    "absent_over_time(cage_gateway_evidenced_requests_permitted_total{namespace=\"${module.namespace.name}\"}[5m])",
   ])
   compliance_bridge_metrics_scrape_failure_promql = join(" or ", [
     "(up{job=\"compliance-bridge-metrics\",namespace=\"${module.namespace.name}\"} == 0)",
@@ -61,6 +63,23 @@ locals {
     "(sum(rate(cage_gateway_canary_requests_total{job=\"gateway-metrics\",namespace=\"${module.namespace.name}\"}[5m])) > 0)",
   ])
   gateway_canary_probe_absent_promql = "sum(rate(cage_gateway_canary_requests_total{job=\"gateway-metrics\",namespace=\"${module.namespace.name}\"}[5m])) == 0"
+  # POAM-2026-217: Two-ways-of-counting reconciliation between ingress-counted
+  # permitted requests (WorkloadIdentityMiddleware) and Redis-acknowledged stream
+  # appends (EvidenceStreamSink._acknowledge). Catches both total append stalls
+  # (permitted >= 3 over 5m while appended == 0) and per-route silent drops
+  # (appended + trace_shed + 1 < evidenced_requests_permitted).
+  gateway_evidence_append_reconciliation_promql = join(" ", [
+    "((sum(increase(cage_gateway_gated_requests_total{job=\"gateway-metrics\",namespace=\"${module.namespace.name}\",outcome=\"permitted\"}[5m])) >= 3)",
+    "and",
+    "((sum(increase(cage_gateway_evidence_records_appended_total{job=\"gateway-metrics\",namespace=\"${module.namespace.name}\"}[5m])) or vector(0)) == 0))",
+    "or",
+    "((((sum(increase(cage_gateway_evidence_records_appended_total{job=\"gateway-metrics\",namespace=\"${module.namespace.name}\"}[5m])) or vector(0))",
+    "+",
+    "(sum(increase(cage_evidence_trace_shed_total{job=\"gateway-metrics\",namespace=\"${module.namespace.name}\"}[5m])) or vector(0))",
+    "+ 1)",
+    "<",
+    "sum(increase(cage_gateway_evidenced_requests_permitted_total{job=\"gateway-metrics\",namespace=\"${module.namespace.name}\"}[5m]))))",
+  ])
 }
 
 resource "google_monitoring_alert_policy" "prometheus_metrics_scrape_liveness" {
@@ -385,4 +404,62 @@ resource "google_monitoring_alert_policy" "gateway_canary_pod_health" {
 
   depends_on = [module.gke]
 }
+
+resource "google_monitoring_alert_policy" "gateway_evidence_append_reconciliation" {
+  count = local.enforcing_posture ? 1 : 0
+
+  project               = var.project_id
+  display_name          = "${var.cluster_name} - Gateway Permitted Traffic vs Evidence Appends Deficit (AU-5 / AU-12)"
+  combiner              = "OR"
+  enabled               = true
+  severity              = "CRITICAL"
+  notification_channels = var.lula_alert_notification_channels
+
+  user_labels = {
+    owner       = trimspace(var.lula_alert_owner)
+    component   = "gateway"
+    control     = "au-5"
+    environment = var.environment
+  }
+
+  documentation {
+    mime_type = "text/markdown"
+    content   = <<-EOT
+      ## CAGE Gateway Evidence Append Reconciliation Alert (NIST SP 800-53 AU-5 / AU-12 / POAM-2026-217)
+
+      - **Owner:** `${trimspace(var.lula_alert_owner)}`
+      - **Cluster:** `${var.cluster_name}` (`${var.namespace}`)
+      - **Ingress Metrics:** `cage_gateway_gated_requests_total{outcome="permitted"}` and `cage_gateway_evidenced_requests_permitted_total` (`WorkloadIdentityMiddleware`)
+      - **Custody Metric:** `cage_gateway_evidence_records_appended_total` (`EvidenceStreamSink._acknowledge` after Redis `XADD`)
+
+      Reconciles two independent counters across the gateway request boundary and
+      the Redis evidence stream (`POAM-2026-217`). Fires when for `120s` either:
+      1. `>= 3` gated requests were permitted over `5m` while `0` evidence records
+         were durably acknowledged on `cage:evidence:stream`, **or**
+      2. `cage_gateway_evidence_records_appended_total + cage_evidence_trace_shed_total + 1`
+         falls short of `cage_gateway_evidenced_requests_permitted_total` over `5m`
+         (detecting per-route silent evidence drops even while synthetic canary
+         probes continue appending on `/governance/validate-action`).
+
+      Without this reconciliation, un-evidenced completions (`EVIDENCE_CHAIN_BLOCKING=false`
+      or a future stopped-sink bypass) keep `cage_gateway_gated_requests_total`
+      healthy while `compliance-bridge` simply observes fewer custody records and
+      treats the cluster as idle rather than broken.
+    EOT
+  }
+
+  conditions {
+    display_name = "Permitted governed requests exceed Redis-acknowledged evidence appends over 5m for 120s"
+
+    condition_prometheus_query_language {
+      query                     = local.gateway_evidence_append_reconciliation_promql
+      duration                  = "120s"
+      evaluation_interval       = "60s"
+      disable_metric_validation = true
+    }
+  }
+
+  depends_on = [module.gke]
+}
+
 
