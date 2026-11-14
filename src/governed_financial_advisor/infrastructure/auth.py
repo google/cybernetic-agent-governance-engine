@@ -32,6 +32,9 @@ out-of-band ``kid``-resolved OIDC JWT verification (:func:`verify_user_oidc_toke
     ``CAGE_ALLOW_ASSERTED_PRINCIPAL=true``), requests without a verified user
     OIDC token are refused with HTTP 401. Under permissive postures
     (``dev``/``test``/``ci``), unauthenticated requests carry ``verified=False``.
+  - Binds checkpointed conversation threads to the initiating principal via
+    :func:`require_thread_owner`, refusing cross-principal access, default-thread
+    pre-claiming, and ownerless populated checkpoints.
 """
 
 from __future__ import annotations
@@ -49,6 +52,7 @@ from typing import Any
 import jwt as pyjwt
 from fastapi import HTTPException, Security, status
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
+from langgraph.checkpoint.base import BaseCheckpointSaver
 
 from src.gateway.governance.env_posture import env_flag, is_enforcing
 from src.governed_financial_advisor.models.principal import (
@@ -64,6 +68,7 @@ logger = logging.getLogger(__name__)
 _ALLOWED_USER_OIDC_ALGS: tuple[str, ...] = ("RS256", "ES256", "EdDSA")
 _EMBEDDED_KEY_HEADERS: frozenset[str] = frozenset({"jwk", "jku", "x5c", "x5u"})
 USER_TOKEN_HEADERS: tuple[str, ...] = ("x-cage-user-token",)
+ADVISOR_DEFAULT_THREAD_PREFIX: str = "advisor_session_"
 
 
 def _parse_unverified_jws_header(token: str) -> dict[str, Any] | None:
@@ -337,6 +342,48 @@ def resolve_request_principal(
         )
 
     return PrincipalIdentity(user_id=asserted_user_id, verified=False)
+
+
+async def require_thread_owner(graph: Any, thread_id: str, user_id: str) -> None:
+    """Refuse a turn on a conversation thread reserved for or owned by another principal.
+
+    Enforces two fail-closed session-ownership invariants:
+      1. Default-thread reservation: any ``thread_id`` starting with
+         ``"advisor_session_"`` is reserved exclusively for
+         ``f"advisor_session_{user_id}"``, rejecting pre-claiming / squatting
+         even before any checkpoint exists.
+      2. Checkpoint binding: when ``graph.checkpointer`` is a
+         :class:`BaseCheckpointSaver`, any existing populated checkpoint
+         (``snapshot is not None and bool(snapshot.values)``) must carry a
+         non-empty ``user_id`` equal to ``user_id``; both another principal's
+         checkpoint and ownerless pre-migration populated checkpoints fail
+         closed.
+
+    Raises:
+        PermissionError: If ``user_id`` is empty, ``thread_id`` targets another
+            principal's reserved ``advisor_session_`` prefix, or an existing
+            populated checkpoint has a missing or different ``user_id``.
+    """
+    if not user_id:
+        raise PermissionError("user_id is required to access a conversation thread")
+    if (
+        thread_id.startswith(ADVISOR_DEFAULT_THREAD_PREFIX)
+        and thread_id != f"{ADVISOR_DEFAULT_THREAD_PREFIX}{user_id}"
+    ):
+        raise PermissionError(
+            "advisor_session_ thread_id is reserved for the matching principal"
+        )
+    if not isinstance(getattr(graph, "checkpointer", None), BaseCheckpointSaver):
+        return
+    snapshot = await graph.aget_state({"configurable": {"thread_id": thread_id}})
+    if snapshot is not None and bool(snapshot.values):
+        owner = (
+            snapshot.values.get("user_id")
+            if isinstance(snapshot.values, Mapping)
+            else None
+        )
+        if not isinstance(owner, str) or not owner or owner != user_id:
+            raise PermissionError("thread_id belongs to another principal")
 
 
 async def require_api_key(

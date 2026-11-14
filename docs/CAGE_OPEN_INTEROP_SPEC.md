@@ -428,7 +428,11 @@ human-in-the-loop (HITL) interrupt. The response body includes
 
 **Response 401 Unauthorized:** Missing or invalid API key.
 
-**Response 422 Unprocessable Entity:** `user_id` is missing or violates the
+**Response 403 Forbidden:** Asserted `user_id` disagrees with the verified OIDC
+principal, `thread_id` is owned by or reserved for another principal, or an
+existing checkpoint has no owner.
+
+**Response 422 Unprocessable Entity:** `user_id` or `thread_id` violates the
 constraints in [`QueryRequest`](#86-queryrequest).
 
 **Response 408 Request Timeout:** Agent exceeded the 240-second timeout.
@@ -1015,7 +1019,7 @@ Request body for `POST /agent/query`.
 |---|---|---|---|
 | `prompt` | `string` | Yes | — |
 | `user_id` | `string` | Yes | 1–64 characters matching `^[A-Za-z0-9._:@/-]+$`. Asserted by the caller, not authenticated |
-| `thread_id` | `string` | No | Defaults to `default_thread` |
+| `thread_id` | `string \| null` | No | 1–128 non-whitespace characters when provided; defaults to a per-principal thread (`advisor_session_<user_id>`). A thread owned by or reserved for another principal is refused with HTTP 403 |
 
 ---
 

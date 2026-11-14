@@ -19,12 +19,14 @@ canonical wire contract in a single location. All refusal paths (NeMo, OPA,
 STPA, Evaluator) route through `explainer` and conform to QueryResponse.
 """
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 from src.governed_financial_advisor.models.principal import (
     PRINCIPAL_MAX_LEN,
     PRINCIPAL_PATTERN,
 )
+
+THREAD_ID_MAX_LEN = 128
 
 
 class QueryRequest(BaseModel):
@@ -45,7 +47,29 @@ class QueryRequest(BaseModel):
         pattern=PRINCIPAL_PATTERN,
         description="End-user principal asserted by the caller; not authenticated.",
     )
-    thread_id: str = "default_thread"
+    # A thread belongs to the principal whose turn started it; when omitted,
+    # each principal gets its own default thread (advisor_session_<user_id>).
+    thread_id: str | None = Field(
+        default=None,
+        min_length=1,
+        max_length=THREAD_ID_MAX_LEN,
+        description=(
+            "Optional conversation thread identifier (1-128 non-whitespace "
+            "characters after trimming); defaults to a per-principal thread."
+        ),
+    )
+
+    @field_validator("thread_id", mode="before")
+    @classmethod
+    def _validate_thread_id(cls, value: object) -> object:
+        if value is None:
+            return None
+        if isinstance(value, str):
+            stripped = value.strip()
+            if not stripped:
+                raise ValueError("thread_id must not be empty or whitespace-only")
+            return stripped
+        return value
 
 
 class QueryResponse(BaseModel):

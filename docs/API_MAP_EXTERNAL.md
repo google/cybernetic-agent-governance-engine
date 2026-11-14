@@ -358,7 +358,8 @@ Main LangGraph agent query. Requires `X-API-Key` header. 240-second timeout.
 
 **Response 408 Request Timeout:** Agent exceeded 240 seconds.
 **Response 401 Unauthorized:** Missing or invalid API key.
-**Response 422 Unprocessable Entity:** `user_id` missing or outside the principal constraints (see [§5.6](#56-queryrequest)).
+**Response 403 Forbidden:** Asserted `user_id` disagrees with the verified OIDC principal, `thread_id` is owned by or reserved for another principal, or an existing checkpoint has no owner.
+**Response 422 Unprocessable Entity:** `user_id` or `thread_id` violates the schema constraints (see [§5.6](#56-queryrequest)).
 
 ---
 
@@ -706,7 +707,7 @@ Immutable transaction ledger entry appended to `AgentState.completed_transaction
 |---|---|---|
 | `prompt` | `str` | — |
 | `user_id` | `str` | Required; 1–64 characters matching `^[A-Za-z0-9._:@/-]+$`. Asserted by the caller, not authenticated |
-| `thread_id` | `str` | Optional; defaults to `default_thread` |
+| `thread_id` | `str \| None` | Optional (1–128 non-whitespace characters when provided); defaults to a per-principal thread (`advisor_session_<user_id>`). A thread owned by or reserved for another principal is refused with HTTP 403 |
 
 ---
 

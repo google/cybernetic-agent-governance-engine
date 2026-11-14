@@ -437,8 +437,8 @@ def call_backend(query: str, session_id: str) -> str:
     is under heavy load.
     """
     # Use session_id as thread_id so each evaluation query runs in its own
-    # isolated LangGraph checkpoint thread.  Without this, all queries share
-    # thread_id="default_thread" (the QueryRequest default) and the graph
+    # isolated LangGraph checkpoint thread.  Without this, all queries from one
+    # user share that user's default thread and the graph
     # resumes from the previous query's checkpoint — including any interrupted
     # state at interrupt_before=["governed_trader"] — causing HTTP 500 errors.
     backend_url = _resolve_backend_url()
