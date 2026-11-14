@@ -142,6 +142,8 @@ async def _gateway_lifespan(app: FastAPI):  # type: ignore[no-untyped-def]
         evidence_sink = await start_evidence_sink()
         app.state.evidence_sink = evidence_sink
         inference_app.state.evidence_sink = evidence_sink
+        governance_app.state.evidence_sink = evidence_sink
+        mcp_app.state.evidence_sink = evidence_sink
 
         # ── Pre-warm and share NeMo Rails ──────────────────────────────────────
         # Under ``none`` no rails are built: NeMo is off and visible, and
@@ -567,12 +569,19 @@ NEMO_RELOAD_CHANNEL = "cage:nemo:reload"
 
 def _build_shared_redis_from_env() -> Any:
     """Resolve the shared async Redis client via ``build_async_redis`` when configured."""
+    from src.gateway.governance.env_posture import is_enforcing, resolve_posture
     from src.gateway.infrastructure.redis_client import build_async_redis
 
+    enforcing = is_enforcing(resolve_posture())
     url = os.environ.get("REDIS_URL", "").strip()
     if not url:
         host = os.environ.get("REDIS_HOST", "").strip()
         if not host:
+            if enforcing:
+                raise RuntimeError(
+                    "Shared Redis client is required under an enforcing posture "
+                    "but neither REDIS_URL nor REDIS_HOST is configured."
+                )
             return None
         port = os.environ.get("REDIS_PORT", "6379").strip() or "6379"
         scheme = (
@@ -583,8 +592,17 @@ def _build_shared_redis_from_env() -> Any:
         url = f"{scheme}://{host}:{port}"
     db = int(os.environ.get("REDIS_DB", "0"))
     try:
-        return build_async_redis(url, db=db)
+        client = build_async_redis(url, db=db)
+        if client is None and enforcing:
+            raise RuntimeError(
+                "Shared Redis client returned None under an enforcing posture."
+            )
+        return client
     except Exception as exc:
+        if enforcing:
+            raise RuntimeError(
+                f"Shared Redis client initialization failed under an enforcing posture: {exc}"
+            ) from exc
         logger.warning("⚠️ Shared Redis client init failed: %s", exc)
         return None
 
