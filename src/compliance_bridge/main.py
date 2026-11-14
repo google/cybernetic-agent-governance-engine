@@ -87,6 +87,7 @@ from .auth import (
     ProducerPrincipal,
     ensure_human_operator_principal,
     require_audit_ingest_producer,
+    require_defer_read_caller,
     require_human_operator_identity,
     require_infra_event_producer,
     require_internal_token,
@@ -2199,6 +2200,20 @@ def _resolve_defer_redis_url() -> str:
     return os.environ.get("EVIDENCE_STREAM_REDIS_URL", "redis://localhost:6379")
 
 
+def _redact_pending_token_dump(token: Any) -> dict[str, Any]:
+    """Serialize a parked DEFER token for bulk listing with routing_seal stripped (POAM-2026-210)."""
+    dumped: dict[str, Any] = (
+        dict(token.model_dump()) if hasattr(token, "model_dump") else dict(token)
+    )
+    dumped.pop("routing_seal", None)
+    snap = dumped.get("opa_input_snapshot")
+    if isinstance(snap, dict) and "routing_seal" in snap:
+        cleaned_snap = dict(snap)
+        cleaned_snap.pop("routing_seal", None)
+        dumped["opa_input_snapshot"] = cleaned_snap
+    return dumped
+
+
 @app.get(
     "/v1/defer/pending",
     tags=["governance"],
@@ -2208,6 +2223,7 @@ async def list_defer_pending(
     limit: int = Query(
         default=50, ge=1, le=200, description="Maximum tokens to return"
     ),
+    _caller: str = Depends(require_defer_read_caller),
 ) -> JSONResponse:
     """Return all execution contexts currently parked in the DEFER queue.
 
@@ -2229,7 +2245,7 @@ async def list_defer_pending(
 
         return JSONResponse(
             content={
-                "pending": [t.model_dump() for t in tokens],
+                "pending": [_redact_pending_token_dump(t) for t in tokens],
                 "count": len(tokens),
             }
         )
@@ -2246,7 +2262,10 @@ async def list_defer_pending(
     tags=["governance"],
     summary="Poll deferred token status by ID",
 )
-async def get_defer_status(defer_id: str) -> JSONResponse:
+async def get_defer_status(
+    defer_id: str,
+    _caller: str = Depends(require_defer_read_caller),
+) -> JSONResponse:
     """Fetch the status of a single DEFER token by defer_id (ADR-008 Phase 4).
 
     This endpoint implements the defer status polling mechanism, allowing clients
@@ -2261,10 +2280,14 @@ async def get_defer_status(defer_id: str) -> JSONResponse:
           - confidence_score: Model confidence at decision time
           - created_at: ISO-8601 timestamp when token was parked
           - ttl_seconds: Time-to-live window before auto-escalation
-          - routing_seal: HMAC-SHA256 seal (only when status=RESOLVED)
+          - routing_seal: HMAC-SHA256 seal (only when status=RESOLVED and authenticated)
 
         HTTP 404 if the token does not exist (never parked or already expired)
     """
+    is_authenticated_caller = _caller not in (
+        "dev-unauthenticated",
+        "permissive-unauthenticated",
+    )
     redis_url = _resolve_defer_redis_url()
     if not redis_url:
         raise HTTPException(
@@ -2308,7 +2331,7 @@ async def get_defer_status(defer_id: str) -> JSONResponse:
             else str(getattr(token, "created_at_utc", "")),
             "ttl_seconds": token.ttl_seconds,
             "routing_seal": getattr(token, "routing_seal", None)
-            if status == "RESOLVED"
+            if (status == "RESOLVED" and is_authenticated_caller)
             else None,
         }
 

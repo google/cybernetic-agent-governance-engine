@@ -529,6 +529,96 @@ async def require_human_operator_identity(request: Request) -> OperatorPrincipal
     return ensure_human_operator_principal(principal)
 
 
+async def require_defer_read_caller(
+    request: Request,
+    x_cage_internal_token: str | None = Header(None, alias="X-Cage-Internal-Token"),
+) -> str:
+    """Authenticate callers of ``GET /v1/defer/pending`` and ``GET /v1/defer/{defer_id}`` (POAM-2026-210).
+
+    Enforces caller authentication across all enforcing postures (:func:`is_enforcing`,
+    including ``staging`` and ``production``), whenever an internal token is configured,
+    or whenever an authentication header is supplied on the request. Accepts either a
+    verified internal service token (:func:`require_internal_token`) or a verified
+    operator/workload identity (:func:`require_operator_identity`).
+    """
+    raw_internal_hdr = (
+        x_cage_internal_token
+        if isinstance(x_cage_internal_token, str)
+        else (
+            request.headers.get("x-cage-internal-token")
+            or request.headers.get("X-Cage-Internal-Token")
+        )
+    )
+    auth_hdr = (
+        request.headers.get("authorization")
+        or request.headers.get("Authorization")
+        or ""
+    )
+    op_token_hdr = (
+        request.headers.get("x-cage-operator-token")
+        or request.headers.get("X-Cage-Operator-Token")
+        or ""
+    )
+    l5d_id, multi_l5d = _linkerd_client_id_header(request)
+    if multi_l5d:
+        raise HTTPException(
+            status_code=401,
+            detail="Multiple l5d-client-id headers presented",
+        )
+    dev_op_hdr = request.headers.get("x-cage-dev-operator-urn") or ""
+
+    expected_internal = (
+        os.environ.get("CAGE_INTERNAL_TOKEN")
+        or os.environ.get("COMPLIANCE_BRIDGE_INTERNAL_TOKEN")
+        or ""
+    ).strip()
+
+    if isinstance(raw_internal_hdr, str) and raw_internal_hdr.strip():
+        return await require_internal_token(
+            request, x_cage_internal_token=raw_internal_hdr.strip()
+        )
+
+    if isinstance(auth_hdr, str) and auth_hdr.startswith("Bearer "):
+        bearer_val = auth_hdr[7:].strip()
+        if (
+            expected_internal
+            and bearer_val
+            and hmac.compare_digest(bearer_val, expected_internal)
+        ):
+            return bearer_val
+        allow_oidc = (
+            os.environ.get("CAGE_OPERATOR_IDENTITY_ALLOW_OIDC", "false").lower()
+            == "true"
+        )
+        if op_token_hdr.strip() or allow_oidc:
+            principal = await require_operator_identity(request)
+            return principal.operator_urn
+        return await require_internal_token(request, x_cage_internal_token=None)
+
+    if op_token_hdr.strip() or l5d_id is not None or dev_op_hdr.strip():
+        principal = await require_operator_identity(request)
+        return principal.operator_urn
+
+    if auth_hdr.strip():
+        raise HTTPException(
+            status_code=401,
+            detail="Unsupported Authorization scheme; Bearer token required",
+        )
+
+    if not is_enforcing():
+        if expected_internal:
+            return await require_internal_token(request, x_cage_internal_token=None)
+        return "permissive-unauthenticated"
+
+    raise HTTPException(
+        status_code=401,
+        detail=(
+            "Authentication required for DEFER queue read endpoints in "
+            "enforcing postures (POAM-2026-210)"
+        ),
+    )
+
+
 # ---------------------------------------------------------------------------
 # Producer mesh-identity authentication (/v1/infra/events, /v1/audit/ingest)
 # ---------------------------------------------------------------------------

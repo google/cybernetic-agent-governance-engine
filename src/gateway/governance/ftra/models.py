@@ -185,6 +185,22 @@ class ReachabilityResult(BaseModel):
         ),
     )
 
+    violation_reason: str | None = Field(
+        default=None,
+        description=(
+            "Descriptive fail-closed violation reason when a malformed plan "
+            "graph (empty, duplicate, or dangling step IDs) is blocked."
+        ),
+    )
+
+    violations: list[str] = Field(
+        default_factory=list,
+        description=(
+            "Structured violation messages emitted during fail-closed plan "
+            "graph validation (POAM-2026-212)."
+        ),
+    )
+
 
 # ---------------------------------------------------------------------------
 # Parse Result Models (BUG-FTRA-SCHEMA-001, BUG-FTRA-JSON-001)

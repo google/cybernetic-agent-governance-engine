@@ -308,7 +308,32 @@ class ApprovalRecord(BaseModel):
         ):
             return False
 
+        if self.auth_method == "WEBAUTHN" and (
+            not self.authenticator_data
+            or not self.authenticator_data.strip()
+            or not self.signature
+            or not self.signature.strip()
+        ):
+            return False
+
         try:
+            if self.authenticator_data is not None:
+                if not self.authenticator_data.strip():
+                    return False
+                ad_str = self.authenticator_data.strip()
+                ad_bytes = base64.urlsafe_b64decode(ad_str + "=" * (-len(ad_str) % 4))
+                if not ad_bytes:
+                    return False
+            if self.signature is not None:
+                if not self.signature.strip():
+                    return False
+                sig_str = self.signature.strip()
+                sig_bytes = base64.urlsafe_b64decode(
+                    sig_str + "=" * (-len(sig_str) % 4)
+                )
+                if not sig_bytes:
+                    return False
+
             b64_str = self.client_data_json.strip()
             pad = "=" * (-len(b64_str) % 4)
             client_data_bytes = base64.urlsafe_b64decode(b64_str + pad)
