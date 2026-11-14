@@ -1459,6 +1459,10 @@ if [[ "$READINESS_FAILED" == "false" ]]; then
         error "Lula assessment results for ${label} contain not-satisfied or lula-validation-error state"
         return 1
       fi
+      if grep -Eiq "assessment_status[[:space:]]*=[[:space:]]*startup_grace" "$file"; then
+        error "Lula assessment results for ${label} satisfied via startup_grace rather than post-grace evidence"
+        return 1
+      fi
       return 0
     }
 
@@ -1611,6 +1615,10 @@ if re.search(r"(?:state|Result)\s*:\s*not-satisfied|lula-validation-error", logs
 
 if re.search(r"\bnot[-_]satisfied\s*[:=]\s*[1-9]\d*|\b[1-9]\d*\s+not[-_]satisfied\b", logs, re.IGNORECASE):
     print("Job/lula-gate-w reported non-zero not-satisfied controls.", file=sys.stderr)
+    sys.exit(1)
+
+if re.search(r"assessment_status\s*=\s*startup_grace|\b[1-9]\d*\s+startup_grace\b", logs, re.IGNORECASE):
+    print("Job/lula-gate-w Lula assessment-results satisfied one or more controls via startup_grace.", file=sys.stderr)
     sys.exit(1)
 
 if not re.search(r"\b(?:assessment-results|satisfied|observations)\b", logs):

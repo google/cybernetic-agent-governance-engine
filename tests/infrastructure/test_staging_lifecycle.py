@@ -2288,4 +2288,81 @@ exit 0
     assert manifest_bad["phase_failures"]["posture"] >= 1
 
 
-# Regression coverage binding: POAM-024, POAM-2026-159, POAM-2026-192, POAM-2026-197, POAM-2026-202, POAM-2026-203, POAM-2026-204, POAM-2026-205, POAM-2026-206, POAM-2026-207
+def test_staging_lifecycle_phase3_rejects_startup_grace_remarks_on_host_and_job_lula_gate_w(
+    tmp_path: Path,
+) -> None:
+    """Gate W Phase 3 rejects `assessment_status=startup_grace` even if `STARTUP_GRACE_HOURS=0` check passed."""
+    # 1. In-cluster Job/lula-gate-w logs carrying `assessment_status=startup_grace` fail Phase 3 closed
+    grace_job_logs = (
+        "PASS: lula-validation-ac3\n"
+        "PASS (assessment_status=startup_grace): lula-validation-a52\n"
+        "Sealed lula_audit assessment-results via /v1/infra/events: status=INGESTED "
+        "record_hash=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa "
+        "(26/26 satisfied, 0 not-satisfied, 1 startup_grace [lula-validation-a52])\n"
+    )
+    repo_job, bin_job, _ = _setup_fake_repo(
+        tmp_path / "job_grace", job_logs=grace_job_logs
+    )
+    archive_job = tmp_path / "archive-job-grace"
+    proc_job = subprocess.run(
+        [
+            "bash",
+            str(repo_job / "scripts" / "staging_lifecycle.sh"),
+            "--skip-live-sweep",
+            "--skip-telemetry",
+            "--skip-rebuild",
+            f"--archive-dir={archive_job}",
+        ],
+        env=_base_env(bin_job, GOOGLE_CLOUD_PROJECT="demo-staging-proj"),
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert proc_job.returncode != 0
+    assert "satisfied one or more controls via startup_grace" in proc_job.stderr
+    manifest_job = json.loads(
+        (archive_job / "manifest.json").read_text(encoding="utf-8")
+    )
+    assert manifest_job["overall_status"] == "FAIL"
+    assert manifest_job["phase_failures"]["lula"] >= 1
+
+    # 2. Host-evaluated assessment-results-*.yaml carrying `assessment_status=startup_grace` fails Phase 3 closed
+    repo_host, bin_host, _ = _setup_fake_repo(tmp_path / "host_grace")
+    lula_bin = bin_host / "lula"
+    base_lula = lula_bin.read_text(encoding="utf-8")
+    _write_executable(
+        lula_bin,
+        base_lula.replace(
+            '            - description: "Result: satisfied"\n',
+            '            - description: "Result: satisfied"\n'
+            '              remarks: "lula.assessment_remark: assessment_status=startup_grace; control_id=A.5.2"\n',
+        ),
+    )
+    archive_host = tmp_path / "archive-host-grace"
+    proc_host = subprocess.run(
+        [
+            "bash",
+            str(repo_host / "scripts" / "staging_lifecycle.sh"),
+            "--skip-live-sweep",
+            "--skip-telemetry",
+            "--skip-rebuild",
+            f"--archive-dir={archive_host}",
+        ],
+        env=_base_env(bin_host, GOOGLE_CLOUD_PROJECT="demo-staging-proj"),
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert proc_host.returncode != 0
+    assert (
+        "satisfied via startup_grace rather than post-grace evidence"
+        in proc_host.stderr
+    )
+    manifest_host = json.loads(
+        (archive_host / "manifest.json").read_text(encoding="utf-8")
+    )
+    assert manifest_host["overall_status"] == "FAIL"
+    assert manifest_host["phase_failures"]["lula"] >= 1
+
+
+# Regression coverage binding: POAM-024, POAM-2026-159, POAM-2026-192, POAM-2026-197, POAM-2026-202, POAM-2026-203, POAM-2026-204, POAM-2026-205, POAM-2026-206, POAM-2026-207, POAM-2026-215

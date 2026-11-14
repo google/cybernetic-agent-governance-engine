@@ -27,6 +27,7 @@ returns non-zero if:
 from __future__ import annotations
 
 import argparse
+import re
 import sys
 from pathlib import Path
 from typing import Any
@@ -34,15 +35,22 @@ from typing import Any
 import yaml
 
 FORBIDDEN_VERDICT_TOKENS = ("not-satisfied", "lula-validation-error")
+_STARTUP_GRACE_RE = re.compile(
+    r"\bassessment_status\s*=\s*startup_grace\b", re.IGNORECASE
+)
 
 
 def verify_assessment_results_data(
     data: dict[str, Any] | None,
+    *,
+    allow_startup_grace: bool = False,
 ) -> tuple[bool, list[str]]:
     """Validate parsed OSCAL assessment-results data.
 
     Returns ``(ok, errors)`` where ``ok`` is True iff there is at least one
-    observation and every observation/finding is ``satisfied``.
+    observation, every observation/finding is ``satisfied``, and (unless
+    ``allow_startup_grace=True``) no observation or finding remark reports
+    ``assessment_status=startup_grace``.
     """
     errors: list[str] = []
     if not isinstance(data, dict) or "assessment-results" not in data:
@@ -81,16 +89,32 @@ def verify_assessment_results_data(
                     errors.append(
                         f"Observation {obs_uuid} remarks contain forbidden token {token!r}"
                     )
+            if not allow_startup_grace and _STARTUP_GRACE_RE.search(remarks):
+                errors.append(
+                    f"Observation {obs_uuid} satisfied via startup_grace (assessment_status=startup_grace)"
+                )
             rel_ev = obs.get("relevant-evidence") or []
             if isinstance(rel_ev, list):
                 for ev in rel_ev:
                     if isinstance(ev, dict):
                         desc = str(ev.get("description", ""))
+                        ev_rem = str(ev.get("remarks", ""))
                         for token in FORBIDDEN_VERDICT_TOKENS:
                             if token in desc:
                                 errors.append(
                                     f"Observation {obs_uuid} evidence contains {token!r}: {desc.strip()}"
                                 )
+                            if token in ev_rem:
+                                errors.append(
+                                    f"Observation {obs_uuid} evidence remarks contain {token!r}: {ev_rem.strip()}"
+                                )
+                        if not allow_startup_grace and (
+                            _STARTUP_GRACE_RE.search(desc)
+                            or _STARTUP_GRACE_RE.search(ev_rem)
+                        ):
+                            errors.append(
+                                f"Observation {obs_uuid} evidence satisfied via startup_grace: {ev_rem.strip() or desc.strip()}"
+                            )
 
         findings = res.get("findings") or []
         if not isinstance(findings, list):
@@ -110,6 +134,11 @@ def verify_assessment_results_data(
                 errors.append(
                     f"Finding {f_uuid} (target={target.get('target-id')!r}) has state={state!r} (expected 'satisfied')"
                 )
+            f_remarks = f"{finding.get('remarks', '')}\n{status.get('remarks', '')}"
+            if not allow_startup_grace and _STARTUP_GRACE_RE.search(f_remarks):
+                errors.append(
+                    f"Finding {f_uuid} (target={target.get('target-id')!r}) satisfied via startup_grace"
+                )
 
     if total_observations == 0:
         errors.append("Assessment results contain 0 observations")
@@ -117,7 +146,11 @@ def verify_assessment_results_data(
     return len(errors) == 0, errors
 
 
-def verify_assessment_results_file(path: Path) -> tuple[bool, list[str]]:
+def verify_assessment_results_file(
+    path: Path,
+    *,
+    allow_startup_grace: bool = False,
+) -> tuple[bool, list[str]]:
     """Load and validate an OSCAL ``assessment-results.yaml`` file."""
     if not path.is_file():
         return False, [f"Assessment results file does not exist: {path}"]
@@ -126,7 +159,7 @@ def verify_assessment_results_file(path: Path) -> tuple[bool, list[str]]:
         data = yaml.safe_load(raw)
     except Exception as exc:
         return False, [f"Failed to parse YAML from {path}: {exc}"]
-    return verify_assessment_results_data(data)
+    return verify_assessment_results_data(data, allow_startup_grace=allow_startup_grace)
 
 
 def main(argv: list[str] | None = None) -> int:

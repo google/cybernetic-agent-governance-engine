@@ -42,6 +42,7 @@ import shutil
 import socket
 import stat
 import subprocess
+import textwrap
 import threading
 from datetime import datetime, timedelta, timezone
 from http.server import BaseHTTPRequestHandler, HTTPServer
@@ -396,7 +397,7 @@ class TestLulaNativeObservationsStatisticalSpecs:
                             "startup_grace_active": True,
                         },
                         "satisfied",
-                        True,
+                        False,
                     ),
                     (
                         "satisfied",
@@ -449,8 +450,14 @@ class TestLulaNativeObservationsStatisticalSpecs:
                         in ev_remarks
                     )
                     assert f"control_id={cid}" in ev_remarks
-                    ok, _ = verify_assessment_results_data(ar_doc)
+                    ok, errors = verify_assessment_results_data(ar_doc)
                     assert ok is expect_ok
+                    if expected_status == "startup_grace":
+                        assert any("startup_grace" in err for err in errors)
+                        ok_grace, _ = verify_assessment_results_data(
+                            ar_doc, allow_startup_grace=True
+                        )
+                        assert ok_grace is True
         finally:
             server.shutdown()
             server.server_close()
@@ -607,6 +614,145 @@ class TestThreeStateLulaAuditPipeline:
             re.IGNORECASE,
         ), (
             f"Expected Gate W non-zero not-satisfied guard to match stdout: {proc.stdout!r}"
+        )
+
+    def test_run_lula_audit_script_surfaces_startup_grace_and_gate_w_rejects_it(
+        self, tmp_path: Path
+    ) -> None:
+        """Steady-state cold-start CronJob exits 0, while Gate W Phase 3 rejects `startup_grace`."""
+        spec_dir = tmp_path / "specs"
+        out_dir = tmp_path / "out"
+        spec_dir.mkdir()
+        for name in (
+            "lula-validation-ac3",
+            "lula-validation-sc8",
+            "lula-validation-a52",
+            "lula-validation-a53",
+            "lula-validation-a92",
+        ):
+            (spec_dir / f"{name}.yaml").write_text(f"# {name}\n", encoding="utf-8")
+
+        fake_lula = tmp_path / "fake_lula_grace.sh"
+        fake_lula.write_text(
+            textwrap.dedent(
+                """\
+                #!/bin/sh
+                set -eu
+                spec=""
+                out=""
+                while [ "$#" -gt 0 ]; do
+                  case "$1" in
+                    -f) spec="$2"; shift 2 ;;
+                    -o) out="$2"; shift 2 ;;
+                    *) shift ;;
+                  esac
+                done
+                base=$(basename "$spec" .yaml)
+                case "$base" in
+                  lula-validation-a52|lula-validation-a53|lula-validation-a92)
+                    cat > "$out" <<'YAML'
+                assessment-results:
+                  results:
+                    - findings:
+                        - target:
+                            status:
+                              state: satisfied
+                      observations:
+                        - description: check
+                          relevant-evidence:
+                            - description: |
+                                Result: satisfied
+                              remarks: |
+                                lula.assessment_remark: assessment_status=startup_grace; control_id=A.5.3; total_traces=0; safety_rate=null; threshold=0.95; evidence_age_seconds=0; max_age_seconds=900; startup_grace_active=true
+                YAML
+                    ;;
+                  *)
+                    cat > "$out" <<'YAML'
+                assessment-results:
+                  results:
+                    - findings:
+                        - target:
+                            status:
+                              state: satisfied
+                      observations:
+                        - description: check
+                          relevant-evidence:
+                            - description: |
+                                Result: satisfied
+                YAML
+                    ;;
+                esac
+                """
+            ),
+            encoding="utf-8",
+        )
+        fake_lula.chmod(0o755)
+
+        captured_payload: dict[str, Any] = {}
+
+        class _BridgeHandler(BaseHTTPRequestHandler):
+            def do_POST(self) -> None:  # noqa: N802
+                length = int(self.headers.get("Content-Length", "0"))
+                raw = self.rfile.read(length).decode("utf-8")
+                captured_payload.update(json.loads(raw))
+                body = b'{"status":"INGESTED","record_hash":"' + (b"b" * 64) + b'"}'
+                self.send_response(201)
+                self.send_header("Content-Type", "application/json")
+                self.send_header("Content-Length", str(len(body)))
+                self.end_headers()
+                self.wfile.write(body)
+
+            def log_message(self, format: str, *args: object) -> None:  # noqa: A002
+                return
+
+        server = HTTPServer(("127.0.0.1", 0), _BridgeHandler)
+        thread = threading.Thread(target=server.serve_forever, daemon=True)
+        thread.start()
+        out_dir.mkdir(exist_ok=True)
+        try:
+            env = {
+                **os.environ,
+                "LULA_SPECS_DIR": str(spec_dir),
+                "LULA_OUT_DIR": str(out_dir),
+                "LULA_BIN": str(fake_lula),
+                "LULA_SKIP_LINKERD_WAIT": "true",
+                "COMPLIANCE_BRIDGE_EVENTS_URL": (
+                    f"http://127.0.0.1:{server.server_port}/v1/infra/events"
+                ),
+            }
+            proc = subprocess.run(
+                ["/bin/sh", "-ec", RUN_SCRIPT.read_text(encoding="utf-8")],
+                env=env,
+                capture_output=True,
+                text=True,
+                check=False,
+            )
+        finally:
+            server.shutdown()
+            server.server_close()
+
+        assert proc.returncode == 0, proc.stderr
+        assert (
+            "PASS (assessment_status=startup_grace): lula-validation-a52" in proc.stdout
+        )
+        assert (
+            "3 startup_grace [lula-validation-a52,lula-validation-a53,lula-validation-a92]"
+            in proc.stdout
+        )
+        assert (
+            "3 startup_grace: lula-validation-a52,lula-validation-a53,lula-validation-a92"
+            in captured_payload["summary"]
+        )
+
+        lifecycle_src = STAGING_LIFECYCLE.read_text(encoding="utf-8")
+        assert (
+            r"assessment_status\s*=\s*startup_grace|\b[1-9]\d*\s+startup_grace\b"
+            in lifecycle_src
+        )
+        assert re.search(
+            r"assessment_status\s*=\s*startup_grace|\b[1-9]\d*\s+startup_grace\b",
+            proc.stdout,
+            re.IGNORECASE,
         )
 
     @pytest.mark.asyncio

@@ -39,8 +39,10 @@ total=0
 passed=0
 failed=0
 insufficient_traffic=0
+startup_grace=0
 failed_list=""
 insufficient_traffic_list=""
+startup_grace_list=""
 
 for spec in "${SPEC_DIR}"/lula-validation-*.yaml; do
   if [ ! -e "$spec" ]; then
@@ -62,7 +64,17 @@ for spec in "${SPEC_DIR}"/lula-validation-*.yaml; do
      grep -q 'observations:' "$out_file" && \
      ! grep -Eq 'state:[[:space:]]*not-satisfied|lula-validation-error' "$out_file"; then
     passed=$((passed + 1))
-    echo "PASS: ${name}"
+    if grep -Eq 'lula\.assessment_remark:[[:space:]]*assessment_status=startup_grace([[:space:];]|$)' "$out_file"; then
+      startup_grace=$((startup_grace + 1))
+      if [ -z "$startup_grace_list" ]; then
+        startup_grace_list="$name"
+      else
+        startup_grace_list="${startup_grace_list},${name}"
+      fi
+      echo "PASS (assessment_status=startup_grace): ${name}"
+    else
+      echo "PASS: ${name}"
+    fi
   elif [ "$lula_rc" -eq 0 ] && \
        [ -s "$out_file" ] && \
        grep -q 'observations:' "$out_file" && \
@@ -95,8 +107,13 @@ fi
 
 ts=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
 if [ "$failed" -eq 0 ] && [ "$insufficient_traffic" -eq 0 ]; then
-  summary="lula_audit PASS: ${passed}/${total} active validations satisfied"
-  sealed_counts="${passed}/${total} satisfied, 0 not-satisfied"
+  if [ "$startup_grace" -gt 0 ]; then
+    summary=$(printf 'lula_audit PASS: %s/%s active validations satisfied (%s startup_grace: %s)' "$passed" "$total" "$startup_grace" "$startup_grace_list" | cut -c1-480)
+    sealed_counts="${passed}/${total} satisfied, 0 not-satisfied, ${startup_grace} startup_grace [${startup_grace_list}]"
+  else
+    summary="lula_audit PASS: ${passed}/${total} active validations satisfied"
+    sealed_counts="${passed}/${total} satisfied, 0 not-satisfied"
+  fi
 elif [ "$failed" -eq 0 ]; then
   summary=$(printf 'lula_audit INSUFFICIENT_TRAFFIC: %s/%s satisfied (%s not-satisfied [insufficient_traffic]: %s)' "$passed" "$total" "$insufficient_traffic" "$insufficient_traffic_list" | cut -c1-480)
   sealed_counts="${passed}/${total} satisfied, 0 failed, ${insufficient_traffic} not-satisfied [insufficient_traffic]"
