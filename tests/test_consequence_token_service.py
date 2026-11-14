@@ -276,3 +276,128 @@ class TestConsequenceTokenService:
         assert finding["code"] == FINDING_CODE_CONSEQUENCE_TOKEN_MINT_FAILED
         assert finding["severity"] == "blocked"
         assert "integer outside" in finding["message"]
+
+    @pytest.mark.parametrize(
+        "bad_receipt_exp",
+        [True, False, 0, -100, "1763150600", 1763150600.5, 1000, 999],
+    )
+    async def test_invalid_or_non_future_receipt_expires_at_fails_closed(
+        self, bad_receipt_exp: object
+    ) -> None:
+        """POAM-2026-156 item 2: boolean, non-int, <= 0, or <= iat receipt_expires_at fails closed."""
+        from src.gateway.governance.consequence_token import (
+            ConsequenceToken,
+            ConsequenceTokenMalformedError,
+        )
+        from src.gateway.governance.kms_signer import (
+            KMSGovernanceSigner,
+            SoftwareEd25519Provider,
+        )
+
+        signer = KMSGovernanceSigner(
+            provider=SoftwareEd25519Provider(key_id="cts-rec-exp-guard")
+        )
+        with (
+            patch(
+                "src.gateway.governance.consequence_token_service.get_governance_signer",
+                return_value=signer,
+            ),
+            patch(
+                "src.gateway.governance.consequence_token.time.time",
+                return_value=1000,
+            ),
+        ):
+            with pytest.raises(ConsequenceTokenMalformedError):
+                await ConsequenceToken.mint(
+                    sub="user-123",
+                    tid="thread-abc",
+                    rec="rec-xyz",
+                    act="a" * 64,
+                    receipt_expires_at=bad_receipt_exp,  # type: ignore[arg-type]
+                    signer=signer,
+                )
+
+            finding = await mint_consequence_token_finding(
+                actor_id="user-123",
+                thread_id="thread-abc",
+                authority_record_id="rec-xyz",
+                action_payload={"action": "test"},
+                magnitudes=_MAGNITUDES,
+                receipt_expires_at=bad_receipt_exp,  # type: ignore[arg-type]
+            )
+            assert finding["code"] == FINDING_CODE_CONSEQUENCE_TOKEN_MINT_FAILED
+            assert finding["severity"] == "blocked"
+
+    async def test_verify_enforces_rec_exp_type_iat_bound_and_expiry(self) -> None:
+        """ConsequenceToken.verify rejects malformed rec_exp and expired rec_exp even before token exp."""
+        import base64
+        import json
+
+        from src.gateway.governance.consequence_token import (
+            ConsequenceToken,
+            ConsequenceTokenError,
+            ConsequenceTokenMalformedError,
+        )
+        from src.gateway.governance.kms_signer import (
+            KMSGovernanceSigner,
+            SoftwareEd25519Provider,
+        )
+
+        signer = KMSGovernanceSigner(
+            provider=SoftwareEd25519Provider(key_id="cts-verify-rec-exp")
+        )
+        with patch(
+            "src.gateway.governance.consequence_token.time.time",
+            return_value=1000,
+        ):
+            valid_token = await ConsequenceToken.mint(
+                sub="user-123",
+                tid="thread-abc",
+                rec="rec-short-receipt",
+                act="b" * 64,
+                ttl_seconds=60,
+                receipt_expires_at=1020,
+                signer=signer,
+            )
+            claims = ConsequenceToken.verify(valid_token, signer=signer)
+            assert claims.rec_exp == 1020
+
+        # At t=1025: token exp=1060 is NOT expired, but rec_exp=1020 IS expired -> rejected!
+        with patch(
+            "src.gateway.governance.consequence_token.time.time",
+            return_value=1025,
+        ):
+            with pytest.raises(
+                ConsequenceTokenError, match="Authority receipt expired"
+            ):
+                ConsequenceToken.verify(valid_token, signer=signer)
+
+        # Signed malformed rec_exp claims (bool, str, <=0, <=iat, None) raise ConsequenceTokenMalformedError
+        header_b64 = valid_token.split(".")[0]
+        for bad_claim in (True, False, "1050", 0, -5, None, 1000, 995):
+            payload = {
+                "sub": "user-123",
+                "tid": "thread-abc",
+                "rec": "rec-malformed",
+                "act": "b" * 64,
+                "ver": "",
+                "iat": 1000,
+                "exp": 1060,
+                "jti": "rec-malformed",
+                "rec_exp": bad_claim,
+            }
+            payload_b64 = (
+                base64.urlsafe_b64encode(json.dumps(payload, sort_keys=True).encode())
+                .rstrip(b"=")
+                .decode("ascii")
+            )
+            signing_input = f"{header_b64}.{payload_b64}".encode("ascii")
+            sig = await signer.sign_raw_async(signing_input)
+            sig_b64 = base64.urlsafe_b64encode(sig).rstrip(b"=").decode("ascii")
+            crafted = f"{header_b64}.{payload_b64}.{sig_b64}"
+            with patch(
+                "src.gateway.governance.consequence_token.time.time",
+                return_value=1005,
+            ):
+                with pytest.raises(ConsequenceTokenMalformedError, match="rec_exp"):
+                    ConsequenceToken.verify(crafted, signer=signer)

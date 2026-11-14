@@ -116,6 +116,9 @@ class ConsequenceTokenClaims:
         iat: Issued-at timestamp (epoch seconds).
         exp: Expiry timestamp (epoch seconds; TTL 60s from iat).
         jti: JWT ID (unique token identifier, equals rec).
+        rec_exp: Optional epoch-second upper bound of the upstream authority
+            receipt's validity window. When present, single-use consumption
+            retains the marker across the full remaining receipt validity.
     """
 
     sub: str
@@ -126,6 +129,7 @@ class ConsequenceTokenClaims:
     iat: int
     exp: int
     jti: str
+    rec_exp: int | None = None
 
 
 class ConsequenceToken:
@@ -145,6 +149,7 @@ class ConsequenceToken:
         act: str,
         ver: str | None = None,
         ttl_seconds: int = 60,
+        receipt_expires_at: int | None = None,
         signer: KMSGovernanceSigner,
     ) -> str:
         """Mint a new ConsequenceToken JWS.
@@ -156,15 +161,33 @@ class ConsequenceToken:
             act: Action digest (SHA-256 hex of JCS-canonicalized action payload).
             ver: Authority state version (optional, normalized to "" when None).
             ttl_seconds: Token time-to-live (default 60s).
+            receipt_expires_at: Optional epoch-second upper bound of the upstream
+                authority receipt's validity window (must be a positive int > iat).
             signer: KMSGovernanceSigner instance (must have KMS active).
 
         Returns:
             Compact JWS string: base64url(header).base64url(payload).base64url(signature)
 
         Raises:
+            ConsequenceTokenMalformedError: If receipt_expires_at is non-int, boolean,
+                non-positive, or not strictly greater than iat.
             RuntimeError: If KMS is not active or signing fails.
         """
         now = int(time.time())
+
+        if receipt_expires_at is not None:
+            if (
+                isinstance(receipt_expires_at, bool)
+                or not isinstance(receipt_expires_at, int)
+                or receipt_expires_at <= 0
+            ):
+                raise ConsequenceTokenMalformedError(
+                    f"Invalid receipt_expires_at: {receipt_expires_at!r} (expected positive int)"
+                )
+            if receipt_expires_at <= now:
+                raise ConsequenceTokenMalformedError(
+                    f"Invalid receipt_expires_at: {receipt_expires_at} must be > iat ({now})"
+                )
 
         # Protected header: MUST include alg, kid, typ per RFC 7515
         header = {
@@ -177,7 +200,7 @@ class ConsequenceToken:
         normalized_ver = ver if ver is not None else ""
 
         # Claims payload
-        payload = {
+        payload: dict[str, str | int] = {
             "sub": sub,
             "tid": tid,
             "rec": rec,
@@ -187,6 +210,8 @@ class ConsequenceToken:
             "exp": now + ttl_seconds,
             "jti": rec,  # JWT ID equals authority record ID
         }
+        if receipt_expires_at is not None:
+            payload["rec_exp"] = receipt_expires_at
 
         # Build signing input: base64url(header).base64url(payload)
         # v3.1.0: Migrated to RFC 8785 JCS canonicalization
@@ -426,6 +451,28 @@ class ConsequenceToken:
                 f"Claim mismatch: jti ({jti!r}) must equal rec ({rec!r})"
             )
 
+        rec_exp: int | None = None
+        if "rec_exp" in payload:
+            raw_rec_exp = payload["rec_exp"]
+            if (
+                isinstance(raw_rec_exp, bool)
+                or not isinstance(raw_rec_exp, int)
+                or raw_rec_exp <= 0
+            ):
+                raise ConsequenceTokenMalformedError(
+                    f"Invalid rec_exp claim: {raw_rec_exp!r} (expected positive int)"
+                )
+            if raw_rec_exp <= iat:
+                raise ConsequenceTokenMalformedError(
+                    f"Invalid rec_exp claim: {raw_rec_exp} must be > iat ({iat})"
+                )
+            if now > raw_rec_exp:
+                raise ConsequenceTokenError(
+                    f"Authority receipt expired: rec_exp={raw_rec_exp}, now={now} "
+                    f"(age={now - raw_rec_exp}s)"
+                )
+            rec_exp = raw_rec_exp
+
         claims = ConsequenceTokenClaims(
             sub=sub,
             tid=tid,
@@ -435,6 +482,7 @@ class ConsequenceToken:
             iat=iat,
             exp=exp,
             jti=jti,
+            rec_exp=rec_exp,
         )
 
         # Never log the full claims (security requirement)

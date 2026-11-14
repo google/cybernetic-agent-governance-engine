@@ -47,12 +47,14 @@ marker recovered from a lost reply.
     False on a Redis failure.
 
 Key schema:
-  consequence:token:<rec>  →  "<SHA-256 binding hash>:<op id>"   (TTL 90 s)
+  consequence:token:<rec>  →  "<SHA-256 binding hash>:<op id>"   (TTL >= 90 s)
 
-The 90 s TTL is 1.5 times the ConsequenceToken's 60 s lifetime, so a token
-always expires before its marker. That suffices while ``rec`` names one
-determination. Retaining the marker for a record's whole validity needs the
-partner's receipt-validity rules (POAM-2026-156 item 2, POAM-2026-113).
+The 90 s default TTL is 1.5 times the ConsequenceToken's 60 s lifetime, so a
+token always expires before its marker. When the token carries an upstream
+authority receipt expiry (``rec_exp``), ``ConsequenceGateway.evaluate()``
+passes ``ttl_seconds`` covering the full remaining receipt validity plus clock
+skew, bounded below by ``self.ttl_seconds`` so the marker outlives both the
+token and the upstream authority receipt (POAM-2026-156 item 2).
 
 Usage:
   store = ConsequenceAuthorityStore.from_env()
@@ -187,9 +189,23 @@ class ConsequenceAuthorityStore:
                 "ConsequenceAuthorityStore: a WAIT timeout must be positive, got "
                 f"{replication.timeout_ms} ms"
             )
+        if (
+            isinstance(ttl_seconds, bool)
+            or not isinstance(ttl_seconds, int)
+            or ttl_seconds <= 0
+        ):
+            raise ValueError(
+                "ConsequenceAuthorityStore: ttl_seconds must be a positive int, got "
+                f"{ttl_seconds!r}"
+            )
         self._redis = redis_client
         self._replication = replication
         self._ttl_seconds = ttl_seconds
+
+    @property
+    def ttl_seconds(self) -> int:
+        """Minimum marker retention TTL in seconds (default 90 s)."""
+        return self._ttl_seconds
 
     @classmethod
     def from_env(cls) -> ConsequenceAuthorityStore:
@@ -236,13 +252,23 @@ class ConsequenceAuthorityStore:
         )
         return hashlib.sha256(canonical).hexdigest()
 
-    async def consume_once(self, authority_record_id: str, binding: str) -> bool:
+    async def consume_once(
+        self,
+        authority_record_id: str,
+        binding: str,
+        *,
+        ttl_seconds: int | None = None,
+    ) -> bool:
         """Consume the record once. True only for the consumption that wins.
 
         Args:
             authority_record_id: The token's ``rec`` claim: the provider's
                 per-determination receipt id.
             binding: SHA-256 binding hash (from binding_hash()).
+            ttl_seconds: Optional marker retention override in seconds. When
+                supplied, must be a positive integer and is bounded below by
+                ``self.ttl_seconds`` so the marker always outlives both the
+                ConsequenceToken and the upstream receipt's remaining validity.
 
         Returns:
             True if this call wrote the marker (including a re-send after a
@@ -251,11 +277,26 @@ class ConsequenceAuthorityStore:
             consumption holds the marker.
 
         Raises:
+            ValueError: ``ttl_seconds`` is boolean, non-integer, or ``<= 0``.
             ConsumptionNotReplicatedError: Strict replication, and the marker
                 was not acknowledged by enough replicas. The marker stays.
             Exception: Redis connection/timeout errors. Never silently returns
                 True/False on Redis failure; callers must fail closed.
         """
+        if ttl_seconds is None:
+            effective_ttl = self._ttl_seconds
+        else:
+            if (
+                isinstance(ttl_seconds, bool)
+                or not isinstance(ttl_seconds, int)
+                or ttl_seconds <= 0
+            ):
+                raise ValueError(
+                    "ConsequenceAuthorityStore.consume_once: ttl_seconds must be a "
+                    f"positive int, got {ttl_seconds!r}"
+                )
+            effective_ttl = max(self._ttl_seconds, ttl_seconds)
+
         key = f"{_KEY_PREFIX}{authority_record_id}"
         # The binding plus a per-attempt op id: a SET re-sent after a lost
         # reply finds this exact marker and still counts as this consumption.
@@ -263,10 +304,12 @@ class ConsequenceAuthorityStore:
 
         try:
             if self._replication.waits:
-                won = await self._consume_acknowledged(authority_record_id, key, marker)
+                won = await self._consume_acknowledged(
+                    authority_record_id, key, marker, effective_ttl
+                )
             else:
                 won = await set_nx_retry_safe(
-                    self._redis, key, marker, ex=self._ttl_seconds
+                    self._redis, key, marker, ex=effective_ttl
                 )
         except ConsumptionNotReplicatedError:
             raise
@@ -285,7 +328,7 @@ class ConsequenceAuthorityStore:
                 "ConsequenceAuthorityStore: CONSUMED authority_record_id=%s binding=%s ttl=%ds",
                 authority_record_id,
                 binding[:16] + "...",  # Log first 16 chars of hash for audit
-                self._ttl_seconds,
+                effective_ttl,
             )
         else:
             logger.warning(
@@ -296,12 +339,12 @@ class ConsequenceAuthorityStore:
         return won
 
     async def _consume_acknowledged(
-        self, authority_record_id: str, key: str, marker: str
+        self, authority_record_id: str, key: str, marker: str, ttl_seconds: int
     ) -> bool:
         """Write the marker and WAIT for it, both on one pinned socket."""
         pinned, should_close = await pinned_connection(self._redis)
         try:
-            outcome = await set_nx_outcome(pinned, key, marker, ex=self._ttl_seconds)
+            outcome = await set_nx_outcome(pinned, key, marker, ex=ttl_seconds)
             if outcome is NxOutcome.HELD:
                 return False
             if outcome is NxOutcome.RESENT and not await self._reassert(
