@@ -163,28 +163,30 @@ a list of missing keys.
 
 ## Signed Receipts
 
-The partner response body carries a detached Ed25519 signature (either as a
-structured JWS-style object or a flat 128-character hex / base64url string
-paired with `kid` / `receipt_kid`, defaulting to
-`archytan-sandbox-receipt-2026-01` published at `GET /v1/keys/receipt-manifest`):
+The partner response body carries `intent_hash` (the full RFC 8785 JCS-canonical
+governance envelope submitted by CAGE, either as a UTF-8 JSON string or JSON
+object) and a detached Ed25519 signature (either as a structured JWS-style
+object or a flat 128-character hex / base64url string paired with `kid` /
+`receipt_kid`, defaulting to `archytan-sandbox-receipt-2026-01` published at
+`GET /v1/keys/receipt-manifest`, with optional proxy `ingress_signature`):
 
 ```json
-{"status": "accepted", "envelope_digest": "<sha256 hex>", "...": "...",
+{"receipt_id": "r-...", "timestamp_ns": 1785012000000000000, "status": "ACCEPTED",
+ "intent_hash": "<JCS-canonical governance envelope>",
  "signature": {"alg": "EdDSA", "kid": "<key id>", "value": "<base64url>"}}
 ```
 
-The signed message is `ARCHYTAN_RECEIPT_V1:` followed by the RFC 8785
-(JCS) canonical form of the body without `signature` (and without
-`ingress_signature` when appended by the ingress proxy)
+The signed message is `ARCHYTAN_RECEIPT_V1:` followed by `SHA-256(intent_hash)`
 ([`RECEIPT_SIGNATURE_DOMAIN_TAG`](constants.py)). [`verify_partner_receipt()`](receipt_verifier.py)
 resolves the public key **only by `kid`** from the independently fetched
-manifest, never from the receipt, and never raises:
+manifest, never from the receipt, verifies `SHA-256(intent_hash) == envelope_digest`
+before checking the Ed25519 signature, and never raises:
 
 | Condition | `verification` | Effect on outcome |
 |---|---|---|
-| Valid signature, signed `envelope_digest` matches ours | `VERIFIED` | Unchanged |
+| Valid signature over `ARCHYTAN_RECEIPT_V1:` \|\| `SHA-256(intent_hash)`, and `SHA-256(intent_hash)` matches submitted `envelope_digest` | `VERIFIED` | Unchanged |
 | No signature, or manifest unconfigured/unreachable | `UNVERIFIED` | Unchanged (strict mode: `UNKNOWN`, finding `RECEIPT_UNVERIFIED`) |
-| Malformed signature, unknown `kid`, bad signature, digest missing or mismatched | `INVALID` | Forced to `UNKNOWN` |
+| Malformed signature, unknown `kid`, missing `intent_hash`, `SHA-256(intent_hash)` mismatch, or bad signature | `INVALID` | Forced to `UNKNOWN` |
 
 An unauthenticated accept or reject cannot settle the action, so it is treated
 as indeterminate. When a manifest is configured, `require_signed_receipts`

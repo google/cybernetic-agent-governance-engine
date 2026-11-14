@@ -15,23 +15,24 @@
 """
 receipt_verifier.py — kid-resolved verification of actuator_01 receipts.
 
-A partner response body MAY carry a detached Ed25519 signature::
+A partner response body MAY carry ``intent_hash`` (the RFC 8785 JCS-canonical
+governance envelope) and a detached Ed25519 signature::
 
     {
-      "receipt_id": "...", "session_uuid": "...", "status": "...",
-      "envelope_digest": "<sha256 hex of the canonical envelope CAGE sent>",
+      "receipt_id": "...", "timestamp_ns": 1785012000000000000, "status": "...",
+      "intent_hash": "<JCS-canonical governance envelope>",
       "signature": {"alg": "EdDSA", "kid": "<key id>", "value": "<base64url>"}
     }
 
-Signed message: ``RECEIPT_SIGNATURE_DOMAIN_TAG || JCS(body without "signature")``.
+Signed message: ``RECEIPT_SIGNATURE_DOMAIN_TAG || SHA-256(intent_hash)``.
 
 Verification rules (fail closed):
 
 - The key is resolved ONLY by ``kid`` from an independently fetched manifest,
   never from the receipt itself. An unknown ``kid`` is ``INVALID``.
-- The signed body must echo the ``envelope_digest`` CAGE submitted, binding the
-  receipt to this exact clearance (a valid receipt for another order is
-  ``INVALID``).
+- The signed receipt must carry ``intent_hash`` whose SHA-256 digest equals the
+  ``envelope_digest`` CAGE submitted, binding the receipt to this exact
+  clearance (a valid receipt for another order is ``INVALID``).
 - A body with no signature, or one whose key manifest cannot be fetched or is
   not configured, is ``UNVERIFIED`` — receipt resolution is not verification.
 """
@@ -40,6 +41,7 @@ from __future__ import annotations
 
 import base64
 import binascii
+import hashlib
 import logging
 from dataclasses import dataclass
 from typing import Any
@@ -50,7 +52,6 @@ from src.gateway.governance.jcs_canonicalizer import jcs_canonicalize_plan
 from src.gateway.governance.seams.actuation import ReceiptVerification
 from src.integrations.actuator_01.constants import (
     DEFAULT_RECEIPT_KID,
-    LEGACY_RECEIPT_SIGNATURE_DOMAIN_TAG,
     RECEIPT_SIGNATURE_DOMAIN_TAG,
 )
 from src.integrations.trust.key_manifest import Ed25519KeyResolver
@@ -190,47 +191,57 @@ async def verify_partner_receipt(
     if public_key is None:
         return _invalid("RECEIPT_UNKNOWN_KID", f"kid={kid} not in receipt key manifest")
 
-    candidate_bodies = [{k: v for k, v in body.items() if k != "signature"}]
-    if "ingress_signature" in body:
-        candidate_bodies.append(
-            {
-                k: v
-                for k, v in body.items()
-                if k not in ("signature", "ingress_signature")
-            }
-        )
-
-    verified_body: dict[str, Any] | None = None
-    for candidate in candidate_bodies:
+    raw_intent = body.get("intent_hash")
+    if isinstance(raw_intent, str) and raw_intent.strip():
+        intent_bytes = raw_intent.encode("utf-8")
+    elif isinstance(raw_intent, dict) and raw_intent:
         try:
-            canonical_candidate = jcs_canonicalize_plan(candidate)
+            intent_bytes = jcs_canonicalize_plan(raw_intent)
         except Exception as exc:
             return _invalid(
                 "RECEIPT_SIGNATURE_MALFORMED",
-                f"receipt not canonicalizable: {type(exc).__name__}",
+                f"receipt intent_hash not canonicalizable: {type(exc).__name__}",
             )
-        for domain_tag in (
-            RECEIPT_SIGNATURE_DOMAIN_TAG,
-            LEGACY_RECEIPT_SIGNATURE_DOMAIN_TAG,
-        ):
-            try:
-                public_key.verify(signature_bytes, domain_tag + canonical_candidate)
-                verified_body = candidate
-                break
-            except InvalidSignature:
-                continue
-        if verified_body is not None:
-            break
-
-    if verified_body is None:
+    else:
         return _invalid(
-            "RECEIPT_SIGNATURE_INVALID", f"signature does not verify (kid={kid})"
+            "RECEIPT_MISSING_INTENT_HASH",
+            "signed receipt carries no intent_hash",
         )
 
-    if verified_body.get("envelope_digest") != envelope_digest:
+    intent_digest = hashlib.sha256(intent_bytes)
+    computed_digest = intent_digest.hexdigest()
+    if (
+        not isinstance(envelope_digest, str)
+        or computed_digest != envelope_digest.lower()
+    ):
         return _invalid(
             "RECEIPT_ENVELOPE_MISMATCH",
-            "signed receipt is not bound to the submitted envelope_digest",
+            "signed receipt intent_hash SHA-256 does not match submitted envelope_digest",
+        )
+    if "envelope_digest" in body and (
+        not isinstance(body["envelope_digest"], str)
+        or body["envelope_digest"].lower() != computed_digest
+    ):
+        return _invalid(
+            "RECEIPT_ENVELOPE_MISMATCH",
+            "signed receipt envelope_digest conflicts with intent_hash SHA-256",
+        )
+
+    verified = False
+    for preimage in (
+        RECEIPT_SIGNATURE_DOMAIN_TAG + computed_digest.encode("ascii"),
+        RECEIPT_SIGNATURE_DOMAIN_TAG + intent_digest.digest(),
+    ):
+        try:
+            public_key.verify(signature_bytes, preimage)
+            verified = True
+            break
+        except InvalidSignature:
+            continue
+
+    if not verified:
+        return _invalid(
+            "RECEIPT_SIGNATURE_INVALID", f"signature does not verify (kid={kid})"
         )
 
     logger.info("[actuator_01/receipt] receipt signature VERIFIED (kid=%s)", kid)

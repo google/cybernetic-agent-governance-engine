@@ -42,6 +42,7 @@ from cryptography.hazmat.primitives.asymmetric.ed25519 import (
     Ed25519PublicKey,
 )
 
+import src.integrations.provider_07 as provider_07_pkg
 from src.gateway.governance.jcs_canonicalizer import jcs_canonicalize_plan
 from src.gateway.governance.seams.normative import (
     EvidenceSeal,
@@ -52,10 +53,10 @@ from src.integrations.provider_07 import (
     NormativeProviderError,
     Provider07InferenceRequest,
     Provider07InferenceResponse,
-    Provider07JwksClient,
     Provider07NormativeProvider,
     verify_inference_signature,
 )
+from src.integrations.trust.key_manifest import Ed25519KeyManifestClient
 
 # Hermetic: tests provider_07 adapter with mocks, no live services
 pytestmark = [pytest.mark.unit, pytest.mark.local, pytest.mark.partner]
@@ -100,11 +101,11 @@ def jwks_payload(
 @pytest.fixture
 def mock_jwks_client(
     ed25519_keypair: tuple[Ed25519PrivateKey, Ed25519PublicKey],
-) -> Provider07JwksClient:
+) -> Ed25519KeyManifestClient:
     """Create a mock JWKS client that returns the test public key."""
     _, public_key = ed25519_keypair
 
-    client = MagicMock(spec=Provider07JwksClient)
+    client = MagicMock(spec=Ed25519KeyManifestClient)
 
     async def mock_get_key(kid: str) -> Ed25519PublicKey | None:
         if kid == "test-key-001":
@@ -169,7 +170,7 @@ def valid_request_payload() -> dict[str, Any]:
 
 
 @pytest.fixture
-def adapter(mock_jwks_client: Provider07JwksClient) -> Provider07NormativeProvider:
+def adapter(mock_jwks_client: Ed25519KeyManifestClient) -> Provider07NormativeProvider:
     """Create adapter instance with mock JWKS client."""
     return Provider07NormativeProvider(
         endpoint="http://localhost:8087",
@@ -715,12 +716,21 @@ class TestEnvironmentConfiguration:
 
 
 class TestJwksClient:
-    """Tests for Provider07JwksClient key resolution."""
+    """Tests for shared Ed25519KeyManifestClient wiring in Provider 07."""
 
-    def test_jwks_url_scheme_validation(self) -> None:
-        """JWKS client rejects non-http/https URLs (Bandit B310 compliance)."""
+    def test_provider_07_jwks_client_retired_and_http_https_enforced(self) -> None:
+        """Provider07JwksClient is retired and Provider07NormativeProvider enforces http/https only."""
+        assert not hasattr(provider_07_pkg, "Provider07JwksClient")
         with pytest.raises(ValueError, match="Invalid JWKS URL scheme"):
-            Provider07JwksClient(jwks_url="ftp://invalid.example.com/jwks.json")
+            Ed25519KeyManifestClient(
+                manifest_url="ftp://invalid.example.com/jwks.json",
+                allowed_schemes=("http", "https"),
+            )
+        with pytest.raises(ValueError, match="Invalid JWKS URL scheme"):
+            Provider07NormativeProvider(
+                endpoint="http://localhost:8087",
+                jwks_url="file:///tmp/jwks.json",
+            )
 
     @pytest.mark.asyncio
     async def test_jwks_client_key_resolution(
@@ -728,7 +738,7 @@ class TestJwksClient:
         jwks_payload: dict[str, Any],
         ed25519_keypair: tuple[Ed25519PrivateKey, Ed25519PublicKey],
     ) -> None:
-        """JWKS client resolves Ed25519 keys from manifest."""
+        """Ed25519KeyManifestClient resolves Ed25519 keys from manifest."""
         _, public_key = ed25519_keypair
 
         mock_response = MagicMock()
@@ -740,8 +750,9 @@ class TestJwksClient:
             client_instance.get.return_value = mock_response
             MockClient.return_value.__aenter__.return_value = client_instance
 
-            client = Provider07JwksClient(
-                jwks_url="http://localhost:8087/.well-known/jwks.json"
+            client = Ed25519KeyManifestClient(
+                manifest_url="http://localhost:8087/.well-known/jwks.json",
+                allowed_schemes=("http", "https"),
             )
             resolved_key = await client.get_key("test-key-001")
 
@@ -755,7 +766,7 @@ class TestJwksClient:
         self,
         jwks_payload: dict[str, Any],
     ) -> None:
-        """JWKS client returns None for unknown kid (caller must fail closed)."""
+        """Ed25519KeyManifestClient returns None for unknown kid (caller must fail closed)."""
         mock_response = MagicMock()
         mock_response.json.return_value = jwks_payload
         mock_response.raise_for_status = MagicMock()
@@ -765,8 +776,9 @@ class TestJwksClient:
             client_instance.get.return_value = mock_response
             MockClient.return_value.__aenter__.return_value = client_instance
 
-            client = Provider07JwksClient(
-                jwks_url="http://localhost:8087/.well-known/jwks.json"
+            client = Ed25519KeyManifestClient(
+                manifest_url="http://localhost:8087/.well-known/jwks.json",
+                allowed_schemes=("http", "https"),
             )
             resolved_key = await client.get_key("unknown-key-999")
 
@@ -1318,9 +1330,10 @@ class TestProvider07PartnerContractVectors:
             client_instance.get.side_effect = [resp_v1, resp_v2]
             MockClient.return_value.__aenter__.return_value = client_instance
 
-            client = Provider07JwksClient(
-                jwks_url="http://localhost:8087/.well-known/jwks.json",
+            client = Ed25519KeyManifestClient(
+                manifest_url="http://localhost:8087/.well-known/jwks.json",
                 cache_ttl_seconds=3600,
+                allowed_schemes=("http", "https"),
             )
             k1 = await client.get_key("key-v1")
             assert k1 is not None
@@ -1502,8 +1515,9 @@ class TestProvider07Step2SignedVectors:
     ) -> None:
         """Provider07NormativeProvider verifies real Step 2 JWKS and signed payloads across allow/refuse/escalate."""
         jwks_http_resp = _mock_http_response(STEP2_STAGING_JWKS)
-        jwks_client = Provider07JwksClient(
-            jwks_url="https://provider07-cage-staging.example.com/.well-known/jwks.json"
+        jwks_client = Ed25519KeyManifestClient(
+            manifest_url="https://provider07-cage-staging.example.com/.well-known/jwks.json",
+            allowed_schemes=("http", "https"),
         )
         adapter = Provider07NormativeProvider(
             endpoint="https://provider07-cage-staging.example.com",
@@ -1545,8 +1559,9 @@ class TestProvider07Step2SignedVectors:
         import copy
 
         jwks_http_resp = _mock_http_response(STEP2_STAGING_JWKS)
-        jwks_client = Provider07JwksClient(
-            jwks_url="https://provider07-cage-staging.example.com/.well-known/jwks.json"
+        jwks_client = Ed25519KeyManifestClient(
+            manifest_url="https://provider07-cage-staging.example.com/.well-known/jwks.json",
+            allowed_schemes=("http", "https"),
         )
         adapter = Provider07NormativeProvider(
             endpoint="https://provider07-cage-staging.example.com",

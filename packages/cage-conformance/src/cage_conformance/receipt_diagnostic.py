@@ -15,8 +15,8 @@
 """Offline preimage and field diagnostic for ``actuator_01`` receipts.
 
 Compares the signed-message preimage and required fields that CAGE's
-``verify_partner_receipt()`` (``src/integrations/actuator_01/receipt_verifier.py``
-lines 193-234) expects against the ``actuator_01`` partner receipt signing scheme
+``verify_partner_receipt()`` (``src/integrations/actuator_01/receipt_verifier.py``)
+expects against the ``actuator_01`` partner receipt signing scheme
 (``"ARCHYTAN_RECEIPT_V1:" || SHA-256(intent_hash)``), using only the Python
 standard library. Does not verify Ed25519 signatures and never contacts a live
 endpoint.
@@ -28,15 +28,12 @@ Usage (one paragraph):
     ``PYTHONPATH=packages/cage-conformance/src`` and no package install) against
     any captured ``actuator_01`` receipt JSON. The tool makes no network calls and does
     not verify the Ed25519 signature; instead, it prints the exact preimage and
-    SHA-256 digest CAGE constructs (``"ARCHYTAN_RECEIPT_V1:" || JCS(body without
-    "signature" and "ingress_signature")``) alongside the preimage and SHA-256
-    digest for the partner signing scheme (``"ARCHYTAN_RECEIPT_V1:" ||
-    SHA-256(intent_hash)``), lists which required fields (``envelope_digest``
-    for CAGE, ``intent_hash`` for the partner) are absent, and states the specific
-    reconciliation failure reason (``preimage digest mismatch``, ``missing
-    envelope_digest``, or ``both``). It exits ``0`` when the candidate preimage
-    digests agree and ``envelope_digest`` is present, ``1`` on any mismatch, and
-    ``2`` if the input cannot be parsed as a JSON object.
+    SHA-256 digest CAGE constructs (``"ARCHYTAN_RECEIPT_V1:" || SHA-256(intent_hash)``)
+    alongside the partner signing scheme preimage and diagnoses legacy
+    ``envelope_digest``-only or ``JCS(body)`` receipt mismatches. It exits ``0``
+    when the candidate preimage digests agree, ``intent_hash`` is present, and no
+    conflicting ``envelope_digest`` is present; ``1`` on any mismatch; and ``2``
+    if the input cannot be parsed as a JSON object.
 """
 
 from __future__ import annotations
@@ -62,7 +59,7 @@ RECEIPT_DOMAIN_TAG_STR = RECEIPT_DOMAIN_TAG.decode("ascii")
 STRIPPED_SIGNATURE_FIELDS: tuple[str, ...] = ("signature", "ingress_signature")
 _HEX64_RE = re.compile(r"[0-9a-fA-F]{64}")
 
-PreimageBuilder = Callable[[Mapping[str, Any]], bytes]
+PreimageBuilder = Callable[[Mapping[str, Any]], bytes | None]
 
 
 @dataclass(frozen=True)
@@ -101,8 +98,30 @@ def strip_signature_fields(body: Mapping[str, Any]) -> dict[str, Any]:
     return {k: v for k, v in body.items() if k not in STRIPPED_SIGNATURE_FIELDS}
 
 
-def build_cage_preimage(body: Mapping[str, Any]) -> bytes:
-    """Build CAGE's signed-message preimage: ``RECEIPT_DOMAIN_TAG || JCS(stripped_body)``."""
+def _resolve_cage_intent_sha256(body: Mapping[str, Any]) -> str | None:
+    """Resolve ``SHA-256(intent_hash)`` hex exactly as ``verify_partner_receipt()`` does."""
+    raw_intent = body.get("intent_hash")
+    if isinstance(raw_intent, str) and raw_intent.strip():
+        return hashlib.sha256(raw_intent.encode("utf-8")).hexdigest()
+    if isinstance(raw_intent, Mapping) and raw_intent:
+        return hashlib.sha256(jcs_bytes(raw_intent)).hexdigest()
+    return None
+
+
+def build_cage_preimage(body: Mapping[str, Any]) -> bytes | None:
+    """Build CAGE's primary signed-message preimage: ``RECEIPT_DOMAIN_TAG || SHA-256(intent_hash)``.
+
+    Returns ``None`` when ``intent_hash`` is absent (matching ``verify_partner_receipt()``
+    returning ``RECEIPT_MISSING_INTENT_HASH`` before signature verification).
+    """
+    intent_sha256_hex = _resolve_cage_intent_sha256(body)
+    if intent_sha256_hex is None:
+        return None
+    return RECEIPT_DOMAIN_TAG + intent_sha256_hex.encode("ascii")
+
+
+def build_legacy_jcs_preimage(body: Mapping[str, Any]) -> bytes:
+    """Build the retired legacy ``RECEIPT_DOMAIN_TAG || JCS(stripped_body)`` preimage for diagnostics."""
     return RECEIPT_DOMAIN_TAG + jcs_bytes(strip_signature_fields(body))
 
 
@@ -113,17 +132,17 @@ def _resolve_intent_sha256(
 
     Partner receipts carry ``intent_hash`` (the JCS-canonicalized governance
     envelope) and sign ``"ARCHYTAN_RECEIPT_V1:" || SHA-256(intent_hash)``.
-    When diagnosing a CAGE README-shaped receipt that carries ``envelope_digest``
-    (already the 64-hex SHA-256 of the canonical envelope) and no ``intent_hash``,
-    fall back to ``envelope_digest`` so both candidate preimages can still be
-    displayed side by side while reporting ``intent_hash`` as absent.
+    When diagnosing a legacy receipt that carries ``envelope_digest`` (already
+    the 64-hex SHA-256 of the canonical envelope) and no ``intent_hash``, fall
+    back to ``envelope_digest`` so the candidate partner preimage can still be
+    displayed while reporting ``intent_hash`` as absent.
     """
     raw_intent = body.get("intent_hash")
     if isinstance(raw_intent, str) and raw_intent.strip():
         intent_bytes = raw_intent.encode("utf-8")
         digest = hashlib.sha256(intent_bytes)
         return digest.hexdigest(), digest.digest(), "sha256(intent_hash)"
-    if isinstance(raw_intent, (Mapping, list, tuple)) and raw_intent:
+    if isinstance(raw_intent, Mapping) and raw_intent:
         intent_bytes = jcs_bytes(raw_intent)
         digest = hashlib.sha256(intent_bytes)
         return digest.hexdigest(), digest.digest(), "sha256(JCS(intent_hash))"
@@ -160,7 +179,7 @@ def _has_field(body: Mapping[str, Any], field: str) -> bool:
     value = body.get(field)
     if isinstance(value, str):
         return bool(value.strip())
-    if isinstance(value, (Mapping, list, tuple)):
+    if isinstance(value, Mapping):
         return bool(value)
     return False
 
@@ -185,7 +204,12 @@ def diagnose_receipt(
     stripped_body = strip_signature_fields(body)
     cage_canonical_bytes = jcs_bytes(stripped_body)
     cage_preimage = cage_preimage_builder(body)
-    cage_preimage_sha256 = hashlib.sha256(cage_preimage).hexdigest()
+    if cage_preimage is not None:
+        cage_preimage_utf8 = cage_preimage.decode("utf-8", errors="replace")
+        cage_preimage_sha256 = hashlib.sha256(cage_preimage).hexdigest()
+    else:
+        cage_preimage_utf8 = ""
+        cage_preimage_sha256 = ""
 
     intent_sha256_hex, intent_sha256_raw, intent_source = _resolve_intent_sha256(body)
     if intent_sha256_hex is not None and intent_sha256_raw is not None:
@@ -207,28 +231,42 @@ def diagnose_receipt(
 
     missing_envelope_digest = not _has_field(body, "envelope_digest")
     missing_intent_hash = not _has_field(body, "intent_hash")
-    absent: list[str] = []
-    if missing_envelope_digest:
-        absent.append("envelope_digest")
-    if missing_intent_hash:
-        absent.append("intent_hash")
+    absent: tuple[str, ...] = ("intent_hash",) if missing_intent_hash else ()
+
+    envelope_digest_conflict = False
+    if not missing_intent_hash and "envelope_digest" in body:
+        raw_env = body.get("envelope_digest")
+        if not isinstance(raw_env, str) or raw_env.lower() != intent_sha256_hex:
+            envelope_digest_conflict = True
 
     preimage_digest_mismatch = (
-        partner_preimage_sha256 is None
+        cage_preimage is None
+        or partner_preimage_sha256 is None
         or cage_preimage_sha256
         not in {partner_preimage_sha256, partner_raw_preimage_sha256}
     )
 
-    if preimage_digest_mismatch and missing_envelope_digest:
-        reason = "both (preimage digest mismatch; missing envelope_digest)"
+    if missing_intent_hash:
+        if cage_preimage is not None:
+            reason = "both (preimage digest mismatch; missing intent_hash)"
+        elif not missing_envelope_digest:
+            reason = "missing intent_hash (legacy envelope_digest-only receipt)"
+        else:
+            reason = "missing intent_hash"
+    elif preimage_digest_mismatch and envelope_digest_conflict:
+        reason = "both (preimage digest mismatch; conflicting envelope_digest)"
     elif preimage_digest_mismatch:
         reason = "preimage digest mismatch"
-    elif missing_envelope_digest:
-        reason = "missing envelope_digest"
+    elif envelope_digest_conflict:
+        reason = "envelope_digest conflicts with sha256(intent_hash)"
     else:
         reason = "none"
 
-    reconciled = not preimage_digest_mismatch and not missing_envelope_digest
+    reconciled = (
+        not preimage_digest_mismatch
+        and not missing_intent_hash
+        and not envelope_digest_conflict
+    )
 
     return ReceiptDiagnosis(
         input_name=input_name,
@@ -239,10 +277,10 @@ def diagnose_receipt(
         preimage_digest_mismatch=preimage_digest_mismatch,
         missing_envelope_digest=missing_envelope_digest,
         missing_intent_hash=missing_intent_hash,
-        absent_fields=tuple(absent),
+        absent_fields=absent,
         cage_domain_tag=RECEIPT_DOMAIN_TAG_STR,
         cage_canonical_body_utf8=cage_canonical_bytes.decode("utf-8"),
-        cage_preimage_utf8=cage_preimage.decode("utf-8", errors="replace"),
+        cage_preimage_utf8=cage_preimage_utf8,
         cage_preimage_sha256=cage_preimage_sha256,
         partner_domain_tag=RECEIPT_DOMAIN_TAG_STR,
         intent_digest_source=intent_source,
@@ -257,7 +295,7 @@ def diagnose_receipt(
 def format_diagnosis(diagnosis: ReceiptDiagnosis) -> str:
     """Render a human-readable diagnostic report."""
     status = "AGREEMENT" if diagnosis.reconciled else "MISMATCH"
-    env_state = "absent" if diagnosis.missing_envelope_digest else "present"
+    env_state = "absent (optional)" if diagnosis.missing_envelope_digest else "present"
     intent_state = "absent" if diagnosis.missing_intent_hash else "present"
     absent_str = (
         ", ".join(diagnosis.absent_fields) if diagnosis.absent_fields else "none"
@@ -268,14 +306,28 @@ def format_diagnosis(diagnosis: ReceiptDiagnosis) -> str:
         "  signature_verification:  NOT_PERFORMED (compares signed-message preimages and required fields only)",
         f"  reason:                  {diagnosis.reason}",
         "  required_fields:",
-        f"    envelope_digest (CAGE receipt_verifier.py:230): {env_state}",
-        f"    intent_hash (partner receipt schema):           {intent_state}",
+        f"    intent_hash (CAGE & partner receipt schema):    {intent_state}",
+        f"    envelope_digest (legacy optional echo):         {env_state}",
         f"  absent_required_fields:  {absent_str}",
-        "  cage_candidate (RECEIPT_SIGNATURE_DOMAIN_TAG || JCS(body - {signature, ingress_signature})):",
-        f"    preimage_utf8:         {diagnosis.cage_preimage_utf8}",
-        f"    preimage_sha256:       {diagnosis.cage_preimage_sha256}",
-        f'  partner_candidate ("{RECEIPT_DOMAIN_TAG_STR}" || SHA-256(intent_hash)):',
+        f'  cage_candidate ("{RECEIPT_DOMAIN_TAG_STR}" || SHA-256(intent_hash)):',
     ]
+    if diagnosis.cage_preimage_utf8:
+        lines.extend(
+            [
+                f"    preimage_utf8:         {diagnosis.cage_preimage_utf8}",
+                f"    preimage_sha256:       {diagnosis.cage_preimage_sha256}",
+            ]
+        )
+    else:
+        lines.extend(
+            [
+                "    unavailable:           missing intent_hash (RECEIPT_MISSING_INTENT_HASH)",
+                f"    stripped_body_jcs:     {diagnosis.cage_canonical_body_utf8}",
+            ]
+        )
+    lines.append(
+        f'  partner_candidate ("{RECEIPT_DOMAIN_TAG_STR}" || SHA-256(intent_hash)):'
+    )
     if diagnosis.partner_preimage_utf8 is not None:
         lines.extend(
             [

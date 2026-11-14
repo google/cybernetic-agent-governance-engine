@@ -20,11 +20,10 @@ suitability constraints (SEC Reg BI, FINRA Rule 2111, EU AI Act Art. 27).
 
 Public Exports:
 - Phase 1: Wire protocol schema models (Pydantic v2)
-- Phase 2: NormativeProvider adapter, JWKS client, signature verification
+- Phase 2: NormativeProvider adapter and Ed25519 JCS signature verification
 """
 
 from .adapter import NormativeProviderError, Provider07NormativeProvider
-from .jwks_client import Provider07JwksClient
 from .schema import (
     ActionUtility,
     ClientProfile,
@@ -47,7 +46,6 @@ __all__ = [
     "Provider07EvidenceResponse",
     "Provider07InferenceRequest",
     "Provider07InferenceResponse",
-    "Provider07JwksClient",
     "Provider07NormativeProvider",
     "verify_inference_signature",
 ]
