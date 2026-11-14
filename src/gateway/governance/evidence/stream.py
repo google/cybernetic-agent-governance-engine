@@ -2217,7 +2217,10 @@ class EvidenceStreamSink:
         self._prev_hash = last.record_hash
         self._sequence = last.sequence + 1
         self._prev_id = ids[-1]
+        from src.gateway.governance.governor.metrics import governor_metrics
+
         self._acked_head = _ChainHead(sealed.chain_id, last.sequence, last.record_hash)
+        governor_metrics().evidence_records_appended(len(batch))
         for item, record, msg_id in zip(batch, sealed.records, ids, strict=True):
             if item.future is not None and not item.future.done():
                 item.future.set_result(
@@ -2678,8 +2681,11 @@ def append_evidence_record_sync(
 
         status = _as_str(raw_res[0])
         if status in ("OK", "ALREADY") and len(raw_res) >= 2:
+            from src.gateway.governance.governor.metrics import governor_metrics
+
             if _evidence_sink is not None:
                 _evidence_sink._chain_restored = False
+            governor_metrics().evidence_records_appended(1)
             msg_id = _as_str(raw_res[1])
             return EvidenceCommitResult(
                 success=True,

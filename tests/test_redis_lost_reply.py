@@ -150,7 +150,23 @@ async def _indexed_seal(redis: Any) -> str:
     return seal
 
 
-@pytest.mark.usefixtures("hmac_seal_posture")
+@pytest.fixture
+async def routing_seal_evidence_sink(monkeypatch: pytest.MonkeyPatch):
+    import src.gateway.governance.evidence.stream as es_mod
+
+    ev_redis = fakeredis.FakeRedis(decode_responses=True)
+    sink = es_mod.EvidenceStreamSink(stream_key="cage:test:lost_reply:seal")
+    sink._redis = ev_redis
+    sink._running = True
+    monkeypatch.setattr(es_mod, "_evidence_sink", sink)
+    try:
+        yield sink
+    finally:
+        if sink.is_running:
+            await sink.stop()
+
+
+@pytest.mark.usefixtures("hmac_seal_posture", "routing_seal_evidence_sink")
 class TestRoutingSeal:
     async def test_consume_survives_lost_reply(self):
         redis = fakeredis.FakeRedis()

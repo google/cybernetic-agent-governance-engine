@@ -194,7 +194,7 @@ def proxy_deps(monkeypatch):
     evidence_sink.ingest_sync = AsyncMock(return_value="1-0")
     evidence_sink.ingest = AsyncMock(return_value="1-0")
     monkeypatch.setattr(
-        _mod.inference_app.state, "evidence_sink", evidence_sink, raising=False
+        "src.gateway.governance.evidence.stream._evidence_sink", evidence_sink
     )
     monkeypatch.setattr(_mod.inference_app.state, "redis", None, raising=False)
     monkeypatch.setattr(

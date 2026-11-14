@@ -34,6 +34,8 @@ locals {
     "absent_over_time(cage_gateway_gated_requests_total{namespace=\"${module.namespace.name}\",outcome=\"permitted\"}[5m])",
     "absent_over_time(cage_gateway_canary_requests_total{namespace=\"${module.namespace.name}\",outcome=\"blocked\"}[5m])",
     "absent_over_time(cage_gateway_canary_requests_total{namespace=\"${module.namespace.name}\",outcome=\"permitted\"}[5m])",
+    "absent_over_time(cage_gateway_evidence_records_appended_total{namespace=\"${module.namespace.name}\"}[5m])",
+    "absent_over_time(cage_gateway_evidenced_requests_permitted_total{namespace=\"${module.namespace.name}\"}[5m])",
   ])
   compliance_bridge_metrics_scrape_failure_promql = join(" or ", [
     "(up{job=\"compliance-bridge-metrics\",namespace=\"${module.namespace.name}\"} == 0)",
@@ -61,6 +63,27 @@ locals {
     "(sum(rate(cage_gateway_canary_requests_total{job=\"gateway-metrics\",namespace=\"${module.namespace.name}\"}[5m])) > 0)",
   ])
   gateway_canary_probe_absent_promql = "sum(rate(cage_gateway_canary_requests_total{job=\"gateway-metrics\",namespace=\"${module.namespace.name}\"}[5m])) == 0"
+  # POAM-2026-217: Two-ways-of-counting rate reconciliation between ingress-counted
+  # permitted requests (WorkloadIdentityMiddleware) and Redis-acknowledged stream
+  # appends (EvidenceStreamSink._acknowledge). Evaluates rate() over a 15m window
+  # (longer than both EvidenceStreamSink group-commit/CAS retry lag, PodMonitoring's
+  # 15s scrape cadence, and EvidenceCustodian's 300s flush/verify interval) and
+  # sustains for 600s (10m) so asynchronous batching and boundary skew at t=window-edge
+  # never trigger false positives under normal or burst load.
+  gateway_evidence_reconciliation_min_requests = 5
+  gateway_evidence_reconciliation_ratio_floor  = "0.85"
+  gateway_evidence_append_reconciliation_promql = join(" ", [
+    "((sum(rate(cage_gateway_gated_requests_total{job=\"gateway-metrics\",namespace=\"${module.namespace.name}\",outcome=\"permitted\"}[15m])) >= (3 / 900))",
+    "and",
+    "((sum(rate(cage_gateway_evidence_records_appended_total{job=\"gateway-metrics\",namespace=\"${module.namespace.name}\"}[15m])) or vector(0)) == 0))",
+    "or",
+    "((((sum(rate(cage_gateway_evidence_records_appended_total{job=\"gateway-metrics\",namespace=\"${module.namespace.name}\"}[15m])) or vector(0))",
+    "+",
+    "(sum(rate(cage_evidence_trace_shed_total{job=\"gateway-metrics\",namespace=\"${module.namespace.name}\"}[15m])) or vector(0)))",
+    "/",
+    "(sum(rate(cage_gateway_evidenced_requests_permitted_total{job=\"gateway-metrics\",namespace=\"${module.namespace.name}\"}[15m])) >= (${local.gateway_evidence_reconciliation_min_requests} / 900)))",
+    "< ${local.gateway_evidence_reconciliation_ratio_floor})",
+  ])
 }
 
 resource "google_monitoring_alert_policy" "prometheus_metrics_scrape_liveness" {
@@ -385,4 +408,68 @@ resource "google_monitoring_alert_policy" "gateway_canary_pod_health" {
 
   depends_on = [module.gke]
 }
+
+resource "google_monitoring_alert_policy" "gateway_evidence_append_reconciliation" {
+  count = local.enforcing_posture ? 1 : 0
+
+  project               = var.project_id
+  display_name          = "${var.cluster_name} - Gateway Permitted Traffic vs Evidence Appends Deficit (AU-5 / AU-12)"
+  combiner              = "OR"
+  enabled               = true
+  severity              = "CRITICAL"
+  notification_channels = var.lula_alert_notification_channels
+
+  user_labels = {
+    owner       = trimspace(var.lula_alert_owner)
+    component   = "gateway"
+    control     = "au-5"
+    environment = var.environment
+  }
+
+  documentation {
+    mime_type = "text/markdown"
+    content   = <<-EOT
+      ## CAGE Gateway Evidence Append Reconciliation Alert (NIST SP 800-53 AU-5 / AU-12 / POAM-2026-217)
+
+      - **Owner:** `${trimspace(var.lula_alert_owner)}`
+      - **Cluster:** `${var.cluster_name}` (`${var.namespace}`)
+      - **Ingress Metrics:** `cage_gateway_gated_requests_total{outcome="permitted"}` and `cage_gateway_evidenced_requests_permitted_total` (`WorkloadIdentityMiddleware`)
+      - **Custody Metric:** `cage_gateway_evidence_records_appended_total` (`EvidenceStreamSink._acknowledge` after Redis `XADD`)
+
+      Reconciles two independent rate series across the gateway request boundary and
+      the Redis evidence stream over a `15m` window (`POAM-2026-217`), evaluated
+      across a sustained `600s` (`10m`) duration (exceeding group-commit batching,
+      `15s` `PodMonitoring` scrape skew, and `EvidenceCustodian`'s `300s` cadence
+      so asynchronous flush lag at window boundaries does not false-page). Fires
+      when for `600s` either:
+      1. Permitted request rate is `>= 3 / 15m` while `rate(cage_gateway_evidence_records_appended_total[15m]) == 0`
+         (total append stall), **or**
+      2. `(rate(appended[15m]) + rate(trace_shed[15m])) / rate(evidenced_requests_permitted[15m]) < ${local.gateway_evidence_reconciliation_ratio_floor}`
+         with `>= ${local.gateway_evidence_reconciliation_min_requests}` evidenced permitted requests per `15m`
+         (sustained per-route evidence loss even while synthetic canary probes
+         continue appending on `/governance/validate-action`).
+
+      **Operator note (`EC-1`):** Under `EVIDENCE_CHAIN_BLOCKING=true` (enforcing
+      default), a `memorystore_governance` Redis custody outage fails all governed
+      traffic closed (`503` — full gateway outage, paging `gateway_sustained_refusal_ratio`
+      and `gateway_zero_permitted_requests`). This reconciliation policy catches the
+      complementary failure mode (`EVIDENCE_CHAIN_BLOCKING=false` break-glass or a
+      code-path regression) where traffic is permitted without durable Redis appends.
+    EOT
+  }
+
+  conditions {
+    display_name = "Sustained 15m evidence-append rate deficit (< ${local.gateway_evidence_reconciliation_ratio_floor} of evidenced permitted rate) for 600s (10m)"
+
+    condition_prometheus_query_language {
+      query                     = local.gateway_evidence_append_reconciliation_promql
+      duration                  = "600s"
+      evaluation_interval       = "60s"
+      disable_metric_validation = true
+    }
+  }
+
+  depends_on = [module.gke]
+}
+
 

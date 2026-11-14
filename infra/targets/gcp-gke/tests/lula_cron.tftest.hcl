@@ -163,12 +163,21 @@ run "staging_plans_lula_cron_active_specs_and_dedicated_ksas" {
       length(google_monitoring_alert_policy.gateway_canary_pod_health) == 1 &&
       length(google_monitoring_alert_policy.gateway_canary_pod_health[0].conditions) == 2 &&
       google_monitoring_alert_policy.gateway_canary_pod_health[0].user_labels["component"] == "gateway-canary" &&
+      length(google_monitoring_alert_policy.gateway_evidence_append_reconciliation) == 1 &&
+      length(google_monitoring_alert_policy.gateway_evidence_append_reconciliation[0].conditions) == 1 &&
+      google_monitoring_alert_policy.gateway_evidence_append_reconciliation[0].user_labels["owner"] == "platform-compliance-oncall" &&
+      google_monitoring_alert_policy.gateway_evidence_append_reconciliation[0].user_labels["control"] == "au-5" &&
+      google_monitoring_alert_policy.gateway_evidence_append_reconciliation[0].conditions[0].condition_prometheus_query_language[0].duration == "600s" &&
+      strcontains(google_monitoring_alert_policy.gateway_evidence_append_reconciliation[0].conditions[0].condition_prometheus_query_language[0].query, "rate(cage_gateway_evidence_records_appended_total") &&
+      strcontains(google_monitoring_alert_policy.gateway_evidence_append_reconciliation[0].conditions[0].condition_prometheus_query_language[0].query, "[15m]") &&
+      strcontains(google_monitoring_alert_policy.gateway_evidence_append_reconciliation[0].conditions[0].condition_prometheus_query_language[0].query, "< 0.85") &&
+      strcontains(google_monitoring_alert_policy.gateway_evidence_append_reconciliation[0].conditions[0].condition_prometheus_query_language[0].query, "cage_gateway_evidenced_requests_permitted_total") &&
       length(kubernetes_deployment_v1.gateway_canary) == 1 &&
       kubernetes_service_account.workload["gateway_canary"].metadata[0].name == "cage-gateway-canary-sa" &&
       length(coalesce(kubernetes_service_account.workload["gateway_canary"].metadata[0].annotations, tomap({}))) == 0 &&
       kubernetes_network_policy_v1.gateway_canary_egress.metadata[0].name == "gateway-canary-egress"
     )
-    error_message = "CA-7 / AU-12 / SI-4: enforcing deployments must provision single-condition PromQL lula_audit_failure, lula_audit_pod_restart, prometheus_metrics_scrape_liveness, gateway_sustained_refusal_ratio, gateway_zero_permitted_requests, gateway_canary_probe_absent, gateway_canary_pod_health, and in-mesh Deployment/gateway-canary under cage-gateway-canary-sa"
+    error_message = "CA-7 / AU-12 / AU-5 / SI-4: enforcing deployments must provision single-condition PromQL lula_audit_failure, lula_audit_pod_restart, prometheus_metrics_scrape_liveness, gateway_sustained_refusal_ratio, gateway_zero_permitted_requests, gateway_canary_probe_absent, gateway_canary_pod_health, gateway_evidence_append_reconciliation, and in-mesh Deployment/gateway-canary under cage-gateway-canary-sa"
   }
 }
 
@@ -185,9 +194,10 @@ run "disabling_gateway_canary_omits_zero_permitted_alert_policy" {
       length(google_monitoring_alert_policy.gateway_zero_permitted_requests) == 0 &&
       length(google_monitoring_alert_policy.gateway_canary_probe_absent) == 0 &&
       length(google_monitoring_alert_policy.gateway_canary_pod_health) == 0 &&
-      length(google_monitoring_alert_policy.gateway_sustained_refusal_ratio) == 1
+      length(google_monitoring_alert_policy.gateway_sustained_refusal_ratio) == 1 &&
+      length(google_monitoring_alert_policy.gateway_evidence_append_reconciliation) == 1
     )
-    error_message = "enable_gateway_canary = false must omit Deployment/gateway-canary, gateway_zero_permitted_requests, gateway_canary_probe_absent, and gateway_canary_pod_health"
+    error_message = "enable_gateway_canary = false must omit Deployment/gateway-canary, gateway_zero_permitted_requests, gateway_canary_probe_absent, and gateway_canary_pod_health while keeping gateway_evidence_append_reconciliation"
   }
 }
 
@@ -255,9 +265,12 @@ run "custom_lula_alert_owner_and_channels_propagate" {
       contains(google_monitoring_alert_policy.gateway_canary_probe_absent[0].notification_channels, "projects/lula-cron-test-project/notificationChannels/12345") &&
       google_monitoring_alert_policy.gateway_canary_pod_health[0].user_labels["owner"] == "secops-compliance-oncall" &&
       strcontains(google_monitoring_alert_policy.gateway_canary_pod_health[0].documentation[0].content, "secops-compliance-oncall") &&
-      contains(google_monitoring_alert_policy.gateway_canary_pod_health[0].notification_channels, "projects/lula-cron-test-project/notificationChannels/12345")
+      contains(google_monitoring_alert_policy.gateway_canary_pod_health[0].notification_channels, "projects/lula-cron-test-project/notificationChannels/12345") &&
+      google_monitoring_alert_policy.gateway_evidence_append_reconciliation[0].user_labels["owner"] == "secops-compliance-oncall" &&
+      strcontains(google_monitoring_alert_policy.gateway_evidence_append_reconciliation[0].documentation[0].content, "secops-compliance-oncall") &&
+      contains(google_monitoring_alert_policy.gateway_evidence_append_reconciliation[0].notification_channels, "projects/lula-cron-test-project/notificationChannels/12345")
     )
-    error_message = "custom lula_alert_owner and lula_alert_notification_channels must propagate into Lula, GMP scrape-liveness, gateway refusal-ratio, gateway zero-permitted, and gateway canary liveness alert policies"
+    error_message = "custom lula_alert_owner and lula_alert_notification_channels must propagate into Lula, GMP scrape-liveness, gateway refusal-ratio, gateway zero-permitted, gateway canary liveness, and gateway evidence reconciliation alert policies"
   }
 }
 

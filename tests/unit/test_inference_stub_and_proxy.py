@@ -629,8 +629,9 @@ async def test_proxy_enforces_stage1_block_quota_429_and_forwards_clean_stub_tur
         m.setattr("redis.asyncio.from_url", lambda *a, **k: ev_redis)
         await sink.start()
     monkeypatch.setattr(evidence_stream, "_evidence_sink", sink)
-    inference_proxy.inference_app.state.evidence_sink = sink
-    inference_proxy.inference_app.state.redis = ev_redis
+    monkeypatch.setattr(
+        inference_proxy.inference_app.state, "redis", ev_redis, raising=False
+    )
 
     # Deterministic Stub backend wired in-process behind _get_http_client.
     stub_app = create_stub_app(environ={"CAGE_ENV": "staging"})
@@ -833,7 +834,6 @@ async def test_proxy_refusal_paths_fail_closed_503_when_blocking_evidence_unavai
     monkeypatch.setattr(evidence_stream, "_evidence_sink", None)
     monkeypatch.setattr(evidence_stream, "get_evidence_sink", lambda: None)
     monkeypatch.setattr(evidence_stream, "is_evidence_chain_blocking", lambda: True)
-    inference_proxy.inference_app.state.evidence_sink = None
 
     stub_app = create_stub_app(environ={"CAGE_ENV": "staging"})
     stub_client = httpx.AsyncClient(

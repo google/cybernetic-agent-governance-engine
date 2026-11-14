@@ -749,9 +749,13 @@ def test_all_three_mesh_charts_obey_linkerd_policy_webhook_invariants() -> None:
         'resource "google_monitoring_alert_policy" "gateway_canary_pod_health"'
         in metrics_alert_tf
     )
+    assert (
+        'resource "google_monitoring_alert_policy" "gateway_evidence_append_reconciliation"'
+        in metrics_alert_tf
+    )
     assert "cage_gateway_gated_requests_total{" in metrics_alert_tf
     assert "cage_gateway_canary_requests_total{" in metrics_alert_tf
-    assert metrics_alert_tf.count("condition_prometheus_query_language {") == 4
+    assert metrics_alert_tf.count("condition_prometheus_query_language {") == 5
 
 
 # Regression coverage binding: POAM-007, POAM-2026-007, POAM-2026-080, POAM-2026-195

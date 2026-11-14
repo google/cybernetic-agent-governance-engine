@@ -121,6 +121,7 @@ from src.gateway.governance.governor.metrics import (
     GovernorMetrics,
     governor_metrics,
     track_gated_request,
+    was_request_evidenced,
     was_request_refused,
 )
 
@@ -139,6 +140,19 @@ CANARY_ALLOWED_PATHS: frozenset[str] = frozenset(
     {
         "/governance/validate-action",
         "/governance/policy-precheck",
+    }
+)
+
+#: Exact HTTP paths where every permitted response is obligated to append at
+#: least one record to ``cage:evidence:stream``. Matched independently at the
+#: ingress middleware boundary (in addition to ``mark_request_evidenced()`` for
+#: dynamic tool calls) so ``cage_gateway_evidenced_requests_permitted_total``
+#: reconciles against ``cage_gateway_evidence_records_appended_total``.
+EVIDENCE_OBLIGATED_PATHS: frozenset[str] = frozenset(
+    {
+        "/v1/chat/completions",
+        "/inference/v1/chat/completions",
+        "/governance/validate-action",
     }
 )
 
@@ -519,8 +533,13 @@ class WorkloadIdentityMiddleware:
                                 or http_status >= 400
                                 or was_request_refused()
                             )
+                        evidenced = (
+                            path in EVIDENCE_OBLIGATED_PATHS or was_request_evidenced()
+                        )
                         metrics.gated_request_completed(
-                            blocked=blocked, canary=is_canary_client
+                            blocked=blocked,
+                            canary=is_canary_client,
+                            evidenced=evidenced,
                         )
                 return
         logger.warning(

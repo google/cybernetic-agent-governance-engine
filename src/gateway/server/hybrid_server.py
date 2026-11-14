@@ -137,13 +137,12 @@ async def _gateway_lifespan(app: FastAPI):  # type: ignore[no-untyped-def]
             raise
 
         # ── Evidence Stream Sink ───────────────────────────────────────────────
-        # Refusal receipts, pause receipts and blocking seals all write through
-        # the get_evidence_sink() singleton, so it must be connected before the
-        # first request. Fails startup under an enforcing posture if Redis is
-        # unreachable.
+        # Refusal receipts, pass records, pause receipts, and blocking seals all
+        # write exclusively through the get_evidence_sink() singleton (single
+        # source of truth — never mirrored onto app.state), so it must be
+        # connected before the first request. Fails startup under an enforcing
+        # posture if Redis is unreachable.
         evidence_sink = await start_evidence_sink()
-        app.state.evidence_sink = evidence_sink
-        inference_app.state.evidence_sink = evidence_sink
 
         # ── Pre-warm and share NeMo Rails ──────────────────────────────────────
         # Under ``none`` no rails are built: NeMo is off and visible, and

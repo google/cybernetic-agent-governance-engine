@@ -47,16 +47,22 @@ _REQUEST_REFUSED: contextvars.ContextVar[bool] = contextvars.ContextVar(
     "cage_gateway_request_refused",
     default=False,
 )
+_REQUEST_EVIDENCED: contextvars.ContextVar[bool] = contextvars.ContextVar(
+    "cage_gateway_request_evidenced",
+    default=False,
+)
 
 
 @contextmanager
 def track_gated_request() -> Iterator[None]:
-    """Scope per-request refusal tracking to one gated gateway request."""
-    token = _REQUEST_REFUSED.set(False)
+    """Scope per-request refusal and evidence-obligation tracking to one gated gateway request."""
+    refused_token = _REQUEST_REFUSED.set(False)
+    evidenced_token = _REQUEST_EVIDENCED.set(False)
     try:
         yield
     finally:
-        _REQUEST_REFUSED.reset(token)
+        _REQUEST_EVIDENCED.reset(evidenced_token)
+        _REQUEST_REFUSED.reset(refused_token)
 
 
 def mark_request_refused() -> None:
@@ -69,12 +75,24 @@ def was_request_refused() -> bool:
     return _REQUEST_REFUSED.get()
 
 
+def mark_request_evidenced() -> None:
+    """Mark the current gated request as obligated to append at least one evidence record."""
+    _REQUEST_EVIDENCED.set(True)
+
+
+def was_request_evidenced() -> bool:
+    """Return True if the current gated request entered an evidence-obligated governance path."""
+    return _REQUEST_EVIDENCED.get()
+
+
 class GovernorMetrics:
     """Governor collectors bound to one registry. Build via :func:`governor_metrics`."""
 
     __slots__ = (
         "_canary_requests",
         "_evidence_publish_failures",
+        "_evidence_records_appended",
+        "_evidenced_requests_permitted",
         "_ftra_boundary_checks",
         "_gated_requests",
         "_refusals",
@@ -96,7 +114,7 @@ class GovernorMetrics:
             if Counter is None or registry is None
             else Counter(
                 "cage_governance_evidence_publish_failures_total",
-                "Refusal/deferral evidence records that failed to reach the evidence stream",
+                "Refusal/deferral/pass evidence records that failed to reach the evidence stream",
                 ["kind"],
                 registry=registry,
             )
@@ -114,6 +132,8 @@ class GovernorMetrics:
         if Counter is None or registry is None:
             self._gated_requests = None
             self._canary_requests = None
+            self._evidence_records_appended = None
+            self._evidenced_requests_permitted = None
         else:
             self._gated_requests = Counter(
                 "cage_gateway_gated_requests_total",
@@ -127,14 +147,29 @@ class GovernorMetrics:
                 ["outcome"],
                 registry=registry,
             )
+            self._evidence_records_appended = Counter(
+                "cage_gateway_evidence_records_appended_total",
+                "Total evidence records durably acknowledged by Redis XADD on the gateway evidence stream",
+                registry=registry,
+            )
+            self._evidenced_requests_permitted = Counter(
+                "cage_gateway_evidenced_requests_permitted_total",
+                "Total permitted gateway requests on routes or actions obligated to append at least one evidence record",
+                registry=registry,
+            )
             for outcome in GATED_REQUEST_OUTCOMES:
                 self._gated_requests.labels(outcome=outcome)
                 self._canary_requests.labels(outcome=outcome)
 
     def evidence_publish_failure(self, kind: str) -> None:
-        """Count one best-effort evidence write that failed (``refusal``, ``deferral``, etc.)."""
+        """Count one evidence write that failed (``refusal``, ``seal_consumed``, ``inference_proxy_pass``, etc.)."""
         if self._evidence_publish_failures is not None:
             self._evidence_publish_failures.labels(kind=kind).inc()
+
+    def evidence_records_appended(self, count: int = 1) -> None:
+        """Count ``count`` records durably acknowledged on ``cage:evidence:stream``."""
+        if count > 0 and self._evidence_records_appended is not None:
+            self._evidence_records_appended.inc(count)
 
     def refusal_decided(self, tier: str) -> None:
         """Count one hard governance refusal under its lead tier."""
@@ -142,13 +177,21 @@ class GovernorMetrics:
         if self._refusals is not None:
             self._refusals.labels(tier=tier or "SYMBOLIC_GOVERNOR").inc()
 
-    def gated_request_completed(self, *, blocked: bool, canary: bool = False) -> None:
+    def gated_request_completed(
+        self,
+        *,
+        blocked: bool,
+        canary: bool = False,
+        evidenced: bool = False,
+    ) -> None:
         """Count one completed non-open gateway request as ``blocked`` or ``permitted``."""
         outcome = "blocked" if blocked else "permitted"
         if self._gated_requests is not None:
             self._gated_requests.labels(outcome=outcome).inc()
         if canary and self._canary_requests is not None:
             self._canary_requests.labels(outcome=outcome).inc()
+        if not blocked and evidenced and self._evidenced_requests_permitted is not None:
+            self._evidenced_requests_permitted.inc()
 
     def ftra_boundary_check(self, result: str) -> None:
         """Count one FTRA boundary check outcome (``passed``, ``conditional_clear``, ``hitl_required``, ``error``)."""

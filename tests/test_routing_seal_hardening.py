@@ -39,7 +39,11 @@ import src.gateway.governance.routing_seal as rs
 from src.gateway.governance.evidence.stream import EvidenceChainUnavailableError
 from src.gateway.governance.jcs_canonicalizer import jcs_canonicalize_plan
 
-pytestmark = [pytest.mark.unit, pytest.mark.local]
+pytestmark = [
+    pytest.mark.unit,
+    pytest.mark.local,
+    pytest.mark.usefixtures("connected_evidence_sink"),
+]
 
 ACTION = "execute_trade"
 PARAMS = {"symbol": "AAPL", "amount": 100.0}
