@@ -11,7 +11,7 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-# Closure regression guard for: POAM-2026-030-B, POAM-2026-033, POAM-2026-074
+# Closure regression guard for: POAM-2026-030-B, POAM-2026-033, POAM-2026-074, POAM-2026-212
 
 """
 tests/test_ftra_package.py
@@ -409,6 +409,33 @@ class TestPlanGraphAnalyzer:
         assert "s3" not in result.reachable_terminals
         # s3 has no incoming edge and is not step[0], so DFS from s1 never visits it
         assert result.reachable_step_count == 2
+
+    def test_duplicate_or_empty_step_id_fails_closed_to_blocked(self, tmp_path):
+        """POAM-2026-212: Duplicate or empty step.id values fail closed with BLOCKED."""
+        from src.gateway.governance.ftra.models import (
+            FTRAVerdict,
+            TerminalClassification,
+        )
+
+        analyzer = self._analyzer(
+            tmp_path,
+            {"check_price": "READ_ONLY", "execute_trade": "IRREVERSIBLE_TERMINAL"},
+        )
+        dup_plan = _make_plan([("s1", "execute_trade"), ("s1", "check_price")])
+        dup_res = analyzer.analyze(dup_plan, confidence=0.99)
+        assert dup_res.verdict == FTRAVerdict.BLOCKED
+        assert (
+            dup_res.worst_case_classification
+            == TerminalClassification.IRREVERSIBLE_TERMINAL
+        )
+        assert dup_res.violation_reason is not None
+        assert "FTRA_DUPLICATE_STEP_ID" in dup_res.violation_reason
+
+        empty_plan = _make_plan([("", "check_price")])
+        empty_res = analyzer.analyze(empty_plan, confidence=0.99)
+        assert empty_res.verdict == FTRAVerdict.BLOCKED
+        assert empty_res.violation_reason is not None
+        assert "FTRA_INVALID_STEP_ID" in empty_res.violation_reason
 
     def test_analyze_never_raises_on_internal_error(self, tmp_path):
         """Fail-closed contract: any exception during analysis must be caught

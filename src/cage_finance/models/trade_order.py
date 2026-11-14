@@ -90,6 +90,13 @@ class TradeOrder(BaseModel):
             raise ValueError("Confidence must be between 0.0 and 1.0")
         return v
 
+    @field_validator("amount", "amount_minor", mode="before")
+    @classmethod
+    def reject_boolean_amounts(cls, v):  # type: ignore[no-untyped-def]
+        if isinstance(v, bool):
+            raise ValueError("Boolean is not a valid trade amount")
+        return v
+
     @field_validator("amount")
     @classmethod
     def validate_positive(cls, v):  # type: ignore[no-untyped-def]
@@ -103,12 +110,19 @@ class TradeOrder(BaseModel):
 
     @model_validator(mode="after")
     def validate_amounts(self):  # type: ignore[no-untyped-def]
+        if isinstance(self.amount, bool) or isinstance(self.amount_minor, bool):
+            raise ValueError("Boolean is not a valid trade amount")
         if self.amount is None and self.amount_minor is None:
             raise ValueError("Must provide either amount or amount_minor")
         if self.amount is not None and self.amount_minor is None:
             self.amount_minor = int(round(self.amount * 100))
         elif self.amount_minor is not None and self.amount is None:
             self.amount = self.amount_minor / 100.0
+        elif self.amount is not None and self.amount_minor is not None:
+            if int(round(self.amount * 100)) != self.amount_minor:
+                raise ValueError(
+                    f"Conflicting trade amounts: amount={self.amount} does not match amount_minor={self.amount_minor}"
+                )
 
         if self.amount_minor is not None and self.amount_minor <= 0:
             raise ValueError("Amount must be positive")

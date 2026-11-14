@@ -132,6 +132,73 @@ class PlanGraphAnalyzer:
             :class:`ReachabilityResult` — never raises.
         """
         safe_confidence = _normalize_confidence(confidence)
+        plan_id = getattr(plan, "plan_id", "<unknown>")
+        raw_steps = getattr(plan, "steps", None)
+        if not isinstance(raw_steps, list):
+            reason = "FTRA_INVALID_PLAN_STEPS: ExecutionPlan.steps must be a list"
+            logger.error(
+                "FTRA graph validation failed for plan '%s': %s — failing closed (BLOCKED).",
+                plan_id,
+                reason,
+            )
+            return ReachabilityResult(
+                plan_id=plan_id,
+                worst_case_classification=TerminalClassification.IRREVERSIBLE_TERMINAL,
+                reachable_terminals=[],
+                critical_path=[],
+                verdict=FTRAVerdict.BLOCKED,
+                confidence_at_analysis=safe_confidence,
+                total_steps=0,
+                reachable_step_count=0,
+                violation_reason=reason,
+                violations=[reason],
+            )
+
+        if raw_steps:
+            seen_trimmed: set[str] = set()
+            exact_ids: set[str] = set()
+            violation_msg: str | None = None
+            for idx, step in enumerate(raw_steps):
+                raw_id = getattr(step, "id", None)
+                if not isinstance(raw_id, str) or not raw_id.strip():
+                    violation_msg = f"FTRA_INVALID_STEP_ID: step[{idx}].id must be a non-empty string"
+                    break
+                trimmed_id = raw_id.strip()
+                if raw_id in exact_ids or trimmed_id in seen_trimmed:
+                    violation_msg = f"FTRA_DUPLICATE_STEP_ID: duplicate step.id {trimmed_id!r} in execution plan"
+                    break
+                seen_trimmed.add(trimmed_id)
+                exact_ids.add(raw_id)
+
+            if violation_msg is None:
+                for step in raw_steps:
+                    deps = getattr(step, "depends_on", None) or []
+                    for dep_id in deps:
+                        if not isinstance(dep_id, str) or dep_id not in exact_ids:
+                            violation_msg = f"FTRA_DANGLING_DEPENDENCY: step {step.id!r} depends_on unknown step {dep_id!r}"
+                            break
+                    if violation_msg is not None:
+                        break
+
+            if violation_msg is not None:
+                logger.error(
+                    "FTRA graph validation failed for plan '%s': %s — failing closed (BLOCKED).",
+                    plan_id,
+                    violation_msg,
+                )
+                return ReachabilityResult(
+                    plan_id=plan_id,
+                    worst_case_classification=TerminalClassification.IRREVERSIBLE_TERMINAL,
+                    reachable_terminals=[],
+                    critical_path=[],
+                    verdict=FTRAVerdict.BLOCKED,
+                    confidence_at_analysis=safe_confidence,
+                    total_steps=len(raw_steps),
+                    reachable_step_count=0,
+                    violation_reason=violation_msg,
+                    violations=[violation_msg],
+                )
+
         try:
             return self._analyze_internal(plan, safe_confidence)
         except Exception as exc:

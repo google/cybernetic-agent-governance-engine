@@ -66,61 +66,68 @@ class CBFTierPlugin(MutatingTier):
         import math
 
         from src.gateway.governance.contracts import ViolationKind, coerce_bound
-
-        shadow_cash = params.get("_shadow_cash_balance_usd")
-        if (
-            shadow_cash is not None
-            and not isinstance(shadow_cash, bool)
-            and isinstance(shadow_cash, (int, float))
-            and math.isfinite(float(shadow_cash))
-        ):
-            cost = self._cost(action, params)
-            balance = float(shadow_cash)
-            safe, h_next, required_h_next = self.cbf.admits(balance, cost)
-            if safe:
-                return []
-            h_t = self.cbf.evaluate_barrier(balance)
-            raw_bound = h_t - max((1.0 - self.cbf.gamma) * h_t, 0.0)
-            return [
-                Violation(
-                    tier=self.tier_name,
-                    code="CBF_BARRIER_VIOLATED",
-                    message=(
-                        f"Safety Violation (RBC/CBF shadow preview). "
-                        f"h(next)={h_next:.2f} < threshold={required_h_next:.2f}"
-                    ),
-                    kind=ViolationKind.HARD,
-                    bound=coerce_bound(raw_bound if raw_bound > 0 else 0.0),
-                )
-            ]
-
-        raw_headroom = (
-            params.get("remaining_headroom")
-            if "remaining_headroom" in params
-            else params.get("autonomous_headroom_usd")
+        from src.gateway.governance.env_posture import is_enforcing
+        from src.gateway.governance.governor.server_inputs import (
+            is_online_governance_active,
         )
-        if (
-            raw_headroom is not None
-            and not isinstance(raw_headroom, bool)
-            and isinstance(raw_headroom, (int, float))
-            and math.isfinite(float(raw_headroom))
-        ):
-            cost = self._cost(action, params)
-            headroom = float(raw_headroom)
-            if headroom <= 0.0 or cost > headroom:
+
+        # POAM-2026-211: Honor counterfactual shadow/headroom keys strictly in
+        # offline evaluation (never on online requests or enforcing postures).
+        if not is_enforcing() and not is_online_governance_active():
+            shadow_cash = params.get("_shadow_cash_balance_usd")
+            if (
+                shadow_cash is not None
+                and not isinstance(shadow_cash, bool)
+                and isinstance(shadow_cash, (int, float))
+                and math.isfinite(float(shadow_cash))
+            ):
+                cost = self._cost(action, params)
+                balance = float(shadow_cash)
+                safe, h_next, required_h_next = self.cbf.admits(balance, cost)
+                if safe:
+                    return []
+                h_t = self.cbf.evaluate_barrier(balance)
+                raw_bound = h_t - max((1.0 - self.cbf.gamma) * h_t, 0.0)
                 return [
                     Violation(
                         tier=self.tier_name,
                         code="CBF_BARRIER_VIOLATED",
                         message=(
-                            f"Safety Violation (RBC/CBF shadow headroom). "
-                            f"cost={cost:.2f} exceeds remaining_headroom={headroom:.2f}"
+                            f"Safety Violation (RBC/CBF shadow preview). "
+                            f"h(next)={h_next:.2f} < threshold={required_h_next:.2f}"
                         ),
                         kind=ViolationKind.HARD,
-                        bound=coerce_bound(max(0.0, headroom)),
+                        bound=coerce_bound(raw_bound if raw_bound > 0 else 0.0),
                     )
                 ]
-            return []
+
+            raw_headroom = (
+                params.get("remaining_headroom")
+                if "remaining_headroom" in params
+                else params.get("autonomous_headroom_usd")
+            )
+            if (
+                raw_headroom is not None
+                and not isinstance(raw_headroom, bool)
+                and isinstance(raw_headroom, (int, float))
+                and math.isfinite(float(raw_headroom))
+            ):
+                cost = self._cost(action, params)
+                headroom = float(raw_headroom)
+                if headroom <= 0.0 or cost > headroom:
+                    return [
+                        Violation(
+                            tier=self.tier_name,
+                            code="CBF_BARRIER_VIOLATED",
+                            message=(
+                                f"Safety Violation (RBC/CBF shadow headroom). "
+                                f"cost={cost:.2f} exceeds remaining_headroom={headroom:.2f}"
+                            ),
+                            kind=ViolationKind.HARD,
+                            bound=coerce_bound(max(0.0, headroom)),
+                        )
+                    ]
+                return []
 
         return await preview_barrier(
             self.cbf,

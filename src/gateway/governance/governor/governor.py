@@ -62,6 +62,8 @@ from src.gateway.governance.governor.server_inputs import (
     KERNEL_SERVER_INPUT_KEYS,
     bind_server_inputs,
     inspect_prompt_injection_params,
+    online_governance_scope,
+    strip_untrusted_shadow_params,
     verified_post_hitl_approval,
 )
 from src.gateway.governance.governor.settlement import SettlementLedger, settle
@@ -160,7 +162,10 @@ class SymbolicGovernor:
         and stamps their server-verified values so advisory prechecks and
         committing runs evaluate identical authoritative inputs (F-100).
         """
-        return await bind_server_inputs(self._components.server_inputs, action, params)
+        with online_governance_scope(True):
+            return await bind_server_inputs(
+                self._components.server_inputs, action, params
+            )
 
     async def validate_action(
         self,
@@ -181,12 +186,13 @@ class SymbolicGovernor:
         for keys a domain resolves server-side are replaced, so the preview
         evaluates the same inputs as the committing run.
         """
-        return await self._evaluate_dry_run(
-            action,
-            params,
-            policy_version_id,
-            emit_side_effects=True,
-        )
+        with online_governance_scope(True):
+            return await self._evaluate_dry_run(
+                action,
+                params,
+                policy_version_id,
+                emit_side_effects=True,
+            )
 
     async def preview_action(
         self,
@@ -207,12 +213,13 @@ class SymbolicGovernor:
                 f"({self._components.posture.value}); online validation must use "
                 "validate_action() so deferrals and refusals commit to the evidence chain."
             )
-        return await self._evaluate_dry_run(
-            action,
-            params,
-            policy_version_id,
-            emit_side_effects=False,
-        )
+        with online_governance_scope(False):
+            return await self._evaluate_dry_run(
+                action,
+                params,
+                policy_version_id,
+                emit_side_effects=False,
+            )
 
     async def _evaluate_dry_run(
         self,
@@ -486,43 +493,51 @@ class SymbolicGovernor:
         evaluated (issue #379). The stages get their own copy, as on the
         narrow path, so a stage cannot mutate what is sealed either.
         """
-        sealed = copy.deepcopy(params)
-        with tracer.start_as_current_span("symbolic_governor.govern") as span:
-            span.set_attribute(OBSERVATION_TYPE, "span")
-            span.set_attribute(OBSERVATION_NAME, "governance_evaluation")
-            span.set_attribute(
-                OBSERVATION_INPUT, json.dumps({"tool": tool_name, "params": sealed})
-            )
+        with online_governance_scope(True):
+            sealed = copy.deepcopy(params)
+            with tracer.start_as_current_span("symbolic_governor.govern") as span:
+                span.set_attribute(OBSERVATION_TYPE, "span")
+                span.set_attribute(OBSERVATION_NAME, "governance_evaluation")
+                span.set_attribute(
+                    OBSERVATION_INPUT,
+                    json.dumps({"tool": tool_name, "params": sealed}),
+                )
 
-            eval_params = copy.deepcopy(sealed)
-            if (
-                tool_name in KERNEL_SERVER_INPUT_ACTIONS
-                or any(k in eval_params for k in KERNEL_SERVER_INPUT_KEYS)
-                or inspect_prompt_injection_params(eval_params)[0]
-            ):
-                eval_params = await bind_server_inputs(
-                    self._components.server_inputs, tool_name, eval_params
+                eval_params = strip_untrusted_shadow_params(
+                    copy.deepcopy(sealed), action=tool_name
                 )
-            ctx = StageContext(
-                action=tool_name, params=eval_params, profile=Profile.FULL
-            )
-            result, seal = await run_sealed(
-                self.stages, ctx, sealed, path="govern", settlements=self._settlements
-            )
-            if seal is None:
-                seal = await self._sealed_narrow(tool_name, sealed, result)
-            else:
-                await _trace(
-                    result,
-                    tool_name,
-                    Profile.FULL,
-                    "govern",
-                    GovernanceDecision.ALLOW,
-                    seal=seal,
+                if (
+                    tool_name in KERNEL_SERVER_INPUT_ACTIONS
+                    or any(k in eval_params for k in KERNEL_SERVER_INPUT_KEYS)
+                    or inspect_prompt_injection_params(eval_params)[0]
+                ):
+                    eval_params = await bind_server_inputs(
+                        self._components.server_inputs, tool_name, eval_params
+                    )
+                ctx = StageContext(
+                    action=tool_name, params=eval_params, profile=Profile.FULL
                 )
-            span.set_attribute("cage.seal_issued", True)
-            span.set_attribute(OBSERVATION_OUTPUT, GovernanceDecision.ALLOW)
-            return seal
+                result, seal = await run_sealed(
+                    self.stages,
+                    ctx,
+                    sealed,
+                    path="govern",
+                    settlements=self._settlements,
+                )
+                if seal is None:
+                    seal = await self._sealed_narrow(tool_name, sealed, result)
+                else:
+                    await _trace(
+                        result,
+                        tool_name,
+                        Profile.FULL,
+                        "govern",
+                        GovernanceDecision.ALLOW,
+                        seal=seal,
+                    )
+                span.set_attribute("cage.seal_issued", True)
+                span.set_attribute(OBSERVATION_OUTPUT, GovernanceDecision.ALLOW)
+                return seal
 
     async def _sealed_narrow(
         self, action: str, params: dict[str, Any], result: PipelineResult
@@ -725,13 +740,19 @@ class SymbolicGovernor:
                 raise GovernanceError(
                     f"no tier governs {action}; post-HITL re-validation refused"
                 )
-            eval_params = copy.deepcopy(params)
+            with online_governance_scope(True):
+                eval_params = strip_untrusted_shadow_params(
+                    copy.deepcopy(params), action=action
+                )
             if not rebind_inputs and (
                 action in KERNEL_SERVER_INPUT_ACTIONS
                 or any(k in eval_params for k in KERNEL_SERVER_INPUT_KEYS)
                 or inspect_prompt_injection_params(eval_params)[0]
             ):
-                with verified_post_hitl_approval(approval.approval_id):
+                with (
+                    online_governance_scope(True),
+                    verified_post_hitl_approval(approval.approval_id),
+                ):
                     eval_params = await bind_server_inputs(
                         self._components.server_inputs, action, eval_params
                     )

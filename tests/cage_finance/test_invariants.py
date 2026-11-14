@@ -71,12 +71,20 @@ class TestFinanceCostResolver:
         assert cost == 1500.0
 
     def test_execute_trade_with_amount_minor(self):
-        """execute_trade with 'amount_minor' (cents) returns dollars."""
-        cost = finance_cost_resolver(
-            "execute_trade", {"amount_minor": 250000, "amount": 9999.0}
+        """execute_trade with 'amount_minor' (cents) returns dollars and rejects discordant 'amount' (POAM-2026-208)."""
+        assert (
+            finance_cost_resolver("execute_trade", {"amount_minor": 250000}) == 2500.0
         )
-        # amount_minor takes precedence: 250000 cents = 2500.0 dollars
-        assert cost == 2500.0
+        assert (
+            finance_cost_resolver(
+                "execute_trade", {"amount_minor": 250000, "amount": 2500.0}
+            )
+            == 2500.0
+        )
+        with pytest.raises(ValueError, match="Conflicting trade amounts"):
+            finance_cost_resolver(
+                "execute_trade", {"amount_minor": 250000, "amount": 9999.0}
+            )
 
     def test_execute_trade_zero_amount_returns_zero(self):
         """execute_trade with zero amount returns 0.0 cost (no barrier hit)."""
@@ -120,12 +128,21 @@ class TestFinanceCostResolver:
         )
 
     def test_execute_trade_bounded_with_amount_minor(self):
-        """execute_trade_bounded with 'amount_minor' (cents) returns dollars."""
-        cost = finance_cost_resolver(
-            "execute_trade_bounded", {"amount_minor": 150000, "amount": 8888.0}
+        """execute_trade_bounded with 'amount_minor' (cents) returns dollars and rejects discordant 'amount' (POAM-2026-208)."""
+        assert (
+            finance_cost_resolver("execute_trade_bounded", {"amount_minor": 150000})
+            == 1500.0
         )
-        # amount_minor takes precedence: 150000 cents = 1500.0 dollars
-        assert cost == 1500.0
+        assert (
+            finance_cost_resolver(
+                "execute_trade_bounded", {"amount_minor": 150000, "amount": 1500.0}
+            )
+            == 1500.0
+        )
+        with pytest.raises(ValueError, match="Conflicting trade amounts"):
+            finance_cost_resolver(
+                "execute_trade_bounded", {"amount_minor": 150000, "amount": 8888.0}
+            )
 
     def test_execute_trade_bounded_zero_amount_returns_zero(self):
         """execute_trade_bounded with zero amount returns 0.0 cost (no barrier hit)."""

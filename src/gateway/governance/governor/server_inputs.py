@@ -49,6 +49,7 @@ from types import MappingProxyType
 from typing import Any
 
 from src.gateway.governance.contracts import ServerInputResolver
+from src.gateway.governance.env_posture import is_enforcing
 from src.gateway.governance.prompt_injection_detector import detect_prompt_injection
 from src.gateway.governance.text_filter import ac_keyword_scan
 
@@ -75,6 +76,10 @@ _verified_post_hitl_approval_id: ContextVar[str | None] = ContextVar(
     "verified_post_hitl_approval_id", default=None
 )
 
+_online_governance_active: ContextVar[bool] = ContextVar(
+    "online_governance_active", default=False
+)
+
 
 @contextmanager
 def verified_post_hitl_approval(approval_id: str) -> Iterator[None]:
@@ -84,6 +89,42 @@ def verified_post_hitl_approval(approval_id: str) -> Iterator[None]:
         yield
     finally:
         _verified_post_hitl_approval_id.reset(token)
+
+
+@contextmanager
+def online_governance_scope(active: bool = True) -> Iterator[None]:
+    """Mark the current task as serving an online governance path (POAM-2026-211)."""
+    token = _online_governance_active.set(active)
+    try:
+        yield
+    finally:
+        _online_governance_active.reset(token)
+
+
+def is_online_governance_active() -> bool:
+    """Return True when evaluating an online governance request rather than offline replay."""
+    return _online_governance_active.get()
+
+
+def strip_untrusted_shadow_params(
+    params: Mapping[str, Any], action: str = ""
+) -> dict[str, Any]:
+    """Strip ``_shadow_*`` simulation keys from untrusted online or enforcing inputs (POAM-2026-211)."""
+    cleaned = dict(params)
+    if not is_online_governance_active() and not is_enforcing():
+        return cleaned
+    stripped = sorted(
+        k for k in list(cleaned) if isinstance(k, str) and k.startswith("_shadow_")
+    )
+    for k in stripped:
+        cleaned.pop(k, None)
+    if stripped:
+        logger.warning(
+            "server inputs: ignoring caller-supplied shadow keys %s for %s",
+            stripped,
+            action or "<unknown>",
+        )
+    return cleaned
 
 
 def _iter_scannable_strings(value: Any) -> Iterator[str]:
@@ -188,7 +229,7 @@ async def bind_server_inputs(
     stripped from caller input regardless of ``action``. Clean actions without
     a resolver get an unchanged shallow copy.
     """
-    bound = dict(params)
+    bound = strip_untrusted_shadow_params(params, action=action)
     stripped_kernel = sorted(k for k in KERNEL_SERVER_INPUT_KEYS if k in bound)
     for key in KERNEL_SERVER_INPUT_KEYS:
         bound.pop(key, None)
@@ -256,6 +297,9 @@ __all__ = [
     "WriteDbApprovalInputResolver",
     "bind_server_inputs",
     "inspect_prompt_injection_params",
+    "is_online_governance_active",
     "kernel_server_inputs",
+    "online_governance_scope",
+    "strip_untrusted_shadow_params",
     "verified_post_hitl_approval",
 ]

@@ -26,31 +26,35 @@ class SerumConcentrationBarrier:
     invariant_id = "healthcare.serum_concentration"
     state_key = "safety:serum_concentration"
     threshold_key = "domains.healthcare.min_therapeutic_concentration"
-    gamma = 0.4
-    initial_state = 15.0
-    requires_external_ground_truth = True
+    gamma, initial_state, requires_external_ground_truth = 0.4, 15.0, True
 
 
 DoseCeilingBarrier = SerumConcentrationBarrier
 
-_HEALTHCARE_DOSE_ACTIONS: frozenset[str] = REGISTERED_ACTIONS
+
+def _parse_dose(raw: Any) -> float:
+    if isinstance(raw, bool) or not isinstance(raw, (int, float, str)):
+        raise ValueError(f"Invalid clinical dose {raw!r}")
+    val = float(raw)
+    if not math.isfinite(val) or val < 0.0:
+        raise ValueError(f"Invalid clinical dose {raw!r}")
+    return val
+
+
+_DOSE_KEYS = ("concentration_delta", "dose_mg", "dose", "amount")
 
 
 def healthcare_cost_resolver(action_name: str, payload: dict[str, Any]) -> float:
     """Resolve serum concentration headroom cost for clinical dosing actions."""
-    if action_name not in _HEALTHCARE_DOSE_ACTIONS:
+    if action_name not in REGISTERED_ACTIONS:
         return 0.0
-    raw = payload.get(
-        "concentration_delta",
-        payload.get("dose_mg", payload.get("dose", payload.get("amount", 0.0))),
-    )
-    if isinstance(raw, bool):
-        raise ValueError(
-            f"Invalid clinical dose {raw!r}: bool is not a valid numeric dose"
-        )
-    value = float(raw)
-    if not math.isfinite(value) or value < 0.0:
-        raise ValueError(
-            f"Invalid clinical dose {raw!r}: must be a finite non-negative number"
-        )
-    return value
+    unit = payload.get("unit", payload.get("dose_unit"))
+    if unit is not None and (not isinstance(unit, str) or unit.strip().lower() != "mg"):
+        raise ValueError(f"Invalid clinical dose unit {unit!r}")
+    vals = [_parse_dose(payload[k]) for k in _DOSE_KEYS if payload.get(k) is not None]
+    if any(abs(v - vals[0]) > 1e-9 for v in vals[1:]):
+        raise ValueError(f"Conflicting clinical dose fields in {payload!r}")
+    return vals[0] if vals else 0.0
+
+
+resolve_healthcare_dose_cost = healthcare_cost_resolver

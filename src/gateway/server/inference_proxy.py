@@ -321,18 +321,57 @@ async def _mask_tool_arguments(rails: Any, raw_args: str) -> tuple[str, bool]:
 
 
 def _extract_message_content_text(content: Any) -> str:
-    """Extract text from an OpenAI string or multi-part content array."""
+    """Extract text from an OpenAI string, multi-part content array, or structured value."""
+    if content is None:
+        return ""
     if isinstance(content, str):
         return content
     if isinstance(content, list):
         parts: list[str] = []
         for part in content:
-            if isinstance(part, dict) and isinstance(part.get("text"), str):
-                parts.append(part["text"])
-            elif isinstance(part, str):
+            if isinstance(part, dict):
+                text_val = part.get("text")
+                if isinstance(text_val, str) and text_val:
+                    parts.append(text_val)
+                input_text_val = part.get("input_text")
+                if (
+                    isinstance(input_text_val, str)
+                    and input_text_val
+                    and input_text_val != text_val
+                ):
+                    parts.append(input_text_val)
+            elif isinstance(part, str) and part:
                 parts.append(part)
         return " ".join(parts)
-    return ""
+    return json.dumps(content, default=str)
+
+
+def _sanitize_otel_content(value: Any) -> Any:
+    """Recursively scrub PII from strings, multimodal content arrays, and structured dicts."""
+    if value is None or isinstance(value, (int, float, bool)):
+        return value
+    if isinstance(value, str):
+        if value.lstrip().lower().startswith("data:"):
+            return "[REDACTED-DATA-URI]"
+        return scrub_pii(value)
+    if isinstance(value, list):
+        return [_sanitize_otel_content(item) for item in value]
+    if isinstance(value, dict):
+        return {str(k): _sanitize_otel_content(v) for k, v in value.items()}
+    return scrub_pii(json.dumps(value, default=str))
+
+
+def _sanitize_otel_message(msg: Any) -> Any:
+    """Sanitize a single chat message object before serializing to OTel span attributes."""
+    if not isinstance(msg, dict):
+        return _sanitize_otel_content(msg)
+    sanitized: dict[str, Any] = {}
+    for key, val in msg.items():
+        if key == "role" and isinstance(val, str):
+            sanitized[key] = val
+        else:
+            sanitized[key] = _sanitize_otel_content(val)
+    return sanitized
 
 
 def _extract_scannable_messages_text(messages: Any) -> str:
@@ -574,14 +613,13 @@ async def chat_completions(
     tracer = trace.get_tracer(__name__)
     with tracer.start_as_current_span("inference_proxy.chat") as span:
         request_start_ns = time.perf_counter_ns()
-        # Attach GenAI tracking
+        # Attach GenAI tracking (recursively scrub multimodal/structured content; POAM-2026-209)
         if span.is_recording():
-            safe_messages = [
-                {**m, "content": scrub_pii(m.get("content", ""))}
-                if isinstance(m.get("content"), str)
-                else m
-                for m in messages
-            ]
+            safe_messages = (
+                [_sanitize_otel_message(m) for m in messages]
+                if isinstance(messages, list)
+                else _sanitize_otel_content(messages)
+            )
             span.set_attribute("gen_ai.operation.name", "chat")
             span.set_attribute("gen_ai.system", "cage-inference-proxy")
             span.set_attribute("gen_ai.request.model", model_id)
@@ -779,14 +817,14 @@ async def chat_completions(
         stamp_iso_control(span, ingress_stage=2, control="A.4", outcome="PASS")
 
         # 4. NeMo input verification — runs for ALL requests while semantic
-        # rails are on. Uses the full message list; falls back to last_user_msg
-        # for NeMo rails that expect a single string (NeMo context is the last
-        # user msg or a concatenation of all messages when no user message
-        # exists). With rails off no input rail runs, and the evidence records
-        # SKIPPED with the reason code instead of a PASS that never happened.
-        # Steps 4-7 are wrapped in a try/except so that any downstream
+        # rails are on. Evaluates all_messages_text across the full conversation
+        # history (falling back to last_user_msg if needed) so earlier turns
+        # cannot hide adversarial instructions behind a benign trailing user turn
+        # (POAM-2026-209). With rails off no input rail runs, and the evidence
+        # records SKIPPED with the reason code instead of a PASS that never
+        # happened. Steps 4-7 are wrapped in a try/except so that any downstream
         # failure triggers a quota rollback (CTRL_TQP_007 §5.3).
-        nemo_input_text = last_user_msg if last_user_msg else all_messages_text
+        nemo_input_text = all_messages_text if all_messages_text else last_user_msg
         try:
             if rails_refusal is not None:
                 # Off by configuration. An enabled-but-absent rail (rails
@@ -1115,20 +1153,24 @@ async def chat_completions(
             safe_err = _safe_error_response(exc)
             raise HTTPException(status_code=500, detail=safe_err)
 
-        # 6. Output filtering / PII masking
+        # 6. Output filtering / PII masking across ALL completion choices (POAM-2026-209)
         non_stream_pii_redacted = False
         try:
-            if vllm_response.get("choices"):
-                choice = vllm_response["choices"][0]
-                message = choice.get("message", {})
+            for choice in vllm_response.get("choices") or []:
+                if not isinstance(choice, dict):
+                    continue
+                message = choice.get("message")
+                if not isinstance(message, dict):
+                    continue
 
                 if (
                     choice.get("finish_reason") == "tool_calls"
                     or "tool_calls" in message
                 ):
-                    for tool_call in message.get("tool_calls", []):
+                    for tool_call in message.get("tool_calls") or []:
                         if (
-                            "function" in tool_call
+                            isinstance(tool_call, dict)
+                            and isinstance(tool_call.get("function"), dict)
                             and "arguments" in tool_call["function"]
                         ):
                             raw_args = tool_call["function"]["arguments"]
@@ -1139,12 +1181,17 @@ async def chat_completions(
                                 if args_mod:
                                     non_stream_pii_redacted = True
                                 tool_call["function"]["arguments"] = safe_args_str
-                if isinstance(message.get("content"), str) and message["content"]:
-                    orig_content = message["content"]
+                orig_content = message.get("content")
+                if isinstance(orig_content, str) and orig_content:
                     safe_content = await _mask_output(rails, orig_content)
                     if safe_content != orig_content:
                         non_stream_pii_redacted = True
                     message["content"] = safe_content
+                elif isinstance(orig_content, list) and orig_content:
+                    safe_list, list_mod = await _mask_json_value(rails, orig_content)
+                    if list_mod:
+                        non_stream_pii_redacted = True
+                    message["content"] = safe_list
         except Exception:
             await _get_token_quota_proxy().rollback_step(
                 agent_id, reserved_tokens=token_delta
@@ -1152,11 +1199,13 @@ async def chat_completions(
             raise
 
         if span.is_recording():
-            choice_msg = vllm_response.get("choices", [{}])[0].get("message", {})
-            safe_choice = {**choice_msg}
-            if "content" in safe_choice and isinstance(safe_choice["content"], str):
-                safe_choice["content"] = scrub_pii(safe_choice["content"])
-            span.set_attribute("gen_ai.output.messages", json.dumps([safe_choice]))
+            raw_choices = vllm_response.get("choices") or []
+            safe_output_msgs = [
+                _sanitize_otel_message(c.get("message", {}))
+                for c in raw_choices
+                if isinstance(c, dict)
+            ]
+            span.set_attribute("gen_ai.output.messages", json.dumps(safe_output_msgs))
             span.set_attribute(
                 "gen_ai.response.model", vllm_response.get("model", model_id)
             )

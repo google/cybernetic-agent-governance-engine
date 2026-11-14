@@ -52,49 +52,57 @@ class CashBarrier:
     requires_external_ground_truth: bool = True
 
 
+def _parse_trade_number(raw: Any) -> float:
+    """Parse a non-boolean, finite, non-negative trade numeric value."""
+    if isinstance(raw, bool) or not isinstance(raw, (int, float, str)):
+        raise ValueError(
+            f"invalid trade amount {raw!r} — must be a finite, non-negative number"
+        )
+    try:
+        value = float(raw)
+    except (TypeError, ValueError) as exc:
+        raise ValueError(
+            f"invalid trade amount {raw!r} — must be a finite, non-negative number"
+        ) from exc
+    if not math.isfinite(value) or value < 0:
+        raise ValueError(
+            f"invalid trade amount {value!r} — must be a finite, non-negative number"
+        )
+    return value
+
+
 def finance_cost_resolver(action_name: str, payload: dict[str, Any]) -> float:
     """Finance domain cost resolver for CBF engine.
 
     Only ``execute_trade`` and ``execute_trade_bounded`` carry a cash cost;
-    every other action is 0. A non-finite (NaN/inf) or negative ``amount`` is
-    rejected here so it can never reach the barrier certificate or the Redis
-    cash-state write.
-
-    This function is injected into the CBF engine at plugin registration time,
-    making the kernel domain-agnostic while preserving the finance-specific
-    cost resolution logic.
-
-    Args:
-        action_name: Name of the action being evaluated.
-        payload: Action parameters dict.
-
-    Returns:
-        The cash cost for the action (0.0 for non-trade actions).
-
-    Raises:
-        ValueError: If execute_trade or execute_trade_bounded has a non-finite
-            or negative amount.
+    every other action is 0. Non-finite (NaN/inf), boolean, negative,
+    fractional-cent ``amount_minor``, or conflicting ``amount`` / ``amount_minor``
+    values fail closed with ``ValueError`` (POAM-2026-208).
     """
     if action_name not in ("execute_trade", "execute_trade_bounded"):
         return 0.0
 
-    if "amount_minor" in payload and payload["amount_minor"] is not None:
-        raw_minor = payload["amount_minor"]
-        if isinstance(raw_minor, bool):
-            raise ValueError(
-                f"invalid trade amount {raw_minor!r} — must be a finite, non-negative number"
-            )
-        cost = float(raw_minor) / 100.0
-    else:
-        raw_amount = payload.get("amount", 0.0)
-        if isinstance(raw_amount, bool):
-            raise ValueError(
-                f"invalid trade amount {raw_amount!r} — must be a finite, non-negative number"
-            )
-        cost = float(raw_amount)
+    has_minor = "amount_minor" in payload and payload["amount_minor"] is not None
+    has_amount = "amount" in payload and payload["amount"] is not None
 
-    if not math.isfinite(cost) or cost < 0:
-        raise ValueError(
-            f"invalid trade amount {cost!r} — must be a finite, non-negative number"
-        )
-    return cost
+    if has_minor:
+        raw_minor = payload["amount_minor"]
+        minor_f = _parse_trade_number(raw_minor)
+        if not minor_f.is_integer():
+            raise ValueError(
+                f"invalid trade amount_minor {raw_minor!r} — minor units must be whole integers"
+            )
+        if has_amount:
+            raw_amount = payload["amount"]
+            amount_f = _parse_trade_number(raw_amount)
+            if int(round(amount_f * 100)) != int(round(minor_f)):
+                raise ValueError(
+                    f"Conflicting trade amounts: amount={raw_amount!r} does not match amount_minor={raw_minor!r}"
+                )
+        return minor_f / 100.0
+
+    raw_amount = payload.get("amount", 0.0)
+    return _parse_trade_number(raw_amount)
+
+
+resolve_finance_trade_cost = finance_cost_resolver

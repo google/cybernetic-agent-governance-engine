@@ -1664,8 +1664,17 @@ class TestDeferQueueEndpoints:
     """
 
     def test_defer_pending_returns_200_or_503(self, session):
-        """The endpoint must respond — 200 (queue available) or 503 (Redis down)."""
+        """The endpoint must respond — 200/503 when authenticated, 401/403 when unauthenticated in staging/prod."""
         r = session.get(f"{BASE_URL}/v1/defer/pending", timeout=15)
+        if (
+            _ENFORCING_POSTURE
+            and not os.environ.get("COMPLIANCE_BRIDGE_INTERNAL_TOKEN", "").strip()
+            and not os.environ.get("CAGE_OPERATOR_OIDC_TOKEN", "").strip()
+        ):
+            assert r.status_code in (401, 403), (
+                f"Unauthenticated GET /v1/defer/pending must return 401 or 403 in staging/prod, got {r.status_code}"
+            )
+            return
         assert r.status_code in (200, 503), (
             f"/v1/defer/pending returned unexpected {r.status_code}. "
             "200 = queue accessible, 503 = Redis db=1 unavailable. "
@@ -1677,6 +1686,15 @@ class TestDeferQueueEndpoints:
         r = session.get(f"{BASE_URL}/v1/defer/pending", timeout=15)
         if r.status_code == 503:
             pytest.skip("Redis db=1 unavailable — skipping shape check")
+        if (
+            _ENFORCING_POSTURE
+            and not os.environ.get("COMPLIANCE_BRIDGE_INTERNAL_TOKEN", "").strip()
+            and not os.environ.get("CAGE_OPERATOR_OIDC_TOKEN", "").strip()
+        ):
+            assert r.status_code in (401, 403), (
+                f"Unauthenticated GET /v1/defer/pending must return 401 or 403 in staging/prod, got {r.status_code}"
+            )
+            return
         data = r.json()
         assert "pending" in data, "Response must have 'pending' list"
         assert "count" in data, "Response must have 'count' integer"
@@ -1690,6 +1708,15 @@ class TestDeferQueueEndpoints:
         r = session.get(f"{BASE_URL}/v1/defer/pending?limit=1", timeout=15)
         if r.status_code == 503:
             pytest.skip("Redis db=1 unavailable")
+        if (
+            _ENFORCING_POSTURE
+            and not os.environ.get("COMPLIANCE_BRIDGE_INTERNAL_TOKEN", "").strip()
+            and not os.environ.get("CAGE_OPERATOR_OIDC_TOKEN", "").strip()
+        ):
+            assert r.status_code in (401, 403), (
+                f"Unauthenticated GET /v1/defer/pending must return 401 or 403 in staging/prod, got {r.status_code}"
+            )
+            return
         data = r.json()
         assert len(data["pending"]) <= 1, (
             f"limit=1 must return at most 1 token, got {len(data['pending'])}"
