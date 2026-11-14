@@ -69,12 +69,18 @@ component-definition:
           opa-spec:
             output:
               validation: lula.validate
+              observations:
+                - lula.assessment_remark
             rego: |
               package lula
 
               import future.keywords.if
 
               metrics_doc := object.get(input.langfuse_metrics_a53, "response", input.langfuse_metrics_a53)
+              total_traces := object.get(metrics_doc, "total_traces", 0)
+              safety_rate := object.get(metrics_doc, "safety_rate", null)
+              evidence_age_s := round(object.get(metrics_doc, "evidence_age_seconds", 0))
+              grace_active := object.get(metrics_doc, "startup_grace_active", false)
 
               # A.5.3: Logging and Monitoring
               sample_size_or_grace_met if {
@@ -102,3 +108,28 @@ component-definition:
                 metrics_doc.evidence_age_seconds < 172800
                 rate_or_grace_ok
               }
+
+              safety_rate_str := "null" if {
+                safety_rate == null
+              } else := sprintf("%v", [safety_rate])
+
+              assessment_status := "missing_metrics_response" if {
+                count(input.langfuse_metrics_a53) == 0
+              } else := "stale_evidence" if {
+                object.get(metrics_doc, "evidence_age_seconds", 172800) >= 172800
+              } else := "startup_grace" if {
+                grace_active == true
+                total_traces == 0
+                safety_rate == null
+              } else := "insufficient_traffic" if {
+                grace_active == false
+                total_traces == 0
+                safety_rate == null
+              } else := "satisfied" if {
+                rate_or_grace_ok
+              } else := "threshold_violation"
+
+              assessment_remark := sprintf(
+                "assessment_status=%s; control_id=A.5.3; total_traces=%d; safety_rate=%s; threshold=0.98; evidence_age_seconds=%d; startup_grace_active=%v",
+                [assessment_status, total_traces, safety_rate_str, evidence_age_s, grace_active],
+              )

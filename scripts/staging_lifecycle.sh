@@ -1459,6 +1459,10 @@ if [[ "$READINESS_FAILED" == "false" ]]; then
         error "Lula assessment results for ${label} contain not-satisfied or lula-validation-error state"
         return 1
       fi
+      if grep -Eiq "assessment_status[[:space:]]*=[[:space:]]*startup_grace" "$file"; then
+        error "Lula assessment results for ${label} satisfied via startup_grace rather than post-grace evidence"
+        return 1
+      fi
       return 0
     }
 
@@ -1592,40 +1596,9 @@ if errors:
 
       job_logs="$(kubectl logs job/lula-gate-w -n "$NAMESPACE" --all-containers=true 2>&1 || echo "")"
       printf '%s\n' "$job_logs" > "$ARCHIVE_DIR/lula/job-lula-gate-w.log"
-      if ! printf '%s' "$job_logs" | python3 -c '
-import re
-import sys
-
-logs = sys.stdin.read()
-if not logs.strip():
-    print("Job/lula-gate-w produced empty logs.", file=sys.stderr)
-    sys.exit(1)
-
-if "/v1/oscal/assessment-results" in logs:
-    print("Job/lula-gate-w referenced metrics-derived /v1/oscal/assessment-results instead of Lula assessment-results.", file=sys.stderr)
-    sys.exit(1)
-
-if re.search(r"(?:state|Result)\s*:\s*not-satisfied|lula-validation-error", logs):
-    print("Job/lula-gate-w Lula assessment-results reported not-satisfied or lula-validation-error.", file=sys.stderr)
-    sys.exit(1)
-
-if re.search(r"\bnot[-_]satisfied\s*[:=]\s*[1-9]\d*|\b[1-9]\d*\s+not[-_]satisfied\b", logs, re.IGNORECASE):
-    print("Job/lula-gate-w reported non-zero not-satisfied controls.", file=sys.stderr)
-    sys.exit(1)
-
-if not re.search(r"\b(?:assessment-results|satisfied|observations)\b", logs):
-    print("Job/lula-gate-w logs lack Lula assessment-results evaluation proof.", file=sys.stderr)
-    sys.exit(1)
-
-has_custody_ack = bool(
-    re.search(r"\"status\"\s*:\s*\"INGESTED\"|\bstatus\s*[=:]\s*INGESTED\b", logs)
-    or re.search(r"\"record_hash\"\s*:\s*\"[0-9a-f]{64}\"|\brecord_hash\s*[=:]\s*[0-9a-f]{64}\b", logs)
-    or re.search(r"/v1/infra/events.*\b(?:200|201|202|INGESTED)\b|\bHTTP[/ ]1\.[01]\"?\s+(?:200|201|202)\b", logs)
-)
-if not has_custody_ack:
-    print("Job/lula-gate-w logs lack /v1/infra/events custody receipt acknowledgment.", file=sys.stderr)
-    sys.exit(1)
-'; then
+      if ! python3 "$REPO_ROOT/scripts/verify_lula_assessment_results.py" \
+        --gate-w-job-logs "$ARCHIVE_DIR/lula/job-lula-gate-w.log" \
+        --lula-manifests-dir "$REPO_ROOT/compliance/lula"; then
         error "Job/lula-gate-w log & /v1/infra/events receipt verification FAILED"
         ((LULA_FAILURES++)) || true
       elif ! verify_worm_evidence_chain "Phase 3 Job/lula-gate-w WORM custody"; then

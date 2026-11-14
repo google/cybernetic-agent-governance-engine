@@ -229,7 +229,11 @@ def compute_request_fingerprint(
     satisfied_count: int | None = None,
     not_satisfied_count: int | None = None,
     failed_count: int | None = None,
+    insufficient_traffic_count: int | None = None,
+    startup_grace_count: int | None = None,
     failed_controls: Sequence[str] | None = None,
+    insufficient_traffic_controls: Sequence[str] | None = None,
+    startup_grace_controls: Sequence[str] | None = None,
 ) -> str:
     """Compute a deterministic SHA-256 fingerprint of a producer's event claim.
 
@@ -257,8 +261,18 @@ def compute_request_fingerprint(
         claim["not_satisfied_count"] = not_satisfied_count
     if failed_count is not None:
         claim["failed_count"] = failed_count
+    if insufficient_traffic_count is not None:
+        claim["insufficient_traffic_count"] = insufficient_traffic_count
+    if startup_grace_count is not None:
+        claim["startup_grace_count"] = startup_grace_count
     if failed_controls is not None:
         claim["failed_controls"] = [str(item) for item in failed_controls]
+    if insufficient_traffic_controls is not None:
+        claim["insufficient_traffic_controls"] = [
+            str(item) for item in insufficient_traffic_controls
+        ]
+    if startup_grace_controls is not None:
+        claim["startup_grace_controls"] = [str(item) for item in startup_grace_controls]
     body = canonical_payload_json(claim)
     return hashlib.sha256(body.encode()).hexdigest()
 
@@ -548,7 +562,11 @@ class InfraEvidenceChain:
         satisfied_count: int | None = None,
         not_satisfied_count: int | None = None,
         failed_count: int | None = None,
+        insufficient_traffic_count: int | None = None,
+        startup_grace_count: int | None = None,
         failed_controls: Sequence[str] | None = None,
+        insufficient_traffic_controls: Sequence[str] | None = None,
+        startup_grace_controls: Sequence[str] | None = None,
     ) -> InfraCustodyReceipt:
         """Seal and durably persist an ``INFRA`` event, or replay idempotently.
 
@@ -573,7 +591,11 @@ class InfraEvidenceChain:
             satisfied_count=satisfied_count,
             not_satisfied_count=not_satisfied_count,
             failed_count=failed_count,
+            insufficient_traffic_count=insufficient_traffic_count,
+            startup_grace_count=startup_grace_count,
             failed_controls=failed_controls,
+            insufficient_traffic_controls=insufficient_traffic_controls,
+            startup_grace_controls=startup_grace_controls,
         )
         idem_redis_key = (
             _idempotency_redis_key(self._stream_key, producer_svid, idempotency_key)
@@ -674,9 +696,23 @@ class InfraEvidenceChain:
                     payload_dict["not_satisfied_count"] = not_satisfied_count
                 if failed_count is not None:
                     payload_dict["failed_count"] = failed_count
+                if insufficient_traffic_count is not None:
+                    payload_dict["insufficient_traffic_count"] = (
+                        insufficient_traffic_count
+                    )
+                if startup_grace_count is not None:
+                    payload_dict["startup_grace_count"] = startup_grace_count
                 if failed_controls is not None:
                     payload_dict["failed_controls"] = [
                         str(item) for item in failed_controls
+                    ]
+                if insufficient_traffic_controls is not None:
+                    payload_dict["insufficient_traffic_controls"] = [
+                        str(item) for item in insufficient_traffic_controls
+                    ]
+                if startup_grace_controls is not None:
+                    payload_dict["startup_grace_controls"] = [
+                        str(item) for item in startup_grace_controls
                     ]
 
                 payload_json = canonical_payload_json(payload_dict)

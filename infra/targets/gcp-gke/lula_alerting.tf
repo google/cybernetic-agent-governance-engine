@@ -46,9 +46,13 @@ resource "google_monitoring_alert_policy" "lula_audit_failure" {
 
       Fires when:
       1. `cage_lula_audit_not_satisfied_controls > 0`
-         (including `< 26` active-manifest corpus-floor breaches),
+         (real control violations, stale evidence, or `< 26` active-manifest
+         corpus-floor breaches; idle-cluster `total_traces == 0` statistical
+         controls `a52`/`a53`/`a92` with `assessment_status=insufficient_traffic`
+         report separately on `cage_lula_audit_insufficient_traffic_controls`),
       2. `increase(cage_lula_audit_deadman_breaches_total[5m]) > 0`
-         because no clean `lula_audit PASS` completed within `2 x schedule`, or
+         because no healthy `26`-manifest `lula_audit` run completed within
+         `2 x schedule`, or
       3. `kubernetes.io/container/restart_count` increases for `lula-audit` pods.
     EOT
   }

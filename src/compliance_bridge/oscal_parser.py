@@ -211,6 +211,25 @@ def parse_oscal_yaml(oscal_yaml: str) -> list[OscalFinding]:
     for result_data in results_raw:
         if not isinstance(result_data, dict):
             continue
+        obs_remarks_by_uuid: dict[str, str] = {}
+        for raw_obs in result_data.get("observations") or []:
+            if not isinstance(raw_obs, dict):
+                continue
+            obs_uuid = str(raw_obs.get("uuid") or "").strip()
+            if not obs_uuid:
+                continue
+            parts: list[str] = []
+            top_rem = raw_obs.get("remarks")
+            if isinstance(top_rem, str) and top_rem.strip():
+                parts.append(top_rem.strip())
+            for ev in raw_obs.get("relevant-evidence") or []:
+                if isinstance(ev, dict):
+                    ev_rem = ev.get("remarks")
+                    if isinstance(ev_rem, str) and ev_rem.strip():
+                        parts.append(ev_rem.strip())
+            if parts:
+                obs_remarks_by_uuid[obs_uuid] = " | ".join(parts)
+
         raw_findings = result_data.get("findings") or []
 
         for raw_finding_data in raw_findings:
@@ -235,16 +254,56 @@ def parse_oscal_yaml(oscal_yaml: str) -> list[OscalFinding]:
             state = (
                 status_data.get("state", "") if isinstance(status_data, dict) else ""
             )
+            status_remarks = (
+                status_data.get("remarks")
+                if isinstance(status_data, dict)
+                and isinstance(status_data.get("remarks"), str)
+                else None
+            )
+
+            linked_obs_remarks: list[str] = []
+            for rel_obs in raw_finding_data.get("related-observations") or []:
+                if isinstance(rel_obs, dict):
+                    ref_uuid = str(
+                        rel_obs.get("observation-uuid")
+                        or rel_obs.get("observation_uuid")
+                        or ""
+                    ).strip()
+                    if ref_uuid and ref_uuid in obs_remarks_by_uuid:
+                        linked_obs_remarks.append(obs_remarks_by_uuid[ref_uuid])
+            combined_obs_remark = (
+                " | ".join(linked_obs_remarks) if linked_obs_remarks else None
+            )
 
             safety_rate_str = _get_prop(raw_finding.props, "safety_rate")
             evidence_age_str = _get_prop(raw_finding.props, "evidence_age_seconds")
+            total_traces_str = _get_prop(raw_finding.props, "total_traces")
+            assessment_status = _get_prop(raw_finding.props, "assessment_status")
+            if (
+                assessment_status is None
+                and combined_obs_remark is not None
+                and "assessment_status=insufficient_traffic" in combined_obs_remark
+                and "assessment_status=threshold_violation" not in combined_obs_remark
+                and "assessment_status=stale_evidence" not in combined_obs_remark
+                and "assessment_status=missing_metrics_response"
+                not in combined_obs_remark
+            ):
+                assessment_status = "insufficient_traffic"
+
+            mapped_result = _map_state(state)
+            if mapped_result == "FAIL" and assessment_status == "insufficient_traffic":
+                mapped_result = "INSUFFICIENT_EVIDENCE"
 
             candidate: dict[str, Any] = {
                 "control_id": control_id,
-                "result": _map_state(state),
+                "result": mapped_result,
                 "finding_id": raw_finding.uuid,
                 "remarks": (
-                    raw_finding.remarks or raw_finding.description or raw_finding.title
+                    raw_finding.remarks
+                    or status_remarks
+                    or combined_obs_remark
+                    or raw_finding.description
+                    or raw_finding.title
                 ),
                 "safety_rate": float(safety_rate_str)
                 if safety_rate_str is not None
@@ -252,6 +311,10 @@ def parse_oscal_yaml(oscal_yaml: str) -> list[OscalFinding]:
                 "evidence_age_s": float(evidence_age_str)
                 if evidence_age_str is not None
                 else None,
+                "total_traces": int(total_traces_str)
+                if total_traces_str is not None
+                else None,
+                "assessment_status": assessment_status,
             }
 
             # Strict validation before inclusion

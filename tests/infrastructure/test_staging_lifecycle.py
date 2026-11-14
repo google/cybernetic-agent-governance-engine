@@ -32,20 +32,46 @@ LIFECYCLE_SCRIPT = REPO_ROOT / "scripts" / "staging_lifecycle.sh"
 CORROBORATION_SCRIPT = REPO_ROOT / "scripts" / "verify_audit_corroboration.py"
 ANCHOR_SCRIPT = REPO_ROOT / "scripts" / "read_worm_chain_anchor.py"
 
+VERIFIER_SCRIPT = REPO_ROOT / "scripts" / "verify_lula_assessment_results.py"
+
 DEFAULT_PRE_HASH = "1" * 64
 DEFAULT_PRE_ATTEST = "2" * 64
 DEFAULT_POST_HASH = "3" * 64
 DEFAULT_POST_ATTEST = "4" * 64
 
-DEFAULT_JOB_LOGS = (
-    "assessment-results:\n"
-    "  observations:\n"
-    "    - uuid: 00000000-0000-4000-8000-000000000001\n"
-    "  state: satisfied\n"
-    'POST /v1/infra/events -> {"status": "INGESTED", "record_hash": "'
-    + ("a" * 64)
-    + '"}\n'
-)
+
+def _make_job_logs(
+    satisfied_controls: tuple[str, ...] | list[str] = ("lula-validation-sample",),
+) -> str:
+    controls = list(satisfied_controls)
+    n = len(controls)
+    pass_lines = "".join(f"PASS: {c}\n" for c in controls)
+    return (
+        pass_lines
+        + "Sealed lula_audit assessment-results via /v1/infra/events: status=INGESTED record_hash="
+        + ("a" * 64)
+        + f" ({n}/{n} satisfied, 0 not-satisfied)\n"
+        + json.dumps(
+            {
+                "cage_lula_audit_receipt_v1": {
+                    "status": "INGESTED",
+                    "record_hash": "a" * 64,
+                    "summary": f"lula_audit PASS: {n}/{n} active validations satisfied",
+                    "evaluated_count": n,
+                    "satisfied_count": n,
+                    "failed_count": 0,
+                    "insufficient_traffic_count": 0,
+                    "startup_grace_count": 0,
+                    "satisfied_controls": controls,
+                    "startup_grace_controls": [],
+                }
+            }
+        )
+        + "\n"
+    )
+
+
+DEFAULT_JOB_LOGS = _make_job_logs()
 
 DEFAULT_EVIDENCE_VERIFY_JSON = json.dumps(
     {
@@ -215,6 +241,9 @@ def _setup_fake_repo(
 
     shutil.copy2(LIFECYCLE_SCRIPT, repo / "scripts" / "staging_lifecycle.sh")
     shutil.copy2(ANCHOR_SCRIPT, repo / "scripts" / "read_worm_chain_anchor.py")
+    shutil.copy2(
+        VERIFIER_SCRIPT, repo / "scripts" / "verify_lula_assessment_results.py"
+    )
     (repo / "compliance" / "lula" / "lula-validation-sample.yaml").write_text(
         "kind: LulaValidation\n", encoding="utf-8"
     )
@@ -892,7 +921,10 @@ def test_staging_lifecycle_fails_closed_when_lula_exits_zero_with_not_satisfied(
 def test_staging_lifecycle_skips_api_and_planned_lula_specs_on_host_and_prints_planned_list(
     tmp_path: Path,
 ) -> None:
-    repo, bin_dir, log_file = _setup_fake_repo(tmp_path)
+    repo, bin_dir, log_file = _setup_fake_repo(
+        tmp_path,
+        job_logs=_make_job_logs(("lula-validation-sample", "lula-validation-api")),
+    )
     (repo / "compliance" / "lula" / "lula-validation-api.yaml").write_text(
         "  type: api\n  url: http://compliance-bridge.governance-stack.svc.cluster.local/v1/metrics/A.5.2\n",
         encoding="utf-8",
@@ -2288,4 +2320,179 @@ exit 0
     assert manifest_bad["phase_failures"]["posture"] >= 1
 
 
-# Regression coverage binding: POAM-024, POAM-2026-159, POAM-2026-192, POAM-2026-197, POAM-2026-202, POAM-2026-203, POAM-2026-204, POAM-2026-205, POAM-2026-206, POAM-2026-207
+def test_staging_lifecycle_phase3_rejects_startup_grace_remarks_on_host_and_job_lula_gate_w(
+    tmp_path: Path,
+) -> None:
+    """Gate W Phase 3 rejects `assessment_status=startup_grace` even if `STARTUP_GRACE_HOURS=0` check passed."""
+    # 1. In-cluster Job/lula-gate-w logs carrying `assessment_status=startup_grace` fail Phase 3 closed
+    grace_job_logs = (
+        "PASS: lula-validation-ac3\n"
+        "PASS (assessment_status=startup_grace): lula-validation-a52\n"
+        "Sealed lula_audit assessment-results via /v1/infra/events: status=INGESTED "
+        "record_hash=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa "
+        "(26/26 satisfied, 0 not-satisfied, 1 startup_grace [lula-validation-a52])\n"
+    )
+    repo_job, bin_job, _ = _setup_fake_repo(
+        tmp_path / "job_grace", job_logs=grace_job_logs
+    )
+    archive_job = tmp_path / "archive-job-grace"
+    proc_job = subprocess.run(
+        [
+            "bash",
+            str(repo_job / "scripts" / "staging_lifecycle.sh"),
+            "--skip-live-sweep",
+            "--skip-telemetry",
+            "--skip-rebuild",
+            f"--archive-dir={archive_job}",
+        ],
+        env=_base_env(bin_job, GOOGLE_CLOUD_PROJECT="demo-staging-proj"),
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert proc_job.returncode != 0
+    assert "satisfied one or more controls via startup_grace" in proc_job.stderr
+    manifest_job = json.loads(
+        (archive_job / "manifest.json").read_text(encoding="utf-8")
+    )
+    assert manifest_job["overall_status"] == "FAIL"
+    assert manifest_job["phase_failures"]["lula"] >= 1
+
+    # 2. Host-evaluated assessment-results-*.yaml carrying `assessment_status=startup_grace` fails Phase 3 closed
+    repo_host, bin_host, _ = _setup_fake_repo(tmp_path / "host_grace")
+    lula_bin = bin_host / "lula"
+    base_lula = lula_bin.read_text(encoding="utf-8")
+    _write_executable(
+        lula_bin,
+        base_lula.replace(
+            '            - description: "Result: satisfied"\n',
+            '            - description: "Result: satisfied"\n'
+            '              remarks: "lula.assessment_remark: assessment_status=startup_grace; control_id=A.5.2"\n',
+        ),
+    )
+    archive_host = tmp_path / "archive-host-grace"
+    proc_host = subprocess.run(
+        [
+            "bash",
+            str(repo_host / "scripts" / "staging_lifecycle.sh"),
+            "--skip-live-sweep",
+            "--skip-telemetry",
+            "--skip-rebuild",
+            f"--archive-dir={archive_host}",
+        ],
+        env=_base_env(bin_host, GOOGLE_CLOUD_PROJECT="demo-staging-proj"),
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert proc_host.returncode != 0
+    assert (
+        "satisfied via startup_grace rather than post-grace evidence"
+        in proc_host.stderr
+    )
+    manifest_host = json.loads(
+        (archive_host / "manifest.json").read_text(encoding="utf-8")
+    )
+    assert manifest_host["overall_status"] == "FAIL"
+    assert manifest_host["phase_failures"]["lula"] >= 1
+
+    # 3. Format drift / missing `cage_lula_audit_receipt_v1` JSON receipt fails Phase 3 closed
+    #    (never reads absence of `startup_grace` substrings as a clean pass!)
+    drifted_logs = (
+        "assessment-results:\n"
+        "  observations:\n"
+        "    - uuid: 00000000-0000-4000-8000-000000000001\n"
+        "  state: satisfied\n"
+        'POST /v1/infra/events -> {"status": "INGESTED", "record_hash": "'
+        + ("a" * 64)
+        + '"}\n'
+    )
+    repo_drift, bin_drift, _ = _setup_fake_repo(
+        tmp_path / "job_drift", job_logs=drifted_logs
+    )
+    archive_drift = tmp_path / "archive-job-drift"
+    proc_drift = subprocess.run(
+        [
+            "bash",
+            str(repo_drift / "scripts" / "staging_lifecycle.sh"),
+            "--skip-live-sweep",
+            "--skip-telemetry",
+            "--skip-rebuild",
+            f"--archive-dir={archive_drift}",
+        ],
+        env=_base_env(bin_drift, GOOGLE_CLOUD_PROJECT="demo-staging-proj"),
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert proc_drift.returncode != 0
+    assert (
+        "must contain exactly 1 structured cage_lula_audit_receipt_v1 JSON receipt"
+        in proc_drift.stderr
+    )
+
+    # 4. Deferred `type: api` spec (`lula-validation-a52.yaml`) missing from `satisfied_controls` fails Phase 3 closed
+    repo_missing_api, bin_missing_api, _ = _setup_fake_repo(tmp_path / "missing_api")
+    (repo_missing_api / "compliance" / "lula" / "lula-validation-a52.yaml").write_text(
+        "  type: api\n  url: http://compliance-bridge.governance-stack.svc.cluster.local/v1/metrics/A.5.2\n",
+        encoding="utf-8",
+    )
+    archive_missing_api = tmp_path / "archive-missing-api"
+    proc_missing_api = subprocess.run(
+        [
+            "bash",
+            str(repo_missing_api / "scripts" / "staging_lifecycle.sh"),
+            "--skip-live-sweep",
+            "--skip-telemetry",
+            "--skip-rebuild",
+            f"--archive-dir={archive_missing_api}",
+        ],
+        env=_base_env(bin_missing_api, GOOGLE_CLOUD_PROJECT="demo-staging-proj"),
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert proc_missing_api.returncode != 0
+    assert (
+        "Deferred API-domain Lula spec 'lula-validation-a52' missing"
+        in proc_missing_api.stderr
+    )
+
+    # 5. Active host Kubernetes spec (`lula-validation-sc28.yaml`) present on disk in
+    #    `compliance/lula/` (minus `# cage-status: planned`) but absent from
+    #    `Job/lula-gate-w`'s `satisfied_controls` fails Phase 3 closed by name
+    #    (independent two-ways-of-counting parity via `--lula-manifests-dir`).
+    repo_missing_host, bin_missing_host, _ = _setup_fake_repo(tmp_path / "missing_host")
+    (
+        repo_missing_host / "compliance" / "lula" / "lula-validation-sc28.yaml"
+    ).write_text(
+        "  type: kubernetes\n",
+        encoding="utf-8",
+    )
+    (repo_missing_host / "compliance" / "lula" / "lula-validation-ra5.yaml").write_text(
+        "# cage-status: planned\n  type: kubernetes\n",
+        encoding="utf-8",
+    )
+    archive_missing_host = tmp_path / "archive-missing-host"
+    proc_missing_host = subprocess.run(
+        [
+            "bash",
+            str(repo_missing_host / "scripts" / "staging_lifecycle.sh"),
+            "--skip-live-sweep",
+            "--skip-telemetry",
+            "--skip-rebuild",
+            f"--archive-dir={archive_missing_host}",
+        ],
+        env=_base_env(bin_missing_host, GOOGLE_CLOUD_PROJECT="demo-staging-proj"),
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert proc_missing_host.returncode != 0
+    assert (
+        "Active Lula spec 'lula-validation-sc28' missing from Job/lula-gate-w satisfied_controls"
+        in proc_missing_host.stderr
+    )
+
+
+# Regression coverage binding: POAM-024, POAM-2026-159, POAM-2026-192, POAM-2026-197, POAM-2026-202, POAM-2026-203, POAM-2026-204, POAM-2026-205, POAM-2026-206, POAM-2026-207, POAM-2026-215, POAM-2026-216

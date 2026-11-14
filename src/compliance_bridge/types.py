@@ -95,17 +95,41 @@ class ComplianceMetrics(BaseModel):
 # Mirrors the Zod OscalFindingSchema in types.ts
 # ---------------------------------------------------------------------------
 
-OscalResult = Literal["PASS", "FAIL", "NOT_APPLICABLE", "ERROR"]
-# ERROR semantics (per NIST SP 800-53A assessment procedures):
-#   PASS           — evidence meets the assessment objective (Satisfied)
-#   FAIL           — evidence fails the assessment objective (Not-Satisfied)
-#   NOT_APPLICABLE — the control does not apply to this system component
-#                    (e.g. a wireless control on a wired-only system)
-#   ERROR          — the control applies but the scanner/collector failed to
-#                    gather evidence ("fetch failed", timeout, etc.).
-#                    Must NEVER be masked as NOT_APPLICABLE — auditing frameworks
-#                    require this to be flagged as Incomplete/Unknown so the
-#                    security blind spot is visible.  (NIST SP 800-53A §3.2)
+OscalResult = Literal[
+    "PASS",
+    "FAIL",
+    "INSUFFICIENT_EVIDENCE",
+    "NOT_APPLICABLE",
+    "ERROR",
+]
+# Result semantics (per NIST SP 800-53A §3.2 assessment procedures & POAM-2026-215):
+#   PASS                  — evidence meets the assessment objective (OSCAL: satisfied)
+#   FAIL                  — evidence fails the assessment objective (OSCAL: not-satisfied)
+#   INSUFFICIENT_EVIDENCE — the control applies to this system, but zero governed traces
+#                           were observed in the look-back window (`total_traces == 0`,
+#                           `safety_rate is None`). Exported as OSCAL `not-satisfied` with
+#                           explicit `assessment_status=insufficient_traffic` remarks —
+#                           NEVER `not-applicable` (which falsely claims the control is
+#                           out of scope, POAM-2026-215) and NEVER `satisfied`.
+#   NOT_APPLICABLE        — the control does not apply to this system component
+#                           (e.g. a wireless control on a wired-only system)
+#   ERROR                 — the control applies but the scanner/collector failed to
+#                           gather evidence ("fetch failed", timeout, etc.).
+#                           Must NEVER be masked as NOT_APPLICABLE — auditing frameworks
+#                           require this to be flagged as Incomplete/Unknown so the
+#                           security blind spot is visible.  (NIST SP 800-53A §3.2)
+
+# Statistical trace-rate Lula manifests whose `not-satisfied` verdict may carry
+# `lula.assessment_remark: assessment_status=insufficient_traffic` when
+# `total_traces == 0` outside startup grace. Structural/Kubernetes/config specs
+# are NEVER eligible for `insufficient_traffic` classification.
+STATISTICAL_TRACE_LULA_SPECS: frozenset[str] = frozenset(
+    {
+        "lula-validation-a52",
+        "lula-validation-a53",
+        "lula-validation-a92",
+    }
+)
 
 
 class OscalFinding(BaseModel):
@@ -132,6 +156,8 @@ class OscalFinding(BaseModel):
     result: OscalResult
     safety_rate: float | None = Field(default=None, ge=0.0, le=1.0)
     evidence_age_s: float | None = Field(default=None, ge=0)
+    total_traces: int | None = Field(default=None, ge=0)
+    assessment_status: str | None = None
     finding_id: str
     remarks: str | None = None
     # Optional position in the Context Accumulator chain (CAGE v2.0.0+)
@@ -595,6 +621,7 @@ from src.gateway.governance.iso_control import (
 __all__ = [
     "CRITICAL_CONTROLS",
     "FRAMEWORK_CONTROLS",
+    "STATISTICAL_TRACE_LULA_SPECS",
     "SUPPORTED_CONTROLS",
     "SUPPORTED_FRAMEWORKS",
     "AssurancePosture",

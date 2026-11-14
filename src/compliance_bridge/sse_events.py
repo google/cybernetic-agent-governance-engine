@@ -69,7 +69,9 @@ GovernanceEventType = Literal[
     "DEFER_PARKING",  # emitted when an execution context is parked in the DEFER queue
     "DEFER_RESOLVED",  # emitted when a deferred token is resolved (ESCALATED/INJECTED/EXPIRED)
 ]
-OscalResult = Literal["PASS", "FAIL", "NOT_APPLICABLE"]
+OscalResult = Literal[
+    "PASS", "FAIL", "INSUFFICIENT_EVIDENCE", "NOT_APPLICABLE", "ERROR"
+]
 
 
 # We use a plain ``dict`` at the boundary so that ``json.dumps`` can serialise

@@ -85,7 +85,10 @@ def _finding_to_state(finding: OscalFinding) -> str:
 
     NIST OSCAL 1.1.x assessment-results state vocabulary:
       satisfied      — control objective met (PASS)
-      not-satisfied  — control objective not met (FAIL)
+      not-satisfied  — control objective not met (FAIL) OR zero traces observed
+                       in the look-back window (INSUFFICIENT_EVIDENCE; annotated
+                       via OSCAL `remarks` and `props` with
+                       `assessment_status=insufficient_traffic`, POAM-2026-215)
       not-applicable — control does not apply to this system component
       error          — scanner/collector failure; evidence could not be gathered.
                        Must NOT be mapped to "not-applicable" — that would hide
@@ -94,7 +97,7 @@ def _finding_to_state(finding: OscalFinding) -> str:
     """
     if finding.result == "PASS":
         return "satisfied"
-    if finding.result == "FAIL":
+    if finding.result in ("FAIL", "INSUFFICIENT_EVIDENCE"):
         return "not-satisfied"
     if finding.result == "NOT_APPLICABLE":
         return "not-applicable"
@@ -179,6 +182,10 @@ def build_oscal_assessment_results(
         ]
         if f.safety_rate is not None:
             props.append({"name": "safety_rate", "value": str(round(f.safety_rate, 6))})
+        if f.total_traces is not None:
+            props.append({"name": "total_traces", "value": str(int(f.total_traces))})
+        if f.assessment_status:
+            props.append({"name": "assessment_status", "value": f.assessment_status})
         if f.evidence_age_s is not None:
             props.append(
                 {"name": "evidence_age_seconds", "value": str(int(f.evidence_age_s))}
@@ -198,6 +205,9 @@ def build_oscal_assessment_results(
         # Region-aware control metadata lookup
         _region = os.environ.get("CAGE_DEPLOYMENT_REGION", "LOCAL")
         _control_meta = get_control_meta(_region)
+        status_block: dict = {"state": _finding_to_state(f)}
+        if f.remarks:
+            status_block["remarks"] = f.remarks
         entry: dict = {
             "uuid": f.finding_id,
             "title": (
@@ -207,12 +217,13 @@ def build_oscal_assessment_results(
             "target": {
                 "type": "objective-id",
                 "target-id": f.control_id,
-                "status": {"state": _finding_to_state(f)},
+                "status": status_block,
             },
             "props": props,
         }
         if f.remarks:
             entry["description"] = f.remarks
+            entry["remarks"] = f.remarks
 
         # Provider 02 CER attestation link (Feature 2 — OSCAL CER Links)
         # B6 + B7: Wire CER evidence links with disclosure policy and structured hash props
@@ -440,21 +451,45 @@ def findings_from_metrics_dict(
             )
             continue
         sr = data.get("safety_rate")
-        # M-10: safety_rate is None when no traces exist — treat as NOT_APPLICABLE
-        # (no evidence yet) rather than crashing or falsely reporting PASS/FAIL.
+        raw_total = data.get("total_traces")
+        total_traces = int(raw_total) if raw_total is not None else None
+        age_s = data.get("evidence_age_seconds")
+        grace_active = bool(data.get("startup_grace_active", False))
+
+        # POAM-2026-215: safety_rate is None when zero traces exist in the window.
+        # Never map zero traces to NOT_APPLICABLE (which falsely asserts the
+        # control is out of scope for CAGE) or to a vacuous PASS. Emit
+        # INSUFFICIENT_EVIDENCE (OSCAL `not-satisfied`) with explicit structured
+        # remarks so evaluators can distinguish zero traffic from violations.
         if sr is None:
-            result: OscalResult = "NOT_APPLICABLE"
+            effective_total = total_traces if total_traces is not None else 0
+            age_int = int(age_s) if age_s is not None else 0
+            result: OscalResult = "INSUFFICIENT_EVIDENCE"
+            assessment_status = "insufficient_traffic"
+            total_traces = effective_total
+            remarks: str | None = (
+                f"assessment_status=insufficient_traffic; control_id={cid}; "
+                f"total_traces={effective_total}; safety_rate=null; "
+                f"evidence_age_seconds={age_int}; "
+                f"startup_grace_active={str(grace_active).lower()}"
+            )
         else:
             threshold = {"A.5.2": 0.99, "A.5.3": 0.98, "A.9.2": 1.0}.get(cid, 1.0)
             result = "PASS" if sr >= threshold else "FAIL"
+            assessment_status = (
+                "satisfied" if result == "PASS" else "threshold_violation"
+            )
+            remarks = None
         findings.append(
             OscalFinding(
                 control_id=cid,
                 result=result,
                 finding_id=str(uuid.uuid5(uuid.NAMESPACE_URL, f"{audit_id}-{cid}")),
                 safety_rate=sr,
-                evidence_age_s=data.get("evidence_age_seconds"),
-                remarks=None,
+                evidence_age_s=age_s,
+                total_traces=total_traces,
+                assessment_status=assessment_status,
+                remarks=remarks,
             )
         )
     return findings

@@ -276,9 +276,10 @@ Generate an OSCAL 1.1.2 Assessment Results document from live metrics.
 | `window_hours` | `int` | `24` | Lookback window |
 | `format` | `json\|yaml` | `json` | Output format |
 | `audit_id` | `string` (optional) | — | Attach to existing audit |
+| `verify_custody` | `bool` | `false` | Verify WORM evidence custody and fail closed (`409`) unless at least one signed batch verifies with zero failures and zero gaps |
 
-**Response 200 OK:** OSCAL Assessment Results document.
-`Content-Type: application/json` or `application/yaml`.
+**Response 200 OK:** OSCAL Assessment Results document (`Content-Type: application/json`).
+When a control has zero governed traces in `window_hours` (`safety_rate == null`, `total_traces == 0`), its finding emits `target.status.state = "not-satisfied"` with OSCAL `remarks` and `props` (`assessment_status=insufficient_traffic`, `total_traces=0`, `evidence_age_seconds`) — never `not-applicable` (`POAM-2026-215`) and never a vacuous `satisfied`.
 
 ---
 
@@ -295,7 +296,7 @@ Generate an on-demand CSA AARM Conformance Report Card (11 threat vectors).
 | `include_narrative` | `bool` | `false` | Include LLM narrative |
 | `audit_id` | `string` (optional) | — | Attach to existing audit |
 
-**Response 200 OK:** AARM Conformance Report Card document.
+**Response 200 OK:** AARM Conformance Report Card document (`overall_posture` is `SECURE` only when all 11 vectors are `NEUTRALIZED`; unassessed `UNKNOWN` or `PARTIAL` vectors report `DEGRADED`, and any `EXPOSED` vector reports `CRITICAL`).
 
 ---
 
