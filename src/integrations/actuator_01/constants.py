@@ -28,12 +28,11 @@ MAX_TTL_SECONDS = 30
 # Nonce format: 32 hex chars (16 bytes)
 NONCE_HEX_LENGTH = 32
 
-# Domain tag prepended to the JCS-canonical receipt body before the partner's
-# Ed25519 receipt signature (see README "Signed receipts"). Isolates receipt
-# signatures from every other signature context so a receipt signature can
-# never be replayed as an assertion.
+# Domain tag prepended to SHA-256(intent_hash) before the partner's Ed25519
+# receipt signature (see README "Signed Receipts"). Isolates receipt signatures
+# from every other signature context so a receipt signature can never be
+# replayed as an assertion.
 RECEIPT_SIGNATURE_DOMAIN_TAG = b"ARCHYTAN_RECEIPT_V1:"
-LEGACY_RECEIPT_SIGNATURE_DOMAIN_TAG = b"CAGE_ACTUATION_RECEIPT_V1:"
 
 # Default sandbox receipt signing key ID published at /v1/keys/receipt-manifest
 DEFAULT_RECEIPT_KID = "archytan-sandbox-receipt-2026-01"

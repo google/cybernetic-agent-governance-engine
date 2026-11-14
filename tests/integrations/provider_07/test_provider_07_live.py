@@ -39,7 +39,6 @@ from src.gateway.governance.seams.normative import (
     ValidationResult,
 )
 from src.integrations.provider_07.adapter import Provider07NormativeProvider
-from src.integrations.provider_07.jwks_client import Provider07JwksClient
 from src.integrations.provider_07.schema import (
     Provider07BaselineResponse,
     Provider07EvidenceResponse,
@@ -47,6 +46,7 @@ from src.integrations.provider_07.schema import (
     Provider07InferenceResponse,
 )
 from src.integrations.provider_07.signature import verify_inference_signature
+from src.integrations.trust.key_manifest import Ed25519KeyManifestClient
 
 pytestmark = [
     pytest.mark.partner_integration,
@@ -275,7 +275,9 @@ async def test_live_jwks_resolution(
     endpoint, _ = live_credentials
     jwks_url = _get_live_jwks_url(endpoint)
     expected_kid = _get_expected_kid(endpoint)
-    jwks_client = Provider07JwksClient(jwks_url=jwks_url, timeout_seconds=10.0)
+    jwks_client = Ed25519KeyManifestClient(
+        manifest_url=jwks_url, timeout_seconds=10.0, allowed_schemes=("http", "https")
+    )
 
     public_key = await jwks_client.get_key(expected_kid)
     assert public_key is not None, f"Active key {expected_kid} not found in JWKS"
@@ -301,8 +303,10 @@ async def test_live_infer_contract_vectors(
         "Content-Type": "application/json",
         "Authorization": f"Bearer {api_key}" if api_key else "",
     }
-    jwks_client = Provider07JwksClient(
-        jwks_url=_get_live_jwks_url(endpoint), timeout_seconds=10.0
+    jwks_client = Ed25519KeyManifestClient(
+        manifest_url=_get_live_jwks_url(endpoint),
+        timeout_seconds=10.0,
+        allowed_schemes=("http", "https"),
     )
 
     async with httpx.AsyncClient(timeout=15.0) as client:

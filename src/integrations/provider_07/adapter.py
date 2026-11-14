@@ -55,8 +55,11 @@ from src.gateway.governance.seams.normative import (
     NormativeBaseline,
     ValidationResult,
 )
+from src.integrations.trust.key_manifest import (
+    Ed25519KeyManifestClient,
+    Ed25519KeyResolver,
+)
 
-from .jwks_client import Provider07JwksClient
 from .schema import (
     Provider07BaselineResponse,
     Provider07EvidenceResponse,
@@ -113,7 +116,7 @@ class Provider07NormativeProvider:
         api_key: str = "",
         jwks_url: str = "",
         timeout_seconds: float = 5.0,
-        jwks_client: Provider07JwksClient | None = None,
+        jwks_client: Ed25519KeyResolver | None = None,
         allow_step1_unsigned: bool = False,
     ) -> None:
         """
@@ -147,16 +150,17 @@ class Provider07NormativeProvider:
                 posture.value,
             )
 
-        # JWKS client for out-of-band key resolution
+        # Shared key-manifest client for out-of-band key resolution (HTTP/HTTPS only)
         if jwks_client is not None:
-            self._jwks_client = jwks_client
+            self._jwks_client: Ed25519KeyResolver = jwks_client
         else:
             # Default JWKS URL follows RFC 8615 well-known URI convention
             effective_jwks_url = jwks_url or f"{self._endpoint}/.well-known/jwks.json"
-            self._jwks_client = Provider07JwksClient(
-                jwks_url=effective_jwks_url,
+            self._jwks_client = Ed25519KeyManifestClient(
+                manifest_url=effective_jwks_url,
                 cache_ttl_seconds=3600,
                 timeout_seconds=timeout_seconds,
+                allowed_schemes=("http", "https"),
             )
 
     @classmethod

@@ -24,9 +24,11 @@ Trust Anchor Invariant:
     caller must fail closed.
 
 Security properties:
-- URL scheme allow-list (http/https/file) checked before any fetch (Bandit B310).
+- URL scheme allow-list (http/https/file, narrowable per caller) checked before
+  any fetch (Bandit B310).
 - Only ``kty=OKP, crv=Ed25519`` keys are loaded.
-- TTL-bounded in-memory cache so rotated-out keys stop verifying.
+- TTL-bounded in-memory cache with a single warm-cache refresh on unknown ``kid``
+  so newly rotated keys verify immediately while rotated-out keys stop verifying.
 """
 
 from __future__ import annotations
@@ -61,41 +63,66 @@ class Ed25519KeyManifestClient:
         manifest_url: str,
         cache_ttl_seconds: int = 3600,
         timeout_seconds: float = 5.0,
+        allowed_schemes: tuple[str, ...] = _ALLOWED_SCHEMES,
     ) -> None:
         """
         Args:
             manifest_url: JWKS manifest location (http://, https://, or file://).
             cache_ttl_seconds: Cache lifetime before the manifest is re-fetched.
             timeout_seconds: HTTP fetch timeout.
+            allowed_schemes: Non-empty subset of ``("http", "https", "file")``
+                permitted for ``manifest_url`` (e.g. ``("http", "https")`` for
+                remote-only adapters).
 
         Raises:
-            ValueError: If the URL scheme is not allow-listed (Bandit B310).
+            ValueError: If ``allowed_schemes`` or the URL scheme is not allow-listed
+                (Bandit B310).
         """
+        if not allowed_schemes or any(
+            s not in _ALLOWED_SCHEMES for s in allowed_schemes
+        ):
+            raise ValueError(
+                f"Invalid allowed_schemes {allowed_schemes!r}: must be a non-empty "
+                f"subset of {_ALLOWED_SCHEMES!r}."
+            )
+        normalized_schemes = tuple(allowed_schemes)
         parsed = urlparse(manifest_url)
-        if parsed.scheme not in _ALLOWED_SCHEMES:
+        if parsed.scheme not in normalized_schemes:
+            schemes_str = ", ".join(repr(s) for s in normalized_schemes)
             raise ValueError(
                 f"Invalid JWKS URL scheme: {parsed.scheme!r}. "
-                f"Only 'http', 'https', and 'file' are allowed (Bandit B310 compliance)."
+                f"Only {schemes_str} allowed (Bandit B310 compliance)."
             )
 
         self._manifest_url = manifest_url
         self._cache_ttl_seconds = cache_ttl_seconds
         self._timeout_seconds = timeout_seconds
+        self._allowed_schemes = normalized_schemes
         self._key_cache: dict[str, Ed25519PublicKey] = {}
         self._cache_timestamp: float = 0.0
 
     async def get_key(self, kid: str) -> Ed25519PublicKey | None:
         """Resolve a public key by ``kid``; ``None`` if absent (fail closed).
 
+        On a warm-cache miss (``kid`` not present before TTL expiry), refreshes
+        the manifest at most once so newly rotated partner keys verify without
+        waiting out the cache TTL.
+
         Raises:
             httpx.HTTPError: If the manifest fetch fails.
             ValueError: If the manifest is malformed.
         """
         cache_age = time.time() - self._cache_timestamp
+        refreshed = False
         if cache_age > self._cache_ttl_seconds or not self._key_cache:
             await self._refresh_keys()
+            refreshed = True
 
         key = self._key_cache.get(kid)
+        if key is None and not refreshed:
+            await self._refresh_keys()
+            key = self._key_cache.get(kid)
+
         if key is None:
             logger.warning(
                 "Unknown kid=%r in key manifest (url=%s); caller must fail closed.",
@@ -111,8 +138,10 @@ class Ed25519KeyManifestClient:
             self._timeout_seconds,
         )
         parsed = urlparse(self._manifest_url)
+        if parsed.scheme not in self._allowed_schemes:
+            raise ValueError(f"Invalid JWKS URL scheme: {parsed.scheme!r}")
         if parsed.scheme == "file":
-            with open(Path(parsed.path)) as f:
+            with open(Path(parsed.path), encoding="utf-8") as f:
                 jwks_data = json.load(f)
         else:
             async with httpx.AsyncClient(timeout=self._timeout_seconds) as client:
@@ -120,7 +149,9 @@ class Ed25519KeyManifestClient:
                 response.raise_for_status()
                 jwks_data = response.json()
 
-        if not isinstance(jwks_data, dict) or "keys" not in jwks_data:
+        if not isinstance(jwks_data, dict) or not isinstance(
+            jwks_data.get("keys"), list
+        ):
             raise ValueError("Invalid JWKS manifest: missing 'keys' array")
 
         new_cache: dict[str, Ed25519PublicKey] = {}
@@ -131,11 +162,18 @@ class Ed25519KeyManifestClient:
                 continue
             kid = jwk.get("kid")
             x_b64 = jwk.get("x")
-            if not kid or not x_b64:
+            if (
+                not isinstance(kid, str)
+                or not kid
+                or not isinstance(x_b64, str)
+                or not x_b64
+            ):
                 logger.warning("Skipping JWK with missing kid or x")
                 continue
             try:
-                public_key_bytes = base64.urlsafe_b64decode(x_b64 + "==")
+                public_key_bytes = base64.urlsafe_b64decode(
+                    x_b64 + "=" * (-len(x_b64) % 4)
+                )
                 new_cache[kid] = Ed25519PublicKey.from_public_bytes(public_key_bytes)
             except Exception as exc:
                 logger.warning("Failed to parse Ed25519 key kid=%s: %s", kid, exc)

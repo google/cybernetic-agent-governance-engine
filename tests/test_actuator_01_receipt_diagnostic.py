@@ -40,6 +40,7 @@ from cage_conformance.cli import main as cli_main  # noqa: E402
 from cage_conformance.receipt_diagnostic import (  # noqa: E402
     RECEIPT_DOMAIN_TAG,
     build_cage_preimage,
+    build_legacy_jcs_preimage,
     build_partner_preimage,
     diagnose_receipt,
     format_diagnosis,
@@ -132,94 +133,95 @@ def _partner_receipt() -> dict[str, Any]:
     }
 
 
-def test_cage_preimage_matches_receipt_verifier_path() -> None:
-    """Bind build_cage_preimage() directly to verify_partner_receipt()'s preimage path (lines 193-224).
+def _legacy_envelope_digest_receipt() -> dict[str, Any]:
+    """Build a retired legacy receipt carrying envelope_digest and no intent_hash."""
+    return {
+        "receipt_id": "r-legacy-0001",
+        "session_uuid": "550e8400-e29b-41d4-a716-446655440000",
+        "status": "accepted",
+        "envelope_digest": _VECTOR1_SHA256,
+        "signature": {
+            "alg": "EdDSA",
+            "kid": "actuator-01-sandbox-receipt-2026-01",
+            "value": "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
+        },
+    }
 
-    Exercises key stripping (signature and ingress_signature), domain-tag prefix,
-    JCS canonicalization, and concatenation by passing a signature over
-    build_cage_preimage(body) through verify_partner_receipt() and asserting the
-    exact bytes passed to public_key.verify() equal build_cage_preimage(body).
-    """
+
+def test_cage_preimage_matches_receipt_verifier_path() -> None:
+    """Bind build_cage_preimage() 1:1 to verify_partner_receipt()'s preimage path."""
     fixture_body = json.loads(_README_FIXTURE_PATH.read_text(encoding="utf-8"))
     diag_fixture_preimage = build_cage_preimage(fixture_body)
+    assert diag_fixture_preimage is not None
+    assert diag_fixture_preimage == build_partner_preimage(fixture_body)
     capturing_fixture_key, fixture_check = _verify_with_receipt_verifier(
         fixture_body,
         signed_preimage=diag_fixture_preimage,
-        envelope_digest=fixture_body["envelope_digest"],
+        envelope_digest=_VECTOR1_SHA256,
     )
-    assert capturing_fixture_key.attempted_preimages[0] == diag_fixture_preimage
+    assert capturing_fixture_key.attempted_preimages == [diag_fixture_preimage]
     assert capturing_fixture_key.verified_preimage == diag_fixture_preimage
     assert fixture_check.verification == ReceiptVerification.VERIFIED
 
     partner_body = _partner_receipt()
     diag_partner_preimage = build_cage_preimage(partner_body)
+    assert diag_partner_preimage is not None
     capturing_partner_key, partner_check = _verify_with_receipt_verifier(
         partner_body,
         signed_preimage=diag_partner_preimage,
         envelope_digest=_VECTOR1_SHA256,
     )
-    # verify_partner_receipt tries body minus "signature" first, then body minus
-    # ("signature", "ingress_signature") with RECEIPT_SIGNATURE_DOMAIN_TAG, which
-    # matches build_cage_preimage(partner_body) and passes Ed25519 verification
-    # before failing on the missing envelope_digest at line 230.
+    assert capturing_partner_key.attempted_preimages == [diag_partner_preimage]
     assert capturing_partner_key.verified_preimage == diag_partner_preimage
-    assert partner_check.verification == ReceiptVerification.INVALID
-    assert partner_check.finding is not None
-    assert partner_check.finding["code"] == "RECEIPT_ENVELOPE_MISMATCH"
+    assert partner_check.verification == ReceiptVerification.VERIFIED
 
-
-def test_readme_fixture_reports_preimage_digest_mismatch_and_exits_nonzero(
-    capsys: pytest.CaptureFixture[str],
-) -> None:
-    """The shipped README-shaped fixture reports preimage digest mismatch and exits 1."""
-    assert _README_FIXTURE_PATH.is_file()
-    fixture_body = json.loads(_README_FIXTURE_PATH.read_text(encoding="utf-8"))
-
-    diag_preimage = build_cage_preimage(fixture_body)
-    capturing_key, check = _verify_with_receipt_verifier(
-        fixture_body,
-        signed_preimage=diag_preimage,
-        envelope_digest=fixture_body["envelope_digest"],
-    )
-    assert check.verification == ReceiptVerification.VERIFIED
-    assert capturing_key.verified_preimage == diag_preimage
-
-    exit_code = cli_main(["diagnose-receipt", str(_README_FIXTURE_PATH)])
-    assert exit_code == 1
-
-    out = capsys.readouterr().out
-    assert "actuator_01 receipt diagnostic: MISMATCH" in out
-    assert "signature_verification:  NOT_PERFORMED" in out
-    assert "reason:                  preimage digest mismatch" in out
-    assert "envelope_digest (CAGE receipt_verifier.py:230): present" in out
-    assert "intent_hash (partner receipt schema):           absent" in out
-    assert "absent_required_fields:  intent_hash" in out
-
-    expected_cage_sha256 = hashlib.sha256(capturing_key.verified_preimage).hexdigest()
-    expected_partner_preimage = f"ARCHYTAN_RECEIPT_V1:{_VECTOR1_SHA256}".encode("ascii")
-    expected_partner_sha256 = hashlib.sha256(expected_partner_preimage).hexdigest()
-
-    assert capturing_key.verified_preimage.decode("utf-8") in out
-    assert expected_cage_sha256 in out
-    assert expected_partner_preimage.decode("ascii") in out
-    assert expected_partner_sha256 in out
-
-
-def test_partner_shaped_receipt_reports_both_preimage_and_missing_envelope_digest(
-    tmp_path: Path, capsys: pytest.CaptureFixture[str]
-) -> None:
-    """A partner receipt (intent_hash, no envelope_digest) reports both reasons and exits 1."""
-    body = _partner_receipt()
-    receipt_file = tmp_path / "partner_receipt.json"
-    receipt_file.write_text(json.dumps(body), encoding="utf-8")
-
-    diag_preimage = build_cage_preimage(body)
-    capturing_key, _ = _verify_with_receipt_verifier(
-        body,
-        signed_preimage=diag_preimage,
+    legacy_body = _legacy_envelope_digest_receipt()
+    assert build_cage_preimage(legacy_body) is None
+    capturing_legacy_key, legacy_check = _verify_with_receipt_verifier(
+        legacy_body,
+        signed_preimage=build_legacy_jcs_preimage(legacy_body),
         envelope_digest=_VECTOR1_SHA256,
     )
-    assert capturing_key.verified_preimage == diag_preimage
+    assert capturing_legacy_key.attempted_preimages == []
+    assert capturing_legacy_key.verified_preimage is None
+    assert legacy_check.verification == ReceiptVerification.INVALID
+    assert legacy_check.finding is not None
+    assert legacy_check.finding["code"] == "RECEIPT_MISSING_INTENT_HASH"
+
+
+def test_readme_fixture_and_partner_receipt_report_agreement_and_exit_zero(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """The aligned README fixture and partner intent_hash receipt report AGREEMENT and exit 0."""
+    assert _README_FIXTURE_PATH.is_file()
+    exit_code = cli_main(["diagnose-receipt", str(_README_FIXTURE_PATH)])
+    assert exit_code == 0
+
+    out = capsys.readouterr().out
+    assert "actuator_01 receipt diagnostic: AGREEMENT" in out
+    assert "signature_verification:  NOT_PERFORMED" in out
+    assert "reason:                  none" in out
+    assert "intent_hash (CAGE & partner receipt schema):    present" in out
+    assert "envelope_digest (legacy optional echo):         absent (optional)" in out
+    assert "absent_required_fields:  none" in out
+    assert f"intent_sha256_hex:     {_VECTOR1_SHA256}" in out
+    expected_preimage = RECEIPT_DOMAIN_TAG + _VECTOR1_SHA256.encode("ascii")
+    assert expected_preimage.decode("ascii") in out
+    assert hashlib.sha256(expected_preimage).hexdigest() in out
+
+    partner_file = tmp_path / "partner_receipt.json"
+    partner_file.write_text(json.dumps(_partner_receipt()), encoding="utf-8")
+    assert cli_main(["diagnose-receipt", str(partner_file)]) == 0
+    assert "actuator_01 receipt diagnostic: AGREEMENT" in capsys.readouterr().out
+
+
+def test_legacy_envelope_digest_only_receipt_reports_missing_intent_hash(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """A legacy envelope_digest-only receipt (no intent_hash) reports MISMATCH and exits 1."""
+    legacy_body = _legacy_envelope_digest_receipt()
+    receipt_file = tmp_path / "legacy_receipt.json"
+    receipt_file.write_text(json.dumps(legacy_body), encoding="utf-8")
 
     exit_code = cli_main(["diagnose-receipt", str(receipt_file)])
     assert exit_code == 1
@@ -227,60 +229,63 @@ def test_partner_shaped_receipt_reports_both_preimage_and_missing_envelope_diges
     out = capsys.readouterr().out
     assert "actuator_01 receipt diagnostic: MISMATCH" in out
     assert (
-        "reason:                  both (preimage digest mismatch; missing envelope_digest)"
+        "reason:                  missing intent_hash (legacy envelope_digest-only receipt)"
         in out
     )
-    assert "envelope_digest (CAGE receipt_verifier.py:230): absent" in out
-    assert "intent_hash (partner receipt schema):           present" in out
-    assert "absent_required_fields:  envelope_digest" in out
-    assert f"intent_sha256_hex:     {_VECTOR1_SHA256}" in out
-    assert f"ARCHYTAN_RECEIPT_V1:{_VECTOR1_SHA256}" in out
+    assert "intent_hash (CAGE & partner receipt schema):    absent" in out
+    assert "envelope_digest (legacy optional echo):         present" in out
+    assert "absent_required_fields:  intent_hash" in out
+    assert "envelope_digest (intent_hash absent)" in out
 
 
-def test_missing_envelope_digest_only_reason(
+def test_legacy_jcs_preimage_builder_reports_mismatch(
     tmp_path: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:
-    """When preimage digests match but envelope_digest is absent, reports missing envelope_digest."""
+    """Diagnosing against the retired JCS(body) preimage builder reports preimage digest mismatch."""
     body = _partner_receipt()
-    receipt_file = tmp_path / "missing_env_only.json"
+    receipt_file = tmp_path / "partner_vs_legacy_jcs.json"
     receipt_file.write_text(json.dumps(body), encoding="utf-8")
 
-    def matching_builder(b: Any) -> bytes:
-        preimage = build_partner_preimage(b)
-        assert preimage is not None
-        return preimage
-
-    exit_code = diag_main([str(receipt_file)], cage_preimage_builder=matching_builder)
+    exit_code = diag_main(
+        [str(receipt_file)], cage_preimage_builder=build_legacy_jcs_preimage
+    )
     assert exit_code == 1
 
     out = capsys.readouterr().out
     assert "actuator_01 receipt diagnostic: MISMATCH" in out
-    assert "reason:                  missing envelope_digest" in out
+    assert "reason:                  preimage digest mismatch" in out
+
+    # Legacy receipt missing intent_hash with legacy JCS builder reports both reasons
+    legacy_file = tmp_path / "legacy_both.json"
+    legacy_file.write_text(
+        json.dumps(_legacy_envelope_digest_receipt()), encoding="utf-8"
+    )
+    assert (
+        diag_main([str(legacy_file)], cage_preimage_builder=build_legacy_jcs_preimage)
+        == 1
+    )
+    out_both = capsys.readouterr().out
+    assert (
+        "reason:                  both (preimage digest mismatch; missing intent_hash)"
+        in out_both
+    )
 
 
-def test_agreement_exits_zero(
+def test_conflicting_envelope_digest_reports_mismatch(
     tmp_path: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:
-    """When preimage digests match and envelope_digest is present, reports AGREEMENT and exits 0."""
-    body = {
-        **_partner_receipt(),
-        "envelope_digest": _VECTOR1_SHA256,
-    }
-    receipt_file = tmp_path / "reconciled.json"
+    """A receipt carrying both intent_hash and a conflicting envelope_digest fails reconciliation."""
+    body = {**_partner_receipt(), "envelope_digest": "f" * 64}
+    receipt_file = tmp_path / "conflicting.json"
     receipt_file.write_text(json.dumps(body), encoding="utf-8")
 
-    def matching_builder(b: Any) -> bytes:
-        preimage = build_partner_preimage(b)
-        assert preimage is not None
-        return preimage
-
-    exit_code = diag_main([str(receipt_file)], cage_preimage_builder=matching_builder)
-    assert exit_code == 0
-
+    assert cli_main(["diagnose-receipt", str(receipt_file)]) == 1
     out = capsys.readouterr().out
-    assert "actuator_01 receipt diagnostic: AGREEMENT" in out
-    assert "reason:                  none" in out
-    assert "absent_required_fields:  none" in out
+    assert "actuator_01 receipt diagnostic: MISMATCH" in out
+    assert (
+        "reason:                  envelope_digest conflicts with sha256(intent_hash)"
+        in out
+    )
 
 
 def test_reads_from_stdin_and_supports_json_flag(
@@ -295,14 +300,14 @@ def test_reads_from_stdin_and_supports_json_flag(
 
     monkeypatch.setattr(sys, "stdin", _StdinStub(raw_bytes))
     exit_code = cli_main(["diagnose-receipt", "--json"])
-    assert exit_code == 1
+    assert exit_code == 0
 
     payload = json.loads(capsys.readouterr().out)
     assert payload["input_name"] == "<stdin>"
     assert payload["signature_verification"] == "NOT_PERFORMED"
-    assert payload["reconciled"] is False
-    assert payload["reason"] == "preimage digest mismatch"
-    assert payload["absent_fields"] == ["intent_hash"]
+    assert payload["reconciled"] is True
+    assert payload["reason"] == "none"
+    assert payload["absent_fields"] == []
 
 
 def test_dict_intent_hash_and_missing_both_digests() -> None:
@@ -313,17 +318,14 @@ def test_dict_intent_hash_and_missing_both_digests() -> None:
     )
     assert diag_dict_intent.intent_sha256_hex == _VECTOR1_SHA256
     assert diag_dict_intent.intent_digest_source == "sha256(JCS(intent_hash))"
-    assert (
-        diag_dict_intent.reason
-        == "both (preimage digest mismatch; missing envelope_digest)"
-    )
+    assert diag_dict_intent.reconciled is True
+    assert diag_dict_intent.reason == "none"
 
     diag_empty = diagnose_receipt({"receipt_id": "r-empty", "status": "ACCEPTED"})
     assert diag_empty.partner_preimage_utf8 is None
-    assert diag_empty.absent_fields == ("envelope_digest", "intent_hash")
-    assert (
-        diag_empty.reason == "both (preimage digest mismatch; missing envelope_digest)"
-    )
+    assert diag_empty.absent_fields == ("intent_hash",)
+    assert diag_empty.reconciled is False
+    assert diag_empty.reason == "missing intent_hash"
     assert "neither intent_hash nor envelope_digest present" in format_diagnosis(
         diag_empty
     )
@@ -368,7 +370,7 @@ def test_runs_under_python_isolated_stdlib_only(tmp_path: Path) -> None:
         timeout=60,
         check=False,
     )
-    assert proc.returncode == 1, proc.stdout + proc.stderr
-    assert "reason:                  preimage digest mismatch" in proc.stdout
+    assert proc.returncode == 0, proc.stdout + proc.stderr
+    assert "actuator_01 receipt diagnostic: AGREEMENT" in proc.stdout
     assert "RECEIPT_DOMAIN_TAG" not in proc.stderr
     assert RECEIPT_DOMAIN_TAG.decode("ascii") in proc.stdout
