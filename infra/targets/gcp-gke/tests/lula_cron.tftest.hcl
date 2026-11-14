@@ -167,8 +167,10 @@ run "staging_plans_lula_cron_active_specs_and_dedicated_ksas" {
       length(google_monitoring_alert_policy.gateway_evidence_append_reconciliation[0].conditions) == 1 &&
       google_monitoring_alert_policy.gateway_evidence_append_reconciliation[0].user_labels["owner"] == "platform-compliance-oncall" &&
       google_monitoring_alert_policy.gateway_evidence_append_reconciliation[0].user_labels["control"] == "au-5" &&
-      google_monitoring_alert_policy.gateway_evidence_append_reconciliation[0].conditions[0].condition_prometheus_query_language[0].duration == "120s" &&
-      strcontains(google_monitoring_alert_policy.gateway_evidence_append_reconciliation[0].conditions[0].condition_prometheus_query_language[0].query, "cage_gateway_evidence_records_appended_total") &&
+      google_monitoring_alert_policy.gateway_evidence_append_reconciliation[0].conditions[0].condition_prometheus_query_language[0].duration == "600s" &&
+      strcontains(google_monitoring_alert_policy.gateway_evidence_append_reconciliation[0].conditions[0].condition_prometheus_query_language[0].query, "rate(cage_gateway_evidence_records_appended_total") &&
+      strcontains(google_monitoring_alert_policy.gateway_evidence_append_reconciliation[0].conditions[0].condition_prometheus_query_language[0].query, "[15m]") &&
+      strcontains(google_monitoring_alert_policy.gateway_evidence_append_reconciliation[0].conditions[0].condition_prometheus_query_language[0].query, "< 0.85") &&
       strcontains(google_monitoring_alert_policy.gateway_evidence_append_reconciliation[0].conditions[0].condition_prometheus_query_language[0].query, "cage_gateway_evidenced_requests_permitted_total") &&
       length(kubernetes_deployment_v1.gateway_canary) == 1 &&
       kubernetes_service_account.workload["gateway_canary"].metadata[0].name == "cage-gateway-canary-sa" &&

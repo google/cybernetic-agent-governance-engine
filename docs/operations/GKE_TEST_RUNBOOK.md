@@ -133,6 +133,17 @@ pkill -f "kubectl port-forward"
 | `CAGE_REDIS_WAIT_REPLICAS` | `"0"` | `"1"` | `"1"` | Required replica acknowledgments per write |
 | `CAGE_REDIS_WAIT_TIMEOUT_MS` | `"100"` | `"100"` | `"100"` | Maximum blocking window for `WAIT 1 100` |
 | `CAGE_RECONCILIATION_REPLAY_DEFENSE` | `"true"` | `"true"` | `"true"` | Enforces monotonic snapshot sequence & out-of-band `kid` verification |
+| `EVIDENCE_CHAIN_BLOCKING` | `"true"` | `"true"` | `"true"` | Fail-closed Redis DB `1` custody commit across **all** governed verdicts, seal consumption, and permitted chat completions (`EC-1` / `POAM-2026-217`) |
+
+### Incident Blast Radius: Governance Valkey Outage = Full Gateway Outage (`EC-1` / `POAM-2026-217`)
+
+Under `EVIDENCE_CHAIN_BLOCKING=true` (default in every posture), **a `memorystore_governance` (`cage-valkey-gov-<env>`) custody outage is a full gateway outage — including for traffic that would otherwise have been allowed.** Every governed verdict (`ALLOW`, `DENY`, `DEFER`), single-use routing-seal consumption ([`verify_and_consume_seal()`](../../src/gateway/governance/routing_seal.py)), and permitted inference completion ([`_emit_proxy_pass_evidence()`](../../src/gateway/server/inference_proxy.py) on `POST /v1/chat/completions` and `POST /inference/v1/chat/completions`) blocks synchronously on a durable Redis DB `1` stream append before releasing its seal, execution, or completion bytes.
+
+- **Blast-radius shift (`service down`, not `audit gap`):** Losing `memorystore_governance` DB `1` does **not** degrade gracefully into un-audited completions; the gateway rolls back reserved `TokenQuotaProxy` quota and returns HTTP `503` (`evidence_chain_unavailable`) across both blocked and permitted traffic, paging `gateway_sustained_refusal_ratio` (`180s`) and `gateway_zero_permitted_requests` (`900s`). By contrast, an outage on `memorystore_app` (`cage-valkey-app-<env>`) affects only advisor/Langfuse application state and does **not** trip gateway custody.
+- **Incident triage checklist:**
+  1. Check `cage_governance_evidence_publish_failures_total{kind}` on `:9090/metrics` (`PodMonitoring/gateway-metrics`) to confirm whether `503` responses originate from DB `1` custody append failures (`inference_proxy_pass`, `inference_proxy_refusal`, `seal_consumed`, `seal`, `refusal`, `deferral`).
+  2. Inspect `memorystore_governance` Private Service Connect reachability (`/32` `primary_endpoint_ip` in [`network_policy.tf`](../../infra/targets/gcp-gke/network_policy.tf)), TLS CA mount (`ConfigMap/gateway-redis-ca` at `/etc/cage/tls/redis/ca.pem`), Workload Identity IAM (`roles/memorystore.dbConnectionUser` on `cage-gateway@<project>`), replica health for `WAIT 1 100`, and memory headroom under `maxmemory-policy=noeviction`.
+  3. Do **not** set `EVIDENCE_CHAIN_BLOCKING=false` in `staging` or `prod` unless executing an authorized break-glass override (which requires `CAGE_ALLOW_NONBLOCKING_PROD=true`, intentionally converts the incident from `"service down"` back to `"audit gap"`, and pages `gateway_evidence_append_reconciliation` once the `15m` append-to-permitted rate ratio stays `< 0.85` for `600s`).
 
 ### Cluster Invariant Requirements
 - **Compliance Bridge `LANGFUSE_HOST`**: In GKE deployments, `LANGFUSE_HOST` must explicitly declare port `3000` (`http://langfuse-web.governance-stack.svc.cluster.local:3000`), as `langfuse-web` listens on `3000` (not `80`).

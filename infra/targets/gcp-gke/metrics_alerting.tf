@@ -63,22 +63,26 @@ locals {
     "(sum(rate(cage_gateway_canary_requests_total{job=\"gateway-metrics\",namespace=\"${module.namespace.name}\"}[5m])) > 0)",
   ])
   gateway_canary_probe_absent_promql = "sum(rate(cage_gateway_canary_requests_total{job=\"gateway-metrics\",namespace=\"${module.namespace.name}\"}[5m])) == 0"
-  # POAM-2026-217: Two-ways-of-counting reconciliation between ingress-counted
+  # POAM-2026-217: Two-ways-of-counting rate reconciliation between ingress-counted
   # permitted requests (WorkloadIdentityMiddleware) and Redis-acknowledged stream
-  # appends (EvidenceStreamSink._acknowledge). Catches both total append stalls
-  # (permitted >= 3 over 5m while appended == 0) and per-route silent drops
-  # (appended + trace_shed + 1 < evidenced_requests_permitted).
+  # appends (EvidenceStreamSink._acknowledge). Evaluates rate() over a 15m window
+  # (longer than both EvidenceStreamSink group-commit/CAS retry lag, PodMonitoring's
+  # 15s scrape cadence, and EvidenceCustodian's 300s flush/verify interval) and
+  # sustains for 600s (10m) so asynchronous batching and boundary skew at t=window-edge
+  # never trigger false positives under normal or burst load.
+  gateway_evidence_reconciliation_min_requests = 5
+  gateway_evidence_reconciliation_ratio_floor  = "0.85"
   gateway_evidence_append_reconciliation_promql = join(" ", [
-    "((sum(increase(cage_gateway_gated_requests_total{job=\"gateway-metrics\",namespace=\"${module.namespace.name}\",outcome=\"permitted\"}[5m])) >= 3)",
+    "((sum(rate(cage_gateway_gated_requests_total{job=\"gateway-metrics\",namespace=\"${module.namespace.name}\",outcome=\"permitted\"}[15m])) >= (3 / 900))",
     "and",
-    "((sum(increase(cage_gateway_evidence_records_appended_total{job=\"gateway-metrics\",namespace=\"${module.namespace.name}\"}[5m])) or vector(0)) == 0))",
+    "((sum(rate(cage_gateway_evidence_records_appended_total{job=\"gateway-metrics\",namespace=\"${module.namespace.name}\"}[15m])) or vector(0)) == 0))",
     "or",
-    "((((sum(increase(cage_gateway_evidence_records_appended_total{job=\"gateway-metrics\",namespace=\"${module.namespace.name}\"}[5m])) or vector(0))",
+    "((((sum(rate(cage_gateway_evidence_records_appended_total{job=\"gateway-metrics\",namespace=\"${module.namespace.name}\"}[15m])) or vector(0))",
     "+",
-    "(sum(increase(cage_evidence_trace_shed_total{job=\"gateway-metrics\",namespace=\"${module.namespace.name}\"}[5m])) or vector(0))",
-    "+ 1)",
-    "<",
-    "sum(increase(cage_gateway_evidenced_requests_permitted_total{job=\"gateway-metrics\",namespace=\"${module.namespace.name}\"}[5m]))))",
+    "(sum(rate(cage_evidence_trace_shed_total{job=\"gateway-metrics\",namespace=\"${module.namespace.name}\"}[15m])) or vector(0)))",
+    "/",
+    "(sum(rate(cage_gateway_evidenced_requests_permitted_total{job=\"gateway-metrics\",namespace=\"${module.namespace.name}\"}[15m])) >= (${local.gateway_evidence_reconciliation_min_requests} / 900)))",
+    "< ${local.gateway_evidence_reconciliation_ratio_floor})",
   ])
 }
 
@@ -432,28 +436,34 @@ resource "google_monitoring_alert_policy" "gateway_evidence_append_reconciliatio
       - **Ingress Metrics:** `cage_gateway_gated_requests_total{outcome="permitted"}` and `cage_gateway_evidenced_requests_permitted_total` (`WorkloadIdentityMiddleware`)
       - **Custody Metric:** `cage_gateway_evidence_records_appended_total` (`EvidenceStreamSink._acknowledge` after Redis `XADD`)
 
-      Reconciles two independent counters across the gateway request boundary and
-      the Redis evidence stream (`POAM-2026-217`). Fires when for `120s` either:
-      1. `>= 3` gated requests were permitted over `5m` while `0` evidence records
-         were durably acknowledged on `cage:evidence:stream`, **or**
-      2. `cage_gateway_evidence_records_appended_total + cage_evidence_trace_shed_total + 1`
-         falls short of `cage_gateway_evidenced_requests_permitted_total` over `5m`
-         (detecting per-route silent evidence drops even while synthetic canary
-         probes continue appending on `/governance/validate-action`).
+      Reconciles two independent rate series across the gateway request boundary and
+      the Redis evidence stream over a `15m` window (`POAM-2026-217`), evaluated
+      across a sustained `600s` (`10m`) duration (exceeding group-commit batching,
+      `15s` `PodMonitoring` scrape skew, and `EvidenceCustodian`'s `300s` cadence
+      so asynchronous flush lag at window boundaries does not false-page). Fires
+      when for `600s` either:
+      1. Permitted request rate is `>= 3 / 15m` while `rate(cage_gateway_evidence_records_appended_total[15m]) == 0`
+         (total append stall), **or**
+      2. `(rate(appended[15m]) + rate(trace_shed[15m])) / rate(evidenced_requests_permitted[15m]) < ${local.gateway_evidence_reconciliation_ratio_floor}`
+         with `>= ${local.gateway_evidence_reconciliation_min_requests}` evidenced permitted requests per `15m`
+         (sustained per-route evidence loss even while synthetic canary probes
+         continue appending on `/governance/validate-action`).
 
-      Without this reconciliation, un-evidenced completions (`EVIDENCE_CHAIN_BLOCKING=false`
-      or a future stopped-sink bypass) keep `cage_gateway_gated_requests_total`
-      healthy while `compliance-bridge` simply observes fewer custody records and
-      treats the cluster as idle rather than broken.
+      **Operator note (`EC-1`):** Under `EVIDENCE_CHAIN_BLOCKING=true` (enforcing
+      default), a `memorystore_governance` Redis custody outage fails all governed
+      traffic closed (`503` — full gateway outage, paging `gateway_sustained_refusal_ratio`
+      and `gateway_zero_permitted_requests`). This reconciliation policy catches the
+      complementary failure mode (`EVIDENCE_CHAIN_BLOCKING=false` break-glass or a
+      code-path regression) where traffic is permitted without durable Redis appends.
     EOT
   }
 
   conditions {
-    display_name = "Permitted governed requests exceed Redis-acknowledged evidence appends over 5m for 120s"
+    display_name = "Sustained 15m evidence-append rate deficit (< ${local.gateway_evidence_reconciliation_ratio_floor} of evidenced permitted rate) for 600s (10m)"
 
     condition_prometheus_query_language {
       query                     = local.gateway_evidence_append_reconciliation_promql
-      duration                  = "120s"
+      duration                  = "600s"
       evaluation_interval       = "60s"
       disable_metric_validation = true
     }

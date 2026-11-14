@@ -466,8 +466,15 @@ All GKE deployments via Cloud Build are automatically logged to Cloud Logging fo
 
 ---
 
+## Operational Incident Dependencies (`EC-1` / `POAM-2026-217`)
+
+- **Governance Valkey Outage = Full Gateway Outage:** Under `EVIDENCE_CHAIN_BLOCKING=true` (enforcing default), a `memorystore_governance` DB `1` custody outage fails **all** governed traffic closed (`503 evidence_chain_unavailable` across permitted chat completions, `ALLOW`/`DENY`/`DEFER` verdicts, and single-use seal consumption — `"service down"`, not `"audit gap"`). Size, monitor, and maintain `memorystore_governance` (`replica_count >= 1` in `staging`, `>= 2` in `prod`, `noeviction`) as a Tier-0 hard availability dependency of `Deployment/gateway` (see [`GKE_TEST_RUNBOOK.md`](GKE_TEST_RUNBOOK.md#incident-blast-radius-governance-valkey-outage--full-gateway-outage-ec-1--poam-2026-217)).
+
+---
+
 ## Related Documentation
 
 - [`AGENTS.md`](../../AGENTS.md) — canonical source for deployment rules summary
 - [`docs/operations/DEPLOYMENT_DECISION_RECORD.md`](DEPLOYMENT_DECISION_RECORD.md) — ADRs
+- [`docs/operations/GKE_TEST_RUNBOOK.md`](GKE_TEST_RUNBOOK.md) — GKE incident triage & validation runbook
 - [`infra/QUICK_START.md`](../../infra/QUICK_START.md) — 5-minute quick start

@@ -558,8 +558,11 @@ class TestEvidenceAppendReconciliationMetricsAndAlert:
             'resource "google_monitoring_alert_policy" "gateway_evidence_append_reconciliation"'
             in tf_text
         )
-        assert "cage_gateway_evidence_records_appended_total" in tf_text
-        assert "cage_gateway_evidenced_requests_permitted_total" in tf_text
+        assert "rate(cage_gateway_evidence_records_appended_total" in tf_text
+        assert "rate(cage_gateway_evidenced_requests_permitted_total" in tf_text
+        assert "[15m]" in tf_text
+        assert 'duration                  = "600s"' in tf_text
+        assert "+ 1)" not in tf_text
         assert (
             "absent_over_time(cage_gateway_evidence_records_appended_total" in tf_text
         )
