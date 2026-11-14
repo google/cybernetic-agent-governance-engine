@@ -455,13 +455,69 @@ class TestSustainedRefusalRatioAlertTerraformContract:
                 return False
             return (blocked_5m / total_5m) >= threshold
 
-        # 1. Idle cluster (even with 500 open-path /healthz probes excluded from both): silent
+        # 1. Idle cluster (even with 500 open-path /healthz probes excluded from both): silent on ratio
         assert fires(0.0, 0.0) is False
-        # 2. Single/small negative smoke probe below volume floor: silent
+        # 2. Single/small negative smoke probe below volume floor: silent on ratio
         assert fires(float(min_requests - 1), 0.0) is False
-        # 3. Healthy cluster with occasional policy denials: silent
+        # 3. Healthy cluster with occasional policy denials: silent on ratio
         assert fires(5.0, 95.0) is False
-        # 4. Soft-failed dependency (100% gated requests refused): pages
+        # 4. Soft-failed dependency (100% gated requests refused): pages on ratio
         assert fires(float(min_requests), 0.0) is True
-        # 5. Sustained attack / near-total refusal (96% blocked): pages
+        # 5. Sustained attack / near-total refusal (96% blocked): pages on ratio
         assert fires(96.0, 4.0) is True
+
+    def test_zero_permitted_requests_policy_closes_caller_backoff_gap(self) -> None:
+        """Verify rate(permitted)==0 over 900s holds paging open when callers back off."""
+        tf_text = _METRICS_ALERTING_TF.read_text(encoding="utf-8")
+        assert (
+            'resource "google_monitoring_alert_policy" "gateway_zero_permitted_requests"'
+            in tf_text
+        )
+        assert (
+            'rate(cage_gateway_gated_requests_total{job=\\"gateway-metrics\\"'
+            in tf_text
+        )
+        assert 'outcome=\\"permitted\\"}[5m])) == 0' in tf_text
+        assert 'duration                  = "900s"' in tf_text
+
+        # Verify Terraform documents the >= 400 denominator assumption tied to
+        # deny-by-default Linkerd mesh ingress so widening ingress triggers re-audit.
+        assert ">= 400" in tf_text
+        assert "404" in tf_text
+
+        min_match = re.search(
+            r"gateway_refusal_ratio_min_requests\s*=\s*(\d+)", tf_text
+        )
+        thresh_match = re.search(
+            r'gateway_refusal_ratio_threshold\s*=\s*"?([0-9.]+)"?', tf_text
+        )
+        assert min_match is not None
+        assert thresh_match is not None
+        min_requests = int(min_match.group(1))
+        threshold = float(thresh_match.group(1))
+
+        def ratio_fires(
+            blocked_5m: float, permitted_5m: float, sustained_s: int
+        ) -> bool:
+            total_5m = blocked_5m + permitted_5m
+            if sustained_s < 180 or total_5m < min_requests:
+                return False
+            return (blocked_5m / total_5m) >= threshold
+
+        def zero_permitted_fires(permitted_5m: float, sustained_s: int) -> bool:
+            rate_permitted_per_s = permitted_5m / 300.0
+            return sustained_s >= 900 and rate_permitted_per_s == 0.0
+
+        # Stage 1 (t = 3m): outage begins, callers retry (>= 5 blocked / 5m, 0 permitted).
+        # Ratio alarm pages fast; 15m zero-permitted condition not yet at duration.
+        assert ratio_fires(20.0, 0.0, sustained_s=180) is True
+        assert zero_permitted_fires(0.0, sustained_s=180) is False
+
+        # Stage 2 (t = 15m+): callers give up retrying (only 1 blocked / 5m < floor, 0 permitted).
+        # Ratio condition drops below floor, but zero_permitted_requests takes over with no floor.
+        assert ratio_fires(1.0, 0.0, sustained_s=900) is False
+        assert zero_permitted_fires(0.0, sustained_s=900) is True
+
+        # Recovery: as soon as permitted traffic resumes (> 0), both conditions clear.
+        assert ratio_fires(0.0, 1.0, sustained_s=900) is False
+        assert zero_permitted_fires(1.0, sustained_s=900) is False
