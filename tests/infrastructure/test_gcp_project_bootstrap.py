@@ -12,7 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Unit tests for clean-project GCP bootstrap (`scripts/bootstrap_gcp_project.sh` and `scripts/gen_tfvars.py`)."""
+"""Unit and planted-mutant tests for clean-project GCP bootstrap (`scripts/bootstrap_gcp_project.sh` and `scripts/gen_tfvars.py`) — POAM-2026-165, POAM-2026-187, POAM-2026-206."""
 
 from __future__ import annotations
 
@@ -29,6 +29,15 @@ pytestmark = [pytest.mark.unit, pytest.mark.local]
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 BOOTSTRAP_SCRIPT = REPO_ROOT / "scripts" / "bootstrap_gcp_project.sh"
+
+DANGEROUS_DEFAULT_COMPUTE_ROLES = (
+    "roles/editor",
+    "roles/storage.admin",
+    "roles/storage.objectViewer",
+    "roles/artifactregistry.writer",
+    "roles/artifactregistry.createOnPushWriter",
+    "roles/container.defaultNodeServiceAccount",
+)
 
 EXPECTED_APIS = {
     "container.googleapis.com",
@@ -66,6 +75,8 @@ def _make_stub_bins(
     *,
     describe_exists: bool = False,
     state_list_entries: list[str] | None = None,
+    project_number: str = "",
+    compute_default_sa_roles: list[str] | None = None,
 ) -> tuple[Path, Path]:
     bin_dir = tmp_path / "bin"
     bin_dir.mkdir(parents=True, exist_ok=True)
@@ -74,6 +85,11 @@ def _make_stub_bins(
 
     describe_rc = "0" if describe_exists else "1"
     state_text = "\n".join(state_list_entries or [])
+    compute_roles_file = tmp_path / "compute_default_sa_roles.txt"
+    compute_roles_file.write_text(
+        "\n".join(compute_default_sa_roles) + "\n" if compute_default_sa_roles else "",
+        encoding="utf-8",
+    )
 
     _write_executable(
         bin_dir / "gcloud",
@@ -101,6 +117,17 @@ if [[ "$*" == *"config get-value account"* ]]; then
 fi
 if [[ "$*" == *"auth print-access-token"* ]]; then
   echo "stub-token"
+  exit 0
+fi
+if [[ "$1" == "projects" && "$2" == "describe" ]]; then
+  if [[ -n "{project_number}" ]]; then
+    echo "{project_number}"
+    exit 0
+  fi
+  exit {describe_rc}
+fi
+if [[ "$1" == "projects" && "$2" == "get-iam-policy" ]]; then
+  cat "{compute_roles_file}"
   exit 0
 fi
 if [[ "$*" == *" describe "* ]]; then
@@ -508,4 +535,207 @@ exit 0
     assert calls.count("artifacts repositories create gcr.io") == 2
 
 
-# Regression coverage binding: POAM-2026-206
+def _run_and_assert_default_compute_sa_deprivileged(
+    script_path: Path, work_dir: Path
+) -> None:
+    """Oracle for POAM-2026-165 and POAM-2026-187 default Compute SA de-privileging."""
+    work_dir.mkdir(parents=True, exist_ok=True)
+    synthetic_project_number = "123456789012"
+    compute_sa = f"{synthetic_project_number}-compute@developer.gserviceaccount.com"
+    bin_dir, log_file = _make_stub_bins(
+        work_dir,
+        describe_exists=False,
+        project_number=synthetic_project_number,
+        compute_default_sa_roles=[
+            *DANGEROUS_DEFAULT_COMPUTE_ROLES,
+            "roles/logging.logWriter",
+            "roles/cloudtrace.agent",
+        ],
+    )
+    env = {
+        **os.environ,
+        "PATH": f"{bin_dir}:{os.environ.get('PATH', '')}",
+        "BOOTSTRAP_IAM_RETRY_BASE_SLEEP": "0",
+    }
+    proc = subprocess.run(
+        [
+            "bash",
+            str(script_path),
+            "--project=clean-proj-sa",
+            "--env=staging",
+            "--region=us-central1",
+        ],
+        env=env,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert proc.returncode == 0, proc.stderr
+    assert "[AC-6 / POAM-2026-187]" in proc.stdout
+
+    calls = log_file.read_text(encoding="utf-8")
+    assert (
+        "gcloud projects describe clean-proj-sa --format=value(projectNumber)" in calls
+    )
+    policy_query = (
+        "gcloud projects get-iam-policy clean-proj-sa "
+        "--flatten=bindings[].members "
+        f"--filter=bindings.members:serviceAccount:{compute_sa} "
+        "--format=value(bindings.role)"
+    )
+    assert policy_query in calls
+    assert calls.index("gcloud services enable compute.googleapis.com") < calls.index(
+        policy_query
+    )
+
+    for role in DANGEROUS_DEFAULT_COMPUTE_ROLES:
+        expected_revoke = (
+            "gcloud projects remove-iam-policy-binding clean-proj-sa "
+            f"--member=serviceAccount:{compute_sa} "
+            f"--role={role} "
+            "--condition=None --quiet"
+        )
+        assert expected_revoke in calls, f"Expected bootstrap to revoke {role}"
+
+    for benign_role in ("roles/logging.logWriter", "roles/cloudtrace.agent"):
+        assert (
+            f"remove-iam-policy-binding clean-proj-sa --member=serviceAccount:{compute_sa} --role={benign_role}"
+            not in calls
+        )
+
+
+def test_bootstrap_deprivileges_default_compute_sa_dangerous_roles(
+    tmp_path: Path,
+) -> None:
+    """POAM-2026-165 / POAM-2026-187: revoke all automatic default roles on <PROJECT_NUMBER>-compute@developer.gserviceaccount.com."""
+    _run_and_assert_default_compute_sa_deprivileged(BOOTSTRAP_SCRIPT, tmp_path)
+
+
+def test_bootstrap_revokes_only_present_editor_and_storage_admin_bindings(
+    tmp_path: Path,
+) -> None:
+    """POAM-2026-165 / POAM-2026-187: idempotently revoke only held dangerous roles (roles/editor, roles/storage.admin)."""
+    synthetic_project_number = "123456789012"
+    compute_sa = f"{synthetic_project_number}-compute@developer.gserviceaccount.com"
+    bin_dir, log_file = _make_stub_bins(
+        tmp_path,
+        describe_exists=False,
+        project_number=synthetic_project_number,
+        compute_default_sa_roles=[
+            "roles/editor",
+            "roles/storage.admin",
+            "roles/logging.logWriter",
+        ],
+    )
+    proc = subprocess.run(
+        [
+            "bash",
+            str(BOOTSTRAP_SCRIPT),
+            "--project=clean-proj-subset",
+            "--env=staging",
+            "--region=us-central1",
+        ],
+        env={
+            **os.environ,
+            "PATH": f"{bin_dir}:{os.environ.get('PATH', '')}",
+            "BOOTSTRAP_IAM_RETRY_BASE_SLEEP": "0",
+        },
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert proc.returncode == 0, proc.stderr
+    calls = log_file.read_text(encoding="utf-8")
+    remove_lines = [
+        line
+        for line in calls.splitlines()
+        if line.startswith("gcloud projects remove-iam-policy-binding ")
+    ]
+    assert len(remove_lines) == 2
+    assert (
+        f"gcloud projects remove-iam-policy-binding clean-proj-subset --member=serviceAccount:{compute_sa} --role=roles/editor --condition=None --quiet"
+        in remove_lines
+    )
+    assert (
+        f"gcloud projects remove-iam-policy-binding clean-proj-subset --member=serviceAccount:{compute_sa} --role=roles/storage.admin --condition=None --quiet"
+        in remove_lines
+    )
+
+
+@pytest.mark.parametrize(
+    "benign_roles",
+    [
+        [],
+        ["roles/logging.logWriter", "roles/cloudtrace.agent"],
+    ],
+    ids=["empty-bindings", "benign-roles-only"],
+)
+def test_bootstrap_succeeds_cleanly_when_default_compute_sa_holds_no_dangerous_roles(
+    tmp_path: Path, benign_roles: list[str]
+) -> None:
+    """POAM-2026-165 / POAM-2026-187: succeed cleanly without remove-iam-policy-binding when no dangerous role is held."""
+    synthetic_project_number = "123456789012"
+    compute_sa = f"{synthetic_project_number}-compute@developer.gserviceaccount.com"
+    bin_dir, log_file = _make_stub_bins(
+        tmp_path,
+        describe_exists=False,
+        project_number=synthetic_project_number,
+        compute_default_sa_roles=benign_roles,
+    )
+    proc = subprocess.run(
+        [
+            "bash",
+            str(BOOTSTRAP_SCRIPT),
+            "--project=clean-proj-clean-sa",
+            "--env=staging",
+            "--region=us-central1",
+        ],
+        env={
+            **os.environ,
+            "PATH": f"{bin_dir}:{os.environ.get('PATH', '')}",
+            "BOOTSTRAP_IAM_RETRY_BASE_SLEEP": "0",
+        },
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert proc.returncode == 0, proc.stderr
+    assert "holds no dangerous automatic default roles" in proc.stdout
+    calls = log_file.read_text(encoding="utf-8")
+    assert f"--filter=bindings.members:serviceAccount:{compute_sa}" in calls
+    assert "remove-iam-policy-binding" not in calls
+
+
+@pytest.mark.parametrize(
+    ("mutant_id", "target", "replacement"),
+    [
+        ("BS-M1", '    "roles/editor"\n', ""),
+        ("BS-M2", '    "roles/storage.admin"\n', ""),
+        (
+            "BS-M3",
+            'PROJECT_NUMBER="$(gcloud projects describe "$PROJECT_ID" --format=\'value(projectNumber)\' 2>/dev/null || true)"',
+            'PROJECT_NUMBER=""',
+        ),
+        (
+            "BS-M4",
+            'retry_gcloud_iam gcloud projects remove-iam-policy-binding "$PROJECT_ID"',
+            "true",
+        ),
+    ],
+)
+def test_bootstrap_default_compute_sa_planted_mutants_are_killed(
+    tmp_path: Path, mutant_id: str, target: str, replacement: str
+) -> None:
+    """POAM-2026-165 / POAM-2026-187 planted-mutant verification (BS-M1..BS-M4)."""
+    original_text = BOOTSTRAP_SCRIPT.read_text(encoding="utf-8")
+    assert target in original_text, f"Planted mutant target missing for {mutant_id}"
+    mutated_script = tmp_path / f"bootstrap_{mutant_id}.sh"
+    _write_executable(mutated_script, original_text.replace(target, replacement, 1))
+
+    with pytest.raises(AssertionError):
+        _run_and_assert_default_compute_sa_deprivileged(
+            mutated_script, tmp_path / mutant_id
+        )
+
+
+# Regression coverage binding: POAM-2026-165, POAM-2026-187, POAM-2026-206

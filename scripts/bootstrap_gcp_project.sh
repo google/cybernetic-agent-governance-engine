@@ -428,19 +428,6 @@ for ((i = 1; i < ${#REQUIRED_APIS[@]}; i += MAX_SERVICES_BATCH_SIZE)); do
   gcloud services enable "${api_batch[@]}" --project="$PROJECT_ID" --quiet
 done
 
-# --- EF8a: Materialize Google-managed service agents (P4SAs) before CMEK / sink IAM bindings ---
-echo "🤖 [EF8a] Materializing Google-managed service agents on '${PROJECT_ID}'..."
-for p4sa_service in \
-  "sqladmin.googleapis.com" \
-  "memorystore.googleapis.com" \
-  "redis.googleapis.com" \
-  "container.googleapis.com" \
-  "logging.googleapis.com"; do
-  gcloud beta services identity create --service="$p4sa_service" --project="$PROJECT_ID" --quiet >/dev/null 2>&1 || true
-done
-gcloud storage service-agent --project="$PROJECT_ID" --quiet >/dev/null 2>&1 || true
-gcloud logging settings describe --project="$PROJECT_ID" --quiet >/dev/null 2>&1 || true
-
 # Retry newly enabled GCP API resource creations and IAM policy bindings so
 # global Service Usage / IAM propagation (~5-30s on brand-new projects) never
 # aborts Phase 0 with transient PERMISSION_DENIED or INVALID_ARGUMENT errors.
@@ -462,6 +449,59 @@ retry_gcloud_iam() {
     sleep_s=$((sleep_s * 2))
   done
 }
+
+# --- AC-6 / POAM-2026-165 / POAM-2026-187: De-privilege Compute Engine default service account ---
+# On projects lacking `constraints/iam.automaticIamGrantsForDefaultServiceAccounts`,
+# enabling `compute.googleapis.com` grants `<PROJECT_NUMBER>-compute@developer.gserviceaccount.com`
+# automatic `roles/editor` (or legacy storage/registry/node roles). Revoke those grants
+# idempotently while leaving benign logging/trace bindings intact.
+PROJECT_NUMBER="$(gcloud projects describe "$PROJECT_ID" --format='value(projectNumber)' 2>/dev/null || true)"
+if [[ -n "$PROJECT_NUMBER" ]]; then
+  COMPUTE_DEFAULT_SA="${PROJECT_NUMBER}-compute@developer.gserviceaccount.com"
+  echo "🔒 [AC-6 / POAM-2026-187] Auditing IAM bindings on Compute Engine default service account '${COMPUTE_DEFAULT_SA}'..."
+  DEFAULT_COMPUTE_ROLES="$(gcloud projects get-iam-policy "$PROJECT_ID" \
+    --flatten="bindings[].members" \
+    --filter="bindings.members:serviceAccount:${COMPUTE_DEFAULT_SA}" \
+    --format="value(bindings.role)" 2>/dev/null || true)"
+  DANGEROUS_DEFAULT_COMPUTE_ROLES=(
+    "roles/editor"
+    "roles/storage.admin"
+    "roles/storage.objectViewer"
+    "roles/artifactregistry.writer"
+    "roles/artifactregistry.createOnPushWriter"
+    "roles/container.defaultNodeServiceAccount"
+  )
+  removed_default_roles=0
+  for dangerous_role in "${DANGEROUS_DEFAULT_COMPUTE_ROLES[@]}"; do
+    if grep -Fxq "$dangerous_role" <<< "$DEFAULT_COMPUTE_ROLES"; then
+      echo "  ✂️  [AC-6 / POAM-2026-187] Revoking '${dangerous_role}' from 'serviceAccount:${COMPUTE_DEFAULT_SA}'..."
+      retry_gcloud_iam gcloud projects remove-iam-policy-binding "$PROJECT_ID" \
+        --member="serviceAccount:${COMPUTE_DEFAULT_SA}" \
+        --role="$dangerous_role" \
+        --condition=None \
+        --quiet >/dev/null
+      removed_default_roles=$((removed_default_roles + 1))
+    fi
+  done
+  if (( removed_default_roles == 0 )); then
+    echo "  ✓ [AC-6 / POAM-2026-187] '${COMPUTE_DEFAULT_SA}' holds no dangerous automatic default roles."
+  else
+    echo "  ✅ [AC-6 / POAM-2026-187] Revoked ${removed_default_roles} dangerous automatic default role(s) from '${COMPUTE_DEFAULT_SA}'."
+  fi
+fi
+
+# --- EF8a: Materialize Google-managed service agents (P4SAs) before CMEK / sink IAM bindings ---
+echo "🤖 [EF8a] Materializing Google-managed service agents on '${PROJECT_ID}'..."
+for p4sa_service in \
+  "sqladmin.googleapis.com" \
+  "memorystore.googleapis.com" \
+  "redis.googleapis.com" \
+  "container.googleapis.com" \
+  "logging.googleapis.com"; do
+  gcloud beta services identity create --service="$p4sa_service" --project="$PROJECT_ID" --quiet >/dev/null 2>&1 || true
+done
+gcloud storage service-agent --project="$PROJECT_ID" --quiet >/dev/null 2>&1 || true
+gcloud logging settings describe --project="$PROJECT_ID" --quiet >/dev/null 2>&1 || true
 
 # --- PF2: Ensure remote Terraform state GCS bucket exists ---
 echo "🪣 [PF2] Ensuring Terraform state bucket 'gs://${STATE_BUCKET}' exists..."
