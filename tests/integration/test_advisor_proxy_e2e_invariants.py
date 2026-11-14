@@ -946,17 +946,28 @@ async def e2e_stack(
             clearance: ExecutionClearance,
         ) -> ActuationReceipt:
             recorded_executions.append(clearance)
-            envelope_digest = clearance.governance_decision_digest
+            intent_envelope = {
+                "action": clearance.action,
+                "target": clearance.target,
+                "correlation_id": clearance.correlation_id,
+                "governance_decision_digest": clearance.governance_decision_digest,
+                "nonce": clearance.nonce,
+                "issued_at": clearance.issued_at,
+            }
+            intent_hash = jcs_canonicalize_plan(intent_envelope).decode("utf-8")
+            envelope_digest = hashlib.sha256(intent_hash.encode("utf-8")).hexdigest()
             receipt_body: dict[str, Any] = {
                 "receipt_id": f"rcpt-{uuid.uuid4().hex[:12]}",
                 "session_uuid": str(uuid.uuid4()),
                 "status": "executed",
                 "symbol": str(clearance.params.get("symbol", "")),
                 "amount": float(clearance.params.get("amount", 0.0)),
+                "intent_hash": intent_hash,
                 "envelope_digest": envelope_digest,
             }
-            canonical = jcs_canonicalize_plan(receipt_body)
-            sig_bytes = receipt_priv.sign(RECEIPT_SIGNATURE_DOMAIN_TAG + canonical)
+            sig_bytes = receipt_priv.sign(
+                RECEIPT_SIGNATURE_DOMAIN_TAG + envelope_digest.encode("ascii")
+            )
             sig_b64 = base64.urlsafe_b64encode(sig_bytes).rstrip(b"=").decode("ascii")
             signed_body = {
                 **receipt_body,
@@ -1842,6 +1853,8 @@ async def test_advisor_proxy_e2e_all_five_invariants_and_negative_controls(
 
     diag = diagnose_actuation_receipt(signed_rcpt)
     assert diag.missing_envelope_digest is False
+    assert diag.missing_intent_hash is False
+    assert diag.reconciled is True
 
     verified_rcpt = await verify_partner_receipt(
         signed_rcpt,
