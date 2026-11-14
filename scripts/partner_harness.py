@@ -30,8 +30,10 @@ this module on every pull request.
 
 Standard library only, so the workflow can run it before installing anything::
 
-    python3 scripts/partner_harness.py matrix all|<partner>
+    python3 scripts/partner_harness.py matrix provisioned|all|<partner>
     python3 scripts/partner_harness.py target <partner>
+    python3 scripts/partner_harness.py disclosure provisioned|all|<partner>
+    python3 scripts/partner_harness.py verdict provisioned|all|<partner>
 """
 
 from __future__ import annotations
@@ -48,6 +50,38 @@ PARTNER_TARGETS: dict[str, str] = {
     "provider_07": "tests/integrations/provider_07",
     "provider_08": "tests/integrations/provider_08",
     "actuator_01": "tests/test_actuator_01_live.py",
+}
+
+#: Partners with active live sandboxes and credentials provisioned in GitHub
+#: Actions. The weekly Monday schedule runs these failing closed.
+PROVISIONED_PARTNERS: tuple[str, ...] = (
+    "provider_01",
+    "provider_05",
+    "provider_08",
+)
+
+#: Exact complement ``set(PARTNER_TARGETS) - set(PROVISIONED_PARTNERS)``,
+#: mapped to the blocker keeping each partner out of the weekly schedule.
+UNPROVISIONED_PARTNER_REASONS: dict[str, str] = {
+    "provider_02": (
+        "Missing GitHub Actions sandbox secrets (PROVIDER_02_API_ENDPOINT, "
+        "PROVIDER_02_JWK_ENDPOINT, PROVIDER_02_API_KEY_SECRET, "
+        "PROVIDER_02_TEST_CERT_HASH) and open CER signature verification defect."
+    ),
+    "provider_03": (
+        "No live partner sandbox endpoint or API key provisioned in GitHub "
+        "Actions secrets (PROVIDER_03_ENDPOINT, PROVIDER_03_API_KEY)."
+    ),
+    "provider_07": (
+        "Missing valid PROVIDER_07_API_KEY and sandbox secrets "
+        "(PROVIDER_07_ENDPOINT, PROVIDER_07_JWKS_URL, PROVIDER_07_EXPECTED_KID) "
+        "in GitHub Actions."
+    ),
+    "actuator_01": (
+        "Missing sandbox endpoint and mTLS secrets in GitHub Actions "
+        "(ACTUATOR_01_ENDPOINT, ACTUATOR_01_TENANT_ID, ACTUATOR_01_CLIENT_CERT, "
+        "ACTUATOR_01_CLIENT_KEY, ACTUATOR_01_CA_CERT)."
+    ),
 }
 
 #: Partner -> variables its job receives, each from the repository secret of the
@@ -133,36 +167,155 @@ UNSUPPLIED: dict[str, str] = {
 }
 
 
+def validate_partner_partition() -> None:
+    """Ensure PROVISIONED_PARTNERS and UNPROVISIONED_PARTNER_REASONS partition PARTNER_TARGETS."""
+    provisioned = set(PROVISIONED_PARTNERS)
+    unprovisioned = set(UNPROVISIONED_PARTNER_REASONS)
+    targets = set(PARTNER_TARGETS)
+    if len(PROVISIONED_PARTNERS) != len(provisioned):
+        raise RuntimeError("PROVISIONED_PARTNERS contains duplicate entries")
+    overlap = sorted(provisioned & unprovisioned)
+    if overlap:
+        raise RuntimeError(
+            "partners listed in both PROVISIONED_PARTNERS and "
+            f"UNPROVISIONED_PARTNER_REASONS: {overlap}"
+        )
+    if provisioned | unprovisioned != targets:
+        missing = sorted(targets - (provisioned | unprovisioned))
+        unknown = sorted((provisioned | unprovisioned) - targets)
+        raise RuntimeError(
+            "PROVISIONED_PARTNERS and UNPROVISIONED_PARTNER_REASONS must partition "
+            f"PARTNER_TARGETS (missing={missing}, unknown={unknown})"
+        )
+    empty = sorted(
+        partner
+        for partner, reason in UNPROVISIONED_PARTNER_REASONS.items()
+        if not reason or not reason.strip()
+    )
+    if empty:
+        raise RuntimeError(
+            f"UNPROVISIONED_PARTNER_REASONS has blank reason for: {empty}"
+        )
+
+
 def matrix(selection: str) -> list[str]:
-    """Partners one run covers: all of them for ``all`` or empty (the schedule)."""
-    if selection in ("", "all"):
+    """Partners one run covers: provisioned for schedule/default, all 7 for ``all``."""
+    validate_partner_partition()
+    if selection in ("", "provisioned"):
+        return list(PROVISIONED_PARTNERS)
+    if selection == "all":
         return list(PARTNER_TARGETS)
     if selection in PARTNER_TARGETS:
         return [selection]
     raise ValueError(
-        f"unknown partner {selection!r}; expected 'all' or one of: "
+        f"unknown partner {selection!r}; expected 'provisioned', 'all', or one of: "
         + ", ".join(PARTNER_TARGETS)
     )
 
 
+def disclosure(selection: str) -> str:
+    """Render scope header, selected partners, and NOT RUN partners with blockers."""
+    selected = matrix(selection)
+    mode = "provisioned" if selection == "" else selection
+    total = len(PARTNER_TARGETS)
+    selected_set = set(selected)
+    omitted = [partner for partner in PARTNER_TARGETS if partner not in selected_set]
+
+    omitted_summary = ", ".join(omitted) if omitted else "none"
+    lines = [
+        f"### Partner Harness Scope: {len(selected)} of {total} partners selected (mode: {mode})",
+        "",
+        f"SELECTED ({len(selected)} of {total}): {', '.join(selected)}",
+        f"NOT RUN ({len(omitted)} of {total}): {omitted_summary}",
+        "",
+        f"#### Selected / Run ({len(selected)} of {total})",
+        "",
+        "| Partner | Status | Pytest Target | Notes |",
+        "| --- | --- | --- | --- |",
+    ]
+    for partner in selected:
+        target = PARTNER_TARGETS[partner]
+        if partner in UNPROVISIONED_PARTNER_REASONS:
+            note = f"Unprovisioned sandbox: {UNPROVISIONED_PARTNER_REASONS[partner]}"
+        else:
+            note = "Provisioned live sandbox"
+        lines.append(f"| `{partner}` | SELECTED | `{target}` | {note} |")
+
+    lines.extend(["", f"#### Not Run ({len(omitted)} of {total})", ""])
+    if not omitted:
+        lines.append(
+            f"None — all {total} of {total} partners in PARTNER_TARGETS were selected."
+        )
+    else:
+        lines.extend(
+            [
+                "| Partner | Status | Pytest Target | Reason |",
+                "| --- | --- | --- | --- |",
+            ]
+        )
+        for partner in omitted:
+            target = PARTNER_TARGETS[partner]
+            if partner in UNPROVISIONED_PARTNER_REASONS:
+                reason = UNPROVISIONED_PARTNER_REASONS[partner]
+                if mode != "provisioned":
+                    reason = f"Excluded from selection ({mode}); {reason}"
+            else:
+                reason = (
+                    f"Excluded from single-partner selection ({mode}); "
+                    "live sandbox is provisioned."
+                )
+            lines.append(f"| `{partner}` | NOT RUN | `{target}` | {reason} |")
+    return "\n".join(lines)
+
+
+def verdict_summary(selection: str) -> str:
+    """Return the fail-closed pass summary naming exact verified and NOT RUN counts."""
+    selected = matrix(selection)
+    mode = "provisioned" if selection == "" else selection
+    total = len(PARTNER_TARGETS)
+    not_run_count = total - len(selected)
+    if mode == "provisioned":
+        return (
+            f"PASSED: {len(selected)} of {total} partners verified over the wire; "
+            f"{not_run_count} of {total} NOT RUN (unprovisioned)"
+        )
+    if mode == "all":
+        return (
+            f"PASSED: {len(selected)} of {total} partners verified over the wire; "
+            f"0 of {total} NOT RUN"
+        )
+    return (
+        f"PASSED: {len(selected)} of {total} partners ({selected[0]}) verified over "
+        f"the wire; {not_run_count} of {total} NOT RUN (excluded from selection)"
+    )
+
+
 def main(argv: list[str]) -> int:
-    """Print the matrix (JSON) or one partner's pytest target."""
-    if len(argv) == 2 and argv[0] in ("matrix", "target"):
+    """Print the matrix (JSON), pytest target, scope disclosure, or pass verdict."""
+    if len(argv) == 2 and argv[0] in ("matrix", "target", "disclosure", "verdict"):
         command, selection = argv
         try:
-            partners = matrix(selection)
+            if command == "matrix":
+                print(json.dumps(matrix(selection)))
+                return 0
+            if command == "disclosure":
+                print(disclosure(selection))
+                return 0
+            if command == "verdict":
+                print(verdict_summary(selection))
+                return 0
+            matrix(selection)
         except ValueError as exc:
             print(f"partner_harness: {exc}", file=sys.stderr)
             return 2
-        if command == "matrix":
-            print(json.dumps(partners))
-            return 0
         if selection in PARTNER_TARGETS:
             print(PARTNER_TARGETS[selection])
             return 0
     print(
-        "usage: partner_harness.py matrix all|<partner>\n"
-        "       partner_harness.py target <partner>",
+        "usage: partner_harness.py matrix provisioned|all|<partner>\n"
+        "       partner_harness.py target <partner>\n"
+        "       partner_harness.py disclosure provisioned|all|<partner>\n"
+        "       partner_harness.py verdict provisioned|all|<partner>",
         file=sys.stderr,
     )
     return 2

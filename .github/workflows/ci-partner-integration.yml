@@ -22,6 +22,11 @@ name: Partner Integration Tests
 # (tests/fixtures/require_live.py). A skip fails the job: a skipped test
 # verified nothing, and pytest reports an all-skipped run as a success.
 #
+# On the weekly Monday schedule (and the default "provisioned" dispatch choice),
+# the harness runs PROVISIONED_PARTNERS failing closed and explicitly discloses
+# every unprovisioned partner as NOT RUN (with its blocker) in both job logs and
+# $GITHUB_STEP_SUMMARY so a green run is never misread as 7 of 7.
+#
 # Each job receives only its own partner's secrets. scripts/partner_harness.py
 # is the single source for the partner list, the pytest targets and the secret
 # names; tests/test_partner_harness.py checks this file against it and against
@@ -31,11 +36,12 @@ on:
   workflow_dispatch:
     inputs:
       partner_filter:
-        description: 'Partner to verify, or "all" for one job per partner'
+        description: 'Partner to verify, "provisioned" for active sandboxes, or "all" for every partner'
         required: true
-        default: all
+        default: provisioned
         type: choice
         options:
+          - provisioned
           - all
           - provider_01
           - provider_02
@@ -45,7 +51,8 @@ on:
           - provider_08
           - actuator_01
   schedule:
-    # Mondays 06:17 UTC: a live check that runs only on request decays.
+    # Mondays 06:17 UTC: runs provisioned sandboxes failing closed and lists
+    # unprovisioned partners as NOT RUN with blockers.
     - cron: "17 6 * * 1"
 
 permissions:
@@ -55,8 +62,8 @@ concurrency:
   # One group per partner selection and ref. GitHub lets a newer run in a group
   # supersede a pending one even with cancel-in-progress: false, so a single
   # shared group let a dispatch for one partner cancel another partner's queued
-  # run. Scheduled runs have no inputs and share the "all" group.
-  group: partner-integration-${{ github.ref }}-${{ inputs.partner_filter || 'all' }}
+  # run. Scheduled runs have no inputs and share the "provisioned" group.
+  group: partner-integration-${{ github.ref }}-${{ inputs.partner_filter || 'provisioned' }}
   cancel-in-progress: false
 
 jobs:
@@ -76,11 +83,14 @@ jobs:
       - name: Resolve the partner matrix
         id: select
         env:
-          # Empty on the weekly schedule, which runs every partner.
+          # Empty on the weekly schedule, which runs provisioned sandboxes.
           SELECTION: ${{ inputs.partner_filter }}
         run: |
-          partners="$(python3 scripts/partner_harness.py matrix "${SELECTION:-all}")"
+          partners="$(python3 scripts/partner_harness.py matrix "${SELECTION:-provisioned}")"
           echo "partners=${partners}" >> "$GITHUB_OUTPUT"
+          disclosure="$(python3 scripts/partner_harness.py disclosure "${SELECTION:-provisioned}")"
+          printf '%s\n' "$disclosure"
+          printf '%s\n' "$disclosure" >> "$GITHUB_STEP_SUMMARY"
 
   live:
     name: Live (${{ matrix.partner }})
@@ -212,12 +222,24 @@ jobs:
     timeout-minutes: 5
 
     steps:
+      - name: Checkout repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
       - name: Require every partner job to pass
         env:
           LIVE_RESULT: ${{ needs.live.result }}
+          SELECTION: ${{ inputs.partner_filter }}
         run: |
+          disclosure="$(python3 scripts/partner_harness.py disclosure "${SELECTION:-provisioned}")"
+          printf '%s\n' "$disclosure"
+          printf '%s\n' "$disclosure" >> "$GITHUB_STEP_SUMMARY"
           if [ "$LIVE_RESULT" != "success" ]; then
             echo "At least one partner job did not pass (result: ${LIVE_RESULT})." >&2
+            printf '\n**FAILED: At least one selected partner job did not pass (result: %s).**\n' "$LIVE_RESULT" >> "$GITHUB_STEP_SUMMARY"
             exit 1
           fi
-          echo "Every selected partner's live tests ran and passed."
+          verdict_line="$(python3 scripts/partner_harness.py verdict "${SELECTION:-provisioned}")"
+          printf '%s\n' "$verdict_line"
+          printf '\n**%s**\n' "$verdict_line" >> "$GITHUB_STEP_SUMMARY"
