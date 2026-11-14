@@ -186,21 +186,25 @@ jobs:
           skip-existing: true
 
       - name: Attach cage-client Wheels to GitHub Release
-        uses: softprops/action-gh-release@efb35369e0ad2afab669f228072c1b0d510eae64 # v3
         if: startsWith(github.ref, 'refs/tags/client-v')
-        with:
-          files: |
-            packages/cage-client/dist/*
-          generate_release_notes: true
         env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          RELEASE_TAG: ${{ github.ref_name }}
+        run: |
+          if gh release view "$RELEASE_TAG" >/dev/null 2>&1; then
+            gh release upload "$RELEASE_TAG" packages/cage-client/dist/* --clobber
+          else
+            gh release create "$RELEASE_TAG" packages/cage-client/dist/* --generate-notes
+          fi
 
       - name: Attach cage-conformance Wheels to GitHub Release
-        uses: softprops/action-gh-release@efb35369e0ad2afab669f228072c1b0d510eae64 # v3
         if: startsWith(github.ref, 'refs/tags/conformance-v')
-        with:
-          files: |
-            packages/cage-conformance/dist/*
-          generate_release_notes: true
         env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          RELEASE_TAG: ${{ github.ref_name }}
+        run: |
+          if gh release view "$RELEASE_TAG" >/dev/null 2>&1; then
+            gh release upload "$RELEASE_TAG" packages/cage-conformance/dist/* --clobber
+          else
+            gh release create "$RELEASE_TAG" packages/cage-conformance/dist/* --generate-notes
+          fi

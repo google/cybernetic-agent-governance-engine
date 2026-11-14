@@ -1704,16 +1704,20 @@ def test_publish_client_sdk_tag_version_guard_and_per_tag_scoping(
     assert "client-v" not in pypi_conf_if
     assert "workflow_dispatch" not in pypi_conf_if
 
-    # GitHub Release attachment scoped strictly to matching tag's dist/*
+    # GitHub Release attachment scoped strictly to matching tag's dist/* via gh release
     rel_client = by_name["Attach cage-client Wheels to GitHub Release"]
     assert rel_client["if"] == "startsWith(github.ref, 'refs/tags/client-v')"
-    assert "packages/cage-client/dist/*" in rel_client["with"]["files"]
-    assert "cage-conformance" not in rel_client["with"]["files"]
+    assert "gh release " in rel_client["run"]
+    assert "packages/cage-client/dist/*" in rel_client["run"]
+    assert "cage-conformance" not in rel_client["run"]
+    assert "${{" not in rel_client["run"]
 
     rel_conf = by_name["Attach cage-conformance Wheels to GitHub Release"]
     assert rel_conf["if"] == "startsWith(github.ref, 'refs/tags/conformance-v')"
-    assert "packages/cage-conformance/dist/*" in rel_conf["with"]["files"]
-    assert "cage-client" not in rel_conf["with"]["files"]
+    assert "gh release " in rel_conf["run"]
+    assert "packages/cage-conformance/dist/*" in rel_conf["run"]
+    assert "cage-client" not in rel_conf["run"]
+    assert "${{" not in rel_conf["run"]
 
 
 def test_ci_conformance_oidc_attest_smoke_job_is_enforcing_and_fork_safe() -> None:
