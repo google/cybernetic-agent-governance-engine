@@ -213,16 +213,15 @@ async def test_inference_proxy_rejects_quarantined_workload_via_app_state_redis(
         MagicMock(name="stub_rails"),
         raising=False,
     )
+    import src.gateway.governance.evidence.stream as es_mod
+
     stub_sink = MagicMock(name="stub_evidence_sink")
     stub_sink._running = True
+    stub_sink.is_running = True
+    stub_sink._redis = object()
     stub_sink.ingest_sync = AsyncMock(return_value="1-0")
     stub_sink.ingest = AsyncMock(return_value="1-0")
-    monkeypatch.setattr(
-        gw_srv.inference_app.state,
-        "evidence_sink",
-        stub_sink,
-        raising=False,
-    )
+    monkeypatch.setattr(es_mod, "_evidence_sink", stub_sink)
     async with httpx.AsyncClient(
         transport=httpx.ASGITransport(
             app=gw_srv.root_app, client=("10.112.0.43", 50000)

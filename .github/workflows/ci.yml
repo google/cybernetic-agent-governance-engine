@@ -938,9 +938,10 @@ jobs:
           dup_resp=$($call /tools/execute '{"tool_name":"execute_trade_action","params":{"symbol":"AAPL","amount":250.0,"currency":"USD","confidence":0.99,"transaction_id":"11111111-1111-4111-8111-111111111111","side":"buy"}}')
           dup_refusal_hash=$(python3 -c 'import json, re, sys; a, d = json.loads(sys.argv[1]), json.loads(sys.argv[2]); assert d.get("status") == "SUCCESS" and d.get("output") == a.get("output"), (a, d); h = d["proof_hash"]; assert re.fullmatch(r"[0-9a-f]{64}", h), d; print(h)' "$allow_resp" "$dup_resp")
 
-          # 1c. Direct routing-seal nonce replay (Theorem 5.3 / INV-2: mint EdDSA JWT -> consume #1 passes -> consume #2 on same seal refused by live Redis Lua burn)
+          # 1c. Direct routing-seal nonce replay (Theorem 5.3 / INV-2: mint EdDSA JWT -> consume #1 commits GOVERNANCE_SEAL_CONSUMED -> consume #2 on same seal refused by live Redis Lua burn)
           docker compose exec -T gateway python -c '
-          import asyncio, hashlib
+          import asyncio, hashlib, redis
+          import src.gateway.governance.evidence.stream as es_mod
           from src.gateway.governance.routing_seal import (
               SymbolicGovernorViolation,
               _index_evidence_binding,
@@ -949,19 +950,30 @@ jobs:
               verify_and_consume_seal,
           )
           async def main() -> None:
-              params = {"symbol": "NVDA", "amount": 150.0, "currency": "USD", "confidence": 0.99, "side": "buy"}
-              ev_hash = hashlib.sha256(b"quickstart-live-seal-replay").hexdigest()
-              seal = await generate_seal("execute_trade", params, record_hash=ev_hash)
-              assert len(seal.split(".")) == 3, f"expected v3 EdDSA JWT seal, got {seal!r}"
-              await _index_evidence_binding(seal, ev_hash, 60, None)
-              assert await verify_and_consume_seal(seal, "execute_trade", params) is True
+              probe_key = "cage:evidence:seal_replay_probe"
+              r_db1 = redis.Redis.from_url("redis://redis:6379/1", decode_responses=True)
+              r_db1.delete(probe_key)
+              sink = es_mod.EvidenceStreamSink(stream_key=probe_key)
+              await sink.start()
+              es_mod._evidence_sink = sink
               try:
-                  await verify_and_consume_seal(seal, "execute_trade", params)
-              except SymbolicGovernorViolation as exc:
-                  assert "replay attack detected" in exc.reason and "already consumed" in exc.reason, exc.reason
-                  print(f"✅ Live Redis routing-seal replay refused (nonce={seal_nonce(seal)[:16]}...): {exc.reason}")
-                  return
-              raise AssertionError("Replayed routing seal was accepted instead of refused!")
+                  params = {"symbol": "NVDA", "amount": 150.0, "currency": "USD", "confidence": 0.99, "side": "buy"}
+                  ev_hash = hashlib.sha256(b"quickstart-live-seal-replay").hexdigest()
+                  seal = await generate_seal("execute_trade", params, record_hash=ev_hash)
+                  assert len(seal.split(".")) == 3, f"expected v3 EdDSA JWT seal, got {seal!r}"
+                  await _index_evidence_binding(seal, ev_hash, 60, None)
+                  assert await verify_and_consume_seal(seal, "execute_trade", params) is True
+                  try:
+                      await verify_and_consume_seal(seal, "execute_trade", params)
+                  except SymbolicGovernorViolation as exc:
+                      assert "replay attack detected" in exc.reason and "already consumed" in exc.reason, exc.reason
+                      assert r_db1.xlen(probe_key) == 1, f"expected 1 GOVERNANCE_SEAL_CONSUMED on probe stream, got {r_db1.xlen(probe_key)}"
+                      print(f"✅ Live Redis routing-seal replay refused (nonce={seal_nonce(seal)[:16]}...): {exc.reason}")
+                      return
+                  raise AssertionError("Replayed routing seal was accepted instead of refused!")
+              finally:
+                  await sink.stop()
+                  r_db1.delete(probe_key)
           asyncio.run(main())
           '
 
