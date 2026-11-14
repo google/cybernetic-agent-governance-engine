@@ -30,6 +30,7 @@ from scripts.check_posture_guard_integrity import (
 from scripts.check_posture_guard_integrity import (
     scan_source,
     scan_tree,
+    scan_tree_with_stats,
 )
 
 pytestmark = [pytest.mark.unit, pytest.mark.local]
@@ -44,17 +45,25 @@ _SRC_ROOT = _REPO_ROOT / "src"
 
 
 def test_repo_src_has_zero_posture_guard_violations() -> None:
-    """All files under src/ must pass Rule A and Rule B with zero waivers."""
-    violations = scan_tree(_SRC_ROOT)
+    """All files under src/ must pass Rule A, Rule B, and Rule C with non-vacuous middleware recognition."""
+    violations, file_count, raising_count, broad_count, middleware_count = (
+        scan_tree_with_stats(_SRC_ROOT)
+    )
     assert violations == [], (
         "Posture guard integrity violations detected:\n"
         + "\n".join(f"  {v.format_line_span()}: {v.detail}" for v in violations)
     )
+    assert file_count >= 100
+    assert raising_count >= 10
+    assert broad_count >= 5
+    from scripts.check_posture_guard_integrity import MIN_EXPECTED_MIDDLEWARE_HANDLERS
+
+    assert middleware_count >= MIN_EXPECTED_MIDDLEWARE_HANDLERS
 
 
 def test_cli_main_exits_zero_on_repo() -> None:
     """CLI entrypoint returns exit code 0 with --verbose against src/."""
-    rc = check_posture_main(["--root", str(_SRC_ROOT), "--verbose"])
+    rc = check_posture_main(["--verbose"])
     assert rc == 0
 
 
@@ -591,9 +600,403 @@ def test_zero_recognized_guards_fails_when_minimum_corpus_required(
             "1",
             "--min-broad-guards",
             "1",
+            "--min-middleware-handlers",
+            "1",
         ]
     )
     captured = capsys.readouterr()
     assert rc == 1
     assert "recognized posture-raising targets 0 < minimum expected 1" in captured.out
     assert "recognized broad enforcing guards 0 < minimum expected 1" in captured.out
+    assert "recognized middleware handlers 0 < minimum expected 1" in captured.out
+
+
+# ---------------------------------------------------------------------------
+# 7. Synthetic AST fixtures — Rule B early-return & De Morgan negation
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    ("guard_clause", "expected_kind"),
+    [
+        ('if env != "prod":\n        return', "early-exit guard"),
+        ('if env not in ("prod", "production"):\n        return', "early-exit guard"),
+        ('if not (env == "prod"):\n        return', "early-exit guard"),
+        (
+            "if posture != DeploymentPosture.PRODUCTION:\n        return",
+            "early-exit guard",
+        ),
+        ('if env == "staging":\n        return', "early-exit guard"),
+        ('if env in ("dev", "staging"):\n        return', "early-exit guard"),
+        (
+            'if env == "prod":\n        marker = 1\n    else:\n        return',
+            "early-exit guard",
+        ),
+        ('if env != "prod" and flag:\n        return', "early-exit guard"),
+        ('if env != "prod" or flag:\n        return', "early-exit guard"),
+    ],
+)
+def test_rule_b_flags_early_return_and_negated_posture_narrowing(
+    guard_clause: str,
+    expected_kind: str,
+) -> None:
+    """Preceding non-raising early returns that skip staging narrow downstream guards to prod-only."""
+    code = f"""
+def assert_posture_ready():
+    if is_enforcing():
+        raise RuntimeError("not ready")
+
+def boot(env: str, posture=None, flag: bool = True):
+    {guard_clause}
+    assert_posture_ready()
+"""
+    violations = scan_source(code)
+    assert len(violations) == 1
+    assert "Rule B" in violations[0].rule
+    assert expected_kind in violations[0].detail
+    assert "assert_posture_ready()" in violations[0].target
+    assert violations[0].line_number < violations[0].end_line_number
+
+
+def test_rule_b_flags_loop_continue_and_ternary_narrowing() -> None:
+    """`continue` guard clauses in loops and inline ternary expressions are flagged."""
+    code = """
+def assert_posture_ready():
+    if is_enforcing():
+        raise RuntimeError("not ready")
+
+def boot_loop(envs: list[str]):
+    for env in envs:
+        if env != "prod":
+            continue
+        assert_posture_ready()
+
+def boot_ternary(env: str):
+    return assert_posture_ready() if env == "prod" else None
+"""
+    violations = scan_source(code)
+    assert len(violations) == 2
+    assert all("Rule B" in v.rule for v in violations)
+
+
+def test_rule_b_allows_enforcing_early_returns_and_fail_closed_raises() -> None:
+    """Early returns that retain staging or fail closed via raise are allowed."""
+    code = """
+def assert_posture_ready():
+    if is_enforcing():
+        raise RuntimeError("not ready")
+
+def ok_not_enforcing():
+    if not is_enforcing():
+        return
+    assert_posture_ready()
+
+def ok_permissive_only(env: str):
+    if env in ("dev", "test", "ci"):
+        return
+    assert_posture_ready()
+
+def ok_de_morgan_admits_staging(env: str):
+    if env != "prod" and env != "staging":
+        return
+    assert_posture_ready()
+
+def ok_notin_enforcing_set(env: str):
+    if env not in ("prod", "production", "staging"):
+        return
+    assert_posture_ready()
+
+def ok_disjunction_admits_staging(env: str):
+    if env == "prod" or env == "staging":
+        assert_posture_ready()
+
+def ok_fail_closed_raise(env: str):
+    if env != "prod":
+        raise RuntimeError("prod required")
+    assert_posture_ready()
+"""
+    assert scan_source(code) == []
+
+
+# ---------------------------------------------------------------------------
+# 8. Synthetic AST fixtures — Rule C middleware bound-gated guard fallthrough
+# ---------------------------------------------------------------------------
+
+_MCP_QUARANTINE_MIDDLEWARE_HEADER = """
+import collections
+import json
+
+_MAX_MCP_INSPECT_BYTES = 65536
+
+async def check_and_refuse_quarantined_workload(scope, *, explicit_thread_id=None):
+    return None
+
+class McpQuarantineMiddleware:
+    def __init__(self, inner_app):
+        self.app = inner_app
+
+    @staticmethod
+    async def _send_json(send, status_code: int, payload: dict) -> None:
+        await send({"type": "http.response.start", "status": status_code, "headers": []})
+        await send({"type": "http.response.body", "body": json.dumps(payload).encode()})
+"""
+
+
+def test_rule_c_flags_asgi_middleware_size_cap_fallthrough_to_replay() -> None:
+    """ASGI middleware skipping check_* above _MAX_MCP_INSPECT_BYTES and replaying to self.app is flagged."""
+    code = (
+        _MCP_QUARANTINE_MIDDLEWARE_HEADER
+        + """
+    async def __call__(self, scope, receive, send) -> None:
+        if scope.get("type") != "http":
+            await self.app(scope, receive, send)
+            return
+        buffered = collections.deque()
+        raw_chunks = []
+        total_bytes = 0
+        complete = False
+        while total_bytes <= _MAX_MCP_INSPECT_BYTES:
+            msg = await receive()
+            buffered.append(msg)
+            chunk = msg.get("body", b"")
+            if chunk:
+                raw_chunks.append(chunk)
+                total_bytes += len(chunk)
+            if not msg.get("more_body", False):
+                complete = True
+                break
+
+        if complete and raw_chunks and total_bytes <= _MAX_MCP_INSPECT_BYTES:
+            refusal = await check_and_refuse_quarantined_workload(
+                scope, explicit_thread_id="t-1"
+            )
+            if refusal is not None:
+                await self._send_json(send, refusal[0], refusal[1])
+                return
+
+        async def _replay():
+            return buffered.popleft() if buffered else await receive()
+
+        await self.app(scope, _replay, send)
+"""
+    )
+    violations = scan_source(code)
+    assert len(violations) == 1
+    assert "Rule C" in violations[0].rule
+    assert "check_and_refuse_quarantined_workload()" in violations[0].target
+    assert "threshold condition" in violations[0].detail
+
+
+def test_rule_c_flags_bounded_while_loop_evasion_without_413_rejection() -> None:
+    """Removing `<=` from the `if` while keeping a bounded `while` loop without 413 rejection is still flagged."""
+    code = (
+        _MCP_QUARANTINE_MIDDLEWARE_HEADER
+        + """
+    async def __call__(self, scope, receive, send) -> None:
+        buffered = collections.deque()
+        raw_chunks = []
+        total_bytes = 0
+        complete = False
+        while total_bytes <= _MAX_MCP_INSPECT_BYTES:
+            msg = await receive()
+            buffered.append(msg)
+            chunk = msg.get("body", b"")
+            if chunk:
+                raw_chunks.append(chunk)
+                total_bytes += len(chunk)
+            if not msg.get("more_body", False):
+                complete = True
+                break
+
+        if complete and raw_chunks:
+            refusal = await check_and_refuse_quarantined_workload(
+                scope, explicit_thread_id="t-1"
+            )
+            if refusal is not None:
+                await self._send_json(send, refusal[0], refusal[1])
+                return
+
+        await self.app(scope, receive, send)
+"""
+    )
+    violations = scan_source(code)
+    assert len(violations) == 1
+    assert "Rule C" in violations[0].rule
+    assert "bounded while-loop" in violations[0].detail
+
+
+def test_rule_c_flags_http_middleware_early_dispatch_on_size_threshold() -> None:
+    """BaseHTTPMiddleware.dispatch and @app.middleware bypassing guards via early call_next on size > MAX are flagged."""
+    code = """
+class PayloadGuardMiddleware(BaseHTTPMiddleware):
+    async def dispatch(self, request, call_next):
+        if int(request.headers.get("content-length", "0")) > 65536:
+            return await call_next(request)
+        verify_request_signature(request)
+        return await call_next(request)
+
+@app.middleware("http")
+async def inline_guard_mw(request, call_next):
+    if len(request.scope.get("raw_path", b"")) <= 256:
+        enforce_path_policy(request)
+    return await call_next(request)
+"""
+    violations = scan_source(code)
+    assert len(violations) == 2
+    assert all("Rule C" in v.rule for v in violations)
+    assert {v.target for v in violations} == {
+        "verify_request_signature()",
+        "enforce_path_policy()",
+    }
+
+
+@pytest.mark.parametrize(
+    "remediated_body",
+    [
+        # Variant 1: 413 early return inside unbounded while loop
+        """
+    async def __call__(self, scope, receive, send) -> None:
+        if scope.get("type") != "http":
+            await self.app(scope, receive, send)
+            return
+        buffered = collections.deque()
+        raw_chunks = []
+        total_bytes = 0
+        complete = False
+        while True:
+            msg = await receive()
+            buffered.append(msg)
+            chunk = msg.get("body", b"")
+            if chunk:
+                raw_chunks.append(chunk)
+                total_bytes += len(chunk)
+                if total_bytes > _MAX_MCP_INSPECT_BYTES:
+                    await self._send_json(send, 413, {"error": "payload_too_large"})
+                    return
+            if not msg.get("more_body", False):
+                complete = True
+                break
+
+        if complete and raw_chunks:
+            refusal = await check_and_refuse_quarantined_workload(scope, explicit_thread_id="t-1")
+            if refusal is not None:
+                await self._send_json(send, refusal[0], refusal[1])
+                return
+
+        await self.app(scope, receive, send)
+""",
+        # Variant 2: Post-loop explicit `if total_bytes > _MAX_MCP_INSPECT_BYTES: return 413`
+        """
+    async def __call__(self, scope, receive, send) -> None:
+        raw_chunks = []
+        total_bytes = 0
+        complete = False
+        while total_bytes <= _MAX_MCP_INSPECT_BYTES:
+            msg = await receive()
+            chunk = msg.get("body", b"")
+            if chunk:
+                raw_chunks.append(chunk)
+                total_bytes += len(chunk)
+            if not msg.get("more_body", False):
+                complete = True
+                break
+        if total_bytes > _MAX_MCP_INSPECT_BYTES:
+            await self._send_json(send, 413, {"error": "payload_too_large"})
+            return
+        if complete and raw_chunks and total_bytes <= _MAX_MCP_INSPECT_BYTES:
+            refusal = await check_and_refuse_quarantined_workload(scope, explicit_thread_id="t-1")
+            if refusal is not None:
+                await self._send_json(send, refusal[0], refusal[1])
+                return
+        await self.app(scope, receive, send)
+""",
+        # Variant 3: Else-branch returning 413 on threshold `if`
+        """
+    async def __call__(self, scope, receive, send) -> None:
+        raw_chunks = [b"{}"]
+        total_bytes = 2
+        if total_bytes <= _MAX_MCP_INSPECT_BYTES:
+            refusal = await check_and_refuse_quarantined_workload(scope, explicit_thread_id="t-1")
+            if refusal is not None:
+                await self._send_json(send, refusal[0], refusal[1])
+                return
+        else:
+            await self._send_json(send, 413, {"error": "payload_too_large"})
+            return
+        await self.app(scope, receive, send)
+""",
+    ],
+)
+def test_rule_c_allows_fail_closed_413_remediations(remediated_body: str) -> None:
+    """Failing closed with 413 (without calling self.app) when exceeding _MAX_MCP_INSPECT_BYTES passes Rule C."""
+    assert scan_source(_MCP_QUARANTINE_MIDDLEWARE_HEADER + remediated_body) == []
+
+
+def test_rule_c_inventory_cross_check_catches_unrecognized_new_middleware_above_floor() -> (
+    None
+):
+    """Even when >= 2 valid middlewares satisfy the numeric floor, adding an unrecognized *Middleware,
+    add_middleware(...) target, or @app.middleware(...) function fails closed."""
+    code = """
+class ValidOneMiddleware:
+    def __init__(self, app):
+        self.app = app
+    async def __call__(self, scope, receive, send):
+        await self.app(scope, receive, send)
+
+class ValidTwoGuard(BaseHTTPMiddleware):
+    async def dispatch(self, request, call_next):
+        return await call_next(request)
+
+class VarargsAuditMiddleware:
+    def __init__(self, app):
+        self.app = app
+    async def __call__(self, *args):
+        await self.app(*args)
+
+class OpaqueIngressFilter:
+    def __init__(self, app):
+        self.app = app
+    async def __call__(self, s, r, snd):
+        await self.app(s, r, snd)
+
+app.add_middleware(OpaqueIngressFilter)
+
+@app.middleware("http")
+async def varargs_http_mw(*args):
+    return None
+"""
+    violations = scan_source(code)
+    assert len(violations) == 3
+    assert all(
+        v.rule == "Rule C (unrecognized middleware registration)" for v in violations
+    )
+    assert {v.target for v in violations} == {
+        "VarargsAuditMiddleware",
+        "add_middleware(OpaqueIngressFilter)",
+        "varargs_http_mw()",
+    }
+
+
+def test_rule_c_inventory_cross_check_allows_third_party_and_aliased_in_tree_middleware(
+    tmp_path: Path,
+) -> None:
+    """Third-party CORSMiddleware imports and valid cross-module aliased in-tree middlewares pass."""
+    pkg = tmp_path / "pkg"
+    pkg.mkdir()
+    (pkg / "mw.py").write_text(
+        "class WorkloadIdentityMiddleware:\n"
+        "    def __init__(self, app):\n"
+        "        self.app = app\n"
+        "    async def __call__(self, scope, receive, send):\n"
+        "        await self.app(scope, receive, send)\n",
+        encoding="utf-8",
+    )
+    (pkg / "server.py").write_text(
+        "from fastapi.middleware.cors import CORSMiddleware\n"
+        "from pkg.mw import WorkloadIdentityMiddleware as WIM\n"
+        "app.add_middleware(CORSMiddleware, allow_origins=[])\n"
+        "app.add_middleware(WIM)\n",
+        encoding="utf-8",
+    )
+    assert scan_tree(tmp_path) == []
