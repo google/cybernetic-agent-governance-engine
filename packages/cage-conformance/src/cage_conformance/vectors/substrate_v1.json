@@ -28,6 +28,23 @@
       "list_keys": [
         "keys"
       ]
+    },
+    {
+      "id": "SUBSTRATE-WELL-KNOWN-JWKS",
+      "title": "GET /governance/.well-known/jwks.json returns a JSON Web Key Set matching /governance/jwks",
+      "method": "GET",
+      "path": "/governance/.well-known/jwks.json",
+      "expected_status": 200,
+      "required_keys": [
+        "keys"
+      ],
+      "list_keys": [
+        "keys"
+      ],
+      "matches_check": "SUBSTRATE-JWKS",
+      "match_keys": [
+        "keys"
+      ]
     }
   ]
 }

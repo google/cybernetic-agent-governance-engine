@@ -1614,7 +1614,11 @@ async def test_advisor_proxy_e2e_all_five_invariants_and_negative_controls(
             bridge_health_resp.content,
         )
     }
-    for path in ("/governance/policy-version", "/governance/jwks"):
+    for path in (
+        "/governance/policy-version",
+        "/governance/jwks",
+        "/governance/.well-known/jwks.json",
+    ):
         r = await e2e_stack.gateway_http.get(path)
         assert r.status_code == 200, (path, r.text)
         sync_routes[path] = (r.status_code, dict(r.headers), r.content)

@@ -71,13 +71,15 @@ cage-conformance verify --endpoint https://gateway.example.test \
 ```
 
 `substrate-v1` checks `GET /governance/policy-version` (`active_hash` and
-`thresholds_digest` as 64-character lowercase SHA-256 hex digests) and
-`GET /governance/jwks` (`keys` array). `provider-01-v0.2` runs the Phase 3
-normative wire vectors (`CASE-1A`..`1F`), hostile response schema vectors
-(`CASE-1G-*`), and consequence bindings (`CASE-2A`, `2B`). Pass endpoint
-credentials via `--api-key-file` / `$CAGE_CONFORMANCE_API_KEY` or
-`--gcp-id-token-file` / `$CAGE_CONFORMANCE_GCP_ID_TOKEN`, never on the command
-line.
+`thresholds_digest` as 64-character lowercase SHA-256 hex digests),
+`GET /governance/jwks` (`keys` array), and `GET /governance/.well-known/jwks.json`
+(`keys` array matching `/governance/jwks`). `provider-01-v0.2` runs 6 live
+black-box HTTP wire assertions (`CASE-1A`..`CASE-1F`) against `POST /cage/validate`
+over the 37-field `CageAuthorityDetermineRequest` contract using Cloud Run DRS
+dual-header authentication (`X-Serverless-Authorization: Bearer <gcp_id_token>`
+and `Authorization: Bearer <api_key>`). Pass endpoint credentials via
+`--api-key-file` / `$CAGE_CONFORMANCE_API_KEY` and `--gcp-id-token-file` /
+`$CAGE_CONFORMANCE_GCP_ID_TOKEN`, never on the command line.
 
 ## Check a report
 

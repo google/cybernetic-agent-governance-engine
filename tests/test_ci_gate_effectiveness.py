@@ -1606,3 +1606,161 @@ def test_setup_git_hooks_precommit_matches_ci_deterministic_gates() -> None:
 
 
 # Regression coverage binding: POAM-2026-150, POAM-2026-160
+
+
+def test_publish_client_sdk_tag_version_guard_and_per_tag_scoping(
+    tmp_path: Path,
+) -> None:
+    """`publish-client-sdk.yml` must verify tag==pyproject.version fail-closed and scope GHCR, PyPI, and Release assets by trigger."""
+    pub_yaml = yaml.safe_load(
+        (WORKFLOWS_DIR / "publish-client-sdk.yml").read_text(encoding="utf-8")
+    )
+    steps = pub_yaml["jobs"]["build-and-publish"]["steps"]
+    by_name = {
+        step["name"]: step
+        for step in steps
+        if isinstance(step, dict) and "name" in step
+    }
+
+    guard_step = by_name["Verify release tag matches package version"]
+    assert guard_step["env"] == {
+        "EVENT_NAME": "${{ github.event_name }}",
+        "GIT_REF": "${{ github.ref }}",
+    }
+    guard_script = _extract_heredoc_python(guard_step["run"])
+
+    def _run_guard(
+        git_ref: str, event_name: str = "push", cwd: Path = REPO_ROOT
+    ) -> subprocess.CompletedProcess[str]:
+        return subprocess.run(
+            [sys.executable, "-c", guard_script],
+            cwd=cwd,
+            env={**os.environ, "GIT_REF": git_ref, "EVENT_NAME": event_name},
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+
+    client_ver = tomllib.loads(
+        (REPO_ROOT / "packages" / "cage-client" / "pyproject.toml").read_text(
+            encoding="utf-8"
+        )
+    )["project"]["version"]
+    conf_ver = tomllib.loads(
+        (REPO_ROOT / "packages" / "cage-conformance" / "pyproject.toml").read_text(
+            encoding="utf-8"
+        )
+    )["project"]["version"]
+
+    # Matching tags and workflow_dispatch succeed
+    assert _run_guard(f"refs/tags/client-v{client_ver}").returncode == 0
+    assert _run_guard(f"refs/tags/conformance-v{conf_ver}").returncode == 0
+    assert _run_guard("refs/heads/main", event_name="workflow_dispatch").returncode == 0
+
+    # Planted tag-version mismatches, empty suffixes, and unexpected refs fail closed
+    for bad_ref, bad_event in (
+        ("refs/tags/client-v9.9.9", "push"),
+        ("refs/tags/conformance-v0.4.0", "push"),
+        ("refs/tags/client-v", "push"),
+        ("refs/tags/conformance-v", "push"),
+        ("refs/tags/v4.1.0", "push"),
+        ("refs/heads/main", "push"),
+    ):
+        proc = _run_guard(bad_ref, event_name=bad_event)
+        assert proc.returncode == 1, (
+            f"Expected tag guard failure for ref={bad_ref!r} event={bad_event!r}, "
+            f"got {proc.returncode}: {proc.stdout} {proc.stderr}"
+        )
+
+    # GHCR push steps scoped per package + workflow_dispatch
+    ghcr_client_if = str(
+        by_name["Publish CAGE Client SDK to GitHub Packages (GHCR)"]["if"]
+    )
+    assert "workflow_dispatch" in ghcr_client_if
+    assert "refs/tags/client-v" in ghcr_client_if
+    assert "refs/tags/conformance-v" not in ghcr_client_if
+
+    build_conf_run = str(
+        by_name["Build CAGE Conformance Verifier Wheel & Sdist"]["run"]
+    )
+    assert 'dist/cage_conformance-"${CONF_VERSION}".tar.gz' in build_conf_run
+    assert "verify" in build_conf_run
+    assert "${{" not in build_conf_run
+
+    ghcr_conf = by_name["Publish CAGE Conformance Verifier to GitHub Packages (GHCR)"]
+    ghcr_conf_if = str(ghcr_conf["if"])
+    assert "workflow_dispatch" in ghcr_conf_if
+    assert "refs/tags/conformance-v" in ghcr_conf_if
+    assert "refs/tags/client-v" not in ghcr_conf_if
+    ghcr_conf_run = str(ghcr_conf["run"])
+    assert "FROM python:3.12-slim" in ghcr_conf_run
+    assert 'ENTRYPOINT ["cage-conformance"]' in ghcr_conf_run
+    assert "FROM scratch" not in ghcr_conf_run
+    assert "${{" not in ghcr_conf_run
+    assert ghcr_conf_run.index("docker run --rm") < ghcr_conf_run.index("docker push")
+
+    # PyPI publish steps scoped strictly to their own release tag (never cross-published or dispatched)
+    pypi_client_if = str(
+        by_name["Publish cage-client to PyPI (OIDC Trusted Publishing)"]["if"]
+    )
+    assert "vars.PYPI_TRUSTED_PUBLISHING_ENABLED == 'true'" in pypi_client_if
+    assert "startsWith(github.ref, 'refs/tags/client-v')" in pypi_client_if
+    assert "conformance-v" not in pypi_client_if
+    assert "workflow_dispatch" not in pypi_client_if
+
+    pypi_conf_if = str(
+        by_name["Publish cage-conformance to PyPI (OIDC Trusted Publishing)"]["if"]
+    )
+    assert "vars.PYPI_TRUSTED_PUBLISHING_ENABLED == 'true'" in pypi_conf_if
+    assert "startsWith(github.ref, 'refs/tags/conformance-v')" in pypi_conf_if
+    assert "client-v" not in pypi_conf_if
+    assert "workflow_dispatch" not in pypi_conf_if
+
+    # GitHub Release attachment scoped strictly to matching tag's dist/* via gh release
+    rel_client = by_name["Attach cage-client Wheels to GitHub Release"]
+    assert rel_client["if"] == "startsWith(github.ref, 'refs/tags/client-v')"
+    assert "gh release " in rel_client["run"]
+    assert "packages/cage-client/dist/*" in rel_client["run"]
+    assert "cage-conformance" not in rel_client["run"]
+    assert "${{" not in rel_client["run"]
+
+    rel_conf = by_name["Attach cage-conformance Wheels to GitHub Release"]
+    assert rel_conf["if"] == "startsWith(github.ref, 'refs/tags/conformance-v')"
+    assert "gh release " in rel_conf["run"]
+    assert "packages/cage-conformance/dist/*" in rel_conf["run"]
+    assert "cage-client" not in rel_conf["run"]
+    assert "${{" not in rel_conf["run"]
+
+
+def test_ci_conformance_oidc_attest_smoke_job_is_enforcing_and_fork_safe() -> None:
+    """`ci.yml:conformance-oidc-smoke` must mint a real GitHub OIDC token, attest, verify AUTHOR_SELF_TEST posture, and skip fork PRs cleanly."""
+    ci_yaml = yaml.safe_load((WORKFLOWS_DIR / "ci.yml").read_text(encoding="utf-8"))
+    job = ci_yaml["jobs"]["conformance-oidc-smoke"]
+    assert job["permissions"] == {"contents": "read", "id-token": "write"}
+    job_if = str(job["if"])
+    assert "github.event_name != 'pull_request'" in job_if
+    assert (
+        "github.event.pull_request.head.repo.full_name == github.repository" in job_if
+    )
+
+    steps = job["steps"]
+    assert steps[0]["with"]["persist-credentials"] is False
+    for step in steps:
+        if "run" in step:
+            assert "${{" not in step["run"], (
+                f"Template interpolation forbidden in run block: {step['name']!r}"
+            )
+
+    smoke_run = steps[-1]["run"]
+    for required_fragment in (
+        "cage-conformance verify",
+        "packages/cage-conformance/src/cage_conformance/vectors/trace_v1.json",
+        "cage-conformance audience",
+        "ACTIONS_ID_TOKEN_REQUEST_URL",
+        "cage-conformance attest",
+        "cage-conformance verify-report",
+        "posture=AUTHOR_SELF_TEST",
+    ):
+        assert required_fragment in smoke_run, (
+            f"conformance-oidc-smoke missing {required_fragment!r}"
+        )

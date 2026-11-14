@@ -25,17 +25,19 @@ that checked nothing is not conformant.
 from __future__ import annotations
 
 import copy
+import io
 import json
 import re
 import urllib.error
 import urllib.parse
 import urllib.request
+import uuid
 from collections.abc import Callable, Iterable, Iterator, Mapping, Sequence
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from types import MappingProxyType
-from typing import Any, Optional, TextIO
+from typing import Any, TextIO
 
 from .report import (
     ENDPOINT_PROFILES,
@@ -92,6 +94,11 @@ _PROFILE_VECTOR_FILES: Mapping[str, str] = MappingProxyType(
     }
 )
 _SHA256_LOWER_RE = re.compile(r"^[0-9a-f]{64}$")
+_PROVIDER_01_OFFSET_FIELDS: tuple[tuple[str, str], ...] = (
+    ("mandate_valid_until_offset_seconds", "mandate_valid_until"),
+    ("screening_captured_at_offset_seconds", "screening_captured_at"),
+    ("requested_execution_time_offset_seconds", "requested_execution_time"),
+)
 
 
 @dataclass(frozen=True)
@@ -162,12 +169,24 @@ def _json_lines(stream: TextIO, source: str) -> Iterator[Any]:
 
 
 def iter_trace_events(stream: TextIO, source: str) -> Iterator[dict[str, Any]]:
-    """``GOVERNANCE_TRACE`` events from JSONL, bare or wrapped in an ``event`` field.
+    """``GOVERNANCE_TRACE`` events from JSONL or a ``trace-v1`` vector bundle.
 
     Lines of any other type are skipped, as ``scripts/check_trace_conformance.py``
     does. Events must be in emission order for the seal-join rules.
     """
-    for record in _json_lines(stream, source):
+    raw = stream.read()
+    stripped = raw.lstrip()
+    if stripped.startswith("{") and "\n" in stripped:
+        try:
+            doc = json.loads(raw)
+        except json.JSONDecodeError:
+            doc = None
+        if isinstance(doc, dict) and isinstance(doc.get("conformant_trace"), list):
+            for item in doc["conformant_trace"]:
+                if isinstance(item, dict) and item.get("type") == TRACE_EVENT_TYPE:
+                    yield item
+            return
+    for record in _json_lines(io.StringIO(raw), source):
         if not isinstance(record, dict):
             continue
         if record.get("type") == TRACE_EVENT_TYPE:
@@ -279,41 +298,6 @@ def _load_profile_vectors(profile: str) -> tuple[InputDigest, dict[str, Any]]:
     return InputDigest.of_bytes(filename, raw), json.loads(raw.decode("utf-8"))
 
 
-def _validate_strict_response_schema(
-    body: Mapping[str, Any], *, max_clock_skew_seconds: int = 300
-) -> str | None:
-    """Validate a provider_01 v0.2 receipt against strict hash and timestamp rules."""
-    for field_name in ("policy_pack_hash", "Canonical_payload_hash"):
-        val = body.get(field_name)
-        if not isinstance(val, str) or not _SHA256_LOWER_RE.match(val):
-            return "INVALID_SHA256_HEX"
-
-    evaluated_at = body.get("evaluated_at")
-    if not isinstance(evaluated_at, str):
-        return "MISSING_EVALUATED_AT"
-    try:
-        eval_dt = datetime.fromisoformat(evaluated_at.replace("Z", "+00:00"))
-    except ValueError:
-        return "INVALID_TIMESTAMP_FORMAT"
-
-    now_utc = datetime.now(timezone.utc)
-    if eval_dt > now_utc + timedelta(seconds=max_clock_skew_seconds):
-        return "FUTURE_TIMESTAMP_SKEW"
-    return None
-
-
-def _bind_consequence(verdict: str, *, signature_valid: bool = True) -> str:
-    """Bind a normative verdict and signature status to the gateway enforcement action."""
-    if not signature_valid:
-        return "FAIL_CLOSED_ABORT"
-    mapping = {
-        "ALLOW": "EXECUTE",
-        "ESCALATE": "HOLD_FOR_APPROVAL",
-        "DENY": "ABORT",
-    }
-    return mapping.get(verdict, "FAIL_CLOSED_ABORT")
-
-
 def _run_substrate_v1(
     base_url: str,
     headers: Mapping[str, str],
@@ -323,6 +307,7 @@ def _run_substrate_v1(
 ) -> tuple[int, tuple[AssertionResult, ...]]:
     checks = vectors.get("checks", [])
     assertions: list[AssertionResult] = []
+    passed_payloads: dict[str, Mapping[str, Any]] = {}
     root = base_url.rstrip("/")
 
     for check in checks:
@@ -395,6 +380,20 @@ def _run_substrate_v1(
             value = payload.get(key)
             if not isinstance(value, list):
                 failures.append(f"key {key!r} must be a JSON array")
+        matches_check = check.get("matches_check")
+        if isinstance(matches_check, str) and matches_check:
+            ref_payload = passed_payloads.get(matches_check)
+            if ref_payload is None:
+                failures.append(
+                    f"cannot compare against {matches_check}: reference check did not pass"
+                )
+            else:
+                for key in check.get("match_keys", []):
+                    if payload.get(key) != ref_payload.get(key):
+                        failures.append(f"key {key!r} does not match {matches_check}")
+
+        if not failures:
+            passed_payloads[cid] = payload
 
         assertions.append(
             AssertionResult(
@@ -410,6 +409,125 @@ def _run_substrate_v1(
     return len(checks), tuple(assertions)
 
 
+def _iso_utc(dt: datetime) -> str:
+    return (
+        dt.astimezone(timezone.utc).isoformat(timespec="seconds").replace("+00:00", "Z")
+    )
+
+
+def _extract_provider_01_receipt_id(body: Mapping[str, Any]) -> str:
+    raw_receipt = body.get("authority_receipt")
+    if isinstance(raw_receipt, Mapping):
+        nested_id = raw_receipt.get("id")
+        if isinstance(nested_id, str) and nested_id.strip():
+            return nested_id.strip()
+    top_level = body.get("authority_receipt_id")
+    if isinstance(top_level, str) and top_level.strip():
+        return top_level.strip()
+    return ""
+
+
+def _extract_provider_01_record_id(body: Mapping[str, Any]) -> str:
+    raw = body.get("authority_record_id")
+    return raw.strip() if isinstance(raw, str) else ""
+
+
+def _build_provider_01_request_body(
+    base_template: Mapping[str, Any],
+    default_offsets: Mapping[str, Any],
+    vec: Mapping[str, Any],
+    *,
+    now_utc: datetime,
+    run_suffix: str,
+) -> dict[str, Any]:
+    if "request_body" in vec:
+        raw_body = vec["request_body"]
+        if not isinstance(raw_body, Mapping):
+            raise ReportError("wire vector request_body must be a JSON object")
+        return copy.deepcopy(dict(raw_body))
+
+    vid_slug = str(vec["id"]).lower().replace("_", "-")
+    req_body = copy.deepcopy(dict(base_template))
+    raw_overrides = vec.get("request_overrides", {})
+    overrides = dict(raw_overrides) if isinstance(raw_overrides, Mapping) else {}
+    offsets = dict(default_offsets)
+
+    for offset_key, target_field in _PROVIDER_01_OFFSET_FIELDS:
+        if offset_key in overrides:
+            offsets[offset_key] = int(overrides.pop(offset_key))
+        elif target_field in overrides:
+            offsets.pop(offset_key, None)
+
+    execution_pinned = "execution_id" in overrides
+    scenario_pinned = "scenario_id" in overrides
+    evidence_pinned = "evidence_references" in overrides
+
+    req_body.update(overrides)
+
+    for offset_key, target_field in _PROVIDER_01_OFFSET_FIELDS:
+        if offset_key in offsets:
+            delta = timedelta(seconds=int(offsets[offset_key]))
+            req_body[target_field] = _iso_utc(now_utc + delta)
+
+    if not execution_pinned and isinstance(req_body.get("execution_id"), str):
+        req_body["execution_id"] = f"{req_body['execution_id']}-{vid_slug}-{run_suffix}"
+    if not scenario_pinned and isinstance(req_body.get("scenario_id"), str):
+        req_body["scenario_id"] = f"{req_body['scenario_id']}-{vid_slug}-{run_suffix}"
+    if not evidence_pinned and isinstance(req_body.get("execution_id"), str):
+        req_body["evidence_references"] = [
+            {
+                "type": "governance_decision",
+                "uri": f"cer://{req_body['execution_id']}",
+            }
+        ]
+
+    return req_body
+
+
+def _evaluate_provider_01_response(
+    vec: Mapping[str, Any],
+    resp: HttpResponse,
+    body: Any,
+) -> tuple[bool, str]:
+    expected_status = int(vec["expected_status"])
+    if expected_status != 200:
+        has_decision = isinstance(body, Mapping) and "decision" in body
+        passed = (
+            resp.status_code == expected_status
+            and isinstance(body, Mapping)
+            and not has_decision
+        )
+        detail = (
+            f"status={resp.status_code} expected_status={expected_status} "
+            f"has_decision={has_decision}"
+        )
+        return passed, detail
+
+    if not isinstance(body, Mapping):
+        return False, f"status={resp.status_code} non_object_body"
+
+    expected_decision = vec.get("expected_decision")
+    decision = body.get("decision")
+    record_id = _extract_provider_01_record_id(body)
+    receipt_id = _extract_provider_01_receipt_id(body)
+    requires_record = bool(vec.get("requires_authority_record_id", False))
+    requires_receipt = bool(vec.get("requires_authority_receipt", False))
+
+    passed = (
+        resp.status_code == 200
+        and isinstance(decision, str)
+        and decision == expected_decision
+        and (not requires_record or bool(record_id))
+        and (not requires_receipt or bool(receipt_id))
+    )
+    detail = (
+        f"status={resp.status_code} decision={decision!r} "
+        f"authority_record_id={record_id or None!r} "
+        f"receipt_id={receipt_id or None!r}"
+    )
+    return passed, detail
+
+
 def _run_provider_01_v02(
     base_url: str,
     headers: Mapping[str, str],
@@ -418,35 +536,52 @@ def _run_provider_01_v02(
     timeout_s: float,
 ) -> tuple[int, tuple[AssertionResult, ...]]:
     base_template = dict(vectors["base_request_template"])
+    raw_offsets = vectors.get("default_offsets", {})
+    default_offsets = dict(raw_offsets) if isinstance(raw_offsets, Mapping) else {}
+    raw_path = str(vectors.get("default_validate_path", "/cage/validate")).strip()
+    validate_path = raw_path if raw_path.startswith("/") else f"/{raw_path}"
     trimmed = base_url.rstrip("/")
-    evaluate_url = (
-        trimmed if trimmed.endswith("/v1/evaluate") else f"{trimmed}/v1/evaluate"
+    validate_url = (
+        trimmed if trimmed.endswith(validate_path) else f"{trimmed}{validate_path}"
     )
     post_headers = {**headers, "Content-Type": "application/json"}
+
+    now_utc = datetime.now(timezone.utc)
+    run_suffix = uuid.uuid4().hex[:12]
+    sent_requests: dict[str, bytes] = {}
+    passed_bodies: dict[str, Mapping[str, Any]] = {}
     assertions: list[AssertionResult] = []
 
     for vec in vectors.get("wire_vectors", []):
         vid = str(vec["id"])
         title = str(vec["title"])
-        req_body = copy.deepcopy(base_template)
-        overrides = vec.get("request_overrides", {})
-        for key, value in overrides.items():
-            if (
-                key == "payload"
-                and isinstance(value, Mapping)
-                and isinstance(req_body.get("payload"), Mapping)
-            ):
-                merged_payload = dict(req_body["payload"])
-                merged_payload.update(value)
-                req_body["payload"] = merged_payload
-            else:
-                req_body[key] = value
+        replay_of = vec.get("replay_of")
 
-        raw_req = json.dumps(req_body, sort_keys=True).encode("utf-8")
-        case1a_passed_body: Mapping[str, Any] | None = None
+        if isinstance(replay_of, str) and replay_of:
+            if replay_of not in passed_bodies or replay_of not in sent_requests:
+                assertions.append(
+                    AssertionResult(
+                        assertion_id=vid,
+                        title=title,
+                        passed=False,
+                        detail=f"skipped: {replay_of} did not return a valid ALLOW receipt",
+                    )
+                )
+                continue
+            raw_req = sent_requests[replay_of]
+        else:
+            req_body = _build_provider_01_request_body(
+                base_template,
+                default_offsets,
+                vec,
+                now_utc=now_utc,
+                run_suffix=run_suffix,
+            )
+            raw_req = json.dumps(req_body, sort_keys=True).encode("utf-8")
+            sent_requests[vid] = raw_req
 
         try:
-            resp = requester("POST", evaluate_url, post_headers, raw_req, timeout_s)
+            resp = requester("POST", validate_url, post_headers, raw_req, timeout_s)
             body = resp.json()
         except Exception as exc:
             assertions.append(
@@ -457,151 +592,30 @@ def _run_provider_01_v02(
                     detail=f"request error: {exc}",
                 )
             )
-            if vid == "CASE-1A":
-                assertions.append(
-                    AssertionResult(
-                        assertion_id="CASE-1B",
-                        title="Deterministic receipt on identical request_id replay",
-                        passed=False,
-                        detail="skipped: CASE-1A did not return a valid ALLOW receipt",
-                    )
-                )
             continue
 
-        expected_status = int(vec["expected_status"])
-        if expected_status == 200:
-            schema_err = (
-                _validate_strict_response_schema(body)
+        passed, detail = _evaluate_provider_01_response(vec, resp, body)
+        if passed and isinstance(body, Mapping):
+            passed_bodies[vid] = body
+        if isinstance(replay_of, str) and replay_of in passed_bodies:
+            first_receipt = _extract_provider_01_receipt_id(passed_bodies[replay_of])
+            replay_receipt = (
+                _extract_provider_01_receipt_id(body)
                 if isinstance(body, Mapping)
-                else "NON_OBJECT_BODY"
-            )
-            sig_obj = body.get("signature") if isinstance(body, Mapping) else None
-            has_sig = isinstance(sig_obj, Mapping) and bool(sig_obj.get("sig"))
-            verdict = body.get("verdict") if isinstance(body, Mapping) else None
-            reason_code = body.get("reason_code") if isinstance(body, Mapping) else None
-            passed = (
-                resp.status_code == 200
-                and verdict == vec.get("expected_verdict")
-                and reason_code == vec.get("expected_reason_code")
-                and schema_err is None
-                and (not vec.get("requires_receipt_signature", True) or has_sig)
+                else ""
             )
             detail = (
-                f"status={resp.status_code} verdict={verdict} "
-                f"reason_code={reason_code} schema_error={schema_err}"
+                f"{detail} first_receipt_id={first_receipt or None!r} "
+                f"replay_receipt_id={replay_receipt or None!r}"
             )
-            assertions.append(
-                AssertionResult(
-                    assertion_id=vid,
-                    title=title,
-                    passed=passed,
-                    detail=detail,
-                )
-            )
-            if vid == "CASE-1A" and passed and isinstance(body, Mapping):
-                case1a_passed_body = body
-        else:
-            error_obj = body.get("error") if isinstance(body, Mapping) else None
-            err_code = (
-                error_obj.get("code")
-                if isinstance(error_obj, Mapping)
-                else (body.get("code") if isinstance(body, Mapping) else None)
-            )
-            passed = resp.status_code == expected_status and err_code == vec.get(
-                "expected_error_code"
-            )
-            assertions.append(
-                AssertionResult(
-                    assertion_id=vid,
-                    title=title,
-                    passed=passed,
-                    detail=f"status={resp.status_code} error_code={err_code}",
-                )
-            )
-
-        if vid == "CASE-1A":
-            if case1a_passed_body is None:
-                assertions.append(
-                    AssertionResult(
-                        assertion_id="CASE-1B",
-                        title="Deterministic receipt on identical request_id replay",
-                        passed=False,
-                        detail="skipped: CASE-1A did not return a valid ALLOW receipt",
-                    )
-                )
-            else:
-                try:
-                    replay_resp = requester(
-                        "POST", evaluate_url, post_headers, raw_req, timeout_s
-                    )
-                    replay_body = replay_resp.json()
-                    replay_ok = (
-                        replay_resp.status_code == 200
-                        and isinstance(replay_body, Mapping)
-                        and replay_body.get("verdict") == "ALLOW"
-                        and replay_body.get("receipt_id")
-                        == case1a_passed_body.get("receipt_id")
-                        and replay_body.get("Canonical_payload_hash")
-                        == case1a_passed_body.get("Canonical_payload_hash")
-                    )
-                    replay_detail = (
-                        f"first_receipt_id={case1a_passed_body.get('receipt_id')} "
-                        f"replay_receipt_id="
-                        f"{replay_body.get('receipt_id') if isinstance(replay_body, Mapping) else None}"
-                    )
-                except Exception as exc:
-                    replay_ok = False
-                    replay_detail = f"replay error: {exc}"
-                assertions.append(
-                    AssertionResult(
-                        assertion_id="CASE-1B",
-                        title="Deterministic receipt on identical request_id replay",
-                        passed=replay_ok,
-                        detail=replay_detail,
-                    )
-                )
-
-    for hvec in vectors.get("hostile_response_vectors", []):
-        hid = str(hvec["id"])
-        htitle = str(hvec["title"])
-        detected = _validate_strict_response_schema(hvec["response"])
-        expected_err = str(hvec["expected_error_code"])
         assertions.append(
             AssertionResult(
-                assertion_id=hid,
-                title=htitle,
-                passed=detected == expected_err,
-                detail=f"detected_error={detected} expected_error={expected_err}",
+                assertion_id=vid,
+                title=title,
+                passed=passed,
+                detail=detail,
             )
         )
-
-    for cvec in vectors.get("consequence_vectors", []):
-        cid = str(cvec["id"])
-        ctitle = str(cvec["title"])
-        if "verdicts" in cvec:
-            actual_actions = [_bind_consequence(str(v)) for v in cvec["verdicts"]]
-            expected_actions = list(cvec["expected_actions"])
-            assertions.append(
-                AssertionResult(
-                    assertion_id=cid,
-                    title=ctitle,
-                    passed=actual_actions == expected_actions,
-                    detail=f"actions={actual_actions}",
-                )
-            )
-        else:
-            action = _bind_consequence(
-                str(cvec["verdict"]),
-                signature_valid=bool(cvec.get("signature_valid", True)),
-            )
-            assertions.append(
-                AssertionResult(
-                    assertion_id=cid,
-                    title=ctitle,
-                    passed=action == cvec["expected_action"],
-                    detail=f"action={action}",
-                )
-            )
 
     return len(assertions), tuple(assertions)
 
@@ -621,10 +635,16 @@ def verify_endpoint(
     input_digest, vectors = _load_profile_vectors(profile)
 
     headers: dict[str, str] = {"Accept": "application/json"}
-    if gcp_id_token:
-        headers["Authorization"] = f"Bearer {gcp_id_token}"
-    if api_key:
-        headers["X-API-Key"] = api_key
+    if profile == "provider-01-v0.2":
+        if gcp_id_token:
+            headers["X-Serverless-Authorization"] = f"Bearer {gcp_id_token}"
+        if api_key:
+            headers["Authorization"] = f"Bearer {api_key}"
+    else:
+        if gcp_id_token:
+            headers["Authorization"] = f"Bearer {gcp_id_token}"
+        if api_key:
+            headers["X-API-Key"] = api_key
 
     if profile == "substrate-v1":
         checked, assertions = _run_substrate_v1(

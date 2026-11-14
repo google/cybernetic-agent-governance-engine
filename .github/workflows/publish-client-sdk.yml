@@ -46,6 +46,64 @@ jobs:
         with:
           python-version: "3.12"
 
+      - name: Verify release tag matches package version
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          GIT_REF: ${{ github.ref }}
+        run: |
+          python3 - <<'EOF'
+          import os
+          import pathlib
+          import sys
+          import tomllib
+
+          event_name = os.environ.get("EVENT_NAME", "")
+          git_ref = os.environ.get("GIT_REF", "")
+
+          def read_version(pyproject_rel: str) -> str:
+              data = tomllib.loads(pathlib.Path(pyproject_rel).read_text(encoding="utf-8"))
+              return str(data["project"]["version"]).strip()
+
+          if git_ref.startswith("refs/tags/client-v"):
+              tag_version = git_ref.removeprefix("refs/tags/client-v")
+              pkg_version = read_version("packages/cage-client/pyproject.toml")
+              if not tag_version or tag_version != pkg_version:
+                  print(
+                      f"::error::Tag {git_ref!r} version {tag_version!r} does not match "
+                      f"packages/cage-client/pyproject.toml version {pkg_version!r}",
+                      file=sys.stderr,
+                  )
+                  sys.exit(1)
+              print(f"Verified cage-client tag {git_ref} == {pkg_version}")
+          elif git_ref.startswith("refs/tags/conformance-v"):
+              tag_version = git_ref.removeprefix("refs/tags/conformance-v")
+              pkg_version = read_version("packages/cage-conformance/pyproject.toml")
+              if not tag_version or tag_version != pkg_version:
+                  print(
+                      f"::error::Tag {git_ref!r} version {tag_version!r} does not match "
+                      f"packages/cage-conformance/pyproject.toml version {pkg_version!r}",
+                      file=sys.stderr,
+                  )
+                  sys.exit(1)
+              print(f"Verified cage-conformance tag {git_ref} == {pkg_version}")
+          elif event_name == "workflow_dispatch":
+              client_ver = read_version("packages/cage-client/pyproject.toml")
+              conf_ver = read_version("packages/cage-conformance/pyproject.toml")
+              if not client_ver or not conf_ver:
+                  print("::error::Empty package version in pyproject.toml", file=sys.stderr)
+                  sys.exit(1)
+              print(
+                  f"workflow_dispatch build: cage-client={client_ver}, "
+                  f"cage-conformance={conf_ver}"
+              )
+          else:
+              print(
+                  f"::error::Unsupported trigger event={event_name!r} ref={git_ref!r}",
+                  file=sys.stderr,
+              )
+              sys.exit(1)
+          EOF
+
       - name: Verify cage-client SDK sync
         run: python3 scripts/check_client_sdk_sync.py --verbose
 
@@ -53,24 +111,50 @@ jobs:
         run: python3 scripts/check_conformance_sync.py
 
       - name: Build CAGE Client SDK Wheel & Sdist
+        if: github.event_name == 'workflow_dispatch' || startsWith(github.ref, 'refs/tags/client-v')
         run: |
           cd packages/cage-client
           rm -rf dist
           uv build
 
       - name: Build CAGE Conformance Verifier Wheel & Sdist
+        if: github.event_name == 'workflow_dispatch' || startsWith(github.ref, 'refs/tags/conformance-v')
+        env:
+          COMMIT_SHA: ${{ github.sha }}
         run: |
           cd packages/cage-conformance
           rm -rf dist
           uv build
+          CONF_VERSION=$(python3 -c 'import tomllib; print(tomllib.load(open("pyproject.toml", "rb"))["project"]["version"])')
+          SDIST_VENV="$(mktemp -d)/sdist-venv"
+          uv venv "$SDIST_VENV"
+          uv pip install --python "$SDIST_VENV/bin/python" --no-deps dist/cage_conformance-"${CONF_VERSION}".tar.gz
+          "$SDIST_VENV/bin/cage-conformance" --version | grep -Fx "cage-conformance ${CONF_VERSION}"
+          "$SDIST_VENV/bin/cage-conformance" verify \
+            --trace src/cage_conformance/vectors/trace_v1.json \
+            --provider-id cage-conformance-sdist-smoke \
+            --adapter-author-org "Google LLC" \
+            --counterparty-org "Google LLC" \
+            --adapter-version "$CONF_VERSION" \
+            --adapter-commit "${COMMIT_SHA::12}" \
+            --runner-org "Google LLC" \
+            --runner-identity "publish-client-sdk@github-actions"
+          rm -rf "$(dirname "$SDIST_VENV")"
 
-      - name: Publish CAGE Client SDK & Conformance Verifier to GitHub Packages (GHCR)
+      - name: Log in to GitHub Container Registry (GHCR)
+        if: >-
+          github.event_name == 'workflow_dispatch' ||
+          startsWith(github.ref, 'refs/tags/client-v') ||
+          startsWith(github.ref, 'refs/tags/conformance-v')
         env:
           GH_ACTOR: ${{ github.actor }}
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           printf '%s\n' "$GH_TOKEN" | docker login ghcr.io -u "$GH_ACTOR" --password-stdin
 
+      - name: Publish CAGE Client SDK to GitHub Packages (GHCR)
+        if: github.event_name == 'workflow_dispatch' || startsWith(github.ref, 'refs/tags/client-v')
+        run: |
           VERSION=$(python3 -c 'import tomllib; print(tomllib.load(open("packages/cage-client/pyproject.toml", "rb"))["project"]["version"])')
           IMAGE="ghcr.io/google/cybernetic-agent-governance-engine/cage-client"
           cat > packages/cage-client/Dockerfile.pkg <<'EOF'
@@ -86,42 +170,75 @@ jobs:
           docker push "${IMAGE}:latest"
           rm -f packages/cage-client/Dockerfile.pkg
 
+      - name: Publish CAGE Conformance Verifier to GitHub Packages (GHCR)
+        if: github.event_name == 'workflow_dispatch' || startsWith(github.ref, 'refs/tags/conformance-v')
+        env:
+          COMMIT_SHA: ${{ github.sha }}
+        run: |
           CONF_VERSION=$(python3 -c 'import tomllib; print(tomllib.load(open("packages/cage-conformance/pyproject.toml", "rb"))["project"]["version"])')
           CONF_IMAGE="ghcr.io/google/cybernetic-agent-governance-engine/cage-conformance"
           cat > packages/cage-conformance/Dockerfile.pkg <<'EOF'
-          FROM scratch
+          FROM python:3.12-slim
           LABEL org.opencontainers.image.title="cage-conformance"
           LABEL org.opencontainers.image.description="Standalone Conformance Verifier for CAGE Governance Traces, Evidence Streams, and Partner Endpoints"
           LABEL org.opencontainers.image.source="https://github.com/google/cybernetic-agent-governance-engine"
           LABEL org.opencontainers.image.licenses="Apache-2.0"
           COPY dist/ /dist/
+          RUN pip install --no-cache-dir --no-deps /dist/*.whl
+          USER 65532:65532
+          ENTRYPOINT ["cage-conformance"]
           EOF
           docker build -f packages/cage-conformance/Dockerfile.pkg -t "${CONF_IMAGE}:${CONF_VERSION}" -t "${CONF_IMAGE}:latest" packages/cage-conformance
+          rm -f packages/cage-conformance/Dockerfile.pkg
+          docker run --rm "${CONF_IMAGE}:${CONF_VERSION}" --version | grep -Fx "cage-conformance ${CONF_VERSION}"
+          docker run --rm \
+            -v "$PWD/packages/cage-conformance/src/cage_conformance/vectors:/vectors:ro" \
+            "${CONF_IMAGE}:${CONF_VERSION}" verify \
+            --trace /vectors/trace_v1.json \
+            --provider-id cage-conformance-ghcr-smoke \
+            --adapter-author-org "Google LLC" \
+            --counterparty-org "Google LLC" \
+            --adapter-version "$CONF_VERSION" \
+            --adapter-commit "${COMMIT_SHA::12}" \
+            --runner-org "Google LLC" \
+            --runner-identity "publish-client-sdk@github-actions"
           docker push "${CONF_IMAGE}:${CONF_VERSION}"
           docker push "${CONF_IMAGE}:latest"
-          rm -f packages/cage-conformance/Dockerfile.pkg
 
       - name: Publish cage-client to PyPI (OIDC Trusted Publishing)
-        if: vars.PYPI_TRUSTED_PUBLISHING_ENABLED == 'true'
+        if: vars.PYPI_TRUSTED_PUBLISHING_ENABLED == 'true' && startsWith(github.ref, 'refs/tags/client-v')
         uses: pypa/gh-action-pypi-publish@7245906fb61fa33a13554f9d5fb856fe61758086 # v1.14.3
         with:
           packages-dir: packages/cage-client/dist/
           skip-existing: true
 
       - name: Publish cage-conformance to PyPI (OIDC Trusted Publishing)
-        if: vars.PYPI_TRUSTED_PUBLISHING_ENABLED == 'true'
+        if: vars.PYPI_TRUSTED_PUBLISHING_ENABLED == 'true' && startsWith(github.ref, 'refs/tags/conformance-v')
         uses: pypa/gh-action-pypi-publish@7245906fb61fa33a13554f9d5fb856fe61758086 # v1.14.3
         with:
           packages-dir: packages/cage-conformance/dist/
           skip-existing: true
 
-      - name: Attach Wheels to GitHub Release
-        uses: softprops/action-gh-release@efb35369e0ad2afab669f228072c1b0d510eae64 # v3
-        if: startsWith(github.ref, 'refs/tags/client-v') || startsWith(github.ref, 'refs/tags/conformance-v')
-        with:
-          files: |
-            packages/cage-client/dist/*
-            packages/cage-conformance/dist/*
-          generate_release_notes: true
+      - name: Attach cage-client Wheels to GitHub Release
+        if: startsWith(github.ref, 'refs/tags/client-v')
         env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          RELEASE_TAG: ${{ github.ref_name }}
+        run: |
+          if gh release view "$RELEASE_TAG" >/dev/null 2>&1; then
+            gh release upload "$RELEASE_TAG" packages/cage-client/dist/* --clobber
+          else
+            gh release create "$RELEASE_TAG" packages/cage-client/dist/* --generate-notes
+          fi
+
+      - name: Attach cage-conformance Wheels to GitHub Release
+        if: startsWith(github.ref, 'refs/tags/conformance-v')
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          RELEASE_TAG: ${{ github.ref_name }}
+        run: |
+          if gh release view "$RELEASE_TAG" >/dev/null 2>&1; then
+            gh release upload "$RELEASE_TAG" packages/cage-conformance/dist/* --clobber
+          else
+            gh release create "$RELEASE_TAG" packages/cage-conformance/dist/* --generate-notes
+          fi

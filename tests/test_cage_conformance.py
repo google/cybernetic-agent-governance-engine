@@ -35,6 +35,8 @@ import re
 import shutil
 import subprocess
 import sys
+import uuid
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
@@ -462,12 +464,62 @@ def test_stream_tampering_and_loss_fail_their_rules() -> None:
 
 # ── Endpoint mode ─────────────────────────────────────────────────────────────
 
+_PROVIDER_01_REQUIRED_FIELDS = frozenset(
+    {
+        "approval_id",
+        "platform",
+        "execution_id",
+        "scenario_id",
+        "action",
+        "target",
+        "context",
+        "actor_id",
+        "actor_type",
+        "actor_role",
+        "actor_authenticated",
+        "kya_status",
+        "principal_id",
+        "principal_name",
+        "mandate_id",
+        "mandate_status",
+        "mandate_max_amount",
+        "mandate_currency",
+        "permitted_source_accounts",
+        "permitted_counterparty_class",
+        "mandate_valid_until",
+        "magnitude",
+        "currency",
+        "source_account",
+        "beneficiary",
+        "purpose",
+        "counterparty_status",
+        "account_status",
+        "risk_state",
+        "approval_required",
+        "screening_status",
+        "screening_captured_at",
+        "screening_max_age_seconds",
+        "screening_source",
+        "requested_execution_time",
+    }
+)
+_PROVIDER_01_ALL_FIELDS = _PROVIDER_01_REQUIRED_FIELDS | frozenset(
+    {"authority_resolution_path", "evidence_references"}
+)
+
 
 def _endpoint_provenance(profile: str = "substrate-v1") -> cc.Provenance:
     return cc.build_provenance(_adapter(contract_profile=profile), _runner())
 
 
-def _substrate_requester(*, omit_thresholds_digest: bool = False) -> cc.HttpRequester:
+def _substrate_requester(
+    *,
+    omit_thresholds_digest: bool = False,
+    jwks_status: int = 200,
+    well_known_status: int = 200,
+    mismatch_well_known_jwks: bool = False,
+    seen_headers: list[dict[str, str]] | None = None,
+) -> cc.HttpRequester:
     def _req(
         method: str,
         url: str,
@@ -475,6 +527,8 @@ def _substrate_requester(*, omit_thresholds_digest: bool = False) -> cc.HttpRequ
         body: bytes | None,
         timeout_s: float,
     ) -> cc.HttpResponse:
+        if seen_headers is not None:
+            seen_headers.append(dict(headers))
         assert method == "GET"
         if url.endswith("/governance/policy-version"):
             payload: dict[str, Any] = {"active_hash": "a" * 64}
@@ -487,11 +541,18 @@ def _substrate_requester(*, omit_thresholds_digest: bool = False) -> cc.HttpRequ
             )
         if url.endswith("/governance/jwks"):
             return cc.HttpResponse(
-                status_code=200,
+                status_code=jwks_status,
                 headers={"content-type": "application/json"},
                 body=json.dumps({"keys": [{"kty": "OKP", "kid": "k1"}]}).encode(
                     "utf-8"
                 ),
+            )
+        if url.endswith("/governance/.well-known/jwks.json"):
+            kid = "drifted-kid" if mismatch_well_known_jwks else "k1"
+            return cc.HttpResponse(
+                status_code=well_known_status,
+                headers={"content-type": "application/json"},
+                body=json.dumps({"keys": [{"kty": "OKP", "kid": kid}]}).encode("utf-8"),
             )
         return cc.HttpResponse(status_code=404, headers={}, body=b"{}")
 
@@ -499,8 +560,19 @@ def _substrate_requester(*, omit_thresholds_digest: bool = False) -> cc.HttpRequ
 
 
 def _provider_01_requester(
-    *, break_case1a: bool = False, seen_headers: list[dict[str, str]] | None = None
+    *,
+    break_case1a: bool = False,
+    omit_record_id: bool = False,
+    omit_receipt_id: bool = False,
+    omit_replay_receipt_id: bool = False,
+    top_level_receipt_id_only: bool = False,
+    forged_422_decision: bool = False,
+    seen_headers: list[dict[str, str]] | None = None,
+    seen_urls: list[str] | None = None,
+    seen_bodies: list[dict[str, Any]] | None = None,
 ) -> cc.HttpRequester:
+    allow_calls = 0
+
     def _req(
         method: str,
         url: str,
@@ -508,73 +580,110 @@ def _provider_01_requester(
         body: bytes | None,
         timeout_s: float,
     ) -> cc.HttpResponse:
+        nonlocal allow_calls
         if seen_headers is not None:
             seen_headers.append(dict(headers))
+        if seen_urls is not None:
+            seen_urls.append(url)
         assert method == "POST"
-        assert url.endswith("/v1/evaluate")
+        assert url.endswith("/cage/validate")
+        assert not url.endswith("/cage/validate/cage/validate")
+
         req = json.loads((body or b"{}").decode("utf-8"))
-        payload = req.get("payload", {})
-        amount = float(payload.get("amount_usd", 0.0))
-        if amount < 0:
+        if seen_bodies is not None:
+            seen_bodies.append(req)
+
+        # Enforce exact 37-field FastAPI Pydantic extra="forbid" + required-fields contract
+        if (
+            not isinstance(req, dict)
+            or not _PROVIDER_01_REQUIRED_FIELDS.issubset(req.keys())
+            or not set(req.keys()).issubset(_PROVIDER_01_ALL_FIELDS)
+        ):
+            err_payload: dict[str, Any] = {
+                "detail": [{"type": "missing_or_extra", "msg": "Validation error"}]
+            }
+            if forged_422_decision:
+                err_payload["decision"] = "ALLOW"
             return cc.HttpResponse(
                 status_code=422,
                 headers={"content-type": "application/json"},
-                body=json.dumps({"error": {"code": "SCHEMA_VALIDATION_FAILED"}}).encode(
-                    "utf-8"
-                ),
+                body=json.dumps(err_payload).encode("utf-8"),
             )
-        if req.get("mandate_valid_until") == "2025-12-31T23:59:59Z":
-            verdict, reason = "DENY", "MANDATE_EXPIRED"
-        elif not payload.get("sanctions_screen_passed", True):
-            verdict, reason = "DENY", "SANCTIONS_SCREEN_FAILED"
-        elif amount > 100000.0 and not payload.get("dual_control_token"):
-            verdict, reason = "ESCALATE", "DUAL_CONTROL_REQUIRED"
-        elif break_case1a:
-            verdict, reason = "DENY", "UNEXPECTED_DENY"
-        else:
-            verdict, reason = "ALLOW", "WITHIN_MANDATE_LIMITS"
 
-        req_id = str(req.get("request_id", ""))
-        canonical_hash = hashlib.sha256(body or b"").hexdigest()
-        receipt = {
-            "receipt_id": f"rcpt-{hashlib.sha256(req_id.encode()).hexdigest()[:16]}",
-            "request_id": req_id,
-            "verdict": verdict,
-            "reason_code": reason,
-            "policy_pack_id": req.get("policy_pack_id"),
-            "policy_pack_version": req.get("policy_pack_version"),
-            "policy_pack_hash": req.get("policy_pack_hash"),
-            "evaluated_at": "2026-03-31T21:00:00Z",
-            "Canonical_payload_hash": canonical_hash,
-            "signature": {
-                "alg": "Ed25519",
-                "kid": "provider-01-normative-ed25519-2026-01",
-                "sig": "c2lnbmF0dXJl",
-            },
-        }
+        now_utc = datetime.now(timezone.utc)
+        mandate_dt = datetime.fromisoformat(
+            str(req["mandate_valid_until"]).replace("Z", "+00:00")
+        )
+        captured_dt = datetime.fromisoformat(
+            str(req["screening_captured_at"]).replace("Z", "+00:00")
+        )
+        max_age = int(req["screening_max_age_seconds"])
+
+        if req["action"] != "payment.release":
+            resp_body: dict[str, Any] = {
+                "decision": "REFUSE",
+                "message": "Unsupported action",
+            }
+        elif mandate_dt <= now_utc:
+            resp_body = {
+                "decision": "REFUSE",
+                "message": "Mandate expired",
+            }
+        elif (now_utc - captured_dt).total_seconds() > max_age:
+            resp_body = {
+                "decision": "ESCALATE",
+                "message": "Stale screening evidence",
+            }
+        elif break_case1a:
+            resp_body = {
+                "decision": "REFUSE",
+                "message": "Unexpected refusal",
+            }
+        else:
+            allow_calls += 1
+            # Live service is stateless and issues a fresh UUID receipt per call
+            fresh_receipt_id = f"rcpt-{uuid.uuid4()}"
+            resp_body = {
+                "decision": "ALLOW",
+                "authority_record_id": "" if omit_record_id else req["mandate_id"],
+            }
+            skip_rcpt = omit_receipt_id or (omit_replay_receipt_id and allow_calls >= 2)
+            if not skip_rcpt:
+                if top_level_receipt_id_only:
+                    resp_body["authority_receipt_id"] = fresh_receipt_id
+                else:
+                    resp_body["authority_receipt"] = {"id": fresh_receipt_id}
+
         return cc.HttpResponse(
             status_code=200,
             headers={"content-type": "application/json"},
-            body=json.dumps(receipt).encode("utf-8"),
+            body=json.dumps(resp_body).encode("utf-8"),
         )
 
     return _req
 
 
 def test_substrate_v1_endpoint_conformance() -> None:
+    seen_headers: list[dict[str, str]] = []
     report = cc.verify_endpoint(
         "https://gateway.example.test",
         profile="substrate-v1",
         provenance=_endpoint_provenance("substrate-v1"),
-        http_requester=_substrate_requester(),
+        api_key="gw-key",
+        gcp_id_token="gw-bearer",
+        http_requester=_substrate_requester(seen_headers=seen_headers),
     )
     assert report.conformant
     assert report.mode == "endpoint"
-    assert report.checked == 2
+    assert report.checked == 3
     assert [a.assertion_id for a in report.assertions] == [
         "SUBSTRATE-POLICY-VERSION",
         "SUBSTRATE-JWKS",
+        "SUBSTRATE-WELL-KNOWN-JWKS",
     ]
+    assert seen_headers[0]["Authorization"] == "Bearer gw-bearer"
+    assert seen_headers[0]["X-API-Key"] == "gw-key"
+    assert "X-Serverless-Authorization" not in seen_headers[0]
     assert cc.validate_report(report.to_dict()) == report
 
     bad = cc.verify_endpoint(
@@ -588,19 +697,62 @@ def test_substrate_v1_endpoint_conformance() -> None:
         "SUBSTRATE-POLICY-VERSION"
     ]
 
+    missing_wk = cc.verify_endpoint(
+        "https://gateway.example.test",
+        profile="substrate-v1",
+        provenance=_endpoint_provenance("substrate-v1"),
+        http_requester=_substrate_requester(well_known_status=404),
+    )
+    assert not missing_wk.conformant
+    assert [a.assertion_id for a in missing_wk.assertions if not a.passed] == [
+        "SUBSTRATE-WELL-KNOWN-JWKS"
+    ]
+
+    drifted_wk = cc.verify_endpoint(
+        "https://gateway.example.test",
+        profile="substrate-v1",
+        provenance=_endpoint_provenance("substrate-v1"),
+        http_requester=_substrate_requester(mismatch_well_known_jwks=True),
+    )
+    assert not drifted_wk.conformant
+    assert [a.assertion_id for a in drifted_wk.assertions if not a.passed] == [
+        "SUBSTRATE-WELL-KNOWN-JWKS"
+    ]
+    assert "does not match SUBSTRATE-JWKS" in drifted_wk.assertions[2].detail
+
+    broken_primary_jwks = cc.verify_endpoint(
+        "https://gateway.example.test",
+        profile="substrate-v1",
+        provenance=_endpoint_provenance("substrate-v1"),
+        http_requester=_substrate_requester(jwks_status=500),
+    )
+    assert not broken_primary_jwks.conformant
+    assert [a.assertion_id for a in broken_primary_jwks.assertions if not a.passed] == [
+        "SUBSTRATE-JWKS",
+        "SUBSTRATE-WELL-KNOWN-JWKS",
+    ]
+
 
 def test_provider_01_v02_endpoint_conformance() -> None:
+    assert len(_PROVIDER_01_ALL_FIELDS) == 37
     seen_headers: list[dict[str, str]] = []
+    seen_urls: list[str] = []
+    seen_bodies: list[dict[str, Any]] = []
     report = cc.verify_endpoint(
         "https://normative.example.test",
         profile="provider-01-v0.2",
         provenance=_endpoint_provenance("provider-01-v0.2"),
         api_key="test-key",
         gcp_id_token="test-id-token",
-        http_requester=_provider_01_requester(seen_headers=seen_headers),
+        http_requester=_provider_01_requester(
+            seen_headers=seen_headers,
+            seen_urls=seen_urls,
+            seen_bodies=seen_bodies,
+        ),
     )
     assert report.conformant, [a for a in report.assertions if not a.passed]
-    assert report.checked == 11
+    assert report.checked == 6
+    assert len(seen_bodies) == 6, "every assertion must represent a live HTTP call"
     assert [a.assertion_id for a in report.assertions] == [
         "CASE-1A",
         "CASE-1B",
@@ -608,26 +760,65 @@ def test_provider_01_v02_endpoint_conformance() -> None:
         "CASE-1D",
         "CASE-1E",
         "CASE-1F",
-        "CASE-1G-TRUNCATED-HASH",
-        "CASE-1G-UPPERCASE-HASH",
-        "CASE-1G-FUTURE-RECEIPT",
-        "CASE-2A",
-        "CASE-2B",
     ]
-    assert seen_headers[0]["X-API-Key"] == "test-key"
-    assert seen_headers[0]["Authorization"] == "Bearer test-id-token"
+    # Cloud Run DRS dual-header authentication
+    assert seen_headers[0]["X-Serverless-Authorization"] == "Bearer test-id-token"
+    assert seen_headers[0]["Authorization"] == "Bearer test-key"
+    assert "X-API-Key" not in seen_headers[0]
+    assert all(u == "https://normative.example.test/cage/validate" for u in seen_urls)
+    # CASE-1A..CASE-1E send exact 37-field payload; CASE-1B replays identical bytes of CASE-1A
+    for idx in range(5):
+        assert set(seen_bodies[idx].keys()) == _PROVIDER_01_ALL_FIELDS
+    assert seen_bodies[0] == seen_bodies[1]
+    assert seen_bodies[5] == {"malformed_attack_vector": True}
 
-    broken = cc.verify_endpoint(
-        "https://normative.example.test",
+    # Direct non-DRS endpoint (api_key only) and IAM-only endpoint (gcp_id_token only)
+    key_only_headers: list[dict[str, str]] = []
+    key_only_report = cc.verify_endpoint(
+        "https://normative.example.test/cage/validate/",
         profile="provider-01-v0.2",
         provenance=_endpoint_provenance("provider-01-v0.2"),
-        http_requester=_provider_01_requester(break_case1a=True),
+        api_key="direct-only-key",
+        http_requester=_provider_01_requester(
+            top_level_receipt_id_only=True,
+            seen_headers=key_only_headers,
+        ),
     )
-    assert not broken.conformant
-    assert {a.assertion_id for a in broken.assertions if not a.passed} == {
-        "CASE-1A",
-        "CASE-1B",
-    }
+    assert key_only_report.conformant
+    assert key_only_headers[0]["Authorization"] == "Bearer direct-only-key"
+    assert "X-Serverless-Authorization" not in key_only_headers[0]
+
+    iam_only_headers: list[dict[str, str]] = []
+    iam_only_report = cc.verify_endpoint(
+        "https://normative.example.test/cage/validate",
+        profile="provider-01-v0.2",
+        provenance=_endpoint_provenance("provider-01-v0.2"),
+        gcp_id_token="iam-only-token",
+        http_requester=_provider_01_requester(seen_headers=iam_only_headers),
+    )
+    assert iam_only_report.conformant
+    assert iam_only_headers[0]["X-Serverless-Authorization"] == "Bearer iam-only-token"
+    assert "Authorization" not in iam_only_headers[0]
+
+    # Negative / mutation checks: missing ALLOW, missing record_id, missing receipt_id,
+    # missing replay receipt_id, and 422 carrying a determination all fail closed
+    for kwargs, expected_failed in (
+        ({"break_case1a": True}, {"CASE-1A", "CASE-1B"}),
+        ({"omit_record_id": True}, {"CASE-1A", "CASE-1B"}),
+        ({"omit_receipt_id": True}, {"CASE-1A", "CASE-1B"}),
+        ({"omit_replay_receipt_id": True}, {"CASE-1B"}),
+        ({"forged_422_decision": True}, {"CASE-1F"}),
+    ):
+        broken = cc.verify_endpoint(
+            "https://normative.example.test",
+            profile="provider-01-v0.2",
+            provenance=_endpoint_provenance("provider-01-v0.2"),
+            http_requester=_provider_01_requester(**kwargs),
+        )
+        assert not broken.conformant, kwargs
+        assert {
+            a.assertion_id for a in broken.assertions if not a.passed
+        } == expected_failed, kwargs
 
 
 def test_endpoint_rejects_non_http_url_and_unknown_profile() -> None:
@@ -777,3 +968,29 @@ def test_cli_requires_every_identity_flag(tmp_path: Path) -> None:
     with pytest.raises(SystemExit) as exc:
         cli_main(["verify", "--trace", str(trace), *without_runner])
     assert exc.value.code == 2
+
+
+def test_cli_trace_mode_accepts_packaged_trace_v1_vector_bundle(
+    tmp_path: Path,
+) -> None:
+    vec_path = _PACKAGE_SRC / "cage_conformance" / "vectors" / "trace_v1.json"
+    out = tmp_path / "trace_bundle_report.json"
+    assert (
+        cli_main(
+            [
+                "verify",
+                "--trace",
+                str(vec_path),
+                "--output",
+                str(out),
+                *_PROVENANCE_FLAGS,
+            ]
+        )
+        == 0
+    )
+    parsed = cc.validate_report(json.loads(out.read_text(encoding="utf-8")))
+    assert parsed.conformant is True
+    assert parsed.checked == 2
+    assert parsed.inputs == (
+        cc.InputDigest.of_bytes("trace_v1.json", vec_path.read_bytes()),
+    )
