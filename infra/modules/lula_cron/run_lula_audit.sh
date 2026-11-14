@@ -40,6 +40,7 @@ passed=0
 failed=0
 insufficient_traffic=0
 startup_grace=0
+satisfied_list=""
 failed_list=""
 insufficient_traffic_list=""
 startup_grace_list=""
@@ -63,16 +64,52 @@ for spec in "${SPEC_DIR}"/lula-validation-*.yaml; do
      [ -s "$out_file" ] && \
      grep -q 'observations:' "$out_file" && \
      ! grep -Eq 'state:[[:space:]]*not-satisfied|lula-validation-error' "$out_file"; then
-    passed=$((passed + 1))
-    if grep -Eq 'lula\.assessment_remark:[[:space:]]*assessment_status=startup_grace([[:space:];]|$)' "$out_file"; then
-      startup_grace=$((startup_grace + 1))
-      if [ -z "$startup_grace_list" ]; then
-        startup_grace_list="$name"
+    requires_remark=0
+    case "$name" in
+      lula-validation-a52|lula-validation-a53|lula-validation-a92)
+        requires_remark=1
+        ;;
+    esac
+    if [ "$requires_remark" -eq 1 ] || grep -q 'lula\.assessment_remark:' "$out_file"; then
+      if grep -Eq 'lula\.assessment_remark:[[:space:]]*assessment_status=satisfied([[:space:];]|$)' "$out_file" && \
+         ! grep -Eq 'lula\.assessment_remark:[[:space:]]*assessment_status=startup_grace([[:space:];]|$)' "$out_file"; then
+        passed=$((passed + 1))
+        if [ -z "$satisfied_list" ]; then
+          satisfied_list="$name"
+        else
+          satisfied_list="${satisfied_list},${name}"
+        fi
+        echo "PASS: ${name}"
+      elif grep -Eq 'lula\.assessment_remark:[[:space:]]*assessment_status=startup_grace([[:space:];]|$)' "$out_file"; then
+        passed=$((passed + 1))
+        startup_grace=$((startup_grace + 1))
+        if [ -z "$satisfied_list" ]; then
+          satisfied_list="$name"
+        else
+          satisfied_list="${satisfied_list},${name}"
+        fi
+        if [ -z "$startup_grace_list" ]; then
+          startup_grace_list="$name"
+        else
+          startup_grace_list="${startup_grace_list},${name}"
+        fi
+        echo "PASS (assessment_status=startup_grace): ${name}"
       else
-        startup_grace_list="${startup_grace_list},${name}"
+        failed=$((failed + 1))
+        if [ -z "$failed_list" ]; then
+          failed_list="$name"
+        else
+          failed_list="${failed_list},${name}"
+        fi
+        echo "FAIL: ${name} (missing or unrecognized lula.assessment_remark)" >&2
       fi
-      echo "PASS (assessment_status=startup_grace): ${name}"
     else
+      passed=$((passed + 1))
+      if [ -z "$satisfied_list" ]; then
+        satisfied_list="$name"
+      else
+        satisfied_list="${satisfied_list},${name}"
+      fi
       echo "PASS: ${name}"
     fi
   elif [ "$lula_rc" -eq 0 ] && \
@@ -135,8 +172,10 @@ payload=$(jq -nc \
   --argjson satisfied_count "$passed" \
   --argjson failed_count "$failed" \
   --argjson insufficient_traffic_count "$insufficient_traffic" \
+  --argjson startup_grace_count "$startup_grace" \
   --arg failed_csv "$failed_list" \
   --arg insufficient_csv "$insufficient_traffic_list" \
+  --arg startup_grace_csv "$startup_grace_list" \
   '{
     event_type: "lula_audit",
     timestamp_utc: $ts,
@@ -146,8 +185,10 @@ payload=$(jq -nc \
     satisfied_count: $satisfied_count,
     failed_count: $failed_count,
     insufficient_traffic_count: $insufficient_traffic_count,
+    startup_grace_count: $startup_grace_count,
     failed_controls: (if $failed_csv == "" then [] else ($failed_csv | split(",")) end),
-    insufficient_traffic_controls: (if $insufficient_csv == "" then [] else ($insufficient_csv | split(",")) end)
+    insufficient_traffic_controls: (if $insufficient_csv == "" then [] else ($insufficient_csv | split(",")) end),
+    startup_grace_controls: (if $startup_grace_csv == "" then [] else ($startup_grace_csv | split(",")) end)
   }')
 
 idem_raw="lula-audit-${HOSTNAME:-run}-${ts}"
@@ -161,6 +202,30 @@ if resp=$(curl -sf -X POST "${COMPLIANCE_BRIDGE_EVENTS_URL}" \
    record_hash=$(printf '%s' "$resp" | jq -er 'select(.status == "INGESTED" and (.record_hash | type == "string" and length == 64)) | .record_hash'); then
   post_ok=1
   echo "Sealed lula_audit assessment-results via /v1/infra/events: status=INGESTED record_hash=${record_hash} (${sealed_counts})"
+  jq -nc \
+    --arg record_hash "$record_hash" \
+    --arg summary "$summary" \
+    --argjson evaluated_count "$total" \
+    --argjson satisfied_count "$passed" \
+    --argjson failed_count "$failed" \
+    --argjson insufficient_traffic_count "$insufficient_traffic" \
+    --argjson startup_grace_count "$startup_grace" \
+    --arg sat_csv "$satisfied_list" \
+    --arg sg_csv "$startup_grace_list" \
+    '{
+      cage_lula_audit_receipt_v1: {
+        status: "INGESTED",
+        record_hash: $record_hash,
+        summary: $summary,
+        evaluated_count: $evaluated_count,
+        satisfied_count: $satisfied_count,
+        failed_count: $failed_count,
+        insufficient_traffic_count: $insufficient_traffic_count,
+        startup_grace_count: $startup_grace_count,
+        satisfied_controls: (if $sat_csv == "" then [] else ($sat_csv | split(",")) end),
+        startup_grace_controls: (if $sg_csv == "" then [] else ($sg_csv | split(",")) end)
+      }
+    }'
 else
   echo "ERROR: failed to POST lula_audit event to ${COMPLIANCE_BRIDGE_EVENTS_URL}" >&2
 fi

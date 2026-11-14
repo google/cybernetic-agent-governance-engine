@@ -32,19 +32,39 @@ LIFECYCLE_SCRIPT = REPO_ROOT / "scripts" / "staging_lifecycle.sh"
 CORROBORATION_SCRIPT = REPO_ROOT / "scripts" / "verify_audit_corroboration.py"
 ANCHOR_SCRIPT = REPO_ROOT / "scripts" / "read_worm_chain_anchor.py"
 
+VERIFIER_SCRIPT = REPO_ROOT / "scripts" / "verify_lula_assessment_results.py"
+
 DEFAULT_PRE_HASH = "1" * 64
 DEFAULT_PRE_ATTEST = "2" * 64
 DEFAULT_POST_HASH = "3" * 64
 DEFAULT_POST_ATTEST = "4" * 64
 
 DEFAULT_JOB_LOGS = (
-    "assessment-results:\n"
-    "  observations:\n"
-    "    - uuid: 00000000-0000-4000-8000-000000000001\n"
-    "  state: satisfied\n"
-    'POST /v1/infra/events -> {"status": "INGESTED", "record_hash": "'
+    "PASS: lula-validation-sample\n"
+    "PASS: lula-validation-api\n"
+    "Sealed lula_audit assessment-results via /v1/infra/events: status=INGESTED record_hash="
     + ("a" * 64)
-    + '"}\n'
+    + " (2/2 satisfied, 0 not-satisfied)\n"
+    + json.dumps(
+        {
+            "cage_lula_audit_receipt_v1": {
+                "status": "INGESTED",
+                "record_hash": "a" * 64,
+                "summary": "lula_audit PASS: 2/2 active validations satisfied",
+                "evaluated_count": 2,
+                "satisfied_count": 2,
+                "failed_count": 0,
+                "insufficient_traffic_count": 0,
+                "startup_grace_count": 0,
+                "satisfied_controls": [
+                    "lula-validation-sample",
+                    "lula-validation-api",
+                ],
+                "startup_grace_controls": [],
+            }
+        }
+    )
+    + "\n"
 )
 
 DEFAULT_EVIDENCE_VERIFY_JSON = json.dumps(
@@ -215,6 +235,9 @@ def _setup_fake_repo(
 
     shutil.copy2(LIFECYCLE_SCRIPT, repo / "scripts" / "staging_lifecycle.sh")
     shutil.copy2(ANCHOR_SCRIPT, repo / "scripts" / "read_worm_chain_anchor.py")
+    shutil.copy2(
+        VERIFIER_SCRIPT, repo / "scripts" / "verify_lula_assessment_results.py"
+    )
     (repo / "compliance" / "lula" / "lula-validation-sample.yaml").write_text(
         "kind: LulaValidation\n", encoding="utf-8"
     )
@@ -2363,6 +2386,68 @@ def test_staging_lifecycle_phase3_rejects_startup_grace_remarks_on_host_and_job_
     )
     assert manifest_host["overall_status"] == "FAIL"
     assert manifest_host["phase_failures"]["lula"] >= 1
+
+    # 3. Format drift / missing `cage_lula_audit_receipt_v1` JSON receipt fails Phase 3 closed
+    #    (never reads absence of `startup_grace` substrings as a clean pass!)
+    drifted_logs = (
+        "assessment-results:\n"
+        "  observations:\n"
+        "    - uuid: 00000000-0000-4000-8000-000000000001\n"
+        "  state: satisfied\n"
+        'POST /v1/infra/events -> {"status": "INGESTED", "record_hash": "'
+        + ("a" * 64)
+        + '"}\n'
+    )
+    repo_drift, bin_drift, _ = _setup_fake_repo(
+        tmp_path / "job_drift", job_logs=drifted_logs
+    )
+    archive_drift = tmp_path / "archive-job-drift"
+    proc_drift = subprocess.run(
+        [
+            "bash",
+            str(repo_drift / "scripts" / "staging_lifecycle.sh"),
+            "--skip-live-sweep",
+            "--skip-telemetry",
+            "--skip-rebuild",
+            f"--archive-dir={archive_drift}",
+        ],
+        env=_base_env(bin_drift, GOOGLE_CLOUD_PROJECT="demo-staging-proj"),
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert proc_drift.returncode != 0
+    assert (
+        "must contain exactly 1 structured cage_lula_audit_receipt_v1 JSON receipt"
+        in proc_drift.stderr
+    )
+
+    # 4. Deferred `type: api` spec (`lula-validation-a52.yaml`) missing from `satisfied_controls` fails Phase 3 closed
+    repo_missing_api, bin_missing_api, _ = _setup_fake_repo(tmp_path / "missing_api")
+    (repo_missing_api / "compliance" / "lula" / "lula-validation-a52.yaml").write_text(
+        "  type: api\n  url: http://compliance-bridge.governance-stack.svc.cluster.local/v1/metrics/A.5.2\n",
+        encoding="utf-8",
+    )
+    archive_missing_api = tmp_path / "archive-missing-api"
+    proc_missing_api = subprocess.run(
+        [
+            "bash",
+            str(repo_missing_api / "scripts" / "staging_lifecycle.sh"),
+            "--skip-live-sweep",
+            "--skip-telemetry",
+            "--skip-rebuild",
+            f"--archive-dir={archive_missing_api}",
+        ],
+        env=_base_env(bin_missing_api, GOOGLE_CLOUD_PROJECT="demo-staging-proj"),
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert proc_missing_api.returncode != 0
+    assert (
+        "Deferred API-domain Lula spec 'lula-validation-a52' missing"
+        in proc_missing_api.stderr
+    )
 
 
 # Regression coverage binding: POAM-024, POAM-2026-159, POAM-2026-192, POAM-2026-197, POAM-2026-202, POAM-2026-203, POAM-2026-204, POAM-2026-205, POAM-2026-206, POAM-2026-207, POAM-2026-215

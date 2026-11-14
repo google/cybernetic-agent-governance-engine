@@ -57,7 +57,10 @@ from fastapi.testclient import TestClient
 
 import src.compliance_bridge.main as bridge_main
 import src.compliance_bridge.sla_monitor as sla_mod
-from scripts.verify_lula_assessment_results import verify_assessment_results_data
+from scripts.verify_lula_assessment_results import (
+    verify_assessment_results_data,
+    verify_lula_gate_w_job_logs,
+)
 from src.compliance_bridge.aarm_mapper import build_aarm_conformance_report
 from src.compliance_bridge.infra_custody import InfraEvidenceChain
 from src.compliance_bridge.main import InfraEvent, app
@@ -601,28 +604,32 @@ class TestThreeStateLulaAuditPipeline:
         validated = InfraEvent.model_validate(posted)
         assert validated.insufficient_traffic_count == 3
 
-        # Gate W Phase 3 log check (`staging_lifecycle.sh`) MUST still reject unseeded
-        # runs where Job/lula-gate-w emits non-zero not-satisfied controls!
+        # Gate W Phase 3 verifier (`verify_lula_gate_w_job_logs`, invoked by
+        # `staging_lifecycle.sh`) MUST reject unseeded runs where Job/lula-gate-w
+        # emits non-zero not-satisfied / insufficient_traffic controls!
         lifecycle_src = STAGING_LIFECYCLE.read_text(encoding="utf-8")
-        assert (
-            r"\bnot[-_]satisfied\s*[:=]\s*[1-9]\d*|\b[1-9]\d*\s+not[-_]satisfied\b"
-            in lifecycle_src
-        )
-        assert re.search(
-            r"\bnot[-_]satisfied\s*[:=]\s*[1-9]\d*|\b[1-9]\d*\s+not[-_]satisfied\b",
+        assert "verify_lula_assessment_results.py" in lifecycle_src
+        assert "--gate-w-job-logs" in lifecycle_src
+        ok_gate_w, gate_w_errs = verify_lula_gate_w_job_logs(
             proc.stdout,
-            re.IGNORECASE,
-        ), (
-            f"Expected Gate W non-zero not-satisfied guard to match stdout: {proc.stdout!r}"
+            expected_active_count=5,
+            expected_api_specs=[
+                "lula-validation-a52",
+                "lula-validation-a53",
+                "lula-validation-a92",
+            ],
         )
+        assert ok_gate_w is False
+        assert any("not-satisfied" in err for err in gate_w_errs)
 
     def test_run_lula_audit_script_surfaces_startup_grace_and_gate_w_rejects_it(
         self, tmp_path: Path
     ) -> None:
-        """Steady-state cold-start CronJob exits 0, while Gate W Phase 3 rejects `startup_grace`."""
+        """Bind `run_lula_audit.sh` producer to `verify_lula_gate_w_job_logs` consumer across clean, startup_grace, and drifted states."""
         spec_dir = tmp_path / "specs"
         out_dir = tmp_path / "out"
         spec_dir.mkdir()
+        out_dir.mkdir()
         for name in (
             "lula-validation-ac3",
             "lula-validation-sc8",
@@ -632,7 +639,8 @@ class TestThreeStateLulaAuditPipeline:
         ):
             (spec_dir / f"{name}.yaml").write_text(f"# {name}\n", encoding="utf-8")
 
-        fake_lula = tmp_path / "fake_lula_grace.sh"
+        remark_mode = {"value": "startup_grace"}
+        fake_lula = tmp_path / "fake_lula_modes.sh"
         fake_lula.write_text(
             textwrap.dedent(
                 """\
@@ -650,7 +658,22 @@ class TestThreeStateLulaAuditPipeline:
                 base=$(basename "$spec" .yaml)
                 case "$base" in
                   lula-validation-a52|lula-validation-a53|lula-validation-a92)
-                    cat > "$out" <<'YAML'
+                    if [ "${FAKE_REMARK_MODE}" = "missing" ]; then
+                      cat > "$out" <<'YAML'
+                assessment-results:
+                  results:
+                    - findings:
+                        - target:
+                            status:
+                              state: satisfied
+                      observations:
+                        - description: check
+                          relevant-evidence:
+                            - description: |
+                                Result: satisfied
+                YAML
+                    else
+                      cat > "$out" <<YAML
                 assessment-results:
                   results:
                     - findings:
@@ -663,8 +686,9 @@ class TestThreeStateLulaAuditPipeline:
                             - description: |
                                 Result: satisfied
                               remarks: |
-                                lula.assessment_remark: assessment_status=startup_grace; control_id=A.5.3; total_traces=0; safety_rate=null; threshold=0.95; evidence_age_seconds=0; max_age_seconds=900; startup_grace_active=true
+                                lula.assessment_remark: assessment_status=${FAKE_REMARK_MODE}; control_id=A.5.3; total_traces=0; safety_rate=null; threshold=0.95; evidence_age_seconds=0; max_age_seconds=900; startup_grace_active=true
                 YAML
+                    fi
                     ;;
                   *)
                     cat > "$out" <<'YAML'
@@ -694,6 +718,7 @@ class TestThreeStateLulaAuditPipeline:
             def do_POST(self) -> None:  # noqa: N802
                 length = int(self.headers.get("Content-Length", "0"))
                 raw = self.rfile.read(length).decode("utf-8")
+                captured_payload.clear()
                 captured_payload.update(json.loads(raw))
                 body = b'{"status":"INGESTED","record_hash":"' + (b"b" * 64) + b'"}'
                 self.send_response(201)
@@ -705,55 +730,106 @@ class TestThreeStateLulaAuditPipeline:
             def log_message(self, format: str, *args: object) -> None:  # noqa: A002
                 return
 
-        server = HTTPServer(("127.0.0.1", 0), _BridgeHandler)
-        thread = threading.Thread(target=server.serve_forever, daemon=True)
-        thread.start()
-        out_dir.mkdir(exist_ok=True)
-        try:
+        def _run_mode(mode: str) -> subprocess.CompletedProcess[str]:
+            remark_mode["value"] = mode
             env = {
                 **os.environ,
                 "LULA_SPECS_DIR": str(spec_dir),
                 "LULA_OUT_DIR": str(out_dir),
                 "LULA_BIN": str(fake_lula),
                 "LULA_SKIP_LINKERD_WAIT": "true",
+                "FAKE_REMARK_MODE": mode,
                 "COMPLIANCE_BRIDGE_EVENTS_URL": (
                     f"http://127.0.0.1:{server.server_port}/v1/infra/events"
                 ),
             }
-            proc = subprocess.run(
+            return subprocess.run(
                 ["/bin/sh", "-ec", RUN_SCRIPT.read_text(encoding="utf-8")],
                 env=env,
                 capture_output=True,
                 text=True,
                 check=False,
             )
+
+        api_specs = [
+            "lula-validation-a52",
+            "lula-validation-a53",
+            "lula-validation-a92",
+        ]
+        server = HTTPServer(("127.0.0.1", 0), _BridgeHandler)
+        thread = threading.Thread(target=server.serve_forever, daemon=True)
+        thread.start()
+        try:
+            # 1. Clean post-grace seeded run: producer -> consumer contract passes
+            proc_clean = _run_mode("satisfied")
+            assert proc_clean.returncode == 0, proc_clean.stderr
+            assert captured_payload["startup_grace_count"] == 0
+            assert captured_payload["startup_grace_controls"] == []
+            InfraEvent.model_validate(captured_payload)
+            ok_clean, errs_clean = verify_lula_gate_w_job_logs(
+                proc_clean.stdout,
+                expected_active_count=5,
+                expected_api_specs=api_specs,
+            )
+            assert ok_clean is True, errs_clean
+
+            # 2. Startup-grace run: CronJob exits 0, Gate W verifier fails closed
+            #    (and STILL fails closed even if human PASS lines are stripped, via
+            #    structured `startup_grace_count: 3` in `cage_lula_audit_receipt_v1`!)
+            proc_grace = _run_mode("startup_grace")
+            assert proc_grace.returncode == 0, proc_grace.stderr
+            assert captured_payload["startup_grace_count"] == 3
+            assert captured_payload["startup_grace_controls"] == api_specs
+            InfraEvent.model_validate(captured_payload)
+            ok_grace, errs_grace = verify_lula_gate_w_job_logs(
+                proc_grace.stdout,
+                expected_active_count=5,
+                expected_api_specs=api_specs,
+            )
+            assert ok_grace is False
+            assert any("startup_grace" in err for err in errs_grace)
+            stripped_stdout = "\n".join(
+                line
+                for line in proc_grace.stdout.splitlines()
+                if not line.startswith("PASS (") and not line.startswith("Sealed ")
+            )
+            ok_stripped, errs_stripped = verify_lula_gate_w_job_logs(
+                f"PASS: lula-validation-ac3\n{stripped_stdout}\n",
+                expected_active_count=5,
+                expected_api_specs=api_specs,
+            )
+            assert ok_stripped is False
+            assert any("startup_grace" in err for err in errs_stripped)
+
+            # 3. Rego remark token drift (`grace_window`) or missing remark on `a52`:
+            #    `run_lula_audit.sh` fails closed (`returncode != 0`, `failed_count == 3`)
+            for bad_mode in ("grace_window", "missing"):
+                proc_bad = _run_mode(bad_mode)
+                assert proc_bad.returncode != 0
+                assert captured_payload["failed_count"] == 3
+                ok_bad, _ = verify_lula_gate_w_job_logs(
+                    proc_bad.stdout,
+                    expected_active_count=5,
+                    expected_api_specs=api_specs,
+                )
+                assert ok_bad is False
         finally:
             server.shutdown()
             server.server_close()
 
-        assert proc.returncode == 0, proc.stderr
-        assert (
-            "PASS (assessment_status=startup_grace): lula-validation-a52" in proc.stdout
+        # 4. Receipt omission or missing `startup_grace_count` key fails closed
+        no_receipt = "\n".join(
+            line
+            for line in proc_clean.stdout.splitlines()
+            if "cage_lula_audit_receipt_v1" not in line
         )
-        assert (
-            "3 startup_grace [lula-validation-a52,lula-validation-a53,lula-validation-a92]"
-            in proc.stdout
+        ok_no_receipt, errs_no_receipt = verify_lula_gate_w_job_logs(
+            no_receipt,
+            expected_active_count=5,
+            expected_api_specs=api_specs,
         )
-        assert (
-            "3 startup_grace: lula-validation-a52,lula-validation-a53,lula-validation-a92"
-            in captured_payload["summary"]
-        )
-
-        lifecycle_src = STAGING_LIFECYCLE.read_text(encoding="utf-8")
-        assert (
-            r"assessment_status\s*=\s*startup_grace|\b[1-9]\d*\s+startup_grace\b"
-            in lifecycle_src
-        )
-        assert re.search(
-            r"assessment_status\s*=\s*startup_grace|\b[1-9]\d*\s+startup_grace\b",
-            proc.stdout,
-            re.IGNORECASE,
-        )
+        assert ok_no_receipt is False
+        assert any("cage_lula_audit_receipt_v1" in err for err in errs_no_receipt)
 
     @pytest.mark.asyncio
     async def test_idle_night_multi_cycle_seals_worm_sets_insufficient_gauge_without_alerting_or_poisoning_a53(

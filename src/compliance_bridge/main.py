@@ -919,11 +919,13 @@ class InfraEvent(BaseModel):
     satisfied_count: int | None = Field(default=None, ge=0)
     failed_count: int | None = Field(default=None, ge=0)
     insufficient_traffic_count: int | None = Field(default=None, ge=0)
+    startup_grace_count: int | None = Field(default=None, ge=0)
     not_satisfied_count: int | None = Field(default=None, ge=0)
     failed_controls: tuple[str, ...] | list[str] | None = Field(default=None)
     insufficient_traffic_controls: tuple[str, ...] | list[str] | None = Field(
         default=None
     )
+    startup_grace_controls: tuple[str, ...] | list[str] | None = Field(default=None)
 
     @field_validator("timestamp_utc")
     @classmethod
@@ -948,7 +950,11 @@ class InfraEvent(BaseModel):
             raise ValueError("field must not contain ASCII control characters")
         return value
 
-    @field_validator("failed_controls", "insufficient_traffic_controls")
+    @field_validator(
+        "failed_controls",
+        "insufficient_traffic_controls",
+        "startup_grace_controls",
+    )
     @classmethod
     def _validate_failed_controls(
         cls, value: tuple[str, ...] | list[str] | None
@@ -1138,6 +1144,14 @@ async def ingest_infra_event(
         if event.insufficient_traffic_controls is not None
         else None
     )
+    scrubbed_startup_grace_controls = (
+        [
+            _CREDENTIAL_PATTERN.sub("[REDACTED]", c)[:128]
+            for c in event.startup_grace_controls
+        ]
+        if event.startup_grace_controls is not None
+        else None
+    )
     control_id = iso_map[event.event_type]
     received_at_utc = (
         datetime.now(tz=timezone.utc)
@@ -1186,8 +1200,10 @@ async def ingest_infra_event(
             not_satisfied_count=event.not_satisfied_count,
             failed_count=event.failed_count,
             insufficient_traffic_count=event.insufficient_traffic_count,
+            startup_grace_count=event.startup_grace_count,
             failed_controls=scrubbed_failed_controls,
             insufficient_traffic_controls=scrubbed_insufficient_controls,
+            startup_grace_controls=scrubbed_startup_grace_controls,
         )
     except InfraIdempotencyConflictError as exc:
         raise HTTPException(
@@ -1223,6 +1239,7 @@ async def ingest_infra_event(
             scrubbed_summary=scrubbed_summary,
             scrubbed_failed_controls=scrubbed_failed_controls,
             scrubbed_insufficient_controls=scrubbed_insufficient_controls,
+            scrubbed_startup_grace_controls=scrubbed_startup_grace_controls,
             receipt_hash=receipt.record_hash,
             idempotent_replay=receipt.idempotent_replay,
         )
@@ -1254,6 +1271,7 @@ async def _handle_lula_audit_post_custody(
     scrubbed_summary: str,
     scrubbed_failed_controls: list[str] | None,
     scrubbed_insufficient_controls: list[str] | None = None,
+    scrubbed_startup_grace_controls: list[str] | None = None,
     receipt_hash: str,
     idempotent_replay: bool,
 ) -> None:
@@ -1286,17 +1304,29 @@ async def _handle_lula_audit_post_custody(
         failed_controls_list = []
 
     insufficient_controls_raw = [c for c in (scrubbed_insufficient_controls or []) if c]
+    startup_grace_controls_raw = [
+        c for c in (scrubbed_startup_grace_controls or []) if c
+    ]
     # Server-authoritative allowlist: ONLY statistical trace-rate Lula manifests
-    # (`a52`, `a53`, `a92`) can report `insufficient_traffic`. Any structural or
-    # unknown manifest claiming `insufficient_traffic` is promoted to a failure.
+    # (`a52`, `a53`, `a92`) can report `insufficient_traffic` or `startup_grace`.
+    # Any structural or unknown manifest claiming either state is promoted to a failure.
     valid_insufficient_controls = [
         c for c in insufficient_controls_raw if c in STATISTICAL_TRACE_LULA_SPECS
     ]
     invalid_insufficient_controls = [
         c for c in insufficient_controls_raw if c not in STATISTICAL_TRACE_LULA_SPECS
     ]
+    invalid_startup_grace_controls = [
+        c for c in startup_grace_controls_raw if c not in STATISTICAL_TRACE_LULA_SPECS
+    ]
     effective_failed_controls = list(
-        dict.fromkeys([*failed_controls_list, *invalid_insufficient_controls])
+        dict.fromkeys(
+            [
+                *failed_controls_list,
+                *invalid_insufficient_controls,
+                *invalid_startup_grace_controls,
+            ]
+        )
     )
 
     summary_upper = scrubbed_summary.upper()
