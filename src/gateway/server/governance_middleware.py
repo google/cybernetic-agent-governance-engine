@@ -53,7 +53,10 @@ from src.gateway.governance.governance_envelope import GovernanceEnvelopeBuilder
 from src.gateway.governance.governor.approval import PostHitlApproval
 from src.gateway.governance.governor.errors import GovernanceDeferred
 from src.gateway.governance.governor.governor import GovernanceError, SymbolicGovernor
-from src.gateway.governance.governor.metrics import governor_metrics
+from src.gateway.governance.governor.metrics import (
+    governor_metrics,
+    mark_request_refused,
+)
 from src.gateway.governance.governor.pipeline import OpaVerdict
 from src.gateway.governance.governor.stages.opa import decode_opa_verdict
 from src.gateway.governance.iso_control import stamp_iso_control
@@ -779,6 +782,25 @@ async def get_jwks_well_known() -> JSONResponse:
     return await get_jwks_endpoint()
 
 
+def _enforce_canary_probe_scope(route: str, action: str) -> JSONResponse | None:
+    """Refuse 403 if a synthetic canary identity invokes any route/action outside the domain's CanaryProbe."""
+    from src.gateway.governance.plugin_loader import active_domain_config
+    from src.gateway.server.workload_identity import is_canary_request
+
+    if not is_canary_request():
+        return None
+    probe = active_domain_config().canary_probe
+    if probe is None or probe.route != route or probe.action != action:
+        return JSONResponse(
+            status_code=403,
+            content={
+                "error": "canary_action_forbidden",
+                "detail": "Synthetic canary identity is restricted to the active domain's declared CanaryProbe.",
+            },
+        )
+    return None
+
+
 @governance_app.post("/policy-precheck")
 async def policy_precheck_endpoint(
     request: Request,
@@ -799,6 +821,12 @@ async def policy_precheck_endpoint(
         - Overrides spoofed caller server-bound inputs via ``bind_server_inputs()``.
         - Fails closed to ``"DENY"`` on any OPA error or undecodable verdict.
     """
+    canary_rejection = _enforce_canary_probe_scope(
+        "/governance/policy-precheck", body.action
+    )
+    if canary_rejection is not None:
+        return canary_rejection
+
     rl_res = await _check_validate_action_rate_limit(request)
     if inspect.isawaitable(rl_res):
         rl_res = await rl_res
@@ -843,6 +871,7 @@ async def policy_precheck_endpoint(
             decision = "MANUAL_REVIEW"
         else:
             decision = "DENY"
+            mark_request_refused()
 
         return JSONResponse(
             status_code=200,
@@ -902,6 +931,11 @@ async def validate_action_endpoint(
     """
     # GHSA-v3h4-8458-5ww3: the caller is authenticated before any processing by
     # WorkloadIdentityMiddleware (mesh identity, POAM-2026-080) on the root app.
+    canary_rejection = _enforce_canary_probe_scope(
+        "/governance/validate-action", body.action
+    )
+    if canary_rejection is not None:
+        return canary_rejection
 
     # ── Rate limiting: shared dual-bucket GCRA (identity + principal) ─────────
     rl_res = await _check_validate_action_rate_limit(request)

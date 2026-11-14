@@ -48,14 +48,15 @@ class HealthcareCagePlugin(contracts.CagePlugin):
         ftra_registry_path=_CONFIG_DIR / "ftra" / "terminal_registry.json",
         opa_package="dosing.governance",
         opa_required_rules=("allow",),
+        canary_probe=contracts.CanaryProbe(
+            "/governance/policy-precheck", "administer_dose", {"dose_mg": 10.0}
+        ),
     )
 
     def contribute(self) -> contracts.PluginContribution:
         barrier = SerumConcentrationBarrier()
         cbf = ControlBarrierFunction(
-            invariant=barrier,
-            cost_resolver=healthcare_cost_resolver,
-            skip_epoch_seed=True,
+            barrier, cost_resolver=healthcare_cost_resolver, skip_epoch_seed=True
         )
         return contracts.PluginContribution(
             domain=self.name,
@@ -71,7 +72,7 @@ class HealthcareCagePlugin(contracts.CagePlugin):
             consensus=build_healthcare_consensus_contribution(),
             tool_provider=ClinicalToolProvider(),
             threshold_sections={"healthcare": HealthcareThresholds},
-            compliance_overlay_dirs=(Path(__file__).parent / "config" / "compliance",),
+            compliance_overlay_dirs=(_CONFIG_DIR / "compliance",),
             rail_providers=(HealthcareRailProvider(),),  # CheckContraindicationAction
         )
 

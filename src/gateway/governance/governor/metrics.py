@@ -23,7 +23,10 @@ metric twice. Nothing is registered at import time.
 
 from __future__ import annotations
 
+import contextvars
 import threading
+from collections.abc import Iterator
+from contextlib import contextmanager
 from typing import Any
 
 try:
@@ -33,13 +36,47 @@ except ImportError:  # pragma: no cover - exercised only without prometheus_clie
     CollectorRegistry = Any  # type: ignore[misc, assignment]
     Counter = None  # type: ignore[misc, assignment]
 
+GATED_REQUEST_OUTCOMES: tuple[str, str] = ("blocked", "permitted")
+
+#: Per-request flag set when any in-band governance check decides a hard refusal
+#: inside a request whose transport layer still returns HTTP 200 (for example,
+#: MCP Streamable HTTP JSON-RPC tool calls, ``/tools/execute``, or
+#: ``/governance/policy-precheck``). :class:`WorkloadIdentityMiddleware` reads
+#: this flag on completion so protocol-wrapped refusals count as ``blocked``.
+_REQUEST_REFUSED: contextvars.ContextVar[bool] = contextvars.ContextVar(
+    "cage_gateway_request_refused",
+    default=False,
+)
+
+
+@contextmanager
+def track_gated_request() -> Iterator[None]:
+    """Scope per-request refusal tracking to one gated gateway request."""
+    token = _REQUEST_REFUSED.set(False)
+    try:
+        yield
+    finally:
+        _REQUEST_REFUSED.reset(token)
+
+
+def mark_request_refused() -> None:
+    """Mark the currently executing gated gateway request as refused."""
+    _REQUEST_REFUSED.set(True)
+
+
+def was_request_refused() -> bool:
+    """Return True if any governance check refused the current request."""
+    return _REQUEST_REFUSED.get()
+
 
 class GovernorMetrics:
     """Governor collectors bound to one registry. Build via :func:`governor_metrics`."""
 
     __slots__ = (
+        "_canary_requests",
         "_evidence_publish_failures",
         "_ftra_boundary_checks",
+        "_gated_requests",
         "_refusals",
     )
 
@@ -74,6 +111,25 @@ class GovernorMetrics:
                 registry=registry,
             )
         )
+        if Counter is None or registry is None:
+            self._gated_requests = None
+            self._canary_requests = None
+        else:
+            self._gated_requests = Counter(
+                "cage_gateway_gated_requests_total",
+                "Total non-open HTTP and WebSocket requests handled at the gateway ingress boundary, partitioned by outcome",
+                ["outcome"],
+                registry=registry,
+            )
+            self._canary_requests = Counter(
+                "cage_gateway_canary_requests_total",
+                "Total synthetic in-mesh canary requests handled at the gateway ingress boundary, partitioned by outcome",
+                ["outcome"],
+                registry=registry,
+            )
+            for outcome in GATED_REQUEST_OUTCOMES:
+                self._gated_requests.labels(outcome=outcome)
+                self._canary_requests.labels(outcome=outcome)
 
     def evidence_publish_failure(self, kind: str) -> None:
         """Count one best-effort evidence write that failed (``refusal``, ``deferral``, etc.)."""
@@ -82,8 +138,17 @@ class GovernorMetrics:
 
     def refusal_decided(self, tier: str) -> None:
         """Count one hard governance refusal under its lead tier."""
+        mark_request_refused()
         if self._refusals is not None:
             self._refusals.labels(tier=tier or "SYMBOLIC_GOVERNOR").inc()
+
+    def gated_request_completed(self, *, blocked: bool, canary: bool = False) -> None:
+        """Count one completed non-open gateway request as ``blocked`` or ``permitted``."""
+        outcome = "blocked" if blocked else "permitted"
+        if self._gated_requests is not None:
+            self._gated_requests.labels(outcome=outcome).inc()
+        if canary and self._canary_requests is not None:
+            self._canary_requests.labels(outcome=outcome).inc()
 
     def ftra_boundary_check(self, result: str) -> None:
         """Count one FTRA boundary check outcome (``passed``, ``conditional_clear``, ``hitl_required``, ``error``)."""

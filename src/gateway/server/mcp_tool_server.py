@@ -67,6 +67,7 @@ from src.gateway.governance.content_safety import (
 )
 from src.gateway.governance.decisions import GovernanceDecision
 from src.gateway.governance.governor.governor import SymbolicGovernor
+from src.gateway.governance.governor.metrics import mark_request_refused
 from src.gateway.governance.inference_backend import (
     InferenceBackend,
     require_backend_settings,
@@ -508,12 +509,14 @@ async def _evaluate_policy_internal(
                 return "MANUAL_REVIEW: action requires human approval"
             else:
                 span.set_attribute("opa.allowed", False)
+                mark_request_refused()
                 return f"DENIED: action blocked by OPA policy (decision={result_str})"
         except Exception as exc:
             logger.error("Policy Check Error: %s", exc)
             span.record_exception(exc)
             span.set_status(trace.Status(trace.StatusCode.ERROR, str(exc)))
             span.set_attribute("opa.allowed", False)
+            mark_request_refused()
             return "DENIED: policy evaluation error"
 
 
@@ -573,9 +576,11 @@ async def verify_content_safety(text: str) -> str:
 
     refusal = semantic_rails_refusal()
     if refusal is not None:
+        mark_request_refused()
         return blocked_verdict(refusal_reason(*refusal))
     rails = getattr(app.state, "nemo_rails", None)
     if rails is None:
+        mark_request_refused()
         return blocked_verdict(
             refusal_reason(
                 CONTENT_SAFETY_RAILS_UNAVAILABLE,
@@ -586,10 +591,14 @@ async def verify_content_safety(text: str) -> str:
         is_safe, response, _deterministic = await validate_with_nemo(text, rails)
     except Exception as exc:
         logger.error("verify_content_safety: rail check raised — blocking: %s", exc)
+        mark_request_refused()
         return blocked_verdict(
             refusal_reason(CONTENT_SAFETY_ERROR, "the rail check raised an error.")
         )
-    return SAFE_VERDICT if is_safe is True else blocked_verdict(response)
+    if is_safe is True:
+        return SAFE_VERDICT
+    mark_request_refused()
+    return blocked_verdict(response)
 
 
 # ---------------------------------------------------------------------------
@@ -720,6 +729,7 @@ async def execute_tool_endpoint(request_body: ToolExecutionRequest, request: Req
 
     from src.gateway.governance.evidence.stream import EvidenceChainUnavailableError
     from src.gateway.server.governance_middleware import (
+        ActionDeferred,
         get_last_refusal_proof_hash,
         reset_last_refusal_proof_hash,
         set_last_refusal_proof_hash,
@@ -735,6 +745,7 @@ async def execute_tool_endpoint(request_body: ToolExecutionRequest, request: Req
         response: dict[str, Any] = {"status": "SUCCESS", "output": str(output)}
         proof_hash = get_last_refusal_proof_hash()
         if proof_hash:
+            mark_request_refused()
             response["proof_hash"] = proof_hash
         return response
     except EvidenceChainUnavailableError as exc:
@@ -748,6 +759,8 @@ async def execute_tool_endpoint(request_body: ToolExecutionRequest, request: Req
             },
         )
     except Exception as exc:
+        if not isinstance(exc, ActionDeferred):
+            mark_request_refused()
         logger.error("Tool Execution Error: %s", exc)
         err_response: dict[str, Any] = {"status": "ERROR", "error": str(exc)}
         proof_hash = get_last_refusal_proof_hash()

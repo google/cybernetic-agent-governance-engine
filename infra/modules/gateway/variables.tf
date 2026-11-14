@@ -217,6 +217,20 @@ variable "trusted_client_identities" {
   }
 }
 
+variable "canary_client_identities" {
+  description = "Dedicated Linkerd workload identities (disjoint from trusted_client_identities) restricted strictly to Exact POST /governance/validate-action and /governance/policy-precheck for the synthetic in-mesh liveness canary (CAGE_CANARY_CLIENT_IDENTITIES)."
+  type        = list(string)
+  default     = []
+
+  validation {
+    condition = alltrue([
+      for id in var.canary_client_identities :
+      can(regex("^[a-z0-9]([-a-z0-9]*[a-z0-9])?\\.[a-z0-9]([-a-z0-9]*[a-z0-9])?\\.serviceaccount\\.identity\\.linkerd\\.[a-z0-9]([-a-z0-9.]*[a-z0-9])?$", id))
+    ])
+    error_message = "canary_client_identities must contain only valid Linkerd workload identities (<sa>.<namespace>.serviceaccount.identity.linkerd.<trust-domain>)."
+  }
+}
+
 variable "enable_mesh_policy" {
   description = "Install the gateway's Linkerd Server/HTTPRoute/AuthorizationPolicy set. Requires the Linkerd CRDs (infra/modules/service_mesh)."
   type        = bool

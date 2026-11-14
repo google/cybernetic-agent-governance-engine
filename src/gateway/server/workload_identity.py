@@ -117,13 +117,30 @@ from src.gateway.governance.env_posture import (
     is_enforcing,
     resolve_posture,
 )
+from src.gateway.governance.governor.metrics import (
+    GovernorMetrics,
+    governor_metrics,
+    track_gated_request,
+    was_request_refused,
+)
 
 logger = logging.getLogger(__name__)
 
 CLIENT_IDENTITY_HEADER = "l5d-client-id"
 TRUSTED_IDENTITIES_ENV = "CAGE_TRUSTED_CLIENT_IDENTITIES"
+CANARY_IDENTITIES_ENV = "CAGE_CANARY_CLIENT_IDENTITIES"
 ALLOW_DEV_LOOPBACK_IDENTITY_ENV = "CAGE_ALLOW_DEV_LOOPBACK_IDENTITY"
 _TRUTHY = frozenset({"1", "true", "yes", "on"})
+
+#: Non-mutating POST endpoints that a dedicated synthetic canary workload
+#: identity (``CAGE_CANARY_CLIENT_IDENTITIES``) is permitted to invoke. Every
+#: other method or path is refused 403 for canary identities.
+CANARY_ALLOWED_PATHS: frozenset[str] = frozenset(
+    {
+        "/governance/validate-action",
+        "/governance/policy-precheck",
+    }
+)
 
 #: Paths that need no caller identity. Everything else is refused unless the
 #: caller presents a trusted identity. Only exact paths can be open: there is
@@ -156,6 +173,13 @@ ASGIApp = Callable[[Scope, Receive, Send], Awaitable[None]]
 _VERIFIED_CLIENT_IDENTITY: contextvars.ContextVar[str | None] = contextvars.ContextVar(
     "cage_verified_client_identity", default=None
 )
+#: True only while serving an authenticated synthetic canary workload identity
+#: (``IdentityPolicy.canary``). Used by ``EvidenceStreamSink`` to stamp
+#: ``"canary": True`` inside hash-chained payloads so compliance-bridge never
+#: counts synthetic liveness traffic toward Lula volume or ``safety_rate``.
+_VERIFIED_CANARY_REQUEST: contextvars.ContextVar[bool] = contextvars.ContextVar(
+    "cage_verified_canary_request", default=False
+)
 
 
 def current_client_identity() -> str | None:
@@ -170,14 +194,21 @@ def current_client_identity() -> str | None:
     return _VERIFIED_CLIENT_IDENTITY.get()
 
 
+def is_canary_request() -> bool:
+    """True only when the current request was authenticated as a synthetic canary."""
+    return _VERIFIED_CANARY_REQUEST.get()
+
+
 @contextmanager
-def _serving(identity: str | None) -> Iterator[None]:
-    """Make ``identity`` the verified caller for the enclosed downstream call."""
-    token = _VERIFIED_CLIENT_IDENTITY.set(identity)
+def _serving(identity: str | None, *, canary: bool = False) -> Iterator[None]:
+    """Make ``identity`` (and its ``canary`` status) active for the downstream call."""
+    id_token = _VERIFIED_CLIENT_IDENTITY.set(identity)
+    canary_token = _VERIFIED_CANARY_REQUEST.set(bool(canary and identity is not None))
     try:
         yield
     finally:
-        _VERIFIED_CLIENT_IDENTITY.reset(token)
+        _VERIFIED_CANARY_REQUEST.reset(canary_token)
+        _VERIFIED_CLIENT_IDENTITY.reset(id_token)
 
 
 def is_workload_identity(value: object) -> bool:
@@ -190,15 +221,24 @@ class IdentityPolicy:
     """Which caller identities the gateway admits. Always enforced."""
 
     trusted: frozenset[str]
+    canary: frozenset[str] = frozenset()
 
     def __post_init__(self) -> None:
         if not self.trusted:
             raise ValueError("IdentityPolicy requires at least one trusted identity.")
-        malformed = sorted(i for i in self.trusted if not _LINKERD_IDENTITY.match(i))
+        malformed = sorted(
+            i for i in (self.trusted | self.canary) if not _LINKERD_IDENTITY.match(i)
+        )
         if malformed:
             raise ValueError(
                 f"IdentityPolicy contains values that are not Linkerd workload "
                 f"identities: {malformed}."
+            )
+        overlap = sorted(self.trusted & self.canary)
+        if overlap:
+            raise ValueError(
+                "IdentityPolicy trusted and canary sets must be disjoint so "
+                f"production workloads cannot be tagged as canary traffic: {overlap}."
             )
 
 
@@ -242,8 +282,8 @@ def load_identity_policy() -> IdentityPolicy:
 
     Raises:
         RuntimeError: no identity is configured, a configured identity is
-            not a Linkerd workload identity, or the LT-1 dev loopback opt-in is
-            set outside a non-enforcing dev posture.
+            not a Linkerd workload identity, trusted/canary sets overlap, or
+            the LT-1 dev loopback opt-in is set outside a non-enforcing dev posture.
     """
     dev_loopback_flag = (
         os.environ.get(ALLOW_DEV_LOOPBACK_IDENTITY_ENV, "").strip().lower() in _TRUTHY
@@ -267,7 +307,24 @@ def load_identity_policy() -> IdentityPolicy:
             f"{TRUSTED_IDENTITIES_ENV} must list the workload identities allowed to call "
             "the gateway (POAM-2026-080). There is no permissive bypass."
         )
-    return IdentityPolicy(trusted=identities)
+    raw_canary = os.environ.get(CANARY_IDENTITIES_ENV, "")
+    canary_identities = frozenset(
+        part.strip() for part in raw_canary.split(",") if part.strip()
+    )
+    malformed_canary = sorted(
+        i for i in canary_identities if not _LINKERD_IDENTITY.match(i)
+    )
+    if malformed_canary:
+        raise RuntimeError(
+            f"{CANARY_IDENTITIES_ENV} contains values that are not Linkerd workload "
+            f"identities: {malformed_canary}."
+        )
+    overlap = sorted(identities & canary_identities)
+    if overlap:
+        raise RuntimeError(
+            f"{CANARY_IDENTITIES_ENV} must be disjoint from {TRUSTED_IDENTITIES_ENV}: {overlap}."
+        )
+    return IdentityPolicy(trusted=identities, canary=canary_identities)
 
 
 def _client_identities(scope: Mapping[str, Any]) -> list[str]:
@@ -361,9 +418,19 @@ def extract_client_identity(scope: Mapping[str, Any]) -> str:
 class WorkloadIdentityMiddleware:
     """ASGI middleware: refuse any non-open request without a trusted identity."""
 
-    def __init__(self, app: ASGIApp, policy: IdentityPolicy) -> None:
+    def __init__(
+        self,
+        app: ASGIApp,
+        policy: IdentityPolicy,
+        *,
+        metrics: GovernorMetrics | None = None,
+    ) -> None:
         self.app = app
         self.policy = policy
+        self._metrics = metrics
+
+    def _resolve_metrics(self) -> GovernorMetrics:
+        return self._metrics if self._metrics is not None else governor_metrics()
 
     async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
         if scope["type"] not in ("http", "websocket"):
@@ -371,10 +438,13 @@ class WorkloadIdentityMiddleware:
             return
         path = scope.get("path", "")
         if is_open_path(path):
-            # An open path never runs as an authenticated caller.
+            # An open path never runs as an authenticated caller and is excluded
+            # from gated request counters so kubelet probes cannot dilute a
+            # sustained refusal outage.
             with _serving(None):
                 await self.app(scope, receive, send)
             return
+        metrics = self._resolve_metrics()
         presented = _client_identities(scope)
         if presented and not _is_trusted_identity_source(scope):
             # Through the proxy, the header is the identity the proxy verified.
@@ -386,19 +456,79 @@ class WorkloadIdentityMiddleware:
                 _peer(scope),
                 presented[0] if len(presented) == 1 else f"<{len(presented)} headers>",
             )
+            metrics.gated_request_completed(blocked=True)
             await _refuse(scope, send)
             return
-        # Exactly one header, and it must be trusted. Several headers mean
-        # something other than the proxy wrote one of them.
-        if len(presented) == 1 and presented[0] in self.policy.trusted:
-            with _serving(presented[0]):
-                await self.app(scope, receive, send)
-            return
+        # Exactly one header, and it must be either a trusted client identity or
+        # a dedicated synthetic canary identity restricted to CANARY_ALLOWED_PATHS.
+        if len(presented) == 1:
+            caller = presented[0]
+            is_trusted_client = caller in self.policy.trusted
+            is_canary_client = caller in self.policy.canary
+            if is_canary_client and (
+                scope["type"] != "http"
+                or str(scope.get("method", "")).upper() != "POST"
+                or path not in CANARY_ALLOWED_PATHS
+            ):
+                logger.warning(
+                    "INGRESS_CANARY_ROUTE_FORBIDDEN method=%s path=%s identity=%s",
+                    scope.get("method", ""),
+                    path,
+                    caller,
+                )
+                metrics.gated_request_completed(blocked=True, canary=True)
+                await _refuse(scope, send)
+                return
+            if is_trusted_client or is_canary_client:
+                is_ws = scope["type"] == "websocket"
+                http_status: int | None = None
+                ws_accepted = False
+                ws_policy_closed = False
+
+                async def _tracked_send(message: dict[str, Any]) -> None:
+                    nonlocal http_status, ws_accepted, ws_policy_closed
+                    msg_type = message.get("type")
+                    if msg_type == "http.response.start":
+                        http_status = int(message.get("status", 500))
+                    elif msg_type == "websocket.accept":
+                        ws_accepted = True
+                    elif msg_type == "websocket.close" and not ws_accepted:
+                        ws_policy_closed = True
+                    await send(message)
+
+                completed_cleanly = False
+                with (
+                    _serving(caller, canary=is_canary_client),
+                    track_gated_request(),
+                ):
+                    try:
+                        await self.app(scope, receive, _tracked_send)
+                        completed_cleanly = True
+                    finally:
+                        if is_ws:
+                            blocked = (
+                                not completed_cleanly
+                                or ws_policy_closed
+                                or not ws_accepted
+                                or was_request_refused()
+                            )
+                        else:
+                            blocked = (
+                                not completed_cleanly
+                                or http_status is None
+                                or http_status >= 400
+                                or was_request_refused()
+                            )
+                        metrics.gated_request_completed(
+                            blocked=blocked, canary=is_canary_client
+                        )
+                return
         logger.warning(
             "INGRESS_IDENTITY_REFUSED path=%s identity=%s",
             path,
             presented[0] if len(presented) == 1 else f"<{len(presented)} headers>",
         )
+        metrics.gated_request_completed(blocked=True)
         await _refuse(scope, send)
 
 

@@ -1068,6 +1068,9 @@ def _query_cage_evidence_records(
             continue
         seen_keys.add(dedup_key)
 
+        if _is_canary_evidence_record(rec_dict):
+            continue
+
         if not _record_matches_control(rec_dict, control_id):
             continue
 
@@ -1078,6 +1081,25 @@ def _query_cage_evidence_records(
 
     matched.sort(key=lambda item: item[0], reverse=True)
     return [rec for _, rec in matched[:limit]]
+
+
+def _is_canary_evidence_record(record: Mapping[str, Any] | Any) -> bool:
+    """Return True when `record` was emitted by the synthetic in-mesh liveness canary.
+
+    Canary records carry top-level `"canary": true` inside the JCS-canonicalized,
+    hash-chained `payload_json` (stamped exclusively by `EvidenceStreamSink` from
+    Linkerd-verified `CAGE_CANARY_CLIENT_IDENTITIES`, never from caller-supplied
+    `params`). Excluding them prevents synthetic liveness traffic from inflating
+    Lula trace-volume thresholds (`A.5.2`, `A.5.3`, `A.9.2`) or fabricating
+    `safety_rate == 1.0` on an idle cluster.
+    """
+    raw_top = _get_record_field(record, "canary")
+    if raw_top is True or (
+        isinstance(raw_top, str) and raw_top.strip().lower() == "true"
+    ):
+        return True
+    payload = _parse_evidence_payload(record)
+    return payload.get("canary") is True
 
 
 def _fetch_from_evidence_stream_sync(
@@ -1093,6 +1115,8 @@ def _fetch_from_evidence_stream_sync(
     last_event_date = datetime.fromtimestamp(0, tz=timezone.utc)
 
     for record in records:
+        if _is_canary_evidence_record(record):
+            continue
         if not _record_matches_control(record, control_id):
             continue
 

@@ -328,7 +328,7 @@ locals {
       egress  = "default-deny-external-egress"
     }
     ingress = {
-      gateway           = { advisor = [8080, 50051, 4143], sovereign_agent = [8080, 50051, 4143], compliance_bridge = [8080, 4143], gmp = [9090, 4191] }
+      gateway           = { advisor = [8080, 50051, 4143], sovereign_agent = [8080, 50051, 4143], compliance_bridge = [8080, 4143], gateway_canary = [8080, 4143], gmp = [9090, 4191] }
       vllm              = { gateway = [8000, 4143] }
       compliance_bridge = { gateway = [3001, 4143] }
       langfuse_web      = { callers = ["gateway", "compliance-bridge", "governed-financial-advisor", "reconciliation-worker", "langfuse-worker"], ports = [3000, 4143] }
@@ -483,6 +483,13 @@ resource "kubernetes_network_policy_v1" "gateway_ingress" {
         pod_selector {
           match_labels = {
             app = "lula-audit"
+          }
+        }
+      }
+      from {
+        pod_selector {
+          match_labels = {
+            app = "gateway-canary"
           }
         }
       }
@@ -2546,6 +2553,128 @@ resource "kubernetes_network_policy_v1" "agentsight_ui_egress_l3_l4" {
   }
 }
 
+# ─── 13c. Synthetic Gateway Canary Egress (DNS + Linkerd CP + Gateway 8080/4143 Only) ───
+# `gateway-canary` sends one non-mutating governed HTTP POST per minute to
+# `gateway:8080` over Linkerd mTLS (`4143`) and holds zero egress to Valkey,
+# Cloud SQL, ClickHouse, Langfuse, model backends, metadata servers, or WAN.
+
+resource "kubernetes_network_policy_v1" "gateway_canary_egress" {
+  metadata {
+    name      = "gateway-canary-egress"
+    namespace = module.namespace.name
+    labels = {
+      app                            = "gateway-canary"
+      "app.kubernetes.io/managed-by" = "terraform"
+      "cage.io/component"            = "z3n-egress"
+    }
+    annotations = merge(
+      {
+        "compliance.nist.gov/control"  = "SC-7,AC-4,SI-4"
+        "compliance.nist.gov/standard" = "SP-800-53-Rev5"
+        "cage.io/poam"                 = "POAM-2026-195"
+      },
+      local.network_policy_logging_annotation,
+    )
+  }
+
+  spec {
+    pod_selector {
+      match_labels = {
+        app = "gateway-canary"
+      }
+    }
+
+    policy_types = ["Egress"]
+
+    # Cluster DNS (`kube-dns` / `node-local-dns`) in `kube-system` + ClusterIP CIDR
+    egress {
+      to {
+        namespace_selector {
+          match_labels = {
+            "kubernetes.io/metadata.name" = "kube-system"
+          }
+        }
+        pod_selector {
+          match_labels = {
+            "k8s-app" = "kube-dns"
+          }
+        }
+      }
+      to {
+        namespace_selector {
+          match_labels = {
+            "kubernetes.io/metadata.name" = "kube-system"
+          }
+        }
+        pod_selector {
+          match_labels = {
+            "k8s-app" = "node-local-dns"
+          }
+        }
+      }
+      to {
+        ip_block {
+          cidr = var.kube_dns_cidr
+        }
+      }
+      ports {
+        protocol = "UDP"
+        port     = "53"
+      }
+      ports {
+        protocol = "TCP"
+        port     = "53"
+      }
+    }
+
+    # Linkerd mTLS control-plane services (`identity`, `destination`, `policy`)
+    egress {
+      to {
+        namespace_selector {
+          match_labels = {
+            "kubernetes.io/metadata.name" = "linkerd"
+          }
+        }
+      }
+      ports {
+        protocol = "TCP"
+        port     = "8080"
+      }
+      ports {
+        protocol = "TCP"
+        port     = "8086"
+      }
+      ports {
+        protocol = "TCP"
+        port     = "8090"
+      }
+      ports {
+        protocol = "TCP"
+        port     = "443"
+      }
+    }
+
+    # Gateway HTTP 8080 + Linkerd inbound 4143 ONLY (never gRPC 50051 or metrics 9090)
+    egress {
+      to {
+        pod_selector {
+          match_labels = {
+            app = "gateway"
+          }
+        }
+      }
+      ports {
+        protocol = "TCP"
+        port     = "8080"
+      }
+      ports {
+        protocol = "TCP"
+        port     = "4143"
+      }
+    }
+  }
+}
+
 # ─── 14. Materialize GKE FQDNNetworkPolicy Objects in Cluster (§5.3) ─────────
 
 resource "kubernetes_manifest" "fqdn_network_policy" {
@@ -2583,6 +2712,7 @@ resource "terraform_data" "network_policy_workload_rollout" {
       ],
       length(module.governed_advisor) > 0 ? ["deployment/governed-financial-advisor"] : [],
       var.enable_compliance_bridge ? ["deployment/compliance-bridge"] : [],
+      var.enable_gateway_canary ? ["deployment/gateway-canary"] : [],
       local.vllm_enabled ? ["deployment/vllm-inference", "deployment/vllm-reasoning"] : [],
       local.clickhouse_cold_tier_enabled ? ["statefulset/clickhouse-keeper"] : [],
     ))} -n ${module.namespace.name}"
@@ -2610,6 +2740,7 @@ resource "terraform_data" "network_policy_workload_rollout" {
     kubernetes_network_policy_v1.clickhouse_keeper_egress_l3_l4,
     kubernetes_network_policy_v1.lula_audit_egress,
     kubernetes_network_policy_v1.agentsight_ui_egress_l3_l4,
+    kubernetes_network_policy_v1.gateway_canary_egress,
     kubernetes_manifest.fqdn_network_policy,
   ]
 }

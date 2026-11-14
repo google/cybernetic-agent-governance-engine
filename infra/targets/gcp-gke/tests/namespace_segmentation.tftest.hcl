@@ -123,6 +123,7 @@ run "per_workload_network_policy_segmentation" {
         kubernetes_network_policy_v1.clickhouse_keeper_ingress,
         kubernetes_network_policy_v1.clickhouse_keeper_egress_l3_l4,
         kubernetes_network_policy_v1.lula_audit_egress,
+        kubernetes_network_policy_v1.gateway_canary_egress,
         ] : (
         length(coalesce(np.spec[0].pod_selector[0].match_labels, tomap({}))) > 0 ||
         length(np.spec[0].pod_selector[0].match_expressions) > 0
@@ -143,6 +144,7 @@ run "per_workload_network_policy_segmentation" {
         kubernetes_network_policy_v1.clickhouse_egress_l3_l4,
         kubernetes_network_policy_v1.clickhouse_keeper_egress_l3_l4,
         kubernetes_network_policy_v1.lula_audit_egress,
+        kubernetes_network_policy_v1.gateway_canary_egress,
         ] : length([
           for r in np.spec[0].egress : r
           if anytrue([
@@ -184,6 +186,7 @@ run "per_workload_network_policy_segmentation" {
           kubernetes_network_policy_v1.clickhouse_egress_l3_l4,
           kubernetes_network_policy_v1.clickhouse_keeper_egress_l3_l4,
           kubernetes_network_policy_v1.lula_audit_egress,
+          kubernetes_network_policy_v1.gateway_canary_egress,
           ] : !contains(flatten([
             for r in np.spec[0].egress :
             [for t in r.to : t.ip_block[0].cidr if length(t.ip_block) > 0]
@@ -216,6 +219,7 @@ run "per_workload_network_policy_segmentation" {
           kubernetes_network_policy_v1.clickhouse_egress_l3_l4,
           kubernetes_network_policy_v1.clickhouse_keeper_egress_l3_l4,
           kubernetes_network_policy_v1.lula_audit_egress,
+          kubernetes_network_policy_v1.gateway_canary_egress,
           ] : (
           !contains(flatten([
             for r in np.spec[0].egress :
@@ -285,9 +289,11 @@ run "per_workload_network_policy_segmentation" {
       kubernetes_service_account.workload["clickhouse_keeper"].metadata[0].name == "cage-clickhouse-keeper-sa" &&
       length(coalesce(kubernetes_service_account.workload["clickhouse_keeper"].metadata[0].annotations, tomap({}))) == 0 &&
       kubernetes_service_account.workload["inference_stub"].metadata[0].name == "cage-inference-stub-sa" &&
-      length(coalesce(kubernetes_service_account.workload["inference_stub"].metadata[0].annotations, tomap({}))) == 0
+      length(coalesce(kubernetes_service_account.workload["inference_stub"].metadata[0].annotations, tomap({}))) == 0 &&
+      kubernetes_service_account.workload["gateway_canary"].metadata[0].name == "cage-gateway-canary-sa" &&
+      length(coalesce(kubernetes_service_account.workload["gateway_canary"].metadata[0].annotations, tomap({}))) == 0
     )
-    error_message = "agentsight_ui, clickhouse_keeper, and inference_stub must run under dedicated KSAs with zero Workload Identity GSA annotation"
+    error_message = "agentsight_ui, clickhouse_keeper, inference_stub, and gateway_canary must run under dedicated KSAs with zero Workload Identity GSA annotation"
   }
 }
 
