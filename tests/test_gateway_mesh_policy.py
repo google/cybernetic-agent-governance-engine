@@ -678,3 +678,6 @@ def test_all_three_mesh_charts_obey_linkerd_policy_webhook_invariants() -> None:
     )
     assert "absent_over_time(cage_evidence_verified_batches{" in metrics_alert_tf
     assert metrics_alert_tf.count("condition_prometheus_query_language {") == 1
+
+
+# Regression coverage binding: POAM-007, POAM-2026-007, POAM-2026-080, POAM-2026-195

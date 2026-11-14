@@ -15,8 +15,9 @@
 # lula-validation-ia3.yaml
 # NIST SP 800-53 Rev 5 — IA-3: Device Identification and Authentication
 #
-# POAM-007 STATUS: CLOSED 2026-05-17
+# POAM-007 / POAM-2026-007 / POAM-2026-080 / POAM-2026-195 STATUS: CLOSED 2026-11-13
 # Asserts Linkerd mTLS workload identity enforcement on the gateway Deployment,
+# zero config.linkerd.io/skip-inbound-ports bypass across gateway and compliance-bridge,
 # L3/L4 NetworkPolicy isolation, and in-pod OPA UDS sidecar isolation (zero TCP
 # listener ports, --addr=unix:///var/run/opa/opa.sock, --authorization=basic).
 #
@@ -24,7 +25,7 @@
 #   - infra/targets/gcp-gke/network_policy.tf — default-deny and L3/L4 NetworkPolicy definitions
 #   - infra/modules/service_mesh/main.tf & infra/modules/gateway/mesh-policy/ — Linkerd mTLS SPIFFE authorization policies
 #   - infra/modules/gateway/main.tf — Gateway UDS OPA sidecar
-#   - docs/POAM.md — POAM-007 (IA-3: Linkerd mTLS — CLOSED 2026-05-17)
+#   - docs/POAM.md & docs/compliance/us_fed/POAM_US_FED.md — POAM-007, POAM-2026-007, POAM-2026-080, POAM-2026-195 (CLOSED 2026-11-13)
 
 component-definition:
   uuid: f9dc196a-c256-50dc-8884-955eb90df5a6

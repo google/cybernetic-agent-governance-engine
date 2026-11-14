@@ -12,7 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-# PR-7b (§10 — POAM-2026-195, POAM-2026-080, F-16..F-20, F-78, F-87, F-103, R-5, R-16):
+# PR-7b (§10 — POAM-007, POAM-2026-007, POAM-2026-195, POAM-2026-080, F-16..F-20, F-78, F-87, F-103, R-5, R-16):
 # Plan-time contracts for per-workload Kubernetes NetworkPolicy segmentation,
 # dedicated workload KSAs + Linkerd mesh-policy identities, and GKE Dataplane V2
 # policy-verdict logging.

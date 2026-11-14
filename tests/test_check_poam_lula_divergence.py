@@ -372,7 +372,7 @@ def test_live_repository_passes_all_four_checks(
     assert stats["poam_closed_rows"] >= 130 and stats["poam_total_rows"] >= 220
     assert stats["poam_open_or_in_progress_rows"] >= 90
     assert stats["poam_detail_sections"] >= 100
-    assert stats["active_lula_manifests"] == 12
+    assert stats["active_lula_manifests"] == 16
 
 
 def test_zero_legacy_waiver_lists_or_control_stem_matching_remain() -> None:

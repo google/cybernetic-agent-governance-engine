@@ -268,7 +268,7 @@ PLATFORM_CONTROL_NARRATIVES: dict[str, dict[str, dict[str, str]]] = {
         "sc-7": {
             "uuid": _PLATFORM_SC7_IMPL_UUID,
             "control-id": "sc-7",
-            "title": "Boundary Protection — GKE Dataplane V2 Per-Workload Segmentation & Default-Deny Ingress/Egress (FQDN L7 Filtering & Live Verification Pending)",
+            "title": "Boundary Protection — GKE Dataplane V2 Per-Workload Segmentation & Default-Deny Ingress/Egress (FQDN L7 Filtering Pending)",
             "status": "partial",
             "narrative": (
                 "Ingress and external egress in the governance-stack namespace are default-deny "
@@ -280,17 +280,16 @@ PLATFORM_CONTROL_NARRATIVES: dict[str, dict[str, dict[str, str]]] = {
                 "default_deny_external_egress block unpermitted pod-to-pod and external flows, "
                 "per-workload policies scope Cloud SQL and Memorystore for Valkey /32 PSC "
                 "endpoints strictly to their declared consumers (excluding the governed advisor "
-                "from Valkey, POAM-2026-190, POAM-2026-195), and model_backend_ingress admits "
-                "TCP 8000 solely from app=gateway while routing in-cluster advisor completions "
-                "through the gateway /v1/chat/completions proxy (POAM-2026-191). External HTTPS "
-                "egress exists only where a workload FQDNNetworkPolicy allows it (the gateway, "
-                "compliance-bridge, reconciliation-worker, vLLM, ClickHouse tiering and "
-                "telemetry-stack allowlists); the governed financial advisor has none. Open gaps "
-                "keep this control partial: FQDNNetworkPolicy enforces at L3/L4 on DNS-resolved "
-                "IPs without L7 HTTP-method filtering and the gateway allowlist's "
-                "*.googleapis.com entry also matches Google's model API (POAM-2026-152), and "
-                "live deployed-cluster drop/allow corroboration for POAM-2026-190, POAM-2026-191 "
-                "and POAM-2026-195 remains pending Gate W."
+                "from Valkey, POAM-2026-190, POAM-2026-195, verified in Gate W 8956f505), and "
+                "model_backend_ingress admits TCP 8000 solely from app=gateway while routing "
+                "in-cluster advisor completions through the gateway /v1/chat/completions proxy "
+                "(POAM-2026-191, verified in Gate W 8956f505). External HTTPS egress exists only "
+                "where a workload FQDNNetworkPolicy allows it (the gateway, compliance-bridge, "
+                "reconciliation-worker, vLLM, ClickHouse tiering and telemetry-stack allowlists); "
+                "the governed financial advisor has none. Open gaps keep this control partial: "
+                "FQDNNetworkPolicy enforces at L3/L4 on DNS-resolved IPs without L7 HTTP-method "
+                "filtering and the gateway allowlist's *.googleapis.com entry also matches "
+                "Google's model API (POAM-2026-152)."
             ),
             "evidence": (
                 "infra/targets/gcp-gke/network_policy.tf, "
@@ -305,16 +304,16 @@ PLATFORM_CONTROL_NARRATIVES: dict[str, dict[str, dict[str, str]]] = {
         "sc-8": {
             "uuid": _PLATFORM_SC8_IMPL_UUID,
             "control-id": "sc-8",
-            "title": "Transmission Confidentiality and Integrity — Linkerd mTLS, OPA UDS Sidecar & Managed Data-Plane TLS (App Cache TLS, TLS 1.3 Floor & Live Verification Pending)",
+            "title": "Transmission Confidentiality and Integrity — Linkerd mTLS, OPA UDS Sidecar & Managed Data-Plane TLS (App Cache TLS & TLS 1.3 Floor Pending)",
             "status": "partial",
             "narrative": (
                 "Pods in the governance-stack namespace are meshed by Linkerd "
                 "(linkerd.io/inject=enabled) with defaultInboundPolicy=all-authenticated via "
                 "infra/modules/service_mesh, and a ValidatingAdmissionPolicy "
                 "(charts/mesh-proxy-required) refuses any pod created there without the "
-                "Linkerd proxy, including while the fail-open proxy injector is down (live "
-                "verification pending, POAM-2026-167). Pod-to-pod traffic is mutual TLS using "
-                "24-hour in-memory workload certificates signed through a 48-hour Google "
+                "Linkerd proxy, including while the fail-open proxy injector is down "
+                "(POAM-2026-167, verified in Gate W 8956f505). Pod-to-pod traffic is mutual TLS "
+                "using 24-hour in-memory workload certificates signed through a 48-hour Google "
                 "Certificate Authority Service intermediate CSR flow, while OPA runs inside the "
                 "gateway pod over a non-networked Unix domain socket "
                 "(infra/modules/gateway/main.tf). Per-route Linkerd Server, HTTPRoute and "
@@ -322,8 +321,10 @@ PLATFORM_CONTROL_NARRATIVES: dict[str, dict[str, dict[str, str]]] = {
                 "infra/modules/gateway/mesh-policy/templates/policy.yaml, "
                 "infra/modules/compliance_bridge/mesh-policy/templates/policy.yaml and "
                 "infra/targets/gcp-gke/charts/workload-mesh-policy/templates/servers-and-authz.yaml "
-                "restrict L7 HTTP and ClickHouse TCP 9000 callers by ServiceAccount identity, "
-                "backed by src/gateway/server/workload_identity.py on the gateway. Governance "
+                "restrict L7 HTTP, :9090 metrics scrape and ClickHouse TCP 9000 callers by "
+                "ServiceAccount or probe-network policy, backed by "
+                "src/gateway/server/workload_identity.py on the gateway (POAM-2026-007, "
+                "POAM-2026-080, POAM-2026-195, verified in Gate W 8956f505). Governance "
                 "Memorystore for Valkey enforces transit_encryption_mode=SERVER_AUTHENTICATION "
                 "over Private Service Connect with REDIS_CA_CERT_PATH "
                 "(infra/modules/memorystore_valkey/main.tf, "
@@ -332,11 +333,10 @@ PLATFORM_CONTROL_NARRATIVES: dict[str, dict[str, dict[str, str]]] = {
                 "(infra/modules/cloudsql_postgres/main.tf). Open gaps keep this control "
                 "partial: the application Memorystore instance (memorystore_app in "
                 "infra/targets/gcp-gke/main.tf) runs with transit encryption and authentication "
-                "disabled; live deployed-cluster verification of mesh mTLS and L7 authorization "
-                "remains pending (POAM-2026-080, POAM-2026-195); and outbound Python HTTP "
-                "clients use default SSL contexts with a TLS 1.2 floor because "
-                "create_hardened_client_context in src/gateway/infrastructure/tls_context.py "
-                "has no production call site (POAM-2026-011)."
+                "disabled, and outbound Python HTTP clients use default SSL contexts with a "
+                "TLS 1.2 floor because create_hardened_client_context in "
+                "src/gateway/infrastructure/tls_context.py has no production call site "
+                "(POAM-2026-011)."
             ),
             "evidence": (
                 "infra/modules/service_mesh/main.tf, infra/modules/gateway/mesh-policy/templates/policy.yaml, "
