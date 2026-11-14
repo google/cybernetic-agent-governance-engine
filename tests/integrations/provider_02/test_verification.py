@@ -766,3 +766,180 @@ class TestF110JWKSFreshnessAndStaleness:
         assert len(attestations) == 1
         assert attestations[0].status == AttestationStatus.ERROR.value
         assert "CER_JWKS_STALE" in str(attestations[0].metadata["error"])
+
+
+class TestResolverAndTwoStageVerificationEndToEnd:
+    """End-to-end hermetic tests for verify_cer() resolving /v1/resolve/cer/:hash."""
+
+    @staticmethod
+    def _build_captured_resolve_envelope() -> tuple[
+        str, dict[str, object], dict[str, object]
+    ]:
+        """Build a /v1/resolve/cer/:hash envelope around the partner-signed k1 vector."""
+        import copy
+        from pathlib import Path
+
+        fixture_path = (
+            Path(__file__).parent.parent.parent
+            / "fixtures"
+            / "provider_02_native"
+            / "attest_exchange_k1.json"
+        )
+        exchange = json.loads(fixture_path.read_text(encoding="utf-8"))
+        cer = copy.deepcopy(exchange["cer"])
+        response = exchange["response"]
+        manifest_key = copy.deepcopy(exchange["manifestKey"])
+
+        cert_hash_full = str(cer["certificateHash"])
+        hex_digest = cert_hash_full.removeprefix("sha256:")
+
+        cert_canonical = jcs_canonicalize_plan(
+            {k: v for k, v in cer.items() if k != "certificateHash"}
+        ).decode("utf-8")
+
+        signed_fields = response["verificationEnvelope"]["signedFields"]
+        env_attestation = response["verificationEnvelope"]["attestation"]
+        envelope_canonical = jcs_canonicalize_plan(
+            {
+                "bundle": {f: cer[f] for f in signed_fields["bundle"]},
+                "attestation": {
+                    f: env_attestation[f] for f in signed_fields["attestation"]
+                },
+            }
+        ).decode("utf-8")
+
+        resolve_envelope: dict[str, object] = {
+            "ok": True,
+            "schemaVersion": "1.0",
+            "artifactType": "cer",
+            "certificateHash": cert_hash_full,
+            "bundle": cer,
+            "canonical": {
+                "certificate": {
+                    "payload": cert_canonical,
+                    "hashAlgorithm": "sha256",
+                    "canonicalization": "jcs",
+                    "matchesCertificateHash": True,
+                },
+                "envelope": {
+                    "payload": envelope_canonical,
+                    "kid": response["kid"],
+                    "signer": "provider-02-node",
+                    "publicKeyJwk": manifest_key["publicKeyJwk"],
+                },
+            },
+            "verification": {
+                "algorithm": "Ed25519",
+                "verificationEnvelopeSignature": response[
+                    "verificationEnvelopeSignature"
+                ],
+            },
+            "timestamp": {"attestedAt": response["issuedAt"]},
+            "links": {
+                "self": (
+                    "https://api.provider02.example.com/v1/resolve/cer/"
+                    f"sha256%3A{hex_digest}"
+                )
+            },
+        }
+        return hex_digest, resolve_envelope, manifest_key
+
+    @respx.mock
+    @pytest.mark.asyncio
+    async def test_verify_cer_resolves_wrapped_governed_cer_and_verifies_k1(
+        self,
+    ) -> None:
+        """verify_cer() unwraps /v1/resolve/cer/:hash, verifies inner CER JCS digest, and verifies Ed25519 signature."""
+        hex_digest, resolve_envelope, manifest_key = (
+            self._build_captured_resolve_envelope()
+        )
+
+        respx.get(
+            f"https://api.provider02.example.com/v1/resolve/cer/sha256%3A{hex_digest}"
+        ).mock(
+            return_value=httpx.Response(
+                200,
+                content=json.dumps(resolve_envelope, indent=2).encode("utf-8"),
+                headers={"ETag": '"k1-cer"', "Content-Type": "application/json"},
+            )
+        )
+
+        provider = Provider02AttestationProvider(
+            endpoint="https://api.provider02.example.com/v1"
+        )
+        provider._jwk_cache = JWKCache(
+            jwk_set={"keys": [manifest_key]},
+            last_synced=time.time(),
+        )
+
+        result = await provider.verify_cer(hex_digest)
+
+        assert result.valid is True
+        assert result.signature_checked is True
+        assert result.key_id == "k1"
+        assert result.signer == "provider-02-node"
+        assert result.error is None
+
+    @respx.mock
+    @pytest.mark.asyncio
+    async def test_verify_cer_rejects_tampered_inner_bundle_at_resolver_boundary(
+        self,
+    ) -> None:
+        """Tampering bundle.evidence fails at resolver JCS check even if canonical.certificate is untouched."""
+        hex_digest, resolve_envelope, manifest_key = (
+            self._build_captured_resolve_envelope()
+        )
+        bundle_cer = resolve_envelope["bundle"]
+        assert isinstance(bundle_cer, dict)
+        bundle_cer["evidence"]["bundle"]["terminalPath"] = "forged"
+
+        respx.get(
+            f"https://api.provider02.example.com/v1/resolve/cer/sha256%3A{hex_digest}"
+        ).mock(return_value=httpx.Response(200, json=resolve_envelope))
+
+        provider = Provider02AttestationProvider(
+            endpoint="https://api.provider02.example.com/v1"
+        )
+        provider._jwk_cache = JWKCache(
+            jwk_set={"keys": [manifest_key]},
+            last_synced=time.time(),
+        )
+
+        result = await provider.verify_cer(hex_digest)
+
+        assert result.valid is False
+        assert result.signature_checked is False
+        assert result.error is not None
+        assert "CER_DIGEST_MISMATCH" in result.error
+
+    @respx.mock
+    @pytest.mark.asyncio
+    async def test_verify_cer_rejects_unsupported_bundle_type_at_resolver_boundary(
+        self,
+    ) -> None:
+        """cer.ai.execution.v1 resolved from /v1/resolve/cer/:hash fails closed with CER_UNSUPPORTED_BUNDLE_TYPE."""
+        hex_digest, resolve_envelope, manifest_key = (
+            self._build_captured_resolve_envelope()
+        )
+        bundle_cer = resolve_envelope["bundle"]
+        assert isinstance(bundle_cer, dict)
+        bundle_cer["bundleType"] = "cer.ai.execution.v1"
+
+        respx.get(
+            f"https://api.provider02.example.com/v1/resolve/cer/sha256%3A{hex_digest}"
+        ).mock(return_value=httpx.Response(200, json=resolve_envelope))
+
+        provider = Provider02AttestationProvider(
+            endpoint="https://api.provider02.example.com/v1"
+        )
+        provider._jwk_cache = JWKCache(
+            jwk_set={"keys": [manifest_key]},
+            last_synced=time.time(),
+        )
+
+        result = await provider.verify_cer(hex_digest)
+
+        assert result.valid is False
+        assert result.signature_checked is False
+        assert result.error is not None
+        assert "CER_UNSUPPORTED_BUNDLE_TYPE" in result.error

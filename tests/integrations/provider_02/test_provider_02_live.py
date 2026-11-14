@@ -21,6 +21,7 @@ when configured via environment variables.
 from __future__ import annotations
 
 import os
+from collections.abc import AsyncIterator
 
 import pytest
 
@@ -45,7 +46,7 @@ def _get_live_credentials() -> tuple[str, str, str]:
 
 
 @pytest.fixture
-async def live_provider() -> Provider02AttestationProvider:
+async def live_provider() -> AsyncIterator[Provider02AttestationProvider]:
     """Create a live Provider 02 provider instance."""
     endpoint, jwk_endpoint, api_key = _get_live_credentials()
 
@@ -89,8 +90,10 @@ async def test_live_cer_verification_signature(
     Provider 02's sandbox. If no test certificate hash is available, the test
     will skip.
     """
-    # Use a test certificate hash if provided via environment
+    # Use a test certificate hash if provided via environment (accept with or without sha256: prefix)
     test_cert_hash = os.environ.get("PROVIDER_02_TEST_CERT_HASH", "").strip()
+    if test_cert_hash.lower().startswith("sha256:"):
+        test_cert_hash = test_cert_hash.split(":", 1)[1]
 
     if not test_cert_hash:
         pytest.skip(
