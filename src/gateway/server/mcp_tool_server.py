@@ -596,11 +596,13 @@ async def verify_content_safety(text: str) -> str:
 # Mount Stateless MCP Streamable HTTP with distributed tracing (A3)
 # ---------------------------------------------------------------------------
 
+from src.gateway.server.quarantine_guard import McpQuarantineMiddleware
+
 patch_mcp_tools(mcp)
 logger.info(
-    "Mounting Stateless MCP Streamable HTTP App at /mcp (with distributed tracing)..."
+    "Mounting Stateless MCP Streamable HTTP App at /mcp (with distributed tracing and quarantine guard)..."
 )
-app.mount("/mcp", mcp.streamable_http_app())
+app.mount("/mcp", McpQuarantineMiddleware(mcp.streamable_http_app(), state_owner=app))
 
 
 # ---------------------------------------------------------------------------
@@ -666,6 +668,31 @@ async def execute_tool_endpoint(request_body: ToolExecutionRequest, request: Req
             status_code=403,
             detail="trusted workload identity required",
         )
+
+    from src.gateway.server.quarantine_guard import (
+        check_and_refuse_quarantined_workload,
+    )
+
+    quarantine_refusal = await check_and_refuse_quarantined_workload(
+        request.scope,
+        action_id=request_body.tool_name,
+        surface="mcp_tool_server",
+        app_obj=getattr(request, "app", None),
+        fallback_app_obj=app,
+        body_params=request_body.params,
+    )
+    if quarantine_refusal is not None:
+        q_status, q_payload = quarantine_refusal
+        if q_status == 503:
+            return JSONResponse(
+                status_code=503,
+                content={
+                    "status": "ERROR",
+                    "error": "evidence_chain_unavailable",
+                    "detail": q_payload.get("detail", ""),
+                },
+            )
+        return JSONResponse(status_code=q_status, content=q_payload)
 
     # A4 / M-20: Shared dual-bucket GCRA rate limiting (identity + principal)
     if _check_rate_limit is not _default_check_rate_limit:

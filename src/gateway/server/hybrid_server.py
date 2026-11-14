@@ -142,6 +142,8 @@ async def _gateway_lifespan(app: FastAPI):  # type: ignore[no-untyped-def]
         evidence_sink = await start_evidence_sink()
         app.state.evidence_sink = evidence_sink
         inference_app.state.evidence_sink = evidence_sink
+        governance_app.state.evidence_sink = evidence_sink
+        mcp_app.state.evidence_sink = evidence_sink
 
         # ── Pre-warm and share NeMo Rails ──────────────────────────────────────
         # Under ``none`` no rails are built: NeMo is off and visible, and

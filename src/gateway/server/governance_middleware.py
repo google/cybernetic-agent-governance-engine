@@ -820,6 +820,21 @@ async def policy_precheck_endpoint(
             },
         )
 
+    from src.gateway.server.quarantine_guard import (
+        check_and_refuse_quarantined_workload,
+    )
+
+    quarantine_refusal = await check_and_refuse_quarantined_workload(
+        request.scope,
+        action_id=body.action,
+        surface="governance_middleware",
+        app_obj=getattr(request, "app", None),
+        body_params=body.params,
+    )
+    if quarantine_refusal is not None:
+        q_status, q_payload = quarantine_refusal
+        return JSONResponse(status_code=q_status, content=q_payload)
+
     governor = governor_of(request.app)  # fail closed if governor not assembled
     carrier = sanitize_trace_carrier(request.headers)
     remote_ctx = otel_extract(carrier)
@@ -924,6 +939,22 @@ async def validate_action_endpoint(
                 "retry_after_seconds": retry_after,
             },
         )
+
+    # ── Out-of-Band Quarantine Enforcement (SC-7 / AC-3) ──────────────────────
+    from src.gateway.server.quarantine_guard import (
+        check_and_refuse_quarantined_workload,
+    )
+
+    quarantine_refusal = await check_and_refuse_quarantined_workload(
+        request.scope,
+        action_id=body.action,
+        surface="governance_middleware",
+        app_obj=getattr(request, "app", None),
+        body_params=body.params,
+    )
+    if quarantine_refusal is not None:
+        q_status, q_payload = quarantine_refusal
+        return JSONResponse(status_code=q_status, content=q_payload)
 
     # ── Extract W3C trace context from inbound headers ────────────────────────
     # The GFA injected 'traceparent' via otel_inject(headers).  Extracting it
