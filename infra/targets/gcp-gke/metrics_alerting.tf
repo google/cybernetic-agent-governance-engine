@@ -39,6 +39,7 @@ locals {
     "(up{job=\"compliance-bridge-metrics\",namespace=\"${module.namespace.name}\"} == 0)",
     "absent_over_time(up{job=\"compliance-bridge-metrics\",namespace=\"${module.namespace.name}\"}[5m])",
     "absent_over_time(cage_lula_audit_not_satisfied_controls{namespace=\"${module.namespace.name}\"}[5m])",
+    "absent_over_time(cage_lula_audit_insufficient_traffic_controls{namespace=\"${module.namespace.name}\"}[5m])",
     "absent_over_time(cage_evidence_verified_batches{namespace=\"${module.namespace.name}\"}[5m])",
   ])
   prometheus_metrics_scrape_liveness_promql = var.enable_compliance_bridge ? "${local.gateway_metrics_scrape_failure_promql} or ${local.compliance_bridge_metrics_scrape_failure_promql}" : local.gateway_metrics_scrape_failure_promql

@@ -838,9 +838,12 @@ def _resolve_lula_audit_min_manifests() -> int:
     return max(1, int(LULA_AUDIT_MIN_MANIFESTS))
 
 
+from .types import STATISTICAL_TRACE_LULA_SPECS
+
 LULA_AUDIT_RUNS_TOTAL: Any = None
 LULA_AUDIT_EVALUATED_MANIFESTS: Any = None
 LULA_AUDIT_NOT_SATISFIED_CONTROLS: Any = None
+LULA_AUDIT_INSUFFICIENT_TRAFFIC_CONTROLS: Any = None
 LULA_AUDIT_LAST_PASS_TIMESTAMP_SECONDS: Any = None
 try:
     from prometheus_client import REGISTRY as _PROM_REGISTRY
@@ -870,7 +873,11 @@ try:
     )
     LULA_AUDIT_NOT_SATISFIED_CONTROLS = _bridge_gauge(
         "cage_lula_audit_not_satisfied_controls",
-        "Number of not-satisfied or missing corpus-floor controls in the latest lula_audit run",
+        "Number of not-satisfied violation or missing corpus-floor controls in the latest lula_audit run",
+    )
+    LULA_AUDIT_INSUFFICIENT_TRAFFIC_CONTROLS = _bridge_gauge(
+        "cage_lula_audit_insufficient_traffic_controls",
+        "Number of statistical trace-rate controls reporting not-satisfied due to insufficient_traffic in the latest lula_audit run",
     )
     LULA_AUDIT_LAST_PASS_TIMESTAMP_SECONDS = _bridge_gauge(
         "cage_lula_audit_last_pass_timestamp_seconds",
@@ -911,8 +918,12 @@ class InfraEvent(BaseModel):
     evaluated_count: int | None = Field(default=None, ge=0)
     satisfied_count: int | None = Field(default=None, ge=0)
     failed_count: int | None = Field(default=None, ge=0)
+    insufficient_traffic_count: int | None = Field(default=None, ge=0)
     not_satisfied_count: int | None = Field(default=None, ge=0)
     failed_controls: tuple[str, ...] | list[str] | None = Field(default=None)
+    insufficient_traffic_controls: tuple[str, ...] | list[str] | None = Field(
+        default=None
+    )
 
     @field_validator("timestamp_utc")
     @classmethod
@@ -937,7 +948,7 @@ class InfraEvent(BaseModel):
             raise ValueError("field must not contain ASCII control characters")
         return value
 
-    @field_validator("failed_controls")
+    @field_validator("failed_controls", "insufficient_traffic_controls")
     @classmethod
     def _validate_failed_controls(
         cls, value: tuple[str, ...] | list[str] | None
@@ -945,16 +956,16 @@ class InfraEvent(BaseModel):
         if value is None:
             return None
         if len(value) > 256:
-            raise ValueError("failed_controls must contain at most 256 items")
+            raise ValueError("control list must contain at most 256 items")
         cleaned: list[str] = []
         for item in value:
             if not isinstance(item, str) or not item.strip():
-                raise ValueError("failed_controls entries must be non-empty strings")
+                raise ValueError("control list entries must be non-empty strings")
             if len(item) > 128:
-                raise ValueError("failed_controls entries must be <= 128 characters")
+                raise ValueError("control list entries must be <= 128 characters")
             if _INFRA_CONTROL_CHARS.search(item):
                 raise ValueError(
-                    "failed_controls entries must not contain ASCII control characters"
+                    "control list entries must not contain ASCII control characters"
                 )
             cleaned.append(item.strip())
         return cleaned
@@ -1119,6 +1130,14 @@ async def ingest_infra_event(
         if event.failed_controls is not None
         else None
     )
+    scrubbed_insufficient_controls = (
+        [
+            _CREDENTIAL_PATTERN.sub("[REDACTED]", c)[:128]
+            for c in event.insufficient_traffic_controls
+        ]
+        if event.insufficient_traffic_controls is not None
+        else None
+    )
     control_id = iso_map[event.event_type]
     received_at_utc = (
         datetime.now(tz=timezone.utc)
@@ -1166,7 +1185,9 @@ async def ingest_infra_event(
             satisfied_count=event.satisfied_count,
             not_satisfied_count=event.not_satisfied_count,
             failed_count=event.failed_count,
+            insufficient_traffic_count=event.insufficient_traffic_count,
             failed_controls=scrubbed_failed_controls,
+            insufficient_traffic_controls=scrubbed_insufficient_controls,
         )
     except InfraIdempotencyConflictError as exc:
         raise HTTPException(
@@ -1201,6 +1222,7 @@ async def ingest_infra_event(
             event=event,
             scrubbed_summary=scrubbed_summary,
             scrubbed_failed_controls=scrubbed_failed_controls,
+            scrubbed_insufficient_controls=scrubbed_insufficient_controls,
             receipt_hash=receipt.record_hash,
             idempotent_replay=receipt.idempotent_replay,
         )
@@ -1209,11 +1231,11 @@ async def ingest_infra_event(
 
 
 _LULA_SUMMARY_RATIO_RE = re.compile(
-    r"\blula_audit\s+(PASS|FAIL)\s*:\s*(\d+)\s*/\s*(\d+)\b",
+    r"\blula_audit\s+(PASS|FAIL|INSUFFICIENT_TRAFFIC)\s*:\s*(\d+)\s*/\s*(\d+)\b",
     re.IGNORECASE,
 )
 _LULA_SUMMARY_FAILED_BLOCK_RE = re.compile(
-    r"\((\d+)\s+failed:\s*([^)]*)\)",
+    r"\((\d+)\s+failed:\s*([^);]*)",
     re.IGNORECASE,
 )
 _LULA_SUMMARY_NOT_SAT_RE = re.compile(
@@ -1231,6 +1253,7 @@ async def _handle_lula_audit_post_custody(
     event: InfraEvent,
     scrubbed_summary: str,
     scrubbed_failed_controls: list[str] | None,
+    scrubbed_insufficient_controls: list[str] | None = None,
     receipt_hash: str,
     idempotent_replay: bool,
 ) -> None:
@@ -1262,18 +1285,30 @@ async def _handle_lula_audit_post_custody(
     else:
         failed_controls_list = []
 
-    not_satisfied = max(
-        event.not_satisfied_count or 0,
-        event.failed_count or 0,
-        max(0, evaluated_count - satisfied_count),
-        len(failed_controls_list),
-        int(m_failed_block.group(1)) if m_failed_block is not None else 0,
-        int(m_not_sat.group(1)) if m_not_sat is not None else 0,
+    insufficient_controls_raw = [c for c in (scrubbed_insufficient_controls or []) if c]
+    # Server-authoritative allowlist: ONLY statistical trace-rate Lula manifests
+    # (`a52`, `a53`, `a92`) can report `insufficient_traffic`. Any structural or
+    # unknown manifest claiming `insufficient_traffic` is promoted to a failure.
+    valid_insufficient_controls = [
+        c for c in insufficient_controls_raw if c in STATISTICAL_TRACE_LULA_SPECS
+    ]
+    invalid_insufficient_controls = [
+        c for c in insufficient_controls_raw if c not in STATISTICAL_TRACE_LULA_SPECS
+    ]
+    effective_failed_controls = list(
+        dict.fromkeys([*failed_controls_list, *invalid_insufficient_controls])
     )
 
     summary_upper = scrubbed_summary.upper()
     has_pass_prefix = bool(
         re.search(r"\blula_audit\s+pass\s*:", scrubbed_summary, re.IGNORECASE)
+    )
+    has_insufficient_prefix = bool(
+        re.search(
+            r"\blula_audit\s+insufficient_traffic\s*:",
+            scrubbed_summary,
+            re.IGNORECASE,
+        )
     )
     residual_not_sat = "not-satisfied" in _LULA_SUMMARY_ZERO_NOT_SAT_RE.sub(
         "", scrubbed_summary.lower()
@@ -1282,36 +1317,84 @@ async def _handle_lula_audit_post_custody(
     summary_indicated_fail = (
         "FAIL" in summary_upper or not has_pass_prefix or residual_not_sat
     )
+
+    not_satisfied = max(
+        event.not_satisfied_count or 0,
+        event.failed_count or 0,
+        max(0, evaluated_count - satisfied_count),
+        len(effective_failed_controls),
+        int(m_failed_block.group(1)) if m_failed_block is not None else 0,
+        int(m_not_sat.group(1)) if m_not_sat is not None else 0,
+    )
+
     is_clean_pass = (
         not corpus_floor_breach
         and not_satisfied == 0
-        and len(failed_controls_list) == 0
+        and len(effective_failed_controls) == 0
+        and len(valid_insufficient_controls) == 0
+        and (event.insufficient_traffic_count or 0) == 0
         and satisfied_count >= evaluated_count
         and not summary_indicated_fail
     )
 
-    effective_not_satisfied_gauge = (
-        0
-        if is_clean_pass
-        else max(
-            not_satisfied,
+    is_insufficient_traffic_only = (
+        not is_clean_pass
+        and not corpus_floor_breach
+        and (event.failed_count or 0) == 0
+        and (event.not_satisfied_count or 0) == 0
+        and len(effective_failed_controls) == 0
+        and len(valid_insufficient_controls) > 0
+        and (
+            event.insufficient_traffic_count is None
+            or event.insufficient_traffic_count == len(valid_insufficient_controls)
+        )
+        and satisfied_count + len(valid_insufficient_controls) == evaluated_count
+        and has_insufficient_prefix
+        and "FAIL" not in summary_upper
+        and m_failed_block is None
+    )
+
+    if is_clean_pass:
+        effective_not_satisfied_gauge = 0
+        effective_insufficient_gauge = 0
+        run_outcome = "pass"
+    elif is_insufficient_traffic_only:
+        effective_not_satisfied_gauge = 0
+        effective_insufficient_gauge = len(valid_insufficient_controls)
+        run_outcome = "insufficient_traffic"
+    else:
+        effective_insufficient_gauge = len(valid_insufficient_controls)
+        unaccounted_failures = max(
+            0,
+            evaluated_count - satisfied_count - len(valid_insufficient_controls),
+        )
+        effective_not_satisfied_gauge = max(
+            event.not_satisfied_count or 0,
+            event.failed_count or 0,
+            unaccounted_failures,
+            len(effective_failed_controls),
+            int(m_failed_block.group(1)) if m_failed_block is not None else 0,
             max(0, min_manifests - evaluated_count) if corpus_floor_breach else 0,
             1,
         )
-    )
+        run_outcome = "fail"
 
     if LULA_AUDIT_EVALUATED_MANIFESTS is not None:
         LULA_AUDIT_EVALUATED_MANIFESTS.set(float(evaluated_count))
     if LULA_AUDIT_NOT_SATISFIED_CONTROLS is not None:
         LULA_AUDIT_NOT_SATISFIED_CONTROLS.set(float(effective_not_satisfied_gauge))
+    if LULA_AUDIT_INSUFFICIENT_TRAFFIC_CONTROLS is not None:
+        LULA_AUDIT_INSUFFICIENT_TRAFFIC_CONTROLS.set(
+            float(effective_insufficient_gauge)
+        )
     if not idempotent_replay and LULA_AUDIT_RUNS_TOTAL is not None:
-        LULA_AUDIT_RUNS_TOTAL.labels(outcome="pass" if is_clean_pass else "fail").inc()
+        LULA_AUDIT_RUNS_TOTAL.labels(outcome=run_outcome).inc()
     if is_clean_pass and LULA_AUDIT_LAST_PASS_TIMESTAMP_SECONDS is not None:
         LULA_AUDIT_LAST_PASS_TIMESTAMP_SECONDS.set(
             datetime.now(tz=timezone.utc).timestamp()
         )
 
-    if is_clean_pass or idempotent_replay:
+    if is_clean_pass or is_insufficient_traffic_only or idempotent_replay:
         return
 
     reasons: list[str] = []
@@ -1320,10 +1403,15 @@ async def _handle_lula_audit_post_custody(
             f"corpus-floor breach: evaluated_count={evaluated_count} < "
             f"LULA_AUDIT_MIN_MANIFESTS={min_manifests}"
         )
-    if not_satisfied > 0:
-        reasons.append(f"not_satisfied={not_satisfied}")
-    if failed_controls_list:
-        reasons.append(f"failed_controls={','.join(failed_controls_list)}")
+    if invalid_insufficient_controls:
+        reasons.append(
+            "non-statistical controls rejected from insufficient_traffic="
+            f"{','.join(invalid_insufficient_controls)}"
+        )
+    if effective_not_satisfied_gauge > 0:
+        reasons.append(f"not_satisfied={effective_not_satisfied_gauge}")
+    if effective_failed_controls:
+        reasons.append(f"failed_controls={','.join(effective_failed_controls)}")
     if summary_indicated_fail and not reasons:
         reasons.append("summary reported non-passing outcome")
 
@@ -1353,7 +1441,7 @@ async def _handle_lula_audit_post_custody(
             safety_rate=effective_rate,
         )
     ]
-    for idx, failed_ctrl in enumerate(failed_controls_list):
+    for idx, failed_ctrl in enumerate(effective_failed_controls):
         findings.append(
             OscalFinding(
                 control_id=failed_ctrl,

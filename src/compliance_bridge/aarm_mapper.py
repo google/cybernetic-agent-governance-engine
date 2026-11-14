@@ -459,9 +459,9 @@ def build_aarm_conformance_report(
     # Build a lookup from control_id → finding result for O(1) access
     finding_index: dict[str, str] = {}
     for f in findings:
-        # If the same control appears multiple times, FAIL takes precedence
+        # If the same control appears multiple times, FAIL / ERROR takes precedence
         existing = finding_index.get(f.control_id)
-        if existing is None or f.result == "FAIL":
+        if existing is None or f.result in ("FAIL", "ERROR"):
             finding_index[f.control_id] = f.result
 
     vector_results: list[AARMVectorResult] = []
@@ -482,6 +482,9 @@ def build_aarm_conformance_report(
             elif result == "NOT_APPLICABLE":
                 control_results[ctrl_id] = "NOT_APPLICABLE"
                 not_found += 1
+            elif result == "INSUFFICIENT_EVIDENCE":
+                control_results[ctrl_id] = "INSUFFICIENT_EVIDENCE"
+                not_found += 1
             else:
                 control_results[ctrl_id] = result  # "FAIL" or "ERROR"
                 fail_count += 1
@@ -499,7 +502,7 @@ def build_aarm_conformance_report(
             status = "EXPOSED"
             exposed += 1
         elif pass_count == 0 and not_found > 0 and fail_count == 0:
-            # No evidence gathered yet (all NOT_FOUND), not necessarily exposed
+            # No evidence gathered yet (all NOT_FOUND / INSUFFICIENT_EVIDENCE), not exposed
             status = "UNKNOWN"
             unknown += 1
         else:
@@ -523,10 +526,11 @@ def build_aarm_conformance_report(
             )
         )
 
-    # Derive overall posture
+    # Derive overall posture — never report SECURE when any vector is UNKNOWN
+    # due to unassessed / zero-trace controls (POAM-2026-215).
     if exposed > 0:
         overall_posture = "CRITICAL"
-    elif partial > 0:
+    elif partial > 0 or unknown > 0:
         overall_posture = "DEGRADED"
     else:
         overall_posture = "SECURE"

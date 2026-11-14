@@ -583,7 +583,13 @@ class TestOscalFindingModel:
         """OscalFinding must accept all valid OscalResult literals."""
         from src.compliance_bridge.types import OscalFinding
 
-        valid_results = ("PASS", "FAIL", "NOT_APPLICABLE", "ERROR")
+        valid_results = (
+            "PASS",
+            "FAIL",
+            "INSUFFICIENT_EVIDENCE",
+            "NOT_APPLICABLE",
+            "ERROR",
+        )
         for result in valid_results:
             f = OscalFinding(
                 control_id="A.5.3",

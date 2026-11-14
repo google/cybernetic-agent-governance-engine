@@ -133,6 +133,7 @@ run "staging_plans_lula_cron_active_specs_and_dedicated_ksas" {
       strcontains(google_monitoring_alert_policy.prometheus_metrics_scrape_liveness[0].conditions[0].condition_prometheus_query_language[0].query, "absent_over_time(cage_event_loop_lag_seconds_count") &&
       strcontains(google_monitoring_alert_policy.prometheus_metrics_scrape_liveness[0].conditions[0].condition_prometheus_query_language[0].query, "job=\"compliance-bridge-metrics\"") &&
       strcontains(google_monitoring_alert_policy.prometheus_metrics_scrape_liveness[0].conditions[0].condition_prometheus_query_language[0].query, "absent_over_time(cage_lula_audit_not_satisfied_controls") &&
+      strcontains(google_monitoring_alert_policy.prometheus_metrics_scrape_liveness[0].conditions[0].condition_prometheus_query_language[0].query, "absent_over_time(cage_lula_audit_insufficient_traffic_controls") &&
       strcontains(google_monitoring_alert_policy.prometheus_metrics_scrape_liveness[0].conditions[0].condition_prometheus_query_language[0].query, "absent_over_time(cage_evidence_verified_batches") &&
       strcontains(google_monitoring_alert_policy.prometheus_metrics_scrape_liveness[0].conditions[0].condition_prometheus_query_language[0].query, "absent_over_time(cage_gateway_gated_requests_total") &&
       length(google_monitoring_alert_policy.gateway_sustained_refusal_ratio) == 1 &&
