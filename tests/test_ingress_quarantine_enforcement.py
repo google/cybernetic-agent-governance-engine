@@ -417,6 +417,7 @@ class _HeaderInjectingTransport(httpx.AsyncBaseTransport):
         merged = httpx.Headers(request.headers)
         for k, v in self._headers.items():
             merged[k] = v
+        merged["host"] = "gateway:8080"
         rewritten = httpx.Request(
             method=request.method,
             url=request.url,
@@ -432,7 +433,7 @@ async def test_mcp_streamable_http_and_tools_execute_enforce_quarantine(
     monkeypatch: pytest.MonkeyPatch,
     _isolated_quarantine_and_app_state: SimpleNamespace,
 ) -> None:
-    """/mcp (McpQuarantineMiddleware) and /tools/execute block quarantined SVIDs and threads with SC-7 evidence."""
+    """/mcp on mts.app and /tools/execute block quarantined SVIDs and threads with SC-7 evidence."""
     monkeypatch.setenv("CAGE_TRUSTED_CLIENT_IDENTITIES", f"{QUARANTINED_ID},{CLEAN_ID}")
     q_server = fakeredis.FakeServer()
     redis_shared = fakeredis.aioredis.FakeRedis(server=q_server, decode_responses=True)
@@ -445,114 +446,127 @@ async def test_mcp_streamable_http_and_tools_execute_enforce_quarantine(
     )
     clear_local_quarantine_state()
 
-    executed_calls: list[str] = []
-    mcp_srv = FastMCP(
-        "CAGE Quarantine Test MCP",
-        stateless_http=True,
-        json_response=True,
-        streamable_http_path="/",
-        transport_security=TransportSecuritySettings(
-            allowed_hosts=["127.0.0.1:*", "localhost:*", f"{POD_IP}:*"]
-        ),
-    )
+    import src.gateway.server.mcp_tool_server as mts
 
-    @mcp_srv.tool()
-    async def sample_tool(symbol: str, thread_id: str = "clean-thread") -> str:
+    executed_calls: list[str] = []
+
+    @mts.mcp.tool()
+    async def sample_ingress_tool(symbol: str, thread_id: str = "clean-thread") -> str:
         executed_calls.append(f"{symbol}:{thread_id}")
         return f"OK:{symbol}:{thread_id}"
-
-    @asynccontextmanager
-    async def _lifespan(_app: FastAPI):
-        async with mcp_srv.session_manager.run():
-            yield
-
-    mcp_host = FastAPI(lifespan=_lifespan)
-    mcp_host.state.redis = redis_shared
-    mcp_host.state.evidence_sink = sink
-    mcp_host.add_middleware(
-        WorkloadIdentityMiddleware,
-        policy=IdentityPolicy(trusted=frozenset({QUARANTINED_ID, CLEAN_ID})),
-    )
-    mcp_host.mount(
-        "/mcp",
-        McpQuarantineMiddleware(mcp_srv.streamable_http_app(), state_owner=mcp_host),
-    )
-
-    async with AsyncExitStack() as stack:
-        await stack.enter_async_context(mcp_srv.session_manager.run())
-
-        # 1. Quarantined SVID hitting /mcp/ -> 403 + SC-7 receipt before FastMCP runs
-        async with httpx.AsyncClient(
-            transport=httpx.ASGITransport(app=mcp_host, client=PROXY_PEER),
-            base_url=POD_BASE_URL,
-            headers={"l5d-client-id": QUARANTINED_ID},
-        ) as q_http:
-            r_mcp_svid = await q_http.post(
-                "/mcp/",
-                json={"jsonrpc": "2.0", "id": 1, "method": "tools/list", "params": {}},
-            )
-            assert r_mcp_svid.status_code == 403
-            assert r_mcp_svid.json()["error"] == "workload_quarantined"
-            assert r_mcp_svid.json()["agent_id"] == QUARANTINED_ID
-
-        # 2. Clean SVID with unquarantined thread succeeds via real GatewayMCPClient (replay verified),
-        #    while JSON-RPC tools/call (even with decoy x-cage-thread-id header) carrying quarantined
-        #    arguments.thread_id is refused 403!
-        mcp_client = GatewayMCPClient(
-            f"{POD_BASE_URL}/mcp/",
-            http_transport=_HeaderInjectingTransport(
-                mcp_host, {"l5d-client-id": CLEAN_ID}
-            ),
-        )
-        ok_out = await mcp_client.call_tool(
-            "sample_tool", {"symbol": "MSFT", "thread_id": "clean-thread"}
-        )
-        assert "OK:MSFT:clean-thread" in ok_out
-        assert executed_calls == ["MSFT:clean-thread"]
-        await mcp_client._reset_unlocked()
-
-        async with httpx.AsyncClient(
-            transport=httpx.ASGITransport(app=mcp_host, client=PROXY_PEER),
-            base_url=POD_BASE_URL,
-            headers={
-                "l5d-client-id": CLEAN_ID,
-                "accept": "application/json, text/event-stream",
-            },
-        ) as c_http:
-            r_rpc_thread = await c_http.post(
-                "/mcp/",
-                headers={"x-cage-thread-id": "innocent-decoy-header"},
-                json={
-                    "jsonrpc": "2.0",
-                    "id": 2,
-                    "method": "tools/call",
-                    "params": {
-                        "name": "sample_tool",
-                        "arguments": {"symbol": "NVDA", "thread_id": "mcp-bad-thread"},
-                    },
-                },
-            )
-            assert r_rpc_thread.status_code == 403
-            assert r_rpc_thread.json()["thread_id"] == "mcp-bad-thread"
-            assert executed_calls == ["MSFT:clean-thread"]
-
-            # 3. Blocking evidence sink failure on /mcp/ -> 503
-            mcp_host.state.evidence_sink = EvidenceStreamSink()
-            r_mcp_503 = await c_http.post(
-                "/mcp/",
-                headers={"x-cage-thread-id": "mcp-bad-thread"},
-                json={"jsonrpc": "2.0", "id": 3, "method": "tools/list", "params": {}},
-            )
-            assert r_mcp_503.status_code == 503
-            assert r_mcp_503.json()["error"] == "evidence_chain_unavailable"
-
-    # 4. /tools/execute on mcp_tool_server.app enforces quarantine + blocking SC-7 receipt
-    import src.gateway.server.mcp_tool_server as mts
 
     prev_mts_redis = getattr(mts.app.state, "redis", None)
     prev_mts_sink = getattr(mts.app.state, "evidence_sink", None)
     try:
         mts.app.state.redis = redis_shared
+        mts.app.state.evidence_sink = sink
+
+        async with AsyncExitStack() as stack:
+            await stack.enter_async_context(mts.mcp.session_manager.run())
+
+            # 1. Quarantined SVID hitting /mcp/ on mts.app -> 403 + SC-7 receipt before FastMCP runs
+            async with httpx.AsyncClient(
+                transport=httpx.ASGITransport(app=mts.app, client=PROXY_PEER),
+                base_url=POD_BASE_URL,
+                headers={"l5d-client-id": QUARANTINED_ID, "host": "gateway:8080"},
+            ) as q_http:
+                r_mcp_svid = await q_http.post(
+                    "/mcp/",
+                    json={
+                        "jsonrpc": "2.0",
+                        "id": 1,
+                        "method": "tools/list",
+                        "params": {},
+                    },
+                )
+                assert r_mcp_svid.status_code == 403
+                assert r_mcp_svid.json()["error"] == "workload_quarantined"
+                assert r_mcp_svid.json()["agent_id"] == QUARANTINED_ID
+
+            # 2. Clean SVID with unquarantined thread succeeds via real GatewayMCPClient on mts.app (replay verified)
+            mcp_client = GatewayMCPClient(
+                f"{POD_BASE_URL}/mcp/",
+                http_transport=_HeaderInjectingTransport(
+                    mts.app, {"l5d-client-id": CLEAN_ID}
+                ),
+            )
+            ok_out = await mcp_client.call_tool(
+                "sample_ingress_tool", {"symbol": "MSFT", "thread_id": "clean-thread"}
+            )
+            assert "OK:MSFT:clean-thread" in ok_out
+            assert executed_calls == ["MSFT:clean-thread"]
+            await mcp_client._reset_unlocked()
+
+            async with httpx.AsyncClient(
+                transport=httpx.ASGITransport(app=mts.app, client=PROXY_PEER),
+                base_url=POD_BASE_URL,
+                headers={
+                    "l5d-client-id": CLEAN_ID,
+                    "host": "gateway:8080",
+                    "accept": "application/json, text/event-stream",
+                },
+            ) as c_http:
+                # 3. Clean SVID carrying quarantined arguments.thread_id -> refused 403
+                r_rpc_thread = await c_http.post(
+                    "/mcp/",
+                    headers={"x-cage-thread-id": "innocent-decoy-header"},
+                    json={
+                        "jsonrpc": "2.0",
+                        "id": 2,
+                        "method": "tools/call",
+                        "params": {
+                            "name": "sample_ingress_tool",
+                            "arguments": {
+                                "symbol": "NVDA",
+                                "thread_id": "mcp-bad-thread",
+                            },
+                        },
+                    },
+                )
+                assert r_rpc_thread.status_code == 403
+                assert r_rpc_thread.json()["thread_id"] == "mcp-bad-thread"
+                assert executed_calls == ["MSFT:clean-thread"]
+
+                # 4. Body exceeding inspection limit (> 64 KiB) carrying quarantined thread_id
+                #    fails closed to 413 (payload_too_large) and never executes tool
+                padded_args = {
+                    "symbol": "NVDA",
+                    "thread_id": "mcp-bad-thread",
+                    "padding": "x" * 70_000,
+                }
+                r_too_large = await c_http.post(
+                    "/mcp/",
+                    headers={"x-cage-thread-id": "innocent-decoy-header"},
+                    json={
+                        "jsonrpc": "2.0",
+                        "id": 3,
+                        "method": "tools/call",
+                        "params": {
+                            "name": "sample_ingress_tool",
+                            "arguments": padded_args,
+                        },
+                    },
+                )
+                assert r_too_large.status_code == 413
+                assert r_too_large.json()["error"] == "payload_too_large"
+                assert executed_calls == ["MSFT:clean-thread"]
+
+                # 5. Blocking evidence sink failure on /mcp/ -> 503
+                mts.app.state.evidence_sink = EvidenceStreamSink()
+                r_mcp_503 = await c_http.post(
+                    "/mcp/",
+                    headers={"x-cage-thread-id": "mcp-bad-thread"},
+                    json={
+                        "jsonrpc": "2.0",
+                        "id": 4,
+                        "method": "tools/list",
+                        "params": {},
+                    },
+                )
+                assert r_mcp_503.status_code == 503
+                assert r_mcp_503.json()["error"] == "evidence_chain_unavailable"
+
+        # 6. /tools/execute on mts.app enforces quarantine + blocking SC-7 receipt
         mts.app.state.evidence_sink = sink
         async with httpx.AsyncClient(
             transport=httpx.ASGITransport(app=mts.app, client=PROXY_PEER),

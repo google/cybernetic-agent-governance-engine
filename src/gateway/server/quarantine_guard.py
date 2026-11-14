@@ -339,6 +339,20 @@ class McpQuarantineMiddleware:
             if not msg.get("more_body", False):
                 break
 
+        if total > _MAX_MCP_INSPECT_BYTES:
+            await self._send_json(
+                send,
+                413,
+                {
+                    "error": "payload_too_large",
+                    "message": (
+                        f"MCP request body exceeds {_MAX_MCP_INSPECT_BYTES} "
+                        "bytes inspection limit"
+                    ),
+                },
+            )
+            return
+
         if chunks and total <= _MAX_MCP_INSPECT_BYTES:
             try:
                 parsed = json.loads(b"".join(chunks))
@@ -360,12 +374,8 @@ class McpQuarantineMiddleware:
                     and tid not in seen
                 ):
                     seen.add(tid)
-                    tool = (
-                        params.get("name")
-                        if isinstance(params, dict)
-                        and isinstance(params.get("name"), str)
-                        else "mcp_streamable_http"
-                    )
+                    tool_val = params.get("name") if isinstance(params, dict) else None
+                    tool = tool_val if isinstance(tool_val, str) else "mcp_streamable_http"
                     if rpc_ref := await check_and_refuse_quarantined_workload(
                         scope,
                         action_id=tool,
