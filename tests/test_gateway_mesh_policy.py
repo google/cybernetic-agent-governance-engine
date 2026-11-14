@@ -677,7 +677,12 @@ def test_all_three_mesh_charts_obey_linkerd_policy_webhook_invariants() -> None:
         "absent_over_time(cage_lula_audit_not_satisfied_controls{" in metrics_alert_tf
     )
     assert "absent_over_time(cage_evidence_verified_batches{" in metrics_alert_tf
-    assert metrics_alert_tf.count("condition_prometheus_query_language {") == 1
+    assert (
+        'resource "google_monitoring_alert_policy" "gateway_sustained_refusal_ratio"'
+        in metrics_alert_tf
+    )
+    assert "cage_gateway_gated_requests_total{" in metrics_alert_tf
+    assert metrics_alert_tf.count("condition_prometheus_query_language {") == 2
 
 
 # Regression coverage binding: POAM-007, POAM-2026-007, POAM-2026-080, POAM-2026-195

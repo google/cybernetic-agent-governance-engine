@@ -117,6 +117,12 @@ from src.gateway.governance.env_posture import (
     is_enforcing,
     resolve_posture,
 )
+from src.gateway.governance.governor.metrics import (
+    GovernorMetrics,
+    governor_metrics,
+    track_gated_request,
+    was_request_refused,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -361,9 +367,19 @@ def extract_client_identity(scope: Mapping[str, Any]) -> str:
 class WorkloadIdentityMiddleware:
     """ASGI middleware: refuse any non-open request without a trusted identity."""
 
-    def __init__(self, app: ASGIApp, policy: IdentityPolicy) -> None:
+    def __init__(
+        self,
+        app: ASGIApp,
+        policy: IdentityPolicy,
+        *,
+        metrics: GovernorMetrics | None = None,
+    ) -> None:
         self.app = app
         self.policy = policy
+        self._metrics = metrics
+
+    def _resolve_metrics(self) -> GovernorMetrics:
+        return self._metrics if self._metrics is not None else governor_metrics()
 
     async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
         if scope["type"] not in ("http", "websocket"):
@@ -371,10 +387,13 @@ class WorkloadIdentityMiddleware:
             return
         path = scope.get("path", "")
         if is_open_path(path):
-            # An open path never runs as an authenticated caller.
+            # An open path never runs as an authenticated caller and is excluded
+            # from gated request counters so kubelet probes cannot dilute a
+            # sustained refusal outage.
             with _serving(None):
                 await self.app(scope, receive, send)
             return
+        metrics = self._resolve_metrics()
         presented = _client_identities(scope)
         if presented and not _is_trusted_identity_source(scope):
             # Through the proxy, the header is the identity the proxy verified.
@@ -386,19 +405,56 @@ class WorkloadIdentityMiddleware:
                 _peer(scope),
                 presented[0] if len(presented) == 1 else f"<{len(presented)} headers>",
             )
+            metrics.gated_request_completed(blocked=True)
             await _refuse(scope, send)
             return
         # Exactly one header, and it must be trusted. Several headers mean
         # something other than the proxy wrote one of them.
         if len(presented) == 1 and presented[0] in self.policy.trusted:
-            with _serving(presented[0]):
-                await self.app(scope, receive, send)
+            is_ws = scope["type"] == "websocket"
+            http_status: int | None = None
+            ws_accepted = False
+            ws_policy_closed = False
+
+            async def _tracked_send(message: dict[str, Any]) -> None:
+                nonlocal http_status, ws_accepted, ws_policy_closed
+                msg_type = message.get("type")
+                if msg_type == "http.response.start":
+                    http_status = int(message.get("status", 500))
+                elif msg_type == "websocket.accept":
+                    ws_accepted = True
+                elif msg_type == "websocket.close" and not ws_accepted:
+                    ws_policy_closed = True
+                await send(message)
+
+            completed_cleanly = False
+            with _serving(presented[0]), track_gated_request():
+                try:
+                    await self.app(scope, receive, _tracked_send)
+                    completed_cleanly = True
+                finally:
+                    if is_ws:
+                        blocked = (
+                            not completed_cleanly
+                            or ws_policy_closed
+                            or not ws_accepted
+                            or was_request_refused()
+                        )
+                    else:
+                        blocked = (
+                            not completed_cleanly
+                            or http_status is None
+                            or http_status >= 400
+                            or was_request_refused()
+                        )
+                    metrics.gated_request_completed(blocked=blocked)
             return
         logger.warning(
             "INGRESS_IDENTITY_REFUSED path=%s identity=%s",
             path,
             presented[0] if len(presented) == 1 else f"<{len(presented)} headers>",
         )
+        metrics.gated_request_completed(blocked=True)
         await _refuse(scope, send)
 
 

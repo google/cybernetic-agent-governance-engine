@@ -53,7 +53,10 @@ from src.gateway.governance.governance_envelope import GovernanceEnvelopeBuilder
 from src.gateway.governance.governor.approval import PostHitlApproval
 from src.gateway.governance.governor.errors import GovernanceDeferred
 from src.gateway.governance.governor.governor import GovernanceError, SymbolicGovernor
-from src.gateway.governance.governor.metrics import governor_metrics
+from src.gateway.governance.governor.metrics import (
+    governor_metrics,
+    mark_request_refused,
+)
 from src.gateway.governance.governor.pipeline import OpaVerdict
 from src.gateway.governance.governor.stages.opa import decode_opa_verdict
 from src.gateway.governance.iso_control import stamp_iso_control
@@ -843,6 +846,7 @@ async def policy_precheck_endpoint(
             decision = "MANUAL_REVIEW"
         else:
             decision = "DENY"
+            mark_request_refused()
 
         return JSONResponse(
             status_code=200,

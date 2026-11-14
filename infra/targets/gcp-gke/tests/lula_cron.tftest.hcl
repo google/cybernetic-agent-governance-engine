@@ -133,9 +133,19 @@ run "staging_plans_lula_cron_active_specs_and_dedicated_ksas" {
       strcontains(google_monitoring_alert_policy.prometheus_metrics_scrape_liveness[0].conditions[0].condition_prometheus_query_language[0].query, "absent_over_time(cage_event_loop_lag_seconds_count") &&
       strcontains(google_monitoring_alert_policy.prometheus_metrics_scrape_liveness[0].conditions[0].condition_prometheus_query_language[0].query, "job=\"compliance-bridge-metrics\"") &&
       strcontains(google_monitoring_alert_policy.prometheus_metrics_scrape_liveness[0].conditions[0].condition_prometheus_query_language[0].query, "absent_over_time(cage_lula_audit_not_satisfied_controls") &&
-      strcontains(google_monitoring_alert_policy.prometheus_metrics_scrape_liveness[0].conditions[0].condition_prometheus_query_language[0].query, "absent_over_time(cage_evidence_verified_batches")
+      strcontains(google_monitoring_alert_policy.prometheus_metrics_scrape_liveness[0].conditions[0].condition_prometheus_query_language[0].query, "absent_over_time(cage_evidence_verified_batches") &&
+      strcontains(google_monitoring_alert_policy.prometheus_metrics_scrape_liveness[0].conditions[0].condition_prometheus_query_language[0].query, "absent_over_time(cage_gateway_gated_requests_total") &&
+      length(google_monitoring_alert_policy.gateway_sustained_refusal_ratio) == 1 &&
+      length(google_monitoring_alert_policy.gateway_sustained_refusal_ratio[0].conditions) == 1 &&
+      google_monitoring_alert_policy.gateway_sustained_refusal_ratio[0].user_labels["owner"] == "platform-compliance-oncall" &&
+      strcontains(google_monitoring_alert_policy.gateway_sustained_refusal_ratio[0].documentation[0].content, "platform-compliance-oncall") &&
+      google_monitoring_alert_policy.gateway_sustained_refusal_ratio[0].conditions[0].condition_prometheus_query_language[0].disable_metric_validation == true &&
+      google_monitoring_alert_policy.gateway_sustained_refusal_ratio[0].conditions[0].condition_prometheus_query_language[0].duration == "180s" &&
+      strcontains(google_monitoring_alert_policy.gateway_sustained_refusal_ratio[0].conditions[0].condition_prometheus_query_language[0].query, "cage_gateway_gated_requests_total") &&
+      strcontains(google_monitoring_alert_policy.gateway_sustained_refusal_ratio[0].conditions[0].condition_prometheus_query_language[0].query, "outcome=\"blocked\"") &&
+      strcontains(google_monitoring_alert_policy.gateway_sustained_refusal_ratio[0].conditions[0].condition_prometheus_query_language[0].query, ">= 0.95")
     )
-    error_message = "CA-7 / AU-12: enforcing deployments must provision single-condition PromQL lula_audit_failure, lula_audit_pod_restart, and prometheus_metrics_scrape_liveness (with named cage_* series absence on both gateway and compliance-bridge) naming lula_alert_owner"
+    error_message = "CA-7 / AU-12 / SI-4: enforcing deployments must provision single-condition PromQL lula_audit_failure, lula_audit_pod_restart, prometheus_metrics_scrape_liveness, and gateway_sustained_refusal_ratio naming lula_alert_owner"
   }
 }
 
@@ -191,9 +201,12 @@ run "custom_lula_alert_owner_and_channels_propagate" {
       google_monitoring_alert_policy.lula_audit_pod_restart[0].user_labels["owner"] == "secops-compliance-oncall" &&
       contains(google_monitoring_alert_policy.lula_audit_pod_restart[0].notification_channels, "projects/lula-cron-test-project/notificationChannels/12345") &&
       google_monitoring_alert_policy.prometheus_metrics_scrape_liveness[0].user_labels["owner"] == "secops-compliance-oncall" &&
-      contains(google_monitoring_alert_policy.prometheus_metrics_scrape_liveness[0].notification_channels, "projects/lula-cron-test-project/notificationChannels/12345")
+      contains(google_monitoring_alert_policy.prometheus_metrics_scrape_liveness[0].notification_channels, "projects/lula-cron-test-project/notificationChannels/12345") &&
+      google_monitoring_alert_policy.gateway_sustained_refusal_ratio[0].user_labels["owner"] == "secops-compliance-oncall" &&
+      strcontains(google_monitoring_alert_policy.gateway_sustained_refusal_ratio[0].documentation[0].content, "secops-compliance-oncall") &&
+      contains(google_monitoring_alert_policy.gateway_sustained_refusal_ratio[0].notification_channels, "projects/lula-cron-test-project/notificationChannels/12345")
     )
-    error_message = "custom lula_alert_owner and lula_alert_notification_channels must propagate into Lula and GMP scrape-liveness alert policies"
+    error_message = "custom lula_alert_owner and lula_alert_notification_channels must propagate into Lula, GMP scrape-liveness, and gateway refusal-ratio alert policies"
   }
 }
 

@@ -95,11 +95,13 @@ async def _gateway_lifespan(app: FastAPI):  # type: ignore[no-untyped-def]
     # Starts the threaded Prometheus WSGI server on CAGE_METRICS_PORT (default
     # 9090) so /metrics remains scrapeable even when the asyncio event loop is
     # blocked, alongside a 250 ms loop-lag sampling task.
+    from src.gateway.governance.governor.metrics import governor_metrics
     from src.gateway.observability.loop_monitor import (
         run_loop_lag_monitor,
         start_metrics_http_server,
     )
 
+    governor_metrics()
     app.state.metrics_server = start_metrics_http_server()
     app.state.loop_lag_task = None
     app.state.normative_polling_task = None

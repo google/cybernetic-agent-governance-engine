@@ -30,6 +30,7 @@ locals {
     "(up{job=\"gateway-metrics\",namespace=\"${module.namespace.name}\"} == 0)",
     "absent_over_time(up{job=\"gateway-metrics\",namespace=\"${module.namespace.name}\"}[5m])",
     "absent_over_time(cage_event_loop_lag_seconds_count{namespace=\"${module.namespace.name}\"}[5m])",
+    "absent_over_time(cage_gateway_gated_requests_total{namespace=\"${module.namespace.name}\",outcome=\"blocked\"}[5m])",
   ])
   compliance_bridge_metrics_scrape_failure_promql = join(" or ", [
     "(up{job=\"compliance-bridge-metrics\",namespace=\"${module.namespace.name}\"} == 0)",
@@ -38,6 +39,15 @@ locals {
     "absent_over_time(cage_evidence_verified_batches{namespace=\"${module.namespace.name}\"}[5m])",
   ])
   prometheus_metrics_scrape_liveness_promql = var.enable_compliance_bridge ? "${local.gateway_metrics_scrape_failure_promql} or ${local.compliance_bridge_metrics_scrape_failure_promql}" : local.gateway_metrics_scrape_failure_promql
+
+  gateway_refusal_ratio_min_requests = 5
+  gateway_refusal_ratio_threshold    = "0.95"
+  gateway_sustained_refusal_ratio_promql = join(" ", [
+    "((sum(increase(cage_gateway_gated_requests_total{job=\"gateway-metrics\",namespace=\"${module.namespace.name}\",outcome=\"blocked\"}[5m])) or vector(0))",
+    "/",
+    "(sum(increase(cage_gateway_gated_requests_total{job=\"gateway-metrics\",namespace=\"${module.namespace.name}\"}[5m])) >= ${local.gateway_refusal_ratio_min_requests}))",
+    ">= ${local.gateway_refusal_ratio_threshold}",
+  ])
 }
 
 resource "google_monitoring_alert_policy" "prometheus_metrics_scrape_liveness" {
@@ -71,7 +81,8 @@ resource "google_monitoring_alert_policy" "prometheus_metrics_scrape_liveness" {
       `NetworkPolicy` drop, or connection failure), `absent_over_time(up[5m])`
       (missing `PodMonitoring` target or collector outage), or `absent_over_time`
       on startup-registered `cage_*` series (`cage_event_loop_lag_seconds_count`
-      on `gateway`; `cage_lula_audit_not_satisfied_controls` and
+      and `cage_gateway_gated_requests_total` on `gateway`;
+      `cage_lula_audit_not_satisfied_controls` and
       `cage_evidence_verified_batches` on `compliance-bridge`, catching HTTP `200`
       from an empty registry) for `120s`.
     EOT
@@ -83,6 +94,74 @@ resource "google_monitoring_alert_policy" "prometheus_metrics_scrape_liveness" {
     condition_prometheus_query_language {
       query                     = local.prometheus_metrics_scrape_liveness_promql
       duration                  = "120s"
+      evaluation_interval       = "60s"
+      disable_metric_validation = true
+    }
+  }
+
+  depends_on = [module.gke]
+}
+
+# ─── Gateway Sustained Refusal-Ratio Alerting (SI-4 / AU-5) ──────────────────
+# When a runtime dependency fails soft or becomes unreachable after boot (for
+# example quarantine/evidence Redis, OPA sidecar, or Linkerd proxy identity
+# wiring), /healthz continues returning HTTP 200, PodMonitoring scrapes remain
+# healthy (up == 1 and startup-registered cage_* series arrive), and the Lula
+# CronJob sees fresh cluster state — while gated gateway routes return 403/503
+# or protocol-wrapped refusals on ~100% of traffic. Excluding OPEN_EXACT_PATHS
+# (/health, /healthz, JWKS) prevents kubelet probes from diluting the ratio, and
+# requiring >= 5 gated requests per 5m held for 180s avoids false pages on idle
+# clusters or single-shot negative smoke probes.
+
+resource "google_monitoring_alert_policy" "gateway_sustained_refusal_ratio" {
+  count = local.enforcing_posture ? 1 : 0
+
+  project               = var.project_id
+  display_name          = "${var.cluster_name} - Gateway Sustained Refusal Ratio >= 95% (SI-4 / AU-5)"
+  combiner              = "OR"
+  enabled               = true
+  severity              = "CRITICAL"
+  notification_channels = var.lula_alert_notification_channels
+
+  user_labels = {
+    owner       = trimspace(var.lula_alert_owner)
+    component   = "gateway"
+    control     = "si-4"
+    environment = var.environment
+  }
+
+  documentation {
+    mime_type = "text/markdown"
+    content   = <<-EOT
+      ## CAGE Gateway Sustained Refusal-Ratio Alert (NIST SP 800-53 SI-4 / AU-5)
+
+      - **Owner:** `${trimspace(var.lula_alert_owner)}`
+      - **Cluster:** `${var.cluster_name}` (`${var.namespace}`)
+      - **Metric:** `cage_gateway_gated_requests_total{outcome="blocked"|"permitted"}` on `PodMonitoring/gateway-metrics` (`:9090/metrics`)
+
+      Fires when at least `${local.gateway_refusal_ratio_min_requests}` non-open
+      gateway requests arrive within `5m` and the `blocked` share stays
+      `>= ${local.gateway_refusal_ratio_threshold}` for `180s` (`OPEN_EXACT_PATHS`
+      such as `/health`, `/healthz`, and JWKS are excluded so kubelet probes
+      never dilute the denominator).
+
+      ### Triage Checklist
+      1. **Fail-closed dependency outage (gateway alive, `/healthz` = `200`, routes `403`/`503`):**
+         Check gateway logs for quarantine Redis / evidence stream connectivity,
+         OPA UDS sidecar readiness, KMS signing errors, or `INGRESS_IDENTITY_*`
+         Linkerd `l5d-client-id` proxy mismatches.
+      2. **Sustained adversarial probing or GCRA rate-limit flood:**
+         Correlate `cage_governance_refusals_total{tier}` and
+         `cage_rate_limit_hits_total{route,scope}` with gateway refusal receipts.
+    EOT
+  }
+
+  conditions {
+    display_name = "Gateway blocked-over-total gated request ratio >= 0.95 (>= 5 req / 5m) for 180s"
+
+    condition_prometheus_query_language {
+      query                     = local.gateway_sustained_refusal_ratio_promql
+      duration                  = "180s"
       evaluation_interval       = "60s"
       disable_metric_validation = true
     }
