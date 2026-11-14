@@ -50,19 +50,12 @@ import pytest
 from cryptography.hazmat.primitives.asymmetric import ec
 from fastapi.testclient import TestClient
 
-from src.cage_finance.invariants import (
-    CashBarrier,
-    finance_cost_resolver,
-    resolve_finance_trade_cost,
-)
+from src.cage_finance.invariants import CashBarrier, finance_cost_resolver
 from src.cage_finance.models.trade_order import TradeOrder
 from src.cage_finance.safety.fiscal_limit_guard import FiscalLimitGuard
 from src.cage_finance.tiers.cbf_tier import CBFTierPlugin
 from src.cage_finance.tiers.fiscal_tier import FiscalTierPlugin
-from src.cage_healthcare.invariants import (
-    healthcare_cost_resolver,
-    resolve_healthcare_dose_cost,
-)
+from src.cage_healthcare.invariants import healthcare_cost_resolver
 from src.eval_harness import FoundationModelEvalHarness, ToolActionStep
 from src.gateway.governance.contracts import ReadOnlyTier, Violation, ViolationKind
 from src.gateway.governance.decisions import GovernanceDecision
@@ -85,7 +78,6 @@ from src.gateway.governance.safety.cbf_engine import ControlBarrierFunction
 from src.gateway.server.inference_proxy import (
     _extract_message_content_text,
     _extract_scannable_messages_text,
-    _sanitize_otel_message,
     inference_app,
 )
 from tests.fixtures.governor import default_classifier, make_governor
@@ -150,14 +142,6 @@ class TestPoam208DualFieldMagnitudeValidation:
     def test_finance_cost_resolver_enforces_dual_field_parity_and_whole_cents(
         self, action: str
     ) -> None:
-        assert resolve_finance_trade_cost is finance_cost_resolver
-        assert finance_cost_resolver(
-            action, {"amount": 125.50, "amount_minor": 12550}
-        ) == pytest.approx(125.50)
-        assert finance_cost_resolver(action, {"amount_minor": 100}) == pytest.approx(
-            1.0
-        )
-
         with pytest.raises(ValueError, match="Conflicting trade amounts"):
             finance_cost_resolver(action, {"amount": 9500.0, "amount_minor": 100})
 
@@ -173,18 +157,29 @@ class TestPoam208DualFieldMagnitudeValidation:
             with pytest.raises(ValueError):
                 finance_cost_resolver(action, bad_payload)
 
+        assert finance_cost_resolver(
+            action, {"amount": 125.50, "amount_minor": 12550}
+        ) == pytest.approx(125.50)
+        assert finance_cost_resolver(action, {"amount_minor": 100}) == pytest.approx(
+            1.0
+        )
+        from src.cage_finance.invariants import resolve_finance_trade_cost
+
+        assert resolve_finance_trade_cost is finance_cost_resolver
+
     def test_healthcare_cost_resolver_enforces_dual_field_and_unit_consistency(
         self,
     ) -> None:
-        assert resolve_healthcare_dose_cost is healthcare_cost_resolver
-        assert healthcare_cost_resolver(
-            "administer_medication", {"dose_mg": 2.5}
-        ) == pytest.approx(2.5)
-        assert healthcare_cost_resolver(
-            "administer_dose",
-            {"concentration_delta": 2.5, "dose_mg": 2.5, "unit": "mg"},
-        ) == pytest.approx(2.5)
-
+        with pytest.raises(ValueError, match="Conflicting clinical dose fields"):
+            healthcare_cost_resolver(
+                "administer_medication",
+                {"concentration_delta": 0.01, "dose_mg": 500.0},
+            )
+        with pytest.raises(ValueError, match="Conflicting clinical dose fields"):
+            healthcare_cost_resolver(
+                "administer_dose",
+                {"dose_mg": 250.0, "amount": 1.0},
+            )
         with pytest.raises(ValueError, match="Invalid clinical dose"):
             healthcare_cost_resolver("administer_medication", {"dose_mg": True})
         with pytest.raises(ValueError, match="Invalid clinical dose"):
@@ -197,16 +192,17 @@ class TestPoam208DualFieldMagnitudeValidation:
             healthcare_cost_resolver(
                 "administer_medication", {"dose_mg": 5.0, "unit": "g"}
             )
-        with pytest.raises(ValueError, match="Conflicting clinical dose fields"):
-            healthcare_cost_resolver(
-                "administer_medication",
-                {"concentration_delta": 0.01, "dose_mg": 500.0},
-            )
-        with pytest.raises(ValueError, match="Conflicting clinical dose fields"):
-            healthcare_cost_resolver(
-                "administer_dose",
-                {"dose_mg": 250.0, "amount": 1.0},
-            )
+
+        assert healthcare_cost_resolver(
+            "administer_medication", {"dose_mg": 2.5}
+        ) == pytest.approx(2.5)
+        assert healthcare_cost_resolver(
+            "administer_dose",
+            {"concentration_delta": 2.5, "dose_mg": 2.5, "unit": "mg"},
+        ) == pytest.approx(2.5)
+        from src.cage_healthcare.invariants import resolve_healthcare_dose_cost
+
+        assert resolve_healthcare_dose_cost is healthcare_cost_resolver
 
 
 # ===========================================================================
@@ -258,6 +254,8 @@ class TestPoam209InferenceProxyBoundaries:
         assert "assistant_tool_arg_marker" in combined
 
     def test_otel_safe_messages_scrubs_multimodal_and_non_dict_entries(self) -> None:
+        from src.gateway.server.inference_proxy import _sanitize_otel_message
+
         multimodal_msg = {
             "role": "user",
             "content": [

@@ -11,9 +11,10 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
+# Closure regression guard for: POAM-2026-208
 
 """
-Negative tests for execute_trade routing seal enforcement.
+Negative tests for execute_trade routing seal enforcement and notional order sizing.
 
 Validates fail-closed invariant: execute_trade() must reject calls with
 missing, empty, or whitespace-only routing seals.
