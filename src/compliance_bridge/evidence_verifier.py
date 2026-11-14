@@ -120,6 +120,16 @@ _DATA_SUFFIX = ".ndjson"
 _SIGNED_SUFFIX = ".attestation.json"
 _UNSIGNED_SUFFIX = ".attestation.unsigned.json"
 _RANGE_RE = re.compile(r"/(?P<chain>[^/]+)/(?P<first>\d{12})-(?P<last>\d{12})\.ndjson$")
+_STREAM_ID_RE = re.compile(r"(?P<ms>[0-9]+)-(?P<seq>[0-9]+)")
+
+# Chain-rotation tie rule for stream-ID ordering. A rotated chain's first stream
+# ID must come after the replaced chain's last verified stream ID. False: strictly
+# after. True: an equal ID is also accepted, at a rotation boundary only; within a
+# chain, IDs are always strictly increasing. The rotation owner decides this
+# (Fail-closed and permanent per the maintainers: a legitimate restart advances
+# wall-clock milliseconds, while allowing a tie would let a key-holder clamp a
+# rewritten rotation batch to the prior chain's final timestamp.)
+ROTATION_EQUAL_ALLOWED = False
 
 _PROM_AVAILABLE = False
 try:
@@ -279,6 +289,10 @@ class VerifiedBatch:
     bound_chain_rotation: bool = False
     attestation_sha256: str = ""
     stream_key: str = ""
+    # The attested first/last Redis stream IDs, which verify_batch has checked
+    # against the data object and against strict ordering within the batch.
+    first_stream_id: str = ""
+    last_stream_id: str = ""
 
 
 @dataclass(frozen=True)
@@ -400,6 +414,20 @@ class CustodyVerificationReport:
 def _fail(key: str, reason: str) -> EvidenceVerificationError:
     logger.critical("[EvidenceVerifier] %s: %s", key, reason)
     return EvidenceVerificationError(f"{key}: {reason}")
+
+
+def _stream_id_tuple(value: object) -> tuple[int, int] | None:
+    """Parse a Redis stream ID ``<ms>-<seq>``; None if it is not one.
+
+    Stream IDs are the only time the archive records and no record hash covers
+    them, so the verifier orders them itself instead of trusting the writer.
+    """
+    if not isinstance(value, str):
+        return None
+    match = _STREAM_ID_RE.fullmatch(value)
+    if match is None:
+        return None
+    return int(match["ms"]), int(match["seq"])
 
 
 def _rotation_origin(
@@ -622,6 +650,7 @@ class CustodyVerifier:
             raise _fail(data_key, f"{len(lines)} records, attestation says {entries}")
 
         prev_hash = first_prev
+        prev_stream_id: tuple[int, int] | None = None
         for offset, record in enumerate(lines):
             if not isinstance(record, dict):
                 raise _fail(data_key, f"line {offset} is not a JSON object")
@@ -642,6 +671,15 @@ class CustodyVerifier:
                     data_key,
                     f"sequence {seq}: {result.error or 'record_hash mismatch'}",
                 )
+            parsed_stream_id = _stream_id_tuple(stream_id)
+            if parsed_stream_id is None:
+                raise _fail(data_key, f"line {offset} has a malformed stream ID")
+            if prev_stream_id is not None and parsed_stream_id <= prev_stream_id:
+                raise _fail(
+                    data_key,
+                    f"line {offset} stream ID is not strictly after the previous record's",
+                )
+            prev_stream_id = parsed_stream_id
             if offset == 0 and stream_id != first_sid:
                 raise _fail(data_key, "first stream ID does not match the attestation")
             if offset == entries - 1 and stream_id != last_sid:
@@ -722,6 +760,8 @@ class CustodyVerifier:
             rotation_kind=gap_kind if rotated_from else None,
             attestation_sha256=attestation_sha256,
             stream_key=stream_key,
+            first_stream_id=first_sid,
+            last_stream_id=last_sid,
         )
 
     async def verify_all(self, prefix: str | None = None) -> CustodyVerificationReport:
@@ -846,8 +886,11 @@ class CustodyVerifier:
         for chain_id, batches in sorted(by_chain.items()):
             batches.sort(key=lambda b: b.first_sequence)
             expected_seq, expected_prev = 0, ""
+            previous_last_sid: tuple[int, int] | None = None
             for batch in batches:
                 key = batch.attestation_key
+                first_sid = _stream_id_tuple(batch.first_stream_id)
+                last_sid = _stream_id_tuple(batch.last_stream_id)
                 has_rotation_metadata = (
                     batch.rotated_from_chain_id is not None
                     and batch.rotated_from_last_sequence is not None
@@ -874,6 +917,38 @@ class CustodyVerifier:
                             ),
                             None,
                         )
+
+                    # Stream-ID ordering across a rotation, for both the legacy
+                    # CHAIN_ROTATION and the BOUND_CHAIN_ROTATION genesis: the
+                    # rotated chain's first stream ID must come after the replaced
+                    # chain's last verified stream ID (prior_tail is already
+                    # resolved for both kinds above).
+                    if first_sid is not None and prior_tail is not None:
+                        replaced_last_sid = max(
+                            (
+                                sid
+                                for b in by_chain.get(prior_tail.chain_id, [])
+                                if (sid := _stream_id_tuple(b.last_stream_id))
+                                is not None
+                            ),
+                            default=None,
+                        )
+                        if replaced_last_sid is not None and not (
+                            first_sid > replaced_last_sid
+                            or (
+                                ROTATION_EQUAL_ALLOWED
+                                and first_sid == replaced_last_sid
+                            )
+                        ):
+                            report.failures.append(
+                                VerificationFailure(
+                                    key,
+                                    f"chain {chain_id} rotated from "
+                                    f"{prior_tail.chain_id} but its first stream ID "
+                                    "is not after the replaced chain's last verified "
+                                    "stream ID",
+                                )
+                            )
 
                     if claims_genesis_binding:
                         if (
@@ -990,6 +1065,26 @@ class CustodyVerifier:
                             f"chain {chain_id} is missing sequences {expected_seq}.."
                             f"{batch.first_sequence - 1} and the batch declares no gap",
                         )
+                    )
+                if (
+                    first_sid is not None
+                    and previous_last_sid is not None
+                    and batch.first_sequence >= expected_seq
+                    and first_sid <= previous_last_sid
+                ):
+                    report.failures.append(
+                        VerificationFailure(
+                            key,
+                            f"chain {chain_id} batch at sequence {batch.first_sequence} "
+                            "has a first stream ID that is not after the previous "
+                            "batch's last stream ID",
+                        )
+                    )
+                if last_sid is not None:
+                    previous_last_sid = (
+                        last_sid
+                        if previous_last_sid is None
+                        else max(previous_last_sid, last_sid)
                     )
                 expected_seq = batch.last_sequence + 1
                 expected_prev = batch.last_record_hash
