@@ -73,6 +73,7 @@ class GovernorMetrics:
     """Governor collectors bound to one registry. Build via :func:`governor_metrics`."""
 
     __slots__ = (
+        "_canary_requests",
         "_evidence_publish_failures",
         "_ftra_boundary_checks",
         "_gated_requests",
@@ -112,6 +113,7 @@ class GovernorMetrics:
         )
         if Counter is None or registry is None:
             self._gated_requests = None
+            self._canary_requests = None
         else:
             self._gated_requests = Counter(
                 "cage_gateway_gated_requests_total",
@@ -119,8 +121,15 @@ class GovernorMetrics:
                 ["outcome"],
                 registry=registry,
             )
+            self._canary_requests = Counter(
+                "cage_gateway_canary_requests_total",
+                "Total synthetic in-mesh canary requests handled at the gateway ingress boundary, partitioned by outcome",
+                ["outcome"],
+                registry=registry,
+            )
             for outcome in GATED_REQUEST_OUTCOMES:
                 self._gated_requests.labels(outcome=outcome)
+                self._canary_requests.labels(outcome=outcome)
 
     def evidence_publish_failure(self, kind: str) -> None:
         """Count one best-effort evidence write that failed (``refusal``, ``deferral``, etc.)."""
@@ -133,12 +142,13 @@ class GovernorMetrics:
         if self._refusals is not None:
             self._refusals.labels(tier=tier or "SYMBOLIC_GOVERNOR").inc()
 
-    def gated_request_completed(self, *, blocked: bool) -> None:
+    def gated_request_completed(self, *, blocked: bool, canary: bool = False) -> None:
         """Count one completed non-open gateway request as ``blocked`` or ``permitted``."""
+        outcome = "blocked" if blocked else "permitted"
         if self._gated_requests is not None:
-            self._gated_requests.labels(
-                outcome="blocked" if blocked else "permitted"
-            ).inc()
+            self._gated_requests.labels(outcome=outcome).inc()
+        if canary and self._canary_requests is not None:
+            self._canary_requests.labels(outcome=outcome).inc()
 
     def ftra_boundary_check(self, result: str) -> None:
         """Count one FTRA boundary check outcome (``passed``, ``conditional_clear``, ``hitl_required``, ``error``)."""

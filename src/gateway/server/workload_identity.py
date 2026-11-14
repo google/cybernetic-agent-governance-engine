@@ -476,7 +476,7 @@ class WorkloadIdentityMiddleware:
                     path,
                     caller,
                 )
-                metrics.gated_request_completed(blocked=True)
+                metrics.gated_request_completed(blocked=True, canary=True)
                 await _refuse(scope, send)
                 return
             if is_trusted_client or is_canary_client:
@@ -519,7 +519,9 @@ class WorkloadIdentityMiddleware:
                                 or http_status >= 400
                                 or was_request_refused()
                             )
-                        metrics.gated_request_completed(blocked=blocked)
+                        metrics.gated_request_completed(
+                            blocked=blocked, canary=is_canary_client
+                        )
                 return
         logger.warning(
             "INGRESS_IDENTITY_REFUSED path=%s identity=%s",

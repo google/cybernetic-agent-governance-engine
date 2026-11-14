@@ -480,6 +480,23 @@ class TestSustainedRefusalRatioAlertTerraformContract:
         assert 'outcome=\\"permitted\\"}[5m])) == 0' in tf_text
         assert 'duration                  = "900s"' in tf_text
 
+        # Verify Terraform conditions gateway_zero_permitted_requests on canary
+        # probe arrival (> 0) and pairs it with gateway_canary_probe_absent (== 0)
+        # + gateway_canary_pod_health so a dead prober never misattributes an
+        # outage to the gateway at 3am.
+        assert (
+            'resource "google_monitoring_alert_policy" "gateway_canary_probe_absent"'
+            in tf_text
+        )
+        assert (
+            'resource "google_monitoring_alert_policy" "gateway_canary_pod_health"'
+            in tf_text
+        )
+        assert (
+            'rate(cage_gateway_canary_requests_total{job=\\"gateway-metrics\\"'
+            in tf_text
+        )
+
         # Verify Terraform documents the >= 400 denominator assumption tied to
         # deny-by-default Linkerd mesh ingress so widening ingress triggers re-audit.
         assert ">= 400" in tf_text
@@ -504,23 +521,50 @@ class TestSustainedRefusalRatioAlertTerraformContract:
                 return False
             return (blocked_5m / total_5m) >= threshold
 
-        def zero_permitted_fires(permitted_5m: float, sustained_s: int) -> bool:
+        def zero_permitted_fires(
+            permitted_5m: float, canary_total_5m: float, sustained_s: int
+        ) -> bool:
             rate_permitted_per_s = permitted_5m / 300.0
-            return sustained_s >= 900 and rate_permitted_per_s == 0.0
+            rate_canary_per_s = canary_total_5m / 300.0
+            return (
+                sustained_s >= 900
+                and rate_permitted_per_s == 0.0
+                and rate_canary_per_s > 0.0
+            )
 
-        # Stage 1 (t = 3m): outage begins, callers retry (>= 5 blocked / 5m, 0 permitted).
-        # Ratio alarm pages fast; 15m zero-permitted condition not yet at duration.
+        def canary_probe_absent_fires(canary_total_5m: float, sustained_s: int) -> bool:
+            rate_canary_per_s = canary_total_5m / 300.0
+            return sustained_s >= 300 and rate_canary_per_s == 0.0
+
+        # Stage 1 (t = 3m): gateway outage begins, callers + canary blocked (>= 5 blocked / 5m, 0 permitted).
+        # Ratio alarm pages fast; 15m zero-permitted condition not yet at duration; canary probe is arriving.
         assert ratio_fires(20.0, 0.0, sustained_s=180) is True
-        assert zero_permitted_fires(0.0, sustained_s=180) is False
+        assert zero_permitted_fires(0.0, canary_total_5m=3.0, sustained_s=180) is False
+        assert canary_probe_absent_fires(canary_total_5m=3.0, sustained_s=300) is False
 
-        # Stage 2 (t = 15m+): callers give up retrying (only 1 blocked / 5m < floor, 0 permitted).
-        # Ratio condition drops below floor, but zero_permitted_requests takes over with no floor.
-        assert ratio_fires(1.0, 0.0, sustained_s=900) is False
-        assert zero_permitted_fires(0.0, sustained_s=900) is True
+        # Stage 2 (t = 15m+): external callers stop retrying, only 1/min canary arrives and is blocked
+        # (Wait: 5 canary probes / 5m OR if interval=120s -> 2.5 < floor; zero_permitted has no floor).
+        # Canary is confirmed arriving (> 0) and blocked -> gateway_zero_permitted_requests pages gateway,
+        # while gateway_canary_probe_absent stays silent!
+        assert ratio_fires(2.0, 0.0, sustained_s=900) is False
+        assert zero_permitted_fires(0.0, canary_total_5m=2.0, sustained_s=900) is True
+        assert canary_probe_absent_fires(canary_total_5m=2.0, sustained_s=900) is False
 
-        # Recovery: as soon as permitted traffic resumes (> 0), both conditions clear.
-        assert ratio_fires(0.0, 1.0, sustained_s=900) is False
-        assert zero_permitted_fires(1.0, sustained_s=900) is False
+        # Dead prober / broken HTTPRoute on idle cluster (canary_total_5m == 0, permitted_5m == 0):
+        # gateway_canary_probe_absent pages on component="gateway-canary" at 5m, and
+        # gateway_zero_permitted_requests does NOT misattribute the dead prober to gateway!
+        assert canary_probe_absent_fires(canary_total_5m=0.0, sustained_s=300) is True
+        assert zero_permitted_fires(0.0, canary_total_5m=0.0, sustained_s=900) is False
+
+        # Dead prober while real advisor traffic succeeds (canary_total_5m == 0, permitted_5m == 20):
+        # gateway_canary_probe_absent still pages on broken canary liveness!
+        assert canary_probe_absent_fires(canary_total_5m=0.0, sustained_s=300) is True
+        assert zero_permitted_fires(20.0, canary_total_5m=0.0, sustained_s=900) is False
+
+        # Healthy idle cluster (only 1/min canary permitted): all alarms silent.
+        assert ratio_fires(0.0, 5.0, sustained_s=900) is False
+        assert zero_permitted_fires(5.0, canary_total_5m=5.0, sustained_s=900) is False
+        assert canary_probe_absent_fires(canary_total_5m=5.0, sustained_s=900) is False
 
 
 CANARY_ID = "cage-gateway-canary-sa.governance-stack.serviceaccount.identity.linkerd.cluster.local"
@@ -611,6 +655,20 @@ class TestSyntheticMeshCanaryAndComplianceExclusion:
 
         assert _counter_value(registry, "permitted") == 3.0
         assert _counter_value(registry, "blocked") == 4.0
+        # Canary-specific counter tracks ONLY canary arrivals (2 permitted POSTs + 4 blocked routes;
+        # the advisor POST is excluded from cage_gateway_canary_requests_total).
+        assert (
+            registry.get_sample_value(
+                "cage_gateway_canary_requests_total", {"outcome": "permitted"}
+            )
+            == 2.0
+        )
+        assert (
+            registry.get_sample_value(
+                "cage_gateway_canary_requests_total", {"outcome": "blocked"}
+            )
+            == 4.0
+        )
 
     def test_evidence_sink_stamps_canary_and_strips_spoofed_canary_flag(self) -> None:
         import json
