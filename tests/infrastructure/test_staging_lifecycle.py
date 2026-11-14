@@ -39,33 +39,39 @@ DEFAULT_PRE_ATTEST = "2" * 64
 DEFAULT_POST_HASH = "3" * 64
 DEFAULT_POST_ATTEST = "4" * 64
 
-DEFAULT_JOB_LOGS = (
-    "PASS: lula-validation-sample\n"
-    "PASS: lula-validation-api\n"
-    "Sealed lula_audit assessment-results via /v1/infra/events: status=INGESTED record_hash="
-    + ("a" * 64)
-    + " (2/2 satisfied, 0 not-satisfied)\n"
-    + json.dumps(
-        {
-            "cage_lula_audit_receipt_v1": {
-                "status": "INGESTED",
-                "record_hash": "a" * 64,
-                "summary": "lula_audit PASS: 2/2 active validations satisfied",
-                "evaluated_count": 2,
-                "satisfied_count": 2,
-                "failed_count": 0,
-                "insufficient_traffic_count": 0,
-                "startup_grace_count": 0,
-                "satisfied_controls": [
-                    "lula-validation-sample",
-                    "lula-validation-api",
-                ],
-                "startup_grace_controls": [],
+
+def _make_job_logs(
+    satisfied_controls: tuple[str, ...] | list[str] = ("lula-validation-sample",),
+) -> str:
+    controls = list(satisfied_controls)
+    n = len(controls)
+    pass_lines = "".join(f"PASS: {c}\n" for c in controls)
+    return (
+        pass_lines
+        + "Sealed lula_audit assessment-results via /v1/infra/events: status=INGESTED record_hash="
+        + ("a" * 64)
+        + f" ({n}/{n} satisfied, 0 not-satisfied)\n"
+        + json.dumps(
+            {
+                "cage_lula_audit_receipt_v1": {
+                    "status": "INGESTED",
+                    "record_hash": "a" * 64,
+                    "summary": f"lula_audit PASS: {n}/{n} active validations satisfied",
+                    "evaluated_count": n,
+                    "satisfied_count": n,
+                    "failed_count": 0,
+                    "insufficient_traffic_count": 0,
+                    "startup_grace_count": 0,
+                    "satisfied_controls": controls,
+                    "startup_grace_controls": [],
+                }
             }
-        }
+        )
+        + "\n"
     )
-    + "\n"
-)
+
+
+DEFAULT_JOB_LOGS = _make_job_logs()
 
 DEFAULT_EVIDENCE_VERIFY_JSON = json.dumps(
     {
@@ -915,7 +921,10 @@ def test_staging_lifecycle_fails_closed_when_lula_exits_zero_with_not_satisfied(
 def test_staging_lifecycle_skips_api_and_planned_lula_specs_on_host_and_prints_planned_list(
     tmp_path: Path,
 ) -> None:
-    repo, bin_dir, log_file = _setup_fake_repo(tmp_path)
+    repo, bin_dir, log_file = _setup_fake_repo(
+        tmp_path,
+        job_logs=_make_job_logs(("lula-validation-sample", "lula-validation-api")),
+    )
     (repo / "compliance" / "lula" / "lula-validation-api.yaml").write_text(
         "  type: api\n  url: http://compliance-bridge.governance-stack.svc.cluster.local/v1/metrics/A.5.2\n",
         encoding="utf-8",
@@ -2449,5 +2458,41 @@ def test_staging_lifecycle_phase3_rejects_startup_grace_remarks_on_host_and_job_
         in proc_missing_api.stderr
     )
 
+    # 5. Active host Kubernetes spec (`lula-validation-sc28.yaml`) present on disk in
+    #    `compliance/lula/` (minus `# cage-status: planned`) but absent from
+    #    `Job/lula-gate-w`'s `satisfied_controls` fails Phase 3 closed by name
+    #    (independent two-ways-of-counting parity via `--lula-manifests-dir`).
+    repo_missing_host, bin_missing_host, _ = _setup_fake_repo(tmp_path / "missing_host")
+    (
+        repo_missing_host / "compliance" / "lula" / "lula-validation-sc28.yaml"
+    ).write_text(
+        "  type: kubernetes\n",
+        encoding="utf-8",
+    )
+    (repo_missing_host / "compliance" / "lula" / "lula-validation-ra5.yaml").write_text(
+        "# cage-status: planned\n  type: kubernetes\n",
+        encoding="utf-8",
+    )
+    archive_missing_host = tmp_path / "archive-missing-host"
+    proc_missing_host = subprocess.run(
+        [
+            "bash",
+            str(repo_missing_host / "scripts" / "staging_lifecycle.sh"),
+            "--skip-live-sweep",
+            "--skip-telemetry",
+            "--skip-rebuild",
+            f"--archive-dir={archive_missing_host}",
+        ],
+        env=_base_env(bin_missing_host, GOOGLE_CLOUD_PROJECT="demo-staging-proj"),
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert proc_missing_host.returncode != 0
+    assert (
+        "Active Lula spec 'lula-validation-sc28' missing from Job/lula-gate-w satisfied_controls"
+        in proc_missing_host.stderr
+    )
 
-# Regression coverage binding: POAM-024, POAM-2026-159, POAM-2026-192, POAM-2026-197, POAM-2026-202, POAM-2026-203, POAM-2026-204, POAM-2026-205, POAM-2026-206, POAM-2026-207, POAM-2026-215
+
+# Regression coverage binding: POAM-024, POAM-2026-159, POAM-2026-192, POAM-2026-197, POAM-2026-202, POAM-2026-203, POAM-2026-204, POAM-2026-205, POAM-2026-206, POAM-2026-207, POAM-2026-215, POAM-2026-216

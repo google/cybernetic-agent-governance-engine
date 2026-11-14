@@ -1596,18 +1596,9 @@ if errors:
 
       job_logs="$(kubectl logs job/lula-gate-w -n "$NAMESPACE" --all-containers=true 2>&1 || echo "")"
       printf '%s\n' "$job_logs" > "$ARCHIVE_DIR/lula/job-lula-gate-w.log"
-      expected_total_active=$((evaluated_count + ${#api_specs[@]}))
-      if [[ $expected_total_active -lt 1 ]]; then
-        expected_total_active=1
-      fi
-      gate_w_api_args=()
-      for api_spec in ${api_specs[@]+"${api_specs[@]}"}; do
-        gate_w_api_args+=(--expected-api-spec "$api_spec")
-      done
       if ! python3 "$REPO_ROOT/scripts/verify_lula_assessment_results.py" \
         --gate-w-job-logs "$ARCHIVE_DIR/lula/job-lula-gate-w.log" \
-        --expected-active-count "$expected_total_active" \
-        ${gate_w_api_args[@]+"${gate_w_api_args[@]}"}; then
+        --lula-manifests-dir "$REPO_ROOT/compliance/lula"; then
         error "Job/lula-gate-w log & /v1/infra/events receipt verification FAILED"
         ((LULA_FAILURES++)) || true
       elif ! verify_worm_evidence_chain "Phase 3 Job/lula-gate-w WORM custody"; then

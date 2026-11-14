@@ -58,6 +58,7 @@ from fastapi.testclient import TestClient
 import src.compliance_bridge.main as bridge_main
 import src.compliance_bridge.sla_monitor as sla_mod
 from scripts.verify_lula_assessment_results import (
+    discover_active_lula_manifests,
     verify_assessment_results_data,
     verify_lula_gate_w_job_logs,
 )
@@ -817,7 +818,7 @@ class TestThreeStateLulaAuditPipeline:
             server.shutdown()
             server.server_close()
 
-        # 4. Receipt omission or missing `startup_grace_count` key fails closed
+        # 4. Receipt omission or missing `startup_grace_count` key fails closed (POAM-2026-216)
         no_receipt = "\n".join(
             line
             for line in proc_clean.stdout.splitlines()
@@ -825,11 +826,46 @@ class TestThreeStateLulaAuditPipeline:
         )
         ok_no_receipt, errs_no_receipt = verify_lula_gate_w_job_logs(
             no_receipt,
-            expected_active_count=5,
-            expected_api_specs=api_specs,
+            lula_manifests_dir=spec_dir,
         )
         assert ok_no_receipt is False
         assert any("cage_lula_audit_receipt_v1" in err for err in errs_no_receipt)
+
+        # 5. Independent filesystem discovery (`lula_manifests_dir`) enforces exact
+        #    bijective set equality across ALL active specs (including `# cage-status: planned`
+        #    exclusion and host-spec drop detection).
+        manifests_check_dir = tmp_path / "manifests_dir_parity"
+        shutil.copytree(spec_dir, manifests_check_dir)
+        (manifests_check_dir / "lula-validation-ra5.yaml").write_text(
+            "# cage-status: planned\n  type: kubernetes\n",
+            encoding="utf-8",
+        )
+        ok_bijective, errs_bijective = verify_lula_gate_w_job_logs(
+            proc_clean.stdout,
+            lula_manifests_dir=manifests_check_dir,
+        )
+        assert ok_bijective is True, errs_bijective
+
+        # Adding an active host spec on disk without `run_lula_audit.sh` evaluating it fails closed by name
+        (manifests_check_dir / "lula-validation-sc28.yaml").write_text(
+            "  type: kubernetes\n",
+            encoding="utf-8",
+        )
+        ok_dropped_host, errs_dropped_host = verify_lula_gate_w_job_logs(
+            proc_clean.stdout,
+            lula_manifests_dir=manifests_check_dir,
+        )
+        assert ok_dropped_host is False
+        assert any(
+            "Active Lula spec 'lula-validation-sc28' missing" in err
+            for err in errs_dropped_host
+        )
+
+        # Live repository `compliance/lula/` parity check
+        repo_active, repo_api, repo_skipped = discover_active_lula_manifests(LULA_DIR)
+        assert len(repo_active) >= 26
+        assert len(repo_skipped) >= 7
+        assert set(api_specs).issubset(set(repo_api))
 
     @pytest.mark.asyncio
     async def test_idle_night_multi_cycle_seals_worm_sets_insufficient_gauge_without_alerting_or_poisoning_a53(
