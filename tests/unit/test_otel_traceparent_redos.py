@@ -24,6 +24,7 @@ from typing import Any
 import pytest
 import tomllib
 from opentelemetry import trace
+from starlette.requests import Request
 
 from src.gateway.observability.mcp_tracing import (
     MAX_TRACEPARENT_LENGTH,
@@ -170,14 +171,22 @@ async def test_governance_middleware_sanitizes_hostile_traceparent_headers(
 
     valid_tp = "00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01"
     crafted_redos = f"{valid_tp}{' ' * 60_000}\nx"
-    fake_request = SimpleNamespace(
-        app=SimpleNamespace(),
-        headers={"traceparent": crafted_redos, "x-request-id": "req-1"},
+    real_request = Request(
+        {
+            "type": "http",
+            "method": "POST",
+            "path": "/governance/policy-precheck",
+            "headers": [
+                (b"traceparent", crafted_redos.encode("latin-1")),
+                (b"x-request-id", b"req-1"),
+            ],
+            "app": SimpleNamespace(state=SimpleNamespace()),
+        }
     )
     body = gm.PolicyPrecheckRequest(action="read_resource", params={"id": "1"})
 
     t0 = time.perf_counter()
-    resp = await gm.policy_precheck_endpoint(fake_request, body)  # type: ignore[arg-type]
+    resp = await gm.policy_precheck_endpoint(real_request, body)
     elapsed = time.perf_counter() - t0
 
     assert resp.status_code == 200

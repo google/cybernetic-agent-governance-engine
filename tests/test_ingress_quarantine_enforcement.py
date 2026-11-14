@@ -92,11 +92,11 @@ def _read_stream_entries(
     stream_server: fakeredis.FakeServer,
 ) -> list[tuple[str, dict[str, str]]]:
     sync_r = fakeredis.FakeRedis(server=stream_server, decode_responses=True)
-    return list(sync_r.xrange("cage:evidence:stream", min="-", max="+"))
+    return list(sync_r.xrange("cage:evidence:stream", min="-", max="+"))  # type: ignore[arg-type]
 
 
 @pytest.fixture(autouse=True)
-async def _isolated_quarantine_and_app_state(monkeypatch: pytest.MonkeyPatch):
+async def _isolated_quarantine_and_app_state(monkeypatch: pytest.MonkeyPatch) -> Any:
     clear_local_quarantine_state()
     bind_quarantine_redis(None)
     iso_server = fakeredis.FakeServer()
@@ -129,7 +129,7 @@ def _make_real_sink(
         server=stream_server, decode_responses=False
     )
     sink = EvidenceStreamSink(stream_key="cage:evidence:stream")
-    sink._redis = sink_redis
+    sink._redis = sink_redis  # type: ignore[assignment]
     sink._running = True
     sinks_tracker.append(sink)
     return sink
@@ -601,3 +601,113 @@ async def test_mcp_streamable_http_and_tools_execute_enforce_quarantine(
     assert len(entries) == 3  # /mcp SVID, /mcp RPC thread, /tools/execute SVID
     findings = check_stream([f for _, f in entries], expected_refusal_count=3)
     assert findings == [], f"Stream invariant findings: {findings}"
+
+
+def test_shared_redis_builder_enforcing_fail_fast(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Verify _build_shared_redis_from_env fails fast at startup under enforcing posture."""
+    from src.gateway.server.hybrid_server import _build_shared_redis_from_env
+
+    # 1. Enforcing posture without REDIS_URL / REDIS_HOST fails fast at startup
+    monkeypatch.setenv("CAGE_ENV", "staging")
+    monkeypatch.delenv("REDIS_URL", raising=False)
+    monkeypatch.delenv("REDIS_HOST", raising=False)
+    with pytest.raises(
+        RuntimeError,
+        match="Shared Redis client is required under an enforcing posture",
+    ):
+        _build_shared_redis_from_env()
+
+    # 2. Enforcing posture with Redis init failure fails fast at startup
+    monkeypatch.setenv("CAGE_ENV", "staging")
+    monkeypatch.setenv("REDIS_URL", "redis://localhost:6379")
+    monkeypatch.setattr(
+        "src.gateway.infrastructure.redis_client.build_async_redis",
+        MagicMock(side_effect=ConnectionError("Redis connection refused")),
+    )
+    with pytest.raises(
+        RuntimeError,
+        match="Shared Redis client initialization failed under an enforcing posture",
+    ):
+        _build_shared_redis_from_env()
+
+    # 3. Non-enforcing posture without Redis returns None without raising
+    monkeypatch.setenv("CAGE_ENV", "dev")
+    monkeypatch.delenv("REDIS_URL", raising=False)
+    monkeypatch.delenv("REDIS_HOST", raising=False)
+    assert _build_shared_redis_from_env() is None
+
+
+@pytest.mark.asyncio
+async def test_mcp_quarantine_middleware_chunked_streaming_fails_closed_at_64k() -> (
+    None
+):
+    """Verify ASGI body chunk accumulation past 64 KiB returns HTTP 413 and suppresses downstream app."""
+    downstream_called = False
+
+    async def _dummy_downstream(scope: Any, receive: Any, send: Any) -> None:
+        nonlocal downstream_called
+        downstream_called = True
+
+    mw = McpQuarantineMiddleware(_dummy_downstream)
+
+    # 1. Stream 9 chunks of 8 KiB (72 KiB total > 64 KiB)
+    chunk_size = 8192
+    num_chunks = 9
+    chunks_sent = 0
+
+    async def _oversized_receive() -> dict[str, Any]:
+        nonlocal chunks_sent
+        chunks_sent += 1
+        return {
+            "type": "http.request",
+            "body": b"A" * chunk_size,
+            "more_body": chunks_sent < num_chunks,
+        }
+
+    sent_messages: list[dict[str, Any]] = []
+
+    async def _capture_send(msg: dict[str, Any]) -> None:
+        sent_messages.append(msg)
+
+    scope = {
+        "type": "http",
+        "method": "POST",
+        "path": "/mcp",
+        "headers": [(b"content-type", b"application/json")],
+    }
+
+    await mw(scope, _oversized_receive, _capture_send)
+
+    assert not downstream_called
+    assert len(sent_messages) == 2
+    assert sent_messages[0]["type"] == "http.response.start"
+    assert sent_messages[0]["status"] == 413
+    body = json.loads(sent_messages[1]["body"].decode("utf-8"))
+    assert body["error"] == "payload_too_large"
+
+    # 2. Clean small request (< 64 KiB) passes through to downstream app intact
+    downstream_called = False
+    clean_received: list[dict[str, Any]] = []
+
+    async def _clean_downstream(scope: Any, receive: Any, send: Any) -> None:
+        nonlocal downstream_called
+        downstream_called = True
+        msg = await receive()
+        clean_received.append(msg)
+
+    mw_clean = McpQuarantineMiddleware(_clean_downstream)
+
+    async def _clean_receive() -> dict[str, Any]:
+        return {
+            "type": "http.request",
+            "body": b'{"jsonrpc": "2.0", "method": "ping"}',
+            "more_body": False,
+        }
+
+    sent_clean: list[dict[str, Any]] = []
+    await mw_clean(scope, _clean_receive, lambda msg: sent_clean.append(msg))
+    assert downstream_called
+    assert len(clean_received) == 1
+    assert clean_received[0]["body"] == b'{"jsonrpc": "2.0", "method": "ping"}'

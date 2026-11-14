@@ -69,12 +69,7 @@ def _resolve_backend(name: str, *apps: Any) -> Any:
     for a in apps:
         if (v := _state_attr(a, name)) is not None:
             return v
-    try:
-        from src.gateway.server.inference_proxy import inference_app
-
-        return _state_attr(inference_app, name)
-    except Exception:
-        return None
+    return None
 
 
 def resolve_verified_workload_identity(scope: Mapping[str, Any]) -> str | None:
@@ -267,13 +262,7 @@ async def refuse_if_quarantined(
     """FastAPI helper returning a 403/503 ``JSONResponse`` when caller is quarantined."""
     scope = getattr(request, "scope", None)
     if not isinstance(scope, Mapping):
-        hdrs_list: list[tuple[bytes, bytes]] = []
-        if isinstance(raw_hdrs := getattr(request, "headers", None), Mapping):
-            for k, v in raw_hdrs.items():
-                hdrs_list.append(
-                    (str(k).lower().encode("latin-1"), str(v).encode("latin-1"))
-                )
-        scope = {"type": "http", "headers": hdrs_list}
+        return None
     if ref := await check_and_refuse_quarantined_workload(
         scope,
         action_id=action_id,
@@ -375,7 +364,9 @@ class McpQuarantineMiddleware:
                 ):
                     seen.add(tid)
                     tool_val = params.get("name") if isinstance(params, dict) else None
-                    tool = tool_val if isinstance(tool_val, str) else "mcp_streamable_http"
+                    tool = (
+                        tool_val if isinstance(tool_val, str) else "mcp_streamable_http"
+                    )
                     if rpc_ref := await check_and_refuse_quarantined_workload(
                         scope,
                         action_id=tool,
