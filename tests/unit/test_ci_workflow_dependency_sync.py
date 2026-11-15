@@ -205,4 +205,37 @@ def test_generate_python_sbom_rejects_empty_and_partial_environments(
     assert len(sbom["components"]) == floor
 
 
+def test_generate_summary_report_supports_cyclonedx_16_tools_object(
+    tmp_path: Path,
+) -> None:
+    """`generate_summary_report` handles CycloneDX 1.6 `metadata.tools = {'components': [...]}` without `KeyError: 0`."""
+    from scripts.generate_sbom import generate_summary_report
+
+    cdx_16 = {
+        "bomFormat": "CycloneDX",
+        "specVersion": "1.6",
+        "metadata": {
+            "component": {"name": "cybernetic-agent-governance-engine"},
+            "tools": {
+                "components": [
+                    {"type": "application", "name": "cyclonedx-py", "version": "7.2.1"}
+                ]
+            },
+            "timestamp": "2026-11-15T23:27:41Z",
+        },
+        "components": [{"name": "fastapi", "version": "0.115.0", "type": "library"}],
+    }
+    summary = generate_summary_report(
+        sbom=cdx_16,
+        vulnerabilities=[],
+        license_violations=[],
+        output_dir=tmp_path,
+        sbom_filename="python-deps-2026-11-15.cdx.json",
+        dry_run=False,
+    )
+    rendered = summary.read_text(encoding="utf-8")
+    assert "| **Tool** | cyclonedx-py |" in rendered
+    assert "| **Format** | CycloneDX 1.6 |" in rendered
+
+
 # Regression coverage binding: POAM-2026-221

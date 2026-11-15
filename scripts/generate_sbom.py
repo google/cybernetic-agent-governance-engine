@@ -594,6 +594,21 @@ def upload_to_gcs(
 # ---------------------------------------------------------------------------
 
 
+def _extract_sbom_tool_name(metadata: dict[str, Any]) -> str:
+    """Extract tool name across CycloneDX 1.4 (list) and CycloneDX 1.5/1.6 (dict)."""
+    tools = metadata.get("tools")
+    if isinstance(tools, list) and tools:
+        first = tools[0]
+        if isinstance(first, dict):
+            return str(first.get("name", "unknown"))
+    if isinstance(tools, dict):
+        for bucket in ("components", "services"):
+            entries = tools.get(bucket)
+            if isinstance(entries, list) and entries and isinstance(entries[0], dict):
+                return str(entries[0].get("name", "unknown"))
+    return "unknown"
+
+
 def generate_summary_report(
     sbom: dict[str, Any],
     vulnerabilities: list[dict[str, Any]],
@@ -608,7 +623,7 @@ def generate_summary_report(
     Returns:
         Path to the generated Markdown file.
     """
-    now = datetime.datetime.utcnow().strftime("%Y-%m-%d %H:%M UTC")
+    now = datetime.datetime.now(datetime.UTC).strftime("%Y-%m-%d %H:%M UTC")
     components = sbom.get("components", [])
     metadata = sbom.get("metadata", {})
     subject = metadata.get("component", {}).get("name", "unknown")
@@ -643,7 +658,7 @@ def generate_summary_report(
         "| Field | Value |",
         "|-------|-------|",
         f"| **Subject** | `{subject}` |",
-        f"| **Tool** | {metadata.get('tools', [{}])[0].get('name', 'unknown') if metadata.get('tools') else 'unknown'} |",
+        f"| **Tool** | {_extract_sbom_tool_name(metadata)} |",
         f"| **Format** | CycloneDX {sbom.get('specVersion', '?')} |",
         f"| **Total Components** | {len(components)} |",
         f"| **Scan Timestamp** | {metadata.get('timestamp', 'unknown')} |",
