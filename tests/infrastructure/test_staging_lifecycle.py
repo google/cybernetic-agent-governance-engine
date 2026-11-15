@@ -78,6 +78,8 @@ DEFAULT_EVIDENCE_VERIFY_JSON = json.dumps(
     {
         "ok": True,
         "citable": True,
+        "citable_qualifications": [],
+        "posture_status": "staging",
         "verified": [
             {
                 "attestation_key": "evidence-stream/2026/11/09/chain01/000000000000-000000000005.ndjson.attestation.json",
@@ -89,6 +91,7 @@ DEFAULT_EVIDENCE_VERIFY_JSON = json.dumps(
                 "first_prev_hash": "",
                 "last_record_hash": DEFAULT_PRE_HASH,
                 "attestation_sha256": DEFAULT_PRE_ATTEST,
+                "posture_status": "staging",
                 "bound_chain_rotation": False,
             }
         ],
@@ -103,6 +106,8 @@ DEFAULT_POST_REBUILD_EVIDENCE_VERIFY_JSON = json.dumps(
     {
         "ok": True,
         "citable": True,
+        "citable_qualifications": [],
+        "posture_status": "staging",
         "verified": [
             {
                 "attestation_key": "evidence-stream/2026/11/09/chain01/000000000000-000000000005.ndjson.attestation.json",
@@ -114,6 +119,7 @@ DEFAULT_POST_REBUILD_EVIDENCE_VERIFY_JSON = json.dumps(
                 "first_prev_hash": "",
                 "last_record_hash": DEFAULT_PRE_HASH,
                 "attestation_sha256": DEFAULT_PRE_ATTEST,
+                "posture_status": "staging",
                 "bound_chain_rotation": False,
             },
             {
@@ -126,6 +132,7 @@ DEFAULT_POST_REBUILD_EVIDENCE_VERIFY_JSON = json.dumps(
                 "first_prev_hash": "",
                 "last_record_hash": DEFAULT_POST_HASH,
                 "attestation_sha256": DEFAULT_POST_ATTEST,
+                "posture_status": "staging",
                 "rotated_from_chain_id": "chain01",
                 "bound_chain_rotation": True,
             },
@@ -1233,6 +1240,8 @@ def test_staging_lifecycle_fails_closed_when_bridge_gmp_timeseries_empty(
             {
                 "ok": True,
                 "citable": True,
+                "citable_qualifications": [],
+                "posture_status": "staging",
                 "verified": [{"batch_id": "b1"}],
                 "failures": [{"batch_id": "b2", "reason": "tampered"}],
                 "declared_gaps": [],
@@ -1244,6 +1253,8 @@ def test_staging_lifecycle_fails_closed_when_bridge_gmp_timeseries_empty(
             {
                 "ok": True,
                 "citable": True,
+                "citable_qualifications": [],
+                "posture_status": "staging",
                 "verified": [{"batch_id": "b1"}],
                 "failures": [],
                 "declared_gaps": [{"seq": 2}],
@@ -1255,6 +1266,8 @@ def test_staging_lifecycle_fails_closed_when_bridge_gmp_timeseries_empty(
             {
                 "ok": True,
                 "citable": True,
+                "citable_qualifications": [],
+                "posture_status": "staging",
                 "verified": [{"batch_id": "b1"}],
                 "failures": [],
                 "declared_gaps": [],
@@ -1449,6 +1462,8 @@ def test_staging_lifecycle_allow_legacy_lien_survivor_accepts_known_langfuse_eve
             {
                 "ok": True,
                 "citable": True,
+                "citable_qualifications": [],
+                "posture_status": "staging",
                 "verified": json.loads(DEFAULT_POST_REBUILD_EVIDENCE_VERIFY_JSON)[
                     "verified"
                 ],
@@ -1463,6 +1478,8 @@ def test_staging_lifecycle_allow_legacy_lien_survivor_accepts_known_langfuse_eve
             {
                 "ok": True,
                 "citable": True,
+                "citable_qualifications": [],
+                "posture_status": "staging",
                 "verified": json.loads(DEFAULT_POST_REBUILD_EVIDENCE_VERIFY_JSON)[
                     "verified"
                 ],
@@ -2776,6 +2793,93 @@ exit 0
     assert any(
         line.startswith("uv [pf=open ") and "--run-live-external" in line
         for line in lines_b
+    )
+
+
+def test_staging_lifecycle_enforces_worm_posture_status_on_fresh_vs_existing_project(
+    tmp_path: Path,
+) -> None:
+    v1_payload = json.loads(DEFAULT_EVIDENCE_VERIFY_JSON)
+    v1_payload["posture_status"] = "unstamped_v1"
+    v1_payload["citable_qualifications"] = ["unstamped_v1_posture"]
+
+    # 1. --fresh-project clean-room run MUST fail closed if archive reports unstamped_v1.
+    repo_fresh, bin_fresh, _ = _setup_fake_repo(
+        tmp_path / "fresh_v1",
+        evidence_verify_json=json.dumps(v1_payload),
+    )
+    proc_fresh = subprocess.run(
+        [
+            "bash",
+            str(repo_fresh / "scripts" / "staging_lifecycle.sh"),
+            "--fresh-project=ephemeral-proj-99",
+            "--skip-lula",
+            "--skip-posture",
+            "--skip-live-sweep",
+            "--skip-rebuild",
+        ],
+        env=_base_env(bin_fresh),
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert proc_fresh.returncode != 0
+    assert (
+        "posture_status='unstamped_v1' (expected 'staging' on clean-room Gate W run)"
+        in proc_fresh.stderr
+    )
+    assert (
+        "citable_qualifications=['unstamped_v1_posture'] (expected [] on clean-room Gate W run)"
+        in proc_fresh.stderr
+    )
+
+    # 2. Existing operated project with historical v1 batches passes (with qualification).
+    repo_operated, bin_operated, _ = _setup_fake_repo(
+        tmp_path / "operated_v1",
+        evidence_verify_json=json.dumps(v1_payload),
+    )
+    proc_operated = subprocess.run(
+        [
+            "bash",
+            str(repo_operated / "scripts" / "staging_lifecycle.sh"),
+            "--skip-lula",
+            "--skip-posture",
+            "--skip-live-sweep",
+            "--skip-rebuild",
+        ],
+        env=_base_env(bin_operated, GOOGLE_CLOUD_PROJECT="demo-staging-proj"),
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert proc_operated.returncode == 0, proc_operated.stderr
+    assert "posture_status=unstamped_v1" in proc_operated.stdout
+
+    # 3. Any staging Gate W run encountering production-stamped batches fails closed.
+    prod_payload = json.loads(DEFAULT_EVIDENCE_VERIFY_JSON)
+    prod_payload["posture_status"] = "production"
+    repo_prod, bin_prod, _ = _setup_fake_repo(
+        tmp_path / "operated_prod",
+        evidence_verify_json=json.dumps(prod_payload),
+    )
+    proc_prod = subprocess.run(
+        [
+            "bash",
+            str(repo_prod / "scripts" / "staging_lifecycle.sh"),
+            "--skip-lula",
+            "--skip-posture",
+            "--skip-live-sweep",
+            "--skip-rebuild",
+        ],
+        env=_base_env(bin_prod, GOOGLE_CLOUD_PROJECT="demo-staging-proj"),
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert proc_prod.returncode != 0
+    assert (
+        "posture_status='production' (expected 'staging' or 'unstamped_v1')"
+        in proc_prod.stderr
     )
 
 

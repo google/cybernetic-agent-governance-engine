@@ -1553,17 +1553,20 @@ component-definition:
                 Cryptographic protection of audit information combines a SHA-256 hash chain
                 over RFC 8785 JCS-canonicalized records (cage-audit/3.0 headers bind
                 chain_id, sequence, trace_id and event_type into each link) with a per-batch
-                cage-evidence-batch/1 attestation signed by the compliance bridge using the
+                cage-evidence-batch/2 attestation signed by the compliance bridge using the
                 dedicated asymmetric Cloud KMS key EVIDENCE_KMS_KEY
                 (infra/targets/gcp-gke/kms_signing.tf, compliance-evidence; signer IAM
                 granted to the compliance-bridge service account only). The attestation
-                covers the chain id, sequence range, first prev_hash, last record_hash,
-                NDJSON SHA-256 and any recorded gap. Under an enforcing posture custody
-                refuses to run without an active signer, and a signing failure writes
-                nothing. Attestations written in dev/test/ci without a signer carry
-                signature_status UNSIGNED and evidentiary false, are stored under a
-                distinct .attestation.unsigned.json key, and are rejected by
-                assert_citable(); they are never evidence for this control.
+                covers deployment_posture ("production" or "staging"), chain id, sequence
+                range, first prev_hash, last record_hash, NDJSON SHA-256 and any recorded
+                gap; pre-stamping cage-evidence-batch/1 attestations verify with
+                posture_status="unstamped_v1" and citable_qualifications=["unstamped_v1_posture"].
+                Under an enforcing posture custody refuses to run without an active signer
+                or a citable posture, and a signing failure writes nothing. Attestations
+                written in dev/test/ci/local carry signature_status UNSIGNED and
+                evidentiary false, are stored under a distinct .attestation.unsigned.json
+                key, and are rejected by assert_citable(); they are never evidence for
+                this control.
               props:
                 - name: implementation-status
                   value: partial
@@ -1576,7 +1579,7 @@ component-definition:
                   rel: reference
                 - href: "../../src/compliance_bridge/evidence_custodian.py"
                   rel: implementation
-                  text: "Signed cage-evidence-batch/1 attestations; assert_citable()"
+                  text: "Signed cage-evidence-batch/2 attestations with deployment_posture; assert_citable()"
                 - href: "../../src/compliance_bridge/kms_batch_signer.py"
                   rel: implementation
                   text: "build_evidence_signer() resolves EVIDENCE_KMS_KEY"

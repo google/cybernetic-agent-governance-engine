@@ -475,6 +475,7 @@ class TestEvidenceCustodianTimestampAndClockSkew:
             signer,
             stream_key="cage:evidence:stream",
             require_signature=True,
+            deployment_posture="staging",
         )
         outcome = await custodian.flush_once()
         assert outcome.status == CustodyStatus.WRITTEN
@@ -482,6 +483,8 @@ class TestEvidenceCustodianTimestampAndClockSkew:
 
         att_bytes = await cold_store.get(outcome.attestation_key)
         att_doc = json.loads(att_bytes.decode("utf-8"))
+        assert att_doc["schema"] == "cage-evidence-batch/2"
+        assert att_doc["deployment_posture"] == "staging"
         assert isinstance(att_doc.get("created_at_utc"), str)
         assert att_doc["created_at_utc"].endswith("Z")
 
@@ -550,7 +553,8 @@ class TestEvidenceCustodianTimestampAndClockSkew:
     ) -> None:
         first = json.dumps(
             {
-                "schema": "cage-evidence-batch/1",
+                "schema": "cage-evidence-batch/2",
+                "deployment_posture": "staging",
                 "created_at_utc": "2026-04-06T18:26:50.100000Z",
                 "chain_id": "c1",
                 "content_sha256": "a" * 64,
@@ -559,7 +563,8 @@ class TestEvidenceCustodianTimestampAndClockSkew:
         ).encode("utf-8")
         retry_one_second_later = json.dumps(
             {
-                "schema": "cage-evidence-batch/1",
+                "schema": "cage-evidence-batch/2",
+                "deployment_posture": "staging",
                 "created_at_utc": "2026-04-06T18:26:51.900000Z",
                 "chain_id": "c1",
                 "content_sha256": "a" * 64,
@@ -568,15 +573,27 @@ class TestEvidenceCustodianTimestampAndClockSkew:
         ).encode("utf-8")
         tampered = json.dumps(
             {
-                "schema": "cage-evidence-batch/1",
+                "schema": "cage-evidence-batch/2",
+                "deployment_posture": "staging",
                 "created_at_utc": "2026-04-06T18:26:51.900000Z",
                 "chain_id": "c1",
                 "content_sha256": "b" * 64,
                 "signature": {"key_id": EVIDENCE_KEY_V1, "value": "sig-2"},
             }
         ).encode("utf-8")
+        posture_swapped = json.dumps(
+            {
+                "schema": "cage-evidence-batch/2",
+                "deployment_posture": "production",
+                "created_at_utc": "2026-04-06T18:26:51.900000Z",
+                "chain_id": "c1",
+                "content_sha256": "a" * 64,
+                "signature": {"key_id": EVIDENCE_KEY_V1, "value": "sig-2"},
+            }
+        ).encode("utf-8")
         assert _same_attestation_body(first, retry_one_second_later) is True
         assert _same_attestation_body(first, tampered) is False
+        assert _same_attestation_body(first, posture_swapped) is False
 
 
 class TestCallerIsolationAndControlPlaneMutations:

@@ -400,7 +400,7 @@ header = {
 ## 9. Open Questions & Future Work
 
 ### 9.1 Per-Batch KMS Attestation (replaces per-record signing)
-**Status:** Implemented. The gateway no longer signs evidence records. The compliance-bridge [`EvidenceCustodian`](../../src/compliance_bridge/evidence_custodian.py) re-verifies each batch of the chain and signs a `cage-evidence-batch/1` attestation with the dedicated compliance-evidence key `EVIDENCE_KMS_KEY`, stored next to the NDJSON batch in the WORM cold store. `build_evidence_signer()` ([`kms_batch_signer.py`](../../src/compliance_bridge/kms_batch_signer.py)) refuses a key that matches the gateway (`KMS_GOVERNANCE_KEY`) or reconciler (`RECONCILER_KMS_KEY`) key. See [`EVIDENCE_CHAIN.md`](EVIDENCE_CHAIN.md).
+**Status:** Implemented. The gateway no longer signs evidence records. The compliance-bridge [`EvidenceCustodian`](../../src/compliance_bridge/evidence_custodian.py) re-verifies each batch of the chain and signs a `cage-evidence-batch/2` attestation stamping `deployment_posture` (`"production"` or `"staging"`; historical `cage-evidence-batch/1` archives verify with `posture_status="unstamped_v1"` and `citable_qualifications=["unstamped_v1_posture"]`) with the dedicated compliance-evidence key `EVIDENCE_KMS_KEY`, stored next to the NDJSON batch in the WORM cold store. `build_evidence_signer()` ([`kms_batch_signer.py`](../../src/compliance_bridge/kms_batch_signer.py)) refuses a key that matches the gateway (`KMS_GOVERNANCE_KEY`) or reconciler (`RECONCILER_KMS_KEY`) key. See [`EVIDENCE_CHAIN.md`](EVIDENCE_CHAIN.md).
 
 **Current Limitation:**
 - Individual stream records carry no signature; provenance is established per batch (attestation over the batch's first/last record hashes and NDJSON digest)

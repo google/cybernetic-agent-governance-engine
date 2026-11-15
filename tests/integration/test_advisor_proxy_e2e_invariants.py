@@ -1761,6 +1761,7 @@ async def test_advisor_proxy_e2e_all_five_invariants_and_negative_controls(
         signer=e2e_stack.batch_signer,
         stream_key=STREAM_KEY,
         require_signature=True,
+        deployment_posture="staging",
     )
     flush_outcome = await custodian.flush_once()
     assert flush_outcome.status is CustodyStatus.WRITTEN
@@ -1775,6 +1776,8 @@ async def test_advisor_proxy_e2e_all_five_invariants_and_negative_controls(
         e2e_stack.worm_store, trust_anchors=loaded_anchors, require_citable=True
     )
     assert custody_report.citable is True
+    assert custody_report.posture_status == "staging"
+    assert custody_report.citable_qualifications == []
     assert len(custody_report.verified) == 1
     assert custody_report.verified[0].key_id == BATCH_KID
 

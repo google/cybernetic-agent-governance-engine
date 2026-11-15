@@ -440,7 +440,7 @@ def _add_audit_corroboration_parser(subparsers: argparse._SubParsersAction) -> N
         type=Path,
         default=[],
         metavar="FILE",
-        help="cage-evidence-batch/1 attestations (compliance-evidence key)",
+        help="cage-evidence-batch/1 or cage-evidence-batch/2 attestations (compliance-evidence key)",
     )
     corroborate.add_argument(
         "--seals",

@@ -34,6 +34,8 @@ import pytest
 
 from src.compliance_bridge.evidence_custodian import (
     ATTESTATION_SCHEMA,
+    ATTESTATION_SCHEMA_V1,
+    ATTESTATION_SCHEMA_V2,
     GAP_KIND_CHAIN_ROTATION,
     CustodyStatus,
     EvidenceCustodian,
@@ -153,7 +155,23 @@ async def _produce(server, n: int, *, max_len: int = 10_000) -> EvidenceStreamSi
     return sink
 
 
-def _custodian(server, store, signer=None, *, require_signature=True, batch_size=100):
+_UNSET = object()
+
+
+def _custodian(
+    server,
+    store,
+    signer=None,
+    *,
+    require_signature=True,
+    batch_size=100,
+    deployment_posture=_UNSET,
+):
+    resolved_posture = (
+        ("staging" if require_signature else None)
+        if deployment_posture is _UNSET
+        else deployment_posture
+    )
     return EvidenceCustodian(
         _redis(server),
         store,
@@ -162,6 +180,7 @@ def _custodian(server, store, signer=None, *, require_signature=True, batch_size
         batch_size=batch_size,
         require_signature=require_signature,
         interval_s=0.01,
+        deployment_posture=resolved_posture,
     )
 
 
@@ -625,9 +644,14 @@ class TestNonEvidentiaryAttestations:
 
 
 class TestAssertCitable:
-    def _signed(self) -> dict:
-        return {
-            "schema": ATTESTATION_SCHEMA,
+    def _signed(
+        self,
+        *,
+        schema: str = ATTESTATION_SCHEMA_V2,
+        deployment_posture: str | None = "staging",
+    ) -> dict:
+        att: dict = {
+            "schema": schema,
             "signature_status": "SIGNED",
             "evidentiary": True,
             "signature": {
@@ -636,14 +660,32 @@ class TestAssertCitable:
                 "value": "sig",
             },
         }
+        if deployment_posture is not None:
+            att["deployment_posture"] = deployment_posture
+        return att
 
-    def test_accepts_signed(self):
-        assert_citable(self._signed())
+    @pytest.mark.parametrize("posture", ["production", "staging"])
+    def test_accepts_signed_v2_citable_postures(self, posture):
+        assert_citable(self._signed(deployment_posture=posture))
+
+    def test_accepts_signed_v1_without_deployment_posture(self):
+        assert_citable(
+            self._signed(schema=ATTESTATION_SCHEMA_V1, deployment_posture=None)
+        )
 
     @pytest.mark.parametrize(
         "mutate",
         [
             lambda a: a.update(schema="cage-evidence-batch/0"),
+            lambda a: a.update(
+                schema=ATTESTATION_SCHEMA_V1, deployment_posture="staging"
+            ),
+            lambda a: a.pop("deployment_posture"),
+            lambda a: a.update(deployment_posture=""),
+            lambda a: a.update(deployment_posture="dev"),
+            lambda a: a.update(deployment_posture="test"),
+            lambda a: a.update(deployment_posture="ci"),
+            lambda a: a.update(deployment_posture="local"),
             lambda a: a.update(signature_status="UNSIGNED"),
             lambda a: a.pop("signature_status"),
             lambda a: a.update(evidentiary=False),
@@ -654,6 +696,13 @@ class TestAssertCitable:
         ],
         ids=[
             "wrong-schema",
+            "v1-with-posture",
+            "v2-missing-posture",
+            "v2-empty-posture",
+            "v2-dev-posture",
+            "v2-test-posture",
+            "v2-ci-posture",
+            "v2-local-posture",
             "unsigned-status",
             "missing-status",
             "non-evidentiary",
@@ -933,3 +982,106 @@ class TestCustodyCursorRecovery:
 
         assert set(store.objects) == keys_before
         assert await _redis(server).hgetall(CURSOR_KEY) == {}
+
+
+class TestAttestationPostureStamp:
+    """Verify cage-evidence-batch/2 posture stamping, non-citable posture guards, and cursor recovery."""
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("posture", ["production", "staging"])
+    async def test_v2_attestation_stamps_deployment_posture_inside_signed_body(
+        self, server, posture
+    ):
+        await _produce(server, 2)
+        store, signer = FakeColdStore(), FakeSigner()
+        outcome = await _custodian(
+            server, store, signer, deployment_posture=posture
+        ).flush_once()
+
+        att = json.loads(store.objects[outcome.attestation_key])
+        assert att["schema"] == ATTESTATION_SCHEMA_V2
+        assert att["deployment_posture"] == posture
+        assert signer.signed[0]["schema"] == ATTESTATION_SCHEMA_V2
+        assert signer.signed[0]["deployment_posture"] == posture
+        assert_citable(att)
+
+    @pytest.mark.parametrize(
+        "bad_posture",
+        ["dev", "test", "ci", "local", "invalid-posture", None],
+    )
+    def test_require_signature_rejects_non_citable_or_unknown_posture(
+        self, server, monkeypatch, bad_posture
+    ):
+        monkeypatch.setenv("CAGE_ENV", "test")
+        with pytest.raises(EvidenceCustodyConfigError):
+            _custodian(
+                server,
+                FakeColdStore(),
+                FakeSigner(),
+                require_signature=True,
+                deployment_posture=bad_posture,
+            )
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("posture", ["dev", "test", "ci", "local"])
+    async def test_permissive_posture_never_emits_signed_attestation_even_with_active_signer(
+        self, server, posture
+    ):
+        await _produce(server, 1)
+        store, signer = FakeColdStore(), FakeSigner(active=True)
+        outcome = await _custodian(
+            server,
+            store,
+            signer,
+            require_signature=False,
+            deployment_posture=posture,
+        ).flush_once()
+
+        assert outcome.status is CustodyStatus.WRITTEN
+        assert outcome.evidentiary is False
+        assert outcome.attestation_key.endswith(".attestation.unsigned.json")
+        assert signer.signed == []
+        att = json.loads(store.objects[outcome.attestation_key])
+        assert att["signature_status"] == "UNSIGNED"
+        assert att["evidentiary"] is False
+        assert att["signature"] is None
+        with pytest.raises(NonEvidentiaryAttestationError):
+            assert_citable(att)
+
+    @pytest.mark.asyncio
+    async def test_cursor_recovery_accepts_v1_archive_and_halts_on_cross_posture_v2(
+        self, server
+    ):
+        # 1. Pre-stamping v1 archive in WORM recovers cleanly into a v2 staging custodian.
+        old = await _produce(server, 2)
+        store = FakeColdStore()
+        first = await _custodian(
+            server, store, deployment_posture="staging"
+        ).flush_once()
+        v1_att = json.loads(store.objects[first.attestation_key])
+        v1_att["schema"] = ATTESTATION_SCHEMA_V1
+        v1_att.pop("deployment_posture", None)
+        store.objects[first.attestation_key] = json.dumps(v1_att).encode()
+
+        await _redis(server).delete(CURSOR_KEY)
+        for i in range(2, 4):
+            await old.ingest(
+                {"type": "GOVERNANCE_DECISION", "controlId": "AU-9", "n": i}
+            )
+
+        second = await _custodian(
+            server, store, deployment_posture="staging"
+        ).flush_once()
+        assert second.status is CustodyStatus.WRITTEN
+        assert (second.first_sequence, second.last_sequence) == (2, 3)
+        assert second.gap is False
+
+        # 2. A production custodian encountering a staging v2 attestation in WORM halts fail-closed.
+        await _redis(server).delete(CURSOR_KEY)
+        await old.ingest({"type": "GOVERNANCE_DECISION", "controlId": "AU-9", "n": 4})
+        with pytest.raises(
+            EvidenceCustodyIntegrityError, match="deployment_posture='staging'"
+        ):
+            await _custodian(
+                server, store, deployment_posture="production"
+            ).flush_once()

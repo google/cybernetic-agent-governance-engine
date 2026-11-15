@@ -862,7 +862,7 @@ PY
       LAST_EVIDENCE_VERIFY_JSON="$verify_raw"
       local err_tmp
       err_tmp="$(mktemp "${TMPDIR:-/tmp}/cage-worm-err-XXXXXX")"
-      summary="$(VERIFY_RAW="$verify_raw" python3 - "$require_bound_rotation" "$expected_prior_head" "$expected_prior_attestation" "$min_verified_batches" 2>"$err_tmp" <<'PY'
+      summary="$(VERIFY_RAW="$verify_raw" python3 - "$require_bound_rotation" "$expected_prior_head" "$expected_prior_attestation" "$min_verified_batches" "$FRESH_PROJECT" 2>"$err_tmp" <<'PY'
 import json
 import os
 import sys
@@ -871,6 +871,7 @@ require_bound_rotation = sys.argv[1].lower() == "true"
 expected_prior_head = sys.argv[2].strip().lower()
 expected_prior_attestation = sys.argv[3].strip().lower()
 min_verified_batches = int(sys.argv[4])
+fresh_project = sys.argv[5].lower() == "true"
 
 
 def _count(val, field):
@@ -913,6 +914,8 @@ unsigned = max(
 )
 bound_rotations_raw = data.get("bound_rotations", [])
 bound_rotations = _count(bound_rotations_raw, "bound_rotations")
+posture_status = data.get("posture_status")
+qualifications = data.get("citable_qualifications", [])
 
 errors = []
 if verified <= 0:
@@ -925,6 +928,29 @@ if gaps != 0:
     errors.append(f"gaps={gaps} (expected 0)")
 if unsigned != 0:
     errors.append(f"unsigned={unsigned} (expected 0)")
+posture_invalid = False
+if verified > 0:
+    if not isinstance(qualifications, list):
+        errors.append(
+            f"citable_qualifications must be a list, got {type(qualifications).__name__}"
+        )
+        posture_invalid = True
+    if fresh_project:
+        if posture_status != "staging":
+            errors.append(
+                f"posture_status={posture_status!r} (expected 'staging' on clean-room Gate W run)"
+            )
+            posture_invalid = True
+        if qualifications:
+            errors.append(
+                f"citable_qualifications={qualifications!r} (expected [] on clean-room Gate W run)"
+            )
+            posture_invalid = True
+    elif posture_status not in ("staging", "unstamped_v1"):
+        errors.append(
+            f"posture_status={posture_status!r} (expected 'staging' or 'unstamped_v1')"
+        )
+        posture_invalid = True
 if require_bound_rotation:
     if bound_rotations < 1:
         errors.append(
@@ -956,10 +982,14 @@ if require_bound_rotation:
 
 if errors:
     print("; ".join(errors), file=sys.stderr)
-    sys.exit(2 if (failures == 0 and gaps == 0 and unsigned == 0) else 1)
+    sys.exit(
+        2
+        if (failures == 0 and gaps == 0 and unsigned == 0 and not posture_invalid)
+        else 1
+    )
 
 print(
-    f"verified={verified}, bound_rotations={bound_rotations}, failures={failures}, gaps={gaps}, unsigned={unsigned}"
+    f"verified={verified}, bound_rotations={bound_rotations}, failures={failures}, gaps={gaps}, unsigned={unsigned}, posture_status={posture_status}"
 )
 PY
       )"

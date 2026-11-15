@@ -17,7 +17,8 @@
 
 Fetches Cloud KMS ``AsymmetricSign`` Data Access records and Admin Activity
 records for the workload project from the Cloud Logging API, and the signed
-``cage-evidence-batch/1`` attestations in the WORM evidence bucket, then runs
+``cage-evidence-batch/1`` / ``cage-evidence-batch/2`` attestations in the WORM
+evidence bucket, then runs
 ``cage_conformance.audit_corroboration.verify_audit_corroboration`` over a
 settled verification window::
 
