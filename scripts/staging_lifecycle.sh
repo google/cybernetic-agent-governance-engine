@@ -495,6 +495,7 @@ manifest = {
         "evaluated_host_specs": _i("MANIFEST_LULA_HOST_COUNT"),
         "planned_specs": planned_specs,
         "api_specs": api_specs,
+        "rating_breakdown": _opt_json(Path(os.environ["MANIFEST_OUT"]).parent / "lula" / "rating-breakdown.json"),
     },
     "pytest_suites": suites,
     "partner_conformance_status": os.environ.get("MANIFEST_PARTNER_STATUS", "not_run"),
@@ -1482,6 +1483,7 @@ if [[ "$READINESS_FAILED" == "false" ]]; then
 
     planned_specs=()
     api_specs=()
+    host_specs=()
     evaluated_count=0
 
     if [[ ${#validation_files[@]} -eq 0 ]]; then
@@ -1501,6 +1503,7 @@ if [[ "$READINESS_FAILED" == "false" ]]; then
         fi
         info "Validating host Kubernetes-domain spec: ${base_name}"
         ((evaluated_count++)) || true
+        host_specs+=("$base_name")
         spec_stem="${base_name%.yaml}"
         spec_stem="${spec_stem#lula-validation-}"
         per_spec_out="$ARCHIVE_DIR/lula/assessment-results-${spec_stem}.yaml"
@@ -1526,6 +1529,18 @@ if [[ "$READINESS_FAILED" == "false" ]]; then
       for planned_spec in ${planned_specs[@]+"${planned_specs[@]}"}; do
         info "  [planned] ${planned_spec}"
       done
+
+      # "N of N satisfied" counts every evaluated spec. Record which of them the
+      # Lula README rates Active, the only ones citable as POA&M closure evidence.
+      if ! python3 "$REPO_ROOT/scripts/lula_rating_breakdown.py" \
+        --lula-dir "$REPO_ROOT/compliance/lula" \
+        --evaluated ${host_specs[@]+"${host_specs[@]}"} ${api_specs[@]+"${api_specs[@]}"} \
+        --not-evaluated ${planned_specs[@]+"${planned_specs[@]}"} \
+        > "$ARCHIVE_DIR/lula/rating-breakdown.json"; then
+        error "Lula rating breakdown FAILED: the archive cannot say which satisfied specs are rated Active"
+        rm -f "$ARCHIVE_DIR/lula/rating-breakdown.json"
+        ((LULA_FAILURES++)) || true
+      fi
 
       if [[ $evaluated_count -eq 0 ]]; then
         error "Zero active Kubernetes-domain Lula validation files were evaluated on host"

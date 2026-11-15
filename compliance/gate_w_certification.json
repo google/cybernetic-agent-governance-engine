@@ -14,5 +14,81 @@
   "prior_v410_archive_release_url": "https://github.com/google/cybernetic-agent-governance-engine/releases/download/v4.1.0/gate-w-fa772122-clean-room-worm-archive.tar.gz",
   "prior_v410_recovery_archive_release_url": "https://github.com/google/cybernetic-agent-governance-engine/releases/download/v4.1.0/gate-w-fa772122-recovery-worm-archive.tar.gz",
   "partner_conformance_status": "unreachable_waived",
-  "notes": "Certified on 2026-11-14T01:59:25Z via zero-state clean-room execution of scripts/staging_lifecycle.sh from unmodified main (8956f5057c62a8e833ad2b2c7beb3aadc48cdf83) on a brand-new GCP project (<PROJECT_ID>, pre_existing_project_state.project_pre_existed=false, 0 prior APIs/objects, manifest SHA-256 3d58b3f9afddf5a85f7b7eeb5d9fc89c6dff0958c7f019f9eb05ace354b89528), archived in retention-locked WORM storage and published as immutable GitHub Release asset gate-w-8956f505-clean-room-worm-archive.tar.gz (SHA-256 aa573aebee341e6d16608fb4e464946451201d2a415f5320a41d069e51a47242 on tag gate-w-8956f505). Achieved exit_code=0, overall_status=PASS, zero-drift Phase 1 and Stage 5 Terraform plans (drift_read_back_scope recorded for helm_release.gateway and mesh/metrics/dataplane-v2 charts), 0 container/initContainer restarts across all workloads (kubelet_image_pull_summary: 227 pulled events, 115 cold pulls, max 171.602s vs 600s Phase 2 timeout), 26/26 active Lula v0.16.0 specs satisfied under startup_grace_hours=0 (22 Kubernetes-domain including lula-validation-ia3.yaml/ac3.yaml/sc8.yaml + 4 in-cluster Job/lula-gate-w API-domain; 7 planned specs recorded), US_FED (18), EU_ECB (48), APAC_MAS (7), live data-residency (6), Langfuse posture isolation, fail-closed Binary Authorization negative unattested-pod admission refusal in default namespace (imagepolicywebhook.image-policy.k8s.io, passed=true, pod_admitted=false), live_external (5), integration (94), E2E advisor (12, including in-mesh GatewayClient / cage-client==0.3.0 Cloud KMS ES256 JWKS verification), Cloud Monitoring GMP :9090 mTLS scrape read-back (3 active prometheus.googleapis.com/cage_* series across gateway and compliance-bridge under defaultInboundPolicy=all-authenticated with symmetric absent_over_time alert policies), Stage 5b cross-teardown BOUND_CHAIN_ROTATION across cage:evidence:stream and cage:evidence:infra:stream (verified=6, total_records=97, bound_rotations=1, gaps=0) with AS-6 Cloud Audit Log KMS signature corroboration PASSED pre- and post-rebuild, and Stage 6 PF9 zero unexpected survivors. Plain-English verification_boundary_disclosures record that advisor SDK coverage is newly exercised starting in #736 (prior runs used raw httpx + server-side GovernanceEnvelopeBuilder) and that Verdict.DEFER -> defer_node is unreachable in US_FED where HITL outranks DEFERRABLE (validated out-of-band in live TCP rehearsal). Partner live-wire suites recorded 14 passed / 50 skipped (partner_conformance_status=unreachable_waived)."
+  "notes": "Certified on 2026-11-14T01:59:25Z via zero-state clean-room execution of scripts/staging_lifecycle.sh from unmodified main (8956f5057c62a8e833ad2b2c7beb3aadc48cdf83) on a brand-new GCP project (<PROJECT_ID>, pre_existing_project_state.project_pre_existed=false, 0 prior APIs/objects, manifest SHA-256 3d58b3f9afddf5a85f7b7eeb5d9fc89c6dff0958c7f019f9eb05ace354b89528), archived in retention-locked WORM storage and published as immutable GitHub Release asset gate-w-8956f505-clean-room-worm-archive.tar.gz (SHA-256 aa573aebee341e6d16608fb4e464946451201d2a415f5320a41d069e51a47242 on tag gate-w-8956f505). Achieved exit_code=0, overall_status=PASS, zero-drift Phase 1 and Stage 5 Terraform plans (drift_read_back_scope recorded for helm_release.gateway and mesh/metrics/dataplane-v2 charts), 0 container/initContainer restarts across all workloads (kubelet_image_pull_summary: 227 pulled events, 115 cold pulls, max 171.602s vs 600s Phase 2 timeout), 26/26 active Lula v0.16.0 specs satisfied under startup_grace_hours=0 (22 Kubernetes-domain including lula-validation-ia3.yaml/ac3.yaml/sc8.yaml + 4 in-cluster Job/lula-gate-w API-domain; 7 planned specs recorded), US_FED (18), EU_ECB (48), APAC_MAS (7), live data-residency (6), Langfuse posture isolation, fail-closed Binary Authorization negative unattested-pod admission refusal in default namespace (imagepolicywebhook.image-policy.k8s.io, passed=true, pod_admitted=false), live_external (5), integration (94), E2E advisor (12, including in-mesh GatewayClient / cage-client==0.3.0 Cloud KMS ES256 JWKS verification), Cloud Monitoring GMP :9090 mTLS scrape read-back (3 active prometheus.googleapis.com/cage_* series across gateway and compliance-bridge under defaultInboundPolicy=all-authenticated with symmetric absent_over_time alert policies), Stage 5b cross-teardown BOUND_CHAIN_ROTATION across cage:evidence:stream and cage:evidence:infra:stream (verified=6, total_records=97, bound_rotations=1, gaps=0) with AS-6 Cloud Audit Log KMS signature corroboration PASSED pre- and post-rebuild, and Stage 6 PF9 zero unexpected survivors. Plain-English verification_boundary_disclosures record that advisor SDK coverage is newly exercised starting in #736 (prior runs used raw httpx + server-side GovernanceEnvelopeBuilder) and that Verdict.DEFER -> defer_node is unreachable in US_FED where HITL outranks DEFERRABLE (validated out-of-band in live TCP rehearsal). Partner live-wire suites recorded 14 passed / 50 skipped (partner_conformance_status=unreachable_waived). Annotation added after certification (lula_result_breakdown; the certified result and the published archive are unchanged): '26/26 active' counts every spec without a planned or not-applicable header, not 26 controls rated Active. The Lula README rated 12 of the 26 Active at the certified commit, several of which assert less than their names, and the '7 planned specs' are 2 planned and 5 adopter-operated not-applicable.",
+  "lula_result_breakdown": {
+    "annotated_utc": "2026-11-15T00:56:11Z",
+    "annotation_scope": "Added after certification to qualify '26/26 active Lula v0.16.0 specs satisfied' in notes. It changes no certified result. The published archive (archive_sha256) and its manifest (archive_manifest_sha256) are immutable and do not carry this breakdown. The fields below are what scripts/lula_rating_breakdown.py computes from that manifest's own spec lists (the 22 host specs with assessment results, the 4 api_specs and the 7 planned_specs) and compliance/lula/README.md at certified_git_sha. Archive manifests written by scripts/staging_lifecycle.sh from this change on carry the same fields as lula.rating_breakdown.",
+    "satisfied_in_certified_run": 26,
+    "rating_source": "compliance/lula/README.md Status column at certified_git_sha",
+    "rating_meaning": "Only a manifest rated Active may be cited as evidence for closing a POA&M item (scripts/check_poam_lula_divergence.py). The rating is the README's judgment of the manifest, not a measurement of what its Rego asserts; the README row says what each manifest checks.",
+    "counts": {
+      "evaluated": 26,
+      "evaluated_rated_active": 12,
+      "evaluated_not_rated_active": 14,
+      "not_evaluated_planned": 2,
+      "not_evaluated_not_applicable": 5
+    },
+    "evaluated_rated_active": [
+      "lula-validation-a52.yaml",
+      "lula-validation-a53.yaml",
+      "lula-validation-a92.yaml",
+      "lula-validation-au12.yaml",
+      "lula-validation-cilium-dpv2.yaml",
+      "lula-validation-eu-fria.yaml",
+      "lula-validation-flowsignal.yaml",
+      "lula-validation-ftra.yaml",
+      "lula-validation-iso001-token-quota.yaml",
+      "lula-validation-metrics.yaml",
+      "lula-validation-sc4.yaml",
+      "lula-validation-tqp007.yaml"
+    ],
+    "evaluated_not_rated_active": [
+      "lula-validation-aarm-vectors.yaml",
+      "lula-validation-ac2.yaml",
+      "lula-validation-ac3.yaml",
+      "lula-validation-ai600-cbrn.yaml",
+      "lula-validation-ai600-confabulation.yaml",
+      "lula-validation-ai600-data-privacy.yaml",
+      "lula-validation-ai600-human-ai-config.yaml",
+      "lula-validation-ai600-prompt-injection.yaml",
+      "lula-validation-cm6.yaml",
+      "lula-validation-ia3.yaml",
+      "lula-validation-ia5.yaml",
+      "lula-validation-ir6.yaml",
+      "lula-validation-sc8.yaml",
+      "lula-validation-si2.yaml"
+    ],
+    "placeholders_flagged_by_stub_ratchet": [
+      "lula-validation-ai600-cbrn.yaml",
+      "lula-validation-ai600-confabulation.yaml",
+      "lula-validation-ai600-data-privacy.yaml",
+      "lula-validation-ai600-human-ai-config.yaml",
+      "lula-validation-ai600-prompt-injection.yaml"
+    ],
+    "not_evaluated_planned": [
+      "lula-validation-gdpr-art22.yaml",
+      "lula-validation-ra5.yaml"
+    ],
+    "not_evaluated_not_applicable": [
+      "lula-validation-dora-art10.yaml",
+      "lula-validation-eu-ai-act-art9.yaml",
+      "lula-validation-mas-feat.yaml",
+      "lula-validation-mas-notice655.yaml",
+      "lula-validation-mas-trm-s6.yaml"
+    ],
+    "rated_active_after_certification": {
+      "commit": "84f39e213954b76192fd574e9bb09eccfab68c9a",
+      "manifests": [
+        "lula-validation-ac3.yaml",
+        "lula-validation-ia3.yaml",
+        "lula-validation-sc8.yaml",
+        "lula-validation-si2.yaml"
+      ],
+      "note": "The commit that recorded this certification rated these four evaluated specs Active and, in the same change, closed POAM-2026-007, POAM-2026-080 and POAM-2026-195 citing ac3, ia3 and sc8. scripts/check_poam_lula_divergence.py accepts a Lula manifest as closure evidence only if it is rated Active, and counts it as bound to a finding only if the manifest names the finding; the commit's only edit to lula-validation-ia3.yaml added those three IDs to its header comment. No assertion changed, so 16 of the 26 are rated Active from that commit on.",
+      "rating_lag": "All four already met the Active criteria at certified_git_sha, and the rating had lagged the manifests; the criteria did not change. Each passed the check the closure gate applies to Active manifests (_validate_active_lula_manifest), carried no stub-ratchet markers, and was satisfied in this run. Their assertions were last rewritten in #705, #724 and #733, none of which touched the README, whose rows still described older checks: si2's named CVE patching through pip-audit, which lula-validation-si2.yaml has never asserted.",
+      "description_overstated": "The description 84f39e21 wrote for lula-validation-sc8.yaml, 'Linkerd mTLS, OPA UDS sidecar & Memorystore server CA TLS', claimed more than the manifest checks: its Rego asserts only that gateway and compliance-bridge pin the Memorystore server CA. The README row was corrected in the same change as this annotation."
+    },
+    "active_rating_scope": "Rated Active is the README's judgment, not a measurement of what a manifest asserts. Checked against their Rego when this annotation was written, five of the 12 rated Active in the certified tree describe checks their Rego does not make: lula-validation-ftra.yaml asserts only that a gateway Deployment has a gateway container; lula-validation-eu-fria.yaml accepts any of the three regions and checks neither the fria tier nor the normative provider, and was satisfied in this US_FED run; lula-validation-tqp007.yaml checks only that the gateway is ready with a REDIS_URL, and lula-validation-iso001-token-quota.yaml only that REDIS_URL and the opa-policies ConfigMap are present, so neither checks that quotas are enforced; and lula-validation-flowsignal.yaml's Redis-isolation check compares constants, while its secretKeyRef check passes when no FlowSignal variables are set. Their README rows now say what each asserts; their ratings are unchanged.",
+    "reading": "26 of 26 evaluated specs were satisfied and none failed. That is not 26 controls rated Active: 12 were rated Active in the certified tree, the commit that recorded this certification rated 4 more Active, and 10 are rated Stub. Five of those 10 are Phase-0 placeholders whose own metadata says they always pass, so their being satisfied says nothing about the controls they name. Nor is every Active rating a tested control: see active_rating_scope."
+  }
 }

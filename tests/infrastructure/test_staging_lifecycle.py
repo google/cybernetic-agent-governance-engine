@@ -33,6 +33,7 @@ CORROBORATION_SCRIPT = REPO_ROOT / "scripts" / "verify_audit_corroboration.py"
 ANCHOR_SCRIPT = REPO_ROOT / "scripts" / "read_worm_chain_anchor.py"
 
 VERIFIER_SCRIPT = REPO_ROOT / "scripts" / "verify_lula_assessment_results.py"
+BREAKDOWN_SCRIPT = REPO_ROOT / "scripts" / "lula_rating_breakdown.py"
 
 DEFAULT_PRE_HASH = "1" * 64
 DEFAULT_PRE_ATTEST = "2" * 64
@@ -244,8 +245,13 @@ def _setup_fake_repo(
     shutil.copy2(
         VERIFIER_SCRIPT, repo / "scripts" / "verify_lula_assessment_results.py"
     )
+    shutil.copy2(BREAKDOWN_SCRIPT, repo / "scripts" / "lula_rating_breakdown.py")
     (repo / "compliance" / "lula" / "lula-validation-sample.yaml").write_text(
         "kind: LulaValidation\n", encoding="utf-8"
+    )
+    (repo / "compliance" / "lula" / "README.md").write_text(
+        "| [`lula-validation-sample.yaml`](lula-validation-sample.yaml) | ✅ Active |\n",
+        encoding="utf-8",
     )
     (tf_dir / "staging.tfvars").write_text(
         'environment = "staging"\n', encoding="utf-8"
@@ -950,6 +956,97 @@ def test_staging_lifecycle_skips_api_and_planned_lula_specs_on_host_and_prints_p
     assert "lula-validation-ra5.yaml" not in calls
 
 
+def test_archive_manifest_splits_evaluated_lula_specs_by_readme_rating(
+    tmp_path: Path,
+) -> None:
+    """A satisfied stub is not a production-ready control, so the manifest records
+    which evaluated specs the Lula README rates Active and which it does not."""
+    repo, bin_dir, _ = _setup_fake_repo(
+        tmp_path,
+        job_logs=_make_job_logs(("lula-validation-sample", "lula-validation-api")),
+    )
+    lula_dir = repo / "compliance" / "lula"
+    (lula_dir / "lula-validation-api.yaml").write_text(
+        "  type: api\n  url: http://compliance-bridge.governance-stack.svc.cluster.local/v1/metrics/A.5.2\n",
+        encoding="utf-8",
+    )
+    (lula_dir / "lula-validation-ra5.yaml").write_text(
+        "# cage-status: planned\n  type: kubernetes\n", encoding="utf-8"
+    )
+    (lula_dir / "lula-validation-mas-feat.yaml").write_text(
+        "# cage-status: not-applicable\n  type: kubernetes\n", encoding="utf-8"
+    )
+    (lula_dir / "README.md").write_text(
+        "- ✅ **Active** — a legend line, not a rating\n"
+        "| [`lula-validation-sample.yaml`](lula-validation-sample.yaml) | ✅ Active |\n"
+        "| [`lula-validation-api.yaml`](lula-validation-api.yaml) | 🔶 Stub |\n"
+        "| [`lula-validation-ra5.yaml`](lula-validation-ra5.yaml) | 🔶 Stub |\n"
+        "| [`lula-validation-mas-feat.yaml`](lula-validation-mas-feat.yaml) "
+        "| ⚪ Adopter-Operated (`not-applicable`) |\n",
+        encoding="utf-8",
+    )
+    archive = tmp_path / "archive"
+    proc = subprocess.run(
+        [
+            "bash",
+            str(repo / "scripts" / "staging_lifecycle.sh"),
+            f"--archive-dir={archive}",
+        ],
+        env=_base_env(bin_dir, GOOGLE_CLOUD_PROJECT="demo-staging-proj"),
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert proc.returncode == 0, proc.stderr
+
+    manifest = json.loads((archive / "manifest.json").read_text(encoding="utf-8"))
+    breakdown = manifest["lula"]["rating_breakdown"]
+    assert breakdown == json.loads(
+        (archive / "lula" / "rating-breakdown.json").read_text(encoding="utf-8")
+    )
+    assert breakdown["counts"] == {
+        "evaluated": 2,
+        "evaluated_rated_active": 1,
+        "evaluated_not_rated_active": 1,
+        "not_evaluated_planned": 1,
+        "not_evaluated_not_applicable": 1,
+    }
+    assert breakdown["evaluated_rated_active"] == ["lula-validation-sample.yaml"]
+    assert breakdown["evaluated_not_rated_active"] == ["lula-validation-api.yaml"]
+    assert breakdown["not_evaluated_planned"] == ["lula-validation-ra5.yaml"]
+    assert breakdown["not_evaluated_not_applicable"] == [
+        "lula-validation-mas-feat.yaml"
+    ]
+
+
+def test_staging_lifecycle_fails_closed_when_lula_rating_breakdown_cannot_be_written(
+    tmp_path: Path,
+) -> None:
+    """Without the README there is no rating to split by, so the Lula phase fails
+    rather than archiving a satisfied count with nothing to qualify it."""
+    repo, bin_dir, _ = _setup_fake_repo(tmp_path)
+    (repo / "compliance" / "lula" / "README.md").unlink()
+    archive = tmp_path / "archive"
+    proc = subprocess.run(
+        [
+            "bash",
+            str(repo / "scripts" / "staging_lifecycle.sh"),
+            f"--archive-dir={archive}",
+        ],
+        env=_base_env(bin_dir, GOOGLE_CLOUD_PROJECT="demo-staging-proj"),
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert proc.returncode != 0
+    assert "Lula rating breakdown FAILED" in proc.stderr
+    manifest = json.loads((archive / "manifest.json").read_text(encoding="utf-8"))
+    assert manifest["overall_status"] == "FAIL"
+    assert manifest["phase_failures"]["lula"] >= 1
+    assert manifest["lula"]["rating_breakdown"] is None
+    assert not (archive / "lula" / "rating-breakdown.json").exists()
+
+
 @pytest.mark.parametrize(
     ("job_exit_code", "job_logs", "expected_err"),
     [
@@ -1524,6 +1621,7 @@ def test_staging_lifecycle_archive_manifest_stamps_existing_vs_fresh_target_mode
     assert manifest_fresh["deployment_target_mode"] == "fresh_project_clean_room"
     assert manifest_fresh["overall_status"] == "PARTIAL_PASS"
     assert manifest_fresh["full_unskipped_gate_w"] is False
+    assert manifest_fresh["lula"]["rating_breakdown"] is None
 
 
 def test_staging_lifecycle_fails_closed_when_startup_grace_active_true(

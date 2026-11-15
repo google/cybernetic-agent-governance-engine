@@ -20,10 +20,10 @@ In this project, Lula validations (`compliance/lula/lula-validation-*.yaml`) eva
 | [`lula-validation-a53.yaml`](lula-validation-a53.yaml)   | A.5.3   | ISO 42001            | ALL          | ✅ Active | Logging and Monitoring — Langfuse safety rate ≥ 98%                |
 | [`lula-validation-a92.yaml`](lula-validation-a92.yaml)   | A.9.2   | ISO 42001            | ALL          | ✅ Active | Data Transfer to Suppliers — Presidio PII leak rate = 0%           |
 | [`lula-validation-aarm-vectors.yaml`](lula-validation-aarm-vectors.yaml) | CSA AARM v1.0 | CSA AARM | ALL | 🔶 Stub | CSA AARM v1.0 11-vector threat coverage validation |
-| [`lula-validation-tqp007.yaml`](lula-validation-tqp007.yaml)             | A.8.4         | ISO 42001 | ALL | ✅ Active | TokenQuotaProxy fail-closed (CTRL_TQP_007) — asserts tqp_running, tqp_has_redis_url, tqp_fail_closed |
-| [`lula-validation-iso001-token-quota.yaml`](lula-validation-iso001-token-quota.yaml) | A.4 | ISO 42001 | ALL | ✅ Active | Token Quota OPA Injection (ISO-001) — asserts advisor_running, advisor_has_redis_url, advisor_has_quota_markers |
-| [`lula-validation-ftra.yaml`](lula-validation-ftra.yaml)                 | CTRL_FTRA_001 | ISO 42001 / NIST | ALL | ✅ Active | FTRA Tier 0.5 Gate — Forward-Looking Trajectory Reachability Analyzer boundary check |
-| [`lula-validation-flowsignal.yaml`](lula-validation-flowsignal.yaml)     | A.8.4         | ISO 42001 | ALL | ✅ Active | FlowSignal Integration (FLOWSIGNAL-001) — asserts normative provider, secretKeyRef for mTLS credentials, Redis namespace isolation, and KMS config |
+| [`lula-validation-tqp007.yaml`](lula-validation-tqp007.yaml)             | A.8.4         | ISO 42001 | ALL | ✅ Active | TokenQuotaProxy (CTRL_TQP_007) — asserts `tqp_running` and `tqp_has_redis_url`: the gateway is ready and has a non-empty `REDIS_URL`. It does not check fail-closed behaviour |
+| [`lula-validation-iso001-token-quota.yaml`](lula-validation-iso001-token-quota.yaml) | A.4 | ISO 42001 | ALL | ✅ Active | Token Quota OPA Injection (ISO-001) — asserts `gateway_has_redis_url` and `opa_policy_present`: the gateway or advisor has a non-empty `REDIS_URL` and the `opa-policies` ConfigMap is non-empty. It checks no quota markers |
+| [`lula-validation-ftra.yaml`](lula-validation-ftra.yaml)                 | CTRL_FTRA_001 | ISO 42001 / NIST | ALL | ✅ Active | FTRA Tier 0.5 Gate (CTRL_FTRA_001) — asserts only `gateway_exists`: a gateway Deployment with a `gateway` container. It does not exercise FTRA |
+| [`lula-validation-flowsignal.yaml`](lula-validation-flowsignal.yaml)     | A.8.4         | ISO 42001 | ALL | ✅ Active | FlowSignal Integration (FLOWSIGNAL-001) — asserts the gateway has `REDIS_URL` and a KMS setting, and that any `FLOWSIGNAL_*` credential variables come from `secretKeyRef` (true when none are set). Its Redis-prefix check compares constants, and nothing checks the normative provider |
 
 ### US_FED Controls (NIST SP 800-53 / NIST AI 600-1 — US_FED only)
 
@@ -36,11 +36,11 @@ In this project, Lula validations (`compliance/lula/lula-validation-*.yaml`) eva
 | [`lula-validation-au12.yaml`](lula-validation-au12.yaml) | AU-12   | NIST SP 800-53 Rev 5 | US_FED       | ✅ Active | Audit Record Generation — verifies gateway blocking hash-chain (`EVIDENCE_CHAIN_BLOCKING=true`) and `compliance-bridge` durable WORM cold-store (`EVIDENCE_COLD_STORE`) |
 | [`lula-validation-metrics.yaml`](lula-validation-metrics.yaml) | AU-12 | NIST SP 800-53 Rev 5 | US_FED | ✅ Active | Prometheus Metrics Scrape — verifies Terraform-reconciled `gateway-metrics` GMP `PodMonitoring` (`infra/modules/gateway/metrics-monitors/`) targeting `app=gateway` on port `metrics` (`/metrics`) in `governance-stack` |
 | [`lula-validation-cm6.yaml`](lula-validation-cm6.yaml)   | CM-6    | NIST SP 800-53 Rev 5 | US_FED       | 🔶 Stub   | Configuration Settings — Governance ConfigMaps present             |
-| [`lula-validation-ia3.yaml`](lula-validation-ia3.yaml)   | IA-3    | NIST SP 800-53       | US_FED       | ✅ Active | Device Identification — Linkerd mTLS SPIFFE identity, OPA UDS sidecar & zero inbound port-skip bypass |
+| [`lula-validation-ia3.yaml`](lula-validation-ia3.yaml)   | IA-3    | NIST SP 800-53       | US_FED       | ✅ Active | Device Identification — the gateway names its trusted Linkerd client identities (`CAGE_TRUSTED_CLIENT_IDENTITIES`), runs the OPA UDS sidecar, one of three named `NetworkPolicy` objects exists, and neither `gateway` nor `compliance-bridge` skips inbound mesh ports |
 | [`lula-validation-ia5.yaml`](lula-validation-ia5.yaml)   | IA-5    | NIST SP 800-53       | US_FED       | 🔶 Stub   | Authenticator Management — KMS HSM key lifecycle                   |
 | [`lula-validation-ir6.yaml`](lula-validation-ir6.yaml)   | IR-6    | NIST SP 800-53 Rev 5 | US_FED       | 🔶 Stub   | Incident Reporting — compliance-bridge Deployment check            |
 | [`lula-validation-ra5.yaml`](lula-validation-ra5.yaml)   | RA-5    | NIST SP 800-53 Rev 5 | US_FED       | 🔶 Stub   | Vulnerability Scanning (`planned`, `POAM-010`) — in-cluster `CronJob/security-scanner` check |
-| [`lula-validation-sc8.yaml`](lula-validation-sc8.yaml)   | SC-8    | NIST SP 800-53       | US_FED       | ✅ Active | Transmission Confidentiality — Linkerd mTLS, OPA UDS sidecar & Memorystore server CA TLS |
+| [`lula-validation-sc8.yaml`](lula-validation-sc8.yaml)   | SC-8    | NIST SP 800-53       | US_FED       | ✅ Active | Transmission Confidentiality — `gateway` and `compliance-bridge` pin the Memorystore server CA (`POAM-2026-086`). It checks neither Linkerd mTLS nor Service or Ingress TLS |
 | [`lula-validation-si2.yaml`](lula-validation-si2.yaml)   | SI-2    | NIST SP 800-53       | US_FED       | ✅ Active | Flaw Remediation — immutable `@sha256:` image digests across `governance-stack` |
 | [`lula-validation-ai600-confabulation.yaml`](lula-validation-ai600-confabulation.yaml) | SI-10, AU-3 | NIST AI 600-1 | US_FED | 🔶 Stub | AI 600-1 §2.2 Confabulation — asserts `confabulation_rate < 0.02` over 24h window (POAM AI600-001). Requires `confabulation_rate` metric in Langfuse compliance project. |
 | [`lula-validation-ai600-data-privacy.yaml`](lula-validation-ai600-data-privacy.yaml) | SI-19, SC-28 | NIST AI 600-1 | US_FED | 🔶 Stub | AI 600-1 §2.3 Data Privacy — asserts PII audit log retention ≥ 90 days and Presidio score threshold ≥ 0.5 (POAM AI600-002). |
@@ -52,7 +52,7 @@ In this project, Lula validations (`compliance/lula/lula-validation-*.yaml`) eva
 
 | Validation File                                                          | Control         | Standard             | Region Scope | Status    | Description                                                        |
 | ------------------------------------------------------------------------ | --------------- | -------------------- | ------------ | --------- | ------------------------------------------------------------------ |
-| [`lula-validation-eu-fria.yaml`](lula-validation-eu-fria.yaml)           | Art. 27        | EU AI Act            | EU_ECB       | ✅ Active | FRIA Gating (EU-001) — asserts gateway_running, normative_provider_not_static, normative_endpoint_set, region_is_eu_ecb (the region that assembles the `fria` tier) |
+| [`lula-validation-eu-fria.yaml`](lula-validation-eu-fria.yaml)           | Art. 27        | EU AI Act            | EU_ECB       | ✅ Active | FRIA Gating (EU-001) — asserts `gateway_running` and `region_from_configmap`: the gateway is ready and reads `CAGE_DEPLOYMENT_REGION` from the `cage-deployment` ConfigMap, which may hold any of the three regions. It checks neither the `fria` tier nor the normative provider |
 | [`lula-validation-eu-ai-act-art9.yaml`](lula-validation-eu-ai-act-art9.yaml) | Art. 9     | EU AI Act            | EU_ECB       | ⚪ Adopter-Operated (`not-applicable`) | Institutional Risk Management System — illustrative template for adopters wiring a GRC endpoint |
 | [`lula-validation-gdpr-art22.yaml`](lula-validation-gdpr-art22.yaml)     | Art. 22         | GDPR                 | EU_ECB       | 🔶 Stub   | Automated Decision-Making (`planned` `EU-006`) — runtime `REQUIRE_APPROVAL` dual-control oversight is `implemented`; Art. 22(3) subject contestation & `/v1/compliance/gdpr/art22` endpoint check remain `planned` |
 | [`lula-validation-dora-art10.yaml`](lula-validation-dora-art10.yaml)     | Art. 10         | DORA                 | EU_ECB       | ⚪ Adopter-Operated (`not-applicable`) | Institutional ICT Detection & Incident Classification — illustrative template for supervised financial-entity SOC integration |
@@ -67,18 +67,37 @@ In this project, Lula validations (`compliance/lula/lula-validation-*.yaml`) eva
 
 **Legend:**
 
-- ✅ **Active** — Validation is production-ready and enabled in the Lula CronJob
+- ✅ **Active** — Rated production-ready. Only a manifest marked Active here may be cited as evidence for closing a POA&M item ([`check_poam_lula_divergence.py`](../../scripts/check_poam_lula_divergence.py) reads this column). The rating does not re-verify the Rego; the Description column says what each manifest checks
 - 🔶 **Stub** — Validation logic is complete but requires cluster-specific namespace/resource name configuration or a planned endpoint (`ra5`, `gdpr-art22`) before activation
 - ⚪ **Adopter-Operated (`not-applicable`)** — Institutional governance/GRC/SOC obligation outside the standalone CAGE software boundary (`# cage-status: not-applicable`); retained as an illustrative reference template for deploying institutions
 - **Region Scope:** `ALL` = applies to US_FED, EU_ECB, and APAC_MAS deployments; `US_FED` = applies only when `CAGE_DEPLOYMENT_REGION=US_FED`; `EU_ECB` = applies only when `CAGE_DEPLOYMENT_REGION=EU_ECB`; `APAC_MAS` = applies only when `CAGE_DEPLOYMENT_REGION=APAC_MAS`
+
+### Two Counts: 26 Evaluated, 16 Rated Active
+
+This directory is described by two numbers, and they answer different questions.
+
+- **26 evaluated.** A manifest is evaluated unless it carries a `# cage-status: planned` or `# cage-status: not-applicable` header. The in-cluster audit CronJob ([`infra/modules/lula_cron/main.tf`](../../infra/modules/lula_cron/main.tf)) and Gate W ([`staging_lifecycle.sh`](../../scripts/staging_lifecycle.sh)) select on that header, and [`check_lula_stub_count.py`](../../scripts/check_lula_stub_count.py) holds the 26 / 7 split equal to the SSPs. This is the "26 of 26 satisfied" in [`gate_w_certification.json`](../gate_w_certification.json).
+- **16 rated Active.** The Status column above is a quality rating, not a schedule. It is stricter on purpose: it is the allowlist of manifests that may back a POA&M closure.
+
+| Status column | Count | Evaluated by the CronJob and Gate W | May back a POA&M closure |
+|---|---|---|---|
+| Rated Active | 16 | Yes | Yes |
+| Stub, no `cage-status` header | 10 | Yes | No |
+| Stub, `planned` (`ra5`, `gdpr-art22`) | 2 | No | No |
+| Adopter-operated, `not-applicable` | 5 | No | No |
+| **Total** | **33** | **26** | **16** |
+
+The ten evaluated stubs are the five AI 600-1 manifests that the stub ratchet flags as placeholders (`ai600-confabulation`, `ai600-data-privacy`, `ai600-prompt-injection`, `ai600-human-ai-config`, `ai600-cbrn`; their own metadata says they always pass) and five more that this README rates Stub and the ratchet does not flag (`aarm-vectors`, `ac2`, `cm6`, `ia5`, `ir6`).
+
+So a result of "26 of 26 satisfied" is true and is weaker than it sounds: ten of the 26 are manifests this README does not accept as evidence, and a placeholder can be satisfied without asserting anything about the control. Read it as "16 manifests rated Active satisfied, and no evaluated manifest failed". Rated Active is narrower than it sounds too. Checked against their Rego on 2026-11-14, six Active rows described checks the Rego does not make (`ftra`, `eu-fria`, `tqp007`, `iso001-token-quota`, `flowsignal` and `sc8`); the rows above now say what each asserts, and `ftra` asserts only that a gateway container exists. Their ratings are unchanged. For the certified `8956f505` run the figure is narrower still: 12 manifests were rated Active in the certified tree, and the commit that recorded the certification (`84f39e21`) promoted four more (`ac3`, `ia3`, `sc8`, `si2`). Those four already met the Active criteria in the certified tree, so the rating had lagged the manifests, but the description that commit gave `sc8` claimed more than its Rego checks. [`gate_w_certification.json`](../gate_w_certification.json) carries this breakdown as `lula_result_breakdown`. Gate W runs from now on write it with [`lula_rating_breakdown.py`](../../scripts/lula_rating_breakdown.py) to `<archive>/lula/rating-breakdown.json` and into the archive manifest as `lula.rating_breakdown`, and the Lula phase fails if it cannot. [`test_lula_rating_breakdown.py`](../../tests/unit/test_lula_rating_breakdown.py) holds the counts in this section to the tree.
 
 ### Posture Architecture Alignment
 
 The active/stub/adopter-operated split is **intentional and aligned with the posture architecture**:
 
-- **7 Active (ALL scope):** ISO 42001 universal controls (A.5.2, A.5.3, A.9.2) + TokenQuotaProxy fail-closed (A.8.4 / CTRL_TQP_007) + Token Quota OPA Injection (A.4 / ISO-001) + FTRA Tier 0.5 Gate (CTRL_FTRA_001) + FlowSignal Integration (A.8.4 / FLOWSIGNAL-001) — production-ready across all deployment regions
-- **8 Active (US_FED scope):** AC-3 access enforcement (`lula-validation-ac3.yaml`), IA-3 Linkerd mTLS workload identity (`lula-validation-ia3.yaml`), SC-4 fiscal limits (`lula-validation-sc4.yaml`), SC-7 GKE Dataplane V2 boundary protection (`lula-validation-cilium-dpv2.yaml`), SC-8 transmission confidentiality (`lula-validation-sc8.yaml`), SI-2 digest pinning (`lula-validation-si2.yaml`), AU-12 audit record generation (`lula-validation-au12.yaml`), and AU-12 Prometheus metrics scrape (`lula-validation-metrics.yaml`) — production-ready for US Federal deployments
-- **1 Active (EU_ECB scope):** EU AI Act Art. 27 FRIA gating (`lula-validation-eu-fria.yaml`) — production-ready for EU_ECB deployments
+- **7 Active (ALL scope):** ISO 42001 universal controls (A.5.2, A.5.3, A.9.2) + TokenQuotaProxy (A.8.4 / CTRL_TQP_007) + Token Quota OPA Injection (A.4 / ISO-001) + FTRA Tier 0.5 Gate (CTRL_FTRA_001) + FlowSignal Integration (A.8.4 / FLOWSIGNAL-001) — rated Active in every region; the rows above say how little some of them check
+- **8 Active (US_FED scope):** AC-3 access enforcement (`lula-validation-ac3.yaml`), IA-3 workload identity configuration (`lula-validation-ia3.yaml`), SC-4 fiscal limits (`lula-validation-sc4.yaml`), SC-7 GKE Dataplane V2 boundary protection (`lula-validation-cilium-dpv2.yaml`), SC-8 transmission confidentiality (`lula-validation-sc8.yaml`), SI-2 digest pinning (`lula-validation-si2.yaml`), AU-12 audit record generation (`lula-validation-au12.yaml`), and AU-12 Prometheus metrics scrape (`lula-validation-metrics.yaml`) — rated Active for US Federal deployments
+- **1 Active (EU_ECB scope):** EU AI Act Art. 27 FRIA gating (`lula-validation-eu-fria.yaml`) — rated Active for EU_ECB deployments, although its Rego checks neither the `fria` tier nor that the region is `EU_ECB`
 - **1 Stub (ALL scope):** CSA AARM vectors — universal but requires cluster configuration. **Note:** This validation is listed as `Status: 🔶 Stub` and counted as 1 stub (ALL scope). It is NOT counted as an active validation for release gate purposes until real assertions replace the stub. See CA-05 remediation note below.
 - **5 Remaining Unverified / Planned (US_FED scope):** NIST SP 800-53 controls (`ac2`, `cm6`, `ia5`, `ir6`, plus `ra5` `# cage-status: planned` under `POAM-2026-010`)
 - **5 Stub (US_FED scope):** NIST AI 600-1 controls — Phase-0 placeholder Rego stubs tracked by `compliance/lula/.stub-baseline` (`5`, downward-only ratchet in `scripts/check_lula_stub_count.py`)
