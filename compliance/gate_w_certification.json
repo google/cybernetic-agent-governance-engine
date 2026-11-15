@@ -138,5 +138,16 @@
         }
       }
     }
+  },
+  "custody_posture_qualification": {
+    "annotated_utc": "2026-11-15T16:25:00Z",
+    "annotation_scope": "Added after certification to record the attestation schema and structural posture qualification of the published WORM archives. It changes no certified result, and the published archives (gate-w-8956f505 and prior v4.1.0 fa772122) and their manifests are unchanged.",
+    "attestation_schema_in_certified_archive": "cage-evidence-batch/1",
+    "posture_status": "unstamped_v1",
+    "citable": true,
+    "citable_qualifications": [
+      "unstamped_v1_posture"
+    ],
+    "note": "At certified_git_sha (8956f505) and in the prior v4.1.0 certification (fa772122), EvidenceCustodian emitted cage-evidence-batch/1 attestations, which did not stamp deployment_posture inside the KMS-signed payload. Those archives remain cryptographically sound and verify with citable=true by default in CustodyVerifier without opt-in flags, surfaced structurally with posture_status='unstamped_v1' and citable_qualifications=['unstamped_v1_posture'] rather than defaulting to 'production'. Accepting cage-evidence-batch/1 is cryptographically bounded because schema and deployment_posture sit inside the KMS-signed JCS payload (EVIDENCE_KMS_KEY): relabelling a cage-evidence-batch/2 attestation as cage-evidence-batch/1 or stripping deployment_posture breaks signature verification without the signing key. From cage-evidence-batch/2 onward, EvidenceCustodian stamps deployment_posture ('production' or 'staging') inside every signed attestation, and clean-room Gate W runs (--fresh-project) require posture_status='staging' and citable_qualifications=[]."
   }
 }

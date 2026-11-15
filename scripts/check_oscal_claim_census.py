@@ -119,8 +119,9 @@ EVIDENCE_STORE_PROVENANCE: tuple[EvidenceStoreProvenance, ...] = (
         retention="2555d (prod) / 1d (staging)",
         writer_and_credential=(
             "Gateway appends unsigned records to IAM-authenticated Valkey (DB 1); "
-            "bridge re-verifies chain, signs **one `cage-evidence-batch/1` attestation "
-            "per batch** (`compliance-evidence`, `F-90`), and writes WORM"
+            "bridge re-verifies chain, signs **one `cage-evidence-batch/2` attestation "
+            "per batch** stamping `deployment_posture` (`compliance-evidence`, `F-90`; "
+            "pre-stamping `cage-evidence-batch/1` qualified as `unstamped_v1`), and writes WORM"
         ),
         forgery_or_suppression_surface=(
             "Governance-plane identities; a node compromise (`F-72`); on staging before "

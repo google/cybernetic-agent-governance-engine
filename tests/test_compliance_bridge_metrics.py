@@ -109,12 +109,18 @@ def _make_evidence_record(
     return rec
 
 
-def _make_signed_attestation_bytes(data_key: str, ndjson_bytes: bytes) -> bytes:
+def _make_signed_attestation_bytes(
+    data_key: str,
+    ndjson_bytes: bytes,
+    *,
+    schema: str | None = None,
+    deployment_posture: str | None = "staging",
+) -> bytes:
     """Build a citable signed custody attestation companion for `data_key`."""
     from src.compliance_bridge.evidence_custodian import ATTESTATION_SCHEMA, SIGNED
 
-    attestation = {
-        "schema": ATTESTATION_SCHEMA,
+    attestation: dict[str, Any] = {
+        "schema": schema or ATTESTATION_SCHEMA,
         "chain_id": "00000000-0000-4000-8000-000000000001",
         "stream_key": "cage:evidence:stream",
         "first_sequence": 1,
@@ -135,6 +141,8 @@ def _make_signed_attestation_bytes(data_key: str, ndjson_bytes: bytes) -> bytes:
             "value": "base64-sig-placeholder",
         },
     }
+    if deployment_posture is not None:
+        attestation["deployment_posture"] = deployment_posture
     return json.dumps(attestation, sort_keys=True, separators=(",", ":")).encode(
         "utf-8"
     )
@@ -629,6 +637,49 @@ class TestCustodyChainStoreDeduplication:
             pytest.raises(NonEvidentiaryAttestationError),
         ):
             metrics_mod._query_cage_evidence_records("A.5.2", window_hours=24)
+
+        rec = _make_evidence_record(now, control_id="A.5.2", verdict="ALLOW")
+        ndjson_bytes = (json.dumps(rec, sort_keys=True) + "\n").encode("utf-8")
+        signed_key = f"evidence-stream/{day_path}/chain/000000000001-000000000001.attestation.json"
+
+        # Under CAGE_ENV=prod, a v2 staging-stamped batch is rejected as cross-posture:
+        staging_in_prod = _FakeColdStore(
+            {
+                data_key: ndjson_bytes,
+                signed_key: _make_signed_attestation_bytes(
+                    data_key, ndjson_bytes, deployment_posture="staging"
+                ),
+            }
+        )
+        with (
+            patch(
+                "src.compliance_bridge.metrics.get_cold_store",
+                return_value=staging_in_prod,
+            ),
+            pytest.raises(
+                NonEvidentiaryAttestationError, match="expected 'production'"
+            ),
+        ):
+            metrics_mod._query_cage_evidence_records("A.5.2", window_hours=24)
+
+        # Pre-stamping v1 batches (no deployment_posture) remain readable across upgrade:
+        v1_store = _FakeColdStore(
+            {
+                data_key: ndjson_bytes,
+                signed_key: _make_signed_attestation_bytes(
+                    data_key,
+                    ndjson_bytes,
+                    schema="cage-evidence-batch/1",
+                    deployment_posture=None,
+                ),
+            }
+        )
+        with patch(
+            "src.compliance_bridge.metrics.get_cold_store",
+            return_value=v1_store,
+        ):
+            v1_recs = metrics_mod._query_cage_evidence_records("A.5.2", window_hours=24)
+        assert len(v1_recs) == 1
 
 
 class TestGetComplianceMetricsAndAuditWorkflow:

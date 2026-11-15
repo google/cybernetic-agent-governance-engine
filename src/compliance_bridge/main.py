@@ -1635,13 +1635,21 @@ async def verify_evidence_custody(
             "declared stream gaps exist"
         ),
     ),
+    require_unqualified: bool = Query(
+        default=False,
+        description=(
+            "Return 409 unless the archive is citable with zero "
+            "citable_qualifications (rejecting pre-stamping v1 archives)"
+        ),
+    ),
 ) -> JSONResponse:
     """Independently verify WORM archive batches against out-of-band trust anchors.
 
-    Returns 200 with the structured ``CustodyVerificationReport`` when the
+    Returns 200 with the structured ``CustodyVerificationReport`` (including
+    ``citable_qualifications`` and three-valued ``posture_status``) when the
     archive satisfies the requested verification level, 409 when any batch
-    fails verification (or when ``require_citable=true`` and the archive is
-    not citable), and 503 when the cold-store backend is unreachable.
+    fails verification (or when ``require_citable`` / ``require_unqualified``
+    is requested and unmet), and 503 when the cold-store backend is unreachable.
     """
     from src.gateway.governance.evidence.cold_store import ColdStoreError
 
@@ -1662,9 +1670,12 @@ async def verify_evidence_custody(
     payload = report.to_dict()
     if not report.ok:
         return JSONResponse(status_code=409, content=payload)
-    if require_citable and not report.citable:
+    if (require_citable or require_unqualified) and (
+        not report.citable
+        or (require_unqualified and bool(report.citable_qualifications))
+    ):
         try:
-            report.assert_citable()
+            report.assert_citable(allow_qualifications=not require_unqualified)
         except EvidenceVerificationError as exc:
             payload["citation_error"] = str(exc)
         return JSONResponse(status_code=409, content=payload)

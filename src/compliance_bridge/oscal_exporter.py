@@ -381,6 +381,25 @@ def build_oscal_assessment_results(
                                         "name": "evidence-custody-key-id",
                                         "value": verified_batches[-1].key_id,
                                     },
+                                    {
+                                        "name": "evidence-custody-posture-status",
+                                        "value": (
+                                            custody_report.posture_status or ""
+                                            if custody_report is not None
+                                            else ""
+                                        ),
+                                    },
+                                    *(
+                                        [
+                                            {
+                                                "name": "evidence-custody-qualification",
+                                                "value": q,
+                                            }
+                                            for q in custody_report.citable_qualifications
+                                        ]
+                                        if custody_report is not None
+                                        else []
+                                    ),
                                 ]
                                 if verified_batches
                                 else []

@@ -998,6 +998,7 @@ class TestDeterministicHashAndCustodyChain:
             signer,
             stream_key="cage:evidence:gov:test",
             require_signature=True,
+            deployment_posture="staging",
         )
         infra_custodian = EvidenceCustodian(
             fakeredis.FakeAsyncRedis(server=fake_server, decode_responses=True),
@@ -1005,6 +1006,7 @@ class TestDeterministicHashAndCustodyChain:
             signer,
             stream_key=infra_chain.stream_key,
             require_signature=True,
+            deployment_posture="staging",
         )
         gov_out = await gov_custodian.flush_once()
         infra_out = await infra_custodian.flush_once()
@@ -1144,6 +1146,7 @@ class TestFailClosedPersistenceAndIdempotency:
             signer,
             stream_key=infra_chain.stream_key,
             require_signature=True,
+            deployment_posture="staging",
         )
         r_ok = mesh_client.post(
             "/v1/infra/events",
@@ -1178,6 +1181,7 @@ class TestFailClosedPersistenceAndIdempotency:
             signer,
             stream_key=infra_chain.stream_key,
             require_signature=True,
+            deployment_posture="staging",
         )
         r_worm_err = mesh_client.post(
             "/v1/infra/events",
@@ -1390,6 +1394,7 @@ class TestFailClosedPersistenceAndIdempotency:
             stream_key=stream_key,
             batch_size=3,
             require_signature=True,
+            deployment_posture="staging",
         )
 
         async def _append_mid_flight() -> None:
@@ -1698,6 +1703,7 @@ class TestInfraBoundGenesisRotation:
             signer,
             stream_key=DEFAULT_INFRA_STREAM_KEY,
             require_signature=True,
+            deployment_posture="staging",
         )
         await chain1.append_durable(
             event_type="lula_audit",
@@ -1736,6 +1742,7 @@ class TestInfraBoundGenesisRotation:
             signer,
             stream_key=DEFAULT_INFRA_STREAM_KEY,
             require_signature=True,
+            deployment_posture="staging",
         )
         await chain2.append_durable(
             event_type="lula_audit",
@@ -1774,6 +1781,7 @@ class TestInfraBoundGenesisRotation:
             signer,
             stream_key=DEFAULT_INFRA_STREAM_KEY,
             require_signature=True,
+            deployment_posture="staging",
         )
         await chain3_unbound.append_durable(
             event_type="lula_audit",

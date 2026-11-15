@@ -321,7 +321,7 @@ The authoritative record is the `cage-audit/3.0` evidence stream. Each record ca
 record_hash = SHA-256( prev_hash ‖ JCS(header) ‖ payload_json )
 ```
 
-with contiguous sequence numbers from a genesis record whose `prev_hash` is empty. Altering, removing or reordering a record breaks every later link, and verification is one pass over the stream. Link hashes are unkeyed, so a chain alone shows internal consistency, not who wrote it. Origin comes from the compliance bridge's KMS-signed batch attestations in retention-locked storage, corroborated against the KMS audit log.
+with contiguous sequence numbers from a genesis record whose `prev_hash` is empty. Altering, removing or reordering a record breaks every later link, and verification is one pass over the stream. Link hashes are unkeyed, so a chain alone shows internal consistency, not who wrote it. Origin and deployment posture come from the compliance bridge's KMS-signed `cage-evidence-batch/2` batch attestations (`deployment_posture` in `{"production", "staging"}`; pre-stamping `v1` archives verify with `posture_status="unstamped_v1"` and `citable_qualifications=["unstamped_v1_posture"]`) in retention-locked storage, corroborated against the KMS audit log.
 
 `provenance_chain.py` is a separate per-node chain: each record holds SHA-256 digests of a node's input and output plus `parent_hash`, and a record's own hash is SHA-256 over the canonical JSON of the whole record.
 
