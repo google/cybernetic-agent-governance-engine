@@ -58,7 +58,7 @@ Latest recorded over-the-wire result per adapter, current to 2026-11-14. A harne
 
 ## Plan D — Over-the-Wire Conformance & Partner Adapter Hardening
 
-Plan D (`#750`–`#758`, `conformance-v0.4.1`) reconciles the standalone conformance verifier, release automation, and Layer 3 partner adapters against live wire contracts and cryptographic receipt schemas while enforcing honest, fail-closed reporting of what runs over the wire versus what remains blocked on partner sandboxes or credentials.
+Plan D (`#750`, `#752`–`#756` and `#758`, released as `conformance-v0.4.1`) reconciles the standalone conformance verifier, release automation, and Layer 3 partner adapters against live wire contracts and cryptographic receipt schemas while enforcing honest, fail-closed reporting of what runs over the wire versus what remains blocked on partner sandboxes or credentials.
 
 ### 1. `cage-conformance` `0.4.1` Live Endpoint Verification & Corrected Wire Vectors (`#752`, `16d60823`)
 
