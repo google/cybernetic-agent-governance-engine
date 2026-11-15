@@ -210,16 +210,17 @@ class TestMountedRegoGate:
 class TestCheckPolicyDriftCli:
     """Exercises scripts/check_policy_drift.py --domain parameterization."""
 
-    @pytest.mark.parametrize("domain", ["all", "finance", "healthcare"])
+    @pytest.mark.parametrize("domain", ["all", "finance"])
     def test_production_domains_pass_policy_drift(self, domain: str) -> None:
         from scripts.check_policy_drift import main as drift_main
 
         assert drift_main(["--domain", domain]) == 0
 
-    def test_stub_domain_fails_policy_drift(self) -> None:
+    @pytest.mark.parametrize("domain", ["physical_ai", "healthcare"])
+    def test_stub_domain_fails_policy_drift(self, domain: str) -> None:
         from scripts.check_policy_drift import main as drift_main
 
-        assert drift_main(["--domain", "physical_ai"]) == 1
+        assert drift_main(["--domain", domain]) == 1
 
     def test_unknown_domain_returns_config_error(self) -> None:
         from scripts.check_policy_drift import main as drift_main

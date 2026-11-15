@@ -327,7 +327,7 @@ For the finance plugin's `CashBarrier` ([`src/cage_finance/invariants.py`](../..
 
 **Invariant validation (V1–V4).** Every plugin-contributed invariant is checked at governor assembly (`assemble_governor()` → `validate_invariant()` in [`governor/invariants.py`](../../src/gateway/governance/governor/invariants.py)) across all domains. Startup is refused on: V1 duplicate `invariant_id`; V2 un-namespaced `state_key` (no `:`); V3 `threshold_key` not resolving in the loaded thresholds; V4 `gamma` outside $(0, 1]$. Validated invariants are recorded on the immutable `GovernorComponents.invariants`.
 
-> **Enforcement scope (POAM-2026-078, Open):** a CBF engine instance still enforces one invariant. Only finance's `CashBarrier` is enforced, through the CBF the finance plugin builds ([`src/cage_finance/plugin.py`](../../src/cage_finance/plugin.py)). The healthcare and physical-AI barriers are validated but not enforced; their barrier tiers have no CBF and fail closed (DENY). See [`docs/POAM.md`](../POAM.md).
+> **Enforcement scope (POAM-2026-078, Open):** a CBF engine instance enforces the one invariant it is built with, and each domain plugin builds its own: finance one over `CashBarrier` ([`src/cage_finance/plugin.py`](../../src/cage_finance/plugin.py)), healthcare one over `SerumConcentrationBarrier`, and physical-AI three over its separation, velocity and torque barriers. The kernel builds no engine from the invariants it validates. Only finance is production-eligible; healthcare and physical-AI declare stub maturity and are refused in every enforcing posture, so their barriers run only in tests and permissive postures. See [`docs/POAM.md`](../POAM.md).
 
 **Discrete-time CBF condition:**
 
