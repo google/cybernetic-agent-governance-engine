@@ -28,9 +28,14 @@ For every Active row this file enforces two things:
 * every rule the ``validate`` body references directly is named in the row, so
   a rule cannot be swapped into ``validate`` without the row saying so.
 
-It compares names, not bodies. A rule whose name overstates its body passes:
-before ``#664``, ``ftra``'s ``terminal_registry_valid`` passed whenever the
-gateway existed. Judging what each rule actually checks is still the rating's
+It compares names, not bodies, so it cannot see what a rule selects. Before
+``#664`` every object ``ftra`` selected by name was one no Terraform module
+creates, and both of its ``validate`` rules required one of them, so no cluster
+Terraform builds could have satisfied the manifest; this file would have passed
+it. ``scripts/check_k8s_terraform_parity.py`` holds that half: every object an
+Active manifest selects by name must be one ``infra/`` creates
+(``tests/unit/test_lula_selector_parity.py``). Neither check judges whether a
+rule that selects a real object checks enough of it; that is still the rating's
 job. A ``validate`` that composes no named rules (``cilium-dpv2``) has nothing
 to hold its row to.
 """

@@ -90,7 +90,7 @@ component-definition:
               # a policy file in the mounted ConfigMap must carry the quota rules.
               opa_policy_has_quota_rules if {
                 some cm in input["opa-policy-configmap"]
-                cm.metadata.name in {"opa-policies", "opa-policy"}
+                cm.metadata.name == "opa-policies"
                 some content in cm.data
                 contains(content, "quota_available")
                 contains(content, "token_quota")
