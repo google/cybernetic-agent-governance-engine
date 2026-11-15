@@ -86,7 +86,7 @@ summarize_replica_run() {
   local pre_metrics="$4"
   local post_metrics="$5"
 
-  uv run python - "${replicas}" "${stats_csv}" "${failures_csv}" "${pre_metrics}" "${post_metrics}" <<'PYEOF'
+  uv run --no-sync python - "${replicas}" "${stats_csv}" "${failures_csv}" "${pre_metrics}" "${post_metrics}" <<'PYEOF'
 import csv
 import math
 import os

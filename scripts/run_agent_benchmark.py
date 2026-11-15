@@ -29,12 +29,14 @@ DEFAULT_MODEL_NAME = os.getenv("MODEL_FAST")
 
 
 class VLLMBenchmark:
-    def __init__(self, base_url, model_name, api_key="EMPTY"):
+    def __init__(self, base_url: str, model_name: str, api_key: str = "EMPTY") -> None:
         self.client = OpenAI(base_url=base_url, api_key=api_key)
         self.model_name = model_name
         print(f"🔧 Initialized Benchmark for Model: {self.model_name} @ {base_url}")
 
-    def run_inference(self, prompt: str, max_tokens: int = 256):
+    def run_inference(
+        self, prompt: str, max_tokens: int = 256
+    ) -> dict[str, object] | None:
         start_time = time.time()
         try:
             response = self.client.chat.completions.create(
@@ -57,7 +59,7 @@ class VLLMBenchmark:
                 "completion_tokens": completion_tokens,
                 "prompt_tokens": prompt_tokens,
                 "total_tokens": total_tokens,
-                "throughput": completion_tokens / latency if latency > 0 else 0,
+                "throughput": completion_tokens / latency if latency > 0 else 0.0,
                 "content": response.choices[0].message.content,
             }
         except Exception as e:
@@ -65,11 +67,11 @@ class VLLMBenchmark:
             return None
 
 
-def run_benchmark(benchmark, prompt, iterations):
+def run_benchmark(benchmark: VLLMBenchmark, prompt: str, iterations: int) -> None:
     print(f"\n🚀 Running Benchmark ({iterations} iterations)...")
     print(f"📝 Prompt: {prompt[:50]}...")
 
-    results = []
+    results: list[dict[str, float]] = []
 
     # Warmup
     print("🔥 Warming up (1 request)...")
@@ -79,10 +81,11 @@ def run_benchmark(benchmark, prompt, iterations):
         print(f"  Iteration {i + 1}/{iterations}...", end="", flush=True)
         stats = benchmark.run_inference(prompt)
         if stats:
-            results.append(stats)
-            print(
-                f" {stats['latency']:.3f}s | {stats['completion_tokens']} tok | {stats['throughput']:.1f} tok/s"
-            )
+            lat = float(stats["latency"])  # type: ignore[arg-type]
+            comp_tok = float(stats["completion_tokens"])  # type: ignore[arg-type]
+            tput = float(stats["throughput"])  # type: ignore[arg-type]
+            results.append({"latency": lat, "throughput": tput})
+            print(f" {lat:.3f}s | {int(comp_tok)} tok | {tput:.1f} tok/s")
         else:
             print(" Failed")
 
@@ -117,7 +120,7 @@ def run_benchmark(benchmark, prompt, iterations):
     print("-" * 50)
 
 
-def main():
+def main() -> None:
     parser = argparse.ArgumentParser(description="vLLM Performance Benchmark")
     parser.add_argument(
         "--url", default=DEFAULT_VLLM_API_BASE, help="vLLM API Base URL"

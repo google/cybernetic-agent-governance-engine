@@ -269,10 +269,10 @@ def successors(s: State, cfg: Config) -> list[tuple[str, State]]:
             nxt = act(s, a, cfg)
             if nxt is not None:
                 out.append((f"{act.__name__}(a{a})", nxt))
-    for act in _GLOBAL_ACTIONS:
-        nxt = act(s, cfg)
+    for global_act in _GLOBAL_ACTIONS:
+        nxt = global_act(s, cfg)
         if nxt is not None:
-            out.append((act.__name__, nxt))
+            out.append((global_act.__name__, nxt))
     return out
 
 

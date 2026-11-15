@@ -12,61 +12,36 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""STPA freshness gate: sha256 of a fresh compile first; commit order or stamps as fallback."""
+"""STPA & OSCAL freshness gate: fail-closed SHA-256 content verification (POAM-2026-221)."""
 
 from __future__ import annotations
 
 import importlib.util
-import os
-import shutil
-import subprocess
 from pathlib import Path
 
 import pytest
 
 pytestmark = [pytest.mark.unit, pytest.mark.local]
 
-pytestmark.append(
-    pytest.mark.skipif(shutil.which("git") is None, reason="git required")
-)
-
 _SCRIPT = Path(__file__).resolve().parents[1] / "scripts" / "check_stpa_freshness.py"
 
 
 def _load_gate():
     spec = importlib.util.spec_from_file_location("check_stpa_freshness", _SCRIPT)
+    assert spec is not None and spec.loader is not None
     module = importlib.util.module_from_spec(spec)
-    assert spec.loader is not None
     spec.loader.exec_module(module)
     return module
 
 
-def _git(repo: Path, *args: str, date: str | None = None) -> None:
-    env = {
-        **os.environ,
-        "GIT_AUTHOR_NAME": "t",
-        "GIT_AUTHOR_EMAIL": "t@example.com",
-        "GIT_COMMITTER_NAME": "t",
-        "GIT_COMMITTER_EMAIL": "t@example.com",
-    }
-    if date:
-        env["GIT_AUTHOR_DATE"] = date
-        env["GIT_COMMITTER_DATE"] = date
-    subprocess.run(["git", *args], cwd=repo, env=env, check=True, capture_output=True)
-
-
 @pytest.fixture()
-def gate(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
+def synthetic_gate(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
     repo = tmp_path / "repo"
     (repo / "config" / "stpa").mkdir(parents=True)
     source = repo / "config" / "stpa" / "core.yaml"
     artifact = repo / "generated.rego"
-    source.write_text("hazards: []\n")
-    # Stamp deliberately older than the commit: the old gate failed on this.
-    artifact.write_text("# Generated: 2000-01-01T00:00:00+00:00\n")
-    _git(repo, "init", "-q")
-    _git(repo, "add", ".")
-    _git(repo, "commit", "-q", "-m", "same commit", date="2026-01-01T12:00:00+00:00")
+    source.write_text("hazards: []\n", encoding="utf-8")
+    artifact.write_text("# Generated: 2000-01-01T00:00:00+00:00\n", encoding="utf-8")
 
     module = _load_gate()
     monkeypatch.setattr(module, "_REPO_ROOT", repo)
@@ -76,90 +51,88 @@ def gate(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
     return module, repo, source, artifact
 
 
-def test_source_and_artifact_in_same_commit_is_fresh(gate) -> None:
-    """Squash merges put both in one commit with a new committer time."""
-    module, *_ = gate
-    assert module.check_freshness() == []
-
-
-def test_source_committed_after_artifact_is_stale(gate) -> None:
-    module, repo, source, _ = gate
-    source.write_text("hazards: [h1]\n")
-    _git(repo, "commit", "-qam", "edit source only", date="2026-01-02T12:00:00+00:00")
-    errors = module.check_freshness()
-    assert len(errors) == 1
-    assert "committed before newest STPA source change" in errors[0]
-
-
-def test_regenerated_in_later_commit_is_fresh(gate) -> None:
-    module, repo, source, artifact = gate
-    source.write_text("hazards: [h1]\n")
-    _git(repo, "commit", "-qam", "edit source", date="2026-01-02T12:00:00+00:00")
-    artifact.write_text("# Generated: 2000-01-01T00:00:00+00:00\n# regen\n")
-    _git(repo, "commit", "-qam", "regen", date="2026-01-03T12:00:00+00:00")
-    assert module.check_freshness() == []
-
-
-def test_uncommitted_source_edit_is_stale(gate) -> None:
-    module, _, source, _ = gate
-    source.write_text("hazards: [h2]\n")
-    errors = module.check_freshness()
-    assert len(errors) == 1
-    assert "generated before source edit" in errors[0]
-
-
-def test_uncommitted_regeneration_is_fresh(gate) -> None:
-    module, _, source, artifact = gate
-    source.write_text("hazards: [h2]\n")
-    artifact.write_text("# Generated: 2999-01-01T00:00:00+00:00\n")
-    assert module.check_freshness() == []
-
-
-def test_missing_artifact_is_reported(gate) -> None:
-    module, repo, _, artifact = gate
-    _git(repo, "rm", "-q", str(artifact))
-    _git(repo, "commit", "-qm", "drop", date="2026-01-02T12:00:00+00:00")
-    errors = module.check_freshness()
-    assert errors and errors[0].startswith("MISSING artifact")
-
-
-# ---------------------------------------------------------------------------
-# Content first (F-3): sha256 of a fresh compile beats commit order
-# ---------------------------------------------------------------------------
-
-
-def test_touched_source_with_identical_compile_is_fresh(gate) -> None:
-    """Ordering alone calls this stale; the regenerated content says otherwise."""
-    module, repo, source, artifact = gate
-    source.write_text("hazards: []  # comment only\n")
-    _git(repo, "commit", "-qam", "touch source", date="2026-01-02T12:00:00+00:00")
-    assert module.check_freshness(regenerated={artifact: artifact.read_text()}) == []
-
-
-def test_artifact_committed_later_but_differing_is_stale(gate) -> None:
-    """Ordering alone calls this fresh; the content mismatch is caught."""
-    module, repo, source, artifact = gate
-    source.write_text("hazards: [h1]\n")
-    _git(repo, "commit", "-qam", "edit source", date="2026-01-02T12:00:00+00:00")
-    artifact.write_text("# Generated: 2000-01-01T00:00:00+00:00\n# hand edit\n")
-    _git(
-        repo,
-        "commit",
-        "-qam",
-        "unrelated artifact edit",
-        date="2026-01-03T12:00:00+00:00",
+def test_matching_regenerated_content_is_fresh(synthetic_gate) -> None:
+    module, _, _, artifact = synthetic_gate
+    assert (
+        module.check_freshness(
+            regenerated={artifact: "# Generated: 2026-11-15T00:00:00+00:00\n"}
+        )
+        == []
     )
 
+
+def test_differing_regenerated_content_is_stale(synthetic_gate) -> None:
+    module, _, _, artifact = synthetic_gate
     errors = module.check_freshness(
-        regenerated={artifact: "# Generated: 2026-01-03T00:00:00+00:00\n# from h1\n"}
+        regenerated={artifact: "# Generated: 2026-11-15T00:00:00+00:00\n# drifted\n"}
     )
-
     assert len(errors) == 1
     assert "content differs from a fresh compile (sha256)" in errors[0]
 
 
-def test_volatile_stamps_are_masked_before_hashing(gate) -> None:
-    module, *_ = gate
+def test_missing_artifact_is_reported(synthetic_gate) -> None:
+    module, _, _, artifact = synthetic_gate
+    artifact.unlink()
+    errors = module.check_freshness(regenerated={artifact: "# content\n"})
+    assert len(errors) == 1
+    assert errors[0].startswith("MISSING artifact")
+
+
+def test_unregenerable_artifact_fails_closed(synthetic_gate) -> None:
+    """Inability to regenerate an artifact in memory is a hard failure, never a skip."""
+    module, _, _, artifact = synthetic_gate
+    errors = module.check_freshness(regenerated={artifact: None})
+    assert len(errors) == 1
+    assert "UNABLE TO CHECK" in errors[0]
+
+
+def test_unreciped_artifact_in_generated_list_fails_closed(synthetic_gate) -> None:
+    """Every entry in _GENERATED_ARTIFACTS must have a registered content recipe."""
+    module, *_ = synthetic_gate
+    errors = module.check_freshness()
+    assert len(errors) == 1
+    assert "UNABLE TO CHECK" in errors[0]
+    assert "no registered regeneration recipe" in errors[0]
+
+
+def test_missing_dependency_import_fails_closed(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Replays the #694..#767 failure: ModuleNotFoundError in OSCAL export fails the gate."""
+    from src.gateway.governance import oscal_ssp_exporter
+
+    module = _load_gate()
+
+    def _missing_otel(*_args: object, **_kwargs: object) -> dict[Path, str | None]:
+        raise ModuleNotFoundError("No module named 'opentelemetry'")
+
+    monkeypatch.setattr(
+        oscal_ssp_exporter, "render_default_oscal_artifacts", _missing_otel
+    )
+    errors = module.check_freshness()
+    assert len(errors) == 1
+    assert "UNABLE TO CHECK" in errors[0]
+    assert "ModuleNotFoundError" in errors[0]
+    assert "opentelemetry" in errors[0]
+
+    monkeypatch.setattr("sys.argv", ["check_stpa_freshness.py"])
+    assert module.main() == 1
+
+
+def test_missing_ruff_for_formatted_target_fails_closed(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Missing ruff binary when formatted Python/LangGraph targets exist fails closed."""
+    module = _load_gate()
+    monkeypatch.setattr(module, "_ruff_binary", lambda: None)
+    errors = module.check_freshness()
+    assert len(errors) == 1
+    assert "UNABLE TO CHECK" in errors[0]
+    assert "ruff binary is required" in errors[0]
+
+
+def test_volatile_stamps_are_masked_before_hashing() -> None:
+    module = _load_gate()
     a = (
         '# Generated: 2000-01-01T00:00:00+00:00\n{"generated_at": "2000-01-01T00:00:00Z",'
         ' "issued_at": "2000-01-01T00:00:00Z", "expires_at": "2001-01-01T00:00:00Z"}\n'
@@ -172,21 +145,8 @@ def test_volatile_stamps_are_masked_before_hashing(gate) -> None:
     assert module.content_digest(a) != module.content_digest(a + "rule\n")
 
 
-def test_unregenerable_artifact_falls_back_to_commit_order(gate) -> None:
-    module, repo, source, artifact = gate
-    source.write_text("hazards: [h1]\n")
-    _git(repo, "commit", "-qam", "edit source only", date="2026-01-02T12:00:00+00:00")
-    errors = module.check_freshness(regenerated={artifact: None})
-    assert len(errors) == 1
-    assert "committed before newest STPA source change" in errors[0]
-
-
-@pytest.mark.skipif(
-    _load_gate()._ruff_binary() is None,
-    reason="ruff formats the generated Python targets",
-)
 def test_every_committed_artifact_matches_a_fresh_compile() -> None:
-    """The recipes are right: every real artifact regenerates byte-identically."""
+    """Every real STPA and US_FED OSCAL artifact regenerates byte-identically."""
     module = _load_gate()
     results = module.check_content()
     assert {a.name: r.value for a, r in results.items()} == {
@@ -214,7 +174,6 @@ def test_planted_divergence_in_us_fed_ssp_reported_by_check_stpa_freshness(
     fake_ssp = tmp_path / "system-security-plan.yaml"
     original_text = real_ssp.read_text(encoding="utf-8")
 
-    # Plant a divergence inside the _STPA_IMPL_UUID control implementation block
     diverged = original_text.replace(
         "uuid: g7000099-stpa-4000-8000-compiler00001\n      control-id: sa-11",
         "uuid: g7000099-stpa-4000-8000-compiler00001\n      control-id: sa-999",
@@ -231,3 +190,30 @@ def test_planted_divergence_in_us_fed_ssp_reported_by_check_stpa_freshness(
     assert "content differs from a fresh compile (sha256)" in errors[0]
     assert "system-security-plan.yaml" in errors[0]
     assert "oscal_ssp_exporter export" in errors[0]
+
+
+def test_planted_divergence_in_compiled_stpa_artifact_reported(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Planting a divergence in a compiled STPA artifact fails check_stpa_freshness.py."""
+    module = _load_gate()
+    real_nemo = module._REPO_ROOT / "config" / "rails" / "generated_stpa_rails.co"
+    fake_nemo = tmp_path / "generated_stpa_rails.co"
+    fake_nemo.write_text(
+        real_nemo.read_text(encoding="utf-8") + "\n# planted drift\n",
+        encoding="utf-8",
+    )
+
+    recipes = dict(module._ARTIFACT_RECIPES)
+    recipes[fake_nemo] = recipes[real_nemo]
+    monkeypatch.setattr(module, "_ARTIFACT_RECIPES", recipes)
+    monkeypatch.setattr(module, "_GENERATED_ARTIFACTS", [fake_nemo])
+
+    errors = module.check_freshness()
+    assert len(errors) == 1
+    assert "content differs from a fresh compile (sha256)" in errors[0]
+    assert "generated_stpa_rails.co" in errors[0]
+    assert "stpa_compiler compile" in errors[0]
+
+
+# Regression coverage binding: POAM-2026-176, POAM-2026-221

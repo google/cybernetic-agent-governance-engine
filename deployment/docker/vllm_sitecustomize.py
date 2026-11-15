@@ -18,12 +18,13 @@ import os
 import signal
 import tempfile
 from pathlib import Path
+from typing import Any
 
 import vllm.config as vllm_config
 import vllm.model_executor.model_loader.loader as vllm_loader
 import vllm.transformers_utils.s3_utils as s3_utils
 import vllm.transformers_utils.utils as tu_utils
-from google.cloud import storage
+from google.cloud import storage  # type: ignore[attr-defined]
 
 _orig_is_s3 = tu_utils.is_s3
 
@@ -31,14 +32,18 @@ _orig_is_s3 = tu_utils.is_s3
 def _is_s3_or_gs(model_or_path: str) -> bool:
     return (
         isinstance(model_or_path, str) and model_or_path.lower().startswith("gs://")
-    ) or _orig_is_s3(model_or_path)
+    ) or bool(_orig_is_s3(model_or_path))
 
 
 _orig_glob = s3_utils.glob
-_orig_S3Model = s3_utils.S3Model
+_orig_S3Model: Any = s3_utils.S3Model
 
 
-def _gcs_list_blobs(path: str, allow_pattern=None, ignore_pattern=None):
+def _gcs_list_blobs(
+    path: str,
+    allow_pattern: list[str] | None = None,
+    ignore_pattern: list[str] | None = None,
+) -> tuple[str, str, list[str], list[Any]]:
     stripped = path[5:].lstrip("/")
     parts = stripped.split("/", 1)
     bucket_name = parts[0]
@@ -58,7 +63,11 @@ def _gcs_list_blobs(path: str, allow_pattern=None, ignore_pattern=None):
     return bucket_name, prefix, paths, [blob_map[p] for p in paths]
 
 
-def _patched_glob(s3=None, path: str = "", allow_pattern=None):
+def _patched_glob(
+    s3: Any = None,
+    path: str = "",
+    allow_pattern: list[str] | None = None,
+) -> list[str]:
     if isinstance(path, str) and path.lower().startswith("gs://"):
         bucket_name, _, _, blobs = _gcs_list_blobs(path, allow_pattern=allow_pattern)
         local_files = []
@@ -70,10 +79,10 @@ def _patched_glob(s3=None, path: str = "", allow_pattern=None):
                 blob.download_to_filename(str(dest))
             local_files.append(str(dest))
         return sorted(local_files)
-    return _orig_glob(s3=s3, path=path, allow_pattern=allow_pattern)
+    return list(_orig_glob(s3=s3, path=path, allow_pattern=allow_pattern))
 
 
-class _PatchedS3Model(_orig_S3Model):
+class _PatchedS3Model(_orig_S3Model):  # type: ignore[misc]
     def __init__(self) -> None:
         self.s3 = None
         for sig in (signal.SIGINT, signal.SIGTERM):
@@ -82,7 +91,10 @@ class _PatchedS3Model(_orig_S3Model):
         self.dir = tempfile.mkdtemp(prefix="vllm-s3-")
 
     def pull_files(
-        self, s3_model_path: str = "", allow_pattern=None, ignore_pattern=None
+        self,
+        s3_model_path: str = "",
+        allow_pattern: list[str] | None = None,
+        ignore_pattern: list[str] | None = None,
     ) -> None:
         if isinstance(s3_model_path, str) and s3_model_path.lower().startswith("gs://"):
             _, base_dir, _, blobs = _gcs_list_blobs(

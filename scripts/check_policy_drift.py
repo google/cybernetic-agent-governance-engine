@@ -38,9 +38,12 @@ import importlib.metadata
 import inspect
 import json
 import logging
+import os
 import re
 import sys
 from pathlib import Path
+
+os.environ.setdefault("CAGE_ENV", "ci")
 
 logging.basicConfig(
     level=logging.INFO,
@@ -193,47 +196,65 @@ def check_policy_drift(
         logger.error("Failed domain policy verification: %s", exc)
         return 2
 
-    # Step 3: Verify ControlRegistry.active_hash against on-disk regional baseline
+    # Step 3: Verify ControlRegistry.active_hash against every on-disk regional baseline
     try:
         from src.gateway.governance.constants import _OVERLAY_DIRS, ControlRegistry
+        from src.gateway.governance.env_posture import SUPPORTED_REGIONS
         from src.gateway.governance.jcs_canonicalizer import jcs_canonicalize_plan
 
-        registry = ControlRegistry()
-        registry_hash = registry.active_hash
-        if not registry_hash or len(registry_hash) != 64:
-            logger.error(
-                "❌ ControlRegistry.active_hash is empty or invalid: %r",
-                registry_hash,
-            )
-            return 1
-        baseline_file = (
-            _REPO_ROOT
-            / "config"
-            / "compliance"
-            / f"{registry.active_region}_BASELINE.json"
-        )
-        if baseline_file.exists():
-            raw_baseline = json.loads(baseline_file.read_text(encoding="utf-8"))
-            for overlay_dir in _OVERLAY_DIRS:
-                overlay_path = overlay_dir / f"{registry.active_region}_OVERLAY.json"
-                if overlay_path.exists():
-                    raw_baseline.update(
-                        json.loads(overlay_path.read_text(encoding="utf-8"))
+        initial_region = ControlRegistry().active_region
+        try:
+            for region_name in sorted(SUPPORTED_REGIONS):
+                ControlRegistry.reconfigure(region_name)
+                registry = ControlRegistry()
+                registry_hash = registry.active_hash
+                if not registry_hash or len(registry_hash) != 64:
+                    logger.error(
+                        "❌ ControlRegistry.active_hash for %s is empty or invalid: %r",
+                        region_name,
+                        registry_hash,
                     )
-            expected_baseline_hash = hashlib.sha256(
-                jcs_canonicalize_plan(ControlRegistry._coerce_floats(raw_baseline))
-            ).hexdigest()
-            if registry_hash != expected_baseline_hash:
-                logger.error(
-                    "❌ CONTROL REGISTRY DRIFT DETECTED\n"
-                    "   ControlRegistry.active_hash : %s\n"
-                    "   On-disk %s_BASELINE.json   : %s",
-                    registry_hash[:16],
-                    registry.active_region,
-                    expected_baseline_hash[:16],
+                    return 1
+                baseline_file = (
+                    _REPO_ROOT
+                    / "config"
+                    / "compliance"
+                    / f"{region_name}_BASELINE.json"
                 )
-                return 1
-        logger.info("ControlRegistry.active_hash verified: %s", registry_hash[:16])
+                if not baseline_file.exists():
+                    logger.error(
+                        "❌ Missing regional compliance baseline file: %s",
+                        baseline_file,
+                    )
+                    return 1
+                raw_baseline = json.loads(baseline_file.read_text(encoding="utf-8"))
+                for overlay_dir in _OVERLAY_DIRS:
+                    overlay_path = overlay_dir / f"{region_name}_OVERLAY.json"
+                    if overlay_path.exists():
+                        raw_baseline.update(
+                            json.loads(overlay_path.read_text(encoding="utf-8"))
+                        )
+                expected_baseline_hash = hashlib.sha256(
+                    jcs_canonicalize_plan(ControlRegistry._coerce_floats(raw_baseline))
+                ).hexdigest()
+                if registry_hash != expected_baseline_hash:
+                    logger.error(
+                        "❌ CONTROL REGISTRY DRIFT DETECTED (%s)\n"
+                        "   ControlRegistry.active_hash : %s\n"
+                        "   On-disk %s_BASELINE.json   : %s",
+                        region_name,
+                        registry_hash[:16],
+                        region_name,
+                        expected_baseline_hash[:16],
+                    )
+                    return 1
+                logger.info(
+                    "ControlRegistry.active_hash verified for %s: %s",
+                    region_name,
+                    registry_hash[:16],
+                )
+        finally:
+            ControlRegistry.reconfigure(initial_region)
     except Exception as exc:
         logger.error("Failed to verify ControlRegistry.active_hash: %s", exc)
         return 2

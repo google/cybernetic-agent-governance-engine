@@ -171,20 +171,20 @@ def map_type_to_schema(
         return {"type": ["string", "null"]} if field_is_optional else schema
 
     if base_type is int:
-        schema = {"type": "integer"}
+        int_schema: dict[str, Any] = {"type": "integer"}
         if field_name == "loop_count":
-            schema["minimum"] = 0
-        return {"type": ["integer", "null"]} if field_is_optional else schema
+            int_schema["minimum"] = 0
+        return {"type": ["integer", "null"]} if field_is_optional else int_schema
 
     if base_type is bool:
         return {"type": "boolean"}
 
     # Handle dict types
     if origin is dict or base_type is dict:
-        schema = {"type": "object"}
+        dict_schema: dict[str, Any] = {"type": "object"}
         if field_name == "latency_stats":
-            schema["additionalProperties"] = {"type": "number"}
-        return {"type": ["object", "null"]} if field_is_optional else schema
+            dict_schema["additionalProperties"] = {"type": "number"}
+        return {"type": ["object", "null"]} if field_is_optional else dict_schema
 
     # Handle list types
     if origin is list:

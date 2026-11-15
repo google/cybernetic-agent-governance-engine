@@ -18,9 +18,10 @@ import shutil
 import subprocess
 import sys
 from pathlib import Path
+from typing import Any
 
 
-def load_dotenv():
+def load_dotenv() -> None:
     """Load environment variables from .env file."""
     # adjust path to be relative to this file inside deployment/lib/
     # deployment/lib/utils.py -> deployment/lib/ -> deployment/ -> root
@@ -47,7 +48,13 @@ def _redact_cmd_arg(arg: str) -> str:
     return arg
 
 
-def run_command(command, check=True, capture_output=False, env=None, input_data=None):
+def run_command(
+    command: list[str] | str,
+    check: bool = True,
+    capture_output: bool = False,
+    env: dict[str, str] | None = None,
+    input_data: str | None = None,
+) -> subprocess.CompletedProcess[str] | subprocess.CalledProcessError:
     """
     Runs a shell command and prints the output.
 
@@ -66,7 +73,7 @@ def run_command(command, check=True, capture_output=False, env=None, input_data=
     safe_args = [_redact_cmd_arg(str(a)) for a in cmd_args]
     print(f"🚀 Running: {' '.join(safe_args)}")
     try:
-        result = subprocess.run(
+        result: Any = subprocess.run(
             cmd_args,
             check=check,
             capture_output=capture_output,
@@ -86,6 +93,6 @@ def run_command(command, check=True, capture_output=False, env=None, input_data=
         return e
 
 
-def check_tool_availability(tool_name):
+def check_tool_availability(tool_name: str) -> bool:
     """Checks if a CLI tool is available in the PATH."""
     return shutil.which(tool_name) is not None

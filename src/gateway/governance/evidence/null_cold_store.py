@@ -34,6 +34,8 @@ from collections import OrderedDict
 from collections.abc import Mapping
 from datetime import datetime, timezone
 
+from src.gateway.governance.env_posture import is_enforcing, resolve_posture
+
 from .cold_store import (
     ColdStoreHealth,
     ColdStoreNotFoundError,
@@ -52,18 +54,20 @@ class NullColdStore(EvidenceColdStore):
     """
 
     def __init__(self, max_entries: int = 1000) -> None:
-        """Initialize NullColdStore with prod safety check.
+        """Initialize NullColdStore with enforcing-posture safety check.
 
         Raises:
-            RuntimeError: If CAGE_ENV=prod and CAGE_ALLOW_NONBLOCKING_PROD is not true.
+            RuntimeError: If running in an enforcing posture and
+                CAGE_ALLOW_NONBLOCKING_PROD is not true.
         """
-        cage_env = os.environ.get("CAGE_ENV", "dev").lower()
         allow_nonblocking_prod = (
             os.environ.get("CAGE_ALLOW_NONBLOCKING_PROD", "false").lower() == "true"
         )
-        if cage_env in ("prod", "production") and not allow_nonblocking_prod:
+        posture = resolve_posture()
+        if is_enforcing(posture) and not allow_nonblocking_prod:
             raise RuntimeError(
-                "[NullColdStore] CAGE_ENV=prod requires durable cold storage. "
+                f"[NullColdStore] CAGE_ENV=prod requires durable cold storage "
+                f"(refused under enforcing posture {posture.value!r}). "
                 "Configure EVIDENCE_COLD_STORE (gcs or s3) and regional bucket. "
                 "Set CAGE_ALLOW_NONBLOCKING_PROD=true to explicitly override."
             )

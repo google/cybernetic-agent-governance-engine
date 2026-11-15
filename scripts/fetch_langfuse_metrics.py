@@ -19,28 +19,34 @@ from datetime import datetime
 import requests
 from requests.auth import HTTPBasicAuth
 
-PK = os.getenv("LANGFUSE_PUBLIC_KEY")
-SK = os.getenv("LANGFUSE_SECRET_KEY")
-HOST = os.getenv("LANGFUSE_HOST", "http://localhost:3000")
 
-if not PK or not SK:
-    print(
-        "ERROR: LANGFUSE_PUBLIC_KEY and LANGFUSE_SECRET_KEY must be set in the environment."
-    )
-    sys.exit(1)
+def fetch_data() -> None:
+    pk = os.getenv("LANGFUSE_PUBLIC_KEY")
+    sk = os.getenv("LANGFUSE_SECRET_KEY")
+    host = os.getenv("LANGFUSE_HOST", "http://localhost:3000")
 
-auth = HTTPBasicAuth(PK, SK)
+    if not pk or not sk:
+        print(
+            "ERROR: LANGFUSE_PUBLIC_KEY and LANGFUSE_SECRET_KEY must be set in the environment."
+        )
+        sys.exit(1)
 
+    auth = HTTPBasicAuth(pk, sk)
 
-def fetch_data():
     try:
         # Fetch generations
         print("Fetching GENERATION observations...")
-        url = f"{HOST}/api/public/observations"
+        url = f"{host}/api/public/observations"
+        gen_params: dict[str, str | int] = {
+            "type": "GENERATION",
+            "public": "false",
+            "limit": 100,
+        }
         res = requests.get(
             url,
             auth=auth,
-            params={"type": "GENERATION", "public": "false", "limit": 100},
+            params=gen_params,
+            timeout=10,
         )
         res.raise_for_status()
         obs_data = res.json().get("data", [])
@@ -49,7 +55,6 @@ def fetch_data():
         for obs in obs_data:
             start = obs.get("startTime")
             comp = obs.get("completionStartTime")
-            name = obs.get("name", "unknown")
             trace_id = obs.get("traceId")
 
             if start and comp:
@@ -68,9 +73,12 @@ def fetch_data():
             print("No TTFT data found in GENERATION observations.")
 
         print("\nFetching SPAN observations for overhead analysis...")
-        res = requests.get(
-            url, auth=auth, params={"type": "SPAN", "public": "false", "limit": 100}
-        )
+        span_params: dict[str, str | int] = {
+            "type": "SPAN",
+            "public": "false",
+            "limit": 100,
+        }
+        res = requests.get(url, auth=auth, params=span_params, timeout=10)
         res.raise_for_status()
         span_data = res.json().get("data", [])
         for span in span_data[:20]:

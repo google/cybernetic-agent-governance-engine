@@ -38,7 +38,7 @@ import sys
 from collections.abc import Mapping
 from datetime import datetime, timezone
 from functools import lru_cache
-from typing import Any
+from typing import Any, cast
 
 from pydantic import BaseModel, Field, field_validator, model_validator
 
@@ -624,7 +624,7 @@ def _active_region() -> str:
 
 @lru_cache(maxsize=8)
 def load_and_validate_thresholds(
-    path: str = _ENV_CONFIG_PATH, region: str | None = None
+    path: str | None = None, region: str | None = None
 ) -> GovernanceThresholds:
     """Load and validate governance_thresholds.json for a deployment region.
 
@@ -644,7 +644,12 @@ def load_and_validate_thresholds(
     Returns:
         A fully-validated ``GovernanceThresholds`` singleton.
     """
-    resolved = os.path.abspath(path)
+    effective_path = (
+        path
+        if path is not None
+        else os.environ.get("GOVERNANCE_THRESHOLDS_PATH", _DEFAULT_CONFIG_PATH)
+    )
+    resolved = os.path.abspath(effective_path)
     logger.info("Loading governance thresholds from %s", resolved)
 
     if not os.path.exists(resolved):
@@ -840,10 +845,31 @@ def get_reconciliation_pending_debit_max_age_seconds() -> float:
 
 
 # ---------------------------------------------------------------------------
-# Module-level singleton — import this in governance modules.
+# Module-level lazy proxy — import this in governance modules without
+# performing disk I/O, region resolution, or sys.exit(1) at import time.
 # ---------------------------------------------------------------------------
 
-THRESHOLDS: GovernanceThresholds = load_and_validate_thresholds()
+
+class _LazyThresholdsProxy:
+    """Lazy proxy delegating attribute access to the effective GovernanceThresholds."""
+
+    def _resolve(self) -> GovernanceThresholds:
+        current = globals().get("THRESHOLDS")
+        if current is not None and current is not self:
+            return cast(GovernanceThresholds, current)
+        return load_and_validate_thresholds()
+
+    def __getattr__(self, name: str) -> Any:
+        return getattr(self._resolve(), name)
+
+    def __repr__(self) -> str:
+        return repr(self._resolve())
+
+    def __eq__(self, other: object) -> bool:
+        return bool(self._resolve() == other)
+
+
+THRESHOLDS: GovernanceThresholds = cast(GovernanceThresholds, _LazyThresholdsProxy())
 
 
 def thresholds_digest(thresholds: GovernanceThresholds | None = None) -> str:

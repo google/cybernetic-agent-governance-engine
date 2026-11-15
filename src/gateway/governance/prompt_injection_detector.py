@@ -65,7 +65,10 @@ import re
 import unicodedata
 from dataclasses import dataclass
 
-from src.gateway.governance.env_posture import resolve_deployment_region
+from src.gateway.governance.env_posture import (
+    DeploymentRegionError,
+    resolve_deployment_region,
+)
 
 logger = logging.getLogger("Gateway.Governance.PromptInjectionDetector")
 
@@ -126,6 +129,16 @@ def get_injection_citation(region: str | None = None) -> str:
 
     active_region = (region or _get_region()).strip().upper()
     return INJECTION_CITATION.get(active_region, INJECTION_CITATION_DEFAULT)
+
+
+def _citation_for_log() -> str:
+    """Resolve regulatory citation for warning logs without aborting offline detection."""
+    from src.gateway.governance.constants import INJECTION_CITATION_DEFAULT
+
+    try:
+        return get_injection_citation()
+    except DeploymentRegionError:
+        return INJECTION_CITATION_DEFAULT
 
 
 # ---------------------------------------------------------------------------
@@ -428,7 +441,7 @@ def detect_prompt_injection(text: str) -> InjectionResult:
                 "(citation=%s — blocking request)",
                 pattern_name,
                 text[:100],
-                get_injection_citation(),
+                _citation_for_log(),
             )
             return InjectionResult(
                 detected=True,
@@ -475,6 +488,6 @@ def detect_indirect_injection(tool_name: str, response_text: str) -> InjectionRe
             "tool=%s pattern=%s (citation=%s — blocking response)",
             tool_name,
             result.pattern_matched,
-            get_injection_citation(),
+            _citation_for_log(),
         )
     return result

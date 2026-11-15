@@ -361,9 +361,13 @@ async def main() -> None:
         "X-Serverless-Authorization": f"Bearer {id_token}",
     }
 
+    from src.gateway.infrastructure.redis_replication import ReplicationPolicy
+
     signer = _build_ephemeral_kms_signer()
     fake_redis = fakeredis.aioredis.FakeRedis(decode_responses=True)
-    authority_store = ConsequenceAuthorityStore(fake_redis, ttl_seconds=90)
+    authority_store = ConsequenceAuthorityStore(
+        fake_redis, ttl_seconds=90, replication=ReplicationPolicy.from_env()
+    )
     consequence_gateway = ConsequenceGateway(
         store=authority_store, signer=signer, magnitudes=_MAGNITUDES
     )
@@ -725,6 +729,7 @@ async def main() -> None:
         receipt_exec_drift = await dispatch_actuation(
             broker_actuator, clearance_executor_drift
         )
+        assert receipt_exec_drift.outcome is not None
         exec_drift_codes = [f.get("code") for f in receipt_exec_drift.findings]
         print(
             f"  [4B] Executor Drift (executor_id='rogue_external_actuator') -> "
@@ -759,6 +764,7 @@ async def main() -> None:
         receipt_route_drift = await dispatch_actuation(
             broker_actuator, clearance_route_drift
         )
+        assert receipt_route_drift.outcome is not None
         route_drift_codes = [f.get("code") for f in receipt_route_drift.findings]
         print(
             f"  [4C] Target Route Drift (target_route='https://untrusted-egress...') -> "

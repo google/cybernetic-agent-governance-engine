@@ -84,7 +84,9 @@ from typing import Any
 from src.gateway.governance.env_posture import (
     SUPPORTED_REGIONS,
     DeploymentRegionError,
+    is_enforcing,
     resolve_deployment_region,
+    resolve_posture,
 )
 from src.gateway.governance.jcs_canonicalizer import jcs_canonicalize_plan
 
@@ -126,36 +128,20 @@ def register_overlay_dir(path: Path) -> None:
 
 
 def _require_env(key: str, fallback: str, *, sensitive: bool = True) -> str:
-    """Return the value of environment variable *key*, or *fallback* in dev.
+    """Return the value of environment variable *key*, or *fallback* in permissive postures.
 
-    In production (CAGE_ENV=prod), raises RuntimeError for sensitive variables
-    that are not set — preventing silent use of insecure defaults.
-
-    In dev/test, logs a warning and returns the fallback so existing
-    non-production deployments are not broken.
-
-    Args:
-        key:       Environment variable name.
-        fallback:  Default value to use in non-production environments.
-        sensitive: When True, raises in prod if the variable is unset.
-                   Set to False for non-secret configuration values.
-
-    Returns:
-        The environment variable value, or *fallback* in dev/test.
-
-    Raises:
-        RuntimeError: If *sensitive* is True, CAGE_ENV=prod, and *key* is unset.
+    In enforcing postures (production, staging, or unknown CAGE_ENV), raises
+    RuntimeError for sensitive variables that are not set — preventing silent
+    use of insecure defaults.
     """
     value = os.environ.get(key)
     if value:
         return value
-    cage_env = os.environ.get(
-        "CAGE_ENV", "prod"
-    ).lower()  # Default to "prod" to fail-secure: missing CAGE_ENV must not silently disable enforcement
-    if cage_env == "prod" and sensitive:
+    if is_enforcing(resolve_posture()) and sensitive:
         raise RuntimeError(
-            f"Required environment variable {key!r} is not set in production. "
-            f"Set it via Kubernetes Secret or environment injection before starting."
+            f"Required environment variable {key!r} is not set in production "
+            f"(or enforcing posture). Set it via Kubernetes Secret or "
+            f"environment injection before starting."
         )
     logging.getLogger(__name__).warning(
         "Using fallback for %s — set this in production", key

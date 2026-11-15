@@ -18,10 +18,10 @@ import sys
 # Add project root to path
 sys.path.append(os.getcwd())
 
-from src.gateway.governance.nemo.manager import load_rails
+from src.integrations.nemo.manager import load_rails
 
 
-def test_colang_syntax():
+def test_colang_syntax() -> int:
     print("🔍 Verifying Colang syntax in config/rails/...")
     try:
         # Attempt to load rails

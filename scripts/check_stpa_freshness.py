@@ -1,3 +1,4 @@
+#!/usr/bin/env python3
 # Copyright 2026 Google LLC
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
@@ -13,57 +14,49 @@
 # limitations under the License.
 
 """
-check_stpa_freshness.py — CI staleness guard for generated STPA artifacts
-=========================================================================
+check_stpa_freshness.py — CI staleness guard for generated STPA & OSCAL artifacts
+==================================================================================
 
-Fails with exit code 1 if any generated STPA artifact does not match the
-STPA sources (``config/stpa/`` plus each domain's ``config/stpa/``).
+Verifies that every generated artifact derived from ``config/stpa/`` and
+``src/cage_*/config/stpa/`` matches a fresh in-memory compilation by SHA-256
+(with volatile generation timestamps masked).
 
-Content first (F-3): each artifact is regenerated in memory with the STPA
-compiler and compared by sha256 with the file on disk, with the volatile
-``generated_at`` / ``issued_at`` / ``expires_at`` / ``Generated:`` stamps
-masked. A match is fresh and a mismatch is stale, whatever the commit order
-says, so touching a source without changing what it compiles to no longer
-fails the check, and an artifact committed after an unrelated source change
-can no longer hide a real difference.
+Fail-Closed Invariant (POAM-2026-221)
+-------------------------------------
+Inability to perform any content check is a hard failure (exit code ``1``),
+never a skip or commit-order fallback:
+  1. ``stpa_compiler`` and ``oscal_ssp_exporter`` must import cleanly.
+  2. Every artifact in ``_GENERATED_ARTIFACTS`` must exist on disk and must
+     have a registered recipe in ``_ARTIFACT_RECIPES`` or ``_OSCAL_TARGETS``
+     (unless explicit ``regenerated`` content is supplied by a caller).
+  3. ``ruff`` must be available whenever any active recipe target requires
+     formatting (``_RUFF_FORMATTED``), and formatting failures fail closed.
+  4. Any ``None`` or empty in-memory regeneration result fails closed.
 
-Only when an artifact cannot be regenerated here (compiler not importable,
-``ruff`` missing for the formatted Python targets, a generation error) does
-the check fall back to ordering, for that artifact alone:
-
-* In a committed tree (CI) an artifact is stale if its last commit precedes
-  the newest source commit. Commit *order* survives rebases and squash
-  merges, which rewrite committer times; the wall-clock ``Generated:`` stamp
-  does not.
-* With uncommitted STPA edits, an artifact is stale if its ``Generated:``
-  stamp (or mtime) pre-dates the newest source file mtime.
-
-Usage::
-
-    # In CI (fails the build if artifacts are stale)
-    python scripts/check_stpa_freshness.py
-
-    # Local check with verbose output
-    python scripts/check_stpa_freshness.py --verbose
+Usage:
+    uv run python scripts/check_stpa_freshness.py
+    uv run python scripts/check_stpa_freshness.py --verbose
 
 Exit codes:
-    0  All artifacts are current.
-    1  One or more artifacts are stale — re-run the compiler:
-       python -m src.gateway.governance.stpa_compiler compile
+    0 — all generated artifacts exist and match a fresh in-memory compile
+    1 — one or more artifacts are missing, stale, or unable to be checked
 """
 
 from __future__ import annotations
 
 import argparse
-import datetime
 import enum
 import hashlib
+import os
 import re
 import shutil
 import subprocess
 import sys
 import tempfile
 from pathlib import Path
+from typing import Any
+
+os.environ.setdefault("CAGE_ENV", "ci")
 
 # ---------------------------------------------------------------------------
 # Paths (relative to repo root)
@@ -148,39 +141,8 @@ _VOLATILE_STAMP_RE = re.compile(
 class ContentCheck(enum.Enum):
     MATCH = "match"
     DIFFERS = "differs"
-    UNAVAILABLE = "unavailable"
-
-
-# Regex that matches the "Generated: <ISO-8601>" comment, "generated_at": "<ISO-8601>"
-# JSON field, or OSCAL "last-modified:" / "generated:" YAML timestamp.
-_GENERATED_TS_RE = re.compile(
-    r'(?:Generated:\s*|"generated_at":\s*|(?:last-modified|generated):\s*[\'"]?)'
-    r'(\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}[^\s"\'\\]*)'
-)
-
-
-def _parse_embedded_timestamp(artifact: Path) -> datetime.datetime | None:
-    """Extract the ``Generated:`` timestamp from the first 30 lines of *artifact*."""
-    try:
-        with artifact.open(encoding="utf-8") as fh:
-            for i, line in enumerate(fh):
-                if i >= 30:
-                    break
-                m = _GENERATED_TS_RE.search(line)
-                if m:
-                    ts_str = m.group(1)
-                    # Normalise timezone offset (e.g. +00:00 → UTC, Z → +00:00)
-                    if ts_str.endswith("Z"):
-                        ts_str = ts_str[:-1] + "+00:00"
-                    try:
-                        return datetime.datetime.fromisoformat(ts_str)
-                    except ValueError:
-                        # Strip sub-second precision if fromisoformat chokes
-                        ts_str = re.sub(r"\.\d+", "", ts_str)
-                        return datetime.datetime.fromisoformat(ts_str)
-    except OSError:
-        return None
-    return None
+    MISSING = "missing"
+    UNABLE_TO_CHECK = "unable_to_check"
 
 
 def content_digest(text: str) -> str:
@@ -196,31 +158,52 @@ def _ruff_binary() -> str | None:
     return shutil.which("ruff")
 
 
-def _ruff_formatted(text: str, ruff: str) -> str | None:
+def _ruff_formatted(text: str, ruff: str) -> str:
+    """Format *text* with *ruff*, failing closed on non-zero exit or OS error."""
     with tempfile.TemporaryDirectory() as tmp:
         path = Path(tmp) / "generated.py"
         path.write_text(text, encoding="utf-8")
         try:
-            subprocess.run([ruff, "format", str(path)], check=True, capture_output=True)
-        except (OSError, subprocess.CalledProcessError):
-            return None
+            subprocess.run(
+                [ruff, "format", str(path)],
+                check=True,
+                capture_output=True,
+                text=True,
+            )
+        except (OSError, subprocess.CalledProcessError) as exc:
+            raise RuntimeError(
+                f"ruff format failed for generated target: {exc}"
+            ) from exc
         return path.read_text(encoding="utf-8")
 
 
+def _oscal_targets() -> tuple[Path, Path, Path]:
+    return (_OSCAL_SSP, _OSCAL_COMP_DEF, _OSCAL_PATCH)
+
+
 def _regenerate_all() -> dict[Path, str | None]:
-    """Regenerate every artifact in memory; ``None`` where that is not possible here."""
-    unavailable: dict[Path, str | None] = dict.fromkeys(_GENERATED_ARTIFACTS)
+    """Regenerate every configured artifact in memory, failing closed if unable."""
     if str(_REPO_ROOT) not in sys.path:
         sys.path.insert(0, str(_REPO_ROOT))
-    try:
-        from src.gateway.governance import stpa_compiler
-    except Exception:  # noqa: BLE001 — any import failure means "cannot regenerate"
-        return unavailable
+
+    from src.gateway.governance import stpa_compiler
+
+    oscal_set = set(_oscal_targets())
+    unregistered = [
+        art
+        for art in _GENERATED_ARTIFACTS
+        if art not in _ARTIFACT_RECIPES and art not in oscal_set
+    ]
+    if unregistered:
+        joined = ", ".join(str(_rel(p)) for p in unregistered)
+        raise RuntimeError(
+            f"UNABLE TO CHECK: artifact(s) have no registered regeneration recipe: {joined}"
+        )
 
     source_dirs = {_CORE: _SOURCE_DIR}
     for d_dir in _DOMAIN_STPA_DIRS:
         source_dirs[_domain_key_for(d_dir)] = d_dir
-    generators = {
+    generators: dict[str, Any] = {
         "opa": stpa_compiler.generate_opa,
         "nemo": stpa_compiler.generate_nemo,
         "python": stpa_compiler.generate_python,
@@ -228,35 +211,59 @@ def _regenerate_all() -> dict[Path, str | None]:
         "ftra": stpa_compiler.generate_terminal_registry,
         "sandbox": stpa_compiler.generate_sandbox_policy,
     }
-    structures: dict[str, object | None] = {}
-    for name, directory in source_dirs.items():
-        files = sorted(directory.rglob("*.yaml")) if directory.exists() else []
-        try:
-            structures[name] = (
-                stpa_compiler.load_control_structures(files) if files else None
-            )
-        except Exception:  # noqa: BLE001
-            structures[name] = None
 
+    active_artifacts = set(_GENERATED_ARTIFACTS)
+    needed_sources = {
+        source
+        for artifact, (source, _target) in _ARTIFACT_RECIPES.items()
+        if artifact in active_artifacts
+    }
+    needs_ruff = any(
+        target in _RUFF_FORMATTED
+        for artifact, (_source, target) in _ARTIFACT_RECIPES.items()
+        if artifact in active_artifacts
+    )
     ruff = _ruff_binary()
-    regenerated = unavailable
+    if needs_ruff and ruff is None:
+        raise RuntimeError(
+            "UNABLE TO CHECK: ruff binary is required to verify formatted Python/LangGraph STPA targets"
+        )
+
+    structures: dict[str, Any] = {}
+    for name, directory in source_dirs.items():
+        if name not in needed_sources:
+            continue
+        files = sorted(directory.rglob("*.yaml")) if directory.exists() else []
+        if not files:
+            raise RuntimeError(
+                f"UNABLE TO CHECK: no STPA YAML files found for source '{name}' under {directory}"
+            )
+        structures[name] = stpa_compiler.load_control_structures(files)
+
+    regenerated: dict[Path, str | None] = dict.fromkeys(_GENERATED_ARTIFACTS)
     for artifact, (source, target) in _ARTIFACT_RECIPES.items():
         if artifact not in regenerated:
             continue
         cs = structures.get(source)
-        if cs is None or (target in _RUFF_FORMATTED and ruff is None):
-            continue
-        try:
-            text = generators[target](cs)
-        except Exception:  # noqa: BLE001
-            continue
-        if target in _RUFF_FORMATTED and ruff is not None:
+        if cs is None:
+            raise RuntimeError(
+                f"UNABLE TO CHECK: missing compiled control structure '{source}' for {_rel(artifact)}"
+            )
+        text: str | None = generators[target](cs)
+        if text is None:
+            raise RuntimeError(
+                f"UNABLE TO CHECK: generator '{target}' returned None for {_rel(artifact)}"
+            )
+        if target in _RUFF_FORMATTED:
+            assert ruff is not None
             text = _ruff_formatted(text, ruff)
         regenerated[artifact] = text
 
-    oscal_targets = (_OSCAL_SSP, _OSCAL_COMP_DEF, _OSCAL_PATCH)
-    if any(p in regenerated for p in oscal_targets):
-        try:
+    if any(p in regenerated for p in oscal_set):
+        missing_oscal_on_disk = [
+            p for p in _oscal_targets() if p in regenerated and not p.exists()
+        ]
+        if not missing_oscal_on_disk:
             from src.gateway.governance.oscal_ssp_exporter import (
                 render_default_oscal_artifacts,
             )
@@ -265,12 +272,11 @@ def _regenerate_all() -> dict[Path, str | None]:
                 ssp_path=_OSCAL_SSP,
                 comp_def_path=_OSCAL_COMP_DEF,
                 patch_out_path=_OSCAL_PATCH,
+                raise_on_error=True,
             )
-            for p, text in oscal_rendered.items():
+            for p, rendered_text in oscal_rendered.items():
                 if p in regenerated:
-                    regenerated[p] = text
-        except Exception:  # noqa: BLE001
-            pass
+                    regenerated[p] = rendered_text
 
     return regenerated
 
@@ -283,58 +289,17 @@ def check_content(
         regenerated = _regenerate_all()
     results: dict[Path, ContentCheck] = {}
     for artifact in _GENERATED_ARTIFACTS:
+        if not artifact.exists():
+            results[artifact] = ContentCheck.MISSING
+            continue
         fresh = regenerated.get(artifact)
-        if fresh is None or not artifact.exists():
-            results[artifact] = ContentCheck.UNAVAILABLE
+        if fresh is None:
+            results[artifact] = ContentCheck.UNABLE_TO_CHECK
             continue
         on_disk = artifact.read_text(encoding="utf-8")
         same = content_digest(on_disk) == content_digest(fresh)
         results[artifact] = ContentCheck.MATCH if same else ContentCheck.DIFFERS
     return results
-
-
-def _git_last_commit_time(path: Path) -> datetime.datetime | None:
-    """Return the UTC datetime of the last git commit that touched *path*.
-
-    Falls back to ``None`` if git is unavailable or the file is untracked.
-    This is used instead of ``stat().st_mtime`` so that the check is
-    stable in CI environments where ``git checkout`` resets all file
-    mtimes to the checkout time.
-    """
-    try:
-        result = subprocess.run(
-            ["git", "log", "-1", "--format=%cI", "--", str(path)],
-            capture_output=True,
-            text=True,
-            check=True,
-            cwd=path.parent if path.is_file() else path,
-        )
-        ts_str = result.stdout.strip()
-        if not ts_str:
-            return None
-        return datetime.datetime.fromisoformat(ts_str)
-    except (subprocess.CalledProcessError, FileNotFoundError, ValueError):
-        return None
-
-
-def _git_dirty(paths: list[Path]) -> set[Path] | None:
-    """Return the subset of *paths* with uncommitted changes, or ``None`` without git."""
-    try:
-        result = subprocess.run(
-            ["git", "status", "--porcelain", "--", *(str(p) for p in paths)],
-            capture_output=True,
-            text=True,
-            check=True,
-            cwd=_REPO_ROOT,
-        )
-    except (subprocess.CalledProcessError, FileNotFoundError):
-        return None
-    dirty: set[Path] = set()
-    for line in result.stdout.splitlines():
-        rel = line[3:].split(" -> ")[-1].strip().strip('"')
-        if rel:
-            dirty.add((_REPO_ROOT / rel).resolve())
-    return dirty
 
 
 def _rel(artifact: Path) -> Path:
@@ -344,92 +309,16 @@ def _rel(artifact: Path) -> Path:
         return artifact
 
 
-def _stale(artifact: Path, reason: str) -> str:
-    cmd = (
+def _remediation_cmd(artifact: Path) -> str:
+    return (
         "python -m src.gateway.governance.oscal_ssp_exporter export"
-        if artifact in (_OSCAL_SSP, _OSCAL_COMP_DEF, _OSCAL_PATCH)
+        if artifact in _oscal_targets()
         else "python -m src.gateway.governance.stpa_compiler compile"
     )
-    return f"STALE ({reason}): {_rel(artifact)}\n  Run: {cmd}"
 
 
-def _check_commit_order(
-    source_commit: datetime.datetime, verbose: bool, artifacts: list[Path]
-) -> list[str]:
-    """Committed tree: each artifact must be committed at or after the newest source.
-
-    Rebases and squash merges rewrite committer times, but they rewrite the
-    source and the artifacts of one commit identically and keep the relative
-    order of commits, so this comparison is stable where a comparison against
-    the wall-clock ``Generated:`` stamp is not.
-    """
-    errors: list[str] = []
-    for artifact in artifacts:
-        if not artifact.exists():
-            errors.append(
-                f"MISSING artifact: {artifact.relative_to(_REPO_ROOT)}\n"
-                f"  Run: python -m src.gateway.governance.stpa_compiler compile"
-            )
-            continue
-        artifact_commit = _git_last_commit_time(artifact)
-        if verbose:
-            print(f"\nArtifact: {artifact.relative_to(_REPO_ROOT)}")
-            print(
-                f"  last commit:   {artifact_commit.isoformat() if artifact_commit else 'untracked'}"
-            )
-        if artifact_commit is None or artifact_commit < source_commit:
-            errors.append(
-                _stale(artifact, "committed before newest STPA source change")
-                + f"\n  artifact commit: {artifact_commit.isoformat() if artifact_commit else 'untracked'}"
-                + f"\n  source   commit: {source_commit.isoformat()}"
-            )
-            if verbose:
-                print("  [STALE] artifact committed before newest source")
-            continue
-        if verbose:
-            print("  [OK]")
-    return errors
-
-
-def _check_working_tree(
-    source_files: list[Path], verbose: bool, artifacts: list[Path]
-) -> list[str]:
-    """Uncommitted edits: embedded ``Generated:`` stamp (or mtime) vs source mtime."""
-    errors: list[str] = []
-    source_mtime = max(f.stat().st_mtime for f in source_files)
-    source_mtime_dt = datetime.datetime.fromtimestamp(
-        source_mtime, tz=datetime.timezone.utc
-    )
-    if verbose:
-        print(f"  newest source mtime: {source_mtime_dt.isoformat()}")
-    for artifact in artifacts:
-        if not artifact.exists():
-            errors.append(
-                f"MISSING artifact: {artifact.relative_to(_REPO_ROOT)}\n"
-                f"  Run: python -m src.gateway.governance.stpa_compiler compile"
-            )
-            continue
-        embedded_ts = _parse_embedded_timestamp(artifact)
-        if embedded_ts is not None and embedded_ts.tzinfo is None:
-            embedded_ts = embedded_ts.replace(tzinfo=datetime.timezone.utc)
-        artifact_dt = embedded_ts or datetime.datetime.fromtimestamp(
-            artifact.stat().st_mtime, tz=datetime.timezone.utc
-        )
-        if verbose:
-            print(f"\nArtifact: {artifact.relative_to(_REPO_ROOT)}")
-            print(f"  generated:     {artifact_dt.isoformat()}")
-        if artifact_dt < source_mtime_dt:
-            errors.append(
-                _stale(artifact, "generated before source edit")
-                + f"\n  generated:    {artifact_dt.isoformat()}"
-                + f"\n  source mtime: {source_mtime_dt.isoformat()}"
-            )
-            if verbose:
-                print("  [STALE] generated before source edit")
-            continue
-        if verbose:
-            print("  [OK]")
-    return errors
+def _stale(artifact: Path, reason: str) -> str:
+    return f"STALE ({reason}): {_rel(artifact)}\n  Run: {_remediation_cmd(artifact)}"
 
 
 def check_freshness(
@@ -437,18 +326,13 @@ def check_freshness(
     *,
     regenerated: dict[Path, str | None] | None = None,
 ) -> list[str]:
-    """Return a list of staleness error messages (empty = all fresh).
+    """Return a list of staleness or inability-to-check error messages (empty = all fresh).
 
-    Content first: an artifact whose sha256 (stamps masked) equals that of its
-    in-memory regeneration is fresh; one that differs is stale. Artifacts that
-    cannot be regenerated here fall back to ordering:
-
-    * **Committed tree** (CI, or a clean local checkout): every artifact must
-      be committed at or after the newest STPA source change (git commit
-      order).
-    * **Uncommitted edits** to any source or artifact: every artifact's
-      embedded ``Generated:`` stamp (or file mtime) must not pre-date the
-      newest source file mtime.
+    Every artifact must exist on disk and match the SHA-256 (volatile timestamps
+    masked) of its fresh in-memory regeneration. Inability to import compiler
+    or exporter dependencies, missing ``ruff`` on formatted targets, missing
+    files, or ``None`` regeneration results are reported as hard errors — never
+    downgraded to commit-order fallbacks (POAM-2026-221).
     """
     if not _SOURCE_DIR.exists():
         return [f"STPA source directory not found: {_SOURCE_DIR}"]
@@ -456,51 +340,43 @@ def check_freshness(
     for d_dir in _DOMAIN_STPA_DIRS:
         if d_dir.exists():
             source_files.extend(sorted(d_dir.rglob("*.yaml")))
-    source_label = f"directory {_SOURCE_DIR.relative_to(_REPO_ROOT)} + domain STPA dirs"
+    source_label = f"directory {_rel(_SOURCE_DIR)} + domain STPA dirs"
     if not source_files:
         return [f"No YAML files found under {_SOURCE_DIR}"]
 
     if verbose:
         print(f"Source:  {source_label} ({len(source_files)} file(s))")
 
+    try:
+        verdicts = check_content(regenerated)
+    except Exception as exc:  # noqa: BLE001 — convert precondition/import failure to hard gate error
+        return [
+            f"UNABLE TO CHECK STPA/OSCAL artifact freshness ({type(exc).__name__}): {exc}"
+        ]
+
     errors: list[str] = []
-    fallback: list[Path] = []
-    for artifact, verdict in check_content(regenerated).items():
+    for artifact, verdict in verdicts.items():
         if verbose:
-            print(f"  content {verdict.value:11s} {artifact.relative_to(_REPO_ROOT)}")
-        if verdict is ContentCheck.DIFFERS:
+            print(f"  content {verdict.value:15s} {_rel(artifact)}")
+        if verdict is ContentCheck.MISSING:
+            errors.append(
+                f"MISSING artifact: {_rel(artifact)}\n  Run: {_remediation_cmd(artifact)}"
+            )
+        elif verdict is ContentCheck.UNABLE_TO_CHECK:
+            errors.append(
+                f"UNABLE TO CHECK (in-memory regeneration produced no output): {_rel(artifact)}\n"
+                f"  Run: {_remediation_cmd(artifact)}"
+            )
+        elif verdict is ContentCheck.DIFFERS:
             errors.append(
                 _stale(artifact, "content differs from a fresh compile (sha256)")
             )
-        elif verdict is ContentCheck.UNAVAILABLE:
-            fallback.append(artifact)
-    if not fallback:
-        return errors
-    return errors + _check_order(source_files, fallback, verbose)
-
-
-def _check_order(
-    source_files: list[Path], artifacts: list[Path], verbose: bool
-) -> list[str]:
-    """Ordering fallback for artifacts the content check could not regenerate."""
-    dirty = _git_dirty(source_files + _GENERATED_ARTIFACTS)
-    source_times = [_git_last_commit_time(f) for f in source_files]
-    if dirty == set() and source_times and all(t is not None for t in source_times):
-        source_commit = max(t for t in source_times if t is not None)
-        if verbose:
-            print(
-                f"  mode: committed tree; newest source commit {source_commit.isoformat()}"
-            )
-        return _check_commit_order(source_commit, verbose, artifacts)
-
-    if verbose:
-        print("  mode: working tree (uncommitted STPA changes or git unavailable)")
-    return _check_working_tree(source_files, verbose, artifacts)
+    return errors
 
 
 def main() -> int:
     parser = argparse.ArgumentParser(
-        description="Check that generated STPA artifacts are current."
+        description="Check that generated STPA and OSCAL artifacts are current."
     )
     parser.add_argument(
         "--verbose",
@@ -517,7 +393,8 @@ def main() -> int:
         for err in errors:
             print(f"\n  {err}", file=sys.stderr)
         print(
-            "\nFix: python -m src.gateway.governance.stpa_compiler compile",
+            "\nFix: uv run python -m src.gateway.governance.stpa_compiler compile && "
+            "uv run python -m src.gateway.governance.oscal_ssp_exporter export",
             file=sys.stderr,
         )
         return 1

@@ -26,10 +26,9 @@ from dotenv import load_dotenv
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 load_dotenv(".env")
 
-# Direct imports from agents to get fallback strings
-from src.governed_financial_advisor.agents.data_analyst.agent import (
-    EXECUTOR_PROMPT_TEXT,
-    PLANNER_PROMPT_TEXT,
+# Direct imports from agents/subgraphs to get fallback strings
+from src.governed_financial_advisor.agents.evaluator.agent import (
+    _SYSTEM_PROMPT as EVALUATOR_FALLBACK_PROMPT,
 )
 from src.governed_financial_advisor.agents.execution_analyst.agent import (
     EXECUTION_ANALYST_FALLBACK_PROMPT,
@@ -40,21 +39,20 @@ from src.governed_financial_advisor.agents.explainer.agent import (
 from src.governed_financial_advisor.agents.financial_advisor.prompt import (
     FINANCIAL_COORDINATOR_FALLBACK_PROMPT,
 )
-from src.governed_financial_advisor.agents.governed_trader.agent import (
+from src.governed_financial_advisor.graph.subgraphs.governed_trader_graph import (
     EXECUTOR_FALLBACK_PROMPT as GOVERNED_TRADER_FALLBACK_PROMPT,
 )
 
-PROMPTS_TO_SYNC = {
+PROMPTS_TO_SYNC: dict[str, str] = {
     "agent/financial_coordinator": FINANCIAL_COORDINATOR_FALLBACK_PROMPT,
-    "agent/data_analyst_planner": PLANNER_PROMPT_TEXT,
-    "agent/data_analyst_executor": EXECUTOR_PROMPT_TEXT,
     "agent/execution_analyst": EXECUTION_ANALYST_FALLBACK_PROMPT,
     "agent/explainer": EXPLAINER_FALLBACK_PROMPT,
     "agent/governed_trader": GOVERNED_TRADER_FALLBACK_PROMPT,
+    "agent/evaluator": EVALUATOR_FALLBACK_PROMPT,
 }
 
 
-def sync_prompts():
+def sync_prompts() -> None:
     from langfuse import Langfuse
 
     client = Langfuse(

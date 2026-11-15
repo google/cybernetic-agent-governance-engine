@@ -109,26 +109,53 @@ _ENV_SANITIZE_TOKENIZER_ARTIFACTS = "FTRA_SANITIZE_TOKENIZER_ARTIFACTS"
 # Prometheus Metrics (optional — degrades gracefully if prometheus_client unavailable)
 # ---------------------------------------------------------------------------
 
-_PROM_AVAILABLE = False
-FTRA_PARSE_FAILURES = None
+import importlib.util
+import threading
 
-try:
-    from prometheus_client import Counter
+_PROM_AVAILABLE = importlib.util.find_spec("prometheus_client") is not None
+_FTRA_PARSE_FAILURES_LOCK = threading.Lock()
+_FTRA_PARSE_FAILURES_INSTANCE: Any = None
 
-    FTRA_PARSE_FAILURES = Counter(
-        "cage_ftra_parse_failures_total",
-        "Total count of FTRA parse failures by failure class",
-        ["failure_class"],
-    )
-    _PROM_AVAILABLE = True
-except ImportError:
-    logger.debug("prometheus_client not available — FTRA metrics disabled")
+
+def _get_parse_failures_counter() -> Any:
+    """Lazily register or reuse the FTRA parse-failure Counter."""
+    global _FTRA_PARSE_FAILURES_INSTANCE
+    if not _PROM_AVAILABLE:
+        return None
+    if _FTRA_PARSE_FAILURES_INSTANCE is not None:
+        return _FTRA_PARSE_FAILURES_INSTANCE
+    with _FTRA_PARSE_FAILURES_LOCK:
+        if _FTRA_PARSE_FAILURES_INSTANCE is not None:
+            return _FTRA_PARSE_FAILURES_INSTANCE
+        try:
+            from prometheus_client import REGISTRY, Counter
+
+            try:
+                _FTRA_PARSE_FAILURES_INSTANCE = Counter(
+                    "cage_ftra_parse_failures_total",
+                    "Total count of FTRA parse failures by failure class",
+                    ["failure_class"],
+                )
+            except ValueError:
+                _FTRA_PARSE_FAILURES_INSTANCE = REGISTRY._names_to_collectors.get(
+                    "cage_ftra_parse_failures"
+                ) or REGISTRY._names_to_collectors.get("cage_ftra_parse_failures_total")
+        except ImportError:
+            return None
+        return _FTRA_PARSE_FAILURES_INSTANCE
+
+
+def __getattr__(name: str) -> Any:  # noqa: N807
+    if name == "FTRA_PARSE_FAILURES":
+        return _get_parse_failures_counter()
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
 
 
 def _increment_parse_failure_counter(failure_class: str) -> None:
     """Increment the parse failure counter if prometheus_client is available."""
-    if _PROM_AVAILABLE and FTRA_PARSE_FAILURES is not None:
-        FTRA_PARSE_FAILURES.labels(failure_class=failure_class).inc()
+    counter = _get_parse_failures_counter()
+    if counter is not None:
+        counter.labels(failure_class=failure_class).inc()
 
 
 # ---------------------------------------------------------------------------

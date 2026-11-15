@@ -161,15 +161,15 @@ class UnavailableQuarantineActuator:
 class SimulatedQuarantineActuator:
     """Tier-2 posture-completing local simulator with deterministic fault injection.
 
-    Permitted only in non-production postures (``dev``, ``test``, ``ci``, ``development``).
-    Raises ``RuntimeError`` if instantiated when ``CAGE_ENV`` is ``prod`` or ``production``.
+    Permitted only in permissive postures (``dev``, ``test``, ``ci``).
+    Raises ``RuntimeError`` if instantiated under an enforcing posture.
     """
 
     def __init__(self, fault_mode: str | None = None) -> None:
-        env = os.environ.get("CAGE_ENV", "dev").strip().lower()
-        if env in ("prod", "production"):
+        posture = resolve_posture()
+        if is_enforcing(posture):
             raise RuntimeError(
-                "SimulatedQuarantineActuator is forbidden in production posture (CAGE_ENV=prod)"
+                f"SimulatedQuarantineActuator is forbidden in production / enforcing posture ({posture.value!r})"
             )
         self._fault_mode = (
             fault_mode
@@ -232,7 +232,7 @@ class SimulatedQuarantineActuator:
             rule_id=rule_id,
             latency_us=45.0,
             outcome=ActuationOutcome.ACCEPTED,
-            verification=ReceiptVerification.VERIFIED,
+            verification=ReceiptVerification.UNVERIFIED,
             findings=[],
             envelope_digest=digest,
             timestamp_utc=now_utc,
@@ -329,7 +329,7 @@ class InferenceProxySvidQuarantineActuator:
             rule_id=rule_id,
             latency_us=latency_us,
             outcome=ActuationOutcome.ACCEPTED,
-            verification=ReceiptVerification.VERIFIED,
+            verification=ReceiptVerification.UNVERIFIED,
             findings=[],
             envelope_digest=digest,
             timestamp_utc=now_utc,

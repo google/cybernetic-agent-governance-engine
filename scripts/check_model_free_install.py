@@ -232,7 +232,11 @@ def forbidden_vendor_sdks(boundaries_source: str) -> tuple[set[str] | None, str]
         isinstance(e, ast.Constant) and isinstance(e.value, str) for e in literal.elts
     ):
         return None, "FORBIDDEN_VENDOR_SDKS is not a literal sequence of strings"
-    return {e.value for e in literal.elts if isinstance(e, ast.Constant)}, ""
+    return {
+        e.value
+        for e in literal.elts
+        if isinstance(e, ast.Constant) and isinstance(e.value, str)
+    }, ""
 
 
 def check(

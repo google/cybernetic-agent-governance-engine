@@ -198,7 +198,7 @@ jobs:
           LANGFUSE_SECRET_KEY: "sk-dummy"
         run: uv run pytest -p no:langsmith -p no:langsmith_plugin tests/ -m "local or unit" -n auto --dist=loadscope -v --cov-branch --cov=src --cov-fail-under=70
       - name: Run Bandit SAST (medium+ severity)
-        run: uv run bandit -r src/ scripts/ -c pyproject.toml -ll -ii
+        run: uv run bandit -r src/ scripts/ packages/cage-client/src/ packages/cage-conformance/src/ proof/ deployment/ -c pyproject.toml -ll -ii
 
   lint:
     name: "Lint"
@@ -227,7 +227,7 @@ jobs:
       - name: Ruff format check
         run: uv run ruff format --check .
       - name: Mypy type check
-        run: uv run mypy src/
+        run: uv run mypy src/ scripts/ proof/ packages/cage-client/src/ packages/cage-conformance/src/ deployment/
       - name: Import boundary check (G3 - Layer 1 → Layer 2/3/4 + reverse scan)
         # PR B (domain extraction) established clean layer isolation.
         # This gate blocks any Layer 1 (gateway) → Layer 2 (cage_*) imports.
@@ -413,14 +413,41 @@ jobs:
         with:
           fetch-depth: 0
           persist-credentials: false
+      - name: Install uv
+        uses: astral-sh/setup-uv@07a047e608db84b3d8c06cd9a7c7dcc9c355c18e # v10.3.2
+        with:
+          enable-cache: true
       - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
         with:
-          python-version: "3.11"
+          python-version-file: "pyproject.toml"
       - name: Install dependencies
-        run: pip install pyyaml pydantic "ruff==0.16.5"
+        run: uv sync --locked --all-groups --all-extras
+      - name: Verify content-drift failure mode (red-before-green canary, POAM-2026-221)
+        run: |
+          printf '\n# planted-drift-canary\n' >> config/rails/generated_stpa_rails.co
+          if uv run --no-sync python scripts/check_stpa_freshness.py --verbose; then
+            echo "ERROR: check_stpa_freshness.py passed on a deliberately stale STPA artifact!" >&2
+            git checkout -- config/rails/generated_stpa_rails.co
+            exit 1
+          fi
+          git checkout -- config/rails/generated_stpa_rails.co
+          uv run --no-sync python -c '
+          from pathlib import Path
+          p = Path("compliance/oscal/system-security-plan.yaml")
+          t = p.read_text(encoding="utf-8")
+          assert "control-id: sa-11" in t
+          p.write_text(t.replace("control-id: sa-11", "control-id: sa-999", 1), encoding="utf-8")
+          '
+          if uv run --no-sync python scripts/check_stpa_freshness.py --verbose; then
+            echo "ERROR: check_stpa_freshness.py passed on a deliberately stale US_FED OSCAL SSP!" >&2
+            git checkout -- compliance/oscal/system-security-plan.yaml
+            exit 1
+          fi
+          git checkout -- compliance/oscal/system-security-plan.yaml
+          echo "Red-before-green verified on both STPA and US_FED OSCAL artifacts."
       - name: Check generated STPA artifacts are current
         run: |
-          python scripts/check_stpa_freshness.py --verbose
+          uv run --no-sync python scripts/check_stpa_freshness.py --verbose
 
   nemo-freshness-check:
     name: "NeMo Rail Actions Freshness Check"
@@ -532,18 +559,22 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
+      - name: Install uv
+        uses: astral-sh/setup-uv@07a047e608db84b3d8c06cd9a7c7dcc9c355c18e # v10.3.2
+        with:
+          enable-cache: true
       - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
         with:
-          python-version: "3.11"
-      - name: Install PyYAML
-        run: pip install pyyaml
+          python-version-file: "pyproject.toml"
+      - name: Install dependencies
+        run: uv sync --locked --only-group dev
       - name: Validate AI 600-1 Lula manifest structure (stub syntax check)
         # Stub manifests use OSCAL component-definition structure (not standalone domain/provider).
         # The domain/provider are embedded inside back-matter.resources[].description.
         # The manifests read a live deployment; `lula validate` runs only against one (scripts/staging_lifecycle.sh Phase 3).
-        run: python3 scripts/check_ai600_lula_manifests.py
+        run: uv run --no-sync python scripts/check_ai600_lula_manifests.py
       - name: Enforce Lula stub count downward-only baseline & POAM linkage
-        run: python3 scripts/check_lula_stub_count.py
+        run: uv run --no-sync python scripts/check_lula_stub_count.py
       - name: Assert lula manifest count matches README
         run: |
           DISK_COUNT=$(ls compliance/lula/lula-validation-*.yaml 2>/dev/null | wc -l | tr -d ' ')
@@ -565,21 +596,32 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
+      - name: Install uv
+        uses: astral-sh/setup-uv@07a047e608db84b3d8c06cd9a7c7dcc9c355c18e # v10.3.2
+        with:
+          enable-cache: true
       - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
         with:
-          python-version: "3.11"
-      - name: Install cyclonedx-py
-        run: pip install cyclonedx-py
-      - name: Generate SBOM
-        run: python -m cyclonedx_py environment > sbom.json
-      - name: Validate SBOM schema
+          python-version-file: "pyproject.toml"
+      - name: Install locked project dependencies and cyclonedx-py
         run: |
-          python -c "
+          uv sync --locked --all-groups --all-extras
+          uv pip install cyclonedx-bom
+      - name: Generate SBOM
+        run: uv run --no-sync python -m cyclonedx_py environment > sbom.json
+      - name: Validate SBOM schema and non-vacuous component inventory
+        run: |
+          uv run --no-sync python -c "
           import json
+          from scripts.generate_sbom import expected_uv_lock_component_floor
           d = json.load(open('sbom.json'))
           assert d.get('bomFormat') == 'CycloneDX', \
             f'Unexpected bomFormat: {d.get(\"bomFormat\")!r}'
-          print(f'SBOM validated: {d.get(\"bomFormat\")} v{d.get(\"specVersion\")}')
+          comps = d.get('components', [])
+          floor = expected_uv_lock_component_floor()
+          assert len(comps) >= floor, \
+            f'Vacuous or partial Python SBOM (POAM-2026-221): expected >= {floor} components from uv.lock, got {len(comps)}'
+          print(f'SBOM validated: {d.get(\"bomFormat\")} v{d.get(\"specVersion\")} ({len(comps)} components, uv.lock floor={floor})')
           "
       - name: Upload SBOM artifact
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2

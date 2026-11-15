@@ -12,13 +12,16 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import os
 import shlex
 import subprocess
 import sys
 from pathlib import Path
 
+os.environ.setdefault("CAGE_ENV", "ci")
 
-def run_command(command, description):
+
+def run_command(command: list[str] | str, description: str) -> bool:
     print(f"\n--- Running: {description} ---")
     print(f"Command: {command}")
     try:
@@ -39,7 +42,7 @@ def run_command(command, description):
         return False
 
 
-def main():
+def main() -> None:
     # DEP-23: run the jurisdiction-specific OPA suites for the deployment region.
     # This script covers universal ISO 42001 controls, plus the NIST SP 800-53,
     # EU AI Act or MAS FEAT suite of the region resolve_deployment_region()

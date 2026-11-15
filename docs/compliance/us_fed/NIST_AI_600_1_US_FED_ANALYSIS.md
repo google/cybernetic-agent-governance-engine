@@ -541,7 +541,7 @@ CAGE's agentic AI risk surface is **unusually broad** because:
 **CAGE Applicability:** **Critical** — CAGE's value chain includes: NVIDIA (NeMo Guardrails), Meta (Llama-3.1 weights), DeepSeek (DeepSeek-R1 weights), LangChain Inc. (LangGraph), Microsoft (Presidio), CNCF (OPA), Langfuse (compliance telemetry), and Google Cloud (GKE, KMS, GCS). A compromise in any of these components could undermine CAGE's governance guarantees.
 
 **Current Coverage:**
-- **SBOM:** `compliance/sbom/python-deps-2026-06-08.cdx.json` — Python dependency SBOM exists (POAM-010 closed)
+- **SBOM:** ~~`9b2b745d:compliance/sbom/python-deps-2026-06-08.cdx.json` — Python dependency SBOM exists (POAM-010 closed)~~ *(Withdrawn `2026-11-15`, `POAM-2026-221`: that committed file was generated from an unsynced gRPC scratch environment containing only 8 bootstrap packages and zero CAGE runtime dependencies, and has been deleted; Python CycloneDX SBOMs are now generated in CI against `uv sync --locked --all-groups --all-extras` and validated against `expected_uv_lock_component_floor()` in `.github/workflows/ci.yml` and `.github/workflows/security-scan.yml`)*
 - **Trivy/pip-audit CI scanning:** `.github/workflows/security-scan.yml` — vulnerability scanning in CI (POAM-010 closed)
 - **Linkerd mTLS:** Intra-cluster service identity (POAM-007 closed)
 - **CVE-2025-69872 remediated:** `outlines` package removed (POAM-016 closed)

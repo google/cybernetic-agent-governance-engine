@@ -211,7 +211,7 @@ run_gate() {
 
 run_gate "ruff_check" "${repo_ruff}" check .
 run_gate "ruff_format" "${repo_ruff}" format --check .
-run_gate "mypy" "${repo_mypy}" src/
+run_gate "mypy" "${repo_mypy}" src/ scripts/ proof/ packages/cage-client/src/ packages/cage-conformance/src/ deployment/
 
 for gate_script in "${gate_scripts[@]}"; do
   if [[ -f "${gate_script}" ]]; then
