@@ -16,14 +16,12 @@
 residency.py — Declarative Evidence Storage Residency Resolver
 
 Provides backend-agnostic, table-driven data residency validation for evidence
-cold storage across CAGE compliance jurisdictions (US_FED, EU_ECB, APAC_MAS, LOCAL).
+cold storage across CAGE compliance jurisdictions (US_FED, EU_ECB, APAC_MAS).
 
 Enforces:
-    - GDPR Art. 44 (EU sovereign data boundaries)
-    - MAS TRM §4.2 (Singapore sovereign data boundaries)
-    - NIST SP 800-53 / FedRAMP (US sovereign data boundaries)
-
-Task Spec: Wave 1, W1.4 (plans/vendor_decoupling_implementation_plan.md)
+    - GDPR Art. 44 (EU sovereign data boundaries, e.g. europe-west1)
+    - MAS TRM §4.2 (Singapore sovereign data boundaries, e.g. asia-southeast1)
+    - NIST SP 800-53 / FedRAMP (US sovereign data boundaries, e.g. us-central1)
 """
 
 from __future__ import annotations
@@ -35,7 +33,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-from src.gateway.governance.env_posture import resolve_deployment_region
+from src.gateway.governance.env_posture import is_enforcing, resolve_deployment_region
 
 logger = logging.getLogger(__name__)
 
@@ -44,17 +42,19 @@ _DEFAULT_CONFIG_PATH = (
     Path(__file__).parents[4] / "config" / "compliance" / "residency.json"
 )
 
+#: Carries the WORM cold-store bucket's immutable cloud location (injected by
+#: Terraform from ``module.worm_bucket.bucket_location``, never inferred from
+#: the caller pod's ``GOOGLE_CLOUD_LOCATION`` or ``AWS_REGION`` or a bucket-name
+#: prefix).
+COLD_STORE_LOCATION_ENV_VAR = "EVIDENCE_COLD_STORE_LOCATION"
+
 
 class ResidencyViolationError(RuntimeError):
     """Raised when cold store bucket configuration violates jurisdictional data residency."""
 
-    pass
-
 
 class MissingBucketConfigError(ResidencyViolationError):
     """Raised when required bucket environment variable is unset."""
-
-    pass
 
 
 @dataclass(frozen=True)
@@ -64,10 +64,7 @@ class RegionalResidencyRule:
     region: str
     jurisdiction: str
     env_var: str
-    allowed_prefixes: tuple[str, ...]
     allowed_locations: tuple[str, ...]
-    default_bucket: str | None = None
-    allow_prefixes: bool = True
 
 
 _CONFIG_CACHE: dict[str, Any] | None = None
@@ -124,10 +121,9 @@ def get_regional_rule(
         region=region,
         jurisdiction=rule_data.get("jurisdiction", ""),
         env_var=rule_data.get("env_var", ""),
-        allowed_prefixes=tuple(rule_data.get("allowed_prefixes", [])),
-        allowed_locations=tuple(rule_data.get("allowed_locations", [])),
-        default_bucket=rule_data.get("default_bucket"),
-        allow_prefixes=rule_data.get("allow_prefixes", True),
+        allowed_locations=tuple(
+            str(loc).strip().lower() for loc in rule_data.get("allowed_locations", [])
+        ),
     )
 
 
@@ -141,18 +137,23 @@ def resolve_cold_store_bucket(
     """Resolve and validate the cold storage bucket for the current deployment region.
 
     Evaluation Order:
-        1. Resolve region from the `region` arg, else `resolve_deployment_region()`.
+        1. Resolve region from the ``region`` arg, else ``resolve_deployment_region()``.
         2. Resolve candidate bucket name:
-           a. `bucket_override` (if provided)
-           b. Regional env var (e.g. `EVIDENCE_COLD_STORE_BUCKET_EU`)
-           c. Global fallback `EVIDENCE_COLD_STORE_BUCKET`
-           d. For `LOCAL`, default to `default_bucket` from config if unset.
-        3. Validate candidate bucket against allowed prefixes and locations.
-        4. Fail closed on any violation or missing configuration.
+           a. ``bucket_override`` (if provided)
+           b. Regional env var (e.g. ``EVIDENCE_COLD_STORE_BUCKET_EU``)
+           c. Global fallback ``EVIDENCE_COLD_STORE_BUCKET``
+        3. In permissive postures (``dev``, ``test``, ``ci``), skip geographic
+           location validation and return the non-empty bucket name.
+        4. In every enforcing posture (``production``, ``staging``, ``local``,
+           or an unknown ``CAGE_ENV``), require the bucket's cloud location
+           (``location`` arg or ``EVIDENCE_COLD_STORE_LOCATION``, lowercased)
+           to belong to ``rule.allowed_locations``. Neither bucket-name
+           prefixes nor the caller pod's ``GOOGLE_CLOUD_LOCATION`` /
+           ``AWS_REGION`` satisfy residency.
 
     Args:
-        region: Deployment region (e.g. "US_FED", "EU_ECB", "APAC_MAS", "LOCAL").
-        location: Cloud location/zone (e.g. "europe-west1", "asia-southeast1", "us-central1").
+        region: Deployment region ("US_FED", "EU_ECB", or "APAC_MAS").
+        location: Bucket cloud location (e.g. "europe-west1", "asia-southeast1", "us-central1").
         backend_id: Storage backend identifier ("gcs", "s3", "null").
         bucket_override: Explicit bucket name to validate.
         config_path: Custom path to residency.json.
@@ -162,81 +163,49 @@ def resolve_cold_store_bucket(
 
     Raises:
         MissingBucketConfigError: If required bucket environment variable is unset.
-        ResidencyViolationError: If bucket violates jurisdictional residency rules.
+        ResidencyViolationError: If bucket location is missing or violates residency rules.
     """
+    _ = backend_id
     active_region = (region or resolve_deployment_region()).strip()
     rule = get_regional_rule(active_region, config_path=config_path)
 
-    # Resolve candidate bucket
-    candidate = bucket_override
+    candidate = (bucket_override or "").strip()
     if not candidate:
-        # Check specific regional variable first
         candidate = os.environ.get(rule.env_var, "").strip()
-        if not candidate:
-            # Check universal cold store bucket variable
-            candidate = os.environ.get("EVIDENCE_COLD_STORE_BUCKET", "").strip()
-
     if not candidate:
-        if active_region == "LOCAL" and rule.default_bucket:
-            candidate = rule.default_bucket
-        else:
-            raise MissingBucketConfigError(
-                f"Missing required bucket configuration for region '{active_region}'. "
-                f"Set environment variable '{rule.env_var}' or 'EVIDENCE_COLD_STORE_BUCKET'."
-            )
+        candidate = os.environ.get("EVIDENCE_COLD_STORE_BUCKET", "").strip()
+    if not candidate:
+        raise MissingBucketConfigError(
+            f"Missing required bucket configuration for region '{active_region}'. "
+            f"Set environment variable '{rule.env_var}' or 'EVIDENCE_COLD_STORE_BUCKET'."
+        )
 
-    # Null backend bypass check for local testing
-    if backend_id == "null" and candidate in (
-        "null",
-        "null-bucket",
-        "local-evidence-bucket",
-    ):
-        return candidate
-
-    # Bypass geographic validation for non-production environments
-    cage_env = os.environ.get("CAGE_ENV", "production").lower()
-    if cage_env in ("development", "dev", "test", "ci", "staging", "uat", "preprod"):
+    if not is_enforcing():
         logger.info(
-            "Geographic residency checks DISABLED for CAGE_ENV=%s. Region: %s, Bucket: %s",
-            cage_env,
+            "Geographic residency checks skipped in permissive posture. Region: %s, Bucket: %s",
             active_region,
             candidate,
         )
         return candidate
 
-    # PRODUCTION: Enforce geographic residency
-    # Validate Location if provided
-    active_location = (
+    raw_location = (
         location
-        or os.environ.get("GOOGLE_CLOUD_LOCATION")
-        or os.environ.get("AWS_REGION")
+        if location is not None
+        else os.environ.get(COLD_STORE_LOCATION_ENV_VAR, "")
     )
-    if active_location:
-        active_location = active_location.strip()
-        if active_location not in rule.allowed_locations:
-            raise ResidencyViolationError(
-                f"Storage location '{active_location}' violates data residency for region "
-                f"'{active_region}'. Allowed locations: {rule.allowed_locations}"
-            )
-
-    # Validate Bucket Name Prefixes
-    has_valid_prefix = any(
-        candidate.startswith(prefix) for prefix in rule.allowed_prefixes
-    )
-    if not has_valid_prefix:
-        # If prefix validation fails, verify whether explicit location match grants exception
-        if active_location and active_location in rule.allowed_locations:
-            logger.warning(
-                "Bucket '%s' does not match regional prefixes %s, but location '%s' satisfies residency.",
-                candidate,
-                rule.allowed_prefixes,
-                active_location,
-            )
-        else:
-            raise ResidencyViolationError(
-                f"Bucket '{candidate}' violates data residency for region '{active_region}'. "
-                f"Bucket name must start with one of {rule.allowed_prefixes} or reference a "
-                f"verified location in {rule.allowed_locations}."
-            )
+    active_location = raw_location.strip().lower()
+    if not active_location:
+        raise ResidencyViolationError(
+            f"Bucket '{candidate}' cannot be verified for region '{active_region}': "
+            f"an enforcing posture requires {COLD_STORE_LOCATION_ENV_VAR} "
+            f"(the bucket's immutable cloud location) to be set to one of "
+            f"{rule.allowed_locations}."
+        )
+    if active_location not in rule.allowed_locations:
+        raise ResidencyViolationError(
+            f"Storage location '{active_location}' for bucket '{candidate}' violates "
+            f"data residency for region '{active_region}'. Allowed locations: "
+            f"{rule.allowed_locations}"
+        )
 
     return candidate

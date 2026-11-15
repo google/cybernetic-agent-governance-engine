@@ -946,6 +946,10 @@ module "compliance_bridge" {
   startup_grace_hours        = var.startup_grace_hours
   deployment_config_map_name = module.deployment_config.config_map_name
 
+  # POAM-2026-220: inject the WORM bucket's immutable GCS location rather than
+  # expanding runtime IAM with storage.buckets.get (roles/storage.legacyBucketReader).
+  evidence_cold_store_location = module.worm_bucket.bucket_location
+
   # EvidenceCustodian: same governance Memorystore instance, db, key, TLS and
   # IAM auth mode as the gateway producer (see local.evidence_stream_*).
   evidence_stream_redis_url   = local.evidence_stream_redis_url

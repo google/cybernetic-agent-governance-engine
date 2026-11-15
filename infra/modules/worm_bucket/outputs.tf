@@ -54,3 +54,8 @@ output "managed_bucket_count" {
   description = "Count of managed GCS bucket resources planned in this module (0 when external_bucket_enabled = true)."
   value       = length(google_storage_bucket.bucket)
 }
+
+output "bucket_location" {
+  description = "Immutable geographic location of the retention-locked WORM bucket (lowercased, e.g. us-central1)"
+  value       = lower(var.external_bucket_enabled ? data.google_storage_bucket.external[0].location : google_storage_bucket.bucket[0].location)
+}

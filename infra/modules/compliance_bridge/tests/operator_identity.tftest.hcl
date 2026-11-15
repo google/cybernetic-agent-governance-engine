@@ -34,11 +34,12 @@ variables {
   redis_ca_pem               = "-----BEGIN CERTIFICATE-----\ntest\n-----END CERTIFICATE-----\n"
   deployment_config_map_name = "cage-deployment"
 
-  cage_env                    = "staging"
-  trusted_operator_identities = ["risk-officer-1@cage.example", "risk-officer-2@cage.example"]
-  operator_oidc_issuer        = "https://idp.cage.example"
-  operator_oidc_audience      = "cage-compliance-bridge"
-  operator_jwks_uri           = "https://idp.cage.example/.well-known/jwks.json"
+  cage_env                     = "staging"
+  evidence_cold_store_location = "us-central1"
+  trusted_operator_identities  = ["risk-officer-1@cage.example", "risk-officer-2@cage.example"]
+  operator_oidc_issuer         = "https://idp.cage.example"
+  operator_oidc_audience       = "cage-compliance-bridge"
+  operator_jwks_uri            = "https://idp.cage.example/.well-known/jwks.json"
 }
 
 run "enforcing_valid_human_operator_identities_plans" {
@@ -160,6 +161,18 @@ run "prod_refuses_operator_jwks_json" {
   variables {
     cage_env           = "prod"
     operator_jwks_json = "{\"cage-e2e-op-1\":\"test\"}"
+  }
+
+  expect_failures = [
+    kubernetes_deployment.compliance_bridge,
+  ]
+}
+
+run "enforcing_empty_cold_store_location_is_refused" {
+  command = plan
+
+  variables {
+    evidence_cold_store_location = ""
   }
 
   expect_failures = [

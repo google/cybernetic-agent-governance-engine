@@ -58,10 +58,11 @@ def get_cold_store(
     if selected_backend == "null":
         return NullColdStore()
 
-    resolved_bucket = bucket or resolve_cold_store_bucket(
+    resolved_bucket = resolve_cold_store_bucket(
         region=region,
         location=location,
         backend_id=selected_backend,
+        bucket_override=bucket,
     )
 
     if selected_backend == "gcs":

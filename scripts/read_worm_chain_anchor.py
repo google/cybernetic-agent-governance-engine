@@ -151,6 +151,7 @@ def fetch_verify_report_gcs(
     *,
     gcs_project: str,
     kms_key: str,
+    gcs_location: str = "",
     timeout_s: int = DEFAULT_TIMEOUT_SECONDS,
 ) -> dict[str, Any]:
     """Run ``src.compliance_bridge.evidence_verifier --json`` directly against GCS + Cloud KMS."""
@@ -165,10 +166,37 @@ def fetch_verify_report_gcs(
         )
     repo_root = Path(__file__).resolve().parents[1]
     child_env = dict(os.environ)
+    resolved_location = (
+        gcs_location.strip()
+        or child_env.get("EVIDENCE_COLD_STORE_LOCATION", "").strip()
+    ).lower()
+    if not resolved_location:
+        desc = subprocess.run(
+            [
+                "gcloud",
+                "storage",
+                "buckets",
+                "describe",
+                f"gs://{bucket}",
+                f"--project={project}",
+                "--format=value(location)",
+            ],
+            capture_output=True,
+            text=True,
+            timeout=timeout_s,
+            check=False,
+        )
+        if desc.returncode != 0 or not desc.stdout.strip():
+            detail = desc.stderr.strip() or f"exit code {desc.returncode}"
+            raise WormAnchorError(
+                f"Failed to describe GCS WORM bucket location for gs://{bucket}: {detail}"
+            )
+        resolved_location = desc.stdout.strip().lower()
     child_env.update(
         {
             "EVIDENCE_COLD_STORE": "gcs",
             "EVIDENCE_COLD_STORE_BUCKET": bucket,
+            "EVIDENCE_COLD_STORE_LOCATION": resolved_location,
             "GOOGLE_CLOUD_PROJECT": project,
             "CAGE_KMS_PROVIDER": "gcp",
             "EVIDENCE_KMS_KEY": key,
@@ -471,6 +499,12 @@ def main(argv: list[str] | None = None) -> int:
         help="Cloud KMS CryptoKeyVersion resource name when --gcs-bucket is used",
     )
     parser.add_argument(
+        "--gcs-location",
+        type=str,
+        default="",
+        help="Optional GCS WORM bucket location (otherwise queried via gcloud storage buckets describe)",
+    )
+    parser.add_argument(
         "--pre-run-inventory",
         type=Path,
         default=None,
@@ -549,6 +583,7 @@ def main(argv: list[str] | None = None) -> int:
                 args.gcs_bucket,
                 gcs_project=args.gcs_project,
                 kms_key=args.kms_key,
+                gcs_location=args.gcs_location,
                 timeout_s=args.timeout,
             )
         else:

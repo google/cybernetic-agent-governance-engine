@@ -123,25 +123,11 @@ class TestEUECBDeployedResidency:
             _assert_eu_region(value, var)
 
     def test_google_cloud_location_is_europe_west1(self) -> None:
-        """GOOGLE_CLOUD_LOCATION must be europe-west1 for EU_ECB PRODUCTION deployments.
+        """GOOGLE_CLOUD_LOCATION must be europe-west1 for EU_ECB enforcing deployments."""
+        from src.gateway.governance.env_posture import is_enforcing
 
-        Staging/dev/test environments are exempt from geographic restrictions to allow
-        multi-region compliance testing on a single cluster.
-        """
-        cage_env = os.environ.get("CAGE_ENV", "production").lower()
-        if cage_env in (
-            "development",
-            "dev",
-            "test",
-            "ci",
-            "staging",
-            "uat",
-            "preprod",
-        ):
-            pytest.skip(
-                f"Geographic location checks skipped for CAGE_ENV={cage_env} "
-                "(non-production environment)"
-            )
+        if not is_enforcing():
+            pytest.skip("Geographic location checks skipped in permissive posture")
 
         location = os.environ.get("GOOGLE_CLOUD_LOCATION", "")
         if not location:

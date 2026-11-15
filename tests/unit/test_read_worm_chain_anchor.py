@@ -405,3 +405,33 @@ def test_all_streams_emits_governance_and_infra_anchors(
         f"export TF_VAR_infra_evidence_previous_batch_attestation_digest={ATTEST_B}"
         in exp_out
     )
+
+
+def test_fetch_verify_report_gcs_injects_bucket_location(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import subprocess as sp
+
+    from scripts.read_worm_chain_anchor import fetch_verify_report_gcs
+
+    calls: list[tuple[list[str], dict[str, str] | None]] = []
+
+    def _fake_run(cmd, **kwargs):
+        calls.append((list(cmd), kwargs.get("env")))
+        if cmd[:3] == ["gcloud", "storage", "buckets"]:
+            return sp.CompletedProcess(cmd, 0, stdout="US-CENTRAL1\n", stderr="")
+        return sp.CompletedProcess(cmd, 0, stdout='{"ok": true}', stderr="")
+
+    monkeypatch.delenv("EVIDENCE_COLD_STORE_LOCATION", raising=False)
+    monkeypatch.setattr(sp, "run", _fake_run)
+    doc = fetch_verify_report_gcs(
+        "proj-evidence-worm-staging",
+        gcs_project="proj",
+        kms_key="projects/proj/locations/us-central1/keyRings/r/cryptoKeys/k/cryptoKeyVersions/1",
+    )
+    assert doc == {"ok": True}
+    assert len(calls) == 2
+    assert calls[0][0][:4] == ["gcloud", "storage", "buckets", "describe"]
+    verifier_env = calls[1][1]
+    assert verifier_env is not None
+    assert verifier_env["EVIDENCE_COLD_STORE_LOCATION"] == "us-central1"

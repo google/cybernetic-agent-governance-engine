@@ -175,6 +175,12 @@ variable "evidence_cold_store_bucket" {
   default     = ""
 }
 
+variable "evidence_cold_store_location" {
+  description = "Immutable cloud location of the retention-locked WORM bucket (EVIDENCE_COLD_STORE_LOCATION, e.g. us-central1, europe-west1, asia-southeast1). Required under enforcing postures when evidence_cold_store != 'null'."
+  type        = string
+  default     = ""
+}
+
 variable "cmek_key_resource_name" {
   description = "Full Cloud KMS key resource name for CMEK encryption verification on the WORM bucket (POAM-014 / SC-28)."
   type        = string

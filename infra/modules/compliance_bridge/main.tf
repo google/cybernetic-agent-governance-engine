@@ -73,6 +73,11 @@ resource "kubernetes_deployment" "compliance_bridge" {
       condition     = !contains(["prod", "production"], lower(var.cage_env)) || (!var.enable_e2e_mode && trimspace(var.operator_jwks_json) == "")
       error_message = "CAGE Invariant (POAM-2026-191 / POAM-2026-196): enable_e2e_mode and operator_jwks_json are non-production verification switches and are refused when cage_env is prod or production."
     }
+
+    precondition {
+      condition     = !contains(["staging", "prod", "production"], lower(var.cage_env)) || lower(trimspace(var.evidence_cold_store)) == "null" || trimspace(var.evidence_cold_store_location) != ""
+      error_message = "CAGE Invariant (SC-7 / GDPR Art. 44 / MAS TRM §4.2 / POAM-2026-220): under an enforcing posture with durable cold storage, compliance-bridge requires a non-empty evidence_cold_store_location (the WORM bucket's immutable cloud location)."
+    }
   }
 
   metadata {
@@ -318,6 +323,11 @@ resource "kubernetes_deployment" "compliance_bridge" {
           env {
             name  = "EVIDENCE_COLD_STORE_BUCKET"
             value = var.evidence_cold_store_bucket != "" ? var.evidence_cold_store_bucket : var.oscal_s3_bucket
+          }
+
+          env {
+            name  = "EVIDENCE_COLD_STORE_LOCATION"
+            value = var.evidence_cold_store_location
           }
 
           env {
