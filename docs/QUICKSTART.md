@@ -191,7 +191,7 @@ CAGE_DOMAIN=finance docker compose up -d opa gateway
 
 ### 8b. Domain Plugin Example: Healthcare
 
-**Package:** [`src/cage_healthcare/`](../src/cage_healthcare/) · **Status:** example domain, not a clinical device
+**Package:** [`src/cage_healthcare/`](../src/cage_healthcare/) · **Status:** example domain, not a clinical device. It declares `maturity = "stub"`, so it runs only in permissive postures such as this Compose stack (`CAGE_ENV=dev`) and is refused in `staging`, `production` and `local`
 
 The healthcare plugin ships a complete `DomainConfig` (FTRA terminal registry and the `dosing.governance` OPA package; it registers no causal tier, so it declares no causal graph) and wires `DoseBarrierTier` with an invariant-parametric `ControlBarrierFunction` over `SerumConcentrationBarrier`. Note that the `app` service (`governed_financial_advisor`) in `docker-compose.yml` is finance-specific; to run the healthcare gateway stack or its hermetic test suite:
 

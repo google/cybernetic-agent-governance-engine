@@ -371,9 +371,40 @@ def test_stub_plugin_maturity_refused_in_enforcing_posture(
         assemble_governor([plugin], opa=allow_opa(), posture=posture)
 
 
-def test_production_plugins_declare_production_maturity() -> None:
-    from src.cage_finance.plugin import FinanceCagePlugin
+@pytest.mark.parametrize(
+    "posture",
+    [_Posture.PRODUCTION, _Posture.STAGING, _Posture.LOCAL],
+)
+def test_healthcare_reference_domain_refused_in_enforcing_posture(
+    posture: _Posture,
+) -> None:
+    """POAM-2026-198: healthcare is a reference domain with no STPA hazard
+    file and no Gate W run, so it declares ``maturity == 'stub'`` and
+    ``assemble_governor()`` refuses it under every enforcing posture."""
+    from src.cage_healthcare.plugin import HealthcareCagePlugin
+    from src.gateway.governance.governor.assembly import assemble_governor
+    from tests.fixtures.governor import allow_opa
+
+    plugin = HealthcareCagePlugin()
+    assert plugin.maturity == "stub"
+    with pytest.raises(RuntimeError, match="maturity='stub'"):
+        assemble_governor([plugin], opa=allow_opa(), posture=posture)
+
+
+def test_healthcare_contribution_carries_the_plugin_maturity() -> None:
+    """A contribution left at the default ``production`` would fail assembly in
+    every posture, including the permissive ones the reference domain runs in."""
     from src.cage_healthcare.plugin import HealthcareCagePlugin
 
+    plugin = HealthcareCagePlugin()
+    assert plugin.contribute().maturity == plugin.maturity == "stub"
+
+
+def test_only_finance_declares_production_maturity() -> None:
+    from src.cage_finance.plugin import FinanceCagePlugin
+    from src.cage_healthcare.plugin import HealthcareCagePlugin
+    from src.cage_physical_ai.plugin import PhysicalAICagePlugin
+
     assert FinanceCagePlugin.maturity == "production"
-    assert HealthcareCagePlugin.maturity == "production"
+    assert HealthcareCagePlugin.maturity == "stub"
+    assert PhysicalAICagePlugin.maturity == "stub"

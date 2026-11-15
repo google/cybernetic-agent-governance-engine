@@ -36,14 +36,17 @@ from src.gateway.governance.safety.cbf_engine import ControlBarrierFunction
 _CONFIG_DIR = Path(__file__).resolve().parent / "config"
 
 
-# Enforces clinical consensus, SerumConcentrationBarrier CBF, FTRA terminal
-# classification, and dosing.governance OPA policy across Compose and GKE.
-# Domain-specific STPA hazard YAML and compiled uca_rules remain planned for
-# healthcare (currently finance-only); core system STPA UCAs apply via Layer 1.
+# A reference domain, not a production one. It wires clinical consensus, the
+# SerumConcentrationBarrier CBF, FTRA terminal classification and the
+# dosing.governance OPA policy, and runs in permissive postures (dev, test, ci).
+# ``maturity = "stub"`` makes assemble_governor() refuse it in every enforcing
+# posture: the domain has no STPA hazard file or compiled uca_rules (only the
+# Layer 1 core UCAs apply), its ground truth is simulated, and no Gate W run
+# has exercised it. Raise the maturity only together with that evidence.
 class HealthcareCagePlugin(contracts.CagePlugin):
-    """Healthcare domain capability plugin."""
+    """Healthcare reference domain plugin (stub maturity)."""
 
-    name, api_version, maturity = "healthcare", "2.0", "production"
+    name, api_version, maturity = "healthcare", "2.0", "stub"
     domain_config = contracts.DomainConfig(
         ftra_registry_path=_CONFIG_DIR / "ftra" / "terminal_registry.json",
         opa_package="dosing.governance",
@@ -60,6 +63,7 @@ class HealthcareCagePlugin(contracts.CagePlugin):
         )
         return contracts.PluginContribution(
             domain=self.name,
+            maturity=self.maturity,
             tiers=create_healthcare_tiers(cbf),
             invariants=(barrier,),  # declarative, no logic
             ground_truth_providers={
