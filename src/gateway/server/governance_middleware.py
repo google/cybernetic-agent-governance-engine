@@ -72,6 +72,7 @@ from src.gateway.observability.mcp_tracing import (
 )
 from src.gateway.observability.mcp_tracing import sanitize_trace_carrier
 from src.gateway.server.app_state import governor_of
+from src.gateway.server.quarantine_guard import refuse_if_quarantined
 from src.gateway.server.state_commitment_api import (
     router as state_commitment_router,
 )
@@ -853,6 +854,14 @@ async def policy_precheck_endpoint(
             },
         )
 
+    if q_resp := await refuse_if_quarantined(
+        request,
+        action_id=body.action,
+        surface="governance_middleware",
+        body_params=body.params,
+    ):
+        return q_resp
+
     governor = governor_of(request.app)  # fail closed if governor not assembled
     carrier = sanitize_trace_carrier(request.headers)
     remote_ctx = otel_extract(carrier)
@@ -963,6 +972,14 @@ async def validate_action_endpoint(
                 "retry_after_seconds": retry_after,
             },
         )
+
+    if q_resp := await refuse_if_quarantined(
+        request,
+        action_id=body.action,
+        surface="governance_middleware",
+        body_params=body.params,
+    ):
+        return q_resp
 
     # ── Extract W3C trace context from inbound headers ────────────────────────
     # The GFA injected 'traceparent' via otel_inject(headers).  Extracting it
