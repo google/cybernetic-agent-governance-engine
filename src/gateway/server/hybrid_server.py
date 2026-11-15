@@ -320,6 +320,7 @@ async def _gateway_lifespan(app: FastAPI):  # type: ignore[no-untyped-def]
         from src.gateway.governance.quarantine_actuator import bind_quarantine_redis
 
         shared_redis = _build_shared_redis_from_env()
+        await _verify_shared_redis_startup(shared_redis)
         app.state.redis = shared_redis
         inference_app.state.redis = shared_redis
         governance_app.state.redis = shared_redis
@@ -611,13 +612,26 @@ NEMO_RELOAD_CHANNEL = "cage:nemo:reload"
 
 
 def _build_shared_redis_from_env() -> Any:
-    """Resolve the shared async Redis client via ``build_async_redis`` when configured."""
+    """Resolve the shared async Redis client via ``build_async_redis`` when configured.
+
+    Under an enforcing posture (``staging`` / ``production``), missing Redis
+    configuration or client initialization failure raises ``RuntimeError`` at
+    startup so a misconfigured pod never passes ``/healthz`` and serves 100%
+    fail-closed 403 quarantine refusals.
+    """
+    from src.gateway.governance.env_posture import is_enforcing, resolve_posture
     from src.gateway.infrastructure.redis_client import build_async_redis
 
+    enforcing = is_enforcing(resolve_posture())
     url = os.environ.get("REDIS_URL", "").strip()
     if not url:
         host = os.environ.get("REDIS_HOST", "").strip()
         if not host:
+            if enforcing:
+                raise RuntimeError(
+                    "Shared Redis client is required under an enforcing posture "
+                    "(configure REDIS_URL or REDIS_HOST)."
+                )
             return None
         port = os.environ.get("REDIS_PORT", "6379").strip() or "6379"
         scheme = (
@@ -626,12 +640,43 @@ def _build_shared_redis_from_env() -> Any:
             else "redis"
         )
         url = f"{scheme}://{host}:{port}"
-    db = int(os.environ.get("REDIS_DB", "0"))
+    raw_db = os.environ.get("REDIS_DB")
     try:
+        db: int | None = int(raw_db.strip()) if raw_db and raw_db.strip() else None
         return build_async_redis(url, db=db)
     except Exception as exc:
+        if enforcing:
+            raise RuntimeError(
+                f"Shared Redis client initialization failed under an enforcing posture: {exc}"
+            ) from exc
         logger.warning("⚠️ Shared Redis client init failed: %s", exc)
         return None
+
+
+async def _verify_shared_redis_startup(shared_redis: Any) -> None:
+    """Probe shared Redis with ``PING`` at startup under an enforcing posture."""
+    import inspect
+
+    from src.gateway.governance.env_posture import is_enforcing, resolve_posture
+
+    if shared_redis is None or not is_enforcing(resolve_posture()):
+        return
+    ping_fn = getattr(shared_redis, "ping", None)
+    if not callable(ping_fn):
+        return
+    try:
+        res = ping_fn()
+        if inspect.isawaitable(res):
+            await res
+    except Exception as exc:
+        if hasattr(shared_redis, "aclose"):
+            try:
+                await shared_redis.aclose()
+            except Exception as close_exc:
+                logger.debug("Shared Redis startup cleanup error: %s", close_exc)
+        raise RuntimeError(
+            f"Shared Redis connectivity check (PING) failed under an enforcing posture: {exc}"
+        ) from exc
 
 
 def _get_refinement_redis(app_instance: FastAPI | None = None) -> Any:

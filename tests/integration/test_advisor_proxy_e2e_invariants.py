@@ -937,6 +937,8 @@ async def e2e_stack(
     monkeypatch.setattr(
         inference_proxy.inference_app.state, "redis", stream_redis, raising=False
     )
+    monkeypatch.setattr(governance_app.state, "redis", stream_redis, raising=False)
+    monkeypatch.setattr(mcp_tool_server.app.state, "redis", stream_redis, raising=False)
     await publish_thresholds_loaded(sink)
 
     # Real TokenQuotaProxy backed by fakeredis; generous initial budget for E2E turns.
@@ -1175,6 +1177,7 @@ def _merge_proxy_and_mcp() -> Starlette:
         return await inference_proxy.chat_completions(request, background_tasks)
 
     combined.mount("/", mcp_tool_server.app)
+    mcp_tool_server.app.state.redis = combined.state.redis
     return combined
 
 

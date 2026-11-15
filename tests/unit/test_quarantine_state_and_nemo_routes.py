@@ -129,8 +129,8 @@ def _build_nemo_app(redis_client: Any) -> FastAPI:
 @pytest.mark.covers(
     "src.gateway.server.state_commitment_api:commit_state_endpoint#workload_quarantined",
     "src.gateway.server.state_commitment_api:commit_state_endpoint#quarantine_backend_unavailable",
-    "src.gateway.governance.quarantine_actuator:check_workload_quarantine_status#Redis EXISTS check failed",
-    "src.gateway.governance.quarantine_actuator:check_workload_quarantine_status#Shared Redis client unavailable in enforcing posture",
+    "src.gateway.governance.quarantine_actuator:probe_workload_quarantine#Redis EXISTS check failed",
+    "src.gateway.governance.quarantine_actuator:probe_workload_quarantine#Shared Redis client unavailable in enforcing posture — failing closed",
 )
 async def test_state_commitments_blocks_quarantined_svid_and_thread_with_403_and_redis_outage_with_503(
     monkeypatch: pytest.MonkeyPatch,
