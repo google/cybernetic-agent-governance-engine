@@ -4,7 +4,7 @@
 
 [Lula](https://docs.lula.dev/) is a compliance-as-code tool that evaluates OSCAL (Open Security Controls Assessment Language) component definitions against live system state. It supports multiple **domain** backends (Kubernetes, API, file) and uses **OPA Rego** as the policy evaluation engine.
 
-In this project, Lula validations (`compliance/lula/lula-validation-*.yaml`) evaluate compliance controls against the live cluster state and running services (standalone Terraform CronJob tracked under `POAM-2026-195`, retiring `385e502e:src/compliance_bridge/lula_scheduler.py` and `de5534ac:deployment/k8s/lula-cron.yaml`).
+In this project, Lula validations (`compliance/lula/lula-validation-*.yaml`) evaluate compliance controls against the live cluster state and running services. In the cluster they run from `CronJob/lula-audit`, which Terraform manages in [`infra/modules/lula_cron/`](../../infra/modules/lula_cron/main.tf). It replaced `385e502e:src/compliance_bridge/lula_scheduler.py` and the unmanaged `de5534ac:deployment/k8s/lula-cron.yaml`.
 
 ---
 
@@ -118,7 +118,7 @@ Each deployment region has a dedicated OSCAL System Security Plan:
 | **EU_ECB** | [`compliance/oscal/system-security-plan-eu-ecb.yaml`](../oscal/system-security-plan-eu-ecb.yaml) | EU AI Act / GDPR Art. 22 / DORA |
 | **APAC_MAS** | [`compliance/oscal/system-security-plan-apac-mas.yaml`](../oscal/system-security-plan-apac-mas.yaml) | MAS FEAT / MAS Notice 655 / MAS TRM §6.3 |
 
-Region selection is controlled exclusively by `CAGE_DEPLOYMENT_REGION`. The Lula CronJob runner (standalone Terraform CronJob tracked under `POAM-2026-195`, retiring `385e502e:src/compliance_bridge/lula_scheduler.py`) reads this variable to determine which jurisdiction-specific manifests to include in each run.
+`CAGE_DEPLOYMENT_REGION` selects which SSP applies. It does not select manifests: `CronJob/lula-audit` ([`infra/modules/lula_cron/`](../../infra/modules/lula_cron/main.tf)) mounts every manifest that carries no `# cage-status: planned` or `# cage-status: not-applicable` header, whatever the region.
 
 ---
 
@@ -130,68 +130,20 @@ Region selection is controlled exclusively by `CAGE_DEPLOYMENT_REGION`. The Lula
 lula validate -f compliance/lula/lula-validation-a53.yaml
 ```
 
-### Run all active validations (ALL regions)
+### Run the evaluated validations from a workstation
+
+The in-cluster CronJob and Gate W evaluate every manifest without a `planned` or `not-applicable` header, whatever `CAGE_DEPLOYMENT_REGION` is. API-domain manifests (`type: api`) call in-cluster service URLs, so run those in the cluster (see [In-cluster](#in-cluster-via-cronjob) below). This loop runs the rest, as Gate W's host phase does:
 
 ```bash
-for f in compliance/lula/lula-validation-a52.yaml \
-          compliance/lula/lula-validation-a53.yaml \
-          compliance/lula/lula-validation-a92.yaml \
-          compliance/lula/lula-validation-tqp007.yaml \
-          compliance/lula/lula-validation-iso001-token-quota.yaml; do
+for f in compliance/lula/lula-validation-*.yaml; do
+  grep -Eq '^#[[:space:]]*cage-status:[[:space:]]*(planned|not-applicable)([[:space:]]|$)' "$f" && continue
+  grep -Eq '^[[:space:]]*type:[[:space:]]*api([[:space:]]|$)' "$f" && continue
   echo "=== Validating $f ==="
   lula validate -f "$f"
 done
 ```
 
-### Run US_FED active validations
-
-```bash
-# Only run when CAGE_DEPLOYMENT_REGION=US_FED
-for f in compliance/lula/lula-validation-a52.yaml \
-          compliance/lula/lula-validation-a53.yaml \
-          compliance/lula/lula-validation-a92.yaml \
-          compliance/lula/lula-validation-tqp007.yaml \
-          compliance/lula/lula-validation-iso001-token-quota.yaml \
-          compliance/lula/lula-validation-sc4.yaml; do
-  echo "=== Validating $f ==="
-  lula validate -f "$f"
-done
-```
-
-### Run EU_ECB active validations
-
-```bash
-# Only run when CAGE_DEPLOYMENT_REGION=EU_ECB
-for f in compliance/lula/lula-validation-a52.yaml \
-          compliance/lula/lula-validation-a53.yaml \
-          compliance/lula/lula-validation-a92.yaml \
-          compliance/lula/lula-validation-tqp007.yaml \
-          compliance/lula/lula-validation-iso001-token-quota.yaml \
-          compliance/lula/lula-validation-eu-fria.yaml \
-          compliance/lula/lula-validation-eu-ai-act-art9.yaml \
-          compliance/lula/lula-validation-gdpr-art22.yaml \
-          compliance/lula/lula-validation-dora-art10.yaml; do
-  echo "=== Validating $f ==="
-  lula validate -f "$f"
-done
-```
-
-### Run APAC_MAS validations (when stubs are activated)
-
-```bash
-# Only run when CAGE_DEPLOYMENT_REGION=APAC_MAS
-for f in compliance/lula/lula-validation-a52.yaml \
-          compliance/lula/lula-validation-a53.yaml \
-          compliance/lula/lula-validation-a92.yaml \
-          compliance/lula/lula-validation-tqp007.yaml \
-          compliance/lula/lula-validation-iso001-token-quota.yaml \
-          compliance/lula/lula-validation-mas-feat.yaml \
-          compliance/lula/lula-validation-mas-notice655.yaml \
-          compliance/lula/lula-validation-mas-trm-s6.yaml; do
-  echo "=== Validating $f ==="
-  lula validate -f "$f"
-done
-```
+A satisfied manifest is evidence for its control only if the tables above rate it Active.
 
 ### Run against a specific Kubernetes context
 
@@ -201,7 +153,13 @@ lula validate -f compliance/lula/lula-validation-sc4.yaml --kubeconfig ~/.kube/c
 
 ### In-cluster (via CronJob)
 
-`#664` (`372daad2`) migrated all 33 `compliance/lula/lula-validation-*.yaml` files to the Lula v0.16.0 `resource-rule` / `requests` schema (`tests/test_lula_v0160_schema.py`), and unmanaged `de5534ac:deployment/k8s/lula-cron.yaml` (`de5534ac:deployment/k8s/lula-rbac.yaml`) has been retired alongside the shadow manifest tree; migrating the standalone Lula auditor `CronJob` and read-only RBAC into Terraform state is tracked under `POAM-2026-195`, 5 validations carry `.stub-baseline` stub markers (`scripts/check_lula_stub_count.py`), and the AgentSight eBPF collector is not in force (`POAM-021` reopened, `POAM-2026-193`).
+Gate W runs the CronJob on demand the same way (`governance-stack` is the default namespace):
+
+```bash
+kubectl create job lula-manual --from=cronjob/lula-audit -n governance-stack
+```
+
+`#664` (`372daad2`) migrated all 33 `compliance/lula/lula-validation-*.yaml` files to the Lula v0.16.0 `resource-rule` / `requests` schema (`tests/test_lula_v0160_schema.py`). The unmanaged `de5534ac:deployment/k8s/lula-cron.yaml` and `de5534ac:deployment/k8s/lula-rbac.yaml` were retired with the shadow manifest tree, and the auditor `CronJob` and its read-only RBAC are now in Terraform state ([`infra/modules/lula_cron/`](../../infra/modules/lula_cron/main.tf)). The certified Gate W run found it active and evaluated its 26 manifests ([`gate_w_certification.json`](../gate_w_certification.json)). 5 validations carry `.stub-baseline` stub markers (`scripts/check_lula_stub_count.py`), and the AgentSight eBPF collector is not in force (`POAM-021` reopened, `POAM-2026-193`).
 
 ---
 
@@ -213,7 +171,7 @@ Each stub file contains `# TODO:` comments with the specific steps required. The
 2. **Confirm the namespace** — check `infra/modules/k8s_namespace/main.tf` and `infra/targets/gcp-gke/main.tf`
 3. **Update the validation file** — replace placeholder names and `# TODO:` namespace values
 4. **Test locally** — `lula validate -f compliance/lula/lula-validation-<control>.yaml`
-5. **Register for scheduled execution** — include the validation in the Lula runner configuration (standalone Terraform CronJob under `POAM-2026-195`)
+5. **Register for scheduled execution** — nothing to register: `CronJob/lula-audit` picks up every manifest without a `planned` or `not-applicable` header. A stub is already scheduled; what it lacks is the rating in the next step
 6. **Update this table** — change status from 🔶 Stub to ✅ Active
 
 ### Activating EU_ECB Stubs
@@ -307,7 +265,7 @@ See [`compliance/continuous-monitoring/ISCM_STRATEGY.md`](../continuous-monitori
 ## Related Documentation
 
 - [`compliance/continuous-monitoring/ISCM_STRATEGY.md`](../continuous-monitoring/ISCM_STRATEGY.md) — Information System Continuous Monitoring Strategy
-- [`docs/POAM.md`](../../docs/POAM.md) — Plan of Action and Milestones (POAM items for stub activation, including `POAM-2026-195` for the Terraform Lula CronJob replacing retired `de5534ac:deployment/k8s/lula-cron.yaml` and `de5534ac:deployment/k8s/lula-rbac.yaml`)
+- [`docs/POAM.md`](../../docs/POAM.md) — Plan of Action and Milestones (POAM items for stub activation)
 - [`deployment/docker/Dockerfile.lula`](../../deployment/docker/Dockerfile.lula) — Lula container image
 - [`compliance/oscal/system-security-plan.yaml`](../oscal/system-security-plan.yaml) — US_FED SSP (NIST SP 800-53 Rev 5 HIGH)
 - [`compliance/oscal/system-security-plan-eu-ecb.yaml`](../oscal/system-security-plan-eu-ecb.yaml) — EU_ECB SSP (EU AI Act / GDPR / DORA)
