@@ -196,19 +196,28 @@ class TestUnifiedEnforcingPostureGuards:
         assert svid_receipt.quarantined is True
         assert svid_receipt.verification is ReceiptVerification.UNVERIFIED
 
-    def test_langsmith_tracing_defaults_disabled_in_settings(
-        self, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
-        import importlib
-
-        import config.settings as settings_mod
-
-        monkeypatch.delenv("LANGCHAIN_TRACING_V2", raising=False)
-        monkeypatch.delenv("LANGSMITH_TRACING", raising=False)
-        with patch("dotenv.load_dotenv", return_value=False):
-            reloaded = importlib.reload(settings_mod)
-        assert reloaded.Config.LANGCHAIN_TRACING_V2 == "false"
-        assert reloaded.Config.LANGSMITH_TRACING == "false"
+    def test_langsmith_tracing_defaults_disabled_in_settings(self) -> None:
+        code = (
+            "from unittest.mock import patch\n"
+            "with patch('dotenv.load_dotenv', return_value=False):\n"
+            "    from config.settings import Config\n"
+            "assert Config.LANGCHAIN_TRACING_V2 == 'false', Config.LANGCHAIN_TRACING_V2\n"
+            "assert Config.LANGSMITH_TRACING == 'false', Config.LANGSMITH_TRACING\n"
+        )
+        clean_env = {
+            "PATH": "/usr/bin:/bin",
+            "HOME": str(REPO_ROOT),
+            "PYTHONPATH": str(REPO_ROOT),
+        }
+        proc = subprocess.run(
+            [sys.executable, "-c", code],
+            cwd=REPO_ROOT,
+            env=clean_env,
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        assert proc.returncode == 0, f"stdout={proc.stdout}\nstderr={proc.stderr}"
 
 
 class TestModelWeightVerificationAndDevScripts:
