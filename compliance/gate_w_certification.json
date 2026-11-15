@@ -149,5 +149,35 @@
       "unstamped_v1_posture"
     ],
     "note": "At certified_git_sha (8956f505) and in the prior v4.1.0 certification (fa772122), EvidenceCustodian emitted cage-evidence-batch/1 attestations, which did not stamp deployment_posture inside the KMS-signed payload. Those archives remain cryptographically sound and verify with citable=true by default in CustodyVerifier without opt-in flags, surfaced structurally with posture_status='unstamped_v1' and citable_qualifications=['unstamped_v1_posture'] rather than defaulting to 'production'. Accepting cage-evidence-batch/1 is cryptographically bounded because schema and deployment_posture sit inside the KMS-signed JCS payload (EVIDENCE_KMS_KEY): relabelling a cage-evidence-batch/2 attestation as cage-evidence-batch/1 or stripping deployment_posture breaks signature verification without the signing key. From cage-evidence-batch/2 onward, EvidenceCustodian stamps deployment_posture ('production' or 'staging') inside every signed attestation, and clean-room Gate W runs (--fresh-project) require posture_status='staging' and citable_qualifications=[]."
+  },
+  "next_gate_w_discharge": {
+    "annotated_utc": "2026-11-15T17:15:00Z",
+    "annotation_scope": "Combined discharge schedule for the three post-8956f505 archive disclosures above (lula_result_breakdown.ratings_from_2026_11_14, residency_result_breakdown, and custody_posture_qualification). All three discharge on the same next Gate W run and must be verified and retired together when refreshing this file so none is discharged piecemeal while leaving the others stale.",
+    "target_run": {
+      "deployment_target_mode": "fresh_project_clean_room",
+      "compliance_region": "APAC_MAS",
+      "gcp_region": "asia-southeast1",
+      "command": "scripts/staging_lifecycle.sh --fresh-project"
+    },
+    "discharges": [
+      {
+        "id": "POAM-2026-220",
+        "disclosure_field": "residency_result_breakdown",
+        "gap_in_certified_archive": "At 8956f505, resolve_cold_store_bucket() bypassed geographic residency under CAGE_ENV=staging and Phase 4 ran under US_FED, so runtime cold-store residency (EVIDENCE_COLD_STORE_LOCATION) was never exercised live.",
+        "required_in_next_run": "compliance-bridge starts ready under CAGE_ENV=staging and CAGE_DEPLOYMENT_REGION=APAC_MAS with EVIDENCE_COLD_STORE_LOCATION=ASIA-SOUTHEAST1 enforced from module.worm_bucket.bucket_location, exercising both the staging residency lock and non-US_FED regional residency end-to-end with verified >= 1 and gaps == 0."
+      },
+      {
+        "id": "POAM-2026-219",
+        "disclosure_field": "lula_result_breakdown.ratings_from_2026_11_14",
+        "gap_in_certified_archive": "At 8956f505, lula-validation-iso001-token-quota.yaml ran in its #664 form (non-empty opa-policies ConfigMap only); its restored opa_policy_has_quota_rules check has been evaluated only offline with lula dev validate.",
+        "required_in_next_run": "Archive manifest records lula-validation-iso001-token-quota.yaml satisfied and lula.rating_breakdown.counts.evaluated_rated_active == 12 (the check is evaluated in every region, so the APAC_MAS run satisfies POAM-2026-219 Closure Criterion 2; Closure Criterion 3's historical POAM-2026-079 ac2 strike-through and seven US SSP statement/census restatements remain separate repository edits before POAM-2026-219 closes)."
+      },
+      {
+        "id": "EP-1",
+        "disclosure_field": "custody_posture_qualification",
+        "gap_in_certified_archive": "At 8956f505 and fa772122, EvidenceCustodian emitted cage-evidence-batch/1 without deployment_posture, so the published archives verify as citable=true with posture_status='unstamped_v1' and citable_qualifications=['unstamped_v1_posture'].",
+        "required_in_next_run": "EvidenceCustodian emits cage-evidence-batch/2 with deployment_posture='staging' inside the KMS-signed JCS payload, and GET /v1/evidence/verify (enforced by scripts/staging_lifecycle.sh --fresh-project) reports posture_status == 'staging' and citable_qualifications == [] across both pre- and post-rebuild WORM chains."
+      }
+    ]
   }
 }
