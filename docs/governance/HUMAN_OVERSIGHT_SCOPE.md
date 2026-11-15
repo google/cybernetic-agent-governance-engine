@@ -1,6 +1,6 @@
 # Human Oversight Scope — CAGE v3.0.1
 
-**Document:** AI600-005 / NIST AI 600-1 §2.5 / ISO 42001 §A.8.4
+**Document:** AI600-005 / NIST AI 600-1 §2.7 / ISO 42001 §A.8.4
 **Date:** 2026-08-16
 **Status:** Active
 **POAM:** AI600-005
@@ -11,7 +11,7 @@
 
 This document defines the human oversight scope for the Cybernetic AI Governance Engine (CAGE). It satisfies:
 
-- **NIST AI 600-1 §2.5** — Human-AI Configuration controls
+- **NIST AI 600-1 §2.7** — Human-AI Configuration controls
 - **ISO 42001 §A.8.4** — Human oversight of AI system decisions
 - **SR 26-2 §3.2** — US Federal Reserve HITL SLA requirements (US_FED only)
 - **DORA Art. 10** — ICT incident management oversight (EU_ECB only)

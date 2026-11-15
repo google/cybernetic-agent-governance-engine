@@ -163,7 +163,7 @@ added in Phase 2.
 
    **`lula-validation-ai600-confabulation.yaml`**
    ```yaml
-   # Validates: AI 600-1 §2.1 Confabulation controls
+   # Validates: AI 600-1 §2.2 Confabulation controls
    # Controls: CTRL_AGT_001 (confidence ≥ 0.95)
    domain:
      type: kubernetes
@@ -180,7 +180,7 @@ added in Phase 2.
 
    **`lula-validation-ai600-data-privacy.yaml`**
    ```yaml
-   # Validates: AI 600-1 §2.2 Data Privacy controls
+   # Validates: AI 600-1 §2.4 Data Privacy controls
    # Controls: Presidio PII sanitizer active; PII audit log encrypted
    domain:
      type: kubernetes
@@ -196,7 +196,7 @@ added in Phase 2.
 
    **`lula-validation-ai600-prompt-injection.yaml`**
    ```yaml
-   # Validates: AI 600-1 §2.3 Data Poisoning / Prompt Injection controls
+   # Validates: AI 600-1 §2.9 Data Poisoning / Prompt Injection controls
    # Controls: CausalGatekeeper active; WAL integrity verified
    domain:
      type: kubernetes
@@ -212,7 +212,7 @@ added in Phase 2.
 
    **`lula-validation-ai600-human-ai-config.yaml`**
    ```yaml
-   # Validates: AI 600-1 §2.5 Human-AI Configuration controls
+   # Validates: AI 600-1 §2.7 Human-AI Configuration controls
    # Controls: Consensus threshold enforced; override audit active
    domain:
      type: kubernetes
@@ -228,7 +228,7 @@ added in Phase 2.
 
    **`lula-validation-ai600-cbrn.yaml`**
    ```yaml
-   # Validates: AI 600-1 §2.6 CBRN / Harmful Content controls
+   # Validates: AI 600-1 §2.1 CBRN / Harmful Content controls
    # Controls: NeMo guardrails active; Tier-1 keyword list enforced
    domain:
      type: kubernetes
@@ -275,7 +275,7 @@ Langfuse confabulation scorer active in dev; SBOM uploaded to GCS in prod CI.
 
 ### 5.1 Confabulation Scorer — Dev Posture `[DEV]`
 
-**POAM**: AI600-001 | **AI 600-1 ref**: §2.1 Confabulation | **Control**: CTRL_AGT_001
+**POAM**: AI600-001 | **AI 600-1 ref**: §2.2 Confabulation | **Control**: CTRL_AGT_001
 
 **Current state**: `CTRL_AGT_001` enforces `confidence ≥ 0.95` at the gateway layer
 (`config/governance_thresholds.json` → `confidence.agent_threshold`). However, there is
@@ -338,7 +338,7 @@ no Langfuse scorer that records confabulation events for audit purposes.
 
 ### 5.2 Confabulation Scorer — Prod Posture `[PROD]`
 
-**POAM**: AI600-001 | **AI 600-1 ref**: §2.1 | **Control**: CTRL_AGT_001
+**POAM**: AI600-001 | **AI 600-1 ref**: §2.2 | **Control**: CTRL_AGT_001
 
 **Prod tasks**:
 
@@ -378,7 +378,7 @@ no Langfuse scorer that records confabulation events for audit purposes.
 
 ### 5.3 PII Audit Log Hardening — Dev Posture `[DEV]`
 
-**POAM**: AI600-002 | **AI 600-1 ref**: §2.2 Data Privacy | **Control**: Presidio
+**POAM**: AI600-002 | **AI 600-1 ref**: §2.4 Data Privacy | **Control**: Presidio
 
 **Current state**: `src/gateway/governance/pii_sanitizer.py` uses Microsoft Presidio
 to detect and redact PII. However, PII detection events are not written to an
@@ -432,7 +432,7 @@ manifests; AgentSight provenance chain active in prod.
 
 ### 6.1 Prompt Injection Detector — Dev Posture `[DEV]`
 
-**POAM**: AI600-003 | **AI 600-1 ref**: §2.3 Data Poisoning / Prompt Injection
+**POAM**: AI600-003 | **AI 600-1 ref**: §2.9 Data Poisoning / Prompt Injection
 **Controls**: `CausalGatekeeper`, `CTRL_WAL_002`
 
 **Current state**: `src/gateway/governance/causal/gatekeeper.py` performs causal
@@ -447,7 +447,7 @@ keyword-based attacks but not semantic injection patterns.
    # Copyright 2026 Google LLC
    # Licensed under the Apache License, Version 2.0
 
-   """Prompt injection detector — AI 600-1 §2.3 control."""
+   """Prompt injection detector — AI 600-1 §2.9 control."""
 
    import re
    from dataclasses import dataclass
@@ -517,7 +517,7 @@ keyword-based attacks but not semantic injection patterns.
 
 ### 6.2 Prompt Injection Detector — Prod Posture `[PROD]`
 
-**POAM**: AI600-003 | **AI 600-1 ref**: §2.3
+**POAM**: AI600-003 | **AI 600-1 ref**: §2.9
 
 **Prod tasks**:
 
@@ -575,7 +575,7 @@ keyword-based attacks but not semantic injection patterns.
 
 ### 6.3 Human-in-the-Loop Enforcement — Dev Posture `[DEV]`
 
-**POAM**: AI600-004 | **AI 600-1 ref**: §2.5 Human-AI Configuration
+**POAM**: AI600-004 | **AI 600-1 ref**: §2.7 Human-AI Configuration
 **Controls**: `ConsensusEngine`, consensus threshold USD 10,000
 
 **Current state**: `ConsensusEngine` (`src/gateway/governance/consensus/engine.py`) enforces
@@ -590,7 +590,7 @@ threshold is exceeded, the request is blocked but not routed to a human reviewer
    # Copyright 2026 Google LLC
    # Licensed under the Apache License, Version 2.0
 
-   """Human-in-the-loop escalator — AI 600-1 §2.5 control."""
+   """Human-in-the-loop escalator — AI 600-1 §2.7 control."""
 
    import os
    from dataclasses import dataclass
@@ -662,7 +662,7 @@ assertions and pass in CI; AI 600-1 readiness reaches ≥ 85%.
 
 ### 7.1 NeMo Guardrails CBRN Rail — Dev Posture `[DEV]`
 
-**POAM**: AI600-007 | **AI 600-1 ref**: §2.6 CBRN and Weapons of Mass Destruction
+**POAM**: AI600-007 | **AI 600-1 ref**: §2.1 CBRN and Weapons of Mass Destruction
 **Controls**: NeMo Guardrails, Tier-1 keyword list
 
 **Current state**: `de5534ac:deployment/k8s/nemo.yaml` deploys NeMo Guardrails with financial
@@ -673,7 +673,7 @@ domain rails. CBRN-specific Colang rail definitions are not present.
 1. Create `src/gateway/governance/nemo/colang/cbrn_rails.co` with CBRN rail
    definitions:
    ```colang
-   # CBRN Safety Rail — AI 600-1 §2.6
+   # CBRN Safety Rail — AI 600-1 §2.1
    # Blocks requests related to chemical, biological, radiological, nuclear content
    
    define user ask cbrn synthesis
@@ -709,7 +709,7 @@ domain rails. CBRN-specific Colang rail definitions are not present.
 
 ### 7.2 NeMo Guardrails CBRN Rail — Prod Posture `[PROD]`
 
-**POAM**: AI600-007 | **AI 600-1 ref**: §2.6
+**POAM**: AI600-007 | **AI 600-1 ref**: §2.1
 
 > ⚠️ **Cat-M flag**: Adding new NeMo Colang rail definitions that affect the
 > inference pipeline constitutes a change to the AI model behavior layer.
@@ -772,7 +772,7 @@ domain rails. CBRN-specific Colang rail definitions are not present.
 
 ### 7.3 Recursive Governance Risk Mitigation `[BOTH]`
 
-**POAM**: AI600-001 (secondary) | **AI 600-1 ref**: §2.1, §2.5.3
+**POAM**: AI600-001 (secondary) | **AI 600-1 ref**: §2.2, §2.5.3
 **Controls**: `ConsensusEngine` (LLM-governed-by-LLM risk)
 
 **What**: The `ConsensusEngine` uses LLM inference to govern LLM outputs — creating
@@ -827,7 +827,7 @@ risk categories and 7 POAM items.
 | Phase 2 complete | 78% | 70% | Prompt injection detector, HITL escalator, provenance chain |
 | Phase 3 complete | 92% | 88% | CBRN NeMo rails, OSCAL extension, all Lula stubs replaced |
 
-> **Note**: 100% is not achievable because AI 600-1 §2.4 (Harmful Bias) and §2.9
+> **Note**: 100% is not achievable because AI 600-1 §2.6 (Harmful Bias) and §2.5
 > (Environmental Impact) require ongoing measurement programs, not one-time controls.
 > The 8–12% residual gap represents continuous monitoring obligations.
 
@@ -1225,7 +1225,7 @@ Kubernetes assertions. This is the final step before AI 600-1 release gate closu
 
 ### 6.4 Human-in-the-Loop Enforcement — Prod Posture `[PROD]`
 
-**POAM**: AI600-004 | **AI 600-1 ref**: §2.5
+**POAM**: AI600-004 | **AI 600-1 ref**: §2.7
 
 **Prod tasks**:
 
@@ -1262,7 +1262,7 @@ Kubernetes assertions. This is the final step before AI 600-1 release gate closu
 
 ### 6.5 AgentSight Provenance Chain — Dev Posture `[DEV]`
 
-**POAM**: AI600-005 | **AI 600-1 ref**: §2.7 Information Integrity
+**POAM**: AI600-005 | **AI 600-1 ref**: §2.8 Information Integrity
 **Controls**: AgentSight daemon, KMS signing
 
 **Current state (`2026-11-05`)**: `de5534ac:deployment/k8s/agentsight-daemon.yaml` is a static manifest outside Terraform state, has been refused by Binary Authorization on staging since 2026-09-06 (Cloud Audit Logs), and is **not in force** (`POAM-021` reopened, `POAM-2026-193`). Furthermore, `POST /v1/infra/events` in [`src/compliance_bridge/main.py`](../../../src/compliance_bridge/main.py) logs caller-supplied events to container stdout only (after `#667` retired `4c48d107^:src/compliance_bridge/clickhouse_sink.py`) without verifying cryptographic provenance (`POAM-2026-193`).
@@ -1274,7 +1274,7 @@ Kubernetes assertions. This is the final step before AI 600-1 release gate closu
    # Copyright 2026 Google LLC
    # Licensed under the Apache License, Version 2.0
 
-   """Provenance chain — AI 600-1 §2.7 information integrity control."""
+   """Provenance chain — AI 600-1 §2.8 information integrity control."""
 
    import hashlib
    import json
@@ -1333,7 +1333,7 @@ Kubernetes assertions. This is the final step before AI 600-1 release gate closu
 
 ### 6.6 AgentSight Provenance Chain — Prod Posture `[PROD]`
 
-**POAM**: AI600-005 | **AI 600-1 ref**: §2.7
+**POAM**: AI600-005 | **AI 600-1 ref**: §2.8
 
 **Prod tasks**:
 
@@ -1367,7 +1367,7 @@ Kubernetes assertions. This is the final step before AI 600-1 release gate closu
 
 ### 5.4 PII Audit Log Hardening — Prod Posture `[PROD]`
 
-**POAM**: AI600-002 | **AI 600-1 ref**: §2.2 | **Control**: Presidio + CMEK
+**POAM**: AI600-002 | **AI 600-1 ref**: §2.4 | **Control**: Presidio + CMEK
 
 **Prod tasks**:
 
@@ -1414,7 +1414,7 @@ Kubernetes assertions. This is the final step before AI 600-1 release gate closu
 
 ### 5.5 Supply Chain Integrity — SBOM to GCS `[PROD]`
 
-**POAM**: AI600-006 | **AI 600-1 ref**: §2.8 Value Chain | **Control**: SBOM + Trivy
+**POAM**: AI600-006 | **AI 600-1 ref**: §2.12 Value Chain | **Control**: SBOM + Trivy
 
 **What**: Promote the SBOM CI step (Phase 0, §4.3) to production by uploading the
 SBOM to the GCS WORM bucket and adding a Trivy vulnerability gate.
@@ -1464,7 +1464,7 @@ SBOM to the GCS WORM bucket and adding a Trivy vulnerability gate.
 
 ### 4.3 SBOM Generation in CI `[DEV]` → promoted to `[BOTH]` in Phase 1
 
-**POAM**: AI600-006 | **AI 600-1 ref**: §2.8 Value Chain and Component Integrity
+**POAM**: AI600-006 | **AI 600-1 ref**: §2.12 Value Chain and Component Integrity
 
 **What**: Ensure `scripts/generate_sbom.py` runs in CI on every push to `main` and
 `rc-v*` branches, and that the SBOM artifact is stored in GCS.
@@ -1496,7 +1496,7 @@ SBOM to the GCS WORM bucket and adding a Trivy vulnerability gate.
 
 **Commit message**:
 ```
-ci(compliance): add SBOM generation step for AI 600-1 §2.8 value chain
+ci(compliance): add SBOM generation step for AI 600-1 §2.12 value chain
 ```
 
 **Branch**: `ci/ai600-sbom-generation`
@@ -1505,11 +1505,11 @@ ci(compliance): add SBOM generation step for AI 600-1 §2.8 value chain
 
 ### 4.4 Keyword List Expansion for CBRN `[DEV]`
 
-**POAM**: AI600-007 | **AI 600-1 ref**: §2.6 CBRN and Weapons of Mass Destruction
+**POAM**: AI600-007 | **AI 600-1 ref**: §2.1 CBRN and Weapons of Mass Destruction
 
 **What**: Expand the Tier-1 keyword list in `config/thresholds/US_FED_BASELINE.json`
 to include CBRN-specific terms. Current list has 14 keywords (financial domain).
-AI 600-1 §2.6 requires CBRN coverage for any GenAI system accessible to federal users.
+AI 600-1 §2.1 requires CBRN coverage for any GenAI system accessible to federal users.
 
 **Dev tasks**:
 
@@ -1544,7 +1544,7 @@ AI 600-1 §2.6 requires CBRN coverage for any GenAI system accessible to federal
 
 **Commit message**:
 ```
-feat(governance): expand Tier-1 keyword list with CBRN terms for AI 600-1 §2.6
+feat(governance): expand Tier-1 keyword list with CBRN terms for AI 600-1 §2.1
 ```
 
 **Branch**: `feat/CAGE-XXX-ai600-cbrn-keywords`

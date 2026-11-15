@@ -35,7 +35,7 @@ PII_RETENTION_AUTHORITY: dict[str, str] = {
 }
 
 INJECTION_CITATION: dict[str, str] = {
-    "US_FED": "AI 600-1 §2.3 (prompt injection — US Federal posture)",
+    "US_FED": "AI 600-1 §2.9 (prompt injection — US Federal posture)",
     "EU_ECB": "EU AI Act Art. 9 (risk management system — robustness)",
     "APAC_MAS": "MAS FEAT Principle 2 (Ethics — robustness against adversarial inputs)",
 }

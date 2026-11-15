@@ -13,7 +13,7 @@
 # limitations under the License.
 
 # lula-validation-ai600-cbrn.yaml
-# NIST AI 600-1 §2.6 — CBRN / Harmful Content controls
+# NIST AI 600-1 §2.1 — CBRN / Harmful Content controls
 #
 # Validates: NeMo guardrails active; Tier-1 CBRN keyword list enforced.
 # POAM: AI600-007
@@ -28,7 +28,7 @@ component-definition:
     last-modified: '2026-07-09T00:00:00Z'
     version: 1.0.0
     oscal-version: 1.1.2
-    remarks: 'Phase-0 stub for AI 600-1 §2.6 CBRN / Harmful Content controls. Always passes until Phase 3 real assertions
+    remarks: 'Phase-0 stub for AI 600-1 §2.1 CBRN / Harmful Content controls. Always passes until Phase 3 real assertions
       are implemented per §7.2. Region: US_FED. POAM: AI600-007.'
   components:
   - uuid: fded7ef2-1e57-4f30-ba4f-c5707cfb66de
@@ -43,7 +43,7 @@ component-definition:
       implemented-requirements:
       - uuid: fd641f71-329b-41db-83ce-9d2dc1e57c04
         control-id: ai600-cbrn
-        description: Phase-0 stub for AI 600-1 §2.6 CBRN harmful content controls.
+        description: Phase-0 stub for AI 600-1 §2.1 CBRN harmful content controls.
         links:
         - href: '#ab3e9842-b66a-4e1e-b518-2d47937ee8e8'
           rel: lula

@@ -81,7 +81,7 @@ deferral rationale.
 | POAM-2026-016 | RA-5 / SI-2 | No — upstream CVE, no fix available |
 | POAM-2026-023 | RA-5 | No — upstream Debian base-layer CVE |
 | POAM-2026-024 | CM-6 | No — staging environment not provisioned |
-| POAM-2026-025 | AI 600-1 §2.6 | No — blocked on AO pre-approval |
+| POAM-2026-025 | AI 600-1 §2.1 | No — blocked on AO pre-approval |
 | POAM-2026-026 | ISO 42001 A.8.4 | No — deployment topology |
 | **POAM-2026-060** | **SC-13 / SI-7** | **Yes — the sole explicit backward-compat deferral** |
 | EU-DORA-001 | DORA Art. 10 | No — endpoint not implemented |

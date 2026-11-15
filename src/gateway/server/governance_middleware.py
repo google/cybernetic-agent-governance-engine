@@ -370,7 +370,7 @@ async def sanitize_mcp_tool_response(
     response_text: str,
     span: Any = None,
 ) -> str | None:
-    """Sanitize an MCP tool response for indirect injection (AI 600-1 §2.3, AI600-003).
+    """Sanitize an MCP tool response for indirect injection (AI 600-1 §2.9, AI600-003).
 
     Checks the tool response against the indirect injection pattern set in
     ``prompt_injection_detector.detect_indirect_injection()``.  Called in the

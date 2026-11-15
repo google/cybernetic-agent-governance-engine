@@ -1,4 +1,4 @@
-# CBRN Safety Rail — AI 600-1 §2.6
+# CBRN Safety Rail — AI 600-1 §2.1
 # Blocks requests related to chemical, biological, radiological, nuclear content.
 # Region guard: loaded only when CAGE_DEPLOYMENT_REGION=US_FED
 # POAM: AI600-007

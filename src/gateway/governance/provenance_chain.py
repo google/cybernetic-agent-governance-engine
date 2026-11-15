@@ -12,7 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Provenance chain — AI 600-1 §2.7 information integrity control.
+"""Provenance chain — AI 600-1 §2.8 information integrity control.
 
 Builds a cryptographic hash chain linking each LangGraph governance node's
 input and output, creating an immutable audit trail of governance decisions.
@@ -143,7 +143,7 @@ def compute_hash(data: dict) -> str:
     """Return the SHA-256 hex digest of the RFC 8785 canonical JSON-serialised dict.
 
     Uses RFC 8785 JSON Canonicalization Scheme (JCS) to guarantee cross-language
-    and cross-platform byte determinism (AI 600-1 §2.7 information integrity).
+    and cross-platform byte determinism (AI 600-1 §2.8 information integrity).
     Non-serialisable leaf values are coerced to strings while preserving nested
     dict and list structure.
 
