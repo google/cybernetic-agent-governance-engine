@@ -46,6 +46,7 @@ from typing import Any
 
 import yaml
 
+from src.gateway.governance.env_posture import resolve_deployment_region
 from src.gateway.governance.jcs_canonicalizer import jcs_canonicalize_plan
 
 logger = logging.getLogger(__name__)
@@ -272,7 +273,7 @@ class UCALogger:
         timestamp = now_utc.strftime("%Y-%m-%dT%H:%M:%SZ")
         date_str = now_utc.strftime("%Y-%m-%d")
         worm_path = f"uca-records/{date_str}/{event_id}.yaml"
-        region = os.environ.get("CAGE_DEPLOYMENT_REGION", "US_FED")
+        region = resolve_deployment_region()
         session_key = f"quota:session:{agent_id}"
 
         # PII sanitized before persistence per GDPR Art. 32 / MAS Notice 655
@@ -429,7 +430,7 @@ class UCALogger:
         Falls back to OSCAL_S3_BUCKET if the region-specific var is unset.
         Satisfies .clinerules §12.2 (CAGE_DEPLOYMENT_REGION guard).
         """
-        region = os.environ.get("CAGE_DEPLOYMENT_REGION", "US_FED")
+        region = resolve_deployment_region()
         fallback = os.environ.get("OSCAL_S3_BUCKET", "")
         bucket_map = {
             "US_FED": os.environ.get("OSCAL_S3_BUCKET_US_FED", fallback),

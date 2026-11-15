@@ -19,7 +19,10 @@ Provides a centralized enum for deployment environments and resolution logic
 from CAGE_ENV environment variable.
 
 This module standardizes posture detection across the codebase, replacing
-ad-hoc CAGE_ENV string comparisons with a typed enum.
+ad-hoc CAGE_ENV string comparisons with a typed enum. It also holds the only
+readers of ``CAGE_DOMAIN`` (:func:`resolve_domain`) and
+``CAGE_DEPLOYMENT_REGION`` (:func:`resolve_deployment_region`): a process runs
+one domain under one region, and both refuse rather than guess.
 """
 
 from __future__ import annotations
@@ -155,3 +158,57 @@ def resolve_domain() -> str:
             f"{DOMAIN_ENV_VAR}={raw!r} names more than one domain; a CAGE process runs exactly one"
         )
     return raw.lower()
+
+
+REGION_ENV_VAR = "CAGE_DEPLOYMENT_REGION"
+
+#: The deployment regions the kernel has a compliance profile and a
+#: jurisdiction entry for. A CAGE process runs under exactly one of them.
+SUPPORTED_REGIONS: frozenset[str] = frozenset({"US_FED", "EU_ECB", "APAC_MAS"})
+
+#: The region a permissive posture (dev, test, CI) runs under when
+#: ``CAGE_DEPLOYMENT_REGION`` is unset. No enforcing posture has a default.
+PERMISSIVE_DEFAULT_REGION = "US_FED"
+
+
+class DeploymentRegionError(RuntimeError):
+    """``CAGE_DEPLOYMENT_REGION`` names no supported region, or is unset where one is required."""
+
+
+def resolve_deployment_region(env: Mapping[str, str] | None = None) -> str:
+    """Return the one deployment region this process runs under.
+
+    This is the only reader of ``CAGE_DEPLOYMENT_REGION``;
+    ``tests/unit/test_deployment_region_reader.py`` fails on any other. Every
+    region-dependent control (compliance profile, jurisdiction, citations,
+    residency, SLA targets) takes its region from here, so they cannot
+    disagree about which region is in force.
+
+    The value must equal one of :data:`SUPPORTED_REGIONS` exactly once
+    surrounding whitespace is stripped: no case folding and no aliases, so
+    ``us_fed`` or ``LOCAL`` is refused rather than read as some region.
+
+    Unset or blank, a permissive posture (dev, test, CI) runs under
+    :data:`PERMISSIVE_DEFAULT_REGION`; every other posture, including
+    ``local`` and an unknown ``CAGE_ENV``, refuses, because guessing a region
+    would apply another jurisdiction's controls.
+
+    Raises:
+        DeploymentRegionError: If the value is set but not a supported region,
+            or unset or blank in an enforcing posture.
+    """
+    source = os.environ if env is None else env
+    raw = (source.get(REGION_ENV_VAR) or "").strip()
+    if not raw:
+        if is_enforcing(source if env is not None else None):
+            raise DeploymentRegionError(
+                f"{REGION_ENV_VAR} is not set: an enforcing posture requires one of "
+                f"{sorted(SUPPORTED_REGIONS)}"
+            )
+        return PERMISSIVE_DEFAULT_REGION
+    if raw not in SUPPORTED_REGIONS:
+        raise DeploymentRegionError(
+            f"{REGION_ENV_VAR}={raw!r} is not a supported region; expected exactly "
+            f"one of {sorted(SUPPORTED_REGIONS)}"
+        )
+    return raw

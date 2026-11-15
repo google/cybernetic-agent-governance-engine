@@ -228,10 +228,20 @@ class TestGetInjectionCitation:
         citation = get_injection_citation()
         assert "MAS FEAT" in citation
 
-    def test_unset_region_falls_back_to_iso_42001(self, monkeypatch):
+    def test_unset_or_unknown_region_follows_resolver_posture(self, monkeypatch):
+        from src.gateway.governance.env_posture import DeploymentRegionError
+
+        monkeypatch.setenv("CAGE_ENV", "test")
         monkeypatch.delenv("CAGE_DEPLOYMENT_REGION", raising=False)
-        citation = get_injection_citation()
-        assert "ISO 42001" in citation
+        assert "AI 600-1" in get_injection_citation()
+
+        monkeypatch.setenv("CAGE_ENV", "production")
+        with pytest.raises(DeploymentRegionError, match="is not set"):
+            get_injection_citation()
+
+        monkeypatch.setenv("CAGE_DEPLOYMENT_REGION", "UNKNOWN_REGION")
+        with pytest.raises(DeploymentRegionError, match="not a supported region"):
+            get_injection_citation()
 
     def test_explicit_region_parameter_overrides_environment(self, monkeypatch):
         monkeypatch.setenv("CAGE_DEPLOYMENT_REGION", "US_FED")

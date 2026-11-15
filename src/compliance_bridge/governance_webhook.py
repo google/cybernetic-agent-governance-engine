@@ -76,6 +76,8 @@ from urllib.parse import urlparse
 
 import httpx as _httpx
 
+from src.gateway.governance.env_posture import resolve_deployment_region
+
 logger = logging.getLogger("ComplianceBridge.GovernanceWebhook")
 
 # ---------------------------------------------------------------------------
@@ -203,9 +205,7 @@ class WebhookRegistry:
     def __init__(self) -> None:
         self._registrations: dict[str, WebhookRegistration] = {}
         self._lock = asyncio.Lock()
-        self._region = (
-            os.environ.get("CAGE_DEPLOYMENT_REGION", "US_FED").strip().upper()
-        )
+        self._region = resolve_deployment_region()
 
     # ------------------------------------------------------------------
     # Region guard

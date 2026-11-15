@@ -66,8 +66,9 @@ JURISDICTIONS: Mapping[str, JurisdictionFactory] = MappingProxyType(
 def active_region() -> str:
     """The region whose compliance profile ``ControlRegistry`` has loaded.
 
-    Same reader as every other region-dependent control: an unknown
-    ``CAGE_DEPLOYMENT_REGION`` falls back to ``US_FED`` there, and so here.
+    Same reader as every other region-dependent control: the region is the one
+    ``resolve_deployment_region()`` returned when the profile loaded, and an
+    unknown ``CAGE_DEPLOYMENT_REGION`` is refused there, so none is in force here.
     """
     from src.gateway.governance.constants import ControlRegistry
 

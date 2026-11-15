@@ -51,10 +51,11 @@ References:
 from __future__ import annotations
 
 import logging
-import os
 import uuid
 from datetime import datetime, timezone
 from typing import TYPE_CHECKING
+
+from src.gateway.governance.env_posture import resolve_deployment_region
 
 if TYPE_CHECKING:
     from .evidence_verifier import CustodyVerificationReport
@@ -203,7 +204,7 @@ def build_oscal_assessment_results(
             )
 
         # Region-aware control metadata lookup
-        _region = os.environ.get("CAGE_DEPLOYMENT_REGION", "LOCAL")
+        _region = resolve_deployment_region()
         _control_meta = get_control_meta(_region)
         status_block: dict = {"state": _finding_to_state(f)}
         if f.remarks:

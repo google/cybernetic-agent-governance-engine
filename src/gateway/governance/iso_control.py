@@ -35,11 +35,12 @@ Attribute schema (6 mandatory attributes):
 
 import collections
 import logging
-import os
 import time
 from importlib.metadata import PackageNotFoundError
 from importlib.metadata import version as _pkg_version
 from typing import Any
+
+from src.gateway.governance.env_posture import resolve_deployment_region
 
 logger = logging.getLogger("Gateway.Governance.IsoControl")
 
@@ -59,7 +60,7 @@ _REDIS_STREAM_KEY = "iso_control:audit_trail"
 
 
 def _get_deployment_region() -> str:
-    return os.environ.get("CAGE_DEPLOYMENT_REGION", "US_FED").strip().upper()
+    return resolve_deployment_region()
 
 
 # ---------------------------------------------------------------------------

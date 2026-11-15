@@ -65,8 +65,6 @@ def clean_env(monkeypatch: pytest.MonkeyPatch):
         ("EU_ECB", "EVIDENCE_COLD_STORE_BUCKET_EU", "cage-eu-compliance-vault"),
         ("APAC_MAS", "EVIDENCE_COLD_STORE_BUCKET_APAC", "apac-cold-store-archive"),
         ("APAC_MAS", "EVIDENCE_COLD_STORE_BUCKET_APAC", "cage-apac-evidence-stream"),
-        ("LOCAL", "EVIDENCE_COLD_STORE_BUCKET_LOCAL", "dev-local-evidence"),
-        ("LOCAL", "EVIDENCE_COLD_STORE_BUCKET_LOCAL", "local-evidence-bucket"),
     ],
 )
 def test_resolve_cold_store_bucket_valid_prefixes(
@@ -81,6 +79,18 @@ def test_resolve_cold_store_bucket_valid_prefixes(
 
     bucket = resolve_cold_store_bucket()
     assert bucket == valid_bucket
+
+
+def test_resolve_cold_store_bucket_rejects_local_env_region(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    """CAGE_DEPLOYMENT_REGION=LOCAL is not a supported deployment region and fails closed."""
+    from src.gateway.governance.env_posture import DeploymentRegionError
+
+    monkeypatch.setenv("CAGE_DEPLOYMENT_REGION", "LOCAL")
+    monkeypatch.setenv("EVIDENCE_COLD_STORE_BUCKET_LOCAL", "local-evidence-bucket")
+    with pytest.raises(DeploymentRegionError, match="not a supported region"):
+        resolve_cold_store_bucket()
 
 
 def test_resolve_cold_store_bucket_local_default():

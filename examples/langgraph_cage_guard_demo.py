@@ -50,6 +50,7 @@ Usage:
 
 import argparse
 import asyncio
+import os
 import sys
 import uuid
 from datetime import datetime, timedelta, timezone
@@ -63,6 +64,7 @@ from unittest.mock import AsyncMock, MagicMock
 
 _REPO_ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(_REPO_ROOT))
+os.environ.setdefault("CAGE_ENV", "dev")
 
 from cage_client.adapters.langgraph import cage_guard
 from cage_client.core import CageClient

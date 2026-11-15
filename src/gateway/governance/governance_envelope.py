@@ -76,6 +76,7 @@ from datetime import datetime, timezone
 from enum import Enum
 from typing import Any
 
+from src.gateway.governance.env_posture import resolve_deployment_region
 from src.gateway.governance.jcs_canonicalizer import jcs_canonicalize_plan
 from src.gateway.governance.seams.attestation import (
     AttestationStatus as AttestationStatus,
@@ -96,7 +97,6 @@ _ENVELOPE_TYPE = "cage_governance_decision"
 # Instance identification (from environment or generated)
 _SERVICE_NAME = os.environ.get("CAGE_SERVICE_NAME", "cage-gateway")
 _INSTANCE_ID = os.environ.get("CAGE_INSTANCE_ID", f"local-{uuid.uuid4().hex[:8]}")
-_DEPLOYMENT_REGION = os.environ.get("CAGE_DEPLOYMENT_REGION", "LOCAL")
 
 # Envelope TTL (default: 5 minutes for audit retention, not execution)
 _ENVELOPE_TTL_S = int(os.environ.get("CAGE_ENVELOPE_TTL_S", "300"))
@@ -120,7 +120,7 @@ class IssuerMetadata:
 
     service: str = _SERVICE_NAME
     instance_id: str = _INSTANCE_ID
-    region: str = _DEPLOYMENT_REGION
+    region: str = field(default_factory=resolve_deployment_region)
 
     def to_dict(self) -> dict[str, str]:
         return {
@@ -160,7 +160,7 @@ class GovernanceContext:
 
     policy_version: str
     tiers_passed: list[str] = field(default_factory=list)
-    deployment_region: str = _DEPLOYMENT_REGION
+    deployment_region: str = field(default_factory=resolve_deployment_region)
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -358,7 +358,7 @@ class GovernanceEnvelopeBuilder:
         context = GovernanceContext(
             policy_version=self._get_policy_version(),
             tiers_passed=tiers_passed or [],
-            deployment_region=_DEPLOYMENT_REGION,
+            deployment_region=resolve_deployment_region(),
         )
 
         return GovernanceEnvelope(
@@ -654,7 +654,11 @@ class GovernanceEnvelopeBuilder:
         issuer = IssuerMetadata(
             service=issuer_data.get("service", _SERVICE_NAME),
             instance_id=issuer_data.get("instance_id", _INSTANCE_ID),
-            region=issuer_data.get("region", _DEPLOYMENT_REGION),
+            region=(
+                issuer_data["region"]
+                if "region" in issuer_data
+                else resolve_deployment_region()
+            ),
         )
 
         subject_data = data.get("subject", {})
@@ -673,7 +677,11 @@ class GovernanceEnvelopeBuilder:
         context = GovernanceContext(
             policy_version=context_data.get("policy_version", ""),
             tiers_passed=context_data.get("tiers_passed", []),
-            deployment_region=context_data.get("deployment_region", _DEPLOYMENT_REGION),
+            deployment_region=(
+                context_data["deployment_region"]
+                if "deployment_region" in context_data
+                else resolve_deployment_region()
+            ),
         )
 
         sig_data = data.get("signature")

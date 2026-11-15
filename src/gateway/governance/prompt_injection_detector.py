@@ -61,10 +61,11 @@ Usage::
 from __future__ import annotations
 
 import logging
-import os
 import re
 import unicodedata
 from dataclasses import dataclass
+
+from src.gateway.governance.env_posture import resolve_deployment_region
 
 logger = logging.getLogger("Gateway.Governance.PromptInjectionDetector")
 
@@ -103,20 +104,20 @@ logger = logging.getLogger("Gateway.Governance.PromptInjectionDetector")
 
 
 def _get_region() -> str:
-    return os.environ.get("CAGE_DEPLOYMENT_REGION", "").strip().upper()
+    return resolve_deployment_region()
 
 
 def get_injection_citation(region: str | None = None) -> str:
     """Return the jurisdiction-specific prompt-injection regulatory citation.
 
     Args:
-        region: CAGE_DEPLOYMENT_REGION value. If None, reads from the
-                environment. One of "US_FED", "EU_ECB", "APAC_MAS".
+        region: One of "US_FED", "EU_ECB", "APAC_MAS". If None,
+                ``resolve_deployment_region()``.
 
     Returns:
-        The regulatory authority citation string for the active region, or
-        the universal ISO 42001 A.9.2 citation if the region is unset or
-        unrecognised.
+        The regulatory authority citation string for the active region (or the
+        ISO 42001 A.9.2 citation if an explicit ``region`` argument is not in
+        ``INJECTION_CITATION``).
     """
     from src.gateway.governance.constants import (
         INJECTION_CITATION,

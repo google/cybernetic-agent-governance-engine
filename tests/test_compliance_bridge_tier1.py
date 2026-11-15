@@ -215,17 +215,15 @@ class TestControlsDiscoveryEndpoint:
         assert sc4["critical"] is True
 
     def test_all_supported_controls_present(self, client):
-        # When CAGE_DEPLOYMENT_REGION is not set the endpoint returns universal
-        # (ISO 42001) controls only.  SUPPORTED_CONTROLS now includes all
-        # jurisdictional controls too, so compare against the universal subset.
+        # /v1/controls returns get_control_meta(resolve_deployment_region()),
+        # which includes universal ISO 42001 controls plus the active region's controls.
         from src.compliance_bridge.types import get_control_meta
+        from src.gateway.governance.env_posture import resolve_deployment_region
 
-        universal_ids = set(get_control_meta("").keys())
+        expected_ids = set(get_control_meta(resolve_deployment_region()).keys())
         data = client.get("/v1/controls").json()
         returned_ids = {c["control_id"] for c in data["controls"]}
-        assert universal_ids <= returned_ids, (
-            f"Expected universal controls {universal_ids} to be a subset of returned {returned_ids}"
-        )
+        assert expected_ids == returned_ids
 
 
 # ---------------------------------------------------------------------------
