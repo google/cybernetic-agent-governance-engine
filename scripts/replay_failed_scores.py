@@ -39,6 +39,7 @@ import logging
 import os
 import sys
 import time
+from typing import Any
 
 logging.basicConfig(
     level=logging.INFO,
@@ -63,7 +64,7 @@ REPLAYED_SCORES_PATH = "failed_scores_replayed.jsonl"
 
 
 def _post_score_with_retry(
-    langfuse_client,
+    langfuse_client: Any,
     *,
     trace_id: str,
     name: str,

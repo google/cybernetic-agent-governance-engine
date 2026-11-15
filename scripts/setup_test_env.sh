@@ -57,9 +57,8 @@ export CAGE_ENV=dev
 export CAGE_DOMAIN="${CAGE_DOMAIN:-finance}"  # exactly one domain per process
 export CAGE_TRUSTED_CLIENT_IDENTITIES="${CAGE_TRUSTED_CLIENT_IDENTITIES:-cage-advisor-sa.governance-stack.serviceaccount.identity.linkerd.cluster.local}"
 
-# Prevents regional compliance overlays (US_FED / EU_ECB / APAC_MAS) from
-# activating.  Leave unset or set to LOCAL for local development.
-export CAGE_DEPLOYMENT_REGION="${CAGE_DEPLOYMENT_REGION:-LOCAL}"
+# Default to US_FED in dev/test posture (resolve_deployment_region() refuses LOCAL).
+export CAGE_DEPLOYMENT_REGION="${CAGE_DEPLOYMENT_REGION:-US_FED}"
 
 # Insecure placeholder — satisfies the HMAC governance salt check locally.
 export GOVERNANCE_SALT="${GOVERNANCE_SALT:-dev-only-insecure-placeholder-not-for-production-use}"

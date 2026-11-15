@@ -1008,6 +1008,12 @@ class TestCitabilityAndOscalExport:
 
 
 class _NonNullStore(NullColdStore):
+    def __init__(self) -> None:
+        from collections import OrderedDict
+
+        self._max_entries = 1000
+        self._entries = OrderedDict()
+
     @property
     def backend_id(self) -> str:
         return "gcs"

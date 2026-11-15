@@ -112,9 +112,9 @@ verify-deploy: ## Verify GKE deployment matches latest build and all Secrets are
 ## Run linters, type checks, and lockfile validation
 lint:
 	@echo "==> Running ruff linter..."
-	@uv run ruff check src/ scripts/ tests/
+	@uv run ruff check src/ scripts/ tests/ packages/ proof/ deployment/
 	@echo "==> Running mypy type checker..."
-	@uv run mypy src/
+	@uv run mypy src/ scripts/ proof/ packages/cage-client/src/ packages/cage-conformance/src/ deployment/
 	@echo "==> Validating dependency lockfile..."
 	@uv lock --check
 	@echo "==> Checking the base install and gateway image are model-free..."
@@ -129,7 +129,7 @@ security:
 	@uv lock --check
 	@echo ""
 	@echo "==> Running Bandit SAST scanner..."
-	@uv run --with bandit bandit -r src/ scripts/ -c pyproject.toml -ll -ii
+	@uv run --with bandit bandit -r src/ scripts/ packages/cage-client/src/ packages/cage-conformance/src/ proof/ deployment/ -c pyproject.toml -ll -ii
 	@echo ""
 	@echo "==> Running pip-audit for CVE scanning..."
 	@uv run pip-audit

@@ -717,6 +717,8 @@ async def e2e_stack(
     monkeypatch.setenv("EVIDENCE_CHAIN_BLOCKING", "true")
     monkeypatch.setenv("CAGE_REDIS_WAIT_REPLICAS", "0")
     monkeypatch.setenv("CAGE_STRICT_REPLICATION", "false")
+    # Hermetic FakeRedis harness seeds cbf.redis_key directly without a reconciler daemon.
+    monkeypatch.setenv("CAGE_CBF_STRICT_MODE", "false")
     monkeypatch.setenv("CAGE_TRUSTED_CLIENT_IDENTITIES", ADVISOR_L5D_ID)
     monkeypatch.setenv("CAGE_RATE_LIMIT_PRINCIPAL_PER_MIN", "1000")
 

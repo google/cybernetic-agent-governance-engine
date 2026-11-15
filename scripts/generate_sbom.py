@@ -497,7 +497,7 @@ def upload_to_gcs(
         return gcs_uri
 
     try:
-        from google.cloud import storage  # type: ignore[import]
+        from google.cloud import storage  # type: ignore[attr-defined,import-untyped]
 
         logger.info("Uploading '%s' → %s", local_path, gcs_uri)
         client = storage.Client(project=project_id)

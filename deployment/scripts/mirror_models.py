@@ -46,8 +46,11 @@ import hashlib
 import json
 import logging
 import os
+import re
 import shutil
+import sys
 from pathlib import Path
+from typing import Any
 
 import boto3
 from botocore.config import Config as BotocoreConfig
@@ -58,32 +61,43 @@ load_dotenv()
 
 logger = logging.getLogger(__name__)
 
-# Configuration — S3_BUCKET_NAME is required; no placeholder default permitted.
-BUCKET_NAME = os.environ["S3_BUCKET_NAME"]
+# Configuration — S3_BUCKET_NAME is validated when upload/mirror runs so importing
+# this module in unit/type tests does not crash with KeyError at import time.
+BUCKET_NAME = os.environ.get("S3_BUCKET_NAME", "")
 ENDPOINT_URL = os.environ.get("S3_ENDPOINT_URL") or None
 REGION_NAME = os.environ.get("S3_REGION_NAME", "us-east-1")
 PATH_STYLE = os.environ.get("S3_PATH_STYLE", "").lower() in ("1", "true", "yes")
 
-# AI600-007: Model weight integrity verification mode.
-# STRICT=true → abort on hash mismatch; STRICT=false (default) → warn and continue.
-_VERIFICATION_STRICT = (
-    os.environ.get("MODEL_WEIGHT_VERIFICATION_STRICT", "").lower() == "true"
-)
+# AI600-007: Fail-closed by default — set MODEL_WEIGHT_VERIFICATION_STRICT=false
+# only in explicitly non-production local experiments.
+_VERIFICATION_STRICT = os.environ.get(
+    "MODEL_WEIGHT_VERIFICATION_STRICT", "true"
+).lower() not in ("0", "false", "no")
+
+_COMMIT_SHA_RE = re.compile(r"^[0-9a-f]{40}$")
+_PLACEHOLDER_DIGEST = "PLACEHOLDER_REQUIRES_SECURITY_REVIEW"
+_UNSAFE_PICKLE_SUFFIXES = frozenset({".bin", ".pt", ".pth", ".ckpt", ".pkl", ".pickle"})
+_IGNORE_PATTERNS = [
+    "*.bin",
+    "*.pt",
+    "*.pth",
+    "*.ckpt",
+    "*.pkl",
+    "*.pickle",
+    "*.msgpack",
+    "*.h5",
+    "*.ot",
+]
 
 # Canonical path to the signed model hash manifest (relative to repo root).
 _MANIFEST_PATH = Path(__file__).parent.parent.parent / "config" / "model_hashes.json"
 
-# Anchor filenames whose hashes are checked for integrity.  We verify config.json
-# and tokenizer.json as lightweight integrity anchors — these files ship with every
-# HuggingFace model snapshot and are small enough to hash locally.  Weight shard
-# files (*.safetensors, *.bin) are too large for a static manifest; a future Phase 3
-# improvement will add cosign/sigstore attestation for those files.
 _INTEGRITY_ANCHORS = frozenset(
     ["config.json", "tokenizer.json", "tokenizer_config.json"]
 )
 
 
-def get_base_model_name(model_id: str) -> str:
+def get_base_model_name(model_id: str | None) -> str:
     """Strips openai/ or other provider prefixes."""
     if not model_id:
         return ""
@@ -98,20 +112,19 @@ def get_base_model_name(model_id: str) -> str:
 MODEL_FAST = os.getenv("MODEL_FAST")
 MODEL_REASONING = os.getenv("MODEL_REASONING")
 
-MODELS_TO_MIRROR = list(
-    set(
-        filter(
-            None,
-            [
-                get_base_model_name(MODEL_FAST),
-                get_base_model_name(MODEL_REASONING),
-            ],
+MODELS_TO_MIRROR = sorted(
+    {
+        name
+        for name in (
+            get_base_model_name(MODEL_FAST),
+            get_base_model_name(MODEL_REASONING),
         )
-    )
+        if name
+    }
 )
 
 
-def _get_s3_client() -> boto3.client:
+def _get_s3_client() -> Any:
     """Return a configured boto3 S3 client."""
     config = BotocoreConfig(s3={"addressing_style": "path"} if PATH_STYLE else {})
     return boto3.client(
@@ -131,73 +144,106 @@ def _sha256_file(path: Path) -> str:
     return h.hexdigest()
 
 
-def _load_hash_manifest() -> dict:
-    """Load the signed model hash manifest from config/model_hashes.json.
-
-    Returns an empty dict if the manifest file does not exist, logging a
-    warning (non-fatal in non-strict mode).
-    """
+def _load_hash_manifest() -> dict[str, Any]:
+    """Load the signed model hash manifest from config/model_hashes.json."""
     if not _MANIFEST_PATH.exists():
-        logger.warning(
-            "[AI600-007] Model hash manifest not found at %s — "
-            "integrity verification will be skipped for all models. "
-            "Ensure config/model_hashes.json is committed to the repository.",
-            _MANIFEST_PATH,
-        )
+        logger.error("[AI600-007] Model hash manifest not found at %s.", _MANIFEST_PATH)
         return {}
     try:
         with open(_MANIFEST_PATH, encoding="utf-8") as f:
-            return json.load(f)
+            data = json.load(f)
+        return data if isinstance(data, dict) else {}
     except Exception as exc:
         logger.error("[AI600-007] Failed to parse model hash manifest: %s", exc)
         return {}
 
 
+def _resolve_model_revision(model_id: str, manifest: dict[str, Any]) -> str | None:
+    """Resolve the pinned 40-char HuggingFace commit SHA for *model_id*."""
+    env_key = "MODEL_REVISION_" + re.sub(r"[^A-Za-z0-9]", "_", model_id).upper()
+    entry = manifest.get(model_id)
+    manifest_rev = entry.get("_revision", "") if isinstance(entry, dict) else ""
+    rev = (
+        os.environ.get(env_key, "").strip()
+        or os.environ.get("MODEL_REVISION", "").strip()
+        or str(manifest_rev).strip()
+    )
+    if not rev:
+        return None
+    allow_mutable = os.environ.get("ALLOW_MUTABLE_MODEL_REVISION", "").lower() in (
+        "1",
+        "true",
+        "yes",
+    )
+    if not allow_mutable and not _COMMIT_SHA_RE.match(rev):
+        logger.error(
+            "[AI600-007] Revision %r for %s is not an immutable 40-char commit SHA.",
+            rev,
+            model_id,
+        )
+        return None
+    return rev
+
+
 def verify_model_integrity(local_model_dir: Path, model_id: str) -> bool:
-    """Verify the integrity of downloaded model anchor files against the signed manifest.
+    """Verify anchor digests, absence of pickle weights, and presence of .safetensors."""
+    unsafe_files = [
+        str(p.relative_to(local_model_dir))
+        for p in local_model_dir.rglob("*")
+        if p.is_file() and p.suffix.lower() in _UNSAFE_PICKLE_SUFFIXES
+    ]
+    if unsafe_files:
+        logger.error(
+            "[AI600-007] ❌ Unsafe pickle/PyTorch weight artifacts detected in %s: %s",
+            model_id,
+            unsafe_files,
+        )
+        _emit_integrity_span(model_id, verified=False, reason="unsafe_pickle_weights")
+        return False
 
-    Computes SHA-256 digests of anchor files (config.json, tokenizer.json,
-    tokenizer_config.json) in the downloaded model directory and compares
-    them to the expected digests in config/model_hashes.json.
+    allow_non_safetensors = os.environ.get("ALLOW_NON_SAFETENSORS", "").lower() in (
+        "1",
+        "true",
+        "yes",
+    )
+    safetensor_files = list(local_model_dir.rglob("*.safetensors"))
+    if not safetensor_files and not allow_non_safetensors:
+        logger.error(
+            "[AI600-007] ❌ No .safetensors weight shards found in %s.", model_id
+        )
+        _emit_integrity_span(model_id, verified=False, reason="missing_safetensors")
+        return False
 
-    Args:
-        local_model_dir: Path to the local model snapshot directory.
-        model_id:        HuggingFace model ID (e.g. "deepseek-ai/DeepSeek-R1-Distill-Llama-8B").
-
-    Returns:
-        ``True`` if all available anchor files pass verification or no manifest
-        entries exist for this model (non-blocking default).
-        ``False`` if any anchor file hash does not match the manifest.
-    """
     manifest = _load_hash_manifest()
     model_hashes = manifest.get(model_id, {})
 
-    if not model_hashes:
-        logger.warning(
-            "[AI600-007] No hash manifest entries for model '%s' — "
-            "skipping integrity verification. Add entries to config/model_hashes.json.",
+    if not isinstance(model_hashes, dict) or not model_hashes:
+        logger.error(
+            "[AI600-007] No hash manifest entries for model '%s' in %s.",
             model_id,
+            _MANIFEST_PATH,
         )
-        # Emit OTel span attribute if available (best-effort — OTel may not be configured)
         _emit_integrity_span(model_id, verified=False, reason="no_manifest_entries")
-        return True  # Non-blocking: treat as unverified rather than failing
+        return False
 
     all_passed = True
     verified_count = 0
     failed_files: list[str] = []
 
-    for anchor_filename in _INTEGRITY_ANCHORS:
+    for anchor_filename in sorted(_INTEGRITY_ANCHORS):
         anchor_path = local_model_dir / anchor_filename
         if not anchor_path.exists():
-            continue  # Anchor file not present in this model snapshot — skip
+            continue
 
         expected_hash = model_hashes.get(anchor_filename)
-        if not expected_hash:
-            logger.debug(
-                "[AI600-007] No manifest entry for %s/%s — skipping.",
+        if not expected_hash or expected_hash == _PLACEHOLDER_DIGEST:
+            logger.error(
+                "[AI600-007] Missing or unreviewed placeholder digest for %s/%s.",
                 model_id,
                 anchor_filename,
             )
+            all_passed = False
+            failed_files.append(anchor_filename)
             continue
 
         actual_hash = _sha256_file(anchor_path)
@@ -223,6 +269,11 @@ def verify_model_integrity(local_model_dir: Path, model_id: str) -> bool:
             all_passed = False
             failed_files.append(anchor_filename)
 
+    if verified_count == 0:
+        all_passed = False
+        if not failed_files:
+            failed_files.append("no_anchor_files_verified")
+
     if all_passed:
         logger.info(
             "[AI600-007] ✅ Model integrity verified: model=%s files_checked=%d",
@@ -246,11 +297,7 @@ def verify_model_integrity(local_model_dir: Path, model_id: str) -> bool:
 
 
 def _emit_integrity_span(model_id: str, verified: bool, reason: str) -> None:
-    """Emit an OTel span with supply_chain.model_integrity_verified attribute.
-
-    Best-effort — if OpenTelemetry is not configured, the span is a no-op.
-    AI600-007: SA-12 / SR-3 / SI-7 supply chain integrity evidence.
-    """
+    """Emit an OTel span with supply_chain.model_integrity_verified attribute."""
     try:
         from opentelemetry import trace
 
@@ -260,15 +307,18 @@ def _emit_integrity_span(model_id: str, verified: bool, reason: str) -> None:
             span.set_attribute("supply_chain.model_integrity_verified", verified)
             span.set_attribute("supply_chain.integrity_reason", reason)
             span.set_attribute("supply_chain.poam_ref", "AI600-007")
-    except Exception:
-        pass  # OTel not configured — span is non-critical
+    except Exception:  # noqa: BLE001
+        logger.debug("OpenTelemetry unavailable for supply_chain.model_integrity_check")
 
 
-def upload_to_s3(local_path: Path, s3_prefix: str, s3_client: boto3.client) -> None:
+def upload_to_s3(local_path: Path, s3_prefix: str, s3_client: Any) -> None:
     """Upload all files under *local_path* to *s3_prefix* in the configured bucket."""
+    bucket = BUCKET_NAME or os.environ.get("S3_BUCKET_NAME", "")
+    if not bucket:
+        raise RuntimeError("S3_BUCKET_NAME environment variable is required.")
     endpoint_display = ENDPOINT_URL or "AWS S3"
     print(
-        f"🚀 Uploading {local_path} → s3://{BUCKET_NAME}/{s3_prefix} ({endpoint_display})..."
+        f"🚀 Uploading {local_path} → s3://{bucket}/{s3_prefix} ({endpoint_display})..."
     )
 
     file_count = 0
@@ -280,16 +330,19 @@ def upload_to_s3(local_path: Path, s3_prefix: str, s3_client: boto3.client) -> N
         s3_key = f"{s3_prefix}/{rel}"
 
         print(f"  ↑ {rel}", end="\r")
-        s3_client.upload_file(str(local_file), BUCKET_NAME, s3_key)
+        s3_client.upload_file(str(local_file), bucket, s3_key)
         file_count += 1
 
-    print(f"✅ Uploaded {file_count} files to s3://{BUCKET_NAME}/{s3_prefix}")
+    print(f"✅ Uploaded {file_count} files to s3://{bucket}/{s3_prefix}")
 
 
 def mirror_models() -> None:
+    if not (BUCKET_NAME or os.environ.get("S3_BUCKET_NAME")):
+        print("❌ S3_BUCKET_NAME environment variable is required.")
+        sys.exit(1)
     s3 = _get_s3_client()
+    manifest = _load_hash_manifest()
 
-    # Ensure HF transfer is enabled for speed
     os.environ["HF_HUB_ENABLE_HF_TRANSFER"] = "1"
 
     if not os.environ.get("HUGGING_FACE_HUB_TOKEN"):
@@ -297,56 +350,68 @@ def mirror_models() -> None:
 
     work_dir = Path("temp_model_mirror")
     work_dir.mkdir(exist_ok=True)
+    had_failures = False
 
     try:
         for model_id in MODELS_TO_MIRROR:
             print(f"\n--- ⬇️ Processing {model_id} ---")
+            revision = _resolve_model_revision(model_id, manifest)
+            if not revision:
+                print(
+                    f"❌ [AI600-007] Missing or unpinned commit SHA revision for {model_id}. "
+                    "Set MODEL_REVISION (<40-hex-sha>) or _revision in config/model_hashes.json."
+                )
+                had_failures = True
+                continue
 
             local_model_dir = work_dir / model_id.replace("/", "--")
-            print(f"📥 Downloading to {local_model_dir}...")
+            print(f"📥 Downloading {model_id}@{revision[:12]} to {local_model_dir}...")
 
             try:
                 snapshot_download(
                     repo_id=model_id,
+                    revision=revision,
                     local_dir=local_model_dir,
-                    ignore_patterns=["*.msgpack", "*.h5", "*.ot"],
-                    local_dir_use_symlinks=False,
+                    ignore_patterns=_IGNORE_PATTERNS,
                 )
             except Exception as exc:
                 print(f"❌ Download failed for {model_id}: {exc}")
+                had_failures = True
                 continue
 
-            # AI600-007: SHA-256 integrity verification after download
-            # Verify anchor files (config.json, tokenizer.json) against signed manifest.
             print(f"🔐 Verifying model integrity for {model_id}...")
             integrity_ok = verify_model_integrity(local_model_dir, model_id)
             if not integrity_ok:
+                shutil.rmtree(local_model_dir, ignore_errors=True)
                 if _VERIFICATION_STRICT:
                     print(
                         f"❌ [AI600-007] STRICT MODE: Aborting upload of {model_id} due to "
-                        "hash mismatch. Set MODEL_WEIGHT_VERIFICATION_STRICT=false to skip "
-                        "(not recommended)."
+                        "failed weight/anchor verification."
                     )
+                    had_failures = True
                     continue
-                else:
-                    print(
-                        f"⚠️ [AI600-007] Hash mismatch for {model_id} — proceeding with upload "
-                        "(warn-only mode). Set MODEL_WEIGHT_VERIFICATION_STRICT=true to abort."
-                    )
+                print(
+                    f"⚠️ [AI600-007] Verification failed for {model_id} — proceeding only because "
+                    "MODEL_WEIGHT_VERIFICATION_STRICT=false."
+                )
 
             try:
                 upload_to_s3(local_model_dir, model_id, s3)
             except Exception as exc:
                 print(f"❌ Upload failed for {model_id}: {exc}")
+                had_failures = True
                 continue
 
             print(f"🧹 Cleaning up {local_model_dir}...")
-            shutil.rmtree(local_model_dir)
+            shutil.rmtree(local_model_dir, ignore_errors=True)
 
     finally:
         if work_dir.exists():
-            shutil.rmtree(work_dir)
+            shutil.rmtree(work_dir, ignore_errors=True)
             print("✨ Temporary directory cleaned up.")
+
+    if had_failures and _VERIFICATION_STRICT:
+        sys.exit(1)
 
 
 if __name__ == "__main__":

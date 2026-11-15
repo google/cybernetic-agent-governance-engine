@@ -39,8 +39,8 @@ deny[msg] {
 """
 
 
-def extract_policies(text):
-    policies = []
+def extract_policies(text: str) -> list[str]:
+    policies: list[str] = []
 
     # Simple heuristic extraction logic
     # 1. Identity Verification
@@ -110,7 +110,7 @@ deny[msg] {
     return policies
 
 
-def main():
+def main() -> None:
     if not os.path.exists(INPUT_FILE):
         print(f"Error: Input file {INPUT_FILE} not found.")
         return

@@ -21,6 +21,7 @@ import json
 import os
 import subprocess
 import sys
+from typing import Any
 
 import httpx
 import redis
@@ -60,7 +61,7 @@ def _get_deployment_replicas(
     return None
 
 
-def test_redis():
+def test_redis() -> bool:
     """Test Redis / Memorystore for Valkey connectivity and configuration"""
     print("\n=== Redis / Memorystore for Valkey ===")
     try:
@@ -72,7 +73,8 @@ def test_redis():
             socket_connect_timeout=2,
         )
         ping_result = r.ping()
-        info = r.info("server")
+        info_raw = r.info("server")
+        info: dict[str, Any] = info_raw if isinstance(info_raw, dict) else {}
         config_maxmemory = r.config_get("maxmemory")
         config_policy = r.config_get("maxmemory-policy")
 
@@ -200,12 +202,12 @@ def test_opa_uds_sidecar(namespace: str = "governance-stack") -> bool:
 
 
 def test_http_service(
-    name,
-    url,
-    timeout=5,
-    deployment_name=None,
-    required_env="REQUIRE_VLLM_GPUS",
-):
+    name: str,
+    url: str,
+    timeout: int = 5,
+    deployment_name: str | None = None,
+    required_env: str = "REQUIRE_VLLM_GPUS",
+) -> bool:
     """Test HTTP service connectivity"""
     print(f"\n=== {name} ({url}) ===")
     try:
@@ -234,7 +236,7 @@ def test_http_service(
         return False
 
 
-def test_langfuse_auth():
+def test_langfuse_auth() -> bool:
     """Test Langfuse API authentication"""
     print("\n=== Langfuse Authentication Test ===")
     try:
@@ -258,7 +260,7 @@ def test_langfuse_auth():
         return False
 
 
-def main():
+def main() -> int:
     print("=" * 60)
     print("CAGE Live GKE Service Smoke Test")
     print("=" * 60)

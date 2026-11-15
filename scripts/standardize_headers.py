@@ -32,7 +32,7 @@ HEADER_LINES = [
 ]
 
 
-def get_comment_syntax(extension):
+def get_comment_syntax(extension: str) -> tuple[str | None, str | None]:
     if extension in [".py", ".sh", ".yaml", ".yml", ".tf", "Dockerfile", ".rb", ".pl"]:
         return "#", ""
     elif extension in [
@@ -50,7 +50,7 @@ def get_comment_syntax(extension):
     return None, None
 
 
-def format_header(extension):
+def format_header(extension: str) -> str | None:
     prefix, _suffix = get_comment_syntax(extension)
     if not prefix:
         return None
@@ -72,7 +72,7 @@ def format_header(extension):
     return "\n".join(out) + "\n\n"
 
 
-def process_file(filepath):
+def process_file(filepath: str) -> None:
     # Skip generated files
     if "pb2" in filepath or "generated" in filepath:
         return
@@ -148,7 +148,7 @@ def process_file(filepath):
     print(f"Updated {filepath}")
 
 
-def main():
+def main() -> None:
     exclude_dirs = {
         ".venv",
         "venv",

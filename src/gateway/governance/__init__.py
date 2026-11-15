@@ -46,39 +46,27 @@ def __getattr__(name: str) -> object:  # noqa: N807
     entries); any other name raises ``AttributeError``.
     """
     if name in ("GovernanceError", "SymbolicGovernor"):
-        try:
-            from .governor.errors import GovernanceError
-            from .governor.governor import SymbolicGovernor
-        except ImportError:
-            return None
+        from .governor.errors import GovernanceError
+        from .governor.governor import SymbolicGovernor
+
         globals()["GovernanceError"] = GovernanceError
         globals()["SymbolicGovernor"] = SymbolicGovernor
         return GovernanceError if name == "GovernanceError" else SymbolicGovernor
 
     if name == "langgraph_harness":
-        try:
-            # NOTE: `from . import langgraph_harness` would trigger Python's
-            # internal `hasattr(package, "langgraph_harness")` check while
-            # resolving the fromlist, which re-enters this __getattr__ for the
-            # same name before the submodule is cached in globals() —
-            # causing infinite recursion (RecursionError). importlib.import_module
-            # loads the submodule directly via sys.modules, sidestepping the
-            # package attribute lookup entirely.
-            langgraph_harness = importlib.import_module(
-                ".langgraph_harness", __package__
-            )
-        except ImportError:
-            return None
+        # NOTE: `from . import langgraph_harness` would trigger Python's
+        # internal `hasattr(package, "langgraph_harness")` check while
+        # resolving the fromlist, which re-enters this __getattr__ for the
+        # same name before the submodule is cached in globals() —
+        # causing infinite recursion (RecursionError). importlib.import_module
+        # loads the submodule directly via sys.modules, sidestepping the
+        # package attribute lookup entirely.
+        langgraph_harness = importlib.import_module(".langgraph_harness", __package__)
         globals()["langgraph_harness"] = langgraph_harness
         return langgraph_harness
 
     if name in ("causal_gatekeeper", "causal_safety_check"):
-        try:
-            causal_gatekeeper = importlib.import_module(
-                ".causal.gatekeeper", __package__
-            )
-        except ImportError:
-            return None
+        causal_gatekeeper = importlib.import_module(".causal.gatekeeper", __package__)
         causal_safety_check = causal_gatekeeper.causal_safety_check
         globals()["causal_gatekeeper"] = causal_gatekeeper
         globals()["causal_safety_check"] = causal_safety_check

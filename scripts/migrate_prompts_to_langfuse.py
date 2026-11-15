@@ -26,23 +26,24 @@ import os
 import yaml
 from langfuse import Langfuse
 
-# Initialize Langfuse
-langfuse = Langfuse(
-    public_key=os.getenv("LANGFUSE_PUBLIC_KEY"),
-    secret_key=os.getenv("LANGFUSE_SECRET_KEY"),
-    host=os.getenv("LANGFUSE_HOST", "http://localhost:3000"),
-)
+
+def _langfuse_client() -> Langfuse:
+    return Langfuse(
+        public_key=os.getenv("LANGFUSE_PUBLIC_KEY"),
+        secret_key=os.getenv("LANGFUSE_SECRET_KEY"),
+        host=os.getenv("LANGFUSE_HOST", "http://localhost:3000"),
+    )
 
 
-def migrate_nemo_prompts(file_path):
+def migrate_nemo_prompts(file_path: str) -> None:
     if not os.path.exists(file_path):
         print(f"Error: {file_path} not found.")
         return
 
     with open(file_path) as f:
-        data = yaml.safe_load(f)
+        data = yaml.safe_load(f) or {}
 
-    # NeMo prompts are typically in a list under the 'prompts' key
+    langfuse = _langfuse_client()
     prompts_list = data.get("prompts", [])
 
     for item in prompts_list:
@@ -52,20 +53,22 @@ def migrate_nemo_prompts(file_path):
         if task_name and content:
             print(f"Migrating task: {task_name}...")
             try:
-                # Create prompt in Langfuse
                 langfuse.create_prompt(
-                    name=f"nemo/{task_name}",  # Namespacing for organization
+                    name=f"nemo/{task_name}",
                     prompt=content,
                     type="text",
-                    labels=["production"],  # Sets as default version
+                    labels=["production"],
                 )
                 print(f"✅ Successfully migrated {task_name}")
             except Exception as e:
                 print(f"❌ Failed to migrate {task_name}: {e}")
 
 
-def migrate_python_prompts():
+def migrate_python_prompts() -> None:
+    import importlib
+
     sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+    langfuse = _langfuse_client()
 
     prompts_to_migrate = [
         (
@@ -85,29 +88,21 @@ def migrate_python_prompts():
         ),
         (
             "agent/governed_trader",
-            "src.governed_financial_advisor.agents.governed_trader.agent",
+            "src.governed_financial_advisor.graph.subgraphs.governed_trader_graph",
             "EXECUTOR_FALLBACK_PROMPT",
         ),
         (
-            "agent/data_analyst_planner",
-            "src.governed_financial_advisor.agents.data_analyst.agent",
-            "PLANNER_PROMPT_TEXT",
-        ),
-        (
-            "agent/data_analyst_executor",
-            "src.governed_financial_advisor.agents.data_analyst.agent",
-            "EXECUTOR_PROMPT_TEXT",
+            "agent/evaluator",
+            "src.governed_financial_advisor.agents.evaluator.agent",
+            "_SYSTEM_PROMPT",
         ),
     ]
 
     for name, module_path, variable_name in prompts_to_migrate:
         print(f"Migrating python prompt: {name}...")
         try:
-            # Use importlib to dynamically load the module and get the variable
-            import importlib
-
             module = importlib.import_module(module_path)
-            prompt_text = getattr(module, variable_name)
+            prompt_text = str(getattr(module, variable_name))
 
             langfuse.create_prompt(
                 name=name, prompt=prompt_text, type="text", labels=["production"]
@@ -116,27 +111,8 @@ def migrate_python_prompts():
         except Exception as e:
             print(f"❌ Failed to migrate {name}: {e}")
 
-    # Special case for Evaluator (Prompt object)
-    try:
-        from src.governed_financial_advisor.agents.evaluator.agent import (
-            EVALUATOR_PROMPT_OBJ,
-        )
-
-        prompt_text = EVALUATOR_PROMPT_OBJ.prompt_data.contents[0].parts[0].text
-        print("Migrating python prompt: agent/evaluator...")
-        langfuse.create_prompt(
-            name="agent/evaluator",
-            prompt=prompt_text,
-            type="text",
-            labels=["production"],
-        )
-        print("✅ Successfully migrated agent/evaluator")
-    except Exception as e:
-        print(f"❌ Failed to migrate agent/evaluator: {e}")
-
 
 if __name__ == "__main__":
-    # Update this path to your local prompts.yml
     PATH_TO_PROMPTS = "config/rails/prompts.yml"
     migrate_nemo_prompts(PATH_TO_PROMPTS)
     migrate_python_prompts()

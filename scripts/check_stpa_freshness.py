@@ -58,12 +58,16 @@ import argparse
 import datetime
 import enum
 import hashlib
+import os
 import re
 import shutil
 import subprocess
 import sys
 import tempfile
 from pathlib import Path
+from typing import Any
+
+os.environ.setdefault("CAGE_ENV", "ci")
 
 # ---------------------------------------------------------------------------
 # Paths (relative to repo root)
@@ -220,7 +224,7 @@ def _regenerate_all() -> dict[Path, str | None]:
     source_dirs = {_CORE: _SOURCE_DIR}
     for d_dir in _DOMAIN_STPA_DIRS:
         source_dirs[_domain_key_for(d_dir)] = d_dir
-    generators = {
+    generators: dict[str, Any] = {
         "opa": stpa_compiler.generate_opa,
         "nemo": stpa_compiler.generate_nemo,
         "python": stpa_compiler.generate_python,
@@ -228,15 +232,19 @@ def _regenerate_all() -> dict[Path, str | None]:
         "ftra": stpa_compiler.generate_terminal_registry,
         "sandbox": stpa_compiler.generate_sandbox_policy,
     }
-    structures: dict[str, object | None] = {}
+    needed_sources = {
+        source
+        for artifact, (source, _target) in _ARTIFACT_RECIPES.items()
+        if artifact in unavailable
+    }
+    structures: dict[str, Any] = {}
     for name, directory in source_dirs.items():
+        if name not in needed_sources:
+            continue
         files = sorted(directory.rglob("*.yaml")) if directory.exists() else []
-        try:
-            structures[name] = (
-                stpa_compiler.load_control_structures(files) if files else None
-            )
-        except Exception:  # noqa: BLE001
-            structures[name] = None
+        structures[name] = (
+            stpa_compiler.load_control_structures(files) if files else None
+        )
 
     ruff = _ruff_binary()
     regenerated = unavailable
@@ -246,31 +254,30 @@ def _regenerate_all() -> dict[Path, str | None]:
         cs = structures.get(source)
         if cs is None or (target in _RUFF_FORMATTED and ruff is None):
             continue
-        try:
-            text = generators[target](cs)
-        except Exception:  # noqa: BLE001
-            continue
-        if target in _RUFF_FORMATTED and ruff is not None:
+        text: str | None = generators[target](cs)
+        if target in _RUFF_FORMATTED and ruff is not None and text is not None:
             text = _ruff_formatted(text, ruff)
         regenerated[artifact] = text
 
     oscal_targets = (_OSCAL_SSP, _OSCAL_COMP_DEF, _OSCAL_PATCH)
-    if any(p in regenerated for p in oscal_targets):
-        try:
-            from src.gateway.governance.oscal_ssp_exporter import (
-                render_default_oscal_artifacts,
-            )
+    if any(p in regenerated and p.exists() for p in oscal_targets):
+        from src.gateway.governance.oscal_ssp_exporter import (
+            render_default_oscal_artifacts,
+        )
 
-            oscal_rendered = render_default_oscal_artifacts(
-                ssp_path=_OSCAL_SSP,
-                comp_def_path=_OSCAL_COMP_DEF,
-                patch_out_path=_OSCAL_PATCH,
-            )
-            for p, text in oscal_rendered.items():
-                if p in regenerated:
-                    regenerated[p] = text
-        except Exception:  # noqa: BLE001
-            pass
+        oscal_rendered = render_default_oscal_artifacts(
+            ssp_path=_OSCAL_SSP,
+            comp_def_path=_OSCAL_COMP_DEF,
+            patch_out_path=_OSCAL_PATCH,
+            raise_on_error=(
+                _OSCAL_SSP.exists()
+                and _OSCAL_COMP_DEF.exists()
+                and _OSCAL_PATCH.exists()
+            ),
+        )
+        for p, rendered_text in oscal_rendered.items():
+            if p in regenerated:
+                regenerated[p] = rendered_text
 
     return regenerated
 

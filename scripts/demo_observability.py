@@ -31,15 +31,12 @@ logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger("ObservabilityDemo")
 
 
-async def run_demo():  # type: ignore[no-untyped-def]
+async def run_demo() -> None:
     print("🚀 Starting Observability Feature Demo...")
 
     # 1. Initialize Telemetry & Graph
     configure_telemetry()
-    from src.gateway.governance.governor.bootstrap import bootstrap_governor
-
     graph = create_graph(
-        bootstrap_governor(),
         redis_url=os.getenv("REDIS_URL", "redis://localhost:6379"),
     )
 

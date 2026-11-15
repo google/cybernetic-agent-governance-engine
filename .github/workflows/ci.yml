@@ -198,7 +198,7 @@ jobs:
           LANGFUSE_SECRET_KEY: "sk-dummy"
         run: uv run pytest -p no:langsmith -p no:langsmith_plugin tests/ -m "local or unit" -n auto --dist=loadscope -v --cov-branch --cov=src --cov-fail-under=70
       - name: Run Bandit SAST (medium+ severity)
-        run: uv run bandit -r src/ scripts/ -c pyproject.toml -ll -ii
+        run: uv run bandit -r src/ scripts/ packages/cage-client/src/ packages/cage-conformance/src/ proof/ deployment/ -c pyproject.toml -ll -ii
 
   lint:
     name: "Lint"
@@ -227,7 +227,7 @@ jobs:
       - name: Ruff format check
         run: uv run ruff format --check .
       - name: Mypy type check
-        run: uv run mypy src/
+        run: uv run mypy src/ scripts/ proof/ packages/cage-client/src/ packages/cage-conformance/src/ deployment/
       - name: Import boundary check (G3 - Layer 1 → Layer 2/3/4 + reverse scan)
         # PR B (domain extraction) established clean layer isolation.
         # This gate blocks any Layer 1 (gateway) → Layer 2 (cage_*) imports.

@@ -28,7 +28,7 @@ from __future__ import annotations
 from collections.abc import Sequence
 
 from src.gateway.governance.contracts import InvariantModel
-from src.gateway.governance.schemas.thresholds import load_and_validate_thresholds
+from src.gateway.governance.schemas import thresholds as thresholds_module
 
 
 def validate_invariant(
@@ -58,7 +58,7 @@ def validate_invariant(
     # V3: Threshold key must resolve in the active thresholds tree, so the
     # barrier never falls back to a silent None at runtime.
     try:
-        load_and_validate_thresholds().resolve(invariant.threshold_key)
+        thresholds_module.THRESHOLDS.resolve(invariant.threshold_key)
     except (KeyError, TypeError) as exc:
         raise ValueError(
             f"invariant {invariant.invariant_id}: threshold_key "

@@ -53,8 +53,30 @@ def upload_directory(
         print(f"  ✓ {uri}")
 
 
+import re
+
+_COMMIT_SHA_RE = re.compile(r"^[0-9a-f]{40}$")
+_UNSAFE_WEIGHT_PATTERNS = [
+    "*.bin",
+    "*.pt",
+    "*.pth",
+    "*.ckpt",
+    "*.pkl",
+    "*.pickle",
+    "*.msgpack",
+    "*.h5",
+    "*.ot",
+]
+
+
 def main() -> None:
     model_id = os.environ.get("MODEL_ID")
+    model_revision = os.environ.get("MODEL_REVISION", "").strip()
+    allow_mutable = os.environ.get("ALLOW_MUTABLE_MODEL_REVISION", "").lower() in (
+        "1",
+        "true",
+        "yes",
+    )
     bucket_name = os.environ.get("GCS_BUCKET")
     # Default to local storage; set STORAGE_BACKEND=gcs to use Google Cloud Storage
     storage_backend = os.environ.get("STORAGE_BACKEND", "local").lower()
@@ -63,14 +85,32 @@ def main() -> None:
         print("Error: MODEL_ID environment variable is required.")
         sys.exit(1)
 
+    if not model_revision:
+        print(
+            "Error: MODEL_REVISION (40-hex HuggingFace commit SHA) is required "
+            "to prevent mutable supply-chain tampering (AI600-007 / Bandit B615)."
+        )
+        sys.exit(1)
+
+    if not allow_mutable and not _COMMIT_SHA_RE.match(model_revision):
+        print(
+            f"Error: MODEL_REVISION={model_revision!r} must be a 40-char lowercase "
+            "commit SHA (or set ALLOW_MUTABLE_MODEL_REVISION=true for local testing)."
+        )
+        sys.exit(1)
+
     if storage_backend == "gcs" and not bucket_name:
         print(
             "Error: GCS_BUCKET environment variable is required when STORAGE_BACKEND=gcs."
         )
         sys.exit(1)
 
-    print(f"Downloading {model_id} from HuggingFace Hub...")
-    local_dir = snapshot_download(repo_id=model_id)
+    print(f"Downloading {model_id}@{model_revision[:12]} from HuggingFace Hub...")
+    local_dir = snapshot_download(
+        repo_id=model_id,
+        revision=model_revision,
+        ignore_patterns=_UNSAFE_WEIGHT_PATTERNS,
+    )
     print(f"Downloaded to {local_dir}")
 
     target = (

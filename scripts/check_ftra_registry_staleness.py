@@ -45,8 +45,11 @@ from __future__ import annotations
 
 import argparse
 import importlib
+import os
 import sys
 from pathlib import Path
+
+os.environ.setdefault("CAGE_ENV", "ci")
 
 _REPO_ROOT = Path(__file__).resolve().parents[1]
 if str(_REPO_ROOT) not in sys.path:
@@ -73,15 +76,39 @@ def _parse_args() -> argparse.Namespace:
         default=None,
         help=(
             "Path to the terminal registry JSON.  "
-            "Default: config/ftra/terminal_registry.json"
+            "Defaults to the domain plugin's DomainConfig.ftra_registry_path "
+            "or config/ftra/terminal_registry.json."
         ),
     )
     parser.add_argument(
         "--strict",
         action="store_true",
-        help="Exit with code 1 if any mismatch is detected.",
+        help="Exit with code 1 if any mismatch or expiration is detected.",
     )
     return parser.parse_args()
+
+
+def _resolve_default_registry_path(
+    domain_module_name: str, domain_module: object
+) -> Path:
+    """Resolve the terminal registry JSON path for *domain_module* without requiring CAGE_DOMAIN."""
+    try:
+        plugin_mod = importlib.import_module(f"{domain_module_name}.plugin")
+        for obj in vars(plugin_mod).values():
+            cfg = getattr(obj, "domain_config", None)
+            reg_path = getattr(cfg, "ftra_registry_path", None)
+            if isinstance(reg_path, Path) and reg_path.is_file():
+                return reg_path
+    except Exception:  # noqa: BLE001
+        pass
+    module_file = getattr(domain_module, "__file__", None)
+    if isinstance(module_file, str):
+        candidate = (
+            Path(module_file).resolve().parent / "stpa" / "terminal_registry.json"
+        )
+        if candidate.is_file():
+            return candidate
+    return _REPO_ROOT / "config" / "ftra" / "terminal_registry.json"
 
 
 def main() -> int:
@@ -113,7 +140,11 @@ def main() -> int:
     # ── Call the kernel staleness function — no domain code in kernel ──────
     from src.gateway.governance.ftra.classifier import check_registry_staleness
 
-    registry_path = Path(args.registry) if args.registry else None
+    registry_path = (
+        Path(args.registry)
+        if args.registry
+        else _resolve_default_registry_path(args.domain, domain_module)
+    )
     report = check_registry_staleness(live_actions, registry_path=registry_path)
 
     # ── Report ─────────────────────────────────────────────────────────────
@@ -125,6 +156,13 @@ def main() -> int:
         return 0
 
     exit_code = 0
+
+    if report.expired:
+        print(
+            f"[FTRA staleness] ❌ Registry at {registry_path} has EXPIRED "
+            "(expires_at <= current UTC time)."
+        )
+        exit_code = 1
 
     if report.unclassified:
         print(

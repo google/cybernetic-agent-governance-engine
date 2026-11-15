@@ -17,7 +17,7 @@ import subprocess
 import sys
 
 
-def run_command(command, check=True):
+def run_command(command: list[str], check: bool = True) -> None:
     print(f"🚀 Running: {' '.join(command)}")
     try:
         subprocess.run(command, check=check)
@@ -27,7 +27,7 @@ def run_command(command, check=True):
             sys.exit(1)
 
 
-def main():
+def main() -> None:
     parser = argparse.ArgumentParser(
         description="Teardown Cybernetic Governance Engine Resources"
     )

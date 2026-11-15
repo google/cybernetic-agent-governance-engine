@@ -29,21 +29,25 @@ the FTRA stage does not fail closed on an unregistered action name.
 import asyncio
 import os
 import sys
-from typing import Any
+from typing import Any, Literal
 from unittest.mock import AsyncMock, MagicMock
 
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
 
-from src.gateway.governance.contracts import (
+os.environ.setdefault("CAGE_ENV", "dev")
+os.environ.setdefault("CAGE_DOMAIN", "finance")
+
+from src.gateway.governance.contracts import (  # noqa: E402
+    DomainConfig,
     PluginContribution,
     ReadOnlyTier,
     Violation,
 )
-from src.gateway.governance.env_posture import resolve_posture
-from src.gateway.governance.governor.assembly import assemble_governor
-from src.gateway.governance.governor.posture import assert_production_posture
-
-os.environ.setdefault("CAGE_DOMAIN", "finance")
+from src.gateway.governance.env_posture import resolve_posture  # noqa: E402
+from src.gateway.governance.governor.assembly import assemble_governor  # noqa: E402
+from src.gateway.governance.governor.posture import (  # noqa: E402
+    assert_production_posture,
+)
 
 _ACTION = "check_balance"
 
@@ -64,7 +68,8 @@ class _PassTier(ReadOnlyTier):
 class _ProbePlugin:
     name = "verify_probe"
     api_version = "2.0"
-    domain_config = None
+    maturity: Literal["production", "stub"] = "production"
+    domain_config: DomainConfig | None = None
 
     def contribute(self) -> PluginContribution:
         return PluginContribution(domain=self.name, tiers=(_PassTier(),))

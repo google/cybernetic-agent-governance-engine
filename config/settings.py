@@ -100,8 +100,9 @@ class Config:
     # Otherwise, it falls back to the split-brain URLs above.
     VLLM_GATEWAY_URL = os.getenv("VLLM_GATEWAY_URL")
 
-    # --- LangSmith ---
-    LANGCHAIN_TRACING_V2 = os.getenv("LANGCHAIN_TRACING_V2", "true")
+    # --- LangSmith (strictly disabled by default per AGENTS.md) ---
+    LANGCHAIN_TRACING_V2 = os.getenv("LANGCHAIN_TRACING_V2", "false")
+    LANGSMITH_TRACING = os.getenv("LANGSMITH_TRACING", "false")
     LANGCHAIN_PROJECT = os.getenv("LANGCHAIN_PROJECT", "financial-advisor")
 
 

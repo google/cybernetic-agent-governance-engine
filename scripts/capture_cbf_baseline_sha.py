@@ -42,7 +42,7 @@ def extract_lua_script(file_path: Path) -> str:
     return match.group(1)
 
 
-def main():
+def main() -> int:
     repo_root = Path(__file__).parent.parent
     cbf_file = repo_root / "src" / "gateway" / "governance" / "safety" / "cbf_engine.py"
 

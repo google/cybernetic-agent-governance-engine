@@ -100,7 +100,7 @@ Gaps closed by this proof:
 
 from __future__ import annotations
 
-from collections.abc import Iterator
+from collections.abc import Callable, Iterable, Iterator
 from dataclasses import dataclass
 from itertools import product
 
@@ -118,7 +118,7 @@ from itertools import product
 # action.  They are evaluated sequentially (OPA in phase 1, CBF in phase 2),
 # so no interleaving sub-proof is needed.
 # FTRA (Tier 0.5) added to close proof/implementation divergence (ARCH-1).
-TIERS = (
+TIERS: tuple[str, ...] = (
     "ftra",  # Tier 0.5: FTRA action classification & reachability analysis
     "stpa",  # Tier 1:  STAMP/STPA unsafe control action check
     "opa",  # Tier 3b: OPA Rego policy evaluation
@@ -1093,7 +1093,7 @@ def ungated_narrow_transitions(state: State) -> Iterator[State]:
 
 
 def enumerate_reachable(
-    transition_fn,
+    transition_fn: Callable[[State], Iterable[State]],
     start: State | None = None,
 ) -> set[State]:
     """BFS over the state space.  Returns the set of all reachable states."""
@@ -1137,7 +1137,10 @@ def check_no_direct_bind(states: set[State]) -> tuple[bool, State | None]:
     return True, None
 
 
-def enumerate_region(region: str, transition_fn=None) -> set[State]:
+def enumerate_region(
+    region: str,
+    transition_fn: Callable[[State], Iterable[State]] | None = None,
+) -> set[State]:
     """Enumerate the gated model with ``region``'s jurisdiction tiers appended.
 
     The transition functions and ``State`` read the module-level ``TIERS`` /

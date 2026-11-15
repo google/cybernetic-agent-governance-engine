@@ -28,6 +28,7 @@ import logging
 import math
 import os
 import secrets
+import threading
 import time
 import uuid
 from collections.abc import Mapping, Sequence
@@ -37,6 +38,7 @@ from typing import Any
 
 from src.gateway.governance.constants import ControlRegistry, GovernanceControl
 from src.gateway.governance.contracts import InvariantModel
+from src.gateway.governance.env_posture import is_enforcing, resolve_posture
 from src.gateway.governance.safety.debit_ledger import (
     DEBITS_BY_TIME_KEY,
     DEBITS_KEY,
@@ -59,14 +61,28 @@ from src.gateway.infrastructure.telemetry import get_tracer
 
 logger = logging.getLogger("SafetyLayer")
 
-_cage_env_cbf = (
-    os.environ.get("CAGE_ENV") or os.environ.get("ENVIRONMENT", "production")
-).lower()
-_IS_PRODUCTION: bool = _cage_env_cbf not in ("development", "test", "dev", "ci")
+# Optional test-patch overrides; when None, posture & strict mode are resolved
+# dynamically at call time via is_enforcing(resolve_posture()).
+_IS_PRODUCTION: bool | None = None
+_CBF_STRICT_MODE: bool | None = None
 
-_CBF_STRICT_MODE: bool = os.environ.get(
-    "CAGE_CBF_STRICT_MODE", "true" if _IS_PRODUCTION else "false"
-).lower() in ("true", "1", "yes")
+
+def _is_enforcing_cbf() -> bool:
+    if _IS_PRODUCTION is not None:
+        return bool(_IS_PRODUCTION)
+    return is_enforcing(resolve_posture())
+
+
+def _is_cbf_strict_mode() -> bool:
+    if _CBF_STRICT_MODE is not None:
+        return bool(_CBF_STRICT_MODE)
+    default_strict = "true" if _is_enforcing_cbf() else "false"
+    return os.environ.get("CAGE_CBF_STRICT_MODE", default_strict).lower() in (
+        "true",
+        "1",
+        "yes",
+    )
+
 
 _REPLAY_DEFENSE_ENABLED: bool = os.environ.get(
     "CAGE_RECONCILIATION_REPLAY_DEFENSE", "false"
@@ -118,66 +134,103 @@ _WAIT_TIMEOUT_COUNTER: Any = None
 _STRICT_REPLICATION_ROLLBACK_COUNTER: Any = None
 _COMMIT_ATTEMPTS_HISTOGRAM: Any = None
 _EPOCH_CONTENDED_COUNTER: Any = None
+_CBF_METRICS_INITIALIZED = False
+_CBF_METRICS_LOCK = threading.Lock()
 
-try:
-    from prometheus_client import REGISTRY, Counter, Gauge, Histogram
 
-    def _get_or_create_metric(
-        metric_cls: Any, name: str, *args: Any, **kwargs: Any
-    ) -> Any:
+def _ensure_cbf_metrics() -> None:
+    """Lazily register CBF Prometheus collectors on first engine instantiation."""
+    global _CBF_METRICS_INITIALIZED
+    global _REPLAY_REJECTED_COUNTER, _EPOCH_REGRESSION_COUNTER
+    global _CURRENT_FENCE_EPOCH_GAUGE, _WAIT_LATENCY_HISTOGRAM
+    global _WAIT_TIMEOUT_COUNTER, _STRICT_REPLICATION_ROLLBACK_COUNTER
+    global _COMMIT_ATTEMPTS_HISTOGRAM, _EPOCH_CONTENDED_COUNTER
+    if _CBF_METRICS_INITIALIZED:
+        return
+    with _CBF_METRICS_LOCK:
+        if _CBF_METRICS_INITIALIZED:
+            return
+        _CBF_METRICS_INITIALIZED = True
         try:
-            return metric_cls(name, *args, **kwargs)
-        except (ValueError, Exception):
-            collector = REGISTRY._names_to_collectors.get(name)
-            if collector is not None:
-                return collector
-            raise
+            from prometheus_client import REGISTRY, Counter, Gauge, Histogram
 
-    _REPLAY_REJECTED_COUNTER = _get_or_create_metric(
-        Counter,
-        "cage_reconciliation_replay_rejected_total",
-        "Number of reconciliation payloads rejected due to non-advancing sequence (R-04 replay defense)",
-        ["source"],
-    )
-    _EPOCH_REGRESSION_COUNTER = _get_or_create_metric(
-        Counter,
-        "cage_cbf_epoch_regression_detected_total",
-        "Number of CBF reads rejected due to fence epoch regression (R-05 double-spend defense)",
-    )
-    _CURRENT_FENCE_EPOCH_GAUGE = _get_or_create_metric(
-        Gauge,
-        "cage_cbf_current_fence_epoch",
-        "Current value of the CBF fence epoch counter",
-    )
-    _WAIT_LATENCY_HISTOGRAM = _get_or_create_metric(
-        Histogram,
-        "cage_cbf_wait_latency_seconds",
-        "Latency of Redis WAIT command for replication synchronization (Phase 4.3)",
-        buckets=(0.001, 0.005, 0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1.0, 2.5),
-    )
-    _WAIT_TIMEOUT_COUNTER = _get_or_create_metric(
-        Counter,
-        "cage_cbf_wait_timeout_total",
-        "Number of Redis WAIT commands that timed out before reaching replica count (Phase 4.3)",
-    )
-    _STRICT_REPLICATION_ROLLBACK_COUNTER = _get_or_create_metric(
-        Counter,
-        "cage_cbf_strict_replication_rollback_total",
-        "Number of CBF commits rolled back due to WAIT timeout in strict replication mode (P0 hardening)",
-    )
-    _COMMIT_ATTEMPTS_HISTOGRAM = _get_or_create_metric(
-        Histogram,
-        "cage_cbf_commit_attempts",
-        "Number of Lua CAS attempts per CBF atomic_verify_and_commit invocation",
-        buckets=(1.0, 2.0, 3.0, 4.0, 5.0, 10.0),
-    )
-    _EPOCH_CONTENDED_COUNTER = _get_or_create_metric(
-        Counter,
-        "cage_cbf_epoch_contended_total",
-        "Number of CBF atomic commits that exhausted retry attempts on forward-moved fence epochs",
-    )
-except ImportError:
-    pass
+            def _get_or_create_metric(
+                metric_cls: Any, name: str, *args: Any, **kwargs: Any
+            ) -> Any:
+                try:
+                    return metric_cls(name, *args, **kwargs)
+                except (ValueError, Exception):
+                    collector = REGISTRY._names_to_collectors.get(
+                        name
+                    ) or REGISTRY._names_to_collectors.get(name.removesuffix("_total"))
+                    if collector is not None:
+                        return collector
+                    raise
+
+            if _REPLAY_REJECTED_COUNTER is None:
+                _REPLAY_REJECTED_COUNTER = _get_or_create_metric(
+                    Counter,
+                    "cage_reconciliation_replay_rejected_total",
+                    "Number of reconciliation payloads rejected due to non-advancing sequence (R-04 replay defense)",
+                    ["source"],
+                )
+            if _EPOCH_REGRESSION_COUNTER is None:
+                _EPOCH_REGRESSION_COUNTER = _get_or_create_metric(
+                    Counter,
+                    "cage_cbf_epoch_regression_detected_total",
+                    "Number of CBF reads rejected due to fence epoch regression (R-05 double-spend defense)",
+                )
+            if _CURRENT_FENCE_EPOCH_GAUGE is None:
+                _CURRENT_FENCE_EPOCH_GAUGE = _get_or_create_metric(
+                    Gauge,
+                    "cage_cbf_current_fence_epoch",
+                    "Current value of the CBF fence epoch counter",
+                )
+            if _WAIT_LATENCY_HISTOGRAM is None:
+                _WAIT_LATENCY_HISTOGRAM = _get_or_create_metric(
+                    Histogram,
+                    "cage_cbf_wait_latency_seconds",
+                    "Latency of Redis WAIT command for replication synchronization (Phase 4.3)",
+                    buckets=(
+                        0.001,
+                        0.005,
+                        0.01,
+                        0.025,
+                        0.05,
+                        0.1,
+                        0.25,
+                        0.5,
+                        1.0,
+                        2.5,
+                    ),
+                )
+            if _WAIT_TIMEOUT_COUNTER is None:
+                _WAIT_TIMEOUT_COUNTER = _get_or_create_metric(
+                    Counter,
+                    "cage_cbf_wait_timeout_total",
+                    "Number of Redis WAIT commands that timed out before reaching replica count (Phase 4.3)",
+                )
+            if _STRICT_REPLICATION_ROLLBACK_COUNTER is None:
+                _STRICT_REPLICATION_ROLLBACK_COUNTER = _get_or_create_metric(
+                    Counter,
+                    "cage_cbf_strict_replication_rollback_total",
+                    "Number of CBF commits rolled back due to WAIT timeout in strict replication mode (P0 hardening)",
+                )
+            if _COMMIT_ATTEMPTS_HISTOGRAM is None:
+                _COMMIT_ATTEMPTS_HISTOGRAM = _get_or_create_metric(
+                    Histogram,
+                    "cage_cbf_commit_attempts",
+                    "Number of Lua CAS attempts per CBF atomic_verify_and_commit invocation",
+                    buckets=(1.0, 2.0, 3.0, 4.0, 5.0, 10.0),
+                )
+            if _EPOCH_CONTENDED_COUNTER is None:
+                _EPOCH_CONTENDED_COUNTER = _get_or_create_metric(
+                    Counter,
+                    "cage_cbf_epoch_contended_total",
+                    "Number of CBF atomic commits that exhausted retry attempts on forward-moved fence epochs",
+                )
+        except ImportError:
+            pass
 
 
 class GroundTruthUnavailableError(RuntimeError):
@@ -460,6 +513,7 @@ return {1, status, tostring(restored), new_epoch, tostring(current), tostring(re
 
         # Validate threshold_key resolves at construction time
         _ = self._resolve_threshold()
+        _ensure_cbf_metrics()
 
         self.tracer: Any = get_tracer("src.gateway.governance.safety")
         self._lua_sha: str | None = None
@@ -582,7 +636,7 @@ return {1, status, tostring(restored), new_epoch, tostring(current), tostring(re
             return 0
 
         if sync_redis_client is None:
-            if _IS_PRODUCTION:
+            if _is_enforcing_cbf():
                 raise CBFInitializationError(
                     "Cannot initialize CBF: sync Redis client unavailable. "
                     "Fence epoch cannot be seeded from external anchor. "
@@ -665,7 +719,7 @@ return {1, status, tostring(restored), new_epoch, tostring(current), tostring(re
                 _CURRENT_FENCE_EPOCH_GAUGE.set(epoch)
             return effective_epoch
         except Exception as exc:
-            if _IS_PRODUCTION:
+            if _is_enforcing_cbf():
                 raise CBFInitializationError(
                     f"Cannot initialize CBF: fence epoch unavailable from Redis. "
                     f"Error: {exc}. Failing closed to prevent stale-read attack window."
@@ -1197,17 +1251,18 @@ return {1, status, tostring(restored), new_epoch, tostring(current), tostring(re
                     except GroundTruthUnavailableError:
                         raise
                     except Exception as sig_exc:
+                        strict_mode = _is_cbf_strict_mode()
                         logger.critical(
                             json.dumps(
                                 {
                                     "event": "CBF_KMS_VERIFY_FAILED",
                                     "severity": "CRITICAL",
                                     "error": str(sig_exc),
-                                    "strict_mode": _CBF_STRICT_MODE,
+                                    "strict_mode": strict_mode,
                                 }
                             )
                         )
-                        if _CBF_STRICT_MODE:
+                        if strict_mode:
                             raise GroundTruthUnavailableError(
                                 f"Cannot verify balance — transaction rejected. "
                                 f"KMS verification failed: {type(sig_exc).__name__}",
@@ -1215,7 +1270,7 @@ return {1, status, tostring(restored), new_epoch, tostring(current), tostring(re
                             ) from sig_exc
                         break
                 else:
-                    if _IS_PRODUCTION:
+                    if _is_enforcing_cbf():
                         logger.critical(
                             json.dumps(
                                 {
@@ -1243,7 +1298,7 @@ return {1, status, tostring(restored), new_epoch, tostring(current), tostring(re
         except GroundTruthUnavailableError:
             raise
         except Exception as recon_exc:
-            if _CBF_STRICT_MODE:
+            if _is_cbf_strict_mode():
                 raise GroundTruthUnavailableError(
                     f"Cannot verify balance — transaction rejected. "
                     f"Reconciliation read failed: {type(recon_exc).__name__}",
@@ -1405,7 +1460,7 @@ return {1, status, tostring(restored), new_epoch, tostring(current), tostring(re
                 "mode": "reconciled",
                 "sequence": sequence,
                 "fence_epoch": state.get("fence_epoch", 0),
-                "strict_mode": _CBF_STRICT_MODE,
+                "strict_mode": _is_cbf_strict_mode(),
                 "reconciliation_age_ms": 0,
                 "state_scalar": float(state["state_scalar"]),
                 "outstanding_debits": float(state.get("outstanding_debits", 0.0)),
@@ -1421,7 +1476,7 @@ return {1, status, tostring(restored), new_epoch, tostring(current), tostring(re
             "sequence_regression",
             "signature_invalid",
             "unsigned_production_snapshot",
-        ) or (_CBF_STRICT_MODE and source == "self_reported"):
+        ) or (_is_cbf_strict_mode() and source == "self_reported"):
             if source == "epoch_regression":
                 fallback_reason = state.get("epoch_reason") or "epoch regression"
             elif source in (
@@ -1516,7 +1571,7 @@ return {1, status, tostring(restored), new_epoch, tostring(current), tostring(re
                 "signature_invalid",
                 "unsigned_production_snapshot",
             )
-            or (_CBF_STRICT_MODE and balance_source == "self_reported")
+            or (_is_cbf_strict_mode() and balance_source == "self_reported")
         ):
             _mrm_meta = ControlRegistry().get_mapping(
                 GovernanceControl.TRADITIONAL_MRM_VALIDATION
@@ -1653,7 +1708,7 @@ return {1, status, tostring(restored), new_epoch, tostring(current), tostring(re
                 "signature_invalid",
                 "unsigned_production_snapshot",
             )
-            or (_CBF_STRICT_MODE and source == "self_reported")
+            or (_is_cbf_strict_mode() and source == "self_reported")
         ):
             return None
         h_t = self.evaluate_barrier(float(state["current_cash"]))

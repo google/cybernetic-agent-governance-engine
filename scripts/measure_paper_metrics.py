@@ -283,17 +283,18 @@ class _BenchFinancePlugin:
     name = "finance"
     api_version = "2.0"
 
+    maturity: Any = "production"
+    domain_config: Any = None
+
     def __init__(self, *, cbf: Any, fiscal_guard: Any, consensus: Any) -> None:
         from src.cage_finance.plugin import FinanceCagePlugin  # noqa: PLC0415
 
         self.domain_config = FinanceCagePlugin.domain_config
         # Same overlay dir FinanceCagePlugin.contribute() declares; calling that
         # would construct Redis-backed engines, which the benchmark mocks.
-        self._overlay_dirs = (
-            Path(sys.modules[FinanceCagePlugin.__module__].__file__).parent
-            / "config"
-            / "compliance",
-        )
+        plugin_mod_file = sys.modules[FinanceCagePlugin.__module__].__file__
+        assert plugin_mod_file is not None
+        self._overlay_dirs = (Path(plugin_mod_file).parent / "config" / "compliance",)
         self._cbf, self._fiscal_guard, self._consensus = cbf, fiscal_guard, consensus
 
     def contribute(self) -> Any:
@@ -1718,6 +1719,11 @@ def _fmt_benign_table(benign: dict[str, Any]) -> str:
 # It sends each payload to UNGOVERNED_ENDPOINT without the governance pipeline,
 # using the same _classify_response() classifier for direct comparison.
 # Requires a running LLM endpoint; adds significant wall-clock time.
+
+
+UNGOVERNED_ENDPOINT: str = os.environ.get(
+    "UNGOVERNED_ENDPOINT", "http://localhost:8000/v1/chat/completions"
+)
 
 
 def measure_ungoverned_baseline(
