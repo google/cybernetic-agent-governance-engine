@@ -176,6 +176,8 @@ Deeper material: [`GATEWAY_ARCHITECTURE.md`](docs/architecture/GATEWAY_ARCHITECT
 
 `CAGE_DEPLOYMENT_REGION` selects one of three regions, and an unset value resolves to `US_FED`. There is no `LOCAL` jurisdiction. [`residency.json`](config/compliance/residency.json) does keep a `LOCAL` evidence-residency rule for developer workstations, and evidence cold-store bucket selection falls back to it when the variable is unset, so on an unset value the two lookups disagree.
 
+Jurisdiction and geography are coupled at deployment and decoupled at runtime. A Terraform precondition ([`infra/targets/gcp-gke/main.tf`](infra/targets/gcp-gke/main.tf), DEP-10) requires the deployment's GCP region to match the jurisdiction in every environment: `europe-*` for `EU_ECB`, `asia-*` for `APAC_MAS`, `us-*` for `US_FED`. The gateway's own check, in [`resolve_cold_store_bucket()`](src/gateway/governance/evidence/residency.py), skips its geographic validation when `CAGE_ENV` is `staging` or a development or test value. Two consequences follow. That runtime check never runs in staging, so no Gate W run exercises it; the other regions' controls are exercised by in-process regional test suites, not on a cluster. And records name the jurisdiction (`region`) but not where the system ran or whether residency was checked.
+
 | Region | Frameworks mapped | Thresholds |
 |---|---|---|
 | `US_FED` | NIST SP 800-53 Rev 5, NIST AI 600-1, SR 26-2 | [`US_FED_BASELINE.json`](config/thresholds/US_FED_BASELINE.json) |
@@ -454,7 +456,7 @@ What happens, in order:
 | 1 | [`deploy_all.sh`](deploy_all.sh) builds and attests images and applies Terraform; a second plan must show zero drift |
 | 2 | Every workload ready with zero container restarts; the audit CronJob active |
 | 3 | Host and in-cluster Lula validation with no startup grace; evidence custody read back |
-| 4 | Regional suites, live data-residency checks, and a Binary Authorization probe with an unattested image |
+| 4 | Regional suites, residency checks of configuration and the evidence bucket's location, and a Binary Authorization probe with an unattested image |
 | 5 | Live integration and advisor end-to-end suites, metrics read-back, KMS audit-log corroboration |
 | 6 | Teardown, rebuild, proof that the new evidence chain is bound to the old one, final destroy and survivor check |
 
@@ -468,7 +470,7 @@ To deploy without the validation cycle, into a project you have already bootstra
 ./deploy_all.sh --target gcp-gke --env staging --var project_id=<PROJECT_ID>
 ```
 
-The default run deploys `US_FED` in `us-central1`. Residency for `EU_ECB` or `APAC_MAS` on real infrastructure needs its own run in a European or Asian region.
+The default run deploys `US_FED` in `us-central1`. Its residency phase checks configuration and one live fact, that the evidence WORM bucket is in a US location; the checks written for an `EU_ECB` deployment are skipped. It does not exercise the gateway's own residency enforcement, which staging switches off by design (see [Configurable jurisdictional compliance](#configurable-jurisdictional-compliance)). A run in a European or Asian region would check where that run's infrastructure sits, and still not the enforcement.
 
 ## Partner integrations
 
