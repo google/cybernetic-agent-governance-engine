@@ -52,6 +52,8 @@ import sys
 from pathlib import Path
 from typing import Any
 
+import tomllib
+
 # ---------------------------------------------------------------------------
 # Logging configuration
 # ---------------------------------------------------------------------------
@@ -82,6 +84,56 @@ BLOCKLISTED_LICENSES = {
 }
 CRITICAL_CVSS_THRESHOLD = 9.0
 MIN_PYTHON_SBOM_COMPONENTS = 20
+DEFAULT_UV_LOCK_PATH = Path(__file__).resolve().parent.parent / "uv.lock"
+UV_LOCK_FLOOR_RATIO = 0.90
+
+
+def expected_uv_lock_component_floor(
+    lock_path: Path = DEFAULT_UV_LOCK_PATH,
+    *,
+    ratio: float = UV_LOCK_FLOOR_RATIO,
+) -> int:
+    """Compute the minimum expected Python SBOM component count from ``uv.lock``.
+
+    Counts resolved non-workspace ``[[package]]`` entries in ``uv.lock`` that
+    publish an sdist, pure-Python wheel (``none-any``), or wheel matching the
+    active platform (``linux`` / ``macosx`` / ``win``), then multiplies by
+    ``ratio`` (default ``0.90``) to accommodate environment-marker-only entries
+    while catching both empty venvs and partial/half-rendered SBOMs (POAM-2026-221).
+    """
+    if not lock_path.is_file():
+        raise FileNotFoundError(
+            f"Cannot compute Python SBOM component floor: missing {lock_path}"
+        )
+    data = tomllib.loads(lock_path.read_text(encoding="utf-8"))
+    packages = data.get("package", [])
+    plat_tag = (
+        "macosx"
+        if sys.platform == "darwin"
+        else ("win" if sys.platform.startswith("win") else "linux")
+    )
+    applicable = 0
+    for pkg in packages:
+        if not isinstance(pkg, dict):
+            continue
+        source = pkg.get("source", {})
+        if isinstance(source, dict) and ("editable" in source or "virtual" in source):
+            continue
+        wheels = pkg.get("wheels", [])
+        if not wheels or "sdist" in pkg:
+            applicable += 1
+            continue
+        filenames = [str(w.get("filename", "")) for w in wheels if isinstance(w, dict)]
+        if any("none-any" in fn or plat_tag in fn for fn in filenames):
+            applicable += 1
+    floor = int(applicable * ratio)
+    if floor < MIN_PYTHON_SBOM_COMPONENTS:
+        raise RuntimeError(
+            f"uv.lock at {lock_path} resolved too few packages "
+            f"({applicable} -> floor {floor} < {MIN_PYTHON_SBOM_COMPONENTS})"
+        )
+    return floor
+
 
 # ---------------------------------------------------------------------------
 # SBOM Generation Functions
@@ -89,17 +141,24 @@ MIN_PYTHON_SBOM_COMPONENTS = 20
 
 
 def generate_python_sbom(
-    output_dir: Path, dry_run: bool = False, *, allow_minimal: bool = False
+    output_dir: Path,
+    dry_run: bool = False,
+    *,
+    allow_minimal: bool = False,
+    uv_lock_path: Path = DEFAULT_UV_LOCK_PATH,
 ) -> dict[str, Any]:
     """
     Generate a CycloneDX JSON SBOM for Python dependencies.
 
     Reads installed packages via ``cyclonedx_py environment`` (or ``pip list``
     fallback) and fails closed (POAM-2026-221) if fewer than
-    ``MIN_PYTHON_SBOM_COMPONENTS`` packages are present, preventing vacuous
-    SBOM generation against an unsynced virtual environment.
+    ``expected_uv_lock_component_floor(uv_lock_path)`` packages are present,
+    preventing both vacuous and partial/half-rendered SBOMs.
     """
     logger.info("Generating Python dependency SBOM (CM-8 / POAM-006)...")
+    min_components = (
+        0 if allow_minimal else expected_uv_lock_component_floor(uv_lock_path)
+    )
 
     # Try cyclonedx-bom first (preferred — produces standards-compliant output)
     try:
@@ -110,10 +169,6 @@ def generate_python_sbom(
                 "-m",
                 "cyclonedx_py",
                 "environment",
-                "--output-format",
-                "JSON",
-                "--schema-version",
-                SBOM_SCHEMA_VERSION,
             ],
             capture_output=True,
             text=True,
@@ -123,11 +178,11 @@ def generate_python_sbom(
             sbom = json.loads(result.stdout)
             comp_count = len(sbom.get("components", []))
             logger.info("cyclonedx-bom succeeded: %d components found", comp_count)
-            if not allow_minimal and comp_count < MIN_PYTHON_SBOM_COMPONENTS:
+            if not allow_minimal and comp_count < min_components:
                 raise RuntimeError(
-                    f"Vacuous Python SBOM rejected (POAM-2026-221): found only {comp_count} "
-                    f"components (expected >= {MIN_PYTHON_SBOM_COMPONENTS}). Run `uv sync` "
-                    "before generating the Python dependency SBOM."
+                    f"Vacuous or partial Python SBOM rejected (POAM-2026-221): found only "
+                    f"{comp_count} components (expected >= {min_components} from {uv_lock_path.name}). "
+                    "Run `uv sync --locked --all-groups --all-extras` before generating the SBOM."
                 )
             return sbom
         else:
@@ -179,11 +234,11 @@ def generate_python_sbom(
     )
 
     logger.info("Fallback SBOM built: %d components", len(components))
-    if not allow_minimal and len(components) < MIN_PYTHON_SBOM_COMPONENTS:
+    if not allow_minimal and len(components) < min_components:
         raise RuntimeError(
-            f"Vacuous Python SBOM rejected on fallback path (POAM-2026-221): found only "
-            f"{len(components)} components (expected >= {MIN_PYTHON_SBOM_COMPONENTS}). "
-            "Run `uv sync` before generating the Python dependency SBOM."
+            f"Vacuous or partial Python SBOM rejected on fallback path (POAM-2026-221): found "
+            f"only {len(components)} components (expected >= {min_components} from "
+            f"{uv_lock_path.name}). Run `uv sync --locked --all-groups --all-extras` first."
         )
     return sbom
 

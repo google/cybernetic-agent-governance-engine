@@ -32,7 +32,10 @@ from unittest.mock import patch
 import pytest
 import yaml
 
-from scripts.generate_sbom import MIN_PYTHON_SBOM_COMPONENTS, generate_python_sbom
+from scripts.generate_sbom import (
+    expected_uv_lock_component_floor,
+    generate_python_sbom,
+)
 
 pytestmark = [pytest.mark.unit, pytest.mark.local]
 
@@ -128,17 +131,18 @@ def test_stpa_freshness_workflow_enforces_red_before_green_canary() -> None:
     assert "system-security-plan.yaml" in runs
 
 
-def test_python_sbom_workflow_jobs_sync_uv_and_assert_component_floor() -> None:
-    """Both `ci.yml::sbom-generate` and `security-scan.yml::sbom-generation` must sync locked deps."""
+def test_python_sbom_workflow_jobs_sync_uv_and_assert_uv_lock_floor() -> None:
+    """Both `ci.yml::sbom-generate` and `security-scan.yml::sbom-generation` must sync locked deps and enforce uv.lock floor."""
     ci_yaml = yaml.safe_load((WORKFLOWS_DIR / "ci.yml").read_text(encoding="utf-8"))
     sbom_job = ci_yaml["jobs"]["sbom-generate"]
     assert _job_has_uv_sync(sbom_job), "ci.yml::sbom-generate must run `uv sync`"
     ci_runs = "\n".join(
         str(s.get("run", "")) for s in sbom_job["steps"] if isinstance(s, dict)
     )
-    assert "len(comps) >= 20" in ci_runs, (
-        "ci.yml::sbom-generate must assert non-vacuous component count >= 20"
+    assert "expected_uv_lock_component_floor" in ci_runs, (
+        "ci.yml::sbom-generate must assert component count against expected_uv_lock_component_floor()"
     )
+    assert "len(comps) >= floor" in ci_runs
 
     sec_yaml = yaml.safe_load(
         (WORKFLOWS_DIR / "security-scan.yml").read_text(encoding="utf-8")
@@ -149,48 +153,56 @@ def test_python_sbom_workflow_jobs_sync_uv_and_assert_component_floor() -> None:
     )
 
 
-def test_generate_python_sbom_rejects_vacuous_unsynced_environment(
+def test_generate_python_sbom_rejects_empty_and_partial_environments(
     tmp_path: Path,
 ) -> None:
-    """`generate_python_sbom` fails closed when `cyclonedx_py` or `pip list` sees < 20 packages."""
-    vacuous_cdx = json.dumps(
-        {
-            "bomFormat": "CycloneDX",
-            "specVersion": "1.4",
-            "components": [{"name": "cyclonedx-bom", "version": "4.0.0"}],
-        }
-    )
-    ok_proc = subprocess.CompletedProcess(
-        args=["python", "-m", "cyclonedx_py"],
-        returncode=0,
-        stdout=vacuous_cdx,
-        stderr="",
-    )
-    with (
-        patch("scripts.generate_sbom.subprocess.run", return_value=ok_proc),
-        pytest.raises(RuntimeError, match="Vacuous Python SBOM rejected"),
-    ):
-        generate_python_sbom(tmp_path, dry_run=True)
+    """`generate_python_sbom` fails closed on both empty (1-pkg) and partial/half-rendered (150-pkg) SBOMs against `uv.lock`."""
+    floor = expected_uv_lock_component_floor()
+    assert floor >= 250, f"Expected uv.lock floor >= 250, got {floor}"
+
+    for bad_count in (1, 150, floor - 1):
+        partial_cdx = json.dumps(
+            {
+                "bomFormat": "CycloneDX",
+                "specVersion": "1.6",
+                "components": [
+                    {"name": f"pkg-{idx}", "version": "1.0.0"}
+                    for idx in range(bad_count)
+                ],
+            }
+        )
+        bad_proc = subprocess.CompletedProcess(
+            args=["python", "-m", "cyclonedx_py", "environment"],
+            returncode=0,
+            stdout=partial_cdx,
+            stderr="",
+        )
+        with (
+            patch("scripts.generate_sbom.subprocess.run", return_value=bad_proc),
+            pytest.raises(
+                RuntimeError, match="Vacuous or partial Python SBOM rejected"
+            ),
+        ):
+            generate_python_sbom(tmp_path, dry_run=True)
 
     populated_cdx = json.dumps(
         {
             "bomFormat": "CycloneDX",
-            "specVersion": "1.4",
+            "specVersion": "1.6",
             "components": [
-                {"name": f"pkg-{idx}", "version": "1.0.0"}
-                for idx in range(MIN_PYTHON_SBOM_COMPONENTS)
+                {"name": f"pkg-{idx}", "version": "1.0.0"} for idx in range(floor)
             ],
         }
     )
     populated_proc = subprocess.CompletedProcess(
-        args=["python", "-m", "cyclonedx_py"],
+        args=["python", "-m", "cyclonedx_py", "environment"],
         returncode=0,
         stdout=populated_cdx,
         stderr="",
     )
     with patch("scripts.generate_sbom.subprocess.run", return_value=populated_proc):
         sbom = generate_python_sbom(tmp_path, dry_run=True)
-    assert len(sbom["components"]) == MIN_PYTHON_SBOM_COMPONENTS
+    assert len(sbom["components"]) == floor
 
 
 # Regression coverage binding: POAM-2026-221
