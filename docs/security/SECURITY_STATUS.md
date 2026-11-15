@@ -1,5 +1,18 @@
 # Security & Compliance Status — CAGE v3.0.1
 
+> [!WARNING]
+> **Superseded. Do not cite this document as current status.** It describes
+> v3.0.1 as of 2026-08-28 and has not been maintained since. Several of its
+> statements are no longer true, among them the Lula manifest counts, the
+> control-barrier and routing-seal descriptions, and the status of individual
+> POA&M items. It is kept because other documents link to it.
+>
+> For current status use:
+> - [`docs/POAM.md`](../POAM.md) for open findings and accepted risks;
+> - [`OSCAL_EVIDENCE_CLAIM_REGISTER.md`](../compliance/OSCAL_EVIDENCE_CLAIM_REGISTER.md) for whether each compliance claim's evidence holds;
+> - [`compliance/gate_w_certification.json`](../../compliance/gate_w_certification.json) for what was last certified, at which commit;
+> - the Security and compliance status section of the root [`README.md`](../../README.md).
+
 **Date:** 2026-08-28
 **Status:** Public disclosure of current security posture and compliance implementation state
 
