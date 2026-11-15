@@ -1,6 +1,6 @@
 # PII Scrubbing Policy — CAGE Compliance Bridge
 
-**Document:** AI600-002 / NIST AI 600-1 §2.2 / GDPR Art. 25 Data Minimisation
+**Document:** AI600-002 / NIST AI 600-1 §2.4 / GDPR Art. 25 Data Minimisation
 **Date:** 2026-06-23
 **Status:** Active
 **POAM:** AI600-002
@@ -11,7 +11,7 @@
 
 This policy documents the Personally Identifiable Information (PII) scrubbing approach for Langfuse audit traces in the CAGE compliance bridge. It satisfies:
 
-- **NIST AI 600-1 §2.2** — Data Privacy controls
+- **NIST AI 600-1 §2.4** — Data Privacy controls
 - **GDPR Art. 25** — Data protection by design and by default (EU_ECB deployments)
 - **MAS Notice 655 §9** — Customer data protection (APAC_MAS deployments)
 - **ISO 42001 §A.6** — Data lineage and PII leak mitigation
@@ -114,7 +114,7 @@ PII sanitization events are logged to the compliance Langfuse project with:
 - `pii_sanitizer.fields_sanitized` — list of fields scrubbed in this span
 - `iso_control` — `A.6` (Data Lineage)
 
-These log entries constitute evidence for ISO 42001 §A.6 and AI 600-1 §2.2 compliance.
+These log entries constitute evidence for ISO 42001 §A.6 and AI 600-1 §2.4 compliance.
 
 ---
 

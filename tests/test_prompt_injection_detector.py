@@ -14,7 +14,7 @@
 # Closure regression guard for: POAM-2026-036, POAM-2026-074
 import pytest
 
-"""Tests for prompt injection detector — AI 600-1 §2.3 (Data Poisoning).
+"""Tests for prompt injection detector — AI 600-1 §2.9 (Data Poisoning).
 
 POAM: AI600-003
 Phase: 2 (core hardening)

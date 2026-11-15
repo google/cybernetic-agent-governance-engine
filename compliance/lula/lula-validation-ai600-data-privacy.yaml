@@ -13,7 +13,7 @@
 # limitations under the License.
 
 # lula-validation-ai600-data-privacy.yaml
-# NIST AI 600-1 §2.2 — Data Privacy controls
+# NIST AI 600-1 §2.4 — Data Privacy controls
 #
 # Validates: Presidio PII sanitizer active; PII audit log encrypted (CMEK).
 # POAM: AI600-002
@@ -27,7 +27,7 @@ component-definition:
     last-modified: '2026-07-09T00:00:00Z'
     version: 1.0.0
     oscal-version: 1.1.2
-    remarks: 'Phase-0 stub for AI 600-1 §2.2 Data Privacy controls. Always passes until Phase 2 real assertions are implemented
+    remarks: 'Phase-0 stub for AI 600-1 §2.4 Data Privacy controls. Always passes until Phase 2 real assertions are implemented
       per §5.4. Region: US_FED. POAM: AI600-002.'
   components:
   - uuid: a3f43860-0eca-4635-b9d9-22f81f4ca9b4
@@ -42,7 +42,7 @@ component-definition:
       implemented-requirements:
       - uuid: 2c91e53d-5ec2-4223-99d3-be7dfce07fbc
         control-id: ai600-data-privacy
-        description: Phase-0 stub for AI 600-1 §2.2 data privacy controls.
+        description: Phase-0 stub for AI 600-1 §2.4 data privacy controls.
         links:
         - href: '#d6734f08-028c-4170-a796-6a63a2beb311'
           rel: lula

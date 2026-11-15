@@ -451,7 +451,7 @@ def get_injection_patterns() -> list[str]:
 
 
 def detect_indirect_injection(tool_name: str, response_text: str) -> InjectionResult:
-    """Detect indirect prompt injection in an MCP tool response (AI 600-1 §2.3).
+    """Detect indirect prompt injection in an MCP tool response (AI 600-1 §2.9).
 
     Alias for ``detect_prompt_injection`` scoped to tool response sanitisation.
     Called by ``governance_middleware.sanitize_mcp_tool_response()`` after every

@@ -13,7 +13,7 @@
 # limitations under the License.
 
 """
-Tests for Recursive Governance Risk Mitigation — AI 600-1 §2.1, §2.5.3
+Tests for Recursive Governance Risk Mitigation — AI 600-1 §2.2, §2.5.3
 (POAM AI600-001 secondary).
 
 The ConsensusGate uses LLM inference to govern LLM outputs — creating a

@@ -13,7 +13,7 @@
 # limitations under the License.
 # Closure regression guard for: POAM-2026-035
 
-"""Tests for PII audit log — AI 600-1 §2.2 (Data Privacy).
+"""Tests for PII audit log — AI 600-1 §2.4 (Data Privacy).
 
 POAM: AI600-002
 Phase: 1 (quick wins)

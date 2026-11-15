@@ -446,11 +446,11 @@ All four phases of the NIST AI 600-1 implementation are now complete. The follow
 
 | Phase | Control | Manifest | Status |
 |-------|---------|----------|--------|
-| Phase 0 | §2.6 CBRN / Harmful Content | `lula-validation-ai600-cbrn.yaml` | 🔶 Stub (Cat-M: AO pre-approval required) |
-| Phase 1 | §2.1 Confabulation | `lula-validation-ai600-confabulation.yaml` | 🔶 Stub (requires Langfuse metric) |
-| Phase 2 | §2.2 Data Privacy | `lula-validation-ai600-data-privacy.yaml` | ✅ Active |
-| Phase 2 | §2.3 Prompt Injection | `lula-validation-ai600-prompt-injection.yaml` | 🔶 Stub |
-| Phase 3 | §2.5 Human-AI Configuration | `lula-validation-ai600-human-ai-config.yaml` | ✅ Active |
+| Phase 0 | §2.1 CBRN / Harmful Content | `lula-validation-ai600-cbrn.yaml` | 🔶 Stub (Cat-M: AO pre-approval required) |
+| Phase 1 | §2.2 Confabulation | `lula-validation-ai600-confabulation.yaml` | 🔶 Stub (requires Langfuse metric) |
+| Phase 2 | §2.4 Data Privacy | `lula-validation-ai600-data-privacy.yaml` | ✅ Active |
+| Phase 2 | §2.9 Prompt Injection | `lula-validation-ai600-prompt-injection.yaml` | 🔶 Stub |
+| Phase 3 | §2.7 Human-AI Configuration | `lula-validation-ai600-human-ai-config.yaml` | ✅ Active |
 
 ### Three-Region Compliance Matrix
 

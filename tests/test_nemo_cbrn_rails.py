@@ -13,7 +13,7 @@
 # limitations under the License.
 
 """
-Tests for NeMo Guardrails CBRN Colang rail — AI 600-1 §2.6 (POAM AI600-007).
+Tests for NeMo Guardrails CBRN Colang rail — AI 600-1 §2.1 (POAM AI600-007).
 
 These tests validate the *static content* of the Colang rail file
 (src/integrations/nemo/colang/cbrn_rails.co) without requiring a live

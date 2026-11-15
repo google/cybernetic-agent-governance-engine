@@ -292,7 +292,7 @@ Because Phase 2 (`cbf` Tier 3a → `fiscal` Tier 4) runs only after all Phase 1 
 
 **Source:** [`src/gateway/governance/confabulation_scorer.py`](../../src/gateway/governance/confabulation_scorer.py)
 
-The Confabulation Scorer implements **CTRL_AGT_001** (AI 600-1 §2.1 confidence control). It records low-confidence events to Langfuse for audit purposes and provides a structured risk score for downstream governance decisions.
+The Confabulation Scorer implements **CTRL_AGT_001** (AI 600-1 §2.2 confidence control). It records low-confidence events to Langfuse for audit purposes and provides a structured risk score for downstream governance decisions.
 
 > **Pipeline placement note:** The confabulation scorer is **not** a sequential tier of `SymbolicGovernor`. It is a standalone Langfuse observability metric computed independently of the governance decision path. Confidence enforcement in the pipeline is handled by Tier 2 in `src/gateway/governance/governor/stages/confidence.py` + OPA `system_authz.rego` (Tier 3b).
 

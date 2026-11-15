@@ -438,11 +438,11 @@ class GovernanceThresholds(BaseModel):
 
     tier1_keywords: list[str] = Field(default_factory=list)
 
-    # AI 600-1 §2.6 CBRN keyword list (US_FED only)
+    # AI 600-1 §2.1 CBRN keyword list (US_FED only)
     tier1_keywords_cbrn: list[str] = Field(default_factory=list)
     tier1_keywords_cbrn_enabled: bool = False
 
-    # AI 600-1 §2.2 PII audit log settings.
+    # AI 600-1 §2.4 PII audit log settings.
     #
     # FINDING-07 (MEDIUM): retention_days and retention_authority are resolved
     # from CAGE_DEPLOYMENT_REGION via _resolve_pii_retention() rather than

@@ -650,7 +650,7 @@ NeMo Guardrails (`src/integrations/nemo/`) is the neural component of the neuro-
 | [`manager.py`](../../src/integrations/nemo/manager.py) | Lifecycle management; hot-reload endpoint; Phase 4.2 async refactor |
 | [`actions.py`](../../src/integrations/nemo/actions.py) | Gateway-internal NeMo action implementations (OPA check, CBF check, STPA check) |
 | [`server.py`](../../src/integrations/nemo/server.py) | gRPC service exposing NeMo rails to external callers |
-| [`src/integrations/nemo/colang/cbrn_rails.co`](../../src/integrations/nemo/colang/cbrn_rails.co) | CBRN keyword rail — NIST AI 600-1 §2.6 **[US_FED only]** |
+| [`src/integrations/nemo/colang/cbrn_rails.co`](../../src/integrations/nemo/colang/cbrn_rails.co) | CBRN keyword rail — NIST AI 600-1 §2.1 **[US_FED only]** |
 
 **Extension pattern**: A new safety rail is added by authoring a Colang 2.x flow file and registering it in `config/rails/config.yml`. The `NeMoNodeFactory` in the LangGraph harness (§4.1) automatically wraps the updated rail set as a typed governance node. No kernel changes are required.
 

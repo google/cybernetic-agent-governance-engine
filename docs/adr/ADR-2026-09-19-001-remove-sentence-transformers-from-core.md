@@ -146,7 +146,7 @@ class SemanticInjectionAdapter:
 
 **No change.** The regulatory citations attached to injection detections (`get_injection_citation()`) are jurisdiction-specific but the detection logic itself is universal. Stage 2 regex patterns satisfy:
 
-- **NIST AI 600-1 §2.3** — Prompt injection detection
+- **NIST AI 600-1 §2.9** — Prompt injection detection
 - **ISO 42001 §A.9.2** — Information security controls for AI systems
 - **SR 26-2** — Model risk management (US_FED)
 

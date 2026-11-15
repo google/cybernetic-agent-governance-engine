@@ -194,7 +194,7 @@ single approved refinement propagates to every consumer simultaneously.
 | [`vllm_client.py`](vllm_client.py)                                                     | `VLLMLLM` — a LangChain `BaseChatModel` wrapper around the vLLM inference service via LiteLLM. Registered as the `vllm_llama` LLM provider and used by NeMo for any LLM calls within Colang flows.   |
 | [`otel_exporter.py`](otel_exporter.py)                                                 | `NeMoOTelCallback` — streams Colang execution spans into CAGE's OpenTelemetry pipeline (relocated from Layer 1 `src/gateway/` to preserve kernel purity).                                             |
 | [`__init__.py`](__init__.py)                                                           | Package init (currently empty; kept for Python package resolution).                                                                                                                                    |
-| [`src/integrations/nemo/colang/cbrn_rails.co`](colang/cbrn_rails.co)                   | **\[US\_FED only\]** CBRN safety rail (NIST AI 600-1 §2.6/§2.12). Blocks synthesis/weaponisation queries across Chemical, Biological, Radiological, and Nuclear categories. Loaded only when `CAGE_DEPLOYMENT_REGION=US_FED`. |
+| [`src/integrations/nemo/colang/cbrn_rails.co`](colang/cbrn_rails.co)                   | **\[US\_FED only\]** CBRN safety rail (NIST AI 600-1 §2.1). Blocks synthesis/weaponisation queries across Chemical, Biological, Radiological, and Nuclear categories. Loaded only when `CAGE_DEPLOYMENT_REGION=US_FED`. |
 | [`../../gateway/protos/nemo.proto`](../../gateway/protos/nemo.proto)                   | Protobuf definition for the gRPC sidecar: `NeMoGuardrails.Verify(VerifyRequest) → VerifyResponse`.                                                                                                     |
 | [`../../../config/rails/`](../../../config/rails/)                                     | Colang flow definitions and `config.yml` consumed by both the in-process manager and the gRPC sidecar.                                                                                                 |
 
@@ -216,7 +216,7 @@ startup via the `config.yml` rail configuration.
 ### `cbrn_rails.co` — CBRN Safety Rail **\[US\_FED only\]**
 
 **File:** [`src/integrations/nemo/colang/cbrn_rails.co`](colang/cbrn_rails.co)
-**Compliance authority:** NIST AI 600-1 §2.6 (Dual-Use Foundation Model Risks) and §2.12 (CBRN Uplift Prevention) — **US\_FED jurisdiction only**
+**Compliance authority:** NIST AI 600-1 §2.1 (CBRN Information or Capabilities) — **US\_FED jurisdiction only**
 **POAM reference:** AI600-007
 **Change category:** Cat-M — requires AO pre-approval before production deployment (Phase 3)
 

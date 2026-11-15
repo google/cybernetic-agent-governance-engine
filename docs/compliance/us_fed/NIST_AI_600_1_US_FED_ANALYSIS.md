@@ -119,7 +119,7 @@ CAGE v2.0.0 is an **agentic AI governance platform** that deploys an 8-tier gove
 | Agentic action scope not formally bounded | **High** | Partial (STPA UCAs) | No AI 600-1 §2.5 "agentic AI" scope document |
 | Multi-agent trust hierarchy undocumented | **High** | Partial (ConsensusEngine) | No inter-agent trust model per AI 600-1 §2.5.3 |
 | Data poisoning controls not formally assessed | **High** | Partial (Aho-Corasick) | No training data provenance; no poisoning Lula validation |
-| Human-AI configuration not formally documented | **High** | Partial (HITL TOCTOU) | No AI 600-1 §2.5.4 human oversight scope statement |
+| Human-AI configuration not formally documented | **High** | Partial (HITL TOCTOU) | No AI 600-1 §2.7 human oversight scope statement |
 | Value chain risk (model weights) unassessed | **High** | None | No model card verification; no weight integrity check |
 | Bias/homogenization risk not measured | **Moderate** | None | No fairness metric; no demographic impact assessment |
 | Intellectual property controls absent | **Moderate** | None | No training data license audit; no output IP policy |
@@ -303,7 +303,7 @@ CAGE's agentic AI risk surface is **unusually broad** because:
 - NeMo Colang flows apply PII detection on both input and output rails
 
 **Gaps:**
-1. **No training data memorization assessment.** AI 600-1 §2.3 specifically flags "training data memorization" as a data privacy risk. There is no assessment of whether DeepSeek-R1 or Llama-3.1 have memorized PII from their training corpora. This is distinct from runtime PII detection — a model can reproduce memorized PII even when the input contains no PII.
+1. **No training data memorization assessment.** AI 600-1 §2.4 specifically flags "training data memorization" as a data privacy risk. There is no assessment of whether DeepSeek-R1 or Llama-3.1 have memorized PII from their training corpora. This is distinct from runtime PII detection — a model can reproduce memorized PII even when the input contains no PII.
 2. **No differential privacy or membership inference attack testing.** No red-team tests for membership inference attacks (can an adversary determine if a specific individual's data was in the training set?).
 3. **PII detection threshold `score_threshold=0.3` may be too permissive.** The Presidio `score_threshold=0.3` in `SafeAnalyzer` means entities with 30% confidence are flagged — but also means 70%-confidence entities below the threshold pass through. For a HIGH-baseline financial system, this threshold should be reviewed.
 4. **No PII retention audit for Langfuse traces.** OTel spans containing governance decisions may include PII in `langfuse.observation.input` attributes. The 24-hour PII retention limit from `compliance/cross-region/banking_regs.md` is not enforced on Langfuse trace storage.
@@ -313,7 +313,7 @@ CAGE's agentic AI risk surface is **unusually broad** because:
 
 **Recommended RMF Updates:**
 
-1. **Chunk 3 (Select/Implement) — SI-19 gap update:** The existing SI-19 gap notes "no de-identification effectiveness audit." Add AI 600-1 §2.3 training data memorization as a specific sub-gap requiring a memorization assessment test (e.g., using the Carlini et al. extraction attack methodology against the deployed vLLM models).
+1. **Chunk 3 (Select/Implement) — SI-19 gap update:** The existing SI-19 gap notes "no de-identification effectiveness audit." Add AI 600-1 §2.4 training data memorization as a specific sub-gap requiring a memorization assessment test (e.g., using the Carlini et al. extraction attack methodology against the deployed vLLM models).
 
 2. **Chunk 2 (Prepare/Categorize) — Information Type update:** Add "AI Training Data Memorization Risk" as a new information type in `docs/compliance/us_fed/SP800-60_INFORMATION_TYPES.md` with C=High, I=Moderate, A=Low — reflecting that memorized PII in model weights is a persistent confidentiality risk.
 
@@ -337,7 +337,7 @@ CAGE's agentic AI risk surface is **unusually broad** because:
 - **STPA UCA-1** — missing approval token blocks execution (prevents injection-driven authorization bypass)
 
 **Gaps:**
-1. **Indirect prompt injection not covered.** The Tier-1 keyword scan and NeMo rails detect direct injection in user inputs. AI 600-1 §2.4 specifically flags **indirect prompt injection** — where malicious instructions are embedded in external data sources (market data API responses, portfolio data, news feeds) that the agent retrieves and processes. The `get_market_data` MCP tool response is not sanitized before being passed to the LLM context.
+1. **Indirect prompt injection not covered.** The Tier-1 keyword scan and NeMo rails detect direct injection in user inputs. AI 600-1 §2.9 specifically flags **indirect prompt injection** — where malicious instructions are embedded in external data sources (market data API responses, portfolio data, news feeds) that the agent retrieves and processes. The `get_market_data` MCP tool response is not sanitized before being passed to the LLM context.
 2. **Only 14 Tier-1 keywords.** The Aho-Corasick keyword list covers 14 bypass phrases. Modern prompt injection attacks use semantic obfuscation, Unicode homoglyphs, and multi-turn context manipulation that keyword matching cannot detect.
 3. **No adversarial robustness metric.** The red team dataset exists but `deflection_score >= 3` (3/5 rubric) is the pass threshold — insufficient for a HIGH-baseline financial system. AI 600-1 recommends measuring adversarial robustness as a continuous metric.
 4. **No training data provenance.** There is no documentation of the training data sources for DeepSeek-R1 or Llama-3.1, making it impossible to assess data poisoning risk in the pre-training phase.
@@ -399,7 +399,7 @@ CAGE's agentic AI risk surface is **unusually broad** because:
 1. **No formal Human Oversight Scope Statement.** AI 600-1 §2.5.4 requires documenting "the degree of human oversight" for each agentic AI capability. There is no document specifying: which decisions require human approval, what information humans are shown, what the expected review time is, and what happens if the human approver is unavailable.
 2. **Automation bias not addressed.** The HITL approval interface (if any exists) is not documented. If human approvers are shown only the AI's recommendation without counterfactual alternatives, automation bias (rubber-stamping AI decisions) is likely. AI 600-1 §2.7 specifically flags this.
 3. **No DEFER queue SLA.** The DEFER queue stores confidence-starved contexts for human review, but there is no documented SLA for how quickly a human must review and resolve a deferred decision. Stale deferred decisions could block legitimate trades indefinitely.
-4. **Trades below USD 10,000 have no human review.** The consensus threshold is USD 10,000 — trades below this amount are approved/denied entirely by the automated governance pipeline with no human review option. AI 600-1 §2.5.4 requires justification for any autonomous decision with real-world consequences.
+4. **Trades below USD 10,000 have no human review.** The consensus threshold is USD 10,000 — trades below this amount are approved/denied entirely by the automated governance pipeline with no human review option. AI 600-1 §2.7 requires justification for any autonomous decision with real-world consequences.
 5. **No human override audit trail.** If a human approver overrides a governance DENY decision, there is no dedicated audit trail for the override — only the standard OTel span. Override decisions should be separately logged with the approver identity and rationale.
 6. **No "meaningful human control" assessment.** AI 600-1 §2.7 requires assessing whether human oversight is "meaningful" (i.e., humans have sufficient information, time, and authority to make independent decisions) vs. "nominal" (rubber-stamp). No such assessment exists.
 
@@ -592,7 +592,7 @@ This section consolidates all recommended updates to the five existing NIST RMF 
 
 **Recommended addition to §1.3 Coverage Assessment:**
 
-> **AI 600-1 Gap Note (added 2026-06-15):** The governance enforcement stack is strong for deterministic policy enforcement but does not address NIST AI 600-1 GenAI-specific risks. Key gaps: (1) no confabulation rate metric, (2) indirect prompt injection via MCP tool responses unmitigated, (3) no human oversight scope document per AI 600-1 §2.5.4, (4) no model weight integrity verification, (5) no training data memorization assessment. These gaps are tracked as POAM items AI600-001 through AI600-007 in `compliance/us_fed/POAM_US_FED.md`.
+> **AI 600-1 Gap Note (added 2026-06-15):** The governance enforcement stack is strong for deterministic policy enforcement but does not address NIST AI 600-1 GenAI-specific risks. Key gaps: (1) no confabulation rate metric, (2) indirect prompt injection via MCP tool responses unmitigated, (3) no human oversight scope document per AI 600-1 §2.7, (4) no model weight integrity verification, (5) no training data memorization assessment. These gaps are tracked as POAM items AI600-001 through AI600-007 in `compliance/us_fed/POAM_US_FED.md`.
 
 ---
 
@@ -621,7 +621,7 @@ This section consolidates all recommended updates to the five existing NIST RMF 
 | C3-U1 | SI — System & Info Integrity | **SI-10 gap extension:** Add confabulation as a sub-category of SI-10. Existing gap covers API schema validation; extend to LLM output factual accuracy validation. Recommend `confabulation_rate < 0.02` metric. | §4.2 Confabulation |
 | C3-U2 | SI — System & Info Integrity | **SI-3 gap extension:** Extend malicious code protection gap to cover indirect prompt injection via MCP tool responses. Add recommendation: sanitize all MCP tool responses through Aho-Corasick scanner before injecting into LLM context window. | §4.4 Data Poisoning |
 | C3-U3 | SI — System & Info Integrity | **SI-7 gap extension:** Add LLM output integrity (provenance tracking) and NeMo Guardrails integrity verification as SI-7 sub-gaps. Recommend structured provenance record per financial recommendation. | §4.8, §4.12 |
-| C3-U4 | SI — System & Info Integrity | **SI-19 gap extension:** Add AI 600-1 §2.3 training data memorization as a specific SI-19 sub-gap. Recommend Carlini et al. extraction attack methodology against deployed vLLM models. | §4.3 Data Privacy |
+| C3-U4 | SI — System & Info Integrity | **SI-19 gap extension:** Add AI 600-1 §2.4 training data memorization as a specific SI-19 sub-gap. Recommend Carlini et al. extraction attack methodology against deployed vLLM models. | §4.3 Data Privacy |
 | C3-U5 | AC — Access Control | **AC-5 gap extension:** Extend separation of duties gap to include AI 600-1 §2.7 human-AI configuration requirements. Add recommendation: create `docs/governance/HUMAN_OVERSIGHT_SCOPE.md`. | §4.7 Human-AI Config |
 | C3-U6 | RA — Risk Assessment | **New RA gap:** Add algorithmic fairness assessment as a RA-3 sub-gap. Recommend `compliance/universal/AI_FAIRNESS_ASSESSMENT.md` per SR 11-7 model risk management requirements. | §4.6 Bias |
 | C3-U7 | CA — Security Assessment | **CA-8 gap extension:** Add AI-specific penetration testing requirements: model extraction resistance, advanced jailbreak testing (DAN, role-play, many-shot), adversarial financial examples, vLLM direct-access testing. | §4.9 Info Security |
@@ -838,7 +838,7 @@ imports:
 | Document | Path | Purpose | AI 600-1 Source | Priority |
 |----------|------|---------|-----------------|----------|
 | AI Risk Taxonomy | `docs/compliance/universal/AI_RISK_TAXONOMY.md` | Formal adoption of AI 600-1 12-category taxonomy with CAGE applicability ratings | All §4.x | **P0** |
-| Human Oversight Scope | `docs/governance/HUMAN_OVERSIGHT_SCOPE.md` | Documents degree of human oversight for each agentic capability per AI 600-1 §2.5.4 | §4.7 | **P1** |
+| Human Oversight Scope | `docs/governance/HUMAN_OVERSIGHT_SCOPE.md` | Documents degree of human oversight for each agentic capability per AI 600-1 §2.7 | §4.7 | **P1** |
 | AI Fairness Assessment | `compliance/universal/AI_FAIRNESS_ASSESSMENT.md` | Algorithmic fairness testing methodology per SR 11-7 and AI 600-1 §2.6 | §4.6 | **P2** |
 | Model Card Review | `docs/compliance/universal/MODEL_CARD_REVIEW.md` | Formal review of DeepSeek-R1 and Llama-3.1 model cards | §4.12 | **P1** |
 | AI IP Policy | `docs/compliance/universal/AI_IP_POLICY.md` | Model license terms, training data provenance, IP ownership of AI outputs | §4.10 | **P2** |
@@ -853,8 +853,8 @@ The following POAM items are derived from the AI 600-1 gap analysis. They are nu
 | POAM ID | Control ID | AI 600-1 Ref | Weakness Description | Risk Level | Scheduled Completion | Status |
 |---------|-----------|--------------|---------------------|------------|---------------------|--------|
 | **AI600-001** | SI-10, AU-3 | §2.2 Confabulation | No confabulation rate metric exists. The financial advisor LLM can produce confident but factually incorrect market data, fabricated portfolio positions, or hallucinated regulatory constraints. ConsensusEngine critics are also LLMs subject to confabulation. No Lula validation for confabulation rate. | **High** | 2026-09-30 | Open |
-| **AI600-002** | SI-19, SC-28 | §2.3 Data Privacy | No training data memorization assessment. DeepSeek-R1 and Llama-3.1 may have memorized PII from training corpora. No differential privacy or membership inference attack testing. Presidio score_threshold=0.3 may be too permissive for HIGH-baseline financial system. | **High** | 2026-10-31 | Open |
-| **AI600-003** | SI-3, SI-10, CA-8 | §2.4 Data Poisoning | Indirect prompt injection via MCP tool responses (market data API, portfolio data) is unmitigated. Only 14 Tier-1 keywords cover direct injection. No multi-turn injection testing. No adversarial robustness metric. Red team pass threshold (deflection_score >= 3) insufficient for HIGH baseline. | **Critical** | 2026-08-31 | Open |
+| **AI600-002** | SI-19, SC-28 | §2.4 Data Privacy | No training data memorization assessment. DeepSeek-R1 and Llama-3.1 may have memorized PII from training corpora. No differential privacy or membership inference attack testing. Presidio score_threshold=0.3 may be too permissive for HIGH-baseline financial system. | **High** | 2026-10-31 | Open |
+| **AI600-003** | SI-3, SI-10, CA-8 | §2.9 Data Poisoning | Indirect prompt injection via MCP tool responses (market data API, portfolio data) is unmitigated. Only 14 Tier-1 keywords cover direct injection. No multi-turn injection testing. No adversarial robustness metric. Red team pass threshold (deflection_score >= 3) insufficient for HIGH baseline. | **Critical** | 2026-08-31 | Open |
 | **AI600-004** | RA-3, SI-12 | §2.6 Harmful Bias | No fairness metric or demographic impact assessment. Financial advisor may produce systematically different recommendations for different demographic groups — potential ECOA/Regulation B violation. No homogenization risk assessment per AI 600-1 §2.6. | **High** | 2026-11-30 | Open |
 | **AI600-005** | AC-5, AU-3, CA-7 | §2.7 Human-AI Config | No formal Human Oversight Scope Statement per AI 600-1 §2.5.4. No DEFER queue SLA documented. No automation bias assessment. No human override audit trail. Trades below USD 10,000 have no human review option with no documented justification. | **High** | 2026-09-30 | Open |
 | **AI600-006** | CA-8, RA-5, SC-7 | §2.9 Information Security | No model extraction attack testing. No advanced jailbreak testing (DAN, role-play, many-shot). vLLM API accessible within cluster without authentication layer. CAGE_ROUTING_SEAL_SECRET bypass (POAM-012) also constitutes an AI 600-1 §2.9 gap. | **High** | 2026-09-30 | Open |
@@ -889,7 +889,7 @@ The following POAM items are derived from the AI 600-1 gap analysis. They are nu
 | # | Artifact | Path | Effort | Controls |
 |---|----------|------|--------|----------|
 | AI-P0-1 | AI Risk Taxonomy document | `docs/compliance/universal/AI_RISK_TAXONOMY.md` | 4h | AI RMF GOVERN-1.1, GOVERN-1.2 |
-| AI-P0-2 | Human Oversight Scope document | `docs/governance/HUMAN_OVERSIGHT_SCOPE.md` | 6h | AC-5, CA-7, AI 600-1 §2.5.4 |
+| AI-P0-2 | Human Oversight Scope document | `docs/governance/HUMAN_OVERSIGHT_SCOPE.md` | 6h | AC-5, CA-7, AI 600-1 §2.7 |
 | AI-P0-3 | Model Card Review | `docs/compliance/universal/MODEL_CARD_REVIEW.md` | 8h | SA-12, SR-3, AI 600-1 §2.12 |
 | AI-P0-4 | OSCAL component definition extension | `compliance/oscal/component-definition.yaml` | 4h | CA-2, CA-7 |
 
