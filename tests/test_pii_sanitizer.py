@@ -33,6 +33,35 @@ def test_credit_card_redacted(sanitizer):
 
 
 @pytest.mark.local
+@pytest.mark.parametrize(
+    "card",
+    [
+        # JCB, 16 digits, written in 4-digit groups
+        "3530 1113 3330 0000",
+        "3530-1113-3330-0000",
+        "3566002020360505",
+        # Diners Club, 14 digits, split 4-6-4 and 4-4-4-2
+        "3056 930902 5904",
+        "3056 9309 0259 04",
+        "30569309025904",
+        # Diners Club, 16 digits (300-305, 36, 38-39 ranges)
+        "3000 0000 0000 0004",
+        "3600-0000-0000-0008",
+        "3800000000000006",
+        # Discover, 644-649 prefix
+        "6445 6445 6445 6445",
+        "6491234567890123",
+        # JCB 15-digit, 2131 and 1800 prefixes, grouped 4-6-5
+        "2131 000000 00008",
+        "180000000000002",
+    ],
+)
+def test_grouped_and_range_card_numbers_redacted(sanitizer, card):
+    """Card numbers written with separators, and Discover 644-649, must not reach the ledger."""
+    assert sanitizer.sanitize(f"card {card} on file") == "card [REDACTED_CC] on file"
+
+
+@pytest.mark.local
 def test_email_redacted(sanitizer):
     assert sanitizer.sanitize("user@example.com") == "[REDACTED_EMAIL]"
 
