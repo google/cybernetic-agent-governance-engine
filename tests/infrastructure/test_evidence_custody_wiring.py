@@ -398,12 +398,14 @@ def test_bridge_module_keeps_cold_store_and_custody_interval() -> None:
     for name in (
         "EVIDENCE_COLD_STORE",
         "EVIDENCE_COLD_STORE_BUCKET",
+        "EVIDENCE_COLD_STORE_LOCATION",
         "EVIDENCE_KMS_KEY",
         "EVIDENCE_VERIFY_INTERVAL_S",
         "EVIDENCE_VERIFY_PREFIX",
         "OSCAL_REQUIRE_VERIFIED_CUSTODY",
     ):
         assert name in env
+    assert env["EVIDENCE_COLD_STORE_LOCATION"] == "var.evidence_cold_store_location"
     assert (
         env["EVIDENCE_CUSTODY_INTERVAL_S"]
         == "tostring(var.evidence_custody_interval_s)"
@@ -416,6 +418,10 @@ def test_bridge_module_keeps_cold_store_and_custody_interval() -> None:
     assert (
         _tf_attr(bridge, "evidence_cold_store_bucket")
         == "module.worm_bucket.bucket_name"
+    )
+    assert (
+        _tf_attr(bridge, "evidence_cold_store_location")
+        == "module.worm_bucket.bucket_location"
     )
     assert _tf_attr(bridge, "evidence_verify_interval_s") == "300"
 

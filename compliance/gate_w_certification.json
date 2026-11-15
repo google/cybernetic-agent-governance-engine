@@ -110,5 +110,33 @@
       ],
       "reading": "Under the ratings from 2026-11-14, 12 of the 26 evaluated specs are rated Active and 14 are rated Stub. Eleven of the 12 were satisfied in this run with the validate logic they have today, counting lula-validation-au12.yaml, whose Deployment match has since dropped stera-gateway, a name nothing in infra/ creates, which cannot change its result on a cluster Terraform builds. lula-validation-iso001-token-quota.yaml was satisfied in its #664 form, which required only a non-empty opa-policies ConfigMap; its restored check was evaluated offline with lula dev validate on 2026-11-14, and no Gate W run has evaluated it yet. Of the 12 rated Active in the certified tree, ftra, eu-fria, tqp007 and flowsignal are now rated Stub."
     }
+  },
+  "residency_result_breakdown": {
+    "annotated_utc": "2026-11-15T14:50:00Z",
+    "annotation_scope": "Added after certification to qualify 'live data-residency (6)' in notes. It changes no certified result, and the published archive and its manifest are unchanged.",
+    "runtime_residency_gate_exercised": false,
+    "runtime_residency_reason": "At certified_git_sha (8956f505), resolve_cold_store_bucket() in src/gateway/governance/evidence/residency.py bypassed geographic validation whenever CAGE_ENV was in ('development', 'dev', 'test', 'ci', 'staging', 'uat', 'preprod'). Because Gate W runs with CAGE_ENV=staging, the runtime cold-store residency gate was never exercised in this run; that bypass also masked a latent production startup failure on compliance-bridge (POAM-2026-220).",
+    "phase_4_live_data_residency": {
+      "test_file": "tests/infrastructure/test_data_residency.py",
+      "collected": 12,
+      "passed": 6,
+      "skipped": 6,
+      "passed_breakdown": {
+        "TestUSFEDDeployedResidency": {
+          "count": 3,
+          "what_ran": "2 Gate W runner environment-variable checks (GOOGLE_CLOUD_LOCATION and bucket/path env vars on the test host) plus 1 live gcloud storage buckets describe showing a US location on the staging WORM bucket"
+        },
+        "TestEUECBResidencyArtifacts": {
+          "count": 3,
+          "what_ran": "Repository-file checks over eu-dev.tfvars, eu-prod.tfvars and config/compliance/EU_ECB_BASELINE.json"
+        }
+      },
+      "skipped_breakdown": {
+        "TestEUECBDeployedResidency": {
+          "count": 6,
+          "reason": "Skipped because the deployed cluster's cage-deployment ConfigMap set CAGE_DEPLOYMENT_REGION=US_FED"
+        }
+      }
+    }
   }
 }
