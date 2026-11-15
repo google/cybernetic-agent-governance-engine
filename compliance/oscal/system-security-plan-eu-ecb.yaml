@@ -277,7 +277,9 @@ system-security-plan:
       links:
       - href: ../../compliance/lula/lula-validation-eu-fria.yaml
         rel: lula
-        text: 'Lula validation: EU AI Act Art. 27 FRIA'
+        text: 'Lula validation: EU AI Act Art. 27 FRIA (rated Stub: checks gateway
+          readiness and the region source only, not the fria tier or the EU_ECB region;
+          POAM-2026-219)'
     - uuid: eu-ecb-comp-0005-4000-8000-000000000005
       type: software
       title: CAGE Regional Finance Threshold Overlay and Trade-Confidence Tier
@@ -656,7 +658,9 @@ system-security-plan:
         links:
         - href: ../../compliance/lula/lula-validation-eu-fria.yaml
           rel: reference
-          text: Lula automated validation for EU AI Act Art. 27
+          text: 'Lula manifest for EU AI Act Art. 27, rated Stub and not evidence
+            for this statement: it checks gateway readiness and the region source
+            only (POAM-2026-219)'
     - uuid: eu-ecb-req-0005-4000-8000-000000000005
       control-id: cm-6
       description: 'Configuration settings (NIST SP 800-53 CM-6). The effective EU_ECB
@@ -1177,7 +1181,7 @@ system-security-plan:
       - href: compliance/lula/lula-validation-dora-art10.yaml
         media-type: application/yaml
     - uuid: eu-ecb-res-0010-4000-8000-000000000010
-      title: CAGE EU AI Act Lula Validation — Art. 27 FRIA
+      title: CAGE EU AI Act Lula Validation — Art. 27 FRIA (rated Stub, POAM-2026-219)
       rlinks:
       - href: compliance/lula/lula-validation-eu-fria.yaml
         media-type: application/yaml

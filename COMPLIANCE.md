@@ -263,38 +263,11 @@ Full STPA hazard analysis (UCAs 1–9, Saga pattern, FiscalLimitGuard): [`docs/s
     *   **⚠️ Gaps to Authorization:** The CAGE software runtime does not inherently possess an official **Authority to Operate (ATO)**. To close this loop, the parent organization must deploy independent assessors to complete RMF Step 5 (Assess) and Step 6 (Authorize), as well as remediate the remaining open infrastructure POA&M tickets.
 *   **Companion Documentation:** For infrastructure configurations, Linkerd policy files, cryptographic key management, and security posture tracking, see [docs/SECURITY_STATUS.md](docs/security/SECURITY_STATUS.md), [`docs/operations/KEY_ROTATION.md`](docs/operations/KEY_ROTATION.md), and [docs/POAM.md](docs/POAM.md).
 
-### F. Lula Automated Compliance Validation (32 Manifests)
+### F. Lula Automated Compliance Validation (33 Manifests)
 *   **Status:** Partially Automated.
 *   **Mechanism:** There are **33 validation manifests** in `compliance/lula/` covering ISO 42001 (universal), NIST SP 800-53 (US_FED), NIST AI 600-1 (US_FED), EU AI Act/GDPR/DORA (EU_ECB), and MAS FEAT/Notice 655/TRM (APAC_MAS) (the unmanaged static CronJob `de5534ac:deployment/k8s/lula-cron.yaml` was retired with `deployment/k8s/`; Terraform CronJob provisioning is tracked under `POAM-2026-195`). `#664` (`372daad2`) migrated all 33 specs to the Lula v0.16.0 `resource-rule` / `requests` schema (`tests/test_lula_v0160_schema.py`) and added fail-closed assessment verification (`scripts/verify_lula_assessment_results.py`), while 5 manifests remain `.stub-baseline` stubs (`scripts/check_lula_stub_count.py`) and live cluster execution requires an active deployment (`POAM-2026-080`, `POAM-2026-169` Instance 12). See [`compliance/lula/README.md`](compliance/lula/README.md) for the full status table and activation instructions.
 
-    **✅ Active (7):**
-    *   `lula-validation-a52.yaml` (ISO 42001 A.5.2, **ALL regions**) — Social impact assessment; NeMo Guardrails toxicity blocking ≥ 99%
-    *   `lula-validation-a53.yaml` (ISO 42001 A.5.3, **ALL regions**) — Logging and monitoring; Langfuse safety rate ≥ 98%
-    *   `lula-validation-a92.yaml` (ISO 42001 A.9.2, **ALL regions**) — Data transfer to suppliers; Presidio PII leak rate = 0%
-    *   `lula-validation-sc4.yaml` (NIST SP 800-53 SC-4, **US_FED only**) — Fiscal limits and RBAC; OPA ConfigMap label present in `governance-stack` namespace
-    *   `lula-validation-sc8.yaml` (NIST SP 800-53 SC-8, **US_FED only**) — Transmission confidentiality / TLS enforcement verified via unit tests in `tests/test_tls_enforcement.py` and Linkerd mTLS manifest annotations
-    *   `lula-validation-ia5.yaml` (NIST SP 800-53 IA-5 / SC-12, **US_FED only**) — Authenticator management / KMS HSM key lifecycle documented in `docs/operations/KEY_ROTATION.md`
-    *   `lula-validation-cilium-dpv2.yaml` (NIST SP 800-53 SC-7, **US_FED only**) — Boundary protection; asserts GKE Dataplane V2 `anetd` DaemonSet is scheduled and all nodes are ready, enforcing eBPF-backed `NetworkPolicy` / `FQDNNetworkPolicy` on Dataplane V2 (`infra/targets/gcp-gke/network_policy.tf`)
-
-    **🔶 Stub (11)** — NIST SP 800-53 / CSA AARM; logic complete, requires cluster-specific configuration:
-    *   `lula-validation-aarm-vectors.yaml` (CSA AARM v1.0, **ALL regions**) — 11-vector AI agent threat model coverage
-    *   `lula-validation-ac2.yaml` (NIST SP 800-53 AC-2) — Account management / service account lifecycle
-    *   `lula-validation-ac3.yaml` (NIST SP 800-53 AC-3) — Access enforcement / OPA RBAC
-    *   `lula-validation-au12.yaml` (NIST SP 800-53 AU-12) — Langfuse OTLP ingestion availability (standalone OTel Collector deprecated 2026-05-31; validation needs update)
-    *   `lula-validation-cm6.yaml` (NIST SP 800-53 CM-6) — Configuration settings enforcement
-    *   `lula-validation-ia3.yaml` (NIST SP 800-53 IA-3) — Device identification / Linkerd mTLS SPIFFE identity
-    *   `lula-validation-ia5.yaml` (NIST SP 800-53 IA-5) — Authenticator management / KMS HSM key lifecycle
-    *   `lula-validation-ir6.yaml` (NIST SP 800-53 IR-6) — Incident reporting
-    *   `lula-validation-ra5.yaml` (NIST SP 800-53 RA-5) — Vulnerability scanning (pip-audit / Trivy CI)
-    *   `lula-validation-sc8.yaml` (NIST SP 800-53 SC-8) — Transmission confidentiality / TLS enforcement
-    *   `lula-validation-si2.yaml` (NIST SP 800-53 SI-2) — Flaw remediation / CVE patching (pip-audit CI)
-
-    **🔶 Stub (5)** — NIST AI 600-1 (**US_FED only**); Phase 0 scaffolding added 2026-06-15; require Langfuse metric availability and cluster-specific configuration before activation (see [`docs/compliance/us_fed/AI_600_1_IMPLEMENTATION_PLAN.md`](docs/compliance/us_fed/AI_600_1_IMPLEMENTATION_PLAN.md)):
-    *   `lula-validation-ai600-confabulation.yaml` (AI 600-1 §2.1, controls: SI-10, AU-3, POAM AI600-001) — Confabulation / hallucination detection; asserts `confabulation_rate < 0.02` over 24 h window via `confabulation_scorer.py`
-    *   `lula-validation-ai600-data-privacy.yaml` (AI 600-1 §2.2, controls: SI-19, SC-28, POAM AI600-002) — Data privacy / PII sanitization; asserts PII audit log retention ≥ 90 days and Presidio score threshold ≥ 0.5
-    *   `lula-validation-ai600-prompt-injection.yaml` (AI 600-1 §2.3, controls: SI-3, SI-10, CA-8, POAM AI600-003) — Prompt injection detection; asserts injection detector ConfigMap present and deflection score ≥ 4
-    *   `lula-validation-ai600-human-ai-config.yaml` (AI 600-1 §2.5, controls: AC-5, AU-3, CA-7, POAM AI600-005) — Human-AI configuration / HITL escalation; asserts DEFER queue SLA ≤ 4 h for CRITICAL escalations and HITL audit trail present
-    *   `lula-validation-ai600-cbrn.yaml` (AI 600-1 §2.6 / §2.12, controls: SA-12, SR-3, SI-7, POAM AI600-007) — CBRN content filtering; asserts CBRN keyword list ≥ 10 terms enabled and NeMo CBRN rail deployed. **⚠️ Cat-M: requires AO pre-approval before cluster activation.**
+    **Ratings:** [`compliance/lula/README.md`](compliance/lula/README.md) is the only place a manifest is rated, and only a manifest it rates Active may back a POA&M closure. It rates **12 of the 26 evaluated manifests Active**: `a52`, `a53`, `a92` and `iso001-token-quota` in every region, and `ac3`, `au12`, `cilium-dpv2`, `ia3`, `metrics`, `sc4`, `sc8` and `si2` for US_FED. Each Active row names the rules its manifest's `validate` composes, held to the Rego by `tests/unit/test_lula_description_parity.py`. `sc8` checks Memorystore CA pinning only; no Lula manifest checks TLS enforcement or Linkerd mTLS. The 14 evaluated stubs include the five NIST AI 600-1 placeholders in §G and `ftra`, `eu-fria`, `tqp007` and `flowsignal`, re-rated on 2026-11-14 because `#664` had removed most of what they asserted (POAM-2026-219).
 
 ### G. NIST AI 600-1 Generative AI Risk Management (US_FED Profile)
 *   **Status:** Phase 0 Scaffolding Complete (2026-06-15). Full assertions target Phase 2–3 per [`docs/compliance/us_fed/AI_600_1_IMPLEMENTATION_PLAN.md`](docs/compliance/us_fed/AI_600_1_IMPLEMENTATION_PLAN.md).

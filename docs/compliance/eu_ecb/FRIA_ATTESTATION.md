@@ -177,7 +177,7 @@ The `fria` tier calls the deployment's `NormativeProvider` (`CAGE_NORMATIVE_PROV
    ```
 5. Verify boot-time baseline fetch: `kubectl logs -n governance-stack deploy/cage-gateway | grep NormativeDaemon`
 6. Load the deployer's FRIA artefact into `CTRL_FRIA_006.assessments` (§5.2). Submit a test trade, then confirm that the governor runs the `fria` stage and that the provider's decision appears in the verdict: no `FRIA_*` violation when admitted, `FRIA_EXTERNAL_HOLD` when escalated.
-7. Run Lula validation: `lula validate -f compliance/lula/lula-validation-eu-fria.yaml`
+7. Run Lula validation: `lula validate -f compliance/lula/lula-validation-eu-fria.yaml`. A pass shows only that the gateway is ready and reads its region from the `cage-deployment` ConfigMap, whichever region it holds; the manifest checks neither the `fria` tier nor the provider and is rated Stub (POAM-2026-219). Step 6 is the check that the `fria` stage runs.
 
 ---
 

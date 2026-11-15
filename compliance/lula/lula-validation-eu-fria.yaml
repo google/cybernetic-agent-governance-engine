@@ -16,19 +16,16 @@ component-definition:
   uuid: 2ed0f8fd-6e9e-5bff-870b-a604fcaf8f4d
   metadata:
     title: CAGE Validation — EU FRIA (EU-001)
-    last-modified: '2026-10-01T00:00:00Z'
-    version: 1.1.0
+    last-modified: '2026-11-14T00:00:00Z'
+    version: 1.1.1
     oscal-version: 1.1.2
     remarks: |-
       Auto-converted from standalone lula validation format.
       Region: EU_ECB. Posture: eu_ai_act.
-      Notes: EU AI Act Art. 27: Fundamental Rights Impact Assessment gating (EU-001). Asserts that the cage-gateway Deployment in EU_ECB:
-        (1) Is Running with ≥1 ready replica.
-        (2) CAGE_NORMATIVE_PROVIDER is set to a non-stub value (e.g. "provider_01").
-            "static" is NOT permitted in EU_ECB — it means FRIA gating is bypassed.
-        (3) CAGE_NORMATIVE_ENDPOINT is set to the external normative provider API URL.
-        (4) The cage-deployment ConfigMap declares CAGE_DEPLOYMENT_REGION=EU_ECB and the gateway reads its region from it (configMapKeyRef); EU_ECB is the only region whose jurisdiction entry assembles the fria tier (src/gateway/governance/jurisdiction/registry.py); the tier is absent from US_FED and APAC_MAS deployments by construction (tests/governor/test_jurisdiction_wiring.py).
-      Failure means FRIA validation is in stub mode: all governance decisions are self-admitted without independent external compliance validation, which does not satisfy EU AI Act Art. 27 for High-Risk AI systems. POAM reference: EU-001 (POAM_EU_ECB.md). See also: docs/compliance/eu_ecb/FRIA_ATTESTATION.md for the full FRIA document.
+      Notes: EU AI Act Art. 27: Fundamental Rights Impact Assessment gating (EU-001). Asserts gateway_running (a gateway Deployment has at least one ready replica) and region_from_configmap (the cage-deployment ConfigMap holds EU_ECB, US_FED or APAC_MAS, and the gateway reads CAGE_DEPLOYMENT_REGION from it through configMapKeyRef).
+      It checks neither the fria tier, nor the normative provider, nor that the region is EU_ECB, so a US_FED deployment satisfies it, as the certified Gate W run did. compliance/lula/README.md does not rate it Active.
+      Until #664 (372daad2) it also asserted that CAGE_NORMATIVE_PROVIDER is set and not "static", that CAGE_NORMATIVE_ENDPOINT is set, and that the ConfigMap declares EU_ECB. The committed Terraform set none of these for the US_FED staging deployment, and #664 removed the three checks without updating these Notes (POAM-2026-219).
+      The fria tier's EU_ECB-only assembly and the refusal of an enforcing EU_ECB posture on the stub provider are verified by tests/governor/test_jurisdiction_wiring.py (POAM-2026-099). Independent external FRIA validation remains tracked by EU-001 (POAM_EU_ECB.md). See also: docs/compliance/eu_ecb/FRIA_ATTESTATION.md.
   components:
   - uuid: 8c303a7e-01aa-5f29-8517-978957c411f9
     type: software

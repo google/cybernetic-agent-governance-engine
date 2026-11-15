@@ -15,27 +15,26 @@
 # lula-validation-sc8.yaml
 # NIST SP 800-53 Rev 5 — SC-8: Transmission Confidentiality and Integrity
 #
-# Asserts that:
-#   1. All Services in the governance-stack namespace use port 443 or 8443 or named "https"
-#      (no cleartext HTTP-only services exposed externally)
-#   2. A default-deny NetworkPolicy exists (enforcing ingress restrictions)
-#   3. Ingress resources (if any) have TLS configured
-#   4. Deployments have readOnlyRootFilesystem: true OR carry a TLS enforcement
-#      annotation (cage.io/tls-enforced: "true")
-#   5. The gateway and compliance-bridge Deployments mount a *-redis-ca ConfigMap
-#      read-only at /etc/cage/tls/redis, set REDIS_CA_CERT_PATH=/etc/cage/tls/redis/ca.pem,
-#      and carry a non-empty cage.io/redis-ca-sha256 pod-template annotation (POAM-2026-086)
+# Asserts one thing, redis_ca_pinned: the gateway and compliance-bridge
+# Deployments mount a *-redis-ca ConfigMap read-only at /etc/cage/tls/redis, set
+# REDIS_CA_CERT_PATH=/etc/cage/tls/redis/ca.pem, and carry a non-empty
+# cage.io/redis-ca-sha256 pod-template annotation (POAM-2026-086).
 #
-# Domain: kubernetes → Services, NetworkPolicies, Ingresses, Deployments
+# It checks neither Linkerd mTLS nor Service, Ingress or NetworkPolicy TLS.
+# Until 2026-11-14 this header listed four more checks: TLS Service ports, a
+# default-deny NetworkPolicy, Ingress TLS, and readOnlyRootFilesystem or a TLS
+# annotation on every Deployment. #664 (372daad2) removed them from the Rego and
+# left the header claiming them (POAM-2026-219). POAM-011, the missing
+# encryption-in-transit assertion, remains open.
+#
+# Domain: kubernetes → Deployments
 # Provider: opa (inline Rego)
 #
 # References:
-#   - infra/targets/gcp-gke/network_policy.tf — default-deny and hardened NetworkPolicy definitions
-#   - infra/targets/gcp-gke/perimeter.tf — GKE Ingress managed TLS & Cloud Armor BackendConfig
-#   - infra/modules/governed_advisor/main.tf — container security context
 #   - infra/modules/gateway/main.tf — gateway-redis-ca ConfigMap & mount
 #   - infra/modules/compliance_bridge/main.tf — compliance-bridge-redis-ca ConfigMap & mount
-#   - docs/POAM.md — POAM-011 (SC-8: no TLS assertion in test suite), POAM-2026-086 (SC-8: Memorystore CA pinning)
+#   - docs/POAM.md — POAM-2026-086 (SC-8: Memorystore CA pinning), POAM-2026-219
+#   - docs/compliance/us_fed/POAM_US_FED.md — POAM-011 (SC-8: no TLS assertion in test suite)
 #
 # OSCAL Mapping:
 #   component: cage-gateway
@@ -47,28 +46,15 @@ component-definition:
   uuid: 0625ad3c-dd04-5999-9bcd-2018ef7828b7
   metadata:
     title: CAGE Validation — SC8
-    last-modified: '2026-10-01T00:00:00Z'
-    version: 1.1.0
+    last-modified: '2026-11-14T00:00:00Z'
+    version: 1.1.1
     oscal-version: 1.1.2
     remarks: |-
       Auto-converted from standalone lula validation format.
       Region: US_FED. Posture: nist-sp800-53.
-      Notes: NIST SP 800-53 Rev 5 SC-8: Transmission Confidentiality and Integrity. Namespace: governance-stack (confirmed from live cluster deployment snapshot). Implements five transmission security assertions for the CAGE governance namespace:
-        (1) All Services must expose TLS ports (443 or 8443) or be named "https".
-            ClusterIP services annotated cage.io/internal-only: "true" are exempt
-            (they rely on NetworkPolicy L3/L4 isolation for confidentiality).
-        (2) default-deny-ingress NetworkPolicy must exist (enforces boundary isolation
-            per network-policy.yaml; prevents unencrypted lateral movement).
-        (3) All Ingress resources must have spec.tls blocks configured (no HTTP-only
-            ingress paths; TLS termination at the cluster edge required).
-        (4) All Deployments must have readOnlyRootFilesystem: true in container
-            securityContext OR carry the cage.io/tls-enforced: "true" annotation
-            (defense-in-depth: immutable filesystem prevents TLS config tampering).
-        (5) The gateway and compliance-bridge Deployments must mount a *-redis-ca
-            ConfigMap read-only at /etc/cage/tls/redis, set REDIS_CA_CERT_PATH=/etc/cage/tls/redis/ca.pem,
-            and carry a non-empty cage.io/redis-ca-sha256 pod-template annotation
-            (pins the Memorystore managed server CA and rolls pods on CA rotation).
-      Remediates: POAM-011 (SC-8: no encryption-in-transit validation test) and POAM-2026-086 (SC-8: Memorystore managed CA pinning in gateway and compliance-bridge). See: compliance/continuous-monitoring/ISCM_STRATEGY.md — SC-8 monitoring cadence. See: docs/POAM.md — POAM-011, POAM-2026-086.
+      Notes: NIST SP 800-53 Rev 5 SC-8: Transmission Confidentiality and Integrity. Namespace: governance-stack (confirmed from live cluster deployment snapshot). Asserts redis_ca_pinned: the gateway and compliance-bridge Deployments mount a *-redis-ca ConfigMap read-only at /etc/cage/tls/redis, set REDIS_CA_CERT_PATH=/etc/cage/tls/redis/ca.pem, and carry a non-empty cage.io/redis-ca-sha256 pod-template annotation, which pins the Memorystore managed server CA and rolls pods on CA rotation.
+      It checks neither Linkerd mTLS nor Service, Ingress or NetworkPolicy TLS. Until 2026-11-14 these Notes described four more assertions (TLS Service ports, a default-deny-ingress NetworkPolicy, Ingress TLS, and readOnlyRootFilesystem or a TLS annotation on every Deployment), which #664 (372daad2) had removed from the Rego (POAM-2026-219).
+      Evidence for POAM-2026-086 (SC-8: Memorystore managed CA pinning in gateway and compliance-bridge). It does not remediate POAM-011 (SC-8: no encryption-in-transit validation test), which remains open. See: compliance/continuous-monitoring/ISCM_STRATEGY.md — SC-8 monitoring cadence. See: docs/POAM.md — POAM-2026-086, POAM-2026-219.
   components:
   - uuid: 6a1a452d-4510-5333-bfe5-d114471d57e5
     type: software

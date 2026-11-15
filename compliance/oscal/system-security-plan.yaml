@@ -1488,8 +1488,10 @@ system-security-plan:
     - uuid: g7000014-0000-4000-8000-000000000014
       control-id: ctrl-ftra-001
       description: Framed Transitions & Reachable Actions (FTRA) Tier 0.5 action reachability
-        enforcement is active in the governance-stack gateway deployment, validated
-        by compliance/lula/lula-validation-ftra.yaml.
+        enforcement runs unconditionally in the gateway governor and is verified by
+        tests/test_ftra_package.py. The linked compliance/lula/lula-validation-ftra.yaml
+        checks only that a gateway container exists and is not evidence for this control
+        (POAM-2026-219).
       props:
       - name: implementation-status
         value: implemented
@@ -1499,9 +1501,12 @@ system-security-plan:
       - role-id: compliance-engineer
     - uuid: g7000015-0000-4000-8000-000000000015
       control-id: A.4
-      description: ISO/IEC 42001 Annex A.4 resource and token quota governance is
-        enforced via Redis-backed gateway quota state and active OPA policy ConfigMap
-        bindings, validated by compliance/lula/lula-validation-iso001-token-quota.yaml.
+      description: ISO/IEC 42001 Annex A.4 token quota configuration is in place on
+        the gateway, validated by compliance/lula/lula-validation-iso001-token-quota.yaml,
+        which checks that the gateway or advisor sets a non-empty REDIS_URL and that
+        a policy file in the opa-policies ConfigMap carries the token quota rule.
+        It checks configuration, not quota enforcement; OPA enforcement against live
+        session counters is tracked as ISO-001.
       props:
       - name: implementation-status
         value: implemented
@@ -1535,9 +1540,12 @@ system-security-plan:
       - role-id: compliance-engineer
     - uuid: g7000018-0000-4000-8000-000000000018
       control-id: A.8.4
-      description: ISO/IEC 42001 Annex A.8.4 fail-closed token quota proxy and secret-reference
-        isolation controls are enforced on the gateway deployment, validated by compliance/lula/lula-validation-flowsignal.yaml
-        and compliance/lula/lula-validation-tqp007.yaml.
+      description: ISO/IEC 42001 Annex A.8.4 fail-closed token quota enforcement is
+        implemented in the gateway inference proxy's TokenQuotaProxy (src/gateway/governance/token_quota_proxy.py),
+        whose check_and_increment() raises QuotaExceededError when Redis fails, verified
+        by tests/test_token_quota_proxy.py. No Lula manifest evidences it; compliance/lula/lula-validation-tqp007.yaml
+        checks only gateway readiness and REDIS_URL, and compliance/lula/lula-validation-flowsignal.yaml
+        checks configuration presence; both are rated Stub (POAM-2026-219).
       props:
       - name: implementation-status
         value: implemented

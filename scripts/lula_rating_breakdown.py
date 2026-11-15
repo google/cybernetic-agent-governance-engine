@@ -98,7 +98,9 @@ def build_breakdown(
             "Only a manifest rated Active may be cited as evidence for closing a "
             "POA&M item (scripts/check_poam_lula_divergence.py). The rating is the "
             "README's judgment of the manifest, not a measurement of what its Rego "
-            "asserts; the README row says what each manifest checks."
+            "asserts. Each Active README row names the rules its manifest's validate "
+            "composes, and tests/unit/test_lula_description_parity.py holds those "
+            "names, not what the rules check, to the Rego."
         ),
         "counts": {
             "evaluated": len(evaluated_names),

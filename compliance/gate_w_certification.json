@@ -89,6 +89,26 @@
       "description_overstated": "The description 84f39e21 wrote for lula-validation-sc8.yaml, 'Linkerd mTLS, OPA UDS sidecar & Memorystore server CA TLS', claimed more than the manifest checks: its Rego asserts only that gateway and compliance-bridge pin the Memorystore server CA. The README row was corrected in the same change as this annotation."
     },
     "active_rating_scope": "Rated Active is the README's judgment, not a measurement of what a manifest asserts. Checked against their Rego when this annotation was written, five of the 12 rated Active in the certified tree describe checks their Rego does not make: lula-validation-ftra.yaml asserts only that a gateway Deployment has a gateway container; lula-validation-eu-fria.yaml accepts any of the three regions and checks neither the fria tier nor the normative provider, and was satisfied in this US_FED run; lula-validation-tqp007.yaml checks only that the gateway is ready with a REDIS_URL, and lula-validation-iso001-token-quota.yaml only that REDIS_URL and the opa-policies ConfigMap are present, so neither checks that quotas are enforced; and lula-validation-flowsignal.yaml's Redis-isolation check compares constants, while its secretKeyRef check passes when no FlowSignal variables are set. Their README rows now say what each asserts; their ratings are unchanged.",
-    "reading": "26 of 26 evaluated specs were satisfied and none failed. That is not 26 controls rated Active: 12 were rated Active in the certified tree, the commit that recorded this certification rated 4 more Active, and 10 are rated Stub. Five of those 10 are Phase-0 placeholders whose own metadata says they always pass, so their being satisfied says nothing about the controls they name. Nor is every Active rating a tested control: see active_rating_scope."
+    "reading": "26 of 26 evaluated specs were satisfied and none failed. That is not 26 controls rated Active: 12 were rated Active in the certified tree, the commit that recorded this certification rated 4 more Active, and 10 are rated Stub. Five of those 10 are Phase-0 placeholders whose own metadata says they always pass, so their being satisfied says nothing about the controls they name. Nor is every Active rating a tested control: see active_rating_scope.",
+    "ratings_from_2026_11_14": {
+      "annotated_utc": "2026-11-15T03:32:00Z",
+      "annotation_scope": "Added after certification, like the fields above. It changes no certified result; it records how the README ratings those fields describe changed on 2026-11-14 (POAM-2026-219), and supersedes 'their ratings are unchanged' in active_rating_scope and the present-tense counts in reading.",
+      "change": "The six manifests active_rating_scope and rated_active_after_certification.description_overstated name lost their assertions in one commit, #664 (372daad2), a Lula v0.16 schema migration whose message mentions no removals. lula-validation-ftra.yaml, lula-validation-eu-fria.yaml, lula-validation-tqp007.yaml and lula-validation-flowsignal.yaml are rated Stub. lula-validation-iso001-token-quota.yaml has its policy-content check restored and stays Active. lula-validation-sc8.yaml stays Active for its one check, Memorystore CA pinning, with its header corrected. Every Active README row now names the rules its manifest's validate composes, held to the Rego by tests/unit/test_lula_description_parity.py.",
+      "evaluated_rated_active": [
+        "lula-validation-a52.yaml",
+        "lula-validation-a53.yaml",
+        "lula-validation-a92.yaml",
+        "lula-validation-ac3.yaml",
+        "lula-validation-au12.yaml",
+        "lula-validation-cilium-dpv2.yaml",
+        "lula-validation-ia3.yaml",
+        "lula-validation-iso001-token-quota.yaml",
+        "lula-validation-metrics.yaml",
+        "lula-validation-sc4.yaml",
+        "lula-validation-sc8.yaml",
+        "lula-validation-si2.yaml"
+      ],
+      "reading": "Under the ratings from 2026-11-14, 12 of the 26 evaluated specs are rated Active and 14 are rated Stub. Eleven of the 12 were satisfied in this run with the validate logic they have today. lula-validation-iso001-token-quota.yaml was satisfied in its #664 form, which required only a non-empty opa-policies ConfigMap; its restored check was evaluated offline with lula dev validate on 2026-11-14, and no Gate W run has evaluated it yet. Of the 12 rated Active in the certified tree, ftra, eu-fria, tqp007 and flowsignal are now rated Stub."
+    }
   }
 }
