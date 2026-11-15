@@ -140,10 +140,11 @@ When `submit_evidence()` is called:
 2. **Verify receipt digest**: Compute SHA-256 over JCS-canonicalized receipt (excluding `receiptDigest` and `signature` fields) and compare
 3. **Resolve public key**: Fetch Ed25519 public key from JWKS manifest by `signature.keyId`
 4. **Verify signature**: Ed25519 signature verification over canonical bytes
-5. **Check expiration**: Ensure `now <= expiresAt`
-6. **Return seal**: Store `receiptDigest` as seal hash
+5. **Check envelope binding**: Require the signed `envelopeDigest` to equal the submitted `evidence_hash`
+6. **Check expiration**: Ensure `now <= expiresAt`
+7. **Return seal**: Store `receiptDigest` as seal hash
 
-If any verification step fails, `submit_evidence()` returns an `EvidenceSeal` with `error` populated (fail-closed).
+If any verification step fails, or no key manifest is configured, `submit_evidence()` returns an `EvidenceSeal` with `error` populated (fail-closed).
 
 ### JWKS Manifest
 

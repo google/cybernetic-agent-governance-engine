@@ -484,11 +484,11 @@ class TestSubmitEvidence:
 
     @pytest.mark.asyncio
     @pytest.mark.local
-    async def test_submit_evidence_success(
+    async def test_submit_evidence_without_key_manifest_fails_closed(
         self,
         adapter: Provider06AgentIntegrityAdapter,
     ) -> None:
-        """submit_evidence returns seal hash on success (no JWKS configured)."""
+        """Without a key manifest the receipt cannot be verified, so nothing is sealed."""
         mock_response = _mock_response({"receiptDigest": "sha256-abc123def456"})
 
         with patch("httpx.AsyncClient") as MockClient:
@@ -502,8 +502,9 @@ class TestSubmitEvidence:
             )
 
         assert result.thread_id == "test-123"
-        assert result.seal_hash == "sha256-abc123def456"
-        assert result.error is None
+        assert result.seal_hash is None or result.seal_hash == ""
+        assert result.error is not None
+        assert "key manifest" in result.error.lower()
 
     @pytest.mark.asyncio
     @pytest.mark.local
