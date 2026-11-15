@@ -584,7 +584,7 @@ run_hermetic_region_pytest() {
   local marker="$3"
   if [[ -n "${CAGE_HERMETIC_PYTEST_WRAPPER:-}" ]]; then
     run_pytest_require_passed "$label" \
-      "$CAGE_HERMETIC_PYTEST_WRAPPER" env CAGE_DEPLOYMENT_REGION="$region_val" ./.venv/bin/pytest tests/ -m "$marker" -v --tb=short
+      env -u GATEWAY_URL "$CAGE_HERMETIC_PYTEST_WRAPPER" env -u GATEWAY_URL CAGE_DEPLOYMENT_REGION="$region_val" ./.venv/bin/pytest tests/ -m "$marker" -v --tb=short
     return $?
   fi
   if [[ -f "$REPO_ROOT/.env" ]]; then
@@ -594,7 +594,7 @@ run_hermetic_region_pytest() {
   local rc=0
   set +e
   run_pytest_require_passed "$label" \
-    env CAGE_DEPLOYMENT_REGION="$region_val" uv run pytest "$REPO_ROOT/tests/" -m "$marker" -v --tb=short
+    env -u GATEWAY_URL CAGE_DEPLOYMENT_REGION="$region_val" uv run pytest "$REPO_ROOT/tests/" -m "$marker" -v --tb=short
   rc=$?
   set -e
   restore_shielded_dotenv
@@ -1628,13 +1628,17 @@ if errors:
       error "$LULA_FAILURES Lula validation check(s) failed"
       error "POAM-024 is NOT satisfied — security posture incomplete"
     fi
+    stop_staging_port_forward
   else
     warn "Lula validation skipped (--skip-lula flag)"
   fi
 
-  if [[ "$SKIP_POSTURE" == "false" || "$SKIP_LIVE_SWEEP" == "false" ]]; then
-    start_staging_port_forward
-  fi
+  ensure_no_staging_port_forward() {
+    if [[ -x "$REPO_ROOT/scripts/port_forward_staging.sh" ]]; then
+      "$REPO_ROOT/scripts/port_forward_staging.sh" --stop >/dev/null 2>&1 || true
+    fi
+    PORT_FORWARD_ACTIVE=false
+  }
 
   # ─── Phase 4: Region Posture, Live Residency & Live Langfuse (FAIL CLOSED) ─
   if [[ "$SKIP_POSTURE" == "false" ]]; then
@@ -1643,6 +1647,10 @@ if errors:
     echo -e "${CYAN}║  Phase 4: Region posture, live residency & Langfuse isolation    ║${RESET}"
     echo -e "${CYAN}╚══════════════════════════════════════════════════════════════════╝${RESET}"
     echo ""
+
+    # Hermetic regional suites must never run while kubectl port-forward exposes
+    # live staging on localhost:8080 (even if started externally before --skip-lula).
+    ensure_no_staging_port_forward
 
     info "Running US_FED posture tests..."
     if ! run_hermetic_region_pytest "US_FED posture tests" "US_FED" "us_fed"; then
@@ -1658,6 +1666,8 @@ if errors:
     if ! run_hermetic_region_pytest "APAC_MAS posture tests" "APAC_MAS" "apac_mas"; then
       ((POSTURE_FAILURES++)) || true
     fi
+
+    start_staging_port_forward
 
     info "Running live data-residency verification (test_data_residency.py --run-integration)..."
     if ! run_pytest_require_passed "Live data-residency tests" \
@@ -1702,6 +1712,7 @@ if errors:
   echo ""
 
   if [[ "$SKIP_LIVE_SWEEP" == "false" ]]; then
+    start_staging_port_forward
     info "Running first-party GCP live_external sweep (-m 'live_external and not partner' --run-live-external)..."
     if ! run_pytest_require_passed "Phase 5 live_external sweep" \
       env \
