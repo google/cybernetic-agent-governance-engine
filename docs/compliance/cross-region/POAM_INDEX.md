@@ -64,7 +64,7 @@ Which ISO 42001 Annex A controls and Clauses have POAM entries vs. which are unt
 | §A.8.3 | Supply Chain | POAM-006, POAM-013, POAM-017, POAM-023 (US_FED) | — | 🟡 Partial |
 | §A.8.4 | WAL / Continuity | EU-002 (EU_ECB) | — | 🟡 Partial |
 | §A.9.2 | Access Control | POAM-001, POAM-002 (US_FED) | [`lula-validation-ac2.yaml`](../../../compliance/lula/lula-validation-ac2.yaml), [`lula-validation-ac3.yaml`](../../../compliance/lula/lula-validation-ac3.yaml) | ✅ Active (`ac3`) / 🔶 Stub (`ac2`) |
-| §A.9.3 | Network / Data Protection | POAM-007, POAM-011, POAM-014 (US_FED) | [`lula-validation-ia3.yaml`](../../../compliance/lula/lula-validation-ia3.yaml), [`lula-validation-sc8.yaml`](../../../compliance/lula/lula-validation-sc8.yaml) | ✅ Active Lula |
+| §A.9.3 | Network / Data Protection | POAM-007, POAM-011, POAM-014 (US_FED) | [`lula-validation-ia3.yaml`](../../../compliance/lula/lula-validation-ia3.yaml), [`lula-validation-sc8.yaml`](../../../compliance/lula/lula-validation-sc8.yaml) | ✅ Active Lula (`sc8` checks Memorystore CA pinning only, so it does not evidence POAM-011) |
 | §A.9.4 | Telemetry / Monitoring | POAM-018→ISO, POAM-019→ISO, EU-005 (EU_ECB), MAS-002, MAS-004 (APAC_MAS) | [`lula-validation-a53.yaml`](../../../compliance/lula/lula-validation-a53.yaml) | ✅ Active Lula |
 | §A.9.2 (privacy) | Data Privacy / PII | — | [`lula-validation-a92.yaml`](../../../compliance/lula/lula-validation-a92.yaml) | ✅ Active Lula |
 
@@ -119,9 +119,9 @@ Which POAM entries have a corresponding Lula validation manifest:
 | [`lula-validation-ia5.yaml`](../../../compliance/lula/lula-validation-ia5.yaml) | US_FED | §A.9.3 | IA-5 | — |
 | [`lula-validation-ir6.yaml`](../../../compliance/lula/lula-validation-ir6.yaml) | US_FED | §6.1 | IR-6 | POAM-008 (US_FED) |
 | [`lula-validation-ra5.yaml`](../../../compliance/lula/lula-validation-ra5.yaml) | US_FED | §A.8.3 | RA-5 | POAM-010 (US_FED, Closed) |
-| [`lula-validation-sc8.yaml`](../../../compliance/lula/lula-validation-sc8.yaml) | US_FED | §A.9.3 | SC-8 | POAM-011 (US_FED; ✅ Active Lula) |
+| [`lula-validation-sc8.yaml`](../../../compliance/lula/lula-validation-sc8.yaml) | US_FED | §A.9.3 | SC-8 | POAM-2026-086 (Memorystore CA pinning; ✅ Active Lula). Not POAM-011 (US_FED, Open): its only check is `redis_ca_pinned` (POAM-2026-219) |
 | [`lula-validation-si2.yaml`](../../../compliance/lula/lula-validation-si2.yaml) | US_FED | §A.8.3 | SI-2 | POAM-013, POAM-017, POAM-023 (US_FED; ✅ Active Lula) |
-| [`lula-validation-tqp007.yaml`](../../../compliance/lula/lula-validation-tqp007.yaml) | ALL | §A.4 / §A.8.4 | SC-5 | ISO-001, ISO-004 |
+| [`lula-validation-tqp007.yaml`](../../../compliance/lula/lula-validation-tqp007.yaml) | ALL | §A.4 / §A.8.4 | SC-5 | — (🔶 Stub: checks gateway readiness and `REDIS_URL`, not fail-closed quota enforcement, so it evidences neither ISO-001 nor ISO-004; POAM-2026-219) |
 
 ---
 

@@ -44,6 +44,8 @@ Per ISO 42001 §9.3.2, the following inputs were reviewed:
 | `lula-validation-sc8.yaml` | PASS | Linkerd mTLS enforced |
 | AI 600-1 Lula stubs | IN PROGRESS | Phase 2 graduation in progress (this session) |
 
+> **Note (2026-11-14):** `lula-validation-sc8.yaml` has never checked Linkerd mTLS. In Q2 2026 it checked Service ports, a default-deny NetworkPolicy, Ingress TLS and read-only root filesystems; `#341` added the Memorystore CA pin, and since `#664` (`372daad2`) the CA pin is all it checks (POAM-2026-219). The Evidence entry above overstated it.
+
 ### 2.3 Langfuse Safety Rate Trends (Q2 2026)
 
 - **Average safety_rate:** 0.97 (target: ≥ 0.95) ✅

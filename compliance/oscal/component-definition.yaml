@@ -345,10 +345,13 @@ component-definition:
             are enforced even during dependency failures.
 
             '
-          remarks: 'Implemented as an env var TOKEN_QUOTA_FAIL_CLOSED=true on the
-            token-quota-proxy Deployment in the governance-stack namespace. Lula validation
-            asserts this configuration is present at runtime. STPA hazard: H-7 (TokenQuotaProxy
-            fail-OPEN scenario). POAM reference: ISO-004 (POAM_ISO42001.md).
+          remarks: 'Described as an env var TOKEN_QUOTA_FAIL_CLOSED=true on a token-quota-proxy
+            Deployment in the governance-stack namespace, but neither the variable
+            nor that Deployment appears in the committed Terraform or source. The
+            linked Lula manifest does not check the variable: since #664 it checks
+            only that the gateway is ready and sets REDIS_URL, and it is rated Stub
+            (POAM-2026-219). STPA hazard: H-7 (TokenQuotaProxy fail-OPEN scenario).
+            POAM reference: ISO-004 (POAM_ISO42001.md).
 
             '
           links:
@@ -581,7 +584,8 @@ component-definition:
         links:
         - href: ../../compliance/lula/lula-validation-sc8.yaml
           rel: lula
-          text: 'Lula validation: SC-8 Transmission Confidentiality (US_FED)'
+          text: 'Lula validation: SC-8 Memorystore CA pinning (US_FED). It does not
+            observe the TLS context factory this statement describes (POAM-2026-219)'
   - uuid: e5000099-stpa-4000-8000-compiler00001
     title: STPA-to-Policy Compiler
     type: software

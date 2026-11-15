@@ -15,20 +15,22 @@
 # lula-validation-ftra.yaml
 # FTRA Tier 0.5 Gate — Forward-Looking Trajectory Reachability Analyzer
 #
-# Validates:
-#   - FTRA boundary check capability is deployed (mandatory, no feature flag)
-#   - terminal_registry.json ConfigMap is present
-#   - NetworkPolicy interim control is active (until boundary check is default)
-#   - cage-gateway deployment has FTRA-related environment variables
+# Asserts only gateway_exists: a gateway Deployment with a container named
+# "gateway" exists in governance-stack. It does not exercise FTRA, read the
+# terminal registry, or check a NetworkPolicy, so it is not evidence for
+# CTRL_FTRA_001 and compliance/lula/README.md does not rate it Active.
 #
-# POAM: POAM-2026-030
+# Before #664 (372daad2) it also defined rules named for FTRA configuration, the
+# terminal registry ConfigMap and an interim NetworkPolicy, but each of them
+# passed whenever the gateway container existed, and its gateway rule matched
+# only a Deployment named cage-gateway, which Terraform does not create. #664
+# widened the name match and deleted the other rules, and this header kept
+# describing them until 2026-11-14 (POAM-2026-219). The ConfigMap and
+# NetworkPolicies are retired. FTRA itself is covered by tests/test_ftra_package.py.
+#
+# POAM: POAM-2026-030, POAM-2026-219
 # Control ID: CTRL_FTRA_001
-# Phase: 3.4 (FTRA Tests and NetworkPolicy Interim Control)
 # Region: ALL (Universal gate — not region-specific)
-#
-# Risks Mitigated:
-#   - R-02: Trust Boundary Mutation
-#   - R-03: Trust Boundary Bypass
 #
 # Reference: docs/operations/FTRA_COMPENSATING_CONTROLS.md
 
@@ -36,22 +38,23 @@ component-definition:
   uuid: 8c7a4f92-3d5e-4a1b-9c8d-2e6f1b3a5c7d
   metadata:
     title: CAGE Validation — FTRA Tier 0.5 Gate
-    last-modified: '2026-08-15T00:00:00Z'
-    version: 1.0.0
+    last-modified: '2026-11-14T00:00:00Z'
+    version: 1.0.1
     oscal-version: 1.1.2
     remarks: |
-      Validates the Forward-Looking Trajectory Reachability Analyzer (FTRA)
-      Tier 0.5 governance gate implementation. FTRA performs commencement-time
-      reachability analysis on execution plans to identify plans that can reach
-      IRREVERSIBLE_TERMINAL actions and routes them for HITL review.
+      Asserts only gateway_exists: a gateway Deployment with a container named
+      gateway exists in governance-stack. It does not exercise the Forward-Looking
+      Trajectory Reachability Analyzer (FTRA), read the terminal registry, or
+      check a NetworkPolicy, and compliance/lula/README.md does not rate it Active.
 
-      This validation covers both the in-graph ftra_node and the Phase 3.3
-      boundary check at the controller level. The NetworkPolicy is deployed as
-      defense-in-depth alongside the mandatory FTRA boundary check in
-      SymbolicGovernor._run_checks().
+      Before #664 (372daad2) it also defined rules named for FTRA configuration,
+      the terminal registry ConfigMap and an interim NetworkPolicy, each of which
+      passed whenever the gateway container existed. #664 deleted them, and this
+      description kept naming them until 2026-11-14 (POAM-2026-219). FTRA is
+      covered by tests/test_ftra_package.py.
 
       Control ID: CTRL_FTRA_001
-      POAM: POAM-2026-030
+      POAM: POAM-2026-030, POAM-2026-219
       Region: Universal (ALL)
   components:
   - uuid: 9d8b5a03-4e6f-5b2c-8d9e-3f7a2c4b6d8e
@@ -68,13 +71,10 @@ component-definition:
       description: |
         Control implementation for FTRA Tier 0.5 Gate (CTRL_FTRA_001).
 
-        This implementation validates:
-        1. The cage-gateway deployment has FTRA-related configuration
-        2. The terminal_registry.json ConfigMap is present
-        3. The NetworkPolicy interim control is deployed
-        4. FTRA boundary check environment variables are configured
+        This validation asserts only that a gateway Deployment with a gateway
+        container exists (gateway_exists). It checks no FTRA configuration, no
+        terminal registry and no NetworkPolicy.
 
-        Phase: 3.4 (FTRA Tests and NetworkPolicy Interim Control)
         Region: Universal (ALL)
       implemented-requirements:
       - uuid: 1f0d7c25-6a8b-4d4e-af1a-5b9c4e6d8f0a

@@ -15,13 +15,20 @@
 # lula-validation-flowsignal.yaml
 # FlowSignal Integration — Consequence Authority Store & Provider Configuration
 #
-# Asserts that:
-#   1. CAGE_NORMATIVE_PROVIDER=provider_01 is sourced via env var (not hardcoded image)
-#   2. FlowSignal secrets (FLOWSIGNAL_CLIENT_CERT, FLOWSIGNAL_CLIENT_KEY, 
-#      FLOWSIGNAL_CA_BUNDLE) are referenced via secretKeyRef if present — never inline value:
-#   3. Redis key namespace flowsignal:token:* does not collide with existing prefixes
-#      (fiscal:*, DEFER:*, safety:*)
-#   4. REDIS_URL env var is present on the gateway Deployment (consumption store dependency)
+# Asserts, on the gateway Deployment in governance-stack:
+#   - flowsignal_secrets_use_secretref: any FLOWSIGNAL_CLIENT_CERT,
+#     FLOWSIGNAL_CLIENT_KEY or FLOWSIGNAL_CA_BUNDLE variable comes from a
+#     secretKeyRef, never an inline value (true when none is set)
+#   - redis_namespace_no_collision: the flowsignal:token: prefix does not overlap
+#     fiscal:, DEFER: or safety: (both sides are constants in the Rego, so this
+#     reads nothing from the cluster)
+#   - redis_url_configured: a REDIS_URL variable is present
+#   - kms_config_present: KMS_GOVERNANCE_KEY or CAGE_KMS_PROVIDER is present
+#
+# It does not check the normative provider. Until #664 (372daad2) it also
+# asserted CAGE_NORMATIVE_PROVIDER=provider_01, which the committed Terraform did
+# not set; #664 removed that check and left this header claiming it
+# (POAM-2026-219). compliance/lula/README.md does not rate it Active.
 #
 # Domain: kubernetes → Gateway Deployment in governance-stack namespace
 # Provider: opa (inline Rego)
@@ -29,7 +36,7 @@
 # References:
 #   - src/gateway/governance/consequence_authority_store.py — Redis consumption store
 #   - src/integrations/provider_01/provider.py — FlowSignal NormativeProvider
-#   - plans/flowsignal_integration_implementation_plan.md — Phase 1 §4
+#   - docs/partners/provider_01/flowsignal_integration_implementation_plan.md — Phase 1 §4
 #
 # OSCAL Mapping:
 #   component: cage-gateway
@@ -41,26 +48,24 @@ component-definition:
   uuid: f1025a8c-4d3e-5a99-8b2f-c418e7f92d1a
   metadata:
     title: CAGE Validation — FlowSignal Integration (FLOWSIGNAL-001)
-    last-modified: '2026-08-27T16:14:00Z'
-    version: 1.1.0
+    last-modified: '2026-11-14T00:00:00Z'
+    version: 1.1.1
     oscal-version: 1.1.2
     remarks: |-
       Auto-converted from standalone lula validation format.
       Region: ALL. Posture: iso42001.
-      Notes: ISO 42001 §A.8.4 — FlowSignal Integration Compliance (FLOWSIGNAL-001). Asserts that the FlowSignal (provider_01) consequence authority integration is configured correctly on the gateway Deployment in the governance-stack namespace:
-        (1) CAGE_NORMATIVE_PROVIDER=provider_01 is set via env var (not hardcoded in image),
-            enabling runtime provider selection per the plugin architecture specification.
-        (2) All FlowSignal mTLS secrets (FLOWSIGNAL_CLIENT_CERT, FLOWSIGNAL_CLIENT_KEY,
-            FLOWSIGNAL_CA_BUNDLE) are referenced via secretKeyRef if present — never
-            inline value: fields (prevents credential exposure in pod specs).
-        (3) Redis key namespace flowsignal:token:* does not collide with existing
-            prefixes (fiscal:*, DEFER:*, safety:*) — ensures namespace isolation for
-            the distributed consequence authority consumption store.
-        (4) REDIS_URL env var is present on the gateway Deployment (consumption store
+      Notes: ISO 42001 §A.8.4 — FlowSignal Integration Compliance (FLOWSIGNAL-001). Asserts, on the gateway Deployment in the governance-stack namespace:
+        (1) flowsignal_secrets_use_secretref: any FlowSignal mTLS variable (FLOWSIGNAL_CLIENT_CERT,
+            FLOWSIGNAL_CLIENT_KEY, FLOWSIGNAL_CA_BUNDLE) is referenced via secretKeyRef, never an
+            inline value: field. It holds when none of them is set.
+        (2) redis_namespace_no_collision: the flowsignal:token: prefix does not overlap fiscal:,
+            DEFER: or safety:. Both sides are constants in the Rego, so this reads nothing from the cluster.
+        (3) redis_url_configured: a REDIS_URL env var is present (consumption store
             dependency per consequence_authority_store.py from_env() factory).
-        (5) Phase 2: KMS configuration env vars (KMS_GOVERNANCE_KEY or CAGE_KMS_PROVIDER)
-            are present for ConsequenceToken JWS signing via KMSGovernanceSigner.
-      Reference architecture: This validation enforces illustrative deployment patterns for FlowSignal consequence authority integration. Adopters should adapt namespace prefixes, secret names, and KMS key configurations to their own environments. See: plans/flowsignal_integration_implementation_plan.md Phase 1 §4, Phase 2 §5. See: src/gateway/governance/consequence_authority_store.py — Redis key schema, src/gateway/governance/consequence_token.py — KMS-signed JWS.
+        (4) kms_config_present: KMS_GOVERNANCE_KEY or CAGE_KMS_PROVIDER is present, for
+            ConsequenceToken JWS signing via KMSGovernanceSigner.
+      It does not check the normative provider, and compliance/lula/README.md does not rate it Active. Until #664 (372daad2) it also asserted CAGE_NORMATIVE_PROVIDER=provider_01, which the committed Terraform did not set; #664 removed that check without updating these Notes (POAM-2026-219).
+      Reference architecture: This validation enforces illustrative deployment patterns for FlowSignal consequence authority integration. Adopters should adapt namespace prefixes, secret names, and KMS key configurations to their own environments. See: docs/partners/provider_01/flowsignal_integration_implementation_plan.md Phase 1 §4, Phase 2 §5. See: src/gateway/governance/consequence_authority_store.py — Redis key schema, src/gateway/governance/consequence_token.py — KMS-signed JWS.
   components:
   - uuid: a4d8f2c1-6e9b-5c73-ba18-f29e4a7c8d0e
     type: software

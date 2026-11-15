@@ -16,13 +16,13 @@ component-definition:
   uuid: 0ddb2190-5503-51f2-97c5-1a4ed5e97a1c
   metadata:
     title: CAGE Validation — ISO001 TOKEN QUOTA (ISO-001)
-    last-modified: '2026-07-01T13:18:54Z'
-    version: 1.0.0
+    last-modified: '2026-11-14T00:00:00Z'
+    version: 1.1.0
     oscal-version: 1.1.2
     remarks: |-
       Auto-converted from standalone lula validation format.
       Region: ALL. Posture: iso42001.
-      Notes: ISO 42001 §A.4: AI System Resource Controls — Token Quota OPA Injection (ISO-001). Asserts that the governed-financial-advisor Deployment matches required state signatures.
+      Notes: ISO 42001 §A.4: AI System Resource Controls — Token Quota OPA Injection (ISO-001). Asserts gateway_has_redis_url (the gateway or advisor Deployment has a non-empty REDIS_URL) and opa_policy_has_quota_rules (a policy file in the opa-policies ConfigMap mentions both quota_available and token_quota). The finance bundle's trade_governance.rego satisfies the second; a domain whose bundle carries no token quota rule fails it. #664 (372daad2) had replaced the policy-content check with a non-empty check; it was restored on 2026-11-14 (POAM-2026-219).
   components:
   - uuid: a30eb71f-447c-53aa-8891-bb1b7db73afa
     type: software
@@ -86,15 +86,19 @@ component-definition:
                 env.value != ""
               }
 
-              opa_policy_present if {
+              # Restored after #664 replaced it with a non-empty check (POAM-2026-219):
+              # a policy file in the mounted ConfigMap must carry the quota rules.
+              opa_policy_has_quota_rules if {
                 some cm in input["opa-policy-configmap"]
-                cm.metadata.name in {"opa-policies", "opa-policy"}
-                count(cm.data) > 0
+                cm.metadata.name == "opa-policies"
+                some content in cm.data
+                contains(content, "quota_available")
+                contains(content, "token_quota")
               }
 
               validate if {
                 count(input["gateway-deployment"]) > 0
                 count(input["opa-policy-configmap"]) > 0
                 gateway_has_redis_url
-                opa_policy_present
+                opa_policy_has_quota_rules
               }
