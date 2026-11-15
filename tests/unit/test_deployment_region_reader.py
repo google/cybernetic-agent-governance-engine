@@ -55,7 +55,7 @@ from src.gateway.governance.env_posture import (
 pytestmark = [pytest.mark.unit, pytest.mark.local]
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
-SCANNED_TREES = ("src", "scripts", "packages")
+SCANNED_TREES = ("src", "scripts", "packages", "examples")
 READER = Path("src/gateway/governance/env_posture.py")
 VAR_NAME = "CAGE_DEPLOYMENT_REGION"
 NAME_CONSTANT = "REGION_ENV_VAR"
