@@ -27,7 +27,9 @@ Covers:
 
 from __future__ import annotations
 
+import importlib.util
 import json
+import sys
 from pathlib import Path
 
 import pytest
@@ -40,16 +42,24 @@ from src.compliance_bridge.types import (
     get_iso_control_map,
 )
 from src.gateway.governance.oscal_ssp_exporter import (
+    _DEFAULT_APAC_SSP,
+    _DEFAULT_COMP_DEF,
+    _DEFAULT_EU_SSP,
+    _DEFAULT_INPUT_DIR,
+    _DEFAULT_PATCH_OUT,
+    _DEFAULT_SSP,
     _FTRA_COMPONENT_UUID,
     _FTRA_SI10_DESCRIPTION,
     _FTRA_SI10_IMPL_UUID,
     _PLATFORM_SC7_IMPL_UUID,
+    _REPO_ROOT,
     _STPA_COMPONENT_UUID,
     _STPA_IMPL_MARKER,
     FrameworkRouter,
     _apply_component_patch,
     _apply_ftra_component_patch,
     _apply_ssp_patch,
+    _render_targets_in_memory,
     _write_standalone_patch,
     apply_narrative_source,
     generate_component_entry,
@@ -1330,6 +1340,81 @@ class TestRegionalSspExportAndCheck:
         assert rewritten != original_text
         eu_copy.write_text(rewritten, encoding="utf-8")
         assert main(["export", "--check", "--ssp", str(eu_copy)]) == 0
+
+
+class TestCensusHashedTextIgnoresTheExportClock:
+    """An export must not change the census hash of a claim that did not change.
+
+    ``scripts/check_oscal_claim_census.py`` hashes the description and props of
+    every implemented-requirement. The sa-11 STPA statement used to carry the
+    export time in both, so any export that rewrote an SSP for another reason
+    drifted that statement's census row, and the census gate failed on a claim
+    nobody had changed.
+    """
+
+    @staticmethod
+    def _claim_hashes(rendered: dict[Path, str], out_dir: Path) -> dict[str, str]:
+        name = "_census_for_export_clock"
+        spec = importlib.util.spec_from_file_location(
+            name, _REPO_ROOT / "scripts" / "check_oscal_claim_census.py"
+        )
+        assert spec is not None and spec.loader is not None
+        census = importlib.util.module_from_spec(spec)
+        # Its dataclasses look their module up in sys.modules while executing.
+        sys.modules[name] = census
+        spec.loader.exec_module(census)
+        out_dir.mkdir()
+        for path, text in rendered.items():
+            (out_dir / path.name).write_text(text, encoding="utf-8")
+        return {
+            claim_id: row["description_sha256"]
+            for claim_id, row in census.extract_all_oscal_claims(out_dir).items()
+        }
+
+    @pytest.mark.parametrize(
+        ("ssp_path", "framework_key", "platform", "with_component_artifacts"),
+        [
+            pytest.param(_DEFAULT_SSP, "NIST", "gcp-gke", True, id="US_FED"),
+            pytest.param(_DEFAULT_EU_SSP, "EU_AI_ACT", "agnostic", False, id="EU_ECB"),
+            pytest.param(
+                _DEFAULT_APAC_SSP, "MAS_FEAT", "agnostic", False, id="APAC_MAS"
+            ),
+        ],
+    )
+    def test_two_export_times_render_identical_claim_hashes(
+        self,
+        tmp_path: Path,
+        ssp_path: Path,
+        framework_key: str,
+        platform: str,
+        with_component_artifacts: bool,
+    ) -> None:
+        cs = load_control_structures(
+            [
+                *sorted(_DEFAULT_INPUT_DIR.rglob("*.yaml")),
+                *sorted((_REPO_ROOT / "src").glob("cage_*/config/stpa/*.yaml")),
+            ]
+        )
+        renders: list[dict[Path, str]] = []
+        for now in ("2026-01-01T00:00:00Z", "2031-12-31T23:59:59Z"):
+            ok, rendered = _render_targets_in_memory(
+                cs=cs,
+                ssp_path=ssp_path,
+                comp_def_path=_DEFAULT_COMP_DEF if with_component_artifacts else None,
+                patch_out_path=_DEFAULT_PATCH_OUT if with_component_artifacts else None,
+                framework_key=framework_key,
+                platform=platform,
+                now=now,
+            )
+            assert ok
+            renders.append(rendered)
+        early, late = renders
+        # The clock still reaches document metadata, so equal hashes below are
+        # not the result of two identical renders.
+        assert early[ssp_path] != late[ssp_path]
+        early_hashes = self._claim_hashes(early, tmp_path / "early")
+        assert early_hashes
+        assert early_hashes == self._claim_hashes(late, tmp_path / "late")
 
 
 class TestServerBoundAndAdvisoryOscalExport:

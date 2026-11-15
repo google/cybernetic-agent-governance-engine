@@ -118,12 +118,13 @@ _DEFAULT_PATCH_OUT = (
 
 # Volatile generation timestamps masked when comparing OSCAL / STPA outputs
 # across runs (`--check` and `scripts/check_stpa_freshness.py`, POAM-2026-176).
+# They sit in document metadata and component props only: none may sit in an
+# implemented-requirement, whose text the evidence-claim census hashes.
 _VOLATILE_STAMP_RE = re.compile(
     r"(Generated:\s*"
     r'|"(?:generated_at|issued_at|expires_at)":\s*"'
     r"|(?:last-modified|generated):\s*\'?"
-    r"|- name: last-compiled\n\s+value:\s*\'?"
-    r"|Last(?:\\\n\s*\\)?\s+compiled:(?:\\\n\s*\\)?\s*)"
+    r"|- name: last-compiled\n\s+value:\s*\'?)"
     r"\d{4}-\d{2}-\d{2}T[^\s\"\'\\]*"
 )
 
@@ -965,7 +966,6 @@ def generate_ssp_patch(
     cs: ControlStructureModel,
     target_framework: str = "NIST",
     *,
-    now: str | None = None,
     live_server_inputs: Mapping[str, frozenset[str]] | None = None,
 ) -> dict[str, Any]:
     """
@@ -981,10 +981,11 @@ def generate_ssp_patch(
             Framework routing tables live in config/oscal/framework_mappings/.
 
     Returns a dict ready to be appended to
-    ``system-security-plan.implemented-requirements``.
+    ``system-security-plan.implemented-requirements``. The block carries no
+    timestamp: ``scripts/check_oscal_claim_census.py`` hashes its description
+    and props, so a statement that has not changed must render identically on
+    every export.
     """
-    now = now or _now_iso()
-
     resolved_inputs = (
         _live_registered_server_inputs()
         if live_server_inputs is None
@@ -1098,7 +1099,6 @@ def generate_ssp_patch(
             UCAs encoded: {len(cs.unsafe_control_actions)} ({len(enforcing_ucas)} enforcing server-bound, {len(advisory_ucas)} advisory)
             Hazards modelled: {len(cs.hazards)}
             Safety constraints: {len(cs.safety_constraints)}
-            Last compiled: {now}
 
             UCA-to-Control mapping ({framework_label}):
             {uca_prose}
@@ -1110,7 +1110,6 @@ def generate_ssp_patch(
             {"name": "enforcing-uca-count", "value": str(len(enforcing_ucas))},
             {"name": "advisory-uca-count", "value": str(len(advisory_ucas))},
             {"name": "hazard-count", "value": str(len(cs.hazards))},
-            {"name": "last-compiled", "value": now},
             {"name": "target-framework", "value": framework_label},
             *nemo_artifact_props,
             {
@@ -1822,7 +1821,7 @@ def _render_targets_in_memory(
         logger.error("Narrative source rejected: %s", exc)
         return False, {}
     stpa_patch_block = generate_ssp_patch(
-        cs, target_framework=framework_key, now=now, live_server_inputs=live_inputs
+        cs, target_framework=framework_key, live_server_inputs=live_inputs
     )
     component_entry = generate_component_entry(
         cs, now=now, live_server_inputs=live_inputs

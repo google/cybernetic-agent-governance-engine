@@ -130,17 +130,16 @@ _ARTIFACT_RECIPES: dict[Path, tuple[str, str]] = _BUILT_RECIPES[1]
 _RUFF_FORMATTED = frozenset({"python", "langgraph"})
 
 # Volatile stamps masked before hashing: every compile/export rewrites them.
-# Covers STPA compiler headers/JSON fields as well as the 4 OSCAL SSP/Component
-# timestamp locations (last-modified, generated, props[last-compiled], and
-# "Last compiled:" inside implemented-requirement.description, including
-# PyYAML's 80-column double-quoted line-continuation wrap).
+# Covers STPA compiler headers/JSON fields as well as the OSCAL SSP/Component
+# timestamp locations (last-modified, generated, props[last-compiled]). The
+# exporter writes no stamp into an implemented-requirement, whose text the
+# evidence-claim census hashes.
 _VOLATILE_STAMP_RE = re.compile(
     r"("
     r"Generated:\s*"
     r'|"(?:generated_at|issued_at|expires_at)":\s*"'
     r"|(?:last-modified|generated):\s*['\"]?"
     r"|-\s*name:\s*last-compiled\s*\n\s*value:\s*['\"]?"
-    r"|Last(?:\s+|\s*\\\n\s*\\\s*)compiled:\s*"
     r")"
     r"\d{4}-\d{2}-\d{2}T[^\s\"'\\]*"
 )
