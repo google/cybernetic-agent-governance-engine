@@ -32,6 +32,7 @@ from typing import Any, Literal
 import httpx
 import opentelemetry.trace
 
+from src.gateway.governance.env_posture import resolve_deployment_region
 from src.gateway.governance.iso_control import get_iso_control_map
 from src.gateway.observability.attributes import TRACE_TAGS
 
@@ -42,7 +43,7 @@ logger = logging.getLogger(__name__)
 
 def _get_iso_control_map() -> dict[str, str]:
     """Return the ISO control map for the current deployment region."""
-    _region = os.environ.get("CAGE_DEPLOYMENT_REGION", "LOCAL")
+    _region = resolve_deployment_region()
     return get_iso_control_map(_region)
 
 

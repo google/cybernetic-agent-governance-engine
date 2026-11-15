@@ -25,9 +25,9 @@ is emitted citing the applicable regulation (R-3, R-4).
 """
 
 import logging
-import os
 import re
 
+from src.gateway.governance.env_posture import resolve_deployment_region
 from src.gateway.governance.pii_sanitizer import (
     CANONICAL_UUID_RE,
     CREDIT_CARD_PATTERN,
@@ -115,7 +115,7 @@ def scrub_pii(
 
     # Jurisdictional audit trail (R-3, R-4)
     if emit_jurisdiction_audit and redacted_entities:
-        region = os.environ.get("CAGE_DEPLOYMENT_REGION", "").strip().upper()
+        region = resolve_deployment_region()
         citation = _ERASURE_CITATION.get(region)
         if citation:
             logger.info(

@@ -60,6 +60,8 @@ from fastapi.responses import JSONResponse, Response
 from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_validator
 from sse_starlette.sse import EventSourceResponse
 
+from src.gateway.governance.env_posture import resolve_deployment_region
+
 if TYPE_CHECKING:
     from .evidence_verifier import CustodyVerifier
 
@@ -91,7 +93,6 @@ from .auth import (
     require_human_operator_identity,
     require_infra_event_producer,
     require_internal_token,
-    require_operator_identity,
     validate_operator_identity_posture,
 )
 from .cer_index import CERIndex
@@ -670,11 +671,8 @@ async def list_controls(
         JSONResponse,
     )
 
-    # Default to "" (empty string) when CAGE_DEPLOYMENT_REGION is not set so that
-    # get_control_meta("") returns only universal ISO 42001 controls.  Defaulting
-    # to "US_FED" was incorrect — it caused NIST SP 800-53 controls to appear in
-    # region-agnostic contexts (e.g. test environments, APAC_MAS deployments).
-    active_region = os.environ.get("CAGE_DEPLOYMENT_REGION", "").strip().upper()
+    # The controls listed are those of the one region this process runs under.
+    active_region = resolve_deployment_region()
     region_controls = get_control_meta(active_region)
 
     # Build the set of framework names available for this region
@@ -764,8 +762,7 @@ async def get_metrics_summary(
         }\n
     """
     # Use region-filtered controls — consistent with /v1/controls endpoint.
-    # CAGE_DEPLOYMENT_REGION="" returns universal ISO 42001 controls only.
-    active_region = os.environ.get("CAGE_DEPLOYMENT_REGION", "").strip().upper()
+    active_region = resolve_deployment_region()
     region_control_ids: list[str] = list(get_control_meta(active_region).keys())
 
     results: dict = {}
@@ -1086,7 +1083,7 @@ async def ingest_infra_event(
     derived_pod_name = producer.verified_pod_name
     pod_name_verified = producer.verified_pod_name is not None
 
-    active_region = os.environ.get("CAGE_DEPLOYMENT_REGION", "US_FED").strip().upper()
+    active_region = resolve_deployment_region()
     iso_map = get_iso_control_map(active_region)
 
     if event.event_type not in iso_map:
@@ -2033,9 +2030,7 @@ async def audit_ingest(
         custody_flusher = _resolve_inline_custody_flusher(
             request.app.state, flush_inline=True
         )
-        active_region = (
-            os.environ.get("CAGE_DEPLOYMENT_REGION", "US_FED").strip().upper()
-        )
+        active_region = resolve_deployment_region()
         iso_map = get_iso_control_map(active_region)
         audit_control_id = iso_map.get("context_accumulate", "CA-7")
         yaml_sha256 = hashlib.sha256(body.oscal_yaml.encode()).hexdigest()
@@ -3044,7 +3039,7 @@ def safe_map_trace(t: Any) -> dict:
         event_type = "GOVERNANCE_VIOLATION"
 
     # Get control name (region-aware lookup)
-    _region = os.environ.get("CAGE_DEPLOYMENT_REGION", "LOCAL")
+    _region = resolve_deployment_region()
     _control_meta = get_control_meta(_region)
     control_name = control_id
     if control_id in _control_meta:

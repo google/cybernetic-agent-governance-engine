@@ -32,11 +32,18 @@ Required env vars for the Langfuse source:
 
 import logging
 import os
+import sys
 import urllib.parse
 import urllib.request
 from abc import ABC, abstractmethod
 from datetime import datetime, timedelta, timezone
+from pathlib import Path
 from typing import Any
+
+_REPO_ROOT = str(Path(__file__).resolve().parents[1])
+if _REPO_ROOT not in sys.path:
+    sys.path.insert(0, _REPO_ROOT)
+from src.gateway.governance.env_posture import resolve_deployment_region
 
 # Configure logging
 logging.basicConfig(
@@ -62,7 +69,7 @@ _LANGFUSE_SECRET_KEY = os.environ.get("LANGFUSE_SECRET_KEY", "")
 # Defaulting to cloud.langfuse.com routes audit traces to a SaaS endpoint outside
 # the deployment region, violating GDPR Art. 44 (EU_ECB) and MAS TRM §4.2 (APAC_MAS).
 # R-3, R-7: data residency must be enforced at the deployment pipeline layer.
-_cage_region = os.environ.get("CAGE_DEPLOYMENT_REGION", "")
+_cage_region = resolve_deployment_region()
 _langfuse_host = os.environ.get("LANGFUSE_HOST", "")
 if not _langfuse_host:
     if _cage_region in ("EU_ECB", "APAC_MAS"):

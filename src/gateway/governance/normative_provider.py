@@ -68,6 +68,7 @@ import os
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
+from src.gateway.governance.env_posture import resolve_deployment_region
 from src.gateway.governance.jcs_canonicalizer import jcs_canonicalize_plan
 from src.gateway.governance.seams.normative import (
     EvidenceSeal,
@@ -474,7 +475,7 @@ class NormativeProviderDaemon:
             CAGE_NORMATIVE_BOOT_TIMEOUT_SECONDS — boot timeout
         """
         provider = get_normative_provider()
-        region = os.environ.get("CAGE_DEPLOYMENT_REGION", "US_FED").strip().upper()
+        region = resolve_deployment_region()
         return cls(
             provider=provider,
             region=region,

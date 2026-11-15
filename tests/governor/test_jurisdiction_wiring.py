@@ -228,13 +228,22 @@ def test_non_eu_governor_has_no_fria_tier(
     assert "fria" not in _domain_stage_names(governor)
 
 
-def test_default_test_region_resolves_without_fria() -> None:
-    """The hermetic default (LOCAL → US_FED fallback) assembles no fria tier."""
-    ControlRegistry.reconfigure("LOCAL")
+def test_default_test_region_resolves_without_fria(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """In a permissive posture, an unset region resolves to US_FED (no fria); LOCAL is refused."""
+    from src.gateway.governance.env_posture import DeploymentRegionError
+
+    monkeypatch.setenv("CAGE_ENV", "test")
+    monkeypatch.delenv("CAGE_DEPLOYMENT_REGION", raising=False)
+    ControlRegistry.reset_for_testing()
     governor = _assemble()
     assert governor.components.jurisdiction is not None
     assert governor.components.jurisdiction.region == "US_FED"
     assert "fria" not in governor.registered_tier_names()
+
+    with pytest.raises(DeploymentRegionError, match="not a supported region"):
+        ControlRegistry.reconfigure("LOCAL")
 
 
 def test_eu_governor_runs_fria_once_in_phase_one_after_causal(

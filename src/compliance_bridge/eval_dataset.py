@@ -37,8 +37,9 @@ from __future__ import annotations
 
 import asyncio
 import logging
-import os
 from datetime import datetime, timezone
+
+from src.gateway.governance.env_posture import resolve_deployment_region
 
 from .types import OscalFinding, get_control_meta
 
@@ -61,7 +62,7 @@ def _create_dataset_item_sync(  # type: ignore[no-untyped-def]
     dataset_name = _dataset_name(control_id)
 
     # Region-aware control metadata lookup
-    _region = os.environ.get("CAGE_DEPLOYMENT_REGION", "LOCAL")
+    _region = resolve_deployment_region()
     _control_meta = get_control_meta(_region)
 
     # Ensure dataset exists (upsert semantics — Langfuse will not error if it exists)

@@ -49,6 +49,8 @@ import re
 from collections.abc import Callable, Mapping
 from datetime import datetime, timezone
 
+from src.gateway.governance.env_posture import resolve_deployment_region
+
 # ---------------------------------------------------------------------------
 # FINDING-08 (MEDIUM) — Jurisdictional retention authority citation map
 #
@@ -69,7 +71,7 @@ logger = logging.getLogger("Gateway.Governance.PIISanitizer")
 
 
 def _get_region() -> str:
-    return os.environ.get("CAGE_DEPLOYMENT_REGION", "").strip().upper()
+    return resolve_deployment_region()
 
 
 # ---------------------------------------------------------------------------
@@ -439,16 +441,17 @@ def pii_audit_log(
 
     FINDING-08 (MEDIUM): the retention authority citation is jurisdiction-aware
     — US_FED cites FISMA AU-11, EU_ECB cites GDPR Art. 5(1)(e), APAC_MAS cites
-    MAS Notice 655 §4.3. Deployments outside these three regions (or with the
-    region unset) fall back to the universal ISO 42001 A.9.2 citation.
+    MAS Notice 655 §4.3. When ``region`` is omitted, ``resolve_deployment_region()``
+    resolves it (refusing unknown values and unset enforcing postures); an
+    unrecognised explicit ``region`` argument falls back to ISO 42001 A.9.2.
 
     Args:
         trace_id:     Langfuse trace ID for the governed request.
         entity_types: List of detected PII entity types
                       (e.g. ["PERSON", "EMAIL_ADDRESS"]).
         redacted:     True if PII was redacted from the request.
-        region:       CAGE_DEPLOYMENT_REGION value. If None, reads from the
-                      environment. One of "US_FED", "EU_ECB", "APAC_MAS".
+        region:       One of "US_FED", "EU_ECB", "APAC_MAS". If None,
+                      ``resolve_deployment_region()``.
 
     Returns:
         A dict with the following schema:

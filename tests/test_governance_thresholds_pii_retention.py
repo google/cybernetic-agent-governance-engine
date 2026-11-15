@@ -52,21 +52,22 @@ class TestResolvePiiRetention:
         if expected_days is not None:
             assert days == expected_days
 
-    @pytest.mark.parametrize(
-        "setup",
-        [
-            pytest.param("unset", id="unset-region-falls-back-to-iso-42001"),
-            pytest.param("UNKNOWN_REGION", id="unknown-region-falls-back-to-iso-42001"),
-        ],
-    )
-    def test_fallback_to_iso_42001(self, monkeypatch, setup):
-        """Unset or unknown CAGE_DEPLOYMENT_REGION falls back to ISO 42001."""
-        if setup == "unset":
-            monkeypatch.delenv("CAGE_DEPLOYMENT_REGION", raising=False)
-        else:
-            monkeypatch.setenv("CAGE_DEPLOYMENT_REGION", setup)
+    def test_unset_or_unknown_region_follows_resolver_posture(self, monkeypatch):
+        """Unset resolves to US_FED in permissive postures and raises in enforcing postures; unknown values always raise."""
+        from src.gateway.governance.env_posture import DeploymentRegionError
+
+        monkeypatch.setenv("CAGE_ENV", "test")
+        monkeypatch.delenv("CAGE_DEPLOYMENT_REGION", raising=False)
         _days, authority = _resolve_pii_retention()
-        assert "ISO 42001" in authority
+        assert "FISMA AU-11" in authority
+
+        monkeypatch.setenv("CAGE_ENV", "production")
+        with pytest.raises(DeploymentRegionError, match="is not set"):
+            _resolve_pii_retention()
+
+        monkeypatch.setenv("CAGE_DEPLOYMENT_REGION", "UNKNOWN_REGION")
+        with pytest.raises(DeploymentRegionError, match="not a supported region"):
+            _resolve_pii_retention()
 
 
 class TestGovernanceThresholdsPiiFieldsRegionAware:

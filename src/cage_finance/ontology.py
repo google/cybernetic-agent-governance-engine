@@ -17,10 +17,10 @@
 from __future__ import annotations
 
 import logging
-import os
 from dataclasses import dataclass, field
 from typing import ClassVar
 
+from src.gateway.governance.env_posture import resolve_deployment_region
 from src.gateway.governance.ontology import STAMP_UCA, Constraint
 
 logger = logging.getLogger(__name__)
@@ -89,9 +89,7 @@ class TradingKnowledgeGraph:
     @classmethod
     def get_control_map(cls, region: str | None = None) -> dict[str, str]:
         """Return control mappings applicable to the given deployment region."""
-        effective_region = (
-            region or os.environ.get("CAGE_DEPLOYMENT_REGION", "LOCAL")
-        ).upper()
+        effective_region = (region or resolve_deployment_region()).upper()
         result = dict(cls._UNIVERSAL_CONTROL_MAP)
         if effective_region in cls._JURISDICTIONAL_CONTROL_MAP:
             result.update(cls._JURISDICTIONAL_CONTROL_MAP[effective_region])

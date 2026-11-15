@@ -42,6 +42,7 @@ from typing import Any
 
 from pydantic import BaseModel, Field, field_validator, model_validator
 
+from src.gateway.governance.env_posture import resolve_deployment_region
 from src.gateway.governance.schemas.regional_overlay import (
     RegionalOverlayError,
     load_regional_domains,
@@ -89,7 +90,7 @@ def _resolve_pii_retention() -> tuple[int, str]:
         PII_RETENTION_AUTHORITY_DEFAULT,
     )
 
-    region = os.environ.get("CAGE_DEPLOYMENT_REGION", "").strip().upper()
+    region = resolve_deployment_region()
     authority = PII_RETENTION_AUTHORITY.get(region, PII_RETENTION_AUTHORITY_DEFAULT)
     return _PII_RETENTION_DAYS_DEFAULT, authority
 
@@ -612,9 +613,9 @@ def _apply_env_overrides(raw: dict) -> dict:
 def _active_region() -> str:
     """The deployment region, from the same reader as every regional control.
 
-    ``ControlRegistry`` resolves ``CAGE_DEPLOYMENT_REGION`` (unknown values
-    fall back to ``US_FED``); governor assembly resolves the jurisdiction
-    contribution from the same source.
+    ``ControlRegistry`` loads the region ``resolve_deployment_region()``
+    returns, which refuses an unknown value rather than falling back; governor
+    assembly resolves the jurisdiction contribution from the same source.
     """
     from src.gateway.governance.constants import ControlRegistry
 

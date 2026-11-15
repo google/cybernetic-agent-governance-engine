@@ -111,9 +111,11 @@ the sole finalized, production-eligible domain plugin (`healthcare` in
 [`src/cage_healthcare/`](src/cage_healthcare/) and `physical_ai` in
 [`src/cage_physical_ai/`](src/cage_physical_ai/) ship as non-production
 reference stubs; `POAM-2026-076`–`078`, `POAM-2026-198`), and the jurisdictional
-region (`US_FED`, `EU_ECB` or `APAC_MAS`, set by `CAGE_DEPLOYMENT_REGION`; unset
-resolves to `US_FED`) determines which regulatory controls are in scope for a
-given deployment. Key security controls are documented in:
+region (`US_FED`, `EU_ECB` or `APAC_MAS`, set by `CAGE_DEPLOYMENT_REGION` and
+read only by [`resolve_deployment_region()`](src/gateway/governance/env_posture.py);
+unknown values are refused, and an unset value is refused in enforcing postures
+and resolves to `US_FED` only in `dev`, `test` and `ci`) determines which
+regulatory controls are in scope for a given deployment. Key security controls are documented in:
 
 - [`docs/POAM.md`](docs/POAM.md) — open findings and accepted risks;
   [`OSCAL_EVIDENCE_CLAIM_REGISTER.md`](docs/compliance/OSCAL_EVIDENCE_CLAIM_REGISTER.md)

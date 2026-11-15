@@ -89,6 +89,10 @@ from typing import Any
 
 import yaml
 
+from src.gateway.governance.env_posture import (
+    DeploymentRegionError,
+    resolve_deployment_region,
+)
 from src.gateway.governance.stpa_compiler import (
     ControlStructureModel,
     UCAModel,
@@ -493,28 +497,27 @@ def get_regional_profile(region: str | None = None) -> dict:
 
     Args:
         region: Explicit region string (``"US_FED"``, ``"EU_ECB"``, or
-            ``"APAC_MAS"``).  If *None*, the value is read from the
-            ``CAGE_DEPLOYMENT_REGION`` environment variable.  Defaults to
-            ``"US_FED"`` if the variable is unset or the value is unrecognised
-            (backward-compatible with pre-multi-jurisdiction deployments).
+            ``"APAC_MAS"``).  If *None*, the region comes from
+            ``resolve_deployment_region()``.
 
     Returns:
         A dict from :data:`REGIONAL_PROFILES` with keys ``profile_path``,
         ``framework``, ``framework_id``, and ``coverage_metric``.
+
+    Raises:
+        DeploymentRegionError: If the region has no profile. Exporting another
+            region's profile in its place would misstate the SSP's framework.
     """
     if region is None:
-        region = os.environ.get("CAGE_DEPLOYMENT_REGION", "US_FED").strip().upper()
+        region = resolve_deployment_region()
     else:
         region = region.strip().upper()
 
     if region not in REGIONAL_PROFILES:
-        logger.warning(
-            "get_regional_profile: unknown region '%s' — falling back to US_FED. "
-            "Set CAGE_DEPLOYMENT_REGION to one of: %s",
-            region,
-            sorted(REGIONAL_PROFILES.keys()),
+        raise DeploymentRegionError(
+            f"get_regional_profile: {region!r} has no OSCAL profile; expected one "
+            f"of {sorted(REGIONAL_PROFILES)}"
         )
-        region = "US_FED"
 
     profile = REGIONAL_PROFILES[region]
     logger.info(
@@ -2033,25 +2036,31 @@ def _build_parser() -> argparse.ArgumentParser:
 def cmd_export(args: argparse.Namespace) -> int:
     # ---------------------------------------------------------------------------
     # Multi-jurisdiction SSP router — resolve region and target SSP path.
-    # When --ssp is omitted, CAGE_DEPLOYMENT_REGION selects both the regional
-    # profile and its canonical ssp_path (preventing an EU_ECB/APAC_MAS run from
-    # overwriting the US_FED system-security-plan.yaml, POAM-2026-177).
+    # When --ssp is omitted, resolve_deployment_region() selects both the
+    # regional profile and its canonical ssp_path (preventing an EU_ECB/APAC_MAS
+    # run from overwriting the US_FED system-security-plan.yaml, POAM-2026-177).
+    # An unknown region, or an unset one in an enforcing posture, is refused
+    # rather than exported as US_FED.
     # When --ssp is explicitly supplied and declares cage-deployment-region in
     # metadata.props, that region's profile and framework are used automatically.
     # ---------------------------------------------------------------------------
-    env_region = os.environ.get("CAGE_DEPLOYMENT_REGION", "US_FED").strip().upper()
-    if env_region not in REGIONAL_PROFILES:
-        env_region = "US_FED"
-
-    if args.ssp is None:
-        region = env_region
-        regional_profile = get_regional_profile(region)
-        ssp_path = _REPO_ROOT / regional_profile["ssp_path"]
-    else:
-        ssp_path = args.ssp
-        inferred_region = _infer_region_from_ssp(ssp_path)
-        region = inferred_region if inferred_region is not None else env_region
-        regional_profile = get_regional_profile(region)
+    try:
+        if args.ssp is None:
+            region = resolve_deployment_region()
+            regional_profile = get_regional_profile(region)
+            ssp_path = _REPO_ROOT / regional_profile["ssp_path"]
+        else:
+            ssp_path = args.ssp
+            inferred_region = _infer_region_from_ssp(ssp_path)
+            region = (
+                inferred_region
+                if inferred_region is not None
+                else resolve_deployment_region()
+            )
+            regional_profile = get_regional_profile(region)
+    except DeploymentRegionError as exc:
+        logger.error("cmd_export: %s", exc)
+        return 2
 
     # Derive the FrameworkRouter key from the resolved region, unless the caller
     # explicitly passed a non-default --framework value on the CLI.

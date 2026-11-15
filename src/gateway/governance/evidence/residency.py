@@ -35,6 +35,8 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
+from src.gateway.governance.env_posture import resolve_deployment_region
+
 logger = logging.getLogger(__name__)
 
 # Default config path relative to repo root
@@ -139,7 +141,7 @@ def resolve_cold_store_bucket(
     """Resolve and validate the cold storage bucket for the current deployment region.
 
     Evaluation Order:
-        1. Resolve region from `region` arg or `CAGE_DEPLOYMENT_REGION` env var (default: "LOCAL").
+        1. Resolve region from the `region` arg, else `resolve_deployment_region()`.
         2. Resolve candidate bucket name:
            a. `bucket_override` (if provided)
            b. Regional env var (e.g. `EVIDENCE_COLD_STORE_BUCKET_EU`)
@@ -162,9 +164,7 @@ def resolve_cold_store_bucket(
         MissingBucketConfigError: If required bucket environment variable is unset.
         ResidencyViolationError: If bucket violates jurisdictional residency rules.
     """
-    active_region = (
-        region or os.environ.get("CAGE_DEPLOYMENT_REGION") or "LOCAL"
-    ).strip()
+    active_region = (region or resolve_deployment_region()).strip()
     rule = get_regional_rule(active_region, config_path=config_path)
 
     # Resolve candidate bucket

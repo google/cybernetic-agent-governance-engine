@@ -304,10 +304,10 @@ The `ControlRegistry` is a thread-safe, lock-guaranteed singleton that loads reg
 
 1. **Activation Pattern:**
    ```bash
-   export CAGE_DEPLOYMENT_REGION=EU_ECB  # Options: US_FED (default), EU_ECB, APAC_MAS
+   export CAGE_DEPLOYMENT_REGION=EU_ECB  # US_FED | EU_ECB | APAC_MAS (unset defaults to US_FED in dev/test/ci only)
    ```
 2. **Properties and Methods:**
-   - `registry.active_region`: Returns the active region identifier string (`"US_FED"`, `"EU_ECB"`, `"APAC_MAS"`, or `"LEGACY"`).
+   - `registry.active_region`: Returns the active region identifier string (`"US_FED"`, `"EU_ECB"`, or `"APAC_MAS"`).
    - `registry.active_hash`: SHA-256 hash of the currently loaded baseline profile JSON (used for policy version pinning in `validate_action()`).
    - `registry.get_mapping_safe(control)`: Returns `None` instead of raising `KeyError` if a control is absent from the active region's baseline, enabling graceful handling of region-specific controls like `CTRL_FRIA_006`.
    - `ControlRegistry.reconfigure(region)`: Triggers atomic runtime reloading of the baseline profile. Thread-safe: the new instance is loaded outside the lock, then swapped atomically inside a single lock acquisition.

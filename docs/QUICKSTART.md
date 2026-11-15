@@ -224,7 +224,7 @@ Manufacturing, logistics, energy dispatch, customer service, critical infrastruc
 Regional compliance is configuration, independent of which domain plugin you loaded. Any plugin runs under any posture.
 
 ```bash
-export CAGE_DEPLOYMENT_REGION=US_FED      # NIST AI 600-1, SP 800-53, AI RMF, FedRAMP, SR 26-2 (default)
+export CAGE_DEPLOYMENT_REGION=US_FED      # NIST AI 600-1, SP 800-53, AI RMF, FedRAMP, SR 26-2 (dev/test/ci default; required in enforcing postures)
 export CAGE_DEPLOYMENT_REGION=EU_ECB      # GDPR, DORA, EU AI Act, MiFID II
 export CAGE_DEPLOYMENT_REGION=APAC_MAS    # MAS Notice 655, FEAT principles, MAS TRM
 ```
