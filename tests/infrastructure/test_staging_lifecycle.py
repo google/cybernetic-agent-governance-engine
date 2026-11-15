@@ -185,6 +185,7 @@ def _base_env(bin_dir: Path, **overrides: str) -> dict[str, str]:
             "CAGE_E2E_SUITE_SCRIPT",
             "DEPLOYER_EGRESS_IP",
             "COMPLIANCE_BRIDGE_URL",
+            "GATEWAY_URL",
             "CAGE_AUDIT_CORROBORATION_SCRIPT",
             "CAGE_BINAUTHZ_PROBE_SCRIPT",
             "CAGE_WORM_ANCHOR_SCRIPT",
@@ -1777,15 +1778,15 @@ exit 0
     assert "--var registry_url=" in calls
     assert "operated-legacy-proj" not in calls
     assert (
-        "wrapper env CAGE_DEPLOYMENT_REGION=US_FED ./.venv/bin/pytest tests/ -m us_fed"
+        "wrapper env -u GATEWAY_URL CAGE_DEPLOYMENT_REGION=US_FED ./.venv/bin/pytest tests/ -m us_fed"
         in calls
     )
     assert (
-        "wrapper env CAGE_DEPLOYMENT_REGION=EU_ECB ./.venv/bin/pytest tests/ -m eu_ecb"
+        "wrapper env -u GATEWAY_URL CAGE_DEPLOYMENT_REGION=EU_ECB ./.venv/bin/pytest tests/ -m eu_ecb"
         in calls
     )
     assert (
-        "wrapper env CAGE_DEPLOYMENT_REGION=APAC_MAS ./.venv/bin/pytest tests/ -m apac_mas"
+        "wrapper env -u GATEWAY_URL CAGE_DEPLOYMENT_REGION=APAC_MAS ./.venv/bin/pytest tests/ -m apac_mas"
         in calls
     )
     assert "--generate-ephemeral-jwks" in calls
@@ -2590,6 +2591,191 @@ def test_staging_lifecycle_phase3_rejects_startup_grace_remarks_on_host_and_job_
     assert (
         "Active Lula spec 'lula-validation-sc28' missing from Job/lula-gate-w satisfied_controls"
         in proc_missing_host.stderr
+    )
+
+
+def _install_port_forward_and_env_probes(
+    repo: Path, bin_dir: Path, log_file: Path, pf_state: Path
+) -> None:
+    """Install a stateful port_forward_staging.sh stub and record tunnel/env state on uv calls."""
+    _write_executable(
+        repo / "scripts" / "port_forward_staging.sh",
+        f"""#!/usr/bin/env bash
+echo "port_forward_staging.sh $*" >> "{log_file}"
+if [[ "$*" == *"--stop"* ]]; then
+  rm -f "{pf_state}"
+  exit 0
+fi
+touch "{pf_state}"
+exit 0
+""",
+    )
+    e2e_stub = repo / "tests" / "e2e" / "run_gke_e2e_suite.py"
+    e2e_stub.parent.mkdir(parents=True, exist_ok=True)
+    e2e_stub.write_text("# stub\n", encoding="utf-8")
+
+    uv_path = bin_dir / "uv"
+    uv_body = uv_path.read_text(encoding="utf-8")
+    uv_body = uv_body.replace(
+        f'echo "uv $*" >> "{log_file}"\n',
+        f'_pf="closed"\n[[ -f "{pf_state}" ]] && _pf="open"\n'
+        '_gw="unset"\n[[ -n "${GATEWAY_URL+x}" ]] && _gw="set:${GATEWAY_URL}"\n'
+        f'echo "uv [pf=${{_pf}} gw=${{_gw}}] $*" >> "{log_file}"\n'
+        'if [[ "$*" == *"run_gke_e2e_suite.py"* ]]; then\n'
+        "  echo '{\"passed\": true}'\n"
+        "  exit 0\n"
+        "fi\n",
+    )
+    _write_executable(uv_path, uv_body)
+
+
+def test_staging_lifecycle_closes_port_forward_and_unsets_gateway_url_for_phase4_hermetic_suites(
+    tmp_path: Path,
+) -> None:
+    repo, bin_dir, log_file = _setup_fake_repo(tmp_path)
+    pf_state = tmp_path / "pf_active"
+    # Pre-seed an external tunnel and an exported GATEWAY_URL in the caller's shell.
+    pf_state.write_text("preexisting\n", encoding="utf-8")
+    _install_port_forward_and_env_probes(repo, bin_dir, log_file, pf_state)
+
+    env = _base_env(
+        bin_dir,
+        GOOGLE_CLOUD_PROJECT="demo-staging-proj",
+        GATEWAY_URL="http://localhost:8080",
+    )
+    proc = subprocess.run(
+        [
+            "bash",
+            str(repo / "scripts" / "staging_lifecycle.sh"),
+            "--skip-telemetry",
+            "--skip-rebuild",
+        ],
+        env=env,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert proc.returncode == 0, proc.stderr
+    lines = log_file.read_text(encoding="utf-8").splitlines()
+
+    def _find_uv_line(substr: str) -> tuple[int, str]:
+        for idx, line in enumerate(lines):
+            if line.startswith("uv [") and substr in line:
+                return idx, line
+        raise AssertionError(
+            f"Missing expected uv invocation matching {substr!r} in:\n"
+            + "\n".join(lines)
+        )
+
+    seed_idx, seed_line = _find_uv_line("--seed-only")
+    assert "[pf=open " in seed_line
+
+    us_idx, us_line = _find_uv_line("-m us_fed")
+    eu_idx, eu_line = _find_uv_line("-m eu_ecb")
+    apac_idx, apac_line = _find_uv_line("-m apac_mas")
+    for reg_line in (us_line, eu_line, apac_line):
+        assert "[pf=closed gw=unset]" in reg_line, reg_line
+
+    res_idx, res_line = _find_uv_line("test_data_residency.py --run-integration")
+    lf_idx, lf_line = _find_uv_line("verify_langfuse_posture.py --posture staging")
+    live_ext_idx, live_ext_line = _find_uv_line("--run-live-external")
+    integ_idx, integ_line = _find_uv_line("-m integration --run-integration")
+    partner_idx, partner_line = _find_uv_line("--run-partner-integration")
+
+    assert (
+        seed_idx
+        < us_idx
+        < eu_idx
+        < apac_idx
+        < res_idx
+        < lf_idx
+        < live_ext_idx
+        < integ_idx
+        < partner_idx
+    )
+    for live_line in (res_line, lf_line, live_ext_line, integ_line, partner_line):
+        assert "[pf=open " in live_line, live_line
+
+
+def test_staging_lifecycle_port_forward_isolation_across_skip_lula_and_skip_posture(
+    tmp_path: Path,
+) -> None:
+    # 1. --skip-lula with a pre-existing external tunnel + CAGE_HERMETIC_PYTEST_WRAPPER:
+    #    ensure_no_staging_port_forward still closes the pre-existing tunnel and strips
+    #    GATEWAY_URL before the wrapper executes.
+    repo_a, bin_a, log_a = _setup_fake_repo(tmp_path / "skip_lula")
+    pf_a = tmp_path / "pf_a"
+    pf_a.write_text("external\n", encoding="utf-8")
+    _install_port_forward_and_env_probes(repo_a, bin_a, log_a, pf_a)
+
+    wrapper_a = tmp_path / "wrapper_a.sh"
+    _write_executable(
+        wrapper_a,
+        f"""#!/usr/bin/env bash
+_pf="closed"
+[[ -f "{pf_a}" ]] && _pf="open"
+_gw="unset"
+[[ -n "${{GATEWAY_URL+x}}" ]] && _gw="set:${{GATEWAY_URL}}"
+echo "wrapper [pf=${{_pf}} gw=${{_gw}}] $*" >> "{log_a}"
+echo "collected 3 items"
+echo "3 passed in 0.05s"
+exit 0
+""",
+    )
+    proc_a = subprocess.run(
+        [
+            "bash",
+            str(repo_a / "scripts" / "staging_lifecycle.sh"),
+            "--skip-lula",
+            "--skip-live-sweep",
+            "--skip-telemetry",
+            "--skip-rebuild",
+        ],
+        env=_base_env(
+            bin_a,
+            GOOGLE_CLOUD_PROJECT="demo-staging-proj",
+            GATEWAY_URL="http://localhost:8080",
+            CAGE_HERMETIC_PYTEST_WRAPPER=str(wrapper_a),
+        ),
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert proc_a.returncode == 0, proc_a.stderr
+    calls_a = log_a.read_text(encoding="utf-8")
+    for marker in ("us_fed", "eu_ecb", "apac_mas"):
+        assert (
+            f"wrapper [pf=closed gw=unset] env -u GATEWAY_URL CAGE_DEPLOYMENT_REGION={marker.upper()} ./.venv/bin/pytest tests/ -m {marker}"
+            in calls_a
+        )
+    assert (
+        "uv [pf=open " in calls_a
+        and "test_data_residency.py --run-integration" in calls_a
+    )
+
+    # 2. --skip-posture (with Phase 5 live sweeps enabled): Phase 3 closes its tunnel
+    #    after Lula and Phase 5 re-opens it before --run-live-external.
+    repo_b, bin_b, log_b = _setup_fake_repo(tmp_path / "skip_posture")
+    pf_b = tmp_path / "pf_b"
+    _install_port_forward_and_env_probes(repo_b, bin_b, log_b, pf_b)
+    proc_b = subprocess.run(
+        [
+            "bash",
+            str(repo_b / "scripts" / "staging_lifecycle.sh"),
+            "--skip-posture",
+            "--skip-telemetry",
+            "--skip-rebuild",
+        ],
+        env=_base_env(bin_b, GOOGLE_CLOUD_PROJECT="demo-staging-proj"),
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert proc_b.returncode == 0, proc_b.stderr
+    lines_b = log_b.read_text(encoding="utf-8").splitlines()
+    assert any(
+        line.startswith("uv [pf=open ") and "--run-live-external" in line
+        for line in lines_b
     )
 
 

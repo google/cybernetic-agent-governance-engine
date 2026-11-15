@@ -188,17 +188,21 @@ valid selection markers. Do not work around it by excluding the file from collec
 
 Tests read variables from the process environment only. No `.env` file is
 loaded, and a hermetic session (no live opt-in flag) refuses to start while a
-`.env` file can reach it: litellm loads the first `.env` above its install
-directory when it is imported, so the file would change results partway through
-the run ([`dotenv_guard.py`](fixtures/dotenv_guard.py)). For a live run, export
-the variables or pass a file explicitly:
-`uv run --env-file .env pytest tests/ --run-integration`.
+`.env` file can reach it ([`dotenv_guard.py`](fixtures/dotenv_guard.py)) or
+while `GATEWAY_URL` is set in the environment
+([`gateway_url_guard.py`](fixtures/gateway_url_guard.py)): litellm loads the
+first `.env` above its install directory on import, and a set `GATEWAY_URL`
+would send any hermetic test that reads it into a live or port-forwarded
+gateway. Every hermetic test also asserts `"GATEWAY_URL" not in os.environ`
+before and after running. For a live run, export the variables or pass a file
+explicitly: `uv run --env-file .env pytest tests/ --run-integration`.
 [`.env.example`](../.env.example) lists the variable names.
 
 ### Service URLs
 
 | Variable                      | Default                           | Description                           |
 | ----------------------------- | --------------------------------- | ------------------------------------- |
+| `GATEWAY_URL`                 | `http://localhost:8080` _(live runs only; unset & refused in hermetic runs)_ | Governance Gateway base URL (port-forward) |
 | `BACKEND_URL`                 | `http://localhost:8081`           | Governed Financial Advisor backend    |
 | `LANGFUSE_HOST`               | `http://localhost:3001`           | Self-hosted Langfuse instance         |
 | `COMPLIANCE_BRIDGE_URL`       | `http://localhost:3002`           | Compliance Bridge API (port-forward)  |
