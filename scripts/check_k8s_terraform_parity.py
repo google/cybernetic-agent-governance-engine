@@ -1413,17 +1413,37 @@ def _tested_names(
 
 def _call_sites(
     rules: list[_RegoRule], function: _RegoRule
-) -> list[tuple[_RegoRule, tuple[str, ...]]]:
+) -> tuple[list[tuple[_RegoRule, tuple[str, ...]]], list[str]]:
+    """Return each call of *function* with its arguments, and each call it cannot read.
+
+    A call whose argument list nests parentheses cannot be split into arguments,
+    so it is reported rather than skipped: skipping it would leave that caller's
+    argument unchecked while the readable calls passed.
+    """
+    name_re = re.compile(rf"(?<![.\w]){re.escape(function.name)}\s*\(")
     call_re = re.compile(
-        rf"(?<![.\w]){re.escape(function.name)}\(\s*(?P<args>[^()]*)\)"
+        rf"(?<![.\w]){re.escape(function.name)}\s*\(\s*(?P<args>[^()]*)\)"
     )
     calls: list[tuple[_RegoRule, tuple[str, ...]]] = []
+    unreadable: list[str] = []
     for rule in rules:
-        for m in call_re.finditer(rule.text):
+        literals = [m.span() for m in _REGO_LITERAL_RE.finditer(rule.text)]
+        for m in name_re.finditer(rule.text):
             if rule.name == function.name and m.start() == 0:
                 continue  # a head of the function itself
-            calls.append((rule, tuple(a.strip() for a in m["args"].split(","))))
-    return calls
+            if any(start <= m.start() < end for start, end in literals):
+                continue
+            call = call_re.match(rule.text, m.start())
+            if call is None:
+                line_end = rule.text.find("\n", m.start())
+                snippet = rule.text[m.start() : None if line_end == -1 else line_end]
+                unreadable.append(
+                    f"rule {rule.name} calls {function.name}() at {snippet.strip()!r}, "
+                    "whose arguments this gate cannot read"
+                )
+                continue
+            calls.append((rule, tuple(a.strip() for a in call["args"].split(","))))
+    return calls, unreadable
 
 
 def rego_name_selectors(
@@ -1515,8 +1535,9 @@ def rego_name_selectors(
                 )
 
     for function, index, names in parameter_tests:
-        calls = _call_sites(rules, function)
-        if not calls:
+        calls, unreadable = _call_sites(rules, function)
+        problems.extend(unreadable)
+        if not calls and not unreadable:
             problems.append(
                 f"function {function.name}() tests metadata.name but nothing calls it"
             )
@@ -1532,7 +1553,7 @@ def rego_name_selectors(
             select(caller.name, next(iter(bound)), names)
 
     if problems:
-        raise OrphanSelectorError(f"{manifest}: " + "; ".join(problems))
+        raise OrphanSelectorError(f"{manifest}: " + "; ".join(dict.fromkeys(problems)))
     return list(dict.fromkeys(selected))
 
 

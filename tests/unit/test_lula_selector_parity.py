@@ -312,6 +312,13 @@ _ALIASES = {
             id="function-parameter",
         ),
         pytest.param(
+            'is_gateway(d) if {\n  d.metadata.name == "gateway"\n}\n\n'
+            'ok if {\n  some d in input["deploys"]\n  is_gateway(d)\n'
+            '  msg := "is_gateway(x) holds"\n}',
+            {("deployments", "gateway")},
+            id="call-quoted-in-a-string-is-not-a-call",
+        ),
+        pytest.param(
             'ok if {\n  cm := input["maps"][_]\n  "opa-policies" == cm.metadata.name\n}',
             {("configmaps", "opa-policies")},
             id="reversed-literal",
@@ -373,6 +380,12 @@ def test_each_selector_form_is_read(body: str, expected: set[tuple[str, str]]) -
         pytest.param(
             'is_gateway(d) if {\n  d.metadata.name == "gateway"\n}',
             id="uncalled-function",
+        ),
+        pytest.param(
+            'is_gateway(d) if {\n  d.metadata.name == "gateway"\n}\n\n'
+            'ok if {\n  some d in input["deploys"]\n  is_gateway(d)\n}\n\n'
+            'ok if {\n  is_gateway(object.get(input, "maps", {}))\n}',
+            id="unreadable-call-argument",
         ),
         pytest.param(
             'ok if {\n  input["deploys"][0].metadata.name == "gateway"\n}',
