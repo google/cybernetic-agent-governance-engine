@@ -38,10 +38,7 @@ from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 from pathlib import Path
 
-try:
-    import tomllib
-except ModuleNotFoundError:  # Python 3.10 (requires-python admits it)
-    import tomli as tomllib  # type: ignore[no-redef]
+import tomllib
 
 PYPI_INDEX = "https://pypi.org/simple"
 PYPI_JSON = "https://pypi.org/pypi"

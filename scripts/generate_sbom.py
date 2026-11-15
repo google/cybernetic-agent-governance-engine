@@ -81,27 +81,23 @@ BLOCKLISTED_LICENSES = {
     "GPL-2.0-or-later",
 }
 CRITICAL_CVSS_THRESHOLD = 9.0
+MIN_PYTHON_SBOM_COMPONENTS = 20
 
 # ---------------------------------------------------------------------------
 # SBOM Generation Functions
 # ---------------------------------------------------------------------------
 
 
-def generate_python_sbom(output_dir: Path, dry_run: bool = False) -> dict[str, Any]:
+def generate_python_sbom(
+    output_dir: Path, dry_run: bool = False, *, allow_minimal: bool = False
+) -> dict[str, Any]:
     """
     Generate a CycloneDX JSON SBOM for Python dependencies.
 
-    Reads installed packages via `pip list --format=json` and attempts to
-    enrich with metadata from pyproject.toml or requirements.txt. Falls back
-    to constructing a minimal CycloneDX document if cyclonedx-bom is not
-    available.
-
-    Args:
-        output_dir: Directory to write the SBOM JSON file.
-        dry_run: If True, generate SBOM but do not write to disk.
-
-    Returns:
-        The CycloneDX SBOM as a Python dictionary.
+    Reads installed packages via ``cyclonedx_py environment`` (or ``pip list``
+    fallback) and fails closed (POAM-2026-221) if fewer than
+    ``MIN_PYTHON_SBOM_COMPONENTS`` packages are present, preventing vacuous
+    SBOM generation against an unsynced virtual environment.
     """
     logger.info("Generating Python dependency SBOM (CM-8 / POAM-006)...")
 
@@ -125,10 +121,14 @@ def generate_python_sbom(output_dir: Path, dry_run: bool = False) -> dict[str, A
         )
         if result.returncode == 0 and result.stdout.strip():
             sbom = json.loads(result.stdout)
-            logger.info(
-                "cyclonedx-bom succeeded: %d components found",
-                len(sbom.get("components", [])),
-            )
+            comp_count = len(sbom.get("components", []))
+            logger.info("cyclonedx-bom succeeded: %d components found", comp_count)
+            if not allow_minimal and comp_count < MIN_PYTHON_SBOM_COMPONENTS:
+                raise RuntimeError(
+                    f"Vacuous Python SBOM rejected (POAM-2026-221): found only {comp_count} "
+                    f"components (expected >= {MIN_PYTHON_SBOM_COMPONENTS}). Run `uv sync` "
+                    "before generating the Python dependency SBOM."
+                )
             return sbom
         else:
             logger.warning(
@@ -179,6 +179,12 @@ def generate_python_sbom(output_dir: Path, dry_run: bool = False) -> dict[str, A
     )
 
     logger.info("Fallback SBOM built: %d components", len(components))
+    if not allow_minimal and len(components) < MIN_PYTHON_SBOM_COMPONENTS:
+        raise RuntimeError(
+            f"Vacuous Python SBOM rejected on fallback path (POAM-2026-221): found only "
+            f"{len(components)} components (expected >= {MIN_PYTHON_SBOM_COMPONENTS}). "
+            "Run `uv sync` before generating the Python dependency SBOM."
+        )
     return sbom
 
 

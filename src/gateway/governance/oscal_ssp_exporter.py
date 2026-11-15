@@ -1894,9 +1894,13 @@ def render_default_oscal_artifacts(
     ssp_path: Path = _DEFAULT_SSP,
     comp_def_path: Path = _DEFAULT_COMP_DEF,
     patch_out_path: Path = _DEFAULT_PATCH_OUT,
-    raise_on_error: bool = False,
+    raise_on_error: bool = True,
 ) -> dict[Path, str | None]:
-    """Render the three default US_FED OSCAL artifacts in memory for freshness checking."""
+    """Render the three default US_FED OSCAL artifacts in memory for freshness checking.
+
+    Defaults to ``raise_on_error=True`` (POAM-2026-221) so missing dependencies
+    or render failures fail closed instead of silently skipping content checks.
+    """
     unavailable: dict[Path, str | None] = {
         ssp_path: None,
         comp_def_path: None,
@@ -1918,10 +1922,13 @@ def render_default_oscal_artifacts(
             platform="gcp-gke",
         )
         if not ok:
-            if raise_on_error:
-                raise RuntimeError("OSCAL in-memory render returned ok=False")
-            return unavailable
-        return {k: rendered.get(k) for k in unavailable}
+            raise RuntimeError("OSCAL in-memory render returned ok=False")
+        missing = [str(k) for k in unavailable if not rendered.get(k)]
+        if missing:
+            raise RuntimeError(
+                f"OSCAL in-memory render produced empty output for: {missing}"
+            )
+        return {k: rendered[k] for k in unavailable}
     except Exception:  # noqa: BLE001
         if raise_on_error:
             raise

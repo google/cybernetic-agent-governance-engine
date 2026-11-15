@@ -305,5 +305,9 @@ class TestModelWeightVerificationAndDevScripts:
         from src.gateway.governance import stpa_compiler
 
         monkeypatch.setattr(stpa_compiler, "generate_nemo", _boom)
-        with pytest.raises(RuntimeError, match="synthetic recipe compiler failure"):
-            module.check_freshness()
+        errors = module.check_freshness()
+        assert len(errors) == 1
+        assert "UNABLE TO CHECK" in errors[0]
+        assert "synthetic recipe compiler failure" in errors[0]
+        monkeypatch.setattr("sys.argv", ["check_stpa_freshness.py"])
+        assert module.main() == 1
