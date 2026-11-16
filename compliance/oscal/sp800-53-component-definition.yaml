@@ -265,8 +265,11 @@ component-definition:
                    ingress_stage, outcome, timestamp, gateway_version and evidence_chain
                    attributes. The gateway uses its own telemetry key pair, kept out of the
                    advisor's Secret (infra/modules/gateway/main.tf). Spans are operational
-                   telemetry, not evidence for this control: they are not hash-chained or
-                   retention-locked, and nothing reconciles them against the evidence stream.
+                   telemetry, not evidence for this control: they are not hash-chained, and
+                   nothing reconciles them against the evidence stream. Every non-staging
+                   tier retention-locks Langfuse's raw event bucket for 2555 days
+                   (infra/targets/gcp-gke/main.tf), so span events are kept, but the lock
+                   does not make them evidence (POAM-2026-225).
 
                 4. OPERATIONAL METRICS: the gateway serves Prometheus metrics on
                    CAGE_METRICS_PORT (9090) from a daemon thread started in _gateway_lifespan
