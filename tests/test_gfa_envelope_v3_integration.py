@@ -216,9 +216,12 @@ async def test_gfa_unwraps_v3_envelope_on_retry_path() -> None:
             return httpx.Response(
                 403,
                 json={
+                    "schema_version": "2.0.0",
+                    "verdict": "DENIED",
                     "violations": [
                         "Substrate Policy Drift Detected: policy version mismatch"
-                    ]
+                    ],
+                    "proof_hash": "sha256:test-drift-refusal",
                 },
             )
         return httpx.Response(

@@ -155,7 +155,13 @@ class TestGuardFailClosed:
         [
             pytest.param(
                 lambda r: httpx.Response(
-                    403, json={"verdict": "DENIED", "violations": ["limit"]}
+                    403,
+                    json={
+                        "schema_version": "2.0.0",
+                        "verdict": "DENIED",
+                        "violations": ["limit"],
+                        "proof_hash": "sha256:test-guard-refusal-1",
+                    },
                 ),
                 id="denied-403",
             ),
@@ -173,7 +179,13 @@ class TestGuardFailClosed:
             ),
             pytest.param(
                 lambda r: httpx.Response(
-                    202, json={"verdict": "DEFER", "defer_id": "d-1"}
+                    200,
+                    json={
+                        "verdict": "DEFER",
+                        "defer_token": "d-1",
+                        "defer_reason": "CONFIDENCE_BELOW_THRESHOLD",
+                        "violations": [],
+                    },
                 ),
                 id="defer",
             ),
@@ -231,7 +243,15 @@ class TestGuardFailClosed:
         def handler(request: httpx.Request) -> httpx.Response:
             symbol = json.loads(request.content)["params"]["symbol"]
             if symbol == "EVIL":
-                return httpx.Response(403, json={"verdict": "DENIED"})
+                return httpx.Response(
+                    403,
+                    json={
+                        "schema_version": "2.0.0",
+                        "verdict": "DENIED",
+                        "violations": ["blocked symbol"],
+                        "proof_hash": "sha256:test-guard-refusal-2",
+                    },
+                )
             return httpx.Response(200, json=_ALLOW)
 
         gateway(handler)
@@ -412,7 +432,17 @@ class TestGuardApprovedResume:
         "approved", [False, None, "true"], ids=["rejected", "none", "truthy-str"]
     )
     async def test_non_true_approval_revalidates(self, gateway, approved) -> None:
-        seen = gateway(lambda r: httpx.Response(403, json={"verdict": "DENIED"}))
+        seen = gateway(
+            lambda r: httpx.Response(
+                403,
+                json={
+                    "schema_version": "2.0.0",
+                    "verdict": "DENIED",
+                    "violations": ["approval not true"],
+                    "proof_hash": "sha256:test-guard-refusal-3",
+                },
+            )
+        )
         spy = _SpyNode()
 
         result = await gateway_tool_guard("execute_trade", approvable=True)(spy)(
@@ -425,7 +455,17 @@ class TestGuardApprovedResume:
 
     @pytest.mark.asyncio
     async def test_not_approvable_ignores_approval_state(self, gateway) -> None:
-        seen = gateway(lambda r: httpx.Response(403, json={"verdict": "DENIED"}))
+        seen = gateway(
+            lambda r: httpx.Response(
+                403,
+                json={
+                    "schema_version": "2.0.0",
+                    "verdict": "DENIED",
+                    "violations": ["not approvable"],
+                    "proof_hash": "sha256:test-guard-refusal-4",
+                },
+            )
+        )
         spy = _SpyNode()
 
         result = await gateway_tool_guard("execute_trade")(spy)(

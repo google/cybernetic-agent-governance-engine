@@ -245,7 +245,12 @@ class TestSafetyNodeFailClosed:
         gateway(
             lambda r: httpx.Response(
                 403,
-                json={"verdict": "DENIED", "violations": ["junior trade above limit"]},
+                json={
+                    "schema_version": "2.0.0",
+                    "verdict": "DENIED",
+                    "violations": ["junior trade above limit"],
+                    "proof_hash": "sha256:test-safety-refusal-1",
+                },
             )
         )
 
@@ -390,7 +395,17 @@ class TestSafetyNodeFailClosed:
 
     @pytest.mark.asyncio
     async def test_denial_budget_exhaustion_hard_pauses(self, gateway) -> None:
-        gateway(lambda r: httpx.Response(403, json={"verdict": "DENIED"}))
+        gateway(
+            lambda r: httpx.Response(
+                403,
+                json={
+                    "schema_version": "2.0.0",
+                    "verdict": "DENIED",
+                    "violations": ["budget exhaustion"],
+                    "proof_hash": "sha256:test-safety-refusal-2",
+                },
+            )
+        )
 
         result = await safety_check_node(
             _trade_state(consecutive_denials=MAX_CONSECUTIVE_DENIALS - 1)

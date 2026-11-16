@@ -475,7 +475,12 @@ def _allow(tag: str) -> Handler:
 
 
 def _deny(reason: str) -> Handler:
-    body = {"verdict": "DENIED", "violations": [reason]}
+    body = {
+        "schema_version": "2.0.0",
+        "verdict": "DENIED",
+        "violations": [reason],
+        "proof_hash": "sha256:test-trade-refusal",
+    }
     return lambda request: httpx.Response(403, json=body)
 
 

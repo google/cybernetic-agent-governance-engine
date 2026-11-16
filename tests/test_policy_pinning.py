@@ -271,10 +271,12 @@ async def test_gateway_client_recovery_loop_on_policy_drift():
             return httpx.Response(
                 status_code=403,
                 json={
+                    "schema_version": "2.0.0",
                     "verdict": "DENIED",
                     "violations": [
                         "Substrate Policy Drift Detected. Session pinned to version signature 'stale'"
                     ],
+                    "proof_hash": "sha256:test-policy-drift-refusal",
                 },
             )
         return httpx.Response(
