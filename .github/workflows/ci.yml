@@ -848,6 +848,7 @@ jobs:
           helm template mesh-policy infra/modules/gateway/mesh-policy \
             --namespace governance-stack \
             --set-string "trustedIdentities[0]=cage-advisor-sa.governance-stack.serviceaccount.identity.linkerd.cluster.local" \
+            --set-string "canaryIdentities[0]=cage-gateway-canary-sa.governance-stack.serviceaccount.identity.linkerd.cluster.local" \
             | kubectl apply -f -
       - name: Run Linkerd service-mesh conformance suite
         env:
