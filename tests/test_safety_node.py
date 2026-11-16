@@ -278,9 +278,10 @@ class TestSafetyNodeFailClosed:
     async def test_gateway_500_blocks(self, gateway) -> None:
         gateway(lambda r: httpx.Response(500, json={"detail": "boom"}))
 
-        result = await safety_check_node(_trade_state())
+        result = await safety_check_node(_trade_state(consecutive_denials=1))
 
-        assert result["safety_status"] == "BLOCKED"
+        assert result["safety_status"] == "GATEWAY_ERROR"
+        assert result["consecutive_denials"] == 1
         assert result["last_violation"]["policy_rule"] == "GATEWAY_ERROR"
         assert result["last_violation"]["recoverable"] is False
 
@@ -288,10 +289,39 @@ class TestSafetyNodeFailClosed:
     async def test_gateway_unauthenticated_401_blocks(self, gateway) -> None:
         gateway(lambda r: httpx.Response(401, json={"detail": "no workload identity"}))
 
-        result = await safety_check_node(_trade_state())
+        result = await safety_check_node(_trade_state(consecutive_denials=1))
 
-        assert result["safety_status"] == "BLOCKED"
+        assert result["safety_status"] == "GATEWAY_ERROR"
+        assert result["consecutive_denials"] == 1
         assert result["last_violation"]["policy_rule"] == "GATEWAY_ERROR"
+
+    @pytest.mark.parametrize(
+        "response",
+        [
+            httpx.Response(403, content=b"", headers={"content-type": "text/plain"}),
+            httpx.Response(
+                403, json={"detail": "Forbidden: missing workload identity"}
+            ),
+            httpx.Response(
+                403,
+                content=b'{"verdict":"DENIED","violations":["spoofed"]}',
+                headers={"content-type": "application/json"},
+            ),
+        ],
+        ids=["empty-linkerd-403", "workload-identity-403", "missing-proof-hash-403"],
+    )
+    @pytest.mark.asyncio
+    async def test_gateway_unevidenced_403_returns_gateway_error_without_counting_denial(
+        self, gateway, response: httpx.Response
+    ) -> None:
+        gateway(lambda r: response)
+
+        result = await safety_check_node(_trade_state(consecutive_denials=1))
+
+        assert result["safety_status"] == "GATEWAY_ERROR"
+        assert result["consecutive_denials"] == 1
+        assert result["last_violation"]["reason_code"] == "GATEWAY_ERROR"
+        assert result["last_violation"]["recoverable"] is False
 
     @pytest.mark.asyncio
     async def test_gateway_timeout_blocks(self, gateway) -> None:
@@ -300,9 +330,10 @@ class TestSafetyNodeFailClosed:
 
         gateway(timeout)
 
-        result = await safety_check_node(_trade_state())
+        result = await safety_check_node(_trade_state(consecutive_denials=1))
 
-        assert result["safety_status"] == "BLOCKED"
+        assert result["safety_status"] == "GATEWAY_ERROR"
+        assert result["consecutive_denials"] == 1
         assert result["last_violation"]["policy_rule"] == "GATEWAY_ERROR"
         assert "ReadTimeout" in result["last_violation"]["evidence"]
 
@@ -313,9 +344,10 @@ class TestSafetyNodeFailClosed:
 
         gateway(refused)
 
-        result = await safety_check_node(_trade_state())
+        result = await safety_check_node(_trade_state(consecutive_denials=1))
 
-        assert result["safety_status"] == "BLOCKED"
+        assert result["safety_status"] == "GATEWAY_ERROR"
+        assert result["consecutive_denials"] == 1
         assert "ConnectError" in result["last_violation"]["evidence"]
 
     @pytest.mark.parametrize(
@@ -422,6 +454,7 @@ class TestRouteSafety:
             ("APPROVED", "governed_trader"),
             ("DEFERRED", "defer_node"),
             ("HARD_PAUSE_BUDGET_EXCEEDED", "human_review"),
+            ("GATEWAY_ERROR", "explainer"),
             ("BLOCKED", "explainer"),
             ("SKIPPED", "explainer"),
             ("UNKNOWN", "explainer"),

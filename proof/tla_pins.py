@@ -63,10 +63,10 @@ TLC_PINS: dict[str, TlcPin] = {
         negative_control=True,
     ),
     # LangGraphHarness.tla — GFA thread over MaxTurns turns + DeferQueue.
-    "LangGraphHarness": TlcPin("LangGraphHarness", 82652, frozenset()),
+    "LangGraphHarness": TlcPin("LangGraphHarness", 83729, frozenset()),
     "LangGraphHarness_unguarded": TlcPin(
         "LangGraphHarness",
-        906,
+        915,
         frozenset({"SingleUseDeferralTicket"}),
         negative_control=True,
     ),

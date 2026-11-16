@@ -44,9 +44,11 @@ routing-seal secret, signer or governor of its own.
 
 Fail-closed: only an explicit ALLOW, NARROW or REQUIRE_APPROVAL verdict for
 every trade step routes onward (nothing is committed here; the gateway commits
-only inside ``execute_trade_action``). For any step, a DENIED verdict, an
-unknown / missing verdict, a DEFER without a non-blank ``defer_token``, an HTTP error, a
-timeout or an unreachable gateway all produce ``BLOCKED``.
+only inside ``execute_trade_action``). For any step, an evidenced DENIED verdict, an unknown / missing verdict, or a
+DEFER without a non-blank ``defer_token`` produces ``BLOCKED`` (counting one
+denial), while an HTTP error (including an un-evidenced proxy/mesh 403), an
+unverified envelope, a timeout, or an unreachable gateway produces
+``GATEWAY_ERROR`` (leaving ``consecutive_denials`` unchanged).
 
 MAX_CONSECUTIVE_DENIALS = 2: Policy-probing attack mitigation. When an agent
 receives 2 consecutive DENY verdicts without an intervening ALLOW, the graph
@@ -80,15 +82,6 @@ MAX_CONSECUTIVE_DENIALS = 2
 
 #: How the gateway routed one trade step: onward, parked, or refused.
 _Routing = Literal["routed", "deferred", "blocked"]
-
-
-def _violations_of(response: httpx.Response) -> str:
-    """Render the ``violations`` of a gateway refusal body (best effort)."""
-    try:
-        violations = response.json().get("violations") or ["governance denied"]
-    except Exception:
-        violations = ["governance denied"]
-    return "; ".join(str(v) for v in violations)
 
 
 def _signature_value(result: Mapping[str, Any]) -> str:
@@ -138,23 +131,43 @@ def _blocked(
     }
 
 
+def _gateway_error(
+    state: AgentState,
+    *,
+    evidence: str,
+) -> dict[str, Any]:
+    """Build a fail-closed GATEWAY_ERROR outcome without incrementing consecutive_denials."""
+    current_denials = state.get("consecutive_denials", 0) or 0
+    return {
+        "safety_status": "GATEWAY_ERROR",
+        "consecutive_denials": current_denials,
+        "last_violation": {
+            "reason_code": "GATEWAY_ERROR",
+            "policy_rule": "GATEWAY_ERROR",
+            "evidence": evidence,
+            "audit_id": None,
+            "recoverable": False,
+        },
+        "routing_verdict_cache": None,
+    }
+
+
 async def _route_trade(
     state: AgentState, params: dict[str, Any], *, label: str | None
 ) -> tuple[_Routing, dict[str, Any]]:
     """Ask the gateway how one trade step must be routed. Never raises.
 
     Args:
-        state: Current AgentState (its denial budget prices a refusal).
+        state: Current AgentState (its denial budget prices an evidenced refusal).
         params: The step's canonical ``execute_trade`` parameters.
         label: ``"Trade step i of n"`` for a multi-step plan, prefixed to the
-            refusal evidence; ``None`` for a single-step plan.
+            refusal or error evidence; ``None`` for a single-step plan.
 
     Returns:
         ``("routed", result)`` for an ALLOW, NARROW or REQUIRE_APPROVAL
         verdict, ``("deferred", result)`` for a DEFER with a non-blank
-        ``defer_token``, and
-        ``("blocked", update)`` with the BLOCKED (or budget-exhausted) state
-        update for anything else.
+        ``defer_token``, and ``("blocked", update)`` with the BLOCKED,
+        HARD_PAUSE_BUDGET_EXCEEDED, or GATEWAY_ERROR state update otherwise.
     """
 
     def blocked(
@@ -168,42 +181,36 @@ async def _route_trade(
             recoverable=recoverable,
         )
 
+    def gateway_error(evidence: str) -> tuple[_Routing, dict[str, Any]]:
+        return "blocked", _gateway_error(
+            state,
+            evidence=f"{label}: {evidence}" if label else evidence,
+        )
+
     try:
         result = await GatewayClient().validate_action(
             action=TRADE_ACTION, params=params
         )
     except PermissionError as exc:
-        # Gateway DENIED the action.
+        # Evidenced gateway policy refusal.
         logger.warning("🚫 Safety Node: Action DENIED by governance: %s", exc)
         return blocked("GOVERNANCE_DENIED", str(exc), recoverable=True)
     except httpx.HTTPStatusError as exc:
-        if exc.response.status_code == 403:
-            # The gateway's refusal contract: HTTP 403 {"verdict": "DENIED", ...}.
-            logger.warning("🚫 Safety Node: Action DENIED by governance (HTTP 403)")
-            return blocked(
-                "GOVERNANCE_DENIED", _violations_of(exc.response), recoverable=True
-            )
         logger.error(
-            "❌ Safety Node: Gateway HTTP %d — failing closed",
+            "❌ Safety Node: Gateway validation unavailable/unverified — failing closed (HTTP %d)",
             exc.response.status_code,
         )
-        return blocked(
-            "GATEWAY_ERROR",
-            f"Gateway returned HTTP {exc.response.status_code}",
-            recoverable=False,
-        )
+        return gateway_error(f"Gateway returned HTTP {exc.response.status_code}")
     except Exception as exc:
-        # Fail closed: HTTP errors, timeouts, unreachable gateway.
+        # Fail closed: CageGatewayError, RoutingSealVerificationError, timeouts, unreachable gateway.
         logger.error(
-            "❌ Safety Node: Governance validation failed — failing closed (%s: %s)",
+            "❌ Safety Node: Gateway validation unavailable/unverified — failing closed (%s: %s)",
             type(exc).__name__,
             exc,
             exc_info=True,
         )
-        return blocked(
-            "GATEWAY_ERROR",
-            f"Failed to validate action due to {type(exc).__name__}: {exc!s}",
-            recoverable=False,
+        return gateway_error(
+            f"Failed to validate action due to {type(exc).__name__}: {exc!s}"
         )
 
     verdict = result.get("verdict") if isinstance(result, dict) else None
@@ -395,6 +402,7 @@ def route_safety(state: AgentState) -> str:
       - "BLOCKED" → explainer (self-correction or budget check)
       - "DEFERRED" → defer_node (turn-terminal governance hold)
       - "HARD_PAUSE_BUDGET_EXCEEDED" → human_review (escalate to human)
+      - "GATEWAY_ERROR" → explainer (fail-closed infrastructure halt)
       - default → explainer (defensive fallback)
 
     Args:
@@ -414,6 +422,9 @@ def route_safety(state: AgentState) -> str:
     elif status == "HARD_PAUSE_BUDGET_EXCEEDED":
         logger.error("🔴 route_safety: HARD_PAUSE_BUDGET_EXCEEDED → human_review")
         return "human_review"
+    elif status == "GATEWAY_ERROR":
+        logger.error("🔴 route_safety: GATEWAY_ERROR → explainer")
+        return "explainer"
     else:
         # "BLOCKED" or defensive fallback
         logger.info("🔴 route_safety: %s → explainer", status)

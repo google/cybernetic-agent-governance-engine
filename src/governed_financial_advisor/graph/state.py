@@ -81,6 +81,7 @@ class AgentState(TypedDict):
         "SKIPPED",
         "DEFERRED",
         "HARD_PAUSE_BUDGET_EXCEEDED",
+        "GATEWAY_ERROR",
     ]
     governance_signature: (
         str | None

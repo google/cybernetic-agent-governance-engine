@@ -170,15 +170,15 @@ CHECK_DEADLOCK FALSE
 
 ### FtraBoundary and LangGraphHarness: Results
 
-Unlike [`model.py`](model.py) + [`trace_conformance.py`](trace_conformance.py) and [`DistributedCBF.tla`](DistributedCBF.tla) + [`distributed_cbf_model.py`](distributed_cbf_model.py), [`FtraBoundary.tla`](FtraBoundary.tla) and [`LangGraphHarness.tla`](LangGraphHarness.tla) are standalone TLC-checked design specifications with no Python BFS twin and no runtime trace-conformance checker coupling them to `src/governed_financial_advisor/`; TLC's distinct-state count (`-continue`) and violated-invariant set are pinned in [`tla_pins.py`](tla_pins.py), while advisor node behavioral conformance ([`safety_node.py`](../src/governed_financial_advisor/graph/nodes/safety_node.py) / [`defer_node.py`](../src/governed_financial_advisor/graph/nodes/defer_node.py): `SafetyDefer` leaving `consecutive_denials` unchanged vs. `SafetyDeny` incrementing it) is enforced by live ASGI integration tests in [`tests/test_advisor_trade_preview_e2e.py`](../tests/test_advisor_trade_preview_e2e.py). Each spec has one negative-control cfg that removes the defence it depends on; it lists the demonstrated invariant first because TLC reports only the first violated invariant per state.
+Unlike [`model.py`](model.py) + [`trace_conformance.py`](trace_conformance.py) and [`DistributedCBF.tla`](DistributedCBF.tla) + [`distributed_cbf_model.py`](distributed_cbf_model.py), [`FtraBoundary.tla`](FtraBoundary.tla) and [`LangGraphHarness.tla`](LangGraphHarness.tla) are standalone TLC-checked design specifications with no Python BFS twin and no runtime trace-conformance checker coupling them to `src/governed_financial_advisor/`; TLC's distinct-state count (`-continue`) and violated-invariant set are pinned in [`tla_pins.py`](tla_pins.py), while advisor node behavioral conformance ([`safety_node.py`](../src/governed_financial_advisor/graph/nodes/safety_node.py) / [`defer_node.py`](../src/governed_financial_advisor/graph/nodes/defer_node.py): `SafetyDefer` and `SafetyTransportError` leaving `consecutive_denials` unchanged vs. `SafetyDeny` incrementing it) is enforced by [`tests/test_advisor_trade_preview_e2e.py`](../tests/test_advisor_trade_preview_e2e.py) and [`tests/unit/test_poam_228_gateway_error_split.py`](../tests/unit/test_poam_228_gateway_error_split.py). Each spec has one negative-control cfg that removes the defence it depends on; it lists the demonstrated invariant first because TLC reports only the first violated invariant per state.
 
 | cfg | Posture | Distinct states | Result |
 |-----|---------|-----------------|--------|
 | `FtraBoundary.cfg` | Shipped: `FtraStage` in every governor run, NetworkPolicy applied; `FairSpec` | 8272 | ✅ all invariants; `EveryRequestTerminates` holds |
 | `FtraBoundary_nonetpol.cfg` | No NetworkPolicy (e.g. agnostic target) | 8756 | ✅ all invariants |
 | `FtraBoundary_noboundary.cfg` | Governor without `FtraStage` (negative control) | 13792 | ❌ `NoUnreviewedIrreversibleExecution`, `ControllerBoundaryCoversInGraphBypass`, `ControllerBoundaryUnconditional` |
-| `LangGraphHarness.cfg` | HEAD: status-guarded `DeferQueue._resolve`; 3 turns | 82652 | ✅ all invariants |
-| `LangGraphHarness_unguarded.cfg` | `_resolve` without the status guard (pre-POAM-2026-093; negative control); 1 turn | 906 | ❌ `SingleUseDeferralTicket` |
+| `LangGraphHarness.cfg` | HEAD: status-guarded `DeferQueue._resolve` + `SafetyTransportError` split (`POAM-2026-228`); 3 turns | 83729 | ✅ all invariants |
+| `LangGraphHarness_unguarded.cfg` | `_resolve` without the status guard (pre-POAM-2026-093; negative control); 1 turn | 915 | ❌ `SingleUseDeferralTicket` |
 
 **LangGraphHarness constants:** `MaxLoopCount = 3` (`route_after_evaluator`), `HITLTimeoutTicks = 1`, `MaxConsecutiveDenials = 2` (`safety_node.MAX_CONSECUTIVE_DENIALS`), `MaxTurns = 3`, `ResolveGuarded = TRUE`.
 
@@ -187,7 +187,7 @@ Unlike [`model.py`](model.py) + [`trace_conformance.py`](trace_conformance.py) a
 - `HITLTimeoutSafety`: an expired interrupt never trades. `OutputRailCoverage`: every response past the input rail passes the output rail.
 - `SingleUseDeferralTicket`: each DeferQueue ticket is resolved at most once and consumed at most once.
 - `BudgetNeverExceededWithoutPause`: a refused `safety_check` reports `HARD_PAUSE_BUDGET_EXCEEDED` exactly when the new `consecutive_denials` is at least 2. The pause ends that turn; it does not lock the thread, and the counter persists in the thread checkpoint.
-- `RefusedTurnNeverTrades`, `FtraHoldNeverTradesThisTurn`: a refused or paused turn, and a turn the FTRA node parked, never reach the trader (an FTRA HITL resume goes to the explainer).
+- `RefusedTurnNeverTrades`, `FtraHoldNeverTradesThisTurn`: a refused, paused, deferred, or transport-errored (`GATEWAY_ERROR`) turn, and a turn the FTRA node parked, never reach the trader (an FTRA HITL resume goes to the explainer).
 
 ### Running TLC Model Checker
 

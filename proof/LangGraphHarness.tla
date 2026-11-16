@@ -33,7 +33,8 @@
                         | interrupt (HITL_REQUIRED), then explainer on resume
                           (route_after_ftra sends HITL_REQUIRED to explainer)
      safety_check      -> approval_node | governed_trader (APPROVED / SKIPPED)
-                        | defer_node (DEFERRED) | explainer (BLOCKED / HARD_PAUSE)
+                        | defer_node (DEFERRED)
+                        | explainer (BLOCKED / HARD_PAUSE / GATEWAY_ERROR)
      approval_node     -> governed_trader | explainer
      governed_trader   -> explainer;  defer_node -> explainer
      explainer         -> nemo_output_rail -> END
@@ -41,7 +42,8 @@
    safety_check (graph/nodes/safety_node.py) asks the gateway
    (POST /governance/validate-action) only for an execute_trade plan; any
    other plan is SKIPPED. ALLOW / NARROW / REQUIRE_APPROVAL reset
-   consecutive_denials to 0; DEFER leaves it; a refusal or gateway error
+   consecutive_denials to 0; DEFER and transport/unverified gateway errors
+   (GATEWAY_ERROR) leave it unchanged; an evidenced policy refusal
    increments it and reports HARD_PAUSE_BUDGET_EXCEEDED once the new count
    reaches MAX_CONSECUTIVE_DENIALS (2), else BLOCKED. The counter lives in
    the thread checkpoint across turns. The pause ends that turn; it does not
@@ -121,7 +123,7 @@ TradingPhases == {"APPROVAL", "TRADER", "TRADER_HITL"}
 GatewayDecisions == {"ALLOW", "NARROW", "REQUIRE_APPROVAL", "DENY"}
 FTRAVerdicts == {"CLEAR", "HITL_REQUIRED", "BLOCKED"}
 SafetyStatuses == {"APPROVED", "SKIPPED", "DEFERRED", "BLOCKED",
-                   "HARD_PAUSE_BUDGET_EXCEEDED"}
+                   "HARD_PAUSE_BUDGET_EXCEEDED", "GATEWAY_ERROR"}
 
 TicketIds == 1..MaxTurns          \* ticket t is parked in turn t
 TicketKinds == {"DEFER", "FTRA", "APPROVAL"}
@@ -355,9 +357,9 @@ SafetyDefer ==
                    seal_issued, resolved_allow, executed, evidence_committed,
                    hitl_ticks_remaining>>
 
-(* Gateway refusal (HTTP 403 / PermissionError), gateway error or an
-   unroutable verdict: safety_node._blocked. The gateway commits a refusal
-   receipt for a refusal; a transport error is modelled the same way. *)
+(* Evidenced gateway refusal (HTTP 403 carrying proof_hash/audit_id ->
+   PermissionError) or signed non-routable envelope: safety_node._blocked
+   increments consecutive_denials and the gateway commits a refusal receipt. *)
 SafetyDeny ==
     /\ phase = "SAFETY_CHECK"
     /\ LET new == consecutive_denials + 1
@@ -369,6 +371,19 @@ SafetyDeny ==
     /\ UNCHANGED <<turn, loop_count, ftra_verdict, governance_decision,
                    guardrail_blocked, output_rail_applied, seal_issued,
                    resolved_allow, executed, hitl_ticks_remaining, ticket_vars>>
+
+(* Gateway transport error, HTTP error, un-evidenced proxy/mesh 403 or
+   envelope verification error: safety_node._gateway_error halts fail-closed
+   via explainer without incrementing consecutive_denials or claiming a
+   gateway refusal receipt was committed (POAM-2026-228). *)
+SafetyTransportError ==
+    /\ phase = "SAFETY_CHECK"
+    /\ safety_status' = "GATEWAY_ERROR"
+    /\ phase' = "EXPLAINER"
+    /\ UNCHANGED <<turn, loop_count, consecutive_denials, ftra_verdict,
+                   governance_decision, guardrail_blocked, output_rail_applied,
+                   seal_issued, resolved_allow, executed, evidence_committed,
+                   hitl_ticks_remaining, ticket_vars>>
 
 (* approval_node: interrupt(); Command(goto=...) on the reviewer's decision. *)
 ApprovalGranted  == phase = "APPROVAL" /\ hitl_ticks_remaining > 0 /\ Goto("TRADER")
@@ -513,7 +528,7 @@ Next ==
     \/ StartTurn \/ GuardrailBlock \/ GuardrailPass
     \/ RouteToOutput \/ RouteToPlanner \/ Plan
     \/ FTRAClear \/ FTRABlocked \/ FTRAHITLRequired \/ FTRAResume \/ FTRATimeout
-    \/ SafetySkip \/ SafetyApprove \/ SafetyDefer \/ SafetyDeny
+    \/ SafetySkip \/ SafetyApprove \/ SafetyDefer \/ SafetyDeny \/ SafetyTransportError
     \/ ApprovalGranted \/ ApprovalRejected
     \/ TraderAllow \/ TraderDeny \/ TraderRequireApproval \/ TraderNoToolCall
     \/ TraderResume \/ TraderHITLTimeout \/ HITLTick
@@ -571,9 +586,9 @@ BudgetNeverExceededWithoutPause ==
         ((safety_status = "HARD_PAUSE_BUDGET_EXCEEDED")
             <=> (consecutive_denials >= MaxConsecutiveDenials))
 
-(* A refused, paused or deferred turn never reaches the trader. *)
+(* A refused, paused, deferred or transport-errored turn never reaches the trader. *)
 RefusedTurnNeverTrades ==
-    safety_status \in {"BLOCKED", "HARD_PAUSE_BUDGET_EXCEEDED", "DEFERRED"} =>
+    safety_status \in {"BLOCKED", "HARD_PAUSE_BUDGET_EXCEEDED", "DEFERRED", "GATEWAY_ERROR"} =>
         (~executed /\ phase \notin TradingPhases)
 
 (* An FTRA HITL or BLOCKED verdict never trades in that turn. *)

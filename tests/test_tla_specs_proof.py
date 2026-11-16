@@ -11,7 +11,7 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-# Closure regression guard for: POAM-2026-024
+# Closure regression guard for: POAM-2026-024, POAM-2026-228
 
 """Cfg/spec parity for FtraBoundary.tla and LangGraphHarness.tla (POAM-2026-091).
 
@@ -193,6 +193,23 @@ def test_step15_table_matches_pins() -> None:
         claimed = re.search(r"all (\d+) invariants", verdict)
         if claimed:
             assert int(claimed.group(1)) == len(DECLARED_CHECKS[name].invariants), name
+
+
+def test_langgraph_harness_splits_safety_transport_error() -> None:
+    """POAM-2026-228: SafetyTransportError leaves consecutive_denials and evidence_committed unchanged."""
+    spec_text = (PROOF / "LangGraphHarness.tla").read_text(encoding="utf-8")
+    defs = _spec_definitions(PROOF / "LangGraphHarness.tla")
+    assert "SafetyTransportError" in defs
+    assert '"GATEWAY_ERROR"' in spec_text
+    action_block = spec_text.split("SafetyTransportError ==", 1)[1].split("\n\n", 1)[0]
+    assert 'safety_status\' = "GATEWAY_ERROR"' in action_block
+    assert 'phase\' = "EXPLAINER"' in action_block
+    assert "consecutive_denials" in action_block and "UNCHANGED" in action_block
+    assert "evidence_committed" in action_block
+    refused_block = spec_text.split("RefusedTurnNeverTrades ==", 1)[1].split("\n\n", 1)[
+        0
+    ]
+    assert '"GATEWAY_ERROR"' in refused_block
 
 
 def _tools() -> tuple[str, str] | None:
