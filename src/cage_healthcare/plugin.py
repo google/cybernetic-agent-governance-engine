@@ -17,37 +17,23 @@
 from pathlib import Path
 
 from src.cage_healthcare import create_healthcare_tiers
+from src.cage_healthcare import ground_truth as _gt
 from src.cage_healthcare.constants import CONSEQUENCE_MAGNITUDES, REGISTERED_ACTIONS
-from src.cage_healthcare.ground_truth import (
-    SimulatedSerumAssayProvider,
-    healthcare_cost_resolver,
-)
 from src.cage_healthcare.invariants import SerumConcentrationBarrier
 from src.cage_healthcare.rails.provider import HealthcareRailProvider
 from src.cage_healthcare.thresholds import HealthcareThresholds
-from src.cage_healthcare.tiers.clinical_consensus_tier import (
-    build_healthcare_consensus_contribution,
-)
+from src.cage_healthcare.tiers import clinical_consensus_tier as _cct
 from src.cage_healthcare.tools.tool_provider import ClinicalToolProvider
 from src.gateway.governance import contracts
 from src.gateway.governance.consensus import extract_field_magnitude
 from src.gateway.governance.safety.cbf_engine import ControlBarrierFunction
 
 _CONFIG_DIR = Path(__file__).resolve().parent / "config"
-
-
-_DOSE_EVALUATED_PARAM_SPECS: dict[str, contracts.EvaluatedParamSpec] = {
-    "dose_mg": contracts.EvaluatedParamSpec.number(),
-    "confidence": contracts.EvaluatedParamSpec.number(),
-    "route": contracts.EvaluatedParamSpec.enum(
-        "oral", "iv", "im", "sc", "topical", "inhaled"
-    ),
-}
-
-HEALTHCARE_EVALUATED_PARAM_SPECS: dict[str, dict[str, contracts.EvaluatedParamSpec]] = {
-    "administer_dose": _DOSE_EVALUATED_PARAM_SPECS,
-    "dose_order": _DOSE_EVALUATED_PARAM_SPECS,
-}
+_NUM, _ENUM = contracts.EvaluatedParamSpec.number(), contracts.EvaluatedParamSpec.enum
+_ROUTES = _ENUM("oral", "iv", "im", "sc", "topical", "inhaled")
+_DOSE_SPECS = {"dose_mg": _NUM, "confidence": _NUM, "route": _ROUTES}
+_DOSE_ACTIONS = ("administer_dose", "dose_order")
+HEALTHCARE_EVALUATED_PARAM_SPECS = dict.fromkeys(_DOSE_ACTIONS, _DOSE_SPECS)
 
 
 # A reference domain, not a production one. It wires clinical consensus, the
@@ -71,23 +57,20 @@ class HealthcareCagePlugin(contracts.CagePlugin):
     )
 
     def contribute(self) -> contracts.PluginContribution:
-        barrier = SerumConcentrationBarrier()
-        cbf = ControlBarrierFunction(
-            barrier, cost_resolver=healthcare_cost_resolver, skip_epoch_seed=True
-        )
+        barrier, cost = SerumConcentrationBarrier(), _gt.healthcare_cost_resolver
+        cbf = ControlBarrierFunction(barrier, cost, skip_epoch_seed=True)
+        gt_providers = {barrier.invariant_id: _gt.SimulatedSerumAssayProvider()}
         return contracts.PluginContribution(
             domain=self.name,
             maturity=self.maturity,
             tiers=create_healthcare_tiers(cbf),
             invariants=(barrier,),  # declarative, no logic
-            ground_truth_providers={
-                barrier.invariant_id: SimulatedSerumAssayProvider()
-            },
+            ground_truth_providers=gt_providers,
             registered_actions=REGISTERED_ACTIONS,
             consequence_magnitudes=CONSEQUENCE_MAGNITUDES,
             magnitude_extractor=extract_field_magnitude("dose_mg"),
             safety_filter=cbf,
-            consensus=build_healthcare_consensus_contribution(),
+            consensus=_cct.build_healthcare_consensus_contribution(),
             tool_provider=ClinicalToolProvider(),
             threshold_sections={"healthcare": HealthcareThresholds},
             compliance_overlay_dirs=(_CONFIG_DIR / "compliance",),
