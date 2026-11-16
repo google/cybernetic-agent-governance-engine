@@ -315,6 +315,10 @@ class SymbolicGovernor:
                     else GovernanceDecision.DENY,
                 )
             handler_kwargs: dict[str, Any] = {"reliance": result.reliance}
+            if handler is handle_deny:
+                handler_kwargs["evaluated_param_specs"] = (
+                    self._components.evaluated_param_specs
+                )
             if not emit_side_effects:
                 handler_kwargs["emit_side_effects"] = False
             verdict = handler(
@@ -400,7 +404,13 @@ class SymbolicGovernor:
                     "validate_action",
                     GovernanceDecision.DENY,
                 )
-            await _deny(action, params, result, emit_side_effects=emit_side_effects)
+            await _deny(
+                action,
+                params,
+                result,
+                emit_side_effects=emit_side_effects,
+                evaluated_param_specs=self._components.evaluated_param_specs,
+            )
         verified = await self._rebind(action, proposal)  # the params the response names
         ctx = StageContext(
             action=action, params=copy.deepcopy(verified), profile=Profile.DRY_RUN
@@ -454,6 +464,7 @@ class SymbolicGovernor:
                 deny_meta,
                 latency_ms,
                 reliance=rerun.reliance,
+                evaluated_param_specs=self._components.evaluated_param_specs,
                 **extra_kwargs,
             )
             raise GovernanceError(
@@ -568,7 +579,12 @@ class SymbolicGovernor:
             await _trace(
                 result, action, Profile.FULL, "govern", GovernanceDecision.DENY
             )
-            await _deny(action, params, result)
+            await _deny(
+                action,
+                params,
+                result,
+                evaluated_param_specs=self._components.evaluated_param_specs,
+            )
         # The exact params the seal and receipt name, server inputs re-bound.
         narrowed = await self._rebind(action, proposal)
 
@@ -622,6 +638,7 @@ class SymbolicGovernor:
                     "classification_reason": "narrow_reverification_failed",
                 },
                 reliance=rerun.reliance,
+                evaluated_param_specs=self._components.evaluated_param_specs,
             )
             raise GovernanceError(
                 f"handle_deny returned without raising; refusing {action}"
@@ -713,6 +730,7 @@ class SymbolicGovernor:
                     ],
                     [],
                     {"approved_barrier_preview": str(approval.barrier_preview)},
+                    evaluated_param_specs=self._components.evaluated_param_specs,
                 )
                 raise GovernanceError(
                     f"handle_deny returned without raising; refusing {action}"
@@ -724,7 +742,14 @@ class SymbolicGovernor:
                 # POST_HITL re-runs only claimed barriers; with none there is
                 # nothing to re-verify, so the approval cannot be honoured.
                 await _spend_refused(approval)
-                await handle_deny(action, params, [_UNGOVERNED_POST_HITL], [], {})
+                await handle_deny(
+                    action,
+                    params,
+                    [_UNGOVERNED_POST_HITL],
+                    [],
+                    {},
+                    evaluated_param_specs=self._components.evaluated_param_specs,
+                )
                 raise GovernanceError(
                     f"no tier governs {action}; post-HITL re-validation refused"
                 )
@@ -793,6 +818,7 @@ class SymbolicGovernor:
                     [],
                     {"approval_id": approval.approval_id},
                     reliance=result.reliance,
+                    evaluated_param_specs=self._components.evaluated_param_specs,
                 )
                 raise GovernanceError(
                     f"handle_deny returned without raising; refusing {action}"
@@ -829,10 +855,27 @@ class SymbolicGovernor:
                 approved == BarrierPreview.PASS
                 and result.barrier_outcome == BarrierPreview.FAIL
             ):
-                await _deny_drift(action, params, result, approved)
+                await _deny_drift(
+                    action,
+                    params,
+                    result,
+                    approved,
+                    evaluated_param_specs=self._components.evaluated_param_specs,
+                )
             if unapproved := _unapproved_holds(result):
-                await _deny_unapproved_holds(action, params, result, unapproved)
-            await _deny(action, params, result)
+                await _deny_unapproved_holds(
+                    action,
+                    params,
+                    result,
+                    unapproved,
+                    evaluated_param_specs=self._components.evaluated_param_specs,
+                )
+            await _deny(
+                action,
+                params,
+                result,
+                evaluated_param_specs=self._components.evaluated_param_specs,
+            )
 
     def _defers_on_reliance(self, result: PipelineResult) -> bool:
         """True iff the run's findings defer on an ineligible warrant.
@@ -1049,6 +1092,8 @@ async def _deny_drift(
     params: dict[str, Any],
     result: PipelineResult,
     approved: BarrierPreview,
+    *,
+    evaluated_param_specs: Any = None,
 ) -> NoReturn:
     """Refuse a committing run whose barriers no longer match the approval.
 
@@ -1075,6 +1120,7 @@ async def _deny_drift(
             "barrier_outcome": BarrierPreview.FAIL.value,
         },
         reliance=result.reliance,
+        evaluated_param_specs=evaluated_param_specs,
     )
     raise GovernanceError(
         f"handle_deny returned without raising; refusing {action}"
@@ -1099,6 +1145,8 @@ async def _deny_unapproved_holds(
     params: dict[str, Any],
     result: PipelineResult,
     holds: tuple[Violation, ...],
+    *,
+    evaluated_param_specs: Any = None,
 ) -> NoReturn:
     """Refuse a committing run that reports a hold its approval was not given against.
 
@@ -1124,6 +1172,7 @@ async def _deny_unapproved_holds(
             "unapproved_holds": [f"{v.tier}/{v.code}" for v in holds],
         },
         reliance=result.reliance,
+        evaluated_param_specs=evaluated_param_specs,
     )
     raise GovernanceError(
         f"handle_deny returned without raising; refusing {action}"
@@ -1176,8 +1225,12 @@ async def _deny(
     result: PipelineResult,
     *,
     emit_side_effects: bool = True,
+    evaluated_param_specs: Any = None,
 ) -> NoReturn:
-    deny_kwargs: dict[str, Any] = {"reliance": result.reliance}
+    deny_kwargs: dict[str, Any] = {
+        "reliance": result.reliance,
+        "evaluated_param_specs": evaluated_param_specs,
+    }
     if not emit_side_effects:
         deny_kwargs["emit_side_effects"] = False
     await handle_deny(

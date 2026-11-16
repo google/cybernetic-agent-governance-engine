@@ -673,3 +673,123 @@ def test_governed_advisor_terraform_configures_gateway_checkpointer_and_health_p
     assert "liveness_probe" in tf_text
     assert "REDIS_HOST" not in tf_text
     assert "REDIS_URL" not in tf_text
+
+
+@pytest.mark.asyncio
+async def test_pending_approvals_never_returns_partial_200_on_mid_iteration_checkpoint_outage(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """POAM-2026-226: /v1/approvals/pending must fail closed with HTTP 503 — never HTTP 200 omitting paused threads — if aget_state fails mid-iteration."""
+    from src.governed_financial_advisor.server import app as advisor_app
+
+    monkeypatch.setenv("CAGE_ENV", "dev")
+    monkeypatch.delenv("CAGE_API_KEY", raising=False)
+    monkeypatch.delenv("CAGE_USER_OIDC_ISSUER", raising=False)
+
+    redis = fakeredis.aioredis.FakeRedis(decode_responses=True)
+    store = GatewayCheckpointStore(redis)
+    gw_app = _build_gated_checkpoint_app(store)
+    saver = GatewayCheckpointSaver(
+        "http://gateway:8080",
+        transport=_PodLocalASGITransport(gw_app),
+        headers={CLIENT_IDENTITY_HEADER: _ADVISOR_ID},
+    )
+    real_graph = _compile_interruptible_graph(saver)
+
+    # Park two separate threads at HITL interrupts
+    await real_graph.ainvoke(
+        {"user_id": "u1", "amount": 1000},
+        {"configurable": {"thread_id": "hitl-thread-1"}},
+    )
+    await real_graph.ainvoke(
+        {"user_id": "u2", "amount": 2000},
+        {"configurable": {"thread_id": "hitl-thread-2"}},
+    )
+
+    class _MidIterationFaultGraph:
+        checkpointer = saver
+
+        async def aget_state(self, config: dict[str, Any]) -> Any:
+            tid = config["configurable"]["thread_id"]
+            if tid == "hitl-thread-1":
+                raise CheckpointDurabilityError("simulated Redis disconnect mid-scan")
+            return await real_graph.aget_state(config)
+
+    prev_graph = getattr(advisor_app.state, "graph", None)
+    try:
+        # Baseline: both paused threads returned when store is healthy
+        advisor_app.state.graph = real_graph
+        async with httpx.AsyncClient(
+            transport=httpx.ASGITransport(app=advisor_app),
+            base_url="http://advisor.local",
+        ) as client:
+            ok_resp = await client.get("/v1/approvals/pending")
+            assert ok_resp.status_code == 200
+            assert {p["thread_id"] for p in ok_resp.json()["pending"]} == {
+                "hitl-thread-1",
+                "hitl-thread-2",
+            }
+
+            # Faulted mid-iteration: must return HTTP 503, NEVER HTTP 200 with only hitl-thread-2
+            advisor_app.state.graph = _MidIterationFaultGraph()
+            fault_resp = await client.get("/v1/approvals/pending")
+            assert fault_resp.status_code == 503
+            assert (
+                fault_resp.json()["detail"]["error"] == "checkpoint_store_unavailable"
+            )
+    finally:
+        advisor_app.state.graph = prev_graph
+        await saver.aclose()
+
+
+@pytest.mark.asyncio
+async def test_query_agent_returns_503_on_runtime_checkpoint_durability_error(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """POAM-2026-226: /agent/query returns HTTP 503 when CheckpointDurabilityError occurs in thread-owner check or graph.ainvoke."""
+    from langgraph.checkpoint.memory import MemorySaver
+
+    from src.governed_financial_advisor.server import app as advisor_app
+
+    monkeypatch.setenv("CAGE_ENV", "dev")
+    monkeypatch.delenv("CAGE_API_KEY", raising=False)
+    monkeypatch.delenv("CAGE_USER_OIDC_ISSUER", raising=False)
+
+    class _OwnershipFaultGraph:
+        checkpointer = MemorySaver()
+
+        async def aget_state(self, config: dict[str, Any]) -> Any:
+            raise CheckpointDurabilityError("gateway checkpointer unreachable on read")
+
+    class _InvokeFaultGraph:
+        checkpointer = MemorySaver()
+
+        async def aget_state(self, config: dict[str, Any]) -> Any:
+            return None
+
+        async def ainvoke(self, *args: Any, **kwargs: Any) -> Any:
+            raise CheckpointDurabilityError("gateway checkpointer unreachable on write")
+
+    prev_graph = getattr(advisor_app.state, "graph", None)
+    try:
+        async with httpx.AsyncClient(
+            transport=httpx.ASGITransport(app=advisor_app),
+            base_url="http://advisor.local",
+        ) as client:
+            advisor_app.state.graph = _OwnershipFaultGraph()
+            r1 = await client.post(
+                "/agent/query",
+                json={"prompt": "Rebalance my portfolio", "user_id": "u1"},
+            )
+            assert r1.status_code == 503
+            assert r1.json()["detail"]["error"] == "checkpoint_store_unavailable"
+
+            advisor_app.state.graph = _InvokeFaultGraph()
+            r2 = await client.post(
+                "/agent/query",
+                json={"prompt": "Rebalance my portfolio", "user_id": "u1"},
+            )
+            assert r2.status_code == 503
+            assert r2.json()["detail"]["error"] == "checkpoint_store_unavailable"
+    finally:
+        advisor_app.state.graph = prev_graph

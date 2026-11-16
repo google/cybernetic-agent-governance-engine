@@ -52,6 +52,7 @@ from src.gateway.governance.contracts import (
     CagePlugin,
     CanaryProbe,
     DomainConfig,
+    EvaluatedParamSpec,
     PluginContribution,
 )
 from src.gateway.governance.governor.assembly import DisabledTier
@@ -62,6 +63,35 @@ logger = logging.getLogger(__name__)
 FINANCE_EXECUTION_VERBS: frozenset[str] = frozenset(
     {"buy", "sell", "trade", "transfer", "execute_trade"}
 )
+
+_TRADE_EVALUATED_PARAM_SPECS: dict[str, EvaluatedParamSpec] = {
+    "symbol": EvaluatedParamSpec.upper_alpha_code(max_length=5),
+    "currency": EvaluatedParamSpec.upper_alpha_code(max_length=3),
+    "side": EvaluatedParamSpec.enum("buy", "sell"),
+    "type": EvaluatedParamSpec.enum("market", "limit"),
+    "trader_role": EvaluatedParamSpec.enum("junior", "senior"),
+    "dry_run": EvaluatedParamSpec.boolean(),
+    "amount": EvaluatedParamSpec.number(),
+    "amount_minor": EvaluatedParamSpec.number(),
+    "confidence": EvaluatedParamSpec.number(),
+    "latency_ms": EvaluatedParamSpec.number(),
+    "drawdown": EvaluatedParamSpec.number(),
+    "portfolio_total": EvaluatedParamSpec.number(),
+    "order_size": EvaluatedParamSpec.number(),
+    "daily_vol": EvaluatedParamSpec.number(),
+}
+
+FINANCE_EVALUATED_PARAM_SPECS: dict[str, dict[str, EvaluatedParamSpec]] = {
+    "execute_trade": _TRADE_EVALUATED_PARAM_SPECS,
+    "execute_trade_bounded": _TRADE_EVALUATED_PARAM_SPECS,
+    "market_analysis": {
+        "symbol": EvaluatedParamSpec.upper_alpha_code(max_length=5),
+        "confidence": EvaluatedParamSpec.number(),
+    },
+    "check_market_status": {
+        "symbol": EvaluatedParamSpec.upper_alpha_code(max_length=5),
+    },
+}
 
 # The 5 core deterministic finance tiers. An enforcing posture refuses to start
 # if any of them is not enabled (posture check ``required_tiers``); listed
@@ -221,6 +251,7 @@ class FinanceCagePlugin(CagePlugin):
             rail_providers=(FinancialRailsProvider(),),
             required_tiers=required_tiers,
             disabled_tiers=disabled_tiers,
+            evaluated_param_specs=FINANCE_EVALUATED_PARAM_SPECS,
         )
 
 

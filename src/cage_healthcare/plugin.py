@@ -36,6 +36,20 @@ from src.gateway.governance.safety.cbf_engine import ControlBarrierFunction
 _CONFIG_DIR = Path(__file__).resolve().parent / "config"
 
 
+_DOSE_EVALUATED_PARAM_SPECS: dict[str, contracts.EvaluatedParamSpec] = {
+    "dose_mg": contracts.EvaluatedParamSpec.number(),
+    "confidence": contracts.EvaluatedParamSpec.number(),
+    "route": contracts.EvaluatedParamSpec.enum(
+        "oral", "iv", "im", "sc", "topical", "inhaled"
+    ),
+}
+
+HEALTHCARE_EVALUATED_PARAM_SPECS: dict[str, dict[str, contracts.EvaluatedParamSpec]] = {
+    "administer_dose": _DOSE_EVALUATED_PARAM_SPECS,
+    "dose_order": _DOSE_EVALUATED_PARAM_SPECS,
+}
+
+
 # A reference domain, not a production one. It wires clinical consensus, the
 # SerumConcentrationBarrier CBF, FTRA terminal classification and the
 # dosing.governance OPA policy, and runs in permissive postures (dev, test, ci).
@@ -78,6 +92,7 @@ class HealthcareCagePlugin(contracts.CagePlugin):
             threshold_sections={"healthcare": HealthcareThresholds},
             compliance_overlay_dirs=(_CONFIG_DIR / "compliance",),
             rail_providers=(HealthcareRailProvider(),),  # CheckContraindicationAction
+            evaluated_param_specs=HEALTHCARE_EVALUATED_PARAM_SPECS,
         )
 
 

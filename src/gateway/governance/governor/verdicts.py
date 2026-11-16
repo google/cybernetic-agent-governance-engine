@@ -32,6 +32,7 @@ from src.gateway.governance.agent_confidence import reported_confidence
 from src.gateway.governance.classification_engine import ClassificationResult
 from src.gateway.governance.constants import ControlRegistry, GovernanceControl
 from src.gateway.governance.contracts import (
+    EvaluatedParamSpecMap,
     GovernanceTierFailure,
     RefusalReceipt,
     Violation,
@@ -40,6 +41,11 @@ from src.gateway.governance.contracts import (
 from src.gateway.governance.decisions import GovernanceDecision
 from src.gateway.governance.governor.errors import GovernanceDeferred, GovernanceError
 from src.gateway.governance.governor.metrics import governor_metrics
+from src.gateway.governance.refusal_projection import (
+    REFUSAL_ENVELOPE_EXCLUDED_KEYS,
+    compute_refusal_params_hash,
+    project_evaluated_params,
+)
 from src.gateway.governance.warrant.reliance import RelianceRecord, reliance_evidence
 
 logger = logging.getLogger(__name__)
@@ -64,6 +70,7 @@ def build_refusal_receipt(
     *,
     violated_tier_default: str = "SYMBOLIC_GOVERNOR",
     reliance: Sequence[RelianceRecord] = (),
+    evaluated_param_specs: EvaluatedParamSpecMap | None = None,
 ) -> RefusalReceipt:
     thread_id = resolve_thread_id(params)
     _first_tf = tier_failures[0] if tier_failures else None
@@ -89,16 +96,23 @@ def build_refusal_receipt(
         ],
     }
 
+    stripped_params = {
+        k: v for k, v in params.items() if k not in REFUSAL_ENVELOPE_EXCLUDED_KEYS
+    }
     return RefusalReceipt(
         thread_id=thread_id,
         action=action,
         violated_tier=_first_tf.tier if _first_tf else violated_tier_default,
         violated_rule=violated_rule,
         standing_at_refusal=standing_at_refusal,
-        schema_version="v2",
-        attempted_params={
-            k: v for k, v in params.items() if k not in ("thread_id", "transaction_id")
-        },
+        schema_version="v4",
+        params_hash=compute_refusal_params_hash(action, stripped_params),
+        evaluated_params=project_evaluated_params(
+            evaluated_param_specs, action, stripped_params
+        ),
+        # Content-tier only: retained in-memory for offline DRY_RUN evaluation
+        # and omitted by RefusalReceipt.to_worm_dict() on the WORM write path.
+        attempted_params=stripped_params,
         standing_snapshot=_first_tf.governing_state if _first_tf else {},
         control_id=_first_tf.control_id if _first_tf else "",
         protected_consequence=_first_tf.protected_consequence if _first_tf else "",
@@ -110,7 +124,7 @@ def build_refusal_receipt(
 
 
 async def publish_refusal(receipt: RefusalReceipt) -> None:
-    """Hash-chain the refusal receipt into the evidence stream.
+    """Hash-chain the WORM retention-tier refusal projection into the evidence stream.
 
     When ``EVIDENCE_CHAIN_BLOCKING=true`` (the default), commits via
     ``ingest_sync()`` and raises :class:`EvidenceChainUnavailableError` after
@@ -127,13 +141,21 @@ async def publish_refusal(receipt: RefusalReceipt) -> None:
 
     try:
         sink = get_evidence_sink()
+        if hasattr(receipt, "to_worm_dict"):
+            worm_receipt = receipt.to_worm_dict()
+        elif hasattr(receipt, "to_dict"):
+            worm_receipt = {
+                k: v for k, v in receipt.to_dict().items() if k != "attempted_params"
+            }
+        else:
+            worm_receipt = {
+                k: v for k, v in vars(receipt).items() if k != "attempted_params"
+            }
         event = {
             "type": "GOVERNANCE_REFUSAL",
             "controlId": receipt.control_id
             or GovernanceControl.AGENTIC_SCOPE_STATEMENT.value,
-            "receipt": receipt.to_dict()
-            if hasattr(receipt, "to_dict")
-            else vars(receipt),
+            "receipt": worm_receipt,
         }
         await commit_decision_evidence(
             event,
@@ -788,6 +810,7 @@ async def handle_deny(
     reliance: Sequence[RelianceRecord] = (),
     redis_client: Any | None = None,
     emit_side_effects: bool = True,
+    evaluated_param_specs: EvaluatedParamSpecMap | None = None,
 ) -> None:
     span = trace.get_current_span()
     span.set_attribute("cage.verdict", GovernanceDecision.DENY)
@@ -798,7 +821,12 @@ async def handle_deny(
     )
 
     receipt = build_refusal_receipt(
-        action, params, violations, tier_failures, reliance=reliance
+        action,
+        params,
+        violations,
+        tier_failures,
+        reliance=reliance,
+        evaluated_param_specs=evaluated_param_specs,
     )
     span.set_attribute("cage.refusal_proof_hash", receipt.proof_hash)
     if emit_side_effects:

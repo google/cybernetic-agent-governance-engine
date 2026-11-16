@@ -513,6 +513,7 @@ def _scan_function_for_events(
                     ):
                         local_dict_keys.setdefault(var_name, set()).update(
                             catalog.dataclass_fields.get("RefusalReceipt", set())
+                            - {"attempted_params"}
                         )
                     else:
                         resolved = _resolve_called_function(val, mod, modules)
@@ -561,7 +562,10 @@ def _scan_function_for_events(
             if et == "GOVERNANCE_REFUSAL" and "receipt" in d_keys:
                 catalog.event_nested_keys.setdefault(
                     ("GOVERNANCE_REFUSAL", "receipt"), set()
-                ).update(catalog.dataclass_fields.get("RefusalReceipt", set()))
+                ).update(
+                    catalog.dataclass_fields.get("RefusalReceipt", set())
+                    - {"attempted_params"}
+                )
 
     for node in ast.walk(fn):
         if isinstance(node, ast.Dict):
@@ -583,7 +587,10 @@ def _scan_function_for_events(
                     if et == "GOVERNANCE_REFUSAL" and "receipt" in d_keys:
                         catalog.event_nested_keys.setdefault(
                             ("GOVERNANCE_REFUSAL", "receipt"), set()
-                        ).update(catalog.dataclass_fields.get("RefusalReceipt", set()))
+                        ).update(
+                            catalog.dataclass_fields.get("RefusalReceipt", set())
+                            - {"attempted_params"}
+                        )
         elif isinstance(node, ast.Call):
             call_ev_types: set[str] = set()
             call_payload_exprs: list[ast.expr] = []
