@@ -31,6 +31,7 @@ Architecture Note:
   at ToolManager.call_tool() — before validation — to extract the carrier.
 """
 
+import json
 import logging
 from collections.abc import Mapping
 from typing import Any
@@ -99,8 +100,23 @@ def patch_mcp_tools(mcp_server) -> None:  # type: ignore[no-untyped-def]
                 name, arguments, context=context, convert_result=convert_result
             )
 
-            # 4. Record the result size
-            span.set_attribute(SPAN_ATTR_MCP_TOOL_RESULT_LENGTH, len(str(result)))
+            # 4. Sanitize tool response against indirect prompt injection (AI 600-1 §2.3 / A.9.2)
+            from src.gateway.governance.governor.metrics import mark_request_refused
+            from src.gateway.server.governance_middleware import (
+                sanitize_mcp_tool_response,
+            )
+
+            result_str = _extract_mcp_result_text(result)
+            violation = await sanitize_mcp_tool_response(name, result_str, span=span)
+            if violation is not None:
+                mark_request_refused()
+                span.set_attribute("mcp.tool.blocked_output", violation)
+                raise PermissionError(
+                    f"MCP tool response blocked by indirect prompt-injection guard ({violation})"
+                )
+
+            # 5. Record the result size only — never raw content (#774)
+            span.set_attribute(SPAN_ATTR_MCP_TOOL_RESULT_LENGTH, len(result_str))
             return result
 
     # Replace the method on the instance
@@ -111,3 +127,26 @@ def patch_mcp_tools(mcp_server) -> None:  # type: ignore[no-untyped-def]
         f"✅ Patched ToolManager.call_tool with distributed tracing "
         f"({tool_count} tools covered)"
     )
+
+
+def _extract_mcp_result_text(result: Any) -> str:
+    """Extract scannable text from raw or FastMCP-converted tool outputs."""
+    if isinstance(result, str):
+        return result
+    if isinstance(result, dict):
+        return json.dumps(result, default=str)
+    content_attr = getattr(result, "content", None)
+    if isinstance(content_attr, (list, tuple)):
+        return _extract_mcp_result_text(content_attr)
+    if isinstance(result, (list, tuple)):
+        parts: list[str] = []
+        for item in result:
+            text_attr = getattr(item, "text", None)
+            if isinstance(text_attr, str):
+                parts.append(text_attr)
+            elif isinstance(item, (list, tuple, dict)):
+                parts.append(_extract_mcp_result_text(item))
+            elif item is not None:
+                parts.append(str(item))
+        return "\n".join(parts)
+    return str(result)

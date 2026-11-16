@@ -69,6 +69,7 @@ def _make_quota_proxy(allowed: bool = True, reason: str = "") -> MagicMock:
         return_value=_make_quota_result(allowed, reason)
     )
     proxy.rollback_step = AsyncMock()
+    proxy.reconcile_actual_tokens = AsyncMock()
     return proxy
 
 
@@ -674,10 +675,12 @@ async def test_streaming_upstream_4xx_yields_error_event(proxy_deps):
     ) as client:
         resp = await client.post("/v1/chat/completions", json=_chat_body(stream=True))
 
-    assert resp.status_code == 200  # streaming path always 200
-    body_bytes = resp.content
-    assert b"vLLM backend error 503" in body_bytes
+    assert resp.status_code == 503
+    err_json = resp.json()
+    assert "vLLM backend error 503" in err_json.get("message", "")
+    assert "Service Unavailable" not in resp.text
     quota_proxy.rollback_step.assert_awaited_once()
+    proxy_deps["evidence_sink"].ingest.assert_not_awaited()
 
 
 @pytest.mark.asyncio
@@ -945,7 +948,7 @@ async def test_shutdown_closes_http_client():
 
 @pytest.mark.asyncio
 async def test_null_max_tokens_defaults_to_zero(proxy_deps):
-    """OpenAI-compatible requests with max_tokens=None succeed and reserve 0 tokens."""
+    """OpenAI-compatible requests with max_tokens=None succeed and reserve a positive default budget."""
     app = proxy_deps["app"]
     quota_proxy = proxy_deps["quota_proxy"]
 
@@ -958,7 +961,7 @@ async def test_null_max_tokens_defaults_to_zero(proxy_deps):
 
     assert resp.status_code == 200
     quota_proxy.check_and_increment.assert_awaited_once()
-    assert quota_proxy.check_and_increment.call_args.kwargs["token_delta"] == 0
+    assert quota_proxy.check_and_increment.call_args.kwargs["token_delta"] > 0
 
 
 @pytest.mark.asyncio

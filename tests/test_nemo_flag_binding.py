@@ -287,6 +287,7 @@ async def test_approving_a_refinement_while_off_is_refused_and_left_staged(
     )
 
     monkeypatch.setenv("CAGE_TRUSTED_CLIENT_IDENTITIES", f"{_PROPOSER},{_APPROVER}")
+    monkeypatch.setenv("CAGE_NEMO_APPROVER_IDENTITIES", _APPROVER)
     rebuild = MagicMock(name="create_nemo_manager", return_value=MagicMock())
     monkeypatch.setattr(nemo_node_factory, "create_nemo_manager", rebuild)
 

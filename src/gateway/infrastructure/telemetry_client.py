@@ -18,10 +18,15 @@ Centralized Observability via OTLP Collector.
 """
 
 import contextlib
+import json
 import logging
 import os
+import re
 import sys
+from collections.abc import Mapping, Sequence
+from typing import Any
 
+from src.gateway.governance.env_posture import env_flag, is_enforcing, resolve_posture
 from src.gateway.infrastructure.privacy import scrub_pii as global_scrub
 from src.gateway.observability.attributes import (
     OBSERVATION_MODEL_NAME,
@@ -271,9 +276,142 @@ _install_otlp_error_filter()
 
 from opentelemetry.sdk.trace import SpanProcessor
 
+_SENSITIVE_KEY_SUBSTRINGS: tuple[str, ...] = (
+    "authorization",
+    "bearer",
+    "routing_seal",
+    "consequence_token",
+    "api_key",
+    "apikey",
+    "secret",
+    "password",
+    "passwd",
+    "private_key",
+)
+_BEARER_VALUE_RE = re.compile(r"(?i)\bBearer\s+[A-Za-z0-9._\-~+/=]{6,}")
+
+
+def is_sensitive_span_key(key: str) -> bool:
+    """Return True when an attribute or payload key names credential/seal material."""
+    norm = re.sub(r"[^a-z0-9]+", "_", key.strip().lower()).strip("_")
+    if not norm:
+        return False
+    if any(sub in norm for sub in _SENSITIVE_KEY_SUBSTRINGS):
+        return True
+    segments = norm.split("_")
+    # Match singular 'token' (e.g. 'token', 'auth_token', 'access_token') while
+    # preserving numeric token-usage counters ('input_tokens', 'total_tokens').
+    return "token" in segments
+
+
+def _scrub_json_obj(obj: Any) -> tuple[Any, bool]:
+    """Recursively scrub sensitive dict keys and PII/Bearer strings inside JSON payloads."""
+    if isinstance(obj, Mapping):
+        modified = False
+        out_dict: dict[str, Any] = {}
+        for raw_k, raw_v in obj.items():
+            k_str = str(raw_k)
+            if is_sensitive_span_key(k_str):
+                out_dict[k_str] = "[REDACTED]"
+                if raw_v != "[REDACTED]":
+                    modified = True
+            else:
+                new_v, child_mod = _scrub_json_obj(raw_v)
+                out_dict[k_str] = new_v
+                modified = modified or child_mod
+        return out_dict, modified
+    if isinstance(obj, list):
+        modified = False
+        out_list: list[Any] = []
+        for item in obj:
+            new_item, item_mod = _scrub_json_obj(item)
+            out_list.append(new_item)
+            modified = modified or item_mod
+        return out_list, modified
+    if isinstance(obj, str):
+        scrubbed = scrub_span_text(obj)
+        return scrubbed, scrubbed != obj
+    return obj, False
+
+
+def scrub_span_text(text: str) -> str:
+    """Scrub PII, Bearer credentials, and JSON-embedded sensitive keys from *text*."""
+    if not text:
+        return text
+    stripped = text.lstrip()
+    if stripped.startswith(("{", "[")):
+        try:
+            parsed = json.loads(text)
+        except (ValueError, TypeError):
+            parsed = None
+        if isinstance(parsed, (Mapping, list)):
+            sanitized, modified = _scrub_json_obj(parsed)
+            if modified:
+                return json.dumps(sanitized)
+            return text
+    no_bearer = _BEARER_VALUE_RE.sub("[REDACTED_BEARER_TOKEN]", text)
+    return global_scrub(no_bearer)
+
+
+def redact_span_payload(obj: Any) -> Any:
+    """Return a redacted copy of *obj* safe for serialising into OTel span/log payloads."""
+    sanitized, _ = _scrub_json_obj(obj)
+    return sanitized
+
+
+def _scrub_attr_value(key: str, value: Any) -> tuple[Any, bool]:
+    """Scrub a single span/event attribute ``(key, value)`` pair."""
+    key_sensitive = is_sensitive_span_key(key)
+    if isinstance(value, str):
+        if key_sensitive:
+            return "[REDACTED]", value != "[REDACTED]"
+        scrubbed = scrub_span_text(value)
+        return scrubbed, scrubbed != value
+    if isinstance(value, Sequence) and not isinstance(value, (bytes, bytearray)):
+        changed = False
+        out_seq: list[Any] = []
+        for elem in value:
+            if isinstance(elem, str):
+                new_elem = "[REDACTED]" if key_sensitive else scrub_span_text(elem)
+                if new_elem != elem:
+                    changed = True
+                out_seq.append(new_elem)
+            else:
+                out_seq.append(elem)
+        if not changed:
+            return value, False
+        return (tuple(out_seq) if isinstance(value, tuple) else out_seq), True
+    if key_sensitive and value is not None:
+        return "[REDACTED]", True
+    return value, False
+
+
+def _scrub_mutable_attributes(attrs: Any) -> dict[str, Any] | None:
+    """Scrub an OTel attribute container in place if possible, returning a scrubbed dict."""
+    if attrs is None or not hasattr(attrs, "items"):
+        return None
+    target = getattr(attrs, "_dict", attrs)
+    can_mutate = hasattr(target, "__setitem__")
+    scrubbed_copy: dict[str, Any] = {}
+    any_changed = False
+    for raw_key, raw_val in list(attrs.items()):
+        key_str = str(raw_key)
+        new_val, changed = _scrub_attr_value(key_str, raw_val)
+        scrubbed_copy[key_str] = new_val
+        if changed:
+            any_changed = True
+            if can_mutate:
+                try:
+                    target[raw_key] = new_val
+                except TypeError:
+                    can_mutate = False
+    if any_changed and not can_mutate:
+        return scrubbed_copy
+    return scrubbed_copy if any_changed else None
+
 
 class RedactingSpanProcessor(SpanProcessor):
-    """Intercepts all spans and redacts PII from attributes before export."""
+    """Intercepts all spans and redacts PII, credentials, sequences, and events before export."""
 
     def __init__(self, inner):  # type: ignore[no-untyped-def]
         self.inner = inner
@@ -282,15 +420,60 @@ class RedactingSpanProcessor(SpanProcessor):
         self.inner.on_start(span, parent_context)
 
     def on_end(self, span):  # type: ignore[no-untyped-def]
-        # Mutate the internal _attributes of the ReadableSpan snapshot
+        # 1. Scrub span attributes (strings, JSON strings, Sequence[str], sensitive keys)
         attrs = getattr(span, "_attributes", None)
         if attrs is not None:
+            replacement = _scrub_mutable_attributes(attrs)
             target = getattr(attrs, "_dict", attrs)
-            for key, value in list(attrs.items()):
-                if isinstance(value, str):
-                    scrubbed = global_scrub(value)
-                    if scrubbed != value:
-                        target[key] = scrubbed
+            if replacement is not None and not hasattr(target, "__setitem__"):
+                with contextlib.suppress(Exception):
+                    object.__setattr__(span, "_attributes", replacement)
+
+        # 2. Scrub span events and their attributes
+        events = getattr(span, "_events", None)
+        if events:
+            from opentelemetry.sdk.trace import Event as _OtelEvent
+
+            updated_events: list[Any] = []
+            events_replaced = False
+            for ev in list(events):
+                ev_name = getattr(ev, "name", "")
+                new_ev_name = (
+                    scrub_span_text(ev_name) if isinstance(ev_name, str) else ev_name
+                )
+                ev_attrs = getattr(ev, "_attributes", None)
+                if ev_attrs is None:
+                    ev_attrs = getattr(ev, "attributes", None)
+                ev_replacement = _scrub_mutable_attributes(ev_attrs)
+                ev_target = getattr(ev_attrs, "_dict", ev_attrs)
+                need_rebuild = new_ev_name != ev_name or (
+                    ev_replacement is not None and not hasattr(ev_target, "__setitem__")
+                )
+                if need_rebuild:
+                    clean_attrs = (
+                        ev_replacement
+                        if ev_replacement is not None
+                        else (dict(ev_attrs.items()) if ev_attrs is not None else {})
+                    )
+                    updated_events.append(
+                        _OtelEvent(
+                            name=new_ev_name,
+                            attributes=clean_attrs,
+                            timestamp=getattr(ev, "timestamp", None),
+                        )
+                    )
+                    events_replaced = True
+                else:
+                    updated_events.append(ev)
+            if events_replaced:
+                new_container = (
+                    tuple(updated_events)
+                    if isinstance(events, tuple)
+                    else updated_events
+                )
+                with contextlib.suppress(Exception):
+                    object.__setattr__(span, "_events", new_container)
+
         self.inner.on_end(span)
 
     def shutdown(self):  # type: ignore[no-untyped-def]
@@ -456,11 +639,22 @@ def configure_telemetry():  # type: ignore[no-untyped-def]
                     )
                     otlp_configured = True
                 else:
-                    # Use gRPC Exporter — 5 s timeout
+                    # Use gRPC Exporter — TLS enforced by default; insecure allowed
+                    # only via explicit opt-in under a non-enforcing dev/test posture.
+                    enforcing_posture = is_enforcing(resolve_posture())
+                    grpc_insecure = (not enforcing_posture) and env_flag(
+                        "OTEL_EXPORTER_OTLP_INSECURE", False
+                    )
+                    grpc_headers = (
+                        tuple((str(k).lower(), str(v)) for k, v in otlp_headers.items())
+                        if otlp_headers
+                        else None
+                    )
                     otlp_exporter = ContentFilterSpanExporter(
                         GRPCSpanExporter(
                             endpoint=otel_endpoint,
-                            insecure=True,
+                            insecure=grpc_insecure,
+                            headers=grpc_headers,
                             timeout=_OTLP_EXPORT_TIMEOUT_S,
                         )
                     )
@@ -474,34 +668,35 @@ def configure_telemetry():  # type: ignore[no-untyped-def]
                     )
                     logger.info(
                         "✅ OpenTelemetry: gRPC OTLP Exporter configured at %s "
-                        "(timeout=%ds, with Final Redaction Tier)",
+                        "(timeout=%ds, insecure=%s, with Final Redaction Tier)",
                         otel_endpoint,
                         _OTLP_EXPORT_TIMEOUT_S,
+                        grpc_insecure,
                     )
                     otlp_configured = True
             except Exception as otlp_exc:
                 logger.warning(
-                    "⚠️ OpenTelemetry: OTLP exporter setup failed (%s). "
-                    "Falling back to ConsoleSpanExporter so spans are not lost.",
+                    "⚠️ OpenTelemetry: OTLP exporter setup failed (%s).",
                     otlp_exc,
                 )
 
-        # 3. Fallback: always register a LoggingSpanExporter so that spans are
-        #    visible in application logs even when the OTLP backend is down.
-        #    When the OTLP exporter is healthy this exporter is silent (DEBUG).
-        fallback_exporter = ContentFilterSpanExporter(ConsoleSpanExporter())
-        fallback_level = logging.DEBUG if otlp_configured else logging.WARNING
-        logging.getLogger("opentelemetry.sdk.trace").setLevel(fallback_level)
-        provider.add_span_processor(
-            BatchSpanProcessor(
-                fallback_exporter,
-                export_timeout_millis=_OTLP_EXPORT_TIMEOUT_MS,
+        # 3. Dev-only ConsoleSpanExporter fallback: disabled whenever OTLP is
+        #    configured OR an enforcing posture is active so spans never write
+        #    to stdout in production/staging or alongside OTLP.
+        if not otlp_configured and not is_enforcing(resolve_posture()):
+            fallback_exporter = ContentFilterSpanExporter(ConsoleSpanExporter())
+            logging.getLogger("opentelemetry.sdk.trace").setLevel(logging.WARNING)
+            provider.add_span_processor(
+                RedactingSpanProcessor(
+                    BatchSpanProcessor(
+                        fallback_exporter,
+                        export_timeout_millis=_OTLP_EXPORT_TIMEOUT_MS,
+                    )
+                )
             )
-        )
-        if not otlp_configured:
             logger.warning(
-                "⚠️ OpenTelemetry: OTLP endpoint unavailable — "
-                "spans will be logged locally via ConsoleSpanExporter."
+                "⚠️ OpenTelemetry: OTLP endpoint unavailable in non-enforcing posture — "
+                "filtered & redacted spans will be logged locally via ConsoleSpanExporter."
             )
 
         # Instrument HTTP libraries

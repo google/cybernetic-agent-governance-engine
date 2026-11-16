@@ -148,8 +148,12 @@ async def _explain_worker() -> None:
                     timeout=10.0,
                 )
                 response.raise_for_status()
+                from src.gateway.infrastructure.telemetry_client import (
+                    redact_span_payload,
+                )
+
                 resp_json = response.json()
-                explanation = resp_json.get("explanation", [])
+                explanation = redact_span_payload(resp_json.get("explanation", []))
                 explanation_str = json.dumps(explanation)[:500]  # truncate to 500 chars
 
             logger.debug(

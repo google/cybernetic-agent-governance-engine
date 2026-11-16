@@ -35,10 +35,13 @@ Environment variables:
 """
 
 import asyncio
+import inspect
 import json
 import logging
+import math
 import os
 import ssl
+import threading
 from typing import Any
 
 from src.gateway.governance.env_posture import is_enforcing, resolve_posture
@@ -307,13 +310,24 @@ try:
             return await client.delete(*keys)
 
         async def get_float(self, key: str, default: float = 0.0) -> float:
+            if isinstance(default, bool) or not math.isfinite(default):
+                raise ValueError(
+                    f"get_float default for key {key!r} must be a finite number"
+                )
             raw = await self.get(key)
             if raw is None:
                 return default
             try:
-                return float(raw)
-            except (ValueError, TypeError):
-                return default
+                parsed = float(raw)
+            except (ValueError, TypeError) as exc:
+                raise ValueError(
+                    f"Corrupt non-numeric Redis float value at key {key!r}: {raw!r}"
+                ) from exc
+            if not math.isfinite(parsed):
+                raise ValueError(
+                    f"Non-finite Redis float value at key {key!r}: {raw!r}"
+                )
+            return parsed
 
         async def pipeline(self):  # type: ignore[no-untyped-def]
             """Return a raw redis.asyncio pipeline for WATCH/MULTI/EXEC."""
@@ -321,9 +335,18 @@ try:
             return client.pipeline()
 
         async def watch(self, *keys: str):  # type: ignore[no-untyped-def]
-            """Return a pipeline in WATCH mode for optimistic locking."""
+            """Return a pipeline with WATCH active on *keys* for optimistic locking."""
             client = await self._get()
-            return client.pipeline()
+            if keys:
+                watch_res = client.watch(*keys)
+                if inspect.isawaitable(watch_res):
+                    await watch_res
+            pipe = client.pipeline(transaction=True)
+            if keys and hasattr(pipe, "watch"):
+                pipe_watch = pipe.watch(*keys)
+                if inspect.isawaitable(pipe_watch):
+                    await pipe_watch
+            return pipe
 
         async def get_raw_client(self) -> aioredis.Redis:
             """Return the underlying aioredis.Redis client.
@@ -385,10 +408,23 @@ try:
             client = await self._get()
             async with client.pipeline(transaction=True) as pipe:
                 try:
-                    await pipe.watch(*watch_keys)
-                    pipe.multi()
-                    await build_pipeline_fn(pipe)
-                    return await pipe.execute()
+                    if watch_keys:
+                        await pipe.watch(*watch_keys)
+                    fn_result = await build_pipeline_fn(pipe)
+                    if callable(fn_result):
+                        if not getattr(pipe, "explicit_transaction", False):
+                            pipe.multi()
+                        queued = fn_result(pipe)
+                        if inspect.isawaitable(queued):
+                            await queued
+                        return await pipe.execute()
+                    if getattr(pipe, "explicit_transaction", False) or getattr(
+                        pipe, "command_stack", None
+                    ):
+                        return await pipe.execute()
+                    if watch_keys and hasattr(pipe, "unwatch"):
+                        await pipe.unwatch()
+                    return fn_result
                 except aioredis.WatchError:
                     # Best-effort cleanup of any staging keys written before MULTI.
                     if staging_keys:
@@ -465,31 +501,35 @@ try:
 
         def __init__(self) -> None:
             self._client: redis.Redis | None = None  # type: ignore[type-arg]
+            self._lock = threading.Lock()
 
         def _get(self) -> redis.Redis:  # type: ignore[type-arg]
-            if self._client is None:
-                from src.gateway.infrastructure.redis_credential_factory import (
-                    get_redis_credential_provider,
-                )
+            if self._client is not None:
+                return self._client
+            with self._lock:
+                if self._client is None:
+                    from src.gateway.infrastructure.redis_credential_factory import (
+                        get_redis_credential_provider,
+                    )
 
-                cred_provider = get_redis_credential_provider()
-                effective_password = (
-                    None if cred_provider is not None else _REDIS_PASSWORD
-                )
-                self._client = redis.Redis(
-                    host=_REDIS_HOST,
-                    port=_REDIS_PORT,
-                    db=_REDIS_DB,
-                    password=effective_password,
-                    credential_provider=cred_provider,
-                    decode_responses=True,
-                    socket_connect_timeout=3.0,
-                    socket_timeout=3.0,
-                    ssl=_REDIS_TLS,
-                    ssl_cert_reqs=_REDIS_SSL_CERT_REQS,  # type: ignore[arg-type]
-                    ssl_ca_certs=_REDIS_CA_CERT_PATH,
-                )
-            return self._client
+                    cred_provider = get_redis_credential_provider()
+                    effective_password = (
+                        None if cred_provider is not None else _REDIS_PASSWORD
+                    )
+                    self._client = redis.Redis(
+                        host=_REDIS_HOST,
+                        port=_REDIS_PORT,
+                        db=_REDIS_DB,
+                        password=effective_password,
+                        credential_provider=cred_provider,
+                        decode_responses=True,
+                        socket_connect_timeout=3.0,
+                        socket_timeout=3.0,
+                        ssl=_REDIS_TLS,
+                        ssl_cert_reqs=_REDIS_SSL_CERT_REQS,  # type: ignore[arg-type]
+                        ssl_ca_certs=_REDIS_CA_CERT_PATH,
+                    )
+                return self._client
 
         def get(self, key: str) -> str | None:
             return self._get().get(key)  # type: ignore[return-value]
@@ -534,9 +574,10 @@ try:
                 ) from exc
 
         def close(self) -> None:
-            if self._client is not None:
-                self._client.close()
-                self._client = None
+            with self._lock:
+                if self._client is not None:
+                    self._client.close()
+                    self._client = None
 
     sync_redis_client = _SyncRedisClient()
     logger.info(

@@ -401,7 +401,9 @@ def test_configure_telemetry_wraps_every_exporter(
     finally:
         sdk_logger.setLevel(level)
 
-    _assert_all_filtered(recorded_exporters, expected=2)  # OTLP + console fallback
+    _assert_all_filtered(
+        recorded_exporters, expected=1
+    )  # OTLP only ([KC-07] suppresses ConsoleSpanExporter when OTLP is active)
 
 
 def test_setup_tracing_wraps_every_exporter(
@@ -418,7 +420,9 @@ def test_setup_tracing_wraps_every_exporter(
 
     tracing_setup.setup_tracing()
 
-    _assert_all_filtered(recorded_exporters, expected=2)  # OTLP + console fallback
+    _assert_all_filtered(
+        recorded_exporters, expected=1
+    )  # OTLP only ([KC-07] suppresses ConsoleSpanExporter when OTLP is active)
     assert all(os.environ[name] == "false" for name in CONTENT_CAPTURE_ENV_VARS)
 
 
