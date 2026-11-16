@@ -40,6 +40,8 @@ _EXPECTED_PR_WORKFLOWS = frozenset(
         "policy_compile.yml",
         # Reads live repository rules, so it also runs on a schedule.
         "repo-rules.yml",
+        # Reports the required check `Approved review or recorded bypass`.
+        "review-bypass-attestation.yml",
         "sbom.yml",
         "security-scan.yml",
         "test-hermetic.yml",
@@ -125,8 +127,13 @@ def test_makefile_lint_runs_mypy() -> None:
 
 
 def test_required_check_workflows_trigger_on_stacked_pr_branches() -> None:
-    """Workflows backing ruleset 25966171's 8 required checks must run unconditionally on every PR."""
-    required_workflows = ("ci.yml", "security-scan.yml", "license_guard.yml")
+    """Workflows backing ruleset 25966171's 9 required checks must run unconditionally on every PR."""
+    required_workflows = (
+        "ci.yml",
+        "security-scan.yml",
+        "license_guard.yml",
+        "review-bypass-attestation.yml",
+    )
     for wf_name in required_workflows:
         on_block = _load_on_block(_WORKFLOWS_DIR / wf_name)
         assert isinstance(on_block, dict) and "pull_request" in on_block, (

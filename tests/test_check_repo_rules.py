@@ -16,7 +16,10 @@
 """Tests for scripts/check_repo_rules.py (POAM-2026-169, POAM-2026-170).
 
 The fixtures are the API's responses on 2026-11-02, read without credentials,
-after ruleset 26377312 was applied and all eight required checks were pinned.
+after ruleset 26377312 was applied and all eight required checks were pinned,
+with one entry added in the shape the API returns it: the ninth required check,
+`Approved review or recorded bypass`, which the change adding it also adds to
+ruleset 25966171 (POAM-2026-115).
 Every planted defect below is a way the live configuration could drift from
 .github/branch-protection-rules.md; each must be reported. The recorded
 responses must report nothing, or the planted defects prove nothing.

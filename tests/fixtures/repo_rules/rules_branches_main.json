@@ -76,6 +76,10 @@
         {
           "context": "Quickstart Bootstrap & First-DENY Smoke Gate",
           "integration_id": 15368
+        },
+        {
+          "context": "Approved review or recorded bypass",
+          "integration_id": 15368
         }
       ]
     },

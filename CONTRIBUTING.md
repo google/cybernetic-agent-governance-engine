@@ -198,9 +198,12 @@ Examples: `v3.2.0`, `v3.2.0-rc.1`, `v3.2.0-dev.1`
 ## Protected Branches
 
 GitHub enforces three rulesets on `main`: one approving review (repository admins bypass
-it, so the maintainer's own merges are admin merges; POAM-2026-115), the eight required
-status checks, each pinned to GitHub Actions, and no force push or deletion. No ruleset
-covers `rc-v*` or `release/**`; create one before creating such a branch. Release tags
+it, so the maintainer's own merges are admin merges; POAM-2026-115), the nine required
+status checks, each pinned to GitHub Actions, and no force push or deletion. One of the
+nine, `Approved review or recorded bypass`, passes only on an approving review or on a
+signed record that the head was unreviewed, and a recorded bypass is not a review
+(`.github/branch-protection-rules.md` §3.1). No ruleset covers `rc-v*` or `release/**`;
+create one before creating such a branch. Release tags
 (`v*`, `client-v*`) cannot be deleted, moved or force-pushed.
 
 The local pre-push hook refuses pushes to `main`, and to `rc-v*` through its branch-name check, whichever branch is checked out. Tags pass, so step 3 of the release process works from `main`. The hook runs only where it is installed; the rulesets are what GitHub enforces.
