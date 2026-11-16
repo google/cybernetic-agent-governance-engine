@@ -34,6 +34,8 @@ Per ISO 42001 §9.3.2, the following inputs were reviewed:
 - POAM-020 (CM-3): Technical report README version mismatch corrected
 - POAM-021 (SI-4): AgentSight remote exporter confirmed already configured
 
+> **Note (2026-11-15):** On the `2026-06-23` review date (inside the `1902c92c` `2026-06-01` .. `9b2b745d` `2026-11-15` window, `POAM-2026-221` in [`docs/POAM.md`](../../POAM.md)), the Python CycloneDX + Grype leg of `.github/workflows/security-scan.yml` (`sbom-generation`) ran `pip install cyclonedx-bom` without `uv sync`, inventorying and Grype-scanning zero CAGE Python dependencies. Python CVE coverage during Q2 2026 rested on `python-dependency-audit` (`uv sync --frozen --all-groups --all-extras` + `pip-audit`) and Trivy/Syft filesystem scanning rather than the Python Grype leg, which was restored in `#768` (`b92a1719`, `2026-11-15`) with `expected_uv_lock_component_floor()`; periodic in-cluster scanning remains open under `POAM-2026-010`.
+
 ### 2.2 Lula Audit Results (Q2 2026)
 
 | Manifest | Result | Evidence |
