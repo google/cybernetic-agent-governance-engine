@@ -178,7 +178,7 @@ plugin in PR C. No interim adapter is provided.
 
 ### Acceptance Criteria
 
-Per `1ffa37d9^:plans/domain_extraction_implementation_plan.md`:
+Per [`plans/completed/domain_extraction_implementation_plan.md`](../plans/completed/domain_extraction_implementation_plan.md):
 
 - [x] G1: Tier dispatch loop executes and honors phase/order
 - [x] G2: Capability predicate (`claims_action()`) replaces hardcoded literals
