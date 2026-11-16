@@ -722,7 +722,7 @@ def test_oscal_and_lula_yaml_rejects_duplicate_mapping_keys(tmp_path: Path) -> N
 def test_oscal_yaml_rejects_dangling_fragment_local_href_and_docs_proof_packages_paths(
     tmp_path: Path,
 ) -> None:
-    """OSCAL YAML hrefs and narrative paths cover docs/, proof/, and packages/ without KNOWN_DOCUMENTED_GAPS waivers."""
+    """OSCAL YAML hrefs and narrative paths cover docs/, proof/, and packages/, with no waiver."""
     oscal_dir = tmp_path / "compliance" / "oscal"
     src_dir = tmp_path / "src" / "gateway"
     docs_dir = tmp_path / "docs"
@@ -735,10 +735,10 @@ def test_oscal_yaml_rejects_dangling_fragment_local_href_and_docs_proof_packages
     (proof_dir / "real_proof.py").write_text("x = 1\n", encoding="utf-8")
     (pkg_dir / "pyproject.toml").write_text("[project]\n", encoding="utf-8")
 
+    # Both were KNOWN_DOCUMENTED_GAPS entries; the waiver is deleted (POAM-2026-224).
+    assert not hasattr(g9, "KNOWN_DOCUMENTED_GAPS")
     waived_gap_path = "compliance/oscal/sp80053-profile.yaml"
-    assert waived_gap_path in g9.KNOWN_DOCUMENTED_GAPS
     waived_narrative = "scripts/generate_sar.py"
-    assert waived_narrative in g9.KNOWN_DOCUMENTED_GAPS
 
     (oscal_dir / "eu-ai-act-profile.yaml").write_text(
         "profile:\n"
@@ -902,4 +902,161 @@ def test_ring3_census_claim_ids_and_summary_tables_enforced(
         ),
         (9, "Census Claim ID", "component-definition.yaml#ghost-999"),
         (10, "Census Claim ID", "system-security-plan.yaml#weak-002"),
+    ]
+
+
+# ---------------------------------------------------------------------------
+# POAM-2026-224: retracted records and branch-name examples
+# ---------------------------------------------------------------------------
+
+NOTICE = (
+    "> **RETRACTED 2026-11-15** \u2014 Withdrawn in full under `POAM-2026-224`. "
+    "Nothing below is a current claim.\n"
+)
+
+
+@pytest.fixture()
+def retracted_repo(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
+    """Fixture repo: docs/POAM.md with a POAM-2026-224 row, and the retracted archive."""
+    (tmp_path / "docs").mkdir()
+    (tmp_path / "docs" / "POAM.md").write_text(
+        "| ID | Control | Description | Severity | Target Date |\n"
+        "|----|---------|-------------|----------|-------------|\n"
+        "| POAM-2026-224 | CA-2 | Waiver deleted | Moderate | 2026-12-31 |\n",
+        encoding="utf-8",
+    )
+    (tmp_path / "compliance" / "archive" / "retracted").mkdir(parents=True)
+    monkeypatch.setattr(g9, "REPO_ROOT", tmp_path)
+    return tmp_path
+
+
+def _retracted(repo: Path, text: str) -> list[g9.Issue]:
+    doc = repo / "compliance" / "archive" / "retracted" / "SAR.md"
+    doc.write_text(text, encoding="utf-8")
+    return audit_markdown_file(doc)
+
+
+def test_retracted_record_with_notice_and_poam_row_skips_its_body(
+    retracted_repo: Path,
+) -> None:
+    body = "\n# Old report\n\n| Related SAP | `docs/no_such_plan_g9.md` |\n"
+    assert _retracted(retracted_repo, "\n" + NOTICE + body) == []
+
+
+def test_retracted_record_without_notice_is_reported_and_checked(
+    retracted_repo: Path,
+) -> None:
+    issues = _retracted(retracted_repo, "# Old report\n\n`docs/no_such_plan_g9.md`\n")
+    assert [(i.line_number, i.reference_type) for i in issues] == [
+        (1, "Retraction Notice"),
+        (3, "File Path"),
+    ]
+    assert (
+        "lacks a dated retraction notice naming an existing POAM item"
+        in issues[0].reason
+    )
+
+
+def test_retracted_record_naming_a_poam_without_a_row_is_reported(
+    retracted_repo: Path,
+) -> None:
+    notice = NOTICE.replace("POAM-2026-224", "POAM-2026-999")
+    issues = _retracted(retracted_repo, notice + "\n`docs/no_such_plan_g9.md`\n")
+    assert [(i.reference_type, i.target) for i in issues] == [
+        ("Retraction Notice", "POAM-2026-999"),
+        ("File Path", "docs/no_such_plan_g9.md"),
+    ]
+    assert "has no table row in docs/POAM.md" in issues[0].reason
+
+
+@pytest.mark.parametrize(
+    "opening",
+    [
+        "# Old report\n\n" + NOTICE,  # the notice is not the first non-empty line
+        NOTICE.replace("2026-11-15", "2026-11"),  # undated
+        NOTICE.replace("2026-11-15", "2026-13-45"),  # not a calendar date
+        NOTICE.replace("`POAM-2026-224`", "the POAM"),  # names no POAM item
+    ],
+)
+def test_retracted_record_with_a_malformed_notice_is_reported(
+    retracted_repo: Path, opening: str
+) -> None:
+    issues = _retracted(retracted_repo, opening + "\nBody.\n")
+    assert [i.reference_type for i in issues] == ["Retraction Notice"]
+
+
+def test_retraction_notice_outside_the_archive_excludes_nothing(
+    retracted_repo: Path,
+) -> None:
+    doc = retracted_repo / "docs" / "report.md"
+    doc.write_text(NOTICE + "\n`docs/no_such_plan_g9.md`\n", encoding="utf-8")
+    assert [i.reference_type for i in audit_markdown_file(doc)] == ["File Path"]
+
+
+def test_retracted_records_are_discovered_through_doc_scope(
+    retracted_repo: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    assert any(
+        g9.RETRACTED_ARCHIVE == entry or g9.RETRACTED_ARCHIVE.startswith(entry + "/")
+        for entry in g9.DOC_SCOPE
+    )
+    doc = retracted_repo / "compliance" / "archive" / "retracted" / "SAR.md"
+    doc.write_text("# Old report\n", encoding="utf-8")
+    monkeypatch.setattr(g9, "DOC_SCOPE", ("compliance",))
+    assert doc.resolve() in g9.find_markdown_files()
+
+
+BRANCH_TABLE = "| Purpose | Pattern | Example |\n|---|---|---|\n"
+
+
+def test_branch_table_examples_are_verified_as_branch_names(tmp_path: Path) -> None:
+    doc = tmp_path / "doc.md"
+    doc.write_text(
+        BRANCH_TABLE
+        + "| Documentation | `docs/<short-description>` | `docs/stpa-control-diagram` |\n"
+        "| Hotfix on release | `hotfix/<version>-<description>` | `hotfix/2.0.1-redis-timeout` |\n"
+        "| Release candidate | `rc-v<semver>` | `rc-v2.1.0` |\n",
+        encoding="utf-8",
+    )
+    assert audit_markdown_file(doc) == []
+
+
+@pytest.mark.parametrize(
+    ("example", "reason"),
+    [
+        ("docs/STPA-control-diagram", "does not match pattern"),
+        ("docs/" + "a" * 31, "<short-description> part is 31 characters"),
+        ("fix/stpa-control-diagram", "does not match pattern"),
+    ],
+)
+def test_branch_table_example_mismatch_is_reported(
+    tmp_path: Path, example: str, reason: str
+) -> None:
+    doc = tmp_path / "doc.md"
+    doc.write_text(
+        BRANCH_TABLE
+        + f"| Documentation | `docs/<short-description>` | `{example}` |\n",
+        encoding="utf-8",
+    )
+    issues = audit_markdown_file(doc)
+    assert [(i.line_number, i.reference_type, i.target) for i in issues] == [
+        (3, "Branch Example", example)
+    ]
+    assert reason in issues[0].reason
+
+
+def test_docs_path_outside_a_branch_table_is_still_checked(tmp_path: Path) -> None:
+    doc = tmp_path / "doc.md"
+    doc.write_text(
+        "See `docs/nonexistent-thing` for details.\n"
+        "| Area | Document | Example |\n|---|---|---|\n"
+        "| Docs | `main` | `docs/nonexistent-thing` |\n"
+        "| Plan | `docs/<area>/plan.md` | `docs/nonexistent-thing/plan.md` |\n",
+        encoding="utf-8",
+    )
+    issues = audit_markdown_file(doc)
+    assert [(i.line_number, i.reference_type) for i in issues] == [
+        (1, "File Path"),
+        (4, "File Path"),
+        (5, "File Path"),
     ]

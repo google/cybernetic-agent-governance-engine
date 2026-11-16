@@ -17,7 +17,7 @@
 | Authorizing Official (AO) | [AO NAME — TBD]                                                                                                                                                       |
 | Cloud Platform            | Google Kubernetes Engine (GKE) on Google Cloud Platform (GCP)                                                                                                         |
 | Deployment Namespace      | `governance-stack`                                                                                                                                                                                    |
-| Related Documents         | `compliance/categorization/FIPS199_CATEGORIZATION.md`, `compliance/rar/RISK_ASSESSMENT_REPORT.md`, `compliance/sar/SAR_2026Q1.md`, `docs/compliance/us_fed/SECURITY_ASSESSMENT_PLAN.md` |
+| Related Documents         | `compliance/categorization/FIPS199_CATEGORIZATION.md`, `compliance/rar/RISK_ASSESSMENT_REPORT.md`. No security assessment plan is in force, and the 2026-Q1 security assessment report was retracted on 2026-11-15 (`compliance/archive/retracted/SAR_2026Q1.md`, `POAM-2026-224`). |
 
 ---
 
@@ -33,7 +33,7 @@ This Authorization Boundary Document defines the logical and technical boundary 
 4. Identifies security controls that are inherited from the Common Control Provider (GCP/GKE)
 5. Provides a visual representation of the system boundary
 
-The authorization boundary governs the scope of the Security Assessment Plan (`docs/compliance/us_fed/SECURITY_ASSESSMENT_PLAN.md`), the Security Assessment Report (`compliance/sar/SAR_2026Q1.md`), and the System Security Plan (SSP).
+The authorization boundary sets the scope of the System Security Plan (SSP) and of any future security assessment. No security assessment plan is in force: the draft plan was deleted on 2026-07-30 (`00442dec`), and the 2026-Q1 security assessment report was retracted on 2026-11-15 because the assessment it records did not take place (`POAM-2026-224`).
 
 ### 1.2 Scope
 

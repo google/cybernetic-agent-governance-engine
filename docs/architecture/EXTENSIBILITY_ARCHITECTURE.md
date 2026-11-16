@@ -716,7 +716,7 @@ the public repository), use the plugin escape hatch described below.
 
 ### Step 1: Build Plugin Loader (One-Time Setup)
 
-If not already implemented, create `src/gateway/governance/provider_plugin_loader.py`:
+CAGE ships no provider plugin loader. An adopter writes one, for example as a `provider_plugin_loader` module beside [`plugin_loader.py`](../../src/gateway/governance/plugin_loader.py), which loads domain plugins:
 
 1. Implement allow-list validation from external Secret/ConfigMap
 2. Implement signature verification (cosign/Sigstore or SHA-256 digest pinning)

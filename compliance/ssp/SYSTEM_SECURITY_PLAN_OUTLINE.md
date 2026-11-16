@@ -362,8 +362,8 @@ _The following documents constitute the NIST RMF authorization package and relat
 | System Security Plan — EU_ECB | `compliance/oscal/system-security-plan-eu-ecb.yaml`                  | OSCAL SSP — EU AI Act / GDPR Art. 22 / DORA               | ✅ Exists |
 | System Security Plan — APAC_MAS | `compliance/oscal/system-security-plan-apac-mas.yaml`              | OSCAL SSP — MAS FEAT / MAS Notice 655 / MAS TRM §6.3      | ✅ Exists |
 | Assessment Results           | `compliance/lula/assessment-results.yaml`                             | OSCAL assessment results (Lula-generated)                  | ✅ Exists |
-| Assessment Plan              | `compliance/oscal/assessment-plan.yaml`                               | OSCAL assessment plan                                      | ⬜ Pending |
-| POA&M (OSCAL)                | `compliance/oscal/plan-of-action-milestones.yaml`                     | OSCAL POA&M representation                                 | ⬜ Pending |
+| Assessment Plan              | None: no OSCAL assessment plan has been written                        | OSCAL assessment plan                                      | ⬜ Not created |
+| POA&M (OSCAL)                | None: the POA&M is maintained in Markdown ([`docs/POAM.md`](../../docs/POAM.md)) | OSCAL POA&M representation                                 | ⬜ Not created |
 | Lula Specifications          | `compliance/lula/lula-validation-*.yaml`                              | Automated control validation specifications (29 manifests) | ✅ Exists |
 
 ---
