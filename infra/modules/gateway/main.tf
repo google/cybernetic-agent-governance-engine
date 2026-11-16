@@ -922,6 +922,7 @@ resource "helm_release" "mesh_policy" {
   values = [yamlencode({
     trustedIdentities = var.trusted_client_identities
     canaryIdentities  = var.canary_client_identities
+    templateSha256    = filesha256("${path.module}/mesh-policy/templates/policy.yaml")
   })]
 }
 
