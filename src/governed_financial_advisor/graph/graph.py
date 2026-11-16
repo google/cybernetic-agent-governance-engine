@@ -66,8 +66,8 @@ from langgraph.graph import END, StateGraph
 
 from src.gateway.governance.ftra.node_factory import create_ftra_node, route_after_ftra
 
+from . import checkpointer as _checkpointer_mod
 from .annotations import SIDE_EFFECT_REGISTRY
-from .checkpointer import get_checkpointer
 from .nodes.agent_nodes import (
     create_governed_trader_node,
     data_analyst_node,
@@ -276,26 +276,30 @@ def _build_workflow() -> StateGraph:
     return workflow
 
 
-def create_graph(redis_url=None):  # type: ignore[no-untyped-def]
-    """Create a compiled graph with Redis checkpointer (production/test mode).
+def create_graph(gateway_url: str | None = None, *, checkpointer=None):  # type: ignore[no-untyped-def]
+    """Create a compiled graph with a gateway-mediated checkpointer.
 
-    Used by the standalone server. It calls _build_workflow() to construct the
-    topology, then compiles with a Redis-backed checkpointer (or MemorySaver
-    fallback).
+    Used by the standalone server. Constructs the topology via
+    :func:`_build_workflow` and compiles with :func:`get_checkpointer` (which
+    requires durable gateway-mediated checkpoint storage in every enforcing
+    posture and permits ``MemorySaver`` only in non-enforcing test/dev runs
+    without ``GATEWAY_URL``).
 
     Args:
-        redis_url: Optional Redis connection URL. Falls back to MemorySaver if None.
+        gateway_url: Optional gateway base URL override for ``GatewayCheckpointSaver``.
+        checkpointer: Optional explicit ``BaseCheckpointSaver`` instance.
 
     Returns:
-        Compiled graph with a checkpointer.  HITL suspension is dynamic —
-        ``approval_node`` calls ``interrupt()`` at runtime rather than the
-        graph declaring ``interrupt_before`` at compile time.
+        Compiled graph with a checkpointer. HITL suspension is dynamic —
+        ``approval_node`` calls ``interrupt()`` at runtime.
     """
     workflow = _build_workflow()
 
-    # ARCH-04: Use the Redis-backed checkpointer configured via get_checkpointer().
-    # Falls back gracefully to MemorySaver when redis_url is None (local dev/test).
-    checkpointer = get_checkpointer(redis_url)
+    resolved_checkpointer = (
+        checkpointer
+        if checkpointer is not None
+        else _checkpointer_mod.get_checkpointer(gateway_url)
+    )
 
     # Provider 02 Attestation — opt-in via PROVIDER_02_ATTESTATION_ENABLED=true
     # When enabled, a per-run callback factory is stored on the compiled graph
@@ -327,7 +331,7 @@ def create_graph(redis_url=None):  # type: ignore[no-untyped-def]
             pass  # provider_02 adapter not available — skip silently
 
     # Phase 2.1: Removed static interrupt_before — approval_node uses dynamic interrupt()
-    compiled = workflow.compile(checkpointer=checkpointer)
+    compiled = workflow.compile(checkpointer=resolved_checkpointer)
 
     # Attach the factory for caller retrieval (does not affect graph execution)
     compiled._provider_02_callback_factory = provider_02_callback_factory  # type: ignore[attr-defined]

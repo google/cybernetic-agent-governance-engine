@@ -78,7 +78,7 @@ def _extract_module_block(name: str, text: str) -> str:
 
 
 def test_workload_isolation_separation() -> None:
-    """§2.1: Gateway uses governance instance; advisor and Langfuse use app instance."""
+    """§2.1 + POAM-2026-195/226: Gateway uses governance instance; Langfuse uses app instance; advisor holds no Redis endpoint."""
     gke_main_text = _GKE_MAIN.read_text()
 
     # Find gateway module block
@@ -86,10 +86,10 @@ def test_workload_isolation_separation() -> None:
     assert "module.memorystore_governance.primary_endpoint_ip" in gw_block
     assert "module.memorystore_app" not in gw_block
 
-    # Find advisor module block (in-cluster GKE Deployment)
+    # Find advisor module block (gateway-mediated checkpointing; zero direct Redis access)
     for adv_mod in ("governed_advisor",):
         adv_block = _extract_module_block(adv_mod, gke_main_text)
-        assert "module.memorystore_app.primary_endpoint_ip" in adv_block
+        assert "module.memorystore_app" not in adv_block
         assert "module.memorystore_governance" not in adv_block
 
     # Find langfuse module block

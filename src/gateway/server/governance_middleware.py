@@ -1097,3 +1097,8 @@ async def validate_action_endpoint(
 
 # POST /governance/state-commitments — generic state-commitment service.
 governance_app.include_router(state_commitment_router)
+
+# /governance/checkpoints/* — gateway-mediated working-state checkpoint service.
+from src.gateway.server.checkpoint_api import router as checkpoint_router  # noqa: E402
+
+governance_app.include_router(checkpoint_router)

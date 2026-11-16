@@ -36,9 +36,7 @@ async def run_demo() -> None:
 
     # 1. Initialize Telemetry & Graph
     configure_telemetry()
-    graph = create_graph(
-        redis_url=os.getenv("REDIS_URL", "redis://localhost:6379"),
-    )
+    graph = create_graph()
 
     # Reset Safety State for clean demo
     print("\n🧹 Resetting Safety State (Redis)...")
