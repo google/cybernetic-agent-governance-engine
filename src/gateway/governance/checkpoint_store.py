@@ -49,6 +49,7 @@ from __future__ import annotations
 import base64
 import binascii
 import hashlib
+import inspect
 import json
 import logging
 import os
@@ -387,7 +388,12 @@ class GatewayCheckpointStore:
         redis = self._redis
         self._redis = None
         if self._owns_redis and redis is not None and hasattr(redis, "aclose"):
-            await redis.aclose()
+            try:
+                close_res = redis.aclose()
+                if inspect.isawaitable(close_res):
+                    await close_res
+            except Exception as exc:
+                logger.debug("Checkpoint Redis close error: %s", exc)
 
     # ── Key builders (all SHA-256 hashed for isolation & PII-free key names) ──
 
