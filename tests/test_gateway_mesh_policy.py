@@ -827,4 +827,4 @@ def test_all_three_mesh_charts_obey_linkerd_policy_webhook_invariants() -> None:
     assert metrics_alert_tf.count("condition_prometheus_query_language {") == 5
 
 
-# Regression coverage binding: POAM-007, POAM-2026-007, POAM-2026-080, POAM-2026-195
+# Regression coverage binding: POAM-007, POAM-2026-007, POAM-2026-080, POAM-2026-195, POAM-2026-227
