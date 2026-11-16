@@ -12,7 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Telemetry never exports raw content or end-user identifiers.
+"""Telemetry never exports raw content or end-user identifiers (POAM-2026-225).
 
 Covers ``src/gateway/observability/content_filter.py`` and the code that feeds it:
 
