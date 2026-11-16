@@ -198,6 +198,41 @@ def gateway_policy_violations(docs: list[dict]) -> list[str]:
         )
         if identities != {ADVISOR_IDENTITY}:
             problems.append(f"gated identities {sorted(identities)} != {{advisor}}")
+
+    # Linkerd / Gateway API route precedence selects Exact matches ahead of
+    # PathPrefix "/" and never falls back on 403. Every non-open HTTPRoute on
+    # gateway-http must therefore also carry an AuthorizationPolicy granting
+    # gateway-trusted-clients so advisor calls are not shadowed out.
+    for route_doc in docs:
+        if route_doc["kind"] != "HTTPRoute":
+            continue
+        rname = route_doc["metadata"]["name"]
+        if rname in {"gateway-open", "gateway-gated"}:
+            continue
+        trusted_policies = [
+            d
+            for d in docs
+            if d["kind"] == "AuthorizationPolicy"
+            and d["spec"].get("targetRef")
+            == {
+                "group": "policy.linkerd.io",
+                "kind": "HTTPRoute",
+                "name": rname,
+            }
+            and d["spec"].get("requiredAuthenticationRefs")
+            == [
+                {
+                    "group": "policy.linkerd.io",
+                    "kind": "MeshTLSAuthentication",
+                    "name": "gateway-trusted-clients",
+                }
+            ]
+        ]
+        if not trusted_policies:
+            problems.append(
+                f"HTTPRoute/{rname} shadows PathPrefix '/' without an "
+                "AuthorizationPolicy granting gateway-trusted-clients"
+            )
     return problems
 
 
@@ -233,7 +268,8 @@ def test_rendered_policy_denies_all_gated_routes_when_identities_empty() -> None
     assert [
         d
         for d in docs
-        if d["metadata"]["name"] == "gateway-gated"
+        if d["metadata"]["name"]
+        in {"gateway-gated", "gateway-canary-trusted", "gateway-canary"}
         and d["kind"] == "AuthorizationPolicy"
     ] == []
 
@@ -241,7 +277,8 @@ def test_rendered_policy_denies_all_gated_routes_when_identities_empty() -> None
 def test_canary_mesh_route_admits_only_exact_probe_posts() -> None:
     canary_id = "cage-gateway-canary-sa.governance-stack.serviceaccount.identity.linkerd.cluster.local"
     docs = _render_mesh_policy_chart([ADVISOR_IDENTITY], canary_identities=[canary_id])
-    # Full gateway-gated route remains strictly advisor-only.
+    # Full gateway-gated route remains strictly advisor-only, while
+    # gateway-canary carries both gateway-canary-trusted and gateway-canary.
     assert gateway_policy_violations(docs) == []
     canary_route = _by(docs, "HTTPRoute", "gateway-canary")
     matches = [m for r in canary_route["spec"]["rules"] for m in r["matches"]]
@@ -259,6 +296,26 @@ def test_canary_mesh_route_admits_only_exact_probe_posts() -> None:
     assert canary_auth["spec"]["identities"] == [canary_id]
     canary_policy = _by(docs, "AuthorizationPolicy", "gateway-canary")
     assert canary_policy["spec"]["targetRef"]["name"] == "gateway-canary"
+    canary_trusted = _by(docs, "AuthorizationPolicy", "gateway-canary-trusted")
+    assert canary_trusted["spec"]["targetRef"]["name"] == "gateway-canary"
+    assert [
+        r["name"] for r in canary_trusted["spec"]["requiredAuthenticationRefs"]
+    ] == ["gateway-trusted-clients"]
+
+
+def test_gateway_policy_violations_flags_missing_canary_trusted_authz() -> None:
+    canary_id = "cage-gateway-canary-sa.governance-stack.serviceaccount.identity.linkerd.cluster.local"
+    docs = _render_mesh_policy_chart([ADVISOR_IDENTITY], canary_identities=[canary_id])
+    stripped = [
+        d
+        for d in docs
+        if not (
+            d["kind"] == "AuthorizationPolicy"
+            and d["metadata"]["name"] == "gateway-canary-trusted"
+        )
+    ]
+    problems = gateway_policy_violations(stripped)
+    assert any("HTTPRoute/gateway-canary shadows PathPrefix '/'" in p for p in problems)
 
 
 def test_open_route_allows_any_network_only_for_open_paths() -> None:
