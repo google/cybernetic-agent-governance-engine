@@ -27,6 +27,7 @@ from scripts.check_producer_consumer_keys import (
     MIN_PRODUCED_EVENT_TYPES,
     MIN_STREAM_CONSUMER_FILES,
     MIN_VERIFIED_KEY_READS,
+    MIN_VERIFIED_TEST_FIXTURE_RESPONSES,
     main,
     run_check,
 )
@@ -53,6 +54,9 @@ def test_live_repo_passes_with_zero_baseline_and_floors(
     assert stats["stream_consumer_files"] >= MIN_STREAM_CONSUMER_FILES
     assert stats["envelope_consumer_files"] >= MIN_ENVELOPE_CONSUMER_FILES
     assert stats["verified_key_reads"] >= MIN_VERIFIED_KEY_READS
+    assert (
+        stats["verified_test_fixture_responses"] >= MIN_VERIFIED_TEST_FIXTURE_RESPONSES
+    )
 
     rc = main(["--repo-root", str(DEFAULT_REPO_ROOT), "--verbose"])
     captured = capsys.readouterr()
@@ -275,8 +279,128 @@ def test_corpus_floors_fail_closed_on_empty_tree(
     tmp_path: Path,
     capsys: pytest.CaptureFixture[str],
 ) -> None:
-    """Running without --no-floors on an empty tree fails closed on all 4 floors."""
+    """Running without --no-floors on an empty tree fails closed on all 5 floors."""
     rc = main(["--repo-root", str(tmp_path)])
     captured = capsys.readouterr()
     assert rc == 1
-    assert captured.err.count("[corpus-floor]") == 4
+    assert captured.err.count("[corpus-floor]") == 5
+
+
+def test_planted_gateway_test_fixture_mismatches_fail_closed(tmp_path: Path) -> None:
+    """Contract 5 catches un-evidenced 403s, HTTP 202, unproduced envelope keys, and SSE message chunks."""
+    _write(
+        tmp_path / "src/gateway/server/governance_middleware.py",
+        """
+        async def validate_action_endpoint(request, body):
+            refusal_content = {
+                "schema_version": "2.0.0",
+                "verdict": "DENIED",
+                "violations": ["rule"],
+            }
+            refusal_content["refusal_receipt"] = {}
+            refusal_content["proof_hash"] = "sha256:abc"
+            return refusal_content
+
+        async def policy_precheck_endpoint(request, body):
+            return JSONResponse(
+                status_code=200,
+                content={
+                    "schema_version": "1.0.0",
+                    "action": body.action,
+                    "decision": "ALLOW",
+                    "dry_run": True,
+                    "advisory": True,
+                },
+            )
+        """,
+    )
+    _write(
+        tmp_path / "src/gateway/governance/governance_envelope.py",
+        """
+        class GovernanceEnvelope:
+            def to_dict(self):
+                return {
+                    "envelope_version": "3.0",
+                    "envelope_type": "cage_governance_decision",
+                    "envelope_id": "e-1",
+                    "issued_at": "t0",
+                    "expires_at": "t1",
+                    "issuer": {},
+                    "subject": {},
+                    "governance_context": {},
+                    "payload": {},
+                    "external_attestations": [],
+                    "signature": {},
+                }
+        """,
+    )
+    _write(
+        tmp_path / "src/gateway/governance/governor/governor.py",
+        """
+        class SymbolicGovernor:
+            async def _evaluate_dry_run(self, action, params):
+                return {
+                    "verdict": "ALLOW",
+                    "violations": [],
+                    "latency_ms": 1.0,
+                }
+        """,
+    )
+    _write(
+        tmp_path / "src/integrations/inference_stub/server.py",
+        """
+        async def _stream_sse_chunks(model_id, decision):
+            base = {
+                "id": "cmpl-1",
+                "object": "chat.completion.chunk",
+                "created": 1,
+                "model": model_id,
+            }
+            chunk = {
+                **base,
+                "choices": [{"index": 0, "delta": {"role": "assistant"}, "finish_reason": None}],
+            }
+            return chunk
+        """,
+    )
+    _write(
+        tmp_path / "tests/test_planted_gateway_fixtures.py",
+        """
+        import httpx
+        import pytest
+        from cage_client import CageClient, CageGatewayError
+
+        async def test_positive_403_without_proof_hash_is_flagged():
+            return httpx.Response(403, json={"verdict": "DENIED", "violations": ["limit"]})
+
+        async def test_negative_403_asserting_gateway_error_is_allowed():
+            resp = httpx.Response(403, json={"verdict": "DENIED"})
+            with pytest.raises(CageGatewayError):
+                raise CageGatewayError("missing proof_hash")
+            return resp
+
+        async def test_http_202_defer_is_flagged():
+            return httpx.Response(202, json={"ticket_id": "t-1"})
+
+        async def test_fictional_nested_governance_payload_is_flagged():
+            return httpx.Response(
+                200,
+                json={"envelope_version": "3.0", "payload": {"governance": {"verdict": "ALLOW"}}},
+            )
+
+        async def test_sse_chunk_with_non_streaming_message_is_flagged():
+            bad_sse = 'data: {"id":"1","object":"chat.completion.chunk","created":1,"model":"m","choices":[{"index":0,"message":{"role":"assistant","content":"hi"}}]}'
+            return bad_sse
+        """,
+    )
+
+    violations, stats = run_check(tmp_path, enforce_floors=False)
+    kinds = [v.kind for v in violations]
+    assert "unproduced-refusal-fixture" in kinds
+    assert "unproduced-fixture-status" in kinds
+    assert "unproduced-envelope-fixture" in kinds
+    assert "unproduced-sse-chunk-fixture" in kinds
+    # Negative test asserting CageGatewayError on line 10 must NOT be flagged.
+    flagged_lines = {v.line for v in violations}
+    assert 10 not in flagged_lines
+    assert stats["verified_test_fixture_responses"] >= 5
