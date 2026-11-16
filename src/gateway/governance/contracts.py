@@ -29,6 +29,15 @@ from enum import StrEnum
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Literal, Protocol, runtime_checkable
 
+from src.gateway.governance.refusal_projection import (
+    EvaluatedParamKind,
+    EvaluatedParamSpec,
+    EvaluatedParamSpecMap,
+    assert_worm_safe_evaluated_params,
+    compute_refusal_params_hash,
+    validate_evaluated_param_specs,
+)
+
 if TYPE_CHECKING:
     from mcp.server.fastmcp import FastMCP
 
@@ -46,7 +55,7 @@ class GovernanceTierFailure:
     the governing state at the moment of refusal.
 
     Fields map to Terry's 5-part chain:
-        1. attempted_movement → captured at RefusalReceipt level (action + attempted_params)
+        1. attempted_movement → captured at RefusalReceipt level (action + params_hash + evaluated_params)
         2. standing           → governing_state (tier-specific snapshot)
         3. governing_condition → tier + control_id + rule_description
         4. protected_consequence → what would have formed if allowed
@@ -80,9 +89,17 @@ class RefusalReceipt:
 
     Schema evolution:
     - v1: Original fields (thread_id, action, violated_tier, violated_rule, proof_hash)
-    - v2: Added 5-part proof chain (Terry Snyder seam: attempted_params,
-          standing_snapshot, control_id, protected_consequence, non_formation_proof)
+    - v2: Added 5-part proof chain (attempted_params, standing_snapshot,
+          control_id, protected_consequence, non_formation_proof)
     - v3: Added tier_failures tuple (multi-tier dispatch architecture)
+    - v4 (RP-1 / POAM-2026-225): Splits the 7-year WORM retention tier from the
+          in-memory / bounded-retention content tier. ``proof_hash`` and
+          :meth:`to_worm_dict` bind ``params_hash`` (64-hex SHA-256) plus
+          ``evaluated_params`` (default-deny bounded scalars, booleans, enums,
+          and short uppercase-alpha codes — never free-form strings). Raw
+          ``attempted_params`` remains on the in-memory object only for offline
+          ``Profile.DRY_RUN`` evaluation / DPO harvesting and is never emitted
+          to WORM.
 
     ``reliance`` holds the warrant reliance records (JSON objects, see
     ``src.gateway.governance.warrant.reliance``) the refused decision
@@ -100,9 +117,11 @@ class RefusalReceipt:
     standing_at_refusal: dict[str, Any] = field(default_factory=dict)
     timestamp: float = field(default_factory=time.time)
     proof_hash: str = field(default="")
-    # ── 5-part proof chain fields (Terry Snyder, schema v2) ──
-    # ── tier_failures (multi-tier dispatch, schema v3) ──
-    schema_version: str = field(default="v3")
+    # ── 5-part proof chain & retention/content split (schema v2..v4) ──
+    schema_version: str = field(default="v4")
+    params_hash: str = field(default="")
+    evaluated_params: dict[str, Any] = field(default_factory=dict)
+    # In-memory / content-tier only; never emitted by to_worm_dict().
     attempted_params: dict[str, Any] = field(default_factory=dict)
     standing_snapshot: dict[str, Any] = field(default_factory=dict)
     control_id: str = field(default="")
@@ -113,19 +132,6 @@ class RefusalReceipt:
 
     def compute_proof_hash(self) -> str:
         """Compute the canonical RFC 8785 JCS SHA-256 hex digest over this receipt's payload."""
-        # NOTE: standing_at_refusal MUST be included in the hashed payload
-        # to ensure the cryptographic proof binds to the actual refused
-        # transaction context (symbol, amount, etc.). Without this, two
-        # RefusalReceipts for the same action/tier/rule/timestamp but
-        # different amounts would produce identical proof_hash values,
-        # breaking the evidentiary chain. (CAGE-SEC-009, plans/unified_implementation_analysis.md:191-193)
-        #
-        # Backward compatibility: Any Decimal values in standing_at_refusal
-        # are serialized via JCS canonicalization (RFC 8785), which
-        # converts Python Decimal to JSON number representation. Receipts
-        # generated after this fix will have different proof_hash values
-        # than hypothetical receipts from an implementation that excluded
-        # standing_at_refusal — this is the intended behavior.
         payload: dict[str, Any] = {
             "thread_id": self.thread_id,
             "action": self.action,
@@ -134,17 +140,31 @@ class RefusalReceipt:
             "standing_at_refusal": self.standing_at_refusal,
             "timestamp": self.timestamp,
         }
-        # Schema v2: include 5-part proof chain fields in the hash
-        # when populated, ensuring the cryptographic binding covers
-        # the full causal chain.
-        if self.schema_version != "v1":
+        if self.schema_version in ("v2", "v3"):
             payload["schema_version"] = self.schema_version
             payload["attempted_params"] = self.attempted_params
             payload["standing_snapshot"] = self.standing_snapshot
             payload["control_id"] = self.control_id
             payload["protected_consequence"] = self.protected_consequence
             payload["non_formation_proof"] = self.non_formation_proof
-            # Serialize tier_failures for hashing
+            payload["tier_failures"] = [
+                {
+                    "tier": tf.tier,
+                    "control_id": tf.control_id,
+                    "rule_description": tf.rule_description,
+                    "governing_state": tf.governing_state,
+                    "protected_consequence": tf.protected_consequence,
+                }
+                for tf in self.tier_failures
+            ]
+        elif self.schema_version != "v1":
+            payload["schema_version"] = self.schema_version
+            payload["params_hash"] = self.params_hash
+            payload["evaluated_params"] = self.evaluated_params
+            payload["standing_snapshot"] = self.standing_snapshot
+            payload["control_id"] = self.control_id
+            payload["protected_consequence"] = self.protected_consequence
+            payload["non_formation_proof"] = self.non_formation_proof
             payload["tier_failures"] = [
                 {
                     "tier": tf.tier,
@@ -172,8 +192,24 @@ class RefusalReceipt:
             return False
         return hmac.compare_digest(self.proof_hash, expected)
 
-    def to_dict(self) -> dict[str, Any]:
-        """Serialize this refusal receipt to a JSON-compatible dictionary."""
+    def to_worm_dict(self) -> dict[str, Any]:
+        """Serialize the 7-year WORM retention-tier projection (never ``attempted_params``).
+
+        Refuses legacy ``v2`` / ``v3`` receipts carrying non-empty
+        ``attempted_params`` and re-verifies ``evaluated_params`` against
+        :func:`assert_worm_safe_evaluated_params` so free-form strings cannot
+        enter the 2,555-day archive through any code path.
+        """
+        if self.schema_version in ("v2", "v3") and self.attempted_params:
+            raise ValueError(
+                f"RefusalReceipt schema_version={self.schema_version!r} with "
+                "attempted_params cannot be emitted to WORM; use schema_version='v4' "
+                "(params_hash + evaluated_params)"
+            )
+        safe_eval = assert_worm_safe_evaluated_params(self.evaluated_params)
+        resolved_params_hash = self.params_hash or compute_refusal_params_hash(
+            self.action, safe_eval
+        )
         return {
             "thread_id": self.thread_id,
             "action": self.action,
@@ -183,7 +219,8 @@ class RefusalReceipt:
             "timestamp": self.timestamp,
             "proof_hash": self.proof_hash,
             "schema_version": self.schema_version,
-            "attempted_params": dict(self.attempted_params),
+            "params_hash": resolved_params_hash,
+            "evaluated_params": safe_eval,
             "standing_snapshot": dict(self.standing_snapshot),
             "control_id": self.control_id,
             "protected_consequence": self.protected_consequence,
@@ -192,7 +229,42 @@ class RefusalReceipt:
             "reliance": [dict(record) for record in self.reliance],
         }
 
+    def to_dict(self) -> dict[str, Any]:
+        """Serialize this refusal receipt (in-memory representation; use :meth:`to_worm_dict` for WORM)."""
+        out: dict[str, Any] = {
+            "thread_id": self.thread_id,
+            "action": self.action,
+            "violated_tier": self.violated_tier,
+            "violated_rule": self.violated_rule,
+            "standing_at_refusal": dict(self.standing_at_refusal),
+            "timestamp": self.timestamp,
+            "proof_hash": self.proof_hash,
+            "schema_version": self.schema_version,
+            "params_hash": self.params_hash,
+            "evaluated_params": dict(self.evaluated_params),
+            "attempted_params": dict(self.attempted_params),
+            "standing_snapshot": dict(self.standing_snapshot),
+            "control_id": self.control_id,
+            "protected_consequence": self.protected_consequence,
+            "non_formation_proof": self.non_formation_proof,
+            "tier_failures": [tf.to_dict() for tf in self.tier_failures],
+            "reliance": [dict(record) for record in self.reliance],
+        }
+        return out
+
     def __post_init__(self) -> None:
+        if self.schema_version not in ("v1", "v2", "v3"):
+            safe_eval = assert_worm_safe_evaluated_params(self.evaluated_params)
+            object.__setattr__(self, "evaluated_params", safe_eval)
+            if not self.params_hash:
+                source_params = (
+                    self.attempted_params if self.attempted_params else safe_eval
+                )
+                object.__setattr__(
+                    self,
+                    "params_hash",
+                    compute_refusal_params_hash(self.action, source_params),
+                )
         if not self.proof_hash:
             object.__setattr__(self, "proof_hash", self.compute_proof_hash())
 
@@ -859,6 +931,11 @@ class PluginContribution:
             switched off therefore never reads as a tier that was consulted.
         disabled_tiers: Contributed tiers that are switched off in this
             configuration (:class:`DisabledTier`), never included in ``tiers``.
+        evaluated_param_specs: Per-action closed scalar/boolean/enum/code
+            parameter projections permitted in 7-year WORM ``GOVERNANCE_REFUSAL``
+            records (:class:`EvaluatedParamSpec`, ``RP-1`` / ``POAM-2026-225``).
+            Defaults to ``{}`` (default-deny: a domain that declares nothing
+            emits ``evaluated_params == {}``).
     """
 
     domain: str
@@ -885,6 +962,7 @@ class PluginContribution:
     consequence_magnitudes: tuple[ConsequenceMagnitude, ...] = ()
     required_tiers: frozenset[str] = frozenset()
     disabled_tiers: tuple[Any, ...] = ()
+    evaluated_param_specs: EvaluatedParamSpecMap = field(default_factory=dict)
     maturity: PluginMaturity = "production"
 
     def __post_init__(self) -> None:
@@ -893,6 +971,15 @@ class PluginContribution:
                 f"PluginContribution {self.domain!r}: maturity must be one of "
                 f"{sorted(VALID_PLUGIN_MATURITIES)}, got {self.maturity!r}"
             )
+        object.__setattr__(
+            self,
+            "evaluated_param_specs",
+            validate_evaluated_param_specs(
+                self.evaluated_param_specs,
+                allowed_actions=self.registered_actions or None,
+                domain_label=self.domain,
+            ),
+        )
 
 
 @runtime_checkable

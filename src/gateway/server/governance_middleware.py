@@ -512,17 +512,14 @@ class PolicyPrecheckRequest(BaseModel):
 def _serialize_receipt(
     receipt_obj: Any,
 ) -> dict[str, Any]:
-    """Serialize a RefusalReceipt to a dict for evidence ingestion.
+    """Serialize a RefusalReceipt to its WORM retention-tier dict (RP-1 / POAM-2026-225).
 
-    Preserves the receipt's computed proof_hash exactly without recomputation.
-    Handles nested frozen dataclasses (GovernanceTierFailure).
-
-    Args:
-        receipt_obj: RefusalReceipt instance.
-
-    Returns:
-        Serialized dict suitable for JSON encoding and evidence stream ingestion.
+    Preserves the receipt's computed ``proof_hash`` while emitting
+    ``params_hash`` and ``evaluated_params`` (never raw ``attempted_params``).
     """
+    if hasattr(receipt_obj, "to_worm_dict") and callable(receipt_obj.to_worm_dict):
+        return dict(receipt_obj.to_worm_dict())
+
     from dataclasses import asdict, is_dataclass
 
     def _convert_value(obj: Any) -> Any:
@@ -538,7 +535,10 @@ def _serialize_receipt(
         else:
             return obj
 
-    return _convert_value(receipt_obj)
+    converted = _convert_value(receipt_obj)
+    if isinstance(converted, dict):
+        converted.pop("attempted_params", None)
+    return converted
 
 
 async def record_refusal(

@@ -622,22 +622,24 @@
     "action": "execute_trade",
     "entry_points": {
       "validate_action": {
-        "outcome": "ValueError",
-        "first_violation_code": "Invalid JSON number: nan",
+        "outcome": "GovernanceError",
+        "first_violation_code": "[CTRL_AGT_001] ISO 42001 \u00a7A.5.2 Confidence Violation: Confidence score is NaN (invalid)",
         "seal_issued": false,
         "collaborators_called": [
           "ftra_stage._ftra_boundary_check",
           "opa_client.evaluate_policy",
+          "publish_refusal",
           "stpa_validator.validate"
         ]
       },
       "govern": {
-        "outcome": "ValueError",
-        "first_violation_code": "Invalid JSON number: nan",
+        "outcome": "GovernanceError",
+        "first_violation_code": "[CTRL_AGT_001] ISO 42001 \u00a7A.5.2 Confidence Violation: Confidence score is NaN (invalid)",
         "seal_issued": false,
         "collaborators_called": [
           "ftra_stage._ftra_boundary_check",
           "opa_client.evaluate_policy",
+          "publish_refusal",
           "stpa_validator.validate"
         ]
       },
@@ -668,22 +670,24 @@
     "action": "execute_trade",
     "entry_points": {
       "validate_action": {
-        "outcome": "ValueError",
-        "first_violation_code": "Invalid JSON number: inf",
+        "outcome": "GovernanceError",
+        "first_violation_code": "[CTRL_AGT_001] ISO 42001 \u00a7A.5.2 Confidence Violation: Confidence score is infinite (invalid)",
         "seal_issued": false,
         "collaborators_called": [
           "ftra_stage._ftra_boundary_check",
           "opa_client.evaluate_policy",
+          "publish_refusal",
           "stpa_validator.validate"
         ]
       },
       "govern": {
-        "outcome": "ValueError",
-        "first_violation_code": "Invalid JSON number: inf",
+        "outcome": "GovernanceError",
+        "first_violation_code": "[CTRL_AGT_001] ISO 42001 \u00a7A.5.2 Confidence Violation: Confidence score is infinite (invalid)",
         "seal_issued": false,
         "collaborators_called": [
           "ftra_stage._ftra_boundary_check",
           "opa_client.evaluate_policy",
+          "publish_refusal",
           "stpa_validator.validate"
         ]
       },

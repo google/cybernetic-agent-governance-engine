@@ -60,6 +60,7 @@ from src.gateway.observability.attributes import (
     SPAN_ATTR_THREAD_ID,
     WEBHOOK_THRESHOLD_BREACH,
 )
+from src.governed_financial_advisor.graph.checkpointer import CheckpointDurabilityError
 from src.governed_financial_advisor.graph.graph import create_graph
 from src.governed_financial_advisor.infrastructure.auth import (
     ADVISOR_DEFAULT_THREAD_PREFIX,
@@ -311,6 +312,12 @@ async def query_agent(  # type: ignore[no-untyped-def]
         )
     except PermissionError as exc:
         raise HTTPException(status_code=403, detail=str(exc)) from exc
+    except CheckpointDurabilityError as exc:
+        logger.error("Checkpoint store unavailable during thread-owner check: %s", exc)
+        raise HTTPException(
+            status_code=503,
+            detail={"error": "checkpoint_store_unavailable", "detail": str(exc)},
+        ) from exc
     token = user_context.set(principal.user_id)
     verified_token = principal_verified_context.set(principal.verified)
     try:
@@ -468,6 +475,12 @@ async def query_agent(  # type: ignore[no-untyped-def]
     except HTTPException:
         # Re-raise HTTPException (e.g. 504 timeout) without wrapping in 500.
         raise
+    except CheckpointDurabilityError as exc:
+        logger.error("Checkpoint store unavailable during graph execution: %s", exc)
+        raise HTTPException(
+            status_code=503,
+            detail={"error": "checkpoint_store_unavailable", "detail": str(exc)},
+        ) from exc
     except Exception as e:
         logger.error("Error invoking agent graph: %s", e)
         traceback.print_exc()
@@ -535,12 +548,11 @@ async def list_pending_approvals(  # type: ignore[no-untyped-def]
                 continue
             seen_threads.add(thread_id)
 
-            # Fetch the current state snapshot for this thread
+            # Fetch the current state snapshot for this thread. Never swallow
+            # checkpointer or state-read failures: returning HTTP 200 with a
+            # partial list would under-report pending human approvals (POAM-2026-226).
             config = {"configurable": {"thread_id": thread_id}}
-            try:
-                snapshot = await graph.aget_state(config)
-            except Exception:
-                continue
+            snapshot = await graph.aget_state(config)
 
             if snapshot is None:
                 continue
@@ -567,6 +579,16 @@ async def list_pending_approvals(  # type: ignore[no-untyped-def]
                     }
                 )
 
+    except HTTPException:
+        raise
+    except CheckpointDurabilityError as exc:
+        logger.error(
+            "Checkpoint store unavailable while listing pending approvals: %s", exc
+        )
+        raise HTTPException(
+            status_code=503,
+            detail={"error": "checkpoint_store_unavailable", "detail": str(exc)},
+        ) from exc
     except Exception as exc:
         logger.error("Failed to list pending approvals: %s", exc)
         traceback.print_exc()
