@@ -19,16 +19,26 @@ FROM ${VLLM_BASE_IMAGE}
 # runtime via GKE Workload Identity (`runai_streamer`). Never pass or bake
 # Hugging Face credentials into this image.
 
-# Install RunAI model streamer and GCS backend.
+# Install RunAI model streamer and GCS backend pinned to exact versions.
 # runai-model-streamer-gcs requires google-cloud-storage for ADC auth.
-RUN pip install --no-cache-dir --upgrade \
-    runai-model-streamer \
-    runai-model-streamer-gcs \
-    google-cloud-storage
+RUN pip install --no-cache-dir \
+    "runai-model-streamer==0.11.0" \
+    "runai-model-streamer-gcs==0.11.0" \
+    "google-cloud-storage==2.19.0" \
+    && (id -u 1000 >/dev/null 2>&1 || useradd --uid 1000 --user-group --no-create-home --shell /usr/sbin/nologin vllm)
 
-# Inject runtime hook so gs:// model paths are handled transparently.
-COPY deployment/docker/vllm_sitecustomize.py /etc/python3.12/sitecustomize.py
-RUN cp -f /etc/python3.12/sitecustomize.py /usr/local/lib/python3.12/dist-packages/sitecustomize.py
+# Inject root-owned (0644) runtime hook so gs:// model paths are handled transparently.
+COPY --chmod=0644 deployment/docker/vllm_sitecustomize.py /etc/python3.12/sitecustomize.py
+RUN cp -f /etc/python3.12/sitecustomize.py /usr/local/lib/python3.12/dist-packages/sitecustomize.py \
+    && chmod 0644 /usr/local/lib/python3.12/dist-packages/sitecustomize.py
+
+ENV HOME=/tmp \
+    TMPDIR=/tmp \
+    PYTHONDONTWRITEBYTECODE=1 \
+    HF_HUB_OFFLINE=1 \
+    TRANSFORMERS_OFFLINE=1
+
+USER 1000:1000
 
 # The entrypoint is inherited from the vllm/vllm-openai base image:
 #   python3 -m vllm.entrypoints.openai.api_server

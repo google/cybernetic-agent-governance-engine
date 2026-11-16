@@ -43,15 +43,9 @@ REPO_ROOT = Path(__file__).resolve().parents[2]
 INFRA_DIR = REPO_ROOT / "infra"
 
 # (module directory relative to the repository root, resource name).
-KNOWN_STANDALONE_GUARDS = frozenset(
-    {
-        ("infra/targets/gcp-gke", "control_plane_access_guard"),
-        ("infra/targets/gcp-gke", "inference_backend_guard"),
-        ("infra/targets/gcp-gke", "memorystore_ca_pinning_guard"),
-        ("infra/targets/gcp-gke", "poam_019_empty_key_guard"),
-        ("infra/targets/gcp-gke", "poam_019_shared_key_guard"),
-    }
-)
+# All five legacy standalone guards in infra/targets/gcp-gke/main.tf are now
+# wired into depends_on on the modules they protect (POAM-2026-180 / IC-04).
+KNOWN_STANDALONE_GUARDS: frozenset[tuple[str, str]] = frozenset()
 
 MATRIX = (
     "the placement matrix in the comment below "

@@ -15,21 +15,28 @@
 # Local Development Dockerfile for LangGraph SDK Server
 # Runs `langgraph dev` with hot-reload source mounts for rapid iteration.
 
-FROM python:3.12-slim-bookworm
+ARG PYTHON_BASE=python:3.12-slim-bookworm
+ARG UV_IMAGE=ghcr.io/astral-sh/uv:0.13.8@sha256:5cc1805e2426484abca4ad46ea783bab281fdb225fd82d8ce6d66a81254bac85
+
+FROM ${PYTHON_BASE}
 
 WORKDIR /app
-ENV PYTHONPATH=/app:/app/src
+ENV PYTHONPATH=/app:/app/src \
+    PYTHONUNBUFFERED=1 \
+    PYTHONDONTWRITEBYTECODE=1 \
+    TMPDIR=/tmp
 
-# Install system dependencies
+# Install system dependencies and create non-root runtime user
 RUN apt-get update \
     && apt-get upgrade -y --no-install-recommends \
     && apt-get install -y --no-install-recommends \
     build-essential \
-    git \
-    && rm -rf /var/lib/apt/lists/*
+    && rm -rf /var/lib/apt/lists/* \
+    && groupadd --gid 1000 appuser \
+    && useradd --uid 1000 --gid 1000 --no-create-home --shell /usr/sbin/nologin appuser
 
-# Install uv
-RUN pip install --no-cache-dir uv
+# Install uv pinned by immutable OCI index digest
+COPY --from=${UV_IMAGE} /uv /usr/local/bin/uv
 
 # Create virtual environment
 RUN uv venv /app/.venv
@@ -44,8 +51,15 @@ COPY pyproject.toml uv.lock ./
 # --group dev pulls langgraph-cli[inmem] and other dev tools.
 RUN uv sync --frozen --group dev --extra advisor --extra gateway --extra nemo --extra inference --extra langfuse --no-install-project
 
-# Copy project files (source mounts will override src/ at runtime)
-COPY . .
+# Copy explicit source and configuration directories only (never COPY . .)
+COPY src /app/src
+COPY config /app/config
+COPY langgraph.json README.md /app/
+
+# Writable local-dev state directory for `langgraph dev`; /app/src remains root-owned
+RUN mkdir -p /app/.langgraph_api && chown appuser:appuser /app/.langgraph_api
+
+USER 1000:1000
 
 # Expose LangGraph SDK port
 EXPOSE 2024

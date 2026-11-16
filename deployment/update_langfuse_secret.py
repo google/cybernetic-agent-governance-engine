@@ -37,17 +37,31 @@ Required env vars (for non-interactive operation):
 """
 
 import base64
+import getpass
 import json
 import os
+import re
 import subprocess
 import sys
 import uuid
 
+_CREDENTIAL_URI_RE = re.compile(r"([a-zA-Z][a-zA-Z0-9+.-]*://[^:/@\s]+:)([^@\s]+)(@)")
+
+
 # ── helpers ──────────────────────────────────────────────────────────────────
 
 
+def _scrub_text(text: str, extra_secrets: tuple[str, ...] = ()) -> str:
+    """Scrub URI passwords and caller-supplied secret values before logging."""
+    scrubbed = _CREDENTIAL_URI_RE.sub(r"\1****\3", text)
+    for secret in extra_secrets:
+        if secret:
+            scrubbed = scrubbed.replace(secret, "****")
+    return scrubbed
+
+
 def _redact_cmd(cmd: list[str]) -> list[str]:
-    """Redact sensitive --from-literal values before logging command failures."""
+    """Redact any sensitive flag values before logging command failures."""
     redacted: list[str] = []
     for token in cmd:
         if (
@@ -57,7 +71,7 @@ def _redact_cmd(cmd: list[str]) -> list[str]:
             key = token.split("=", 2)[1]
             redacted.append(f"--from-literal={key}=****")
         else:
-            redacted.append(token)
+            redacted.append(_scrub_text(token))
     return redacted
 
 
@@ -65,6 +79,7 @@ def run(
     cmd: list[str],
     capture_output: bool = True,
     input_data: str | None = None,
+    redact_values: tuple[str, ...] = (),
 ) -> str:
     try:
         result = subprocess.run(
@@ -76,29 +91,63 @@ def run(
             input=input_data,
         )
         return result.stdout.strip() if result.stdout else ""
-    except subprocess.CalledProcessError as e:
-        print(f"Error running: {_redact_cmd(cmd)}")
-        print(e.stderr)
-        raise
+    except subprocess.CalledProcessError as exc:
+        safe_cmd = _redact_cmd(cmd)
+        safe_err = _scrub_text(exc.stderr or "", redact_values).strip()
+        print(f"Error running: {safe_cmd} (exit code {exc.returncode})")
+        if safe_err:
+            print(safe_err)
+        raise RuntimeError(
+            f"Command {safe_cmd[0]} failed with exit code {exc.returncode}"
+        ) from None
 
 
 def b64enc(s: str) -> str:
     return base64.b64encode(s.encode()).decode()
 
 
-def _get_or_prompt(env_key: str, prompt: str, default: str = "") -> str:
+def _get_or_prompt(
+    env_key: str,
+    prompt: str,
+    default: str = "",
+    *,
+    is_secret: bool = False,
+) -> str:
     """Return env var value, or prompt the user, falling back to *default*."""
     val = os.environ.get(env_key, "").strip()
     if val:
         return val
-    if default:
+    if is_secret:
+        val = getpass.getpass(f"{prompt}: ").strip()
+    elif default:
         val = input(f"{prompt} [{default}]: ").strip()
         return val if val else default
-    val = input(f"{prompt}: ").strip()
+    else:
+        val = input(f"{prompt}: ").strip()
     if not val:
+        if default:
+            return default
         print(f"❌  {env_key} is required.")
         sys.exit(1)
     return val
+
+
+def _build_secret_manifest(
+    name: str,
+    namespace: str,
+    encoded_data: dict[str, str],
+) -> dict[str, object]:
+    """Construct a Kubernetes v1/Secret manifest with base64-encoded data."""
+    return {
+        "apiVersion": "v1",
+        "kind": "Secret",
+        "metadata": {
+            "name": name,
+            "namespace": namespace,
+        },
+        "type": "Opaque",
+        "data": encoded_data,
+    }
 
 
 # ── Part 1: patch advisor-secrets / DATABASE_URL ─────────────────────────────
@@ -175,14 +224,17 @@ def patch_database_url(project_id: str, instance_name: str, conn_string: str) ->
             "governance-stack",
             "-o",
             "json",
-        ]
+        ],
+        redact_values=(password, new_url, conn_string),
     )
     secret_data = json.loads(secret_json)
+    secret_data.setdefault("data", {})
     secret_data["data"]["DATABASE_URL"] = b64enc(new_url)
 
     run(
         ["kubectl", "apply", "-f", "-"],
         input_data=json.dumps(secret_data),
+        redact_values=(password, new_url, conn_string),
     )
     print("✅ advisor-secrets patched.")
 
@@ -191,19 +243,13 @@ def patch_database_url(project_id: str, instance_name: str, conn_string: str) ->
 
 
 def ensure_langfuse_secrets(namespace: str = "governance-stack") -> None:
-    """Idempotently create the `langfuse-secrets` K8s Secret.
+    """Idempotently create or update the `langfuse-secrets` K8s Secret via stdin.
 
-    This secret is required by langfuse-web (langfuse-web.yaml lines 139-166).
-    Its absence causes CreateContainerConfigError on every pod start.
-
-    Keys managed:
-      init-project-id      - stable UUID for the Langfuse project
-      init-user-email      - initial admin user e-mail
-      init-user-password   - initial admin user password
+    Secret material is piped exclusively over stdin to `kubectl apply -f -` and
+    never passed on process `argv` (`--from-literal`).
     """
     print("\n── langfuse-secrets ──────────────────────────────────────────────")
 
-    # Determine values — env vars take priority, then interactive prompt.
     project_id_val = _get_or_prompt(
         "LANGFUSE_INIT_PROJECT_ID",
         "Langfuse init project UUID",
@@ -216,15 +262,21 @@ def ensure_langfuse_secrets(namespace: str = "governance-stack") -> None:
     user_password = _get_or_prompt(
         "LANGFUSE_INIT_USER_PASSWORD",
         "Langfuse admin user password",
+        is_secret=True,
     )
 
-    # Check whether the secret already exists so we can decide create vs patch.
     exists_rc = subprocess.run(
         ["kubectl", "get", "secret", "langfuse-secrets", "-n", namespace],
         shell=False,
         check=False,
         capture_output=True,
     ).returncode
+
+    encoded_fields = {
+        "init-project-id": b64enc(project_id_val),
+        "init-user-email": b64enc(user_email),
+        "init-user-password": b64enc(user_password),
+    }
 
     if exists_rc == 0:
         print("[INFO] langfuse-secrets already exists - patching keys...")
@@ -235,7 +287,6 @@ def ensure_langfuse_secrets(namespace: str = "governance-stack") -> None:
             "   a live credential, update the bcrypt hash in Postgres `users.password` and\n"
             "   purge `sessions` directly (see POAM-2026-162)."
         )
-        # Read, merge, re-apply via stdin without writing temporary secret files.
         raw = run(
             [
                 "kubectl",
@@ -246,37 +297,29 @@ def ensure_langfuse_secrets(namespace: str = "governance-stack") -> None:
                 namespace,
                 "-o",
                 "json",
-            ]
+            ],
+            redact_values=(user_password,),
         )
         obj = json.loads(raw)
         obj.setdefault("data", {})
-        obj["data"]["init-project-id"] = b64enc(project_id_val)
-        obj["data"]["init-user-email"] = b64enc(user_email)
-        obj["data"]["init-user-password"] = b64enc(user_password)
-        run(
-            ["kubectl", "apply", "-f", "-"],
-            input_data=json.dumps(obj),
-        )
+        obj["data"].update(encoded_fields)
+        manifest_payload: dict[str, object] = obj
     else:
-        print("[+] Creating langfuse-secrets...")
-        run(
-            [
-                "kubectl",
-                "create",
-                "secret",
-                "generic",
-                "langfuse-secrets",
-                f"--from-literal=init-project-id={project_id_val}",
-                f"--from-literal=init-user-email={user_email}",
-                f"--from-literal=init-user-password={user_password}",
-                "-n",
-                namespace,
-            ]
+        print("[+] Creating langfuse-secrets via stdin manifest...")
+        manifest_payload = _build_secret_manifest(
+            name="langfuse-secrets",
+            namespace=namespace,
+            encoded_data=encoded_fields,
         )
+
+    run(
+        ["kubectl", "apply", "-f", "-"],
+        input_data=json.dumps(manifest_payload),
+        redact_values=(user_password,),
+    )
 
     print("✅ langfuse-secrets is ready.")
 
-    # Force a rolling restart so langfuse-web picks up the new secret.
     print("🔄 Rolling restart of langfuse-web and langfuse-worker…")
     run(
         [
@@ -285,7 +328,7 @@ def ensure_langfuse_secrets(namespace: str = "governance-stack") -> None:
             "restart",
             "deployment/langfuse-web",
             "-n",
-            "governance-stack",
+            namespace,
         ]
     )
     run(
@@ -295,12 +338,12 @@ def ensure_langfuse_secrets(namespace: str = "governance-stack") -> None:
             "restart",
             "deployment/langfuse-worker",
             "-n",
-            "governance-stack",
+            namespace,
         ]
     )
     print("✅ Rollout triggered — watch with:")
-    print("   kubectl rollout status deployment/langfuse-web -n governance-stack")
-    print("   kubectl rollout status deployment/langfuse-worker -n governance-stack")
+    print(f"   kubectl rollout status deployment/langfuse-web -n {namespace}")
+    print(f"   kubectl rollout status deployment/langfuse-worker -n {namespace}")
 
 
 # ── main ─────────────────────────────────────────────────────────────────────
@@ -312,17 +355,17 @@ def main() -> None:
         "LANGFUSE_SQL_INSTANCE",
         f"langfuse-instance-{project_id}"
         if project_id
-        else f"langfuse-instance-{os.environ.get('GCP_PROJECT_ID', '<your-project-id>')}",
+        else f"langfuse-instance-{os.environ.get('GCP_PROJECT_ID', '<PROJECT_ID>')}",
     )
     conn_string = os.environ.get("DATABASE_URL", "")
 
-    # Part 1 is optional — only run when the GCP project is known and a
-    # DATABASE_URL is available (i.e. during initial cluster setup).
     if project_id and conn_string:
         try:
             patch_database_url(project_id, instance_name, conn_string)
         except Exception as exc:
-            print(f"⚠️  Could not patch DATABASE_URL: {exc}")
+            print(
+                f"⚠️  Could not patch DATABASE_URL: {_scrub_text(str(exc), (conn_string,))}"
+            )
             print("    Continuing to langfuse-secrets step…")
     else:
         print(
@@ -330,7 +373,6 @@ def main() -> None:
             "skipping advisor-secrets DATABASE_URL patch."
         )
 
-    # Part 2 always runs — this is the fix for CreateContainerConfigError.
     ensure_langfuse_secrets()
 
 

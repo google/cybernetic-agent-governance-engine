@@ -56,7 +56,8 @@ resource "kubernetes_deployment" "vllm" {
       }
 
       spec {
-        service_account_name = var.service_account_name
+        service_account_name            = var.service_account_name
+        automount_service_account_token = false
 
         # Pod-level security context: satisfies PodSecurity "restricted:latest"
         # admission policy enforced on governance-stack.

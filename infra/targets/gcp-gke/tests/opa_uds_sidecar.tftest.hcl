@@ -321,9 +321,15 @@ run "gateway_embeds_readonly_opa_uds_sidecar_with_zero_tcp_ports" {
         for vm in yamldecode(helm_release.gateway.values[0]).manifest.spec.template.spec.initContainers[0].volumeMounts :
         "${vm.name}:${vm.mountPath}:${coalesce(vm.readOnly, false)}"
       ], "opa-config:/config:true") &&
-      toset([for p in kubernetes_service.gateway.spec[0].port : tonumber(p.port)]) == toset([8080, 50051, 9090])
+      toset([for p in kubernetes_service.gateway.spec[0].port : tonumber(p.port)]) == toset([8080, 50051, 9090]) &&
+      yamldecode(helm_release.gateway.values[0]).manifest.spec.template.spec.automountServiceAccountToken == false &&
+      yamldecode(helm_release.gateway.values[0]).manifest.spec.template.spec.containers[0].securityContext.readOnlyRootFilesystem == true &&
+      contains([
+        for vm in yamldecode(helm_release.gateway.values[0]).manifest.spec.template.spec.containers[0].volumeMounts :
+        "${vm.name}:${vm.mountPath}:${coalesce(vm.readOnly, false)}"
+      ], "tmp:/tmp:false")
     )
-    error_message = "opa sidecar ConfigMap mounts must be readOnly and gateway Service must never expose port 8181"
+    error_message = "opa sidecar ConfigMap mounts must be readOnly, gateway container must enforce readOnlyRootFilesystem with /tmp emptyDir and automountServiceAccountToken=false, and gateway Service must never expose port 8181"
   }
 }
 

@@ -19,12 +19,11 @@ Replaces the former gsutil-based upload with boto3, making this script
 compatible with any S3-compatible endpoint (MinIO, AWS S3, Wasabi, etc.).
 
 AI600-007 / SA-12 / SR-3 / SI-7 — Model Weight Integrity Verification:
-  After each model download, SHA-256 digests of selected anchor files
-  (config.json, tokenizer.json) are computed and verified against the signed
-  manifest in ``config/model_hashes.json``.
+  After each model download, SHA-256 digests of `.safetensors` shards and anchor
+  files (`config.json`, `tokenizer.json`, `tokenizer_config.json`) are computed
+  and verified fail-closed against ``config/model_hashes.json``.
 
-  Set ``MODEL_WEIGHT_VERIFICATION_STRICT=true`` to abort on mismatch (default:
-  warn-only to avoid blocking critical infrastructure bootstraps).
+  ``MODEL_WEIGHT_VERIFICATION_STRICT`` defaults to ``"true"`` (fail-closed).
 
   A verification result OTel span is emitted with attribute:
     supply_chain.model_integrity_verified=true/false
@@ -39,7 +38,7 @@ Configuration via environment variables:
   MODEL_FAST          — HuggingFace model ID for the fast/governance model
   MODEL_REASONING     — HuggingFace model ID for the reasoning model
   HUGGING_FACE_HUB_TOKEN — token for gated model access (optional)
-  MODEL_WEIGHT_VERIFICATION_STRICT — "true" to abort on hash mismatch (default: warn)
+  MODEL_WEIGHT_VERIFICATION_STRICT — "true" to abort on hash mismatch (default: "true")
 """
 
 import hashlib
@@ -206,13 +205,23 @@ def verify_model_integrity(local_model_dir: Path, model_id: str) -> bool:
         "true",
         "yes",
     )
-    safetensor_files = list(local_model_dir.rglob("*.safetensors"))
+    safetensor_files = sorted(local_model_dir.rglob("*.safetensors"))
     if not safetensor_files and not allow_non_safetensors:
         logger.error(
             "[AI600-007] ❌ No .safetensors weight shards found in %s.", model_id
         )
         _emit_integrity_span(model_id, verified=False, reason="missing_safetensors")
         return False
+
+    for sf_path in safetensor_files:
+        if not sf_path.is_file() or sf_path.stat().st_size == 0:
+            logger.error(
+                "[AI600-007] ❌ Empty or invalid .safetensors shard in %s: %s",
+                model_id,
+                sf_path,
+            )
+            _emit_integrity_span(model_id, verified=False, reason="empty_safetensors")
+            return False
 
     manifest = _load_hash_manifest()
     model_hashes = manifest.get(model_id, {})
@@ -229,6 +238,68 @@ def verify_model_integrity(local_model_dir: Path, model_id: str) -> bool:
     all_passed = True
     verified_count = 0
     failed_files: list[str] = []
+
+    # Verify SHA-256 digests on every .safetensors shard (fail-closed whenever
+    # .safetensors digests are pinned in model_hashes; always compute SHA-256).
+    pinned_safetensors: dict[str, Any] = {
+        rel_key: digest
+        for rel_key, digest in model_hashes.items()
+        if not rel_key.startswith("_") and rel_key.endswith(".safetensors")
+    }
+    nested_st = model_hashes.get("safetensors")
+    if isinstance(nested_st, dict):
+        for rel_key, digest in nested_st.items():
+            if isinstance(rel_key, str) and rel_key.endswith(".safetensors"):
+                pinned_safetensors[rel_key] = digest
+
+    disk_safetensors_rel: dict[str, Path] = {
+        sf.relative_to(local_model_dir).as_posix(): sf for sf in safetensor_files
+    }
+    for rel_st, sf_path in sorted(disk_safetensors_rel.items()):
+        actual_st_sha = _sha256_file(sf_path)
+        if pinned_safetensors:
+            expected_st_sha = pinned_safetensors.get(rel_st)
+            if (
+                not isinstance(expected_st_sha, str)
+                or not expected_st_sha
+                or expected_st_sha == _PLACEHOLDER_DIGEST
+            ):
+                logger.error(
+                    "[AI600-007] ❌ Unpinned or placeholder .safetensors shard %s/%s.",
+                    model_id,
+                    rel_st,
+                )
+                all_passed = False
+                failed_files.append(rel_st)
+            elif actual_st_sha != expected_st_sha:
+                logger.error(
+                    "[AI600-007] ❌ SAFETENSORS SHA-256 MISMATCH: %s/%s "
+                    "(expected=%s actual=%s)",
+                    model_id,
+                    rel_st,
+                    expected_st_sha,
+                    actual_st_sha,
+                )
+                all_passed = False
+                failed_files.append(rel_st)
+            else:
+                verified_count += 1
+        else:
+            logger.info(
+                "[AI600-007] Computed .safetensors SHA-256 for %s/%s: %s",
+                model_id,
+                rel_st,
+                actual_st_sha[:16] + "…",
+            )
+
+    for pinned_rel in sorted(set(pinned_safetensors) - set(disk_safetensors_rel)):
+        logger.error(
+            "[AI600-007] ❌ Missing pinned .safetensors shard on disk: %s/%s",
+            model_id,
+            pinned_rel,
+        )
+        all_passed = False
+        failed_files.append(pinned_rel)
 
     for anchor_filename in sorted(_INTEGRITY_ANCHORS):
         anchor_path = local_model_dir / anchor_filename

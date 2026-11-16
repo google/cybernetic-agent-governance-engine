@@ -27,6 +27,7 @@
 # and update WOLFI_BASE in all four Python Dockerfiles together (including
 # deployment/docker/Dockerfile.nemo).
 ARG WOLFI_BASE=cgr.dev/chainguard/wolfi-base@sha256:f15fea2f49cb14dceaea491fcbde0d35e0c190126a744ac05a9838440d47d994
+ARG UV_IMAGE=ghcr.io/astral-sh/uv:0.13.8@sha256:5cc1805e2426484abca4ad46ea783bab281fdb225fd82d8ce6d66a81254bac85
 
 # ---------------------------------------------------------------------------
 # Stage 1 — builder
@@ -38,8 +39,8 @@ WORKDIR /app
 # Interpreter, its headers, and the build toolchain (builder only).
 RUN apk add --no-cache python-3.12 python-3.12-dev build-base
 
-# Install uv for dependency management (builder only — not shipped at runtime)
-COPY --from=ghcr.io/astral-sh/uv:0.12.2 /uv /bin/uv
+# Install uv for dependency management (builder only — pinned by immutable OCI index digest)
+COPY --from=${UV_IMAGE} /uv /bin/uv
 
 # Use the system interpreter so the venv's python symlink
 # (/usr/bin/python3.12) resolves identically in the runtime stage.
@@ -71,10 +72,13 @@ ENV VIRTUAL_ENV=/app/.venv \
 #   whose adapter (src/integrations/telemetry_langfuse) imports langfuse at startup.
 RUN uv sync --frozen --no-dev --extra gateway --extra compliance --extra langfuse --no-install-project
 
-# Download spaCy large model via direct wheel URL (avoids CDN redirect failures).
-# Target the venv explicitly so the package lands in /app/.venv.
-RUN uv pip install --python /app/.venv --no-cache \
-    "https://github.com/explosion/spacy-models/releases/download/en_core_web_lg-3.8.0/en_core_web_lg-3.8.0-py3-none-any.whl"
+# Download and cryptographically verify spaCy en_core_web_lg 3.8.0 wheel via --require-hashes.
+RUN printf '%s\n' \
+    'en-core-web-lg @ https://github.com/explosion/spacy-models/releases/download/en_core_web_lg-3.8.0/en_core_web_lg-3.8.0-py3-none-any.whl \\' \
+    '    --hash=sha256:293e9547a655b25499198ab15a525b05b9407a75f10255e405e8c3854329ab63' \
+    > /tmp/spacy-model.requirements.txt \
+    && uv pip install --python /app/.venv --no-cache --no-deps --require-hashes -r /tmp/spacy-model.requirements.txt \
+    && rm -f /tmp/spacy-model.requirements.txt
 
 # Copy Source Code
 COPY src/__init__.py /app/src/__init__.py
@@ -105,12 +109,16 @@ RUN apk upgrade --no-cache \
     && apk add --no-cache ca-certificates-bundle python-3.12 libstdc++ libgcc tzdata \
     && adduser -D -H -u 1000 -s /bin/false appuser
 
-COPY --from=builder --chown=appuser:appuser /app /app
+# Keep /app root-owned (root:root) so runtime appuser (UID 1000) cannot mutate code or venv.
+COPY --from=builder /app /app
 
 # Environment Variables
 ENV VIRTUAL_ENV=/app/.venv
 ENV PATH="/app/.venv/bin:$PATH"
 ENV PYTHONUNBUFFERED=1
+ENV PYTHONDONTWRITEBYTECODE=1
+ENV TMPDIR=/tmp
+ENV HOME=/tmp
 ENV PYTHONPATH=/app:/app/src
 
 USER appuser

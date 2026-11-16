@@ -122,6 +122,15 @@ run "staging_profile_persists_governance_state_on_every_write" {
     condition     = module.memorystore_app.persistence_mode == "DISABLED"
     error_message = "the app instance must plan an explicit DISABLED"
   }
+  assert {
+    condition = (
+      module.memorystore_governance.authorization_mode == "IAM_AUTH" &&
+      module.memorystore_governance.transit_encryption_mode == "SERVER_AUTHENTICATION" &&
+      module.memorystore_app.authorization_mode == "IAM_AUTH" &&
+      module.memorystore_app.transit_encryption_mode == "SERVER_AUTHENTICATION"
+    )
+    error_message = "both memorystore_governance and memorystore_app must enforce IAM_AUTH and SERVER_AUTHENTICATION TLS by default (IC-08)"
+  }
 }
 
 # The staging tier with enforce_in_dev forced off: AOF must not depend on it.

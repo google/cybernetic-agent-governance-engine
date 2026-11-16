@@ -370,7 +370,8 @@ resource "kubernetes_deployment" "langfuse_web" {
       }
 
       spec {
-        service_account_name = var.service_account_name != "" ? var.service_account_name : null
+        service_account_name            = var.service_account_name != "" ? var.service_account_name : null
+        automount_service_account_token = false
 
         security_context {
           run_as_non_root = true
@@ -952,7 +953,8 @@ resource "kubernetes_deployment" "langfuse_worker" {
       }
 
       spec {
-        service_account_name = var.service_account_name != "" ? var.service_account_name : null
+        service_account_name            = var.service_account_name != "" ? var.service_account_name : null
+        automount_service_account_token = false
 
         security_context {
           run_as_non_root = true
