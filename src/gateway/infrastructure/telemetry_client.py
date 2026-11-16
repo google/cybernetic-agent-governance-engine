@@ -18,23 +18,29 @@ Centralized Observability via OTLP Collector.
 """
 
 import contextlib
-import json
 import logging
 import os
 import sys
 
 from src.gateway.infrastructure.privacy import scrub_pii as global_scrub
 from src.gateway.observability.attributes import (
-    OBSERVATION_INPUT,
     OBSERVATION_MODEL_NAME,
-    OBSERVATION_OUTPUT,
     OBSERVATION_TYPE,
+    SPAN_ATTR_CONTENT_INPUT_LENGTH,
+    SPAN_ATTR_CONTENT_OUTPUT_LENGTH,
     SPAN_ATTR_GEN_AI_OPERATION_NAME,
     SPAN_ATTR_GEN_AI_REQUEST_MODEL,
 )
+from src.gateway.observability.content_filter import (
+    ContentFilterSpanExporter,
+    disable_content_capture,
+)
 
-# Force OTel GenAI Instrumentation to capture inputs and outputs (PII is handled by Gateway)
-os.environ["OTEL_INSTRUMENTATION_GENAI_CAPTURE_MESSAGE_CONTENT"] = "true"
+# Raw prompts, responses and end-user identifiers must never reach the
+# retention-locked telemetry backend: force every instrumentation content switch
+# off before any library reads it. Spans that still carry content are dropped at
+# export by ContentFilterSpanExporter.
+disable_content_capture()
 
 from pythonjsonlogger import json as jsonlogger
 
@@ -306,6 +312,10 @@ def configure_telemetry():  # type: ignore[no-untyped-def]
         silently dropped when ``OTEL_EXPORTER_OTLP_ENDPOINT`` is absent
       - ``_OTLPErrorFilter`` installed on OTLP logger namespaces to downgrade
         "Failed to upload JSON to S3" and similar errors from ERROR to WARNING
+
+    Privacy: every exporter (OTLP HTTP, OTLP gRPC and the console fallback) is
+    wrapped in ``ContentFilterSpanExporter``, which drops content- and
+    identity-bearing attributes before export.
     """
     global HANDLER_ADDED
     global _telemetry_configured
@@ -423,10 +433,12 @@ def configure_telemetry():  # type: ignore[no-untyped-def]
                     "https://"
                 ):
                     # Use HTTP Exporter — 5 s timeout so failures don't stall the BSP thread
-                    otlp_exporter = OTLPSpanExporter(
-                        endpoint=otel_endpoint,
-                        headers=otlp_headers,
-                        timeout=_OTLP_EXPORT_TIMEOUT_S,
+                    otlp_exporter = ContentFilterSpanExporter(
+                        OTLPSpanExporter(
+                            endpoint=otel_endpoint,
+                            headers=otlp_headers,
+                            timeout=_OTLP_EXPORT_TIMEOUT_S,
+                        )
                     )
                     provider.add_span_processor(
                         RedactingSpanProcessor(
@@ -445,10 +457,12 @@ def configure_telemetry():  # type: ignore[no-untyped-def]
                     otlp_configured = True
                 else:
                     # Use gRPC Exporter — 5 s timeout
-                    otlp_exporter = GRPCSpanExporter(  # type: ignore[assignment]
-                        endpoint=otel_endpoint,
-                        insecure=True,
-                        timeout=_OTLP_EXPORT_TIMEOUT_S,
+                    otlp_exporter = ContentFilterSpanExporter(
+                        GRPCSpanExporter(
+                            endpoint=otel_endpoint,
+                            insecure=True,
+                            timeout=_OTLP_EXPORT_TIMEOUT_S,
+                        )
                     )
                     provider.add_span_processor(
                         RedactingSpanProcessor(
@@ -475,7 +489,7 @@ def configure_telemetry():  # type: ignore[no-untyped-def]
         # 3. Fallback: always register a LoggingSpanExporter so that spans are
         #    visible in application logs even when the OTLP backend is down.
         #    When the OTLP exporter is healthy this exporter is silent (DEBUG).
-        fallback_exporter = ConsoleSpanExporter()
+        fallback_exporter = ContentFilterSpanExporter(ConsoleSpanExporter())
         fallback_level = logging.DEBUG if otlp_configured else logging.WARNING
         logging.getLogger("opentelemetry.sdk.trace").setLevel(fallback_level)
         provider.add_span_processor(
@@ -542,34 +556,14 @@ def clean_model_name(model_name: str) -> str:
     return cleaned
 
 
-# Maximum byte length for span string attributes that are exported to RemoteTelemetry via
-# OTLP. RemoteTelemetry's S3 worker fails with HTTP 500 ("Failed to upload JSON to S3")
-# when a single span JSON payload exceeds ~1 MB. Full LLM prompts and completions
-# are the primary culprit; we truncate them here, before the BatchSpanProcessor
-# queues them, so the Protobuf batch stays well under the limit.
-_SPAN_ATTR_MAX_CHARS = 8_000
-
-
-def _truncate_attr(value: str, max_chars: int = _SPAN_ATTR_MAX_CHARS) -> str:
-    """Truncate a string span attribute to *max_chars* characters.
-
-    A ``[TRUNCATED]`` suffix is appended so that operators can identify
-    attributes that were shortened during export.
-    """
-    if len(value) <= max_chars:
-        return value
-    return value[:max_chars] + " [TRUNCATED]"
-
-
 @contextlib.contextmanager
 def genai_span(name: str, prompt: str = None, model: str = None):  # type: ignore[assignment, no-untyped-def]
     """
     Context manager for GenAI Semantic Conventions (Centralized).
 
-    Span attributes that carry LLM prompt/completion text are truncated to
-    ``_SPAN_ATTR_MAX_CHARS`` characters before being attached to the span.
-    This prevents the self-hosted RemoteTelemetry S3 worker from returning HTTP 500
-    ("Failed to upload JSON to S3") on oversized span payloads.
+    The prompt text is never recorded. The span carries only its character
+    length (``SPAN_ATTR_CONTENT_INPUT_LENGTH``): raw prompts must not reach the
+    retention-locked telemetry backend.
     """
     tracer = get_tracer()
     if tracer is None:
@@ -583,12 +577,7 @@ def genai_span(name: str, prompt: str = None, model: str = None):  # type: ignor
         span.set_attribute(OBSERVATION_TYPE, "generation")
 
         if prompt:
-            truncated_prompt = _truncate_attr(prompt)
-            span.set_attribute(
-                "gen_ai.input.messages",
-                json.dumps([{"role": "user", "content": truncated_prompt}]),
-            )
-            span.set_attribute(OBSERVATION_INPUT, truncated_prompt)
+            span.set_attribute(SPAN_ATTR_CONTENT_INPUT_LENGTH, len(prompt))
 
         if model:
             cleaned_model = clean_model_name(model)
@@ -604,19 +593,9 @@ def genai_span(name: str, prompt: str = None, model: str = None):  # type: ignor
 
 
 def record_completion(span, completion: str):  # type: ignore[no-untyped-def]
-    """Helper to record completion metadata.
-
-    The completion string is truncated to ``_SPAN_ATTR_MAX_CHARS`` characters
-    before being attached to the span to avoid RemoteTelemetry S3 upload failures on
-    large model outputs.
-    """
+    """Record the completion's character length; its text is never recorded."""
     if span and completion:
-        truncated = _truncate_attr(completion)
-        span.set_attribute(
-            "gen_ai.output.messages",
-            json.dumps([{"role": "assistant", "content": truncated}]),
-        )
-        span.set_attribute(OBSERVATION_OUTPUT, truncated)
+        span.set_attribute(SPAN_ATTR_CONTENT_OUTPUT_LENGTH, len(completion))
 
 
 def record_usage(span, usage):  # type: ignore[no-untyped-def]

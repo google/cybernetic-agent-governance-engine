@@ -251,12 +251,13 @@ Span attributes mirror the live system exactly:
 ```
 langfuse.observation.type       = "span"
 langfuse.observation.name       = "governance_evaluation"
-langfuse.observation.output     = "BLOCKED" | "APPROVED"
 cage.governance.decision        = "BLOCKED" | "APPROVED"
 cage.governance.blocking_tier   = 0–4 | -1
 cage.governance.violation_count = int
 cage.evidence.chain_hash        = sha256 hex
 ```
+
+Spans carry no observation input or output: `setup_tracing()` wraps its exporters in the gateway's span content filter ([`content_filter.py`](../src/gateway/observability/content_filter.py)), which drops them before export.
 
 ### 2. NDJSON Evidence Chain
 

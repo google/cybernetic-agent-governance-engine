@@ -26,9 +26,9 @@ from mcp import ClientSession
 from mcp.client.streamable_http import streamable_http_client
 
 from src.gateway.observability.attributes import (
-    OBSERVATION_OUTPUT,
     OBSERVATION_TYPE,
     SPAN_ATTR_GEN_AI_OPERATION_NAME,
+    SPAN_ATTR_MCP_TOOL_RESULT_LENGTH,
 )
 
 logger = logging.getLogger("Infrastructure.MCPClient")
@@ -426,7 +426,7 @@ class GatewayMCPClient:
                 text = _result_text(result)
                 if getattr(result, "isError", False):
                     raise MCPToolExecutionError(name, text)
-                span.set_attribute(OBSERVATION_OUTPUT, text)
+                span.set_attribute(SPAN_ATTR_MCP_TOOL_RESULT_LENGTH, len(text))
                 return text
             except Exception as e:
                 span.record_exception(e)

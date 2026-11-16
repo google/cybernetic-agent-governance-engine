@@ -40,7 +40,6 @@ from src.gateway.governance.iso_control import stamp_iso_control
 from src.gateway.governance.langgraph_harness.types import OpaNodeConfig, StateDict
 from src.gateway.observability.attributes import (
     OBSERVATION_NAME,
-    OBSERVATION_OUTPUT,
     OBSERVATION_TYPE,
     metadata,
 )
@@ -161,10 +160,6 @@ def create_opa_safety_node(
             plan = state.get(config.plan_state_key)
             if not plan:
                 span.set_attribute("governance.decision", "SKIPPED")
-                span.set_attribute(
-                    OBSERVATION_OUTPUT,
-                    f"SKIPPED: no {config.plan_state_key}",
-                )
                 logger.warning(
                     "No %s found to validate. Passing through.",
                     config.plan_state_key,
@@ -193,7 +188,6 @@ def create_opa_safety_node(
                 )
                 span.set_attribute("governance.decision", "APPROVED")
                 span.set_attribute("governance.blocked", False)
-                span.set_attribute(OBSERVATION_OUTPUT, "APPROVED")
                 stamp_iso_control(
                     span,
                     ingress_stage=config.iso_tier,
@@ -211,7 +205,6 @@ def create_opa_safety_node(
             except GovernanceError as exc:
                 msg = str(exc)
                 span.set_attribute("governance.reason", msg)
-                span.set_attribute(OBSERVATION_OUTPUT, msg)
 
                 if _is_escalated_governance_error(exc):
                     logger.warning(

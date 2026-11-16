@@ -23,7 +23,7 @@ CAGE separates operational LLM observability from compliance audit scoring and c
 | Plane | Backing Store | Content | Sensitivity | Retention |
 | --- | --- | --- | --- | --- |
 | **Authoritative Custody Chain** | Redis DB 1 (`cage:evidence:stream`) + GCS/S3 WORM `.ndjson` (`EVIDENCE_ARCHIVE_BUCKET`) | Signed, SHA-256 hash-chained governance decisions, spending seals, actuation receipts, refusals, deferrals, INFRA events | Primary evidentiary record | 7 years (WORM) |
-| **Operational LLM Telemetry** | Langfuse Tenant Project 1 (`LANGFUSE_PUBLIC_KEY` / `LANGFUSE_SECRET_KEY`) | Inference latency, token counts, prompt lookups, agent execution spans | Operational (may contain redacted prompts) | Operational |
+| **Operational LLM Telemetry** | Langfuse Tenant Project 1 (`LANGFUSE_PUBLIC_KEY` / `LANGFUSE_SECRET_KEY`) | Inference latency, token counts, prompt lookups, agent execution spans | Operational (no prompt or response text and no end-user identifier; [`content_filter.py`](../../src/gateway/observability/content_filter.py) drops them at export) | Operational |
 | **Compliance Audit & Advisory Telemetry** | Langfuse Tenant Project 2 (`LANGFUSE_COMPLIANCE_PUBLIC_KEY` / `LANGFUSE_COMPLIANCE_SECRET_KEY`) | Mirrored OSCAL finding scores, FAIL eval dataset items, Step 5 LLM remediation advisories | Secondary audit observability | Audit dashboard |
 
 Separating the two logical Langfuse tenant projects — and decoupling both from authoritative control-outcome computation — enforces three security properties:

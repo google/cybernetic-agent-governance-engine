@@ -65,6 +65,10 @@ from src.gateway.governance.token_quota_proxy import _get_token_quota_proxy
 from src.gateway.governance.uca_logger import _get_uca_logger
 from src.gateway.infrastructure.config_manager import config_manager
 from src.gateway.infrastructure.privacy import scrub_pii
+from src.gateway.observability.attributes import (
+    SPAN_ATTR_CONTENT_INPUT_LENGTH,
+    SPAN_ATTR_CONTENT_OUTPUT_LENGTH,
+)
 
 logger = logging.getLogger("Gateway.InferenceProxy")
 
@@ -344,34 +348,6 @@ def _extract_message_content_text(content: Any) -> str:
                 parts.append(part)
         return " ".join(parts)
     return json.dumps(content, default=str)
-
-
-def _sanitize_otel_content(value: Any) -> Any:
-    """Recursively scrub PII from strings, multimodal content arrays, and structured dicts."""
-    if value is None or isinstance(value, (int, float, bool)):
-        return value
-    if isinstance(value, str):
-        if value.lstrip().lower().startswith("data:"):
-            return "[REDACTED-DATA-URI]"
-        return scrub_pii(value)
-    if isinstance(value, list):
-        return [_sanitize_otel_content(item) for item in value]
-    if isinstance(value, dict):
-        return {str(k): _sanitize_otel_content(v) for k, v in value.items()}
-    return scrub_pii(json.dumps(value, default=str))
-
-
-def _sanitize_otel_message(msg: Any) -> Any:
-    """Sanitize a single chat message object before serializing to OTel span attributes."""
-    if not isinstance(msg, dict):
-        return _sanitize_otel_content(msg)
-    sanitized: dict[str, Any] = {}
-    for key, val in msg.items():
-        if key == "role" and isinstance(val, str):
-            sanitized[key] = val
-        else:
-            sanitized[key] = _sanitize_otel_content(val)
-    return sanitized
 
 
 def _extract_scannable_messages_text(messages: Any) -> str:
@@ -655,17 +631,11 @@ async def chat_completions(
     tracer = trace.get_tracer(__name__)
     with tracer.start_as_current_span("inference_proxy.chat") as span:
         request_start_ns = time.perf_counter_ns()
-        # Attach GenAI tracking (recursively scrub multimodal/structured content; POAM-2026-209)
+        # GenAI metadata only: message content never goes on the span.
         if span.is_recording():
-            safe_messages = (
-                [_sanitize_otel_message(m) for m in messages]
-                if isinstance(messages, list)
-                else _sanitize_otel_content(messages)
-            )
             span.set_attribute("gen_ai.operation.name", "chat")
             span.set_attribute("gen_ai.system", "cage-inference-proxy")
             span.set_attribute("gen_ai.request.model", model_id)
-            span.set_attribute("gen_ai.input.messages", json.dumps(safe_messages))
             span.set_attribute(
                 "gen_ai.request.streaming", body.get("stream", False) is True
             )
@@ -690,6 +660,7 @@ async def chat_completions(
         # This prevents system-only, assistant-only, or structured content arrays
         # from bypassing the keyword filter (GHSA-hfqj-24cj-693g).
         all_messages_text = _extract_scannable_messages_text(messages)
+        span.set_attribute(SPAN_ATTR_CONTENT_INPUT_LENGTH, len(all_messages_text))
 
         # 1. Ingress Stage 1 keyword scan — applied to ALL messages, not just user role.
         if ac_keyword_scan(all_messages_text):
@@ -1262,13 +1233,12 @@ async def chat_completions(
             raise
 
         if span.is_recording():
-            raw_choices = vllm_response.get("choices") or []
-            safe_output_msgs = [
-                _sanitize_otel_message(c.get("message", {}))
-                for c in raw_choices
-                if isinstance(c, dict)
-            ]
-            span.set_attribute("gen_ai.output.messages", json.dumps(safe_output_msgs))
+            output_length = sum(
+                len(_extract_message_content_text(choice["message"].get("content")))
+                for choice in vllm_response.get("choices") or []
+                if isinstance(choice, dict) and isinstance(choice.get("message"), dict)
+            )
+            span.set_attribute(SPAN_ATTR_CONTENT_OUTPUT_LENGTH, output_length)
             span.set_attribute(
                 "gen_ai.response.model", vllm_response.get("model", model_id)
             )

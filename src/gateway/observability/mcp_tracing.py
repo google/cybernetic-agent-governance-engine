@@ -31,7 +31,6 @@ Architecture Note:
   at ToolManager.call_tool() — before validation — to extract the carrier.
 """
 
-import json
 import logging
 from collections.abc import Mapping
 from typing import Any
@@ -39,11 +38,7 @@ from typing import Any
 from opentelemetry import trace
 from opentelemetry.trace.propagation.tracecontext import TraceContextTextMapPropagator
 
-from src.gateway.observability.attributes import (
-    OBSERVATION_INPUT,
-    OBSERVATION_OUTPUT,
-    SPAN_ATTR_MCP_TOOL_RESULT_LENGTH,
-)
+from src.gateway.observability.attributes import SPAN_ATTR_MCP_TOOL_RESULT_LENGTH
 
 logger = logging.getLogger("Gateway.MCP.Tracing")
 tracer = trace.get_tracer("mcp.server.tools")
@@ -95,21 +90,17 @@ def patch_mcp_tools(mcp_server) -> None:  # type: ignore[no-untyped-def]
 
         # 2. Create a child span linked to the caller's trace
         with tracer.start_as_current_span(f"mcp.tool:{name}", context=otel_ctx) as span:
+            # Tool arguments and results are content: only the tool name and
+            # the result length go on the span.
             span.set_attribute("mcp.tool.name", name)
-            span.set_attribute(
-                OBSERVATION_INPUT,
-                json.dumps({"tool": name, "args": _filter_args(arguments)}),
-            )
 
             # 3. Delegate to original (validates args, calls fn)
             result = await original_call_tool(
                 name, arguments, context=context, convert_result=convert_result
             )
 
-            # 4. Record output
-            result_str = str(result)
-            span.set_attribute(SPAN_ATTR_MCP_TOOL_RESULT_LENGTH, len(result_str))
-            span.set_attribute(OBSERVATION_OUTPUT, result_str[:4096])
+            # 4. Record the result size
+            span.set_attribute(SPAN_ATTR_MCP_TOOL_RESULT_LENGTH, len(str(result)))
             return result
 
     # Replace the method on the instance
@@ -120,8 +111,3 @@ def patch_mcp_tools(mcp_server) -> None:  # type: ignore[no-untyped-def]
         f"✅ Patched ToolManager.call_tool with distributed tracing "
         f"({tool_count} tools covered)"
     )
-
-
-def _filter_args(kwargs: dict) -> dict:
-    """Remove internal keys from args for cleaner logging."""
-    return {k: v for k, v in kwargs.items() if not k.startswith("_")}

@@ -18,14 +18,22 @@ Unit tests for src/integrations/nemo/vllm_client.py — VLLMLLM and helpers.
 All tests are hermetic:
 - litellm is mocked so no real vLLM inference is triggered.
 - langchain_core imports are allowed (they are pure Python).
-- opentelemetry is mocked to avoid requiring a running collector.
+- opentelemetry is mocked to avoid requiring a running collector, except in
+  the span-content test, which records real spans in memory.
 """
 
 from __future__ import annotations
 
+import importlib
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
+
+from src.gateway.observability.attributes import (
+    SPAN_ATTR_CONTENT_INPUT_LENGTH,
+    SPAN_ATTR_CONTENT_OUTPUT_LENGTH,
+)
+from tests.fixtures.telemetry_canary import CanaryCapture, leaks
 
 pytestmark = [pytest.mark.unit, pytest.mark.local]
 
@@ -102,52 +110,62 @@ def _make_litellm_response(content: str = "mock output"):
 
 
 # ---------------------------------------------------------------------------
-# Tests: _truncate helper
+# Tests: span content (character lengths, never message text)
 # ---------------------------------------------------------------------------
 
 
 @pytest.mark.local
-class TestTruncateHelper:
-    """Tests for the _truncate() utility function."""
+class TestSpanContent:
+    """Generation spans record character lengths, never prompt or response text."""
 
-    def test_short_string_returned_unchanged(self):
-        """Strings within the budget are returned as-is."""
+    def test_content_length_counts_only_string_content(self):
+        """Multimodal parts and missing content add nothing to the length."""
+        from src.integrations.nemo.vllm_client import _content_length
+
+        messages = [
+            {"role": "user", "content": "hello"},
+            {"role": "assistant", "content": "world!"},
+            {"role": "user", "content": [{"type": "text", "text": "skipped"}]},
+            {"role": "system"},
+        ]
+
+        assert _content_length(messages) == len("hello") + len("world!")
+        assert _content_length([]) == 0
+
+    @pytest.mark.asyncio
+    async def test_agenerate_span_carries_lengths_not_content(self):
+        """The prompt and the completion reach neither the raw nor the exported span."""
         import sys
 
-        with patch.dict("sys.modules", _minimal_stubs()):
+        from langchain_core.messages import HumanMessage
+
+        prompt = "canary-prompt-5f1d"
+        answer = "canary-answer-a83c"
+        stubs = {
+            name: module
+            for name, module in _minimal_stubs().items()
+            if not name.startswith("opentelemetry")
+        }
+        stubs["litellm"] = MagicMock(
+            acompletion=AsyncMock(return_value=_make_litellm_response(answer))
+        )
+        capture = CanaryCapture()
+
+        with patch.dict("sys.modules", stubs):
             sys.modules.pop("src.integrations.nemo.vllm_client", None)
-            from src.integrations.nemo.vllm_client import _truncate
+            vllm_client = importlib.import_module("src.integrations.nemo.vllm_client")
+            llm = vllm_client.VLLMLLM(
+                model_name="m", api_base="http://vllm:8000/v1", api_key="k"
+            )
+            with patch.object(vllm_client, "tracer", capture.tracer):
+                result = await llm._agenerate([HumanMessage(content=prompt)])
 
-        result = _truncate("hello world", max_chars=100)
-        assert result == "hello world"
-
-    def test_long_string_is_truncated_with_suffix(self):
-        """Strings exceeding max_chars are cut and suffixed with [TRUNCATED]."""
-        import sys
-
-        with patch.dict("sys.modules", _minimal_stubs()):
-            sys.modules.pop("src.integrations.nemo.vllm_client", None)
-            from src.integrations.nemo.vllm_client import _truncate
-
-        long_str = "A" * 200
-        result = _truncate(long_str, max_chars=50)
-
-        assert result.endswith("[TRUNCATED]")
-        assert len(result) > 50  # suffix is appended
-        assert result[:50] == "A" * 50
-
-    def test_exact_length_not_truncated(self):
-        """Strings of exactly max_chars are not truncated."""
-        import sys
-
-        with patch.dict("sys.modules", _minimal_stubs()):
-            sys.modules.pop("src.integrations.nemo.vllm_client", None)
-            from src.integrations.nemo.vllm_client import _truncate
-
-        s = "X" * 100
-        result = _truncate(s, max_chars=100)
-        assert result == s
-        assert "[TRUNCATED]" not in result
+        assert result.generations[0].message.content == answer
+        (span,) = capture.raw_spans()
+        assert span.attributes[SPAN_ATTR_CONTENT_INPUT_LENGTH] == len(prompt)
+        assert span.attributes[SPAN_ATTR_CONTENT_OUTPUT_LENGTH] == len(answer)
+        assert leaks(capture.raw_spans(), prompt, answer) == []
+        assert leaks(capture.exported_spans(), prompt, answer) == []
 
 
 # ---------------------------------------------------------------------------

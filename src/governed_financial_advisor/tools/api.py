@@ -12,7 +12,6 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-import json
 import logging
 import time
 from typing import Any
@@ -26,10 +25,9 @@ from src.cage_finance.models.trade_order import TradeOrder
 from src.gateway.governance.content_safety import is_safe_verdict
 from src.gateway.infrastructure.privacy import scrub_pii
 from src.gateway.observability.attributes import (
-    OBSERVATION_INPUT,
     OBSERVATION_NAME,
-    OBSERVATION_OUTPUT,
     OBSERVATION_TYPE,
+    SPAN_ATTR_CONTENT_OUTPUT_LENGTH,
 )
 from src.governed_financial_advisor.graph.annotations import side_effect_node
 from src.governed_financial_advisor.infrastructure.auth import require_api_key
@@ -183,17 +181,6 @@ async def execute_tool_endpoint(  # type: ignore[no-untyped-def]
                 root_span.set_attribute("cage.symbol", order.symbol)
                 root_span.set_attribute(OBSERVATION_TYPE, "span")
                 root_span.set_attribute(OBSERVATION_NAME, "cage.tool_execute")
-                root_span.set_attribute(
-                    OBSERVATION_INPUT,
-                    json.dumps(
-                        {
-                            "symbol": order.symbol,
-                            "amount": order.amount,
-                            "confidence": order.confidence,
-                            "currency": order.currency,
-                        }
-                    ),
-                )
                 t0 = time.perf_counter()
                 trade_payload: dict[str, Any] = {
                     "symbol": order.symbol,
@@ -213,7 +200,9 @@ async def execute_tool_endpoint(  # type: ignore[no-untyped-def]
                     "cage.total_latency_ms",
                     round((time.perf_counter() - t0) * 1000, 2),
                 )
-                root_span.set_attribute(OBSERVATION_OUTPUT, str(output)[:500])
+                root_span.set_attribute(
+                    SPAN_ATTR_CONTENT_OUTPUT_LENGTH, len(str(output))
+                )
                 if not str(output).startswith("EXECUTED"):
                     root_span.set_status(Status(StatusCode.ERROR))
                 else:
