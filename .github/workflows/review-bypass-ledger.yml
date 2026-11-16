@@ -136,6 +136,7 @@ jobs:
           digest="$(python3 scripts/review_bypass_attestation.py subject \
             --repo "${GITHUB_REPOSITORY}" --pr "${PR}" --head-sha "${HEAD_SHA}" \
             --output "${work}/premerge-subject.json")"
+          verified=false
           for attempt in 1 2 3; do
             if gh attestation verify "${work}/premerge-subject.json" \
                 --repo "${GITHUB_REPOSITORY}" \
@@ -143,14 +144,17 @@ jobs:
                 --signer-workflow "${GITHUB_REPOSITORY}/.github/workflows/review-bypass-attestation.yml" \
                 --source-ref "refs/pull/${PR}/merge" \
                 --deny-self-hosted-runners; then
-              echo "digest=${digest}" >> "${GITHUB_OUTPUT}"
-              echo "verified=true" >> "${GITHUB_OUTPUT}"
-              exit 0
+              verified=true
+              break
             fi
             sleep "$((attempt * 5))"
           done
-          echo "::error title=Unrecorded unreviewed merge::#${PR} merged as ${GITHUB_SHA} without an approving review, and no verified pre-merge record covers its head ${HEAD_SHA}."
-          exit 1
+          if [ "${verified}" != "true" ]; then
+            echo "::error title=Unrecorded unreviewed merge::#${PR} merged as ${GITHUB_SHA} without an approving review, and no verified pre-merge record covers its head ${HEAD_SHA}."
+            exit 1
+          fi
+          echo "digest=${digest}" >> "${GITHUB_OUTPUT}"
+          echo "verified=true" >> "${GITHUB_OUTPUT}"
 
       - name: Write the ledger record's subject and predicate
         id: subject
@@ -191,6 +195,7 @@ jobs:
         run: |
           set -euo pipefail
           work="${RUNNER_TEMP}/review-bypass"
+          verified=false
           for attempt in 1 2 3 4 5; do
             if gh attestation verify "${work}/ledger-subject.json" \
                 --repo "${GITHUB_REPOSITORY}" \
@@ -198,13 +203,16 @@ jobs:
                 --signer-workflow "${GITHUB_REPOSITORY}/.github/workflows/review-bypass-ledger.yml" \
                 --source-ref "refs/heads/main" \
                 --deny-self-hosted-runners; then
-              echo "verified=true" >> "${GITHUB_OUTPUT}"
-              exit 0
+              verified=true
+              break
             fi
             sleep "$((attempt * 5))"
           done
-          echo "::error title=Ledger record not verified::The ledger record for ${GITHUB_SHA} did not verify."
-          exit 1
+          if [ "${verified}" != "true" ]; then
+            echo "::error title=Ledger record not verified::The ledger record for ${GITHUB_SHA} did not verify."
+            exit 1
+          fi
+          echo "verified=true" >> "${GITHUB_OUTPUT}"
 
       - name: Pass only on an approval or both verified records
         env:

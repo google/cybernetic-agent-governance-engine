@@ -14,7 +14,7 @@
 
 """Meta-check regression suite ensuring every CI and Makefile gate actually enforces.
 
-Covers all 19 workflows in ``.github/workflows/*.yml`` (18 gate workflows + 1 release
+Covers all 21 workflows in ``.github/workflows/*.yml`` (20 gate workflows + 1 release
 workflow ``publish-client-sdk.yml``) plus ``Makefile`` and ``scripts/staging_lifecycle.sh``:
 
 1. Complete workflow inventory & classification (fails if a new workflow is added
@@ -72,7 +72,7 @@ MAKEFILE_PATH = REPO_ROOT / "Makefile"
 GITLEAKS_TOML_PATH = REPO_ROOT / ".gitleaks.toml"
 STAGING_LIFECYCLE_PATH = REPO_ROOT / "scripts" / "staging_lifecycle.sh"
 
-# Complete classification of all 19 workflows in .github/workflows/
+# Complete classification of all 21 workflows in .github/workflows/
 NON_GATE_WORKFLOWS: frozenset[str] = frozenset(
     {
         "publish-client-sdk.yml",  # Tag/manual release workflow building & pushing cage-client wheel/GHCR package
@@ -97,6 +97,12 @@ GATE_WORKFLOWS: frozenset[str] = frozenset(
         # Live repository rules vs .github/branch-protection-rules.md;
         # planted-defect tests in tests/test_check_repo_rules.py.
         "repo-rules.yml",
+        # The required check `Approved review or recorded bypass` and its
+        # post-merge ledger (POAM-2026-115); planted-defect tests in
+        # tests/test_review_bypass_attestation.py and
+        # test_gate_review_bypass_steps_fail_closed_on_planted_states below.
+        "review-bypass-attestation.yml",
+        "review-bypass-ledger.yml",
         "sbom.yml",
         "security-scan.yml",
         "test-hermetic.yml",
@@ -152,7 +158,7 @@ def test_workflow_inventory_is_complete_and_classified() -> None:
         "Register new workflows in GATE_WORKFLOWS and add adversarial gate tests."
     )
     assert not missing, f"Classified workflow(s) missing from disk: {missing}"
-    assert len(on_disk) == 19, f"Expected 19 workflows, found {len(on_disk)}"
+    assert len(on_disk) == 21, f"Expected 21 workflows, found {len(on_disk)}"
 
     # Verify publish-client-sdk.yml is genuinely a release workflow, not a disguised test gate
     pub_data = yaml.safe_load(
@@ -530,6 +536,186 @@ def test_gate_license_header_check_catches_unlicensed_file(tmp_path: Path) -> No
         f"Expected license-check to fail on planted file, got {proc.returncode}"
     )
     assert "Missing Apache 2.0 license header" in proc.stdout
+
+
+def _review_bypass_steps(workflow: str) -> list[dict[str, Any]]:
+    data = yaml.safe_load((WORKFLOWS_DIR / workflow).read_text(encoding="utf-8"))
+    (job,) = data["jobs"].values()
+    return list(job["steps"])
+
+
+def _run_review_bypass_step(
+    step: dict[str, Any], tmp_path: Path, env: dict[str, str]
+) -> tuple[int, str, str]:
+    """Run one review-bypass step's own shell with planted values.
+
+    Returns the exit status, the job summary and the step outputs it wrote.
+    """
+    summary = tmp_path / "summary.md"
+    outputs = tmp_path / "outputs.txt"
+    summary.write_text("", encoding="utf-8")
+    outputs.write_text("", encoding="utf-8")
+    (tmp_path / "review-bypass").mkdir(exist_ok=True)
+    full_env = {
+        "PATH": os.environ.get("PATH", ""),
+        "GITHUB_REPOSITORY": "google/cybernetic-agent-governance-engine",
+        "GITHUB_SHA": "d" * 40,
+        "GITHUB_STEP_SUMMARY": str(summary),
+        "GITHUB_OUTPUT": str(outputs),
+        "RUNNER_TEMP": str(tmp_path),
+        **env,
+    }
+    proc = subprocess.run(
+        ["bash", "-c", step["run"]],
+        cwd=REPO_ROOT,
+        env=full_env,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    return (
+        proc.returncode,
+        summary.read_text(encoding="utf-8"),
+        outputs.read_text(encoding="utf-8"),
+    )
+
+
+def test_gate_review_bypass_steps_fail_closed_on_planted_states(tmp_path: Path) -> None:
+    """The review-bypass workflows pass only on an approval or verified records.
+
+    Runs the workflows' own shell steps with planted step outputs (POAM-2026-115):
+    every state but APPROVED, or UNREVIEWED with verified records, fails; an
+    unreviewed fork head fails; and a verification loop whose `gh` never
+    verifies fails without reporting `verified=true`.
+    """
+    repo = "google/cybernetic-agent-governance-engine"
+    head = "a" * 40
+    premerge = _review_bypass_steps("review-bypass-attestation.yml")
+    ledger = _review_bypass_steps("review-bypass-ledger.yml")
+
+    # The pre-merge check's last step.
+    recorded = {
+        "DECISION": "UNREVIEWED",
+        "VERIFIED": "true",
+        "DIGEST": "f" * 64,
+        "ATTESTATION_URL": f"https://github.com/{repo}/attestations/1",
+        "PR": "7",
+        "HEAD_SHA": head,
+    }
+    assert set(recorded) == set(premerge[-1]["env"])
+    for planted in (
+        {"DECISION": ""},
+        {"DECISION": "approved"},
+        {"VERIFIED": ""},
+        {"VERIFIED": "false"},
+        {"DIGEST": ""},
+        {"ATTESTATION_URL": ""},
+    ):
+        status, _, _ = _run_review_bypass_step(
+            premerge[-1], tmp_path, recorded | planted
+        )
+        assert status != 0, f"the pre-merge check passed on planted state {planted}"
+    status, summary, _ = _run_review_bypass_step(premerge[-1], tmp_path, recorded)
+    assert status == 0
+    assert summary.startswith("### UNREVIEWED: no approving review.")
+    approved = recorded | {
+        "DECISION": "APPROVED",
+        "VERIFIED": "",
+        "DIGEST": "",
+        "ATTESTATION_URL": "",
+    }
+    status, summary, _ = _run_review_bypass_step(premerge[-1], tmp_path, approved)
+    assert status == 0 and summary.startswith("### Approved review or recorded bypass")
+
+    # An unreviewed head from a fork is refused before anything is signed.
+    fork_step = next(step for step in premerge if "HEAD_REPO" in step.get("env", {}))
+    for head_repo, refused in (("someone/fork", True), ("", True), (repo, False)):
+        status, _, _ = _run_review_bypass_step(
+            fork_step, tmp_path, {"HEAD_REPO": head_repo}
+        )
+        assert (status != 0) is refused, f"fork refusal for {head_repo!r}"
+
+    # The ledger's last step.
+    ledger_recorded = {
+        "DECISION": "UNREVIEWED",
+        "PREMERGE_VERIFIED": "true",
+        "PREMERGE_DIGEST": "e" * 64,
+        "VERIFIED": "true",
+        "DIGEST": "f" * 64,
+        "ATTESTATION_URL": f"https://github.com/{repo}/attestations/2",
+        "PR": "7",
+        "HEAD_SHA": head,
+    }
+    assert set(ledger_recorded) == set(ledger[-1]["env"])
+    for name in (
+        "DECISION",
+        "PREMERGE_VERIFIED",
+        "PREMERGE_DIGEST",
+        "VERIFIED",
+        "DIGEST",
+    ):
+        status, _, _ = _run_review_bypass_step(
+            ledger[-1], tmp_path, ledger_recorded | {name: ""}
+        )
+        assert status != 0, f"the ledger passed with {name} empty"
+    status, summary, _ = _run_review_bypass_step(ledger[-1], tmp_path, ledger_recorded)
+    assert status == 0 and summary.startswith("### UNREVIEWED: merged without")
+
+    # The verification loops, against a `gh` that never verifies and one that does.
+    shims = tmp_path / "bin"
+    shims.mkdir()
+    calls = tmp_path / "gh-calls.txt"
+    (shims / "sleep").write_text("#!/bin/sh\n", encoding="utf-8")
+    loops = (
+        (
+            premerge,
+            "verify",
+            {"PREDICATE_TYPE": "premerge-type"},
+            "review-bypass-attestation.yml",
+            "refs/pull/7/merge",
+        ),
+        (
+            ledger,
+            "premerge",
+            {"PREDICATE_TYPE": "premerge-type", "HEAD_SHA": head},
+            "review-bypass-attestation.yml",
+            "refs/pull/7/merge",
+        ),
+        (
+            ledger,
+            "verify",
+            {"PREDICATE_TYPE": "ledger-type"},
+            "review-bypass-ledger.yml",
+            "refs/heads/main",
+        ),
+    )
+    for verifies in (False, True):
+        (shims / "gh").write_text(
+            f'#!/bin/sh\necho "$*" >> "{calls}"\n[ "{verifies}" = True ]\n',
+            encoding="utf-8",
+        )
+        for shim in shims.iterdir():
+            shim.chmod(0o755)
+        for steps, step_id, extra, signer, source_ref in loops:
+            step = next(step for step in steps if step.get("id") == step_id)
+            calls.write_text("", encoding="utf-8")
+            env = {
+                "PATH": f"{shims}:{os.environ.get('PATH', '')}",
+                "GH_TOKEN": "planted",
+                "PR": "7",
+                **extra,
+            }
+            status, _, outputs = _run_review_bypass_step(step, tmp_path, env)
+            label = f"{signer}:{step_id} with a gh that {'verifies' if verifies else 'never verifies'}"
+            assert (status == 0) is verifies, label
+            assert ("verified=true" in outputs) is verifies, label
+            logged = calls.read_text(encoding="utf-8")
+            assert f"--predicate-type {extra['PREDICATE_TYPE']}" in logged, label
+            assert f"--signer-workflow {repo}/.github/workflows/{signer}" in logged, (
+                label
+            )
+            assert f"--source-ref {source_ref}" in logged, label
+            assert "--deny-self-hosted-runners" in logged, label
 
 
 def test_gate_marker_contract_rejects_unmarked_test() -> None:

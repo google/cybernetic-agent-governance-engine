@@ -945,6 +945,9 @@ def test_shell_steps_stop_at_the_first_error(path: Path) -> None:
         script = step["run"]
         assert script.startswith("set -euo pipefail\n"), step["name"]
         assert not re.search(r"\|\|\s*(?:true\b|:(?=\s|$))", script), step["name"]
+        # Success is the end of the script, never an early `exit 0`, which
+        # tests/test_ci_gate_effectiveness.py also forbids.
+        assert not re.search(r"^\s*exit\s+0\s*$", script, re.MULTILINE), step["name"]
         # Expressions reach the shell through env, never by interpolation.
         assert "${{" not in script, step["name"]
 

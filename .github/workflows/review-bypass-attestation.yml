@@ -163,6 +163,7 @@ jobs:
           work="${RUNNER_TEMP}/review-bypass"
           # The API can trail the upload by a few seconds. A head whose record
           # never verifies keeps the check failed.
+          verified=false
           for attempt in 1 2 3 4 5; do
             if gh attestation verify "${work}/subject.json" \
                 --repo "${GITHUB_REPOSITORY}" \
@@ -170,13 +171,16 @@ jobs:
                 --signer-workflow "${GITHUB_REPOSITORY}/.github/workflows/review-bypass-attestation.yml" \
                 --source-ref "refs/pull/${PR}/merge" \
                 --deny-self-hosted-runners; then
-              echo "verified=true" >> "${GITHUB_OUTPUT}"
-              exit 0
+              verified=true
+              break
             fi
             sleep "$((attempt * 5))"
           done
-          echo "::error title=Record not verified::The signed record for this head did not verify, so the check fails and the merge stays blocked."
-          exit 1
+          if [ "${verified}" != "true" ]; then
+            echo "::error title=Record not verified::The signed record for this head did not verify, so the check fails and the merge stays blocked."
+            exit 1
+          fi
+          echo "verified=true" >> "${GITHUB_OUTPUT}"
 
       - name: Pass only on an approval or a verified record
         env:
