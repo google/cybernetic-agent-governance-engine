@@ -3,7 +3,7 @@ system-security-plan:
   metadata:
     title: CAGE System Security Plan (US_FED — NIST SP 800-53 Rev 5 HIGH)
     published: '2026-03-06T00:00:00Z'
-    last-modified: '2026-11-15T04:48:19Z'
+    last-modified: '2026-11-16T03:56:39Z'
     version: 1.0.1-draft+stpa
     oscal-version: 1.0.4
     remarks: 'This System Security Plan (SSP) documents the security controls implemented
@@ -705,8 +705,13 @@ system-security-plan:
       type: software
       title: Langfuse Observability
       description: 'AI observability platform receiving OTel spans from all CAGE components.
-        Provides trace aggregation, prompt/response logging, compliance dashboards,
-        and long-term audit log storage. External interconnection (SaaS).
+        Provides trace aggregation, compliance dashboards, and long-term audit log
+        storage. External interconnection (SaaS). Workload OTel spans carry no prompt
+        or response text and no end-user identifier: no source sets them, and an exporter-side
+        filter drops content and identity attributes before export (POAM-2026-225).
+        Outside that filter: exception messages recorded on spans, and advisory traces
+        from the compliance bridge, which go through the Langfuse SDK and carry LLM-generated
+        remediation text derived from evidence records.
 
         '
       purpose: 'Implements AU-2/AU-12 audit record storage and CA-7 continuous monitoring
