@@ -115,18 +115,11 @@ resource "kubernetes_deployment" "governed_advisor" {
             value = var.enable_logging
           }
 
-          # Redis Session Management
+          # Gateway-mediated checkpointing (POAM-2026-195, POAM-2026-226):
+          # the advisor holds no direct Redis endpoint or credentials.
           env {
-            name  = "REDIS_HOST"
-            value = var.redis_host
-          }
-          env {
-            name  = "REDIS_PORT"
-            value = var.redis_port
-          }
-          env {
-            name  = "REDIS_URL"
-            value = "redis://${var.redis_host}:${var.redis_port}"
+            name  = "CAGE_CHECKPOINT_BACKEND"
+            value = "gateway"
           }
 
           # Model Configuration (Tiered)
@@ -323,6 +316,28 @@ resource "kubernetes_deployment" "governed_advisor" {
             }
           }
 
+          readiness_probe {
+            http_get {
+              path = "/health"
+              port = 8080
+            }
+            initial_delay_seconds = 10
+            period_seconds        = 10
+            timeout_seconds       = 5
+            failure_threshold     = 3
+          }
+
+          liveness_probe {
+            http_get {
+              path = "/"
+              port = 8080
+            }
+            initial_delay_seconds = 20
+            period_seconds        = 20
+            timeout_seconds       = 5
+            failure_threshold     = 3
+          }
+
           security_context {
             allow_privilege_escalation = false
             run_as_non_root            = true
@@ -346,8 +361,6 @@ resource "kubernetes_deployment" "governed_advisor" {
             }
           }
         }
-
-
       }
     }
   }

@@ -357,11 +357,11 @@ The architecture implements a **Risk-Based Tiered Strategy** balancing operation
 
 ### The Deterministic Router (LangGraph)
 
-The canonical agent graph is assembled by `create_graph(redis_url)` in `src/governed_financial_advisor/graph/graph.py`. The graph compiles with:
+The canonical agent graph is assembled by `create_graph()` in `src/governed_financial_advisor/graph/graph.py`. The graph compiles with:
 
-- **10 nodes:** `nemo_guardrail → thinker_node → doer_node → data_analyst / execution_analyst → evaluator → safety_check → governed_trader → explainer → nemo_output_rail`
-- **`interrupt_before=["governed_trader"]`** — mandatory HITL pause before any trade execution
-- **`AsyncRedisSaver`** — durable checkpoint persistence; `MemorySaver` fallback emits ERROR log + OTel alert span
+- **13 nodes:** `nemo_guardrail → thinker_node → doer_node → data_analyst / execution_analyst → evaluator → ftra_node → safety_check → defer_node / approval_node → governed_trader → explainer → nemo_output_rail`
+- **Dynamic `interrupt()` in `approval_node`** — mandatory HITL pause before trade execution requiring human review
+- **`GatewayCheckpointSaver`** — gateway-mediated durable checkpoint persistence (`/governance/checkpoints/*`, resumption-window TTL, `MemorySaver` refused in enforcing postures)
 
 All agent transitions are explicitly managed by routing functions (`route_supervisor`, `route_after_evaluator`, `route_after_safety`). Agents return structured state fields; the graph decides the next node deterministically based on those fields.
 

@@ -114,13 +114,10 @@ The advisor's startup guard ([`identity_guard.py`](../../../src/governed_financi
 
 ### 3.3 LangGraph HITL Interrupt Point
 
-The graph compiles with `interrupt_before=["governed_trader"]` ([`graph.py:create_graph()`](../../../src/governed_financial_advisor/graph/graph.py)), pausing execution when `approval_required=True`:
+The graph compiles with a gateway-mediated checkpointer ([`graph.py:create_graph()`](../../../src/governed_financial_advisor/graph/graph.py)), and [`approval_node`](../../../src/governed_financial_advisor/graph/nodes/approval_node.py) pauses execution dynamically via `interrupt()` when `REQUIRE_APPROVAL` is returned:
 
 ```python
-graph = create_graph(redis_url)
-compiled = graph.compile(
-    checkpointer=get_checkpointer(redis_url), interrupt_before=["governed_trader"]
-)
+graph = create_graph()
 ```
 
 Human approval is handled via REST API ([`server.py`](../../../src/governed_financial_advisor/server.py)):

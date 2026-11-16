@@ -1144,9 +1144,6 @@ module "governed_advisor" {
   project_id                 = var.project_id
   region                     = var.region
   enable_logging             = "true"
-  redis_host                 = module.memorystore_app.primary_endpoint_ip
-  redis_port                 = tostring(module.memorystore_app.primary_endpoint_port)
-  redis_password             = ""
   model_fast                 = var.served_model_fast
   model_reasoning            = var.served_model_reasoning
   model_consensus            = var.served_model_reasoning

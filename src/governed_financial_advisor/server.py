@@ -111,40 +111,23 @@ async def lifespan(app: FastAPI):  # type: ignore[no-untyped-def]
         )
 
     logger.info("Initializing Agent Graph...")
-    app.state.graph = create_graph(redis_url=Config.REDIS_URL)
-
-    # ── Connect the GFA AsyncRedisClient singleton ────────────────────────
-    # The singleton is created at module import time (redis_client.py) but
-    # connect() must be called explicitly to establish the connection pool.
-    # Failure is non-fatal: the server starts but sessions won't persist.
-    from src.governed_financial_advisor.infrastructure.redis_client import (
-        redis_client as _redis_client,
+    from src.gateway.governance.env_posture import is_enforcing
+    from src.governed_financial_advisor.graph.checkpointer import (
+        CheckpointDurabilityError,
+        GatewayCheckpointSaver,
     )
 
-    try:
-        await _redis_client.connect()
-        logger.info("✅ GFA AsyncRedisClient connected")
-    except Exception as _redis_exc:
-        logger.error("❌ GFA Redis connection failed (non-fatal): %s", _redis_exc)
-
-    # Initialize Redis Indices if using Redis Checkpointer (langgraph-checkpoint-redis)
-    try:
-        if hasattr(app.state.graph, "checkpointer") and app.state.graph.checkpointer:
-            cp = app.state.graph.checkpointer
-            # Check for AsyncRedisSaver and call setup() if available
-            # Only AsyncRedisSaver has setup(); MemorySaver does not
-            try:
-                from langgraph.checkpoint.redis import AsyncRedisSaver
-
-                if isinstance(cp, AsyncRedisSaver):
-                    logger.info("Running Redis Checkpointer setup()...")
-                    await cp.setup()
-                    logger.info("Redis Checkpointer setup complete")
-            except ImportError:
-                # langgraph-checkpoint-redis not installed; skip setup
-                logger.debug("langgraph-checkpoint-redis not available; skipping setup")
-    except Exception as e:
-        logger.warning("Failed to setup Redis Checkpointer: %s", e)
+    app.state.graph = create_graph()
+    cp = getattr(app.state.graph, "checkpointer", None)
+    if isinstance(cp, GatewayCheckpointSaver):
+        await cp.verify_ready()
+        logger.info(
+            "✅ GatewayCheckpointSaver verified (ttl_seconds=%s)", cp.ttl_seconds
+        )
+    elif is_enforcing():
+        raise CheckpointDurabilityError(
+            "Enforcing posture requires durable GatewayCheckpointSaver; refusing startup"
+        )
 
     logger.info("Agent Graph Initialized")
     yield
@@ -155,10 +138,11 @@ async def lifespan(app: FastAPI):  # type: ignore[no-untyped-def]
     except Exception as exc:
         logger.debug("PromptRegistry stop error: %s", exc)
     await get_mcp_client().close()
-    try:
-        await _redis_client.close()
-    except Exception as exc:
-        logger.debug("Redis client close error: %s", exc)
+    if isinstance(cp, GatewayCheckpointSaver):
+        try:
+            await cp.aclose()
+        except Exception as exc:
+            logger.debug("GatewayCheckpointSaver close error: %s", exc)
 
 
 app = FastAPI(
@@ -246,12 +230,59 @@ def read_root():  # type: ignore[no-untyped-def]
 
 
 @app.get("/health")
-def health_check():  # type: ignore[no-untyped-def]
-    return {
+async def health_check(request: Request):  # type: ignore[no-untyped-def]
+    from src.gateway.governance.env_posture import is_enforcing
+    from src.governed_financial_advisor.graph.checkpointer import (
+        GatewayCheckpointSaver,
+        checkpointer_type_of,
+        get_checkpointer_type,
+    )
+
+    graph = getattr(request.app.state, "graph", None)
+    cp = getattr(graph, "checkpointer", None) if graph is not None else None
+    cp_type = checkpointer_type_of(cp) if cp is not None else get_checkpointer_type()
+    durable = cp_type == "gateway"
+
+    if is_enforcing() and not durable:
+        return JSONResponse(
+            status_code=503,
+            content={
+                "status": "unhealthy",
+                "reason": "non_durable_checkpointer",
+                "service": "financial-advisor-graph-agent",
+                "project_id": Config.GOOGLE_CLOUD_PROJECT,
+                "checkpointer": cp_type,
+                "durable": False,
+            },
+        )
+
+    if isinstance(cp, GatewayCheckpointSaver):
+        try:
+            await cp.verify_ready()
+        except Exception as exc:
+            logger.error("/health gateway checkpointer probe failed: %s", exc)
+            return JSONResponse(
+                status_code=503,
+                content={
+                    "status": "unhealthy",
+                    "reason": "gateway_checkpointer_unreachable",
+                    "service": "financial-advisor-graph-agent",
+                    "project_id": Config.GOOGLE_CLOUD_PROJECT,
+                    "checkpointer": cp_type,
+                    "durable": False,
+                },
+            )
+
+    payload: dict[str, object] = {
         "status": "ok",
         "service": "financial-advisor-graph-agent",
         "project_id": Config.GOOGLE_CLOUD_PROJECT,
+        "checkpointer": cp_type,
+        "durable": durable,
     }
+    if isinstance(cp, GatewayCheckpointSaver) and cp.ttl_seconds is not None:
+        payload["checkpoint_ttl_seconds"] = cp.ttl_seconds
+    return payload
 
 
 @app.post("/agent/query", response_model=QueryResponse)

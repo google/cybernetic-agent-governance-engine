@@ -420,7 +420,6 @@ run "governed_advisor_carries_no_opa_env_vars" {
     image                      = "registry.invalid/cage-test/governed-financial-advisor@sha256:deadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeef"
     project_id                 = "opa-uds-test"
     region                     = "us-central1"
-    redis_host                 = "10.10.0.6"
     model_fast                 = "test-fast"
     model_reasoning            = "test-reasoning"
     model_consensus            = "test-consensus"
@@ -435,8 +434,10 @@ run "governed_advisor_carries_no_opa_env_vars" {
   assert {
     condition = (
       !contains([for e in kubernetes_deployment.governed_advisor.spec[0].template[0].spec[0].container[0].env : e.name], "OPA_URL") &&
-      !contains([for e in kubernetes_deployment.governed_advisor.spec[0].template[0].spec[0].container[0].env : e.name], "OPA_AUTH_TOKEN")
+      !contains([for e in kubernetes_deployment.governed_advisor.spec[0].template[0].spec[0].container[0].env : e.name], "OPA_AUTH_TOKEN") &&
+      !contains([for e in kubernetes_deployment.governed_advisor.spec[0].template[0].spec[0].container[0].env : e.name], "REDIS_HOST") &&
+      !contains([for e in kubernetes_deployment.governed_advisor.spec[0].template[0].spec[0].container[0].env : e.name], "REDIS_URL")
     )
-    error_message = "governed_advisor container must inject neither OPA_URL nor OPA_AUTH_TOKEN (D-195-3 / OP-1)"
+    error_message = "governed_advisor container must inject neither OPA_* nor direct REDIS_* env vars (D-195-3 / OP-1 / POAM-2026-226)"
   }
 }

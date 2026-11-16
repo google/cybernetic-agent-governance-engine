@@ -200,7 +200,6 @@ run "governed_advisor_module_refuses_e2e_mode_in_prod" {
     image                      = "registry.invalid/cage-test/governed-financial-advisor@sha256:deadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeef"
     project_id                 = "w6-test-project"
     region                     = "us-central1"
-    redis_host                 = "10.10.0.6"
     model_fast                 = "Qwen/Qwen2.5-1.5B-Instruct"
     model_reasoning            = "deepseek-ai/DeepSeek-R1-Distill-Llama-8B"
     model_consensus            = "deepseek-ai/DeepSeek-R1-Distill-Llama-8B"

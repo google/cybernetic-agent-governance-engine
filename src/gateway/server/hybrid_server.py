@@ -253,6 +253,18 @@ async def _gateway_lifespan(app: FastAPI):  # type: ignore[no-untyped-def]
         app.state.state_commitments = state_commitments
         governance_app.state.state_commitments = state_commitments
 
+        # ── Gateway-mediated checkpoint store (/governance/checkpoints/*) ──────
+        # Partitioned by verified Linkerd client identity in Redis DB 3 (default)
+        # with TTL derived from the kernel defer/hold resumption windows. Fails
+        # startup closed under every enforcing posture when Redis is unavailable.
+        from src.gateway.governance.checkpoint_store import (
+            start_checkpoint_store_from_env,
+        )
+
+        checkpoint_store = await start_checkpoint_store_from_env()
+        app.state.checkpoint_store = checkpoint_store
+        governance_app.state.checkpoint_store = checkpoint_store
+
         # ── Pre-warm OPA Policy Engine ──────────────────────────────────────────
         logger.info("🔥 Pre-warming OPA policy evaluation...")
         synthetic_params = {
@@ -411,6 +423,14 @@ async def _gateway_lifespan(app: FastAPI):  # type: ignore[no-untyped-def]
             await rl_redis.aclose()
         except Exception as rl_close_exc:
             logger.debug("Rate-limit Redis close error: %s", rl_close_exc)
+
+    app.state.checkpoint_store = None
+    governance_app.state.checkpoint_store = None
+    if checkpoint_store is not None:
+        try:
+            await checkpoint_store.close()
+        except Exception as ckpt_close_exc:
+            logger.debug("Checkpoint store close error: %s", ckpt_close_exc)
 
     from src.gateway.governance.defer_queue import close_shared_defer_queue
 

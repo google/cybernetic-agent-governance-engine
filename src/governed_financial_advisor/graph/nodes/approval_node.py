@@ -46,6 +46,15 @@ from src.governed_financial_advisor.graph.nodes.approval_contract import (
 
 logger = logging.getLogger(__name__)
 
+DEFAULT_HITL_APPROVAL_TTL_SECONDS: int = 300
+
+
+def resolve_hitl_approval_ttl_seconds() -> int:
+    """Return the configured HITL approval window in seconds (default 300 s)."""
+    return int(
+        os.getenv("HITL_APPROVAL_TTL_SECONDS", str(DEFAULT_HITL_APPROVAL_TTL_SECONDS))
+    )
+
 
 def create_approval_node(
     *,
@@ -62,7 +71,7 @@ def create_approval_node(
     def _node(state: dict[str, Any]) -> Command:
         logger.info("[ApprovalNode] Trade requires human approval — suspending graph.")
 
-        ttl_seconds: int = int(os.getenv("HITL_APPROVAL_TTL_SECONDS", "300"))
+        ttl_seconds: int = resolve_hitl_approval_ttl_seconds()
         trade_payload: dict[str, Any] = {
             "reason": "trade_approval_required",
             # The gateway-held approval token. The authoritative approval is
