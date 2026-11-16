@@ -71,8 +71,6 @@ All OTel span attributes follow the naming convention already established in
 
     langfuse.observation.type       = "span"
     langfuse.observation.name       = "governance_evaluation"
-    langfuse.observation.input      = JSON({tool, params})
-    langfuse.observation.output     = "BLOCKED" | "APPROVED"
     langfuse.trace.metadata.iso.control_id   = "A.8.4"
     langfuse.trace.metadata.nist.control_id  = "SC-4"
     cage.governance.decision        = "BLOCKED" | "APPROVED"
@@ -82,6 +80,12 @@ All OTel span attributes follow the naming convention already established in
     cage.governance.action          = str
     cage.evidence.chain_hash        = sha256 hex
     cage.evidence.record_id         = uuid4
+
+Spans carry no observation input or output. Scenario parameters are content, and
+``setup_tracing()`` wraps its exporters in the gateway's span content filter
+(``src/gateway/observability/content_filter.py``), which drops
+``*.observation.input`` and ``*.observation.output`` before export. The decision
+travels in ``cage.governance.decision``.
 
 Usage:
     from examples.telemetry import PlaygroundTelemetry
@@ -127,8 +131,6 @@ _VIEW_ACCESS_LOG_PATH = _EVIDENCE_DIR / f"view_access_log_{_TODAY}.ndjson"
 _SPAN_ATTRS = {
     "type": "langfuse.observation.type",
     "name": "langfuse.observation.name",
-    "input": "langfuse.observation.input",
-    "output": "langfuse.observation.output",
     "iso_ctrl": "langfuse.trace.metadata.iso.control_id",
     "nist_ctrl": "langfuse.trace.metadata.nist.control_id",
     "iso_req": "langfuse.trace.metadata.iso.requirement",
@@ -270,17 +272,14 @@ class PlaygroundTelemetry:
 
         Yields the span (or a no-op stub if OTel is unavailable).
         Call ``record_result()`` inside the block with the final outcome.
+        ``params`` are content and are not recorded on the span.
         """
-        span_input = json.dumps(
-            {"scenario": scenario_id, "action": action, "params": params}
-        )
         record_id = str(uuid.uuid4())
 
         if self._tracer is not None:
             with self._tracer.start_as_current_span("cage.playground.scenario") as span:
                 span.set_attribute(_SPAN_ATTRS["type"], "span")
                 span.set_attribute(_SPAN_ATTRS["name"], "governance_evaluation")
-                span.set_attribute(_SPAN_ATTRS["input"], span_input)
                 span.set_attribute(_SPAN_ATTRS["iso_ctrl"], "A.8.4")
                 span.set_attribute(_SPAN_ATTRS["nist_ctrl"], "SC-4")
                 span.set_attribute(_SPAN_ATTRS["iso_req"], "Controllability")
@@ -312,7 +311,6 @@ class PlaygroundTelemetry:
 
         # ── Finalise OTel span ────────────────────────────────────────────
         if span_wrapper.span is not None:
-            span_wrapper.span.set_attribute(_SPAN_ATTRS["output"], decision)
             span_wrapper.span.set_attribute(_SPAN_ATTRS["decision"], decision)
             span_wrapper.span.set_attribute(_SPAN_ATTRS["tier"], tier_val)
             span_wrapper.span.set_attribute(_SPAN_ATTRS["vuln_count"], len(violations))

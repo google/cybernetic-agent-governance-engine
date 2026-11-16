@@ -19,6 +19,10 @@ Call ``setup_tracing()`` once at process startup — before binding to any port
 — to ensure every governance span is exported via OTLP and that OpenLLMetry
 automatically wraps all vLLM / OpenAI SDK calls.
 
+Every exporter is wrapped in ``ContentFilterSpanExporter`` and instrumentation
+content capture is forced off (``src/gateway/observability/content_filter.py``):
+raw prompts, responses and end-user identifiers never leave the process.
+
 Environment variables:
     OTEL_EXPORTER_OTLP_ENDPOINT  — OTLP HTTP endpoint; if unset and TELEMETRY_HOST is
                                    also unset, OTLP export is disabled (no localhost fallback)
@@ -160,6 +164,9 @@ def setup_tracing() -> None:
         "Failed to upload JSON to S3" from ERROR to WARNING
       - ``LoggingSpanExporter`` fallback registered so spans are visible in
         application logs even when the OTLP backend is unavailable
+
+    Privacy: both exporters are wrapped in ``ContentFilterSpanExporter`` and
+    ``disable_content_capture()`` runs before any instrumentation starts.
     """
     if _TRACES_EXPORTER == "none":
         logger.info("OTel tracing disabled via OTEL_TRACES_EXPORTER=none.")
@@ -176,6 +183,13 @@ def setup_tracing() -> None:
             BatchSpanProcessor,
             ConsoleSpanExporter,
         )
+
+        from src.gateway.observability.content_filter import (
+            ContentFilterSpanExporter,
+            disable_content_capture,
+        )
+
+        disable_content_capture()
 
         # If a real provider is already installed, do not replace it.
         existing = trace.get_tracer_provider()
@@ -210,10 +224,12 @@ def setup_tracing() -> None:
                         or "/api/public/" in _otlp_endpoint
                         else f"{_otlp_endpoint}/v1/traces"
                     )
-                    exporter = OTLPSpanExporter(
-                        endpoint=otlp_url,
-                        headers=_otlp_headers,
-                        timeout=_OTLP_EXPORT_TIMEOUT_S,
+                    exporter = ContentFilterSpanExporter(
+                        OTLPSpanExporter(
+                            endpoint=otlp_url,
+                            headers=_otlp_headers,
+                            timeout=_OTLP_EXPORT_TIMEOUT_S,
+                        )
                     )
                     provider.add_span_processor(
                         BatchSpanProcessor(
@@ -236,7 +252,7 @@ def setup_tracing() -> None:
 
             # Fallback: ConsoleSpanExporter — always registered so spans are
             # never silently dropped when the OTLP backend is unavailable.
-            fallback_exporter = ConsoleSpanExporter()
+            fallback_exporter = ContentFilterSpanExporter(ConsoleSpanExporter())
             provider.add_span_processor(
                 BatchSpanProcessor(
                     fallback_exporter,

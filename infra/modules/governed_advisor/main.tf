@@ -231,17 +231,18 @@ resource "kubernetes_deployment" "governed_advisor" {
             name  = "TRACE_SAMPLING_RATE"
             value = var.trace_sampling_rate
           }
+          # Raw content must not reach the retention-locked Langfuse event bucket.
           env {
             name  = "OTEL_PYTHON_INSTRUMENTATION_HTTPX_CAPTURE_REQUEST_BODY"
-            value = "true"
+            value = "false"
           }
           env {
             name  = "OTEL_PYTHON_INSTRUMENTATION_HTTPX_CAPTURE_RESPONSE_BODY"
-            value = "true"
+            value = "false"
           }
           env {
             name  = "OTEL_INSTRUMENTATION_GENAI_CAPTURE_MESSAGE_CONTENT"
-            value = "true"
+            value = "false"
           }
           env {
             name  = "OTEL_PYTHON_EXCLUDED_URLS"
@@ -249,7 +250,7 @@ resource "kubernetes_deployment" "governed_advisor" {
           }
           env {
             name  = "OTEL_INSTRUMENTATION_HTTP_CAPTURE_HEADERS_SERVER_REQUEST"
-            value = "content-type,accept,user-agent,x-request-id,x-goog-authenticated-user-email"
+            value = "content-type,accept,user-agent,x-request-id"
           }
           env {
             name  = "OTEL_INSTRUMENTATION_HTTP_CAPTURE_HEADERS_SERVER_RESPONSE"

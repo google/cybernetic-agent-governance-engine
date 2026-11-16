@@ -361,7 +361,6 @@ try:
             span.set_attribute("otel.drop", True)
             span.set_recording(False)
             return
-        span.set_attribute("input", f"{method} {path}")
         span.update_name(f"{method} {path}")
         headers = {
             k.decode("utf-8").lower(): v.decode("utf-8")

@@ -12,7 +12,6 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-import json
 import logging
 import os
 
@@ -26,9 +25,9 @@ from langgraph.graph.message import add_messages
 from src.gateway.infrastructure.mcp_client import get_mcp_client
 from src.gateway.infrastructure.telemetry_client import get_tracer
 from src.gateway.observability.attributes import (
-    OBSERVATION_INPUT,
     OBSERVATION_MODEL_NAME,
-    OBSERVATION_OUTPUT,
+    SPAN_ATTR_CONTENT_INPUT_LENGTH,
+    SPAN_ATTR_CONTENT_OUTPUT_LENGTH,
     TRACE_METADATA_CURRENT_NODE,
     TRACE_METADATA_MCP_SERVER,
 )
@@ -156,21 +155,13 @@ async def analyst_thinker_node(state: DataAnalystState):  # type: ignore[no-unty
                 if isinstance(getattr(m, "content", None), str)
             ]
         )
-        span.set_attribute(
-            "gen_ai.input.messages",
-            json.dumps([{"role": "user", "content": input_str}]),
-        )
-        span.set_attribute(OBSERVATION_INPUT, input_str)
+        span.set_attribute(SPAN_ATTR_CONTENT_INPUT_LENGTH, len(input_str))
 
         response = await llm.ainvoke(messages, config={"run_name": "Analyst Thinker"})
         raw_output = response.content
         clean_plan = strip_thinking_tags(raw_output)  # type: ignore[arg-type]
 
-        span.set_attribute(
-            "gen_ai.output.messages",
-            json.dumps([{"role": "assistant", "content": clean_plan}]),
-        )
-        span.set_attribute(OBSERVATION_OUTPUT, clean_plan)
+        span.set_attribute(SPAN_ATTR_CONTENT_OUTPUT_LENGTH, len(clean_plan))
 
         # Return LOCAL state update
         return {"reasoning_output": raw_output}
@@ -236,11 +227,7 @@ async def analyst_doer_node(state: DataAnalystState) -> dict[str, Any]:
                 if isinstance(getattr(m, "content", None), str)
             ]
         )
-        span.set_attribute(
-            "gen_ai.input.messages",
-            json.dumps([{"role": "user", "content": input_str}]),
-        )
-        span.set_attribute(OBSERVATION_INPUT, input_str)
+        span.set_attribute(SPAN_ATTR_CONTENT_INPUT_LENGTH, len(input_str))
 
         mcp_client = get_mcp_client()
         await mcp_client.ensure_connected()
@@ -273,11 +260,7 @@ async def analyst_doer_node(state: DataAnalystState) -> dict[str, Any]:
             if response.content
             else str(getattr(response, "tool_calls", "No content"))
         )
-        span.set_attribute(
-            "gen_ai.output.messages",
-            json.dumps([{"role": "assistant", "content": output_str}]),
-        )
-        span.set_attribute(OBSERVATION_OUTPUT, output_str)
+        span.set_attribute(SPAN_ATTR_CONTENT_OUTPUT_LENGTH, len(output_str))
 
         # The tool calls on ``response`` are what gateway_tool_guard submits to
         # the gateway — every one of them, not a summarised first call.
@@ -337,11 +320,7 @@ async def analyst_reporter_node(state: DataAnalystState):  # type: ignore[no-unt
                 if isinstance(getattr(m, "content", None), str)
             ]
         )
-        span.set_attribute(
-            "gen_ai.input.messages",
-            json.dumps([{"role": "user", "content": input_str}]),
-        )
-        span.set_attribute(OBSERVATION_INPUT, input_str)
+        span.set_attribute(SPAN_ATTR_CONTENT_INPUT_LENGTH, len(input_str))
 
         response = await llm.ainvoke(messages, config={"run_name": "Analyst Reporter"})
 
@@ -349,10 +328,8 @@ async def analyst_reporter_node(state: DataAnalystState):  # type: ignore[no-unt
             response.content = "Data Analysis: " + response.content  # type: ignore[operator]  # guarded by truthiness check; LangChain content is str in this path
 
         span.set_attribute(
-            "gen_ai.output.messages",
-            json.dumps([{"role": "assistant", "content": response.content}]),
+            SPAN_ATTR_CONTENT_OUTPUT_LENGTH, len(str(response.content or ""))
         )
-        span.set_attribute(OBSERVATION_OUTPUT, response.content)
 
         return {"messages": [response]}
 

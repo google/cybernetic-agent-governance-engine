@@ -36,7 +36,6 @@ from opentelemetry.trace import Span, Status, StatusCode
 
 from config.settings import Config
 from src.gateway.observability.attributes import (
-    OBSERVATION_INPUT,
     OBSERVATION_NAME,
     OBSERVATION_TYPE,
     TRACE_METADATA_GOVERNANCE_ACTION,
@@ -694,7 +693,6 @@ class OPAClient:
         with tracer.start_as_current_span("governance.opa_check") as span:
             span.set_attribute(OBSERVATION_TYPE, "span")
             span.set_attribute(OBSERVATION_NAME, "opa_policy_check")
-            span.set_attribute(OBSERVATION_INPUT, serialized_input)
             start_time = time.time()
             span.set_attribute(TRACE_METADATA_ISO_CONTROL_ID, "A.10.1")
             span.set_attribute(

@@ -56,11 +56,10 @@ from langgraph.graph import END, START, StateGraph
 from src.gateway.infrastructure.mcp_client import get_mcp_client
 from src.gateway.infrastructure.telemetry_client import get_tracer
 from src.gateway.observability.attributes import (
-    OBSERVATION_INPUT,
     OBSERVATION_MODEL_NAME,
     OBSERVATION_NAME,
-    OBSERVATION_OUTPUT,
     OBSERVATION_TYPE,
+    SPAN_ATTR_CONTENT_OUTPUT_LENGTH,
     TRACE_METADATA_CURRENT_NODE,
 )
 from src.governed_financial_advisor.graph.annotations import side_effect_node
@@ -253,12 +252,11 @@ async def executor_node(state: GovernedTraderState) -> dict[str, Any]:
 
         messages = [system_msg, *state.get("messages", [])]
 
-        span.set_attribute(OBSERVATION_INPUT, str(messages))
-
         response = await llm_with_tools.ainvoke(messages)
 
         span.set_attribute(
-            OBSERVATION_OUTPUT, getattr(response, "content", "No content")
+            SPAN_ATTR_CONTENT_OUTPUT_LENGTH,
+            len(str(getattr(response, "content", "") or "")),
         )
 
         # The tool calls on ``response`` are what gateway_tool_guard submits to

@@ -19,7 +19,6 @@ Node functions for the main graph: Data Analyst, Execution Analyst, and Governed
 Uses Dependency Injection pattern to allow mocking during tests.
 """
 
-import json
 import logging
 from typing import Any
 
@@ -27,8 +26,8 @@ from langchain_core.messages import HumanMessage
 
 from src.gateway.infrastructure.telemetry_client import get_tracer
 from src.gateway.observability.attributes import (
-    OBSERVATION_INPUT,
-    OBSERVATION_OUTPUT,
+    SPAN_ATTR_CONTENT_INPUT_LENGTH,
+    SPAN_ATTR_CONTENT_OUTPUT_LENGTH,
     TRACE_METADATA_CURRENT_NODE,
 )
 from src.governed_financial_advisor.agents.execution_analyst.agent import (
@@ -152,7 +151,7 @@ async def execution_analyst_node(state):  # type: ignore[no-untyped-def]
     tracer = get_tracer()
     with tracer.start_as_current_span("ExecutionAnalyst: Planner") as span:
         span.set_attribute(TRACE_METADATA_CURRENT_NODE, "execution_analyst")
-        span.set_attribute(OBSERVATION_INPUT, injected_msg)
+        span.set_attribute(SPAN_ATTR_CONTENT_INPUT_LENGTH, len(injected_msg))
 
         # P1 fix: bounded retry loop — up to MAX_PLAN_RETRIES additional
         # attempts on semantically-incomplete plans (empty rationale, empty
@@ -197,7 +196,7 @@ async def execution_analyst_node(state):  # type: ignore[no-untyped-def]
         if plan_obj is not None:
             # Serialize for state dictionary
             plan_output = plan_obj.model_dump()
-            span.set_attribute(OBSERVATION_OUTPUT, json.dumps(plan_output))
+            span.set_attribute(SPAN_ATTR_CONTENT_OUTPUT_LENGTH, len(str(raw_content)))
             logger.info(
                 f"✅ Generated Execution Plan: {plan_output.get('plan_id', 'unknown')}"
             )

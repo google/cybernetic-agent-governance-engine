@@ -40,17 +40,20 @@ except ImportError:
 logger = logging.getLogger("NeMo.LLM")
 tracer = trace.get_tracer("src.integrations.nemo.vllm_client")
 
-from src.gateway.observability.attributes import OBSERVATION_TYPE
+from src.gateway.observability.attributes import (
+    OBSERVATION_TYPE,
+    SPAN_ATTR_CONTENT_INPUT_LENGTH,
+    SPAN_ATTR_CONTENT_OUTPUT_LENGTH,
+)
 
-# Maximum characters for span string attributes (mirrors telemetry.py limit).
-_VLLM_SPAN_ATTR_MAX_CHARS = 8_000
 
-
-def _truncate(value: str, max_chars: int = _VLLM_SPAN_ATTR_MAX_CHARS) -> str:
-    """Truncate a string to *max_chars* with a [TRUNCATED] suffix."""
-    if len(value) <= max_chars:
-        return value
-    return value[:max_chars] + " [TRUNCATED]"
+def _content_length(messages: list[dict[str, Any]]) -> int:
+    """Total characters of string message content; the content is never recorded."""
+    return sum(
+        len(message["content"])
+        for message in messages
+        if isinstance(message.get("content"), str)
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -149,8 +152,7 @@ class VLLMLLM(BaseChatModel):
                         m["role"] = "user"
 
                 span.set_attribute(
-                    "gen_ai.input.messages",
-                    _truncate(json.dumps(formatted_messages)),
+                    SPAN_ATTR_CONTENT_INPUT_LENGTH, _content_length(formatted_messages)
                 )
 
                 response = litellm.completion(
@@ -164,10 +166,7 @@ class VLLMLLM(BaseChatModel):
                 )
 
                 content = response.choices[0].message.content
-                span.set_attribute(
-                    "gen_ai.output.messages",
-                    _truncate(json.dumps([{"role": "assistant", "content": content}])),
-                )
+                span.set_attribute(SPAN_ATTR_CONTENT_OUTPUT_LENGTH, len(content or ""))
                 # Record token usage when available
                 if getattr(response, "usage", None):
                     span.set_attribute(
@@ -261,8 +260,7 @@ class VLLMLLM(BaseChatModel):
                         m["role"] = "user"
 
                 span.set_attribute(
-                    "gen_ai.input.messages",
-                    _truncate(json.dumps(formatted_messages)),
+                    SPAN_ATTR_CONTENT_INPUT_LENGTH, _content_length(formatted_messages)
                 )
 
                 # Use per-instance timeout (set at construction time).
@@ -282,6 +280,7 @@ class VLLMLLM(BaseChatModel):
                 )
                 completion_message = response.choices[0].message
                 content = completion_message.content or ""
+                span.set_attribute(SPAN_ATTR_CONTENT_OUTPUT_LENGTH, len(content))
 
                 # Record token usage when available
                 if getattr(response, "usage", None):
@@ -311,20 +310,6 @@ class VLLMLLM(BaseChatModel):
                             {"name": t.function.name, "args": args, "id": t.id}
                         )
                     logger.debug("vLLM Response Tool Calls: %s", lc_tool_calls)
-                    span.set_attribute(
-                        "gen_ai.output.messages",
-                        _truncate(
-                            json.dumps(
-                                [
-                                    {
-                                        "role": "assistant",
-                                        "content": content,
-                                        "tool_calls": lc_tool_calls,
-                                    }
-                                ]
-                            )
-                        ),
-                    )
                     return ChatResult(
                         generations=[
                             ChatGeneration(
@@ -336,12 +321,6 @@ class VLLMLLM(BaseChatModel):
                     )
                 else:
                     logger.debug("vLLM Response Content: %s...", content[:100])
-                    span.set_attribute(
-                        "gen_ai.output.messages",
-                        _truncate(
-                            json.dumps([{"role": "assistant", "content": content}])
-                        ),
-                    )
                     return ChatResult(
                         generations=[ChatGeneration(message=AIMessage(content=content))]
                     )
@@ -390,8 +369,7 @@ class VLLMLLM(BaseChatModel):
                         m["role"] = "user"
 
                 span.set_attribute(
-                    "gen_ai.input.messages",
-                    _truncate(json.dumps(formatted_messages)),
+                    SPAN_ATTR_CONTENT_INPUT_LENGTH, _content_length(formatted_messages)
                 )
 
                 # Use litellm with stream=True
@@ -419,17 +397,8 @@ class VLLMLLM(BaseChatModel):
                             await run_manager.on_llm_new_token(content)
 
                 span.set_attribute(
-                    "gen_ai.output.messages",
-                    _truncate(
-                        json.dumps(
-                            [
-                                {
-                                    "role": "assistant",
-                                    "content": "".join(collected_content),
-                                }
-                            ]
-                        )
-                    ),
+                    SPAN_ATTR_CONTENT_OUTPUT_LENGTH,
+                    sum(len(chunk) for chunk in collected_content),
                 )
 
             except Exception as e:

@@ -53,15 +53,16 @@ from src.gateway.observability.attributes import (
     AI_WEBHOOK_SCORE_NAME,
     AI_WEBHOOK_SCORE_VALUE,
     AI_WEBHOOK_TRACE_ID,
-    OBSERVATION_INPUT,
-    OBSERVATION_OUTPUT,
     OBSERVATION_TYPE,
     SPAN_ATTR_CAGE_PRINCIPAL_VERIFIED,
-    SPAN_ATTR_ENDUSER_ID,
+    SPAN_ATTR_CONTENT_INPUT_LENGTH,
+    SPAN_ATTR_CONTENT_OUTPUT_LENGTH,
+    SPAN_ATTR_THREAD_ID,
     WEBHOOK_THRESHOLD_BREACH,
 )
 from src.governed_financial_advisor.graph.graph import create_graph
 from src.governed_financial_advisor.infrastructure.auth import (
+    ADVISOR_DEFAULT_THREAD_PREFIX,
     require_api_key,
     require_thread_owner,
     resolve_request_principal,
@@ -171,9 +172,6 @@ def server_request_hook(span, scope):  # type: ignore[no-untyped-def]
 
     method = scope.get("method", "GET").upper()
     path = scope.get("path", "/")
-
-    # 1. Rich Observation (Mapping Input and Span Name)
-    span.set_attribute("input", f"{method} {path}")
     span.update_name(f"{method} {path}")
 
 
@@ -285,24 +283,23 @@ async def query_agent(  # type: ignore[no-untyped-def]
     token = user_context.set(principal.user_id)
     verified_token = principal_verified_context.set(principal.verified)
     try:
-        import json as _json
-
-        # ISO 42001: A.7.2 Accountability — Tag trace with User Identity
+        # The span never carries the prompt, the response or the end-user
+        # identifier: anything exported reaches the retention-locked telemetry
+        # event bucket. It records whether the principal was verified and the
+        # content lengths instead.
         current_span = trace.get_current_span()
         trace_id = None
         if current_span and current_span.is_recording():
-            current_span.set_attribute(SPAN_ATTR_ENDUSER_ID, principal.user_id)
             current_span.set_attribute(
                 SPAN_ATTR_CAGE_PRINCIPAL_VERIFIED, principal.verified
             )
-            current_span.set_attribute("thread.id", effective_thread_id)
+            if not effective_thread_id.startswith(ADVISOR_DEFAULT_THREAD_PREFIX):
+                # A default (advisor_session_<user_id>) thread id embeds the
+                # user id, so only another thread id is recorded.
+                current_span.set_attribute(SPAN_ATTR_THREAD_ID, effective_thread_id)
             current_span.set_attribute(OBSERVATION_TYPE, "generation")
             current_span.set_attribute("gen_ai.operation.name", "chat")
-            current_span.set_attribute(
-                "gen_ai.input.messages",
-                _json.dumps([{"role": "user", "content": req.prompt}]),
-            )
-            current_span.set_attribute(OBSERVATION_INPUT, req.prompt)
+            current_span.set_attribute(SPAN_ATTR_CONTENT_INPUT_LENGTH, len(req.prompt))
             current_span.set_attribute("gen_ai.system", "financial-advisor-gateway")
             ctx = current_span.get_span_context()
             if ctx.trace_flags.sampled:
@@ -344,7 +341,9 @@ async def query_agent(  # type: ignore[no-untyped-def]
             if current_span and current_span.is_recording():
                 current_span.set_attribute("gen_ai.system", "langchain")
                 current_span.set_attribute("gen_ai.request.model", "cached")
-                current_span.set_attribute(OBSERVATION_OUTPUT, cached_response)
+                current_span.set_attribute(
+                    SPAN_ATTR_CONTENT_OUTPUT_LENGTH, len(cached_response)
+                )
                 current_span.set_attribute("cache.hit", True)
 
             return {"response": final_response_text, "trace_id": trace_id}
@@ -430,10 +429,8 @@ async def query_agent(  # type: ignore[no-untyped-def]
                 os.environ.get("VLLM_REASONING_MODEL", "unknown"),
             )
             current_span.set_attribute(
-                "gen_ai.output.messages",
-                _json.dumps([{"role": "assistant", "content": final_response_text}]),
+                SPAN_ATTR_CONTENT_OUTPUT_LENGTH, len(final_response_text)
             )
-            current_span.set_attribute(OBSERVATION_OUTPUT, final_response_text)
 
         return {"response": final_response_text, "trace_id": trace_id}
 

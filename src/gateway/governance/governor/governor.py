@@ -24,7 +24,6 @@ from __future__ import annotations
 
 import copy
 import inspect
-import json
 import logging
 import time
 from collections.abc import Callable, Mapping
@@ -84,10 +83,9 @@ from src.gateway.governance.warrant.reliance import (
     reliance_evidence,
 )
 from src.gateway.observability.attributes import (
-    OBSERVATION_INPUT,
     OBSERVATION_NAME,
-    OBSERVATION_OUTPUT,
     OBSERVATION_TYPE,
+    SPAN_ATTR_GOVERNANCE_TOOL,
 )
 
 if TYPE_CHECKING:
@@ -235,9 +233,7 @@ class SymbolicGovernor:
         with tracer.start_as_current_span("cage.validate_action") as span:
             span.set_attribute(OBSERVATION_TYPE, "span")
             span.set_attribute(OBSERVATION_NAME, "governance_validate")
-            span.set_attribute(
-                OBSERVATION_INPUT, json.dumps({"tool": action, "params": params})
-            )
+            span.set_attribute(SPAN_ATTR_GOVERNANCE_TOOL, action)
 
             _check_policy_pin(policy_version_id)
 
@@ -257,7 +253,6 @@ class SymbolicGovernor:
                         GovernanceDecision.ALLOW,
                     )
                 span.set_attribute("cage.verdict", GovernanceDecision.ALLOW)
-                span.set_attribute(OBSERVATION_OUTPUT, GovernanceDecision.ALLOW)
                 span.set_status(Status(StatusCode.OK))
                 return {
                     "verdict": GovernanceDecision.ALLOW,
@@ -498,10 +493,7 @@ class SymbolicGovernor:
             with tracer.start_as_current_span("symbolic_governor.govern") as span:
                 span.set_attribute(OBSERVATION_TYPE, "span")
                 span.set_attribute(OBSERVATION_NAME, "governance_evaluation")
-                span.set_attribute(
-                    OBSERVATION_INPUT,
-                    json.dumps({"tool": tool_name, "params": sealed}),
-                )
+                span.set_attribute(SPAN_ATTR_GOVERNANCE_TOOL, tool_name)
 
                 eval_params = strip_untrusted_shadow_params(
                     copy.deepcopy(sealed), action=tool_name
@@ -536,7 +528,7 @@ class SymbolicGovernor:
                         seal=seal,
                     )
                 span.set_attribute("cage.seal_issued", True)
-                span.set_attribute(OBSERVATION_OUTPUT, GovernanceDecision.ALLOW)
+                span.set_attribute("cage.verdict", GovernanceDecision.ALLOW)
                 return seal
 
     async def _sealed_narrow(
@@ -697,9 +689,7 @@ class SymbolicGovernor:
         ) as span:
             span.set_attribute(OBSERVATION_TYPE, "span")
             span.set_attribute(OBSERVATION_NAME, "governance_revalidate_post_hitl")
-            span.set_attribute(
-                OBSERVATION_INPUT, json.dumps({"tool": action, "params": params})
-            )
+            span.set_attribute(SPAN_ATTR_GOVERNANCE_TOOL, action)
             span.set_attribute(
                 "toctou.revalidation.scope", "opa+warrant+revalidated+phase2"
             )
@@ -709,8 +699,6 @@ class SymbolicGovernor:
                 "toctou.approved_holds",
                 sorted(f"{tier}/{code}" for tier, code in approval.approved_holds),
             )
-            if approval.thread_id is not None:
-                span.set_attribute("toctou.revalidation.trace_id", approval.thread_id)
             try:
                 approved = _parse_barrier_snapshot(approval.barrier_preview)
             except ValueError:
@@ -907,9 +895,7 @@ class SymbolicGovernor:
         with tracer.start_as_current_span("symbolic_governor.verify") as span:
             span.set_attribute(OBSERVATION_TYPE, "span")
             span.set_attribute(OBSERVATION_NAME, "governance_simulation")
-            span.set_attribute(
-                OBSERVATION_INPUT, json.dumps({"tool": tool_name, "params": params})
-            )
+            span.set_attribute(SPAN_ATTR_GOVERNANCE_TOOL, tool_name)
 
             # DRY_RUN never commits, so no ReservationScope: run_pipeline refuses one.
             ctx = StageContext(action=tool_name, params=params, profile=Profile.DRY_RUN)
@@ -931,22 +917,11 @@ class SymbolicGovernor:
                     tool_name,
                 ).decision
             span.set_attribute("cage.verdict", decision.value)
-            span.set_attribute(
-                OBSERVATION_OUTPUT,
-                json.dumps(
-                    [
-                        {
-                            "tier": v.tier,
-                            "code": v.code,
-                            "message": v.message,
-                            "kind": v.kind.value,
-                        }
-                        for v in violations
-                    ]
+            if violations:
+                span.set_attribute(
+                    "cage.governance.violation_codes",
+                    [f"{v.tier}/{v.code}" for v in violations],
                 )
-                if violations
-                else GovernanceDecision.ALLOW,
-            )
             return {
                 "decision": decision,
                 "violations": violations,
