@@ -73,6 +73,11 @@ EXPECTED_PULL_REQUEST_PARAMETERS: Mapping[str, Any] = {
     "required_review_thread_resolution": False,
 }
 
+# The check `.github/workflows/review-bypass-attestation.yml` reports. It
+# passes on an approving review or on a verified signed record of the
+# unreviewed head, and a record is not a review (§3.1, POAM-2026-115).
+REVIEW_BYPASS_CHECK = "Approved review or recorded bypass"
+
 # Required status checks on `main` and the app each is pinned to (§3).
 EXPECTED_REQUIRED_CHECKS: Mapping[str, int] = {
     "Lint": GITHUB_ACTIONS_APP_ID,
@@ -85,6 +90,7 @@ EXPECTED_REQUIRED_CHECKS: Mapping[str, int] = {
     "Pytest Logic Tests": GITHUB_ACTIONS_APP_ID,
     "Terraform Tests (gcp-gke, mock providers)": GITHUB_ACTIONS_APP_ID,
     "Quickstart Bootstrap & First-DENY Smoke Gate": GITHUB_ACTIONS_APP_ID,
+    REVIEW_BYPASS_CHECK: GITHUB_ACTIONS_APP_ID,
 }
 
 # Branches need not be up to date before merging (§1).
