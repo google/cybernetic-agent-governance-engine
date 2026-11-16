@@ -65,6 +65,7 @@ locals {
         local.workload_mesh_identities.langfuse,
       ]
     }
+    templateSha256 = filesha256("${path.module}/charts/workload-mesh-policy/templates/servers-and-authz.yaml")
   }
 }
 

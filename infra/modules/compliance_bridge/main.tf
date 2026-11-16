@@ -605,6 +605,7 @@ resource "helm_release" "mesh_policy" {
   values = [yamlencode({
     trustedIdentities = var.trusted_mesh_identities
     auditorIdentity   = var.auditor_mesh_identity
+    templateSha256    = filesha256("${path.module}/mesh-policy/templates/policy.yaml")
   })]
 }
 

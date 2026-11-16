@@ -383,6 +383,18 @@ def test_gateway_module_wires_identities_not_hmac() -> None:
     assert "CAGE_ROUTING_SEAL_SECRET" not in text
     assert "cage-routing-seal" not in text
     assert 'resource "helm_release" "mesh_policy"' in text
+    assert 'filesha256("${path.module}/mesh-policy/templates/policy.yaml")' in text, (
+        "gateway helm_release.mesh_policy must hash templates/policy.yaml"
+    )
+    cb_tf = (_REPO / "infra" / "modules" / "compliance_bridge" / "main.tf").read_text()
+    assert 'filesha256("${path.module}/mesh-policy/templates/policy.yaml")' in cb_tf, (
+        "compliance_bridge helm_release.mesh_policy must hash templates/policy.yaml"
+    )
+    wl_tf = (_REPO / "infra" / "targets" / "gcp-gke" / "mesh_policy.tf").read_text()
+    assert (
+        'filesha256("${path.module}/charts/workload-mesh-policy/templates/servers-and-authz.yaml")'
+        in wl_tf
+    ), "workload_mesh_policy must hash servers-and-authz.yaml"
 
 
 def test_gke_target_trusts_only_the_advisor_and_meshes_the_namespace() -> None:
