@@ -8,6 +8,10 @@
 > **ISO 42001:** A.5.2 (Policies for AI risk), A.9.4 (Monitoring)
 > **Reference:** NIST SP 800-53 Rev. 5, EO 14028, NIST SP 800-218 (SSDF)
 
+> **⚠️ Evidence Withdrawal and Signing Hold (2026-11-15, `POAM-2026-222` in [`docs/POAM.md`](../../docs/POAM.md)):** The `Langfuse Metric` column of §2.1 and Appendix B were written as a design specification and describe a Langfuse custom-metric backend that was never built. None of the `cage.<subsystem>.<metric>` names they list has ever been emitted by `src/` or `infra/`; every metric CAGE emits is a `cage_*` Prometheus series. The column and Appendix B are withdrawn as monitoring evidence, along with the two compensating controls that rest on mechanisms as written that do not exist: RA-001 (1), which names a Langfuse compliance-project log as the 100% governance-decision record (decision custody is the Redis DB 1 `cage:evidence:stream` hot custody buffer feeding KMS-signed WORM archival), and RA-002 (1), since `CronJob/lula-audit` injects no synthetic evaluations. Rows are left unchanged until each has an owner-recorded disposition under `POAM-2026-222`: implement the metric, re-point to real telemetry, or withdraw the monitoring claim and reopen the risk.
+>
+> **Signing hold:** RA-001, RA-002, RA-003, and RA-004 (§5) and the §6 approval block **must not be signed** until every §2.1 row has a recorded disposition under `POAM-2026-222`. An acceptance signed before then would rest on monitoring that does not exist.
+
 ---
 
 ## Table of Contents
@@ -82,6 +86,8 @@ Threshold IDs follow the pattern `THR-<CATEGORY>-<NNN>`:
 > **Safety Supplement:** `config/safety_params.json`
 
 ### 2.1 Full Threshold Registry Table
+
+> **Note (2026-11-15):** The `Langfuse Metric` column below is withdrawn as monitoring evidence pending per-row dispositions under `POAM-2026-222` (see the notice at the top of this document). The THR-AUD-003 entry was corrected in `#769` under `POAM-2026-010`.
 
 | Threshold ID     | Threshold Name                                       | Value       | Unit                | Source Control                       | Code Location                                                                                                                                                                   | Lula Validation                                                        | Langfuse Metric                                                                              | POAM Ref                          | Risk Acceptance                                                                                                                                                                                                                                            |
 | ---------------- | ---------------------------------------------------- | ----------- | ------------------- | ------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------- | -------------------------------------------------------------------------------------------- | --------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
@@ -297,6 +303,8 @@ This section documents thresholds that represent **known risk acceptances** — 
 
 ## 6. Approval Block
 
+> **Signing hold (2026-11-15):** Do not sign this page until every §2.1 row has a recorded disposition under `POAM-2026-222` (see the notice at the top of this document). The AO attestation below accepts RA-001 through RA-004 "with the compensating controls described in Section 5", and two of those compensating controls are withdrawn.
+
 ```
 ================================================================================
   CAGE THRESHOLD TRACEABILITY MATRIX — SIGNATURE PAGE
@@ -366,6 +374,8 @@ it carries formal risk acceptance authority:
 | [`deployment/opa_config.yaml`](../../deployment/opa_config.yaml)                               | OPA bundle configuration                   | OPA runtime                                                                     |
 
 ## Appendix B: Langfuse Metric Naming Convention
+
+> **Note (2026-11-15):** No metric following this convention has ever been emitted, and Langfuse holds no custom counters, gauges, or histograms in CAGE's design. The governance-critical metrics listed below do not exist (`POAM-2026-222`). Emitted metrics are `cage_*` Prometheus series scraped from `:9090/metrics`.
 
 All CAGE Langfuse metrics follow the schema: `cage.<subsystem>.<metric_name>`
 
