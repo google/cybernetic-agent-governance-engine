@@ -12,7 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Static gate: the workload modules never turn telemetry content capture on.
+"""Static gate: the workload modules never turn telemetry content capture on (POAM-2026-225).
 
 The telemetry backend writes every raw event it receives to an event bucket that
 is retention-locked outside staging. Neither workload module may therefore enable
