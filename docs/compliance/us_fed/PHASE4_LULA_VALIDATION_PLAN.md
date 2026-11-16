@@ -345,7 +345,7 @@ See [`compliance/lula/README.md`](../../../README.md) for the full validation co
 | [`compliance/lula/README.md`](../../../README.md) | Lula validation coverage and activation guide |
 | `de5534ac:deployment/k8s/lula-cron.yaml` | CronJob manifest (lula-audit + lula-sc4-watch) |
 | `de5534ac:deployment/k8s/lula-rbac.yaml` | RBAC for lula-auditor ServiceAccount |
-| [`compliance/sar/SAR_2026Q1.md`](../../../compliance/sar/SAR_2026Q1.md) | Security Assessment Report (pre-ATO gap assessment) |
+| [`compliance/archive/retracted/SAR_2026Q1.md`](../../../compliance/archive/retracted/SAR_2026Q1.md) | Security Assessment Report, retracted 2026-11-15: the assessment it records did not take place (`POAM-2026-224`) |
 | [`compliance/continuous-monitoring/ISCM_STRATEGY.md`](../../../compliance/continuous-monitoring/ISCM_STRATEGY.md) | ISCM cadence and escalation procedures |
 
 ---
