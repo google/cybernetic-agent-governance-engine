@@ -35,6 +35,7 @@ from opentelemetry import trace
 from opentelemetry.trace import Span, Status, StatusCode
 
 from config.settings import Config
+from src.gateway.governance.contracts import PolicyEngineUnavailableError
 from src.gateway.observability.attributes import (
     OBSERVATION_NAME,
     OBSERVATION_TYPE,
@@ -444,8 +445,9 @@ def _decision_string(raw_result: Any) -> str:
     """Normalize an OPA ``result`` to a canonical uppercase decision string.
 
     OPA policies return a dict (``{"allow": true}`` or ``{"decision": "ALLOW"}``),
-    a bool, or a string; anything else denies. A dict with neither key, or
-    whose ``allow`` and ``decision`` disagree, is ambiguous and denies.
+    a bool, or a string; anything else raises :class:`PolicyEngineUnavailableError`.
+    A dict with neither key, or whose ``allow`` and ``decision`` disagree, is
+    undefined/ambiguous and raises :class:`PolicyEngineUnavailableError`.
     """
     if isinstance(raw_result, dict):
         answers = {
@@ -453,25 +455,68 @@ def _decision_string(raw_result: Any) -> str:
             for key in ("decision", "allow")
             if key in raw_result
         }
-        return answers.pop() if len(answers) == 1 else "DENY"
+        if len(answers) == 1:
+            return answers.pop()
+        raise PolicyEngineUnavailableError(
+            f"OPA returned undefined or conflicting decision object: {raw_result!r}",
+            reason="UNDEFINED_DECISION",
+        )
     return _scalar_decision(raw_result)
 
 
 def _scalar_decision(value: Any) -> str:
-    """``True``/``False`` → ``ALLOW``/``DENY``; ``None`` denies; else uppercased."""
+    """``True``/``False`` → ``ALLOW``/``DENY``; ``None`` raises; else uppercased."""
     if isinstance(value, bool):
         return "ALLOW" if value else "DENY"
-    return str(value).upper() if value is not None else "DENY"
+    if value is None:
+        raise PolicyEngineUnavailableError(
+            "OPA returned None decision",
+            reason="UNDEFINED_DECISION",
+        )
+    cleaned = str(value).strip().upper()
+    if not cleaned:
+        raise PolicyEngineUnavailableError(
+            "OPA returned empty decision string",
+            reason="UNDEFINED_DECISION",
+        )
+    return cleaned
 
 
-def _deny(span: Span, error: BaseException | str, reason: str) -> str:
-    """Log and trace a failed OPA check; the decision is always DENY."""
+class _OPAQueryFailed(PolicyEngineUnavailableError):
+    """Internal transport/response failure carrying its CircuitBreaker outcome."""
+
+    def __init__(
+        self,
+        message: str,
+        *,
+        reason: str,
+        outcome: CallOutcome,
+        status_code: int | None = None,
+    ) -> None:
+        super().__init__(message, reason=reason, status_code=status_code)
+        self.outcome = outcome
+
+
+def _fail_unavailable(
+    span: Span,
+    error: BaseException | str,
+    reason: str,
+    outcome: CallOutcome,
+    *,
+    status_code: int | None = None,
+) -> None:
+    """Log, trace, and raise a typed PolicyEngineUnavailableError."""
     logger.critical("🔥 OPA FAILURE (%s): %s", reason, error)
     if isinstance(error, BaseException):
         span.record_exception(error)
     span.set_status(Status(StatusCode.ERROR))
     span.set_attribute(TRACE_METADATA_GOVERNANCE_DENIAL_REASON, reason)
-    return "DENY"
+    raise _OPAQueryFailed(
+        str(error),
+        reason=reason,
+        outcome=outcome,
+        status_code=status_code,
+    )
 
 
 class OPAClient:
@@ -653,7 +698,7 @@ class OPAClient:
     async def evaluate_policy(
         self, input_data: dict[str, Any], current_latency_ms: float = 0.0
     ) -> str:
-        """Ask OPA for a decision on ``input_data``; any failure denies.
+        """Ask OPA for a decision on ``input_data``; raise on engine unavailability.
 
         Every call goes to OPA: decisions are never cached, so a policy or
         data change takes effect on the next request.
@@ -662,7 +707,10 @@ class OPAClient:
             logger.critical(
                 f"💀 Bankruptcy Protocol: {current_latency_ms}ms > {self.cb.max_latency_budget}ms."
             )
-            return "DENY"
+            raise PolicyEngineUnavailableError(
+                f"Latency budget exceeded ({current_latency_ms}ms > {self.cb.max_latency_budget}ms)",
+                reason="LATENCY_BUDGET_EXCEEDED",
+            )
 
         if self.cb.check_soft_ceiling(current_latency_ms):
             logger.warning(
@@ -672,21 +720,35 @@ class OPAClient:
         ticket = self.cb.admit()
         if ticket is None:
             logger.warning(
-                "⚠️ Circuit Breaker %s. Fast failing OPA check -> DENY.",
+                "⚠️ Circuit Breaker %s. Fast failing OPA check.",
                 self.cb.state.value,
             )
-            return "DENY"
+            raise PolicyEngineUnavailableError(
+                f"OPA circuit breaker is {self.cb.state.value}",
+                reason="CIRCUIT_BREAKER_OPEN",
+            )
 
         outcome = CallOutcome.INCONCLUSIVE
         try:
             decision, outcome = await self._query_opa(input_data)
             return decision
-        except Exception:
-            # _query_opa denies every failure it anticipates; anything else is
-            # a local bug, and PolicyClient promises an erroring policy engine
-            # yields DENY.
-            logger.exception("🔥 OPA FAILURE (UNEXPECTED_ERROR); denying.")
-            return "DENY"
+        except _OPAQueryFailed as exc:
+            outcome = exc.outcome
+            raise PolicyEngineUnavailableError(
+                str(exc),
+                reason=exc.reason,
+                status_code=exc.status_code,
+            ) from exc
+        except PolicyEngineUnavailableError:
+            raise
+        except asyncio.CancelledError:
+            raise
+        except Exception as exc:
+            logger.exception("🔥 OPA FAILURE (UNEXPECTED_ERROR); failing closed.")
+            raise PolicyEngineUnavailableError(
+                f"Unexpected OPA evaluation error: {exc}",
+                reason="UNEXPECTED_ERROR",
+            ) from exc
         finally:
             self.cb.record(ticket, outcome)
 
@@ -717,42 +779,31 @@ class OPAClient:
             if self.auth_token:
                 headers["Authorization"] = f"Bearer {self.auth_token}"
 
-            # IMPORTANT: Do NOT use ?explain=full in the hot governance path.
-            # explain=full forces OPA to serialize its full policy evaluation
-            # trace (~100KB-1MB JSON), adding 13-17s of latency vs ~30ms without it.
-            # The audit trail is captured via OTel span attributes above.
-            # Use ?explain=notes for lightweight rule annotations if needed.
-            #
-            # Explain-mode logging is async and non-blocking — the hot path is
-            # never delayed by explain requests.  See _explain_worker() and
-            # start_explain_worker() for the background explain architecture.
             try:
-                # HIGH-7 fix: use the pooled client — no new client per request.
-                # The client's own timeouts apply (connect 2 s, read and write
-                # 5 s, pool 2 s), so a saturated pool fails fast.
                 response = await self._get_client().post(
                     self.target_url,
                     json={"input": normalized_input},
                     headers=headers,
                 )
             except httpx.PoolTimeout as exc:
-                # Every pooled connection is busy. This request is denied, but
-                # that is no evidence OPA is down: if OPA is slow enough to
-                # matter, the in-flight calls time out and trip the breaker.
-                return _deny(
-                    span, exc, "LOCAL_POOL_SATURATED"
-                ), CallOutcome.INCONCLUSIVE
+                _fail_unavailable(
+                    span, exc, "LOCAL_POOL_SATURATED", CallOutcome.INCONCLUSIVE
+                )
             except (httpx.UnsupportedProtocol, httpx.LocalProtocolError) as exc:
-                # Raised before any byte reaches OPA: an unusable OPA_URL, or
-                # an illegal header value such as a token with a newline.
-                return _deny(
-                    span, exc, "LOCAL_MISCONFIGURATION"
-                ), CallOutcome.INCONCLUSIVE
+                _fail_unavailable(
+                    span, exc, "LOCAL_MISCONFIGURATION", CallOutcome.INCONCLUSIVE
+                )
             except httpx.TransportError as exc:
-                return _deny(span, exc, "SYSTEM_FAILURE"), CallOutcome.UPSTREAM_FAILURE
+                _fail_unavailable(
+                    span, exc, "SYSTEM_FAILURE", CallOutcome.UPSTREAM_FAILURE
+                )
             except Exception as exc:
-                # Misconfiguration (e.g. a malformed OPA_URL) or a local bug.
-                return _deny(span, exc, "SYSTEM_FAILURE"), CallOutcome.INCONCLUSIVE
+                reason = (
+                    "LOCAL_MISCONFIGURATION"
+                    if self._endpoint_error is not None
+                    else "SYSTEM_FAILURE"
+                )
+                _fail_unavailable(span, exc, reason, CallOutcome.INCONCLUSIVE)
 
             span.set_attribute(
                 TRACE_METADATA_LATENCY_CURRENCY_TAX, (time.time() - start_time) * 1000
@@ -760,30 +811,50 @@ class OPAClient:
             status = response.status_code
             # 5xx, or 408/429 from a proxy in front of OPA: no answer came back.
             if status >= 500 or status in (408, 429):
-                return (
-                    _deny(span, f"OPA returned HTTP {status}", "SYSTEM_FAILURE"),
+                _fail_unavailable(
+                    span,
+                    f"OPA returned HTTP {status}",
+                    "SYSTEM_FAILURE",
                     CallOutcome.UPSTREAM_FAILURE,
+                    status_code=status,
                 )
             if not 200 <= status < 300:
-                return (
-                    _deny(
-                        span, f"OPA rejected the query: HTTP {status}", "OPA_REJECTED"
-                    ),
+                _fail_unavailable(
+                    span,
+                    f"OPA rejected the query: HTTP {status}",
+                    "OPA_REJECTED",
                     CallOutcome.HEALTHY,
+                    status_code=status,
                 )
             try:
                 resp_json = response.json()
             except ValueError as exc:
-                return _deny(span, exc, "MALFORMED_RESPONSE"), CallOutcome.HEALTHY
+                _fail_unavailable(span, exc, "MALFORMED_RESPONSE", CallOutcome.HEALTHY)
             if not isinstance(resp_json, dict):
-                return (
-                    _deny(
-                        span, "OPA response is not a JSON object", "MALFORMED_RESPONSE"
-                    ),
+                _fail_unavailable(
+                    span,
+                    "OPA response is not a JSON object",
+                    "MALFORMED_RESPONSE",
                     CallOutcome.HEALTHY,
                 )
 
-            decision_str = _decision_string(resp_json.get("result", "DENY"))
+            if "result" not in resp_json:
+                _fail_unavailable(
+                    span,
+                    "OPA response omitted 'result' (undefined Rego decision document)",
+                    "UNDEFINED_DECISION",
+                    CallOutcome.HEALTHY,
+                )
+
+            try:
+                decision_str = _decision_string(resp_json["result"])
+            except PolicyEngineUnavailableError as exc:
+                _fail_unavailable(
+                    span,
+                    exc,
+                    exc.reason,
+                    CallOutcome.HEALTHY,
+                )
             span.set_attribute(TRACE_METADATA_GOVERNANCE_DECISION, decision_str)
 
             # The explanation is logged for the Auditor via the OTel span above.

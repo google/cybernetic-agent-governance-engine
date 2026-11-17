@@ -720,6 +720,7 @@ class TestNoPausePath:
     three non-ALLOW, non-NARROW verdicts and the enum has no PAUSE member."""
 
     def test_verdict_handlers_name_no_pause(self):
+        from src.gateway.governance.classification_engine import InfrastructureOutcome
         from src.gateway.governance.decisions import GovernanceDecision
         from src.gateway.governance.governor import governor as governor_module
 
@@ -727,6 +728,7 @@ class TestNoPausePath:
             GovernanceDecision.DENY,
             GovernanceDecision.REQUIRE_APPROVAL,
             GovernanceDecision.DEFER,
+            InfrastructureOutcome.INFRASTRUCTURE_BLOCK,
         }
         assert not hasattr(GovernanceDecision, "PAUSE")
         assert not hasattr(governor_module, "handle_pause")

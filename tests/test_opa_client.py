@@ -21,6 +21,7 @@ import respx
 pytestmark = pytest.mark.unit
 
 from src.gateway.core.policy import OPAClient
+from src.gateway.governance.contracts import PolicyEngineUnavailableError
 
 
 @pytest.fixture
@@ -69,8 +70,9 @@ async def test_circuit_breaker(opa_client):
         mock.post(query_url).mock(return_value=httpx.Response(500))
 
         for _ in range(5):
-            result = await opa_client.evaluate_policy({"action": "test"})
-            assert result == "DENY"
+            with pytest.raises(PolicyEngineUnavailableError) as exc_info:
+                await opa_client.evaluate_policy({"action": "test"})
+            assert exc_info.value.reason == "SYSTEM_FAILURE"
 
         # Now CB should be OPEN
         assert opa_client.cb.state == "OPEN"

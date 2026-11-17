@@ -182,9 +182,12 @@ class _AdvisorTransport(httpx.AsyncBaseTransport):
 
     ``CageClient`` builds the governance exchange and verifies its answer.
     Sending it through the advisor's ``httpx.AsyncClient`` keeps the
-    advisor's W3C trace context and ``x-cage-principal`` headers, its 429/503
-    retry budget, and the policy-drift replay with a refreshed
-    ``policy_version_id``.
+    advisor's W3C trace context and ``x-cage-principal`` headers, its 429
+    rate-limit retry budget (matching ``execute_tool``: 503 is never retried,
+    so a governance or mesh outage surfaces once as ``GATEWAY_ERROR`` without
+    multiplying hash-chained ``GOVERNANCE_INFRASTRUCTURE_BLOCK`` events or
+    parsing unverified error bodies), and the policy-drift replay with a
+    refreshed ``policy_version_id``.
     """
 
     def __init__(self, owner: GatewayClient, http: httpx.AsyncClient) -> None:
@@ -219,7 +222,7 @@ class _AdvisorTransport(httpx.AsyncBaseTransport):
                 path, json=body, headers=headers, timeout=timeout
             )
 
-        response = await _post_with_retries(_post, retry_statuses=frozenset({429, 503}))
+        response = await _post_with_retries(_post, retry_statuses=frozenset({429}))
         if (
             current is not None
             and response.status_code == 403
@@ -231,9 +234,7 @@ class _AdvisorTransport(httpx.AsyncBaseTransport):
             body["policy_version_id"] = await self._owner.get_policy_version(
                 timeout=timeout
             )
-            response = await _post_with_retries(
-                _post, retry_statuses=frozenset({429, 503})
-            )
+            response = await _post_with_retries(_post, retry_statuses=frozenset({429}))
         if current is not None:
             current.response = response
         return response

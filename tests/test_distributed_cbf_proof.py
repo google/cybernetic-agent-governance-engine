@@ -199,6 +199,7 @@ class _AlwaysNarrows:
 
 _KIND = {
     "HARD": ViolationKind.HARD,
+    "INFRASTRUCTURE": ViolationKind.INFRASTRUCTURE,
     "HITL": ViolationKind.HITL,
     "DEFERRABLE": ViolationKind.DEFERRABLE,
     "NARROWABLE": ViolationKind.NARROWABLE,
