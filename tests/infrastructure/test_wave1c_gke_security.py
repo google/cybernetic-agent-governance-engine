@@ -608,6 +608,9 @@ def test_ic09_gateway_dockerfile_root_owned_app_and_supply_chain_hashes() -> Non
     assert "--chown=appuser" not in gw_dockerfile
     assert "COPY --from=builder /app /app" in gw_dockerfile
     assert "ARG UV_IMAGE=ghcr.io/astral-sh/uv:" in gw_dockerfile
+    assert "FROM ${UV_IMAGE} AS uv" in gw_dockerfile
+    assert "COPY --from=uv /uv /bin/uv" in gw_dockerfile
+    assert "COPY --from=$" not in gw_dockerfile
     assert "@sha256:" in gw_dockerfile
     assert "--require-hashes" in gw_dockerfile
     assert (
@@ -615,6 +618,13 @@ def test_ic09_gateway_dockerfile_root_owned_app_and_supply_chain_hashes() -> Non
         in gw_dockerfile
     )
     assert "USER appuser" in gw_dockerfile
+
+    local_dev_dockerfile = (
+        REPO_ROOT / "deployment" / "docker" / "Dockerfile.local-dev"
+    ).read_text(encoding="utf-8")
+    assert "FROM ${UV_IMAGE} AS uv" in local_dev_dockerfile
+    assert "COPY --from=uv /uv /usr/local/bin/uv" in local_dev_dockerfile
+    assert "COPY --from=$" not in local_dev_dockerfile
 
 
 def test_ic09_runtime_workloads_disable_sa_token_automount_and_enforce_readonly_rootfs() -> (

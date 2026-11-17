@@ -30,6 +30,11 @@ ARG WOLFI_BASE=cgr.dev/chainguard/wolfi-base@sha256:f15fea2f49cb14dceaea491fcbde
 ARG UV_IMAGE=ghcr.io/astral-sh/uv:0.13.8@sha256:5cc1805e2426484abca4ad46ea783bab281fdb225fd82d8ce6d66a81254bac85
 
 # ---------------------------------------------------------------------------
+# Stage 0 — digest-pinned uv binary source (BuildKit rejects --from=${ARG})
+# ---------------------------------------------------------------------------
+FROM ${UV_IMAGE} AS uv
+
+# ---------------------------------------------------------------------------
 # Stage 1 — builder
 # ---------------------------------------------------------------------------
 FROM ${WOLFI_BASE} AS builder
@@ -40,7 +45,7 @@ WORKDIR /app
 RUN apk add --no-cache python-3.12 python-3.12-dev build-base
 
 # Install uv for dependency management (builder only — pinned by immutable OCI index digest)
-COPY --from=${UV_IMAGE} /uv /bin/uv
+COPY --from=uv /uv /bin/uv
 
 # Use the system interpreter so the venv's python symlink
 # (/usr/bin/python3.12) resolves identically in the runtime stage.
@@ -74,8 +79,7 @@ RUN uv sync --frozen --no-dev --extra gateway --extra compliance --extra langfus
 
 # Download and cryptographically verify spaCy en_core_web_lg 3.8.0 wheel via --require-hashes.
 RUN printf '%s\n' \
-    'en-core-web-lg @ https://github.com/explosion/spacy-models/releases/download/en_core_web_lg-3.8.0/en_core_web_lg-3.8.0-py3-none-any.whl \\' \
-    '    --hash=sha256:293e9547a655b25499198ab15a525b05b9407a75f10255e405e8c3854329ab63' \
+    'en-core-web-lg @ https://github.com/explosion/spacy-models/releases/download/en_core_web_lg-3.8.0/en_core_web_lg-3.8.0-py3-none-any.whl --hash=sha256:293e9547a655b25499198ab15a525b05b9407a75f10255e405e8c3854329ab63' \
     > /tmp/spacy-model.requirements.txt \
     && uv pip install --python /app/.venv --no-cache --no-deps --require-hashes -r /tmp/spacy-model.requirements.txt \
     && rm -f /tmp/spacy-model.requirements.txt
