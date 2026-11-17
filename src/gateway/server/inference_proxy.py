@@ -41,6 +41,7 @@ import inspect
 import json
 import logging
 import os
+import re
 import time
 import uuid as _uuid
 from collections.abc import AsyncIterator
@@ -73,6 +74,332 @@ from src.gateway.observability.attributes import (
 logger = logging.getLogger("Gateway.InferenceProxy")
 
 inference_app = FastAPI(title="CAGE Inference Proxy")
+
+_DEFAULT_MAX_REQUEST_BODY_BYTES = 4 * 1024 * 1024
+_DEFAULT_MAX_STREAM_BUFFER_BYTES = 16 * 1024 * 1024
+_DEFAULT_RESERVED_COMPLETION_TOKENS = 1024
+
+# WHATWG HTML §9.2.6 SSE line breaks: CRLF, CR, or LF only — NEVER Python
+# str.splitlines(), which splits on U+2028 / U+2029 and breaks JSON data: framing
+# (GHSA-xm4c-x85r-38fp).
+_SSE_LINE_SPLIT_RE = re.compile(r"\r\n|\r|\n")
+
+
+def _iter_sse_data_payloads(raw_stream: str) -> list[str]:
+    """Extract SSE ``data:`` payloads strictly under WHATWG CRLF/CR/LF framing."""
+    payloads: list[str] = []
+    event_data_lines: list[str] = []
+
+    def _flush_event_block() -> bool:
+        """Flush buffered data: lines for one SSE event; return True if [DONE] seen."""
+        if not event_data_lines:
+            return False
+        if len(event_data_lines) == 1:
+            single = event_data_lines[0].strip()
+            event_data_lines.clear()
+            if not single:
+                return False
+            if single == "[DONE]":
+                return True
+            payloads.append(single)
+            return False
+
+        joined = "\n".join(event_data_lines).strip()
+        lines_copy = list(event_data_lines)
+        event_data_lines.clear()
+        if joined == "[DONE]":
+            return True
+        try:
+            json.loads(joined)
+            payloads.append(joined)
+            return False
+        except ValueError:
+            pass
+
+        for item in lines_copy:
+            stripped = item.strip()
+            if not stripped:
+                continue
+            if stripped == "[DONE]":
+                return True
+            payloads.append(stripped)
+        return False
+
+    for raw_line in _SSE_LINE_SPLIT_RE.split(raw_stream):
+        if raw_line == "":
+            if _flush_event_block():
+                return payloads
+            continue
+        if raw_line.startswith(":"):
+            continue
+        field, sep, value = raw_line.partition(":")
+        if field.strip() == "data" and sep == ":":
+            if value.startswith(" "):
+                value = value[1:]
+            event_data_lines.append(value)
+
+    _flush_event_block()
+    return payloads
+
+
+def _reject_non_finite_json(token: str) -> Any:
+    raise ValueError(f"Non-finite JSON constant {token!r} is not permitted")
+
+
+async def _read_validated_chat_body(
+    request: Request,
+) -> tuple[dict[str, Any] | None, JSONResponse | None]:
+    """Read a bounded JSON object body, returning ``(body, None)`` or ``(None, error_response)``."""
+    max_bytes = max(
+        1024,
+        int(
+            os.environ.get(
+                "CAGE_INFERENCE_MAX_REQUEST_BYTES",
+                str(_DEFAULT_MAX_REQUEST_BODY_BYTES),
+            )
+        ),
+    )
+    content_length = request.headers.get("content-length")
+    if content_length:
+        try:
+            parsed_len = int(content_length)
+            if parsed_len < 0:
+                raise ValueError("negative content-length")
+            if parsed_len > max_bytes:
+                return None, JSONResponse(
+                    status_code=413,
+                    content={
+                        "error": "payload_too_large",
+                        "message": f"Request body exceeds maximum size of {max_bytes} bytes",
+                    },
+                )
+        except ValueError:
+            return None, JSONResponse(
+                status_code=400,
+                content={
+                    "error": "invalid_request_error",
+                    "message": "Invalid Content-Length header",
+                },
+            )
+
+    if hasattr(request, "stream"):
+        chunks: list[bytes] = []
+        total = 0
+        try:
+            async for chunk in request.stream():
+                if not chunk:
+                    continue
+                total += len(chunk)
+                if total > max_bytes:
+                    return None, JSONResponse(
+                        status_code=413,
+                        content={
+                            "error": "payload_too_large",
+                            "message": f"Request body exceeds maximum size of {max_bytes} bytes",
+                        },
+                    )
+                chunks.append(bytes(chunk))
+            raw_bytes = b"".join(chunks)
+            parsed = json.loads(
+                raw_bytes.decode("utf-8"),
+                parse_constant=_reject_non_finite_json,
+            )
+        except (UnicodeDecodeError, json.JSONDecodeError, ValueError, TypeError):
+            return None, JSONResponse(
+                status_code=400,
+                content={
+                    "error": "invalid_request_error",
+                    "message": "Malformed JSON request body",
+                },
+            )
+    else:
+        try:
+            parsed = await request.json()
+        except Exception:
+            return None, JSONResponse(
+                status_code=400,
+                content={
+                    "error": "invalid_request_error",
+                    "message": "Malformed JSON request body",
+                },
+            )
+
+    if not isinstance(parsed, dict):
+        return None, JSONResponse(
+            status_code=400,
+            content={
+                "error": "invalid_request_error",
+                "message": "Request body must be a JSON object",
+            },
+        )
+    if "messages" in parsed and not isinstance(parsed.get("messages"), list):
+        return None, JSONResponse(
+            status_code=400,
+            content={
+                "error": "invalid_request_error",
+                "message": "messages must be a list",
+            },
+        )
+    if (
+        "stream_options" in parsed
+        and parsed.get("stream_options") is not None
+        and not isinstance(parsed.get("stream_options"), dict)
+    ):
+        return None, JSONResponse(
+            status_code=400,
+            content={
+                "error": "invalid_request_error",
+                "message": "stream_options must be an object",
+            },
+        )
+    return parsed, None
+
+
+def _parse_strict_token_limit(body: dict[str, Any], field_name: str) -> int | None:
+    """Validate an optional OpenAI token limit field as a strict non-negative int."""
+    if field_name not in body or body[field_name] is None:
+        return None
+    raw_val = body[field_name]
+    if isinstance(raw_val, bool) or not isinstance(raw_val, int) or raw_val < 0:
+        raise HTTPException(
+            status_code=400,
+            detail={
+                "error": "invalid_request_error",
+                "message": f"{field_name} must be a non-negative integer",
+            },
+        )
+    return raw_val
+
+
+def _compute_token_reservation(body: dict[str, Any], scannable_prompt_text: str) -> int:
+    """Compute a positive token reservation covering max_tokens / max_completion_tokens."""
+    parsed_max_tokens = _parse_strict_token_limit(body, "max_tokens")
+    parsed_max_completion = _parse_strict_token_limit(body, "max_completion_tokens")
+
+    raw_n = body.get("n", 1)
+    if raw_n is None:
+        num_choices = 1
+    elif isinstance(raw_n, bool) or not isinstance(raw_n, int) or raw_n < 1:
+        raise HTTPException(
+            status_code=400,
+            detail={
+                "error": "invalid_request_error",
+                "message": "n must be a positive integer",
+            },
+        )
+    else:
+        num_choices = min(raw_n, 128)
+
+    prompt_estimate = max(1, (len(scannable_prompt_text.encode("utf-8")) + 3) // 4)
+    explicit_limits = [
+        v for v in (parsed_max_tokens, parsed_max_completion) if v is not None
+    ]
+    if not explicit_limits:
+        default_comp = max(
+            1,
+            int(
+                os.environ.get(
+                    "CAGE_DEFAULT_COMPLETION_TOKEN_RESERVATION",
+                    str(_DEFAULT_RESERVED_COMPLETION_TOKENS),
+                )
+            ),
+        )
+        return prompt_estimate + (default_comp * num_choices)
+
+    explicit_max = max(explicit_limits)
+    if explicit_max == 0:
+        return prompt_estimate
+    return explicit_max * num_choices
+
+
+async def _reconcile_actual_usage(
+    agent_id: str, reserved_tokens: int, usage: Any
+) -> None:
+    """Reconcile reserved token quota against actual vLLM usage.total_tokens when present."""
+    if not isinstance(usage, dict):
+        return
+    total_tokens = usage.get("total_tokens")
+    if (
+        isinstance(total_tokens, bool)
+        or not isinstance(total_tokens, int)
+        or total_tokens < 0
+    ):
+        return
+    quota_proxy = _get_token_quota_proxy()
+    reconcile_fn = getattr(quota_proxy, "reconcile_actual_tokens", None)
+    if callable(reconcile_fn):
+        res = reconcile_fn(agent_id, reserved_tokens, total_tokens)
+        if inspect.isawaitable(res):
+            await res
+
+
+def _build_redacted_sse_bytes(
+    *,
+    stream_id: str,
+    created: int,
+    model_id: str,
+    sanitized_choices: list[dict[str, Any]],
+    usage: dict[str, Any] | None,
+) -> list[bytes]:
+    """Encode sanitized streaming choices as valid OpenAI chat.completion.chunk SSE frames."""
+    frames: list[bytes] = []
+    delta_choices: list[dict[str, Any]] = []
+    finish_choices: list[dict[str, Any]] = []
+    for item in sanitized_choices:
+        idx = int(item["index"])
+        delta_obj: dict[str, Any] = {"role": "assistant"}
+        if item.get("reasoning_content") is not None:
+            delta_obj["reasoning_content"] = item["reasoning_content"]
+        if item.get("content") is not None:
+            delta_obj["content"] = item["content"]
+        if item.get("tool_calls"):
+            tc_deltas: list[dict[str, Any]] = []
+            for tc_pos, tc in enumerate(item["tool_calls"]):
+                tc_deltas.append(
+                    {
+                        "index": tc_pos,
+                        "id": tc["id"],
+                        "type": tc.get("type", "function"),
+                        "function": tc["function"],
+                    }
+                )
+            delta_obj["tool_calls"] = tc_deltas
+        delta_choices.append(
+            {
+                "index": idx,
+                "delta": delta_obj,
+                "finish_reason": None,
+            }
+        )
+        finish_choices.append(
+            {
+                "index": idx,
+                "delta": {},
+                "finish_reason": item.get("finish_reason") or "stop",
+            }
+        )
+
+    content_chunk: dict[str, Any] = {
+        "id": stream_id,
+        "object": "chat.completion.chunk",
+        "created": created,
+        "model": model_id,
+        "choices": delta_choices,
+    }
+    frames.append(f"data: {json.dumps(content_chunk)}\n\n".encode())
+
+    finish_chunk: dict[str, Any] = {
+        "id": stream_id,
+        "object": "chat.completion.chunk",
+        "created": created,
+        "model": model_id,
+        "choices": finish_choices,
+    }
+    if isinstance(usage, dict):
+        finish_chunk["usage"] = usage
+    frames.append(f"data: {json.dumps(finish_chunk)}\n\n".encode())
+    frames.append(b"data: [DONE]\n\n")
+    return frames
 
 
 def _safe_error_response(exc: Exception, status_code: int = 500) -> dict:
@@ -132,6 +459,20 @@ async def _shutdown_http_client() -> None:
     _http_client_loop = None
 
 
+def _map_upstream_error_status(upstream_status: int) -> int:
+    """Map an upstream inference HTTP error to a gateway HTTP status code (F-15).
+
+    Upstream 4xx responses (especially 401, 403, 429) must never be passed
+    through verbatim as the gateway's own authentication, governance refusal,
+    or token-quota status codes; they are mapped to 502 Bad Gateway.
+    Server-side upstream 5xx codes in {500, 502, 503, 504} are preserved, and
+    all other statuses default to 502.
+    """
+    if upstream_status in {500, 502, 503, 504}:
+        return upstream_status
+    return 502
+
+
 async def _stream_vllm(
     target_url: str,
     body: dict[str, Any],
@@ -156,12 +497,19 @@ async def _stream_vllm(
     ) as resp:
         if resp.status_code >= 400:
             error_body = await resp.aread()
-            logger.error("vLLM streaming backend returned %s", resp.status_code)
-            # Emit a single SSE error event so the client can surface it
-            yield (
-                f'data: {{"error": "vLLM backend error {resp.status_code}", '
-                f'"detail": {json.dumps(error_body.decode(errors="replace"))}}}\n\n'
-            ).encode()
+            correlation_id = str(_uuid.uuid4())
+            logger.error(
+                "vLLM streaming backend returned %s [correlation_id=%s]: %s",
+                resp.status_code,
+                correlation_id,
+                scrub_pii(error_body.decode(errors="replace")[:200]),
+            )
+            err_event = {
+                "error": f"vLLM backend error {resp.status_code}",
+                "status_code": int(resp.status_code),
+                "correlation_id": correlation_id,
+            }
+            yield f"data: {json.dumps(err_event)}\n\n".encode()
             return
         async for chunk in resp.aiter_bytes():
             if chunk:
@@ -361,6 +709,9 @@ def _extract_scannable_messages_text(messages: Any) -> str:
         text = _extract_message_content_text(msg.get("content"))
         if text:
             fragments.append(text)
+        reasoning_text = _extract_message_content_text(msg.get("reasoning_content"))
+        if reasoning_text:
+            fragments.append(reasoning_text)
         tool_calls = msg.get("tool_calls")
         if isinstance(tool_calls, list):
             for tc in tool_calls:
@@ -579,11 +930,11 @@ async def _emit_proxy_pass_evidence(
                 ) from exc
 
 
-@inference_app.post("/v1/chat/completions")
+@inference_app.post("/v1/chat/completions", response_model=None)
 async def chat_completions(
     request: Request,
     background_tasks: BackgroundTasks,
-) -> JSONResponse:
+) -> JSONResponse | StreamingResponse:
     """OpenAI-compatible governed inference endpoint."""
     from src.gateway.governance.semantic_rail_factory import (
         initialize_semantic_rails as _init_rails,
@@ -616,8 +967,22 @@ async def chat_completions(
         if rails is None:
             rails = _init_rails()
 
-    body = await request.json()
-    requested_model = body.get("model", "default")
+    parsed_body, body_err_resp = await _read_validated_chat_body(request)
+    if body_err_resp is not None:
+        return body_err_resp
+    assert parsed_body is not None
+    body = parsed_body
+
+    raw_requested_model = body.get("model", "default")
+    if not isinstance(raw_requested_model, str) or not raw_requested_model.strip():
+        return JSONResponse(
+            status_code=400,
+            content={
+                "error": "invalid_request_error",
+                "message": "model must be a non-empty string",
+            },
+        )
+    requested_model = raw_requested_model
     model_id = (
         os.getenv("MODEL_FAST", "default")
         if requested_model == "default"
@@ -746,39 +1111,7 @@ async def chat_completions(
 
         # ── Step 3: Token Quota Enforcement (ISO 42001 Annex A.4) ──
         # Runs for ALL requests regardless of message role composition.
-        raw_max_tokens = body.get("max_tokens")
-        if raw_max_tokens is None:
-            token_delta = 0
-        elif isinstance(raw_max_tokens, bool) or not isinstance(
-            raw_max_tokens, (int, float, str)
-        ):
-            raise HTTPException(
-                status_code=400,
-                detail={
-                    "error": "invalid_request_error",
-                    "message": "max_tokens must be a non-negative integer",
-                },
-            )
-        else:
-            try:
-                parsed_max_tokens = int(raw_max_tokens)
-            except (TypeError, ValueError, OverflowError) as exc:
-                raise HTTPException(
-                    status_code=400,
-                    detail={
-                        "error": "invalid_request_error",
-                        "message": "max_tokens must be a non-negative integer",
-                    },
-                ) from exc
-            if parsed_max_tokens < 0:
-                raise HTTPException(
-                    status_code=400,
-                    detail={
-                        "error": "invalid_request_error",
-                        "message": "max_tokens must be non-negative",
-                    },
-                )
-            token_delta = parsed_max_tokens
+        token_delta = _compute_token_reservation(body, all_messages_text)
 
         quota_result = await _get_token_quota_proxy().check_and_increment(
             agent_id=agent_id,
@@ -913,18 +1246,40 @@ async def chat_completions(
         if want_stream:
             stamp_iso_control(span, ingress_stage=4, control="A.5.3", outcome="STREAM")
             logger.info("Streaming response: model=%s", model_id)
-            # Collect the full streamed response so output filtering can be
-            # applied before returning to the client.  Streaming responses
-            # previously bypassed NeMo output filtering (GHSA-hfqj-24cj-693g).
+            upstream_stream_body = dict(body)
+            raw_stream_opts = upstream_stream_body.get("stream_options")
+            if raw_stream_opts is None:
+                upstream_stream_body["stream_options"] = {"include_usage": True}
+            elif isinstance(raw_stream_opts, dict):
+                upstream_stream_body["stream_options"] = {
+                    **raw_stream_opts,
+                    "include_usage": True,
+                }
+
+            max_stream_bytes = max(
+                1024,
+                int(
+                    os.environ.get(
+                        "CAGE_INFERENCE_MAX_STREAM_BYTES",
+                        str(_DEFAULT_MAX_STREAM_BUFFER_BYTES),
+                    )
+                ),
+            )
             collected_chunks: list[bytes] = []
+            stream_bytes_total = 0
+            stream_overflow = False
             try:
                 async for chunk in _stream_vllm(
                     target_url,
-                    body,
+                    upstream_stream_body,
                     api_key,
                     span=span,
                     request_start_ns=request_start_ns,
                 ):
+                    stream_bytes_total += len(chunk)
+                    if stream_bytes_total > max_stream_bytes:
+                        stream_overflow = True
+                        break
                     collected_chunks.append(chunk)
             except HTTPException:
                 await _get_token_quota_proxy().rollback_step(
@@ -938,35 +1293,113 @@ async def chat_completions(
                 safe_err = _safe_error_response(exc)
                 raise HTTPException(status_code=500, detail=safe_err) from exc
 
-            # Reassemble and attempt to extract the assistant content and
-            # tool_calls arguments for output filtering.  SSE chunks are
-            # "data: {...}\n\n" lines.
+            if stream_overflow:
+                await _get_token_quota_proxy().rollback_step(
+                    agent_id, reserved_tokens=token_delta
+                )
+                return JSONResponse(
+                    status_code=413,
+                    content={
+                        "error": "payload_too_large",
+                        "message": f"Streaming response exceeded maximum buffer size ({max_stream_bytes} bytes)",
+                    },
+                )
+
             raw_stream = b"".join(collected_chunks).decode(errors="replace")
-            filtered_content: str | None = None
-            streamed_tool_calls: dict[int, dict[str, str]] = {}
+            choice_buffers: dict[int, dict[str, Any]] = {}
+            unparsed_payloads: list[str] = []
             stream_backend_error = False
-            for line in raw_stream.splitlines():
-                line = line.strip()
-                if not line.startswith("data:"):
-                    continue
-                data_str = line[len("data:") :].strip()
-                if data_str == "[DONE]":
-                    break
+            stream_backend_status = 502
+            stream_error_correlation_id: str | None = None
+            stream_id: str | None = None
+            stream_created: int | None = None
+            stream_model: str = model_id
+            stream_usage: dict[str, Any] | None = None
+
+            for data_str in _iter_sse_data_payloads(raw_stream):
                 try:
                     chunk_json = json.loads(data_str)
-                    if isinstance(chunk_json, dict) and str(
-                        chunk_json.get("error", "")
-                    ).startswith("vLLM backend error"):
-                        stream_backend_error = True
-                    delta_obj = chunk_json.get("choices", [{}])[0].get("delta", {})
-                    delta = delta_obj.get("content", "")
-                    if delta:
-                        filtered_content = (filtered_content or "") + delta
-                    for idx, tc in enumerate(delta_obj.get("tool_calls", []) or []):
+                except json.JSONDecodeError:
+                    unparsed_payloads.append(data_str)
+                    continue
+
+                if not isinstance(chunk_json, dict):
+                    unparsed_payloads.append(data_str)
+                    continue
+
+                err_field = str(chunk_json.get("error", ""))
+                if err_field.startswith("vLLM backend error"):
+                    stream_backend_error = True
+                    raw_status = chunk_json.get("status_code")
+                    if isinstance(raw_status, int) and not isinstance(raw_status, bool):
+                        stream_backend_status = raw_status
+                    else:
+                        parts = err_field.rsplit(" ", 1)
+                        if len(parts) == 2 and parts[1].isdigit():
+                            stream_backend_status = int(parts[1])
+                    if isinstance(chunk_json.get("correlation_id"), str):
+                        stream_error_correlation_id = chunk_json["correlation_id"]
+                    continue
+
+                if stream_id is None and isinstance(chunk_json.get("id"), str):
+                    stream_id = chunk_json["id"]
+                if (
+                    stream_created is None
+                    and isinstance(chunk_json.get("created"), int)
+                    and not isinstance(chunk_json.get("created"), bool)
+                ):
+                    stream_created = chunk_json["created"]
+                if isinstance(chunk_json.get("model"), str) and chunk_json["model"]:
+                    stream_model = chunk_json["model"]
+                if isinstance(chunk_json.get("usage"), dict):
+                    stream_usage = chunk_json["usage"]
+
+                choices_list = chunk_json.get("choices")
+                if not isinstance(choices_list, list):
+                    continue
+                for pos, choice_obj in enumerate(choices_list):
+                    if not isinstance(choice_obj, dict):
+                        continue
+                    raw_c_idx = choice_obj.get("index", pos)
+                    c_idx = (
+                        raw_c_idx
+                        if isinstance(raw_c_idx, int)
+                        and not isinstance(raw_c_idx, bool)
+                        else pos
+                    )
+                    c_buf = choice_buffers.setdefault(
+                        c_idx,
+                        {
+                            "content": None,
+                            "reasoning_content": None,
+                            "tool_calls": {},
+                            "finish_reason": None,
+                        },
+                    )
+                    if choice_obj.get("finish_reason"):
+                        c_buf["finish_reason"] = str(choice_obj["finish_reason"])
+                    delta_obj = choice_obj.get("delta")
+                    if not isinstance(delta_obj, dict):
+                        continue
+                    delta_content = delta_obj.get("content")
+                    if isinstance(delta_content, str) and delta_content:
+                        c_buf["content"] = (c_buf["content"] or "") + delta_content
+                    delta_reasoning = delta_obj.get("reasoning_content")
+                    if isinstance(delta_reasoning, str) and delta_reasoning:
+                        c_buf["reasoning_content"] = (
+                            c_buf["reasoning_content"] or ""
+                        ) + delta_reasoning
+                    for idx, tc in enumerate(delta_obj.get("tool_calls") or []):
                         if not isinstance(tc, dict):
                             continue
-                        tc_idx = int(tc.get("index", idx))
-                        entry = streamed_tool_calls.setdefault(
+                        raw_tc_idx = tc.get("index", idx)
+                        tc_idx = (
+                            int(raw_tc_idx)
+                            if isinstance(raw_tc_idx, int)
+                            and not isinstance(raw_tc_idx, bool)
+                            else idx
+                        )
+                        entry = c_buf["tool_calls"].setdefault(
                             tc_idx,
                             {"id": "", "name": "", "arguments": ""},
                         )
@@ -978,27 +1411,66 @@ async def chat_completions(
                                 entry["name"] += str(fn["name"])
                             if fn.get("arguments"):
                                 entry["arguments"] += str(fn["arguments"])
-                except (
-                    json.JSONDecodeError,
-                    IndexError,
-                    KeyError,
-                    TypeError,
-                    ValueError,
-                ):
-                    pass
 
+            # [KC-01] / [F-15] FIRST: Abort on streaming backend >= 400 error BEFORE emitting PASS evidence!
             if stream_backend_error:
                 await _get_token_quota_proxy().rollback_step(
                     agent_id, reserved_tokens=token_delta
                 )
+                upstream_status = (
+                    stream_backend_status if 400 <= stream_backend_status < 600 else 502
+                )
+                gateway_status = _map_upstream_error_status(upstream_status)
+                return JSONResponse(
+                    status_code=gateway_status,
+                    content={
+                        "error": "upstream_inference_error",
+                        "upstream_status": upstream_status,
+                        "message": f"vLLM backend error {upstream_status}",
+                        "correlation_id": stream_error_correlation_id
+                        or str(_uuid.uuid4()),
+                    },
+                )
 
+            stream_pii_redacted = False
+            sanitized_choices: list[dict[str, Any]] = []
             try:
-                # Apply NeMo output filtering to streamed tool_calls arguments
-                if streamed_tool_calls:
-                    tool_calls_modified = False
-                    sanitized_tool_calls: list[dict[str, Any]] = []
-                    for tc_idx in sorted(streamed_tool_calls):
-                        tc_entry = streamed_tool_calls[tc_idx]
+                if unparsed_payloads:
+                    joined_unparsed = "\n".join(unparsed_payloads)
+                    safe_unparsed = await _mask_output(rails, joined_unparsed)
+                    if safe_unparsed != joined_unparsed:
+                        stream_pii_redacted = True
+                        if not choice_buffers:
+                            sanitized_choices.append(
+                                {
+                                    "index": 0,
+                                    "content": safe_unparsed,
+                                    "reasoning_content": None,
+                                    "tool_calls": [],
+                                    "finish_reason": "stop",
+                                }
+                            )
+
+                for c_idx in sorted(choice_buffers):
+                    c_buf = choice_buffers[c_idx]
+                    raw_c_content: str | None = c_buf["content"]
+                    safe_c_content: str | None = raw_c_content
+                    if raw_c_content:
+                        safe_c_content = await _mask_output(rails, raw_c_content)
+                        if safe_c_content != raw_c_content:
+                            stream_pii_redacted = True
+
+                    raw_c_reasoning: str | None = c_buf["reasoning_content"]
+                    safe_c_reasoning: str | None = raw_c_reasoning
+                    if raw_c_reasoning:
+                        safe_c_reasoning = await _mask_output(rails, raw_c_reasoning)
+                        if safe_c_reasoning != raw_c_reasoning:
+                            stream_pii_redacted = True
+
+                    tc_map: dict[int, dict[str, str]] = c_buf["tool_calls"]
+                    sanitized_tcs: list[dict[str, Any]] = []
+                    for tc_idx in sorted(tc_map):
+                        tc_entry = tc_map[tc_idx]
                         raw_args = tc_entry["arguments"]
                         safe_args_str = raw_args
                         if raw_args:
@@ -1006,8 +1478,8 @@ async def chat_completions(
                                 rails, raw_args
                             )
                             if was_modified:
-                                tool_calls_modified = True
-                        sanitized_tool_calls.append(
+                                stream_pii_redacted = True
+                        sanitized_tcs.append(
                             {
                                 "id": tc_entry["id"] or f"call-{tc_idx}",
                                 "type": "function",
@@ -1017,107 +1489,36 @@ async def chat_completions(
                                 },
                             }
                         )
-                    if tool_calls_modified:
-                        logger.info(
-                            "Streaming tool_calls filtered by NeMo: model=%s", model_id
-                        )
-                        ts = int(time.time())
-                        filtered_response = {
-                            "id": f"chatcmpl-{ts}",
-                            "object": "chat.completion",
-                            "created": ts,
-                            "model": model_id,
-                            "choices": [
-                                {
-                                    "index": 0,
-                                    "finish_reason": "tool_calls",
-                                    "message": {
-                                        "role": "assistant",
-                                        "content": safe_content
-                                        if filtered_content
-                                        and (
-                                            safe_content := await _mask_output(
-                                                rails, filtered_content
-                                            )
-                                        )
-                                        else filtered_content,
-                                        "tool_calls": sanitized_tool_calls,
-                                    },
-                                }
-                            ],
-                            "usage": {
-                                "prompt_tokens": 0,
-                                "completion_tokens": 0,
-                                "total_tokens": 0,
-                            },
-                        }
-                        await _emit_proxy_pass_evidence(
-                            request,
-                            span=span,
-                            body=body,
-                            model_id=model_id,
-                            agent_id=agent_id,
-                            pii_redacted=True,
-                        )
-                        return JSONResponse(content=filtered_response)
 
-                # Apply NeMo output filtering to the assembled content
-                if filtered_content:
-                    safe_content = await _mask_output(rails, filtered_content)
-                    if safe_content != filtered_content:
-                        logger.info(
-                            "Streaming output filtered by NeMo: model=%s", model_id
-                        )
-                        # Return filtered content as a non-streaming JSON response
-                        # LOW-5 fix: removed inline `import time as _time` — time is
-                        # already imported at module level.
-                        ts = int(time.time())
-                        filtered_response = {
-                            "id": f"chatcmpl-{ts}",
-                            "object": "chat.completion",
-                            "created": ts,
-                            "model": model_id,
-                            "choices": [
-                                {
-                                    "index": 0,
-                                    "finish_reason": "stop",
-                                    "message": {
-                                        "role": "assistant",
-                                        "content": safe_content,
-                                    },
-                                }
-                            ],
-                            "usage": {
-                                "prompt_tokens": 0,
-                                "completion_tokens": 0,
-                                "total_tokens": 0,
-                            },
+                    finish_reason = c_buf["finish_reason"] or (
+                        "tool_calls" if sanitized_tcs else "stop"
+                    )
+                    sanitized_choices.append(
+                        {
+                            "index": c_idx,
+                            "content": safe_c_content,
+                            "reasoning_content": safe_c_reasoning,
+                            "tool_calls": sanitized_tcs,
+                            "finish_reason": finish_reason,
                         }
-                        await _emit_proxy_pass_evidence(
-                            request,
-                            span=span,
-                            body=body,
-                            model_id=model_id,
-                            agent_id=agent_id,
-                            pii_redacted=True,
-                        )
-                        return JSONResponse(content=filtered_response)
-            except EvidenceChainUnavailableError as exc:
-                if not stream_backend_error:
-                    await _get_token_quota_proxy().rollback_step(
-                        agent_id, reserved_tokens=token_delta
                     )
-                logger.error(
-                    "Inference proxy streaming pass failed closed: evidence chain unavailable: %s",
-                    exc,
-                )
-                return _evidence_unavailable_response(exc)
             except Exception:
-                if not stream_backend_error:
-                    await _get_token_quota_proxy().rollback_step(
-                        agent_id, reserved_tokens=token_delta
-                    )
+                await _get_token_quota_proxy().rollback_step(
+                    agent_id, reserved_tokens=token_delta
+                )
                 raise
+
+            # Record lengths ONLY — never message/response content on OTel spans (#774).
+            if span.is_recording():
+                stream_output_length = sum(
+                    len(sc.get("content") or "")
+                    + len(sc.get("reasoning_content") or "")
+                    for sc in sanitized_choices
+                )
+                span.set_attribute(
+                    SPAN_ATTR_CONTENT_OUTPUT_LENGTH, stream_output_length
+                )
+                span.set_attribute("gen_ai.response.model", stream_model)
 
             try:
                 await _emit_proxy_pass_evidence(
@@ -1126,25 +1527,53 @@ async def chat_completions(
                     body=body,
                     model_id=model_id,
                     agent_id=agent_id,
-                    pii_redacted=False,
+                    pii_redacted=stream_pii_redacted,
                 )
             except EvidenceChainUnavailableError as exc:
-                if not stream_backend_error:
-                    await _get_token_quota_proxy().rollback_step(
-                        agent_id, reserved_tokens=token_delta
-                    )
+                await _get_token_quota_proxy().rollback_step(
+                    agent_id, reserved_tokens=token_delta
+                )
                 logger.error(
                     "Inference proxy streaming pass failed closed: evidence chain unavailable: %s",
                     exc,
                 )
                 return _evidence_unavailable_response(exc)
 
+            await _reconcile_actual_usage(agent_id, token_delta, stream_usage)
+
+            if stream_pii_redacted:
+                logger.info(
+                    "Streaming output redacted by Stage 4 guardrails: model=%s",
+                    model_id,
+                )
+                ts_now = int(time.time())
+                sse_frames = _build_redacted_sse_bytes(
+                    stream_id=stream_id or f"chatcmpl-{ts_now}",
+                    created=stream_created if stream_created is not None else ts_now,
+                    model_id=stream_model,
+                    sanitized_choices=sanitized_choices,
+                    usage=stream_usage,
+                )
+
+                async def _replay_redacted() -> AsyncIterator[bytes]:
+                    for frame in sse_frames:
+                        yield frame
+
+                return StreamingResponse(
+                    _replay_redacted(),
+                    media_type="text/event-stream",
+                    headers={
+                        "Cache-Control": "no-cache",
+                        "X-Accel-Buffering": "no",
+                    },
+                )
+
             # Content passed output filtering — re-stream the collected chunks
             async def _replay_chunks() -> AsyncIterator[bytes]:
                 for c in collected_chunks:
                     yield c
 
-            return StreamingResponse(  # type: ignore[return-value]
+            return StreamingResponse(
                 _replay_chunks(),
                 media_type="text/event-stream",
                 headers={
@@ -1163,16 +1592,26 @@ async def chat_completions(
                 headers={"Authorization": f"Bearer {api_key}"},
             )
             if resp.status_code >= 400:
+                correlation_id = str(_uuid.uuid4())
                 logger.error(
-                    "vLLM backend returned %s: %s", resp.status_code, resp.text[:200]
+                    "vLLM backend returned %s [correlation_id=%s]: %s",
+                    resp.status_code,
+                    correlation_id,
+                    scrub_pii((resp.text or "")[:200]),
                 )
+                gateway_status = _map_upstream_error_status(resp.status_code)
                 raise HTTPException(
-                    status_code=resp.status_code,
-                    detail=resp.json()
-                    if resp.text
-                    else {"error": "vLLM backend error"},
+                    status_code=gateway_status,
+                    detail={
+                        "error": "upstream_inference_error",
+                        "upstream_status": int(resp.status_code),
+                        "message": f"vLLM backend error {resp.status_code}",
+                        "correlation_id": correlation_id,
+                    },
                 )
             vllm_response = resp.json()
+            if not isinstance(vllm_response, dict):
+                raise ValueError("Upstream inference response was not a JSON object")
         except HTTPException:
             # MED-6 fix: roll back quota on vLLM HTTP errors (4xx/5xx).
             await _get_token_quota_proxy().rollback_step(
@@ -1180,12 +1619,12 @@ async def chat_completions(
             )
             raise
         except Exception as exc:
-            # MED-6 fix: roll back quota on connection/timeout errors.
+            # MED-6 fix: roll back quota on connection/timeout/parse errors.
             await _get_token_quota_proxy().rollback_step(
                 agent_id, reserved_tokens=token_delta
             )
             safe_err = _safe_error_response(exc)
-            raise HTTPException(status_code=500, detail=safe_err)
+            raise HTTPException(status_code=500, detail=safe_err) from exc
 
         # 6. Output filtering / PII masking across ALL completion choices (POAM-2026-209)
         non_stream_pii_redacted = False
@@ -1226,15 +1665,33 @@ async def chat_completions(
                     if list_mod:
                         non_stream_pii_redacted = True
                     message["content"] = safe_list
+
+                orig_reasoning = message.get("reasoning_content")
+                if isinstance(orig_reasoning, str) and orig_reasoning:
+                    safe_reasoning = await _mask_output(rails, orig_reasoning)
+                    if safe_reasoning != orig_reasoning:
+                        non_stream_pii_redacted = True
+                    message["reasoning_content"] = safe_reasoning
+                elif isinstance(orig_reasoning, list) and orig_reasoning:
+                    safe_r_list, r_mod = await _mask_json_value(rails, orig_reasoning)
+                    if r_mod:
+                        non_stream_pii_redacted = True
+                    message["reasoning_content"] = safe_r_list
         except Exception:
             await _get_token_quota_proxy().rollback_step(
                 agent_id, reserved_tokens=token_delta
             )
             raise
 
+        # Record lengths ONLY — never message/response content on OTel spans (#774).
         if span.is_recording():
             output_length = sum(
                 len(_extract_message_content_text(choice["message"].get("content")))
+                + len(
+                    _extract_message_content_text(
+                        choice["message"].get("reasoning_content")
+                    )
+                )
                 for choice in vllm_response.get("choices") or []
                 if isinstance(choice, dict) and isinstance(choice.get("message"), dict)
             )
@@ -1261,4 +1718,6 @@ async def chat_completions(
                 exc,
             )
             return _evidence_unavailable_response(exc)
+
+        await _reconcile_actual_usage(agent_id, token_delta, vllm_response.get("usage"))
         return JSONResponse(content=vllm_response)

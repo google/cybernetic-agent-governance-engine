@@ -37,10 +37,14 @@ import base64
 import logging
 import os
 
+from src.gateway.governance.env_posture import env_flag, is_enforcing, resolve_posture
+from src.gateway.infrastructure.telemetry_client import RedactingSpanProcessor
+
 logger = logging.getLogger("Gateway.TracingSetup")
 
 _SERVICE_NAME = os.environ.get("OTEL_SERVICE_NAME", "cage-gateway")
 _TRACES_EXPORTER = os.environ.get("OTEL_TRACES_EXPORTER", "otlp").lower()
+_IMPORT_TRACES_EXPORTER = _TRACES_EXPORTER
 _OPENLLMETRY_ENABLED = os.environ.get("OPENLLMETRY_ENABLED", "true").lower() != "false"
 
 # Short OTLP export timeout — prevents background BSP thread from blocking
@@ -168,7 +172,12 @@ def setup_tracing() -> None:
     Privacy: both exporters are wrapped in ``ContentFilterSpanExporter`` and
     ``disable_content_capture()`` runs before any instrumentation starts.
     """
-    if _TRACES_EXPORTER == "none":
+    active_exporter = (
+        _TRACES_EXPORTER
+        if _TRACES_EXPORTER != _IMPORT_TRACES_EXPORTER
+        else os.environ.get("OTEL_TRACES_EXPORTER", _TRACES_EXPORTER).lower()
+    )
+    if active_exporter == "none":
         logger.info("OTel tracing disabled via OTEL_TRACES_EXPORTER=none.")
         return
 
@@ -211,58 +220,108 @@ def setup_tracing() -> None:
                     "telemetry via RemoteTelemetry's integrated OTel collector."
                 )
             else:
-                try:
-                    from opentelemetry.exporter.otlp.proto.http.trace_exporter import (
-                        OTLPSpanExporter,
-                    )
-
-                    # Append /v1/traces only when using a generic collector endpoint
-                    # (RemoteTelemetry's endpoint already includes the full path).
-                    otlp_url = (
-                        _otlp_endpoint
-                        if _otlp_endpoint.endswith("/otel")
-                        or "/api/public/" in _otlp_endpoint
-                        else f"{_otlp_endpoint}/v1/traces"
-                    )
-                    exporter = ContentFilterSpanExporter(
-                        OTLPSpanExporter(
-                            endpoint=otlp_url,
-                            headers=_otlp_headers,
-                            timeout=_OTLP_EXPORT_TIMEOUT_S,
+                if _otlp_endpoint.startswith(("http://", "https://")):
+                    try:
+                        from opentelemetry.exporter.otlp.proto.http.trace_exporter import (
+                            OTLPSpanExporter,
                         )
-                    )
-                    provider.add_span_processor(
+
+                        # Append /v1/traces only when using a generic collector endpoint
+                        # (RemoteTelemetry's endpoint already includes the full path).
+                        otlp_url = (
+                            _otlp_endpoint
+                            if _otlp_endpoint.endswith("/otel")
+                            or "/api/public/" in _otlp_endpoint
+                            else f"{_otlp_endpoint}/v1/traces"
+                        )
+                        exporter = ContentFilterSpanExporter(
+                            OTLPSpanExporter(
+                                endpoint=otlp_url,
+                                headers=_otlp_headers,
+                                timeout=_OTLP_EXPORT_TIMEOUT_S,
+                            )
+                        )
+                        provider.add_span_processor(
+                            RedactingSpanProcessor(
+                                BatchSpanProcessor(
+                                    exporter,
+                                    export_timeout_millis=_OTLP_EXPORT_TIMEOUT_MS,
+                                )
+                            )
+                        )
+                        logger.info(
+                            "✅ OTel HTTP OTLP exporter configured → %s (timeout=%ds, with ContentFilter + RedactingSpanProcessor)",
+                            otlp_url,
+                            _OTLP_EXPORT_TIMEOUT_S,
+                        )
+                        otlp_configured = True
+                    except ImportError:
+                        logger.warning(
+                            "⚠️ opentelemetry-exporter-otlp-proto-http not installed — "
+                            "spans will not be exported via OTLP."
+                        )
+                else:
+                    try:
+                        from opentelemetry.exporter.otlp.proto.grpc.trace_exporter import (
+                            OTLPSpanExporter as GRPCSpanExporter,
+                        )
+
+                        enforcing_posture = is_enforcing(resolve_posture())
+                        grpc_insecure = (not enforcing_posture) and env_flag(
+                            "OTEL_EXPORTER_OTLP_INSECURE", False
+                        )
+                        grpc_headers = (
+                            tuple(
+                                (str(k).lower(), str(v))
+                                for k, v in _otlp_headers.items()
+                            )
+                            if _otlp_headers
+                            else None
+                        )
+                        grpc_exporter = ContentFilterSpanExporter(
+                            GRPCSpanExporter(
+                                endpoint=_otlp_endpoint,
+                                insecure=grpc_insecure,
+                                headers=grpc_headers,
+                                timeout=_OTLP_EXPORT_TIMEOUT_S,
+                            )
+                        )
+                        provider.add_span_processor(
+                            RedactingSpanProcessor(
+                                BatchSpanProcessor(
+                                    grpc_exporter,
+                                    export_timeout_millis=_OTLP_EXPORT_TIMEOUT_MS,
+                                )
+                            )
+                        )
+                        logger.info(
+                            "✅ OTel gRPC OTLP exporter configured → %s (timeout=%ds, insecure=%s, with ContentFilter + RedactingSpanProcessor)",
+                            _otlp_endpoint,
+                            _OTLP_EXPORT_TIMEOUT_S,
+                            grpc_insecure,
+                        )
+                        otlp_configured = True
+                    except ImportError:
+                        logger.warning(
+                            "⚠️ opentelemetry-exporter-otlp-proto-grpc not installed — "
+                            "spans will not be exported via gRPC OTLP."
+                        )
+
+            # Dev-only ConsoleSpanExporter fallback: disabled whenever OTLP is
+            # configured OR an enforcing posture is active.
+            if not otlp_configured and not is_enforcing(resolve_posture()):
+                fallback_exporter = ContentFilterSpanExporter(ConsoleSpanExporter())
+                provider.add_span_processor(
+                    RedactingSpanProcessor(
                         BatchSpanProcessor(
-                            exporter,
+                            fallback_exporter,
                             export_timeout_millis=_OTLP_EXPORT_TIMEOUT_MS,
                         )
                     )
-                    logger.info(
-                        "✅ OTel OTLP exporter configured → %s (timeout=%ds)",
-                        otlp_url,
-                        _OTLP_EXPORT_TIMEOUT_S,
-                    )
-                    otlp_configured = True
-                except ImportError:
-                    logger.warning(
-                        "⚠️ opentelemetry-exporter-otlp-proto-http not installed — "
-                        "spans will not be exported via OTLP.  "
-                        "Install with: pip install opentelemetry-exporter-otlp-proto-http"
-                    )
-
-            # Fallback: ConsoleSpanExporter — always registered so spans are
-            # never silently dropped when the OTLP backend is unavailable.
-            fallback_exporter = ContentFilterSpanExporter(ConsoleSpanExporter())
-            provider.add_span_processor(
-                BatchSpanProcessor(
-                    fallback_exporter,
-                    export_timeout_millis=_OTLP_EXPORT_TIMEOUT_MS,
                 )
-            )
-            if not otlp_configured:
                 logger.warning(
-                    "⚠️ OTel: OTLP exporter unavailable — "
-                    "spans will be logged locally via ConsoleSpanExporter."
+                    "⚠️ OTel: OTLP exporter unavailable in non-enforcing posture — "
+                    "filtered & redacted spans will be logged locally via ConsoleSpanExporter."
                 )
 
             trace.set_tracer_provider(provider)

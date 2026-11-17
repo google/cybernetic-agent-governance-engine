@@ -253,6 +253,7 @@ async def test_nemo_proposal_staged_on_replica_a_approved_on_replica_b_and_pubsu
     )
     approver_id = "compliance-bridge.governance-stack.serviceaccount.identity.linkerd.cluster.local"
     monkeypatch.setenv("CAGE_TRUSTED_CLIENT_IDENTITIES", f"{proposer_id},{approver_id}")
+    monkeypatch.setenv("CAGE_NEMO_APPROVER_IDENTITIES", approver_id)
     # Applying a refinement rebuilds the rails, which needs them switched on.
     monkeypatch.setenv("CAGE_NEMO_ENABLED", "true")
     monkeypatch.delenv("CAGE_INFERENCE_BACKEND", raising=False)
@@ -364,6 +365,7 @@ async def test_nemo_proposal_routes_fail_closed_with_503_when_redis_unavailable(
         "cage-advisor-sa.governance-stack.serviceaccount.identity.linkerd.cluster.local"
     )
     monkeypatch.setenv("CAGE_TRUSTED_CLIENT_IDENTITIES", trusted_id)
+    monkeypatch.setenv("CAGE_NEMO_APPROVER_IDENTITIES", trusted_id)
 
     import src.gateway.server.hybrid_server as gw_srv
     from src.gateway.server.workload_identity import (

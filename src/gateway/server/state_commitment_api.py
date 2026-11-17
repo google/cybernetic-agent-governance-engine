@@ -35,6 +35,7 @@ import logging
 from typing import Any
 
 from fastapi import APIRouter, HTTPException, Request
+from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 
 from src.gateway.governance.seams.state_commitment import (
@@ -58,16 +59,33 @@ class StateCommitmentRequest(BaseModel):
     linkage: dict[str, Any]
 
 
-@router.post("/state-commitments")
+@router.post("/state-commitments", response_model=None)
 async def commit_state_endpoint(
     request: Request, body: StateCommitmentRequest
-) -> dict[str, Any]:
+) -> dict[str, Any] | JSONResponse:
     """Sanitize, hash and retain ``body.snapshot``; return the receipt."""
+    from src.gateway.server.rate_limit import get_shared_rate_limiter
+
     try:
         caller_identity = extract_client_identity(request.scope)
     except ValueError as exc:
         # Unreachable behind WorkloadIdentityMiddleware; refuse regardless.
         raise HTTPException(status_code=403, detail=str(exc)) from exc
+
+    rl_verdict = await get_shared_rate_limiter().check_request(
+        request, "state-commitments"
+    )
+    if not rl_verdict.allowed:
+        retry_after = max(1, int(rl_verdict.retry_after_seconds or 1))
+        return JSONResponse(
+            status_code=429,
+            headers={"Retry-After": str(retry_after)},
+            content={
+                "error": "rate_limit_exceeded",
+                "scope": rl_verdict.scope or "principal",
+                "retry_after_seconds": retry_after,
+            },
+        )
 
     try:
         service = state_commitment_service_of(request.app)

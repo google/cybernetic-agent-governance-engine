@@ -21,15 +21,17 @@ to prevent token replay attacks. Enforces strict fail-closed validation.
 
 import base64
 import hashlib
+import hmac
 import json
 import math
 import time
+from datetime import datetime, timezone
 from typing import Any, Protocol
 
 from cryptography import x509
 from cryptography.exceptions import InvalidSignature
 from cryptography.hazmat.primitives import hashes, serialization
-from cryptography.hazmat.primitives.asymmetric import ec, padding, rsa
+from cryptography.hazmat.primitives.asymmetric import ec, ed25519, padding, rsa
 from cryptography.hazmat.primitives.asymmetric.utils import encode_dss_signature
 
 from src.gateway.infrastructure.redis_single_use import new_op_id, set_nx_retry_safe
@@ -205,8 +207,11 @@ class DPoPValidator(ProofOfPossessionValidator):
 
         dpop_thumbprint = self._compute_jwk_thumbprint_from_dict(dpop_jwk)
 
-        # Fail-closed: Thumbprints MUST match
-        if cert_thumbprint != dpop_thumbprint:
+        # Fail-closed: Thumbprints MUST match (constant-time comparison)
+        if not hmac.compare_digest(
+            cert_thumbprint.encode("ascii"),
+            dpop_thumbprint.encode("ascii"),
+        ):
             raise TokenBindingError(
                 f"Public key mismatch: cert_thumbprint={cert_thumbprint[:16]}... "
                 f"!= dpop_thumbprint={dpop_thumbprint[:16]}..."
@@ -263,11 +268,20 @@ class DPoPValidator(ProofOfPossessionValidator):
         "ES512": hashes.SHA512,
     }
 
+    # RFC 7638 §3.2 required JWK members per key type (all optional fields excluded)
+    _RFC7638_REQUIRED_MEMBERS: dict[str, tuple[str, ...]] = {
+        "EC": ("crv", "kty", "x", "y"),
+        "RSA": ("e", "kty", "n"),
+        "OKP": ("crv", "kty", "x"),
+    }
+
     def _verify_proof_signature(
         self,
         signing_input: bytes,
         signature: bytes,
-        public_key: rsa.RSAPublicKey | ec.EllipticCurvePublicKey,
+        public_key: (
+            rsa.RSAPublicKey | ec.EllipticCurvePublicKey | ed25519.Ed25519PublicKey
+        ),
         alg: str,
     ) -> None:
         """Verify the DPoP JWT signature (fail-closed).
@@ -275,6 +289,17 @@ class DPoPValidator(ProofOfPossessionValidator):
         Raises TokenBindingError on any unsupported algorithm, key/algorithm
         mismatch, or cryptographic verification failure.
         """
+        if isinstance(public_key, ed25519.Ed25519PublicKey):
+            if alg != "EdDSA":
+                raise TokenBindingError(
+                    f"Algorithm {alg!r} does not match Ed25519 proof key"
+                )
+            try:
+                public_key.verify(signature, signing_input)
+            except InvalidSignature:
+                raise TokenBindingError("DPoP proof signature verification failed")
+            return
+
         hash_cls = self._ALG_HASHES.get(alg)
         if hash_cls is None:
             raise TokenBindingError(f"Unsupported DPoP signing algorithm: {alg!r}")
@@ -334,25 +359,42 @@ class DPoPValidator(ProofOfPossessionValidator):
 
     def _extract_cert_public_key(
         self, cert_pem: str
-    ) -> rsa.RSAPublicKey | ec.EllipticCurvePublicKey:
-        """Extract public key from PEM-encoded X.509 certificate."""
+    ) -> rsa.RSAPublicKey | ec.EllipticCurvePublicKey | ed25519.Ed25519PublicKey:
+        """Extract public key from PEM-encoded X.509 certificate and verify validity window."""
         try:
             cert = x509.load_pem_x509_certificate(cert_pem.encode("utf-8"))
-            public_key = cert.public_key()
-
-            if not isinstance(
-                public_key, (rsa.RSAPublicKey, ec.EllipticCurvePublicKey)
-            ):
-                raise TokenBindingError(
-                    f"Unsupported certificate public key type: {type(public_key)}"
-                )
-
-            return public_key
         except Exception as e:
-            raise TokenBindingError(f"Failed to parse client certificate: {e}")
+            raise TokenBindingError(f"Failed to parse client certificate: {e}") from e
+
+        now_utc = datetime.now(timezone.utc)
+        not_before = cert.not_valid_before_utc
+        not_after = cert.not_valid_after_utc
+        if not (not_before <= now_utc <= not_after):
+            raise TokenBindingError(
+                f"Client certificate outside validity window: "
+                f"not_valid_before={not_before.isoformat()}, "
+                f"not_valid_after={not_after.isoformat()}"
+            )
+
+        public_key = cert.public_key()
+        if not isinstance(
+            public_key,
+            (
+                rsa.RSAPublicKey,
+                ec.EllipticCurvePublicKey,
+                ed25519.Ed25519PublicKey,
+            ),
+        ):
+            raise TokenBindingError(
+                f"Unsupported certificate public key type: {type(public_key)}"
+            )
+        return public_key
 
     def _compute_jwk_thumbprint(
-        self, public_key: rsa.RSAPublicKey | ec.EllipticCurvePublicKey
+        self,
+        public_key: (
+            rsa.RSAPublicKey | ec.EllipticCurvePublicKey | ed25519.Ed25519PublicKey
+        ),
     ) -> str:
         """Compute RFC 7638 JWK thumbprint (SHA-256) from cryptography public key."""
         if isinstance(public_key, rsa.RSAPublicKey):
@@ -391,15 +433,40 @@ class DPoPValidator(ProofOfPossessionValidator):
                 "x": self._base64url_encode(ec_numbers.x.to_bytes(coord_size, "big")),
                 "y": self._base64url_encode(ec_numbers.y.to_bytes(coord_size, "big")),
             }
+        elif isinstance(public_key, ed25519.Ed25519PublicKey):
+            raw_bytes = public_key.public_bytes(
+                serialization.Encoding.Raw,
+                serialization.PublicFormat.Raw,
+            )
+            jwk = {
+                "crv": "Ed25519",
+                "kty": "OKP",
+                "x": self._base64url_encode(raw_bytes),
+            }
         else:
             raise TokenBindingError(f"Unsupported public key type: {type(public_key)}")
 
         return self._compute_jwk_thumbprint_from_dict(jwk)
 
     def _compute_jwk_thumbprint_from_dict(self, jwk: dict) -> str:
-        """Compute RFC 7638 JWK thumbprint from JWK dictionary."""
-        # RFC 7638: Canonicalize by sorting keys
-        canonical_jwk = json.dumps(jwk, sort_keys=True, separators=(",", ":"))
+        """Compute RFC 7638 §3.2 JWK thumbprint over ONLY the required members for kty."""
+        if not isinstance(jwk, dict):
+            raise TokenBindingError("DPoP 'jwk' header member must be a JSON object")
+        kty = jwk.get("kty")
+        if not isinstance(kty, str) or kty not in self._RFC7638_REQUIRED_MEMBERS:
+            raise TokenBindingError(f"Unsupported or missing JWK 'kty': {kty!r}")
+        required_members = self._RFC7638_REQUIRED_MEMBERS[kty]
+        canonical_members: dict[str, str] = {}
+        for member in required_members:
+            val = jwk.get(member)
+            if not isinstance(val, str) or not val:
+                raise TokenBindingError(
+                    f"DPoP JWK ({kty}) missing or invalid required member: {member!r}"
+                )
+            canonical_members[member] = val
+        canonical_jwk = json.dumps(
+            canonical_members, sort_keys=True, separators=(",", ":")
+        )
         thumbprint = hashlib.sha256(canonical_jwk.encode("utf-8")).digest()
         return self._base64url_encode(thumbprint)
 

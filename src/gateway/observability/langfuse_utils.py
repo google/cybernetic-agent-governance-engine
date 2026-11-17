@@ -27,6 +27,7 @@ import json
 import logging
 import os
 import threading
+import urllib.parse
 from typing import Any, Literal
 
 import httpx
@@ -53,12 +54,15 @@ IsoOutcome = Literal["PASSED", "BLOCKED", "ESCALATED", "SKIPPED"]
 # Prompt management — via compliance-bridge HTTP proxy & in-memory PromptRegistry
 # ---------------------------------------------------------------------------
 
-DEFAULT_PROMPT_NAMES: tuple[str, ...] = (
-    "agent/explainer",
-    "agent/execution_analyst",
-    "agent/financial_coordinator",
-    "agent/governed_trader",
-)
+DEFAULT_PROMPT_NAMES: tuple[str, ...] = ()
+
+
+def _resolve_configured_prompt_names() -> tuple[str, ...]:
+    """Resolve optional prompt names from CAGE_MANAGED_PROMPT_NAMES (domain-neutral Layer 1)."""
+    raw = os.environ.get("CAGE_MANAGED_PROMPT_NAMES", "").strip()
+    if not raw:
+        return DEFAULT_PROMPT_NAMES
+    return tuple(part.strip() for part in raw.split(",") if part.strip())
 
 
 class PromptRegistry:
@@ -118,30 +122,36 @@ class PromptRegistry:
         label: str = "production",
     ) -> str | None:
         """Fetch a single prompt from the compliance-bridge and update memory."""
+        cleaned_name = name.strip() if isinstance(name, str) else ""
+        if not cleaned_name:
+            return None
         bridge_url = os.environ.get(
             "COMPLIANCE_BRIDGE_URL", "http://compliance-bridge:3001"
-        )
-        url = f"{bridge_url}/v1/prompts/{name}"
+        ).rstrip("/")
+        encoded_name = urllib.parse.quote(cleaned_name, safe="")
+        url = f"{bridge_url}/v1/prompts/{encoded_name}"
         client = self._ensure_client()
         try:
             response = await client.get(url, params={"label": label})
             if response.status_code == 200:
                 text = response.json()["text"]
-                self.set(name, text, label=label)
+                self.set(cleaned_name, text, label=label)
                 logger.info(
-                    "[prompts] refreshed %s@%s into PromptRegistry", name, label
+                    "[prompts] refreshed %s@%s into PromptRegistry",
+                    cleaned_name,
+                    label,
                 )
                 return text
             logger.debug(
                 "[prompts] bridge returned HTTP %s for '%s@%s'; keeping cached/fallback.",
                 response.status_code,
-                name,
+                cleaned_name,
                 label,
             )
         except Exception as exc:
             logger.debug(
                 "[prompts] failed to refresh '%s@%s' from bridge (%s): %s; keeping cached/fallback.",
-                name,
+                cleaned_name,
                 label,
                 bridge_url,
                 exc,
@@ -150,12 +160,13 @@ class PromptRegistry:
 
     async def refresh_all(
         self,
-        names: tuple[str, ...] = DEFAULT_PROMPT_NAMES,
+        names: tuple[str, ...] | None = None,
         label: str = "production",
     ) -> None:
         """Concurrently refresh all managed prompts from the compliance-bridge."""
+        effective_names = _resolve_configured_prompt_names() if names is None else names
         await asyncio.gather(
-            *(self.refresh_prompt(name, label=label) for name in names),
+            *(self.refresh_prompt(name, label=label) for name in effective_names),
             return_exceptions=True,
         )
 
@@ -180,15 +191,16 @@ class PromptRegistry:
 
     async def start(
         self,
-        names: tuple[str, ...] = DEFAULT_PROMPT_NAMES,
+        names: tuple[str, ...] | None = None,
         label: str = "production",
     ) -> None:
         """Warm the prompt cache and start the periodic background refresh loop."""
-        await self.refresh_all(names=names, label=label)
+        effective_names = _resolve_configured_prompt_names() if names is None else names
+        await self.refresh_all(names=effective_names, label=label)
         if self._task is None or self._task.done():
             self._stop_event = asyncio.Event()
             self._task = asyncio.create_task(
-                self._refresh_loop(names=names, label=label),
+                self._refresh_loop(names=effective_names, label=label),
                 name="cage-prompt-registry-refresh",
             )
 

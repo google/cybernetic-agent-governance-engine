@@ -216,17 +216,15 @@ async def test_tools_cache_ttl_avoids_repeated_rpc_and_refreshes_on_expiry() -> 
         assert len(t3) == 1
         assert list_calls == 2
 
-        # get_tools() caches LangChain tool wrappers across calls
-        fake_lc_tool = MagicMock(name="lc_echo_governed")
-        with patch(
-            "langchain_mcp_adapters.tools.load_mcp_tools",
-            new=AsyncMock(return_value=[fake_lc_tool]),
-        ) as mock_load:
-            lc1 = await client.get_tools()
-            lc2 = await client.get_tools()
-            assert lc1 == [fake_lc_tool]
-            assert lc2 == [fake_lc_tool]
-            assert mock_load.await_count == 1
+        # get_tools() caches framework-neutral MCPBoundTool adapters without extra RPCs ([KC-13])
+        lc1 = await client.get_tools()
+        lc2 = await client.get_tools()
+        assert len(lc1) == 1
+        assert lc1[0].name == "echo_governed"
+        assert lc1 == lc2
+        assert list_calls == 2  # reused cached list_tools() result
+        invoked = await lc1[0].ainvoke({"action": "cached", "seq": 9})
+        assert "ACTION=cached:SEQ=9" in invoked
 
         await client.close()
 
