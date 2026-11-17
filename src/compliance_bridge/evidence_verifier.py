@@ -141,6 +141,8 @@ QUALIFICATION_UNSTAMPED_V1_POSTURE = "unstamped_v1_posture"
 _DATA_SUFFIX = ".ndjson"
 _SIGNED_SUFFIX = ".attestation.json"
 _UNSIGNED_SUFFIX = ".attestation.unsigned.json"
+# Reserved for a custody-time anchor next to a signed attestation (#488).
+_ANCHOR_SUFFIX = ".attestation.anchor.json"
 _RANGE_RE = re.compile(r"/(?P<chain>[^/]+)/(?P<first>\d{12})-(?P<last>\d{12})\.ndjson$")
 _STREAM_ID_RE = re.compile(r"(?P<ms>[0-9]+)-(?P<seq>[0-9]+)")
 
@@ -881,6 +883,14 @@ class CustodyVerifier:
                     ):
                         report.failures.append(
                             VerificationFailure(key, "data object has no attestation")
+                        )
+                elif key.endswith(_ANCHOR_SUFFIX):
+                    base = key[: -len(_ANCHOR_SUFFIX)]
+                    if base + _SIGNED_SUFFIX not in key_set:
+                        report.failures.append(
+                            VerificationFailure(
+                                key, "anchor sidecar has no signed attestation"
+                            )
                         )
                 elif key.endswith(_UNSIGNED_SUFFIX):
                     report.non_evidentiary.append(key)

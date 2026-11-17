@@ -9,6 +9,10 @@ Versions follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Added
+
+- **The evidence verifier recognises `.attestation.anchor.json` sidecars** (`feat(compliance)`, [`evidence_verifier.py`](src/compliance_bridge/evidence_verifier.py)). `verify_all()` no longer reports a sidecar beside a signed attestation as an unexpected object, and fails one with no signed attestation beside it. The verifier does not read sidecars yet; this lets verifiers ship before custodians write them ([#488](https://github.com/google/cybernetic-agent-governance-engine/issues/488)).
+
 ### Changed
 
 - **Batch attestations stamp `deployment_posture` (`cage-evidence-batch/2`), and pre-stamping `v1` archives verify with structural `citable_qualifications`** (`feat(compliance)!`, [`evidence_custodian.py`](src/compliance_bridge/evidence_custodian.py), [`evidence_verifier.py`](src/compliance_bridge/evidence_verifier.py), [`main.py`](src/compliance_bridge/main.py), [`oscal_exporter.py`](src/compliance_bridge/oscal_exporter.py), [`audit_corroboration.py`](packages/cage-conformance/src/cage_conformance/audit_corroboration.py), [`staging_lifecycle.sh`](scripts/staging_lifecycle.sh), [`gate_w_certification.json`](compliance/gate_w_certification.json)).

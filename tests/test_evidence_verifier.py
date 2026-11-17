@@ -431,6 +431,44 @@ class TestDataFailsClosed:
         assert not report.ok
         assert "unexpected object" in _reasons(report)
 
+    @pytest.mark.asyncio
+    async def test_anchor_sidecar_beside_signed_attestation_is_accepted(
+        self, server, store, signer, provider
+    ):
+        [outcome] = await _custody_batches(server, store, signer, [2])
+        base = outcome.attestation_key[: -len(".attestation.json")]
+        await store.put_batch(base + ".attestation.anchor.json", b"{}")
+        report = await _verifier(store, provider).verify_all()
+        assert report.ok and report.citable
+        assert len(report.verified) == 1
+
+    @pytest.mark.asyncio
+    async def test_orphan_anchor_sidecar_fails(self, server, store, signer, provider):
+        [outcome] = await _custody_batches(server, store, signer, [2])
+        orphan = outcome.attestation_key.replace(
+            "000000000001.attestation.json", "000000000009.attestation.anchor.json"
+        )
+        await store.put_batch(orphan, b"{}")
+        report = await _verifier(store, provider).verify_all()
+        assert not report.ok
+        assert report.failures == [
+            VerificationFailure(orphan, "anchor sidecar has no signed attestation")
+        ]
+
+    @pytest.mark.asyncio
+    async def test_anchor_sidecar_beside_unsigned_attestation_fails(
+        self, server, store, signer, provider
+    ):
+        [outcome] = await _custody_batches(server, store, signer, [2])
+        base = outcome.attestation_key[: -len(".attestation.json")]
+        store._entries[base + ".attestation.unsigned.json"] = store._entries.pop(
+            outcome.attestation_key
+        )
+        await store.put_batch(base + ".attestation.anchor.json", b"{}")
+        report = await _verifier(store, provider).verify_all()
+        assert not report.ok
+        assert "anchor sidecar has no signed attestation" in _reasons(report)
+
 
 # ---------------------------------------------------------------------------
 # Cross-batch continuity (fail closed)
