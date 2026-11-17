@@ -188,7 +188,7 @@ The compliance output model of the domain-agnostic kernel uses a **four-state OS
 
 #### Critical-Control Alert Behaviour
 
-Controls in `CRITICAL_CONTROLS = {"A.9.2", "SC-4", "A.8.4"}` trigger Slack/PagerDuty alerts on **both** `FAIL` and `ERROR`. An `ERROR` on a critical control is treated with the same urgency as a `FAIL` because the system cannot assert the control is satisfied — the absence of evidence is itself a risk signal.
+Controls in `CRITICAL_CONTROLS = {"A.9.2", "SC-4", "A.8.4"}` trigger Slack/PagerDuty alerts on **both** `FAIL` and `ERROR` (**Correction (`2026-11-16`, `POAM-2026-230`):** every committed profile pins the compliance-bridge `alert_channel` to `console`, so those alerts are log lines until `POAM-2026-230` closes). An `ERROR` on a critical control is treated with the same urgency as a `FAIL` because the system cannot assert the control is satisfied — the absence of evidence is itself a risk signal.
 
 This property is invariant across all domains that extend the compliance bridge.
 

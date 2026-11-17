@@ -424,7 +424,7 @@ Docker Compose shows that the governance logic works. It cannot show that the in
 | Signing key | In-memory Ed25519, development only | Per-workload HSM keys in Cloud KMS |
 | Caller identity | Development loopback opt-in | Linkerd mTLS and `NetworkPolicy` |
 | Evidence custody | Container Redis, lost on teardown | KMS-signed batches in retention-locked storage, verified across a rebuild |
-| Continuous compliance | Not present | In-cluster Lula audit job with a dead-man's switch |
+| Continuous compliance | Not present | In-cluster Lula audit job with a dead-man's switch (**Note (`2026-11-16`, `POAM-2026-230`):** its alert reaches no one, because no committed profile gives it a notification channel) |
 | Image admission | Not present | Binary Authorization, with a negative probe |
 
 A green Compose run is evidence about application logic only. The per-property grading of what each path exercises, partially exercises, or does not exercise is the coverage matrix in [`docs/EVALUATOR_GUIDE.md`](docs/EVALUATOR_GUIDE.md) §2, and this README does not restate it.
