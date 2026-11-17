@@ -27,6 +27,7 @@ in the same PR per the C0 specification.
 
 from __future__ import annotations
 
+import asyncio
 import logging
 import os
 from datetime import datetime, timezone
@@ -81,6 +82,41 @@ async def dispatch_actuation(
     """
     try:
         receipt = await actuator.actuate(clearance)
+    except asyncio.CancelledError:
+        logger.error(
+            "[ExecutionActuator] %s cancelled mid-actuate (outcome UNKNOWN)",
+            actuator.actuator_id,
+        )
+        cancelled_receipt = ActuationReceipt(
+            accepted=False,
+            receipt_id=None,
+            session_uuid=None,
+            raw_receipt=None,
+            findings=[
+                {
+                    "code": "ACTUATOR_CANCELLED",
+                    "severity": "TERMINAL",
+                    "detail": "asyncio.CancelledError during actuate()",
+                }
+            ],
+            retryable=False,
+            timestamp_utc=datetime.now(tz=timezone.utc).isoformat(),
+            outcome=ActuationOutcome.UNKNOWN,
+        )
+        ingest_task = asyncio.create_task(
+            ingest_actuation_receipt(
+                clearance, cancelled_receipt, actuator_id=actuator.actuator_id
+            )
+        )
+        try:
+            await asyncio.shield(ingest_task)
+        except BaseException as ingest_exc:  # noqa: BLE001
+            logger.error(
+                "[ExecutionActuator] Failed to ingest UNKNOWN receipt on cancellation for %s: %s",
+                actuator.actuator_id,
+                ingest_exc,
+            )
+        raise
     except Exception as exc:
         logger.error(
             "[ExecutionActuator] %s raised during actuate (outcome UNKNOWN): %s",
@@ -252,24 +288,50 @@ class ActuatorRegistry:
                 f"Actuator must implement ExecutionActuator protocol, got {type(actuator)}"
             )
 
+        if claims is None:
+            declared = getattr(actuator, "claims", None) or getattr(
+                actuator, "supported_actions", None
+            )
+            effective_claims = (
+                {str(c).strip() for c in declared if str(c).strip()}
+                if declared
+                else {"*"}
+            )
+        else:
+            effective_claims = {str(c).strip() for c in claims if str(c).strip()}
         self._actuators[actuator_id] = actuator
-        self._claims[actuator_id] = claims if claims is not None else {"*"}
+        self._claims[actuator_id] = effective_claims
 
     def get_actuator(self, action: str) -> ExecutionActuator | None:
-        """
-        Retrieve the actuator that handles the given action.
+        """Retrieve the most specific actuator claiming ``action`` (KG-27).
 
-        Returns the first matching actuator, or None if no actuator claims it.
+        Precedence order:
+            1. Exact action match (``pattern == action``)
+            2. Longest prefix glob match (``pattern.endswith("*")`` with non-empty prefix)
+            3. Catch-all wildcard (``"*"``)
         """
+        # 1. Exact match
+        for actuator_id, patterns in self._claims.items():
+            if action in patterns and action != "*":
+                return self._actuators[actuator_id]
+
+        # 2. Longest non-wildcard prefix match
+        best_prefix_len = -1
+        best_actuator_id: str | None = None
+        for actuator_id, patterns in self._claims.items():
+            for pattern in patterns:
+                if pattern != "*" and pattern.endswith("*"):
+                    prefix = pattern[:-1]
+                    if action.startswith(prefix) and len(prefix) > best_prefix_len:
+                        best_prefix_len = len(prefix)
+                        best_actuator_id = actuator_id
+        if best_actuator_id is not None:
+            return self._actuators[best_actuator_id]
+
+        # 3. Catch-all wildcard fallback
         for actuator_id, patterns in self._claims.items():
             if "*" in patterns:
                 return self._actuators[actuator_id]
-            # Simple prefix matching for now
-            for pattern in patterns:
-                if pattern.endswith("*") and action.startswith(pattern[:-1]):
-                    return self._actuators[actuator_id]
-                elif action == pattern:
-                    return self._actuators[actuator_id]
         return None
 
     def list_actuators(self) -> list[str]:

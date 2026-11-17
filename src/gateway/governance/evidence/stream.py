@@ -769,7 +769,7 @@ def _link_hash(
             previous_batch_attestation_digest
         )
 
-    header_bytes = jcs_canonicalize_plan(header_dict)
+    header_bytes = jcs_canonicalize_plan(_normalize_for_jcs(header_dict))
     return _sha256(
         prev_hash.encode("utf-8") + header_bytes + payload_json.encode("utf-8")
     )
@@ -794,17 +794,24 @@ def _extract_sparse_header(
         ``(classification_reason, narrowing_applied, pause_token)``, each None
         when the member is absent.
     """
+    from src.gateway.governance.pii_sanitizer import _get_pii_sanitizer
+
+    sanitizer = _get_pii_sanitizer()
     classification_reason = event.get("classification_reason")
     if classification_reason is not None:
-        classification_reason = str(classification_reason)
+        classification_reason = sanitizer.sanitize(str(classification_reason))
 
-    narrowing_applied = event.get("narrowing_applied")
-    if not isinstance(narrowing_applied, dict):
+    narrowing_raw = event.get("narrowing_applied")
+    if isinstance(narrowing_raw, dict):
+        narrowing_applied: dict[str, Any] | None = _normalize_for_jcs(
+            sanitizer.sanitize_dict(narrowing_raw)
+        )
+    else:
         narrowing_applied = None
 
     pause_token = event.get("pause_token")
     if pause_token is not None:
-        pause_token = str(pause_token)
+        pause_token = sanitizer.sanitize(str(pause_token))
 
     return classification_reason, narrowing_applied, pause_token
 
@@ -1653,7 +1660,7 @@ class EvidenceStreamSink:
         )
         trace_id = current_trace_id()
         return _QueuedEvidenceItem(
-            event=effective_event,
+            event=normalized_event,
             payload_json=payload_json,
             event_type=event_type,
             control_id=control_id,
@@ -2541,7 +2548,7 @@ def append_evidence_record_sync(
     control_id = str(event.get("controlId") or event.get("control_id") or "")
     trace_id = current_trace_id()
     classification_reason, narrowing_applied, pause_token = _extract_sparse_header(
-        event
+        normalized_event
     )
 
     for attempt in range(_MAX_APPEND_ATTEMPTS):

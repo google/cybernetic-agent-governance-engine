@@ -35,12 +35,19 @@ from src.gateway.governance.schemas.thresholds import THRESHOLDS
 
 logger = logging.getLogger("SafetyLayer")
 
-_ZERO_WIDTH_RE = re.compile(r"[\u00ad\u200b-\u200f\u202a-\u202e\u2060-\u206f\ufeff]")
+_INVISIBLE_SCAN_RE = re.compile(
+    r"[\u00ad\u034f\u061c\u115f\u1160\u17b4\u17b5\u180b-\u180f"
+    r"\u200b-\u200f\u202a-\u202e\u2060-\u206f\u3164\ufe00-\ufe0f"
+    r"\ufeff\uffa0\U000e0000-\U000e007f\U000e0100-\U000e01ef]"
+)
 
 
 def _normalize_for_scan(text: str) -> str:
-    """Apply Unicode NFKC normalization and strip zero-width/format characters."""
-    return _ZERO_WIDTH_RE.sub("", unicodedata.normalize("NFKC", text))
+    """Apply Unicode NFKC normalization and strip Cf/CGJ/Variation-Selector/Tag characters (KG-23)."""
+    stripped = _INVISIBLE_SCAN_RE.sub("", text)
+    nfkc = unicodedata.normalize("NFKC", stripped)
+    cleaned = _INVISIBLE_SCAN_RE.sub("", nfkc)
+    return "".join(ch for ch in cleaned if unicodedata.category(ch) != "Cf")
 
 
 # ---------------------------------------------------------------------------

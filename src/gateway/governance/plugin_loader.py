@@ -30,7 +30,11 @@ import logging
 import re
 from typing import TYPE_CHECKING
 
-from src.gateway.governance.env_posture import DOMAIN_ENV_VAR, resolve_domain
+from src.gateway.governance.env_posture import (
+    DOMAIN_ENV_VAR,
+    resolve_deployment_region,
+    resolve_domain,
+)
 
 if TYPE_CHECKING:
     from src.gateway.governance.contracts import CagePlugin, DomainConfig
@@ -124,4 +128,5 @@ def active_domain_config() -> DomainConfig:
     ``CAGE_DOMAIN`` is a process constant, so the result is cached for the
     process lifetime. Tests that change the domain call ``cache_clear()``.
     """
+    resolve_deployment_region()
     return domain_config_of(load_domain_plugin())

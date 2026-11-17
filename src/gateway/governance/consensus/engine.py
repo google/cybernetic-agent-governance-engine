@@ -297,8 +297,10 @@ async def _background_audit_worker() -> None:
     """
     logger.info("🔄 Consensus background audit worker started.")
     while True:
+        got_item = False
         try:
             record = await _AUDIT_QUEUE.get()
+            got_item = True
             logger.info(
                 "📋 [AUDIT] Post-hoc consensus | action=%s magnitude=%.2f "
                 "decision=%s votes=%s",
@@ -307,10 +309,13 @@ async def _background_audit_worker() -> None:
                 record.get("decision"),
                 record.get("votes"),
             )
-            _AUDIT_QUEUE.task_done()
+        except asyncio.CancelledError:
+            break
         except Exception as exc:
             logger.error("Audit worker error: %s", exc)
-            _AUDIT_QUEUE.task_done()
+        finally:
+            if got_item:
+                _AUDIT_QUEUE.task_done()
 
 
 class ConsensusGate:

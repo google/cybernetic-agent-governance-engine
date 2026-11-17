@@ -560,6 +560,7 @@ def _reconciler_preimage(item: Mapping[str, Any]) -> bytes | None:
         # Mirrors src.gateway.governance.reconciliation.trust.snapshot_signing_payload.
         return jcs_bytes(
             {
+                "invariant_id": str(item.get("invariant_id") or ""),
                 "source": item["source"],
                 "state_scalar": float(item["state_scalar"]),
                 "verified_at": item["verified_at"],

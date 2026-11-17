@@ -257,13 +257,52 @@ class TokenQuotaProxy:
         """Build a namespaced Redis key for a session counter."""
         return f"quota:session:{agent_id}:{suffix}"
 
+    @staticmethod
+    def _validate_non_negative_int(value: Any, name: str) -> int:
+        if isinstance(value, bool) or not isinstance(value, int):
+            raise ValueError(f"{name} must be a non-bool integer, got {value!r}")
+        if value < 0:
+            raise ValueError(f"{name} must be non-negative, got {value!r}")
+        return int(value)
+
+    async def _evalsha_with_reload(
+        self,
+        which: str,
+        script: str,
+        numkeys: int,
+        *keys_and_args: str,
+    ) -> Any:
+        """Execute cached Lua SHA with automatic NOSCRIPT reload recovery (KG-28)."""
+        await self._load_scripts()
+        sha_attr = f"_sha_{which}"
+        sha = getattr(self, sha_attr)
+        try:
+            return await self._redis.evalsha(sha, numkeys, *keys_and_args)
+        except Exception as exc:
+            if "NOSCRIPT" not in str(exc).upper():
+                raise
+            logger.warning(
+                "Quota proxy: NOSCRIPT on %s Lua script — reloading scripts and retrying.",
+                which,
+            )
+            self._sha_check = None
+            self._sha_rollback = None
+            self._sha_reconcile = None
+            await self._load_scripts()
+            refreshed_sha = getattr(self, sha_attr)
+            return await self._redis.evalsha(refreshed_sha, numkeys, *keys_and_args)
+
     async def _load_scripts(self) -> None:
         """Load Lua scripts into Redis and cache their SHA hashes.
 
         Called lazily on first use.  Safe to call multiple times — Redis
         SCRIPT LOAD is idempotent (same script always produces the same SHA).
         """
-        if self._sha_check is not None:
+        if (
+            self._sha_check is not None
+            and self._sha_rollback is not None
+            and self._sha_reconcile is not None
+        ):
             return
         try:
             self._sha_check = await self._redis.script_load(_LUA_CHECK_AND_INCREMENT)
@@ -314,30 +353,31 @@ class TokenQuotaProxy:
         Raises:
             QuotaExceededError: If quota is exceeded OR Redis is unavailable.
         """
-        try:
-            await self._load_scripts()
-        except Exception as exc:
-            # Fail-CLOSED: script load failure → block the request
-            raise QuotaExceededError(
-                agent_id=agent_id,
-                reason="redis_unavailable",
-                current_value=0,
-                quota_max=self._step_quota_max,
-                session_key=self._session_key(agent_id, "steps"),
-            ) from exc
-
         steps_key = self._session_key(agent_id, "steps")
         tokens_key = self._session_key(agent_id, "tokens")
+        try:
+            validated_delta = self._validate_non_negative_int(
+                token_delta, "token_delta"
+            )
+        except ValueError as exc:
+            raise QuotaExceededError(
+                agent_id=agent_id,
+                reason="invalid_token_delta",
+                current_value=0,
+                quota_max=self._token_quota_max,
+                session_key=tokens_key,
+            ) from exc
 
         try:
-            result = await self._redis.evalsha(
-                self._sha_check,
+            result = await self._evalsha_with_reload(
+                "check",
+                _LUA_CHECK_AND_INCREMENT,
                 2,  # numkeys
                 steps_key,
                 tokens_key,
                 str(self._step_quota_max),
                 str(self._token_quota_max),
-                str(max(0, token_delta)),
+                str(validated_delta),
                 str(self._session_ttl),
             )
         except Exception as exc:
@@ -416,18 +456,24 @@ class TokenQuotaProxy:
             reserved_tokens:   The token_delta passed to check_and_increment.
             actual_tokens_used: The actual tokens consumed (from vLLM response).
         """
-        if reserved_tokens == actual_tokens_used:
+        reserved_valid = self._validate_non_negative_int(
+            reserved_tokens, "reserved_tokens"
+        )
+        actual_valid = self._validate_non_negative_int(
+            actual_tokens_used, "actual_tokens_used"
+        )
+        if reserved_valid == actual_valid:
             return  # No adjustment needed
 
         tokens_key = self._session_key(agent_id, "tokens")
         try:
-            await self._load_scripts()
-            await self._redis.evalsha(
-                self._sha_reconcile,
+            await self._evalsha_with_reload(
+                "reconcile",
+                _LUA_RECONCILE,
                 1,  # numkeys
                 tokens_key,
-                str(reserved_tokens),
-                str(actual_tokens_used),
+                str(reserved_valid),
+                str(actual_valid),
             )
             delta = actual_tokens_used - reserved_tokens
             # 'token' = LLM usage-token counts; logs agent id/counters/error only.
@@ -464,16 +510,19 @@ class TokenQuotaProxy:
             agent_id:        The agent UUID for this session.
             reserved_tokens: The token_delta that was reserved.
         """
+        reserved_valid = self._validate_non_negative_int(
+            reserved_tokens, "reserved_tokens"
+        )
         steps_key = self._session_key(agent_id, "steps")
         tokens_key = self._session_key(agent_id, "tokens")
         try:
-            await self._load_scripts()
-            await self._redis.evalsha(
-                self._sha_rollback,
+            await self._evalsha_with_reload(
+                "rollback",
+                _LUA_ROLLBACK,
                 2,  # numkeys
                 steps_key,
                 tokens_key,
-                str(reserved_tokens),
+                str(reserved_valid),
             )
             # 'token' = LLM usage-token counts; logs agent id/counters/error only.
             # nosemgrep: python.lang.security.audit.logging.logger-credential-leak.python-logger-credential-disclosure
@@ -566,16 +615,17 @@ class TokenQuotaProxy:
 # Module-level singleton (lazy init)
 # ---------------------------------------------------------------------------
 
+import threading
+
 _token_quota_proxy: TokenQuotaProxy | None = None
+_token_quota_proxy_lock = threading.Lock()
 
 
 def _get_token_quota_proxy() -> TokenQuotaProxy:
-    """Return the module-level TokenQuotaProxy singleton.
-
-    Lazily initialised on first call.  Thread-safe because Python's GIL
-    guarantees atomic reference assignment for simple object creation.
-    """
+    """Return the module-level TokenQuotaProxy singleton (thread-safe lazy init)."""
     global _token_quota_proxy
     if _token_quota_proxy is None:
-        _token_quota_proxy = TokenQuotaProxy.from_env()
+        with _token_quota_proxy_lock:
+            if _token_quota_proxy is None:
+                _token_quota_proxy = TokenQuotaProxy.from_env()
     return _token_quota_proxy

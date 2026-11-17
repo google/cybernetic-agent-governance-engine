@@ -163,11 +163,18 @@ class NullTelemetryProvider(BaseTelemetryProvider):
 class MockTelemetryProvider(BaseTelemetryProvider):
     """Wraps the deterministic synthetic telemetry generator.
 
-    Used in unit and property tests. Forbidden in production (CAGE_ENV=prod).
+    Used in unit and property tests. Strictly forbidden in all enforcing postures.
     The seed is configurable via CAUSAL_MOCK_SEED (default: 42).
     """
 
     def __init__(self, seed: int = 42) -> None:
+        from src.gateway.governance.env_posture import is_enforcing, resolve_posture
+
+        if is_enforcing(resolve_posture()):
+            raise ConfigurationError(
+                "MockTelemetryProvider is strictly forbidden in production "
+                "and all enforcing postures."
+            )
         self._seed = seed
 
     def get_latest_data(self, n_samples: int = 500) -> pd.DataFrame:
