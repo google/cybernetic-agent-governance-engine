@@ -26,6 +26,14 @@
 | [`Provider05KeyProvider`](key_provider.py) | `provider_05-key` | `KEY` | Axiom 2 — Identity Genesis: an admissibility grant exists for a SPIFFE ID at a consequence class |
 | [`Provider05PhysicsProvider`](physics_provider.py) | `provider_05-physics` | `PHYSICS` | Axiom 3 — Substrate Integrity: vTPM status and eBPF anomaly count for the host node |
 
+When the client has an endpoint (`PROVIDER_05_ATTESTATION_ENDPOINT`) or a
+seeded key manifest, every artifact must verify as VEIP v0.3 against the
+`kid`-resolved key manifest ([`verify_v03_artifact`](client.py)). The
+client's configuration decides this, not the artifact: a live response that
+omits `schema_version`, `kid` and `signature` is `DENIED` (`SCHEMA_MISMATCH`),
+never read as an unsigned v0.1 record. Only seeded records on a client with
+neither an endpoint nor a key manifest are read unsigned.
+
 ## Institutional warrants (Warrant Contract v0.1 & v0.2)
 
 The warrant model, trust-anchor key-manifest verifier, standing verifier and

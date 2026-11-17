@@ -748,6 +748,19 @@ class Provider05Client:
     def key_manifest(self) -> VerifiedKeyManifest | None:
         return self._key_manifest
 
+    @property
+    def requires_v03(self) -> bool:
+        """True when every artifact must pass VEIP v0.3 verification.
+
+        The live endpoint serves only v0.3 artifacts (``from_v03_dict``), so a
+        response that omits ``schema_version``, ``kid`` and ``signature`` is an
+        unsigned artifact, not a v0.1 record. Whether an artifact is verified
+        is therefore decided by this client's configuration, never by the
+        artifact's own fields: only seeded records on a client with neither
+        an endpoint nor a key manifest are read unsigned.
+        """
+        return bool(self._endpoint) or self._key_manifest is not None
+
     def seed_key_manifest(
         self,
         manifest: Mapping[str, Any] | VerifiedKeyManifest,
