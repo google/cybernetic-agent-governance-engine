@@ -165,10 +165,9 @@
       "A.5.3": 1.0,
       "A.8.4": 1.0,
       "A.9.2": 1.0,
-      "SC-4": 1.0,
-      "AC-3": 1.0
+      "SC-4": 1.0
     },
-    "note": "Under POAM-2026-233 and POAM-2026-234, _is_control_effective_record() in src/compliance_bridge/metrics.py counts GOVERNANCE_REFUSAL, GOVERNANCE_REFUSAL_RECEIPT, GOVERNANCE_DEFERRAL (including unpersisted DeferQueue failures), and INFERENCE_PROXY_BLOCK (including fail-closed quarantine Redis errors) as control effectiveness in safety_rate, so an OPA or Redis outage can raise measured posture. Recomputing per-control safety_rate across all three published Gate W WORM archives with every refusal, deferral, refusal-receipt, and quarantine-block record excluded yields 1.0000 across all six evaluated controls (A.5.2, A.5.3, A.8.4, A.9.2, SC-4, AC-3) with 0 OPA-outage refusals. Published Gate W certification ratings, Lula Active ratings, and the OSCAL evidence claim census were not contaminated; the structural defects remain open under POAM-2026-233 and POAM-2026-234."
+    "note": "Under POAM-2026-233 and POAM-2026-234, _is_control_effective_record() in src/compliance_bridge/metrics.py counts GOVERNANCE_REFUSAL, GOVERNANCE_REFUSAL_RECEIPT, GOVERNANCE_DEFERRAL (including unpersisted DeferQueue failures), and INFERENCE_PROXY_BLOCK (including fail-closed quarantine Redis errors) as control effectiveness in safety_rate, so an OPA or Redis outage can raise measured posture. Recomputing per-control safety_rate across all three published Gate W WORM archives with every refusal, deferral, refusal-receipt, and quarantine-block record excluded yields 1.0000 across all five populated controls in SUPPORTED_CONTROLS (A.5.2, A.5.3, A.8.4, A.9.2, SC-4) with 0 OPA-outage refusals. Published Gate W certification archive verdicts were not contaminated by refusal-as-effective scoring; this archive recomputation makes no claim about the OSCAL evidence claim census, and the structural defects remain open under POAM-2026-233 and POAM-2026-234."
   },
   "next_gate_w_discharge": {
     "annotated_utc": "2026-11-15T17:15:00Z",
