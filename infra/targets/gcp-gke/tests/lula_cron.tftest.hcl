@@ -179,6 +179,19 @@ run "staging_plans_lula_cron_active_specs_and_dedicated_ksas" {
     )
     error_message = "CA-7 / AU-12 / AU-5 / SI-4: enforcing deployments must provision single-condition PromQL lula_audit_failure, lula_audit_pod_restart, prometheus_metrics_scrape_liveness, gateway_sustained_refusal_ratio, gateway_zero_permitted_requests, gateway_canary_probe_absent, gateway_canary_pod_health, gateway_evidence_append_reconciliation, and in-mesh Deployment/gateway-canary under cage-gateway-canary-sa"
   }
+
+  assert {
+    condition = anytrue([
+      for e in kubernetes_deployment_v1.gateway_canary[0].spec[0].template[0].spec[0].container[0].env :
+      e.name == "CAGE_DEPLOYMENT_REGION" &&
+      length(e.value_from) == 1 &&
+      length(e.value_from[0].config_map_key_ref) == 1 &&
+      e.value_from[0].config_map_key_ref[0].name == module.deployment_config.config_map_name &&
+      e.value_from[0].config_map_key_ref[0].key == "CAGE_DEPLOYMENT_REGION" &&
+      e.value_from[0].config_map_key_ref[0].optional == false
+    ])
+    error_message = "POAM-2026-231: Deployment/gateway-canary must inject CAGE_DEPLOYMENT_REGION from ConfigMap/cage-deployment (module.deployment_config.config_map_name) with optional = false."
+  }
 }
 
 run "disabling_gateway_canary_omits_zero_permitted_alert_policy" {
