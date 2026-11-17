@@ -785,6 +785,8 @@ async def execute_tool_endpoint(request_body: ToolExecutionRequest, request: Req
         )
 
     from src.gateway.governance.evidence.stream import EvidenceChainUnavailableError
+    from src.gateway.governance.execution_idempotency import UnsettledDuplicate
+    from src.gateway.governance.routing_seal import SymbolicGovernorViolation
     from src.gateway.infrastructure.privacy import scrub_pii
     from src.gateway.server.governance_middleware import (
         ActionDeferred,
@@ -792,6 +794,27 @@ async def execute_tool_endpoint(request_body: ToolExecutionRequest, request: Req
         reset_last_refusal_proof_hash,
         sanitize_mcp_tool_response,
         set_last_refusal_proof_hash,
+    )
+
+    def _valid_exc_types(
+        *candidates: Any, exclude: tuple[type[BaseException], ...] = ()
+    ) -> tuple[type[BaseException], ...]:
+        return tuple(
+            cls
+            for cls in candidates
+            if isinstance(cls, type)
+            and issubclass(cls, BaseException)
+            and cls not in exclude
+        )
+
+    # Guard against unit tests that stub module imports with MagicMock or bare Exception.
+    action_deferred_types = _valid_exc_types(
+        ActionDeferred, exclude=(BaseException, Exception, PermissionError)
+    )
+    governed_error_types = _valid_exc_types(
+        SymbolicGovernorViolation,
+        UnsettledDuplicate,
+        exclude=(BaseException, Exception, RuntimeError),
     )
 
     func = tool_map[request_body.tool_name]
@@ -802,20 +825,34 @@ async def execute_tool_endpoint(request_body: ToolExecutionRequest, request: Req
         else:
             output = await asyncio.to_thread(func, **request_body.params)
         output_str = str(output)
+        current_span = trace.get_current_span()
+        is_rec = getattr(current_span, "is_recording", None)
+        active_span = (
+            current_span
+            if current_span is not None and (not callable(is_rec) or is_rec())
+            else None
+        )
         san_res = sanitize_mcp_tool_response(
             request_body.tool_name,
             output_str,
-            span=trace.get_current_span(),
+            span=active_span,
         )
         violation = await san_res if inspect.isawaitable(san_res) else san_res
         if isinstance(violation, str) and violation:
             mark_request_refused()
+            blocked_output_payload: dict[str, Any] = {
+                "status": "ERROR",
+                "error_type": "IndirectPromptInjectionError",
+                "stage": "post_execution_output_sanitizer",
+                "violation": violation,
+                "error": f"Tool response blocked by indirect prompt-injection guard ({violation})",
+            }
+            proof_hash = get_last_refusal_proof_hash()
+            if proof_hash:
+                blocked_output_payload["proof_hash"] = proof_hash
             return _SubscriptableJSONResponse(
                 status_code=403,
-                content={
-                    "status": "ERROR",
-                    "error": f"Tool response blocked by indirect prompt-injection guard ({violation})",
-                },
+                content=blocked_output_payload,
             )
         response: dict[str, Any] = {"status": "SUCCESS", "output": output_str}
         proof_hash = get_last_refusal_proof_hash()
@@ -834,31 +871,51 @@ async def execute_tool_endpoint(request_body: ToolExecutionRequest, request: Req
                 "detail": f"EvidenceChainUnavailableError: {scrub_pii(str(exc))}",
             },
         )
+    except action_deferred_types as exc:
+        # ActionDeferred subclasses PermissionError — catch it before PermissionError so 202 DEFERRED is reachable.
+        return _SubscriptableJSONResponse(
+            status_code=202,
+            content={
+                "status": "DEFERRED",
+                "deferred_id": getattr(exc, "deferred_id", ""),
+                "defer_reason": getattr(exc, "defer_reason", ""),
+                "approval_retained": bool(getattr(exc, "approval_retained", False)),
+            },
+        )
+    except governed_error_types as exc:
+        # Structured governed rejections (SymbolicGovernorViolation, UnsettledDuplicate)
+        # preserve the /tools/execute HTTP 200 protocol envelope while marking the request refused.
+        mark_request_refused()
+        logger.warning(
+            "Governed tool execution rejected (%s): %s",
+            type(exc).__name__,
+            exc,
+        )
+        gov_payload: dict[str, Any] = {
+            "status": "ERROR",
+            "error_type": type(exc).__name__,
+            "error": scrub_pii(str(exc)),
+        }
+        proof_hash = get_last_refusal_proof_hash()
+        if proof_hash:
+            gov_payload["proof_hash"] = proof_hash
+        return _SubscriptableJSONResponse(status_code=200, content=gov_payload)
     except PermissionError as exc:
         mark_request_refused()
         logger.warning("Tool execution blocked by governance: %s", exc)
         blocked_payload: dict[str, Any] = {
             "status": "ERROR",
+            "error_type": type(exc).__name__,
             "error": "Governance blocked tool execution",
         }
-        proof_hash = get_last_refusal_proof_hash()
+        violated_tier = getattr(exc, "violated_tier", "")
+        if violated_tier:
+            blocked_payload["violated_tier"] = violated_tier
+        proof_hash = get_last_refusal_proof_hash() or getattr(exc, "proof_hash", "")
         if proof_hash:
             blocked_payload["proof_hash"] = proof_hash
         return _SubscriptableJSONResponse(status_code=403, content=blocked_payload)
     except Exception as exc:
-        if (
-            isinstance(ActionDeferred, type)
-            and issubclass(ActionDeferred, BaseException)
-            and isinstance(exc, ActionDeferred)
-        ):
-            return _SubscriptableJSONResponse(
-                status_code=202,
-                content={
-                    "status": "DEFERRED",
-                    "deferred_id": getattr(exc, "deferred_id", ""),
-                    "defer_reason": getattr(exc, "defer_reason", ""),
-                },
-            )
         mark_request_refused()
         correlation_id = str(uuid.uuid4())
         logger.error(

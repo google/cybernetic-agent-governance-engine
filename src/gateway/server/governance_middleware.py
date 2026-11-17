@@ -62,8 +62,10 @@ from src.gateway.governance.governor.stages.opa import decode_opa_verdict
 from src.gateway.governance.iso_control import stamp_iso_control
 from src.gateway.governance.jcs_canonicalizer import jcs_canonicalize_plan
 from src.gateway.governance.kms_signer import get_governance_signer
-from src.gateway.governance.prompt_injection_detector import detect_indirect_injection
 from src.gateway.governance.text_filter import ac_keyword_scan
+from src.gateway.observability.mcp_tracing import (
+    sanitize_mcp_tool_response as _sanitize_mcp_tool_response,
+)
 from src.gateway.observability.mcp_tracing import sanitize_trace_carrier
 from src.gateway.server.app_state import governor_of
 from src.gateway.server.state_commitment_api import (
@@ -386,23 +388,7 @@ async def sanitize_mcp_tool_response(
         A violation description string if indirect injection was detected,
         ``None`` if the response is clean.
     """
-    safe_text = (
-        response_text
-        if isinstance(response_text, str)
-        else str(response_text if response_text is not None else "")
-    )
-    result = detect_indirect_injection(tool_name, safe_text)
-    if result.detected:
-        stamp_iso_control(span, ingress_stage=2, control="A.9.2", outcome="BLOCK")
-        logger.warning(
-            '🔴 [AI600-003] MCP tool response rejected: tool=%s pattern=%s "\n'
-            "(ISO 42001 A.9.2 — indirect injection blocked)",
-            tool_name,
-            result.pattern_matched,
-        )
-        return f"indirect_injection:{result.pattern_matched}"
-    stamp_iso_control(span, ingress_stage=2, control="A.9.2", outcome="PASS")
-    return None
+    return await _sanitize_mcp_tool_response(tool_name, response_text, span=span)
 
 
 # ---------------------------------------------------------------------------

@@ -39,6 +39,11 @@ from typing import Any
 from opentelemetry import trace
 from opentelemetry.trace.propagation.tracecontext import TraceContextTextMapPropagator
 
+from src.gateway.governance.governor.metrics import mark_request_refused
+from src.gateway.governance.iso_control import stamp_iso_control
+from src.gateway.governance.prompt_injection_detector import (
+    detect_indirect_injection,
+)
 from src.gateway.observability.attributes import SPAN_ATTR_MCP_TOOL_RESULT_LENGTH
 
 logger = logging.getLogger("Gateway.MCP.Tracing")
@@ -71,6 +76,48 @@ def sanitize_trace_carrier(carrier: Any) -> dict[str, str]:
     return clean
 
 
+async def sanitize_mcp_tool_response(
+    tool_name: str,
+    response_text: Any,
+    span: Any = None,
+) -> str | None:
+    """Sanitize an MCP tool response for indirect injection (AI 600-1 §2.3, AI600-003).
+
+    Checks the tool response against ``detect_indirect_injection()`` using
+    lightweight kernel imports (avoiding cold-importing FastAPI/middleware on
+    the hot ``ToolManager.call_tool`` path) and skips ISO control stamping when
+    *span* is non-recording.
+
+    Returns:
+        A violation description string if indirect injection was detected,
+        ``None`` if the response is clean.
+    """
+    safe_text = (
+        response_text
+        if isinstance(response_text, str)
+        else str(response_text if response_text is not None else "")
+    )
+    active_span = span
+    if active_span is not None:
+        is_rec = getattr(active_span, "is_recording", None)
+        if callable(is_rec) and not is_rec():
+            active_span = None
+    result = detect_indirect_injection(tool_name, safe_text)
+    if result.detected:
+        stamp_iso_control(
+            active_span, ingress_stage=2, control="A.9.2", outcome="BLOCK"
+        )
+        logger.warning(
+            "🔴 [AI600-003] MCP tool response rejected: tool=%s pattern=%s "
+            "(ISO 42001 A.9.2 — indirect injection blocked)",
+            tool_name,
+            result.pattern_matched,
+        )
+        return f"indirect_injection:{result.pattern_matched}"
+    stamp_iso_control(active_span, ingress_stage=2, control="A.9.2", outcome="PASS")
+    return None
+
+
 def patch_mcp_tools(mcp_server) -> None:  # type: ignore[no-untyped-def]
     """
     Monkey-patches ToolManager.call_tool to extract the W3C traceparent
@@ -101,16 +148,12 @@ def patch_mcp_tools(mcp_server) -> None:  # type: ignore[no-untyped-def]
             )
 
             # 4. Sanitize tool response against indirect prompt injection (AI 600-1 §2.3 / A.9.2)
-            from src.gateway.governance.governor.metrics import mark_request_refused
-            from src.gateway.server.governance_middleware import (
-                sanitize_mcp_tool_response,
-            )
-
             result_str = _extract_mcp_result_text(result)
             violation = await sanitize_mcp_tool_response(name, result_str, span=span)
             if violation is not None:
                 mark_request_refused()
                 span.set_attribute("mcp.tool.blocked_output", violation)
+                span.set_attribute("mcp.tool.output_sanitized_after_execution", True)
                 raise PermissionError(
                     f"MCP tool response blocked by indirect prompt-injection guard ({violation})"
                 )
@@ -136,8 +179,14 @@ def _extract_mcp_result_text(result: Any) -> str:
     if isinstance(result, dict):
         return json.dumps(result, default=str)
     content_attr = getattr(result, "content", None)
-    if isinstance(content_attr, (list, tuple)):
-        return _extract_mcp_result_text(content_attr)
+    structured_attr = getattr(result, "structuredContent", None)
+    if isinstance(content_attr, (list, tuple)) or isinstance(structured_attr, dict):
+        extracted_parts: list[str] = []
+        if isinstance(content_attr, (list, tuple)):
+            extracted_parts.append(_extract_mcp_result_text(content_attr))
+        if isinstance(structured_attr, dict):
+            extracted_parts.append(json.dumps(structured_attr, default=str))
+        return "\n".join(p for p in extracted_parts if p)
     if isinstance(result, (list, tuple)):
         parts: list[str] = []
         for item in result:

@@ -459,6 +459,20 @@ async def _shutdown_http_client() -> None:
     _http_client_loop = None
 
 
+def _map_upstream_error_status(upstream_status: int) -> int:
+    """Map an upstream inference HTTP error to a gateway HTTP status code (F-15).
+
+    Upstream 4xx responses (especially 401, 403, 429) must never be passed
+    through verbatim as the gateway's own authentication, governance refusal,
+    or token-quota status codes; they are mapped to 502 Bad Gateway.
+    Server-side upstream 5xx codes in {500, 502, 503, 504} are preserved, and
+    all other statuses default to 502.
+    """
+    if upstream_status in {500, 502, 503, 504}:
+        return upstream_status
+    return 502
+
+
 async def _stream_vllm(
     target_url: str,
     body: dict[str, Any],
@@ -1398,19 +1412,21 @@ async def chat_completions(
                             if fn.get("arguments"):
                                 entry["arguments"] += str(fn["arguments"])
 
-            # [KC-01] FIRST: Abort on streaming backend >= 400 error BEFORE emitting PASS evidence!
+            # [KC-01] / [F-15] FIRST: Abort on streaming backend >= 400 error BEFORE emitting PASS evidence!
             if stream_backend_error:
                 await _get_token_quota_proxy().rollback_step(
                     agent_id, reserved_tokens=token_delta
                 )
-                err_status = (
+                upstream_status = (
                     stream_backend_status if 400 <= stream_backend_status < 600 else 502
                 )
+                gateway_status = _map_upstream_error_status(upstream_status)
                 return JSONResponse(
-                    status_code=err_status,
+                    status_code=gateway_status,
                     content={
                         "error": "upstream_inference_error",
-                        "message": f"vLLM backend error {err_status}",
+                        "upstream_status": upstream_status,
+                        "message": f"vLLM backend error {upstream_status}",
                         "correlation_id": stream_error_correlation_id
                         or str(_uuid.uuid4()),
                     },
@@ -1583,10 +1599,12 @@ async def chat_completions(
                     correlation_id,
                     scrub_pii((resp.text or "")[:200]),
                 )
+                gateway_status = _map_upstream_error_status(resp.status_code)
                 raise HTTPException(
-                    status_code=resp.status_code,
+                    status_code=gateway_status,
                     detail={
                         "error": "upstream_inference_error",
+                        "upstream_status": int(resp.status_code),
                         "message": f"vLLM backend error {resp.status_code}",
                         "correlation_id": correlation_id,
                     },

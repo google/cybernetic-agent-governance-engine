@@ -508,6 +508,9 @@ try:
                 return self._client
             with self._lock:
                 if self._client is None:
+                    from redis.backoff import NoBackoff
+                    from redis.retry import Retry
+
                     from src.gateway.infrastructure.redis_credential_factory import (
                         get_redis_credential_provider,
                     )
@@ -525,6 +528,9 @@ try:
                         decode_responses=True,
                         socket_connect_timeout=3.0,
                         socket_timeout=3.0,
+                        # redis-py 7.x defaults to 3 retries with exponential jitter
+                        # (4-8s blocking stall on connection refused); fail fast on sync client.
+                        retry=Retry(NoBackoff(), 0),
                         ssl=_REDIS_TLS,
                         ssl_cert_reqs=_REDIS_SSL_CERT_REQS,  # type: ignore[arg-type]
                         ssl_ca_certs=_REDIS_CA_CERT_PATH,
