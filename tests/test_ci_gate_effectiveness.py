@@ -52,6 +52,7 @@ from scripts import (
     check_k8s_terraform_parity,
     check_locked_yanks,
     check_locust_baseline,
+    check_mechanism_references,
     check_oscal_claim_census,
     check_poam_lula_divergence,
     check_producer_consumer_keys,
@@ -1742,6 +1743,65 @@ spec:
         check_k8s_terraform_parity.verify_k8s_terraform_parity(
             synth_repo, enforce_floors=False
         )
+
+
+def test_gate_mechanism_references_catches_phantom_metrics_fields_and_signing_hold(
+    tmp_path: Path,
+) -> None:
+    """check_mechanism_references.py must run in ci.yml lint and fail closed on planted drift."""
+    ci_yaml = yaml.safe_load((WORKFLOWS_DIR / "ci.yml").read_text(encoding="utf-8"))
+    lint_steps = ci_yaml["jobs"]["lint"]["steps"]
+    assert any(
+        "scripts/check_mechanism_references.py" in step.get("run", "")
+        for step in lint_steps
+    ), "ci.yml lint job must run scripts/check_mechanism_references.py"
+
+    assert check_mechanism_references.main([]) == 0, (
+        "Live repository failed mechanism-reference gate"
+    )
+
+    from tests.unit.test_check_mechanism_references import _build_valid_synth_repo
+
+    synth = _build_valid_synth_repo(tmp_path / "synth_ok")
+    assert (
+        check_mechanism_references.main(["--repo-root", str(synth), "--no-floors"]) == 0
+    )
+    assert check_mechanism_references.main(["--repo-root", str(synth)]) == 1
+
+    # Planted broken alert metric fails closed
+    synth_alert = _build_valid_synth_repo(tmp_path / "synth_alert")
+    tf_file = synth_alert / "infra" / "targets" / "gcp-gke" / "metrics_alerting.tf"
+    tf_file.write_text(
+        tf_file.read_text(encoding="utf-8").replace(
+            "cage_gateway_gated_requests_total", "cage_phantom_requests_total"
+        ),
+        encoding="utf-8",
+    )
+    assert (
+        check_mechanism_references.main(
+            ["--repo-root", str(synth_alert), "--no-floors"]
+        )
+        == 1
+    )
+
+    # Planted premature RA-001 signature while POAM-2026-222 is Open fails closed
+    synth_hold = _build_valid_synth_repo(tmp_path / "synth_hold")
+    ttm_file = (
+        synth_hold
+        / "compliance"
+        / "risk_acceptance"
+        / "THRESHOLD_TRACEABILITY_MATRIX.md"
+    )
+    ttm_file.write_text(
+        ttm_file.read_text(encoding="utf-8").replace(
+            "[SIGNATURE PENDING]", "Signed by AO", 1
+        ),
+        encoding="utf-8",
+    )
+    assert (
+        check_mechanism_references.main(["--repo-root", str(synth_hold), "--no-floors"])
+        == 1
+    )
 
 
 def test_setup_git_hooks_precommit_matches_ci_deterministic_gates() -> None:

@@ -142,6 +142,8 @@ security:
 docs-check:
 	@echo "==> Checking documentation references (broken links, dangling paths, stale symbols)..."
 	@uv run python scripts/check_doc_references.py
+	@echo "==> Checking monitoring, Lula, OSCAL, and TTM mechanism references..."
+	@uv run python scripts/check_mechanism_references.py --verbose
 	@echo "==> Checking vendor brand leakage into executable code..."
 	@uv run python scripts/check_vendor_brands.py --verbose
 	@echo "==> Checking domain literal leakage into kernel/integrations..."
