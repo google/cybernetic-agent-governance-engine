@@ -11,7 +11,7 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-# Closure regression guard for: POAM-2026-027, POAM-2026-176
+# Closure regression guard for: POAM-2026-027, POAM-2026-176, POAM-2026-235
 
 """Contract, bypass-closure, and mutation-killing tests for scripts/check_poam_lula_divergence.py.
 
@@ -1068,3 +1068,104 @@ def test_ce_m6_oscal_description_sha_drift_weaker_verdict_and_register_drift_fai
         "[Check 4: Census]" in e and "failing verdict 'WEAKER'" in e
         for e in errs_verdict
     ), errs_verdict
+
+
+# ---------------------------------------------------------------------------
+# POAM-2026-235: _audit_oscal_checks short-circuit & non-implemented HOLDS
+# ---------------------------------------------------------------------------
+
+
+def test_poam_235_short_circuit_closed_and_non_implemented_holds_audited(
+    synthetic_repo: pathlib.Path,
+) -> None:
+    """POAM-2026-235: pairing a runnable pytest file with a Stub Lula manifest, relying on
+    meta-schema test_lula_v0160_schema.py, or leaving a non-implemented HOLDS row without a
+    concrete runnable check must all fail Check 1 / Check 4."""
+    census_file = (
+        synthetic_repo / "compliance" / "oscal" / "evidence_claim_census.jsonl"
+    )
+    reg_file = (
+        synthetic_repo / "docs" / "compliance" / "OSCAL_EVIDENCE_CLAIM_REGISTER.md"
+    )
+    orig_rows = [
+        json.loads(line)
+        for line in census_file.read_text(encoding="utf-8").splitlines()
+        if line.strip()
+    ]
+
+    def _write_rows(
+        mutated: list[dict[str, object]],
+    ) -> tuple[list[str], dict[str, int]]:
+        census_file.write_text(
+            "\n".join(json.dumps(r) for r in mutated) + "\n", encoding="utf-8"
+        )
+        reg_file.write_text(
+            census_mod.render_register_markdown(mutated),  # type: ignore[arg-type]
+            encoding="utf-8",
+        )
+        return drift.audit_poam_and_oscal(synthetic_repo)
+
+    # (a) Runnable pytest + Stub Lula in evidence_named must NOT short-circuit past Stub Lula
+    rows_a = json.loads(json.dumps(orig_rows))
+    rows_a[0]["evidence_named"] = [
+        "tests/unit/test_bound_guard.py",
+        "compliance/lula/lula-validation-ac2.yaml",
+    ]
+    errs_a, _ = _write_rows(rows_a)
+    assert any(
+        "[Check 1: Read-Back]" in e and "names non-Active Lula manifest" in e
+        for e in errs_a
+    ), errs_a
+
+    # (b) Undisclaimed Stub Lula in read_back.check fails; disclaimed Stub alongside runnable passes
+    rows_b = json.loads(json.dumps(orig_rows))
+    rows_b[0]["read_back"]["check"] = (
+        "tests/unit/test_bound_guard.py ; compliance/lula/lula-validation-ac2.yaml"
+    )
+    errs_b, _ = _write_rows(rows_b)
+    assert any(
+        "[Check 1: Read-Back]" in e and "without Stub disclaimer" in e for e in errs_b
+    ), errs_b
+
+    rows_b_ok = json.loads(json.dumps(orig_rows))
+    rows_b_ok[0]["read_back"]["check"] = (
+        "tests/unit/test_bound_guard.py ; compliance/lula/lula-validation-ac2.yaml (rated Stub; not evidence)"
+    )
+    errs_b_ok, _ = _write_rows(rows_b_ok)
+    assert errs_b_ok == [], errs_b_ok
+
+    # (c) Meta-schema test_lula_v0160_schema.py cannot satisfy HOLDS
+    meta_file = synthetic_repo / "tests" / "test_lula_v0160_schema.py"
+    meta_file.write_text(
+        "import pytest\n"
+        "pytestmark = [pytest.mark.unit, pytest.mark.local]\n\n"
+        "def test_schema_only() -> None:\n"
+        "    assert True\n",
+        encoding="utf-8",
+    )
+    rows_c = json.loads(json.dumps(orig_rows))
+    rows_c[0]["evidence_named"] = ["tests/test_lula_v0160_schema.py"]
+    rows_c[0]["read_back"]["check"] = "tests/test_lula_v0160_schema.py"
+    rows_c[0]["cites"] = ["tests/test_lula_v0160_schema.py:L1-L5"]
+    errs_c, _ = _write_rows(rows_c)
+    assert any(
+        "[Check 1: Read-Back]" in e and "cites no resolvable PR-CI runnable" in e
+        for e in errs_c
+    ), errs_c
+    assert any(
+        "[Check 4: Census]" in e and "cannot rely on meta/schema test" in e
+        for e in errs_c
+    ), errs_c
+
+    # (d) Non-implemented HOLDS row (SA11-SYSTEMIC, partially-implemented) without concrete runnable fails Check 1
+    rows_d = json.loads(json.dumps(orig_rows))
+    rows_d[1]["evidence_named"] = []
+    rows_d[1]["cites"] = []
+    rows_d[1]["read_back"]["check"] = "unit tests"
+    errs_d, _ = _write_rows(rows_d)
+    assert any(
+        "OSCAL SA11-SYSTEMIC" in e
+        and "[Check 1: Read-Back]" in e
+        and "HOLDS claim cites no resolvable PR-CI runnable" in e
+        for e in errs_d
+    ), errs_d
