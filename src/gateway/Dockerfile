@@ -78,10 +78,11 @@ ENV VIRTUAL_ENV=/app/.venv \
 RUN uv sync --frozen --no-dev --extra gateway --extra compliance --extra langfuse --no-install-project
 
 # Download and cryptographically verify spaCy en_core_web_lg 3.8.0 wheel via --require-hashes.
+# --no-config prevents uv from reading [tool.uv].override-dependencies (which uses >= pins) in --require-hashes mode.
 RUN printf '%s\n' \
     'en-core-web-lg @ https://github.com/explosion/spacy-models/releases/download/en_core_web_lg-3.8.0/en_core_web_lg-3.8.0-py3-none-any.whl --hash=sha256:293e9547a655b25499198ab15a525b05b9407a75f10255e405e8c3854329ab63' \
     > /tmp/spacy-model.requirements.txt \
-    && uv pip install --python /app/.venv --no-cache --no-deps --require-hashes -r /tmp/spacy-model.requirements.txt \
+    && uv pip install --no-config --python /app/.venv --no-cache --no-deps --require-hashes -r /tmp/spacy-model.requirements.txt \
     && rm -f /tmp/spacy-model.requirements.txt
 
 # Copy Source Code
