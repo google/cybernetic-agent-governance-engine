@@ -750,7 +750,9 @@ async def test_consequence_gateway_blocks_unsafe_ieee754_integers(
     colliding_payload_a = {"action": "transfer", "amount": 9007199254740992}
     colliding_payload_b = {"action": "transfer", "amount": 9007199254740993}
     # Even if a token were somehow forged with the raw JCS digest of 2^53, evaluate() blocks both.
-    raw_digest = hashlib.sha256(jcs_canonicalize_plan(colliding_payload_a)).hexdigest()
+    raw_digest = hashlib.sha256(
+        b'{"action":"transfer","amount":9007199254740992}'
+    ).hexdigest()
     token = await ConsequenceToken.mint(
         sub="actor-123",
         tid="thread-456",
@@ -761,7 +763,8 @@ async def test_consequence_gateway_blocks_unsafe_ieee754_integers(
         signer=signer,
     )
 
-    res_b = await gateway.evaluate(token=token, action_payload=colliding_payload_b)
-    assert res_b.decision == ConsequenceDecision.BLOCK
-    assert res_b.reason_code == "ACTION_BINDING_MISMATCH"
-    assert "integer outside" in res_b.detail
+    for payload in (colliding_payload_a, colliding_payload_b):
+        res = await gateway.evaluate(token=token, action_payload=payload)
+        assert res.decision == ConsequenceDecision.BLOCK
+        assert res.reason_code == "ACTION_BINDING_MISMATCH"
+        assert "integer outside" in res.detail

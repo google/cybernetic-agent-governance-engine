@@ -76,3 +76,24 @@ class GovernanceDeferred(GovernanceError):
         self.defer_reason: str = defer_reason
         self.deferred_id: str = deferred_id
         self.reliance: list[dict[str, Any]] = list(reliance or [])
+
+
+class DeferQueueUnavailableError(GovernanceError):
+    """Raised when a committing deferral cannot be persisted to DeferQueue (F-05).
+
+    Subclasses :class:`GovernanceError` so direct ``govern()`` callers fail
+    closed uniformly, while ``enforce_governance()`` catches it ahead of
+    generic ``GovernanceError`` to avoid emitting a contradictory
+    ``GOVERNANCE_REFUSAL_RECEIPT`` after ``GOVERNANCE_DEFERRAL (persisted=False)``
+    has already been chained.
+    """
+
+    def __init__(
+        self,
+        message: str,
+        *,
+        defer_reason: str,
+        violations: list[str] | None = None,
+    ) -> None:
+        super().__init__(message, violations=violations)
+        self.defer_reason: str = defer_reason

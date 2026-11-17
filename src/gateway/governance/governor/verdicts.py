@@ -47,6 +47,7 @@ from src.gateway.governance.refusal_projection import (
     project_evaluated_params,
 )
 from src.gateway.governance.warrant.reliance import RelianceRecord, reliance_evidence
+from src.gateway.server.workload_identity import current_client_identity
 
 logger = logging.getLogger(__name__)
 tracer = trace.get_tracer(__name__)
@@ -697,7 +698,7 @@ async def handle_defer(
         "action": action,
     }
     if emit_side_effects:
-        defer_token, _persisted = await _park_defer_context(
+        defer_id, persisted = await _park_defer_context(
             action=action,
             params=params,
             metadata=defer_metadata,
@@ -708,11 +709,12 @@ async def handle_defer(
             defer_reason=defer_reason,
             reliance=reliance,
         )
+        defer_token: str | None = defer_id if persisted else None
     else:
         defer_token = f"preview-{uuid.uuid4()}"
 
     span.set_attribute("cage.verdict", GovernanceDecision.DEFER)
-    span.set_attribute("cage.defer_token", defer_token)
+    span.set_attribute("cage.defer_token", defer_token or "")
     span.set_attribute(OBSERVATION_OUTPUT, GovernanceDecision.DEFER)
     span.set_status(Status(StatusCode.OK))
     logger.info(
@@ -722,7 +724,7 @@ async def handle_defer(
         latency_ms,
     )
 
-    agent_id = params.get("_caller_principal", "")
+    agent_id = current_client_identity() or ""
     return {
         "verdict": GovernanceDecision.DEFER,
         "violations": violations,
@@ -780,7 +782,7 @@ def handle_narrow(
         constraints_applied,
         latency_ms,
     )
-    agent_id = original_params.get("_caller_principal", "")
+    agent_id = current_client_identity() or ""
 
     return {
         "verdict": GovernanceDecision.NARROW,
@@ -837,10 +839,12 @@ async def handle_deny(
     ordered = sorted(violations, key=lambda v: v.kind != ViolationKind.HARD)
 
     quarantine_meta: dict[str, Any] = {}
-    auto_quarantine = emit_side_effects and (
-        os.getenv("CAGE_ENABLE_AUTO_QUARANTINE", "false").strip().lower()
+    verified_caller = (current_client_identity() or "").strip()
+    auto_quarantine = (
+        emit_side_effects
+        and os.getenv("CAGE_ENABLE_AUTO_QUARANTINE", "false").strip().lower()
         in ("true", "1", "yes")
-        or bool(params.get("_quarantine_on_breach"))
+        and bool(verified_caller)
     )
     if auto_quarantine and ordered and ordered[0].kind == ViolationKind.HARD:
         import time as _time
@@ -862,12 +866,7 @@ async def handle_deny(
         else:
             trigger_reason = QuarantineTriggerReason.CRITICAL_CBF_BREACH
 
-        agent_svid = str(
-            params.get("_caller_principal")
-            or params.get("agent_svid")
-            or params.get("workload_svid")
-            or "spiffe://cluster.local/ns/cage/sa/unknown-agent"
-        )
+        agent_svid = verified_caller
         thread_id = str(params.get("thread_id") or "default-thread")
         sandbox_id = str(params.get("sandbox_id") or "default-sandbox")
         try:

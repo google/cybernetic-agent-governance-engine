@@ -492,12 +492,25 @@ class TestSymbolicGovernorDefer:
             "symbol": "AAPL",
         }
 
-        result = await governor.validate_action("execute_trade", params)
+        from contextlib import asynccontextmanager
+
+        fake_queue = MagicMock()
+        fake_queue.park = AsyncMock(side_effect=lambda tok: tok.defer_id)
+
+        @asynccontextmanager
+        async def _fake_open_queue():
+            yield fake_queue
+
+        with patch(
+            "src.gateway.governance.defer_queue.open_defer_queue",
+            _fake_open_queue,
+        ):
+            result = await governor.validate_action("execute_trade", params)
 
         from src.gateway.governance.decisions import GovernanceDecision
 
         if result["verdict"] == GovernanceDecision.DEFER:
-            # Should have a defer_token or defer_id
+            # Should have a persisted defer_token or defer_id
             assert result.get("defer_token") or result.get("defer_id")
             # Token should be a UUID-like string
             token = result.get("defer_token") or result.get("defer_id")

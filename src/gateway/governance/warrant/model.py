@@ -120,14 +120,23 @@ class WarrantScope:
         are checked when the context supplies them.
         """
 
-        def _admits(values: tuple[str, ...], item: str | None) -> bool:
-            return item is None or "*" in values or item in values
+        def _admits_required(values: tuple[str, ...], item: str | None) -> bool:
+            if item is None or not str(item).strip():
+                return False
+            return "*" in values or item in values
+
+        def _admits_optional(values: tuple[str, ...], item: str | None) -> bool:
+            if item is None:
+                return True
+            if not str(item).strip():
+                return False
+            return "*" in values or item in values
 
         return (
-            _admits(self.actions, action)
-            and _admits(self.jurisdictions, jurisdiction)
-            and _admits(self.actors, actor)
-            and _admits(self.systems, system)
+            _admits_required(self.actions, action)
+            and _admits_required(self.jurisdictions, jurisdiction)
+            and _admits_optional(self.actors, actor)
+            and _admits_optional(self.systems, system)
         )
 
 

@@ -407,8 +407,9 @@ class TestPlanGraphAnalyzer:
 
         assert "s2" in result.reachable_terminals
         assert "s3" not in result.reachable_terminals
-        # s3 has no incoming edge and is not step[0], so DFS from s1 never visits it
-        assert result.reachable_step_count == 2
+        # KG-12: every zero-in-degree root (s1 and s3) is traversed so unreferenced
+        # root steps cannot smuggle unanalyzed terminals past step[0]-only DFS.
+        assert result.reachable_step_count == 3
 
     def test_duplicate_or_empty_step_id_fails_closed_to_blocked(self, tmp_path):
         """POAM-2026-212: Duplicate or empty step.id values fail closed with BLOCKED."""
