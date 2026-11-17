@@ -1,0 +1,2 @@
+- Mechanizable gets a gate; reasoning discipline gets a few lines here. Prose describing something a check could enforce is one more unenforced claim, so write the check instead.
+- Before reasoning about what a control detects, establish that it is deployed and running: ready replicas, last successful run, alert policy enabled and bound to a channel.
