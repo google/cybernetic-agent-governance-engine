@@ -1019,6 +1019,30 @@ async def validate_action_endpoint(
                 for v in payload_result["violations"]
             ]
 
+        verdict_val = payload_result.get("verdict")
+        has_persisted_ticket = bool(
+            payload_result.get("deferred_id")
+            or payload_result.get("defer_token")
+            or payload_result.get("defer_id")
+        )
+        if (
+            verdict_val
+            in (
+                GovernanceDecision.REQUIRE_APPROVAL,
+                "REQUIRE_APPROVAL",
+                GovernanceDecision.DEFER,
+                "DEFER",
+            )
+            and not has_persisted_ticket
+        ):
+            return JSONResponse(
+                status_code=503,
+                content={
+                    "error": "defer_queue_unavailable",
+                    "detail": "Deferral could not be persisted to DeferQueue; failing closed.",
+                },
+            )
+
         builder = GovernanceEnvelopeBuilder()
         envelope = await builder.build(
             action=body.action,
@@ -1030,6 +1054,18 @@ async def validate_action_endpoint(
         )
         return JSONResponse(content=envelope.to_dict(include_signature=True))
 
+    except DeferQueueUnavailableError as exc:
+        logger.error(
+            "DeferQueue unavailable during validate_action (%s)",
+            type(exc).__name__,
+        )
+        return JSONResponse(
+            status_code=503,
+            content={
+                "error": "defer_queue_unavailable",
+                "detail": "Deferral could not be persisted to DeferQueue; failing closed.",
+            },
+        )
     except GovernanceError as exc:
         from src.gateway.governance.evidence.stream import (
             EvidenceChainUnavailableError,

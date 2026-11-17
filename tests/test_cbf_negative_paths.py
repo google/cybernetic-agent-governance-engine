@@ -121,6 +121,7 @@ async def test_read_cbf_state_uses_reconciled_balance_when_kms_valid(make_cbf):
     verified.state_scalar = 88_000.0
     verified.source = "plaid"
     verified.verified_at = 1_700_000_000.0
+    verified.invariant_id = "finance.cash_balance"
 
     mock_signer = MagicMock()
     mock_signer.verify_decision = MagicMock(return_value=True)
@@ -168,6 +169,7 @@ async def test_read_cbf_state_falls_back_when_kms_sig_invalid(make_cbf):
     verified.state_scalar = 88_000.0
     verified.source = "plaid"
     verified.verified_at = 1_700_000_000.0
+    verified.invariant_id = "finance.cash_balance"
 
     mock_signer = MagicMock()
     mock_signer.verify_decision = MagicMock(return_value=False)  # signature invalid
@@ -219,6 +221,7 @@ async def test_read_cbf_state_falls_back_when_kms_verify_raises(make_cbf):
     verified.state_scalar = 88_000.0
     verified.source = "plaid"
     verified.verified_at = 1_700_000_000.0
+    verified.invariant_id = "finance.cash_balance"
 
     mock_signer = MagicMock()
     mock_signer.verify_decision = MagicMock(
@@ -347,6 +350,7 @@ async def test_read_cbf_state_rejects_sequence_regression_and_strict_self_report
     verified.state_scalar = 88_000.0
     verified.source = "plaid"
     verified.verified_at = 1_700_000_000.0
+    verified.invariant_id = "finance.cash_balance"
 
     mock_signer = MagicMock()
     mock_signer.verify_decision = MagicMock(return_value=True)

@@ -622,6 +622,10 @@ def _active_region() -> str:
     return ControlRegistry().active_region
 
 
+class ThresholdsConfigurationError(RuntimeError):
+    """Raised when governance_thresholds.json or regional overlays fail validation."""
+
+
 @lru_cache(maxsize=8)
 def load_and_validate_thresholds(
     path: str | None = None, region: str | None = None
@@ -653,18 +657,17 @@ def load_and_validate_thresholds(
     logger.info("Loading governance thresholds from %s", resolved)
 
     if not os.path.exists(resolved):
-        logger.critical(
-            "❌ governance_thresholds.json not found at %s — aborting startup.",
-            resolved,
-        )
-        sys.exit(1)
+        msg = f"governance_thresholds.json not found at {resolved}"
+        logger.critical("❌ %s — aborting startup.", msg)
+        raise ThresholdsConfigurationError(msg)
 
     try:
         with open(resolved) as fh:
             raw = json.load(fh)
     except json.JSONDecodeError as exc:
-        logger.critical("❌ governance_thresholds.json is not valid JSON: %s", exc)
-        sys.exit(1)
+        msg = f"governance_thresholds.json is not valid JSON: {exc}"
+        logger.critical("❌ %s", msg)
+        raise ThresholdsConfigurationError(msg) from exc
 
     resolved_region = (region if region is not None else _active_region()).upper()
     try:
@@ -672,12 +675,9 @@ def load_and_validate_thresholds(
             raw.get("domains", {}), load_regional_domains(resolved_region)
         )
     except RegionalOverlayError as exc:
-        logger.critical(
-            "❌ regional threshold overlay for %s failed: %s — aborting startup.",
-            resolved_region,
-            exc,
-        )
-        sys.exit(1)
+        msg = f"regional threshold overlay for {resolved_region} failed: {exc}"
+        logger.critical("❌ %s — aborting startup.", msg)
+        raise ThresholdsConfigurationError(msg) from exc
     raw["region"] = resolved_region
 
     # Apply environment variable overrides (EV-1 through EV-6)
@@ -686,11 +686,9 @@ def load_and_validate_thresholds(
     try:
         thresholds = GovernanceThresholds(**raw)
     except Exception as exc:  # pydantic.ValidationError
-        logger.critical(
-            "❌ governance_thresholds.json failed schema validation: %s — aborting startup.",
-            exc,
-        )
-        sys.exit(1)
+        msg = f"governance_thresholds.json failed schema validation: {exc}"
+        logger.critical("❌ %s — aborting startup.", msg)
+        raise ThresholdsConfigurationError(msg) from exc
 
     logger.info(
         "✅ Governance thresholds validated: region=%s, confidence=%.2f, "

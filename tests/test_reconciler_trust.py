@@ -64,7 +64,7 @@ def _signed_snapshot(signer: KMSGovernanceSigner, **overrides) -> Reconciliation
         state_scalar=75_000.0,
         verified_at=time.time(),
         sequence=3,
-        invariant_id="test.invariant",
+        invariant_id="finance.cash_balance",
     )
     record = signer.sign_decision(trust.snapshot_signing_payload(snap))
     snap.signature = record.signature

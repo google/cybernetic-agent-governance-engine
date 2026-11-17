@@ -575,7 +575,7 @@ def test_loader_aborts_on_an_out_of_bounds_config(
     tmp_path: pathlib.Path, max_age: float
 ) -> None:
     path = _write_config(tmp_path, {"max_age_seconds": max_age})
-    with pytest.raises(SystemExit):
+    with pytest.raises((thresholds_module.ThresholdsConfigurationError, SystemExit)):
         thresholds_module.load_and_validate_thresholds.__wrapped__(
             path, region="US_FED"
         )
@@ -587,7 +587,7 @@ def test_loader_aborts_on_an_out_of_bounds_env_override(
 ) -> None:
     path = _write_config(tmp_path, {"max_age_seconds": 60})
     monkeypatch.setenv("WARRANT_MAX_AGE_SECONDS", value)
-    with pytest.raises(SystemExit):
+    with pytest.raises((thresholds_module.ThresholdsConfigurationError, SystemExit)):
         thresholds_module.load_and_validate_thresholds.__wrapped__(
             path, region="US_FED"
         )
