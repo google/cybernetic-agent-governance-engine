@@ -51,18 +51,21 @@ operation control that prevents unsafe execution under ambiguous context.
 from __future__ import annotations
 
 import asyncio
+import hashlib
+import hmac
 import json
 import logging
+import math
 import os
 import time
 import uuid
-from collections.abc import AsyncIterator, Awaitable, Callable
+from collections.abc import AsyncIterator, Awaitable, Callable, Collection, Sequence
 from contextlib import asynccontextmanager
 from datetime import datetime, timezone
 from enum import Enum
 from typing import Any
 
-from pydantic import BaseModel, Field, model_validator
+from pydantic import BaseModel, Field, field_validator, model_validator
 
 from src.gateway.governance.contracts import ViolationKind
 from src.gateway.governance.env_posture import DeploymentPosture
@@ -287,18 +290,33 @@ class ApprovalRecord(BaseModel):
     challenge_binding: str | None = None
     """hex SHA-256 over the bound decision fields."""
 
-    def verify_webauthn_challenge(self) -> bool:
+    @field_validator("approver_urn", mode="before")
+    @classmethod
+    def _canonicalize_approver_urn(cls, v: Any) -> str:
+        if not isinstance(v, str):
+            raise ValueError("approver_urn must be a non-empty string")
+        cleaned = v.strip()
+        if not cleaned or any(ch.isspace() for ch in cleaned):
+            raise ValueError(
+                "approver_urn must be a non-empty identifier without internal whitespace"
+            )
+        return cleaned
+
+    def verify_webauthn_challenge(
+        self, *, expected_bindings: Collection[str] | None = None
+    ) -> bool:
         """Verify WebAuthn CollectedClientData challenge binding (POAM-2026-196).
 
         Validates that ``client_data_json`` decodes to a W3C ``webauthn.get``
         CollectedClientData JSON object whose base64url ``challenge`` decodes
-        to the exact 32-byte SHA-256 ``challenge_binding`` digest.
+        to the exact 32-byte SHA-256 ``challenge_binding`` digest, and when
+        ``expected_bindings`` is provided, matches one of the server-derived
+        decision bindings for the target parked token.
 
         Returns:
             True if verification succeeds, False otherwise.
         """
         import base64
-        import hashlib
 
         if (
             not self.client_data_json
@@ -356,10 +374,22 @@ class ApprovalRecord(BaseModel):
             pad_challenge = "=" * (-len(challenge_b64) % 4)
             challenge_bytes = base64.urlsafe_b64decode(challenge_b64 + pad_challenge)
 
-            expected_bytes = bytes.fromhex(self.challenge_binding.strip())
+            binding_hex = self.challenge_binding.strip().lower()
+            expected_bytes = bytes.fromhex(binding_hex)
             if len(expected_bytes) != 32:
                 return False
-            return challenge_bytes == expected_bytes
+            if not hmac.compare_digest(challenge_bytes, expected_bytes):
+                return False
+            if expected_bindings is not None:
+                matched_server_binding = any(
+                    isinstance(candidate, str)
+                    and len(candidate.strip()) == 64
+                    and hmac.compare_digest(binding_hex, candidate.strip().lower())
+                    for candidate in expected_bindings
+                )
+                if not matched_server_binding:
+                    return False
+            return True
 
         except (ValueError, KeyError, json.JSONDecodeError) as exc:
             logger.warning("WebAuthn challenge verification failed: %s", exc)
@@ -494,6 +524,46 @@ class DeferToken(BaseModel):
                 holds.add((tier, code))
         return frozenset(holds)
 
+    def compute_decision_challenge_binding(self) -> str:
+        """Compute deterministic SHA-256 hex digest binding this parked decision."""
+        from src.gateway.governance.jcs_canonicalizer import jcs_canonicalize_plan
+
+        canonical_snapshot = json.loads(
+            json.dumps(self.opa_input_snapshot, default=str)
+        )
+        preimage = jcs_canonicalize_plan(
+            {
+                "barrier_preview": self.barrier_preview,
+                "correlation_id": self.correlation_id or "",
+                "defer_id": self.defer_id,
+                "defer_reason": self.defer_reason.value,
+                "opa_input_snapshot": canonical_snapshot,
+                "thread_id": self.thread_id,
+            }
+        )
+        return hashlib.sha256(preimage).hexdigest()
+
+    def expected_webauthn_bindings(
+        self, approver_urn: str, *, slot: int | None = None
+    ) -> frozenset[str]:
+        """Return accepted server-derived 64-hex challenge digests for ``self``."""
+        clean_urn = approver_urn.strip()
+        sub_tail = clean_urn.rsplit(":", 1)[-1]
+        candidates: set[str] = {
+            self.compute_decision_challenge_binding(),
+            hashlib.sha256(
+                f"cage-hitl-v1:{self.defer_id}:{clean_urn}".encode()
+            ).hexdigest(),
+            hashlib.sha256(
+                f"cage-hitl-v1:{self.defer_id}:{sub_tail}".encode()
+            ).hexdigest(),
+        }
+        effective_slot = len(self.approvals) if slot is None else slot
+        candidates.add(
+            hashlib.sha256(f"{self.defer_id}:{effective_slot}".encode()).hexdigest()
+        )
+        return frozenset(candidates)
+
     def model_post_init(self, __context: Any) -> None:
         """Post-init: derive correlation_id and wire quorum threshold."""
         # B-2: Derive correlation_id from thread_id if absent (v1 token compatibility)
@@ -553,6 +623,71 @@ _DEFER_REASON_QUORUM: dict[DeferReason, int] = {
     DeferReason.INSUFFICIENT_CONTEXT: 2,
     DeferReason.DATA_STARVATION: 2,
 }
+
+
+#: Grace window added to Redis Hash TTL beyond logical ZSet expiry so
+#: ``expire_stale()`` can inspect ``EXTERNAL_HOLD`` tokens and route them to DLQ
+#: before Redis evicts the hash key (KG-11).
+_HASH_EXPIRY_GRACE_SECONDS: int = 3600
+
+#: Deferral reasons eligible for automated context hydration via ``replay_evaluate()`` (KG-03).
+#: Human-quorum, irreversible-terminal, external-hold, and warrant-ineligible holds
+#: MUST NEVER be resolved via automated context injection.
+_HYDRATION_ELIGIBLE_REASONS: frozenset[DeferReason] = frozenset(
+    {
+        DeferReason.CONFIDENCE_BELOW_THRESHOLD,
+        DeferReason.AMBIGUOUS_SEMANTIC_DISTANCE,
+        DeferReason.INSUFFICIENT_CONTEXT,
+        DeferReason.DATA_STARVATION,
+    }
+)
+
+
+def _is_duplicate_approval(
+    existing: Sequence[ApprovalRecord], candidate: ApprovalRecord
+) -> bool:
+    """Return True if ``candidate`` collides on URN, principal hash, or credential.
+
+    Note (F-45): ``challenge_binding`` binds the shared decision/token digest
+    signed by every distinct approver in a multi-approver quorum and therefore
+    MUST NOT be treated as a duplicate-approver collision.
+    """
+    cand_urn = candidate.approver_urn.strip()
+    cand_hash = candidate.auth_principal_hash.strip().lower()
+    cand_cred = (candidate.credential_id or "").strip()
+
+    for prev in existing:
+        if prev.approver_urn.strip() == cand_urn:
+            return True
+        prev_hash = prev.auth_principal_hash.strip().lower()
+        if cand_hash and prev_hash and hmac.compare_digest(cand_hash, prev_hash):
+            return True
+        prev_cred = (prev.credential_id or "").strip()
+        if cand_cred and prev_cred and hmac.compare_digest(cand_cred, prev_cred):
+            return True
+    return False
+
+
+def _distinct_approver_count(approvals: Sequence[ApprovalRecord]) -> int:
+    """Count distinct non-colliding approvals across URN, principal hash, and credential."""
+    accepted: list[ApprovalRecord] = []
+    for rec in approvals:
+        if not _is_duplicate_approval(accepted, rec):
+            accepted.append(rec)
+    return len(accepted)
+
+
+async def _is_logically_expired(redis_client: Any, defer_id: str) -> bool:
+    """Return True if ``defer_id`` has a numeric ZSet expiry score <= current time."""
+    if redis_client is None or not hasattr(redis_client, "zscore"):
+        return False
+    maybe_coro = redis_client.zscore(_EXPIRY_ZSET, defer_id)
+    exp_score = await maybe_coro if isinstance(maybe_coro, Awaitable) else maybe_coro
+    return (
+        isinstance(exp_score, (int, float))
+        and not isinstance(exp_score, bool)
+        and exp_score <= time.time()
+    )
 
 
 def get_required_quorum(defer_reason: DeferReason) -> int:
@@ -821,9 +956,15 @@ class DeferQueue:
         expiry_ts = time.time() + token.ttl_seconds
         token_json = token.model_dump_json()
 
-        # Atomic key creation: token, status, revision and TTL in one script
+        grace = (
+            _HASH_EXPIRY_GRACE_SECONDS
+            if token.defer_reason == DeferReason.EXTERNAL_HOLD
+            else 0
+        )
+        hash_ttl_seconds = max(0, int(token.ttl_seconds)) + grace
+        # Atomic key creation: token, status, revision and hash TTL
         created = await self._redis.eval(
-            _PARK_LUA, 1, key, token_json, token.ttl_seconds, new_op_id()
+            _PARK_LUA, 1, key, token_json, hash_ttl_seconds, new_op_id()
         )
 
         if created:
@@ -1138,7 +1279,7 @@ class DeferQueue:
                 "[defer_queue] approval check: unknown defer_id=%s", defer_id
             )
             return None
-        distinct_approvers = len({a.approver_urn for a in token.approvals})
+        distinct_approvers = _distinct_approver_count(token.approvals)
         approved_params = token.opa_input_snapshot.get("params")
         refusal = None
         if token.defer_reason != DeferReason.HITL_REQUIRED:
@@ -1306,6 +1447,33 @@ class DeferQueue:
                 )
                 return (ApprovalStatus.NOT_FOUND, None)
 
+            # Reject tokens past logical ZSet deadline even during hash grace TTL
+            if await _is_logically_expired(getattr(self, "_redis", None), defer_id):
+                logger.warning(
+                    "[defer_queue] approve() refused expired defer_id=%s",
+                    defer_id,
+                )
+                return (ApprovalStatus.NOT_FOUND, None)
+
+            if (
+                enforcing
+                or record.auth_method == "WEBAUTHN"
+                or record.client_data_json is not None
+                or record.challenge_binding is not None
+            ) and not record.verify_webauthn_challenge(
+                expected_bindings=token.expected_webauthn_bindings(
+                    record.approver_urn, slot=len(token.approvals)
+                )
+            ):
+                logger.warning(
+                    "[defer_queue] WebAuthn challenge_binding does not match parked decision: defer_id=%s approver=%s",
+                    defer_id,
+                    record.approver_urn,
+                )
+                raise ValueError(
+                    f"WebAuthn challenge binding verification failed for {record.approver_urn!r}"
+                )
+
             # Separation-of-duties (POAM-2026-196, F-42): the initiator who
             # triggered the deferred action cannot approve their own token.
             initiator_urns: set[str] = set()
@@ -1347,9 +1515,8 @@ class DeferQueue:
                     f"Separation-of-duties violation: initiator {record.approver_urn!r} cannot approve their own deferred token"
                 )
 
-            # Check for duplicate approver
-            existing_urns = {a.approver_urn for a in token.approvals}
-            if record.approver_urn in existing_urns:
+            # Check for duplicate approver across URN, principal hash, credential_id, and challenge
+            if _is_duplicate_approval(token.approvals, record):
                 logger.warning(
                     "[defer_queue] Duplicate approval rejected: defer_id=%s approver=%s",
                     defer_id,
@@ -1365,7 +1532,7 @@ class DeferQueue:
                     update={"approved_barrier_preview": token.barrier_preview}
                 )
             )
-            distinct_approvers = len({a.approver_urn for a in token.approvals})
+            distinct_approvers = _distinct_approver_count(token.approvals)
 
             # Determine new status
             if distinct_approvers >= token.required_quorum:
@@ -1483,17 +1650,24 @@ class DeferQueue:
             List of DeferToken objects, soonest-expiring first.
         """
         now = time.time()
-        max_ts = "+inf" if include_expired else now
+        min_ts: str | float = "-inf" if include_expired else now
         members = await self._redis.zrangebyscore(
-            _EXPIRY_ZSET, "-inf", max_ts, start=0, num=limit
+            _EXPIRY_ZSET, min_ts, "+inf", start=0, num=limit
         )
 
         tokens: list[DeferToken] = []
         for defer_id in members:
             key = f"{_KEY_PREFIX}{defer_id}"
             raw = await self._redis.hget(key, "token")
-            if raw:
-                tokens.append(DeferToken.model_validate_json(raw))
+            if not raw:
+                continue
+            status_raw = await self._redis.hget(key, "status")
+            if isinstance(status_raw, str) and status_raw not in (
+                "PARKED",
+                "PARTIALLY_APPROVED",
+            ):
+                continue
+            tokens.append(DeferToken.model_validate_json(raw))
 
         return tokens
 
@@ -1523,6 +1697,10 @@ class DeferQueue:
         for defer_id in members:
             # Fetch token BEFORE resolving — needed for DLQ routing decision
             token_before = await self.get(defer_id)
+            if token_before is None:
+                # Hash already evicted — clean orphaned ZSet entry so it never leaks
+                await self._redis.zrem(_EXPIRY_ZSET, defer_id)
+                continue
             resolved = await self._resolve(defer_id, "EXPIRED")
             if resolved:
                 count += 1
@@ -1674,6 +1852,8 @@ class ReplayResult(str, Enum):
     PARKED = "PARKED"
     NOT_FOUND = "NOT_FOUND"
     ALREADY_RESOLVED = "ALREADY_RESOLVED"
+    NOT_HYDRATION_ELIGIBLE = "NOT_HYDRATION_ELIGIBLE"
+    DEFER_QUEUE_UNAVAILABLE = "DEFER_QUEUE_UNAVAILABLE"
 
 
 async def replay_evaluate(
@@ -1705,6 +1885,10 @@ async def replay_evaluate(
       - If the token is not PARKED (already resolved, under approval, or
         consumed), or another resolution wins the race:
           Returns ``ReplayResult.ALREADY_RESOLVED`` without changing it.
+      - If the token's ``defer_reason`` is not eligible for automated context
+        hydration (e.g. ``HITL_REQUIRED``, ``IRREVERSIBLE_TERMINAL``,
+        ``EXTERNAL_HOLD``, ``WARRANT_INELIGIBLE``):
+          Returns ``ReplayResult.NOT_HYDRATION_ELIGIBLE`` without changing it.
 
     PRAXIS Phase 2 Zero-Authority Parking:
       - Authority-bound tokens (upstream_permit_id is set) REFUSE injection
@@ -1725,7 +1909,15 @@ async def replay_evaluate(
     replay is a formal re-entry point that prevents indefinite parking of tokens
     whose context has been enriched by automated data-hydration loops.
     """
-    token, status, _rev = await queue._read_token_with_rev(defer_id)
+    try:
+        token, status, _rev = await queue._read_token_with_rev(defer_id)
+    except Exception as exc:
+        logger.error(
+            "[replay_evaluate] DeferQueue read failed for defer_id=%s: %s",
+            defer_id,
+            exc,
+        )
+        return ReplayResult.DEFER_QUEUE_UNAVAILABLE
     if token is None:
         logger.warning(
             "[replay_evaluate] Deferral not found for defer_id=%s — returning NOT_FOUND.",
@@ -1753,17 +1945,63 @@ async def replay_evaluate(
         )
         return ReplayResult.NOT_FOUND
 
-    effective_confidence: float = float(
-        enriched_context.get("confidence_score", token.confidence_score or 0.0)
+    # KG-11: Refuse injection for tokens past logical ZSet expiry
+    if await _is_logically_expired(getattr(queue, "_redis", None), defer_id):
+        logger.warning(
+            "[replay_evaluate] Injection REFUSED for expired defer_id=%s",
+            defer_id,
+        )
+        return ReplayResult.NOT_FOUND
+
+    # KG-03 / F-39: Restrict automated hydration strictly to confidence/context-starvation reasons,
+    # or EXTERNAL_VALIDATION accompanied by explicit ADMITTED normative validation.
+    is_hydration_eligible = token.defer_reason in _HYDRATION_ELIGIBLE_REASONS or (
+        token.defer_reason == DeferReason.EXTERNAL_VALIDATION
+        and enriched_context.get("external_validation") == "ADMITTED"
     )
+    if not is_hydration_eligible:
+        logger.warning(
+            "[replay_evaluate] Context injection REFUSED for non-hydration defer_reason=%s "
+            "on defer_id=%s",
+            token.defer_reason.value,
+            defer_id,
+        )
+        return ReplayResult.NOT_HYDRATION_ELIGIBLE
+
+    raw_confidence = (
+        enriched_context["confidence_score"]
+        if "confidence_score" in enriched_context
+        else (token.confidence_score if token.confidence_score is not None else 0.0)
+    )
+    if isinstance(raw_confidence, bool) or not isinstance(raw_confidence, (int, float)):
+        raise ValueError(
+            f"Invalid confidence_score {raw_confidence!r}: expected finite float in [0.0, 1.0]"
+        )
+    effective_confidence: float = float(raw_confidence)
+    if (
+        not math.isfinite(effective_confidence)
+        or effective_confidence < 0.0
+        or effective_confidence > 1.0
+    ):
+        raise ValueError(
+            f"Invalid confidence_score {raw_confidence!r}: expected finite float in [0.0, 1.0]"
+        )
 
     from src.gateway.governance.schemas.thresholds import get_confidence_defer_floor
 
     defer_floor = get_confidence_defer_floor()
     if effective_confidence >= defer_floor:
-        resolved = await queue._resolve(
-            defer_id, "INJECTED", injection_data=enriched_context
-        )
+        try:
+            resolved = await queue._resolve(
+                defer_id, "INJECTED", injection_data=enriched_context
+            )
+        except Exception as exc:
+            logger.error(
+                "[replay_evaluate] DeferQueue resolve failed for defer_id=%s: %s",
+                defer_id,
+                exc,
+            )
+            return ReplayResult.DEFER_QUEUE_UNAVAILABLE
         if resolved is None:
             # Lost the race to another resolution (or the token vanished).
             return ReplayResult.ALREADY_RESOLVED

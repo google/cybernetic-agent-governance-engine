@@ -455,9 +455,14 @@ def test_verify_rejects_invalid_base64_header():
 def test_verify_rejects_non_json_payload():
     """Verify rejects a token with non-JSON payload."""
     signer, _ = _make_mock_signer_with_keypair("ec_p256")
+    kid = signer.key_id
 
     header_b64 = (
-        base64.urlsafe_b64encode(b'{"alg":"ES256","typ":"JWT"}').rstrip(b"=").decode()
+        base64.urlsafe_b64encode(
+            f'{{"alg":"ES256","typ":"JWT","kid":"{kid}"}}'.encode()
+        )
+        .rstrip(b"=")
+        .decode()
     )
     payload_b64 = base64.urlsafe_b64encode(b"not-json").rstrip(b"=").decode()
     sig_b64 = "fake"

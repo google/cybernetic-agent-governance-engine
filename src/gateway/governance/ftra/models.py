@@ -533,6 +533,10 @@ class PlanStep(BaseModel):
     parameters: dict[str, Any] = Field(
         default_factory=dict, description="Parameters for the action"
     )
+    depends_on: list[str] = Field(
+        default_factory=list,
+        description="Upstream step IDs that must complete before this step",
+    )
 
 
 class ExecutionPlan(BaseModel):

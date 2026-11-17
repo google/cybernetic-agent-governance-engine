@@ -73,6 +73,7 @@ Usage (Phase 2 integration point, from provider_01's normative validation):
 from __future__ import annotations
 
 import base64
+import inspect
 import json
 import logging
 import time
@@ -189,10 +190,16 @@ class ConsequenceToken:
                     f"Invalid receipt_expires_at: {receipt_expires_at} must be > iat ({now})"
                 )
 
+        signer_kid = getattr(signer, "key_id", None)
+        if not isinstance(signer_kid, str) or not signer_kid.strip():
+            raise RuntimeError(
+                "ConsequenceToken minting failed: signer.key_id must be a non-empty string"
+            )
+
         # Protected header: MUST include alg, kid, typ per RFC 7515
         header = {
             "alg": signer.jose_alg,  # JOSE algorithm (ES256, EdDSA, etc.)
-            "kid": signer.key_id,  # Key version resource name
+            "kid": signer_kid,  # Key version resource name
             "typ": "JWT",  # Standard JWT type
         }
 
@@ -222,9 +229,13 @@ class ConsequenceToken:
         payload_b64 = _b64url_encode(payload_bytes)
         signing_input = f"{header_b64}.{payload_b64}".encode("ascii")
 
-        # Sign via KMS
+        # Sign via KMS (RFC 7518 JWS R || S encoding for ECDSA)
         try:
-            signature_bytes = await signer.sign_raw_async(signing_input)
+            sign_jws_fn = getattr(signer, "sign_jws_async", None)
+            if inspect.iscoroutinefunction(sign_jws_fn):
+                signature_bytes = await sign_jws_fn(signing_input)
+            else:
+                signature_bytes = await signer.sign_raw_async(signing_input)
         except Exception as exc:
             # 'ConsequenceToken' is the class name; logs masked ids or the error only.
             # nosemgrep: python.lang.security.audit.logging.logger-credential-leak.python-logger-credential-disclosure
@@ -319,35 +330,38 @@ class ConsequenceToken:
                 f"Algorithm confusion: header alg={header_alg}, expected {expected_alg}"
             )
 
-        # Validate kid against signer's active key_id or trust-anchor registry when present
+        # Validate mandatory non-empty kid against signer's active key_id or trust-anchor registry
         header_kid = header.get("kid")
-        if header_kid is not None:
-            if not isinstance(header_kid, str):
-                raise ConsequenceTokenSignatureError("Invalid kid header: expected str")
-            if header_kid:
-                signer_kid: str | None = None
-                try:
-                    raw_signer_kid = getattr(signer, "key_id", None)
-                    if isinstance(raw_signer_kid, str):
-                        signer_kid = raw_signer_kid
-                except Exception:
-                    signer_kid = None
-                resolved_anchor = (
-                    signer.resolve_trust_anchor(header_kid)
-                    if hasattr(signer, "resolve_trust_anchor")
-                    else None
-                )
-                if (
-                    (signer_kid is not None or hasattr(signer, "resolve_trust_anchor"))
-                    and header_kid != signer_kid
-                    and not (
-                        isinstance(resolved_anchor, (bytes, bytearray))
-                        and len(resolved_anchor) > 0
-                    )
-                ):
-                    raise ConsequenceTokenSignatureError(
-                        f"Unknown or untrusted kid in header: {header_kid!r}"
-                    )
+        if not isinstance(header_kid, str) or not header_kid.strip():
+            raise ConsequenceTokenSignatureError(
+                "Missing or empty kid header: non-empty str required"
+            )
+        header_kid = header_kid.strip()
+        signer_kid: str | None = None
+        try:
+            raw_signer_kid = getattr(signer, "key_id", None)
+            if isinstance(raw_signer_kid, str):
+                signer_kid = raw_signer_kid
+        except Exception:
+            signer_kid = None
+        raw_anchor = (
+            signer.resolve_trust_anchor(header_kid)
+            if hasattr(signer, "resolve_trust_anchor")
+            else None
+        )
+        resolved_anchor: bytes | None = (
+            bytes(raw_anchor)
+            if isinstance(raw_anchor, (bytes, bytearray)) and len(raw_anchor) > 0
+            else None
+        )
+        if (
+            (signer_kid is not None or hasattr(signer, "resolve_trust_anchor"))
+            and header_kid != signer_kid
+            and resolved_anchor is None
+        ):
+            raise ConsequenceTokenSignatureError(
+                f"Unknown or untrusted kid in header: {header_kid!r}"
+            )
 
         # Validate typ header (should be JWT)
         header_typ = header.get("typ", "")
@@ -408,7 +422,26 @@ class ConsequenceToken:
             ) from exc
 
         try:
-            valid = signer.verify_raw(signing_input, signature_bytes)
+            verify_fn = signer.verify_raw
+            if resolved_anchor is not None:
+                try:
+                    sig_params = inspect.signature(verify_fn).parameters
+                    supports_kw = "public_key_pem" in sig_params or any(
+                        p.kind == inspect.Parameter.VAR_KEYWORD
+                        for p in sig_params.values()
+                    )
+                except (TypeError, ValueError):
+                    supports_kw = False
+                if supports_kw:
+                    valid = verify_fn(
+                        signing_input,
+                        signature_bytes,
+                        public_key_pem=resolved_anchor,
+                    )
+                else:
+                    valid = verify_fn(signing_input, signature_bytes)
+            else:
+                valid = verify_fn(signing_input, signature_bytes)
         except RuntimeError as exc:
             # verify_raw raises RuntimeError on inactive KMS or missing public key (fail-closed)
             raise ConsequenceTokenSignatureError(

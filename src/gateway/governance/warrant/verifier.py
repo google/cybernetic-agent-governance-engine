@@ -160,6 +160,14 @@ class WarrantStandingVerifier:
                     RelianceStatus.INELIGIBLE_AUTHENTICITY,
                     f"Key manifest {key_manifest.manifest_id!r} is outside its validity window",
                 )
+            manifest_env = (getattr(key_manifest, "environment", None) or "").strip()
+            warrant_env = (getattr(warrant, "environment", None) or "").strip()
+            if manifest_env and warrant_env and warrant_env != manifest_env:
+                return _ineligible(
+                    RelianceStatus.INELIGIBLE_AUTHENTICITY,
+                    f"ENVIRONMENT_MISMATCH: warrant environment {warrant_env!r} "
+                    f"does not match key manifest environment {manifest_env!r}",
+                )
             if not warrant.kid:
                 return _ineligible(
                     RelianceStatus.INELIGIBLE_AUTHENTICITY,

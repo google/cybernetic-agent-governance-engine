@@ -45,7 +45,11 @@ from src.gateway.governance.contracts import (
 from src.gateway.governance.decisions import GovernanceDecision
 from src.gateway.governance.env_posture import is_enforcing
 from src.gateway.governance.governor.approval import PostHitlApproval
-from src.gateway.governance.governor.errors import GovernanceDeferred, GovernanceError
+from src.gateway.governance.governor.errors import (
+    DeferQueueUnavailableError,
+    GovernanceDeferred,
+    GovernanceError,
+)
 from src.gateway.governance.governor.pipeline import (
     BarrierPreview,
     PipelineResult,
@@ -87,6 +91,7 @@ from src.gateway.observability.attributes import (
     OBSERVATION_TYPE,
     SPAN_ATTR_GOVERNANCE_TOOL,
 )
+from src.gateway.server.workload_identity import current_client_identity
 
 if TYPE_CHECKING:
     from src.gateway.governance.governor.assembly import GovernorComponents
@@ -258,7 +263,7 @@ class SymbolicGovernor:
                     "verdict": GovernanceDecision.ALLOW,
                     "violations": [],
                     "latency_ms": latency_ms,
-                    "agent_id": params.get("_caller_principal", ""),
+                    "agent_id": current_client_identity() or "",
                     **_context_meta(result),
                     **_reliance_meta(result),
                 }
@@ -506,17 +511,11 @@ class SymbolicGovernor:
                 span.set_attribute(OBSERVATION_NAME, "governance_evaluation")
                 span.set_attribute(SPAN_ATTR_GOVERNANCE_TOOL, tool_name)
 
-                eval_params = strip_untrusted_shadow_params(
-                    copy.deepcopy(sealed), action=tool_name
+                eval_params = await bind_server_inputs(
+                    self._components.server_inputs,
+                    tool_name,
+                    copy.deepcopy(sealed),
                 )
-                if (
-                    tool_name in KERNEL_SERVER_INPUT_ACTIONS
-                    or any(k in eval_params for k in KERNEL_SERVER_INPUT_KEYS)
-                    or inspect_prompt_injection_params(eval_params)[0]
-                ):
-                    eval_params = await bind_server_inputs(
-                        self._components.server_inputs, tool_name, eval_params
-                    )
                 ctx = StageContext(
                     action=tool_name, params=eval_params, profile=Profile.FULL
                 )
@@ -696,10 +695,14 @@ class SymbolicGovernor:
         ``[APPROVAL_CONTEXT_DRIFT]``, and a HARD finding (an authority that
         now refuses, or is unreachable) denies.
         """
+        sealed = copy.deepcopy(params)
         if rebind_inputs:
-            with verified_post_hitl_approval(approval.approval_id):
-                params = await bind_server_inputs(
-                    self._components.server_inputs, action, params
+            with (
+                online_governance_scope(True),
+                verified_post_hitl_approval(approval.approval_id),
+            ):
+                sealed = await bind_server_inputs(
+                    self._components.server_inputs, action, sealed
                 )
         with tracer.start_as_current_span(
             "symbolic_governor.revalidate_post_hitl"
@@ -722,7 +725,7 @@ class SymbolicGovernor:
                 await _spend_refused(approval)
                 await handle_deny(
                     action,
-                    params,
+                    sealed,
                     [
                         _approval_drift(
                             f"unrecognised approval snapshot {approval.barrier_preview!r}"
@@ -738,13 +741,13 @@ class SymbolicGovernor:
             span.set_attribute(
                 "toctou.approved_barrier_preview", approved.value if approved else ""
             )
-            if not self._is_governed_action(action, params):
+            if not self._is_governed_action(action, sealed):
                 # POST_HITL re-runs only claimed barriers; with none there is
                 # nothing to re-verify, so the approval cannot be honoured.
                 await _spend_refused(approval)
                 await handle_deny(
                     action,
-                    params,
+                    sealed,
                     [_UNGOVERNED_POST_HITL],
                     [],
                     {},
@@ -753,22 +756,19 @@ class SymbolicGovernor:
                 raise GovernanceError(
                     f"no tier governs {action}; post-HITL re-validation refused"
                 )
-            with online_governance_scope(True):
-                eval_params = strip_untrusted_shadow_params(
-                    copy.deepcopy(params), action=action
-                )
-            if not rebind_inputs and (
-                action in KERNEL_SERVER_INPUT_ACTIONS
-                or any(k in eval_params for k in KERNEL_SERVER_INPUT_KEYS)
-                or inspect_prompt_injection_params(eval_params)[0]
+            with (
+                online_governance_scope(True),
+                verified_post_hitl_approval(approval.approval_id),
             ):
-                with (
-                    online_governance_scope(True),
-                    verified_post_hitl_approval(approval.approval_id),
-                ):
-                    eval_params = await bind_server_inputs(
-                        self._components.server_inputs, action, eval_params
+                eval_params = (
+                    copy.deepcopy(sealed)
+                    if rebind_inputs
+                    else await bind_server_inputs(
+                        self._components.server_inputs,
+                        action,
+                        copy.deepcopy(sealed),
                     )
+                )
             ctx = StageContext(
                 action=action,
                 params=eval_params,
@@ -780,7 +780,7 @@ class SymbolicGovernor:
             result, seal = await run_sealed(
                 self.stages,
                 ctx,
-                params,
+                sealed,
                 path="revalidate_post_hitl",
                 settlements=self._settlements,
                 admit=approval.spend,
@@ -813,7 +813,7 @@ class SymbolicGovernor:
                 )
                 await handle_deny(
                     action,
-                    params,
+                    sealed,
                     [_approval_not_redeemable(approval.approval_id)],
                     [],
                     {"approval_id": approval.approval_id},
@@ -834,7 +834,7 @@ class SymbolicGovernor:
                 )
                 await handle_post_hitl_defer(
                     action,
-                    params,
+                    sealed,
                     list(result.violations),
                     dict(_RELIANCE_DEFER_META),
                     approval_id=approval.approval_id,
@@ -857,7 +857,7 @@ class SymbolicGovernor:
             ):
                 await _deny_drift(
                     action,
-                    params,
+                    sealed,
                     result,
                     approved,
                     evaluated_param_specs=self._components.evaluated_param_specs,
@@ -865,14 +865,14 @@ class SymbolicGovernor:
             if unapproved := _unapproved_holds(result):
                 await _deny_unapproved_holds(
                     action,
-                    params,
+                    sealed,
                     result,
                     unapproved,
                     evaluated_param_specs=self._components.evaluated_param_specs,
                 )
             await _deny(
                 action,
-                params,
+                sealed,
                 result,
                 evaluated_param_specs=self._components.evaluated_param_specs,
             )
@@ -1040,11 +1040,19 @@ async def _defer_commit(
         reliance=result.reliance,
     )
     findings = [f"[{v.code}] {v.message}" for v in result.violations]
+    parked_token = verdict.get("defer_token")
+    if not isinstance(parked_token, str) or not parked_token:
+        raise DeferQueueUnavailableError(
+            f"[DEFER_PARK_FAILED] [{verdict['defer_reason']}] committing run "
+            "deferral could not be persisted to DeferQueue: " + "; ".join(findings),
+            defer_reason=str(verdict["defer_reason"]),
+            violations=findings,
+        )
     raise GovernanceDeferred(
         f"[{verdict['defer_reason']}] committing run deferred as "
-        f"{verdict['defer_token']!r}: " + "; ".join(findings),
+        f"{parked_token!r}: " + "; ".join(findings),
         defer_reason=str(verdict["defer_reason"]),
-        deferred_id=str(verdict["defer_token"]),
+        deferred_id=parked_token,
         reliance=list(verdict.get("reliance", [])),
         violations=findings,
     )

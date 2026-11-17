@@ -208,11 +208,13 @@ class TestRoutingSeal:
 
 
 def _approval(urn: str) -> ApprovalRecord:
+    import hashlib
+
     return ApprovalRecord(
         approver_urn=urn,
         approved_at_utc="2026-01-01T00:00:00Z",
         auth_method="MTLS",
-        auth_principal_hash="h",
+        auth_principal_hash=hashlib.sha256(urn.encode()).hexdigest(),
     )
 
 

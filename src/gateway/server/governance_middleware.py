@@ -51,7 +51,10 @@ from src.gateway.governance.decisions import GovernanceDecision
 from src.gateway.governance.evidence.stream import get_evidence_sink
 from src.gateway.governance.governance_envelope import GovernanceEnvelopeBuilder
 from src.gateway.governance.governor.approval import PostHitlApproval
-from src.gateway.governance.governor.errors import GovernanceDeferred
+from src.gateway.governance.governor.errors import (
+    DeferQueueUnavailableError,
+    GovernanceDeferred,
+)
 from src.gateway.governance.governor.governor import GovernanceError, SymbolicGovernor
 from src.gateway.governance.governor.metrics import (
     governor_metrics,
@@ -193,6 +196,10 @@ async def enforce_governance(
         # deferral (parked token + GOVERNANCE_DEFERRAL) is already evidenced.
         logger.info("🕒 Symbolic Governor DEFERRED %s: %s", tool_name, exc)
         raise ActionDeferred(exc, approval_retained=False) from exc
+    except DeferQueueUnavailableError:
+        # GOVERNANCE_DEFERRAL (persisted=False) was already chained; never
+        # emit a contradictory GOVERNANCE_REFUSAL_RECEIPT (F-05).
+        raise
     except GovernanceError as exc:
         logger.warning("🛡️ Symbolic Governor BLOCKED %s: %s", tool_name, exc)
         emitted = await _emit_refusal_receipt(
