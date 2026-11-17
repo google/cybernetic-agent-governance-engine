@@ -633,16 +633,18 @@ class TestLinkerdEmpty403FailsClosed:
         return httpx.Response(403, content=b"", headers={"content-type": "text/plain"})
 
     @pytest.mark.asyncio
-    async def test_validate_action_raises_permission_error_on_empty_mesh_403(
+    async def test_validate_action_raises_http_status_error_on_empty_mesh_403(
         self, gateway
     ) -> None:
         gateway(self._linkerd_empty_403)
 
-        with pytest.raises(PermissionError, match="Governance DENIED 'execute_trade'"):
+        with pytest.raises(httpx.HTTPStatusError) as exc_info:
             await GatewayClient().validate_action(
                 action="execute_trade",
                 params={"symbol": "AAPL", "amount": 100.0},
             )
+        assert exc_info.value.response.status_code == 403
+        assert not isinstance(exc_info.value, PermissionError)
 
     @pytest.mark.asyncio
     async def test_gateway_tool_guard_refuses_batch_without_executing_node(
@@ -688,8 +690,10 @@ class TestLinkerdEmpty403FailsClosed:
 
         out = await safety_check_node(state)  # type: ignore[arg-type]
 
-        assert out["safety_status"] == "BLOCKED"
-        assert out["consecutive_denials"] == 1
+        assert out["safety_status"] == "GATEWAY_ERROR"
+        assert out["consecutive_denials"] == 0
+        assert out["last_violation"]["reason_code"] == "GATEWAY_ERROR"
+        assert out["last_violation"]["recoverable"] is False
         assert out["routing_verdict_cache"] is None
 
     @pytest.mark.asyncio
@@ -705,4 +709,4 @@ class TestLinkerdEmpty403FailsClosed:
         assert decision == "DENY"
 
 
-# Regression coverage binding: POAM-2026-080, POAM-2026-227
+# Regression coverage binding: POAM-2026-080, POAM-2026-227, POAM-2026-228

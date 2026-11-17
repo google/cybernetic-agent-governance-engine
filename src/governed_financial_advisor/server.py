@@ -453,9 +453,9 @@ async def query_agent(  # type: ignore[no-untyped-def]
                 if not reason or reason == final_response_text
                 else reason
             )
-        else:
+        elif not res or res.get("safety_status") in (None, "APPROVED", "SKIPPED"):
             # Cache successful responses (only if query was cacheable)
-            # Blocked responses are not cached (different blocks may have different reasons)
+            # Blocked, deferred, hard-paused, and gateway-error responses are not cached
             await query_cache.set(
                 req.prompt, final_response_text, governance_context=_governance_context
             )

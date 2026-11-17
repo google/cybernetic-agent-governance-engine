@@ -85,6 +85,40 @@ async def explainer_node(state: AgentState) -> dict[str, Any]:
     MODEL_REASONING call entirely.  For high-risk verdicts the original two-call path
     is preserved: MODEL_REASONING for justification, MODEL_FAST for response.
     """
+    # Fail-closed infrastructure halt: never report transport/unverified gateway
+    # errors as policy denials or policy-probing violations (POAM-2026-228).
+    if state.get("safety_status") == "GATEWAY_ERROR":
+        last_violation = state.get("last_violation") or {}
+        evidence = (
+            last_violation.get("evidence")
+            or "Governance gateway unavailable or response unverified."
+        )
+        logger.error(
+            "❌ Explainer Node: Halting turn fail-closed on GATEWAY_ERROR (%s)",
+            evidence,
+        )
+        gateway_error_msg = (
+            "⚠️ **Governance Gateway Unavailable — Execution Halted (Fail-Closed)**\n\n"
+            "The governance gateway was unreachable or returned an unverified response, "
+            "so execution was halted fail-closed without running any requested action.\n\n"
+            f"- **Diagnostic Detail**: {evidence}\n\n"
+            "No policy violation was counted against your session budget. Please retry "
+            "once governance gateway connectivity is restored."
+        )
+        summary = (
+            "### 🛡️ Governance Audit Report\n"
+            "- **System Verdict**: GATEWAY_ERROR (Fail-Closed)\n\n"
+            "#### ⚖️ Outcome Summary\n"
+            "Governance gateway validation was unavailable or unverified; execution was "
+            "halted fail-closed.\n"
+        )
+        return {
+            "messages": [("ai", gateway_error_msg)],
+            "governance_summary": summary,
+            "safety_status": "GATEWAY_ERROR",
+            "next_step": "FINISH",
+        }
+
     # Check consecutive denials budget FIRST (ADR-008 enforcement)
     consecutive_denials = state.get("consecutive_denials", 0)
 
