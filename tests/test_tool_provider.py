@@ -26,7 +26,7 @@ import pytest
 
 from src.cage_finance.tools.tool_provider import execute_trade_action
 from src.gateway.governance.routing_seal import SymbolicGovernorViolation
-from src.gateway.governance.seams.actuation import ActuationReceipt
+from src.gateway.governance.seams.actuation import ActuationOutcome, ActuationReceipt
 from tests.fixtures.trade_inputs import trade_governor
 
 pytestmark = [pytest.mark.unit, pytest.mark.local]
@@ -160,6 +160,7 @@ class TestExecuteTradeActionRoutingSealEnforcement:
                     raw_receipt={"execution_result": "EXECUTED: AAPL x 100.0"},
                     findings=[],
                     retryable=False,
+                    outcome=ActuationOutcome.ACCEPTED,
                 ),
             ),
             patch(

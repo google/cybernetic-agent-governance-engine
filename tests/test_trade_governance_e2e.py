@@ -90,7 +90,7 @@ from src.gateway.governance.governor import pipeline as pipeline_mod
 from src.gateway.governance.governor.governor import GovernanceError, SymbolicGovernor
 from src.gateway.governance.narrower import NarrowerRegistry
 from src.gateway.governance.safety.cbf_engine import ControlBarrierFunction
-from src.gateway.governance.seams.actuation import ActuationReceipt
+from src.gateway.governance.seams.actuation import ActuationOutcome, ActuationReceipt
 from src.gateway.governance.stpa_validator import STPAValidator
 from src.gateway.server import governance_middleware
 from src.gateway.server.governance_middleware import governance_app
@@ -406,6 +406,7 @@ async def gw(monkeypatch: pytest.MonkeyPatch) -> AsyncIterator[Gateway]:
             receipt_id=f"r-{uuid.uuid4().hex[:8]}",
             session_uuid=None,
             raw_receipt={"status": "executed"},
+            outcome=ActuationOutcome.ACCEPTED,
         )
     )
     monkeypatch.setattr(

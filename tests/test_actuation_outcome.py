@@ -28,7 +28,10 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from src.cage_finance.tools.tool_provider import execute_trade_action
+from src.cage_finance.tools.tool_provider import (
+    ActuationIndeterminateError,
+    execute_trade_action,
+)
 from src.gateway.governance.execution_actuator import dispatch_actuation
 from src.gateway.governance.routing_seal import SymbolicGovernorViolation
 from src.gateway.governance.seams.actuation import (
@@ -70,7 +73,9 @@ class TestDispatchActuation:
     @pytest.mark.asyncio
     async def test_records_each_receipt_exactly_once(self) -> None:
         actuator = MagicMock(actuator_id="stub")
-        actuator.actuate = AsyncMock(return_value=_receipt(accepted=True))
+        actuator.actuate = AsyncMock(
+            return_value=_receipt(accepted=True, outcome=ActuationOutcome.ACCEPTED)
+        )
         with patch(
             "src.gateway.governance.execution_actuator.ingest_actuation_receipt",
             new_callable=AsyncMock,
@@ -97,7 +102,7 @@ class TestDispatchActuation:
 
 
 def _receipt(**overrides) -> ActuationReceipt:
-    fields = {
+    fields: dict[str, object] = {
         "accepted": False,
         "receipt_id": None,
         "session_uuid": None,
@@ -106,13 +111,32 @@ def _receipt(**overrides) -> ActuationReceipt:
         "retryable": False,
     }
     fields.update(overrides)
-    return ActuationReceipt(**fields)
+    return ActuationReceipt(**fields)  # type: ignore[arg-type]
 
 
 class TestReceiptOutcomeInvariants:
-    def test_outcome_derived_from_accepted(self) -> None:
-        assert _receipt(accepted=True).outcome is ActuationOutcome.ACCEPTED
-        assert _receipt(accepted=False).outcome is ActuationOutcome.REJECTED
+    def test_omitted_outcome_raises_type_error(self) -> None:
+        """DA-01: outcome is required with no default on both accepted=True and False."""
+        with pytest.raises(TypeError, match="outcome"):
+            _receipt(accepted=True)
+        with pytest.raises(TypeError, match="outcome"):
+            _receipt(accepted=False)
+
+    def test_none_or_positional_outcome_raises_type_error(self) -> None:
+        with pytest.raises(TypeError, match="ActuationOutcome"):
+            _receipt(accepted=False, outcome=None)
+        with pytest.raises(TypeError):
+            ActuationReceipt(  # type: ignore[misc]
+                False,
+                None,
+                None,
+                None,
+                [],
+                False,
+                None,
+                None,
+                ActuationOutcome.REJECTED,
+            )
 
     def test_accepted_contradicting_outcome_rejected(self) -> None:
         with pytest.raises(ValueError):
@@ -127,7 +151,9 @@ class TestReceiptOutcomeInvariants:
             _receipt(outcome=ActuationOutcome.UNKNOWN, retryable=True)
 
     def test_may_have_executed(self) -> None:
-        assert _receipt(accepted=True).may_have_executed
+        assert _receipt(
+            accepted=True, outcome=ActuationOutcome.ACCEPTED
+        ).may_have_executed
         assert _receipt(outcome=ActuationOutcome.UNKNOWN).may_have_executed
         assert not _receipt(outcome=ActuationOutcome.REJECTED).may_have_executed
 
@@ -171,7 +197,7 @@ class TestSettlementDirection:
         governor, result = await _run_trade(
             AsyncMock(return_value=_receipt(outcome=ActuationOutcome.UNKNOWN))
         )
-        assert isinstance(result, SymbolicGovernorViolation)
+        assert isinstance(result, ActuationIndeterminateError)
         assert "indeterminate" in str(result)
         governor.settle.assert_awaited_once_with(_SEAL, executed=True)
 
@@ -181,6 +207,7 @@ class TestSettlementDirection:
             AsyncMock(return_value=_receipt(outcome=ActuationOutcome.REJECTED))
         )
         assert isinstance(result, SymbolicGovernorViolation)
+        assert not isinstance(result, ActuationIndeterminateError)
         assert "Actuation rejected" in str(result)
         governor.settle.assert_awaited_once_with(_SEAL, executed=False)
 
@@ -190,6 +217,6 @@ class TestSettlementDirection:
         governor, result = await _run_trade(
             AsyncMock(side_effect=RuntimeError("venue socket died"))
         )
-        assert isinstance(result, SymbolicGovernorViolation)
+        assert isinstance(result, ActuationIndeterminateError)
         assert "ACTUATOR_EXCEPTION" in str(result)
         governor.settle.assert_awaited_once_with(_SEAL, executed=True)

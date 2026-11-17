@@ -21,8 +21,12 @@ from src.cage_finance.safety.bounding.contract import (
     BoundingContractEnforcer,
 )
 from src.cage_finance.safety.bounding.providers import (
+    MarketDataProvider,
+    RollbackCapabilityProvider,
     StubMarketDataProvider,
     StubRollbackCapabilityProvider,
+    UnconfiguredEnforcingMarketDataProvider,
+    UnconfiguredEnforcingRollbackProvider,
 )
 from src.cage_finance.safety.bounding.registry import BoundingContractRegistry
 from src.cage_finance.tiers.bounding_tier import BoundingContractTierPlugin
@@ -45,6 +49,7 @@ from src.gateway.governance.contracts import (
     MagnitudePath,
     NormBinding,
 )
+from src.gateway.governance.env_posture import is_enforcing, resolve_posture
 from src.gateway.governance.feature_flags import opt_in_enabled
 from src.gateway.governance.schemas.thresholds import THRESHOLDS
 from src.gateway.governance.telemetry_provider import (
@@ -179,8 +184,17 @@ def create_finance_tiers(
             allowed_counterparties={"BROKER_A", "BROKER_B", "TEST_COUNTERPARTY"},
         )
         bounding_enforcer = BoundingContractEnforcer(bounding_config)
-        market_data_provider = StubMarketDataProvider()
-        rollback_provider = StubRollbackCapabilityProvider()
+        enforcing_posture = is_enforcing(resolve_posture())
+        market_data_provider: MarketDataProvider = (
+            UnconfiguredEnforcingMarketDataProvider()
+            if enforcing_posture
+            else StubMarketDataProvider()
+        )
+        rollback_provider: RollbackCapabilityProvider = (
+            UnconfiguredEnforcingRollbackProvider()
+            if enforcing_posture
+            else StubRollbackCapabilityProvider()
+        )
         bounding_registry = BoundingContractRegistry(
             thresholds={
                 **THRESHOLDS.model_dump(),

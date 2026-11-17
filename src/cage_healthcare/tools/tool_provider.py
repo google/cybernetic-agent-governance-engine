@@ -12,21 +12,22 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Healthcare tool provider."""
-
 from __future__ import annotations
 
+import asyncio  # noqa: E401
 import hashlib
+import hmac
 import json
 import time
 import uuid
 from datetime import datetime, timezone
 from typing import TYPE_CHECKING, Any
 
+from src.cage_healthcare import ground_truth as _gt
 from src.cage_healthcare.tools.dose_order import DoseOrder
+from src.gateway.governance import contracts as _ct
 from src.gateway.governance import execution_actuator as _act
 from src.gateway.governance import routing_seal as _rs
-from src.gateway.governance.contracts import DomainToolProvider
 from src.gateway.governance.execution_actuator import get_actuator_registry
 from src.gateway.governance.routing_seal import verify_and_consume_seal
 from src.gateway.governance.seams import actuation as _seam
@@ -37,6 +38,9 @@ if TYPE_CHECKING:
     from mcp.server.fastmcp import FastMCP
 
     from src.gateway.governance.governor.governor import SymbolicGovernor
+
+_R, _O = _seam.ActuationReceipt, _seam.ActuationOutcome
+_ACC, _REJ, _UNK = _O.ACCEPTED, _O.REJECTED, _O.UNKNOWN
 
 
 def _blocked(reason: str, ph: object = "") -> dict[str, object]:
@@ -51,10 +55,16 @@ async def _refuse(reason: str, params: dict[str, Any]) -> dict[str, object]:
     return _blocked(reason, ph)
 
 
-class ClinicalDoseActuator:
-    """Healthcare domain actuator for governed clinical dose administration."""
+def _deny(code: str, ts: str, detail: str = "") -> _seam.ActuationReceipt:
+    f = {"code": code, "detail": detail} if detail else {"code": code}
+    return _R(False, None, None, None, [f], False, None, ts, outcome=_REJ)
 
+
+class ClinicalDoseActuator:
     actuator_id: str = "cage_healthcare_clinical"
+
+    def __init__(self, ledger: Any = None) -> None:
+        self._ledger = ledger
 
     async def health_check(self) -> bool:
         return True
@@ -62,26 +72,47 @@ class ClinicalDoseActuator:
     def get_capabilities(self) -> set[_seam.ActuatorCapability]:
         return {_seam.ActuatorCapability.REPLAY_PROTECTED}
 
-    async def actuate(
-        self, clearance: _seam.ExecutionClearance
-    ) -> _seam.ActuationReceipt:
-        ts, c = datetime.now(tz=timezone.utc).isoformat(), clearance
-        # The digest is validated by the contract; the seal is what binds.
-        if (
-            c.executor_id != self.actuator_id
-            or c.decision != "ALLOW"
-            or not c.routing_seal
-        ):
-            bad = [{"code": "CLEARANCE_INVALID"}]
-            return _seam.ActuationReceipt(False, None, None, None, bad, False, ts)
-        raw = DoseOrder(**c.params).model_dump()  # type: ignore[arg-type]
-        return _seam.ActuationReceipt(True, c.nonce, c.thread_id, raw, [], False, ts)
+    async def actuate(self, c: _seam.ExecutionClearance) -> _seam.ActuationReceipt:
+        ts, s = datetime.now(tz=timezone.utc).isoformat(), c.routing_seal
+        ok = c.executor_id == self.actuator_id and c.decision == "ALLOW"
+        if not ok or not isinstance(s, str) or not s.strip():
+            return _deny("CLEARANCE_INVALID", ts)
+        if c.target_route.rstrip("/") not in ("local://default", "*"):
+            return _deny("TARGET_ROUTE_MISMATCH", ts, c.target_route)
+        if len(c.approvals) < c.required_quorum:
+            return _deny("QUORUM_NOT_MET", ts)
+        if not hmac.compare_digest(_rs.seal_digest(s), c.governance_decision_digest):
+            return _deny("SEAL_DIGEST_MISMATCH", ts)
+        p = dict(c.params)
+        try:
+            if not _rs.verify_seal(s, c.action, p):
+                return _deny("INVALID_ROUTING_SEAL", ts, "verify_seal False")
+        except _rs.SymbolicGovernorViolation as exc:
+            return _deny("INVALID_ROUTING_SEAL", ts, exc.reason)
+        try:
+            raw = DoseOrder(**p).model_dump()  # type: ignore[arg-type]
+            debit = _gt.healthcare_cost_resolver(c.action, p)
+        except Exception as exc:
+            return _deny("ORDER_INVALID", ts, str(exc))
+        if debit > 0.0:
+            if self._ledger is None:
+                self._ledger = _gt.SimulatedSerumAssayProvider()
+            try:
+                kw = {"submitted_at": time.time(), "debit_id": c.nonce}
+                await asyncio.to_thread(self._ledger.record_debit, debit, **kw)
+            except Exception as exc:
+                f = [{"code": "ASSAY_JOURNAL_FAILED", "detail": str(exc)}]
+                return _R(
+                    False, None, c.thread_id, None, f, False, None, ts, outcome=_UNK
+                )
+        doc = {**raw, "assay_debit_mg_l": debit}
+        return _R(True, c.nonce, c.thread_id, doc, [], False, None, ts, outcome=_ACC)
 
 
-if get_actuator_registry().get_actuator("administer_dose") is None:
-    get_actuator_registry().register(
-        ClinicalDoseActuator(), claims={"administer_dose", "dose_order"}
-    )
+_clinical_actuator = ClinicalDoseActuator()
+_reg = get_actuator_registry()
+if _reg.get_actuator("administer_dose") is None:
+    _reg.register(_clinical_actuator, {"administer_dose", "dose_order"})
 
 
 async def administer_dose_action(
@@ -92,17 +123,19 @@ async def administer_dose_action(
     *,
     governor: SymbolicGovernor,
 ) -> dict[str, object]:
-    """Govern, seal, actuate, and settle a clinical dose order."""
     order = DoseOrder(patient_id=patient_id, medication=medication, dose_mg=dose_mg)
     params: dict[str, Any] = {**order.model_dump(), "confidence": confidence}
     try:
         seal = await enforce_governance(governor, "administer_dose", params)
     except _gm.ActionDeferred as exc:
-        msg = str(exc)
-        return {"status": "DEFERRED", "deferred_id": exc.deferred_id, "reason": msg}
+        return {
+            "status": "DEFERRED",
+            "deferred_id": exc.deferred_id,
+            "reason": str(exc),
+        }
     except PermissionError as exc:
         return _blocked(str(exc), getattr(exc, "proof_hash", ""))
-    if not seal or not isinstance(seal, str) or not seal.strip():
+    if not isinstance(seal, str) or not seal.strip():
         raise _rs.SymbolicGovernorViolation("No seal", action="administer_dose")
     executed = False
     try:
@@ -110,31 +143,45 @@ async def administer_dose_action(
             await verify_and_consume_seal(seal, "administer_dose", params)
         except _rs.SymbolicGovernorViolation as exc:
             return await _refuse(exc.reason, params)
-        actuator = get_actuator_registry().get_actuator("administer_dose")
-        if actuator is None:
+        act = get_actuator_registry().get_actuator("administer_dose")
+        if act is None:
             raise _rs.SymbolicGovernorViolation("No actuator", action="administer_dose")
         tid, nonce = str(uuid.uuid4()), uuid.uuid4().hex[:32]
-        digest = hashlib.sha256(json.dumps(params, sort_keys=True).encode()).hexdigest()
-        c1 = (tid, "ALLOW", "DIRECT", "administer_dose", order.patient_id)
-        c2 = ("clinician_001", int(time.time()), "CONSTRUCTION_TIME", tid)
-        c3 = ("THREAD_DERIVED", _rs.seal_digest(seal), digest, nonce, params)
-        c4 = ("cage_healthcare_clinical", "local://default", "HIGH_CLINICAL")
-        clearance = _seam.ExecutionClearance(*c1, *c2, *c3, *c4, routing_seal=seal)  # type: ignore[arg-type]
-        receipt = await _act.dispatch_actuation(actuator, clearance)
-        executed = receipt.may_have_executed
-        if not receipt.accepted:
+        dig = hashlib.sha256(json.dumps(params, sort_keys=True).encode()).hexdigest()
+        kw: dict[str, Any] = {"thread_id": tid, "decision": "ALLOW", "nonce": nonce}
+        kw |= {"decision_path": "DIRECT", "action": "administer_dose", "params": params}
+        kw |= {"target": order.patient_id, "operator_urn": "clinician_001"}
+        kw |= {"issued_at": int(time.time()), "correlation_id": tid}
+        kw |= {"issued_at_provenance": "CONSTRUCTION_TIME", "opa_input_digest": dig}
+        kw |= {"correlation_id_source": "THREAD_DERIVED", "routing_seal": seal}
+        kw |= {"governance_decision_digest": _rs.seal_digest(seal)}
+        kw |= {"executor_id": "cage_healthcare_clinical", "required_quorum": 0}
+        kw |= {"consequence_ceiling": "HIGH_CLINICAL"}
+        executed = True
+        rec = await _act.dispatch_actuation(act, _seam.ExecutionClearance(**kw))
+        executed = rec.may_have_executed
+        if not rec.accepted:
+            if executed:
+                msg = "Actuation indeterminate (reservations confirmed)"
+                f = list(rec.findings)
+                return {
+                    "status": "INDETERMINATE",
+                    "reason": msg,
+                    "receipt_id": rec.receipt_id,
+                    "findings": f,
+                }
             return await _refuse("Actuation rejected", params)
-        rid = receipt.receipt_id
-        return {"status": "GOVERNED", **order.model_dump(), "receipt_id": rid}
+        return {
+            "status": "GOVERNED",
+            **order.model_dump(),
+            "receipt_id": rec.receipt_id,
+        }
     finally:
         await governor.settle(seal, executed=executed)
 
 
-class ClinicalToolProvider(DomainToolProvider):
-    """Provides healthcare domain tools to the MCP tool server."""
-
+class ClinicalToolProvider(_ct.DomainToolProvider):
     def register_tools(self, server: FastMCP, governor: SymbolicGovernor) -> None:
-        """Register healthcare tools with the MCP server."""
         if not hasattr(server, "tool"):
             return
 

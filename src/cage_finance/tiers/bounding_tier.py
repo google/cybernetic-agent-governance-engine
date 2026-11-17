@@ -113,17 +113,30 @@ class BoundingContractTierPlugin(ReadOnlyTier):
         Returns:
             List of Violation for failed contracts
         """
-        # Convert params to BoundedTradeRequest
+        # Convert params to BoundedTradeRequest (reject bool/missing numerics fail-closed)
         try:
+            raw_amount = params.get("amount")
+            if isinstance(raw_amount, bool) or raw_amount is None:
+                raise ValueError(
+                    f"amount must be a finite positive number, got {raw_amount!r}"
+                )
+            raw_window = params.get("rollback_window_seconds", 300)
+            if isinstance(raw_window, bool) or not isinstance(raw_window, int):
+                if isinstance(raw_window, float) and raw_window.is_integer():
+                    raw_window = int(raw_window)
+                else:
+                    raise ValueError(
+                        f"rollback_window_seconds must be a positive integer, got {raw_window!r}"
+                    )
             request = BoundedTradeRequest(
                 symbol=params.get("symbol", ""),
-                amount=float(params.get("amount", 0.0)),
+                amount=float(raw_amount),
                 side=params.get("side", "buy"),
                 venue=params.get("venue", ""),
                 counterparty=params.get("counterparty"),
                 trader_role=params.get("trader_role", "autonomous"),
                 jurisdiction=params.get("jurisdiction"),
-                rollback_window_seconds=int(params.get("rollback_window_seconds", 300)),
+                rollback_window_seconds=raw_window,
                 transaction_id=params.get("transaction_id"),
             )
         except (ValueError, TypeError, KeyError) as e:

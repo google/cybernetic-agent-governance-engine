@@ -12,8 +12,6 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Clinical consensus tier — multi-critic agreement (phase 1, order 5)."""
-
 from pathlib import Path
 from typing import Any
 
@@ -21,85 +19,65 @@ from src.cage_healthcare.constants import (
     HIGH_STAKES_CLINICAL_ACTIONS,
     REGISTERED_ACTIONS,
 )
-from src.gateway.governance.consensus import (
-    ConsensusGate,
-    consensus_admits,
-    consensus_violation_code,
-    extract_field_magnitude,
-    load_critic_specs,
-)
-from src.gateway.governance.contracts import (
-    ConsensusContribution,
-    CriticSpec,
-    ReadOnlyTier,
-    Violation,
-    ViolationKind,
-)
+from src.gateway.governance import consensus as _cs
+from src.gateway.governance import contracts as _ct
 
 _CRITICS_PATH = Path(__file__).resolve().parent.parent / "config" / "critics.yaml"
+_REJ = "CLINICAL_CONSENSUS_REJECTED"
 
 
-def load_healthcare_critics(path: Path = _CRITICS_PATH) -> tuple[CriticSpec, ...]:
-    return load_critic_specs(path)
+def load_healthcare_critics(path: Path = _CRITICS_PATH) -> tuple[_ct.CriticSpec, ...]:
+    return _cs.load_critic_specs(path)
 
 
-def build_healthcare_consensus_contribution() -> ConsensusContribution:
-    return ConsensusContribution(
-        critics=load_healthcare_critics(),
-        threshold=100.0,
-        magnitude_extractor=extract_field_magnitude("dose_mg"),
-        high_stakes_actions=HIGH_STAKES_CLINICAL_ACTIONS,
+def build_healthcare_consensus_contribution() -> _ct.ConsensusContribution:
+    ext = _cs.extract_field_magnitude("dose_mg")
+    return _ct.ConsensusContribution(
+        load_healthcare_critics(), 100.0, ext, HIGH_STAKES_CLINICAL_ACTIONS
     )
 
 
-def build_healthcare_consensus_gate() -> ConsensusGate:
-    return ConsensusGate.from_contribution(build_healthcare_consensus_contribution())
+def build_healthcare_consensus_gate() -> _cs.ConsensusGate:
+    return _cs.ConsensusGate.from_contribution(
+        build_healthcare_consensus_contribution()
+    )
 
 
-class ClinicalConsensusTier(ReadOnlyTier):
-    """Clinical consensus tier (phase 1, order 5)."""
+class ClinicalConsensusTier(_ct.ReadOnlyTier):
+    tier_name: str = "clinical_consensus"
+    order: int = 5
 
     def __init__(self, consensus_engine: Any = None) -> None:
-        if consensus_engine is None or (
-            isinstance(consensus_engine, ConsensusGate) and not consensus_engine.critics
-        ):
-            consensus_engine = build_healthcare_consensus_gate()
-        self.consensus_engine = consensus_engine
-
-    @property
-    def tier_name(self) -> str:
-        return "clinical_consensus"
-
-    @property
-    def order(self) -> int:
-        return 5
+        e = consensus_engine
+        empty = isinstance(e, _cs.ConsensusGate) and not e.critics
+        self.consensus_engine = (
+            build_healthcare_consensus_gate() if (e is None or empty) else e
+        )
 
     def claims_action(self, action: str, params: dict[str, Any]) -> bool:
         return action in REGISTERED_ACTIONS
 
     def _reject(
-        self,
-        message: str,
-        kind: ViolationKind = ViolationKind.HARD,
-        code: str = "CLINICAL_CONSENSUS_REJECTED",
-    ) -> list[Violation]:
-        return [Violation(self.tier_name, code, message, kind)]
+        self, m: str, k: _ct.ViolationKind = _ct.ViolationKind.HARD, c: str = _REJ
+    ) -> list[_ct.Violation]:
+        return [_ct.Violation(self.tier_name, c, m, k)]
 
-    async def evaluate(self, action: str, params: dict[str, Any]) -> list[Violation]:
+    async def evaluate(
+        self, action: str, params: dict[str, Any]
+    ) -> list[_ct.Violation]:
         if self.consensus_engine is None:
             return self._reject("Clinical consensus engine is not configured")
-        result = await self.consensus_engine.check_consensus(
+        res = await self.consensus_engine.check_consensus(
             action_type=action, params=params
         )
-        if not isinstance(result, dict):
+        if not isinstance(res, dict):
             return self._reject("Invalid clinical consensus result payload")
-        status = result.get("status")
-        if consensus_admits(result):
+        if _cs.consensus_admits(res):
             return []
-        reason = str(result.get("reason") or "Multi-critic consensus not achieved")
-        kind = ViolationKind.HITL if status == "ESCALATE" else ViolationKind.HARD
-        return self._reject(
-            reason,
-            kind=kind,
-            code=consensus_violation_code(result, "CLINICAL_CONSENSUS_REJECTED"),
+        r = str(res.get("reason") or "Multi-critic consensus not achieved")
+        k = (
+            _ct.ViolationKind.HITL
+            if res.get("status") == "ESCALATE"
+            else _ct.ViolationKind.HARD
         )
+        return self._reject(r, k=k, c=_cs.consensus_violation_code(res, _REJ))

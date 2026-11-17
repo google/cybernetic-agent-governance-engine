@@ -12,25 +12,27 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""
-BrokerActuator — Finance Domain Execution Actuator (ADR-008 Phase 1 & 2).
-
-Implements the ExecutionActuator protocol for financial trades, bridging the
-governance kernel's ExecutionClearance to the domain-specific trade_executor.
-"""
+"""BrokerActuator — Finance Domain Execution Actuator (ADR-008 Phase 1 & 2)."""
 
 from __future__ import annotations
 
 import asyncio
 import hashlib
+import hmac
 import logging
+import os
 import time
 from datetime import datetime, timezone
 from typing import Protocol
 
 from src.cage_finance.invariants import finance_cost_resolver
 from src.cage_finance.models.trade_order import TradeOrder
-from src.cage_finance.tools.trade_executor import execute_trade
+from src.cage_finance.tools.trade_executor import (
+    IndeterminateExecutionError,
+    PreWireRejectionError,
+    execute_trade,
+)
+from src.gateway.governance import routing_seal
 from src.gateway.governance.seams.actuation import (
     ActuationOutcome,
     ActuationReceipt,
@@ -43,8 +45,6 @@ logger = logging.getLogger(__name__)
 
 
 class CustodianLedger(Protocol):
-    """Where an executed fill is journaled so ground truth can settle it."""
-
     def record_debit(
         self,
         amount_usd: float,
@@ -70,10 +70,6 @@ class BrokerActuator:
 
     Capabilities:
         - REPLAY_PROTECTED: Nonce-based replay prevention via routing seal
-
-    Architectural position:
-        Layer 2 (Domain Plugin) → Layer 1 (Kernel) boundary enforcement.
-        Never imports from Layer 1 governance internals.
     """
 
     @property
@@ -103,9 +99,6 @@ class BrokerActuator:
             True if actuator is ready, False otherwise.
         """
         try:
-            # Check if we're in mock mode (always healthy)
-            import os
-
             use_mock = os.getenv("USE_MOCK_BROKER", "false").lower() in (
                 "true",
                 "1",
@@ -114,7 +107,6 @@ class BrokerActuator:
             if use_mock:
                 return True
 
-            # Verify broker credentials are configured
             api_key = config_manager.get("BROKER_API_KEY")
             api_secret = config_manager.get("BROKER_API_SECRET")
 
@@ -133,17 +125,12 @@ class BrokerActuator:
 
         This method:
         1. Validates the clearance, its quorum, and its out-of-band routing seal
+           cryptographically (digest binding + verify_seal)
         2. Constructs TradeOrder from clearance parameters
         3. Invokes execute_trade with the routing seal (never the digest)
-        4. Returns the ActuationReceipt (evidence is recorded by the kernel's
-           ``dispatch_actuation()``, never by the actuator)
-
-        Args:
-            clearance: Validated ExecutionClearance from governance kernel
-
-        Returns:
-            ActuationReceipt with accepted=True on success, or accepted=False
-            with structured findings on failure.
+        4. Classifies pre-wire rejections as REJECTED and any post-transmission
+           indeterminate error as UNKNOWN (retryable=False) so settlement never
+           rolls back CBF or FiscalLimitGuard reservations after potential fill.
         """
         timestamp_utc = datetime.now(tz=timezone.utc).isoformat()
         findings: list[dict] = []
@@ -166,6 +153,7 @@ class BrokerActuator:
                 ],
                 retryable=False,
                 timestamp_utc=timestamp_utc,
+                outcome=ActuationOutcome.REJECTED,
             )
 
         # Gate 2: Route validation (in-process broker only accepts local routes)
@@ -185,6 +173,7 @@ class BrokerActuator:
                 ],
                 retryable=False,
                 timestamp_utc=timestamp_utc,
+                outcome=ActuationOutcome.REJECTED,
             )
 
         # Step 1: Validate clearance pre-conditions
@@ -203,6 +192,7 @@ class BrokerActuator:
                 findings=findings,
                 retryable=False,
                 timestamp_utc=timestamp_utc,
+                outcome=ActuationOutcome.REJECTED,
             )
 
         # Step 2: Validate quorum threshold
@@ -221,12 +211,16 @@ class BrokerActuator:
                 findings=findings,
                 retryable=False,
                 timestamp_utc=timestamp_utc,
+                outcome=ActuationOutcome.REJECTED,
             )
 
-        # Step 3: Require the routing seal. It arrives out of band in
-        # ``clearance.routing_seal``; ``governance_decision_digest`` is its
-        # SHA-256 digest (validated by the contract) and never the seal.
-        if not clearance.routing_seal:
+        # Step 3: Cryptographically verify the out-of-band routing seal and its
+        # binding to clearance.governance_decision_digest ([DA-02]).
+        if (
+            not clearance.routing_seal
+            or not isinstance(clearance.routing_seal, str)
+            or not clearance.routing_seal.strip()
+        ):
             findings.append(
                 {
                     "code": "MISSING_ROUTING_SEAL",
@@ -241,6 +235,64 @@ class BrokerActuator:
                 findings=findings,
                 retryable=False,
                 timestamp_utc=timestamp_utc,
+                outcome=ActuationOutcome.REJECTED,
+            )
+
+        computed_seal_digest = routing_seal.seal_digest(clearance.routing_seal)
+        if not hmac.compare_digest(
+            computed_seal_digest, clearance.governance_decision_digest
+        ):
+            findings.append(
+                {
+                    "code": "SEAL_DIGEST_MISMATCH",
+                    "severity": "TERMINAL",
+                    "detail": "routing_seal SHA-256 digest does not match clearance.governance_decision_digest",
+                }
+            )
+            return ActuationReceipt(
+                accepted=False,
+                receipt_id=None,
+                session_uuid=None,
+                raw_receipt=None,
+                findings=findings,
+                retryable=False,
+                timestamp_utc=timestamp_utc,
+                outcome=ActuationOutcome.REJECTED,
+            )
+
+        seal_params = dict(clearance.params)
+        try:
+            verified = routing_seal.verify_seal(
+                clearance.routing_seal,
+                clearance.action,
+                seal_params,
+            )
+            if not verified:
+                raise routing_seal.SymbolicGovernorViolation(
+                    "verify_seal returned False",
+                    action=clearance.action,
+                )
+        except routing_seal.SymbolicGovernorViolation as exc:
+            logger.warning(
+                "BrokerActuator: Routing seal cryptographic verification failed: %s",
+                exc.reason,
+            )
+            findings.append(
+                {
+                    "code": "INVALID_ROUTING_SEAL",
+                    "severity": "TERMINAL",
+                    "detail": f"Routing seal verification failed: {exc.reason}",
+                }
+            )
+            return ActuationReceipt(
+                accepted=False,
+                receipt_id=None,
+                session_uuid=None,
+                raw_receipt=None,
+                findings=findings,
+                retryable=False,
+                timestamp_utc=timestamp_utc,
+                outcome=ActuationOutcome.REJECTED,
             )
 
         # Step 4: Construct TradeOrder from clearance.params
@@ -252,10 +304,7 @@ class BrokerActuator:
                 clearance.action,
                 clearance.governance_decision_digest[:16],
             )
-
-            # Construct TradeOrder from clearance.params
-            order = TradeOrder(**clearance.params)  # type: ignore[arg-type]
-
+            order = TradeOrder(**seal_params)  # type: ignore[arg-type]
         except Exception as exc:
             logger.error("BrokerActuator: Failed to construct TradeOrder: %s", exc)
             findings.append(
@@ -272,23 +321,24 @@ class BrokerActuator:
                 findings=findings,
                 retryable=False,
                 timestamp_utc=timestamp_utc,
+                outcome=ActuationOutcome.REJECTED,
             )
 
-        # Step 5: Execute trade with the out-of-band routing seal
+        # Step 5: Execute trade with the out-of-band routing seal ([DA-01])
         try:
             result_msg = await execute_trade(
                 order,
                 routing_seal=clearance.routing_seal,
+                action=clearance.action,
+                seal_params=seal_params,
             )
 
-            # Extract order ID from result message
-            receipt_id = clearance.nonce  # Use clearance nonce as receipt ID
+            receipt_id = clearance.nonce
             logger.info(
                 "BrokerActuator: Trade executed successfully: %s",
                 result_msg,
             )
 
-            # Compute envelope digest for evidence chain
             from src.gateway.governance.jcs_canonicalizer import jcs_canonicalize_plan
 
             envelope_dict = {
@@ -307,9 +357,7 @@ class BrokerActuator:
             # Step 6: Journal the fill with the custodian so ground truth
             # settles it. The debit equals the CBF cost by construction
             # (same resolver), and the clearance nonce keys the entry.
-            fill_amount = finance_cost_resolver(
-                clearance.action, dict(clearance.params)
-            )
+            fill_amount = finance_cost_resolver(clearance.action, seal_params)
             if fill_amount > 0.0:
                 try:
                     await asyncio.to_thread(
@@ -329,9 +377,6 @@ class BrokerActuator:
                             "detail": str(journal_exc),
                         }
                     )
-                    # The trade already executed; only the custodian journal
-                    # failed.  The outcome is indeterminate from the ledger's
-                    # point of view and a retry would double-execute.
                     return ActuationReceipt(
                         accepted=False,
                         receipt_id=None,
@@ -357,13 +402,15 @@ class BrokerActuator:
                 retryable=False,
                 envelope_digest=envelope_digest,
                 timestamp_utc=timestamp_utc,
+                outcome=ActuationOutcome.ACCEPTED,
             )
 
-        except Exception as exc:
-            logger.error("BrokerActuator: Trade execution failed: %s", exc)
+        except routing_seal.SymbolicGovernorViolation as exc:
+            logger.error("BrokerActuator: Pre-wire seal rejection: %s", exc)
             findings.append(
                 {
-                    "code": "EXECUTION_FAILED",
+                    "code": "INVALID_ROUTING_SEAL",
+                    "severity": "TERMINAL",
                     "detail": str(exc),
                 }
             )
@@ -373,6 +420,78 @@ class BrokerActuator:
                 session_uuid=None,
                 raw_receipt=None,
                 findings=findings,
-                retryable="INTERRUPTED" not in str(exc),  # Interrupts are not retryable
+                retryable=False,
                 timestamp_utc=timestamp_utc,
+                outcome=ActuationOutcome.REJECTED,
+            )
+
+        except PreWireRejectionError as exc:
+            logger.warning(
+                "BrokerActuator: Deterministic pre-execution rejection (%s): %s",
+                exc.code,
+                exc,
+            )
+            findings.append(
+                {
+                    "code": exc.code,
+                    "severity": "TERMINAL",
+                    "detail": str(exc),
+                }
+            )
+            return ActuationReceipt(
+                accepted=False,
+                receipt_id=None,
+                session_uuid=None,
+                raw_receipt=None,
+                findings=findings,
+                retryable=exc.retryable,
+                timestamp_utc=timestamp_utc,
+                outcome=ActuationOutcome.REJECTED,
+            )
+
+        except IndeterminateExecutionError as exc:
+            logger.error(
+                "BrokerActuator: Post-wire indeterminate execution failure (%s): %s",
+                exc.code,
+                exc,
+            )
+            findings.append(
+                {
+                    "code": exc.code,
+                    "severity": "INDETERMINATE",
+                    "detail": str(exc),
+                }
+            )
+            return ActuationReceipt(
+                accepted=False,
+                receipt_id=None,
+                session_uuid=clearance.thread_id,
+                raw_receipt=None,
+                findings=findings,
+                retryable=False,
+                timestamp_utc=timestamp_utc,
+                outcome=ActuationOutcome.UNKNOWN,
+            )
+
+        except Exception as exc:
+            logger.error(
+                "BrokerActuator: Unexpected post-precheck execution error (UNKNOWN): %s",
+                exc,
+            )
+            findings.append(
+                {
+                    "code": "EXECUTION_INDETERMINATE",
+                    "severity": "INDETERMINATE",
+                    "detail": f"{type(exc).__name__}: {exc}",
+                }
+            )
+            return ActuationReceipt(
+                accepted=False,
+                receipt_id=None,
+                session_uuid=clearance.thread_id,
+                raw_receipt=None,
+                findings=findings,
+                retryable=False,
+                timestamp_utc=timestamp_utc,
+                outcome=ActuationOutcome.UNKNOWN,
             )
