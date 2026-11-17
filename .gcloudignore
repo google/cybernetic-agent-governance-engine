@@ -4,6 +4,9 @@
 /.gcloudignore
 /.env
 /.env.*
+**/.env
+**/.env.*
+**/*.env
 /.DS_Store
 __pycache__/
 *.pyc
@@ -11,6 +14,8 @@ __pycache__/
 venv/
 .venv/
 .venv*/
+**/venv*/
+**/.venv*/
 /env/
 /.idea/
 /.vscode/
@@ -31,6 +36,21 @@ venv/
 /pytest-results/
 /plans/
 /schemas/
+/scratch/
+**/scratch/
+
+# Private keys, certificates, and Terraform secret/plan material (IC-02)
+**/*.key
+**/*.pem
+**/*.p12
+**/*.pfx
+/deployment/certs/
+**/certs/
+**/*.tfvars
+**/*.tfvars.json
+**/tfplan*
+**/*.tfplan
+**/*.tfplan.*
 
 /infra/
 **/.terraform/

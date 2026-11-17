@@ -118,7 +118,8 @@ resource "kubernetes_deployment" "compliance_bridge" {
       }
 
       spec {
-        service_account_name = var.service_account_name
+        service_account_name            = var.service_account_name
+        automount_service_account_token = false
 
         security_context {
           run_as_non_root = true
@@ -489,6 +490,21 @@ resource "kubernetes_deployment" "compliance_bridge" {
             value = trimspace(var.infra_evidence_previous_batch_attestation_digest)
           }
 
+          env {
+            name  = "TMPDIR"
+            value = "/tmp"
+          }
+
+          env {
+            name  = "PYTHONDONTWRITEBYTECODE"
+            value = "1"
+          }
+
+          volume_mount {
+            name       = "tmp"
+            mount_path = "/tmp"
+          }
+
           dynamic "volume_mount" {
             for_each = local.mount_redis_ca ? [1] : []
             content {
@@ -500,6 +516,7 @@ resource "kubernetes_deployment" "compliance_bridge" {
 
           security_context {
             allow_privilege_escalation = false
+            read_only_root_filesystem  = true
             run_as_non_root            = true
             run_as_user                = 1000
             capabilities {
@@ -541,6 +558,14 @@ resource "kubernetes_deployment" "compliance_bridge" {
             period_seconds        = 10
             timeout_seconds       = 5
             failure_threshold     = 3
+          }
+        }
+
+        volume {
+          name = "tmp"
+          empty_dir {
+            medium     = "Memory"
+            size_limit = "64Mi"
           }
         }
 

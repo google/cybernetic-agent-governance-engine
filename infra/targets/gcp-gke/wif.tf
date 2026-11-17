@@ -36,13 +36,15 @@
 # 3. Partner Conformance Harness Identity (`cage-partner-harness`):
 #    - Bound to `principalSet://.../attribute.repository/${var.github_repository}` so
 #      branch-dispatched `ci-partner-integration.yml` runs can execute without
-#      holding deployer authority.
-#    - Granted only:
-#      a) `roles/iam.serviceAccountTokenCreator` on `cage-gateway` (authoritative
-#         binding) to mint audience-bound Cloud Run OIDC ID tokens for `provider_01`;
-#      b) `roles/cloudkms.signer`, `roles/cloudkms.publicKeyViewer`, and
-#         `roles/cloudkms.viewer` (authoritative key policy) on the dedicated
-#         `actuator-01-signing` key.
+#      holding deployer or runtime workload authority.
+#    - Holds ZERO roles on `cage-gateway` (no `serviceAccountTokenCreator` or
+#      impersonation path to `gateway-seal` HSM signing, CMEK, or secrets).
+#    - Mints audience-bound OIDC ID tokens under its own identity for partner
+#      Cloud Run ingress (plus optional `roles/run.invoker` on any in-project
+#      partner harness Cloud Run service) and holds `roles/cloudkms.signer`,
+#      `roles/cloudkms.publicKeyViewer`, and `roles/cloudkms.viewer`
+#      (authoritative key policy) exclusively on the dedicated
+#      `actuator-01-signing` test key.
 
 resource "google_iam_workload_identity_pool" "github_actions" {
   workload_identity_pool_id = "github-actions"
@@ -124,14 +126,16 @@ resource "google_service_account_iam_binding" "partner_harness_token_creator" {
   ]
 }
 
-# Authoritative Token Creator binding on cage-gateway: only cage-partner-harness
-# may mint Cloud Run OIDC ID tokens as cage-gateway for provider_01 CI tests.
-resource "google_service_account_iam_binding" "gateway_partner_token_creator" {
-  service_account_id = google_service_account.gateway.name
-  role               = "roles/iam.serviceAccountTokenCreator"
-  members = [
-    "serviceAccount:${google_service_account.partner_harness.email}",
-  ]
+# Direct Cloud Run invoker grant for any in-project partner conformance service.
+# External partner Cloud Run services grant roles/run.invoker directly to
+# cage-partner-harness; cage-partner-harness never impersonates cage-gateway.
+resource "google_cloud_run_v2_service_iam_member" "partner_harness_invoker" {
+  count    = var.partner_harness_cloud_run_service != "" ? 1 : 0
+  project  = var.project_id
+  location = var.partner_harness_cloud_run_location != "" ? var.partner_harness_cloud_run_location : var.region
+  name     = var.partner_harness_cloud_run_service
+  role     = "roles/run.invoker"
+  member   = "serviceAccount:${google_service_account.partner_harness.email}"
 }
 
 # Authoritative key-level policy on the dedicated actuator-01-signing KMS key:

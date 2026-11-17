@@ -235,6 +235,42 @@ reports/
 # Stale scratch/temp directories — canonical protos live in src/gateway/protos/
 temp_test/
 scratch/
+**/scratch/
+
+# Private keys, certificates, and secret material — never commit (IC-02)
+*.key
+**/*.key
+*.pem
+**/*.pem
+*.p12
+**/*.p12
+*.pfx
+**/*.pfx
+deployment/certs/**/*.crt
+!deployment/certs/actuator_01/ca.crt
+!deployment/certs/actuator_01/client.crt
+**/tfplan*
+**/*.tfplan
+**/*.tfplan.*
+**/.env
+**/.env.*
+!.env.example
+!**/*.env.example
+**/*.tfvars
+**/*.tfvars.json
+!infra/targets/gcp-gke/dev.tfvars
+!infra/targets/gcp-gke/us-dev.tfvars
+!infra/targets/gcp-gke/eu-dev.tfvars
+!infra/targets/gcp-gke/apac-dev.tfvars
+!infra/targets/gcp-gke/staging.tfvars
+!infra/targets/gcp-gke/prod.tfvars
+!infra/targets/gcp-gke/eu-prod.tfvars
+!infra/targets/gcp-gke/apac-prod.tfvars
+!infra/targets/gcp-gke/tests/fixtures/image_digests.tfvars
+!*.tfvars.example
+!**/*.tfvars.example
+*.auto.tfvars
+**/*.auto.tfvars
 
 # Evidence directories (populated at runtime, never committed)
 examples/evidence/

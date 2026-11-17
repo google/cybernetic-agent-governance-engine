@@ -1665,7 +1665,11 @@ class TestImageSupplyChainAndAttestation:
         offending: list[str] = []
 
         for path in [main_tf, *sorted(docker_dir.rglob("*"))]:
-            if not path.is_file():
+            if (
+                not path.is_file()
+                or "__pycache__" in path.parts
+                or path.suffix in {".pyc", ".pyo"}
+            ):
                 continue
             for lineno, line in enumerate(
                 path.read_text(encoding="utf-8").splitlines(), start=1

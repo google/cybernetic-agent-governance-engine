@@ -379,3 +379,51 @@ run "dev_with_a_flag_refuses_an_empty_allowlist" {
 
   expect_failures = [terraform_data.control_plane_access_guard]
 }
+
+# ─── POAM-2026-180 / IC-04: targeted plans (-target=module.*) still evaluate root guards ─
+
+run "targeted_module_gke_plan_still_refuses_empty_allowlist" {
+  command = plan
+
+  plan_options {
+    target = [module.gke]
+  }
+
+  variables {
+    authorized_networks = []
+  }
+
+  expect_failures = [terraform_data.control_plane_access_guard]
+}
+
+run "targeted_module_app_secrets_plan_still_refuses_empty_compliance_keys" {
+  command = plan
+
+  plan_options {
+    target = [module.app_secrets]
+  }
+
+  variables {
+    langfuse_compliance_public_key = ""
+    langfuse_compliance_secret_key = ""
+  }
+
+  expect_failures = [terraform_data.poam_019_empty_key_guard]
+}
+
+run "targeted_module_app_secrets_plan_still_refuses_shared_compliance_keys" {
+  command = plan
+
+  plan_options {
+    target = [module.app_secrets]
+  }
+
+  variables {
+    langfuse_public_key            = "fake-app-public-key"
+    langfuse_secret_key            = "fake-app-secret-key"
+    langfuse_compliance_public_key = "fake-app-public-key"
+    langfuse_compliance_secret_key = "fake-app-secret-key"
+  }
+
+  expect_failures = [terraform_data.poam_019_shared_key_guard]
+}

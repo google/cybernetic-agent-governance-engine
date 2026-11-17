@@ -1,5 +1,8 @@
 .env
 .env.*
+**/.env
+**/.env.*
+**/*.env
 .git
 .gitignore
 .gcloudignore
@@ -26,6 +29,21 @@ htmlcov/
 .antigravity/
 .dockerignore
 .jules/
+scratch/
+**/scratch/
+
+# Private keys, certificates, and Terraform secret/plan material (IC-02)
+**/*.key
+**/*.pem
+**/*.p12
+**/*.pfx
+deployment/certs/
+**/certs/
+**/*.tfvars
+**/*.tfvars.json
+**/tfplan*
+**/*.tfplan
+**/*.tfplan.*
 
 # Local Terraform state/provider artifacts. These are never needed inside a
 # built image and inflate SBOM/CVE Trivy scans with irrelevant host-platform

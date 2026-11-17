@@ -21,9 +21,10 @@ partition:
    (default ``refs/heads/main``) and never the repository-wide principal set or
    the Compute Engine default service account.
 3. ``cage-partner-harness`` is a dedicated low-privilege identity for CI partner
-   runs with only ``roles/iam.serviceAccountTokenCreator`` on ``cage-gateway``
-   and ``roles/cloudkms.signer`` (+ viewer/publicKeyViewer) on the partner
-   signing key.
+   runs with zero IAM bindings on ``cage-gateway`` (no impersonation path to
+   ``gateway-seal``, CMEK, or secrets), optional ``roles/run.invoker`` on an
+   explicit partner harness Cloud Run service, and ``roles/cloudkms.signer``
+   (+ viewer/publicKeyViewer) exclusively on the partner test signing key.
 """
 
 from __future__ import annotations
@@ -105,19 +106,19 @@ def test_partner_harness_isolation_and_narrow_grants() -> None:
         assert "attribute.repository/${var.github_repository}" in block
         assert "-compute@developer.gserviceaccount.com" not in block
 
-    gateway_binding = _extract_resource_block(
-        text, "google_service_account_iam_binding", "gateway_partner_token_creator"
+    assert "gateway_partner_token_creator" not in text
+    assert "google_service_account.gateway" not in text
+
+    invoker_binding = _extract_resource_block(
+        text, "google_cloud_run_v2_service_iam_member", "partner_harness_invoker"
     )
-    assert "google_service_account.gateway.name" in gateway_binding
+    assert 'role     = "roles/run.invoker"' in invoker_binding
     assert (
-        'role               = "roles/iam.serviceAccountTokenCreator"' in gateway_binding
+        'member   = "serviceAccount:${google_service_account.partner_harness.email}"'
+        in invoker_binding
     )
-    assert (
-        '"serviceAccount:${google_service_account.partner_harness.email}"'
-        in gateway_binding
-    )
-    assert "sa-cage-deployer" not in gateway_binding
-    assert "-compute@developer.gserviceaccount.com" not in gateway_binding
+    assert "sa-cage-deployer" not in invoker_binding
+    assert "-compute@developer.gserviceaccount.com" not in invoker_binding
 
     kms_policy = _extract_resource_block(
         text, "google_kms_crypto_key_iam_policy", "partner_harness_kms_signer"

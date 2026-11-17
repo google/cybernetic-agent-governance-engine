@@ -306,12 +306,12 @@ resource "google_container_cluster" "primary" {
   vertical_pod_autoscaling { enabled = var.enable_vertical_pod_autoscaling }
 
   lifecycle {
+    # IC-04 / POAM-2026-174: master_authorized_networks_config and monitoring_config
+    # are omitted from ignore_changes so Terraform reconciles out-of-band gcloud drift.
     ignore_changes = [
       node_version,
       database_encryption, # POAM-2026-182: provider 6.50.0 enum lacks ALL_OBJECTS_ENCRYPTION_ENABLED
-      master_authorized_networks_config,
       min_master_version,
-      monitoring_config,
       resource_labels,
     ]
 

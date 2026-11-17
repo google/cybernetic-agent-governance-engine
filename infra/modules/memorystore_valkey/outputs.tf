@@ -84,3 +84,13 @@ output "psc_network" {
   description = "VPC network URI configured on desired_auto_created_endpoints"
   value       = one(google_memorystore_instance.instance.desired_auto_created_endpoints[*].network)
 }
+
+output "authorization_mode" {
+  description = "Authorization mode configured on the Memorystore Valkey instance"
+  value       = google_memorystore_instance.instance.authorization_mode
+}
+
+output "transit_encryption_mode" {
+  description = "Transit encryption mode configured on the Memorystore Valkey instance"
+  value       = google_memorystore_instance.instance.transit_encryption_mode
+}

@@ -288,7 +288,7 @@ deploy_terraform_target() {
   local env="$2"
   shift 2
   
-  local tf_dir="$REPO_ROOT/infra/targets/$target"
+  local tf_dir="$REPO_ROOT/infra/targets/$target"; _ACTIVE_TF_DIR="$tf_dir"
   local var_file="$tf_dir/${env}.tfvars"
   local tf_args=()
   local backend_config_args=()
@@ -700,6 +700,17 @@ deploy_terraform_target() {
 }
 
 # ─── Entry point ──────────────────────────────────────────────────────────────
+
+# Clean up any plaintext Terraform plan files (which embed secret/state values)
+# on normal exit, set -e failure, or operator Ctrl+C / SIGTERM (IC-07).
+_ACTIVE_TF_DIR=""
+_cleanup_tfplan_artifacts() {
+  if [[ -n "${_ACTIVE_TF_DIR:-}" && -d "$_ACTIVE_TF_DIR" ]]; then
+    rm -f "$_ACTIVE_TF_DIR"/tfplan "$_ACTIVE_TF_DIR"/tfplan.* "$_ACTIVE_TF_DIR"/*.tfplan 2>/dev/null || true
+  fi
+  rm -f "$REPO_ROOT"/infra/targets/*/tfplan "$REPO_ROOT"/infra/targets/*/tfplan.* "$REPO_ROOT"/infra/targets/*/*.tfplan 2>/dev/null || true
+}
+trap _cleanup_tfplan_artifacts EXIT INT TERM
 
 main() {
   # Show help

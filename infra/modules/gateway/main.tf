@@ -260,6 +260,7 @@ locals {
     imagePullPolicy = "Always"
     securityContext = {
       allowPrivilegeEscalation = false
+      readOnlyRootFilesystem   = true
       runAsNonRoot             = true
       runAsUser                = 1000
       seccompProfile = {
@@ -617,6 +618,14 @@ locals {
           name  = "OPENBLAS_NUM_THREADS"
           value = "2"
         },
+        {
+          name  = "TMPDIR"
+          value = "/tmp"
+        },
+        {
+          name  = "PYTHONDONTWRITEBYTECODE"
+          value = "1"
+        },
       ],
       local.mount_redis_ca ? [
         {
@@ -636,6 +645,11 @@ locals {
         {
           name      = "opa-socket"
           mountPath = "/var/run/opa"
+          readOnly  = false
+        },
+        {
+          name      = "tmp"
+          mountPath = "/tmp"
           readOnly  = false
         },
       ],
@@ -700,6 +714,13 @@ locals {
       {
         name     = "opa-socket"
         emptyDir = {}
+      },
+      {
+        name = "tmp"
+        emptyDir = {
+          medium    = "Memory"
+          sizeLimit = "128Mi"
+        }
       },
       {
         name = "opa-policies"
@@ -770,6 +791,7 @@ locals {
         }
         spec = {
           serviceAccountName            = var.service_account_name
+          automountServiceAccountToken  = false
           terminationGracePeriodSeconds = 35
           # §3, §7 Pitfalls: Governance-critical gateway pods must NEVER schedule on Spot nodes.
           affinity = {

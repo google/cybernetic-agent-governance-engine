@@ -140,10 +140,12 @@ resource "google_project_iam_member" "gateway_storage_viewer" {
   }
 }
 
-resource "google_project_iam_member" "gateway_secret_accessor" {
-  project = var.project_id
-  role    = "roles/secretmanager.secretAccessor"
-  member  = "serviceAccount:${google_service_account.gateway.email}"
+resource "google_secret_manager_secret_iam_member" "gateway_secret_accessor" {
+  for_each  = toset(var.gateway_secret_manager_secret_ids)
+  project   = var.project_id
+  secret_id = each.value
+  role      = "roles/secretmanager.secretAccessor"
+  member    = "serviceAccount:${google_service_account.gateway.email}"
 }
 
 resource "google_kms_crypto_key_iam_member" "gateway_kms_encrypter_decrypter" {
@@ -206,10 +208,12 @@ resource "google_project_iam_member" "compliance_bridge_memorystore_user" {
   member  = "serviceAccount:${google_service_account.compliance_bridge.email}"
 }
 
-resource "google_project_iam_member" "compliance_bridge_secret_accessor" {
-  project = var.project_id
-  role    = "roles/secretmanager.secretAccessor"
-  member  = "serviceAccount:${google_service_account.compliance_bridge.email}"
+resource "google_secret_manager_secret_iam_member" "compliance_bridge_secret_accessor" {
+  for_each  = toset(var.compliance_bridge_secret_manager_secret_ids)
+  project   = var.project_id
+  secret_id = each.value
+  role      = "roles/secretmanager.secretAccessor"
+  member    = "serviceAccount:${google_service_account.compliance_bridge.email}"
 }
 
 

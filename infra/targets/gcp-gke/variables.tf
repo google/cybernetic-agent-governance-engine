@@ -1321,6 +1321,30 @@ variable "partner_harness_kms_key" {
   default     = ""
 }
 
+variable "partner_harness_cloud_run_service" {
+  description = "Optional in-project Cloud Run v2 service name granted roles/run.invoker directly to cage-partner-harness (never via cage-gateway impersonation). Empty string skips the binding."
+  type        = string
+  default     = ""
+}
+
+variable "partner_harness_cloud_run_location" {
+  description = "Region of partner_harness_cloud_run_service (defaults to var.region when empty)."
+  type        = string
+  default     = ""
+}
+
+variable "gateway_secret_manager_secret_ids" {
+  description = "Explicit list of Secret Manager secret IDs granted roles/secretmanager.secretAccessor to google_service_account.gateway (never project-wide)."
+  type        = list(string)
+  default     = []
+}
+
+variable "compliance_bridge_secret_manager_secret_ids" {
+  description = "Explicit list of Secret Manager secret IDs granted roles/secretmanager.secretAccessor to google_service_account.compliance_bridge (never project-wide)."
+  type        = list(string)
+  default     = []
+}
+
 # ─── Pre-W Evidence Survival: Reconciler & GMP PodMonitoring (PR-11) ──────────
 
 variable "enable_reconciliation_worker" {

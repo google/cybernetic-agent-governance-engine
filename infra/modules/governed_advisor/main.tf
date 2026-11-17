@@ -56,7 +56,8 @@ resource "kubernetes_deployment" "governed_advisor" {
       }
 
       spec {
-        service_account_name = var.service_account_name
+        service_account_name            = var.service_account_name
+        automount_service_account_token = false
 
         security_context {
           run_as_non_root = true
@@ -338,8 +339,27 @@ resource "kubernetes_deployment" "governed_advisor" {
             failure_threshold     = 3
           }
 
+          env {
+            name  = "TMPDIR"
+            value = "/tmp"
+          }
+          env {
+            name  = "HOME"
+            value = "/tmp"
+          }
+          env {
+            name  = "PYTHONDONTWRITEBYTECODE"
+            value = "1"
+          }
+
+          volume_mount {
+            name       = "tmp"
+            mount_path = "/tmp"
+          }
+
           security_context {
             allow_privilege_escalation = false
+            read_only_root_filesystem  = true
             run_as_non_root            = true
             run_as_user                = 1000
             capabilities {
@@ -359,6 +379,14 @@ resource "kubernetes_deployment" "governed_advisor" {
               cpu    = "500m"
               memory = "2Gi"
             }
+          }
+        }
+
+        volume {
+          name = "tmp"
+          empty_dir {
+            medium     = "Memory"
+            size_limit = "64Mi"
           }
         }
       }

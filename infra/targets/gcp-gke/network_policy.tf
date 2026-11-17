@@ -631,14 +631,6 @@ resource "kubernetes_network_policy_v1" "gateway_egress_l3_l4" {
       }
     }
 
-    # OPA policy evaluation (kept narrow to gateway only until PR-7a moves OPA to UDS)
-    egress {
-      ports {
-        protocol = "TCP"
-        port     = "4143"
-      }
-    }
-
     # Compliance bridge internal API (container port 3001 + Linkerd inbound 4143)
     egress {
       to {

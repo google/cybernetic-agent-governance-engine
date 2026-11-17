@@ -659,22 +659,25 @@ def test_memorystore_iam_bindings_for_authorized_gsas() -> None:
     assert iam_tf.count('role    = "roles/memorystore.dbConnectionUser"') == 4
 
 
-def test_compliance_bridge_artifactregistry_writer_references_sa_resource_and_no_bare_literal() -> (
+def test_compliance_bridge_holds_no_artifactregistry_writer_and_no_bare_literal() -> (
     None
 ):
-    """EF9: compliance_bridge_sa_artifactregistry_writer references google_service_account.compliance_bridge.email and no file uses bare compliance-bridge-sa."""
+    """IC-08 / EF9: runtime compliance-bridge GSA holds no artifactregistry.writer and no file uses bare compliance-bridge-sa."""
     main_tf = (_GKE / "main.tf").read_text()
-    match = re.search(
-        r'^\s*resource\s+"google_project_iam_member"\s+"compliance_bridge_sa_artifactregistry_writer"\s*\{(.*?)^\s*\}',
-        main_tf,
-        re.M | re.S,
-    )
-    assert match is not None
-    body = match.group(1)
-    assert 'role    = "roles/artifactregistry.writer"' in body
+    iam_tf = (_GKE / "iam.tf").read_text()
     assert (
-        'member  = "serviceAccount:${google_service_account.compliance_bridge.email}"'
-        in body
+        'resource "google_project_iam_member" "compliance_bridge_sa_artifactregistry_writer"'
+        not in main_tf
+    )
+    assert (
+        "from = google_project_iam_member.compliance_bridge_sa_artifactregistry_writer"
+        in main_tf
+    )
+    assert "roles/artifactregistry.writer" not in main_tf
+    assert iam_tf.count('role    = "roles/artifactregistry.writer"') == 1
+    assert (
+        'resource "google_project_iam_member" "cloudbuild_artifactregistry_writer"'
+        in iam_tf
     )
     bare_literal = re.compile(r"(?<![a-z0-9-])compliance-bridge-sa\b")
     offenders = [

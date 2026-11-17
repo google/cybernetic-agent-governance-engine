@@ -238,7 +238,8 @@ resource "kubernetes_stateful_set" "clickhouse_keeper" {
       }
 
       spec {
-        service_account_name = var.keeper_service_account_name != "" ? var.keeper_service_account_name : null
+        service_account_name            = var.keeper_service_account_name != "" ? var.keeper_service_account_name : null
+        automount_service_account_token = false
 
         # §3, §7: Schedule strictly onto tainted clickhouse node pool (never general or Spot)
         toleration {
@@ -625,7 +626,8 @@ resource "kubernetes_stateful_set" "clickhouse" {
       }
 
       spec {
-        service_account_name = var.service_account_name != "" ? var.service_account_name : null
+        service_account_name            = var.service_account_name != "" ? var.service_account_name : null
+        automount_service_account_token = false
 
         # §3, §7: Taint toleration and node affinity for dedicated clickhouse
         # local-SSD node pool; strictly prohibit scheduling onto Spot or general nodes.
