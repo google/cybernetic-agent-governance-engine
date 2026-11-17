@@ -326,6 +326,12 @@ jobs:
         # consumers must be emitted by a producer in src/ (zero baseline/waivers).
         run: |
           uv run python scripts/check_producer_consumer_keys.py --verbose
+      - name: Mechanism reference & TTM signing-hold gate (POAM-2026-222)
+        # Verifies every cage_* Prometheus series in alert policies/dashboards,
+        # every compliance-bridge field read by Lula specs, every metric/alert
+        # citation across OSCAL and DOC_SCOPE, and POAM-2026-222 TTM signing hold.
+        run: |
+          uv run python scripts/check_mechanism_references.py --verbose
       - name: OSCAL evidence-claim census & register parity check
         # Verifies 1-to-1 claim completeness and SHA-256/status freshness across
         # all 7 OSCAL YAML files, path resolution in cites/read_back.check, and

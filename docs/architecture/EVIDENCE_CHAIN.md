@@ -306,7 +306,7 @@ out-of-cluster GCP Cloud Audit Log corroboration (`AS-1` decisions `D-AS-1`..`D-
   cluster teardown.
 
 **Operational Metrics vs. Evidentiary Non-Repudiation (`R-9` Comparison-Owed Note)**:
-GKE Managed Prometheus metrics (`cage_evidence_*`, `cage_custody_batches_total`,
+GKE Managed Prometheus metrics (`cage_evidence_*`, `cage_evidence_custody_batches_total`,
 `cage_kms_rpc_total`) provide operational pipeline health and alerting (NIST
 SP 800-53 AU-12) and are intentionally non-evidentiary. Cryptographic
 non-repudiation and out-of-cluster tamper detection rest exclusively on
