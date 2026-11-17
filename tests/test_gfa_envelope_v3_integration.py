@@ -148,7 +148,7 @@ async def test_gfa_refuses_an_unsigned_legacy_flat_dict() -> None:
         sign=False,
     )
 
-    with pytest.raises(CageGatewayError, match="no routable verdict"):
+    with pytest.raises(CageGatewayError, match="missing required 'envelope' field"):
         await client.validate_action("execute_trade", {"symbol": "AAPL"})
 
 
