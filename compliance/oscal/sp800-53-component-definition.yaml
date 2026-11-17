@@ -289,7 +289,9 @@ component-definition:
                    cage_event_loop_lag_seconds_count absence; compliance/lula/lula-validation-metrics.yaml
                    checks that the PodMonitoring object exists with the expected selector and
                    endpoint, while live GMP sample arrival under Server/gateway-metrics awaits
-                   certification.
+                   certification. Correction (2026-11-16, POAM-2026-230): that alert policy has no
+                   notification channel in any committed profile, so a failed scrape is evaluated and
+                   reported to no one until POAM-2026-230 closes.
 
                 Open: live staging verification of signed attestations in the WORM bucket
                 (POAM-2026-084); staging keeps WORM objects for 1 day inside the ephemeral
