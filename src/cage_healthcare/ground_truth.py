@@ -12,78 +12,50 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Healthcare domain simulated serum-assay ground-truth provider and cost resolver."""
-
 from __future__ import annotations
 
-from src.cage_healthcare.invariants import (
-    DoseCeilingBarrier,
-    SerumConcentrationBarrier,
-    healthcare_cost_resolver,
-)
-from src.gateway.governance.seams.ground_truth import (
-    FaultMode,
-    GroundTruthProvider,
-    GroundTruthSnapshot,
-    SimulatedSource,
-)
+from typing import Any
+
+from src.cage_healthcare import invariants as _inv
+from src.cage_healthcare.thresholds import load_healthcare_thresholds
+from src.gateway.governance.seams import ground_truth as _gt
+
+DoseCeilingBarrier = _inv.DoseCeilingBarrier
+SerumConcentrationBarrier = _inv.SerumConcentrationBarrier
+healthcare_cost_resolver = _inv.healthcare_cost_resolver
 
 
-class SimulatedSerumAssayProvider(GroundTruthProvider):
-    """Deterministic simulated laboratory serum-assay provider for healthcare CBF."""
+class SimulatedSerumAssayProvider(_gt.GroundTruthProvider):
+    source_id = "simulated:serum_assay_lab"
 
-    def __init__(
-        self,
-        *,
-        invariant_id: str = SerumConcentrationBarrier.invariant_id,
-        state_key: str = SerumConcentrationBarrier.state_key,
-        initial_scalar: float = 15.0,
-        barrier_floor: float = 5.0,
-        patient_id: str = "patient-sim-01",
-        seed: int | None = None,
-    ) -> None:
-        self.invariant_id = invariant_id
-        self.state_key = state_key
-        self.patient_id = patient_id
-        self.barrier_floor = float(barrier_floor)
-        self.source_id = "simulated:serum_assay_lab"
-        self._source = SimulatedSource(
-            invariant_id=invariant_id,
-            state_key=state_key,
-            initial_scalar=float(initial_scalar),
-            barrier_floor=float(barrier_floor),
-            source_id=self.source_id,
-            seed=seed,
-        )
-        self.source = self._source
+    def __init__(self, *, seed: int | None = None, **kw: Any) -> None:
+        cfg = load_healthcare_thresholds()
+        inv = kw.pop("invariant_id", SerumConcentrationBarrier.invariant_id)
+        skey = kw.pop("state_key", SerumConcentrationBarrier.state_key)
+        ceil = float(kw.pop("toxic_ceiling_mg_l", cfg.toxic_ceiling_concentration))
+        b_def = cfg.min_therapeutic_concentration
+        base = float(kw.pop("baseline_concentration_mg_l", b_def))
+        head = float(kw.pop("initial_scalar", ceil - base))
+        flr = float(kw.pop("barrier_floor", b_def))
+        self.patient_id = str(kw.pop("patient_id", "patient-sim-01"))
+        j, lag = kw.pop("journal", None), float(kw.pop("settlement_lag_s", 0.0))
+        if kw:
+            raise TypeError(f"Unexpected kwargs: {sorted(kw)}")
+        self.invariant_id, self.state_key = inv, skey
+        self.toxic_ceiling_mg_l, self.barrier_floor = ceil, flr
+        s_kw: dict[str, Any] = {"invariant_id": inv, "state_key": skey, "seed": seed}
+        s_kw.update(initial_scalar=head, barrier_floor=flr, source_id=self.source_id)
+        s_kw.update(journal=j, settlement_lag_s=lag)
+        self._source = self.source = _gt.SimulatedSource(**s_kw)
 
-    @property
-    def fault_mode(self) -> FaultMode:
-        return self._source.fault_mode
+    def __getattr__(self, name: str) -> Any:
+        return getattr(self._source, name)
 
-    def inject_fault(self, mode: FaultMode | str) -> None:
-        self._source.inject_fault(mode)
+    def fetch_snapshot_sync(self) -> _gt.GroundTruthSnapshot:
+        conc = max(0.0, self.toxic_ceiling_mg_l - self._source.current_scalar)
+        m: dict[str, Any] = {"patient_id": self.patient_id, "unit": "mg/L"}
+        m["serum_concentration_mg_l"] = conc
+        return self._source.next_snapshot(extra_metadata=m)
 
-    def clear_fault(self) -> None:
-        self._source.clear_fault()
-
-    def record_debit(self, delta_mg_l: float) -> None:
-        self._source.record_debit(delta_mg_l)
-
-    def reset(self, *, scalar: float | None = None) -> None:
-        self._source.reset(scalar=scalar)
-
-    def fetch_snapshot_sync(self) -> GroundTruthSnapshot:
-        return self._source.next_snapshot(
-            extra_metadata={"patient_id": self.patient_id, "unit": "mg/L"}
-        )
-
-    async def fetch_snapshot(self) -> GroundTruthSnapshot:
+    async def fetch_snapshot(self) -> _gt.GroundTruthSnapshot:
         return self.fetch_snapshot_sync()
-
-
-__all__ = [
-    "DoseCeilingBarrier",
-    "SimulatedSerumAssayProvider",
-    "healthcare_cost_resolver",
-]

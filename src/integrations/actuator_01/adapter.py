@@ -374,6 +374,7 @@ class Actuator01Adapter:
                 retryable=False,
                 envelope_digest=None,
                 timestamp_utc=timestamp_utc,
+                outcome=ActuationOutcome.REJECTED,
             )
 
         # Gate 2: Target route validation
@@ -406,6 +407,7 @@ class Actuator01Adapter:
                 retryable=False,
                 envelope_digest=None,
                 timestamp_utc=timestamp_utc,
+                outcome=ActuationOutcome.REJECTED,
             )
 
         # ── Gate 3: Fetch outbound credentials (optional) ────────────────
@@ -448,6 +450,7 @@ class Actuator01Adapter:
                     retryable=False,
                     envelope_digest=None,
                     timestamp_utc=timestamp_utc,
+                    outcome=ActuationOutcome.REJECTED,
                 )
 
         # ── Step 1-2: Build, canonicalize, digest ─────────────────────────
@@ -472,6 +475,7 @@ class Actuator01Adapter:
                 retryable=False,
                 envelope_digest=None,
                 timestamp_utc=timestamp_utc,
+                outcome=ActuationOutcome.REJECTED,
             )
         except EnvelopeTooLargeError as exc:
             logger.warning(
@@ -492,6 +496,7 @@ class Actuator01Adapter:
                 retryable=False,
                 envelope_digest=None,
                 timestamp_utc=timestamp_utc,
+                outcome=ActuationOutcome.REJECTED,
             )
 
         # ── Step 3: Build assertion ───────────────────────────────────────
@@ -519,6 +524,7 @@ class Actuator01Adapter:
                 retryable=False,
                 envelope_digest=envelope_digest,
                 timestamp_utc=timestamp_utc,
+                outcome=ActuationOutcome.REJECTED,
             )
 
         # ── Step 4: Sign for quorum ───────────────────────────────────────
@@ -557,6 +563,7 @@ class Actuator01Adapter:
                     retryable=False,
                     envelope_digest=envelope_digest,
                     timestamp_utc=timestamp_utc,
+                    outcome=ActuationOutcome.REJECTED,
                 )
 
             # Sign concurrently with per-operator signers
@@ -586,6 +593,7 @@ class Actuator01Adapter:
                 retryable=False,
                 envelope_digest=envelope_digest,
                 timestamp_utc=timestamp_utc,
+                outcome=ActuationOutcome.REJECTED,
             )
 
         # ── Step 5: Submit over mTLS ──────────────────────────────────────

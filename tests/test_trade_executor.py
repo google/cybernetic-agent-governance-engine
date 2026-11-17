@@ -132,8 +132,16 @@ class TestExecuteTradeRoutingSealEnforcement:
         assert "Direct execution attempt rejected" in str(exc_info.value)
 
     @pytest.mark.asyncio
-    async def test_execute_trade_accepts_valid_seal(self):
-        """execute_trade() with a non-empty routing_seal proceeds to Redis checks."""
+    async def test_execute_trade_accepts_valid_seal(self, monkeypatch):
+        """execute_trade() with a valid Ed25519 routing_seal proceeds to Redis checks."""
+        import src.gateway.governance.jwks as jwks_mod
+        import src.gateway.governance.kms_signer as ks
+        from src.gateway.governance.routing_seal import generate_seal
+
+        provider = ks.SoftwareEd25519Provider(key_id="trade-exec-test-k1")
+        monkeypatch.setattr(ks, "_signer", ks.KMSGovernanceSigner(provider=provider))
+        monkeypatch.setattr(jwks_mod, "_global_jwks", None)
+
         order = TradeOrder(
             symbol="AMZN",
             amount=5,
@@ -143,6 +151,9 @@ class TestExecuteTradeRoutingSealEnforcement:
             confidence=0.98,
             transaction_id=str(uuid.uuid4()),
         )
+        valid_seal = await generate_seal(
+            "execute_trade", order.model_dump(exclude_none=True), record_hash="e" * 64
+        )
 
         # Mock Redis and broker to validate seal check passes
         with (
@@ -151,7 +162,7 @@ class TestExecuteTradeRoutingSealEnforcement:
         ):
             mock_redis.get.return_value = None  # No safety violation
 
-            result = await execute_trade(order, routing_seal="valid-seal-abc123")
+            result = await execute_trade(order, routing_seal=valid_seal)
 
             # Should reach mock broker execution without raising seal error
             assert "EXECUTED" in result
@@ -162,8 +173,20 @@ class TestExecuteTradeOrderSizing:
     """The broker order must carry the same dollar amount governance priced."""
 
     @pytest.mark.asyncio
-    async def test_execute_trade_sends_amount_as_notional(self):
+    async def test_execute_trade_sends_amount_as_notional(self, monkeypatch):
         """amount is a USD notional (fiscal tier, CBF, UCA-6), never a share count."""
+        import json as _json
+
+        import httpx
+
+        import src.gateway.governance.jwks as jwks_mod
+        import src.gateway.governance.kms_signer as ks
+        from src.gateway.governance.routing_seal import generate_seal
+
+        provider = ks.SoftwareEd25519Provider(key_id="trade-notional-test-k1")
+        monkeypatch.setattr(ks, "_signer", ks.KMSGovernanceSigner(provider=provider))
+        monkeypatch.setattr(jwks_mod, "_global_jwks", None)
+
         order = TradeOrder(
             symbol="NVDA",
             amount=1000,
@@ -173,27 +196,33 @@ class TestExecuteTradeOrderSizing:
             confidence=0.99,
             transaction_id=str(uuid.uuid4()),
         )
+        valid_seal = await generate_seal(
+            "execute_trade", order.model_dump(exclude_none=True), record_hash="e" * 64
+        )
         captured_payload: dict = {}
 
-        def _fake_post(url, json=None, headers=None, **kwargs):
-            captured_payload.update(json or {})
-            mock_resp = MagicMock()
-            mock_resp.json.return_value = {"id": "order-notional-001"}
-            mock_resp.raise_for_status.return_value = None
-            return mock_resp
+        def _fake_post(req: httpx.Request) -> httpx.Response:
+            captured_payload.update(_json.loads(req.content.decode("utf-8")))
+            return httpx.Response(200, json={"id": "order-notional-001"})
 
-        with (
-            patch("src.cage_finance.tools.trade_executor.redis_client") as mock_redis,
-            patch("src.cage_finance.tools.trade_executor._USE_MOCK_BROKER", False),
-            patch("requests.post", side_effect=_fake_post),
-            patch.dict(
-                os.environ,
-                {"BROKER_API_KEY": "test-key", "BROKER_API_SECRET": "test-secret"},
-            ),
-        ):
-            mock_redis.get.return_value = None
+        async with httpx.AsyncClient(
+            transport=httpx.MockTransport(_fake_post)
+        ) as client:
+            with (
+                patch(
+                    "src.cage_finance.tools.trade_executor.redis_client"
+                ) as mock_redis,
+                patch("src.cage_finance.tools.trade_executor._USE_MOCK_BROKER", False),
+                patch.dict(
+                    os.environ,
+                    {"BROKER_API_KEY": "test-key", "BROKER_API_SECRET": "test-secret"},
+                ),
+            ):
+                mock_redis.get.return_value = None
 
-            result = await execute_trade(order, routing_seal="valid-seal-notional")
+                result = await execute_trade(
+                    order, routing_seal=valid_seal, http_client=client
+                )
 
         assert "EXECUTED" in result
         assert captured_payload.get("notional") == 1000

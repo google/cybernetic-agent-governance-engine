@@ -54,25 +54,10 @@ Each transition is exactly-once: a member leaves the pending set in only one
 of confirm, release or reclaim, so a double settle or a settle racing the
 reclaimer cannot count or refund the same reservation twice.
 
-Known gap: a crash *after* the trade but *before* ``confirm()`` lets the
-reservation expire, so that spend is under-counted for the rest of the
-window.  Closing it needs the actuation receipt to drive the confirm; see
-ADR-009.
-
 Redis key schema:
   fiscal:daily_limit:{YYYY-MM-DD}  → reserved + confirmed spend (int, cents)
   fiscal:pending                   → ZSET of open reservations, score = expiry epoch
   fiscal:reclaimed                 → ZSET of reclaimed reservations, score = reclaim epoch
-
-  A member is ``"{reservation_id}|{amount_cents}|{window_key}"``.  The
-  reclaim script derives the window key from the member, so these keys must
-  live on one Redis node (standalone or a single cluster hash slot).
-
-Safety invariants:
-  * Requested amounts are strictly positive and finite.
-  * ``reserve()`` fails closed: any Redis error yields a rejected token.
-  * The counter never goes below zero, and a release, reclaim or confirm
-    never recreates an expired window.
 """
 
 from __future__ import annotations
@@ -92,10 +77,8 @@ logger = logging.getLogger(__name__)
 
 PENDING_KEY = "fiscal:pending"
 RECLAIMED_KEY = "fiscal:reclaimed"
-_RECLAIM_BATCH = 100  # reservations reclaimed per call; the rest wait for the next call
+_RECLAIM_BATCH = 100
 
-# KEYS: window, pending.  ARGV: amount_cents, cap_cents, window_seconds, member, expires_at.
-# Returns the new window total in cents, or -1 if the cap would be exceeded.
 _LUA_RESERVE = """
 local amount = tonumber(ARGV[1])
 local current = tonumber(redis.call('GET', KEYS[1]) or '0')
@@ -108,9 +91,6 @@ redis.call('ZADD', KEYS[2], ARGV[5], ARGV[4])
 return total
 """
 
-# KEYS: window, pending, reclaimed.  ARGV: member, amount_cents.
-# Returns the new window total in cents, or -1 if the reservation was not
-# pending (already confirmed, released or reclaimed).
 _LUA_RELEASE = """
 if redis.call('ZREM', KEYS[2], ARGV[1]) == 0 then
   redis.call('ZREM', KEYS[3], ARGV[1])
@@ -127,8 +107,6 @@ end
 return total
 """
 
-# KEYS: window, pending, reclaimed.  ARGV: member, amount_cents.
-# Returns 1 (confirmed), 2 (was reclaimed: amount counted again), 0 (no-op).
 _LUA_CONFIRM = """
 if redis.call('ZREM', KEYS[2], ARGV[1]) == 1 then
   return 1
@@ -142,8 +120,6 @@ end
 return 0
 """
 
-# KEYS: pending, reclaimed.  ARGV: now, batch, reclaimed_cutoff.
-# Returns the number of reservations reclaimed.
 _LUA_RECLAIM = """
 local expired = redis.call('ZRANGEBYSCORE', KEYS[1], '-inf', ARGV[1], 'LIMIT', 0, tonumber(ARGV[2]))
 local reclaimed = 0
@@ -166,13 +142,7 @@ return reclaimed
 
 @dataclass(frozen=True)
 class ReservationToken:
-    """Atomic fiscal limit reservation receipt.
-
-    Returned by FiscalLimitGuard.reserve() to attest that a slice of the daily
-    fiscal limit has been atomically reserved in Redis. The token must be
-    passed to confirm() or release() to finalize or cancel the reservation;
-    otherwise it expires after ``ttl_seconds``.
-    """
+    """Atomic fiscal limit reservation receipt."""
 
     reservation_id: str
     agent_id: str
@@ -196,21 +166,7 @@ class GovernanceLimitError(Exception):
 
 
 class FiscalLimitGuard:
-    """Atomic pre-reservation guard for the daily fiscal cap.
-
-    Prevents multi-agent "race to the rail" by atomically reserving a slice
-    of the daily fiscal limit in Redis *before* the trade.  See the module
-    docstring for the reserve → confirm | release | expire lifecycle.
-
-    Works with both ``redis.asyncio.Redis`` and synchronous ``redis.Redis``
-    clients (the latter is driven from the default executor).
-
-    Args:
-        redis_client:     A Redis client (async or sync).
-        daily_cap_usd:    Hard ceiling for all agents combined (default $500k).
-        reservation_ttl:  Seconds an unsettled reservation stays counted (default 300s).
-        window_seconds:   Lifetime of a window counter key (default 86400).
-    """
+    """Atomic pre-reservation guard for the daily fiscal cap."""
 
     def __init__(
         self,
@@ -219,10 +175,29 @@ class FiscalLimitGuard:
         reservation_ttl: int = 300,
         window_seconds: int = 86_400,
     ) -> None:
-        if reservation_ttl <= 0:
+        if (
+            isinstance(daily_cap_usd, bool)
+            or not isinstance(daily_cap_usd, (int, float))
+            or not math.isfinite(daily_cap_usd)
+            or daily_cap_usd <= 0.0
+        ):
+            raise ValueError(
+                f"daily_cap_usd must be a finite positive number, got {daily_cap_usd!r}"
+            )
+        if (
+            isinstance(reservation_ttl, bool)
+            or not isinstance(reservation_ttl, int)
+            or reservation_ttl <= 0
+        ):
             raise ValueError("reservation_ttl must be positive")
+        if (
+            isinstance(window_seconds, bool)
+            or not isinstance(window_seconds, int)
+            or window_seconds <= 0
+        ):
+            raise ValueError("window_seconds must be positive")
         self._redis = redis_client
-        self._daily_cap_usd = daily_cap_usd
+        self._daily_cap_usd = float(daily_cap_usd)
         self._reservation_ttl = reservation_ttl
         self._window_seconds = window_seconds
 
@@ -236,13 +211,13 @@ class FiscalLimitGuard:
         from src.gateway.infrastructure.redis_client import build_async_redis
 
         redis_url = os.environ.get("REDIS_URL", "redis://localhost:6379")
-        cap = daily_cap_usd or float(os.environ.get("FISCAL_DAILY_CAP_USD", "500000"))
+        cap = (
+            float(os.environ.get("FISCAL_DAILY_CAP_USD", "500000"))
+            if daily_cap_usd is None
+            else daily_cap_usd
+        )
         client = build_async_redis(redis_url, socket_timeout=3.0)
         return cls(client, daily_cap_usd=cap, reservation_ttl=reservation_ttl)
-
-    # ------------------------------------------------------------------
-    # Internal helpers
-    # ------------------------------------------------------------------
 
     def _window_key(self) -> str:
         day = time.strftime("%Y-%m-%d", time.gmtime())
@@ -272,17 +247,8 @@ class FiscalLimitGuard:
                 exc,
             )
 
-    # ------------------------------------------------------------------
-    # Public API
-    # ------------------------------------------------------------------
-
     async def reclaim_expired(self, now: float | None = None) -> int:
-        """Release every reservation still pending past its TTL; return how many.
-
-        These reservations were never settled: the process stopped between
-        seal and actuation, or a sealed run was never actuated.  Raises on a
-        Redis error.
-        """
+        """Release every reservation still pending past its TTL; return how many."""
         now = time.time() if now is None else now
         reclaimed = await self._eval(
             _LUA_RECLAIM,
@@ -307,28 +273,44 @@ class FiscalLimitGuard:
         if amount_usd is None and amount_minor is None:
             raise ValueError("Must provide either amount_usd or amount_minor")
 
-        if amount_minor is not None:
-            if not isinstance(amount_minor, int):
+        if amount_usd is not None:
+            if (
+                isinstance(amount_usd, bool)
+                or not isinstance(amount_usd, (int, float))
+                or not math.isfinite(amount_usd)
+            ):
                 raise ValueError(
-                    f"reserve: amount_minor must be an integer, got {type(amount_minor)}"
+                    f"reserve: amount_usd must be a finite positive number, got {amount_usd!r}"
+                )
+            if amount_usd <= 0:
+                raise ValueError(f"reserve: amount_usd must be > 0, got {amount_usd}")
+
+        if amount_minor is not None:
+            if isinstance(amount_minor, bool) or not isinstance(amount_minor, int):
+                raise ValueError(
+                    f"reserve: amount_minor must be an integer (not bool), got {type(amount_minor)}"
                 )
             if amount_minor <= 0:
                 raise ValueError(
                     f"reserve: amount_minor must be > 0, got {amount_minor}"
                 )
-            amount_cents = amount_minor
-            if amount_usd is None:
-                amount_usd = amount_minor / 100.0
-        else:
-            if not isinstance(amount_usd, (int, float)) or not math.isfinite(
-                amount_usd
-            ):  # type: ignore[arg-type]
+            if amount_usd is not None and int(round(amount_usd * 100)) != amount_minor:
                 raise ValueError(
-                    f"reserve: amount_usd must be a finite positive number, got {amount_usd!r}"
+                    f"reserve: conflicting amounts amount_usd={amount_usd!r} vs amount_minor={amount_minor!r}"
                 )
-            if amount_usd <= 0:  # type: ignore[operator]
-                raise ValueError(f"reserve: amount_usd must be > 0, got {amount_usd}")
-            amount_cents = int(round(amount_usd * 100))  # type: ignore[operator]
+            amount_cents = amount_minor
+            resolved_usd = (
+                float(amount_usd) if amount_usd is not None else amount_minor / 100.0
+            )
+        else:
+            assert amount_usd is not None
+            amount_cents = int(round(amount_usd * 100))
+            if amount_cents <= 0:
+                raise ValueError(
+                    f"reserve: amount_usd must round to at least 1 cent (> 0), got {amount_usd!r}"
+                )
+            resolved_usd = float(amount_usd)
+
         cap_cents = int(round(self._daily_cap_usd * 100))
         window_key = self._window_key()
         reservation_id = str(uuid.uuid4())
@@ -361,7 +343,7 @@ class FiscalLimitGuard:
         token = ReservationToken(
             reservation_id=reservation_id,
             agent_id=agent_id,
-            amount_usd=amount_usd,
+            amount_usd=resolved_usd,
             amount_cents=amount_cents,
             reserved_at=datetime.now(timezone.utc).timestamp(),
             window_key=window_key,
@@ -375,7 +357,7 @@ class FiscalLimitGuard:
             logger.warning(
                 "FiscalLimitGuard: REJECTED agent=%s amount=%.2f cap=%.2f result=%d",
                 agent_id,
-                amount_usd,
+                resolved_usd,
                 self._daily_cap_usd,
                 result,
             )
@@ -384,7 +366,7 @@ class FiscalLimitGuard:
                 "FiscalLimitGuard: RESERVED agent=%s amount=%.2f "
                 "running_total=%.2f/%.2f id=%s ttl=%ds",
                 agent_id,
-                amount_usd,
+                resolved_usd,
                 running_total_usd,
                 self._daily_cap_usd,
                 reservation_id,
@@ -393,13 +375,7 @@ class FiscalLimitGuard:
         return token
 
     async def release(self, token: ReservationToken) -> float:
-        """Release a pending reservation: the trade did not execute.
-
-        Returns the new window total in USD (``0.0`` when there was nothing
-        to release).  Idempotent: a reservation already confirmed, released
-        or reclaimed is left alone.  Raises on a Redis error; the
-        reservation then stays pending and is reclaimed after its TTL.
-        """
+        """Release a pending reservation: the trade did not execute."""
         if token.rejected:
             return 0.0
         result = await self._eval(
@@ -423,13 +399,7 @@ class FiscalLimitGuard:
         return result / 100.0
 
     async def confirm(self, token: ReservationToken) -> None:
-        """Make a reservation permanent: the trade executed.
-
-        Idempotent.  If the reservation already expired and was reclaimed,
-        its amount is counted again (uncapped: the money is spent) and a
-        warning is logged.  Raises on a Redis error; the reservation then
-        expires, under-counting this spend.
-        """
+        """Make a reservation permanent: the trade executed."""
         if token.rejected:
             return
         outcome = await self._eval(
@@ -477,13 +447,7 @@ class FiscalLimitGuard:
         )
 
     async def _read_window_cents(self) -> int | None:
-        """Today's spend in cents as ``reserve()`` would see it, or ``None`` if unreadable.
-
-        Read-only.  Reserved + confirmed spend, minus reservations of this
-        window that are past their TTL but not yet reclaimed: ``reserve()``
-        reclaims those before it checks the cap, so a preview that counted
-        them would refuse what the commit then admits.
-        """
+        """Today's spend in cents as ``reserve()`` would see it, or ``None`` if unreadable."""
         try:
             key = self._window_key()
             raw = await self._call("get", key)
@@ -508,26 +472,23 @@ class FiscalLimitGuard:
     async def would_accept(self, amount_usd: float) -> bool:
         """Read-only: would ``reserve(amount_usd=...)`` be accepted right now?"""
         if (
-            not isinstance(amount_usd, (int, float))
+            isinstance(amount_usd, bool)
+            or not isinstance(amount_usd, (int, float))
             or not math.isfinite(amount_usd)
             or amount_usd <= 0
         ):
             return False
+        amount_cents = int(round(amount_usd * 100))
+        if amount_cents <= 0:
+            return False
         current_cents = await self._read_window_cents()
         if current_cents is None:
             return False
-        amount_cents = int(round(amount_usd * 100))
         cap_cents = int(round(self._daily_cap_usd * 100))
         return current_cents + amount_cents <= cap_cents
 
     async def headroom_usd(self) -> float | None:
-        """Read-only: the largest amount ``reserve()`` would accept right now.
-
-        ``None`` when the window cannot be read. Unlike :meth:`remaining_usd`
-        this never reports the full cap on a Redis error, so it is safe to
-        hand to a narrower as a bound. The value is a snapshot: a concurrent
-        reservation can shrink it, which the committing re-run then catches.
-        """
+        """Read-only: the largest amount ``reserve()`` would accept right now."""
         current_cents = await self._read_window_cents()
         if current_cents is None:
             return None

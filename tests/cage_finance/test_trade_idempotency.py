@@ -53,6 +53,7 @@ def _accepted() -> ActuationReceipt:
         receipt_id="r-1",
         session_uuid="s-1",
         raw_receipt={"execution_result": "EXECUTED"},
+        outcome=ActuationOutcome.ACCEPTED,
     )
 
 

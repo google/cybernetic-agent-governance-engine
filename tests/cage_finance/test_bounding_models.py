@@ -180,15 +180,34 @@ class TestBoundedTradeRequest:
         assert req.side == "sell"
         assert req.amount == 5000.0
 
-    def test_zero_amount_is_valid(self):
-        """Zero amount is valid (no-op trade, useful for testing)."""
-        req = BoundedTradeRequest(
-            symbol="TEST",
-            amount=0.0,
-            side="buy",
-            venue="TEST_VENUE",
-        )
-        assert req.amount == 0.0
+    def test_rejects_zero_amount(self):
+        """Zero amount raises ValueError (fail-closed per DA-11)."""
+        with pytest.raises(ValueError, match="amount must be positive"):
+            BoundedTradeRequest(
+                symbol="TEST",
+                amount=0.0,
+                side="buy",
+                venue="TEST_VENUE",
+            )
+
+    @pytest.mark.parametrize("bad_bool", [True, False])
+    def test_rejects_bool_amount_and_rollback_window(self, bad_bool: bool):
+        """Boolean values are rejected despite bool subclassing int in Python."""
+        with pytest.raises(ValueError, match="not bool"):
+            BoundedTradeRequest(
+                symbol="AAPL",
+                amount=bad_bool,  # type: ignore[arg-type]
+                side="buy",
+                venue="NASDAQ",
+            )
+        with pytest.raises(ValueError, match="not bool"):
+            BoundedTradeRequest(
+                symbol="AAPL",
+                amount=100.0,
+                side="buy",
+                venue="NASDAQ",
+                rollback_window_seconds=bad_bool,  # type: ignore[arg-type]
+            )
 
     def test_rejects_nan_amount(self):
         """Non-finite amount (NaN) raises ValueError (fail-closed)."""
@@ -222,7 +241,7 @@ class TestBoundedTradeRequest:
 
     def test_rejects_negative_amount(self):
         """Negative amount raises ValueError (fail-closed)."""
-        with pytest.raises(ValueError, match="amount must be non-negative"):
+        with pytest.raises(ValueError, match="amount must be positive"):
             BoundedTradeRequest(
                 symbol="AAPL",
                 amount=-1000.0,
