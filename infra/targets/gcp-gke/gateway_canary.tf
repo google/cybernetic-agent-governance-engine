@@ -111,6 +111,19 @@ resource "kubernetes_deployment_v1" "gateway_canary" {
           image_pull_policy = "IfNotPresent"
           command           = ["python", "-m", "src.gateway.canary"]
 
+          # Deployment jurisdiction: single source is the cage-deployment
+          # ConfigMap (modules/deployment_config). optional = false: a pod
+          # never starts without a declared region (POAM-2026-231).
+          env {
+            name = "CAGE_DEPLOYMENT_REGION"
+            value_from {
+              config_map_key_ref {
+                name     = module.deployment_config.config_map_name
+                key      = "CAGE_DEPLOYMENT_REGION"
+                optional = false
+              }
+            }
+          }
           env {
             name  = "CAGE_DOMAIN"
             value = var.cage_domain
@@ -185,6 +198,7 @@ resource "kubernetes_deployment_v1" "gateway_canary" {
   }
 
   depends_on = [
+    module.deployment_config,
     module.gateway,
     module.service_mesh,
     kubernetes_service_account.workload["gateway_canary"],
