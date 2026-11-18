@@ -799,6 +799,65 @@ async def test_mutant_m3_unsigned_or_mismatched_receipt_fails_tests_2_and_3_with
                 )
 
 
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("require_signed_env", "expected_outcome"),
+    [
+        (None, ActuationOutcome.UNKNOWN),
+        ("true", ActuationOutcome.UNKNOWN),
+        ("false", ActuationOutcome.ACCEPTED),
+    ],
+)
+async def test_from_env_with_receipt_manifest_requires_signed_receipts_by_default(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    require_signed_env: str | None,
+    expected_outcome: ActuationOutcome,
+) -> None:
+    """A configured receipt manifest makes signed receipts mandatory unless opted out.
+
+    ``from_env()`` with ``ACTUATOR_03_RECEIPT_KEY_MANIFEST_URL`` set must not
+    settle a quarantine on a receipt whose signature block was dropped, unless
+    ``ACTUATOR_03_REQUIRE_SIGNED_RECEIPTS=false`` explicitly opts out.
+    """
+    with _running_dpu_quarantine_server(
+        tmp_path, fault_mode=ServerFaultMode.UNSIGNED_RECEIPT
+    ) as harness:
+        for key, value in harness.env_vars().items():
+            monkeypatch.setenv(key, value)
+        if require_signed_env is None:
+            monkeypatch.delenv("ACTUATOR_03_REQUIRE_SIGNED_RECEIPTS", raising=False)
+        else:
+            monkeypatch.setenv(
+                "ACTUATOR_03_REQUIRE_SIGNED_RECEIPTS", require_signed_env
+            )
+        adapter = Actuator03Adapter.from_env(signer=live_suite.resolve_live_signer())
+        directive = QuarantineDirective(
+            thread_id="thread-strict-default",
+            agent_svid="spiffe://cluster.local/ns/cage/sa/quarantine-conformance-agent",
+            sandbox_id="sbx-strict-default",
+            reason=QuarantineTriggerReason.CRITICAL_CBF_BREACH,
+            violation_codes=("CBF_SAFETY_BARRIER_BREACH",),
+            issued_at=1710000000,
+            correlation_id="22222222-3333-4444-8555-666666666666",
+            refusal_proof_hash=hashlib.sha256(b"strict-default").hexdigest(),
+            nonce="c" * 32,
+            ttl_seconds=300,
+        )
+        try:
+            q_receipt = await adapter.quarantine_workload(directive)
+        finally:
+            await adapter._http_client.aclose()  # type: ignore[union-attr]
+
+    assert q_receipt.outcome is expected_outcome
+    assert q_receipt.quarantined is (expected_outcome is ActuationOutcome.ACCEPTED)
+    assert q_receipt.verification is ReceiptVerification.UNVERIFIED
+    codes = {f.get("code") for f in q_receipt.findings}
+    assert "RECEIPT_SIGNATURE_MISSING" in codes
+    if expected_outcome is ActuationOutcome.UNKNOWN:
+        assert "SIGNED_RECEIPT_REQUIRED" in codes
+
+
 def test_mutant_m4_require_live_fails_closed_when_endpoint_missing_and_passes_when_set(
     tmp_path: Path,
 ) -> None:
