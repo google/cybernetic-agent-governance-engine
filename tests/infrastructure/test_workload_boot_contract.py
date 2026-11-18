@@ -1509,3 +1509,36 @@ def test_gateway_canary_runtime_boot_contract_in_enforcing_posture() -> None:
             f"stdout={present.stdout!r} stderr={present.stderr!r}"
         )
         assert "/governance/validate-action" in present.stdout, present.stdout
+
+
+def _parse_mi(quantity: str) -> int:
+    q = quantity.strip()
+    if q.endswith("Gi"):
+        return int(q[:-2]) * 1024
+    if q.endswith("Mi"):
+        return int(q[:-2])
+    raise AssertionError(f"Expected Mi/Gi Kubernetes memory quantity, got {quantity!r}")
+
+
+def test_gateway_canary_memory_headroom_above_domain_plugin_rss() -> None:
+    """gateway-canary loads active_domain_config() (~236Mi RSS); keep request >= 256Mi and limit >= 512Mi."""
+    canary_tf = (INFRA_DIR / "targets" / "gcp-gke" / "gateway_canary.tf").read_text(
+        encoding="utf-8"
+    )
+    cleaned = _strip_hcl_comments(canary_tf)
+    req_match = re.search(
+        r'requests\s*=\s*\{[^}]*memory\s*=\s*"([^"]+)"', cleaned, re.DOTALL
+    )
+    lim_match = re.search(
+        r'limits\s*=\s*\{[^}]*memory\s*=\s*"([^"]+)"', cleaned, re.DOTALL
+    )
+    assert req_match is not None, "gateway_canary.tf missing requests.memory"
+    assert lim_match is not None, "gateway_canary.tf missing limits.memory"
+    req_mi = _parse_mi(req_match.group(1))
+    lim_mi = _parse_mi(lim_match.group(1))
+    assert req_mi >= 256, (
+        f"gateway_canary requests.memory={req_mi}Mi is below its ~236Mi steady-state RSS"
+    )
+    assert lim_mi >= 512, (
+        f"gateway_canary limits.memory={lim_mi}Mi leaves insufficient headroom above ~236Mi RSS"
+    )

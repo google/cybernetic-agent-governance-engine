@@ -157,14 +157,17 @@ resource "kubernetes_deployment_v1" "gateway_canary" {
             value = "1"
           }
 
+          # active_domain_config() loads the domain plugin (transitively importing
+          # dowhy/scipy/matplotlib under finance), giving ~236Mi steady-state RSS
+          # on GKE staging; 256Mi request / 512Mi limit avoids OOM under GC spikes.
           resources {
             requests = {
               cpu    = "25m"
-              memory = "128Mi"
+              memory = "256Mi"
             }
             limits = {
               cpu    = "200m"
-              memory = "256Mi"
+              memory = "512Mi"
             }
           }
 
