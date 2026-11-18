@@ -695,10 +695,13 @@ async def test_gateway_retains_600s_receipt_marker_and_refuses_expired_rec_exp_b
                 receipt_expires_at=2005,
                 signer=signer,
             )
-        # Verify at t=2005 passes verify() (now > rec_exp is False), then Step 6 sees rec_exp <= now!
+        # verify() rejects rec_exp == now itself, so give the token module its own
+        # clock one second earlier: verify() passes at t=2004, then the gateway's
+        # clock reads t=2005 and Step 6 sees rec_exp <= now and blocks.
         with (
             patch(
-                "src.gateway.governance.consequence_token.time.time", return_value=2005
+                "src.gateway.governance.consequence_token.time",
+                MagicMock(time=MagicMock(return_value=2004)),
             ),
             patch(
                 "src.gateway.governance.consequence_gateway.time.time",

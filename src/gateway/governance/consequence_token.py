@@ -395,7 +395,9 @@ class ConsequenceToken:
             raise ConsequenceTokenMalformedError(
                 f"Invalid exp claim: {exp!r} (expected int)"
             )
-        if now > exp:
+        # RFC 7519 4.1.4: exp is the time "on or after which" the token
+        # MUST NOT be accepted.
+        if now >= exp:
             raise ConsequenceTokenError(
                 f"Token expired: exp={exp}, now={now} (age={now - exp}s)"
             )
@@ -499,7 +501,7 @@ class ConsequenceToken:
                 raise ConsequenceTokenMalformedError(
                     f"Invalid rec_exp claim: {raw_rec_exp} must be > iat ({iat})"
                 )
-            if now > raw_rec_exp:
+            if now >= raw_rec_exp:
                 raise ConsequenceTokenError(
                     f"Authority receipt expired: rec_exp={raw_rec_exp}, now={now} "
                     f"(age={now - raw_rec_exp}s)"
