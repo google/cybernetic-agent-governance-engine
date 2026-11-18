@@ -269,7 +269,12 @@ component-definition:
                    nothing reconciles them against the evidence stream. Every non-staging
                    tier retention-locks Langfuse's raw event bucket for 2555 days
                    (infra/targets/gcp-gke/main.tf), so span events are kept, but the lock
-                   does not make them evidence (POAM-2026-225).
+                   does not make them evidence (POAM-2026-225). Correction (2026-11-18,
+                   POAM-2026-236): module.langfuse (infra/modules/langfuse_stack/main.tf) seeds
+                   only the operational/advisor and compliance project key pairs and never
+                   seeds the gateway telemetry key pair from gateway-secrets, so in-cluster
+                   Langfuse rejects every gateway OTLP span batch with HTTP 401 Unauthorized
+                   and drops 100% of gateway OTLP spans silently until POAM-2026-236 closes.
 
                 4. OPERATIONAL METRICS: the gateway serves Prometheus metrics on
                    CAGE_METRICS_PORT (9090) from a daemon thread started in _gateway_lifespan
@@ -1736,10 +1741,11 @@ component-definition:
                 and infra/targets/gcp-gke/main.tf does not set it), so the finance plugin
                 installs a disabled causal tier. When it is on, an enforcing posture requires
                 CAUSAL_GATEKEEPER_STRICT_MODE=true and live telemetry credentials, the Terraform
-                plan requires a telemetry Secret other than the advisor's, every causal failure
-                is a HARD deny with a distinct code (CAUSAL_TELEMETRY_UNAVAILABLE,
-                CAUSAL_INSUFFICIENT_SAMPLES), and synthetic telemetry is never substituted
-                (POAM-2026-088). Safety parameters (thresholds, envelope bounds) are defined in
+                plan requires a telemetry Secret other than the advisor's (whose dedicated
+                gateway telemetry key pair module.langfuse does not yet seed in Postgres
+                api_keys, POAM-2026-236), every causal failure is a HARD deny with a distinct
+                code (CAUSAL_TELEMETRY_UNAVAILABLE, CAUSAL_INSUFFICIENT_SAMPLES), and synthetic
+                telemetry is never substituted (POAM-2026-088). Safety parameters (thresholds, envelope bounds) are defined in
                 config/governance_thresholds.json and config/safety_params.json. Hazard analysis
                 is documented in docs/security/STPA_ANALYSIS.md and findings are tracked in
                 docs/POAM.md.
@@ -1771,7 +1777,10 @@ component-definition:
                 every DENY writes a GOVERNANCE_REFUSAL record, a CBF rollback writes a
                 CBF_ROLLBACK record, and a fence writes a RECONCILIATION_DISCREPANCY_FENCE
                 record. CBF violations are also emitted as OTel span events with severity
-                WARNING or CRITICAL; these are telemetry only and feed no alerting. The
+                WARNING or CRITICAL; these are telemetry only, feed no alerting, and on gcp-gke
+                currently fail OTLP export to in-cluster Langfuse with HTTP 401 Unauthorized
+                because module.langfuse does not seed the gateway telemetry key pair
+                (POAM-2026-236). The
                 compliance bridge's evidence-age SLA monitor
                 (src/compliance_bridge/sla_monitor.py) computes per-control metrics from the
                 custody chain every 5 minutes and alerts through the configured notifier
@@ -1898,8 +1907,11 @@ component-definition:
                 request's initiator.
 
                 Open: human-only approval has not been verified on a deployed cluster
-                (POAM-2026-196), and the operator identities and OIDC issuer in the committed
-                tfvars are example values that an adopter replaces.
+                (POAM-2026-196). The client_data_json is not a verified authenticator assertion:
+                WebAuthn assertion enforcement and cryptographic signature verification remain
+                open, so approval rests on the operator OIDC identity alone (POAM-2026-210).
+                The operator identities and OIDC issuer in the committed tfvars are example
+                values that an adopter replaces.
               props:
                 - name: implementation-status
                   value: partial

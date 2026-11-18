@@ -558,8 +558,9 @@ system-security-plan:
           escalations (src/cage_finance/tiers/consensus_tier.py, src/gateway/governance/governor/stages/confidence.py,
           src/cage_finance/tiers/trade_confidence_tier.py) park tokens in DeferQueue
           (src/gateway/governance/defer_queue.py) for distinct-principal dual-control
-          human OIDC + WebAuthn approval (DeferQueue.approve()) and single-use consumption
-          with POST_HITL drift revalidation (DeferQueue.consume_approval(), SymbolicGovernor.revalidate_post_hitl()),
+          human OIDC approval (DeferQueue.approve(); WebAuthn assertions are not verified,
+          POAM-2026-210) and single-use consumption with POST_HITL drift revalidation
+          (DeferQueue.consume_approval(), SymbolicGovernor.revalidate_post_hitl()),
           verified in tests/test_defer_dual_control_auth.py, tests/test_defer_queue_quorum.py,
           tests/test_defer_queue_single_use.py, tests/test_hitl_toctou_revalidation.py,
           tests/governor/test_post_hitl_approval_spend.py, tests/governor/test_regional_overlay.py,

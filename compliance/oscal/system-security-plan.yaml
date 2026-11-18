@@ -3,7 +3,7 @@ system-security-plan:
   metadata:
     title: CAGE System Security Plan (US_FED — NIST SP 800-53 Rev 5 HIGH)
     published: '2026-03-06T00:00:00Z'
-    last-modified: '2026-11-17T21:56:49Z'
+    last-modified: '2026-11-18T13:11:25Z'
     version: 1.0.1-draft+stpa
     oscal-version: 1.0.4
     remarks: 'This System Security Plan (SSP) documents the security controls implemented
@@ -1003,7 +1003,10 @@ system-security-plan:
         detections, configuration changes, privileged function executions, account
         management events, and system startup/shutdown. All OTel spans carry control
         identifiers (iso42001.control_id and nist.control_id) for automated compliance
-        verification. AgentSight eBPF monitor captures kernel-level events.
+        verification. AgentSight eBPF monitor captures kernel-level events. Correction
+        (2026-11-18, POAM-2026-236): on gcp-gke, module.langfuse does not seed the
+        dedicated gateway telemetry key pair from gateway-secrets, so in-cluster Langfuse
+        rejects gateway OTLP span batches with HTTP 401 Unauthorized.
 
         '
       props:
@@ -1018,7 +1021,10 @@ system-security-plan:
         uuid: h8000003-0000-4000-8000-000000000003
         description: 'CAGE Gateway emits OTel spans for all governance decisions.
           gateway/tracing_setup.py configures the OTel SDK with Langfuse exporter.
-          All enforcement events include nist.control_id=AU-2 attribute.
+          All enforcement events include nist.control_id=AU-2 attribute. Correction
+          (2026-11-18, POAM-2026-236): on gcp-gke, module.langfuse does not seed the
+          dedicated gateway telemetry key pair from gateway-secrets, so in-cluster
+          Langfuse rejects every gateway OTLP span batch with HTTP 401 Unauthorized.
 
           '
         implementation-status:
@@ -1064,8 +1070,12 @@ system-security-plan:
         Rule 17a-4. The Compliance Bridge Service triggers Slack/PagerDuty alerts\n\
         when safety_rate thresholds are breached. Correction (2026-11-16, POAM-2026-230):\
         \ no committed profile configures Slack or PagerDuty (alert_channel is console),\
-        \ so these alerts are log lines.\n\nRefusal and deferral parity (0cdb5aaa,\
-        \ #427): a DENY writes a GOVERNANCE_REFUSAL record and a DEFER or REQUIRE_APPROVAL\
+        \ so these alerts are log lines. Correction (2026-11-18, POAM-2026-236): on\
+        \ gcp-gke, module.langfuse does not seed the dedicated gateway telemetry key\
+        \ pair from gateway-secrets, so in-cluster Langfuse rejects every gateway\
+        \ OTLP span batch with HTTP 401 Unauthorized and drops 100% of gateway decision-time\
+        \ OTel spans silently.\n\nRefusal and deferral parity (0cdb5aaa, #427): a\
+        \ DENY writes a GOVERNANCE_REFUSAL record and a DEFER or REQUIRE_APPROVAL\
         \ writes a hash-chained GOVERNANCE_DEFERRAL record (src/gateway/governance/governor/verdicts.py).\
         \ The writes are non-blocking because neither outcome executes anything, but\
         \ a failed write logs at ERROR and increments cage_governance_evidence_publish_failures_total{kind}\
@@ -1093,7 +1103,9 @@ system-security-plan:
           scripts/automated_auditor.py performs scheduled audit trail generation.
 
 
-          Decision-time audit: OTel spans emitted to Langfuse asynchronously.
+          Decision-time audit: OTel spans emitted to Langfuse asynchronously (currently
+          rejected with HTTP 401 Unauthorized on gcp-gke because module.langfuse does
+          not seed the gateway telemetry key pair, POAM-2026-236).
 
           Evidence-of-execution audit: provenance_chain.py ensures commit before seal.
 
