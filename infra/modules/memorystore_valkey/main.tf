@@ -79,5 +79,18 @@ resource "google_memorystore_instance" "instance" {
       condition     = (var.persistence_mode == "AOF") == (var.aof_append_fsync != null)
       error_message = "aof_append_fsync must be set when persistence_mode is AOF, and only then: AOF without it takes the service's default fsync, and a policy without AOF persists nothing."
     }
+
+    # A client that cannot follow a mode is locked out the moment the instance
+    # enforces it, and neither block shows that on its own (#788). These run on
+    # every plan that includes the instance: a plan targeted at it, or at any
+    # client, since every client reads its endpoint.
+    precondition {
+      condition     = var.authorization_mode != "IAM_AUTH" || alltrue([for client in values(var.clients) : client.iam_auth])
+      error_message = "authorization_mode = IAM_AUTH would lock out ${join(", ", [for name, client in var.clients : name if !client.iam_auth])}: an IAM_AUTH instance refuses every connection that does not send an IAM access token, and they cannot send one. Keep IAM auth off for this instance, or wire each of them first and set its iam_auth to true in clients."
+    }
+    precondition {
+      condition     = var.transit_encryption_mode != "SERVER_AUTHENTICATION" || alltrue([for client in values(var.clients) : client.tls])
+      error_message = "transit_encryption_mode = SERVER_AUTHENTICATION would lock out ${join(", ", [for name, client in var.clients : name if !client.tls])}: the instance then refuses every plaintext connection, and they connect in plaintext. Keep TLS off for this instance, or wire each of them first and set its tls to true in clients."
+    }
   }
 }

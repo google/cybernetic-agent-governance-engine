@@ -1142,15 +1142,27 @@ variable "cage_deployment_region" {
 # ─── Track 6b Memorystore Configuration (§2.1, D5, D6) ────────────────────────
 
 variable "enable_memorystore_iam_auth" {
-  description = "Enable IAM authentication on Memorystore instances (default true per D5)"
+  description = "Enable IAM authentication on the governance Memorystore instance, and give its clients (gateway, compliance bridge, reconciliation worker) redis_auth_mode = iam (default true per D5). The app instance has its own switch, enable_memorystore_app_iam_auth."
   type        = bool
   default     = true
 }
 
 variable "enable_memorystore_tls" {
-  description = "Enable in-transit encryption on Memorystore instances (default true per §2.1)"
+  description = "Enable in-transit encryption on the governance Memorystore instance, and give its clients REDIS_TLS and the instance's managed CA (default true per §2.1). The app instance has its own switch, enable_memorystore_app_tls."
   type        = bool
   default     = true
+}
+
+variable "enable_memorystore_app_iam_auth" {
+  description = "Enable IAM authentication on the app Memorystore instance. Off by default: its one client, Langfuse, cannot send an IAM token, so module.memorystore_app refuses to plan IAM_AUTH while its clients list says so."
+  type        = bool
+  default     = false
+}
+
+variable "enable_memorystore_app_tls" {
+  description = "Enable in-transit encryption on the app Memorystore instance. Off by default: langfuse_stack gives Langfuse no TLS or CA settings, so module.memorystore_app refuses to plan SERVER_AUTHENTICATION while its clients list says Langfuse connects in plaintext."
+  type        = bool
+  default     = false
 }
 
 variable "memorystore_governance_instance_id" {

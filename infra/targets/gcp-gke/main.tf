@@ -443,6 +443,16 @@ module "cloudsql_postgres" {
 
 # ─── Deploy Memorystore Instances (Valkey Cluster Mode Disabled) ───────────────
 # D5, D6: Two separate instances for governance state integrity and app isolation.
+#
+# Each instance lists its clients: every block that reads its endpoint or CA,
+# and whether that block follows the instance's IAM auth and TLS switches. A
+# client follows iam_auth when it is given redis_auth_mode = "iam" whenever the
+# switch is on, and tls when it is given enable_redis_tls and the instance's
+# managed_server_ca under the same switch. The module refuses to plan either
+# mode while a client cannot follow it.
+# tests/infrastructure/test_memorystore_client_capability.py finds the clients
+# by reference, not from these lists, and derives every entry from the client's
+# own arguments, so a missing or wrong entry fails CI.
 
 module "memorystore_governance" {
   source = "../../modules/memorystore_valkey"
@@ -464,6 +474,12 @@ module "memorystore_governance" {
 
   authorization_mode      = var.enable_memorystore_iam_auth ? "IAM_AUTH" : "AUTH_DISABLED"
   transit_encryption_mode = var.enable_memorystore_tls ? "SERVER_AUTHENTICATION" : "TRANSIT_ENCRYPTION_DISABLED"
+
+  clients = {
+    "module.gateway"               = { iam_auth = true, tls = true }
+    "module.compliance_bridge"     = { iam_auth = true, tls = true }
+    "module.reconciliation_worker" = { iam_auth = true, tls = true }
+  }
 
   enable_cmek = var.enable_cmek
   kms_key_id  = local.cmek_key_id
@@ -496,8 +512,16 @@ module "memorystore_app" {
   node_type     = var.environment == "prod" ? "HIGHMEM_MEDIUM" : "SHARED_CORE_NANO"
   mode          = "CLUSTER_DISABLED"
 
-  authorization_mode      = var.enable_memorystore_iam_auth ? "IAM_AUTH" : "AUTH_DISABLED"
-  transit_encryption_mode = var.enable_memorystore_tls ? "SERVER_AUTHENTICATION" : "TRANSIT_ENCRYPTION_DISABLED"
+  # Its own switches, never the governance ones (#788): its one client,
+  # Langfuse, is given a plain redis://host:port. langfuse_stack has no TLS or
+  # CA input, and Langfuse has no way to send an IAM token, so the module
+  # refuses either switch until Langfuse is wired for it.
+  authorization_mode      = var.enable_memorystore_app_iam_auth ? "IAM_AUTH" : "AUTH_DISABLED"
+  transit_encryption_mode = var.enable_memorystore_app_tls ? "SERVER_AUTHENTICATION" : "TRANSIT_ENCRYPTION_DISABLED"
+
+  clients = {
+    "module.langfuse" = { iam_auth = false, tls = false }
+  }
 
   enable_cmek = var.enable_cmek
   kms_key_id  = local.cmek_key_id
