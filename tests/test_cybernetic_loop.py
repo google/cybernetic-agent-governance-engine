@@ -168,11 +168,14 @@ class TestLangfuseWebhook:
         ):
             import src.governed_financial_advisor.server as srv
             from src.governed_financial_advisor.infrastructure.auth import (
-                require_api_key,
+                require_service_api_key,
             )
 
-            srv.app.dependency_overrides[require_api_key] = lambda: "test"
-            return TestClient(srv.app, raise_server_exceptions=True)
+        srv.app.dependency_overrides[require_service_api_key] = lambda: None
+        try:
+            yield TestClient(srv.app, raise_server_exceptions=True)
+        finally:
+            srv.app.dependency_overrides.pop(require_service_api_key, None)
 
     def test_non_score_event_ignored(self, client):
         """R-LOOP-2: trace-created events must be acknowledged but not acted on."""
@@ -558,11 +561,14 @@ class TestWebhookCooldown:
         ):
             import src.governed_financial_advisor.server as srv
             from src.governed_financial_advisor.infrastructure.auth import (
-                require_api_key,
+                require_service_api_key,
             )
 
-            srv.app.dependency_overrides[require_api_key] = lambda: "test"
-            return TestClient(srv.app, raise_server_exceptions=True)
+        srv.app.dependency_overrides[require_service_api_key] = lambda: None
+        try:
+            yield TestClient(srv.app, raise_server_exceptions=True)
+        finally:
+            srv.app.dependency_overrides.pop(require_service_api_key, None)
 
     def test_first_trigger_accepted(self, client):
         """R-LOOP-6: First below-threshold event must be accepted (cooldown not yet armed)."""
@@ -693,11 +699,14 @@ class TestWebhookMinSamples:
         ):
             import src.governed_financial_advisor.server as srv
             from src.governed_financial_advisor.infrastructure.auth import (
-                require_api_key,
+                require_service_api_key,
             )
 
-            srv.app.dependency_overrides[require_api_key] = lambda: "test"
-            return TestClient(srv.app, raise_server_exceptions=True)
+        srv.app.dependency_overrides[require_service_api_key] = lambda: None
+        try:
+            yield TestClient(srv.app, raise_server_exceptions=True)
+        finally:
+            srv.app.dependency_overrides.pop(require_service_api_key, None)
 
     def test_small_sample_deferred(self, client):
         """R-LOOP-7: sample_size < min_samples must return status=deferred."""

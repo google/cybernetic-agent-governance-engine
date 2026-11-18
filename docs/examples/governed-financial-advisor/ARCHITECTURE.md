@@ -120,9 +120,8 @@ The graph compiles with a gateway-mediated checkpointer ([`graph.py:create_graph
 graph = create_graph()
 ```
 
-Human approval is handled via REST API ([`server.py`](../../../src/governed_financial_advisor/server.py)):
-- **`POST /v1/approvals/{thread_id}/resume`**: Resume execution with `ApprovalResumeRequest` (rationale, reviewer identity, max slippage)
-- **`GET /v1/approvals/pending`**: List all threads awaiting approval
+Human approval status is queried per principal via REST API ([`server.py`](../../../src/governed_financial_advisor/server.py)), while reviewers inspect and approve deferrals at the compliance bridge (`GET /v1/defer/pending`, `POST /v1/defer/{defer_id}/escalate`) and graph resumption runs via LangGraph `Command(resume=...)`:
+- **`GET /v1/approvals/pending?user_id=<id>`**: Service-only (`require_service_api_key`) listing of one principal's threads awaiting approval, omitting gateway deferral handles (`deferred_id` / `defer_id`)
 
 ---
 
@@ -132,33 +131,29 @@ The GFA exposes a FastAPI server ([`src/governed_financial_advisor/server.py`](.
 
 ### 4.1 Core Workflow Endpoints
 
-| Endpoint | Method | Purpose | Request Body |
+| Endpoint | Method | Auth | Purpose | Request Body |
+|---|---|---|---|---|
+| **`/agent/query`** | POST | `require_api_key_or_user_token` | Submit natural-language advisory prompt | `QueryRequest` (`prompt`, required `user_id`, `thread_id`) |
+| **`/health`** | GET | Unauthenticated probe | Readiness probe (`checkpointer`, `durable`, `checkpoint_ttl_seconds`) | None |
+| **`/`** | GET | Unauthenticated probe | Liveness probe | None |
+
+### 4.2 Service & Operator Endpoints
+
+| Endpoint | Method | Auth | Purpose |
 |---|---|---|---|
-| **`/agent/query`** | POST | Submit natural-language advisory prompt | `QueryRequest` (`prompt`, required `user_id`, `thread_id`) |
-| **`/agent/stream`** | POST | SSE-streamed agent execution | Same as `/agent/query` |
-| **`/health`** | GET | Liveness probe | None |
+| **`/v1/approvals/pending`** | GET | `require_service_api_key` + `resolve_request_principal` | List a single principal's (`?user_id=<id>`) threads awaiting human approval, with `deferred_id` / `defer_id` redacted |
+| **`/v1/refinement/trigger`** | POST | `require_service_api_key` | Submit a KFP refinement pipeline run |
+| **`/v1/webhooks/langfuse`** | POST | `require_service_api_key` | Receive Langfuse `score-created` webhook events and trigger KFP refinement |
 
-### 4.2 Human-in-the-Loop Endpoints
+### 4.3 Tool Dispatch Boundary
 
-| Endpoint | Method | Purpose |
-|---|---|---|
-| **`/v1/approvals/pending`** | GET | List threads awaiting human approval |
-| **`/v1/approvals/{thread_id}/resume`** | POST | Resume execution with approval decision |
-| **`/v1/approvals/{thread_id}/cancel`** | POST | Cancel pending trade |
-
-### 4.3 Tools & Utilities
-
-| Endpoint | Method | Purpose |
-|---|---|---|
-| **`/tools/get_market_data`** | GET | yfinance ticker lookup |
-| **`/tools/get_portfolio`** | GET | Mock portfolio positions |
-| **`/demo/pipeline/trigger`** | POST | KFP green-stack pipeline trigger |
+The advisor exposes **no** HTTP tool-dispatch endpoint (`POST /tools/execute` was removed). Governed tools (`execute_trade_action`, `simulate_governance_check`, `evaluate_policy`, `verify_content_safety`, `trigger_safety_intervention`) run exclusively in the gateway behind Linkerd workload-identity admission and are invoked only from inside the LangGraph after `POST /agent/query` verifies the end-user principal and thread ownership. Development-only `/demo/*` routes ([`demo/router.py`](../../../src/governed_financial_advisor/demo/router.py)) are mounted only when `CAGE_ENV=dev`.
 
 ### 4.4 Authentication & Authorization
 
-All endpoints require authentication via [`require_api_key()`](../../../src/governed_financial_advisor/infrastructure/auth.py):
-- **Verified End-User OIDC JWT (`Authorization: Bearer <oidc-jwt>` or `X-CAGE-User-Token`)**: Verified by [`verify_user_oidc_token()`](../../../src/governed_financial_advisor/infrastructure/auth.py) against out-of-band `kid`-resolved trust anchors (`CAGE_USER_OIDC_JWKS_JSON` or `CAGE_USER_OIDC_TRUST_ANCHORS_FILE`) and `CAGE_USER_OIDC_ISSUER` / `CAGE_USER_OIDC_AUDIENCE`, returning a verified [`PrincipalIdentity`](../../../src/governed_financial_advisor/infrastructure/auth.py) (`verified=True`).
-- **Shared Client Secret (`Authorization: Bearer <CAGE_API_KEY>`)**: Authenticates the calling service in development/test postures or alongside `X-CAGE-User-Token` (see §4.5).
+Authentication is split between two dependencies in [`auth.py`](../../../src/governed_financial_advisor/infrastructure/auth.py) returning [`CallerCredentialKind`](../../../src/governed_financial_advisor/infrastructure/auth.py):
+- **Service-Only Credential ([`require_service_api_key()`](../../../src/governed_financial_advisor/infrastructure/auth.py))**: Guards `GET /v1/approvals/pending`, `POST /v1/refinement/trigger`, and `POST /v1/webhooks/langfuse`. Authenticates `Authorization: Bearer <CAGE_API_KEY>` using constant-time comparison (`hmac.compare_digest`), **never** accepts an end-user OIDC JWT even when `CAGE_USER_OIDC_ISSUER` is configured, and fails closed (`401`) when `CAGE_API_KEY` is unset outside unconfigured `dev` mode. On `GET /v1/approvals/pending`, the calling service additionally binds the target end user via `user_id` + [`resolve_request_principal()`](../../../src/governed_financial_advisor/infrastructure/auth.py) (`X-CAGE-User-Token` verified in enforcing postures).
+- **User-or-Service Credential ([`require_api_key_or_user_token()`](../../../src/governed_financial_advisor/infrastructure/auth.py))**: Used **exclusively** on `POST /agent/query`. Accepts either `Authorization: Bearer <CAGE_API_KEY>` (paired with `X-CAGE-User-Token` in enforcing postures; see §4.5) or a verified end-user OIDC JWT (`Authorization: Bearer <oidc-jwt>`), verified by [`verify_user_oidc_token()`](../../../src/governed_financial_advisor/infrastructure/auth.py) against out-of-band `kid`-resolved trust anchors (`CAGE_USER_OIDC_JWKS_JSON` or `CAGE_USER_OIDC_TRUST_ANCHORS_FILE`) and `CAGE_USER_OIDC_ISSUER` / `CAGE_USER_OIDC_AUDIENCE`.
 
 Calls from the GFA to the gateway carry no shared secret. The gateway
 authenticates the GFA by its Linkerd mTLS workload identity

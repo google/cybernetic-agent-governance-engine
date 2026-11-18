@@ -292,7 +292,7 @@ The reviewer may supply `max_slippage_pct` in the resume payload to tighten slip
 - **Fail-Closed Rejection:** A non-approved decision routes to `rejection_node`, which terminates the subgraph with an auditable rejection message carrying the reviewer identity and rationale.
 
 ### 7.2 HITL API Endpoints
-- `GET /v1/approvals/pending` (`src/governed_financial_advisor/server.py`): Enumerates checkpointer threads whose state snapshot has a pending `next` step and non-empty task interrupts, returning `{"pending": [{"thread_id", "interrupt_payload", "interrupted_at"}]}`.
+- `GET /v1/approvals/pending?user_id=<principal>` (`src/governed_financial_advisor/server.py`): Service-only (`require_service_api_key`, never an end-user OIDC JWT) listing scoped to one end-user principal resolved via `resolve_request_principal()` (verified `X-CAGE-User-Token` matching `user_id` in enforcing postures). Enumerates checkpointer threads whose state snapshot belongs to `principal.user_id`, has a pending `next` step, and carries non-empty task interrupts, returning `{"pending": [{"thread_id", "interrupt_payload", "interrupted_at"}]}` with gateway deferral handles (`deferred_id` / `defer_id`) stripped at every depth. Reviewers inspect and approve deferrals at the compliance bridge (`GET /v1/defer/pending`, `POST /v1/defer/{defer_id}/escalate`).
 - Resumption is **not** an application endpoint. It is issued through the LangGraph SDK as `Command(resume=decision)`.
 
 > [!NOTE]
@@ -305,8 +305,8 @@ The reviewer may supply `max_slippage_pct` in the resume payload to tighten slip
 - **TTL metadata**: `hitl_expires_at` is stamped from `HITL_APPROVAL_TTL_SECONDS` (default 300s) and surfaced to the reviewer in the interrupt payload. It is advisory metadata at HEAD — no server-side expiry rejection is implemented since the resume endpoint was removed.
 
 ### 7.4 Checkpointing Modes
-- **Primary**: `AsyncRedisSaver` storing full state snapshots at every node transition.
-- **Fallback**: `MemorySaver` for dev/degraded operation (emits OTel alert span).
+- **Primary**: `GatewayCheckpointSaver` calling `/governance/checkpoints/*` on the gateway (`src/governed_financial_advisor/graph/checkpointer.py`).
+- **Fallback**: `MemorySaver` for dev/test/ci only (refused in enforcing postures).
 
 ---
 
@@ -317,7 +317,7 @@ The reviewer may supply `max_slippage_pct` in the resume payload to tighten slip
 2. `simulate_governance_check`: Dry-run preview in the gateway's governor (gateway MCP tool); it does not enforce.
 3. `safety_intervention`: Calls the gateway's `trigger_safety_intervention` tool.
 
-The advisor's `POST /tools/execute` endpoint (`src/governed_financial_advisor/tools/api.py`) forwards `simulate_governance_check`, `verify_content_safety`, `evaluate_policy` and `execute_trade` to the gateway through `GatewayClient.execute_tool()`; the advisor does not run NeMo content-safety checks for these tools in-process. The evaluator's verdict is advisory and unsigned — the only signature in state (`governance_signature`) comes from the gateway via `safety_check`. Post-hoc trace auditing is performed by `EvaluatorAuditor.audit_trace()` in `src/governed_financial_advisor/agents/evaluator/auditor.py`.
+The advisor exposes no tool-dispatch HTTP endpoint of its own: governed tools (`simulate_governance_check`, `verify_content_safety`, `evaluate_policy`, `execute_trade_action`) run exclusively in the gateway behind Linkerd workload-identity admission and are reached from inside the advisor's LangGraph after `POST /agent/query` verifies principal and thread ownership. The evaluator's verdict is advisory and unsigned — the only signature in state (`governance_signature`) comes from the gateway via `safety_check`. Post-hoc trace auditing is performed by `EvaluatorAuditor.audit_trace()` in `src/governed_financial_advisor/agents/evaluator/auditor.py`.
 
 `evaluator_node` ([`evaluator_node.py`](../../src/governed_financial_advisor/graph/nodes/evaluator_node.py)) previews every trade step of a plan with `simulate_governance_check`. It builds the requests with the same [`trade_contract.py`](../../src/governed_financial_advisor/graph/nodes/trade_contract.py) as `safety_check_node`. A step is a trade only when its action is exactly one of `TRADE_STEP_ACTIONS` (`execute_trade`, `trade`, `buy`, `sell`, ignoring case), and it is always submitted as the registered `execute_trade` action, with `symbol`, `amount` and `currency` from the step. A step without a `confidence` is submitted with `0.0`, the committing tool's default. The RBAC role is always the least-privilege `junior`, never a role the model wrote into the plan. The evaluator proceeds on the same verdicts as the pre-trade gate (`PROCEED_VERDICTS`: `ALLOW`, `NARROW`, `REQUIRE_APPROVAL`), and only when every trade step's verdict does. `REQUIRE_APPROVAL` goes on to the human-approval path instead of back to the planner, and `evaluation_result.requires_approval` records it. `DENY`, `DEFER` and errors send the plan back for revision. `safety_check_node` also submits every trade step: a refusal of any step blocks the plan and counts one denial. Only a single-trade plan answered `ALLOW` is cached in `routing_verdict_cache`, bound to the full canonical order including `confidence`. [`tests/test_evaluator_trade_preview.py`](../../tests/test_evaluator_trade_preview.py) and [`tests/test_trade_contract.py`](../../tests/test_trade_contract.py) pin this behaviour.
 

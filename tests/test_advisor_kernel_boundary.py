@@ -325,98 +325,20 @@ async def test_validate_action_server_error_raises() -> None:
 
 
 # ---------------------------------------------------------------------------
-# Advisor /tools/execute forwards governed tools to the gateway
+# The advisor dispatches no tools over HTTP
 # ---------------------------------------------------------------------------
 
 
-def _tools_client():
-    from fastapi import FastAPI
-    from fastapi.testclient import TestClient
+def test_advisor_has_no_tool_dispatch_module() -> None:
+    """Governed tools run only in the gateway, which admits trusted workloads.
 
-    from src.governed_financial_advisor.infrastructure.auth import require_api_key
-    from src.governed_financial_advisor.tools.api import tools_router
+    The advisor's former ``POST /tools/execute`` router ran gateway tools for
+    any caller its bearer dependency admitted, under the advisor's own mesh
+    identity. Nothing but tests called it, so it is gone rather than guarded.
+    """
+    import importlib.util
 
-    app = FastAPI()
-    app.include_router(tools_router)
-    app.dependency_overrides[require_api_key] = lambda: "test"
-    return TestClient(app)
-
-
-def test_execute_trade_forwards_to_gateway_execute_trade_action() -> None:
-    from src.governed_financial_advisor.tools import api
-
-    gateway = AsyncMock(
-        return_value={"status": "SUCCESS", "output": "EXECUTED: AAPL x 5.0"}
-    )
-    params = {"symbol": "AAPL", "amount": 5.0, "currency": "USD", "confidence": 0.99}
-    with patch.object(api._gateway_client, "execute_tool", gateway):
-        resp = _tools_client().post(
-            "/tools/execute", json={"tool_name": "execute_trade", "params": params}
-        )
-
-    assert resp.json() == {"status": "SUCCESS", "output": "EXECUTED: AAPL x 5.0"}
-    tool_name, forwarded = gateway.await_args.args
-    assert tool_name == "execute_trade_action"
-    assert {
-        k: forwarded[k] for k in ("symbol", "amount", "currency", "confidence")
-    } == params
-
-
-@pytest.mark.parametrize(
-    ("tool", "gateway_tool"),
-    [
-        ("execute_trade", "execute_trade_action"),
-        ("evaluate_policy", "evaluate_policy"),
-        ("simulate_governance_check", "simulate_governance_check"),
-        ("trigger_safety_intervention", "trigger_safety_intervention"),
-    ],
-)
-def test_gateway_tool_error_is_not_reported_as_success(
-    tool: str, gateway_tool: str
-) -> None:
-    from src.governed_financial_advisor.tools import api
-
-    gateway = AsyncMock(return_value={"status": "ERROR", "error": "seal invalid"})
-    params = {
-        "symbol": "AAPL",
-        "amount": 5.0,
-        "currency": "USD",
-        "confidence": 0.99,
-        "action": "execute_trade",
-        "reason": "drawdown breach",
-    }
-    with patch.object(api._gateway_client, "execute_tool", gateway):
-        resp = _tools_client().post(
-            "/tools/execute", json={"tool_name": tool, "params": params}
-        )
-
-    assert resp.json()["status"] == "ERROR"
-    assert gateway.await_args.args[0] == gateway_tool
-
-
-def test_trigger_safety_intervention_forwards_to_gateway() -> None:
-    from src.governed_financial_advisor.tools import api
-
-    gateway = AsyncMock(
-        return_value={"status": "SUCCESS", "output": "INTERVENTION_ACK: System Locked."}
-    )
-    with patch.object(api._gateway_client, "execute_tool", gateway):
-        resp = _tools_client().post(
-            "/tools/execute",
-            json={
-                "tool_name": "trigger_safety_intervention",
-                "params": {"reason": "circuit breaker"},
-            },
-        )
-
-    assert resp.json() == {
-        "status": "SUCCESS",
-        "output": "INTERVENTION_ACK: System Locked.",
-    }
-    assert gateway.await_args.args == (
-        "trigger_safety_intervention",
-        {"reason": "circuit breaker"},
-    )
+    assert importlib.util.find_spec("src.governed_financial_advisor.tools.api") is None
 
 
 def test_finance_plugin_contributes_rail_provider() -> None:
@@ -426,22 +348,6 @@ def test_finance_plugin_contributes_rail_provider() -> None:
     contribution = FinanceCagePlugin().contribute()
     assert len(contribution.rail_providers) == 1
     assert isinstance(contribution.rail_providers[0], FinancialRailsProvider)
-
-
-def test_gateway_unreachable_is_an_error() -> None:
-    from src.governed_financial_advisor.tools import api
-
-    gateway = AsyncMock(side_effect=httpx.ConnectError("gateway down"))
-    with patch.object(api._gateway_client, "execute_tool", gateway):
-        resp = _tools_client().post(
-            "/tools/execute",
-            json={
-                "tool_name": "evaluate_policy",
-                "params": {"action": "execute_trade"},
-            },
-        )
-
-    assert resp.json()["status"] == "ERROR"
 
 
 # ---------------------------------------------------------------------------

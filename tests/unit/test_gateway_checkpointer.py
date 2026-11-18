@@ -717,22 +717,32 @@ async def test_pending_approvals_never_returns_partial_200_on_mid_iteration_chec
 
     prev_graph = getattr(advisor_app.state, "graph", None)
     try:
-        # Baseline: both paused threads returned when store is healthy
+        # Baseline: each principal sees exactly its own paused thread when the
+        # store is healthy.
         advisor_app.state.graph = real_graph
         async with httpx.AsyncClient(
             transport=httpx.ASGITransport(app=advisor_app),
             base_url="http://advisor.local",
         ) as client:
-            ok_resp = await client.get("/v1/approvals/pending")
-            assert ok_resp.status_code == 200
-            assert {p["thread_id"] for p in ok_resp.json()["pending"]} == {
-                "hitl-thread-1",
-                "hitl-thread-2",
-            }
+            for user_id, thread_id in (
+                ("u1", "hitl-thread-1"),
+                ("u2", "hitl-thread-2"),
+            ):
+                ok_resp = await client.get(
+                    "/v1/approvals/pending", params={"user_id": user_id}
+                )
+                assert ok_resp.status_code == 200
+                assert {p["thread_id"] for p in ok_resp.json()["pending"]} == {
+                    thread_id
+                }
 
-            # Faulted mid-iteration: must return HTTP 503, NEVER HTTP 200 with only hitl-thread-2
+            # Faulted mid-iteration: must return HTTP 503, NEVER HTTP 200 with an
+            # empty list for u2, even though the unreadable thread is u1's: an
+            # unread snapshot could be the caller's own pending approval.
             advisor_app.state.graph = _MidIterationFaultGraph()
-            fault_resp = await client.get("/v1/approvals/pending")
+            fault_resp = await client.get(
+                "/v1/approvals/pending", params={"user_id": "u2"}
+            )
             assert fault_resp.status_code == 503
             assert (
                 fault_resp.json()["detail"]["error"] == "checkpoint_store_unavailable"

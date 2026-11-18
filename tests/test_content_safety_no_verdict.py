@@ -33,6 +33,7 @@ from src.gateway.governance.content_safety import (
     CONTENT_SAFETY_NO_MAIN_FLOW,
     CONTENT_SAFETY_RAILS_UNAVAILABLE,
     SAFE_VERDICT,
+    is_safe_verdict,
 )
 
 pytestmark = [pytest.mark.unit, pytest.mark.local]
@@ -221,71 +222,22 @@ async def test_verify_content_safety_reports_rail_verdicts(
 
 
 # ---------------------------------------------------------------------------
-# Advisor: only the exact SAFE verdict is recorded as safe
+# Only the exact SAFE verdict is safe
 # ---------------------------------------------------------------------------
 
 
-class _RecordingSpan:
-    def __init__(self) -> None:
-        self.attributes: dict[str, Any] = {}
-
-    def set_attribute(self, key: str, value: Any) -> None:
-        self.attributes[key] = value
-
-    def set_status(self, *args: Any, **kwargs: Any) -> None:
-        return None
-
-    def __enter__(self) -> _RecordingSpan:
-        return self
-
-    def __exit__(self, *exc: Any) -> bool:
-        return False
-
-
-class _RecordingTracer:
-    def __init__(self) -> None:
-        self.spans: list[_RecordingSpan] = []
-
-    def start_as_current_span(self, name: str, *args: Any, **kwargs: Any):
-        span = _RecordingSpan()
-        self.spans.append(span)
-        return span
-
-
-def _advisor_verdict_for(gateway_output: str) -> str:
-    from fastapi import FastAPI
-    from fastapi.testclient import TestClient
-
-    from src.governed_financial_advisor.infrastructure.auth import require_api_key
-    from src.governed_financial_advisor.tools import api
-
-    app = FastAPI()
-    app.include_router(api.tools_router)
-    app.dependency_overrides[require_api_key] = lambda: "test"
-    tracer = _RecordingTracer()
-    gateway = AsyncMock(return_value={"status": "SUCCESS", "output": gateway_output})
-    with (
-        patch.object(api._gateway_client, "execute_tool", gateway),
-        patch.object(api, "_tracer", tracer),
-    ):
-        resp = TestClient(app).post(
-            "/tools/execute",
-            json={"tool_name": "verify_content_safety", "params": {"text": "hi"}},
-        )
-    assert resp.json()["status"] == "SUCCESS"
-    (span,) = tracer.spans
-    return span.attributes["cage.verdict"]
-
-
-def test_advisor_records_a_non_verdict_output_as_blocked() -> None:
-    """The output the gateway gave before this change for absent rails."""
-    assert _advisor_verdict_for("ERROR: NeMo rails not initialised.") == "BLOCKED"
-
-
-def test_advisor_records_verdicts_as_given() -> None:
-    assert _advisor_verdict_for(SAFE_VERDICT) == "SAFE"
-    assert _advisor_verdict_for("BLOCKED: unsafe") == "BLOCKED"
-    assert _advisor_verdict_for("SAFE, probably") == "BLOCKED"
+@pytest.mark.parametrize(
+    ("output", "safe"),
+    [
+        (SAFE_VERDICT, True),
+        # What the gateway answered for absent rails before POAM-2026-124.
+        ("ERROR: NeMo rails not initialised.", False),
+        ("BLOCKED: unsafe", False),
+        ("SAFE, probably", False),
+    ],
+)
+def test_only_the_exact_safe_verdict_is_safe(output: str, safe: bool) -> None:
+    assert is_safe_verdict(output) is safe
 
 
 # ---------------------------------------------------------------------------

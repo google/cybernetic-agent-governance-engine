@@ -783,15 +783,11 @@ Required on:
 
 ---
 
-### `X-API-Key` (Governed Financial Advisor)
+### `Authorization: Bearer <token>` (Governed Financial Advisor)
 
-Validated by [`infrastructure/auth.py`](../src/governed_financial_advisor/infrastructure/auth.py).
-
-Required on:
-- `POST /agent/query`
-- `POST /v1/approvals/{thread_id}/resume`
-- `POST /v1/nemo/approve-refinement/{proposal_id}`
-- `POST /tools/execute`
+Validated by [`infrastructure/auth.py`](../src/governed_financial_advisor/infrastructure/auth.py):
+- `require_api_key_or_user_token()` on `POST /agent/query` (`CAGE_API_KEY` or verified end-user OIDC JWT)
+- `require_service_api_key()` on `GET /v1/approvals/pending`, `POST /v1/refinement/trigger`, and `POST /v1/webhooks/langfuse` (`CAGE_API_KEY` only; end-user OIDC JWTs are refused)
 
 ---
 
@@ -827,7 +823,7 @@ Notice 655.
 #### `POST /v1/webhooks/langfuse`
 
 Langfuse webhook receiver — triggers refinement pipeline when safety metrics
-breach thresholds.
+breach thresholds. Requires `Authorization: Bearer <CAGE_API_KEY>` (`require_service_api_key`).
 
 **Request body** (`LangfuseWebhookEvent`):
 ```json
@@ -849,61 +845,7 @@ breach thresholds.
 
 ---
 
-### 3.2 Tools Router — [`src/governed_financial_advisor/tools/api.py`](../src/governed_financial_advisor/tools/api.py)
-
-Mounted at `/tools`. All endpoints require `X-API-Key` header.
-
-#### `POST /tools/execute`
-
-Execute a named tool. The advisor holds no governor, signing key, or
-actuator: `simulate_governance_check`, `evaluate_policy` and `execute_trade`
-are forwarded to the gateway's `POST /tools/execute` through
-`GatewayClient.execute_tool()`. `execute_trade` validates the params as a
-`TradeOrder` and calls the gateway's `execute_trade_action` tool, which runs
-the governor and dispatches through the `ActuatorRegistry`. A gateway tool
-error is returned as an error, never as `SUCCESS`.
-
-**Request body** (`ToolExecutionRequest`):
-```json
-{
-  "tool_name": "execute_trade",
-  "params": {
-    "symbol": "AAPL",
-    "amount": 5000.0,
-    "currency": "USD",
-    "confidence": 0.91
-  }
-}
-```
-
-The request names no trader: the gateway binds `trader_role` (which sets the
-trade's OPA limits) and `trader_id` from the caller's verified workload
-identity.
-
-**Supported `tool_name` values:**
-
-| Tool name | Description | Governance |
-|---|---|---|
-| `check_market_status` | Market data lookup | None |
-| `get_market_sentiment` | Sentiment analysis | None |
-| `simulate_governance_check` | Dry-run governance sim; `verdict` is a `GovernanceDecision` value | Forwarded to gateway |
-| `trigger_safety_intervention` | Lock system | None |
-| `verify_content_safety` | NeMo content check | None |
-| `evaluate_policy` | OPA Rego evaluation | Forwarded to gateway |
-| `execute_trade` | Governed trade execution | Gateway `execute_trade_action`: full governor, seal verify-and-consume, `ActuatorRegistry` dispatch |
-
-**Response 200 OK:**
-```json
-{
-  "status": "SUCCESS",
-  "output": "string",
-  "trace_id": "otel-trace-id"
-}
-```
-
----
-
-### 3.3 Demo Router — [`demo/router.py`](../src/governed_financial_advisor/demo/router.py)
+### 3.2 Demo Router — [`demo/router.py`](../src/governed_financial_advisor/demo/router.py)
 
 Mounted at `/demo`. **Dev environment only** — returns 404 in production.
 
