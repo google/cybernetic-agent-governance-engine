@@ -98,7 +98,9 @@ def test_default_deny_when_domain_declares_nothing() -> None:
         evaluated_param_specs=physical_contrib.evaluated_param_specs,
     )
 
-    assert receipt.schema_version == "v4"
+    assert receipt.schema_version == "v5"
+    assert receipt.evaluated_stages == ()
+    assert receipt.skipped_stages == ()
     assert receipt.evaluated_params == {}
     assert len(receipt.params_hash) == 64
     # In-memory content tier retains raw attempted_params for offline DRY_RUN eval
@@ -108,6 +110,8 @@ def test_default_deny_when_domain_declares_nothing() -> None:
     serialized = json.dumps(worm)
     assert "attempted_params" not in worm
     assert worm["evaluated_params"] == {}
+    assert worm["evaluated_stages"] == []
+    assert worm["skipped_stages"] == []
     assert worm["params_hash"] == receipt.params_hash
     assert canary_prose not in serialized
 
@@ -284,26 +288,7 @@ async def test_finance_refusal_strips_extra_and_stuffed_params_from_both_worm_si
 
     # Round-trip proof_hash verification from WORM payload alone (zero attempted_params)
     worm_rec = dict(gov_refusal["receipt"])  # type: ignore[arg-type]
-    rehydrated = RefusalReceipt(
-        thread_id=worm_rec["thread_id"],
-        action=worm_rec["action"],
-        violated_tier=worm_rec["violated_tier"],
-        violated_rule=worm_rec["violated_rule"],
-        standing_at_refusal=worm_rec["standing_at_refusal"],
-        timestamp=worm_rec["timestamp"],
-        proof_hash=worm_rec["proof_hash"],
-        schema_version=worm_rec["schema_version"],
-        params_hash=worm_rec["params_hash"],
-        evaluated_params=worm_rec["evaluated_params"],
-        standing_snapshot=worm_rec["standing_snapshot"],
-        control_id=worm_rec["control_id"],
-        protected_consequence=worm_rec["protected_consequence"],
-        non_formation_proof=worm_rec["non_formation_proof"],
-        tier_failures=tuple(
-            GovernanceTierFailure(**tf) for tf in worm_rec["tier_failures"]
-        ),
-        reliance=tuple(worm_rec["reliance"]),
-    )
+    rehydrated = RefusalReceipt.from_worm_dict(worm_rec)
     assert rehydrated.attempted_params == {}
     assert rehydrated.verify_proof_hash() is True
 
@@ -368,3 +353,57 @@ def test_worm_belt_and_suspenders_rejects_free_text_in_evaluated_params() -> Non
             violated_rule="rule",
             evaluated_params={"route": "free text prose"},
         )
+
+
+def test_v4_frozen_preimage_and_v5_stage_coverage_worm_roundtrip() -> None:
+    """Historical v4 WORM records remain verifiable while v5 commits evaluated/skipped stages."""
+    v4_receipt = RefusalReceipt(
+        thread_id="thread-v4",
+        action="execute_trade",
+        violated_tier="CBF",
+        violated_rule="Margin exceeded",
+        timestamp=1700000000.0,
+        schema_version="v4",
+        params_hash="a" * 64,
+        evaluated_params={"amount": 500.0},
+        control_id="SC-4",
+    )
+    v4_worm = v4_receipt.to_worm_dict()
+    assert "evaluated_stages" not in v4_worm
+    assert "skipped_stages" not in v4_worm
+    v4_rehydrated = RefusalReceipt.from_worm_dict(v4_worm)
+    assert v4_rehydrated.schema_version == "v4"
+    assert v4_rehydrated.verify_proof_hash() is True
+
+    v5_receipt = build_refusal_receipt(
+        "execute_trade",
+        {"symbol": "AAPL", "amount": 500.0},
+        [
+            Violation(
+                tier="cbf",
+                code="CBF_MARGIN",
+                message="Margin exceeded",
+                kind=ViolationKind.HARD,
+            )
+        ],
+        [
+            GovernanceTierFailure(
+                tier="cbf",
+                control_id="CBF_MARGIN",
+                rule_description="Margin exceeded",
+            )
+        ],
+        evaluated_stages=(("ftra", "PASS"), ("cbf", "FAIL")),
+        skipped_stages=("opa",),
+    )
+    assert v5_receipt.schema_version == "v5"
+    assert v5_receipt.evaluated_stages == (("ftra", "PASS"), ("cbf", "FAIL"))
+    assert v5_receipt.skipped_stages == ("opa",)
+    v5_worm = v5_receipt.to_worm_dict()
+    assert v5_worm["evaluated_stages"] == [["ftra", "PASS"], ["cbf", "FAIL"]]
+    assert v5_worm["skipped_stages"] == ["opa"]
+    assert RefusalReceipt.from_worm_dict(v5_worm).verify_proof_hash() is True
+
+    tampered = dict(v5_worm)
+    tampered["skipped_stages"] = []
+    assert RefusalReceipt.from_worm_dict(tampered).verify_proof_hash() is False

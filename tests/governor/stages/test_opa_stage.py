@@ -109,8 +109,8 @@ async def test_opa_stage_returns_hitl_violation_for_manual_review():
 
 
 @pytest.mark.asyncio
-async def test_opa_stage_returns_hard_violation_for_unknown():
-    """OpaStage returns a HARD violation for unknown verdicts."""
+async def test_opa_stage_returns_infrastructure_violation_for_unknown():
+    """OpaStage returns an INFRASTRUCTURE violation for undecodable verdicts."""
     client = MockPolicyClient("SOMETHING_ELSE")
     stage = OpaStage(client)
 
@@ -122,14 +122,14 @@ async def test_opa_stage_returns_hard_violation_for_unknown():
     out = await stage.run(ctx)
     violations = list(out.violations)
     assert len(violations) == 1
-    assert violations[0].code == "OPA_UNKNOWN_VERDICT"
-    assert violations[0].kind == ViolationKind.HARD
+    assert violations[0].code == "OPA_UNAVAILABLE"
+    assert violations[0].kind == ViolationKind.INFRASTRUCTURE
     assert out.opa_verdict is None
 
 
 @pytest.mark.asyncio
-async def test_opa_stage_returns_hard_violation_on_exception():
-    """OpaStage returns a HARD violation when policy evaluation raises an exception."""
+async def test_opa_stage_returns_infrastructure_violation_on_exception():
+    """OpaStage returns an INFRASTRUCTURE violation when policy evaluation raises."""
     client = MockPolicyClient(RuntimeError("Connection lost"))
     stage = OpaStage(client)
 
@@ -141,8 +141,8 @@ async def test_opa_stage_returns_hard_violation_on_exception():
     out = await stage.run(ctx)
     violations = list(out.violations)
     assert len(violations) == 1
-    assert violations[0].code == "OPA_ERROR"
-    assert violations[0].kind == ViolationKind.HARD
+    assert violations[0].code == "OPA_UNAVAILABLE"
+    assert violations[0].kind == ViolationKind.INFRASTRUCTURE
     assert "Connection lost" in violations[0].message
     assert out.opa_verdict is None
 

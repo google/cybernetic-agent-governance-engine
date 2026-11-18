@@ -54,6 +54,7 @@ from src.gateway.governance.governor.approval import PostHitlApproval
 from src.gateway.governance.governor.errors import (
     DeferQueueUnavailableError,
     GovernanceDeferred,
+    GovernanceInfrastructureError,
 )
 from src.gateway.governance.governor.governor import GovernanceError, SymbolicGovernor
 from src.gateway.governance.governor.metrics import (
@@ -200,6 +201,10 @@ async def enforce_governance(
         # GOVERNANCE_DEFERRAL (persisted=False) was already chained; never
         # emit a contradictory GOVERNANCE_REFUSAL_RECEIPT (F-05).
         raise
+    except GovernanceInfrastructureError:
+        # GOVERNANCE_INFRASTRUCTURE_BLOCK was already chained; never fabricate
+        # a KMS-signed policy refusal receipt (POAM-2026-233).
+        raise
     except GovernanceError as exc:
         logger.warning("🛡️ Symbolic Governor BLOCKED %s: %s", tool_name, exc)
         emitted = await _emit_refusal_receipt(
@@ -333,6 +338,8 @@ async def enforce_approved_governance(
         # the approval); a deferral is not a refusal, so no refusal receipt.
         logger.info("🕒 Post-approval re-validation DEFERRED %s: %s", tool_name, exc)
         raise ActionDeferred(exc, approval_retained=True) from exc
+    except GovernanceInfrastructureError:
+        raise
     except GovernanceError as exc:
         logger.warning("🛡️ Post-approval re-validation BLOCKED %s: %s", tool_name, exc)
         emitted = await _emit_refusal_receipt(
@@ -1064,6 +1071,16 @@ async def validate_action_endpoint(
             content={
                 "error": "defer_queue_unavailable",
                 "detail": "Deferral could not be persisted to DeferQueue; failing closed.",
+            },
+        )
+    except GovernanceInfrastructureError as exc:
+        return JSONResponse(
+            status_code=503,
+            content={
+                "error": exc.error_code,
+                "dependency": exc.dependency,
+                "failure_code": exc.failure_code,
+                "detail": str(exc),
             },
         )
     except GovernanceError as exc:

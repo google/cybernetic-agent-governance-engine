@@ -72,14 +72,33 @@ def build_refusal_receipt(
     violated_tier_default: str = "SYMBOLIC_GOVERNOR",
     reliance: Sequence[RelianceRecord] = (),
     evaluated_param_specs: EvaluatedParamSpecMap | None = None,
+    evaluated_stages: Sequence[tuple[str, str]] = (),
+    skipped_stages: Sequence[str] = (),
 ) -> RefusalReceipt:
     thread_id = resolve_thread_id(params)
-    _first_tf = tier_failures[0] if tier_failures else None
+    policy_violations = [
+        v for v in violations if v.kind != ViolationKind.INFRASTRUCTURE
+    ]
+    effective_violations = policy_violations or violations
+    infra_only_codes = {
+        v.code for v in violations if v.kind == ViolationKind.INFRASTRUCTURE
+    } - {v.code for v in policy_violations}
+    policy_tier_failures = [
+        tf for tf in tier_failures if tf.control_id not in infra_only_codes
+    ]
+    effective_tier_failures = (
+        policy_tier_failures if policy_violations else tier_failures
+    )
+    _first_tf = effective_tier_failures[0] if effective_tier_failures else None
 
     violated_rule = (
         "Multiple violations"
-        if len(violations) > 1
-        else (_error_message(violations[0]) if violations else "Unknown violation")
+        if len(effective_violations) > 1
+        else (
+            _error_message(effective_violations[0])
+            if effective_violations
+            else "Unknown violation"
+        )
     )
 
     # Generate standing at refusal
@@ -93,20 +112,29 @@ def build_refusal_receipt(
                 "governing_state": tf.governing_state,
                 "protected_consequence": tf.protected_consequence,
             }
-            for tf in tier_failures
+            for tf in effective_tier_failures
         ],
     }
 
     stripped_params = {
         k: v for k, v in params.items() if k not in REFUSAL_ENVELOPE_EXCLUDED_KEYS
     }
+    resolved_tier = (
+        _first_tf.tier
+        if _first_tf
+        else (
+            effective_violations[0].tier
+            if effective_violations and effective_violations[0].tier
+            else violated_tier_default
+        )
+    )
     return RefusalReceipt(
         thread_id=thread_id,
         action=action,
-        violated_tier=_first_tf.tier if _first_tf else violated_tier_default,
+        violated_tier=resolved_tier,
         violated_rule=violated_rule,
         standing_at_refusal=standing_at_refusal,
-        schema_version="v4",
+        schema_version="v5",
         params_hash=compute_refusal_params_hash(action, stripped_params),
         evaluated_params=project_evaluated_params(
             evaluated_param_specs, action, stripped_params
@@ -118,9 +146,13 @@ def build_refusal_receipt(
         control_id=_first_tf.control_id if _first_tf else "",
         protected_consequence=_first_tf.protected_consequence if _first_tf else "",
         # Contract: a string naming the tiers that held the action back.
-        non_formation_proof=",".join(tf.tier for tf in tier_failures),
-        tier_failures=tuple(tier_failures),
+        non_formation_proof=",".join(tf.tier for tf in effective_tier_failures),
+        tier_failures=tuple(effective_tier_failures),
         reliance=tuple(reliance_evidence(reliance)),
+        evaluated_stages=tuple(
+            (str(stage), str(outcome)) for stage, outcome in evaluated_stages
+        ),
+        skipped_stages=tuple(str(stage) for stage in skipped_stages),
     )
 
 
@@ -813,13 +845,21 @@ async def handle_deny(
     redis_client: Any | None = None,
     emit_side_effects: bool = True,
     evaluated_param_specs: EvaluatedParamSpecMap | None = None,
+    evaluated_stages: Sequence[tuple[str, str]] = (),
+    skipped_stages: Sequence[str] = (),
 ) -> None:
     span = trace.get_current_span()
     span.set_attribute("cage.verdict", GovernanceDecision.DENY)
     span.set_attribute(OBSERVATION_OUTPUT, GovernanceDecision.DENY)
     span.set_status(Status(StatusCode.ERROR))
+    policy_violations = [
+        v for v in violations if v.kind != ViolationKind.INFRASTRUCTURE
+    ]
+    effective_violations = policy_violations or violations
     logger.warning(
-        "🚫 handle_deny DENY: action=%s violations=%d", action, len(violations)
+        "🚫 handle_deny DENY: action=%s violations=%d",
+        action,
+        len(effective_violations),
     )
 
     receipt = build_refusal_receipt(
@@ -829,14 +869,17 @@ async def handle_deny(
         tier_failures,
         reliance=reliance,
         evaluated_param_specs=evaluated_param_specs,
+        evaluated_stages=evaluated_stages,
+        skipped_stages=skipped_stages,
     )
     span.set_attribute("cage.refusal_proof_hash", receipt.proof_hash)
     if emit_side_effects:
         governor_metrics().refusal_decided(receipt.violated_tier)
         await publish_refusal(receipt)
     # Lead with the violation that decided the refusal (a HARD one when
-    # present), so a co-occurring HITL finding never masks the real cause.
-    ordered = sorted(violations, key=lambda v: v.kind != ViolationKind.HARD)
+    # present), so a co-occurring HITL finding never masks the real cause, and
+    # never include INFRASTRUCTURE codes in policy-refusal or quarantine records.
+    ordered = sorted(effective_violations, key=lambda v: v.kind != ViolationKind.HARD)
 
     quarantine_meta: dict[str, Any] = {}
     verified_caller = (current_client_identity() or "").strip()
@@ -923,6 +966,138 @@ async def handle_deny(
             **quarantine_meta,
         },
         receipt=receipt,
+        violations=[_error_message(v) for v in ordered],
+    )
+
+
+INFRASTRUCTURE_BLOCK_EVENT_TYPE = "GOVERNANCE_INFRASTRUCTURE_BLOCK"
+
+
+def _resolve_infra_dependency(violation: Violation) -> tuple[str, str]:
+    """Return ``(dependency, error_code)`` for an infrastructure violation."""
+    code = (violation.code or "").upper()
+    tier = (violation.tier or "").lower()
+    if code.startswith("OPA_") or tier == "opa":
+        return "opa", "policy_engine_unavailable"
+    return (violation.tier or "governance"), "governance_dependency_unavailable"
+
+
+async def publish_infrastructure_block(
+    *,
+    action: str,
+    params: dict[str, Any],
+    dependency: str,
+    failure_code: str,
+    detail: str,
+    control_id: str,
+) -> None:
+    """Hash-chain a ``GOVERNANCE_INFRASTRUCTURE_BLOCK`` record without KMS refusal signing.
+
+    Carries only WORM-safe fields (``params_hash``, ``dependency``, ``failure_code``,
+    ``detail``) — never raw ``attempted_params`` or a ``proof_hash`` (POAM-2026-233).
+    """
+    from src.gateway.governance.evidence.stream import (
+        commit_decision_evidence,
+        get_evidence_sink,
+        is_evidence_chain_blocking,
+    )
+
+    stripped_params = {
+        k: v for k, v in params.items() if k not in REFUSAL_ENVELOPE_EXCLUDED_KEYS
+    }
+    params_hash = compute_refusal_params_hash(action, stripped_params)
+    thread_id = str(params.get("thread_id") or "default")
+
+    try:
+        sink = get_evidence_sink()
+        event: dict[str, Any] = {
+            "type": INFRASTRUCTURE_BLOCK_EVENT_TYPE,
+            "schema_version": 1,
+            "controlId": control_id or GovernanceControl.OPA_POLICY_ENFORCEMENT.value,
+            "action": action,
+            "thread_id": thread_id,
+            "params_hash": params_hash,
+            "dependency": dependency,
+            "failure_code": failure_code,
+            "detail": detail[:500],
+            "timestamp_utc": datetime.now(tz=timezone.utc).isoformat(),
+        }
+        await commit_decision_evidence(
+            event,
+            label=INFRASTRUCTURE_BLOCK_EVENT_TYPE,
+            sink=sink,
+            sentinel_unset=False,
+        )
+    except Exception as exc:
+        logger.error("Failed to publish infrastructure block record: %s", exc)
+        governor_metrics().evidence_publish_failure("infrastructure_block")
+        if is_evidence_chain_blocking():
+            raise
+
+
+async def handle_infrastructure_block(
+    action: str,
+    params: dict[str, Any],
+    violations: list[Violation],
+    tier_failures: list[GovernanceTierFailure],
+    classification_meta: dict[str, Any] | None = None,
+    latency_ms: float = 0.0,
+    *,
+    reliance: Sequence[RelianceRecord] = (),
+    emit_side_effects: bool = True,
+) -> None:
+    """Block fail-closed on dependency unavailability without signing a policy refusal."""
+    from src.gateway.governance.governor.errors import GovernanceInfrastructureError
+
+    del tier_failures, latency_ms, reliance
+    ordered = sorted(violations, key=lambda v: v.kind != ViolationKind.INFRASTRUCTURE)
+    lead = ordered[0]
+    dependency, error_code = _resolve_infra_dependency(lead)
+    ctrl_meta = _control_payload(lead)
+    control_id = str(
+        ctrl_meta.get("control_id")
+        or (
+            GovernanceControl.OPA_POLICY_ENFORCEMENT.value
+            if dependency == "opa"
+            else GovernanceControl.AGENTIC_SCOPE_STATEMENT.value
+        )
+    )
+
+    span = trace.get_current_span()
+    span.set_attribute("cage.verdict", "INFRASTRUCTURE_BLOCK")
+    span.set_attribute("cage.infrastructure.dependency", dependency)
+    span.set_attribute("cage.infrastructure.failure_code", lead.code)
+    span.set_attribute(OBSERVATION_OUTPUT, "INFRASTRUCTURE_BLOCK")
+    span.set_status(Status(StatusCode.ERROR))
+    logger.error(
+        "🚧 handle_infrastructure_block: action=%s dependency=%s code=%s",
+        action,
+        dependency,
+        lead.code,
+    )
+
+    if emit_side_effects:
+        governor_metrics().infrastructure_block_decided(dependency, lead.code)
+        await publish_infrastructure_block(
+            action=action,
+            params=params,
+            dependency=dependency,
+            failure_code=lead.code,
+            detail=_error_message(lead),
+            control_id=control_id,
+        )
+
+    raise GovernanceInfrastructureError(
+        _error_message(lead),
+        dependency=dependency,
+        failure_code=lead.code,
+        error_code=error_code,
+        payload={
+            **(classification_meta or {}),
+            **ctrl_meta,
+            "dependency": dependency,
+            "failure_code": lead.code,
+        },
         violations=[_error_message(v) for v in ordered],
     )
 

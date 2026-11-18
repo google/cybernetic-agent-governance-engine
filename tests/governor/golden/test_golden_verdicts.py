@@ -81,9 +81,14 @@ async def _execute_scenario_entry_point(
             "src.gateway.governance.governor.verdicts.publish_refusal",
             new_callable=AsyncMock,
         ) as mock_publish_refusal,
+        patch(
+            "src.gateway.governance.governor.verdicts.publish_infrastructure_block",
+            new_callable=AsyncMock,
+        ) as mock_publish_infra_block,
     ):
         governor, collaborators = build_governor_for_scenario(scenario)
         collaborators["publish_refusal"] = mock_publish_refusal
+        collaborators["publish_infrastructure_block"] = mock_publish_infra_block
         fn = getattr(governor, entry_point)
 
         outcome: str

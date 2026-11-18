@@ -35,6 +35,8 @@ from opentelemetry.trace import Status, StatusCode
 from src.gateway.governance.classification_engine import (
     REASON_RELIANCE_INELIGIBLE,
     ClassificationContext,
+    ClassificationOutcome,
+    InfrastructureOutcome,
 )
 from src.gateway.governance.constants import ControlRegistry
 from src.gateway.governance.contracts import (
@@ -49,6 +51,7 @@ from src.gateway.governance.governor.errors import (
     DeferQueueUnavailableError,
     GovernanceDeferred,
     GovernanceError,
+    GovernanceInfrastructureError,
 )
 from src.gateway.governance.governor.pipeline import (
     BarrierPreview,
@@ -75,6 +78,7 @@ from src.gateway.governance.governor.trace import decision_trace_event, publish_
 from src.gateway.governance.governor.verdicts import (
     handle_defer,
     handle_deny,
+    handle_infrastructure_block,
     handle_narrow,
     handle_post_hitl_defer,
     handle_require_approval,
@@ -305,7 +309,9 @@ class SymbolicGovernor:
                 )
 
             if classification.decision == GovernanceDecision.REQUIRE_APPROVAL:
-                meta = await self._reverified_narrow_hint(action, meta)
+                meta = await self._reverified_narrow_hint(
+                    action, meta, emit_side_effects=emit_side_effects
+                )
 
             # Unmapped decisions fall through to DENY (fail-closed).
             handler = _VERDICT_HANDLERS.get(classification.decision, handle_deny)
@@ -316,7 +322,7 @@ class SymbolicGovernor:
                     Profile.DRY_RUN,
                     "validate_action",
                     classification.decision
-                    if classification.decision in _PENDING_DECISIONS
+                    if classification.decision in _UNSEALED_CHECKING_OUTCOMES
                     else GovernanceDecision.DENY,
                 )
             handler_kwargs: dict[str, Any] = {"reliance": result.reliance}
@@ -324,6 +330,7 @@ class SymbolicGovernor:
                 handler_kwargs["evaluated_param_specs"] = (
                     self._components.evaluated_param_specs
                 )
+                handler_kwargs.update(_stage_coverage_kwargs(result))
             if not emit_side_effects:
                 handler_kwargs["emit_side_effects"] = False
             verdict = handler(
@@ -350,7 +357,11 @@ class SymbolicGovernor:
         )
 
     async def _reverified_narrow_hint(
-        self, action: str, meta: dict[str, Any]
+        self,
+        action: str,
+        meta: dict[str, Any],
+        *,
+        emit_side_effects: bool = True,
     ) -> dict[str, Any]:
         """Keep the classifier's ``narrow_hint`` only if DRY_RUN vouches for it.
 
@@ -374,6 +385,20 @@ class SymbolicGovernor:
             action=action, params=copy.deepcopy(verified), profile=Profile.DRY_RUN
         )
         rerun = await run_pipeline(self.stages, ctx, profile=Profile.DRY_RUN)
+        if self._blocks_on_infrastructure(rerun):
+            if emit_side_effects:
+                await _trace(
+                    rerun,
+                    action,
+                    Profile.DRY_RUN,
+                    "validate_action",
+                    InfrastructureOutcome.INFRASTRUCTURE_BLOCK,
+                    narrower_present=True,
+                    clamped_params_valid=False,
+                )
+            await _block_infrastructure(
+                action, verified, rerun, emit_side_effects=emit_side_effects
+            )
         kept = all(v.kind == ViolationKind.HITL for v in rerun.violations)
         trace.get_current_span().set_attribute(
             "cage.governance.narrow_hint_reverified", kept
@@ -423,13 +448,20 @@ class SymbolicGovernor:
         rerun = await run_pipeline(self.stages, ctx, profile=Profile.DRY_RUN)
         latency_ms = round((time.perf_counter() - t0) * 1000, 2)
         reverified = not rerun.violations
+        rerun_infra = not reverified and self._blocks_on_infrastructure(rerun)
         if emit_side_effects:
             await _trace(
                 result,
                 action,
                 Profile.DRY_RUN,
                 "validate_action",
-                GovernanceDecision.NARROW if reverified else GovernanceDecision.DENY,
+                GovernanceDecision.NARROW
+                if reverified
+                else (
+                    InfrastructureOutcome.INFRASTRUCTURE_BLOCK
+                    if rerun_infra
+                    else GovernanceDecision.DENY
+                ),
                 narrower_present=True,
                 clamped_params_valid=reverified,
             )
@@ -440,6 +472,10 @@ class SymbolicGovernor:
             extra_kwargs: dict[str, Any] = (
                 {"emit_side_effects": False} if not emit_side_effects else {}
             )
+            if rerun_infra:
+                await _block_infrastructure(
+                    action, verified, rerun, emit_side_effects=emit_side_effects
+                )
             if self._defers_on_reliance(rerun):
                 return {
                     **(
@@ -470,6 +506,7 @@ class SymbolicGovernor:
                 latency_ms,
                 reliance=rerun.reliance,
                 evaluated_param_specs=self._components.evaluated_param_specs,
+                **_stage_coverage_kwargs(rerun),
                 **extra_kwargs,
             )
             raise GovernanceError(
@@ -553,6 +590,15 @@ class SymbolicGovernor:
         receipt is stored inside that run's ``ReservationScope``: if it
         cannot be stored, the commits are rolled back and the request denied.
         """
+        if self._blocks_on_infrastructure(result):
+            await _trace(
+                result,
+                action,
+                Profile.FULL,
+                "govern",
+                InfrastructureOutcome.INFRASTRUCTURE_BLOCK,
+            )
+            await _block_infrastructure(action, params, result)
         if self._defers_on_reliance(result):
             # A warrant failure removes reliance on the norm; it never becomes
             # a DENY of its own (proof/model.py verdict_of). An independent
@@ -613,18 +659,27 @@ class SymbolicGovernor:
         )
         span = trace.get_current_span()
         span.set_attribute("cage.governance.narrow_reverified", seal is not None)
+        rerun_infra = seal is None and self._blocks_on_infrastructure(rerun)
         # The model's NARROW state records where the *original* run failed.
         await _trace(
             result,
             action,
             Profile.FULL,
             "govern_narrow",
-            GovernanceDecision.NARROW if seal is not None else GovernanceDecision.DENY,
+            GovernanceDecision.NARROW
+            if seal is not None
+            else (
+                InfrastructureOutcome.INFRASTRUCTURE_BLOCK
+                if rerun_infra
+                else GovernanceDecision.DENY
+            ),
             seal=seal,
             narrower_present=True,
             clamped_params_valid=seal is not None,
         )
         if seal is None:
+            if rerun_infra:
+                await _block_infrastructure(action, narrowed, rerun)
             if self._defers_on_reliance(rerun):
                 await _defer_commit(action, narrowed, rerun)
             await handle_deny(
@@ -638,6 +693,7 @@ class SymbolicGovernor:
                 },
                 reliance=rerun.reliance,
                 evaluated_param_specs=self._components.evaluated_param_specs,
+                **_stage_coverage_kwargs(rerun),
             )
             raise GovernanceError(
                 f"handle_deny returned without raising; refusing {action}"
@@ -674,6 +730,9 @@ class SymbolicGovernor:
           deferral is hash-chained naming it, and
           :class:`~.errors.GovernanceDeferred` is raised. The same approval
           redeems once the warrant is eligible again (POAM-2026-104).
+        * **INFRASTRUCTURE_BLOCK** — an authority is unreachable or returns an
+          undecodable reply without any HARD policy breach. Nothing is sealed
+          or committed, and the approval is **not** spent (POAM-2026-233).
         * **DENY** — any other finding. The approval is spent, then the run
           is refused, so the operator must approve a fresh request.
 
@@ -734,6 +793,8 @@ class SymbolicGovernor:
                     [],
                     {"approved_barrier_preview": str(approval.barrier_preview)},
                     evaluated_param_specs=self._components.evaluated_param_specs,
+                    evaluated_stages=(),
+                    skipped_stages=tuple(s.name for s in self.stages),
                 )
                 raise GovernanceError(
                     f"handle_deny returned without raising; refusing {action}"
@@ -752,6 +813,8 @@ class SymbolicGovernor:
                     [],
                     {},
                     evaluated_param_specs=self._components.evaluated_param_specs,
+                    evaluated_stages=(),
+                    skipped_stages=tuple(s.name for s in self.stages),
                 )
                 raise GovernanceError(
                     f"no tier governs {action}; post-HITL re-validation refused"
@@ -819,10 +882,25 @@ class SymbolicGovernor:
                     {"approval_id": approval.approval_id},
                     reliance=result.reliance,
                     evaluated_param_specs=self._components.evaluated_param_specs,
+                    **_stage_coverage_kwargs(result),
                 )
                 raise GovernanceError(
                     f"handle_deny returned without raising; refusing {action}"
                 )  # fail closed
+            # Neither an infrastructure outage (POAM-2026-233, Consumer 11) nor
+            # an unavailable warrant freshness source is a policy refusal:
+            # preserve the human approval unspent so the caller can retry once
+            # the dependency or warrant source recovers.
+            if self._blocks_on_infrastructure(result):
+                span.set_attribute("toctou.approval_spent", False)
+                await _trace(
+                    result,
+                    action,
+                    Profile.POST_HITL,
+                    "revalidate_post_hitl",
+                    InfrastructureOutcome.INFRASTRUCTURE_BLOCK,
+                )
+                await _block_infrastructure(action, sealed, result)
             if self._defers_on_reliance(result):
                 span.set_attribute("toctou.approval_spent", False)
                 await _trace(
@@ -876,6 +954,10 @@ class SymbolicGovernor:
                 result,
                 evaluated_param_specs=self._components.evaluated_param_specs,
             )
+
+    def _blocks_on_infrastructure(self, result: PipelineResult) -> bool:
+        """True iff the run's findings block fail-closed on dependency unavailability."""
+        return self._components.classifier.blocks_on_infrastructure(result.violations)
 
     def _defers_on_reliance(self, result: PipelineResult) -> bool:
         """True iff the run's findings defer on an ineligible warrant.
@@ -945,7 +1027,9 @@ class SymbolicGovernor:
             result = await run_pipeline(self.stages, ctx, profile=Profile.DRY_RUN)
 
             violations = list(result.violations)
-            decision = GovernanceDecision.ALLOW
+            decision: GovernanceDecision | InfrastructureOutcome = (
+                GovernanceDecision.ALLOW
+            )
             if violations:
                 decision = self._components.classifier.classify(
                     ClassificationContext(
@@ -1095,6 +1179,33 @@ def _approval_drift(detail: str) -> Violation:
     )
 
 
+def _stage_coverage_kwargs(result: PipelineResult) -> dict[str, Any]:
+    """Stage coverage kwargs for ``RefusalReceipt`` schema ``v5`` (POAM-2026-233)."""
+    evaluated: list[tuple[str, str]] = []
+    for stage_name, stage_outcome in result.stage_outcomes:
+        if stage_outcome == "PASS":
+            evaluated.append((stage_name, "PASS"))
+            continue
+        stage_v = [
+            v
+            for v in result.violations
+            if v.tier.lower() == stage_name.lower()
+            or (stage_name == "opa" and v.code.startswith("OPA_"))
+        ]
+        if stage_v and all(v.kind == ViolationKind.INFRASTRUCTURE for v in stage_v):
+            evaluated.append((stage_name, "INFRASTRUCTURE"))
+        else:
+            evaluated.append((stage_name, stage_outcome))
+    ran = {stage_name for stage_name, _ in evaluated}
+    skipped = tuple(
+        stage_name for stage_name, _phase in result.plan if stage_name not in ran
+    )
+    return {
+        "evaluated_stages": tuple(evaluated),
+        "skipped_stages": skipped,
+    }
+
+
 async def _deny_drift(
     action: str,
     params: dict[str, Any],
@@ -1129,6 +1240,7 @@ async def _deny_drift(
         },
         reliance=result.reliance,
         evaluated_param_specs=evaluated_param_specs,
+        **_stage_coverage_kwargs(result),
     )
     raise GovernanceError(
         f"handle_deny returned without raising; refusing {action}"
@@ -1181,15 +1293,23 @@ async def _deny_unapproved_holds(
         },
         reliance=result.reliance,
         evaluated_param_specs=evaluated_param_specs,
+        **_stage_coverage_kwargs(result),
     )
     raise GovernanceError(
         f"handle_deny returned without raising; refusing {action}"
     )  # fail closed
 
 
-#: Decisions that park the request instead of refusing it (model phase CHECKING).
+#: Decisions/outcomes that do not transition to REFUSED (model phase CHECKING).
 _PENDING_DECISIONS = frozenset(
     {GovernanceDecision.REQUIRE_APPROVAL, GovernanceDecision.DEFER}
+)
+_UNSEALED_CHECKING_OUTCOMES: frozenset[ClassificationOutcome] = frozenset(
+    {
+        GovernanceDecision.REQUIRE_APPROVAL,
+        GovernanceDecision.DEFER,
+        InfrastructureOutcome.INFRASTRUCTURE_BLOCK,
+    }
 )
 
 
@@ -1198,7 +1318,7 @@ async def _trace(
     action: str,
     profile: Profile,
     path: str,
-    verdict: GovernanceDecision,
+    verdict: ClassificationOutcome,
     *,
     seal: str | None = None,
     narrower_present: bool = False,
@@ -1219,12 +1339,36 @@ async def _trace(
     )
 
 
-_VERDICT_HANDLERS: dict[GovernanceDecision, Callable[..., Any]] = {
+_VERDICT_HANDLERS: dict[ClassificationOutcome, Callable[..., Any]] = {
     GovernanceDecision.DENY: handle_deny,
+    InfrastructureOutcome.INFRASTRUCTURE_BLOCK: handle_infrastructure_block,
     GovernanceDecision.REQUIRE_APPROVAL: handle_require_approval,
     GovernanceDecision.DEFER: handle_defer,
     # NARROW is not here: SymbolicGovernor._narrow_candidate() re-verifies it.
 }
+
+
+async def _block_infrastructure(
+    action: str,
+    params: dict[str, Any],
+    result: PipelineResult,
+    *,
+    emit_side_effects: bool = True,
+) -> NoReturn:
+    await handle_infrastructure_block(
+        action,
+        params,
+        list(result.violations),
+        list(result.tier_failures),
+        _ftra_meta(result),
+        reliance=result.reliance,
+        emit_side_effects=emit_side_effects,
+    )
+    raise GovernanceInfrastructureError(
+        f"handle_infrastructure_block returned without raising; blocking {action}",
+        dependency="governance",
+        failure_code="INFRASTRUCTURE_UNAVAILABLE",
+    )  # fail closed
 
 
 async def _deny(
@@ -1238,6 +1382,7 @@ async def _deny(
     deny_kwargs: dict[str, Any] = {
         "reliance": result.reliance,
         "evaluated_param_specs": evaluated_param_specs,
+        **_stage_coverage_kwargs(result),
     }
     if not emit_side_effects:
         deny_kwargs["emit_side_effects"] = False

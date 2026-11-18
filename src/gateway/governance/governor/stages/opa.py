@@ -16,7 +16,12 @@ import logging
 from typing import Any
 
 from src.gateway.governance.constants import ControlRegistry, GovernanceControl
-from src.gateway.governance.contracts import PolicyClient, Violation, ViolationKind
+from src.gateway.governance.contracts import (
+    PolicyClient,
+    PolicyEngineUnavailableError,
+    Violation,
+    ViolationKind,
+)
 from src.gateway.governance.governor.pipeline import (
     OpaVerdict,
     Stage,
@@ -86,6 +91,10 @@ class OpaStage(Stage):
     approval being redeemed was given against it
     (:func:`~src.gateway.governance.governor.pipeline.answered_by_approval`),
     so a review OPA first asks for while the request waited refuses the run.
+
+    Engine unavailability or undecodable verdicts emit
+    ``ViolationKind.INFRASTRUCTURE`` (``OPA_UNAVAILABLE``), blocking fail-closed
+    without fabricating a policy refusal receipt (POAM-2026-233).
     """
 
     name = "opa"
@@ -100,15 +109,27 @@ class OpaStage(Stage):
         try:
             raw_result = await self.opa_client.evaluate_policy(opa_payload)
             verdict = decode_opa_verdict(raw_result)
+        except PolicyEngineUnavailableError as e:
+            logger.error("OPA unavailable (%s): %s", e.reason, e)
+            return StageOutput(
+                violations=(
+                    Violation(
+                        tier="governance",
+                        code="OPA_UNAVAILABLE",
+                        message=f"[{_OPA_CTRL}] OPA policy engine unavailable ({e.reason}): {e}",
+                        kind=ViolationKind.INFRASTRUCTURE,
+                    ),
+                )
+            )
         except Exception as e:
             logger.error("OPA error: %s", e)
             return StageOutput(
                 violations=(
                     Violation(
                         tier="governance",
-                        code="OPA_ERROR",
+                        code="OPA_UNAVAILABLE",
                         message=f"[{_OPA_CTRL}] OPA policy evaluation failed: {e}",
-                        kind=ViolationKind.HARD,
+                        kind=ViolationKind.INFRASTRUCTURE,
                     ),
                 )
             )
@@ -146,8 +167,8 @@ def _violations_for(verdict: OpaVerdict | None, raw_result: object) -> list[Viol
     return [
         Violation(
             tier="governance",
-            code="OPA_UNKNOWN_VERDICT",
-            message=f"[{_OPA_CTRL}] OPA Policy Violation: Unexpected verdict '{raw_result}'",
-            kind=ViolationKind.HARD,
+            code="OPA_UNAVAILABLE",
+            message=f"[{_OPA_CTRL}] OPA policy engine returned undecodable verdict '{raw_result}'",
+            kind=ViolationKind.INFRASTRUCTURE,
         )
     ]

@@ -39,6 +39,7 @@ from src.gateway.core.policy import (
     OPAClient,
     OPAPolicyMismatchError,
 )
+from src.gateway.governance.contracts import PolicyEngineUnavailableError
 
 
 class _Clock:
@@ -347,9 +348,13 @@ class TestOPAClientInit:
             client._get_client()
 
     @pytest.mark.asyncio
-    async def test_evaluate_policy_denies_when_opa_url_has_path(self) -> None:
+    async def test_evaluate_policy_raises_unavailable_when_opa_url_has_path(
+        self,
+    ) -> None:
         client = self._make_client("http://localhost:8181/v1/data/trade/governance")
-        assert await client.evaluate_policy({"action": "trade"}) == "DENY"
+        with pytest.raises(PolicyEngineUnavailableError) as exc_info:
+            await client.evaluate_policy({"action": "trade"})
+        assert exc_info.value.reason == "LOCAL_MISCONFIGURATION"
 
     def test_circuit_breaker_initialised(self) -> None:
         with patch("src.gateway.core.policy.Config") as mock_cfg:
@@ -794,17 +799,32 @@ def _response(
         ({"allow": False}, "DENY"),
         ({"decision": "manual_review"}, "MANUAL_REVIEW"),
         ({"allow": True, "decision": "allow"}, "ALLOW"),
-        ({"allow": True, "decision": "DENY"}, "DENY"),
-        ({"allow": False, "decision": "ALLOW"}, "DENY"),
-        ({}, "DENY"),
+        ({"allow": False, "decision": "deny"}, "DENY"),
         (True, "ALLOW"),
         (False, "DENY"),
         ("allow", "ALLOW"),
-        (None, "DENY"),
     ],
 )
 def test_decision_string_normalizes_result_shapes(raw: object, expected: str) -> None:
     assert policy_mod._decision_string(raw) == expected
+
+
+@pytest.mark.local
+@pytest.mark.parametrize(
+    "raw",
+    [
+        {"allow": True, "decision": "DENY"},
+        {"allow": False, "decision": "ALLOW"},
+        {},
+        None,
+        "",
+        "   ",
+    ],
+)
+def test_decision_string_raises_on_undefined_or_conflicting_result(raw: object) -> None:
+    with pytest.raises(PolicyEngineUnavailableError) as exc_info:
+        policy_mod._decision_string(raw)
+    assert exc_info.value.reason == "UNDEFINED_DECISION"
 
 
 @pytest.mark.local
@@ -855,16 +875,20 @@ class TestOPAClientEvaluatePolicy:
         assert http.post.await_count == 3
 
     @pytest.mark.asyncio
-    async def test_missing_result_key_defaults_to_deny(self) -> None:
+    async def test_missing_result_key_raises_undefined_decision(self) -> None:
         client = self._make_opa_client()
         http = self._http(response=_response(payload={}))
-        assert await self._evaluate(client, http) == "DENY"
+        with pytest.raises(PolicyEngineUnavailableError) as exc_info:
+            await self._evaluate(client, http)
+        assert exc_info.value.reason == "UNDEFINED_DECISION"
 
     @pytest.mark.asyncio
-    async def test_malformed_body_denies_without_charging_the_breaker(self) -> None:
+    async def test_malformed_body_raises_without_charging_the_breaker(self) -> None:
         client = self._make_opa_client()
         for response in (_response(json_error=True), _response(payload=["a", "b"])):
-            assert await self._evaluate(client, self._http(response=response)) == "DENY"
+            with pytest.raises(PolicyEngineUnavailableError) as exc_info:
+                await self._evaluate(client, self._http(response=response))
+            assert exc_info.value.reason == "MALFORMED_RESPONSE"
         assert client.cb.failures == 0
 
     @pytest.mark.parametrize(
@@ -876,38 +900,50 @@ class TestOPAClientEvaluatePolicy:
         ],
     )
     @pytest.mark.asyncio
-    async def test_transport_failures_deny_and_count(self, exc: Exception) -> None:
+    async def test_transport_failures_raise_and_count(self, exc: Exception) -> None:
         client = self._make_opa_client()
-        assert await self._evaluate(client, self._http(exc=exc)) == "DENY"
+        with pytest.raises(PolicyEngineUnavailableError) as exc_info:
+            await self._evaluate(client, self._http(exc=exc))
+        assert exc_info.value.reason == "SYSTEM_FAILURE"
         assert client.cb.failures == 1
 
     @pytest.mark.asyncio
-    async def test_5xx_denies_and_counts(self) -> None:
+    async def test_5xx_raises_and_counts(self) -> None:
         client = self._make_opa_client()
         http = self._http(response=_response(503))
-        assert await self._evaluate(client, http) == "DENY"
+        with pytest.raises(PolicyEngineUnavailableError) as exc_info:
+            await self._evaluate(client, http)
+        assert exc_info.value.reason == "SYSTEM_FAILURE"
+        assert exc_info.value.status_code == 503
         assert client.cb.failures == 1
 
     @pytest.mark.asyncio
-    async def test_4xx_denies_without_counting(self) -> None:
+    async def test_4xx_raises_without_counting(self) -> None:
         client = self._make_opa_client()
         http = self._http(response=_response(404))
-        assert await self._evaluate(client, http) == "DENY"
+        with pytest.raises(PolicyEngineUnavailableError) as exc_info:
+            await self._evaluate(client, http)
+        assert exc_info.value.reason == "OPA_REJECTED"
+        assert exc_info.value.status_code == 404
         assert client.cb.failures == 0
 
     @pytest.mark.asyncio
-    async def test_pool_timeout_denies_without_tripping_the_breaker(self) -> None:
+    async def test_pool_timeout_raises_without_tripping_the_breaker(self) -> None:
         client = self._make_opa_client()
         saturated = self._http(exc=httpx.PoolTimeout("pool full"))
         for _ in range(client.cb.failure_threshold + 1):
-            assert await self._evaluate(client, saturated) == "DENY"
+            with pytest.raises(PolicyEngineUnavailableError) as exc_info:
+                await self._evaluate(client, saturated)
+            assert exc_info.value.reason == "LOCAL_POOL_SATURATED"
         assert client.cb.failures == 0
         assert client.cb.state is BreakerState.CLOSED
 
     @pytest.mark.asyncio
-    async def test_misconfigured_url_denies_without_counting(self) -> None:
+    async def test_misconfigured_url_raises_without_counting(self) -> None:
         client = self._make_opa_client("http://localhost:8181/v1/data/trade/governance")
-        assert await client.evaluate_policy({"action": "trade"}) == "DENY"
+        with pytest.raises(PolicyEngineUnavailableError) as exc_info:
+            await client.evaluate_policy({"action": "trade"})
+        assert exc_info.value.reason == "LOCAL_MISCONFIGURATION"
         assert client.cb.failures == 0
 
     @pytest.mark.asyncio
@@ -915,11 +951,14 @@ class TestOPAClientEvaluatePolicy:
         client = self._make_opa_client()
         failing = self._http(exc=httpx.ConnectError("refused"))
         for _ in range(client.cb.failure_threshold):
-            await self._evaluate(client, failing)
+            with pytest.raises(PolicyEngineUnavailableError):
+                await self._evaluate(client, failing)
         assert client.cb.state is BreakerState.OPEN
 
         healthy = self._http(response=_response())
-        assert await self._evaluate(client, healthy) == "DENY"
+        with pytest.raises(PolicyEngineUnavailableError) as exc_info:
+            await self._evaluate(client, healthy)
+        assert exc_info.value.reason == "CIRCUIT_BREAKER_OPEN"
         healthy.post.assert_not_awaited()
 
     @pytest.mark.asyncio
@@ -975,12 +1014,15 @@ class TestOPAClientEvaluatePolicy:
         """Upstream failures reopen, OPA answers close, local errors free the slot."""
         client = self._half_open_client()
 
-        assert await self._evaluate(client, self._http(**probe_kwargs)) == "DENY"
+        with pytest.raises(PolicyEngineUnavailableError):
+            await self._evaluate(client, self._http(**probe_kwargs))
 
         assert client.cb.state is state_after
         follow_up = self._http(response=_response())
         if state_after is BreakerState.OPEN:
-            assert await self._evaluate(client, follow_up) == "DENY"
+            with pytest.raises(PolicyEngineUnavailableError) as exc_info:
+                await self._evaluate(client, follow_up)
+            assert exc_info.value.reason == "CIRCUIT_BREAKER_OPEN"
             follow_up.post.assert_not_awaited()
         else:
             # CLOSED admits everyone; a freed HALF_OPEN slot admits a new probe.
@@ -993,20 +1035,23 @@ class TestOPAClientEvaluatePolicy:
             "http://localhost:8181/v1/data/trade/governance"
         )
 
-        assert await client.evaluate_policy({"action": "trade"}) == "DENY"
+        with pytest.raises(PolicyEngineUnavailableError) as exc_info:
+            await client.evaluate_policy({"action": "trade"})
+        assert exc_info.value.reason == "LOCAL_MISCONFIGURATION"
 
         assert client.cb.state is BreakerState.HALF_OPEN
         ticket = client.cb.admit()
         assert ticket is not None and ticket.probe
 
     @pytest.mark.asyncio
-    async def test_unexpected_error_denies_and_frees_the_probe(self) -> None:
-        """Errors _query_opa does not anticipate still yield DENY (PolicyClient)."""
+    async def test_unexpected_error_raises_and_frees_the_probe(self) -> None:
+        """Errors _query_opa does not anticipate still raise PolicyEngineUnavailableError."""
         client = self._half_open_client()
         response = _response()
         response.json = MagicMock(side_effect=RecursionError("deeply nested body"))
 
-        assert await self._evaluate(client, self._http(response=response)) == "DENY"
+        with pytest.raises(PolicyEngineUnavailableError):
+            await self._evaluate(client, self._http(response=response))
 
         assert client.cb.state is BreakerState.HALF_OPEN
         ticket = client.cb.admit()
@@ -1028,12 +1073,16 @@ class TestOPAClientEvaluatePolicy:
             probe = asyncio.create_task(client.evaluate_policy({"action": "trade"}))
             await started.wait()
             others = await asyncio.gather(
-                *(client.evaluate_policy({"action": "trade"}) for _ in range(3))
+                *(client.evaluate_policy({"action": "trade"}) for _ in range(3)),
+                return_exceptions=True,
             )
             release.set()
             assert await probe == "ALLOW"
 
-        assert others == ["DENY"] * 3
+        assert len(others) == 3
+        for item in others:
+            assert isinstance(item, PolicyEngineUnavailableError)
+            assert item.reason == "CIRCUIT_BREAKER_OPEN"
         assert http.post.await_count == 1
         assert client.cb.state is BreakerState.CLOSED
 
@@ -1060,13 +1109,13 @@ class TestOPAClientEvaluatePolicy:
         assert ticket is not None and ticket.probe
 
     @pytest.mark.asyncio
-    async def test_bankrupt_request_denies_without_claiming_the_probe(self) -> None:
+    async def test_bankrupt_request_raises_without_claiming_the_probe(self) -> None:
         client = self._half_open_client()
         http = self._http(response=_response())
 
-        assert (
-            await self._evaluate(client, http, current_latency_ms=999_999.0) == "DENY"
-        )
+        with pytest.raises(PolicyEngineUnavailableError) as exc_info:
+            await self._evaluate(client, http, current_latency_ms=999_999.0)
+        assert exc_info.value.reason == "LATENCY_BUDGET_EXCEEDED"
         http.post.assert_not_awaited()
         assert await self._evaluate(client, http) == "ALLOW"
 

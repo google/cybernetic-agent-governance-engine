@@ -786,6 +786,7 @@ async def execute_tool_endpoint(request_body: ToolExecutionRequest, request: Req
 
     from src.gateway.governance.evidence.stream import EvidenceChainUnavailableError
     from src.gateway.governance.execution_idempotency import UnsettledDuplicate
+    from src.gateway.governance.governor.errors import GovernanceInfrastructureError
     from src.gateway.governance.routing_seal import SymbolicGovernorViolation
     from src.gateway.infrastructure.privacy import scrub_pii
     from src.gateway.server.governance_middleware import (
@@ -810,6 +811,10 @@ async def execute_tool_endpoint(request_body: ToolExecutionRequest, request: Req
     # Guard against unit tests that stub module imports with MagicMock or bare Exception.
     action_deferred_types = _valid_exc_types(
         ActionDeferred, exclude=(BaseException, Exception, PermissionError)
+    )
+    infra_error_types = _valid_exc_types(
+        GovernanceInfrastructureError,
+        exclude=(BaseException, Exception, RuntimeError),
     )
     governed_error_types = _valid_exc_types(
         SymbolicGovernorViolation,
@@ -869,6 +874,25 @@ async def execute_tool_endpoint(request_body: ToolExecutionRequest, request: Req
                 "status": "ERROR",
                 "error": "evidence_chain_unavailable",
                 "detail": f"EvidenceChainUnavailableError: {scrub_pii(str(exc))}",
+            },
+        )
+    except infra_error_types as exc:
+        logger.error(
+            "Governance infrastructure unavailable during /tools/execute (%s/%s): %s",
+            getattr(exc, "dependency", "unknown"),
+            getattr(exc, "failure_code", "unknown"),
+            exc,
+        )
+        return _SubscriptableJSONResponse(
+            status_code=503,
+            content={
+                "status": "ERROR",
+                "error": getattr(
+                    exc, "error_code", "governance_infrastructure_unavailable"
+                ),
+                "dependency": getattr(exc, "dependency", "unknown"),
+                "failure_code": getattr(exc, "failure_code", "unknown"),
+                "detail": scrub_pii(str(exc)),
             },
         )
     except action_deferred_types as exc:

@@ -205,7 +205,22 @@ class BigQueryTrajectoryHarvester(TrajectoryHarvesterProtocol):
             )
             raw_reliance = self._parse_json_column(row.get("reliance")) or ()
             reliance = tuple(dict(r) for r in raw_reliance if isinstance(r, Mapping))
-            default_schema = "v4" if row.get("params_hash") else "v3"
+            raw_eval_stages = self._parse_json_column(row.get("evaluated_stages"))
+            raw_skip_stages = self._parse_json_column(row.get("skipped_stages"))
+            has_stage_coverage = (
+                raw_eval_stages is not None or raw_skip_stages is not None
+            )
+            default_schema = (
+                "v5"
+                if has_stage_coverage
+                else ("v4" if row.get("params_hash") else "v3")
+            )
+            evaluated_stages = tuple(
+                (str(pair[0]), str(pair[1]))
+                for pair in (raw_eval_stages or ())
+                if isinstance(pair, (list, tuple)) and len(pair) == 2
+            )
+            skipped_stages = tuple(str(s) for s in (raw_skip_stages or ()))
             receipt = RefusalReceipt(
                 thread_id=str(row["thread_id"]),
                 action=str(row["action"]),
@@ -232,6 +247,8 @@ class BigQueryTrajectoryHarvester(TrajectoryHarvesterProtocol):
                 non_formation_proof=str(row.get("non_formation_proof", "")),
                 tier_failures=tier_failures,
                 reliance=reliance,
+                evaluated_stages=evaluated_stages,
+                skipped_stages=skipped_stages,
             )
             if not receipt.verify_proof_hash():
                 raise ValueError(
