@@ -516,10 +516,11 @@ The [v4.0.0 errata](CHANGELOG.md) record four surfaces that repository documents
 
 ### Open findings
 
-[`docs/POAM.md`](docs/POAM.md) is the authoritative list; it held 65 open rows on 2026-11-14. Two high-severity items opened most recently:
+[`docs/POAM.md`](docs/POAM.md) is the authoritative list; it held 78 open rows on 2026-11-18. Notable open items include:
 
-- **`POAM-2026-210`: WebAuthn assertions are not verified cryptographically.** Deferral read endpoints now require an authenticated caller, and an approval with a missing authenticator field is rejected. But the check confirms that the fields are present, not that an authenticator signed them against a registered operator key. The human-approval quorum rests on operator OIDC identity, and the WebAuthn binding adds no cryptographic assurance until this closes.
+- **`POAM-2026-210`: WebAuthn assertions are not verified.** Deferral read endpoints now require an authenticated caller (`#742`). The `2026-11-14` sub-claim that `#742` remediated WebAuthn field-presence checking was withdrawn on `2026-11-18`, and nothing verifies that an authenticator signed an approval against a registered operator key. The human-approval quorum rests on operator OIDC identity, and the WebAuthn fields add no assurance until this closes.
 - **`POAM-2026-217`: evidence could be lost silently on a stopped sink.** A seal's nonce could be burned with no consumption record, and the inference proxy served permitted completions with no evidence while correctly blocking refusals. The fix (`#749`) is on `main`: both paths now fail closed. The entry stays open until its closure evidence is recorded.
+- **`POAM-2026-236`: gateway OTLP trace export to Langfuse fails silently with `401 Unauthorized`.** `F-92` minted a dedicated gateway telemetry keypair in `gateway-secrets`, while `module.langfuse` seeds only the operational/advisor and compliance project keypairs, so in-cluster Langfuse rejects every gateway OTLP span batch (`100%` operational-telemetry trace drop) with no Prometheus counter or alert. Authoritative WORM evidence custody (`cage:evidence:stream`) is unaffected.
 
 Other open items that bear on claims in this README: automated signing-key rotation (`POAM-2026-012`), the simulated reconciler feed (`POAM-2026-096`), the causal tier (`POAM-2026-094`, `POAM-2026-117`), plugin overlays redefining kernel controls (`POAM-2026-123`), and persistent long-retention evidence custody (`POAM-2026-084`). `POAM-2026-115` is an accepted risk: the project has one maintainer, so changes reach `main` without independent human review.
 
