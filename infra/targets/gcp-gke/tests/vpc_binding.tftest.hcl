@@ -263,6 +263,7 @@ run "memorystore_sets_desired_auto_created_endpoints" {
     environment = "staging"
     region      = "us-central1"
     network_id  = "cage-vpc-staging"
+    clients     = {}
   }
 
   assert {

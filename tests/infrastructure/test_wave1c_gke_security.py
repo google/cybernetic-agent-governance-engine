@@ -35,7 +35,9 @@ supply-chain pins:
   ``infra/load_env.sh`` is sourced-safe and exports only ``TF_VAR_*`` variables.
 - ``[IC-08]``: Runtime ``compliance-bridge`` holds no ``roles/artifactregistry.writer``;
   Secret Manager access uses per-secret ``google_secret_manager_secret_iam_member``;
-  ``memorystore_app`` enables ``IAM_AUTH`` and ``SERVER_AUTHENTICATION``; ``langfuse_event_upload``
+  ``memorystore_app`` follows its own ``enable_memorystore_app_*`` switches, never the
+  governance instance's (``test_memorystore_client_capability.py`` checks that no instance
+  turns on IAM auth or TLS while a client cannot follow); ``langfuse_event_upload``
   enforces CMEK, ``uniform_bucket_level_access``, and ``public_access_prevention = "enforced"``.
 - ``[IC-09]`` & ``[KC-13]``: ``src/gateway/Dockerfile`` keeps ``/app`` root-owned, pins ``uv``
   by ``@sha256:`` digest, and verifies ``en_core_web_lg`` with ``--require-hashes``; runtime
@@ -531,7 +533,7 @@ def test_ic07_deploy_all_sh_registers_tfplan_cleanup_trap() -> None:
 
 
 # ---------------------------------------------------------------------------
-# [IC-08] Least-Privilege IAM, memorystore_app TLS/IAM_AUTH & langfuse_event_upload CMEK
+# [IC-08] Least-Privilege IAM, memorystore_app switches & langfuse_event_upload CMEK
 # ---------------------------------------------------------------------------
 
 
@@ -567,7 +569,9 @@ def test_ic08_no_project_wide_secret_accessor_and_hardened_memorystore_and_bucke
         in main_tf
     )
 
-    # memorystore_app enables IAM_AUTH and SERVER_AUTHENTICATION
+    # memorystore_app follows its own switches, never the governance instance's:
+    # its one client, Langfuse, can do neither IAM auth nor TLS, so the module
+    # refuses either while it cannot (test_memorystore_client_capability.py).
     cleaned_main = parity._strip_hcl_comments(main_tf)
     ms_app_blocks = [
         b
@@ -576,13 +580,15 @@ def test_ic08_no_project_wide_secret_accessor_and_hardened_memorystore_and_bucke
     ]
     assert len(ms_app_blocks) == 1
     assert (
-        'var.enable_memorystore_iam_auth ? "IAM_AUTH" : "AUTH_DISABLED"'
+        'var.enable_memorystore_app_iam_auth ? "IAM_AUTH" : "AUTH_DISABLED"'
         in ms_app_blocks[0].body
     )
     assert (
-        'var.enable_memorystore_tls ? "SERVER_AUTHENTICATION" : "TRANSIT_ENCRYPTION_DISABLED"'
+        'var.enable_memorystore_app_tls ? "SERVER_AUTHENTICATION" : "TRANSIT_ENCRYPTION_DISABLED"'
         in ms_app_blocks[0].body
     )
+    assert "var.enable_memorystore_iam_auth" not in ms_app_blocks[0].body
+    assert "var.enable_memorystore_tls" not in ms_app_blocks[0].body
 
     # langfuse_event_upload enforces CMEK + public_access_prevention + UBLA
     lf_bucket_blocks = [

@@ -74,6 +74,17 @@ variable "transit_encryption_mode" {
   default     = "SERVER_AUTHENTICATION"
 }
 
+# Required: a caller states who connects, so the two modes above cannot be
+# turned on behind a client's back.
+variable "clients" {
+  description = "Every block that connects to this instance, keyed by its address in the calling configuration, and whether it follows each mode: iam_auth when it sends an IAM access token whenever authorization_mode is IAM_AUTH, tls when it speaks TLS and trusts managed_server_ca whenever transit_encryption_mode is SERVER_AUTHENTICATION. The instance refuses to plan either mode while a client cannot follow it. {} for an instance nothing connects to."
+  type = map(object({
+    iam_auth = bool
+    tls      = bool
+  }))
+  nullable = false
+}
+
 variable "enable_cmek" {
   description = "Enable Customer-Managed Encryption Key (CMEK)"
   type        = bool
