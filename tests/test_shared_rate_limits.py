@@ -320,10 +320,11 @@ class TestGatewayClientPrincipalAndRetries:
     """Verify GatewayClient sends x-cage-principal and retries on 429/503."""
 
     @pytest.mark.asyncio
-    async def test_validate_action_sends_principal_and_retries_429_503(
+    async def test_validate_action_sends_principal_retries_429_and_never_retries_503(
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         from src.governed_financial_advisor.infrastructure.gateway_client import (
+            CageGatewayError,
             GatewayClient,
         )
         from src.governed_financial_advisor.utils.context import user_context
@@ -334,6 +335,7 @@ class TestGatewayClientPrincipalAndRetries:
         token = user_context.set("advisor-session-77")
         seen_headers: list[dict[str, str]] = []
         attempts = 0
+        attempts_503 = 0
 
         envelope = {
             "verdict": GovernanceDecision.ALLOW.value,
@@ -341,7 +343,11 @@ class TestGatewayClientPrincipalAndRetries:
         }
 
         def _handler(request: httpx.Request) -> httpx.Response:
-            nonlocal attempts
+            nonlocal attempts, attempts_503
+            body = json.loads(request.content.decode("utf-8"))
+            if body.get("params", {}).get("trigger_503"):
+                attempts_503 += 1
+                return httpx.Response(503, json={"error": "policy_engine_unavailable"})
             attempts += 1
             seen_headers.append(dict(request.headers))
             if attempts == 1:
@@ -350,8 +356,6 @@ class TestGatewayClientPrincipalAndRetries:
                     headers={"Retry-After": "0.001"},
                     json={"error": "rate_limit_exceeded"},
                 )
-            if attempts == 2:
-                return httpx.Response(503, json={"error": "service_unavailable"})
             return httpx.Response(200, json=envelope)
 
         from tests.fixtures.signed_gateway import SignedGatewayStub
@@ -367,8 +371,15 @@ class TestGatewayClientPrincipalAndRetries:
         try:
             res = await client.validate_action("execute_trade", {"amount": 100.0})
             assert res["verdict"] == GovernanceDecision.ALLOW.value
-            assert attempts == 3
+            assert attempts == 2
             assert seen_headers[0].get("x-cage-principal") == "advisor-session-77"
+
+            with pytest.raises(httpx.HTTPStatusError) as exc_503:
+                await client.validate_action(
+                    "execute_trade", {"amount": 100.0, "trigger_503": True}
+                )
+            assert exc_503.value.response.status_code == 503
+            assert attempts_503 == 1
         finally:
             await client._http.aclose()
             client._http = old_http

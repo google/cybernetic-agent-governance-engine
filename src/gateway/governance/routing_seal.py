@@ -70,6 +70,7 @@ Usage:
 
 from __future__ import annotations
 
+import asyncio
 import base64
 import functools
 import hashlib
@@ -261,20 +262,12 @@ def assert_custom_salt_in_production() -> None:
     if not _USING_DEFAULT_SALT:
         return  # Custom salt is set — no risk
 
-    env = (
-        os.environ.get("CAGE_ENV") or os.environ.get("ENVIRONMENT", "production")
-    ).lower()
-    non_production_envs = (
-        "development",
-        "dev",
-        "test",
-        "ci",
-        "staging",
-        "uat",
-        "preprod",
-    )
-    if env in non_production_envs:
-        return  # Non-production — default salt is acceptable
+    from src.gateway.governance.env_posture import is_enforcing, resolve_posture
+
+    posture = resolve_posture()
+    if not is_enforcing(posture):
+        return  # Permissive posture (dev/test/ci) — default salt is acceptable
+    env = posture.value
 
     raise RuntimeError(
         "CAGE SECURITY FAILURE: GOVERNANCE_SALT is using the hardcoded default value "
@@ -859,7 +852,7 @@ def verify_seal(
             elif kty == "OKP":
                 algs = ["EdDSA"]
             else:
-                algs = ["RS256", "PS256"]
+                algs = ["RS256", "RS384", "RS512", "PS256", "PS384", "PS512"]
 
             def _reject_seal(fail_reason: str, fail_action: str) -> None:
                 logger.warning(
@@ -1461,7 +1454,7 @@ def _verified_jwt_claims_for_revocation(seal: str) -> dict[str, Any]:
     elif kty == "OKP":
         algs = ["EdDSA"]
     else:
-        algs = ["RS256", "PS256"]
+        algs = ["RS256", "RS384", "RS512", "PS256", "PS384", "PS512"]
     try:
         claims: dict[str, Any] = pyjwt.decode(
             seal,
@@ -1605,10 +1598,7 @@ def require_cleared_seal(
 
             @functools.wraps(func)
             async def async_wrapper(*args: Any, **kwargs: Any) -> Any:
-                # verify_seal() raises SymbolicGovernorViolation on any failure —
-                # no need to check the return value. The wrapped function is never
-                # called if the seal is invalid (CRIT-1 fix).
-                verify_seal(seal, action, params)
+                await verify_and_consume_seal(seal, action, params)
                 return await func(*args, **kwargs)
 
             return async_wrapper  # type: ignore[return-value]
@@ -1616,10 +1606,15 @@ def require_cleared_seal(
 
             @functools.wraps(func)
             def sync_wrapper(*args: Any, **kwargs: Any) -> Any:
-                # verify_seal() raises SymbolicGovernorViolation on any failure —
-                # no need to check the return value. The wrapped function is never
-                # called if the seal is invalid (CRIT-1 fix).
-                verify_seal(seal, action, params)
+                try:
+                    asyncio.get_running_loop()
+                except RuntimeError:
+                    asyncio.run(verify_and_consume_seal(seal, action, params))
+                else:
+                    raise SymbolicGovernorViolation(
+                        "sync @require_cleared_seal cannot consume seal inside an active event loop; use async def",
+                        action,
+                    )
                 return func(*args, **kwargs)
 
             return sync_wrapper  # type: ignore[return-value]

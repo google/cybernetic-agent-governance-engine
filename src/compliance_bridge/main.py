@@ -2634,6 +2634,14 @@ async def defer_inject(
                 status_code=409,
                 detail={"error": "DEFER_TOKEN_ALREADY_RESOLVED", "defer_id": defer_id},
             )
+        elif result == getattr(ReplayResult, "NOT_HYDRATION_ELIGIBLE", None):
+            raise HTTPException(
+                status_code=403,
+                detail={
+                    "error": "DEFER_TOKEN_NOT_HYDRATION_ELIGIBLE",
+                    "defer_id": defer_id,
+                },
+            )
         elif result == ReplayResult.PARKED:
             # Injected context did not raise confidence above confidence.defer_floor (0.70)
             # Publish DEFER_PARKED event (not DEFER_RESOLVED) for accurate audit trail

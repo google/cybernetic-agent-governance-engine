@@ -101,6 +101,7 @@ gate_scripts=(
   scripts/check_lula_stub_count.py
   scripts/check_poam_lula_divergence.py
   scripts/check_producer_consumer_keys.py
+  scripts/check_mechanism_references.py
   scripts/check_k8s_terraform_parity.py
   scripts/check_stpa_freshness.py
   scripts/check_ai600_lula_manifests.py

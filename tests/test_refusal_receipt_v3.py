@@ -33,15 +33,15 @@ from src.gateway.governance.contracts import GovernanceTierFailure, RefusalRecei
 class TestRefusalReceiptSchemaV3:
     """RefusalReceipt schema v3 tests."""
 
-    def test_default_schema_version_is_v4(self) -> None:
-        """Default schema_version is 'v4' (RP-1 WORM retention/content split)."""
+    def test_default_schema_version_is_v5(self) -> None:
+        """Default schema_version is 'v5' (FA-1 stage-coverage proof binding)."""
         receipt = RefusalReceipt(
             thread_id="test",
             action="test_action",
             violated_tier="TEST_TIER",
             violated_rule="TEST_RULE",
         )
-        assert receipt.schema_version == "v4"
+        assert receipt.schema_version == "v5"
 
     def test_v3_receipt_includes_tier_failures_in_hash(self) -> None:
         """Schema v3 proof_hash includes tier_failures in computation."""

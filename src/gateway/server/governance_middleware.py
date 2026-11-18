@@ -51,7 +51,11 @@ from src.gateway.governance.decisions import GovernanceDecision
 from src.gateway.governance.evidence.stream import get_evidence_sink
 from src.gateway.governance.governance_envelope import GovernanceEnvelopeBuilder
 from src.gateway.governance.governor.approval import PostHitlApproval
-from src.gateway.governance.governor.errors import GovernanceDeferred
+from src.gateway.governance.governor.errors import (
+    DeferQueueUnavailableError,
+    GovernanceDeferred,
+    GovernanceInfrastructureError,
+)
 from src.gateway.governance.governor.governor import GovernanceError, SymbolicGovernor
 from src.gateway.governance.governor.metrics import (
     governor_metrics,
@@ -193,6 +197,14 @@ async def enforce_governance(
         # deferral (parked token + GOVERNANCE_DEFERRAL) is already evidenced.
         logger.info("🕒 Symbolic Governor DEFERRED %s: %s", tool_name, exc)
         raise ActionDeferred(exc, approval_retained=False) from exc
+    except DeferQueueUnavailableError:
+        # GOVERNANCE_DEFERRAL (persisted=False) was already chained; never
+        # emit a contradictory GOVERNANCE_REFUSAL_RECEIPT (F-05).
+        raise
+    except GovernanceInfrastructureError:
+        # GOVERNANCE_INFRASTRUCTURE_BLOCK was already chained; never fabricate
+        # a KMS-signed policy refusal receipt (POAM-2026-233).
+        raise
     except GovernanceError as exc:
         logger.warning("🛡️ Symbolic Governor BLOCKED %s: %s", tool_name, exc)
         emitted = await _emit_refusal_receipt(
@@ -326,6 +338,8 @@ async def enforce_approved_governance(
         # the approval); a deferral is not a refusal, so no refusal receipt.
         logger.info("🕒 Post-approval re-validation DEFERRED %s: %s", tool_name, exc)
         raise ActionDeferred(exc, approval_retained=True) from exc
+    except GovernanceInfrastructureError:
+        raise
     except GovernanceError as exc:
         logger.warning("🛡️ Post-approval re-validation BLOCKED %s: %s", tool_name, exc)
         emitted = await _emit_refusal_receipt(
@@ -1012,6 +1026,30 @@ async def validate_action_endpoint(
                 for v in payload_result["violations"]
             ]
 
+        verdict_val = payload_result.get("verdict")
+        has_persisted_ticket = bool(
+            payload_result.get("deferred_id")
+            or payload_result.get("defer_token")
+            or payload_result.get("defer_id")
+        )
+        if (
+            verdict_val
+            in (
+                GovernanceDecision.REQUIRE_APPROVAL,
+                "REQUIRE_APPROVAL",
+                GovernanceDecision.DEFER,
+                "DEFER",
+            )
+            and not has_persisted_ticket
+        ):
+            return JSONResponse(
+                status_code=503,
+                content={
+                    "error": "defer_queue_unavailable",
+                    "detail": "Deferral could not be persisted to DeferQueue; failing closed.",
+                },
+            )
+
         builder = GovernanceEnvelopeBuilder()
         envelope = await builder.build(
             action=body.action,
@@ -1023,6 +1061,28 @@ async def validate_action_endpoint(
         )
         return JSONResponse(content=envelope.to_dict(include_signature=True))
 
+    except DeferQueueUnavailableError as exc:
+        logger.error(
+            "DeferQueue unavailable during validate_action (%s)",
+            type(exc).__name__,
+        )
+        return JSONResponse(
+            status_code=503,
+            content={
+                "error": "defer_queue_unavailable",
+                "detail": "Deferral could not be persisted to DeferQueue; failing closed.",
+            },
+        )
+    except GovernanceInfrastructureError as exc:
+        return JSONResponse(
+            status_code=503,
+            content={
+                "error": exc.error_code,
+                "dependency": exc.dependency,
+                "failure_code": exc.failure_code,
+                "detail": str(exc),
+            },
+        )
     except GovernanceError as exc:
         from src.gateway.governance.evidence.stream import (
             EvidenceChainUnavailableError,

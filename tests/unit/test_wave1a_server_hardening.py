@@ -1305,7 +1305,9 @@ class TestKC10KC12KC13InfraAndAuth:
             pipe.multi()
             pipe.set("watched_k", "v1_committed")
 
-        with pytest.raises(TransactionAbortedError):
+        import src.gateway.infrastructure.redis_client as _rc_mod
+
+        with pytest.raises(_rc_mod.TransactionAbortedError):
             await wrapper.watched_transaction(
                 watch_keys=["watched_k"],
                 staging_keys=["staging_temp"],

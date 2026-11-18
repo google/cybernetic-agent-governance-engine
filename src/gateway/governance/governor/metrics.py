@@ -95,6 +95,7 @@ class GovernorMetrics:
         "_evidenced_requests_permitted",
         "_ftra_boundary_checks",
         "_gated_requests",
+        "_infrastructure_blocks",
         "_refusals",
     )
 
@@ -126,6 +127,16 @@ class GovernorMetrics:
                 "cage_governance_refusals_total",
                 "Total hard governance refusals decided by the gateway",
                 ["tier"],
+                registry=registry,
+            )
+        )
+        self._infrastructure_blocks = (
+            None
+            if Counter is None or registry is None
+            else Counter(
+                "cage_governance_infrastructure_blocks_total",
+                "Total requests blocked fail-closed due to governance infrastructure or dependency unavailability",
+                ["dependency", "code"],
                 registry=registry,
             )
         )
@@ -176,6 +187,14 @@ class GovernorMetrics:
         mark_request_refused()
         if self._refusals is not None:
             self._refusals.labels(tier=tier or "SYMBOLIC_GOVERNOR").inc()
+
+    def infrastructure_block_decided(self, dependency: str, code: str) -> None:
+        """Count one fail-closed infrastructure block without incrementing policy refusals."""
+        if self._infrastructure_blocks is not None:
+            self._infrastructure_blocks.labels(
+                dependency=dependency or "unknown",
+                code=code or "INFRASTRUCTURE_UNAVAILABLE",
+            ).inc()
 
     def gated_request_completed(
         self,

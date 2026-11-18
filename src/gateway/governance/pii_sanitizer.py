@@ -228,19 +228,28 @@ PHONE_PATTERN: re.Pattern[str] = re.compile(
 _CREDENTIAL_PATTERNS: list[
     tuple[re.Pattern[str], str | Callable[[re.Match[str]], str]]
 ] = [
-    # API keys and Bearer tokens: Langfuse (pk-lf-*, sk-lf-*), HuggingFace
-    # (hf_*), and generic Bearer tokens (run before UUID preservation so opaque
-    # ``Bearer <uuid>`` tokens are still scrubbed).
-    (
-        re.compile(r"\b(?:pk-lf-|sk-lf-|hf_|Bearer\s+)[A-Za-z0-9_\-]{8,}\b"),
-        "[REDACTED_API_KEY]",
-    ),
-    # Compact JWS/JWT tokens (R5: ConsequenceToken leakage mitigation).
+    # Compact JWS/JWT tokens (KG-05 / R5: ConsequenceToken & routing_seal leakage
+    # mitigation). MUST run BEFORE generic Bearer redaction so ``Bearer eyJ...``
+    # scrubs the entire 3-segment JWS instead of leaving ``.<payload>.<sig>``.
     (
         re.compile(
-            r"\beyJ[A-Za-z0-9_\-]{17,}\.[A-Za-z0-9_\-]{20,}\.[A-Za-z0-9_\-]{20,}(?![A-Za-z0-9_\-])"
+            r"(?:(?i:\bBearer)\s+)?\beyJ[A-Za-z0-9_\-]{10,}\.[A-Za-z0-9_\-]{10,}\.[A-Za-z0-9_\-]{10,}(?![A-Za-z0-9_\-])"
         ),
         "[REDACTED_JWS]",
+    ),
+    # Redis / Valkey connection URLs carrying embedded credentials.
+    (
+        re.compile(r"\brediss?://[^:\s/\"']*:[^@\s\"']+@[^\s\"']+"),
+        "[REDACTED_REDIS_URL]",
+    ),
+    # API keys and Bearer tokens: Langfuse (pk-lf-*, sk-lf-*), HuggingFace
+    # (hf_*), Google API/credential tokens (GOOG*), and generic Bearer tokens
+    # (run before UUID preservation so opaque ``Bearer <uuid>`` tokens are scrubbed).
+    (
+        re.compile(
+            r"\b(?:pk-lf-[A-Za-z0-9_\-]{8,}|sk-lf-[A-Za-z0-9_\-]{8,}|hf_[A-Za-z0-9_\-]{8,}|GOOG[A-Za-z0-9_\-]{12,}|(?i:Bearer)\s+[A-Za-z0-9_\-\.=]{8,})(?![A-Za-z0-9_\-])"
+        ),
+        "[REDACTED_API_KEY]",
     ),
 ]
 
@@ -510,16 +519,17 @@ def pii_audit_log(
 # Module-level singleton (lazy init)
 # ---------------------------------------------------------------------------
 
+import threading
+
 _pii_sanitizer: PIISanitizer | None = None
+_pii_sanitizer_lock = threading.Lock()
 
 
 def _get_pii_sanitizer() -> PIISanitizer:
-    """Return the module-level PIISanitizer singleton.
-
-    Lazily initialised on first call.  Thread-safe because Python's GIL
-    guarantees atomic reference assignment for simple object creation.
-    """
+    """Return the module-level PIISanitizer singleton (thread-safe lazy init)."""
     global _pii_sanitizer
     if _pii_sanitizer is None:
-        _pii_sanitizer = PIISanitizer()
+        with _pii_sanitizer_lock:
+            if _pii_sanitizer is None:
+                _pii_sanitizer = PIISanitizer()
     return _pii_sanitizer

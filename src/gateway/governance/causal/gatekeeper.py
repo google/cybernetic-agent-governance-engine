@@ -121,25 +121,42 @@ from src.gateway.governance.schemas.thresholds import (
     get_telemetry_max_staleness_seconds,
 )
 
-# CAUSAL_LOCK_P_VALUE_THRESHOLD (Phase 2 — placebo refutation):
-#   If the placebo treatment refuter's p-value is below this threshold, the
-#   null hypothesis (no spurious effect) is rejected at the 5% significance
-#   level. The world-model's causal assumptions cannot be trusted.
-CAUSAL_LOCK_P_VALUE_THRESHOLD: float = get_causal_p_value_threshold()
+# KG-19: Resolved dynamically via thresholds accessors on each check rather
+# than frozen at import time; module __getattr__ provides compatibility reads,
+# and explicit monkeypatches on module globals take precedence when set.
+_MAX_TELEMETRY_FUTURE_SKEW_SECONDS: float = 5.0
 
-# CAUSAL_LOCK_PLACEBO_EFFECT_MAGNITUDE (Phase 2 — placebo refutation):
-#   If the absolute value of the placebo refuter's new_effect exceeds this
-#   threshold, the estimated causal effect is considered unreliable regardless
-#   of the p-value. Like beta, the placebo effect is measured per normalised
-#   unit of treatment (``CausalSpec.normalization_scale``).
-CAUSAL_LOCK_PLACEBO_EFFECT_MAGNITUDE: float = get_causal_placebo_effect_magnitude()
 
-# CAUSAL_LOCK_RISK_BOUNDARY (Phase 1 — marginal risk boundary):
-#   If (0.5 + estimated_marginal_effect) exceeds this threshold, the proposed
-#   action is predicted to push the system's outcome metric above the safety
-#   boundary. estimated_marginal_effect = beta * treatment_value /
-#   normalization_scale, the predicted change in the outcome metric.
-CAUSAL_LOCK_RISK_BOUNDARY: float = get_causal_risk_boundary()
+def _effective_p_value_threshold() -> float:
+    override = globals().get("CAUSAL_LOCK_P_VALUE_THRESHOLD")
+    if isinstance(override, (int, float)) and not isinstance(override, bool):
+        return float(override)
+    return get_causal_p_value_threshold()
+
+
+def _effective_placebo_effect_magnitude() -> float:
+    override = globals().get("CAUSAL_LOCK_PLACEBO_EFFECT_MAGNITUDE")
+    if isinstance(override, (int, float)) and not isinstance(override, bool):
+        return float(override)
+    return get_causal_placebo_effect_magnitude()
+
+
+def _effective_risk_boundary() -> float:
+    override = globals().get("CAUSAL_LOCK_RISK_BOUNDARY")
+    if isinstance(override, (int, float)) and not isinstance(override, bool):
+        return float(override)
+    return get_causal_risk_boundary()
+
+
+def __getattr__(name: str) -> Any:
+    if name == "CAUSAL_LOCK_P_VALUE_THRESHOLD":
+        return get_causal_p_value_threshold()
+    if name == "CAUSAL_LOCK_PLACEBO_EFFECT_MAGNITUDE":
+        return get_causal_placebo_effect_magnitude()
+    if name == "CAUSAL_LOCK_RISK_BOUNDARY":
+        return get_causal_risk_boundary()
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
+
 
 # CAUSAL_NORMALIZATION_SCALE:
 #   Default treatment unit for a CausalSpec that does not set one. The
@@ -205,13 +222,17 @@ def _extract_telemetry_watermark(telemetry: pd.DataFrame) -> float | None:
             return None
 
         raw_ts = telemetry[ts_col].max()
-        if raw_ts is None or pd.isna(raw_ts):
+        if raw_ts is None or isinstance(raw_ts, (bool, np.bool_)) or pd.isna(raw_ts):
             return None
         if isinstance(raw_ts, (int, float, np.number)):
             val = float(raw_ts)
-            if not math.isfinite(val):
+            if not math.isfinite(val) or val <= 0:
                 return None
-            if val > 1e12:
+            # Reject µs/ns epoch magnitudes (> year ~5138 in ms) instead of
+            # dividing by 1000 into far-future timestamps (KG-19).
+            if val > 1e14:
+                return None
+            if val > 1e11:
                 val = val / 1000.0
             return val
         most_recent = pd.to_datetime(raw_ts, utc=True).to_pydatetime()
@@ -256,10 +277,22 @@ def _check_telemetry_freshness(  # type: ignore[no-untyped-def]
 
         most_recent = datetime.fromtimestamp(watermark, tz=timezone.utc)
         now_utc = datetime.now(tz=timezone.utc)
-        age_seconds = int((now_utc - most_recent).total_seconds())
+        age_float = (now_utc - most_recent).total_seconds()
+        age_seconds = int(age_float)
         max_staleness = get_telemetry_max_staleness_seconds()
 
-        if age_seconds > max_staleness:
+        if age_float < -_MAX_TELEMETRY_FUTURE_SKEW_SECONDS:
+            logger.warning(
+                "Telemetry freshness check: most-recent observation is %.1fs in the future "
+                "(max_skew=%.1fs) — failing closed.",
+                -age_float,
+                _MAX_TELEMETRY_FUTURE_SKEW_SECONDS,
+            )
+            span.set_attribute("causal.telemetry_stale", True)
+            span.set_attribute("causal.telemetry_age_seconds", age_seconds)
+            return False
+
+        if age_float > max_staleness:
             logger.warning(
                 "Telemetry freshness check: most-recent observation is %ds old "
                 "(threshold=%ds) — failing closed (stale telemetry cannot be "
@@ -903,18 +936,19 @@ class CausalGatekeeper:
         estimated_risk = _marginal_risk(
             beta, treatment_value, self.spec.normalization_scale
         )
+        risk_boundary = _effective_risk_boundary()
         with tracer.start_as_current_span(
             "causal_gatekeeper.risk_boundary"
         ) as risk_span:
             risk_span.set_attribute("causal.estimated_risk", estimated_risk)
-            risk_span.set_attribute("causal.risk_boundary", CAUSAL_LOCK_RISK_BOUNDARY)
-            if estimated_risk > CAUSAL_LOCK_RISK_BOUNDARY:
+            risk_span.set_attribute("causal.risk_boundary", risk_boundary)
+            if estimated_risk > risk_boundary:
                 logger.warning(
                     "[%s] CAUSAL LOCK: Proposed action predicted to exceed safety boundary "
                     "(estimated_risk=%.4f > boundary=%.4f).",
                     GovernanceControl.TRADITIONAL_MRM_VALIDATION.value,
                     estimated_risk,
-                    CAUSAL_LOCK_RISK_BOUNDARY,
+                    risk_boundary,
                 )
                 risk_span.set_attribute("causal.lock_reason", "risk_boundary_exceeded")
                 return False
@@ -1053,9 +1087,9 @@ def _placebo_lock_reason(placebo: PlaceboRefutation, beta: float) -> str | None:
     p_value, new_effect = placebo.p_value, placebo.new_effect
     if not _is_finite_real(p_value) or not _is_finite_real(new_effect):
         return REASON_PLACEBO_RESULT_INVALID
-    if p_value < CAUSAL_LOCK_P_VALUE_THRESHOLD:
+    if p_value < _effective_p_value_threshold():
         return REASON_PLACEBO_P_VALUE
-    if abs(new_effect) > CAUSAL_LOCK_PLACEBO_EFFECT_MAGNITUDE:
+    if abs(new_effect) > _effective_placebo_effect_magnitude():
         return REASON_PLACEBO_EFFECT_MAGNITUDE
     return None
 
@@ -1317,12 +1351,12 @@ def validate_world_model(
             tel_span.set_attribute("causal.lock_reason", lock_reason)
             if lock_reason == REASON_PLACEBO_P_VALUE:
                 tel_span.set_attribute(
-                    "causal.lock_p_value_threshold", CAUSAL_LOCK_P_VALUE_THRESHOLD
+                    "causal.lock_p_value_threshold", _effective_p_value_threshold()
                 )
             elif lock_reason == REASON_PLACEBO_EFFECT_MAGNITUDE:
                 tel_span.set_attribute(
                     "causal.lock_effect_magnitude_threshold",
-                    CAUSAL_LOCK_PLACEBO_EFFECT_MAGNITUDE,
+                    _effective_placebo_effect_magnitude(),
                 )
             return WorldModelVerdict(False, beta, lock_reason)
 

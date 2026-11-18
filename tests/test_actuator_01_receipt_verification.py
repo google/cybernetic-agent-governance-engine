@@ -629,6 +629,7 @@ class TestReceiptInvariant:
                 receipt_id="r",
                 session_uuid=None,
                 raw_receipt=None,
+                outcome=ActuationOutcome.ACCEPTED,
                 verification=ReceiptVerification.INVALID,
             )
 

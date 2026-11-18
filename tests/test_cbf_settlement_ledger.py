@@ -1051,7 +1051,16 @@ async def test_discrepancy_guard_tolerates_unsettled_debits_but_not_external_mov
 # ---------------------------------------------------------------------------
 
 
-def _clearance(amount: float) -> ExecutionClearance:
+async def _clearance(
+    amount: float, monkeypatch: pytest.MonkeyPatch
+) -> ExecutionClearance:
+    import src.gateway.governance.jwks as jwks_mod
+    import src.gateway.governance.kms_signer as ks
+    from src.gateway.governance.routing_seal import generate_seal, seal_digest
+
+    provider = ks.SoftwareEd25519Provider(key_id="cbf-ledger-test-k1")
+    monkeypatch.setattr(ks, "_signer", ks.KMSGovernanceSigner(provider=provider))
+    monkeypatch.setattr(jwks_mod, "_global_jwks", None)
     params = {
         "symbol": "AAPL",
         "amount": amount,
@@ -1062,6 +1071,7 @@ def _clearance(amount: float) -> ExecutionClearance:
         "trader_role": "junior",
         "side": "buy",
     }
+    seal = await generate_seal(ACTION, params, record_hash="e" * 64)
     return ExecutionClearance(
         thread_id=params["transaction_id"],
         decision="ALLOW",
@@ -1073,7 +1083,7 @@ def _clearance(amount: float) -> ExecutionClearance:
         issued_at_provenance="CONSTRUCTION_TIME",
         correlation_id=params["transaction_id"],
         correlation_id_source="THREAD_DERIVED",
-        governance_decision_digest=hashlib.sha256(b"seal").hexdigest(),
+        governance_decision_digest=seal_digest(seal),
         opa_input_digest=hashlib.sha256(
             json.dumps(params, sort_keys=True).encode()
         ).hexdigest(),
@@ -1081,7 +1091,7 @@ def _clearance(amount: float) -> ExecutionClearance:
         params=params,
         required_quorum=0,
         executor_id="cage_finance_broker",
-        routing_seal="seal",
+        routing_seal=seal,
     )
 
 
@@ -1093,7 +1103,7 @@ async def test_broker_actuator_journals_the_fill_with_the_custodian(
     journal = InMemoryLedgerJournal()
     custodian = SimulatedCashLedgerProvider(journal=journal, settlement_lag_s=0.0)
     actuator = BrokerActuator(ledger=custodian)
-    clearance = _clearance(250.0)
+    clearance = await _clearance(250.0, monkeypatch)
     with patch(
         "src.cage_finance.actuators.broker_actuator.execute_trade",
         new_callable=AsyncMock,
@@ -1117,12 +1127,13 @@ async def test_broker_actuator_refuses_when_the_custodian_journal_fails(
     broken = MagicMock()
     broken.record_debit = MagicMock(side_effect=ConnectionError("journal down"))
     actuator = BrokerActuator(ledger=broken)
+    clearance = await _clearance(250.0, monkeypatch)
     with patch(
         "src.cage_finance.actuators.broker_actuator.execute_trade",
         new_callable=AsyncMock,
         return_value="EXECUTED",
     ):
-        receipt = await actuator.actuate(_clearance(250.0))
+        receipt = await actuator.actuate(clearance)
     assert receipt.accepted is False
     # The trade executed before the journal failed: indeterminate, and a
     # retry would double-execute.

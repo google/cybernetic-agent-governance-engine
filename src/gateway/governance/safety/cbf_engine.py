@@ -87,8 +87,27 @@ def _is_cbf_strict_mode() -> bool:
 _REPLAY_DEFENSE_ENABLED: bool = os.environ.get(
     "CAGE_RECONCILIATION_REPLAY_DEFENSE", "false"
 ).lower() in ("true", "1", "yes")
+_BOOT_REPLAY_DEFENSE: bool = _REPLAY_DEFENSE_ENABLED
 
 _REDIS_KEY_SEQUENCE_LAST_ACCEPTED = "reconciliation:sequence:last_accepted"
+
+
+def _sequence_last_accepted_key(invariant_id: str | None = None) -> str:
+    clean = (invariant_id or "").strip()
+    if not clean or clean == "finance.cash_balance":
+        return _REDIS_KEY_SEQUENCE_LAST_ACCEPTED
+    return f"{_REDIS_KEY_SEQUENCE_LAST_ACCEPTED}:{clean}"
+
+
+def _is_replay_defense_enabled() -> bool:
+    if _REPLAY_DEFENSE_ENABLED != _BOOT_REPLAY_DEFENSE:
+        return bool(_REPLAY_DEFENSE_ENABLED)
+    return os.environ.get("CAGE_RECONCILIATION_REPLAY_DEFENSE", "false").lower() in (
+        "true",
+        "1",
+        "yes",
+    )
+
 
 # Atomic compare-and-advance of the replay high-water mark. Returns
 # {1, last} when the incoming sequence is >= last (advancing the mark if
@@ -108,18 +127,52 @@ return {1, last}
 _FENCE_EPOCH_ENABLED: bool = os.environ.get(
     "CAGE_REDIS_SYNCHRONOUS_REPLICATION", "true"
 ).lower() in ("true", "1", "yes")
+_BOOT_FENCE_EPOCH_ENABLED: bool = _FENCE_EPOCH_ENABLED
+
+
+def _is_fence_epoch_enabled() -> bool:
+    if _FENCE_EPOCH_ENABLED != _BOOT_FENCE_EPOCH_ENABLED:
+        return bool(_FENCE_EPOCH_ENABLED)
+    return os.environ.get("CAGE_REDIS_SYNCHRONOUS_REPLICATION", "true").lower() in (
+        "true",
+        "1",
+        "yes",
+    )
+
 
 _REDIS_KEY_FENCE_EPOCH = "safety:fence_epoch"
 _REDIS_KEY_FENCE_EPOCH_HWM = "safety:fence_epoch_hwm"
 
 # The replica-acknowledgement (WAIT) policy is shared with the consequence
-# authority store (redis_replication.ReplicationPolicy). Read per call through
-# these three names, which tests patch.
+# authority store (redis_replication.ReplicationPolicy). Resolved dynamically
+# unless a test patches these module-level overrides directly.
 _replication = ReplicationPolicy.from_env()
 _WAIT_REPLICAS: int = _replication.replicas
 _WAIT_TIMEOUT_MS: int = _replication.timeout_ms
 _STRICT_REPLICATION: bool = _replication.strict
+_BOOT_WAIT_REPLICAS: int = _WAIT_REPLICAS
+_BOOT_WAIT_TIMEOUT_MS: int = _WAIT_TIMEOUT_MS
+_BOOT_STRICT_REPLICATION: bool = _STRICT_REPLICATION
 del _replication
+
+
+def _resolve_wait_replicas() -> int:
+    if _WAIT_REPLICAS != _BOOT_WAIT_REPLICAS:
+        return _WAIT_REPLICAS
+    return ReplicationPolicy.from_env().replicas
+
+
+def _resolve_wait_timeout_ms() -> int:
+    if _WAIT_TIMEOUT_MS != _BOOT_WAIT_TIMEOUT_MS:
+        return _WAIT_TIMEOUT_MS
+    return ReplicationPolicy.from_env().timeout_ms
+
+
+def _resolve_strict_replication() -> bool:
+    if _STRICT_REPLICATION != _BOOT_STRICT_REPLICATION:
+        return _STRICT_REPLICATION
+    return ReplicationPolicy.from_env().strict
+
 
 _COMMIT_ATTEMPTS: int = max(1, int(os.environ.get("CAGE_CBF_COMMIT_ATTEMPTS", "3")))
 _COMMIT_RETRY_BASE_DELAY_SECONDS: float = float(
@@ -505,10 +558,13 @@ return {1, status, tostring(restored), new_epoch, tostring(current), tostring(re
         self._cost_resolver = cost_resolver or self._default_cost_resolver
         self._gamma_override: float | None = None
         self._threshold_override: float | None = None
+        effective_ns = (
+            debit_namespace if debit_namespace is not None else invariant.invariant_id
+        )
         self._debit_ledger: DebitLedger = (
             debit_ledger
             if debit_ledger is not None
-            else DebitLedger(namespace=debit_namespace)
+            else DebitLedger(namespace=effective_ns)
         )
 
         # Validate threshold_key resolves at construction time
@@ -566,10 +622,9 @@ return {1, status, tostring(restored), new_epoch, tostring(current), tostring(re
 
     @gamma.setter
     def gamma(self, value: float) -> None:
-        cage_env = os.getenv("CAGE_ENV", "dev").lower()
-        if cage_env in ("production", "prod"):
+        if is_enforcing(resolve_posture()):
             logger.warning(
-                "gamma override in production is unsafe for concurrent requests; "
+                "gamma override in enforcing posture is unsafe for concurrent requests; "
                 "use static configuration (InvariantModel.gamma) instead"
             )
         self._gamma_override = value
@@ -921,8 +976,10 @@ return {1, status, tostring(restored), new_epoch, tostring(current), tostring(re
         *,
         socket: object | None = None,
     ) -> bool:
-        replicas = num_replicas if num_replicas is not None else _WAIT_REPLICAS
-        timeout = timeout_ms if timeout_ms is not None else _WAIT_TIMEOUT_MS
+        replicas = (
+            num_replicas if num_replicas is not None else _resolve_wait_replicas()
+        )
+        timeout = timeout_ms if timeout_ms is not None else _resolve_wait_timeout_ms()
 
         if replicas <= 0:
             return True
@@ -1013,18 +1070,23 @@ return {1, status, tostring(restored), new_epoch, tostring(current), tostring(re
         closed: the caller falls back to the non-reconciled path, which
         strict mode refuses.
         """
-        if not isinstance(incoming_sequence, int) or incoming_sequence < 0:
+        if (
+            isinstance(incoming_sequence, bool)
+            or not isinstance(incoming_sequence, int)
+            or incoming_sequence < 0
+        ):
             return (False, f"invalid sequence={incoming_sequence}")
+        seq_key = _sequence_last_accepted_key(self._invariant.invariant_id)
         try:
             eval_res = await asyncio.to_thread(
                 sync_redis.eval,
                 _SEQUENCE_ADVANCE_LUA,
                 1,
-                _REDIS_KEY_SEQUENCE_LAST_ACCEPTED,
+                seq_key,
                 str(incoming_sequence),
             )
             if _is_mock(eval_res) and incoming_sequence == 0:
-                raw_last = sync_redis.get(_REDIS_KEY_SEQUENCE_LAST_ACCEPTED)
+                raw_last = sync_redis.get(seq_key)
                 if raw_last is None or _is_mock(raw_last):
                     return (True, "OK")
                 last_val = int(raw_last)
@@ -1145,7 +1207,10 @@ return {1, status, tostring(restored), new_epoch, tostring(current), tostring(re
                         # G8: verify against reconciler-only trust anchors,
                         # resolved by the snapshot's kid. Gateway-signed or
                         # unknown-kid snapshots fail closed.
-                        sig_valid = verify_snapshot_signature(verified)
+                        sig_valid = verify_snapshot_signature(
+                            verified,
+                            expected_invariant_id=self._invariant.invariant_id,
+                        )
                         if not sig_valid:
                             logger.critical(
                                 json.dumps(
@@ -1166,7 +1231,7 @@ return {1, status, tostring(restored), new_epoch, tostring(current), tostring(re
                             }
 
                         seq_num = getattr(verified, "sequence", 0)
-                        if _REPLAY_DEFENSE_ENABLED:
+                        if _is_replay_defense_enabled():
                             (
                                 sequence_valid,
                                 seq_reason,
@@ -1203,7 +1268,7 @@ return {1, status, tostring(restored), new_epoch, tostring(current), tostring(re
                         fence_epoch, redis_hwm = await self._read_fence_epoch_and_hwm(
                             raw_client
                         )
-                        if _FENCE_EPOCH_ENABLED:
+                        if _is_fence_epoch_enabled():
                             floor_before = max(
                                 seen_before,
                                 epoch_before,
@@ -1354,7 +1419,7 @@ return {1, status, tostring(restored), new_epoch, tostring(current), tostring(re
             else:
                 redis_hwm = None
 
-            if _FENCE_EPOCH_ENABLED:
+            if _is_fence_epoch_enabled():
                 unambiguous_regression = current_epoch < seen_before or (
                     redis_hwm is not None and current_epoch < redis_hwm
                 )

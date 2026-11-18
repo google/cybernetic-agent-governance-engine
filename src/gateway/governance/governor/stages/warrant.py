@@ -62,8 +62,10 @@ REQUIRE_APPROVAL) and the ``RefusalReceipt`` (DENY), and the envelope's
 from __future__ import annotations
 
 import asyncio
-from collections.abc import Callable, Sequence
+import os
+from collections.abc import Callable, Mapping, Sequence
 from datetime import datetime, timezone
+from typing import Any
 
 from opentelemetry import trace
 
@@ -150,7 +152,7 @@ class WarrantStage(Stage):
                 *(self._cache.observe(b.norm_id) for b in governing)
             )
             records = tuple(
-                self._record(binding, observation, ctx.action, now)
+                self._record(binding, observation, ctx.action, ctx.params, now)
                 for binding, observation in zip(governing, observations, strict=True)
             )
             violations = tuple(
@@ -171,13 +173,14 @@ class WarrantStage(Stage):
         binding: NormBinding,
         observation: WarrantObservation,
         action: str,
+        params: Mapping[str, Any],
         now: datetime,
     ) -> RelianceRecord:
         return RelianceRecord(
             norm_id=binding.norm_id,
             required_governing_version=str(binding.governing_version),
             provider_name=self.source_name,
-            standing=self._standing(binding, observation, action, now),
+            standing=self._standing(binding, observation, action, params, now),
             observed_at=(
                 observation.observed_at.isoformat()
                 if observation.observed_at is not None
@@ -192,6 +195,7 @@ class WarrantStage(Stage):
         binding: NormBinding,
         observation: WarrantObservation,
         action: str,
+        params: Mapping[str, Any],
         now: datetime,
     ) -> StandingVerificationResult:
         attested_at = now.isoformat()
@@ -241,6 +245,12 @@ class WarrantStage(Stage):
                 warrant_id=warrant.warrant_id if warrant is not None else "",
                 warrant_digest=warrant.digest if warrant is not None else "",
             )
+        actor = (
+            os.environ.get("CAGE_WARRANT_ACTOR_ID", "").strip()
+            or str(params.get("actor") or "").strip()
+            or None
+        )
+        system = os.environ.get("CAGE_SYSTEM_ID", "").strip() or "cage-gateway"
         return WarrantStandingVerifier.verify_standing(
             warrant,
             context={
@@ -248,6 +258,8 @@ class WarrantStage(Stage):
                 "jurisdiction": self._jurisdiction,
                 "governing_version": binding.governing_version,
                 "norm_value": binding.value,
+                "actor": actor,
+                "system": system,
             },
             now=now,
             key_manifest=observation.key_manifest,

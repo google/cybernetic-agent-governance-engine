@@ -27,8 +27,12 @@ from src.cage_finance.safety.bounding.contract import (
     BoundingContractEnforcer,
 )
 from src.cage_finance.safety.bounding.providers import (
+    MarketDataProvider,
+    RollbackCapabilityProvider,
     StubMarketDataProvider,
     StubRollbackCapabilityProvider,
+    UnconfiguredEnforcingMarketDataProvider,
+    UnconfiguredEnforcingRollbackProvider,
 )
 from src.cage_finance.safety.bounding.registry import BoundingContractRegistry
 from src.cage_finance.safety.fiscal_limit_guard import FiscalLimitGuard
@@ -55,6 +59,7 @@ from src.gateway.governance.contracts import (
     EvaluatedParamSpec,
     PluginContribution,
 )
+from src.gateway.governance.env_posture import is_enforcing, resolve_posture
 from src.gateway.governance.governor.assembly import DisabledTier
 from src.gateway.governance.safety.cbf_engine import ControlBarrierFunction
 
@@ -128,6 +133,15 @@ class FinanceCagePlugin(CagePlugin):
         ),
     )
 
+    def __init__(
+        self,
+        *,
+        market_data_provider: MarketDataProvider | None = None,
+        rollback_provider: RollbackCapabilityProvider | None = None,
+    ) -> None:
+        self._market_data_provider = market_data_provider
+        self._rollback_provider = rollback_provider
+
     def contribute(self) -> PluginContribution:
         from src.cage_finance.ground_truth import SimulatedCashLedgerProvider
         from src.cage_finance.invariants import CashBarrier, finance_cost_resolver
@@ -164,15 +178,32 @@ class FinanceCagePlugin(CagePlugin):
         )
         consensus_gate = build_finance_consensus_gate()
 
-        # Dev/test bounding providers: permissive allowlists, stub market data
-        # and rollback capability (they fail closed in production).
+        enforcing_posture = is_enforcing(resolve_posture())
+        market_data_provider: MarketDataProvider = (
+            self._market_data_provider
+            if self._market_data_provider is not None
+            else (
+                UnconfiguredEnforcingMarketDataProvider()
+                if enforcing_posture
+                else StubMarketDataProvider()
+            )
+        )
+        rollback_provider: RollbackCapabilityProvider = (
+            self._rollback_provider
+            if self._rollback_provider is not None
+            else (
+                UnconfiguredEnforcingRollbackProvider()
+                if enforcing_posture
+                else StubRollbackCapabilityProvider()
+            )
+        )
         bounding_registry = BoundingContractRegistry(
             thresholds={
                 **effective.model_dump(),
                 **effective.domains.get("finance", {}),
             },
-            market_data_provider=StubMarketDataProvider(),
-            rollback_provider=StubRollbackCapabilityProvider(),
+            market_data_provider=market_data_provider,
+            rollback_provider=rollback_provider,
             enforcer=BoundingContractEnforcer(
                 BoundingContractConfig(
                     allowed_instruments={"AAPL", "MSFT", "GOOGL", "AMZN"},

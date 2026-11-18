@@ -30,13 +30,8 @@ def _prepare_for_canonicalization(obj: Any) -> Any:
     from src.gateway.governance.contracts import Violation
 
     if isinstance(obj, Violation):
-        # Convert Violation to dict for JSON serialization
-        return {
-            "tier": obj.tier,
-            "code": obj.code,
-            "message": obj.message,
-            "kind": obj.kind.value,  # Serialize enum to string
-        }
+        # Delegate to Violation.to_dict() so optional ``bound`` is preserved (KG-29).
+        return obj.to_dict()
     elif isinstance(obj, dict):
         return {k: _prepare_for_canonicalization(v) for k, v in obj.items()}
     elif isinstance(obj, (list, tuple)):

@@ -224,11 +224,11 @@ class ActuationReceipt:
 
     Returned by ExecutionActuator.actuate(). Follows the fail-closed pattern:
     network timeouts, HTTP errors, and parse failures never produce
-    ``accepted=True``. ``outcome`` distinguishes a definitive refusal
-    (``REJECTED``) from an indeterminate one (``UNKNOWN``); when omitted it
-    is derived from ``accepted`` (``True`` → ``ACCEPTED``, ``False`` →
-    ``REJECTED``), so adapters must set ``UNKNOWN`` explicitly wherever the
-    side effect may already have happened.
+    ``accepted=True``. ``outcome`` is a required keyword-only field with no
+    default so every adapter and caller must commit explicitly to
+    ``ACCEPTED``, ``REJECTED`` (definitive proof the side effect did not
+    happen), or ``UNKNOWN`` (indeterminate — reservations remain confirmed
+    pending reconciliation).
     """
 
     accepted: bool  # True only on a verified 200 with a valid receipt
@@ -245,17 +245,16 @@ class ActuationReceipt:
     envelope_digest: str | None = None  # SHA-256 of canonical envelope bytes
     timestamp_utc: str | None = None  # ISO-8601 UTC when actuation was attempted
 
-    outcome: ActuationOutcome | None = None
+    # Required explicit tri-state outcome (DA-01): omitting it is a TypeError.
+    outcome: ActuationOutcome = field(kw_only=True)
 
     # Cryptographic status of the actuator's receipt (see ReceiptVerification).
     verification: ReceiptVerification = ReceiptVerification.UNVERIFIED
 
     def __post_init__(self) -> None:
-        if self.outcome is None:
-            self.outcome = (
-                ActuationOutcome.ACCEPTED
-                if self.accepted
-                else ActuationOutcome.REJECTED
+        if not isinstance(self.outcome, ActuationOutcome):
+            raise TypeError(
+                f"outcome must be an ActuationOutcome, got {type(self.outcome).__name__}"
             )
         if self.accepted != (self.outcome is ActuationOutcome.ACCEPTED):
             raise ValueError(

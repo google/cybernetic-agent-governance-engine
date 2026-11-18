@@ -169,7 +169,7 @@ class CausalTierPlugin(ReadOnlyTier):
         return 6
 
     def claims_action(self, action: str, params: dict[str, Any]) -> bool:
-        return action == "execute_trade"
+        return action in ("execute_trade", "execute_trade_bounded")
 
     async def evaluate(self, action: str, params: dict[str, Any]) -> list[Violation]:
         # Calling the module-level causal_safety_check function allows patching at either

@@ -1408,7 +1408,9 @@ component-definition:
                   (src/compliance_bridge/sla_monitor.py) every 5 minutes over per-control
                   metrics computed from the custody chain (src/compliance_bridge/metrics.py) and
                   alerts through the configured notifier when a control's newest evidence
-                  exceeds its SLA.
+                  exceeds its SLA; however, preventive refusals/blocks currently advance
+                  last_event_date and zero-trace controls report evidence_age_seconds = 0.0,
+                  suppressing staleness alerts on dark or failing-only controls (POAM-2026-234).
                 - Custody verification: CustodyVerifier re-verifies archived evidence batches on
                   a schedule (see AU-10).
                 - Lula results ingestion: src/compliance_bridge/audit_workflow.py processes
@@ -1653,7 +1655,8 @@ component-definition:
                 bridge's stdout and no Slack or PagerDuty delivery is configured. Two producers
                 raise alerts: the evidence-age SLA monitor
                 (src/compliance_bridge/sla_monitor.py), every 5 minutes, when a control's newest
-                custody-chain evidence exceeds its SLA; and
+                custody-chain evidence exceeds its SLA (subject to POAM-2026-234: refusals/blocks
+                refresh last_event_date and zero-trace controls report 0.0s age); and
                 src/compliance_bridge/audit_workflow.py, for FAIL findings on critical controls
                 in Lula results submitted to POST /v1/audit/ingest. No alert fires on the PII
                 safety rate, an overall compliance score or OPA availability. Governance events
@@ -1772,7 +1775,9 @@ component-definition:
                 compliance bridge's evidence-age SLA monitor
                 (src/compliance_bridge/sla_monitor.py) computes per-control metrics from the
                 custody chain every 5 minutes and alerts through the configured notifier
-                (console in the reference Terraform) when a control's evidence goes stale.
+                (console in the reference Terraform) when a control's evidence goes stale
+                (currently masked by POAM-2026-234: refusals/blocks refresh last_event_date and
+                zero-trace controls report 0.0s age).
                 scripts/automated_auditor.py runs only when invoked by hand; nothing schedules
                 it.
               props:

@@ -1792,80 +1792,120 @@ def _audit_oscal_checks(
                             f"HOLDS claim references missing file {rel_p!r}"
                         )
 
-        if status_ex != "implemented":
-            continue
-        impl_count += 1
+        if status_ex == "implemented":
+            impl_count += 1
+            if verdict not in {"HOLDS", "INHERITED", "ROLLUP"}:
+                errors.append(
+                    f"[Check 4: Census] {rid}: OSCAL status 'implemented' has failing verdict {verdict!r}"
+                )
+                continue
 
-        if verdict not in {"HOLDS", "INHERITED", "ROLLUP"}:
-            errors.append(
-                f"[Check 4: Census] {rid}: OSCAL status 'implemented' has failing verdict {verdict!r}"
-            )
+        if verdict != "HOLDS":
             continue
 
-        if verdict in {"INHERITED", "ROLLUP"}:
-            continue
+        claim_kind = "implemented" if status_ex == "implemented" else "HOLDS"
 
         custody = row.get("custody")
         c_grade = custody.get("grade") if isinstance(custody, dict) else custody
         if c_grade in {"GOV_WRITABLE", "UNKNOWN", None, "n/a"}:
             errors.append(
-                f"[Check 3: Custody] OSCAL {rid}: implemented claim has forbidden custody grade {c_grade!r}"
+                f"[Check 3: Custody] OSCAL {rid}: {claim_kind} claim has forbidden custody grade {c_grade!r}"
             )
 
         lifetime = row.get("lifetime")
         lt_grade = lifetime.get("grade") if isinstance(lifetime, dict) else lifetime
         if lt_grade in {"SHORTER", "UNKNOWN", None, "n/a"}:
             errors.append(
-                f"[Check 2: Lifetime] OSCAL {rid}: implemented claim has insufficient lifetime grade {lt_grade!r}"
+                f"[Check 2: Lifetime] OSCAL {rid}: {claim_kind} claim has insufficient lifetime grade {lt_grade!r}"
             )
 
         read_back = row.get("read_back")
         rb_grade = read_back.get("grade") if isinstance(read_back, dict) else read_back
         if rb_grade not in {"OBSERVES", "PRESENCE"}:
             errors.append(
-                f"[Check 1: Read-Back] OSCAL {rid}: implemented claim has read_back grade {rb_grade!r}"
+                f"[Check 1: Read-Back] OSCAL {rid}: {claim_kind} claim has read_back grade {rb_grade!r}"
             )
             continue
 
+        rb_check_str = str(
+            read_back.get("check", "") if isinstance(read_back, dict) else read_back
+        )
+        rb_note_str = str(
+            read_back.get("note", "") if isinstance(read_back, dict) else ""
+        )
+        ev_named_blob = " ".join(str(x) for x in (row.get("evidence_named") or []))
         blob = " ".join(
             [
-                str(
-                    read_back.get("check", "")
-                    if isinstance(read_back, dict)
-                    else read_back
-                ),
-                str(read_back.get("note", "") if isinstance(read_back, dict) else ""),
+                rb_check_str,
+                rb_note_str,
                 " ".join(str(x) for x in (row.get("cites") or [])),
-                " ".join(str(x) for x in (row.get("evidence_named") or [])),
+                ev_named_blob,
             ]
         )
+
+        # POAM-2026-235: Never short-circuit past Lula manifests named as evidence on HOLDS rows.
+        for ev_lula in _extract_unpinned_runnable_candidates(ev_named_blob):
+            if ev_lula.startswith("compliance/lula/"):
+                ok_lula, lula_reason = _validate_active_lula_manifest(
+                    repo_root, ev_lula, active_lula
+                )
+                if not ok_lula:
+                    errors.append(
+                        f"[Check 1: Read-Back] OSCAL {rid}: {claim_kind} claim names non-Active Lula manifest "
+                        f"{ev_lula!r} in evidence_named ({lula_reason})"
+                    )
+
+        disclaimed_lula_re = re.compile(
+            r"(?:rated\s+Stub|not\s+evidence|cannot\s+pass|non-observing)",
+            re.IGNORECASE,
+        )
+        for rb_lula in _extract_unpinned_runnable_candidates(rb_check_str):
+            if rb_lula.startswith("compliance/lula/"):
+                ok_lula, lula_reason = _validate_active_lula_manifest(
+                    repo_root, rb_lula, active_lula
+                )
+                if not ok_lula and not disclaimed_lula_re.search(rb_check_str):
+                    errors.append(
+                        f"[Check 1: Read-Back] OSCAL {rid}: {claim_kind} read_back.check cites non-Active Lula "
+                        f"manifest {rb_lula!r} without Stub disclaimer ({lula_reason})"
+                    )
+
+        meta_tests = getattr(census_mod, "META_SCHEMA_TEST_FILES", frozenset())
         candidates = _extract_unpinned_runnable_candidates(blob)
-        runnable_ok = False
+        pr_ci_runnable_ok = False
+        active_lula_ok = False
         for rel in candidates:
             full = repo_root / rel
             if not full.is_file():
                 continue
+            if rel in meta_tests:
+                continue
             if rel.startswith("tests/") and Path(rel).name.startswith("test_"):
                 ft = full.read_text(encoding="utf-8", errors="replace")
                 if _TEST_FN_RE.search(ft) and _PR_CI_PYTEST_MARKER_RE.search(ft):
-                    runnable_ok = True
-                    break
+                    pr_ci_runnable_ok = True
             elif rel.endswith(".tftest.hcl"):
                 ft = full.read_text(encoding="utf-8", errors="replace")
                 if _TFTEST_RUN_RE.search(ft):
-                    runnable_ok = True
-                    break
+                    pr_ci_runnable_ok = True
             elif rel.startswith("compliance/lula/"):
                 ok, _ = _validate_active_lula_manifest(repo_root, rel, active_lula)
                 if ok:
-                    runnable_ok = True
-                    break
+                    active_lula_ok = True
             elif rel.startswith("scripts/check_") and rel in ci_scripts:
-                runnable_ok = True
-                break
-        if not runnable_ok and not _OBSERVED_RECORD_RE.search(blob):
+                pr_ci_runnable_ok = True
+
+        # Because Lula manifests are not evaluated in PR CI (lula-validate.yml checks schema only),
+        # an Active Lula manifest satisfies HOLDS only alongside a PR-CI runnable check or an
+        # Observed YYYY-MM-DD live/Gate-W record (POAM-2026-235).
+        observed_ok = bool(_OBSERVED_RECORD_RE.search(blob))
+        if (
+            not pr_ci_runnable_ok
+            and not (active_lula_ok and observed_ok)
+            and not observed_ok
+        ):
             errors.append(
-                f"[Check 1: Read-Back] OSCAL {rid}: implemented claim cites no resolvable runnable test/tftest/active-Lula/CI-gate"
+                f"[Check 1: Read-Back] OSCAL {rid}: {claim_kind} claim cites no resolvable PR-CI runnable test/tftest/CI-gate or Observed record"
             )
 
     return errors, impl_count

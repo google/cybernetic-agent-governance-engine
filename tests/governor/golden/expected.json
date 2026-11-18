@@ -360,39 +360,39 @@
     "action": "execute_trade",
     "entry_points": {
       "validate_action": {
-        "outcome": "GovernanceError",
-        "first_violation_code": "[CTRL_OPA_005] OPA Policy Violation: Unexpected verdict '{'decision': 'UNKNOWN_ARBITRARY_VERDICT', 'allow': 'UNKNOWN_ARBITRARY_VERDICT'}'",
+        "outcome": "GovernanceInfrastructureError",
+        "first_violation_code": "[CTRL_OPA_005] OPA policy engine returned undecodable verdict '{'decision': 'UNKNOWN_ARBITRARY_VERDICT', 'allow': 'UNKNOWN_ARBITRARY_VERDICT'}'",
         "seal_issued": false,
         "collaborators_called": [
           "ftra_stage._ftra_boundary_check",
           "opa_client.evaluate_policy",
-          "publish_refusal",
+          "publish_infrastructure_block",
           "stpa_validator.validate"
         ]
       },
       "govern": {
-        "outcome": "GovernanceError",
-        "first_violation_code": "[CTRL_OPA_005] OPA Policy Violation: Unexpected verdict '{'decision': 'UNKNOWN_ARBITRARY_VERDICT', 'allow': 'UNKNOWN_ARBITRARY_VERDICT'}'",
+        "outcome": "GovernanceInfrastructureError",
+        "first_violation_code": "[CTRL_OPA_005] OPA policy engine returned undecodable verdict '{'decision': 'UNKNOWN_ARBITRARY_VERDICT', 'allow': 'UNKNOWN_ARBITRARY_VERDICT'}'",
         "seal_issued": false,
         "collaborators_called": [
           "ftra_stage._ftra_boundary_check",
           "opa_client.evaluate_policy",
-          "publish_refusal",
+          "publish_infrastructure_block",
           "stpa_validator.validate"
         ]
       },
       "revalidate_post_hitl": {
-        "outcome": "GovernanceError",
-        "first_violation_code": "[CTRL_OPA_005] OPA Policy Violation: Unexpected verdict '{'decision': 'UNKNOWN_ARBITRARY_VERDICT', 'allow': 'UNKNOWN_ARBITRARY_VERDICT'}'",
+        "outcome": "GovernanceInfrastructureError",
+        "first_violation_code": "[CTRL_OPA_005] OPA policy engine returned undecodable verdict '{'decision': 'UNKNOWN_ARBITRARY_VERDICT', 'allow': 'UNKNOWN_ARBITRARY_VERDICT'}'",
         "seal_issued": false,
         "collaborators_called": [
           "opa_client.evaluate_policy",
-          "publish_refusal"
+          "publish_infrastructure_block"
         ]
       },
       "verify": {
         "outcome": "DENY",
-        "first_violation_code": "OPA_UNKNOWN_VERDICT",
+        "first_violation_code": "OPA_UNAVAILABLE",
         "seal_issued": false,
         "collaborators_called": [
           "ftra_stage._ftra_boundary_check",
@@ -463,39 +463,39 @@
     "action": "execute_trade",
     "entry_points": {
       "validate_action": {
-        "outcome": "GovernanceError",
+        "outcome": "GovernanceInfrastructureError",
         "first_violation_code": "[CTRL_OPA_005] OPA policy evaluation failed: OPA service unreachable",
         "seal_issued": false,
         "collaborators_called": [
           "ftra_stage._ftra_boundary_check",
           "opa_client.evaluate_policy",
-          "publish_refusal",
+          "publish_infrastructure_block",
           "stpa_validator.validate"
         ]
       },
       "govern": {
-        "outcome": "GovernanceError",
+        "outcome": "GovernanceInfrastructureError",
         "first_violation_code": "[CTRL_OPA_005] OPA policy evaluation failed: OPA service unreachable",
         "seal_issued": false,
         "collaborators_called": [
           "ftra_stage._ftra_boundary_check",
           "opa_client.evaluate_policy",
-          "publish_refusal",
+          "publish_infrastructure_block",
           "stpa_validator.validate"
         ]
       },
       "revalidate_post_hitl": {
-        "outcome": "GovernanceError",
+        "outcome": "GovernanceInfrastructureError",
         "first_violation_code": "[CTRL_OPA_005] OPA policy evaluation failed: OPA service unreachable",
         "seal_issued": false,
         "collaborators_called": [
           "opa_client.evaluate_policy",
-          "publish_refusal"
+          "publish_infrastructure_block"
         ]
       },
       "verify": {
         "outcome": "DENY",
-        "first_violation_code": "OPA_ERROR",
+        "first_violation_code": "OPA_UNAVAILABLE",
         "seal_issued": false,
         "collaborators_called": [
           "ftra_stage._ftra_boundary_check",

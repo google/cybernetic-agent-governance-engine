@@ -30,6 +30,7 @@ import hashlib
 import hmac
 import json
 import logging
+import math
 import os
 import threading
 import time
@@ -156,11 +157,13 @@ async def _run_in_kms_executor(
 # ---------------------------------------------------------------------------
 
 _KMS_KEY_VERSION: str = os.environ.get("KMS_GOVERNANCE_KEY", "")
+_IMPORT_TIME_KMS_KEY_VERSION: str = _KMS_KEY_VERSION
 _PUBLIC_PEM_PATH: str = os.environ.get("KMS_GOVERNANCE_PUBLIC_PEM", "")
 
 # Maximum age of a KMS-signed payload before it is rejected as stale (seconds).
 # Payloads older than this threshold are rejected to prevent replay attacks.
 MAX_KMS_PAYLOAD_AGE_SECONDS: int = 300
+MAX_KMS_CLOCK_SKEW_SECONDS: int = 30
 
 _FORBIDDEN_ENFORCING_ALGORITHMS: frozenset[str] = frozenset(
     {
@@ -705,7 +708,12 @@ class KMSGovernanceSigner:
         provider_name = (
             explicit_provider or os.environ.get("CAGE_KMS_PROVIDER", "gcp")
         ).lower()
-        key_version = _KMS_KEY_VERSION
+        env_key_version = os.environ.get("KMS_GOVERNANCE_KEY", "").strip()
+        key_version = (
+            _KMS_KEY_VERSION
+            if _KMS_KEY_VERSION != _IMPORT_TIME_KMS_KEY_VERSION
+            else env_key_version
+        )
 
         posture = resolve_posture()
         is_non_production = not is_enforcing(posture)
@@ -972,17 +980,33 @@ class KMSGovernanceSigner:
 
     def validate_ready(self) -> None:
         """Verify the KMS key version is reachable and ENABLED."""
+        enforcing = is_enforcing(resolve_posture())
         if not self._kms_active or self._provider is None:
             raise RuntimeError(
                 "[KMSSigner] validate_ready() called but KMS is not active. "
                 "Ensure KMS_GOVERNANCE_KEY is set and from_env() succeeded."
             )
+        if enforcing:
+            if self._provider.is_software_fallback:
+                raise RuntimeError(
+                    "[KMSSigner] Software KMS fallback is forbidden in enforcing postures."
+                )
+            env_key = os.environ.get("KMS_GOVERNANCE_KEY", "").strip()
+            effective_key = self._key_version_name or (
+                _KMS_KEY_VERSION
+                if _KMS_KEY_VERSION != _IMPORT_TIME_KMS_KEY_VERSION
+                else env_key
+            )
+            if self._provider.provider_name == "gcp" and not effective_key:
+                raise RuntimeError(
+                    "[KMSSigner] KMS_GOVERNANCE_KEY must be set in enforcing postures."
+                )
         try:
             self._provider.validate_ready(self._key_version_name)
         except RuntimeError:
             raise
         except Exception as exc:
-            if self._public_key_pem:
+            if not enforcing and self._public_key_pem:
                 logger.warning(
                     "[KMSSigner] Remote KMS probe failed (%s), but valid local public key is loaded — proceeding in verification-only mode.",
                     exc,
@@ -1041,8 +1065,16 @@ class KMSGovernanceSigner:
         if result:
             signed_at = plan.get("signed_at")
             if signed_at is not None:
-                age = int(time.time()) - int(signed_at)
-                if age > MAX_KMS_PAYLOAD_AGE_SECONDS:
+                if (
+                    isinstance(signed_at, bool)
+                    or not isinstance(signed_at, (int, float))
+                    or not math.isfinite(float(signed_at))
+                ):
+                    raise ValueError("KMS payload has invalid signed_at")
+                now_s = time.time()
+                if float(signed_at) > now_s + MAX_KMS_CLOCK_SKEW_SECONDS:
+                    raise ValueError("KMS payload signed_at is in the future")
+                if now_s - float(signed_at) > MAX_KMS_PAYLOAD_AGE_SECONDS:
                     raise ValueError("KMS payload has expired (signed_at too old)")
         return result
 
@@ -1053,6 +1085,8 @@ class KMSGovernanceSigner:
         *,
         kid: str | None = None,
         algorithm: str | None = None,
+        max_age_seconds: float | None = MAX_KMS_PAYLOAD_AGE_SECONDS,
+        clock_skew_seconds: float = MAX_KMS_CLOCK_SKEW_SECONDS,
     ) -> bool:
         """Verify a signed decision using ``kid``-resolved trust anchors (fail-closed).
 
@@ -1155,6 +1189,37 @@ class KMSGovernanceSigner:
             )
             return False
 
+        if (
+            max_age_seconds is not None
+            and "signed_at" in payload
+            and payload["signed_at"] is not None
+        ):
+            raw_signed_at = payload["signed_at"]
+            if isinstance(raw_signed_at, bool) or not isinstance(
+                raw_signed_at, (int, float)
+            ):
+                logger.warning(
+                    "[KMSSigner] Invalid signed_at type in verify_decision — failing closed."
+                )
+                return False
+            signed_ts = float(raw_signed_at)
+            if not math.isfinite(signed_ts):
+                return False
+            now_ts = time.time()
+            if signed_ts > now_ts + clock_skew_seconds:
+                logger.warning(
+                    "[KMSSigner] Future-dated signed_at in verify_decision (skew=%.1fs) — failing closed.",
+                    signed_ts - now_ts,
+                )
+                return False
+            if now_ts - signed_ts > max_age_seconds:
+                logger.warning(
+                    "[KMSSigner] Expired signed_at in verify_decision (age=%.1fs > %.1fs) — failing closed.",
+                    now_ts - signed_ts,
+                    max_age_seconds,
+                )
+                return False
+
         plan_bytes = _canonicalise_plan(payload)
         return self._kms_verify(plan_bytes, sig_hex, public_key_pem=public_key_pem)
 
@@ -1174,14 +1239,23 @@ class KMSGovernanceSigner:
                 return False
         return True
 
-    def verify_raw(self, message: bytes, signature: bytes) -> bool:
-        """Verify a raw signature produced by sign_raw()."""
-        if not self._kms_active:
+    def verify_raw(
+        self,
+        message: bytes,
+        signature: bytes,
+        *,
+        public_key_pem: bytes | None = None,
+    ) -> bool:
+        """Verify a raw or JWS (R || S) signature against ``public_key_pem`` or ``self._public_key_pem``."""
+        effective_pem = (
+            public_key_pem if public_key_pem is not None else self._public_key_pem
+        )
+        if not self._kms_active and not effective_pem:
             raise RuntimeError(
                 "[KMSSigner] verify_raw() called but KMS is not active. "
                 "Ensure KMS_GOVERNANCE_KEY is set and from_env() succeeded."
             )
-        if not self._public_key_pem:
+        if not effective_pem:
             raise RuntimeError(
                 "[KMSSigner] verify_raw() called but no public key is loaded. "
                 "Ensure KMS_GOVERNANCE_PUBLIC_PEM is set or KMS bootstrap succeeded."
@@ -1197,10 +1271,36 @@ class KMSGovernanceSigner:
             )
             from cryptography.hazmat.primitives.asymmetric import utils as asym_utils
 
-            public_key = serialization.load_pem_public_key(self._public_key_pem)
+            public_key = serialization.load_pem_public_key(effective_pem)
 
             if isinstance(public_key, ed25519.Ed25519PublicKey):
                 public_key.verify(signature, message)
+                return True
+
+            if isinstance(public_key, ec.EllipticCurvePublicKey):
+                ec_hash_name = {384: "SHA384", 521: "SHA512"}.get(
+                    public_key.curve.key_size, "SHA256"
+                )
+                ec_hash_alg = getattr(hashes, ec_hash_name)()
+                ec_digest = hashlib.new(ec_hash_name.lower(), message).digest()
+                coord_size = (public_key.curve.key_size + 7) // 8
+                sig_to_verify = signature
+                if len(signature) == 2 * coord_size:
+                    needs_encode = len(signature) > 0 and signature[0] != 0x30
+                    if not needs_encode:
+                        try:
+                            asym_utils.decode_dss_signature(signature)
+                        except ValueError:
+                            needs_encode = True
+                    if needs_encode:
+                        r = int.from_bytes(signature[:coord_size], byteorder="big")
+                        s = int.from_bytes(signature[coord_size:], byteorder="big")
+                        sig_to_verify = asym_utils.encode_dss_signature(r, s)
+                public_key.verify(
+                    sig_to_verify,
+                    ec_digest,
+                    ec.ECDSA(asym_utils.Prehashed(ec_hash_alg)),
+                )
                 return True
 
             hash_alg_name = (
@@ -1209,28 +1309,12 @@ class KMSGovernanceSigner:
             hash_alg = getattr(hashes, hash_alg_name)()
             digest = hashlib.new(hash_alg_name.lower(), message).digest()
 
-            if isinstance(public_key, ec.EllipticCurvePublicKey):
-                coord_size = (public_key.curve.key_size + 7) // 8
-                sig_to_verify = signature
-                if len(signature) == 2 * coord_size and (
-                    getattr(self._provider, "ecdsa_signature_encoding", "der") == "raw"
-                    or (len(signature) > 0 and signature[0] != 0x30)
-                ):
-                    r = int.from_bytes(signature[:coord_size], byteorder="big")
-                    s = int.from_bytes(signature[coord_size:], byteorder="big")
-                    sig_to_verify = asym_utils.encode_dss_signature(r, s)
-                public_key.verify(
-                    sig_to_verify,
-                    digest,
-                    ec.ECDSA(asym_utils.Prehashed(hash_alg)),
-                )
-                return True
             if isinstance(public_key, rsa.RSAPublicKey):
                 padding_scheme: padding.PKCS1v15 | padding.PSS = padding.PKCS1v15()
                 if self._provider and self._provider.uses_rsa_pss:
                     padding_scheme = padding.PSS(
                         mgf=padding.MGF1(hash_alg),
-                        salt_length=padding.PSS.MAX_LENGTH,
+                        salt_length=padding.PSS.AUTO,
                     )
 
                 public_key.verify(

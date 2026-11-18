@@ -267,18 +267,18 @@ def answered_by_approval(ctx: StageContext, violation: Violation) -> bool:
 def phase2_mode(profile: Profile, phase1_kinds: Iterable[ViolationKind]) -> Phase2Mode:
     """The phase-2 gate: decided by the *kinds* phase 1 reported, never by tier.
 
-    * any HARD → SKIP: the request is refused whatever the barriers say;
+    * any HARD or INFRASTRUCTURE → SKIP: the request is blocked without phase-2 commits;
     * no violations → COMMIT (DRY_RUN: PREVIEW, it never commits);
-    * only non-HARD (HITL, NARROWABLE, DEFERRABLE …) → PREVIEW. The request
-      will not be sealed now (``run_sealed`` refuses any violation), so
-      committing would reserve headroom for nothing; previewing lets a barrier
-      that would refuse anyway deny it *before* a human is asked (a HARD
-      preview) or tell the reviewer what it would breach.
+    * only non-HARD/non-INFRASTRUCTURE (HITL, NARROWABLE, DEFERRABLE …) → PREVIEW.
+      The request will not be sealed now (``run_sealed`` refuses any violation),
+      so committing would reserve headroom for nothing; previewing lets a barrier
+      that would refuse anyway deny it *before* a human is asked (a HARD preview)
+      or tell the reviewer what it would breach.
 
     Mirrors ``proof/model.py::phase2_mode`` (``tests/test_formal_profile_parity.py``).
     """
     kinds = set(phase1_kinds)
-    if ViolationKind.HARD in kinds:
+    if kinds & {ViolationKind.HARD, ViolationKind.INFRASTRUCTURE}:
         return Phase2Mode.SKIP
     if kinds or profile == Profile.DRY_RUN:
         return Phase2Mode.PREVIEW
@@ -472,9 +472,13 @@ async def run_pipeline(
         if stage_violations:
             violations.extend(stage_violations)
 
-        hard_violations = [v for v in stage_violations if v.kind == ViolationKind.HARD]
-        if hard_violations:
-            # Stop at the first HARD violation
+        blocking_violations = [
+            v
+            for v in stage_violations
+            if v.kind in (ViolationKind.HARD, ViolationKind.INFRASTRUCTURE)
+        ]
+        if blocking_violations:
+            # Stop at the first HARD or INFRASTRUCTURE violation
             break
 
     if answered:
@@ -595,6 +599,9 @@ async def _preview_mutating(
             continue
         violations.extend(stage_violations)
         failures.append(_tier_failure(stage, stage_violations))
-        if any(v.kind == ViolationKind.HARD for v in stage_violations):
+        if any(
+            v.kind in (ViolationKind.HARD, ViolationKind.INFRASTRUCTURE)
+            for v in stage_violations
+        ):
             break
     return violations, failures, outcomes

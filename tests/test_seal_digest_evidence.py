@@ -68,12 +68,15 @@ def _test_posture(monkeypatch: pytest.MonkeyPatch) -> None:
 @pytest.fixture(params=["hmac", "jwt"])
 async def seal(request: pytest.FixtureRequest, monkeypatch: pytest.MonkeyPatch) -> str:
     """A real seal from ``generate_seal``, in each of its two formats."""
+    import src.gateway.governance.jwks as jwks_mod
+
     provider = (
         ks.SoftwareEd25519Provider(key_id="seal-digest-k1")
         if request.param == "jwt"
         else None
     )
     monkeypatch.setattr(ks, "_signer", ks.KMSGovernanceSigner(provider=provider))
+    monkeypatch.setattr(jwks_mod, "_global_jwks", None)
     minted = await rs.generate_seal(
         "execute_trade", {"symbol": "AAPL", "amount": 10.0}, record_hash="c" * 64
     )
@@ -188,11 +191,21 @@ async def test_finance_records_the_digest_and_hands_the_broker_the_seal(
     broker_execute = AsyncMock(return_value="EXECUTED (mock): AAPL x 10.0 buy")
     from src.cage_finance.tools.tool_provider import execute_trade_action
 
+    minted_seals: list[str] = []
+
+    async def _mint_for_trade(
+        _gov: Any, act: str, params: dict[str, Any], **_kw: Any
+    ) -> str:
+        s = await rs.generate_seal(act, params, record_hash="c" * 64)
+        assert rs._is_jwt_seal(s) is rs._is_jwt_seal(seal)
+        minted_seals.append(s)
+        return s
+
     with ExitStack() as stack:
         for target, value in (
             (
                 "src.cage_finance.tools.tool_provider.enforce_governance",
-                AsyncMock(return_value=seal),
+                AsyncMock(side_effect=_mint_for_trade),
             ),
             (
                 "src.gateway.governance.routing_seal.verify_and_consume_seal",
@@ -219,16 +232,32 @@ async def test_finance_records_the_digest_and_hands_the_broker_the_seal(
             transaction_id=str(uuid.uuid4()),
         )
 
+    assert len(minted_seals) == 1
+    fin_seal = minted_seals[0]
     assert result.startswith("EXECUTED"), result
     # The broker re-checks the seal itself, never the digest.
-    assert broker_execute.await_args.kwargs["routing_seal"] == seal
+    assert broker_execute.await_args.kwargs["routing_seal"] == fin_seal
     receipt = sink.only("ACTUATION_RECEIPT")
-    assert receipt["governance_decision_digest"] == rs.seal_digest(seal)
-    _assert_seal_absent(sink.events, seal)
+    assert receipt["governance_decision_digest"] == rs.seal_digest(fin_seal)
+    _assert_seal_absent(sink.events, fin_seal)
 
 
-async def test_healthcare_records_the_digest_not_the_seal(seal: str) -> None:
+async def test_healthcare_records_the_digest_not_the_seal(
+    request: pytest.FixtureRequest, seal: str
+) -> None:
     from src.cage_healthcare.tools import tool_provider as clinical
+    from src.cage_healthcare.tools.dose_order import DoseOrder
+
+    dose_params = {
+        **DoseOrder(
+            patient_id="patient-1", medication="heparin", dose_mg=2.0
+        ).model_dump(),
+        "confidence": 0.99,
+    }
+    hc_seal = await rs.generate_seal(
+        "administer_dose", dose_params, record_hash="c" * 64
+    )
+    assert rs._is_jwt_seal(hc_seal) is rs._is_jwt_seal(seal)
 
     sink = _CapturingSink()
     registry = ActuatorRegistry()
@@ -237,7 +266,9 @@ async def test_healthcare_records_the_digest_not_the_seal(seal: str) -> None:
 
     with ExitStack() as stack:
         stack.enter_context(
-            patch.object(clinical, "enforce_governance", AsyncMock(return_value=seal))
+            patch.object(
+                clinical, "enforce_governance", AsyncMock(return_value=hc_seal)
+            )
         )
         stack.enter_context(
             patch.object(clinical, "verify_and_consume_seal", AsyncMock())
@@ -254,9 +285,9 @@ async def test_healthcare_records_the_digest_not_the_seal(seal: str) -> None:
 
     assert result["status"] == "GOVERNED", result
     receipt = sink.only("ACTUATION_RECEIPT")
-    assert receipt["governance_decision_digest"] == rs.seal_digest(seal)
-    _assert_seal_absent(sink.events, seal)
-    governor.settle.assert_awaited_once_with(seal, executed=True)
+    assert receipt["governance_decision_digest"] == rs.seal_digest(hc_seal)
+    _assert_seal_absent(sink.events, hc_seal)
+    governor.settle.assert_awaited_once_with(hc_seal, executed=True)
 
 
 async def test_clinical_actuator_refuses_a_clearance_without_its_seal() -> None:

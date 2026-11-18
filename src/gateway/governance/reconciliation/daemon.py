@@ -84,6 +84,24 @@ _REDIS_KEY_PROVIDER = "reconciliation:provider"
 _REDIS_KEY_SIGNATURE = "reconciliation:signature"
 _REDIS_KEY_SEQUENCE_LATEST = "reconciliation:sequence:latest"
 _REDIS_KEY_SEQUENCE_LAST_ACCEPTED = "reconciliation:sequence:last_accepted"
+
+
+def sequence_latest_key(invariant_id: str | None = None) -> str:
+    """Per-invariant R-04 monotonic sequence key (legacy key for finance.cash_balance)."""
+    clean = (invariant_id or "").strip()
+    if not clean or clean == "finance.cash_balance":
+        return _REDIS_KEY_SEQUENCE_LATEST
+    return f"{_REDIS_KEY_SEQUENCE_LATEST}:{clean}"
+
+
+def sequence_last_accepted_key(invariant_id: str | None = None) -> str:
+    """Per-invariant R-04 replay high-water-mark key (legacy key for finance.cash_balance)."""
+    clean = (invariant_id or "").strip()
+    if not clean or clean == "finance.cash_balance":
+        return _REDIS_KEY_SEQUENCE_LAST_ACCEPTED
+    return f"{_REDIS_KEY_SEQUENCE_LAST_ACCEPTED}:{clean}"
+
+
 FENCE_EPOCH_KEY = "safety:fence_epoch"
 _CBF_FENCE_EPOCH_KEY = "safety:cbf_fence_epoch"
 
@@ -1042,6 +1060,7 @@ class GroundTruthReconciler:
                 cutoff,
                 orphan_before=now - self._pending_debit_max_age_s,
                 now=now,
+                namespace=result.invariant_id,
             )
             _attr("reconciliation.settlement_cutoff", cutoff)
             _attr("reconciliation.debits_settled", settled)
@@ -1284,7 +1303,9 @@ class GroundTruthReconciler:
                     # distance to that band, not to the baseline point.
                     unsettled = (
                         unsettled_total_sync(
-                            self._redis, self.settlement_cutoff_for(result)
+                            self._redis,
+                            self.settlement_cutoff_for(result),
+                            namespace=result.invariant_id,
                         )
                         if self._redis is not None
                         else 0.0
@@ -1345,7 +1366,9 @@ class GroundTruthReconciler:
 
             if REPLAY_DEFENSE_ENABLED and self._redis is not None:
                 try:
-                    new_sequence = int(self._redis.incr(_REDIS_KEY_SEQUENCE_LATEST))
+                    new_sequence = int(
+                        self._redis.incr(sequence_latest_key(result.invariant_id))
+                    )
                     result.sequence = new_sequence
                 except Exception as seq_exc:
                     logger.error(

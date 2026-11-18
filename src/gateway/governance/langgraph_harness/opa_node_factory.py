@@ -28,12 +28,14 @@ Domain-specific state access is injected via ``OpaNodeConfig.payload_extractor``
 
 from __future__ import annotations
 
+import copy
 import logging
 from collections.abc import Callable
 from typing import Any
 
 from opentelemetry import trace
 
+from src.gateway.governance.decisions import GovernanceDecision
 from src.gateway.governance.governor.errors import GovernanceDeferred, GovernanceError
 from src.gateway.governance.governor.governor import SymbolicGovernor
 from src.gateway.governance.iso_control import stamp_iso_control
@@ -179,9 +181,108 @@ def create_opa_safety_node(
 
             thread_id = _thread_id_fn(state)
 
-            # ----- 3. Invoke OPA via SymbolicGovernor -----
+            # ----- 3. Invoke non-committing preview via SymbolicGovernor -----
             try:
-                await governor.govern(config.policy_action_name, opa_input)
+                verdict_resp = await governor.validate_action(
+                    config.policy_action_name, opa_input
+                )
+                verdict_raw = (
+                    verdict_resp.get("verdict")
+                    if isinstance(verdict_resp, dict)
+                    else GovernanceDecision.ALLOW
+                )
+                verdict_str = str(
+                    getattr(verdict_raw, "value", verdict_raw or "ALLOW")
+                ).upper()
+
+                if verdict_str in ("REQUIRE_APPROVAL", "DEFER"):
+                    deferred_id = (
+                        verdict_resp.get("deferred_id")
+                        or verdict_resp.get("defer_token")
+                        if isinstance(verdict_resp, dict)
+                        else None
+                    )
+                    if not isinstance(deferred_id, str) or not deferred_id.strip():
+                        raise GovernanceError(
+                            f"{verdict_str} verdict missing persisted deferred_id; failing closed"
+                        )
+                    reason = ""
+                    if isinstance(verdict_resp, dict):
+                        reason = str(
+                            verdict_resp.get("classification_reason")
+                            or verdict_resp.get("defer_reason")
+                            or f"Action escalated ({verdict_str})"
+                        )
+                    logger.warning(
+                        "⚠️ Safety Check ESCALATED (%s): %s — %s",
+                        verdict_str,
+                        opa_input.get("action", config.policy_action_name),
+                        reason,
+                    )
+                    span.set_attribute("governance.decision", "ESCALATED")
+                    span.set_attribute("governance.blocked", True)
+                    span.set_attribute("governance.reason", reason)
+                    stamp_iso_control(
+                        span,
+                        ingress_stage=config.iso_tier,
+                        control=config.iso_control,
+                        outcome="ESCALATE",
+                    )
+                    _score_compliance(
+                        thread_id,
+                        config.iso_control,
+                        passed=False,
+                        comment=f"OPA {config.policy_action_name} gate ESCALATED: {reason}",
+                    )
+                    return {
+                        config.status_state_key: "ESCALATED",
+                        config.error_state_key: reason,
+                        "deferred_id": deferred_id.strip(),
+                    }
+
+                if verdict_str == "NARROW":
+                    narrowed = (
+                        verdict_resp.get("narrowed_params")
+                        if isinstance(verdict_resp, dict)
+                        else None
+                    )
+                    if not isinstance(narrowed, dict):
+                        raise GovernanceError(
+                            "NARROW verdict returned without dict narrowed_params"
+                        )
+                    narrowed_copy = copy.deepcopy(narrowed)
+                    logger.info(
+                        "📐 Safety Check NARROWED: %s",
+                        opa_input.get("action", config.policy_action_name),
+                    )
+                    span.set_attribute("governance.decision", "APPROVED")
+                    span.set_attribute("governance.narrowed", True)
+                    span.set_attribute("governance.blocked", False)
+                    stamp_iso_control(
+                        span,
+                        ingress_stage=config.iso_tier,
+                        control=config.iso_control,
+                        outcome="PASS",
+                    )
+                    _score_compliance(
+                        thread_id,
+                        config.iso_control,
+                        passed=True,
+                        comment=f"OPA {config.policy_action_name} gate NARROWED",
+                    )
+                    out_narrow: dict[str, Any] = {
+                        config.status_state_key: "APPROVED",
+                        config.narrowed_params_state_key: narrowed_copy,
+                    }
+                    if isinstance(plan, dict):
+                        out_narrow[config.plan_state_key] = {**plan, **narrowed_copy}
+                    return out_narrow
+
+                if verdict_str != "ALLOW":
+                    raise GovernanceError(
+                        f"Unrecognised preview verdict {verdict_str!r}; failing closed"
+                    )
+
                 logger.info(
                     "✅ Safety Check PASSED: %s",
                     opa_input.get("action", config.policy_action_name),

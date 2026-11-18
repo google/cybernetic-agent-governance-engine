@@ -307,3 +307,69 @@ class TestProviderIntegrationScenarios:
         assert market_provider is not None
         assert rollback_provider is not None
         assert market_provider is not rollback_provider
+
+
+class TestEnforcingPosturesAndUnconfiguredProviders:
+    """DA-06: Stubs fail in all enforcing postures; FinanceCagePlugin starts safely in enforcing postures."""
+
+    @pytest.mark.parametrize("env_value", ["staging", "local", "unknown-posture"])
+    def test_stubs_raise_in_all_enforcing_postures(self, monkeypatch, env_value: str):
+        monkeypatch.setenv("CAGE_ENV", env_value)
+        with pytest.raises(RuntimeError, match="enforcing posture"):
+            StubMarketDataProvider()
+        with pytest.raises(RuntimeError, match="enforcing posture"):
+            StubRollbackCapabilityProvider()
+
+    def test_stubs_raise_when_cage_env_unset(self, monkeypatch):
+        monkeypatch.delenv("CAGE_ENV", raising=False)
+        monkeypatch.delenv("ENVIRONMENT", raising=False)
+        with pytest.raises(RuntimeError, match="CAGE_ENV=production"):
+            StubMarketDataProvider()
+        with pytest.raises(RuntimeError, match="CAGE_ENV=production"):
+            StubRollbackCapabilityProvider()
+
+    def test_finance_plugin_contribute_succeeds_in_production_and_blocks_b3_b10(
+        self, monkeypatch
+    ):
+        from src.cage_finance.plugin import FinanceCagePlugin
+        from src.cage_finance.safety.bounding.contracts import (
+            contract_b3_liquidity_depth,
+            contract_b10_rollback_window,
+        )
+        from src.cage_finance.safety.bounding.models import (
+            BoundedTradeRequest,
+            ContractSeverity,
+        )
+        from src.cage_finance.safety.bounding.providers import (
+            UnconfiguredEnforcingMarketDataProvider,
+            UnconfiguredEnforcingProviderError,
+            UnconfiguredEnforcingRollbackProvider,
+        )
+
+        monkeypatch.setenv("CAGE_ENV", "production")
+        contribution = FinanceCagePlugin().contribute()
+        assert contribution.domain == "finance"
+
+        mkt = UnconfiguredEnforcingMarketDataProvider()
+        rb = UnconfiguredEnforcingRollbackProvider()
+        with pytest.raises(UnconfiguredEnforcingProviderError):
+            mkt.get_order_book_depth("AAPL", "NASDAQ", "buy")
+        with pytest.raises(UnconfiguredEnforcingProviderError):
+            rb.verify_rollback_window("NASDAQ", 300)
+
+        req = BoundedTradeRequest(
+            symbol="AAPL", amount=1000.0, side="buy", venue="NASDAQ"
+        )
+        thresholds = {
+            "bounding": {
+                "min_liquidity_depth_ratio": 10.0,
+                "b10_min_rollback_window_seconds": 60,
+            }
+        }
+        b3_res = contract_b3_liquidity_depth(req, thresholds, mkt)
+        assert b3_res.admitted is False
+        assert b3_res.severity is ContractSeverity.HARD_BLOCK
+
+        b10_res = contract_b10_rollback_window(req, thresholds, rb)
+        assert b10_res.admitted is False
+        assert b10_res.severity is ContractSeverity.HARD_BLOCK

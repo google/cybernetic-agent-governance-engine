@@ -93,7 +93,7 @@ from src.gateway.governance.governor.bootstrap import bootstrap_governor
 from src.gateway.governance.governor.governor import SymbolicGovernor
 from src.gateway.governance.governor.stages.warrant import WarrantStage
 from src.gateway.governance.jurisdiction import eu_ai_act
-from src.gateway.governance.seams.actuation import ActuationReceipt
+from src.gateway.governance.seams.actuation import ActuationOutcome, ActuationReceipt
 from src.gateway.governance.seams.ground_truth import FaultMode
 from src.gateway.governance.seams.normative import ValidationResult
 from src.gateway.governance.warrant import Warrant, WarrantClock
@@ -384,6 +384,7 @@ async def build(monkeypatch: pytest.MonkeyPatch) -> AsyncIterator[StackFactory]:
             receipt_id=f"r-{uuid.uuid4().hex[:8]}",
             session_uuid=None,
             raw_receipt={"status": "executed"},
+            outcome=ActuationOutcome.ACCEPTED,
         )
     )
     monkeypatch.setattr(

@@ -148,10 +148,14 @@ def score_confabulation(event: ConfabulationEvent) -> dict:
 def is_confabulation_blocked(confidence: float) -> bool:
     """Return True if the given confidence score triggers a confabulation block.
 
-    Args:
-        confidence: Model self-reported confidence score [0.0, 1.0].
-
-    Returns:
-        True if ``confidence < CONFIDENCE_THRESHOLD``, False otherwise.
+    Fails closed (returns ``True``) on booleans, non-numeric inputs, ``NaN``,
+    infinities, and out-of-range values outside ``[0.0, 1.0]`` (KG-17).
     """
-    return confidence < CONFIDENCE_THRESHOLD
+    import math
+
+    if isinstance(confidence, bool) or not isinstance(confidence, (int, float)):
+        return True
+    val = float(confidence)
+    if not math.isfinite(val) or val < 0.0 or val > 1.0:
+        return True
+    return val < CONFIDENCE_THRESHOLD

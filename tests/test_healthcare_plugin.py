@@ -354,12 +354,33 @@ class TestHealthcarePlugin:
             )
 
     @pytest.mark.asyncio
-    async def test_administer_dose_enforces_governance_and_seal_consumption(self):
+    async def test_administer_dose_enforces_governance_and_seal_consumption(
+        self, monkeypatch: pytest.MonkeyPatch
+    ):
         """ClinicalToolProvider / administer_dose_action enforces governor, consumes seal, dispatches actuator, and settles."""
         from unittest.mock import AsyncMock, patch
 
+        import src.gateway.governance.jwks as jwks_mod
+        import src.gateway.governance.kms_signer as ks
+        from src.cage_healthcare.tools.dose_order import DoseOrder
         from src.cage_healthcare.tools.tool_provider import administer_dose_action
-        from src.gateway.governance.routing_seal import SymbolicGovernorViolation
+        from src.gateway.governance.routing_seal import (
+            SymbolicGovernorViolation,
+            generate_seal,
+        )
+
+        provider = ks.SoftwareEd25519Provider(key_id="hc-plugin-test-k1")
+        monkeypatch.setattr(ks, "_signer", ks.KMSGovernanceSigner(provider=provider))
+        monkeypatch.setattr(jwks_mod, "_global_jwks", None)
+        dose_params = {
+            **DoseOrder(
+                patient_id="P001", medication="vancomycin", dose_mg=2.0
+            ).model_dump(),
+            "confidence": 0.99,
+        }
+        minted_seal = await generate_seal(
+            "administer_dose", dose_params, record_hash="e" * 64
+        )
 
         governor = MagicMock()
         governor.settle = AsyncMock(return_value=[])
@@ -367,7 +388,7 @@ class TestHealthcarePlugin:
         with (
             patch(
                 "src.cage_healthcare.tools.tool_provider.enforce_governance",
-                AsyncMock(return_value="seal-hc-001"),
+                AsyncMock(return_value=minted_seal),
             ) as mock_enforce,
             patch(
                 "src.cage_healthcare.tools.tool_provider.verify_and_consume_seal",
@@ -387,7 +408,7 @@ class TestHealthcarePlugin:
         assert res.get("receipt_id") is not None
         mock_enforce.assert_awaited_once()
         mock_verify_seal.assert_awaited_once()
-        governor.settle.assert_awaited_once_with("seal-hc-001", executed=True)
+        governor.settle.assert_awaited_once_with(minted_seal, executed=True)
 
         # Replay / invalid seal blocks execution and settles with executed=False
         governor.settle.reset_mock()
