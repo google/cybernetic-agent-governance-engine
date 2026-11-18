@@ -49,6 +49,8 @@ import re
 from collections.abc import Callable, Mapping
 from datetime import datetime, timezone
 
+from src.gateway.governance.env_posture import resolve_deployment_region
+
 # ---------------------------------------------------------------------------
 # FINDING-08 (MEDIUM) — Jurisdictional retention authority citation map
 #
@@ -69,7 +71,7 @@ logger = logging.getLogger("Gateway.Governance.PIISanitizer")
 
 
 def _get_region() -> str:
-    return os.environ.get("CAGE_DEPLOYMENT_REGION", "").strip().upper()
+    return resolve_deployment_region()
 
 
 # ---------------------------------------------------------------------------
@@ -232,19 +234,28 @@ PHONE_PATTERN: re.Pattern[str] = re.compile(
 _CREDENTIAL_PATTERNS: list[
     tuple[re.Pattern[str], str | Callable[[re.Match[str]], str]]
 ] = [
-    # API keys and Bearer tokens: Langfuse (pk-lf-*, sk-lf-*), HuggingFace
-    # (hf_*), and generic Bearer tokens (run before UUID preservation so opaque
-    # ``Bearer <uuid>`` tokens are still scrubbed).
-    (
-        re.compile(r"\b(?:pk-lf-|sk-lf-|hf_|Bearer\s+)[A-Za-z0-9_\-]{8,}\b"),
-        "[REDACTED_API_KEY]",
-    ),
-    # Compact JWS/JWT tokens (R5: ConsequenceToken leakage mitigation).
+    # Compact JWS/JWT tokens (KG-05 / R5: ConsequenceToken & routing_seal leakage
+    # mitigation). MUST run BEFORE generic Bearer redaction so ``Bearer eyJ...``
+    # scrubs the entire 3-segment JWS instead of leaving ``.<payload>.<sig>``.
     (
         re.compile(
-            r"\beyJ[A-Za-z0-9_\-]{17,}\.[A-Za-z0-9_\-]{20,}\.[A-Za-z0-9_\-]{20,}(?![A-Za-z0-9_\-])"
+            r"(?:(?i:\bBearer)\s+)?\beyJ[A-Za-z0-9_\-]{10,}\.[A-Za-z0-9_\-]{10,}\.[A-Za-z0-9_\-]{10,}(?![A-Za-z0-9_\-])"
         ),
         "[REDACTED_JWS]",
+    ),
+    # Redis / Valkey connection URLs carrying embedded credentials.
+    (
+        re.compile(r"\brediss?://[^:\s/\"']*:[^@\s\"']+@[^\s\"']+"),
+        "[REDACTED_REDIS_URL]",
+    ),
+    # API keys and Bearer tokens: Langfuse (pk-lf-*, sk-lf-*), HuggingFace
+    # (hf_*), Google API/credential tokens (GOOG*), and generic Bearer tokens
+    # (run before UUID preservation so opaque ``Bearer <uuid>`` tokens are scrubbed).
+    (
+        re.compile(
+            r"\b(?:pk-lf-[A-Za-z0-9_\-]{8,}|sk-lf-[A-Za-z0-9_\-]{8,}|hf_[A-Za-z0-9_\-]{8,}|GOOG[A-Za-z0-9_\-]{12,}|(?i:Bearer)\s+[A-Za-z0-9_\-\.=]{8,})(?![A-Za-z0-9_\-])"
+        ),
+        "[REDACTED_API_KEY]",
     ),
 ]
 
@@ -445,16 +456,17 @@ def pii_audit_log(
 
     FINDING-08 (MEDIUM): the retention authority citation is jurisdiction-aware
     — US_FED cites FISMA AU-11, EU_ECB cites GDPR Art. 5(1)(e), APAC_MAS cites
-    MAS Notice 655 §4.3. Deployments outside these three regions (or with the
-    region unset) fall back to the universal ISO 42001 A.9.2 citation.
+    MAS Notice 655 §4.3. When ``region`` is omitted, ``resolve_deployment_region()``
+    resolves it (refusing unknown values and unset enforcing postures); an
+    unrecognised explicit ``region`` argument falls back to ISO 42001 A.9.2.
 
     Args:
         trace_id:     Langfuse trace ID for the governed request.
         entity_types: List of detected PII entity types
                       (e.g. ["PERSON", "EMAIL_ADDRESS"]).
         redacted:     True if PII was redacted from the request.
-        region:       CAGE_DEPLOYMENT_REGION value. If None, reads from the
-                      environment. One of "US_FED", "EU_ECB", "APAC_MAS".
+        region:       One of "US_FED", "EU_ECB", "APAC_MAS". If None,
+                      ``resolve_deployment_region()``.
 
     Returns:
         A dict with the following schema:
@@ -513,16 +525,17 @@ def pii_audit_log(
 # Module-level singleton (lazy init)
 # ---------------------------------------------------------------------------
 
+import threading
+
 _pii_sanitizer: PIISanitizer | None = None
+_pii_sanitizer_lock = threading.Lock()
 
 
 def _get_pii_sanitizer() -> PIISanitizer:
-    """Return the module-level PIISanitizer singleton.
-
-    Lazily initialised on first call.  Thread-safe because Python's GIL
-    guarantees atomic reference assignment for simple object creation.
-    """
+    """Return the module-level PIISanitizer singleton (thread-safe lazy init)."""
     global _pii_sanitizer
     if _pii_sanitizer is None:
-        _pii_sanitizer = PIISanitizer()
+        with _pii_sanitizer_lock:
+            if _pii_sanitizer is None:
+                _pii_sanitizer = PIISanitizer()
     return _pii_sanitizer

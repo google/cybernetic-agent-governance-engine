@@ -58,6 +58,7 @@ from src.gateway.observability.attributes import (
     OBSERVATION_METADATA_STPA_HAZARD,
     OBSERVATION_NAME,
     OBSERVATION_TYPE,
+    SPAN_ATTR_CONTENT_OUTPUT_LENGTH,
     TRACE_METADATA_GUARDRAILS_FRAMEWORK,
     TRACE_METADATA_GUARDRAILS_INPUT_LENGTH,
     TRACE_METADATA_GUARDRAILS_INTERVENED,
@@ -426,8 +427,6 @@ async def validate_with_nemo(
         user_input: The raw user message to validate.
         rails: The LLMRails instance to use for validation.
     """
-    from src.gateway.infrastructure.privacy import scrub_pii
-
     try:
         from src.integrations.nemo.otel_exporter import (
             NeMoOTelCallback,
@@ -446,7 +445,7 @@ async def validate_with_nemo(
         if getattr(rails, "is_transparent_fallback", False) is True:
             span.set_attribute(OBSERVATION_TYPE, "span")
             span.set_attribute(OBSERVATION_NAME, "nemo_guardrails_validation")
-            span.set_attribute("input", scrub_pii(user_input))
+            span.set_attribute(TRACE_METADATA_GUARDRAILS_INPUT_LENGTH, len(user_input))
             span.set_attribute(
                 OBSERVATION_METADATA_STPA_HAZARD, "UCA-1_SEMANTIC_BYPASS"
             )
@@ -465,7 +464,6 @@ async def validate_with_nemo(
                 OBSERVATION_METADATA_GOVERNANCE_STATE,
                 "CIRCUIT_OPEN_REJECTED",
             )
-            span.set_attribute("output", "REJECTED_CIRCUIT_OPEN")
             span.set_status(Status(StatusCode.ERROR))
             if token is not None:
                 streaming_handler_var.reset(token)
@@ -504,7 +502,6 @@ async def validate_with_nemo(
         try:
             span.set_attribute(OBSERVATION_TYPE, "span")
             span.set_attribute(OBSERVATION_NAME, "nemo_guardrails_validation")
-            span.set_attribute("input", scrub_pii(user_input))
             span.set_attribute(TRACE_METADATA_GUARDRAILS_FRAMEWORK, "nemo")
             span.set_attribute(TRACE_METADATA_GUARDRAILS_INPUT_LENGTH, len(user_input))
 
@@ -547,7 +544,6 @@ async def validate_with_nemo(
             )
             span.set_attribute(TRACE_METADATA_RISK_VERDICT, verdict)
             span.set_attribute(TRACE_METADATA_GUARDRAILS_INTERVENED, not is_safe)
-            span.set_attribute("output", response_content)
             span.set_attribute("guardrails.deterministic_verdict", is_deterministic)
             stamp_iso_control(
                 span,
@@ -685,7 +681,7 @@ async def verify_input(
     with tracer.start_as_current_span("guardrails.verify_input") as span:
         span.set_attribute(OBSERVATION_TYPE, "span")
         span.set_attribute(OBSERVATION_NAME, "nemo_input_verification")
-        span.set_attribute("input", scrub_pii(text))
+        span.set_attribute(TRACE_METADATA_GUARDRAILS_INPUT_LENGTH, len(text))
 
         if _detect_bypass(text):
             logger.warning("🛑 Blocking systemic bypass attempt: %s...", text[:50])
@@ -716,7 +712,6 @@ async def verify_input(
                 OBSERVATION_METADATA_GOVERNANCE_STATE,
                 "CIRCUIT_OPEN_REJECTED",
             )
-            span.set_attribute("output", "REJECTED_CIRCUIT_OPEN")
             span.set_status(Status(StatusCode.ERROR))
             return SafetyResult(
                 is_safe=False,
@@ -739,13 +734,13 @@ async def verify_input(
             bot_response = _extract_bot_response(res)
 
             if bot_response:
-                span.set_attribute("output", bot_response)
+                span.set_attribute(TRACE_METADATA_GUARDRAILS_OUTCOME, "BLOCKED")
                 stamp_iso_control(
                     span, ingress_stage=3, control="A.6.1.2", outcome="BLOCK"
                 )
                 return SafetyResult(is_safe=False, reason=bot_response)
 
-            span.set_attribute("output", "SAFE")
+            span.set_attribute(TRACE_METADATA_GUARDRAILS_OUTCOME, "ALLOWED")
             stamp_iso_control(span, ingress_stage=3, control="A.6.1.2", outcome="PASS")
             return SafetyResult(is_safe=True)
 
@@ -781,7 +776,7 @@ async def verify_and_mask_output(rails: LLMRails, text: str) -> str:
         scrubbed_text = scrub_pii(text)
         span.set_attribute(OBSERVATION_TYPE, "span")
         span.set_attribute(OBSERVATION_NAME, "nemo_output_masking")
-        span.set_attribute("input", scrubbed_text)
+        span.set_attribute(SPAN_ATTR_CONTENT_OUTPUT_LENGTH, len(text))
 
         try:
             res = await rails.generate_async(
@@ -791,7 +786,6 @@ async def verify_and_mask_output(rails: LLMRails, text: str) -> str:
             out_content = _extract_bot_response(res)
             # Only replace if NeMo returned a non-trivial response different from the input
             final_out = out_content if out_content else scrubbed_text
-            span.set_attribute("output", final_out)
             stamp_iso_control(
                 span, ingress_stage=3, control="A.6.1.2", outcome="REDACT"
             )
@@ -852,7 +846,8 @@ async def validate_output_semantics(
         span.set_attribute(OBSERVATION_TYPE, "span")
         span.set_attribute(OBSERVATION_NAME, "nemo_output_semantic_validation")
         span.set_attribute(
-            "input", scrub_pii(output_text if isinstance(output_text, str) else "")
+            SPAN_ATTR_CONTENT_OUTPUT_LENGTH,
+            len(output_text) if isinstance(output_text, str) else 0,
         )
 
         # --- Transparent Fallback Circuit Breaker ---
@@ -981,7 +976,6 @@ async def validate_output_semantics(
                 )
                 span.set_attribute("output.semantic_verdict", "UNSAFE")
                 span.set_attribute("output.semantic_safe", False)
-                span.set_attribute("output.semantic_reason", reason)
                 stamp_iso_control(
                     span, ingress_stage=3, control="A.6.1.2", outcome="BLOCK"
                 )

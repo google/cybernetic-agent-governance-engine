@@ -90,34 +90,34 @@ class TestOpaNodeFactory:
         """govern() returning None (no exception) → APPROVED."""
         config = _make_config()
         mock_gov = MagicMock(spec=SymbolicGovernor)
-        mock_gov.govern = AsyncMock(return_value=None)
+        mock_gov.validate_action = AsyncMock(return_value={"verdict": "ALLOW"})
 
         node = create_opa_safety_node(config, mock_gov)
         result = await node(_state_with_plan())
 
         assert result["safety_status"] == "APPROVED"
         assert "error" not in result
-        mock_gov.govern.assert_awaited_once()
+        mock_gov.validate_action.assert_awaited_once()
 
     @pytest.mark.asyncio
     async def test_skipped_when_plan_absent(self):
         """Missing plan_state_key → SKIPPED without invoking govern()."""
         config = _make_config()
         mock_gov = MagicMock(spec=SymbolicGovernor)
-        mock_gov.govern = AsyncMock(return_value=None)
+        mock_gov.validate_action = AsyncMock(return_value={"verdict": "ALLOW"})
 
         node = create_opa_safety_node(config, mock_gov)
         result = await node({"thread_id": "test"})
 
         assert result["safety_status"] == "SKIPPED"
-        mock_gov.govern.assert_not_awaited()
+        mock_gov.validate_action.assert_not_awaited()
 
     @pytest.mark.asyncio
     async def test_blocked_on_governance_error(self):
         """GovernanceError (DENY) without Manual Review → BLOCKED."""
         config = _make_config()
         mock_gov = MagicMock(spec=SymbolicGovernor)
-        mock_gov.govern = AsyncMock(
+        mock_gov.validate_action = AsyncMock(
             side_effect=GovernanceError(
                 "ISO 42001 Policy Violation: OPA Denied Action."
             )
@@ -134,7 +134,7 @@ class TestOpaNodeFactory:
         """GovernanceError with 'Manual Review' → ESCALATED."""
         config = _make_config()
         mock_gov = MagicMock(spec=SymbolicGovernor)
-        mock_gov.govern = AsyncMock(
+        mock_gov.validate_action = AsyncMock(
             side_effect=GovernanceError(
                 "ISO 42001 Policy Check: Manual Review Required."
             )
@@ -151,7 +151,7 @@ class TestOpaNodeFactory:
         """Unexpected RuntimeError → BLOCKED (fail-closed)."""
         config = _make_config()
         mock_gov = MagicMock(spec=SymbolicGovernor)
-        mock_gov.govern = AsyncMock(side_effect=RuntimeError("unexpected"))
+        mock_gov.validate_action = AsyncMock(side_effect=RuntimeError("unexpected"))
 
         node = create_opa_safety_node(config, mock_gov)
         result = await node(_state_with_plan())
@@ -163,7 +163,9 @@ class TestOpaNodeFactory:
         """asyncio.TimeoutError → BLOCKED (fail-closed)."""
         config = _make_config()
         mock_gov = MagicMock(spec=SymbolicGovernor)
-        mock_gov.govern = AsyncMock(side_effect=asyncio.TimeoutError("timeout"))
+        mock_gov.validate_action = AsyncMock(
+            side_effect=asyncio.TimeoutError("timeout")
+        )
 
         node = create_opa_safety_node(config, mock_gov)
         result = await node(_state_with_plan())
@@ -179,7 +181,7 @@ class TestOpaNodeFactory:
             plan_state_key="my_plan",
         )
         mock_gov = MagicMock(spec=SymbolicGovernor)
-        mock_gov.govern = AsyncMock(side_effect=GovernanceError("denied"))
+        mock_gov.validate_action = AsyncMock(side_effect=GovernanceError("denied"))
 
         state = {"my_plan": {"action": "foo"}, "thread_id": "t"}
         node = create_opa_safety_node(config, mock_gov)
@@ -203,21 +205,21 @@ class TestOpaNodeFactory:
             policy_action_name="custom_policy",
         )
         mock_gov = MagicMock(spec=SymbolicGovernor)
-        mock_gov.govern = AsyncMock(return_value=None)
+        mock_gov.validate_action = AsyncMock(return_value={"verdict": "ALLOW"})
 
         state = {"plan": {"action": "ignored"}, "custom_field": "hello"}
         node = create_opa_safety_node(config, mock_gov)
         await node(state)
 
         # govern was called with the custom policy name and extracted payload
-        mock_gov.govern.assert_awaited_once_with("custom_policy", extracted)
+        mock_gov.validate_action.assert_awaited_once_with("custom_policy", extracted)
 
     @pytest.mark.asyncio
     async def test_status_key_always_present(self):
         """The status state key must always be in the returned dict."""
         config = _make_config()
         mock_gov = MagicMock(spec=SymbolicGovernor)
-        mock_gov.govern = AsyncMock(return_value=None)
+        mock_gov.validate_action = AsyncMock(return_value={"verdict": "ALLOW"})
 
         node = create_opa_safety_node(config, mock_gov)
         result = await node(_state_with_plan())
@@ -270,7 +272,7 @@ class TestOpaRouterFactory:
 
         config = _make_config()
         mock_gov = MagicMock(spec=SymbolicGovernor)
-        mock_gov.govern = AsyncMock(
+        mock_gov.validate_action = AsyncMock(
             side_effect=GovernanceDeferred(
                 "Human approval required",
                 defer_reason="HITL",

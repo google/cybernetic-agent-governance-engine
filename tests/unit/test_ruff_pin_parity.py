@@ -55,15 +55,16 @@ def test_ruff_exact_pin_matches_uv_lock_and_ci_workflows() -> None:
 
     ci_yml = (WORKFLOWS_DIR / "ci.yml").read_text(encoding="utf-8")
     assert "uv sync --locked --all-groups --all-extras" in ci_yml
-    assert f'"ruff=={locked_ruff}"' in ci_yml
 
-    unpinned_pip_ruff = re.compile(r"\bpip\s+install\b[^\n]*\bruff(?!==)")
+    pip_ruff_re = re.compile(r"\bpip\s+install\b[^\n]*\bruff(?:==([^\s\"']+))?")
     for wf in sorted(WORKFLOWS_DIR.glob("*.yml")):
         text = wf.read_text(encoding="utf-8")
-        assert not unpinned_pip_ruff.search(text), (
-            f"{wf.name} contains an unpinned `pip install ... ruff`; "
-            f'pin to "ruff=={locked_ruff}"'
-        )
+        for match in pip_ruff_re.finditer(text):
+            pinned_ver = match.group(1)
+            assert pinned_ver == locked_ruff, (
+                f"{wf.name} contains `pip install ... ruff` with version {pinned_ver!r}; "
+                f"prefer `uv sync --locked` or pin to ruff=={locked_ruff}"
+            )
 
 
 def test_oauthlib_locked_above_cve_2026_49272() -> None:

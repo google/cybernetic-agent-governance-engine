@@ -4,7 +4,7 @@ component-definition:
     title: Cybernetic Governance Engine — ISO 42001 AIMS Component Definition
     version: 1.0.0
     oscal-version: 1.0.4
-    last-modified: '2026-11-09T02:00:49Z'
+    last-modified: '2026-11-17T21:56:49Z'
     remarks: 'This component definition maps technical enforcement components to ISO/IEC
       42001:2023 Annex A controls. Each implemented requirement links to a Lula validation
       manifest for automated continuous compliance.
@@ -182,10 +182,14 @@ component-definition:
 
           '
         remarks: 'Zero-tolerance control: lula-validation-a92.yaml requires a safety_rate
-          of 1.0 over compliance-bridge traces tagged control:A.9.2. No component
-          emits that tag today, so the validation cannot pass (POAM-2026-146). A FAIL
-          or ERROR on A.9.2, a critical control, alerts through the compliance bridge
-          audit workflow (_step4_alert_on_critical_fail in src/compliance_bridge/audit_workflow.py).
+          of 1.0 over custody-chain metrics at /v1/metrics/A.9.2 (INFERENCE_PROXY_PII_SCRUB_PASS;
+          POAM-2026-146 closed 2026-11-12). In the maintained staging profile (inference_backend=none)
+          no advisor or model emits A.9.2 records unless seeded (POAM-2026-201), and
+          dark controls currently report evidence_age_seconds = 0.0 (POAM-2026-234).
+          A FAIL or ERROR on A.9.2 in Lula results submitted to POST /v1/audit/ingest
+          alerts through the compliance bridge audit workflow (_step4_alert_on_critical_fail
+          in src/compliance_bridge/audit_workflow.py; console channel in reference
+          Terraform, POAM-2026-230).
 
           '
         links:
@@ -345,10 +349,13 @@ component-definition:
             are enforced even during dependency failures.
 
             '
-          remarks: 'Implemented as an env var TOKEN_QUOTA_FAIL_CLOSED=true on the
-            token-quota-proxy Deployment in the governance-stack namespace. Lula validation
-            asserts this configuration is present at runtime. STPA hazard: H-7 (TokenQuotaProxy
-            fail-OPEN scenario). POAM reference: ISO-004 (POAM_ISO42001.md).
+          remarks: 'Described as an env var TOKEN_QUOTA_FAIL_CLOSED=true on a token-quota-proxy
+            Deployment in the governance-stack namespace, but neither the variable
+            nor that Deployment appears in the committed Terraform or source. The
+            linked Lula manifest does not check the variable: since #664 it checks
+            only that the gateway is ready and sets REDIS_URL, and it is rated Stub
+            (POAM-2026-219). STPA hazard: H-7 (TokenQuotaProxy fail-OPEN scenario).
+            POAM reference: ISO-004 (POAM_ISO42001.md).
 
             '
           links:
@@ -581,7 +588,8 @@ component-definition:
         links:
         - href: ../../compliance/lula/lula-validation-sc8.yaml
           rel: lula
-          text: 'Lula validation: SC-8 Transmission Confidentiality (US_FED)'
+          text: 'Lula validation: SC-8 Memorystore CA pinning (US_FED). It does not
+            observe the TLS context factory this statement describes (POAM-2026-219)'
   - uuid: e5000099-stpa-4000-8000-compiler00001
     title: STPA-to-Policy Compiler
     type: software
@@ -604,7 +612,7 @@ component-definition:
     - name: control-structure-input
       value: config/stpa/
     - name: last-compiled
-      value: '2026-11-09T02:00:49Z'
+      value: '2026-11-17T21:56:49Z'
     - name: uca-count
       value: '12'
     control-implementations:
@@ -685,7 +693,7 @@ component-definition:
     - name: source-file
       value: src/gateway/governance/governor/stages/ftra.py
     - name: last-compiled
-      value: '2026-11-09T02:00:49Z'
+      value: '2026-11-17T21:56:49Z'
     control-implementations:
     - uuid: ftra0001-ctrl-impl-8000-classifier01
       source: https://csrc.nist.gov/projects/cprt/api/cprt/framework/version/SP_800_53_5_1_1/home

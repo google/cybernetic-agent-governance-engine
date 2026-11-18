@@ -53,15 +53,17 @@ from src.gateway.observability.attributes import (
     AI_WEBHOOK_SCORE_NAME,
     AI_WEBHOOK_SCORE_VALUE,
     AI_WEBHOOK_TRACE_ID,
-    OBSERVATION_INPUT,
-    OBSERVATION_OUTPUT,
     OBSERVATION_TYPE,
     SPAN_ATTR_CAGE_PRINCIPAL_VERIFIED,
-    SPAN_ATTR_ENDUSER_ID,
+    SPAN_ATTR_CONTENT_INPUT_LENGTH,
+    SPAN_ATTR_CONTENT_OUTPUT_LENGTH,
+    SPAN_ATTR_THREAD_ID,
     WEBHOOK_THRESHOLD_BREACH,
 )
+from src.governed_financial_advisor.graph.checkpointer import CheckpointDurabilityError
 from src.governed_financial_advisor.graph.graph import create_graph
 from src.governed_financial_advisor.infrastructure.auth import (
+    ADVISOR_DEFAULT_THREAD_PREFIX,
     require_api_key,
     require_thread_owner,
     resolve_request_principal,
@@ -110,40 +112,23 @@ async def lifespan(app: FastAPI):  # type: ignore[no-untyped-def]
         )
 
     logger.info("Initializing Agent Graph...")
-    app.state.graph = create_graph(redis_url=Config.REDIS_URL)
-
-    # ── Connect the GFA AsyncRedisClient singleton ────────────────────────
-    # The singleton is created at module import time (redis_client.py) but
-    # connect() must be called explicitly to establish the connection pool.
-    # Failure is non-fatal: the server starts but sessions won't persist.
-    from src.governed_financial_advisor.infrastructure.redis_client import (
-        redis_client as _redis_client,
+    from src.gateway.governance.env_posture import is_enforcing
+    from src.governed_financial_advisor.graph.checkpointer import (
+        CheckpointDurabilityError,
+        GatewayCheckpointSaver,
     )
 
-    try:
-        await _redis_client.connect()
-        logger.info("✅ GFA AsyncRedisClient connected")
-    except Exception as _redis_exc:
-        logger.error("❌ GFA Redis connection failed (non-fatal): %s", _redis_exc)
-
-    # Initialize Redis Indices if using Redis Checkpointer (langgraph-checkpoint-redis)
-    try:
-        if hasattr(app.state.graph, "checkpointer") and app.state.graph.checkpointer:
-            cp = app.state.graph.checkpointer
-            # Check for AsyncRedisSaver and call setup() if available
-            # Only AsyncRedisSaver has setup(); MemorySaver does not
-            try:
-                from langgraph.checkpoint.redis import AsyncRedisSaver
-
-                if isinstance(cp, AsyncRedisSaver):
-                    logger.info("Running Redis Checkpointer setup()...")
-                    await cp.setup()
-                    logger.info("Redis Checkpointer setup complete")
-            except ImportError:
-                # langgraph-checkpoint-redis not installed; skip setup
-                logger.debug("langgraph-checkpoint-redis not available; skipping setup")
-    except Exception as e:
-        logger.warning("Failed to setup Redis Checkpointer: %s", e)
+    app.state.graph = create_graph()
+    cp = getattr(app.state.graph, "checkpointer", None)
+    if isinstance(cp, GatewayCheckpointSaver):
+        await cp.verify_ready()
+        logger.info(
+            "✅ GatewayCheckpointSaver verified (ttl_seconds=%s)", cp.ttl_seconds
+        )
+    elif is_enforcing():
+        raise CheckpointDurabilityError(
+            "Enforcing posture requires durable GatewayCheckpointSaver; refusing startup"
+        )
 
     logger.info("Agent Graph Initialized")
     yield
@@ -154,10 +139,11 @@ async def lifespan(app: FastAPI):  # type: ignore[no-untyped-def]
     except Exception as exc:
         logger.debug("PromptRegistry stop error: %s", exc)
     await get_mcp_client().close()
-    try:
-        await _redis_client.close()
-    except Exception as exc:
-        logger.debug("Redis client close error: %s", exc)
+    if isinstance(cp, GatewayCheckpointSaver):
+        try:
+            await cp.aclose()
+        except Exception as exc:
+            logger.debug("GatewayCheckpointSaver close error: %s", exc)
 
 
 app = FastAPI(
@@ -171,9 +157,6 @@ def server_request_hook(span, scope):  # type: ignore[no-untyped-def]
 
     method = scope.get("method", "GET").upper()
     path = scope.get("path", "/")
-
-    # 1. Rich Observation (Mapping Input and Span Name)
-    span.set_attribute("input", f"{method} {path}")
     span.update_name(f"{method} {path}")
 
 
@@ -248,12 +231,59 @@ def read_root():  # type: ignore[no-untyped-def]
 
 
 @app.get("/health")
-def health_check():  # type: ignore[no-untyped-def]
-    return {
+async def health_check(request: Request):  # type: ignore[no-untyped-def]
+    from src.gateway.governance.env_posture import is_enforcing
+    from src.governed_financial_advisor.graph.checkpointer import (
+        GatewayCheckpointSaver,
+        checkpointer_type_of,
+        get_checkpointer_type,
+    )
+
+    graph = getattr(request.app.state, "graph", None)
+    cp = getattr(graph, "checkpointer", None) if graph is not None else None
+    cp_type = checkpointer_type_of(cp) if cp is not None else get_checkpointer_type()
+    durable = cp_type == "gateway"
+
+    if is_enforcing() and not durable:
+        return JSONResponse(
+            status_code=503,
+            content={
+                "status": "unhealthy",
+                "reason": "non_durable_checkpointer",
+                "service": "financial-advisor-graph-agent",
+                "project_id": Config.GOOGLE_CLOUD_PROJECT,
+                "checkpointer": cp_type,
+                "durable": False,
+            },
+        )
+
+    if isinstance(cp, GatewayCheckpointSaver):
+        try:
+            await cp.verify_ready()
+        except Exception as exc:
+            logger.error("/health gateway checkpointer probe failed: %s", exc)
+            return JSONResponse(
+                status_code=503,
+                content={
+                    "status": "unhealthy",
+                    "reason": "gateway_checkpointer_unreachable",
+                    "service": "financial-advisor-graph-agent",
+                    "project_id": Config.GOOGLE_CLOUD_PROJECT,
+                    "checkpointer": cp_type,
+                    "durable": False,
+                },
+            )
+
+    payload: dict[str, object] = {
         "status": "ok",
         "service": "financial-advisor-graph-agent",
         "project_id": Config.GOOGLE_CLOUD_PROJECT,
+        "checkpointer": cp_type,
+        "durable": durable,
     }
+    if isinstance(cp, GatewayCheckpointSaver) and cp.ttl_seconds is not None:
+        payload["checkpoint_ttl_seconds"] = cp.ttl_seconds
+    return payload
 
 
 @app.post("/agent/query", response_model=QueryResponse)
@@ -282,27 +312,32 @@ async def query_agent(  # type: ignore[no-untyped-def]
         )
     except PermissionError as exc:
         raise HTTPException(status_code=403, detail=str(exc)) from exc
+    except CheckpointDurabilityError as exc:
+        logger.error("Checkpoint store unavailable during thread-owner check: %s", exc)
+        raise HTTPException(
+            status_code=503,
+            detail={"error": "checkpoint_store_unavailable", "detail": str(exc)},
+        ) from exc
     token = user_context.set(principal.user_id)
     verified_token = principal_verified_context.set(principal.verified)
     try:
-        import json as _json
-
-        # ISO 42001: A.7.2 Accountability — Tag trace with User Identity
+        # The span never carries the prompt, the response or the end-user
+        # identifier: anything exported reaches the retention-locked telemetry
+        # event bucket. It records whether the principal was verified and the
+        # content lengths instead.
         current_span = trace.get_current_span()
         trace_id = None
         if current_span and current_span.is_recording():
-            current_span.set_attribute(SPAN_ATTR_ENDUSER_ID, principal.user_id)
             current_span.set_attribute(
                 SPAN_ATTR_CAGE_PRINCIPAL_VERIFIED, principal.verified
             )
-            current_span.set_attribute("thread.id", effective_thread_id)
+            if not effective_thread_id.startswith(ADVISOR_DEFAULT_THREAD_PREFIX):
+                # A default (advisor_session_<user_id>) thread id embeds the
+                # user id, so only another thread id is recorded.
+                current_span.set_attribute(SPAN_ATTR_THREAD_ID, effective_thread_id)
             current_span.set_attribute(OBSERVATION_TYPE, "generation")
             current_span.set_attribute("gen_ai.operation.name", "chat")
-            current_span.set_attribute(
-                "gen_ai.input.messages",
-                _json.dumps([{"role": "user", "content": req.prompt}]),
-            )
-            current_span.set_attribute(OBSERVATION_INPUT, req.prompt)
+            current_span.set_attribute(SPAN_ATTR_CONTENT_INPUT_LENGTH, len(req.prompt))
             current_span.set_attribute("gen_ai.system", "financial-advisor-gateway")
             ctx = current_span.get_span_context()
             if ctx.trace_flags.sampled:
@@ -344,7 +379,9 @@ async def query_agent(  # type: ignore[no-untyped-def]
             if current_span and current_span.is_recording():
                 current_span.set_attribute("gen_ai.system", "langchain")
                 current_span.set_attribute("gen_ai.request.model", "cached")
-                current_span.set_attribute(OBSERVATION_OUTPUT, cached_response)
+                current_span.set_attribute(
+                    SPAN_ATTR_CONTENT_OUTPUT_LENGTH, len(cached_response)
+                )
                 current_span.set_attribute("cache.hit", True)
 
             return {"response": final_response_text, "trace_id": trace_id}
@@ -416,9 +453,9 @@ async def query_agent(  # type: ignore[no-untyped-def]
                 if not reason or reason == final_response_text
                 else reason
             )
-        else:
+        elif not res or res.get("safety_status") in (None, "APPROVED", "SKIPPED"):
             # Cache successful responses (only if query was cacheable)
-            # Blocked responses are not cached (different blocks may have different reasons)
+            # Blocked, deferred, hard-paused, and gateway-error responses are not cached
             await query_cache.set(
                 req.prompt, final_response_text, governance_context=_governance_context
             )
@@ -430,16 +467,20 @@ async def query_agent(  # type: ignore[no-untyped-def]
                 os.environ.get("VLLM_REASONING_MODEL", "unknown"),
             )
             current_span.set_attribute(
-                "gen_ai.output.messages",
-                _json.dumps([{"role": "assistant", "content": final_response_text}]),
+                SPAN_ATTR_CONTENT_OUTPUT_LENGTH, len(final_response_text)
             )
-            current_span.set_attribute(OBSERVATION_OUTPUT, final_response_text)
 
         return {"response": final_response_text, "trace_id": trace_id}
 
     except HTTPException:
         # Re-raise HTTPException (e.g. 504 timeout) without wrapping in 500.
         raise
+    except CheckpointDurabilityError as exc:
+        logger.error("Checkpoint store unavailable during graph execution: %s", exc)
+        raise HTTPException(
+            status_code=503,
+            detail={"error": "checkpoint_store_unavailable", "detail": str(exc)},
+        ) from exc
     except Exception as e:
         logger.error("Error invoking agent graph: %s", e)
         traceback.print_exc()
@@ -507,12 +548,11 @@ async def list_pending_approvals(  # type: ignore[no-untyped-def]
                 continue
             seen_threads.add(thread_id)
 
-            # Fetch the current state snapshot for this thread
+            # Fetch the current state snapshot for this thread. Never swallow
+            # checkpointer or state-read failures: returning HTTP 200 with a
+            # partial list would under-report pending human approvals (POAM-2026-226).
             config = {"configurable": {"thread_id": thread_id}}
-            try:
-                snapshot = await graph.aget_state(config)
-            except Exception:
-                continue
+            snapshot = await graph.aget_state(config)
 
             if snapshot is None:
                 continue
@@ -539,6 +579,16 @@ async def list_pending_approvals(  # type: ignore[no-untyped-def]
                     }
                 )
 
+    except HTTPException:
+        raise
+    except CheckpointDurabilityError as exc:
+        logger.error(
+            "Checkpoint store unavailable while listing pending approvals: %s", exc
+        )
+        raise HTTPException(
+            status_code=503,
+            detail={"error": "checkpoint_store_unavailable", "detail": str(exc)},
+        ) from exc
     except Exception as exc:
         logger.error("Failed to list pending approvals: %s", exc)
         traceback.print_exc()

@@ -288,7 +288,13 @@ async def test_validate_action_refuses_an_envelope_signed_by_an_unknown_key() ->
     "response",
     [
         httpx.Response(
-            403, json={"verdict": "DENIED", "violations": ["CBF Violation"]}
+            403,
+            json={
+                "schema_version": "2.0.0",
+                "verdict": "DENIED",
+                "violations": ["CBF Violation"],
+                "proof_hash": "sha256:test-cbf-refusal",
+            },
         ),
         httpx.Response(200, json={"verdict": "DENIED"}),
         httpx.Response(200, json={"verdict": "APPROVED"}),

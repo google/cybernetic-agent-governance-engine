@@ -188,7 +188,7 @@ The compliance output model of the domain-agnostic kernel uses a **four-state OS
 
 #### Critical-Control Alert Behaviour
 
-Controls in `CRITICAL_CONTROLS = {"A.9.2", "SC-4", "A.8.4"}` trigger Slack/PagerDuty alerts on **both** `FAIL` and `ERROR`. An `ERROR` on a critical control is treated with the same urgency as a `FAIL` because the system cannot assert the control is satisfied — the absence of evidence is itself a risk signal.
+Controls in `CRITICAL_CONTROLS = {"A.9.2", "SC-4", "A.8.4"}` trigger Slack/PagerDuty alerts on **both** `FAIL` and `ERROR` (**Correction (`2026-11-16`, `POAM-2026-230`):** every committed profile pins the compliance-bridge `alert_channel` to `console`, so those alerts are log lines until `POAM-2026-230` closes). An `ERROR` on a critical control is treated with the same urgency as a `FAIL` because the system cannot assert the control is satisfied — the absence of evidence is itself a risk signal.
 
 This property is invariant across all domains that extend the compliance bridge.
 
@@ -257,7 +257,7 @@ In all cases, the runtime enforcement is identical:
 - If `h(x_next) < (1 - γ) · h(x_t)` → **BLOCK**
 - If `h(x_next) < 0` → **BLOCK** (critical boundary violation)
 
-The decay coefficient `γ`, the state key, and the minimum threshold come from the plugin's invariant and its threshold section; external ground truth comes from the `GroundTruthProvider` the plugin registers for that `invariant_id`. Both `finance` and `healthcare` declare `maturity = "production"` and ship a complete `DomainConfig`, active domain tiers, CBF invariants, and domain OPA bundles (`trade.governance` in [`src/cage_finance/opa/trade_governance.rego`](../../src/cage_finance/opa/trade_governance.rego); `dosing.governance` in [`src/cage_healthcare/opa/dosing_governance.rego`](../../src/cage_healthcare/opa/dosing_governance.rego)) mounted dynamically on both Compose and GKE. Domain-specific STPA hazard YAML and compiled `uca_rules` are currently implemented for `cage_finance` and remain `planned` for `cage_healthcare` (which inherits kernel core STPA UCAs from [`config/stpa/core_system.yaml`](../../config/stpa/core_system.yaml)). The `physical_ai` plugin (`cage_physical_ai`) declares `maturity = "stub"` (no `DomainConfig` or `.rego` bundle; POAM-2026-077 and POAM-2026-198 in [`docs/POAM.md`](../POAM.md)) and is refused by `assemble_governor()` in enforcing postures and by the GKE `opa_policies` ConfigMap precondition at `terraform plan`.
+The decay coefficient `γ`, the state key, and the minimum threshold come from the plugin's invariant and its threshold section; external ground truth comes from the `GroundTruthProvider` the plugin registers for that `invariant_id`. Only `finance` declares `maturity = "production"`. `healthcare` declares `maturity = "stub"`, so `assemble_governor()` refuses it in every enforcing posture (`DM-1` in [`BREAKING_CHANGES.md`](../BREAKING_CHANGES.md)), although it has the structure of a production domain: like `finance` it ships a complete `DomainConfig`, active domain tiers, a CBF invariant, and a domain OPA bundle (`trade.governance` in [`src/cage_finance/opa/trade_governance.rego`](../../src/cage_finance/opa/trade_governance.rego); `dosing.governance` in [`src/cage_healthcare/opa/dosing_governance.rego`](../../src/cage_healthcare/opa/dosing_governance.rego)), mounted dynamically on both Compose and GKE. Domain-specific STPA hazard YAML and compiled `uca_rules` are currently implemented for `cage_finance` and remain `planned` for `cage_healthcare` (which inherits kernel core STPA UCAs from [`config/stpa/core_system.yaml`](../../config/stpa/core_system.yaml)). The `physical_ai` plugin (`cage_physical_ai`) declares `maturity = "stub"` (no `DomainConfig` or `.rego` bundle; POAM-2026-077 and POAM-2026-198 in [`docs/POAM.md`](../POAM.md)) and is refused by `assemble_governor()` in enforcing postures and by the GKE `opa_policies` ConfigMap precondition at `terraform plan`.
 
 #### Formal Mathematical Invariant & TOCTOU Resolution
 
@@ -716,7 +716,7 @@ the public repository), use the plugin escape hatch described below.
 
 ### Step 1: Build Plugin Loader (One-Time Setup)
 
-If not already implemented, create `src/gateway/governance/provider_plugin_loader.py`:
+CAGE ships no provider plugin loader. An adopter writes one, for example as a `provider_plugin_loader` module beside [`plugin_loader.py`](../../src/gateway/governance/plugin_loader.py), which loads domain plugins:
 
 1. Implement allow-list validation from external Secret/ConfigMap
 2. Implement signature verification (cosign/Sigstore or SHA-256 digest pinning)

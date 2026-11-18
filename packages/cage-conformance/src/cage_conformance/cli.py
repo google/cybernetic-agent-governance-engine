@@ -282,6 +282,7 @@ def _verify(args: argparse.Namespace) -> int:
         gcp_id_token = _read_optional_secret(
             args.gcp_id_token_file, (GCP_ID_TOKEN_ENV_VAR, LEGACY_GCP_ID_TOKEN_ENV_VAR)
         )
+        assert isinstance(args.profile, str)
         report = verify_endpoint(
             args.endpoint,
             profile=args.profile,
@@ -440,7 +441,7 @@ def _add_audit_corroboration_parser(subparsers: argparse._SubParsersAction) -> N
         type=Path,
         default=[],
         metavar="FILE",
-        help="cage-evidence-batch/1 attestations (compliance-evidence key)",
+        help="cage-evidence-batch/1 or cage-evidence-batch/2 attestations (compliance-evidence key)",
     )
     corroborate.add_argument(
         "--seals",

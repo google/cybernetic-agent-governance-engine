@@ -66,10 +66,20 @@ def test_pyproject_bandit_exclude_dirs_does_not_exclude_scripts_or_src() -> None
     )
 
 
+SCANNED_ROOTS = (
+    "src",
+    "scripts",
+    "packages/cage-client/src",
+    "packages/cage-conformance/src",
+    "proof",
+    "deployment",
+)
+
+
 def test_every_nosec_in_src_and_scripts_has_rule_id_and_reason() -> None:
-    """Every `# nosec` in src/ and scripts/ must specify B<NNN> and a `# reason` comment."""
+    """Every `# nosec` across scanned trees must specify B<NNN> and a `# reason` comment."""
     violations: list[str] = []
-    for root_name in ("src", "scripts"):
+    for root_name in SCANNED_ROOTS:
         root_dir = REPO_ROOT / root_name
         for py_file in sorted(root_dir.rglob("*.py")):
             for lineno, line in enumerate(
@@ -155,12 +165,11 @@ def test_planted_defect_caught_by_bandit_config() -> None:
 
 
 def test_bandit_full_scan_covers_src_and_scripts_cleanly() -> None:
-    """Full Bandit scan over src/ and scripts/ scans >25,000 LOC and exits 0 with 0 issues."""
+    """Full Bandit scan over all production, script, package, proof, and deployment trees exits 0."""
     proc = subprocess.run(
         _bandit_cmd(
             "-r",
-            "src/",
-            "scripts/",
+            *SCANNED_ROOTS,
             "-c",
             str(PYPROJECT_PATH),
             "-ll",
@@ -185,7 +194,7 @@ def test_bandit_full_scan_covers_src_and_scripts_cleanly() -> None:
     )
     total_loc = int(match.group(1))
     assert total_loc > 25_000, (
-        f"Expected Bandit to scan >25,000 LOC across src/ and scripts/, got {total_loc}"
+        f"Expected Bandit to scan >25,000 LOC across {SCANNED_ROOTS}, got {total_loc}"
     )
 
 

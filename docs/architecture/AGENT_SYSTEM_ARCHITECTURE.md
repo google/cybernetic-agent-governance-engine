@@ -122,7 +122,7 @@ While `ExecutionAnalystAgent` defines the structural steps of the trade, `Evalua
 
 ## 4. Graph Topology & Routing
 
-The `StateGraph` topology is assembled by `_build_workflow()` in `src/governed_financial_advisor/graph/graph.py`, which is shared by `create_graph(redis_url)` (Redis-checkpointed) and `create_uncheckpointed_graph()` (LangGraph SDK delegated state). Neither factory (nor `build_governed_trader_graph()`) takes a governor argument: the advisor hosts no `SymbolicGovernor` (POAM-2026-079). **Thirteen named nodes** are registered with fail-closed routing:
+The `StateGraph` topology is assembled by `_build_workflow()` in `src/governed_financial_advisor/graph/graph.py`, which is shared by `create_graph()` (gateway-mediated checkpointing via `GatewayCheckpointSaver`) and `create_uncheckpointed_graph()` (LangGraph SDK delegated state). Neither factory (nor `build_governed_trader_graph()`) takes a governor argument: the advisor hosts no `SymbolicGovernor` (POAM-2026-079). **Thirteen named nodes** are registered with fail-closed routing:
 
 ```mermaid
 flowchart TD

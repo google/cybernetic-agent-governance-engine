@@ -15,7 +15,7 @@
 | Risk Assessment Lead      | [ISSO NAME — TBD]                                                                                                                                      |
 | Authorizing Official (AO) | [AO NAME — TBD]                                                                                                                                        |
 | Assessment Methodology    | NIST SP 800-30 Rev. 1                                                                                                                                  |
-| Related Documents         | `docs/POAM.md`, `compliance/sar/SAR_2026Q1.md`, `compliance/categorization/FIPS199_CATEGORIZATION.md`, `compliance/boundary/AUTHORIZATION_BOUNDARY.md` |
+| Related Documents         | `docs/POAM.md`, `compliance/archive/retracted/SAR_2026Q1.md` (retracted 2026-11-15), `compliance/categorization/FIPS199_CATEGORIZATION.md`, `compliance/boundary/AUTHORIZATION_BOUNDARY.md` |
 
 ---
 

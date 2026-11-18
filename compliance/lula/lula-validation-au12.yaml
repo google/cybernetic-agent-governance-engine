@@ -121,7 +121,7 @@ component-definition:
 
               gateway_blocking_evidence_ready if {
                 some deploy in input["cage-deployments"]
-                deploy.metadata.name in {"gateway", "stera-gateway"}
+                deploy.metadata.name == "gateway"
                 deploy.status.readyReplicas >= 1
                 some container in deploy.spec.template.spec.containers
                 container.name == "gateway"

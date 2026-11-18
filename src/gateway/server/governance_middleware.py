@@ -51,7 +51,11 @@ from src.gateway.governance.decisions import GovernanceDecision
 from src.gateway.governance.evidence.stream import get_evidence_sink
 from src.gateway.governance.governance_envelope import GovernanceEnvelopeBuilder
 from src.gateway.governance.governor.approval import PostHitlApproval
-from src.gateway.governance.governor.errors import GovernanceDeferred
+from src.gateway.governance.governor.errors import (
+    DeferQueueUnavailableError,
+    GovernanceDeferred,
+    GovernanceInfrastructureError,
+)
 from src.gateway.governance.governor.governor import GovernanceError, SymbolicGovernor
 from src.gateway.governance.governor.metrics import (
     governor_metrics,
@@ -62,8 +66,10 @@ from src.gateway.governance.governor.stages.opa import decode_opa_verdict
 from src.gateway.governance.iso_control import stamp_iso_control
 from src.gateway.governance.jcs_canonicalizer import jcs_canonicalize_plan
 from src.gateway.governance.kms_signer import get_governance_signer
-from src.gateway.governance.prompt_injection_detector import detect_indirect_injection
 from src.gateway.governance.text_filter import ac_keyword_scan
+from src.gateway.observability.mcp_tracing import (
+    sanitize_mcp_tool_response as _sanitize_mcp_tool_response,
+)
 from src.gateway.observability.mcp_tracing import sanitize_trace_carrier
 from src.gateway.server.app_state import governor_of
 from src.gateway.server.state_commitment_api import (
@@ -191,6 +197,14 @@ async def enforce_governance(
         # deferral (parked token + GOVERNANCE_DEFERRAL) is already evidenced.
         logger.info("🕒 Symbolic Governor DEFERRED %s: %s", tool_name, exc)
         raise ActionDeferred(exc, approval_retained=False) from exc
+    except DeferQueueUnavailableError:
+        # GOVERNANCE_DEFERRAL (persisted=False) was already chained; never
+        # emit a contradictory GOVERNANCE_REFUSAL_RECEIPT (F-05).
+        raise
+    except GovernanceInfrastructureError:
+        # GOVERNANCE_INFRASTRUCTURE_BLOCK was already chained; never fabricate
+        # a KMS-signed policy refusal receipt (POAM-2026-233).
+        raise
     except GovernanceError as exc:
         logger.warning("🛡️ Symbolic Governor BLOCKED %s: %s", tool_name, exc)
         emitted = await _emit_refusal_receipt(
@@ -324,6 +338,8 @@ async def enforce_approved_governance(
         # the approval); a deferral is not a refusal, so no refusal receipt.
         logger.info("🕒 Post-approval re-validation DEFERRED %s: %s", tool_name, exc)
         raise ActionDeferred(exc, approval_retained=True) from exc
+    except GovernanceInfrastructureError:
+        raise
     except GovernanceError as exc:
         logger.warning("🛡️ Post-approval re-validation BLOCKED %s: %s", tool_name, exc)
         emitted = await _emit_refusal_receipt(
@@ -386,18 +402,7 @@ async def sanitize_mcp_tool_response(
         A violation description string if indirect injection was detected,
         ``None`` if the response is clean.
     """
-    result = detect_indirect_injection(tool_name, response_text)
-    if result.detected:
-        stamp_iso_control(span, ingress_stage=2, control="A.9.2", outcome="BLOCK")
-        logger.warning(
-            '🔴 [AI600-003] MCP tool response rejected: tool=%s pattern=%s "\n'
-            "(ISO 42001 A.9.2 — indirect injection blocked)",
-            tool_name,
-            result.pattern_matched,
-        )
-        return f"indirect_injection:{result.pattern_matched}"
-    stamp_iso_control(span, ingress_stage=2, control="A.9.2", outcome="PASS")
-    return None
+    return await _sanitize_mcp_tool_response(tool_name, response_text, span=span)
 
 
 # ---------------------------------------------------------------------------
@@ -512,17 +517,14 @@ class PolicyPrecheckRequest(BaseModel):
 def _serialize_receipt(
     receipt_obj: Any,
 ) -> dict[str, Any]:
-    """Serialize a RefusalReceipt to a dict for evidence ingestion.
+    """Serialize a RefusalReceipt to its WORM retention-tier dict (RP-1 / POAM-2026-225).
 
-    Preserves the receipt's computed proof_hash exactly without recomputation.
-    Handles nested frozen dataclasses (GovernanceTierFailure).
-
-    Args:
-        receipt_obj: RefusalReceipt instance.
-
-    Returns:
-        Serialized dict suitable for JSON encoding and evidence stream ingestion.
+    Preserves the receipt's computed ``proof_hash`` while emitting
+    ``params_hash`` and ``evaluated_params`` (never raw ``attempted_params``).
     """
+    if hasattr(receipt_obj, "to_worm_dict") and callable(receipt_obj.to_worm_dict):
+        return dict(receipt_obj.to_worm_dict())
+
     from dataclasses import asdict, is_dataclass
 
     def _convert_value(obj: Any) -> Any:
@@ -538,7 +540,10 @@ def _serialize_receipt(
         else:
             return obj
 
-    return _convert_value(receipt_obj)
+    converted = _convert_value(receipt_obj)
+    if isinstance(converted, dict):
+        converted.pop("attempted_params", None)
+    return converted
 
 
 async def record_refusal(
@@ -1021,6 +1026,30 @@ async def validate_action_endpoint(
                 for v in payload_result["violations"]
             ]
 
+        verdict_val = payload_result.get("verdict")
+        has_persisted_ticket = bool(
+            payload_result.get("deferred_id")
+            or payload_result.get("defer_token")
+            or payload_result.get("defer_id")
+        )
+        if (
+            verdict_val
+            in (
+                GovernanceDecision.REQUIRE_APPROVAL,
+                "REQUIRE_APPROVAL",
+                GovernanceDecision.DEFER,
+                "DEFER",
+            )
+            and not has_persisted_ticket
+        ):
+            return JSONResponse(
+                status_code=503,
+                content={
+                    "error": "defer_queue_unavailable",
+                    "detail": "Deferral could not be persisted to DeferQueue; failing closed.",
+                },
+            )
+
         builder = GovernanceEnvelopeBuilder()
         envelope = await builder.build(
             action=body.action,
@@ -1032,6 +1061,28 @@ async def validate_action_endpoint(
         )
         return JSONResponse(content=envelope.to_dict(include_signature=True))
 
+    except DeferQueueUnavailableError as exc:
+        logger.error(
+            "DeferQueue unavailable during validate_action (%s)",
+            type(exc).__name__,
+        )
+        return JSONResponse(
+            status_code=503,
+            content={
+                "error": "defer_queue_unavailable",
+                "detail": "Deferral could not be persisted to DeferQueue; failing closed.",
+            },
+        )
+    except GovernanceInfrastructureError as exc:
+        return JSONResponse(
+            status_code=503,
+            content={
+                "error": exc.error_code,
+                "dependency": exc.dependency,
+                "failure_code": exc.failure_code,
+                "detail": str(exc),
+            },
+        )
     except GovernanceError as exc:
         from src.gateway.governance.evidence.stream import (
             EvidenceChainUnavailableError,
@@ -1097,3 +1148,8 @@ async def validate_action_endpoint(
 
 # POST /governance/state-commitments — generic state-commitment service.
 governance_app.include_router(state_commitment_router)
+
+# /governance/checkpoints/* — gateway-mediated working-state checkpoint service.
+from src.gateway.server.checkpoint_api import router as checkpoint_router  # noqa: E402
+
+governance_app.include_router(checkpoint_router)

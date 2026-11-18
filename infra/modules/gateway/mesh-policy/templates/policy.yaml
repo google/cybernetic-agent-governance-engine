@@ -13,12 +13,15 @@
 # limitations under the License.
 # Deny by default on the gateway HTTP port. Once a Server has HTTPRoutes,
 # Linkerd refuses any request that matches no route, and a route with no
-# AuthorizationPolicy admits nobody. Two routes cover the whole path space:
-#   gateway-open   exact open paths                      → any client, incl. kubelet probes
-#   gateway-gated  PathPrefix "/" (everything else)       → trusted mesh identities only
-# Exact and longer-prefix matches win over "/", so the open paths never fall
-# into the gated route. The gateway repeats the same check on l5d-client-id
-# (WorkloadIdentityMiddleware), so deleting these objects does not open it.
+# AuthorizationPolicy admits nobody. Three routes cover the whole path space:
+#   gateway-open    exact open paths                                        → any client, incl. kubelet probes
+#   gateway-canary  exact POST /governance/{validate-action,policy-precheck} → trusted + canary mesh identities
+#   gateway-gated   PathPrefix "/" (everything else)                        → trusted mesh identities only
+# Exact and longer-prefix matches win over "/" without falling back on 403, so
+# gateway-canary MUST carry gateway-canary-trusted (trustedIdentities) alongside
+# gateway-canary (canaryIdentities), matching compliance-bridge-infra-events.
+# The gateway repeats the same check on l5d-client-id (WorkloadIdentityMiddleware),
+# so deleting these objects does not open it.
 apiVersion: policy.linkerd.io/v1beta3
 kind: Server
 metadata:
@@ -47,6 +50,27 @@ spec:
             type: Exact
             value: {{ . | quote }}
 {{- end }}
+---
+apiVersion: policy.linkerd.io/v1beta3
+kind: HTTPRoute
+metadata:
+  name: gateway-canary
+  namespace: {{ .Release.Namespace }}
+spec:
+  parentRefs:
+    - group: policy.linkerd.io
+      kind: Server
+      name: gateway-http
+  rules:
+    - matches:
+        - method: POST
+          path:
+            type: Exact
+            value: "/governance/validate-action"
+        - method: POST
+          path:
+            type: Exact
+            value: "/governance/policy-precheck"
 ---
 apiVersion: policy.linkerd.io/v1beta3
 kind: HTTPRoute
@@ -104,6 +128,21 @@ spec:
 apiVersion: policy.linkerd.io/v1alpha1
 kind: AuthorizationPolicy
 metadata:
+  name: gateway-canary-trusted
+  namespace: {{ .Release.Namespace }}
+spec:
+  targetRef:
+    group: policy.linkerd.io
+    kind: HTTPRoute
+    name: gateway-canary
+  requiredAuthenticationRefs:
+    - group: policy.linkerd.io
+      kind: MeshTLSAuthentication
+      name: gateway-trusted-clients
+---
+apiVersion: policy.linkerd.io/v1alpha1
+kind: AuthorizationPolicy
+metadata:
   name: gateway-gated
   namespace: {{ .Release.Namespace }}
 spec:
@@ -117,27 +156,6 @@ spec:
       name: gateway-trusted-clients
 {{- end }}
 {{- if .Values.canaryIdentities }}
----
-apiVersion: policy.linkerd.io/v1beta3
-kind: HTTPRoute
-metadata:
-  name: gateway-canary
-  namespace: {{ .Release.Namespace }}
-spec:
-  parentRefs:
-    - group: policy.linkerd.io
-      kind: Server
-      name: gateway-http
-  rules:
-    - matches:
-        - method: POST
-          path:
-            type: Exact
-            value: "/governance/validate-action"
-        - method: POST
-          path:
-            type: Exact
-            value: "/governance/policy-precheck"
 ---
 apiVersion: policy.linkerd.io/v1alpha1
 kind: MeshTLSAuthentication

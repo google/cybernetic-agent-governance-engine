@@ -482,7 +482,9 @@ class TestAdapterReceiptVerification:
             )
 
             # Create receipt that expired 1 day ago
-            receipt = create_test_receipt(expires_in_days=-1)
+            receipt = create_test_receipt(
+                envelope_digest="test-evidence-hash", expires_in_days=-1
+            )
 
             # Mock HTTP response
             with patch("httpx.AsyncClient") as MockHTTPClient:
@@ -502,6 +504,51 @@ class TestAdapterReceiptVerification:
             # Should fail (receipt expired)
             assert result.error is not None
             assert "expired" in result.error.lower()
+
+    @pytest.mark.asyncio
+    async def test_receipt_for_other_evidence_hash_fails_closed(self) -> None:
+        """A genuine receipt sealing a different evidence hash is not accepted."""
+        with patch(
+            "src.integrations.provider_06.adapter.Provider06KeyManifestClient"
+        ) as MockJWKSClient:
+            mock_client = AsyncMock()
+
+            from cryptography.hazmat.primitives.asymmetric.ed25519 import (
+                Ed25519PublicKey,
+            )
+
+            public_key_jwk = get_test_public_key_jwk()
+            public_key_bytes = base64.urlsafe_b64decode(public_key_jwk["x"] + "==")
+            public_key = Ed25519PublicKey.from_public_bytes(public_key_bytes)
+
+            mock_client.get_key.return_value = public_key
+            MockJWKSClient.return_value = mock_client
+
+            adapter = Provider06AgentIntegrityAdapter(
+                endpoint="http://localhost:8090",
+                key_manifest_url="file:///test/manifest.json",
+            )
+
+            # Validly signed, but for another evidence record
+            receipt = create_test_receipt(envelope_digest="other-evidence-hash")
+
+            with patch("httpx.AsyncClient") as MockHTTPClient:
+                client_instance = AsyncMock()
+                from unittest.mock import MagicMock
+
+                mock_response = MagicMock()
+                mock_response.json.return_value = receipt
+                client_instance.post.return_value = mock_response
+                MockHTTPClient.return_value.__aenter__.return_value = client_instance
+
+                result = await adapter.submit_evidence(
+                    thread_id="test-thread",
+                    evidence_hash="test-evidence-hash",
+                )
+
+            assert result.error is not None
+            assert "envelopedigest mismatch" in result.error.lower()
+            assert not result.seal_hash
 
 
 # ---------------------------------------------------------------------------

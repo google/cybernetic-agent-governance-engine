@@ -254,9 +254,13 @@ def _extract_signals(node_name: str, state: dict[str, Any]) -> dict[str, Any]:
     if opa := state.get("opa_results"):
         signals["policyResults"] = opa
 
-    # Safety status
+    # Safety status and violation reason code
     if safety := state.get("safety_status"):
         signals["safetyStatus"] = safety
+    if isinstance(violation := state.get("last_violation"), Mapping) and (
+        reason_code := violation.get("reason_code")
+    ):
+        signals["violationReasonCode"] = str(reason_code)
 
     # Risk status
     if risk := state.get("risk_status"):
@@ -295,6 +299,19 @@ def _extract_signals(node_name: str, state: dict[str, Any]) -> dict[str, Any]:
     return signals
 
 
+def _is_gateway_error_step(step: ProjectBundleStepEntry) -> bool:
+    """Return True if ``step`` recorded a gateway transport/verification failure."""
+    if step.signals.get("safetyStatus") == "GATEWAY_ERROR":
+        return True
+    if step.signals.get("violationReasonCode") == "GATEWAY_ERROR":
+        return True
+    last_violation = step.signals.get("last_violation")
+    return (
+        isinstance(last_violation, Mapping)
+        and last_violation.get("reason_code") == "GATEWAY_ERROR"
+    )
+
+
 def _classify_terminal_path(
     steps: list[ProjectBundleStepEntry], topology: GraphTopology
 ) -> str:
@@ -331,6 +348,11 @@ def _classify_terminal_path(
     # Priority 1 (Happy Path): Terminal node was reached
     if topology.terminal_node in node_names:
         return "happy_path"
+
+    # Fail-closed transport/unverified gateway errors are infrastructure faults,
+    # never CBF barrier blocks, loop-breaker trips, or NeMo policy blocks (POAM-2026-228).
+    if any(_is_gateway_error_step(step) for step in steps):
+        return "unknown"
 
     # Priority 2 (CBF Invariant Block): Check for CBF safety violations
     for step in steps:

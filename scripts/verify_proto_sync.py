@@ -36,7 +36,7 @@ PROTO_PAIRS = [
 ]
 
 
-def main():
+def main() -> None:
     all_ok = True
     for canonical, copy_ in PROTO_PAIRS:
         if not canonical.exists():

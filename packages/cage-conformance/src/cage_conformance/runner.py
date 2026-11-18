@@ -142,7 +142,9 @@ def http_request(
         method=method.upper(),
     )
     try:
-        with urllib.request.urlopen(request, timeout=timeout_s) as resp:  # nosec B310
+        with urllib.request.urlopen(  # nosec B310  # http(s):// scheme validated in _validate_http_url
+            request, timeout=timeout_s
+        ) as resp:
             return HttpResponse(
                 status_code=int(resp.status),
                 headers=dict(resp.headers.items()),

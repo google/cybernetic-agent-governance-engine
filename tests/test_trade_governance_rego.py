@@ -30,7 +30,7 @@ import httpx
 import pytest
 import respx
 
-pytestmark = pytest.mark.unit
+pytestmark = [pytest.mark.unit, pytest.mark.local]
 
 # ---------------------------------------------------------------------------
 # Determine whether a live OPA is available with the trade.governance policy
@@ -343,10 +343,116 @@ class TestTradeGovernanceRegoMocked:
     def test_rego_policy_has_fail_closed_default(self):
         """Rego policy must declare default allow = \"DENY\" for fail-closed posture."""
         content = _POLICY_PATH.read_text()
-        assert 'default allow = "DENY"' in content
+        assert (
+            'default allow := "DENY"' in content or 'default allow = "DENY"' in content
+        )
 
     def test_rego_policy_has_junior_and_senior_rules(self):
         """Rego policy must contain RBAC rules for both junior and senior roles."""
         content = _POLICY_PATH.read_text()
         assert '"junior"' in content
         assert '"senior"' in content
+
+
+# ---------------------------------------------------------------------------
+# Hermetic OPA CLI policy evaluation tests (DA-03)
+# ---------------------------------------------------------------------------
+
+import json as _json
+import shutil as _shutil
+import subprocess as _subprocess
+
+_OPA_BIN = _shutil.which("opa")
+
+
+def _eval_rego_cli(input_doc: dict[str, Any]) -> dict[str, Any]:
+    assert _OPA_BIN is not None
+    proc = _subprocess.run(
+        [
+            _OPA_BIN,
+            "eval",
+            "--format=json",
+            "--data",
+            str(_POLICY_PATH),
+            "--stdin-input",
+            "data.trade.governance",
+        ],
+        input=_json.dumps(input_doc).encode("utf-8"),
+        capture_output=True,
+        check=True,
+    )
+    payload = _json.loads(proc.stdout.decode("utf-8"))
+    return payload["result"][0]["expressions"][0]["value"]
+
+
+@pytest.mark.skipif(_OPA_BIN is None, reason="opa CLI binary not installed on PATH")
+class TestTradeGovernanceRegoDA03CLI:
+    """Direct opa eval verification of DA-03 cross-type/sign/action hardening."""
+
+    @pytest.mark.parametrize(
+        "bad_amount",
+        [None, False, True, 0, 0.0, -1, -5000.0, "100", [100], {"usd": 100}],
+    )
+    def test_cross_type_and_non_positive_amounts_denied(self, bad_amount: Any) -> None:
+        out = _eval_rego_cli(
+            {
+                "action": "execute_trade",
+                "trader_role": "junior",
+                "amount": bad_amount,
+                "amount_minor": 50_000_000,
+                "currency": "USD",
+            }
+        )
+        assert out["allow"] == "DENY"
+
+    def test_amount_and_amount_minor_mismatch_denied(self) -> None:
+        out = _eval_rego_cli(
+            {
+                "action": "execute_trade",
+                "trader_role": "junior",
+                "amount": 100.0,
+                "amount_minor": 50_000_000,
+                "currency": "USD",
+            }
+        )
+        assert out["allow"] == "DENY"
+
+    def test_matching_amount_and_amount_minor_allowed(self) -> None:
+        out = _eval_rego_cli(
+            {
+                "action": "execute_trade",
+                "trader_role": "junior",
+                "amount": 100.25,
+                "amount_minor": 10025,
+                "currency": "USD",
+            }
+        )
+        assert out["allow"] == "ALLOW"
+
+    @pytest.mark.parametrize(
+        "advisory_action",
+        ["market_analysis", "check_balance", "check_market_status"],
+    )
+    def test_registered_advisory_actions_allowed(self, advisory_action: str) -> None:
+        out = _eval_rego_cli({"action": advisory_action, "trader_role": "junior"})
+        assert out["allow"] == "ALLOW"
+
+    @pytest.mark.parametrize(
+        "unregistered_action",
+        ["", "drop_database", "wire_transfer", "admin_override", None, 123, True],
+    )
+    def test_unregistered_actions_denied(self, unregistered_action: Any) -> None:
+        out = _eval_rego_cli({"action": unregistered_action, "trader_role": "senior"})
+        assert out["allow"] == "DENY"
+
+    def test_execute_trade_bounded_btc_senior_does_not_conflict(self) -> None:
+        out = _eval_rego_cli(
+            {
+                "action": "execute_trade_bounded",
+                "trader_role": "senior",
+                "symbol": "BTC",
+                "amount": 25000,
+                "currency": "USD",
+            }
+        )
+        assert out["allow"] == "MANUAL_REVIEW"

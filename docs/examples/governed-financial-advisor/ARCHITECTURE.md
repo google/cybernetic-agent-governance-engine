@@ -114,13 +114,10 @@ The advisor's startup guard ([`identity_guard.py`](../../../src/governed_financi
 
 ### 3.3 LangGraph HITL Interrupt Point
 
-The graph compiles with `interrupt_before=["governed_trader"]` ([`graph.py:create_graph()`](../../../src/governed_financial_advisor/graph/graph.py)), pausing execution when `approval_required=True`:
+The graph compiles with a gateway-mediated checkpointer ([`graph.py:create_graph()`](../../../src/governed_financial_advisor/graph/graph.py)), and [`approval_node`](../../../src/governed_financial_advisor/graph/nodes/approval_node.py) pauses execution dynamically via `interrupt()` when `REQUIRE_APPROVAL` is returned:
 
 ```python
-graph = create_graph(redis_url)
-compiled = graph.compile(
-    checkpointer=get_checkpointer(redis_url), interrupt_before=["governed_trader"]
-)
+graph = create_graph()
 ```
 
 Human approval is handled via REST API ([`server.py`](../../../src/governed_financial_advisor/server.py)):
@@ -173,7 +170,7 @@ see [`workload_identity.py`](../../../src/gateway/server/workload_identity.py)
 
 The end-user principal is **bound to a verified OIDC identity in enforcing postures, and explicitly marked unverified when caller-asserted in permissive postures** (`#516`, `#520`):
 
-- **Out-of-band `kid`-resolved user authentication.** [`resolve_request_principal()`](../../../src/governed_financial_advisor/infrastructure/auth.py) verifies the end-user OIDC JWT via [`verify_user_oidc_token()`](../../../src/governed_financial_advisor/infrastructure/auth.py), rejecting any token with embedded key headers (`jwk`, `jku`, `x5c`, `x5u`), disallowed algorithms, or an unknown `kid`. When a verified token is present, its subject claim (`sub`, `act_sub`, `user_sub`, or `CAGE_USER_OIDC_PRINCIPAL_CLAIM`) is validated against `PRINCIPAL_PATTERN` (`1..64` chars) and carried end-to-end as `PrincipalIdentity(user_id=..., verified=True)` (`user_context`, `principal_verified_context=True`, span attributes `enduser.id` + `cage.principal.verified=true`, and outbound [`GatewayClient._build_headers()`](../../../src/governed_financial_advisor/infrastructure/gateway_client.py) headers `x-cage-principal` and `x-cage-principal-verified: true`). If the caller also supplies `user_id` in the JSON body and it disagrees with the verified token claim, `POST /agent/query` fails closed with HTTP 403 before graph execution.
+- **Out-of-band `kid`-resolved user authentication.** [`resolve_request_principal()`](../../../src/governed_financial_advisor/infrastructure/auth.py) verifies the end-user OIDC JWT via [`verify_user_oidc_token()`](../../../src/governed_financial_advisor/infrastructure/auth.py), rejecting any token with embedded key headers (`jwk`, `jku`, `x5c`, `x5u`), disallowed algorithms, or an unknown `kid`. When a verified token is present, its subject claim (`sub`, `act_sub`, `user_sub`, or `CAGE_USER_OIDC_PRINCIPAL_CLAIM`) is validated against `PRINCIPAL_PATTERN` (`1..64` chars) and carried end-to-end as `PrincipalIdentity(user_id=..., verified=True)` (`user_context`, `principal_verified_context=True`, span attribute `cage.principal.verified=true` (the user ID itself never goes on a span), and outbound [`GatewayClient._build_headers()`](../../../src/governed_financial_advisor/infrastructure/gateway_client.py) headers `x-cage-principal` and `x-cage-principal-verified: true`). If the caller also supplies `user_id` in the JSON body and it disagrees with the verified token claim, `POST /agent/query` fails closed with HTTP 403 before graph execution.
 - **Posture-dependent handling of unverified principals.** When no verified user OIDC token is present, [`requires_verified_principal()`](../../../src/governed_financial_advisor/infrastructure/auth.py) refuses the request with HTTP 401 in enforcing postures (`production`, `staging`), when `CAGE_USER_OIDC_ISSUER` is configured, or when `CAGE_REQUIRE_VERIFIED_PRINCIPAL=true` (unless `CAGE_ALLOW_ASSERTED_PRINCIPAL=true` is explicitly set in non-enforcing posture). In permissive postures (`dev`, `test`, `ci`), a caller-asserted [`QueryRequest.user_id`](../../../src/governed_financial_advisor/models/query.py) is accepted and explicitly marked unverified (`verified=False`, `cage.principal.verified=false`, `x-cage-principal-verified: false`).
 - **The gateway's rate-limit trust boundary is the workload identity.** The gateway authenticates the GFA by its Linkerd mTLS workload identity (§4.4). It reads `x-cage-principal` only on requests that carry that verified identity ([`extract_rate_limit_keys()`](../../../src/gateway/server/rate_limit.py)) and uses it as a per-principal rate-limit key bounded by the per-identity budget.
 - **Reviewer names are attribution only.** The `reviewer` sent to `POST /v1/approvals/{thread_id}/resume` is caller-supplied. Approval authority stays with the gateway's quorum-approved `DeferQueue` ([`enforce_approved_governance()`](../../../src/gateway/server/governance_middleware.py)).

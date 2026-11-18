@@ -29,7 +29,7 @@ if TYPE_CHECKING:
     from src.gateway.governance.governor.governor import SymbolicGovernor
 
 from src.cage_finance.actuators.broker_actuator import BrokerActuator
-from src.cage_finance.models.trade_order import TradeOrder, is_valid_transaction_id
+from src.cage_finance.models.trade_order import is_valid_transaction_id
 from src.cage_finance.tools.market_service import get_market_data
 from src.gateway.governance.contracts import DomainToolProvider
 from src.gateway.governance.execution_actuator import (
@@ -45,6 +45,7 @@ from src.gateway.governance.execution_idempotency import (
     UnsettledDuplicate,
 )
 from src.gateway.governance.governor.server_inputs import bind_server_inputs
+from src.gateway.governance.routing_seal import SymbolicGovernorViolation
 from src.gateway.governance.seams.actuation import ExecutionClearance
 from src.gateway.server.governance_middleware import (
     ActionDeferred,
@@ -54,6 +55,16 @@ from src.gateway.server.governance_middleware import (
 )
 
 logger = logging.getLogger(__name__)
+
+
+class ActuationIndeterminateError(SymbolicGovernorViolation):
+    """Raised when trade actuation reached an indeterminate (UNKNOWN) outcome.
+
+    Distinct from a provable pre-execution rejection (``SymbolicGovernorViolation``):
+    phase-2 reservations remain confirmed pending broker reconciliation (F-06,
+    POAM-2026-232) and callers must not treat the order as safely unexecuted.
+    """
+
 
 # ── Module-level actuator registration ──
 # Register the BrokerActuator on module import so it's available
@@ -90,8 +101,12 @@ def _approval_covers_trade(approved: dict, requested: dict) -> bool:
     if any(approved.get(f) != requested.get(f) for f in _APPROVAL_BOUND_FIELDS):
         return False
     try:
-        approved_amount = float(approved["amount"])
-        requested_amount = float(requested["amount"])
+        raw_approved = approved["amount"]
+        raw_requested = requested["amount"]
+        if isinstance(raw_approved, bool) or isinstance(raw_requested, bool):
+            return False
+        approved_amount = float(raw_approved)
+        requested_amount = float(raw_requested)
     except (KeyError, TypeError, ValueError):
         return False
     return 0.0 < requested_amount <= approved_amount
@@ -367,9 +382,10 @@ async def _govern_and_actuate(
     seal = governance_result
 
     # Every exit from here on settles the seal's phase-2 commits exactly once
-    # (ADR-009): confirmed only if the broker accepted the trade, released on
-    # every other path (blocked receipt, invalid seal, dry run, rejection,
-    # actuation error).
+    # (ADR-009): confirmed whenever the trade may have executed (ACCEPTED,
+    # UNKNOWN, or mid-dispatch cancellation), and released only on provable
+    # pre-execution paths (blocked receipt, invalid seal, dry run, missing
+    # actuator, or deterministic REJECTED receipt).
     executed = False
     try:
         # Step 3: NARROW Receipt Validation (CAGE-SEC-004 fix)
@@ -475,7 +491,6 @@ async def _govern_and_actuate(
             return "DRY_RUN: APPROVED by OPA, Safety, and Consensus."
 
         # Step 5: Construct ExecutionClearance (ADR-008 Phase 2 + v3.0 Routing)
-        # Build the clearance structure required by the ActuatorRegistry
         clearance = ExecutionClearance(
             thread_id=str(action_params.get("transaction_id", str(uuid.uuid4()))),
             decision="ALLOW",
@@ -496,8 +511,8 @@ async def _govern_and_actuate(
             executor_id="cage_finance_broker",
             target_route="local://default",
             consequence_ceiling="HIGH_FINANCIAL",
-            approvals=[],  # Populated by dual-control in future phases
-            required_quorum=0,  # No quorum required for single-agent trades
+            approvals=[],
+            required_quorum=0,
             routing_seal=seal,
         )
 
@@ -509,10 +524,12 @@ async def _govern_and_actuate(
                 action="execute_trade",
             )
 
-        # The kernel dispatcher records the receipt exactly once and turns an
-        # actuator exception into an UNKNOWN receipt. Anything not provably
-        # REJECTED confirms the reservations rather than releasing headroom.
-        attempt.status = ExecutionStatus.UNKNOWN  # the broker may act from here on
+        # Flip executed=True and attempt.status=UNKNOWN BEFORE awaiting
+        # dispatch_actuation so mid-flight cancellation (BaseException) or
+        # indeterminate outcomes NEVER roll back CBF or FiscalLimitGuard
+        # reservations; only a provable REJECTED receipt resets executed=False.
+        attempt.status = ExecutionStatus.UNKNOWN
+        executed = True
         receipt = await dispatch_actuation(actuator, clearance)
         executed = receipt.may_have_executed
 
@@ -522,7 +539,7 @@ async def _govern_and_actuate(
                 for f in receipt.findings
             )
             if executed:
-                raise SymbolicGovernorViolation(
+                raise ActuationIndeterminateError(
                     f"Actuation outcome indeterminate (reservations confirmed "
                     f"pending reconciliation): {findings_str}",
                     action="execute_trade",

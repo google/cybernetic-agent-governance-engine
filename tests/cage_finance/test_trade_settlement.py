@@ -30,7 +30,7 @@ import pytest
 
 from src.cage_finance.tools.tool_provider import execute_trade_action
 from src.gateway.governance.routing_seal import SymbolicGovernorViolation
-from src.gateway.governance.seams.actuation import ActuationReceipt
+from src.gateway.governance.seams.actuation import ActuationOutcome, ActuationReceipt
 from tests.fixtures.trade_inputs import trade_governor
 
 pytestmark = [
@@ -51,6 +51,7 @@ def _receipt(accepted: bool) -> ActuationReceipt:
         raw_receipt={},
         findings=[] if accepted else [{"code": "VENUE_REJECT", "detail": "halted"}],
         retryable=False,
+        outcome=ActuationOutcome.ACCEPTED if accepted else ActuationOutcome.REJECTED,
     )
 
 
@@ -193,3 +194,16 @@ async def test_settlement_failures_do_not_mask_the_trade_result(caplog) -> None:
     result = await _run(governor, actuate=AsyncMock(return_value=_receipt(True)))
     assert result.startswith("EXECUTED")
     assert "settlement (executed=True) failed" in caplog.text
+
+
+@pytest.mark.asyncio
+async def test_omitted_outcome_receipt_raises_type_error() -> None:
+    with pytest.raises(TypeError, match="outcome"):
+        ActuationReceipt(  # type: ignore[call-arg]
+            accepted=False,
+            receipt_id=None,
+            session_uuid="s-1",
+            raw_receipt=None,
+            findings=[{"code": "READ_TIMEOUT", "detail": "socket timed out"}],
+            retryable=False,
+        )

@@ -41,15 +41,6 @@ variable "enable_logging" {
   default = "true"
 }
 
-variable "redis_host" {
-  type = string
-}
-
-variable "redis_port" {
-  type    = string
-  default = "6379"
-}
-
 variable "model_fast" {
   type = string
 }
@@ -131,13 +122,6 @@ variable "gateway_url" {
 variable "mcp_mode" {
   type    = string
   default = "stdio"
-}
-
-variable "redis_password" {
-  description = "Redis password"
-  type        = string
-  default     = ""
-  sensitive   = true
 }
 
 variable "alphavantage_api_key" {

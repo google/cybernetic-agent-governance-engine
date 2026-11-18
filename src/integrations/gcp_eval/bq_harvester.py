@@ -166,11 +166,15 @@ class BigQueryTrajectoryHarvester(TrajectoryHarvesterProtocol):
 
         # Table identifier is strictly validated by _BQ_TABLE_ID_RE in __init__;
         # all runtime filter values use @since_iso and @row_limit query parameters.
+        # WORM-derived v4 tables carry ``params_hash`` and ``evaluated_params``
+        # (never raw ``attempted_params``); bounded-retention offline evaluation
+        # tables may additionally carry ``attempted_params``.
         sql_template = (
             "SELECT thread_id, action, violated_tier, violated_rule, "
             "standing_at_refusal, timestamp, proof_hash, schema_version, "
-            "attempted_params, standing_snapshot, control_id, "
-            "protected_consequence, non_formation_proof, tier_failures, reliance "
+            "params_hash, evaluated_params, attempted_params, standing_snapshot, "
+            "control_id, protected_consequence, non_formation_proof, "
+            "tier_failures, reliance "
             "FROM `__TABLE_FQN__` "
             "WHERE emitted_at >= @since_iso "
             "ORDER BY emitted_at DESC "
@@ -201,6 +205,22 @@ class BigQueryTrajectoryHarvester(TrajectoryHarvesterProtocol):
             )
             raw_reliance = self._parse_json_column(row.get("reliance")) or ()
             reliance = tuple(dict(r) for r in raw_reliance if isinstance(r, Mapping))
+            raw_eval_stages = self._parse_json_column(row.get("evaluated_stages"))
+            raw_skip_stages = self._parse_json_column(row.get("skipped_stages"))
+            has_stage_coverage = (
+                raw_eval_stages is not None or raw_skip_stages is not None
+            )
+            default_schema = (
+                "v5"
+                if has_stage_coverage
+                else ("v4" if row.get("params_hash") else "v3")
+            )
+            evaluated_stages = tuple(
+                (str(pair[0]), str(pair[1]))
+                for pair in (raw_eval_stages or ())
+                if isinstance(pair, (list, tuple)) and len(pair) == 2
+            )
+            skipped_stages = tuple(str(s) for s in (raw_skip_stages or ()))
             receipt = RefusalReceipt(
                 thread_id=str(row["thread_id"]),
                 action=str(row["action"]),
@@ -211,7 +231,11 @@ class BigQueryTrajectoryHarvester(TrajectoryHarvesterProtocol):
                 ),
                 timestamp=float(row["timestamp"]),
                 proof_hash=str(row["proof_hash"]),
-                schema_version=str(row.get("schema_version", "v3")),
+                schema_version=str(row.get("schema_version", default_schema)),
+                params_hash=str(row.get("params_hash") or ""),
+                evaluated_params=dict(
+                    self._parse_json_column(row.get("evaluated_params")) or {}
+                ),
                 attempted_params=dict(
                     self._parse_json_column(row.get("attempted_params")) or {}
                 ),
@@ -223,6 +247,8 @@ class BigQueryTrajectoryHarvester(TrajectoryHarvesterProtocol):
                 non_formation_proof=str(row.get("non_formation_proof", "")),
                 tier_failures=tier_failures,
                 reliance=reliance,
+                evaluated_stages=evaluated_stages,
+                skipped_stages=skipped_stages,
             )
             if not receipt.verify_proof_hash():
                 raise ValueError(

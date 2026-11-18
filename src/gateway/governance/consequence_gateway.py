@@ -37,6 +37,7 @@ algorithm confusion, malformed, missing claims).
 from __future__ import annotations
 
 import hashlib
+import hmac
 import logging
 import time
 from dataclasses import dataclass
@@ -193,6 +194,9 @@ class ConsequenceGateway:
                 sentinel_unset=False,
             )
         except EvidenceChainUnavailableError as exc:
+            from src.gateway.governance.governor.metrics import governor_metrics
+
+            governor_metrics().evidence_publish_failure("consequence_gateway")
             logger.error(
                 "[ConsequenceGateway] Evidence stream unavailable on %s (%s): %s",
                 evaluation.decision.value,
@@ -208,6 +212,9 @@ class ConsequenceGateway:
                     )
                 raise
         except Exception as exc:
+            from src.gateway.governance.governor.metrics import governor_metrics
+
+            governor_metrics().evidence_publish_failure("consequence_gateway")
             logger.error(
                 "[ConsequenceGateway] Failed to emit %s (%s): %s",
                 event_type,
@@ -280,7 +287,7 @@ class ConsequenceGateway:
                 claims=claims,
             )
 
-        if recomputed_digest != claims.act:
+        if not hmac.compare_digest(recomputed_digest, claims.act):
             logger.warning(
                 "[ConsequenceGateway] ACTION_BINDING_MISMATCH rec=%s",
                 claims.rec,
@@ -404,7 +411,9 @@ class ConsequenceGateway:
         if not consumed:
             # Re-read the existing binding to distinguish REPLAY vs SUBSTITUTION
             existing_binding = await self._store.get_binding(claims.rec)
-            if existing_binding == binding:
+            if isinstance(existing_binding, str) and hmac.compare_digest(
+                existing_binding, binding
+            ):
                 reason_code = "ALREADY_CONSUMED"
             else:
                 reason_code = "AUTHORITY_RECORD_BINDING_MISMATCH"

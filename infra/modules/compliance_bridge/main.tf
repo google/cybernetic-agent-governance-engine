@@ -73,6 +73,11 @@ resource "kubernetes_deployment" "compliance_bridge" {
       condition     = !contains(["prod", "production"], lower(var.cage_env)) || (!var.enable_e2e_mode && trimspace(var.operator_jwks_json) == "")
       error_message = "CAGE Invariant (POAM-2026-191 / POAM-2026-196): enable_e2e_mode and operator_jwks_json are non-production verification switches and are refused when cage_env is prod or production."
     }
+
+    precondition {
+      condition     = !contains(["staging", "prod", "production"], lower(var.cage_env)) || lower(trimspace(var.evidence_cold_store)) == "null" || trimspace(var.evidence_cold_store_location) != ""
+      error_message = "CAGE Invariant (SC-7 / GDPR Art. 44 / MAS TRM §4.2 / POAM-2026-220): under an enforcing posture with durable cold storage, compliance-bridge requires a non-empty evidence_cold_store_location (the WORM bucket's immutable cloud location)."
+    }
   }
 
   metadata {
@@ -113,7 +118,8 @@ resource "kubernetes_deployment" "compliance_bridge" {
       }
 
       spec {
-        service_account_name = var.service_account_name
+        service_account_name            = var.service_account_name
+        automount_service_account_token = false
 
         security_context {
           run_as_non_root = true
@@ -321,6 +327,11 @@ resource "kubernetes_deployment" "compliance_bridge" {
           }
 
           env {
+            name  = "EVIDENCE_COLD_STORE_LOCATION"
+            value = var.evidence_cold_store_location
+          }
+
+          env {
             name  = "CMEK_KEY_RESOURCE_NAME"
             value = var.cmek_key_resource_name
           }
@@ -479,6 +490,21 @@ resource "kubernetes_deployment" "compliance_bridge" {
             value = trimspace(var.infra_evidence_previous_batch_attestation_digest)
           }
 
+          env {
+            name  = "TMPDIR"
+            value = "/tmp"
+          }
+
+          env {
+            name  = "PYTHONDONTWRITEBYTECODE"
+            value = "1"
+          }
+
+          volume_mount {
+            name       = "tmp"
+            mount_path = "/tmp"
+          }
+
           dynamic "volume_mount" {
             for_each = local.mount_redis_ca ? [1] : []
             content {
@@ -490,6 +516,7 @@ resource "kubernetes_deployment" "compliance_bridge" {
 
           security_context {
             allow_privilege_escalation = false
+            read_only_root_filesystem  = true
             run_as_non_root            = true
             run_as_user                = 1000
             capabilities {
@@ -531,6 +558,14 @@ resource "kubernetes_deployment" "compliance_bridge" {
             period_seconds        = 10
             timeout_seconds       = 5
             failure_threshold     = 3
+          }
+        }
+
+        volume {
+          name = "tmp"
+          empty_dir {
+            medium     = "Memory"
+            size_limit = "64Mi"
           }
         }
 
@@ -595,6 +630,7 @@ resource "helm_release" "mesh_policy" {
   values = [yamlencode({
     trustedIdentities = var.trusted_mesh_identities
     auditorIdentity   = var.auditor_mesh_identity
+    templateSha256    = filesha256("${path.module}/mesh-policy/templates/policy.yaml")
   })]
 }
 

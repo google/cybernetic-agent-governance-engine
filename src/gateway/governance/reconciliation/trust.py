@@ -165,11 +165,12 @@ def reset_reconciler_trust() -> None:
 def snapshot_signing_payload(snapshot: Any) -> dict[str, Any]:
     """Return the canonical payload covered by a snapshot signature.
 
-    ``settled_through`` is covered because the reconciler prunes the CBF's
-    local-debit ledger up to it (ADR-010 §4): an attacker who could edit it
-    in Redis unsigned could settle debits the custodian has not absorbed.
+    Covers ``invariant_id`` (KG-06: prevents cross-invariant snapshot
+    substitution) and ``settled_through`` (ADR-010 §4: prevents unsigned
+    local-debit ledger pruning).
     """
     return {
+        "invariant_id": str(getattr(snapshot, "invariant_id", "") or ""),
         "source": snapshot.source,
         "state_scalar": float(snapshot.state_scalar),
         "verified_at": snapshot.verified_at,
@@ -181,6 +182,8 @@ def snapshot_signing_payload(snapshot: Any) -> dict[str, Any]:
 def verify_snapshot_signature(
     snapshot: Any,
     verifier: KMSGovernanceSigner | None = None,
+    *,
+    expected_invariant_id: str | None = None,
 ) -> bool:
     """Verify a ground-truth snapshot signature against reconciler anchors.
 
@@ -209,6 +212,15 @@ def verify_snapshot_signature(
             "Ground-truth snapshot signed by the gateway key (kid=%r) — "
             "rejected; only the reconciler key may sign ground truth.",
             kid,
+        )
+        return False
+    snap_inv = str(getattr(snapshot, "invariant_id", "") or "")
+    if expected_invariant_id is not None and snap_inv != expected_invariant_id:
+        logger.critical(
+            "Ground-truth snapshot invariant_id mismatch (got %r, expected %r) — "
+            "failing closed against cross-invariant substitution.",
+            snap_inv,
+            expected_invariant_id,
         )
         return False
 

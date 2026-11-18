@@ -18,9 +18,10 @@
 Covers:
   - POAM-2026-208: Dual-field amount / amount_minor and clinical dose agreement across
     TradeOrder, finance_cost_resolver, and healthcare_cost_resolver.
-  - POAM-2026-209: Inference proxy content-part normalization (#662), OTel span PII
-    sanitization on multimodal/structured messages, full-history NeMo input rail
-    evaluation, and multi-choice output PII scrubbing preserving JSON tool arguments.
+  - POAM-2026-209: Inference proxy content-part normalization (#662), no message
+    content on OTel spans (which replaced the span PII sanitization of
+    multimodal/structured messages), full-history NeMo input rail evaluation, and
+    multi-choice output PII scrubbing preserving JSON tool arguments.
   - POAM-2026-210: Posture-safe authentication on GET /v1/defer/pending and
     GET /v1/defer/{defer_id} across staging and production, routing_seal redaction on
     bulk pending listings, and WebAuthn signature/authenticator_data enforcement.
@@ -212,8 +213,8 @@ class TestPoam208DualFieldMagnitudeValidation:
 
 @pytest.mark.usefixtures("connected_evidence_sink")
 class TestPoam209InferenceProxyBoundaries:
-    """POAM-2026-209 (#644 + #662): Content-part normalization, OTel PII scrubbing,
-    multi-turn NeMo input verification, and multi-choice output masking."""
+    """POAM-2026-209 (#644 + #662): Content-part normalization, no message content on
+    OTel spans, multi-turn NeMo input verification, and multi-choice output masking."""
 
     def test_extract_content_text_and_preserve_tool_calls_scan(self) -> None:
         parts = [
@@ -252,31 +253,6 @@ class TestPoam209InferenceProxyBoundaries:
         assert "ignore all previous instructions" in combined
         assert "execute_trade_action" in combined
         assert "assistant_tool_arg_marker" in combined
-
-    def test_otel_safe_messages_scrubs_multimodal_and_non_dict_entries(self) -> None:
-        from src.gateway.server.inference_proxy import _sanitize_otel_message
-
-        multimodal_msg = {
-            "role": "user",
-            "content": [
-                {"type": "text", "text": "Customer SSN is 123-45-6789"},
-                {"type": "input_text", "input_text": "Email alice@example.com"},
-                {
-                    "type": "image_url",
-                    "image_url": {"url": "data:image/png;base64,AAAA"},
-                },
-            ],
-        }
-        sanitized = _sanitize_otel_message(multimodal_msg)
-        dumped = json.dumps(sanitized)
-        assert "123-45-6789" not in dumped
-        assert "alice@example.com" not in dumped
-        assert "data:image/png" not in dumped
-        assert "[REDACTED-DATA-URI]" in dumped
-
-        # Non-dict message element must not raise TypeError
-        non_dict_sanitized = _sanitize_otel_message("raw SSN 123-45-6789")
-        assert "123-45-6789" not in str(non_dict_sanitized)
 
     def test_stage1_blocks_input_text_and_dict_content_shapes(
         self, monkeypatch: pytest.MonkeyPatch
@@ -460,13 +436,14 @@ class TestPoam209InferenceProxyBoundaries:
             assert "EARLIER_SAFE_CONTEXT" in captured_nemo_inputs[0]
             assert "check status" in captured_nemo_inputs[0]
 
-            # Verify OTel gen_ai.input.messages and gen_ai.output.messages redacted PII
+            # The span carries no message or response content at all.
             span_attrs = {
                 call.args[0]: call.args[1]
                 for call in mock_span.set_attribute.call_args_list
             }
-            assert "123-45-6789" not in span_attrs["gen_ai.input.messages"]
-            assert "123-45-6789" not in span_attrs["gen_ai.output.messages"]
+            assert "gen_ai.input.messages" not in span_attrs
+            assert "gen_ai.output.messages" not in span_attrs
+            assert not any("123-45-6789" in str(v) for v in span_attrs.values())
 
             # Verify BOTH choices[0] and choices[1] were masked and JSON numbers survived (#709)
             body = ok_resp.json()

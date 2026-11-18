@@ -37,7 +37,11 @@ import pytest
 
 from src.cage_finance.models.trade_order import TradeOrder
 from src.gateway.governance.defer_queue import DeferQueue, DeferToken
-from src.gateway.governance.seams.actuation import ActuationReceipt, ExecutionClearance
+from src.gateway.governance.seams.actuation import (
+    ActuationOutcome,
+    ActuationReceipt,
+    ExecutionClearance,
+)
 from tests.fixtures.trade_inputs import trade_governor
 
 pytestmark = [pytest.mark.unit, pytest.mark.local]
@@ -260,6 +264,7 @@ async def test_execute_trade_action_traverses_actuator():
         findings=[],
         retryable=False,
         timestamp_utc="2026-09-13T21:00:00Z",
+        outcome=ActuationOutcome.ACCEPTED,
     )
 
     actuate_spy = AsyncMock(return_value=spy_receipt)

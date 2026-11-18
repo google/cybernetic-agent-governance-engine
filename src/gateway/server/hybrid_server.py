@@ -106,6 +106,11 @@ async def _gateway_lifespan(app: FastAPI):  # type: ignore[no-untyped-def]
     app.state.loop_lag_task = None
     app.state.normative_polling_task = None
     app.state.nemo_reload_task = None
+    evidence_sink = None
+    governor = None
+    checkpoint_store = None
+    rl_redis = None
+    shared_redis = None
 
     try:
         # ── Inference backend (CAGE_INFERENCE_BACKEND) ──────────────────────
@@ -252,6 +257,18 @@ async def _gateway_lifespan(app: FastAPI):  # type: ignore[no-untyped-def]
         state_commitments = build_state_commitment_service(evidence_sink)
         app.state.state_commitments = state_commitments
         governance_app.state.state_commitments = state_commitments
+
+        # ── Gateway-mediated checkpoint store (/governance/checkpoints/*) ──────
+        # Partitioned by verified Linkerd client identity in Redis DB 3 (default)
+        # with TTL derived from the kernel defer/hold resumption windows. Fails
+        # startup closed under every enforcing posture when Redis is unavailable.
+        from src.gateway.governance.checkpoint_store import (
+            start_checkpoint_store_from_env,
+        )
+
+        checkpoint_store = await start_checkpoint_store_from_env()
+        app.state.checkpoint_store = checkpoint_store
+        governance_app.state.checkpoint_store = checkpoint_store
 
         # ── Pre-warm OPA Policy Engine ──────────────────────────────────────────
         logger.info("🔥 Pre-warming OPA policy evaluation...")
@@ -412,6 +429,32 @@ async def _gateway_lifespan(app: FastAPI):  # type: ignore[no-untyped-def]
         except Exception as rl_close_exc:
             logger.debug("Rate-limit Redis close error: %s", rl_close_exc)
 
+    app.state.checkpoint_store = None
+    governance_app.state.checkpoint_store = None
+    if checkpoint_store is not None:
+        try:
+            await checkpoint_store.close()
+        except Exception as ckpt_close_exc:
+            logger.debug("Checkpoint store close error: %s", ckpt_close_exc)
+
+    from src.gateway.infrastructure.redis_client import (
+        redis_client as _gw_async_redis,
+    )
+    from src.gateway.infrastructure.redis_client import (
+        sync_redis_client as _gw_sync_redis,
+    )
+
+    if _gw_async_redis is not None:
+        try:
+            await _gw_async_redis.close()
+        except Exception as gw_redis_exc:
+            logger.debug("Gateway async Redis pool close error: %s", gw_redis_exc)
+    if _gw_sync_redis is not None:
+        try:
+            _gw_sync_redis.close()
+        except Exception as gw_sync_exc:
+            logger.debug("Gateway sync Redis pool close error: %s", gw_sync_exc)
+
     from src.gateway.governance.defer_queue import close_shared_defer_queue
 
     await close_shared_defer_queue()
@@ -430,12 +473,13 @@ async def _gateway_lifespan(app: FastAPI):  # type: ignore[no-untyped-def]
 
 
 class _DebugEndpointGuard(BaseHTTPMiddleware):
-    """Return 404 for /debug/* paths unless CAGE_ENV is 'dev' or 'test'."""
+    """Return 404 for /debug/* paths whenever is_enforcing() is active."""
 
     async def dispatch(self, request: Request, call_next):  # type: ignore[no-untyped-def]
         if request.url.path.startswith("/debug"):
-            cage_env = os.getenv("CAGE_ENV", "prod").lower()
-            if cage_env not in ("dev", "test", "local"):
+            from src.gateway.governance.env_posture import is_enforcing, resolve_posture
+
+            if is_enforcing(resolve_posture()):
                 return JSONResponse(
                     status_code=404,
                     content={"detail": "Not found"},
@@ -704,23 +748,144 @@ async def _subscribe_nemo_reload(
             logger.debug("[NeMo/Refinement] PubSub cleanup error: %s", exc)
 
 
+_REFINEMENT_PROPOSAL_KEY_PREFIX = "cage:nemo:proposal:"
+_REFINEMENT_PENDING_SET_KEY = "cage:nemo:proposals:pending"
+_REFINEMENT_PROPOSAL_TTL_SECONDS = 86400
+_MAX_PENDING_PROPOSALS = 500
+_MAX_PENDING_SCAN_ITEMS = 250
+_MAX_PENDING_RETURN_ITEMS = 100
+
+# Atomic CAS transition for NeMo refinement proposal review:
+# KEYS[1] = cage:nemo:proposal:{proposal_id}
+# KEYS[2] = cage:nemo:proposals:pending
+# ARGV[1] = proposal_id
+# ARGV[2] = approver_identity
+# ARGV[3] = reviewer
+# ARGV[4] = rationale
+# ARGV[5] = reviewed_at
+# ARGV[6] = target_status ('rejected' or 'applying')
+# ARGV[7] = ttl_seconds
+# ARGV[8] = precheck_only ('1' to verify staged + SoD without mutating, else '0')
+_LUA_PROPOSAL_CAS = """
+local raw = redis.call('GET', KEYS[1])
+if not raw then
+    return {0, 'NOT_FOUND', ''}
+end
+local ok, prop = pcall(cjson.decode, raw)
+if not ok or type(prop) ~= 'table' then
+    return {0, 'CORRUPT', ''}
+end
+if prop['status'] ~= 'staged' then
+    return {0, 'NOT_STAGED', tostring(prop['status'] or '')}
+end
+local proposer = prop['proposer_identity']
+if proposer and proposer ~= cjson.null and proposer == ARGV[2] then
+    return {0, 'SELF_APPROVAL', ''}
+end
+if ARGV[8] == '1' then
+    return {1, 'PRECHECK_OK', raw}
+end
+prop['reviewer'] = ARGV[3]
+prop['approver_identity'] = ARGV[2]
+prop['rationale'] = ARGV[4]
+prop['reviewed_at'] = ARGV[5]
+prop['status'] = ARGV[6]
+local encoded = cjson.encode(prop)
+redis.call('SET', KEYS[1], encoded, 'EX', tonumber(ARGV[7]))
+redis.call('SREM', KEYS[2], ARGV[1])
+return {1, 'CLAIMED', encoded}
+"""
+
+
+def _proposal_redis_key(proposal_id: str) -> str:
+    return f"{_REFINEMENT_PROPOSAL_KEY_PREFIX}{proposal_id}"
+
+
+def _proposal_ttl_seconds() -> int:
+    try:
+        parsed = int(
+            os.environ.get(
+                "CAGE_NEMO_PROPOSAL_TTL_SECONDS", str(_REFINEMENT_PROPOSAL_TTL_SECONDS)
+            )
+        )
+    except ValueError:
+        return _REFINEMENT_PROPOSAL_TTL_SECONDS
+    return max(60, parsed)
+
+
+async def _enforce_nemo_rate_limit(request: Request, route: str) -> None:
+    """Enforce SharedRateLimiter on /v1/nemo/* control-plane endpoints."""
+    from src.gateway.server.rate_limit import get_shared_rate_limiter
+
+    verdict = await get_shared_rate_limiter().check_request(request, route)
+    if not verdict.allowed:
+        retry_after = max(1, int(verdict.retry_after_seconds or 1))
+        raise HTTPException(
+            status_code=429,
+            headers={"Retry-After": str(retry_after)},
+            detail={
+                "error": "rate_limit_exceeded",
+                "scope": verdict.scope or "principal",
+                "retry_after_seconds": retry_after,
+            },
+        )
+
+
+def _require_nemo_approver_identity(approver_identity: str) -> None:
+    """Fail closed (HTTP 403) when CAGE_NEMO_APPROVER_IDENTITIES is unset or caller is unlisted."""
+    allowed_approvers_raw = os.environ.get("CAGE_NEMO_APPROVER_IDENTITIES", "").strip()
+    allowed_approvers = {
+        part.strip() for part in allowed_approvers_raw.split(",") if part.strip()
+    }
+    if not allowed_approvers:
+        raise HTTPException(
+            status_code=403,
+            detail=(
+                "Forbidden: CAGE_NEMO_APPROVER_IDENTITIES is unset or empty; "
+                "NeMo refinement approval fails closed."
+            ),
+        )
+    if approver_identity not in allowed_approvers:
+        raise HTTPException(
+            status_code=403,
+            detail="Forbidden: caller workload identity is not authorized to approve NeMo refinements.",
+        )
+
+
 async def _save_refinement_proposal(
     proposal: dict[str, Any], app_instance: FastAPI | None = None
 ) -> None:
-    """Persist a NeMo refinement proposal to Redis only."""
+    """Persist a NeMo refinement proposal to Redis with a bounded TTL."""
     proposal_id = str(proposal["proposal_id"])
     redis_client = _get_refinement_redis(app_instance)
-    if redis_client is None or not hasattr(redis_client, "hset"):
+    if redis_client is None or not hasattr(redis_client, "set"):
         raise HTTPException(
             status_code=503,
             detail="Shared Redis backend unavailable for NeMo refinement proposals.",
         )
+    ttl = _proposal_ttl_seconds()
+    is_staged = proposal.get("status") == "staged"
     try:
-        await redis_client.hset(
-            _REFINEMENT_PROPOSALS_REDIS_KEY,
-            proposal_id,
+        if is_staged and hasattr(redis_client, "scard"):
+            pending_count = int(await redis_client.scard(_REFINEMENT_PENDING_SET_KEY))
+            if pending_count >= _MAX_PENDING_PROPOSALS:
+                raise HTTPException(
+                    status_code=429,
+                    detail="Maximum pending NeMo refinement proposals reached.",
+                )
+        await redis_client.set(
+            _proposal_redis_key(proposal_id),
             json.dumps(proposal),
+            ex=ttl,
         )
+        if is_staged and hasattr(redis_client, "sadd"):
+            await redis_client.sadd(_REFINEMENT_PENDING_SET_KEY, proposal_id)
+            if hasattr(redis_client, "expire"):
+                await redis_client.expire(_REFINEMENT_PENDING_SET_KEY, ttl)
+        elif not is_staged and hasattr(redis_client, "srem"):
+            await redis_client.srem(_REFINEMENT_PENDING_SET_KEY, proposal_id)
+    except HTTPException:
+        raise
     except Exception as exc:
         logger.error(
             "[NeMo/Refinement] Failed to persist proposal %s to Redis: %s",
@@ -738,13 +903,13 @@ async def _load_refinement_proposal(
 ) -> dict[str, Any] | None:
     """Load a NeMo refinement proposal from Redis only."""
     redis_client = _get_refinement_redis(app_instance)
-    if redis_client is None or not hasattr(redis_client, "hget"):
+    if redis_client is None or not hasattr(redis_client, "get"):
         raise HTTPException(
             status_code=503,
             detail="Shared Redis backend unavailable for NeMo refinement proposals.",
         )
     try:
-        raw = await redis_client.hget(_REFINEMENT_PROPOSALS_REDIS_KEY, proposal_id)
+        raw = await redis_client.get(_proposal_redis_key(proposal_id))
         if raw:
             loaded = json.loads(raw if isinstance(raw, str) else raw.decode("utf-8"))
             if isinstance(loaded, dict):
@@ -762,6 +927,65 @@ async def _load_refinement_proposal(
     return None
 
 
+async def _cas_claim_refinement_proposal(
+    redis_client: Any,
+    *,
+    proposal_id: str,
+    approver_identity: str,
+    reviewer: str,
+    rationale: str,
+    reviewed_at: str,
+    target_status: str,
+    precheck_only: bool = False,
+) -> tuple[int, str, dict[str, Any] | None]:
+    """Atomically verify and transition a staged proposal via Redis Lua CAS."""
+    ttl = _proposal_ttl_seconds()
+    key = _proposal_redis_key(proposal_id)
+    args = [
+        proposal_id,
+        approver_identity,
+        reviewer,
+        rationale,
+        reviewed_at,
+        target_status,
+        str(ttl),
+        "1" if precheck_only else "0",
+    ]
+    reg_fn = getattr(redis_client, "register_script", None)
+    if callable(reg_fn):
+        script = reg_fn(_LUA_PROPOSAL_CAS)
+        res = script(
+            keys=[key, _REFINEMENT_PENDING_SET_KEY],
+            args=args,
+            client=redis_client,
+        )
+        if _asyncio.iscoroutine(res) or hasattr(res, "__await__"):
+            res = await res
+    else:
+        res = await redis_client.eval(
+            _LUA_PROPOSAL_CAS,
+            2,
+            key,
+            _REFINEMENT_PENDING_SET_KEY,
+            *args,
+        )
+    ok_flag = int(res[0])
+    code_raw = res[1]
+    code = (
+        code_raw.decode("utf-8", errors="replace")
+        if isinstance(code_raw, bytes)
+        else str(code_raw)
+    )
+    payload_raw = res[2]
+    payload_str = (
+        payload_raw.decode("utf-8", errors="replace")
+        if isinstance(payload_raw, bytes)
+        else str(payload_raw or "")
+    )
+    parsed = json.loads(payload_str) if ok_flag == 1 and payload_str else None
+    return ok_flag, code, parsed if isinstance(parsed, dict) else None
+
+
 @root_app.post("/v1/nemo/propose-refinement")
 async def propose_nemo_refinement(
     request: Request, req: NeMoApplyRefinementRequest
@@ -773,6 +997,8 @@ async def propose_nemo_refinement(
         proposer_identity = extract_client_identity(request.scope)
     except ValueError as exc:
         raise HTTPException(status_code=403, detail=str(exc)) from exc
+
+    await _enforce_nemo_rate_limit(request, "nemo-propose")
 
     proposal_id = str(_uuid.uuid4())
     proposal = {
@@ -823,7 +1049,9 @@ async def approve_nemo_refinement(
     req: NeMoApproveRequest,
     request: Request,
 ) -> dict[str, Any]:
-    """Approve or reject a staged NeMo refinement proposal and reload gateway NeMo rails."""
+    """Approve or reject a staged NeMo refinement proposal via atomic Redis Lua CAS."""
+    from src.gateway.governance.semantic_rail_factory import semantic_rails_refusal
+    from src.gateway.server.inference_proxy import _safe_error_response
     from src.gateway.server.workload_identity import extract_client_identity
 
     try:
@@ -831,16 +1059,8 @@ async def approve_nemo_refinement(
     except ValueError as exc:
         raise HTTPException(status_code=403, detail=str(exc)) from exc
 
-    allowed_approvers_raw = os.environ.get("CAGE_NEMO_APPROVER_IDENTITIES", "").strip()
-    if allowed_approvers_raw:
-        allowed_approvers = {
-            part.strip() for part in allowed_approvers_raw.split(",") if part.strip()
-        }
-        if approver_identity not in allowed_approvers:
-            raise HTTPException(
-                status_code=403,
-                detail="Forbidden: caller workload identity is not authorized to approve NeMo refinements.",
-            )
+    await _enforce_nemo_rate_limit(request, "nemo-approve")
+    _require_nemo_approver_identity(approver_identity)
 
     reviewer = req.reviewer.strip() if req.reviewer else ""
     if not reviewer:
@@ -856,31 +1076,56 @@ async def approve_nemo_refinement(
             "for this governance configuration change.",
         )
 
-    proposal = await _load_refinement_proposal(proposal_id, request.app)
-    if proposal is None or proposal["status"] != "staged":
+    redis_client = _get_refinement_redis(request.app)
+    if redis_client is None or not (
+        hasattr(redis_client, "eval") or hasattr(redis_client, "register_script")
+    ):
+        raise HTTPException(
+            status_code=503,
+            detail="Shared Redis backend unavailable for NeMo refinement proposals.",
+        )
+
+    rails_refusal = semantic_rails_refusal() if req.approved else None
+    reviewed_at = datetime.now(timezone.utc).isoformat()
+    target_status = "applying" if req.approved else "rejected"
+
+    try:
+        ok_flag, cas_code, claimed_proposal = await _cas_claim_refinement_proposal(
+            redis_client,
+            proposal_id=proposal_id,
+            approver_identity=approver_identity,
+            reviewer=reviewer,
+            rationale=req.rationale.strip(),
+            reviewed_at=reviewed_at,
+            target_status=target_status,
+            precheck_only=(rails_refusal is not None),
+        )
+    except Exception as exc:
+        logger.error(
+            "[NeMo/Refinement] Redis CAS failed for proposal %s: %s",
+            proposal_id,
+            exc,
+        )
+        raise HTTPException(
+            status_code=503,
+            detail="Failed to process NeMo refinement proposal in Redis.",
+        ) from exc
+
+    if ok_flag == 0:
+        if cas_code == "SELF_APPROVAL":
+            raise HTTPException(
+                status_code=403,
+                detail=(
+                    "Separation-of-duties violation: the workload identity that staged "
+                    "a NeMo refinement proposal cannot approve or reject its own proposal."
+                ),
+            )
         raise HTTPException(
             status_code=404,
             detail=f"Proposal '{proposal_id}' not found or already processed.",
         )
 
-    proposer_identity = proposal.get("proposer_identity")
-    if proposer_identity and approver_identity == proposer_identity:
-        raise HTTPException(
-            status_code=403,
-            detail=(
-                "Separation-of-duties violation: the workload identity that staged "
-                "a NeMo refinement proposal cannot approve or reject its own proposal."
-            ),
-        )
-
-    proposal["reviewer"] = reviewer
-    proposal["approver_identity"] = approver_identity
-    proposal["rationale"] = req.rationale.strip()
-    proposal["reviewed_at"] = datetime.now(timezone.utc).isoformat()
-
     if not req.approved:
-        proposal["status"] = "rejected"
-        await _save_refinement_proposal(proposal, request.app)
         logger.info(
             "[NeMo/Refinement] Proposal REJECTED: id=%s reviewer=%s approver_identity=%s",
             proposal_id,
@@ -895,11 +1140,7 @@ async def approve_nemo_refinement(
         }
 
     # Applying a refinement rebuilds the rails. When they are off by
-    # configuration, refuse before saving anything: the proposal stays
-    # ``staged`` (nothing failed) and can be applied once the rails are on.
-    from src.gateway.governance.semantic_rail_factory import semantic_rails_refusal
-
-    rails_refusal = semantic_rails_refusal()
+    # configuration, refuse without mutating the proposal out of ``staged``.
     if rails_refusal is not None:
         reason_code, detail = rails_refusal
         logger.info(
@@ -917,12 +1158,14 @@ async def approve_nemo_refinement(
             },
         )
 
+    assert claimed_proposal is not None
+    proposal = claimed_proposal
+
     try:
         await _reload_app_nemo_rails(request.app)
         proposal["status"] = "applied"
         await _save_refinement_proposal(proposal, request.app)
-        redis_client = _get_refinement_redis(request.app)
-        if redis_client is not None and hasattr(redis_client, "publish"):
+        if hasattr(redis_client, "publish"):
             await redis_client.publish(
                 NEMO_RELOAD_CHANNEL,
                 json.dumps(
@@ -942,11 +1185,18 @@ async def approve_nemo_refinement(
         )
     except Exception as exc:
         proposal["status"] = "apply_failed"
-        await _save_refinement_proposal(proposal, request.app)
-        logger.error("[NeMo/Refinement] Rails reload failed after approval: %s", exc)
+        try:
+            await _save_refinement_proposal(proposal, request.app)
+        except Exception as save_exc:
+            logger.debug(
+                "[NeMo/Refinement] Failed to persist apply_failed status for %s: %s",
+                proposal_id,
+                save_exc,
+            )
+        safe_err = _safe_error_response(exc)
         raise HTTPException(
             status_code=500,
-            detail=f"NeMo rails reload failed: {exc}",
+            detail=safe_err,
         ) from exc
 
     return {
@@ -960,24 +1210,55 @@ async def approve_nemo_refinement(
 
 @root_app.get("/v1/nemo/proposals/pending")
 async def list_pending_nemo_proposals(request: Request) -> dict[str, Any]:
-    """List all staged NeMo refinement proposals awaiting human review."""
+    """List staged NeMo refinement proposals using bounded SSCAN (no unbounded HGETALL)."""
+    await _enforce_nemo_rate_limit(request, "nemo-proposals")
     redis_client = _get_refinement_redis(request.app)
-    if redis_client is None or not hasattr(redis_client, "hgetall"):
+    if redis_client is None or not hasattr(redis_client, "sscan"):
         raise HTTPException(
             status_code=503,
             detail="Shared Redis backend unavailable for NeMo refinement proposals.",
         )
     pending: list[dict[str, Any]] = []
+    scanned = 0
     try:
-        raw_map = await redis_client.hgetall(_REFINEMENT_PROPOSALS_REDIS_KEY)
-        if isinstance(raw_map, dict):
-            for raw_val in raw_map.values():
+        cursor: int | str = 0
+        while (
+            scanned < _MAX_PENDING_SCAN_ITEMS
+            and len(pending) < _MAX_PENDING_RETURN_ITEMS
+        ):
+            next_cursor, members = await redis_client.sscan(
+                _REFINEMENT_PENDING_SET_KEY, cursor=cursor, count=50
+            )
+            for raw_id in members or []:
+                scanned += 1
+                pid = (
+                    raw_id.decode("utf-8", errors="replace")
+                    if isinstance(raw_id, bytes)
+                    else str(raw_id)
+                )
+                raw_val = await redis_client.get(_proposal_redis_key(pid))
+                if not raw_val:
+                    if hasattr(redis_client, "srem"):
+                        await redis_client.srem(_REFINEMENT_PENDING_SET_KEY, pid)
+                    continue
                 val_str = (
-                    raw_val if isinstance(raw_val, str) else raw_val.decode("utf-8")
+                    raw_val
+                    if isinstance(raw_val, str)
+                    else raw_val.decode("utf-8", errors="replace")
                 )
                 loaded = json.loads(val_str)
                 if isinstance(loaded, dict) and loaded.get("status") == "staged":
                     pending.append(loaded)
+                    if len(pending) >= _MAX_PENDING_RETURN_ITEMS:
+                        break
+                elif hasattr(redis_client, "srem"):
+                    await redis_client.srem(_REFINEMENT_PENDING_SET_KEY, pid)
+                if scanned >= _MAX_PENDING_SCAN_ITEMS:
+                    break
+            cursor_int = int(next_cursor) if str(next_cursor).isdigit() else 0
+            if cursor_int == 0:
+                break
+            cursor = cursor_int
     except Exception as exc:
         logger.error("[NeMo/Refinement] Failed to list proposals from Redis: %s", exc)
         raise HTTPException(
@@ -998,6 +1279,8 @@ async def apply_nemo_refinement(
         proposer_identity = extract_client_identity(request.scope)
     except ValueError as exc:
         raise HTTPException(status_code=403, detail=str(exc)) from exc
+
+    await _enforce_nemo_rate_limit(request, "nemo-propose")
 
     logger.info(
         "[NeMo/Refinement] Routing to proposal flow. control_id=%s source=%s proposer=%s",

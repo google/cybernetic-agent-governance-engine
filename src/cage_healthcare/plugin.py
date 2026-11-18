@@ -12,40 +12,34 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Healthcare domain capability plugin (T-D5 declarative plugin)."""
-
 from pathlib import Path
+from typing import Any
 
 from src.cage_healthcare import create_healthcare_tiers
+from src.cage_healthcare import ground_truth as _gt
 from src.cage_healthcare.constants import CONSEQUENCE_MAGNITUDES, REGISTERED_ACTIONS
-from src.cage_healthcare.ground_truth import (
-    SimulatedSerumAssayProvider,
-    healthcare_cost_resolver,
-)
 from src.cage_healthcare.invariants import SerumConcentrationBarrier
 from src.cage_healthcare.rails.provider import HealthcareRailProvider
 from src.cage_healthcare.thresholds import HealthcareThresholds
-from src.cage_healthcare.tiers.clinical_consensus_tier import (
-    build_healthcare_consensus_contribution,
-)
-from src.cage_healthcare.tools.tool_provider import ClinicalToolProvider
+from src.cage_healthcare.tiers import clinical_consensus_tier as _cct
+from src.cage_healthcare.tools import tool_provider as _tp
 from src.gateway.governance import contracts
 from src.gateway.governance.consensus import extract_field_magnitude
 from src.gateway.governance.safety.cbf_engine import ControlBarrierFunction
 
-_CONFIG_DIR = Path(__file__).resolve().parent / "config"
+_CFG = Path(__file__).resolve().parent / "config"
+_NUM, _ENUM = contracts.EvaluatedParamSpec.number(), contracts.EvaluatedParamSpec.enum
+_ROUTES = ("oral", "iv", "im", "sc", "topical", "inhaled")
+_DOSE_SPECS = {"dose_mg": _NUM, "confidence": _NUM, "route": _ENUM(*_ROUTES)}
+HEALTHCARE_EVALUATED_PARAM_SPECS = dict.fromkeys(
+    ("administer_dose", "dose_order"), _DOSE_SPECS
+)
 
 
-# Enforces clinical consensus, SerumConcentrationBarrier CBF, FTRA terminal
-# classification, and dosing.governance OPA policy across Compose and GKE.
-# Domain-specific STPA hazard YAML and compiled uca_rules remain planned for
-# healthcare (currently finance-only); core system STPA UCAs apply via Layer 1.
 class HealthcareCagePlugin(contracts.CagePlugin):
-    """Healthcare domain capability plugin."""
-
-    name, api_version, maturity = "healthcare", "2.0", "production"
+    name, api_version, maturity = "healthcare", "2.0", "stub"
     domain_config = contracts.DomainConfig(
-        ftra_registry_path=_CONFIG_DIR / "ftra" / "terminal_registry.json",
+        ftra_registry_path=_CFG / "ftra" / "terminal_registry.json",
         opa_package="dosing.governance",
         opa_required_rules=("allow",),
         canary_probe=contracts.CanaryProbe(
@@ -54,27 +48,26 @@ class HealthcareCagePlugin(contracts.CagePlugin):
     )
 
     def contribute(self) -> contracts.PluginContribution:
-        barrier = SerumConcentrationBarrier()
+        b, assay = SerumConcentrationBarrier(), _gt.SimulatedSerumAssayProvider()
         cbf = ControlBarrierFunction(
-            barrier, cost_resolver=healthcare_cost_resolver, skip_epoch_seed=True
+            b, _gt.healthcare_cost_resolver, skip_epoch_seed=True
         )
-        return contracts.PluginContribution(
-            domain=self.name,
-            tiers=create_healthcare_tiers(cbf),
-            invariants=(barrier,),  # declarative, no logic
-            ground_truth_providers={
-                barrier.invariant_id: SimulatedSerumAssayProvider()
-            },
-            registered_actions=REGISTERED_ACTIONS,
-            consequence_magnitudes=CONSEQUENCE_MAGNITUDES,
-            magnitude_extractor=extract_field_magnitude("dose_mg"),
-            safety_filter=cbf,
-            consensus=build_healthcare_consensus_contribution(),
-            tool_provider=ClinicalToolProvider(),
-            threshold_sections={"healthcare": HealthcareThresholds},
-            compliance_overlay_dirs=(_CONFIG_DIR / "compliance",),
-            rail_providers=(HealthcareRailProvider(),),  # CheckContraindicationAction
+        _tp._clinical_actuator._ledger = assay
+        kw: dict[str, Any] = {"domain": self.name, "maturity": self.maturity}
+        kw.update(
+            tiers=create_healthcare_tiers(cbf), invariants=(b,), safety_filter=cbf
         )
+        kw.update(ground_truth_providers={b.invariant_id: assay})
+        kw.update(registered_actions=REGISTERED_ACTIONS)
+        kw.update(consequence_magnitudes=CONSEQUENCE_MAGNITUDES)
+        kw.update(magnitude_extractor=extract_field_magnitude("dose_mg"))
+        kw.update(tool_provider=_tp.ClinicalToolProvider())
+        kw.update(consensus=_cct.build_healthcare_consensus_contribution())
+        kw.update(rail_providers=(HealthcareRailProvider(),))
+        kw.update(threshold_sections={"healthcare": HealthcareThresholds})
+        kw.update(compliance_overlay_dirs=(_CFG / "compliance",))
+        kw.update(evaluated_param_specs=HEALTHCARE_EVALUATED_PARAM_SPECS)
+        return contracts.PluginContribution(**kw)
 
 
 def get_plugin() -> contracts.CagePlugin:

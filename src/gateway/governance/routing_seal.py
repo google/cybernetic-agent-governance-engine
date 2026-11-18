@@ -15,11 +15,11 @@
 """
 Cryptographic Routing Seal — Defense-in-Depth for Tool Actuation.
 
-The Routing Seal is a short-lived HMAC-SHA256 token issued by the Hybrid
-Gateway after a successful ``/v1/governance/validate-action`` approval.  The
-GFA service (or any downstream actuator) MUST verify the seal before executing
-the trade.  This ensures that execution cannot proceed by simply ignoring the
-HTTP response from the governance endpoint.
+The Routing Seal is a short-lived, single-use, asymmetrically signed JWT issued
+by the Hybrid Gateway after a governed action clears every planned stage. A
+downstream actuator MUST verify and consume the seal before executing the
+action. This ensures that execution cannot proceed by simply ignoring the HTTP
+response from the governance endpoint.
 
 Theoretical Foundation:
     Enforces the 'Evidence Sufficiency' invariant defined by Krti Tallam (2026),
@@ -28,30 +28,39 @@ Theoretical Foundation:
     persistence rather than uncommitted in-memory claims.
 
 Architectural Hardening:
-    Identified during security review by K. Tallam: decoupling the cryptographic HMAC seal
-    from durable hash-chain writes allowed an execution path where actions could be authorized
-    even if the audit sink was unreachable or dropped events.
+    Identified during security review by K. Tallam: decoupling the seal's
+    signature from durable hash-chain writes allowed an execution path where
+    actions could be authorized even if the audit sink was unreachable or
+    dropped events.
 
     ``generate_seal_with_evidence()`` enforces fail-closed semantics: seal issuance blocks
     on a synchronous, durable chain commit, raising ``EvidenceChainUnavailableError`` if the
     sink fails or times out.
 
 Seal format (v3 — asymmetric JWT with evidence binding):
-    Standard JWT signed by the Gateway KMS signer.
+    A standard JWT signed by the gateway's governance signer (a cloud KMS key
+    in enforcing postures). The header carries ``alg`` and ``kid``; the claims
+    are ``action_hash``, ``canon``, ``record_hash``, ``nonce``, ``iat``,
+    ``exp``, ``iss`` and ``aud``. ``record_hash`` binds the seal to a specific
+    evidence record in the compliance evidence stream. Verification resolves
+    the key by ``kid`` from the trust anchor, never from the token, and accepts
+    only ``ES256``/``ES384``/``ES512`` for an EC key or ``EdDSA`` for Ed25519.
 
-**BREAKING CHANGE (v3):** The seal format is now a standard JWT.
-    The `record_hash` binds the seal to a specific evidence record in the
-    compliance evidence stream.
+Legacy format (v2 — HMAC-SHA256), not accepted by default:
+    Kept only so hermetic tests can run without a signer. ``verify_seal()``
+    rejects an HMAC seal whenever ``CAGE_SEAL_STRICT_MODE`` is true (the
+    default) or the environment is production, so a malformed JWT cannot
+    downgrade verification to the shared-secret path.
 
 Usage:
-    # Gateway (issuance with evidence binding — recommended):
+    # Gateway (issuance with evidence binding — the supported path):
     seal = await generate_seal_with_evidence("execute_action", params)
 
-    # Gateway (issuance without evidence binding — migration only):
-    seal = generate_seal("execute_action", params, record_hash=None)
-
-    # Verification — raises SymbolicGovernorViolation on failure:
+    # Verification only — raises SymbolicGovernorViolation on failure:
     verify_seal(seal, "execute_action", params)
+
+    # Actuator (verify, then burn the single-use nonce, then execute):
+    await verify_and_consume_seal(seal, "execute_action", params)
 
     # Decorator pattern:
     @require_cleared_seal(seal, "execute_action", params)
@@ -61,6 +70,7 @@ Usage:
 
 from __future__ import annotations
 
+import asyncio
 import base64
 import functools
 import hashlib
@@ -252,20 +262,12 @@ def assert_custom_salt_in_production() -> None:
     if not _USING_DEFAULT_SALT:
         return  # Custom salt is set — no risk
 
-    env = (
-        os.environ.get("CAGE_ENV") or os.environ.get("ENVIRONMENT", "production")
-    ).lower()
-    non_production_envs = (
-        "development",
-        "dev",
-        "test",
-        "ci",
-        "staging",
-        "uat",
-        "preprod",
-    )
-    if env in non_production_envs:
-        return  # Non-production — default salt is acceptable
+    from src.gateway.governance.env_posture import is_enforcing, resolve_posture
+
+    posture = resolve_posture()
+    if not is_enforcing(posture):
+        return  # Permissive posture (dev/test/ci) — default salt is acceptable
+    env = posture.value
 
     raise RuntimeError(
         "CAGE SECURITY FAILURE: GOVERNANCE_SALT is using the hardcoded default value "
@@ -850,7 +852,7 @@ def verify_seal(
             elif kty == "OKP":
                 algs = ["EdDSA"]
             else:
-                algs = ["RS256", "PS256"]
+                algs = ["RS256", "RS384", "RS512", "PS256", "PS384", "PS512"]
 
             def _reject_seal(fail_reason: str, fail_action: str) -> None:
                 logger.warning(
@@ -1452,7 +1454,7 @@ def _verified_jwt_claims_for_revocation(seal: str) -> dict[str, Any]:
     elif kty == "OKP":
         algs = ["EdDSA"]
     else:
-        algs = ["RS256", "PS256"]
+        algs = ["RS256", "RS384", "RS512", "PS256", "PS384", "PS512"]
     try:
         claims: dict[str, Any] = pyjwt.decode(
             seal,
@@ -1596,10 +1598,7 @@ def require_cleared_seal(
 
             @functools.wraps(func)
             async def async_wrapper(*args: Any, **kwargs: Any) -> Any:
-                # verify_seal() raises SymbolicGovernorViolation on any failure —
-                # no need to check the return value. The wrapped function is never
-                # called if the seal is invalid (CRIT-1 fix).
-                verify_seal(seal, action, params)
+                await verify_and_consume_seal(seal, action, params)
                 return await func(*args, **kwargs)
 
             return async_wrapper  # type: ignore[return-value]
@@ -1607,10 +1606,15 @@ def require_cleared_seal(
 
             @functools.wraps(func)
             def sync_wrapper(*args: Any, **kwargs: Any) -> Any:
-                # verify_seal() raises SymbolicGovernorViolation on any failure —
-                # no need to check the return value. The wrapped function is never
-                # called if the seal is invalid (CRIT-1 fix).
-                verify_seal(seal, action, params)
+                try:
+                    asyncio.get_running_loop()
+                except RuntimeError:
+                    asyncio.run(verify_and_consume_seal(seal, action, params))
+                else:
+                    raise SymbolicGovernorViolation(
+                        "sync @require_cleared_seal cannot consume seal inside an active event loop; use async def",
+                        action,
+                    )
                 return func(*args, **kwargs)
 
             return sync_wrapper  # type: ignore[return-value]

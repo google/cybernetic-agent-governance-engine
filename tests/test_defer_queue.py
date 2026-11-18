@@ -549,7 +549,7 @@ async def test_replay_evaluate_enforces_confidence_threshold(fake_redis):
     token = DeferToken(
         defer_id="test-replay-001",
         thread_id="thread-001",
-        defer_reason=DeferReason.EXTERNAL_VALIDATION,
+        defer_reason=DeferReason.CONFIDENCE_BELOW_THRESHOLD,
         confidence_score=0.65,
         ttl_seconds=300,
         opa_input_snapshot={"action": "test"},
@@ -572,7 +572,7 @@ async def test_replay_evaluate_enforces_confidence_threshold(fake_redis):
     token2 = DeferToken(
         defer_id="test-replay-002",
         thread_id="thread-002",
-        defer_reason=DeferReason.EXTERNAL_VALIDATION,
+        defer_reason=DeferReason.CONFIDENCE_BELOW_THRESHOLD,
         confidence_score=0.65,
         ttl_seconds=300,
         opa_input_snapshot={"action": "test"},

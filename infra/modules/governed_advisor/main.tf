@@ -56,7 +56,8 @@ resource "kubernetes_deployment" "governed_advisor" {
       }
 
       spec {
-        service_account_name = var.service_account_name
+        service_account_name            = var.service_account_name
+        automount_service_account_token = false
 
         security_context {
           run_as_non_root = true
@@ -115,18 +116,11 @@ resource "kubernetes_deployment" "governed_advisor" {
             value = var.enable_logging
           }
 
-          # Redis Session Management
+          # Gateway-mediated checkpointing (POAM-2026-195, POAM-2026-226):
+          # the advisor holds no direct Redis endpoint or credentials.
           env {
-            name  = "REDIS_HOST"
-            value = var.redis_host
-          }
-          env {
-            name  = "REDIS_PORT"
-            value = var.redis_port
-          }
-          env {
-            name  = "REDIS_URL"
-            value = "redis://${var.redis_host}:${var.redis_port}"
+            name  = "CAGE_CHECKPOINT_BACKEND"
+            value = "gateway"
           }
 
           # Model Configuration (Tiered)
@@ -231,17 +225,18 @@ resource "kubernetes_deployment" "governed_advisor" {
             name  = "TRACE_SAMPLING_RATE"
             value = var.trace_sampling_rate
           }
+          # Raw content must not reach the retention-locked Langfuse event bucket.
           env {
             name  = "OTEL_PYTHON_INSTRUMENTATION_HTTPX_CAPTURE_REQUEST_BODY"
-            value = "true"
+            value = "false"
           }
           env {
             name  = "OTEL_PYTHON_INSTRUMENTATION_HTTPX_CAPTURE_RESPONSE_BODY"
-            value = "true"
+            value = "false"
           }
           env {
             name  = "OTEL_INSTRUMENTATION_GENAI_CAPTURE_MESSAGE_CONTENT"
-            value = "true"
+            value = "false"
           }
           env {
             name  = "OTEL_PYTHON_EXCLUDED_URLS"
@@ -249,7 +244,7 @@ resource "kubernetes_deployment" "governed_advisor" {
           }
           env {
             name  = "OTEL_INSTRUMENTATION_HTTP_CAPTURE_HEADERS_SERVER_REQUEST"
-            value = "content-type,accept,user-agent,x-request-id,x-goog-authenticated-user-email"
+            value = "content-type,accept,user-agent,x-request-id"
           }
           env {
             name  = "OTEL_INSTRUMENTATION_HTTP_CAPTURE_HEADERS_SERVER_RESPONSE"
@@ -322,8 +317,49 @@ resource "kubernetes_deployment" "governed_advisor" {
             }
           }
 
+          readiness_probe {
+            http_get {
+              path = "/health"
+              port = 8080
+            }
+            initial_delay_seconds = 10
+            period_seconds        = 10
+            timeout_seconds       = 5
+            failure_threshold     = 3
+          }
+
+          liveness_probe {
+            http_get {
+              path = "/"
+              port = 8080
+            }
+            initial_delay_seconds = 20
+            period_seconds        = 20
+            timeout_seconds       = 5
+            failure_threshold     = 3
+          }
+
+          env {
+            name  = "TMPDIR"
+            value = "/tmp"
+          }
+          env {
+            name  = "HOME"
+            value = "/tmp"
+          }
+          env {
+            name  = "PYTHONDONTWRITEBYTECODE"
+            value = "1"
+          }
+
+          volume_mount {
+            name       = "tmp"
+            mount_path = "/tmp"
+          }
+
           security_context {
             allow_privilege_escalation = false
+            read_only_root_filesystem  = true
             run_as_non_root            = true
             run_as_user                = 1000
             capabilities {
@@ -346,7 +382,13 @@ resource "kubernetes_deployment" "governed_advisor" {
           }
         }
 
-
+        volume {
+          name = "tmp"
+          empty_dir {
+            medium     = "Memory"
+            size_limit = "64Mi"
+          }
+        }
       }
     }
   }

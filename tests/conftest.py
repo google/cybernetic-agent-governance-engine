@@ -68,10 +68,16 @@ import pytest
 
 from tests.fixtures.deployment_region import REGION_MARKERS
 from tests.fixtures.dotenv_guard import (
-    LIVE_RUN_OPTIONS,
     reachable_dotenv_files,
     refusal,
     search_starts,
+)
+from tests.fixtures.gateway_url_guard import (
+    GATEWAY_URL_ENV_VAR,
+    is_live_session,
+)
+from tests.fixtures.gateway_url_guard import (
+    refusal as gateway_url_refusal,
 )
 from tests.fixtures.selection_flags import applied_marker_names
 
@@ -98,10 +104,12 @@ if os.environ.get("CAGE_ENV", "test").lower() not in (
             "For local testing without KMS, set CAGE_ENV=test."
         )
 
-# Sanitize cluster-internal Kubernetes DNS URLs that cannot be resolved outside GKE
+# Sanitize cluster-internal Kubernetes DNS URLs that cannot be resolved outside GKE.
+# GATEWAY_URL is intentionally excluded here: hermetic sessions must keep
+# GATEWAY_URL unset (tests/fixtures/gateway_url_guard.py), and live sessions
+# populate the localhost:8080 default in pytest_configure.
 _cluster_internal_replacements = {
     "BACKEND_URL": "http://localhost:18080",
-    "GATEWAY_URL": "http://localhost:8080",
     "LANGFUSE_HOST": "http://localhost:3001",
     "LANGFUSE_BASEURL": "http://localhost:3001",
     "COMPLIANCE_BRIDGE_URL": "http://localhost:3002",
@@ -177,8 +185,9 @@ for _ns in _OTLP_LOGGER_NAMESPACES:
 
 def pytest_configure(config: pytest.Config) -> None:
     """Set environment variable defaults that tests expect."""
-    # Before anything else: no .env file may reach a hermetic session.
+    # Before anything else: no .env file or GATEWAY_URL may reach a hermetic session.
     _refuse_reachable_dotenv(config)
+    _refuse_hermetic_gateway_url(config)
 
     # One region for the whole session: US_FED for hermetic runs, the
     # deployment's ConfigMap value for live runs (fails closed on mismatch).
@@ -191,7 +200,8 @@ def pytest_configure(config: pytest.Config) -> None:
     os.environ["GOOGLE_CLOUD_LOCATION"] = _region_locations[_region]
 
     _setdefault("BACKEND_URL", "http://localhost:18080")
-    _setdefault("GATEWAY_URL", "http://localhost:8080")
+    if is_live_session(config):
+        _setdefault(GATEWAY_URL_ENV_VAR, "http://localhost:8080")
     _setdefault("LANGFUSE_HOST", "http://localhost:3001")
     _setdefault("VLLM_REASONING_API_BASE", "http://localhost:8000/v1")
     # OTEL_EXPORTER_OTLP_ENDPOINT: default points at the Langfuse native OTLP
@@ -268,12 +278,40 @@ def pytest_configure(config: pytest.Config) -> None:
 
 def _refuse_reachable_dotenv(config: pytest.Config) -> None:
     """Refuse a hermetic session that a ``.env`` file can reach (``dotenv_guard``)."""
-    live_run = any(
-        config.getoption(option, default=False) for option in LIVE_RUN_OPTIONS
-    )
+    live_run = is_live_session(config)
     reason = refusal(reachable_dotenv_files(search_starts()), live_run=live_run)
     if reason is not None:
         raise pytest.UsageError(reason)
+
+
+def _refuse_hermetic_gateway_url(config: pytest.Config) -> None:
+    """Refuse a hermetic session started with ``GATEWAY_URL`` set."""
+    reason = gateway_url_refusal(
+        os.environ.get(GATEWAY_URL_ENV_VAR), live_run=is_live_session(config)
+    )
+    if reason is not None:
+        raise pytest.UsageError(reason)
+
+
+@pytest.fixture(autouse=True)
+def assert_hermetic_gateway_url_unset(request: pytest.FixtureRequest):
+    """Assert ``GATEWAY_URL`` stays unset across every test in a hermetic session."""
+    if is_live_session(request.config):
+        yield
+        return
+    assert GATEWAY_URL_ENV_VAR not in os.environ, (
+        f"Hermetic test {request.node.nodeid} started with "
+        f"{GATEWAY_URL_ENV_VAR}={os.environ.get(GATEWAY_URL_ENV_VAR)!r}; "
+        "GATEWAY_URL must remain unset in hermetic runs."
+    )
+    yield
+    if GATEWAY_URL_ENV_VAR in os.environ:
+        leaked = os.environ.pop(GATEWAY_URL_ENV_VAR)
+        pytest.fail(
+            f"Hermetic test {request.node.nodeid} leaked "
+            f"{GATEWAY_URL_ENV_VAR}={leaked!r} into os.environ; "
+            "use monkeypatch.setenv so it is undone at teardown."
+        )
 
 
 def _setdefault(key: str, value: str) -> None:

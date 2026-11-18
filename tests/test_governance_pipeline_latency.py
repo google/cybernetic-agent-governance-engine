@@ -262,7 +262,7 @@ def _nemo_output_patches():
 def _mock_governor():
     """A governor whose ``govern()`` approves, injected into the OPA safety node."""
     mock_gov = AsyncMock()
-    mock_gov.govern = AsyncMock(return_value=None)
+    mock_gov.validate_action = AsyncMock(return_value={"verdict": "ALLOW"})
     return mock_gov
 
 

@@ -3,7 +3,7 @@ system-security-plan:
   metadata:
     title: CAGE System Security Plan (US_FED — NIST SP 800-53 Rev 5 HIGH)
     published: '2026-03-06T00:00:00Z'
-    last-modified: '2026-11-14T02:37:33Z'
+    last-modified: '2026-11-17T21:56:49Z'
     version: 1.0.1-draft+stpa
     oscal-version: 1.0.4
     remarks: 'This System Security Plan (SSP) documents the security controls implemented
@@ -664,7 +664,9 @@ system-security-plan:
       description: 'Python service aggregating OTel spans into time-windowed safety_rate
         metrics, parsing OSCAL assessment results, and triggering Slack/PagerDuty
         alerts for compliance violations. Runs automated_auditor.py for continuous
-        AU-12 audit record generation and review.
+        AU-12 audit record generation and review. Correction (2026-11-16, POAM-2026-230):
+        every committed profile pins alert_channel = "console", so these alerts are
+        log lines.
 
         '
       purpose: 'Implements AU-12 audit record generation, IR-6 incident reporting
@@ -705,8 +707,13 @@ system-security-plan:
       type: software
       title: Langfuse Observability
       description: 'AI observability platform receiving OTel spans from all CAGE components.
-        Provides trace aggregation, prompt/response logging, compliance dashboards,
-        and long-term audit log storage. External interconnection (SaaS).
+        Provides trace aggregation, compliance dashboards, and long-term audit log
+        storage. External interconnection (SaaS). Workload OTel spans carry no prompt
+        or response text and no end-user identifier: no source sets them, and an exporter-side
+        filter drops content and identity attributes before export (POAM-2026-225).
+        Outside that filter: exception messages recorded on spans, and advisory traces
+        from the compliance bridge, which go through the Langfuse SDK and carry LLM-generated
+        remediation text derived from evidence records.
 
         '
       purpose: 'Implements AU-2/AU-12 audit record storage and CA-7 continuous monitoring
@@ -1055,7 +1062,9 @@ system-security-plan:
         \ availability (decision-time) or non-repudiation\n(evidence-of-execution).\n\
         \nAudit records are exported to GCS buckets for long-term retention per SEC\n\
         Rule 17a-4. The Compliance Bridge Service triggers Slack/PagerDuty alerts\n\
-        when safety_rate thresholds are breached.\n\nRefusal and deferral parity (0cdb5aaa,\
+        when safety_rate thresholds are breached. Correction (2026-11-16, POAM-2026-230):\
+        \ no committed profile configures Slack or PagerDuty (alert_channel is console),\
+        \ so these alerts are log lines.\n\nRefusal and deferral parity (0cdb5aaa,\
         \ #427): a DENY writes a GOVERNANCE_REFUSAL record and a DEFER or REQUIRE_APPROVAL\
         \ writes a hash-chained GOVERNANCE_DEFERRAL record (src/gateway/governance/governor/verdicts.py).\
         \ The writes are non-blocking because neither outcome executes anything, but\
@@ -1311,14 +1320,18 @@ system-security-plan:
         integration for P1/P2 escalation is planned but not yet implemented; this
         gap is tracked and the automated Slack notification provides interim reporting
         capability. External incident reporting to regulators (SEC, FINRA) follows
-        manual procedures documented in the IR plan.
+        manual procedures documented in the IR plan. Correction (2026-11-16, POAM-2026-230):
+        the reference Terraform pins alert_channel = "console" in every committed
+        profile, so no Slack notification is sent; alerts are log lines until POAM-2026-230
+        closes.
 
         '
       props:
       - name: implementation-status
         value: partially-implemented
       - name: current-capability
-        value: Slack notifications via compliance_bridge/notifier.py
+        value: Slack notifications via compliance_bridge/notifier.py (not delivered
+          in any committed profile; POAM-2026-230, 2026-11-16)
       - name: planned-capability
         value: PagerDuty P1/P2 escalation (pending)
       responsible-roles:
@@ -1328,7 +1341,8 @@ system-security-plan:
         uuid: h8000008-0000-4000-8000-000000000009
         description: 'src/compliance_bridge/notifier.py implements Slack alert notifications.
           PagerDuty integration pending. Manual escalation procedures documented in
-          IR plan for external regulatory reporting.
+          IR plan for external regulatory reporting. Correction (2026-11-16, POAM-2026-230):
+          no committed profile configures a Slack channel (alert_channel = "console").
 
           '
         implementation-status:
@@ -1463,24 +1477,30 @@ system-security-plan:
       - role-id: compliance-engineer
     - uuid: g7000012-0000-4000-8000-000000000012
       control-id: sc-4
-      description: Information in shared system resources and session isolation are
-        enforced via the in-state OPA service and active domain Rego policy ConfigMap
-        (opa-policies), validated by compliance/lula/lula-validation-sc4.yaml.
+      description: CAGE fiscal-limit and RBAC policy evaluation runs via the in-pod
+        gateway OPA Unix-domain-socket sidecar and active domain Rego policy ConfigMap
+        (opa-policies) with immutable system.authz, checked for configuration presence
+        in-cluster by compliance/lula/lula-validation-sc4.yaml; NIST SP 800-53 SC-4
+        shared-resource residual-information verification across Valkey and runtime
+        stores remains partial (POAM-2026-235).
       props:
       - name: implementation-status
-        value: implemented
+        value: partially-implemented
       - name: lula-validation
         value: compliance/lula/lula-validation-sc4.yaml
       responsible-roles:
       - role-id: compliance-engineer
     - uuid: g7000013-0000-4000-8000-000000000013
       control-id: si-2
-      description: Container image flaw remediation and immutable @sha256 digest pinning
-        (with mutable :latest tags rejected) are enforced across governance-stack
-        deployments, validated by compliance/lula/lula-validation-si2.yaml.
+      description: Immutable @sha256 container image digest pinning (with mutable
+        :latest tags rejected) and pull-policy validation are enforced at Terraform
+        plan time (infra/targets/gcp-gke/tests/image_digests.tftest.hcl) and checked
+        in-cluster by compliance/lula/lula-validation-si2.yaml; automated in-cluster
+        vulnerability scanning and flaw-remediation gating remain planned under POAM-2026-010
+        (POAM-2026-235).
       props:
       - name: implementation-status
-        value: implemented
+        value: partially-implemented
       - name: lula-validation
         value: compliance/lula/lula-validation-si2.yaml
       responsible-roles:
@@ -1488,8 +1508,10 @@ system-security-plan:
     - uuid: g7000014-0000-4000-8000-000000000014
       control-id: ctrl-ftra-001
       description: Framed Transitions & Reachable Actions (FTRA) Tier 0.5 action reachability
-        enforcement is active in the governance-stack gateway deployment, validated
-        by compliance/lula/lula-validation-ftra.yaml.
+        enforcement runs unconditionally in the gateway governor and is verified by
+        tests/test_ftra_package.py. The linked compliance/lula/lula-validation-ftra.yaml
+        checks only that a gateway container exists and is not evidence for this control
+        (POAM-2026-219).
       props:
       - name: implementation-status
         value: implemented
@@ -1499,12 +1521,16 @@ system-security-plan:
       - role-id: compliance-engineer
     - uuid: g7000015-0000-4000-8000-000000000015
       control-id: A.4
-      description: ISO/IEC 42001 Annex A.4 resource and token quota governance is
-        enforced via Redis-backed gateway quota state and active OPA policy ConfigMap
-        bindings, validated by compliance/lula/lula-validation-iso001-token-quota.yaml.
+      description: ISO/IEC 42001 Annex A.4 token quota configuration is in place on
+        the gateway, checked in-cluster by compliance/lula/lula-validation-iso001-token-quota.yaml,
+        which asserts that the gateway or advisor sets a non-empty REDIS_URL and that
+        a policy file in the opa-policies ConfigMap carries the token quota rule.
+        It checks configuration, not quota enforcement; OPA enforcement against live
+        session counters is tracked as ISO-001, and the restored policy-content check
+        awaits a Gate W evaluation run (POAM-2026-219, POAM-2026-235).
       props:
       - name: implementation-status
-        value: implemented
+        value: partially-implemented
       - name: lula-validation
         value: compliance/lula/lula-validation-iso001-token-quota.yaml
       responsible-roles:
@@ -1512,11 +1538,13 @@ system-security-plan:
     - uuid: g7000016-0000-4000-8000-000000000016
       control-id: A.5.2
       description: ISO/IEC 42001 Annex A.5.2 social impact and prompt-safety rate
-        monitoring is continuously evaluated from the custody-chain metrics endpoint
-        (/v1/metrics/A.5.2) by compliance/lula/lula-validation-a52.yaml.
+        monitoring is evaluated in-cluster from the custody-chain metrics endpoint
+        (/v1/metrics/A.5.2) by compliance/lula/lula-validation-a52.yaml; no PR-CI
+        test exercises the Lula metric check end-to-end, and preventive blocks currently
+        score as effective and refresh SLA age (POAM-2026-234, POAM-2026-235).
       props:
       - name: implementation-status
-        value: implemented
+        value: partially-implemented
       - name: lula-validation
         value: compliance/lula/lula-validation-a52.yaml
       responsible-roles:
@@ -1524,20 +1552,26 @@ system-security-plan:
     - uuid: g7000017-0000-4000-8000-000000000017
       control-id: A.5.3
       description: ISO/IEC 42001 Annex A.5.3 AI governance logging and safety-rate
-        monitoring is continuously evaluated from the custody-chain metrics endpoint
-        (/v1/metrics/A.5.3) by compliance/lula/lula-validation-a53.yaml.
+        monitoring is evaluated in-cluster from the custody-chain metrics endpoint
+        (/v1/metrics/A.5.3) by compliance/lula/lula-validation-a53.yaml; no PR-CI
+        test exercises the Lula metric check end-to-end, and refusals and unpersisted
+        deferrals currently score as effective and refresh SLA age (POAM-2026-234,
+        POAM-2026-235).
       props:
       - name: implementation-status
-        value: implemented
+        value: partially-implemented
       - name: lula-validation
         value: compliance/lula/lula-validation-a53.yaml
       responsible-roles:
       - role-id: compliance-engineer
     - uuid: g7000018-0000-4000-8000-000000000018
       control-id: A.8.4
-      description: ISO/IEC 42001 Annex A.8.4 fail-closed token quota proxy and secret-reference
-        isolation controls are enforced on the gateway deployment, validated by compliance/lula/lula-validation-flowsignal.yaml
-        and compliance/lula/lula-validation-tqp007.yaml.
+      description: ISO/IEC 42001 Annex A.8.4 fail-closed token quota enforcement is
+        implemented in the gateway inference proxy's TokenQuotaProxy (src/gateway/governance/token_quota_proxy.py),
+        whose check_and_increment() raises QuotaExceededError when Redis fails, verified
+        by tests/test_token_quota_proxy.py. No Lula manifest evidences it; compliance/lula/lula-validation-tqp007.yaml
+        checks only gateway readiness and REDIS_URL, and compliance/lula/lula-validation-flowsignal.yaml
+        checks configuration presence; both are rated Stub (POAM-2026-219).
       props:
       - name: implementation-status
         value: implemented
@@ -1548,11 +1582,14 @@ system-security-plan:
     - uuid: g7000019-0000-4000-8000-000000000019
       control-id: A.9.2
       description: ISO/IEC 42001 Annex A.9.2 supplier data-transfer PII redaction
-        safety rate is continuously evaluated from the custody-chain metrics endpoint
-        (/v1/metrics/A.9.2) by compliance/lula/lula-validation-a92.yaml.
+        safety rate is evaluated in-cluster from the custody-chain metrics endpoint
+        (/v1/metrics/A.9.2) by compliance/lula/lula-validation-a92.yaml; no PR-CI
+        test exercises the Lula metric check end-to-end, the maintained staging profile
+        deploys no model/advisor producer (POAM-2026-201), and dark controls report
+        zero evidence age (POAM-2026-234, POAM-2026-235).
       props:
       - name: implementation-status
-        value: implemented
+        value: partially-implemented
       - name: lula-validation
         value: compliance/lula/lula-validation-a92.yaml
       responsible-roles:
@@ -1560,45 +1597,58 @@ system-security-plan:
     - uuid: g7000020-0000-4000-8000-000000000020
       control-id: aarm-vectors
       description: CSA Autonomous Agent Risk Management (AARM) 11-vector threat conformance
-        is evaluated on demand via compliance-bridge (/v1/aarm/conformance-report)
-        and validated by compliance/lula/lula-validation-aarm-vectors.yaml.
+        report generation (/v1/aarm/conformance-report) is partially implemented in
+        compliance-bridge (src/compliance_bridge/aarm_mapper.py, tested by tests/test_aarm_mapper.py).
+        The linked compliance/lula/lula-validation-aarm-vectors.yaml is rated Stub
+        (passing on all-UNKNOWN zero-evidence responses) and per-vector rates inherit
+        refusal-as-effective scoring (POAM-2026-219, POAM-2026-234, POAM-2026-235).
       props:
       - name: implementation-status
-        value: implemented
+        value: partially-implemented
       - name: lula-validation
         value: compliance/lula/lula-validation-aarm-vectors.yaml
       responsible-roles:
       - role-id: compliance-engineer
     - uuid: g7000021-0000-4000-8000-000000000021
       control-id: ai600-cbrn
-      description: NIST AI 600-1 CBRN / hazardous capability screening is enforced
-        by the deterministic Aho-Corasick heuristic gate in the gateway deployment,
-        validated by compliance/lula/lula-validation-ai600-cbrn.yaml.
+      description: NIST AI 600-1 CBRN / hazardous capability keyword screening is
+        partially implemented via the deterministic Aho-Corasick heuristic gate in
+        src/gateway/governance/text_filter.py (verified by tests/test_text_filter_cbrn.py);
+        live cluster validation is unverified because compliance/lula/lula-validation-ai600-cbrn.yaml
+        is a Phase-0 placeholder rated Stub that always passes (AI600-007, POAM-2026-219,
+        POAM-2026-235).
       props:
       - name: implementation-status
-        value: implemented
+        value: partially-implemented
       - name: lula-validation
         value: compliance/lula/lula-validation-ai600-cbrn.yaml
       responsible-roles:
       - role-id: compliance-engineer
     - uuid: g7000022-0000-4000-8000-000000000022
       control-id: ai600-confabulation
-      description: NIST AI 600-1 confabulation mitigation binds the gateway deployment
-        to deterministic OPA policy evaluation (OPA_URL), validated by compliance/lula/lula-validation-ai600-confabulation.yaml.
+      description: NIST AI 600-1 confabulation mitigation is partially implemented
+        via gateway OPA policy binding and src/gateway/governance/confabulation_scorer.py
+        (verified by tests/test_confabulation_scorer.py); live cluster metric validation
+        is unverified because compliance/lula/lula-validation-ai600-confabulation.yaml
+        is a Phase-0 placeholder rated Stub that always passes (AI600-001, POAM-2026-219,
+        POAM-2026-235).
       props:
       - name: implementation-status
-        value: implemented
+        value: partially-implemented
       - name: lula-validation
         value: compliance/lula/lula-validation-ai600-confabulation.yaml
       responsible-roles:
       - role-id: compliance-engineer
     - uuid: g7000023-0000-4000-8000-000000000023
       control-id: ai600-data-privacy
-      description: NIST AI 600-1 data privacy header sanitization (OTEL_INSTRUMENTATION_HTTP_CAPTURE_HEADERS_SANITIZE_FIELDS)
-        is enforced on the gateway deployment, validated by compliance/lula/lula-validation-ai600-data-privacy.yaml.
+      description: NIST AI 600-1 data privacy sanitization is partially implemented
+        via gateway telemetry content filtering and PII scrubbing (verified by tests/test_pii_sanitizer.py);
+        live cluster validation is unverified because compliance/lula/lula-validation-ai600-data-privacy.yaml
+        is a Phase-0 placeholder rated Stub that always passes (AI600-002, POAM-2026-219,
+        POAM-2026-235).
       props:
       - name: implementation-status
-        value: implemented
+        value: partially-implemented
       - name: lula-validation
         value: compliance/lula/lula-validation-ai600-data-privacy.yaml
       responsible-roles:
@@ -1606,23 +1656,29 @@ system-security-plan:
     - uuid: g7000024-0000-4000-8000-000000000024
       control-id: ai600-human-ai-config
       description: NIST AI 600-1 human-AI configuration and strict Control Barrier
-        Function mode (CAGE_CBF_STRICT_MODE) are enforced on the gateway deployment,
-        validated by compliance/lula/lula-validation-ai600-human-ai-config.yaml.
+        Function enforcement (CAGE_CBF_STRICT_MODE) are partially implemented in the
+        gateway governor (verified by tests/test_cbf_negative_paths.py); live cluster
+        DEFER SLA validation is unverified because compliance/lula/lula-validation-ai600-human-ai-config.yaml
+        is a Phase-0 placeholder rated Stub that always passes (AI600-005, POAM-2026-219,
+        POAM-2026-235).
       props:
       - name: implementation-status
-        value: implemented
+        value: partially-implemented
       - name: lula-validation
         value: compliance/lula/lula-validation-ai600-human-ai-config.yaml
       responsible-roles:
       - role-id: compliance-engineer
     - uuid: g7000025-0000-4000-8000-000000000025
       control-id: ai600-prompt-injection
-      description: NIST AI 600-1 prompt injection defense and trusted caller identity
-        binding (CAGE_TRUSTED_CLIENT_IDENTITIES) are enforced on the gateway deployment,
-        validated by compliance/lula/lula-validation-ai600-prompt-injection.yaml.
+      description: NIST AI 600-1 prompt injection detection and trusted caller identity
+        binding (CAGE_TRUSTED_CLIENT_IDENTITIES) are partially implemented in the
+        gateway (verified by tests/test_prompt_injection_detector.py and tests/test_workload_identity_middleware.py);
+        live cluster deflection-score validation is unverified because compliance/lula/lula-validation-ai600-prompt-injection.yaml
+        is a Phase-0 placeholder rated Stub that always passes (AI600-003, POAM-2026-219,
+        POAM-2026-235).
       props:
       - name: implementation-status
-        value: implemented
+        value: partially-implemented
       - name: lula-validation
         value: compliance/lula/lula-validation-ai600-prompt-injection.yaml
       responsible-roles:
@@ -1646,42 +1702,42 @@ system-security-plan:
         \          Framework reference: https://csrc.nist.gov/publications/detail/sp/800-53/rev-5/final\n\
         \          System: CAGE Financial Advisor v1.1.0\n          UCAs encoded:\
         \ 12 (6 enforcing server-bound, 6 advisory)\n          Hazards modelled: 7\n\
-        \          Safety constraints: 3\n          Last compiled: 2026-11-14T02:37:33Z\n\
-        \n          UCA-to-Control mapping (NIST SP 800-53 Rev 5 (FedRAMP baseline)):\n\
-        \            UCA-1 (unsafe_action): Agent executes write operation without\
-        \ a human approval token.\n  → NIST: ac-3 (Access Enforcement), sc-4 (Information\
-        \ in Shared System Resources / Fiscal Limits)\nUCA-10 (wrong_timing) [advisory\
-        \ — partial]: Agent reads account balance with stale connection data.\n  →\
-        \ NIST: cm-6 (Configuration Settings), si-4 (System Monitoring)\nUCA-12 (unsafe_action)\
-        \ [advisory — partial]: Agent executes bounded trade when bounding contracts\
-        \ B1-B10 fail validation. Phase 5: execute_trade_bounded is EXTERNALLY_REVERSIBLE\
-        \ when B10 rollback window validation passes, enabling HITL review without\
-        \ confidence hard-gate per VEC-004. When B10 fails (closed rollback window),\
-        \ the bounding tier raises a HITL violation (B10_ROLLBACK_WINDOW_CLOSED) and\
-        \ the request parks for human approval, as an irreversible action would.\n\
-        \  → NIST: ac-3 (Access Enforcement), sa-11 (Developer Testing and Evaluation)\n\
-        UCA-13 (unsafe_action): Agent executes sell order exceeding the allowable\
-        \ fraction of portfolio value.\n  → NIST: sc-4 (Information in Shared System\
-        \ Resources / Fiscal Limits), cm-6 (Configuration Settings)\nUCA-2 (wrong_timing):\
-        \ Agent executes trade with stale market data (latency > threshold).\n  →\
-        \ NIST: cm-6 (Configuration Settings), sa-11 (Developer Testing and Evaluation)\n\
-        UCA-3 (unsafe_action) [advisory — partial]: Agent outputs PII to user interface.\n\
-        \  → NIST: ac-3 (Access Enforcement), sc-28 (Protection of Information at\
-        \ Rest)\nUCA-4 (stopped_too_soon) [advisory — partial]: Agent debits account\
-        \ but fails to credit asset (atomic failure).\n  → NIST: si-7 (Software, Firmware,\
-        \ and Information Integrity), au-10 (Non-Repudiation)\nUCA-5 (unsafe_action):\
-        \ Agent executes buy order when daily drawdown exceeds limit.\n  → NIST: ac-3\
-        \ (Access Enforcement), sc-4 (Information in Shared System Resources / Fiscal\
-        \ Limits)\nUCA-6 (wrong_timing): Agent submits market order exceeding allowable\
-        \ fraction of daily volume.\n  → NIST: sc-4 (Information in Shared System\
-        \ Resources / Fiscal Limits), si-3 (Malicious Code Protection)\nUCA-7 (unsafe_action):\
-        \ Adversarial prompt injection score exceeds detection threshold.\n  → NIST:\
-        \ sc-4 (Information in Shared System Resources / Fiscal Limits), si-3 (Malicious\
-        \ Code Protection)\nUCA-8 (wrong_timing) [advisory — partial]: Agent executes\
-        \ trade before risk assessment is complete.\n  → NIST: ac-3 (Access Enforcement),\
-        \ sa-11 (Developer Testing and Evaluation)\nUCA-9 (wrong_timing) [advisory\
-        \ — partial]: Agent executes trade with compliance check bypassed.\n  → NIST:\
-        \ ac-3 (Access Enforcement), cm-6 (Configuration Settings)"
+        \          Safety constraints: 3\n\n          UCA-to-Control mapping (NIST\
+        \ SP 800-53 Rev 5 (FedRAMP baseline)):\n            UCA-1 (unsafe_action):\
+        \ Agent executes write operation without a human approval token.\n  → NIST:\
+        \ ac-3 (Access Enforcement), sc-4 (Information in Shared System Resources\
+        \ / Fiscal Limits)\nUCA-10 (wrong_timing) [advisory — partial]: Agent reads\
+        \ account balance with stale connection data.\n  → NIST: cm-6 (Configuration\
+        \ Settings), si-4 (System Monitoring)\nUCA-12 (unsafe_action) [advisory —\
+        \ partial]: Agent executes bounded trade when bounding contracts B1-B10 fail\
+        \ validation. Phase 5: execute_trade_bounded is EXTERNALLY_REVERSIBLE when\
+        \ B10 rollback window validation passes, enabling HITL review without confidence\
+        \ hard-gate per VEC-004. When B10 fails (closed rollback window), the bounding\
+        \ tier raises a HITL violation (B10_ROLLBACK_WINDOW_CLOSED) and the request\
+        \ parks for human approval, as an irreversible action would.\n  → NIST: ac-3\
+        \ (Access Enforcement), sa-11 (Developer Testing and Evaluation)\nUCA-13 (unsafe_action):\
+        \ Agent executes sell order exceeding the allowable fraction of portfolio\
+        \ value.\n  → NIST: sc-4 (Information in Shared System Resources / Fiscal\
+        \ Limits), cm-6 (Configuration Settings)\nUCA-2 (wrong_timing): Agent executes\
+        \ trade with stale market data (latency > threshold).\n  → NIST: cm-6 (Configuration\
+        \ Settings), sa-11 (Developer Testing and Evaluation)\nUCA-3 (unsafe_action)\
+        \ [advisory — partial]: Agent outputs PII to user interface.\n  → NIST: ac-3\
+        \ (Access Enforcement), sc-28 (Protection of Information at Rest)\nUCA-4 (stopped_too_soon)\
+        \ [advisory — partial]: Agent debits account but fails to credit asset (atomic\
+        \ failure).\n  → NIST: si-7 (Software, Firmware, and Information Integrity),\
+        \ au-10 (Non-Repudiation)\nUCA-5 (unsafe_action): Agent executes buy order\
+        \ when daily drawdown exceeds limit.\n  → NIST: ac-3 (Access Enforcement),\
+        \ sc-4 (Information in Shared System Resources / Fiscal Limits)\nUCA-6 (wrong_timing):\
+        \ Agent submits market order exceeding allowable fraction of daily volume.\n\
+        \  → NIST: sc-4 (Information in Shared System Resources / Fiscal Limits),\
+        \ si-3 (Malicious Code Protection)\nUCA-7 (unsafe_action): Adversarial prompt\
+        \ injection score exceeds detection threshold.\n  → NIST: sc-4 (Information\
+        \ in Shared System Resources / Fiscal Limits), si-3 (Malicious Code Protection)\n\
+        UCA-8 (wrong_timing) [advisory — partial]: Agent executes trade before risk\
+        \ assessment is complete.\n  → NIST: ac-3 (Access Enforcement), sa-11 (Developer\
+        \ Testing and Evaluation)\nUCA-9 (wrong_timing) [advisory — partial]: Agent\
+        \ executes trade with compliance check bypassed.\n  → NIST: ac-3 (Access Enforcement),\
+        \ cm-6 (Configuration Settings)"
       props:
       - name: implementation-status
         value: partial
@@ -1695,8 +1751,6 @@ system-security-plan:
         value: '6'
       - name: hazard-count
         value: '7'
-      - name: last-compiled
-        value: '2026-11-14T02:37:33Z'
       - name: target-framework
         value: NIST SP 800-53 Rev 5 (FedRAMP baseline)
       - name: artifact-python

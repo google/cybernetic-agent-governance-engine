@@ -46,6 +46,27 @@ _ACTION_TO_ISO_CONTROL: dict[str, str] = {
 # do not match the "check" / "guard" / "detect" keyword heuristic.
 _TRACED_ACTION_NAMES: frozenset[str] = frozenset(_ACTION_TO_ISO_CONTROL.keys())
 
+# Keywords that mark a string action result as a block.
+_DENIAL_KEYWORDS: tuple[str, ...] = ("DENY", "UNSAFE", "BLOCKED", "VIOLATION")
+
+
+def _block_reason(result: Any) -> str:
+    """Name why *result* counts as a block without echoing it.
+
+    A string result can be model output (the fallback action returns the LLM's
+    reply), so the span records the matched keyword, never the text.
+    """
+    if result is False:
+        return "result_false"
+    if isinstance(result, dict):
+        return "status_blocked"
+    upper = result.upper() if isinstance(result, str) else ""
+    for keyword in _DENIAL_KEYWORDS:
+        if keyword in upper:
+            return f"keyword_{keyword.lower()}"
+    return "blocked"
+
+
 # ---------------------------------------------------------------------------
 # R-21 Fix: ContextVar-based span storage
 # ---------------------------------------------------------------------------
@@ -132,8 +153,7 @@ class NeMoOTelCallback(StreamingHandler):
             elif isinstance(result, dict) and result.get("status") == "blocked":
                 outcome = "BLOCKED"
             elif isinstance(result, str) and any(
-                kw in result.upper()
-                for kw in ("DENY", "UNSAFE", "BLOCKED", "VIOLATION")
+                kw in result.upper() for kw in _DENIAL_KEYWORDS
             ):
                 outcome = "BLOCKED"
 
@@ -145,7 +165,9 @@ class NeMoOTelCallback(StreamingHandler):
             )
 
             if outcome == "BLOCKED":
-                span.set_attribute(TRACE_METADATA_GUARDRAIL_BLOCK_REASON, str(result))
+                span.set_attribute(
+                    TRACE_METADATA_GUARDRAIL_BLOCK_REASON, _block_reason(result)
+                )
                 logger.warning(f"⛔ Guardrail BLOCKED: {action} | Result: {result}")
             else:
                 logger.info(f"✅ Guardrail PASSED: {action}")

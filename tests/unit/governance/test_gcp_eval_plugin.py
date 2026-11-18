@@ -557,6 +557,8 @@ async def test_bigquery_harvester_parameterized_queries_and_flywheel(
         "timestamp": valid_receipt.timestamp,
         "proof_hash": valid_receipt.proof_hash,
         "schema_version": valid_receipt.schema_version,
+        "params_hash": valid_receipt.params_hash,
+        "evaluated_params": json.dumps(valid_receipt.evaluated_params),
         "attempted_params": json.dumps(valid_receipt.attempted_params),
         "standing_snapshot": "{}",
         "control_id": "",

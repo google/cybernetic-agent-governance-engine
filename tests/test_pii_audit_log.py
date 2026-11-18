@@ -160,12 +160,23 @@ class TestPiiAuditLogJurisdictionalRetentionAuthority:
         )
         assert "MAS Notice 655" in record["retention_authority"]
 
-    def test_unset_region_falls_back_to_iso_42001(self, monkeypatch):
+    def test_unset_or_unknown_region_follows_resolver_posture(self, monkeypatch):
+        from src.gateway.governance.env_posture import DeploymentRegionError
+
+        monkeypatch.setenv("CAGE_ENV", "test")
         monkeypatch.delenv("CAGE_DEPLOYMENT_REGION", raising=False)
         record = pii_audit_log(
             trace_id="trace-none", entity_types=["SSN"], redacted=True
         )
-        assert "ISO 42001" in record["retention_authority"]
+        assert "FISMA AU-11" in record["retention_authority"]
+
+        monkeypatch.setenv("CAGE_ENV", "production")
+        with pytest.raises(DeploymentRegionError, match="is not set"):
+            pii_audit_log(trace_id="trace-prod", entity_types=["SSN"], redacted=True)
+
+        monkeypatch.setenv("CAGE_DEPLOYMENT_REGION", "UNKNOWN_REGION")
+        with pytest.raises(DeploymentRegionError, match="not a supported region"):
+            pii_audit_log(trace_id="trace-bad", entity_types=["SSN"], redacted=True)
 
     def test_explicit_region_parameter_overrides_environment(self, monkeypatch):
         monkeypatch.setenv("CAGE_DEPLOYMENT_REGION", "US_FED")

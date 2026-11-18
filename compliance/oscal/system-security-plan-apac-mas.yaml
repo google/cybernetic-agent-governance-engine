@@ -3,7 +3,7 @@ system-security-plan:
   metadata:
     title: CAGE System Security Plan (APAC_MAS — MAS FEAT / MAS Notice 655 / MAS TRM)
     published: '2026-06-15T00:00:00Z'
-    last-modified: '2026-11-13T00:54:26Z'
+    last-modified: '2026-11-15T04:48:26Z'
     version: 1.0.0-draft+stpa
     oscal-version: 1.0.4
     remarks: 'This System Security Plan (SSP) documents the compliance controls implemented
@@ -528,21 +528,21 @@ system-security-plan:
         \ Accountability, Transparency)\n          Framework reference: https://www.mas.gov.sg/publications/monographs-or-information-paper/2019/feat-principles\n\
         \          System: CAGE Financial Advisor v1.1.0\n          UCAs encoded:\
         \ 12 (6 enforcing server-bound, 6 advisory)\n          Hazards modelled: 7\n\
-        \          Safety constraints: 3\n          Last compiled: 2026-11-13T00:54:26Z\n\
-        \n          UCA-to-Control mapping (MAS FEAT Principles (Fairness, Ethics,\
-        \ Accountability, Transparency)):\n            UCA-1 (unsafe_action): Agent\
-        \ executes write operation without a human approval token.\n  → MAS_FEAT:\
-        \ Accountability A1 (Clear roles and responsibilities for AI decision-making),\
-        \ Ethics E3 (AI system operates within defined boundaries and scope)\nUCA-10\
-        \ (wrong_timing) [advisory — partial]: Agent reads account balance with stale\
-        \ connection data.\n  → MAS_FEAT: Accountability A2 (Audit trail and record-keeping\
-        \ for AI decisions), Transparency T2 (Regular reporting of AI performance\
-        \ and limitations)\nUCA-12 (unsafe_action) [advisory — partial]: Agent executes\
-        \ bounded trade when bounding contracts B1-B10 fail validation. Phase 5: execute_trade_bounded\
-        \ is EXTERNALLY_REVERSIBLE when B10 rollback window validation passes, enabling\
-        \ HITL review without confidence hard-gate per VEC-004. When B10 fails (closed\
-        \ rollback window), the bounding tier raises a HITL violation (B10_ROLLBACK_WINDOW_CLOSED)\
-        \ and the request parks for human approval, as an irreversible action would.\n\
+        \          Safety constraints: 3\n\n          UCA-to-Control mapping (MAS\
+        \ FEAT Principles (Fairness, Ethics, Accountability, Transparency)):\n   \
+        \         UCA-1 (unsafe_action): Agent executes write operation without a\
+        \ human approval token.\n  → MAS_FEAT: Accountability A1 (Clear roles and\
+        \ responsibilities for AI decision-making), Ethics E3 (AI system operates\
+        \ within defined boundaries and scope)\nUCA-10 (wrong_timing) [advisory —\
+        \ partial]: Agent reads account balance with stale connection data.\n  → MAS_FEAT:\
+        \ Accountability A2 (Audit trail and record-keeping for AI decisions), Transparency\
+        \ T2 (Regular reporting of AI performance and limitations)\nUCA-12 (unsafe_action)\
+        \ [advisory — partial]: Agent executes bounded trade when bounding contracts\
+        \ B1-B10 fail validation. Phase 5: execute_trade_bounded is EXTERNALLY_REVERSIBLE\
+        \ when B10 rollback window validation passes, enabling HITL review without\
+        \ confidence hard-gate per VEC-004. When B10 fails (closed rollback window),\
+        \ the bounding tier raises a HITL violation (B10_ROLLBACK_WINDOW_CLOSED) and\
+        \ the request parks for human approval, as an irreversible action would.\n\
         \  → MAS_FEAT: Ethics E3 (AI system operates within defined boundaries and\
         \ scope), Accountability A3 (Human accountability for AI-assisted recommendations)\n\
         UCA-13 (unsafe_action): Agent executes sell order exceeding the allowable\
@@ -588,8 +588,6 @@ system-security-plan:
         value: '6'
       - name: hazard-count
         value: '7'
-      - name: last-compiled
-        value: '2026-11-13T00:54:26Z'
       - name: target-framework
         value: MAS FEAT Principles (Fairness, Ethics, Accountability, Transparency)
       - name: artifact-python

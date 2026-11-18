@@ -101,6 +101,7 @@ gate_scripts=(
   scripts/check_lula_stub_count.py
   scripts/check_poam_lula_divergence.py
   scripts/check_producer_consumer_keys.py
+  scripts/check_mechanism_references.py
   scripts/check_k8s_terraform_parity.py
   scripts/check_stpa_freshness.py
   scripts/check_ai600_lula_manifests.py
@@ -211,7 +212,7 @@ run_gate() {
 
 run_gate "ruff_check" "${repo_ruff}" check .
 run_gate "ruff_format" "${repo_ruff}" format --check .
-run_gate "mypy" "${repo_mypy}" src/
+run_gate "mypy" "${repo_mypy}" src/ scripts/ proof/ packages/cage-client/src/ packages/cage-conformance/src/ deployment/
 
 for gate_script in "${gate_scripts[@]}"; do
   if [[ -f "${gate_script}" ]]; then

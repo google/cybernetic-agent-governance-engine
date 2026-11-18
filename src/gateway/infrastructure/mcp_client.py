@@ -15,6 +15,7 @@
 from __future__ import annotations
 
 import asyncio
+import inspect
 import logging
 import os
 import time
@@ -26,9 +27,9 @@ from mcp import ClientSession
 from mcp.client.streamable_http import streamable_http_client
 
 from src.gateway.observability.attributes import (
-    OBSERVATION_OUTPUT,
     OBSERVATION_TYPE,
     SPAN_ATTR_GEN_AI_OPERATION_NAME,
+    SPAN_ATTR_MCP_TOOL_RESULT_LENGTH,
 )
 
 logger = logging.getLogger("Infrastructure.MCPClient")
@@ -354,8 +355,7 @@ class GatewayMCPClient:
             return list(tools)
 
     async def get_tools(self, *, force_refresh: bool = False) -> list[Any]:
-        """Return LangChain-adapted MCP tools, cached for ``tools_cache_ttl_s`` (300s)."""
-        await self.ensure_connected()
+        """Return framework-neutral callable MCP tool adapters, cached for ``tools_cache_ttl_s``."""
         now = time.monotonic()
         if (
             not force_refresh
@@ -364,30 +364,11 @@ class GatewayMCPClient:
         ):
             return list(self._cached_lc_tools)
 
-        lock = self._get_lock()
-        async with lock:
-            now = time.monotonic()
-            if (
-                not force_refresh
-                and self._cached_lc_tools is not None
-                and (now - self._cached_lc_tools_at) < self._tools_cache_ttl_s
-            ):
-                return list(self._cached_lc_tools)
-            if self.session is None:
-                await self._open_session_unlocked()
-            assert self.session is not None
-            from langchain_mcp_adapters.tools import load_mcp_tools
-
-            try:
-                lc_tools = await load_mcp_tools(self.session)
-            except Exception:
-                await self._open_session_unlocked()
-                assert self.session is not None
-                lc_tools = await load_mcp_tools(self.session)
-
-            self._cached_lc_tools = list(lc_tools)
-            self._cached_lc_tools_at = time.monotonic()
-            return list(self._cached_lc_tools)
+        raw_tools = await self.list_tools(force_refresh=force_refresh)
+        adapted = [_build_mcp_tool_adapter(self, t) for t in raw_tools]
+        self._cached_lc_tools = adapted
+        self._cached_lc_tools_at = time.monotonic()
+        return list(adapted)
 
     async def call_tool(self, name: str, arguments: dict[str, Any]) -> str:
         """Invoke an MCP tool and return the text of its result.
@@ -426,7 +407,7 @@ class GatewayMCPClient:
                 text = _result_text(result)
                 if getattr(result, "isError", False):
                     raise MCPToolExecutionError(name, text)
-                span.set_attribute(OBSERVATION_OUTPUT, text)
+                span.set_attribute(SPAN_ATTR_MCP_TOOL_RESULT_LENGTH, len(text))
                 return text
             except Exception as e:
                 span.record_exception(e)
@@ -542,3 +523,96 @@ def get_mcp_client() -> GatewayMCPClient:
             )
         _mcp_client_instance = GatewayMCPClient(mcp_url)
     return _mcp_client_instance
+
+
+_JSON_SCHEMA_TYPE_MAP: dict[str, Any] = {
+    "string": str,
+    "integer": int,
+    "number": float,
+    "boolean": bool,
+    "array": list,
+    "object": dict,
+}
+
+
+class MCPBoundTool(dict[str, Any]):
+    """Framework-neutral MCP tool adapter exposing OpenAI dict schema, `.name`, and `.ainvoke()`."""
+
+    def __init__(self, client: GatewayMCPClient, mcp_tool: Any) -> None:
+        self._client = client
+        self.name: str = str(getattr(mcp_tool, "name", ""))
+        self.description: str = str(getattr(mcp_tool, "description", None) or self.name)
+        raw_schema = getattr(mcp_tool, "inputSchema", None)
+        self.input_schema: dict[str, Any] = (
+            dict(raw_schema)
+            if isinstance(raw_schema, dict)
+            else {"type": "object", "properties": {}}
+        )
+        super().__init__(
+            type="function",
+            function={
+                "name": self.name,
+                "description": self.description,
+                "parameters": self.input_schema,
+            },
+        )
+        self.__name__ = self.name
+        self.__doc__ = self.description
+
+        props = self.input_schema.get("properties")
+        required_raw = self.input_schema.get("required")
+        required_set = (
+            {str(r) for r in required_raw}
+            if isinstance(required_raw, (list, tuple, set))
+            else set()
+        )
+        params: list[inspect.Parameter] = []
+        annotations: dict[str, Any] = {"return": str}
+        if isinstance(props, dict):
+            ordered_keys = sorted(
+                props.keys(), key=lambda k: (0 if k in required_set else 1, str(k))
+            )
+            for key in ordered_keys:
+                prop_spec = props.get(key)
+                json_type = (
+                    prop_spec.get("type") if isinstance(prop_spec, dict) else None
+                )
+                py_type = _JSON_SCHEMA_TYPE_MAP.get(str(json_type), Any)
+                default_val = (
+                    inspect.Parameter.empty
+                    if key in required_set
+                    else (
+                        prop_spec.get("default")
+                        if isinstance(prop_spec, dict) and "default" in prop_spec
+                        else None
+                    )
+                )
+                params.append(
+                    inspect.Parameter(
+                        name=str(key),
+                        kind=inspect.Parameter.KEYWORD_ONLY,
+                        default=default_val,
+                        annotation=py_type,
+                    )
+                )
+                annotations[str(key)] = py_type
+        self.__signature__ = inspect.Signature(parameters=params, return_annotation=str)
+        self.__annotations__ = annotations
+
+    async def ainvoke(
+        self, input_args: dict[str, Any] | None = None, *_args: Any, **_kwargs: Any
+    ) -> str:
+        """Invoke the MCP tool via GatewayMCPClient.call_tool()."""
+        return await self._client.call_tool(self.name, dict(input_args or {}))
+
+    async def __call__(self, **kwargs: Any) -> str:
+        """Invoke the MCP tool directly with keyword arguments."""
+        return await self._client.call_tool(self.name, dict(kwargs))
+
+    def to_function_schema(self) -> dict[str, Any]:
+        """Return function-calling schema dictionary representation."""
+        return dict(self)
+
+
+def _build_mcp_tool_adapter(client: GatewayMCPClient, mcp_tool: Any) -> MCPBoundTool:
+    return MCPBoundTool(client, mcp_tool)

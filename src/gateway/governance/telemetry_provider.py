@@ -50,20 +50,19 @@ import logging
 import os
 from abc import ABC, abstractmethod
 from collections.abc import Mapping
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 import numpy as np
 import pandas as pd
 
 logger = logging.getLogger("Gateway.Governance.TelemetryProvider")
 
-# EV-4 Migration: MIN_SAMPLES is sourced from config/governance_thresholds.json
-# with environment variable overrides supported (CAUSAL_MIN_SAMPLES or legacy
-# CAUSAL_MIN_LIVE_SAMPLES). See schemas/thresholds.py for details.
+# EV-4 Migration: MIN_SAMPLES is sourced lazily from config/governance_thresholds.json
+# so importing telemetry_provider performs zero import-time disk/region resolution.
 from src.gateway.governance.schemas.thresholds import get_causal_min_samples
 
-# Minimum number of live samples required before trusting live telemetry.
-MIN_SAMPLES: int = get_causal_min_samples()
+if TYPE_CHECKING:
+    MIN_SAMPLES: int
 
 
 # ---------------------------------------------------------------------------
@@ -164,11 +163,18 @@ class NullTelemetryProvider(BaseTelemetryProvider):
 class MockTelemetryProvider(BaseTelemetryProvider):
     """Wraps the deterministic synthetic telemetry generator.
 
-    Used in unit and property tests. Forbidden in production (CAGE_ENV=prod).
+    Used in unit and property tests. Strictly forbidden in all enforcing postures.
     The seed is configurable via CAUSAL_MOCK_SEED (default: 42).
     """
 
     def __init__(self, seed: int = 42) -> None:
+        from src.gateway.governance.env_posture import is_enforcing, resolve_posture
+
+        if is_enforcing(resolve_posture()):
+            raise ConfigurationError(
+                "MockTelemetryProvider is strictly forbidden in production "
+                "and all enforcing postures."
+            )
         self._seed = seed
 
     def get_latest_data(self, n_samples: int = 500) -> pd.DataFrame:
@@ -209,11 +215,13 @@ if _PREV_MOCK_TELEMETRY_PROVIDER is not None:
 
 
 def __getattr__(name: str) -> Any:
-    """Lazy-load Layer 3 integration adapters on attribute access.
+    """Lazy-load Layer 3 integration adapters and threshold constants on attribute access.
 
     This preserves backward-compatible imports while maintaining strict
-    layer boundary separation (Gate G3).
+    layer boundary separation (Gate G3) and zero import-time disk/region reads.
     """
+    if name == "MIN_SAMPLES":
+        return get_causal_min_samples()
     if name == "RemoteTelemetryProvider":
         from src.integrations.telemetry_langfuse.provider import (
             LangfuseTelemetryProvider as RemoteTelemetryProvider,
@@ -316,15 +324,11 @@ def get_telemetry_provider(
         return NullTelemetryProvider()
 
     if provider_type == "mock":
-        cage_env = (
-            (os.environ.get("CAGE_ENV") or os.environ.get("ENVIRONMENT", ""))
-            .strip()
-            .lower()
-        )
-        if cage_env in ("prod", "production"):
+        if is_enforcing():
             raise ConfigurationError(
-                "MockTelemetryProvider is strictly forbidden in production (CAGE_ENV=prod). "
-                "Configure live telemetry credentials or select a valid production provider."
+                "MockTelemetryProvider is strictly forbidden in production "
+                "and all enforcing postures. Configure live telemetry credentials "
+                "or select a valid production provider."
             )
         return MockTelemetryProvider()
 

@@ -42,7 +42,27 @@ from src.cage_finance.safety.bounding.models import (
 from src.cage_finance.safety.bounding.providers import (
     MarketDataProvider,
     RollbackCapabilityProvider,
+    UnconfiguredEnforcingProviderError,
 )
+
+
+def _is_valid_positive_number(value: Any) -> bool:
+    return (
+        not isinstance(value, bool)
+        and isinstance(value, (int, float))
+        and math.isfinite(value)
+        and value > 0.0
+    )
+
+
+def _is_valid_non_negative_number(value: Any) -> bool:
+    return (
+        not isinstance(value, bool)
+        and isinstance(value, (int, float))
+        and math.isfinite(value)
+        and value >= 0.0
+    )
+
 
 logger = logging.getLogger(__name__)
 
@@ -95,7 +115,7 @@ def contract_b1_max_notional(
             ],
         )
 
-    if not math.isfinite(max_notional):
+    if not _is_valid_positive_number(max_notional):
         return ContractResult(
             contract_id=contract_id,
             admitted=False,
@@ -105,7 +125,22 @@ def contract_b1_max_notional(
                     "reason": "Invalid threshold value",
                     "threshold_key": "bounding.max_single_order_usd",
                     "threshold_value": max_notional,
-                    "error": "Threshold must be finite",
+                    "error": "Threshold must be a finite positive number",
+                }
+            ],
+        )
+
+    if not _is_valid_positive_number(request.amount):
+        return ContractResult(
+            contract_id=contract_id,
+            admitted=False,
+            severity=ContractSeverity.HARD_BLOCK,
+            findings=[
+                {
+                    "reason": "Invalid trade amount",
+                    "symbol": request.symbol,
+                    "amount_usd": request.amount,
+                    "error": "Trade amount must be a finite positive number",
                 }
             ],
         )
@@ -193,7 +228,7 @@ def contract_b2_drawdown_breaker(
             ],
         )
 
-    if not math.isfinite(max_drawdown_pct):
+    if not _is_valid_positive_number(max_drawdown_pct):
         return ContractResult(
             contract_id=contract_id,
             admitted=False,
@@ -203,7 +238,22 @@ def contract_b2_drawdown_breaker(
                     "reason": "Invalid threshold value",
                     "threshold_key": "drawdown.limit",
                     "threshold_value": max_drawdown_pct,
-                    "error": "Threshold must be finite",
+                    "error": "Threshold must be a finite positive number",
+                }
+            ],
+        )
+
+    if not _is_valid_positive_number(request.amount):
+        return ContractResult(
+            contract_id=contract_id,
+            admitted=False,
+            severity=ContractSeverity.HARD_BLOCK,
+            findings=[
+                {
+                    "reason": "Invalid trade amount",
+                    "symbol": request.symbol,
+                    "amount_usd": request.amount,
+                    "error": "Trade amount must be a finite positive number",
                 }
             ],
         )
@@ -223,7 +273,7 @@ def contract_b2_drawdown_breaker(
             ],
         )
 
-    if not math.isfinite(current_drawdown):
+    if not _is_valid_non_negative_number(current_drawdown):
         return ContractResult(
             contract_id=contract_id,
             admitted=False,
@@ -232,7 +282,7 @@ def contract_b2_drawdown_breaker(
                 {
                     "reason": "Invalid current drawdown value",
                     "current_drawdown": current_drawdown,
-                    "error": "Drawdown must be finite",
+                    "error": "Drawdown must be a finite non-negative number",
                 }
             ],
         )
@@ -316,7 +366,7 @@ def contract_b6_hitl_high_impact(
             ],
         )
 
-    if not math.isfinite(threshold_usd):
+    if not _is_valid_positive_number(threshold_usd):
         return ContractResult(
             contract_id=contract_id,
             admitted=False,
@@ -326,7 +376,22 @@ def contract_b6_hitl_high_impact(
                     "reason": "Invalid threshold value",
                     "threshold_key": "consensus.threshold_usd",
                     "threshold_value": threshold_usd,
-                    "error": "Threshold must be finite",
+                    "error": "Threshold must be a finite positive number",
+                }
+            ],
+        )
+
+    if not _is_valid_positive_number(request.amount):
+        return ContractResult(
+            contract_id=contract_id,
+            admitted=False,
+            severity=ContractSeverity.HITL_ESCALATE,
+            findings=[
+                {
+                    "reason": "Invalid trade amount",
+                    "symbol": request.symbol,
+                    "amount_usd": request.amount,
+                    "error": "Trade amount must be a finite positive number",
                 }
             ],
         )
@@ -411,7 +476,7 @@ def contract_b3_liquidity_depth(
             ],
         )
 
-    if not math.isfinite(min_ratio) or min_ratio <= 0:
+    if not _is_valid_positive_number(min_ratio):
         return ContractResult(
             contract_id=contract_id,
             admitted=False,
@@ -430,6 +495,20 @@ def contract_b3_liquidity_depth(
     try:
         depth_data = market_data_provider.get_order_book_depth(
             symbol=request.symbol, venue=request.venue, side=request.side
+        )
+    except UnconfiguredEnforcingProviderError as e:
+        return ContractResult(
+            contract_id=contract_id,
+            admitted=False,
+            severity=ContractSeverity.HARD_BLOCK,
+            findings=[
+                {
+                    "reason": "Market data provider unconfigured in enforcing posture",
+                    "symbol": request.symbol,
+                    "venue": request.venue,
+                    "error": str(e),
+                }
+            ],
         )
     except RuntimeError as e:
         # Provider unavailable → fail-closed with HITL escalation
@@ -637,6 +716,19 @@ def contract_b5_volatility_sizing(
         vol_data = market_data_provider.get_volatility_percentile(
             symbol=request.symbol, window_days=vol_window_days
         )
+    except UnconfiguredEnforcingProviderError as e:
+        return ContractResult(
+            contract_id=contract_id,
+            admitted=False,
+            severity=ContractSeverity.HARD_BLOCK,
+            findings=[
+                {
+                    "reason": "Market data provider unconfigured in enforcing posture",
+                    "symbol": request.symbol,
+                    "error": str(e),
+                }
+            ],
+        )
     except RuntimeError as e:
         # Provider unavailable → fail-closed with HITL escalation
         return ContractResult(
@@ -817,6 +909,20 @@ def contract_b8_twap_slippage(
             symbol=request.symbol,
             venue=request.venue,
             window_seconds=twap_window_seconds,
+        )
+    except UnconfiguredEnforcingProviderError as e:
+        return ContractResult(
+            contract_id=contract_id,
+            admitted=False,
+            severity=ContractSeverity.HARD_BLOCK,
+            findings=[
+                {
+                    "reason": "Market data provider unconfigured in enforcing posture",
+                    "symbol": request.symbol,
+                    "venue": request.venue,
+                    "error": str(e),
+                }
+            ],
         )
     except RuntimeError as e:
         # Provider unavailable → fail-closed with HITL escalation
@@ -1253,6 +1359,20 @@ def contract_b10_rollback_window(
         capability = rollback_provider.verify_rollback_window(
             venue=request.venue,
             rollback_window_seconds=request.rollback_window_seconds,
+        )
+    except UnconfiguredEnforcingProviderError as e:
+        return ContractResult(
+            contract_id=contract_id,
+            admitted=False,
+            severity=ContractSeverity.HARD_BLOCK,
+            findings=[
+                {
+                    "reason": "Rollback capability provider unconfigured in enforcing posture",
+                    "symbol": request.symbol,
+                    "venue": request.venue,
+                    "error": str(e),
+                }
+            ],
         )
     except RuntimeError as e:
         return _b10_window_closed(

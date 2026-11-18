@@ -821,7 +821,7 @@ class TestSyntheticMeshCanaryAndComplianceExclusion:
             if request.url.path == "/governance/validate-action":
                 return httpx.Response(
                     200,
-                    json={"payload": {"governance": {"verdict": "ALLOW"}}},
+                    json={"payload": {"verdict": "ALLOW", "violations": []}},
                 )
             return httpx.Response(
                 200,

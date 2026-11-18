@@ -244,7 +244,7 @@
 1. **Continuous monitoring covers only 4 of ~300 HIGH-baseline controls.** The Lula CronJob provides meaningful cATO evidence for A.5.2, A.5.3, A.9.2, and SC-4. The remaining ~296 controls have no continuous monitoring — they are assessed only once during initial authorization (if at all).
 2. **No cATO boundary or scope document exists.** NIST SP 800-137 requires a documented Information Security Continuous Monitoring (ISCM) strategy defining: monitoring objectives, monitoring tiers (organization/mission/information system), monitoring frequencies, and reporting mechanisms. None exists.
 3. **Lula CronJob image uses a `${REGISTRY_URL}` template variable** — the actual image `${REGISTRY_URL}/lula:0.9.5` must be resolved at deployment time. If this variable is not substituted, the CronJob will fail silently. No CI check validates this substitution.
-4. **No alert escalation SLA is defined.** When `_step4_alert_on_critical_fail()` fires, alerts go to Slack/PagerDuty via `create_notifier()`. There is no documented SLA for alert acknowledgment, triage, and remediation — required for cATO.
+4. **No alert escalation SLA is defined.** When `_step4_alert_on_critical_fail()` fires, alerts go to Slack/PagerDuty via `create_notifier()`. There is no documented SLA for alert acknowledgment, triage, and remediation — required for cATO. **Correction (`2026-11-16`, `POAM-2026-230`):** in every committed profile they go to the console (`alert_channel = "console"`), not to Slack or PagerDuty; see `POAM-2026-230`.
 5. **The `lula-auditor` ServiceAccount RBAC** is defined in `de5534ac:deployment/k8s/lula-rbac.yaml` (referenced in lula-cron.yaml) — this grants Kubernetes API access for SC-4 validation. The actual RBAC permissions were not read — if over-privileged, this represents an IA-5/AC-6 gap.
 
 **Refactoring Recommendations:**
@@ -345,7 +345,7 @@
 | 5   | OSCAL artifact persistence to S3/GCS is configured and verified                 | ⚠️ (conditional on OSCAL_S3_ENDPOINT)            |
 | 6   | Compliance Langfuse project is configured with separate credentials             | ⚠️ (env vars required, not validated at startup) |
 | 7   | Alert escalation SLAs are defined and documented                                | ❌                                               |
-| 8   | Critical control failure alerts are wired to PagerDuty/Slack                    | ✅ (via `create_notifier()`)                     |
+| 8   | Critical control failure alerts are wired to PagerDuty/Slack                    | ✅ (via `create_notifier()`) (**Correction (`2026-11-16`, `POAM-2026-230`):** not wired in any committed profile; `alert_channel = "console"`) |
 | 9   | SSE real-time governance events stream to KernelDashboard                       | ✅                                               |
 | 10  | Control effectiveness metrics include trend analysis (7-day, 30-day)            | ❌                                               |
 | 11  | False-positive rate is measured and within acceptable bounds                    | ❌                                               |

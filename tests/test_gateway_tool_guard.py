@@ -155,7 +155,13 @@ class TestGuardFailClosed:
         [
             pytest.param(
                 lambda r: httpx.Response(
-                    403, json={"verdict": "DENIED", "violations": ["limit"]}
+                    403,
+                    json={
+                        "schema_version": "2.0.0",
+                        "verdict": "DENIED",
+                        "violations": ["limit"],
+                        "proof_hash": "sha256:test-guard-refusal-1",
+                    },
                 ),
                 id="denied-403",
             ),
@@ -173,7 +179,13 @@ class TestGuardFailClosed:
             ),
             pytest.param(
                 lambda r: httpx.Response(
-                    202, json={"verdict": "DEFER", "defer_id": "d-1"}
+                    200,
+                    json={
+                        "verdict": "DEFER",
+                        "defer_token": "d-1",
+                        "defer_reason": "CONFIDENCE_BELOW_THRESHOLD",
+                        "violations": [],
+                    },
                 ),
                 id="defer",
             ),
@@ -231,7 +243,15 @@ class TestGuardFailClosed:
         def handler(request: httpx.Request) -> httpx.Response:
             symbol = json.loads(request.content)["params"]["symbol"]
             if symbol == "EVIL":
-                return httpx.Response(403, json={"verdict": "DENIED"})
+                return httpx.Response(
+                    403,
+                    json={
+                        "schema_version": "2.0.0",
+                        "verdict": "DENIED",
+                        "violations": ["blocked symbol"],
+                        "proof_hash": "sha256:test-guard-refusal-2",
+                    },
+                )
             return httpx.Response(200, json=_ALLOW)
 
         gateway(handler)
@@ -412,7 +432,17 @@ class TestGuardApprovedResume:
         "approved", [False, None, "true"], ids=["rejected", "none", "truthy-str"]
     )
     async def test_non_true_approval_revalidates(self, gateway, approved) -> None:
-        seen = gateway(lambda r: httpx.Response(403, json={"verdict": "DENIED"}))
+        seen = gateway(
+            lambda r: httpx.Response(
+                403,
+                json={
+                    "schema_version": "2.0.0",
+                    "verdict": "DENIED",
+                    "violations": ["approval not true"],
+                    "proof_hash": "sha256:test-guard-refusal-3",
+                },
+            )
+        )
         spy = _SpyNode()
 
         result = await gateway_tool_guard("execute_trade", approvable=True)(spy)(
@@ -425,7 +455,17 @@ class TestGuardApprovedResume:
 
     @pytest.mark.asyncio
     async def test_not_approvable_ignores_approval_state(self, gateway) -> None:
-        seen = gateway(lambda r: httpx.Response(403, json={"verdict": "DENIED"}))
+        seen = gateway(
+            lambda r: httpx.Response(
+                403,
+                json={
+                    "schema_version": "2.0.0",
+                    "verdict": "DENIED",
+                    "violations": ["not approvable"],
+                    "proof_hash": "sha256:test-guard-refusal-4",
+                },
+            )
+        )
         spy = _SpyNode()
 
         result = await gateway_tool_guard("execute_trade")(spy)(
@@ -574,3 +614,99 @@ class TestGuardTransactionIds:
             "t1", thread_id=None, message_id="ai-9"
         )
         assert seen == []  # an approved call is not re-validated
+
+
+class TestLinkerdEmpty403FailsClosed:
+    """POAM-2026-227: empty-body Linkerd HTTP 403 fails closed on every advisor path.
+
+    From ``#746`` (``f0ca9f4d``) until ``#782`` (``8a3e86bb``) and ``#783``
+    (``5d98e1e2``), ``HTTPRoute/gateway-canary`` matched exact ``POST
+    /governance/validate-action`` and ``POST /governance/policy-precheck``
+    without binding ``gateway-trusted-clients``, causing Linkerd's inbound
+    proxy to reject ``cage-advisor-sa`` with ``HTTP 403`` and an empty
+    ``text/plain`` body before FastAPI ran. Every caller in the advisor must
+    fail closed (outage, never governance bypass).
+    """
+
+    @staticmethod
+    def _linkerd_empty_403(_request: httpx.Request) -> httpx.Response:
+        return httpx.Response(403, content=b"", headers={"content-type": "text/plain"})
+
+    @pytest.mark.asyncio
+    async def test_validate_action_raises_http_status_error_on_empty_mesh_403(
+        self, gateway
+    ) -> None:
+        gateway(self._linkerd_empty_403)
+
+        with pytest.raises(httpx.HTTPStatusError) as exc_info:
+            await GatewayClient().validate_action(
+                action="execute_trade",
+                params={"symbol": "AAPL", "amount": 100.0},
+            )
+        assert exc_info.value.response.status_code == 403
+        assert not isinstance(exc_info.value, PermissionError)
+
+    @pytest.mark.asyncio
+    async def test_gateway_tool_guard_refuses_batch_without_executing_node(
+        self, gateway
+    ) -> None:
+        gateway(self._linkerd_empty_403)
+        spy = _SpyNode()
+        state = {
+            **_state(_call("t1")),
+            "routing_verdict_cache": {"params_digest": "stale"},
+        }
+
+        out = await gateway_tool_guard("execute_trade", approvable=True)(spy)(state)
+
+        assert spy.calls == 0
+        assert out["governance_status"] == "DENIED"
+        assert out["routing_verdict_cache"] is None
+        assert len(out["messages"]) == 1
+        assert "Governance refused this action" in out["messages"][0].content
+
+    @pytest.mark.asyncio
+    async def test_safety_check_node_blocks_plan_on_empty_mesh_403(
+        self, gateway
+    ) -> None:
+        from src.governed_financial_advisor.graph.nodes.safety_node import (
+            safety_check_node,
+        )
+
+        gateway(self._linkerd_empty_403)
+        state: dict[str, Any] = {
+            "execution_plan_output": {
+                "steps": [
+                    {
+                        "action": "execute_trade",
+                        "symbol": "AAPL",
+                        "amount": 100.0,
+                        "side": "BUY",
+                    }
+                ]
+            },
+            "consecutive_denials": 0,
+        }
+
+        out = await safety_check_node(state)  # type: ignore[arg-type]
+
+        assert out["safety_status"] == "GATEWAY_ERROR"
+        assert out["consecutive_denials"] == 0
+        assert out["last_violation"]["reason_code"] == "GATEWAY_ERROR"
+        assert out["last_violation"]["recoverable"] is False
+        assert out["routing_verdict_cache"] is None
+
+    @pytest.mark.asyncio
+    async def test_policy_precheck_returns_deny_on_empty_mesh_403(
+        self, gateway
+    ) -> None:
+        gateway(self._linkerd_empty_403)
+
+        decision = await GatewayClient().evaluate_policy_dry_run(
+            "execute_trade", {"symbol": "AAPL", "amount": 100.0}
+        )
+
+        assert decision == "DENY"
+
+
+# Regression coverage binding: POAM-2026-080, POAM-2026-227, POAM-2026-228

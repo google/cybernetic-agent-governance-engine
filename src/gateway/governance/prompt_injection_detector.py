@@ -61,10 +61,14 @@ Usage::
 from __future__ import annotations
 
 import logging
-import os
 import re
 import unicodedata
 from dataclasses import dataclass
+
+from src.gateway.governance.env_posture import (
+    DeploymentRegionError,
+    resolve_deployment_region,
+)
 
 logger = logging.getLogger("Gateway.Governance.PromptInjectionDetector")
 
@@ -103,20 +107,20 @@ logger = logging.getLogger("Gateway.Governance.PromptInjectionDetector")
 
 
 def _get_region() -> str:
-    return os.environ.get("CAGE_DEPLOYMENT_REGION", "").strip().upper()
+    return resolve_deployment_region()
 
 
 def get_injection_citation(region: str | None = None) -> str:
     """Return the jurisdiction-specific prompt-injection regulatory citation.
 
     Args:
-        region: CAGE_DEPLOYMENT_REGION value. If None, reads from the
-                environment. One of "US_FED", "EU_ECB", "APAC_MAS".
+        region: One of "US_FED", "EU_ECB", "APAC_MAS". If None,
+                ``resolve_deployment_region()``.
 
     Returns:
-        The regulatory authority citation string for the active region, or
-        the universal ISO 42001 A.9.2 citation if the region is unset or
-        unrecognised.
+        The regulatory authority citation string for the active region (or the
+        ISO 42001 A.9.2 citation if an explicit ``region`` argument is not in
+        ``INJECTION_CITATION``).
     """
     from src.gateway.governance.constants import (
         INJECTION_CITATION,
@@ -125,6 +129,16 @@ def get_injection_citation(region: str | None = None) -> str:
 
     active_region = (region or _get_region()).strip().upper()
     return INJECTION_CITATION.get(active_region, INJECTION_CITATION_DEFAULT)
+
+
+def _citation_for_log() -> str:
+    """Resolve regulatory citation for warning logs without aborting offline detection."""
+    from src.gateway.governance.constants import INJECTION_CITATION_DEFAULT
+
+    try:
+        return get_injection_citation()
+    except DeploymentRegionError:
+        return INJECTION_CITATION_DEFAULT
 
 
 # ---------------------------------------------------------------------------
@@ -348,19 +362,26 @@ _INJECTION_PATTERNS: list[tuple[str, re.Pattern[str]]] = [
     (
         "structural_attack_patterns",
         re.compile(
-            r"`[^`]*(?:rm|curl|wget|bash|sh|python|nc|netcat|chmod|chown)[^`]*`"
-            r"|(?:\$\(|\$\{)[^)]*(?:rm|curl|wget|bash|sh|python)[^)]*(?:\)|\})",
+            r"`[^`\n]{0,500}(?:rm|curl|wget|bash|sh|python|nc|netcat|chmod|chown)[^`\n]{0,500}`"
+            r"|(?:\$\(|\$\{)[^)\}\n]{0,500}(?:rm|curl|wget|bash|sh|python)[^)\}\n]{0,500}(?:\)|\})",
             re.IGNORECASE,
         ),
     ),
 ]
 
-_ZERO_WIDTH_RE = re.compile(r"[\u00ad\u200b-\u200f\u202a-\u202e\u2060-\u206f\ufeff]")
+_INVISIBLE_SCAN_RE = re.compile(
+    r"[\u00ad\u034f\u061c\u115f\u1160\u17b4\u17b5\u180b-\u180f"
+    r"\u200b-\u200f\u202a-\u202e\u2060-\u206f\u3164\ufe00-\ufe0f"
+    r"\ufeff\uffa0\U000e0000-\U000e007f\U000e0100-\U000e01ef]"
+)
 
 
 def _normalize_for_scan(text: str) -> str:
-    """Apply Unicode NFKC normalization and strip zero-width/format characters."""
-    return _ZERO_WIDTH_RE.sub("", unicodedata.normalize("NFKC", text))
+    """Apply Unicode NFKC normalization and strip Cf/CGJ/Variation-Selector/Tag characters (KG-23)."""
+    stripped = _INVISIBLE_SCAN_RE.sub("", text)
+    nfkc = unicodedata.normalize("NFKC", stripped)
+    cleaned = _INVISIBLE_SCAN_RE.sub("", nfkc)
+    return "".join(ch for ch in cleaned if unicodedata.category(ch) != "Cf")
 
 
 # ---------------------------------------------------------------------------
@@ -427,7 +448,7 @@ def detect_prompt_injection(text: str) -> InjectionResult:
                 "(citation=%s — blocking request)",
                 pattern_name,
                 text[:100],
-                get_injection_citation(),
+                _citation_for_log(),
             )
             return InjectionResult(
                 detected=True,
@@ -474,6 +495,6 @@ def detect_indirect_injection(tool_name: str, response_text: str) -> InjectionRe
             "tool=%s pattern=%s (citation=%s — blocking response)",
             tool_name,
             result.pattern_matched,
-            get_injection_citation(),
+            _citation_for_log(),
         )
     return result

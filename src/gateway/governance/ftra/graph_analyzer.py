@@ -172,10 +172,20 @@ class PlanGraphAnalyzer:
 
             if violation_msg is None:
                 for step in raw_steps:
-                    deps = getattr(step, "depends_on", None) or []
+                    raw_deps = getattr(step, "depends_on", None)
+                    if raw_deps is not None and not isinstance(raw_deps, (list, tuple)):
+                        violation_msg = (
+                            f"FTRA_INVALID_DEPENDS_ON: step {step.id!r} depends_on "
+                            "must be a list of step IDs"
+                        )
+                        break
+                    deps = raw_deps or []
                     for dep_id in deps:
                         if not isinstance(dep_id, str) or dep_id not in exact_ids:
                             violation_msg = f"FTRA_DANGLING_DEPENDENCY: step {step.id!r} depends_on unknown step {dep_id!r}"
+                            break
+                        if dep_id == step.id:
+                            violation_msg = f"FTRA_CYCLE_DETECTED: step {step.id!r} cannot depend on itself"
                             break
                     if violation_msg is not None:
                         break
@@ -262,32 +272,82 @@ class PlanGraphAnalyzer:
 
         # Determine edges: Phase 2 depends_on or Phase 1 linear chain
         has_depends_on = any(
-            hasattr(step, "depends_on") and step.depends_on for step in steps
+            hasattr(step, "depends_on") and bool(step.depends_on) for step in steps
         )
 
         if has_depends_on:
-            # Phase 2: explicit dependency edges
+            # Phase 2: explicit dependency edges (validated as a true DAG across all roots)
             for step in steps:
-                deps: list[str] = getattr(step, "depends_on", None) or []
+                deps: list[str] = list(getattr(step, "depends_on", None) or [])
                 for dep_id in deps:
-                    if G.has_node(dep_id):
-                        G.add_edge(dep_id, step.id)
-                    else:
-                        logger.warning(
-                            "FTRA: step '%s' depends_on unknown step '%s' — edge skipped.",
-                            step.id,
-                            dep_id,
+                    if not G.has_node(dep_id):
+                        msg = (
+                            f"FTRA_DANGLING_DEPENDENCY: step {step.id!r} "
+                            f"depends_on unknown step {dep_id!r}"
                         )
+                        return ReachabilityResult(
+                            plan_id=plan_id,
+                            worst_case_classification=TerminalClassification.IRREVERSIBLE_TERMINAL,
+                            reachable_terminals=[],
+                            critical_path=[],
+                            verdict=FTRAVerdict.BLOCKED,
+                            confidence_at_analysis=confidence,
+                            total_steps=len(steps),
+                            reachable_step_count=0,
+                            violation_reason=msg,
+                            violations=[msg],
+                        )
+                    G.add_edge(dep_id, step.id)
+
+            if not nx.is_directed_acyclic_graph(G):
+                msg = f"FTRA_CYCLE_DETECTED: execution plan {plan_id!r} contains a dependency cycle"
+                logger.error("FTRA DAG cycle detected: %s", msg)
+                return ReachabilityResult(
+                    plan_id=plan_id,
+                    worst_case_classification=TerminalClassification.IRREVERSIBLE_TERMINAL,
+                    reachable_terminals=[],
+                    critical_path=[],
+                    verdict=FTRAVerdict.BLOCKED,
+                    confidence_at_analysis=confidence,
+                    total_steps=len(steps),
+                    reachable_step_count=0,
+                    violation_reason=msg,
+                    violations=[msg],
+                )
+
+            roots: list[str] = [step.id for step in steps if G.in_degree(step.id) == 0]
+            seen_reachable: set[str] = set()
+            reachable_ids: list[str] = []
+            for root_id in roots:
+                for node_id in nx.dfs_preorder_nodes(G, source=root_id):
+                    if node_id not in seen_reachable:
+                        seen_reachable.add(node_id)
+                        reachable_ids.append(node_id)
+
+            if not roots or len(reachable_ids) < len(steps):
+                msg = (
+                    f"FTRA_UNREACHABLE_STEPS: only {len(reachable_ids)}/{len(steps)} "
+                    f"steps reachable from DAG roots in plan {plan_id!r}"
+                )
+                logger.error("FTRA unreachable steps: %s", msg)
+                return ReachabilityResult(
+                    plan_id=plan_id,
+                    worst_case_classification=TerminalClassification.IRREVERSIBLE_TERMINAL,
+                    reachable_terminals=[],
+                    critical_path=[],
+                    verdict=FTRAVerdict.BLOCKED,
+                    confidence_at_analysis=confidence,
+                    total_steps=len(steps),
+                    reachable_step_count=len(reachable_ids),
+                    violation_reason=msg,
+                    violations=[msg],
+                )
         else:
             # Phase 1: linear chain step[i] → step[i+1]
             for i in range(len(steps) - 1):
                 G.add_edge(steps[i].id, steps[i + 1].id)
-
-        # ----------------------------------------------------------------
-        # DFS reachability from step[0]
-        # ----------------------------------------------------------------
-        source_id: str = steps[0].id
-        reachable_ids: list[str] = list(nx.dfs_preorder_nodes(G, source=source_id))
+            roots = [steps[0].id]
+            reachable_ids = list(nx.dfs_preorder_nodes(G, source=steps[0].id))
 
         # ----------------------------------------------------------------
         # Classify each reachable node
@@ -333,21 +393,24 @@ class PlanGraphAnalyzer:
         critical_path: list[str] = []
         if reachable_terminals:
             first_terminal = reachable_terminals[0]
-            try:
-                critical_path = nx.shortest_path(
-                    G, source=source_id, target=first_terminal
-                )
-            except nx.NetworkXNoPath:
-                # Should not happen since first_terminal is in reachable_ids,
-                # but guard defensively.
-                critical_path = [first_terminal]
-            except Exception as exc:
-                logger.warning(
-                    "FTRA: shortest_path failed for plan '%s' (%s) — "
-                    "critical_path will be empty.",
-                    plan_id,
-                    exc,
-                )
+            best_path: list[str] | None = None
+            for root_id in roots:
+                try:
+                    candidate = list(
+                        nx.shortest_path(G, source=root_id, target=first_terminal)
+                    )
+                    if best_path is None or len(candidate) < len(best_path):
+                        best_path = candidate
+                except nx.NetworkXNoPath:
+                    continue
+                except Exception as exc:
+                    logger.warning(
+                        "FTRA: shortest_path failed for plan '%s' (%s) — "
+                        "critical_path will be empty.",
+                        plan_id,
+                        exc,
+                    )
+            critical_path = best_path if best_path is not None else [first_terminal]
 
         # ----------------------------------------------------------------
         # Determine verdict (from the worst classification still needing a human)

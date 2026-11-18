@@ -26,7 +26,7 @@ and no organisation ruleset does:
 | Ruleset | Rules | Parameters | Bypass actors |
 |---|---|---|---|
 | 19769096 "Protect main branch" | `pull_request` | One approving review; stale approvals dismissed on push; code-owner review off; review-thread resolution off | Repository admin role, mode `always` |
-| 25966171 "Require status checks on main" | `required_status_checks` | The eight checks in §3, each pinned to GitHub Actions (`integration_id` 15368); branches need not be up to date (`strict_required_status_checks_policy: false`) | None |
+| 25966171 "Require status checks on main" | `required_status_checks` | The nine checks in §3 (the ninth, `Approved review or recorded bypass`, added 2026-11-15), each pinned to GitHub Actions (`integration_id` 15368); branches need not be up to date (`strict_required_status_checks_policy: false`) | None |
 | 26377312 "Protect main history" | `non_fast_forward`, `deletion` | — | None |
 
 What that enforces:
@@ -34,8 +34,12 @@ What that enforces:
 - **Pull requests and review.** A change reaches `main` through a pull request with one
   approving review, except that a repository admin bypasses the rule. The maintainer cannot
   approve their own pull requests, so each of their merges is such a bypass. This is an
-  accepted risk (POAM-2026-115).
-- **Required checks.** A pull request merges only after the eight checks in §3 passed on its
+  accepted risk (POAM-2026-115). The bypass skips the review rule but not ruleset 25966171,
+  whose check `Approved review or recorded bypass` passes only on an approving review or on a
+  signed, publicly verifiable record that the head was unreviewed (§3.1). A recorded bypass is
+  not a review: the record discloses the unreviewed merge, and the separation-of-duties gap
+  stays open.
+- **Required checks.** A pull request merges only after the nine checks in §3 passed on its
   head, and the admin bypass does not reach this ruleset. Each run tests the head merged into
   `main` as it stood when the run started, and the checks are not re-run when `main` moves
   before the merge, so the commit that lands may never have been tested; its own runs start
@@ -49,8 +53,9 @@ What that enforces:
 
 The one exception to ruleset 25966171 is an advisory fix landed from a private fork, where
 Actions does not run: the ruleset is disabled for that single merge and re-enabled, and its
-history records both edits ([`SECURITY.md`](../SECURITY.md)). Ruleset 26377312 stays enabled
-throughout, which is why the history rules are not in 25966171.
+history records both edits ([`SECURITY.md`](../SECURITY.md)). Such a merge has no pre-merge
+record, so its ledger run on `main` fails (§3.1). Ruleset 26377312 stays enabled throughout,
+which is why the history rules are not in 25966171.
 
 Before each merge, run `scripts/check_pr_mergeable.sh <pr> --comment`. It verifies the
 required checks on the exact head SHA and posts the result on the pull request. Nothing
@@ -83,13 +88,15 @@ release branch needs a ruleset before it is created.
 
 ---
 
-## 3. Required Status Checks on `main` (ruleset 25966171, verified 2026-11-02)
+## 3. Required Status Checks on `main` (ruleset 25966171, verified 2026-11-02; ninth check added 2026-11-15)
 
 Ruleset `25966171` (`Require status checks on main`, `enforcement: active`, no bypass actors)
-requires the following **eight** checks on `refs/heads/main`. Each is pinned to the GitHub
+requires the following **nine** checks on `refs/heads/main`. Each is pinned to the GitHub
 Actions app, so a check run or commit status of the same name from any other source does not
-satisfy it. Until 2026-11-02 only the last three were pinned. The check context must match
-what GitHub Actions reports exactly:
+satisfy it. Until 2026-11-02 only `Pytest Logic Tests`, `Terraform Tests (gcp-gke, mock
+providers)` and `Quickstart Bootstrap & First-DENY Smoke Gate` were pinned; `Approved review
+or recorded bypass` was pinned from its addition on 2026-11-15 (§3.1). The check context must
+match what GitHub Actions reports exactly:
 
 | Check context (exact) | Workflow files | Integration pin |
 |---|---|---|
@@ -101,6 +108,7 @@ what GitHub Actions reports exactly:
 | `Pytest Logic Tests` | `ci.yml` | `integration_id: 15368` (GitHub Actions) |
 | `Terraform Tests (gcp-gke, mock providers)` | `ci.yml` | `integration_id: 15368` (GitHub Actions) |
 | `Quickstart Bootstrap & First-DENY Smoke Gate` | `ci.yml` | `integration_id: 15368` (GitHub Actions) |
+| `Approved review or recorded bypass` | `review-bypass-attestation.yml` | `integration_id: 15368` (GitHub Actions) |
 
 Two jobs that check different things report `license-check` (POAM-2026-172): `ci.yml`
 checks Apache 2.0 headers and `license_guard.yml` audits dependency licences. Both
@@ -108,6 +116,55 @@ reported on `f43efeba` (check runs `123570375167` and `123570378192`, read 2026-
 How GitHub evaluates the requirement when the two disagree has not been observed.
 `tests/test_check_repo_rules.py` fails unless the workflow column names exactly the
 workflows whose jobs report each check.
+
+### 3.1 `Approved review or recorded bypass`
+
+The admin bypass skips ruleset 19769096's review rule, but this check is in ruleset 25966171,
+which has no bypass actor, so `--admin` cannot skip it.
+[`review-bypass-attestation.yml`](workflows/review-bypass-attestation.yml) runs on every pull
+request push and on every review submitted, dismissed or edited, and the check passes in one of
+two ways:
+
+- **Approved.** A reviewer other than the author, with write access and not a bot, approved the
+  current head, and that approval is their latest approval, change request or dismissal.
+  [`review_bypass_attestation.py`](../scripts/review_bypass_attestation.py) states the rule.
+- **Unreviewed and recorded.** Otherwise the workflow signs a record that the head was unreviewed
+  (a Sigstore attestation, logged in Sigstore's public transparency log) and verifies it from the
+  attestations API before the check passes. An unreviewed pull request from a fork fails
+  instead: it needs an approving review.
+
+**A recorded bypass is not a review.** The check passing means "approved, or unreviewed and
+recorded". Every record says `"reviewed": false` and "It is not a review or an approval and
+makes no claim about the change", and the repository's own CI makes it, not an independent
+party. The control is disclosure, a durable and verifiable record of each unreviewed merge, not
+review: the separation-of-duties gap (AC-5) stays open and accepted (POAM-2026-115), and no
+claim that a change was reviewed may rest on a record or on the ledger.
+
+The check fails closed. No step continues on error, and the last step passes only on an approval
+or a verified record, so a recording step that errors fails the check and the merge stays
+blocked; it cannot proceed unrecorded. After each merge,
+[`review-bypass-ledger.yml`](workflows/review-bypass-ledger.yml) decides the merged head again,
+verifies its pre-merge record and signs a ledger record of the merge commit. A merge with
+neither an approval nor a verified pre-merge record fails that run on `main`.
+[`test_review_bypass_attestation.py`](../tests/test_review_bypass_attestation.py) fails on a
+workflow edit that breaks any of this.
+
+| Record | Subject: canonical JSON, sorted keys, no whitespace | Predicate type |
+|---|---|---|
+| Pre-merge | `{"head_sha":"<sha>","pr":<number>,"repo":"<owner>/<name>"}` | `https://github.com/google/cybernetic-agent-governance-engine/attestations/review-bypass/v1` |
+| Ledger | `{"merge_sha":"<sha>","repo":"<owner>/<name>"}` | `https://github.com/google/cybernetic-agent-governance-engine/attestations/review-bypass-ledger/v1` |
+
+A record's subject digest is the sha256 of its subject, so anyone can rebuild the subject from
+public data and verify the record with the commands in §10. The pre-merge predicate also records
+the base branch and SHA, the author, the observed approving-review count, the evaluation time
+and the run; the ledger predicate records the merger, the merge time and the pre-merge subject
+digest.
+
+Limits. GitHub takes the workflow and the script from the pull request's merge ref, so a pull
+request that edits them decides its own check; the edit is in the merged diff, and each record's
+signing certificate names the workflow ref that signed it. A merge landed while ruleset 25966171
+is disabled (the private-fork advisory path in §1) has no pre-merge record, and its ledger run
+fails.
 
 ### Additional non-required pull-request workflows
 
@@ -187,7 +244,7 @@ After any ruleset change:
 
 - [ ] Run `python scripts/check_repo_rules.py` and update its pins with the change; run the
       §10 commands for §1.1, §5 and §6
-- [ ] Open a pull request and confirm the eight required checks in §3 are listed and must pass
+- [ ] Open a pull request and confirm the nine required checks in §3 are listed and must pass
 - [ ] Confirm the review requirement appears on a pull request by the maintainer
 - [ ] Confirm a direct push of a new commit to `main` is refused with `remote: error: GH013`
 - [ ] Before a document states what a rule refuses or allows, probe it on a disposable ref
@@ -203,6 +260,8 @@ After any ruleset change:
 | `ci.yml` (`Lint`, `AI 600-1 Unit Tests`, `license-check` (Apache 2.0 headers), `Pytest Logic Tests`, `Terraform Tests (gcp-gke, mock providers)`, `Quickstart Bootstrap & First-DENY Smoke Gate`) | §3 → ruleset `25966171` |
 | `security-scan.yml` `secret-scan` and `rego-policy-lint` jobs | §3 → ruleset `25966171`: `Secret Scanning (Gitleaks)`, `OPA Rego Policy Lint and Test ...` |
 | `license_guard.yml` `license-check` job (dependency licences) | §3 → ruleset `25966171`: `license-check` |
+| `review-bypass-attestation.yml` | §3 → ruleset `25966171`: `Approved review or recorded bypass` (§3.1) |
+| `review-bypass-ledger.yml` | None: it runs after each merge, and a failed run on `main` is the signal (§3.1) |
 | `dependency-review.yml` | §5 → dependency graph |
 | `scripts/setup_git_hooks.sh` pre-push hook (refuses pushes to `main`) | Local only. Server side, ruleset `19769096` requires pull requests and `26377312` blocks force pushes and deletion |
 | `dependabot.yml` weekly Actions scan | §5 → Dependabot alerts |
@@ -231,4 +290,35 @@ gh api "repos/$R/rulesets/26377312" --jq '{enforcement, bypass_actors, condition
 gh api "repos/$R/rulesets/25965917" --jq '{enforcement, bypass_actors, conditions, rules: [.rules[].type]}'
 gh api "repos/$R" --jq '{allow_merge_commit, allow_squash_merge, allow_rebase_merge, allow_auto_merge, squash_merge_commit_title, security_and_analysis}'
 gh api "repos/$R/actions/permissions/workflow"
+```
+
+A pre-merge record (§3.1) is checked by rebuilding its subject from public data, and a ledger
+record likewise from the merge commit. Each command fails unless a record of that type, signed by
+that workflow for that ref, exists for the subject:
+
+```bash
+R=google/cybernetic-agent-governance-engine
+PR=<number>; HEAD=$(gh api "repos/$R/pulls/$PR" --jq .head.sha)
+printf '{"head_sha":"%s","pr":%d,"repo":"%s"}' "$HEAD" "$PR" "$R" > subject.json
+gh attestation verify subject.json --repo "$R" \
+  --predicate-type https://github.com/google/cybernetic-agent-governance-engine/attestations/review-bypass/v1 \
+  --signer-workflow "$R/.github/workflows/review-bypass-attestation.yml" --source-ref "refs/pull/$PR/merge"
+MERGE=<merge commit SHA>
+printf '{"merge_sha":"%s","repo":"%s"}' "$MERGE" "$R" > ledger.json
+gh attestation verify ledger.json --repo "$R" \
+  --predicate-type https://github.com/google/cybernetic-agent-governance-engine/attestations/review-bypass-ledger/v1 \
+  --signer-workflow "$R/.github/workflows/review-bypass-ledger.yml" --source-ref refs/heads/main
+```
+
+Counts of unreviewed merges are read from the ledger, not restated in documents. From the merge
+that added `review-bypass-ledger.yml`, every merge on `main` has a ledger run that either passed
+(approved, or unreviewed and recorded) or failed, and the ledger records can be listed by merge
+commit:
+
+```bash
+git log --first-parent --format=%H "<first ledger merge>^..origin/main" | while read -r sha; do
+  digest=$(python3 scripts/review_bypass_attestation.py ledger-subject --repo "$R" --merge-sha "$sha")
+  printf '%s %s\n' "$sha" "$(gh api "repos/$R/attestations/sha256:$digest" --jq '.attestations | length' 2>/dev/null || echo 0)"
+done
+gh run list --workflow review-bypass-ledger.yml --branch main --limit 1000 --json headSha,conclusion
 ```

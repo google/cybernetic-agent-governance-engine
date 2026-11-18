@@ -38,19 +38,17 @@ docs/
 | Scope label | Meaning |
 |---|---|
 | **Universal** | Applies to all deployment regions — ISO 42001 baseline, always active |
-| **US_FED** | Applies only when `CAGE_DEPLOYMENT_REGION=US_FED` |
+| **US_FED** | Applies when `CAGE_DEPLOYMENT_REGION=US_FED` (also the `dev`/`test`/`ci` default when unset; enforcing postures require it explicitly) |
 | **EU_ECB** | Applies only when `CAGE_DEPLOYMENT_REGION=EU_ECB` |
 | **APAC_MAS** | Applies only when `CAGE_DEPLOYMENT_REGION=APAC_MAS` |
-| **LOCAL** | Development default — universal baseline only, no jurisdictional extension |
-| **Custom** | Any adopter-defined region added under `config/thresholds/` and `config/compliance/` |
 
-Jurisdictional postures are **configuration, not code**. Select one at deploy time:
+Select a jurisdiction at deploy time (exact, case-sensitive match; unknown values such as `LOCAL` are refused):
 
 ```bash
-export CAGE_DEPLOYMENT_REGION=US_FED    # or EU_ECB, APAC_MAS, LOCAL, or your own
+export CAGE_DEPLOYMENT_REGION=US_FED    # US_FED | EU_ECB | APAC_MAS
 ```
 
-To add a jurisdiction, create `config/thresholds/<REGION>_BASELINE.json` and `config/compliance/<REGION>_BASELINE.json` following the existing schema, register region-specific Rego under `config/opa/` and Lula assertions under `compliance/lula/`, then ship a `<REGION>_OVERLAY.json` inside each active domain plugin. No Python changes are required.
+Adding a jurisdiction requires registering it in [`SUPPORTED_REGIONS`](../src/gateway/governance/env_posture.py), [`JURISDICTIONS`](../src/gateway/governance/jurisdiction/registry.py) and [`REGIONAL_PROFILES`](../src/gateway/governance/oscal_ssp_exporter.py), alongside `config/thresholds/<REGION>_BASELINE.json`, `config/compliance/<REGION>_BASELINE.json`, region-specific Rego under `config/opa/`, and Lula assertions under `compliance/lula/`.
 
 See [GOVERNANCE_CROSSWALK.md](compliance/cross-region/GOVERNANCE_CROSSWALK.md) for the full framework applicability table and [REGION_GUARD_AUDIT.md](compliance/REGION_GUARD_AUDIT.md) for region-guard enforcement.
 

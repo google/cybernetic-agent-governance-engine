@@ -475,7 +475,12 @@ def _allow(tag: str) -> Handler:
 
 
 def _deny(reason: str) -> Handler:
-    body = {"verdict": "DENIED", "violations": [reason]}
+    body = {
+        "schema_version": "2.0.0",
+        "verdict": "DENIED",
+        "violations": [reason],
+        "proof_hash": "sha256:test-trade-refusal",
+    }
     return lambda request: httpx.Response(403, json=body)
 
 
@@ -548,22 +553,32 @@ async def test_a_denied_second_step_spends_the_denial_budget(gateway) -> None:
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
-    "second",
+    ("second", "expected_status", "expected_denials"),
     [
-        _respond(200, {"verdict": "DENIED", "violations": ["cbf barrier"]}),
-        _respond(500, {"detail": "boom"}),
-        _respond(401, {"detail": "no workload identity"}),
-        _respond(200, {"verdict": "DEFER"}),  # no ticket to park
-        _respond(200, {"verdict": "REQUIRE_APPROVAL"}),  # no deferred_id
-        _respond(200, {"verdict": "PAUSE"}),
-        _respond(200, {"violations": []}),
-        _timeout,
-        _unreachable,
+        (
+            _respond(200, {"verdict": "DENIED", "violations": ["cbf barrier"]}),
+            "BLOCKED",
+            1,
+        ),
+        (_respond(500, {"detail": "boom"}), "GATEWAY_ERROR", 0),
+        (_respond(401, {"detail": "no workload identity"}), "GATEWAY_ERROR", 0),
+        (_respond(403, {"detail": "Forbidden"}), "GATEWAY_ERROR", 0),
+        (_respond(200, {"verdict": "DEFER"}), "BLOCKED", 1),  # no ticket to park
+        (
+            _respond(200, {"verdict": "REQUIRE_APPROVAL"}),
+            "BLOCKED",
+            1,
+        ),  # no deferred_id
+        (_respond(200, {"verdict": "PAUSE"}), "BLOCKED", 1),
+        (_respond(200, {"violations": []}), "BLOCKED", 1),
+        (_timeout, "GATEWAY_ERROR", 0),
+        (_unreachable, "GATEWAY_ERROR", 0),
     ],
     ids=[
         "denied-200",
         "http-500",
         "http-401",
+        "unevidenced-403",
         "defer-without-ticket",
         "approval-without-deferred-id",
         "unknown-verdict",
@@ -573,14 +588,14 @@ async def test_a_denied_second_step_spends_the_denial_budget(gateway) -> None:
     ],
 )
 async def test_every_fail_closed_second_step_blocks_the_plan(
-    gateway, second: Handler
+    gateway, second: Handler, expected_status: str, expected_denials: int
 ) -> None:
     gateway(_by_symbol({"AAA": _allow("sig-a"), "BBB": second}))
 
     out = await safety_check_node(_two_step_state())
 
-    assert out["safety_status"] == "BLOCKED"
-    assert out["consecutive_denials"] == 1
+    assert out["safety_status"] == expected_status
+    assert out["consecutive_denials"] == expected_denials
     assert out["last_violation"]["evidence"].startswith("Trade step 2 of 2: ")
     assert out["routing_verdict_cache"] is None
 

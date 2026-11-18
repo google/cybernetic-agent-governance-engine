@@ -33,6 +33,7 @@ from __future__ import annotations
 
 from collections.abc import Sequence
 from dataclasses import dataclass
+from enum import StrEnum
 from typing import Any
 
 from src.gateway.governance.contracts import NarrowingResult, Violation, ViolationKind
@@ -47,6 +48,20 @@ REASON_RELIANCE_INELIGIBLE = "reliance_ineligible"
 DEFER_REASONS: frozenset[str] = frozenset(
     {REASON_CONFIDENCE_BELOW_THRESHOLD, REASON_RELIANCE_INELIGIBLE}
 )
+
+
+class InfrastructureOutcome(StrEnum):
+    """Fail-closed non-policy routing outcome when a required dependency is unavailable.
+
+    Distinct from :class:`GovernanceDecision` so genuine policy decisions remain
+    the five canonical STERA outcomes while infrastructure outages never emit
+    KMS-signed policy refusal receipts (POAM-2026-233).
+    """
+
+    INFRASTRUCTURE_BLOCK = "INFRASTRUCTURE_BLOCK"
+
+
+ClassificationOutcome = GovernanceDecision | InfrastructureOutcome
 
 
 @dataclass(frozen=True)
@@ -64,15 +79,16 @@ class ClassificationContext:
 class ClassificationResult:
     """Result of classification with decision and metadata."""
 
-    decision: GovernanceDecision
+    decision: ClassificationOutcome
     metadata: dict[str, Any]
 
 
 class ClassificationEngine:
     """Standalone classification engine for governance decisions.
 
-    Routes violations to DENY, DEFER, NARROW, or REQUIRE_APPROVAL based on
-    ViolationKind, confidence thresholds, and registered narrowers.
+    Routes violations to DENY, INFRASTRUCTURE_BLOCK, DEFER, NARROW, or
+    REQUIRE_APPROVAL based on ViolationKind, confidence thresholds, and
+    registered narrowers.
     """
 
     def __init__(
@@ -87,20 +103,33 @@ class ClassificationEngine:
         self._defer_enabled = defer_enabled
         self._narrow_enabled = narrow_enabled
 
+    def blocks_on_infrastructure(self, violations: Sequence[Violation]) -> bool:
+        """True iff :meth:`classify` answers ``INFRASTRUCTURE_BLOCK``.
+
+        Steps 1 and 2 of :meth:`classify`, side-effect free: no HARD finding
+        and at least one ``INFRASTRUCTURE`` finding. Every committing path of
+        the governor asks this so an outage blocks fail-closed without signing
+        a policy refusal receipt, while an independent HARD finding still
+        denies (``proof/model.py`` ``verdict_of``).
+        """
+        kinds = {v.kind for v in violations}
+        return ViolationKind.INFRASTRUCTURE in kinds and ViolationKind.HARD not in kinds
+
     def defers_on_reliance(self, violations: Sequence[Violation]) -> bool:
         """True iff :meth:`classify` answers DEFER for an ineligible warrant.
 
-        Steps 1 and 2 of :meth:`classify`, side-effect free (no narrower
-        runs): no HARD finding, at least one ``RELIANCE_INELIGIBLE`` finding,
-        and DEFER enabled. Every committing path of the governor asks this, so
-        a warrant failure is a DEFER on all of them and a HARD finding still
-        outranks it (``proof/model.py`` ``verdict_of``).
+        Steps 1-3 of :meth:`classify`, side-effect free (no narrower runs): no
+        HARD or INFRASTRUCTURE finding, at least one ``RELIANCE_INELIGIBLE``
+        finding, and DEFER enabled. Every committing path of the governor asks
+        this, so a warrant failure is a DEFER on all of them and HARD /
+        INFRASTRUCTURE findings still outrank it (``proof/model.py``
+        ``verdict_of``).
         """
         kinds = {v.kind for v in violations}
         return (
             self._defer_enabled
             and ViolationKind.RELIANCE_INELIGIBLE in kinds
-            and ViolationKind.HARD not in kinds
+            and not (kinds & {ViolationKind.HARD, ViolationKind.INFRASTRUCTURE})
         )
 
     def classify(
@@ -112,15 +141,16 @@ class ClassificationEngine:
 
         Classification priority (fail-closed):
           1. HARD violations → DENY
-          2. RELIANCE_INELIGIBLE violations → DEFER, regardless of confidence
+          2. INFRASTRUCTURE violations → INFRASTRUCTURE_BLOCK
+          3. RELIANCE_INELIGIBLE violations → DEFER, regardless of confidence
              (DENY only if DEFER is disabled, which assembly refuses whenever
              a warranted norm is configured)
-          3. OPA MANUAL_REVIEW → REQUIRE_APPROVAL
-          4. HITL violations → REQUIRE_APPROVAL
-          5. Every violation NARROWABLE + narrower proposal → NARROW candidate
+          4. OPA MANUAL_REVIEW → REQUIRE_APPROVAL
+          5. HITL violations → REQUIRE_APPROVAL
+          6. Every violation NARROWABLE + narrower proposal → NARROW candidate
              (the governor re-runs FULL on the clamped params; else DENY)
-          6. DEFERRABLE violations + low confidence → DEFER (if enabled, else DENY)
-          7. Default → DENY
+          7. DEFERRABLE violations + low confidence → DEFER (if enabled, else DENY)
+          8. Default → DENY
         """
         if not context.violations:
             # Should not be called with empty violations
@@ -144,7 +174,21 @@ class ClassificationEngine:
                 },
             )
 
-        # Step 2: a norm CAGE may not rely on → DEFER.  Ranked above approval:
+        # Step 2: Infrastructure/dependency unavailability → INFRASTRUCTURE_BLOCK
+        infra = [
+            v for v in normalized_violations if v.kind == ViolationKind.INFRASTRUCTURE
+        ]
+        if infra:
+            return ClassificationResult(
+                decision=InfrastructureOutcome.INFRASTRUCTURE_BLOCK,
+                metadata={
+                    "classification_reason": "infrastructure_unavailable",
+                    "deferrable": False,
+                    "infrastructure_failures": [v.to_dict() for v in infra],
+                },
+            )
+
+        # Step 3: a norm CAGE may not rely on → DEFER.  Ranked above approval:
         # a human approver cannot repair a warrant.  Never a DENY of its own
         # (proof/model.py verdict_of; assembly refuses a warranted norm when
         # DEFER is disabled, so the DENY branch below is unreachable there).

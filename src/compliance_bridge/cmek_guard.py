@@ -58,6 +58,8 @@ import logging
 import os
 import re
 
+from src.gateway.governance.env_posture import resolve_deployment_region
+
 logger = logging.getLogger(__name__)
 
 # KMS key resource name pattern:
@@ -91,7 +93,7 @@ def _current_env() -> str:
 
 
 def _get_region() -> str:
-    return os.environ.get("CAGE_DEPLOYMENT_REGION", "").strip().upper()
+    return resolve_deployment_region()
 
 
 def validate_cmek_configuration(region: str | None = None) -> dict:
@@ -104,8 +106,8 @@ def validate_cmek_configuration(region: str | None = None) -> dict:
     jurisdictional.
 
     Args:
-        region: CAGE_DEPLOYMENT_REGION value.  If None, reads from environment.
-                One of "US_FED", "EU_ECB", "APAC_MAS".
+        region: One of "US_FED", "EU_ECB", "APAC_MAS". If None,
+                ``resolve_deployment_region()``.
 
     Returns:
         {

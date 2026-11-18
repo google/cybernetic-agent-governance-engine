@@ -39,15 +39,15 @@ from langgraph.graph.state import CompiledStateGraph
 from src.governed_financial_advisor.graph.graph import create_graph
 
 
-def test_graph_compilation_no_redis():
-    """Graph compiles successfully when redis_url=None (MemorySaver fallback)."""
-    graph = create_graph(redis_url=None)
+def test_graph_compilation_no_gateway():
+    """Graph compiles successfully in permissive test posture when gateway_url=None."""
+    graph = create_graph(gateway_url=None)
     assert isinstance(graph, CompiledStateGraph)
 
 
 def test_graph_has_canonical_nodes():
     """All expected canonical node names are present in the compiled graph."""
-    graph = create_graph(redis_url=None)
+    graph = create_graph()
     nodes = graph.get_graph().nodes
 
     expected_nodes = {
@@ -66,7 +66,7 @@ def test_graph_has_canonical_nodes():
 
 def test_graph_does_not_have_legacy_nodes():
     """Legacy shim node names (supervisor, optimistic_execution) must not exist."""
-    graph = create_graph(redis_url=None)
+    graph = create_graph()
     nodes = graph.get_graph().nodes
 
     legacy_nodes = {"supervisor", "optimistic_execution"}
@@ -85,7 +85,7 @@ def test_graph_entry_point():
     only exposes the conditional fallback edge — not the runtime branches.
     We therefore verify thinker_node is present as a graph node (not an edge).
     """
-    graph = create_graph(redis_url=None)
+    graph = create_graph()
     raw_graph = graph.get_graph()
 
     # __start__ must connect directly to nemo_guardrail (mandatory first node)
@@ -105,13 +105,14 @@ def test_graph_entry_point():
     )
 
 
-def test_graph_compilation_with_patched_redis():
-    """Graph compiles when a Redis URL is supplied but the saver is mocked."""
+def test_graph_compilation_with_patched_checkpointer():
+    """Graph compiles when a gateway URL is supplied and get_checkpointer is patched."""
     with patch(
         "src.governed_financial_advisor.graph.checkpointer.get_checkpointer"
     ) as mock_cp:
         from langgraph.checkpoint.memory import MemorySaver
 
         mock_cp.return_value = MemorySaver()
-        graph = create_graph(redis_url="redis://localhost:6379")
+        graph = create_graph(gateway_url="http://gateway.local:8080")
         assert isinstance(graph, CompiledStateGraph)
+        mock_cp.assert_called_once_with("http://gateway.local:8080")

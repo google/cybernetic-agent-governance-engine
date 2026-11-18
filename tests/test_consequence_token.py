@@ -395,6 +395,50 @@ async def test_verify_accepts_token_within_ttl():
         assert claims.sub == "actor"
 
 
+async def test_verify_rejects_token_at_exact_exp():
+    """RFC 7519 4.1.4: the token is not accepted on or after exp."""
+    signer, _ = _make_mock_signer_with_keypair("ec_p256")
+
+    with patch("src.gateway.governance.consequence_token.time.time", return_value=1000):
+        token = await ConsequenceToken.mint(
+            sub="actor",
+            tid="thread",
+            rec="rec",
+            act="a" * 64,
+            ttl_seconds=60,
+            signer=signer,
+        )
+
+    # exp = 1060; now == exp must be rejected, one second earlier is accepted.
+    with patch("src.gateway.governance.consequence_token.time.time", return_value=1059):
+        assert ConsequenceToken.verify(token, signer=signer).sub == "actor"
+    with patch("src.gateway.governance.consequence_token.time.time", return_value=1060):
+        with pytest.raises(ConsequenceTokenError, match="Token expired"):
+            ConsequenceToken.verify(token, signer=signer)
+
+
+async def test_verify_rejects_receipt_at_exact_rec_exp():
+    """verify() must agree with mint() and ConsequenceGateway: rec_exp <= now is expired."""
+    signer, _ = _make_mock_signer_with_keypair("ec_p256")
+
+    with patch("src.gateway.governance.consequence_token.time.time", return_value=1000):
+        token = await ConsequenceToken.mint(
+            sub="actor",
+            tid="thread",
+            rec="rec",
+            act="a" * 64,
+            ttl_seconds=60,
+            receipt_expires_at=1030,
+            signer=signer,
+        )
+
+    with patch("src.gateway.governance.consequence_token.time.time", return_value=1029):
+        assert ConsequenceToken.verify(token, signer=signer).rec_exp == 1030
+    with patch("src.gateway.governance.consequence_token.time.time", return_value=1030):
+        with pytest.raises(ConsequenceTokenError, match="Authority receipt expired"):
+            ConsequenceToken.verify(token, signer=signer)
+
+
 async def test_verify_rejects_implausibly_future_iat():
     """Verify rejects a token with iat too far in the future (beyond clock skew tolerance)."""
     signer, _ = _make_mock_signer_with_keypair("ec_p256")
@@ -455,9 +499,14 @@ def test_verify_rejects_invalid_base64_header():
 def test_verify_rejects_non_json_payload():
     """Verify rejects a token with non-JSON payload."""
     signer, _ = _make_mock_signer_with_keypair("ec_p256")
+    kid = signer.key_id
 
     header_b64 = (
-        base64.urlsafe_b64encode(b'{"alg":"ES256","typ":"JWT"}').rstrip(b"=").decode()
+        base64.urlsafe_b64encode(
+            f'{{"alg":"ES256","typ":"JWT","kid":"{kid}"}}'.encode()
+        )
+        .rstrip(b"=")
+        .decode()
     )
     payload_b64 = base64.urlsafe_b64encode(b"not-json").rstrip(b"=").decode()
     sig_b64 = "fake"

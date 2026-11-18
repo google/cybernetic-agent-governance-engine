@@ -1357,13 +1357,17 @@ class Provider06AgentIntegrityAdapter:
                 resp.raise_for_status()
                 receipt = resp.json()
 
-            if self._jwks_client is not None:
-                verification_result = await self._verify_receipt(receipt, evidence_hash)
-                if verification_result is not None:
-                    return EvidenceSeal(
-                        thread_id=thread_id,
-                        error=verification_result,
-                    )
+            if self._jwks_client is None:
+                return EvidenceSeal(
+                    thread_id=thread_id,
+                    error="Out-of-band key manifest (JWKS) is required to verify the evidence receipt",
+                )
+            verification_result = await self._verify_receipt(receipt, evidence_hash)
+            if verification_result is not None:
+                return EvidenceSeal(
+                    thread_id=thread_id,
+                    error=verification_result,
+                )
 
             return EvidenceSeal(
                 thread_id=thread_id,
@@ -1406,12 +1410,16 @@ class Provider06AgentIntegrityAdapter:
             logger.error("[Provider06] Receipt signature verification FAILED")
             return "Receipt signature verification failed"
 
-        envelope_digest = receipt.get("envelopeDigest", "")
-        if envelope_digest != evidence_hash:
-            logger.warning(
+        envelope_digest = receipt.get("envelopeDigest")
+        if not isinstance(envelope_digest, str) or envelope_digest != evidence_hash:
+            logger.error(
                 "[Provider06] Envelope digest mismatch: expected=%s got=%s",
                 evidence_hash,
                 envelope_digest,
+            )
+            return (
+                f"Receipt envelopeDigest mismatch: expected={evidence_hash} "
+                f"got={envelope_digest}"
             )
 
         expires_at_str = receipt.get("expiresAt")

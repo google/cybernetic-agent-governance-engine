@@ -304,10 +304,10 @@ The `ControlRegistry` is a thread-safe, lock-guaranteed singleton that loads reg
 
 1. **Activation Pattern:**
    ```bash
-   export CAGE_DEPLOYMENT_REGION=EU_ECB  # Options: US_FED (default), EU_ECB, APAC_MAS
+   export CAGE_DEPLOYMENT_REGION=EU_ECB  # US_FED | EU_ECB | APAC_MAS (unset defaults to US_FED in dev/test/ci only)
    ```
 2. **Properties and Methods:**
-   - `registry.active_region`: Returns the active region identifier string (`"US_FED"`, `"EU_ECB"`, `"APAC_MAS"`, or `"LEGACY"`).
+   - `registry.active_region`: Returns the active region identifier string (`"US_FED"`, `"EU_ECB"`, or `"APAC_MAS"`).
    - `registry.active_hash`: SHA-256 hash of the currently loaded baseline profile JSON (used for policy version pinning in `validate_action()`).
    - `registry.get_mapping_safe(control)`: Returns `None` instead of raising `KeyError` if a control is absent from the active region's baseline, enabling graceful handling of region-specific controls like `CTRL_FRIA_006`.
    - `ControlRegistry.reconfigure(region)`: Triggers atomic runtime reloading of the baseline profile. Thread-safe: the new instance is loaded outside the lock, then swapped atomically inside a single lock acquisition.
@@ -357,11 +357,11 @@ The architecture implements a **Risk-Based Tiered Strategy** balancing operation
 
 ### The Deterministic Router (LangGraph)
 
-The canonical agent graph is assembled by `create_graph(redis_url)` in `src/governed_financial_advisor/graph/graph.py`. The graph compiles with:
+The canonical agent graph is assembled by `create_graph()` in `src/governed_financial_advisor/graph/graph.py`. The graph compiles with:
 
-- **10 nodes:** `nemo_guardrail → thinker_node → doer_node → data_analyst / execution_analyst → evaluator → safety_check → governed_trader → explainer → nemo_output_rail`
-- **`interrupt_before=["governed_trader"]`** — mandatory HITL pause before any trade execution
-- **`AsyncRedisSaver`** — durable checkpoint persistence; `MemorySaver` fallback emits ERROR log + OTel alert span
+- **13 nodes:** `nemo_guardrail → thinker_node → doer_node → data_analyst / execution_analyst → evaluator → ftra_node → safety_check → defer_node / approval_node → governed_trader → explainer → nemo_output_rail`
+- **Dynamic `interrupt()` in `approval_node`** — mandatory HITL pause before trade execution requiring human review
+- **`GatewayCheckpointSaver`** — gateway-mediated durable checkpoint persistence (`/governance/checkpoints/*`, resumption-window TTL, `MemorySaver` refused in enforcing postures)
 
 All agent transitions are explicitly managed by routing functions (`route_supervisor`, `route_after_evaluator`, `route_after_safety`). Agents return structured state fields; the graph decides the next node deterministically based on those fields.
 

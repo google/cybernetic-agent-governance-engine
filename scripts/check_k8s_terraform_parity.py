@@ -14,7 +14,7 @@
 # limitations under the License.
 """Kubernetes / Terraform Shadow-Manifest & Selector Parity Gate.
 
-Enforces two structural invariants across the repository with zero waivers:
+Enforces three structural invariants across the repository with zero waivers:
 
 1. **No Unmanaged Shadow Manifest Directory**: ``deployment/k8s/`` must not
    exist on disk. All Kubernetes workloads, services, network policies, service
@@ -28,15 +28,31 @@ Enforces two structural invariants across the repository with zero waivers:
    match at least one Terraform workload pod template (``Deployment``,
    ``StatefulSet``, ``DaemonSet``, ``CronJob``, or ``Job``) in ``infra/``.
    Any selector matching zero workload templates raises ``OrphanSelectorError``.
+3. **Lula Name-Selector Parity (POAM-2026-219)**: Every object a Lula manifest
+   rated Active in ``compliance/lula/README.md`` selects by name — through a
+   ``resource-rule.name``, or a Rego test of ``metadata.name`` against a string,
+   a set, or a variable iterating a set — must be an object of that kind that a
+   Terraform resource, ``locals`` manifest or Helm template in ``infra/`` names,
+   or a declared platform object (``PLATFORM_OBJECTS``) whose enabling Terraform
+   setting resolves to its required value. A rule selecting an object nothing
+   creates can never be satisfied by a cluster Terraform builds, so it raises
+   ``OrphanSelectorError``, and so does any use of ``metadata.name`` this gate
+   cannot read. Names resolve through variable defaults, as for the selectors
+   above, and namespaces are compared for platform objects only.
 """
 
 from __future__ import annotations
 
 import argparse
+import functools
+import importlib.util
+import json
 import re
 import sys
+from collections.abc import Mapping
 from dataclasses import dataclass
 from pathlib import Path
+from types import ModuleType
 from typing import Any
 
 import yaml
@@ -49,6 +65,8 @@ MIN_WORKLOAD_TEMPLATES = 10
 MIN_NETWORK_POLICY_SELECTORS = 15
 MIN_SERVICE_SELECTORS = 10
 MIN_HELM_SELECTORS = 3
+MIN_LULA_SELECTING_MANIFESTS = 8
+MIN_LULA_NAME_SELECTORS = 20
 
 WORKLOAD_RESOURCE_TYPES: frozenset[str] = frozenset(
     {
@@ -103,13 +121,101 @@ HELM_SELECTOR_KINDS: frozenset[str] = frozenset(
     }
 )
 
+LULA_DIR_REL = Path("compliance") / "lula"
+
+#: Terraform resource types that create one named Kubernetes object, keyed to
+#: the Lula ``resource-rule.resource`` that fetches objects of that kind.
+TF_RESOURCE_LULA_RESOURCES: dict[str, str] = {
+    "kubernetes_config_map": "configmaps",
+    "kubernetes_config_map_v1": "configmaps",
+    "kubernetes_cron_job": "cronjobs",
+    "kubernetes_cron_job_v1": "cronjobs",
+    "kubernetes_daemon_set": "daemonsets",
+    "kubernetes_daemon_set_v1": "daemonsets",
+    "kubernetes_daemonset": "daemonsets",
+    "kubernetes_deployment": "deployments",
+    "kubernetes_deployment_v1": "deployments",
+    "kubernetes_job": "jobs",
+    "kubernetes_job_v1": "jobs",
+    "kubernetes_network_policy": "networkpolicies",
+    "kubernetes_network_policy_v1": "networkpolicies",
+    "kubernetes_secret": "secrets",
+    "kubernetes_secret_v1": "secrets",
+    "kubernetes_service": "services",
+    "kubernetes_service_v1": "services",
+    "kubernetes_service_account": "serviceaccounts",
+    "kubernetes_service_account_v1": "serviceaccounts",
+    "kubernetes_stateful_set": "statefulsets",
+    "kubernetes_stateful_set_v1": "statefulsets",
+}
+
+#: The ``kind`` of a manifest embedded in ``locals``, a ``kubernetes_manifest``
+#: or a Helm template, keyed to the same Lula resource names.
+MANIFEST_KIND_LULA_RESOURCES: dict[str, str] = {
+    "ConfigMap": "configmaps",
+    "CronJob": "cronjobs",
+    "DaemonSet": "daemonsets",
+    "Deployment": "deployments",
+    "FQDNNetworkPolicy": "fqdnnetworkpolicies",
+    "Job": "jobs",
+    "NetworkPolicy": "networkpolicies",
+    "PodMonitoring": "podmonitorings",
+    "Secret": "secrets",
+    "Service": "services",
+    "ServiceAccount": "serviceaccounts",
+    "ServiceMonitor": "servicemonitors",
+    "StatefulSet": "statefulsets",
+}
+
+
+@dataclass(frozen=True)
+class PlatformObject:
+    """A Kubernetes object no module declares, created by the platform on a setting.
+
+    It may be selected by an Active Lula manifest only while ``attribute`` of
+    every ``resource_type`` resource in ``infra/modules/<module>`` resolves to
+    ``value`` in every instantiation of that module.
+    """
+
+    resource: str
+    namespace: str
+    name: str
+    created_by: str
+    module: str
+    resource_type: str
+    attribute: str
+    value: str
+
+
+PLATFORM_OBJECTS: tuple[PlatformObject, ...] = (
+    PlatformObject(
+        resource="daemonsets",
+        namespace="kube-system",
+        name="anetd",
+        created_by="GKE Dataplane V2",
+        module="gcp_gke_cluster",
+        resource_type="google_container_cluster",
+        attribute="datapath_provider",
+        value="ADVANCED_DATAPATH",
+    ),
+)
+
+#: The Lula resources whose objects this gate can hold to ``infra/``.
+NAMEABLE_LULA_RESOURCES: frozenset[str] = frozenset(
+    {
+        *TF_RESOURCE_LULA_RESOURCES.values(),
+        *MANIFEST_KIND_LULA_RESOURCES.values(),
+        *(obj.resource for obj in PLATFORM_OBJECTS),
+    }
+)
+
 
 class ShadowManifestError(RuntimeError):
     """Raised when the retired ``deployment/k8s`` shadow directory exists."""
 
 
 class OrphanSelectorError(RuntimeError):
-    """Raised when a Kubernetes selector in ``infra/`` matches zero workloads."""
+    """Raised when a selector in ``infra/`` or an Active Lula manifest matches nothing."""
 
 
 @dataclass(frozen=True)
@@ -177,6 +283,30 @@ class SelectorRequirement:
 
 
 @dataclass(frozen=True)
+class TerraformObject:
+    """A named Kubernetes object that ``infra/`` creates.
+
+    ``name`` is ``None`` when it does not resolve through variable defaults.
+    """
+
+    resource: str
+    name: str | None
+    origin: str
+
+
+@dataclass(frozen=True)
+class LulaNameSelector:
+    """An object an Active Lula manifest selects by name."""
+
+    manifest: str
+    rule: str
+    alias: str
+    resource: str
+    namespaces: tuple[str, ...]
+    name: str
+
+
+@dataclass(frozen=True)
 class ParityReport:
     """Summary returned by ``verify_k8s_terraform_parity``."""
 
@@ -184,6 +314,9 @@ class ParityReport:
     helm_templates_scanned: int
     workloads: tuple[WorkloadTemplate, ...]
     selectors: tuple[SelectorRequirement, ...]
+    terraform_objects: tuple[TerraformObject, ...] = ()
+    lula_manifests: tuple[str, ...] = ()
+    lula_selectors: tuple[LulaNameSelector, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -338,7 +471,7 @@ _DIRECT_VAR_RE = re.compile(r"^var\.([A-Za-z0-9_]+)$")
 
 
 def _resolve_hcl_scalar(raw_val: str, var_env: dict[str, str]) -> str | None:
-    """Resolve an HCL string literal or ``var.<name>`` reference to a string."""
+    """Resolve an HCL string or boolean literal or a ``var.<name>`` reference."""
     val = raw_val.strip().rstrip(",")
     direct = _DIRECT_VAR_RE.match(val)
     if direct:
@@ -349,12 +482,13 @@ def _resolve_hcl_scalar(raw_val: str, var_env: dict[str, str]) -> str | None:
             lambda m: var_env.get(m.group(1), f"<unresolved:var.{m.group(1)}>"),
             inner,
         )
+    if val in ("true", "false"):
+        return val
     return None
 
 
-def _parse_kv_map(body: str, var_env: dict[str, str]) -> dict[str, str]:
-    """Parse top-level ``key = value`` scalar pairs inside an HCL map block."""
-    # Mask nested {...} blocks so inner keys do not bleed into the outer map.
+def _mask_nested_blocks(body: str) -> str:
+    """Blank nested ``{...}`` blocks so their keys do not bleed into the outer map."""
     masked: list[str] = []
     depth = 0
     in_str = False
@@ -382,14 +516,26 @@ def _parse_kv_map(body: str, var_env: dict[str, str]) -> dict[str, str]:
             masked.append(ch)
         elif ch == "\n":
             masked.append("\n")
+    return "".join(masked)
 
+
+def _parse_kv_map(body: str, var_env: dict[str, str]) -> dict[str, str]:
+    """Parse top-level ``key = value`` scalar pairs inside an HCL map block."""
     result: dict[str, str] = {}
-    for m in _KV_LINE_RE.finditer("".join(masked)):
+    for m in _KV_LINE_RE.finditer(_mask_nested_blocks(body)):
         key = m.group("qkey") or m.group("ukey")
         resolved = _resolve_hcl_scalar(m.group("val"), var_env)
         if key and resolved is not None:
             result[key] = resolved
     return result
+
+
+def _raw_hcl_attribute(body: str, attribute: str) -> str | None:
+    """Return the unresolved expression assigned to a top-level ``attribute``."""
+    for m in _KV_LINE_RE.finditer(_mask_nested_blocks(body)):
+        if (m.group("qkey") or m.group("ukey")) == attribute:
+            return m.group("val").strip()
+    return None
 
 
 def _parse_string_list(raw_val: str, var_env: dict[str, str]) -> tuple[str, ...]:
@@ -914,17 +1060,642 @@ def _extract_helm_selectors(template_file: Path) -> list[SelectorRequirement]:
     return out
 
 
+# ---------------------------------------------------------------------------
+# Invariant 3: objects infra/ creates by name, and the names Lula selects
+# ---------------------------------------------------------------------------
+
+
+def _metadata_name(
+    block: _HclBlock, source_file: Path, var_env: dict[str, str]
+) -> str | None:
+    """Return the resolved ``metadata.name`` of *block*, or ``None``."""
+    metas = _find_child_blocks(block.body, "metadata", source_file, block.start_line)
+    if not metas:
+        return None
+    name = _parse_kv_map(metas[0].body, var_env).get("name")
+    if not name or "<unresolved:" in name:
+        return None
+    return name
+
+
+def _manifest_object(
+    block: _HclBlock, source_file: Path, var_env: dict[str, str], origin: str
+) -> TerraformObject | None:
+    """Return the object an embedded manifest map declares, if it declares one."""
+    kv = _parse_kv_map(block.body, var_env)
+    resource = MANIFEST_KIND_LULA_RESOURCES.get(kv.get("kind", ""))
+    if resource is None or "apiVersion" not in kv:
+        return None
+    return TerraformObject(
+        resource=resource,
+        name=_metadata_name(block, source_file, var_env),
+        origin=origin,
+    )
+
+
+def _extract_tf_objects_from_file(
+    tf_file: Path, instance_prefix: str, var_env: dict[str, str]
+) -> list[TerraformObject]:
+    """Return the named Kubernetes objects one ``.tf`` file's resources and locals create."""
+    objects: list[TerraformObject] = []
+    prefix = f"{instance_prefix}." if instance_prefix else ""
+    cleaned = _strip_hcl_comments(tf_file.read_text(encoding="utf-8"))
+    for block in _iter_top_blocks(cleaned, tf_file):
+        res_match = re.match(r'^resource\s+"([^"]+)"\s+"([^"]+)"$', block.header)
+        if res_match:
+            res_type, res_name = res_match.groups()
+            origin = f"{prefix}{res_type}.{res_name}"
+            if res_type in TF_RESOURCE_LULA_RESOURCES:
+                objects.append(
+                    TerraformObject(
+                        resource=TF_RESOURCE_LULA_RESOURCES[res_type],
+                        name=_metadata_name(block, tf_file, var_env),
+                        origin=origin,
+                    )
+                )
+            elif res_type == "kubernetes_manifest":
+                for manifest in _find_child_blocks(
+                    block.body, "manifest", tf_file, block.start_line
+                ):
+                    obj = _manifest_object(manifest, tf_file, var_env, origin)
+                    if obj is not None:
+                        objects.append(obj)
+        elif block.header == "locals":
+            for outer in _iter_blocks(block.body, tf_file, block.start_line):
+                origin = f"{prefix}local.{outer.header}"
+                obj = _manifest_object(outer, tf_file, var_env, origin)
+                if obj is not None:
+                    objects.append(obj)
+                    continue
+                for entry in _iter_blocks(outer.body, tf_file, outer.start_line):
+                    nested = _manifest_object(
+                        entry, tf_file, var_env, f"{origin}.{entry.header}"
+                    )
+                    if nested is not None:
+                        objects.append(nested)
+    return objects
+
+
+def _extract_helm_objects(template_file: Path) -> list[TerraformObject]:
+    """Return the named objects a Helm template under ``infra/`` renders."""
+    sanitized = _sanitize_helm_template(template_file.read_text(encoding="utf-8"))
+    try:
+        docs = list(yaml.safe_load_all(sanitized))
+    except yaml.YAMLError as exc:
+        raise OrphanSelectorError(
+            f"Failed to parse Helm template {template_file}: {exc}"
+        ) from exc
+    objects: list[TerraformObject] = []
+    for doc in docs:
+        if not isinstance(doc, dict):
+            continue
+        resource = MANIFEST_KIND_LULA_RESOURCES.get(str(doc.get("kind")))
+        if resource is None:
+            continue
+        metadata = doc.get("metadata")
+        name = metadata.get("name") if isinstance(metadata, dict) else None
+        literal = isinstance(name, str) and name and "helm-placeholder" not in name
+        objects.append(
+            TerraformObject(
+                resource=resource,
+                name=name if literal else None,
+                origin=template_file.as_posix(),
+            )
+        )
+    return objects
+
+
+_TERNARY_ON_VAR_RE = re.compile(
+    r'^var\.([A-Za-z0-9_]+)\s*\?\s*"([^"]*)"\s*:\s*"([^"]*)"$'
+)
+
+
+def _resolve_hcl_setting(raw: str, var_env: dict[str, str]) -> str | None:
+    """Resolve a literal, a ``var.<name>``, or ``var.<flag> ? "a" : "b"``."""
+    ternary = _TERNARY_ON_VAR_RE.match(raw.strip())
+    if ternary is None:
+        return _resolve_hcl_scalar(raw, var_env)
+    flag = var_env.get(ternary.group(1))
+    if flag == "true":
+        return ternary.group(2)
+    if flag == "false":
+        return ternary.group(3)
+    return None
+
+
+def _platform_object_shortfall(
+    infra_dir: Path,
+    module_instances: Mapping[Path, list[tuple[str, dict[str, str]]]],
+    obj: PlatformObject,
+) -> str | None:
+    """Return why Terraform does not enable *obj*, or ``None`` if it does everywhere."""
+    mod_dir = (infra_dir / "modules" / obj.module).resolve()
+    header_re = re.compile(rf'^resource\s+"{re.escape(obj.resource_type)}"\s+"[^"]+"$')
+    expressions: list[str] = []
+    for tf_file in sorted(mod_dir.glob("*.tf")):
+        cleaned = _strip_hcl_comments(tf_file.read_text(encoding="utf-8"))
+        for block in _iter_top_blocks(cleaned, tf_file):
+            if header_re.match(block.header):
+                raw = _raw_hcl_attribute(block.body, obj.attribute)
+                if raw is not None:
+                    expressions.append(raw)
+    if not expressions:
+        return (
+            f"no {obj.resource_type} in infra/modules/{obj.module} sets {obj.attribute}"
+        )
+    for instance_id, var_env in module_instances.get(mod_dir, []):
+        for raw in expressions:
+            value = _resolve_hcl_setting(raw, var_env)
+            if value != obj.value:
+                return (
+                    f"{instance_id} resolves {obj.attribute} = {raw} to {value!r}, "
+                    f"not {obj.value!r}"
+                )
+    return None
+
+
+@functools.cache
+def _sibling_script(name: str) -> ModuleType:
+    """Load ``scripts/<name>.py`` as ``check_poam_lula_divergence.py`` loads siblings."""
+    path = Path(__file__).resolve().parent / f"{name}.py"
+    spec = importlib.util.spec_from_file_location(f"_k8s_parity_{name}", path)
+    if spec is None or spec.loader is None:
+        raise RuntimeError(f"Cannot load {path}")
+    module = importlib.util.module_from_spec(spec)
+    sys.modules[spec.name] = module
+    spec.loader.exec_module(module)
+    return module
+
+
+@dataclass(frozen=True)
+class LulaAlias:
+    """What ``input["<alias>"]`` holds: the objects one ``resource-rule`` fetches."""
+
+    resource: str
+    namespaces: tuple[str, ...]
+
+
+@dataclass(frozen=True)
+class _RegoRule:
+    name: str
+    params: tuple[str, ...]
+    text: str
+
+
+_REGO_STRING = r'"(?:[^"\\]|\\.)*"'
+_REGO_SET = r"\{[^{}]*\}"
+_REGO_IDENT = r"[A-Za-z_][A-Za-z0-9_]*"
+_REGO_INPUT = r'input\[\s*"(?P<input_alias>[^"]+)"\s*\]'
+_REGO_LITERAL_RE = re.compile(rf"{_REGO_STRING}|`[^`]*`")
+
+# ``some d in input["a"]``, ``every _, d in input["a"]`` and ``d := input["a"][_]``.
+_INPUT_BINDING_RES: tuple[re.Pattern[str], ...] = (
+    re.compile(
+        rf"\b(?:some|every)\s+(?:{_REGO_IDENT}\s*,\s*)?(?P<var>{_REGO_IDENT})"
+        rf"\s+in\s+{_REGO_INPUT}"
+    ),
+    re.compile(
+        rf"(?<![.\w])(?P<var>{_REGO_IDENT})\s*:?=\s*{_REGO_INPUT}\s*\[\s*_\s*\]"
+    ),
+)
+_SET_DEFINITION_RE = re.compile(
+    rf"(?m)^(?P<name>{_REGO_IDENT})\s*:?=\s*(?P<set>{_REGO_SET})"
+)
+# ``every n in {"a", "b"}`` or ``some n in named_set`` (never ``in input[...]``).
+_ITERATION_RE = re.compile(
+    rf"\b(?:some|every)\s+(?P<var>{_REGO_IDENT})\s+in\s+"
+    rf"(?P<src>{_REGO_SET}|{_REGO_IDENT}\b(?!\s*\[))"
+)
+_NAME_REF_RE = re.compile(
+    rf"(?:(?<![.\w])(?P<var>{_REGO_IDENT})|{_REGO_INPUT}(?:\[\s*_\s*\])?)"
+    r"\.metadata\.name\b"
+)
+# Every use, so one the reference pattern does not attribute fails closed.
+_ANY_NAME_USE_RE = re.compile(r"\.metadata\.name\b")
+_NAME_TEST_AFTER_RE = re.compile(
+    rf"\s*(?P<op>==|!=|\bin\b)\s*(?P<rhs>{_REGO_STRING}|{_REGO_SET}|{_REGO_IDENT}\b)"
+)
+_NAME_TEST_BEFORE_RE = re.compile(rf"(?P<lit>{_REGO_STRING})\s*(?P<op>==|!=)\s*$")
+_SET_LOOKUP_BEFORE_RE = re.compile(rf"(?<![.\w])(?P<set>{_REGO_IDENT})\[\s*$")
+_RULE_HEAD_RE = re.compile(
+    rf"^(?:default\s+)?(?P<name>{_REGO_IDENT})(?:\((?P<params>[^)]*)\))?"
+)
+
+
+def _strip_rego_comments(rego: str) -> str:
+    """Drop ``#`` comments outside string literals, keeping line structure."""
+    out: list[str] = []
+    i, n = 0, len(rego)
+    while i < n:
+        ch = rego[i]
+        if ch == '"':
+            j = i + 1
+            while j < n and rego[j] != '"':
+                j += 2 if rego[j] == "\\" else 1
+            out.append(rego[i : j + 1])
+            i = j + 1
+        elif ch == "`":
+            j = rego.find("`", i + 1)
+            j = n - 1 if j == -1 else j
+            out.append(rego[i : j + 1])
+            i = j + 1
+        elif ch == "#":
+            j = rego.find("\n", i)
+            i = n if j == -1 else j
+        else:
+            out.append(ch)
+            i += 1
+    return "".join(out)
+
+
+def _rego_rules(code: str) -> list[_RegoRule]:
+    """Split comment-free Rego into its top-level rules, in source order."""
+    rules: list[_RegoRule] = []
+    current: list[str] = []
+
+    def flush() -> None:
+        head = _RULE_HEAD_RE.match(current[0]) if current else None
+        if head is not None:
+            params = tuple(
+                p.strip() for p in (head.group("params") or "").split(",") if p.strip()
+            )
+            rules.append(_RegoRule(head.group("name"), params, "\n".join(current)))
+        current.clear()
+
+    for line in code.splitlines():
+        starts_rule = (
+            bool(line)
+            and not line[0].isspace()
+            and not line.startswith(("}", "]", ")", "package ", "import "))
+        )
+        if starts_rule:
+            flush()
+        if starts_rule or current:
+            current.append(line)
+    flush()
+    return rules
+
+
+def _rego_string(literal: str) -> str | None:
+    """Decode a double-quoted Rego string literal, or ``None`` if it is malformed."""
+    try:
+        value = json.loads(literal)
+    except json.JSONDecodeError:
+        return None
+    return value if isinstance(value, str) else None
+
+
+def _set_members(literal: str) -> tuple[str, ...] | None:
+    """Return the members of a Rego set literal of strings, or ``None``."""
+    inner = literal.strip()[1:-1]
+    if re.sub(_REGO_STRING, "", inner).replace(",", "").strip():
+        return None
+    members = [_rego_string(s) for s in re.findall(_REGO_STRING, inner)]
+    if any(member is None for member in members):
+        return None
+    return tuple(member for member in members if member is not None)
+
+
+def _input_bindings(text: str) -> dict[str, set[str]]:
+    bindings: dict[str, set[str]] = {}
+    for pattern in _INPUT_BINDING_RES:
+        for m in pattern.finditer(text):
+            bindings.setdefault(m["var"], set()).add(m["input_alias"])
+    return bindings
+
+
+def _iterations(
+    text: str, named_sets: Mapping[str, tuple[str, ...] | None]
+) -> dict[str, tuple[str, ...] | None]:
+    iterations: dict[str, tuple[str, ...] | None] = {}
+    for m in _ITERATION_RE.finditer(text):
+        src = m["src"]
+        iterations[m["var"]] = (
+            _set_members(src) if src.startswith("{") else named_sets.get(src)
+        )
+    return iterations
+
+
+def _tested_names(
+    text: str,
+    ref: re.Match[str],
+    named_sets: Mapping[str, tuple[str, ...] | None],
+    iterations: Mapping[str, tuple[str, ...] | None],
+) -> tuple[str, ...] | None:
+    """Return the names one ``metadata.name`` reference is tested against.
+
+    ``()`` for an exclusion (``!=``), which selects nothing, and ``None`` for a
+    use this gate cannot read.
+    """
+    after = _NAME_TEST_AFTER_RE.match(text, ref.end())
+    if after is not None:
+        op, rhs = after["op"], after["rhs"]
+        if op == "!=":
+            return ()
+        if rhs.startswith('"'):
+            literal = _rego_string(rhs)
+            return (literal,) if op == "==" and literal is not None else None
+        if rhs.startswith("{"):
+            return _set_members(rhs) if op == "in" else None
+        return iterations.get(rhs) if op == "==" else named_sets.get(rhs)
+    before = text[: ref.start()]
+    reversed_test = _NAME_TEST_BEFORE_RE.search(before)
+    if reversed_test is not None:
+        if reversed_test["op"] == "!=":
+            return ()
+        literal = _rego_string(reversed_test["lit"])
+        return (literal,) if literal is not None else None
+    lookup = _SET_LOOKUP_BEFORE_RE.search(before)
+    if lookup is not None and re.match(r"\s*\]", text[ref.end() :]):
+        return named_sets.get(lookup["set"])
+    return None
+
+
+def _call_sites(
+    rules: list[_RegoRule], function: _RegoRule
+) -> tuple[list[tuple[_RegoRule, tuple[str, ...]]], list[str]]:
+    """Return each call of *function* with its arguments, and each call it cannot read.
+
+    A call whose argument list nests parentheses cannot be split into arguments,
+    so it is reported rather than skipped: skipping it would leave that caller's
+    argument unchecked while the readable calls passed.
+    """
+    name_re = re.compile(rf"(?<![.\w]){re.escape(function.name)}\s*\(")
+    call_re = re.compile(
+        rf"(?<![.\w]){re.escape(function.name)}\s*\(\s*(?P<args>[^()]*)\)"
+    )
+    calls: list[tuple[_RegoRule, tuple[str, ...]]] = []
+    unreadable: list[str] = []
+    for rule in rules:
+        literals = [m.span() for m in _REGO_LITERAL_RE.finditer(rule.text)]
+        for m in name_re.finditer(rule.text):
+            if rule.name == function.name and m.start() == 0:
+                continue  # a head of the function itself
+            if any(start <= m.start() < end for start, end in literals):
+                continue
+            call = call_re.match(rule.text, m.start())
+            if call is None:
+                line_end = rule.text.find("\n", m.start())
+                snippet = rule.text[m.start() : None if line_end == -1 else line_end]
+                unreadable.append(
+                    f"rule {rule.name} calls {function.name}() at {snippet.strip()!r}, "
+                    "whose arguments this gate cannot read"
+                )
+                continue
+            calls.append((rule, tuple(a.strip() for a in call["args"].split(","))))
+    return calls, unreadable
+
+
+def rego_name_selectors(
+    rego: str, aliases: Mapping[str, LulaAlias], manifest: str
+) -> list[LulaNameSelector]:
+    """Return every object *rego* selects by ``metadata.name``.
+
+    Recognised forms, where ``x`` is bound by ``some x in input["a"]``,
+    ``every x in input["a"]`` or ``x := input["a"][_]`` (directly, or as the
+    argument of a function whose parameter is tested): ``x.metadata.name ==``
+    a string, a variable iterating a set literal or a named set of strings;
+    ``x.metadata.name in`` a set literal or a named set; ``"lit" ==
+    x.metadata.name``; ``named_set[x.metadata.name]``; and the same tests on
+    ``input["a"].metadata.name``. ``!=`` excludes and selects nothing. Any other
+    use raises ``OrphanSelectorError``, so a new form fails closed.
+    """
+    code = _strip_rego_comments(rego)
+    named_sets = {
+        m["name"]: _set_members(m["set"]) for m in _SET_DEFINITION_RE.finditer(code)
+    }
+    rules = _rego_rules(code)
+    selected: list[LulaNameSelector] = []
+    parameter_tests: list[tuple[_RegoRule, int, tuple[str, ...]]] = []
+    problems: list[str] = []
+
+    def select(rule_name: str, alias: str, names: tuple[str, ...]) -> None:
+        target = aliases.get(alias)
+        if target is None:
+            problems.append(
+                f"rule {rule_name} reads input[{alias!r}], which kubernetes-spec "
+                "does not declare"
+            )
+            return
+        selected.extend(
+            LulaNameSelector(
+                manifest, rule_name, alias, target.resource, target.namespaces, name
+            )
+            for name in names
+        )
+
+    for rule in rules:
+        bindings = _input_bindings(rule.text)
+        iterations = _iterations(rule.text, named_sets)
+        literals = [m.span() for m in _REGO_LITERAL_RE.finditer(rule.text)]
+
+        def in_literal(pos: int, spans: list[tuple[int, int]] = literals) -> bool:
+            return any(start <= pos < end for start, end in spans)
+
+        refs = [
+            ref
+            for ref in _NAME_REF_RE.finditer(rule.text)
+            if not in_literal(ref.start())
+        ]
+        attributed = {ref.end() for ref in refs}
+        for use in _ANY_NAME_USE_RE.finditer(rule.text):
+            if not in_literal(use.start()) and use.end() not in attributed:
+                line_start = rule.text.rfind("\n", 0, use.start()) + 1
+                snippet = rule.text[line_start : use.end()].strip()
+                problems.append(
+                    f"rule {rule.name} reads metadata.name at {snippet!r}, which is "
+                    "not a variable or input alias this gate can attribute"
+                )
+        for ref in refs:
+            names = _tested_names(rule.text, ref, named_sets, iterations)
+            if names is None:
+                snippet = rule.text[ref.start() : ref.end() + 40].splitlines()[0]
+                problems.append(f"rule {rule.name} cannot be read at {snippet!r}")
+                continue
+            if not names:
+                continue
+            if ref["input_alias"] is not None:
+                select(rule.name, ref["input_alias"], names)
+                continue
+            var = ref["var"]
+            bound = bindings.get(var, set())
+            if len(bound) == 1:
+                select(rule.name, next(iter(bound)), names)
+            elif not bound and var in rule.params:
+                parameter_tests.append((rule, rule.params.index(var), names))
+            elif not bound:
+                problems.append(
+                    f"rule {rule.name} tests {var}.metadata.name, but {var} is not "
+                    "bound to an input alias"
+                )
+            else:
+                problems.append(
+                    f"rule {rule.name} binds {var} to more than one input alias "
+                    f"({', '.join(sorted(bound))})"
+                )
+
+    for function, index, names in parameter_tests:
+        calls, unreadable = _call_sites(rules, function)
+        problems.extend(unreadable)
+        if not calls and not unreadable:
+            problems.append(
+                f"function {function.name}() tests metadata.name but nothing calls it"
+            )
+        for caller, args in calls:
+            arg = args[index] if index < len(args) else ""
+            bound = _input_bindings(caller.text).get(arg, set())
+            if len(bound) != 1:
+                problems.append(
+                    f"rule {caller.name} calls {function.name}() with {arg!r}, not a "
+                    "variable bound to one input alias"
+                )
+                continue
+            select(caller.name, next(iter(bound)), names)
+
+    if problems:
+        raise OrphanSelectorError(f"{manifest}: " + "; ".join(dict.fromkeys(problems)))
+    return list(dict.fromkeys(selected))
+
+
+def _lula_aliases(
+    domain: Mapping[str, Any], manifest: str
+) -> tuple[dict[str, LulaAlias], list[LulaNameSelector]]:
+    """Return a Kubernetes domain's aliases and the names its resource-rules fix."""
+    spec = domain.get("kubernetes-spec")
+    if not isinstance(spec, dict):
+        raise OrphanSelectorError(
+            f"{manifest}: kubernetes domain has no kubernetes-spec (Lula v0.16 schema)"
+        )
+    aliases: dict[str, LulaAlias] = {}
+    named: list[LulaNameSelector] = []
+    for entry in spec.get("resources") or []:
+        rule = entry.get("resource-rule") if isinstance(entry, dict) else None
+        if (
+            not isinstance(rule, dict)
+            or not entry.get("name")
+            or not rule.get("resource")
+        ):
+            raise OrphanSelectorError(
+                f"{manifest}: kubernetes-spec resource needs a name and a "
+                f"resource-rule.resource: {entry!r}"
+            )
+        alias = LulaAlias(
+            resource=str(rule["resource"]),
+            namespaces=tuple(str(ns) for ns in rule.get("namespaces") or ()),
+        )
+        aliases[str(entry["name"])] = alias
+        if rule.get("name"):
+            named.append(
+                LulaNameSelector(
+                    manifest,
+                    "resource-rule",
+                    str(entry["name"]),
+                    alias.resource,
+                    alias.namespaces,
+                    str(rule["name"]),
+                )
+            )
+    return aliases, named
+
+
+def lula_name_selectors(manifest: Path) -> list[LulaNameSelector]:
+    """Return every object a Lula manifest's Kubernetes domains select by name."""
+    doc = yaml.safe_load(manifest.read_text(encoding="utf-8"))
+    payloads, errors = _sibling_script("check_lula_stub_count")._extract_lula_payloads(
+        doc if isinstance(doc, dict) else {}
+    )
+    if errors:
+        raise OrphanSelectorError(f"{manifest.name}: {'; '.join(errors)}")
+    selected: list[LulaNameSelector] = []
+    for payload in payloads:
+        domain = payload.get("domain")
+        if not isinstance(domain, dict) or domain.get("type") != "kubernetes":
+            continue
+        aliases, named = _lula_aliases(domain, manifest.name)
+        provider = payload.get("provider")
+        opa_spec = provider.get("opa-spec") if isinstance(provider, dict) else None
+        rego = opa_spec.get("rego") if isinstance(opa_spec, dict) else None
+        if not isinstance(rego, str):
+            raise OrphanSelectorError(
+                f"{manifest.name}: kubernetes domain without an opa-spec rego"
+            )
+        selected.extend(named)
+        selected.extend(rego_name_selectors(rego, aliases, manifest.name))
+    return list(dict.fromkeys(selected))
+
+
+def _active_lula_manifests(repo_root: Path) -> tuple[Path, ...] | None:
+    """Return the manifests ``compliance/lula/README.md`` rates Active.
+
+    ``None`` when the README is absent, as in a synthetic ``infra/``-only tree.
+    """
+    readme = repo_root / LULA_DIR_REL / "README.md"
+    if not readme.is_file():
+        return None
+    names = _sibling_script("lula_rating_breakdown").rated_active(
+        readme.read_text(encoding="utf-8")
+    )
+    return tuple(repo_root / LULA_DIR_REL / name for name in sorted(names))
+
+
+def _lula_orphans(
+    selectors: tuple[LulaNameSelector, ...],
+    objects: tuple[TerraformObject, ...],
+    infra_dir: Path,
+    module_instances: Mapping[Path, list[tuple[str, dict[str, str]]]],
+) -> list[str]:
+    """Describe each Lula name selector no object in ``infra/`` satisfies."""
+    created: dict[str, set[str]] = {}
+    for obj in objects:
+        if obj.name is not None:
+            created.setdefault(obj.resource, set()).add(obj.name)
+    shortfalls = {
+        obj: _platform_object_shortfall(infra_dir, module_instances, obj)
+        for obj in PLATFORM_OBJECTS
+    }
+    orphans: list[str] = []
+    for sel in selectors:
+        where = f"{(LULA_DIR_REL / sel.manifest).as_posix()} rule {sel.rule} [{sel.resource}]"
+        if sel.resource not in NAMEABLE_LULA_RESOURCES:
+            orphans.append(
+                f"  - {where} selects {sel.name!r} by name, and this gate cannot hold "
+                f"{sel.resource} to infra/"
+            )
+            continue
+        if sel.name in created.get(sel.resource, set()):
+            continue
+        platform = next(
+            (
+                obj
+                for obj in PLATFORM_OBJECTS
+                if (obj.resource, obj.name) == (sel.resource, sel.name)
+                and obj.namespace in sel.namespaces
+            ),
+            None,
+        )
+        if platform is None:
+            reason = "no Terraform resource, locals manifest or Helm template in infra/ creates it"
+        elif shortfalls[platform] is None:
+            continue
+        else:
+            reason = f"{platform.created_by} creates it, but {shortfalls[platform]}"
+        orphans.append(f"  - {where} selects metadata.name {sel.name!r}: {reason}")
+    return orphans
+
+
 def verify_k8s_terraform_parity(
     repo_root: Path = DEFAULT_REPO_ROOT,
     *,
     enforce_floors: bool = True,
 ) -> ParityReport:
-    """Verify shadow-manifest absence and selector parity across ``infra/``.
+    """Verify shadow-manifest absence, selector parity, and Lula name parity.
 
     Raises:
         ShadowManifestError: If ``deployment/k8s`` exists at *repo_root*.
-        OrphanSelectorError: If any selector matches zero workload templates or
-            if corpus floors are not met.
+        OrphanSelectorError: If any selector matches zero workload templates, if
+            an Active Lula manifest selects an object ``infra/`` does not create
+            or uses ``metadata.name`` in a form this gate cannot read, or if
+            corpus floors are not met.
     """
     shadow_dir = repo_root / "deployment" / "k8s"
     if shadow_dir.exists():
@@ -949,6 +1720,7 @@ def verify_k8s_terraform_parity(
 
     workloads: list[WorkloadTemplate] = []
     selectors: list[SelectorRequirement] = []
+    tf_objects: list[TerraformObject] = []
 
     # 1. Scan module .tf files once per concrete module instantiation.
     modules_root = (infra_dir / "modules").resolve()
@@ -959,6 +1731,9 @@ def verify_k8s_terraform_parity(
                 w, s = _extract_tf_items_from_file(tf_file, inst_prefix, var_env)
                 workloads.extend(w)
                 selectors.extend(s)
+                tf_objects.extend(
+                    _extract_tf_objects_from_file(tf_file, inst_prefix, var_env)
+                )
 
     # 2. Scan non-module .tf files (e.g. infra/targets/gcp-gke/*.tf).
     for tf_file in all_tf_files:
@@ -969,6 +1744,7 @@ def verify_k8s_terraform_parity(
         w, s = _extract_tf_items_from_file(tf_file, "", target_env)
         workloads.extend(w)
         selectors.extend(s)
+        tf_objects.extend(_extract_tf_objects_from_file(tf_file, "", target_env))
 
     # 3. Scan Helm templates under infra/**/templates/*.yaml.
     helm_templates = [
@@ -982,6 +1758,18 @@ def verify_k8s_terraform_parity(
     ]
     for tmpl in helm_templates:
         selectors.extend(_extract_helm_selectors(tmpl))
+        tf_objects.extend(_extract_helm_objects(tmpl))
+
+    # 4. Read what each Lula manifest rated Active selects by name.
+    lula_manifests = _active_lula_manifests(repo_root)
+    lula_selectors: list[LulaNameSelector] = []
+    for manifest in lula_manifests or ():
+        if not manifest.is_file():
+            raise OrphanSelectorError(
+                f"{(LULA_DIR_REL / 'README.md').as_posix()} rates {manifest.name} "
+                "Active, but the manifest does not exist"
+            )
+        lula_selectors.extend(lula_name_selectors(manifest))
 
     if enforce_floors:
         np_count = sum(1 for s in selectors if s.category == "network_policy")
@@ -1009,6 +1797,20 @@ def verify_k8s_terraform_parity(
             floor_errors.append(
                 f"helm_selectors={helm_count} < MIN_HELM_SELECTORS={MIN_HELM_SELECTORS}"
             )
+        if lula_manifests is None:
+            floor_errors.append(f"{(LULA_DIR_REL / 'README.md').as_posix()} is missing")
+        else:
+            selecting = len({sel.manifest for sel in lula_selectors})
+            if selecting < MIN_LULA_SELECTING_MANIFESTS:
+                floor_errors.append(
+                    f"lula_selecting_manifests={selecting} < "
+                    f"MIN_LULA_SELECTING_MANIFESTS={MIN_LULA_SELECTING_MANIFESTS}"
+                )
+            if len(lula_selectors) < MIN_LULA_NAME_SELECTORS:
+                floor_errors.append(
+                    f"lula_name_selectors={len(lula_selectors)} < "
+                    f"MIN_LULA_NAME_SELECTORS={MIN_LULA_NAME_SELECTORS}"
+                )
         if floor_errors:
             raise OrphanSelectorError(
                 "Corpus floor check failed (vacuous scan guard): "
@@ -1044,18 +1846,51 @@ def verify_k8s_terraform_parity(
             + "\n  ".join(known_labels)
         )
 
+    lula_orphans = _lula_orphans(
+        tuple(lula_selectors), tuple(tf_objects), infra_dir, module_instances
+    )
+    if lula_orphans:
+        kinds = sorted({sel.resource for sel in lula_selectors})
+        known_objects = [
+            f"  {kind}: "
+            + ", ".join(
+                [
+                    *sorted(
+                        {o.name for o in tf_objects if o.resource == kind and o.name}
+                    ),
+                    *(
+                        f"{p.name} in {p.namespace} (platform object: {p.created_by})"
+                        for p in PLATFORM_OBJECTS
+                        if p.resource == kind
+                    ),
+                ]
+            )
+            for kind in kinds
+        ]
+        raise OrphanSelectorError(
+            f"OrphanSelectorError: {len(lula_orphans)} name selector(s) in Active "
+            "Lula manifests select objects infra/ does not create:\n"
+            + "\n".join(lula_orphans)
+            + "\nNamed objects infra/ creates, by the kinds those manifests select:\n"
+            + "\n".join(known_objects)
+        )
+
     return ParityReport(
         tf_files_scanned=len(all_tf_files),
         helm_templates_scanned=len(helm_templates),
         workloads=tuple(workloads),
         selectors=tuple(selectors),
+        terraform_objects=tuple(tf_objects),
+        lula_manifests=tuple(m.name for m in lula_manifests or ()),
+        lula_selectors=tuple(lula_selectors),
     )
 
 
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(
         description=(
-            "Verify deployment/k8s absence and Terraform workload selector parity."
+            "Verify deployment/k8s absence, Terraform workload selector parity, "
+            "and that Active Lula manifests select only objects infra/ creates."
         )
     )
     parser.add_argument(
@@ -1080,11 +1915,15 @@ def main(argv: list[str] | None = None) -> int:
         print(f"FAIL: {exc}", file=sys.stderr)
         return 1
 
+    selecting = len({sel.manifest for sel in report.lula_selectors})
     print(
         f"OK: deployment/k8s absent; verified {len(report.selectors)} Kubernetes "
         f"selectors against {len(report.workloads)} Terraform workload templates "
         f"across {report.tf_files_scanned} .tf files and "
-        f"{report.helm_templates_scanned} Helm templates (0 orphans)."
+        f"{report.helm_templates_scanned} Helm templates (0 orphans); "
+        f"{len(report.lula_selectors)} name selectors in {selecting} of "
+        f"{len(report.lula_manifests)} Active Lula manifests name objects infra/ "
+        "creates."
     )
     return 0
 

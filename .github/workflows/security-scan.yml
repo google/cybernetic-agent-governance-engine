@@ -237,10 +237,15 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
-      - name: Set up Python 3.11
+      - name: Install uv
+        uses: astral-sh/setup-uv@07a047e608db84b3d8c06cd9a7c7dcc9c355c18e # v10.3.2
+        with:
+          enable-cache: true
+
+      - name: Set up Python
         uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
         with:
-          python-version: "3.11"
+          python-version-file: "pyproject.toml"
 
       - name: Install Syft (SBOM generator — anchore/syft)
         run: |
@@ -256,13 +261,15 @@ jobs:
             | sh -s -- -b /usr/local/bin
           grype version
 
-      - name: Install cyclonedx-bom (Python SBOM)
-        run: pip install cyclonedx-bom
+      - name: Sync locked project dependencies and install cyclonedx-bom (Python SBOM)
+        run: |
+          uv sync --frozen --all-groups --all-extras
+          uv pip install cyclonedx-bom
 
-      - name: Generate Python SBOM (CycloneDX JSON — CM-8 / POAM-006)
+      - name: Generate Python SBOM (CycloneDX JSON — CM-8 / POAM-006 / POAM-2026-221)
         run: |
           mkdir -p compliance/sbom
-          python scripts/generate_sbom.py \
+          uv run --no-sync python scripts/generate_sbom.py \
             --type python \
             --output-dir compliance/sbom
 

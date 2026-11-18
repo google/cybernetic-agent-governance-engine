@@ -49,11 +49,12 @@ from urllib.parse import unquote, urlparse
 
 from cachetools import TTLCache
 
-from src.gateway.governance.env_posture import is_enforcing
+from src.gateway.governance.env_posture import is_enforcing, resolve_posture
 from src.gateway.governance.evidence.cold_store import EvidenceColdStore
 from src.gateway.governance.evidence.factory import get_cold_store
 
 from .evidence_custodian import (
+    ATTESTATION_SCHEMA_V2,
     EvidenceCustodyIntegrityError,
     NonEvidentiaryAttestationError,
     assert_citable,
@@ -919,7 +920,8 @@ async def _read_cold_store_records_async(
     now: datetime,
 ) -> list[dict[str, Any]]:
     """Read `.ndjson` custody batches from WORM cold storage across `[window_start, now]`."""
-    enforcing = is_enforcing()
+    posture = resolve_posture()
+    enforcing = is_enforcing(posture)
     listed_keys: set[str] = set()
     for prefix in _date_prefixes_for_window(window_start, now):
         keys = await cold_store.list_keys(prefix)
@@ -957,6 +959,15 @@ async def _read_cold_store_records_async(
                     f"Custody attestation at {signed_att_key!r} must be a JSON object."
                 )
             assert_citable(attestation)
+            if (
+                enforcing
+                and attestation.get("schema") == ATTESTATION_SCHEMA_V2
+                and attestation.get("deployment_posture") != posture.value
+            ):
+                raise NonEvidentiaryAttestationError(
+                    f"Custody batch {data_key!r} carries deployment_posture="
+                    f"{attestation.get('deployment_posture')!r}, expected {posture.value!r}."
+                )
             actual_sha = hashlib.sha256(ndjson_bytes).hexdigest()
             if attestation.get("content_sha256") != actual_sha:
                 raise EvidenceCustodyIntegrityError(

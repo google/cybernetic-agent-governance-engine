@@ -226,8 +226,9 @@ def create_mock_allow_envelope() -> dict[str, Any]:
             "tiers_passed": ["tier_1", "tier_2"],
         },
         "payload": {
-            "decision": "ALLOW",
-            "execution_token": "mock-token-123",
+            "verdict": "ALLOW",
+            "violations": [],
+            "latency_ms": 1.2,
         },
         "signature": {
             "algorithm": "ES256",
@@ -244,12 +245,11 @@ async def test_validate_action_allow(
 ) -> None:
     """Test successful ALLOW response returns frozen GovernanceEnvelope."""
     envelope_data = create_mock_allow_envelope()
-    response_body = {"envelope": envelope_data}
 
     mock_route = respx.post(f"{mock_gateway_url}/governance/validate-action").mock(
         return_value=httpx.Response(
             status_code=200,
-            json=response_body,
+            json=envelope_data,
         )
     )
 
@@ -263,7 +263,7 @@ async def test_validate_action_allow(
     assert isinstance(result, GovernanceEnvelope)
     assert result.envelope_version == "3.0"
     assert result.envelope_type == "cage_governance_decision"
-    assert result.payload["decision"] == "ALLOW"
+    assert result.payload["verdict"] == "ALLOW"
     assert result.subject["action"] == "query_portfolio"
     assert result.subject["agent_id"] == "test-agent"
 
@@ -286,15 +286,22 @@ async def test_validate_action_deny_raises_policy_violation(
 ) -> None:
     """Test DENY response raises PolicyViolationException with structured details."""
     response_body = {
-        "reason_code": "TIER_3_BLOCKED",
-        "details": {
-            "failed_tier": "tier_3",
-            "policy_rule": "high_value_limit",
-            "evidence": "Amount exceeds $10,000 threshold",
-            "suggested_alternatives": ["reduce_amount", "request_approval"],
+        "schema_version": "2.0.0",
+        "verdict": "DENIED",
+        "violations": [
+            {
+                "tier": "tier_3",
+                "code": "TIER_3_BLOCKED",
+                "message": "Amount exceeds $10,000 threshold",
+            }
+        ],
+        "refusal_receipt": {
+            "type": "GOVERNANCE_REFUSAL_RECEIPT",
+            "receipt_id": "rcpt-12345",
+            "violated_rule": "high_value_limit",
+            "proof_hash": "sha256:audit-12345",
         },
-        "audit_id": "audit-12345",
-        "recoverable": True,
+        "proof_hash": "sha256:audit-12345",
     }
 
     respx.post(f"{mock_gateway_url}/governance/validate-action").mock(
@@ -313,12 +320,12 @@ async def test_validate_action_deny_raises_policy_violation(
 
     exc = exc_info.value
     assert exc.reason_code == "TIER_3_BLOCKED"
-    assert exc.audit_id == "audit-12345"
+    assert exc.audit_id == "sha256:audit-12345"
     assert exc.recoverable is True
-    assert exc.violation_details["failed_tier"] == "tier_3"
-    assert exc.violation_details["policy_rule"] == "high_value_limit"
-    assert "suggested_alternatives" in exc.violation_details
-    assert "reduce_amount" in exc.violation_details["suggested_alternatives"]
+    assert exc.violation_details["violations"][0]["tier"] == "tier_3"
+    assert (
+        exc.violation_details["refusal_receipt"]["violated_rule"] == "high_value_limit"
+    )
 
 
 @respx.mock
@@ -326,19 +333,22 @@ async def test_validate_action_defer_raises_deferral_pending(
     cage_client: CageClient,
     mock_gateway_url: str,
 ) -> None:
-    """Test DEFER response raises DeferralPending with ticket_id."""
-    expires_at = datetime.now(timezone.utc) + timedelta(hours=4)
-    response_body = {
-        "ticket_id": "defer-ticket-789",
-        "reason": "Action requires manual approval",
-        "expires_at": expires_at.isoformat(),
-        "ttl_seconds": 14400,
+    """Test HTTP 200 DEFER envelope raises DeferralPending with ticket_id."""
+    expires_at = datetime.now(timezone.utc).replace(microsecond=0) + timedelta(hours=4)
+    envelope_data = create_mock_allow_envelope()
+    envelope_data["expires_at"] = expires_at.isoformat()
+    envelope_data["payload"] = {
+        "verdict": "DEFER",
+        "violations": [],
+        "defer_token": "defer-ticket-789",
+        "defer_reason": "Action requires manual approval",
+        "retry_after_seconds": 14400,
     }
 
     respx.post(f"{mock_gateway_url}/governance/validate-action").mock(
         return_value=httpx.Response(
-            status_code=202,
-            json=response_body,
+            status_code=200,
+            json=envelope_data,
         )
     )
 
@@ -450,16 +460,19 @@ async def test_defer_response_missing_ticket_id_fails_closed(
     cage_client: CageClient,
     mock_gateway_url: str,
 ) -> None:
-    """Test DEFER response without ticket_id or defer_id fails closed with CageGatewayError."""
-    response_body = {
-        "reason": "Requires approval",
-        "ttl_seconds": 14400,
+    """Test HTTP 200 DEFER envelope without defer_token or deferred_id fails closed with CageGatewayError."""
+    envelope_data = create_mock_allow_envelope()
+    envelope_data["payload"] = {
+        "verdict": "DEFER",
+        "violations": [],
+        "defer_reason": "Requires approval",
+        "retry_after_seconds": 14400,
     }
 
     respx.post(f"{mock_gateway_url}/governance/validate-action").mock(
         return_value=httpx.Response(
-            status_code=202,
-            json=response_body,
+            status_code=200,
+            json=envelope_data,
         )
     )
 
@@ -470,7 +483,7 @@ async def test_defer_response_missing_ticket_id_fails_closed(
             agent_id="test-agent",
         )
 
-    assert "missing required 'ticket_id' field" in str(exc_info.value)
+    assert "DEFER envelope missing required" in str(exc_info.value)
 
 
 @respx.mock
@@ -556,9 +569,16 @@ async def test_validate_action_top_level_envelope_with_envelope_id(
     mock_gateway_url: str,
 ) -> None:
     """Test top-level v3.0 envelope with envelope_id and external_attestations parses cleanly."""
+    att_entry = {
+        "type": "BLUEPRINT",
+        "status": "VERIFIED",
+        "receipt_id": "rcpt-001",
+        "attested_at": "2026-09-18T20:00:00Z",
+        "provider_name": "provider_01",
+    }
     envelope_data = create_mock_allow_envelope()
     envelope_data["envelope_id"] = "env-uuid-999"
-    envelope_data["external_attestations"] = [{"provider": "provider_01"}]
+    envelope_data["external_attestations"] = [att_entry]
 
     respx.post(f"{mock_gateway_url}/governance/validate-action").mock(
         return_value=httpx.Response(status_code=200, json=envelope_data)
@@ -570,8 +590,8 @@ async def test_validate_action_top_level_envelope_with_envelope_id(
         agent_id="test-agent",
     )
     assert envelope.envelope_id == "env-uuid-999"
-    assert envelope.external_attestations == [{"provider": "provider_01"}]
-    assert envelope.payload["decision"] == "ALLOW"
+    assert envelope.external_attestations == [att_entry]
+    assert envelope.payload["verdict"] == "ALLOW"
 
 
 @respx.mock
@@ -684,7 +704,7 @@ async def test_validate_action_http_200_unrecognised_verdict_fails_closed(
 ) -> None:
     """Test HTTP 200 envelope without an ALLOW verdict is never treated as ALLOW."""
     envelope_data = create_mock_allow_envelope()
-    del envelope_data["payload"]["decision"]
+    del envelope_data["payload"]["verdict"]
     if verdict is not None:
         envelope_data["payload"]["verdict"] = verdict
 

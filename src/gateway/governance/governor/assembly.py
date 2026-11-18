@@ -73,6 +73,7 @@ from src.gateway.governance.contracts import (
     ConsensusContribution,
     ConsensusProvider,
     ConsequenceMagnitude,
+    EvaluatedParamSpecMap,
     GovernanceTier,
     InvariantModel,
     Narrower,
@@ -109,6 +110,7 @@ from src.gateway.governance.null_components import (
     NullConsensusProvider,
     NullSafetyFilter,
 )
+from src.gateway.governance.refusal_projection import validate_evaluated_param_specs
 from src.gateway.governance.warrant.cache import WarrantCache, WarrantClock
 
 if TYPE_CHECKING:
@@ -178,6 +180,9 @@ class GovernorComponents:
     consequence_magnitudes: ConsequenceMagnitudes = field(
         default_factory=ConsequenceMagnitudes
     )
+    # Default-deny WORM refusal parameter projections (RP-1 / POAM-2026-225).
+    # Empty when composed by hand or when a domain declares nothing.
+    evaluated_param_specs: EvaluatedParamSpecMap = field(default_factory=dict)
 
     def __post_init__(self) -> None:
         if self.classifier is None:
@@ -204,6 +209,11 @@ class GovernorComponents:
         )
         object.__setattr__(
             self, "server_inputs", MappingProxyType(dict(self.server_inputs))
+        )
+        object.__setattr__(
+            self,
+            "evaluated_param_specs",
+            validate_evaluated_param_specs(self.evaluated_param_specs),
         )
         object.__setattr__(self, "execution_verbs", frozenset(self.execution_verbs))
         enabled = {t.tier_name for t in self.domain_tiers}
@@ -343,6 +353,29 @@ def _collect_consequence_magnitudes(
             declarations.append(declaration)
     _reject_duplicates("consequence magnitude", (d.action for d in declarations))
     return ConsequenceMagnitudes(tuple(declarations))
+
+
+def _collect_evaluated_param_specs(
+    contributions: Sequence[PluginContribution],
+) -> EvaluatedParamSpecMap:
+    """Merge every contribution's WORM refusal parameter projections, rejecting collisions."""
+    merged: dict[str, Mapping[str, Any]] = {}
+    for c in contributions:
+        try:
+            validated = validate_evaluated_param_specs(
+                c.evaluated_param_specs,
+                allowed_actions=c.registered_actions,
+                domain_label=c.domain,
+            )
+        except (TypeError, ValueError) as exc:
+            raise GovernorAssemblyError(str(exc)) from exc
+        for action, param_specs in validated.items():
+            if action in merged:
+                raise GovernorAssemblyError(
+                    f"duplicate evaluated_param_specs: {action!r} is contributed twice"
+                )
+            merged[action] = param_specs
+    return MappingProxyType(merged)
 
 
 def _reject_foreign_magnitude_policy(
@@ -489,6 +522,7 @@ def assemble_governor(
     server_inputs = _assemble_server_inputs(
         contributions, _known_actions(plugins, contributions)
     )
+    evaluated_param_specs = _collect_evaluated_param_specs(contributions)
     narrowers = tuple(n for c in contributions for n in c.narrowers)
     flags = flags or DecisionFlags.from_env()
     warranted = tuple(b for b in norm_bindings if b.requires_warrant)
@@ -583,6 +617,7 @@ def assemble_governor(
         execution_ledger=ExecutionLedger(execution_ledger_redis),
         disabled_tiers=disabled_tiers,
         consequence_magnitudes=consequence_magnitudes,
+        evaluated_param_specs=evaluated_param_specs,
     )
     governor = SymbolicGovernor(components)
     logger.info(

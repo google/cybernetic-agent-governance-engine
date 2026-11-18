@@ -33,6 +33,12 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import httpx
 import pytest
 
+from src.gateway.observability.attributes import (
+    SPAN_ATTR_CONTENT_INPUT_LENGTH,
+    SPAN_ATTR_CONTENT_OUTPUT_LENGTH,
+)
+from tests.fixtures.telemetry_canary import CanaryCapture, leaks
+
 pytestmark = pytest.mark.local
 
 # ---------------------------------------------------------------------------
@@ -63,6 +69,7 @@ def _make_quota_proxy(allowed: bool = True, reason: str = "") -> MagicMock:
         return_value=_make_quota_result(allowed, reason)
     )
     proxy.rollback_step = AsyncMock()
+    proxy.reconcile_actual_tokens = AsyncMock()
     return proxy
 
 
@@ -668,10 +675,12 @@ async def test_streaming_upstream_4xx_yields_error_event(proxy_deps):
     ) as client:
         resp = await client.post("/v1/chat/completions", json=_chat_body(stream=True))
 
-    assert resp.status_code == 200  # streaming path always 200
-    body_bytes = resp.content
-    assert b"vLLM backend error 503" in body_bytes
+    assert resp.status_code == 503
+    err_json = resp.json()
+    assert "vLLM backend error 503" in err_json.get("message", "")
+    assert "Service Unavailable" not in resp.text
     quota_proxy.rollback_step.assert_awaited_once()
+    proxy_deps["evidence_sink"].ingest.assert_not_awaited()
 
 
 @pytest.mark.asyncio
@@ -939,7 +948,7 @@ async def test_shutdown_closes_http_client():
 
 @pytest.mark.asyncio
 async def test_null_max_tokens_defaults_to_zero(proxy_deps):
-    """OpenAI-compatible requests with max_tokens=None succeed and reserve 0 tokens."""
+    """OpenAI-compatible requests with max_tokens=None succeed and reserve a positive default budget."""
     app = proxy_deps["app"]
     quota_proxy = proxy_deps["quota_proxy"]
 
@@ -952,7 +961,7 @@ async def test_null_max_tokens_defaults_to_zero(proxy_deps):
 
     assert resp.status_code == 200
     quota_proxy.check_and_increment.assert_awaited_once()
-    assert quota_proxy.check_and_increment.call_args.kwargs["token_delta"] == 0
+    assert quota_proxy.check_and_increment.call_args.kwargs["token_delta"] > 0
 
 
 @pytest.mark.asyncio
@@ -1204,3 +1213,73 @@ async def test_rails_on_but_absent_still_reach_the_input_rail(proxy_deps, monkey
     assert verify_input.await_args.args[0] is None
     assert "SKIPPED" not in _a612_outcomes(proxy_deps["module"].stamp_iso_control)
     proxy_deps["http_client"].post.assert_not_awaited()
+
+
+# ---------------------------------------------------------------------------
+# Tests — telemetry carries no message or response content
+# ---------------------------------------------------------------------------
+
+_PROMPT_CANARY = "zebra-prompt-canary-5d1e9b"
+_RESPONSE_CANARY = "okapi-response-canary-7c42a0"
+
+
+@pytest.mark.asyncio
+async def test_chat_span_exports_no_message_or_response_content(
+    proxy_deps, monkeypatch
+):
+    """Canary messages and the canary completion never reach an exported span.
+
+    String, multi-part and tool-call message content is covered. The completion
+    still reaches the caller unchanged; the span records lengths only.
+    """
+    capture = CanaryCapture()
+    monkeypatch.setattr(
+        f"{_MODULE}.trace.get_tracer", lambda *_args, **_kwargs: capture.tracer
+    )
+    completion = f"Rebalance away from {_RESPONSE_CANARY}."
+    monkeypatch.setattr(
+        proxy_deps["module"],
+        "_get_http_client",
+        lambda: _make_http_client_mock(_vllm_json_response(content=completion)),
+    )
+    messages = [
+        {"role": "system", "content": f"House view: {_PROMPT_CANARY}-system"},
+        {"role": "user", "content": f"Should I buy {_PROMPT_CANARY}?"},
+        {
+            "role": "user",
+            "content": [{"type": "text", "text": f"{_PROMPT_CANARY}-part"}],
+        },
+        {
+            "role": "assistant",
+            "content": None,
+            "tool_calls": [
+                {
+                    "id": "call_1",
+                    "type": "function",
+                    "function": {
+                        "name": "get_market_data",
+                        "arguments": json.dumps({"symbol": f"{_PROMPT_CANARY}-arg"}),
+                    },
+                }
+            ],
+        },
+    ]
+
+    async with httpx.AsyncClient(
+        transport=httpx.ASGITransport(app=proxy_deps["app"]), base_url="http://test"
+    ) as client:
+        resp = await client.post(
+            "/v1/chat/completions", json=_chat_body(messages=messages)
+        )
+
+    assert resp.status_code == 200
+    assert resp.json()["choices"][0]["message"]["content"] == completion
+    raw_spans = capture.raw_spans()
+    (raw,) = [span for span in raw_spans if span.name == "inference_proxy.chat"]
+    assert "gen_ai.input.messages" not in raw.attributes
+    assert "gen_ai.output.messages" not in raw.attributes
+    assert raw.attributes[SPAN_ATTR_CONTENT_INPUT_LENGTH] > 0
+    assert raw.attributes[SPAN_ATTR_CONTENT_OUTPUT_LENGTH] == len(completion)
+    assert raw.attributes["gen_ai.request.model"] == "test-model"
+    assert leaks(raw_spans, _PROMPT_CANARY, _RESPONSE_CANARY) == []
+    assert leaks(capture.exported_spans(), _PROMPT_CANARY, _RESPONSE_CANARY) == []

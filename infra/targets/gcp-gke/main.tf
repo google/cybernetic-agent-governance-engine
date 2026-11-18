@@ -153,6 +153,8 @@ module "gke" {
   pod_cidr                      = local.gke_pod_cidr
   service_cidr                  = local.gke_service_cidr
   master_ipv4_cidr_block        = var.master_ipv4_cidr_block
+
+  depends_on = [terraform_data.control_plane_access_guard]
 }
 
 # ─── Create Namespace ─────────────────────────────────────────────────────────
@@ -263,6 +265,14 @@ resource "google_storage_bucket" "langfuse_event_upload" {
   force_destroy = var.environment == "dev" ? true : false
 
   uniform_bucket_level_access = true
+  public_access_prevention    = "enforced"
+
+  dynamic "encryption" {
+    for_each = (var.enable_cmek || var.kms_key_id != "") ? [1] : []
+    content {
+      default_kms_key_name = local.cmek_key_id
+    }
+  }
 
   # AU-9 / AU-11: no object can be deleted or overwritten before it is
   # local.retention_period_seconds old. Locking is irreversible.
@@ -374,13 +384,14 @@ resource "google_storage_bucket_iam_member" "langfuse_gcs_viewer" {
 #
 # Dedicated Cloud Build identity (google_service_account.cloudbuild) and its
 # Artifact Registry / Cloud Logging / staging-bucket bindings are declared in
-# iam.tf (POAM-2026-083). The compliance_bridge GSA binding below is retained
-# for legacy console triggers that still reference that service account.
+# iam.tf (POAM-2026-083). Runtime workload GSAs (including compliance_bridge)
+# never hold Artifact Registry push permissions (IC-08).
+removed {
+  from = google_project_iam_member.compliance_bridge_sa_artifactregistry_writer
 
-resource "google_project_iam_member" "compliance_bridge_sa_artifactregistry_writer" {
-  project = var.project_id
-  role    = "roles/artifactregistry.writer"
-  member  = "serviceAccount:${google_service_account.compliance_bridge.email}"
+  lifecycle {
+    destroy = true
+  }
 }
 
 # ─── Deploy Cloud SQL PostgreSQL (Langfuse Metadata Store) ─────────────────────
@@ -432,6 +443,16 @@ module "cloudsql_postgres" {
 
 # ─── Deploy Memorystore Instances (Valkey Cluster Mode Disabled) ───────────────
 # D5, D6: Two separate instances for governance state integrity and app isolation.
+#
+# Each instance lists its clients: every block that reads its endpoint or CA,
+# and whether that block follows the instance's IAM auth and TLS switches. A
+# client follows iam_auth when it is given redis_auth_mode = "iam" whenever the
+# switch is on, and tls when it is given enable_redis_tls and the instance's
+# managed_server_ca under the same switch. The module refuses to plan either
+# mode while a client cannot follow it.
+# tests/infrastructure/test_memorystore_client_capability.py finds the clients
+# by reference, not from these lists, and derives every entry from the client's
+# own arguments, so a missing or wrong entry fails CI.
 
 module "memorystore_governance" {
   source = "../../modules/memorystore_valkey"
@@ -453,6 +474,12 @@ module "memorystore_governance" {
 
   authorization_mode      = var.enable_memorystore_iam_auth ? "IAM_AUTH" : "AUTH_DISABLED"
   transit_encryption_mode = var.enable_memorystore_tls ? "SERVER_AUTHENTICATION" : "TRANSIT_ENCRYPTION_DISABLED"
+
+  clients = {
+    "module.gateway"               = { iam_auth = true, tls = true }
+    "module.compliance_bridge"     = { iam_auth = true, tls = true }
+    "module.reconciliation_worker" = { iam_auth = true, tls = true }
+  }
 
   enable_cmek = var.enable_cmek
   kms_key_id  = local.cmek_key_id
@@ -485,8 +512,16 @@ module "memorystore_app" {
   node_type     = var.environment == "prod" ? "HIGHMEM_MEDIUM" : "SHARED_CORE_NANO"
   mode          = "CLUSTER_DISABLED"
 
-  authorization_mode      = "AUTH_DISABLED"
-  transit_encryption_mode = "TRANSIT_ENCRYPTION_DISABLED"
+  # Its own switches, never the governance ones (#788): its one client,
+  # Langfuse, is given a plain redis://host:port. langfuse_stack has no TLS or
+  # CA input, and Langfuse has no way to send an IAM token, so the module
+  # refuses either switch until Langfuse is wired for it.
+  authorization_mode      = var.enable_memorystore_app_iam_auth ? "IAM_AUTH" : "AUTH_DISABLED"
+  transit_encryption_mode = var.enable_memorystore_app_tls ? "SERVER_AUTHENTICATION" : "TRANSIT_ENCRYPTION_DISABLED"
+
+  clients = {
+    "module.langfuse" = { iam_auth = false, tls = false }
+  }
 
   enable_cmek = var.enable_cmek
   kms_key_id  = local.cmek_key_id
@@ -767,7 +802,7 @@ module "vllm" {
     }
   ]
 
-  depends_on = [module.gke, kubernetes_service_account.workload["vllm"]]
+  depends_on = [module.gke, kubernetes_service_account.workload["vllm"], terraform_data.inference_backend_guard]
 }
 
 # ─── Deploy vLLM Reasoning Engine ──────────────────────────────────────────────
@@ -825,7 +860,7 @@ module "vllm_reasoning" {
     }
   ]
 
-  depends_on = [module.gke, kubernetes_service_account.workload["vllm"]]
+  depends_on = [module.gke, kubernetes_service_account.workload["vllm"], terraform_data.inference_backend_guard]
 }
 
 # ─── Deploy Deterministic Inference Stub (opt-in non-prod E2E, POAM-2026-191) ─
@@ -946,6 +981,10 @@ module "compliance_bridge" {
   startup_grace_hours        = var.startup_grace_hours
   deployment_config_map_name = module.deployment_config.config_map_name
 
+  # POAM-2026-220: inject the WORM bucket's immutable GCS location rather than
+  # expanding runtime IAM with storage.buckets.get (roles/storage.legacyBucketReader).
+  evidence_cold_store_location = module.worm_bucket.bucket_location
+
   # EvidenceCustodian: same governance Memorystore instance, db, key, TLS and
   # IAM auth mode as the gateway producer (see local.evidence_stream_*).
   evidence_stream_redis_url   = local.evidence_stream_redis_url
@@ -981,7 +1020,7 @@ module "compliance_bridge" {
   infra_evidence_previous_chain_head_hash          = var.infra_evidence_previous_chain_head_hash
   infra_evidence_previous_batch_attestation_digest = var.infra_evidence_previous_batch_attestation_digest
 
-  depends_on = [module.langfuse, module.vllm, module.worm_bucket, module.memorystore_governance, module.service_mesh]
+  depends_on = [module.langfuse, module.vllm, module.worm_bucket, module.memorystore_governance, module.service_mesh, terraform_data.memorystore_ca_pinning_guard]
 }
 
 
@@ -1091,7 +1130,7 @@ module "gateway" {
   enable_pod_monitoring  = true
   enable_service_monitor = var.enable_service_monitor
 
-  depends_on = [module.app_secrets, module.opa, module.vllm, module.inference_stub, module.memorystore_governance, module.service_mesh]
+  depends_on = [module.app_secrets, module.opa, module.vllm, module.inference_stub, module.memorystore_governance, module.service_mesh, terraform_data.memorystore_ca_pinning_guard]
 }
 
 # ─── Deploy Ground-Truth Reconciliation Worker (POAM-2026-096, F-86, CA-7) ────
@@ -1123,7 +1162,7 @@ module "reconciliation_worker" {
   evidence_stream_key       = local.evidence_stream_key
   network_policy_hash       = local.network_policy_spec_hash
 
-  depends_on = [module.deployment_config, module.memorystore_governance, module.service_mesh]
+  depends_on = [module.deployment_config, module.memorystore_governance, module.service_mesh, terraform_data.memorystore_ca_pinning_guard]
 }
 
 # ─── Deploy Governed Financial Advisor (in-cluster GKE Deployment) ───────────
@@ -1140,9 +1179,6 @@ module "governed_advisor" {
   project_id                 = var.project_id
   region                     = var.region
   enable_logging             = "true"
-  redis_host                 = module.memorystore_app.primary_endpoint_ip
-  redis_port                 = tostring(module.memorystore_app.primary_endpoint_port)
-  redis_password             = ""
   model_fast                 = var.served_model_fast
   model_reasoning            = var.served_model_reasoning
   model_consensus            = var.served_model_reasoning
@@ -1303,7 +1339,7 @@ module "app_secrets" {
   # Dev without enforce_in_dev: pass the key as-is. It may be empty: the module
   #   still writes the secret, empty, and the compliance bridge only warns in dev.
   # Enforcing posture (every staging and prod plan, POAM-2026-181): the POAM-019
-  #   guards below refuse an empty or shared key in untargeted plans (POAM-2026-180).
+  #   guards below refuse an empty or shared key in both targeted and untargeted plans (POAM-2026-180).
   #   The silent fallback to module.langfuse.public_key has been removed to prevent
   #   circular evidence contamination in Step 5 (_fetch_failing_traces).
   langfuse_compliance_public_key = var.langfuse_compliance_public_key
@@ -1312,7 +1348,7 @@ module "app_secrets" {
 
   cage_deployment_region = var.cage_deployment_region
 
-  depends_on = [module.langfuse, module.cloudsql_postgres, module.clickhouse_operator]
+  depends_on = [module.langfuse, module.cloudsql_postgres, module.clickhouse_operator, terraform_data.poam_019_empty_key_guard, terraform_data.poam_019_shared_key_guard]
 }
 
 
@@ -1432,8 +1468,9 @@ resource "terraform_data" "control_plane_access_guard" {
 # A destroy plan reports resource preconditions only as warnings, so
 # `terraform destroy -var-file=staging.tfvars` needs neither authorized_networks
 # nor the compliance keys, while a variable validation fails the destroy plan.
-# The five legacy guards above and below are standalone: POAM-2026-180 tracks
-# moving them, and tests/infrastructure/test_guard_placement.py fails on a new one.
+# Every root terraform_data guard above and below is wired into depends_on on the
+# modules it protects (POAM-2026-180), and tests/infrastructure/test_guard_placement.py
+# fails closed on any standalone guard.
 
 # W6: what each inference backend deploys must be able to run. "vllm" schedules
 # its pods on the GPU pool, so it needs one (min 0 costs nothing while idle).

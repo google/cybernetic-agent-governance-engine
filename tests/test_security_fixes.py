@@ -51,9 +51,26 @@ pytestmark = pytest.mark.unit
 class TestC01TradeSide:
     """C-01: execute_trade() must forward the requested side, not hardcode 'buy'."""
 
+    async def _mint_order_seal(self, monkeypatch, order) -> str:
+        import src.gateway.governance.jwks as jwks_mod
+        import src.gateway.governance.kms_signer as ks
+        from src.gateway.governance.routing_seal import generate_seal
+
+        provider = ks.SoftwareEd25519Provider(key_id=f"sec-c01-{uuid.uuid4().hex[:8]}")
+        monkeypatch.setattr(ks, "_signer", ks.KMSGovernanceSigner(provider=provider))
+        monkeypatch.setattr(jwks_mod, "_global_jwks", None)
+        return await generate_seal(
+            "execute_trade", order.model_dump(exclude_none=True), record_hash="e" * 64
+        )
+
     @pytest.mark.asyncio
-    async def test_sell_order_sends_sell_to_broker(self):
+    async def test_sell_order_sends_sell_to_broker(self, monkeypatch):
         """A sell order must reach the broker with side='sell'."""
+        import json as _json
+
+        import httpx
+
+        import src.cage_finance.tools.trade_executor as tools_module
         from src.cage_finance.models.trade_order import TradeOrder
         from src.cage_finance.tools.trade_executor import execute_trade
 
@@ -67,31 +84,36 @@ class TestC01TradeSide:
             confidence=0.95,
             transaction_id=tx_id,
         )
+        seal = await self._mint_order_seal(monkeypatch, order)
 
         captured_payload: dict = {}
 
-        def _fake_post(url, json=None, headers=None, **kwargs):
-            captured_payload.update(json or {})
-            mock_resp = MagicMock()
-            mock_resp.json.return_value = {"id": "order-sell-001"}
-            mock_resp.raise_for_status.return_value = None
-            return mock_resp
+        def _fake_post(req: httpx.Request) -> httpx.Response:
+            captured_payload.update(_json.loads(req.content.decode("utf-8")))
+            return httpx.Response(200, json={"id": "order-sell-001"})
 
-        with (
-            patch("src.cage_finance.tools.trade_executor.redis_client") as mock_redis,
-            patch("requests.post", side_effect=_fake_post),
-            patch.dict(
-                os.environ,
-                {
-                    "BROKER_API_KEY": "test-key",
-                    "BROKER_API_SECRET": "test-secret",
-                    "USE_MOCK_BROKER": "false",
-                },
-            ),
-        ):
-            mock_redis.get.return_value = None  # no safety violation
+        async with httpx.AsyncClient(
+            transport=httpx.MockTransport(_fake_post)
+        ) as client:
+            with (
+                patch(
+                    "src.cage_finance.tools.trade_executor.redis_client"
+                ) as mock_redis,
+                patch.object(tools_module, "_USE_MOCK_BROKER", False),
+                patch.dict(
+                    os.environ,
+                    {
+                        "BROKER_API_KEY": "test-key",
+                        "BROKER_API_SECRET": "test-secret",
+                        "USE_MOCK_BROKER": "false",
+                    },
+                ),
+            ):
+                mock_redis.get.return_value = None  # no safety violation
 
-            result = await execute_trade(order, routing_seal="test-seal-c01-sell")
+                result = await execute_trade(
+                    order, routing_seal=seal, http_client=client
+                )
 
         assert captured_payload.get("side") == "sell", (
             f"Expected side='sell' in broker payload but got: {captured_payload}"
@@ -99,8 +121,13 @@ class TestC01TradeSide:
         assert "EXECUTED" in result
 
     @pytest.mark.asyncio
-    async def test_buy_order_sends_buy_to_broker(self):
+    async def test_buy_order_sends_buy_to_broker(self, monkeypatch):
         """A buy order must reach the broker with side='buy'."""
+        import json as _json
+
+        import httpx
+
+        import src.cage_finance.tools.trade_executor as tools_module
         from src.cage_finance.models.trade_order import TradeOrder
         from src.cage_finance.tools.trade_executor import execute_trade
 
@@ -114,31 +141,36 @@ class TestC01TradeSide:
             confidence=0.90,
             transaction_id=tx_id,
         )
+        seal = await self._mint_order_seal(monkeypatch, order)
 
         captured_payload: dict = {}
 
-        def _fake_post(url, json=None, headers=None, **kwargs):
-            captured_payload.update(json or {})
-            mock_resp = MagicMock()
-            mock_resp.json.return_value = {"id": "order-buy-001"}
-            mock_resp.raise_for_status.return_value = None
-            return mock_resp
+        def _fake_post(req: httpx.Request) -> httpx.Response:
+            captured_payload.update(_json.loads(req.content.decode("utf-8")))
+            return httpx.Response(200, json={"id": "order-buy-001"})
 
-        with (
-            patch("src.cage_finance.tools.trade_executor.redis_client") as mock_redis,
-            patch("requests.post", side_effect=_fake_post),
-            patch.dict(
-                os.environ,
-                {
-                    "BROKER_API_KEY": "test-key",
-                    "BROKER_API_SECRET": "test-secret",
-                    "USE_MOCK_BROKER": "false",
-                },
-            ),
-        ):
-            mock_redis.get.return_value = None
+        async with httpx.AsyncClient(
+            transport=httpx.MockTransport(_fake_post)
+        ) as client:
+            with (
+                patch(
+                    "src.cage_finance.tools.trade_executor.redis_client"
+                ) as mock_redis,
+                patch.object(tools_module, "_USE_MOCK_BROKER", False),
+                patch.dict(
+                    os.environ,
+                    {
+                        "BROKER_API_KEY": "test-key",
+                        "BROKER_API_SECRET": "test-secret",
+                        "USE_MOCK_BROKER": "false",
+                    },
+                ),
+            ):
+                mock_redis.get.return_value = None
 
-            result = await execute_trade(order, routing_seal="test-seal-c01-buy")
+                result = await execute_trade(
+                    order, routing_seal=seal, http_client=client
+                )
 
         assert captured_payload.get("side") == "buy", (
             f"Expected side='buy' in broker payload but got: {captured_payload}"
@@ -146,8 +178,11 @@ class TestC01TradeSide:
         assert "EXECUTED" in result
 
     @pytest.mark.asyncio
-    async def test_invalid_side_raises_assertion_error(self):
+    async def test_invalid_side_raises_assertion_error(self, monkeypatch):
         """An order with an invalid side must be rejected before any broker call."""
+        import httpx
+
+        import src.cage_finance.tools.trade_executor as tools_module
         from src.cage_finance.models.trade_order import TradeOrder
         from src.cage_finance.tools.trade_executor import execute_trade
 
@@ -161,31 +196,43 @@ class TestC01TradeSide:
             confidence=0.80,
             transaction_id=tx_id,
         )
+        seal = await self._mint_order_seal(monkeypatch, order)
+        broker_called = False
 
-        with (
-            patch("src.cage_finance.tools.trade_executor.redis_client") as mock_redis,
-            patch("requests.post") as mock_post,
-            patch.dict(
-                os.environ,
-                {
-                    "BROKER_API_KEY": "test-key",
-                    "BROKER_API_SECRET": "test-secret",
-                    "USE_MOCK_BROKER": "false",
-                },
-            ),
-        ):
-            mock_redis.get.return_value = None
+        def _never_called(_req: httpx.Request) -> httpx.Response:
+            nonlocal broker_called
+            broker_called = True
+            return httpx.Response(200, json={"id": "unexpected"})
 
-            with pytest.raises(
-                (ValueError, AssertionError), match="Invalid trade side"
+        async with httpx.AsyncClient(
+            transport=httpx.MockTransport(_never_called)
+        ) as client:
+            with (
+                patch(
+                    "src.cage_finance.tools.trade_executor.redis_client"
+                ) as mock_redis,
+                patch.object(tools_module, "_USE_MOCK_BROKER", False),
+                patch.dict(
+                    os.environ,
+                    {
+                        "BROKER_API_KEY": "test-key",
+                        "BROKER_API_SECRET": "test-secret",
+                        "USE_MOCK_BROKER": "false",
+                    },
+                ),
             ):
-                await execute_trade(order, routing_seal="test-seal-c01-invalid")
+                mock_redis.get.return_value = None
+
+                with pytest.raises(
+                    (ValueError, AssertionError), match="Invalid trade side"
+                ):
+                    await execute_trade(order, routing_seal=seal, http_client=client)
 
         # Broker must never be called for an invalid side.
-        mock_post.assert_not_called()
+        assert broker_called is False
 
     @pytest.mark.asyncio
-    async def test_mock_broker_preserves_sell_side(self):
+    async def test_mock_broker_preserves_sell_side(self, monkeypatch):
         """Mock broker fast-path must also reflect the requested side in its return value.
 
         _USE_MOCK_BROKER is a module-level constant evaluated at import time, so
@@ -206,6 +253,7 @@ class TestC01TradeSide:
             confidence=0.88,
             transaction_id=tx_id,
         )
+        seal = await self._mint_order_seal(monkeypatch, order)
 
         with (
             patch("src.cage_finance.tools.trade_executor.redis_client") as mock_redis,
@@ -213,7 +261,7 @@ class TestC01TradeSide:
         ):
             mock_redis.get.return_value = None
 
-            result = await execute_trade(order, routing_seal="test-seal-c01-mock")
+            result = await execute_trade(order, routing_seal=seal)
 
         # The mock result string includes the side from the order object.
         assert "sell" in result.lower(), (

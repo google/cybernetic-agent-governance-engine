@@ -56,6 +56,7 @@ from __future__ import annotations
 import argparse
 import asyncio
 import json
+import os
 import sys
 import tempfile
 import time
@@ -70,6 +71,7 @@ from unittest.mock import patch
 # ---------------------------------------------------------------------------
 _REPO_ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(_REPO_ROOT))
+os.environ.setdefault("CAGE_ENV", "dev")
 
 # ---------------------------------------------------------------------------
 # Terminal colours (no external deps — pure ANSI)

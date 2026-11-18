@@ -3,7 +3,7 @@ system-security-plan:
   metadata:
     title: CAGE System Security Plan (EU_ECB — EU AI Act / GDPR / DORA)
     published: '2026-06-15T00:00:00Z'
-    last-modified: '2026-11-13T00:54:23Z'
+    last-modified: '2026-11-15T04:48:23Z'
     version: 1.0.0-draft+stpa
     oscal-version: 1.0.4
     remarks: 'This System Security Plan (SSP) documents the compliance controls implemented
@@ -277,7 +277,9 @@ system-security-plan:
       links:
       - href: ../../compliance/lula/lula-validation-eu-fria.yaml
         rel: lula
-        text: 'Lula validation: EU AI Act Art. 27 FRIA'
+        text: 'Lula validation: EU AI Act Art. 27 FRIA (rated Stub: checks gateway
+          readiness and the region source only, not the fria tier or the EU_ECB region;
+          POAM-2026-219)'
     - uuid: eu-ecb-comp-0005-4000-8000-000000000005
       type: software
       title: CAGE Regional Finance Threshold Overlay and Trade-Confidence Tier
@@ -656,7 +658,9 @@ system-security-plan:
         links:
         - href: ../../compliance/lula/lula-validation-eu-fria.yaml
           rel: reference
-          text: Lula automated validation for EU AI Act Art. 27
+          text: 'Lula manifest for EU AI Act Art. 27, rated Stub and not evidence
+            for this statement: it checks gateway readiness and the region source
+            only (POAM-2026-219)'
     - uuid: eu-ecb-req-0005-4000-8000-000000000005
       control-id: cm-6
       description: 'Configuration settings (NIST SP 800-53 CM-6). The effective EU_ECB
@@ -905,51 +909,51 @@ system-security-plan:
         \ High-Risk AI — Annex III §5(b)\n          Framework reference: https://eur-lex.europa.eu/legal-content/EN/TXT/?uri=CELEX%3A32024R1689\n\
         \          System: CAGE Financial Advisor v1.1.0\n          UCAs encoded:\
         \ 12 (6 enforcing server-bound, 6 advisory)\n          Hazards modelled: 7\n\
-        \          Safety constraints: 3\n          Last compiled: 2026-11-13T00:54:23Z\n\
-        \n          UCA-to-Control mapping (EU AI Act (Regulation (EU) 2024/1689)\
-        \ High-Risk AI — Annex III §5(b)):\n            UCA-1 (unsafe_action): Agent\
-        \ executes write operation without a human approval token.\n  → EU_AI_ACT:\
-        \ Art. 9(5) (Risk Management — Residual risk mitigation measures), Art. 14\
-        \ (Human Oversight — Technical measures to enable oversight)\nUCA-10 (wrong_timing)\
-        \ [advisory — partial]: Agent reads account balance with stale connection\
-        \ data.\n  → EU_AI_ACT: Art. 9(2)(b) (Risk Controls — Identification of known\
-        \ and foreseeable risks), Art. 12 (Record-Keeping and Automatic Logging Obligations)\n\
-        UCA-12 (unsafe_action) [advisory — partial]: Agent executes bounded trade\
-        \ when bounding contracts B1-B10 fail validation. Phase 5: execute_trade_bounded\
-        \ is EXTERNALLY_REVERSIBLE when B10 rollback window validation passes, enabling\
-        \ HITL review without confidence hard-gate per VEC-004. When B10 fails (closed\
-        \ rollback window), the bounding tier raises a HITL violation (B10_ROLLBACK_WINDOW_CLOSED)\
-        \ and the request parks for human approval, as an irreversible action would.\n\
-        \  → EU_AI_ACT: Art. 9(5) (Risk Management — Residual risk mitigation measures),\
-        \ Art. 14 (Human Oversight — Technical measures to enable oversight)\nUCA-13\
-        \ (unsafe_action): Agent executes sell order exceeding the allowable fraction\
-        \ of portfolio value.\n  → EU_AI_ACT: Art. 9(5) (Risk Management — Residual\
-        \ risk mitigation measures), Art. 14 (Human Oversight — Technical measures\
-        \ to enable oversight)\nUCA-2 (wrong_timing): Agent executes trade with stale\
-        \ market data (latency > threshold).\n  → EU_AI_ACT: Art. 10(3) (Data Governance\
-        \ — Examination of data for bias), Art. 17 (Quality Management System (QMS)\
-        \ Requirements)\nUCA-3 (unsafe_action) [advisory — partial]: Agent outputs\
-        \ PII to user interface.\n  → EU_AI_ACT: Art. 10(5) (Data Governance — Personal\
-        \ data and data minimisation), GDPR Art. 22 (Automated Individual Decision-Making\
-        \ Including Profiling)\nUCA-4 (stopped_too_soon) [advisory — partial]: Agent\
-        \ debits account but fails to credit asset (atomic failure).\n  → EU_AI_ACT:\
-        \ Art. 12 (Record-Keeping and Automatic Logging Obligations), Art. 17 (Quality\
-        \ Management System (QMS) Requirements)\nUCA-5 (unsafe_action): Agent executes\
-        \ buy order when daily drawdown exceeds limit.\n  → EU_AI_ACT: Art. 9(2)(b)\
-        \ (Risk Controls — Identification of known and foreseeable risks), Art. 14\
-        \ (Human Oversight — Technical measures to enable oversight)\nUCA-6 (wrong_timing):\
-        \ Agent submits market order exceeding allowable fraction of daily volume.\n\
-        \  → EU_AI_ACT: Art. 9(5) (Risk Management — Residual risk mitigation measures),\
-        \ Art. 14 (Human Oversight — Technical measures to enable oversight)\nUCA-7\
-        \ (unsafe_action): Adversarial prompt injection score exceeds detection threshold.\n\
-        \  → EU_AI_ACT: Art. 9(5) (Risk Management — Residual risk mitigation measures),\
-        \ Annex III §5(b) (High-Risk AI Classification — Creditworthiness and credit\
-        \ scoring)\nUCA-8 (wrong_timing) [advisory — partial]: Agent executes trade\
-        \ before risk assessment is complete.\n  → EU_AI_ACT: Art. 9 (Risk Management\
-        \ System for High-Risk AI), Art. 14 (Human Oversight — Technical measures\
-        \ to enable oversight)\nUCA-9 (wrong_timing) [advisory — partial]: Agent executes\
-        \ trade with compliance check bypassed.\n  → EU_AI_ACT: Art. 9 (Risk Management\
-        \ System for High-Risk AI), Art. 17 (Quality Management System (QMS) Requirements)"
+        \          Safety constraints: 3\n\n          UCA-to-Control mapping (EU AI\
+        \ Act (Regulation (EU) 2024/1689) High-Risk AI — Annex III §5(b)):\n     \
+        \       UCA-1 (unsafe_action): Agent executes write operation without a human\
+        \ approval token.\n  → EU_AI_ACT: Art. 9(5) (Risk Management — Residual risk\
+        \ mitigation measures), Art. 14 (Human Oversight — Technical measures to enable\
+        \ oversight)\nUCA-10 (wrong_timing) [advisory — partial]: Agent reads account\
+        \ balance with stale connection data.\n  → EU_AI_ACT: Art. 9(2)(b) (Risk Controls\
+        \ — Identification of known and foreseeable risks), Art. 12 (Record-Keeping\
+        \ and Automatic Logging Obligations)\nUCA-12 (unsafe_action) [advisory — partial]:\
+        \ Agent executes bounded trade when bounding contracts B1-B10 fail validation.\
+        \ Phase 5: execute_trade_bounded is EXTERNALLY_REVERSIBLE when B10 rollback\
+        \ window validation passes, enabling HITL review without confidence hard-gate\
+        \ per VEC-004. When B10 fails (closed rollback window), the bounding tier\
+        \ raises a HITL violation (B10_ROLLBACK_WINDOW_CLOSED) and the request parks\
+        \ for human approval, as an irreversible action would.\n  → EU_AI_ACT: Art.\
+        \ 9(5) (Risk Management — Residual risk mitigation measures), Art. 14 (Human\
+        \ Oversight — Technical measures to enable oversight)\nUCA-13 (unsafe_action):\
+        \ Agent executes sell order exceeding the allowable fraction of portfolio\
+        \ value.\n  → EU_AI_ACT: Art. 9(5) (Risk Management — Residual risk mitigation\
+        \ measures), Art. 14 (Human Oversight — Technical measures to enable oversight)\n\
+        UCA-2 (wrong_timing): Agent executes trade with stale market data (latency\
+        \ > threshold).\n  → EU_AI_ACT: Art. 10(3) (Data Governance — Examination\
+        \ of data for bias), Art. 17 (Quality Management System (QMS) Requirements)\n\
+        UCA-3 (unsafe_action) [advisory — partial]: Agent outputs PII to user interface.\n\
+        \  → EU_AI_ACT: Art. 10(5) (Data Governance — Personal data and data minimisation),\
+        \ GDPR Art. 22 (Automated Individual Decision-Making Including Profiling)\n\
+        UCA-4 (stopped_too_soon) [advisory — partial]: Agent debits account but fails\
+        \ to credit asset (atomic failure).\n  → EU_AI_ACT: Art. 12 (Record-Keeping\
+        \ and Automatic Logging Obligations), Art. 17 (Quality Management System (QMS)\
+        \ Requirements)\nUCA-5 (unsafe_action): Agent executes buy order when daily\
+        \ drawdown exceeds limit.\n  → EU_AI_ACT: Art. 9(2)(b) (Risk Controls — Identification\
+        \ of known and foreseeable risks), Art. 14 (Human Oversight — Technical measures\
+        \ to enable oversight)\nUCA-6 (wrong_timing): Agent submits market order exceeding\
+        \ allowable fraction of daily volume.\n  → EU_AI_ACT: Art. 9(5) (Risk Management\
+        \ — Residual risk mitigation measures), Art. 14 (Human Oversight — Technical\
+        \ measures to enable oversight)\nUCA-7 (unsafe_action): Adversarial prompt\
+        \ injection score exceeds detection threshold.\n  → EU_AI_ACT: Art. 9(5) (Risk\
+        \ Management — Residual risk mitigation measures), Annex III §5(b) (High-Risk\
+        \ AI Classification — Creditworthiness and credit scoring)\nUCA-8 (wrong_timing)\
+        \ [advisory — partial]: Agent executes trade before risk assessment is complete.\n\
+        \  → EU_AI_ACT: Art. 9 (Risk Management System for High-Risk AI), Art. 14\
+        \ (Human Oversight — Technical measures to enable oversight)\nUCA-9 (wrong_timing)\
+        \ [advisory — partial]: Agent executes trade with compliance check bypassed.\n\
+        \  → EU_AI_ACT: Art. 9 (Risk Management System for High-Risk AI), Art. 17\
+        \ (Quality Management System (QMS) Requirements)"
       props:
       - name: implementation-status
         value: partial
@@ -963,8 +967,6 @@ system-security-plan:
         value: '6'
       - name: hazard-count
         value: '7'
-      - name: last-compiled
-        value: '2026-11-13T00:54:23Z'
       - name: target-framework
         value: EU AI Act (Regulation (EU) 2024/1689) High-Risk AI — Annex III §5(b)
       - name: artifact-python
@@ -1177,7 +1179,7 @@ system-security-plan:
       - href: compliance/lula/lula-validation-dora-art10.yaml
         media-type: application/yaml
     - uuid: eu-ecb-res-0010-4000-8000-000000000010
-      title: CAGE EU AI Act Lula Validation — Art. 27 FRIA
+      title: CAGE EU AI Act Lula Validation — Art. 27 FRIA (rated Stub, POAM-2026-219)
       rlinks:
       - href: compliance/lula/lula-validation-eu-fria.yaml
         media-type: application/yaml

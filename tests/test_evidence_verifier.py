@@ -106,7 +106,19 @@ async def _ingest(sink, n: int, start: int = 0) -> None:
         )
 
 
-def _custodian(server, store, signer, *, require_signature=True):
+def _custodian(
+    server,
+    store,
+    signer,
+    *,
+    require_signature=True,
+    deployment_posture: str | None = None,
+):
+    resolved_posture = (
+        ("staging" if require_signature else None)
+        if deployment_posture is None
+        else deployment_posture
+    )
     return EvidenceCustodian(
         _redis(server),
         store,
@@ -115,13 +127,21 @@ def _custodian(server, store, signer, *, require_signature=True):
         batch_size=100,
         require_signature=require_signature,
         interval_s=0.01,
+        deployment_posture=resolved_posture,
     )
 
 
-async def _custody_batches(server, store, signer, sizes: list[int]):
+async def _custody_batches(
+    server,
+    store,
+    signer,
+    sizes: list[int],
+    *,
+    deployment_posture: str = "staging",
+):
     """Produce and custody one batch per entry in ``sizes``; return outcomes."""
     sink = await _sink(server)
-    custodian = _custodian(server, store, signer)
+    custodian = _custodian(server, store, signer, deployment_posture=deployment_posture)
     outcomes, produced = [], 0
     for size in sizes:
         await _ingest(sink, size, start=produced)
@@ -988,6 +1008,12 @@ class TestCitabilityAndOscalExport:
 
 
 class _NonNullStore(NullColdStore):
+    def __init__(self) -> None:
+        from collections import OrderedDict
+
+        self._max_entries = 1000
+        self._entries = OrderedDict()
+
     @property
     def backend_id(self) -> str:
         return "gcs"
@@ -1514,3 +1540,285 @@ class TestBoundGenesisRotation:
         report = await _verifier(store, provider).verify_all()
         assert not report.ok
         assert "invalid previous_chain_head_hash" in _reasons(report)
+
+
+class TestPostureStampingAndV1Qualification:
+    """Verify cage-evidence-batch/2 posture stamping, v1 structural qualification, and downgrade bounds."""
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("posture", ["production", "staging"])
+    async def test_v2_stamped_archive_is_unqualified_citable(
+        self, server, store, signer, provider, posture
+    ):
+        await _custody_batches(
+            server, store, signer, [2, 3], deployment_posture=posture
+        )
+        report = await _verifier(store, provider).verify_all()
+
+        assert report.ok, _reasons(report)
+        assert report.citable is True
+        assert report.citable_qualifications == []
+        assert report.posture_status == posture
+        assert all(
+            b.attestation_schema == "cage-evidence-batch/2" for b in report.verified
+        )
+        assert all(b.deployment_posture == posture for b in report.verified)
+        assert all(b.posture_status == posture for b in report.verified)
+        assert len(report.assert_citable(allow_qualifications=False)) == 2
+
+        as_dict = report.to_dict()
+        assert as_dict["citable"] is True
+        assert as_dict["citable_qualifications"] == []
+        assert as_dict["posture_status"] == posture
+        assert all(v["posture_status"] == posture for v in as_dict["verified"])
+
+    @pytest.mark.asyncio
+    async def test_pre_stamping_v1_archive_verifies_with_structural_qualification(
+        self, server, store, signer, provider
+    ):
+        [outcome] = await _custody_batches(server, store, signer, [3])
+        att = json.loads(store._entries[outcome.attestation_key])
+        att["schema"] = "cage-evidence-batch/1"
+        att.pop("deployment_posture", None)
+        await _resign(store, signer, outcome.attestation_key, att)
+
+        verifier = _verifier(store, provider)
+        report = await verifier.verify_all()
+
+        assert report.ok, _reasons(report)
+        assert report.citable is True
+        assert report.citable_qualifications == ["unstamped_v1_posture"]
+        assert report.posture_status == "unstamped_v1"
+        assert report.verified[0].attestation_schema == "cage-evidence-batch/1"
+        assert report.verified[0].deployment_posture is None
+        assert report.verified[0].posture_status == "unstamped_v1"
+
+        # Default citation accepts valid pre-stamping v1 evidence without extra flags.
+        assert len(report.assert_citable()) == 1
+        assert (await verifier.verify_for_citation()).citable is True
+
+        # Strict callers rejecting qualified archives fail closed with structured reason.
+        with pytest.raises(
+            ev.EvidenceVerificationError,
+            match=r"archive has citation qualification\(s\) \(unstamped_v1_posture\)",
+        ):
+            report.assert_citable(allow_qualifications=False)
+        with pytest.raises(
+            ev.EvidenceVerificationError,
+            match="unstamped_v1_posture",
+        ):
+            await verifier.verify_for_citation(allow_qualifications=False)
+
+    @pytest.mark.asyncio
+    async def test_upgrade_archive_mixing_v1_and_v2_staging_surfaces_unstamped_v1_qualification(
+        self, server, store, signer, provider
+    ):
+        first, second = await _custody_batches(
+            server, store, signer, [2, 2], deployment_posture="staging"
+        )
+        att_v1 = json.loads(store._entries[first.attestation_key])
+        att_v1["schema"] = "cage-evidence-batch/1"
+        att_v1.pop("deployment_posture", None)
+        await _resign(store, signer, first.attestation_key, att_v1)
+
+        att_v2 = json.loads(store._entries[second.attestation_key])
+        assert att_v2["schema"] == "cage-evidence-batch/2"
+        assert att_v2["deployment_posture"] == "staging"
+
+        report = await _verifier(store, provider).verify_all()
+        assert report.ok, _reasons(report)
+        assert report.citable is True
+        assert report.citable_qualifications == ["unstamped_v1_posture"]
+        assert report.posture_status == "unstamped_v1"
+        assert [b.posture_status for b in report.verified] == [
+            "unstamped_v1",
+            "staging",
+        ]
+
+    @pytest.mark.asyncio
+    async def test_mixing_v2_staging_and_production_in_one_archive_fails_closed(
+        self, server, store, signer, provider
+    ):
+        _first, second = await _custody_batches(
+            server, store, signer, [2, 2], deployment_posture="staging"
+        )
+        att_prod = json.loads(store._entries[second.attestation_key])
+        att_prod["deployment_posture"] = "production"
+        await _resign(store, signer, second.attestation_key, att_prod)
+
+        report = await _verifier(store, provider).verify_all()
+        assert report.ok is False
+        assert report.citable is False
+        assert report.posture_status is None
+        assert report.citable_qualifications == []
+        assert "mixes incompatible deployment postures" in _reasons(report)
+        assert report.prefix in [f.key for f in report.failures]
+
+    @pytest.mark.asyncio
+    async def test_downgrade_or_posture_mutation_without_signing_key_breaks_signature(
+        self, server, store, signer, provider
+    ):
+        """Cryptographic downgrade bound: schema and deployment_posture sit inside the
+        KMS-signed JCS payload, so relabelling v2 -> v1 or mutating staging -> production
+        without EVIDENCE_KMS_KEY fails signature verification."""
+        [outcome] = await _custody_batches(
+            server, store, signer, [2], deployment_posture="staging"
+        )
+        original_bytes = store._entries[outcome.attestation_key]
+
+        # Attack 1: Downgrade v2 -> v1 and strip deployment_posture without re-signing.
+        downgraded = json.loads(original_bytes)
+        downgraded["schema"] = "cage-evidence-batch/1"
+        downgraded.pop("deployment_posture", None)
+        store._entries[outcome.attestation_key] = json.dumps(
+            downgraded, sort_keys=True, separators=(",", ":")
+        ).encode()
+        downgrade_report = await _verifier(store, provider).verify_all()
+        assert downgrade_report.ok is False
+        assert downgrade_report.citable is False
+        assert downgrade_report.posture_status is None
+        assert "signature does not verify" in _reasons(downgrade_report)
+
+        # Attack 2: Relabel staging -> production on v2 without re-signing.
+        escalated = json.loads(original_bytes)
+        escalated["deployment_posture"] = "production"
+        store._entries[outcome.attestation_key] = json.dumps(
+            escalated, sort_keys=True, separators=(",", ":")
+        ).encode()
+        escalated_report = await _verifier(store, provider).verify_all()
+        assert escalated_report.ok is False
+        assert escalated_report.citable is False
+        assert escalated_report.posture_status is None
+        assert "signature does not verify" in _reasons(escalated_report)
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        ("mutate", "expected_reason"),
+        [
+            (
+                lambda a: a.update(
+                    schema="cage-evidence-batch/1", deployment_posture="staging"
+                ),
+                "must not carry deployment_posture",
+            ),
+            (
+                lambda a: a.pop("deployment_posture", None),
+                "missing deployment_posture",
+            ),
+            (
+                lambda a: a.update(deployment_posture="dev"),
+                "not citable",
+            ),
+            (
+                lambda a: a.update(deployment_posture="test"),
+                "not citable",
+            ),
+            (
+                lambda a: a.update(deployment_posture="local"),
+                "not citable",
+            ),
+        ],
+        ids=[
+            "v1-with-posture",
+            "v2-missing-posture",
+            "v2-dev-posture",
+            "v2-test-posture",
+            "v2-local-posture",
+        ],
+    )
+    async def test_malformed_posture_claims_fail_even_when_signed(
+        self, server, store, signer, provider, mutate, expected_reason
+    ):
+        [outcome] = await _custody_batches(server, store, signer, [2])
+        att = json.loads(store._entries[outcome.attestation_key])
+        mutate(att)
+        await _resign(store, signer, outcome.attestation_key, att)
+
+        report = await _verifier(store, provider).verify_all()
+        assert report.ok is False
+        assert report.citable is False
+        assert report.posture_status is None
+        assert expected_reason in _reasons(report)
+
+    def test_cli_and_http_require_unqualified_and_oscal_posture_props(
+        self, server, store, signer, provider, monkeypatch, capsys
+    ):
+        from unittest.mock import AsyncMock, MagicMock, patch
+
+        from fastapi.testclient import TestClient
+
+        from src.compliance_bridge.main import app
+
+        [outcome] = asyncio.run(
+            _custody_batches(server, store, signer, [2], deployment_posture="staging")
+        )
+        verifier = _verifier(store, provider)
+        monkeypatch.setattr(ev, "_run", lambda p: verifier.verify_all(p))
+
+        # 1. v2 staging passes CLI --require-unqualified
+        rc_v2 = ev.main(["--require-unqualified", "--json"])
+        out_v2 = json.loads(capsys.readouterr().out)
+        assert rc_v2 == 0
+        assert out_v2["posture_status"] == "staging"
+        assert out_v2["citable_qualifications"] == []
+
+        # 2. Convert archive to signed v1 -> --require-citable exits 0, --require-unqualified exits 1
+        att_v1 = json.loads(store._entries[outcome.attestation_key])
+        att_v1["schema"] = "cage-evidence-batch/1"
+        att_v1.pop("deployment_posture", None)
+        asyncio.run(_resign(store, signer, outcome.attestation_key, att_v1))
+
+        rc_citable = ev.main(["--require-citable", "--json"])
+        out_citable = json.loads(capsys.readouterr().out)
+        assert rc_citable == 0
+        assert out_citable["citable"] is True
+        assert out_citable["posture_status"] == "unstamped_v1"
+        assert out_citable["citable_qualifications"] == ["unstamped_v1_posture"]
+
+        rc_strict = ev.main(["--require-unqualified", "--json"])
+        out_strict = json.loads(capsys.readouterr().out)
+        assert rc_strict == 1
+        assert "unstamped_v1_posture" in out_strict["citation_error"]
+
+        # 3. HTTP /v1/evidence/verify and /v1/oscal/assessment-results surface posture & qualification
+        fake_metric = MagicMock()
+        fake_metric.model_dump.return_value = {
+            "safety_rate": 1.0,
+            "evidence_age_seconds": 5,
+        }
+        with (
+            patch("src.compliance_bridge.main.Langfuse", return_value=MagicMock()),
+            patch(
+                "src.compliance_bridge.main.get_compliance_metrics",
+                new=AsyncMock(return_value=fake_metric),
+            ),
+        ):
+            with TestClient(app) as client:
+                app.state.evidence_verifier = verifier
+
+                r_default = client.get("/v1/evidence/verify?require_citable=true")
+                assert r_default.status_code == 200
+                assert r_default.json()["posture_status"] == "unstamped_v1"
+                assert r_default.json()["citable_qualifications"] == [
+                    "unstamped_v1_posture"
+                ]
+
+                r_unqual = client.get("/v1/evidence/verify?require_unqualified=true")
+                assert r_unqual.status_code == 409
+                assert "unstamped_v1_posture" in r_unqual.json()["citation_error"]
+
+                r_oscal = client.get(
+                    "/v1/oscal/assessment-results?verify_custody=true&audit_id=v1-qual"
+                )
+                assert r_oscal.status_code == 200
+                result_props = r_oscal.json()["document"]["assessment-results"][
+                    "results"
+                ][0]["props"]
+                props_by_name = {p["name"]: p["value"] for p in result_props}
+                assert (
+                    props_by_name["evidence-custody-posture-status"] == "unstamped_v1"
+                )
+                assert (
+                    props_by_name["evidence-custody-qualification"]
+                    == "unstamped_v1_posture"
+                )

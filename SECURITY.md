@@ -110,13 +110,21 @@ environments generally; `finance` ([`src/cage_finance/`](src/cage_finance/)) is
 the sole finalized, production-eligible domain plugin (`healthcare` in
 [`src/cage_healthcare/`](src/cage_healthcare/) and `physical_ai` in
 [`src/cage_physical_ai/`](src/cage_physical_ai/) ship as non-production
-reference stubs; `POAM-2026-076`–`078`, `POAM-2026-198`), and the selectable
-jurisdictional postures (`US_FED`, `EU_ECB`, `APAC_MAS`, `LOCAL`) determine
-which regulatory controls are in scope for a given deployment. Key security
-controls are documented in:
+reference stubs; `POAM-2026-076`–`078`, `POAM-2026-198`), and the jurisdictional
+region (`US_FED`, `EU_ECB` or `APAC_MAS`, set by `CAGE_DEPLOYMENT_REGION` and
+read only by [`resolve_deployment_region()`](src/gateway/governance/env_posture.py);
+unknown values are refused, and an unset value is refused in enforcing postures
+and resolves to `US_FED` only in `dev`, `test` and `ci`) determines which
+regulatory controls are in scope for a given deployment. Key security controls are documented in:
 
-- [`docs/security/SECURITY_STATUS.md`](docs/security/SECURITY_STATUS.md) — full
-  security posture, NIST RMF status, and all open POA&M items
+- [`docs/POAM.md`](docs/POAM.md) — open findings and accepted risks;
+  [`OSCAL_EVIDENCE_CLAIM_REGISTER.md`](docs/compliance/OSCAL_EVIDENCE_CLAIM_REGISTER.md)
+  — whether each control claim's evidence holds;
+  [`compliance/gate_w_certification.json`](compliance/gate_w_certification.json) —
+  what was last certified, at which commit
+- [`docs/security/SECURITY_STATUS.md`](docs/security/SECURITY_STATUS.md) — a
+  superseded v3.0.1 snapshot (2026-08-28), kept because other documents link to
+  it; do not cite it as current status
 - [`docs/operations/KEY_ROTATION.md`](docs/operations/KEY_ROTATION.md) — cryptographic key lifecycle and rotation runbooks (SC-12 / IA-5)
 - [`docs/architecture/GATEWAY_ARCHITECTURE.md`](docs/architecture/GATEWAY_ARCHITECTURE.md)
 - [`infra/targets/gcp-gke/network_policy.tf`](infra/targets/gcp-gke/network_policy.tf) — Kubernetes `NetworkPolicy` & GKE Dataplane V2 `FQDNNetworkPolicy` isolation
@@ -127,7 +135,7 @@ controls are documented in:
 | Control | Census Claim ID | Implementation |
 |---|---|---|
 | Governance signing | `sp800-53-component-definition.yaml#61c43f8a-6693-4049-ae09-edd8b22f500a` | Cloud KMS asymmetric signing (cloud providers in `src/integrations/{gcp,aws,azure}/kms_provider.py`, loaded via `signer_factory.py`); separate keys per role (gateway seal, reconciler snapshot, compliance-bridge evidence) with kid-resolved verification. Software Ed25519 / HMAC signers are refused under an enforcing posture and allowed only in dev/test/CI. 90-day rotation cadence per `KEY_ROTATION.md` |
-| Routing seal v2 | `sp800-53-component-definition.yaml#0c2d40d7-0d19-4b9d-9afa-6c80967b31b4` | 4-tuple token `<expire_hex>.<action_slug>.<record_hash_hex>.<hmac_hex>` binding SHA-256 evidence record hash (KMS-signed JWT seals when a KMS signer is active); internal to `/tools/execute` and `ConsequenceGateway` — **not** used for caller authentication |
+| Routing seal (v3) | `sp800-53-component-definition.yaml#0c2d40d7-0d19-4b9d-9afa-6c80967b31b4` | Single-use JWT signed by the gateway's governance signer (Cloud KMS in enforcing postures), verified by `kid` against an independently resolved trust anchor and bound to the SHA-256 evidence `record_hash`. The HMAC v2 4-tuple is a legacy path `verify_seal()` rejects while `CAGE_SEAL_STRICT_MODE` is true (the default) and always in production. Internal to `/tools/execute` and `ConsequenceGateway` — **not** used for caller authentication |
 | TLS & Transport Security | `sp800-53-component-definition.yaml#230de322-4b76-4a0d-b07d-267f4fa23769` | Redis TLS 1.2+ enforcement (`src/gateway/infrastructure/redis_client.py`), OIDC JWKS `verify=True` enforcement, and Linkerd mTLS across meshed pods (`tests/test_tls_enforcement.py`). Outbound HTTP client wiring for `create_hardened_client_context()` (`src/gateway/infrastructure/tls_context.py`) is open under reopened `POAM-2026-011` (`docs/POAM.md`) |
 | Base Image Hardening | `system-security-plan.yaml#s3000001-plat-si3-8000-platform0001` | Advisor, gateway, compliance-bridge and NeMo Guardrails images use two-stage builds on a digest-pinned Wolfi base (`cgr.dev/chainguard/wolfi-base`) with no compiler, util-linux or package-manager cache in the runtime stage and a build-time `apk upgrade`; images are tagged by git SHA and their digests signed for Binary Authorization at build time (`scripts/build_images.sh`) (`lula-validation-si2.yaml` active; `SI-3` runtime admission stub open) |
 | Prompt injection detection | `sp800-53-component-definition.yaml#8e46d991-dd78-416a-897d-f909cb63be8d` | Aho-Corasick O(n) scan; 14+ patterns (partially-implemented: Stage 1 deterministic scan active; semantic tier opt-in) |
@@ -139,12 +147,12 @@ controls are documented in:
 | Caller identity | `sp800-53-component-definition.yaml#ca8f96e2-69a3-4d6b-980c-962e73e075d8` | Gateway ingress requires a Linkerd-verified `l5d-client-id` that matches `CAGE_TRUSTED_CLIENT_IDENTITIES` ([`WorkloadIdentityMiddleware`](src/gateway/server/workload_identity.py)); enforced in every environment, **no** header/body identity fallback, fail-closed 403. An RFC 9449 `DPoPValidator` (`src/gateway/server/dpop_validator.py`) ships and is unit-tested but is **not yet wired into any ingress path**. See [`docs/architecture/AGENT_IDENTITY_BINDING_SPEC.md`](docs/architecture/AGENT_IDENTITY_BINDING_SPEC.md) (partially-implemented: SVID binding enforced; DPoP unwired) |
 | Egress credentials (v3.1.0, seam only — `POAM-2026-072`) | `system-security-plan.yaml#h8000009-5000-4000-8000-000000000017` | `CredentialBrokerAdapter` `Protocol` in Layer 1 (`src/gateway/governance/seams/credential_broker.py`); when a concrete broker is supplied to `Actuator01BindingAdapter`, credentials are fetched per dispatch, masked in logs, excluded from `ActuationReceipt`, and fail closed on `CredentialNotFound` / `CredentialAccessDenied` via `ingest_actuation_receipt()`. At HEAD no concrete `CredentialBrokerAdapter` ships in `src/` and `BrokerActuator` reads `BROKER_API_KEY` from `os.environ` (`POAM-2026-072` reopened) |
 | Egress lockdown | `system-security-plan.yaml#p7000001-plat-sc7-8000-platform0001` | GKE Dataplane V2 `NetworkPolicy` & `FQDNNetworkPolicy` resources in `infra/targets/gcp-gke/network_policy.tf` (`POAM-2026-190`, `POAM-2026-195` closed; L3/L4 FQDN wildcard scope open under `POAM-2026-152`) |
-| Token quota enforcement | `component-definition.yaml#tqp007-req-0001-0000-0000-000000000001` | Per-session step-count (≤12) and token (≤100k) via Redis atomic Lua counters; fail-closed (partially-implemented: Lua quota enforced; Lula `CTRL_TQP_007` stub open) |
+| Token quota enforcement | `component-definition.yaml#tqp007-req-0001-0000-0000-000000000001` | Per-session step-count (≤12) and token (≤100k) via Redis atomic Lua counters; fail-closed (partially-implemented: Lua quota enforced; `lula-validation-tqp007.yaml` is rated Stub: it checks only that the gateway is ready with a `REDIS_URL`, not fail-closed behaviour, POAM-2026-219) |
 
-> **Note:** CAGE v3.x is a reference architecture. Regulated-environment deployers
-> must conduct their own risk assessment before production use. See
-> [`docs/security/SECURITY_STATUS.md`](docs/security/SECURITY_STATUS.md) for the complete
-> posture breakdown and pre-deployment checklist.
+> **Note:** CAGE is a reference architecture. Regulated-environment deployers
+> must conduct their own risk assessment before production use. For current
+> status see [`docs/POAM.md`](docs/POAM.md) and the security and compliance
+> status section of the root [`README.md`](README.md).
 
 ### KMS Cryptographic Signing Security
 

@@ -11,206 +11,240 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
+# Regression coverage binding: POAM-2026-220
 
-"""
-tests/test_evidence_residency.py — Unit tests for declarative evidence residency resolver.
+"""Unit tests for locked evidence cold-store data residency (residency.py).
 
-Tests:
-    - Regional bucket prefix resolution (US_FED, EU_ECB, APAC_MAS, LOCAL)
-    - Fail-closed behavior on missing configuration
-    - Cross-region residency violation detection
-    - Location matching and prefix override validation
-    - Unknown region rejection
+Verifies:
+- Every enforcing posture (``production``, ``staging``, ``local``, unknown
+  ``CAGE_ENV``) enforces geographic residency; only permissive postures
+  (``dev``, ``test``, ``ci``) skip location validation.
+- Bucket residency is verified exclusively against the bucket's cloud location
+  (``location`` argument or ``EVIDENCE_COLD_STORE_LOCATION``). Bucket-name
+  prefixes and caller-pod ``GOOGLE_CLOUD_LOCATION`` / ``AWS_REGION`` variables
+  never satisfy residency.
+- ``residency.json`` defines rules for ``SUPPORTED_REGIONS`` only (no ``LOCAL``
+  rule, no ``allowed_prefixes`` / ``allow_prefixes`` / ``default_bucket``).
+- The ``POAM-2026-220`` production compliance-bridge environment
+  (``<project>-evidence-worm-prod`` + ``EVIDENCE_COLD_STORE_LOCATION``) resolves
+  cleanly in both ``prod`` and ``staging``, and fails closed when the location
+  is omitted or out-of-region, including through ``get_cold_store(bucket=...)``.
 """
 
 from __future__ import annotations
 
-import os
-
 import pytest
 
+from src.gateway.governance.env_posture import SUPPORTED_REGIONS, DeploymentRegionError
+from src.gateway.governance.evidence.factory import get_cold_store
 from src.gateway.governance.evidence.residency import (
+    COLD_STORE_LOCATION_ENV_VAR,
     MissingBucketConfigError,
     ResidencyViolationError,
     clear_residency_cache,
+    load_residency_config,
     resolve_cold_store_bucket,
 )
 
-pytestmark = [pytest.mark.local, pytest.mark.unit]
+pytestmark = [pytest.mark.unit, pytest.mark.local]
 
 
 @pytest.fixture(autouse=True)
-def clean_env(monkeypatch: pytest.MonkeyPatch):
+def clean_env(monkeypatch: pytest.MonkeyPatch) -> None:
     """Ensure clean residency-related environment variables for each test."""
     clear_residency_cache()
-    for var in [
+    for var in (
         "CAGE_DEPLOYMENT_REGION",
+        "EVIDENCE_COLD_STORE",
         "EVIDENCE_COLD_STORE_BUCKET",
         "EVIDENCE_COLD_STORE_BUCKET_US",
         "EVIDENCE_COLD_STORE_BUCKET_EU",
         "EVIDENCE_COLD_STORE_BUCKET_APAC",
-        "EVIDENCE_COLD_STORE_BUCKET_LOCAL",
+        COLD_STORE_LOCATION_ENV_VAR,
         "GOOGLE_CLOUD_LOCATION",
         "AWS_REGION",
-    ]:
+    ):
         monkeypatch.delenv(var, raising=False)
 
 
+def test_residency_config_matches_supported_regions_without_prefixes_or_local() -> None:
+    """residency.json covers SUPPORTED_REGIONS only, with no prefix or LOCAL fields."""
+    cfg = load_residency_config()
+    regions = cfg["regions"]
+    assert set(regions) == SUPPORTED_REGIONS
+    for region, rule in regions.items():
+        assert rule.get("allowed_locations"), region
+        for retired in ("allowed_prefixes", "allow_prefixes", "default_bucket"):
+            assert retired not in rule, (region, retired)
+
+
 @pytest.mark.parametrize(
-    "region,env_var,valid_bucket",
+    "region,env_var,location,bucket",
     [
-        ("US_FED", "EVIDENCE_COLD_STORE_BUCKET_US", "us-cold-store-archive"),
-        ("US_FED", "EVIDENCE_COLD_STORE_BUCKET_US", "cage-us-fed-evidence"),
-        ("EU_ECB", "EVIDENCE_COLD_STORE_BUCKET_EU", "eu-cold-store-archive"),
-        ("EU_ECB", "EVIDENCE_COLD_STORE_BUCKET_EU", "cage-eu-compliance-vault"),
-        ("APAC_MAS", "EVIDENCE_COLD_STORE_BUCKET_APAC", "apac-cold-store-archive"),
-        ("APAC_MAS", "EVIDENCE_COLD_STORE_BUCKET_APAC", "cage-apac-evidence-stream"),
-        ("LOCAL", "EVIDENCE_COLD_STORE_BUCKET_LOCAL", "dev-local-evidence"),
-        ("LOCAL", "EVIDENCE_COLD_STORE_BUCKET_LOCAL", "local-evidence-bucket"),
+        (
+            "US_FED",
+            "EVIDENCE_COLD_STORE_BUCKET_US",
+            "us-central1",
+            "proj-evidence-worm-prod",
+        ),
+        ("US_FED", "EVIDENCE_COLD_STORE_BUCKET_US", "US-EAST4", "unprefixed-us-vault"),
+        (
+            "EU_ECB",
+            "EVIDENCE_COLD_STORE_BUCKET_EU",
+            "europe-west1",
+            "proj-evidence-worm-eu",
+        ),
+        (
+            "EU_ECB",
+            "EVIDENCE_COLD_STORE_BUCKET_EU",
+            "EUROPE-WEST4",
+            "custom-enterprise-vault",
+        ),
+        (
+            "APAC_MAS",
+            "EVIDENCE_COLD_STORE_BUCKET_APAC",
+            "asia-southeast1",
+            "proj-evidence-worm-apac",
+        ),
+        (
+            "APAC_MAS",
+            "EVIDENCE_COLD_STORE_BUCKET_APAC",
+            "ap-southeast-1",
+            "s3-apac-vault",
+        ),
     ],
 )
-def test_resolve_cold_store_bucket_valid_prefixes(
+@pytest.mark.parametrize("posture", ["production", "staging", "local", "unknown-env"])
+def test_enforcing_postures_accept_verified_bucket_location(
     monkeypatch: pytest.MonkeyPatch,
+    posture: str,
     region: str,
     env_var: str,
-    valid_bucket: str,
-):
-    """Assert valid regional prefixes resolve successfully."""
+    location: str,
+    bucket: str,
+) -> None:
+    monkeypatch.setenv("CAGE_ENV", posture)
     monkeypatch.setenv("CAGE_DEPLOYMENT_REGION", region)
-    monkeypatch.setenv(env_var, valid_bucket)
+    monkeypatch.setenv(env_var, bucket)
+    monkeypatch.setenv(COLD_STORE_LOCATION_ENV_VAR, location)
 
-    bucket = resolve_cold_store_bucket()
-    assert bucket == valid_bucket
-
-
-def test_resolve_cold_store_bucket_local_default():
-    """Assert LOCAL region falls back to default_bucket when no env vars are set."""
-    bucket = resolve_cold_store_bucket(region="LOCAL")
-    assert bucket == "local-evidence-bucket"
+    assert resolve_cold_store_bucket(backend_id="gcs") == bucket
 
 
-def test_resolve_cold_store_bucket_missing_env_raises(monkeypatch: pytest.MonkeyPatch):
-    """Assert missing bucket configuration fails closed with MissingBucketConfigError."""
+@pytest.mark.parametrize(
+    "posture", ["production", "staging", "local", "uat", "preprod"]
+)
+def test_enforcing_postures_refuse_missing_bucket_location_even_with_regional_prefix_or_pod_location(
+    monkeypatch: pytest.MonkeyPatch,
+    posture: str,
+) -> None:
+    """Neither a regional bucket-name prefix nor GOOGLE_CLOUD_LOCATION/AWS_REGION satisfies residency."""
+    monkeypatch.setenv("CAGE_ENV", posture)
+    monkeypatch.setenv("CAGE_DEPLOYMENT_REGION", "US_FED")
+    monkeypatch.setenv("EVIDENCE_COLD_STORE_BUCKET_US", "us-prefixed-worm-bucket")
+    monkeypatch.setenv("GOOGLE_CLOUD_LOCATION", "us-central1")
+    monkeypatch.setenv("AWS_REGION", "us-east-1")
+
+    with pytest.raises(ResidencyViolationError, match=COLD_STORE_LOCATION_ENV_VAR):
+        resolve_cold_store_bucket(backend_id="gcs")
+
+
+@pytest.mark.parametrize(
+    "region,bad_location",
+    [
+        ("US_FED", "europe-west1"),
+        ("EU_ECB", "us-central1"),
+        ("APAC_MAS", "us-central1"),
+    ],
+)
+@pytest.mark.parametrize("posture", ["production", "staging", "local"])
+def test_enforcing_postures_refuse_cross_region_bucket_location(
+    monkeypatch: pytest.MonkeyPatch,
+    posture: str,
+    region: str,
+    bad_location: str,
+) -> None:
+    """Staging enforces residency identically to production: out-of-region buckets fail closed."""
+    monkeypatch.setenv("CAGE_ENV", posture)
+    monkeypatch.setenv("CAGE_DEPLOYMENT_REGION", region)
+    monkeypatch.setenv("EVIDENCE_COLD_STORE_BUCKET", "proj-evidence-worm")
+    monkeypatch.setenv(COLD_STORE_LOCATION_ENV_VAR, bad_location)
+
+    with pytest.raises(
+        ResidencyViolationError, match=f"violates data residency for region '{region}'"
+    ):
+        resolve_cold_store_bucket(backend_id="gcs")
+
+
+@pytest.mark.parametrize("posture", ["dev", "development", "test", "testing", "ci"])
+def test_permissive_postures_skip_geographic_validation(
+    monkeypatch: pytest.MonkeyPatch,
+    posture: str,
+) -> None:
+    monkeypatch.setenv("CAGE_ENV", posture)
     monkeypatch.setenv("CAGE_DEPLOYMENT_REGION", "EU_ECB")
+    monkeypatch.setenv("EVIDENCE_COLD_STORE_BUCKET_EU", "dev-bucket-any-name")
+
+    assert resolve_cold_store_bucket(backend_id="gcs") == "dev-bucket-any-name"
+
+
+def test_poam_2026_220_compliance_bridge_prod_and_staging_parity(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Regression guard for POAM-2026-220: prod and staging behave identically on the bridge env."""
+    for posture in ("prod", "staging"):
+        monkeypatch.setenv("CAGE_ENV", posture)
+        monkeypatch.setenv("CAGE_DEPLOYMENT_REGION", "US_FED")
+        monkeypatch.setenv("EVIDENCE_COLD_STORE", "gcs")
+        monkeypatch.setenv(
+            "EVIDENCE_COLD_STORE_BUCKET", "sample-proj-evidence-worm-prod"
+        )
+        monkeypatch.delenv(COLD_STORE_LOCATION_ENV_VAR, raising=False)
+
+        with pytest.raises(ResidencyViolationError, match=COLD_STORE_LOCATION_ENV_VAR):
+            resolve_cold_store_bucket(backend_id="gcs")
+
+        monkeypatch.setenv(COLD_STORE_LOCATION_ENV_VAR, "US-CENTRAL1")
+        assert (
+            resolve_cold_store_bucket(backend_id="gcs")
+            == "sample-proj-evidence-worm-prod"
+        )
+
+
+def test_get_cold_store_with_explicit_bucket_still_enforces_residency(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Passing bucket= to get_cold_store() must not bypass resolve_cold_store_bucket()."""
+    monkeypatch.setenv("CAGE_ENV", "staging")
+    monkeypatch.setenv("CAGE_DEPLOYMENT_REGION", "EU_ECB")
+    monkeypatch.setenv(COLD_STORE_LOCATION_ENV_VAR, "us-central1")
+
+    with pytest.raises(
+        ResidencyViolationError, match="violates data residency for region 'EU_ECB'"
+    ):
+        get_cold_store(backend="gcs", bucket="eu-named-but-us-located-bucket")
+
+
+def test_missing_bucket_raises_missing_bucket_config_error(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("CAGE_ENV", "test")
+    monkeypatch.setenv("CAGE_DEPLOYMENT_REGION", "EU_ECB")
+
     with pytest.raises(
         MissingBucketConfigError, match="Missing required bucket configuration"
     ):
         resolve_cold_store_bucket()
 
 
-def test_resolve_cold_store_bucket_cross_region_violation_raises(
+def test_local_and_unknown_regions_are_refused(
     monkeypatch: pytest.MonkeyPatch,
-):
-    """Assert US bucket configured in EU_ECB deployment fails closed."""
-    monkeypatch.setenv("CAGE_ENV", "production")  # Force production validation
-    monkeypatch.setenv("CAGE_DEPLOYMENT_REGION", "EU_ECB")
-    monkeypatch.setenv("EVIDENCE_COLD_STORE_BUCKET_EU", "us-central-evidence")
-
-    with pytest.raises(
-        ResidencyViolationError, match="violates data residency for region 'EU_ECB'"
-    ):
+) -> None:
+    monkeypatch.setenv("CAGE_DEPLOYMENT_REGION", "LOCAL")
+    with pytest.raises(DeploymentRegionError, match="not a supported region"):
         resolve_cold_store_bucket()
 
-
-def test_resolve_cold_store_bucket_location_mismatch_raises(
-    monkeypatch: pytest.MonkeyPatch,
-):
-    """Assert mismatched GOOGLE_CLOUD_LOCATION fails closed even if bucket prefix is valid."""
-    monkeypatch.setenv("CAGE_ENV", "production")  # Force production validation
-    monkeypatch.setenv("CAGE_DEPLOYMENT_REGION", "EU_ECB")
-    monkeypatch.setenv("EVIDENCE_COLD_STORE_BUCKET_EU", "eu-evidence-bucket")
-    monkeypatch.setenv("GOOGLE_CLOUD_LOCATION", "us-central1")
-
     with pytest.raises(
-        ResidencyViolationError, match="violates data residency for region 'EU_ECB'"
+        ResidencyViolationError, match="Unknown deployment region 'LOCAL'"
     ):
-        resolve_cold_store_bucket()
-
-
-def test_resolve_cold_store_bucket_staging_allows_cross_region(
-    monkeypatch: pytest.MonkeyPatch,
-):
-    """Assert staging/dev environments decouple jurisdictional posture from physical location.
-
-    This enables multi-jurisdiction compliance testing on a single staging cluster
-    deployed in us-central1, where EU_ECB and APAC_MAS postures can be tested
-    without requiring geographically distributed infrastructure.
-    """
-    monkeypatch.setenv("CAGE_ENV", "staging")  # Non-production posture
-    monkeypatch.setenv("CAGE_DEPLOYMENT_REGION", "EU_ECB")
-    monkeypatch.setenv("EVIDENCE_COLD_STORE_BUCKET_EU", "us-central-evidence")
-
-    # Should NOT raise in staging - jurisdictional posture decoupled from location
-    bucket = resolve_cold_store_bucket()
-    assert bucket == "us-central-evidence"
-
-
-def test_resolve_cold_store_bucket_test_env_allows_location_mismatch(
-    monkeypatch: pytest.MonkeyPatch,
-):
-    """Assert test environments allow GOOGLE_CLOUD_LOCATION mismatch for multi-jurisdiction testing."""
-    monkeypatch.setenv("CAGE_ENV", "test")  # Default test posture
-    monkeypatch.setenv("CAGE_DEPLOYMENT_REGION", "EU_ECB")
-    monkeypatch.setenv("EVIDENCE_COLD_STORE_BUCKET_EU", "eu-evidence-bucket")
-    monkeypatch.setenv("GOOGLE_CLOUD_LOCATION", "us-central1")  # Mismatch allowed
-
-    # Should NOT raise in test mode
-    bucket = resolve_cold_store_bucket()
-    assert bucket == "eu-evidence-bucket"
-
-
-def test_resolve_cold_store_bucket_staging_apac_from_us_location(
-    monkeypatch: pytest.MonkeyPatch,
-):
-    """Assert APAC_MAS jurisdictional posture can be tested from us-central1 staging cluster."""
-    monkeypatch.setenv("CAGE_ENV", "staging")
-    monkeypatch.setenv("CAGE_DEPLOYMENT_REGION", "APAC_MAS")
-    monkeypatch.setenv("EVIDENCE_COLD_STORE_BUCKET_APAC", "us-staging-evidence")
-    monkeypatch.setenv("GOOGLE_CLOUD_LOCATION", "us-central1")
-
-    # APAC_MAS posture decoupled from physical location in staging
-    bucket = resolve_cold_store_bucket()
-    assert bucket == "us-staging-evidence"
-
-
-def test_resolve_cold_store_bucket_dev_us_fed_from_eu_location(
-    monkeypatch: pytest.MonkeyPatch,
-):
-    """Assert US_FED jurisdictional posture can be tested from europe-west1 dev cluster."""
-    monkeypatch.setenv("CAGE_ENV", "dev")
-    monkeypatch.setenv("CAGE_DEPLOYMENT_REGION", "US_FED")
-    monkeypatch.setenv("EVIDENCE_COLD_STORE_BUCKET_US", "eu-dev-evidence")
-    monkeypatch.setenv("GOOGLE_CLOUD_LOCATION", "europe-west1")
-
-    # US_FED posture decoupled from physical location in dev
-    bucket = resolve_cold_store_bucket()
-    assert bucket == "eu-dev-evidence"
-
-
-def test_resolve_cold_store_bucket_location_exception_for_unprefixed_bucket(
-    monkeypatch: pytest.MonkeyPatch,
-):
-    """Assert unprefixed bucket name passes if verified against an allowed cloud location."""
-    monkeypatch.setenv("CAGE_DEPLOYMENT_REGION", "EU_ECB")
-    monkeypatch.setenv("EVIDENCE_COLD_STORE_BUCKET_EU", "custom-enterprise-vault")
-    monkeypatch.setenv("GOOGLE_CLOUD_LOCATION", "europe-west1")
-
-    bucket = resolve_cold_store_bucket()
-    assert bucket == "custom-enterprise-vault"
-
-
-def test_resolve_cold_store_bucket_unknown_region_raises():
-    """Assert unknown region raises ResidencyViolationError."""
-    with pytest.raises(
-        ResidencyViolationError,
-        match="Unknown deployment region 'UNKNOWN_JURISDICTION'",
-    ):
-        resolve_cold_store_bucket(region="UNKNOWN_JURISDICTION")
-
-
-def test_resolve_cold_store_bucket_null_backend():
-    """Assert null backend allows null placeholder in local environment."""
-    bucket = resolve_cold_store_bucket(
-        region="LOCAL", backend_id="null", bucket_override="null"
-    )
-    assert bucket == "null"
+        resolve_cold_store_bucket(region="LOCAL", bucket_override="b")

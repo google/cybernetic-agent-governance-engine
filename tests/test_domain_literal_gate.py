@@ -23,6 +23,7 @@ Gate: G6 (domain literal enforcement)
 
 import os
 import subprocess
+import sys
 import tempfile
 from pathlib import Path
 
@@ -38,7 +39,7 @@ class TestDomainLiteralGate:
     def test_gate_passes_on_clean_kernel(self) -> None:
         """G6 gate passes when src/gateway/ contains no domain literals."""
         result = subprocess.run(
-            ["uv", "run", "python", "scripts/check_domain_literals.py"],
+            [sys.executable, "scripts/check_domain_literals.py"],
             capture_output=True,
             text=True,
         )
@@ -119,7 +120,7 @@ class TestDomainLiteralGate:
     def test_gate_reports_file_count_on_pass(self) -> None:
         """G6 gate reports number of files scanned on pass."""
         result = subprocess.run(
-            ["uv", "run", "python", "scripts/check_domain_literals.py"],
+            [sys.executable, "scripts/check_domain_literals.py"],
             capture_output=True,
             text=True,
         )
@@ -130,7 +131,7 @@ class TestDomainLiteralGate:
     def test_gate_reports_forbidden_literals_list(self) -> None:
         """G6 gate output includes the forbidden literals list."""
         result = subprocess.run(
-            ["uv", "run", "python", "scripts/check_domain_literals.py"],
+            [sys.executable, "scripts/check_domain_literals.py"],
             capture_output=True,
             text=True,
         )

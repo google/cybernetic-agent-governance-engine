@@ -122,6 +122,20 @@ run "staging_profile_persists_governance_state_on_every_write" {
     condition     = module.memorystore_app.persistence_mode == "DISABLED"
     error_message = "the app instance must plan an explicit DISABLED"
   }
+  assert {
+    condition = (
+      module.memorystore_governance.authorization_mode == "IAM_AUTH" &&
+      module.memorystore_governance.transit_encryption_mode == "SERVER_AUTHENTICATION"
+    )
+    error_message = "staging must plan the governance instance with IAM_AUTH and SERVER_AUTHENTICATION TLS"
+  }
+  assert {
+    condition = (
+      module.memorystore_app.authorization_mode == "AUTH_DISABLED" &&
+      module.memorystore_app.transit_encryption_mode == "TRANSIT_ENCRYPTION_DISABLED"
+    )
+    error_message = "staging must keep the app instance on AUTH_DISABLED and TRANSIT_ENCRYPTION_DISABLED: its one client, Langfuse, can do neither IAM auth nor TLS (see tests/memorystore_clients.tftest.hcl)"
+  }
 }
 
 # The staging tier with enforce_in_dev forced off: AOF must not depend on it.
@@ -366,6 +380,7 @@ run "module_renders_an_explicit_disabled_by_default" {
 
   variables {
     network_id = "default"
+    clients    = {}
   }
 
   assert {
@@ -383,6 +398,7 @@ run "module_renders_aof_with_the_fsync_policy_it_is_given" {
 
   variables {
     network_id       = "default"
+    clients          = {}
     persistence_mode = "AOF"
     aof_append_fsync = "EVERY_SEC"
   }
@@ -412,6 +428,7 @@ run "module_refuses_rdb" {
 
   variables {
     network_id       = "default"
+    clients          = {}
     persistence_mode = "RDB"
   }
 
@@ -427,6 +444,7 @@ run "module_refuses_the_gcloud_fsync_spelling" {
 
   variables {
     network_id       = "default"
+    clients          = {}
     persistence_mode = "AOF"
     aof_append_fsync = "always"
   }
@@ -444,6 +462,7 @@ run "module_refuses_aof_without_a_fsync_policy" {
 
   variables {
     network_id       = "default"
+    clients          = {}
     persistence_mode = "AOF"
   }
 
@@ -460,6 +479,7 @@ run "module_refuses_a_fsync_policy_without_aof" {
 
   variables {
     network_id       = "default"
+    clients          = {}
     aof_append_fsync = "ALWAYS"
   }
 
@@ -475,6 +495,7 @@ run "memorystore_valkey_selects_primary_connection_when_not_first" {
 
   variables {
     network_id = "default"
+    clients    = {}
   }
 
   override_resource {

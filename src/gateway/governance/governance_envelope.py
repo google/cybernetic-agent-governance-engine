@@ -76,6 +76,7 @@ from datetime import datetime, timezone
 from enum import Enum
 from typing import Any
 
+from src.gateway.governance.env_posture import resolve_deployment_region
 from src.gateway.governance.jcs_canonicalizer import jcs_canonicalize_plan
 from src.gateway.governance.seams.attestation import (
     AttestationStatus as AttestationStatus,
@@ -96,7 +97,6 @@ _ENVELOPE_TYPE = "cage_governance_decision"
 # Instance identification (from environment or generated)
 _SERVICE_NAME = os.environ.get("CAGE_SERVICE_NAME", "cage-gateway")
 _INSTANCE_ID = os.environ.get("CAGE_INSTANCE_ID", f"local-{uuid.uuid4().hex[:8]}")
-_DEPLOYMENT_REGION = os.environ.get("CAGE_DEPLOYMENT_REGION", "LOCAL")
 
 # Envelope TTL (default: 5 minutes for audit retention, not execution)
 _ENVELOPE_TTL_S = int(os.environ.get("CAGE_ENVELOPE_TTL_S", "300"))
@@ -120,7 +120,7 @@ class IssuerMetadata:
 
     service: str = _SERVICE_NAME
     instance_id: str = _INSTANCE_ID
-    region: str = _DEPLOYMENT_REGION
+    region: str = field(default_factory=resolve_deployment_region)
 
     def to_dict(self) -> dict[str, str]:
         return {
@@ -160,7 +160,7 @@ class GovernanceContext:
 
     policy_version: str
     tiers_passed: list[str] = field(default_factory=list)
-    deployment_region: str = _DEPLOYMENT_REGION
+    deployment_region: str = field(default_factory=resolve_deployment_region)
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -235,13 +235,17 @@ class GovernanceEnvelope:
         """Serialize envelope to RFC 8785 canonical JSON bytes."""
         return jcs_canonicalize_plan(self.to_dict(include_signature))
 
-    def compute_digest(self) -> bytes:
-        """Compute the SHA-256 digest of the unsigned envelope.
+    def compute_digest(self, hash_algorithm: str = "sha256") -> bytes:
+        """Compute the cryptographic digest of the unsigned envelope.
 
-        This is the value that should be signed by KMS.
+        Defaults to SHA-256; supports ``sha384`` and ``sha512`` for P-384/P-521
+        and RS384/RS512/PS384/PS512 signing keys.
         """
         canonical = self.to_canonical_bytes(include_signature=False)
-        return hashlib.sha256(canonical).digest()
+        normalized = hash_algorithm.strip().lower().replace("-", "")
+        if normalized not in {"sha256", "sha384", "sha512"}:
+            raise ValueError(f"Unsupported envelope hash algorithm: {hash_algorithm!r}")
+        return hashlib.new(normalized, canonical).digest()
 
     def compute_digest_hex(self) -> str:
         """Compute the SHA-256 digest as a hex string."""
@@ -358,7 +362,7 @@ class GovernanceEnvelopeBuilder:
         context = GovernanceContext(
             policy_version=self._get_policy_version(),
             tiers_passed=tiers_passed or [],
-            deployment_region=_DEPLOYMENT_REGION,
+            deployment_region=resolve_deployment_region(),
         )
 
         return GovernanceEnvelope(
@@ -476,14 +480,18 @@ class GovernanceEnvelopeBuilder:
             kid = jwk["kid"]
             alg = jwk.get("alg", "ES256")
 
-            if alg.upper() in {"EDDSA", "ED25519"} and hasattr(
-                signer, "sign_raw_async"
-            ):
+            alg_upper = alg.strip().upper()
+            if alg_upper in {"EDDSA", "ED25519"} and hasattr(signer, "sign_raw_async"):
                 canonical = envelope.to_canonical_bytes(include_signature=False)
                 signature_bytes = await signer.sign_raw_async(canonical)
             else:
-                # Use the direct digest signing method for efficiency
-                digest = envelope.compute_digest()
+                if "384" in alg_upper:
+                    digest_alg = "sha384"
+                elif "512" in alg_upper or "521" in alg_upper:
+                    digest_alg = "sha512"
+                else:
+                    digest_alg = "sha256"
+                digest = envelope.compute_digest(digest_alg)
                 sig_hex = await signer.sign_precomputed_digest_async(digest)
                 signature_bytes = bytes.fromhex(sig_hex)
 
@@ -523,9 +531,18 @@ class GovernanceEnvelopeBuilder:
             logger.warning("⚠️ Envelope has no signature")
             return False
 
-        if verify_expiry and envelope.expires_at:
+        if verify_expiry:
+            if (
+                not isinstance(envelope.expires_at, str)
+                or not envelope.expires_at.strip()
+            ):
+                logger.warning(
+                    "⚠️ Envelope missing mandatory expires_at: id=%s",
+                    envelope.envelope_id,
+                )
+                return False
             try:
-                raw_exp = envelope.expires_at
+                raw_exp = envelope.expires_at.strip()
                 if raw_exp.endswith("Z"):
                     raw_exp = raw_exp[:-1] + "+00:00"
                 exp_dt = datetime.fromisoformat(raw_exp)
@@ -580,35 +597,51 @@ class GovernanceEnvelopeBuilder:
                 sig_b64 += "=" * padding
             signature_bytes = base64.urlsafe_b64decode(sig_b64)
 
-            # Compute expected digest
-            digest = envelope.compute_digest()
-
-            # Verify based on key type and bind algorithm header
+            # Verify based on key type and bind algorithm + hash + padding
             if isinstance(public_key, ec.EllipticCurvePublicKey):
-                if alg not in {
-                    "ES256",
-                    "ES384",
-                    "ES512",
-                    "ECDSA_P256_SHA256",
-                    "ECDSA_P384_SHA384",
-                }:
+                ec_alg_map: dict[str, tuple[int, str, hashes.HashAlgorithm]] = {
+                    "ES256": (256, "sha256", hashes.SHA256()),
+                    "ECDSA_P256_SHA256": (256, "sha256", hashes.SHA256()),
+                    "ES384": (384, "sha384", hashes.SHA384()),
+                    "ECDSA_P384_SHA384": (384, "sha384", hashes.SHA384()),
+                    "ES512": (521, "sha512", hashes.SHA512()),
+                    "ECDSA_P521_SHA512": (521, "sha512", hashes.SHA512()),
+                }
+                if alg not in ec_alg_map:
                     logger.warning(
                         "⚠️ Envelope algorithm %r incompatible with EC public key",
                         envelope.signature.algorithm,
                     )
                     return False
+                expected_curve_bits, digest_name, hash_obj = ec_alg_map[alg]
+                if public_key.curve.key_size != expected_curve_bits:
+                    logger.warning(
+                        "⚠️ Envelope EC curve size %d does not match algorithm %r",
+                        public_key.curve.key_size,
+                        alg,
+                    )
+                    return False
+                digest = envelope.compute_digest(digest_name)
                 # Convert IEEE P1363 signature to DER if needed
                 key_size = (public_key.curve.key_size + 7) // 8
                 if len(signature_bytes) == key_size * 2:
-                    # IEEE P1363 format (r || s) — convert to DER
-                    r = int.from_bytes(signature_bytes[:key_size], "big")
-                    s = int.from_bytes(signature_bytes[key_size:], "big")
-                    signature_bytes = utils.encode_dss_signature(r, s)
+                    needs_encode = (
+                        len(signature_bytes) > 0 and signature_bytes[0] != 0x30
+                    )
+                    if not needs_encode:
+                        try:
+                            utils.decode_dss_signature(signature_bytes)
+                        except ValueError:
+                            needs_encode = True
+                    if needs_encode:
+                        r = int.from_bytes(signature_bytes[:key_size], "big")
+                        s = int.from_bytes(signature_bytes[key_size:], "big")
+                        signature_bytes = utils.encode_dss_signature(r, s)
 
                 public_key.verify(
                     signature_bytes,
                     digest,
-                    ec.ECDSA(utils.Prehashed(hashes.SHA256())),
+                    ec.ECDSA(utils.Prehashed(hash_obj)),
                 )
             elif isinstance(public_key, ed25519.Ed25519PublicKey):
                 if alg not in {"EDDSA", "ED25519"}:
@@ -621,22 +654,47 @@ class GovernanceEnvelopeBuilder:
                 canonical = envelope.to_canonical_bytes(include_signature=False)
                 public_key.verify(signature_bytes, canonical)
             elif isinstance(public_key, rsa.RSAPublicKey):
-                if alg not in {"RS256", "RS384", "RS512", "PS256", "PS384", "PS512"}:
+                rsa_alg_map: dict[str, tuple[bool, str, hashes.HashAlgorithm]] = {
+                    "RS256": (False, "sha256", hashes.SHA256()),
+                    "RS384": (False, "sha384", hashes.SHA384()),
+                    "RS512": (False, "sha512", hashes.SHA512()),
+                    "PS256": (True, "sha256", hashes.SHA256()),
+                    "PS384": (True, "sha384", hashes.SHA384()),
+                    "PS512": (True, "sha512", hashes.SHA512()),
+                    "RSA_SIGN_PKCS1_2048_SHA256": (False, "sha256", hashes.SHA256()),
+                    "RSA_SIGN_PKCS1_3072_SHA256": (False, "sha256", hashes.SHA256()),
+                    "RSA_SIGN_PKCS1_4096_SHA256": (False, "sha256", hashes.SHA256()),
+                    "RSA_SIGN_PKCS1_4096_SHA512": (False, "sha512", hashes.SHA512()),
+                    "RSA_SIGN_PSS_2048_SHA256": (True, "sha256", hashes.SHA256()),
+                    "RSA_SIGN_PSS_3072_SHA256": (True, "sha256", hashes.SHA256()),
+                    "RSA_SIGN_PSS_4096_SHA256": (True, "sha256", hashes.SHA256()),
+                    "RSA_SIGN_PSS_4096_SHA512": (True, "sha512", hashes.SHA512()),
+                }
+                if alg not in rsa_alg_map:
                     logger.warning(
                         "⚠️ Envelope algorithm %r incompatible with RSA public key",
                         envelope.signature.algorithm,
                     )
                     return False
-                # RSA
                 from cryptography.hazmat.primitives.asymmetric import (
                     padding as rsa_padding,
                 )
 
+                use_pss, digest_name, hash_obj = rsa_alg_map[alg]
+                digest = envelope.compute_digest(digest_name)
+                rsa_pad: rsa_padding.AsymmetricPadding = (
+                    rsa_padding.PSS(
+                        mgf=rsa_padding.MGF1(hash_obj),
+                        salt_length=rsa_padding.PSS.AUTO,
+                    )
+                    if use_pss
+                    else rsa_padding.PKCS1v15()
+                )
                 public_key.verify(
                     signature_bytes,
                     digest,
-                    rsa_padding.PKCS1v15(),
-                    utils.Prehashed(hashes.SHA256()),
+                    rsa_pad,
+                    utils.Prehashed(hash_obj),
                 )
             else:
                 raise ValueError(f"Unsupported public key type: {type(public_key)}")
@@ -654,7 +712,11 @@ class GovernanceEnvelopeBuilder:
         issuer = IssuerMetadata(
             service=issuer_data.get("service", _SERVICE_NAME),
             instance_id=issuer_data.get("instance_id", _INSTANCE_ID),
-            region=issuer_data.get("region", _DEPLOYMENT_REGION),
+            region=(
+                issuer_data["region"]
+                if "region" in issuer_data
+                else resolve_deployment_region()
+            ),
         )
 
         subject_data = data.get("subject", {})
@@ -673,7 +735,11 @@ class GovernanceEnvelopeBuilder:
         context = GovernanceContext(
             policy_version=context_data.get("policy_version", ""),
             tiers_passed=context_data.get("tiers_passed", []),
-            deployment_region=context_data.get("deployment_region", _DEPLOYMENT_REGION),
+            deployment_region=(
+                context_data["deployment_region"]
+                if "deployment_region" in context_data
+                else resolve_deployment_region()
+            ),
         )
 
         sig_data = data.get("signature")

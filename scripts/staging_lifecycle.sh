@@ -495,6 +495,7 @@ manifest = {
         "evaluated_host_specs": _i("MANIFEST_LULA_HOST_COUNT"),
         "planned_specs": planned_specs,
         "api_specs": api_specs,
+        "rating_breakdown": _opt_json(Path(os.environ["MANIFEST_OUT"]).parent / "lula" / "rating-breakdown.json"),
     },
     "pytest_suites": suites,
     "partner_conformance_status": os.environ.get("MANIFEST_PARTNER_STATUS", "not_run"),
@@ -583,7 +584,7 @@ run_hermetic_region_pytest() {
   local marker="$3"
   if [[ -n "${CAGE_HERMETIC_PYTEST_WRAPPER:-}" ]]; then
     run_pytest_require_passed "$label" \
-      "$CAGE_HERMETIC_PYTEST_WRAPPER" env CAGE_DEPLOYMENT_REGION="$region_val" ./.venv/bin/pytest tests/ -m "$marker" -v --tb=short
+      env -u GATEWAY_URL "$CAGE_HERMETIC_PYTEST_WRAPPER" env -u GATEWAY_URL CAGE_DEPLOYMENT_REGION="$region_val" ./.venv/bin/pytest tests/ -m "$marker" -v --tb=short
     return $?
   fi
   if [[ -f "$REPO_ROOT/.env" ]]; then
@@ -593,7 +594,7 @@ run_hermetic_region_pytest() {
   local rc=0
   set +e
   run_pytest_require_passed "$label" \
-    env CAGE_DEPLOYMENT_REGION="$region_val" uv run pytest "$REPO_ROOT/tests/" -m "$marker" -v --tb=short
+    env -u GATEWAY_URL CAGE_DEPLOYMENT_REGION="$region_val" uv run pytest "$REPO_ROOT/tests/" -m "$marker" -v --tb=short
   rc=$?
   set -e
   restore_shielded_dotenv
@@ -861,7 +862,7 @@ PY
       LAST_EVIDENCE_VERIFY_JSON="$verify_raw"
       local err_tmp
       err_tmp="$(mktemp "${TMPDIR:-/tmp}/cage-worm-err-XXXXXX")"
-      summary="$(VERIFY_RAW="$verify_raw" python3 - "$require_bound_rotation" "$expected_prior_head" "$expected_prior_attestation" "$min_verified_batches" 2>"$err_tmp" <<'PY'
+      summary="$(VERIFY_RAW="$verify_raw" python3 - "$require_bound_rotation" "$expected_prior_head" "$expected_prior_attestation" "$min_verified_batches" "$FRESH_PROJECT" 2>"$err_tmp" <<'PY'
 import json
 import os
 import sys
@@ -870,6 +871,7 @@ require_bound_rotation = sys.argv[1].lower() == "true"
 expected_prior_head = sys.argv[2].strip().lower()
 expected_prior_attestation = sys.argv[3].strip().lower()
 min_verified_batches = int(sys.argv[4])
+fresh_project = sys.argv[5].lower() == "true"
 
 
 def _count(val, field):
@@ -912,6 +914,8 @@ unsigned = max(
 )
 bound_rotations_raw = data.get("bound_rotations", [])
 bound_rotations = _count(bound_rotations_raw, "bound_rotations")
+posture_status = data.get("posture_status")
+qualifications = data.get("citable_qualifications", [])
 
 errors = []
 if verified <= 0:
@@ -924,6 +928,29 @@ if gaps != 0:
     errors.append(f"gaps={gaps} (expected 0)")
 if unsigned != 0:
     errors.append(f"unsigned={unsigned} (expected 0)")
+posture_invalid = False
+if verified > 0:
+    if not isinstance(qualifications, list):
+        errors.append(
+            f"citable_qualifications must be a list, got {type(qualifications).__name__}"
+        )
+        posture_invalid = True
+    if fresh_project:
+        if posture_status != "staging":
+            errors.append(
+                f"posture_status={posture_status!r} (expected 'staging' on clean-room Gate W run)"
+            )
+            posture_invalid = True
+        if qualifications:
+            errors.append(
+                f"citable_qualifications={qualifications!r} (expected [] on clean-room Gate W run)"
+            )
+            posture_invalid = True
+    elif posture_status not in ("staging", "unstamped_v1"):
+        errors.append(
+            f"posture_status={posture_status!r} (expected 'staging' or 'unstamped_v1')"
+        )
+        posture_invalid = True
 if require_bound_rotation:
     if bound_rotations < 1:
         errors.append(
@@ -955,10 +982,14 @@ if require_bound_rotation:
 
 if errors:
     print("; ".join(errors), file=sys.stderr)
-    sys.exit(2 if (failures == 0 and gaps == 0 and unsigned == 0) else 1)
+    sys.exit(
+        2
+        if (failures == 0 and gaps == 0 and unsigned == 0 and not posture_invalid)
+        else 1
+    )
 
 print(
-    f"verified={verified}, bound_rotations={bound_rotations}, failures={failures}, gaps={gaps}, unsigned={unsigned}"
+    f"verified={verified}, bound_rotations={bound_rotations}, failures={failures}, gaps={gaps}, unsigned={unsigned}, posture_status={posture_status}"
 )
 PY
       )"
@@ -1243,7 +1274,7 @@ echo -e "${CYAN}╔════════════════════�
 echo -e "${CYAN}║  Phase 1: Provisioning staging + zero-drift read-back            ║${RESET}"
 echo -e "${CYAN}╚══════════════════════════════════════════════════════════════════╝${RESET}"
 echo ""
-if [[ "$FRESH_PROJECT" == "true" && "$SKIP_PROVISION" == "false" && -z "${TF_VAR_evidence_previous_chain_head_hash:-}" ]]; then _anchor_script="${CAGE_WORM_ANCHOR_SCRIPT:-$REPO_ROOT/scripts/read_worm_chain_anchor.py}"; if [[ -f "$_anchor_script" ]]; then _anchor_py="$REPO_ROOT/.venv/bin/python"; [[ -x "$_anchor_py" ]] || _anchor_py="python3"; _pre_worm_exp="$(GOOGLE_API_USE_CLIENT_CERTIFICATE=false "$_anchor_py" "$_anchor_script" --gcs-bucket="${PROJECT_ID}-evidence-worm-staging" --gcs-project="$PROJECT_ID" --kms-key="projects/${PROJECT_ID}/locations/${REGION}/keyRings/cage-signing-staging/cryptoKeys/compliance-evidence/cryptoKeyVersions/1" --pre-run-inventory="$PRE_RUN_INVENTORY_JSON" --all-streams --if-exists --format=export)" || exit 1; eval "$_pre_worm_exp"; fi; fi
+if [[ "$FRESH_PROJECT" == "true" && "$SKIP_PROVISION" == "false" && -z "${TF_VAR_evidence_previous_chain_head_hash:-}" ]]; then _anchor_script="${CAGE_WORM_ANCHOR_SCRIPT:-$REPO_ROOT/scripts/read_worm_chain_anchor.py}"; if [[ -f "$_anchor_script" ]]; then _anchor_py="$REPO_ROOT/.venv/bin/python"; [[ -x "$_anchor_py" ]] || _anchor_py="python3"; _pre_worm_exp="$(CAGE_DEPLOYMENT_REGION="${CAGE_DEPLOYMENT_REGION:-US_FED}" GOOGLE_API_USE_CLIENT_CERTIFICATE=false "$_anchor_py" "$_anchor_script" --gcs-bucket="${PROJECT_ID}-evidence-worm-staging" --gcs-project="$PROJECT_ID" --kms-key="projects/${PROJECT_ID}/locations/${REGION}/keyRings/cage-signing-staging/cryptoKeys/compliance-evidence/cryptoKeyVersions/1" --pre-run-inventory="$PRE_RUN_INVENTORY_JSON" --all-streams --if-exists --format=export)" || exit 1; eval "$_pre_worm_exp"; fi; fi
 if [[ "$SKIP_PROVISION" == "false" ]]; then info "Deploying staging with full security posture..."
 if ! "$REPO_ROOT/deploy_all.sh" --target gcp-gke --env staging --auto-approve ${DEPLOY_EXTRA_ARGS[@]+"${DEPLOY_EXTRA_ARGS[@]}"}; then
   error "Staging provision failed. Check Terraform output above."
@@ -1482,6 +1513,7 @@ if [[ "$READINESS_FAILED" == "false" ]]; then
 
     planned_specs=()
     api_specs=()
+    host_specs=()
     evaluated_count=0
 
     if [[ ${#validation_files[@]} -eq 0 ]]; then
@@ -1501,6 +1533,7 @@ if [[ "$READINESS_FAILED" == "false" ]]; then
         fi
         info "Validating host Kubernetes-domain spec: ${base_name}"
         ((evaluated_count++)) || true
+        host_specs+=("$base_name")
         spec_stem="${base_name%.yaml}"
         spec_stem="${spec_stem#lula-validation-}"
         per_spec_out="$ARCHIVE_DIR/lula/assessment-results-${spec_stem}.yaml"
@@ -1526,6 +1559,18 @@ if [[ "$READINESS_FAILED" == "false" ]]; then
       for planned_spec in ${planned_specs[@]+"${planned_specs[@]}"}; do
         info "  [planned] ${planned_spec}"
       done
+
+      # "N of N satisfied" counts every evaluated spec. Record which of them the
+      # Lula README rates Active, the only ones citable as POA&M closure evidence.
+      if ! python3 "$REPO_ROOT/scripts/lula_rating_breakdown.py" \
+        --lula-dir "$REPO_ROOT/compliance/lula" \
+        --evaluated ${host_specs[@]+"${host_specs[@]}"} ${api_specs[@]+"${api_specs[@]}"} \
+        --not-evaluated ${planned_specs[@]+"${planned_specs[@]}"} \
+        > "$ARCHIVE_DIR/lula/rating-breakdown.json"; then
+        error "Lula rating breakdown FAILED: the archive cannot say which satisfied specs are rated Active"
+        rm -f "$ARCHIVE_DIR/lula/rating-breakdown.json"
+        ((LULA_FAILURES++)) || true
+      fi
 
       if [[ $evaluated_count -eq 0 ]]; then
         error "Zero active Kubernetes-domain Lula validation files were evaluated on host"
@@ -1613,13 +1658,17 @@ if errors:
       error "$LULA_FAILURES Lula validation check(s) failed"
       error "POAM-024 is NOT satisfied — security posture incomplete"
     fi
+    stop_staging_port_forward
   else
     warn "Lula validation skipped (--skip-lula flag)"
   fi
 
-  if [[ "$SKIP_POSTURE" == "false" || "$SKIP_LIVE_SWEEP" == "false" ]]; then
-    start_staging_port_forward
-  fi
+  ensure_no_staging_port_forward() {
+    if [[ -x "$REPO_ROOT/scripts/port_forward_staging.sh" ]]; then
+      "$REPO_ROOT/scripts/port_forward_staging.sh" --stop >/dev/null 2>&1 || true
+    fi
+    PORT_FORWARD_ACTIVE=false
+  }
 
   # ─── Phase 4: Region Posture, Live Residency & Live Langfuse (FAIL CLOSED) ─
   if [[ "$SKIP_POSTURE" == "false" ]]; then
@@ -1628,6 +1677,10 @@ if errors:
     echo -e "${CYAN}║  Phase 4: Region posture, live residency & Langfuse isolation    ║${RESET}"
     echo -e "${CYAN}╚══════════════════════════════════════════════════════════════════╝${RESET}"
     echo ""
+
+    # Hermetic regional suites must never run while kubectl port-forward exposes
+    # live staging on localhost:8080 (even if started externally before --skip-lula).
+    ensure_no_staging_port_forward
 
     info "Running US_FED posture tests..."
     if ! run_hermetic_region_pytest "US_FED posture tests" "US_FED" "us_fed"; then
@@ -1643,6 +1696,8 @@ if errors:
     if ! run_hermetic_region_pytest "APAC_MAS posture tests" "APAC_MAS" "apac_mas"; then
       ((POSTURE_FAILURES++)) || true
     fi
+
+    start_staging_port_forward
 
     info "Running live data-residency verification (test_data_residency.py --run-integration)..."
     if ! run_pytest_require_passed "Live data-residency tests" \
@@ -1687,6 +1742,7 @@ if errors:
   echo ""
 
   if [[ "$SKIP_LIVE_SWEEP" == "false" ]]; then
+    start_staging_port_forward
     info "Running first-party GCP live_external sweep (-m 'live_external and not partner' --run-live-external)..."
     if ! run_pytest_require_passed "Phase 5 live_external sweep" \
       env \

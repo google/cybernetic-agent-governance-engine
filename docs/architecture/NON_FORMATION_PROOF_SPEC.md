@@ -307,7 +307,7 @@ in §5-§8 is justified by exactly one row below.
 | **`containment_attestation` sub-object** | 🆕 New | Closes proof element 6 — new field referencing pinned `proof/model.py` digest + deployed commit SHA (§6.6) |
 | **`rule_snapshot` + `rule_lineage` chain** | 🆕 New | Closes proof element 9 — new chained structure mirroring `ProvenanceRecord` (§6.4) |
 | **Receipt WORM persistence path** (`refusal-receipts/<date>/<receipt_id>.json`) | 🆕 New | Closes proof element 7 fully — a new object-key prefix in the existing retention-locked, CMEK-encrypted WORM bucket (`infra/modules/worm_bucket`) that the evidence cold store already writes to |
-| **Replay verification procedure/tool** | 🆕 New | Closes proof element 8 — a new `scripts/replay_refusal_receipt.py`-class utility (design only, §7.1) |
+| **Replay verification procedure/tool** | 🆕 New | Closes proof element 8 — a new replay utility under `scripts/` (design only, §7.1; not implemented) |
 | **`GovernanceRefusalReceipt` OSCAL cross-reference emitter** | 🆕 New (optional) | Feeds `oscal_ssp_exporter.py`-style ingestion for regulator-facing evidence bundles |
 
 ---

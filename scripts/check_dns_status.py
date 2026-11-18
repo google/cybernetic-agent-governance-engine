@@ -38,7 +38,7 @@ def check_dns_resolution(
     clean_domain = domain.rstrip(".")
     try:
         addr_info = socket.getaddrinfo(clean_domain, 443, proto=socket.IPPROTO_TCP)
-        resolved_ips = list(dict.fromkeys(info[4][0] for info in addr_info))
+        resolved_ips = list(dict.fromkeys(str(info[4][0]) for info in addr_info))
     except socket.gaierror as err:
         return False, [], f"DNS lookup failed for '{clean_domain}': {err}"
 

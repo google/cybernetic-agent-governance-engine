@@ -43,7 +43,7 @@ Signing preimages (Cloud KMS logs the RFC 4648 base64 SHA-256 of these bytes):
 ========================================  ===================  =========================================
 Artifact                                  Key                  Signing preimage
 ========================================  ===================  =========================================
-``cage-evidence-batch/1`` attestation     compliance-evidence  RFC 8785 JCS of the attestation without
+``cage-evidence-batch/{1,2}`` attestation compliance-evidence  RFC 8785 JCS of the attestation without
                                                                ``signature``
 Governance decision record (SignedRecord) gateway-seal         RFC 8785 JCS of ``payload``
 Routing seal (compact JWS)                gateway-seal         ASCII JWS signing input
@@ -88,7 +88,12 @@ KNOWN_SIGNING_KEYS: frozenset[str] = frozenset(
     {GATEWAY_SEAL_KEY, COMPLIANCE_EVIDENCE_KEY, RECONCILER_SNAPSHOT_KEY}
 )
 
-EVIDENCE_BATCH_SCHEMA = "cage-evidence-batch/1"
+EVIDENCE_BATCH_SCHEMA_V1 = "cage-evidence-batch/1"
+EVIDENCE_BATCH_SCHEMA_V2 = "cage-evidence-batch/2"
+EVIDENCE_BATCH_SCHEMA = EVIDENCE_BATCH_SCHEMA_V2
+SUPPORTED_EVIDENCE_BATCH_SCHEMAS: frozenset[str] = frozenset(
+    {EVIDENCE_BATCH_SCHEMA_V1, EVIDENCE_BATCH_SCHEMA_V2}
+)
 DISCREPANCY_FENCE_TYPE = "RECONCILIATION_DISCREPANCY_FENCE"
 
 EVIDENCE_BATCH_ARTIFACT = "evidence-batch-attestation"
@@ -531,7 +536,7 @@ def _compact_jws(
 
 
 def _evidence_batch_preimage(item: Mapping[str, Any]) -> bytes | None:
-    if item.get("schema") != EVIDENCE_BATCH_SCHEMA:
+    if item.get("schema") not in SUPPORTED_EVIDENCE_BATCH_SCHEMAS:
         return None
     body = {k: v for k, v in item.items() if k not in _EVIDENCE_SIGNATURE_FIELDS}
     return jcs_bytes(body)
@@ -555,6 +560,7 @@ def _reconciler_preimage(item: Mapping[str, Any]) -> bytes | None:
         # Mirrors src.gateway.governance.reconciliation.trust.snapshot_signing_payload.
         return jcs_bytes(
             {
+                "invariant_id": str(item.get("invariant_id") or ""),
                 "source": item["source"],
                 "state_scalar": float(item["state_scalar"]),
                 "verified_at": item["verified_at"],
@@ -687,7 +693,8 @@ def extract_signed_artifacts(
     """Reduce signed CAGE documents produced under ``key_family`` to artifacts.
 
     ``key_family`` names the key the caller expects signed the documents:
-    ``compliance-evidence`` for ``cage-evidence-batch/1`` attestations,
+    ``compliance-evidence`` for ``cage-evidence-batch/1`` and
+    ``cage-evidence-batch/2`` attestations,
     ``gateway-seal`` for routing seals and governance decision records, and
     ``reconciler-snapshot`` for snapshots and discrepancy fences. Unsigned
     documents are skipped; documents the family cannot interpret are kept with

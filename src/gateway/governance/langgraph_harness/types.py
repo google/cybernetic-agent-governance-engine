@@ -93,6 +93,7 @@ class OpaNodeConfig:
     thread_id_extractor: ThreadIdExtractor | None = None
     span_attributes: dict[str, str] = dataclasses.field(default_factory=dict)
     span_keys: tuple[str, ...] = ()
+    narrowed_params_state_key: str = "narrowed_params"
 
 
 # ---------------------------------------------------------------------------

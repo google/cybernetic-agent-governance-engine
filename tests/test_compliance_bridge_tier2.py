@@ -378,19 +378,21 @@ class TestSlaMonitor:
     # SLA targets (SC-7/SC-8 for US_FED, Article 12 for EU_ECB, MAS-FEAT-1 for
     # APAC_MAS) are monitored in their applicable region.
 
-    def test_active_sla_seconds_universal_only_when_region_unset(self):
+    def test_active_sla_seconds_when_region_unset_follows_posture(self):
         from src.compliance_bridge.sla_monitor import _active_sla_seconds
-        from src.compliance_bridge.types import _UNIVERSAL_SLA
+        from src.compliance_bridge.types import get_sla_seconds
+        from src.gateway.governance.env_posture import DeploymentRegionError
 
-        with patch.dict(os.environ, {}, clear=False):
+        with patch.dict(os.environ, {"CAGE_ENV": "test"}, clear=False):
             os.environ.pop("CAGE_DEPLOYMENT_REGION", None)
             sla_map = _active_sla_seconds()
 
-        assert sla_map == _UNIVERSAL_SLA
-        assert "SC-7" not in sla_map
-        assert "SC-8" not in sla_map
-        assert "Article 12" not in sla_map
-        assert "MAS-FEAT-1" not in sla_map
+        assert sla_map == get_sla_seconds("US_FED")
+
+        with patch.dict(os.environ, {"CAGE_ENV": "production"}, clear=False):
+            os.environ.pop("CAGE_DEPLOYMENT_REGION", None)
+            with pytest.raises(DeploymentRegionError, match="is not set"):
+                _active_sla_seconds()
 
     def test_active_sla_seconds_includes_us_fed_jurisdictional(self):
         from src.compliance_bridge.sla_monitor import _active_sla_seconds
@@ -450,10 +452,12 @@ class TestSlaMonitor:
         assert "SC-7" in breached
 
     @pytest.mark.asyncio
-    async def test_check_sla_once_ignores_jurisdictional_control_outside_region(self):
-        """A stale SC-7 must NOT be flagged when CAGE_DEPLOYMENT_REGION is unset
-        (or EU_ECB/APAC_MAS) — SC-7 is a US_FED-only NIST control and is not even
-        in the polled control set outside US_FED."""
+    @pytest.mark.parametrize("non_us_region", ["EU_ECB", "APAC_MAS"])
+    async def test_check_sla_once_ignores_jurisdictional_control_outside_region(
+        self, non_us_region: str
+    ):
+        """A stale SC-7 must NOT be flagged under EU_ECB or APAC_MAS — SC-7 is a
+        US_FED-only NIST control and is not in the polled control set outside US_FED."""
         from src.compliance_bridge.sla_monitor import _check_sla_once
 
         async def _mock_metrics(control_id, window_hours=24):
@@ -461,8 +465,7 @@ class TestSlaMonitor:
                 return _make_metrics(control_id, evidence_age=200_000.0)
             return _make_metrics(control_id, evidence_age=60.0)
 
-        with patch.dict(os.environ, {}, clear=False):
-            os.environ.pop("CAGE_DEPLOYMENT_REGION", None)
+        with patch.dict(os.environ, {"CAGE_DEPLOYMENT_REGION": non_us_region}):
             with patch(
                 "src.compliance_bridge.sla_monitor.get_compliance_metrics",
                 new=AsyncMock(side_effect=_mock_metrics),
@@ -536,20 +539,18 @@ class TestMetricsSummaryEndpoint:
         assert data["overall_pass_rate"] < 1.0
 
     def test_summary_controls_dict_has_all_supported(self, client):
-        # The summary endpoint returns region-filtered controls via get_control_meta(region).
-        # With CAGE_DEPLOYMENT_REGION unset (empty string), only universal ISO 42001
-        # controls are returned — jurisdictional controls (SA-11, SC-7, etc.) are
-        # correctly excluded.  Use get_control_meta("") to match the endpoint's behaviour.
+        # The summary endpoint returns region-filtered controls via
+        # get_control_meta(resolve_deployment_region()).
         from src.compliance_bridge.types import get_control_meta
+        from src.gateway.governance.env_posture import resolve_deployment_region
 
-        expected_controls = list(get_control_meta("").keys())
+        expected_controls = list(get_control_meta(resolve_deployment_region()).keys())
         with patch(
             "src.compliance_bridge.main.get_compliance_metrics",
             new=AsyncMock(side_effect=self._mock_metrics_factory()),
         ):
             data = client.get("/v1/metrics/summary").json()
-        for cid in expected_controls:
-            assert cid in data["controls"], f"{cid} missing from summary controls"
+        assert set(expected_controls) == set(data["controls"])
 
     def test_summary_respects_window_hours(self, client):
         call_args: list = []

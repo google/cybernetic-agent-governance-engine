@@ -29,6 +29,17 @@ history is rewritten; whoever rewrites `main` owns re-pinning them.
 The label of a Markdown link with a local target is display text: the target is
 the reference, and it is what gets verified.
 
+There is no waiver. A record withdrawn as untrue is preserved verbatim under
+`compliance/archive/retracted/`, and its first non-empty line is a dated notice,
+`> **RETRACTED YYYY-MM-DD** ...`, naming a POAM item that has a row in
+`docs/POAM.md`. The gate verifies the notice and that row, then skips the
+preserved body; a record there without both is reported and checked in full.
+
+In a branch-naming table row, `| Purpose | <pattern> | <example> |` with the
+pattern a backticked branch name built from `<placeholder>` parts, the example
+is a branch name, not a path: it is verified against its pattern, not the
+filesystem.
+
 Usage:
     uv run --active python scripts/check_doc_references.py
     uv run --active python scripts/check_doc_references.py --output /tmp/doc_references_report.txt
@@ -45,8 +56,8 @@ import re
 import shutil
 import subprocess
 import sys
-import tempfile
 from dataclasses import dataclass
+from datetime import date
 from pathlib import Path
 from typing import Any
 
@@ -87,8 +98,10 @@ _DuplicateKeyRejectingLoader.add_constructor(
 
 # The gate's scope, and the only copy of it: CI gate G9 and `make docs-check`
 # run this script without --path. CHANGELOG.md and docs/partners/** are outside
-# the scope by design (a changelog must be free to name removed paths; the
-# partner tree carries a known backlog).
+# it by design (a changelog must be free to name removed paths; the partner tree
+# carries a known backlog). Most of the rest of docs/ is outside it until
+# POAM-2026-224 widens it area by area, so a document outside DOC_SCOPE is
+# unverified, not verified.
 DOC_SCOPE = (
     "README.md",
     "AGENTS.md",
@@ -108,6 +121,15 @@ DOC_SCOPE = (
     "infra",
 )
 DOC_ROOTS = [REPO_ROOT / entry for entry in DOC_SCOPE]
+
+# A record withdrawn as untrue moves here verbatim. Its first non-empty line is a
+# dated notice naming the POAM item that withdrew it; the gate verifies the
+# notice and that item's row in docs/POAM.md, then skips the preserved body.
+# This is the gate's only exclusion.
+RETRACTED_ARCHIVE = "compliance/archive/retracted"
+RETRACTION_NOTICE_PATTERN = re.compile(
+    r"^> \*\*RETRACTED (?P<date>\d{4}-\d{2}-\d{2})\*\*.*?\b(?P<poam>POAM-\d{4}-\d{3,})\b"
+)
 
 # Markdown link: [text](target)
 MD_LINK_PATTERN = re.compile(r"\[([^\]]+)\]\(([^)]+)\)")
@@ -138,173 +160,6 @@ CONCRETE_EXTENSIONS = {
 }
 
 # Literal words or tokens to ignore
-
-# Deliberately documented compliance gap artifacts (cited in NIST RMF as missing)
-KNOWN_DOCUMENTED_GAPS = {
-    "src.gateway.governance.ftra",
-    "src.compliance_bridge.evidence_stream",
-    "src.cage_finance.safety.cbf",
-    ".roo/rules-code/01-code-standards.md",
-    ".github/branch-protection-rules.json",
-    "compliance/authorization/PACKAGE_INDEX.md",
-    "compliance/governance/ROLES_MATRIX.md",
-    "compliance/lula/eu_ecb/component-validations.yaml",
-    "compliance/lula/apac_mas/component-validations.yaml",
-    "compliance/lula/lula-validation-ai600-supply-chain.yaml",
-    "compliance/lula/lula-validation-ai600-privacy.yaml",
-    "compliance/lula/sp80053/",
-    "compliance/lula/sp80053",
-    "compliance/evidence/",
-    "compliance/evidence",
-    "compliance/eu_ai_act/technical_documentation/",
-    "compliance/eu_ai_act/technical_documentation",
-    "compliance_bridge/reconciliation_worker.py",
-    "compliance_bridge/evidence_stream.py",
-    "deployment/TERRAFORM_MIGRATION.md",
-    "config/critics.yaml",
-    "compliance/ssp/INHERITED_CONTROLS.md",
-    "compliance/sar/SAR_TEMPLATE.md",
-    "compliance/oscal/us_fed/system-security-plan.yaml",
-    "compliance/oscal/us_fed/component-definition.yaml",
-    "compliance/oscal/sp80053-profile.yaml",
-    "compliance/oscal/sp80053-assessment-results.yaml",
-    "compliance/oscal/profiles/cage-moderate-tailored.yaml",
-    "compliance/oscal/profiles/",
-    "compliance/oscal/profiles",
-    "compliance/oscal/plan-of-action-milestones.yaml",
-    "compliance/oscal/eu_ecb/system-security-plan.yaml",
-    "compliance/oscal/eu_ecb/component-definition.yaml",
-    "compliance/oscal/components/cage_iso42001.json",
-    "compliance/oscal/components/",
-    "compliance/oscal/components",
-    "compliance/oscal/assessment-plan.yaml",
-    "compliance/oscal/apac_mas/system-security-plan.yaml",
-    "compliance/oscal/apac_mas/component-definition.yaml",
-    "compliance/lula/us_fed/component-validations.yaml",
-    "compliance/lula/sp80053/lula-au-12.yaml",
-    "compliance/lula/sp80053/lula-ac-3.yaml",
-    "deployment/cloudbuild.yaml",
-    "deployment/k8s/generated/debug-downloader.yaml",
-    "deployment/k8s/generated/debug-downloader-fix.yaml",
-    "deployment/k8s/falco-rules.yaml",
-    "deployment/k8s/falco-daemonset.yaml",
-    "deployment/k8s/compliance-bridge-servicemonitor.yaml",
-    "deployment/k8s/authz-policy-seal.yaml",
-    "deployment/k8s/network-policy-seal.yaml",
-    "deployment/k8s/mtls-policy.yaml",
-    "deployment/k8s/istio-peer-auth.yaml",
-    "deployment/k8s/trace-auditor-cron.yaml",
-    "docs/RED_TEAM_DATASET_EXTENSION.md",
-    "docs/QUICKSTART_AGW.md",
-    "docs/QUICKSTART_ACS.md",
-    "docs/ISO42001_MANAGEMENT_REVIEW.md",
-    "docs/INFRASTRUCTURE_POLICY.md",
-    "docs/GIT_HISTORY_SCRUBBING.md",
-    "docs/DATA_GOVERNANCE.md",
-    "docs/Configuration_Baseline.md",
-    "docs/CONTINGENCY_PLAN.md",
-    "docs/COMPLIANCE_POLICY.md",
-    "docs/CHANGE_MANAGEMENT_PROCESS.md",
-    "docs/Authentication_Architecture.md",
-    "docs/cage-arxiv-revision-plan",
-    "docs/cage-arxiv-reproducibility",
-    "docs/cage-arxiv-critical-fixes",
-    "docs/cage-arxiv-bibliography",
-    "docs/ai600-agentic-scope-statement",
-    "proof/compliance-trigger-evidence.yaml",
-    "oscal-artifacts/index.json",
-    "scripts/deploy_sw.py",
-    "scripts/check_region_guards.py",
-    "docs/paper/FPR_IMPROVEMENT_PLAN.md",
-    "docs/templates/COMPLIANCE_STATUS_REPORT.md",
-    "docs/TECHNICAL_DECOMMISSION_GUIDELINES.md",
-    "docs/System_Interconnection_Agreements.md",
-    "docs/SYSTEM_BOUNDARY_DIAGRAM.md",
-    "docs/SECURITY_POLICY.md",
-    "docs/SECRET_MANAGEMENT_OPTIONS.md",
-    "docs/security/INCIDENT_RESPONSE_PLAN.md",
-    "tests/infra/",
-    "src/evaluator_agent/",
-    "compliance/lula/sp800-53/",
-    "compliance/lula/sp800-53",
-    "plans/poam-framework-redesign.md",
-    "plans/domain_extraction_implementation_plan.md",
-    "plans/CAGE_RISK_MATRIX.md",
-    "src/cage_sdk/",
-    "src/cage_sdk",
-    "src/cage_sdk_ts/",
-    "src/cage_sdk_ts",
-    "scripts/vulnerability_scan.sh",
-    "scripts/generate_sbom.sh",
-    "scripts/generate_sar.py",
-    "scripts/replay_refusal_receipt.py",
-    "src/compliance_bridge/oscal_ssp_exporter.py",
-    "src/gateway/governance/agw_envelope.py",
-    "src/gateway/governance/provider_plugin_loader.py",
-    "src/gateway/governance/region_utils.py",
-    "test_results/final_summary_20260603T104718.json",
-    "src/protos/gateway.js",
-    "tests/test_fiscal_limit_guard.py",
-    "tests/test_agw_envelope.py",
-    "tests/red_team/README.md",
-    "tests/integration/test_defer_workflow.py",
-    "src/governed_financial_advisor/infrastructure/telemetry/nemo_exporter.py",
-    "src/governed_financial_advisor/infrastructure/mcp_client.py",
-    "src/governed_financial_advisor/infrastructure/llm_client.py",
-    "src/governed_financial_advisor/infrastructure/llm_client.py:23",
-    "src/governed_financial_advisor/governance/nemo_action_registry.py",
-    "src/governance/transpiler.py",
-    "/.well-known/nexart-node.json",
-    ".well-known/nexart-node.json",
-    "docs/DATA_RETENTION_POLICY.md",
-    "docs/Continuous_Monitoring_Plan.md",
-    "docs/AUTHORIZATION_BOUNDARY.md",
-    "docs/AI_600_1_IMPLEMENTATION_PLAN.md",
-    "docs/AGENT_OPS_ARCHITECTURE.md",
-    "docs/AC2_Account_Management_Procedure.md",
-    "compliance/risk_acceptance/RISK_ACCEPTANCE_STATEMENT.md",
-    "compliance/authorization/AUTHORIZATION_MEMO.md",
-    "compliance/poam/POA_AND_M.md",
-    "compliance/poam/poam.yaml",
-    "deployment/k8s/secret-rotation-cronjob.yaml",
-    "src/gateway/server/agw_service_extension.py",
-    "docs/Network_Architecture.md",
-    "docs/MODEL_OUTPUT_HANDLING.md",
-    "docs/MISSION_BUSINESS_PROCESS.md",
-    "docs/Flaw_Remediation_Policy.md",
-    "docs/EXTERNAL_DEPENDENCY_REGISTER.md",
-    "docs/DECOMMISSION_CHECKLIST.md",
-    "docs/INTERCONNECTION_AGREEMENTS",
-    "docs/INTERCONNECTION_AGREEMENTS/",
-    "docs/Supply_Chain_Risk_Assessment.md",
-    "docs/SUPPLY_CHAIN_RISK_ASSESSMENT.md",
-    "docs/SECURITY_AUDIT_REPORT.md",
-    "docs/SECURITY_AUDIT_REPORT.md:758",
-    "docs/security/IR_PLAN.md",
-    "docs/Incident_Response_Plan.md",
-    "docs/NIST_RMF_CHUNK3_SELECT_IMPLEMENT.md",
-    "src/governed_financial_advisor/requirements.txt",
-    "src/governed_financial_advisor/utils/privacy.py",
-    "src/governed_financial_advisor/utils/langfuse_utils.py",
-    "src/governed_financial_advisor/governance/policy/generated_rules.rego",
-    "src/compliance_bridge/requirements.txt",
-    "plans/layer_inversion_remediation_plan.md",
-    "docs/stpa-control-diagram",
-    "docs/SYSTEM_SECURITY_PLAN.md",
-    "docs/proposals/004_risk_remediation_plan.md",
-    "docs/compliance/us_fed/SECURITY_ASSESSMENT_PLAN.md",
-    "docs/compliance/us_fed/SP800-60_INFORMATION_TYPES.md",
-    "deployment/deploy_sw.py",
-    "docs/governance/ROLES_AND_RESPONSIBILITIES.md",
-    "docs/compliance/universal/AI_IP_POLICY.md",
-    "docs/compliance/us_fed/CONTINUOUS_MONITORING_STRATEGY.md",
-    "docs/MIGRATION_GUIDE_v3.md",
-    "docs/whitepapers/CAGE_TECHNICAL_PREPRINT.md",
-    str(Path(tempfile.gettempdir()) / "benign_dataset.json"),
-    str(Path(tempfile.gettempdir()) / "adversarial_dataset.json"),
-    "tests/governance/test_ir_drill.py",
-}
-
 IGNORED_TOKENS = {
     "true",
     "false",
@@ -537,12 +392,6 @@ def _resolve_candidate_path(base_dir: Path, target_path_str: str) -> Path | None
     ):
         return None
     norm = clean_target[2:] if clean_target.startswith("./") else clean_target
-    if (
-        clean_target in KNOWN_DOCUMENTED_GAPS
-        or norm in KNOWN_DOCUMENTED_GAPS
-        or stripped_target in KNOWN_DOCUMENTED_GAPS
-    ):
-        return None
 
     candidates = [
         # 1. Direct from repo root
@@ -627,14 +476,6 @@ def verify_file_path(
         return True, ""
 
     if is_template_or_pattern(clean_target):
-        return True, ""
-
-    norm = clean_target[2:] if clean_target.startswith("./") else clean_target
-    if (
-        clean_target in KNOWN_DOCUMENTED_GAPS
-        or norm in KNOWN_DOCUMENTED_GAPS
-        or stripped_target in KNOWN_DOCUMENTED_GAPS
-    ):
         return True, ""
 
     resolved = _resolve_candidate_path(base_dir, target_path_str)
@@ -1039,12 +880,6 @@ def _get_yaml_uuid_span(yaml_path: Path, uuid_str: str) -> tuple[int, int] | Non
 
 def verify_python_symbol(symbol_str: str) -> tuple[bool, str]:
     """Verify qualified module.Symbol references (e.g. src.gateway.symbolic_governor.SymbolicGovernor)."""
-    clean_sym = symbol_str.strip()
-    if clean_sym in KNOWN_DOCUMENTED_GAPS or any(
-        clean_sym == g or clean_sym.startswith(g) for g in KNOWN_DOCUMENTED_GAPS
-    ):
-        return True, ""
-
     if is_template_or_pattern(symbol_str):
         return True, ""
 
@@ -1330,6 +1165,139 @@ def _audit_line_references_and_contextual_symbols(
     return issues
 
 
+def _is_retracted_record(path: Path) -> bool:
+    """Return True if *path* lies under RETRACTED_ARCHIVE."""
+    archive = (REPO_ROOT / RETRACTED_ARCHIVE).resolve()
+    return archive in path.resolve().parents
+
+
+def _poam_has_table_row(poam_id: str) -> bool:
+    """Return True if docs/POAM.md has a table row `| <poam_id> |`."""
+    try:
+        poam_text = (REPO_ROOT / "docs" / "POAM.md").read_text(encoding="utf-8")
+    except OSError:
+        return False
+    row = re.compile(rf"^\|\s*{re.escape(poam_id)}\s*\|", re.MULTILINE)
+    return row.search(poam_text) is not None
+
+
+def _audit_retraction_notice(path: Path, lines: list[str]) -> Issue | None:
+    """Verify a retracted record's dated notice and its POAM row; None if both hold."""
+    line_idx, first = next(
+        (
+            (idx, line.strip())
+            for idx, line in enumerate(lines, start=1)
+            if line.strip()
+        ),
+        (1, ""),
+    )
+    missing = (
+        "Retracted record lacks a dated retraction notice naming an existing POAM item"
+    )
+    notice = RETRACTION_NOTICE_PATTERN.match(first)
+    if notice is None:
+        return Issue(
+            path,
+            line_idx,
+            "Retraction Notice",
+            first[:90] or path.name,
+            f"{missing}: its first non-empty line must read "
+            "'> **RETRACTED YYYY-MM-DD** ... POAM-YYYY-NNN ...'",
+        )
+    try:
+        date.fromisoformat(notice["date"])
+    except ValueError:
+        return Issue(
+            path,
+            line_idx,
+            "Retraction Notice",
+            notice["date"],
+            f"{missing}: '{notice['date']}' is not a calendar date",
+        )
+    if not _poam_has_table_row(notice["poam"]):
+        return Issue(
+            path,
+            line_idx,
+            "Retraction Notice",
+            notice["poam"],
+            f"{missing}: {notice['poam']} has no table row in docs/POAM.md",
+        )
+    return None
+
+
+# Branch-naming table row: | Purpose | `<branch pattern>` | `<example>` |
+BRANCH_PLACEHOLDER_PATTERN = re.compile(r"<([a-z][a-z0-9-]*)>")
+BRANCH_LITERAL_PATTERN = re.compile(r"^[a-z0-9/-]*$")
+BRANCH_SEMVER_PLACEHOLDERS = frozenset({"version", "semver"})
+BRANCH_DESCRIPTION_PLACEHOLDERS = frozenset({"short-description", "description"})
+BRANCH_DESCRIPTION_MAX_CHARS = 30  # AGENTS.md: description <= 30 characters
+BRANCH_KEBAB_CASE = r"[a-z0-9]+(?:-[a-z0-9]+)*"
+BRANCH_SEMVER = r"\d+\.\d+\.\d+"
+TABLE_CELL_DELIMITER = re.compile(r"(?<!\\)\|")
+
+
+def _branch_example_reason(example: str, pattern: str) -> str:
+    """Return why *example* does not match branch *pattern*, or "" if it does."""
+    parts = BRANCH_PLACEHOLDER_PATTERN.split(pattern)
+    regex = "".join(
+        re.escape(part)
+        if idx % 2 == 0
+        else f"({BRANCH_SEMVER if part in BRANCH_SEMVER_PLACEHOLDERS else BRANCH_KEBAB_CASE})"
+        for idx, part in enumerate(parts)
+    )
+    match = re.fullmatch(regex, example)
+    if match is None:
+        return (
+            f"Branch-name example does not match pattern '{pattern}' (<version> and "
+            "<semver> are N.N.N; every other placeholder is lowercase kebab-case)"
+        )
+    for name, value in zip(parts[1::2], match.groups(), strict=True):
+        if (
+            name in BRANCH_DESCRIPTION_PLACEHOLDERS
+            and len(value) > BRANCH_DESCRIPTION_MAX_CHARS
+        ):
+            return (
+                f"Branch-name example's <{name}> part is {len(value)} characters "
+                f"(at most {BRANCH_DESCRIPTION_MAX_CHARS})"
+            )
+    return ""
+
+
+def _audit_branch_examples(
+    path: Path, line_idx: int, line: str
+) -> tuple[tuple[int, int] | None, list[Issue]]:
+    """Verify the example cell of a branch-naming table row against its pattern cell.
+
+    A row qualifies when its second cell is a single backticked branch pattern:
+    `<placeholder>` parts and lowercase literal parts, at least one with a
+    letter (`feat/<short-description>`, `rc-v<semver>`). Returns the third
+    cell's span, whose backticked tokens are branch names rather than paths, and
+    an Issue per mismatch.
+    """
+    bars = [m.start() for m in TABLE_CELL_DELIMITER.finditer(line)]
+    if len(bars) < 4 or line[: bars[0]].strip():
+        return None, []
+    pattern_cell = re.fullmatch(r"`([^`\s]+)`", line[bars[1] + 1 : bars[2]].strip())
+    if pattern_cell is None:
+        return None, []
+    pattern = pattern_cell.group(1)
+    parts = BRANCH_PLACEHOLDER_PATTERN.split(pattern)
+    literals = parts[::2]
+    if (
+        len(parts) < 3
+        or not all(BRANCH_LITERAL_PATTERN.match(p) for p in literals)
+        or not re.search(r"[a-z]", "".join(literals))
+    ):
+        return None, []
+    cell = (bars[2] + 1, bars[3])
+    issues = [
+        Issue(path, line_idx, "Branch Example", cm.group(1).strip(), reason)
+        for cm in INLINE_CODE_PATTERN.finditer(line, *cell)
+        if (reason := _branch_example_reason(cm.group(1).strip(), pattern))
+    ]
+    return cell, issues
+
+
 def audit_markdown_file(path: Path) -> list[Issue]:
     """Scan a single markdown file for broken file paths, links, and code symbols."""
     issues: list[Issue] = []
@@ -1339,6 +1307,13 @@ def audit_markdown_file(path: Path) -> list[Issue]:
         return [Issue(path, 1, "File Read Error", str(path), str(err))]
 
     lines = content.splitlines()
+
+    # 0. A retracted record: verify its notice and POAM row, then skip its body
+    if _is_retracted_record(path):
+        notice_issue = _audit_retraction_notice(path, lines)
+        if notice_issue is None:
+            return []
+        issues.append(notice_issue)
 
     for line_idx, line in enumerate(lines, start=1):
         # Collect any revision-pinned .tf addresses on this line for historical HCL lookups
@@ -1371,12 +1346,20 @@ def audit_markdown_file(path: Path) -> list[Issue]:
                     Issue(path, line_idx, "Markdown Link", link_target, reason)
                 )
 
-        # 2. Inline code backticks: `target`
+        # 2. Inline code backticks: `target`. A branch-naming table row's example
+        #    is a branch name, verified against its pattern, not a path.
+        branch_cell, branch_issues = _audit_branch_examples(path, line_idx, line)
+        issues.extend(branch_issues)
         is_mutation_row = bool(re.search(r"\|\s*(?:Re-declare|Restore)\s+`", line))
         for code_match in INLINE_CODE_PATTERN.finditer(line):
             if any(
                 start <= code_match.start() and code_match.end() <= end
                 for start, end in local_link_labels
+            ):
+                continue
+            if branch_cell is not None and (
+                branch_cell[0] <= code_match.start()
+                and code_match.end() <= branch_cell[1]
             ):
                 continue
             code_snippet = code_match.group(1).strip()
@@ -1685,7 +1668,7 @@ def _audit_oscal_prose_paths(
                     _find_line_1(raw_lines, cand),
                     "OSCAL File Path",
                     cand,
-                    f"OSCAL narrative path '{cand}' does not exist on disk (no KNOWN_DOCUMENTED_GAPS waiver)",
+                    f"OSCAL narrative path '{cand}' does not exist on disk",
                 )
             )
     return issues
@@ -1736,7 +1719,7 @@ def _walk_oscal_node(
                                 _find_line_1(raw_lines, href_val),
                                 "OSCAL Href Path",
                                 href_val,
-                                f"OSCAL local href '{clean_href}' does not exist on disk (no KNOWN_DOCUMENTED_GAPS waiver)",
+                                f"OSCAL local href '{clean_href}' does not exist on disk",
                             )
                         )
             elif k in {"description", "remarks"} and isinstance(v, str):

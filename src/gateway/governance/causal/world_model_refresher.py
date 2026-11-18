@@ -88,6 +88,7 @@ class WorldModelSnapshot:
     computed_at: float
     telemetry_watermark: float | None
     provider_error: str | None = None
+    computed_monotonic: float | None = None
 
 
 class WorldModelRefresher:
@@ -133,6 +134,7 @@ class WorldModelRefresher:
     ) -> WorldModelSnapshot:
         """Install an explicit snapshot (used by unit tests and warm-up hooks)."""
         now = time.time() if computed_at is None else float(computed_at)
+        mono = time.monotonic() if computed_at is None else None
         watermark = (
             now
             if (telemetry_watermark is None and verdict.trusted)
@@ -143,6 +145,7 @@ class WorldModelRefresher:
             computed_at=now,
             telemetry_watermark=watermark,
             provider_error=provider_error,
+            computed_monotonic=mono,
         )
         self._snapshot = snap
         return snap
@@ -166,12 +169,17 @@ class WorldModelRefresher:
             )
 
         current_time = time.time() if now is None else float(now)
+        cache_age = (
+            (time.monotonic() - snap.computed_monotonic)
+            if (now is None and snap.computed_monotonic is not None)
+            else (current_time - snap.computed_at)
+        )
         cache_ttl = get_causal_cache_ttl_seconds()
-        if cache_ttl > 0 and (current_time - snap.computed_at) > cache_ttl:
+        if cache_ttl > 0 and (cache_age > cache_ttl or cache_age < -5.0):
             logger.warning(
-                "WorldModelRefresher: cached verdict is %.1fs old (ttl=%ds) — "
+                "WorldModelRefresher: cached verdict age=%.1fs invalid for ttl=%ds — "
                 "failing closed with stale_telemetry.",
-                current_time - snap.computed_at,
+                cache_age,
                 cache_ttl,
             )
             return (
@@ -183,11 +191,15 @@ class WorldModelRefresher:
             return snap.verdict, snap.provider_error
 
         max_staleness = get_telemetry_max_staleness_seconds()
-        if (
-            snap.telemetry_watermark is None
-            or not math.isfinite(snap.telemetry_watermark)
-            or (current_time - snap.telemetry_watermark) > max_staleness
-        ):
+        watermark_age = (
+            (current_time - snap.telemetry_watermark)
+            if (
+                snap.telemetry_watermark is not None
+                and math.isfinite(snap.telemetry_watermark)
+            )
+            else math.inf
+        )
+        if watermark_age > max_staleness or watermark_age < -5.0:
             logger.warning(
                 "WorldModelRefresher: telemetry watermark is stale or missing "
                 "(max_staleness=%ds) — failing closed with stale_telemetry.",
@@ -222,6 +234,7 @@ class WorldModelRefresher:
                             False, None, REASON_NO_LIVE_TELEMETRY
                         ),
                         computed_at=time.time(),
+                        computed_monotonic=time.monotonic(),
                         telemetry_watermark=None,
                         provider_error=str(exc),
                     )
@@ -236,6 +249,7 @@ class WorldModelRefresher:
                             False, None, REASON_NO_LIVE_TELEMETRY
                         ),
                         computed_at=time.time(),
+                        computed_monotonic=time.monotonic(),
                         telemetry_watermark=None,
                     )
                     self._snapshot = snap
@@ -247,6 +261,7 @@ class WorldModelRefresher:
                             False, None, REASON_NO_LIVE_TELEMETRY
                         ),
                         computed_at=time.time(),
+                        computed_monotonic=time.monotonic(),
                         telemetry_watermark=None,
                     )
                     self._snapshot = snap
@@ -262,6 +277,7 @@ class WorldModelRefresher:
                     snap = WorldModelSnapshot(
                         verdict=WorldModelVerdict(False, None, REASON_CHECK_ERROR),
                         computed_at=time.time(),
+                        computed_monotonic=time.monotonic(),
                         telemetry_watermark=None,
                     )
                     self._snapshot = snap

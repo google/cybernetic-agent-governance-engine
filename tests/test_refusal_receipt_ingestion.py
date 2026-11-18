@@ -51,8 +51,13 @@ class TestSerializeReceipt:
             violated_tier="CBF",
             violated_rule="Cash balance below threshold",
             standing_at_refusal={"balance": 1000.0},
-            schema_version="v3",
-            attempted_params={"symbol": "AAPL", "amount": 10000.0},
+            schema_version="v4",
+            evaluated_params={"symbol": "AAPL", "amount": 10000.0},
+            attempted_params={
+                "symbol": "AAPL",
+                "amount": 10000.0,
+                "rationale": "unbounded prose stays in memory only",
+            },
             standing_snapshot={"balance": 1000.0},
             control_id="CAGE-CTRL-001",
             protected_consequence="trade_rejection",
@@ -64,14 +69,17 @@ class TestSerializeReceipt:
         original_proof_hash = receipt.proof_hash
         assert original_proof_hash != "", "Receipt should have computed proof_hash"
 
-        # Serialize it
+        # Serialize it for WORM ingestion
         serialized = _serialize_receipt(receipt)
 
         # Verify proof_hash is byte-identical to the computed value
         assert serialized["proof_hash"] == original_proof_hash
-        assert serialized["schema_version"] == "v3"
+        assert serialized["schema_version"] == "v4"
         assert serialized["thread_id"] == "test-thread-123"
         assert serialized["action"] == "execute_trade"
+        assert "attempted_params" not in serialized
+        assert serialized["evaluated_params"] == {"symbol": "AAPL", "amount": 10000.0}
+        assert len(serialized["params_hash"]) == 64
 
     def test_serialize_preserves_tier_failures(self):
         """A2 requirement: tier_failures survive serialization."""
@@ -102,14 +110,15 @@ class TestSerializeReceipt:
         assert tf["protected_consequence"] == "budget_violation"
 
     def test_serialize_five_part_proof_chain(self):
-        """A2 requirement: 5-part proof chain fields survive serialization."""
+        """A2 + RP-1 requirement: 5-part proof chain fields survive WORM serialization without attempted_params."""
         receipt = RefusalReceipt(
             thread_id="test-thread-789",
             action="execute_trade",
             violated_tier="CBF",
             violated_rule="Test rule",
-            schema_version="v2",
-            attempted_params={"symbol": "MSFT", "amount": 5000.0},
+            schema_version="v4",
+            evaluated_params={"symbol": "MSFT", "amount": 5000.0},
+            attempted_params={"symbol": "MSFT", "amount": 5000.0, "notes": "free text"},
             standing_snapshot={"balance": 2000.0, "committed": 1000.0},
             control_id="CAGE-CTRL-003",
             protected_consequence="overdraft_prevention",
@@ -118,8 +127,10 @@ class TestSerializeReceipt:
 
         serialized = _serialize_receipt(receipt)
 
-        # Verify all 5 parts are present
-        assert serialized["attempted_params"] == {"symbol": "MSFT", "amount": 5000.0}
+        # Verify WORM retention projection
+        assert "attempted_params" not in serialized
+        assert serialized["evaluated_params"] == {"symbol": "MSFT", "amount": 5000.0}
+        assert len(serialized["params_hash"]) == 64
         assert serialized["standing_snapshot"] == {
             "balance": 2000.0,
             "committed": 1000.0,
@@ -128,13 +139,27 @@ class TestSerializeReceipt:
         assert serialized["protected_consequence"] == "overdraft_prevention"
         assert serialized["non_formation_proof"] == "cbf_barrier_active"
 
+        # Legacy v3 receipts with non-empty attempted_params are refused on the WORM path
+        legacy_v3 = RefusalReceipt(
+            thread_id="legacy-v3",
+            action="execute_trade",
+            violated_tier="CBF",
+            violated_rule="Test rule",
+            schema_version="v3",
+            attempted_params={"symbol": "MSFT", "notes": "free text"},
+        )
+        with pytest.raises(
+            ValueError, match="attempted_params cannot be emitted to WORM"
+        ):
+            _serialize_receipt(legacy_v3)
+
 
 class TestEmitRefusalReceiptIntegration:
-    """Integration tests for _emit_refusal_receipt with full v3 receipts."""
+    """Integration tests for _emit_refusal_receipt with full v4 WORM receipts."""
 
     @pytest.mark.asyncio
     async def test_emit_with_full_receipt_contains_proof_hash(self, monkeypatch):
-        """A2 requirement: Emitted receipt contains proof_hash matching the computed value."""
+        """A2 + RP-1 requirement: Emitted receipt contains proof_hash and evaluated_params without attempted_params."""
         from unittest.mock import AsyncMock, MagicMock
 
         # Mock the evidence sink
@@ -167,8 +192,13 @@ class TestEmitRefusalReceiptIntegration:
             violated_tier="FISCAL",
             violated_rule="Budget exceeded",
             tier_failures=(tier_failure,),
-            schema_version="v3",
-            attempted_params={"symbol": "NVDA", "amount": 15000.0},
+            schema_version="v4",
+            evaluated_params={"symbol": "NVDA", "amount": 15000.0},
+            attempted_params={
+                "symbol": "NVDA",
+                "amount": 15000.0,
+                "rationale": "unbounded prompt text",
+            },
             standing_snapshot={"budget": 10000.0},
             control_id="CAGE-CTRL-004",
             protected_consequence="fiscal_violation",
@@ -197,11 +227,13 @@ class TestEmitRefusalReceiptIntegration:
         assert len(ingested_payload["tier_failures"]) == 1
         assert ingested_payload["tier_failures"][0]["tier"] == "FISCAL"
 
-        # Verify 5-part proof chain
-        assert ingested_payload["attempted_params"] == {
+        # Verify RP-1 WORM retention projection
+        assert "attempted_params" not in ingested_payload
+        assert ingested_payload["evaluated_params"] == {
             "symbol": "NVDA",
             "amount": 15000.0,
         }
+        assert len(ingested_payload["params_hash"]) == 64
         assert ingested_payload["control_id"] == "CAGE-CTRL-004"
         assert ingested_payload["protected_consequence"] == "fiscal_violation"
 

@@ -91,8 +91,31 @@ def _violations(response: httpx.Response) -> list[str]:
     return [str(v) for v in violations] if violations else ["governance denied"]
 
 
+def _has_refusal_evidence(body: Mapping[str, Any]) -> bool:
+    """Return True iff a 403 refusal body carries a non-empty proof_hash or audit_id."""
+    raw_receipt = body.get("refusal_receipt")
+    receipt = raw_receipt if isinstance(raw_receipt, Mapping) else {}
+    for candidate in (
+        body.get("proof_hash"),
+        receipt.get("proof_hash"),
+        body.get("audit_id"),
+    ):
+        if isinstance(candidate, str) and candidate.strip():
+            return True
+    return False
+
+
 def _is_policy_drift(response: httpx.Response) -> bool:
-    return any("Substrate Policy Drift Detected" in v for v in _violations(response))
+    try:
+        body = response.json()
+    except ValueError:
+        return False
+    if not isinstance(body, Mapping) or not _has_refusal_evidence(body):
+        return False
+    violations = body.get("violations")
+    if not isinstance(violations, list) or not violations:
+        return False
+    return any("Substrate Policy Drift Detected" in str(v) for v in violations)
 
 
 def _retry_delay_seconds(response: httpx.Response, attempt: int) -> float:
@@ -159,9 +182,12 @@ class _AdvisorTransport(httpx.AsyncBaseTransport):
 
     ``CageClient`` builds the governance exchange and verifies its answer.
     Sending it through the advisor's ``httpx.AsyncClient`` keeps the
-    advisor's W3C trace context and ``x-cage-principal`` headers, its 429/503
-    retry budget, and the policy-drift replay with a refreshed
-    ``policy_version_id``.
+    advisor's W3C trace context and ``x-cage-principal`` headers, its 429
+    rate-limit retry budget (matching ``execute_tool``: 503 is never retried,
+    so a governance or mesh outage surfaces once as ``GATEWAY_ERROR`` without
+    multiplying hash-chained ``GOVERNANCE_INFRASTRUCTURE_BLOCK`` events or
+    parsing unverified error bodies), and the policy-drift replay with a
+    refreshed ``policy_version_id``.
     """
 
     def __init__(self, owner: GatewayClient, http: httpx.AsyncClient) -> None:
@@ -196,7 +222,7 @@ class _AdvisorTransport(httpx.AsyncBaseTransport):
                 path, json=body, headers=headers, timeout=timeout
             )
 
-        response = await _post_with_retries(_post, retry_statuses=frozenset({429, 503}))
+        response = await _post_with_retries(_post, retry_statuses=frozenset({429}))
         if (
             current is not None
             and response.status_code == 403
@@ -208,9 +234,7 @@ class _AdvisorTransport(httpx.AsyncBaseTransport):
             body["policy_version_id"] = await self._owner.get_policy_version(
                 timeout=timeout
             )
-            response = await _post_with_retries(
-                _post, retry_statuses=frozenset({429, 503})
-            )
+            response = await _post_with_retries(_post, retry_statuses=frozenset({429}))
         if current is not None:
             current.response = response
         return response
@@ -225,7 +249,7 @@ def _verified_result(response: httpx.Response | None) -> dict[str, Any]:
     as a 200 envelope carries no signature and is refused.
     """
     if response is None or response.status_code != 200:
-        raise PermissionError(
+        raise CageGatewayError(
             "Governance answered without a signed envelope; refusing to route on it"
         )
     body = json.loads(response.content)
@@ -257,22 +281,33 @@ def _denial_reasons(
     return exc.reason_code
 
 
+_UNSIGNED_200_PREFIXES = (
+    "Invalid JSON in ALLOW response",
+    "ALLOW response ",
+    "Failed to parse governance envelope",
+)
+
+
 def _raise_unrouted(
     action: str, exc: CageGatewayError, response: httpx.Response | None
 ) -> NoReturn:
-    """Re-raise an SDK error the way the advisor's callers already handle it."""
+    """Re-raise an SDK error without collapsing un-evidenced HTTP errors into policy denials."""
     if isinstance(exc.__cause__, httpx.RequestError):
         # Transport failure or timeout: surface the original httpx error.
         raise exc.__cause__ from None
-    if response is not None and response.status_code == 403:
-        raise PermissionError(
-            f"Governance DENIED '{action}': {'; '.join(_violations(response))}"
-        ) from exc
     if response is not None and response.status_code >= 400:
         response.raise_for_status()
-    raise PermissionError(
-        f"Governance returned no routable verdict for '{action}': {exc}"
-    ) from exc
+    if (
+        response is not None
+        and response.status_code == 200
+        and not str(exc).startswith(_UNSIGNED_200_PREFIXES)
+    ):
+        # Cryptographically verified 200 GovernanceEnvelope carrying an
+        # unrecognised or incomplete verdict payload.
+        raise PermissionError(
+            f"Governance returned no routable verdict for '{action}': {exc}"
+        ) from exc
+    raise exc
 
 
 class GatewayClient:
@@ -515,12 +550,16 @@ class GatewayClient:
             gateway-held approval token) or ``DEFER``.
 
         Raises:
-            PermissionError: On a refusal (HTTP 403 / ``DENY``) or any answer
-                outside the canonical vocabulary — the caller must block.
+            PermissionError: On an evidenced refusal (HTTP 403 carrying
+                ``proof_hash`` / ``audit_id``, or a signed ``DENY`` envelope)
+                or a signed 200 envelope outside the canonical vocabulary —
+                the caller must block.
             cage_client.RoutingSealVerificationError: If the envelope's
                 signature, ``kid``, freshness or request binding fails
                 verification — the caller must block.
-            httpx.HTTPStatusError: On other 4xx / 5xx Gateway errors.
+            cage_client.CageGatewayError: If an HTTP 200/202 body lacks a
+                valid signed ``GovernanceEnvelope``.
+            httpx.HTTPStatusError: On un-evidenced 403 or other 4xx / 5xx errors.
             httpx.TimeoutException: If the Gateway does not respond within timeout.
         """
         sdk = await self._ensure_sdk(await self._ensure_client(), timeout)
@@ -531,6 +570,21 @@ class GatewayClient:
                 action=action, parameters=params, agent_id=_ADVISOR_AGENT_ID
             )
         except PolicyViolationException as exc:
+            if preview.response is not None and preview.response.status_code != 200:
+                try:
+                    raw_body = preview.response.json()
+                except ValueError:
+                    raw_body = None
+                if not isinstance(raw_body, Mapping) or not _has_refusal_evidence(
+                    raw_body
+                ):
+                    _raise_unrouted(
+                        action,
+                        CageGatewayError(
+                            "DENY response missing non-blank string 'proof_hash' or 'audit_id'"
+                        ),
+                        preview.response,
+                    )
             narrowed = (
                 exc.reason_code == "NARROWED"
                 and preview.response is not None

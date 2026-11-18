@@ -98,15 +98,22 @@ def _kubectl(
 def render_mesh_policy_chart(
     namespace: str = NAMESPACE,
     trusted_identities: list[str] | None = None,
+    canary_identities: list[str] | None = None,
 ) -> str:
     """Render ``infra/modules/gateway/mesh-policy`` for the given namespace and identities."""
     identities = (
         [ADVISOR_SPIFFE_ID] if trusted_identities is None else list(trusted_identities)
     )
+    default_canary = f"cage-gateway-canary-sa.{namespace}.serviceaccount.identity.linkerd.cluster.local"
+    canaries = (
+        [default_canary] if canary_identities is None else list(canary_identities)
+    )
     if shutil.which("helm") is not None:
         set_args: list[str] = []
         for idx, identity in enumerate(identities):
             set_args.extend(["--set-string", f"trustedIdentities[{idx}]={identity}"])
+        for idx, identity in enumerate(canaries):
+            set_args.extend(["--set-string", f"canaryIdentities[{idx}]={identity}"])
         res = subprocess.run(
             [
                 "helm",
@@ -165,6 +172,27 @@ def render_mesh_policy_chart(
             apiVersion: policy.linkerd.io/v1beta3
             kind: HTTPRoute
             metadata:
+              name: gateway-canary
+              namespace: {namespace}
+            spec:
+              parentRefs:
+                - group: policy.linkerd.io
+                  kind: Server
+                  name: gateway-http
+              rules:
+                - matches:
+                    - method: POST
+                      path:
+                        type: Exact
+                        value: "/governance/validate-action"
+                    - method: POST
+                      path:
+                        type: Exact
+                        value: "/governance/policy-precheck"
+            ---
+            apiVersion: policy.linkerd.io/v1beta3
+            kind: HTTPRoute
+            metadata:
               name: gateway-gated
               namespace: {namespace}
             spec:
@@ -220,6 +248,21 @@ def render_mesh_policy_chart(
             f"apiVersion: policy.linkerd.io/v1alpha1\n"
             f"kind: AuthorizationPolicy\n"
             f"metadata:\n"
+            f"  name: gateway-canary-trusted\n"
+            f"  namespace: {namespace}\n"
+            f"spec:\n"
+            f"  targetRef:\n"
+            f"    group: policy.linkerd.io\n"
+            f"    kind: HTTPRoute\n"
+            f"    name: gateway-canary\n"
+            f"  requiredAuthenticationRefs:\n"
+            f"    - group: policy.linkerd.io\n"
+            f"      kind: MeshTLSAuthentication\n"
+            f"      name: gateway-trusted-clients\n"
+            f"---\n"
+            f"apiVersion: policy.linkerd.io/v1alpha1\n"
+            f"kind: AuthorizationPolicy\n"
+            f"metadata:\n"
             f"  name: gateway-gated\n"
             f"  namespace: {namespace}\n"
             f"spec:\n"
@@ -231,6 +274,33 @@ def render_mesh_policy_chart(
             f"    - group: policy.linkerd.io\n"
             f"      kind: MeshTLSAuthentication\n"
             f"      name: gateway-trusted-clients\n"
+        )
+    if canaries:
+        c_lines = "\n".join(f"    - {json.dumps(i)}" for i in canaries)
+        docs.append(
+            f"apiVersion: policy.linkerd.io/v1alpha1\n"
+            f"kind: MeshTLSAuthentication\n"
+            f"metadata:\n"
+            f"  name: gateway-canary-clients\n"
+            f"  namespace: {namespace}\n"
+            f"spec:\n"
+            f"  identities:\n"
+            f"{c_lines}\n"
+            f"---\n"
+            f"apiVersion: policy.linkerd.io/v1alpha1\n"
+            f"kind: AuthorizationPolicy\n"
+            f"metadata:\n"
+            f"  name: gateway-canary\n"
+            f"  namespace: {namespace}\n"
+            f"spec:\n"
+            f"  targetRef:\n"
+            f"    group: policy.linkerd.io\n"
+            f"    kind: HTTPRoute\n"
+            f"    name: gateway-canary\n"
+            f"  requiredAuthenticationRefs:\n"
+            f"    - group: policy.linkerd.io\n"
+            f"      kind: MeshTLSAuthentication\n"
+            f"      name: gateway-canary-clients\n"
         )
     return "\n---\n".join(docs)
 
@@ -810,15 +880,59 @@ def _exec_http_get(
     return int(payload["status"]), str(payload["body"])
 
 
+def _exec_http_post(
+    pod_name: str,
+    path: str,
+    json_body: dict[str, object],
+) -> tuple[int, str]:
+    """Execute an HTTP POST from inside a meshed client pod to the gateway Service."""
+    body_literal = json.dumps(json.dumps(json_body))
+    script = textwrap.dedent(
+        f"""\
+        import json, urllib.request, urllib.error
+        url = "http://gateway-mesh-probe.{NAMESPACE}.svc.cluster.local:8080{path}"
+        req = urllib.request.Request(
+            url,
+            data={body_literal}.encode("utf-8"),
+            headers={{"Content-Type": "application/json"}},
+            method="POST",
+        )
+        try:
+            with urllib.request.urlopen(req, timeout=10) as resp:
+                print(json.dumps({{"status": resp.status, "body": resp.read().decode("utf-8", "replace")}}))
+        except urllib.error.HTTPError as exc:
+            print(json.dumps({{"status": exc.code, "body": exc.read().decode("utf-8", "replace")}}))
+        """
+    )
+    res = _kubectl(
+        "exec",
+        pod_name,
+        "-n",
+        NAMESPACE,
+        "-c",
+        "client",
+        "--",
+        "python",
+        "-c",
+        script,
+    )
+    payload = json.loads(res.stdout.strip().splitlines()[-1])
+    return int(payload["status"]), str(payload["body"])
+
+
 def test_linkerd_manifests_accepted_by_apiserver(linkerd_mesh_fixture) -> None:
     """Verify Linkerd policy resources rendered from infra/modules/gateway/mesh-policy are active."""
     expected_resources = [
         "server.policy.linkerd.io/gateway-http",
         "httproute.policy.linkerd.io/gateway-open",
+        "httproute.policy.linkerd.io/gateway-canary",
         "httproute.policy.linkerd.io/gateway-gated",
         "meshtlsauthentication.policy.linkerd.io/gateway-trusted-clients",
+        "meshtlsauthentication.policy.linkerd.io/gateway-canary-clients",
         "networkauthentication.policy.linkerd.io/gateway-any-network",
         "authorizationpolicy.policy.linkerd.io/gateway-open",
+        "authorizationpolicy.policy.linkerd.io/gateway-canary-trusted",
+        "authorizationpolicy.policy.linkerd.io/gateway-canary",
         "authorizationpolicy.policy.linkerd.io/gateway-gated",
     ]
     for resource in expected_resources:
@@ -891,7 +1005,7 @@ def test_companion_mesh_charts_accepted_by_linkerd_webhook(
 
 
 def test_trusted_advisor_sa_reaches_gated_and_open_routes(linkerd_mesh_fixture) -> None:
-    """Verify cage-advisor-sa is admitted to both open and gated routes on hybrid_server:root_app."""
+    """Verify cage-advisor-sa is admitted to open, gated, and exact gateway-canary routes on hybrid_server:root_app."""
     status_open, body_open = _exec_http_get("advisor-mesh-client", "/healthz")
     assert status_open == 200
     assert json.loads(body_open)["status"] == "healthy"
@@ -904,17 +1018,32 @@ def test_trusted_advisor_sa_reaches_gated_and_open_routes(linkerd_mesh_fixture) 
     assert gated_payload.get("active_hash")
     assert gated_payload.get("thresholds_digest")
 
+    # Exact HTTPRoute/gateway-canary paths must also admit cage-advisor-sa via
+    # AuthorizationPolicy/gateway-canary-trusted (Linkerd selects Exact ahead of
+    # PathPrefix "/" and returns an empty-body 403 if trustedIdentities is omitted).
+    for exact_path in ("/governance/validate-action", "/governance/policy-precheck"):
+        st, body = _exec_http_post("advisor-mesh-client", exact_path, {})
+        assert body.strip() != "", (
+            f"Linkerd proxy returned empty-body {st} for cage-advisor-sa on {exact_path}"
+        )
+
 
 def test_untrusted_vllm_sa_reaches_open_route_but_denied_on_gated_route(
     linkerd_mesh_fixture,
 ) -> None:
-    """Verify cage-vllm-sa is admitted to /healthz (200) but blocked by Linkerd on gated routes (403)."""
+    """Verify cage-vllm-sa is admitted to /healthz (200) but blocked by Linkerd on gated and canary routes (403)."""
     status_open, body_open = _exec_http_get("vllm-mesh-client", "/healthz")
     assert status_open == 200
     assert json.loads(body_open)["status"] == "healthy"
 
     status_gated, _ = _exec_http_get("vllm-mesh-client", "/governance/policy-version")
     assert status_gated == 403
+
+    status_canary, body_canary = _exec_http_post(
+        "vllm-mesh-client", "/governance/validate-action", {}
+    )
+    assert status_canary == 403
+    assert body_canary == ""
 
 
 def test_forged_l5d_client_id_header_rejected_and_overwritten_by_linkerd(

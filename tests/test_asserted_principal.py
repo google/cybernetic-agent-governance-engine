@@ -21,8 +21,9 @@ Covers the wire and authentication contracts in
 * A request carrying a verified OIDC JWT (resolved out-of-band by ``kid``)
   propagates that authenticated principal end-to-end (``user_context``,
   ``principal_verified_context=True``, ``x-cage-principal``,
-  ``x-cage-principal-verified="true"``, and span
-  attributes ``enduser.id`` + ``cage.principal.verified=True``).
+  ``x-cage-principal-verified="true"``, and span attribute
+  ``cage.principal.verified=True``). The principal itself, the prompt and the
+  response never go on a span.
 * A request whose body ``user_id`` disagrees with the verified OIDC claim is
   refused with HTTP 403 before graph execution.
 * A request without a verified OIDC identity is refused (HTTP 401) in
@@ -69,7 +70,10 @@ from pydantic import ValidationError
 
 from src.gateway.observability.attributes import (
     SPAN_ATTR_CAGE_PRINCIPAL_VERIFIED,
+    SPAN_ATTR_CONTENT_INPUT_LENGTH,
+    SPAN_ATTR_CONTENT_OUTPUT_LENGTH,
     SPAN_ATTR_ENDUSER_ID,
+    SPAN_ATTR_THREAD_ID,
 )
 from src.gateway.server.rate_limit import sanitize_principal as gateway_sanitize
 from src.governed_financial_advisor.infrastructure.auth import (
@@ -91,6 +95,7 @@ from src.governed_financial_advisor.utils.context import (
     principal_verified_context,
     user_context,
 )
+from tests.fixtures.telemetry_canary import CanaryCapture, leaks
 
 pytestmark = [pytest.mark.unit, pytest.mark.local]
 
@@ -640,10 +645,36 @@ class TestAuthenticatedPrincipalBinding:
         assert graph.calls[0]["headers"]["x-cage-principal-verified"] == "false"
 
 
-class TestQuerySpanMarksPrincipalVerification:
-    """The /agent/query span records enduser.id and cage.principal.verified."""
+_PROMPT_CANARY = "zebra-prompt-canary-5d1e9b"
+_RESPONSE_CANARY = "okapi-response-canary-7c42a0"
+_USER_CANARY = "canary-user-3f8b61"
 
-    async def test_span_records_enduser_and_unverified_flag(
+
+class _CanaryGraph(_CapturingGraph):
+    """Capturing graph whose answer carries the response canary."""
+
+    async def ainvoke(
+        self, inputs: dict[str, Any], config: dict[str, Any]
+    ) -> dict[str, Any]:
+        await super().ainvoke(inputs, config)
+        return {
+            "messages": [
+                SimpleNamespace(content=f"Index funds beat {_RESPONSE_CANARY}.")
+            ]
+        }
+
+
+def _query_request(graph: _CapturingGraph) -> SimpleNamespace:
+    return SimpleNamespace(
+        app=SimpleNamespace(state=SimpleNamespace(graph=graph)), headers={}
+    )
+
+
+class TestQuerySpanCarriesNoIdentityOrContent:
+    """The /agent/query span records cage.principal.verified, never the principal,
+    the prompt or the response."""
+
+    async def test_span_records_unverified_flag_without_principal(
         self, advisor_server: Any, stub_cache: MagicMock
     ) -> None:
         exporter = InMemorySpanExporter()
@@ -665,9 +696,12 @@ class TestQuerySpanMarksPrincipalVerification:
 
         assert result["response"] == "Diversify across index funds."
         (span,) = exporter.get_finished_spans()
-        assert span.attributes[SPAN_ATTR_ENDUSER_ID] == "investor-42"
+        assert SPAN_ATTR_ENDUSER_ID not in span.attributes
         assert span.attributes[SPAN_ATTR_CAGE_PRINCIPAL_VERIFIED] is False
-        assert span.attributes["thread.id"] == "advisor_session_investor-42"
+        # The default thread id embeds the user id, so it stays off the span,
+        # while the graph and the cache still key on it.
+        assert SPAN_ATTR_THREAD_ID not in span.attributes
+        assert leaks([span], "investor-42") == []
         assert (
             graph.calls[0]["config"]["configurable"]["thread_id"]
             == "advisor_session_investor-42"
@@ -679,7 +713,7 @@ class TestQuerySpanMarksPrincipalVerification:
         assert SPAN_ATTR_CAGE_PRINCIPAL_VERIFIED == "cage.principal.verified"
         assert SPAN_ATTR_ENDUSER_ID == "enduser.id"
 
-    async def test_span_records_verified_true_when_principal_authenticated(
+    async def test_span_records_verified_true_without_principal(
         self,
         advisor_server: Any,
         stub_cache: MagicMock,
@@ -716,8 +750,99 @@ class TestQuerySpanMarksPrincipalVerification:
 
         assert result["response"] == "Diversify across index funds."
         (span,) = exporter.get_finished_spans()
-        assert span.attributes[SPAN_ATTR_ENDUSER_ID] == "user:alice@example.com"
+        assert SPAN_ATTR_ENDUSER_ID not in span.attributes
         assert span.attributes[SPAN_ATTR_CAGE_PRINCIPAL_VERIFIED] is True
+        assert leaks([span], "alice") == []
+
+    async def test_canary_prompt_user_and_response_are_never_exported(
+        self, advisor_server: Any, stub_cache: MagicMock
+    ) -> None:
+        capture = CanaryCapture()
+        graph = _CanaryGraph()
+        prompt = f"Should I move my savings into {_PROMPT_CANARY}?"
+
+        with capture.tracer.start_as_current_span("POST /agent/query"):
+            result = await advisor_server.query_agent(
+                QueryRequest(prompt=prompt, user_id=_USER_CANARY),
+                _query_request(graph),
+                _auth="test",
+            )
+
+        canaries = (_PROMPT_CANARY, _USER_CANARY, _RESPONSE_CANARY)
+        # The request itself is unchanged: the graph gets the prompt and the user.
+        assert _RESPONSE_CANARY in result["response"]
+        assert graph.calls[0]["inputs"]["user_id"] == _USER_CANARY
+        assert graph.calls[0]["inputs"]["messages"] == [("user", prompt)]
+        # At the source, the span carries no prompt, response or user id ...
+        (raw,) = capture.raw_spans()
+        assert SPAN_ATTR_ENDUSER_ID not in raw.attributes
+        assert "gen_ai.input.messages" not in raw.attributes
+        assert "gen_ai.output.messages" not in raw.attributes
+        assert leaks(capture.raw_spans(), *canaries) == []
+        assert raw.attributes[SPAN_ATTR_CONTENT_INPUT_LENGTH] == len(prompt)
+        assert raw.attributes[SPAN_ATTR_CONTENT_OUTPUT_LENGTH] == len(
+            result["response"]
+        )
+        assert raw.attributes[SPAN_ATTR_CAGE_PRINCIPAL_VERIFIED] is False
+        # ... and nothing that leaves the process carries them.
+        assert leaks(capture.exported_spans(), *canaries) == []
+
+    async def test_cached_response_is_never_exported(
+        self, advisor_server: Any, stub_cache: MagicMock
+    ) -> None:
+        stub_cache.get.return_value = f"Cached answer about {_RESPONSE_CANARY}."
+        capture = CanaryCapture()
+        graph = _CapturingGraph()
+
+        with capture.tracer.start_as_current_span("POST /agent/query"):
+            result = await advisor_server.query_agent(
+                QueryRequest(prompt=f"What is {_PROMPT_CANARY}?", user_id=_USER_CANARY),
+                _query_request(graph),
+                _auth="test",
+            )
+
+        assert result["response"] == stub_cache.get.return_value
+        assert graph.calls == []
+        (raw,) = capture.raw_spans()
+        assert raw.attributes["cache.hit"] is True
+        assert raw.attributes[SPAN_ATTR_CONTENT_OUTPUT_LENGTH] == len(
+            result["response"]
+        )
+        canaries = (_PROMPT_CANARY, _USER_CANARY, _RESPONSE_CANARY)
+        assert leaks(capture.raw_spans(), *canaries) == []
+        assert leaks(capture.exported_spans(), *canaries) == []
+
+    @pytest.mark.parametrize(
+        ("thread_id", "recorded"),
+        [
+            ("thread-99", True),
+            (f"advisor_session_{_USER_CANARY}", False),
+        ],
+        ids=["client-chosen", "explicit-default-form"],
+    )
+    async def test_thread_id_recorded_only_when_it_does_not_embed_the_user(
+        self,
+        advisor_server: Any,
+        stub_cache: MagicMock,
+        thread_id: str,
+        recorded: bool,
+    ) -> None:
+        capture = CanaryCapture()
+        graph = _CapturingGraph()
+
+        with capture.tracer.start_as_current_span("POST /agent/query"):
+            await advisor_server.query_agent(
+                QueryRequest(prompt="Hello", user_id=_USER_CANARY, thread_id=thread_id),
+                _query_request(graph),
+                _auth="test",
+            )
+
+        assert graph.calls[0]["config"]["configurable"]["thread_id"] == thread_id
+        (exported,) = capture.exported_spans()
+        assert (SPAN_ATTR_THREAD_ID in exported.attributes) is recorded
+        if recorded:
+            assert exported.attributes[SPAN_ATTR_THREAD_ID] == thread_id
+        assert leaks(capture.exported_spans(), _USER_CANARY) == []
 
 
 # ---------------------------------------------------------------------------

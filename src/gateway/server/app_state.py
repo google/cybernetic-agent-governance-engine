@@ -18,6 +18,7 @@ from __future__ import annotations
 
 from typing import Any
 
+from src.gateway.governance.checkpoint_store import GatewayCheckpointStore
 from src.gateway.governance.evidence.state_commitment import StateCommitmentService
 from src.gateway.governance.governor.governor import SymbolicGovernor
 
@@ -48,3 +49,18 @@ def state_commitment_service_of(app: Any) -> StateCommitmentService:
             "no state-commitment service on app.state; refusing to commit state"
         )
     return service
+
+
+def checkpoint_store_of(app: Any) -> GatewayCheckpointStore:
+    """The checkpoint store the lifespan built for ``app``; fail closed.
+
+    Raises:
+        RuntimeError: The lifespan has not stored a ``GatewayCheckpointStore``
+            on ``app.state.checkpoint_store``.
+    """
+    store = getattr(getattr(app, "state", None), "checkpoint_store", None)
+    if not isinstance(store, GatewayCheckpointStore):
+        raise RuntimeError(
+            "no checkpoint store on app.state; refusing to serve checkpoints"
+        )
+    return store

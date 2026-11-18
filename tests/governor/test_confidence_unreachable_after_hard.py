@@ -152,13 +152,13 @@ async def test_non_hard_stpa_finding_is_promoted_and_stops_before_confidence(
 @pytest.mark.asyncio
 @_PROFILES
 async def test_opa_error_stops_before_confidence(profile: Profile) -> None:
-    """(b) OPA raises → OPA_ERROR HARD, verdict None; confidence never runs."""
+    """(b) OPA raises → OPA_UNAVAILABLE INFRASTRUCTURE, verdict None; confidence never runs."""
     stages, spy = _assembled(_Opa(ConnectionError("opa down")), _stpa())
 
     result = await _run(stages, profile)
 
     assert [(v.code, v.kind) for v in result.violations] == [
-        ("OPA_ERROR", ViolationKind.HARD)
+        ("OPA_UNAVAILABLE", ViolationKind.INFRASTRUCTURE)
     ]
     assert result.opa_verdict is None
     assert spy.seen == []
@@ -170,13 +170,13 @@ async def test_opa_error_stops_before_confidence(profile: Profile) -> None:
 async def test_undecodable_opa_stops_before_confidence(
     profile: Profile, raw: Any
 ) -> None:
-    """(c) OPA answers something undecodable → HARD; confidence never runs."""
+    """(c) OPA answers something undecodable → INFRASTRUCTURE; confidence never runs."""
     stages, spy = _assembled(_Opa(raw), _stpa())
 
     result = await _run(stages, profile)
 
     assert [(v.code, v.kind) for v in result.violations] == [
-        ("OPA_UNKNOWN_VERDICT", ViolationKind.HARD)
+        ("OPA_UNAVAILABLE", ViolationKind.INFRASTRUCTURE)
     ]
     assert result.opa_verdict is None
     assert spy.seen == []

@@ -1142,15 +1142,27 @@ variable "cage_deployment_region" {
 # ─── Track 6b Memorystore Configuration (§2.1, D5, D6) ────────────────────────
 
 variable "enable_memorystore_iam_auth" {
-  description = "Enable IAM authentication on Memorystore instances (default true per D5)"
+  description = "Enable IAM authentication on the governance Memorystore instance, and give its clients (gateway, compliance bridge, reconciliation worker) redis_auth_mode = iam (default true per D5). The app instance has its own switch, enable_memorystore_app_iam_auth."
   type        = bool
   default     = true
 }
 
 variable "enable_memorystore_tls" {
-  description = "Enable in-transit encryption on Memorystore instances (default true per §2.1)"
+  description = "Enable in-transit encryption on the governance Memorystore instance, and give its clients REDIS_TLS and the instance's managed CA (default true per §2.1). The app instance has its own switch, enable_memorystore_app_tls."
   type        = bool
   default     = true
+}
+
+variable "enable_memorystore_app_iam_auth" {
+  description = "Enable IAM authentication on the app Memorystore instance. Off by default: its one client, Langfuse, cannot send an IAM token, so module.memorystore_app refuses to plan IAM_AUTH while its clients list says so."
+  type        = bool
+  default     = false
+}
+
+variable "enable_memorystore_app_tls" {
+  description = "Enable in-transit encryption on the app Memorystore instance. Off by default: langfuse_stack gives Langfuse no TLS or CA settings, so module.memorystore_app refuses to plan SERVER_AUTHENTICATION while its clients list says Langfuse connects in plaintext."
+  type        = bool
+  default     = false
 }
 
 variable "memorystore_governance_instance_id" {
@@ -1319,6 +1331,30 @@ variable "partner_harness_kms_key" {
   description = "Cloud KMS CryptoKey name granted to cage-partner-harness for CI partner integration signing (POAM-2026-165). Empty string skips the key binding."
   type        = string
   default     = ""
+}
+
+variable "partner_harness_cloud_run_service" {
+  description = "Optional in-project Cloud Run v2 service name granted roles/run.invoker directly to cage-partner-harness (never via cage-gateway impersonation). Empty string skips the binding."
+  type        = string
+  default     = ""
+}
+
+variable "partner_harness_cloud_run_location" {
+  description = "Region of partner_harness_cloud_run_service (defaults to var.region when empty)."
+  type        = string
+  default     = ""
+}
+
+variable "gateway_secret_manager_secret_ids" {
+  description = "Explicit list of Secret Manager secret IDs granted roles/secretmanager.secretAccessor to google_service_account.gateway (never project-wide)."
+  type        = list(string)
+  default     = []
+}
+
+variable "compliance_bridge_secret_manager_secret_ids" {
+  description = "Explicit list of Secret Manager secret IDs granted roles/secretmanager.secretAccessor to google_service_account.compliance_bridge (never project-wide)."
+  type        = list(string)
+  default     = []
 }
 
 # ─── Pre-W Evidence Survival: Reconciler & GMP PodMonitoring (PR-11) ──────────

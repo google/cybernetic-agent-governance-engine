@@ -16,15 +16,18 @@
 
 from __future__ import annotations
 
+import json
 import uuid
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
 
+import httpx
 import pytest
 from pydantic import ValidationError
 
 from src.cage_finance.models.trade_order import TradeOrder, is_valid_transaction_id
 from src.cage_finance.tools import trade_executor
+from src.gateway.governance.routing_seal import SymbolicGovernorViolation, generate_seal
 
 pytestmark = [pytest.mark.unit, pytest.mark.local]
 
@@ -77,15 +80,19 @@ def test_non_string_transaction_id_is_not_valid() -> None:
 
 
 @pytest.mark.asyncio
-async def test_broker_order_carries_the_transaction_id_as_client_order_id() -> None:
+async def test_broker_order_carries_the_transaction_id_as_client_order_id(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("CAGE_SEAL_STRICT_MODE", "false")
     order = _order(str(uuid.uuid4()))
+    seal = await generate_seal(
+        "execute_trade", order.model_dump(exclude_none=True), record_hash="e" * 64
+    )
     sent: dict[str, Any] = {}
 
-    def fake_post(url: str, *, json: dict[str, Any], **_: Any) -> MagicMock:
-        sent.update(json)
-        response = MagicMock()
-        response.json.return_value = {"id": "broker-order-1"}
-        return response
+    def _handler(request: httpx.Request) -> httpx.Response:
+        sent.update(json.loads(request.content.decode("utf-8")))
+        return httpx.Response(200, json={"id": "broker-order-1"})
 
     config = MagicMock()
     config.get.side_effect = lambda key, default=None: {
@@ -93,13 +100,37 @@ async def test_broker_order_carries_the_transaction_id_as_client_order_id() -> N
         "BROKER_API_SECRET": "secret",
     }.get(key, default or "https://broker.test")
 
-    with (
-        patch.object(trade_executor, "_USE_MOCK_BROKER", False),
-        patch.object(trade_executor, "config_manager", config),
-        patch.object(trade_executor, "_redis_get", AsyncMock(return_value=None)),
-        patch("requests.post", side_effect=fake_post),
-    ):
-        result = await trade_executor.execute_trade(order, routing_seal="seal-1")
+    async with httpx.AsyncClient(transport=httpx.MockTransport(_handler)) as client:
+        with (
+            patch.object(trade_executor, "_USE_MOCK_BROKER", False),
+            patch.object(trade_executor, "config_manager", config),
+            patch.object(trade_executor, "_redis_get", AsyncMock(return_value=None)),
+        ):
+            result = await trade_executor.execute_trade(
+                order,
+                routing_seal=seal,
+                http_client=client,
+            )
 
     assert result == "EXECUTED: AAPL x 10.0 (Order ID: broker-order-1)"
     assert sent["client_order_id"] == order.transaction_id
+
+
+@pytest.mark.asyncio
+async def test_execute_trade_rejects_unverified_truthy_seal_before_wire() -> None:
+    order = _order(str(uuid.uuid4()))
+    called = False
+
+    def _handler(_request: httpx.Request) -> httpx.Response:
+        nonlocal called
+        called = True
+        return httpx.Response(200, json={"id": "never"})
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(_handler)) as client:
+        with pytest.raises(SymbolicGovernorViolation):
+            await trade_executor.execute_trade(
+                order,
+                routing_seal="forged-truthy-seal",
+                http_client=client,
+            )
+    assert called is False

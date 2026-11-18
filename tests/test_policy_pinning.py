@@ -23,7 +23,7 @@ from src.gateway.governance.governor.governor import GovernanceError, SymbolicGo
 from src.gateway.server.governance_middleware import governance_app
 from tests.fixtures.governor import make_governor
 
-pytestmark = pytest.mark.unit
+pytestmark = [pytest.mark.unit, pytest.mark.local]
 
 
 @pytest.fixture
@@ -271,10 +271,12 @@ async def test_gateway_client_recovery_loop_on_policy_drift():
             return httpx.Response(
                 status_code=403,
                 json={
+                    "schema_version": "2.0.0",
                     "verdict": "DENIED",
                     "violations": [
                         "Substrate Policy Drift Detected. Session pinned to version signature 'stale'"
                     ],
+                    "proof_hash": "sha256:test-policy-drift-refusal",
                 },
             )
         return httpx.Response(
@@ -303,6 +305,92 @@ async def test_gateway_client_recovery_loop_on_policy_drift():
             ("POST", "/governance/validate-action"),
         ]
         assert pins == ["stale-hash", "fresh-hash-12345"]
+    finally:
+        await client.close()
+        GatewayClient._instance = None
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "case_id",
+    [
+        "missing-proof-hash-and-audit-id",
+        "blank-proof-hash-and-audit-id",
+        "plain-text-drift-403",
+    ],
+)
+async def test_gateway_client_does_not_replay_unevidenced_policy_drift_403(
+    case_id: str,
+):
+    """POAM-2026-228: Un-evidenced 403s mentioning policy drift must NEVER refresh pins or replay."""
+    import json
+
+    import httpx
+
+    from src.governed_financial_advisor.infrastructure.gateway_client import (
+        GatewayClient,
+    )
+    from tests.fixtures.signed_gateway import SignedGatewayStub
+
+    responses = {
+        "missing-proof-hash-and-audit-id": httpx.Response(
+            status_code=403,
+            json={
+                "schema_version": "2.0.0",
+                "verdict": "DENIED",
+                "violations": [
+                    "Substrate Policy Drift Detected. Session pinned to version signature 'stale'"
+                ],
+            },
+        ),
+        "blank-proof-hash-and-audit-id": httpx.Response(
+            status_code=403,
+            content=json.dumps(
+                {
+                    "schema_version": "2.0.0",
+                    "verdict": "DENIED",
+                    "violations": ["Substrate Policy Drift Detected"],
+                    "proof_hash": "   ",
+                    "audit_id": "",
+                    "refusal_receipt": {"proof_hash": ""},
+                }
+            ).encode("utf-8"),
+            headers={"content-type": "application/json"},
+        ),
+        "plain-text-drift-403": httpx.Response(
+            status_code=403,
+            content=b"Substrate Policy Drift Detected",
+            headers={"content-type": "text/plain"},
+        ),
+    }
+
+    calls: list[tuple[str, str]] = []
+    pins: list[str | None] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        calls.append((request.method, request.url.path))
+        if request.url.path == "/governance/policy-version":
+            return httpx.Response(200, json={"active_hash": "attacker-pin"})
+        pins.append(json.loads(request.content)["policy_version_id"])
+        return responses[case_id]
+
+    GatewayClient._instance = None
+    client = GatewayClient()
+    client._http = httpx.AsyncClient(
+        transport=httpx.MockTransport(SignedGatewayStub().transport_handler(handler)),
+        base_url="http://localhost:8080",
+    )
+    try:
+        with pytest.raises(httpx.HTTPStatusError) as exc_info:
+            await client.validate_action(
+                action="execute_trade",
+                params={"amount": 100},
+                policy_version_id="stale-hash",
+            )
+        assert exc_info.value.response.status_code == 403
+        assert not isinstance(exc_info.value, PermissionError)
+        assert calls == [("POST", "/governance/validate-action")]
+        assert pins == ["stale-hash"]
     finally:
         await client.close()
         GatewayClient._instance = None

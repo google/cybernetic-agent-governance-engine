@@ -40,15 +40,28 @@ Enforced Contracts (Zero Baseline / Zero Waivers):
    ``subject``, ``governance_context``, and ``signature`` emitted by the
    corresponding producer ``.to_dict()`` methods in
    ``src/gateway/governance/governance_envelope.py``.
-4. **Non-Vacuous Corpus Floors**: Fails closed if AST extraction discovers fewer
-   than the minimum expected number of produced event types, consumer files, or
-   verified key reads.
+4. **Gateway HTTP & Streaming SSE Test-Fixture Parity**: Mocked gateway HTTP
+   responses and streaming ``chat.completion.chunk`` SSE payloads across
+   ``tests/`` may only use HTTP status codes and JSON keys actually emitted by
+   the corresponding producers in ``src/gateway/`` and
+   ``src/integrations/inference_stub/`` (requiring ``verdict`` + ``proof_hash``
+   on positive ``HTTP 403`` policy-refusal mocks, forbidding unproduced
+   ``HTTP 202`` / ``409`` status codes and ``{"envelope": ...}`` wrappers on
+   ``/governance/validate-action``, verifying ``GovernanceEnvelope`` / payload /
+   ``ExternalAttestation`` / ``policy-precheck`` keys, and forbidding
+   non-streaming ``choices[*].message`` inside ``chat.completion.chunk`` SSE
+   streams), unless the enclosing test explicitly exercises fail-closed
+   rejection of malformed/proxy inputs.
+5. **Non-Vacuous Corpus Floors**: Fails closed if AST extraction discovers fewer
+   than the minimum expected number of produced event types, consumer files,
+   verified key reads, or verified gateway test-fixture responses.
 """
 
 from __future__ import annotations
 
 import argparse
 import ast
+import json
 import re
 import sys
 from collections.abc import Iterable
@@ -64,6 +77,7 @@ MIN_STREAM_CONSUMER_FILES = 3
 # since the src/gateway/client/ mirror was retired.
 MIN_ENVELOPE_CONSUMER_FILES = 2
 MIN_VERIFIED_KEY_READS = 40
+MIN_VERIFIED_TEST_FIXTURE_RESPONSES = 100
 
 EVENT_TYPE_RE = re.compile(r"^[A-Z][A-Z0-9_]{2,}$")
 
@@ -513,6 +527,7 @@ def _scan_function_for_events(
                     ):
                         local_dict_keys.setdefault(var_name, set()).update(
                             catalog.dataclass_fields.get("RefusalReceipt", set())
+                            - {"attempted_params"}
                         )
                     else:
                         resolved = _resolve_called_function(val, mod, modules)
@@ -561,7 +576,10 @@ def _scan_function_for_events(
             if et == "GOVERNANCE_REFUSAL" and "receipt" in d_keys:
                 catalog.event_nested_keys.setdefault(
                     ("GOVERNANCE_REFUSAL", "receipt"), set()
-                ).update(catalog.dataclass_fields.get("RefusalReceipt", set()))
+                ).update(
+                    catalog.dataclass_fields.get("RefusalReceipt", set())
+                    - {"attempted_params"}
+                )
 
     for node in ast.walk(fn):
         if isinstance(node, ast.Dict):
@@ -583,7 +601,10 @@ def _scan_function_for_events(
                     if et == "GOVERNANCE_REFUSAL" and "receipt" in d_keys:
                         catalog.event_nested_keys.setdefault(
                             ("GOVERNANCE_REFUSAL", "receipt"), set()
-                        ).update(catalog.dataclass_fields.get("RefusalReceipt", set()))
+                        ).update(
+                            catalog.dataclass_fields.get("RefusalReceipt", set())
+                            - {"attempted_params"}
+                        )
         elif isinstance(node, ast.Call):
             call_ev_types: set[str] = set()
             call_payload_exprs: list[ast.expr] = []
@@ -1305,6 +1326,776 @@ def check_envelope_consumers(
     return violations, checked_files, verified_reads
 
 
+@dataclass
+class GatewayHttpProducerCatalog:
+    """HTTP route & SSE chunk producer schemas extracted from ``src/`` AST."""
+
+    validate_action_refusal_keys: set[str] = field(default_factory=set)
+    validate_action_payload_keys: set[str] = field(default_factory=set)
+    policy_precheck_keys: set[str] = field(default_factory=set)
+    envelope_keys: set[str] = field(default_factory=set)
+    external_attestation_keys: set[str] = field(default_factory=set)
+    refusal_receipt_keys: set[str] = field(default_factory=set)
+    sse_chunk_keys: set[str] = field(default_factory=set)
+    sse_choice_keys: set[str] = field(default_factory=set)
+    sse_delta_keys: set[str] = field(default_factory=set)
+
+
+def collect_gateway_http_producers(
+    modules: dict[str, ModuleIndex], catalog: ProducerCatalog
+) -> GatewayHttpProducerCatalog:
+    """Extract gateway HTTP JSON & streaming SSE producer key sets from ``src/`` AST."""
+    http_cat = GatewayHttpProducerCatalog(
+        envelope_keys=set(catalog.to_dict_keys.get("GovernanceEnvelope", set())),
+        external_attestation_keys=set(
+            catalog.to_dict_keys.get("ExternalAttestation", set())
+        ),
+        refusal_receipt_keys=set(catalog.to_dict_keys.get("RefusalReceipt", set())),
+    )
+
+    gm_mod = modules.get("src.gateway.server.governance_middleware")
+    if gm_mod is not None:
+        va_fn = gm_mod.functions.get("validate_action_endpoint")
+        if va_fn is not None:
+            for node in ast.walk(va_fn):
+                if isinstance(node, (ast.Assign, ast.AnnAssign)):
+                    tgt = (
+                        node.targets[0]
+                        if isinstance(node, ast.Assign) and node.targets
+                        else getattr(node, "target", None)
+                    )
+                    val = node.value
+                    if (
+                        isinstance(tgt, ast.Name)
+                        and tgt.id == "refusal_content"
+                        and isinstance(val, ast.Dict)
+                    ):
+                        http_cat.validate_action_refusal_keys.update(
+                            _extract_dict_node_keys(val, gm_mod, modules, catalog)
+                        )
+                    elif (
+                        isinstance(tgt, ast.Subscript)
+                        and isinstance(tgt.value, ast.Name)
+                        and tgt.value.id == "refusal_content"
+                    ):
+                        http_cat.validate_action_refusal_keys.update(
+                            _resolve_expr_strings(tgt.slice, gm_mod, modules)
+                        )
+
+        pp_fn = gm_mod.functions.get("policy_precheck_endpoint")
+        if pp_fn is not None:
+            for node in ast.walk(pp_fn):
+                if isinstance(node, ast.Call):
+                    fn_name = (
+                        node.func.id
+                        if isinstance(node.func, ast.Name)
+                        else (
+                            node.func.attr
+                            if isinstance(node.func, ast.Attribute)
+                            else ""
+                        )
+                    )
+                    if fn_name != "JSONResponse":
+                        continue
+                    status_val = 200
+                    content_dict: ast.Dict | None = None
+                    for kw in node.keywords:
+                        if (
+                            kw.arg == "status_code"
+                            and isinstance(kw.value, ast.Constant)
+                            and isinstance(kw.value.value, int)
+                        ):
+                            status_val = kw.value.value
+                        elif kw.arg == "content" and isinstance(kw.value, ast.Dict):
+                            content_dict = kw.value
+                    if status_val == 200 and content_dict is not None:
+                        http_cat.policy_precheck_keys.update(
+                            _extract_dict_node_keys(
+                                content_dict, gm_mod, modules, catalog
+                            )
+                        )
+
+    gov_mod = modules.get("src.gateway.governance.governor.governor")
+    if gov_mod is not None:
+        for helper_name in (
+            "_context_meta",
+            "_reliance_meta",
+            "_ftra_meta",
+            "_barrier_meta",
+        ):
+            h_fn = gov_mod.functions.get(helper_name)
+            if h_fn is not None:
+                for node in ast.walk(h_fn):
+                    if isinstance(node, ast.Return) and isinstance(
+                        node.value, ast.Dict
+                    ):
+                        http_cat.validate_action_payload_keys.update(
+                            _extract_dict_node_keys(
+                                node.value, gov_mod, modules, catalog
+                            )
+                        )
+        gov_cls = gov_mod.classes.get("SymbolicGovernor")
+        if gov_cls is not None:
+            for item in gov_cls.body:
+                if (
+                    isinstance(item, (ast.FunctionDef, ast.AsyncFunctionDef))
+                    and item.name == "_evaluate_dry_run"
+                ):
+                    for node in ast.walk(item):
+                        if isinstance(node, ast.Return) and isinstance(
+                            node.value, ast.Dict
+                        ):
+                            http_cat.validate_action_payload_keys.update(
+                                _extract_dict_node_keys(
+                                    node.value, gov_mod, modules, catalog
+                                )
+                            )
+
+    verdicts_mod = modules.get("src.gateway.governance.governor.verdicts")
+    if verdicts_mod is not None:
+        for fn_name in (
+            "handle_narrow",
+            "handle_require_approval",
+            "handle_defer",
+            "_reliance_field",
+        ):
+            v_fn = verdicts_mod.functions.get(fn_name)
+            if v_fn is not None:
+                for node in ast.walk(v_fn):
+                    if isinstance(node, ast.Return) and isinstance(
+                        node.value, ast.Dict
+                    ):
+                        http_cat.validate_action_payload_keys.update(
+                            _extract_dict_node_keys(
+                                node.value, verdicts_mod, modules, catalog
+                            )
+                        )
+                    elif (
+                        isinstance(node, ast.Return)
+                        and isinstance(node.value, ast.IfExp)
+                        and isinstance(node.value.body, ast.Dict)
+                    ):
+                        http_cat.validate_action_payload_keys.update(
+                            _extract_dict_node_keys(
+                                node.value.body, verdicts_mod, modules, catalog
+                            )
+                        )
+
+    # validate_action_endpoint hoists external_attestations out of payload_result.
+    http_cat.validate_action_payload_keys.discard("external_attestations")
+
+    stub_mod = modules.get("src.integrations.inference_stub.server")
+    if stub_mod is not None:
+        sse_fn = stub_mod.functions.get("_stream_sse_chunks")
+        if sse_fn is not None:
+            for node in ast.walk(sse_fn):
+                if isinstance(node, ast.Assign) and isinstance(node.value, ast.Dict):
+                    for tgt in node.targets:
+                        if isinstance(tgt, ast.Name) and tgt.id == "base":
+                            http_cat.sse_chunk_keys.update(
+                                _extract_dict_node_keys(
+                                    node.value, stub_mod, modules, catalog
+                                )
+                            )
+                if isinstance(node, ast.Dict):
+                    d_keys = {
+                        k.value
+                        for k in node.keys
+                        if isinstance(k, ast.Constant) and isinstance(k.value, str)
+                    }
+                    if "choices" in d_keys:
+                        http_cat.sse_chunk_keys.update(d_keys)
+                    if "delta" in d_keys and "index" in d_keys:
+                        http_cat.sse_choice_keys.update(d_keys)
+                        for k, v in zip(node.keys, node.values, strict=False):
+                            if (
+                                isinstance(k, ast.Constant)
+                                and k.value == "delta"
+                                and isinstance(v, ast.Dict)
+                            ):
+                                http_cat.sse_delta_keys.update(
+                                    _extract_dict_node_keys(
+                                        v, stub_mod, modules, catalog
+                                    )
+                                )
+    if http_cat.sse_chunk_keys:
+        # Standard OpenAI/vLLM chunk optional fields alongside stub base fields.
+        http_cat.sse_chunk_keys.update({"usage", "system_fingerprint"})
+        http_cat.sse_choice_keys.update({"logprobs"})
+        http_cat.sse_delta_keys.update(
+            {"reasoning_content", "content", "tool_calls", "role"}
+        )
+
+    return http_cat
+
+
+_GATEWAY_FIXTURE_MARKERS: tuple[str, ...] = (
+    "/governance/validate-action",
+    "/governance/policy-precheck",
+    "/governance/state-commitments",
+    "SignedGatewayStub",
+    "CageClient",
+    "GatewayClient",
+)
+
+_MIDDLEWARE_ERROR_ONLY_KEYS: frozenset[str] = frozenset(
+    {"detail", "error", "scope", "retry_after_seconds", "correlation_id"}
+)
+
+
+def _fn_raised_exception_names(fn: ast.AST) -> set[str]:
+    """Collect exception type names referenced inside ``pytest.raises(...)`` in ``fn``."""
+    names: set[str] = set()
+    for node in ast.walk(fn):
+        if isinstance(node, ast.Call):
+            func = node.func
+            is_raises = (isinstance(func, ast.Attribute) and func.attr == "raises") or (
+                isinstance(func, ast.Name) and func.id == "raises"
+            )
+            if is_raises and node.args:
+                arg0 = node.args[0]
+                if isinstance(arg0, ast.Name):
+                    names.add(arg0.id)
+                elif isinstance(arg0, ast.Attribute):
+                    names.add(arg0.attr)
+                elif isinstance(arg0, ast.Tuple):
+                    for elt in arg0.elts:
+                        if isinstance(elt, ast.Name):
+                            names.add(elt.id)
+                        elif isinstance(elt, ast.Attribute):
+                            names.add(elt.attr)
+    return names
+
+
+def _is_negative_200_rejection_fn(
+    fn: ast.FunctionDef | ast.AsyncFunctionDef, raised_names: set[str]
+) -> bool:
+    """True when ``fn`` intentionally feeds malformed/legacy 200 bodies to assert fail-closed rejection."""
+    if raised_names & {
+        "CageGatewayError",
+        "RoutingSealVerificationError",
+        "PermissionError",
+        "HTTPStatusError",
+    }:
+        return True
+    lower = fn.name.lower()
+    return any(
+        tok in lower
+        for tok in (
+            "fails_closed",
+            "fail_closed",
+            "non_approved",
+            "non_approval",
+            "without_routable_verdict",
+            "unsigned",
+            "tampered",
+            "unrecognised",
+            "missing_",
+            "unknown_",
+        )
+    )
+
+
+def _resolve_local_dict(
+    expr: ast.AST,
+    local_dicts: dict[str, ast.Dict],
+    module_dicts: dict[str, ast.Dict],
+    helper_return_dicts: dict[str, ast.Dict],
+) -> ast.Dict | None:
+    if isinstance(expr, ast.Dict):
+        return expr
+    if isinstance(expr, ast.Name):
+        return local_dicts.get(expr.id) or module_dicts.get(expr.id)
+    if isinstance(expr, ast.Call) and isinstance(expr.func, ast.Name):
+        return helper_return_dicts.get(expr.func.id)
+    return None
+
+
+def _dict_literal_keys_and_mutations(
+    dict_node: ast.Dict,
+    var_name: str | None,
+    scope_node: ast.AST,
+    helper_return_dicts: dict[str, ast.Dict],
+) -> tuple[set[str], dict[str, ast.AST]]:
+    """Extract literal keys and key->value AST nodes for ``dict_node`` plus in-scope ``d['k'] = v`` writes."""
+    keys: set[str] = set()
+    kv: dict[str, ast.AST] = {}
+    for k, v in zip(dict_node.keys, dict_node.values, strict=False):
+        if isinstance(k, ast.Constant) and isinstance(k.value, str) and v is not None:
+            keys.add(k.value)
+            kv[k.value] = v
+        elif k is None and isinstance(v, ast.Call) and isinstance(v.func, ast.Name):
+            spread = helper_return_dicts.get(v.func.id)
+            if spread is not None:
+                s_keys, s_kv = _dict_literal_keys_and_mutations(
+                    spread, None, scope_node, helper_return_dicts
+                )
+                keys.update(s_keys)
+                kv.update(s_kv)
+    if var_name:
+        for stmt in ast.walk(scope_node):
+            if isinstance(stmt, ast.Assign):
+                for tgt in stmt.targets:
+                    if (
+                        isinstance(tgt, ast.Subscript)
+                        and isinstance(tgt.value, ast.Name)
+                        and tgt.value.id == var_name
+                        and isinstance(tgt.slice, ast.Constant)
+                        and isinstance(tgt.slice.value, str)
+                    ):
+                        keys.add(tgt.slice.value)
+                        kv[tgt.slice.value] = stmt.value
+    return keys, kv
+
+
+def check_gateway_test_fixtures(
+    repo_root: Path,
+    http_cat: GatewayHttpProducerCatalog,
+) -> tuple[list[ViolationRecord], int]:
+    """Verify gateway HTTP & SSE test fixtures in ``tests/`` against ``src/`` producers."""
+    tests_root = repo_root / "tests"
+    if not tests_root.is_dir():
+        return [], 0
+
+    violations: list[ViolationRecord] = []
+    verified_responses = 0
+
+    for path in sorted(tests_root.rglob("*.py")):
+        if "__pycache__" in path.parts:
+            continue
+        rel_path = path.relative_to(repo_root).as_posix()
+        # External partner adapter tests mock third-party vendor APIs, not CAGE gateway routes.
+        if rel_path.startswith("tests/integrations/provider_"):
+            continue
+        try:
+            source = path.read_text(encoding="utf-8")
+            tree = ast.parse(source, filename=str(path))
+        except (OSError, SyntaxError):
+            continue
+
+        # 1. Check streaming SSE chat.completion.chunk literals across ALL tests/ files.
+        for fn_or_mod in [
+            n
+            for n in ast.walk(tree)
+            if isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef))
+        ]:
+            raised = _fn_raised_exception_names(fn_or_mod)
+            if raised:
+                continue
+            for node in ast.walk(fn_or_mod):
+                raw_str: str | None = None
+                if isinstance(node, ast.Constant):
+                    if isinstance(node.value, str):
+                        raw_str = node.value
+                    elif isinstance(node.value, bytes):
+                        try:
+                            raw_str = node.value.decode("utf-8")
+                        except UnicodeDecodeError:
+                            raw_str = None
+                if (
+                    raw_str
+                    and "data:" in raw_str
+                    and "chat.completion.chunk" in raw_str
+                ):
+                    for line in raw_str.splitlines():
+                        stripped = line.strip()
+                        if not stripped.startswith("data:"):
+                            continue
+                        payload_txt = stripped[len("data:") :].strip()
+                        if not payload_txt or payload_txt == "[DONE]":
+                            continue
+                        try:
+                            parsed_chunk = json.loads(payload_txt)
+                        except ValueError:
+                            continue
+                        if (
+                            isinstance(parsed_chunk, dict)
+                            and parsed_chunk.get("object") == "chat.completion.chunk"
+                        ):
+                            verified_responses += 1
+                            if http_cat.sse_chunk_keys:
+                                extra_top = (
+                                    set(parsed_chunk.keys()) - http_cat.sse_chunk_keys
+                                )
+                                if extra_top:
+                                    violations.append(
+                                        ViolationRecord(
+                                            file=rel_path,
+                                            line=getattr(node, "lineno", 1),
+                                            kind="unproduced-sse-chunk-fixture",
+                                            detail=(
+                                                f"SSE chat.completion.chunk fixture contains unproduced "
+                                                f"top-level keys {sorted(extra_top)}"
+                                            ),
+                                        )
+                                    )
+                            choices = parsed_chunk.get("choices")
+                            if isinstance(choices, list):
+                                for ch in choices:
+                                    if not isinstance(ch, dict):
+                                        continue
+                                    if "message" in ch or "delta" not in ch:
+                                        violations.append(
+                                            ViolationRecord(
+                                                file=rel_path,
+                                                line=getattr(node, "lineno", 1),
+                                                kind="unproduced-sse-chunk-fixture",
+                                                detail=(
+                                                    "SSE chat.completion.chunk choice uses non-streaming "
+                                                    "'message' (or omits 'delta')"
+                                                ),
+                                            )
+                                        )
+                                    elif http_cat.sse_delta_keys and isinstance(
+                                        ch.get("delta"), dict
+                                    ):
+                                        extra_delta = (
+                                            set(ch["delta"].keys())
+                                            - http_cat.sse_delta_keys
+                                        )
+                                        if extra_delta:
+                                            violations.append(
+                                                ViolationRecord(
+                                                    file=rel_path,
+                                                    line=getattr(node, "lineno", 1),
+                                                    kind="unproduced-sse-chunk-fixture",
+                                                    detail=(
+                                                        f"SSE chat.completion.chunk delta contains unproduced "
+                                                        f"keys {sorted(extra_delta)}"
+                                                    ),
+                                                )
+                                            )
+
+        if not any(marker in source for marker in _GATEWAY_FIXTURE_MARKERS):
+            continue
+
+        # Collect module-level dict constants and single-dict-returning helper functions.
+        module_dicts: dict[str, ast.Dict] = {}
+        helper_return_dicts: dict[str, ast.Dict] = {}
+        for stmt in tree.body:
+            if isinstance(stmt, (ast.Assign, ast.AnnAssign)) and isinstance(
+                stmt.value, ast.Dict
+            ):
+                targets = (
+                    stmt.targets if isinstance(stmt, ast.Assign) else [stmt.target]
+                )
+                for t in targets:
+                    if isinstance(t, ast.Name):
+                        module_dicts[t.id] = stmt.value
+            elif isinstance(stmt, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                ret_dicts = [
+                    n.value
+                    for n in ast.walk(stmt)
+                    if isinstance(n, ast.Return) and isinstance(n.value, ast.Dict)
+                ]
+                if len(ret_dicts) == 1:
+                    helper_return_dicts[stmt.name] = ret_dicts[0]
+
+        # Collect top-level functions and class methods to inspect with enclosing test context.
+        enclosing_fns: list[ast.FunctionDef | ast.AsyncFunctionDef] = []
+        for stmt in tree.body:
+            if isinstance(stmt, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                enclosing_fns.append(stmt)
+            elif isinstance(stmt, ast.ClassDef):
+                for item in stmt.body:
+                    if isinstance(item, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                        enclosing_fns.append(item)
+
+        for fn in enclosing_fns:
+            raised_names = _fn_raised_exception_names(fn)
+            fn_src = ast.unparse(fn)
+            local_dicts: dict[str, ast.Dict] = {}
+            local_helper_copies: dict[str, str] = {}
+            for node in ast.walk(fn):
+                if isinstance(node, (ast.Assign, ast.AnnAssign)):
+                    targets = (
+                        node.targets if isinstance(node, ast.Assign) else [node.target]
+                    )
+                    for t in targets:
+                        if isinstance(t, ast.Name):
+                            if isinstance(node.value, ast.Dict):
+                                local_dicts[t.id] = node.value
+                            elif (
+                                isinstance(node.value, ast.Call)
+                                and isinstance(node.value.func, ast.Name)
+                                and node.value.func.id in helper_return_dicts
+                            ):
+                                local_dicts[t.id] = helper_return_dicts[
+                                    node.value.func.id
+                                ]
+                                local_helper_copies[t.id] = node.value.func.id
+
+            for node in ast.walk(fn):
+                if not isinstance(node, ast.Call):
+                    continue
+                callee = (
+                    node.func.attr
+                    if isinstance(node.func, ast.Attribute)
+                    else (node.func.id if isinstance(node.func, ast.Name) else "")
+                )
+                if callee != "Response":
+                    continue
+
+                status: int | None = None
+                if (
+                    node.args
+                    and isinstance(node.args[0], ast.Constant)
+                    and isinstance(node.args[0].value, int)
+                ):
+                    status = node.args[0].value
+                json_kw: ast.AST | None = None
+                for kw in node.keywords:
+                    if (
+                        kw.arg == "status_code"
+                        and isinstance(kw.value, ast.Constant)
+                        and isinstance(kw.value.value, int)
+                    ):
+                        status = kw.value.value
+                    elif kw.arg == "json":
+                        json_kw = kw.value
+
+                if status is None:
+                    continue
+
+                verified_responses += 1
+
+                # Rule 5a: HTTP 202 is produced nowhere in src/; HTTP 409 is never produced on /governance/validate-action.
+                if status == 202:
+                    violations.append(
+                        ViolationRecord(
+                            file=rel_path,
+                            line=node.lineno,
+                            kind="unproduced-fixture-status",
+                            detail=(
+                                "Gateway test fixture mocks HTTP 202, which no producer in src/ emits "
+                                "(DEFER/REQUIRE_APPROVAL on /governance/validate-action are signed HTTP 200 GovernanceEnvelopes)"
+                            ),
+                        )
+                    )
+                    continue
+                if (
+                    status == 409
+                    and "/governance/validate-action" in fn_src
+                    and "/tools/execute" not in fn_src
+                    and not (raised_names & {"CageGatewayError", "HTTPStatusError"})
+                ):
+                    violations.append(
+                        ViolationRecord(
+                            file=rel_path,
+                            line=node.lineno,
+                            kind="unproduced-fixture-status",
+                            detail=(
+                                "Test fixture mocks HTTP 409 on /governance/validate-action "
+                                "(409 EXTERNAL_HOLD is emitted only by POST /tools/execute)"
+                            ),
+                        )
+                    )
+                    continue
+
+                if json_kw is None:
+                    continue
+
+                var_name = json_kw.id if isinstance(json_kw, ast.Name) else None
+                dict_node = _resolve_local_dict(
+                    json_kw, local_dicts, module_dicts, helper_return_dicts
+                )
+                if dict_node is None:
+                    continue
+                keys, kv = _dict_literal_keys_and_mutations(
+                    dict_node, var_name, fn, helper_return_dicts
+                )
+
+                # Also collect nested mutations var["payload"]["k"] = v on helper-built envelopes.
+                nested_payload_mutations: set[str] = set()
+                if var_name:
+                    for assign_node in ast.walk(fn):
+                        if isinstance(assign_node, ast.Assign):
+                            for tgt in assign_node.targets:
+                                if (
+                                    isinstance(tgt, ast.Subscript)
+                                    and isinstance(tgt.value, ast.Subscript)
+                                    and isinstance(tgt.value.value, ast.Name)
+                                    and tgt.value.value.id == var_name
+                                    and isinstance(tgt.value.slice, ast.Constant)
+                                    and tgt.value.slice.value == "payload"
+                                    and isinstance(tgt.slice, ast.Constant)
+                                    and isinstance(tgt.slice.value, str)
+                                ):
+                                    nested_payload_mutations.add(tgt.slice.value)
+
+                # Rule 5b: HTTP 403 refusal contract parity.
+                if status == 403 and http_cat.validate_action_refusal_keys:
+                    # Pure proxy / middleware 403 bodies ({"detail": ...} / {"error": ...}) are non-policy errors.
+                    if keys and keys <= _MIDDLEWARE_ERROR_ONLY_KEYS:
+                        continue
+                    # Explicit negative test asserting CageGatewayError / HTTPStatusError on malformed 403.
+                    if raised_names & {"CageGatewayError", "HTTPStatusError"}:
+                        continue
+                    extra_403 = keys - http_cat.validate_action_refusal_keys
+                    missing_403 = {"verdict", "proof_hash"} - keys
+                    if extra_403 or missing_403:
+                        parts: list[str] = []
+                        if missing_403:
+                            parts.append(f"missing required {sorted(missing_403)}")
+                        if extra_403:
+                            parts.append(
+                                f"contains unproduced keys {sorted(extra_403)} "
+                                f"(allowed: {sorted(http_cat.validate_action_refusal_keys)})"
+                            )
+                        violations.append(
+                            ViolationRecord(
+                                file=rel_path,
+                                line=node.lineno,
+                                kind="unproduced-refusal-fixture",
+                                detail="HTTP 403 refusal fixture " + "; ".join(parts),
+                            )
+                        )
+                    continue
+
+                if status != 200:
+                    continue
+
+                # Skip non-validate-action 200 endpoints (JWKS, policy-version, OPA /v1/data, state-commitments).
+                if keys <= {"keys"} or keys == {"active_hash"} or keys == {"result"}:
+                    continue
+                if "stateHash" in keys and "evidenceRecordHash" in keys:
+                    continue
+
+                # Rule 5d: /governance/policy-precheck 200 contract parity.
+                if "dry_run" in keys or (
+                    "/governance/policy-precheck" in fn_src
+                    and "/governance/validate-action" not in fn_src
+                ):
+                    if _is_negative_200_rejection_fn(fn, raised_names):
+                        continue
+                    if http_cat.policy_precheck_keys:
+                        extra_pp = keys - http_cat.policy_precheck_keys
+                        if extra_pp:
+                            violations.append(
+                                ViolationRecord(
+                                    file=rel_path,
+                                    line=node.lineno,
+                                    kind="unproduced-precheck-fixture",
+                                    detail=(
+                                        f"/governance/policy-precheck 200 fixture contains unproduced "
+                                        f"keys {sorted(extra_pp)} (allowed: {sorted(http_cat.policy_precheck_keys)})"
+                                    ),
+                                )
+                            )
+                    continue
+
+                # Rule 5c: /governance/validate-action 200 envelope & payload parity.
+                if _is_negative_200_rejection_fn(fn, raised_names):
+                    continue
+
+                if "envelope" in keys and len(keys) == 1:
+                    violations.append(
+                        ViolationRecord(
+                            file=rel_path,
+                            line=node.lineno,
+                            kind="unproduced-envelope-fixture",
+                            detail=(
+                                "HTTP 200 /governance/validate-action fixture wraps response in "
+                                "{'envelope': ...}; validate_action_endpoint emits top-level GovernanceEnvelope.to_dict()"
+                            ),
+                        )
+                    )
+                    continue
+
+                # Full or partial v3.0 envelope dict vs SignedGatewayStub payload shorthand.
+                is_envelope_shaped = bool(
+                    keys & {"envelope_version", "envelope_id", "payload", "signature"}
+                )
+                if is_envelope_shaped:
+                    if http_cat.envelope_keys:
+                        extra_env = keys - http_cat.envelope_keys
+                        if extra_env:
+                            violations.append(
+                                ViolationRecord(
+                                    file=rel_path,
+                                    line=node.lineno,
+                                    kind="unproduced-envelope-fixture",
+                                    detail=(
+                                        f"HTTP 200 envelope fixture contains unproduced top-level keys "
+                                        f"{sorted(extra_env)} (allowed: {sorted(http_cat.envelope_keys)})"
+                                    ),
+                                )
+                            )
+                    ext_att = kv.get("external_attestations")
+                    if (
+                        isinstance(ext_att, ast.List)
+                        and http_cat.external_attestation_keys
+                    ):
+                        for elt in ext_att.elts:
+                            if isinstance(elt, ast.Dict):
+                                att_keys = {
+                                    k.value
+                                    for k in elt.keys
+                                    if isinstance(k, ast.Constant)
+                                    and isinstance(k.value, str)
+                                }
+                                missing_att = (
+                                    http_cat.external_attestation_keys - att_keys
+                                )
+                                if missing_att:
+                                    violations.append(
+                                        ViolationRecord(
+                                            file=rel_path,
+                                            line=elt.lineno,
+                                            kind="unproduced-envelope-fixture",
+                                            detail=(
+                                                f"external_attestations entry missing canonical "
+                                                f"ExternalAttestation.to_dict() keys {sorted(missing_att)}"
+                                            ),
+                                        )
+                                    )
+                    payload_node = kv.get("payload")
+                    payload_dict = (
+                        _resolve_local_dict(
+                            payload_node, local_dicts, module_dicts, helper_return_dicts
+                        )
+                        if payload_node is not None
+                        else None
+                    )
+                    if (
+                        payload_dict is not None
+                        and http_cat.validate_action_payload_keys
+                    ):
+                        p_keys, _ = _dict_literal_keys_and_mutations(
+                            payload_dict, None, fn, helper_return_dicts
+                        )
+                        p_keys |= nested_payload_mutations
+                        extra_p = p_keys - http_cat.validate_action_payload_keys
+                        if extra_p:
+                            violations.append(
+                                ViolationRecord(
+                                    file=rel_path,
+                                    line=node.lineno,
+                                    kind="unproduced-envelope-fixture",
+                                    detail=(
+                                        f"GovernanceEnvelope.payload fixture contains unproduced keys "
+                                        f"{sorted(extra_p)} (allowed: {sorted(http_cat.validate_action_payload_keys)})"
+                                    ),
+                                )
+                            )
+                elif http_cat.validate_action_payload_keys and keys:
+                    extra_shorthand = keys - http_cat.validate_action_payload_keys
+                    if extra_shorthand:
+                        violations.append(
+                            ViolationRecord(
+                                file=rel_path,
+                                line=node.lineno,
+                                kind="unproduced-envelope-fixture",
+                                detail=(
+                                    f"SignedGatewayStub 200 payload fixture contains unproduced keys "
+                                    f"{sorted(extra_shorthand)} (allowed: {sorted(http_cat.validate_action_payload_keys)})"
+                                ),
+                            )
+                        )
+
+    return violations, verified_responses
+
+
 def run_check(
     repo_root: Path = DEFAULT_REPO_ROOT,
     *,
@@ -1325,6 +2116,7 @@ def run_check(
     ]
     modules = _build_module_index(repo_root, scan_roots)
     catalog = collect_producers(repo_root, modules)
+    http_cat = collect_gateway_http_producers(modules, catalog)
 
     violations: list[ViolationRecord] = []
     stream_consumer_files = 0
@@ -1356,11 +2148,15 @@ def run_check(
     violations.extend(env_violations)
     verified_reads += env_reads
 
+    fx_violations, fx_count = check_gateway_test_fixtures(repo_root, http_cat)
+    violations.extend(fx_violations)
+
     stats = {
         "produced_event_types": len(catalog.event_keys),
         "stream_consumer_files": stream_consumer_files,
         "envelope_consumer_files": env_files,
         "verified_key_reads": verified_reads,
+        "verified_test_fixture_responses": fx_count,
     }
 
     if enforce_floors:
@@ -1412,6 +2208,21 @@ def run_check(
                     ),
                 )
             )
+        if (
+            stats["verified_test_fixture_responses"]
+            < MIN_VERIFIED_TEST_FIXTURE_RESPONSES
+        ):
+            violations.append(
+                ViolationRecord(
+                    file="tests/",
+                    line=1,
+                    kind="corpus-floor",
+                    detail=(
+                        f"Verified only {stats['verified_test_fixture_responses']} gateway test-fixture responses "
+                        f"(< MIN_VERIFIED_TEST_FIXTURE_RESPONSES={MIN_VERIFIED_TEST_FIXTURE_RESPONSES})"
+                    ),
+                )
+            )
 
     if verbose:
         print(
@@ -1421,7 +2232,8 @@ def run_check(
         print(
             f"[Gate 11] Checked {stats['stream_consumer_files']} stream consumer groups, "
             f"{stats['envelope_consumer_files']} envelope consumer files, "
-            f"{stats['verified_key_reads']} key/field reads."
+            f"{stats['verified_key_reads']} key/field reads, "
+            f"{stats['verified_test_fixture_responses']} gateway test-fixture responses."
         )
 
     return violations, stats
@@ -1465,7 +2277,8 @@ def main(argv: list[str] | None = None) -> int:
 
     print(
         f"OK: Gate 11 passed — {stats['produced_event_types']} event types, "
-        f"{stats['verified_key_reads']} consumer key/field reads verified (0 mismatches)."
+        f"{stats['verified_key_reads']} consumer key/field reads, "
+        f"{stats['verified_test_fixture_responses']} test-fixture responses verified (0 mismatches)."
     )
     return 0
 

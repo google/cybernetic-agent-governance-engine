@@ -30,7 +30,7 @@ from collections.abc import Callable
 
 import httpx
 import pytest
-from cage_client import RoutingSealVerificationError
+from cage_client import CageGatewayError, RoutingSealVerificationError
 
 from src.governed_financial_advisor.infrastructure.gateway_client import GatewayClient
 from tests.fixtures.signed_gateway import SignedGatewayStub
@@ -148,7 +148,7 @@ async def test_gfa_refuses_an_unsigned_legacy_flat_dict() -> None:
         sign=False,
     )
 
-    with pytest.raises(PermissionError, match="no routable verdict"):
+    with pytest.raises(CageGatewayError, match="missing required 'envelope' field"):
         await client.validate_action("execute_trade", {"symbol": "AAPL"})
 
 
@@ -216,9 +216,12 @@ async def test_gfa_unwraps_v3_envelope_on_retry_path() -> None:
             return httpx.Response(
                 403,
                 json={
+                    "schema_version": "2.0.0",
+                    "verdict": "DENIED",
                     "violations": [
                         "Substrate Policy Drift Detected: policy version mismatch"
-                    ]
+                    ],
+                    "proof_hash": "sha256:test-drift-refusal",
                 },
             )
         return httpx.Response(

@@ -174,9 +174,10 @@ AARM_THREAT_VECTORS: dict[str, AARMVector] = {
         ),
         aarm_severity="CRITICAL",
         neutralizing_controls=["SC-4", "SC-8"],
+        # lula-validation-sc8.yaml checks Memorystore CA pinning only, not mesh
+        # mTLS, so it does not verify this vector (POAM-2026-219).
         lula_validation_files=[
             "compliance/lula/lula-validation-sc4.yaml",
-            "compliance/lula/lula-validation-sc8.yaml",
         ],
         implementation_files=[
             "src/cage_finance/safety/fiscal_limit_guard.py",
@@ -339,9 +340,9 @@ AARM_THREAT_VECTORS: dict[str, AARMVector] = {
         ),
         aarm_severity="CRITICAL",
         neutralizing_controls=["SC-8", "SC-4"],
-        lula_validation_files=[
-            "compliance/lula/lula-validation-sc8.yaml",
-        ],
+        # No Lula manifest verifies model integrity: lula-validation-sc8.yaml
+        # checks Memorystore CA pinning only (POAM-2026-219).
+        lula_validation_files=[],
         implementation_files=[
             "deployment/docker/Dockerfile.vllm",
             "infra/modules/vllm_inference/main.tf",

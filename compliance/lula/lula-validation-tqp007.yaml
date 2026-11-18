@@ -16,19 +16,15 @@ component-definition:
   uuid: c0be590a-584c-5103-90a8-1db6bf900941
   metadata:
     title: CAGE Validation — TQP007 (CTRL_TQP_007)
-    last-modified: '2026-07-01T13:18:54Z'
-    version: 1.0.0
+    last-modified: '2026-11-14T00:00:00Z'
+    version: 1.0.1
     oscal-version: 1.1.2
     remarks: |-
       Auto-converted from standalone lula validation format.
       Region: ALL. Posture: iso42001.
-      Notes: ISO 42001 §A.8.4: AI System Operation Controls — TokenQuotaProxy fail-closed. Asserts that the TokenQuotaProxy Deployment:
-        (1) Is Running with ≥1 ready replica in governance-stack namespace.
-        (2) Has REDIS_URL env var set (points to a running Redis instance).
-        (3) Has TOKEN_QUOTA_FAIL_CLOSED=true env var set, ensuring quota enforcement
-            fails CLOSED (deny all) rather than OPEN (allow uncapped) when Redis is
-            unavailable.
-      STPA hazard H-7: TokenQuotaProxy Redis connection failure causes quota enforcement to fail-OPEN, enabling denial-of-governance via resource exhaustion. CTRL_TQP_007 compensates by requiring fail-closed behavior. POAM reference: ISO-004 (POAM_ISO42001.md). OSCAL mapping: compliance/oscal/component-definition.yaml, component tqp007.
+      Notes: ISO 42001 §A.8.4: AI System Operation Controls — TokenQuotaProxy (CTRL_TQP_007). Asserts tqp_running (a gateway Deployment has at least one ready replica) and tqp_has_redis_url (it sets a non-empty REDIS_URL). It does not check fail-closed behaviour, so compliance/lula/README.md does not rate it Active.
+      Until #664 (372daad2) it also asserted TOKEN_QUOTA_FAIL_CLOSED=true on a token-quota-proxy Deployment. Neither the variable nor that Deployment appears in the committed Terraform or source, so the check could not pass; #664 retargeted the manifest at the gateway and removed the check without updating these Notes (POAM-2026-219).
+      STPA hazard H-7: TokenQuotaProxy Redis connection failure causes quota enforcement to fail-OPEN, enabling denial-of-governance via resource exhaustion. CTRL_TQP_007 compensates by requiring fail-closed behavior; this manifest does not evidence that. POAM reference: ISO-004 (POAM_ISO42001.md), POAM-2026-219. OSCAL mapping: compliance/oscal/component-definition.yaml, component tqp007.
   components:
   - uuid: 963fd02f-e09a-5110-8678-75f1ef7e10f8
     type: software

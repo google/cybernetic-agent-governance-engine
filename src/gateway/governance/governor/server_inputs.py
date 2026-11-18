@@ -109,18 +109,30 @@ def is_online_governance_active() -> bool:
 def strip_untrusted_shadow_params(
     params: Mapping[str, Any], action: str = ""
 ) -> dict[str, Any]:
-    """Strip ``_shadow_*`` simulation keys from untrusted online or enforcing inputs (POAM-2026-211)."""
+    """Strip untrusted ``_caller_*``, ``_quarantine_*``, and ``_shadow_*`` keys (POAM-2026-211, KG-01).
+
+    ``_caller_*`` and ``_quarantine_*`` keys are server-reserved across all postures
+    so callers can never spoof verified principal attributes or trigger cross-agent
+    quarantine. ``_shadow_*`` simulation keys are stripped whenever online governance
+    or an enforcing posture is active.
+    """
     cleaned = dict(params)
-    if not is_online_governance_active() and not is_enforcing():
-        return cleaned
+    strip_shadow = is_online_governance_active() or is_enforcing()
     stripped = sorted(
-        k for k in list(cleaned) if isinstance(k, str) and k.startswith("_shadow_")
+        k
+        for k in list(cleaned)
+        if isinstance(k, str)
+        and (
+            k.startswith("_caller_")
+            or k.startswith("_quarantine_")
+            or (strip_shadow and k.startswith("_shadow_"))
+        )
     )
     for k in stripped:
         cleaned.pop(k, None)
     if stripped:
         logger.warning(
-            "server inputs: ignoring caller-supplied shadow keys %s for %s",
+            "server inputs: ignoring caller-supplied reserved keys %s for %s",
             stripped,
             action or "<unknown>",
         )
@@ -133,9 +145,7 @@ def _iter_scannable_strings(value: Any) -> Iterator[str]:
         yield value
     elif isinstance(value, Mapping):
         for k, v in value.items():
-            if isinstance(k, str) and (
-                k.startswith("_caller_") or k in KERNEL_SERVER_INPUT_KEYS
-            ):
+            if isinstance(k, str) and k in KERNEL_SERVER_INPUT_KEYS:
                 continue
             yield from _iter_scannable_strings(v)
     elif isinstance(value, (list, tuple, set, frozenset)):
@@ -225,10 +235,16 @@ async def bind_server_inputs(
 ) -> dict[str, Any]:
     """Return a copy of ``params`` with ``action``'s owned keys server-resolved.
 
-    Kernel-owned security keys (:data:`KERNEL_SERVER_INPUT_KEYS`) are always
-    stripped from caller input regardless of ``action``. Clean actions without
-    a resolver get an unchanged shallow copy.
+    Kernel-owned security keys (:data:`KERNEL_SERVER_INPUT_KEYS`) and untrusted
+    ``_caller_*`` / ``_quarantine_*`` keys are always stripped from caller input
+    regardless of ``action``.
     """
+    # Scan raw caller strings BEFORE stripping _caller_* keys so injection
+    # payloads stuffed under _caller_* still trip prompt_injection_verified.
+    raw_injection_detected, raw_injection_score = inspect_prompt_injection_params(
+        params
+    )
+
     bound = strip_untrusted_shadow_params(params, action=action)
     stripped_kernel = sorted(k for k in KERNEL_SERVER_INPUT_KEYS if k in bound)
     for key in KERNEL_SERVER_INPUT_KEYS:
@@ -255,6 +271,9 @@ async def bind_server_inputs(
                 type(exc).__name__,
                 exc,
             )
+            if raw_injection_detected:
+                bound["semantic_score"] = raw_injection_score
+                bound["prompt_injection_verified"] = False
             return bound
         if not isinstance(resolved, Mapping):
             logger.error(
@@ -263,6 +282,9 @@ async def bind_server_inputs(
                 action,
                 type(resolved).__name__,
             )
+            if raw_injection_detected:
+                bound["semantic_score"] = raw_injection_score
+                bound["prompt_injection_verified"] = False
             return bound
         for key, value in resolved.items():
             if key in owned:
@@ -280,7 +302,10 @@ async def bind_server_inputs(
             action,
         )
 
-    if "prompt_injection_verified" not in bound:
+    if raw_injection_detected:
+        bound["semantic_score"] = raw_injection_score
+        bound["prompt_injection_verified"] = False
+    elif "prompt_injection_verified" not in bound:
         detected, score = inspect_prompt_injection_params(bound)
         if detected:
             bound["semantic_score"] = score

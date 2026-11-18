@@ -14,5 +14,189 @@
   "prior_v410_archive_release_url": "https://github.com/google/cybernetic-agent-governance-engine/releases/download/v4.1.0/gate-w-fa772122-clean-room-worm-archive.tar.gz",
   "prior_v410_recovery_archive_release_url": "https://github.com/google/cybernetic-agent-governance-engine/releases/download/v4.1.0/gate-w-fa772122-recovery-worm-archive.tar.gz",
   "partner_conformance_status": "unreachable_waived",
-  "notes": "Certified on 2026-11-14T01:59:25Z via zero-state clean-room execution of scripts/staging_lifecycle.sh from unmodified main (8956f5057c62a8e833ad2b2c7beb3aadc48cdf83) on a brand-new GCP project (<PROJECT_ID>, pre_existing_project_state.project_pre_existed=false, 0 prior APIs/objects, manifest SHA-256 3d58b3f9afddf5a85f7b7eeb5d9fc89c6dff0958c7f019f9eb05ace354b89528), archived in retention-locked WORM storage and published as immutable GitHub Release asset gate-w-8956f505-clean-room-worm-archive.tar.gz (SHA-256 aa573aebee341e6d16608fb4e464946451201d2a415f5320a41d069e51a47242 on tag gate-w-8956f505). Achieved exit_code=0, overall_status=PASS, zero-drift Phase 1 and Stage 5 Terraform plans (drift_read_back_scope recorded for helm_release.gateway and mesh/metrics/dataplane-v2 charts), 0 container/initContainer restarts across all workloads (kubelet_image_pull_summary: 227 pulled events, 115 cold pulls, max 171.602s vs 600s Phase 2 timeout), 26/26 active Lula v0.16.0 specs satisfied under startup_grace_hours=0 (22 Kubernetes-domain including lula-validation-ia3.yaml/ac3.yaml/sc8.yaml + 4 in-cluster Job/lula-gate-w API-domain; 7 planned specs recorded), US_FED (18), EU_ECB (48), APAC_MAS (7), live data-residency (6), Langfuse posture isolation, fail-closed Binary Authorization negative unattested-pod admission refusal in default namespace (imagepolicywebhook.image-policy.k8s.io, passed=true, pod_admitted=false), live_external (5), integration (94), E2E advisor (12, including in-mesh GatewayClient / cage-client==0.3.0 Cloud KMS ES256 JWKS verification), Cloud Monitoring GMP :9090 mTLS scrape read-back (3 active prometheus.googleapis.com/cage_* series across gateway and compliance-bridge under defaultInboundPolicy=all-authenticated with symmetric absent_over_time alert policies), Stage 5b cross-teardown BOUND_CHAIN_ROTATION across cage:evidence:stream and cage:evidence:infra:stream (verified=6, total_records=97, bound_rotations=1, gaps=0) with AS-6 Cloud Audit Log KMS signature corroboration PASSED pre- and post-rebuild, and Stage 6 PF9 zero unexpected survivors. Plain-English verification_boundary_disclosures record that advisor SDK coverage is newly exercised starting in #736 (prior runs used raw httpx + server-side GovernanceEnvelopeBuilder) and that Verdict.DEFER -> defer_node is unreachable in US_FED where HITL outranks DEFERRABLE (validated out-of-band in live TCP rehearsal). Partner live-wire suites recorded 14 passed / 50 skipped (partner_conformance_status=unreachable_waived)."
+  "notes": "Certified on 2026-11-14T01:59:25Z via zero-state clean-room execution of scripts/staging_lifecycle.sh from unmodified main (8956f5057c62a8e833ad2b2c7beb3aadc48cdf83) on a brand-new GCP project (<PROJECT_ID>, pre_existing_project_state.project_pre_existed=false, 0 prior APIs/objects, manifest SHA-256 3d58b3f9afddf5a85f7b7eeb5d9fc89c6dff0958c7f019f9eb05ace354b89528), archived in retention-locked WORM storage and published as immutable GitHub Release asset gate-w-8956f505-clean-room-worm-archive.tar.gz (SHA-256 aa573aebee341e6d16608fb4e464946451201d2a415f5320a41d069e51a47242 on tag gate-w-8956f505). Achieved exit_code=0, overall_status=PASS, zero-drift Phase 1 and Stage 5 Terraform plans (drift_read_back_scope recorded for helm_release.gateway and mesh/metrics/dataplane-v2 charts), 0 container/initContainer restarts across all workloads (kubelet_image_pull_summary: 227 pulled events, 115 cold pulls, max 171.602s vs 600s Phase 2 timeout), 26/26 active Lula v0.16.0 specs satisfied under startup_grace_hours=0 (22 Kubernetes-domain including lula-validation-ia3.yaml/ac3.yaml/sc8.yaml + 4 in-cluster Job/lula-gate-w API-domain; 7 planned specs recorded), US_FED (18), EU_ECB (48), APAC_MAS (7), live data-residency (6), Langfuse posture isolation, fail-closed Binary Authorization negative unattested-pod admission refusal in default namespace (imagepolicywebhook.image-policy.k8s.io, passed=true, pod_admitted=false), live_external (5), integration (94), E2E advisor (12, including in-mesh GatewayClient / cage-client==0.3.0 Cloud KMS ES256 JWKS verification), Cloud Monitoring GMP :9090 mTLS scrape read-back (3 active prometheus.googleapis.com/cage_* series across gateway and compliance-bridge under defaultInboundPolicy=all-authenticated with symmetric absent_over_time alert policies), Stage 5b cross-teardown BOUND_CHAIN_ROTATION across cage:evidence:stream and cage:evidence:infra:stream (verified=6, total_records=97, bound_rotations=1, gaps=0) with AS-6 Cloud Audit Log KMS signature corroboration PASSED pre- and post-rebuild, and Stage 6 PF9 zero unexpected survivors. Plain-English verification_boundary_disclosures record that advisor SDK coverage is newly exercised starting in #736 (prior runs used raw httpx + server-side GovernanceEnvelopeBuilder) and that Verdict.DEFER -> defer_node is unreachable in US_FED where HITL outranks DEFERRABLE (validated out-of-band in live TCP rehearsal). Partner live-wire suites recorded 14 passed / 50 skipped (partner_conformance_status=unreachable_waived). Annotation added after certification (lula_result_breakdown; the certified result and the published archive are unchanged): '26/26 active' counts every spec without a planned or not-applicable header, not 26 controls rated Active. The Lula README rated 12 of the 26 Active at the certified commit, several of which assert less than their names, and the '7 planned specs' are 2 planned and 5 adopter-operated not-applicable.",
+  "lula_result_breakdown": {
+    "annotated_utc": "2026-11-15T00:56:11Z",
+    "annotation_scope": "Added after certification to qualify '26/26 active Lula v0.16.0 specs satisfied' in notes. It changes no certified result. The published archive (archive_sha256) and its manifest (archive_manifest_sha256) are immutable and do not carry this breakdown. The fields below are what scripts/lula_rating_breakdown.py computes from that manifest's own spec lists (the 22 host specs with assessment results, the 4 api_specs and the 7 planned_specs) and compliance/lula/README.md at certified_git_sha. Archive manifests written by scripts/staging_lifecycle.sh from this change on carry the same fields as lula.rating_breakdown.",
+    "satisfied_in_certified_run": 26,
+    "rating_source": "compliance/lula/README.md Status column at certified_git_sha",
+    "rating_meaning": "Only a manifest rated Active may be cited as evidence for closing a POA&M item (scripts/check_poam_lula_divergence.py). The rating is the README's judgment of the manifest, not a measurement of what its Rego asserts; the README row says what each manifest checks.",
+    "counts": {
+      "evaluated": 26,
+      "evaluated_rated_active": 12,
+      "evaluated_not_rated_active": 14,
+      "not_evaluated_planned": 2,
+      "not_evaluated_not_applicable": 5
+    },
+    "evaluated_rated_active": [
+      "lula-validation-a52.yaml",
+      "lula-validation-a53.yaml",
+      "lula-validation-a92.yaml",
+      "lula-validation-au12.yaml",
+      "lula-validation-cilium-dpv2.yaml",
+      "lula-validation-eu-fria.yaml",
+      "lula-validation-flowsignal.yaml",
+      "lula-validation-ftra.yaml",
+      "lula-validation-iso001-token-quota.yaml",
+      "lula-validation-metrics.yaml",
+      "lula-validation-sc4.yaml",
+      "lula-validation-tqp007.yaml"
+    ],
+    "evaluated_not_rated_active": [
+      "lula-validation-aarm-vectors.yaml",
+      "lula-validation-ac2.yaml",
+      "lula-validation-ac3.yaml",
+      "lula-validation-ai600-cbrn.yaml",
+      "lula-validation-ai600-confabulation.yaml",
+      "lula-validation-ai600-data-privacy.yaml",
+      "lula-validation-ai600-human-ai-config.yaml",
+      "lula-validation-ai600-prompt-injection.yaml",
+      "lula-validation-cm6.yaml",
+      "lula-validation-ia3.yaml",
+      "lula-validation-ia5.yaml",
+      "lula-validation-ir6.yaml",
+      "lula-validation-sc8.yaml",
+      "lula-validation-si2.yaml"
+    ],
+    "placeholders_flagged_by_stub_ratchet": [
+      "lula-validation-ai600-cbrn.yaml",
+      "lula-validation-ai600-confabulation.yaml",
+      "lula-validation-ai600-data-privacy.yaml",
+      "lula-validation-ai600-human-ai-config.yaml",
+      "lula-validation-ai600-prompt-injection.yaml"
+    ],
+    "not_evaluated_planned": [
+      "lula-validation-gdpr-art22.yaml",
+      "lula-validation-ra5.yaml"
+    ],
+    "not_evaluated_not_applicable": [
+      "lula-validation-dora-art10.yaml",
+      "lula-validation-eu-ai-act-art9.yaml",
+      "lula-validation-mas-feat.yaml",
+      "lula-validation-mas-notice655.yaml",
+      "lula-validation-mas-trm-s6.yaml"
+    ],
+    "rated_active_after_certification": {
+      "commit": "84f39e213954b76192fd574e9bb09eccfab68c9a",
+      "manifests": [
+        "lula-validation-ac3.yaml",
+        "lula-validation-ia3.yaml",
+        "lula-validation-sc8.yaml",
+        "lula-validation-si2.yaml"
+      ],
+      "note": "The commit that recorded this certification rated these four evaluated specs Active and, in the same change, closed POAM-2026-007, POAM-2026-080 and POAM-2026-195 citing ac3, ia3 and sc8. scripts/check_poam_lula_divergence.py accepts a Lula manifest as closure evidence only if it is rated Active, and counts it as bound to a finding only if the manifest names the finding; the commit's only edit to lula-validation-ia3.yaml added those three IDs to its header comment. No assertion changed, so 16 of the 26 are rated Active from that commit on.",
+      "rating_lag": "All four already met the Active criteria at certified_git_sha, and the rating had lagged the manifests; the criteria did not change. Each passed the check the closure gate applies to Active manifests (_validate_active_lula_manifest), carried no stub-ratchet markers, and was satisfied in this run. Their assertions were last rewritten in #705, #724 and #733, none of which touched the README, whose rows still described older checks: si2's named CVE patching through pip-audit, which lula-validation-si2.yaml has never asserted.",
+      "description_overstated": "The description 84f39e21 wrote for lula-validation-sc8.yaml, 'Linkerd mTLS, OPA UDS sidecar & Memorystore server CA TLS', claimed more than the manifest checks: its Rego asserts only that gateway and compliance-bridge pin the Memorystore server CA. The README row was corrected in the same change as this annotation."
+    },
+    "active_rating_scope": "Rated Active is the README's judgment, not a measurement of what a manifest asserts. Checked against their Rego when this annotation was written, five of the 12 rated Active in the certified tree describe checks their Rego does not make: lula-validation-ftra.yaml asserts only that a gateway Deployment has a gateway container; lula-validation-eu-fria.yaml accepts any of the three regions and checks neither the fria tier nor the normative provider, and was satisfied in this US_FED run; lula-validation-tqp007.yaml checks only that the gateway is ready with a REDIS_URL, and lula-validation-iso001-token-quota.yaml only that REDIS_URL and the opa-policies ConfigMap are present, so neither checks that quotas are enforced; and lula-validation-flowsignal.yaml's Redis-isolation check compares constants, while its secretKeyRef check passes when no FlowSignal variables are set. Their README rows now say what each asserts; their ratings are unchanged.",
+    "reading": "26 of 26 evaluated specs were satisfied and none failed. That is not 26 controls rated Active: 12 were rated Active in the certified tree, the commit that recorded this certification rated 4 more Active, and 10 are rated Stub. Five of those 10 are Phase-0 placeholders whose own metadata says they always pass, so their being satisfied says nothing about the controls they name. Nor is every Active rating a tested control: see active_rating_scope.",
+    "ratings_from_2026_11_14": {
+      "annotated_utc": "2026-11-15T04:43:00Z",
+      "annotation_scope": "Added after certification, like the fields above. It changes no certified result; it records how the README ratings those fields describe changed on 2026-11-14 (POAM-2026-219), and supersedes 'their ratings are unchanged' in active_rating_scope and the present-tense counts in reading.",
+      "change": "The six manifests active_rating_scope and rated_active_after_certification.description_overstated name lost their assertions in one commit, #664 (372daad2), a Lula v0.16 schema migration whose message mentions no removals. lula-validation-ftra.yaml, lula-validation-eu-fria.yaml, lula-validation-tqp007.yaml and lula-validation-flowsignal.yaml are rated Stub. lula-validation-iso001-token-quota.yaml has its policy-content check restored and stays Active. lula-validation-sc8.yaml stays Active for its one check, Memorystore CA pinning, with its header corrected. Every Active README row now names the rules its manifest's validate composes, held to the Rego by tests/unit/test_lula_description_parity.py, and scripts/check_k8s_terraform_parity.py fails an Active manifest that selects an object infra/ does not create. lula-validation-au12.yaml and lula-validation-iso001-token-quota.yaml each dropped one such name from a set of alternates: stera-gateway and opa-policy.",
+      "evaluated_rated_active": [
+        "lula-validation-a52.yaml",
+        "lula-validation-a53.yaml",
+        "lula-validation-a92.yaml",
+        "lula-validation-ac3.yaml",
+        "lula-validation-au12.yaml",
+        "lula-validation-cilium-dpv2.yaml",
+        "lula-validation-ia3.yaml",
+        "lula-validation-iso001-token-quota.yaml",
+        "lula-validation-metrics.yaml",
+        "lula-validation-sc4.yaml",
+        "lula-validation-sc8.yaml",
+        "lula-validation-si2.yaml"
+      ],
+      "reading": "Under the ratings from 2026-11-14, 12 of the 26 evaluated specs are rated Active and 14 are rated Stub. Eleven of the 12 were satisfied in this run with the validate logic they have today, counting lula-validation-au12.yaml, whose Deployment match has since dropped stera-gateway, a name nothing in infra/ creates, which cannot change its result on a cluster Terraform builds. lula-validation-iso001-token-quota.yaml was satisfied in its #664 form, which required only a non-empty opa-policies ConfigMap; its restored check was evaluated offline with lula dev validate on 2026-11-14, and no Gate W run has evaluated it yet. Of the 12 rated Active in the certified tree, ftra, eu-fria, tqp007 and flowsignal are now rated Stub."
+    }
+  },
+  "residency_result_breakdown": {
+    "annotated_utc": "2026-11-15T14:50:00Z",
+    "annotation_scope": "Added after certification to qualify 'live data-residency (6)' in notes. It changes no certified result, and the published archive and its manifest are unchanged.",
+    "runtime_residency_gate_exercised": false,
+    "runtime_residency_reason": "At certified_git_sha (8956f505), resolve_cold_store_bucket() in src/gateway/governance/evidence/residency.py bypassed geographic validation whenever CAGE_ENV was in ('development', 'dev', 'test', 'ci', 'staging', 'uat', 'preprod'). Because Gate W runs with CAGE_ENV=staging, the runtime cold-store residency gate was never exercised in this run; that bypass also masked a latent production startup failure on compliance-bridge (POAM-2026-220).",
+    "phase_4_live_data_residency": {
+      "test_file": "tests/infrastructure/test_data_residency.py",
+      "collected": 12,
+      "passed": 6,
+      "skipped": 6,
+      "passed_breakdown": {
+        "TestUSFEDDeployedResidency": {
+          "count": 3,
+          "what_ran": "2 Gate W runner environment-variable checks (GOOGLE_CLOUD_LOCATION and bucket/path env vars on the test host) plus 1 live gcloud storage buckets describe showing a US location on the staging WORM bucket"
+        },
+        "TestEUECBResidencyArtifacts": {
+          "count": 3,
+          "what_ran": "Repository-file checks over eu-dev.tfvars, eu-prod.tfvars and config/compliance/EU_ECB_BASELINE.json"
+        }
+      },
+      "skipped_breakdown": {
+        "TestEUECBDeployedResidency": {
+          "count": 6,
+          "reason": "Skipped because the deployed cluster's cage-deployment ConfigMap set CAGE_DEPLOYMENT_REGION=US_FED"
+        }
+      }
+    }
+  },
+  "custody_posture_qualification": {
+    "annotated_utc": "2026-11-15T16:25:00Z",
+    "annotation_scope": "Added after certification to record the attestation schema and structural posture qualification of the published WORM archives. It changes no certified result, and the published archives (gate-w-8956f505 and prior v4.1.0 fa772122) and their manifests are unchanged.",
+    "attestation_schema_in_certified_archive": "cage-evidence-batch/1",
+    "posture_status": "unstamped_v1",
+    "citable": true,
+    "citable_qualifications": [
+      "unstamped_v1_posture"
+    ],
+    "note": "At certified_git_sha (8956f505) and in the prior v4.1.0 certification (fa772122), EvidenceCustodian emitted cage-evidence-batch/1 attestations, which did not stamp deployment_posture inside the KMS-signed payload. Those archives remain cryptographically sound and verify with citable=true by default in CustodyVerifier without opt-in flags, surfaced structurally with posture_status='unstamped_v1' and citable_qualifications=['unstamped_v1_posture'] rather than defaulting to 'production'. Accepting cage-evidence-batch/1 is cryptographically bounded because schema and deployment_posture sit inside the KMS-signed JCS payload (EVIDENCE_KMS_KEY): relabelling a cage-evidence-batch/2 attestation as cage-evidence-batch/1 or stripping deployment_posture breaks signature verification without the signing key. From cage-evidence-batch/2 onward, EvidenceCustodian stamps deployment_posture ('production' or 'staging') inside every signed attestation, and clean-room Gate W runs (--fresh-project) require posture_status='staging' and citable_qualifications=[]."
+  },
+  "rating_contamination_audit_2026_11_16": {
+    "annotated_utc": "2026-11-16T21:00:00Z",
+    "annotation_scope": "Added after certification to record the negative contamination audit result for POAM-2026-233 (infrastructure failures signed as policy refusals) and POAM-2026-234 (favourable-error measurement bias in compliance_bridge _is_control_effective_record). It changes no certified result, and the published archives (gate-w-8956f505 and prior v4.1.0 fa772122) and their manifests are unchanged.",
+    "published_ratings_contaminated": false,
+    "opa_outage_refusals_in_archives": 0,
+    "archives_recomputed": [
+      "gate-w-8956f505-clean-room-worm-archive.tar.gz",
+      "gate-w-fa772122-clean-room-worm-archive.tar.gz",
+      "gate-w-fa772122-recovery-worm-archive.tar.gz"
+    ],
+    "controls_recomputed_excluding_refusals_deferrals_and_blocks": {
+      "A.5.2": 1.0,
+      "A.5.3": 1.0,
+      "A.8.4": 1.0,
+      "A.9.2": 1.0,
+      "SC-4": 1.0
+    },
+    "note": "Under POAM-2026-233 and POAM-2026-234, _is_control_effective_record() in src/compliance_bridge/metrics.py counts GOVERNANCE_REFUSAL, GOVERNANCE_REFUSAL_RECEIPT, GOVERNANCE_DEFERRAL (including unpersisted DeferQueue failures), and INFERENCE_PROXY_BLOCK (including fail-closed quarantine Redis errors) as control effectiveness in safety_rate, so an OPA or Redis outage can raise measured posture. Recomputing per-control safety_rate across all three published Gate W WORM archives with every refusal, deferral, refusal-receipt, and quarantine-block record excluded yields 1.0000 across all five populated controls in SUPPORTED_CONTROLS (A.5.2, A.5.3, A.8.4, A.9.2, SC-4) with 0 OPA-outage refusals. Published Gate W certification archive verdicts were not contaminated by refusal-as-effective scoring; this archive recomputation makes no claim about the OSCAL evidence claim census, and the structural defects remain open under POAM-2026-233 and POAM-2026-234."
+  },
+  "next_gate_w_discharge": {
+    "annotated_utc": "2026-11-15T17:15:00Z",
+    "annotation_scope": "Combined discharge schedule for the three post-8956f505 archive disclosures above (lula_result_breakdown.ratings_from_2026_11_14, residency_result_breakdown, and custody_posture_qualification). All three discharge on the same next Gate W run and must be verified and retired together when refreshing this file so none is discharged piecemeal while leaving the others stale.",
+    "target_run": {
+      "deployment_target_mode": "fresh_project_clean_room",
+      "compliance_region": "APAC_MAS",
+      "gcp_region": "asia-southeast1",
+      "command": "scripts/staging_lifecycle.sh --fresh-project"
+    },
+    "discharges": [
+      {
+        "id": "POAM-2026-220",
+        "disclosure_field": "residency_result_breakdown",
+        "gap_in_certified_archive": "At 8956f505, resolve_cold_store_bucket() bypassed geographic residency under CAGE_ENV=staging and Phase 4 ran under US_FED, so runtime cold-store residency (EVIDENCE_COLD_STORE_LOCATION) was never exercised live.",
+        "required_in_next_run": "compliance-bridge starts ready under CAGE_ENV=staging and CAGE_DEPLOYMENT_REGION=APAC_MAS with EVIDENCE_COLD_STORE_LOCATION=ASIA-SOUTHEAST1 enforced from module.worm_bucket.bucket_location, exercising both the staging residency lock and non-US_FED regional residency end-to-end with verified >= 1 and gaps == 0."
+      },
+      {
+        "id": "POAM-2026-219",
+        "disclosure_field": "lula_result_breakdown.ratings_from_2026_11_14",
+        "gap_in_certified_archive": "At 8956f505, lula-validation-iso001-token-quota.yaml ran in its #664 form (non-empty opa-policies ConfigMap only); its restored opa_policy_has_quota_rules check has been evaluated only offline with lula dev validate.",
+        "required_in_next_run": "Archive manifest records lula-validation-iso001-token-quota.yaml satisfied and lula.rating_breakdown.counts.evaluated_rated_active == 12 (the check is evaluated in every region, so the APAC_MAS run satisfies POAM-2026-219 Closure Criterion 2; Closure Criterion 3's historical POAM-2026-079 ac2 strike-through and seven US SSP statement/census restatements remain separate repository edits before POAM-2026-219 closes)."
+      },
+      {
+        "id": "EP-1",
+        "disclosure_field": "custody_posture_qualification",
+        "gap_in_certified_archive": "At 8956f505 and fa772122, EvidenceCustodian emitted cage-evidence-batch/1 without deployment_posture, so the published archives verify as citable=true with posture_status='unstamped_v1' and citable_qualifications=['unstamped_v1_posture'].",
+        "required_in_next_run": "EvidenceCustodian emits cage-evidence-batch/2 with deployment_posture='staging' inside the KMS-signed JCS payload, and GET /v1/evidence/verify (enforced by scripts/staging_lifecycle.sh --fresh-project) reports posture_status == 'staging' and citable_qualifications == [] across both pre- and post-rebuild WORM chains."
+      }
+    ]
+  }
 }

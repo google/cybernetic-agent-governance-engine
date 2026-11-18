@@ -18,12 +18,13 @@ import logging
 import os
 import re
 import time
+from typing import Any
 
 import pandas as pd
 from langchain_core.messages import HumanMessage
 from langchain_openai import ChatOpenAI
 from langfuse import Langfuse
-from langfuse.api.client import FernLangfuse
+from pydantic import SecretStr
 
 logger = logging.getLogger(__name__)
 
@@ -58,7 +59,12 @@ _RETRY_DELAYS = (1, 2, 4)  # seconds — exponential backoff, 3 attempts
 
 
 def _post_score_with_retry(
-    langfuse_client, *, trace_id: str, name: str, value: float, comment: str = ""
+    langfuse_client: Any,
+    *,
+    trace_id: str,
+    name: str,
+    value: float,
+    comment: str = "",
 ) -> bool:
     """Post a single score to Langfuse with up to 3 retries and exponential backoff.
 
@@ -127,7 +133,7 @@ def _post_score_with_retry(
             "name": name,
             "value": value,
             "comment": comment,
-            "timestamp": datetime.datetime.utcnow().isoformat() + "Z",
+            "timestamp": datetime.datetime.now(datetime.timezone.utc).isoformat(),
         }
         with open("failed_scores.jsonl", "a", encoding="utf-8") as _fh:
             _fh.write(json.dumps(payload) + "\n")
@@ -144,7 +150,7 @@ def _post_score_with_retry(
     return False
 
 
-def evaluate_production_traces():
+def evaluate_production_traces() -> None:
     print("Initializing Langfuse and fetching traces...")
 
     public_key = os.getenv("LANGFUSE_PUBLIC_KEY")
@@ -156,12 +162,8 @@ def evaluate_production_traces():
             "LANGFUSE_PUBLIC_KEY and LANGFUSE_SECRET_KEY must be set in the environment."
         )
 
-    # Use standard Langfuse for scoring, FernLangfuse API client for fetching
     langfuse_client = Langfuse(public_key=public_key, secret_key=secret_key, host=host)
-    api_client = FernLangfuse(username=public_key, password=secret_key, base_url=host)
-
-    # Fetch traces tagged 'production'
-    traces_response = api_client.trace.list(tags=["production"])
+    traces_response = langfuse_client.api.trace.list(tags=["production"])
     traces_data = getattr(traces_response, "data", traces_response)
 
     if not traces_data:
@@ -197,10 +199,10 @@ def evaluate_production_traces():
     print(f"Initializing vLLM judge ({model_name})...")
     judge_llm = ChatOpenAI(
         base_url=vllm_base,
-        api_key=os.environ.get("VLLM_API_KEY", "EMPTY"),
+        api_key=SecretStr(os.environ.get("VLLM_API_KEY", "EMPTY")),
         model=model_name,
         temperature=0.0,
-        max_tokens=512,
+        max_completion_tokens=512,
     )
 
     print("Running evaluation via vLLM LLM-as-Judge...")
@@ -216,14 +218,9 @@ def evaluate_production_traces():
             if isinstance(response_text, list) and len(response_text) > 0:
                 response_text = response_text[0].get("content", str(response_text))
 
-            trace_id = row.get("trace_id")
+            trace_id = str(row.get("trace_id", ""))
 
             # ── Short-circuit: governance-blocked response ─────────────────
-            # When the backend returns a governance-refusal sentinel (e.g.
-            # "manual justification required") the vLLM judge cannot produce
-            # valid JSON scores — it either returns empty output or free-form
-            # reasoning that fails json.loads().  Detect this BEFORE calling
-            # the LLM and post a predetermined score instead.
             if _is_governance_blocked(str(response_text)):
                 print(
                     f"  [INFO] Governance-blocked response detected for trace "
@@ -255,8 +252,12 @@ USER PROMPT: {user_input}
 AGENT RESPONSE: {response_text}
 """
             judge_response = judge_llm.invoke([HumanMessage(content=eval_prompt)])
-
-            clean_res = judge_response.content.strip()
+            raw_content = judge_response.content
+            clean_res = (
+                raw_content.strip()
+                if isinstance(raw_content, str)
+                else str(raw_content).strip()
+            )
 
             # Extract JSON block using regex
             json_match = re.search(r"```json\s*(.*?)\s*```", clean_res, flags=re.DOTALL)

@@ -66,9 +66,18 @@ from .model import (
 
 TRACE_EVENT_TYPE = "GOVERNANCE_TRACE"
 TRACE_SCHEMA_VERSION = 1
-VERDICTS = frozenset({"ALLOW", "NARROW", "REQUIRE_APPROVAL", "DEFER", "DENY"})
+VERDICTS = frozenset(
+    {
+        "ALLOW",
+        "NARROW",
+        "REQUIRE_APPROVAL",
+        "DEFER",
+        "INFRASTRUCTURE_BLOCK",
+        "DENY",
+    }
+)
 SEALING_PHASES = frozenset({"SEAL_ISSUED", "NARROW"})
-PENDING_VERDICTS = frozenset({"REQUIRE_APPROVAL", "DEFER"})
+PENDING_VERDICTS = frozenset({"REQUIRE_APPROVAL", "DEFER", "INFRASTRUCTURE_BLOCK"})
 
 
 @dataclass(frozen=True)

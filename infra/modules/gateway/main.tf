@@ -260,6 +260,7 @@ locals {
     imagePullPolicy = "Always"
     securityContext = {
       allowPrivilegeEscalation = false
+      readOnlyRootFilesystem   = true
       runAsNonRoot             = true
       runAsUser                = 1000
       seccompProfile = {
@@ -368,17 +369,18 @@ locals {
             }
           }
         },
+        # Raw content must not reach the retention-locked Langfuse event bucket.
         {
           name  = "OTEL_PYTHON_INSTRUMENTATION_HTTPX_CAPTURE_REQUEST_BODY"
-          value = "true"
+          value = "false"
         },
         {
           name  = "OTEL_PYTHON_INSTRUMENTATION_HTTPX_CAPTURE_RESPONSE_BODY"
-          value = "true"
+          value = "false"
         },
         {
           name  = "OTEL_INSTRUMENTATION_GENAI_CAPTURE_MESSAGE_CONTENT"
-          value = "true"
+          value = "false"
         },
         {
           name  = "OTEL_PYTHON_EXCLUDED_URLS"
@@ -386,7 +388,7 @@ locals {
         },
         {
           name  = "OTEL_INSTRUMENTATION_HTTP_CAPTURE_HEADERS_SERVER_REQUEST"
-          value = "content-type,accept,user-agent,x-request-id,x-goog-authenticated-user-email"
+          value = "content-type,accept,user-agent,x-request-id"
         },
         {
           name  = "OTEL_INSTRUMENTATION_HTTP_CAPTURE_HEADERS_SERVER_RESPONSE"
@@ -616,6 +618,14 @@ locals {
           name  = "OPENBLAS_NUM_THREADS"
           value = "2"
         },
+        {
+          name  = "TMPDIR"
+          value = "/tmp"
+        },
+        {
+          name  = "PYTHONDONTWRITEBYTECODE"
+          value = "1"
+        },
       ],
       local.mount_redis_ca ? [
         {
@@ -635,6 +645,11 @@ locals {
         {
           name      = "opa-socket"
           mountPath = "/var/run/opa"
+          readOnly  = false
+        },
+        {
+          name      = "tmp"
+          mountPath = "/tmp"
           readOnly  = false
         },
       ],
@@ -699,6 +714,13 @@ locals {
       {
         name     = "opa-socket"
         emptyDir = {}
+      },
+      {
+        name = "tmp"
+        emptyDir = {
+          medium    = "Memory"
+          sizeLimit = "128Mi"
+        }
       },
       {
         name = "opa-policies"
@@ -769,6 +791,7 @@ locals {
         }
         spec = {
           serviceAccountName            = var.service_account_name
+          automountServiceAccountToken  = false
           terminationGracePeriodSeconds = 35
           # §3, §7 Pitfalls: Governance-critical gateway pods must NEVER schedule on Spot nodes.
           affinity = {
@@ -921,6 +944,7 @@ resource "helm_release" "mesh_policy" {
   values = [yamlencode({
     trustedIdentities = var.trusted_client_identities
     canaryIdentities  = var.canary_client_identities
+    templateSha256    = filesha256("${path.module}/mesh-policy/templates/policy.yaml")
   })]
 }
 

@@ -213,12 +213,12 @@ The legacy unmanaged shadow manifest `de5534ac:deployment/k8s/sbom-cronjob.yaml`
 
 ### Local (CI Artifacts)
 
-| Path                                     | Description                             |
-| ---------------------------------------- | --------------------------------------- |
-| `compliance/sbom/<name>-<date>.cdx.json` | CycloneDX JSON SBOM files               |
-| `compliance/sbom/SBOM_SUMMARY.md`        | Human-readable summary (auto-generated) |
+| Path                                     | Description                                         |
+| ---------------------------------------- | --------------------------------------------------- |
+| `<output-dir>/<name>-<date>.cdx.json`    | CycloneDX JSON SBOM files (ephemeral CI artifact)   |
+| `<output-dir>/SBOM_SUMMARY.md`           | Human-readable summary (auto-generated CI artifact) |
 
-GitHub Actions artifacts are retained for **90 days** and named `sbom-<git-sha>`.
+GitHub Actions artifacts are retained for **90 days** and named `sbom-<git-sha>`. Static SBOM snapshots are not committed to git so they cannot drift from `uv.lock` (see `POAM-2026-221`).
 
 ### GCS (Durable Storage — CM-8 Evidence)
 
@@ -268,9 +268,9 @@ GCS lifecycle policy: **90-day retention** (objects deleted after 90 days per `s
 | `components[].type`                  | `library`, `container`, `application`, `framework`         |
 | `metadata.timestamp`                 | When the SBOM was generated                                |
 
-### Reading the Summary Report (`SBOM_SUMMARY.md`)
+### Reading the Summary Report
 
-The auto-generated summary at `compliance/sbom/SBOM_SUMMARY.md` provides:
+The auto-generated summary written to `<output-dir>/SBOM_SUMMARY.md` provides:
 
 - Total component count
 - Vulnerability severity breakdown (CRITICAL / HIGH / MEDIUM / LOW)

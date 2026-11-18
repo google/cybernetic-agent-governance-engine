@@ -145,8 +145,14 @@ class EvaluatorAuditor:
                     timeout=5,  # Strict 5s timeout
                 )
 
+                from src.gateway.observability.content_filter import (
+                    ContentFilterSpanExporter,
+                )
+
                 provider = TracerProvider(resource=resource, sampler=ALWAYS_ON)
-                provider.add_span_processor(BatchSpanProcessor(exporter))
+                provider.add_span_processor(
+                    BatchSpanProcessor(ContentFilterSpanExporter(exporter))
+                )
                 self._compliance_tracer = provider.get_tracer(  # type: ignore[assignment]
                     "CAGE.EvaluatorAuditor.Compliance"
                 )

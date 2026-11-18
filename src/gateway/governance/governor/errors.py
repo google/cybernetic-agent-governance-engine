@@ -76,3 +76,50 @@ class GovernanceDeferred(GovernanceError):
         self.defer_reason: str = defer_reason
         self.deferred_id: str = deferred_id
         self.reliance: list[dict[str, Any]] = list(reliance or [])
+
+
+class DeferQueueUnavailableError(GovernanceError):
+    """Raised when a committing deferral cannot be persisted to DeferQueue (F-05).
+
+    Subclasses :class:`GovernanceError` so direct ``govern()`` callers fail
+    closed uniformly, while ``enforce_governance()`` catches it ahead of
+    generic ``GovernanceError`` to avoid emitting a contradictory
+    ``GOVERNANCE_REFUSAL_RECEIPT`` after ``GOVERNANCE_DEFERRAL (persisted=False)``
+    has already been chained.
+    """
+
+    def __init__(
+        self,
+        message: str,
+        *,
+        defer_reason: str,
+        violations: list[str] | None = None,
+    ) -> None:
+        super().__init__(message, violations=violations)
+        self.defer_reason: str = defer_reason
+
+
+class GovernanceInfrastructureError(GovernanceError):
+    """Raised when governance blocks fail-closed due to dependency unavailability.
+
+    Subclasses :class:`GovernanceError` (always with ``receipt=None``) so direct
+    ``govern()`` callers block fail-closed without minting a seal, while gateway
+    HTTP and middleware surfaces catch it ahead of :class:`GovernanceError` to
+    emit ``GOVERNANCE_INFRASTRUCTURE_BLOCK`` and HTTP 503 rather than signing a
+    false policy refusal receipt (POAM-2026-233).
+    """
+
+    def __init__(
+        self,
+        message: str,
+        *,
+        dependency: str,
+        failure_code: str,
+        error_code: str = "governance_dependency_unavailable",
+        payload: dict[str, Any] | None = None,
+        violations: list[str] | None = None,
+    ) -> None:
+        super().__init__(message, payload=payload, receipt=None, violations=violations)
+        self.dependency: str = dependency
+        self.failure_code: str = failure_code
+        self.error_code: str = error_code

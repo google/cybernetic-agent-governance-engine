@@ -46,6 +46,7 @@ from typing import Any
 
 import yaml
 
+from src.gateway.governance.env_posture import resolve_deployment_region
 from src.gateway.governance.jcs_canonicalizer import jcs_canonicalize_plan
 
 logger = logging.getLogger(__name__)
@@ -272,7 +273,7 @@ class UCALogger:
         timestamp = now_utc.strftime("%Y-%m-%dT%H:%M:%SZ")
         date_str = now_utc.strftime("%Y-%m-%d")
         worm_path = f"uca-records/{date_str}/{event_id}.yaml"
-        region = os.environ.get("CAGE_DEPLOYMENT_REGION", "US_FED")
+        region = resolve_deployment_region()
         session_key = f"quota:session:{agent_id}"
 
         # PII sanitized before persistence per GDPR Art. 32 / MAS Notice 655
@@ -299,15 +300,17 @@ class UCALogger:
         raw_summary = ""
         if request_body:
             try:
-                raw_summary = json.dumps(request_body)[:512]
+                raw_summary = json.dumps(request_body)
             except (TypeError, ValueError):
-                raw_summary = str(request_body)[:512]
+                raw_summary = str(request_body)
         elif kwargs.get("injected_content"):
-            raw_summary = str(kwargs["injected_content"])[:512]
+            raw_summary = str(kwargs["injected_content"])
         elif kwargs.get("original_args"):
-            raw_summary = str(kwargs["original_args"])[:512]
+            raw_summary = str(kwargs["original_args"])
 
-        request_summary = _sanitize(raw_summary) if raw_summary else ""
+        # KG-26: Sanitize the FULL text BEFORE truncating to 512 chars so PII or
+        # credentials straddling byte 512 cannot evade regex matching.
+        request_summary = _sanitize(raw_summary)[:512] if raw_summary else ""
 
         # Quota-specific fields
         block_reason = kwargs.get("block_reason", "")
@@ -419,24 +422,28 @@ class UCALogger:
         return f"UCA-{uuid.uuid4()}"
 
     def _get_worm_bucket(self) -> str:
-        """Return the region-gated WORM bucket name.
+        """Return the residency-validated WORM cold-store bucket name (KG-26)."""
+        from src.gateway.governance.env_posture import is_enforcing, resolve_posture
+        from src.gateway.governance.evidence.residency import (
+            MissingBucketConfigError,
+            resolve_cold_store_bucket,
+        )
 
-        Routing:
-            US_FED   → OSCAL_S3_BUCKET_US_FED   (us-central1)
-            EU_ECB   → OSCAL_S3_BUCKET_EU_ECB   (europe-west1)
-            APAC_MAS → OSCAL_S3_BUCKET_APAC_MAS (asia-southeast1)
-
-        Falls back to OSCAL_S3_BUCKET if the region-specific var is unset.
-        Satisfies .clinerules §12.2 (CAGE_DEPLOYMENT_REGION guard).
-        """
-        region = os.environ.get("CAGE_DEPLOYMENT_REGION", "US_FED")
-        fallback = os.environ.get("OSCAL_S3_BUCKET", "")
-        bucket_map = {
-            "US_FED": os.environ.get("OSCAL_S3_BUCKET_US_FED", fallback),
-            "EU_ECB": os.environ.get("OSCAL_S3_BUCKET_EU_ECB", fallback),
-            "APAC_MAS": os.environ.get("OSCAL_S3_BUCKET_APAC_MAS", fallback),
-        }
-        return bucket_map.get(region, fallback)
+        region = resolve_deployment_region()
+        try:
+            return resolve_cold_store_bucket(region=region)
+        except MissingBucketConfigError:
+            if is_enforcing(resolve_posture()):
+                raise
+            fallback = os.environ.get("OSCAL_S3_BUCKET", "").strip()
+            bucket_map = {
+                "US_FED": os.environ.get("OSCAL_S3_BUCKET_US_FED", fallback).strip(),
+                "EU_ECB": os.environ.get("OSCAL_S3_BUCKET_EU_ECB", fallback).strip(),
+                "APAC_MAS": os.environ.get(
+                    "OSCAL_S3_BUCKET_APAC_MAS", fallback
+                ).strip(),
+            }
+            return bucket_map.get(region, fallback)
 
     async def _sign_record(self, record: dict) -> None:
         """Sign ``record`` in-place, populating ``cryptographic_signature``
@@ -526,9 +533,16 @@ class UCALogger:
 # ---------------------------------------------------------------------------
 
 
+import threading
+
+_uca_logger_lock = threading.Lock()
+
+
 def _get_uca_logger() -> UCALogger:
-    """Return the module-level UCALogger singleton (lazy init)."""
+    """Return the module-level UCALogger singleton (thread-safe lazy init)."""
     global _uca_logger
     if _uca_logger is None:
-        _uca_logger = UCALogger.from_env()
+        with _uca_logger_lock:
+            if _uca_logger is None:
+                _uca_logger = UCALogger.from_env()
     return _uca_logger

@@ -38,10 +38,11 @@ import sys
 from collections.abc import Mapping
 from datetime import datetime, timezone
 from functools import lru_cache
-from typing import Any
+from typing import Any, cast
 
 from pydantic import BaseModel, Field, field_validator, model_validator
 
+from src.gateway.governance.env_posture import resolve_deployment_region
 from src.gateway.governance.schemas.regional_overlay import (
     RegionalOverlayError,
     load_regional_domains,
@@ -89,7 +90,7 @@ def _resolve_pii_retention() -> tuple[int, str]:
         PII_RETENTION_AUTHORITY_DEFAULT,
     )
 
-    region = os.environ.get("CAGE_DEPLOYMENT_REGION", "").strip().upper()
+    region = resolve_deployment_region()
     authority = PII_RETENTION_AUTHORITY.get(region, PII_RETENTION_AUTHORITY_DEFAULT)
     return _PII_RETENTION_DAYS_DEFAULT, authority
 
@@ -612,18 +613,22 @@ def _apply_env_overrides(raw: dict) -> dict:
 def _active_region() -> str:
     """The deployment region, from the same reader as every regional control.
 
-    ``ControlRegistry`` resolves ``CAGE_DEPLOYMENT_REGION`` (unknown values
-    fall back to ``US_FED``); governor assembly resolves the jurisdiction
-    contribution from the same source.
+    ``ControlRegistry`` loads the region ``resolve_deployment_region()``
+    returns, which refuses an unknown value rather than falling back; governor
+    assembly resolves the jurisdiction contribution from the same source.
     """
     from src.gateway.governance.constants import ControlRegistry
 
     return ControlRegistry().active_region
 
 
+class ThresholdsConfigurationError(RuntimeError):
+    """Raised when governance_thresholds.json or regional overlays fail validation."""
+
+
 @lru_cache(maxsize=8)
 def load_and_validate_thresholds(
-    path: str = _ENV_CONFIG_PATH, region: str | None = None
+    path: str | None = None, region: str | None = None
 ) -> GovernanceThresholds:
     """Load and validate governance_thresholds.json for a deployment region.
 
@@ -643,22 +648,26 @@ def load_and_validate_thresholds(
     Returns:
         A fully-validated ``GovernanceThresholds`` singleton.
     """
-    resolved = os.path.abspath(path)
+    effective_path = (
+        path
+        if path is not None
+        else os.environ.get("GOVERNANCE_THRESHOLDS_PATH", _DEFAULT_CONFIG_PATH)
+    )
+    resolved = os.path.abspath(effective_path)
     logger.info("Loading governance thresholds from %s", resolved)
 
     if not os.path.exists(resolved):
-        logger.critical(
-            "❌ governance_thresholds.json not found at %s — aborting startup.",
-            resolved,
-        )
-        sys.exit(1)
+        msg = f"governance_thresholds.json not found at {resolved}"
+        logger.critical("❌ %s — aborting startup.", msg)
+        raise ThresholdsConfigurationError(msg)
 
     try:
         with open(resolved) as fh:
             raw = json.load(fh)
     except json.JSONDecodeError as exc:
-        logger.critical("❌ governance_thresholds.json is not valid JSON: %s", exc)
-        sys.exit(1)
+        msg = f"governance_thresholds.json is not valid JSON: {exc}"
+        logger.critical("❌ %s", msg)
+        raise ThresholdsConfigurationError(msg) from exc
 
     resolved_region = (region if region is not None else _active_region()).upper()
     try:
@@ -666,12 +675,9 @@ def load_and_validate_thresholds(
             raw.get("domains", {}), load_regional_domains(resolved_region)
         )
     except RegionalOverlayError as exc:
-        logger.critical(
-            "❌ regional threshold overlay for %s failed: %s — aborting startup.",
-            resolved_region,
-            exc,
-        )
-        sys.exit(1)
+        msg = f"regional threshold overlay for {resolved_region} failed: {exc}"
+        logger.critical("❌ %s — aborting startup.", msg)
+        raise ThresholdsConfigurationError(msg) from exc
     raw["region"] = resolved_region
 
     # Apply environment variable overrides (EV-1 through EV-6)
@@ -680,11 +686,9 @@ def load_and_validate_thresholds(
     try:
         thresholds = GovernanceThresholds(**raw)
     except Exception as exc:  # pydantic.ValidationError
-        logger.critical(
-            "❌ governance_thresholds.json failed schema validation: %s — aborting startup.",
-            exc,
-        )
-        sys.exit(1)
+        msg = f"governance_thresholds.json failed schema validation: {exc}"
+        logger.critical("❌ %s — aborting startup.", msg)
+        raise ThresholdsConfigurationError(msg) from exc
 
     logger.info(
         "✅ Governance thresholds validated: region=%s, confidence=%.2f, "
@@ -839,10 +843,31 @@ def get_reconciliation_pending_debit_max_age_seconds() -> float:
 
 
 # ---------------------------------------------------------------------------
-# Module-level singleton — import this in governance modules.
+# Module-level lazy proxy — import this in governance modules without
+# performing disk I/O, region resolution, or sys.exit(1) at import time.
 # ---------------------------------------------------------------------------
 
-THRESHOLDS: GovernanceThresholds = load_and_validate_thresholds()
+
+class _LazyThresholdsProxy:
+    """Lazy proxy delegating attribute access to the effective GovernanceThresholds."""
+
+    def _resolve(self) -> GovernanceThresholds:
+        current = globals().get("THRESHOLDS")
+        if current is not None and current is not self:
+            return cast(GovernanceThresholds, current)
+        return load_and_validate_thresholds()
+
+    def __getattr__(self, name: str) -> Any:
+        return getattr(self._resolve(), name)
+
+    def __repr__(self) -> str:
+        return repr(self._resolve())
+
+    def __eq__(self, other: object) -> bool:
+        return bool(self._resolve() == other)
+
+
+THRESHOLDS: GovernanceThresholds = cast(GovernanceThresholds, _LazyThresholdsProxy())
 
 
 def thresholds_digest(thresholds: GovernanceThresholds | None = None) -> str:

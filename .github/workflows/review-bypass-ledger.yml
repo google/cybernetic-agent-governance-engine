@@ -1,0 +1,259 @@
+# Copyright 2026 Google LLC
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     https://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+# The ledger of merges into main without an approving review (POAM-2026-115).
+#
+# On each push to main this finds the pull request whose squash merge is the
+# pushed commit and decides, by the rule in scripts/review_bypass_attestation.py,
+# whether its final head was approved before the merge. If it was not, the job
+# verifies the signed record `Approved review or recorded bypass` made for that
+# head before the merge, then signs a ledger record (a Sigstore attestation) for
+# the merge commit, whose subject is the canonical JSON of the repository and
+# the merge SHA and whose predicate records the pull request, its head, author,
+# merger and merge time, and the pre-merge subject digest. It verifies that
+# record too.
+#
+# The ledger discloses unreviewed merges; it is not a review. Every ledger
+# record says `"reviewed": false` and makes no claim about the change, and no
+# claim that a change was reviewed may rest on it.
+#
+# The run fails, visibly on main, when the pushed commit is not the squash merge
+# of one pull request, or when an unreviewed merge has no verified pre-merge
+# record, as for a merge landed while ruleset 25966171 was disabled. No step
+# continues on error, and the last step passes only on an approval or on both
+# verified records. tests/test_review_bypass_attestation.py holds these
+# properties.
+#
+# There is no concurrency group, so a later merge never cancels the run that
+# records an earlier one. The job can mint a signing identity, so it runs no
+# third-party action.
+name: review-bypass-ledger
+
+on:
+  push:
+    branches:
+      - main
+
+# The one job declares exactly what it needs.
+permissions: {}
+
+jobs:
+  ledger:
+    name: Record an unreviewed merge
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read # check out the decision script
+      pull-requests: read # read the merged pull request and its reviews
+      id-token: write # mint the OIDC token the Sigstore certificate is issued for
+      attestations: write # store the ledger record, and read records back to verify them
+    steps:
+      - name: Check out the decision script
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Resolve the pull request merged as this commit
+        id: merge
+        env:
+          GH_TOKEN: ${{ github.token }}
+          BEFORE_SHA: ${{ github.event.before }}
+        run: |
+          set -euo pipefail
+          work="${RUNNER_TEMP}/review-bypass"
+          mkdir -p "${work}"
+          gh api "repos/${GITHUB_REPOSITORY}/commits/${GITHUB_SHA}" > "${work}/commit.json"
+          # The commit's association with its pull request can trail the push.
+          pr=""
+          for attempt in 1 2 3 4 5; do
+            gh api "repos/${GITHUB_REPOSITORY}/commits/${GITHUB_SHA}/pulls" > "${work}/pulls.json"
+            if pr="$(python3 scripts/review_bypass_attestation.py merged-pr \
+                --repo "${GITHUB_REPOSITORY}" --merge-sha "${GITHUB_SHA}" \
+                --pulls "${work}/pulls.json")"; then
+              break
+            fi
+            pr=""
+            sleep "$((attempt * 5))"
+          done
+          if [ -z "${pr}" ]; then
+            echo "::error title=No merged pull request::${GITHUB_SHA} reached main without being the squash merge of one pull request, so neither a review nor a record covers it."
+            exit 1
+          fi
+          gh api "repos/${GITHUB_REPOSITORY}/pulls/${pr}" > "${work}/pull.json"
+          python3 scripts/review_bypass_attestation.py merge-facts \
+            --repo "${GITHUB_REPOSITORY}" --merge-sha "${GITHUB_SHA}" --before-sha "${BEFORE_SHA}" \
+            --pull "${work}/pull.json" --commit "${work}/commit.json" \
+            >> "${GITHUB_OUTPUT}"
+
+      - name: Decide whether the merged head was approved before the merge
+        id: decide
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR: ${{ steps.merge.outputs.pr }}
+          HEAD_SHA: ${{ steps.merge.outputs.head_sha }}
+          AUTHOR: ${{ steps.merge.outputs.author }}
+          MERGED_AT: ${{ steps.merge.outputs.merged_at }}
+        run: |
+          set -euo pipefail
+          work="${RUNNER_TEMP}/review-bypass"
+          gh api --paginate "repos/${GITHUB_REPOSITORY}/pulls/${PR}/reviews?per_page=100" \
+            > "${work}/reviews.json"
+          python3 scripts/review_bypass_attestation.py candidates \
+            --reviews "${work}/reviews.json" --author "${AUTHOR}" --head-sha "${HEAD_SHA}" \
+            --before "${MERGED_AT}" > "${work}/candidates.txt"
+          : > "${work}/permissions.tsv"
+          while IFS= read -r login; do
+            permission="$(gh api "repos/${GITHUB_REPOSITORY}/collaborators/${login}/permission" --jq '.permission')"
+            printf '%s\t%s\n' "${login}" "${permission}" >> "${work}/permissions.tsv"
+          done < "${work}/candidates.txt"
+          decision="$(python3 scripts/review_bypass_attestation.py decide \
+            --reviews "${work}/reviews.json" --permissions "${work}/permissions.tsv" \
+            --author "${AUTHOR}" --head-sha "${HEAD_SHA}" --before "${MERGED_AT}")"
+          echo "decision=${decision}" >> "${GITHUB_OUTPUT}"
+
+      - name: Verify the pre-merge record for the merged head
+        id: premerge
+        if: steps.decide.outputs.decision == 'UNREVIEWED'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR: ${{ steps.merge.outputs.pr }}
+          HEAD_SHA: ${{ steps.merge.outputs.head_sha }}
+          PREDICATE_TYPE: https://github.com/google/cybernetic-agent-governance-engine/attestations/review-bypass/v1
+        run: |
+          set -euo pipefail
+          work="${RUNNER_TEMP}/review-bypass"
+          digest="$(python3 scripts/review_bypass_attestation.py subject \
+            --repo "${GITHUB_REPOSITORY}" --pr "${PR}" --head-sha "${HEAD_SHA}" \
+            --output "${work}/premerge-subject.json")"
+          verified=false
+          for attempt in 1 2 3; do
+            if gh attestation verify "${work}/premerge-subject.json" \
+                --repo "${GITHUB_REPOSITORY}" \
+                --predicate-type "${PREDICATE_TYPE}" \
+                --signer-workflow "${GITHUB_REPOSITORY}/.github/workflows/review-bypass-attestation.yml" \
+                --source-ref "refs/pull/${PR}/merge" \
+                --deny-self-hosted-runners; then
+              verified=true
+              break
+            fi
+            sleep "$((attempt * 5))"
+          done
+          if [ "${verified}" != "true" ]; then
+            echo "::error title=Unrecorded unreviewed merge::#${PR} merged as ${GITHUB_SHA} without an approving review, and no verified pre-merge record covers its head ${HEAD_SHA}."
+            exit 1
+          fi
+          echo "digest=${digest}" >> "${GITHUB_OUTPUT}"
+          echo "verified=true" >> "${GITHUB_OUTPUT}"
+
+      - name: Write the ledger record's subject and predicate
+        id: subject
+        if: steps.decide.outputs.decision == 'UNREVIEWED'
+        env:
+          BEFORE_SHA: ${{ github.event.before }}
+        run: |
+          set -euo pipefail
+          work="${RUNNER_TEMP}/review-bypass"
+          digest="$(python3 scripts/review_bypass_attestation.py ledger-subject \
+            --repo "${GITHUB_REPOSITORY}" --merge-sha "${GITHUB_SHA}" \
+            --output "${work}/ledger-subject.json")"
+          python3 scripts/review_bypass_attestation.py ledger-predicate \
+            --repo "${GITHUB_REPOSITORY}" --merge-sha "${GITHUB_SHA}" --before-sha "${BEFORE_SHA}" \
+            --pull "${work}/pull.json" --commit "${work}/commit.json" \
+            --reviews "${work}/reviews.json" --permissions "${work}/permissions.tsv" \
+            --event "${GITHUB_EVENT_NAME}" --run-id "${GITHUB_RUN_ID}" \
+            --run-attempt "${GITHUB_RUN_ATTEMPT}" --workflow-ref "${GITHUB_WORKFLOW_REF}" \
+            --output "${work}/ledger-predicate.json"
+          echo "digest=${digest}" >> "${GITHUB_OUTPUT}"
+
+      - name: Sign a ledger record of the unreviewed merge
+        id: attest
+        if: steps.decide.outputs.decision == 'UNREVIEWED'
+        uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6 # v4.2.2
+        with:
+          subject-name: review-bypass-ledger/merge-${{ github.sha }}
+          subject-digest: sha256:${{ steps.subject.outputs.digest }}
+          predicate-type: https://github.com/google/cybernetic-agent-governance-engine/attestations/review-bypass-ledger/v1
+          predicate-path: ${{ runner.temp }}/review-bypass/ledger-predicate.json
+
+      - name: Verify the ledger record from the attestations API
+        id: verify
+        if: steps.decide.outputs.decision == 'UNREVIEWED'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PREDICATE_TYPE: https://github.com/google/cybernetic-agent-governance-engine/attestations/review-bypass-ledger/v1
+        run: |
+          set -euo pipefail
+          work="${RUNNER_TEMP}/review-bypass"
+          verified=false
+          for attempt in 1 2 3 4 5; do
+            if gh attestation verify "${work}/ledger-subject.json" \
+                --repo "${GITHUB_REPOSITORY}" \
+                --predicate-type "${PREDICATE_TYPE}" \
+                --signer-workflow "${GITHUB_REPOSITORY}/.github/workflows/review-bypass-ledger.yml" \
+                --source-ref "refs/heads/main" \
+                --deny-self-hosted-runners; then
+              verified=true
+              break
+            fi
+            sleep "$((attempt * 5))"
+          done
+          if [ "${verified}" != "true" ]; then
+            echo "::error title=Ledger record not verified::The ledger record for ${GITHUB_SHA} did not verify."
+            exit 1
+          fi
+          echo "verified=true" >> "${GITHUB_OUTPUT}"
+
+      - name: Pass only on an approval or both verified records
+        env:
+          DECISION: ${{ steps.decide.outputs.decision }}
+          PREMERGE_VERIFIED: ${{ steps.premerge.outputs.verified }}
+          PREMERGE_DIGEST: ${{ steps.premerge.outputs.digest }}
+          VERIFIED: ${{ steps.verify.outputs.verified }}
+          DIGEST: ${{ steps.subject.outputs.digest }}
+          ATTESTATION_URL: ${{ steps.attest.outputs.attestation-url }}
+          PR: ${{ steps.merge.outputs.pr }}
+          HEAD_SHA: ${{ steps.merge.outputs.head_sha }}
+        run: |
+          set -euo pipefail
+          case "${DECISION}" in
+            APPROVED)
+              {
+                echo "### Review-bypass ledger: approved"
+                echo
+                echo "#${PR} (head \`${HEAD_SHA}\`) had an approving review from a reviewer other than the author, with write access, before it merged as \`${GITHUB_SHA}\`. Nothing to record."
+              } >> "${GITHUB_STEP_SUMMARY}"
+              ;;
+            UNREVIEWED)
+              if [ "${PREMERGE_VERIFIED}" != "true" ] || [ "${VERIFIED}" != "true" ] \
+                || [ -z "${PREMERGE_DIGEST}" ] || [ -z "${DIGEST}" ] || [ -z "${ATTESTATION_URL}" ]; then
+                echo "::error title=Unrecorded::#${PR} merged as ${GITHUB_SHA} without an approving review, and the ledger did not record it."
+                exit 1
+              fi
+              echo "::notice title=UNREVIEWED::Merged without an approving review. This ledger records the bypass; it does not review the change."
+              {
+                echo "### UNREVIEWED: merged without an approving review. This ledger records the bypass; it does not review the change."
+                echo
+                echo "#${PR} (head \`${HEAD_SHA}\`) merged as \`${GITHUB_SHA}\` with no approving review. The ledger record below discloses that; it says \`\"reviewed\": false\` and is not a review or an approval."
+                echo
+                echo "- Pre-merge record subject digest (verified): \`sha256:${PREMERGE_DIGEST}\`"
+                echo "- Ledger subject: \`{\"merge_sha\":\"${GITHUB_SHA}\",\"repo\":\"${GITHUB_REPOSITORY}\"}\`"
+                echo "- Ledger subject digest: \`sha256:${DIGEST}\`"
+                echo "- Ledger record: ${ATTESTATION_URL}"
+              } >> "${GITHUB_STEP_SUMMARY}"
+              ;;
+            *)
+              echo "::error title=No decision::The decision step recorded no decision."
+              exit 1
+              ;;
+          esac

@@ -379,6 +379,9 @@ class TestApplyRefinementProposalFlow:
         monkeypatch.setenv(
             "CAGE_TRUSTED_CLIENT_IDENTITIES", f"{self._TRUSTED_ID},{approver_id}"
         )
+        monkeypatch.setenv(
+            "CAGE_NEMO_APPROVER_IDENTITIES", f"{self._TRUSTED_ID},{approver_id}"
+        )
         # The approval that succeeds rebuilds the rails: switch them on.
         monkeypatch.setenv("CAGE_NEMO_ENABLED", "true")
         monkeypatch.delenv("CAGE_INFERENCE_BACKEND", raising=False)
@@ -455,6 +458,61 @@ class TestApplyRefinementProposalFlow:
         assert ok.status_code == 200
         assert ok.json()["status"] == "applied"
         assert ok.json()["approver_identity"] == approver_id
+
+    def test_approve_refinement_fails_closed_403_when_approver_identities_unset(
+        self, monkeypatch
+    ):
+        """[KC-04]: Unset CAGE_NEMO_APPROVER_IDENTITIES must fail closed (HTTP 403)."""
+        import fakeredis.aioredis
+
+        from src.gateway.server.workload_identity import (
+            WorkloadIdentityMiddleware,
+            load_identity_policy,
+        )
+
+        approver_id = "compliance-bridge.governance-stack.serviceaccount.identity.linkerd.cluster.local"
+        monkeypatch.setenv(
+            "CAGE_TRUSTED_CLIENT_IDENTITIES", f"{self._TRUSTED_ID},{approver_id}"
+        )
+        monkeypatch.delenv("CAGE_NEMO_APPROVER_IDENTITIES", raising=False)
+        import src.gateway.server.hybrid_server as gw_srv
+
+        for mw in gw_srv.root_app.user_middleware:
+            if mw.cls is WorkloadIdentityMiddleware:
+                mw.kwargs["policy"] = load_identity_policy()
+        gw_srv.root_app.middleware_stack = gw_srv.root_app.build_middleware_stack()
+
+        monkeypatch.setattr(
+            gw_srv.root_app.state,
+            "redis",
+            fakeredis.aioredis.FakeRedis(decode_responses=True),
+            raising=False,
+        )
+        tc = TestClient(
+            gw_srv.root_app,
+            raise_server_exceptions=False,
+            client=("10.112.0.43", 50000),
+            base_url="http://10.112.0.43:8080",
+        )
+        prop = tc.post(
+            "/v1/nemo/apply-refinement",
+            json={"control_id": "A.5.2", "verdict": "FAIL"},
+            headers={"l5d-client-id": self._TRUSTED_ID},
+        )
+        assert prop.status_code == 200
+        proposal_id = prop.json()["proposal_id"]
+
+        denied = tc.post(
+            f"/v1/nemo/approve-refinement/{proposal_id}",
+            json={
+                "approved": True,
+                "reviewer": "sec-lead@example.com",
+                "rationale": "valid rationale",
+            },
+            headers={"l5d-client-id": approver_id},
+        )
+        assert denied.status_code == 403
+        assert "CAGE_NEMO_APPROVER_IDENTITIES" in denied.json()["detail"]
 
 
 # ---------------------------------------------------------------------------

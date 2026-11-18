@@ -200,7 +200,6 @@ run "governed_advisor_module_refuses_e2e_mode_in_prod" {
     image                      = "registry.invalid/cage-test/governed-financial-advisor@sha256:deadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeef"
     project_id                 = "w6-test-project"
     region                     = "us-central1"
-    redis_host                 = "10.10.0.6"
     model_fast                 = "Qwen/Qwen2.5-1.5B-Instruct"
     model_reasoning            = "deepseek-ai/DeepSeek-R1-Distill-Llama-8B"
     model_consensus            = "deepseek-ai/DeepSeek-R1-Distill-Llama-8B"
@@ -295,36 +294,41 @@ run "kms_module_respects_grant_service_agents_false" {
   }
 }
 
-run "compliance_bridge_artifactregistry_writer_uses_service_account_resource" {
+run "cloudbuild_is_sole_ar_writer_and_wif_never_impersonates_gateway" {
   command = plan
-
-  override_resource {
-    target          = google_service_account.compliance_bridge
-    override_during = plan
-    values = {
-      email = "cage-compliance-bridge@cage-test-project.iam.gserviceaccount.com"
-      name  = "projects/cage-test-project/serviceAccounts/cage-compliance-bridge@cage-test-project.iam.gserviceaccount.com"
-    }
-  }
-
-  override_data {
-    target          = data.google_iam_policy.signing_key["compliance_evidence"]
-    override_during = plan
-    values = {
-      policy_data = "{}"
-    }
-  }
 
   assert {
     condition     = google_service_account.compliance_bridge.account_id == "cage-compliance-bridge"
     error_message = "google_service_account.compliance_bridge account_id must be cage-compliance-bridge"
   }
   assert {
+    condition     = google_project_iam_member.cloudbuild_artifactregistry_writer.role == "roles/artifactregistry.writer"
+    error_message = "only Cloud Build may hold roles/artifactregistry.writer (IC-08)"
+  }
+  assert {
     condition = (
-      google_project_iam_member.compliance_bridge_sa_artifactregistry_writer.role == "roles/artifactregistry.writer" &&
-      google_project_iam_member.compliance_bridge_sa_artifactregistry_writer.member == "serviceAccount:cage-compliance-bridge@cage-test-project.iam.gserviceaccount.com"
+      google_service_account.partner_harness.account_id == "cage-partner-harness" &&
+      length(google_cloud_run_v2_service_iam_member.partner_harness_invoker) == 0 &&
+      google_service_account_iam_binding.gateway_workload_identity.members == toset([
+        "serviceAccount:w6-test-project.svc.id.goog[governance-stack/cage-gateway-sa]",
+      ])
     )
-    error_message = "compliance_bridge_sa_artifactregistry_writer must reference google_service_account.compliance_bridge.email"
+    error_message = "cage-partner-harness must hold zero impersonation bindings on cage-gateway (IC-01)"
+  }
+  assert {
+    condition = (
+      google_storage_bucket.langfuse_event_upload.uniform_bucket_level_access == true &&
+      google_storage_bucket.langfuse_event_upload.public_access_prevention == "enforced" &&
+      length(google_storage_bucket.langfuse_event_upload.encryption) == 1
+    )
+    error_message = "langfuse_event_upload bucket must enforce uniform_bucket_level_access, public_access_prevention = enforced, and CMEK encryption (IC-08)"
+  }
+  assert {
+    condition = alltrue([
+      for r in kubernetes_network_policy_v1.gateway_egress_l3_l4.spec[0].egress :
+      length(r.to) > 0
+    ])
+    error_message = "every egress rule in gateway_egress_l3_l4 must restrict peers via a non-empty to block (IC-03)"
   }
 }
 

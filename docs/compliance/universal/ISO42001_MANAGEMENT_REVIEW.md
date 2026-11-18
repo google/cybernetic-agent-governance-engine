@@ -34,6 +34,8 @@ Per ISO 42001 §9.3.2, the following inputs were reviewed:
 - POAM-020 (CM-3): Technical report README version mismatch corrected
 - POAM-021 (SI-4): AgentSight remote exporter confirmed already configured
 
+> **Note (2026-11-15):** On the `2026-06-23` review date (inside the `1902c92c` `2026-06-01` .. `9b2b745d` `2026-11-15` window, `POAM-2026-221` in [`docs/POAM.md`](../../POAM.md)), the Python CycloneDX + Grype leg of `.github/workflows/security-scan.yml` (`sbom-generation`) ran `pip install cyclonedx-bom` without `uv sync`, inventorying and Grype-scanning zero CAGE Python dependencies. Python CVE coverage during Q2 2026 rested on `python-dependency-audit` (`uv sync --frozen --all-groups --all-extras` + `pip-audit`) and Trivy/Syft filesystem scanning rather than the Python Grype leg, which was restored in `#768` (`b92a1719`, `2026-11-15`) with `expected_uv_lock_component_floor()`; periodic in-cluster scanning remains open under `POAM-2026-010`.
+
 ### 2.2 Lula Audit Results (Q2 2026)
 
 | Manifest | Result | Evidence |
@@ -43,6 +45,8 @@ Per ISO 42001 §9.3.2, the following inputs were reviewed:
 | `lula-validation-a94.yaml` | PASS | Langfuse compliance project live (Phase 4, 2026-06-05) |
 | `lula-validation-sc8.yaml` | PASS | Linkerd mTLS enforced |
 | AI 600-1 Lula stubs | IN PROGRESS | Phase 2 graduation in progress (this session) |
+
+> **Note (2026-11-14):** `lula-validation-sc8.yaml` has never checked Linkerd mTLS. In Q2 2026 it checked Service ports, a default-deny NetworkPolicy, Ingress TLS and read-only root filesystems; `#341` added the Memorystore CA pin, and since `#664` (`372daad2`) the CA pin is all it checks (POAM-2026-219). The Evidence entry above overstated it.
 
 ### 2.3 Langfuse Safety Rate Trends (Q2 2026)
 

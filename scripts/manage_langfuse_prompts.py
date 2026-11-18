@@ -21,36 +21,17 @@ if os.environ.get("AGENT_RUNTIME") == "1":
         "Set AGENT_RUNTIME=1 is reserved for the financial advisor service."
     )
 
-from dotenv import load_dotenv
 
-# Add project root to path
-sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-load_dotenv(".env")
-
-from langfuse import Langfuse
-
-client = Langfuse()
-
-
-def list_and_clean_prompts():
-    # Unfortunately Langfuse Python SDK doesn't have a direct `list_prompts` method easily exposed in the standard client.
-    # We will use the REST API directly or the Fern client.
-    from langfuse.api.client import FernLangfuse
-
-    FernLangfuse(
-        username=os.environ["LANGFUSE_PUBLIC_KEY"],
-        password=os.environ["LANGFUSE_SECRET_KEY"],
-        base_url=os.environ.get("LANGFUSE_HOST", "http://localhost:3000"),
-    )
-
-    # Wait, the Fern client doesn't have a `prompt` resource directly, we may need to use HTTP requests.
+def list_and_clean_prompts() -> None:
     import requests
+    from dotenv import load_dotenv
 
+    load_dotenv(".env")
     auth = (os.environ["LANGFUSE_PUBLIC_KEY"], os.environ["LANGFUSE_SECRET_KEY"])
     host = os.environ.get("LANGFUSE_HOST", "http://localhost:3000")
 
     url = f"{host}/api/public/prompts"
-    resp = requests.get(url, auth=auth)
+    resp = requests.get(url, auth=auth, timeout=10)
     if resp.status_code == 200:
         prompts = resp.json().get("data", [])
         print(f"Found {len(prompts)} prompts in Langfuse.")
@@ -60,4 +41,5 @@ def list_and_clean_prompts():
         print(f"Failed to list prompts: {resp.text}")
 
 
-list_and_clean_prompts()
+if __name__ == "__main__":
+    list_and_clean_prompts()

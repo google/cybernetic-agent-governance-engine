@@ -15,4 +15,4 @@ apiVersion: v2
 name: cage-gateway-mesh-policy
 description: Deny-by-default Linkerd authorization for the CAGE gateway HTTP port (POAM-2026-080).
 type: application
-version: 0.1.0
+version: 0.2.0

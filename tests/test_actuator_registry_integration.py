@@ -155,7 +155,14 @@ async def test_broker_actuator_requires_the_routing_seal():
 @pytest.mark.asyncio
 async def test_broker_actuator_success_path(monkeypatch):
     """BrokerActuator executes trade and returns success receipt."""
+    import src.gateway.governance.jwks as jwks_mod
+    import src.gateway.governance.kms_signer as ks
+    from src.gateway.governance.routing_seal import generate_seal, seal_digest
+
     monkeypatch.setenv("USE_MOCK_BROKER", "true")
+    provider = ks.SoftwareEd25519Provider(key_id="actuator-reg-test-k1")
+    monkeypatch.setattr(ks, "_signer", ks.KMSGovernanceSigner(provider=provider))
+    monkeypatch.setattr(jwks_mod, "_global_jwks", None)
 
     actuator = BrokerActuator()
 
@@ -169,6 +176,9 @@ async def test_broker_actuator_success_path(monkeypatch):
         "trader_role": "junior",
         "side": "buy",  # Required by TradeOrder validation
     }
+    minted_seal = await generate_seal(
+        "execute_trade", trade_params, record_hash="e" * 64
+    )
 
     clearance = ExecutionClearance(
         thread_id=trade_params["transaction_id"],
@@ -181,7 +191,7 @@ async def test_broker_actuator_success_path(monkeypatch):
         issued_at_provenance="CONSTRUCTION_TIME",
         correlation_id=trade_params["transaction_id"],
         correlation_id_source="THREAD_DERIVED",
-        governance_decision_digest=hashlib.sha256(b"test_seal").hexdigest(),
+        governance_decision_digest=seal_digest(minted_seal),
         opa_input_digest=hashlib.sha256(
             json.dumps(trade_params, sort_keys=True).encode()
         ).hexdigest(),
@@ -189,7 +199,7 @@ async def test_broker_actuator_success_path(monkeypatch):
         params=trade_params,
         required_quorum=0,
         executor_id="cage_finance_broker",
-        routing_seal="test_seal",
+        routing_seal=minted_seal,
     )
 
     with patch(
@@ -201,7 +211,7 @@ async def test_broker_actuator_success_path(monkeypatch):
 
     assert receipt.accepted is True
     # The broker re-checks the seal itself, never its digest (POAM-2026-149).
-    assert execute_trade.await_args.kwargs["routing_seal"] == "test_seal"
+    assert execute_trade.await_args.kwargs["routing_seal"] == minted_seal
     assert (
         receipt.raw_receipt["governance_digest"] == clearance.governance_decision_digest
     )
@@ -323,7 +333,14 @@ class TestBrokerActuatorV3SecurityGates:
     @pytest.mark.asyncio
     async def test_broker_actuator_accepts_local_default_route(self, monkeypatch):
         """BrokerActuator accepts clearance with 'local://default' route."""
+        import src.gateway.governance.jwks as jwks_mod
+        import src.gateway.governance.kms_signer as ks
+        from src.gateway.governance.routing_seal import generate_seal, seal_digest
+
         monkeypatch.setenv("USE_MOCK_BROKER", "true")
+        provider = ks.SoftwareEd25519Provider(key_id="actuator-route-k1")
+        monkeypatch.setattr(ks, "_signer", ks.KMSGovernanceSigner(provider=provider))
+        monkeypatch.setattr(jwks_mod, "_global_jwks", None)
         actuator = BrokerActuator()
 
         trade_params = {
@@ -336,6 +353,9 @@ class TestBrokerActuatorV3SecurityGates:
             "trader_role": "junior",
             "side": "buy",
         }
+        minted_seal = await generate_seal(
+            "execute_trade", trade_params, record_hash="e" * 64
+        )
 
         clearance = ExecutionClearance(
             thread_id=trade_params["transaction_id"],
@@ -348,7 +368,7 @@ class TestBrokerActuatorV3SecurityGates:
             issued_at_provenance="CONSTRUCTION_TIME",
             correlation_id=trade_params["transaction_id"],
             correlation_id_source="THREAD_DERIVED",
-            governance_decision_digest=hashlib.sha256(b"test_seal").hexdigest(),
+            governance_decision_digest=seal_digest(minted_seal),
             opa_input_digest=hashlib.sha256(
                 json.dumps(trade_params, sort_keys=True).encode()
             ).hexdigest(),
@@ -357,7 +377,7 @@ class TestBrokerActuatorV3SecurityGates:
             executor_id="cage_finance_broker",
             target_route="local://default",  # Valid local route
             required_quorum=0,
-            routing_seal="test_seal",
+            routing_seal=minted_seal,
         )
 
         with patch(
@@ -372,7 +392,14 @@ class TestBrokerActuatorV3SecurityGates:
     @pytest.mark.asyncio
     async def test_broker_actuator_accepts_wildcard_route(self, monkeypatch):
         """BrokerActuator accepts clearance with wildcard '*' route."""
+        import src.gateway.governance.jwks as jwks_mod
+        import src.gateway.governance.kms_signer as ks
+        from src.gateway.governance.routing_seal import generate_seal, seal_digest
+
         monkeypatch.setenv("USE_MOCK_BROKER", "true")
+        provider = ks.SoftwareEd25519Provider(key_id="actuator-wildcard-k1")
+        monkeypatch.setattr(ks, "_signer", ks.KMSGovernanceSigner(provider=provider))
+        monkeypatch.setattr(jwks_mod, "_global_jwks", None)
         actuator = BrokerActuator()
 
         trade_params = {
@@ -385,6 +412,9 @@ class TestBrokerActuatorV3SecurityGates:
             "trader_role": "junior",
             "side": "buy",
         }
+        minted_seal = await generate_seal(
+            "execute_trade", trade_params, record_hash="e" * 64
+        )
 
         clearance = ExecutionClearance(
             thread_id=trade_params["transaction_id"],
@@ -397,7 +427,7 @@ class TestBrokerActuatorV3SecurityGates:
             issued_at_provenance="CONSTRUCTION_TIME",
             correlation_id=trade_params["transaction_id"],
             correlation_id_source="THREAD_DERIVED",
-            governance_decision_digest=hashlib.sha256(b"test_seal").hexdigest(),
+            governance_decision_digest=seal_digest(minted_seal),
             opa_input_digest=hashlib.sha256(
                 json.dumps(trade_params, sort_keys=True).encode()
             ).hexdigest(),
@@ -406,7 +436,7 @@ class TestBrokerActuatorV3SecurityGates:
             executor_id="cage_finance_broker",
             target_route="*",  # Wildcard route
             required_quorum=0,
-            routing_seal="test_seal",
+            routing_seal=minted_seal,
         )
 
         with patch(

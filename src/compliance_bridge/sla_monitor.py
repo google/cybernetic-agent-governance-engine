@@ -54,6 +54,8 @@ import os
 from datetime import datetime, timezone
 from typing import Any
 
+from src.gateway.governance.env_posture import resolve_deployment_region
+
 from .metrics import get_compliance_metrics, get_last_passing_lula_audit_age_seconds
 from .notifier import create_notifier
 from .types import OscalFinding, get_sla_seconds
@@ -123,8 +125,7 @@ def _active_sla_seconds() -> dict[str, int]:
     jurisdictional SLA targets (SC-7/SC-8 for US_FED, Article 12 for EU_ECB,
     MAS-FEAT-1 for APAC_MAS) in every region.
     """
-    region = os.environ.get("CAGE_DEPLOYMENT_REGION", "").strip().upper()
-    return get_sla_seconds(region)
+    return get_sla_seconds(resolve_deployment_region())
 
 
 async def _check_lula_audit_deadman(
@@ -317,11 +318,11 @@ async def run_sla_monitor() -> None:
         return
 
     poll_interval = _poll_interval()
-    active_region = os.environ.get("CAGE_DEPLOYMENT_REGION", "").strip().upper()
+    active_region = resolve_deployment_region()
     logger.info(
         "[sla_monitor] Starting evidence SLA monitor. Poll interval: %ds. Region: %s. Controls: %s",
         poll_interval,
-        active_region or "(unset — universal ISO 42001 only)",
+        active_region,
         ", ".join(_active_sla_seconds().keys()),
     )
 

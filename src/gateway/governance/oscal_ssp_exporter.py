@@ -89,6 +89,10 @@ from typing import Any
 
 import yaml
 
+from src.gateway.governance.env_posture import (
+    DeploymentRegionError,
+    resolve_deployment_region,
+)
 from src.gateway.governance.stpa_compiler import (
     ControlStructureModel,
     UCAModel,
@@ -118,12 +122,13 @@ _DEFAULT_PATCH_OUT = (
 
 # Volatile generation timestamps masked when comparing OSCAL / STPA outputs
 # across runs (`--check` and `scripts/check_stpa_freshness.py`, POAM-2026-176).
+# They sit in document metadata and component props only: none may sit in an
+# implemented-requirement, whose text the evidence-claim census hashes.
 _VOLATILE_STAMP_RE = re.compile(
     r"(Generated:\s*"
     r'|"(?:generated_at|issued_at|expires_at)":\s*"'
     r"|(?:last-modified|generated):\s*\'?"
-    r"|- name: last-compiled\n\s+value:\s*\'?"
-    r"|Last(?:\\\n\s*\\)?\s+compiled:(?:\\\n\s*\\)?\s*)"
+    r"|- name: last-compiled\n\s+value:\s*\'?)"
     r"\d{4}-\d{2}-\d{2}T[^\s\"\'\\]*"
 )
 
@@ -492,28 +497,27 @@ def get_regional_profile(region: str | None = None) -> dict:
 
     Args:
         region: Explicit region string (``"US_FED"``, ``"EU_ECB"``, or
-            ``"APAC_MAS"``).  If *None*, the value is read from the
-            ``CAGE_DEPLOYMENT_REGION`` environment variable.  Defaults to
-            ``"US_FED"`` if the variable is unset or the value is unrecognised
-            (backward-compatible with pre-multi-jurisdiction deployments).
+            ``"APAC_MAS"``).  If *None*, the region comes from
+            ``resolve_deployment_region()``.
 
     Returns:
         A dict from :data:`REGIONAL_PROFILES` with keys ``profile_path``,
         ``framework``, ``framework_id``, and ``coverage_metric``.
+
+    Raises:
+        DeploymentRegionError: If the region has no profile. Exporting another
+            region's profile in its place would misstate the SSP's framework.
     """
     if region is None:
-        region = os.environ.get("CAGE_DEPLOYMENT_REGION", "US_FED").strip().upper()
+        region = resolve_deployment_region()
     else:
         region = region.strip().upper()
 
     if region not in REGIONAL_PROFILES:
-        logger.warning(
-            "get_regional_profile: unknown region '%s' — falling back to US_FED. "
-            "Set CAGE_DEPLOYMENT_REGION to one of: %s",
-            region,
-            sorted(REGIONAL_PROFILES.keys()),
+        raise DeploymentRegionError(
+            f"get_regional_profile: {region!r} has no OSCAL profile; expected one "
+            f"of {sorted(REGIONAL_PROFILES)}"
         )
-        region = "US_FED"
 
     profile = REGIONAL_PROFILES[region]
     logger.info(
@@ -965,7 +969,6 @@ def generate_ssp_patch(
     cs: ControlStructureModel,
     target_framework: str = "NIST",
     *,
-    now: str | None = None,
     live_server_inputs: Mapping[str, frozenset[str]] | None = None,
 ) -> dict[str, Any]:
     """
@@ -981,10 +984,11 @@ def generate_ssp_patch(
             Framework routing tables live in config/oscal/framework_mappings/.
 
     Returns a dict ready to be appended to
-    ``system-security-plan.implemented-requirements``.
+    ``system-security-plan.implemented-requirements``. The block carries no
+    timestamp: ``scripts/check_oscal_claim_census.py`` hashes its description
+    and props, so a statement that has not changed must render identically on
+    every export.
     """
-    now = now or _now_iso()
-
     resolved_inputs = (
         _live_registered_server_inputs()
         if live_server_inputs is None
@@ -1098,7 +1102,6 @@ def generate_ssp_patch(
             UCAs encoded: {len(cs.unsafe_control_actions)} ({len(enforcing_ucas)} enforcing server-bound, {len(advisory_ucas)} advisory)
             Hazards modelled: {len(cs.hazards)}
             Safety constraints: {len(cs.safety_constraints)}
-            Last compiled: {now}
 
             UCA-to-Control mapping ({framework_label}):
             {uca_prose}
@@ -1110,7 +1113,6 @@ def generate_ssp_patch(
             {"name": "enforcing-uca-count", "value": str(len(enforcing_ucas))},
             {"name": "advisory-uca-count", "value": str(len(advisory_ucas))},
             {"name": "hazard-count", "value": str(len(cs.hazards))},
-            {"name": "last-compiled", "value": now},
             {"name": "target-framework", "value": framework_label},
             *nemo_artifact_props,
             {
@@ -1822,7 +1824,7 @@ def _render_targets_in_memory(
         logger.error("Narrative source rejected: %s", exc)
         return False, {}
     stpa_patch_block = generate_ssp_patch(
-        cs, target_framework=framework_key, now=now, live_server_inputs=live_inputs
+        cs, target_framework=framework_key, live_server_inputs=live_inputs
     )
     component_entry = generate_component_entry(
         cs, now=now, live_server_inputs=live_inputs
@@ -1892,8 +1894,13 @@ def render_default_oscal_artifacts(
     ssp_path: Path = _DEFAULT_SSP,
     comp_def_path: Path = _DEFAULT_COMP_DEF,
     patch_out_path: Path = _DEFAULT_PATCH_OUT,
+    raise_on_error: bool = True,
 ) -> dict[Path, str | None]:
-    """Render the three default US_FED OSCAL artifacts in memory for freshness checking."""
+    """Render the three default US_FED OSCAL artifacts in memory for freshness checking.
+
+    Defaults to ``raise_on_error=True`` (POAM-2026-221) so missing dependencies
+    or render failures fail closed instead of silently skipping content checks.
+    """
     unavailable: dict[Path, str | None] = {
         ssp_path: None,
         comp_def_path: None,
@@ -1915,9 +1922,16 @@ def render_default_oscal_artifacts(
             platform="gcp-gke",
         )
         if not ok:
-            return unavailable
-        return {k: rendered.get(k) for k in unavailable}
+            raise RuntimeError("OSCAL in-memory render returned ok=False")
+        missing = [str(k) for k in unavailable if not rendered.get(k)]
+        if missing:
+            raise RuntimeError(
+                f"OSCAL in-memory render produced empty output for: {missing}"
+            )
+        return {k: rendered[k] for k in unavailable}
     except Exception:  # noqa: BLE001
+        if raise_on_error:
+            raise
         return unavailable
 
 
@@ -2034,25 +2048,31 @@ def _build_parser() -> argparse.ArgumentParser:
 def cmd_export(args: argparse.Namespace) -> int:
     # ---------------------------------------------------------------------------
     # Multi-jurisdiction SSP router — resolve region and target SSP path.
-    # When --ssp is omitted, CAGE_DEPLOYMENT_REGION selects both the regional
-    # profile and its canonical ssp_path (preventing an EU_ECB/APAC_MAS run from
-    # overwriting the US_FED system-security-plan.yaml, POAM-2026-177).
+    # When --ssp is omitted, resolve_deployment_region() selects both the
+    # regional profile and its canonical ssp_path (preventing an EU_ECB/APAC_MAS
+    # run from overwriting the US_FED system-security-plan.yaml, POAM-2026-177).
+    # An unknown region, or an unset one in an enforcing posture, is refused
+    # rather than exported as US_FED.
     # When --ssp is explicitly supplied and declares cage-deployment-region in
     # metadata.props, that region's profile and framework are used automatically.
     # ---------------------------------------------------------------------------
-    env_region = os.environ.get("CAGE_DEPLOYMENT_REGION", "US_FED").strip().upper()
-    if env_region not in REGIONAL_PROFILES:
-        env_region = "US_FED"
-
-    if args.ssp is None:
-        region = env_region
-        regional_profile = get_regional_profile(region)
-        ssp_path = _REPO_ROOT / regional_profile["ssp_path"]
-    else:
-        ssp_path = args.ssp
-        inferred_region = _infer_region_from_ssp(ssp_path)
-        region = inferred_region if inferred_region is not None else env_region
-        regional_profile = get_regional_profile(region)
+    try:
+        if args.ssp is None:
+            region = resolve_deployment_region()
+            regional_profile = get_regional_profile(region)
+            ssp_path = _REPO_ROOT / regional_profile["ssp_path"]
+        else:
+            ssp_path = args.ssp
+            inferred_region = _infer_region_from_ssp(ssp_path)
+            region = (
+                inferred_region
+                if inferred_region is not None
+                else resolve_deployment_region()
+            )
+            regional_profile = get_regional_profile(region)
+    except DeploymentRegionError as exc:
+        logger.error("cmd_export: %s", exc)
+        return 2
 
     # Derive the FrameworkRouter key from the resolved region, unless the caller
     # explicitly passed a non-default --framework value on the CLI.

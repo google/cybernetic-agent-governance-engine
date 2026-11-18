@@ -29,8 +29,8 @@ import logging
 import os
 
 from src.gateway.observability.attributes import (
-    OBSERVATION_OUTPUT,
     OBSERVATION_TYPE,
+    SPAN_ATTR_CONTENT_OUTPUT_LENGTH,
     TRACE_METADATA_GUARDRAILS_INTERVENTION,
     TRACE_METADATA_ISO_CONTROL_ID,
     TRACE_METADATA_ISO_REQUIREMENT,
@@ -100,7 +100,7 @@ async def InvokeVllmFallbackAction(  # type: ignore[no-untyped-def]
             response = await llm._acall(messages)  # type: ignore[arg-type]
 
             if span:
-                span.set_attribute(OBSERVATION_OUTPUT, response)
+                span.set_attribute(SPAN_ATTR_CONTENT_OUTPUT_LENGTH, len(response))
 
             logger.debug(
                 "InvokeVllmFallbackAction returning response length=%d", len(response)

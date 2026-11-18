@@ -100,7 +100,7 @@ Gaps closed by this proof:
 
 from __future__ import annotations
 
-from collections.abc import Iterator
+from collections.abc import Callable, Iterable, Iterator
 from dataclasses import dataclass
 from itertools import product
 
@@ -118,7 +118,7 @@ from itertools import product
 # action.  They are evaluated sequentially (OPA in phase 1, CBF in phase 2),
 # so no interleaving sub-proof is needed.
 # FTRA (Tier 0.5) added to close proof/implementation divergence (ARCH-1).
-TIERS = (
+TIERS: tuple[str, ...] = (
     "ftra",  # Tier 0.5: FTRA action classification & reachability analysis
     "stpa",  # Tier 1:  STAMP/STPA unsafe control action check
     "opa",  # Tier 3b: OPA Rego policy evaluation
@@ -318,11 +318,17 @@ def post_hitl_rechecks_jurisdiction() -> bool:
 
 VIOLATION_KINDS: tuple[str, ...] = (
     "HARD",
+    "INFRASTRUCTURE",
     "HITL",
     "DEFERRABLE",
     "NARROWABLE",
     "RELIANCE_INELIGIBLE",
 )
+
+# Transient dependency unavailability (OPA unreachable, circuit-breaker open,
+# malformed reply). Fails closed without minting a seal or signing a policy
+# refusal receipt (POAM-2026-233).
+INFRASTRUCTURE_KIND = "INFRASTRUCTURE"
 
 # A finding that removes CAGE's right to rely on a norm (its warrant failed
 # standing verification). Emitted by the read-only ``warrant`` stage, which
@@ -332,9 +338,10 @@ RELIANCE_KIND = "RELIANCE_INELIGIBLE"
 
 
 def phase2_mode(profile: str, phase1_kinds: frozenset[str]) -> str:
-    """SKIP after any HARD; PREVIEW after only non-HARD findings or under
-    DRY_RUN; COMMIT only over a clean phase 1 under a committing profile."""
-    if "HARD" in phase1_kinds:
+    """SKIP after any HARD or INFRASTRUCTURE; PREVIEW after only other
+    findings or under DRY_RUN; COMMIT only over a clean phase 1 under a
+    committing profile."""
+    if phase1_kinds & {"HARD", INFRASTRUCTURE_KIND}:
         return "SKIP"
     if phase1_kinds or profile == "DRY_RUN":
         return "PREVIEW"
@@ -342,29 +349,36 @@ def phase2_mode(profile: str, phase1_kinds: frozenset[str]) -> str:
 
 
 def awaits_approval(phase1_kinds: frozenset[str]) -> bool:
-    """Phase 1 left the request for a human: HITL, and neither HARD nor a
-    norm CAGE may not rely on (a human cannot repair a warrant: DEFER)."""
-    return "HITL" in phase1_kinds and not phase1_kinds & {"HARD", RELIANCE_KIND}
+    """Phase 1 left the request for a human: HITL, and none of HARD,
+    INFRASTRUCTURE or RELIANCE_INELIGIBLE."""
+    return "HITL" in phase1_kinds and not phase1_kinds & {
+        "HARD",
+        INFRASTRUCTURE_KIND,
+        RELIANCE_KIND,
+    }
 
 
 def pending_approval_outcome(
     phase1_kinds: frozenset[str], preview_kinds: frozenset[str]
 ) -> tuple[str, str]:
-    """CHECKING → (DENIED | DEFER | REQUIRE_APPROVAL, barrier_preview ∈ {PASS, FAIL}).
+    """CHECKING → (DENIED | INFRASTRUCTURE_BLOCK | DEFER | REQUIRE_APPROVAL, barrier_preview ∈ {PASS, FAIL}).
 
     Defined for an approval-pending phase 1 (:func:`awaits_approval`): the
-    barriers are previewed, a HARD preview denies outright, a preview that
+    barriers are previewed, a HARD preview denies outright, an INFRASTRUCTURE
+    preview blocks fail-closed without signing a refusal, a preview that
     removes reliance on a norm defers, and otherwise the request waits for a
     human with the preview's result recorded.
     """
     if not awaits_approval(phase1_kinds):
         raise ValueError(
-            "pending_approval_outcome needs a HITL phase 1 without HARD or "
-            "RELIANCE_INELIGIBLE"
+            "pending_approval_outcome needs a HITL phase 1 without HARD, "
+            "INFRASTRUCTURE or RELIANCE_INELIGIBLE"
         )
     barrier_preview = "FAIL" if preview_kinds else "PASS"
     if "HARD" in preview_kinds:
         return "DENIED", barrier_preview
+    if INFRASTRUCTURE_KIND in preview_kinds:
+        return "INFRASTRUCTURE_BLOCK", barrier_preview
     if RELIANCE_KIND in preview_kinds:
         return "DEFER", barrier_preview
     return "REQUIRE_APPROVAL", barrier_preview
@@ -388,10 +402,10 @@ def no_commit_under_pending_findings() -> bool:
 
 def hard_preview_denies_before_hitl() -> bool:
     """Claim: with approval pending, the barriers are previewed, a HARD
-    preview yields DENIED (no human is asked), a non-HARD preview that
-    removes reliance on a norm yields DEFER (no human is asked either), and
-    every REQUIRE_APPROVAL records the preview's outcome (FAIL iff a barrier
-    reported anything)."""
+    preview yields DENIED (no human is asked), an INFRASTRUCTURE preview yields
+    INFRASTRUCTURE_BLOCK, a non-HARD/non-INFRASTRUCTURE preview that removes
+    reliance on a norm yields DEFER, and every REQUIRE_APPROVAL records the
+    preview's outcome (FAIL iff a barrier reported anything)."""
     for phase1 in _kind_sets():
         if not awaits_approval(phase1):
             continue
@@ -401,7 +415,12 @@ def hard_preview_denies_before_hitl() -> bool:
             outcome, barrier_preview = pending_approval_outcome(phase1, preview)
             if ("HARD" in preview) != (outcome == "DENIED"):
                 return False
-            ineligible = RELIANCE_KIND in preview and "HARD" not in preview
+            infra = INFRASTRUCTURE_KIND in preview and "HARD" not in preview
+            if infra != (outcome == "INFRASTRUCTURE_BLOCK"):
+                return False
+            ineligible = RELIANCE_KIND in preview and not (
+                preview & {"HARD", INFRASTRUCTURE_KIND}
+            )
             if ineligible != (outcome == "DEFER"):
                 return False
             if (barrier_preview == "FAIL") != bool(preview):
@@ -416,9 +435,16 @@ def hard_preview_denies_before_hitl() -> bool:
 # Mirrors ``ClassificationEngine.classify`` in
 # ``src/gateway/governance/classification_engine.py`` (parity in
 # ``tests/test_distributed_cbf_proof.py``). Only ALLOW and NARROW lead to
-# SEAL_ISSUED; DENY, REQUIRE_APPROVAL and DEFER mint no seal.
+# SEAL_ISSUED; DENY, INFRASTRUCTURE_BLOCK, REQUIRE_APPROVAL and DEFER mint no seal.
 
-VERDICTS: tuple[str, ...] = ("ALLOW", "NARROW", "DEFER", "REQUIRE_APPROVAL", "DENY")
+VERDICTS: tuple[str, ...] = (
+    "ALLOW",
+    "NARROW",
+    "DEFER",
+    "REQUIRE_APPROVAL",
+    "INFRASTRUCTURE_BLOCK",
+    "DENY",
+)
 SEALING_VERDICTS: frozenset[str] = frozenset({"ALLOW", "NARROW"})
 
 
@@ -430,9 +456,10 @@ def verdict_of(
     manual_review: bool = False,
     defer_enabled: bool = True,
 ) -> str:
-    """HARD > RELIANCE_INELIGIBLE > (MANUAL_REVIEW | HITL) > all-NARROWABLE +
-    proposal > DEFERRABLE with low confidence > DENY. ``narrows`` = NARROW
-    enabled and a narrower proposes clamped params. No findings is ALLOW.
+    """HARD > INFRASTRUCTURE > RELIANCE_INELIGIBLE > (MANUAL_REVIEW | HITL) >
+    all-NARROWABLE + proposal > DEFERRABLE with low confidence > DENY.
+    ``narrows`` = NARROW enabled and a narrower proposes clamped params. No
+    findings is ALLOW.
 
     RELIANCE_INELIGIBLE defers whatever the confidence; with DEFER disabled
     it would deny, but no governor with a warranted norm is assembled then
@@ -441,6 +468,8 @@ def verdict_of(
         return "ALLOW"
     if "HARD" in kinds:
         return "DENY"
+    if INFRASTRUCTURE_KIND in kinds:
+        return "INFRASTRUCTURE_BLOCK"
     if RELIANCE_KIND in kinds:
         return "DEFER" if defer_enabled else "DENY"
     if manual_review or "HITL" in kinds:
@@ -459,12 +488,13 @@ def _verdict_inputs() -> Iterator[tuple[frozenset[str], bool, bool, bool, bool]]
 
 
 def verdict_lattice_holds() -> bool:
-    """Claims: any HARD finding denies; a RELIANCE_INELIGIBLE finding without
-    HARD defers (never DENY, never a seal, never a human) whenever DEFER is
-    enabled; DEFER needs DEFER enabled and either RELIANCE_INELIGIBLE or a
-    DEFERRABLE finding with low confidence; NARROW needs every finding
-    NARROWABLE; a seal-issuing verdict (ALLOW, NARROW) never coexists with a
-    HARD, HITL, DEFERRABLE or RELIANCE_INELIGIBLE finding; ALLOW iff no
+    """Claims: any HARD finding denies; INFRASTRUCTURE without HARD yields
+    INFRASTRUCTURE_BLOCK (never DENY, never a seal); a RELIANCE_INELIGIBLE
+    finding without HARD or INFRASTRUCTURE defers whenever DEFER is enabled;
+    DEFER needs DEFER enabled and either RELIANCE_INELIGIBLE or a DEFERRABLE
+    finding with low confidence; NARROW needs every finding NARROWABLE; a
+    seal-issuing verdict (ALLOW, NARROW) never coexists with HARD,
+    INFRASTRUCTURE, HITL, DEFERRABLE or RELIANCE_INELIGIBLE; ALLOW iff no
     findings."""
     for kinds, low, nar, mr, de in _verdict_inputs():
         v = verdict_of(
@@ -472,7 +502,16 @@ def verdict_lattice_holds() -> bool:
         )
         if "HARD" in kinds and v != "DENY":
             return False
-        if RELIANCE_KIND in kinds and "HARD" not in kinds and de and v != "DEFER":
+        if (INFRASTRUCTURE_KIND in kinds and "HARD" not in kinds) != (
+            v == "INFRASTRUCTURE_BLOCK"
+        ):
+            return False
+        if (
+            RELIANCE_KIND in kinds
+            and not (kinds & {"HARD", INFRASTRUCTURE_KIND})
+            and de
+            and v != "DEFER"
+        ):
             return False
         if v == "DEFER" and not (
             de and (RELIANCE_KIND in kinds or ("DEFERRABLE" in kinds and low))
@@ -482,6 +521,7 @@ def verdict_lattice_holds() -> bool:
             return False
         if v in SEALING_VERDICTS and kinds & {
             "HARD",
+            INFRASTRUCTURE_KIND,
             "HITL",
             "DEFERRABLE",
             RELIANCE_KIND,
@@ -505,8 +545,8 @@ def warranted_assembly_admissible(
 def warranted_norm_never_fabricates_deny() -> bool:
     """Claim: in every assembly admitted with a warranted norm, a warrant
     failure (RELIANCE_INELIGIBLE) without an independent HARD finding is
-    DEFER — never a fabricated DENY — and a HARD finding still denies (a
-    warrant failure never masks a DENY)."""
+    DEFER (or INFRASTRUCTURE_BLOCK if a dependency is simultaneously
+    unavailable) — never a fabricated DENY — and a HARD finding still denies."""
     for has_source, de in product((False, True), repeat=2):
         if not warranted_assembly_admissible(
             has_warranted_norm=True, defer_enabled=de, has_source=has_source
@@ -522,7 +562,14 @@ def warranted_norm_never_fabricates_deny() -> bool:
                 manual_review=mr,
                 defer_enabled=de,
             )
-            if v != ("DENY" if "HARD" in kinds else "DEFER"):
+            expected = (
+                "DENY"
+                if "HARD" in kinds
+                else (
+                    "INFRASTRUCTURE_BLOCK" if INFRASTRUCTURE_KIND in kinds else "DEFER"
+                )
+            )
+            if v != expected:
                 return False
     return True
 
@@ -575,12 +622,12 @@ def post_hitl_verdict(kinds: frozenset[str]) -> str:
 
     Mirrors ``SymbolicGovernor.revalidate_post_hitl``: nothing is narrowed or
     parked for a human after approval. A clean run seals (ALLOW), a
-    RELIANCE_INELIGIBLE finding without HARD defers with the approval kept,
-    and anything else denies.
+    RELIANCE_INELIGIBLE finding without HARD or INFRASTRUCTURE defers with the
+    approval kept, and anything else is unsealed.
     """
     if not kinds:
         return "ALLOW"
-    if RELIANCE_KIND in kinds and "HARD" not in kinds:
+    if RELIANCE_KIND in kinds and not (kinds & {"HARD", INFRASTRUCTURE_KIND}):
         return "DEFER"
     return "DENY"
 
@@ -592,9 +639,9 @@ def approval_answers_only_its_holds() -> bool:
     POST_HITL, approved against its hold or not: the run seals iff the tier
     reported nothing but holds the approval covers; a HARD finding (e.g. an
     authority that now refuses) always denies; a RELIANCE_INELIGIBLE finding
-    without HARD always defers; and phase 2 commits iff the run seals. So a
-    revocation observed at revalidation is never sealed, and an approved hold
-    does not block its own approval (GHSA-f6xq-23f7-9grm).
+    without HARD or INFRASTRUCTURE always defers; and phase 2 commits iff the
+    run seals. So a revocation observed at revalidation is never sealed, and an
+    approved hold does not block its own approval (GHSA-f6xq-23f7-9grm).
     """
     for kinds in _kind_sets():
         for approved in (False, True):
@@ -605,7 +652,11 @@ def approval_answers_only_its_holds() -> bool:
                 return False
             if "HARD" in kinds and verdict != "DENY":
                 return False
-            if RELIANCE_KIND in kinds and "HARD" not in kinds and verdict != "DEFER":
+            if (
+                RELIANCE_KIND in kinds
+                and not (kinds & {"HARD", INFRASTRUCTURE_KIND})
+                and verdict != "DEFER"
+            ):
                 return False
             if (phase2_mode("POST_HITL", remaining) == "COMMIT") != sealed:
                 return False
@@ -1093,7 +1144,7 @@ def ungated_narrow_transitions(state: State) -> Iterator[State]:
 
 
 def enumerate_reachable(
-    transition_fn,
+    transition_fn: Callable[[State], Iterable[State]],
     start: State | None = None,
 ) -> set[State]:
     """BFS over the state space.  Returns the set of all reachable states."""
@@ -1137,7 +1188,10 @@ def check_no_direct_bind(states: set[State]) -> tuple[bool, State | None]:
     return True, None
 
 
-def enumerate_region(region: str, transition_fn=None) -> set[State]:
+def enumerate_region(
+    region: str,
+    transition_fn: Callable[[State], Iterable[State]] | None = None,
+) -> set[State]:
     """Enumerate the gated model with ``region``'s jurisdiction tiers appended.
 
     The transition functions and ``State`` read the module-level ``TIERS`` /

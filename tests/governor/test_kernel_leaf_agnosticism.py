@@ -118,7 +118,7 @@ class TestOpaNodeFactoryAgnosticism:
             span_keys=("patient_id", "dose_mg"),
         )
         mock_governor = MagicMock()
-        mock_governor.govern = AsyncMock(return_value="seal-123")
+        mock_governor.validate_action = AsyncMock(return_value={"verdict": "ALLOW"})
 
         mock_span = MagicMock()
         mock_tracer = MagicMock()

@@ -103,7 +103,7 @@ class Provider05KeyProvider(AttestationProvider):
             ]
 
         v03_meta: dict[str, Any] = {}
-        if grant.is_v03 or self._client.key_manifest is not None:
+        if grant.is_v03 or self._client.requires_v03:
             key_manifest = await self._client.get_verified_key_manifest(
                 now=context.get("now")
             )

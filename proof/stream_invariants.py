@@ -1143,16 +1143,17 @@ def check_stream(
                     )
                 )
             else:
-                active_thresholds_digest = str(digest)
+                digest_s = str(digest)
+                active_thresholds_digest = digest_s
                 if (
                     expected_thresholds_digest is not None
-                    and digest != expected_thresholds_digest
+                    and digest_s != expected_thresholds_digest
                 ):
                     findings.append(
                         Finding(
                             index,
                             "thresholds",
-                            f"loaded thresholds_digest {digest[:16]}... != expected {expected_thresholds_digest[:16]}...",
+                            f"loaded thresholds_digest {digest_s[:16]}... != expected {expected_thresholds_digest[:16]}...",
                         )
                     )
 
@@ -1168,26 +1169,27 @@ def check_stream(
                     )
                 )
             else:
+                digest_s = str(digest)
                 if (
                     active_thresholds_digest is not None
-                    and digest != active_thresholds_digest
+                    and digest_s != active_thresholds_digest
                 ):
                     findings.append(
                         Finding(
                             index,
                             "thresholds",
-                            f"decision thresholds_digest {digest[:16]}... != loaded {active_thresholds_digest[:16]}...",
+                            f"decision thresholds_digest {digest_s[:16]}... != loaded {active_thresholds_digest[:16]}...",
                         )
                     )
                 if (
                     expected_thresholds_digest is not None
-                    and digest != expected_thresholds_digest
+                    and digest_s != expected_thresholds_digest
                 ):
                     findings.append(
                         Finding(
                             index,
                             "thresholds",
-                            f"decision thresholds_digest {digest[:16]}... != expected {expected_thresholds_digest[:16]}...",
+                            f"decision thresholds_digest {digest_s[:16]}... != expected {expected_thresholds_digest[:16]}...",
                         )
                     )
 

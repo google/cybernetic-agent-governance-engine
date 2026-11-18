@@ -47,9 +47,12 @@ appropriate compliance profile:
   - ``APAC_MAS`` → config/compliance/APAC_MAS_BASELINE.json
                    (MAS FEAT / MAS TRM Guidelines / ISO 42001)
 
-If CAGE_DEPLOYMENT_REGION is unset, the registry falls back first to the
-regional profiles directory using ``US_FED`` as default, then to the legacy
-``config/control_mappings.json`` for backward compatibility.
+The region comes from ``resolve_deployment_region()`` in
+``src/gateway/governance/env_posture.py``, the only reader of
+``CAGE_DEPLOYMENT_REGION``. A value that is not a supported region is refused,
+and so is an unset one in an enforcing posture; dev, test and CI run under
+``US_FED`` when it is unset. There is no fallback profile: a missing regional
+file refuses to start.
 
 Usage::
 
@@ -78,6 +81,13 @@ from enum import Enum
 from pathlib import Path
 from typing import Any
 
+from src.gateway.governance.env_posture import (
+    SUPPORTED_REGIONS,
+    DeploymentRegionError,
+    is_enforcing,
+    resolve_deployment_region,
+    resolve_posture,
+)
 from src.gateway.governance.jcs_canonicalizer import jcs_canonicalize_plan
 
 logger = logging.getLogger("Gateway.Governance.Constants")
@@ -118,36 +128,20 @@ def register_overlay_dir(path: Path) -> None:
 
 
 def _require_env(key: str, fallback: str, *, sensitive: bool = True) -> str:
-    """Return the value of environment variable *key*, or *fallback* in dev.
+    """Return the value of environment variable *key*, or *fallback* in permissive postures.
 
-    In production (CAGE_ENV=prod), raises RuntimeError for sensitive variables
-    that are not set — preventing silent use of insecure defaults.
-
-    In dev/test, logs a warning and returns the fallback so existing
-    non-production deployments are not broken.
-
-    Args:
-        key:       Environment variable name.
-        fallback:  Default value to use in non-production environments.
-        sensitive: When True, raises in prod if the variable is unset.
-                   Set to False for non-secret configuration values.
-
-    Returns:
-        The environment variable value, or *fallback* in dev/test.
-
-    Raises:
-        RuntimeError: If *sensitive* is True, CAGE_ENV=prod, and *key* is unset.
+    In enforcing postures (production, staging, or unknown CAGE_ENV), raises
+    RuntimeError for sensitive variables that are not set — preventing silent
+    use of insecure defaults.
     """
     value = os.environ.get(key)
     if value:
         return value
-    cage_env = os.environ.get(
-        "CAGE_ENV", "prod"
-    ).lower()  # Default to "prod" to fail-secure: missing CAGE_ENV must not silently disable enforcement
-    if cage_env == "prod" and sensitive:
+    if is_enforcing(resolve_posture()) and sensitive:
         raise RuntimeError(
-            f"Required environment variable {key!r} is not set in production. "
-            f"Set it via Kubernetes Secret or environment injection before starting."
+            f"Required environment variable {key!r} is not set in production "
+            f"(or enforcing posture). Set it via Kubernetes Secret or "
+            f"environment injection before starting."
         )
     logging.getLogger(__name__).warning(
         "Using fallback for %s — set this in production", key
@@ -158,10 +152,8 @@ def _require_env(key: str, fallback: str, *, sensitive: bool = True) -> str:
 # ---------------------------------------------------------------------------
 # Supported deployment regions
 # ---------------------------------------------------------------------------
-
-SUPPORTED_REGIONS = frozenset({"US_FED", "EU_ECB", "APAC_MAS"})
-
-_DEFAULT_REGION = "US_FED"
+# SUPPORTED_REGIONS is defined once, beside its only reader,
+# resolve_deployment_region() in env_posture.py, and imported above.
 
 # ---------------------------------------------------------------------------
 # Internal Control ID Enum
@@ -238,13 +230,15 @@ class ControlRegistry:
     return the same in-memory instance — no repeated disk I/O or stale-state
     risk across parallel workers.
 
-    Regional profile resolution order
-    ----------------------------------
-    1. ``CAGE_DEPLOYMENT_REGION`` environment variable (at instantiation time).
-    2. Default region ``US_FED`` if env var is unset.
-    3. ``config/compliance/{REGION}_BASELINE.json`` regional profile (required).
+    Regional profile resolution
+    ---------------------------
+    1. The region: ``resolve_deployment_region()`` at instantiation time, or
+       the explicit argument to :meth:`reconfigure`.
+    2. ``config/compliance/{REGION}_BASELINE.json`` regional profile (required).
 
     Raises:
+        DeploymentRegionError: If the region is unknown, or unset in an
+            enforcing posture.
         RuntimeError: If no JSON file can be found or parsed at startup.
         KeyError: If a requested CTRL_* ID is absent from the active registry.
     """
@@ -252,7 +246,8 @@ class ControlRegistry:
     _instance: ControlRegistry | None = None
     _lock: threading.RLock = threading.RLock()
     _mappings: dict[str, Any] = {}
-    _active_region: str = _DEFAULT_REGION
+    # Empty until a profile loads: no region is in force before then.
+    _active_region: str = ""
     _active_hash: str = ""
 
     # Paths
@@ -310,29 +305,23 @@ class ControlRegistry:
     # ------------------------------------------------------------------
 
     def _load_registry(self, region: str | None = None) -> None:
-        """Load the JSON profile for the given or environment-resolved region.
+        """Load the JSON profile for ``region``, or the resolved deployment region.
 
-        Resolution order:
-          1. ``region`` argument (explicit override — for reconfigure()).
-          2. ``CAGE_DEPLOYMENT_REGION`` environment variable.
-          3. ``US_FED`` default.
-          4. Legacy ``config/control_mappings.json`` if regional file missing.
+        Args:
+            region: Explicit region (for :meth:`reconfigure`). ``None`` means
+                ``resolve_deployment_region()``.
+
+        Raises:
+            DeploymentRegionError: If the region is not a supported region, or
+                is unset in an enforcing posture. There is no default profile.
         """
         if region is None:
-            region = (
-                os.getenv("CAGE_DEPLOYMENT_REGION", _DEFAULT_REGION).strip().upper()
+            region = resolve_deployment_region()
+        elif region not in SUPPORTED_REGIONS:
+            raise DeploymentRegionError(
+                f"ControlRegistry: {region!r} is not a supported region; expected "
+                f"exactly one of {sorted(SUPPORTED_REGIONS)}"
             )
-
-        # Validate region string
-        if region not in SUPPORTED_REGIONS:
-            logger.warning(
-                "ControlRegistry: unknown region '%s'. Supported: %s. "
-                "Falling back to default '%s'.",
-                region,
-                sorted(SUPPORTED_REGIONS),
-                _DEFAULT_REGION,
-            )
-            region = _DEFAULT_REGION
 
         config_path = self._COMPLIANCE_DIR / f"{region}_BASELINE.json"
 
@@ -456,8 +445,7 @@ class ControlRegistry:
         Example::
 
             # In your container entrypoint / FastAPI lifespan:
-            region = os.getenv("CAGE_DEPLOYMENT_REGION", "US_FED")
-            ControlRegistry.reconfigure(region)
+            ControlRegistry.reconfigure(resolve_deployment_region())
 
         Thread-safety note (C-13 fix):
             The previous implementation released the lock between clearing
@@ -507,7 +495,7 @@ class ControlRegistry:
         with cls._lock:
             cls._instance = None
             cls._mappings = {}
-            cls._active_region = _DEFAULT_REGION
+            cls._active_region = ""
 
 
 # ---------------------------------------------------------------------------

@@ -27,8 +27,12 @@ from src.cage_finance.safety.bounding.contract import (
     BoundingContractEnforcer,
 )
 from src.cage_finance.safety.bounding.providers import (
+    MarketDataProvider,
+    RollbackCapabilityProvider,
     StubMarketDataProvider,
     StubRollbackCapabilityProvider,
+    UnconfiguredEnforcingMarketDataProvider,
+    UnconfiguredEnforcingRollbackProvider,
 )
 from src.cage_finance.safety.bounding.registry import BoundingContractRegistry
 from src.cage_finance.safety.fiscal_limit_guard import FiscalLimitGuard
@@ -52,8 +56,10 @@ from src.gateway.governance.contracts import (
     CagePlugin,
     CanaryProbe,
     DomainConfig,
+    EvaluatedParamSpec,
     PluginContribution,
 )
+from src.gateway.governance.env_posture import is_enforcing, resolve_posture
 from src.gateway.governance.governor.assembly import DisabledTier
 from src.gateway.governance.safety.cbf_engine import ControlBarrierFunction
 
@@ -62,6 +68,35 @@ logger = logging.getLogger(__name__)
 FINANCE_EXECUTION_VERBS: frozenset[str] = frozenset(
     {"buy", "sell", "trade", "transfer", "execute_trade"}
 )
+
+_TRADE_EVALUATED_PARAM_SPECS: dict[str, EvaluatedParamSpec] = {
+    "symbol": EvaluatedParamSpec.upper_alpha_code(max_length=5),
+    "currency": EvaluatedParamSpec.upper_alpha_code(max_length=3),
+    "side": EvaluatedParamSpec.enum("buy", "sell"),
+    "type": EvaluatedParamSpec.enum("market", "limit"),
+    "trader_role": EvaluatedParamSpec.enum("junior", "senior"),
+    "dry_run": EvaluatedParamSpec.boolean(),
+    "amount": EvaluatedParamSpec.number(),
+    "amount_minor": EvaluatedParamSpec.number(),
+    "confidence": EvaluatedParamSpec.number(),
+    "latency_ms": EvaluatedParamSpec.number(),
+    "drawdown": EvaluatedParamSpec.number(),
+    "portfolio_total": EvaluatedParamSpec.number(),
+    "order_size": EvaluatedParamSpec.number(),
+    "daily_vol": EvaluatedParamSpec.number(),
+}
+
+FINANCE_EVALUATED_PARAM_SPECS: dict[str, dict[str, EvaluatedParamSpec]] = {
+    "execute_trade": _TRADE_EVALUATED_PARAM_SPECS,
+    "execute_trade_bounded": _TRADE_EVALUATED_PARAM_SPECS,
+    "market_analysis": {
+        "symbol": EvaluatedParamSpec.upper_alpha_code(max_length=5),
+        "confidence": EvaluatedParamSpec.number(),
+    },
+    "check_market_status": {
+        "symbol": EvaluatedParamSpec.upper_alpha_code(max_length=5),
+    },
+}
 
 # The 5 core deterministic finance tiers. An enforcing posture refuses to start
 # if any of them is not enabled (posture check ``required_tiers``); listed
@@ -97,6 +132,15 @@ class FinanceCagePlugin(CagePlugin):
             params={"symbol": "AAPL", "confidence": 0.99},
         ),
     )
+
+    def __init__(
+        self,
+        *,
+        market_data_provider: MarketDataProvider | None = None,
+        rollback_provider: RollbackCapabilityProvider | None = None,
+    ) -> None:
+        self._market_data_provider = market_data_provider
+        self._rollback_provider = rollback_provider
 
     def contribute(self) -> PluginContribution:
         from src.cage_finance.ground_truth import SimulatedCashLedgerProvider
@@ -134,15 +178,32 @@ class FinanceCagePlugin(CagePlugin):
         )
         consensus_gate = build_finance_consensus_gate()
 
-        # Dev/test bounding providers: permissive allowlists, stub market data
-        # and rollback capability (they fail closed in production).
+        enforcing_posture = is_enforcing(resolve_posture())
+        market_data_provider: MarketDataProvider = (
+            self._market_data_provider
+            if self._market_data_provider is not None
+            else (
+                UnconfiguredEnforcingMarketDataProvider()
+                if enforcing_posture
+                else StubMarketDataProvider()
+            )
+        )
+        rollback_provider: RollbackCapabilityProvider = (
+            self._rollback_provider
+            if self._rollback_provider is not None
+            else (
+                UnconfiguredEnforcingRollbackProvider()
+                if enforcing_posture
+                else StubRollbackCapabilityProvider()
+            )
+        )
         bounding_registry = BoundingContractRegistry(
             thresholds={
                 **effective.model_dump(),
                 **effective.domains.get("finance", {}),
             },
-            market_data_provider=StubMarketDataProvider(),
-            rollback_provider=StubRollbackCapabilityProvider(),
+            market_data_provider=market_data_provider,
+            rollback_provider=rollback_provider,
             enforcer=BoundingContractEnforcer(
                 BoundingContractConfig(
                     allowed_instruments={"AAPL", "MSFT", "GOOGL", "AMZN"},
@@ -221,6 +282,7 @@ class FinanceCagePlugin(CagePlugin):
             rail_providers=(FinancialRailsProvider(),),
             required_tiers=required_tiers,
             disabled_tiers=disabled_tiers,
+            evaluated_param_specs=FINANCE_EVALUATED_PARAM_SPECS,
         )
 
 

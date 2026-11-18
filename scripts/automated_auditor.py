@@ -32,11 +32,18 @@ Required env vars for the Langfuse source:
 
 import logging
 import os
+import sys
 import urllib.parse
 import urllib.request
 from abc import ABC, abstractmethod
 from datetime import datetime, timedelta, timezone
+from pathlib import Path
 from typing import Any
+
+_REPO_ROOT = str(Path(__file__).resolve().parents[1])
+if _REPO_ROOT not in sys.path:
+    sys.path.insert(0, _REPO_ROOT)
+from src.gateway.governance.env_posture import resolve_deployment_region
 
 # Configure logging
 logging.basicConfig(
@@ -58,23 +65,23 @@ _AUDITOR_GCP_PROJECT_ID = os.environ.get("AUDITOR_GCP_PROJECT_ID", "")
 _LANGFUSE_PUBLIC_KEY = os.environ.get("LANGFUSE_PUBLIC_KEY", "")
 _LANGFUSE_SECRET_KEY = os.environ.get("LANGFUSE_SECRET_KEY", "")
 
-# DEP-03: Enforce explicit LANGFUSE_HOST for EU_ECB and APAC_MAS deployments.
-# Defaulting to cloud.langfuse.com routes audit traces to a SaaS endpoint outside
-# the deployment region, violating GDPR Art. 44 (EU_ECB) and MAS TRM §4.2 (APAC_MAS).
-# R-3, R-7: data residency must be enforced at the deployment pipeline layer.
-_cage_region = os.environ.get("CAGE_DEPLOYMENT_REGION", "")
-_langfuse_host = os.environ.get("LANGFUSE_HOST", "")
-if not _langfuse_host:
-    if _cage_region in ("EU_ECB", "APAC_MAS"):
+
+def _resolve_langfuse_host() -> str:
+    """Resolve LANGFUSE_HOST lazily so importing automated_auditor never crashes."""
+    from src.gateway.governance.env_posture import is_enforcing, resolve_posture
+
+    host = os.environ.get("LANGFUSE_HOST", "").strip()
+    if host:
+        return host
+    active_region = resolve_deployment_region()
+    if active_region in ("EU_ECB", "APAC_MAS") or is_enforcing(resolve_posture()):
         raise RuntimeError(
-            f"LANGFUSE_HOST must be explicitly set for {_cage_region} deployments "
-            "to ensure data residency compliance (GDPR Art. 44 / MAS TRM §4.2). "
-            "Do not use cloud.langfuse.com — set LANGFUSE_HOST to your in-region "
-            "Langfuse instance (e.g. http://langfuse.governance-stack.svc.cluster.local:3000)."
+            f"LANGFUSE_HOST must be explicitly set for {active_region} / enforcing "
+            "deployments to ensure sovereign data residency compliance "
+            "(GDPR Art. 44 / MAS TRM §4.2 / NIST AU-12). "
+            "Set LANGFUSE_HOST to your in-region Langfuse instance."
         )
-    # US_FED only fallback — SaaS endpoint is acceptable for US federal deployments
-    _langfuse_host = "https://cloud.langfuse.com"
-_LANGFUSE_HOST = _langfuse_host
+    return "http://localhost:3000"
 
 
 # ---------------------------------------------------------------------------
@@ -159,11 +166,13 @@ class CloudTraceSource(TraceSource):
     Requires the ``google-cloud-trace`` package and AUDITOR_GCP_PROJECT_ID.
     """
 
-    def __init__(self, project_id: str = _AUDITOR_GCP_PROJECT_ID):
+    def __init__(self, project_id: str = _AUDITOR_GCP_PROJECT_ID) -> None:
         try:
-            from google.cloud import trace_v2  # type: ignore[import]
+            from google.cloud import (
+                trace_v1,  # type: ignore[attr-defined,import-untyped]
+            )
 
-            self._trace_v2 = trace_v2
+            self._trace_v1: Any = trace_v1
         except ImportError as exc:
             raise ImportError(
                 "The 'google-cloud-trace' package is required for AUDITOR_TRACE_SOURCE=cloudtrace. "
@@ -177,32 +186,30 @@ class CloudTraceSource(TraceSource):
         self.project_id = project_id
 
     def fetch_traces(self, service_name: str, lookback_minutes: int) -> list[dict]:
-        client = self._trace_v2.TraceServiceClient()
-        project_name = f"projects/{self.project_id}"
+        client = self._trace_v1.TraceServiceClient()
         try:
-            traces = list(client.list_traces(request={"parent": project_name}))
+            traces = list(client.list_traces(request={"project_id": self.project_id}))
             logger.info(
                 "CloudTraceSource: fetched %d traces from GCP project %s",
                 len(traces),
                 self.project_id,
             )
-            # Normalise to the same shape used by audit_trace()
             result = []
             for t in traces:
                 spans = [
                     {
-                        "name": s.display_name.value
-                        if hasattr(s.display_name, "value")
-                        else str(s.display_name),
-                        "attributes": dict(s.attributes.attribute_map)
-                        if hasattr(s, "attributes")
-                        else {},
-                        "start_time": s.start_time.timestamp() if s.start_time else 0,
-                        "end_time": s.end_time.timestamp() if s.end_time else 0,
+                        "name": getattr(s, "name", ""),
+                        "attributes": dict(getattr(s, "labels", {}) or {}),
+                        "start_time": s.start_time.timestamp()
+                        if getattr(s, "start_time", None)
+                        else 0.0,
+                        "end_time": s.end_time.timestamp()
+                        if getattr(s, "end_time", None)
+                        else 0.0,
                     }
-                    for s in t.spans
+                    for s in getattr(t, "spans", [])
                 ]
-                result.append({"trace_id": t.name, "spans": spans})
+                result.append({"trace_id": getattr(t, "trace_id", ""), "spans": spans})
             return result
         except Exception as exc:
             logger.warning(
@@ -218,20 +225,9 @@ class CloudTraceSource(TraceSource):
 
 
 class LangfuseTraceSource(TraceSource):
-    """Query the live Langfuse project for recent traces via the Langfuse Python SDK.
-
-    Credentials are read from LANGFUSE_PUBLIC_KEY / LANGFUSE_SECRET_KEY /
-    LANGFUSE_HOST, matching the pattern in src/compliance_bridge/metrics.py.
-
-    Span attributes are sourced from each observation's ``metadata`` dict.
-    Governance decisions recorded under the key ``governance.decision`` will be
-    picked up by :meth:`TraceAuditor.audit_trace` automatically.
-
-    POAM-003 — this is the authoritative live source for AU-12 compliance.
-    """
+    """Query the live Langfuse project for recent traces via the Langfuse Python SDK."""
 
     def __init__(self) -> None:
-        # Lazy import: langfuse is only required at runtime.
         try:
             from langfuse import Langfuse
         except ImportError as exc:
@@ -240,10 +236,11 @@ class LangfuseTraceSource(TraceSource):
                 "Install it with: pip install langfuse"
             ) from exc
 
+        self._host = _resolve_langfuse_host()
         self._langfuse = Langfuse(
-            public_key=_LANGFUSE_PUBLIC_KEY,
-            secret_key=_LANGFUSE_SECRET_KEY,
-            host=_LANGFUSE_HOST,
+            public_key=os.environ.get("LANGFUSE_PUBLIC_KEY", _LANGFUSE_PUBLIC_KEY),
+            secret_key=os.environ.get("LANGFUSE_SECRET_KEY", _LANGFUSE_SECRET_KEY),
+            host=self._host,
         )
 
     def fetch_traces(self, service_name: str, lookback_minutes: int) -> list[dict]:
@@ -252,7 +249,6 @@ class LangfuseTraceSource(TraceSource):
         )
 
         try:
-            # Langfuse SDK v3+ public API; the page cap is 100 rows.
             traces_response = self._langfuse.api.trace.list(
                 from_timestamp=window_start,
                 limit=100,
@@ -261,7 +257,7 @@ class LangfuseTraceSource(TraceSource):
             logger.warning(
                 "LangfuseTraceSource: could not reach Langfuse at %s — %s. "
                 "Returning empty trace list. Check LANGFUSE_PUBLIC_KEY / LANGFUSE_SECRET_KEY / LANGFUSE_HOST.",
-                _LANGFUSE_HOST,
+                self._host,
                 exc,
             )
             return []
@@ -310,7 +306,7 @@ class LangfuseTraceSource(TraceSource):
         logger.info(
             "LangfuseTraceSource: fetched %d traces from %s (lookback=%dm)",
             len(result),
-            _LANGFUSE_HOST,
+            self._host,
             lookback_minutes,
         )
         return result
@@ -438,11 +434,11 @@ class TraceAuditor:
     and asserts structural safety invariants.
     """
 
-    def __init__(self):
-        self.violations = []
+    def __init__(self) -> None:
+        self.violations: list[dict[str, str]] = []
         self.trace_source: TraceSource = create_trace_source()
 
-    def audit_trace(self, trace: dict[str, Any]):
+    def audit_trace(self, trace: dict[str, Any]) -> None:
         """
         Invariant: Every 'tool.execution' span must have a causally preceding 'governance.check' span
         with decision='ALLOW' in the same trace.
@@ -490,7 +486,7 @@ class TraceAuditor:
                         trace["trace_id"], "Orphaned Execution (No linking Check)"
                     )
 
-    def report_violation(self, trace_id: str, reason: str):
+    def report_violation(self, trace_id: str, reason: str) -> None:
         msg = f"🚨 AUDIT FAILURE | Trace: {trace_id} | Reason: {reason}"
         logger.error(msg)
         self.violations.append({"trace_id": trace_id, "reason": reason})

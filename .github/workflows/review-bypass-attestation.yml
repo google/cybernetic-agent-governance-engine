@@ -1,0 +1,223 @@
+# Copyright 2026 Google LLC
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     https://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+# The required check `Approved review or recorded bypass` (POAM-2026-115).
+#
+# Ruleset 19769096 requires one approving review on main, and its
+# repository-admin bypass lets the maintainer merge without one. Ruleset
+# 25966171 has no bypass actor and requires this check, so `--admin` cannot
+# skip it. The check passes in one of two ways:
+#   - a reviewer other than the author, with write access, approved the
+#     current head (scripts/review_bypass_attestation.py states the rule); or
+#   - the head is unreviewed, and a signed record saying so (a Sigstore
+#     attestation) was created and then verified from the attestations API.
+# An unreviewed pull request from a fork fails: it needs an approving review.
+#
+# A recorded bypass is not a review. The check passing means "approved, or
+# unreviewed and recorded"; the record discloses the bypass, says
+# `"reviewed": false`, and makes no claim about the change.
+#
+# It fails closed. No step continues on error, the recording steps run only on
+# an UNREVIEWED decision, and the last step passes only on an approval or a
+# verified record, so an error anywhere leaves the check failed and the merge
+# blocked rather than unrecorded. tests/test_review_bypass_attestation.py fails
+# on an edit that breaks any of this.
+#
+# Neither trigger filters the base branch. A stacked pull request needs the
+# check before it is retargeted to main (POAM-2026-153), and
+# `pull_request_review` has no branch filter; a job-level `if:` would report a
+# skipped job instead, which GitHub counts as a pass. The subject does not name
+# the base branch, so a record made before a retarget still covers the head.
+#
+# For both events GitHub takes this file and the script from the pull
+# request's merge ref, so a pull request that edits them decides its own run.
+# The edit is in the merged diff, the signing certificate names the workflow
+# ref, and review-bypass-ledger.yml checks every merge again after it lands.
+#
+# The job can mint a signing identity, so it runs no third-party action: the
+# runner's python3 runs the standard-library script, with no setup action.
+name: review-bypass-attestation
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened, ready_for_review]
+  pull_request_review:
+    types: [submitted, dismissed, edited]
+
+# The one job declares exactly what it needs.
+permissions: {}
+
+jobs:
+  approved-review-or-recorded-bypass:
+    # This name is the required status check in ruleset 25966171, pinned in
+    # scripts/check_repo_rules.py. Renaming the job unsatisfies the rule.
+    name: Approved review or recorded bypass
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read # check out the decision script
+      pull-requests: read # read the pull request's reviews
+      id-token: write # mint the OIDC token the Sigstore certificate is issued for
+      attestations: write # store the signed record, and read it back to verify it
+    steps:
+      - name: Check out the decision script
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Decide whether the head was approved
+        id: decide
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR: ${{ github.event.pull_request.number }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+          AUTHOR: ${{ github.event.pull_request.user.login }}
+        run: |
+          set -euo pipefail
+          work="${RUNNER_TEMP}/review-bypass"
+          mkdir -p "${work}"
+          gh api --paginate "repos/${GITHUB_REPOSITORY}/pulls/${PR}/reviews?per_page=100" \
+            > "${work}/reviews.json"
+          python3 scripts/review_bypass_attestation.py candidates \
+            --reviews "${work}/reviews.json" --author "${AUTHOR}" --head-sha "${HEAD_SHA}" \
+            > "${work}/candidates.txt"
+          # GitHub counts an approval only from a reviewer with write access,
+          # so look up each candidate's permission. A failed lookup fails here.
+          : > "${work}/permissions.tsv"
+          while IFS= read -r login; do
+            permission="$(gh api "repos/${GITHUB_REPOSITORY}/collaborators/${login}/permission" --jq '.permission')"
+            printf '%s\t%s\n' "${login}" "${permission}" >> "${work}/permissions.tsv"
+          done < "${work}/candidates.txt"
+          decision="$(python3 scripts/review_bypass_attestation.py decide \
+            --reviews "${work}/reviews.json" --permissions "${work}/permissions.tsv" \
+            --author "${AUTHOR}" --head-sha "${HEAD_SHA}")"
+          echo "decision=${decision}" >> "${GITHUB_OUTPUT}"
+
+      - name: Refuse an unreviewed pull request from a fork
+        if: steps.decide.outputs.decision == 'UNREVIEWED'
+        env:
+          HEAD_REPO: ${{ github.event.pull_request.head.repo.full_name }}
+        run: |
+          set -euo pipefail
+          if [ "${HEAD_REPO}" != "${GITHUB_REPOSITORY}" ]; then
+            echo "::error title=Approving review required::This pull request comes from a fork and has no approving review. A fork's pull request needs an approving review from a maintainer; a recorded bypass is only for this repository's own branches."
+            exit 1
+          fi
+
+      - name: Write the record's subject and predicate
+        id: subject
+        if: steps.decide.outputs.decision == 'UNREVIEWED'
+        env:
+          PR: ${{ github.event.pull_request.number }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+          HEAD_REPO: ${{ github.event.pull_request.head.repo.full_name }}
+          BASE_REF: ${{ github.event.pull_request.base.ref }}
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          AUTHOR: ${{ github.event.pull_request.user.login }}
+        run: |
+          set -euo pipefail
+          work="${RUNNER_TEMP}/review-bypass"
+          digest="$(python3 scripts/review_bypass_attestation.py subject \
+            --repo "${GITHUB_REPOSITORY}" --pr "${PR}" --head-sha "${HEAD_SHA}" \
+            --output "${work}/subject.json")"
+          python3 scripts/review_bypass_attestation.py predicate \
+            --repo "${GITHUB_REPOSITORY}" --pr "${PR}" --head-sha "${HEAD_SHA}" \
+            --head-repo "${HEAD_REPO}" --base-ref "${BASE_REF}" --base-sha "${BASE_SHA}" \
+            --author "${AUTHOR}" \
+            --reviews "${work}/reviews.json" --permissions "${work}/permissions.tsv" \
+            --event "${GITHUB_EVENT_NAME}" --run-id "${GITHUB_RUN_ID}" \
+            --run-attempt "${GITHUB_RUN_ATTEMPT}" --workflow-ref "${GITHUB_WORKFLOW_REF}" \
+            --output "${work}/predicate.json"
+          echo "digest=${digest}" >> "${GITHUB_OUTPUT}"
+
+      - name: Sign a record that the head is unreviewed
+        id: attest
+        if: steps.decide.outputs.decision == 'UNREVIEWED'
+        uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6 # v4.2.2
+        with:
+          subject-name: review-bypass/pr-${{ github.event.pull_request.number }}
+          subject-digest: sha256:${{ steps.subject.outputs.digest }}
+          predicate-type: https://github.com/google/cybernetic-agent-governance-engine/attestations/review-bypass/v1
+          predicate-path: ${{ runner.temp }}/review-bypass/predicate.json
+
+      - name: Verify the record from the attestations API
+        id: verify
+        if: steps.decide.outputs.decision == 'UNREVIEWED'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR: ${{ github.event.pull_request.number }}
+          PREDICATE_TYPE: https://github.com/google/cybernetic-agent-governance-engine/attestations/review-bypass/v1
+        run: |
+          set -euo pipefail
+          work="${RUNNER_TEMP}/review-bypass"
+          # The API can trail the upload by a few seconds. A head whose record
+          # never verifies keeps the check failed.
+          verified=false
+          for attempt in 1 2 3 4 5; do
+            if gh attestation verify "${work}/subject.json" \
+                --repo "${GITHUB_REPOSITORY}" \
+                --predicate-type "${PREDICATE_TYPE}" \
+                --signer-workflow "${GITHUB_REPOSITORY}/.github/workflows/review-bypass-attestation.yml" \
+                --source-ref "refs/pull/${PR}/merge" \
+                --deny-self-hosted-runners; then
+              verified=true
+              break
+            fi
+            sleep "$((attempt * 5))"
+          done
+          if [ "${verified}" != "true" ]; then
+            echo "::error title=Record not verified::The signed record for this head did not verify, so the check fails and the merge stays blocked."
+            exit 1
+          fi
+          echo "verified=true" >> "${GITHUB_OUTPUT}"
+
+      - name: Pass only on an approval or a verified record
+        env:
+          DECISION: ${{ steps.decide.outputs.decision }}
+          VERIFIED: ${{ steps.verify.outputs.verified }}
+          DIGEST: ${{ steps.subject.outputs.digest }}
+          ATTESTATION_URL: ${{ steps.attest.outputs.attestation-url }}
+          PR: ${{ github.event.pull_request.number }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: |
+          set -euo pipefail
+          case "${DECISION}" in
+            APPROVED)
+              {
+                echo "### Approved review or recorded bypass: approved"
+                echo
+                echo "A reviewer other than the author, with write access, approved head \`${HEAD_SHA}\` of #${PR}."
+              } >> "${GITHUB_STEP_SUMMARY}"
+              ;;
+            UNREVIEWED)
+              if [ "${VERIFIED}" != "true" ] || [ -z "${DIGEST}" ] || [ -z "${ATTESTATION_URL}" ]; then
+                echo "::error title=Unrecorded::Head ${HEAD_SHA} is unreviewed and no verified record covers it."
+                exit 1
+              fi
+              echo "::notice title=UNREVIEWED::No approving review. This check records the bypass; it does not review the change."
+              {
+                echo "### UNREVIEWED: no approving review. This check records the bypass; it does not review the change."
+                echo
+                echo "No reviewer other than the author, with write access, approved head \`${HEAD_SHA}\` of #${PR}. The signed record below discloses that; it says \`\"reviewed\": false\` and is not a review or an approval."
+                echo
+                echo "- Subject: \`{\"head_sha\":\"${HEAD_SHA}\",\"pr\":${PR},\"repo\":\"${GITHUB_REPOSITORY}\"}\`"
+                echo "- Subject digest: \`sha256:${DIGEST}\`"
+                echo "- Record: ${ATTESTATION_URL}"
+              } >> "${GITHUB_STEP_SUMMARY}"
+              ;;
+            *)
+              echo "::error title=No decision::The decision step recorded no decision."
+              exit 1
+              ;;
+          esac

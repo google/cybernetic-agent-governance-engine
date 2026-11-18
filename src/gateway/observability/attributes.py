@@ -73,10 +73,12 @@ OBSERVATION_NAME: Final[str] = f"{NAMESPACE}.observation.name"
 """Human-readable observation name (e.g. 'governance_evaluation', 'opa_policy_check')"""
 
 OBSERVATION_INPUT: Final[str] = f"{NAMESPACE}.observation.input"
-"""Input payload for the observation (typically JSON string or message text)"""
+"""Observation input payload key. Content-bearing: CAGE never sets it, and the span
+content filter (``content_filter.py``) drops it at export"""
 
 OBSERVATION_OUTPUT: Final[str] = f"{NAMESPACE}.observation.output"
-"""Output payload for the observation (typically JSON string, verdict, or completion)"""
+"""Observation output payload key. Content-bearing: CAGE never sets it, and the span
+content filter (``content_filter.py``) drops it at export"""
 
 OBSERVATION_MODEL_NAME: Final[str] = f"{NAMESPACE}.observation.model.name"
 """Model name/identifier (e.g. 'gemini-1.5-pro', 'llama-3-70b')"""
@@ -283,8 +285,8 @@ SPAN_ATTR_CAGE_VERDICT: Final[str] = "cage.verdict"
 """CAGE governance verdict (ALLOW, DENY, etc.)"""
 
 SPAN_ATTR_CAGE_PRINCIPAL_VERIFIED: Final[str] = "cage.principal.verified"
-"""Boolean: was the span's end-user principal (``enduser.id``) authenticated?
-``False`` when the principal is caller-asserted."""
+"""Boolean: was the request's end-user principal authenticated? ``False`` when the
+principal is caller-asserted. The principal itself is never exported."""
 
 SPAN_ATTR_CAGE_SEAL_ISSUED: Final[str] = "cage.seal_issued"
 """Boolean: was a routing seal issued?"""
@@ -336,8 +338,19 @@ SPAN_ATTR_THREAD_ID: Final[str] = "thread.id"
 """Thread/conversation identifier"""
 
 SPAN_ATTR_ENDUSER_ID: Final[str] = "enduser.id"
-"""End-user identifier (OpenTelemetry ``enduser.id``); pair with
-``SPAN_ATTR_CAGE_PRINCIPAL_VERIFIED`` to record whether it was authenticated"""
+"""End-user identifier key (OpenTelemetry ``enduser.id``). CAGE never sets it, and
+the span content filter (``content_filter.py``) drops it at export"""
 
 SPAN_ATTR_MCP_TOOL_RESULT_LENGTH: Final[str] = "mcp.tool.result_length"
 """MCP tool result length (characters)"""
+
+
+# ---------------------------------------------------------------------------
+# 10. Content size (the content itself is never exported)
+# ---------------------------------------------------------------------------
+
+SPAN_ATTR_CONTENT_INPUT_LENGTH: Final[str] = "cage.content.input_length"
+"""Character length of the prompt or request text a span handled"""
+
+SPAN_ATTR_CONTENT_OUTPUT_LENGTH: Final[str] = "cage.content.output_length"
+"""Character length of the model or tool response text a span handled"""

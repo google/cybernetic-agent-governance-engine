@@ -33,7 +33,7 @@ HEADER = """# Copyright 2026 Google LLC
 TS_HEADER = HEADER.replace("#", "//")
 
 
-def patch_files():
+def patch_files() -> None:
     for root_dir in ["src", "tests", "deployment"]:
         for path in Path(root_dir).rglob("*"):
             if path.suffix in [".py", ".ts", ".js", ".tsx", ".jsx"]:

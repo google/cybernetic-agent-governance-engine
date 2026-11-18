@@ -36,6 +36,8 @@ import math
 import os
 import sys
 import time
+import uuid
+from collections.abc import MutableMapping
 from contextlib import asynccontextmanager
 from typing import Any
 
@@ -361,7 +363,6 @@ try:
             span.set_attribute("otel.drop", True)
             span.set_recording(False)
             return
-        span.set_attribute("input", f"{method} {path}")
         span.update_name(f"{method} {path}")
         headers = {
             k.decode("utf-8").lower(): v.decode("utf-8")
@@ -605,11 +606,67 @@ async def verify_content_safety(text: str) -> str:
 # Mount Stateless MCP Streamable HTTP with distributed tracing (A3)
 # ---------------------------------------------------------------------------
 
+
+class _SubscriptableJSONResponse(JSONResponse):
+    """JSONResponse preserving dict subscripting for direct unit-test callers."""
+
+    def __init__(self, content: Any, status_code: int = 200, **kwargs: Any) -> None:
+        super().__init__(content=content, status_code=status_code, **kwargs)
+        self._json_payload: dict[str, Any] = (
+            dict(content) if isinstance(content, dict) else {}
+        )
+
+    def __getitem__(self, key: str) -> Any:
+        return self._json_payload[key]
+
+    def get(self, key: str, default: Any = None) -> Any:
+        return self._json_payload.get(key, default)
+
+
+class McpRateLimitMiddleware:
+    """ASGI middleware enforcing SharedRateLimiter on the /mcp Streamable HTTP surface."""
+
+    def __init__(self, inner_app: Any) -> None:
+        self.app = inner_app
+
+    async def __call__(
+        self, scope: MutableMapping[str, Any], receive: Any, send: Any
+    ) -> None:
+        if scope.get("type") != "http":
+            await self.app(scope, receive, send)
+            return
+        req_scope: dict[str, Any] = (
+            dict(scope) if scope.get("app") is not None else {**scope, "app": app}
+        )
+        request = Request(req_scope)
+        p_limit, win = _effective_mcp_rate_limits()
+        verdict = await get_shared_rate_limiter().check_request(
+            request,
+            "mcp",
+            principal_per_min=p_limit,
+            window_seconds=win,
+        )
+        if not verdict.allowed:
+            retry_after = max(1, int(verdict.retry_after_seconds or 1))
+            resp = JSONResponse(
+                status_code=429,
+                headers={"Retry-After": str(retry_after)},
+                content={
+                    "error": "rate_limit_exceeded",
+                    "scope": verdict.scope or "principal",
+                    "retry_after_seconds": retry_after,
+                },
+            )
+            await resp(scope, receive, send)
+            return
+        await self.app(scope, receive, send)
+
+
 patch_mcp_tools(mcp)
 logger.info(
-    "Mounting Stateless MCP Streamable HTTP App at /mcp (with distributed tracing)..."
+    "Mounting Stateless MCP Streamable HTTP App at /mcp (with distributed tracing and GCRA rate limiting)..."
 )
-app.mount("/mcp", mcp.streamable_http_app())
+app.mount("/mcp", McpRateLimitMiddleware(mcp.streamable_http_app()))
 
 
 # ---------------------------------------------------------------------------
@@ -728,11 +785,41 @@ async def execute_tool_endpoint(request_body: ToolExecutionRequest, request: Req
         )
 
     from src.gateway.governance.evidence.stream import EvidenceChainUnavailableError
+    from src.gateway.governance.execution_idempotency import UnsettledDuplicate
+    from src.gateway.governance.governor.errors import GovernanceInfrastructureError
+    from src.gateway.governance.routing_seal import SymbolicGovernorViolation
+    from src.gateway.infrastructure.privacy import scrub_pii
     from src.gateway.server.governance_middleware import (
         ActionDeferred,
         get_last_refusal_proof_hash,
         reset_last_refusal_proof_hash,
+        sanitize_mcp_tool_response,
         set_last_refusal_proof_hash,
+    )
+
+    def _valid_exc_types(
+        *candidates: Any, exclude: tuple[type[BaseException], ...] = ()
+    ) -> tuple[type[BaseException], ...]:
+        return tuple(
+            cls
+            for cls in candidates
+            if isinstance(cls, type)
+            and issubclass(cls, BaseException)
+            and cls not in exclude
+        )
+
+    # Guard against unit tests that stub module imports with MagicMock or bare Exception.
+    action_deferred_types = _valid_exc_types(
+        ActionDeferred, exclude=(BaseException, Exception, PermissionError)
+    )
+    infra_error_types = _valid_exc_types(
+        GovernanceInfrastructureError,
+        exclude=(BaseException, Exception, RuntimeError),
+    )
+    governed_error_types = _valid_exc_types(
+        SymbolicGovernorViolation,
+        UnsettledDuplicate,
+        exclude=(BaseException, Exception, RuntimeError),
     )
 
     func = tool_map[request_body.tool_name]
@@ -742,31 +829,133 @@ async def execute_tool_endpoint(request_body: ToolExecutionRequest, request: Req
             output = await func(**request_body.params)
         else:
             output = await asyncio.to_thread(func, **request_body.params)
-        response: dict[str, Any] = {"status": "SUCCESS", "output": str(output)}
+        output_str = str(output)
+        current_span = trace.get_current_span()
+        is_rec = getattr(current_span, "is_recording", None)
+        active_span = (
+            current_span
+            if current_span is not None and (not callable(is_rec) or is_rec())
+            else None
+        )
+        san_res = sanitize_mcp_tool_response(
+            request_body.tool_name,
+            output_str,
+            span=active_span,
+        )
+        violation = await san_res if inspect.isawaitable(san_res) else san_res
+        if isinstance(violation, str) and violation:
+            mark_request_refused()
+            blocked_output_payload: dict[str, Any] = {
+                "status": "ERROR",
+                "error_type": "IndirectPromptInjectionError",
+                "stage": "post_execution_output_sanitizer",
+                "violation": violation,
+                "error": f"Tool response blocked by indirect prompt-injection guard ({violation})",
+            }
+            proof_hash = get_last_refusal_proof_hash()
+            if proof_hash:
+                blocked_output_payload["proof_hash"] = proof_hash
+            return _SubscriptableJSONResponse(
+                status_code=403,
+                content=blocked_output_payload,
+            )
+        response: dict[str, Any] = {"status": "SUCCESS", "output": output_str}
         proof_hash = get_last_refusal_proof_hash()
         if proof_hash:
             mark_request_refused()
             response["proof_hash"] = proof_hash
         return response
     except EvidenceChainUnavailableError as exc:
+        mark_request_refused()
         logger.error("Evidence chain unavailable during /tools/execute: %s", exc)
-        return JSONResponse(
+        return _SubscriptableJSONResponse(
             status_code=503,
             content={
                 "status": "ERROR",
                 "error": "evidence_chain_unavailable",
-                "detail": f"EvidenceChainUnavailableError: {exc}",
+                "detail": f"EvidenceChainUnavailableError: {scrub_pii(str(exc))}",
             },
         )
+    except infra_error_types as exc:
+        logger.error(
+            "Governance infrastructure unavailable during /tools/execute (%s/%s): %s",
+            getattr(exc, "dependency", "unknown"),
+            getattr(exc, "failure_code", "unknown"),
+            exc,
+        )
+        return _SubscriptableJSONResponse(
+            status_code=503,
+            content={
+                "status": "ERROR",
+                "error": getattr(
+                    exc, "error_code", "governance_infrastructure_unavailable"
+                ),
+                "dependency": getattr(exc, "dependency", "unknown"),
+                "failure_code": getattr(exc, "failure_code", "unknown"),
+                "detail": scrub_pii(str(exc)),
+            },
+        )
+    except action_deferred_types as exc:
+        # ActionDeferred subclasses PermissionError — catch it before PermissionError so 202 DEFERRED is reachable.
+        return _SubscriptableJSONResponse(
+            status_code=202,
+            content={
+                "status": "DEFERRED",
+                "deferred_id": getattr(exc, "deferred_id", ""),
+                "defer_reason": getattr(exc, "defer_reason", ""),
+                "approval_retained": bool(getattr(exc, "approval_retained", False)),
+            },
+        )
+    except governed_error_types as exc:
+        # Structured governed rejections (SymbolicGovernorViolation, UnsettledDuplicate)
+        # preserve the /tools/execute HTTP 200 protocol envelope while marking the request refused.
+        mark_request_refused()
+        logger.warning(
+            "Governed tool execution rejected (%s): %s",
+            type(exc).__name__,
+            exc,
+        )
+        gov_payload: dict[str, Any] = {
+            "status": "ERROR",
+            "error_type": type(exc).__name__,
+            "error": scrub_pii(str(exc)),
+        }
+        proof_hash = get_last_refusal_proof_hash()
+        if proof_hash:
+            gov_payload["proof_hash"] = proof_hash
+        return _SubscriptableJSONResponse(status_code=200, content=gov_payload)
+    except PermissionError as exc:
+        mark_request_refused()
+        logger.warning("Tool execution blocked by governance: %s", exc)
+        blocked_payload: dict[str, Any] = {
+            "status": "ERROR",
+            "error_type": type(exc).__name__,
+            "error": "Governance blocked tool execution",
+        }
+        violated_tier = getattr(exc, "violated_tier", "")
+        if violated_tier:
+            blocked_payload["violated_tier"] = violated_tier
+        proof_hash = get_last_refusal_proof_hash() or getattr(exc, "proof_hash", "")
+        if proof_hash:
+            blocked_payload["proof_hash"] = proof_hash
+        return _SubscriptableJSONResponse(status_code=403, content=blocked_payload)
     except Exception as exc:
-        if not isinstance(exc, ActionDeferred):
-            mark_request_refused()
-        logger.error("Tool Execution Error: %s", exc)
-        err_response: dict[str, Any] = {"status": "ERROR", "error": str(exc)}
+        mark_request_refused()
+        correlation_id = str(uuid.uuid4())
+        logger.error(
+            "Tool Execution Error [correlation_id=%s]",
+            correlation_id,
+            exc_info=exc,
+        )
+        err_response: dict[str, Any] = {
+            "status": "ERROR",
+            "error": "Internal tool execution error",
+            "correlation_id": correlation_id,
+        }
         proof_hash = get_last_refusal_proof_hash()
         if proof_hash:
             err_response["proof_hash"] = proof_hash
-        return err_response
+        return _SubscriptableJSONResponse(status_code=500, content=err_response)
     finally:
         reset_last_refusal_proof_hash(refusal_token)
 

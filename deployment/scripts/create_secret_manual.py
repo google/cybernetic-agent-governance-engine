@@ -17,7 +17,7 @@ import subprocess
 from pathlib import Path
 
 
-def load_dotenv(dotenv_path=None):
+def load_dotenv(dotenv_path: Path | None = None) -> bool:
     if dotenv_path is None:
         dotenv_path = Path.cwd() / ".env"
 
@@ -37,7 +37,7 @@ def load_dotenv(dotenv_path=None):
     return True
 
 
-def create_secret():
+def create_secret() -> None:
     load_dotenv()
 
     aws_access_key = os.environ.get("AWS_ACCESS_KEY_ID", "")

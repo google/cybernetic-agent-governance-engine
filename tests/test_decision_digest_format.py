@@ -77,6 +77,7 @@ from src.gateway.governance.seams.quarantine import (
     QuarantineDirective,
     QuarantineTriggerReason,
 )
+from src.gateway.server.workload_identity import _serving
 from src.integrations.actuator_02.ocsf_ingestor import (
     OcsfEventModel,
     OcsfEvidenceIngestor,
@@ -457,8 +458,12 @@ async def test_refusal_triggered_quarantine_records_the_refusal_proof_hash(
     sink = _CapturingSink()
     monkeypatch.setattr(_SINK, lambda: sink)
     monkeypatch.setenv("CAGE_QUARANTINE_ACTUATOR", "simulated")
+    monkeypatch.setenv("CAGE_ENABLE_AUTO_QUARANTINE", "true")
 
-    with pytest.raises(GovernanceError) as denied:
+    with (
+        _serving("spiffe://cluster.local/ns/cage/sa/breach-agent"),
+        pytest.raises(GovernanceError) as denied,
+    ):
         await verdicts.handle_deny(
             action="transfer_funds",
             params=_breach_params(),
@@ -484,6 +489,7 @@ async def test_an_invalid_refusal_hash_refuses_the_quarantine_not_the_deny(
     sink = _CapturingSink()
     monkeypatch.setattr(_SINK, lambda: sink)
     monkeypatch.setenv("CAGE_QUARANTINE_ACTUATOR", "simulated")
+    monkeypatch.setenv("CAGE_ENABLE_AUTO_QUARANTINE", "true")
     built = verdicts.build_refusal_receipt
 
     def _malformed(*args: Any, **kwargs: Any) -> Any:
@@ -495,7 +501,10 @@ async def test_an_invalid_refusal_hash_refuses_the_quarantine_not_the_deny(
         "src.gateway.governance.quarantine_actuator.dispatch_quarantine", dispatched
     )
 
-    with pytest.raises(GovernanceError) as denied:
+    with (
+        _serving("spiffe://cluster.local/ns/cage/sa/breach-agent"),
+        pytest.raises(GovernanceError) as denied,
+    ):
         await verdicts.handle_deny(
             action="transfer_funds",
             params=_breach_params(),
@@ -759,7 +768,11 @@ async def test_a_kernel_quarantine_writes_a_conformant_stream(
     real_stream: SimpleNamespace, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     monkeypatch.setenv("CAGE_QUARANTINE_ACTUATOR", "simulated")
-    with pytest.raises(GovernanceError) as denied:
+    monkeypatch.setenv("CAGE_ENABLE_AUTO_QUARANTINE", "true")
+    with (
+        _serving("spiffe://cluster.local/ns/cage/sa/breach-agent"),
+        pytest.raises(GovernanceError) as denied,
+    ):
         await verdicts.handle_deny(
             action="transfer_funds",
             params=_breach_params(),

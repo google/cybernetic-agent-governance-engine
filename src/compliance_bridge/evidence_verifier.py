@@ -15,10 +15,21 @@
 """evidence_verifier.py — Independent verification of custodied evidence (Layer 3)
 
 The :mod:`evidence_custodian` writes gateway evidence to the WORM cold store
-as NDJSON batches, each with a ``cage-evidence-batch/1`` attestation signed by
-``EVIDENCE_KMS_KEY``. This module reads that archive back and decides what
-may be cited as evidence. It trusts nothing it reads: every property the
-custodian claims is recomputed.
+as NDJSON batches, each with a ``cage-evidence-batch/2`` attestation (or
+historical pre-stamping ``cage-evidence-batch/1`` attestation) signed by
+``EVIDENCE_KMS_KEY``. ``cage-evidence-batch/2`` stamps ``deployment_posture``
+(``"production"`` or ``"staging"``) inside the KMS-signed JCS payload;
+pre-stamping ``cage-evidence-batch/1`` archives remain ``citable=True`` by
+default without opt-in flags, surfaced structurally with
+``posture_status="unstamped_v1"`` and
+``citable_qualifications=["unstamped_v1_posture"]`` so strict consumers can
+test ``report.citable and not report.citable_qualifications`` (or pass
+``allow_qualifications=False`` / ``--require-unqualified``). Accepting ``v1``
+is cryptographically bounded because ``schema`` and ``deployment_posture`` live
+inside the signed body: relabelling a ``v2`` attestation as ``v1`` or mutating
+its posture breaks signature verification without ``EVIDENCE_KMS_KEY``.
+This module reads the archive back and trusts nothing it reads: every property
+the custodian claims is recomputed.
 
 Per batch (:meth:`CustodyVerifier.verify_batch`)
 ------------------------------------------------
@@ -37,7 +48,9 @@ Per batch (:meth:`CustodyVerifier.verify_batch`)
 
 Across batches (:meth:`CustodyVerifier.verify_all`)
 ---------------------------------------------------
-Signed batches are grouped by ``chain_id`` and ordered by sequence. Each
+Signed batches are grouped by ``chain_id`` and ordered by sequence, and
+checked for deployment-posture consistency (mixing ``"staging"`` and
+``"production"`` ``v2`` batches in one archive fails closed). Each
 batch must continue the previous one (next sequence, ``prev_hash`` equal to
 the previous ``last_record_hash``). A jump is acceptable only when the later
 attestation itself declares the gap (the custodian records trimming it
@@ -63,11 +76,12 @@ key. With no anchors every signed attestation fails closed on unknown kid.
 
 Usage::
 
-    uv run python -m src.compliance_bridge.evidence_verifier [--prefix P] [--require-citable] [--json]
+    uv run python -m src.compliance_bridge.evidence_verifier [--prefix P] [--require-citable] [--require-unqualified] [--json]
 
 Exit status is 0 only when the report has no failures (or, with
-``--require-citable``, when the archive verified cleanly with at least one
-signed batch and no declared gaps).
+``--require-citable`` / ``--require-unqualified``, when the archive verified
+cleanly with at least one signed batch, no declared gaps, and—when
+``--require-unqualified`` is set—empty ``citable_qualifications``).
 """
 
 from __future__ import annotations
@@ -81,7 +95,7 @@ import os
 import re
 import sys
 from dataclasses import asdict, dataclass, field, replace
-from typing import Any
+from typing import Any, Final, Literal
 
 from src.gateway.governance.env_posture import is_enforcing
 from src.gateway.governance.evidence.cold_store import (
@@ -92,6 +106,8 @@ from src.gateway.governance.evidence.stream import verify_record
 from src.gateway.governance.kms_signer import KMSGovernanceSigner
 
 from .evidence_custodian import (
+    ATTESTATION_SCHEMA_V1,
+    ATTESTATION_SCHEMA_V2,
     GAP_KIND_BOUND_CHAIN_ROTATION,
     GAP_KIND_CHAIN_ROTATION,
     EvidenceCustodyConfigError,
@@ -115,6 +131,12 @@ VERIFY_PREFIX_ENV = "EVIDENCE_VERIFY_PREFIX"
 # DeclaredGap.kind for entries trimmed before custody. The custodian's
 # attestation records these with ``expected_sequence`` and no kind.
 GAP_KIND_STREAM_TRIM = "STREAM_TRIM"
+
+POSTURE_STATUS_PRODUCTION: Final = "production"
+POSTURE_STATUS_STAGING: Final = "staging"
+POSTURE_STATUS_UNSTAMPED_V1: Final = "unstamped_v1"
+PostureStatus = Literal["production", "staging", "unstamped_v1"]
+QUALIFICATION_UNSTAMPED_V1_POSTURE = "unstamped_v1_posture"
 
 _DATA_SUFFIX = ".ndjson"
 _SIGNED_SUFFIX = ".attestation.json"
@@ -293,6 +315,21 @@ class VerifiedBatch:
     # against the data object and against strict ordering within the batch.
     first_stream_id: str = ""
     last_stream_id: str = ""
+    attestation_schema: str = ATTESTATION_SCHEMA_V2
+    deployment_posture: str | None = None
+
+    @property
+    def posture_status(self) -> PostureStatus:
+        """Three-valued posture proven by this batch's KMS-signed attestation."""
+        if self.attestation_schema == ATTESTATION_SCHEMA_V1:
+            return POSTURE_STATUS_UNSTAMPED_V1
+        if self.deployment_posture == POSTURE_STATUS_PRODUCTION:
+            return POSTURE_STATUS_PRODUCTION
+        if self.deployment_posture == POSTURE_STATUS_STAGING:
+            return POSTURE_STATUS_STAGING
+        raise ValueError(
+            f"VerifiedBatch carries unexpected deployment_posture={self.deployment_posture!r}"
+        )
 
 
 @dataclass(frozen=True)
@@ -341,6 +378,20 @@ class CustodyVerificationReport:
     non-evidentiary attestations do not fail the report, but neither is
     evidence: gaps are ranges that were never custodied, and unsigned
     batches are never counted in ``verified``.
+
+    ``citable`` is accompanied by two structural fields so consumers never
+    conflate pre-stamping ``v1`` archives or ``staging`` archives with
+    unqualified ``production`` evidence:
+
+    * ``citable_qualifications``: ``[]`` when ``citable`` is true over ``v2``
+      posture-stamped batches (``citable and not citable_qualifications`` is
+      the strict unqualified check), or ``["unstamped_v1_posture"]`` when any
+      verified batch uses ``cage-evidence-batch/1``.
+    * ``posture_status``: three-valued (``"production"``, ``"staging"``, or
+      ``"unstamped_v1"``) whenever ``ok`` is true and ``verified`` is
+      non-empty; ``None`` otherwise. Because ``"unstamped_v1"`` is neither
+      ``"staging"`` nor ``"production"``, a consumer handling only the two
+      stamped postures fails loudly instead of defaulting to ``"production"``.
     """
 
     prefix: str
@@ -359,15 +410,41 @@ class CustodyVerificationReport:
         """True when the archive verified cleanly with at least one signed batch and no gaps."""
         return self.ok and bool(self.verified) and not self.declared_gaps
 
+    @property
+    def posture_status(self) -> PostureStatus | None:
+        """Three-valued archive posture (``production`` | ``staging`` | ``unstamped_v1``), or ``None``."""
+        if not self.ok or not self.verified:
+            return None
+        if any(b.attestation_schema == ATTESTATION_SCHEMA_V1 for b in self.verified):
+            return POSTURE_STATUS_UNSTAMPED_V1
+        statuses = {b.posture_status for b in self.verified}
+        if len(statuses) != 1:
+            return None
+        return next(iter(statuses))
+
+    @property
+    def citable_qualifications(self) -> list[str]:
+        """Machine-readable caveats on a ``citable=True`` archive (empty when unqualified)."""
+        if not self.citable:
+            return []
+        if self.posture_status == POSTURE_STATUS_UNSTAMPED_V1:
+            return [QUALIFICATION_UNSTAMPED_V1_POSTURE]
+        return []
+
     def assert_citable(
-        self, *, allow_declared_gaps: bool = False
+        self,
+        *,
+        allow_declared_gaps: bool = False,
+        allow_qualifications: bool = True,
     ) -> list[VerifiedBatch]:
         """Fail closed unless this report's verified batches may be cited as evidence.
 
         Raises:
             EvidenceVerificationError: Any batch failed verification, the
-                archive has no signed verified batches, or (unless
-                ``allow_declared_gaps`` is true) the chain has declared gaps.
+                archive has no signed verified batches, (unless
+                ``allow_declared_gaps`` is true) the chain has declared gaps,
+                or (when ``allow_qualifications`` is false) the archive carries
+                ``citable_qualifications``.
         """
         if self.failures:
             reasons = "; ".join(f"{f.key}: {f.reason}" for f in self.failures)
@@ -391,6 +468,12 @@ class CustodyVerificationReport:
                 f"{self.prefix}: archive has declared stream-trim gap(s) ({gaps}); "
                 "chain is incomplete"
             )
+        if not allow_qualifications and self.citable_qualifications:
+            quals = ", ".join(self.citable_qualifications)
+            raise EvidenceVerificationError(
+                f"{self.prefix}: archive has citation qualification(s) ({quals}); "
+                "unqualified v2 posture-stamped evidence is required"
+            )
         return list(self.verified)
 
     def to_dict(self) -> dict[str, Any]:
@@ -398,7 +481,11 @@ class CustodyVerificationReport:
             "prefix": self.prefix,
             "ok": self.ok,
             "citable": self.citable,
-            "verified": [asdict(b) for b in self.verified],
+            "citable_qualifications": self.citable_qualifications,
+            "posture_status": self.posture_status,
+            "verified": [
+                {**asdict(b), "posture_status": b.posture_status} for b in self.verified
+            ],
             "failures": [asdict(f) for f in self.failures],
             "declared_gaps": [asdict(g) for g in self.declared_gaps],
             "bound_rotations": [asdict(r) for r in self.bound_rotations],
@@ -737,6 +824,12 @@ class CustodyVerifier:
 
         raw_stream_key = att.get("stream_key")
         stream_key = raw_stream_key.strip() if isinstance(raw_stream_key, str) else ""
+        att_schema = _require_str(att, "schema", key)
+        att_posture = (
+            _require_str(att, "deployment_posture", key)
+            if att_schema == ATTESTATION_SCHEMA_V2
+            else None
+        )
 
         return VerifiedBatch(
             attestation_key=key,
@@ -762,6 +855,8 @@ class CustodyVerifier:
             stream_key=stream_key,
             first_stream_id=first_sid,
             last_stream_id=last_sid,
+            attestation_schema=att_schema,
+            deployment_posture=att_posture,
         )
 
     async def verify_all(self, prefix: str | None = None) -> CustodyVerificationReport:
@@ -809,6 +904,7 @@ class CustodyVerifier:
             raise
 
         self._check_continuity(report)
+        self._check_posture_consistency(report)
         self._last_report = report
         if _PROM_AVAILABLE:
             VERIFICATION_RUNS_TOTAL.labels(
@@ -819,12 +915,13 @@ class CustodyVerifier:
             DECLARED_GAPS.set(len(report.declared_gaps))
             NON_EVIDENTIARY_BATCHES.set(len(report.non_evidentiary))
         logger.info(
-            "[EvidenceVerifier] prefix=%s verified=%d failures=%d gaps=%d unsigned=%d",
+            "[EvidenceVerifier] prefix=%s verified=%d failures=%d gaps=%d unsigned=%d posture=%s",
             target_prefix,
             len(report.verified),
             len(report.failures),
             len(report.declared_gaps),
             len(report.non_evidentiary),
+            report.posture_status,
         )
         return report
 
@@ -833,17 +930,23 @@ class CustodyVerifier:
         prefix: str | None = None,
         *,
         allow_declared_gaps: bool = False,
+        allow_qualifications: bool = True,
     ) -> CustodyVerificationReport:
         """Verify the archive and fail closed unless it is citable as evidence.
 
         Raises:
             EvidenceVerificationError: Any batch failed verification, the
-                archive has no signed verified batches, or (unless
-                ``allow_declared_gaps`` is true) the chain has declared gaps.
+                archive has no signed verified batches, (unless
+                ``allow_declared_gaps`` is true) the chain has declared gaps,
+                or (when ``allow_qualifications`` is false) the archive carries
+                ``citable_qualifications``.
             ColdStoreError: The backend could not be listed or read.
         """
         report = await self.verify_all(prefix)
-        report.assert_citable(allow_declared_gaps=allow_declared_gaps)
+        report.assert_citable(
+            allow_declared_gaps=allow_declared_gaps,
+            allow_qualifications=allow_qualifications,
+        )
         return report
 
     async def run_forever(self) -> None:
@@ -1089,6 +1192,24 @@ class CustodyVerifier:
                 expected_seq = batch.last_sequence + 1
                 expected_prev = batch.last_record_hash
 
+    @staticmethod
+    def _check_posture_consistency(report: CustodyVerificationReport) -> None:
+        """Reject archives that mix incompatible v2 deployment postures (e.g. staging + production)."""
+        stamped = sorted(
+            {
+                b.deployment_posture
+                for b in report.verified
+                if b.deployment_posture is not None
+            }
+        )
+        if len(stamped) > 1:
+            report.failures.append(
+                VerificationFailure(
+                    report.prefix,
+                    f"archive mixes incompatible deployment postures ({', '.join(stamped)})",
+                )
+            )
+
 
 # ---------------------------------------------------------------------------
 # CLI
@@ -1117,27 +1238,54 @@ def main(argv: list[str] | None = None) -> int:
         action="store_true",
         help="exit non-zero unless the archive has >=1 signed verified batch and no declared gaps",
     )
+    parser.add_argument(
+        "--require-unqualified",
+        action="store_true",
+        help="exit non-zero unless the archive is citable with zero citable_qualifications",
+    )
     parser.add_argument("--json", action="store_true", help="print the full report")
     args = parser.parse_args(argv)
     logging.basicConfig(level=logging.INFO, format="%(message)s")
 
     report = asyncio.run(_run(args.prefix))
+    require_citable = bool(args.require_citable or args.require_unqualified)
     if args.json:
-        print(json.dumps(report.to_dict(), indent=2, sort_keys=True))
+        payload = report.to_dict()
+        if require_citable and report.ok:
+            try:
+                report.assert_citable(allow_qualifications=not args.require_unqualified)
+            except EvidenceVerificationError as exc:
+                payload["citation_error"] = str(exc)
+        print(json.dumps(payload, indent=2, sort_keys=True))
     else:
+        quals = ",".join(report.citable_qualifications) or "none"
         print(
             f"verified={len(report.verified)} failures={len(report.failures)} "
             f"declared_gaps={len(report.declared_gaps)} "
-            f"non_evidentiary={len(report.non_evidentiary)}"
+            f"non_evidentiary={len(report.non_evidentiary)} "
+            f"posture_status={report.posture_status} "
+            f"citable_qualifications={quals}"
         )
         for failure in report.failures:
             print(f"FAIL {failure.key}: {failure.reason}")
-        if args.require_citable and report.ok and not report.citable:
+        if (
+            require_citable
+            and report.ok
+            and (
+                not report.citable
+                or (args.require_unqualified and bool(report.citable_qualifications))
+            )
+        ):
             try:
-                report.assert_citable()
+                report.assert_citable(allow_qualifications=not args.require_unqualified)
             except EvidenceVerificationError as exc:
                 print(f"NOT CITABLE {exc}")
-    passed = report.citable if args.require_citable else report.ok
+    if args.require_unqualified:
+        passed = report.citable and not report.citable_qualifications
+    elif args.require_citable:
+        passed = report.citable
+    else:
+        passed = report.ok
     return 0 if passed else 1
 
 

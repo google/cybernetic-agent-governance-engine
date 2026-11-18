@@ -1,5 +1,18 @@
 # Security & Compliance Status — CAGE v3.0.1
 
+> [!WARNING]
+> **Superseded. Do not cite this document as current status.** It describes
+> v3.0.1 as of 2026-08-28 and has not been maintained since. Several of its
+> statements are no longer true, among them the Lula manifest counts, the
+> control-barrier and routing-seal descriptions, and the status of individual
+> POA&M items. It is kept because other documents link to it.
+>
+> For current status use:
+> - [`docs/POAM.md`](../POAM.md) for open findings and accepted risks;
+> - [`OSCAL_EVIDENCE_CLAIM_REGISTER.md`](../compliance/OSCAL_EVIDENCE_CLAIM_REGISTER.md) for whether each compliance claim's evidence holds;
+> - [`compliance/gate_w_certification.json`](../../compliance/gate_w_certification.json) for what was last certified, at which commit;
+> - the Security and compliance status section of the root [`README.md`](../../README.md).
+
 **Date:** 2026-08-28
 **Status:** Public disclosure of current security posture and compliance implementation state
 
@@ -46,27 +59,9 @@ CAGE v3.0.1 provides a **production-grade AI governance enforcement runtime**. T
 | PII Sanitizer                    | Pre-ledger regex sanitization pipeline (SSN, CC, email, phone, API key/Bearer token) applied to all UCA records before WORM persistence. ISO 42001 Annex A.6. | ✅ Implemented (fix/track-b-v2-release-gates) |
 | UCA Logger                       | ISO 42001 Clause 6.1 UCA record builder; KMS-signed (HMAC-SHA256 stub in `CAGE_ENV=test`); region-gated WORM persistence (`CAGE_DEPLOYMENT_REGION` → `OSCAL_S3_BUCKET_{REGION}`); UCA types: `quota_exceeded`, `prompt_injection`, `pii_sanitization`. | ✅ Implemented (fix/track-b-v2-release-gates) |
 
-### Compliance Automation (26 Lula Validation Manifests — 4 Active, 22 Stub)
+### Compliance Automation (Lula)
 
-Automated continuous compliance assessment covers **26 Lula validation manifests** in `compliance/lula/`. Of these, **4 are Active** (production-ready, enabled in the Lula CronJob) and **22 are Stubs** (logic complete but requiring cluster-specific namespace/resource name configuration before activation). The 22 stubs span: 1 CSA AARM (ALL scope), 10 NIST SP 800-53 (US_FED), 5 NIST AI 600-1 (US_FED), 3 EU AI Act/GDPR/DORA (EU_ECB), and 3 MAS FEAT/Notice 655/TRM (APAC_MAS). See [`compliance/lula/README.md`](../../README.md) for the full status table and activation instructions.
-
-| Control   | Standard        | Region Scope | Description                                       | Threshold            | Lula Validation              | Status |
-| --------- | --------------- | ------------ | ------------------------------------------------- | -------------------- | ---------------------------- | ------ |
-| ISO A.5.2 | ISO 42001       | ALL          | Social impact — hate speech / bias prevention     | `safety_rate ≥ 99%`  | `lula-validation-a52.yaml`   | ✅ **Active** |
-| ISO A.5.3 | ISO 42001       | ALL          | Logging and monitoring — audit event completeness | `safety_rate ≥ 98%`  | `lula-validation-a53.yaml`   | ✅ **Active** |
-| ISO A.9.2 | ISO 42001       | ALL          | Data privacy — no PII sent to external APIs       | `safety_rate = 100%` | `lula-validation-a92.yaml`   | ✅ **Active** |
-| SC-4      | NIST SP 800-53  | US_FED       | Fiscal limits — human approval for trades > $10k  | OPA policy active    | `lula-validation-sc4.yaml`   | ✅ **Active** |
-| AARM-V    | CSA AARM v1.0   | ALL          | 11-vector AI agent threat model coverage          | All vectors covered  | `lula-validation-aarm-vectors.yaml` | 🔶 **Stub** |
-| AC-2      | NIST SP 800-53  | US_FED       | Account management — service account lifecycle    | Lifecycle validated  | `lula-validation-ac2.yaml`   | 🔶 **Stub** |
-| AC-3      | NIST SP 800-53  | US_FED       | Access enforcement — OPA policy gate              | OPA circuit breaker  | `lula-validation-ac3.yaml`   | 🔶 **Stub** |
-| AU-12     | NIST SP 800-53  | US_FED       | Audit record generation — OTel span completeness  | `safety_rate ≥ 98%`  | `lula-validation-au12.yaml`  | 🔶 **Stub** |
-| CM-6      | NIST SP 800-53  | US_FED       | Configuration settings — governance config        | Config validated     | `lula-validation-cm6.yaml`   | 🔶 **Stub** |
-| IA-3      | NIST SP 800-53  | US_FED       | Device identification — SPIFFE/SVID identity      | Identity verified    | `lula-validation-ia3.yaml`   | 🔶 **Stub** |
-| IA-5      | NIST SP 800-53  | US_FED       | Authenticator management — KMS HSM key lifecycle  | Key lifecycle valid  | `lula-validation-ia5.yaml`   | 🔶 **Stub** |
-| IR-6      | NIST SP 800-53  | US_FED       | Incident reporting — governance bypass alerts     | Alert pipeline valid | `lula-validation-ir6.yaml`   | 🔶 **Stub** |
-| RA-5      | NIST SP 800-53  | US_FED       | Vulnerability scanning — Trivy/pip-audit CI       | CI scan passing      | `lula-validation-ra5.yaml`   | 🔶 **Stub** |
-| SC-8      | NIST SP 800-53  | US_FED       | Transmission confidentiality — Linkerd mTLS       | mTLS enforced        | `lula-validation-sc8.yaml`   | 🔶 **Stub** |
-| SI-2      | NIST SP 800-53  | US_FED       | Flaw remediation — CVE patching (pip-audit CI)    | CI scan passing      | `lula-validation-si2.yaml`   | 🔶 **Stub** |
+`compliance/lula/` holds 33 Lula manifests. `CronJob/lula-audit` and Gate W evaluate the 26 that carry no `planned` or `not-applicable` header. [`compliance/lula/README.md`](../../compliance/lula/README.md) is the only source of ratings: it rates 12 of the 26 Active, only a manifest it rates Active may back a POA&M closure, and each Active row names the rules the manifest's `validate` composes (POAM-2026-219). The SC-8 manifest checks Memorystore CA pinning only, not Linkerd mTLS.
 
 Findings are expressed as OSCAL Assessment Results and ingested into Langfuse via direct OTLP (OTel Collector deprecated 2026-05-31; Langfuse native OTLP ingestion is now used). **Additional ISO 42001 Annex A controls and the full NIST SP 800-53 control baseline are not yet mapped or assessed.**
 
@@ -144,7 +139,7 @@ The following weaknesses are documented in [`compliance/us_fed/POAM_US_FED.md`](
 | **EU AI Act Art. 27** — FRIA (Step 8) | 🟡 Partial | `fria` tier enforces FRIA currency + provider validation (`CTRL_FRIA_006`, `EU_ECB` only); EU AI Office registration pending |
 | **EU AI Act Art. 61** — Post-market monitoring | 🟡 Partial | Lula CronJob + OSCAL Assessment Results active; formal post-market plan pending |
 | **DORA Art. 10** — ICT risk management | 🟡 Partial | Architecture mapped; full DORA compliance testing pending |
-| **DORA Art. 11** — ICT-related incident management | 🟡 Partial | `GovernanceEventBus` + Slack/PagerDuty alerts active; formal DORA incident plan pending |
+| **DORA Art. 11** — ICT-related incident management | 🟡 Partial | `GovernanceEventBus` + Slack/PagerDuty alerts active; formal DORA incident plan pending (**Correction (`2026-11-16`, `POAM-2026-230`):** no committed profile configures Slack or PagerDuty (`alert_channel = "console"`), so these alerts are log lines) |
 | **DORA Art. 12** — Digital operational resilience testing | ❌ Not started | No DORA resilience testing performed |
 | **GDPR Art. 22** — Automated decision-making | 🟡 Partial | HITL gate enforced; DPIA integration pending |
 | **EBA Guidelines (2023/02)** — Internal governance | 🟡 Partial | Model governance mapped; ECB SSM TRIM validation pending |

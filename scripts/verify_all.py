@@ -12,12 +12,16 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import os
 import shlex
 import subprocess
 import sys
+from pathlib import Path
+
+os.environ.setdefault("CAGE_ENV", "ci")
 
 
-def run_command(command, description):
+def run_command(command: list[str] | str, description: str) -> bool:
     print(f"\n--- Running: {description} ---")
     print(f"Command: {command}")
     try:
@@ -38,23 +42,19 @@ def run_command(command, description):
         return False
 
 
-def main():
-    # DEP-23: Read CAGE_DEPLOYMENT_REGION and run jurisdiction-specific OPA suites.
-    # This script covers universal ISO 42001 controls only. Jurisdiction-specific
-    # OPA test suites (NIST SP 800-53, EU AI Act, MAS FEAT) are run conditionally
-    # based on CAGE_DEPLOYMENT_REGION. R-7: scripts must be region-aware.
-    import os
+def main() -> None:
+    # DEP-23: run the jurisdiction-specific OPA suites for the deployment region.
+    # This script covers universal ISO 42001 controls, plus the NIST SP 800-53,
+    # EU AI Act or MAS FEAT suite of the region resolve_deployment_region()
+    # returns. R-7: scripts must be region-aware.
+    repo_root = str(Path(__file__).resolve().parents[1])
+    if repo_root not in sys.path:
+        sys.path.insert(0, repo_root)
+    from src.gateway.governance.env_posture import resolve_deployment_region
 
-    cage_region = os.environ.get("CAGE_DEPLOYMENT_REGION", "")
+    cage_region = resolve_deployment_region()
     print("🚀 Starting Final Verification Suite 🚀\n")
-    if cage_region:
-        print(
-            f"[INFO] CAGE_DEPLOYMENT_REGION={cage_region} - jurisdiction-specific checks active"
-        )
-    else:
-        print(
-            "[INFO] CAGE_DEPLOYMENT_REGION not set - running universal ISO 42001 checks only"
-        )
+    print(f"[INFO] Region {cage_region} - jurisdiction-specific checks active")
     print()
     success = True
 

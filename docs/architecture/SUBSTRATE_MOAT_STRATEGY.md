@@ -209,7 +209,7 @@ The following work items are ordered by strategic priority. Items marked **[BLOC
 | Python Substrate SDK | HIGH | ✅ Shipped (v0.2.0) | [`packages/cage-client/`](../../packages/cage-client/README.md) |
 | TypeScript Substrate SDK | MEDIUM | TBD | ❌ Not implemented |
 | Policy Version Pinning API | HIGH | TBD | Extend `src/gateway/server/hybrid_server.py` |
-| Developer Quickstart (ACS path) | HIGH | TBD | `docs/QUICKSTART_ACS.md` (new) |
+| Developer Quickstart (ACS path) | HIGH | TBD | A new quickstart document under `docs/` (not yet written) |
 
 ### Phase 3 — Semantic Context Integration (Q1 2027)
 

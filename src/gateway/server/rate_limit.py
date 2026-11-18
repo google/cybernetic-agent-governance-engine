@@ -46,7 +46,10 @@ from typing import Any
 from cachetools import TTLCache
 from fastapi import Request
 
-from src.gateway.server.workload_identity import extract_client_identity
+from src.gateway.server.workload_identity import (
+    current_client_identity,
+    extract_client_identity,
+)
 
 logger = logging.getLogger("Gateway.RateLimit")
 
@@ -191,11 +194,12 @@ def extract_rate_limit_keys(request: Request) -> tuple[str, str]:
     unauthenticated caller cannot spoof distinct principal buckets.
     """
     scope = getattr(request, "scope", None) or {}
-    verified_identity: str | None = None
-    try:
-        verified_identity = extract_client_identity(scope)
-    except Exception:
-        verified_identity = None
+    verified_identity: str | None = current_client_identity()
+    if not verified_identity:
+        try:
+            verified_identity = extract_client_identity(scope)
+        except Exception:
+            verified_identity = None
 
     if verified_identity:
         raw_principal: str | None = None
@@ -230,8 +234,12 @@ def resolve_rate_limits(
 ) -> tuple[int, int, float]:
     """Resolve ``(principal_limit, identity_limit, window_seconds)`` from env or overrides."""
     if window_seconds is not None:
+        if isinstance(window_seconds, bool):
+            raise ValueError("window_seconds must be a finite positive number")
         win = float(window_seconds)
     elif legacy_window_seconds is not None:
+        if isinstance(legacy_window_seconds, bool):
+            raise ValueError("window_seconds must be a finite positive number")
         win = float(legacy_window_seconds)
     else:
         win = float(
@@ -245,11 +253,19 @@ def resolve_rate_limits(
                 ),
             )
         )
+    if not math.isfinite(win) or win <= 0.0:
+        raise ValueError(
+            f"window_seconds must be a finite positive number, got {win!r}"
+        )
     win = max(1.0, win)
 
     if principal_per_min is not None:
+        if isinstance(principal_per_min, bool):
+            raise ValueError("principal_per_min must be a non-negative integer")
         p_limit = int(principal_per_min)
     elif legacy_max_calls is not None:
+        if isinstance(legacy_max_calls, bool):
+            raise ValueError("principal_per_min must be a non-negative integer")
         p_limit = int(legacy_max_calls)
     else:
         p_limit = int(
@@ -263,17 +279,26 @@ def resolve_rate_limits(
                 ),
             )
         )
-    p_limit = max(1, p_limit)
+    if p_limit < 0:
+        raise ValueError(f"principal_per_min must be >= 0, got {p_limit}")
 
+    explicit_id = False
     if identity_per_min is not None:
+        if isinstance(identity_per_min, bool):
+            raise ValueError("identity_per_min must be a non-negative integer")
         id_limit = int(identity_per_min)
+        explicit_id = True
     else:
         raw_id = os.environ.get("CAGE_RATE_LIMIT_IDENTITY_PER_MIN")
         if raw_id is not None:
             id_limit = int(raw_id)
+            explicit_id = True
         else:
             id_limit = max(DEFAULT_IDENTITY_PER_MIN, p_limit * 5)
-    id_limit = max(p_limit, id_limit)
+    if id_limit < 0:
+        raise ValueError(f"identity_per_min must be >= 0, got {id_limit}")
+    if not explicit_id:
+        id_limit = max(p_limit, id_limit)
 
     return p_limit, id_limit, win
 
@@ -414,10 +439,42 @@ class SharedRateLimiter:
     ) -> RateLimitVerdict:
         """Evaluate the dual-bucket GCRA rate limit for ``(route, identity, principal)``."""
         p_limit, id_limit, win_s = resolve_rate_limits(
-            principal_per_min=principal_per_min or self._principal_per_min,
-            identity_per_min=identity_per_min or self._identity_per_min,
-            window_seconds=window_seconds or self._window_seconds,
+            principal_per_min=(
+                principal_per_min
+                if principal_per_min is not None
+                else self._principal_per_min
+            ),
+            identity_per_min=(
+                identity_per_min
+                if identity_per_min is not None
+                else self._identity_per_min
+            ),
+            window_seconds=(
+                window_seconds if window_seconds is not None else self._window_seconds
+            ),
         )
+        if id_limit == 0:
+            retry_s = max(1, math.ceil(win_s))
+            if _METRICS_AVAILABLE and rate_limit_hits_total is not None:
+                rate_limit_hits_total.labels(route=route, scope="identity").inc()
+            return RateLimitVerdict(
+                allowed=False,
+                retry_after_seconds=retry_s,
+                scope="identity",
+                identity=identity,
+                principal=principal,
+            )
+        if p_limit == 0:
+            retry_s = max(1, math.ceil(win_s))
+            if _METRICS_AVAILABLE and rate_limit_hits_total is not None:
+                rate_limit_hits_total.labels(route=route, scope="principal").inc()
+            return RateLimitVerdict(
+                allowed=False,
+                retry_after_seconds=retry_s,
+                scope="principal",
+                identity=identity,
+                principal=principal,
+            )
         win_ms = win_s * 1000.0
         id_T = win_ms / float(id_limit)
         id_tau = win_ms
@@ -500,7 +557,10 @@ class SharedRateLimiter:
     ) -> RateLimitVerdict:
         """Extract ``(identity, principal)`` from ``request`` and evaluate the limiter."""
         identity, principal = extract_rate_limit_keys(request)
-        app = getattr(request, "app", None)
+        try:
+            app = request.app
+        except (AttributeError, KeyError):
+            app = None
         app_state = getattr(app, "state", None) if app is not None else None
         redis_override = getattr(app_state, "rate_limit_redis", None) or getattr(
             app_state, "redis", None

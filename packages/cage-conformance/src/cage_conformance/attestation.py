@@ -209,8 +209,9 @@ def _https_get(url: str) -> bytes:
     if not url.startswith("https://"):
         raise AttestationError(f"JWKS URL must be https: {url}")
     request = urllib.request.Request(url, headers={"Accept": "application/json"})
-    # Bandit B310: the scheme is checked to be https just above.
-    with urllib.request.urlopen(request, timeout=10) as resp:  # nosec B310
+    with urllib.request.urlopen(  # nosec B310  # https:// scheme validated above
+        request, timeout=10
+    ) as resp:
         return bytes(resp.read(_MAX_JWKS_BYTES + 1))
 
 

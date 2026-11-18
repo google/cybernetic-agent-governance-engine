@@ -57,6 +57,7 @@ from collections.abc import Mapping
 from datetime import datetime, timezone
 from typing import Any
 
+from src.gateway.governance.env_posture import resolve_deployment_region
 from src.gateway.governance.inference_backend import (
     INFERENCE_BACKEND_URL_MISSING,
     semantic_model_reason_code,
@@ -572,7 +573,7 @@ async def _step5_one_control(
         }
 
     # Region-aware control metadata lookup
-    _region = os.environ.get("CAGE_DEPLOYMENT_REGION", "LOCAL")
+    _region = resolve_deployment_region()
     _control_meta = get_control_meta(_region)
     control_name = _control_meta.get(control_id, {}).get("name", control_id)
     failing_traces = await _fetch_failing_traces(control_id, 10)

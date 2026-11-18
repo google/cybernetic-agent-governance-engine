@@ -67,19 +67,26 @@ stream ID, and each NDJSON line is the entry's fields plus ``stream_id``
 serialized with sorted keys, so a retry produces identical bytes and the
 existing object is accepted as the idempotent result.
 
-Unsigned attestations are not evidence
---------------------------------------
-Every attestation carries ``signature_status`` (``SIGNED`` | ``UNSIGNED``)
-and ``evidentiary`` (``true`` only when signed; the flag is inside the signed
-body). An unsigned attestation — only possible in dev/test/ci — is written
-under a distinct key, ``<same>.attestation.unsigned.json``, with object
-metadata ``evidentiary=false``, and counted as
-``cage_evidence_custody_batches_total{outcome="written_unsigned"}``. Anything
-that cites an attestation as evidence (OSCAL, POAM closure, audit export)
-must pass it through :func:`assert_citable`, which fails closed on it.
+Unsigned and non-citable posture attestations are not evidence
+--------------------------------------------------------------
+Every ``cage-evidence-batch/2`` attestation stamps ``deployment_posture``
+(``"production"`` or ``"staging"`` when signed) alongside ``signature_status``
+(``SIGNED`` | ``UNSIGNED``) and ``evidentiary`` (``true`` only when signed;
+all three sit inside the KMS-signed body). Non-citable postures (``dev``,
+``test``, ``ci``, ``local``) are refused with ``require_signature=True`` and
+always written unsigned when ``require_signature=False``, under a distinct key
+``<same>.attestation.unsigned.json`` with object metadata ``evidentiary=false``
+and counted as ``cage_evidence_custody_batches_total{outcome="written_unsigned"}``.
+Anything that cites an attestation as evidence (OSCAL, POAM closure, audit
+export) must pass it through :func:`assert_citable`, which fails closed on
+unsigned or non-citable-posture attestations while accepting historical
+pre-stamping ``cage-evidence-batch/1`` attestations (reported by
+:mod:`src.compliance_bridge.evidence_verifier` with
+``posture_status="unstamped_v1"`` and
+``citable_qualifications=["unstamped_v1_posture"]``).
 :mod:`src.compliance_bridge.evidence_verifier` performs the full read-back
-verification (kid-resolved signature, object binding, record re-verification
-and cross-batch continuity).
+verification (kid-resolved signature, object binding, record re-verification,
+posture consistency, and cross-batch continuity).
 
 Environment variables
 ---------------------
@@ -104,7 +111,11 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import Any, Protocol
 
-from src.gateway.governance.env_posture import is_enforcing
+from src.gateway.governance.env_posture import (
+    DeploymentPosture,
+    is_enforcing,
+    resolve_posture,
+)
 from src.gateway.governance.evidence.cold_store import (
     ColdStoreIntegrityError,
     EvidenceColdStore,
@@ -114,7 +125,15 @@ from src.gateway.governance.evidence.stream import verify_record
 
 logger = logging.getLogger("cage.compliance_bridge.evidence_custodian")
 
-ATTESTATION_SCHEMA = "cage-evidence-batch/1"
+ATTESTATION_SCHEMA_V1 = "cage-evidence-batch/1"
+ATTESTATION_SCHEMA_V2 = "cage-evidence-batch/2"
+ATTESTATION_SCHEMA = ATTESTATION_SCHEMA_V2
+SUPPORTED_ATTESTATION_SCHEMAS: frozenset[str] = frozenset(
+    {ATTESTATION_SCHEMA_V1, ATTESTATION_SCHEMA_V2}
+)
+CITABLE_DEPLOYMENT_POSTURES: frozenset[str] = frozenset(
+    {DeploymentPosture.PRODUCTION.value, DeploymentPosture.STAGING.value}
+)
 # ``gap.kind`` for a batch that starts a new chain at genesis after another
 # chain was custodied. Trim gaps carry ``expected_sequence`` and no kind.
 GAP_KIND_CHAIN_ROTATION = "CHAIN_ROTATION"
@@ -189,27 +208,51 @@ UNSIGNED = "UNSIGNED"
 def assert_citable(attestation: dict[str, Any]) -> None:
     """Fail closed unless ``attestation`` may be cited as evidence.
 
-    Checks the structural markers only: schema, ``signature_status`` of
-    ``SIGNED``, ``evidentiary`` true, and a complete ``signature`` object.
+    Checks the structural markers only: supported schema
+    (``cage-evidence-batch/1`` or ``cage-evidence-batch/2``),
+    ``signature_status`` of ``SIGNED``, ``evidentiary`` true, schema-bound
+    ``deployment_posture`` rules (absent on ``v1``; ``"production"`` or
+    ``"staging"`` on ``v2``), and a complete ``signature`` object.
     Cryptographic verification is separate:
     :class:`~src.compliance_bridge.evidence_verifier.CustodyVerifier` resolves
     the public key by ``signature.key_id`` from independently loaded trust
     anchors, never from the document itself.
 
+    Accepting ``cage-evidence-batch/1`` is cryptographically bounded because
+    ``schema`` and ``deployment_posture`` sit inside the KMS-signed payload:
+    relabelling a ``v2`` attestation as ``v1`` or stripping its posture breaks
+    signature verification without ``EVIDENCE_KMS_KEY``.
+
     Raises:
         NonEvidentiaryAttestationError: The attestation is unsigned, marked
-            non-evidentiary, or missing signature fields.
+            non-evidentiary, carries a non-citable posture, or is missing
+            signature fields.
     """
-    if attestation.get("schema") != ATTESTATION_SCHEMA:
-        raise NonEvidentiaryAttestationError(
-            f"unknown attestation schema {attestation.get('schema')!r}"
-        )
+    schema = attestation.get("schema")
+    if schema not in SUPPORTED_ATTESTATION_SCHEMAS:
+        raise NonEvidentiaryAttestationError(f"unknown attestation schema {schema!r}")
     if attestation.get("signature_status") != SIGNED:
         raise NonEvidentiaryAttestationError(
             "attestation is UNSIGNED (permissive posture); it is not evidence"
         )
     if attestation.get("evidentiary") is not True:
         raise NonEvidentiaryAttestationError("attestation is marked non-evidentiary")
+    if schema == ATTESTATION_SCHEMA_V1:
+        if "deployment_posture" in attestation:
+            raise NonEvidentiaryAttestationError(
+                "cage-evidence-batch/1 attestation must not carry deployment_posture"
+            )
+    else:
+        posture = attestation.get("deployment_posture")
+        if not isinstance(posture, str) or not posture:
+            raise NonEvidentiaryAttestationError(
+                "cage-evidence-batch/2 attestation is missing deployment_posture"
+            )
+        if posture not in CITABLE_DEPLOYMENT_POSTURES:
+            raise NonEvidentiaryAttestationError(
+                f"attestation deployment_posture={posture!r} is not citable; "
+                f"expected one of {sorted(CITABLE_DEPLOYMENT_POSTURES)}"
+            )
     signature = attestation.get("signature")
     if not isinstance(signature, dict) or not all(
         isinstance(signature.get(k), str) and signature.get(k)
@@ -320,6 +363,9 @@ class EvidenceCustodian:
         batch_size: Maximum entries per batch.
         require_signature: Refuse to write unsigned attestations.
         interval_s: Sleep between cycles in :meth:`run_forever`.
+        deployment_posture: Posture stamped inside signed ``cage-evidence-batch/2``
+            attestations (defaults to :func:`resolve_posture`). Must be
+            ``production`` or ``staging`` when ``require_signature`` is true.
     """
 
     def __init__(
@@ -332,9 +378,21 @@ class EvidenceCustodian:
         batch_size: int = DEFAULT_BATCH_SIZE,
         require_signature: bool,
         interval_s: float = DEFAULT_INTERVAL_S,
+        deployment_posture: DeploymentPosture | str | None = None,
     ) -> None:
         if batch_size < 1:
             raise ValueError("batch_size must be >= 1")
+        if deployment_posture is None:
+            resolved_posture = resolve_posture()
+        elif isinstance(deployment_posture, DeploymentPosture):
+            resolved_posture = deployment_posture
+        else:
+            try:
+                resolved_posture = DeploymentPosture(deployment_posture)
+            except ValueError as exc:
+                raise EvidenceCustodyConfigError(
+                    f"Unknown deployment_posture {deployment_posture!r}"
+                ) from exc
         if is_enforcing() and cold_store.backend_id == "null":
             # EVIDENCE_COLD_STORE defaults to null when unset; a null store
             # silently discards custodied evidence (including retained state
@@ -348,6 +406,14 @@ class EvidenceCustodian:
                 "Evidence custody requires an active KMS attestation signer "
                 "(EVIDENCE_KMS_KEY) under an enforcing posture."
             )
+        if (
+            require_signature
+            and resolved_posture.value not in CITABLE_DEPLOYMENT_POSTURES
+        ):
+            raise EvidenceCustodyConfigError(
+                "Signed evidentiary custody requires deployment_posture in "
+                f"{sorted(CITABLE_DEPLOYMENT_POSTURES)}, got {resolved_posture.value!r}."
+            )
         self._redis = redis
         self._cold_store = cold_store
         self._signer = signer
@@ -356,6 +422,7 @@ class EvidenceCustodian:
         self._batch_size = batch_size
         self._require_signature = require_signature
         self._interval_s = interval_s
+        self._deployment_posture = resolved_posture
         self._flush_lock = asyncio.Lock()
 
     # -- construction -------------------------------------------------------
@@ -366,14 +433,16 @@ class EvidenceCustodian:
 
         Raises:
             EvidenceCustodyConfigError: Enforcing posture with a ``null`` cold
-                store, or without an active ``EVIDENCE_KMS_KEY`` signer.
+                store, non-citable posture, or without an active
+                ``EVIDENCE_KMS_KEY`` signer.
         """
         from src.gateway.governance.evidence.factory import get_cold_store
         from src.gateway.infrastructure.redis_client import build_async_redis
 
         from .kms_batch_signer import build_evidence_signer
 
-        enforcing = is_enforcing()
+        posture = resolve_posture()
+        enforcing = is_enforcing(posture)
         redis_url = os.environ.get(
             "EVIDENCE_STREAM_REDIS_URL", os.environ.get("REDIS_URL", "")
         )
@@ -425,6 +494,7 @@ class EvidenceCustodian:
             interval_s=float(
                 os.environ.get("EVIDENCE_CUSTODY_INTERVAL_S", str(DEFAULT_INTERVAL_S))
             ),
+            deployment_posture=posture,
         )
 
     # -- custody cycle ------------------------------------------------------
@@ -582,6 +652,7 @@ class EvidenceCustodian:
         data_key = f"{base}.ndjson"
         attestation: dict[str, Any] = {
             "schema": ATTESTATION_SCHEMA,
+            "deployment_posture": self._deployment_posture.value,
             "created_at_utc": datetime.now(timezone.utc)
             .isoformat(timespec="microseconds")
             .replace("+00:00", "Z"),
@@ -713,7 +784,7 @@ class EvidenceCustodian:
                 self._integrity_failure(
                     key, "attestation in cold store is not a JSON object"
                 )
-            if att.get("schema") != ATTESTATION_SCHEMA:
+            if att.get("schema") not in SUPPORTED_ATTESTATION_SCHEMAS:
                 self._integrity_failure(
                     key, f"unexpected attestation schema {att.get('schema')!r}"
                 )
@@ -722,6 +793,16 @@ class EvidenceCustodian:
                     assert_citable(att)
                 except NonEvidentiaryAttestationError as exc:
                     self._integrity_failure(key, str(exc))
+                if (
+                    self._require_signature
+                    and att.get("schema") == ATTESTATION_SCHEMA_V2
+                    and att.get("deployment_posture") != self._deployment_posture.value
+                ):
+                    self._integrity_failure(
+                        key,
+                        f"cold store holds deployment_posture={att.get('deployment_posture')!r}, "
+                        f"custodian is running as {self._deployment_posture.value!r}",
+                    )
 
             for str_field in (
                 "stream_key",
@@ -996,12 +1077,19 @@ class EvidenceCustodian:
 
     async def _sign(self, attestation: dict[str, Any]) -> dict[str, str] | None:
         signer = self._signer
-        if signer is None or not signer.is_kms_active:
+        if (
+            signer is None
+            or not signer.is_kms_active
+            or self._deployment_posture.value not in CITABLE_DEPLOYMENT_POSTURES
+        ):
             if self._require_signature:  # pragma: no cover - blocked in __init__
-                raise RuntimeError("Attestation signer is not active.")
+                raise RuntimeError(
+                    "Attestation signer or citable posture is not active."
+                )
             logger.warning(
                 "[EvidenceCustodian] Writing UNSIGNED, non-evidentiary attestation "
-                "(permissive posture, no active EVIDENCE_KMS_KEY signer)."
+                "(posture=%s, require_signature=False).",
+                self._deployment_posture.value,
             )
             return None
         try:

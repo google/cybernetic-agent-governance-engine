@@ -369,21 +369,23 @@ def _get_registry(path: Path | None = None) -> dict[str, str]:
     return dict(_get_registry_document(path).terminals)
 
 
-def _bust_cache(_signum: int, _frame: Any) -> None:
-    """SIGUSR1 handler — clears the registry cache for hot-reload."""
+def _bust_cache(_signum: int = 0, _frame: Any = None) -> None:
+    """Async-signal-safe cache invalidation hook for hot-reload.
+
+    Avoids acquiring ``_registry_lock`` or invoking ``logging`` inside a POSIX
+    signal frame (both can deadlock if interrupted mid-hold).
+    """
     global _registry_cache
-    with _registry_lock:
-        _registry_cache = None
-    logger.info(
-        "FTRA registry cache cleared via SIGUSR1 — will reload on next classify()."
-    )
+    _registry_cache = None
 
 
-# Register SIGUSR1 handler for hot-reload (no-op on Windows or non-main threads).
-try:
-    signal.signal(signal.SIGUSR1, _bust_cache)
-except (OSError, AttributeError, ValueError):
-    pass  # Windows, worker threads, or restricted environment — hot-reload via env flag only
+def install_sigusr1_reload_handler() -> bool:
+    """Explicitly register ``_bust_cache`` on ``SIGUSR1`` for server entrypoints."""
+    try:
+        signal.signal(signal.SIGUSR1, _bust_cache)
+        return True
+    except (OSError, AttributeError, ValueError):
+        return False
 
 
 # ---------------------------------------------------------------------------
