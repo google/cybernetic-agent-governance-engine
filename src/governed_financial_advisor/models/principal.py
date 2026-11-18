@@ -23,11 +23,13 @@ The advisor resolves an end-user principal into a :class:`PrincipalIdentity`
   against its out-of-band trust anchor manifest, checks that any caller-supplied
   ``QueryRequest.user_id`` matches the verified subject claim, and marks
   ``verified=True``.
-* Without a verified user OIDC token, an enforcing posture (or any posture with
-  ``CAGE_USER_OIDC_ISSUER`` / ``CAGE_REQUIRE_VERIFIED_PRINCIPAL`` set, unless
-  ``CAGE_ALLOW_ASSERTED_PRINCIPAL=true``) refuses the request with HTTP 401.
-  Permissive postures (``dev``/``test``/``ci``) carry ``QueryRequest.user_id``
-  forward with ``verified=False``.
+* Without a verified user OIDC token, an enforcing posture refuses the request
+  with HTTP 401. ``CAGE_ALLOW_ASSERTED_PRINCIPAL`` cannot relax that: the
+  advisor refuses to start with it set there. A permissive posture
+  (``dev``/``test``/``ci``) refuses the request too when
+  ``CAGE_USER_OIDC_ISSUER`` or ``CAGE_REQUIRE_VERIFIED_PRINCIPAL`` is set,
+  unless ``CAGE_ALLOW_ASSERTED_PRINCIPAL=true``; otherwise it carries
+  ``QueryRequest.user_id`` forward with ``verified=False``.
 
 The advisor forwards the resolved principal to the gateway as ``x-cage-principal``,
 ``x-cage-principal-verified`` (``"true"`` or ``"false"``).

@@ -88,16 +88,22 @@ if ENABLE_TRACING:
 @asynccontextmanager
 async def lifespan(app: FastAPI):  # type: ignore[no-untyped-def]
     # Startup: refuse to run with any signing identity (POAM-2026-079). The
-    # advisor is an untrusted client of the gateway; it hosts no governor.
+    # advisor is an untrusted client of the gateway; it hosts no governor. An
+    # enforcing posture also refuses the caller-asserted principal override:
+    # it must authenticate the end user.
     import asyncio
 
     from src.gateway.governance.pii_redactor_factory import ensure_pii_engines
     from src.gateway.observability.langfuse_utils import get_prompt_registry
+    from src.governed_financial_advisor.infrastructure.auth import (
+        assert_no_asserted_principal_in_enforcing_posture,
+    )
     from src.governed_financial_advisor.infrastructure.identity_guard import (
         assert_no_signing_identity,
     )
 
     assert_no_signing_identity()
+    assert_no_asserted_principal_in_enforcing_posture()
 
     # Warm Presidio PII engines off the event loop and pre-populate PromptRegistry
     await asyncio.to_thread(ensure_pii_engines)
