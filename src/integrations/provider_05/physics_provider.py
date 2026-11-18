@@ -100,7 +100,7 @@ class Provider05PhysicsProvider(AttestationProvider):
             ]
 
         v03_meta: dict[str, Any] = {}
-        if attestation.is_v03 or self._client.key_manifest is not None:
+        if attestation.is_v03 or self._client.requires_v03:
             key_manifest = await self._client.get_verified_key_manifest(
                 now=context.get("now")
             )

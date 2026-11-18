@@ -31,6 +31,8 @@ Verifies:
        OUT_OF_SCOPE, BAD_SIGNATURE, MISSING)
      - 8 PHYSICS rows (VALID, WRONG_PURPOSE, WRONG_KID, EXPIRED, STALE,
        OUT_OF_SCOPE, BAD_SIGNATURE, MISSING)
+  4. A live-endpoint artifact stripped of its v0.3 fields is refused, not
+     read as an unsigned v0.1 record.
 """
 
 from __future__ import annotations
@@ -43,6 +45,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
+import httpx
 import jsonschema
 import pytest
 from cryptography.hazmat.primitives import serialization
@@ -171,6 +174,7 @@ def v03_pki() -> dict[str, Any]:
 
     return {
         "trust_anchor": trust_anchor,
+        "raw_manifest": raw_manifest,
         "verified_manifest": verified_manifest,
         "warrant_priv": warrant_priv,
         "blueprint_priv": blueprint_priv,
@@ -512,3 +516,101 @@ async def test_all_29_expected_outcome_vectors_csv(
                 AttestationStatus.DENIED.value,
                 AttestationStatus.STALE.value,
             )
+
+
+def _signed_live_artifact(ev_class: str, v03_pki: dict[str, Any]) -> Any:
+    common: dict[str, Any] = {
+        "environment": "SANDBOX",
+        "issuer": "urn:veraxis:veip:sandbox",
+        "scope": _default_scope(),
+        "issued_at": "2026-10-19T12:00:00Z",
+        "valid_from": "2026-10-19T00:00:00Z",
+        "valid_until": "2026-10-20T00:00:00Z",
+        "state_as_of": "2026-10-19T12:00:00Z",
+        "alg": "Ed25519",
+    }
+    if ev_class == "BLUEPRINT":
+        record: Any = RiskAcceptanceRecord(
+            schema_version=BLUEPRINT_SCHEMA_VERSION_V03,
+            artifact_id="bp-live",
+            subject_ref="THR-FIN-006",
+            kid="veip-v03-blueprint-2026-10",
+            risk_id="THR-FIN-006",
+            accepted_by="Jane Doe, CISO / AO",
+            risk_limit="10000.0",
+            **common,
+        )
+    elif ev_class == "KEY":
+        record = AdmissibilityGrant(
+            schema_version=KEY_SCHEMA_VERSION_V03,
+            artifact_id="key-live",
+            subject_ref="spiffe://cage.local/treasury-agent",
+            kid="veip-v03-key-2026-10",
+            grant_id="grant-live",
+            authority_basis_ref="sha256:a1b2c3d4",
+            permitted_action="treasury_transfer",
+            **common,
+        )
+    else:
+        record = SubstrateAttestation(
+            schema_version=PHYSICS_SCHEMA_VERSION_V03,
+            artifact_id="phys-live",
+            subject_ref="gke-node-us-central1-01",
+            kid="veip-v03-physics-2026-10",
+            substrate_id="gke-node-us-central1-01",
+            attestation_result="PASS",
+            measurement_ref="pcr0:99aa",
+            **common,
+        )
+    return _sign_v03_record(record, v03_pki[f"{ev_class.lower()}_priv"])
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("stripped", [False, True], ids=["signed", "stripped"])
+@pytest.mark.parametrize("ev_class", ["BLUEPRINT", "KEY", "PHYSICS"])
+async def test_live_artifact_stripped_of_v03_fields_is_not_verified(
+    v03_pki: dict[str, Any], ev_class: str, stripped: bool
+) -> None:
+    """A live response without schema_version/kid/digest/signature is refused.
+
+    The live endpoint serves only v0.3 artifacts, so dropping the signature
+    fields must not turn the response into an unsigned v0.1 record that is
+    reported VERIFIED without the key manifest ever being consulted.
+    """
+    body = _signed_live_artifact(ev_class, v03_pki).to_v03_dict()
+    if stripped:
+        for field_name in ("schema_version", "kid", "digest", "signature"):
+            del body[field_name]
+
+    def _handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path == "/.well-known/veip/key-manifest-v0.3.json":
+            return httpx.Response(200, json=v03_pki["raw_manifest"])
+        return httpx.Response(200, json=body)
+
+    providers: dict[str, Any] = {
+        "BLUEPRINT": Provider05BlueprintProvider,
+        "KEY": Provider05KeyProvider,
+        "PHYSICS": Provider05PhysicsProvider,
+    }
+    async with httpx.AsyncClient(transport=httpx.MockTransport(_handler)) as http:
+        client = Provider05Client(
+            endpoint="https://veip.invalid",
+            trust_anchor=v03_pki["trust_anchor"],
+            http_client=http,
+        )
+        [entry] = await providers[ev_class](client=client).fetch_attestations(
+            {
+                "action": "treasury_transfer",
+                "jurisdiction": "US_FED",
+                "actor": "spiffe://cage.local/treasury-agent",
+                "system": "gke-node-us-central1-01",
+                "now": _PINNED_NOW,
+            }
+        )
+
+    if stripped:
+        assert entry.status == AttestationStatus.DENIED.value
+        assert entry.metadata["reason_code"] == "SCHEMA_MISMATCH"
+    else:
+        assert entry.status == AttestationStatus.VERIFIED.value
+        assert entry.metadata["reason_code"] == "VALID"
