@@ -984,7 +984,9 @@ def verify_seal(
                 raise SymbolicGovernorViolation("malformed expiry timestamp", action)
 
             now = int(time.time())
-            if now > expire_ts:
+            # Match the JWT branch above (PyJWT verify_exp rejects exp <= now):
+            # the seal is not accepted on or after its expiry second.
+            if now >= expire_ts:
                 logger.warning(
                     "⛔ [SEAL_VERIFICATION_FAILED] event=routing_seal_verification_failed action=%s reason=%s",
                     action,
