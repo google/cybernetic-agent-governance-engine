@@ -41,7 +41,6 @@ CRIT-1 fix note: verify_seal() (both gateway and GFA versions) now raises
 
 import datetime
 import os
-import time
 
 import pytest
 from freezegun import freeze_time
@@ -131,12 +130,27 @@ class TestRoutingSeal:
 
     async def test_expired_seal(self):
         """A seal generated with ttl=0 should be expired immediately."""
-        now = time.time()
-        seal = await generate_seal("execute_trade", PARAMS, ttl_s=0)
-        # Advance frozen time 2 s past seal creation so expiry is definitive
-        frozen_dt = datetime.datetime.fromtimestamp(now + 2, tz=datetime.timezone.utc)
-        with freeze_time(frozen_dt):
-            with pytest.raises(SymbolicGovernorViolation):
+        # Mint and verify in the same frozen second: expiry == now is expired.
+        with freeze_time(datetime.datetime(2026, 1, 1, tzinfo=datetime.timezone.utc)):
+            seal = await generate_seal(
+                "execute_trade", PARAMS, ttl_s=0, record_hash=TEST_RECORD_HASH
+            )
+            with pytest.raises(SymbolicGovernorViolation, match="expired"):
+                gfa_verify_seal(seal, "execute_trade", PARAMS)
+
+    async def test_seal_rejected_at_exact_expiry(self):
+        """The seal is not accepted on or after its expiry second."""
+        minted = datetime.datetime(2026, 1, 1, tzinfo=datetime.timezone.utc)
+        with freeze_time(minted):
+            seal = await generate_seal(
+                "execute_trade", PARAMS, ttl_s=30, record_hash=TEST_RECORD_HASH
+            )
+
+        # expiry = minted + 30 s; one second earlier is accepted, expiry is not.
+        with freeze_time(minted + datetime.timedelta(seconds=29)):
+            assert gfa_verify_seal(seal, "execute_trade", PARAMS) is True
+        with freeze_time(minted + datetime.timedelta(seconds=30)):
+            with pytest.raises(SymbolicGovernorViolation, match="expired"):
                 gfa_verify_seal(seal, "execute_trade", PARAMS)
 
     async def test_tampered_signature(self):
