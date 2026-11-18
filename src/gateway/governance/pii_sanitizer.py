@@ -203,12 +203,18 @@ CREDIT_CARD_PATTERN: re.Pattern[str] = re.compile(
     r"|(?:5[1-5]\d{2}|2(?:22[1-9]|2[3-9]\d|[3-6]\d{2}|7[01]\d|720))(?:[-\s]?\d{4}){3}"
     # Amex: 34 or 37 + 13 more digits (15 total, groups 4-6-5)
     r"|3[47]\d{2}[-\s]?\d{6}[-\s]?\d{5}"
-    # Diners: 300-305 or 36x or 38x + 11 more digits (14 total)
-    r"|3(?:0[0-5]|[68]\d)\d{11}"
-    # Discover: 6011 or 65xx + 12 more digits (16 total)
-    r"|6(?:011|5\d{2})(?:[-\s]?\d{4}){3}"
-    # JCB: 2131, 1800, or 35xxx + 11 more digits (15-16 total)
-    r"|(?:2131|1800|35\d{3})\d{11}"
+    # Diners: 300-305, 36 or 38 prefix, 14 digits, with optional separators
+    # split 4-6-4 ("3056 930902 5904") or 4-4-4-2 ("3056 9309 0259 04").
+    r"|3(?:0[0-5]|[68]\d)\d(?:[-\s]?\d{6}[-\s]?\d{4}|(?:[-\s]?\d{4}){2}[-\s]?\d{2})"
+    # Diners: 300-305, 36 or 38-39 prefix, 16 digits in four 4-digit groups.
+    # 17-19 digit numbers in these ranges are not matched.
+    r"|3(?:0[0-5]|[689]\d)\d(?:[-\s]?\d{4}){3}"
+    # Discover: 6011, 644-649 or 65 prefix + 12 more digits (16 total)
+    r"|6(?:011|4[4-9]\d|5\d{2})(?:[-\s]?\d{4}){3}"
+    # JCB: 35xx, 16 digits in four 4-digit groups
+    r"|35\d{2}(?:[-\s]?\d{4}){3}"
+    # JCB: 2131 or 1800, 15 digits, optional separators split 4-6-5 as for Amex
+    r"|(?:2131|1800)[-\s]?\d{6}[-\s]?\d{5}"
     r")\b"
 )
 
