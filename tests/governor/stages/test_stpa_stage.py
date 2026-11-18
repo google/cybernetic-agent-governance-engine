@@ -32,7 +32,7 @@ async def test_stpa_stage_fail_closed_on_error():
     violations = await stage.run(ctx)
     assert len(violations) == 1
     assert violations[0].code == "STPA_ERROR"
-    assert violations[0].kind == ViolationKind.HARD
+    assert violations[0].kind == ViolationKind.INFRASTRUCTURE
     assert "STPA boom" in violations[0].message
 
 

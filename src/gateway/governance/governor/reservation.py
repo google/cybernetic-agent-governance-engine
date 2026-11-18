@@ -29,7 +29,10 @@ from types import TracebackType
 from typing import TYPE_CHECKING, Literal, NamedTuple
 
 from src.gateway.governance.contracts import CommitReceipt, Violation, ViolationKind
-from src.gateway.governance.governor.errors import GovernanceError
+from src.gateway.governance.governor.errors import (
+    GovernanceError,
+    GovernanceInfrastructureError,
+)
 
 if TYPE_CHECKING:
     from src.gateway.governance.governor.pipeline import Stage, StageContext
@@ -101,9 +104,9 @@ class ReservationScope:
 
         A receipt is recorded even alongside violations: a commit that mutated
         state and then refused must still be undone.  A commit that raises an
-        ``Exception`` becomes a HARD ``TIER_EXCEPTION`` and, by contract,
-        mutated nothing.  Cancellation propagates; the scope's exit undoes the
-        commits already recorded.
+        ``Exception`` becomes an INFRASTRUCTURE ``TIER_EXCEPTION`` and, by
+        contract, mutated nothing.  Cancellation propagates; the scope's exit
+        undoes the commits already recorded.
         """
         self._require_open("commit")
         try:
@@ -115,7 +118,7 @@ class ReservationScope:
                     tier=stage.name,
                     code="TIER_EXCEPTION",
                     message=f"Exception in commit: {type(exc).__name__}: {exc}",
-                    kind=ViolationKind.HARD,
+                    kind=ViolationKind.INFRASTRUCTURE,
                 )
             ]
         if receipt is not None:
@@ -168,7 +171,11 @@ class ReservationScope:
             return False
         detail = "; ".join(v.message for v in failures)
         if exc is None or isinstance(exc, Exception):
-            raise GovernanceError(f"[ROLLBACK_FAILED] {detail}") from exc
+            raise GovernanceInfrastructureError(
+                f"[ROLLBACK_FAILED] {detail}",
+                dependency=failures[0].tier or "governance",
+                failure_code="ROLLBACK_FAILED",
+            ) from exc
         logger.critical(
             "rollback failed while %s propagated: %s", type(exc).__name__, detail
         )
@@ -235,7 +242,7 @@ async def _settle_each(
                         f"{hook} of {stage.name} failed: {type(exc).__name__} — "
                         "resource state may be inconsistent; manual reconciliation required"
                     ),
-                    kind=ViolationKind.HARD,
+                    kind=ViolationKind.INFRASTRUCTURE,
                 )
             )
             if escaped is None and not isinstance(exc, Exception):

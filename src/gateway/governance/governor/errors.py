@@ -123,3 +123,15 @@ class GovernanceInfrastructureError(GovernanceError):
         self.dependency: str = dependency
         self.failure_code: str = failure_code
         self.error_code: str = error_code
+
+
+class ApprovalSpendUnavailableError(RuntimeError):
+    """Raised when PostHitlApproval.spend() cannot reach DeferQueue storage (F-03, POAM-2026-233).
+
+    Distinct from returning ``False``, which means DeferQueue answered and proved
+    the approval was already spent, expired, or non-covering.
+    """
+
+    def __init__(self, message: str, *, pipeline_result: Any = None) -> None:
+        super().__init__(message)
+        self.pipeline_result: Any = pipeline_result

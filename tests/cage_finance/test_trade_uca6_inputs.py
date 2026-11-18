@@ -57,12 +57,15 @@ _UCA_6 = "STPA_UCA_UCA_6"
 _FRACTION = {"US_FED": 0.01, "APAC_MAS": 0.008, "EU_ECB": 0.005}
 _VOLUME = 1_000_000.0  # shares per session
 _PRICE = 100.0  # simulated quote price (±1 % jitter)
+_OUTAGE_FAULTS = [FaultMode.TIMEOUT, FaultMode.CONNECTION_ERROR]
 _FEED_FAULTS = [
     m
     for m in FaultMode
     if m
     not in {
         FaultMode.NONE,
+        FaultMode.TIMEOUT,
+        FaultMode.CONNECTION_ERROR,
         FaultMode.SCALAR_BELOW_BARRIER,
         FaultMode.DISCREPANCY_SPIKE,
         FaultMode.SETTLEMENT_STALL,
@@ -209,15 +212,30 @@ async def test_a_faulted_quote_refuses_the_trade(fault: FaultMode) -> None:
         assert found
 
 
-async def test_no_market_feed_refuses_the_trade() -> None:
+@pytest.mark.parametrize("fault", _OUTAGE_FAULTS, ids=str)
+async def test_an_unavailable_market_feed_raises_server_input_unavailable(
+    fault: FaultMode,
+) -> None:
+    from src.gateway.governance.contracts import ServerInputUnavailableError
+
+    feed = _feed()
+    feed.inject_volume_fault(fault)
+    with pytest.raises(ServerInputUnavailableError) as exc_info:
+        await _uca6(_resolver(feed))
+    assert exc_info.value.dependency == "market_data"
+    assert exc_info.value.failure_code == "MARKET_DATA_UNAVAILABLE"
+
+
+async def test_no_market_feed_raises_server_input_unavailable() -> None:
+    from src.gateway.governance.contracts import ServerInputUnavailableError
+
     resolver = TradeInputResolver(
         ServerTradeInputs(market_feed=None, nav_source=SimulatedPortfolioNavSource())
     )
-
-    bound, found = await _uca6(resolver)
-
-    assert not {"order_size", "daily_vol"} & set(bound)
-    assert found
+    with pytest.raises(ServerInputUnavailableError) as exc_info:
+        await _uca6(resolver)
+    assert exc_info.value.dependency == "market_data"
+    assert exc_info.value.failure_code == "MARKET_DATA_UNAVAILABLE"
 
 
 @pytest.mark.parametrize("amount", [None, "lots", True, math.nan, math.inf, -1.0])

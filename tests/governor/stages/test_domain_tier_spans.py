@@ -200,7 +200,7 @@ async def test_raising_commit_ends_span_with_exception_and_fails_closed(exporter
 
     assert receipt is None
     assert [v.code for v in violations] == ["TIER_EXCEPTION"]
-    assert violations[0].kind == ViolationKind.HARD
+    assert violations[0].kind == ViolationKind.INFRASTRUCTURE
     span = _only_span(exporter, "cage.tier.beta")
     assert span.end_time is not None
     assert span.attributes["cage.tier.exception"] == "RuntimeError"

@@ -245,15 +245,35 @@ async def execute_trade_action(
                 reclaim_blocked=bool(deferred_id),
             )
         except ExecutionLedgerUnavailable as exc:
+            from src.gateway.governance.contracts import Violation, ViolationKind
+            from src.gateway.governance.governor.verdicts import (
+                handle_infrastructure_block,
+            )
+
             reason = (
                 "execution ledger unavailable, at-most-once execution cannot be "
                 f"guaranteed: {exc}"
             )
-            logger.error("execute_trade %s refused: %s", transaction_id, reason)
-            await record_refusal(
-                "execute_trade", reason, oscal_control_ref="AC-3", params=params
+            logger.error(
+                "execute_trade %s blocked on execution ledger outage: %s",
+                transaction_id,
+                reason,
             )
-            return f"BLOCKED: {reason}"
+            await handle_infrastructure_block(
+                "execute_trade",
+                params,
+                [
+                    Violation(
+                        tier="execution_ledger",
+                        code="EXECUTION_LEDGER_UNAVAILABLE",
+                        message=reason,
+                        kind=ViolationKind.INFRASTRUCTURE,
+                        infra_dependency="execution_ledger",
+                        infra_error_code="execution_ledger_unavailable",
+                    )
+                ],
+                [],
+            )
         if isinstance(claimed, Duplicate):
             return await _refuse_duplicate(claimed, transaction_id, params)
         claim = claimed
@@ -269,11 +289,27 @@ async def execute_trade_action(
         )
     except BaseException as exc:
         if claim is not None:
-            await ledger.record_outcome(
-                claim,
-                attempt.status,
-                f"{attempt.status.value}: {str(exc) or type(exc).__name__}",
+            from src.gateway.governance.evidence.stream import (
+                EvidenceChainUnavailableError,
             )
+            from src.gateway.governance.governor.errors import (
+                GovernanceInfrastructureError,
+            )
+
+            if (
+                isinstance(
+                    exc,
+                    (GovernanceInfrastructureError, EvidenceChainUnavailableError),
+                )
+                and attempt.status is ExecutionStatus.BLOCKED
+            ):
+                await ledger.release_unexecuted(claim)
+            else:
+                await ledger.record_outcome(
+                    claim,
+                    attempt.status,
+                    f"{attempt.status.value}: {str(exc) or type(exc).__name__}",
+                )
         raise
     if claim is not None:
         await ledger.record_outcome(claim, attempt.status, outcome)
@@ -331,20 +367,42 @@ async def _govern_and_actuate(
     attempt: _TradeAttempt,
 ) -> str:
     """Govern, seal and actuate one trade; ``attempt.status`` tracks the broker."""
+    # Server-side inputs (the STPA measurements and the trader's role and id)
+    # are bound by the kernel, exactly as for previews; the seal names these
+    # bound params. A missing one is refused inside the governor (UCA-2 /
+    # UCA-5 / UCA-13, or the trade policy for a missing role), which records
+    # the refusal.
+    from src.gateway.governance.contracts import (
+        ServerInputUnavailableError,
+        Violation,
+        ViolationKind,
+    )
+    from src.gateway.governance.governor.verdicts import handle_infrastructure_block
     from src.gateway.governance.routing_seal import (
         SymbolicGovernorViolation,
         seal_digest,
         verify_and_consume_seal,
     )
 
-    # Server-side inputs (the STPA measurements and the trader's role and id)
-    # are bound by the kernel, exactly as for previews; the seal names these
-    # bound params. A missing one is refused inside the governor (UCA-2 /
-    # UCA-5 / UCA-13, or the trade policy for a missing role), which records
-    # the refusal.
-    params = await bind_server_inputs(
-        governor.components.server_inputs, "execute_trade", params
-    )
+    try:
+        params = await bind_server_inputs(
+            governor.components.server_inputs, "execute_trade", params
+        )
+    except ServerInputUnavailableError as exc:
+        await handle_infrastructure_block(
+            "execute_trade",
+            params,
+            [
+                Violation(
+                    tier=exc.dependency,
+                    code=exc.failure_code,
+                    message=str(exc),
+                    kind=ViolationKind.INFRASTRUCTURE,
+                )
+            ],
+            [],
+            {"infra_error_code": exc.error_code},
+        )
 
     # Step 1: Enforce governance (commit + seal) and obtain the seal
     try:

@@ -445,19 +445,22 @@ class TestEnforceApprovedGovernance:
         assert queue.consume_approval.await_args.kwargs["action"] == "execute_trade"
 
     async def test_spend_fails_closed_when_the_queue_raises(self):
+        from src.gateway.governance.governor.errors import (
+            ApprovalSpendUnavailableError,
+        )
+
         governor = _mock_governor()
-        spent: list[bool] = []
 
         async def _revalidate(action, params, *, approval):
-            spent.append(await approval.spend())
+            await approval.spend()
             return "SEAL"
 
         governor.revalidate_post_hitl = _revalidate
         queue, open_queue = self._queue(MagicMock(thread_id="t", barrier_preview=None))
         queue.consume_approval = AsyncMock(side_effect=ConnectionError("redis down"))
 
-        await self._call(governor, open_queue, AsyncMock())
-        assert spent == [False]
+        with pytest.raises(ApprovalSpendUnavailableError, match="defer-1"):
+            await self._call(governor, open_queue, AsyncMock())
 
     async def test_no_approval_refuses_with_receipt_and_never_commits(self):
         governor = _mock_governor()
@@ -473,6 +476,10 @@ class TestEnforceApprovedGovernance:
         assert emit.await_args.kwargs["oscal_control_ref"] == "AC-3"
 
     async def test_queue_unavailable_fails_closed(self):
+        from src.gateway.governance.governor.errors import (
+            GovernanceInfrastructureError,
+        )
+
         governor = _mock_governor()
         governor.revalidate_post_hitl = AsyncMock(return_value="SEAL")
 
@@ -482,10 +489,21 @@ class TestEnforceApprovedGovernance:
             yield  # pragma: no cover
 
         emit = AsyncMock()
-        with pytest.raises(PermissionError):
+        with (
+            patch(
+                "src.gateway.governance.governor.verdicts.publish_infrastructure_block",
+                new_callable=AsyncMock,
+            ) as pub_infra,
+            pytest.raises(GovernanceInfrastructureError) as exc_info,
+        ):
             await self._call(governor, _broken, emit)
+        assert exc_info.value.error_code == "defer_queue_unavailable"
+        assert exc_info.value.dependency == "defer_queue"
+        assert exc_info.value.failure_code == "DEFER_QUEUE_UNAVAILABLE"
+        assert exc_info.value.receipt is None
         governor.revalidate_post_hitl.assert_not_awaited()
-        emit.assert_awaited_once()
+        emit.assert_not_awaited()
+        pub_infra.assert_awaited_once()
 
     async def test_raising_matcher_never_authorises(self):
         """A covers() that raises is treated as "does not cover"."""

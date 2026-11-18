@@ -91,7 +91,7 @@ async def test_malformed_cost_becomes_hard_tier_exception(make) -> None:
     )
     result = await run_pipeline(stages, ctx, profile=Profile.DRY_RUN)
     assert [(v.code, v.kind) for v in result.violations] == [
-        ("TIER_EXCEPTION", ViolationKind.HARD)
+        ("TIER_EXCEPTION", ViolationKind.INFRASTRUCTURE)
     ]
 
 
@@ -143,7 +143,7 @@ def test_no_claiming_tier_is_ungoverned() -> None:
         (RegistryState.REGISTERED, GovernanceDecision.REQUIRE_APPROVAL),
         (RegistryState.UNREGISTERED, GovernanceDecision.REQUIRE_APPROVAL),
         (RegistryState.INVALID_ENTRY, GovernanceDecision.REQUIRE_APPROVAL),
-        (RegistryState.UNAVAILABLE, GovernanceDecision.DENY),
+        (RegistryState.UNAVAILABLE, "INFRASTRUCTURE_BLOCK"),
     ],
 )
 def test_ftra_provenance_codes_classify_by_kind(state, decision) -> None:

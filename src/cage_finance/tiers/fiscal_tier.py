@@ -155,6 +155,9 @@ class FiscalTierPlugin(MutatingTier):
                 return []
         if await self.guard.would_accept(amount_usd=amount):
             return []
+        store_error = FiscalLimitGuard.last_store_error()
+        if isinstance(store_error, str) and store_error:
+            return [self._store_unavailable_violation(agent_id, store_error)]
         return [await self._limit_violation(agent_id)]
 
     async def commit(
@@ -164,6 +167,14 @@ class FiscalTierPlugin(MutatingTier):
         agent_id = params.get("agent_id") or params.get("trader_id") or "anonymous"
 
         token = await self.guard.reserve(agent_id=agent_id, amount_usd=amount)
+        if getattr(token, "store_unavailable", False) is True:
+            detail = getattr(token, "store_error", None)
+            err_text = (
+                detail
+                if isinstance(detail, str) and detail
+                else "Redis store unavailable"
+            )
+            return [self._store_unavailable_violation(agent_id, err_text)], None
         if token.rejected:
             return [await self._limit_violation(agent_id)], None
         return [], CommitReceipt(
@@ -199,4 +210,12 @@ class FiscalTierPlugin(MutatingTier):
             message=f"Daily fiscal limit exceeded for {agent_id}. Fiscal Limit Pre-Reservation REJECTED",
             kind=ViolationKind.NARROWABLE,
             bound=bound,
+        )
+
+    def _store_unavailable_violation(self, agent_id: str, detail: str) -> Violation:
+        return Violation(
+            tier=self.tier_name,
+            code="FISCAL_STORE_UNAVAILABLE",
+            message=(f"Fiscal limit store unavailable for {agent_id}: {detail}"),
+            kind=ViolationKind.INFRASTRUCTURE,
         )

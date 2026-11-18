@@ -60,10 +60,14 @@ from typing import Any
 
 from src.gateway.governance.jcs_canonicalizer import jcs_canonicalize_plan
 
+#: Internal kernel key reserved for server-input unavailability metadata; never
+#: accepted from callers and never serialized into params_hash or WORM payloads.
+SERVER_INPUT_INFRA_ERRORS_KEY = "__cage_server_input_unavailable__"
+
 #: Envelope-level correlation keys excluded before computing ``params_hash``,
 #: matching ``build_refusal_receipt``'s historical parameter scope.
 REFUSAL_ENVELOPE_EXCLUDED_KEYS: frozenset[str] = frozenset(
-    {"thread_id", "transaction_id"}
+    {"thread_id", "transaction_id", SERVER_INPUT_INFRA_ERRORS_KEY}
 )
 
 #: Valid Python/JSON parameter identifier shape.

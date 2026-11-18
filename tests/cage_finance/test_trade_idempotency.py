@@ -37,11 +37,16 @@ from src.gateway.governance.execution_idempotency import (
     ExecutionStatus,
     UnsettledDuplicate,
 )
+from src.gateway.governance.governor.errors import GovernanceInfrastructureError
 from src.gateway.governance.routing_seal import SymbolicGovernorViolation
 from src.gateway.governance.seams.actuation import ActuationOutcome, ActuationReceipt
 from tests.fixtures.trade_inputs import trade_governor
 
-pytestmark = [pytest.mark.unit, pytest.mark.local]
+pytestmark = [
+    pytest.mark.unit,
+    pytest.mark.local,
+    pytest.mark.usefixtures("connected_evidence_sink"),
+]
 
 _TXN = "0b6c7f4e-2a51-4f7e-9c3d-8e1f2a3b4c5d"
 _KEY = ExecutionLedger.key_for("execute_trade", SHARED_CALLER, _TXN)
@@ -165,16 +170,20 @@ async def test_enforcing_posture_without_redis_refuses(
 ) -> None:
     monkeypatch.setenv("CAGE_ENV", "production")
     gov = trade_governor()
-    gov.components.execution_ledger = ExecutionLedger(None)
+    object.__setattr__(gov.components, "execution_ledger", ExecutionLedger(None))
     actuate = AsyncMock(return_value=_accepted())
 
     with _pipeline(actuate) as (governance, refusals):
-        result = await _trade(gov)
+        with pytest.raises(GovernanceInfrastructureError) as exc_info:
+            await _trade(gov)
 
-    assert result.startswith("BLOCKED: execution ledger unavailable")
+    assert exc_info.value.error_code == "execution_ledger_unavailable"
+    assert exc_info.value.dependency == "execution_ledger"
+    assert exc_info.value.failure_code == "EXECUTION_LEDGER_UNAVAILABLE"
+    assert exc_info.value.receipt is None
     governance.assert_not_awaited()
     actuate.assert_not_awaited()
-    refusals.assert_awaited_once()
+    refusals.assert_not_awaited()
 
 
 @pytest.mark.asyncio

@@ -47,6 +47,11 @@ from src.gateway.governance.ftra.models import (
 )
 from src.gateway.governance.governor.governor import SymbolicGovernor
 from src.gateway.governance.narrower import Narrower, NarrowerRegistry, NarrowingResult
+from src.gateway.governance.safety.barrier_tier import (
+    BarrierCheckResult,
+    BarrierCommitResult,
+    BarrierFailureKind,
+)
 from src.gateway.governance.stpa_validator import STPAValidator
 from tests.fixtures.governor import make_governor
 
@@ -75,6 +80,7 @@ class Scenario:
 
     cbf_allowed: bool = True
     cbf_reason: str = "SAFE"
+    cbf_failure_kind: BarrierFailureKind | None = None
     cbf_raises: Exception | None = None
 
     consensus_status: str = "APPROVE"
@@ -177,6 +183,43 @@ def build_governor_for_scenario(
     mock_cbf_backend.verify_action = AsyncMock(
         return_value=scenario.cbf_reason if not scenario.cbf_allowed else "SAFE"
     )
+    if scenario.cbf_failure_kind is not None:
+
+        async def _check_barrier(
+            action_name: str, payload: dict[str, Any]
+        ) -> BarrierCheckResult:
+            verdict = await mock_cbf_backend.verify_action(action_name, payload)
+            if verdict == "SAFE":
+                return BarrierCheckResult(safe=True, message="SAFE")
+            return BarrierCheckResult(
+                safe=False,
+                message=str(verdict),
+                failure_kind=scenario.cbf_failure_kind,
+            )
+
+        async def _commit_barrier_checked(
+            action_name: str,
+            payload: dict[str, Any],
+            governance_signature: str = "",
+            *,
+            debit_id: str | None = None,
+        ) -> BarrierCommitResult:
+            committed, reason, mag = await mock_cbf_backend.atomic_verify_and_commit(
+                action_name, payload, governance_signature, debit_id=debit_id
+            )
+            if committed:
+                return BarrierCommitResult(
+                    committed=True, message=reason, magnitude=mag
+                )
+            return BarrierCommitResult(
+                committed=False,
+                message=reason,
+                magnitude=0.0,
+                failure_kind=scenario.cbf_failure_kind,
+            )
+
+        mock_cbf_backend.check_barrier = _check_barrier
+        mock_cbf_backend.commit_barrier_checked = _commit_barrier_checked
     collaborators["cbf.verify_action"] = mock_cbf_backend.verify_action
     collaborators["cbf.atomic_verify_and_commit"] = (
         mock_cbf_backend.atomic_verify_and_commit
@@ -311,6 +354,7 @@ SCENARIOS: list[Scenario] = [
         params={"symbol": "AAPL", "amount": 100.0, "confidence": 0.99},
         cbf_allowed=False,
         cbf_reason="RECONCILIATION_UNAVAILABLE: ledger sync timeout",
+        cbf_failure_kind=BarrierFailureKind.RECONCILIATION_UNAVAILABLE,
     ),
     # 5. CBF Refusal: Fence epoch regression
     Scenario(
@@ -320,6 +364,7 @@ SCENARIOS: list[Scenario] = [
         params={"symbol": "AAPL", "amount": 100.0, "confidence": 0.99},
         cbf_allowed=False,
         cbf_reason="Fence epoch regression: current 5 < seen 6",
+        cbf_failure_kind=BarrierFailureKind.RECONCILIATION_DRIFT,
     ),
     # 6. OPA DENY
     Scenario(

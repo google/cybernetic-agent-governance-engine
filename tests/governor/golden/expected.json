@@ -158,44 +158,44 @@
     "action": "execute_trade",
     "entry_points": {
       "validate_action": {
-        "outcome": "GovernanceError",
-        "first_violation_code": "[CBF_BARRIER_VIOLATED] RECONCILIATION_UNAVAILABLE: ledger sync timeout",
+        "outcome": "GovernanceInfrastructureError",
+        "first_violation_code": "[CBF_RECONCILIATION_UNAVAILABLE] RECONCILIATION_UNAVAILABLE: ledger sync timeout",
         "seal_issued": false,
         "collaborators_called": [
           "cbf.verify_action",
           "consensus_engine.check_consensus",
           "ftra_stage._ftra_boundary_check",
           "opa_client.evaluate_policy",
-          "publish_refusal",
+          "publish_infrastructure_block",
           "stpa_validator.validate"
         ]
       },
       "govern": {
-        "outcome": "GovernanceError",
-        "first_violation_code": "[CBF_BARRIER_VIOLATED] RECONCILIATION_UNAVAILABLE: ledger sync timeout",
+        "outcome": "GovernanceInfrastructureError",
+        "first_violation_code": "[CBF_RECONCILIATION_UNAVAILABLE] RECONCILIATION_UNAVAILABLE: ledger sync timeout",
         "seal_issued": false,
         "collaborators_called": [
           "cbf.atomic_verify_and_commit",
           "consensus_engine.check_consensus",
           "ftra_stage._ftra_boundary_check",
           "opa_client.evaluate_policy",
-          "publish_refusal",
+          "publish_infrastructure_block",
           "stpa_validator.validate"
         ]
       },
       "revalidate_post_hitl": {
-        "outcome": "GovernanceError",
-        "first_violation_code": "[CBF_BARRIER_VIOLATED] RECONCILIATION_UNAVAILABLE: ledger sync timeout",
+        "outcome": "GovernanceInfrastructureError",
+        "first_violation_code": "[CBF_RECONCILIATION_UNAVAILABLE] RECONCILIATION_UNAVAILABLE: ledger sync timeout",
         "seal_issued": false,
         "collaborators_called": [
           "cbf.atomic_verify_and_commit",
           "opa_client.evaluate_policy",
-          "publish_refusal"
+          "publish_infrastructure_block"
         ]
       },
       "verify": {
         "outcome": "DENY",
-        "first_violation_code": "CBF_BARRIER_VIOLATED",
+        "first_violation_code": "CBF_RECONCILIATION_UNAVAILABLE",
         "seal_issued": false,
         "collaborators_called": [
           "cbf.verify_action",
@@ -1022,21 +1022,21 @@
     "action": "execute_trade",
     "entry_points": {
       "validate_action": {
-        "outcome": "GovernanceError",
-        "first_violation_code": "[FTRA_REGISTRY_UNAVAILABLE] FTRA Boundary Check: the terminal registry could not be loaded; refusing 'execute_trade' (fail-closed).",
+        "outcome": "GovernanceInfrastructureError",
+        "first_violation_code": "[FTRA_REGISTRY_UNAVAILABLE] FTRA Boundary Check: the terminal registry could not be loaded; blocking 'execute_trade' (fail-closed).",
         "seal_issued": false,
         "collaborators_called": [
           "ftra_stage._ftra_boundary_check",
-          "publish_refusal"
+          "publish_infrastructure_block"
         ]
       },
       "govern": {
-        "outcome": "GovernanceError",
-        "first_violation_code": "[FTRA_REGISTRY_UNAVAILABLE] FTRA Boundary Check: the terminal registry could not be loaded; refusing 'execute_trade' (fail-closed).",
+        "outcome": "GovernanceInfrastructureError",
+        "first_violation_code": "[FTRA_REGISTRY_UNAVAILABLE] FTRA Boundary Check: the terminal registry could not be loaded; blocking 'execute_trade' (fail-closed).",
         "seal_issued": false,
         "collaborators_called": [
           "ftra_stage._ftra_boundary_check",
-          "publish_refusal"
+          "publish_infrastructure_block"
         ]
       },
       "revalidate_post_hitl": {

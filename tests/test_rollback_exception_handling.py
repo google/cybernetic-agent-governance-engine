@@ -197,7 +197,7 @@ class TestRollbackFailClosedSemantics:
         assert violations[0].code == "ROLLBACK_FAILED"
         from src.gateway.governance.contracts import ViolationKind
 
-        assert violations[0].kind == ViolationKind.HARD
+        assert violations[0].kind == ViolationKind.INFRASTRUCTURE
 
 
 class TestRollbackViolationStructure:

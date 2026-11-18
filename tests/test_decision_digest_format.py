@@ -241,7 +241,7 @@ def _hard_breach() -> list[Violation]:
     return [
         Violation(
             tier="CBF",
-            code="CBF_BARRIER_VIOLATION",
+            code="CBF_BARRIER_VIOLATED",
             message="Barrier breached",
             kind=ViolationKind.HARD,
         )

@@ -122,6 +122,7 @@ from src.cage_finance.tools.trader_binding import (
     TraderIdentityUnavailable,
     TraderRoleBindings,
 )
+from src.gateway.governance.contracts import ServerInputUnavailableError
 from src.gateway.governance.reconciliation.daemon import TTL_SECONDS
 from src.gateway.server.workload_identity import current_client_identity
 
@@ -203,6 +204,10 @@ class TradeInputUnavailable(RuntimeError):
     """A server-side STPA input could not be measured or trusted."""
 
 
+class TradeInputSourceUnavailable(TradeInputUnavailable):
+    """The authoritative feed or source could not be reached or timed out."""
+
+
 def _verified(source_id: object) -> bool:
     return (
         isinstance(source_id, str)
@@ -240,7 +245,7 @@ async def fetch_verified_quote(
     try:
         quote = await asyncio.wait_for(feed.latest_quote(symbol), FETCH_TIMEOUT_S)
     except Exception as exc:
-        raise TradeInputUnavailable(
+        raise TradeInputSourceUnavailable(
             f"market-data fetch failed: {type(exc).__name__}: {exc}"
         ) from exc
     t_received = clock()
@@ -282,7 +287,7 @@ async def fetch_verified_daily_volume(
     try:
         vol = await asyncio.wait_for(feed.average_daily_volume(symbol), FETCH_TIMEOUT_S)
     except Exception as exc:
-        raise TradeInputUnavailable(
+        raise TradeInputSourceUnavailable(
             f"daily-volume fetch failed: {type(exc).__name__}: {exc}"
         ) from exc
     if not isinstance(vol.symbol, str) or vol.symbol.upper() != symbol.upper():
@@ -348,7 +353,7 @@ async def fetch_verified_nav(
     try:
         snap = await asyncio.wait_for(source.fetch_nav(), FETCH_TIMEOUT_S)
     except Exception as exc:
-        raise TradeInputUnavailable(
+        raise TradeInputSourceUnavailable(
             f"NAV fetch failed: {type(exc).__name__}: {exc}"
         ) from exc
     if not _verified(snap.source_id):
@@ -422,9 +427,15 @@ async def _resolve_market(
     """Add ``latency_ms`` / ``order_size`` (one quote) and ``daily_vol``."""
     try:
         quote = await fetch_verified_quote(feed, symbol)
+    except TradeInputSourceUnavailable as exc:
+        raise ServerInputUnavailableError(
+            f"market-data quote source unavailable for {symbol!r}: {exc}",
+            dependency="market_data",
+            failure_code="MARKET_DATA_UNAVAILABLE",
+        ) from exc
     except TradeInputUnavailable as exc:
         logger.warning(
-            "trade inputs: quote unavailable (UCA-2 / UCA-6 will refuse): %s", exc
+            "trade inputs: quote invalid (UCA-2 / UCA-6 will refuse): %s", exc
         )
     else:
         inputs["latency_ms"] = quote.latency_ms
@@ -436,10 +447,14 @@ async def _resolve_market(
             )
     try:
         inputs["daily_vol"] = await fetch_verified_daily_volume(feed, symbol)
+    except TradeInputSourceUnavailable as exc:
+        raise ServerInputUnavailableError(
+            f"market-data daily-volume source unavailable for {symbol!r}: {exc}",
+            dependency="market_data",
+            failure_code="MARKET_DATA_UNAVAILABLE",
+        ) from exc
     except TradeInputUnavailable as exc:
-        logger.warning(
-            "trade inputs: daily_vol unavailable (UCA-6 will refuse): %s", exc
-        )
+        logger.warning("trade inputs: daily_vol invalid (UCA-6 will refuse): %s", exc)
 
 
 @dataclass(frozen=True)
@@ -467,23 +482,30 @@ class ServerTradeInputs:
         """
         inputs: dict[str, float] = {}
         if self.market_feed is None:
-            logger.warning(
-                "trade inputs: no market-data feed assembled "
-                "(UCA-2 / UCA-6 will refuse)"
+            raise ServerInputUnavailableError(
+                f"no market-data feed assembled for {symbol!r}",
+                dependency="market_data",
+                failure_code="MARKET_DATA_UNAVAILABLE",
             )
-        else:
-            await _resolve_market(self.market_feed, symbol, amount, inputs)
+        await _resolve_market(self.market_feed, symbol, amount, inputs)
         refusing = "UCA-5 / UCA-13" if side == "sell" else "UCA-5"
         if self.nav_source is None:
-            logger.warning(
-                "trade inputs: no NAV source assembled (%s will refuse)", refusing
+            raise ServerInputUnavailableError(
+                "no portfolio NAV source assembled",
+                dependency="portfolio_nav",
+                failure_code="PORTFOLIO_NAV_UNAVAILABLE",
             )
-            return inputs
         try:
             nav = await fetch_verified_nav(self.nav_source)
+        except TradeInputSourceUnavailable as exc:
+            raise ServerInputUnavailableError(
+                f"portfolio NAV source unavailable: {exc}",
+                dependency="portfolio_nav",
+                failure_code="PORTFOLIO_NAV_UNAVAILABLE",
+            ) from exc
         except TradeInputUnavailable as exc:
             logger.warning(
-                "trade inputs: NAV unavailable (%s will refuse): %s", refusing, exc
+                "trade inputs: NAV invalid (%s will refuse): %s", refusing, exc
             )
             return inputs
         inputs["drawdown"] = daily_drawdown_pct(nav)
@@ -570,6 +592,12 @@ class TradeInputResolver:
                 exc,
             )
             return {}
+        except Exception as exc:
+            raise ServerInputUnavailableError(
+                f"trader identity binding lookup failed: {type(exc).__name__}: {exc}",
+                dependency="trader_identity",
+                failure_code="TRADER_IDENTITY_UNAVAILABLE",
+            ) from exc
 
 
 __all__ = [
@@ -586,6 +614,7 @@ __all__ = [
     "PortfolioNavSource",
     "ServerTradeInputs",
     "TradeInputResolver",
+    "TradeInputSourceUnavailable",
     "TradeInputUnavailable",
     "VerifiedQuote",
     "daily_drawdown_pct",

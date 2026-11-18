@@ -48,9 +48,13 @@ from contextvars import ContextVar
 from types import MappingProxyType
 from typing import Any
 
-from src.gateway.governance.contracts import ServerInputResolver
+from src.gateway.governance.contracts import (
+    ServerInputResolver,
+    ServerInputUnavailableError,
+)
 from src.gateway.governance.env_posture import is_enforcing
 from src.gateway.governance.prompt_injection_detector import detect_prompt_injection
+from src.gateway.governance.refusal_projection import SERVER_INPUT_INFRA_ERRORS_KEY
 from src.gateway.governance.text_filter import ac_keyword_scan
 
 logger = logging.getLogger(__name__)
@@ -60,7 +64,12 @@ RESOLVE_TIMEOUT_S: float = 5.0
 
 #: Kernel-owned server-bound keys stripped unconditionally from caller params.
 KERNEL_SERVER_INPUT_KEYS: frozenset[str] = frozenset(
-    {"approval_token", "semantic_score", "prompt_injection_verified"}
+    {
+        "approval_token",
+        "semantic_score",
+        "prompt_injection_verified",
+        SERVER_INPUT_INFRA_ERRORS_KEY,
+    }
 )
 
 #: Core STPA actions whose server-bound parameters are resolved by the kernel.
@@ -264,6 +273,19 @@ async def bind_server_inputs(
             resolved = await asyncio.wait_for(
                 resolver.resolve(MappingProxyType(dict(bound))), RESOLVE_TIMEOUT_S
             )
+        except ServerInputUnavailableError as exc:
+            logger.error(
+                "server inputs: authoritative source unavailable for %s (%s/%s): %s",
+                action,
+                exc.dependency,
+                exc.failure_code,
+                exc,
+            )
+            if raw_injection_detected:
+                bound["semantic_score"] = raw_injection_score
+                bound["prompt_injection_verified"] = False
+                return bound
+            raise
         except Exception as exc:
             logger.error(
                 "server inputs: resolver for %s failed (%s: %s); owned keys stay unset",
@@ -318,6 +340,7 @@ __all__ = [
     "KERNEL_SERVER_INPUT_ACTIONS",
     "KERNEL_SERVER_INPUT_KEYS",
     "RESOLVE_TIMEOUT_S",
+    "SERVER_INPUT_INFRA_ERRORS_KEY",
     "PromptInjectionInputResolver",
     "WriteDbApprovalInputResolver",
     "bind_server_inputs",

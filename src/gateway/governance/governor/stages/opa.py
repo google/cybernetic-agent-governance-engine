@@ -118,6 +118,8 @@ class OpaStage(Stage):
                         code="OPA_UNAVAILABLE",
                         message=f"[{_OPA_CTRL}] OPA policy engine unavailable ({e.reason}): {e}",
                         kind=ViolationKind.INFRASTRUCTURE,
+                        infra_dependency="opa",
+                        infra_error_code="policy_engine_unavailable",
                     ),
                 )
             )
@@ -130,6 +132,8 @@ class OpaStage(Stage):
                         code="OPA_UNAVAILABLE",
                         message=f"[{_OPA_CTRL}] OPA policy evaluation failed: {e}",
                         kind=ViolationKind.INFRASTRUCTURE,
+                        infra_dependency="opa",
+                        infra_error_code="policy_engine_unavailable",
                     ),
                 )
             )
@@ -170,5 +174,7 @@ def _violations_for(verdict: OpaVerdict | None, raw_result: object) -> list[Viol
             code="OPA_UNAVAILABLE",
             message=f"[{_OPA_CTRL}] OPA policy engine returned undecodable verdict '{raw_result}'",
             kind=ViolationKind.INFRASTRUCTURE,
+            infra_dependency="opa",
+            infra_error_code="policy_engine_unavailable",
         )
     ]

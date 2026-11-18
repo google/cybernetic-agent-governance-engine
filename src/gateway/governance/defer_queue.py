@@ -1162,6 +1162,8 @@ class DeferQueue:
         ticket_id: str,
         expected_status: str = "PENDING",
         new_status: str = "RESOLVED",
+        *,
+        raise_on_error: bool = False,
     ) -> bool:
         """Private Lua compare-and-swap helper for single-use status transitions.
 
@@ -1182,12 +1184,15 @@ class DeferQueue:
             ticket_id:       The ``defer_id`` to transition.
             expected_status: Status value required for transition (default: "PENDING").
             new_status:      Target status value (default: "RESOLVED").
+            raise_on_error:  When ``True``, re-raise storage exceptions so callers
+                             distinguish Redis unavailability from a lost CAS race
+                             (F-03, POAM-2026-233).
 
         Returns:
             True if the status was transitioned from ``expected_status`` to
             ``new_status`` (or matched this call's ``op_id`` on retry).
-            False if the current status does not match ``expected_status`` or on
-            Redis error (fail-closed).
+            False if the current status does not match ``expected_status`` (or on
+            Redis error when ``raise_on_error=False``).
         """
         key = f"{_KEY_PREFIX}{ticket_id}"
 
@@ -1240,6 +1245,8 @@ class DeferQueue:
                 ticket_id,
                 exc,
             )
+            if raise_on_error:
+                raise
             # Fail closed — treat errors as "already resolved" to prevent double-execution
             return False
 
@@ -1340,7 +1347,10 @@ class DeferQueue:
         if token is None:
             return None
         if not await self._atomic_resolve(
-            defer_id, expected_status="RESOLVED", new_status="CONSUMED"
+            defer_id,
+            expected_status="RESOLVED",
+            new_status="CONSUMED",
+            raise_on_error=True,
         ):
             return None  # another caller consumed it first (replay)
         return token

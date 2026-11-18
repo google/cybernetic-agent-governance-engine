@@ -243,13 +243,16 @@ async def test_cash_balance_is_not_the_denominator(
 
 
 @pytest.mark.asyncio
-async def test_missing_nav_source_refuses_sell(
+async def test_missing_nav_source_blocks_sell_on_infrastructure(
     region: str, stpa_gateway: list[dict[str, Any]]
 ) -> None:
-    result = await _trade(1.0, side="sell", inputs=_inputs(no_nav=True))
-    assert result.startswith("BLOCKED:")
-    assert _UCA_13 in result
-    assert "portfolio_total" not in stpa_gateway[-1]
+    from src.gateway.governance.governor.errors import GovernanceInfrastructureError
+
+    with pytest.raises(GovernanceInfrastructureError) as exc_info:
+        await _trade(1.0, side="sell", inputs=_inputs(no_nav=True))
+    assert exc_info.value.dependency == "portfolio_nav"
+    assert exc_info.value.failure_code == "PORTFOLIO_NAV_UNAVAILABLE"
+    assert stpa_gateway == []
 
 
 @pytest.mark.asyncio
@@ -258,6 +261,26 @@ async def test_missing_nav_source_refuses_sell(
     [
         FaultMode.TIMEOUT,
         FaultMode.CONNECTION_ERROR,
+    ],
+)
+async def test_unavailable_nav_source_blocks_sell_on_infrastructure(
+    region: str, stpa_gateway: list[dict[str, Any]], fault: FaultMode
+) -> None:
+    from src.gateway.governance.governor.errors import GovernanceInfrastructureError
+
+    nav = _nav()
+    nav.inject_fault(fault)
+    with pytest.raises(GovernanceInfrastructureError) as exc_info:
+        await _trade(1.0, side="sell", inputs=_inputs(nav))
+    assert exc_info.value.dependency == "portfolio_nav"
+    assert exc_info.value.failure_code == "PORTFOLIO_NAV_UNAVAILABLE"
+    assert stpa_gateway == []
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "fault",
+    [
         FaultMode.NEGATIVE_VALUE,
         FaultMode.NAN_VALUE,
         FaultMode.STALE_TIMESTAMP,

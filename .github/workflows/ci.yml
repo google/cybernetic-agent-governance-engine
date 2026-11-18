@@ -267,6 +267,12 @@ jobs:
         # Violations indicate hardcoded domain coupling in vendor-neutral layers.
         run: |
           uv run python scripts/check_domain_literals.py --verbose
+      - name: Violation quarantine trigger ledger check (POAM-2026-233)
+        # Exhaustive AST partition across src/**/*.py ensuring every Violation.code
+        # is explicitly classified as quarantining or non-quarantining with zero
+        # INFRASTRUCTURE overlap and zero unresolvable dynamic code expressions.
+        run: |
+          uv run python scripts/check_violation_quarantine_ledger.py --verbose
       - name: Telemetry literal check (G7 - No raw vendor literals in executable code)
         # AW-6: Gate G7 blocks any raw telemetry vendor string literals in executable code.
         # All telemetry attributes must be imported from src.gateway.observability.attributes.

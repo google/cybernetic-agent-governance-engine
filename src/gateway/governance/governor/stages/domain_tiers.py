@@ -191,7 +191,7 @@ class DomainTierStage(Stage):
                     f"commit() returned {type(result).__name__}, not "
                     "(list[Violation], CommitReceipt | None)"
                 ),
-                kind=ViolationKind.HARD,
+                kind=ViolationKind.INFRASTRUCTURE,
             )
         ], (receipt if isinstance(receipt, CommitReceipt) else None)
 
@@ -220,7 +220,7 @@ class DomainTierStage(Stage):
             tier=self.name,
             code="TIER_EXCEPTION",
             message=f"Exception in {where}: {type(exc).__name__}: {exc}",
-            kind=ViolationKind.HARD,
+            kind=ViolationKind.INFRASTRUCTURE,
         )
 
 

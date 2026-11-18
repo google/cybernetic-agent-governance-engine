@@ -361,7 +361,7 @@ async def test_one_failing_rollback_does_not_stop_the_others() -> None:
 
     assert log[3:] == ["rollback:c", "rollback:b", "rollback:a"]
     assert [(v.tier, v.code, v.kind) for v in failures] == [
-        ("b", "ROLLBACK_FAILED", ViolationKind.HARD)
+        ("b", "ROLLBACK_FAILED", ViolationKind.INFRASTRUCTURE)
     ]
 
 
@@ -470,5 +470,5 @@ async def test_raising_commit_is_hard_tier_exception_and_not_recorded() -> None:
         violations = await scope.commit(_RaisingStage(), _ctx())
         assert scope.commits == ()
     assert [(v.tier, v.code, v.kind) for v in violations] == [
-        ("kernel", "TIER_EXCEPTION", ViolationKind.HARD)
+        ("kernel", "TIER_EXCEPTION", ViolationKind.INFRASTRUCTURE)
     ]

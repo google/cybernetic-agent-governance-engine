@@ -98,6 +98,16 @@ redis.call('SET', KEYS[1], cjson.encode(record), 'KEEPTTL')
 return 1
 """
 
+_RELEASE_UNEXECUTED_LUA = """
+local raw = redis.call('GET', KEYS[1])
+if not raw then return 0 end
+local ok, record = pcall(cjson.decode, raw)
+if (not ok) or type(record) ~= 'table' then return -1 end
+if record['token'] ~= ARGV[1] or record['status'] ~= 'IN_FLIGHT' then return -1 end
+redis.call('DEL', KEYS[1])
+return 1
+"""
+
 
 class ExecutionStatus(str, Enum):
     """What an execution ledger record says about the side effect."""
@@ -322,6 +332,43 @@ class ExecutionLedger:
         )
         return False
 
+    async def release_unexecuted(self, claim: Claim) -> bool:
+        """Release ``claim`` if it is still ``IN_FLIGHT`` and owned by this attempt.
+
+        Used strictly when governance blocks on infrastructure unavailability
+        before actuation started, so retrying the same ``transaction_id`` after
+        the dependency recovers does not collide with a stale ``BLOCKED`` or
+        ``IN_FLIGHT`` record (F-03, POAM-2026-233).
+        """
+        try:
+            redis = await self._raw_redis()
+        except ExecutionLedgerUnavailable as exc:
+            logger.warning(
+                "execution ledger unexecuted claim %s could not be released: %s",
+                claim.key,
+                exc,
+            )
+            return False
+        if redis is None:
+            return self._release_local(claim)
+        for _ in range(_REDIS_ATTEMPTS):
+            try:
+                result = await redis.eval(
+                    _RELEASE_UNEXECUTED_LUA,
+                    1,
+                    claim.key,
+                    claim.token,
+                )
+            except Exception as exc:
+                logger.warning(
+                    "execution ledger unexecuted claim %s release retry failed: %s",
+                    claim.key,
+                    exc,
+                )
+                continue
+            return int(result) == 1
+        return False
+
     async def _raw_redis(self) -> Any | None:
         """The raw async client behind ``redis_client`` (None when unconfigured)."""
         client = self._redis_client
@@ -376,4 +423,16 @@ class ExecutionLedger:
                 return False
             record.status = status
             record.outcome = outcome
+        return True
+
+    def _release_local(self, claim: Claim) -> bool:
+        with self._local_lock:
+            record = self._local.get(claim.key)
+            if (
+                record is None
+                or record.token != claim.token
+                or record.status is not ExecutionStatus.IN_FLIGHT
+            ):
+                return False
+            del self._local[claim.key]
         return True

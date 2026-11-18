@@ -131,7 +131,25 @@ class TestOpaNodeFactory:
 
     @pytest.mark.asyncio
     async def test_escalated_on_manual_review(self):
-        """GovernanceError with 'Manual Review' → ESCALATED."""
+        """GovernanceError with structured MANUAL_REVIEW payload → ESCALATED."""
+        config = _make_config()
+        mock_gov = MagicMock(spec=SymbolicGovernor)
+        mock_gov.validate_action = AsyncMock(
+            side_effect=GovernanceError(
+                "ISO 42001 Policy Check: Manual Review Required.",
+                payload={"verdict": "MANUAL_REVIEW"},
+            )
+        )
+
+        node = create_opa_safety_node(config, mock_gov)
+        result = await node(_state_with_plan())
+
+        assert result["safety_status"] == "ESCALATED"
+        assert "error" in result
+
+    @pytest.mark.asyncio
+    async def test_blocked_on_unstructured_manual_review_text(self):
+        """Plain GovernanceError mentioning 'Manual Review' without structured verdict stays BLOCKED."""
         config = _make_config()
         mock_gov = MagicMock(spec=SymbolicGovernor)
         mock_gov.validate_action = AsyncMock(
@@ -143,7 +161,7 @@ class TestOpaNodeFactory:
         node = create_opa_safety_node(config, mock_gov)
         result = await node(_state_with_plan())
 
-        assert result["safety_status"] == "ESCALATED"
+        assert result["safety_status"] == "BLOCKED"
         assert "error" in result
 
     @pytest.mark.asyncio

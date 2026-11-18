@@ -77,9 +77,11 @@ _CALLER_DRAWDOWN = {
     "current_drawdown": 0.0,
     "portfolio_drawdown_pct": 0.0,
 }
-_NAV_FAULTS = [
+_NAV_OUTAGE_FAULTS = [
     FaultMode.TIMEOUT,
     FaultMode.CONNECTION_ERROR,
+]
+_NAV_FAULTS = [
     FaultMode.MALFORMED_PAYLOAD,
     FaultMode.NEGATIVE_VALUE,
     FaultMode.NAN_VALUE,
@@ -321,9 +323,24 @@ async def test_nav_fault_refuses_with_b2(
     assert "Missing current drawdown data" in found[0][2]
 
 
-async def test_no_nav_source_refuses_with_b2(
+@pytest.mark.parametrize("fault", _NAV_OUTAGE_FAULTS, ids=lambda f: f.value)
+async def test_nav_outage_raises_server_input_unavailable(
+    region: str, contribution: PluginContribution, fault: FaultMode
+) -> None:
+    from src.gateway.governance.contracts import ServerInputUnavailableError
+
+    _nav(contribution).inject_fault(fault)
+    with pytest.raises(ServerInputUnavailableError) as exc_info:
+        await _b2(contribution, **_CALLER_DRAWDOWN)
+    assert exc_info.value.dependency == "portfolio_nav"
+    assert exc_info.value.failure_code == "PORTFOLIO_NAV_UNAVAILABLE"
+
+
+async def test_no_nav_source_raises_server_input_unavailable(
     contribution: PluginContribution,
 ) -> None:
+    from src.gateway.governance.contracts import ServerInputUnavailableError
+
     resolver = contribution.server_inputs[_BOUNDED]
     assert isinstance(resolver, TradeInputResolver)
     blind = replace(
@@ -334,11 +351,10 @@ async def test_no_nav_source_refuses_with_b2(
             )
         },
     )
-
-    bound, found = await _b2(blind, **_CALLER_DRAWDOWN)
-
-    assert "drawdown" not in bound
-    assert [(code, kind) for code, kind, _ in found] == [(_B2, ViolationKind.HARD)]
+    with pytest.raises(ServerInputUnavailableError) as exc_info:
+        await _b2(blind, **_CALLER_DRAWDOWN)
+    assert exc_info.value.dependency == "portfolio_nav"
+    assert exc_info.value.failure_code == "PORTFOLIO_NAV_UNAVAILABLE"
 
 
 @pytest.mark.parametrize("raw", [None, "0.0", True, [0.0]])

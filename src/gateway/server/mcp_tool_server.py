@@ -866,7 +866,6 @@ async def execute_tool_endpoint(request_body: ToolExecutionRequest, request: Req
             response["proof_hash"] = proof_hash
         return response
     except EvidenceChainUnavailableError as exc:
-        mark_request_refused()
         logger.error("Evidence chain unavailable during /tools/execute: %s", exc)
         return _SubscriptableJSONResponse(
             status_code=503,

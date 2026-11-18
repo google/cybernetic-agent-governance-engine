@@ -180,9 +180,10 @@ async def test_failed_commit_rolls_back_lifo_and_records_rollback_failure() -> N
     result = await run_scoped(stages, _ctx())
 
     assert log == ["commit:m1", "commit:m2", "commit:m3", "rollback:m2", "rollback:m1"]
-    codes = [v.code for v in result.violations]
-    assert codes == ["DENY", "ROLLBACK_FAILED"]
-    assert all(v.kind == ViolationKind.HARD for v in result.violations)
+    assert [(v.code, v.kind) for v in result.violations] == [
+        ("DENY", ViolationKind.HARD),
+        ("ROLLBACK_FAILED", ViolationKind.INFRASTRUCTURE),
+    ]
 
 
 @pytest.mark.asyncio
@@ -221,7 +222,7 @@ async def test_phase1_claims_exception_is_hard_tier_exception() -> None:
     result = await run_scoped(stages, _ctx())
 
     assert [(v.tier, v.code, v.kind) for v in result.violations] == [
-        ("gate", "TIER_EXCEPTION", ViolationKind.HARD)
+        ("gate", "TIER_EXCEPTION", ViolationKind.INFRASTRUCTURE)
     ]
     assert "Exception in claims_action: KeyError" in result.violations[0].message
     assert log == []  # evaluate() never ran
