@@ -31,6 +31,7 @@ Implements PR-9 Check 4 ("OSCAL census diff"):
 from __future__ import annotations
 
 import argparse
+import ast
 import hashlib
 import json
 import re
@@ -80,6 +81,29 @@ VALID_CUSTODY_GRADES = {
 VALID_READ_BACK_GRADES = {"OBSERVES", "PRESENCE", "NONE", "n/a", None}
 VALID_LIFETIME_GRADES = {"OUTLIVES", "REPO", "SHORTER", "UNKNOWN", "n/a", None}
 
+# Meta-schema and gate-hygiene tests validate static YAML/JSON/markdown shapes,
+# never runtime control effectiveness, and cannot back a HOLDS control claim (POAM-2026-235).
+META_SCHEMA_TEST_FILES: frozenset[str] = frozenset(
+    {
+        "tests/test_lula_v0160_schema.py",
+        "tests/unit/test_lula_description_parity.py",
+        "tests/unit/test_lula_selector_parity.py",
+        "tests/unit/test_lula_rating_breakdown.py",
+        "tests/test_ci_gate_effectiveness.py",
+        "tests/test_check_oscal_claim_census.py",
+        "tests/test_check_poam_lula_divergence.py",
+        "tests/test_check_doc_references.py",
+        "tests/unit/test_check_gate_w_freshness.py",
+    }
+)
+
+ANCHOR_REQUIRED_CODE_PATHS: tuple[str, ...] = (
+    "src/compliance_bridge/metrics.py",
+    "src/compliance_bridge/aarm_mapper.py",
+    "src/compliance_bridge/sla_monitor.py",
+)
+MIN_CODE_ANCHORED_ROWS = 10
+
 LEGACY_N_FINDING_RE = re.compile(r"\bN-\d+\b")
 PINNED_CITE_PATH_RE = re.compile(
     r"^(?P<rev>[0-9a-f]{7,40}\^?):(?P<path>(?:src|infra|tests|compliance|deployment|scripts|config|docs|\.github|packages|proof)/[^\s:();,]+)"
@@ -88,10 +112,16 @@ CITED_REPO_PATH_RE = re.compile(
     r"^((?:src|infra|tests|compliance|deployment|scripts|config|docs|\.github|packages|proof)/[^\s:();,]+)"
 )
 PINNED_READ_BACK_REPO_PATH_RE = re.compile(
-    r"(?<![A-Za-z0-9_./:-])(?P<rev>[0-9a-f]{7,40}\^?):(?P<path>(?:src|infra|tests|compliance|deployment|scripts|config|docs|\.github|packages|proof)/(?:[A-Za-z0-9_./-]+/)?(?:Dockerfile(?![.A-Za-z0-9_-])|[A-Za-z0-9_./-]+\.[A-Za-z0-9_]+))"
+    r"(?<![A-Za-z0-9_./:-])(?P<rev>[0-9a-f]{7,40}\^?):(?P<path>(?:src|infra|tests|compliance|deployment|scripts|config|docs|\.github|packages|proof)/(?:[A-Za-z0-9_./-]+/)?(?:Dockerfile(?![.A-Za-z0-9_-])|Makefile(?![.A-Za-z0-9_-])|[A-Za-z0-9_./-]+\.[A-Za-z0-9_]+))(?::L?\d+(?:[-,L\d]+)?)?"
 )
 READ_BACK_REPO_PATH_RE = re.compile(
-    r"(?<![A-Za-z0-9_./:-])((?:src|infra|tests|compliance|deployment|scripts|config|docs|\.github|packages|proof)/(?:[A-Za-z0-9_./-]+/)?(?:Dockerfile(?![.A-Za-z0-9_-])|[A-Za-z0-9_./-]+\.[A-Za-z0-9_]+))"
+    r"(?<![A-Za-z0-9_./:-])((?:src|infra|tests|compliance|deployment|scripts|config|docs|\.github|packages|proof)/(?:[A-Za-z0-9_./-]+/)?(?:Dockerfile(?![.A-Za-z0-9_-])|Makefile(?![.A-Za-z0-9_-])|[A-Za-z0-9_./-]+\.[A-Za-z0-9_]+))"
+)
+PROSE_PATH_LINE_RE = re.compile(
+    r"(?<![A-Za-z0-9_./:-])((?:src|infra|tests|compliance|deployment|scripts|config|docs|\.github|packages|proof)/(?:[A-Za-z0-9_./-]+/)?(?:Dockerfile(?![.A-Za-z0-9_-])|Makefile(?![.A-Za-z0-9_-])|[A-Za-z0-9_./-]+\.[A-Za-z0-9_]+))(?::(L?\d+(?:-(?:L?\d+))?(?:,(?:L?\d+(?:-(?:L?\d+))?))*))?"
+)
+SYMBOL_QUAL_RE = re.compile(
+    r"(?<![A-Za-z0-9_./:-])((?:src|tests|scripts|packages|proof)/[A-Za-z0-9_./-]+\.py)::([A-Za-z_][A-Za-z0-9_]*(?:::[A-Za-z_][A-Za-z0-9_]*)?)"
 )
 
 
@@ -161,7 +191,9 @@ EVIDENCE_STORE_PROVENANCE: tuple[EvidenceStoreProvenance, ...] = (
         writer_and_credential="Bridge audit workflow with dedicated keys (`POAM-019` guard)",
         forgery_or_suppression_surface="Compliance bridge",
         retention_and_integrity_detail=(
-            'Query plane only; `iso_42001_outcome == "PASSED"` has zero writers in `src/` (`F-103`)'
+            "Query plane for Lula ingest findings (`audit_workflow.py`); per-control `safety_rate` "
+            "in `metrics.py` reads the `evidence_stream_worm` / Valkey DB 1 custody chain rather "
+            "than Langfuse trace outcomes (`POAM-2026-234`, `POAM-2026-235`)"
         ),
         cited_for="`AU-9` isolation",
     ),
@@ -483,14 +515,184 @@ def _pinned_path_exists_in_git(rev: str, rel_path: str, repo_root: Path) -> bool
     return proc.returncode == 0
 
 
+def _line_count(path: Path, cache: dict[Path, int]) -> int:
+    """Return 1-based total line count of *path*, cached per validation run."""
+    if path not in cache:
+        cache[path] = len(
+            path.read_text(encoding="utf-8", errors="replace").splitlines()
+        )
+    return cache[path]
+
+
+def _ast_symbol_slice(path: Path, symbol: str) -> str | None:
+    """Return source slice of *symbol* (``name`` or ``Class::method`` / ``Class.method``) in *path*."""
+    try:
+        source = path.read_text(encoding="utf-8")
+        tree = ast.parse(source, filename=str(path))
+    except (OSError, SyntaxError):
+        return None
+    lines = source.splitlines()
+    normalized = symbol.replace("::", ".")
+    parts = normalized.split(".")
+
+    def _slice_node(node: ast.AST) -> str:
+        lineno = getattr(node, "lineno", 1)
+        end_lineno = getattr(node, "end_lineno", lineno)
+        return "\n".join(lines[max(0, lineno - 1) : end_lineno])
+
+    if len(parts) == 1:
+        target = parts[0]
+        for node in tree.body:
+            if (
+                isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef))
+                and node.name == target
+            ):
+                return _slice_node(node)
+            if isinstance(node, ast.Assign):
+                for t in node.targets:
+                    if isinstance(t, ast.Name) and t.id == target:
+                        return _slice_node(node)
+            if (
+                isinstance(node, ast.AnnAssign)
+                and isinstance(node.target, ast.Name)
+                and node.target.id == target
+            ):
+                return _slice_node(node)
+        return None
+
+    if len(parts) == 2:
+        cls_name, attr_name = parts
+        for node in tree.body:
+            if isinstance(node, ast.ClassDef) and node.name == cls_name:
+                for child in node.body:
+                    if (
+                        isinstance(child, (ast.FunctionDef, ast.AsyncFunctionDef))
+                        and child.name == attr_name
+                    ):
+                        return _slice_node(child)
+    return None
+
+
+def _validate_line_spec(
+    idx: int,
+    rid: str,
+    field_label: str,
+    rel_path: str,
+    line_spec: str,
+    total_lines: int,
+    errors: list[str],
+) -> None:
+    """Verify every ``L?<start>(-L?<end>)?`` segment in *line_spec* lies within ``[1, total_lines]``."""
+    for seg in line_spec.split(","):
+        bounds = [p.lstrip("L") for p in seg.split("-") if p]
+        if not bounds or not all(b.isdigit() for b in bounds):
+            continue
+        nums = [int(b) for b in bounds]
+        if len(nums) == 2 and nums[0] > nums[1]:
+            errors.append(
+                f"Row {idx} ({rid}): inverted line range in {field_label}: "
+                f"{rel_path}:{line_spec}"
+            )
+            return
+        for ln in nums:
+            if ln < 1 or ln > total_lines:
+                errors.append(
+                    f"Row {idx} ({rid}): out-of-bounds line citation in {field_label}: "
+                    f"{rel_path}:{line_spec} (line {ln} exceeds {total_lines} lines)"
+                )
+                return
+
+
+def _validate_code_anchors(
+    idx: int,
+    rid: str,
+    row: dict[str, Any],
+    repo_root: Path,
+    errors: list[str],
+) -> bool:
+    """Validate structural ``code_anchors`` on *row*; return True if >=1 anchor was checked."""
+    anchors = row.get("code_anchors")
+    if anchors is None:
+        return False
+    if not isinstance(anchors, list) or not anchors:
+        errors.append(
+            f"Row {idx} ({rid}): 'code_anchors' must be a non-empty list when present"
+        )
+        return False
+
+    valid_any = False
+    for a_idx, anchor in enumerate(anchors):
+        if not isinstance(anchor, dict):
+            errors.append(f"Row {idx} ({rid}): code_anchors[{a_idx}] must be an object")
+            continue
+        rel_path = anchor.get("path")
+        if not isinstance(rel_path, str) or not rel_path.strip():
+            errors.append(
+                f"Row {idx} ({rid}): code_anchors[{a_idx}] missing non-empty 'path'"
+            )
+            continue
+        full_path = repo_root / rel_path
+        if not full_path.is_file():
+            errors.append(
+                f"Row {idx} ({rid}): code_anchor path does not exist: {rel_path}"
+            )
+            continue
+
+        symbol = anchor.get("symbol")
+        if symbol is not None:
+            if not isinstance(symbol, str) or not symbol.strip():
+                errors.append(
+                    f"Row {idx} ({rid}): code_anchors[{a_idx}] 'symbol' must be a non-empty string"
+                )
+                continue
+            target_text = _ast_symbol_slice(full_path, symbol)
+            if target_text is None:
+                errors.append(
+                    f"Row {idx} ({rid}): code_anchor symbol does not exist: {rel_path}::{symbol}"
+                )
+                continue
+        else:
+            target_text = full_path.read_text(encoding="utf-8", errors="replace")
+
+        must_contain = anchor.get("must_contain") or []
+        must_not_contain = anchor.get("must_not_contain") or []
+        if not isinstance(must_contain, list) or not isinstance(must_not_contain, list):
+            errors.append(
+                f"Row {idx} ({rid}): code_anchors[{a_idx}] must_contain/must_not_contain must be lists"
+            )
+            continue
+        if symbol is None and not must_contain and not must_not_contain:
+            errors.append(
+                f"Row {idx} ({rid}): code_anchors[{a_idx}] on {rel_path} must declare symbol, must_contain, or must_not_contain"
+            )
+            continue
+
+        for needle in must_contain:
+            if not isinstance(needle, str) or needle not in target_text:
+                errors.append(
+                    f"Row {idx} ({rid}): code_anchor drift on {rel_path}"
+                    f"{f'::{symbol}' if symbol else ''}: missing required snippet {needle!r}"
+                )
+        for forbidden in must_not_contain:
+            if isinstance(forbidden, str) and forbidden in target_text:
+                errors.append(
+                    f"Row {idx} ({rid}): code_anchor drift on {rel_path}"
+                    f"{f'::{symbol}' if symbol else ''}: found forbidden snippet {forbidden!r}"
+                )
+        valid_any = True
+    return valid_any
+
+
 def validate_census(
     census_rows: list[dict[str, Any]],
     extracted: dict[str, dict[str, Any]],
     repo_root: Path = REPO_ROOT,
 ) -> list[str]:
-    """Validate completeness, freshness, schema, finding IDs, and cited paths."""
+    """Validate completeness, freshness, schema, finding IDs, line bounds, and code anchors."""
     errors: list[str] = []
     by_id: dict[str, dict[str, Any]] = {}
+    line_cache: dict[Path, int] = {}
+    anchored_row_count = 0
 
     for idx, row in enumerate(census_rows, 1):
         rid = row.get("id")
@@ -531,6 +733,8 @@ def validate_census(
         if lt_grade not in VALID_LIFETIME_GRADES:
             errors.append(f"Row {idx} ({rid}): invalid lifetime grade {lt_grade!r}")
 
+        paths_missing_blob = " ".join(str(x) for x in (row.get("paths_missing") or []))
+
         for cite in row.get("cites") or []:
             for part in str(cite).split(";"):
                 segment = part.strip()
@@ -552,13 +756,52 @@ def validate_census(
                         )
 
         rb_check = read_back.get("check", "") if isinstance(read_back, dict) else ""
-        rb_blobs: list[tuple[str, str]] = [("read_back.check", str(rb_check))]
         if verdict == "HOLDS":
-            if isinstance(read_back, dict) and read_back.get("note"):
-                rb_blobs.append(("read_back.note", str(read_back.get("note"))))
+            holds_rb_blob = " ".join(
+                [str(rb_check)] + [str(x) for x in (row.get("evidence_named") or [])]
+            )
+            for meta_test in sorted(META_SCHEMA_TEST_FILES):
+                if meta_test in holds_rb_blob:
+                    errors.append(
+                        f"Row {idx} ({rid}): HOLDS claim cannot rely on meta/schema test {meta_test!r}"
+                    )
+
+        prose_fields: list[tuple[str, str]] = [
+            ("cites", " ; ".join(str(c) for c in (row.get("cites") or []))),
+            ("read_back.check", str(rb_check)),
+            (
+                "read_back.note",
+                str(read_back.get("note", "")) if isinstance(read_back, dict) else "",
+            ),
+            (
+                "read_back.runs_in",
+                str(read_back.get("runs_in", ""))
+                if isinstance(read_back, dict)
+                else "",
+            ),
+            (
+                "custody.note",
+                str(custody.get("note", "")) if isinstance(custody, dict) else "",
+            ),
+            (
+                "lifetime.note",
+                str(lifetime.get("note", "")) if isinstance(lifetime, dict) else "",
+            ),
+            (
+                "w_binding.object",
+                str(row["w_binding"].get("object", ""))
+                if isinstance(row.get("w_binding"), dict)
+                else "",
+            ),
+            ("notes", str(row.get("notes") or "")),
+        ]
+        if verdict == "HOLDS":
             for ev_item in row.get("evidence_named") or []:
-                rb_blobs.append(("evidence_named", str(ev_item)))
-        for field_label, blob_str in rb_blobs:
+                prose_fields.append(("evidence_named", str(ev_item)))
+
+        for field_label, blob_str in prose_fields:
+            if not blob_str:
+                continue
             pinned_spans: list[tuple[int, int]] = []
             for mp_rb in PINNED_READ_BACK_REPO_PATH_RE.finditer(blob_str):
                 pinned_spans.append((mp_rb.start(), mp_rb.end()))
@@ -568,18 +811,66 @@ def validate_census(
                     errors.append(
                         f"Row {idx} ({rid}): pinned {field_label} repository path does not resolve in git: {rev}:{rel_path}"
                     )
-            for m_rb in READ_BACK_REPO_PATH_RE.finditer(blob_str):
+            for m_pl in PROSE_PATH_LINE_RE.finditer(blob_str):
                 if any(
-                    ps <= m_rb.start() and m_rb.end() <= pe for ps, pe in pinned_spans
+                    ps <= m_pl.start() and m_pl.end() <= pe for ps, pe in pinned_spans
                 ):
                     continue
-                rel_path = m_rb.group(1).rstrip(".,;")
+                rel_path = m_pl.group(1).rstrip(".,;")
                 if any(ch in rel_path for ch in ("<", ">", "{", "}", "*")):
                     continue
-                if not (repo_root / rel_path).exists():
+                if rel_path in paths_missing_blob:
+                    continue
+                full_p = repo_root / rel_path
+                if not full_p.exists():
                     errors.append(
                         f"Row {idx} ({rid}): {field_label} repository path does not exist: {rel_path}"
                     )
+                    continue
+                line_spec = m_pl.group(2)
+                if line_spec and full_p.is_file():
+                    _validate_line_spec(
+                        idx,
+                        rid,
+                        field_label,
+                        rel_path,
+                        line_spec,
+                        _line_count(full_p, line_cache),
+                        errors,
+                    )
+
+        symbol_sources = " ; ".join(
+            [str(x) for x in (row.get("evidence_named") or [])]
+            + [str(x) for x in (row.get("cites") or [])]
+        )
+        for m_sym in SYMBOL_QUAL_RE.finditer(symbol_sources):
+            sym_path, sym_name = m_sym.group(1), m_sym.group(2)
+            if (
+                f"{sym_path}::{sym_name}" in paths_missing_blob
+                or sym_path in paths_missing_blob
+            ):
+                continue
+            full_sym_p = repo_root / sym_path
+            if full_sym_p.is_file() and _ast_symbol_slice(full_sym_p, sym_name) is None:
+                errors.append(
+                    f"Row {idx} ({rid}): cited Python symbol does not exist: {sym_path}::{sym_name}"
+                )
+
+        has_anchor = _validate_code_anchors(idx, rid, row, repo_root, errors)
+        if has_anchor:
+            anchored_row_count += 1
+        elif len(census_rows) >= 100 and verdict in {"HOLDS", "WEAKER", "NOT_IN_FORCE"}:
+            for req_code_path in ANCHOR_REQUIRED_CODE_PATHS:
+                if req_code_path in raw_row and req_code_path not in paths_missing_blob:
+                    errors.append(
+                        f"Row {idx} ({rid}): references {req_code_path} without structural 'code_anchors' binding"
+                    )
+                    break
+
+    if len(census_rows) >= 100 and anchored_row_count < MIN_CODE_ANCHORED_ROWS:
+        errors.append(
+            f"Census code_anchors floor breached: {anchored_row_count} anchored rows < {MIN_CODE_ANCHORED_ROWS}"
+        )
 
     census_oscal_ids = set(by_id.keys()) - {"SA11-SYSTEMIC"}
     extracted_ids = set(extracted.keys())

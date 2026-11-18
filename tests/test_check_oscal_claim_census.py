@@ -11,6 +11,7 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
+# Closure regression guard for: POAM-2026-235
 """Unit tests for scripts/check_oscal_claim_census.py."""
 
 from __future__ import annotations
@@ -41,8 +42,8 @@ def test_committed_census_passes_validation_and_counts() -> None:
         counts[v] = counts.get(v, 0) + 1
 
     assert counts == {
-        "HOLDS": 41,
-        "WEAKER": 51,
+        "HOLDS": 29,
+        "WEAKER": 63,
         "NOT_IN_FORCE": 24,
         "INHERITED": 45,
         "ROLLUP": 35,
@@ -137,6 +138,101 @@ def test_legacy_n_finding_id_and_missing_cited_or_read_back_paths_fail_closed() 
         in e
         for e in errors
     )
+
+
+def test_poam_235_holds_rejects_meta_schema_test_and_oob_or_symbol_decay() -> None:
+    rows = census_mod.load_census()
+    extracted = census_mod.extract_all_oscal_claims()
+
+    bad_rows = copy.deepcopy(rows)
+    # 1. HOLDS row relying on tests/test_lula_v0160_schema.py fails closed
+    holds_idx = next(i for i, r in enumerate(bad_rows) if r["verdict"] == "HOLDS")
+    bad_rows[holds_idx]["read_back"]["check"] = (
+        "tests/test_lula_v0160_schema.py:L56; tests/test_ftra_package.py"
+    )
+    # 2. WEAKER row with out-of-bounds line citation in custody.note and missing AST symbol fails closed
+    bad_rows[0]["custody"]["note"] = (
+        "Checked in src/gateway/governance/seams/credential_broker.py:L1-L9999 and "
+        "deployment/k8s/deleted_unpinned_manifest.yaml:L10."
+    )
+    bad_rows[0]["evidence_named"] = [
+        "src/gateway/governance/seams/credential_broker.py::NonExistentSymbolXYZ"
+    ]
+
+    errors = census_mod.validate_census(bad_rows, extracted)
+    assert any(
+        "HOLDS claim cannot rely on meta/schema test 'tests/test_lula_v0160_schema.py'"
+        in e
+        for e in errors
+    ), errors
+    assert any(
+        "out-of-bounds line citation in custody.note: src/gateway/governance/seams/credential_broker.py:L1-L9999"
+        in e
+        for e in errors
+    ), errors
+    assert any(
+        "custody.note repository path does not exist: deployment/k8s/deleted_unpinned_manifest.yaml"
+        in e
+        for e in errors
+    ), errors
+    assert any(
+        "cited Python symbol does not exist: src/gateway/governance/seams/credential_broker.py::NonExistentSymbolXYZ"
+        in e
+        for e in errors
+    ), errors
+
+
+def test_poam_235_code_anchors_detect_planted_source_decay(tmp_path: Path) -> None:
+    src_py = tmp_path / "src" / "compliance_bridge"
+    src_py.mkdir(parents=True)
+    target = src_py / "metrics.py"
+    target.write_text(
+        "def _is_control_effective_record(rec: dict) -> bool:\n"
+        "    return rec.get('outcome') == 'PASSED'\n",
+        encoding="utf-8",
+    )
+    row = {
+        "id": "component-definition.yaml#synthetic-1",
+        "verdict": "WEAKER",
+        "disposition": "fix",
+        "custody": {"grade": "PLANE", "note": "ok"},
+        "read_back": {"grade": "NONE", "check": "none", "runs_in": "none"},
+        "lifetime": {"grade": "REPO", "note": "ok"},
+        "w_binding": {"value": False, "object": ""},
+        "description_sha256": "a" * 64,
+        "status_extracted": "partially-implemented",
+        "code_anchors": [
+            {
+                "path": "src/compliance_bridge/metrics.py",
+                "symbol": "_is_control_effective_record",
+                "must_contain": ["PREVENTIVE_ENFORCEMENT_EVENT_TYPES"],
+                "must_not_contain": ["outcome') == 'PASSED'"],
+            }
+        ],
+    }
+    sa11 = {
+        "id": "SA11-SYSTEMIC",
+        "verdict": "WEAKER",
+        "disposition": "restate",
+        "custody": {"grade": "CONFIG", "note": "ok"},
+        "read_back": {"grade": "PRESENCE", "check": "none", "runs_in": "none"},
+        "lifetime": {"grade": "REPO", "note": "ok"},
+        "description_sha256": census_mod.hashlib.sha256(b"").hexdigest(),
+    }
+    extracted = {
+        "component-definition.yaml#synthetic-1": {
+            "id": "component-definition.yaml#synthetic-1",
+            "control": "A.5.3",
+            "status": "partially-implemented",
+            "description_sha256": "a" * 64,
+        }
+    }
+    errors = census_mod.validate_census([row, sa11], extracted, repo_root=tmp_path)
+    assert any(
+        "missing required snippet 'PREVENTIVE_ENFORCEMENT_EVENT_TYPES'" in e
+        for e in errors
+    ), errors
+    assert any("found forbidden snippet" in e for e in errors), errors
 
 
 def test_render_register_markdown_table_integrity_and_committed_parity(
