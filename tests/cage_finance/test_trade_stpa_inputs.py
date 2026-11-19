@@ -24,8 +24,8 @@ region (UCA-5 drawdown 3.5 / 4.0 / 4.5 %, FIN-2 latency 150 / 175 / 200 ms):
 
 * in-limit inputs clear the STPA stage; over-limit inputs are HARD UCA-2 / UCA-5;
 * a missing or faulted source leaves its input unset, and the rule refuses;
-* the advisor's ``/tools/execute`` trade path now clears the STPA stage for a
-  normal buy (before, UCA-2 and UCA-5 refused every advisor trade).
+* the advisor's trade payload (forwarded without ``latency_ms`` or ``drawdown``)
+  now clears the STPA stage for a normal buy through ``execute_trade_action``.
 """
 
 from __future__ import annotations
@@ -363,53 +363,36 @@ def test_registered_mcp_tool_takes_no_caller_latency_or_drawdown() -> None:
     assert "inputs" not in params
 
 
-# ── Advisor path ───────────────────────────────────────────────────────────
+# ── Advisor payload ────────────────────────────────────────────────────────
 
 
 @pytest.mark.asyncio
-async def test_advisor_buy_now_clears_the_stpa_stage(
-    region: str, stpa_gateway: list[dict[str, Any]], monkeypatch: pytest.MonkeyPatch
+async def test_advisor_buy_payload_clears_the_stpa_stage(
+    region: str, stpa_gateway: list[dict[str, Any]]
 ) -> None:
-    """``/tools/execute`` -> gateway ``execute_trade_action`` -> STPA stage.
+    """The plugin-registered ``execute_trade_action`` -> STPA stage.
 
     The gateway tool and its server-input resolver are the ones the finance
-    plugin contributes, with the plugin's own simulated sources. The advisor
-    forwards no latency or drawdown; the gateway supplies both and the buy
-    clears UCA-2 and UCA-5.
+    plugin contributes, with the plugin's own simulated sources. The call
+    carries only what the advisor's graph forwards (no latency or drawdown);
+    the gateway supplies both and the buy clears UCA-2 and UCA-5.
     """
     from src.cage_finance.plugin import FinanceCagePlugin
-    from src.governed_financial_advisor.tools import api
 
     contribution = FinanceCagePlugin().contribute()
     tool = _register_with(
         contribution.tool_provider, trade_governor(dict(contribution.server_inputs))
     )["execute_trade_action"]
 
-    async def _gateway_execute(name: str, params: dict[str, Any]) -> dict[str, Any]:
-        assert name == "execute_trade_action"
-        assert "latency_ms" not in params and "drawdown" not in params
-        try:
-            output = await tool(**params)
-        except _Cleared:
-            output = "STPA_CLEARED"
-        return {"status": "SUCCESS", "output": output}
-
-    monkeypatch.setattr(api._gateway_client, "execute_tool", _gateway_execute)
-    response = await api.execute_tool_endpoint(
-        api.ToolExecutionRequest(
-            tool_name="execute_trade",
-            params={
-                "symbol": "AAPL",
-                "amount": 500.0,
-                "currency": "USD",
-                "confidence": 0.99,
-                "trader_id": "agent_001",
-            },
-        ),
-        MagicMock(),
-        "test-key",
-    )
-    assert response == {"status": "SUCCESS", "output": "STPA_CLEARED"}
+    with pytest.raises(_Cleared):
+        await tool(
+            symbol="AAPL",
+            amount=500.0,
+            currency="USD",
+            confidence=0.99,
+            transaction_id=str(uuid.uuid4()),
+            side="buy",
+        )
     params = stpa_gateway[-1]
     assert 0.0 <= params["latency_ms"] < _LIMITS[region][1]
     assert params["drawdown"] == 0.0

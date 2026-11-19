@@ -16,14 +16,14 @@
 
 Exercises the complete governed runtime graph over ASGI + real OPA UDS sidecar:
   Real ``governed_financial_advisor`` (``ExecutionPlan``, ``parse_execution_plan``,
-  ``GatewayClient``, ``tools_router``) -> Gateway ``POST /v1/chat/completions``
+  ``GatewayClient``) -> Gateway ``POST /v1/chat/completions``
   (``TokenQuotaProxy`` ``TQP-007``, Stage 1 ``A.5.2``, output PII scrub ``A.9.2``) ->
   ``cage-inference-stub`` -> Gateway ``POST /governance/policy-precheck`` &
   ``POST /governance/validate-action`` -> Real OPA engine over Unix domain socket
   evaluating ``src/cage_finance/opa/trade_governance.rego`` -> Compliance Bridge
   ``POST /v1/defer/{defer_id}/escalate`` (Wave 2.2 ``OidcVerifier`` out-of-band
   JWKS + W3C WebAuthn ``client_data_json`` & ``challenge_binding`` dual human
-  quorum) -> Advisor ``POST /tools/execute`` -> Gateway ``POST /tools/execute``
+  quorum) -> ``GatewayClient.execute_tool`` -> Gateway ``POST /tools/execute``
   (``execute_trade_action``, ES256 seal mint/verify/burn, ``ControlBarrierFunction``,
   ``FiscalLimitGuard``, ``BrokerActuator``, settlement) -> ``EvidenceCustodian``
   WORM custody -> ``cage_conformance`` (``substrate-v1``, ``stream-v1``, ``trace-v1``,
@@ -71,6 +71,7 @@ from starlette.routing import Mount, Route
 import src.gateway.governance.routing_seal as rs
 from config.settings import Config
 from src.cage_finance.invariants import CashBarrier, finance_cost_resolver
+from src.cage_finance.models.trade_order import TradeOrder
 from src.cage_finance.narrowers import AmountNarrower
 from src.cage_finance.safety.fiscal_limit_guard import FiscalLimitGuard
 from src.cage_finance.simulated_feeds import (
@@ -133,6 +134,7 @@ from src.gateway.governance.seams.actuation import (
 )
 from src.gateway.governance.stpa_validator import STPAValidator
 from src.gateway.governance.token_quota_proxy import TokenQuotaProxy
+from src.gateway.infrastructure.privacy import scrub_pii
 from src.gateway.server import governance_middleware as gm
 from src.gateway.server import inference_proxy, mcp_tool_server
 from src.gateway.server.governance_middleware import governance_app
@@ -147,7 +149,6 @@ from src.governed_financial_advisor.agents.execution_analyst.agent import (
     parse_execution_plan,
 )
 from src.governed_financial_advisor.infrastructure.gateway_client import GatewayClient
-from src.governed_financial_advisor.tools import api as advisor_tools_api
 from src.integrations.actuator_01.constants import RECEIPT_SIGNATURE_DOMAIN_TAG
 from src.integrations.actuator_01.receipt_verifier import verify_partner_receipt
 from src.integrations.inference_stub.server import create_stub_app
@@ -187,8 +188,6 @@ GATEWAY_POD_IP = "10.24.1.7"
 GATEWAY_BASE_URL = f"http://{GATEWAY_POD_IP}:8080"
 BRIDGE_POD_IP = "10.24.1.8"
 BRIDGE_BASE_URL = f"http://{BRIDGE_POD_IP}:3001"
-ADVISOR_POD_IP = "10.24.1.9"
-ADVISOR_BASE_URL = f"http://{ADVISOR_POD_IP}:8000"
 
 OPA_IMAGE = (
     "openpolicyagent/opa:0.70.0-static"
@@ -568,8 +567,6 @@ class E2EHarness:
     gateway_asgi: Any
     gateway_http: httpx.AsyncClient
     bridge_http: httpx.AsyncClient
-    advisor_http: httpx.AsyncClient
-    advisor_api_key: str
     gateway_client: GatewayClient
     opa_client: OPAClient
     stub_app: Any
@@ -638,14 +635,23 @@ class E2EHarness:
             payload["extra_body"] = extra_body
         return await self.gateway_http.post("/v1/chat/completions", json=payload)
 
-    async def advisor_execute_tool(
-        self, tool_name: str, params: dict[str, Any]
-    ) -> httpx.Response:
-        """Invoke the real governed_financial_advisor ``POST /tools/execute`` router."""
-        return await self.advisor_http.post(
-            "/tools/execute",
-            json={"tool_name": tool_name, "params": params},
-            headers={"Authorization": f"Bearer {self.advisor_api_key}"},
+    async def advisor_execute_trade(self, params: Mapping[str, Any]) -> dict[str, Any]:
+        """Validate ``TradeOrder`` and invoke ``execute_trade_action`` via ``GatewayClient``."""
+        deferred_id = params.get("deferred_id")
+        order_params = {k: v for k, v in params.items() if k != "deferred_id"}
+        order = TradeOrder(**order_params)
+        trade_payload: dict[str, Any] = {
+            "symbol": order.symbol,
+            "amount": order.amount,
+            "currency": order.currency,
+            "confidence": order.confidence,
+            "transaction_id": order.transaction_id,
+            "side": order.side or "buy",
+        }
+        if deferred_id:
+            trade_payload["deferred_id"] = str(deferred_id)
+        return await self.gateway_client.execute_tool(
+            "execute_trade_action", trade_payload
         )
 
     async def validate_action(
@@ -1041,21 +1047,11 @@ async def e2e_stack(
             base_url=BRIDGE_BASE_URL,
         )
 
-        # Wire real governed_financial_advisor GatewayClient + tools_router over ASGI.
+        # Wire real governed_financial_advisor GatewayClient over ASGI.
         monkeypatch.setattr(GatewayClient, "_instance", None)
         gw_client = GatewayClient()
         gw_client._http = gateway_http  # type: ignore[attr-defined]
         gw_client._base_url = GATEWAY_BASE_URL  # type: ignore[attr-defined]
-        monkeypatch.setattr(advisor_tools_api, "_gateway_client", gw_client)
-
-        advisor_app = FastAPI(title="CAGE Governed Financial Advisor Tools Surface")
-        advisor_app.include_router(advisor_tools_api.tools_router)
-        advisor_http = httpx.AsyncClient(
-            transport=httpx.ASGITransport(
-                app=advisor_app, client=(ADVISOR_POD_IP, 50000)
-            ),
-            base_url=ADVISOR_BASE_URL,
-        )
 
         worm_store = _InMemoryWORMStore()
 
@@ -1064,8 +1060,6 @@ async def e2e_stack(
                 gateway_asgi=gateway_asgi,
                 gateway_http=gateway_http,
                 bridge_http=bridge_http,
-                advisor_http=advisor_http,
-                advisor_api_key=advisor_api_key,
                 gateway_client=gw_client,
                 opa_client=opa_client,
                 stub_app=stub_app,
@@ -1089,7 +1083,6 @@ async def e2e_stack(
             )
         finally:
             reset_oidc_verifier()
-            await advisor_http.aclose()
             await bridge_http.aclose()
             await gateway_http.aclose()
             await stub_http.aclose()
@@ -1172,21 +1165,13 @@ async def test_advisor_proxy_e2e_all_five_invariants_and_negative_controls(
     )
     assert precheck_spoofed == "DENY"
 
-    # Real advisor tools_router defensive PII scrubbing check (_scrub_tool_params).
-    scrubbed_check = advisor_tools_api._scrub_tool_params(
-        {
-            "symbol": "AAPL",
-            "amount": 1200.0,
-            "memo": "Client SSN 123-45-6789 email jane.doe@example.org",
-        }
-    )
-    assert scrubbed_check["symbol"] == "AAPL"
-    assert scrubbed_check["amount"] == 1200.0
-    assert "123-45-6789" not in scrubbed_check["memo"]
-    assert "jane.doe@example.org" not in scrubbed_check["memo"]
+    # Defensive PII scrubbing check (scrub_pii).
+    scrubbed_memo = scrub_pii("Client SSN 123-45-6789 email jane.doe@example.org")
+    assert "123-45-6789" not in scrubbed_memo
+    assert "jane.doe@example.org" not in scrubbed_memo
 
     # =========================================================================
-    # Invariant 1: ALLOW ($1,200 AAPL) — proxy -> stub -> validate -> advisor /tools/execute
+    # Invariant 1: ALLOW ($1,200 AAPL) — proxy -> stub -> validate -> GatewayClient.execute_tool
     # =========================================================================
     allow_chat = await e2e_stack.advisor_chat(
         [
@@ -1232,11 +1217,9 @@ async def test_advisor_proxy_e2e_all_five_invariants_and_negative_controls(
         await e2e_stack.stream_redis.get(e2e_stack.cbf.redis_key)
     ) == pytest.approx(OPENING_CASH_USD)
 
-    # Committing execution through real advisor POST /tools/execute -> GatewayClient -> gateway /tools/execute
+    # Committing execution through real GatewayClient.execute_tool -> gateway /tools/execute
     # mints & burns ES256 seal, actuates, and settles.
-    exec_allow = await e2e_stack.advisor_execute_tool("execute_trade", allow_args)
-    assert exec_allow.status_code == 200, exec_allow.text
-    exec_allow_json = exec_allow.json()
+    exec_allow_json = await e2e_stack.advisor_execute_trade(allow_args)
     assert exec_allow_json["status"] == "SUCCESS"
     assert exec_allow_json["output"].startswith("EXECUTED: AAPL x 1200.0")
     assert len(e2e_stack.recorded_executions) == 1
@@ -1485,7 +1468,7 @@ async def test_advisor_proxy_e2e_all_five_invariants_and_negative_controls(
     assert bob_resp.json()["status"] == "escalated"
 
     # Advisor asks stub to build redemption call carrying [CAGE_DEFERRED_ID:...], then
-    # executes through the real advisor tools_router (/tools/execute -> execute_trade)!
+    # executes through real GatewayClient.execute_tool -> gateway /tools/execute!
     redeem_tx = str(uuid.uuid4())
     redeem_chat = await e2e_stack.advisor_chat(
         [
@@ -1508,10 +1491,9 @@ async def test_advisor_proxy_e2e_all_five_invariants_and_negative_controls(
     assert redeem_args["deferred_id"] == defer_id
     assert redeem_args["transaction_id"] == redeem_tx
 
-    redeem_exec = await e2e_stack.advisor_execute_tool("execute_trade", redeem_args)
-    assert redeem_exec.status_code == 200, redeem_exec.text
-    assert redeem_exec.json()["status"] == "SUCCESS"
-    assert redeem_exec.json()["output"].startswith("EXECUTED: MSFT x 7500.0")
+    redeem_exec = await e2e_stack.advisor_execute_trade(redeem_args)
+    assert redeem_exec["status"] == "SUCCESS"
+    assert redeem_exec["output"].startswith("EXECUTED: MSFT x 7500.0")
     assert len(e2e_stack.recorded_executions) == 2
     assert e2e_stack.recorded_executions[1].params["symbol"] == "MSFT"
     assert float(e2e_stack.recorded_executions[1].params["amount"]) == pytest.approx(

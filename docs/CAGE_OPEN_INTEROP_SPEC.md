@@ -481,17 +481,19 @@ decision into the agent graph to continue execution. Requires `X-API-Key`.
 
 ### 5.5 HITL Approval — List Pending
 
-#### `GET /v1/approvals/pending`
+#### `GET /v1/approvals/pending?user_id=<principal>`
 
-List all agent threads currently paused at HITL interrupts awaiting human
-review.
+Service-only (`Authorization: Bearer <CAGE_API_KEY>`, paired with verified
+`X-CAGE-User-Token` in enforcing postures). Lists the single specified
+principal's agent threads currently paused at HITL interrupts awaiting human
+review, omitting gateway deferral handles (`deferred_id` / `defer_id`).
 
 **Response 200 OK:**
 ```json
 {
   "pending": [
     {
-      "thread_id": "thread-uuid",
+      "thread_id": "advisor_session_u-001",
       "interrupt_payload": {},
       "interrupted_at": "2026-07-05T01:00:00Z"
     }
@@ -1614,15 +1616,10 @@ The optional `message` string is surfaced in the finding. On `REFUSE` and
 | Compliance Artifact Service | `GET` | `/v1/telemetry/history` | None | Paginated compliance telemetry history |
 | Financial Advisory Service | `GET` | `/` | None | Service root |
 | Financial Advisory Service | `GET` | `/health` | None | Service health probe |
-| Financial Advisory Service | `POST` | `/agent/query` | `X-API-Key` | Main multi-agent orchestration query |
-| Financial Advisory Service | `POST` | `/v1/approvals/{thread_id}/resume` | `X-API-Key` | Resume HITL-interrupted thread |
-| Financial Advisory Service | `GET` | `/v1/approvals/pending` | None | List pending HITL approvals |
-| Financial Advisory Service | `POST` | `/v1/refinement/trigger` | None | Submit governance refinement pipeline run |
-| Financial Advisory Service | `POST` | `/v1/nemo/propose-refinement` | None | Stage AI safety guardrails refinement proposal |
-| Financial Advisory Service | `POST` | `/v1/nemo/approve-refinement/{proposal_id}` | `X-API-Key` | Approve/reject AI safety guardrails proposal |
-| Financial Advisory Service | `GET` | `/v1/nemo/proposals/pending` | None | List pending AI safety guardrails proposals |
-| Financial Advisory Service | `POST` | `/v1/nemo/apply-refinement` | None | Legacy AI safety guardrails refinement endpoint |
-| Financial Advisory Service | `POST` | `/v1/webhooks/langfuse` | None | Observability webhook receiver |
+| Financial Advisory Service | `POST` | `/agent/query` | `Bearer` (`CAGE_API_KEY` or user OIDC JWT) | Main multi-agent orchestration query |
+| Financial Advisory Service | `GET` | `/v1/approvals/pending` | `Bearer` (`CAGE_API_KEY` service-only) | List one principal's pending HITL approvals (`?user_id=<id>`) |
+| Financial Advisory Service | `POST` | `/v1/refinement/trigger` | `Bearer` (`CAGE_API_KEY` service-only) | Submit governance refinement pipeline run |
+| Financial Advisory Service | `POST` | `/v1/webhooks/langfuse` | `Bearer` (`CAGE_API_KEY` service-only) | Observability webhook receiver |
 | gRPC Gateway | `rpc` | `Chat` | — | Server-streaming governed LLM responses |
 | gRPC Gateway | `rpc` | `ExecuteTool` | — | Unary tool execution via gRPC |
 

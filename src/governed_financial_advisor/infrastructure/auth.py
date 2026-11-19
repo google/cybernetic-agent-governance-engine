@@ -14,9 +14,9 @@
 
 """Bearer token and end-user OIDC authentication for the Governed Financial Advisor API.
 
-C-04: Authenticates API callers via ``CAGE_API_KEY`` using constant-time
-comparison (or a verified end-user OIDC JWT when ``CAGE_USER_OIDC_ISSUER`` is
-configured).
+C-04: Authenticates service callers via ``CAGE_API_KEY`` using constant-time
+comparison (:func:`require_service_api_key`). Only ``POST /agent/query`` also
+accepts a verified end-user OIDC JWT (:func:`require_api_key_or_user_token`).
 
 Issue #520: Binds the end-user principal to an authenticated identity via
 out-of-band ``kid``-resolved OIDC JWT verification (:func:`verify_user_oidc_token`,
@@ -40,6 +40,7 @@ out-of-band ``kid``-resolved OIDC JWT verification (:func:`verify_user_oidc_toke
 from __future__ import annotations
 
 import base64
+import enum
 import hmac
 import json
 import logging
@@ -386,47 +387,90 @@ async def require_thread_owner(graph: Any, thread_id: str, user_id: str) -> None
             raise PermissionError("thread_id belongs to another principal")
 
 
-async def require_api_key(
-    credentials: HTTPAuthorizationCredentials = Security(_bearer),
-) -> str:
-    """Validate bearer token against CAGE_API_KEY or CAGE_USER_OIDC_ISSUER. Fail closed.
+class CallerCredentialKind(str, enum.Enum):
+    """Kind of bearer credential accepted by an advisor route dependency."""
 
-    Returns the validated token string on success.
+    SERVICE_API_KEY = "service_api_key"
+    USER_OIDC_TOKEN = "user_oidc_token"
+    DEV_UNAUTHENTICATED = "dev_unauthenticated"
+
+
+def _dev_auth_disabled(api_key: str, oidc_issuer: str) -> bool:
+    """True in a dev posture that configures no credential at all.
+
+    Preserves local development ergonomics without compromising prod. Accepts
+    both ``dev`` and ``development``: Kubernetes deployments commonly use
+    ``CAGE_ENV=development`` (the full word) while local scripts use
+    ``CAGE_ENV=dev``. A missing ``CAGE_ENV`` reads as ``prod``, so it never
+    disables authentication.
+    """
+    cage_env = os.environ.get("CAGE_ENV", "prod").lower()
+    return cage_env in ("dev", "development") and not api_key and not oidc_issuer
+
+
+def _is_service_api_key(provided: str, api_key: str) -> bool:
+    """Constant-time check that ``provided`` is the configured ``CAGE_API_KEY``."""
+    return bool(api_key) and hmac.compare_digest(provided.encode(), api_key.encode())
+
+
+def _unauthorized(detail: str) -> HTTPException:
+    return HTTPException(
+        status_code=status.HTTP_401_UNAUTHORIZED,
+        detail=detail,
+        headers={"WWW-Authenticate": "Bearer"},
+    )
+
+
+async def require_service_api_key(
+    credentials: HTTPAuthorizationCredentials | None = Security(_bearer),
+) -> CallerCredentialKind:
+    """Authenticate the calling service by ``CAGE_API_KEY``. Never an end-user token.
+
+    Guards every advisor route that acts for the service or its operators
+    rather than for the end user who calls ``POST /agent/query``. A verified
+    end-user OIDC JWT is refused here even when ``CAGE_USER_OIDC_ISSUER`` is
+    configured, and every request is refused when ``CAGE_API_KEY`` is unset,
+    except in a dev posture that configures no credential at all.
+
+    Raises:
+        HTTPException(401): If the bearer token is missing or is not
+            ``CAGE_API_KEY``.
+    """
+    api_key = os.environ.get("CAGE_API_KEY", "")
+    oidc_issuer = os.environ.get("CAGE_USER_OIDC_ISSUER", "").strip()
+    if _dev_auth_disabled(api_key, oidc_issuer):
+        logger.warning("CAGE_API_KEY not set — authentication disabled in dev mode")
+        return CallerCredentialKind.DEV_UNAUTHENTICATED
+    if credentials is None or not _is_service_api_key(credentials.credentials, api_key):
+        raise _unauthorized("Service credential required")
+    return CallerCredentialKind.SERVICE_API_KEY
+
+
+async def require_api_key_or_user_token(
+    credentials: HTTPAuthorizationCredentials | None = Security(_bearer),
+) -> CallerCredentialKind:
+    """Authenticate ``POST /agent/query`` by ``CAGE_API_KEY`` or an end-user OIDC JWT.
+
+    The only advisor route an end user may call directly. A bearer token other
+    than ``CAGE_API_KEY`` must verify as an end-user OIDC JWT
+    (:func:`verify_user_oidc_token`) when ``CAGE_USER_OIDC_ISSUER`` is set;
+    :func:`resolve_request_principal` then binds the request to that
+    principal. Every other route depends on :func:`require_service_api_key`.
+    Fail closed.
 
     Raises:
         HTTPException(401): If credentials are missing or invalid.
     """
     api_key = os.environ.get("CAGE_API_KEY", "")
     oidc_issuer = os.environ.get("CAGE_USER_OIDC_ISSUER", "").strip()
-    cage_env = os.environ.get(
-        "CAGE_ENV", "prod"
-    ).lower()  # Default to "prod" to fail-secure: missing CAGE_ENV must not silently disable enforcement
-
-    # In dev with no API key or OIDC issuer configured, allow through with warning.
-    # This preserves local development ergonomics without compromising prod.
-    # Accept both "dev" and "development" — Kubernetes deployments commonly use
-    # CAGE_ENV=development (the full word) while local scripts use CAGE_ENV=dev.
-    if cage_env in ("dev", "development") and not api_key and not oidc_issuer:
+    if _dev_auth_disabled(api_key, oidc_issuer):
         logger.warning("CAGE_API_KEY not set — authentication disabled in dev mode")
-        return "dev-unauthenticated"
-
-    if not credentials or (not api_key and not oidc_issuer):
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Missing credentials",
-            headers={"WWW-Authenticate": "Bearer"},
-        )
-
-    provided_str = credentials.credentials
-    if api_key and hmac.compare_digest(provided_str.encode(), api_key.encode()):
-        return provided_str
-
+        return CallerCredentialKind.DEV_UNAUTHENTICATED
+    if credentials is None or (not api_key and not oidc_issuer):
+        raise _unauthorized("Missing credentials")
+    if _is_service_api_key(credentials.credentials, api_key):
+        return CallerCredentialKind.SERVICE_API_KEY
     if oidc_issuer:
-        verify_user_oidc_token(provided_str)
-        return provided_str
-
-    raise HTTPException(
-        status_code=status.HTTP_401_UNAUTHORIZED,
-        detail="Invalid credentials",
-        headers={"WWW-Authenticate": "Bearer"},
-    )
+        verify_user_oidc_token(credentials.credentials)
+        return CallerCredentialKind.USER_OIDC_TOKEN
+    raise _unauthorized("Invalid credentials")

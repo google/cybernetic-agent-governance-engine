@@ -214,8 +214,8 @@ def query_agent(prompt: str):
     """Sends a query to the agent.
 
     Injects the CAGE_API_KEY as a Bearer token so that the advisor's
-    require_api_key() dependency (auth.py) does not reject the request
-    with HTTP 401.  When CAGE_API_KEY is unset the header is omitted and
+    require_api_key_or_user_token() dependency (auth.py) does not reject the
+    request with HTTP 401.  When CAGE_API_KEY is unset the header is omitted and
     the dev-mode bypass in auth.py applies (CAGE_ENV=dev + no key).
     When CAGE_USER_OIDC_PRIVATE_KEY_PEM is set, mints a kid-bound EdDSA
     user OIDC token for X-CAGE-User-Token (Issue #520).

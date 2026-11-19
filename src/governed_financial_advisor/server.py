@@ -15,14 +15,16 @@
 import logging
 import os
 import traceback
+from collections.abc import Mapping
 from datetime import datetime, timezone
+from typing import Any
 
 logger = logging.getLogger(__name__)
 
 from contextlib import asynccontextmanager
 
 import uvicorn
-from fastapi import Depends, FastAPI, HTTPException, Request
+from fastapi import Depends, FastAPI, HTTPException, Query, Request
 from fastapi.responses import JSONResponse
 from langgraph.types import Command
 from opentelemetry import trace
@@ -64,12 +66,17 @@ from src.governed_financial_advisor.graph.checkpointer import CheckpointDurabili
 from src.governed_financial_advisor.graph.graph import create_graph
 from src.governed_financial_advisor.infrastructure.auth import (
     ADVISOR_DEFAULT_THREAD_PREFIX,
-    require_api_key,
+    CallerCredentialKind,
+    require_api_key_or_user_token,
+    require_service_api_key,
     require_thread_owner,
     resolve_request_principal,
 )
+from src.governed_financial_advisor.models.principal import (
+    PRINCIPAL_MAX_LEN,
+    PRINCIPAL_PATTERN,
+)
 from src.governed_financial_advisor.models.query import QueryRequest, QueryResponse
-from src.governed_financial_advisor.tools.api import tools_router
 from src.governed_financial_advisor.utils.context import (
     principal_verified_context,
     user_context,
@@ -170,7 +177,10 @@ if (
         server_request_hook=server_request_hook,
         excluded_urls="health,docs,openapi.json,favicon.ico,mcp",
     )  # Only trace meaningful agent routes; health/docs/scanners are excluded
-app.include_router(tools_router)
+# The advisor exposes no tool-dispatch route. Governed tools run in the gateway,
+# whose own /tools/execute and /mcp admit only trusted workload identities; the
+# advisor reaches them only from inside the graph after /agent/query has verified
+# the end user's principal and thread ownership.
 
 if (
     os.environ.get("CAGE_ENV", "prod").lower() == "dev"
@@ -290,10 +300,13 @@ async def health_check(request: Request):  # type: ignore[no-untyped-def]
 async def query_agent(  # type: ignore[no-untyped-def]
     req: QueryRequest,
     request: Request,
-    _auth: str = Depends(require_api_key),
+    _auth: CallerCredentialKind = Depends(require_api_key_or_user_token),
 ):
     """
     Main agent query endpoint.
+
+    The only route that accepts an end-user OIDC JWT as its credential
+    (:func:`require_api_key_or_user_token`); every other route is service-only.
 
     NeMo guardrails are enforced exclusively inside the LangGraph:
       - ``nemo_guardrail_node``    : mandatory first node — input rail
@@ -494,22 +507,79 @@ async def query_agent(  # type: ignore[no-untyped-def]
 # Approval endpoints (Phase 1b — LangGraph interrupt / Command)
 # ---------------------------------------------------------------------------
 
+#: Interrupt payload fields the owner of a pending approval sees. Gateway
+#: deferral handles (``deferred_id``, ``defer_id``) are never included at any
+#: depth: they belong to reviewers at the compliance bridge
+#: (``GET /v1/defer/pending``, ``POST /v1/defer/{deferred_id}/escalate``), not
+#: to the end user.
+_PENDING_APPROVAL_FIELDS: tuple[str, ...] = (
+    "reason",
+    "trade",
+    "timestamp",
+    "expires_at",
+    "ctrl_id",
+    "ftra_result",
+)
+_REDACTED_DEFER_KEYS: frozenset[str] = frozenset({"deferred_id", "defer_id"})
+
+
+def _without_deferred_ids(value: Any) -> Any:
+    """Return ``value`` with every nested ``deferred_id`` / ``defer_id`` key removed."""
+    if isinstance(value, Mapping):
+        return {
+            key: _without_deferred_ids(item)
+            for key, item in value.items()
+            if key not in _REDACTED_DEFER_KEYS
+        }
+    if isinstance(value, list):
+        return [_without_deferred_ids(item) for item in value]
+    return value
+
+
+def _pending_approval_view(payload: Any) -> dict[str, Any]:
+    """The part of an approval interrupt payload its owner may see."""
+    if not isinstance(payload, Mapping):
+        return {}
+    return {
+        field: _without_deferred_ids(payload[field])
+        for field in _PENDING_APPROVAL_FIELDS
+        if field in payload
+    }
+
 
 @app.get("/v1/approvals/pending")
 async def list_pending_approvals(  # type: ignore[no-untyped-def]
     request: Request,
-    _auth: str = Depends(require_api_key),
+    user_id: str = Query(
+        min_length=1,
+        max_length=PRINCIPAL_MAX_LEN,
+        pattern=PRINCIPAL_PATTERN,
+        description="End-user principal whose pending approvals are listed.",
+    ),
+    _auth: CallerCredentialKind = Depends(require_service_api_key),
 ):
     """
-    List all graph threads currently interrupted and awaiting human approval.
+    List one end user's graph threads that are interrupted awaiting human approval.
+
+    Service-only: the caller authenticates with ``CAGE_API_KEY``
+    (:func:`require_service_api_key`), never with an end-user token. The
+    listing is scoped to the end-user principal the service acts for, resolved
+    as ``POST /agent/query`` resolves it (:func:`resolve_request_principal`):
+    in an enforcing posture that is a verified ``X-CAGE-User-Token`` whose
+    subject must equal ``user_id``. Only threads whose checkpoint ``user_id``
+    is that principal are listed, and no entry carries the gateway
+    ``deferred_id``. Reviewers find and approve deferrals at the compliance
+    bridge (``GET /v1/defer/pending``).
 
     Iterates over stored checkpoints via the graph's checkpointer and filters
     for threads whose state snapshot has a non-empty ``next`` step AND contains
-    interrupt payloads.
+    interrupt payloads. Every snapshot is read, including other principals',
+    so a checkpoint store failure is never reported as an empty listing.
 
     Returns:
         {"pending": [{"thread_id": str, "interrupt_payload": dict, "interrupted_at": str}, ...]}
     """
+    principal = resolve_request_principal(request, user_id)
     graph = request.app.state.graph
     checkpointer = graph.checkpointer
 
@@ -556,6 +626,13 @@ async def list_pending_approvals(  # type: ignore[no-untyped-def]
 
             if snapshot is None:
                 continue
+            owner = (
+                snapshot.values.get("user_id")
+                if isinstance(snapshot.values, Mapping)
+                else None
+            )
+            if owner != principal.user_id:
+                continue
 
             # Filter: must be interrupted (has next step) with interrupt payloads
             interrupt_payloads = [
@@ -568,9 +645,9 @@ async def list_pending_approvals(  # type: ignore[no-untyped-def]
                 pending.append(
                     {
                         "thread_id": thread_id,
-                        "interrupt_payload": interrupt_payloads[0].value
-                        if hasattr(interrupt_payloads[0], "value")
-                        else str(interrupt_payloads[0]),
+                        "interrupt_payload": _pending_approval_view(
+                            getattr(interrupt_payloads[0], "value", None)
+                        ),
                         "interrupted_at": (
                             checkpoint_tuple.checkpoint.get("ts", "")
                             if checkpoint_tuple.checkpoint
@@ -667,9 +744,12 @@ def _submit_kfp_run(pipeline_id: str, trigger_reason: str, trace_ids: list) -> d
 @app.post("/v1/refinement/trigger")
 async def trigger_refinement(  # type: ignore[no-untyped-def]
     req: RefinementTriggerRequest,
-    _auth: str = Depends(require_api_key),
+    _auth: CallerCredentialKind = Depends(require_service_api_key),
 ):
     """Trigger the Green-Stack KFP refinement pipeline.
+
+    Service-only (:func:`require_service_api_key`): refinement is an operator
+    function, so an end-user OIDC JWT is never accepted here.
 
     Accepts a JSON body with ``pipeline_id``, ``trigger_reason``, and an
     optional list of ``trace_ids`` that motivated this refinement run.
@@ -759,9 +839,14 @@ _last_refinement_triggered_at: float = -1e9
 @app.post("/v1/webhooks/langfuse")
 async def langfuse_webhook(  # type: ignore[no-untyped-def]
     req: LangfuseWebhookEvent,
-    _auth: str = Depends(require_api_key),
+    _auth: CallerCredentialKind = Depends(require_service_api_key),
 ):
     """Receive Langfuse outgoing webhook events and trigger KFP refinement.
+
+    Service-only (:func:`require_service_api_key`): the webhook sender
+    authenticates with ``Authorization: Bearer <CAGE_API_KEY>``, and an
+    end-user OIDC JWT is never accepted, so no end user can submit a score
+    event or arm the cooldown below.
 
     Configure in the Langfuse UI under **Settings → Webhooks** with:
       - URL: ``https://<governed-financial-advisor>/v1/webhooks/langfuse``
