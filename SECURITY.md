@@ -2,38 +2,26 @@
 
 ## Supported Versions
 
+Security fixes land exclusively on `main`; older release tags do not receive backports.
+
 | Version | Supported |
-|---------|-----------|
-| 3.1.x   | ✅ Yes    |
-| 3.0.x   | ⚠️ Critical fixes only |
-| 2.1.x   | ⚠️ Critical fixes only |
-| < 2.1.0 | ❌ No     |
+|---|---|
+| `main` (post-`v4.1.0`) | ✅ Active (receives all security fixes) |
+| `4.1.0` | ⚠️ Update to `main` (or the next release) for fixes published after `v4.1.0` |
+| `< 4.1.0` (`4.0.x`, `3.x`, `2.x`) | ❌ No |
 
-## Resolved Security Advisories
+## Security Advisories
 
-The following advisories were identified and remediated prior to their
-respective releases. Documented here for transparency.
+Published security advisories, affected ranges, CVSS vectors, and fix commits are maintained canonically on GitHub:
 
-| Advisory | CVSS | Component | Description | Status |
-|----------|------|-----------|-------------|--------|
-| GHSA-hfqj-24cj-693g | 9.4 Critical | `inference_proxy` | Governance bypass: crafted requests with no `role: "user"` message, or `stream: true` responses, could reach the LLM backend without passing input/output governance tiers (reported by `@uwezkhan`) | ✅ Fixed — input governance now applied to all message roles; output filtering applied to all response paths including streaming |
-| GHSA-529c-23c8-3m42 / GHSA-qrg7-27x4-mq39 | 8.6 High | `compliance_bridge` / `defer_queue` | Dual-control quorum bypass via unverified `x-cage-source-principal` header in `require_operator_identity`, `CAGE_ENV="development"` default in `require_internal_token` / K8s manifest, and uninvoked `verify_webauthn_challenge()` in `DeferQueue.approve()` (independently reported by `@moiznationzz` and `@Zorta-Zenith`) | ✅ Fixed — `x-cage-source-principal` removed; operator SVID bound strictly to Linkerd proxy-verified `l5d-client-id` (or transport `request.attributes.source.principal`) with optional `CAGE_TRUSTED_OPERATOR_IDENTITIES` allowlist; `require_internal_token` defaults to fail-closed `"production"` and requires dual-condition opt-in (`CAGE_ALLOW_DEV_UNAUTHENTICATED=true`) in dev; `verify_webauthn_challenge()` enforced in `DeferQueue.approve()` |
-| GHSA-4x3x-w2m3-8mfh | 7.5 High | `mcp_tool_server` / `docker-compose.yml` | Unauthenticated `trigger_safety_intervention` execution via `POST /tools/execute` when `docker-compose.yml` overrode the gateway entrypoint to `mcp_tool_server.py` (bypassing `hybrid_server.py`'s `WorkloadIdentityMiddleware`), setting a permanent Redis `safety_violation` lock (reported by `@m0ssser`) | ✅ Fixed — `docker-compose.yml` and `docker-compose.dev.yml` invoke `hybrid_server.py` with `127.0.0.1` host port binding; `mcp_tool_server.py` enforces Linkerd workload identity on `/tools/execute` and standalone `__main__`; `trigger_safety_intervention` sets bounded TTL (`CAGE_SAFETY_INTERVENTION_TTL_SECONDS`) |
-| GHSA-cmwm-295c-gjf6 / GHSA-w7g7-wjj9-6j97 | 7.5 High | `cbf` | Reconciled/KMS-signed balance (`verified_balance_payload`) disconnected from `atomic_verify_and_commit()`, allowing Lua commit against raw `balance` key (reported by `@ArksherX`) | ✅ Fixed (ADR-010) — `_resolve_ground_truth_balance()` verifies KMS signature and syncs verified balance before Lua commit |
-| GHSA-w7f4-8grh-2xv8 | 6.5 Medium | `governor` / `cbf` | Auto-approved trade path called stateless `cbf.evaluate()` without atomic Redis deduction (`atomic_verify_and_commit()`), enabling concurrent TOCTOU balance bypass (reported by `@ArksherX`) | ✅ Fixed — Phase-2 `commit_barrier` executes `atomic_verify_and_commit()` on the single committing run inside `SymbolicGovernor.govern()` |
-| GHSA-v3h4-8458-5ww3 | 6.5 Medium | `governance_middleware` | Unauthenticated `POST /governance/validate-action` endpoint; undermined NIST IA-3/AC-3 control assertions (reported by `@uwezkhan`) | ✅ Fixed — callers must present a trusted Linkerd mTLS workload identity before any processing ([`WorkloadIdentityMiddleware`](src/gateway/server/workload_identity.py); POAM-2026-080 replaced the original HMAC routing-seal check); rate limiting added |
-| GHSA-w39v-5v7h-fxg9 | 5.3 Medium | `execute_trade_action` / governed trader | Model-controlled `trader_role` raised OPA fiscal limits on the committing trade path: the role and `trader_id` were agent-facing tool arguments that reached [`trade_governance.rego`](src/cage_finance/opa/trade_governance.rego) unchanged, so a prompt-injected `senior` lifted the unreviewed limit from $5,000 to $500,000 (found during maintainer triage) | ✅ Fixed — role and trader bound server-side from the verified workload identity; removed from the tool schema; model-supplied deferred_id stripped |
-| GHSA-f6xq-23f7-9grm | 5.3 Medium | `governor` (POST_HITL) / `fria` tier / `trade_governance.rego` | A normative-provider determination revoked while a human reviewed a held request was never re-checked after approval, so the approved request was sealed; `execute_trade_bounded` bypassed the trade policy's RBAC ladder, and case or whitespace variants (`btc`, `BTC `) bypassed its BTC restriction; the FRIA payload named no caller, so provider_01 could not mint a ConsequenceToken (reported by Dominik Blain, `@dom-omg`, Ironproof) | ✅ Fixed — jurisdiction tiers re-run after approval and a hold is answered only by an approval given against it (OPA's manual review included); every trade action is held to the RBAC ladder, currencies are an allowlist and assets are compared normalised; the payload carries the verified workload identity and trace id. Provider-side request facts tracked as POAM-2026-113 |
-| CAGE-AUDIT-B3 | 7.5 High | `attestation_provider` | Attestation Failure Attributability: Attestations lacked structural attribution, allowing misbehaving external providers to crash the aggregator silently and fail open or obscure the source. | ✅ Fixed (POAM-2026-072) — `provider_name` and `fetch_error` attribution added. Ed25519 CER signature verification added for fail-closed security enforcement. |
-| CAGE-AUDIT-B2 | 7.5 High | `routing_seal` | Evidence sufficiency gap: un-bound seals could authorize execution without verifiable cryptographic link to durable audit record | ✅ Fixed — HMAC Routing Seal v2 embeds SHA-256 `record_hash` in 4-tuple token; binding is required by default in every posture (`CAGE_REQUIRE_EVIDENCE_BINDING=false` is honoured only outside production), and consumption checks the seal's `record_hash` against an issuance-time evidence index |
-| CAGE-AUDIT-P0 | 7.8 High | `cbf` | Replication split-brain double-spend: async Redis failover could expose stale balance | ✅ Fixed — `_sync_to_replicas()` via `WAIT` with automatic fail-closed rollback (`rollback_state()`) on replica timeout in production |
-| [#511](https://github.com/google/cybernetic-agent-governance-engine/issues/511) | — | `evidence stream` | Duplicate evidence records after a lost Redis reply (the re-sent compare-and-append re-sealed its own batch at the next sequence), and silent re-genesis of the chain after the stream was truncated or emptied (reported by `@danofairanks`) | ✅ Fixed — a re-sent batch answers `ALREADY`, a `CONFLICT` checks whether the batch already landed, and an unanswered append is re-sent verbatim, never re-sealed; restore verifies the head hash and raises `EvidenceChainCorruptError` instead of starting over under a live chain; the custodian records a chain rotation as a `CHAIN_ROTATION` gap |
-| [#514](https://github.com/google/cybernetic-agent-governance-engine/issues/514) | — | `mcp_client` / `execute_trade_action` | MCP tool calls were blindly retried after an unknown outcome, and a retried trade was a second, fully governed execution (reported by `@danofairanks`) | ✅ Fixed — [`GatewayMCPClient.call_tool()`](src/gateway/infrastructure/mcp_client.py) resends a call only when nothing was sent or the gateway annotates the tool read-only or idempotent, and otherwise raises `MCPToolOutcomeUnknownError`; [`execute_trade_action`](src/cage_finance/tools/tool_provider.py) requires a UUIDv4 or UUIDv5 `transaction_id` and claims it in the kernel [`ExecutionLedger`](src/gateway/governance/execution_idempotency.py) before governance, so a resubmission gets the first outcome back instead of executing again |
+- **[Published GitHub Security Advisories](https://github.com/google/cybernetic-agent-governance-engine/security/advisories)**
+
+Earlier fixes resolved through public issues, internal audits, or pre-publication tracker entries are recorded in [`CHANGELOG.md`](CHANGELOG.md) and [`docs/POAM.md`](docs/POAM.md).
 
 > **⚠️ Reference architecture notice:** CAGE is a reference architecture and is
-> not deployed to production. These advisories are tracked for completeness and
-> to ensure the codebase accurately represents the security posture claimed in
-> associated research publications.
+> not deployed to production. Advisories are published and fixed to ensure the
+> codebase accurately represents the security posture claimed in associated
+> research and compliance artifacts.
 
 ## Reporting a Vulnerability
 
@@ -64,23 +52,57 @@ We follow a **coordinated disclosure** model:
 
 ## Landing an Advisory Fix (Maintainers)
 
-An advisory's fix lands from GitHub's temporary private fork, where GitHub
-Actions does not run. Ruleset 25966171 requires eight status checks on `main`
-and has no bypass actor, so it blocks that merge. Do not add a bypass actor.
-Ruleset 26377312, which blocks force pushes to `main` and its deletion, stays
-enabled throughout: the merge is a fast-forward. For that one merge:
+GitHub Actions does not run on pull requests in temporary private forks, and
+ruleset 25966171 (`Require status checks on main`, no bypass actor) requires nine
+checks pinned to GitHub Actions — including `Approved review or recorded bypass`,
+whose post-merge [`review-bypass-ledger.yml`](.github/workflows/review-bypass-ledger.yml)
+check fails on `main` if a merge lacks a pre-merge review or Sigstore bypass
+record. **Do not disable ruleset 25966171 or add a bypass actor.** Ruleset
+26377312 (blocking non-fast-forward updates and deletion) also stays enabled
+throughout.
 
-1. Run the test suite on the frozen fix commit and record the result in the
-   advisory's release record, since the private fork gets no CI.
-2. Disable the checks ruleset:
-   `gh api -X PUT repos/google/cybernetic-agent-governance-engine/rulesets/25966171 -f enforcement=disabled`
-3. Merge the advisory's pull request, then re-enable the ruleset at once:
-   `gh api -X PUT repos/google/cybernetic-agent-governance-engine/rulesets/25966171 -f enforcement=active`
-4. Record both ruleset-history entries
-   (`gh api repos/google/cybernetic-agent-governance-engine/rulesets/25966171/history`)
-   and the merge commit in the advisory's release record.
-5. Watch the first CI run on `main` for the landed commit, and fix forward if
-   it fails.
+Because pushing a fix branch to the public repository exposes the vulnerability
+path before publication, publish first at `T=0` and land via normal public
+pull request(s):
+
+1. **Develop and rehearse off-public:** Stage fixes in the advisory's temporary
+   private fork or a local isolated worktree. Before `T=0`, rebase onto current
+   `origin/main`, run deterministic pre-commit checks and targeted security
+   regression tests, and when landing multiple advisories together verify
+   conflict-free multi-way merging across `git merge-tree --write-tree`
+   (including shared files such as [`docs/BREAKING_CHANGES.md`](docs/BREAKING_CHANGES.md)).
+2. **Pre-stage draft advisory metadata via the REST API:** Before `T=0`, `PATCH`
+   each draft on `repos/google/cybernetic-agent-governance-engine/security-advisories/<GHSA_ID>`
+   with its final public description (including a concrete non-code mitigation
+   and with any `<!-- ... -->` comment templates removed), `ecosystem: "other"`
+   structured range (`patched_versions: null` when remediating on `main` ahead
+   of a tag), verified CVSS 3.1 vector, and reporter `.credits`. Confirm HTTP
+   `200` on `GET` read-back so `T=0` requires only a state transition.
+3. **Close all open PRs in the temporary private fork before publishing:**
+   GitHub's advisory publish endpoint rejects `{"state": "published"}` with HTTP
+   `422` while any pull request in the temporary private fork remains open.
+   Close open private-fork PRs before switching the advisory state.
+4. **At `T=0`, publish first, then open public PR(s):**
+   - `PATCH` each draft with `{"state": "published"}` only (leaving `.credits`
+     and pre-staged metadata untouched).
+   - Immediately push the pre-verified fix branch(es) to `origin` and open
+     public pull request(s) against `main`, then `PATCH` each live advisory's
+     remediation line to cite the open PR (`Fix in flight in #<PR>` alongside
+     the immediate mitigation).
+5. **Run all checks, squash-merge, stamp, and verify read-back:**
+   - Wait for all automated checks in ruleset 25966171 (strict up-to-date branch
+     policy is disabled, so independent PRs can run checks in parallel). Never
+     bypass a failing or pending check; rerun transient runner flakes, and if a
+     PR stays stalled on CI past the disclosure window, update the in-flight
+     advisory note to cite the staged PR commit SHA explicitly.
+   - Squash-merge once checks pass (`gh pr merge <PR> --squash --admin`, where
+     `--admin` in single-maintainer posture bypasses only ruleset 19769096's
+     review rule while all nine checks in ruleset 25966171 pass).
+   - Immediately stamp **`Fixed on main in <SHA> (#<PR>)`** onto the published
+     advisory without disturbing `.credits`, and perform a **`GET` read-back** on
+     the advisory endpoint to verify `state == "published"`, the landed `main`
+     SHA, and intact `.credits`. Delete temporary branches and worktrees after
+     post-merge checks pass on `main`.
 
 ## Scope
 
@@ -221,5 +243,6 @@ The CAGE maintainers thank the following researchers for reporting security and 
 - **`@ArksherX`** — Reported Control Barrier Function (CBF) ground-truth balance verification and atomic reservation boundary findings (`GHSA-cmwm-295c-gjf6`, `GHSA-w7g7-wjj9-6j97`, `GHSA-w7f4-8grh-2xv8`).
 - **`@uwezkhan`** — Reported the inference proxy multi-role / streaming governance bypass (`GHSA-hfqj-24cj-693g`) and `/governance/validate-action` ingress authentication boundary (`GHSA-v3h4-8458-5ww3`).
 - **Dominik Blain (`@dom-omg`), Ironproof** — Reported, with step-by-step reproductions, that a normative-provider determination revoked during human review was never re-checked after approval (the EU_ECB `fria` tier did not run under POST_HITL), that `execute_trade_bounded` and case or whitespace variants of `BTC` bypassed `trade_governance.rego`, and that the FRIA payload named no caller and the provider_01 request relied on self-asserted mandate facts (`GHSA-f6xq-23f7-9grm`, POAM-2026-113). Thank you for a careful, clearly reasoned report.
-
-
+- **`@kitkatt7`** — Reported and submitted remediations for partner adapter verification boundaries across `provider_06` evidence-hash binding (`GHSA-348p-gfpg-qqm9`, `#799`), `actuator_03` signed quarantine receipt enforcement (`GHSA-5438-3wwf-qvcq`, `#808`), and `provider_05` live `/v0.3/` attestation signatures (`GHSA-cxxx-6xfq-vvp4`, `#809`), as well as earlier public hardening submissions (`#517`; `#662`, consolidated into `#742`).
+- **`@katesaikishore`** — Reported that non-content OpenAI-compatible response fields (`reasoning` aliases, `refusal`, `audio`, `annotations`, `logprobs`, legacy `function_call`, and raw SSE replay) bypassed governed inference proxy output governance and PII redaction (`GHSA-5c7p-g73w-v4m3`, fixed via explicit egress-allowlist response reconstruction in `#814`).
+- **`@oyesanyf`** — Reported that `require_api_key()` in the governed financial advisor accepted end-user OIDC tokens on service-only routes (`GHSA-797p-rrgm-4p56`, fixed in `#813`).
