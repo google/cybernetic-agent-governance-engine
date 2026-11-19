@@ -138,3 +138,9 @@ variable "network_policy_hash" {
   type        = string
   default     = ""
 }
+
+variable "reconciliation_replay_defense" {
+  description = "CAGE_RECONCILIATION_REPLAY_DEFENSE: true across all environments so monotonic sequences persist across pod restarts (§1.2 / POAM-2026-238)."
+  type        = bool
+  default     = true
+}
