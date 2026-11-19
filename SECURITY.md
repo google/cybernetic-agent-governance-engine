@@ -52,6 +52,13 @@ We follow a **coordinated disclosure** model:
 
 ## Landing an Advisory Fix (Maintainers)
 
+### When this flow applies vs. a direct public PR
+
+- **Use the private-fork `T=0` advisory flow below** whenever a fix alters a security, authentication, authorization, cryptographic, PII-redaction, or governance-tier boundary in a distributed artifact (`cage-client`, `cage-conformance`, container images) or in `main` enforcement/policy code, and the PR diff itself exposes a real bypass or forgeability gap in prior commits or releases.
+- **Use a direct public PR (no advisory)** for hygiene cleanups, test-only or CI-gate additions, documentation/compliance updates, or structural refactors that close no bypass in any shipped artifact or `main` enforcement path. When uncertain whether an exposure warrants an advisory, default to the `T=0` flow.
+
+### Procedure
+
 GitHub Actions does not run on pull requests in temporary private forks, and
 ruleset 25966171 (`Require status checks on main`, no bypass actor) requires nine
 checks pinned to GitHub Actions — including `Approved review or recorded bypass`,
@@ -103,6 +110,10 @@ pull request(s):
      the advisory endpoint to verify `state == "published"`, the landed `main`
      SHA, and intact `.credits`. Delete temporary branches and worktrees after
      post-merge checks pass on `main`.
+
+## Package Distribution Channels
+
+`cage-client` and `cage-conformance` are distributed exclusively via **GitHub Releases** (`client-v*` / `conformance-v*` tags with attached wheels/sdists) and **GitHub Packages (GHCR)** — **not** PyPI. `PYPI_TRUSTED_PUBLISHING_ENABLED` in [`.github/workflows/publish-client-sdk.yml`](.github/workflows/publish-client-sdk.yml) is intentionally left unset/disabled due to Google branding and package-publishing policy and must not be enabled without explicit branding sign-off. Security advisories therefore use `ecosystem: "other"` with commit-SHA / GitHub Release remediation, and [`scripts/check_client_sdk_sync.py`](scripts/check_client_sdk_sync.py) enforces `[tool.cage.release]` parity against GitHub release tags.
 
 ## Scope
 
