@@ -77,6 +77,10 @@ resource "kubernetes_deployment" "reconciliation_worker" {
       condition     = !var.enable_redis_tls || trimspace(var.redis_ca_pem) != ""
       error_message = "CAGE Invariant (SC-8 / POAM-2026-086): when enable_redis_tls=true, redis_ca_pem must be non-empty so reconciliation-worker pins /etc/cage/tls/redis/ca.pem."
     }
+    precondition {
+      condition     = !contains(["staging", "prod", "production"], lower(var.cage_env)) || var.reconciliation_replay_defense
+      error_message = "CAGE Invariant (POAM-2026-238): reconciliation_replay_defense must be true in staging/prod so pod restarts never reset sequences below gateway reconciliation:sequence:last_accepted."
+    }
   }
 
   metadata {
@@ -173,6 +177,10 @@ resource "kubernetes_deployment" "reconciliation_worker" {
           env {
             name  = "CAGE_KMS_PROVIDER"
             value = var.cage_kms_provider
+          }
+          env {
+            name  = "CAGE_RECONCILIATION_REPLAY_DEFENSE"
+            value = tostring(var.reconciliation_replay_defense)
           }
           env {
             name  = "RECONCILIATION_PROVIDER"

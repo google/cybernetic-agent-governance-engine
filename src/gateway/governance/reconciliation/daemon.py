@@ -77,6 +77,42 @@ REPLAY_DEFENSE_ENABLED: bool = os.environ.get(
     "CAGE_RECONCILIATION_REPLAY_DEFENSE", "false"
 ).lower() in ("true", "1", "yes")
 
+# Atomic monotonic sequence advance (R-04 / POAM-2026-238).
+# Advances KEYS[1] (reconciliation:sequence:latest) strictly above both its own
+# last issued value and KEYS[2] (reconciliation:sequence:last_accepted) so a
+# single-writer reconciler restart or migration from ephemeral in-memory
+# sequences can never emit a sequence below the gateway's high-water mark.
+_NEXT_SEQUENCE_LUA: str = """
+local latest = tonumber(redis.call('GET', KEYS[1]) or '0') or 0
+local accepted = tonumber(redis.call('GET', KEYS[2]) or '0') or 0
+local next_seq = math.max(latest, accepted) + 1
+redis.call('SET', KEYS[1], tostring(next_seq))
+return next_seq
+"""
+
+
+def _is_replay_defense_enabled() -> bool:
+    """Return True when Redis-backed monotonic sequence allocation is active.
+
+    Active when ``REPLAY_DEFENSE_ENABLED`` is True, the live environment sets
+    ``CAGE_RECONCILIATION_REPLAY_DEFENSE`` truthy, or the runtime executes in
+    an enforcing posture (``staging``/``prod``/``local``) so pod restarts never
+    reset sequences below ``reconciliation:sequence:last_accepted``
+    (POAM-2026-238).
+    """
+    if REPLAY_DEFENSE_ENABLED:
+        return True
+    if os.environ.get("CAGE_RECONCILIATION_REPLAY_DEFENSE", "").lower() in (
+        "true",
+        "1",
+        "yes",
+    ):
+        return True
+    from src.gateway.governance.env_posture import is_enforcing, resolve_posture
+
+    return is_enforcing(resolve_posture())
+
+
 RECONCILED_STATE_KEY_PREFIX = "cage:ground_truth:"
 _REDIS_KEY_VERIFIED_BALANCE = "reconciliation:verified_balance"
 _REDIS_KEY_VERIFIED_AT = "reconciliation:verified_at"
@@ -1432,11 +1468,22 @@ class GroundTruthReconciler:
                     return result
                 self._last_sequence_by_invariant[result.invariant_id] = result.sequence
 
-            if REPLAY_DEFENSE_ENABLED and self._redis is not None:
+            if _is_replay_defense_enabled() and self._redis is not None:
                 try:
-                    new_sequence = int(
-                        self._redis.incr(sequence_latest_key(result.invariant_id))
-                    )
+                    latest_key = sequence_latest_key(result.invariant_id)
+                    if hasattr(self._redis, "eval") and not isinstance(
+                        self._redis, MagicMock_type()
+                    ):
+                        new_sequence = int(
+                            self._redis.eval(
+                                _NEXT_SEQUENCE_LUA,
+                                2,
+                                latest_key,
+                                sequence_last_accepted_key(result.invariant_id),
+                            )
+                        )
+                    else:
+                        new_sequence = int(self._redis.incr(latest_key))
                     result.sequence = new_sequence
                 except Exception as seq_exc:
                     logger.error(

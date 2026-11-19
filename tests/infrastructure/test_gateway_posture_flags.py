@@ -106,3 +106,34 @@ def test_posture_matrix_resolution(
     assert redis_wait_replicas == expected_wait_replicas
     assert redis_wait_timeout_ms == expected_wait_timeout_ms
     assert reconciliation_replay_defense is True
+
+
+def test_reconciliation_replay_defense_producer_consumer_parity_poam_2026_238() -> None:
+    """POAM-2026-238: producer (reconciliation_worker) and consumer (gateway) must both wire CAGE_RECONCILIATION_REPLAY_DEFENSE."""
+    reconciler_main = (_REPO / "infra/modules/reconciliation_worker/main.tf").read_text(
+        encoding="utf-8"
+    )
+    reconciler_vars = (
+        _REPO / "infra/modules/reconciliation_worker/variables.tf"
+    ).read_text(encoding="utf-8")
+    gateway_main = _GATEWAY_MAIN.read_text(encoding="utf-8")
+    gateway_vars = _GATEWAY_VARS.read_text(encoding="utf-8")
+
+    for label, vars_text, main_text in (
+        ("gateway", gateway_vars, gateway_main),
+        ("reconciliation_worker", reconciler_vars, reconciler_main),
+    ):
+        assert 'variable "reconciliation_replay_defense"' in vars_text, (
+            f"{label}/variables.tf missing variable reconciliation_replay_defense"
+        )
+        block = vars_text.split('variable "reconciliation_replay_defense"', 1)[1].split(
+            "\n}", 1
+        )[0]
+        assert re.search(r"\bdefault\s*=\s*true\b", block), (
+            f"{label}/variables.tf reconciliation_replay_defense must default to true"
+        )
+        assert 'name  = "CAGE_RECONCILIATION_REPLAY_DEFENSE"' in main_text, (
+            f"{label}/main.tf must inject CAGE_RECONCILIATION_REPLAY_DEFENSE env var"
+        )
+    assert "reconciliation_replay_defense" in reconciler_main
+    assert "POAM-2026-238" in reconciler_main
