@@ -333,3 +333,161 @@ def test_tampered_redis_payload_fails_signature_verification(
     assert (
         read_verified_state(sync_redis, "finance.cash_balance", signer=signer) is None
     )
+
+
+def test_non_prefixed_rogue_source_and_unverified_flag_never_prune_cbf_debits(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Reconciler source verification must use allowlist + source_verified, never an 'unverified' prefix.
+
+    A rogue snapshot whose source_id does NOT start with 'unverified' (e.g.
+    'rogue_custodian') or whose source_verified is False must fail closed,
+    invalidate verified Redis state, and leave confirmed CBF debits untouched.
+    """
+    import time
+
+    from src.gateway.governance.safety.debit_ledger import DebitLedger
+    from src.gateway.governance.seams.ground_truth import GroundTruthSnapshot
+
+    signer = _make_ed25519_signer(monkeypatch)
+    sync_redis = fakeredis.FakeRedis(decode_responses=True)
+
+    class _ConfigurableProvider:
+        invariant_id = "finance.cash_balance"
+        state_key = "safety:current_cash"
+        source_id = "custodian:primary_ledger"
+
+        def __init__(self) -> None:
+            self.seq = 0
+            self.snap_source = self.source_id
+            self.snap_verified = True
+
+        def fetch_snapshot_sync(self) -> GroundTruthSnapshot:
+            self.seq += 1
+            now = time.time()
+            return GroundTruthSnapshot(
+                invariant_id=self.invariant_id,
+                state_key=self.state_key,
+                scalar=100_000.0,
+                observed_at=now,
+                sequence=self.seq,
+                source_id=self.snap_source,
+                source_verified=self.snap_verified,
+                settled_through=now + 60.0,
+            )
+
+        async def fetch_snapshot(self) -> GroundTruthSnapshot:
+            return self.fetch_snapshot_sync()
+
+    provider = _ConfigurableProvider()
+    reconciler = GroundTruthReconciler(
+        provider=provider,
+        redis_client=sync_redis,
+        signer=signer,
+        settlement_clock_skew_seconds=0.0,
+    )
+
+    # Healthy tick establishes signed verified state.
+    healthy = reconciler.reconcile_once("finance.cash_balance")
+    assert healthy is not None
+    assert read_verified_state(
+        sync_redis, "finance.cash_balance", signer=signer
+    ) == pytest.approx(100_000.0)
+
+    # Seed a confirmed CBF debit that any accepted snapshot (settled_through > now) would prune.
+    ledger = DebitLedger(sync_redis, namespace="finance.cash_balance")
+    debit_ts = time.time() - 10.0
+    sync_redis.hset(
+        ledger.DEBITS_KEY,
+        "deb-protect-1",
+        json.dumps({"amount": 500.0, "submitted_at": debit_ts}),
+    )
+    sync_redis.zadd(ledger.DEBITS_BY_TIME_KEY, {"deb-protect-1": debit_ts})
+    sync_redis.set(ledger.DEBITS_TOTAL_KEY, "500.0")
+    assert sync_redis.hexists(ledger.DEBITS_KEY, "deb-protect-1")
+
+    # 1. Rogue source WITHOUT 'unverified' prefix, even with source_verified=True -> rejected!
+    provider.snap_source = "rogue_custodian"
+    provider.snap_verified = True
+    rogue_res = reconciler.reconcile("finance.cash_balance")
+    assert not rogue_res.is_valid
+    assert rogue_res.source_verified is False
+    assert (
+        rogue_res.error is not None
+        and "Unverified ground-truth source" in rogue_res.error
+    )
+    assert (
+        read_verified_state(sync_redis, "finance.cash_balance", signer=signer) is None
+    )
+    # Confirmed CBF debit MUST NOT have been pruned by the untrusted snapshot.
+    assert sync_redis.hexists(ledger.DEBITS_KEY, "deb-protect-1")
+    assert float(sync_redis.get(ledger.DEBITS_TOTAL_KEY) or 0.0) == pytest.approx(500.0)
+
+    # 2. Matching source_id but source_verified=False -> rejected, debit preserved!
+    provider.snap_source = "custodian:primary_ledger"
+    provider.snap_verified = False
+    unver_res = reconciler.reconcile("finance.cash_balance")
+    assert not unver_res.is_valid
+    assert unver_res.source_verified is False
+    assert (
+        read_verified_state(sync_redis, "finance.cash_balance", signer=signer) is None
+    )
+    assert sync_redis.hexists(ledger.DEBITS_KEY, "deb-protect-1")
+    assert float(sync_redis.get(ledger.DEBITS_TOTAL_KEY) or 0.0) == pytest.approx(500.0)
+
+    # 3. Explicit trusted_sources allowlist accepts an allowlisted secondary source and prunes.
+    allowlisted_reconciler = GroundTruthReconciler(
+        provider=provider,
+        redis_client=sync_redis,
+        signer=signer,
+        trusted_sources={"finance.cash_balance": {"custodian:secondary_ledger"}},
+        settlement_clock_skew_seconds=0.0,
+    )
+    provider.snap_source = "custodian:secondary_ledger"
+    provider.snap_verified = True
+    ok_secondary = allowlisted_reconciler.reconcile_once("finance.cash_balance")
+    assert ok_secondary is not None
+    assert not sync_redis.hexists(ledger.DEBITS_KEY, "deb-protect-1")
+    assert float(sync_redis.get(ledger.DEBITS_TOTAL_KEY) or 0.0) == pytest.approx(0.0)
+
+
+def test_ground_truth_provider_without_declared_source_id_fails_closed(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A GroundTruthProvider declaring no source_id and no trusted_sources fails closed."""
+    import time
+
+    from src.gateway.governance.seams.ground_truth import GroundTruthSnapshot
+
+    signer = _make_ed25519_signer(monkeypatch)
+    sync_redis = fakeredis.FakeRedis(decode_responses=True)
+
+    class _AnonymousProvider:
+        invariant_id = "finance.cash_balance"
+        state_key = "safety:current_cash"
+
+        def fetch_snapshot_sync(self) -> GroundTruthSnapshot:
+            return GroundTruthSnapshot(
+                invariant_id=self.invariant_id,
+                state_key=self.state_key,
+                scalar=100_000.0,
+                observed_at=time.time(),
+                sequence=1,
+                source_id="arbitrary_unregistered_source",
+                source_verified=True,
+            )
+
+        async def fetch_snapshot(self) -> GroundTruthSnapshot:
+            return self.fetch_snapshot_sync()
+
+    reconciler = GroundTruthReconciler(
+        provider=_AnonymousProvider(),
+        redis_client=sync_redis,
+        signer=signer,
+    )
+    res = reconciler.reconcile("finance.cash_balance")
+    assert not res.is_valid
+    assert res.source_verified is False
+    assert (
+        read_verified_state(sync_redis, "finance.cash_balance", signer=signer) is None
+    )

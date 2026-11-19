@@ -66,6 +66,9 @@ class GroundTruthSnapshot:
     #: already reflected in ``scalar``. ``None`` means the source does not
     #: attest settlement and the reconciler falls back to a configured lag.
     settled_through: float | None = None
+    #: Explicit provider attestation that the reading originated from a
+    #: verified/authenticated source (``False`` under ``FaultMode.UNVERIFIED_SOURCE``).
+    source_verified: bool = True
 
     @property
     def value(self) -> float:
@@ -419,6 +422,7 @@ class SimulatedSource:
                 observed_at=ts,
                 sequence=self._sequence,
                 source_id="unverified:rogue_feed",
+                source_verified=False,
                 metadata=meta,
                 settled_through=settled_through,
             )

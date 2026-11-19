@@ -401,12 +401,14 @@ def _clock() -> float:
 
 
 class _FixedNav:
+    source_id = "simulated:finance_portfolio_nav"
+
     def __init__(self, **overrides: Any) -> None:
         fields: dict[str, Any] = {
             "open_nav": _OPEN_NAV,
             "current_nav": _OPEN_NAV,
             "observed_at": _NOW,
-            "source_id": "simulated:finance_portfolio_nav",
+            "source_id": self.source_id,
         }
         fields.update(overrides)
         self._snap = NavSnapshot(**fields)
@@ -426,6 +428,8 @@ async def test_resolve_returns_current_nav() -> None:
     ("overrides", "reason"),
     [
         ({"source_id": "unverified_rogue_feed"}, "unverified NAV source"),
+        ({"source_id": "rogue_custodian"}, "unverified NAV source"),
+        ({"source_verified": False}, "unverified NAV source"),
         ({"source_id": ""}, "unverified NAV source"),
         ({"current_nav": 0.0}, "no basis for a sell fraction"),
         ({"current_nav": -1.0}, "invalid current NAV"),
@@ -444,6 +448,8 @@ async def test_resolve_returns_current_nav() -> None:
     ],
     ids=[
         "unverified",
+        "rogue-non-prefixed",
+        "source-verified-false",
         "no-source",
         "zero",
         "negative",

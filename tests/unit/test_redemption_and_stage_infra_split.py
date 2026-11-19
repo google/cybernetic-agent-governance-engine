@@ -1541,3 +1541,38 @@ async def test_kernel_zero_substring_semantic_decisions() -> None:
     assert _stage_coverage_kwargs(res)["evaluated_stages"] == (
         ("opa", "INFRASTRUCTURE"),
     )
+
+    # 5. GroundTruthReconciler rejects non-'unverified'-prefixed rogue sources structurally
+    import time
+
+    from src.gateway.governance.reconciliation.daemon import GroundTruthReconciler
+    from src.gateway.governance.seams.ground_truth import GroundTruthSnapshot
+
+    class _SpoofSourceProvider:
+        invariant_id = "finance.cash_balance"
+        state_key = "safety:current_cash"
+        source_id = "custodian:official"
+
+        def fetch_snapshot_sync(self) -> GroundTruthSnapshot:
+            return GroundTruthSnapshot(
+                invariant_id=self.invariant_id,
+                state_key=self.state_key,
+                scalar=50_000.0,
+                observed_at=time.time(),
+                sequence=1,
+                source_id="custodian:rogue_no_prefix",
+                source_verified=True,
+            )
+
+        async def fetch_snapshot(self) -> GroundTruthSnapshot:
+            return self.fetch_snapshot_sync()
+
+    recon_res = GroundTruthReconciler(
+        provider=_SpoofSourceProvider(), redis_client=None
+    ).reconcile("finance.cash_balance")
+    assert recon_res.is_valid is False
+    assert recon_res.source_verified is False
+    assert (
+        recon_res.error is not None
+        and "Unverified ground-truth source" in recon_res.error
+    )

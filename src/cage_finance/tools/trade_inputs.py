@@ -151,6 +151,7 @@ class MarketQuote:
     #: Feed publication time of the quote (Unix epoch seconds).
     published_at: float
     source_id: str
+    source_verified: bool = True
 
 
 @dataclass(frozen=True)
@@ -171,6 +172,7 @@ class DailyVolume:
     #: When the feed computed the average (Unix epoch seconds).
     as_of: float
     source_id: str
+    source_verified: bool = True
 
 
 @dataclass(frozen=True)
@@ -182,6 +184,7 @@ class NavSnapshot:
     #: When the source computed ``current_nav`` (Unix epoch seconds).
     observed_at: float
     source_id: str
+    source_verified: bool = True
 
 
 @runtime_checkable
@@ -208,12 +211,24 @@ class TradeInputSourceUnavailable(TradeInputUnavailable):
     """The authoritative feed or source could not be reached or timed out."""
 
 
-def _verified(source_id: object) -> bool:
-    return (
-        isinstance(source_id, str)
-        and bool(source_id)
-        and not source_id.startswith("unverified")
-    )
+def _source_is_trusted(
+    reading: MarketQuote | DailyVolume | NavSnapshot, provider: object
+) -> bool:
+    """Validate source authenticity structurally without prefix denylisting.
+
+    Requires a non-empty ``source_id``, explicit ``source_verified is True``,
+    and exact ``source_id`` equality whenever ``provider`` declares a
+    non-empty ``source_id``.
+    """
+    source_id = getattr(reading, "source_id", None)
+    if not isinstance(source_id, str) or not source_id.strip():
+        return False
+    if getattr(reading, "source_verified", True) is not True:
+        return False
+    expected_source = getattr(provider, "source_id", None)
+    if isinstance(expected_source, str) and expected_source.strip():
+        return source_id == expected_source.strip()
+    return True
 
 
 async def measure_market_data_latency_ms(
@@ -252,7 +267,7 @@ async def fetch_verified_quote(
 
     if not isinstance(quote.symbol, str) or quote.symbol.upper() != symbol.upper():
         raise TradeInputUnavailable(f"quote is for {quote.symbol!r}, not {symbol!r}")
-    if not _verified(quote.source_id):
+    if not _source_is_trusted(quote, feed):
         raise TradeInputUnavailable(
             f"unverified market-data source {quote.source_id!r}"
         )
@@ -294,7 +309,7 @@ async def fetch_verified_daily_volume(
         raise TradeInputUnavailable(
             f"daily volume is for {vol.symbol!r}, not {symbol!r}"
         )
-    if not _verified(vol.source_id):
+    if not _source_is_trusted(vol, feed):
         raise TradeInputUnavailable(f"unverified daily-volume source {vol.source_id!r}")
     try:
         shares = float(vol.shares)
@@ -356,7 +371,7 @@ async def fetch_verified_nav(
         raise TradeInputSourceUnavailable(
             f"NAV fetch failed: {type(exc).__name__}: {exc}"
         ) from exc
-    if not _verified(snap.source_id):
+    if not _source_is_trusted(snap, source):
         raise TradeInputUnavailable(f"unverified NAV source {snap.source_id!r}")
     try:
         open_nav = float(snap.open_nav)

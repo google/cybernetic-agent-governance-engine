@@ -31,7 +31,7 @@ import logging
 import math
 import os
 import time
-from collections.abc import Awaitable, Mapping, Sequence
+from collections.abc import Awaitable, Collection, Mapping, Sequence
 from contextlib import contextmanager
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
@@ -173,6 +173,10 @@ class ReconciliationResult:
     evidence_sequence: int | None = None
     #: Non-None when appending the discrepancy fence evidence record failed.
     evidence_error: str | None = None
+    #: Explicit provider attestation that the reading originated from a
+    #: verified/authenticated source (``False`` fails closed before signing or
+    #: debit-ledger pruning).
+    source_verified: bool = True
 
     def __post_init__(self) -> None:
         self.state_scalar = float(self.state_scalar)
@@ -189,10 +193,11 @@ class ReconciliationResult:
 
     @property
     def is_valid(self) -> bool:
-        """True if reconciliation succeeded and scalar is finite and non-negative."""
+        """True if reconciliation succeeded, source is verified, and scalar is finite and non-negative."""
         scalar = self.state_scalar
         return (
             self.error is None
+            and self.source_verified is True
             and isinstance(scalar, (int, float))
             and not isinstance(scalar, bool)
             and math.isfinite(scalar)
@@ -288,6 +293,7 @@ class _DefaultSimulatedProvider(GroundTruthProvider):
 
     invariant_id: str = "finance.cash_balance"
     state_key: str = "safety:current_cash"
+    source_id: str = "simulated"
 
     def __init__(
         self,
@@ -306,6 +312,7 @@ class _DefaultSimulatedProvider(GroundTruthProvider):
             state_key=self.state_key,
             initial_scalar=default_scalar,
             barrier_floor=20_000.0,
+            source_id=self.source_id,
             journal=journal,
             settlement_lag_s=(
                 settlement_lag_s
@@ -364,6 +371,9 @@ class GroundTruthReconciler:
         providers: (
             Mapping[str, GroundTruthProvider] | Sequence[GroundTruthProvider] | None
         ) = None,
+        trusted_sources: (
+            Collection[str] | Mapping[str, Collection[str]] | None
+        ) = None,
         max_staleness_s: float | None = None,
         max_clock_skew_s: float = 5.0,
         discrepancy_threshold: float | None = None,
@@ -394,6 +404,26 @@ class GroundTruthReconciler:
         else:
             self._provider = _DefaultSimulatedProvider()
             self._providers[self._provider.invariant_id] = self._provider
+
+        self._global_trusted_sources: frozenset[str] | None = None
+        self._trusted_sources_by_invariant: dict[str, frozenset[str]] = {}
+        if trusted_sources is not None:
+            if isinstance(trusted_sources, Mapping):
+                for inv_key, allowed in trusted_sources.items():
+                    self._trusted_sources_by_invariant[str(inv_key)] = frozenset(
+                        s.strip() for s in allowed if isinstance(s, str) and s.strip()
+                    )
+            elif isinstance(trusted_sources, str):
+                cleaned = trusted_sources.strip()
+                self._global_trusted_sources = (
+                    frozenset({cleaned}) if cleaned else frozenset()
+                )
+            else:
+                self._global_trusted_sources = frozenset(
+                    s.strip()
+                    for s in trusted_sources
+                    if isinstance(s, str) and s.strip()
+                )
 
         self._redis = redis_client
         self._account_id = account_id
@@ -470,6 +500,29 @@ class GroundTruthReconciler:
 
     def _get_source(self, provider: Any) -> Any:
         return getattr(provider, "source", getattr(provider, "_source", None))
+
+    def _expected_sources_for(
+        self, invariant_id: str, provider: Any
+    ) -> frozenset[str] | None:
+        """Resolve the positive ``source_id`` allowlist for ``invariant_id`` / ``provider``.
+
+        Precedence:
+        1. Per-invariant allowlist configured via ``trusted_sources={invariant_id: ...}``.
+        2. Global allowlist configured via ``trusted_sources=[...]``.
+        3. The provider's (or its underlying source's) declared ``source_id``.
+        """
+        if invariant_id in self._trusted_sources_by_invariant:
+            return self._trusted_sources_by_invariant[invariant_id]
+        if self._global_trusted_sources is not None:
+            return self._global_trusted_sources
+        declared = getattr(provider, "source_id", None)
+        if isinstance(declared, str) and declared.strip():
+            return frozenset({declared.strip()})
+        source_obj = self._get_source(provider)
+        nested = getattr(source_obj, "source_id", None)
+        if isinstance(nested, str) and nested.strip():
+            return frozenset({nested.strip()})
+        return None
 
     def _resolve_barrier_floor(self, invariant_id: str, provider: Any) -> float | None:
         source_obj = self._get_source(provider)
@@ -1144,6 +1197,7 @@ class GroundTruthReconciler:
         if not snap.invariant_id or (snap.metadata and snap.metadata.get("malformed")):
             raise ValueError("Malformed ground-truth snapshot payload")
 
+        raw_verified = getattr(snap, "source_verified", True)
         return (
             ReconciliationResult(
                 source=snap.source,
@@ -1153,6 +1207,7 @@ class GroundTruthReconciler:
                 sequence=snap.sequence,
                 raw_response=dict(snap.metadata) if snap.metadata else None,
                 settled_through=getattr(snap, "settled_through", None),
+                source_verified=isinstance(raw_verified, bool) and raw_verified,
             ),
             True,
         )
@@ -1214,15 +1269,28 @@ class GroundTruthReconciler:
                 fetch_ms = (time.monotonic() - t_fetch_start) * 1000.0
                 _set_span_attr("reconciliation.fetch_ms", round(fetch_ms, 1))
 
-            # 1. Source verification (FaultMode.UNVERIFIED_SOURCE)
-            if (
-                not result.source
-                or not isinstance(result.source, str)
-                or result.source == "unverified_rogue_feed"
-                or result.source.startswith("unverified")
-            ):
+            # 1. Source verification (FaultMode.UNVERIFIED_SOURCE / source allowlist)
+            # Fail closed on missing/unverified source attestation or any source_id
+            # outside the configured/provider-declared allowlist before signing,
+            # publishing verified state, or pruning confirmed CBF debits. Never
+            # rely on substring/prefix denylisting of ``result.source``.
+            expected_sources = self._expected_sources_for(
+                result.invariant_id, target_provider
+            )
+            source_is_trusted = (
+                isinstance(result.source, str)
+                and bool(result.source.strip())
+                and result.source_verified is True
+                and (
+                    (expected_sources is not None and result.source in expected_sources)
+                    if is_snapshot
+                    else (expected_sources is None or result.source in expected_sources)
+                )
+            )
+            if not source_is_trusted:
                 self._failure_count += 1
                 self._invalidate_redis_verified_state(result.invariant_id)
+                result.source_verified = False
                 result.error = f"Unverified ground-truth source: {result.source!r}"
                 _set_span_attr("reconciliation.error", result.error)
                 return result

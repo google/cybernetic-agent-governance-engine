@@ -1312,6 +1312,13 @@ async def chat_completions(
                     stream_protocol_error = True
                     break
 
+                # POAM-2026-237 (GHSA-5c7p-g73w-v4m3 open follow-up): this
+                # prefix check only catches synthetic frames emitted by
+                # _stream_vllm() on upstream HTTP >= 400. Upstream HTTP-200
+                # SSE {"error": ...} frames miss this branch and are stripped
+                # by StreamAssembler into empty choices under PII_SCRUB_PASS;
+                # tracked for out-of-band stream error signaling + fail-closed
+                # HTTP-200 error-frame rejection in POAM-2026-237.
                 err_field = str(chunk_json.get("error", ""))
                 if err_field.startswith("vLLM backend error"):
                     stream_backend_error = True

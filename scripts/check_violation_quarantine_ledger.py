@@ -345,8 +345,8 @@ def discover_and_check_ledger(
         if member_name != "CRITICAL_CBF_BREACH":
             seam_reserved_codes.add(member_val)
     stream_consts = module_consts.get("src/gateway/governance/evidence/stream.py", {})
-    for cname, cval in stream_consts.items():
-        if cval == "RECONCILIATION_DISCREPANCY_FENCE" or cname.endswith(
+    for const_name, cval in stream_consts.items():
+        if cval == "RECONCILIATION_DISCREPANCY_FENCE" or const_name.endswith(
             "DISCREPANCY_FENCE_EVENT_TYPE"
         ):
             seam_reserved_codes.add(cval)
@@ -666,25 +666,25 @@ def discover_and_check_ledger(
         ]:
             local_env: dict[str, set[str]] = {k: {v} for k, v in consts.items()}
             # Collect local variable assignments within fn
-            for stmt in ast.walk(fn):
-                if isinstance(stmt, ast.Assign) and len(stmt.targets) == 1:
-                    tgt = stmt.targets[0]
+            for fn_node in ast.walk(fn):
+                if isinstance(fn_node, ast.Assign) and len(fn_node.targets) == 1:
+                    tgt = fn_node.targets[0]
                     if isinstance(tgt, ast.Name):
                         res = resolve_code_expr(
-                            stmt.value, rel=rel, local_env=local_env
+                            fn_node.value, rel=rel, local_env=local_env
                         )
                         if res:
                             local_env.setdefault(tgt.id, set()).update(res)
                         elif (
-                            isinstance(stmt.value, ast.Call)
-                            and _call_name(stmt.value) == "get"
+                            isinstance(fn_node.value, ast.Call)
+                            and _call_name(fn_node.value) == "get"
                         ):
                             # e.g. code = {...}.get(classification) in ftra/models.py
                             if isinstance(
-                                stmt.value.func, ast.Attribute
-                            ) and isinstance(stmt.value.func.value, ast.Dict):
+                                fn_node.value.func, ast.Attribute
+                            ) and isinstance(fn_node.value.func.value, ast.Dict):
                                 dvals: set[str] = set()
-                                for dv in stmt.value.func.value.values:
+                                for dv in fn_node.value.func.value.values:
                                     r = resolve_code_expr(
                                         dv, rel=rel, local_env=local_env
                                     )
@@ -697,20 +697,20 @@ def discover_and_check_ledger(
                         e0 = tgt.elts[0]
                         if (
                             isinstance(e0, ast.Name)
-                            and isinstance(stmt.value, ast.Call)
-                            and isinstance(stmt.value.func, ast.Attribute)
-                            and stmt.value.func.attr == "get"
-                            and isinstance(stmt.value.func.value, ast.Name)
+                            and isinstance(fn_node.value, ast.Call)
+                            and isinstance(fn_node.value.func, ast.Attribute)
+                            and fn_node.value.func.attr == "get"
+                            and isinstance(fn_node.value.func.value, ast.Name)
                         ):
-                            dname = stmt.value.func.value.id
+                            dname = fn_node.value.func.value.id
                             vals = set(dict_first.get(dname, set()))
                             if (
-                                len(stmt.value.args) >= 2
-                                and isinstance(stmt.value.args[1], ast.Tuple)
-                                and stmt.value.args[1].elts
+                                len(fn_node.value.args) >= 2
+                                and isinstance(fn_node.value.args[1], ast.Tuple)
+                                and fn_node.value.args[1].elts
                             ):
                                 def_res = resolve_code_expr(
-                                    stmt.value.args[1].elts[0],
+                                    fn_node.value.args[1].elts[0],
                                     rel=rel,
                                     local_env=local_env,
                                 )
