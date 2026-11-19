@@ -51,11 +51,13 @@ What that enforces:
   restriction beyond the pull-request rule. Earlier versions of this document listed all four
   as enabled.
 
-The one exception to ruleset 25966171 is an advisory fix landed from a private fork, where
-Actions does not run: the ruleset is disabled for that single merge and re-enabled, and its
-history records both edits ([`SECURITY.md`](../SECURITY.md)). Such a merge has no pre-merge
-record, so its ledger run on `main` fails (§3.1). Ruleset 26377312 stays enabled throughout,
-which is why the history rules are not in 25966171.
+Advisory fixes publish first and land through public pull requests under ruleset 25966171
+([`SECURITY.md`](../SECURITY.md#landing-an-advisory-fix-maintainers)), so all nine required
+checks (including `Approved review or recorded bypass`) still run. Historically — and if an
+unavoidable embargoed private-fork merge ever happened where Actions does not run —
+disabling 25966171 for a single merge leaves a commit without a pre-merge record, so its
+ledger run on `main` fails (§3.1) while `/history` records both edits. Ruleset 26377312 stays
+enabled throughout, which is why the history rules are not in 25966171.
 
 Before each merge, run `scripts/check_pr_mergeable.sh <pr> --comment`. It verifies the
 required checks on the exact head SHA and posts the result on the pull request. Nothing
@@ -162,9 +164,8 @@ digest.
 
 Limits. GitHub takes the workflow and the script from the pull request's merge ref, so a pull
 request that edits them decides its own check; the edit is in the merged diff, and each record's
-signing certificate names the workflow ref that signed it. A merge landed while ruleset 25966171
-is disabled (the private-fork advisory path in §1) has no pre-merge record, and its ledger run
-fails.
+signing certificate names the workflow ref that signed it. Any historical merge landed while
+ruleset 25966171 was disabled has no pre-merge record, and its ledger run fails.
 
 ### Additional non-required pull-request workflows
 
