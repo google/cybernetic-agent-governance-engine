@@ -572,7 +572,10 @@ async def _run() -> dict[str, Any]:
                 json={"action": "execute_trade", "params": _trade(50_000.0)},
             )
             assert s4_resp.status_code == 403, s4_resp.text
-            s4_body = s4_resp.json()
+            s4_env = s4_resp.json()
+            assert s4_env.get("envelope_version") == "3.0", s4_env
+            assert s4_env.get("signature"), s4_env
+            s4_body = _unwrap(s4_resp)
             assert s4_body["verdict"] == "DENIED", s4_body
             assert any("CTRL_OPA_005" in str(v) for v in s4_body["violations"]), s4_body
             assert "deferred_id" not in s4_body

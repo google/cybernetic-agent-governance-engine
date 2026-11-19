@@ -134,30 +134,54 @@ verified workload identity and measures the STPA inputs itself; a value in
 
 The `policy_version_id` field is optional. If provided, the governance engine
 validates that the active policy version matches before evaluating. If the version
-has changed, the request is rejected with HTTP 409 Conflict.
+has changed, the request is refused with a signed HTTP `403` `DENIED` envelope (`Substrate Policy Drift Detected`).
 
-**Response:**
+**Response (`GovernanceEnvelope` v3.0, HTTP `200` or HTTP `403`):**
 
 ```json
 {
-  "verdict": "ALLOW | DENY | REQUIRE_APPROVAL | DEFER",
-  "violations": [],
-  "audit_id": "uuid",
-  "policy_version_id": "a1b2c3d4e5f6a7b8",
-  "routing_seal": "hmac-sha256-hex"
+  "envelope_version": "3.0",
+  "envelope_type": "cage_governance_decision",
+  "envelope_id": "cage-uuid",
+  "issued_at": "2026-11-19T00:00:00Z",
+  "expires_at": "2026-11-19T00:05:00Z",
+  "issuer": {
+    "gateway_id": "cage-gateway",
+    "policy_version_id": "a1b2c3d4e5f6a7b8"
+  },
+  "subject": {
+    "action": "execute_trade",
+    "action_hash": "sha256-hex"
+  },
+  "governance_context": {
+    "profile": "DRY_RUN",
+    "tiers_passed": []
+  },
+  "payload": {
+    "verdict": "ALLOW | NARROW | REQUIRE_APPROVAL | DEFER | DENIED",
+    "violations": [],
+    "proof_hash": "sha256-hex (on DENIED)"
+  },
+  "external_attestations": [],
+  "signature": {
+    "algorithm": "ES256 | EdDSA",
+    "kid": "gateway-key-1",
+    "value": "base64-sig"
+  }
 }
 ```
 
 ### 2.2 Verdict Semantics
 
-Canonical four-state vocabulary — see [`src/gateway/governance/decisions.py`](../src/gateway/governance/decisions.py):
+Canonical decision vocabulary — see [`src/gateway/governance/decisions.py`](../src/gateway/governance/decisions.py):
 
 | Verdict | Meaning | HTTP status |
 |---|---|---|
-| `ALLOW` | All governance tiers passed; action may proceed; routing seal issued | 200 |
-| `DENY` | One or more governance tiers rejected the action; no seal issued | 403 |
-| `REQUIRE_APPROVAL` | Action is understood but requires explicit human sign-off before execution; routes to HITL approval queue | 202 |
-| `DEFER` | Action cannot be evaluated — trusted context or evidence is missing; routes to DeferQueue for automated data-hydration (not human triage) | 202 |
+| `ALLOW` | All governance tiers passed; action may proceed (internal routing seal is issued on committing `/tools/execute`, never returned in preview envelopes) | 200 (signed `GovernanceEnvelope`) |
+| `NARROW` | Action exceeds a narrowable limit and was clamped to `narrowed_params` | 200 (signed `GovernanceEnvelope`) |
+| `REQUIRE_APPROVAL` | Action is understood but requires explicit human sign-off before execution; parks `deferred_id` in `DeferQueue` | 200 (signed `GovernanceEnvelope`) |
+| `DEFER` | Action cannot be evaluated — trusted context or evidence is missing; parks `defer_token` in `DeferQueue` | 200 (signed `GovernanceEnvelope`) |
+| `DENIED` | One or more governance tiers rejected the action; emits `refusal_receipt` and `proof_hash` | 403 (signed `GovernanceEnvelope`) |
 
 ### 2.3 Governance Pipeline Tiers
 

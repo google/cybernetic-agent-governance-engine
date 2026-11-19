@@ -349,7 +349,10 @@ async def test_s3_concurrent_replay_executes_exactly_once(live: Live) -> None:
 async def test_s4_oversized_junior_trade_is_denied_without_a_token(live: Live) -> None:
     resp = await live.validate("execute_trade", _trade(50_000.0))
     assert resp.status_code == 403, resp.text
-    body = resp.json()
+    env = resp.json()
+    assert env.get("envelope_version") == "3.0", env
+    assert env.get("signature"), env
+    body = _body(resp)
     assert body["verdict"] == "DENIED"
     assert any("CTRL_OPA_005" in str(v) for v in body["violations"]), body
     assert "deferred_id" not in body
