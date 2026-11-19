@@ -111,6 +111,10 @@ pull request(s):
      SHA, and intact `.credits`. Delete temporary branches and worktrees after
      post-merge checks pass on `main`.
 
+## Package Distribution Channels
+
+`cage-client` and `cage-conformance` are distributed exclusively via **GitHub Releases** (`client-v*` / `conformance-v*` tags with attached wheels/sdists) and **GitHub Packages (GHCR)** — **not** PyPI. `PYPI_TRUSTED_PUBLISHING_ENABLED` in [`.github/workflows/publish-client-sdk.yml`](.github/workflows/publish-client-sdk.yml) is intentionally left unset/disabled due to Google branding and package-publishing policy and must not be enabled without explicit branding sign-off. Security advisories therefore use `ecosystem: "other"` with commit-SHA / GitHub Release remediation, and [`scripts/check_client_sdk_sync.py`](scripts/check_client_sdk_sync.py) enforces `[tool.cage.release]` parity against GitHub release tags.
+
 ## Scope
 
 The following are **in scope** for security reports:
