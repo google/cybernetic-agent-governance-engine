@@ -12,14 +12,15 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""CAGE Gateway Client SDK (``cage-client`` / ``src.gateway.client``).
+"""CAGE Gateway Client SDK (``cage-client``).
 
 Out-of-process Policy Enforcement Point (PEP) client SDK for interacting with
 the CAGE governance gateway over TLS/mTLS with fail-closed cryptographic
-``GovernanceEnvelope`` verification (out-of-band ``kid`` JWKS/PEM resolution,
-RFC 8785 JCS canonicalization, temporal freshness, and ``subject`` action
-binding). Channel TLS/mTLS (``sc-8``) protects only the wire transport and does
-NOT substitute for end-to-end envelope signature verification.
+``GovernanceEnvelope`` verification on every HTTP ``200`` and HTTP ``403``
+verdict (out-of-band ``kid`` JWKS/PEM resolution, RFC 8785 JCS
+canonicalization, temporal freshness, and ``subject`` action binding). Channel
+TLS/mTLS (``sc-8``) protects only the wire transport and does NOT substitute
+for end-to-end envelope signature verification.
 """
 
 from .adapters.langgraph import cage_guard
@@ -35,7 +36,7 @@ from .exceptions import (
 from .jwks import JwksCache, JwksKeyResolver
 from .transport import create_mtls_transport
 
-__version__ = "0.3.0"
+__version__ = "0.4.0"
 
 __all__ = [
     "CageClient",

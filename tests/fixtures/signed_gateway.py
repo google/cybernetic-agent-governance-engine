@@ -126,15 +126,31 @@ class SignedGatewayStub:
         """The ``signature.value`` of every envelope signed so far, in order."""
         return [str(envelope["signature"]["value"]) for envelope in self.issued]
 
+    @staticmethod
+    def _has_refusal_evidence(body: Mapping[str, Any]) -> bool:
+        raw_receipt = body.get("refusal_receipt")
+        receipt = raw_receipt if isinstance(raw_receipt, Mapping) else {}
+        for candidate in (
+            body.get("proof_hash"),
+            receipt.get("proof_hash"),
+            body.get("audit_id"),
+        ):
+            if isinstance(candidate, str) and candidate.strip():
+                return True
+        return False
+
     def transport_handler(self, handler: Handler) -> Handler:
         """Wrap a ``MockTransport`` handler with the gateway's signing role.
 
         JWKS requests are answered here and never reach ``handler``. A 200
         answer to ``/governance/validate-action`` whose body is a verdict
-        payload (or a v3.0-shaped body without a signature block) is replaced
-        by a signed envelope bound to the request's ``action`` and ``params``;
-        an ``envelope_id`` in the body is kept. A body that already carries a
-        signature block (a deliberately forged or tampered envelope), any
+        payload (or a v3.0-shaped body without a signature block), and a 403
+        answer carrying an evidenced refusal payload (``verdict`` in
+        ``DENY``/``DENIED`` with a non-blank ``proof_hash``/``audit_id``), are
+        replaced by a signed envelope bound to the request's ``action`` and
+        ``params``; an ``envelope_id`` in the body is kept. A body that already
+        carries a signature block (a deliberately forged or tampered envelope),
+        an un-evidenced or non-JSON 403 (such as a proxy/mesh rejection), any
         other status, and any other path pass through unchanged.
         """
 
@@ -142,7 +158,10 @@ class SignedGatewayStub:
             if request.url.path == JWKS_PATH:
                 return httpx.Response(200, json=self.jwks)
             response = handler(request)
-            if request.url.path != VALIDATE_ACTION_PATH or response.status_code != 200:
+            if request.url.path != VALIDATE_ACTION_PATH or response.status_code not in (
+                200,
+                403,
+            ):
                 return response
             try:
                 body = response.json()
@@ -151,10 +170,16 @@ class SignedGatewayStub:
             if not isinstance(body, dict) or isinstance(body.get("signature"), dict):
                 return response
             payload = body["payload"] if isinstance(body.get("payload"), dict) else body
+            if response.status_code == 403:
+                if payload.get("verdict") not in (
+                    "DENY",
+                    "DENIED",
+                ) or not self._has_refusal_evidence(payload):
+                    return response
             envelope_id = body.get("envelope_id")
             sent = json.loads(request.content)
             return httpx.Response(
-                200,
+                response.status_code,
                 json=self.envelope(
                     sent["action"],
                     sent["params"],

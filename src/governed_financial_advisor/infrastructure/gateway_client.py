@@ -82,37 +82,12 @@ _ROUTABLE_VERDICTS = frozenset(
 _POLICY_PRECHECK_DECISIONS = frozenset({"ALLOW", "DENY", "MANUAL_REVIEW"})
 
 
-def _violations(response: httpx.Response) -> list[str]:
-    try:
-        body = response.json()
-    except ValueError:
-        return ["governance denied"]
-    violations = body.get("violations") if isinstance(body, dict) else None
-    return [str(v) for v in violations] if violations else ["governance denied"]
-
-
-def _has_refusal_evidence(body: Mapping[str, Any]) -> bool:
-    """Return True iff a 403 refusal body carries a non-empty proof_hash or audit_id."""
-    raw_receipt = body.get("refusal_receipt")
-    receipt = raw_receipt if isinstance(raw_receipt, Mapping) else {}
-    for candidate in (
-        body.get("proof_hash"),
-        receipt.get("proof_hash"),
-        body.get("audit_id"),
-    ):
-        if isinstance(candidate, str) and candidate.strip():
-            return True
-    return False
-
-
-def _is_policy_drift(response: httpx.Response) -> bool:
-    try:
-        body = response.json()
-    except ValueError:
-        return False
-    if not isinstance(body, Mapping) or not _has_refusal_evidence(body):
-        return False
-    violations = body.get("violations")
+def _is_policy_drift(exc: PolicyViolationException) -> bool:
+    """Return True iff a cryptographically verified refusal reports substrate policy drift."""
+    details = (
+        exc.violation_details if isinstance(exc.violation_details, Mapping) else {}
+    )
+    violations = details.get("violations")
     if not isinstance(violations, list) or not violations:
         return False
     return any("Substrate Policy Drift Detected" in str(v) for v in violations)
@@ -180,14 +155,15 @@ _current_preview: contextvars.ContextVar[_Preview | None] = contextvars.ContextV
 class _AdvisorTransport(httpx.AsyncBaseTransport):
     """Sends the SDK's requests through the advisor's HTTP client.
 
-    ``CageClient`` builds the governance exchange and verifies its answer.
-    Sending it through the advisor's ``httpx.AsyncClient`` keeps the
-    advisor's W3C trace context and ``x-cage-principal`` headers, its 429
-    rate-limit retry budget (matching ``execute_tool``: 503 is never retried,
-    so a governance or mesh outage surfaces once as ``GATEWAY_ERROR`` without
-    multiplying hash-chained ``GOVERNANCE_INFRASTRUCTURE_BLOCK`` events or
-    parsing unverified error bodies), and the policy-drift replay with a
-    refreshed ``policy_version_id``.
+    ``CageClient`` builds the governance exchange and cryptographically verifies
+    every HTTP 200 and HTTP 403 answer before mediating any verdict. Sending it
+    through the advisor's ``httpx.AsyncClient`` keeps the advisor's W3C trace
+    context and ``x-cage-principal`` headers plus its 429 rate-limit retry
+    budget (matching ``execute_tool``: 503 is never retried, so a governance or
+    mesh outage surfaces once as ``GATEWAY_ERROR`` without multiplying
+    hash-chained ``GOVERNANCE_INFRASTRUCTURE_BLOCK`` events). Policy-drift
+    pin refresh runs only in :meth:`GatewayClient.validate_action` **after**
+    ``CageClient`` has cryptographically verified the 403 refusal envelope.
     """
 
     def __init__(self, owner: GatewayClient, http: httpx.AsyncClient) -> None:
@@ -223,18 +199,6 @@ class _AdvisorTransport(httpx.AsyncBaseTransport):
             )
 
         response = await _post_with_retries(_post, retry_statuses=frozenset({429}))
-        if (
-            current is not None
-            and response.status_code == 403
-            and _is_policy_drift(response)
-        ):
-            logger.warning(
-                "Substrate drift caught during session. Fetching updated baseline pin and replaying."
-            )
-            body["policy_version_id"] = await self._owner.get_policy_version(
-                timeout=timeout
-            )
-            response = await _post_with_retries(_post, retry_statuses=frozenset({429}))
         if current is not None:
             current.response = response
         return response
@@ -269,15 +233,11 @@ def _verified_result(response: httpx.Response | None) -> dict[str, Any]:
     return result
 
 
-def _denial_reasons(
-    exc: PolicyViolationException, response: httpx.Response | None
-) -> str:
+def _denial_reasons(exc: PolicyViolationException) -> str:
     details = exc.violation_details if isinstance(exc.violation_details, dict) else {}
     violations = details.get("violations")
     if isinstance(violations, list) and violations:
         return "; ".join(str(v) for v in violations)
-    if response is not None and response.status_code != 200:
-        return "; ".join(_violations(response))
     return exc.reason_code
 
 
@@ -353,14 +313,7 @@ class GatewayClient:
         sdk = CageClient(
             gateway_url=f"{base.scheme}://{base.netloc.decode('ascii')}",
             timeout_s=timeout,
-        )
-        # cage-client 0.3.0 takes no transport argument, so its connection
-        # pool is replaced by one that sends through the advisor's client.
-        await sdk._client.aclose()
-        sdk._client = httpx.AsyncClient(
-            transport=_AdvisorTransport(self, http),
-            timeout=httpx.Timeout(timeout),
-            follow_redirects=False,
+            http_transport=_AdvisorTransport(self, http),
         )
         self._sdk = sdk
         self._sdk_http = http
@@ -551,60 +504,63 @@ class GatewayClient:
 
         Raises:
             PermissionError: On an evidenced refusal (HTTP 403 carrying
-                ``proof_hash`` / ``audit_id``, or a signed ``DENY`` envelope)
-                or a signed 200 envelope outside the canonical vocabulary —
-                the caller must block.
-            cage_client.RoutingSealVerificationError: If the envelope's
+                a cryptographically signed HTTP 403 ``DENIED`` envelope carrying
+                ``proof_hash`` / ``audit_id``, or a signed HTTP 200 ``DENY``
+                envelope) or a signed 200 envelope outside the canonical
+                vocabulary — the caller must block.
+            cage_client.RoutingSealVerificationError: If a 200 or 403 envelope's
                 signature, ``kid``, freshness or request binding fails
                 verification — the caller must block.
             cage_client.CageGatewayError: If an HTTP 200/202 body lacks a
                 valid signed ``GovernanceEnvelope``.
-            httpx.HTTPStatusError: On un-evidenced 403 or other 4xx / 5xx errors.
+            httpx.HTTPStatusError: On non-envelope or un-evidenced 403 or other
+                4xx / 5xx errors.
             httpx.TimeoutException: If the Gateway does not respond within timeout.
         """
         sdk = await self._ensure_sdk(await self._ensure_client(), timeout)
-        preview = _Preview(policy_version_id=policy_version_id, timeout=timeout)
-        token = _current_preview.set(preview)
-        try:
-            await sdk.validate_action(
-                action=action, parameters=params, agent_id=_ADVISOR_AGENT_ID
-            )
-        except PolicyViolationException as exc:
-            if preview.response is not None and preview.response.status_code != 200:
-                try:
-                    raw_body = preview.response.json()
-                except ValueError:
-                    raw_body = None
-                if not isinstance(raw_body, Mapping) or not _has_refusal_evidence(
-                    raw_body
+        active_pin = policy_version_id
+        preview: _Preview | None = None
+        for attempt in range(2):
+            preview = _Preview(policy_version_id=active_pin, timeout=timeout)
+            token = _current_preview.set(preview)
+            try:
+                await sdk.validate_action(
+                    action=action, parameters=params, agent_id=_ADVISOR_AGENT_ID
+                )
+                break
+            except PolicyViolationException as exc:
+                if (
+                    attempt == 0
+                    and preview.response is not None
+                    and preview.response.status_code == 403
+                    and _is_policy_drift(exc)
                 ):
-                    _raise_unrouted(
-                        action,
-                        CageGatewayError(
-                            "DENY response missing non-blank string 'proof_hash' or 'audit_id'"
-                        ),
-                        preview.response,
+                    logger.warning(
+                        "Substrate drift caught during session (verified 403 envelope). "
+                        "Fetching updated baseline pin and replaying."
                     )
-            narrowed = (
-                exc.reason_code == "NARROWED"
-                and preview.response is not None
-                and preview.response.status_code == 200
-            )
-            if not narrowed:
-                raise PermissionError(
-                    f"Governance DENIED '{action}': "
-                    f"{_denial_reasons(exc, preview.response)}"
-                ) from exc
-        except DeferralPending:
-            pass  # routed below on the verified envelope, if there is one
-        except RoutingSealVerificationError:
-            raise  # an unverifiable envelope is neither routed nor relabelled
-        except CageGatewayError as exc:
-            _raise_unrouted(action, exc, preview.response)
-        finally:
-            _current_preview.reset(token)
+                    active_pin = await self.get_policy_version(timeout=timeout)
+                    continue
+                narrowed = (
+                    exc.reason_code == "NARROWED"
+                    and preview.response is not None
+                    and preview.response.status_code == 200
+                )
+                if not narrowed:
+                    raise PermissionError(
+                        f"Governance DENIED '{action}': {_denial_reasons(exc)}"
+                    ) from exc
+                break
+            except DeferralPending:
+                break  # routed below on the verified 200 envelope
+            except RoutingSealVerificationError:
+                raise  # an unverifiable envelope is neither routed nor relabelled
+            except CageGatewayError as exc:
+                _raise_unrouted(action, exc, preview.response)
+            finally:
+                _current_preview.reset(token)
 
-        result = _verified_result(preview.response)
+        result = _verified_result(preview.response if preview is not None else None)
         verdict = result.get("verdict")
         if verdict not in _ROUTABLE_VERDICTS:
             violations = [str(v) for v in result.get("violations") or []]

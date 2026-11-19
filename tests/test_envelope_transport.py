@@ -287,7 +287,7 @@ class TestEnvelopeTransportDenied:
         assert resp.status_code == 403
 
     def test_denied_verdict_returns_refusal_contract(self, client_for_denial):
-        """DENIED verdict returns complete refusal contract (ADR-008 Phase 3)."""
+        """DENIED verdict returns signed v3.0 GovernanceEnvelope carrying v2.0.0 refusal payload."""
         resp = client_for_denial.post(
             "/validate-action",
             json={"action": "execute_trade", "params": {"amount": 999999}},
@@ -295,29 +295,33 @@ class TestEnvelopeTransportDenied:
 
         data = resp.json()
 
-        assert data["schema_version"] == "2.0.0"
-        assert data["verdict"] == "DENIED"
-        assert "violations" in data
-        assert len(data["violations"]) > 0
+        assert data["envelope_version"] == "3.0"
+        assert data["subject"]["action"] == "execute_trade"
+        assert data["subject"]["action_hash"].startswith("sha256:")
+        assert data["signature"] is not None
+        assert data["signature"]["kid"] == "test-key-001"
+
+        payload = data["payload"]
+        assert payload["schema_version"] == "2.0.0"
+        assert payload["verdict"] == "DENIED"
+        assert "violations" in payload
+        assert len(payload["violations"]) > 0
 
     def test_denied_verdict_may_contain_refusal_receipt(self, client_for_denial):
-        """DENIED verdict may contain refusal_receipt and proof_hash if available."""
+        """DENIED verdict envelope payload may contain refusal_receipt and proof_hash."""
         resp = client_for_denial.post(
             "/validate-action",
             json={"action": "execute_trade", "params": {"amount": 999999}},
         )
 
         data = resp.json()
+        payload = data["payload"]
 
-        # refusal_receipt and proof_hash are optional (only present if
-        # GovernanceError has .receipt attribute set)
-        # We just assert they don't break if absent
-        assert isinstance(data, dict)
-        # If present, they should be dicts/strings
-        if "refusal_receipt" in data:
-            assert isinstance(data["refusal_receipt"], dict)
-        if "proof_hash" in data:
-            assert isinstance(data["proof_hash"], str)
+        assert isinstance(payload, dict)
+        if "refusal_receipt" in payload:
+            assert isinstance(payload["refusal_receipt"], dict)
+        if "proof_hash" in payload:
+            assert isinstance(payload["proof_hash"], str)
 
 
 class TestEnvelopeTransportEdgeCases:

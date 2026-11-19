@@ -39,11 +39,18 @@ from cryptography.hazmat.primitives.asymmetric import (
 
 pytestmark = [pytest.mark.unit, pytest.mark.local]
 
-# Add standalone subpackage src directory to path for testing
+# Fall back to the standalone subpackage src directory only when cage_client is
+# not already installed as a built wheel in site-packages (avoiding sys.path
+# shadowing of the wheel when collected alongside monorepo tests).
+import importlib.util
+
 subpackage_root = Path(__file__).parent.parent
 subpackage_src = subpackage_root / "src"
-if str(subpackage_src) not in sys.path:
-    sys.path.insert(0, str(subpackage_src))
+if (
+    importlib.util.find_spec("cage_client") is None
+    and str(subpackage_src) not in sys.path
+):
+    sys.path.append(str(subpackage_src))
 
 import cage_client
 from cage_client import (
@@ -298,7 +305,7 @@ async def _run_with_mock_handler(
 
 def test_standalone_exports() -> None:
     """Verify all top-level symbols export correctly."""
-    assert cage_client.__version__ == "0.3.0"
+    assert cage_client.__version__ == "0.4.0"
     assert cage_client.CageClient is CageClient
     assert cage_client.GovernanceEnvelope is GovernanceEnvelope
     assert cage_client.JwksKeyResolver is JwksKeyResolver
@@ -312,11 +319,21 @@ def test_standalone_exports() -> None:
 
 
 def test_routing_seal_secret_rejected() -> None:
-    """Verify CageClient v0.3.0 rejects removed routing_seal_secret parameter."""
+    """Verify CageClient v0.4.0 rejects removed routing_seal_secret parameter."""
     with pytest.raises(TypeError):
         CageClient(
             gateway_url="https://cage-gateway.example.com",
             routing_seal_secret="legacy-secret",  # type: ignore[call-arg]
+        )
+
+
+def test_http_transport_and_mtls_certs_mutually_exclusive() -> None:
+    """Supplying both mtls_certs and http_transport fails closed with ValueError."""
+    with pytest.raises(ValueError, match="mutually exclusive"):
+        CageClient(
+            gateway_url="https://cage-gateway.example.com",
+            mtls_certs=("/a", "/b", "/c"),
+            http_transport=httpx.MockTransport(lambda req: httpx.Response(500)),
         )
 
 
@@ -338,7 +355,7 @@ def test_pyproject_declares_cryptography_and_docs_describe_envelope_verification
     pyproject_data = tomllib.loads(
         (subpackage_root / "pyproject.toml").read_text(encoding="utf-8")
     )
-    assert pyproject_data["project"]["version"] == "0.3.0"
+    assert pyproject_data["project"]["version"] == "0.4.0"
     runtime_deps = pyproject_data["project"]["dependencies"]
     assert any(dep.startswith("cryptography>=41.0.0") for dep in runtime_deps), (
         f"cryptography>=41.0.0 must be declared in pyproject.toml: {runtime_deps}"
@@ -489,12 +506,14 @@ def test_standalone_http_200_verdicts_mediated_fail_closed(
         )
 
 
-def test_standalone_v2_refusal_403_and_v1_external_hold_202(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    """Canonical gateway 403 refusal (proof_hash) and 202 EXTERNAL_HOLD (defer_id) wire formats."""
-    monkeypatch.setenv("CAGE_ENV", "test")
-    refusal_403 = {
+def test_standalone_signed_403_refusal_verified_and_unsigned_403_202_409_422_rejected() -> (
+    None
+):
+    """HTTP 403 requires a cryptographically verified GovernanceEnvelope; 202/409/422 never mediate."""
+    ec_priv, ec_pem, ec_jwk = _make_ec_keypair(kid="ec-403")
+    ed_priv, ed_pem, ed_jwk = _make_ed25519_keypair(kid="ed-403")
+    params = {"limit": 10}
+    refusal_payload = {
         "schema_version": "2.0.0",
         "verdict": "DENIED",
         "violations": ["[CBF_LIMIT_BREACH] Threshold exceeded"],
@@ -505,32 +524,234 @@ def test_standalone_v2_refusal_403_and_v1_external_hold_202(
             "proof_hash": "a" * 64,
         },
     }
-    with pytest.raises(PolicyViolationException) as refusal_exc:
-        asyncio.run(
-            _run_with_mock_handler(lambda req: httpx.Response(403, json=refusal_403))
-        )
-    assert refusal_exc.value.audit_id == "a" * 64
-    assert refusal_exc.value.reason_code == "CBF_LIMIT_BREACH"
-    assert (
-        refusal_exc.value.violation_details["refusal_receipt"]["proof_hash"] == "a" * 64
-    )
 
-    hold_202 = {
+    # 1. Validly signed HTTP 403 envelopes (ES256 and EdDSA) verify and raise PolicyViolationException
+    for priv, kid, alg, jwk in (
+        (ec_priv, "ec-403", "ES256", ec_jwk),
+        (ed_priv, "ed-403", "EdDSA", ed_jwk),
+    ):
+        signed_403 = _sign_envelope_dict(
+            _build_unsigned_envelope(parameters=params, **refusal_payload),
+            priv_key=priv,
+            kid=kid,
+            algorithm=alg,
+        )
+
+        def _handler(
+            req: httpx.Request,
+            env: dict[str, Any] = signed_403,
+            j: dict[str, Any] = jwk,
+        ) -> httpx.Response:
+            if req.url.path == "/governance/.well-known/jwks.json":
+                return httpx.Response(200, json={"keys": [j]})
+            return httpx.Response(403, json=env)
+
+        with pytest.raises(PolicyViolationException) as refusal_exc:
+            asyncio.run(
+                _run_with_mock_handler(
+                    _handler,
+                    parameters=params,
+                    verify_signature=True,
+                    verify_expiration=True,
+                    verify_subject=True,
+                )
+            )
+        assert refusal_exc.value.audit_id == "a" * 64
+        assert refusal_exc.value.reason_code == "CBF_LIMIT_BREACH"
+        assert (
+            refusal_exc.value.violation_details["refusal_receipt"]["proof_hash"]
+            == "a" * 64
+        )
+
+    # 2. Unsigned legacy 403 JSON (even with proof_hash!) fails closed as CageGatewayError, NEVER PolicyViolationException
+    with pytest.raises(CageGatewayError) as unsigned_plain_403:
+        asyncio.run(
+            _run_with_mock_handler(
+                lambda req: httpx.Response(403, json=refusal_payload),
+                parameters=params,
+                verify_signature=True,
+                verify_expiration=True,
+                verify_subject=True,
+                public_keys={"ec-403": ec_pem},
+            )
+        )
+    assert not isinstance(unsigned_plain_403.value, PolicyViolationException)
+
+    # 3. Unsigned, tampered, expired, wrong-action, duplicate-key, and NaN 403 envelopes raise RoutingSealVerificationError
+    unsigned_403_env = _build_unsigned_envelope(parameters=params, **refusal_payload)
+    with pytest.raises(RoutingSealVerificationError):
+        asyncio.run(
+            _run_with_mock_handler(
+                lambda req: httpx.Response(403, json=unsigned_403_env),
+                parameters=params,
+                verify_signature=True,
+                verify_expiration=True,
+                verify_subject=True,
+                public_keys={"ec-403": ec_pem},
+            )
+        )
+
+    tampered_403 = _sign_envelope_dict(
+        _build_unsigned_envelope(parameters=params, **refusal_payload),
+        priv_key=ec_priv,
+        kid="ec-403",
+        algorithm="ES256",
+    )
+    tampered_403["payload"]["violations"] = ["Substrate Policy Drift Detected"]
+    with pytest.raises(RoutingSealVerificationError):
+        asyncio.run(
+            _run_with_mock_handler(
+                lambda req: httpx.Response(403, json=tampered_403),
+                parameters=params,
+                verify_signature=True,
+                verify_expiration=True,
+                verify_subject=True,
+                public_keys={"ec-403": ec_pem},
+            )
+        )
+
+    now = datetime.now(timezone.utc)
+    expired_403 = _sign_envelope_dict(
+        _build_unsigned_envelope(
+            parameters=params,
+            issued_at=now - timedelta(minutes=10),
+            expires_at=now - timedelta(seconds=30),
+            **refusal_payload,
+        ),
+        priv_key=ec_priv,
+        kid="ec-403",
+        algorithm="ES256",
+    )
+    with pytest.raises(RoutingSealVerificationError, match="expired"):
+        asyncio.run(
+            _run_with_mock_handler(
+                lambda req: httpx.Response(403, json=expired_403),
+                parameters=params,
+                verify_signature=True,
+                verify_expiration=True,
+                verify_subject=True,
+                public_keys={"ec-403": ec_pem},
+            )
+        )
+
+    wrong_params_403 = _sign_envelope_dict(
+        _build_unsigned_envelope(parameters={"limit": 9999}, **refusal_payload),
+        priv_key=ec_priv,
+        kid="ec-403",
+        algorithm="ES256",
+    )
+    with pytest.raises(RoutingSealVerificationError, match="action_hash"):
+        asyncio.run(
+            _run_with_mock_handler(
+                lambda req: httpx.Response(403, json=wrong_params_403),
+                parameters=params,
+                verify_signature=True,
+                verify_expiration=True,
+                verify_subject=True,
+                public_keys={"ec-403": ec_pem},
+            )
+        )
+
+    # Duplicate-key JSON on 403 must raise RoutingSealVerificationError
+    with pytest.raises(RoutingSealVerificationError, match="duplicate JSON object key"):
+        asyncio.run(
+            _run_with_mock_handler(
+                lambda req: httpx.Response(
+                    403,
+                    content=b'{"verdict":"DENIED","verdict":"DENIED"}',
+                    headers={"content-type": "application/json"},
+                ),
+                parameters=params,
+                verify_signature=True,
+                verify_expiration=True,
+                verify_subject=True,
+                public_keys={"ec-403": ec_pem},
+            )
+        )
+
+    # 4. Signed HTTP 403 carrying ALLOW/DEFER/NARROW/REQUIRE_APPROVAL or missing proof_hash fails closed
+    for illegal_verdict in ("ALLOW", "DEFER", "REQUIRE_APPROVAL", "NARROW"):
+        bad_403 = _sign_envelope_dict(
+            _build_unsigned_envelope(
+                parameters=params,
+                verdict=illegal_verdict,
+                deferred_id="tok-1",
+                narrowed_params={"limit": 1},
+            ),
+            priv_key=ed_priv,
+            kid="ed-403",
+            algorithm="EdDSA",
+        )
+        with pytest.raises(CageGatewayError, match="non-DENY verdict") as bad_exc:
+            asyncio.run(
+                _run_with_mock_handler(
+                    lambda req, e=bad_403: httpx.Response(403, json=e),
+                    parameters=params,
+                    verify_signature=True,
+                    verify_expiration=True,
+                    verify_subject=True,
+                    public_keys={"ed-403": ed_pem},
+                )
+            )
+        assert not isinstance(
+            bad_exc.value, (PolicyViolationException, DeferralPending)
+        )
+
+    no_evidence_403 = _sign_envelope_dict(
+        _build_unsigned_envelope(
+            parameters=params, verdict="DENIED", proof_hash="   ", violations=["x"]
+        ),
+        priv_key=ed_priv,
+        kid="ed-403",
+        algorithm="EdDSA",
+    )
+    with pytest.raises(CageGatewayError, match="non-blank 'audit_id' or 'proof_hash'"):
+        asyncio.run(
+            _run_with_mock_handler(
+                lambda req: httpx.Response(403, json=no_evidence_403),
+                parameters=params,
+                verify_signature=True,
+                verify_expiration=True,
+                verify_subject=True,
+                public_keys={"ed-403": ed_pem},
+            )
+        )
+
+    # 5. Unsigned HTTP 202, 409, and 422 NEVER mediate as DeferralPending or PolicyViolationException
+    hold_payload = {
         "schema_version": "1.0.0",
-        "defer_id": "ext-hold-777",
+        "defer_id": "forged-hold-777",
+        "ticket_id": "forged-hold-777",
         "status": "pending_review",
-        "poll_url": "/v1/defer/ext-hold-777",
         "verdict": "DEFER",
         "defer_reason": "EXTERNAL_HOLD",
         "ttl_seconds": 300,
     }
-    with pytest.raises(DeferralPending) as hold_exc:
-        asyncio.run(
-            _run_with_mock_handler(lambda req: httpx.Response(202, json=hold_202))
-        )
-    assert hold_exc.value.ticket_id == "ext-hold-777"
-    assert hold_exc.value.defer_reason == "EXTERNAL_HOLD"
-    assert hold_exc.value.ttl_seconds == 300
+    for dead_status, body in (
+        (202, hold_payload),
+        (409, hold_payload),
+        (422, refusal_payload),
+    ):
+        with pytest.raises(
+            CageGatewayError, match="Unexpected gateway response"
+        ) as exc:
+            asyncio.run(
+                _run_with_mock_handler(
+                    lambda req, s=dead_status, b=body: httpx.Response(s, json=b),
+                    parameters=params,
+                    verify_signature=True,
+                    verify_expiration=True,
+                    verify_subject=True,
+                    public_keys={"ec-403": ec_pem},
+                )
+            )
+        assert not isinstance(exc.value, (DeferralPending, PolicyViolationException))
+
+    # 6. Vendored _jcs preserves exact >2^53 integers and rejects non-str keys (KG-1 parity)
+    big_int = (1 << 53) + 1
+    assert canonicalize({"n": big_int}) == f'{{"n":{big_int}}}'.encode()
+    with pytest.raises(TypeError):
+        canonicalize({1: "bad"})
 
 
 def test_standalone_default_jwks_and_pinned_public_keys_verify_es256_and_eddsa() -> (

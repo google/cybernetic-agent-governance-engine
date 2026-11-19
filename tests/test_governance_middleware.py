@@ -270,13 +270,13 @@ class TestValidateActionEndpoint:
         assert resp.status_code == 403
         data = resp.json()
 
-        # ADR-008 Phase 3: Assert refusal contract structure
-        assert data.get("schema_version") == "2.0.0"
-        assert data["verdict"] == "DENIED"
-        assert len(data["violations"]) > 0
-
-        # refusal_receipt and proof_hash may be absent if receipt is None
-        # (existing tests don't set receipt on GovernanceError)
+        # ADR-008 Phase 3 + cage-client v0.4.0: HTTP 403 is wrapped in a GovernanceEnvelope
+        assert data["envelope_version"] == "3.0"
+        assert data["subject"]["action"] == "execute_trade"
+        payload = data["payload"]
+        assert payload.get("schema_version") == "2.0.0"
+        assert payload["verdict"] == "DENIED"
+        assert len(payload["violations"]) > 0
 
     def test_validate_action_internal_exception_returns_500_safe_message(
         self, client, mock_symbolic_governor

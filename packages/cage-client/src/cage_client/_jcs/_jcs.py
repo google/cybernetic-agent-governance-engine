@@ -413,31 +413,19 @@ def _make_iterencode(
             newline_indent = None
             item_separator = _item_separator
         first = True
-        if _sort_keys:
-            items = sorted(dct.items(), key=lambda kv: kv[0].encode("utf-16_be"))
-        else:
-            items = dct.items()
-        for key, value in items:
-            if isinstance(key, str):
-                pass
-            # JavaScript is weakly typed for these, so it makes sense to
-            # also allow them.  Many encoders seem to do something like this.
-            elif isinstance(key, float):
-                # see comment for int/float in _make_iterencode
-                key = convert2Es6Format(key)
-            elif key is True:
-                key = "true"
-            elif key is False:
-                key = "false"
-            elif key is None:
-                key = "null"
-            elif isinstance(key, int):
-                # see comment for int/float in _make_iterencode
-                key = convert2Es6Format(key)
+        validated_items = []
+        for raw_key, raw_val in dct.items():
+            if isinstance(raw_key, str):
+                validated_items.append((raw_key, raw_val))
             elif _skipkeys:
                 continue
             else:
-                raise TypeError("key " + repr(key) + " is not a string")
+                raise TypeError("key " + repr(raw_key) + " is not a string")
+        if _sort_keys:
+            items = sorted(validated_items, key=lambda kv: kv[0].encode("utf-16_be"))
+        else:
+            items = validated_items
+        for key, value in items:
             if first:
                 first = False
             else:

@@ -57,8 +57,9 @@ class GovernanceEnvelope(BaseModel):
            over RFC 8785 JCS canonical bytes against an out-of-band ``kid`` trust
            anchor (JWKS or pinned ``public_keys``), checks ``expires_at`` freshness,
            and validates ``subject.action`` + ``subject.action_hash`` request
-           binding before returning ``ALLOW`` or dispatching ``NARROW`` / ``DENY`` /
-           ``DEFER`` verdicts.
+           binding on every HTTP ``200`` and HTTP ``403`` response before
+           returning ``ALLOW`` or dispatching ``NARROW`` / ``DENY`` / ``DEFER`` /
+           ``REQUIRE_APPROVAL`` verdicts.
         2. Channel TLS/mTLS in ``transport.py`` protects only the point-to-point
            transport channel and does NOT substitute for end-to-end
            ``GovernanceEnvelope.signature`` verification.

@@ -33,11 +33,13 @@ and verifies returned ``GovernanceEnvelope`` decisions fail-closed by default:
 Security & Verification Scope:
     1. By default (``verify_signature=True``, ``verify_expiration=True``,
        ``verify_subject=True``), ``CageClient`` verifies cryptographic signature,
-       temporal freshness, and request-subject binding on every HTTP ``200``
-       ``GovernanceEnvelope`` **before** returning ``ALLOW`` or dispatching
-       ``NARROW`` / ``DENY`` / ``DEFER`` / ``REQUIRE_APPROVAL`` verdicts.
-       Disabling verification is blocked at startup in any non-dev/test
-       ``CAGE_ENV`` posture.
+       temporal freshness, and request-subject binding on every HTTP ``200`` and
+       HTTP ``403`` ``GovernanceEnvelope`` **before** returning ``ALLOW`` or
+       dispatching ``NARROW`` / ``DENY`` / ``DEFER`` / ``REQUIRE_APPROVAL``
+       verdicts. Unsigned ``202`` / ``409`` / ``422`` responses and non-envelope
+       ``403`` responses fail closed with ``CageGatewayError`` and are never
+       mediated as verified deferrals or policy denials. Disabling verification
+       is blocked at startup in any non-dev/test ``CAGE_ENV`` posture.
     2. **TLS/mTLS in ``transport.py`` protects only the point-to-point transport
        channel and does NOT substitute for end-to-end ``GovernanceEnvelope.signature``
        verification** (the envelope carries an asymmetric signature specifically
@@ -83,6 +85,7 @@ from .jwks import JwksKeyResolver, PublicKey, validate_http_url
 # Check for optional HTTP/2 support (h2 package)
 _HTTP2_AVAILABLE = importlib.util.find_spec("h2") is not None
 
+_USER_AGENT = "CageClient/0.4.0"
 _BRACKETED_CODE_RE = re.compile(r"^\[([A-Za-z0-9_.:-]+)\]\s+")
 _DEV_POSTURES: frozenset[str] = frozenset(
     {"dev", "development", "local", "test", "testing"}
@@ -93,6 +96,13 @@ _EMBEDDED_KEY_FIELDS: frozenset[str] = frozenset(
 )
 
 logger = logging.getLogger("CageClient")
+
+
+def _non_blank_str(value: Any) -> str | None:
+    """Return ``value`` as-is when it is a string with non-whitespace content, else ``None``."""
+    if isinstance(value, str) and value.strip():
+        return value
+    return None
 
 
 def _first_violation_code(violations: Any) -> str | None:
@@ -177,6 +187,7 @@ class CageClient:
         jwks_uri: str | None = None,
         jwks_clock: Callable[[], float] | None = None,
         jwks_min_refresh_interval_s: float = 5.0,
+        http_transport: httpx.AsyncBaseTransport | None = None,
     ) -> None:
         """
         Initialize the CAGE Gateway client.
@@ -197,14 +208,22 @@ class CageClient:
             jwks_uri: Optional explicit JWKS URL override
             jwks_clock: Optional monotonic clock callable for JWKS cache testing
             jwks_min_refresh_interval_s: Cooldown between unknown-``kid`` JWKS refresh retries (default: 5.0)
+            http_transport: Optional custom ``httpx.AsyncBaseTransport`` (mutually exclusive
+                with ``mtls_certs``) for callers that route SDK traffic through an existing
+                HTTP client or ASGI/mock transport.
 
         Raises:
-            ValueError: Invalid URL/timing config, half-configured mTLS, or verification opt-out in enforcing ``CAGE_ENV``
+            ValueError: Invalid URL/timing config, half-configured mTLS, conflicting
+                ``mtls_certs`` + ``http_transport``, or verification opt-out in enforcing ``CAGE_ENV``
             FileNotFoundError: If mTLS certificate paths are invalid (fail-closed)
         """
         cleaned_gateway = validate_http_url(
             gateway_url, field_name="gateway_url"
         ).rstrip("/")
+        if mtls_certs is not None and http_transport is not None:
+            raise ValueError(
+                "mtls_certs and http_transport are mutually exclusive; configure TLS on the custom transport"
+            )
         if not math.isfinite(timeout_s) or timeout_s <= 0:
             raise ValueError("timeout_s must be a finite number > 0")
         if not math.isfinite(clock_skew_seconds) or clock_skew_seconds < 0:
@@ -259,19 +278,22 @@ class CageClient:
             else None
         )
 
-        if mtls_certs:
+        resolved_transport: httpx.AsyncBaseTransport
+        if http_transport is not None:
+            resolved_transport = http_transport
+        elif mtls_certs:
             cert_path, key_path, ca_path = mtls_certs
-            http_transport = transport.create_mtls_transport(
+            resolved_transport = transport.create_mtls_transport(
                 cert_path=cert_path, key_path=key_path, ca_path=ca_path
             )
         else:
-            http_transport = transport.create_mtls_transport()
+            resolved_transport = transport.create_mtls_transport()
 
         self._client = httpx.AsyncClient(
             timeout=httpx.Timeout(timeout_s),
-            http2=_HTTP2_AVAILABLE,
+            http2=_HTTP2_AVAILABLE if http_transport is None else False,
             follow_redirects=False,
-            transport=http_transport,
+            transport=resolved_transport,
         )
 
         logger.info(
@@ -294,16 +316,18 @@ class CageClient:
         Sends ``POST /governance/validate-action`` and verifies + mediates the
         gateway response fail-closed:
           - 200 OK (verified ``ALLOW``) → Return verified ``GovernanceEnvelope``
-          - 200 OK (verified ``NARROW`` / ``DENY`` / ``DENIED``) or 403/422 → Raise ``PolicyViolationException``
-          - 200 OK (verified ``DEFER`` / ``REQUIRE_APPROVAL``) or 202/409 → Raise ``DeferralPending``
-          - Signature, ``kid``, freshness, or ``subject.action_hash`` failure → Raise ``RoutingSealVerificationError``
+          - 200 OK (verified ``NARROW`` / ``DENY`` / ``DENIED``) or 403 Forbidden (verified ``DENY`` / ``DENIED``) → Raise ``PolicyViolationException``
+          - 200 OK (verified ``DEFER`` / ``REQUIRE_APPROVAL``) → Raise ``DeferralPending``
+          - Signature, ``kid``, freshness, or ``subject.action_hash`` failure (on 200 or 403) → Raise ``RoutingSealVerificationError``
+          - Non-envelope 403 (proxy/mesh error), legacy 202/409/422, 5xx, or transport error → Raise ``CageGatewayError``
 
         Security & Verification Scope:
             1. By default, ``CageClient`` verifies ``GovernanceEnvelope.signature``
                against an out-of-band ``kid`` trust anchor (``JwksKeyResolver`` or
                pinned ``public_keys``), enforces ``expires_at`` freshness, and
                verifies ``subject.action`` + ``subject.action_hash`` request
-               binding before dispatching any HTTP 200 verdict.
+               binding on **every** HTTP 200 and HTTP 403 response before
+               returning or dispatching any verdict.
             2. **TLS/mTLS in ``transport.py`` protects only the point-to-point
                transport channel and does NOT substitute for end-to-end envelope
                signature verification.**
@@ -328,7 +352,7 @@ class CageClient:
             "Content-Type": "application/json",
             "traceparent": traceparent,
             "X-Correlation-ID": correlation_id,
-            "User-Agent": "CageClient/3.0",
+            "User-Agent": _USER_AGENT,
         }
 
         endpoint = f"{self.gateway_url}/governance/validate-action"
@@ -355,13 +379,11 @@ class CageClient:
                 response, action=action, parameters=parameters
             )
 
-        if response.status_code in (403, 422):
-            self._handle_deny_response(response)
+        if response.status_code == 403:
+            await self._handle_deny_response(
+                response, action=action, parameters=parameters
+            )
             raise AssertionError("_handle_deny_response must raise")
-
-        if response.status_code in (202, 409):
-            self._handle_defer_response(response)
-            raise AssertionError("_handle_defer_response must raise")
 
         if response.status_code >= 500:
             logger.error(
@@ -520,10 +542,12 @@ class CageClient:
             )
 
     @staticmethod
-    def _extract_envelope_dict(response_data: Any) -> dict[str, Any]:
+    def _extract_envelope_dict(
+        response_data: Any, *, response_label: str = "ALLOW"
+    ) -> dict[str, Any]:
         """Extract canonical envelope dict from wrapped or top-level wire format."""
         if not isinstance(response_data, dict):
-            raise CageGatewayError("ALLOW response must be a JSON object")
+            raise CageGatewayError(f"{response_label} response must be a JSON object")
         envelope_data = response_data.get("envelope")
         if isinstance(envelope_data, dict) and envelope_data:
             return envelope_data
@@ -534,16 +558,77 @@ class CageClient:
             and "subject" in response_data
         ):
             return response_data
-        raise CageGatewayError("ALLOW response missing required 'envelope' field")
+        raise CageGatewayError(
+            f"{response_label} response missing required 'envelope' field"
+        )
 
     @staticmethod
-    def _mediate_narrow_verdict(envelope: GovernanceEnvelope) -> None:
+    def _extract_verdict(envelope: GovernanceEnvelope) -> Any:
+        """Read ``verdict`` (or fallback ``decision``) strictly as signed, with no coercion."""
+        if "verdict" in envelope.payload:
+            return envelope.payload["verdict"]
+        return envelope.payload.get("decision")
+
+    async def _verify_envelope_response(
+        self,
+        response: httpx.Response,
+        *,
+        action: str | None = None,
+        parameters: Mapping[str, Any] | None = None,
+        response_label: str = "ALLOW",
+    ) -> GovernanceEnvelope:
+        """Parse and cryptographically verify a ``GovernanceEnvelope`` response fail-closed.
+
+        Enforces strict JSON parsing (refusing duplicate keys and ``NaN``/``Infinity``),
+        embedded-key rejection, strict immutable Pydantic parsing, out-of-band ``kid``
+        ``ES256``/``EdDSA`` signature verification over RFC 8785 JCS canonical bytes,
+        timezone-aware ``issued_at``/``expires_at`` freshness, and ``subject.action`` +
+        ``subject.action_hash`` request binding before any verdict is read or dispatched.
+        """
+        # The signature covers one reading of these bytes, so refuse JSON that a
+        # second parser could read differently (a repeated key) or that is not
+        # JSON at all (NaN, Infinity) rather than resolving it silently.
+        try:
+            response_data = json.loads(
+                response.content,
+                object_pairs_hook=_refuse_duplicate_keys,
+                parse_constant=_refuse_non_finite_number,
+            )
+        except json.JSONDecodeError as exc:
+            raise CageGatewayError(
+                f"Invalid JSON in {response_label} response: {exc}"
+            ) from exc
+
+        envelope_data = self._extract_envelope_dict(
+            response_data, response_label=response_label
+        )
+        if self._verify_signature:
+            self._reject_embedded_key_material(envelope_data)
+
+        try:
+            envelope = GovernanceEnvelope(**envelope_data)
+        except Exception as exc:
+            raise CageGatewayError(
+                f"Failed to parse governance envelope: {exc}"
+            ) from exc
+
+        if self._verify_signature:
+            await self._verify_signature_block(envelope_data, envelope)
+        self._verify_timestamps(envelope)
+        if self._verify_subject:
+            self._verify_subject_binding(envelope, action=action, parameters=parameters)
+        return envelope
+
+    @staticmethod
+    def _mediate_narrow_verdict(envelope: GovernanceEnvelope) -> NoReturn:
         narrowed_params = envelope.payload.get("narrowed_params")
         if not isinstance(narrowed_params, dict):
             raise CageGatewayError(
                 "NARROW envelope missing required 'narrowed_params' object"
             )
-        audit_id = envelope.payload.get("audit_id") or envelope.envelope_id
+        audit_id = _non_blank_str(envelope.payload.get("audit_id")) or _non_blank_str(
+            envelope.envelope_id
+        )
         if not audit_id:
             raise CageGatewayError(
                 "NARROW envelope missing required 'audit_id' or 'envelope_id'"
@@ -554,55 +639,85 @@ class CageClient:
                 "narrowed_params": narrowed_params,
                 "violations": envelope.payload.get("violations") or [],
             },
-            audit_id=str(audit_id),
+            audit_id=audit_id,
             recoverable=True,
         )
 
     @staticmethod
-    def _mediate_deny_verdict(envelope: GovernanceEnvelope) -> None:
-        audit_id = envelope.payload.get("audit_id") or envelope.envelope_id
-        if not audit_id:
+    def _mediate_deny_verdict(
+        envelope: GovernanceEnvelope,
+        *,
+        require_refusal_evidence: bool = False,
+    ) -> NoReturn:
+        raw_receipt = envelope.payload.get("refusal_receipt")
+        receipt_dict = raw_receipt if isinstance(raw_receipt, dict) else {}
+
+        audit_id = (
+            _non_blank_str(envelope.payload.get("audit_id"))
+            or _non_blank_str(envelope.payload.get("proof_hash"))
+            or _non_blank_str(receipt_dict.get("proof_hash"))
+        )
+        if audit_id is None and not require_refusal_evidence:
+            audit_id = _non_blank_str(envelope.envelope_id)
+        if audit_id is None:
+            if require_refusal_evidence:
+                raise CageGatewayError(
+                    "DENY envelope missing required non-blank 'audit_id' or 'proof_hash'"
+                )
             raise CageGatewayError(
-                "DENY envelope missing required 'audit_id' or 'envelope_id'"
+                "DENY envelope missing required 'audit_id', 'proof_hash', or 'envelope_id'"
             )
+
         violations = envelope.payload.get("violations", [])
         reason_code = (
-            envelope.payload.get("reason_code")
+            _non_blank_str(envelope.payload.get("reason_code"))
             or _first_violation_code(violations)
-            or "POLICY_DENIED"
+            or _non_blank_str(receipt_dict.get("violated_rule"))
+            or ("UNKNOWN_VIOLATION" if require_refusal_evidence else "POLICY_DENIED")
         )
         raw_details = envelope.payload.get("details")
-        details = (
-            raw_details if isinstance(raw_details, dict) else {"violations": violations}
-        )
+        if isinstance(raw_details, dict):
+            details = raw_details
+        else:
+            details = {"violations": violations}
+            if "refusal_receipt" in envelope.payload:
+                details["refusal_receipt"] = envelope.payload["refusal_receipt"]
         recoverable = bool(envelope.payload.get("recoverable", True))
+
+        logger.warning(
+            "Action DENIED: reason_code=%s, audit_id=%s, recoverable=%s",
+            reason_code,
+            audit_id,
+            recoverable,
+        )
+
         raise PolicyViolationException(
-            reason_code=str(reason_code),
+            reason_code=reason_code,
             violation_details=details,
-            audit_id=str(audit_id),
+            audit_id=audit_id,
             recoverable=recoverable,
         )
 
     @staticmethod
-    def _mediate_defer_verdict(envelope: GovernanceEnvelope) -> None:
+    def _mediate_defer_verdict(envelope: GovernanceEnvelope) -> NoReturn:
         # Never fall back to envelope.envelope_id: when DeferQueue persistence
         # fails on REQUIRE_APPROVAL, the gateway sets deferred_id=None so the
         # client treats the unpersisted hold as a fail-closed error rather than
         # polling an unapprovable envelope UUID.
         ticket_id = (
-            envelope.payload.get("deferred_id")
-            or envelope.payload.get("defer_token")
-            or envelope.payload.get("defer_id")
-            or envelope.payload.get("ticket_id")
+            _non_blank_str(envelope.payload.get("deferred_id"))
+            or _non_blank_str(envelope.payload.get("defer_token"))
+            or _non_blank_str(envelope.payload.get("defer_id"))
+            or _non_blank_str(envelope.payload.get("ticket_id"))
         )
         if not ticket_id:
             raise CageGatewayError(
                 "DEFER envelope missing required 'deferred_id', 'defer_token', 'defer_id', or 'ticket_id'"
             )
-        defer_reason = str(
-            envelope.payload.get("defer_reason")
-            or envelope.payload.get("classification_reason")
-            or envelope.payload.get("reason")
+        defer_reason = (
+            _non_blank_str(envelope.payload.get("defer_reason"))
+            or _non_blank_str(envelope.payload.get("classification_reason"))
+            or _non_blank_str(envelope.payload.get("reason"))
             or "Human approval required"
         )
         ttl_seconds = int(
@@ -611,7 +726,7 @@ class CageClient:
             or 14400
         )
         raise DeferralPending(
-            ticket_id=str(ticket_id),
+            ticket_id=ticket_id,
             defer_reason=defer_reason,
             expires_at=envelope.expires_at,
             ttl_seconds=ttl_seconds,
@@ -640,37 +755,12 @@ class CageClient:
                transport channel and does NOT substitute for end-to-end envelope
                signature verification.**
         """
-        # The signature covers one reading of these bytes, so refuse JSON that a
-        # second parser could read differently (a repeated key) or that is not
-        # JSON at all (NaN, Infinity) rather than resolving it silently.
-        try:
-            response_data = json.loads(
-                response.content,
-                object_pairs_hook=_refuse_duplicate_keys,
-                parse_constant=_refuse_non_finite_number,
-            )
-        except json.JSONDecodeError as exc:
-            raise CageGatewayError(f"Invalid JSON in ALLOW response: {exc}") from exc
-
-        envelope_data = self._extract_envelope_dict(response_data)
-        if self._verify_signature:
-            self._reject_embedded_key_material(envelope_data)
-
-        try:
-            envelope = GovernanceEnvelope(**envelope_data)
-        except Exception as exc:
-            raise CageGatewayError(
-                f"Failed to parse governance envelope: {exc}"
-            ) from exc
-
-        if self._verify_signature:
-            await self._verify_signature_block(envelope_data, envelope)
-        self._verify_timestamps(envelope)
-        if self._verify_subject:
-            self._verify_subject_binding(envelope, action=action, parameters=parameters)
+        envelope = await self._verify_envelope_response(
+            response, action=action, parameters=parameters, response_label="ALLOW"
+        )
 
         # Matched exactly as signed: no case folding, no coercion to str.
-        verdict = envelope.payload.get("verdict") or envelope.payload.get("decision")
+        verdict = self._extract_verdict(envelope)
 
         if verdict == "NARROW":
             self._mediate_narrow_verdict(envelope)
@@ -690,127 +780,35 @@ class CageClient:
         )
         return envelope
 
-    def _handle_deny_response(self, response: httpx.Response) -> None:
+    async def _handle_deny_response(
+        self,
+        response: httpx.Response,
+        *,
+        action: str | None = None,
+        parameters: Mapping[str, Any] | None = None,
+    ) -> NoReturn:
         """
-        Parse a 403/422 (DENY) response and raise PolicyViolationException.
+        Parse, cryptographically verify, and mediate an HTTP 403 refusal envelope.
 
-        Supports both the canonical gateway v2.0.0 refusal wire format
-        (``proof_hash``, ``violations``, ``refusal_receipt``) and legacy
-        ``audit_id`` / ``reason_code`` / ``details`` payloads.
+        Applies the exact same strict JSON parsing, out-of-band ``kid`` ``ES256`` /
+        ``EdDSA`` signature verification, ``expires_at`` freshness, and
+        ``subject.action`` + ``subject.action_hash`` request binding as HTTP 200
+        before raising ``PolicyViolationException``. Non-envelope 403 responses
+        (for example, mesh/proxy rejections) raise ``CageGatewayError``; unsigned,
+        tampered, expired, or misbound 403 envelopes raise
+        ``RoutingSealVerificationError``.
         """
-        try:
-            response_data = response.json()
-        except json.JSONDecodeError as exc:
-            raise CageGatewayError(f"Invalid JSON in DENY response: {exc}") from exc
-
-        if not isinstance(response_data, dict):
-            raise CageGatewayError("DENY response must be a JSON object")
-
-        raw_receipt = response_data.get("refusal_receipt")
-        receipt_dict = raw_receipt if isinstance(raw_receipt, dict) else {}
-
-        audit_id = (
-            response_data.get("audit_id")
-            or response_data.get("proof_hash")
-            or receipt_dict.get("proof_hash")
+        envelope = await self._verify_envelope_response(
+            response, action=action, parameters=parameters, response_label="DENY"
         )
-        if not audit_id:
+
+        verdict = self._extract_verdict(envelope)
+        if verdict not in ("DENY", "DENIED"):
             raise CageGatewayError(
-                "DENY response missing required 'audit_id' field (or 'proof_hash')"
+                f"HTTP 403 GovernanceEnvelope carries non-DENY verdict {verdict!r}"
             )
 
-        violations = response_data.get("violations", [])
-        reason_code = (
-            response_data.get("reason_code")
-            or _first_violation_code(violations)
-            or receipt_dict.get("violated_rule")
-            or "UNKNOWN_VIOLATION"
-        )
-
-        if "details" in response_data and isinstance(response_data["details"], dict):
-            violation_details = response_data["details"]
-        else:
-            violation_details = {"violations": violations}
-            if "refusal_receipt" in response_data:
-                violation_details["refusal_receipt"] = response_data["refusal_receipt"]
-
-        recoverable = bool(response_data.get("recoverable", True))
-
-        logger.warning(
-            "Action DENIED: reason_code=%s, audit_id=%s, recoverable=%s",
-            reason_code,
-            audit_id,
-            recoverable,
-        )
-
-        raise PolicyViolationException(
-            reason_code=str(reason_code),
-            violation_details=violation_details,
-            audit_id=str(audit_id),
-            recoverable=recoverable,
-        )
-
-    def _handle_defer_response(self, response: httpx.Response) -> None:
-        """
-        Parse a 202/409 (DEFER) response and raise DeferralPending.
-
-        Supports both the canonical gateway v1.0.0 EXTERNAL_HOLD receipt format
-        (``defer_id``, ``defer_reason``, ``poll_url``, ``ttl_seconds``) and
-        legacy ``ticket_id`` / ``reason`` payloads.
-        """
-        try:
-            response_data = response.json()
-        except json.JSONDecodeError as exc:
-            raise CageGatewayError(f"Invalid JSON in DEFER response: {exc}") from exc
-
-        if not isinstance(response_data, dict):
-            raise CageGatewayError("DEFER response must be a JSON object")
-
-        ticket_id = (
-            response_data.get("ticket_id")
-            or response_data.get("defer_id")
-            or response_data.get("deferred_id")
-            or response_data.get("defer_token")
-        )
-        if not ticket_id:
-            raise CageGatewayError(
-                "DEFER response missing required 'ticket_id' field (or 'defer_id')"
-            )
-
-        defer_reason = str(
-            response_data.get("defer_reason")
-            or response_data.get("reason")
-            or "Human approval required"
-        )
-        expires_at_str = response_data.get("expires_at")
-        ttl_seconds = int(response_data.get("ttl_seconds", 14400))
-
-        if expires_at_str:
-            try:
-                expires_at = datetime.fromisoformat(
-                    str(expires_at_str).replace("Z", "+00:00")
-                )
-            except ValueError as exc:
-                raise CageGatewayError(
-                    f"Invalid expires_at timestamp: {expires_at_str}"
-                ) from exc
-        else:
-            expires_at = datetime.now(timezone.utc).replace(microsecond=0) + timedelta(
-                seconds=ttl_seconds
-            )
-
-        logger.info(
-            "Action DEFERRED: ticket_id=%s, expires_at=%s",
-            ticket_id,
-            expires_at.isoformat(),
-        )
-
-        raise DeferralPending(
-            ticket_id=str(ticket_id),
-            defer_reason=defer_reason,
-            expires_at=expires_at,
-            ttl_seconds=ttl_seconds,
-        )
+        self._mediate_deny_verdict(envelope, require_refusal_evidence=True)
 
     @staticmethod
     def _canonicalize_params(params: dict[str, Any]) -> str:

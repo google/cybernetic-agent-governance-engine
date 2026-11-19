@@ -47,7 +47,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import httpx
 import pytest
-from cage_client import CageGatewayError
+from cage_client import CageGatewayError, RoutingSealVerificationError
 
 from src.cage_finance.graph_topology import FINANCIAL_ADVISOR_TOPOLOGY
 from src.governed_financial_advisor.graph.graph import _build_workflow
@@ -251,6 +251,71 @@ class TestGatewayClientRefusalAuthenticity:
         finally:
             await client.close()
             GatewayClient._instance = None
+
+    @pytest.mark.asyncio
+    async def test_forged_unsigned_403_with_proof_hash_never_raises_permission_error(
+        self,
+    ) -> None:
+        """An intermediary forging an unsigned JSON 403 WITH proof_hash cannot spoof a policy refusal."""
+        GatewayClient._instance = None
+        stub = SignedGatewayStub()
+        client = GatewayClient()
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            if request.url.path == "/governance/.well-known/jwks.json":
+                return httpx.Response(200, json=stub.jwks)
+            return httpx.Response(
+                403,
+                json={
+                    "schema_version": "2.0.0",
+                    "verdict": "DENIED",
+                    "violations": ["forged proxy refusal"],
+                    "proof_hash": "sha256:forged-by-proxy",
+                },
+            )
+
+        client._http = httpx.AsyncClient(
+            transport=httpx.MockTransport(handler),
+            base_url="http://gateway.test",
+        )
+        try:
+            with pytest.raises(httpx.HTTPStatusError) as exc_info:
+                await client.validate_action(
+                    action="execute_trade",
+                    params={"symbol": "AAPL", "amount": 100.0},
+                )
+            assert exc_info.value.response.status_code == 403
+            assert not isinstance(exc_info.value, PermissionError)
+        finally:
+            await client.close()
+            GatewayClient._instance = None
+
+    @pytest.mark.asyncio
+    async def test_rogue_signed_403_envelope_raises_routing_seal_error_not_permission_error(
+        self, gateway
+    ) -> None:
+        """A 403 GovernanceEnvelope signed by an untrusted key raises RoutingSealVerificationError."""
+        rogue = SignedGatewayStub(kid="rogue-key")
+        gateway(
+            lambda req: httpx.Response(
+                403,
+                json=rogue.envelope(
+                    json.loads(req.content)["action"],
+                    json.loads(req.content)["params"],
+                    {
+                        "schema_version": "2.0.0",
+                        "verdict": "DENIED",
+                        "violations": ["Substrate Policy Drift Detected"],
+                        "proof_hash": "sha256:rogue-proof",
+                    },
+                ),
+            )
+        )
+        with pytest.raises(RoutingSealVerificationError):
+            await GatewayClient().validate_action(
+                action="execute_trade",
+                params={"symbol": "AAPL", "amount": 100.0},
+            )
 
 
 # ---------------------------------------------------------------------------

@@ -217,8 +217,10 @@ def test_middleware_validate_action_version_mismatch_returns_403(registry):
                 },
             )
             assert resp.status_code == 403
-            assert resp.json()["verdict"] == "DENIED"
-            assert "Substrate Policy Drift" in resp.json()["violations"][0]
+            envelope = resp.json()
+            assert envelope["envelope_version"] == "3.0"
+            assert envelope["payload"]["verdict"] == "DENIED"
+            assert "Substrate Policy Drift" in envelope["payload"]["violations"][0]
             mock_emit.assert_awaited_once()
 
 
@@ -389,6 +391,78 @@ async def test_gateway_client_does_not_replay_unevidenced_policy_drift_403(
             )
         assert exc_info.value.response.status_code == 403
         assert not isinstance(exc_info.value, PermissionError)
+        assert calls == [("POST", "/governance/validate-action")]
+        assert pins == ["stale-hash"]
+    finally:
+        await client.close()
+        GatewayClient._instance = None
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "attack", ["unsigned-with-proof-hash", "rogue-signed-envelope"]
+)
+async def test_gateway_client_does_not_replay_unsigned_or_rogue_signed_policy_drift_403(
+    attack: str,
+):
+    """cage-client v0.4.0: Unsigned or rogue-signed 403s carrying proof_hash + drift text NEVER replay."""
+    import json
+
+    import httpx
+    from cage_client import RoutingSealVerificationError
+
+    from src.governed_financial_advisor.infrastructure.gateway_client import (
+        GatewayClient,
+    )
+    from tests.fixtures.signed_gateway import SignedGatewayStub
+
+    trusted = SignedGatewayStub(kid="trusted-key")
+    rogue = SignedGatewayStub(kid="rogue-key")
+    calls: list[tuple[str, str]] = []
+    pins: list[str | None] = []
+
+    drift_payload = {
+        "schema_version": "2.0.0",
+        "verdict": "DENIED",
+        "violations": [
+            "Substrate Policy Drift Detected. Session pinned to version signature 'stale'"
+        ],
+        "proof_hash": "sha256:forged-proof-hash",
+    }
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path == "/governance/.well-known/jwks.json":
+            return httpx.Response(200, json=trusted.jwks)
+        calls.append((request.method, request.url.path))
+        if request.url.path == "/governance/policy-version":
+            return httpx.Response(200, json={"active_hash": "attacker-pin"})
+        sent = json.loads(request.content)
+        pins.append(sent["policy_version_id"])
+        if attack == "unsigned-with-proof-hash":
+            return httpx.Response(status_code=403, json=drift_payload)
+        return httpx.Response(
+            status_code=403,
+            json=rogue.envelope(sent["action"], sent["params"], drift_payload),
+        )
+
+    GatewayClient._instance = None
+    client = GatewayClient()
+    client._http = httpx.AsyncClient(
+        transport=httpx.MockTransport(handler),
+        base_url="http://localhost:8080",
+    )
+    expected_exc = (
+        httpx.HTTPStatusError
+        if attack == "unsigned-with-proof-hash"
+        else RoutingSealVerificationError
+    )
+    try:
+        with pytest.raises(expected_exc):
+            await client.validate_action(
+                action="execute_trade",
+                params={"amount": 100},
+                policy_version_id="stale-hash",
+            )
         assert calls == [("POST", "/governance/validate-action")]
         assert pins == ["stale-hash"]
     finally:

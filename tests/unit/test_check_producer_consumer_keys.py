@@ -373,6 +373,25 @@ def test_planted_gateway_test_fixture_mismatches_fail_closed(tmp_path: Path) -> 
         async def test_positive_403_without_proof_hash_is_flagged():
             return httpx.Response(403, json={"verdict": "DENIED", "violations": ["limit"]})
 
+        async def test_positive_403_signed_envelope_is_allowed():
+            return httpx.Response(
+                403,
+                json={
+                    "envelope_version": "3.0",
+                    "payload": {"verdict": "DENIED", "proof_hash": "a" * 64, "violations": ["limit"]},
+                    "signature": {"kid": "k1", "value": "sig"},
+                },
+            )
+
+        async def test_positive_403_unsigned_envelope_is_flagged():
+            return httpx.Response(
+                403,
+                json={
+                    "envelope_version": "3.0",
+                    "payload": {"verdict": "DENIED", "proof_hash": "a" * 64, "ghost_key": True},
+                },
+            )
+
         async def test_negative_403_asserting_gateway_error_is_allowed():
             resp = httpx.Response(403, json={"verdict": "DENIED"})
             with pytest.raises(CageGatewayError):
@@ -396,11 +415,12 @@ def test_planted_gateway_test_fixture_mismatches_fail_closed(tmp_path: Path) -> 
 
     violations, stats = run_check(tmp_path, enforce_floors=False)
     kinds = [v.kind for v in violations]
-    assert "unproduced-refusal-fixture" in kinds
+    assert kinds.count("unproduced-refusal-fixture") == 2
     assert "unproduced-fixture-status" in kinds
     assert "unproduced-envelope-fixture" in kinds
     assert "unproduced-sse-chunk-fixture" in kinds
-    # Negative test asserting CageGatewayError on line 10 must NOT be flagged.
-    flagged_lines = {v.line for v in violations}
-    assert 10 not in flagged_lines
-    assert stats["verified_test_fixture_responses"] >= 5
+    # Positive signed 403 envelope and negative CageGatewayError test must NOT be flagged.
+    details = "\n".join(v.format() for v in violations)
+    assert "missing required envelope keys ['signature']" in details
+    assert "ghost_key" in details
+    assert stats["verified_test_fixture_responses"] >= 7

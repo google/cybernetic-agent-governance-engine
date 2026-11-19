@@ -962,7 +962,8 @@ async def validate_action_endpoint(
         governance envelope; ``REQUIRE_APPROVAL`` with the ``deferred_id`` of
         the gateway-held approval token; ``DEFER`` with the ``defer_id`` of
         the parked hold;
-        or 403 ``DENIED`` with a refusal receipt.
+        or 403 ``DENIED`` as a signed governance envelope carrying the refusal
+        receipt and ``proof_hash``.
     """
     # GHSA-v3h4-8458-5ww3: the caller is authenticated before any processing by
     # WorkloadIdentityMiddleware (mesh identity, POAM-2026-080) on the root app.
@@ -1138,7 +1139,10 @@ async def validate_action_endpoint(
                 },
             )
 
-        # ADR-008 Phase 3: Return complete refusal contract
+        # ADR-008 Phase 3: Build canonical refusal payload and wrap in a signed
+        # GovernanceEnvelope (identical JCS + KMS/Ed25519 signature, expires_at,
+        # and subject.action_hash binding as HTTP 200 verdicts) so proxies or
+        # intermediaries cannot masquerade as authentic gateway policy refusals.
         refusal_content: dict[str, Any] = {
             "schema_version": "2.0.0",
             "verdict": "DENIED",
@@ -1153,9 +1157,27 @@ async def validate_action_endpoint(
         elif isinstance(emitted, str) and emitted:
             refusal_content["proof_hash"] = emitted
 
+        try:
+            builder = GovernanceEnvelopeBuilder()
+            envelope = await builder.build(
+                action=body.action,
+                params=body.params,
+                governance_result=jsonable_encoder(refusal_content),
+                tiers_passed=[],
+            )
+        except Exception:
+            logger.error("❌ Failed to sign HTTP 403 refusal envelope", exc_info=True)
+            return JSONResponse(
+                status_code=503,
+                content={
+                    "error": "envelope_signing_unavailable",
+                    "detail": "Refusal envelope could not be signed; failing closed.",
+                },
+            )
+
         return JSONResponse(
             status_code=403,
-            content=refusal_content,
+            content=envelope.to_dict(include_signature=True),
         )
     except Exception as exc:
         from src.gateway.governance.evidence.stream import (
