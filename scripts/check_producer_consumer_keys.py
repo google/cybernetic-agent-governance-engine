@@ -1928,8 +1928,70 @@ def check_gateway_test_fixtures(
                     # Pure proxy / middleware 403 bodies ({"detail": ...} / {"error": ...}) are non-policy errors.
                     if keys and keys <= _MIDDLEWARE_ERROR_ONLY_KEYS:
                         continue
-                    # Explicit negative test asserting CageGatewayError / HTTPStatusError on malformed 403.
-                    if raised_names & {"CageGatewayError", "HTTPStatusError"}:
+                    # Explicit negative test asserting fail-closed rejection on unsigned/malformed 403.
+                    if raised_names & {
+                        "CageGatewayError",
+                        "RoutingSealVerificationError",
+                        "HTTPStatusError",
+                    }:
+                        continue
+                    is_403_envelope_shaped = bool(
+                        keys
+                        & {"envelope_version", "envelope_id", "payload", "signature"}
+                    )
+                    if is_403_envelope_shaped:
+                        parts_403: list[str] = []
+                        if http_cat.envelope_keys:
+                            extra_env_403 = keys - http_cat.envelope_keys
+                            if extra_env_403:
+                                parts_403.append(
+                                    f"contains unproduced envelope keys {sorted(extra_env_403)} "
+                                    f"(allowed: {sorted(http_cat.envelope_keys)})"
+                                )
+                        missing_env_403 = {"payload", "signature"} - keys
+                        if missing_env_403:
+                            parts_403.append(
+                                f"missing required envelope keys {sorted(missing_env_403)}"
+                            )
+                        payload_node_403 = kv.get("payload")
+                        payload_dict_403 = (
+                            _resolve_local_dict(
+                                payload_node_403,
+                                local_dicts,
+                                module_dicts,
+                                helper_return_dicts,
+                            )
+                            if payload_node_403 is not None
+                            else None
+                        )
+                        if payload_dict_403 is not None:
+                            p_keys_403, _ = _dict_literal_keys_and_mutations(
+                                payload_dict_403, None, fn, helper_return_dicts
+                            )
+                            p_keys_403 |= nested_payload_mutations
+                            extra_p_403 = (
+                                p_keys_403 - http_cat.validate_action_refusal_keys
+                            )
+                            missing_p_403 = {"verdict", "proof_hash"} - p_keys_403
+                            if missing_p_403:
+                                parts_403.append(
+                                    f"payload missing required {sorted(missing_p_403)}"
+                                )
+                            if extra_p_403:
+                                parts_403.append(
+                                    f"payload contains unproduced keys {sorted(extra_p_403)} "
+                                    f"(allowed: {sorted(http_cat.validate_action_refusal_keys)})"
+                                )
+                        if parts_403:
+                            violations.append(
+                                ViolationRecord(
+                                    file=rel_path,
+                                    line=node.lineno,
+                                    kind="unproduced-refusal-fixture",
+                                    detail="HTTP 403 refusal envelope fixture "
+                                    + "; ".join(parts_403),
+                                )
+                            )
                         continue
                     extra_403 = keys - http_cat.validate_action_refusal_keys
                     missing_403 = {"verdict", "proof_hash"} - keys

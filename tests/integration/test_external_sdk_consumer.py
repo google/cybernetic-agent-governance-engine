@@ -252,7 +252,7 @@ def test_external_consumer_verifies_the_live_gateway_through_the_wheel(
     module_file = Path(report["module_file"]).resolve()
     assert "site-packages" in module_file.parts, module_file
     assert _REPO / "packages" not in module_file.parents, module_file
-    assert report["version"] == "0.3.0"
+    assert report["version"] == "0.4.0"
 
     assert report["allow"] == {
         "verdict": "ALLOW",

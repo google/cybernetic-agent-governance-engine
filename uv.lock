@@ -462,20 +462,17 @@ wheels = [
 
 [[package]]
 name = "cage-client"
-version = "0.3.0"
-source = { url = "https://github.com/google/cybernetic-agent-governance-engine/releases/download/client-v0.3.0/cage_client-0.3.0-py3-none-any.whl" }
+version = "0.4.0"
+source = { directory = "packages/cage-client" }
 dependencies = [
     { name = "cryptography" },
     { name = "httpx" },
     { name = "pydantic" },
 ]
-wheels = [
-    { url = "https://github.com/google/cybernetic-agent-governance-engine/releases/download/client-v0.3.0/cage_client-0.3.0-py3-none-any.whl", hash = "sha256:120875f242c59ab57ea14f182304f51eaaad3d381eb06aac533d9d88744281da" },
-]
 
 [package.metadata]
 requires-dist = [
-    { name = "cage-client", extras = ["http2", "langgraph"], marker = "extra == 'all'" },
+    { name = "cage-client", extras = ["langgraph", "http2"], marker = "extra == 'all'" },
     { name = "cryptography", specifier = ">=41.0.0" },
     { name = "h2", marker = "extra == 'http2'", specifier = ">=4.1.0" },
     { name = "httpx", specifier = ">=0.27.0" },
@@ -1053,7 +1050,7 @@ requires-dist = [
     { name = "aiohttp", specifier = ">=3.14.4" },
     { name = "boto3", marker = "extra == 's3'", specifier = ">=1.35.0" },
     { name = "cachetools", specifier = ">=5.5.0" },
-    { name = "cage-client", marker = "extra == 'advisor'", url = "https://github.com/google/cybernetic-agent-governance-engine/releases/download/client-v0.3.0/cage_client-0.3.0-py3-none-any.whl" },
+    { name = "cage-client", marker = "extra == 'advisor'", directory = "packages/cage-client" },
     { name = "clickhouse-connect", marker = "extra == 'clickhouse'", specifier = ">=0.7.0" },
     { name = "codespell", marker = "extra == 'lint'", specifier = ">=2.2.0" },
     { name = "cryptography", specifier = ">=50.0.0" },
@@ -1123,7 +1120,7 @@ deployment = [{ name = "absl-py", specifier = ">=2.2.1" }]
 dev = [
     { name = "bandit", specifier = ">=1.7.0" },
     { name = "bcrypt", specifier = ">=5.0.0" },
-    { name = "cage-client", url = "https://github.com/google/cybernetic-agent-governance-engine/releases/download/client-v0.3.0/cage_client-0.3.0-py3-none-any.whl" },
+    { name = "cage-client", directory = "packages/cage-client" },
     { name = "fakeredis", extras = ["lua"], specifier = ">=2.35.1" },
     { name = "filelock", specifier = ">=4.2.1" },
     { name = "freezegun", specifier = ">=1.5.0" },
@@ -1146,7 +1143,7 @@ dev = [
     { name = "setuptools", specifier = ">=84.1.0" },
 ]
 test = [
-    { name = "cage-client", url = "https://github.com/google/cybernetic-agent-governance-engine/releases/download/client-v0.3.0/cage_client-0.3.0-py3-none-any.whl" },
+    { name = "cage-client", directory = "packages/cage-client" },
     { name = "fakeredis", extras = ["lua"], specifier = ">=2.35.1" },
     { name = "freezegun", specifier = ">=1.5.0" },
     { name = "pandas", specifier = ">=2.2.0" },

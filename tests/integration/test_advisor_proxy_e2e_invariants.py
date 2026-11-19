@@ -1288,7 +1288,9 @@ async def test_advisor_proxy_e2e_all_five_invariants_and_negative_controls(
         },
     )
     assert preview_deny.status_code == 403, preview_deny.text
-    deny_body = preview_deny.json()
+    deny_envelope = preview_deny.json()
+    assert deny_envelope.get("signature") is not None
+    deny_body = deny_envelope["payload"]
     assert deny_body["verdict"] == "DENIED"
     preview_deny_hash = deny_body.get("proof_hash")
     assert isinstance(preview_deny_hash, str) and len(preview_deny_hash) == 64

@@ -35,6 +35,7 @@ jobs:
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
+          fetch-depth: 0
 
       - name: Install uv
         uses: astral-sh/setup-uv@07a047e608db84b3d8c06cd9a7c7dcc9c355c18e # v10.3.2
@@ -105,7 +106,15 @@ jobs:
           EOF
 
       - name: Verify cage-client SDK sync
-        run: python3 scripts/check_client_sdk_sync.py --verbose
+        env:
+          GIT_REF: ${{ github.ref }}
+          REF_NAME: ${{ github.ref_name }}
+        run: |
+          if [[ "$GIT_REF" == refs/tags/client-v* ]]; then
+            python3 scripts/check_client_sdk_sync.py --verbose --cutting-release-tag "$REF_NAME"
+          else
+            python3 scripts/check_client_sdk_sync.py --verbose
+          fi
 
       - name: Verify cage-conformance proof sync
         run: python3 scripts/check_conformance_sync.py
@@ -116,6 +125,12 @@ jobs:
           cd packages/cage-client
           rm -rf dist
           uv build
+          CLIENT_VERSION=$(python3 -c 'import tomllib; print(tomllib.load(open("pyproject.toml", "rb"))["project"]["version"])')
+          SMOKE_VENV="$(mktemp -d)/wheel-venv"
+          uv venv "$SMOKE_VENV"
+          uv pip install --python "$SMOKE_VENV/bin/python" "dist/cage_client-${CLIENT_VERSION}-py3-none-any.whl"
+          "$SMOKE_VENV/bin/python" -I -c "import cage_client; assert cage_client.__version__ == '${CLIENT_VERSION}', cage_client.__version__; print('Verified built wheel:', cage_client.__file__, cage_client.__version__)"
+          rm -rf "$(dirname "$SMOKE_VENV")"
 
       - name: Build CAGE Conformance Verifier Wheel & Sdist
         if: github.event_name == 'workflow_dispatch' || startsWith(github.ref, 'refs/tags/conformance-v')

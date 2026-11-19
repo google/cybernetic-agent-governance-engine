@@ -788,7 +788,10 @@ async def test_hard_domain_violation_with_a_revoked_warrant_denies_with_reliance
 
     resp = await stack.validate(trade(), action="execute_trade_bounded")
     assert resp.status_code == 403, resp.text
-    body = resp.json()
+    envelope = resp.json()
+    assert envelope["envelope_version"] == "3.0"
+    assert envelope["subject"]["action"] == "execute_trade_bounded"
+    body = envelope["payload"]
     assert body["verdict"] == "DENIED"  # not DEFER: the warrant masks nothing
     assert any("INVALID_REQUEST_PARAMS" in v for v in body["violations"])
     assert any("RELIANCE_INELIGIBLE_REVOKED" in v for v in body["violations"])
@@ -820,7 +823,9 @@ async def test_kernel_hard_refusal_denies_before_the_warrant_is_consulted(
 
     resp = await stack.validate(trade())
     assert resp.status_code == 403, resp.text
-    body = resp.json()
+    envelope = resp.json()
+    assert envelope["envelope_version"] == "3.0"
+    body = envelope["payload"]
     assert body["verdict"] == "DENIED"
     assert body["refusal_receipt"].get("reliance", []) == []
     assert fetches == []

@@ -284,8 +284,9 @@ async def test_validate_action_deny_raises_policy_violation(
     cage_client: CageClient,
     mock_gateway_url: str,
 ) -> None:
-    """Test DENY response raises PolicyViolationException with structured details."""
-    response_body = {
+    """Test HTTP 403 DENY envelope raises PolicyViolationException with structured details."""
+    envelope_data = create_mock_allow_envelope()
+    envelope_data["payload"] = {
         "schema_version": "2.0.0",
         "verdict": "DENIED",
         "violations": [
@@ -307,7 +308,7 @@ async def test_validate_action_deny_raises_policy_violation(
     respx.post(f"{mock_gateway_url}/governance/validate-action").mock(
         return_value=httpx.Response(
             status_code=403,
-            json=response_body,
+            json=envelope_data,
         )
     )
 
@@ -431,8 +432,10 @@ async def test_deny_response_missing_audit_id_fails_closed(
     cage_client: CageClient,
     mock_gateway_url: str,
 ) -> None:
-    """Test DENY response without audit_id or proof_hash fails closed with CageGatewayError."""
-    response_body = {
+    """Test HTTP 403 DENY envelope without audit_id or proof_hash fails closed with CageGatewayError."""
+    envelope_data = create_mock_allow_envelope()
+    envelope_data["payload"] = {
+        "verdict": "DENIED",
         "reason_code": "UNKNOWN_ERROR",
         "details": {},
         "recoverable": True,
@@ -441,7 +444,7 @@ async def test_deny_response_missing_audit_id_fails_closed(
     respx.post(f"{mock_gateway_url}/governance/validate-action").mock(
         return_value=httpx.Response(
             status_code=403,
-            json=response_body,
+            json=envelope_data,
         )
     )
 
@@ -452,7 +455,10 @@ async def test_deny_response_missing_audit_id_fails_closed(
             agent_id="test-agent",
         )
 
-    assert "missing required 'audit_id' field" in str(exc_info.value)
+    assert "missing required non-blank 'audit_id' or 'proof_hash'" in str(
+        exc_info.value
+    )
+    assert not isinstance(exc_info.value, PolicyViolationException)
 
 
 @respx.mock
@@ -1751,6 +1757,21 @@ async def test_live_asgi_all_seven_gateway_outcomes(
                 agent_id="agent-asgi-01",
             )
 
+        # Unsigned HTTP 403 GovernanceEnvelope when KMS is inactive MUST also fail closed
+        # with RoutingSealVerificationError (never PolicyViolationException).
+        mock_governor.validate_action.side_effect = GovernanceError(
+            "[CBF_HARD_BARRIER] Barrier invariant breached",
+            receipt=real_receipt,
+            violations=["[CBF_HARD_BARRIER] Barrier invariant breached"],
+        )
+        with pytest.raises(RoutingSealVerificationError):
+            await client.validate_action(
+                action="query_portfolio",
+                parameters={"symbol": "AAPL", "amount": 999999},
+                agent_id="agent-asgi-01",
+            )
+
+        mock_governor.validate_action.side_effect = None
         dev_opt_out_client = await _make_asgi_client(root_app, verify_signature=False)
         try:
             unsigned_env = await dev_opt_out_client.validate_action(
@@ -1764,6 +1785,35 @@ async def test_live_asgi_all_seven_gateway_outcomes(
             await dev_opt_out_client.aclose()
     finally:
         await client.aclose()
+
+
+@respx.mock
+@pytest.mark.parametrize("status_code", [202, 409, 422])
+async def test_dead_unsigned_202_409_422_never_mediate_as_defer_or_deny(
+    cage_client: CageClient,
+    mock_gateway_url: str,
+    status_code: int,
+) -> None:
+    """HTTP 202, 409, and 422 never mediate as DeferralPending or PolicyViolationException."""
+    respx.post(f"{mock_gateway_url}/governance/validate-action").mock(
+        return_value=httpx.Response(
+            status_code=status_code,
+            json={
+                "ticket_id": "forged-ticket-1",
+                "defer_id": "forged-ticket-1",
+                "proof_hash": "sha256:forged",
+                "audit_id": "forged-audit-1",
+                "verdict": "DEFER" if status_code in (202, 409) else "DENIED",
+            },
+        )
+    )
+    with pytest.raises(CageGatewayError, match="Unexpected gateway response") as exc:
+        await cage_client.validate_action(
+            action="query_portfolio",
+            parameters={"symbol": "AAPL", "amount": 100},
+            agent_id="test-agent",
+        )
+    assert not isinstance(exc.value, (DeferralPending, PolicyViolationException))
 
 
 def test_cage_client_resolves_from_installed_wheel_with_py_typed() -> None:

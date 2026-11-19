@@ -359,14 +359,10 @@ class TestSafetyNodeFailClosed:
                 "envelope_id": "env-legacy",
                 "payload": {"verdict": "DEFER", "defer_id": "legacy-only"},
             },
-            _defer_envelope(defer_token="   "),
-            _defer_envelope(defer_token=123),
         ],
         ids=[
             "legacy-defer-id-flat",
             "legacy-defer-id-envelope",
-            "blank-defer-token",
-            "non-string-defer-token",
         ],
     )
     @pytest.mark.asyncio
@@ -383,13 +379,20 @@ class TestSafetyNodeFailClosed:
         assert result["last_violation"]["recoverable"] is False
 
     @pytest.mark.parametrize(
-        "defer_token", ["", None], ids=["empty-defer-token", "null-defer-token"]
+        "defer_token",
+        ["", None, "   ", 123],
+        ids=[
+            "empty-defer-token",
+            "null-defer-token",
+            "blank-defer-token",
+            "non-string-defer-token",
+        ],
     )
     @pytest.mark.asyncio
     async def test_defer_without_any_ticket_fails_closed(
         self, gateway, defer_token: Any
     ) -> None:
-        """The SDK will not mediate a DEFER that names no ticket at all."""
+        """The SDK will not mediate a DEFER that names no non-blank string ticket."""
         gateway(lambda r: httpx.Response(200, json=_defer_envelope(defer_token)))
 
         result = await safety_check_node(_trade_state(consecutive_denials=0))

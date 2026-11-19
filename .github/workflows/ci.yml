@@ -966,12 +966,14 @@ jobs:
               with urllib.request.urlopen(req, timeout=30) as resp:
                   raise AssertionError(f"Expected HTTP 403 DENIED, got HTTP {resp.status}: {resp.read().decode()}")
           except urllib.error.HTTPError as err:
-              body = json.loads(err.read().decode())
-              assert err.code == 403, f"Expected HTTP 403, got {err.code}: {body}"
-              assert body.get("verdict") == "DENIED", body
-              assert "CTRL_OPA_005" in json.dumps(body) or "Denied" in json.dumps(body), body
+              envelope = json.loads(err.read().decode())
+              assert err.code == 403, f"Expected HTTP 403, got {err.code}: {envelope}"
+              assert envelope.get("envelope_version") == "3.0", envelope
+              body = envelope["payload"]
+              assert body.get("verdict") == "DENIED", envelope
+              assert "CTRL_OPA_005" in json.dumps(body) or "Denied" in json.dumps(body), envelope
               ph = body.get("proof_hash", "")
-              assert re.fullmatch(r"[0-9a-f]{64}", ph), body
+              assert re.fullmatch(r"[0-9a-f]{64}", ph), envelope
               print(ph)
           ')
           test -n "$first_deny_hash"
@@ -1131,12 +1133,15 @@ jobs:
               with urllib.request.urlopen(req, timeout=30) as resp:
                   raise AssertionError(f"Expected HTTP 403 DENIED, got HTTP {resp.status}: {resp.read().decode()}")
           except urllib.error.HTTPError as err:
-              body = json.loads(err.read().decode())
-              assert err.code == 403, f"Expected HTTP 403, got {err.code}: {body}"
-              assert body.get("verdict") == "DENIED", body
-              assert "CTRL_OPA_005" in json.dumps(body) or "Denied" in json.dumps(body), body
+              envelope = json.loads(err.read().decode())
+              assert err.code == 403, f"Expected HTTP 403, got {err.code}: {envelope}"
+              assert envelope.get("envelope_version") == "3.0", envelope
+              assert envelope.get("signature"), envelope
+              body = envelope["payload"]
+              assert body.get("verdict") == "DENIED", envelope
+              assert "CTRL_OPA_005" in json.dumps(body) or "Denied" in json.dumps(body), envelope
               ph = body.get("proof_hash", "")
-              assert re.fullmatch(r"[0-9a-f]{64}", ph), body
+              assert re.fullmatch(r"[0-9a-f]{64}", ph), envelope
               r = redis.Redis.from_url("redis://redis:6379/1", decode_responses=True)
               entries = [json.dumps(fields) for _id, fields in r.xrange("cage:evidence:stream", "-", "+")]
               assert any(ph in entry for entry in entries), f"Healthcare refusal proof_hash {ph} missing from cage:evidence:stream"

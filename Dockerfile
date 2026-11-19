@@ -56,8 +56,11 @@ RUN uv venv /app/.venv
 ENV VIRTUAL_ENV=/app/.venv
 ENV PATH="/app/.venv/bin:$PATH"
 
-# Copy dependency definitions — both files required for uv sync --frozen
+# Copy dependency definitions and standalone cage-client package source (builder
+# only — uv builds a non-editable wheel into /app/.venv/lib/.../site-packages;
+# packages/ is never copied into the runtime stage).
 COPY pyproject.toml uv.lock ./
+COPY packages/cage-client /app/packages/cage-client
 
 # Install locked dependencies exactly as resolved by uv lock.
 # --frozen enforces the lockfile; --no-dev skips test/lint extras.

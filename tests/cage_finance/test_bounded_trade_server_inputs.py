@@ -393,7 +393,9 @@ async def test_validate_action_refuses_a_caller_drawdown_over_the_limit(
     resp = await gw.validate(_bounded(**_CALLER_DRAWDOWN), action=_BOUNDED)
 
     assert resp.status_code == 403, resp.text
-    body = resp.json()
+    envelope = resp.json()
+    assert envelope["envelope_version"] == "3.0"
+    body = envelope["payload"]
     assert body["verdict"] == "DENIED"
     assert any(_B2 in v for v in body["violations"]), body["violations"]
     gw.refusals.assert_awaited_once()
@@ -409,7 +411,9 @@ async def test_validate_action_does_not_raise_b2_under_the_limit(
 
     resp = await gw.validate(_bounded(drawdown=99.0), action=_BOUNDED)
 
-    assert not any(_B2 in v for v in resp.json().get("violations", [])), resp.text
+    body = resp.json()
+    payload = body.get("payload", body)
+    assert not any(_B2 in v for v in payload.get("violations", [])), resp.text
 
 
 async def test_validate_action_refuses_when_the_nav_source_faults(
@@ -423,7 +427,9 @@ async def test_validate_action_refuses_when_the_nav_source_faults(
     resp = await gw.validate(_bounded(**_CALLER_DRAWDOWN), action=_BOUNDED)
 
     assert resp.status_code == 403, resp.text
-    assert any(_B2 in v for v in resp.json()["violations"])
+    envelope = resp.json()
+    assert envelope["envelope_version"] == "3.0"
+    assert any(_B2 in v for v in envelope["payload"]["violations"])
 
 
 async def test_verify_preview_binds_the_bounded_drawdown(

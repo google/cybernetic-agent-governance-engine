@@ -22,6 +22,10 @@
 # Convert a Python double/float into an ES6/V8 compatible string #
 ##################################################################
 def convert2Es6Format(value):
+    if isinstance(value, bool):
+        raise TypeError("Boolean is not a JSON number")
+    if isinstance(value, int):
+        return "0" if value == 0 else str(int(value))
     # Convert double/float to str using the native Python formatter
     fvalue = float(value)
     #

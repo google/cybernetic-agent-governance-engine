@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "cage-client"
-version = "0.3.0"
+version = "0.4.0"
 description = "Lightweight LangGraph / LangChain PEP Client for CAGE Governance Gateway"
 readme = "README.md"
 requires-python = ">=3.10"
@@ -47,3 +47,11 @@ where = ["src"]
 
 [tool.setuptools.package-data]
 cage_client = ["py.typed"]
+
+[tool.cage.release]
+# Enforced by scripts/check_client_sdk_sync.py:
+#   - "unreleased": version must be strictly newer than the latest client-v* tag,
+#     and tag client-v<version> must not yet exist.
+#   - "published": tag client-v<version> must exist and match packages/cage-client/src/cage_client/
+#     byte-for-byte (zero post-tag drift).
+status = "unreleased"

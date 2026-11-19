@@ -270,44 +270,32 @@ The single choke point for tool-level governance validation. Mounted under `/gov
 }
 ```
 
-**Response — `ALLOW` (HTTP 200):**
-```json
-{
-  "verdict": "ALLOW",
-  "violations": [],
-  "seal": "1773763200.system_action_name.4f9a8b...",
-  "consequence_token": "eyJhbGciOiJSUzI1NiIs...",
-  "latency_ms": 11.2
-}
-```
+**Response — Signed `GovernanceEnvelope` (HTTP 200 for `ALLOW`, `NARROW`, `REQUIRE_APPROVAL`, `DEFER`; HTTP 403 for `DENIED`):**
 
-**Response — `DENY` (HTTP 403):**
-```json
-{
-  "verdict": "DENY",
-  "violations": ["CBF: barrier condition violated for action 'system_action_name'"],
-  "seal": "",
-  "latency_ms": 4.1
-}
-```
+Every verdict from `POST /governance/validate-action` is wrapped in a signed `GovernanceEnvelope` (`envelope_version: "3.0"`, RFC 8785 JCS + `ES256`/`EdDSA` signature resolved out-of-band by `kid`, `subject.action_hash` binding, and `expires_at` freshness). On `DENIED`, the HTTP status is `403` and `payload` carries the `refusal_receipt` and `proof_hash`:
 
-**Response — `REQUIRE_APPROVAL` (HTTP 202):**
 ```json
 {
-  "verdict": "REQUIRE_APPROVAL",
-  "thread_id": "hitl-thread-a83f9b20",
-  "reason": "Consensus escalation: heterogeneous critics disagreed"
+  "envelope_version": "3.0",
+  "envelope_type": "cage_governance_decision",
+  "envelope_id": "cage-...",
+  "issued_at": "2026-11-19T00:00:00Z",
+  "expires_at": "2026-11-19T00:05:00Z",
+  "issuer": {"gateway_id": "cage-gateway", "policy_version_id": "a1b2c3d4e5f6a7b8"},
+  "subject": {"action": "system_action_name", "action_hash": "sha256:..."},
+  "governance_context": {"profile": "DRY_RUN", "tiers_passed": []},
+  "payload": {
+    "schema_version": "2.0.0",
+    "verdict": "DENIED",
+    "violations": ["CBF: barrier condition violated for action 'system_action_name'"],
+    "refusal_receipt": {"type": "GOVERNANCE_REFUSAL_RECEIPT", "proof_hash": "..."},
+    "proof_hash": "..."
+  },
+  "external_attestations": [],
+  "signature": {"algorithm": "ES256", "kid": "gateway-key-1", "value": "..."}
 }
 ```
-
-**Response — `DEFER` (HTTP 202):**
-```json
-{
-  "decision": "DEFER",
-  "defer_token": "def-tok-c91823ab",
-  "classification_reason": "Confidence-starved context (score: 0.81, required: 0.95)"
-}
-```
+> Non-policy middleware rejections (`WorkloadIdentityMiddleware` untrusted `l5d-client-id`, or pre-pipeline prompt-injection blocks) return HTTP `403` `{"detail": "..."}` / `{"error": ...}` rather than a `GovernanceEnvelope`. `cage-client` `v0.4.0` fails closed on any un-enveloped or unsigned `403` on `/governance/validate-action`.
 
 ### 4.2 Supporting Governance Primitives
 

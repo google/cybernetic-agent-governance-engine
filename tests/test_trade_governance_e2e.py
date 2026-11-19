@@ -627,7 +627,8 @@ async def test_s2_unreachable_defer_queue_blocks(
 
 async def _assert_denied(gw: Gateway, resp: httpx.Response, code: str) -> None:
     assert resp.status_code == 403, resp.text
-    body = resp.json()
+    assert resp.json().get("envelope_version") == "3.0"
+    body = _body(resp)
     assert body["verdict"] == "DENIED"
     assert any(code in str(v) for v in body["violations"]), body["violations"]
     assert await gw.parked_tokens() == []
@@ -858,7 +859,8 @@ async def test_identity_bound_to_senior_gets_senior_limits(gw: Gateway) -> None:
     # the advisor (bound to senior) passes OPA and is routed for review.
     denied = await gw.validate(trade(50_000.0), identity=JUNIOR_DESK)
     assert denied.status_code == 403, denied.text
-    assert any("CTRL_OPA_005" in str(v) for v in denied.json()["violations"])
+    assert denied.json().get("envelope_version") == "3.0"
+    assert any("CTRL_OPA_005" in str(v) for v in _body(denied)["violations"])
 
     body = _body(await gw.validate(trade(50_000.0, trader_role="junior")))
     assert body["verdict"] == GovernanceDecision.REQUIRE_APPROVAL
@@ -938,7 +940,8 @@ async def test_s11_preview_surfaces_the_dose_barrier(gw: Gateway) -> None:
     }
     resp = await gw.validate(params, action="administer_medication")
     assert resp.status_code == 403, resp.text
-    assert any("DOSE_BARRIER_VIOLATED" in str(v) for v in resp.json()["violations"])
+    assert resp.json().get("envelope_version") == "3.0"
+    assert any("DOSE_BARRIER_VIOLATED" in str(v) for v in _body(resp)["violations"])
     assert await gw.parked_tokens() == []
     await _assert_nothing_committed(gw)
 
