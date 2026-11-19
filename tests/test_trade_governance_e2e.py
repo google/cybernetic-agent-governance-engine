@@ -602,13 +602,21 @@ async def test_s2_unknown_deferred_id_is_blocked(gw: Gateway) -> None:
 async def test_s2_unreachable_defer_queue_blocks(
     gw: Gateway, monkeypatch: pytest.MonkeyPatch
 ) -> None:
+    from src.gateway.governance.governor.errors import GovernanceInfrastructureError
+
     @asynccontextmanager
     async def _down() -> AsyncIterator[DeferQueue]:
         raise ConnectionError("redis db=1 unreachable")
         yield  # pragma: no cover
 
     monkeypatch.setattr(defer_queue_mod, "open_defer_queue", _down)
-    assert (await gw.execute(trade(20_000.0), str(uuid.uuid4()))).startswith("BLOCKED")
+    with pytest.raises(GovernanceInfrastructureError) as exc_info:
+        await gw.execute(trade(20_000.0), str(uuid.uuid4()))
+    assert exc_info.value.error_code == "defer_queue_unavailable"
+    assert exc_info.value.dependency == "defer_queue"
+    assert exc_info.value.failure_code == "DEFER_QUEUE_UNAVAILABLE"
+    assert exc_info.value.receipt is None
+    gw.refusals.assert_not_awaited()
     await _assert_nothing_committed(gw)
 
 

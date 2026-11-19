@@ -37,6 +37,7 @@ from src.gateway.governance.refusal_projection import (
     compute_refusal_params_hash,
     validate_evaluated_param_specs,
 )
+from src.gateway.governance.seams.quarantine import QuarantineTriggerReason
 
 if TYPE_CHECKING:
     from mcp.server.fastmcp import FastMCP
@@ -442,6 +443,9 @@ class Violation:
     message: str  # human-readable description (never parsed)
     kind: ViolationKind  # REQUIRED — no default (fail-closed by construction)
     bound: float | None = None
+    quarantine_trigger: QuarantineTriggerReason | None = None
+    infra_dependency: str | None = None
+    infra_error_code: str | None = None
 
     def __post_init__(self) -> None:
         if self.bound is None:
@@ -1395,6 +1399,30 @@ class PolicyEngineUnavailableError(RuntimeError):
         super().__init__(message)
         self.reason = reason
         self.status_code = status_code
+
+
+class ServerInputUnavailableError(RuntimeError):
+    """Raised by a ServerInputResolver when an authoritative server-input source is unavailable.
+
+    Separates source unavailability (missing feed, transport error, timeout, or
+    identity-store failure -> ``ViolationKind.INFRASTRUCTURE``) from a present
+    reading that fails validation (stale timestamp, NaN/negative value, or
+    unverified source -> omitted/measured so domain STPA/OPA rules refuse as
+    ``ViolationKind.HARD``) (F-02, POAM-2026-233).
+    """
+
+    def __init__(
+        self,
+        message: str,
+        *,
+        dependency: str = "server_inputs",
+        failure_code: str = "SERVER_INPUT_UNAVAILABLE",
+        error_code: str = "server_input_unavailable",
+    ) -> None:
+        super().__init__(message)
+        self.dependency: str = dependency
+        self.failure_code: str = failure_code
+        self.error_code: str = error_code
 
 
 @runtime_checkable

@@ -24,10 +24,14 @@ the caller reports whether the sealed action ran.
 
 from __future__ import annotations
 
+import dataclasses
 from collections.abc import Awaitable, Callable, Sequence
 from typing import Any
 
-from src.gateway.governance.governor.errors import GovernanceError
+from src.gateway.governance.governor.errors import (
+    ApprovalSpendUnavailableError,
+    GovernanceError,
+)
 from src.gateway.governance.governor.pipeline import (
     PipelineResult,
     Stage,
@@ -115,8 +119,14 @@ async def run_sealed(
         if result.violations:
             assert_nothing_committed(result)
             return result, None
-        if admit is not None and not await admit():
-            return result, None  # the scope rolls the clean run's commits back
+        if admit is not None:
+            try:
+                admitted = await admit()
+            except ApprovalSpendUnavailableError as exc:
+                exc.pipeline_result = dataclasses.replace(result, commits=())
+                raise
+            if not admitted:
+                return result, None  # the scope rolls the clean run's commits back
         decision_context = _build_decision_context(
             result, ctx=ctx, path=path, original_result=original_result
         )

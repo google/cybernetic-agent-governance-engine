@@ -149,7 +149,7 @@ async def test_commit_exception_fails_closed_without_receipt(mutating_tier, ctx)
     violations, receipt = await stage.commit(ctx)
     assert receipt is None
     assert [(v.code, v.kind) for v in violations] == [
-        ("TIER_EXCEPTION", ViolationKind.HARD)
+        ("TIER_EXCEPTION", ViolationKind.INFRASTRUCTURE)
     ]
     assert "commit failed" in violations[0].message
 
@@ -164,7 +164,7 @@ async def test_commit_malformed_result_fails_closed(mutating_tier, ctx, bad):
     violations, receipt = await stage.commit(ctx)
     assert receipt is None
     assert [(v.code, v.kind) for v in violations] == [
-        ("TIER_EXCEPTION", ViolationKind.HARD)
+        ("TIER_EXCEPTION", ViolationKind.INFRASTRUCTURE)
     ]
 
 
@@ -190,7 +190,7 @@ async def test_run_exception(mock_tier, ctx):
     assert len(violations) == 1
     assert violations[0].code == "TIER_EXCEPTION"
     assert "Eval failed" in violations[0].message
-    assert violations[0].kind == ViolationKind.HARD
+    assert violations[0].kind == ViolationKind.INFRASTRUCTURE
 
 
 @pytest.mark.asyncio

@@ -87,7 +87,7 @@ async def test_barrier_preview_exception_is_hard_violation() -> None:
     cbf.verify_action = AsyncMock(side_effect=ConnectionError("redis down"))
     result = await _dry_run([CBFTierPlugin(cbf)])
     assert [(v.code, v.kind) for v in result.violations] == [
-        ("TIER_EXCEPTION", ViolationKind.HARD)
+        ("TIER_EXCEPTION", ViolationKind.INFRASTRUCTURE)
     ]
     assert "ConnectionError" in result.violations[0].message
 

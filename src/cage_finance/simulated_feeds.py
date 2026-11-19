@@ -113,6 +113,7 @@ class SimulatedMarketQuoteFeed:
         as_of = now - (now % 86400.0)  # computed at the start of the UTC day
         shares = self._daily_volume
         source_id = self.source_id
+        source_verified = True
         volume_symbol = symbol.upper()
         if mode is FaultMode.STALE_TIMESTAMP:
             as_of -= _VOLUME_STALE_SHIFT_S
@@ -126,8 +127,13 @@ class SimulatedMarketQuoteFeed:
             volume_symbol = ""
         elif mode is FaultMode.UNVERIFIED_SOURCE:
             source_id = "unverified_rogue_feed"
+            source_verified = False
         return DailyVolume(
-            symbol=volume_symbol, shares=shares, as_of=as_of, source_id=source_id
+            symbol=volume_symbol,
+            shares=shares,
+            as_of=as_of,
+            source_id=source_id,
+            source_verified=source_verified,
         )
 
     async def latest_quote(self, symbol: str) -> MarketQuote:
@@ -139,6 +145,7 @@ class SimulatedMarketQuoteFeed:
         published_at = self._clock() - self._rng.uniform(*self._delay_ms) / 1000.0
         price = self._base_price * (1.0 + self._rng.uniform(-0.01, 0.01))
         source_id = self.source_id
+        source_verified = True
         quoted_symbol = symbol.upper()
         if mode is FaultMode.STALE_TIMESTAMP:
             published_at -= _FAULT_SHIFT_S
@@ -152,11 +159,13 @@ class SimulatedMarketQuoteFeed:
             quoted_symbol = ""
         elif mode is FaultMode.UNVERIFIED_SOURCE:
             source_id = "unverified_rogue_feed"
+            source_verified = False
         return MarketQuote(
             symbol=quoted_symbol,
             price=price,
             published_at=published_at,
             source_id=source_id,
+            source_verified=source_verified,
         )
 
 
@@ -219,6 +228,7 @@ class SimulatedPortfolioNavSource:
         current_nav = open_nav * (1.0 - self._drawdown_pct / 100.0)
         observed_at = self._clock()
         source_id = self.source_id
+        source_verified = True
         if mode is FaultMode.STALE_TIMESTAMP:
             observed_at -= _FAULT_SHIFT_S
         elif mode is FaultMode.FUTURE_TIMESTAMP:
@@ -231,11 +241,13 @@ class SimulatedPortfolioNavSource:
             open_nav = 0.0
         elif mode is FaultMode.UNVERIFIED_SOURCE:
             source_id = "unverified_rogue_feed"
+            source_verified = False
         return NavSnapshot(
             open_nav=open_nav,
             current_nav=current_nav,
             observed_at=observed_at,
             source_id=source_id,
+            source_verified=source_verified,
         )
 
 

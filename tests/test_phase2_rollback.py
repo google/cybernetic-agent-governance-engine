@@ -120,7 +120,7 @@ async def test_rollback_exception_does_not_stop_others(governor, classification_
     assert violations[0].code == "ROLLBACK_FAILED"
     from src.gateway.governance.contracts import ViolationKind
 
-    assert violations[0].kind == ViolationKind.HARD
+    assert violations[0].kind == ViolationKind.INFRASTRUCTURE
 
 
 @pytest.mark.asyncio
@@ -149,7 +149,7 @@ async def test_rollback_multiple_failures(governor, classification_engine):
 
     for v in violations:
         assert v.code == "ROLLBACK_FAILED"
-        assert v.kind == ViolationKind.HARD
+        assert v.kind == ViolationKind.INFRASTRUCTURE
 
 
 @pytest.mark.asyncio
@@ -188,7 +188,7 @@ async def test_rollback_failed_violation_structure(governor, classification_engi
     assert "ValueError" in violation.message
     from src.gateway.governance.contracts import ViolationKind
 
-    assert violation.kind == ViolationKind.HARD
+    assert violation.kind == ViolationKind.INFRASTRUCTURE
 
 
 async def _rollback(committed):

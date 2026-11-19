@@ -69,7 +69,11 @@ from src.gateway.governance.evidence.stream import (
 from src.gateway.governance.governance_envelope import GovernanceEnvelopeBuilder
 from src.gateway.governance.governor import sealing as sealing_module
 from src.gateway.governance.governor.assembly import DecisionFlags, assemble_governor
-from src.gateway.governance.governor.errors import GovernanceDeferred, GovernanceError
+from src.gateway.governance.governor.errors import (
+    GovernanceDeferred,
+    GovernanceError,
+    GovernanceInfrastructureError,
+)
 from src.gateway.governance.governor.pipeline import (
     Profile,
     StageContext,
@@ -1010,10 +1014,27 @@ async def test_unwarranted_regions_produce_no_reliance_record(
     )
     assert not any(isinstance(s, WarrantStage) for s in governor.stages)
 
-    # Without a world-model cache the causal gate refuses (fail closed); the
-    # refusal is the decision under test and must carry no reliance record.
-    with pytest.raises(GovernanceError) as exc_info:
+    # Without Redis, valid _trade() under allow_opa blocks on infrastructure (no receipt),
+    # while a policy DENY from OPA refuses HARD with receipt.reliance == ().
+    # Neither evidence record may carry a reliance field in unwarranted regions.
+    with pytest.raises(GovernanceInfrastructureError) as infra_exc:
         await governor.validate_action(_ACTION, _trade())
+    assert infra_exc.value.receipt is None
+
+    deny_opa = allow_opa()
+    deny_opa.evaluate_policy.return_value = "DENY"
+    governor_deny = assemble_governor(
+        [FinanceCagePlugin()],
+        posture=DeploymentPosture.TEST,
+        opa=deny_opa,
+        stpa_validator=clean_stpa(),
+        flags=DecisionFlags(defer=True, narrow=False),
+        jurisdiction=resolve_jurisdiction(region),
+    )
+    with pytest.raises(GovernanceError) as exc_info:
+        await governor_deny.validate_action(_ACTION, _trade())
+    assert not isinstance(exc_info.value, GovernanceInfrastructureError)
+    assert exc_info.value.receipt is not None
     assert exc_info.value.receipt.reliance == ()
     for record in await chain.records():
         assert "reliance" not in _payload(record)

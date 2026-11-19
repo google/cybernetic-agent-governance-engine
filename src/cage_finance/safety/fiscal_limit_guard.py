@@ -69,11 +69,16 @@ import math
 import os
 import time
 import uuid
+from contextvars import ContextVar
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import Any
 
 logger = logging.getLogger(__name__)
+
+_LAST_FISCAL_STORE_ERROR: ContextVar[str | None] = ContextVar(
+    "_LAST_FISCAL_STORE_ERROR", default=None
+)
 
 PENDING_KEY = "fiscal:pending"
 RECLAIMED_KEY = "fiscal:reclaimed"
@@ -154,6 +159,8 @@ class ReservationToken:
     rejected: bool
     reserved_at: float
     ttl_seconds: int
+    store_unavailable: bool = False
+    store_error: str | None = None
 
     @property
     def member(self) -> str:
@@ -317,6 +324,8 @@ class FiscalLimitGuard:
         member = f"{reservation_id}|{amount_cents}|{window_key}"
 
         await self._reclaim_quietly()
+        store_unavailable = False
+        store_error: str | None = None
         try:
             result = await self._eval(
                 _LUA_RESERVE,
@@ -336,6 +345,8 @@ class FiscalLimitGuard:
                 exc,
             )
             result = -2
+            store_unavailable = True
+            store_error = f"{type(exc).__name__}: {exc}"
 
         rejected = result < 0
         running_total_usd = (result / 100.0) if result >= 0 else self._daily_cap_usd
@@ -351,6 +362,8 @@ class FiscalLimitGuard:
             running_total_usd=running_total_usd,
             rejected=rejected,
             ttl_seconds=self._reservation_ttl,
+            store_unavailable=store_unavailable,
+            store_error=store_error,
         )
 
         if rejected:
@@ -446,17 +459,40 @@ class FiscalLimitGuard:
             None, functools.partial(fn, *args)
         )
 
+    @staticmethod
+    def last_store_error() -> str | None:
+        """Task-local Redis store error recorded by the most recent window read."""
+        return _LAST_FISCAL_STORE_ERROR.get()
+
     async def _read_window_cents(self) -> int | None:
         """Today's spend in cents as ``reserve()`` would see it, or ``None`` if unreadable."""
+        _LAST_FISCAL_STORE_ERROR.set(None)
         try:
             key = self._window_key()
             raw = await self._call("get", key)
+        except Exception as exc:
+            err = f"{type(exc).__name__}: {exc}"
+            _LAST_FISCAL_STORE_ERROR.set(err)
+            logger.error(
+                "FiscalLimitGuard: window read failed — failing closed: %s", exc
+            )
+            return None
+        try:
             current = int(raw) if raw else 0
             if current == 0:
                 return 0
-            expired = await self._call(
-                "zrangebyscore", PENDING_KEY, "-inf", time.time()
-            )
+            try:
+                expired = await self._call(
+                    "zrangebyscore", PENDING_KEY, "-inf", time.time()
+                )
+            except Exception as exc:
+                err = f"{type(exc).__name__}: {exc}"
+                _LAST_FISCAL_STORE_ERROR.set(err)
+                logger.error(
+                    "FiscalLimitGuard: pending-set read failed — failing closed: %s",
+                    exc,
+                )
+                return None
             for member in expired or ():
                 text = member.decode() if isinstance(member, bytes) else str(member)
                 _, cents, window = text.split("|", 2)
@@ -465,12 +501,21 @@ class FiscalLimitGuard:
             return max(0, current)
         except Exception as exc:
             logger.error(
-                "FiscalLimitGuard: window read failed — failing closed: %s", exc
+                "FiscalLimitGuard: malformed window state — failing closed: %s", exc
             )
             return None
 
+    async def check_acceptability(self, amount_usd: float) -> tuple[bool, str | None]:
+        """Return ``(accepted, store_error)`` distinguishing Redis outages from cap breaches."""
+        _LAST_FISCAL_STORE_ERROR.set(None)
+        accepted = await self.would_accept(amount_usd=amount_usd)
+        if accepted:
+            return True, None
+        return False, _LAST_FISCAL_STORE_ERROR.get()
+
     async def would_accept(self, amount_usd: float) -> bool:
         """Read-only: would ``reserve(amount_usd=...)`` be accepted right now?"""
+        _LAST_FISCAL_STORE_ERROR.set(None)
         if (
             isinstance(amount_usd, bool)
             or not isinstance(amount_usd, (int, float))

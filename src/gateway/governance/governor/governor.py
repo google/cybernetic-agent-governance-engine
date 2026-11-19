@@ -41,6 +41,7 @@ from src.gateway.governance.classification_engine import (
 from src.gateway.governance.constants import ControlRegistry
 from src.gateway.governance.contracts import (
     GovernanceTier,
+    ServerInputUnavailableError,
     Violation,
     ViolationKind,
 )
@@ -48,6 +49,7 @@ from src.gateway.governance.decisions import GovernanceDecision
 from src.gateway.governance.env_posture import is_enforcing
 from src.gateway.governance.governor.approval import PostHitlApproval
 from src.gateway.governance.governor.errors import (
+    ApprovalSpendUnavailableError,
     DeferQueueUnavailableError,
     GovernanceDeferred,
     GovernanceError,
@@ -59,6 +61,7 @@ from src.gateway.governance.governor.pipeline import (
     Profile,
     Stage,
     StageContext,
+    plan_pipeline,
     resolve_claims,
     run_pipeline,
 )
@@ -228,6 +231,38 @@ class SymbolicGovernor:
                 emit_side_effects=False,
             )
 
+    def _server_input_unavailable_result(
+        self,
+        action: str,
+        params: dict[str, Any],
+        *,
+        profile: Profile,
+        exc: ServerInputUnavailableError,
+    ) -> tuple[Violation, PipelineResult]:
+        ctx = StageContext(action=action, params=params, profile=profile)
+        _claims, is_governed, _ro, _mut, plan = plan_pipeline(
+            self.stages, ctx, profile=profile
+        )
+        violation = Violation(
+            tier=exc.dependency,
+            code=exc.failure_code,
+            message=str(exc),
+            kind=ViolationKind.INFRASTRUCTURE,
+            infra_dependency=exc.dependency,
+            infra_error_code="server_input_unavailable",
+        )
+        result = PipelineResult(
+            violations=(violation,),
+            tier_failures=(),
+            opa_verdict=None,
+            ftra=None,
+            committed_stages=(),
+            plan=plan,
+            stage_outcomes=(),
+            governed=is_governed,
+        )
+        return violation, result
+
     async def _evaluate_dry_run(
         self,
         action: str,
@@ -236,9 +271,31 @@ class SymbolicGovernor:
         *,
         emit_side_effects: bool = True,
     ) -> dict[str, Any]:
-        params = await bind_server_inputs(
-            self._components.server_inputs, action, params
-        )
+        try:
+            params = await bind_server_inputs(
+                self._components.server_inputs, action, params
+            )
+        except ServerInputUnavailableError as exc:
+            _check_policy_pin(policy_version_id)
+            violation, infra_result = self._server_input_unavailable_result(
+                action, params, profile=Profile.DRY_RUN, exc=exc
+            )
+            if emit_side_effects:
+                await _trace(
+                    infra_result,
+                    action,
+                    Profile.DRY_RUN,
+                    "validate_action",
+                    InfrastructureOutcome.INFRASTRUCTURE_BLOCK,
+                )
+            await handle_infrastructure_block(
+                action,
+                params,
+                [violation],
+                [],
+                {"infra_error_code": exc.error_code},
+                emit_side_effects=emit_side_effects,
+            )
         with tracer.start_as_current_span("cage.validate_action") as span:
             span.set_attribute(OBSERVATION_TYPE, "span")
             span.set_attribute(OBSERVATION_NAME, "governance_validate")
@@ -380,7 +437,30 @@ class SymbolicGovernor:
             return without
         # The exact params the response names, server inputs re-bound so the
         # derived values describe the clamped request, not the original one.
-        verified = await self._rebind(action, proposal)
+        try:
+            verified = await self._rebind(action, proposal)
+        except ServerInputUnavailableError as exc:
+            violation, infra_result = self._server_input_unavailable_result(
+                action, proposal, profile=Profile.DRY_RUN, exc=exc
+            )
+            if emit_side_effects:
+                await _trace(
+                    infra_result,
+                    action,
+                    Profile.DRY_RUN,
+                    "validate_action",
+                    InfrastructureOutcome.INFRASTRUCTURE_BLOCK,
+                    narrower_present=True,
+                    clamped_params_valid=False,
+                )
+            await handle_infrastructure_block(
+                action,
+                proposal,
+                [violation],
+                [],
+                {"infra_error_code": exc.error_code},
+                emit_side_effects=emit_side_effects,
+            )
         ctx = StageContext(
             action=action, params=copy.deepcopy(verified), profile=Profile.DRY_RUN
         )
@@ -441,7 +521,32 @@ class SymbolicGovernor:
                 emit_side_effects=emit_side_effects,
                 evaluated_param_specs=self._components.evaluated_param_specs,
             )
-        verified = await self._rebind(action, proposal)  # the params the response names
+        try:
+            verified = await self._rebind(
+                action, proposal
+            )  # the params the response names
+        except ServerInputUnavailableError as exc:
+            violation, _infra_result = self._server_input_unavailable_result(
+                action, proposal, profile=Profile.DRY_RUN, exc=exc
+            )
+            if emit_side_effects:
+                await _trace(
+                    result,
+                    action,
+                    Profile.DRY_RUN,
+                    "validate_action",
+                    InfrastructureOutcome.INFRASTRUCTURE_BLOCK,
+                    narrower_present=True,
+                    clamped_params_valid=False,
+                )
+            await handle_infrastructure_block(
+                action,
+                proposal,
+                [violation],
+                [],
+                {"infra_error_code": exc.error_code},
+                emit_side_effects=emit_side_effects,
+            )
         ctx = StageContext(
             action=action, params=copy.deepcopy(verified), profile=Profile.DRY_RUN
         )
@@ -548,11 +653,30 @@ class SymbolicGovernor:
                 span.set_attribute(OBSERVATION_NAME, "governance_evaluation")
                 span.set_attribute(SPAN_ATTR_GOVERNANCE_TOOL, tool_name)
 
-                eval_params = await bind_server_inputs(
-                    self._components.server_inputs,
-                    tool_name,
-                    copy.deepcopy(sealed),
-                )
+                try:
+                    eval_params = await bind_server_inputs(
+                        self._components.server_inputs,
+                        tool_name,
+                        copy.deepcopy(sealed),
+                    )
+                except ServerInputUnavailableError as exc:
+                    violation, infra_result = self._server_input_unavailable_result(
+                        tool_name, sealed, profile=Profile.FULL, exc=exc
+                    )
+                    await _trace(
+                        infra_result,
+                        tool_name,
+                        Profile.FULL,
+                        "govern",
+                        InfrastructureOutcome.INFRASTRUCTURE_BLOCK,
+                    )
+                    await handle_infrastructure_block(
+                        tool_name,
+                        sealed,
+                        [violation],
+                        [],
+                        {"infra_error_code": exc.error_code},
+                    )
                 ctx = StageContext(
                     action=tool_name, params=eval_params, profile=Profile.FULL
                 )
@@ -631,7 +755,28 @@ class SymbolicGovernor:
                 evaluated_param_specs=self._components.evaluated_param_specs,
             )
         # The exact params the seal and receipt name, server inputs re-bound.
-        narrowed = await self._rebind(action, proposal)
+        try:
+            narrowed = await self._rebind(action, proposal)
+        except ServerInputUnavailableError as exc:
+            violation, _infra_result = self._server_input_unavailable_result(
+                action, proposal, profile=Profile.FULL, exc=exc
+            )
+            await _trace(
+                result,
+                action,
+                Profile.FULL,
+                "govern_narrow",
+                InfrastructureOutcome.INFRASTRUCTURE_BLOCK,
+                narrower_present=True,
+                clamped_params_valid=False,
+            )
+            await handle_infrastructure_block(
+                action,
+                proposal,
+                [violation],
+                [],
+                {"infra_error_code": exc.error_code},
+            )
 
         async def _deliver(seal: str) -> None:
             await issue_narrow_receipt(
@@ -755,14 +900,18 @@ class SymbolicGovernor:
         now refuses, or is unreachable) denies.
         """
         sealed = copy.deepcopy(params)
+        rebind_infra_exc: ServerInputUnavailableError | None = None
         if rebind_inputs:
             with (
                 online_governance_scope(True),
                 verified_post_hitl_approval(approval.approval_id),
             ):
-                sealed = await bind_server_inputs(
-                    self._components.server_inputs, action, sealed
-                )
+                try:
+                    sealed = await bind_server_inputs(
+                        self._components.server_inputs, action, sealed
+                    )
+                except ServerInputUnavailableError as exc:
+                    rebind_infra_exc = exc
         with tracer.start_as_current_span(
             "symbolic_governor.revalidate_post_hitl"
         ) as span:
@@ -819,19 +968,64 @@ class SymbolicGovernor:
                 raise GovernanceError(
                     f"no tier governs {action}; post-HITL re-validation refused"
                 )
+            if rebind_infra_exc is not None:
+                span.set_attribute("toctou.approval_spent", False)
+                violation, infra_result = self._server_input_unavailable_result(
+                    action, sealed, profile=Profile.POST_HITL, exc=rebind_infra_exc
+                )
+                await _trace(
+                    infra_result,
+                    action,
+                    Profile.POST_HITL,
+                    "revalidate_post_hitl",
+                    InfrastructureOutcome.INFRASTRUCTURE_BLOCK,
+                )
+                await handle_infrastructure_block(
+                    action,
+                    sealed,
+                    [violation],
+                    [],
+                    {
+                        "approval_id": approval.approval_id,
+                        "infra_error_code": rebind_infra_exc.error_code,
+                    },
+                )
             with (
                 online_governance_scope(True),
                 verified_post_hitl_approval(approval.approval_id),
             ):
-                eval_params = (
-                    copy.deepcopy(sealed)
-                    if rebind_inputs
-                    else await bind_server_inputs(
-                        self._components.server_inputs,
-                        action,
-                        copy.deepcopy(sealed),
+                try:
+                    eval_params = (
+                        copy.deepcopy(sealed)
+                        if rebind_inputs
+                        else await bind_server_inputs(
+                            self._components.server_inputs,
+                            action,
+                            copy.deepcopy(sealed),
+                        )
                     )
-                )
+                except ServerInputUnavailableError as exc:
+                    span.set_attribute("toctou.approval_spent", False)
+                    violation, infra_result = self._server_input_unavailable_result(
+                        action, sealed, profile=Profile.POST_HITL, exc=exc
+                    )
+                    await _trace(
+                        infra_result,
+                        action,
+                        Profile.POST_HITL,
+                        "revalidate_post_hitl",
+                        InfrastructureOutcome.INFRASTRUCTURE_BLOCK,
+                    )
+                    await handle_infrastructure_block(
+                        action,
+                        sealed,
+                        [violation],
+                        [],
+                        {
+                            "approval_id": approval.approval_id,
+                            "infra_error_code": exc.error_code,
+                        },
+                    )
             ctx = StageContext(
                 action=action,
                 params=eval_params,
@@ -840,14 +1034,85 @@ class SymbolicGovernor:
             )
             # The approval is spent only by the run it authorises: admit()
             # runs after every stage passed and before the seal is minted.
-            result, seal = await run_sealed(
-                self.stages,
-                ctx,
-                sealed,
-                path="revalidate_post_hitl",
-                settlements=self._settlements,
-                admit=approval.spend,
-            )
+            try:
+                result, seal = await run_sealed(
+                    self.stages,
+                    ctx,
+                    sealed,
+                    path="revalidate_post_hitl",
+                    settlements=self._settlements,
+                    admit=approval.spend,
+                )
+            except ApprovalSpendUnavailableError as exc:
+                span.set_attribute("toctou.approval_spent", False)
+                trace_result = exc.pipeline_result
+                if not isinstance(trace_result, PipelineResult):
+                    _c, is_gov, _ro, _mut, plan = plan_pipeline(
+                        self.stages, ctx, profile=Profile.POST_HITL
+                    )
+                    trace_result = PipelineResult(
+                        violations=(),
+                        tier_failures=(),
+                        opa_verdict=None,
+                        ftra=None,
+                        committed_stages=(),
+                        plan=plan,
+                        stage_outcomes=(),
+                        governed=is_gov,
+                    )
+                await _trace(
+                    trace_result,
+                    action,
+                    Profile.POST_HITL,
+                    "revalidate_post_hitl",
+                    InfrastructureOutcome.INFRASTRUCTURE_BLOCK,
+                )
+                await handle_infrastructure_block(
+                    action,
+                    sealed,
+                    [
+                        Violation(
+                            tier="defer_queue",
+                            code="DEFER_QUEUE_UNAVAILABLE",
+                            message=str(exc),
+                            kind=ViolationKind.INFRASTRUCTURE,
+                            infra_dependency="defer_queue",
+                            infra_error_code="defer_queue_unavailable",
+                        )
+                    ],
+                    [],
+                    {"approval_id": approval.approval_id},
+                )
+            except GovernanceInfrastructureError as exc:
+                if isinstance(exc.__cause__, ApprovalSpendUnavailableError):
+                    span.set_attribute("toctou.approval_spent", False)
+                    cause_exc = exc.__cause__
+                    trace_result = cause_exc.pipeline_result
+                    if isinstance(trace_result, PipelineResult):
+                        await _trace(
+                            trace_result,
+                            action,
+                            Profile.POST_HITL,
+                            "revalidate_post_hitl",
+                            InfrastructureOutcome.INFRASTRUCTURE_BLOCK,
+                        )
+                    await handle_infrastructure_block(
+                        action,
+                        sealed,
+                        [
+                            Violation(
+                                tier="defer_queue",
+                                code="DEFER_QUEUE_UNAVAILABLE",
+                                message=f"{cause_exc}; {exc}",
+                                kind=ViolationKind.INFRASTRUCTURE,
+                                infra_dependency="defer_queue",
+                                infra_error_code="defer_queue_unavailable",
+                            )
+                        ],
+                        [],
+                        {"approval_id": approval.approval_id},
+                    )
+                raise
             if result.barrier_outcome is not None:
                 span.set_attribute(
                     "toctou.barrier_outcome", result.barrier_outcome.value
@@ -1014,9 +1279,36 @@ class SymbolicGovernor:
         NARROW proposal is re-verified and no approval token is parked.
         Params are bound as in :meth:`validate_action`.
         """
-        params = await bind_server_inputs(
-            self._components.server_inputs, tool_name, params
-        )
+        try:
+            params = await bind_server_inputs(
+                self._components.server_inputs, tool_name, params
+            )
+        except ServerInputUnavailableError as exc:
+            with tracer.start_as_current_span("symbolic_governor.verify") as span:
+                span.set_attribute(OBSERVATION_TYPE, "span")
+                span.set_attribute(OBSERVATION_NAME, "governance_simulation")
+                span.set_attribute(SPAN_ATTR_GOVERNANCE_TOOL, tool_name)
+                violation = Violation(
+                    tier=exc.dependency,
+                    code=exc.failure_code,
+                    message=str(exc),
+                    kind=ViolationKind.INFRASTRUCTURE,
+                )
+                infra_decision = InfrastructureOutcome.INFRASTRUCTURE_BLOCK
+                span.set_attribute("cage.verdict", infra_decision.value)
+                span.set_attribute(
+                    "cage.governance.violation_codes",
+                    [f"{violation.tier}/{violation.code}"],
+                )
+                return {
+                    "decision": infra_decision,
+                    "violations": [violation],
+                    "tier_failures": [],
+                    "opa_results": None,
+                    "pending_payload": None,
+                    "ftra_boundary_result": None,
+                    "tier_violations": [violation],
+                }
         with tracer.start_as_current_span("symbolic_governor.verify") as span:
             span.set_attribute(OBSERVATION_TYPE, "span")
             span.set_attribute(OBSERVATION_NAME, "governance_simulation")
@@ -1170,12 +1462,13 @@ def _parse_barrier_snapshot(
     return None if value is None else BarrierPreview(value)
 
 
-def _approval_drift(detail: str) -> Violation:
+def _approval_drift(detail: str, *, quarantine_trigger: Any = None) -> Violation:
     return Violation(
         tier="kernel",
         code=APPROVAL_CONTEXT_DRIFT,
         kind=ViolationKind.HARD,
         message=f"[{APPROVAL_CONTEXT_DRIFT}] {detail}",
+        quarantine_trigger=quarantine_trigger,
     )
 
 
@@ -1185,14 +1478,7 @@ def _stage_coverage_kwargs(result: PipelineResult) -> dict[str, Any]:
     for stage_name, stage_outcome in result.stage_outcomes:
         if stage_outcome == "PASS":
             evaluated.append((stage_name, "PASS"))
-            continue
-        stage_v = [
-            v
-            for v in result.violations
-            if v.tier.lower() == stage_name.lower()
-            or (stage_name == "opa" and v.code.startswith("OPA_"))
-        ]
-        if stage_v and all(v.kind == ViolationKind.INFRASTRUCTURE for v in stage_v):
+        elif stage_name in result.infra_only_stages:
             evaluated.append((stage_name, "INFRASTRUCTURE"))
         else:
             evaluated.append((stage_name, stage_outcome))
@@ -1223,9 +1509,18 @@ async def _deny_drift(
         (v.message for v in result.violations if v.kind == ViolationKind.HARD),
         "phase-2 barriers refused",
     )
+    cause_quarantine = next(
+        (
+            v.quarantine_trigger
+            for v in result.violations
+            if v.kind == ViolationKind.HARD and v.quarantine_trigger is not None
+        ),
+        None,
+    )
     drift = _approval_drift(
         f"approved against barrier preview {approved.value}, but the committing "
-        f"run's barriers now refuse: {cause}"
+        f"run's barriers now refuse: {cause}",
+        quarantine_trigger=cause_quarantine,
     )
     await handle_deny(
         action,

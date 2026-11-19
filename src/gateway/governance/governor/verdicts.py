@@ -46,8 +46,22 @@ from src.gateway.governance.refusal_projection import (
     compute_refusal_params_hash,
     project_evaluated_params,
 )
+from src.gateway.governance.seams.quarantine import QuarantineTriggerReason
 from src.gateway.governance.warrant.reliance import RelianceRecord, reliance_evidence
 from src.gateway.server.workload_identity import current_client_identity
+
+#: Explicit kernel violation codes that warrant out-of-band workload quarantine
+#: when ``CAGE_ENABLE_AUTO_QUARANTINE=true`` (POAM-2026-233). Domain barrier
+#: tiers declare ``Violation.quarantine_trigger`` structurally; unmapped HARD
+#: refusals (e.g. OPA_DENY, parameter validation, or future FTRA/RECON codes)
+#: never inherit quarantine via string prefixes or catch-all defaults.
+_QUARANTINE_TRIGGER_BY_CODE: Mapping[str, QuarantineTriggerReason] = {
+    "FTRA_UNCONTAINABLE_TERMINAL": QuarantineTriggerReason.FTRA_UNCONTAINABLE_TERMINAL,
+    "RECONCILIATION_STATE_DRIFT": QuarantineTriggerReason.RECONCILIATION_STATE_DRIFT,
+    "RECONCILIATION_DISCREPANCY_FENCE": QuarantineTriggerReason.RECONCILIATION_STATE_DRIFT,
+    "SANDBOX_ESCAPE_ATTEMPT": QuarantineTriggerReason.SANDBOX_ESCAPE_ATTEMPT,
+    "CBF_BARRIER_VIOLATED": QuarantineTriggerReason.CRITICAL_CBF_BREACH,
+}
 
 logger = logging.getLogger(__name__)
 tracer = trace.get_tracer(__name__)
@@ -720,9 +734,7 @@ async def handle_defer(
     defer_reason = _reason_from_classification(classification_meta)
     defer_metadata = {
         "cbf_violation": any(
-            "CBF" in (v.tier.upper() if isinstance(v, Violation) else str(v).upper())
-            or "CBF" in (v.code.upper() if isinstance(v, Violation) else str(v).upper())
-            for v in violations
+            isinstance(v, Violation) and v.tier.lower() == "cbf" for v in violations
         ),
         "opa_decision": classification_meta.get("opa_decision"),
         "policy_ambiguous": classification_meta.get("policy_ambiguous", False),
@@ -889,25 +901,22 @@ async def handle_deny(
         in ("true", "1", "yes")
         and bool(verified_caller)
     )
-    if auto_quarantine and ordered and ordered[0].kind == ViolationKind.HARD:
+    trigger_reason = (
+        (
+            ordered[0].quarantine_trigger
+            or _QUARANTINE_TRIGGER_BY_CODE.get(ordered[0].code)
+        )
+        if auto_quarantine and ordered and ordered[0].kind == ViolationKind.HARD
+        else None
+    )
+    if trigger_reason is not None:
         import time as _time
 
         from src.gateway.governance.quarantine_actuator import (
             dispatch_quarantine,
             get_quarantine_redis,
         )
-        from src.gateway.governance.seams.quarantine import (
-            QuarantineDirective,
-            QuarantineTriggerReason,
-        )
-
-        lead_code = ordered[0].code
-        if lead_code.startswith("FTRA"):
-            trigger_reason = QuarantineTriggerReason.FTRA_UNCONTAINABLE_TERMINAL
-        elif lead_code.startswith("RECON"):
-            trigger_reason = QuarantineTriggerReason.RECONCILIATION_STATE_DRIFT
-        else:
-            trigger_reason = QuarantineTriggerReason.CRITICAL_CBF_BREACH
+        from src.gateway.governance.seams.quarantine import QuarantineDirective
 
         agent_svid = verified_caller
         thread_id = str(params.get("thread_id") or "default-thread")
@@ -973,13 +982,47 @@ async def handle_deny(
 INFRASTRUCTURE_BLOCK_EVENT_TYPE = "GOVERNANCE_INFRASTRUCTURE_BLOCK"
 
 
-def _resolve_infra_dependency(violation: Violation) -> tuple[str, str]:
-    """Return ``(dependency, error_code)`` for an infrastructure violation."""
+_INFRA_DEPENDENCY_BY_CODE: Mapping[str, tuple[str, str]] = {
+    "OPA_UNAVAILABLE": ("opa", "policy_engine_unavailable"),
+    "OPA_ERROR": ("opa", "policy_engine_unavailable"),
+    "OPA_UNKNOWN_VERDICT": ("opa", "policy_engine_unavailable"),
+    "DEFER_QUEUE_UNAVAILABLE": ("defer_queue", "defer_queue_unavailable"),
+    "EXECUTION_LEDGER_UNAVAILABLE": (
+        "execution_ledger",
+        "execution_ledger_unavailable",
+    ),
+    "SERVER_INPUT_UNAVAILABLE": ("server_inputs", "server_input_unavailable"),
+}
+
+_INFRA_DEPENDENCY_BY_TIER: Mapping[str, tuple[str, str]] = {
+    "opa": ("opa", "policy_engine_unavailable"),
+    "defer_queue": ("defer_queue", "defer_queue_unavailable"),
+    "execution_ledger": ("execution_ledger", "execution_ledger_unavailable"),
+    "server_inputs": ("server_inputs", "server_input_unavailable"),
+}
+
+
+def _resolve_infra_dependency(
+    violation: Violation,
+    classification_meta: Mapping[str, Any] | None = None,
+) -> tuple[str, str]:
+    """Return ``(dependency, error_code)`` structurally for an infrastructure violation."""
+    if violation.infra_dependency and violation.infra_error_code:
+        return violation.infra_dependency, violation.infra_error_code
     code = (violation.code or "").upper()
+    if code in _INFRA_DEPENDENCY_BY_CODE:
+        return _INFRA_DEPENDENCY_BY_CODE[code]
     tier = (violation.tier or "").lower()
-    if code.startswith("OPA_") or tier == "opa":
-        return "opa", "policy_engine_unavailable"
-    return (violation.tier or "governance"), "governance_dependency_unavailable"
+    if tier in _INFRA_DEPENDENCY_BY_TIER:
+        return _INFRA_DEPENDENCY_BY_TIER[tier]
+    explicit_error_code = (classification_meta or {}).get("infra_error_code")
+    if isinstance(explicit_error_code, str) and explicit_error_code:
+        return (
+            violation.infra_dependency or violation.tier or "server_inputs"
+        ), explicit_error_code
+    return (violation.infra_dependency or violation.tier or "governance"), (
+        violation.infra_error_code or "governance_dependency_unavailable"
+    )
 
 
 async def publish_infrastructure_block(
@@ -1052,7 +1095,10 @@ async def handle_infrastructure_block(
     del tier_failures, latency_ms, reliance
     ordered = sorted(violations, key=lambda v: v.kind != ViolationKind.INFRASTRUCTURE)
     lead = ordered[0]
-    dependency, error_code = _resolve_infra_dependency(lead)
+    dependency, error_code = _resolve_infra_dependency(lead, classification_meta)
+    public_meta = {
+        k: v for k, v in (classification_meta or {}).items() if k != "infra_error_code"
+    }
     ctrl_meta = _control_payload(lead)
     control_id = str(
         ctrl_meta.get("control_id")
@@ -1093,7 +1139,7 @@ async def handle_infrastructure_block(
         failure_code=lead.code,
         error_code=error_code,
         payload={
-            **(classification_meta or {}),
+            **public_meta,
             **ctrl_meta,
             "dependency": dependency,
             "failure_code": lead.code,

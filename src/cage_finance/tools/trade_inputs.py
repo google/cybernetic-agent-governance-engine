@@ -122,6 +122,7 @@ from src.cage_finance.tools.trader_binding import (
     TraderIdentityUnavailable,
     TraderRoleBindings,
 )
+from src.gateway.governance.contracts import ServerInputUnavailableError
 from src.gateway.governance.reconciliation.daemon import TTL_SECONDS
 from src.gateway.server.workload_identity import current_client_identity
 
@@ -150,6 +151,7 @@ class MarketQuote:
     #: Feed publication time of the quote (Unix epoch seconds).
     published_at: float
     source_id: str
+    source_verified: bool = True
 
 
 @dataclass(frozen=True)
@@ -170,6 +172,7 @@ class DailyVolume:
     #: When the feed computed the average (Unix epoch seconds).
     as_of: float
     source_id: str
+    source_verified: bool = True
 
 
 @dataclass(frozen=True)
@@ -181,6 +184,7 @@ class NavSnapshot:
     #: When the source computed ``current_nav`` (Unix epoch seconds).
     observed_at: float
     source_id: str
+    source_verified: bool = True
 
 
 @runtime_checkable
@@ -203,12 +207,28 @@ class TradeInputUnavailable(RuntimeError):
     """A server-side STPA input could not be measured or trusted."""
 
 
-def _verified(source_id: object) -> bool:
-    return (
-        isinstance(source_id, str)
-        and bool(source_id)
-        and not source_id.startswith("unverified")
-    )
+class TradeInputSourceUnavailable(TradeInputUnavailable):
+    """The authoritative feed or source could not be reached or timed out."""
+
+
+def _source_is_trusted(
+    reading: MarketQuote | DailyVolume | NavSnapshot, provider: object
+) -> bool:
+    """Validate source authenticity structurally without prefix denylisting.
+
+    Requires a non-empty ``source_id``, explicit ``source_verified is True``,
+    and exact ``source_id`` equality whenever ``provider`` declares a
+    non-empty ``source_id``.
+    """
+    source_id = getattr(reading, "source_id", None)
+    if not isinstance(source_id, str) or not source_id.strip():
+        return False
+    if getattr(reading, "source_verified", True) is not True:
+        return False
+    expected_source = getattr(provider, "source_id", None)
+    if isinstance(expected_source, str) and expected_source.strip():
+        return source_id == expected_source.strip()
+    return True
 
 
 async def measure_market_data_latency_ms(
@@ -240,14 +260,14 @@ async def fetch_verified_quote(
     try:
         quote = await asyncio.wait_for(feed.latest_quote(symbol), FETCH_TIMEOUT_S)
     except Exception as exc:
-        raise TradeInputUnavailable(
+        raise TradeInputSourceUnavailable(
             f"market-data fetch failed: {type(exc).__name__}: {exc}"
         ) from exc
     t_received = clock()
 
     if not isinstance(quote.symbol, str) or quote.symbol.upper() != symbol.upper():
         raise TradeInputUnavailable(f"quote is for {quote.symbol!r}, not {symbol!r}")
-    if not _verified(quote.source_id):
+    if not _source_is_trusted(quote, feed):
         raise TradeInputUnavailable(
             f"unverified market-data source {quote.source_id!r}"
         )
@@ -282,14 +302,14 @@ async def fetch_verified_daily_volume(
     try:
         vol = await asyncio.wait_for(feed.average_daily_volume(symbol), FETCH_TIMEOUT_S)
     except Exception as exc:
-        raise TradeInputUnavailable(
+        raise TradeInputSourceUnavailable(
             f"daily-volume fetch failed: {type(exc).__name__}: {exc}"
         ) from exc
     if not isinstance(vol.symbol, str) or vol.symbol.upper() != symbol.upper():
         raise TradeInputUnavailable(
             f"daily volume is for {vol.symbol!r}, not {symbol!r}"
         )
-    if not _verified(vol.source_id):
+    if not _source_is_trusted(vol, feed):
         raise TradeInputUnavailable(f"unverified daily-volume source {vol.source_id!r}")
     try:
         shares = float(vol.shares)
@@ -348,10 +368,10 @@ async def fetch_verified_nav(
     try:
         snap = await asyncio.wait_for(source.fetch_nav(), FETCH_TIMEOUT_S)
     except Exception as exc:
-        raise TradeInputUnavailable(
+        raise TradeInputSourceUnavailable(
             f"NAV fetch failed: {type(exc).__name__}: {exc}"
         ) from exc
-    if not _verified(snap.source_id):
+    if not _source_is_trusted(snap, source):
         raise TradeInputUnavailable(f"unverified NAV source {snap.source_id!r}")
     try:
         open_nav = float(snap.open_nav)
@@ -422,9 +442,15 @@ async def _resolve_market(
     """Add ``latency_ms`` / ``order_size`` (one quote) and ``daily_vol``."""
     try:
         quote = await fetch_verified_quote(feed, symbol)
+    except TradeInputSourceUnavailable as exc:
+        raise ServerInputUnavailableError(
+            f"market-data quote source unavailable for {symbol!r}: {exc}",
+            dependency="market_data",
+            failure_code="MARKET_DATA_UNAVAILABLE",
+        ) from exc
     except TradeInputUnavailable as exc:
         logger.warning(
-            "trade inputs: quote unavailable (UCA-2 / UCA-6 will refuse): %s", exc
+            "trade inputs: quote invalid (UCA-2 / UCA-6 will refuse): %s", exc
         )
     else:
         inputs["latency_ms"] = quote.latency_ms
@@ -436,10 +462,14 @@ async def _resolve_market(
             )
     try:
         inputs["daily_vol"] = await fetch_verified_daily_volume(feed, symbol)
+    except TradeInputSourceUnavailable as exc:
+        raise ServerInputUnavailableError(
+            f"market-data daily-volume source unavailable for {symbol!r}: {exc}",
+            dependency="market_data",
+            failure_code="MARKET_DATA_UNAVAILABLE",
+        ) from exc
     except TradeInputUnavailable as exc:
-        logger.warning(
-            "trade inputs: daily_vol unavailable (UCA-6 will refuse): %s", exc
-        )
+        logger.warning("trade inputs: daily_vol invalid (UCA-6 will refuse): %s", exc)
 
 
 @dataclass(frozen=True)
@@ -467,23 +497,30 @@ class ServerTradeInputs:
         """
         inputs: dict[str, float] = {}
         if self.market_feed is None:
-            logger.warning(
-                "trade inputs: no market-data feed assembled "
-                "(UCA-2 / UCA-6 will refuse)"
+            raise ServerInputUnavailableError(
+                f"no market-data feed assembled for {symbol!r}",
+                dependency="market_data",
+                failure_code="MARKET_DATA_UNAVAILABLE",
             )
-        else:
-            await _resolve_market(self.market_feed, symbol, amount, inputs)
+        await _resolve_market(self.market_feed, symbol, amount, inputs)
         refusing = "UCA-5 / UCA-13" if side == "sell" else "UCA-5"
         if self.nav_source is None:
-            logger.warning(
-                "trade inputs: no NAV source assembled (%s will refuse)", refusing
+            raise ServerInputUnavailableError(
+                "no portfolio NAV source assembled",
+                dependency="portfolio_nav",
+                failure_code="PORTFOLIO_NAV_UNAVAILABLE",
             )
-            return inputs
         try:
             nav = await fetch_verified_nav(self.nav_source)
+        except TradeInputSourceUnavailable as exc:
+            raise ServerInputUnavailableError(
+                f"portfolio NAV source unavailable: {exc}",
+                dependency="portfolio_nav",
+                failure_code="PORTFOLIO_NAV_UNAVAILABLE",
+            ) from exc
         except TradeInputUnavailable as exc:
             logger.warning(
-                "trade inputs: NAV unavailable (%s will refuse): %s", refusing, exc
+                "trade inputs: NAV invalid (%s will refuse): %s", refusing, exc
             )
             return inputs
         inputs["drawdown"] = daily_drawdown_pct(nav)
@@ -570,6 +607,12 @@ class TradeInputResolver:
                 exc,
             )
             return {}
+        except Exception as exc:
+            raise ServerInputUnavailableError(
+                f"trader identity binding lookup failed: {type(exc).__name__}: {exc}",
+                dependency="trader_identity",
+                failure_code="TRADER_IDENTITY_UNAVAILABLE",
+            ) from exc
 
 
 __all__ = [
@@ -586,6 +629,7 @@ __all__ = [
     "PortfolioNavSource",
     "ServerTradeInputs",
     "TradeInputResolver",
+    "TradeInputSourceUnavailable",
     "TradeInputUnavailable",
     "VerifiedQuote",
     "daily_drawdown_pct",

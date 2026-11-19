@@ -111,6 +111,7 @@ class FtraStage(Stage):
 
                 bypassed_ftra_node = (
                     detect_bypass
+                    and registry_state is not RegistryState.UNAVAILABLE
                     and classification == TerminalClassification.IRREVERSIBLE_TERMINAL
                 )
 
@@ -152,9 +153,10 @@ class FtraStage(Stage):
                     )
 
                 span.set_attribute("cage.ftra.classification", result.classification)
-                span.set_attribute(
-                    "cage.ftra.irreversibility_score", result.irreversibility_score
-                )
+                if result.irreversibility_score is not None:
+                    span.set_attribute(
+                        "cage.ftra.irreversibility_score", result.irreversibility_score
+                    )
                 span.set_attribute("cage.ftra.requires_hitl", result.requires_hitl)
                 span.set_attribute("cage.ftra.registry_state", registry_state.value)
                 span.set_attribute("cage.ftra.auto_cleared", result.auto_cleared)
@@ -174,8 +176,8 @@ class FtraStage(Stage):
 
             except Exception as exc:
                 logger.error(
-                    "⛔ FTRA Boundary Check failed (%s) — failing closed to "
-                    "IRREVERSIBLE_TERMINAL for action '%s'.",
+                    "⛔ FTRA Boundary Check failed (%s) — blocking fail-closed "
+                    "on infrastructure unavailability for action '%s'.",
                     exc,
                     tool_name,
                 )
@@ -190,18 +192,23 @@ class FtraStage(Stage):
 
                 return FtraBoundaryResult(
                     requires_hitl=True,
-                    irreversibility_score=1.0,
-                    classification=TerminalClassification.IRREVERSIBLE_TERMINAL.value,
+                    irreversibility_score=None,
+                    classification="UNAVAILABLE",
                     terminal_match=None,
                     violations=[
                         Violation(
                             tier="ftra",
                             code="FTRA_ERROR",
-                            message=f"FTRA Boundary Check: Error classifying action '{tool_name}' — failing closed to IRREVERSIBLE_TERMINAL. Error: {exc}",
-                            kind=ViolationKind.HARD,
+                            message=(
+                                f"FTRA Boundary Check: Error classifying action "
+                                f"'{tool_name}' — boundary check unavailable "
+                                f"({type(exc).__name__}: {exc})."
+                            ),
+                            kind=ViolationKind.INFRASTRUCTURE,
                         )
                     ],
-                    bypassed_ftra_node=True,
+                    bypassed_ftra_node=False,
+                    registry_state=RegistryState.UNAVAILABLE,
                 )
 
 

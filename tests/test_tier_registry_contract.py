@@ -376,7 +376,7 @@ async def test_unknown_tier_result_must_block_execution(classification_engine) -
     assert violations[0].code == "TIER_EXCEPTION"
     from src.gateway.governance.contracts import ViolationKind
 
-    assert violations[0].kind == ViolationKind.HARD
+    assert violations[0].kind == ViolationKind.INFRASTRUCTURE
 
 
 @pytest.mark.asyncio
@@ -424,7 +424,7 @@ async def test_tier_timeout_must_block_execution(classification_engine) -> None:
     assert "TimeoutError" in violations[0].message
     from src.gateway.governance.contracts import ViolationKind
 
-    assert violations[0].kind == ViolationKind.HARD
+    assert violations[0].kind == ViolationKind.INFRASTRUCTURE
 
 
 # ---------------------------------------------------------------------------

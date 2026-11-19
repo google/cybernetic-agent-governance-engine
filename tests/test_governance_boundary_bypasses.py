@@ -802,7 +802,8 @@ class TestPoam211OnlinePreviewShadowStateIsolation:
                 "execute_trade", dict(spoofed_params)
             )
             assert len(cbf_violations) == 1
-            assert cbf_violations[0].code == "CBF_BARRIER_VIOLATED"
+            assert cbf_violations[0].code == "CBF_RECONCILIATION_UNAVAILABLE"
+            assert cbf_violations[0].kind is ViolationKind.INFRASTRUCTURE
             fiscal_violations = await FiscalTierPlugin(fiscal_guard).evaluate(
                 "execute_trade", dict(spoofed_params)
             )

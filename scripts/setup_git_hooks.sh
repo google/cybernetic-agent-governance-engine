@@ -90,6 +90,7 @@ gate_scripts=(
   scripts/check_conformance_sync.py
   scripts/check_client_sdk_sync.py
   scripts/check_domain_literals.py
+  scripts/check_violation_quarantine_ledger.py
   scripts/check_telemetry_literals.py
   scripts/check_vendor_brands.py
   scripts/check_project_id_hygiene.py

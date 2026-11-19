@@ -28,7 +28,7 @@ import pytest
 
 from src.cage_finance.tiers.cbf_tier import CBFTierPlugin
 from src.gateway.governance.governor.governor import GovernanceError
-from tests.fixtures.approval import granted_approval
+from tests.fixtures.approval import SpendCounter, granted_approval
 from tests.fixtures.governor import make_governor
 
 # Test markers per AGENTS.md
@@ -68,29 +68,41 @@ class TestC1PostHITLRevalidationFailClosed:
 
     @pytest.mark.asyncio
     async def test_revalidate_fails_on_reconciliation_unavailable(self, mock_governor):
-        """C1: Assert DENY + violation when CBF returns (False, 'RECONCILIATION_UNAVAILABLE')."""
-        # Setup: CBF refuses with RECONCILIATION_UNAVAILABLE
-        mock_governor.components.safety_filter.atomic_verify_and_commit = AsyncMock(
-            return_value=(False, "RECONCILIATION_UNAVAILABLE: Redis unavailable", 0.0)
+        """C1 + FA-2: CBF RECONCILIATION_UNAVAILABLE blocks fail-closed via GovernanceInfrastructureError without burning approval."""
+        from src.gateway.governance.governor.errors import (
+            GovernanceInfrastructureError,
         )
-        # OPA approves (to isolate CBF failure)
+        from src.gateway.governance.safety.barrier_tier import (
+            BarrierCommitResult,
+            BarrierFailureKind,
+        )
+
+        mock_governor.components.safety_filter.commit_barrier_checked = AsyncMock(
+            return_value=BarrierCommitResult(
+                committed=False,
+                message="RECONCILIATION_UNAVAILABLE: Redis unavailable",
+                magnitude=0.0,
+                failure_kind=BarrierFailureKind.RECONCILIATION_UNAVAILABLE,
+            )
+        )
         mock_governor.components.opa.evaluate_policy = AsyncMock(
             return_value={"allow": "ALLOW"}
         )
+        spend = SpendCounter()
+        approval = granted_approval(counter=spend)
 
-        # Execute: revalidate_post_hitl should raise GovernanceError
-        with pytest.raises(GovernanceError) as exc_info:
+        with pytest.raises(GovernanceInfrastructureError) as exc_info:
             await mock_governor.revalidate_post_hitl(
                 action="execute_trade",
                 params={"symbol": "AAPL", "amount": 100},
-                approval=granted_approval(),
+                approval=approval,
             )
 
-        # Assert: Violation message contains the refusal reason
         assert "RECONCILIATION_UNAVAILABLE" in str(exc_info.value)
-        assert exc_info.value.receipt is not None
-        # The receipt names the tier that actually refused, not a generic source.
-        assert exc_info.value.receipt.violated_tier == "cbf"
+        assert exc_info.value.receipt is None
+        assert exc_info.value.dependency == "cbf"
+        assert exc_info.value.failure_code == "CBF_RECONCILIATION_UNAVAILABLE"
+        assert spend.calls == 0
 
     @pytest.mark.asyncio
     async def test_revalidate_fails_on_fence_regression(self, mock_governor):

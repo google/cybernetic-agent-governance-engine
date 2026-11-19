@@ -45,6 +45,7 @@ from src.gateway.governance.seams.quarantine import (
     QuarantineDirective,
     QuarantineTriggerReason,
 )
+from src.gateway.server.workload_identity import _serving
 from src.integrations.actuator_03.adapter import Actuator03Adapter
 from src.integrations.actuator_03.constants import QUARANTINE_RECEIPT_DOMAIN_TAG
 
@@ -288,20 +289,19 @@ class TestLayer1QuarantineBackends:
             lambda: sink,
         )
         monkeypatch.setenv("CAGE_QUARANTINE_ACTUATOR", "cage_svid")
+        monkeypatch.setenv("CAGE_ENABLE_AUTO_QUARANTINE", "true")
 
         svid = "spiffe://cluster.local/ns/cage/sa/breach-agent"
-        with pytest.raises(GovernanceError) as exc_info:
+        with _serving(svid), pytest.raises(GovernanceError) as exc_info:
             await handle_deny(
                 action="transfer_funds",
                 params={
-                    "_caller_principal": svid,
                     "thread_id": "thread-breach-99",
-                    "_quarantine_on_breach": True,
                 },
                 violations=[
                     Violation(
                         tier="CBF",
-                        code="CBF_BARRIER_VIOLATION",
+                        code="CBF_BARRIER_VIOLATED",
                         message="Barrier breached",
                         kind=ViolationKind.HARD,
                     )

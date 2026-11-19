@@ -41,11 +41,13 @@ async def test_ftra_stage_fail_closed_on_error():
 
         assert len(violations) == 1
         assert violations[0].code == "FTRA_ERROR"
-        assert violations[0].kind == ViolationKind.HARD
+        assert violations[0].kind == ViolationKind.INFRASTRUCTURE
         assert "Boom" in violations[0].message
         assert out.ftra is not None
         assert out.ftra.requires_hitl is True
-        assert out.ftra.classification == "IRREVERSIBLE_TERMINAL"
+        assert out.ftra.classification == "UNAVAILABLE"
+        assert out.ftra.irreversibility_score is None
+        assert out.ftra.bypassed_ftra_node is False
 
 
 @pytest.mark.asyncio
@@ -64,6 +66,9 @@ async def test_ftra_stage_fail_closed_when_classify_raises():
     out = await stage.run(ctx)
 
     assert [(v.code, v.kind) for v in out.violations] == [
-        ("FTRA_ERROR", ViolationKind.HARD)
+        ("FTRA_ERROR", ViolationKind.INFRASTRUCTURE)
     ]
     assert out.ftra is not None and out.ftra.auto_cleared is False
+    assert out.ftra.classification == "UNAVAILABLE"
+    assert out.ftra.irreversibility_score is None
+    assert out.ftra.bypassed_ftra_node is False

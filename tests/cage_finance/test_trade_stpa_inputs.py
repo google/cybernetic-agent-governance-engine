@@ -59,7 +59,11 @@ from src.gateway.governance.schemas.thresholds import load_and_validate_threshol
 from src.gateway.governance.seams.ground_truth import FaultMode
 from tests.fixtures.trade_inputs import trade_governor
 
-pytestmark = [pytest.mark.unit, pytest.mark.local]
+pytestmark = [
+    pytest.mark.unit,
+    pytest.mark.local,
+    pytest.mark.usefixtures("connected_evidence_sink"),
+]
 
 _UCA_2 = "STPA_UCA_UCA_2"
 _UCA_5 = "STPA_UCA_UCA_5"
@@ -206,21 +210,31 @@ async def test_regions_differ_at_the_same_inputs(
 
 
 @pytest.mark.asyncio
-async def test_missing_market_feed_is_refused_by_uca2(
+async def test_missing_market_feed_blocks_on_infrastructure(
     region: str, stpa_gateway: list[dict[str, Any]]
 ) -> None:
-    result = await _buy(_inputs(market_feed=None))
-    assert f"{_UCA_2}: Missing required param `latency_ms`." in result
-    assert "latency_ms" not in stpa_gateway[-1]
+    from src.gateway.governance.governor.errors import GovernanceInfrastructureError
+
+    with pytest.raises(GovernanceInfrastructureError) as exc_info:
+        await _buy(_inputs(market_feed=None))
+    assert exc_info.value.dependency == "market_data"
+    assert exc_info.value.failure_code == "MARKET_DATA_UNAVAILABLE"
+    assert exc_info.value.error_code == "server_input_unavailable"
+    assert stpa_gateway == []
 
 
 @pytest.mark.asyncio
-async def test_missing_nav_source_is_refused_by_uca5(
+async def test_missing_nav_source_blocks_on_infrastructure(
     region: str, stpa_gateway: list[dict[str, Any]]
 ) -> None:
-    result = await _buy(_inputs(nav_source=None))
-    assert f"{_UCA_5}: Missing required param `drawdown`." in result
-    assert "drawdown" not in stpa_gateway[-1]
+    from src.gateway.governance.governor.errors import GovernanceInfrastructureError
+
+    with pytest.raises(GovernanceInfrastructureError) as exc_info:
+        await _buy(_inputs(nav_source=None))
+    assert exc_info.value.dependency == "portfolio_nav"
+    assert exc_info.value.failure_code == "PORTFOLIO_NAV_UNAVAILABLE"
+    assert exc_info.value.error_code == "server_input_unavailable"
+    assert stpa_gateway == []
 
 
 @pytest.mark.asyncio
@@ -229,6 +243,26 @@ async def test_missing_nav_source_is_refused_by_uca5(
     [
         FaultMode.TIMEOUT,
         FaultMode.CONNECTION_ERROR,
+    ],
+)
+async def test_unavailable_market_feed_blocks_on_infrastructure(
+    region: str, stpa_gateway: list[dict[str, Any]], fault: FaultMode
+) -> None:
+    from src.gateway.governance.governor.errors import GovernanceInfrastructureError
+
+    feed = _feed(20.0)
+    feed.inject_fault(fault)
+    with pytest.raises(GovernanceInfrastructureError) as exc_info:
+        await _buy(_inputs(market_feed=feed))
+    assert exc_info.value.dependency == "market_data"
+    assert exc_info.value.failure_code == "MARKET_DATA_UNAVAILABLE"
+    assert stpa_gateway == []
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "fault",
+    [
         FaultMode.FUTURE_TIMESTAMP,
         FaultMode.NAN_VALUE,
         FaultMode.NEGATIVE_VALUE,
@@ -263,6 +297,26 @@ async def test_stale_quote_is_measured_and_refused_by_uca2(
     [
         FaultMode.TIMEOUT,
         FaultMode.CONNECTION_ERROR,
+    ],
+)
+async def test_unavailable_nav_source_blocks_on_infrastructure(
+    region: str, stpa_gateway: list[dict[str, Any]], fault: FaultMode
+) -> None:
+    from src.gateway.governance.governor.errors import GovernanceInfrastructureError
+
+    nav = SimulatedPortfolioNavSource()
+    nav.inject_fault(fault)
+    with pytest.raises(GovernanceInfrastructureError) as exc_info:
+        await _buy(_inputs(nav_source=nav))
+    assert exc_info.value.dependency == "portfolio_nav"
+    assert exc_info.value.failure_code == "PORTFOLIO_NAV_UNAVAILABLE"
+    assert stpa_gateway == []
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "fault",
+    [
         FaultMode.STALE_TIMESTAMP,
         FaultMode.FUTURE_TIMESTAMP,
         FaultMode.NAN_VALUE,

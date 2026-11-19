@@ -300,14 +300,39 @@ async def enforce_approved_governance(
 
     try:
         async with AsyncExitStack() as stack:
+            from src.gateway.governance.contracts import Violation, ViolationKind
+            from src.gateway.governance.governor.errors import (
+                ApprovalSpendUnavailableError,
+            )
+            from src.gateway.governance.governor.verdicts import (
+                handle_infrastructure_block,
+            )
+
             try:
                 queue = await stack.enter_async_context(open_defer_queue())
                 token = await queue.redeemable_approval(
                     deferred_id, action=tool_name, covers=_covers
                 )
-            except Exception as exc:  # queue unreachable: no approval can be proven
+            except Exception as exc:  # queue unreachable: block 503, preserve approval
                 logger.error("DeferQueue unavailable checking %s: %s", deferred_id, exc)
-                token = None
+                await handle_infrastructure_block(
+                    tool_name,
+                    params,
+                    [
+                        Violation(
+                            tier="defer_queue",
+                            code="DEFER_QUEUE_UNAVAILABLE",
+                            message=(
+                                f"DeferQueue unavailable checking approval "
+                                f"{deferred_id}: {type(exc).__name__}: {exc}"
+                            ),
+                            kind=ViolationKind.INFRASTRUCTURE,
+                            infra_dependency="defer_queue",
+                            infra_error_code="defer_queue_unavailable",
+                        )
+                    ],
+                    [],
+                )
             if token is None:
                 await _refuse_unredeemable()
 
@@ -316,11 +341,16 @@ async def enforce_approved_governance(
                     spent = await queue.consume_approval(
                         deferred_id, action=tool_name, covers=_covers
                     )
-                except Exception as exc:  # unprovable spend never authorises
+                except (
+                    Exception
+                ) as exc:  # unprovable spend rolls back phase-2 & blocks 503
                     logger.error(
                         "DeferQueue unavailable spending %s: %s", deferred_id, exc
                     )
-                    return False
+                    raise ApprovalSpendUnavailableError(
+                        f"DeferQueue unavailable spending approval "
+                        f"{deferred_id}: {type(exc).__name__}: {exc}"
+                    ) from exc
                 return spent is not None
 
             approval = PostHitlApproval(

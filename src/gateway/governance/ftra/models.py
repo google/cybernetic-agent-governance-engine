@@ -351,8 +351,9 @@ class FtraBoundaryResult:
     """True if the action is classified as IRREVERSIBLE_TERMINAL and requires
     Human-In-The-Loop review before execution."""
 
-    irreversibility_score: float
-    """Numeric score [0.0, 1.0] representing irreversibility:
+    irreversibility_score: float | None
+    """Numeric score [0.0, 1.0] representing irreversibility, or ``None`` when
+    the FTRA boundary check or terminal registry is unavailable:
        - 1.0: IRREVERSIBLE_TERMINAL (highest risk)
        - 0.8: EXTERNALLY_REVERSIBLE (requires external action/time window)
        - 0.5: REVERSIBLE (can be undone)
@@ -416,7 +417,7 @@ class FtraBoundaryResult:
         REGISTERED, ext-reversible  ``FTRA_REGISTERED_EXTERNALLY_REVERSIBLE``  HITL
         UNREGISTERED                ``FTRA_UNREGISTERED_ACTION``               HITL
         INVALID_ENTRY               ``FTRA_REGISTRY_ENTRY_INVALID``            HITL
-        UNAVAILABLE                 ``FTRA_REGISTRY_UNAVAILABLE``              HARD
+        UNAVAILABLE                 ``FTRA_REGISTRY_UNAVAILABLE``              INFRASTRUCTURE
         ==========================  =========================================  ======
 
         A REGISTERED terminal with a ``clear_reason`` (computed by
@@ -439,6 +440,25 @@ class FtraBoundaryResult:
                 f"{action_name!r} is {registry_state.value}/{classification.value}"
             )
 
+        auto_cleared = clear_reason is not None
+        violation = (
+            None
+            if auto_cleared
+            else _provenance_violation(classification, action_name, registry_state)
+        )
+        if registry_state is RegistryState.UNAVAILABLE:
+            return cls(
+                requires_hitl=True,
+                irreversibility_score=None,
+                classification="UNAVAILABLE",
+                terminal_match=None,
+                violations=[violation] if violation is not None else [],
+                bypassed_ftra_node=False,
+                registry_state=registry_state,
+                auto_cleared=False,
+                clear_reason=None,
+            )
+
         score_map = {
             TerminalClassification.IRREVERSIBLE_TERMINAL: 1.0,
             TerminalClassification.EXTERNALLY_REVERSIBLE: 0.8,
@@ -446,12 +466,6 @@ class FtraBoundaryResult:
             TerminalClassification.READ_ONLY: 0.0,
         }
         score = score_map.get(classification, 1.0)  # Fail-closed: unknown = 1.0
-        auto_cleared = clear_reason is not None
-        violation = (
-            None
-            if auto_cleared
-            else _provenance_violation(classification, action_name, registry_state)
-        )
 
         return cls(
             requires_hitl=violation is not None,
@@ -480,9 +494,9 @@ def _provenance_violation(
             code=FTRA_REGISTRY_UNAVAILABLE,
             message=(
                 f"FTRA Boundary Check: the terminal registry could not be loaded; "
-                f"refusing '{action_name}' (fail-closed)."
+                f"blocking '{action_name}' (fail-closed)."
             ),
-            kind=ViolationKind.HARD,
+            kind=ViolationKind.INFRASTRUCTURE,
         )
     if registry_state is RegistryState.UNREGISTERED:
         return Violation(

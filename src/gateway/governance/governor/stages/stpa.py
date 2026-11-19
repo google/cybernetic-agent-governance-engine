@@ -63,7 +63,7 @@ class StpaStage(Stage):
                         tier="stpa",
                         code="STPA_ERROR",
                         message=f"STPA Validator Failed: {exc}",
-                        kind=ViolationKind.HARD,
+                        kind=ViolationKind.INFRASTRUCTURE,
                     )
                 ]
 

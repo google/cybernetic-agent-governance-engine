@@ -586,6 +586,10 @@ class TestServerBoundPolicyPrecheckEndpoint:
         and ALLOW on $1,000; (b) compromised caller spoofing trader_role='senior',
         approval_token, or semantic_score is overridden by bind_server_inputs()."""
         from config.settings import Config
+        from src.cage_finance.simulated_feeds import (
+            SimulatedMarketQuoteFeed,
+            SimulatedPortfolioNavSource,
+        )
         from src.cage_finance.tools.trade_inputs import (
             ServerTradeInputs,
             TradeInputResolver,
@@ -602,7 +606,12 @@ class TestServerBoundPolicyPrecheckEndpoint:
         resolvers = {
             **kernel_server_inputs(),
             "execute_trade": TradeInputResolver(
-                inputs=ServerTradeInputs(market_feed=None, nav_source=None),
+                inputs=ServerTradeInputs(
+                    market_feed=SimulatedMarketQuoteFeed(
+                        seed=7, publication_delay_ms=(10.0, 10.0)
+                    ),
+                    nav_source=SimulatedPortfolioNavSource(drawdown_pct=0.5),
+                ),
                 traders=TraderRoleBindings(),
             ),
         }

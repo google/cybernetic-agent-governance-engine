@@ -39,6 +39,12 @@ from typing import Any
 from src.gateway.governance.constants import ControlRegistry, GovernanceControl
 from src.gateway.governance.contracts import InvariantModel
 from src.gateway.governance.env_posture import is_enforcing, resolve_posture
+from src.gateway.governance.governor.errors import GovernanceError
+from src.gateway.governance.safety.barrier_tier import (
+    BarrierCheckResult,
+    BarrierCommitResult,
+    BarrierFailureKind,
+)
 from src.gateway.governance.safety.debit_ledger import (
     DEBITS_BY_TIME_KEY,
     DEBITS_KEY,
@@ -292,6 +298,29 @@ class GroundTruthUnavailableError(RuntimeError):
     def __init__(self, message: str, cause: Exception | None = None):
         super().__init__(message)
         self.cause = cause
+
+
+class GroundTruthIntegrityError(GroundTruthUnavailableError):
+    """Raised when ground-truth cryptographic/KMS verification fails in strict mode.
+
+    Subclasses :class:`GroundTruthUnavailableError` for compatibility with
+    fail-closed callers while allowing structured classification as
+    :attr:`BarrierFailureKind.INTEGRITY_VIOLATION` without message parsing.
+    """
+
+
+class GroundTruthRejectedError(GovernanceError):
+    """Raised by ``_resolve_ground_truth_balance()`` with a typed ``BarrierFailureKind``."""
+
+    def __init__(
+        self,
+        message: str,
+        *,
+        failure_kind: BarrierFailureKind,
+        payload: dict[str, Any] | None = None,
+    ) -> None:
+        super().__init__(message, payload=payload)
+        self.failure_kind = failure_kind
 
 
 class CBFInitializationError(RuntimeError):
@@ -1328,7 +1357,7 @@ return {1, status, tostring(restored), new_epoch, tostring(current), tostring(re
                             )
                         )
                         if strict_mode:
-                            raise GroundTruthUnavailableError(
+                            raise GroundTruthIntegrityError(
                                 f"Cannot verify balance — transaction rejected. "
                                 f"KMS verification failed: {type(sig_exc).__name__}",
                                 cause=sig_exc,
@@ -1544,6 +1573,7 @@ return {1, status, tostring(restored), new_epoch, tostring(current), tostring(re
         ) or (_is_cbf_strict_mode() and source == "self_reported"):
             if source == "epoch_regression":
                 fallback_reason = state.get("epoch_reason") or "epoch regression"
+                failure_kind = BarrierFailureKind.RECONCILIATION_DRIFT
             elif source in (
                 "sequence_regression",
                 "signature_invalid",
@@ -1552,6 +1582,7 @@ return {1, status, tostring(restored), new_epoch, tostring(current), tostring(re
                 fallback_reason = (
                     state.get("reason") or f"reconciled snapshot rejected ({source})"
                 )
+                failure_kind = BarrierFailureKind.INTEGRITY_VIOLATION
             else:
                 active_fence = await self._read_active_reconciliation_fence()
                 if active_fence is not None:
@@ -1560,12 +1591,14 @@ return {1, status, tostring(restored), new_epoch, tostring(current), tostring(re
                         "reconciliation unavailable; "
                         f"RECONCILIATION_FENCE_ACTIVE (fence_id={f_id}, fence_epoch={f_epoch})"
                     )
+                    failure_kind = BarrierFailureKind.RECONCILIATION_DRIFT
                 else:
                     fallback_reason = "reconciliation unavailable"
-            from src.gateway.governance.governor.governor import GovernanceError
+                    failure_kind = BarrierFailureKind.RECONCILIATION_UNAVAILABLE
 
-            raise GovernanceError(
+            raise GroundTruthRejectedError(
                 f"CBF strict mode: {fallback_reason}",
+                failure_kind=failure_kind,
                 payload={"audit_code": "CBF_STRICT_RECONCILIATION_UNAVAILABLE"},
             )
 
@@ -1616,15 +1649,36 @@ return {1, status, tostring(restored), new_epoch, tostring(current), tostring(re
         safe = cost <= 0 or not (h_next < required_h_next or h_next < 0)
         return safe, h_next, required_h_next
 
-    async def verify_action(self, action_name: str, payload: dict[str, Any]) -> str:
-        """Side-effect-free preview: would ``action_name`` be admitted now?
+    async def check_barrier(
+        self, action_name: str, payload: dict[str, Any]
+    ) -> BarrierCheckResult:
+        """Side-effect-free structured preview returning :class:`BarrierCheckResult`.
 
-        Reads the barrier state and returns ``"SAFE"`` or the refusal text;
-        it never debits anything, in Redis or in this process, so any number
-        of previews leave the engine exactly as they found it. Only
-        :meth:`atomic_verify_and_commit` (``commit_barrier``) spends headroom.
+        Classifies unavailability, integrity rejections, discrepancy fences, and
+        barrier breaches structurally via :class:`BarrierFailureKind` so callers
+        never parse human-readable refusal text.
         """
-        state = await self._read_cbf_state_atomic()
+        try:
+            state = await self._read_cbf_state_atomic()
+        except GroundTruthIntegrityError as gt_exc:
+            _mrm_meta = ControlRegistry().get_mapping(
+                GovernanceControl.TRADITIONAL_MRM_VALIDATION
+            )
+            return BarrierCheckResult(
+                safe=False,
+                message=(
+                    f"[{GovernanceControl.TRADITIONAL_MRM_VALIDATION.value}] "
+                    f"{_mrm_meta['primary_framework']} Violation: "
+                    f"Ground truth verification failed (signature_invalid): {gt_exc}. Fail-closed."
+                ),
+                failure_kind=BarrierFailureKind.INTEGRITY_VIOLATION,
+            )
+        except GroundTruthUnavailableError as gt_exc:
+            return BarrierCheckResult(
+                safe=False,
+                message=f"RECONCILIATION_UNAVAILABLE: {gt_exc}",
+                failure_kind=BarrierFailureKind.RECONCILIATION_UNAVAILABLE,
+            )
         balance_source: str = str(state.get("source", "unknown"))
 
         if (
@@ -1653,20 +1707,37 @@ return {1, status, tostring(restored), new_epoch, tostring(current), tostring(re
                 logger.warning(
                     "CBF check rejected: epoch regression — %s", epoch_reason
                 )
-                return result
+                return BarrierCheckResult(
+                    safe=False,
+                    message=result,
+                    failure_kind=BarrierFailureKind.RECONCILIATION_DRIFT,
+                )
             reason = state.get("reason")
-            if not reason:
-                if balance_source == "self_reported":
-                    active_fence = await self._read_active_reconciliation_fence()
-                    if active_fence is not None:
-                        f_epoch, f_id = active_fence
+            if balance_source in (
+                "sequence_regression",
+                "signature_invalid",
+                "unsigned_production_snapshot",
+            ):
+                failure_kind = BarrierFailureKind.INTEGRITY_VIOLATION
+                if not reason:
+                    reason = f"reconciled state rejected ({balance_source})"
+            elif balance_source == "self_reported":
+                active_fence = await self._read_active_reconciliation_fence()
+                if active_fence is not None:
+                    f_epoch, f_id = active_fence
+                    failure_kind = BarrierFailureKind.RECONCILIATION_DRIFT
+                    if not reason:
                         reason = (
                             "unverified self_reported balance in strict mode; "
                             f"RECONCILIATION_FENCE_ACTIVE (fence_id={f_id}, fence_epoch={f_epoch})"
                         )
-                    else:
-                        reason = "unverified self_reported balance in strict mode"
                 else:
+                    failure_kind = BarrierFailureKind.RECONCILIATION_UNAVAILABLE
+                    if not reason:
+                        reason = "unverified self_reported balance in strict mode"
+            else:
+                failure_kind = BarrierFailureKind.RECONCILIATION_UNAVAILABLE
+                if not reason:
                     reason = f"reconciled state rejected ({balance_source})"
             result = (
                 f"[{GovernanceControl.TRADITIONAL_MRM_VALIDATION.value}] "
@@ -1674,7 +1745,11 @@ return {1, status, tostring(restored), new_epoch, tostring(current), tostring(re
                 f"Ground truth verification failed ({balance_source}): {reason}. Fail-closed."
             )
             logger.warning("CBF check rejected: %s — %s", balance_source, reason)
-            return result
+            return BarrierCheckResult(
+                safe=False,
+                message=result,
+                failure_kind=failure_kind,
+            )
 
         current_state = float(state["current_cash"])
         fence_epoch = int(state.get("fence_epoch", 0))
@@ -1682,12 +1757,31 @@ return {1, status, tostring(restored), new_epoch, tostring(current), tostring(re
         if self.tracer:
             with self.tracer.start_as_current_span("safety.cbf_check") as span:
                 span.set_attribute("cage.cbf.fence_epoch", fence_epoch)
-                return await self._do_verify_action(
+                verdict_str = await self._do_verify_action(
                     action_name, payload, current_state, balance_source, span
                 )
-        return await self._do_verify_action(
-            action_name, payload, current_state, balance_source, None
+        else:
+            verdict_str = await self._do_verify_action(
+                action_name, payload, current_state, balance_source, None
+            )
+        if verdict_str == "SAFE":
+            return BarrierCheckResult(safe=True, message="SAFE")
+        return BarrierCheckResult(
+            safe=False,
+            message=verdict_str,
+            failure_kind=BarrierFailureKind.BARRIER_BREACH,
         )
+
+    async def verify_action(self, action_name: str, payload: dict[str, Any]) -> str:
+        """Side-effect-free preview: would ``action_name`` be admitted now?
+
+        Reads the barrier state and returns ``"SAFE"`` or the refusal text;
+        it never debits anything, in Redis or in this process, so any number
+        of previews leave the engine exactly as they found it. Only
+        :meth:`atomic_verify_and_commit` (``commit_barrier``) spends headroom.
+        """
+        outcome = await self.check_barrier(action_name, payload)
+        return "SAFE" if outcome.safe else outcome.message
 
     async def _do_verify_action(
         self,
@@ -2155,26 +2249,20 @@ return {1, status, tostring(restored), new_epoch, tostring(current), tostring(re
             target_client, debit_id, namespace=self._debit_ledger.namespace
         )
 
-    async def atomic_verify_and_commit(
+    async def commit_barrier_checked(
         self,
         action_name: str,
         payload: dict[str, Any],
         governance_signature: str = "",
         *,
         debit_id: str | None = None,
-    ) -> tuple[bool, str, float]:
-        """Check and debit in one Redis Lua hop; ledger the debit under ``debit_id``.
+    ) -> BarrierCommitResult:
+        """Check and debit in one Redis Lua hop, returning a typed :class:`BarrierCommitResult`.
 
-        ``debit_id`` is minted by ``commit_barrier`` and returned to the
-        caller as ``CommitReceipt.token`` so ``rollback_state`` can retire
-        exactly this entry. Direct callers that pass none still get a
-        ledgered debit under a fresh id; nothing admitted goes unrecorded.
-        When the Lua script reports status ``2`` (``FENCE_ADVANCED``, meaning
-        another concurrent commit advanced ``safety:fence_epoch``), retries
-        up to ``_COMMIT_ATTEMPTS`` times by re-running the full ``Read`` path
-        (``_resolve_ground_truth_balance`` + HWM regression check) before
-        each attempt.
-        Returns ``(committed, reason, magnitude)``.
+        Classifies unavailability, integrity violations, discrepancy fences,
+        epoch regressions, and barrier breaches structurally via
+        :class:`BarrierFailureKind` so ``barrier_tier.commit_barrier()`` never
+        parses reason strings.
         """
         if redis_client is None:
             raise RuntimeError("Redis client unavailable — cannot run atomic CBF.")
@@ -2186,7 +2274,12 @@ return {1, status, tostring(restored), new_epoch, tostring(current), tostring(re
         except (TypeError, ValueError) as exc:
             reason = f"UNSAFE: {exc}"
             logger.warning("CBF atomic check rejected action: %s", exc)
-            return (False, reason, 0.0)
+            return BarrierCommitResult(
+                committed=False,
+                message=reason,
+                magnitude=0.0,
+                failure_kind=BarrierFailureKind.BARRIER_BREACH,
+            )
 
         from src.gateway.governance.reconciliation.daemon import reconciled_state_key
 
@@ -2212,10 +2305,42 @@ return {1, status, tostring(restored), new_epoch, tostring(current), tostring(re
                     ground_truth_balance,
                     balance_metadata,
                 ) = await self._resolve_ground_truth_balance()
+            except GroundTruthRejectedError as exc:
+                reason = f"RECONCILIATION_UNAVAILABLE: {exc}"
+                logger.error("CBF atomic check rejected: %s", reason)
+                return BarrierCommitResult(
+                    committed=False,
+                    message=reason,
+                    magnitude=0.0,
+                    failure_kind=exc.failure_kind,
+                )
+            except GroundTruthIntegrityError as exc:
+                reason = f"RECONCILIATION_UNAVAILABLE: {exc}"
+                logger.error("CBF atomic check rejected: %s", reason)
+                return BarrierCommitResult(
+                    committed=False,
+                    message=reason,
+                    magnitude=0.0,
+                    failure_kind=BarrierFailureKind.INTEGRITY_VIOLATION,
+                )
+            except GroundTruthUnavailableError as exc:
+                reason = f"RECONCILIATION_UNAVAILABLE: {exc}"
+                logger.error("CBF atomic check rejected: %s", reason)
+                return BarrierCommitResult(
+                    committed=False,
+                    message=reason,
+                    magnitude=0.0,
+                    failure_kind=BarrierFailureKind.RECONCILIATION_UNAVAILABLE,
+                )
             except Exception as exc:
                 reason = f"RECONCILIATION_UNAVAILABLE: {exc}"
                 logger.error("CBF atomic check rejected: %s", reason)
-                return (False, reason, 0.0)
+                return BarrierCommitResult(
+                    committed=False,
+                    message=reason,
+                    magnitude=0.0,
+                    failure_kind=BarrierFailureKind.STORE_UNAVAILABLE,
+                )
 
             client = await _get_raw_redis(redis_client)
 
@@ -2264,10 +2389,11 @@ return {1, status, tostring(restored), new_epoch, tostring(current), tostring(re
                             }
                         )
                     )
-                    return (
-                        False,
-                        f"Fence epoch regression: {current_fence_epoch} < {effective_verified_epoch}",
-                        0.0,
+                    return BarrierCommitResult(
+                        committed=False,
+                        message=f"Fence epoch regression: {current_fence_epoch} < {effective_verified_epoch}",
+                        magnitude=0.0,
+                        failure_kind=BarrierFailureKind.RECONCILIATION_DRIFT,
                     )
 
             mode = balance_metadata.get("mode", "self_reported")
@@ -2368,10 +2494,11 @@ return {1, status, tostring(restored), new_epoch, tostring(current), tostring(re
                                 _COMMIT_ATTEMPTS_HISTOGRAM.observe(attempt)
                             if _EPOCH_CONTENDED_COUNTER is not None:
                                 _EPOCH_CONTENDED_COUNTER.inc()
-                            return (
-                                False,
-                                f"CBF_EPOCH_CONTENDED: {last_contended_msg} (after {attempt} attempts)",
-                                0.0,
+                            return BarrierCommitResult(
+                                committed=False,
+                                message=f"CBF_EPOCH_CONTENDED: {last_contended_msg} (after {attempt} attempts)",
+                                magnitude=0.0,
+                                failure_kind=BarrierFailureKind.BARRIER_BREACH,
                             )
                     else:
                         if _COMMIT_ATTEMPTS_HISTOGRAM is not None:
@@ -2425,13 +2552,26 @@ return {1, status, tostring(restored), new_epoch, tostring(current), tostring(re
                                         )
                                     if _STRICT_REPLICATION_ROLLBACK_COUNTER is not None:
                                         _STRICT_REPLICATION_ROLLBACK_COUNTER.inc()
-                                    return (
-                                        False,
-                                        "REPLICATION_UNCONFIRMED: Redis WAIT timed out on replicas. Failed closed.",
-                                        0.0,
+                                    return BarrierCommitResult(
+                                        committed=False,
+                                        message="REPLICATION_UNCONFIRMED: Redis WAIT timed out on replicas. Failed closed.",
+                                        magnitude=0.0,
+                                        failure_kind=BarrierFailureKind.BARRIER_BREACH,
                                     )
 
-                        return (committed, message, cost if committed else 0.0)
+                        if committed:
+                            return BarrierCommitResult(
+                                committed=True,
+                                message=message,
+                                magnitude=cost,
+                                failure_kind=None,
+                            )
+                        return BarrierCommitResult(
+                            committed=False,
+                            message=message,
+                            magnitude=0.0,
+                            failure_kind=BarrierFailureKind.BARRIER_BREACH,
+                        )
             finally:
                 if should_close and hasattr(pinned_client, "aclose"):
                     await pinned_client.aclose()
@@ -2443,11 +2583,41 @@ return {1, status, tostring(restored), new_epoch, tostring(current), tostring(re
 
         if _EPOCH_CONTENDED_COUNTER is not None:
             _EPOCH_CONTENDED_COUNTER.inc()
-        return (
-            False,
-            f"CBF_EPOCH_CONTENDED: {last_contended_msg}",
-            0.0,
+        return BarrierCommitResult(
+            committed=False,
+            message=f"CBF_EPOCH_CONTENDED: {last_contended_msg}",
+            magnitude=0.0,
+            failure_kind=BarrierFailureKind.BARRIER_BREACH,
         )
+
+    async def atomic_verify_and_commit(
+        self,
+        action_name: str,
+        payload: dict[str, Any],
+        governance_signature: str = "",
+        *,
+        debit_id: str | None = None,
+    ) -> tuple[bool, str, float]:
+        """Check and debit in one Redis Lua hop; ledger the debit under ``debit_id``.
+
+        ``debit_id`` is minted by ``commit_barrier`` and returned to the
+        caller as ``CommitReceipt.token`` so ``rollback_state`` can retire
+        exactly this entry. Direct callers that pass none still get a
+        ledgered debit under a fresh id; nothing admitted goes unrecorded.
+        When the Lua script reports status ``2`` (``FENCE_ADVANCED``, meaning
+        another concurrent commit advanced ``safety:fence_epoch``), retries
+        up to ``_COMMIT_ATTEMPTS`` times by re-running the full ``Read`` path
+        (``_resolve_ground_truth_balance`` + HWM regression check) before
+        each attempt.
+        Returns ``(committed, reason, magnitude)``.
+        """
+        outcome = await self.commit_barrier_checked(
+            action_name,
+            payload,
+            governance_signature=governance_signature,
+            debit_id=debit_id,
+        )
+        return (outcome.committed, outcome.message, outcome.magnitude)
 
     async def _evalsha_with_noscript_retry(
         self,

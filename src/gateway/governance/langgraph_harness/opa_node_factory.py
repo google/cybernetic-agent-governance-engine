@@ -55,10 +55,11 @@ _ESCALATED_VERDICTS = frozenset(
 
 
 def _is_escalated_governance_error(exc: GovernanceError) -> bool:
-    """Return True if ``exc`` represents an escalation / human-review deferral.
+    """Return True iff ``exc`` structurally represents an escalation / deferral.
 
-    Checks structured exception attributes and payload metadata first, falling
-    back to message substring matching only for legacy callers.
+    Checks ``GovernanceDeferred`` and structured verdict/payload/receipt fields
+    only — never parses human-readable exception messages, so a ``DENY`` whose
+    message mentions review terms fails closed to ``BLOCKED``.
     """
     if isinstance(exc, GovernanceDeferred):
         return True
@@ -89,14 +90,7 @@ def _is_escalated_governance_error(exc: GovernanceError) -> bool:
             in _ESCALATED_VERDICTS
         ):
             return True
-    msg = str(exc)
-    return (
-        "Manual Review" in msg
-        or "Consensus Escalation" in msg
-        or "CONSENSUS_ESCALATED" in msg
-        or "NOTIONAL_THRESHOLD_ESCALATION" in msg
-        or "escalating for human review" in msg
-    )
+    return False
 
 
 def _score_compliance(thread_id: str, control: str, passed: bool, comment: str) -> None:

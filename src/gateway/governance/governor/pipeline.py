@@ -185,6 +185,10 @@ class PipelineResult:
     # committed), in execution order.  A planned stage that never ran is
     # absent: proof/model.py's ``PENDING``.
     stage_outcomes: tuple[tuple[str, str], ...] = ()
+    # Names of stages whose findings in this run were exclusively
+    # ``ViolationKind.INFRASTRUCTURE``, recorded directly by the pipeline
+    # so receipt stage coverage never infers stage ownership by code prefix.
+    infra_only_stages: frozenset[str] = frozenset()
     # False when no domain tier claimed the action, so only
     # UNGOVERNED_STAGES ran.
     governed: bool = True
@@ -290,7 +294,7 @@ def _claims_failure(stage: Stage, exc: Exception) -> Violation:
         tier=stage.name,
         code="TIER_EXCEPTION",
         message=f"Exception in claims_action: {type(exc).__name__}: {exc}",
-        kind=ViolationKind.HARD,
+        kind=ViolationKind.INFRASTRUCTURE,
     )
 
 
@@ -312,7 +316,7 @@ class Claims:
     """Which domain stages claim an action, over the full (unfiltered) stage set.
 
     A stage whose ``claims()`` raised counts as claiming the action (fail
-    closed) and carries a HARD ``TIER_EXCEPTION`` in :attr:`failures`, keyed by
+    closed) and carries an INFRASTRUCTURE ``TIER_EXCEPTION`` in :attr:`failures`, keyed by
     stage identity: stages are shared across requests, so the failure lives
     with the request, never on the stage.
     """
@@ -347,6 +351,60 @@ def resolve_claims(stages: Sequence[Stage], ctx: StageContext) -> Claims:
     return Claims(claimed=tuple(claimed), failures=failures)
 
 
+def plan_pipeline(
+    stages: Sequence[Stage],
+    ctx: StageContext,
+    *,
+    profile: Profile,
+) -> tuple[
+    Claims,
+    bool,
+    list[Stage],
+    list[Stage],
+    tuple[tuple[str, int], ...],
+]:
+    """Resolve claims and compute the ordered ``(read_only, mutating, plan)`` stages."""
+    claims = resolve_claims(stages, ctx)
+    claimed_ids = {id(s) for s in claims.claimed}
+    profile_stages: list[Stage] = []
+    claimed_domains: list[Stage] = []
+    for s in stages:
+        if not stage_runs_under(
+            profile,
+            name=s.name,
+            mutating=bool(getattr(s, "mutating", False)),
+            revalidated=bool(getattr(s, "revalidated_after_approval", False)),
+        ):
+            continue
+        if getattr(s, "claims", None) is None:
+            profile_stages.append(s)
+        elif id(s) in claimed_ids:
+            claimed_domains.append(s)
+
+    is_governed = claims.governed
+    if not is_governed:
+        profile_stages = [s for s in profile_stages if s.name in UNGOVERNED_STAGES]
+    else:
+        profile_stages.extend(claimed_domains)
+
+    def read_only_sort_key(s: Stage) -> tuple[int, str]:
+        if s.name == "ftra":
+            return (0, s.name)
+        if s.name == "stpa":
+            return (1, s.name)
+        if s.name == "opa":
+            return (2, s.name)
+        if s.name == "confidence":
+            return (3, s.name)
+        return (4, "")
+
+    read_only = [s for s in profile_stages if not getattr(s, "mutating", False)]
+    read_only.sort(key=read_only_sort_key)
+    mutating = [s for s in profile_stages if getattr(s, "mutating", False)]
+    plan = tuple((s.name, 1) for s in read_only) + tuple((s.name, 2) for s in mutating)
+    return claims, is_governed, read_only, mutating, plan
+
+
 async def run_pipeline(
     stages: Sequence[Stage],
     ctx: StageContext,
@@ -366,66 +424,15 @@ async def run_pipeline(
     _check_scope(profile, scope)
     span = trace.get_current_span()
 
-    # a. Who claims the action is decided over the FULL stage set, before any
-    #    profile filtering (resolve_claims), so governedness never depends on
-    #    the profile: an action claimed only by read-only tiers is still
-    #    governed under POST_HITL and still re-runs the POST_HITL read-only
-    #    stages (OPA, warrant).  revalidate_post_hitl asks the same function.
-    claims = resolve_claims(stages, ctx)
+    claims, is_governed, read_only, mutating, plan = plan_pipeline(
+        stages, ctx, profile=profile
+    )
     claim_failures = dict(claims.failures)
-    claimed_ids = {id(s) for s in claims.claimed}
-
-    # b. Select the stages that run under this profile (stage_runs_under).
-    #    Structural, never by name: domain and jurisdiction tiers carry
-    #    contributor-chosen names (e.g. "dose_barrier"), and a name filter
-    #    would silently skip them.
-    profile_stages = []
-    claimed_domains = []
-    for s in stages:
-        if not stage_runs_under(
-            profile,
-            name=s.name,
-            mutating=bool(getattr(s, "mutating", False)),
-            revalidated=bool(getattr(s, "revalidated_after_approval", False)),
-        ):
-            continue
-        if getattr(s, "claims", None) is None:
-            profile_stages.append(s)
-        elif id(s) in claimed_ids:
-            claimed_domains.append(s)
-
-    is_governed = claims.governed
-
-    if not is_governed:
-        span.set_attribute("governance.governed", False)
-        # f. Ungoverned actions: run UNGOVERNED_STAGES only
-        profile_stages = [s for s in profile_stages if s.name in UNGOVERNED_STAGES]
-    else:
-        span.set_attribute("governance.governed", True)
-        profile_stages.extend(claimed_domains)
-
-    def read_only_sort_key(s: Stage) -> tuple[int, str]:
-        if s.name == "ftra":
-            return (0, s.name)
-        if s.name == "stpa":
-            return (1, s.name)
-        if s.name == "opa":
-            return (2, s.name)
-        if s.name == "confidence":
-            return (3, s.name)
-        return (
-            4,
-            "",
-        )  # domain tiers: stable sort keeps order_stages() (phase, order, name)
-
-    read_only = [s for s in profile_stages if not getattr(s, "mutating", False)]
-    read_only.sort(key=read_only_sort_key)
-
-    mutating = [s for s in profile_stages if getattr(s, "mutating", False)]
-    plan = tuple((s.name, 1) for s in read_only) + tuple((s.name, 2) for s in mutating)
+    span.set_attribute("governance.governed", is_governed)
 
     violations: list[Violation] = []
     outcomes: list[tuple[str, str]] = []
+    infra_only_stages: set[str] = set()
     tier_failures: list[GovernanceTierFailure] = []
     committed_stages: list[str] = []
     current_ctx = ctx
@@ -468,6 +475,10 @@ async def run_pipeline(
             ftra_result = output.ftra
         reliance.extend(output.reliance)
         outcomes.append((stage.name, _outcome(stage_violations)))
+        if stage_violations and all(
+            v.kind == ViolationKind.INFRASTRUCTURE for v in stage_violations
+        ):
+            infra_only_stages.add(stage.name)
 
         if stage_violations:
             violations.extend(stage_violations)
@@ -504,8 +515,10 @@ async def run_pipeline(
             preview_violations,
             preview_failures,
             preview_outcomes,
+            preview_infra_only,
         ) = await _preview_mutating(mutating, current_ctx, claim_failures)
         outcomes.extend(preview_outcomes)
+        infra_only_stages.update(preview_infra_only)
         violations.extend(preview_violations)
         tier_failures.extend(preview_failures)
         if mutating:
@@ -525,6 +538,10 @@ async def run_pipeline(
         for stage in mutating:
             stage_violations = await commit_stage(scope, stage, current_ctx)
             outcomes.append((stage.name, _outcome(stage_violations)))
+            if stage_violations and all(
+                v.kind == ViolationKind.INFRASTRUCTURE for v in stage_violations
+            ):
+                infra_only_stages.add(stage.name)
             if stage_violations:
                 barrier_outcome = BarrierPreview.FAIL
                 violations.extend(stage_violations)
@@ -546,6 +563,7 @@ async def run_pipeline(
         barrier_outcome=barrier_outcome,
         plan=plan,
         stage_outcomes=tuple(outcomes),
+        infra_only_stages=frozenset(infra_only_stages),
         governed=is_governed,
         reliance=tuple(reliance),
     )
@@ -565,7 +583,9 @@ async def _preview_mutating(
     mutating: Sequence[Stage],
     ctx: StageContext,
     claim_failures: Mapping[int, Violation],
-) -> tuple[list[Violation], list[GovernanceTierFailure], list[tuple[str, str]]]:
+) -> tuple[
+    list[Violation], list[GovernanceTierFailure], list[tuple[str, str]], set[str]
+]:
     """Ask every mutating stage what its ``commit()`` would say; change nothing.
 
     Never calls ``commit()``.  A stage that cannot be previewed is a HARD
@@ -579,6 +599,7 @@ async def _preview_mutating(
     violations: list[Violation] = []
     failures: list[GovernanceTierFailure] = []
     outcomes: list[tuple[str, str]] = []
+    infra_only: set[str] = set()
     for stage in mutating:
         preview = getattr(stage, "preview", None)
         if id(stage) in claim_failures:
@@ -595,6 +616,10 @@ async def _preview_mutating(
         else:
             stage_violations = await preview(ctx)
         outcomes.append((stage.name, _outcome(stage_violations)))
+        if stage_violations and all(
+            v.kind == ViolationKind.INFRASTRUCTURE for v in stage_violations
+        ):
+            infra_only.add(stage.name)
         if not stage_violations:
             continue
         violations.extend(stage_violations)
@@ -604,4 +629,4 @@ async def _preview_mutating(
             for v in stage_violations
         ):
             break
-    return violations, failures, outcomes
+    return violations, failures, outcomes, infra_only

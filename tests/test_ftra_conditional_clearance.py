@@ -167,7 +167,7 @@ async def _run(stage: FtraStage, action: str, **params: Any) -> list[Any]:
             _IRR,
             RegistryState.UNAVAILABLE,
             FTRA_REGISTRY_UNAVAILABLE,
-            ViolationKind.HARD,
+            ViolationKind.INFRASTRUCTURE,
         ),
     ],
 )
@@ -442,11 +442,11 @@ async def test_stage_never_clears_unregistered(registry: Path) -> None:
 
 
 @pytest.mark.asyncio
-async def test_stage_unavailable_registry_is_hard(tmp_path: Path) -> None:
+async def test_stage_unavailable_registry_is_infrastructure(tmp_path: Path) -> None:
     stage, metrics = _stage(tmp_path / "missing.json")
     violations = await _run(stage, "move_funds", amount=1.0, confidence=_HIGH)
     assert [(v.code, v.kind) for v in violations] == [
-        (FTRA_REGISTRY_UNAVAILABLE, ViolationKind.HARD)
+        (FTRA_REGISTRY_UNAVAILABLE, ViolationKind.INFRASTRUCTURE)
     ]
     metrics.ftra_boundary_check.assert_called_once_with("error")
 

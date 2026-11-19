@@ -57,6 +57,7 @@ from src.gateway.governance.defer_queue import DeferQueue, DeferReason
 from src.gateway.governance.ftra import classifier as ftra_classifier_mod
 from src.gateway.governance.ftra.classifier import registry_digest
 from src.gateway.governance.governance_envelope import GovernanceEnvelopeBuilder
+from src.gateway.governance.governor.errors import GovernanceInfrastructureError
 from src.gateway.governance.governor.governor import SymbolicGovernor
 from src.gateway.governance.governor.stages.warrant import WarrantStage
 from src.gateway.governance.jwks import JWKSet, pem_to_jwk
@@ -312,19 +313,60 @@ async def _assert_refused_everywhere(
     assert await gateway.seal_redis.dbsize() == 0
 
 
-@pytest.mark.parametrize("fault", [FaultMode.TIMEOUT, FaultMode.STALE_TIMESTAMP])
-async def test_market_feed_fault_refuses_with_uca_2(
-    advisor: Gateway, region: str, fault: FaultMode
+async def _assert_unavailable_everywhere(
+    gateway: Gateway, expected_dependency: str, side: str = "buy"
 ) -> None:
-    advisor.market_feed.inject_fault(fault)
+    safety = await safety_check_node({"execution_plan_output": _plan(side=side)})
+    assert safety["safety_status"] == "GATEWAY_ERROR", safety
+    assert safety["consecutive_denials"] == 0
+    assert safety["last_violation"]["audit_id"] is None
+    gateway.refusals.assert_not_awaited()
+
+    with _serving(ADVISOR), pytest.raises(GovernanceInfrastructureError) as exc_info:
+        await execute_trade_action(
+            "AAPL",
+            500.0,
+            "USD",
+            0.99,
+            str(uuid.uuid4()),
+            side=side,
+            governor=gateway.governor,
+        )
+    assert exc_info.value.error_code == "server_input_unavailable"
+    assert exc_info.value.dependency == expected_dependency
+    assert exc_info.value.receipt is None
+    gateway.refusals.assert_not_awaited()
+    gateway.actuate.assert_not_awaited()
+    assert await gateway.seal_redis.dbsize() == 0
+
+
+async def test_market_feed_stale_timestamp_refuses_with_uca_2(
+    advisor: Gateway, region: str
+) -> None:
+    advisor.market_feed.inject_fault(FaultMode.STALE_TIMESTAMP)
     await _assert_refused_everywhere(advisor, (_UCA_2,))
 
 
-async def test_nav_fault_refuses_a_buy_with_uca_5(
+@pytest.mark.parametrize("fault", [FaultMode.TIMEOUT, FaultMode.CONNECTION_ERROR])
+async def test_market_feed_outage_blocks_on_infrastructure(
+    advisor: Gateway, region: str, fault: FaultMode
+) -> None:
+    advisor.market_feed.inject_fault(fault)
+    await _assert_unavailable_everywhere(advisor, "market_data")
+
+
+async def test_nav_invalid_reading_refuses_a_buy_with_uca_5(
+    advisor: Gateway, region: str
+) -> None:
+    advisor.nav_source.inject_fault(FaultMode.NAN_VALUE)
+    await _assert_refused_everywhere(advisor, (_UCA_5,))
+
+
+async def test_nav_outage_blocks_a_buy_on_infrastructure(
     advisor: Gateway, region: str
 ) -> None:
     advisor.nav_source.inject_fault(FaultMode.CONNECTION_ERROR)
-    await _assert_refused_everywhere(advisor, (_UCA_5,))
+    await _assert_unavailable_everywhere(advisor, "portfolio_nav")
 
 
 async def test_nav_fault_refuses_a_sell_with_uca_5_and_uca_13(
