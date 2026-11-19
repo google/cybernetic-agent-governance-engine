@@ -28,10 +28,14 @@ Governance pipeline applied here:
      are built on demand.
   4. ISO 42001 evidence stamps.
   5. Forward to vLLM backend.
-  6. Output scanning / PII masking before returning: the NeMo output rail
-     when semantic rails are on (it applies ``scrub_pii()`` first), else the
-     same deterministic ``scrub_pii()`` pass alone.
-     For streaming: collect full response, filter, then return.
+  6. Output allowlist and PII masking before returning. The response is
+     rebuilt from the egress allowlist in ``completion_egress``: every
+     returned text field passes the NeMo output rail when semantic rails are
+     on (it applies ``scrub_pii()`` first), else the same deterministic
+     ``scrub_pii()`` pass alone, and every field outside the allowlist is
+     dropped. For streaming: collect the full upstream stream, assemble and
+     sanitize it the same way, then emit newly serialized SSE frames. Upstream
+     bytes are never returned.
 """
 
 from __future__ import annotations
@@ -69,6 +73,13 @@ from src.gateway.infrastructure.privacy import scrub_pii
 from src.gateway.observability.attributes import (
     SPAN_ATTR_CONTENT_INPUT_LENGTH,
     SPAN_ATTR_CONTENT_OUTPUT_LENGTH,
+)
+from src.gateway.server.completion_egress import (
+    StreamAssembler,
+    completion_text_length,
+    encode_sse_frames,
+    sanitize_completion,
+    sanitize_stream,
 )
 
 logger = logging.getLogger("Gateway.InferenceProxy")
@@ -333,75 +344,6 @@ async def _reconcile_actual_usage(
             await res
 
 
-def _build_redacted_sse_bytes(
-    *,
-    stream_id: str,
-    created: int,
-    model_id: str,
-    sanitized_choices: list[dict[str, Any]],
-    usage: dict[str, Any] | None,
-) -> list[bytes]:
-    """Encode sanitized streaming choices as valid OpenAI chat.completion.chunk SSE frames."""
-    frames: list[bytes] = []
-    delta_choices: list[dict[str, Any]] = []
-    finish_choices: list[dict[str, Any]] = []
-    for item in sanitized_choices:
-        idx = int(item["index"])
-        delta_obj: dict[str, Any] = {"role": "assistant"}
-        if item.get("reasoning_content") is not None:
-            delta_obj["reasoning_content"] = item["reasoning_content"]
-        if item.get("content") is not None:
-            delta_obj["content"] = item["content"]
-        if item.get("tool_calls"):
-            tc_deltas: list[dict[str, Any]] = []
-            for tc_pos, tc in enumerate(item["tool_calls"]):
-                tc_deltas.append(
-                    {
-                        "index": tc_pos,
-                        "id": tc["id"],
-                        "type": tc.get("type", "function"),
-                        "function": tc["function"],
-                    }
-                )
-            delta_obj["tool_calls"] = tc_deltas
-        delta_choices.append(
-            {
-                "index": idx,
-                "delta": delta_obj,
-                "finish_reason": None,
-            }
-        )
-        finish_choices.append(
-            {
-                "index": idx,
-                "delta": {},
-                "finish_reason": item.get("finish_reason") or "stop",
-            }
-        )
-
-    content_chunk: dict[str, Any] = {
-        "id": stream_id,
-        "object": "chat.completion.chunk",
-        "created": created,
-        "model": model_id,
-        "choices": delta_choices,
-    }
-    frames.append(f"data: {json.dumps(content_chunk)}\n\n".encode())
-
-    finish_chunk: dict[str, Any] = {
-        "id": stream_id,
-        "object": "chat.completion.chunk",
-        "created": created,
-        "model": model_id,
-        "choices": finish_choices,
-    }
-    if isinstance(usage, dict):
-        finish_chunk["usage"] = usage
-    frames.append(f"data: {json.dumps(finish_chunk)}\n\n".encode())
-    frames.append(b"data: [DONE]\n\n")
-    return frames
-
-
 def _safe_error_response(exc: Exception, status_code: int = 500) -> dict:
     """Return a sanitized error response with correlation ID.
 
@@ -411,6 +353,17 @@ def _safe_error_response(exc: Exception, status_code: int = 500) -> dict:
     correlation_id = str(_uuid.uuid4())
     logger.error("Request failed [correlation_id=%s]", correlation_id, exc_info=exc)
     return {"error": "Internal server error", "correlation_id": correlation_id}
+
+
+def _canonical_uuid(value: Any) -> str | None:
+    """Return *value* if it is a canonical UUID string, else None."""
+    if not isinstance(value, str):
+        return None
+    try:
+        parsed = _uuid.UUID(value)
+    except ValueError:
+        return None
+    return value if str(parsed) == value else None
 
 
 # ---------------------------------------------------------------------------
@@ -480,7 +433,12 @@ async def _stream_vllm(
     span: Any = None,
     request_start_ns: int = 0,
 ) -> AsyncIterator[bytes]:
-    """Proxy a streaming SSE response from vLLM to the client verbatim.
+    """Read the upstream SSE response for the proxy to buffer and re-serialize.
+
+    The bytes this yields never reach the client: ``chat_completions``
+    buffers them, parses each ``data:`` payload and returns frames that
+    :func:`~src.gateway.server.completion_egress.encode_sse_frames` builds
+    from the allowlisted, masked completion.
 
     When *span* and *request_start_ns* are provided, captures the time-to-
     first-token (TTFT) on the first non-empty chunk and records it on the span
@@ -652,7 +610,7 @@ async def _mask_json_value(rails: Any, value: Any) -> tuple[Any, bool]:
 
 
 async def _mask_tool_arguments(rails: Any, raw_args: str) -> tuple[str, bool]:
-    """Sanitize ``tool_calls[].function.arguments`` without corrupting JSON numbers.
+    """Sanitize a tool-call or legacy function-call ``arguments`` string.
 
     ``scrub_pii`` replaces bare 9-to-16-digit sequences with unquoted tokens
     such as ``[REDACTED-PHONE-UCA-3]``, which breaks valid JSON numeric fields
@@ -670,6 +628,31 @@ async def _mask_tool_arguments(rails: Any, raw_args: str) -> tuple[str, bool]:
     if not modified:
         return raw_args, False
     return json.dumps(sanitized), True
+
+
+class _ProxyMasker:
+    """The masking primitives above, bound to one request's rails.
+
+    Implements :class:`~src.gateway.server.completion_egress.EgressMasker`.
+    Text and arguments go through :func:`_mask_output` (the output rail, or
+    ``scrub_pii()`` alone when rails are off). Identifiers get ``scrub_pii()``
+    only: the LLM rail could rewrite a tool-call id the client must echo back.
+    """
+
+    def __init__(self, rails: Any) -> None:
+        self._rails = rails
+
+    async def text(self, value: str) -> str:
+        masked = await _mask_output(self._rails, value)
+        return masked if isinstance(masked, str) else str(masked)
+
+    async def arguments(self, value: str) -> str:
+        masked, _ = await _mask_tool_arguments(self._rails, value)
+        return masked
+
+    def identifier(self, value: str) -> str:
+        scrubbed = scrub_pii(value)
+        return scrubbed if isinstance(scrubbed, str) else str(scrubbed)
 
 
 def _extract_message_content_text(content: Any) -> str:
@@ -839,8 +822,14 @@ async def _emit_proxy_pass_evidence(
     model_id: str,
     agent_id: str | None = None,
     pii_redacted: bool = False,
+    output_fields_dropped: int = 0,
 ) -> None:
     """Commit hash-chained A.5.2 (Stage 1) and A.9.2 (Stage 4 PII) pass records.
+
+    The A.9.2 record describes the body the caller receives: ``pii_redacted``
+    is True when masking changed a returned value, and
+    ``output_fields_dropped`` counts the distinct non-null upstream fields the
+    egress allowlist withheld (a count only; the key names are upstream-chosen).
 
     When :func:`is_evidence_chain_blocking` is ``True``, routes both pass
     records through :func:`commit_decision_evidence` so a missing, stopped,
@@ -886,6 +875,7 @@ async def _emit_proxy_pass_evidence(
         "status_code": 200,
         "model": model_id,
         "pii_redacted": bool(pii_redacted),
+        "output_fields_dropped": int(output_fields_dropped),
         "reason": "Stage 4 output PII sanitization verified",
         "timestamp": now_iso,
     }
@@ -1231,9 +1221,9 @@ async def chat_completions(
             )
             raise
 
-        # Respect the caller's streaming preference.  When stream=True the
-        # response is proxied byte-for-byte as an SSE stream so the frontend
-        # receives real-time tokens.
+        # Respect the caller's streaming preference. When stream=True the proxy
+        # buffers the whole upstream stream, projects it through the egress
+        # allowlist and answers with newly serialized SSE frames (decision D5).
         # Use explicit truthiness check instead of identity comparison to handle
         # string "true", int 1, or bool True from various client serializers.
         stream_val = body.get("stream", False)
@@ -1306,26 +1296,21 @@ async def chat_completions(
                 )
 
             raw_stream = b"".join(collected_chunks).decode(errors="replace")
-            choice_buffers: dict[int, dict[str, Any]] = {}
-            unparsed_payloads: list[str] = []
+            assembler = StreamAssembler()
             stream_backend_error = False
             stream_backend_status = 502
             stream_error_correlation_id: str | None = None
-            stream_id: str | None = None
-            stream_created: int | None = None
-            stream_model: str = model_id
-            stream_usage: dict[str, Any] | None = None
+            stream_protocol_error = False
 
             for data_str in _iter_sse_data_payloads(raw_stream):
                 try:
                     chunk_json = json.loads(data_str)
-                except json.JSONDecodeError:
-                    unparsed_payloads.append(data_str)
-                    continue
-
+                except (ValueError, RecursionError):
+                    stream_protocol_error = True
+                    break
                 if not isinstance(chunk_json, dict):
-                    unparsed_payloads.append(data_str)
-                    continue
+                    stream_protocol_error = True
+                    break
 
                 err_field = str(chunk_json.get("error", ""))
                 if err_field.startswith("vLLM backend error"):
@@ -1337,80 +1322,15 @@ async def chat_completions(
                         parts = err_field.rsplit(" ", 1)
                         if len(parts) == 2 and parts[1].isdigit():
                             stream_backend_status = int(parts[1])
-                    if isinstance(chunk_json.get("correlation_id"), str):
-                        stream_error_correlation_id = chunk_json["correlation_id"]
+                    # _stream_vllm() mints this as a uuid4; any other string in
+                    # this position came from upstream and is not echoed.
+                    stream_error_correlation_id = (
+                        _canonical_uuid(chunk_json.get("correlation_id"))
+                        or stream_error_correlation_id
+                    )
                     continue
 
-                if stream_id is None and isinstance(chunk_json.get("id"), str):
-                    stream_id = chunk_json["id"]
-                if (
-                    stream_created is None
-                    and isinstance(chunk_json.get("created"), int)
-                    and not isinstance(chunk_json.get("created"), bool)
-                ):
-                    stream_created = chunk_json["created"]
-                if isinstance(chunk_json.get("model"), str) and chunk_json["model"]:
-                    stream_model = chunk_json["model"]
-                if isinstance(chunk_json.get("usage"), dict):
-                    stream_usage = chunk_json["usage"]
-
-                choices_list = chunk_json.get("choices")
-                if not isinstance(choices_list, list):
-                    continue
-                for pos, choice_obj in enumerate(choices_list):
-                    if not isinstance(choice_obj, dict):
-                        continue
-                    raw_c_idx = choice_obj.get("index", pos)
-                    c_idx = (
-                        raw_c_idx
-                        if isinstance(raw_c_idx, int)
-                        and not isinstance(raw_c_idx, bool)
-                        else pos
-                    )
-                    c_buf = choice_buffers.setdefault(
-                        c_idx,
-                        {
-                            "content": None,
-                            "reasoning_content": None,
-                            "tool_calls": {},
-                            "finish_reason": None,
-                        },
-                    )
-                    if choice_obj.get("finish_reason"):
-                        c_buf["finish_reason"] = str(choice_obj["finish_reason"])
-                    delta_obj = choice_obj.get("delta")
-                    if not isinstance(delta_obj, dict):
-                        continue
-                    delta_content = delta_obj.get("content")
-                    if isinstance(delta_content, str) and delta_content:
-                        c_buf["content"] = (c_buf["content"] or "") + delta_content
-                    delta_reasoning = delta_obj.get("reasoning_content")
-                    if isinstance(delta_reasoning, str) and delta_reasoning:
-                        c_buf["reasoning_content"] = (
-                            c_buf["reasoning_content"] or ""
-                        ) + delta_reasoning
-                    for idx, tc in enumerate(delta_obj.get("tool_calls") or []):
-                        if not isinstance(tc, dict):
-                            continue
-                        raw_tc_idx = tc.get("index", idx)
-                        tc_idx = (
-                            int(raw_tc_idx)
-                            if isinstance(raw_tc_idx, int)
-                            and not isinstance(raw_tc_idx, bool)
-                            else idx
-                        )
-                        entry = c_buf["tool_calls"].setdefault(
-                            tc_idx,
-                            {"id": "", "name": "", "arguments": ""},
-                        )
-                        if tc.get("id"):
-                            entry["id"] = str(tc["id"])
-                        fn = tc.get("function") or {}
-                        if isinstance(fn, dict):
-                            if fn.get("name"):
-                                entry["name"] += str(fn["name"])
-                            if fn.get("arguments"):
-                                entry["arguments"] += str(fn["arguments"])
+                assembler.absorb(chunk_json)
 
             # [KC-01] / [F-15] FIRST: Abort on streaming backend >= 400 error BEFORE emitting PASS evidence!
             if stream_backend_error:
@@ -1432,76 +1352,36 @@ async def chat_completions(
                     },
                 )
 
-            stream_pii_redacted = False
-            sanitized_choices: list[dict[str, Any]] = []
+            # A data payload that is not a JSON object cannot be projected onto
+            # the egress allowlist, so it is neither masked as text nor
+            # replayed: the request fails closed before any PASS evidence.
+            if stream_protocol_error:
+                await _get_token_quota_proxy().rollback_step(
+                    agent_id, reserved_tokens=token_delta
+                )
+                protocol_correlation_id = str(_uuid.uuid4())
+                logger.error(
+                    "Upstream stream carried a data payload that is not a JSON "
+                    "object; failing closed [correlation_id=%s]",
+                    protocol_correlation_id,
+                )
+                return JSONResponse(
+                    status_code=502,
+                    content={
+                        "error": "upstream_protocol_error",
+                        "message": "Upstream stream carried a data payload that "
+                        "is not a JSON object",
+                        "correlation_id": protocol_correlation_id,
+                    },
+                )
+
             try:
-                if unparsed_payloads:
-                    joined_unparsed = "\n".join(unparsed_payloads)
-                    safe_unparsed = await _mask_output(rails, joined_unparsed)
-                    if safe_unparsed != joined_unparsed:
-                        stream_pii_redacted = True
-                        if not choice_buffers:
-                            sanitized_choices.append(
-                                {
-                                    "index": 0,
-                                    "content": safe_unparsed,
-                                    "reasoning_content": None,
-                                    "tool_calls": [],
-                                    "finish_reason": "stop",
-                                }
-                            )
-
-                for c_idx in sorted(choice_buffers):
-                    c_buf = choice_buffers[c_idx]
-                    raw_c_content: str | None = c_buf["content"]
-                    safe_c_content: str | None = raw_c_content
-                    if raw_c_content:
-                        safe_c_content = await _mask_output(rails, raw_c_content)
-                        if safe_c_content != raw_c_content:
-                            stream_pii_redacted = True
-
-                    raw_c_reasoning: str | None = c_buf["reasoning_content"]
-                    safe_c_reasoning: str | None = raw_c_reasoning
-                    if raw_c_reasoning:
-                        safe_c_reasoning = await _mask_output(rails, raw_c_reasoning)
-                        if safe_c_reasoning != raw_c_reasoning:
-                            stream_pii_redacted = True
-
-                    tc_map: dict[int, dict[str, str]] = c_buf["tool_calls"]
-                    sanitized_tcs: list[dict[str, Any]] = []
-                    for tc_idx in sorted(tc_map):
-                        tc_entry = tc_map[tc_idx]
-                        raw_args = tc_entry["arguments"]
-                        safe_args_str = raw_args
-                        if raw_args:
-                            safe_args_str, was_modified = await _mask_tool_arguments(
-                                rails, raw_args
-                            )
-                            if was_modified:
-                                stream_pii_redacted = True
-                        sanitized_tcs.append(
-                            {
-                                "id": tc_entry["id"] or f"call-{tc_idx}",
-                                "type": "function",
-                                "function": {
-                                    "name": tc_entry["name"],
-                                    "arguments": safe_args_str,
-                                },
-                            }
-                        )
-
-                    finish_reason = c_buf["finish_reason"] or (
-                        "tool_calls" if sanitized_tcs else "stop"
-                    )
-                    sanitized_choices.append(
-                        {
-                            "index": c_idx,
-                            "content": safe_c_content,
-                            "reasoning_content": safe_c_reasoning,
-                            "tool_calls": sanitized_tcs,
-                            "finish_reason": finish_reason,
-                        }
-                    )
+                stream_completion, stream_report = await sanitize_stream(
+                    assembler,
+                    _ProxyMasker(rails),
+                    fallback_model=model_id,
+                    now=int(time.time()),
+                )
             except Exception:
                 await _get_token_quota_proxy().rollback_step(
                     agent_id, reserved_tokens=token_delta
@@ -1510,15 +1390,11 @@ async def chat_completions(
 
             # Record lengths ONLY — never message/response content on OTel spans (#774).
             if span.is_recording():
-                stream_output_length = sum(
-                    len(sc.get("content") or "")
-                    + len(sc.get("reasoning_content") or "")
-                    for sc in sanitized_choices
-                )
                 span.set_attribute(
-                    SPAN_ATTR_CONTENT_OUTPUT_LENGTH, stream_output_length
+                    SPAN_ATTR_CONTENT_OUTPUT_LENGTH,
+                    completion_text_length(stream_completion),
                 )
-                span.set_attribute("gen_ai.response.model", stream_model)
+                span.set_attribute("gen_ai.response.model", stream_completion["model"])
 
             try:
                 await _emit_proxy_pass_evidence(
@@ -1527,7 +1403,8 @@ async def chat_completions(
                     body=body,
                     model_id=model_id,
                     agent_id=agent_id,
-                    pii_redacted=stream_pii_redacted,
+                    pii_redacted=stream_report.pii_redacted,
+                    output_fields_dropped=stream_report.fields_dropped,
                 )
             except EvidenceChainUnavailableError as exc:
                 await _get_token_quota_proxy().rollback_step(
@@ -1539,42 +1416,23 @@ async def chat_completions(
                 )
                 return _evidence_unavailable_response(exc)
 
-            await _reconcile_actual_usage(agent_id, token_delta, stream_usage)
+            await _reconcile_actual_usage(
+                agent_id, token_delta, stream_completion.get("usage")
+            )
 
-            if stream_pii_redacted:
+            if stream_report.pii_redacted:
                 logger.info(
                     "Streaming output redacted by Stage 4 guardrails: model=%s",
                     model_id,
                 )
-                ts_now = int(time.time())
-                sse_frames = _build_redacted_sse_bytes(
-                    stream_id=stream_id or f"chatcmpl-{ts_now}",
-                    created=stream_created if stream_created is not None else ts_now,
-                    model_id=stream_model,
-                    sanitized_choices=sanitized_choices,
-                    usage=stream_usage,
-                )
+            sse_frames = encode_sse_frames(stream_completion)
 
-                async def _replay_redacted() -> AsyncIterator[bytes]:
-                    for frame in sse_frames:
-                        yield frame
-
-                return StreamingResponse(
-                    _replay_redacted(),
-                    media_type="text/event-stream",
-                    headers={
-                        "Cache-Control": "no-cache",
-                        "X-Accel-Buffering": "no",
-                    },
-                )
-
-            # Content passed output filtering — re-stream the collected chunks
-            async def _replay_chunks() -> AsyncIterator[bytes]:
-                for c in collected_chunks:
-                    yield c
+            async def _emit_frames() -> AsyncIterator[bytes]:
+                for frame in sse_frames:
+                    yield frame
 
             return StreamingResponse(
-                _replay_chunks(),
+                _emit_frames(),
                 media_type="text/event-stream",
                 headers={
                     "Cache-Control": "no-cache",
@@ -1609,8 +1467,8 @@ async def chat_completions(
                         "correlation_id": correlation_id,
                     },
                 )
-            vllm_response = resp.json()
-            if not isinstance(vllm_response, dict):
+            upstream_completion = resp.json()
+            if not isinstance(upstream_completion, dict):
                 raise ValueError("Upstream inference response was not a JSON object")
         except HTTPException:
             # MED-6 fix: roll back quota on vLLM HTTP errors (4xx/5xx).
@@ -1626,57 +1484,16 @@ async def chat_completions(
             safe_err = _safe_error_response(exc)
             raise HTTPException(status_code=500, detail=safe_err) from exc
 
-        # 6. Output filtering / PII masking across ALL completion choices (POAM-2026-209)
-        non_stream_pii_redacted = False
+        # 6. Egress allowlist + PII masking across ALL completion choices
+        # (POAM-2026-209). The returned body is built from scratch; the upstream
+        # JSON is never mutated or returned.
         try:
-            for choice in vllm_response.get("choices") or []:
-                if not isinstance(choice, dict):
-                    continue
-                message = choice.get("message")
-                if not isinstance(message, dict):
-                    continue
-
-                if (
-                    choice.get("finish_reason") == "tool_calls"
-                    or "tool_calls" in message
-                ):
-                    for tool_call in message.get("tool_calls") or []:
-                        if (
-                            isinstance(tool_call, dict)
-                            and isinstance(tool_call.get("function"), dict)
-                            and "arguments" in tool_call["function"]
-                        ):
-                            raw_args = tool_call["function"]["arguments"]
-                            if raw_args and isinstance(raw_args, str):
-                                safe_args_str, args_mod = await _mask_tool_arguments(
-                                    rails, raw_args
-                                )
-                                if args_mod:
-                                    non_stream_pii_redacted = True
-                                tool_call["function"]["arguments"] = safe_args_str
-                orig_content = message.get("content")
-                if isinstance(orig_content, str) and orig_content:
-                    safe_content = await _mask_output(rails, orig_content)
-                    if safe_content != orig_content:
-                        non_stream_pii_redacted = True
-                    message["content"] = safe_content
-                elif isinstance(orig_content, list) and orig_content:
-                    safe_list, list_mod = await _mask_json_value(rails, orig_content)
-                    if list_mod:
-                        non_stream_pii_redacted = True
-                    message["content"] = safe_list
-
-                orig_reasoning = message.get("reasoning_content")
-                if isinstance(orig_reasoning, str) and orig_reasoning:
-                    safe_reasoning = await _mask_output(rails, orig_reasoning)
-                    if safe_reasoning != orig_reasoning:
-                        non_stream_pii_redacted = True
-                    message["reasoning_content"] = safe_reasoning
-                elif isinstance(orig_reasoning, list) and orig_reasoning:
-                    safe_r_list, r_mod = await _mask_json_value(rails, orig_reasoning)
-                    if r_mod:
-                        non_stream_pii_redacted = True
-                    message["reasoning_content"] = safe_r_list
+            completion, report = await sanitize_completion(
+                upstream_completion,
+                _ProxyMasker(rails),
+                fallback_model=model_id,
+                now=int(time.time()),
+            )
         except Exception:
             await _get_token_quota_proxy().rollback_step(
                 agent_id, reserved_tokens=token_delta
@@ -1685,20 +1502,10 @@ async def chat_completions(
 
         # Record lengths ONLY — never message/response content on OTel spans (#774).
         if span.is_recording():
-            output_length = sum(
-                len(_extract_message_content_text(choice["message"].get("content")))
-                + len(
-                    _extract_message_content_text(
-                        choice["message"].get("reasoning_content")
-                    )
-                )
-                for choice in vllm_response.get("choices") or []
-                if isinstance(choice, dict) and isinstance(choice.get("message"), dict)
-            )
-            span.set_attribute(SPAN_ATTR_CONTENT_OUTPUT_LENGTH, output_length)
             span.set_attribute(
-                "gen_ai.response.model", vllm_response.get("model", model_id)
+                SPAN_ATTR_CONTENT_OUTPUT_LENGTH, completion_text_length(completion)
             )
+            span.set_attribute("gen_ai.response.model", completion["model"])
 
         try:
             await _emit_proxy_pass_evidence(
@@ -1707,7 +1514,8 @@ async def chat_completions(
                 body=body,
                 model_id=model_id,
                 agent_id=agent_id,
-                pii_redacted=non_stream_pii_redacted,
+                pii_redacted=report.pii_redacted,
+                output_fields_dropped=report.fields_dropped,
             )
         except EvidenceChainUnavailableError as exc:
             await _get_token_quota_proxy().rollback_step(
@@ -1719,5 +1527,5 @@ async def chat_completions(
             )
             return _evidence_unavailable_response(exc)
 
-        await _reconcile_actual_usage(agent_id, token_delta, vllm_response.get("usage"))
-        return JSONResponse(content=vllm_response)
+        await _reconcile_actual_usage(agent_id, token_delta, completion.get("usage"))
+        return JSONResponse(content=completion)
