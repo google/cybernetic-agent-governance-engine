@@ -27,11 +27,15 @@ out-of-band ``kid``-resolved OIDC JWT verification (:func:`verify_user_oidc_toke
     manifest (``CAGE_USER_OIDC_JWKS_JSON`` or ``CAGE_USER_OIDC_TRUST_ANCHORS_FILE``).
   - Refuses mismatches between an authenticated token's principal and a
     caller-supplied ``QueryRequest.user_id`` with HTTP 403.
-  - Under enforcing postures (or when ``CAGE_USER_OIDC_ISSUER`` /
-    ``CAGE_REQUIRE_VERIFIED_PRINCIPAL`` is set, unless
-    ``CAGE_ALLOW_ASSERTED_PRINCIPAL=true``), requests without a verified user
-    OIDC token are refused with HTTP 401. Under permissive postures
-    (``dev``/``test``/``ci``), unauthenticated requests carry ``verified=False``.
+  - Under enforcing postures, requests without a verified user OIDC token are
+    refused with HTTP 401, and ``CAGE_ALLOW_ASSERTED_PRINCIPAL`` cannot relax
+    that: the advisor refuses to start with it set
+    (:func:`assert_no_asserted_principal_in_enforcing_posture`), and
+    :func:`requires_verified_principal` ignores it. Under permissive postures
+    (``dev``/``test``/``ci``), the same refusal applies when
+    ``CAGE_USER_OIDC_ISSUER`` or ``CAGE_REQUIRE_VERIFIED_PRINCIPAL`` is set,
+    unless ``CAGE_ALLOW_ASSERTED_PRINCIPAL=true``; otherwise unauthenticated
+    requests carry ``verified=False``.
   - Binds checkpointed conversation threads to the initiating principal via
     :func:`require_thread_owner`, refusing cross-principal access, default-thread
     pre-claiming, and ownerless populated checkpoints.
@@ -55,7 +59,7 @@ from fastapi import HTTPException, Security, status
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from langgraph.checkpoint.base import BaseCheckpointSaver
 
-from src.gateway.governance.env_posture import env_flag, is_enforcing
+from src.gateway.governance.env_posture import env_flag, is_enforcing, resolve_posture
 from src.governed_financial_advisor.models.principal import (
     PRINCIPAL_MAX_LEN,
     PRINCIPAL_PATTERN,
@@ -267,14 +271,51 @@ def verify_user_oidc_token(
 
 
 def requires_verified_principal() -> bool:
-    """Return True when the current posture requires a cryptographically verified principal."""
+    """Return True when an advisor request must carry a verified end-user principal.
+
+    Every enforcing posture requires one, whatever ``CAGE_ALLOW_ASSERTED_PRINCIPAL``
+    says. The flag relaxes only a permissive posture (``dev``/``test``/``ci``),
+    where it overrides ``CAGE_USER_OIDC_ISSUER`` and
+    ``CAGE_REQUIRE_VERIFIED_PRINCIPAL``. The advisor refuses to start in an
+    enforcing posture with the flag set
+    (:func:`assert_no_asserted_principal_in_enforcing_posture`); ignoring it
+    here keeps the request path fail-closed even if that check is bypassed.
+    """
+    if is_enforcing():
+        return True
     if env_flag("CAGE_ALLOW_ASSERTED_PRINCIPAL", False):
         return False
-    if bool(os.environ.get("CAGE_USER_OIDC_ISSUER", "").strip()):
+    if os.environ.get("CAGE_USER_OIDC_ISSUER", "").strip():
         return True
-    if env_flag("CAGE_REQUIRE_VERIFIED_PRINCIPAL", False):
-        return True
-    return is_enforcing()
+    return env_flag("CAGE_REQUIRE_VERIFIED_PRINCIPAL", False)
+
+
+class AssertedPrincipalPostureError(RuntimeError):
+    """``CAGE_ALLOW_ASSERTED_PRINCIPAL`` is set in an enforcing posture."""
+
+
+def assert_no_asserted_principal_in_enforcing_posture() -> None:
+    """Refuse to start when an enforcing posture enables the asserted-principal override.
+
+    ``CAGE_ALLOW_ASSERTED_PRINCIPAL`` accepts a caller-asserted ``user_id``
+    (``verified=False``) in place of a verified end-user OIDC principal. It is
+    a development override: an enforcing posture must authenticate the end
+    user, so setting the flag to a true value there is a misconfiguration that
+    stops the process instead of being silently ignored. The flag is parsed
+    exactly as :func:`requires_verified_principal` parses it.
+
+    Raises:
+        AssertedPrincipalPostureError: If the posture is enforcing and the
+            flag is set to a true value.
+    """
+    if is_enforcing() and env_flag("CAGE_ALLOW_ASSERTED_PRINCIPAL", False):
+        raise AssertedPrincipalPostureError(
+            "Refusing to start: CAGE_ALLOW_ASSERTED_PRINCIPAL is set in enforcing "
+            f"posture {resolve_posture().value!r}. An enforcing posture requires a "
+            "verified end-user OIDC principal, and this flag would accept a "
+            "caller-asserted user_id instead. Unset CAGE_ALLOW_ASSERTED_PRINCIPAL, "
+            "or run under CAGE_ENV=dev, test or ci."
+        )
 
 
 def _extract_user_oidc_token(request: Any) -> str | None:

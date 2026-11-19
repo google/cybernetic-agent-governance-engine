@@ -27,11 +27,13 @@ Covers the wire and authentication contracts in
 * A request whose body ``user_id`` disagrees with the verified OIDC claim is
   refused with HTTP 403 before graph execution.
 * A request without a verified OIDC identity is refused (HTTP 401) in
-  enforcing postures or when ``CAGE_USER_OIDC_ISSUER`` /
+  enforcing postures, where ``CAGE_ALLOW_ASSERTED_PRINCIPAL`` is ignored and
+  makes the advisor refuse to start. In permissive postures (``dev`` /
+  ``test`` / ``ci``) it is refused when ``CAGE_USER_OIDC_ISSUER`` /
   ``CAGE_REQUIRE_VERIFIED_PRINCIPAL`` is configured (unless
-  ``CAGE_ALLOW_ASSERTED_PRINCIPAL=true``), and is explicitly marked unverified
-  (``cage.principal.verified=False``, ``x-cage-principal-verified="false"``)
-  in permissive postures (``dev`` / ``test`` / ``ci``).
+  ``CAGE_ALLOW_ASSERTED_PRINCIPAL=true``) and is otherwise explicitly marked
+  unverified (``cage.principal.verified=False``,
+  ``x-cage-principal-verified="false"``).
 * ``x-cage-principal`` is sanitized and truncated by one helper that matches
   the gateway's ``sanitize_principal``.
 * A checkpointed conversation thread continues only for the principal whose
@@ -56,6 +58,7 @@ import pytest
 from cryptography.hazmat.primitives import serialization
 from cryptography.hazmat.primitives.asymmetric import rsa
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
+from fastapi import FastAPI
 from fastapi.testclient import TestClient
 from langchain_core.messages import AIMessage, AnyMessage, HumanMessage
 from langgraph.checkpoint.memory import MemorySaver
@@ -77,13 +80,18 @@ from src.gateway.observability.attributes import (
 )
 from src.gateway.server.rate_limit import sanitize_principal as gateway_sanitize
 from src.governed_financial_advisor.infrastructure.auth import (
+    AssertedPrincipalPostureError,
     PrincipalIdentity,
+    assert_no_asserted_principal_in_enforcing_posture,
     require_thread_owner,
     requires_verified_principal,
     verify_user_oidc_token,
 )
 from src.governed_financial_advisor.infrastructure.gateway_client import (
     GatewayClient,
+)
+from src.governed_financial_advisor.infrastructure.identity_guard import (
+    FORBIDDEN_SIGNING_KEY_VARS,
 )
 from src.governed_financial_advisor.models.principal import (
     PRINCIPAL_MAX_LEN,
@@ -630,6 +638,7 @@ class TestAuthenticatedPrincipalBinding:
     ) -> None:
         client, graph = query_client
         _, pub_pem = ed25519_keypair
+        monkeypatch.setenv("CAGE_ENV", "dev")
         monkeypatch.setenv("CAGE_USER_OIDC_ISSUER", _OIDC_ISSUER)
         monkeypatch.setenv("CAGE_USER_OIDC_JWKS_JSON", json.dumps({_OIDC_KID: pub_pem}))
         monkeypatch.setenv("CAGE_ALLOW_ASSERTED_PRINCIPAL", "true")
@@ -643,6 +652,113 @@ class TestAuthenticatedPrincipalBinding:
         assert len(graph.calls) == 1
         assert graph.calls[0]["principal_verified"] is False
         assert graph.calls[0]["headers"]["x-cage-principal-verified"] == "false"
+
+
+_ENFORCING_POSTURES = ("production", "staging")
+
+
+class TestAssertedPrincipalOverrideRefusedWhenEnforcing:
+    """``CAGE_ALLOW_ASSERTED_PRINCIPAL`` never relaxes an enforcing posture.
+
+    The advisor refuses to start with the flag set in ``production`` or
+    ``staging``. If that startup check is bypassed, a request without a
+    verified end-user principal is still refused with HTTP 401.
+    """
+
+    @pytest.mark.parametrize("cage_env", _ENFORCING_POSTURES)
+    async def test_advisor_refuses_to_start_with_override_set(
+        self,
+        advisor_server: Any,
+        monkeypatch: pytest.MonkeyPatch,
+        cage_env: str,
+    ) -> None:
+        monkeypatch.setenv("CAGE_ENV", cage_env)
+        monkeypatch.setenv("CAGE_DEPLOYMENT_REGION", "US_FED")
+        monkeypatch.setenv("CAGE_ALLOW_ASSERTED_PRINCIPAL", "true")
+        for var in FORBIDDEN_SIGNING_KEY_VARS:
+            monkeypatch.delenv(var, raising=False)
+        warm_pii_engines = MagicMock()
+        create_graph = MagicMock()
+        served = False
+
+        with (
+            patch(
+                "src.gateway.governance.pii_redactor_factory.ensure_pii_engines",
+                warm_pii_engines,
+            ),
+            patch.object(advisor_server, "create_graph", create_graph),
+            pytest.raises(
+                AssertedPrincipalPostureError,
+                match=(
+                    "CAGE_ALLOW_ASSERTED_PRINCIPAL is set in enforcing posture "
+                    f"'{cage_env}'"
+                ),
+            ),
+        ):
+            async with advisor_server.lifespan(FastAPI()):
+                served = True
+
+        assert served is False
+        warm_pii_engines.assert_not_called()
+        create_graph.assert_not_called()
+
+    @pytest.mark.parametrize("cage_env", _ENFORCING_POSTURES)
+    def test_request_without_verified_principal_is_refused_despite_override(
+        self,
+        query_client: tuple[TestClient, _CapturingGraph],
+        monkeypatch: pytest.MonkeyPatch,
+        cage_env: str,
+    ) -> None:
+        client, graph = query_client
+        monkeypatch.setenv("CAGE_ENV", cage_env)
+        monkeypatch.setenv("CAGE_DEPLOYMENT_REGION", "US_FED")
+        monkeypatch.setenv("CAGE_ALLOW_ASSERTED_PRINCIPAL", "true")
+        assert requires_verified_principal() is True
+
+        resp = client.post(
+            "/agent/query",
+            json={"prompt": "Hello", "user_id": "user:someone-else@example.com"},
+            headers=_AUTH,
+        )
+        assert resp.status_code == 401
+        assert "Verified end-user principal required" in resp.json()["detail"]
+        assert graph.calls == []
+
+    @pytest.mark.parametrize("cage_env", ["production", "staging", "local"])
+    @pytest.mark.parametrize("value", ["true", "1", "YES"])
+    def test_guard_refuses_any_true_spelling_in_an_enforcing_posture(
+        self, monkeypatch: pytest.MonkeyPatch, cage_env: str, value: str
+    ) -> None:
+        monkeypatch.setenv("CAGE_ENV", cage_env)
+        monkeypatch.setenv("CAGE_ALLOW_ASSERTED_PRINCIPAL", value)
+        with pytest.raises(
+            AssertedPrincipalPostureError, match="CAGE_ALLOW_ASSERTED_PRINCIPAL"
+        ):
+            assert_no_asserted_principal_in_enforcing_posture()
+        assert requires_verified_principal() is True
+
+    @pytest.mark.parametrize("value", ["false", "0", ""])
+    def test_guard_allows_a_false_override_in_production(
+        self, monkeypatch: pytest.MonkeyPatch, value: str
+    ) -> None:
+        monkeypatch.setenv("CAGE_ENV", "production")
+        monkeypatch.setenv("CAGE_ALLOW_ASSERTED_PRINCIPAL", value)
+        assert_no_asserted_principal_in_enforcing_posture()
+        assert requires_verified_principal() is True
+
+    @pytest.mark.parametrize("cage_env", ["dev", "test", "ci"])
+    def test_override_still_relaxes_a_permissive_posture(
+        self, monkeypatch: pytest.MonkeyPatch, cage_env: str
+    ) -> None:
+        monkeypatch.setenv("CAGE_ENV", cage_env)
+        monkeypatch.setenv("CAGE_USER_OIDC_ISSUER", _OIDC_ISSUER)
+        monkeypatch.setenv("CAGE_REQUIRE_VERIFIED_PRINCIPAL", "true")
+        monkeypatch.delenv("CAGE_ALLOW_ASSERTED_PRINCIPAL", raising=False)
+        assert requires_verified_principal() is True
+
+        monkeypatch.setenv("CAGE_ALLOW_ASSERTED_PRINCIPAL", "true")
+        assert_no_asserted_principal_in_enforcing_posture()
+        assert requires_verified_principal() is False
 
 
 _PROMPT_CANARY = "zebra-prompt-canary-5d1e9b"
