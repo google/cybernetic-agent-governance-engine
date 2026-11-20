@@ -135,3 +135,30 @@ def test_gitignore_keeps_terraform_state_untracked() -> None:
 def test_gate_runs_in_ci_lint_job() -> None:
     ci = (_REPO_ROOT / ".github" / "workflows" / "ci.yml").read_text(encoding="utf-8")
     assert "scripts/check_project_id_hygiene.py" in ci
+
+
+def test_get_tracked_files_uses_nul_delimiter_for_non_ascii_paths_and_tfstate(
+    tmp_path: Path,
+) -> None:
+    """Non-ASCII paths under default core.quotePath=true are never C-quoted or skipped."""
+    import subprocess
+
+    subprocess.run(["git", "init", "-q"], cwd=tmp_path, check=True)
+    subprocess.run(
+        ["git", "config", "core.quotePath", "true"], cwd=tmp_path, check=True
+    )
+    tfstate_rel = _write(tmp_path, "infra/us—east/terraform.tfstate", "{}\n")
+    doc_rel = _write(
+        tmp_path,
+        "docs/runbook — ops.md",
+        f'project = "{_SYNTHETIC_ID}"\n',
+    )
+    subprocess.run(["git", "add", "-f", tfstate_rel, doc_rel], cwd=tmp_path, check=True)
+
+    tracked = gate.get_tracked_files(tmp_path)
+    assert tfstate_rel in tracked
+    assert doc_rel in tracked
+    assert gate.scan_tracked_files(tmp_path, tracked, [_SYNTHETIC_ID]) == [
+        (doc_rel, 1, f'project = "{_SYNTHETIC_ID}"'),
+        (tfstate_rel, 0, "tracked Terraform state file (POAM-2026-071)"),
+    ]
