@@ -16,23 +16,30 @@
 set -euo pipefail
 
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-OUTPUT_FILE="$REPO_ROOT/THIRD_PARTY_NOTICES.md"
+CURATED_NOTICES="$REPO_ROOT/THIRD_PARTY_NOTICES.md"
+OUTPUT_FILE="${1:-${CAGE_NOTICES_RAW_OUT:-/tmp/cage-raw-licenses.md}}"
 
-echo "# Third-Party Notices" > "$OUTPUT_FILE"
+# Refuse to destructively clobber the curated THIRD_PARTY_NOTICES.md (which carries
+# vendored source attributions, container base image notices, and usage notes).
+if [ "$(cd "$(dirname "$OUTPUT_FILE")" 2>/dev/null && pwd)/$(basename "$OUTPUT_FILE")" = "$CURATED_NOTICES" ]; then
+    echo "ERROR: Refusing to overwrite curated $CURATED_NOTICES directly." >&2
+    echo "Write the raw license inventory to a scratch path (default: /tmp/cage-raw-licenses.md)" >&2
+    echo "and reconcile changes per 'How to Update This File' in THIRD_PARTY_NOTICES.md." >&2
+    exit 1
+fi
+
+echo "# Raw Third-Party License Inventory" > "$OUTPUT_FILE"
 echo "" >> "$OUTPUT_FILE"
-echo "This project incorporates third-party software. Licenses and attributions follow." >> "$OUTPUT_FILE"
 echo "Generated: $(date -u +%Y-%m-%dT%H:%M:%SZ)" >> "$OUTPUT_FILE"
 echo "" >> "$OUTPUT_FILE"
 
-# ── Section 1: Root Python environment ──────────────────────────────────────
-echo "## Python: Root Environment (pyproject.toml)" >> "$OUTPUT_FILE"
+# ── Section 1: Root Python environment (all groups + all optional extras) ────
+echo "## Python: Root Environment (pyproject.toml — --locked --all-groups --all-extras)" >> "$OUTPUT_FILE"
 echo "" >> "$OUTPUT_FILE"
 
 cd "$REPO_ROOT"
-# Use --no-install-project to skip building the local package (missing src/cybernetic_governance_engine/__init__.py)
-uv sync --all-groups --no-install-project --quiet
-# Use --no-project so uv doesn't try to build/install the project itself
-uv run --no-project pip-licenses \
+uv sync --locked --all-groups --all-extras --no-install-project --quiet
+uv run --no-sync --no-project pip-licenses \
     --format=markdown \
     --with-urls \
     --with-authors \
@@ -41,67 +48,39 @@ uv run --no-project pip-licenses \
 
 echo "" >> "$OUTPUT_FILE"
 
-# ── Section 2: compliance_bridge (consolidated into pyproject.toml) ─────────
-echo "## Python: src/compliance_bridge (consolidated into pyproject.toml \`compliance\` extra)" >> "$OUTPUT_FILE"
-echo "" >> "$OUTPUT_FILE"
-echo "_Dependencies previously in src/compliance_bridge/requirements.txt have been absorbed into the root pyproject.toml \`compliance\` extra. Covered by Section 1._" >> "$OUTPUT_FILE"
-
+# ── Section 2: Node.js (agentsight-ui — offline package-lock.json parse) ─────
+echo "## Node.js: src/agentsight-ui (package.json / package-lock.json)" >> "$OUTPUT_FILE"
 echo "" >> "$OUTPUT_FILE"
 
-# ── Section 3: governed_financial_advisor (consolidated into pyproject.toml) ─
-echo "## Python: src/governed_financial_advisor (consolidated into pyproject.toml \`advisor\` extra)" >> "$OUTPUT_FILE"
-echo "" >> "$OUTPUT_FILE"
-echo "_Dependencies previously in src/governed_financial_advisor/requirements.txt have been absorbed into the root pyproject.toml \`advisor\` extra. Covered by Section 1._" >> "$OUTPUT_FILE"
+if [ -f "$REPO_ROOT/src/agentsight-ui/package-lock.json" ]; then
+    uv run --no-sync --no-project python - "$REPO_ROOT/src/agentsight-ui/package.json" "$REPO_ROOT/src/agentsight-ui/package-lock.json" >> "$OUTPUT_FILE" <<'PY'
+import json
+import sys
 
-echo "" >> "$OUTPUT_FILE"
+pkg = json.load(open(sys.argv[1], encoding="utf-8"))
+lock = json.load(open(sys.argv[2], encoding="utf-8"))
+packages = lock.get("packages", {})
 
-# ── Section 4: Node.js (agentsight-ui) ──────────────────────────────────────
-echo "## Node.js: src/agentsight-ui (package.json)" >> "$OUTPUT_FILE"
-echo "" >> "$OUTPUT_FILE"
+direct = {}
+for section in ("dependencies", "devDependencies"):
+    for name, spec in sorted((pkg.get(section) or {}).items()):
+        direct[name] = (section, spec)
 
-if ! command -v node >/dev/null 2>&1; then
-    echo "_Node.js not found — skipping agentsight-ui license scan._" >> "$OUTPUT_FILE"
+print("| Name | Scope | Spec | Pinned Version | License |")
+print("| :--- | :--- | :--- | :--- | :--- |")
+for name, (scope, spec) in sorted(direct.items()):
+    meta = packages.get(f"node_modules/{name}", {})
+    version = meta.get("version", "unknown")
+    lic = meta.get("license", "unknown")
+    print(f"| {name} | {scope} | {spec} | {version} | {lic} |")
+PY
 else
-    # Disable exit-on-error for the entire Node.js section so npm/npx errors
-    # don't abort the script
-    set +e
-    cd "$REPO_ROOT/src/agentsight-ui"
-    if [ ! -d node_modules ]; then
-        npm install --silent 2>/dev/null
-    fi
-
-    NODE_LICENSES_TMP=$(mktemp -u /tmp/node-licenses-XXXXXX.txt)
-
-    # generate-license-file cannot write to /dev/stdout — use a temp file
-    # Note: mktemp -u so the file does not pre-exist (tool prompts for overwrite)
-    npx --yes generate-license-file \
-        --input package.json \
-        --output "$NODE_LICENSES_TMP" \
-        --eol lf \
-        2>/dev/null
-    NODE_EXIT=$?
-
-    if [ $NODE_EXIT -eq 0 ] && [ -s "$NODE_LICENSES_TMP" ]; then
-        cat "$NODE_LICENSES_TMP" >> "$OUTPUT_FILE"
-    else
-        # Fallback: license-checker
-        npx --yes license-checker \
-            --production \
-            --markdown \
-            >> "$OUTPUT_FILE" 2>/dev/null
-        CHECKER_EXIT=$?
-        if [ $CHECKER_EXIT -ne 0 ]; then
-            echo "_Node.js license scan failed — skipped._" >> "$OUTPUT_FILE"
-        fi
-    fi
-
-    rm -f "$NODE_LICENSES_TMP"
-    set -e
+    echo "_package-lock.json not found — skipping agentsight-ui license scan._" >> "$OUTPUT_FILE"
 fi
 
 echo "" >> "$OUTPUT_FILE"
 echo "---" >> "$OUTPUT_FILE"
-echo "_End of Third-Party Notices_" >> "$OUTPUT_FILE"
+echo "_End of Raw Third-Party License Inventory_" >> "$OUTPUT_FILE"
 
 cd "$REPO_ROOT"
-echo "✅ THIRD_PARTY_NOTICES.md written to $OUTPUT_FILE"
+echo "✅ Raw license inventory written to $OUTPUT_FILE (reconcile against $CURATED_NOTICES)"

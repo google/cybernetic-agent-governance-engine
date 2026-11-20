@@ -38,9 +38,9 @@ Simran Pabla / agent-integrity — Copyright 2026 Simran Pabla. Apache License 2
 
 Titusz Pan and Anders Rundgren / jcs — Copyright 2006-2019 WebPKI.org. Apache License 2.0.
   Source: https://github.com/titusz/jcs
-  Location: src/gateway/governance/vendor/jcs/
+  Location: src/gateway/governance/vendor/jcs/, packages/cage-client/src/cage_client/_jcs/
   Note: Vendored RFC 8785 JSON Canonicalization Scheme (JCS) reference implementation
-  used for deterministic hash-chain and routing seal serialization.
+  used for deterministic hash-chain, routing seal, and client envelope serialization.
 
 ---
 

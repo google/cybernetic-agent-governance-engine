@@ -42,6 +42,8 @@ jobs:
     steps:
       - name: Checkout repository
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
 
       - name: Install uv
         uses: astral-sh/setup-uv@07a047e608db84b3d8c06cd9a7c7dcc9c355c18e # v10.3.2
@@ -55,21 +57,45 @@ jobs:
           python-version-file: "pyproject.toml"
 
       - name: Install Dependencies
-        run: uv sync --group dev
-
-      - name: Install pip-licenses
-        run: uv pip install pip-licenses
+        run: uv sync --locked --all-groups --all-extras
 
       - name: Run License Audit
         run: |
-          uv run pip-licenses --format=json > licenses.json
-          
+          uv run --no-sync pip-licenses --format=json > licenses.json
+
+          # Fail closed if pip-licenses scanned an incomplete environment or missed any
+          # [project.optional-dependencies] extra (gateway, finance, nemo, inference,
+          # advisor, gcs, s3, clickhouse, compliance, langfuse, lint).
+          uv run --no-sync python -c '
+          import json, sys
+          data = json.load(open("licenses.json", encoding="utf-8"))
+          names = {row["Name"].lower().replace("_", "-") for row in data}
+          required_sentinels = {
+              "grpcio",
+              "yfinance",
+              "nemoguardrails",
+              "openai",
+              "langgraph",
+              "google-cloud-storage",
+              "boto3",
+              "clickhouse-connect",
+              "dowhy",
+              "langfuse",
+              "ruff",
+          }
+          missing = sorted(required_sentinels - names)
+          if len(data) < 280 or missing:
+              print(f"::error::Incomplete license scan: count={len(data)} missing={missing}", file=sys.stderr)
+              sys.exit(1)
+          print(f"Audited {len(data)} installed packages across all groups and optional extras.")
+          '
+
           # Check for forbidden licenses (including versioned SPDX/classifier strings
-          # like GPLv3, LGPL-2.1, AGPL-3.0), while permitting dual-licensed packages
-          # that offer a permissive alternative (e.g. "GPLv3+; MIT License").
+          # like GPLv3, GPL-2.0-only, LGPL-2.1, AGPL-3.0), while permitting dual-licensed
+          # packages that offer a permissive alternative (e.g. "GPLv3+; MIT License").
           if grep -iE '"[^"]*(GPL|AGPL|LGPL|General Public License)[^"]*"' licenses.json | grep -viE '; *(MIT|Apache|BSD|ISC)'; then
             echo "::error::Forbidden license found! (GPL/AGPL/LGPL)"
             exit 1
           fi
-          
+
           echo "License audit passed. No forbidden licenses detected."
