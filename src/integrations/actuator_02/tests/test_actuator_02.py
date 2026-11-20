@@ -120,7 +120,7 @@ class TestActuator02Adapter:
     async def test_verified_receipt_and_precredentials_brokerage(self) -> None:
         priv = Ed25519PrivateKey.generate()
         pub = priv.public_key()
-        resolver = _StubKeyResolver({"openshell-kid-1": pub})
+        resolver = _StubKeyResolver({"actuator-02-kid-1": pub})
         broker = _StubCredentialBroker()
         captured_headers: dict[str, str] = {}
 
@@ -140,7 +140,7 @@ class TestActuator02Adapter:
                 **unsigned_body,
                 "signature": {
                     "alg": "EdDSA",
-                    "kid": "openshell-kid-1",
+                    "kid": "actuator-02-kid-1",
                     "value": base64.urlsafe_b64encode(sig).decode("ascii").rstrip("="),
                 },
             }

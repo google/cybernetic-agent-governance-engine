@@ -58,7 +58,7 @@ def test_stub_allowed_in_test_posture(monkeypatch: pytest.MonkeyPatch) -> None:
     importlib.util.find_spec(_P09) is not None,
     reason="provider_09 adapter is installed; slot is no longer empty",
 )
-@pytest.mark.parametrize("alias", ["provider_09", "opscanvas", "p09"])
+@pytest.mark.parametrize("alias", ["provider_09", "p09"])
 async def test_uninstalled_provider_09_fails_closed(alias: str) -> None:
     provider = get_estate_provider(alias)
     assert isinstance(provider, UnavailableEstateProvider)
@@ -73,6 +73,14 @@ async def test_uninstalled_provider_09_fails_closed(alias: str) -> None:
 
     snapshot = await provider.get_topology_snapshot("project:demo")
     assert snapshot.ttl_seconds == 0 and not snapshot.is_trustworthy
+
+
+def test_partner_brand_alias_rejected_in_kernel_factory() -> None:
+    from scripts.check_vendor_brands import SLOT_BRAND_TOKENS
+
+    for branded_alias in sorted(SLOT_BRAND_TOKENS["provider_09"]):
+        with pytest.raises(ValueError, match="Unknown estate provider"):
+            get_estate_provider(branded_alias)
 
 
 def test_inner_import_error_is_not_masked(monkeypatch: pytest.MonkeyPatch) -> None:

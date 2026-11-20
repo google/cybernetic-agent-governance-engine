@@ -34,7 +34,7 @@ to find out:
 | Component | State at HEAD |
 |---|---|
 | `EstateProvider` protocol + result dataclasses | ✅ [`seams/estate.py`](../../../src/gateway/governance/seams/estate.py) |
-| Provider factory (`CAGE_ESTATE_PROVIDER=opscanvas` → `provider_09`) | ✅ [`estate_provider.py`](../../../src/gateway/governance/estate_provider.py). Resolves to a fail-closed `UNAVAILABLE` provider until the adapter is installed. |
+| Provider factory (`CAGE_ESTATE_PROVIDER=provider_09` / alias `p09`) | ✅ [`estate_provider.py`](../../../src/gateway/governance/estate_provider.py). Resolves to a fail-closed `UNAVAILABLE` provider until the adapter is installed. |
 | `provider_09` adapter package | ❌ Not yet built. It will live at `src/integrations/provider_09/` and export `Provider09EstateProvider` with a `from_env()` constructor. |
 | Kernel consumers (FTRA, `DeferQueue` hydration, OPA `cloudops_admission`) | ❌ Not wired yet. The "Expected CAGE verdict" column below is the **target** policy from the plan, §4. It is not current runtime behaviour. |
 

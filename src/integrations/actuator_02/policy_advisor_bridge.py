@@ -106,7 +106,7 @@ class PolicyAdvisorBridge:
                     defer_id=None,
                     reason="Fail-closed: DeferQueue unavailable for HITL escalation",
                 )
-            defer_id = f"defer-openshell-{uuid.uuid4().hex[:16]}"
+            defer_id = f"defer-actuator-02-{uuid.uuid4().hex[:16]}"
             token = DeferToken(
                 defer_id=defer_id,
                 thread_id=proposal.thread_id,

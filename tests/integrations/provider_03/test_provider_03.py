@@ -864,7 +864,7 @@ class TestStrictJsonAndBindReceiptProvenance:
         mock_response = _mock_response(
             {
                 "verdict": "APPROVED",
-                "decision_id": "veritas-dec-001",
+                "decision_id": "provider-03-dec-001",
                 "bind_receipt": receipt,
                 "findings": [],
             }
@@ -882,7 +882,7 @@ class TestStrictJsonAndBindReceiptProvenance:
             f for f in result.findings if f["code"] == FINDING_CODE_BIND_RECEIPT
         ]
         assert len(receipt_findings) == 1
-        assert receipt_findings[0]["decision_id"] == "veritas-dec-001"
+        assert receipt_findings[0]["decision_id"] == "provider-03-dec-001"
         assert receipt_findings[0]["bind_receipt"] == receipt
         assert len(receipt_findings[0]["bind_receipt_hash"]) == 64
 

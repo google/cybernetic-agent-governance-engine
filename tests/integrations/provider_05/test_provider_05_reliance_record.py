@@ -41,12 +41,12 @@ from src.gateway.governance.warrant import (
     Warrant,
     WarrantStandingVerifier,
 )
-from tests.integrations.provider_05.test_provider_05_veip_vectors import (
+from tests.integrations.provider_05.test_provider_05_v01_vectors import (
+    PROVIDER_05_ACTIVE_DIGEST,
+    PROVIDER_05_TAMPERED_DIGEST,
+    PROVIDER_05_V01_VECTORS,
     SHARED_CONTEXT,
     SHARED_WARRANT,
-    VEIP_ACTIVE_DIGEST,
-    VEIP_TAMPERED_DIGEST,
-    VEIP_V01_VECTORS,
 )
 
 pytestmark = [pytest.mark.unit, pytest.mark.local, pytest.mark.partner]
@@ -96,7 +96,7 @@ def test_contract_field_mapping_names_the_seven_v01_evidence_fields() -> None:
     }
 
 
-@pytest.mark.parametrize(("warrant", "context", "expected"), VEIP_V01_VECTORS)
+@pytest.mark.parametrize(("warrant", "context", "expected"), PROVIDER_05_V01_VECTORS)
 def test_vector_record_carries_every_contract_field(
     warrant: dict[str, Any], context: dict[str, Any], expected: RelianceStatus
 ) -> None:
@@ -130,7 +130,7 @@ def test_vector_record_carries_every_contract_field(
     assert record.issuing_authority == SHARED_WARRANT["issuing_authority"]
 
 
-@pytest.mark.parametrize(("warrant", "context", "expected"), VEIP_V01_VECTORS)
+@pytest.mark.parametrize(("warrant", "context", "expected"), PROVIDER_05_V01_VECTORS)
 def test_vector_attestation_is_derived_from_the_record(
     warrant: dict[str, Any], context: dict[str, Any], expected: RelianceStatus
 ) -> None:
@@ -145,7 +145,9 @@ def test_vector_attestation_is_derived_from_the_record(
 
 
 def test_vec_005_keeps_required_and_declared_versions_apart() -> None:
-    (vec_005,) = [v for v in VEIP_V01_VECTORS if v.id == "VEC-005-VERSION-MISMATCH"]
+    (vec_005,) = [
+        v for v in PROVIDER_05_V01_VECTORS if v.id == "VEC-005-VERSION-MISMATCH"
+    ]
     warrant, context, _ = vec_005.values
     record, _ = _record(warrant, context)
     assert record.reliance_status is RelianceStatus.INELIGIBLE_VERSION_MISMATCH
@@ -155,13 +157,13 @@ def test_vec_005_keeps_required_and_declared_versions_apart() -> None:
 
 def test_vec_006_reason_shows_distinguishable_full_digests() -> None:
     record, _ = _record(
-        {**SHARED_WARRANT, "digest": VEIP_TAMPERED_DIGEST}, SHARED_CONTEXT
+        {**SHARED_WARRANT, "digest": PROVIDER_05_TAMPERED_DIGEST}, SHARED_CONTEXT
     )
     assert record.reliance_status is RelianceStatus.INELIGIBLE_UNRESOLVED
-    assert VEIP_TAMPERED_DIGEST != VEIP_ACTIVE_DIGEST
+    assert PROVIDER_05_TAMPERED_DIGEST != PROVIDER_05_ACTIVE_DIGEST
     assert record.reason == (
-        f"Cryptographic digest mismatch: declared {VEIP_TAMPERED_DIGEST} "
-        f"vs computed {VEIP_ACTIVE_DIGEST}"
+        f"Cryptographic digest mismatch: declared {PROVIDER_05_TAMPERED_DIGEST} "
+        f"vs computed {PROVIDER_05_ACTIVE_DIGEST}"
     )
 
 

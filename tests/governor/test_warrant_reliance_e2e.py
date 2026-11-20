@@ -26,7 +26,7 @@ in a real ``DeferQueue``. Everything below the HTTP surface is CAGE code.
 What this does **not** exercise: the partner wire. Provider 05 (VEIP) has no
 live endpoint, so the warrant source is the seeded
 ``Provider05WarrantSource`` holding the VEIP v0.1 vectors verbatim
-(``tests/integrations/provider_05/test_provider_05_veip_vectors.py``). This is
+(``tests/integrations/provider_05/test_provider_05_v01_vectors.py``). This is
 not the Over-the-Wire conformance test AGENTS.md requires of Tier 1 adapters;
 that test cannot exist until VEIP publishes a sandbox endpoint.
 
@@ -110,11 +110,11 @@ from src.gateway.server.workload_identity import (
     _serving,
 )
 from src.integrations.provider_05 import Provider05WarrantSource
-from tests.integrations.provider_05.test_provider_05_veip_vectors import (
+from tests.integrations.provider_05.test_provider_05_v01_vectors import (
+    PROVIDER_05_ACTIVE_DIGEST,
+    PROVIDER_05_REVOKED_DIGEST,
+    PROVIDER_05_TAMPERED_DIGEST,
     SHARED_WARRANT,
-    VEIP_ACTIVE_DIGEST,
-    VEIP_REVOKED_DIGEST,
-    VEIP_TAMPERED_DIGEST,
 )
 
 pytestmark = [pytest.mark.unit, pytest.mark.local]
@@ -123,7 +123,7 @@ ADVISOR = (
     "cage-advisor-sa.governance-stack.serviceaccount.identity.linkerd.cluster.local"
 )
 #: The VEIP v0.1 shared ``evaluation_timestamp``.
-VEIP_NOW = datetime(2026, 8, 22, 12, 0, tzinfo=timezone.utc)
+PROVIDER_05_NOW = datetime(2026, 8, 22, 12, 0, tzinfo=timezone.utc)
 _CASH_KEY = "safety:current_cash"
 _OPENING_CASH = 1_000_000.0
 
@@ -132,10 +132,13 @@ VEC_002_REVOKED: dict[str, Any] = {
     **SHARED_WARRANT,
     "status": "REVOKED",
     "revocation_ref": "Emergency Risk Notice #912",
-    "digest": VEIP_REVOKED_DIGEST,
+    "digest": PROVIDER_05_REVOKED_DIGEST,
 }
 #: VEC-006: the shared warrant with its declared digest's last nibble flipped.
-VEC_006_TAMPERED: dict[str, Any] = {**SHARED_WARRANT, "digest": VEIP_TAMPERED_DIGEST}
+VEC_006_TAMPERED: dict[str, Any] = {
+    **SHARED_WARRANT,
+    "digest": PROVIDER_05_TAMPERED_DIGEST,
+}
 
 
 def _vec(fields: dict[str, Any]) -> Warrant:
@@ -149,7 +152,7 @@ def _vec(fields: dict[str, Any]) -> Warrant:
 class _Clock:
     """Monotonic and wall clocks advanced together, by hand."""
 
-    def __init__(self, wall: datetime = VEIP_NOW) -> None:
+    def __init__(self, wall: datetime = PROVIDER_05_NOW) -> None:
         self.mono = 1_000.0
         self.wall = wall
 
@@ -542,7 +545,7 @@ async def test_a_active_vec_001_allows_seals_the_reliance_and_executes_once(
     assert attestation["type"] == "WARRANT"
     assert attestation["status"] == "UNVERIFIED"
     assert attestation["provider_name"] == "provider_05_warrant"
-    assert attestation["warrant_digest"] == VEIP_ACTIVE_DIGEST
+    assert attestation["warrant_digest"] == PROVIDER_05_ACTIVE_DIGEST
     assert attestation["reliance_status"] == "ELIGIBLE"
     assert await stack.records("GOVERNANCE_DECISION") == []  # previews never seal
 
@@ -564,12 +567,12 @@ async def test_a_active_vec_001_allows_seals_the_reliance_and_executes_once(
     (reliance,) = decision_payload["reliance"]
     assert reliance["reliance_status"] == "ELIGIBLE"
     assert reliance["warrant_id"] == "warrant-veip-2026-001"
-    assert reliance["warrant_digest"] == VEIP_ACTIVE_DIGEST
+    assert reliance["warrant_digest"] == PROVIDER_05_ACTIVE_DIGEST
     assert reliance["warrant_status"] == "ACTIVE"
     assert reliance["required_governing_version"] == "cage-policy-2.1.0"
     assert reliance["provider_name"] == "provider_05_warrant"
     assert reliance["verification_status"] == "UNVERIFIED"
-    assert reliance["attested_at"] == VEIP_NOW.isoformat()
+    assert reliance["attested_at"] == PROVIDER_05_NOW.isoformat()
     assert rs.verify_seal_against_evidence(
         clearance.routing_seal,
         "execute_trade",
@@ -740,7 +743,7 @@ async def test_c_stale_state_past_60s_with_a_faulted_source_defers(
     assert reliance["reliance_status"] == "INELIGIBLE_STALE"
     assert reliance["age_seconds"] == "61.000"
     assert reliance["max_age_seconds"] == "60.000"
-    assert reliance["warrant_digest"] == VEIP_ACTIVE_DIGEST  # what went stale
+    assert reliance["warrant_digest"] == PROVIDER_05_ACTIVE_DIGEST  # what went stale
     await assert_commit_defers(stack, trade(), "INELIGIBLE_STALE")
 
     # The source recovers: the next request re-fetches and is admitted again.
@@ -797,7 +800,7 @@ async def test_hard_domain_violation_with_a_revoked_warrant_denies_with_reliance
     assert any("RELIANCE_INELIGIBLE_REVOKED" in v for v in body["violations"])
     (reliance,) = body["refusal_receipt"]["reliance"]
     assert reliance["reliance_status"] == "INELIGIBLE_REVOKED"
-    assert reliance["warrant_digest"] == VEIP_REVOKED_DIGEST
+    assert reliance["warrant_digest"] == PROVIDER_05_REVOKED_DIGEST
     stack.refusals.assert_awaited_once()
     assert list(stack.refusals.await_args.kwargs["receipt"].reliance) == [reliance]
     (refusal,) = await stack.records("GOVERNANCE_REFUSAL")
@@ -917,7 +920,7 @@ async def test_post_hitl_revocation_defers_and_keeps_the_approval(
     reliance = await _assert_post_hitl_deferral(
         stack, deferred_id, result, "INELIGIBLE_REVOKED"
     )
-    assert reliance["warrant_digest"] == VEIP_REVOKED_DIGEST
+    assert reliance["warrant_digest"] == PROVIDER_05_REVOKED_DIGEST
 
     # Still revoked: a retry defers again and still spends nothing.
     result = await stack.execute(trade(0.96), deferred_id)
@@ -944,7 +947,7 @@ async def test_post_hitl_source_fault_defers_and_the_approval_redeems_on_recover
     reliance = await _assert_post_hitl_deferral(
         stack, deferred_id, result, "INELIGIBLE_STALE"
     )
-    assert reliance["warrant_digest"] == VEIP_ACTIVE_DIGEST  # what went stale
+    assert reliance["warrant_digest"] == PROVIDER_05_ACTIVE_DIGEST  # what went stale
 
     stack.source.clear_fault()
     await _assert_redeems_once(stack, deferred_id)
@@ -1136,11 +1139,11 @@ async def test_contract_fields_in_the_chained_allow_decision_and_envelope(
     assert _contract_fields(reliance) == {
         "warrant_id": "warrant-veip-2026-001",
         "norm_id": TRADE_CONFIDENCE_NORM_ID,
-        "digest": VEIP_ACTIVE_DIGEST,
+        "digest": PROVIDER_05_ACTIVE_DIGEST,
         "reliance_status": "ELIGIBLE",
         "governing_version": "cage-policy-2.1.0",
         "residual_risk_ref": "RRR-2026-08-01-A1",
-        "attested_at": VEIP_NOW.isoformat(),
+        "attested_at": PROVIDER_05_NOW.isoformat(),
     }
     assert reliance["required_governing_version"] == "cage-policy-2.1.0"
     assert reliance["issuing_authority"] == SHARED_WARRANT["issuing_authority"]
@@ -1203,7 +1206,7 @@ async def test_contract_fields_in_the_chained_post_hitl_deferral(
     assert _contract_fields(reliance) == {
         "warrant_id": "warrant-veip-2026-001",
         "norm_id": TRADE_CONFIDENCE_NORM_ID,
-        "digest": VEIP_REVOKED_DIGEST,
+        "digest": PROVIDER_05_REVOKED_DIGEST,
         "reliance_status": "INELIGIBLE_REVOKED",
         "governing_version": "cage-policy-2.1.0",
         "residual_risk_ref": "RRR-2026-08-01-A1",
@@ -1217,19 +1220,19 @@ async def test_contract_fields_in_the_chained_post_hitl_deferral(
 
 
 @pytest.mark.eu_ecb
-async def test_veip_v02_active_warrant_is_verified_and_executes_e2e(
+async def test_provider_05_v02_active_warrant_is_verified_and_executes_e2e(
     build: StackFactory,
 ) -> None:
     """VEIP v0.2 ACTIVE warrant + verified key manifest -> VERIFIED reliance & ALLOW."""
-    from tests.integrations.provider_05.test_provider_05_veip_vectors import (
-        VEIP_V02_EVAL_TIME,
-        VEIP_V02_KEY_MANIFEST,
-        VEIP_V02_WARRANTS,
+    from tests.integrations.provider_05.test_provider_05_v01_vectors import (
+        PROVIDER_05_V02_EVAL_TIME,
+        PROVIDER_05_V02_KEY_MANIFEST,
+        PROVIDER_05_V02_WARRANTS,
     )
 
-    clock = _Clock(wall=VEIP_V02_EVAL_TIME)
-    stack = await build(seed=_vec(VEIP_V02_WARRANTS["ACTIVE"]), clock=clock)
-    stack.source.seed_key_manifest(VEIP_V02_KEY_MANIFEST)
+    clock = _Clock(wall=PROVIDER_05_V02_EVAL_TIME)
+    stack = await build(seed=_vec(PROVIDER_05_V02_WARRANTS["ACTIVE"]), clock=clock)
+    stack.source.seed_key_manifest(PROVIDER_05_V02_KEY_MANIFEST)
 
     response = await stack.validate(trade(0.98))
     assert response.status_code == 200
@@ -1265,21 +1268,21 @@ async def test_veip_v02_active_warrant_is_verified_and_executes_e2e(
         ("UNKNOWN_KID", "INELIGIBLE_AUTHENTICITY", "UNVERIFIED"),
     ],
 )
-async def test_veip_v02_ineligible_scenarios_defer_e2e(
+async def test_provider_05_v02_ineligible_scenarios_defer_e2e(
     build: StackFactory,
     scenario: str,
     expected_status: str,
     expected_verified: str,
 ) -> None:
-    from tests.integrations.provider_05.test_provider_05_veip_vectors import (
-        VEIP_V02_EVAL_TIME,
-        VEIP_V02_KEY_MANIFEST,
-        VEIP_V02_WARRANTS,
+    from tests.integrations.provider_05.test_provider_05_v01_vectors import (
+        PROVIDER_05_V02_EVAL_TIME,
+        PROVIDER_05_V02_KEY_MANIFEST,
+        PROVIDER_05_V02_WARRANTS,
     )
 
-    clock = _Clock(wall=VEIP_V02_EVAL_TIME)
-    stack = await build(seed=_vec(VEIP_V02_WARRANTS[scenario]), clock=clock)
-    stack.source.seed_key_manifest(VEIP_V02_KEY_MANIFEST)
+    clock = _Clock(wall=PROVIDER_05_V02_EVAL_TIME)
+    stack = await build(seed=_vec(PROVIDER_05_V02_WARRANTS[scenario]), clock=clock)
+    stack.source.seed_key_manifest(PROVIDER_05_V02_KEY_MANIFEST)
 
     committed = await assert_commit_defers(stack, trade(0.98), expected_status)
     assert committed["verification_status"] == expected_verified

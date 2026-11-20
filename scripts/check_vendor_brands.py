@@ -14,25 +14,28 @@
 
 """Gate G8: Vendor and partner brand anonymity enforcement across code, paths, and tests.
 
-Scope (all 5 code/test trees):
+Scope (all 6 code/test trees):
   1. ``src/gateway/`` (Layer 1 kernel)
-  2. ``packages/cage-conformance/src/`` (published conformance CLI)
-  3. ``src/integrations/`` (Layer 3 adapters)
-  4. ``scripts/`` (operational and verification scripts)
-  5. ``tests/`` (unit, integration, and conformance tests)
+  2. ``packages/cage-client/src/`` (published client SDK)
+  3. ``packages/cage-conformance/src/`` (published conformance CLI)
+  4. ``src/integrations/`` (Layer 3 adapters)
+  5. ``scripts/`` (operational and verification scripts)
+  6. ``tests/`` (unit, integration, and conformance tests)
 
 What is checked:
-  - File and directory paths across all 5 trees (catches branded filenames such as
+  - Partner slot parity against ``scripts/check_partner_headers.py::PARTNER_SLOTS``
+    so no active partner slot can lack brand enforcement.
+  - File and directory paths across all 6 trees (catches branded filenames such as
     ``verify_flowsignal_wire_and_hostile.py`` or ``flowsignal_v02.json``).
   - Python AST symbol and identifier names (``ClassDef``, ``FunctionDef``,
-    ``AsyncFunctionDef``, ``Name``, ``Attribute``, ``arg``) across all 5 trees
+    ``AsyncFunctionDef``, ``Name``, ``Attribute``, ``arg``) across all 6 trees
     (catches ``FlowSignalNormativeProvider``, ``_map_flowsignal_decision``, etc.).
   - Python AST string and bytes literals (``ast.Constant``) outside of docstrings.
 
 Layer 3 External Wire-Protocol Boundary & Provenance Ceiling:
   CAGE-owned paths, class/function/variable identifiers, CLI choices, environment
   variable names, log messages, and test fixtures must use anonymized identifiers
-  (``provider_01``..``provider_08``, ``actuator_01``) across all 5 trees.
+  (``provider_01``..``provider_09``, ``actuator_01``..``actuator_03``) across all 6 trees.
   At the Layer 3 wire boundary, only external wire-protocol constants fixed by a
   partner's cryptographic signing preimage, HTTP header contract, discovery path,
   or signed JWS test vector payload may retain the wire-level string/bytes value.
@@ -50,26 +53,45 @@ from __future__ import annotations
 
 import argparse
 import ast
+import importlib.util
+import re
 import sys
+from collections.abc import Mapping
 from pathlib import Path
 
-# External normative and actuation partner brand names. Forbidden in paths,
-# Python identifiers, and non-wire string/bytes literals across all 5 scanned trees.
-PARTNER_VENDOR_BRANDS: set[str] = {
-    "flowsignal",
-    "flow_signal",
-    "archytan",
-    "nexart",
-    "primust",
-    "thoughtbox",
-    "thoughtproof",
-    "ackagent",
-    "infertheta",
-    "verdict_systems",
+# Canonical brand substrings per active partner slot in check_partner_headers.py::PARTNER_SLOTS.
+SLOT_BRAND_TOKENS: Mapping[str, frozenset[str]] = {
+    "provider_01": frozenset({"flowsignal", "flow_signal"}),
+    "provider_02": frozenset({"nexart"}),
+    "provider_03": frozenset({"veritas"}),
+    "provider_05": frozenset({"veraxis", "veip"}),
+    "provider_06": frozenset({"guardian_cyber", "guardiancyber"}),
+    "provider_07": frozenset({"infertheta"}),
+    "provider_08": frozenset({"verdict_systems", "verdictsystems"}),
+    "provider_09": frozenset({"opscanvas", "ops_canvas", "ops-canvas"}),
+    "actuator_01": frozenset({"archytan"}),
+    "actuator_02": frozenset({"openshell", "open_shell", "open-shell"}),
+    "actuator_03": frozenset({"nvidia_sentry", "sentry", "doca"}),
 }
 
-# Full set of vendor brands forbidden in Layer 1 kernel (src/gateway/) and
-# published conformance package (packages/cage-conformance/src/).
+RETIRED_PARTNER_BRANDS: frozenset[str] = frozenset(
+    {
+        "primust",
+        "thoughtbox",
+        "thoughtproof",
+        "ackagent",
+    }
+)
+
+# External normative and actuation partner brand names. Forbidden in paths,
+# Python identifiers, and non-wire string/bytes literals across all 6 scanned trees.
+PARTNER_VENDOR_BRANDS: set[str] = {
+    tok for tokens in SLOT_BRAND_TOKENS.values() for tok in tokens
+} | set(RETIRED_PARTNER_BRANDS)
+
+# Full set of vendor brands forbidden in Layer 1 kernel (src/gateway/),
+# published client SDK (packages/cage-client/src/), and conformance CLI
+# (packages/cage-conformance/src/).
 FORBIDDEN_VENDOR_BRANDS: set[str] = PARTNER_VENDOR_BRANDS | {
     "langsmith",
     "langfuse",
@@ -104,6 +126,21 @@ LAYER3_WIRE_PROTOCOL_PROVENANCE: dict[str, str] = {
     # provider_02 discovery endpoint & protected-set schema identifier
     "/.well-known/nexart-node.json": "tests/fixtures/provider_02_native/attest_exchange_k1.json",
     "nexart.governed.execution.v1.protected-set.v1": "tests/fixtures/provider_02_native/attest_exchange_k1.json",
+    # provider_05 JCS-signed warrant/manifest/axiom wire schemas, discovery paths & sandbox vectors
+    "veip-warrant/0.2": "docs/partners/provider_05/veip_v02/warrants_v02_vectors.json",
+    "veip-key-manifest/0.2": "docs/partners/provider_05/veip_v02/key_manifest.json",
+    "veip-key-manifest/0.3": "src/integrations/provider_05/README.md",
+    "veip-riskacceptancerecord/0.3": "docs/partners/provider_05/veip_v03/BLUEPRINT_RiskAcceptanceRecord_PROPOSED_SCHEMA.json",
+    "veip-admissibilitygrant/0.3": "docs/partners/provider_05/veip_v03/KEY_AdmissibilityGrant_PROPOSED_SCHEMA.json",
+    "veip-substrateattestation/0.3": "docs/partners/provider_05/veip_v03/PHYSICS_SubstrateAttestation_PROPOSED_SCHEMA.json",
+    "https://veip-cage-sandbox.am-43b.workers.dev": "docs/partners/provider_05/veip_v02/README.md",
+    "/.well-known/veip/key-manifest.json": "docs/partners/provider_05/veip_v02/README.md",
+    "/.well-known/veip/key-manifest-v0.3.json": "docs/partners/provider_05/veip_v03/TRUST_AND_WIRE_CONTRACT.md",
+    "veip-sandbox-manifest-root-2026-10": "docs/partners/provider_05/veip_v02/key_manifest.json",
+    "veip-sandbox-issuer-2026-10": "docs/partners/provider_05/veip_v02/key_manifest.json",
+    "veip-sandbox-manifest-2026-10-07": "docs/partners/provider_05/veip_v02/key_manifest.json",
+    "warrant-veip-2026-001": "docs/partners/provider_05/veip_v01_samples/vec001_allow.json",
+    "warrant-veip-2026-002": "docs/partners/provider_05/veip_v02/warrants_v02_vectors.json",
     # provider_07 signed JWS receipt kids and authority_record_ids in wire vectors
     "infertheta-provider07-2026-01": "src/integrations/provider_07/README.md",
     "infertheta-provider07-prod-2026-01": "docs/partners/provider_07/INFERTHETA_CANONICAL_SCHEMA.md",
@@ -123,7 +160,6 @@ DOC_GOVERNANCE_FILES: frozenset[str] = frozenset(
         "scripts/check_partner_headers.py",
         "scripts/check_doc_references.py",
         "scripts/check_poam_lula_divergence.py",
-        "scripts/package_provider_02_handoff.py",
         "tests/test_check_partner_headers.py",
         "tests/test_layer_boundary_gates.py",
     }
@@ -324,12 +360,69 @@ def should_skip_path(path: Path, base_dir: Path) -> bool:
     return False
 
 
+def _load_partner_slots(repo_root: Path) -> Mapping[str, object]:
+    partner_headers_path = repo_root / "scripts" / "check_partner_headers.py"
+    spec = importlib.util.spec_from_file_location(
+        "_cage_check_partner_headers", partner_headers_path
+    )
+    if spec is None or spec.loader is None:
+        raise RuntimeError(f"Unable to load {partner_headers_path}")
+    mod = importlib.util.module_from_spec(spec)
+    sys.modules[spec.name] = mod
+    spec.loader.exec_module(mod)
+    return mod.PARTNER_SLOTS  # type: ignore[no-any-return]
+
+
+def check_partner_slot_coverage(
+    repo_root: Path,
+    slot_tokens: Mapping[str, frozenset[str]] | None = None,
+    partner_slots: Mapping[str, object] | None = None,
+) -> list[str]:
+    """Verify every active slot in PARTNER_SLOTS has brand enforcement tokens matching its vendor."""
+    active_tokens = SLOT_BRAND_TOKENS if slot_tokens is None else slot_tokens
+    canonical_slots = (
+        _load_partner_slots(repo_root) if partner_slots is None else partner_slots
+    )
+    errors: list[str] = []
+
+    missing_slots = sorted(set(canonical_slots) - set(active_tokens))
+    for slot in missing_slots:
+        errors.append(
+            f"Partner slot '{slot}' in check_partner_headers.PARTNER_SLOTS has no brand tokens in SLOT_BRAND_TOKENS"
+        )
+
+    stale_slots = sorted(set(active_tokens) - set(canonical_slots))
+    for slot in stale_slots:
+        errors.append(
+            f"SLOT_BRAND_TOKENS contains unknown slot '{slot}' absent from check_partner_headers.PARTNER_SLOTS"
+        )
+
+    for slot in sorted(set(canonical_slots) & set(active_tokens)):
+        tokens = active_tokens[slot]
+        if not tokens:
+            errors.append(f"Partner slot '{slot}' has empty brand token set")
+            continue
+        vendor_name = str(getattr(canonical_slots[slot], "vendor", "") or "")
+        norm_vendor = re.sub(r"[^a-z0-9]", "", vendor_name.lower())
+        matched_any = any(
+            len(re.sub(r"[^a-z0-9]", "", tok.lower())) >= 4
+            and re.sub(r"[^a-z0-9]", "", tok.lower()) in norm_vendor
+            for tok in tokens
+        )
+        if not matched_any:
+            errors.append(
+                f"Partner slot '{slot}' tokens {sorted(tokens)} do not match canonical vendor {vendor_name!r}"
+            )
+
+    return errors
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(
         description=(
             "Check vendor and partner brand names in paths, AST identifiers, and "
-            "executable literals across src/gateway/, packages/cage-conformance/src/, "
-            "src/integrations/, scripts/, and tests/."
+            "executable literals across src/gateway/, packages/cage-client/src/, "
+            "packages/cage-conformance/src/, src/integrations/, scripts/, and tests/."
         )
     )
     parser.add_argument("--verbose", "-v", action="store_true", help="Verbose output")
@@ -337,6 +430,7 @@ def main() -> int:
 
     repo_root = Path(__file__).parent.parent
     gateway_dir = repo_root / "src" / "gateway"
+    client_sdk_dir = repo_root / "packages" / "cage-client" / "src"
     conformance_dir = repo_root / "packages" / "cage-conformance" / "src"
     integrations_dir = repo_root / "src" / "integrations"
     scripts_dir = repo_root / "scripts"
@@ -353,6 +447,15 @@ def main() -> int:
         )
         return 1
 
+    slot_errors = check_partner_slot_coverage(repo_root)
+    if slot_errors:
+        print(
+            "❌ Gate G8 FAILED: SLOT_BRAND_TOKENS drifted from check_partner_headers.PARTNER_SLOTS:"
+        )
+        for err in slot_errors:
+            print(f"   • {err}")
+        return 1
+
     provenance_errors = check_wire_literal_provenance(repo_root)
     if provenance_errors:
         print(
@@ -365,6 +468,7 @@ def main() -> int:
     # (directory, brands_to_enforce, allow_layer3_wire_literals)
     scan_targets: list[tuple[Path, set[str], bool]] = [
         (gateway_dir, FORBIDDEN_VENDOR_BRANDS, False),
+        (client_sdk_dir, FORBIDDEN_VENDOR_BRANDS, False),
         (conformance_dir, FORBIDDEN_VENDOR_BRANDS, True),
         (integrations_dir, PARTNER_VENDOR_BRANDS, True),
         (scripts_dir, PARTNER_VENDOR_BRANDS, True),

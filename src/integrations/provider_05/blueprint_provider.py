@@ -102,7 +102,7 @@ class Provider05BlueprintProvider(AttestationProvider):
                     provider_name=self.provider_name,
                     metadata={
                         "threshold_id": threshold_id,
-                        "veip_v03_status": "REJECT",
+                        "provider_05_v03_status": "REJECT",
                         "reason_code": "MISSING",
                         "error": "Record not found",
                     },
@@ -133,7 +133,7 @@ class Provider05BlueprintProvider(AttestationProvider):
                             "threshold_id": record.threshold_id,
                             "kid": record.kid,
                             "digest": record.digest,
-                            "veip_v03_status": verification.expected_status,
+                            "provider_05_v03_status": verification.expected_status,
                             "reason_code": verification.reason_code,
                             "error": verification.reason,
                         },
@@ -142,7 +142,7 @@ class Provider05BlueprintProvider(AttestationProvider):
             v03_meta = {
                 "kid": record.kid,
                 "digest": record.digest,
-                "veip_v03_status": verification.expected_status,
+                "provider_05_v03_status": verification.expected_status,
                 "reason_code": verification.reason_code,
             }
 
@@ -157,7 +157,7 @@ class Provider05BlueprintProvider(AttestationProvider):
             )
             status = AttestationStatus.DRIFT_DETECTED.value
             if v03_meta:
-                v03_meta["veip_v03_status"] = "REJECT"
+                v03_meta["provider_05_v03_status"] = "REJECT"
                 v03_meta["reason_code"] = "DRIFT_DETECTED"
         else:
             status = AttestationStatus.VERIFIED.value

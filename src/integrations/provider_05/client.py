@@ -56,6 +56,7 @@ _TIMEOUT_SECONDS: float = float(os.environ.get("PROVIDER_05_TIMEOUT_SECONDS", "5
 BLUEPRINT_SCHEMA_VERSION_V03 = "veip-riskacceptancerecord/0.3"
 KEY_SCHEMA_VERSION_V03 = "veip-admissibilitygrant/0.3"
 PHYSICS_SCHEMA_VERSION_V03 = "veip-substrateattestation/0.3"
+PROVIDER_05_KEY_MANIFEST_V03_PATH = "/.well-known/veip/key-manifest-v0.3.json"
 DEFAULT_V03_MAX_AGE_SECONDS: float = 60.0
 
 _NUMERIC_RE = re.compile(r"[-+]?\d+(?:\.\d+)?")
@@ -501,7 +502,7 @@ class SubstrateAttestation:
 
 
 @dataclass(frozen=True)
-class VeipV03VerificationResult:
+class Provider05V03VerificationResult:
     """Result of verifying a VEIP v0.3 BLUEPRINT, KEY, or PHYSICS artifact."""
 
     accepted: bool
@@ -521,7 +522,7 @@ def verify_v03_artifact(
     context: Mapping[str, Any] | None = None,
     now: datetime | None = None,
     max_age_seconds: float | None = None,
-) -> VeipV03VerificationResult:
+) -> Provider05V03VerificationResult:
     """Verify a VEIP v0.3 signed artifact against ``key_manifest`` and ``context``.
 
     Check order (first failure wins):
@@ -546,8 +547,8 @@ def verify_v03_artifact(
 
     def _reject(
         status: AttestationStatus, code: str, reason: str
-    ) -> VeipV03VerificationResult:
-        return VeipV03VerificationResult(
+    ) -> Provider05V03VerificationResult:
+        return Provider05V03VerificationResult(
             accepted=False,
             expected_status="REJECT",
             attestation_status=status.value,
@@ -706,7 +707,7 @@ def verify_v03_artifact(
                 f"Evaluation context outside artifact scope {scope_obj.to_dict()}",
             )
 
-    return VeipV03VerificationResult(
+    return Provider05V03VerificationResult(
         accepted=True,
         expected_status="ACCEPT",
         attestation_status=AttestationStatus.VERIFIED.value,
@@ -775,10 +776,10 @@ class Provider05Client:
         anchor = trust_anchor or self._trust_anchor
         if anchor is None:
             from src.integrations.provider_05.warrant_source import (
-                VEIP_SANDBOX_TRUST_ANCHOR,
+                PROVIDER_05_SANDBOX_TRUST_ANCHOR,
             )
 
-            anchor = VEIP_SANDBOX_TRUST_ANCHOR
+            anchor = PROVIDER_05_SANDBOX_TRUST_ANCHOR
         verified = VerifiedKeyManifest.verify(manifest, anchor, now=now)
         self._key_manifest = verified
         return verified
@@ -791,7 +792,7 @@ class Provider05Client:
             return self._key_manifest
         if not self._endpoint:
             return None
-        url = f"{self._endpoint}/.well-known/veip/key-manifest-v0.3.json"
+        url = f"{self._endpoint}{PROVIDER_05_KEY_MANIFEST_V03_PATH}"
         raw = await self._http_get_json(url)
         if raw is None:
             return None

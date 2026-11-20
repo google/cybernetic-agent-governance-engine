@@ -95,7 +95,7 @@ class Provider05KeyProvider(AttestationProvider):
                     metadata={
                         "spiffe_id": spiffe_id,
                         "consequence_class": consequence_class,
-                        "veip_v03_status": "REJECT",
+                        "provider_05_v03_status": "REJECT",
                         "reason_code": "MISSING",
                         "error": "Grant not found",
                     },
@@ -128,7 +128,7 @@ class Provider05KeyProvider(AttestationProvider):
                             "ca_fingerprint": grant.ca_fingerprint,
                             "kid": grant.kid,
                             "digest": grant.digest,
-                            "veip_v03_status": verification.expected_status,
+                            "provider_05_v03_status": verification.expected_status,
                             "reason_code": verification.reason_code,
                             "error": verification.reason,
                         },
@@ -137,7 +137,7 @@ class Provider05KeyProvider(AttestationProvider):
             v03_meta = {
                 "kid": grant.kid,
                 "digest": grant.digest,
-                "veip_v03_status": verification.expected_status,
+                "provider_05_v03_status": verification.expected_status,
                 "reason_code": verification.reason_code,
             }
 
@@ -147,7 +147,7 @@ class Provider05KeyProvider(AttestationProvider):
             else AttestationStatus.DENIED.value
         )
         if not grant.admitted and v03_meta:
-            v03_meta["veip_v03_status"] = "REJECT"
+            v03_meta["provider_05_v03_status"] = "REJECT"
             v03_meta["reason_code"] = "NOT_ADMITTED"
 
         return [

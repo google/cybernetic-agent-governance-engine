@@ -15,8 +15,8 @@
 | Protocol | [`AttestationProvider`](../../gateway/governance/attestation_provider.py:36) — **three** concrete subclasses, one per axiom, plus [`WarrantSource`](../../gateway/governance/seams/warrant.py:43) |
 | Integration style | Out-of-band attestation and live HTTP / seeded VEIP v0.2 institutional warrant verification |
 | Classes | `Provider05BlueprintProvider`, `Provider05KeyProvider`, `Provider05PhysicsProvider`, plus `Provider05Client` and `Provider05WarrantSource` |
-| Status | Warrant source: live HTTP (`GET /v0.2/warrants/{norm_id}` + `GET /.well-known/veip/key-manifest.json`) and seeded mode; Three-Axiom providers: seeded / synthetic |
-| Conformance suite | Live Tier 1 over-the-wire conformance in [`tests/integrations/provider_05/test_provider_05_live.py`](../../../tests/integrations/provider_05/test_provider_05_live.py); vector suite in [`tests/integrations/provider_05/test_provider_05_veip_vectors.py`](../../../tests/integrations/provider_05/test_provider_05_veip_vectors.py) |
+| Status | Warrant source (`v0.2`): live HTTP (`GET /v0.2/warrants/{norm_id}` + `GET /.well-known/veip/key-manifest.json`) and partner-signed vector mode; Three-Axiom providers (`v0.3`): CAGE-side synthetic fixtures only (`POAM-2026-242` — no partner-signed `v0.3` JSON vectors or live `/v0.3/*` endpoints yet) |
+| Conformance suite | **v0.2 (partner-signed & live):** live Tier 1 over-the-wire conformance in [`tests/integrations/provider_05/test_provider_05_live.py`](../../../tests/integrations/provider_05/test_provider_05_live.py) and partner-signed Ed25519 vector suite in [`tests/integrations/provider_05/test_provider_05_v01_vectors.py`](../../../tests/integrations/provider_05/test_provider_05_v01_vectors.py); **v0.3 (in-process synthetic keys only, `POAM-2026-242`):** candidate-schema & CSV review checks in [`tests/integrations/provider_05/test_provider_05_v03_review_vectors.py`](../../../tests/integrations/provider_05/test_provider_05_v03_review_vectors.py) |
 
 ## The three axioms
 
@@ -28,11 +28,13 @@
 
 When the client has an endpoint (`PROVIDER_05_ATTESTATION_ENDPOINT`) or a
 seeded key manifest, every artifact must verify as VEIP v0.3 against the
-`kid`-resolved key manifest ([`verify_v03_artifact`](client.py)). The
+`kid`-resolved key manifest (`veip-key-manifest/0.3` at `GET /.well-known/veip/key-manifest-v0.3.json` via [`verify_v03_artifact`](client.py)). The
 client's configuration decides this, not the artifact: a live response that
 omits `schema_version`, `kid` and `signature` is `DENIED` (`SCHEMA_MISMATCH`),
 never read as an unsigned v0.1 record. Only seeded records on a client with
 neither an endpoint nor a key manifest are read unsigned.
+
+> **Verification boundary (`POAM-2026-242`):** Unlike `v0.2` warrants (verified against partner-signed JSON artifacts in [`docs/partners/provider_05/veip_v02/`](../../../docs/partners/provider_05/veip_v02/README.md) and live over HTTPS), the partner's [`docs/partners/provider_05/veip_v03/`](../../../docs/partners/provider_05/veip_v03/README.md) review deposit shipped candidate JSON Schemas and `EXPECTED_OUTCOME_VECTORS.csv` with **zero partner-signed `v0.3` JSON payloads** and **no deployed `/v0.3/*` or `key-manifest-v0.3.json` routes**. [`test_provider_05_v03_review_vectors.py`](../../../tests/integrations/provider_05/test_provider_05_v03_review_vectors.py) therefore signs CAGE-constructed payloads with an in-process synthetic key fixture (`v03_pki`), which proves CAGE-side internal model/verifier consistency only, not byte-level RFC 8785 JCS interoperability with partner-issued `v0.3` signatures.
 
 ## Institutional warrants (Warrant Contract v0.1 & v0.2)
 
