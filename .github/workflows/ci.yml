@@ -359,6 +359,28 @@ jobs:
         # if any selector in infra/ matches zero Terraform workload pod templates.
         run: |
           uv run python scripts/check_k8s_terraform_parity.py
+      - name: Published advisory fix-trace ancestry gate
+        # Verifies every row in SECURITY.md ## Security Advisories names a commit
+        # SHA that exists in git and is an ancestor of main.
+        run: |
+          uv run python scripts/check_advisory_traces.py --verbose
+
+  advisory-trace-parity:
+    name: "Published Advisory Fix-Trace Parity"
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          fetch-depth: 0
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
+        with:
+          python-version-file: "pyproject.toml"
+      - name: Verify SECURITY.md rows against live GitHub published advisories and main ancestry
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          python3 scripts/check_advisory_traces.py --verify-github --repo "${GITHUB_REPOSITORY}" --verbose
 
   bare-kernel-smoke:
     name: "Bare-Kernel Smoke Test (Zero Cloud SDKs)"

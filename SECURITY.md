@@ -16,7 +16,7 @@ Published security advisories, affected ranges, CVSS vectors, and fix commits ar
 
 - **[Published GitHub Security Advisories](https://github.com/google/cybernetic-agent-governance-engine/security/advisories)**
 
-Advisories published after `v4.1.0` (including internal maintainer findings that do not appear under external [Security Research Acknowledgments](#security-research-acknowledgments)):
+Every published GitHub Security Advisory has an in-repository fix-trace row below, mechanically verified against GitHub's `security-advisories?state=published` API and `main` git ancestry by [`scripts/check_advisory_traces.py`](scripts/check_advisory_traces.py):
 
 | Advisory | Published | Severity | Fix on `main` | Summary |
 |---|---|---|---|---|
@@ -27,6 +27,9 @@ Advisories published after `v4.1.0` (including internal maintainer findings that
 | `GHSA-cxxx-6xfq-vvp4` | `2026-11-18` | Medium | `f6313b20` (`#809`) | `provider_05` three-axiom attestation providers accepted live `/v0.3/` responses as `VERIFIED` when `v0.3` signature fields were stripped |
 | `GHSA-5438-3wwf-qvcq` | `2026-11-18` | Medium | `1ad49289` (`#808`) | `actuator_03` quarantine adapter settled unsigned or unverifiable receipts as `ACCEPTED` without `ACTUATOR_03_REQUIRE_SIGNED_RECEIPTS=true` |
 | `GHSA-348p-gfpg-qqm9` | `2026-11-18` | Medium | `1aeed422` (`#799`) | `provider_06` evidence adapter sealed receipts not bound to the submitted evidence and returned unverified seals without a key manifest |
+| `GHSA-c8pw-f3g3-xg7c` | `2026-10-26` | Medium | `be23480b` (`v4.0.0`) | Finance causal tier risk boundary tripped `10,000x` too high and zero-variance placebo refutation could not fail |
+| `GHSA-f6xq-23f7-9grm` | `2026-10-26` | Medium | `863d4092` (`v3.3.0`) | `EU_ECB` FRIA revocation not re-checked on `POST_HITL`; `execute_trade_bounded` and `BTC` case variants bypassed `trade_governance.rego` |
+| `GHSA-w39v-5v7h-fxg9` | `2026-10-24` | Medium | `cec7ab29` (`#529`, `v3.3.0`) | Model-controlled `trader_role` raised OPA fiscal limits on the committing trade path |
 
 Earlier fixes resolved through public issues, internal audits, or pre-publication tracker entries are recorded in [`CHANGELOG.md`](CHANGELOG.md) and [`docs/POAM.md`](docs/POAM.md).
 
@@ -118,10 +121,12 @@ pull request(s):
      `--admin` in single-maintainer posture bypasses only ruleset 19769096's
      review rule while all nine checks in ruleset 25966171 pass).
    - Immediately stamp **`Fixed on main in <SHA> (#<PR>)`** onto the published
-     advisory without disturbing `.credits`, and perform a **`GET` read-back** on
+     advisory without disturbing `.credits`, perform a **`GET` read-back** on
      the advisory endpoint to verify `state == "published"`, the landed `main`
-     SHA, and intact `.credits`. Delete temporary branches and worktrees after
-     post-merge checks pass on `main`.
+     SHA, and intact `.credits`, and land the matching row in `## Security Advisories`
+     above so [`scripts/check_advisory_traces.py`](scripts/check_advisory_traces.py)
+     (`--verify-github`) passes on `main`. Delete temporary branches and worktrees
+     after post-merge checks pass on `main`.
 
 ## Package Distribution Channels
 

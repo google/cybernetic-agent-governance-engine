@@ -146,6 +146,8 @@ docs-check:
 	@uv run python scripts/check_doc_references.py
 	@echo "==> Checking monitoring, Lula, OSCAL, and TTM mechanism references..."
 	@uv run python scripts/check_mechanism_references.py --verbose
+	@echo "==> Checking SECURITY.md published-advisory fix traces against main ancestry..."
+	@uv run python scripts/check_advisory_traces.py --verbose
 	@echo "==> Checking vendor brand leakage into executable code..."
 	@uv run python scripts/check_vendor_brands.py --verbose
 	@echo "==> Checking domain literal leakage into kernel/integrations..."
