@@ -385,11 +385,37 @@ async def safety_check_node(state: AgentState) -> dict[str, Any]:
         "governance_signature": ",".join(signatures) if any(signatures) else "",
         "routing_verdict_cache": routing_cache,
     }
-    deferred_ids = [
-        str(result["deferred_id"]) for result in routed if result.get("deferred_id")
+    deferred_steps = [
+        (str(result["deferred_id"]), trades[idx])
+        for idx, result in enumerate(routed)
+        if result.get("deferred_id")
     ]
-    if deferred_ids:
-        out["deferred_id"] = deferred_ids[0]
+    if deferred_steps:
+        out["deferred_id"] = deferred_steps[0][0]
+
+    approval_trade = (
+        deferred_steps[0][1]
+        if deferred_steps
+        else (trades[0] if state.get("approval_required") and trades else None)
+    )
+    if approval_trade is not None:
+        from src.governed_financial_advisor.graph.nodes.toctou_quote import (
+            normalize_ticker,
+            select_reference_quote_for_ticker,
+        )
+
+        deferred_symbol = normalize_ticker(approval_trade.get("symbol"))
+        if deferred_symbol is not None:
+            out["data_analyst_ticker"] = deferred_symbol
+            selected_quote = select_reference_quote_for_ticker(
+                state,
+                ticker=deferred_symbol,
+                plan_raw=plan,
+            )
+            if selected_quote is not None:
+                out["hitl_reference_quote"] = selected_quote
+            elif isinstance(state.get("hitl_reference_quote"), Mapping):
+                out["hitl_reference_quote"] = None
     return out
 
 

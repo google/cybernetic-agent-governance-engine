@@ -73,13 +73,14 @@ from src.governed_financial_advisor.graph.nodes.approval_node import (
     rejection_node,
 )
 from src.governed_financial_advisor.graph.nodes.toctou_quote import (
-    build_hitl_reference_quote,
+    extract_pending_trade_tool_ticker,
     extract_plan_ticker_and_price,
     extract_reference_quote_from_state,
     fetch_live_yfinance_price,
     non_negative_finite_float,
     normalize_ticker,
     positive_finite_float,
+    resolve_check_time_reference_quote,
     resolve_decision_slippage_pct,
 )
 from src.governed_financial_advisor.infrastructure.llm.models import chat_model
@@ -274,8 +275,9 @@ async def executor_node(state: GovernedTraderState) -> dict[str, Any]:
 
         out: dict[str, Any] = {"messages": [response]}
 
-        # On pre-HITL entry, ensure a check-time reference quote is recorded
-        # before gateway_tool_guard can park a REQUIRE_APPROVAL interrupt.
+        # On pre-HITL entry, ensure a fresh check-time reference quote is recorded
+        # for the exact tool-call symbol before gateway_tool_guard can park a
+        # REQUIRE_APPROVAL interrupt (overwriting any prior turn's quote).
         decision = state.get("approval_decision")
         pre_hitl = not (
             state.get("deferred_id")
@@ -292,32 +294,18 @@ async def executor_node(state: GovernedTraderState) -> dict[str, Any]:
                 if isinstance(first_args, dict)
                 else None
             )
-            resolved_sym, existing_price, existing_source = (
-                extract_reference_quote_from_state(
-                    state,
-                    preferred_ticker=call_symbol,
-                )
+            resolved_sym, _, _ = extract_reference_quote_from_state(
+                state,
+                preferred_ticker=call_symbol,
             )
             target_sym = call_symbol or resolved_sym
             if target_sym is not None:
-                ref_price = existing_price
-                ref_source = existing_source or "hitl_reference_quote"
-                if ref_price is None:
-                    try:
-                        ref_price = await fetch_live_yfinance_price(target_sym)
-                        ref_source = "yfinance_check_time"
-                    except Exception as exc:
-                        logger.warning(
-                            "[ExecutorNode] ⚠️ Could not capture check-time quote for %s: %s",
-                            target_sym,
-                            exc,
-                        )
-                if ref_price is not None and state.get("hitl_reference_quote") is None:
-                    out["hitl_reference_quote"] = build_hitl_reference_quote(
-                        target_sym,
-                        ref_price,
-                        source=ref_source,
-                    )
+                out["data_analyst_ticker"] = target_sym
+                out["hitl_reference_quote"] = await resolve_check_time_reference_quote(
+                    state,
+                    ticker=target_sym,
+                    plan_raw=state.get("execution_plan"),
+                )
 
         # The tool calls on ``response`` are what gateway_tool_guard submits to
         # the gateway — every one of them, not a summarised first call.
@@ -334,7 +322,7 @@ def should_continue(state: GovernedTraderState) -> str:
     messages = state["messages"]
     last_message = messages[-1]
 
-    if last_message.tool_calls:  # type: ignore[attr-defined]
+    if getattr(last_message, "tool_calls", None):
         return "tools"
     return END
 
@@ -397,7 +385,7 @@ async def post_hitl_rehydrate_node(state: GovernedTraderState) -> dict[str, Any]
 
         # 1. Resolve validated ticker + check-time reference price from state,
         #    hitl_reference_quote, ExecutionPlan (nested PlanStep.parameters or
-        #    flat step), or get_market_data message history.
+        #    flat step), pending tool call, or get_market_data message history.
         ticker = normalize_ticker(state.get("data_analyst_ticker"))
         plan_ticker, _ = extract_plan_ticker_and_price(
             state.get("execution_plan", ""),
@@ -405,6 +393,8 @@ async def post_hitl_rehydrate_node(state: GovernedTraderState) -> dict[str, Any]
         )
         if ticker is None and plan_ticker is not None:
             ticker = plan_ticker
+        if ticker is None:
+            ticker = extract_pending_trade_tool_ticker(state.get("messages"))
 
         resolved_ticker, stale_price, _ = extract_reference_quote_from_state(
             state,

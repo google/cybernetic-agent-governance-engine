@@ -1005,4 +1005,252 @@ class TestApprovalResumeRequestSchema:
         assert req.approved is False
 
 
+class TestAllReachableHitlTradePathsPopulateReferenceQuote:
+    """Verify every trade path reaching HITL populates a matching fresh reference quote."""
+
+    @pytest.mark.asyncio
+    async def test_multistep_safety_check_binds_quote_to_deferred_second_step(self):
+        """Step 1 ALLOW (MSFT) + Step 2 REQUIRE_APPROVAL (NVDA) binds NVDA quote, not MSFT."""
+        from langchain_core.messages import AIMessage
+
+        from src.governed_financial_advisor.graph.nodes.agent_nodes import (
+            governed_trader_node,
+        )
+        from src.governed_financial_advisor.graph.nodes.safety_node import (
+            safety_check_node,
+        )
+        from src.governed_financial_advisor.graph.nodes.toctou_quote import (
+            resolve_check_time_plan_quotes,
+        )
+        from src.governed_financial_advisor.graph.subgraphs.governed_trader_graph import (
+            build_governed_trader_graph,
+        )
+
+        plan = {
+            "plan_id": "p-multi",
+            "strategy_name": "Rebalance",
+            "rationale": "Trim MSFT and initiate NVDA position within mandate.",
+            "steps": [
+                {
+                    "id": "s1",
+                    "action": "execute_trade",
+                    "description": "Sell MSFT",
+                    "parameters": {"symbol": "MSFT", "amount": 1000, "currency": "USD"},
+                },
+                {
+                    "id": "s2",
+                    "action": "execute_trade",
+                    "description": "Buy NVDA",
+                    "parameters": {
+                        "symbol": "NVDA",
+                        "amount": 75000,
+                        "currency": "USD",
+                    },
+                },
+            ],
+        }
+
+        async def _fake_quotes(sym: str, **_kwargs):
+            return 410.0 if sym == "MSFT" else 140.0
+
+        with patch(
+            "src.governed_financial_advisor.graph.nodes.toctou_quote.fetch_live_yfinance_price",
+            AsyncMock(side_effect=_fake_quotes),
+        ):
+            primary_ticker, plan_quotes = await resolve_check_time_plan_quotes({}, plan)
+
+        assert primary_ticker == "MSFT"
+        assert plan_quotes is not None
+        assert plan_quotes["quotes_by_ticker"] == {"MSFT": 410.0, "NVDA": 140.0}
+
+        initial_state = {
+            "messages": [],
+            "consecutive_denials": 0,
+            "execution_plan_output": plan,
+            "data_analyst_ticker": primary_ticker,
+            "hitl_reference_quote": plan_quotes,
+        }
+
+        async def _fake_validate(action: str, params: dict):
+            if params["symbol"] == "MSFT":
+                return {
+                    "verdict": "ALLOW",
+                    "violations": [],
+                    "signature": {"value": "sig-msft"},
+                }
+            return {
+                "verdict": "REQUIRE_APPROVAL",
+                "deferred_id": "def-nvda-2",
+                "violations": [],
+                "signature": {"value": "sig-nvda"},
+            }
+
+        with patch(
+            "src.governed_financial_advisor.graph.nodes.safety_node.GatewayClient"
+        ) as mock_gw_cls:
+            mock_gw_cls.return_value.validate_action = AsyncMock(
+                side_effect=_fake_validate
+            )
+            safety_out = await safety_check_node(initial_state)  # type: ignore[arg-type]
+
+        assert safety_out["deferred_id"] == "def-nvda-2"
+        assert safety_out["data_analyst_ticker"] == "NVDA"
+        assert safety_out["hitl_reference_quote"]["ticker"] == "NVDA"
+        assert safety_out["hitl_reference_quote"]["price"] == pytest.approx(140.0)
+
+        # Resume after parent approval_node approves NVDA with live price 141.0 (0.71% <= 2.0%)
+        resumed_parent_state = {
+            **initial_state,
+            **safety_out,
+            "evaluation_result": {"verdict": "APPROVED"},
+            "approval_decision": {
+                "approved": True,
+                "reviewer": "pm@firm.com",
+                "rationale": "Approved rebalance.",
+                "max_slippage_pct": 2.0,
+            },
+        }
+        with (
+            patch(
+                "src.governed_financial_advisor.graph.subgraphs.governed_trader_graph.fetch_live_yfinance_price",
+                AsyncMock(return_value=141.0),
+            ),
+            patch(
+                "src.governed_financial_advisor.graph.subgraphs.governed_trader_graph.executor_node",
+                AsyncMock(
+                    return_value={"messages": [AIMessage(content="Executed NVDA.")]}
+                ),
+            ),
+        ):
+            subgraph_exec = build_governed_trader_graph()
+            trader_out = await governed_trader_node(
+                resumed_parent_state, subgraph=subgraph_exec
+            )
+        assert any("Executed NVDA." in str(m) for m in trader_out["messages"])
+
+    @pytest.mark.asyncio
+    async def test_subgraph_executor_overwrites_prior_turn_ticker_quote(self):
+        """Turn 1 AAPL quote in state must be overwritten when Turn 2 executor emits NVDA."""
+        from langchain_core.messages import AIMessage
+
+        from src.governed_financial_advisor.graph.subgraphs.governed_trader_graph import (
+            executor_node,
+            post_hitl_rehydrate_node,
+            post_hitl_revalidate_node,
+        )
+
+        fake_ai_call = AIMessage(
+            content="",
+            tool_calls=[
+                {
+                    "id": "call-nvda-1",
+                    "name": "execute_trade_action",
+                    "args": {"symbol": "NVDA", "amount": 75000, "currency": "USD"},
+                }
+            ],
+        )
+        fake_llm = MagicMock()
+        fake_llm.bind_tools.return_value.ainvoke = AsyncMock(return_value=fake_ai_call)
+        fake_mcp = MagicMock()
+        fake_mcp.ensure_connected = AsyncMock()
+        fake_tool = MagicMock()
+        fake_tool.name = "execute_trade_action"
+        fake_mcp.get_tools = AsyncMock(return_value=[fake_tool])
+
+        prior_turn_state = {
+            "messages": [],
+            "execution_plan": "Buy $75,000 of NVDA at market.",
+            "evaluation_result": "APPROVED",
+            "data_analyst_ticker": "AAPL",
+            "hitl_reference_quote": {
+                "ticker": "AAPL",
+                "price": 180.0,
+                "source": "get_market_data",
+                "captured_at_utc": datetime.now(timezone.utc).isoformat(),
+            },
+            "deferred_id": None,
+            "approval_decision": None,
+        }
+
+        with (
+            patch(
+                "src.governed_financial_advisor.graph.subgraphs.governed_trader_graph.chat_model",
+                return_value=fake_llm,
+            ),
+            patch(
+                "src.governed_financial_advisor.graph.subgraphs.governed_trader_graph.get_mcp_client",
+                return_value=fake_mcp,
+            ),
+            patch(
+                "src.governed_financial_advisor.graph.nodes.toctou_quote.fetch_live_yfinance_price",
+                AsyncMock(return_value=140.0),
+            ),
+        ):
+            exec_out = await executor_node(prior_turn_state)  # type: ignore[arg-type]
+
+        assert exec_out["data_analyst_ticker"] == "NVDA"
+        assert exec_out["hitl_reference_quote"]["ticker"] == "NVDA"
+        assert exec_out["hitl_reference_quote"]["price"] == pytest.approx(140.0)
+
+        # Now resume post-HITL for NVDA at 141.0 (0.71% <= 2.0%) -> PASSED (not SKIPPED/BLOCKED)
+        post_approval_state = {
+            **prior_turn_state,
+            **exec_out,
+            "deferred_id": "def-sub-nvda",
+            "approval_decision": {
+                "approved": True,
+                "reviewer": "pm@firm.com",
+                "rationale": "Approved NVDA.",
+                "max_slippage_pct": 2.0,
+            },
+        }
+        with patch(
+            "src.governed_financial_advisor.graph.subgraphs.governed_trader_graph.fetch_live_yfinance_price",
+            AsyncMock(return_value=141.0),
+        ):
+            rehyd = await post_hitl_rehydrate_node(post_approval_state)  # type: ignore[arg-type]
+        reval = await post_hitl_revalidate_node({**post_approval_state, **rehyd})  # type: ignore[arg-type]
+        assert rehyd["rehydration_result"]["status"] == "OK"
+        assert reval["post_hitl_safety_status"] == "PASSED"
+
+    @pytest.mark.asyncio
+    async def test_expired_prior_turn_quote_same_ticker_refreshed_at_check_time(self):
+        """An hours-old Turn-1 AAPL quote is refreshed at Turn-2 check time, preventing false blocks."""
+        from datetime import timedelta
+
+        from src.governed_financial_advisor.graph.nodes.toctou_quote import (
+            resolve_check_time_reference_quote,
+        )
+
+        three_hours_ago = (datetime.now(timezone.utc) - timedelta(hours=3)).isoformat()
+        state = {
+            "hitl_reference_quote": {
+                "ticker": "AAPL",
+                "price": 180.0,
+                "source": "get_market_data",
+                "captured_at_utc": three_hours_ago,
+            },
+            "execution_plan_output": {
+                "steps": [
+                    {
+                        "action": "execute_trade",
+                        "description": "Buy AAPL",
+                        "parameters": {"symbol": "AAPL", "amount": 75000},
+                    }
+                ]
+            },
+        }
+        with patch(
+            "src.governed_financial_advisor.graph.nodes.toctou_quote.fetch_live_yfinance_price",
+            AsyncMock(return_value=200.0),
+        ) as mock_live:
+            refreshed = await resolve_check_time_reference_quote(state, ticker="AAPL")
+
+        mock_live.assert_awaited_once_with("AAPL")
+        assert refreshed is not None
+        assert refreshed["ticker"] == "AAPL"
+        assert refreshed["price"] == pytest.approx(200.0)
+        assert refreshed["source"] == "yfinance_check_time"
+
+
 pytestmark = [pytest.mark.unit, pytest.mark.local]

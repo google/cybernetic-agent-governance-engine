@@ -282,41 +282,16 @@ async def execution_analyst_node(state):  # type: ignore[no-untyped-def]
             updates["investment_period"] = plan_output.get("user_investment_period")
 
         from src.governed_financial_advisor.graph.nodes.toctou_quote import (
-            build_hitl_reference_quote,
-            extract_plan_ticker_and_price,
-            extract_reference_quote_from_state,
-            fetch_live_yfinance_price,
+            resolve_check_time_plan_quotes,
         )
 
-        plan_ticker, plan_price = extract_plan_ticker_and_price(plan_output)
+        plan_ticker, plan_quotes = await resolve_check_time_plan_quotes(
+            state,
+            plan_output,
+        )
         if plan_ticker is not None:
             updates["data_analyst_ticker"] = plan_ticker
-            _, existing_price, existing_source = extract_reference_quote_from_state(
-                {**state, "execution_plan_output": plan_output},
-                preferred_ticker=plan_ticker,
-            )
-            ref_price = plan_price or existing_price
-            ref_source = (
-                "execution_plan"
-                if plan_price is not None
-                else (existing_source or "hitl_reference_quote")
-            )
-            if ref_price is None:
-                try:
-                    ref_price = await fetch_live_yfinance_price(plan_ticker)
-                    ref_source = "yfinance_check_time"
-                except Exception as exc:
-                    logger.warning(
-                        "[ExecutionAnalyst] ⚠️ Could not capture check-time quote for %s: %s",
-                        plan_ticker,
-                        exc,
-                    )
-            if ref_price is not None:
-                updates["hitl_reference_quote"] = build_hitl_reference_quote(
-                    plan_ticker,
-                    ref_price,
-                    source=ref_source,
-                )
+            updates["hitl_reference_quote"] = plan_quotes
 
     return updates
 
@@ -382,4 +357,6 @@ async def governed_trader_node(state, *, subgraph):  # type: ignore[no-untyped-d
         out["approval_decision"] = result["approval_decision"]
     if "hitl_reference_quote" in result:
         out["hitl_reference_quote"] = result["hitl_reference_quote"]
+    if "data_analyst_ticker" in result:
+        out["data_analyst_ticker"] = result["data_analyst_ticker"]
     return out
