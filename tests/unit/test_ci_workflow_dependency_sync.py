@@ -47,6 +47,7 @@ SCRIPT_CALL_RE = re.compile(r"\bscripts/([A-Za-z0-9_]+\.py)\b")
 # (mechanically verified below to import zero third-party packages).
 STDLIB_ONLY_WORKFLOW_SCRIPTS = frozenset(
     {
+        "check_advisory_traces.py",
         "check_client_sdk_sync.py",
         "check_conformance_sync.py",
         "check_locked_yanks.py",
