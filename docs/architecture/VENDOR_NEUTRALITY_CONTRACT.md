@@ -140,3 +140,17 @@ CAGE packaging in `pyproject.toml` isolates optional cloud and sink dependencies
 
 CI enforces that the bare kernel imports and executes without any of the cloud extras installed via the `bare-kernel-smoke` workflow job.
 
+---
+
+## 5. Completeness Principle & Interface Tiering
+
+- **Completeness Principle:** CAGE must be *safety- and security-complete*, not *commercially complete*. If a safety or security property cannot be verified without a component, that component is implemented for real. Data may be simulated; security primitives (key custody, asymmetric signing, trust anchors, workload identity, tamper-evident storage) may not.
+- **Interface Tiering:** Classify every external interface before adding or keeping it:
+  1. **Tier 1 — Partner-built live interfaces** (`src/integrations/provider_*/`, `src/integrations/actuator_*/`): built and maintained by a partner against their own live or sandbox endpoint. Always allowed. Tests must run over the wire (see the Over-the-Wire Conformance Mandate below). If the partner stops maintaining the adapter, or its live test cannot run anymore, it becomes Tier 3.
+  2. **Tier 2 — Posture-completing interfaces:** needed for every governance, safety, or security control to have a path that actually runs. They must be implemented:
+     - **Data sources** (e.g. ledger, lab feed, sensor ground truth) may use simulated backends. Those backends need deterministic seeding and fault injection that covers every fail-closed path.
+     - **Security primitives** (KMS/HSM asymmetric signing, `kid`-resolved trust anchors, SPIFFE/mTLS workload identity, WORM retention) must be real implementations. **Symmetric or software fallbacks (HMAC, local keys) are allowed only in development posture and hermetic tests. They never count as evidence for POAM closure or OSCAL implementation statements.**
+     - **A partner adapter never replaces the reference backend.**
+  3. **Tier 3 — Commercial-deployment-only interfaces:** needed only for a full commercial rollout (e.g. retail banking, custody, or payment data APIs). **Must not live in the repository.** Record each one as an OSCAL customer-responsibility statement.
+- **Over-the-Wire Conformance Mandate (Tier 1):** Validation of every partner-built adapter must run over the physical wire against live staging or sandbox endpoints. In-memory mocks, synthetic HTTP stubs, ASGI test transports (`httpx.ASGITransport(app=...)`), Starlette/FastAPI `TestClient` harnesses, and simulated transports are strictly prohibited for partner integration verification; every run must produce authentic external egress/ingress telemetry including remote server headers and upstream trace identifiers (e.g., `x-cloud-trace-context`). Tier 2 reference backends are tested hermetically, and their security primitives are additionally verified against the real service.
+
