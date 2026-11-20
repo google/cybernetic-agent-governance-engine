@@ -1133,11 +1133,55 @@ def test_gate_gitleaks_scans_full_history_and_catches_planted_secret_patterns() 
 
 
 def test_gate_license_guard_rejects_planted_gpl_dependency() -> None:
-    """`license_guard.yml` forbidden license regex must flag GPL, AGPL, and LGPL packages and allow dual-licensed MIT/Apache/BSD."""
+    """`license_guard.yml` must install `--locked --all-groups --all-extras`, enforce non-vacuity sentinels, and flag GPL/AGPL/LGPL packages."""
+    import tomllib
+
     lg_data = yaml.safe_load(
         (WORKFLOWS_DIR / "license_guard.yml").read_text(encoding="utf-8")
     )
-    step_run = lg_data["jobs"]["license-check"]["steps"][5]["run"]
+    steps = lg_data["jobs"]["license-check"]["steps"]
+    steps_by_name = {s.get("name"): s for s in steps}
+
+    install_run = steps_by_name["Install Dependencies"]["run"]
+    assert "uv sync" in install_run
+    assert "--locked" in install_run
+    assert "--all-groups" in install_run
+    assert "--all-extras" in install_run
+    for s in steps:
+        assert "uv pip install" not in (s.get("run") or ""), (
+            "license_guard.yml must not mutate .venv with unpinned `uv pip install`"
+        )
+
+    step_run = steps_by_name["Run License Audit"]["run"]
+    assert "uv run --no-sync pip-licenses" in step_run
+    for sentinel in (
+        "grpcio",
+        "yfinance",
+        "nemoguardrails",
+        "openai",
+        "langgraph",
+        "google-cloud-storage",
+        "boto3",
+        "clickhouse-connect",
+        "dowhy",
+        "langfuse",
+        "ruff",
+    ):
+        assert sentinel in step_run, (
+            f"license_guard.yml non-vacuity check missing optional-extra sentinel {sentinel!r}"
+        )
+
+    pyproject = tomllib.loads(
+        (REPO_ROOT / "pyproject.toml").read_text(encoding="utf-8")
+    )
+    for extra_name, specs in (
+        pyproject.get("project", {}).get("optional-dependencies", {}).items()
+    ):
+        for spec in specs:
+            assert not spec.lower().startswith("codespell"), (
+                f"GPL-2.0-only codespell must not appear in optional extra {extra_name!r}"
+            )
+
     m = re.search(r"grep -iE '([^']+)'", step_run)
     m_allow = re.search(r"grep -viE '([^']+)'", step_run)
     assert m is not None
@@ -1151,6 +1195,7 @@ def test_gate_license_guard_rejects_planted_gpl_dependency() -> None:
         )
 
     for forbidden in (
+        '{"Name": "codespell", "License": "GPL-2.0-only"}',
         '{"Name": "bad", "License": "GPLv3"}',
         '{"Name": "bad", "License": "GPL-3.0-only"}',
         '{"Name": "bad", "License": "GNU Affero General Public License v3 (AGPL-3.0)"}',

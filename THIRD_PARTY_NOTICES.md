@@ -9,16 +9,16 @@ Entries are grouped by runtime context and listed alphabetically within each
 section. Versions shown reflect the ranges declared in `pyproject.toml` or
 `package.json`; exact pinned versions are in `uv.lock` / `package-lock.json`.
 
-Last reviewed: 2026-09-17
+Last reviewed: 2026-11-20
 
 ---
 
 ## Python Runtime Dependencies
 
 Packages used by one or more of the Python services (`src/gateway`,
-`src/governed_financial_advisor`, `src/compliance_bridge`). Declared in `pyproject.toml`.
+`src/governed_financial_advisor`, `src/compliance_bridge`) or `packages/cage-client`. Declared in `pyproject.toml`.
 
-### aiohttp ≥3.9
+### aiohttp ≥3.14.4
 - **License:** Apache-2.0 AND MIT
 - **Homepage:** https://github.com/aio-libs/aiohttp
 - **Usage:** Async HTTP client used by LangChain community integrations and NeMo Guardrails.
@@ -53,10 +53,10 @@ Packages used by one or more of the Python services (`src/gateway`,
 - **Homepage:** https://github.com/ClickHouse/clickhouse-connect
 - **Usage:** ClickHouse client for durable evidence sink storage in the compliance-bridge.
 
-### cryptography ≥48.0
+### cryptography ≥50.0
 - **License:** Apache-2.0 OR BSD-3-Clause
 - **Homepage:** https://github.com/pyca/cryptography
-- **Usage:** KMS signing, CMEK guard, and JWT verification across gateway and compliance-bridge.
+- **Usage:** KMS signing, CMEK guard, and JWT verification across gateway, compliance-bridge, and `cage-client`.
 
 ### dataclasses-json ≥0.6
 - **License:** MIT
@@ -66,7 +66,7 @@ Packages used by one or more of the Python services (`src/gateway`,
 ### dowhy ≥0.12
 - **License:** MIT
 - **Homepage:** https://github.com/py-why/dowhy
-- **Usage:** Causal inference library used by the Tier-6 causal gatekeeper in the compliance-bridge defer queue.
+- **Usage:** Causal inference library used for offline/bridge causal evaluation (`compliance` extra).
 
 ### en-core-web-sm 3.8.0
 - **License:** MIT
@@ -107,6 +107,16 @@ Packages used by one or more of the Python services (`src/gateway`,
 - **License:** Apache-2.0
 - **Homepage:** https://grpc.io
 - **Usage:** gRPC runtime for the NeMo Guardrails bidirectional streaming interface.
+
+### h2 ≥4.1
+- **License:** MIT
+- **Homepage:** https://github.com/python-hyper/h2
+- **Usage:** HTTP/2 protocol stack used optionally by `cage-client[http2]` and httpx transport multiplexing.
+
+### httptools ≥0.6.1
+- **License:** MIT
+- **Homepage:** https://github.com/MagicStack/httptools
+- **Usage:** Fast C HTTP parser used by uvicorn in the gateway and compliance-bridge servers.
 
 ### httpx ≥0.27
 - **License:** BSD-3-Clause
@@ -213,7 +223,7 @@ Packages used by one or more of the Python services (`src/gateway`,
 - **Homepage:** https://github.com/lark-parser/lark
 - **Usage:** Parser toolkit used by NeMo Guardrails to parse Colang rail definitions.
 
-### mcp ≥0.9
+### mcp ≥1.30,<2.0
 - **License:** MIT
 - **Homepage:** https://modelcontextprotocol.io
 - **Usage:** Model Context Protocol SDK used by the gateway MCP tool server and infrastructure MCP server.
@@ -244,7 +254,7 @@ Packages used by one or more of the Python services (`src/gateway`,
 - **Homepage:** https://github.com/openai/openai-python
 - **Usage:** OpenAI Python client used by the gateway inference proxy and LangChain-OpenAI integration.
 
-### opentelemetry-api ≥1.38
+### opentelemetry-api ≥1.45.2
 - **License:** Apache-2.0
 - **Homepage:** https://github.com/open-telemetry/opentelemetry-python/tree/main/opentelemetry-api
 - **Usage:** OpenTelemetry instrumentation API used across all services for distributed tracing.
@@ -299,7 +309,7 @@ Packages used by one or more of the Python services (`src/gateway`,
 - **Homepage:** https://github.com/daviddrysdale/python-phonenumbers
 - **Usage:** Phone number parsing used by the Presidio PII analyser for phone-number entity detection.
 
-### pillow ≥11.0
+### pillow ≥13.0
 - **License:** MIT-CMU
 - **Homepage:** https://python-pillow.github.io
 - **Usage:** Image processing library used transitively by fastembed and ONNX Runtime.
@@ -313,6 +323,11 @@ Packages used by one or more of the Python services (`src/gateway`,
 - **License:** MIT
 - **Homepage:** https://github.com/Microsoft/presidio
 - **Usage:** PII anonymisation engine used by the gateway PII sanitiser to redact detected entities.
+
+### prometheus-client ≥0.20
+- **License:** Apache-2.0
+- **Homepage:** https://github.com/prometheus/client_python
+- **Usage:** Prometheus metrics exposition client used across the gateway and compliance-bridge.
 
 ### protobuf ≥5.26,<7.0
 - **License:** BSD-3-Clause
@@ -480,7 +495,7 @@ Packages used by one or more of the Python services (`src/gateway`,
 
 Packages from [`src/agentsight-ui/package.json`](src/agentsight-ui/package.json).
 
-### ai ^4.0 (Vercel AI SDK)
+### ai ^7.0.16 (Vercel AI SDK)
 - **License:** Apache-2.0
 - **Homepage:** https://sdk.vercel.ai
 - **Usage:** Streaming AI response utilities used by the AgentSight UI to consume gateway SSE streams.
@@ -516,11 +531,6 @@ builds. Not present in production runtime images.
 - **License:** Apache-2.0
 - **Homepage:** https://github.com/pyca/bcrypt
 - **Usage:** Password hashing library used in authentication integration tests.
-
-### codespell ≥2.2 (lint)
-- **License:** GPL-2.0-only
-- **Homepage:** https://github.com/codespell-project/codespell
-- **Usage:** Spell-checker run in CI to catch typos in source files and documentation.
 
 ### eslint ^9.39 (devDependency)
 - **License:** MIT
@@ -572,7 +582,7 @@ builds. Not present in production runtime images.
 - **Homepage:** https://lundberg.github.io/respx/
 - **Usage:** httpx request mocking library used in gateway and compliance-bridge tests.
 
-### ruff ≥0.4 (lint)
+### ruff ==0.16.5 (lint)
 - **License:** MIT
 - **Homepage:** https://docs.astral.sh/ruff/
 - **Usage:** Fast Python linter and formatter run in CI (replaces flake8, isort, pyupgrade).
@@ -662,14 +672,14 @@ Source code and assets directly vendored into or adapted within this repository.
 - **License:** Apache-2.0
 - **Homepage:** https://github.com/envoyproxy/envoy
 - **Location:** `src/gateway/protos/envoy/`
-- **Usage:** Protobuf service and message definitions for Envoy external authorization (`envoy.service.auth.v3.Authorization`) implemented by CAGE `AgentGatewayAdapter`.
+- **Usage:** Protobuf service and message definitions for Envoy external authorization (`envoy.service.auth.v3.Authorization`).
 
 ### jcs
 - **Author:** Titusz Pan and Anders Rundgren (WebPKI.org)
 - **License:** Apache-2.0
 - **Homepage:** https://github.com/titusz/jcs
-- **Location:** `src/gateway/governance/vendor/jcs/`
-- **Usage:** Vendored RFC 8785 JSON Canonicalization Scheme (JCS) reference implementation used for deterministic serialization of hash-chains and routing seals.
+- **Location:** `src/gateway/governance/vendor/jcs/`, `packages/cage-client/src/cage_client/_jcs/`
+- **Usage:** Vendored RFC 8785 JSON Canonicalization Scheme (JCS) reference implementation used for deterministic serialization of hash-chains, routing seals, and client governance envelopes.
 
 ### no-direct-bind
 - **Author:** LalaSkye contributors
@@ -694,10 +704,9 @@ Source code and assets directly vendored into or adapted within this repository.
    `docker-compose.yml`, update the **Infrastructure & Container Images**
    section.
 
-4. To regenerate a raw license table for cross-checking, run:
+4. To regenerate a raw license table across all groups and optional extras for cross-checking, run:
    ```
-   uv run pip-licenses --format=markdown --with-urls --with-authors \
-       --output-file /tmp/raw-licenses.md
+   bash scripts/generate_notices.sh /tmp/cage-raw-licenses.md
    ```
    Then compare the output against this file and reconcile any differences.
 
