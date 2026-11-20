@@ -301,7 +301,7 @@ def check_file_boundaries(
     visitor = _analyze_ast(filepath)
     if visitor is None:
         return violations
-    filepath_str = str(filepath)
+    filepath_str = filepath.as_posix()
     if visitor.syntax_error is not None:
         lineno, msg = visitor.syntax_error
         violations.append(
@@ -531,7 +531,7 @@ def check_integrations_boundaries(
     """
     violations: list[BoundaryViolation] = []
     imports = extract_imports(filepath)
-    filepath_str = str(filepath)
+    filepath_str = filepath.as_posix()
 
     # Check if file is in the integrations boundary allowlist
     is_in_boundary_allowlist = any(
