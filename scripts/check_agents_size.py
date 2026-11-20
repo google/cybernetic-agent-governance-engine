@@ -13,17 +13,24 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Discover and enforce the 24KB ingestion ceiling across all agent-injected files.
+"""Discover and enforce the 24,000-byte truncation ceiling across repo agent files.
 
 Coding agents (Google Antigravity, Claude Code, Cursor, Windsurf, GitHub
 Copilot) inject instruction and rule files into context from multiple discovery
-locations — not ``AGENTS.md`` alone. Any injected file exceeding 24,576 bytes
-(24 KB) risks silent tail truncation with no runtime error (POAM-2026-224).
+locations — not ``AGENTS.md`` alone. Observed context-loader truncation occurs at
+~24,000 bytes (decimal 24 KB, 576 bytes below binary 24 KiB = 24,576), silently
+dropping trailing rules with no runtime error (POAM-2026-224).
 
 Rather than hard-coding ``AGENTS.md``, this gate discovers every repository file
 matching an agent context-injection surface, enforces a non-vacuous corpus floor
-(``MIN_INJECTED_FILES``), and fails closed if any discovered file is empty (0 B)
-or exceeds ``MAX_BYTES`` (24,576 B).
+(``MIN_INJECTED_FILES = 3``, leaving headroom for workflow churn while catching
+discovery collapse), and fails closed if any discovered file is empty (0 B) or
+exceeds ``MAX_BYTES`` (24,000 B).
+
+Scope boundary: host-level global instruction files outside the repository tree
+(for example ``~/.gemini/config/rules/*.md`` or ``~/.claude/``) are also injected
+into agent context under the same truncation ceiling, but sit outside any
+repository-scoped CI or pre-commit gate.
 """
 
 from __future__ import annotations
@@ -38,8 +45,12 @@ from typing import Literal
 
 DEFAULT_REPO_ROOT = Path(__file__).resolve().parents[1]
 
-MAX_BYTES = 24576  # 24 KB per-file ingestion cap
-MIN_INJECTED_FILES = 4  # AGENTS.md + .agents/rules/{reasoning,security}.md + .agents/workflows/enforce_cloud_build.md
+MAX_BYTES = (
+    24000  # Observed ~24,000-byte truncation cutoff (not binary 24 KiB = 24,576)
+)
+MIN_INJECTED_FILES = (
+    3  # Catches discovery collapse while allowing normal workflow churn
+)
 
 InjectedFileKind = Literal[
     "directory_rule",
@@ -212,7 +223,7 @@ def check_injected_agent_files(
             excess = item.size_bytes - max_bytes
             violations.append(
                 f"{item.rel_path} ({item.kind}): {item.size_bytes:,} bytes exceeds "
-                f"{max_bytes:,}-byte (24KB) cap by {excess:,} bytes."
+                f"{max_bytes:,}-byte truncation cutoff by {excess:,} bytes."
             )
     return files, violations
 
@@ -243,7 +254,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         "--verbose",
         "-v",
         action="store_true",
-        help="List every discovered file and its percentage of the 24KB cap.",
+        help="List every discovered file and its percentage of the truncation cutoff.",
     )
     args = parser.parse_args(list(argv) if argv is not None else None)
 
@@ -273,7 +284,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         for violation in violations:
             print(f"   - {violation}")
         print(
-            "   Exceeding 24KB causes coding agents to silently truncate rules past the cut-off."
+            "   Exceeding ~24,000 bytes causes coding agents to silently truncate rules past the cut-off."
         )
         return 1
 

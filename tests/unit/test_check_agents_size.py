@@ -12,7 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Unit tests for ``scripts/check_agents_size.py`` discovery, corpus floor, and 24KB cap."""
+"""Unit tests for ``scripts/check_agents_size.py`` discovery, corpus floor, and 24,000B cap."""
 
 from __future__ import annotations
 
@@ -36,7 +36,8 @@ def _write(root: Path, rel: str, payload: bytes) -> Path:
 
 def test_real_repository_discovers_all_injected_files_within_cap() -> None:
     """Live repository discovers AGENTS.md, .agents/rules/*.md, and .agents/workflows/*.md."""
-    assert check_agents_size.MAX_BYTES == 24576
+    assert check_agents_size.MAX_BYTES == 24000
+    assert check_agents_size.MIN_INJECTED_FILES == 3
     files, violations = check_agents_size.check_injected_agent_files(REPO_ROOT)
     rel_paths = {item.rel_path for item in files}
     assert {
@@ -89,25 +90,25 @@ def test_discovers_all_agent_customization_surfaces_and_ignores_non_injected_fil
     }
 
 
-def test_exact_boundary_24576_passes_and_24577_in_nested_rule_fails(
+def test_exact_boundary_24000_passes_and_24001_to_24576_band_fails(
     tmp_path: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:
-    """Oversized .agents/rules/*.md fails closed even when AGENTS.md is tiny."""
+    """Exact 24,000B passes; 24,001B and 24,576B (the binary-KiB gap band) both fail closed."""
     _write(tmp_path, "AGENTS.md", b"# small\n")
+    _write(tmp_path, ".agents/rules/security.md", b"# sec\n")
     rule_path = _write(
         tmp_path, ".agents/rules/reasoning.md", b"a" * check_agents_size.MAX_BYTES
     )
-    assert (
-        check_agents_size.main(["--repo-root", str(tmp_path), "--min-files", "2"]) == 0
-    )
+    # 3 core files without enforce_cloud_build.md satisfy MIN_INJECTED_FILES = 3.
+    assert check_agents_size.main(["--repo-root", str(tmp_path)]) == 0
+    capsys.readouterr()
 
-    rule_path.write_bytes(b"a" * (check_agents_size.MAX_BYTES + 1))
-    assert (
-        check_agents_size.main(["--repo-root", str(tmp_path), "--min-files", "2"]) == 1
-    )
-    out = capsys.readouterr().out
-    assert ".agents/rules/reasoning.md (workspace_rule)" in out
-    assert "by 1 bytes" in out
+    for bad_size, expected_excess in ((24001, 1), (24576, 576)):
+        rule_path.write_bytes(b"a" * bad_size)
+        assert check_agents_size.main(["--repo-root", str(tmp_path)]) == 1
+        out = capsys.readouterr().out
+        assert ".agents/rules/reasoning.md (workspace_rule)" in out
+        assert f"by {expected_excess:,} bytes" in out
 
 
 def test_empty_injected_file_and_corpus_floor_breach_fail_closed(
@@ -121,10 +122,8 @@ def test_empty_injected_file_and_corpus_floor_breach_fail_closed(
 
     _write(tmp_path, "AGENTS.md", b"# non-empty\n")
     with pytest.raises(check_agents_size.CorpusFloorError):
-        check_agents_size.check_injected_agent_files(tmp_path, min_files=4)
-    assert (
-        check_agents_size.main(["--repo-root", str(tmp_path), "--min-files", "4"]) == 1
-    )
+        check_agents_size.check_injected_agent_files(tmp_path)
+    assert check_agents_size.main(["--repo-root", str(tmp_path)]) == 1
 
 
 def test_check_agents_size_wired_in_ci_hooks_and_makefile() -> None:

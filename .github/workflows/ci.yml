@@ -288,7 +288,7 @@ jobs:
         run: |
           uv run python scripts/check_project_id_hygiene.py --verbose
       - name: Agent-injected context size cap check (POAM-2026-224)
-        # Discover all agent-injected rule, skill, workflow, and instruction files and enforce <= 24,576 bytes.
+        # Discover all agent-injected rule, skill, workflow, and instruction files and enforce <= 24,000 bytes.
         run: |
           uv run python scripts/check_agents_size.py --verbose
       - name: Documentation reference check (G9 - No dangling paths or symbols in core docs)
