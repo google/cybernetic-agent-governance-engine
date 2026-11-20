@@ -234,22 +234,124 @@ def get_nemo_rails():  # type: ignore[no-untyped-def]
 # ---------------------------------------------------------------------------
 
 
-def _default_user_message_extractor(state: StateDict) -> str:
-    """Extract the most recent user message text from ``state["messages"]``.
+def _extract_content_value_text(content: Any) -> str:
+    """Extract scannable text from string, list-of-parts, or structured message content."""
+    if content is None:
+        return ""
+    if isinstance(content, str):
+        return content
+    if isinstance(content, list):
+        parts: list[str] = []
+        for item in content:
+            if isinstance(item, str) and item:
+                parts.append(item)
+            elif isinstance(item, dict):
+                for key in ("text", "input_text", "refusal"):
+                    val = item.get(key)
+                    if isinstance(val, str) and val:
+                        parts.append(val)
+        return " ".join(parts)
+    return str(content)
 
-    Handles ``BaseMessage`` objects, raw dicts, and tuples defensively.
+
+def _extract_single_message_scannable_text(msg: Any) -> str:
+    """Extract scannable text across content, tool_calls, function_call, and reasoning."""
+    fragments: list[str] = []
+    if isinstance(msg, tuple) and len(msg) >= 2:
+        text = _extract_content_value_text(msg[1])
+        return text
+
+    if isinstance(msg, dict):
+        for key in ("content", "reasoning_content", "reasoning", "refusal", "name"):
+            val = _extract_content_value_text(msg.get(key))
+            if val:
+                fragments.append(val)
+        tool_calls = msg.get("tool_calls")
+        if isinstance(tool_calls, list):
+            for tc in tool_calls:
+                if isinstance(tc, dict):
+                    fn = (
+                        tc.get("function")
+                        if isinstance(tc.get("function"), dict)
+                        else tc
+                    )
+                    if isinstance(fn, dict):
+                        for fn_key in ("name", "arguments", "args"):
+                            fn_val = fn.get(fn_key)
+                            if isinstance(fn_val, str) and fn_val:
+                                fragments.append(fn_val)
+                            elif fn_val is not None and not isinstance(fn_val, str):
+                                fragments.append(str(fn_val))
+        fn_call = msg.get("function_call")
+        if isinstance(fn_call, dict):
+            for fn_key in ("name", "arguments"):
+                fn_val = fn_call.get(fn_key)
+                if isinstance(fn_val, str) and fn_val:
+                    fragments.append(fn_val)
+                elif fn_val is not None and not isinstance(fn_val, str):
+                    fragments.append(str(fn_val))
+        elif isinstance(fn_call, str) and fn_call:
+            fragments.append(fn_call)
+        return " ".join(fragments)
+
+    if hasattr(msg, "content"):
+        content_text = _extract_content_value_text(getattr(msg, "content", None))
+        if content_text:
+            fragments.append(content_text)
+        for tc in getattr(msg, "tool_calls", None) or []:
+            if isinstance(tc, dict):
+                fn = tc.get("function") if isinstance(tc.get("function"), dict) else tc
+                if isinstance(fn, dict):
+                    for fn_key in ("name", "arguments", "args"):
+                        fn_val = fn.get(fn_key)
+                        if isinstance(fn_val, str) and fn_val:
+                            fragments.append(fn_val)
+                        elif fn_val is not None and not isinstance(fn_val, str):
+                            fragments.append(str(fn_val))
+        extra = getattr(msg, "additional_kwargs", None)
+        if isinstance(extra, dict):
+            for key in ("reasoning_content", "reasoning", "refusal"):
+                val = _extract_content_value_text(extra.get(key))
+                if val:
+                    fragments.append(val)
+            fn_call = extra.get("function_call")
+            if isinstance(fn_call, dict):
+                for fn_key in ("name", "arguments"):
+                    fn_val = fn_call.get(fn_key)
+                    if isinstance(fn_val, str) and fn_val:
+                        fragments.append(fn_val)
+                    elif fn_val is not None and not isinstance(fn_val, str):
+                        fragments.append(str(fn_val))
+            elif isinstance(fn_call, str) and fn_call:
+                fragments.append(fn_call)
+        return " ".join(fragments)
+
+    return "" if msg is None else str(msg)
+
+
+def _extract_prior_messages_scannable_text(state: StateDict) -> str:
+    """Collect scannable text across prior turns ``state["messages"][:-1]``."""
+    messages = state.get("messages", [])
+    if not isinstance(messages, list) or len(messages) <= 1:
+        return ""
+    parts = [
+        text
+        for msg in messages[:-1]
+        if (text := _extract_single_message_scannable_text(msg))
+    ]
+    return " ".join(parts)
+
+
+def _default_user_message_extractor(state: StateDict) -> str:
+    """Extract the most recent message text from ``state["messages"]``.
+
+    Handles ``BaseMessage`` objects, raw dicts, and tuples defensively without
+    coercing ``content=None`` into the string ``"None"``.
     """
     messages = state.get("messages", [])
     if not messages:
         return ""
-    last_msg = messages[-1]
-    if hasattr(last_msg, "content"):
-        return str(last_msg.content)
-    if isinstance(last_msg, dict):
-        return str(last_msg.get("content", ""))
-    if isinstance(last_msg, tuple) and len(last_msg) >= 2:
-        return str(last_msg[1])
-    return str(last_msg)
+    return _extract_single_message_scannable_text(messages[-1])
 
 
 def _default_ai_message_extractor(state: StateDict) -> tuple[str, bool]:
@@ -343,6 +445,7 @@ def create_nemo_guardrail_node(config: NemoNodeConfig | None = None) -> Callable
             span.set_attribute("nemo.input_rail.input_length", len(user_input))
 
             original_input = user_input
+            prior_text = _extract_prior_messages_scannable_text(state)
             try:
                 # --- Step 1: Input-side PII scan (runs BEFORE get_nemo_rails) ---
                 # Scan the input for PII BEFORE it reaches any LLM or rail.
@@ -353,6 +456,8 @@ def create_nemo_guardrail_node(config: NemoNodeConfig | None = None) -> Callable
                     user_input, entity_types = await asyncio.to_thread(
                         _redact_pii, user_input
                     )
+                    if prior_text:
+                        prior_text, _ = await asyncio.to_thread(_redact_pii, prior_text)
                     span.set_attribute("input.pii_redacted", bool(entity_types))
                     if entity_types:
                         logger.warning(
@@ -381,7 +486,10 @@ def create_nemo_guardrail_node(config: NemoNodeConfig | None = None) -> Callable
                     )
 
                 # --- Step 2: Deterministic Aho-Corasick fast-path (runs BEFORE get_nemo_rails) ---
-                if ac_keyword_scan(user_input):
+                combined_scan_text = (
+                    f"{prior_text} {user_input}".strip() if prior_text else user_input
+                )
+                if ac_keyword_scan(combined_scan_text):
                     reason = "STPA Violation UCA-7: Request contains systemic bypass attempt."
                     logger.warning(
                         "nemo_guardrail_node: input BLOCKED by deterministic Aho-Corasick fast-path — reason: %s",
@@ -401,7 +509,7 @@ def create_nemo_guardrail_node(config: NemoNodeConfig | None = None) -> Callable
                 if nemo_rails_enabled():
                     rails = get_nemo_rails()
                     is_safe, reason, deterministic = await validate_with_nemo(
-                        user_input, rails
+                        combined_scan_text, rails
                     )
                 else:
                     is_safe, reason, deterministic = True, "", True

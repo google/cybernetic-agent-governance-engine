@@ -90,17 +90,55 @@ def _extract_user_input(state: dict[str, Any]) -> str:
 
     # BaseMessage object (normal runtime path)
     if hasattr(last_msg, "content"):
-        return str(last_msg.content)
+        raw_content = getattr(last_msg, "content", None)
+        parts: list[str] = []
+        if isinstance(raw_content, str) and raw_content:
+            parts.append(raw_content)
+        elif isinstance(raw_content, list):
+            for item in raw_content:
+                if isinstance(item, str) and item:
+                    parts.append(item)
+                elif isinstance(item, dict):
+                    for key in ("text", "input_text", "refusal"):
+                        val = item.get(key)
+                        if isinstance(val, str) and val:
+                            parts.append(val)
+        elif raw_content is not None:
+            parts.append(str(raw_content))
+        extra = getattr(last_msg, "additional_kwargs", None)
+        if isinstance(extra, dict) and isinstance(extra.get("function_call"), dict):
+            fc = extra["function_call"]
+            for fn_key in ("name", "arguments"):
+                fn_val = fc.get(fn_key)
+                if isinstance(fn_val, str) and fn_val:
+                    parts.append(fn_val)
+                elif fn_val is not None:
+                    parts.append(str(fn_val))
+        return " ".join(parts)
 
     # Raw dict: {"role": "human", "content": "..."}
     if isinstance(last_msg, dict):
-        return str(last_msg.get("content", ""))
+        raw_content = last_msg.get("content")
+        parts = []
+        if isinstance(raw_content, str) and raw_content:
+            parts.append(raw_content)
+        elif raw_content is not None:
+            parts.append(str(raw_content))
+        if isinstance(last_msg.get("function_call"), dict):
+            fc = last_msg["function_call"]
+            for fn_key in ("name", "arguments"):
+                fn_val = fc.get(fn_key)
+                if isinstance(fn_val, str) and fn_val:
+                    parts.append(fn_val)
+                elif fn_val is not None:
+                    parts.append(str(fn_val))
+        return " ".join(parts)
 
     # Tuple: ("human", "text") — used in some tests
     if isinstance(last_msg, tuple) and len(last_msg) >= 2:
-        return str(last_msg[1])
+        return "" if last_msg[1] is None else str(last_msg[1])
 
-    return str(last_msg)
+    return "" if last_msg is None else str(last_msg)
 
 
 # ---------------------------------------------------------------------------
