@@ -315,3 +315,27 @@ def test_installed_wheel_parity_passes_on_matching_tree_and_fails_on_drift(
     assert any(
         "missing from installed cage-client wheel" in err for err in missing_errors
     )
+
+
+def test_read_tagged_package_files_handles_non_ascii_paths(tmp_path: Path) -> None:
+    """_read_tagged_package_files uses git ls-tree -z so non-ASCII paths are not C-quoted."""
+    import subprocess
+
+    repo = _make_fake_repo(tmp_path, pkg_version="0.4.0", release_status="published")
+    pkg = repo / "packages" / "cage-client" / "src" / "cage_client"
+    non_ascii = pkg / "notes — utf8.txt"
+    non_ascii.write_bytes(b"utf8-payload\n")
+
+    subprocess.run(["git", "init", "-q"], cwd=repo, check=True)
+    subprocess.run(["git", "config", "core.quotePath", "true"], cwd=repo, check=True)
+    subprocess.run(
+        ["git", "config", "user.email", "test@example.com"], cwd=repo, check=True
+    )
+    subprocess.run(["git", "config", "user.name", "Test"], cwd=repo, check=True)
+    subprocess.run(["git", "add", "."], cwd=repo, check=True)
+    subprocess.run(["git", "commit", "-q", "-m", "init"], cwd=repo, check=True)
+    subprocess.run(["git", "tag", "client-v0.4.0"], cwd=repo, check=True)
+
+    ok, files = sdk_gate._read_tagged_package_files(repo, "client-v0.4.0")
+    assert ok is True
+    assert files[Path("notes — utf8.txt")] == b"utf8-payload\n"

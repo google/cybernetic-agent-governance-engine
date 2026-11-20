@@ -126,14 +126,19 @@ def _read_tagged_package_files(
 ) -> tuple[bool, dict[Path, bytes]]:
     """Read ``{relative_path: content_bytes}`` for ``PACKAGE_REL`` at ``tag``."""
     prefix = PACKAGE_REL.as_posix()
-    ok, raw = _git_bytes(repo_root, "ls-tree", "-r", "--name-only", tag, "--", prefix)
+    ok, raw = _git_bytes(
+        repo_root, "ls-tree", "-r", "-z", "--name-only", tag, "--", prefix
+    )
     if not ok:
         return False, {}
     files: dict[Path, bytes] = {}
-    for line in raw.decode("utf-8", errors="replace").splitlines():
-        rel_repo = line.strip()
-        if not rel_repo:
+    for entry in raw.split(b"\x00"):
+        if not entry:
             continue
+        try:
+            rel_repo = entry.decode("utf-8")
+        except UnicodeDecodeError:
+            return False, {}
         rel_path = Path(rel_repo).relative_to(PACKAGE_REL)
         if "__pycache__" in rel_path.parts:
             continue
