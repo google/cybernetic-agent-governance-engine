@@ -1060,3 +1060,86 @@ def test_docs_path_outside_a_branch_table_is_still_checked(tmp_path: Path) -> No
         (4, "File Path"),
         (5, "File Path"),
     ]
+
+
+def test_markdown_link_rejects_subtree_alias_and_repo_root_fallbacks(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Markdown links resolve strictly relative to doc parent (or leading / against REPO_ROOT)."""
+    monkeypatch.setattr(g9, "REPO_ROOT", tmp_path)
+    (tmp_path / "docs" / "compliance" / "us_fed").mkdir(parents=True)
+    (tmp_path / "docs" / "POAM.md").write_text("# POAM\n", encoding="utf-8")
+    (tmp_path / "src" / "integrations" / "actuator_01").mkdir(parents=True)
+
+    nested_doc = tmp_path / "docs" / "compliance" / "us_fed" / "POAM_US_FED.md"
+    nested_doc.write_text(
+        "Broken 404 link: [POAM](../../docs/POAM.md)\n"
+        "Valid link: [POAM](../../POAM.md)\n",
+        encoding="utf-8",
+    )
+    nested_issues = audit_markdown_file(nested_doc)
+    assert [(i.line_number, i.reference_type, i.target) for i in nested_issues] == [
+        (1, "Markdown Link", "../../docs/POAM.md")
+    ]
+
+    docs_doc = tmp_path / "docs" / "POAM_TEST.md"
+    docs_doc.write_text(
+        "Broken subtree alias link: [act](actuator_01/)\n", encoding="utf-8"
+    )
+    docs_issues = audit_markdown_file(docs_doc)
+    assert [(i.line_number, i.reference_type, i.target) for i in docs_issues] == [
+        (1, "Markdown Link", "actuator_01/")
+    ]
+
+
+def test_inline_code_path_rejects_parent_traversal_and_subtree_aliases(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Inline backtick paths must not skip ../.. or guess arbitrary src/ subdirectories."""
+    monkeypatch.setattr(g9, "REPO_ROOT", tmp_path)
+    (tmp_path / "docs" / "compliance" / "us_fed").mkdir(parents=True)
+    (tmp_path / "docs" / "POAM.md").write_text("# POAM\n", encoding="utf-8")
+    (tmp_path / "src" / "gateway" / "governance" / "governor").mkdir(parents=True)
+    (
+        tmp_path / "src" / "gateway" / "governance" / "governor" / "pipeline.py"
+    ).write_text("X = 1\n", encoding="utf-8")
+
+    doc = tmp_path / "docs" / "compliance" / "us_fed" / "note.md"
+    doc.write_text(
+        "Bad traversal: `../../docs/POAM.md`\n"
+        "Bad abbreviated path: `governor/pipeline.py`\n"
+        "Good canonical path: `src/gateway/governance/governor/pipeline.py`\n",
+        encoding="utf-8",
+    )
+    issues = audit_markdown_file(doc)
+    assert [(i.line_number, i.reference_type, i.target) for i in issues] == [
+        (1, "File Path", "../../docs/POAM.md"),
+        (2, "File Path", "governor/pipeline.py"),
+    ]
+
+
+def test_python_symbol_check_rejects_string_literal_spoofing(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Arbitrary lowercase/CamelCase string literals must not satisfy Python symbol checks."""
+    monkeypatch.setattr(g9, "REPO_ROOT", tmp_path)
+    g9._get_python_file_symbols.cache_clear()
+    mod = tmp_path / "mod.py"
+    mod.write_text(
+        'SPOOF = "nonexistent_helper"\n'
+        'CODE = "FTRA_ERROR"\n'
+        "def real_helper() -> None:\n"
+        "    return None\n",
+        encoding="utf-8",
+    )
+    doc = tmp_path / "doc.md"
+    doc.write_text(
+        "Spoofed fn: `nonexistent_helper()` in [`mod.py`](mod.py)\n"
+        "Real fn: `real_helper()` in [`mod.py`](mod.py)\n"
+        "Upper constant: `FTRA_ERROR` in [`mod.py`](mod.py)\n",
+        encoding="utf-8",
+    )
+    issues = audit_markdown_file(doc)
+    assert [(i.line_number, i.reference_type, i.target) for i in issues] == [
+        (1, "Python Symbol", "mod.py::nonexistent_helper")
+    ]

@@ -381,8 +381,13 @@ def _validate_line_anchor(
     return True, ""
 
 
-def _resolve_candidate_path(base_dir: Path, target_path_str: str) -> Path | None:
-    """Resolve a relative or repo-root path string to an existing Path on disk, or None."""
+def _resolve_candidate_path(
+    base_dir: Path,
+    target_path_str: str,
+    *,
+    markdown_link: bool = False,
+) -> Path | None:
+    """Resolve a path string to an existing Path on disk without guessing subtree aliases."""
     stripped_target = target_path_str.strip().strip("'\"`")
     clean_target = re.split(r"[:#]", stripped_target)[0].strip()
     if (
@@ -391,64 +396,20 @@ def _resolve_candidate_path(base_dir: Path, target_path_str: str) -> Path | None
         or is_template_or_pattern(clean_target)
     ):
         return None
-    norm = clean_target[2:] if clean_target.startswith("./") else clean_target
 
-    candidates = [
-        # 1. Direct from repo root
-        REPO_ROOT / norm,
-        # 2. Relative to the document base directory
-        base_dir / clean_target,
-        # 3. Subtree aliases
-        REPO_ROOT / "docs" / norm,
-        REPO_ROOT / "compliance" / norm,
-        REPO_ROOT / "docs" / "compliance" / norm,
-        REPO_ROOT / "src" / norm,
-        REPO_ROOT / "src" / "gateway" / norm,
-        REPO_ROOT / "src" / "gateway" / "governance" / norm,
-        REPO_ROOT / "src" / "gateway" / "governance" / "nemo" / norm,
-        REPO_ROOT / "src" / "governed_financial_advisor" / norm,
-        REPO_ROOT / "src" / "governed_financial_advisor" / norm.replace("src/", ""),
-        REPO_ROOT
-        / norm.replace("src/integrations/flowsignal", "src/integrations/provider_01"),
-        REPO_ROOT / "src" / "governed_financial_advisor" / "tools" / norm,
-        REPO_ROOT / "src" / "governed_financial_advisor" / "agents" / norm,
-        REPO_ROOT / "src" / "integrations" / norm,
-        REPO_ROOT / "docs" / "compliance" / "us_fed" / norm,
-        REPO_ROOT / "docs" / "compliance" / "universal" / norm,
-        REPO_ROOT / "docs" / "governance" / norm,
-        REPO_ROOT / "docs" / "operations" / norm,
-        REPO_ROOT / "docs" / "project" / norm,
-        REPO_ROOT / "compliance" / "rar" / norm,
-        REPO_ROOT / "compliance" / "categorization" / norm,
-        REPO_ROOT / "compliance" / "boundary" / norm,
-        REPO_ROOT / "compliance" / "lula" / norm,
-        REPO_ROOT / "docs" / "architecture" / norm,
-        REPO_ROOT / "docs" / "compliance" / "cross-region" / norm,
-        REPO_ROOT / "src" / "gateway" / "governance" / "opa" / norm,
-        REPO_ROOT / "src" / "gateway" / "governance" / "opa" / norm.replace("opa/", ""),
-        REPO_ROOT / "src" / "cage_finance" / "opa" / norm.replace("opa/", ""),
-        REPO_ROOT / "src" / "cage_healthcare" / "opa" / norm.replace("opa/", ""),
-        REPO_ROOT
-        / "src"
-        / "compliance_bridge"
-        / norm.replace("compliance_bridge/", ""),
-        REPO_ROOT / "src" / "compliance_bridge" / norm,
-        REPO_ROOT
-        / "src"
-        / "gateway"
-        / "compliance_bridge"
-        / norm.replace("compliance_bridge/", ""),
-        REPO_ROOT / "src" / "cage_healthcare" / "policy" / norm.replace("opa/", ""),
-        REPO_ROOT / "config" / norm,
-        REPO_ROOT / "local" / "plans" / norm.replace("plans/", ""),
-        REPO_ROOT / "local" / norm,
-        REPO_ROOT / "compliance" / "continuous-monitoring" / norm,
-        REPO_ROOT / "local" / "plans" / "remediation" / norm,
-        REPO_ROOT / "scripts" / norm,
-        REPO_ROOT / "infra" / "targets" / "gcp-gke" / norm,
-    ]
-    if norm.startswith("compliance/"):
-        candidates.append(REPO_ROOT / "docs" / norm)
+    if markdown_link:
+        candidates = (
+            [REPO_ROOT / clean_target.lstrip("/")]
+            if clean_target.startswith("/")
+            else [base_dir / clean_target]
+        )
+    else:
+        norm = clean_target[2:] if clean_target.startswith("./") else clean_target
+        candidates = (
+            [REPO_ROOT / clean_target.lstrip("/")]
+            if clean_target.startswith("/")
+            else [REPO_ROOT / norm, base_dir / clean_target]
+        )
 
     has_line_anchor = bool(
         LINE_ANCHOR_PATTERN.search(stripped_target)
@@ -467,7 +428,11 @@ def _resolve_candidate_path(base_dir: Path, target_path_str: str) -> Path | None
 
 
 def verify_file_path(
-    base_dir: Path, target_path_str: str, *, allow_colon_anchor: bool = False
+    base_dir: Path,
+    target_path_str: str,
+    *,
+    allow_colon_anchor: bool = False,
+    markdown_link: bool = False,
 ) -> tuple[bool, str]:
     """Verify if a relative or repo-root path exists on disk and validate any #L or :line anchor."""
     stripped_target = target_path_str.strip().strip("'\"`")
@@ -478,7 +443,11 @@ def verify_file_path(
     if is_template_or_pattern(clean_target):
         return True, ""
 
-    resolved = _resolve_candidate_path(base_dir, target_path_str)
+    resolved = _resolve_candidate_path(
+        base_dir,
+        target_path_str,
+        markdown_link=markdown_link,
+    )
     if resolved is not None:
         return _validate_line_anchor(
             resolved, target_path_str, allow_colon=allow_colon_anchor
@@ -830,7 +799,7 @@ def _get_python_file_symbols(py_path: Path, _depth: int = 0) -> set[str]:
         elif isinstance(node, ast.Attribute):
             syms.add(node.attr)
         elif isinstance(node, ast.Constant) and isinstance(node.value, str):
-            if re.match(r"^[A-Za-z_][A-Za-z0-9_]*$", node.value):
+            if re.fullmatch(r"[A-Z][A-Z0-9_]{2,}", node.value):
                 syms.add(node.value)
     return syms
 
@@ -1340,7 +1309,9 @@ def audit_markdown_file(path: Path) -> list[Issue]:
 
             # The target is the reference; the label is display text.
             local_link_labels.append(link.span(1))
-            valid, reason = verify_file_path(path.parent, link_target)
+            valid, reason = verify_file_path(
+                path.parent, link_target, markdown_link=True
+            )
             if not valid:
                 issues.append(
                     Issue(path, line_idx, "Markdown Link", link_target, reason)
@@ -1418,9 +1389,7 @@ def audit_markdown_file(path: Path) -> list[Issue]:
                 valid, reason = verify_file_path(
                     path.parent, code_snippet, allow_colon_anchor=True
                 )
-                if not valid and not any(
-                    code_snippet.startswith(p) for p in ("../..", "...")
-                ):
+                if not valid and not code_snippet.startswith("..."):
                     issues.append(
                         Issue(path, line_idx, "File Path", code_snippet, reason)
                     )
