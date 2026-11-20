@@ -606,7 +606,7 @@ Header-based identity was first removed in `feat(gateway)!: replace X-Agent-ID h
 | Version | Date | Author | Changes |
 |---|---|---|---|
 | 1.0.0 | 2026-09-22 | Principal Security & Governance Architect | Initial specification: SPIFFE extraction, DPoP binding, namespace prefix matching, A2A delegation |
-| 1.1.0 | 2026-09-22 | Documentation sync | Re-grounded against shipped code: corrected module paths (`server/workload_identity.py`, `server/dpop_validator.py`, `governance/constants.py`), replaced the non-existent `ControlRegistry.register_control()` API with the `372daad2^:config/agent_catalog.json` + `372daad2^:config/opa/agent_catalog.rego` mechanism, converted §5 roadmap to verified implementation status |
+| 1.1.0 | 2026-09-22 | Documentation sync | Re-grounded against shipped code: corrected module paths (`src/gateway/server/workload_identity.py`, `src/gateway/server/dpop_validator.py`, `src/gateway/governance/constants.py`), replaced the non-existent `ControlRegistry.register_control()` API with the `372daad2^:config/agent_catalog.json` + `372daad2^:config/opa/agent_catalog.rego` mechanism, converted §5 roadmap to verified implementation status |
 | 1.2.0 | 2026-11-06 | F-111 retirement | Retired unreferenced `OIDCValidationMiddleware`, `372daad2^:src/gateway/governance/ingress/agent_registry_adapter.py`, `372daad2^:config/agent_catalog.json`, and `372daad2^:config/opa/agent_catalog.rego`; marked §3.5 / Phase 3 as target state and pointed active AC-3 caller admission to `WorkloadIdentityMiddleware` + Linkerd `AuthorizationPolicy` |
 
 ---
