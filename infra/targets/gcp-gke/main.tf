@@ -1009,13 +1009,16 @@ module "compliance_bridge" {
     "${local.ksa_lula}.${module.namespace.name}.${module.service_mesh.identity_suffix}",
   ]
 
-  # POAM-2026-196: Human operator OIDC trust-anchor and allowlist configuration.
+  # POAM-2026-196 & POAM-2026-210: Human operator OIDC + WebAuthn trust-anchor configuration.
   trusted_operator_identities = var.trusted_operator_identities
   operator_oidc_issuer        = var.operator_oidc_issuer
   operator_oidc_audience      = var.operator_oidc_audience
   operator_jwks_uri           = var.operator_jwks_uri
   enable_e2e_mode             = var.enable_e2e_advisor
   operator_jwks_json          = var.enable_e2e_advisor ? trimspace(var.e2e_operator_jwks_json) : ""
+  webauthn_rp_id              = var.operator_webauthn_rp_id
+  webauthn_allowed_origins    = var.operator_webauthn_allowed_origins
+  webauthn_credentials_json   = (var.enable_e2e_advisor && !contains(["prod", "production"], lower(var.environment)) && trimspace(var.e2e_webauthn_credentials_json) != "") ? trimspace(var.e2e_webauthn_credentials_json) : trimspace(var.operator_webauthn_credentials_json)
 
   infra_evidence_previous_chain_head_hash          = var.infra_evidence_previous_chain_head_hash
   infra_evidence_previous_batch_attestation_digest = var.infra_evidence_previous_batch_attestation_digest
@@ -1115,6 +1118,12 @@ module "gateway" {
   reconciliation_provider    = "simulated"
   use_mock_broker            = var.environment != "prod"
   cage_kms_provider          = "gcp"
+
+  # POAM-2026-210: Out-of-band WebAuthn Relying Party and public-key credentials
+  # so DeferToken deserialization at consume_approval() verifies WebAuthn signatures.
+  webauthn_rp_id            = var.operator_webauthn_rp_id
+  webauthn_allowed_origins  = var.operator_webauthn_allowed_origins
+  webauthn_credentials_json = (var.enable_e2e_advisor && !contains(["prod", "production"], lower(var.environment)) && trimspace(var.e2e_webauthn_credentials_json) != "") ? trimspace(var.e2e_webauthn_credentials_json) : trimspace(var.operator_webauthn_credentials_json)
 
   # POAM-2026-079: own identity; signs seals with gateway-seal and trusts
   # ground truth only from reconciler-snapshot (G8).

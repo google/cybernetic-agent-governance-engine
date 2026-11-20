@@ -179,10 +179,13 @@ def cmd_approve(
     *,
     oidc_token: str | None = None,
     internal_token: str | None = None,
+    credential_id: str | None = None,
     client_data_json: str | None = None,
+    authenticator_data: str | None = None,
+    signature: str | None = None,
     challenge_binding: str | None = None,
 ) -> tuple[int, dict[str, Any]]:
-    """Submit a human OIDC approval to ``POST /v1/defer/{defer_id}/escalate``."""
+    """Submit a human OIDC + WebAuthn approval to ``POST /v1/defer/{defer_id}/escalate``."""
     del (
         internal_token
     )  # Human OIDC approval never requires workload CAGE_INTERNAL_TOKEN.
@@ -196,8 +199,14 @@ def cmd_approve(
     url = f"{base}/v1/defer/{safe_id}/escalate"
     headers = _build_headers(oidc_token=eff_oidc, include_internal_token=False)
     payload: dict[str, Any] = {}
+    if credential_id is not None:
+        payload["credential_id"] = credential_id
     if client_data_json is not None:
         payload["client_data_json"] = client_data_json
+    if authenticator_data is not None:
+        payload["authenticator_data"] = authenticator_data
+    if signature is not None:
+        payload["signature"] = signature
     if challenge_binding is not None:
         payload["challenge_binding"] = challenge_binding
     return _request_json("POST", url, headers=headers, payload=payload)
@@ -245,9 +254,24 @@ def build_parser() -> argparse.ArgumentParser:
     )
     approve_p.add_argument("defer_id", help="The defer_id to approve")
     approve_p.add_argument(
+        "--credential-id",
+        default=os.environ.get("CAGE_WEBAUTHN_CREDENTIAL_ID"),
+        help="Base64url-encoded WebAuthn credential ID (mandatory in enforcing postures)",
+    )
+    approve_p.add_argument(
         "--client-data-json",
         default=os.environ.get("CAGE_WEBAUTHN_CLIENT_DATA_JSON"),
         help="Base64url-encoded W3C CollectedClientData JSON (mandatory in enforcing postures)",
+    )
+    approve_p.add_argument(
+        "--authenticator-data",
+        default=os.environ.get("CAGE_WEBAUTHN_AUTHENTICATOR_DATA"),
+        help="Base64url-encoded WebAuthn authenticatorData >=37 bytes (mandatory in enforcing postures)",
+    )
+    approve_p.add_argument(
+        "--signature",
+        default=os.environ.get("CAGE_WEBAUTHN_SIGNATURE"),
+        help="Base64url-encoded WebAuthn assertion signature (mandatory in enforcing postures)",
     )
     approve_p.add_argument(
         "--challenge-binding",
@@ -282,7 +306,10 @@ def main(argv: list[str] | None = None) -> int:
                 args.bridge_url,
                 args.defer_id,
                 oidc_token=args.oidc_token,
+                credential_id=args.credential_id,
                 client_data_json=args.client_data_json,
+                authenticator_data=args.authenticator_data,
+                signature=args.signature,
                 challenge_binding=args.challenge_binding,
             )
         else:  # pragma: no cover

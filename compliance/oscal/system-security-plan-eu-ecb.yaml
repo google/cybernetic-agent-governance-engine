@@ -560,21 +560,25 @@ system-security-plan:
           escalations (src/cage_finance/tiers/consensus_tier.py, src/gateway/governance/governor/stages/confidence.py,
           src/cage_finance/tiers/trade_confidence_tier.py) park tokens in DeferQueue
           (src/gateway/governance/defer_queue.py) for distinct-principal dual-control
-          human OIDC approval (DeferQueue.approve(); WebAuthn assertions are not verified,
+          human OIDC + cryptographic W3C WebAuthn assertion approval (DeferQueue.approve()
+          and verify_webauthn_assertion() in src/gateway/governance/webauthn_verifier.py,
           POAM-2026-210) and single-use consumption with POST_HITL drift revalidation
           (DeferQueue.consume_approval(), SymbolicGovernor.revalidate_post_hitl(),
           and fail-closed post_hitl_rehydrate_node / post_hitl_revalidate_node in
           src/governed_financial_advisor/graph/subgraphs/governed_trader_graph.py,
-          POAM-2026-240), verified in tests/test_defer_dual_control_auth.py, tests/test_defer_queue_quorum.py,
-          tests/test_defer_queue_single_use.py, tests/test_hitl_toctou_revalidation.py,
-          tests/governor/test_post_hitl_approval_spend.py, tests/governor/test_regional_overlay.py,
-          and tests/cage_finance/test_trade_confidence_tier.py.'
+          POAM-2026-240), verified in tests/test_defer_dual_control_auth.py, tests/unit/governance/test_webauthn_verifier.py,
+          tests/test_defer_queue_quorum.py, tests/test_defer_queue_single_use.py,
+          tests/test_hitl_toctou_revalidation.py, tests/governor/test_post_hitl_approval_spend.py,
+          tests/governor/test_regional_overlay.py, and tests/cage_finance/test_trade_confidence_tier.py.'
         implementation-status:
           state: implemented
         links:
         - href: ../../tests/test_defer_dual_control_auth.py
           rel: reference
           text: Dual-control distinct-principal HITL tests
+        - href: ../../tests/unit/governance/test_webauthn_verifier.py
+          rel: reference
+          text: Cryptographic W3C WebAuthn assertion verification tests
         - href: ../../tests/test_hitl_toctou_revalidation.py
           rel: reference
           text: POST_HITL drift revalidation tests

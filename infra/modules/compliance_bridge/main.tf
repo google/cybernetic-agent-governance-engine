@@ -78,6 +78,11 @@ resource "kubernetes_deployment" "compliance_bridge" {
       condition     = !contains(["staging", "prod", "production"], lower(var.cage_env)) || lower(trimspace(var.evidence_cold_store)) == "null" || trimspace(var.evidence_cold_store_location) != ""
       error_message = "CAGE Invariant (SC-7 / GDPR Art. 44 / MAS TRM §4.2 / POAM-2026-220): under an enforcing posture with durable cold storage, compliance-bridge requires a non-empty evidence_cold_store_location (the WORM bucket's immutable cloud location)."
     }
+
+    precondition {
+      condition     = !strcontains(var.webauthn_credentials_json, "PRIVATE KEY")
+      error_message = "CAGE Invariant (IA-2 / POAM-2026-210): webauthn_credentials_json must contain only asymmetric public keys (never PRIVATE KEY material)."
+    }
   }
 
   metadata {
@@ -449,6 +454,24 @@ resource "kubernetes_deployment" "compliance_bridge" {
             content {
               name  = "CAGE_OPERATOR_JWKS_JSON"
               value = trimspace(var.operator_jwks_json)
+            }
+          }
+
+          env {
+            name  = "CAGE_WEBAUTHN_RP_ID"
+            value = trimspace(var.webauthn_rp_id)
+          }
+
+          env {
+            name  = "CAGE_WEBAUTHN_ALLOWED_ORIGINS"
+            value = join(",", [for o in var.webauthn_allowed_origins : trimspace(o) if trimspace(o) != ""])
+          }
+
+          dynamic "env" {
+            for_each = trimspace(var.webauthn_credentials_json) != "" ? [1] : []
+            content {
+              name  = "CAGE_WEBAUTHN_CREDENTIALS_JSON"
+              value = trimspace(var.webauthn_credentials_json)
             }
           }
 

@@ -68,7 +68,12 @@ from typing import Any
 from pydantic import BaseModel, Field, field_validator, model_validator
 
 from src.gateway.governance.contracts import ViolationKind
-from src.gateway.governance.env_posture import DeploymentPosture
+from src.gateway.governance.env_posture import DeploymentPosture, is_enforcing
+from src.gateway.governance.webauthn_verifier import (
+    WebAuthnConfigError,
+    WebAuthnVerificationError,
+    verify_webauthn_assertion,
+)
 from src.gateway.infrastructure.redis_single_use import new_op_id
 
 logger = logging.getLogger(__name__)
@@ -305,109 +310,54 @@ class ApprovalRecord(BaseModel):
     def verify_webauthn_challenge(
         self, *, expected_bindings: Collection[str] | None = None
     ) -> bool:
-        """Verify WebAuthn CollectedClientData challenge binding (POAM-2026-196).
+        """Verify cryptographic W3C WebAuthn assertion and challenge binding (POAM-2026-210).
 
-        Validates that ``client_data_json`` decodes to a W3C ``webauthn.get``
-        CollectedClientData JSON object whose base64url ``challenge`` decodes
-        to the exact 32-byte SHA-256 ``challenge_binding`` digest, and when
-        ``expected_bindings`` is provided, matches one of the server-derived
-        decision bindings for the target parked token.
-
-        Returns:
-            True if verification succeeds, False otherwise.
+        Validates all five assertion fields (``credential_id``, ``client_data_json``,
+        ``authenticator_data``, ``signature``, ``challenge_binding``) independently of
+        caller-stamped ``auth_method``, resolves the registered asymmetric public key
+        out-of-band for ``(approver_urn, credential_id)``, verifies RP-ID hash,
+        ``UP``/``UV`` flags, allowed HTTPS ``origin``, and ``challenge_binding``
+        (against ``expected_bindings`` when supplied), and verifies the cryptographic
+        signature over ``authenticatorData || SHA-256(clientDataJSON)``.
         """
-        import base64
-
-        if (
-            not self.client_data_json
-            or not self.client_data_json.strip()
-            or not self.challenge_binding
-            or not self.challenge_binding.strip()
-        ):
-            return False
-
-        if self.auth_method == "WEBAUTHN" and (
-            not self.authenticator_data
-            or not self.authenticator_data.strip()
-            or not self.signature
-            or not self.signature.strip()
-        ):
-            return False
-
         try:
-            if self.authenticator_data is not None:
-                if not self.authenticator_data.strip():
-                    return False
-                ad_str = self.authenticator_data.strip()
-                ad_bytes = base64.urlsafe_b64decode(ad_str + "=" * (-len(ad_str) % 4))
-                if not ad_bytes:
-                    return False
-            if self.signature is not None:
-                if not self.signature.strip():
-                    return False
-                sig_str = self.signature.strip()
-                sig_bytes = base64.urlsafe_b64decode(
-                    sig_str + "=" * (-len(sig_str) % 4)
-                )
-                if not sig_bytes:
-                    return False
-
-            b64_str = self.client_data_json.strip()
-            pad = "=" * (-len(b64_str) % 4)
-            client_data_bytes = base64.urlsafe_b64decode(b64_str + pad)
-
-            computed_hash = hashlib.sha256(client_data_bytes).hexdigest()
+            verified = verify_webauthn_assertion(
+                approver_urn=self.approver_urn,
+                credential_id=self.credential_id,
+                client_data_json=self.client_data_json,
+                authenticator_data=self.authenticator_data,
+                signature=self.signature,
+                challenge_binding=self.challenge_binding,
+                expected_bindings=expected_bindings,
+            )
             if self.client_data_hash is None:
-                object.__setattr__(self, "client_data_hash", computed_hash)
-
-            client_data = json.loads(client_data_bytes.decode("utf-8"))
-            if (
-                not isinstance(client_data, dict)
-                or client_data.get("type") != "webauthn.get"
-            ):
-                return False
-
-            challenge_b64 = client_data.get("challenge", "")
-            if not isinstance(challenge_b64, str) or not challenge_b64.strip():
-                return False
-
-            pad_challenge = "=" * (-len(challenge_b64) % 4)
-            challenge_bytes = base64.urlsafe_b64decode(challenge_b64 + pad_challenge)
-
-            binding_hex = self.challenge_binding.strip().lower()
-            expected_bytes = bytes.fromhex(binding_hex)
-            if len(expected_bytes) != 32:
-                return False
-            if not hmac.compare_digest(challenge_bytes, expected_bytes):
-                return False
-            if expected_bindings is not None:
-                matched_server_binding = any(
-                    isinstance(candidate, str)
-                    and len(candidate.strip()) == 64
-                    and hmac.compare_digest(binding_hex, candidate.strip().lower())
-                    for candidate in expected_bindings
-                )
-                if not matched_server_binding:
-                    return False
+                object.__setattr__(self, "client_data_hash", verified.client_data_hash)
+            object.__setattr__(self, "credential_id", verified.credential_id)
             return True
-
-        except (ValueError, KeyError, json.JSONDecodeError) as exc:
-            logger.warning("WebAuthn challenge verification failed: %s", exc)
+        except WebAuthnConfigError as exc:
+            if is_enforcing():
+                raise
+            logger.warning("WebAuthn trust configuration unavailable: %s", exc)
+            return False
+        except WebAuthnVerificationError as exc:
+            logger.warning("WebAuthn assertion verification failed: %s", exc)
             return False
 
     @model_validator(mode="after")
     def _validate_enforcing_webauthn_binding(self) -> ApprovalRecord:
-        """Require verified WebAuthn challenge binding in enforcing postures (POAM-2026-196)."""
+        """Require cryptographically verified WebAuthn assertion in enforcing postures (POAM-2026-210)."""
         if DeploymentPosture.from_env().is_enforcing():
             if (
-                not self.client_data_json
-                or not self.client_data_json.strip()
-                or not self.challenge_binding
-                or not self.challenge_binding.strip()
+                not (self.credential_id and self.credential_id.strip())
+                or not (self.client_data_json and self.client_data_json.strip())
+                or not (self.authenticator_data and self.authenticator_data.strip())
+                or not (self.signature and self.signature.strip())
+                or not (self.challenge_binding and self.challenge_binding.strip())
             ):
                 raise ValueError(
-                    "WebAuthn client_data_json and challenge_binding are mandatory "
-                    f"in enforcing postures for {self.approver_urn!r} (POAM-2026-196)"
+                    "WebAuthn credential_id, client_data_json, authenticator_data, "
+                    "signature, and challenge_binding are mandatory in enforcing "
+                    f"postures for {self.approver_urn!r} (POAM-2026-196 / POAM-2026-210)"
                 )
             if not self.verify_webauthn_challenge():
                 raise ValueError(
@@ -654,7 +604,7 @@ def _is_duplicate_approval(
     """
     cand_urn = candidate.approver_urn.strip()
     cand_hash = candidate.auth_principal_hash.strip().lower()
-    cand_cred = (candidate.credential_id or "").strip()
+    cand_cred = (candidate.credential_id or "").strip().rstrip("=")
 
     for prev in existing:
         if prev.approver_urn.strip() == cand_urn:
@@ -662,7 +612,7 @@ def _is_duplicate_approval(
         prev_hash = prev.auth_principal_hash.strip().lower()
         if cand_hash and prev_hash and hmac.compare_digest(cand_hash, prev_hash):
             return True
-        prev_cred = (prev.credential_id or "").strip()
+        prev_cred = (prev.credential_id or "").strip().rstrip("=")
         if cand_cred and prev_cred and hmac.compare_digest(cand_cred, prev_cred):
             return True
     return False
@@ -1399,33 +1349,63 @@ class DeferQueue:
 
         enforcing = DeploymentPosture.from_env().is_enforcing()
         if enforcing and (
-            not (record.client_data_json and record.client_data_json.strip())
+            not (record.credential_id and record.credential_id.strip())
+            or not (record.client_data_json and record.client_data_json.strip())
+            or not (record.authenticator_data and record.authenticator_data.strip())
+            or not (record.signature and record.signature.strip())
             or not (record.challenge_binding and record.challenge_binding.strip())
         ):
             logger.warning(
-                "[defer_queue] Missing mandatory WebAuthn challenge binding in enforcing posture: defer_id=%s approver=%s",
+                "[defer_queue] Missing mandatory WebAuthn assertion fields in enforcing posture: defer_id=%s approver=%s",
                 defer_id,
                 record.approver_urn,
             )
             raise ValueError(
-                "WebAuthn client_data_json and challenge_binding are mandatory "
-                f"in enforcing postures for {record.approver_urn!r} (POAM-2026-196)"
+                "WebAuthn credential_id, client_data_json, authenticator_data, "
+                "signature, and challenge_binding are mandatory in enforcing "
+                f"postures for {record.approver_urn!r} (POAM-2026-196 / POAM-2026-210)"
             )
 
-        if (
+        requires_webauthn = (
             enforcing
-            or record.auth_method == "WEBAUTHN"
-            or record.client_data_json is not None
-            or record.challenge_binding is not None
-        ) and not record.verify_webauthn_challenge():
-            logger.warning(
-                "[defer_queue] WebAuthn challenge verification failed: defer_id=%s approver=%s",
-                defer_id,
-                record.approver_urn,
+            or record.auth_method.strip().upper() == "WEBAUTHN"
+            or any(
+                val is not None
+                for val in (
+                    record.client_data_json,
+                    record.authenticator_data,
+                    record.signature,
+                    record.challenge_binding,
+                )
             )
-            raise ValueError(
-                f"WebAuthn challenge binding verification failed for {record.approver_urn!r}"
-            )
+        )
+        if requires_webauthn:
+            try:
+                verified_pre = verify_webauthn_assertion(
+                    approver_urn=record.approver_urn,
+                    credential_id=record.credential_id,
+                    client_data_json=record.client_data_json,
+                    authenticator_data=record.authenticator_data,
+                    signature=record.signature,
+                    challenge_binding=record.challenge_binding,
+                )
+                if record.client_data_hash is None:
+                    object.__setattr__(
+                        record, "client_data_hash", verified_pre.client_data_hash
+                    )
+                object.__setattr__(record, "credential_id", verified_pre.credential_id)
+            except WebAuthnConfigError:
+                raise
+            except (WebAuthnVerificationError, ValueError) as exc:
+                logger.warning(
+                    "[defer_queue] WebAuthn assertion verification failed: defer_id=%s approver=%s err=%s",
+                    defer_id,
+                    record.approver_urn,
+                    exc,
+                )
+                raise ValueError(
+                    f"WebAuthn challenge binding verification failed for {record.approver_urn!r}: {exc}"
+                ) from exc
 
         for attempt in range(max_retries):
             # Read current token state with revision
@@ -1465,24 +1445,31 @@ class DeferQueue:
                 )
                 return (ApprovalStatus.NOT_FOUND, None)
 
-            if (
-                enforcing
-                or record.auth_method == "WEBAUTHN"
-                or record.client_data_json is not None
-                or record.challenge_binding is not None
-            ) and not record.verify_webauthn_challenge(
-                expected_bindings=token.expected_webauthn_bindings(
-                    record.approver_urn, slot=len(token.approvals)
-                )
-            ):
-                logger.warning(
-                    "[defer_queue] WebAuthn challenge_binding does not match parked decision: defer_id=%s approver=%s",
-                    defer_id,
-                    record.approver_urn,
-                )
-                raise ValueError(
-                    f"WebAuthn challenge binding verification failed for {record.approver_urn!r}"
-                )
+            if requires_webauthn:
+                try:
+                    verify_webauthn_assertion(
+                        approver_urn=record.approver_urn,
+                        credential_id=record.credential_id,
+                        client_data_json=record.client_data_json,
+                        authenticator_data=record.authenticator_data,
+                        signature=record.signature,
+                        challenge_binding=record.challenge_binding,
+                        expected_bindings=token.expected_webauthn_bindings(
+                            record.approver_urn, slot=len(token.approvals)
+                        ),
+                    )
+                except WebAuthnConfigError:
+                    raise
+                except (WebAuthnVerificationError, ValueError) as exc:
+                    logger.warning(
+                        "[defer_queue] WebAuthn challenge_binding does not match parked decision: defer_id=%s approver=%s err=%s",
+                        defer_id,
+                        record.approver_urn,
+                        exc,
+                    )
+                    raise ValueError(
+                        f"WebAuthn challenge binding verification failed for {record.approver_urn!r}: {exc}"
+                    ) from exc
 
             # Separation-of-duties (POAM-2026-196, F-42): the initiator who
             # triggered the deferred action cannot approve their own token.

@@ -480,3 +480,21 @@ variable "use_mock_broker" {
   type        = bool
   default     = false
 }
+
+variable "webauthn_rp_id" {
+  description = "Relying Party ID for human HITL WebAuthn assertion verification during DeferQueue consumption (CAGE_WEBAUTHN_RP_ID; POAM-2026-210)."
+  type        = string
+  default     = "console.cage.example"
+}
+
+variable "webauthn_allowed_origins" {
+  description = "Allowed HTTPS Relying Party origins for human HITL WebAuthn assertions (CAGE_WEBAUTHN_ALLOWED_ORIGINS; POAM-2026-210)."
+  type        = list(string)
+  default     = ["https://console.cage.example"]
+}
+
+variable "webauthn_credentials_json" {
+  description = "Out-of-band public-key WebAuthn operator credential registry JSON (CAGE_WEBAUTHN_CREDENTIALS_JSON; POAM-2026-210). Must contain only public keys."
+  type        = string
+  default     = ""
+}

@@ -2757,13 +2757,15 @@ async def defer_inject(
 
 
 class DeferEscalateRequest(BaseModel):
-    """Request body for human operator approval of a deferred execution (POAM-2026-196).
+    """Request body for human operator approval of a deferred execution (POAM-2026-210).
 
     Self-asserted identity fields (``operator_urn``, ``session_id``, ``auth_method``)
     are forbidden in the body and extracted exclusively from verified human OIDC
     credentials via ``require_human_operator_identity``. Under an enforcing
-    ``DeploymentPosture``, ``client_data_json`` and ``challenge_binding`` are
-    mandatory and verified against ``ApprovalRecord.verify_webauthn_challenge()``.
+    ``DeploymentPosture``, all five W3C WebAuthn assertion fields (``credential_id``,
+    ``client_data_json``, ``authenticator_data``, ``signature``, ``challenge_binding``)
+    are mandatory regardless of ``operator.channel_provenance`` and verified
+    cryptographically against ``ApprovalRecord.verify_webauthn_challenge()``.
     """
 
     model_config = ConfigDict(extra="forbid")
@@ -2778,15 +2780,15 @@ class DeferEscalateRequest(BaseModel):
     )
     credential_id: str | None = Field(
         default=None,
-        description="Optional base64url-encoded WebAuthn credential ID.",
+        description="Base64url-encoded WebAuthn credential ID (mandatory in enforcing postures).",
     )
     authenticator_data: str | None = Field(
         default=None,
-        description="Optional base64url-encoded WebAuthn authenticatorData.",
+        description="Base64url-encoded WebAuthn authenticatorData >=37 bytes (mandatory in enforcing postures).",
     )
     signature: str | None = Field(
         default=None,
-        description="Optional base64url-encoded WebAuthn assertion signature.",
+        description="Base64url-encoded asymmetric WebAuthn assertion signature (mandatory in enforcing postures).",
     )
 
 
@@ -2800,21 +2802,41 @@ async def defer_escalate(
     body: DeferEscalateRequest,
     operator: OperatorPrincipal = Depends(require_human_operator_identity),
 ) -> JSONResponse:
-    """Escalate a DEFER-parked token with verified human operator approval.
+    """Escalate a DEFER-parked token with verified human operator + WebAuthn approval.
 
     Authenticates human operators via ``require_human_operator_identity`` (out-of-band
     ``kid``-verified OIDC JWT in ``CAGE_TRUSTED_OPERATOR_IDENTITIES``; does not
     require workload ``CAGE_INTERNAL_TOKEN``). Workload SVID identities are
-    refused with HTTP 403, and under an enforcing ``DeploymentPosture`` both
-    ``client_data_json`` and ``challenge_binding`` are mandatory.
+    refused with HTTP 403, and under an enforcing ``DeploymentPosture`` all five
+    W3C WebAuthn assertion fields are mandatory and verified cryptographically
+    against out-of-band registered operator public keys, independent of
+    ``operator.channel_provenance``.
     """
     # POAM-2026-196 (F-40, F-41): Defense-in-depth check for direct callers.
     operator = ensure_human_operator_principal(operator)
 
     from src.gateway.governance.env_posture import DeploymentPosture
+    from src.gateway.governance.webauthn_verifier import (
+        WebAuthnConfigError,
+        load_webauthn_verifier_config_from_env,
+    )
 
-    if DeploymentPosture.from_env().is_enforcing() and (
-        not (body.client_data_json and body.client_data_json.strip())
+    enforcing = DeploymentPosture.from_env().is_enforcing()
+    has_any_webauthn_field = any(
+        val is not None
+        for val in (
+            body.credential_id,
+            body.client_data_json,
+            body.authenticator_data,
+            body.signature,
+            body.challenge_binding,
+        )
+    )
+    if enforcing and (
+        not (body.credential_id and body.credential_id.strip())
+        or not (body.client_data_json and body.client_data_json.strip())
+        or not (body.authenticator_data and body.authenticator_data.strip())
+        or not (body.signature and body.signature.strip())
         or not (body.challenge_binding and body.challenge_binding.strip())
     ):
         raise HTTPException(
@@ -2822,12 +2844,30 @@ async def defer_escalate(
             detail={
                 "error": "WEBAUTHN_BINDING_REQUIRED",
                 "message": (
-                    "client_data_json and challenge_binding are mandatory in "
-                    "enforcing postures (POAM-2026-196)."
+                    "credential_id, client_data_json, authenticator_data, signature, "
+                    "and challenge_binding are mandatory in enforcing postures "
+                    "(POAM-2026-196 / POAM-2026-210)."
                 ),
                 "defer_id": defer_id,
             },
         )
+
+    if enforcing or has_any_webauthn_field:
+        try:
+            load_webauthn_verifier_config_from_env()
+        except WebAuthnConfigError as cfg_exc:
+            logger.error(
+                "[defer/escalate] Out-of-band WebAuthn trust configuration unavailable: %s",
+                cfg_exc,
+            )
+            raise HTTPException(
+                status_code=503,
+                detail={
+                    "error": "WEBAUTHN_TRUST_UNCONFIGURED",
+                    "message": str(cfg_exc),
+                    "defer_id": defer_id,
+                },
+            ) from cfg_exc
 
     redis_url = _resolve_defer_redis_url()
 
@@ -2858,6 +2898,15 @@ async def defer_escalate(
             authenticator_data=body.authenticator_data,
             signature=body.signature,
         )
+    except WebAuthnConfigError as cfg_exc:
+        raise HTTPException(
+            status_code=503,
+            detail={
+                "error": "WEBAUTHN_TRUST_UNCONFIGURED",
+                "message": str(cfg_exc),
+                "defer_id": defer_id,
+            },
+        ) from cfg_exc
     except (ValidationError, ValueError) as val_exc:
         raise HTTPException(
             status_code=400,
@@ -2874,6 +2923,15 @@ async def defer_escalate(
         # Use approve() instead of resolve() for dual-control
         try:
             status, token = await queue.approve(defer_id, approval_record)
+        except WebAuthnConfigError as cfg_exc:
+            raise HTTPException(
+                status_code=503,
+                detail={
+                    "error": "WEBAUTHN_TRUST_UNCONFIGURED",
+                    "message": str(cfg_exc),
+                    "defer_id": defer_id,
+                },
+            ) from cfg_exc
         except ValueError as val_exc:
             msg = str(val_exc)
             status_code = 403 if "Separation-of-duties" in msg else 400

@@ -223,6 +223,7 @@ export TF_VAR_startup_grace_hours="${TF_VAR_startup_grace_hours:-0}"
 
 E2E_SUITE_SCRIPT="${CAGE_E2E_SUITE_SCRIPT:-$REPO_ROOT/tests/e2e/run_gke_e2e_suite.py}"
 E2E_KEY_FILE="${CAGE_E2E_KEY_FILE:-}"
+E2E_WEBAUTHN_KEY_FILE="${CAGE_E2E_WEBAUTHN_PRIVATE_KEYS_FILE:-}"
 DOTENV_SHIELD_PATH=""
 LIVE_ENV_FILE="$(mktemp "${TMPDIR:-/tmp}/cage-live-env-XXXXXX")"
 chmod 600 "$LIVE_ENV_FILE"
@@ -297,6 +298,15 @@ if [[ "$ENABLE_E2E_ADVISOR" == "true" ]]; then
   fi
   if [[ -n "${TF_VAR_e2e_operator_jwks_json:-}" ]]; then
     DEPLOY_EXTRA_ARGS+=("--var" "e2e_operator_jwks_json=${TF_VAR_e2e_operator_jwks_json}")
+  fi
+  if [[ -z "${TF_VAR_e2e_webauthn_credentials_json:-}" && -f "$E2E_SUITE_SCRIPT" ]]; then
+    E2E_WEBAUTHN_KEY_FILE="$(mktemp "${TMPDIR:-/tmp}/cage-e2e-webauthn-key-XXXXXX")"
+    chmod 600 "$E2E_WEBAUTHN_KEY_FILE"
+    TF_VAR_e2e_webauthn_credentials_json="$(uv run python "$E2E_SUITE_SCRIPT" --generate-ephemeral-webauthn --webauthn-private-keys-out "$E2E_WEBAUTHN_KEY_FILE")"
+    export TF_VAR_e2e_webauthn_credentials_json
+  fi
+  if [[ -n "${TF_VAR_e2e_webauthn_credentials_json:-}" ]]; then
+    DEPLOY_EXTRA_ARGS+=("--var" "e2e_webauthn_credentials_json=${TF_VAR_e2e_webauthn_credentials_json}")
   fi
 fi
 
@@ -529,6 +539,7 @@ on_lifecycle_exit() {
   restore_shielded_dotenv
   stop_staging_port_forward
   rm -f "${LIVE_ENV_FILE:-}"; [[ -z "${CAGE_E2E_KEY_FILE:-}" ]] && rm -f "${E2E_KEY_FILE:-}" || true
+  [[ -z "${CAGE_E2E_WEBAUTHN_PRIVATE_KEYS_FILE:-}" ]] && rm -f "${E2E_WEBAUTHN_KEY_FILE:-}" || true
   write_gate_w_archive_manifest "$rc"
 }
 trap on_lifecycle_exit EXIT
@@ -571,6 +582,9 @@ build_tf_var_args() {
     TF_VAR_ARGS+=("-var=enable_e2e_advisor=true")
     if [[ -n "${TF_VAR_e2e_operator_jwks_json:-}" ]]; then
       TF_VAR_ARGS+=("-var=e2e_operator_jwks_json=${TF_VAR_e2e_operator_jwks_json}")
+    fi
+    if [[ -n "${TF_VAR_e2e_webauthn_credentials_json:-}" ]]; then
+      TF_VAR_ARGS+=("-var=e2e_webauthn_credentials_json=${TF_VAR_e2e_webauthn_credentials_json}")
     fi
   fi
   if [[ -n "$DIGESTS_FILE" ]]; then
@@ -1777,6 +1791,9 @@ if errors:
         if [[ -n "${E2E_KEY_FILE:-}" && -f "$E2E_KEY_FILE" ]]; then
           e2e_key_args+=("--private-key-file" "$E2E_KEY_FILE")
         fi
+        if [[ -n "${E2E_WEBAUTHN_KEY_FILE:-}" && -f "$E2E_WEBAUTHN_KEY_FILE" ]]; then
+          e2e_key_args+=("--webauthn-private-keys-file" "$E2E_WEBAUTHN_KEY_FILE")
+        fi
         if env CAGE_ALLOW_MACOS_TESTS=1 uv run python "$E2E_SUITE_SCRIPT" --full-e2e \
           --namespace "$NAMESPACE" \
           --gateway-url "${GATEWAY_URL:-http://localhost:8080}" \
@@ -1928,6 +1945,9 @@ run_terraform_destroy() {
     destroy_args+=("-var=enable_e2e_advisor=true")
     if [[ -n "${TF_VAR_e2e_operator_jwks_json:-}" ]]; then
       destroy_args+=("-var=e2e_operator_jwks_json=${TF_VAR_e2e_operator_jwks_json}")
+    fi
+    if [[ -n "${TF_VAR_e2e_webauthn_credentials_json:-}" ]]; then
+      destroy_args+=("-var=e2e_webauthn_credentials_json=${TF_VAR_e2e_webauthn_credentials_json}")
     fi
   fi
   if [[ -n "$DIGESTS_FILE" ]]; then

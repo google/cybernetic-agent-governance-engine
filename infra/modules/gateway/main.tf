@@ -639,6 +639,22 @@ locals {
           value = var.redis_auth_mode
         },
       ] : [],
+      [
+        {
+          name  = "CAGE_WEBAUTHN_RP_ID"
+          value = trimspace(var.webauthn_rp_id)
+        },
+        {
+          name  = "CAGE_WEBAUTHN_ALLOWED_ORIGINS"
+          value = join(",", [for o in var.webauthn_allowed_origins : trimspace(o) if trimspace(o) != ""])
+        },
+      ],
+      trimspace(var.webauthn_credentials_json) != "" ? [
+        {
+          name  = "CAGE_WEBAUTHN_CREDENTIALS_JSON"
+          value = trimspace(var.webauthn_credentials_json)
+        },
+      ] : [],
     )
     volumeMounts = concat(
       [
