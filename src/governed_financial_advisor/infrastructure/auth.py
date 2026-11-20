@@ -274,8 +274,8 @@ def requires_verified_principal() -> bool:
     """Return True when an advisor request must carry a verified end-user principal.
 
     Every enforcing posture requires one, whatever ``CAGE_ALLOW_ASSERTED_PRINCIPAL``
-    says. The flag relaxes only a permissive posture (``dev``/``test``/``ci``),
-    where it overrides ``CAGE_USER_OIDC_ISSUER`` and
+    says (GHSA-c9j3-q7hh-p95m). The flag relaxes only a permissive posture
+    (``dev``/``test``/``ci``), where it overrides ``CAGE_USER_OIDC_ISSUER`` and
     ``CAGE_REQUIRE_VERIFIED_PRINCIPAL``. The advisor refuses to start in an
     enforcing posture with the flag set
     (:func:`assert_no_asserted_principal_in_enforcing_posture`); ignoring it
@@ -301,8 +301,8 @@ def assert_no_asserted_principal_in_enforcing_posture() -> None:
     (``verified=False``) in place of a verified end-user OIDC principal. It is
     a development override: an enforcing posture must authenticate the end
     user, so setting the flag to a true value there is a misconfiguration that
-    stops the process instead of being silently ignored. The flag is parsed
-    exactly as :func:`requires_verified_principal` parses it.
+    stops the process instead of being silently ignored (GHSA-c9j3-q7hh-p95m).
+    The flag is parsed exactly as :func:`requires_verified_principal` parses it.
 
     Raises:
         AssertedPrincipalPostureError: If the posture is enforcing and the

@@ -16,6 +16,18 @@ Published security advisories, affected ranges, CVSS vectors, and fix commits ar
 
 - **[Published GitHub Security Advisories](https://github.com/google/cybernetic-agent-governance-engine/security/advisories)**
 
+Advisories published after `v4.1.0` (including internal maintainer findings that do not appear under external [Security Research Acknowledgments](#security-research-acknowledgments)):
+
+| Advisory | Published | Severity | Fix on `main` | Summary |
+|---|---|---|---|---|
+| `GHSA-gc2v-v2jw-q499` | `2026-11-19` | Medium | `3feffdf6` (`#820`, `client-v0.4.0`) | `cage-client <= 0.3.0` and `GatewayClient`: HTTP `403` refusals and `202`/`409`/`422` deferrals accepted without `GovernanceEnvelope` signature verification |
+| `GHSA-c9j3-q7hh-p95m` | `2026-11-19` | Medium | `dd27b66b` (`#815`, **AP-1** in [`docs/BREAKING_CHANGES.md`](docs/BREAKING_CHANGES.md)) | Governed financial advisor: `CAGE_ALLOW_ASSERTED_PRINCIPAL` accepted unverified end-user identities in enforcing postures (`production`/`staging`) despite documentation stating it was ignored there |
+| `GHSA-5c7p-g73w-v4m3` | `2026-11-19` | Medium | `aa50d17d` (`#814`) | Governed inference proxy: non-`content` response fields bypassed output governance and PII redaction |
+| `GHSA-797p-rrgm-4p56` | `2026-11-19` | High | `c145a9cc` (`#813`) | Governed financial advisor: `require_api_key()` accepted end-user OIDC tokens on service-only routes |
+| `GHSA-cxxx-6xfq-vvp4` | `2026-11-18` | Medium | `f6313b20` (`#809`) | `provider_05` three-axiom attestation providers accepted live `/v0.3/` responses as `VERIFIED` when `v0.3` signature fields were stripped |
+| `GHSA-5438-3wwf-qvcq` | `2026-11-18` | Medium | `1ad49289` (`#808`) | `actuator_03` quarantine adapter settled unsigned or unverifiable receipts as `ACCEPTED` without `ACTUATOR_03_REQUIRE_SIGNED_RECEIPTS=true` |
+| `GHSA-348p-gfpg-qqm9` | `2026-11-18` | Medium | `1aeed422` (`#799`) | `provider_06` evidence adapter sealed receipts not bound to the submitted evidence and returned unverified seals without a key manifest |
+
 Earlier fixes resolved through public issues, internal audits, or pre-publication tracker entries are recorded in [`CHANGELOG.md`](CHANGELOG.md) and [`docs/POAM.md`](docs/POAM.md).
 
 > **⚠️ Reference architecture notice:** CAGE is a reference architecture and is
