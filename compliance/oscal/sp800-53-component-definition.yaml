@@ -1902,18 +1902,20 @@ component-definition:
                       urn:cage:dev: prefix; enforcing postures never yield them.
 
                 The request body may not assert identity (DeferEscalateRequest forbids
-                operator_urn, session_id and auth_method). Enforcing postures require a WebAuthn
-                client_data_json bound to a 32-byte challenge_binding, and DeferQueue.approve()
-                (src/gateway/governance/defer_queue.py) records the verified principal hash
-                (auth_principal_hash) in each ApprovalRecord and refuses approval by the
-                request's initiator.
+                operator_urn, session_id and auth_method). Enforcing postures unconditionally
+                require a cryptographic W3C WebAuthn assertion (credential_id, client_data_json,
+                authenticator_data, signature, and 32-byte challenge_binding) independent of
+                channel_provenance, verified by verify_webauthn_assertion()
+                (src/gateway/governance/webauthn_verifier.py) against out-of-band registered
+                operator public keys (CAGE_WEBAUTHN_RP_ID, CAGE_WEBAUTHN_ALLOWED_ORIGINS,
+                CAGE_WEBAUTHN_CREDENTIALS_FILE / CAGE_WEBAUTHN_CREDENTIALS_JSON; POAM-2026-210).
+                DeferQueue.approve() (src/gateway/governance/defer_queue.py) records the verified
+                principal hash (auth_principal_hash) and credential_id in each ApprovalRecord and
+                refuses approval by the request's initiator.
 
                 Open: human-only approval has not been verified on a deployed cluster
-                (POAM-2026-196). The client_data_json is not a verified authenticator assertion:
-                WebAuthn assertion enforcement and cryptographic signature verification remain
-                open, so approval rests on the operator OIDC identity alone (POAM-2026-210).
-                The operator identities and OIDC issuer in the committed tfvars are example
-                values that an adopter replaces.
+                (POAM-2026-196). The operator identities, OIDC issuer, and WebAuthn Relying Party
+                in the committed tfvars are example values that an adopter replaces.
               props:
                 - name: implementation-status
                   value: partial

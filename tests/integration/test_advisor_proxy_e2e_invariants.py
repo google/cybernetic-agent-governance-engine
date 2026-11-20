@@ -251,8 +251,16 @@ ADVISOR_TOOLS: list[dict[str, Any]] = [
 ]
 
 
-def _make_webauthn_binding(defer_id: str, approver_sub: str) -> dict[str, str]:
-    """Construct W3C WebAuthn CollectedClientData bound to a SHA-256 challenge digest."""
+def _make_webauthn_binding(
+    defer_id: str,
+    approver_sub: str,
+    *,
+    cred_id: str | None = None,
+    priv_key: ec.EllipticCurvePrivateKey | None = None,
+    rp_id: str = "console.cage.example.org",
+    origin: str = "https://console.cage.example.org",
+) -> dict[str, str]:
+    """Construct W3C WebAuthn CollectedClientData (and ES256 signature when key provided)."""
     challenge_bytes = hashlib.sha256(
         f"cage-hitl-v1:{defer_id}:{approver_sub}".encode()
     ).digest()
@@ -262,20 +270,35 @@ def _make_webauthn_binding(defer_id: str, approver_sub: str) -> dict[str, str]:
     client_data = {
         "type": "webauthn.get",
         "challenge": challenge_b64,
-        "origin": "https://console.cage.example.org",
+        "origin": origin,
         "crossOrigin": False,
     }
+    client_data_bytes = json.dumps(client_data, separators=(",", ":")).encode("utf-8")
     client_data_b64 = (
-        base64.urlsafe_b64encode(
-            json.dumps(client_data, separators=(",", ":")).encode("utf-8")
-        )
-        .rstrip(b"=")
-        .decode("ascii")
+        base64.urlsafe_b64encode(client_data_bytes).rstrip(b"=").decode("ascii")
     )
-    return {
+    payload: dict[str, str] = {
         "client_data_json": client_data_b64,
         "challenge_binding": challenge_bytes.hex(),
     }
+    if cred_id is not None and priv_key is not None:
+        auth_data_bytes = (
+            hashlib.sha256(rp_id.encode("utf-8")).digest()
+            + b"\x05"
+            + (1).to_bytes(4, "big")
+        )
+        sig_bytes = priv_key.sign(
+            auth_data_bytes + hashlib.sha256(client_data_bytes).digest(),
+            ec.ECDSA(hashes.SHA256()),
+        )
+        payload["credential_id"] = cred_id
+        payload["authenticator_data"] = (
+            base64.urlsafe_b64encode(auth_data_bytes).rstrip(b"=").decode("ascii")
+        )
+        payload["signature"] = (
+            base64.urlsafe_b64encode(sig_bytes).rstrip(b"=").decode("ascii")
+        )
+    return payload
 
 
 @asynccontextmanager
@@ -587,6 +610,7 @@ class E2EHarness:
     trust_anchors_path: Path
     recorded_executions: list[ExecutionClearance]
     signed_partner_receipts: list[tuple[str, dict[str, Any]]]
+    webauthn_keys: dict[str, tuple[str, ec.EllipticCurvePrivateKey]]
 
     def mint_oidc_jwt(
         self,
@@ -670,6 +694,19 @@ class E2EHarness:
             json={"tool_name": tool_name, "params": params},
         )
 
+    def make_webauthn_assertion(
+        self, defer_id: str, approver_sub: str
+    ) -> dict[str, str]:
+        cred_pair = self.webauthn_keys.get(approver_sub)
+        if cred_pair is not None:
+            return _make_webauthn_binding(
+                defer_id,
+                approver_sub,
+                cred_id=cred_pair[0],
+                priv_key=cred_pair[1],
+            )
+        return _make_webauthn_binding(defer_id, approver_sub)
+
     async def escalate_oidc(
         self,
         defer_id: str,
@@ -681,7 +718,7 @@ class E2EHarness:
         body = (
             body_override
             if body_override is not None
-            else _make_webauthn_binding(defer_id, approver_sub)
+            else self.make_webauthn_assertion(defer_id, approver_sub)
         )
         return await self.bridge_http.post(
             f"/v1/defer/{defer_id}/escalate",
@@ -778,6 +815,37 @@ async def e2e_stack(
         json.dumps({"keys": [oidc_pub_jwk]}, indent=2), encoding="utf-8"
     )
 
+    webauthn_keys: dict[str, tuple[str, ec.EllipticCurvePrivateKey]] = {}
+    webauthn_cred_entries: list[dict[str, str]] = []
+    for idx, sub in enumerate((ALICE_SUB, BOB_SUB)):
+        w_priv = ec.generate_private_key(ec.SECP256R1())
+        w_pub_pem = (
+            w_priv.public_key()
+            .public_bytes(
+                encoding=serialization.Encoding.PEM,
+                format=serialization.PublicFormat.SubjectPublicKeyInfo,
+            )
+            .decode("utf-8")
+        )
+        w_cred_id = (
+            base64.urlsafe_b64encode(f"e2e-webauthn-cred-{idx}".encode("ascii"))
+            .rstrip(b"=")
+            .decode("ascii")
+        )
+        webauthn_keys[sub] = (w_cred_id, w_priv)
+        webauthn_cred_entries.append(
+            {
+                "credential_id": w_cred_id,
+                "operator_urn": sub,
+                "alg": "ES256",
+                "public_key_pem": w_pub_pem,
+            }
+        )
+    webauthn_creds_path = tmp_path / "webauthn_credentials.json"
+    webauthn_creds_path.write_text(
+        json.dumps({"credentials": webauthn_cred_entries}, indent=2), encoding="utf-8"
+    )
+
     monkeypatch.setenv("CAGE_INTERNAL_TOKEN", internal_token)
     monkeypatch.setenv("CAGE_OPERATOR_IDENTITY_ALLOW_OIDC", "true")
     monkeypatch.setenv("CAGE_OPERATOR_IDENTITY_ALLOW_DEV_SYNTHETIC", "false")
@@ -787,6 +855,12 @@ async def e2e_stack(
     monkeypatch.delenv("CAGE_OPERATOR_JWKS_JSON", raising=False)
     monkeypatch.delenv("CAGE_OPERATOR_JWKS_URI", raising=False)
     monkeypatch.setenv("CAGE_TRUSTED_OPERATOR_IDENTITIES", f"{ALICE_SUB},{BOB_SUB}")
+    monkeypatch.setenv("CAGE_WEBAUTHN_RP_ID", "console.cage.example.org")
+    monkeypatch.setenv(
+        "CAGE_WEBAUTHN_ALLOWED_ORIGINS", "https://console.cage.example.org"
+    )
+    monkeypatch.setenv("CAGE_WEBAUTHN_CREDENTIALS_FILE", str(webauthn_creds_path))
+    monkeypatch.delenv("CAGE_WEBAUTHN_CREDENTIALS_JSON", raising=False)
     monkeypatch.setattr(bridge_auth, "_CAGE_ENV", "staging")
     reset_oidc_verifier()
 
@@ -1080,6 +1154,7 @@ async def e2e_stack(
                 trust_anchors_path=trust_anchors_path,
                 recorded_executions=recorded_executions,
                 signed_partner_receipts=signed_partner_receipts,
+                webauthn_keys=webauthn_keys,
             )
         finally:
             reset_oidc_verifier()
@@ -1404,7 +1479,7 @@ async def test_advisor_proxy_e2e_all_five_invariants_and_negative_controls(
         await e2e_stack.escalate_oidc(defer_id, mallory_jwt, approver_sub=MALLORY_SUB)
     ).status_code == 403
 
-    # --- Negative Control #1d: missing or mismatched WebAuthn binding -> 400 (POAM-2026-196) ---
+    # --- Negative Control #1d: missing, partial, or forged WebAuthn assertion -> 400 (POAM-2026-210) ---
     alice_jwt = e2e_stack.mint_oidc_jwt(ALICE_SUB)
     missing_webauthn = await e2e_stack.escalate_oidc(
         defer_id, alice_jwt, body_override={}
@@ -1412,13 +1487,28 @@ async def test_advisor_proxy_e2e_all_five_invariants_and_negative_controls(
     assert missing_webauthn.status_code == 400
     assert missing_webauthn.json()["detail"]["error"] == "WEBAUTHN_BINDING_REQUIRED"
 
-    bad_webauthn = _make_webauthn_binding(defer_id, ALICE_SUB)
+    partial_webauthn = _make_webauthn_binding(defer_id, ALICE_SUB)
+    partial_resp = await e2e_stack.escalate_oidc(
+        defer_id, alice_jwt, body_override=partial_webauthn
+    )
+    assert partial_resp.status_code == 400
+    assert partial_resp.json()["detail"]["error"] == "WEBAUTHN_BINDING_REQUIRED"
+
+    bad_webauthn = e2e_stack.make_webauthn_assertion(defer_id, ALICE_SUB)
     bad_webauthn["challenge_binding"] = "00" * 32
     mismatched_webauthn = await e2e_stack.escalate_oidc(
         defer_id, alice_jwt, body_override=bad_webauthn
     )
     assert mismatched_webauthn.status_code == 400
     assert mismatched_webauthn.json()["detail"]["error"] == "APPROVAL_VALIDATION_FAILED"
+
+    forged_sig_webauthn = e2e_stack.make_webauthn_assertion(defer_id, ALICE_SUB)
+    forged_sig_webauthn["signature"] = "dGVzdC1zaWduYXR1cmU"
+    forged_sig_resp = await e2e_stack.escalate_oidc(
+        defer_id, alice_jwt, body_override=forged_sig_webauthn
+    )
+    assert forged_sig_resp.status_code == 400
+    assert forged_sig_resp.json()["detail"]["error"] == "APPROVAL_VALIDATION_FAILED"
 
     # --- Negative Control #1e: SoD self-approval (initiator == approver) -> 403 ---
     sod_queue = DeferQueue(e2e_stack.defer_redis)

@@ -222,6 +222,18 @@ def validate_operator_identity_posture() -> None:
                 f"FATAL [POAM-2026-196]: Invalid CAGE_OPERATOR_JWKS_URI: {exc}"
             ) from exc
 
+    from src.gateway.governance.webauthn_verifier import (
+        WebAuthnConfigError,
+        validate_configured_webauthn_env,
+    )
+
+    try:
+        validate_configured_webauthn_env()
+    except WebAuthnConfigError as exc:
+        raise RuntimeError(
+            f"FATAL [POAM-2026-210]: Invalid WebAuthn verifier configuration: {exc}"
+        ) from exc
+
 
 def _load_operator_jwks_by_kid() -> dict[str, Any]:
     """Load out-of-band static operator OIDC verification keys indexed by ``kid``."""

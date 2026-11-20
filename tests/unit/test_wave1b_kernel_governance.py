@@ -102,9 +102,28 @@ pytestmark = [pytest.mark.unit, pytest.mark.local]
 
 def _make_webauthn_approval(
     approver_urn: str,
-    credential_id: str,
+    raw_credential_label: str,
     challenge_hex: str,
-) -> ApprovalRecord:
+    *,
+    auth_principal_hash: str | None = None,
+) -> tuple[ApprovalRecord, dict[str, str]]:
+    from cryptography.hazmat.primitives import hashes, serialization
+    from cryptography.hazmat.primitives.asymmetric import ec
+
+    priv = ec.generate_private_key(ec.SECP256R1())
+    pub_pem = (
+        priv.public_key()
+        .public_bytes(
+            serialization.Encoding.PEM,
+            serialization.PublicFormat.SubjectPublicKeyInfo,
+        )
+        .decode("utf-8")
+    )
+    cred_id_b64 = (
+        base64.urlsafe_b64encode(raw_credential_label.encode("utf-8"))
+        .rstrip(b"=")
+        .decode("ascii")
+    )
     challenge_b64 = (
         base64.urlsafe_b64encode(bytes.fromhex(challenge_hex)).rstrip(b"=").decode()
     )
@@ -116,19 +135,36 @@ def _make_webauthn_approval(
         }
     ).encode("utf-8")
     client_data_b64 = base64.urlsafe_b64encode(client_data).rstrip(b"=").decode()
-    auth_data_b64 = base64.urlsafe_b64encode(b"\x01" * 37).rstrip(b"=").decode()
-    sig_b64 = base64.urlsafe_b64encode(b"\x02" * 64).rstrip(b"=").decode()
-    return ApprovalRecord(
+    auth_data = (
+        hashlib.sha256(b"cage.internal").digest()
+        + bytes([0x05])
+        + (1).to_bytes(4, "big")
+    )
+    auth_data_b64 = base64.urlsafe_b64encode(auth_data).rstrip(b"=").decode()
+    sig_bytes = priv.sign(
+        auth_data + hashlib.sha256(client_data).digest(),
+        ec.ECDSA(hashes.SHA256()),
+    )
+    sig_b64 = base64.urlsafe_b64encode(sig_bytes).rstrip(b"=").decode()
+    record = ApprovalRecord(
         approver_urn=approver_urn,
         approved_at_utc="2026-11-17T00:00:00Z",
         auth_method="WEBAUTHN",
-        auth_principal_hash=hashlib.sha256(approver_urn.encode("utf-8")).hexdigest(),
-        credential_id=credential_id,
+        auth_principal_hash=auth_principal_hash
+        or hashlib.sha256(approver_urn.encode("utf-8")).hexdigest(),
+        credential_id=cred_id_b64,
         client_data_json=client_data_b64,
         authenticator_data=auth_data_b64,
         signature=sig_b64,
         challenge_binding=challenge_hex,
     )
+    reg_entry = {
+        "credential_id": cred_id_b64,
+        "operator_urn": approver_urn,
+        "alg": "ES256",
+        "public_key_pem": pub_pem,
+    }
+    return record, reg_entry
 
 
 @pytest.mark.asyncio
@@ -137,6 +173,8 @@ async def test_f45_two_distinct_approvers_sharing_decision_binding_reach_quorum(
 ) -> None:
     """F-45 / KG-10: Two distinct approvers binding the same decision digest reach quorum."""
     monkeypatch.setenv("CAGE_ENV", "test")
+    monkeypatch.setenv("CAGE_WEBAUTHN_RP_ID", "cage.internal")
+    monkeypatch.setenv("CAGE_WEBAUTHN_ALLOWED_ORIGINS", "https://hitl.cage.internal")
     redis = fakeredis.aioredis.FakeRedis(decode_responses=True)
     queue = DeferQueue(redis)
     tok = DeferToken(
@@ -150,32 +188,32 @@ async def test_f45_two_distinct_approvers_sharing_decision_binding_reach_quorum(
     await queue.park(tok)
     shared_binding = tok.compute_decision_challenge_binding()
 
-    rec_alice = _make_webauthn_approval(
+    rec_alice, reg_alice = _make_webauthn_approval(
         "urn:cage:approver:alice", "cred-alice-1", shared_binding
     )
+    rec_alice_alias, reg_alice_alias = _make_webauthn_approval(
+        "urn:cage:approver:alice-alias",
+        "cred-alice-2",
+        shared_binding,
+        auth_principal_hash=rec_alice.auth_principal_hash,
+    )
+    rec_bob, reg_bob = _make_webauthn_approval(
+        "urn:cage:approver:bob", "cred-bob-1", shared_binding
+    )
+    monkeypatch.setenv(
+        "CAGE_WEBAUTHN_CREDENTIALS_JSON",
+        json.dumps({"credentials": [reg_alice, reg_alice_alias, reg_bob]}),
+    )
+
     status1, updated1 = await queue.approve(tok.defer_id, rec_alice)
     assert status1 is ApprovalStatus.PARTIAL_QUORUM
     assert updated1 is not None and len(updated1.approvals) == 1
 
-    # Duplicate principal hash under a different alias URN is rejected (KG-10)
-    rec_alice_alias = ApprovalRecord(
-        approver_urn="urn:cage:approver:alice-alias",
-        approved_at_utc="2026-11-17T00:01:00Z",
-        auth_method="WEBAUTHN",
-        auth_principal_hash=rec_alice.auth_principal_hash,
-        credential_id="cred-alice-2",
-        client_data_json=rec_alice.client_data_json,
-        authenticator_data=rec_alice.authenticator_data,
-        signature=rec_alice.signature,
-        challenge_binding=shared_binding,
-    )
+    # Duplicate principal hash under a different alias URN & distinct credential is rejected (KG-10)
     dup_status, _ = await queue.approve(tok.defer_id, rec_alice_alias)
     assert dup_status is ApprovalStatus.ALREADY_APPROVED
 
     # Distinct second approver signing the SAME decision challenge_binding reaches quorum (F-45)
-    rec_bob = _make_webauthn_approval(
-        "urn:cage:approver:bob", "cred-bob-1", shared_binding
-    )
     status2, updated2 = await queue.approve(tok.defer_id, rec_bob)
     assert status2 is ApprovalStatus.QUORUM_REACHED
     assert updated2 is not None

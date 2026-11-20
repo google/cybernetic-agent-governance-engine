@@ -51,18 +51,19 @@ import base64
 import hashlib
 import json
 import os
+import struct
 import subprocess
 import sys
 import time
 import urllib.parse
 import uuid
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
 from pathlib import Path
 from typing import Any
 
 import httpx
 import jwt as pyjwt
-from cryptography.hazmat.primitives import serialization
+from cryptography.hazmat.primitives import hashes, serialization
 from cryptography.hazmat.primitives.asymmetric import ec
 
 _REPO_ROOT = Path(__file__).resolve().parents[2]
@@ -176,24 +177,116 @@ def mint_operator_oidc_tokens(
     return tokens[0], tokens[1]
 
 
-def build_webauthn_binding_payload(deferred_id: str, slot: int) -> dict[str, str]:
-    """Construct a W3C `webauthn.get` challenge-bound approval body."""
+def generate_ephemeral_webauthn_credentials(
+    identities: Sequence[str] = _DEFAULT_OPERATORS,
+) -> tuple[bytes, str]:
+    """Generate distinct ES256 WebAuthn keypairs per operator (private JSON + public registry JSON)."""
+    cleaned = [i.strip() for i in identities if i and i.strip()]
+    if len(cleaned) < 2 or cleaned[0] == cleaned[1]:
+        raise ValueError("At least two distinct human operator identities are required")
+    private_slots: list[dict[str, str]] = []
+    public_creds: list[dict[str, str]] = []
+    for idx, sub in enumerate(cleaned[:2]):
+        priv = ec.generate_private_key(ec.SECP256R1())
+        priv_pem = priv.private_bytes(
+            encoding=serialization.Encoding.PEM,
+            format=serialization.PrivateFormat.PKCS8,
+            encryption_algorithm=serialization.NoEncryption(),
+        ).decode("utf-8")
+        pub_pem = (
+            priv.public_key()
+            .public_bytes(
+                encoding=serialization.Encoding.PEM,
+                format=serialization.PublicFormat.SubjectPublicKeyInfo,
+            )
+            .decode("utf-8")
+        )
+        cred_id = (
+            base64.urlsafe_b64encode(f"cage-e2e-webauthn-cred-{idx}".encode("ascii"))
+            .rstrip(b"=")
+            .decode("ascii")
+        )
+        private_slots.append(
+            {
+                "credential_id": cred_id,
+                "operator_urn": sub,
+                "private_key_pem": priv_pem,
+            }
+        )
+        public_creds.append(
+            {
+                "credential_id": cred_id,
+                "operator_urn": sub,
+                "alg": "ES256",
+                "public_key_pem": pub_pem,
+            }
+        )
+    priv_bundle = json.dumps(
+        {"slots": private_slots}, separators=(",", ":"), sort_keys=True
+    ).encode("utf-8")
+    pub_bundle = json.dumps(
+        {"credentials": public_creds}, separators=(",", ":"), sort_keys=True
+    )
+    return priv_bundle, pub_bundle
+
+
+def build_webauthn_binding_payload(
+    deferred_id: str,
+    slot: int,
+    *,
+    credential_id: str | None = None,
+    private_key_pem: str | bytes | None = None,
+    rp_id: str = "console.cage.example",
+    origin: str = "https://console.cage.example",
+    sign_count: int = 1,
+) -> dict[str, str]:
+    """Construct a cryptographically signed W3C `webauthn.get` approval body."""
     digest = hashlib.sha256(f"{deferred_id}:{slot}".encode()).digest()
     challenge_b64 = base64.urlsafe_b64encode(digest).rstrip(b"=").decode("ascii")
     client_data_bytes = json.dumps(
         {
             "type": "webauthn.get",
             "challenge": challenge_b64,
-            "origin": "https://console.cage.example",
-        }
+            "origin": origin,
+            "crossOrigin": False,
+        },
+        separators=(",", ":"),
     ).encode("utf-8")
     client_data_json = (
         base64.urlsafe_b64encode(client_data_bytes).rstrip(b"=").decode("ascii")
     )
-    return {
+    payload: dict[str, str] = {
         "client_data_json": client_data_json,
         "challenge_binding": digest.hex(),
     }
+    if credential_id is not None and private_key_pem is not None:
+        pem_bytes = (
+            private_key_pem.encode("utf-8")
+            if isinstance(private_key_pem, str)
+            else private_key_pem
+        )
+        priv_key = serialization.load_pem_private_key(pem_bytes, password=None)
+        if not isinstance(priv_key, ec.EllipticCurvePrivateKey):
+            raise ValueError(
+                "Expected ECDSA P-256 private key for E2E WebAuthn signing"
+            )
+        auth_data_bytes = (
+            hashlib.sha256(rp_id.encode("utf-8")).digest()
+            + b"\x05"
+            + struct.pack(">I", sign_count)
+        )
+        sig_bytes = priv_key.sign(
+            auth_data_bytes + hashlib.sha256(client_data_bytes).digest(),
+            ec.ECDSA(hashes.SHA256()),
+        )
+        payload["credential_id"] = credential_id
+        payload["authenticator_data"] = (
+            base64.urlsafe_b64encode(auth_data_bytes).rstrip(b"=").decode("ascii")
+        )
+        payload["signature"] = (
+            base64.urlsafe_b64encode(sig_bytes).rstrip(b"=").decode("ascii")
+        )
+    return payload
 
 
 def render_e2e_job_manifest(
@@ -948,15 +1041,26 @@ def _submit_two_human_approvals(
     bridge_url: str,
     deferred_ids: Sequence[str],
     operator_tokens: tuple[str, str],
+    webauthn_slots: Sequence[Mapping[str, str]] | None = None,
 ) -> None:
     base = validate_http_url(bridge_url)
     with httpx.Client(base_url=base, timeout=20.0) as client:
         for deferred_id in deferred_ids:
             statuses: list[str] = []
             for slot, token in enumerate(operator_tokens):
+                slot_key = (
+                    webauthn_slots[slot]
+                    if webauthn_slots is not None and slot < len(webauthn_slots)
+                    else {}
+                )
                 resp = client.post(
                     f"/v1/defer/{deferred_id}/escalate",
-                    json=build_webauthn_binding_payload(deferred_id, slot),
+                    json=build_webauthn_binding_payload(
+                        deferred_id,
+                        slot,
+                        credential_id=slot_key.get("credential_id"),
+                        private_key_pem=slot_key.get("private_key_pem"),
+                    ),
                     headers={"Authorization": f"Bearer {token}"},
                 )
                 if resp.status_code != 200:
@@ -982,6 +1086,11 @@ def _build_parser() -> argparse.ArgumentParser:
         help="Generate ephemeral ECDSA P-256 operator keypair and print public JWKS JSON.",
     )
     mode.add_argument(
+        "--generate-ephemeral-webauthn",
+        action="store_true",
+        help="Generate ephemeral ES256 WebAuthn operator keypairs and print public credentials JSON.",
+    )
+    mode.add_argument(
         "--seed-only",
         action="store_true",
         help="Seed real governance + inference proxy custody records before Phase 3 Lula.",
@@ -998,6 +1107,16 @@ def _build_parser() -> argparse.ArgumentParser:
         "--private-key-file",
         default="",
         help="Path to ephemeral private PEM for --full-e2e.",
+    )
+    parser.add_argument(
+        "--webauthn-private-keys-out",
+        default="",
+        help="Output path for ephemeral WebAuthn private key bundle JSON.",
+    )
+    parser.add_argument(
+        "--webauthn-private-keys-file",
+        default=os.environ.get("CAGE_E2E_WEBAUTHN_PRIVATE_KEYS_FILE", ""),
+        help="Path to ephemeral WebAuthn private key bundle JSON for --full-e2e.",
     )
     parser.add_argument(
         "--operator-oidc-tokens",
@@ -1042,6 +1161,16 @@ def main(argv: Sequence[str] | None = None) -> int:
         priv_pem, jwks_json = generate_ephemeral_operator_keypair(kid=args.kid)
         write_private_key_secure(Path(args.private_key_out), priv_pem)
         sys.stdout.write(jwks_json + "\n")
+        return 0
+
+    if args.generate_ephemeral_webauthn:
+        if not args.webauthn_private_keys_out:
+            raise SystemExit(
+                "--generate-ephemeral-webauthn requires --webauthn-private-keys-out <path>"
+            )
+        priv_bundle, pub_json = generate_ephemeral_webauthn_credentials()
+        write_private_key_secure(Path(args.webauthn_private_keys_out), priv_bundle)
+        sys.stdout.write(pub_json + "\n")
         return 0
 
     cluster_cfg = _resolve_cluster_config(args.namespace)
@@ -1091,6 +1220,25 @@ def main(argv: Sequence[str] | None = None) -> int:
             "--full-e2e requires either --private-key-file <path> or --operator-oidc-tokens <tok1,tok2>"
         )
 
+    webauthn_slots: list[dict[str, str]] | None = None
+    raw_webauthn_priv = os.environ.get(
+        "CAGE_E2E_WEBAUTHN_PRIVATE_KEYS_JSON", ""
+    ).strip()
+    if args.webauthn_private_keys_file:
+        raw_webauthn_priv = Path(args.webauthn_private_keys_file).read_text(
+            encoding="utf-8"
+        )
+    if raw_webauthn_priv:
+        parsed_priv = json.loads(raw_webauthn_priv)
+        slots_list = (
+            parsed_priv.get("slots") if isinstance(parsed_priv, dict) else parsed_priv
+        )
+        if not isinstance(slots_list, list) or len(slots_list) < 2:
+            raise SystemExit(
+                "WebAuthn private key bundle must contain at least 2 operator slots"
+            )
+        webauthn_slots = [dict(s) for s in slots_list[:2]]
+
     phase_a = _run_in_mesh_phase(
         job_name="cage-verify-trade-e2e-a",
         namespace=args.namespace,
@@ -1110,6 +1258,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             deferred_ids["s3_concurrent_replay"],
         ],
         tokens,
+        webauthn_slots=webauthn_slots,
     )
     phase_b = _run_in_mesh_phase(
         job_name="cage-verify-trade-e2e-b",

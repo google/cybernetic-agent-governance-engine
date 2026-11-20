@@ -1769,7 +1769,8 @@ class TestDeferQueueEndpoints:
         oidc_token = os.environ.get("CAGE_OPERATOR_OIDC_TOKEN", "").strip()
         if not oidc_token:
             return
-        digest = hashlib.sha256(b"cb-integration-404-probe").digest()
+        probe_defer_id = f"definitely-not-real-{_uid()}"
+        digest = hashlib.sha256(f"{probe_defer_id}:0".encode()).digest()
         challenge_b64 = base64.urlsafe_b64encode(digest).rstrip(b"=").decode("ascii")
         cdj = (
             base64.urlsafe_b64encode(
@@ -1778,20 +1779,55 @@ class TestDeferQueueEndpoints:
                         "type": "webauthn.get",
                         "challenge": challenge_b64,
                         "origin": "https://console.cage.example",
-                    }
+                        "crossOrigin": False,
+                    },
+                    separators=(",", ":"),
                 ).encode("utf-8")
             )
             .rstrip(b"=")
             .decode("ascii")
         )
-        r = session.post(
-            f"{BASE_URL}/v1/defer/definitely-not-real-{_uid()}/escalate",
+        # POAM-2026-210: partial payload without signature/authenticator_data/credential_id
+        # must fail closed with 400 WEBAUTHN_BINDING_REQUIRED in enforcing postures.
+        r_partial = session.post(
+            f"{BASE_URL}/v1/defer/{probe_defer_id}/escalate",
             headers={"Authorization": f"Bearer {oidc_token}"},
             json={"client_data_json": cdj, "challenge_binding": digest.hex()},
             timeout=15,
         )
+        assert r_partial.status_code in (400, 404, 503), (
+            f"Unexpected status for partial escalate probe: {r_partial.status_code}"
+        )
+        raw_priv = os.environ.get("CAGE_E2E_WEBAUTHN_PRIVATE_KEYS_JSON", "").strip()
+        priv_file = os.environ.get("CAGE_E2E_WEBAUTHN_PRIVATE_KEYS_FILE", "").strip()
+        if not raw_priv and priv_file:
+            from pathlib import Path
+
+            raw_priv = Path(priv_file).read_text(encoding="utf-8")
+        if not raw_priv:
+            return
+        from tests.e2e.run_gke_e2e_suite import build_webauthn_binding_payload
+
+        parsed = json.loads(raw_priv)
+        slots = parsed.get("slots") if isinstance(parsed, dict) else parsed
+        if not isinstance(slots, list) or not slots:
+            return
+        signed_body = build_webauthn_binding_payload(
+            probe_defer_id,
+            0,
+            credential_id=slots[0].get("credential_id"),
+            private_key_pem=slots[0].get("private_key_pem"),
+        )
+        r = session.post(
+            f"{BASE_URL}/v1/defer/{probe_defer_id}/escalate",
+            headers={"Authorization": f"Bearer {oidc_token}"},
+            json=signed_body,
+            timeout=15,
+        )
         if r.status_code == 503:
-            pytest.skip("Redis db=1 unavailable — cannot test 404 path")
+            pytest.skip(
+                "Redis db=1 or WebAuthn trust unavailable — cannot test 404 path"
+            )
         assert r.status_code == 404, (
             f"Unknown defer_id must return 404 on escalate, got {r.status_code}"
         )

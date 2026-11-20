@@ -829,6 +829,30 @@ variable "operator_jwks_uri" {
   default     = ""
 }
 
+variable "operator_webauthn_rp_id" {
+  description = "Relying Party ID for human HITL WebAuthn assertion verification across compliance-bridge and gateway (CAGE_WEBAUTHN_RP_ID; POAM-2026-210)."
+  type        = string
+  default     = "console.cage.example"
+}
+
+variable "operator_webauthn_allowed_origins" {
+  description = "Allowed HTTPS Relying Party origins for human HITL WebAuthn assertions (CAGE_WEBAUTHN_ALLOWED_ORIGINS; POAM-2026-210)."
+  type        = list(string)
+  default     = ["https://console.cage.example"]
+}
+
+variable "operator_webauthn_credentials_json" {
+  description = "Out-of-band public-key WebAuthn operator credential registry JSON for production/staging human operators (CAGE_WEBAUTHN_CREDENTIALS_JSON; POAM-2026-210)."
+  type        = string
+  default     = ""
+}
+
+variable "e2e_webauthn_credentials_json" {
+  description = "Optional non-production out-of-band public WebAuthn credential registry JSON for ephemeral E2E human HITL verification when enable_e2e_advisor = true (POAM-2026-210). Refused in prod/production."
+  type        = string
+  default     = ""
+}
+
 variable "gateway_langfuse_public_key" {
   description = "Dedicated telemetry public key for gateway-secrets (TELEMETRY_PUBLIC_KEY; R-2, F-84). When empty, gcp-gke generates an independent key distinct from advisor-secrets."
   type        = string
