@@ -1,353 +1,167 @@
 # AGENTS.md — Contributor & AI-Agent Standards
 
-> **Reference Architecture — Clean Architecture Over Operational Continuity.** CAGE
-> demonstrates governance patterns for AI systems. Because CAGE is a reference
-> architecture and not a deployed production service, **breaking changes and
-> operational considerations are far less important than a clean, legible
-> architecture.** The optimization target is clean code structure, modularity,
-> and architectural clarity — not operational safety, uptime, or backward
-> compatibility. There is no live production instance to protect. Breaking
-> changes are therefore **acceptable and often desirable**: they remove designs
-> the project is deliberately moving away from, and no deprecation window is owed
-> to anyone. Where a choice exists between operational completeness and
-> structural clarity, always choose structural clarity. Deployment,
-> change-management, and region-guard rules describe illustrative models for
-> adopters to adapt to their own environments, not operational constraints that
-> compromise the cleanliness of the codebase.
+> **Reference Architecture — Clean Architecture Over Operational Continuity.** CAGE demonstrates AI governance patterns; it is not a deployed production service. Optimize for clean code structure, modularity, and architectural clarity over operational safety, uptime, or backward compatibility. Breaking changes are desirable when they remove legacy designs.
 
-This file defines standards for anyone (human or AI coding agent) contributing
-to this repository. It is written in the tool-agnostic `AGENTS.md` convention
-supported natively by most AI coding assistants (including Antigravity, Roo Code,
-Cursor, Cline, GitHub Copilot, and Windsurf) — see
-[Tool-Specific Configuration](#tool-specific-configuration) at the bottom.
-
-## Table of Contents
-
-1. [Commit Message Standard](#commit-message-standard)
-2. [Branch Naming & Merge Strategy](#branch-naming--merge-strategy)
-3. [Code Standards](#code-standards)
-4. [Deployment Rules](#deployment-rules)
-5. [Debugging Standards](#debugging-standards)
-6. [Compliance Artifact Obligations](#compliance-artifact-obligations)
-7. [Architecture & Design Standards](#architecture--design-standards)
-8. [Documentation Standards](#documentation-standards)
-9. [Answering Questions About This Repository](#answering-questions-about-this-repository)
-10. [Tool-Specific Configuration](#tool-specific-configuration)
-11. [Test Execution](#test-execution)
-12. [Agent Governance & Cost Guardrails](#agent-governance--cost-guardrails)
+This file defines standards for human and AI contributors. Full contributor details live in [`CONTRIBUTING.md`](CONTRIBUTING.md).
 
 ---
 
 ## Commit Message Standard
 
-This project follows [Conventional Commits v1.0.0](https://www.conventionalcommits.org/).
-Full detail lives in [`CONTRIBUTING.md`](CONTRIBUTING.md#commit-message-standard). Summary:
-
-**Format:** `<type>(<scope>): <short summary>` — subject line ≤ 72 characters.
-
-**Types (exactly these 10):** `feat` | `fix` | `docs` | `style` | `refactor` | `perf` | `test` | `chore` | `ci` | `revert`
-
-**Scopes (use at most one):** `gateway` | `compliance` | `infra` | `governance` | `tests` | `docs` | `ci` | `agentsight` | `advisor` | `nemo` | `opa` | `ftra` | `finance` | `healthcare` | `security` | `imports`
-
-**Rules:**
-- Imperative mood ("add", not "added"/"adds"); no trailing period.
-- Breaking changes: `!` after type/scope, plus a `BREAKING CHANGE:` footer (both must be present together), and an indexed entry under `# Unreleased (v<next_major>.x)` in [`docs/BREAKING_CHANGES.md`](docs/BREAKING_CHANGES.md).
-- PR titles become squash-merge commit messages and must follow this format.
+Follow [Conventional Commits v1.0.0](https://www.conventionalcommits.org/): `<type>(<scope>): <short summary>` (subject ≤ 72 chars, imperative mood, no trailing period).
+- **Types (only):** `feat` | `fix` | `docs` | `style` | `refactor` | `perf` | `test` | `chore` | `ci` | `revert`
+- **Scopes (at most one):** `gateway` | `compliance` | `infra` | `governance` | `tests` | `docs` | `ci` | `agentsight` | `advisor` | `nemo` | `opa` | `ftra` | `finance` | `healthcare` | `security` | `imports`
+- **Breaking changes:** `!` after type/scope + `BREAKING CHANGE:` footer + entry under `# Unreleased (v<next_major>.x)` in [`docs/BREAKING_CHANGES.md`](docs/BREAKING_CHANGES.md). PR titles must match.
 
 ---
 
 ## Branch Naming & Merge Strategy
 
-Full detail lives in [`CONTRIBUTING.md`](CONTRIBUTING.md#branch-naming-conventions). Summary:
+Patterns (lowercase kebab-case, ≤ 30 chars after prefix): `feat/<desc>`, `fix/<desc>`, `docs/<desc>`, `refactor/<desc>`, `ci/<desc>`, `chore/<desc>`, `test/<desc>`, `hotfix/<ver>-<desc>`, `rc-v<semver>`, `spike/<desc>`. Delete branches after merge. Never work directly on `main` or `rc-v*`.
 
-| Purpose | Pattern | Example |
-|---|---|---|
-| New feature | `feat/<short-description>` | `feat/redis-rate-limiter` |
-| Bug fix | `fix/<short-description>` | `fix/oscal-uuid-collision` |
-| Documentation | `docs/<short-description>` | `docs/stpa-control-diagram` |
-| Refactor | `refactor/<short-description>` | `refactor/gateway-middleware` |
-| CI / tooling | `ci/<short-description>` | `ci/pin-actions-sha` |
-| Dependency/tooling update | `chore/<short-description>` | `chore/update-deps` |
-| Test addition | `test/<short-description>` | `test/cbf-chaos-suite` |
-| Hotfix on release | `hotfix/<version>-<description>` | `hotfix/2.0.1-redis-timeout` |
-| Release candidate | `rc-v<semver>` | `rc-v2.1.0` |
-| Experiment / spike | `spike/<short-description>` | `spike/cbf-formal-proof` |
-
-**Rules:** Lowercase kebab-case only; description ≤ 30 characters after prefix; delete branches after merge; never work directly on `main` or `rc-v*`.
-
-**Merge strategy: squash merge only, for every PR into `main` — no exceptions.**
-The `squash-merge-guard` CI job fails the build on any two-parent merge commit reaching `main`. Never suggest `git merge <branch>` into `main` or rebase merges. Always use "Squash and merge" on GitHub.
-
-When asked to commit or push directly to `main` or `rc-v*`, **refuse** and respond:
+**Merge strategy: squash merge only into `main` (`squash-merge-guard` fails on two-parent merges).** When asked to commit or push directly to `main` or `rc-v*`, **refuse**:
 ```text
 Direct commits to `main` are not allowed. I'll create a feature branch instead:
 git checkout -b <type>/<description>
 After committing your changes, I'll push this branch and open a pull request.
 ```
-
-Human contributors install pre-commit and pre-push hooks once via `bash scripts/setup_git_hooks.sh`. See [`docs/operations/GIT_WORKFLOW_STANDARDS.md`](docs/operations/GIT_WORKFLOW_STANDARDS.md) for full branch lifecycle details.
+Hooks setup: `bash scripts/setup_git_hooks.sh`. See [`docs/operations/GIT_WORKFLOW_STANDARDS.md`](docs/operations/GIT_WORKFLOW_STANDARDS.md).
 
 ---
 
 ## Code Standards
 
-### Before creating any file in `src/`
-- Prepend the Apache 2.0 license header for `.py`, `.ts`, `.tsx`, `.js` files.
-- Verify no secrets, credentials, or PII are embedded anywhere in the file.
-
-### License Header — Python Template
-```python
-# Copyright 2026 Google LLC
-#
-# Licensed under the Apache License, Version 2.0 (the "License");
-# you may not use this file except in compliance with the License.
-# You may obtain a copy of the License at
-#
-#     https://www.apache.org/licenses/LICENSE-2.0
-#
-# Unless required by applicable law or agreed to in writing, software
-# distributed under the License is distributed on an "AS IS" BASIS,
-# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-# See the License for the specific language governing permissions and
-# limitations under the License.
-```
-For `.ts`, `.tsx`, `.js` files, use the same text with `//` comment prefix. The CI `license-check` job enforces this.
+### License Headers & New `src/` Files
+Prepend the Apache 2.0 header (`# Copyright 2026 Google LLC` / `https://www.apache.org/licenses/LICENSE-2.0`, `#` for `.py`, `//` for `.ts`/`.tsx`/`.js`; enforced by `license-check`) and verify no secrets or PII are embedded.
 
 ### Secret Hygiene
-Never write code that embeds secrets:
-- Never use `os.environ.get("KEY", "hardcoded-fallback")` for sensitive values.
-- Never hardcode connection strings, tokens, or API keys.
-- Kubernetes manifests must use `secretKeyRef` / `secretRef` — never `value: <secret>`.
-- Prohibited credential patterns: `pk-lf-*` / `sk-lf-*` (Langfuse), `hf_*` (HuggingFace), `GOOG*` (Google), `redis://*:*@*`.
-- Mask credentials before logging: `value[:4] + "****"`. Full environment dumps (`print(os.environ)`) are forbidden.
+Never use `os.environ.get("KEY", "hardcoded-fallback")` for sensitive values, hardcode credentials/URIs, or dump `os.environ`. K8s manifests must use `secretKeyRef`/`secretRef`. Prohibited patterns: `pk-lf-*`/`sk-lf-*`, `hf_*`, `GOOG*`, `redis://*:*@*`. Mask credentials before logging (`value[:4] + "****"`).
 
 ### Terraform Invariants
-- Secret values belong in `terraform.auto.tfvars` (gitignored) — never in committed `.tf` files.
-- `terraform plan` must always precede `terraform apply`. Never edit Terraform state directly.
-- Put a plan-time check where a plan targeted at the resource it protects still evaluates it: a `lifecycle` `precondition` on that resource, or a guard that resource `depends_on`. A standalone `terraform_data` guard is skipped by such a plan, and a variable validation fails `terraform destroy` whenever the teardown inputs fail it. The tested matrix, and the testing trade-off between the two placements, is the comment below `terraform_data.control_plane_access_guard` in [`infra/targets/gcp-gke/main.tf`](infra/targets/gcp-gke/main.tf); [`test_guard_placement.py`](tests/infrastructure/test_guard_placement.py) fails on any new standalone guard (POAM-2026-180).
+- Secrets belong in gitignored `terraform.auto.tfvars`, never in committed `.tf` files. Run `terraform plan` before `apply`; never edit state directly.
+- Place plan-time guards in a resource `lifecycle` `precondition` or a guard `depends_on` (not standalone `terraform_data`, which targeted plans skip, or variable validation, which breaks `destroy`). See `terraform_data.control_plane_access_guard` in [`infra/targets/gcp-gke/main.tf`](infra/targets/gcp-gke/main.tf); [`test_guard_placement.py`](tests/infrastructure/test_guard_placement.py) fails on new standalone guards (`POAM-2026-180`).
 
 ### Mandatory Pre-Commit Code & Security Review
-Every set of uncommitted changes (`git status --porcelain` / `git diff HEAD`) must undergo both a **code review** and a **security review** against this document and [`.agents/rules/security.md`](.agents/rules/security.md) before committing or declaring a task complete:
-- **Code Review Gate**: Inspect all modified and newly created files to verify 3-layer boundary isolation ([`scripts/check_import_boundaries.py`](scripts/check_import_boundaries.py)), documentation link and symbol synchronization ([`scripts/check_doc_references.py`](scripts/check_doc_references.py)), ADR-008 governance gate invariants, Apache 2.0 license headers, and pytest marker contracts.
-- **Security Review Gate**: Audit all uncommitted changes against [`.agents/rules/security.md`](.agents/rules/security.md) (no hardcoded or fallback secrets, no `shell=True`, no insecure deserialization, out-of-band `kid` trust-anchor resolution, and B310 URL scheme validation), backed by `uv run --with bandit bandit -r src/ scripts/ -c pyproject.toml -ll -ii`. Never rely on external IDE scanner daemons (`SECURECODER_API_PORT`).
-- **Fail-Closed Resolution**: All `HIGH` and `MEDIUM` code or security review findings must be resolved in the working copy prior to `git commit`.
+Every uncommitted diff (`git diff HEAD`) must pass both reviews before committing or declaring done:
+- **Code Review:** Verify 3-layer isolation ([`scripts/check_import_boundaries.py`](scripts/check_import_boundaries.py)), doc/symbol sync ([`scripts/check_doc_references.py`](scripts/check_doc_references.py)), ADR-008 invariants, Apache 2.0 headers, and pytest markers.
+- **Security Review:** Audit against [`.agents/rules/security.md`](.agents/rules/security.md) (no fallback secrets, no `shell=True`, no insecure deserialization, out-of-band `kid` resolution, B310 URL scheme validation) + `uv run --with bandit bandit -r src/ scripts/ -c pyproject.toml -ll -ii`. Never rely on `SECURECODER_API_PORT`.
+- **Fail-Closed:** Resolve all `HIGH`/`MEDIUM` findings before `git commit`.
 
 ---
 
 ## Deployment Rules
 
-Full detail lives in [`docs/operations/DEPLOYMENT_RULES.md`](docs/operations/DEPLOYMENT_RULES.md). Summary:
-
-- **GKE targets — Cloud Build only. No exceptions.** Never use local Docker daemon (`docker build` / `docker-compose`) for GKE images to avoid ARM64 vs. x86 architecture-mismatch crashes. `staging` is the maintained GKE profile:
+See [`docs/operations/DEPLOYMENT_RULES.md`](docs/operations/DEPLOYMENT_RULES.md). Summary:
+- **GKE targets — Cloud Build only (`staging` is the maintained profile).** Never use local `docker build` for GKE images (ARM64/x86 mismatch):
   ```bash
   ./deploy_all.sh --target gcp-gke --env staging --var project_id=<PROJECT_ID>
   gcloud builds submit --config deployment/docker/cloudbuild.image.yaml \
     --substitutions="_IMAGE_NAME=gateway,_DOCKERFILE=src/gateway/Dockerfile,_SHORT_SHA=$(git rev-parse --short HEAD)" .
   ```
-- **DNS & Custom Domains**: When provisioning custom domains in cloud sandbox or staging environments, subdomains must be managed in Cloud DNS with upstream NS delegation rather than ephemeral workload stacks. Managed zones must be persistent foundational resources to avoid orphaned zone takeover.
-- `deployment/terraform/` and `2bacc478:infra/targets/agnostic/main.tf` were historical reference (both directories have been removed from the repository); active IaC lives exclusively under [`infra/targets/gcp-gke/`](infra/targets/gcp-gke/main.tf) and [`infra/modules/`](infra/modules/).
+- **DNS:** Manage custom subdomains in Cloud DNS with upstream NS delegation on persistent foundational zones, not ephemeral workload stacks.
+- Active IaC lives exclusively under [`infra/targets/gcp-gke/`](infra/targets/gcp-gke/main.tf) and [`infra/modules/`](infra/modules/).
 
 ---
 
 ## Debugging Standards
 
 ### Diagnosing CI Failures (Check in Order)
-1. **squash-merge-guard** — non-squash merge commit detected on `main`. Fix: ensure GitHub PR uses "Squash and merge".
-2. **license-check** — missing Apache 2.0 header in a new `src/` file. Fix: prepend the Apache 2.0 license header.
-3. **marker-contract-check** — collected test carries no selection marker. Fix: add `pytestmark = [pytest.mark.unit, pytest.mark.local]`.
-4. **Import boundary check (Gate G3, `lint` job)** — Layer 1 imported from Layer 2, 3, or 4. Fix: run `uv run python scripts/check_import_boundaries.py --verbose` and sever illegal upward imports.
-5. **nemo-freshness-check** — ConfigMap out of sync with `config/rails/actions.py`. Fix: run `make update-nemo-configmap`.
-6. **stpa-freshness-check** — STPA source changed without regenerating artifacts. Fix: run `uv run python scripts/check_stpa_freshness.py`.
-7. **pytest-logic** — address the failing test. Confirm no background `kubectl port-forward` tunnels are leaking live GKE state into local tests.
-8. **Bandit / security-scan** — rotate credentials or address Bandit SAST (run in `pytest-logic`) or CVE findings (`security-scan.yml`); never suppress the scan.
-9. **Documentation reference check (Gate G9, `lint` job)** — a document cites a file path, link target, or Python symbol that does not exist at HEAD. Fix: run `make docs-check` (or `uv run python scripts/check_doc_references.py --path <scope>`) and correct the reference — never delete the gate's scope to make it pass. The scope is `DOC_SCOPE` in that script, its only copy. `CHANGELOG.md` and `docs/partners/**` are outside it by design, and most of the rest of `docs/` is outside it until `POAM-2026-224` widens it area by area: a document outside `DOC_SCOPE` is unverified, not verified. A document that must name a path removed from HEAD (for example, a closed POA&M entry describing a deleted file) pins it to a mainline commit where it existed, as `<sha>^:<path>` (git's revision syntax), and G9 verifies the pin against history; the `lint` job checks out full history for this. There is no waiver: a reference to an artifact that never existed is corrected, not excused. A record withdrawn as untrue moves verbatim to `compliance/archive/retracted/` under a first-line `> **RETRACTED <date>**` notice naming its POAM item; G9 verifies the notice and the POAM row and skips the preserved body. Pins break if `main`'s history is rewritten: whoever rewrites it owns re-pinning every citation the rewrite orphans, and G9 names each one.
-
-**Never suggest disabling or skipping a CI check as a fix.**
-
-### Static Analysis & SAST Invocations
-- **Configuration Parity**: Any invocation of `bandit` across local scripts, Makefile, or `.github/workflows/*.yml` must explicitly load project configuration via `-c pyproject.toml` to prevent suppression drift.
-- **Strict Scheme Validation**: Internal diagnostic or auditing scripts making network requests via `urllib.request` must assert URL scheme validity (`http://` or `https://`) prior to `urlopen` (Bandit B310 compliance).
+1. **squash-merge-guard** — Use GitHub "Squash and merge".
+2. **license-check** — Prepend Apache 2.0 header in `src/`.
+3. **marker-contract-check** — Add `pytestmark = [pytest.mark.unit, pytest.mark.local]`.
+4. **Import boundary check (G3)** — Run `uv run python scripts/check_import_boundaries.py --verbose`; sever upward imports.
+5. **nemo-freshness-check** — Run `make update-nemo-configmap`.
+6. **stpa-freshness-check** — Run `uv run python scripts/check_stpa_freshness.py`.
+7. **pytest-logic** — Fix failing test; confirm no `kubectl port-forward` leaks into local tests.
+8. **Bandit / security-scan** — Fix SAST/CVE finding; never suppress. Always pass `-c pyproject.toml` to `bandit` and validate `http://`/`https://` before `urllib.request.urlopen` (B310).
+9. **Doc reference check (G9)** — Run `make docs-check` (`uv run python scripts/check_doc_references.py --path <scope>`); fix dangling paths/symbols without shrinking `DOC_SCOPE`. Removed-at-HEAD paths must be pinned as `<sha>^:<path>`; retracted records move under `compliance/archive/retracted/` with `> **RETRACTED <date>**`. Never disable or skip a CI check.
 
 ---
 
 ## Compliance Artifact Obligations
 
-- **NIST SP 800-53 & OSCAL control changes**: Update the relevant OSCAL component/SSP narratives under `compliance/oscal/` within 2 business days of PR merge, refresh any drifted `description_sha256` entries in [`compliance/oscal/evidence_claim_census.jsonl`](compliance/oscal/evidence_claim_census.jsonl), and regenerate [`docs/compliance/OSCAL_EVIDENCE_CLAIM_REGISTER.md`](docs/compliance/OSCAL_EVIDENCE_CLAIM_REGISTER.md) via `uv run python scripts/check_oscal_claim_census.py --render docs/compliance/OSCAL_EVIDENCE_CLAIM_REGISTER.md`.
-- **Kubernetes resources**: Update Lula validations in `compliance/lula/` when adding or removing resources referenced by Lula assertion files.
-- **POAM remediations**: Update [`docs/POAM.md`](docs/POAM.md) (and any paired regional POA&M + [`docs/compliance/cross-region/POAM_INDEX.md`](docs/compliance/cross-region/POAM_INDEX.md)) with commit SHA, runnable finding-ID-bound test/tftest/active-Lula/CI-gate evidence, and actual closure date; verify all four closure/OSCAL checks pass (`uv run python scripts/check_poam_lula_divergence.py` — read-back, detail-section parity, store lifetime on open and closed rows, custody, and census parity; zero waivers).
-- **STPA source modifications**: Regenerate STPA artifacts before committing (`uv run python scripts/check_stpa_freshness.py`).
-
-### OSCAL & POAM Synchronization Guardrails
-- **OSCAL Exporter CLI Contract**: Always invoke the exporter using default discovery mode (`uv run python -m src.gateway.governance.oscal_ssp_exporter export`). Do not pass `--ssp` unless explicitly targeting a non-canonical schema path.
-- **No Backdated POAM Closures**: POAM closure dates ([`docs/POAM.md`](docs/POAM.md)) must reflect the actual calendar date of artifact verification/generation, never backdated or estimated past dates.
-- **Pre-Closure Verification**: An OSCAL SSP export (`--check` across `US_FED`, `EU_ECB`, `APAC_MAS`), [`tests/test_oscal_ssp_exporter.py`](tests/test_oscal_ssp_exporter.py), [`scripts/check_poam_lula_divergence.py`](scripts/check_poam_lula_divergence.py), and [`scripts/check_doc_references.py`](scripts/check_doc_references.py) must all pass before corresponding POAM items can be marked CLOSED.
+- **NIST SP 800-53 & OSCAL:** Update `compliance/oscal/` within 2 business days of merge, refresh `description_sha256` in [`compliance/oscal/evidence_claim_census.jsonl`](compliance/oscal/evidence_claim_census.jsonl), and regenerate [`docs/compliance/OSCAL_EVIDENCE_CLAIM_REGISTER.md`](docs/compliance/OSCAL_EVIDENCE_CLAIM_REGISTER.md) via `uv run python scripts/check_oscal_claim_census.py --render docs/compliance/OSCAL_EVIDENCE_CLAIM_REGISTER.md`.
+- **Kubernetes / Lula:** Update `compliance/lula/` when adding/removing referenced K8s resources.
+- **POAM & OSCAL Guardrails:** Never backdate [`docs/POAM.md`](docs/POAM.md) closure dates. Before closing POAM items, pass OSCAL SSP export (`uv run python -m src.gateway.governance.oscal_ssp_exporter export --check` across `US_FED`, `EU_ECB`, `APAC_MAS` — omit `--ssp` for default discovery), [`tests/test_oscal_ssp_exporter.py`](tests/test_oscal_ssp_exporter.py), [`scripts/check_poam_lula_divergence.py`](scripts/check_poam_lula_divergence.py), and [`scripts/check_doc_references.py`](scripts/check_doc_references.py).
+- **STPA:** Run `uv run python scripts/check_stpa_freshness.py` before committing STPA source changes.
 
 ---
 
 ## Architecture & Design Standards
 
 ### Core Principle: Clean Architecture Over Operational Continuity
-CAGE is an illustrative reference architecture. The optimization target is clean code structure, modularity, and architectural clarity. Breaking changes are acceptable and desirable when they remove legacy baggage. Always choose structural clarity.
+Optimize for structural clarity and modularity; breaking changes are acceptable to remove legacy baggage.
 
 ### The Three-Layer Architecture (Kernel vs. Domain Plugins vs. Rails)
 
-| Layer | Path | Role & Responsibilities | Invariants & Boundary Rules |
+| Layer | Path | Role | Invariants (Enforced by Gate G3) |
 |---|---|---|---|
-| **Layer 1: Kernel** | `src/gateway/` | **STERA Admissibility Engine**, core governance dispatch loop, standing assembly, consensus engine, CBF engine, evidence accumulator, routing, audit rails. | **Strictly domain-agnostic and vendor-neutral.** Must NEVER import from `src/cage_*` (Layer 2), `src/compliance_bridge/` (Layer 3), `src/governed_financial_advisor/` (Layer 4), or `src/eval_harness/` (Offline Evaluation Plane, `OFFLINE_EVAL_PATTERN`). Must NOT import vendor SDKs (`google.cloud`, `boto3`, `botocore`, `azure`, `langfuse`, `nemoguardrails`, Presidio) or any LLM client or model runtime (`openai`, `litellm`, `anthropic`, `transformers`, and the rest of `FORBIDDEN_VENDOR_SDKS`). Enforced in CI by Gate G3 (`scripts/check_import_boundaries.py`). **Note:** Gate G3 permits only function-scoped lazy imports from allowlisted modules. `INTEGRATIONS_FACTORY_ALLOWLIST` covers `src/integrations/` factories (e.g. `signer_factory.py` for the gcp/aws/azure KMS providers, `execution_actuator.py`, `normative_provider.py`, `evidence/factory.py`, `telemetry_provider.py`; see the script for the full list). `COMPLIANCE_BRIDGE_FACTORY_ALLOWLIST` covers only `oscal_ssp_exporter.py` and `evidence/factory.py`. `FORBIDDEN_VENDOR_SDKS` applies to all of `src/gateway/`, and `scripts/check_model_free_install.py` fails if it stops listing an LLM client; the same gate keeps every model package out of the base install and the gateway image (POAM-2026-168). G3 also enforces kernel AST purity: no domain path literals, no domain action/field literals (`FORBIDDEN_DOMAIN_LITERALS`), and no domain/vendor class definitions (`FORBIDDEN_KERNEL_DEFINITIONS`). |
-| **Layer 2: Domain Plugins** | `src/cage_{domain}/` (e.g. `src/cage_finance/`, `src/cage_healthcare/`) | Domain-specific tiers (`ReadOnlyTier` / `MutatingTier`, ADR-009), domain action registries, ontologies, policies, and causal graphs. | Each process runs exactly one domain, selected by `CAGE_DOMAIN`. The plugin returns a frozen `PluginContribution` from `CagePlugin.contribute()`, and the kernel assembles it via `assemble_governor()`. Encapsulates domain vocabulary without polluting the kernel. |
-| **Layer 3: Integrations & Rails** | `src/integrations/`, `src/cage_finance/rails/`, `src/compliance_bridge/` | External vendor normative/attestation adapters, GCP Evaluation & GEPA optimizer adapters (`src/integrations/gcp_eval/`), Presidio/spaCy PII redaction (`src/integrations/presidio/`), durable sinks (GCS, S3), NeMo Guardrails, Langfuse telemetry. | Adheres to the Secure Plugin & Adapter Architecture Specification. Communicates via canonical dataclasses. |
-| **Offline Eval & Certification Plane** | `src/eval_harness/` | **Standalone Offline Evaluation, GEPA Reflective Optimization & Skill Certification** (`FoundationModelEvalHarness`, `AgentRolloutRunner`, Stage 0 `SKILL.md` linter, `gepa_optimizer.py` Genetic-Pareto reflective prompt/skill/Presidio-PII optimizer, ATIF & rollout adapters, tokenomics engine, 4-bucket `Skill Lift`, `Anchor Calibration`, `cage-skill-eval` CLI, and RLVR/DPO export). | Strictly separated from Online Enforcement (`src/gateway/`). Never copied into `src/gateway/Dockerfile`. Runs standalone (`governor=None`) on ATIF traces or live adapter rollouts, or optionally links `SymbolicGovernor` in `Profile.DRY_RUN`. |
+| **Layer 1: Kernel** | `src/gateway/` | **STERA Admissibility Engine**, dispatch loop, standing assembly, consensus, CBF, evidence accumulator, routing, audit rails. | Strictly domain-agnostic & vendor-neutral. Never import `src/cage_*`, `src/compliance_bridge/`, `src/governed_financial_advisor/`, `src/eval_harness/`, or `FORBIDDEN_VENDOR_SDKS` (`google.cloud`, `boto3`, `azure`, `langfuse`, `nemoguardrails`, Presidio, `openai`, `litellm`, `anthropic`, `transformers`, kept out of base install & gateway image by `scripts/check_model_free_install.py`). Function-scoped lazy imports allowed only from `INTEGRATIONS_FACTORY_ALLOWLIST` / `COMPLIANCE_BRIDGE_FACTORY_ALLOWLIST` in `scripts/check_import_boundaries.py`. No `FORBIDDEN_DOMAIN_LITERALS` or `FORBIDDEN_KERNEL_DEFINITIONS`. |
+| **Layer 2: Domain Plugins** | `src/cage_{domain}/` | Domain tiers (`ReadOnlyTier` / `MutatingTier`, ADR-009), action registries, ontologies, policies, causal graphs. | One domain per process (`CAGE_DOMAIN`). Returns frozen `PluginContribution` from `CagePlugin.contribute()` to `assemble_governor()`. |
+| **Layer 3: Integrations & Rails** | `src/integrations/`, `src/cage_finance/rails/`, `src/compliance_bridge/` | External vendor adapters, GCP eval/GEPA (`src/integrations/gcp_eval/`), Presidio PII (`src/integrations/presidio/`), cold stores, NeMo, Langfuse. | Implements canonical dataclasses and Secure Plugin & Adapter Architecture Spec. |
+| **Offline Eval Plane** | `src/eval_harness/` | Offline eval, GEPA optimizer, `SKILL.md` linter, ATIF/rollouts, `cage-skill-eval`, RLVR/DPO export. | Strictly separated from Online Enforcement (`src/gateway/`); never in `src/gateway/Dockerfile`. |
 
-**Decision test for ambiguous code:** *"If two domains had different copies of this, would a security fix have to be applied twice?"* If yes → Layer 1 (Kernel).
+**Decision test:** *"If two domains had different copies of this, would a security fix have to be applied twice?"* If yes → Layer 1 (Kernel).
 
 ### Canonical Module Namespaces (v3.2.0 Architecture)
-All imports and test mocks must use these canonical locations:
 - Causal Gatekeeper & World-Model Refresher: `src.gateway.governance.causal.gatekeeper`, `src.gateway.governance.causal.world_model_refresher`
-- Reconciliation Daemon: `src.gateway.governance.reconciliation.daemon`
-- FTRA Action Reachability: `src.gateway.governance.ftra`
-- Warrant Reliance & Freshness Cache: `src.gateway.governance.warrant`, `src.gateway.governance.governor.stages.warrant`
-- Evidence Stream, State Commitment & Cold Store: `src.gateway.governance.evidence.stream`, `src.gateway.governance.evidence.state_commitment`, `src.gateway.governance.evidence.cold_store`
-- Shared Redis GCRA Rate Limiter: `src.gateway.server.rate_limit`
+- Reconciliation & FTRA: `src.gateway.governance.reconciliation.daemon`, `src.gateway.governance.ftra`
+- Warrant & Evidence: `src.gateway.governance.warrant`, `src.gateway.governance.governor.stages.warrant`, `src.gateway.governance.evidence.stream`, `src.gateway.governance.evidence.state_commitment`, `src.gateway.governance.evidence.cold_store`
+- Rate Limiter: `src.gateway.server.rate_limit`
 
-### Observability: Langfuse Sovereign Telemetry, Prometheus, and LangSmith
-- **Langfuse**: Standard runtime model observability and compliance trace telemetry tool. Self-hosted per region (`europe-west1`, `asia-southeast1`, `us-central1`) for sovereign data residency.
-- **Prometheus (GKE Managed Prometheus)**: Operational, safety-gate, and evidence-pipeline health telemetry (NIST SP 800-53 AU-12 via `monitoring_config.managed_prometheus` in [`infra/modules/gcp_gke_cluster/main.tf`](infra/modules/gcp_gke_cluster/main.tf), scraped via Terraform-reconciled `PodMonitoring/gateway-metrics` in [`infra/modules/gateway/metrics-monitors/templates/monitors.yaml`](infra/modules/gateway/metrics-monitors/templates/monitors.yaml) and validated by [`compliance/lula/lula-validation-metrics.yaml`](compliance/lula/lula-validation-metrics.yaml)). Python collectors in `src/gateway/` and `src/compliance_bridge/` use `prometheus_client` optionally and degrade to no-ops when absent.
-- **LangSmith**: Transitively present via `langchain-core` / `langgraph`. **LangSmith is strictly forbidden in CAGE application code.** Tracing is explicitly disabled across manifests and tests via `LANGSMITH_TRACING=false` and `LANGCHAIN_TRACING_V2=false`.
+### Observability: Langfuse, Prometheus, and LangSmith
+- **Langfuse:** Self-hosted per region (`europe-west1`, `asia-southeast1`, `us-central1`) for sovereign compliance trace telemetry.
+- **Prometheus:** GKE Managed Prometheus (`monitoring_config.managed_prometheus` in [`infra/modules/gcp_gke_cluster/main.tf`](infra/modules/gcp_gke_cluster/main.tf), scraped via `PodMonitoring/gateway-metrics` in [`monitors.yaml`](infra/modules/gateway/metrics-monitors/templates/monitors.yaml), validated by [`lula-validation-metrics.yaml`](compliance/lula/lula-validation-metrics.yaml)). Optional `prometheus_client` in Python degrades to no-op when absent.
+- **LangSmith:** **Strictly forbidden in CAGE application code.** Disable via `LANGSMITH_TRACING=false` and `LANGCHAIN_TRACING_V2=false`.
 
 ### External Vendor Adapter Standards (Plugin Architecture)
-- **Vendor Isolation**: Vendor packages live under `src/integrations/{provider_name}/` and never import into the core kernel (`src/gateway/`).
-- **Seam Implementation**: Synchronous gate adapters implement `NormativeProvider` (`fetch_baseline`, `validate_fria`, `submit_evidence`).
-- **Trust Anchors — Never Verify Against an Embedded Key**: Never verify a signature against a public key supplied by the signed document. Resolve keys by `kid` from an independently-fetched key manifest, cached out-of-band. Enforce in the type system. Fail closed on unknown `kid`.
-- **Resolution Status Is Not Verification Status**: Successful fetch proves receipt exists, not signature validity. Return `UNVERIFIED` until cryptographic verification succeeds.
-- **Refusals Are Primary Evidence**: DENY receipts (and DEFER / REQUIRE_APPROVAL tokens) must enter the tamper-evident chain with the same completeness as ALLOW approvals.
-- **Generic in Code, Specific in Prose**: File and directory paths, Python identifiers (class, function, variable, attribute, and argument names), CLI profile choices, environment variables, and non-wire string/bytes literals across all five code and test trees (`src/gateway/`, `packages/cage-conformance/src/`, `src/integrations/`, `scripts/`, and `tests/`) use anonymized namespaces (`provider_01`..`provider_08`, `actuator_01`); partner brand names belong in docstrings, comments, and `docs/partners/` prose only. At the Layer 3 adapter wire boundary, only external wire-protocol constants fixed by a partner's cryptographic signing preimage, HTTP header contract, discovery path, or signed JWS vector payload may retain the wire-level string/bytes value, and each such constant must be registered in `LAYER3_WIRE_PROTOCOL_PROVENANCE` in [`scripts/check_vendor_brands.py`](scripts/check_vendor_brands.py) mapped to the committed non-Python specification or received vector artifact (`.md` or `.json`) where it is defined. Gate G8 mechanically enforces both the provenance floor (every allowlisted literal must appear in its cited non-`.py` artifact on disk) and the ceiling (every allowlisted literal must be referenced in the scanned Python trees; unused entries fail Gate G8).
-- **Completeness Principle**: CAGE must be *safety- and security-complete*, not *commercially complete*. If a safety or security property can't be verified without a component, that component is implemented for real. Data may be simulated; security primitives (key custody, asymmetric signing, trust anchors, workload identity, tamper-evident storage) may not.
-- **Interface Tiering**: Classify every external interface before adding or keeping it:
-  1. **Partner-built live interfaces** (`src/integrations/provider_*/`, `src/integrations/actuator_*/`): built and maintained by a partner against their own live or sandbox endpoint. Always allowed. Tests must run over the wire (see the Over-the-Wire Conformance Mandate below). If the partner stops maintaining the adapter, or its live test can't run anymore, it becomes Tier 3.
-  2. **Posture-completing interfaces**: needed for every governance, safety or security control to have a path that actually runs. They must be implemented:
-     - **Data sources** (e.g. ledger, lab feed, sensor ground truth) may use simulated backends. Those backends need deterministic seeding and fault injection that covers every fail-closed path.
-     - **Security primitives** (KMS/HSM asymmetric signing, `kid`-resolved trust anchors, SPIFFE/mTLS workload identity, WORM retention) must be real implementations. Symmetric or software fallbacks (HMAC, local keys) are allowed only in development posture and hermetic tests. They never count as evidence for POAM closure or OSCAL implementation statements.
-     - A partner adapter never replaces the reference backend.
-  3. **Commercial-deployment-only interfaces**: needed only for a full commercial rollout (e.g. retail banking, custody or payment data APIs). Must not live in the repository. Record each one as an OSCAL customer-responsibility statement.
-- **Over-the-Wire Conformance Mandate (Tier 1)**: Validation of every partner-built adapter must run over the physical wire against live staging or sandbox endpoints. In-memory mocks, synthetic HTTP stubs and simulated transports are strictly prohibited for partner integration verification. Tier 2 reference backends are tested hermetically, and their security primitives are additionally verified against the real service (see the Completeness Principle).
+- **Isolation & Seam:** Vendor code lives in `src/integrations/{provider_name}/` (never imported by `src/gateway/`). Synchronous gate adapters implement `NormativeProvider` (`fetch_baseline`, `validate_fria`, `submit_evidence`).
+- **Trust Anchors:** Never verify a signature against an embedded public key. Resolve keys by `kid` from an independently fetched out-of-band key manifest; fail closed on unknown `kid`.
+- **Verification & Evidence:** Resolution (`UNVERIFIED`) is not cryptographic verification. `DENY`, `DEFER`, and `REQUIRE_APPROVAL` receipts must enter the tamper-evident chain with the same completeness as `ALLOW`.
+- **Generic in Code, Specific in Prose (Gate G8):** All code/test paths, identifiers, CLI choices, env vars, and non-wire literals in `src/gateway/`, `packages/cage-conformance/src/`, `src/integrations/`, `scripts/`, and `tests/` use anonymized namespaces (`provider_01`..`provider_08`, `actuator_01`); brand names belong only in docstrings, comments, and `docs/partners/`. External wire-protocol constants must be registered in `LAYER3_WIRE_PROTOCOL_PROVENANCE` in [`scripts/check_vendor_brands.py`](scripts/check_vendor_brands.py) with a matching committed `.md`/`.json` artifact and an active Python reference.
+- **Completeness Principle & Tiering:** CAGE is *safety- and security-complete*, not *commercially complete*. Tier 2 data backends may be simulated; security primitives (KMS signing, out-of-band `kid` verification, Linkerd mTLS, single-use Redis seals, WORM custody) are always real in enforcing postures. **Symmetric or software fallbacks (HMAC, local keys) are allowed only in dev/hermetic tests and never count as evidence for POAM closure or OSCAL implementation statements.** Tier 1 partner adapters must pass **over-the-wire** tests against live staging/sandbox endpoints (no mocks/stubs/`ASGITransport`/`TestClient`). Full Tier 1–3 rules: [`VENDOR_NEUTRALITY_CONTRACT.md`](docs/architecture/VENDOR_NEUTRALITY_CONTRACT.md#5-completeness-principle--interface-tiering).
 
 ### Governance Gate Invariants (ADR-008 Enforcement)
-- **Fail-Closed Execution Boundary**: All domain tool execution paths (Layer 2) must route through [`verify_and_consume_seal()`](src/gateway/governance/routing_seal.py) (verify the routing seal, then atomically consume its nonce) and [`ActuatorRegistry`](src/gateway/governance/execution_actuator.py) dispatch (Layer 1). Direct invocation bypassing either is strictly forbidden. [`ConsequenceGateway`](src/gateway/governance/consequence_gateway.py) is the single-use boundary for normative-provider `ConsequenceToken`s and is **not** on the governor ALLOW path.
-- **Private Queue Resolution**: Deferral resolution must remain strictly private (`_resolve()` in [`DeferQueue`](src/gateway/governance/defer_queue.py)). Public state transitions bypassing the gate are prohibited.
-- **Envelope Integrity**: All production requests traversing middleware must be wrapped via [`GovernanceEnvelopeBuilder`](src/gateway/governance/governance_envelope.py).
-- **Composition Root Only**: Build a `SymbolicGovernor` only through `assemble_governor()` ([`assembly.py`](src/gateway/governance/governor/assembly.py)) or `bootstrap_governor()` ([`bootstrap.py`](src/gateway/governance/governor/bootstrap.py)). The governor is immutable, never built at import time, and passed explicitly; servers read it via `governor_of()` ([`app_state.py`](src/gateway/server/app_state.py)). No module-level singletons.
-- **Advisor Holds No Governance State**: `src/governed_financial_advisor/` hosts no `SymbolicGovernor`, `DeferQueue`, signing key, or Google Cloud identity, and never imports `src.integrations.nemo` directly; governed calls (trade execution, content-safety checks, post-HITL revalidation, deferral) are forwarded to the gateway. The graph's defense-in-depth NeMo input/output rail nodes still run in-process via the kernel `langgraph_harness`. The gateway authenticates callers by Linkerd mTLS workload identity (`l5d-client-id` checked against `CAGE_TRUSTED_CLIENT_IDENTITIES` in [`workload_identity.py`](src/gateway/server/workload_identity.py)), never by HMAC routing seals.
+- **Fail-Closed Execution Boundary:** All Layer 2 tool executions must route through [`verify_and_consume_seal()`](src/gateway/governance/routing_seal.py) (verify seal, atomically consume nonce) and [`ActuatorRegistry`](src/gateway/governance/execution_actuator.py) dispatch (Layer 1). [`ConsequenceGateway`](src/gateway/governance/consequence_gateway.py) is the single-use boundary for normative-provider `ConsequenceToken`s and is **not** on the governor `ALLOW` path.
+- **Private Queue Resolution:** Deferral resolution remains private (`_resolve()` in [`DeferQueue`](src/gateway/governance/defer_queue.py)); no public bypasses.
+- **Envelope Integrity:** Production requests traversing middleware must be wrapped via [`GovernanceEnvelopeBuilder`](src/gateway/governance/governance_envelope.py).
+- **Composition Root Only:** Build `SymbolicGovernor` solely via `assemble_governor()` ([`assembly.py`](src/gateway/governance/governor/assembly.py)) or `bootstrap_governor()` ([`bootstrap.py`](src/gateway/governance/governor/bootstrap.py)). Governors are immutable, passed explicitly, and read via `governor_of()` ([`app_state.py`](src/gateway/server/app_state.py)); no module-level singletons.
+- **Advisor Holds No Governance State:** `src/governed_financial_advisor/` hosts no `SymbolicGovernor`, `DeferQueue`, signing key, or GCP identity, and never imports `src.integrations.nemo` directly (in-process rails run via kernel `langgraph_harness`). Gateway authenticates callers via Linkerd mTLS workload identity (`l5d-client-id` in [`workload_identity.py`](src/gateway/server/workload_identity.py)), never HMAC routing seals.
 
 ---
 
 ## Documentation Standards
 
-Keep documentation synchronized with code changes in the same PR. Cite specific file paths, configuration keys, and line numbers. Do not claim speculative future-state behaviors as current reality.
-
-- **Version-Neutral Living Filenames**: Never embed CAGE major/minor version suffixes (`_v3`, `-v4`, etc.) in living documentation filenames; organize versioned history under `# v<major>.x` and `# Unreleased (v<next_major>.x)` sections inside [`docs/BREAKING_CHANGES.md`](docs/BREAKING_CHANGES.md) (enforced by Gate G9 in [`scripts/check_doc_references.py`](scripts/check_doc_references.py)).
-
----
+Sync docs with code in the same PR, citing exact paths/keys/lines. Never embed version suffixes (`_v3`, `-v4`) in living filenames; organize versioned history in [`docs/BREAKING_CHANGES.md`](docs/BREAKING_CHANGES.md) (Gate G9, [`scripts/check_doc_references.py`](scripts/check_doc_references.py)).
 
 ## Answering Questions About This Repository
 
-1. **Prioritize Code at HEAD**: Ground answers in actual source code and active configuration files.
-2. **Cite File Paths**: Always provide concrete file links (`[file.py](file:///path/to/file.py)`).
-3. **Acknowledge Reference Architecture Posture**: CAGE demonstrates governance patterns; structural clarity takes precedence over operational legacy.
-4. **Never Guess on Safety Invariants**: If an invariant is ambiguous, check `proof/model.py` and fail closed.
-
----
-
-## Tool-Specific Configuration
-
-All modern AI coding assistants consume `AGENTS.md` natively at the repository root:
-- **Antigravity**: Ingested natively as global project instructions and behavioral rules.
-- **Roo Code / Zoo Code / Cline**: Ingested automatically into all modes ([`.roomodes`](.roomodes)).
-- **Cursor / Copilot / Windsurf**: Discovered natively at repository root.
-
-If a tool requires legacy configuration names (e.g. `CLAUDE.md`, `.cursorrules`), create a thin symlink or pointer pointing back to this file.
+Ground answers in code at `HEAD`, cite clickable `file://` paths, remember CAGE is a reference architecture, and never guess on safety invariants (check `proof/model.py` and fail closed). Tool-specific pointers (e.g., `CLAUDE.md`) should link back here.
 
 ---
 
 ## Test Execution
 
-### Test Execution Invariant: Always Use `uv run`
-All test invocations must be prefixed with `uv run` to ensure execution within the locked virtual environment.
-
-### Local and Unit Suite (Offline)
-The canonical way to run the full local and unit test suite across multiple workers:
-```bash
-uv run pytest tests/ -m "local or unit" -n auto --dist loadscope --no-cov -p no:langsmith -p no:langsmith_plugin --tb=short
-# Or via Makefile shortcut:
-make test-fast
-```
-Always launch parallel test suites with `--dist loadscope` to isolate modules across workers.
-
-| Goal / Scope | Canonical Command |
-|---|---|
-| **Fast unit run** | `make test-fast` (or `uv run pytest tests/ -m "local or unit" -n auto --dist loadscope`) |
-| **Single test method** | `uv run pytest tests/<path>::<test_name> -v` |
-| **Marker check** | `uv run pytest tests/ --collect-only -q --no-cov -n0` |
-| **Coverage suite** | `make test-coverage` |
-
-### Two-Phase Testing Lifecycle
-- **Inner Loop (Active Turn)**: Target only the isolated unit test (`uv run pytest tests/<path>::<test_name> -v`) during iterative editing turns. This keeps shell buffer outputs compact (<10 lines) and preserves prompt caching.
-- **Gate Phase (Pre-Completion & PR)**: Execute the full-suite gate (`make test-fast`) and the mandatory uncommitted-code & security review ([`AGENTS.md`](#mandatory-pre-commit-code--security-review) and [`.agents/rules/security.md`](.agents/rules/security.md)) once before committing, declaring a task complete, or opening a PR.
+Always prefix test commands with `uv run`, and parallelize local runs with `--dist loadscope`:
+- **Fast unit suite:** `make test-fast` (`uv run pytest tests/ -m "local or unit" -n auto --dist loadscope --no-cov -p no:langsmith -p no:langsmith_plugin --tb=short`)
+- **Single test / marker check / coverage:** `uv run pytest tests/<path>::<test_name> -v` | `uv run pytest tests/ --collect-only -q --no-cov -n0` | `make test-coverage`
+- **Two-Phase Lifecycle:** Inner loop targets only the edited unit test; gate phase runs `make test-fast` + pre-commit code/security review + Bandit once before committing or opening a PR.
 
 ### Verification Rules (fail-closed)
-- **Full-gate before green**: A change is not green until `make test-fast` passes across the entire suite.
-- **Uncommitted code & security review before commit**: Every set of uncommitted changes (`git status --porcelain` / `git diff HEAD`) must undergo code review and security review via [`AGENTS.md`](#mandatory-pre-commit-code--security-review) and [`.agents/rules/security.md`](.agents/rules/security.md) (plus `uv run --with bandit bandit -r src/ scripts/ -c pyproject.toml -ll -ii`) with zero unresolved `HIGH` or `MEDIUM` findings before committing or declaring completion.
-- **Re-derive every identifier after context compaction**: After context compaction, any identifier — commit SHA, branch name, PR number, workflow run ID, or check-run ID — must be re-derived from a tool call (`gh pr list`, `git rev-parse`, `gh run list --json databaseId`), never recalled from memory or reconstructed from a truncated prefix.
-- **Attribute failures to the merge base**: Before characterizing a failure as pre-existing, verify against the merge base and quote the result.
-- **Grep after renaming**: After renaming any symbol crossing module boundaries, run `rg -n '<old_symbol>' src/` and require zero results before declaring done.
-- **Every fail-closed path needs a test observing it fail**: Happy-path tests prove mechanisms run, not that they block. Never leave placeholder tests (`pass # TODO`).
-- **Partner integration tests strictly over the wire (Tier 1 only)**: Tests validating partner-built integrations (`partner_integration`, `live_external`) must execute live over the wire. Mocking partner responses (via in-memory ASGI transports, `TestClient`, or response patches) in partner test suites is strictly forbidden; validation requires actual boundary transit and upstream trace generation. Tier 2 posture-completing backends use hermetic tests with fault injection instead (see [Interface Tiering](#external-vendor-adapter-standards-plugin-architecture)).
+- **Full-gate before green:** Not green until `make test-fast` and pre-commit code/security review (`uv run --with bandit bandit -r src/ scripts/ -c pyproject.toml -ll -ii`) pass with zero unresolved `HIGH`/`MEDIUM` findings.
+- **Re-derive identifiers after compaction:** Re-query SHAs, branches, PRs, run IDs, and check-run IDs from tools (`git rev-parse`, `gh pr list`, `gh run list --json databaseId`); never recall from memory.
+- **Attribute failures to merge base & grep renames:** Verify claimed pre-existing failures against the merge base; run `rg -n '<old_symbol>' src/` after cross-module renames (expect zero hits).
+- **Test every fail-closed path & partner over-the-wire:** No `pass # TODO` placeholders. Tier 1 `partner_integration` / `live_external` tests must run live over HTTPS/mTLS with authentic remote headers/trace IDs (`ASGITransport`/`TestClient`/mocks forbidden).
 
-### Pytest Marker Contract (fail-closed)
-Every collected test must carry at least one selection marker (`local`, `unit`, `integration`, `live_external`, `partner_integration`, `chaos`, `load`). Unmarked tests abort collection in CI via `tests/conftest.py`. Default for hermetic tests: `pytestmark = [pytest.mark.unit, pytest.mark.local]`.
-
-### Deployment Region in Tests (fail-closed)
-Region resolution lives in [`tests/fixtures/deployment_region.py`](tests/fixtures/deployment_region.py):
-- **Hermetic runs** are pinned to `US_FED`. An exported `CAGE_DEPLOYMENT_REGION` is ignored. A test marked `us_fed` / `eu_ecb` / `apac_mas` runs under that region (env + `ControlRegistry`), so one job covers every region. Use the `each_region` fixture for cross-region invariants. Never `skipif` on the shell region.
-- **Live runs** (`--run-integration` / `--run-e2e`) read the region from the `cage-deployment` ConfigMap (`--cage-namespace`, default `governance-stack`). The run fails if the ConfigMap can't be read or if it contradicts an exported `CAGE_DEPLOYMENT_REGION`. Live tests marked for another region are skipped.
+### Pytest Marker & Region Contracts (fail-closed)
+- **Markers:** Every test needs a selection marker (`local`, `unit`, `integration`, `live_external`, `partner_integration`, `chaos`, `load`); default: `pytestmark = [pytest.mark.unit, pytest.mark.local]`.
+- **Region ([`tests/fixtures/deployment_region.py`](tests/fixtures/deployment_region.py)):** Hermetic runs pin `US_FED` (ignoring shell `CAGE_DEPLOYMENT_REGION`); use `us_fed`/`eu_ecb`/`apac_mas` markers or `each_region` (never `skipif`). Live runs (`--run-integration` / `--run-e2e`) read `cage-deployment` ConfigMap and fail closed on mismatch.
 
 ### Live GKE Cluster & Staging Runbooks
-> **Live Cluster Testing:** For staging port-forwarding, GKE tunnel concurrency rules, and POAM-024 validation, refer to [`docs/operations/GKE_TEST_RUNBOOK.md`](docs/operations/GKE_TEST_RUNBOOK.md).
-
-#### Live Cluster Testing Invariants (Fail-Closed)
-- **Never use `-n auto` on tunnels**: `pytest.ini` defaults to `-n auto` (spawning 16+ workers), which exhausts port-forward TCP pools and triggers false `503 Service Unavailable` / Redis connection drops. Constrain concurrency strictly to `-n 2 --dist loadscope` or `-n0`:
-  ```bash
-  uv run pytest tests/ -m integration --run-integration -n 2 --dist loadscope --no-cov -p no:langsmith -p no:langsmith_plugin --tb=short
-  ```
-- **Persistent Port-Forward Daemon**: Run tunnels via a detached daemon (`tmux new-session -d -s pf "bash scripts/port_forward_staging.sh --daemon"`). Verify reachability (`uv run python scripts/test_live_gke_services.py`) before executing test suites.
-- **Credential Synchronization**: Sync live cluster secrets (`kubectl get secret -n governance-stack <secret>`) into local `.env` (e.g. `REDIS_PASSWORD`, `LANGFUSE_COMPLIANCE_*`) prior to test runs. Never commit live cluster secrets to git.
-- **LLM / Agent Feedback Loop Latency**: End-to-end multi-agent governance benchmarks (`tests/test_agent_accuracy.py`) execute real GPU inference (vLLM DeepSeek-R1 / Qwen2.5) across multi-step cybernetic loops and require 6–8 minutes (`@pytest.mark.timeout(600)`). Monitor asynchronously; avoid aggressive polling loops.
-- **Partner Integration Isolation & Over-the-Wire Invariant**: Third-party partner tests (`tests/integrations/provider_01/`, `tests/integrations/provider_02/`, etc.) are tagged with `partner_integration` and/or `live_external`. They require live external partner sandboxes/staging endpoints and are excluded from standard internal GKE runs and local hermetic runs (`make test-fast`). **Strict over-the-wire execution is mandatory: all partner integration tests must execute authentic network traffic over the wire (HTTPS/mTLS) against the live partner service. In-process mocks, ASGI test transports (`httpx.ASGITransport(app=...)`), Starlette/FastAPI `TestClient` harnesses, or synthetic stubs are strictly forbidden.** Every partner test run must produce and verify authentic external egress/ingress telemetry, including remote server headers and upstream trace identifiers (e.g., `x-cloud-trace-context`), to guarantee an unbroken mutual audit trail.
+See [`docs/operations/GKE_TEST_RUNBOOK.md`](docs/operations/GKE_TEST_RUNBOOK.md). Never use `-n auto` on port-forward tunnels (use `-n 2 --dist loadscope` or `-n0`), launch tunnels detached (`scripts/port_forward_staging.sh --daemon`), verify via `scripts/test_live_gke_services.py`, never commit cluster secrets, and allow `@pytest.mark.timeout(600)` for `tests/test_agent_accuracy.py`.
 
 ---
 
 ## Agent Governance & Cost Guardrails
 
-To eliminate runaway frontier model billing, avoid quota lockouts, and eliminate multi-window context friction, this repository standardizes on the **Unified Sidebar + Passive Keystroke Daemon** architecture:
-
-1. **Unified Sidebar Engine (Roo Code / Zoo Code)**: 100% of conversational engineering, codebase exploration, code diffs, and terminal execution run inside Zoo Code to eliminate the "two-inbox problem" and ensure strict governance under [`.roomodes`](.roomodes):
-   - **Cost-Governed Dispatcher (`orchestrator` mode)**: Coordinates multi-phase tasks by delegating discovery to `ask`, architecture to `architect`/`escalated-architect`, edits/tests to `code`, and root-cause fixes to `debug`/`escalated-debug`. Never executes edits or bash directly.
-   - **Exploration & Discovery (`ask` mode)**: Powered by **Gemini Flash via Google Cloud Vertex AI ADC** (`gemini-2.5-flash` or `gemini-3-flash`). Executes high-speed AST indexing and repository sweeps at pay-as-you-go rates (~$0.001/query), completely bypassing consumer subscription quota freezes and 5-hour rolling lockouts.
-   - **Targeted Implementation (`code` mode)**: Powered by **Claude 3.7 Sonnet**. Governed by active Cost & Search Gates that intercept unstructured searches and direct them to `ask` mode before paid tokens are spent.
-   - **Standard Debugging (`debug` mode)**: Powered by **Claude 3.7 Sonnet** for syntax, failed assertions, and unit tests. Enforces a 2-turn fail-fast threshold.
-   - **Surgical Escalation (`escalated-architect`, `escalated-debug`)**: Powered by **Claude 5 (Opus 5 / Fable 5.1)** for safety-critical state machines, CBF formal proofs, or deep concurrency defects. Strictly capped at 1–3 turns with pre-filtered context.
-
-2. **Ambient Keystroke Completion Daemon (Google Antigravity)**: Installed strictly as a headless, passive background daemon for **unmetered inline tab completions (ghost text)** inside editor buffers. Its chat panel remains permanently closed during active development to preserve unified telemetry, single-point audit logging, and `.roomodes` enforcement.
-
-### Hard Anti-Loop & Cost Invariants
-1. **Context Ceiling (< 200k Tokens)**: Keep active session contexts strictly below 200,000 tokens. Never ingest entire repositories, build artifacts, or multi-megabyte log files into an active session.
-2. **Fail-Fast Policy**: If an edit or test fails twice with a related stack trace, STOP immediately. Formulate a root-cause hypothesis instead of applying speculative patches.
-3. **Immediate Context Reset (`/clear`)**: Issue `/clear` the moment a task passes its tests. Carrying stale diffs and shell logs pushes context across the 200k boundary into higher-priced token tiers.
-4. **Open Tab Context Limit**: Maintain no more than 1 or 2 open editor tabs during active sessions.
-
-### Strict Cache-Invariance Rules
-Prompt caching provides up to a 90% discount on cache reads, but incurs a 25% surcharge on cache writes:
-- **Byte-for-Byte Prefix Stability**: Never inject dynamic timestamps (e.g., current time, ISO dates), randomized session IDs, or volatile environment paths into system prompts, plans, or file headers. Prompt prefixes must remain byte-for-byte identical across turns.
-- **5-Minute TTL Window**: Keep turn cycles compact and interactive to maintain cache warmness within the 5-minute TTL window, ensuring Cache Read tokens account for 80%+ of total input volume.
-- **Code Standards**: Always write complete, production-ready code with full error handling. Never omit logic with `# TODO` or placeholder shims.
-
-For the complete end-to-end setup guide, IDE shortcuts, Vertex AI ADC credentials, and GCP billing alerts, see [`docs/operations/AGENT_COST_GUARDRAILS.md`](docs/operations/AGENT_COST_GUARDRAILS.md).
+Keep active sessions `< 200k` tokens, fail fast after 2 related stack traces (root-cause before patching), clear stale context after tests pass, maintain byte-for-byte prefix stability for prompt caching (no dynamic timestamps/paths in headers), and write complete error-handling code (no `# TODO` shims). Full setup: [`docs/operations/AGENT_COST_GUARDRAILS.md`](docs/operations/AGENT_COST_GUARDRAILS.md).
