@@ -127,6 +127,13 @@ Unverifiable quotes (`status="SKIPPED"`, missing $P_{\text{stale}}$, missing $P_
 
 The default `max_slippage_pct` (`2.0%`) is enforced by [`ApprovalDecision`](../../src/governed_financial_advisor/graph/nodes/approval_contract.py) (`0.0–100.0`) and can be tightened per approval in the `Command(resume=...)` payload.
 
+### Operational Availability Coupling (Known Fail-Closed Property)
+
+Closing the Ghost-State TOCTOU bypass intentionally couples the human-approval execution path to live external market-data availability (`yfinance`, bounded by `YFINANCE_TIMEOUT_SECONDS = 5.0 s`):
+
+1. **Check-time baseline (`DEFAULT_CHECK_TIME_QUOTE_MAX_AGE_S = 60.0 s`):** When a trade reaches [`execution_analyst_node()`](../../src/governed_financial_advisor/graph/nodes/agent_nodes.py) or pre-HITL [`executor_node()`](../../src/governed_financial_advisor/graph/subgraphs/governed_trader_graph.py) without an in-memory `hitl_reference_quote` (`quotes_by_ticker`) younger than `60.0 s`, [`resolve_check_time_reference_quote()`](../../src/governed_financial_advisor/graph/nodes/toctou_quote.py) calls [`fetch_live_yfinance_price()`](../../src/governed_financial_advisor/graph/nodes/toctou_quote.py) to sample $P_{\text{stale}}$ (refusing to fall back to expired same-ticker quotes).
+2. **HITL resume (`Command(resume=...)`):** [`post_hitl_rehydrate_node()`](../../src/governed_financial_advisor/graph/subgraphs/governed_trader_graph.py) unconditionally calls [`fetch_live_yfinance_price()`](../../src/governed_financial_advisor/graph/nodes/toctou_quote.py) at resumption time to sample $P_{\text{fresh}}$. While `yfinance` is unreachable, rate-limited, or times out, human-approved trades **cannot execute**: rehydration marks `status = "SKIPPED"`, [`post_hitl_revalidate_node()`](../../src/governed_financial_advisor/graph/subgraphs/governed_trader_graph.py) blocks fail-closed (`drift_unverifiable`), and [`drift_blocked_node()`](../../src/governed_financial_advisor/graph/subgraphs/governed_trader_graph.py) aborts the advisor turn and clears `deferred_id` / `approval_decision` / `hitl_reference_quote` before contacting the gateway (leaving the gateway `DeferQueue` approval unconsumed, though the trade must be re-submitted once market-data connectivity recovers).
+
 ---
 
 ## Files Changed
