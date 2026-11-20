@@ -140,6 +140,8 @@ security:
 
 ## Run documentation integrity gates (mirrors CI gate G9; scope is DOC_SCOPE in the script)
 docs-check:
+	@echo "==> Checking discovered agent-injected instruction & rule file 24KB size cap..."
+	@uv run python scripts/check_agents_size.py --verbose
 	@echo "==> Checking documentation references (broken links, dangling paths, stale symbols)..."
 	@uv run python scripts/check_doc_references.py
 	@echo "==> Checking monitoring, Lula, OSCAL, and TTM mechanism references..."

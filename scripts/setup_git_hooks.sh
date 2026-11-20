@@ -94,6 +94,7 @@ gate_scripts=(
   scripts/check_telemetry_literals.py
   scripts/check_vendor_brands.py
   scripts/check_project_id_hygiene.py
+  scripts/check_agents_size.py
   scripts/check_doc_references.py
   scripts/check_partner_headers.py
   scripts/check_yaml_unique_keys.py

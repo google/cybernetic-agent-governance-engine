@@ -232,8 +232,8 @@ sequenceDiagram
 Run these terminal checks to confirm size limits, STPA freshness, and boundary integrity before submitting pull requests:
 
 ```bash
-# 1. Enforce AGENTS.md stays strictly under the 24KB limit
-uv run python scripts/check_agents_size.py
+# 1. Enforce all discovered agent instruction/rule files stay strictly under the 24KB limit
+uv run python scripts/check_agents_size.py --verbose
 
 # 2. Verify STPA freshness and import boundaries
 uv run python scripts/check_stpa_freshness.py
