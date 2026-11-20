@@ -170,6 +170,12 @@
         "null"
       ]
     },
+    "hitl_reference_quote": {
+      "type": [
+        "object",
+        "null"
+      ]
+    },
     "guardrail_blocked": {
       "type": "boolean"
     },

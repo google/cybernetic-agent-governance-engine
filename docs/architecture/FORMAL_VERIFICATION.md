@@ -37,8 +37,8 @@ To verify hazard completeness, we re-evaluate the system’s capacity to determi
 
 * **Hazard:** **UCA-5 / FIN-1** (Trade exceeds drawdown limit or portfolio fraction limit due to market drift during human review).
 * **Previous State:** Vulnerable to Time-Of-Check to Time-Of-Use (TOCTOU).
-* **New Enforcement Mechanism:** The execution plan now inherently contains a bounded limit (`max_slippage_pct`). The `post_hitl_revalidate_node` acts as a hard deterministic circuit breaker, recalculating drift immediately prior to actuation.
-* **Evaluation:** **PASS.** The hazard is fully mapped to a deterministic mathematical bound evaluated at execution time, not generation time.
+* **New Enforcement Mechanism:** Check-time market price $P_{\text{stale}}$ is persisted in `hitl_reference_quote` (`AgentState`) prior to HITL suspension, and the human reviewer bounds acceptable execution drift via `max_slippage_pct` (`ApprovalDecision`). Upon resumption, `post_hitl_rehydrate_node` samples live price $P_{\text{fresh}}$ and `post_hitl_revalidate_node` acts as a fail-closed deterministic circuit breaker, blocking both exceeded drift (`price_slippage_exceeded`) and any missing or unverifiable quote state (`drift_unverifiable`, `POAM-2026-240`).
+* **Evaluation:** **PASS.** The hazard is mapped to a fail-closed mathematical bound evaluated immediately prior to actuation.
 
 ---
 
@@ -70,11 +70,11 @@ In the prior architecture, the continuous variable $x_2$ (market price) evolved 
 
 **The Updated Hybrid Automaton:**
 
-1. $\text{PENDING\_HITL}$ is entered when [`approval_node`](../../src/governed_financial_advisor/graph/nodes/approval_node.py) calls the LangGraph `interrupt()` primitive (`langgraph.types.interrupt`), suspending the graph. When the reviewer resumes the thread via the LangGraph SDK `Command(resume={...})` pattern, `interrupt()` returns the decision payload and the node issues `Command(goto="post_hitl_rehydrate")`, transitioning the system to $\text{REVALIDATING}$.
-2. The `post_hitl_revalidate_node` samples $P_{\text{fresh}}$ (continuous state $x_2$ at time $t_{\text{resume}}$).
-3. The guard condition $G_{\text{actuate}}$ for the transition to $\text{APPROVED}$ (execution) is strictly defined by the invariant:
-$$G_{\text{actuate}} \iff \left( \frac{|P_{\text{fresh}} - P_{\text{stale}}|}{P_{\text{stale}}} \le \text{max\_slippage\_pct} \right) \land \left( \text{CBF}(P_{\text{fresh}}, \text{amount}) \ge 0 \right) \land \left( \text{OPA}(P_{\text{fresh}}, \text{params}) = \text{ALLOW} \right)$$
-4. If $G_{\text{actuate}}$ evaluates to False, the system transitions to $\text{BLOCKED}$ (fail-closed).
+1. $\text{PENDING\_HITL}$ is entered when [`approval_node`](../../src/governed_financial_advisor/graph/nodes/approval_node.py) calls the LangGraph `interrupt()` primitive (`langgraph.types.interrupt`), suspending the graph with check-time quote $P_{\text{stale}}$ recorded in `hitl_reference_quote`. When the reviewer resumes the thread via the LangGraph SDK `Command(resume={...})` pattern, `interrupt()` returns the decision payload and the node issues `Command(goto="post_hitl_rehydrate")`, transitioning the system to $\text{REVALIDATING}$.
+2. [`post_hitl_rehydrate_node`](../../src/governed_financial_advisor/graph/subgraphs/governed_trader_graph.py) samples $P_{\text{fresh}}$ (continuous state $x_2$ at time $t_{\text{resume}}$), and [`post_hitl_revalidate_node`](../../src/governed_financial_advisor/graph/subgraphs/governed_trader_graph.py) evaluates the reviewer's `max_slippage_pct` bound fail-closed (`POAM-2026-240`).
+3. The guard condition $G_{\text{actuate}}$ for transitioning to actuation is strictly defined by the invariant:
+$$G_{\text{actuate}} \iff \left( P_{\text{stale}} > 0 \land P_{\text{fresh}} > 0 \land \frac{|P_{\text{fresh}} - P_{\text{stale}}|}{P_{\text{stale}}} \times 100 \le \text{max\_slippage\_pct} \right) \land \left( \text{CBF}(P_{\text{fresh}}, \text{amount}) \ge 0 \right) \land \left( \text{OPA}(P_{\text{fresh}}, \text{params}) = \text{ALLOW} \right)$$
+4. If $G_{\text{actuate}}$ evaluates to False — including when either quote is missing or unverifiable — the system transitions fail-closed to $\text{BLOCKED}$ without emitting a `PASSED` attestation.
 
 Because the transition to an actuated state is mathematically gated by a real-time sample of the continuous variables against the required limits, **the continuous state trajectory can no longer outpace the discrete sampling rate of the governance engine.**
 
