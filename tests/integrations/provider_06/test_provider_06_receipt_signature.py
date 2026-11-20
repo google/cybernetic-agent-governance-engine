@@ -613,3 +613,70 @@ class TestTrustAnchorInvariant:
         assert "x" not in signature_block  # Ed25519 JWK public key parameter
         assert "n" not in signature_block  # RSA public key parameter
         assert "publicKey" not in signature_block  # Generic embedded key
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        "bad_expires_at",
+        [None, "", "not-an-iso-timestamp", "2099-01-01T00:00:00"],
+    )
+    async def test_missing_malformed_or_naive_expires_at_fails_closed(
+        self, bad_expires_at: str | None
+    ) -> None:
+        """Validly signed receipts with missing, malformed, or timezone-naive expiresAt must fail closed."""
+        from unittest.mock import MagicMock
+
+        from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PublicKey
+
+        base = create_test_receipt(envelope_digest="test-evidence-hash")
+        payload = {
+            k: v for k, v in base.items() if k not in ("signature", "receiptDigest")
+        }
+        if bad_expires_at is None:
+            payload.pop("expiresAt", None)
+        else:
+            payload["expiresAt"] = bad_expires_at
+
+        payload_bytes = jcs_canonicalize_plan(payload)
+        sig_bytes = get_test_private_key().sign(payload_bytes)
+        sig_val = base64.urlsafe_b64encode(sig_bytes).decode("ascii").rstrip("=")
+        forged_receipt = {
+            **payload,
+            "signature": {
+                "algorithm": "Ed25519",
+                "keyId": TEST_KEY_ID,
+                "value": sig_val,
+            },
+            "receiptDigest": hashlib.sha256(payload_bytes).hexdigest(),
+        }
+
+        with patch(
+            "src.integrations.provider_06.adapter.Provider06KeyManifestClient"
+        ) as MockJWKSClient:
+            mock_client = AsyncMock()
+            public_key_jwk = get_test_public_key_jwk()
+            public_key_bytes = base64.urlsafe_b64decode(public_key_jwk["x"] + "==")
+            mock_client.get_key.return_value = Ed25519PublicKey.from_public_bytes(
+                public_key_bytes
+            )
+            MockJWKSClient.return_value = mock_client
+
+            adapter = Provider06AgentIntegrityAdapter(
+                endpoint="http://localhost:8090",
+                key_manifest_url="file:///test/manifest.json",
+            )
+
+            with patch("httpx.AsyncClient") as MockHTTPClient:
+                client_instance = AsyncMock()
+                mock_response = MagicMock()
+                mock_response.json.return_value = forged_receipt
+                client_instance.post.return_value = mock_response
+                MockHTTPClient.return_value.__aenter__.return_value = client_instance
+
+                result = await adapter.submit_evidence(
+                    thread_id="test-thread",
+                    evidence_hash="test-evidence-hash",
+                )
+
+            assert result.error is not None
+            assert "expiresat" in result.error.lower()
+            assert not result.seal_hash

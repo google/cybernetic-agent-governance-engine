@@ -2573,14 +2573,16 @@ async def defer_inject(
         )
 
     # Build enriched context with confidence_score for Phase-3 replay
-    enriched_context = body.injection_data or {}
+    enriched_context = dict(body.injection_data or {})
     enriched_context["confidence_score"] = body.confidence_score
 
     try:
-        queue = get_shared_defer_queue(redis_url)
+        from src.gateway.governance.defer_queue import (
+            DeferReason,
+            get_required_quorum,
+        )
 
-        # Stream B security gates: prevent bypassing dual-control via injection
-        from src.gateway.governance.defer_queue import DeferReason, get_required_quorum
+        queue = get_shared_defer_queue(redis_url)
 
         # Fetch token to check defer_reason and approval status
         token = await queue.get(defer_id)
@@ -2668,6 +2670,20 @@ async def defer_inject(
                     "reason": "confidence still below threshold after injection",
                 },
             )
+        elif result == ReplayResult.DEFER_QUEUE_UNAVAILABLE:
+            raise HTTPException(
+                status_code=503,
+                detail={"error": "DEFER_QUEUE_UNAVAILABLE", "defer_id": defer_id},
+            )
+        elif result != ReplayResult.ADMITTED:
+            raise HTTPException(
+                status_code=503,
+                detail={
+                    "error": "DEFER_REPLAY_UNEXPECTED_RESULT",
+                    "defer_id": defer_id,
+                    "result": str(getattr(result, "value", result)),
+                },
+            )
 
         # result == ReplayResult.ADMITTED - proceed with resolution
         # Retrieve the resolved token for audit metadata
@@ -2693,9 +2709,16 @@ async def defer_inject(
         # NOT from Python's built-in ConnectionError.  Detect by errno or message
         # so the integration test's skip guard fires on 503 instead of 500:
         #   if r.status_code == 503: pytest.skip("Redis db=1 unavailable")
+        from redis.exceptions import RedisError
+
+        from src.gateway.governance.governor.errors import DeferQueueUnavailableError
+
         exc_str = str(exc)
         is_conn_err = (
-            isinstance(exc, (ConnectionError, OSError))
+            isinstance(
+                exc,
+                (ConnectionError, OSError, RedisError, DeferQueueUnavailableError),
+            )
             or "Connect call failed" in exc_str
             or "Connection refused" in exc_str
             or "Cannot assign requested address" in exc_str
