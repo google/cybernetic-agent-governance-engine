@@ -43,11 +43,11 @@ T+Δ   AAPL crashes to $130 (–13%).  Drawdown > 4.5%.
 
 | Principle | Implementation |
 |-----------|---------------|
-| **Bounded intent** — approve an *envelope*, not a point | Reviewer specifies `max_slippage_pct`; this defines the mathematical acceptance boundary |
-| **Actuation-time sampling** — check at the moment of use | `post_hitl_rehydrate_node` fetches a live quote immediately before execution |
-| **Deterministic re-validation** — same governor, fresh data | `post_hitl_revalidate_node` calls `SymbolicGovernor.govern()` with updated params |
-| **Fail-closed on drift** — never "bait-and-switch" | `drift_blocked_node` terminates the trade with a human-readable explanation |
-| **TTL circuit breaker** — quotes expire | `approval_node` stamps `expires_at`; `/resume` returns HTTP 410 if elapsed |
+| **Bounded intent** — approve an *envelope*, not a point | Reviewer specifies `max_slippage_pct` (`0.0–100.0`); this defines the mathematical acceptance boundary |
+| **Check-time quote persistence** — authentic baseline | `data_analyst_node` / `execution_analyst_node` persist `hitl_reference_quote` (`P_stale`) before HITL suspension |
+| **Actuation-time sampling** — check at the moment of use | `post_hitl_rehydrate_node` fetches a live quote (`P_fresh`) immediately after resume |
+| **Fail-closed slippage & gateway re-validation** — zero false `PASSED` | `post_hitl_revalidate_node` blocks both exceeded drift (`price_slippage_exceeded`) and unverifiable quotes (`drift_unverifiable`, `POAM-2026-240`); on `PASSED`, `execute_trade_action(deferred_id=...)` consumes the approval once in the gateway (`SymbolicGovernor.revalidate_post_hitl()`) |
+| **Fail-closed terminal node** — never "bait-and-switch" | `drift_blocked_node` terminates the trade and clears HITL tokens with a human-readable explanation |
 
 ---
 
@@ -57,65 +57,46 @@ T+Δ   AAPL crashes to $130 (–13%).  Drawdown > 4.5%.
 sequenceDiagram
     autonumber
     actor Reviewer
-    participant API as POST /v1/approvals<br/>{thread_id}/resume
-    participant TTL as TTL Guard<br/>(server.py)
+    participant Bridge as Compliance Bridge<br/>POST /v1/defer/{id}/escalate
     participant Approval as approval_node<br/>(interrupt/resume)
     participant Rehydrate as post_hitl_rehydrate_node
     participant yf as yfinance
     participant Revalidate as post_hitl_revalidate_node
-    participant SG as SymbolicGovernor<br/>(Tier 2 + Tier 4)
-    participant Exec as executor_node
     participant Drift as drift_blocked_node
+    participant Exec as executor_node / tools
+    participant GW as CAGE Gateway<br/>SymbolicGovernor (POST_HITL)
 
-    note over Reviewer,Drift: PRIOR STATE: Graph suspended via approval_node.interrupt()<br/>Interrupt payload includes expires_at timestamp.<br/>State checkpointed to Redis.
+    note over Reviewer,GW: PRIOR STATE: Graph suspended via approval_node.interrupt()<br/>Checkpoint holds deferred_id + hitl_reference_quote (P_stale).
 
-    Reviewer->>API: POST /resume {approved, reviewer, rationale, max_slippage_pct}
-    API->>TTL: Check interrupt payload.expires_at
+    Reviewer->>Bridge: Record distinct-principal quorum approval on deferred_id
+    Reviewer->>Approval: Command(resume={approved, reviewer, rationale, max_slippage_pct})
+    Approval->>Approval: Validate rationale + max_slippage_pct in [0, 100]
 
-    alt Approval window expired
-        TTL-->>API: now_utc > expires_at
-        API-->>Reviewer: HTTP 410 Gone — re-submit required
-    else Window valid
-        TTL-->>API: OK
-        API->>Approval: Command(resume={approved, max_slippage_pct, ...})<br/>via graph.astream()
-        Approval->>Approval: Resume from interrupt point
-        Approval->>Approval: Build approval_decision<br/>(includes max_slippage_pct)
+    alt Trade rejected
+        Approval-->>Exec: Command(goto="rejection")
+    else Trade approved
+        Approval->>Rehydrate: Command(goto="post_hitl_rehydrate")
+        Rehydrate->>yf: fast_info["last_price"] / 1d close for validated ticker
+        alt Quote verified (P_stale > 0 and P_fresh > 0)
+            yf-->>Rehydrate: fresh_price = P_fresh
+            Rehydrate-->>Revalidate: rehydration_result {status="OK", drift_pct}
+        else Missing ticker, missing P_stale, or yfinance error
+            Rehydrate-->>Revalidate: rehydration_result {status="SKIPPED", drift_pct=None}
+        end
 
-        alt Trade rejected
-            Approval-->>Exec: Command(goto="rejection")
-            note right of Exec: Rejection path unchanged
-        else Trade approved
-            Approval->>Rehydrate: Command(goto="post_hitl_rehydrate")
+        Revalidate->>Revalidate: Require status=="OK" and 0 <= drift_pct <= max_slippage_pct
 
-            Rehydrate->>yf: fast_info["last_price"] for ticker
-            alt yfinance OK
-                yf-->>Rehydrate: fresh_price = P_fresh
-                Rehydrate->>Rehydrate: drift_pct = |P_fresh - P_stale| / P_stale × 100
-                Rehydrate-->>Revalidate: rehydration_result {status=OK, drift_pct}
-            else yfinance SKIPPED (no ticker / network error)
-                Rehydrate-->>Revalidate: rehydration_result {status=SKIPPED, drift_pct=None}
-            end
-
-            Revalidate->>Revalidate: Check drift_pct vs max_slippage_pct
-
-            alt drift_pct > max_slippage_pct
-                Revalidate-->>Drift: post_hitl_safety_status = BLOCKED<br/>block_reason = "price_slippage_exceeded"
-                Drift-->>Reviewer: ⛔ Trade Blocked — Market Drift Detected
-            else Within slippage tolerance
-                Revalidate->>SG: govern("execute_trade", fresh_params)
-                note right of SG: Tier 2: CBF with live cash balance<br/>Tier 4: OPA with fresh price/drawdown
-
-                alt GovernanceError raised
-                    SG-->>Revalidate: GovernanceError (CBF / OPA violation)
-                    Revalidate-->>Drift: post_hitl_safety_status = BLOCKED<br/>block_reason = "governance_violation"
-                    Drift-->>Reviewer: ⛔ Trade Blocked — Governance Violation
-                else Governor APPROVED
-                    SG-->>Revalidate: No exception
-                    Revalidate-->>Exec: post_hitl_safety_status = APPROVED
-                    Exec->>Exec: execute_trade_action (MCP tool)
-                    Exec-->>Reviewer: ✅ Trade Executed
-                end
-            end
+        alt status != "OK" or drift_pct is None
+            Revalidate-->>Drift: post_hitl_safety_status = BLOCKED (drift_unverifiable)
+            Drift-->>Reviewer: Trade Blocked — Unable to verify post-HITL market drift
+        else drift_pct > max_slippage_pct
+            Revalidate-->>Drift: post_hitl_safety_status = BLOCKED (price_slippage_exceeded)
+            Drift-->>Reviewer: Trade Blocked — Market Drift Exceeded Tolerance
+        else 0 <= drift_pct <= max_slippage_pct
+            Revalidate-->>Exec: post_hitl_safety_status = PASSED
+            Exec->>GW: execute_trade_action(deferred_id=...)
+            GW->>GW: DeferQueue.consume_approval() + revalidate_post_hitl()
+            GW-->>Reviewer: Sealed actuation or evidenced refusal
         end
     end
 ```
@@ -124,16 +105,16 @@ sequenceDiagram
 
 ## Formal Correctness Guarantee
 
-After remediation, the system is **mathematically bounded**:
+After remediation, actuation requires **both** the advisor's fail-closed reviewer slippage check and the gateway's `POST_HITL` re-validation:
 
-$$\text{SAFE} \iff \underbrace{\frac{|P_{\text{fresh}} - P_{\text{stale}}|}{P_{\text{stale}}} \leq \delta_{\text{slippage}}}_{\text{Slippage gate}} \land \underbrace{h(P_{\text{fresh}}, \text{amount}) \geq 0}_{\text{Tier 2: CBF}} \land \underbrace{\text{OPA}(P_{\text{fresh}}, \text{params}) = \text{ALLOW}}_{\text{Tier 4: OPA}}$$
+$$\text{ACTUATE} \iff \text{status}_{\text{rehydrate}} = \text{OK} \land \underbrace{\frac{|P_{\text{fresh}} - P_{\text{stale}}|}{P_{\text{stale}}} \leq \delta_{\text{slippage}}}_{\text{Advisor slippage gate}} \land \underbrace{\text{revalidate\_post\_hitl}(\text{deferred\_id}, \text{params}) = \text{ALLOW}}_{\text{Gateway POST\_HITL profile}}$$
 
 Where:
-- $P_{\text{fresh}}$ is sampled at actuation time (not check-time)
-- $P_{\text{stale}}$ is the price from the original approved plan
+- $P_{\text{fresh}}$ is sampled via `yfinance` at actuation time (not check-time)
+- $P_{\text{stale}}$ is the check-time reference quote persisted in `hitl_reference_quote` (or `ExecutionPlan`)
 - $\delta_{\text{slippage}}$ is the reviewer's approved tolerance (`max_slippage_pct / 100`)
 
-The TOCTOU gap is closed because execution only proceeds when ALL three conditions hold simultaneously on the **same sample** of the continuous environment.
+Unverifiable quotes (`status="SKIPPED"`, missing $P_{\text{stale}}$, missing $P_{\text{fresh}}$, or non-finite values) evaluate to `BLOCKED` (`drift_unverifiable`) and never emit a `PASSED` attestation (`POAM-2026-240`).
 
 ---
 
@@ -141,9 +122,10 @@ The TOCTOU gap is closed because execution only proceeds when ALL three conditio
 
 | Environment Variable | Default | Description |
 |---------------------|---------|-------------|
-| `HITL_APPROVAL_TTL_SECONDS` | `300` | Approval window TTL in seconds (5 minutes). After expiry, `/resume` returns HTTP 410 Gone. |
+| `HITL_APPROVAL_TTL_SECONDS` | `300` | Approval window TTL in seconds (5 minutes) stamped into `expires_at`. |
+| `YFINANCE_TIMEOUT_SECONDS` | `5.0` | Timeout in seconds for check-time and post-HITL `yfinance` quote lookups. |
 
-The default `max_slippage_pct` (2.0%) is the reviewer-facing default in `ApprovalResumeRequest`. It can be tightened per-request via the API body.
+The default `max_slippage_pct` (`2.0%`) is enforced by [`ApprovalDecision`](../../src/governed_financial_advisor/graph/nodes/approval_contract.py) (`0.0–100.0`) and can be tightened per approval in the `Command(resume=...)` payload.
 
 ---
 
@@ -151,11 +133,11 @@ The default `max_slippage_pct` (2.0%) is the reviewer-facing default in `Approva
 
 | File | Change |
 |------|--------|
-| [`governed_trader_graph.py`](../../src/governed_financial_advisor/graph/subgraphs/governed_trader_graph.py) | +3 nodes (`post_hitl_rehydrate`, `post_hitl_revalidate`, `drift_blocked`); +3 state fields; updated graph wiring |
-| [`approval_node.py`](../../src/governed_financial_advisor/graph/nodes/approval_node.py) | Migrated to `interrupt()` pattern with `Command(graph=interrupt(value=...))` return; `goto="executor"` → `goto="post_hitl_rehydrate"`; `expires_at` added to interrupt payload; `max_slippage_pct` added to `approval_decision` |
-| [`agent_nodes.py`](../../src/governed_financial_advisor/graph/nodes/agent_nodes.py) | `data_analyst_ticker` forwarded to subgraph state |
-| [`server.py`](../../src/governed_financial_advisor/server.py) | Resume via `Command(resume=approval_decision)` passed to `graph.astream()`; `max_slippage_pct` field on `ApprovalResumeRequest`; TTL expiry guard on `/resume` returning HTTP 410 |
-| [`test_hitl_toctou_revalidation.py`](../../tests/test_hitl_toctou_revalidation.py) | [NEW] 10+ unit tests validating interrupt()/resume semantics, no live services required |
+| [`governed_trader_graph.py`](../../src/governed_financial_advisor/graph/subgraphs/governed_trader_graph.py) | `post_hitl_rehydrate`, `post_hitl_revalidate` (fail-closed on `drift_unverifiable` and `price_slippage_exceeded`), `drift_blocked`, and fail-closed `route_post_revalidation` |
+| [`toctou_quote.py`](../../src/governed_financial_advisor/graph/nodes/toctou_quote.py) | Deterministic ticker validation, check-time `hitl_reference_quote` extraction, nested `PlanStep.parameters` support, and JSON plan serialization |
+| [`approval_node.py`](../../src/governed_financial_advisor/graph/nodes/approval_node.py) | Dynamic `interrupt()` gate with `ApprovalDecision` validation (`max_slippage_pct` in `[0.0, 100.0]`) and `Command(goto="post_hitl_rehydrate")` |
+| [`agent_nodes.py`](../../src/governed_financial_advisor/graph/nodes/agent_nodes.py) | Validated `data_analyst_ticker` + `hitl_reference_quote` capture and `json.dumps` serialization into `governed_trader_node` |
+| [`test_hitl_toctou_revalidation.py`](../../tests/test_hitl_toctou_revalidation.py) | Unit and subgraph regression suite guarding `POAM-2026-045` and `POAM-2026-240` |
 
 ## DEFER Queue — Confidence-Starved Context Handling
 
@@ -166,30 +148,30 @@ Contexts that are not outright denied but fall below the ALLOW threshold are rou
 | Zone | Confidence Range | Action |
 |------|-----------------|--------|
 | ALLOW | ≥ 0.95 | Execute immediately |
-| DEFER | 0.70 – 0.95 | Park in Redis db=1 for resolution |
-| DENY | < 0.70 | Reject immediately |
+| REQUIRE_APPROVAL | 0.70 – 0.95 | Park in Redis db=1 for human quorum approval |
+| DEFER | < 0.70 | Turn-terminal epistemic hold in Redis db=1 |
 
 ### DEFER Token Details
 
 - **Redis storage:** `db=1` with `noeviction` maxmemory policy (isolated from LangGraph checkpointer at `db=0`)
-- **TTL:** 4 hours (`_DEFAULT_TTL = 14400s`) — auto-escalates to MANUAL_REVIEW on expiry
+- **TTL:** 4 hours (`_DEFAULT_TTL = 14400s`)
 - **Key:** `defer:{id}` (Redis Hash)
-- **Threshold:** `confidence.defer_floor = 0.70` (`get_confidence_defer_floor()`; lower bound of the HITL zone, below it DEFER)
+- **Threshold:** `confidence.defer_floor = 0.70` (`get_confidence_defer_floor()`)
 
 ### DEFER Resolution Endpoints
 
 | Method | Path | Description |
 |--------|------|-------------|
-| `POST` | `/v1/defer/{id}/inject` | Automated data injection resolution — provides missing context to resolve the deferred decision |
-| `POST` | `/v1/defer/{id}/escalate` | HITL manual review escalation — routes to human reviewer |
-| `GET` | `/v1/defer/pending` | List all currently DEFER-parked tokens |
+| `POST` | `/v1/defer/{id}/inject` | Automated data injection resolution — provides missing context for `DEFERRABLE` holds |
+| `POST` | `/v1/defer/{id}/escalate` | HITL manual review escalation — records distinct-principal operator approval |
+| `GET` | `/v1/defer/pending` | Authenticated listing of pending deferral tokens |
 
 ---
 
 ## Invariants Preserved
 
-- ✅ HMAC-SHA256 governance signature — **zero changes** (supplemental checks only)
-- ✅ Non-HITL execution path — **zero changes** (goes directly `START → executor`)
-- ✅ `rejection_node` path — **zero changes**
-- ✅ `SymbolicGovernor` called via direct singleton, not MCP (architectural invariant of `safety_node.py`)
-- ✅ Existing HITL rationale / evidence chain — **unchanged** (`max_slippage_pct` is additive)
+- ✅ Gateway-only KMS asymmetric envelope & routing-seal signing (`POAM-2026-079`, `POAM-2026-080`) — the advisor holds no `SymbolicGovernor` or signing key
+- ✅ Non-HITL execution path — goes directly `START → executor → tools`
+- ✅ `rejection_node` path — unchanged
+- ✅ Fail-closed slippage gate — unverifiable drift (`status != "OK"` or `drift_pct is None`) always blocks (`POAM-2026-240`)
+- ✅ Existing HITL rationale / evidence chain — preserved (`max_slippage_pct` validated in `[0.0, 100.0]`)

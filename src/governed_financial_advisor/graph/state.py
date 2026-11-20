@@ -135,6 +135,9 @@ class AgentState(TypedDict):
     # }
     approval_decision: dict[str, Any] | None
     hitl_expires_at: str | None  # TTL expiration timestamp for pending state
+    hitl_reference_quote: (
+        dict[str, Any] | None
+    )  # Check-time market quote {ticker, price, source, captured_at_utc} for post-HITL drift gate
 
     # NeMo Guardrail Gate (ADR 2026-03-09 — mandatory first-node enforcement)
     # Set by nemo_guardrail_node before any agent processes the input.

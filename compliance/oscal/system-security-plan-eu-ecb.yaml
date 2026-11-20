@@ -3,7 +3,7 @@ system-security-plan:
   metadata:
     title: CAGE System Security Plan (EU_ECB — EU AI Act / GDPR / DORA)
     published: '2026-06-15T00:00:00Z'
-    last-modified: '2026-11-15T04:48:23Z'
+    last-modified: '2026-11-20T04:13:34Z'
     version: 1.0.0-draft+stpa
     oscal-version: 1.0.4
     remarks: 'This System Security Plan (SSP) documents the compliance controls implemented
@@ -530,8 +530,9 @@ system-security-plan:
         0.95) universal confidence band in src/gateway/governance/governor/stages/confidence.py;
         [0.70, 0.97) EU_ECB trade-confidence band in src/cage_finance/tiers/trade_confidence_tier.py)
         with distinct-principal dual-control human operator quorum in DeferQueue (src/gateway/governance/defer_queue.py)
-        and single-use POST_HITL drift revalidation (SymbolicGovernor.revalidate_post_hitl()).
-        Sub-0.70 DEFER and WARRANT_INELIGIBLE are turn-terminal epistemic/reliance
+        and single-use POST_HITL drift revalidation (SymbolicGovernor.revalidate_post_hitl()
+        paired with the fail-closed advisor reviewer slippage gate in src/governed_financial_advisor/graph/subgraphs/governed_trader_graph.py,
+        POAM-2026-240). Sub-0.70 DEFER and WARRANT_INELIGIBLE are turn-terminal epistemic/reliance
         holds rather than Art. 22 human-approval gates. Planned / adopter-paired scope
         (POAM EU-006): subject-initiated Art. 22(3) point-of-view and post-decision
         contestation on request (requiring data-controller intake) and GET /v1/compliance/gdpr/art22
@@ -560,8 +561,10 @@ system-security-plan:
           (src/gateway/governance/defer_queue.py) for distinct-principal dual-control
           human OIDC approval (DeferQueue.approve(); WebAuthn assertions are not verified,
           POAM-2026-210) and single-use consumption with POST_HITL drift revalidation
-          (DeferQueue.consume_approval(), SymbolicGovernor.revalidate_post_hitl()),
-          verified in tests/test_defer_dual_control_auth.py, tests/test_defer_queue_quorum.py,
+          (DeferQueue.consume_approval(), SymbolicGovernor.revalidate_post_hitl(),
+          and fail-closed post_hitl_rehydrate_node / post_hitl_revalidate_node in
+          src/governed_financial_advisor/graph/subgraphs/governed_trader_graph.py,
+          POAM-2026-240), verified in tests/test_defer_dual_control_auth.py, tests/test_defer_queue_quorum.py,
           tests/test_defer_queue_single_use.py, tests/test_hitl_toctou_revalidation.py,
           tests/governor/test_post_hitl_approval_spend.py, tests/governor/test_regional_overlay.py,
           and tests/cage_finance/test_trade_confidence_tier.py.'

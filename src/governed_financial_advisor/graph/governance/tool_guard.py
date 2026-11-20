@@ -267,6 +267,7 @@ def gateway_tool_guard(
                     "governance_envelope": None,
                     "deferred_id": None,
                     "approval_decision": None,
+                    "hitl_reference_quote": None,
                     "routing_verdict_cache": None,
                 }
             if approved_id is not None:
@@ -279,6 +280,7 @@ def gateway_tool_guard(
                     "governance_envelope": None,
                     "deferred_id": None,
                     "approval_decision": None,
+                    "hitl_reference_quote": None,
                     "routing_verdict_cache": None,
                 }
 

@@ -70,6 +70,11 @@ async def data_analyst_node(state):  # type: ignore[no-untyped-def]
     """
     logger.info("--- [Graph] Invoking Data Analyst Subgraph ---")
 
+    from src.governed_financial_advisor.graph.nodes.toctou_quote import (
+        build_hitl_reference_quote,
+        extract_analyst_quote_and_ticker,
+        normalize_ticker,
+    )
     from src.governed_financial_advisor.graph.subgraphs.data_analyst_graph import (
         data_analyst_graph,
     )
@@ -79,12 +84,23 @@ async def data_analyst_node(state):  # type: ignore[no-untyped-def]
     # The return contains the new message history (including the tool output).
     result = await data_analyst_graph.ainvoke(state, {"recursion_limit": 10})
 
-    return {
+    analyst_ticker, analyst_price = extract_analyst_quote_and_ticker(
+        result.get("messages")
+    )
+    resolved_ticker = analyst_ticker or normalize_ticker(
+        state.get("data_analyst_ticker")
+    )
+    out: dict[str, Any] = {
         "messages": result["messages"],
-        # Provide an explicit next_step signal back to the parent graph if needed,
-        # or just rely on the parent's Supervisor logic via returning END/FINISH.
-        "data_analyst_ticker": result.get("reasoning_output", "UNKNOWN"),
+        "data_analyst_ticker": resolved_ticker,
     }
+    if resolved_ticker is not None and analyst_price is not None:
+        out["hitl_reference_quote"] = build_hitl_reference_quote(
+            resolved_ticker,
+            analyst_price,
+            source="get_market_data",
+        )
+    return out
 
 
 async def execution_analyst_node(state):  # type: ignore[no-untyped-def]
@@ -251,19 +267,56 @@ async def execution_analyst_node(state):  # type: ignore[no-untyped-def]
     # BUG-FIX: loop_count was reset to 0 on non-REJECTED_REVISE paths, so
     # route_after_evaluator always saw 0 and cycled infinitely.
     # Always increment so the evaluator gate can cap at 3 and break to explainer.
-    updates = {
+    updates: dict[str, Any] = {
         "messages": [("ai", final_response)],
         "risk_status": "UNKNOWN",
         "execution_plan_output": plan_output,
         "loop_count": current_loop + 1,
     }
 
-    # Extract Context back to global state
+    # Extract Context back to global state & capture check-time TOCTOU reference quote
     if plan_output and "error" not in plan_output:
         if plan_output.get("user_risk_attitude"):
             updates["risk_attitude"] = plan_output.get("user_risk_attitude")
         if plan_output.get("user_investment_period"):
             updates["investment_period"] = plan_output.get("user_investment_period")
+
+        from src.governed_financial_advisor.graph.nodes.toctou_quote import (
+            build_hitl_reference_quote,
+            extract_plan_ticker_and_price,
+            extract_reference_quote_from_state,
+            fetch_live_yfinance_price,
+        )
+
+        plan_ticker, plan_price = extract_plan_ticker_and_price(plan_output)
+        if plan_ticker is not None:
+            updates["data_analyst_ticker"] = plan_ticker
+            _, existing_price, existing_source = extract_reference_quote_from_state(
+                {**state, "execution_plan_output": plan_output},
+                preferred_ticker=plan_ticker,
+            )
+            ref_price = plan_price or existing_price
+            ref_source = (
+                "execution_plan"
+                if plan_price is not None
+                else (existing_source or "hitl_reference_quote")
+            )
+            if ref_price is None:
+                try:
+                    ref_price = await fetch_live_yfinance_price(plan_ticker)
+                    ref_source = "yfinance_check_time"
+                except Exception as exc:
+                    logger.warning(
+                        "[ExecutionAnalyst] ⚠️ Could not capture check-time quote for %s: %s",
+                        plan_ticker,
+                        exc,
+                    )
+            if ref_price is not None:
+                updates["hitl_reference_quote"] = build_hitl_reference_quote(
+                    plan_ticker,
+                    ref_price,
+                    source=ref_source,
+                )
 
     return updates
 
@@ -289,18 +342,29 @@ async def governed_trader_node(state, *, subgraph):  # type: ignore[no-untyped-d
     """
     logger.info("--- [Graph] Calling Governed Trader ---")
 
-    # We pass the execution plan and evaluation result down to the subgraph.
-    # data_analyst_ticker is forwarded so post_hitl_rehydrate_node can fetch a
-    # live quote directly without re-parsing execution_plan JSON (more reliable).
+    from src.governed_financial_advisor.graph.nodes.toctou_quote import (
+        normalize_ticker,
+        serialize_execution_plan,
+    )
+
+    # Serialize dict ExecutionPlan payloads as valid JSON (never Python repr)
+    # and forward check-time ticker + reference quote for post-HITL TOCTOU gating.
+    plan_output = state.get("execution_plan_output")
+    serialized_plan = (
+        serialize_execution_plan(plan_output) if plan_output is not None else "No plan."
+    )
     subgraph_state = {
         "messages": state.get("messages", []),
-        "execution_plan": str(state.get("execution_plan_output", "No plan.")),
+        "execution_plan": serialized_plan,
         "evaluation_result": str(
             state.get("evaluation_result", "DENIED")
         ),  # M-06: fail-closed default
         "governance_signature": state.get("governance_signature"),
         "routing_verdict_cache": state.get("routing_verdict_cache"),
-        "data_analyst_ticker": state.get("data_analyst_ticker"),  # TOCTOU: re-hydration
+        "data_analyst_ticker": normalize_ticker(
+            state.get("data_analyst_ticker")
+        ),  # TOCTOU: re-hydration
+        "hitl_reference_quote": state.get("hitl_reference_quote"),
         "deferred_id": state.get("deferred_id"),
         "approval_decision": state.get("approval_decision"),
     }
@@ -316,4 +380,6 @@ async def governed_trader_node(state, *, subgraph):  # type: ignore[no-untyped-d
         out["deferred_id"] = result["deferred_id"]
     if "approval_decision" in result:
         out["approval_decision"] = result["approval_decision"]
+    if "hitl_reference_quote" in result:
+        out["hitl_reference_quote"] = result["hitl_reference_quote"]
     return out

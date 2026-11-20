@@ -208,9 +208,9 @@ Human-in-the-Loop (HITL) interrupts are subject to Time-of-Check/Time-of-Use (TO
 | Node | Purpose |
 |------|---------|
 | `approval` ([`approval_node`](../../src/governed_financial_advisor/graph/nodes/approval_node.py)) | Suspends the LangGraph StateGraph by calling the dynamic `interrupt()` primitive (`langgraph.types.interrupt`) and surfaces the trade payload to a reviewer |
-| `post_hitl_rehydrate` | Fetches a live market quote at actuation time (yfinance `fast_info["last_price"]`); computes price drift vs. stale approval price |
-| `post_hitl_revalidate` | Checks drift against reviewer's `max_slippage_pct`, then calls the gateway's `POST /governance/revalidate-post-hitl` with fresh params; the gateway governor re-runs **Tier 3a (CBF)** and **Tier 3b (OPA)** only (the `POST_HITL` profile) — the advisor re-checks nothing in-process |
-| `drift_blocked` | Fail-closed terminal node reached when drift or re-validation blocks the trade |
+| `post_hitl_rehydrate` | Resolves the validated ticker and check-time reference quote (`hitl_reference_quote` / `ExecutionPlan`), fetches a live market quote at actuation time (`yfinance`), and computes `drift_pct` |
+| `post_hitl_revalidate` | Fail-closed reviewer slippage gate (`POAM-2026-240`): verifies `status == "OK"` and finite `0.0 <= drift_pct <= max_slippage_pct` (blocking both exceeded drift and unverifiable `SKIPPED`/`None` quotes); the advisor runs no `SymbolicGovernor` in-process (`POAM-2026-079`) |
+| `drift_blocked` | Fail-closed terminal node reached whenever `post_hitl_safety_status != "PASSED"` |
 
 > [!IMPORTANT]
 > The graph is compiled **without** `interrupt_before`. Suspension is a runtime decision made inside `approval_node` via `interrupt()`, and resumption uses the LangGraph SDK `Command(resume={...})` pattern — there is no HTTP resume endpoint.
@@ -219,18 +219,18 @@ Human-in-the-Loop (HITL) interrupts are subject to Time-of-Check/Time-of-Use (TO
 ```
 approval_node calls interrupt(trade_payload) → graph suspends
         ↓
-Human reviews in AgentSight UI (HITL TTL countdown visible)
+Human reviews and records DeferQueue quorum approval at compliance-bridge
         ↓
 Reviewer resumes the thread: Command(resume={"approved": true, "max_slippage_pct": ...})
         ↓ (if not approved → rejection_node → END)
-post_hitl_rehydrate — fetch live price; compute drift_pct
-        ↓ (if drift_pct > max_slippage_pct → drift_blocked)
-post_hitl_revalidate — gateway POST /governance/revalidate-post-hitl re-runs Tier 3a (CBF) + Tier 3b (OPA) with fresh params
-        ↓ (if governance violation → drift_blocked)
-executor — execute trade (guarded tools node → gateway /tools/execute)
+post_hitl_rehydrate — fetch live price; compute drift_pct vs. hitl_reference_quote
+        ↓
+post_hitl_revalidate — fail-closed check: status == "OK" and 0.0 <= drift_pct <= max_slippage_pct
+        ↓ (if drift_pct > max_slippage_pct or drift unverifiable → drift_blocked → END)
+executor → tools — execute_trade_action(deferred_id=...) consumes approval once and runs gateway SymbolicGovernor.revalidate_post_hitl()
 ```
 
-If `post_hitl_revalidate` fails (market conditions changed), the trade is blocked and the operator is notified.
+If `post_hitl_revalidate` blocks (market drift exceeded tolerance or quote state could not be verified), the trade is aborted fail-closed and surfaced to the user.
 
 ---
 

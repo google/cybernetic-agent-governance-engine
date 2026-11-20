@@ -66,7 +66,7 @@ All agents reside in `src/governed_financial_advisor/agents/`. Import paths foll
 
 ## 3. AgentState TypedDict & Regression Locking
 
-All graph nodes share a single state object defined in `src/governed_financial_advisor/graph/state.py`. The `AgentState` TypedDict declares **40 fields** at HEAD, locked against schema regression via `tests/test_agent_state_schema.py` and mirrored into the generated JSON Schema at `compliance/schemas/agent_state_schema.json` (freshness gate: `make check-agent-state-schema`). The **25 baseline fields** below constitute the original regression-locked core; the remainder are advanced governance extensions:
+All graph nodes share a single state object defined in `src/governed_financial_advisor/graph/state.py`. The `AgentState` TypedDict declares **41 fields** at HEAD, locked against schema regression via `tests/test_agent_state_schema.py` and mirrored into the generated JSON Schema at `compliance/schemas/agent_state_schema.json` (freshness gate: `make check-agent-state-schema`). The **25 baseline fields** below constitute the original regression-locked core; the remainder are advanced governance extensions:
 
 | Field                   | Type / Notes                                       | Regression Locked | Owner(s)                      |
 | ----------------------- | -------------------------------------------------- | ----------------- | ----------------------------- |
@@ -81,7 +81,7 @@ All graph nodes share a single state object defined in `src/governed_financial_a
 | `investment_period`     | User-declared investment horizon                   | Yes               | Input                         |
 | `reasoning_output`      | DeepSeek chain-of-thought text                     | Yes               | `thinker_node`                |
 | `execution_plan_output` | Serialized `ExecutionPlan` (JSON)                  | Yes               | `ExecutionAnalystAgent`       |
-| `data_analyst_ticker`   | Resolved ticker symbol + market data               | Yes               | `DataAnalystAgent`            |
+| `data_analyst_ticker`   | Validated uppercase ticker symbol (`None` if absent) | Yes             | `data_analyst_node`, `execution_analyst_node` |
 | `evaluation_result`     | Structured evaluation verdict                      | Yes               | `EvaluatorAgent`              |
 | `opa_results`           | OPA policy evaluation results                      | Yes               | `EvaluatorAgent`              |
 | `execution_result`      | Trade execution outcome                            | Yes               | `GovernedTrader`              |
@@ -92,31 +92,28 @@ All graph nodes share a single state object defined in `src/governed_financial_a
 | `approval_required`     | Boolean — whether HITL gate was triggered          | Yes               | `approval_node`               |
 | `approval_decision`     | `dict \| None` — structured human decision          | Yes               | `approval_node` (via resume)  |
 | `hitl_expires_at`       | `str \| None` — TTL expiration timestamp           | Yes               | `approval_node`               |
+| `hitl_reference_quote`  | `dict \| None` — Check-time market quote (`{ticker, price, source, captured_at_utc}`) | Extended | `data_analyst_node`, `execution_analyst_node` |
 | `guardrail_blocked`     | Boolean — NeMo input rail gate                     | Yes               | `nemo_guardrail`              |
 | `guardrail_reason`      | Reason for NeMo input rail block                   | Yes               | `nemo_guardrail`              |
 | `output_rail_applied`   | Boolean — NeMo output rail tracking                | Yes               | `nemo_output_rail`            |
 | `ftra_status`           | `str \| None` — `"CLEAR"` / `"HITL_REQUIRED"` / `"BLOCKED"` | Extended | `ftra_node`                   |
 | `ftra_result`           | `dict \| None` — Serialized FTRA reachability result | Extended        | `ftra_node`                   |
 | `ftra_defer_id`         | `str \| None` — Correlation UUID for DEFER requests| Extended          | `defer_node`                  |
-| `narrow_status`         | `str \| None` — `"NARROWED"` / `"NOT_NARROWED"`     | Extended          | `SymbolicGovernor`            |
-| `narrowed_params`       | `dict \| None` — Clamped parameters from NARROW     | Extended          | `SymbolicGovernor`            |
-| `consecutive_denials`   | `int` — Sequential DENY counter (reset on ALLOW)   | Extended          | `SymbolicGovernor`            |
-| `last_violation`        | `dict \| None` — Most recent structured violation   | Extended          | `SymbolicGovernor`            |
-| `deferral_ticket_id`    | `str \| None` — Ticket ID from `DeferralPending`   | Extended          | `safety_node` / `defer_node`  |
-| `deferral_reason`       | `str \| None` — Justification for the deferral     | Extended          | `safety_node`                 |
-| `agent_id`              | `str` — Identifier submitted to the Gateway PDP    | Extended          | Input                         |
-| `proposed_action`       | `dict \| None` — Parameters staged for validation   | Extended          | Upstream tool-planning nodes  |
-| `governance_envelope`   | `dict \| None` — Gateway APPROVED verdict          | Extended          | `gateway_tool_guard`          |
-| `governance_status`     | `str \| None` — `"ALLOWED"` / `"DENIED"` / `"DEFERRED"` | Extended      | `gateway_tool_guard`          |
-| `routing_verdict_cache` | `dict \| None` — Fingerprint-bound single-use `validate-action` preview verdict (`30s` TTL) | Extended | `safety_node` / `gateway_tool_guard` |
+| `narrow_status`         | `str \| None` — `"NARROWED"` / `"NOT_NARROWED"`    | Extended          | `safety_node`                 |
+| `narrowed_params`       | `dict \| None` — Original and clamped parameter values | Extended       | `safety_node`                 |
+| `consecutive_denials`   | Sequential DENY counter (caps replanning at 2)     | Extended          | `safety_node`                 |
+| `last_violation`        | Structured details from most recent policy denial  | Extended          | `safety_node`                 |
+| `deferral_ticket_id`    | DeferQueue ticket ID for `DEFER` holds             | Extended          | `safety_node`, `defer_node`   |
+| `deferral_reason`       | Justification string for `DEFER` holds             | Extended          | `safety_node`, `defer_node`   |
+| `deferred_id`           | Gateway `REQUIRE_APPROVAL` token ID                | Extended          | `safety_node`, `gateway_tool_guard` |
+| `agent_id`              | Audit identifier (`"financial-advisor-v3"`)        | Extended          | `@cage_guard`                 |
+| `proposed_action`       | Candidate action parameters                        | Extended          | `@cage_guard`                 |
+| `governance_envelope`   | Signed gateway decision envelope                   | Extended          | `gateway_tool_guard`          |
+| `governance_status`     | `"ALLOWED"` / `"DENIED"` / `"REQUIRE_APPROVAL"`    | Extended          | `gateway_tool_guard`          |
+| `routing_verdict_cache` | Fingerprint-bound single-use `ALLOW` preview cache | Extended          | `evaluator_node`, `safety_node` |
 
-### ExecutionPlan Pydantic Schema (TOCTOU Defense)
-
-To mitigate Time-Of-Check to Time-Of-Use vulnerabilities, the `ExecutionPlan` model in `src/governed_financial_advisor/agents/execution_analyst/agent.py` embeds dynamic execution bounds:
-- **`max_slippage_pct` (float)**: The maximum allowable percentage price drift between check time and execution time quotes (default: `2.0`).
-- **`limit_price` (Optional[float])**: The maximum or minimum boundary price at which the trade is permitted to execute.
-
-While `ExecutionAnalystAgent` defines the structural steps of the trade, `EvaluatorAgent` calibrates these fields based on asset volatility and market conditions before graph suspension.
+### 3.1 Key Extended Governance Fields
+- **`max_slippage_pct` (float, `0.0–100.0`)**: The maximum allowable percentage price drift between check-time (`hitl_reference_quote`) and actuation-time quotes (default: `2.0`, carried inside `approval_decision`).
 
 ---
 
@@ -141,7 +138,7 @@ flowchart TD
     ftra_node -->|CLEAR| safety_check
     ftra_node -->|BLOCKED / HITL_REQUIRED| explainer
     safety_check --> route_after_safety{route_after_safety}
-    route_after_safety -->|risk_score > 0.7 or amount > 10000| approval_node
+    route_after_safety -->|approval_required or deferred_id| approval_node
     route_after_safety -->|APPROVED or SKIPPED| governed_trader
     route_after_safety -->|DEFERRED / ESCALATED / MANUAL_REVIEW| defer_node
     route_after_safety -->|BLOCKED| explainer
@@ -166,7 +163,7 @@ flowchart TD
 - **`route_after_evaluator(state)`**: Requires an `APPROVED` verdict in `state["evaluation_result"]` before routing to `ftra_node` (CTRL_FTRA_001, Tier 0.5). The advisor holds no signing key, so the edge routes on the verdict alone; authorization is enforced by the gateway's routing seal at execution time. A missing or non-approved verdict routes back to `execution_analyst` for re-planning (capped at `loop_count >= 3` $\to$ `explainer`).
 - **`route_after_ftra(state)`**: Emitted by the FTRA node factory. `CLEAR` $\to$ `safety_check`; `BLOCKED` and `HITL_REQUIRED` fall back to `explainer`.
 - **`route_after_safety(state)`**: Reads `state["safety_status"]`:
-  - `APPROVED` or `SKIPPED` $\to$ `approval_node` when `evaluation_result.risk_score` $> 0.7$ **or** any `execution_plan_output` step `amount` $> \$10{,}000$; otherwise directly to `governed_trader`
+  - `APPROVED` or `SKIPPED` $\to$ `approval_node` when `approval_required` or `deferred_id` is set; otherwise directly to `governed_trader`
   - `DEFERRED`, `ESCALATED` or `MANUAL_REVIEW` $\to$ `defer_node`, which only packages the gateway-issued `deferral_ticket_id` for checkpointing (the gateway owns the DeferQueue; a missing ticket raises and fails closed)
   - `BLOCKED` or rejected $\to$ `explainer` (compliance narrative; no trade executed)
 
@@ -176,18 +173,18 @@ flowchart TD
 
 ### 5.1 Data Analyst Subgraph
 Defined in `src/governed_financial_advisor/graph/subgraphs/data_analyst_graph.py` over `DataAnalystState`, with nodes `thinker` $\to$ `doer` $\to$ `execute_tool` $\to$ `reporter`:
-1. **Ticker Extraction**: Extracts ticker symbol from conversation history.
+1. **Ticker Extraction**: Extracts ticker symbol from conversation history and tool arguments (`data_analyst_ticker`, never raw reasoning prose).
 2. **yfinance Fetch**: Retrieves 1-month OHLCV price history deterministically.
-3. **Latest Close**: Extracts latest market close price for downstream planning.
+3. **Latest Close**: Extracts latest market close price into `hitl_reference_quote` for downstream TOCTOU drift validation.
 4. **Top 3 News**: Fetches the 3 most recent news headlines for ticker context.
 
 The `execute_tool` node is the subgraph's `tool_executor_node` wrapped by `gateway_tool_guard(GOVERNED_ACTION)`, where `GOVERNED_ACTION = "market_analysis"`. The upstream `doer` node emits the tool calls; the guard submits each one to the gateway's `POST /governance/validate-action` before the fetch runs. `market_analysis` is the finance domain's registered read-only action: it is in `REGISTERED_ACTIONS` ([`src/cage_finance/__init__.py`](../../src/cage_finance/__init__.py)), classified `READ_ONLY` in the FTRA registry ([`config/ftra/terminal_registry.json`](../../config/ftra/terminal_registry.json)), and allowed by [`trade_governance.rego`](../../src/cage_finance/opa/trade_governance.rego). Any unregistered action name is denied by OPA and treated as irreversible by FTRA. [`tests/test_data_analyst_action_contract.py`](../../tests/test_data_analyst_action_contract.py) pins all three.
 
 ### 5.2 Governed Trader Subgraph
-Defined in `src/governed_financial_advisor/graph/subgraphs/governed_trader_graph.py` over `GovernedTraderState`. Entry is always `executor`; the gateway, not the advisor, decides whether a human is needed. When the guarded `tools` node receives `REQUIRE_APPROVAL` with a gateway-issued `deferred_id`, `route_after_tools` routes to the `approval` node (the dynamic `interrupt()` gate of §7); `ALLOWED` loops back to `executor`, and any refusal ends the subgraph.
+Defined in `src/governed_financial_advisor/graph/subgraphs/governed_trader_graph.py` over `GovernedTraderState`. Entry is `post_hitl_rehydrate` when resuming with a pre-approved `deferred_id`, and `executor` otherwise; the gateway, not the advisor, decides whether a human is needed. When the guarded `tools` node receives `REQUIRE_APPROVAL` with a gateway-issued `deferred_id`, `route_after_tools` routes to the `approval` node (the dynamic `interrupt()` gate of §7); `ALLOWED` loops back to `executor`, and any refusal ends the subgraph.
 1. **HITL Gate (`approval`)**: `approval_node` suspends the subgraph via `interrupt()`; on resume it issues `Command(goto="post_hitl_rehydrate")` when approved or `Command(goto="rejection")` when refused.
-2. **State Rehydration (`post_hitl_rehydrate`)**: Restores the parked execution context after resume.
-3. **Reviewer Slippage Gate (`post_hitl_revalidate`)**: Fetches fresh market data immediately upon resume, calculates active price drift and asserts drift $\le$ `max_slippage_pct` (advisor-side, no governance call). On breach, `route_post_revalidation` routes to the fail-closed terminal `drift_blocked`; on `PASSED` it returns to `executor`, which re-proposes the trade with the `deferred_id`.
+2. **State Rehydration (`post_hitl_rehydrate`)**: Resolves the validated ticker and check-time reference quote (`hitl_reference_quote` / `ExecutionPlan` `PlanStep.parameters`), samples a live quote via `yfinance`, and computes `drift_pct`. Missing tickers, missing reference prices, or `yfinance` errors mark `status="SKIPPED"` with `drift_pct=None`.
+3. **Fail-Closed Reviewer Slippage Gate (`post_hitl_revalidate`)**: Asserts `status == "OK"` and finite `0.0 <= drift_pct <= max_slippage_pct` (advisor-side, no governance call; `POAM-2026-240`). On slippage breach (`price_slippage_exceeded`), unverifiable drift (`drift_unverifiable`), or invalid tolerance (`invalid_slippage_tolerance`), `post_hitl_revalidate` stamps `BLOCKED` and `route_post_revalidation` routes fail-closed to `drift_blocked`; only explicit `PASSED` routes to `executor`, which forwards `deferred_id` for single-use gateway consumption.
 4. **Trade Dispatch (`executor` $\to$ `tools`)**: The `tools` node is `tool_executor_node` wrapped by `gateway_tool_guard("execute_trade")`, so no trade tool can fire without an `ALLOW`/`NARROW` verdict from the gateway's `POST /governance/validate-action` (a non-committing preview, or a single-use fingerprint-verified `routing_verdict_cache` entry populated by `safety_node` within `30s`) or, on the approved path, a `deferred_id` that the gateway consumes inside `execute_trade_action`. The single committing governance run (FULL profile for direct trades, POST_HITL profile for approved trades) happens in the gateway at execution time. The trade tool is the gateway's `execute_trade_action` MCP tool, loaded through `GatewayMCPClient.get_tools()`.
 5. **Result Recording**: Writes `execution_result` to state for `ExplainerAgent`.
 

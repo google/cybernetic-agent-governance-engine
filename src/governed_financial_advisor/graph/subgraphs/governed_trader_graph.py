@@ -72,6 +72,16 @@ from src.governed_financial_advisor.graph.nodes.approval_node import (
     approval_node,
     rejection_node,
 )
+from src.governed_financial_advisor.graph.nodes.toctou_quote import (
+    build_hitl_reference_quote,
+    extract_plan_ticker_and_price,
+    extract_reference_quote_from_state,
+    fetch_live_yfinance_price,
+    non_negative_finite_float,
+    normalize_ticker,
+    positive_finite_float,
+    resolve_decision_slippage_pct,
+)
 from src.governed_financial_advisor.infrastructure.llm.models import chat_model
 
 logger = logging.getLogger(__name__)
@@ -93,6 +103,9 @@ class GovernedTraderState(TypedDict):
     # These fields close the ghost-state vulnerability: continuous market variables
     # are re-sampled and re-validated at the moment of actuation, not at check-time.
     data_analyst_ticker: str | None  # passed from parent graph for re-hydration
+    hitl_reference_quote: (
+        dict[str, Any] | None
+    )  # check-time {ticker, price, source, captured_at_utc}
     rehydration_result: dict | None  # fresh market snapshot + drift metrics
     post_hitl_safety_status: str | None  # "PASSED" | "BLOCKED" after the slippage gate
 
@@ -259,9 +272,56 @@ async def executor_node(state: GovernedTraderState) -> dict[str, Any]:
             len(str(getattr(response, "content", "") or "")),
         )
 
+        out: dict[str, Any] = {"messages": [response]}
+
+        # On pre-HITL entry, ensure a check-time reference quote is recorded
+        # before gateway_tool_guard can park a REQUIRE_APPROVAL interrupt.
+        decision = state.get("approval_decision")
+        pre_hitl = not (
+            state.get("deferred_id")
+            and isinstance(decision, dict)
+            and decision.get("approved") is True
+        )
+        tool_calls = getattr(response, "tool_calls", None) or []
+        if pre_hitl and tool_calls:
+            first_args = (
+                tool_calls[0].get("args") if isinstance(tool_calls[0], dict) else None
+            )
+            call_symbol = (
+                normalize_ticker(first_args.get("symbol"))
+                if isinstance(first_args, dict)
+                else None
+            )
+            resolved_sym, existing_price, existing_source = (
+                extract_reference_quote_from_state(
+                    state,
+                    preferred_ticker=call_symbol,
+                )
+            )
+            target_sym = call_symbol or resolved_sym
+            if target_sym is not None:
+                ref_price = existing_price
+                ref_source = existing_source or "hitl_reference_quote"
+                if ref_price is None:
+                    try:
+                        ref_price = await fetch_live_yfinance_price(target_sym)
+                        ref_source = "yfinance_check_time"
+                    except Exception as exc:
+                        logger.warning(
+                            "[ExecutorNode] ⚠️ Could not capture check-time quote for %s: %s",
+                            target_sym,
+                            exc,
+                        )
+                if ref_price is not None and state.get("hitl_reference_quote") is None:
+                    out["hitl_reference_quote"] = build_hitl_reference_quote(
+                        target_sym,
+                        ref_price,
+                        source=ref_source,
+                    )
+
         # The tool calls on ``response`` are what gateway_tool_guard submits to
         # the gateway — every one of them, not a summarised first call.
-        return {"messages": [response]}
+        return out
 
 
 # ---------------------------------------------------------------------------
@@ -313,18 +373,21 @@ async def post_hitl_rehydrate_node(state: GovernedTraderState) -> dict[str, Any]
     """TOCTOU Remediation — State Re-hydration Node.
 
     Samples the live market environment immediately after HITL resumption.
-    Runs BEFORE the executor to populate fresh price data for the subsequent
-    re-validation step.
+    Runs BEFORE ``post_hitl_revalidate_node`` to populate fresh price data and
+    measured drift against the check-time reference quote.
 
     Emits OTel span attributes:
-        toctou.rehydration.status    — OK | SKIPPED
-        toctou.rehydration.ticker    — symbol fetched
-        toctou.rehydration.stale_price  — price from approved execution plan
+        toctou.rehydration.status       — OK | SKIPPED
+        toctou.rehydration.reason       — populated when status=SKIPPED
+        toctou.rehydration.ticker       — symbol fetched
+        toctou.rehydration.stale_price  — check-time reference price
         toctou.rehydration.fresh_price  — live quote from yfinance
         toctou.rehydration.drift_pct    — abs percentage change
 
-    Fail-open on missing ticker or yfinance errors: sets status=SKIPPED and
-    continues so the re-validation step can still run Tier 3a/3b on plan params.
+    Degrades without raising an exception on missing ticker, missing reference
+    price, or yfinance errors by returning ``status="SKIPPED"`` and
+    ``drift_pct=None``, which ``post_hitl_revalidate_node`` then blocks
+    fail-closed (``drift_unverifiable``).
     """
     tracer = get_tracer()
 
@@ -332,31 +395,37 @@ async def post_hitl_rehydrate_node(state: GovernedTraderState) -> dict[str, Any]
         span.set_attribute(OBSERVATION_NAME, "hitl_rehydration")
         span.set_attribute(OBSERVATION_TYPE, "span")
 
-        # 1. Resolve ticker — prefer explicit state field, fall back to plan JSON.
-        ticker: str | None = state.get("data_analyst_ticker")
-        if not ticker:
-            plan_raw = state.get("execution_plan", "")
-            try:
-                plan = json.loads(plan_raw) if isinstance(plan_raw, str) else plan_raw
-                for step in plan.get("steps", []):
-                    if step.get("symbol"):
-                        ticker = str(step["symbol"]).upper()
-                        break
-                if not ticker:
-                    ticker = plan.get("symbol") or plan.get("ticker")
-                    if ticker:
-                        ticker = str(ticker).upper()
-            except (json.JSONDecodeError, TypeError, AttributeError):
-                pass
+        # 1. Resolve validated ticker + check-time reference price from state,
+        #    hitl_reference_quote, ExecutionPlan (nested PlanStep.parameters or
+        #    flat step), or get_market_data message history.
+        ticker = normalize_ticker(state.get("data_analyst_ticker"))
+        plan_ticker, _ = extract_plan_ticker_and_price(
+            state.get("execution_plan", ""),
+            preferred_ticker=ticker,
+        )
+        if ticker is None and plan_ticker is not None:
+            ticker = plan_ticker
 
-        def _skipped_result(reason: str) -> dict:
+        resolved_ticker, stale_price, _ = extract_reference_quote_from_state(
+            state,
+            preferred_ticker=ticker,
+        )
+        if ticker is None and resolved_ticker is not None:
+            ticker = resolved_ticker
+
+        def _skipped_result(
+            reason: str,
+            *,
+            stale: float | None = None,
+            fresh: float | None = None,
+        ) -> dict[str, Any]:
             return {
                 "rehydration_result": {
                     "status": "SKIPPED",
                     "reason": reason,
                     "ticker": ticker,
-                    "fresh_price": None,
-                    "stale_price": None,
+                    "fresh_price": fresh,
+                    "stale_price": stale,
                     "drift_pct": None,
                     "timestamp_utc": datetime.now(timezone.utc).isoformat(),
                 }
@@ -364,67 +433,41 @@ async def post_hitl_rehydrate_node(state: GovernedTraderState) -> dict[str, Any]
 
         if not ticker:
             logger.warning(
-                "[RehydrateNode] ⚠️ No ticker found in state or execution_plan — "
-                "skipping market data fetch (re-validation will use plan params)."
+                "[RehydrateNode] ⚠️ No valid ticker found in state or execution_plan — "
+                "marking rehydration SKIPPED (post_hitl_revalidate will block fail-closed)."
             )
             span.set_attribute("toctou.rehydration.status", "SKIPPED")
             span.set_attribute("toctou.rehydration.reason", "no_ticker")
             return _skipped_result("no_ticker")
 
-        # 2. Extract stale price from execution plan for drift calculation.
-        stale_price: float | None = None
-        try:
-            plan_raw = state.get("execution_plan", "")
-            plan = json.loads(plan_raw) if isinstance(plan_raw, str) else plan_raw
-            for step in plan.get("steps", []):
-                if step.get("price"):
-                    stale_price = float(step["price"])
-                    break
-                # Derive implied price from amount / quantity
-                if (
-                    step.get("amount")
-                    and step.get("quantity")
-                    and float(step["quantity"]) > 0
-                ):
-                    stale_price = float(step["amount"]) / float(step["quantity"])
-                    break
-        except (json.JSONDecodeError, TypeError, ValueError, ZeroDivisionError):
-            pass
+        span.set_attribute("toctou.rehydration.ticker", ticker)
 
-        # 3. Fetch live quote via yfinance off the event loop with bounded timeout.
-        try:
-            import yfinance as yf
-
-            def _fetch_yfinance_price(sym: str) -> float | None:
-                ticker_obj = yf.Ticker(sym)
-                price: float | None = None
-                # Try fast_info first (single HTTP call, ~200ms).
-                try:
-                    fi = ticker_obj.fast_info
-                    raw = fi.get("last_price") or fi.get("lastPrice")
-                    if raw and float(raw) > 0:
-                        price = float(raw)
-                except Exception as exc:
-                    logger.debug(
-                        "yfinance fast_info lookup failed for %s: %s", sym, exc
-                    )
-
-                # Fallback: last close from 1-day history.
-                if not price or price <= 0:
-                    hist = ticker_obj.history(period="1d")
-                    if not hist.empty:
-                        price = float(hist.iloc[-1]["Close"])
-                return price
-
-            yf_timeout = float(os.environ.get("YFINANCE_TIMEOUT_SECONDS", "5.0"))
-            fresh_price = await asyncio.wait_for(
-                asyncio.to_thread(_fetch_yfinance_price, ticker),
-                timeout=yf_timeout,
+        if stale_price is None:
+            logger.warning(
+                "[RehydrateNode] ⚠️ No check-time reference price found for %s — "
+                "marking rehydration SKIPPED (post_hitl_revalidate will block fail-closed).",
+                ticker,
             )
+            span.set_attribute("toctou.rehydration.status", "SKIPPED")
+            span.set_attribute("toctou.rehydration.reason", "missing_reference_price")
+            return _skipped_result("missing_reference_price")
 
-            drift_pct: float | None = None
-            if stale_price and stale_price > 0 and fresh_price and fresh_price > 0:
-                drift_pct = abs(fresh_price - stale_price) / stale_price * 100.0
+        span.set_attribute("toctou.rehydration.stale_price", stale_price)
+
+        # 2. Fetch live quote via yfinance off the event loop with bounded timeout.
+        try:
+            fresh_price = await fetch_live_yfinance_price(ticker)
+            if fresh_price is None:
+                logger.warning(
+                    "[RehydrateNode] ⚠️ yfinance returned no usable quote for %s — "
+                    "marking rehydration SKIPPED (post_hitl_revalidate will block fail-closed).",
+                    ticker,
+                )
+                span.set_attribute("toctou.rehydration.status", "SKIPPED")
+                span.set_attribute("toctou.rehydration.reason", "missing_fresh_price")
+                return _skipped_result("missing_fresh_price", stale=stale_price)
+
+            drift_pct = abs(fresh_price - stale_price) / stale_price * 100.0
 
             result = {
                 "status": "OK",
@@ -436,50 +479,50 @@ async def post_hitl_rehydrate_node(state: GovernedTraderState) -> dict[str, Any]
             }
 
             span.set_attribute("toctou.rehydration.status", "OK")
-            span.set_attribute("toctou.rehydration.ticker", ticker)
-            if fresh_price:
-                span.set_attribute("toctou.rehydration.fresh_price", fresh_price)
-            if stale_price:
-                span.set_attribute("toctou.rehydration.stale_price", stale_price)
-            if drift_pct is not None:
-                span.set_attribute("toctou.rehydration.drift_pct", drift_pct)
+            span.set_attribute("toctou.rehydration.fresh_price", fresh_price)
+            span.set_attribute("toctou.rehydration.drift_pct", drift_pct)
 
             logger.info(
                 "[RehydrateNode] ✅ %s | stale=%.4f fresh=%.4f drift=%.2f%%",
                 ticker,
-                stale_price or 0.0,
-                fresh_price or 0.0,
-                drift_pct or 0.0,
+                stale_price,
+                fresh_price,
+                drift_pct,
             )
             return {"rehydration_result": result}
 
         except Exception as exc:
             logger.warning(
                 "[RehydrateNode] ⚠️ yfinance fetch failed for %s (%s) — "
-                "rehydration SKIPPED, re-validation will use plan params.",
+                "rehydration SKIPPED (post_hitl_revalidate will block fail-closed).",
                 ticker,
                 exc,
             )
             span.set_attribute("toctou.rehydration.status", "SKIPPED")
             span.set_attribute("toctou.rehydration.reason", "yfinance_error")
-            return _skipped_result(f"yfinance_error: {exc}")
+            return _skipped_result(f"yfinance_error: {exc}", stale=stale_price)
 
 
 async def post_hitl_revalidate_node(state: GovernedTraderState) -> dict[str, Any]:
-    """TOCTOU Remediation — reviewer slippage gate.
+    """TOCTOU Remediation — fail-closed reviewer slippage gate.
 
     Blocks when the market moved further during review than the reviewer's
-    ``max_slippage_pct`` allows. This is the only check the advisor applies
-    after approval: governance re-validation of the fresh params runs in the
-    gateway (POST_HITL profile) when ``execute_trade_action`` consumes the
-    ``deferred_id`` — the only process that hosts the ``SymbolicGovernor``
+    ``max_slippage_pct`` allows OR when market drift cannot be verified
+    (``status != "OK"``, missing/non-finite ``drift_pct``, missing reference or
+    live quote, or invalid ``max_slippage_pct``). Because the gateway never
+    receives ``max_slippage_pct``, this node is the sole enforcement point for
+    the human reviewer's slippage constraint and must never stamp ``PASSED`` on
+    unverifiable drift (POAM-2026-240).
+
+    Governance re-validation of the trade parameters still runs in the gateway
+    (POST_HITL profile) when ``execute_trade_action`` consumes ``deferred_id``
     (POAM-2026-079).
 
     Emits OTel span attributes:
         toctou.revalidation.result           — PASSED | BLOCKED
-        toctou.revalidation.block_reason     — price_slippage_exceeded
-        toctou.revalidation.drift_pct        — measured drift at execution time
-        toctou.revalidation.max_slippage_pct — reviewer's approved tolerance
+        toctou.revalidation.block_reason     — price_slippage_exceeded | drift_unverifiable | invalid_slippage_tolerance
+        toctou.revalidation.drift_pct        — measured drift at execution time (when finite)
+        toctou.revalidation.max_slippage_pct — reviewer's approved tolerance (when valid)
     """
     tracer = get_tracer()
 
@@ -490,16 +533,64 @@ async def post_hitl_revalidate_node(state: GovernedTraderState) -> dict[str, Any
         rehydration: dict[str, Any] = state.get("rehydration_result") or {}
         approval_decision: dict[str, Any] = state.get("approval_decision") or {}
 
-        max_slippage_pct: float = float(approval_decision.get("max_slippage_pct", 2.0))
-        drift_pct: float | None = rehydration.get("drift_pct")
+        max_slippage_pct = resolve_decision_slippage_pct(approval_decision, default=2.0)
+        if max_slippage_pct is None:
+            block_reason = (
+                "Approved slippage tolerance (max_slippage_pct) is invalid or "
+                "outside [0.0%, 100.0%]. Trade aborted fail-closed."
+            )
+            logger.warning("[RevalidateNode] ⛔ %s", block_reason)
+            span.set_attribute("toctou.revalidation.result", "BLOCKED")
+            span.set_attribute(
+                "toctou.revalidation.block_reason", "invalid_slippage_tolerance"
+            )
+            return {
+                "post_hitl_safety_status": "BLOCKED",
+                "rehydration_result": {**rehydration, "block_reason": block_reason},
+            }
 
         span.set_attribute("toctou.revalidation.max_slippage_pct", max_slippage_pct)
-        if drift_pct is not None:
-            span.set_attribute("toctou.revalidation.drift_pct", drift_pct)
 
-        # The reviewer's approved tolerance defines the envelope within which
-        # execution is permitted.
-        if drift_pct is not None and drift_pct > max_slippage_pct:
+        drift_pct = non_negative_finite_float(rehydration.get("drift_pct"))
+        stale_invalid = (
+            "stale_price" in rehydration
+            and positive_finite_float(rehydration.get("stale_price")) is None
+        )
+        fresh_invalid = (
+            "fresh_price" in rehydration
+            and positive_finite_float(rehydration.get("fresh_price")) is None
+        )
+        if (
+            rehydration.get("status") != "OK"
+            or drift_pct is None
+            or stale_invalid
+            or fresh_invalid
+        ):
+            reason_detail = str(rehydration.get("reason") or "unverified_quote_state")
+            asset = rehydration.get("ticker") or "the asset"
+            block_reason = (
+                f"Unable to verify post-HITL market drift for {asset} against the "
+                f"approved \u00b1{max_slippage_pct:.1f}% slippage tolerance "
+                f"({reason_detail}). Trade aborted fail-closed."
+            )
+            logger.warning(
+                "[RevalidateNode] ⛔ Drift unverifiable (%s) — failing closed.",
+                reason_detail,
+            )
+            span.set_attribute("toctou.revalidation.result", "BLOCKED")
+            span.set_attribute("toctou.revalidation.block_reason", "drift_unverifiable")
+            return {
+                "post_hitl_safety_status": "BLOCKED",
+                "rehydration_result": {
+                    **rehydration,
+                    "drift_pct": None,
+                    "block_reason": block_reason,
+                },
+            }
+
+        span.set_attribute("toctou.revalidation.drift_pct", drift_pct)
+
+        if drift_pct > max_slippage_pct:
             block_reason = (
                 f"Market price of {rehydration.get('ticker', 'the asset')} drifted "
                 f"{drift_pct:.2f}% during the review period, exceeding the approved "
@@ -538,14 +629,15 @@ def drift_blocked_node(state: GovernedTraderState) -> dict[str, Any]:
     approval_decision: dict[str, Any] = state.get("approval_decision") or {}
 
     block_reason: str = rehydration.get(
-        "block_reason", "Market conditions changed during the review period."
+        "block_reason",
+        "Market conditions could not be verified within the review envelope.",
     )
     ticker: str = rehydration.get("ticker") or "the asset"
-    drift_pct: float | None = rehydration.get("drift_pct")
+    drift_pct = non_negative_finite_float(rehydration.get("drift_pct"))
     reviewer: str = approval_decision.get("reviewer", "the reviewer")
-    max_slippage_pct: float = float(approval_decision.get("max_slippage_pct", 2.0))
+    max_slippage_pct = resolve_decision_slippage_pct(approval_decision, default=2.0)
 
-    if drift_pct is not None:
+    if drift_pct is not None and max_slippage_pct is not None:
         drift_summary = (
             f"The market price of **{ticker}** moved **{drift_pct:.2f}%** during the "
             f"review period, exceeding the approved \u00b1{max_slippage_pct:.1f}% "
@@ -555,12 +647,12 @@ def drift_blocked_node(state: GovernedTraderState) -> dict[str, Any]:
         drift_summary = block_reason
 
     message = (
-        f"\u26d4 **Trade Blocked \u2014 Market Drift Detected**\n\n"
+        f"\u26d4 **Trade Blocked \u2014 Post-HITL Safety Gate**\n\n"
         f"{drift_summary}\n\n"
-        f"**What happened:** {reviewer} approved this trade, but by the time the "
-        f"system attempted execution, market conditions had moved outside the "
-        f"approved safety envelope. The trade was automatically blocked to protect "
-        f"the investment mandate.\n\n"
+        f"**What happened:** {reviewer} approved this trade, but at actuation time "
+        f"the system could not confirm that live market prices remained within the "
+        f"approved safety envelope. The trade was automatically blocked fail-closed "
+        f"to protect the investment mandate.\n\n"
         f"**Next steps:** Please re-submit your request. The agent will generate a "
         f"fresh execution plan based on current market data."
     )
@@ -574,6 +666,9 @@ def drift_blocked_node(state: GovernedTraderState) -> dict[str, Any]:
     return {
         "messages": [("ai", message)],
         "post_hitl_safety_status": "BLOCKED",
+        "deferred_id": None,
+        "approval_decision": None,
+        "hitl_reference_quote": None,
     }
 
 
@@ -593,14 +688,15 @@ def route_entry(state: GovernedTraderState) -> str:
 
 
 def route_post_revalidation(state: GovernedTraderState) -> str:
-    """Route after the slippage gate: drift_blocked if BLOCKED, else executor."""
-    if state.get("post_hitl_safety_status") == "BLOCKED":
-        logger.info(
-            "[GovernedTrader] Post-HITL re-validation BLOCKED — routing to drift_blocked."
-        )
-        return "drift_blocked"
-    logger.info("[GovernedTrader] Slippage gate passed — routing to executor.")
-    return "executor"
+    """Route after the slippage gate: executor ONLY on explicit PASSED, else drift_blocked."""
+    if state.get("post_hitl_safety_status") == "PASSED":
+        logger.info("[GovernedTrader] Slippage gate passed — routing to executor.")
+        return "executor"
+    logger.info(
+        "[GovernedTrader] Post-HITL re-validation status=%r (not PASSED) — routing fail-closed to drift_blocked.",
+        state.get("post_hitl_safety_status"),
+    )
+    return "drift_blocked"
 
 
 # ---------------------------------------------------------------------------
