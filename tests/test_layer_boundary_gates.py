@@ -322,7 +322,7 @@ BAD_URL = "https://flowsignal.example.com/v1/evaluate"
             temp_path.unlink()
 
     def test_layer3_wire_protocol_provenance_and_ceiling(self, tmp_path):
-        """G8 enforces .md/.json spec/vector provenance on LAYER3_WIRE_PROTOCOL_PROVENANCE and pins the 22-entry ceiling."""
+        """G8 enforces .md/.json spec/vector provenance on LAYER3_WIRE_PROTOCOL_PROVENANCE and pins the 36-entry ceiling."""
         from scripts.check_vendor_brands import (
             LAYER3_WIRE_PROTOCOL_PROVENANCE,
             check_wire_literal_provenance,
@@ -330,7 +330,7 @@ BAD_URL = "https://flowsignal.example.com/v1/evaluate"
 
         repo_root = Path(__file__).resolve().parent.parent
         assert check_wire_literal_provenance(repo_root) == []
-        assert len(LAYER3_WIRE_PROTOCOL_PROVENANCE) == 22
+        assert len(LAYER3_WIRE_PROTOCOL_PROVENANCE) == 36
 
         # Rejects citing a .py file as provenance
         py_file = tmp_path / "adapter.py"
@@ -353,3 +353,74 @@ BAD_URL = "https://flowsignal.example.com/v1/evaluate"
         )
         assert len(errs_missing) == 1
         assert "not found in cited provenance artifact" in errs_missing[0]
+
+    def test_slot_brand_tokens_cover_every_partner_slot_and_fail_on_drift(self):
+        """G8 mechanically enforces 1:1 parity between SLOT_BRAND_TOKENS and check_partner_headers.PARTNER_SLOTS."""
+        from scripts.check_partner_headers import PARTNER_SLOTS, PartnerSlot
+        from scripts.check_vendor_brands import (
+            SLOT_BRAND_TOKENS,
+            check_partner_slot_coverage,
+        )
+
+        repo_root = Path(__file__).resolve().parent.parent
+        assert check_partner_slot_coverage(repo_root) == []
+        assert set(SLOT_BRAND_TOKENS) == set(PARTNER_SLOTS)
+
+        # Omitting an active partner slot fails closed
+        without_p09 = {k: v for k, v in SLOT_BRAND_TOKENS.items() if k != "provider_09"}
+        errs_missing = check_partner_slot_coverage(
+            repo_root, slot_tokens=without_p09, partner_slots=PARTNER_SLOTS
+        )
+        assert any("provider_09" in e and "no brand tokens" in e for e in errs_missing)
+
+        # Registering tokens unrelated to the canonical vendor fails closed
+        mismatched_slots = {
+            **PARTNER_SLOTS,
+            "provider_99": PartnerSlot(
+                vendor="ExampleVendorCorp",
+                status_label="ExampleVendorCorp",
+                seams=("NormativeProvider",),
+            ),
+        }
+        mismatched_tokens = {
+            **SLOT_BRAND_TOKENS,
+            "provider_99": frozenset({"unrelatedtoken"}),
+        }
+        errs_mismatch = check_partner_slot_coverage(
+            repo_root, slot_tokens=mismatched_tokens, partner_slots=mismatched_slots
+        )
+        assert any("do not match canonical vendor" in e for e in errs_mismatch)
+
+    def test_rejects_previously_omitted_partner_brands_and_layer1_wire_literals(
+        self, tmp_path
+    ):
+        """G8 catches all 6 previously omitted partner slots and blocks Layer 3 wire literals in Layer 1."""
+        from scripts.check_vendor_brands import (
+            FORBIDDEN_VENDOR_BRANDS,
+            PARTNER_VENDOR_BRANDS,
+            check_path,
+        )
+
+        repo_root = Path("/repo")
+        for branded_rel in (
+            "tests/integrations/provider_05/test_veip_vectors.py",
+            "src/integrations/provider_09/opscanvas_adapter.py",
+            "src/integrations/actuator_02/openshell_bridge.py",
+            "src/integrations/actuator_03/doca_quarantine.py",
+            "src/integrations/provider_03/veritas_client.py",
+            "src/integrations/provider_06/guardiancyber_adapter.py",
+        ):
+            assert check_path(repo_root / branded_rel, repo_root, PARTNER_VENDOR_BRANDS)
+
+        kernel_file = tmp_path / "kernel_leak.py"
+        kernel_file.write_text(
+            'SCHEMA = "veip-warrant/0.2"\nALIAS = "opscanvas"\n',
+            encoding="utf-8",
+        )
+        # Layer 1 sets allow_wire_literals=False, so even registered Layer 3 wire strings fail
+        kernel_violations = check_vendor_file(
+            kernel_file,
+            FORBIDDEN_VENDOR_BRANDS,
+            allow_wire_literals=False,
+        )
+        assert len(kernel_violations) == 2

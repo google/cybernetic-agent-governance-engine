@@ -847,7 +847,7 @@ system-security-plan:
           the CAGE_WARRANT_SOURCE=provider_05 adapter; requests enter through POST
           /governance/validate-action behind workload identity and through execute_trade_action().
           VEC-001 at confidence 0.98 is admitted, and with a signed VEIP v0.2 ACTIVE
-          warrant and verified key manifest (test_veip_v02_active_warrant_is_verified_and_executes_e2e)
+          warrant and verified key manifest (test_provider_05_v02_active_warrant_is_verified_and_executes_e2e)
           the signed envelope and sealed GOVERNANCE_DECISION record carry verification_status
           VERIFIED; VEC-002 to VEC-006, the v0.2 REVOKED, SUSPENDED, EXPIRED, STALE_STATE,
           TAMPERED_SIGNATURE and UNKNOWN_KID scenarios, a missing warrant and a stale

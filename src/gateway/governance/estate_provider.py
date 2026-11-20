@@ -211,9 +211,6 @@ class StubEstateProvider(EstateProvider):
 
 _ALIAS_MAP = {
     "p09": "provider_09",
-    "opscanvas": "provider_09",
-    "ops-canvas": "provider_09",
-    "ops_canvas": "provider_09",
 }
 
 _VALID_PROVIDERS = (UNAVAILABLE_PROVIDER_NAME, STUB_PROVIDER_NAME, "provider_09")
@@ -230,7 +227,7 @@ def get_estate_provider(name: str | None = None) -> EstateProvider:
     Supported providers:
         - "unavailable"  — Fail-closed default (kernel-resident)
         - "stub"         — Permissive hermetic fixture; dev/test postures only
-        - "provider_09"  — OpsCanvas MCP estate provider (alias: "opscanvas")
+        - "provider_09"  — OpsCanvas MCP estate provider (alias: "p09")
 
     Returns:
         An instantiated EstateProvider.

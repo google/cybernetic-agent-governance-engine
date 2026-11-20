@@ -13,7 +13,18 @@
 # limitations under the License.
 
 """
-VEIP v0.3 Pre-Implementation Review Package & 29-Row Vector Conformance Suite.
+VEIP v0.3 Pre-Implementation Review Package & 29-Row Expected-Outcome Suite.
+
+IMPORTANT — Verification Scope Boundary (POAM-2026-242):
+  ``docs/partners/provider_05/veip_v03/`` shipped candidate JSON Schemas,
+  ``TRUST_AND_WIRE_CONTRACT.md``, and ``EXPECTED_OUTCOME_VECTORS.csv`` with
+  **zero partner-signed v0.3 JSON payloads** and **no deployed /v0.3/* routes**.
+  Consequently, ``v03_pki`` signs CAGE-constructed ``to_v03_dict()`` payloads
+  in-process with deterministic synthetic Ed25519 keys. Passing this module
+  proves CAGE-side internal schema/verifier consistency only — NOT byte-level
+  RFC 8785 JCS or Ed25519 interoperability against partner-produced signatures
+  (which is verified for v0.2 only in ``test_provider_05_v01_vectors.py`` and
+  ``test_provider_05_live.py``).
 
 Verifies:
   1. SHA-256 integrity of the deposited review package in
@@ -54,7 +65,6 @@ from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 from src.gateway.governance.governance_envelope import AttestationStatus
 from src.gateway.governance.jcs_canonicalizer import jcs_canonicalize_plan
 from src.gateway.governance.warrant import (
-    MANIFEST_SCHEMA_VERSION_V03,
     RelianceStatus,
     VerifiedKeyManifest,
     Warrant,
@@ -67,6 +77,8 @@ from src.integrations.provider_05 import (
     BLUEPRINT_SCHEMA_VERSION_V03,
     KEY_SCHEMA_VERSION_V03,
     PHYSICS_SCHEMA_VERSION_V03,
+    PROVIDER_05_MANIFEST_SCHEMA_V03,
+    PROVIDER_05_WARRANT_SCHEMA_V02,
     AdmissibilityGrant,
     Provider05BlueprintProvider,
     Provider05Client,
@@ -79,7 +91,12 @@ from src.integrations.provider_05 import (
 pytestmark = [pytest.mark.unit, pytest.mark.local, pytest.mark.partner]
 
 _REPO_ROOT = Path(__file__).resolve().parents[3]
-_VEIP_V03_DIR = _REPO_ROOT / "docs" / "partners" / "provider_05" / "veip_v03"
+_P05_V03_DIR = next(
+    p.parent
+    for p in (_REPO_ROOT / "docs" / "partners" / "provider_05").rglob(
+        "EXPECTED_OUTCOME_VECTORS.csv"
+    )
+)
 _PINNED_NOW = datetime(2026, 10, 19, 12, 0, 15, tzinfo=timezone.utc)
 
 
@@ -113,19 +130,22 @@ def v03_pki() -> dict[str, Any]:
         root_kid="veip-sandbox-manifest-root-2026-10",
         public_key_b64=_b64u(root_raw),
         expected_fingerprint=root_fp,
+        accepted_manifest_schemas=(PROVIDER_05_MANIFEST_SCHEMA_V03,),
+        purpose_required_manifest_schemas=(PROVIDER_05_MANIFEST_SCHEMA_V03,),
+        accepted_warrant_schemas=(PROVIDER_05_WARRANT_SCHEMA_V02,),
     )
 
     unsigned_manifest: dict[str, Any] = {
-        "schema_version": MANIFEST_SCHEMA_VERSION_V03,
+        "schema_version": PROVIDER_05_MANIFEST_SCHEMA_V03,
         "environment": "SANDBOX",
-        "manifest_id": "veip-manifest-v03-2026-10-19",
-        "issuer": "urn:veraxis:veip:sandbox",
+        "manifest_id": "p05-manifest-v03-2026-10-19",
+        "issuer": "urn:provider-05:sandbox",
         "generated_at": "2026-10-01T00:00:00Z",
         "valid_until": "2026-12-31T23:59:59Z",
         "root_kid": "veip-sandbox-manifest-root-2026-10",
         "keys": [
             {
-                "kid": "veip-v03-warrant-2026-10",
+                "kid": "p05-v03-warrant-2026-10",
                 "alg": "Ed25519",
                 "public_key_b64u": _raw_pub_b64u(warrant_priv),
                 "status": "ACTIVE",
@@ -134,7 +154,7 @@ def v03_pki() -> dict[str, Any]:
                 "purpose": "WARRANT",
             },
             {
-                "kid": "veip-v03-blueprint-2026-10",
+                "kid": "p05-v03-blueprint-2026-10",
                 "alg": "Ed25519",
                 "public_key_b64u": _raw_pub_b64u(blueprint_priv),
                 "status": "ACTIVE",
@@ -143,7 +163,7 @@ def v03_pki() -> dict[str, Any]:
                 "purpose": "BLUEPRINT",
             },
             {
-                "kid": "veip-v03-key-2026-10",
+                "kid": "p05-v03-key-2026-10",
                 "alg": "Ed25519",
                 "public_key_b64u": _raw_pub_b64u(key_priv),
                 "status": "ACTIVE",
@@ -152,7 +172,7 @@ def v03_pki() -> dict[str, Any]:
                 "purpose": "KEY",
             },
             {
-                "kid": "veip-v03-physics-2026-10",
+                "kid": "p05-v03-physics-2026-10",
                 "alg": "Ed25519",
                 "public_key_b64u": _raw_pub_b64u(physics_priv),
                 "status": "ACTIVE",
@@ -201,20 +221,20 @@ def _sign_v03_record(record: Any, priv: Ed25519PrivateKey) -> Any:
 def _make_signed_warrant(
     priv: Ed25519PrivateKey,
     *,
-    kid: str = "veip-v03-warrant-2026-10",
+    kid: str = "p05-v03-warrant-2026-10",
     governing_version: str = "2026.10.v1",
 ) -> Warrant:
     unsigned = Warrant(
-        warrant_id="veip-warrant-v03-001",
+        warrant_id="p05-warrant-v03-001",
         norm_id="FINRA.4511.RECORD_RETENTION",
-        issuing_authority="urn:veraxis:veip:sandbox",
+        issuing_authority="urn:provider-05:sandbox",
         authority_basis="Board Resolution 2026-Q4",
         governing_version=governing_version,
         status=WarrantStatus.ACTIVE,
         scope=WarrantScope.from_dict(_default_scope()),
         valid_from="2026-10-19T00:00:00Z",
         valid_until="2026-10-20T00:00:00Z",
-        schema_version="veip-warrant/0.2",
+        schema_version=PROVIDER_05_WARRANT_SCHEMA_V02,
         environment="SANDBOX",
         issued_at="2026-10-19T12:00:00Z",
         state_as_of="2026-10-19T12:00:00Z",
@@ -228,9 +248,9 @@ def _make_signed_warrant(
     return Warrant(**{**with_digest.to_dict(), "signature": sig})
 
 
-def test_deposited_veip_v03_package_manifest_sha256() -> None:
+def test_deposited_provider_05_v03_package_manifest_sha256() -> None:
     """Verify every file in docs/partners/provider_05/veip_v03/ matches MANIFEST.sha256."""
-    manifest_path = _VEIP_V03_DIR / "MANIFEST.sha256"
+    manifest_path = _P05_V03_DIR / "MANIFEST.sha256"
     assert manifest_path.is_file()
     entries = [
         line.strip().split()
@@ -239,28 +259,28 @@ def test_deposited_veip_v03_package_manifest_sha256() -> None:
     ]
     assert len(entries) == 7
     for expected_sha, filename in entries:
-        file_path = _VEIP_V03_DIR / filename
+        file_path = _P05_V03_DIR / filename
         assert file_path.is_file(), f"Missing {filename}"
         actual_sha = hashlib.sha256(file_path.read_bytes()).hexdigest()
         assert actual_sha == expected_sha, f"SHA-256 mismatch for {filename}"
 
 
-def test_veip_v03_proposed_json_schemas_validate_models(
+def test_provider_05_v03_proposed_json_schemas_validate_models(
     v03_pki: dict[str, Any],
 ) -> None:
     """Verify RiskAcceptanceRecord, AdmissibilityGrant, and SubstrateAttestation match v0.3 JSON Schemas."""
     bp_schema = json.loads(
         (
-            _VEIP_V03_DIR / "BLUEPRINT_RiskAcceptanceRecord_PROPOSED_SCHEMA.json"
+            _P05_V03_DIR / "BLUEPRINT_RiskAcceptanceRecord_PROPOSED_SCHEMA.json"
         ).read_text(encoding="utf-8")
     )
     key_schema = json.loads(
-        (_VEIP_V03_DIR / "KEY_AdmissibilityGrant_PROPOSED_SCHEMA.json").read_text(
+        (_P05_V03_DIR / "KEY_AdmissibilityGrant_PROPOSED_SCHEMA.json").read_text(
             encoding="utf-8"
         )
     )
     phys_schema = json.loads(
-        (_VEIP_V03_DIR / "PHYSICS_SubstrateAttestation_PROPOSED_SCHEMA.json").read_text(
+        (_P05_V03_DIR / "PHYSICS_SubstrateAttestation_PROPOSED_SCHEMA.json").read_text(
             encoding="utf-8"
         )
     )
@@ -269,8 +289,8 @@ def test_veip_v03_proposed_json_schemas_validate_models(
         RiskAcceptanceRecord(
             schema_version=BLUEPRINT_SCHEMA_VERSION_V03,
             environment="SANDBOX",
-            artifact_id="veip-bp-001",
-            issuer="urn:veraxis:veip:sandbox",
+            artifact_id="p05-bp-001",
+            issuer="urn:provider-05:sandbox",
             subject_ref="THR-FIN-006",
             scope=_default_scope(),
             issued_at="2026-10-19T12:00:00Z",
@@ -278,7 +298,7 @@ def test_veip_v03_proposed_json_schemas_validate_models(
             valid_until="2026-10-20T00:00:00Z",
             state_as_of="2026-10-19T12:00:00Z",
             alg="Ed25519",
-            kid="veip-v03-blueprint-2026-10",
+            kid="p05-v03-blueprint-2026-10",
             risk_id="THR-FIN-006",
             accepted_by="Jane Doe, CISO / AO",
             risk_limit="10000.0",
@@ -291,8 +311,8 @@ def test_veip_v03_proposed_json_schemas_validate_models(
         AdmissibilityGrant(
             schema_version=KEY_SCHEMA_VERSION_V03,
             environment="SANDBOX",
-            artifact_id="veip-key-001",
-            issuer="urn:veraxis:veip:sandbox",
+            artifact_id="p05-key-001",
+            issuer="urn:provider-05:sandbox",
             subject_ref="spiffe://cage.local/treasury-agent",
             scope=_default_scope(),
             issued_at="2026-10-19T12:00:00Z",
@@ -300,7 +320,7 @@ def test_veip_v03_proposed_json_schemas_validate_models(
             valid_until="2026-10-20T00:00:00Z",
             state_as_of="2026-10-19T12:00:00Z",
             alg="Ed25519",
-            kid="veip-v03-key-2026-10",
+            kid="p05-v03-key-2026-10",
             grant_id="grant-4412",
             authority_basis_ref="sha256:a1b2c3d4",
             permitted_action="treasury_transfer",
@@ -313,8 +333,8 @@ def test_veip_v03_proposed_json_schemas_validate_models(
         SubstrateAttestation(
             schema_version=PHYSICS_SCHEMA_VERSION_V03,
             environment="SANDBOX",
-            artifact_id="veip-phys-001",
-            issuer="urn:veraxis:veip:sandbox",
+            artifact_id="p05-phys-001",
+            issuer="urn:provider-05:sandbox",
             subject_ref="gke-node-us-central1-01",
             scope=_default_scope(),
             issued_at="2026-10-19T12:00:00Z",
@@ -322,7 +342,7 @@ def test_veip_v03_proposed_json_schemas_validate_models(
             valid_until="2026-10-20T00:00:00Z",
             state_as_of="2026-10-19T12:00:00Z",
             alg="Ed25519",
-            kid="veip-v03-physics-2026-10",
+            kid="p05-v03-physics-2026-10",
             substrate_id="gke-node-us-central1-01",
             attestation_result="PASS",
             measurement_ref="pcr0:99aa",
@@ -337,7 +357,7 @@ async def test_all_29_expected_outcome_vectors_csv(
     v03_pki: dict[str, Any],
 ) -> None:
     """Execute all 29 rows from EXPECTED_OUTCOME_VECTORS.csv and assert exact status parity."""
-    csv_path = _VEIP_V03_DIR / "EXPECTED_OUTCOME_VECTORS.csv"
+    csv_path = _P05_V03_DIR / "EXPECTED_OUTCOME_VECTORS.csv"
     with csv_path.open(encoding="utf-8", newline="") as handle:
         rows = list(csv.DictReader(handle))
     assert len(rows) == 29
@@ -391,14 +411,14 @@ async def test_all_29_expected_outcome_vectors_csv(
         suffix = vec_id.split("_", 1)[1]
 
         kid_map = {
-            "BLUEPRINT": ("veip-v03-blueprint-2026-10", v03_pki["blueprint_priv"]),
-            "KEY": ("veip-v03-key-2026-10", v03_pki["key_priv"]),
-            "PHYSICS": ("veip-v03-physics-2026-10", v03_pki["physics_priv"]),
+            "BLUEPRINT": ("p05-v03-blueprint-2026-10", v03_pki["blueprint_priv"]),
+            "KEY": ("p05-v03-key-2026-10", v03_pki["key_priv"]),
+            "PHYSICS": ("p05-v03-physics-2026-10", v03_pki["physics_priv"]),
         }
         wrong_purpose_map = {
-            "BLUEPRINT": ("veip-v03-key-2026-10", v03_pki["key_priv"]),
-            "KEY": ("veip-v03-physics-2026-10", v03_pki["physics_priv"]),
-            "PHYSICS": ("veip-v03-blueprint-2026-10", v03_pki["blueprint_priv"]),
+            "BLUEPRINT": ("p05-v03-key-2026-10", v03_pki["key_priv"]),
+            "KEY": ("p05-v03-physics-2026-10", v03_pki["physics_priv"]),
+            "PHYSICS": ("p05-v03-blueprint-2026-10", v03_pki["blueprint_priv"]),
         }
 
         kid, priv = kid_map[ev_class]
@@ -409,7 +429,7 @@ async def test_all_29_expected_outcome_vectors_csv(
         if suffix == "WRONG_PURPOSE":
             kid, priv = wrong_purpose_map[ev_class]
         elif suffix == "WRONG_KID":
-            kid = "veip-v03-unknown-kid-9999"
+            kid = "p05-v03-unknown-kid-9999"
         elif suffix == "EXPIRED":
             valid_from = "2026-10-18T00:00:00Z"
             valid_until = "2026-10-19T11:00:00Z"
@@ -425,7 +445,7 @@ async def test_all_29_expected_outcome_vectors_csv(
                         schema_version=BLUEPRINT_SCHEMA_VERSION_V03,
                         environment="SANDBOX",
                         artifact_id=f"bp-{vec_id.lower()}",
-                        issuer="urn:veraxis:veip:sandbox",
+                        issuer="urn:provider-05:sandbox",
                         subject_ref="THR-FIN-006",
                         scope=_default_scope(),
                         issued_at="2026-10-19T12:00:00Z",
@@ -449,7 +469,7 @@ async def test_all_29_expected_outcome_vectors_csv(
                         schema_version=KEY_SCHEMA_VERSION_V03,
                         environment="SANDBOX",
                         artifact_id=f"key-{vec_id.lower()}",
-                        issuer="urn:veraxis:veip:sandbox",
+                        issuer="urn:provider-05:sandbox",
                         subject_ref="spiffe://cage.local/treasury-agent",
                         scope=_default_scope(),
                         issued_at="2026-10-19T12:00:00Z",
@@ -473,7 +493,7 @@ async def test_all_29_expected_outcome_vectors_csv(
                         schema_version=PHYSICS_SCHEMA_VERSION_V03,
                         environment="SANDBOX",
                         artifact_id=f"phys-{vec_id.lower()}",
-                        issuer="urn:veraxis:veip:sandbox",
+                        issuer="urn:provider-05:sandbox",
                         subject_ref="gke-node-us-central1-01",
                         scope=_default_scope(),
                         issued_at="2026-10-19T12:00:00Z",
@@ -503,7 +523,7 @@ async def test_all_29_expected_outcome_vectors_csv(
         attestations = await provider.fetch_attestations(ctx)
         assert len(attestations) == 1
         entry = attestations[0]
-        assert entry.metadata["veip_v03_status"] == expected_status, (
+        assert entry.metadata["provider_05_v03_status"] == expected_status, (
             f"Vector {vec_id}: expected {expected_status}, got {entry.metadata}"
         )
         assert entry.metadata["reason_code"] == suffix, (
@@ -521,7 +541,7 @@ async def test_all_29_expected_outcome_vectors_csv(
 def _signed_live_artifact(ev_class: str, v03_pki: dict[str, Any]) -> Any:
     common: dict[str, Any] = {
         "environment": "SANDBOX",
-        "issuer": "urn:veraxis:veip:sandbox",
+        "issuer": "urn:provider-05:sandbox",
         "scope": _default_scope(),
         "issued_at": "2026-10-19T12:00:00Z",
         "valid_from": "2026-10-19T00:00:00Z",
@@ -534,7 +554,7 @@ def _signed_live_artifact(ev_class: str, v03_pki: dict[str, Any]) -> Any:
             schema_version=BLUEPRINT_SCHEMA_VERSION_V03,
             artifact_id="bp-live",
             subject_ref="THR-FIN-006",
-            kid="veip-v03-blueprint-2026-10",
+            kid="p05-v03-blueprint-2026-10",
             risk_id="THR-FIN-006",
             accepted_by="Jane Doe, CISO / AO",
             risk_limit="10000.0",
@@ -545,7 +565,7 @@ def _signed_live_artifact(ev_class: str, v03_pki: dict[str, Any]) -> Any:
             schema_version=KEY_SCHEMA_VERSION_V03,
             artifact_id="key-live",
             subject_ref="spiffe://cage.local/treasury-agent",
-            kid="veip-v03-key-2026-10",
+            kid="p05-v03-key-2026-10",
             grant_id="grant-live",
             authority_basis_ref="sha256:a1b2c3d4",
             permitted_action="treasury_transfer",
@@ -556,7 +576,7 @@ def _signed_live_artifact(ev_class: str, v03_pki: dict[str, Any]) -> Any:
             schema_version=PHYSICS_SCHEMA_VERSION_V03,
             artifact_id="phys-live",
             subject_ref="gke-node-us-central1-01",
-            kid="veip-v03-physics-2026-10",
+            kid="p05-v03-physics-2026-10",
             substrate_id="gke-node-us-central1-01",
             attestation_result="PASS",
             measurement_ref="pcr0:99aa",
@@ -594,7 +614,7 @@ async def test_live_artifact_stripped_of_v03_fields_is_not_verified(
     }
     async with httpx.AsyncClient(transport=httpx.MockTransport(_handler)) as http:
         client = Provider05Client(
-            endpoint="https://veip.invalid",
+            endpoint="https://provider-05.invalid",
             trust_anchor=v03_pki["trust_anchor"],
             http_client=http,
         )

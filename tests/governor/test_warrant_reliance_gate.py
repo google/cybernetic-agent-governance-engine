@@ -658,8 +658,13 @@ def test_warranted_norm_without_version_is_refused() -> None:
 
 def test_kernel_names_no_warrant_provider_or_finance_norm() -> None:
     """The gate is kernel-neutral: the plugin names the norm, the factory the provider."""
+    from scripts.check_vendor_brands import PARTNER_VENDOR_BRANDS
+
     kernel = _REPO / "src" / "gateway" / "governance" / "governor"
     for path in kernel.rglob("*.py"):
-        text = path.read_text()
-        for forbidden in ("provider_05", "min_trade_confidence", "VEIP"):
+        text = path.read_text(encoding="utf-8")
+        for forbidden in ("provider_05", "min_trade_confidence"):
             assert forbidden not in text, f"{path} names {forbidden!r}"
+        lower_text = text.lower()
+        for brand in sorted(PARTNER_VENDOR_BRANDS):
+            assert brand not in lower_text, f"{path} names partner brand {brand!r}"
