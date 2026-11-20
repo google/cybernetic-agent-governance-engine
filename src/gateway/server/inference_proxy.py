@@ -243,14 +243,18 @@ async def _read_validated_chat_body(
                 "message": "Request body must be a JSON object",
             },
         )
-    if "messages" in parsed and not isinstance(parsed.get("messages"), list):
-        return None, JSONResponse(
-            status_code=400,
-            content={
-                "error": "invalid_request_error",
-                "message": "messages must be a list",
-            },
-        )
+    if "messages" in parsed:
+        raw_messages = parsed.get("messages")
+        if not isinstance(raw_messages, list) or any(
+            not isinstance(item, dict) for item in raw_messages
+        ):
+            return None, JSONResponse(
+                status_code=400,
+                content={
+                    "error": "invalid_request_error",
+                    "message": "messages must be a list of message objects",
+                },
+            )
     if (
         "stream_options" in parsed
         and parsed.get("stream_options") is not None
@@ -655,6 +659,64 @@ class _ProxyMasker:
         return scrubbed if isinstance(scrubbed, str) else str(scrubbed)
 
 
+_BINARY_CONTENT_KEYS = frozenset({"image_url", "input_audio", "audio", "file", "data"})
+_MSG_HANDLED_OR_STRUCTURAL_KEYS = frozenset(
+    {
+        "role",
+        "content",
+        "reasoning_content",
+        "reasoning",
+        "refusal",
+        "name",
+        "tool_calls",
+        "function_call",
+        "tool_call_id",
+        "id",
+        "type",
+        "audio",
+    }
+)
+
+
+def _iter_nonbinary_string_leaves(value: Any, fragments: list[str]) -> None:
+    """Append string leaves from nested dict/list values while skipping binary media keys."""
+    if isinstance(value, str):
+        if value:
+            fragments.append(value)
+    elif isinstance(value, list):
+        for item in value:
+            _iter_nonbinary_string_leaves(item, fragments)
+    elif isinstance(value, dict):
+        for key, item in value.items():
+            if str(key) in _BINARY_CONTENT_KEYS:
+                continue
+            _iter_nonbinary_string_leaves(item, fragments)
+
+
+def _extract_callable_invocation_fragments(call_obj: Any, fragments: list[str]) -> None:
+    """Extract scannable fragments from a ``function_call`` or ``tool_calls[*].function`` payload."""
+    if call_obj is None:
+        return
+    if isinstance(call_obj, str):
+        if call_obj:
+            fragments.append(call_obj)
+        return
+    if isinstance(call_obj, dict):
+        for key in ("name", "arguments"):
+            raw = call_obj.get(key)
+            if isinstance(raw, str):
+                if raw:
+                    fragments.append(raw)
+            elif raw is not None:
+                fragments.append(json.dumps(raw, default=str))
+        for key, extra_val in call_obj.items():
+            if key in {"name", "arguments"} or str(key) in _BINARY_CONTENT_KEYS:
+                continue
+            _iter_nonbinary_string_leaves(extra_val, fragments)
+        return
+    fragments.append(json.dumps(call_obj, default=str))
+
+
 def _extract_message_content_text(content: Any) -> str:
     """Extract text from an OpenAI string, multi-part content array, or structured value."""
     if content is None:
@@ -665,16 +727,18 @@ def _extract_message_content_text(content: Any) -> str:
         parts: list[str] = []
         for part in content:
             if isinstance(part, dict):
-                text_val = part.get("text")
-                if isinstance(text_val, str) and text_val:
-                    parts.append(text_val)
-                input_text_val = part.get("input_text")
-                if (
-                    isinstance(input_text_val, str)
-                    and input_text_val
-                    and input_text_val != text_val
-                ):
-                    parts.append(input_text_val)
+                seen_in_part: set[str] = set()
+                for text_key in ("text", "input_text", "refusal"):
+                    val = part.get(text_key)
+                    if isinstance(val, str) and val and val not in seen_in_part:
+                        parts.append(val)
+                        seen_in_part.add(val)
+                for key, extra_val in part.items():
+                    if key in {"type", "text", "input_text", "refusal"} or (
+                        str(key) in _BINARY_CONTENT_KEYS
+                    ):
+                        continue
+                    _iter_nonbinary_string_leaves(extra_val, parts)
             elif isinstance(part, str) and part:
                 parts.append(part)
         return " ".join(parts)
@@ -682,30 +746,62 @@ def _extract_message_content_text(content: Any) -> str:
 
 
 def _extract_scannable_messages_text(messages: Any) -> str:
-    """Collect all scannable text from messages and assistant tool_calls."""
+    """Collect all scannable text across message content, tool_calls, and legacy function_call."""
     if not isinstance(messages, list):
         return ""
     fragments: list[str] = []
     for msg in messages:
         if not isinstance(msg, dict):
             continue
-        text = _extract_message_content_text(msg.get("content"))
-        if text:
-            fragments.append(text)
-        reasoning_text = _extract_message_content_text(msg.get("reasoning_content"))
-        if reasoning_text:
-            fragments.append(reasoning_text)
+        for text_field in (
+            "content",
+            "reasoning_content",
+            "reasoning",
+            "refusal",
+            "name",
+        ):
+            text = _extract_message_content_text(msg.get(text_field))
+            if text:
+                fragments.append(text)
         tool_calls = msg.get("tool_calls")
         if isinstance(tool_calls, list):
             for tc in tool_calls:
-                if not isinstance(tc, dict):
-                    continue
-                fn = tc.get("function")
-                if isinstance(fn, dict):
-                    if isinstance(fn.get("name"), str):
-                        fragments.append(fn["name"])
-                    if isinstance(fn.get("arguments"), str):
-                        fragments.append(fn["arguments"])
+                if isinstance(tc, dict):
+                    _extract_callable_invocation_fragments(
+                        tc.get("function"), fragments
+                    )
+                    for tc_key, tc_val in tc.items():
+                        if tc_key in {"id", "type", "index", "function"} or (
+                            str(tc_key) in _BINARY_CONTENT_KEYS
+                        ):
+                            continue
+                        _iter_nonbinary_string_leaves(tc_val, fragments)
+                elif tc is not None:
+                    _extract_callable_invocation_fragments(tc, fragments)
+        elif tool_calls is not None:
+            _extract_callable_invocation_fragments(tool_calls, fragments)
+
+        # Legacy OpenAI messages[*].function_call ingress scan
+        if msg.get("function_call") is not None:
+            _extract_callable_invocation_fragments(msg.get("function_call"), fragments)
+
+        # Residual non-binary string leaves on any unrecognized message fields
+        for extra_key, extra_val in msg.items():
+            if (
+                extra_key in _MSG_HANDLED_OR_STRUCTURAL_KEYS
+                or str(extra_key) in _BINARY_CONTENT_KEYS
+            ):
+                continue
+            _iter_nonbinary_string_leaves(extra_val, fragments)
+    return " ".join(fragments)
+
+
+def _extract_scannable_request_schema_text(body: dict[str, Any]) -> str:
+    """Extract string leaves from top-level prompt/tool schema fields forwarded upstream."""
+    fragments: list[str] = []
+    for top_key in ("functions", "tools", "prompt", "system"):
+        if body.get(top_key) is not None:
+            _iter_nonbinary_string_leaves(body.get(top_key), fragments)
     return " ".join(fragments)
 
 
@@ -1011,14 +1107,19 @@ async def chat_completions(
         )
 
         # Build a combined text representation of ALL messages (including multi-part
-        # content arrays and prior tool_calls arguments) for Ingress Stage 1 scan.
-        # This prevents system-only, assistant-only, or structured content arrays
-        # from bypassing the keyword filter (GHSA-hfqj-24cj-693g).
+        # content arrays, tool_calls, and legacy function_call) plus top-level
+        # prompt/tool schema fields for Ingress Stage 1 scan (GHSA-hfqj-24cj-693g).
         all_messages_text = _extract_scannable_messages_text(messages)
-        span.set_attribute(SPAN_ATTR_CONTENT_INPUT_LENGTH, len(all_messages_text))
+        request_schema_text = _extract_scannable_request_schema_text(body)
+        stage1_scan_text = (
+            f"{all_messages_text} {request_schema_text}".strip()
+            if request_schema_text
+            else all_messages_text
+        )
+        span.set_attribute(SPAN_ATTR_CONTENT_INPUT_LENGTH, len(stage1_scan_text))
 
-        # 1. Ingress Stage 1 keyword scan — applied to ALL messages, not just user role.
-        if ac_keyword_scan(all_messages_text):
+        # 1. Ingress Stage 1 keyword scan — applied to ALL messages and top-level schema text.
+        if ac_keyword_scan(stage1_scan_text):
             stamp_iso_control(span, ingress_stage=1, control="A.5.2", outcome="BLOCK")
             try:
                 await _emit_proxy_evidence(
@@ -1101,7 +1202,7 @@ async def chat_completions(
 
         # ── Step 3: Token Quota Enforcement (ISO 42001 Annex A.4) ──
         # Runs for ALL requests regardless of message role composition.
-        token_delta = _compute_token_reservation(body, all_messages_text)
+        token_delta = _compute_token_reservation(body, stage1_scan_text)
 
         quota_result = await _get_token_quota_proxy().check_and_increment(
             agent_id=agent_id,
