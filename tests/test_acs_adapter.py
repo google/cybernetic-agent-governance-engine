@@ -19,6 +19,7 @@ from __future__ import annotations
 import pytest
 
 from src.gateway.governance.ingress.acs_adapter import (
+    _map_constraint,
     acs_to_control_structure_patch,
     translate_acs,
 )
@@ -223,10 +224,10 @@ pytestmark = [pytest.mark.unit, pytest.mark.local]
 def test_map_constraint_preserves_zero_threshold():
     """A zero threshold (value: 0) is a valid boundary and must be emitted,
     not dropped by a truthiness check."""
-    from gateway.governance.ingress.acs_adapter import _map_constraint
-
     out = _map_constraint({"type": "greater_than", "parameter": "amount", "value": 0})
     assert out.get("threshold") == 0.0
     # a non-zero value still works
-    out2 = _map_constraint({"type": "greater_than", "parameter": "amount", "value": 50000})
+    out2 = _map_constraint(
+        {"type": "greater_than", "parameter": "amount", "value": 50000}
+    )
     assert out2.get("threshold") == 50000.0
