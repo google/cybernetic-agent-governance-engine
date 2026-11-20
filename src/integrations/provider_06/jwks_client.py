@@ -54,6 +54,7 @@ import httpx
 from cryptography.exceptions import InvalidSignature
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PublicKey
 
+from src.gateway.governance.env_posture import is_enforcing, resolve_posture
 from src.gateway.governance.jcs_canonicalizer import jcs_canonicalize_plan
 from src.integrations.trust.key_manifest import Ed25519KeyManifestClient
 
@@ -172,6 +173,13 @@ class FileJWKSClient(Ed25519KeyManifestClient):
         maximum_receipt_lifetime_seconds: int = 3600,
     ) -> None:
         normalized_url = _normalize_manifest_url(manifest_url)
+        enforcing = is_enforcing(resolve_posture())
+        parsed_scheme = urlparse(normalized_url).scheme.lower()
+        if enforcing and parsed_scheme not in ("https", "file"):
+            raise ValueError(
+                "Provider 06 key manifest URL must use https:// or local volume "
+                f"file:// in enforcing posture (got scheme={parsed_scheme!r})"
+            )
         super().__init__(
             manifest_url=normalized_url,
             cache_ttl_seconds=cache_ttl_seconds,
@@ -201,6 +209,7 @@ class FileJWKSClient(Ed25519KeyManifestClient):
         )
         self._require_manifest_extension = bool(
             require_manifest_extension
+            or enforcing
             or self._authority_keys
             or self._manifest_state_path is not None
         )
@@ -573,17 +582,18 @@ class FileJWKSClient(Ed25519KeyManifestClient):
         if expected_digest != manifest_digest:
             raise ValueError("trust manifest digest mismatch")
 
-        if self._authority_keys:
-            authority_pub = self._authority_keys.get(authority_key_id)
-            if authority_pub is None:
-                raise ValueError("trust manifest authority key is unknown")
-            sig_input = MANIFEST_SIGNATURE_DOMAIN + bytes.fromhex(expected_digest)
-            try:
-                authority_pub.verify(signature_bytes, sig_input)
-            except InvalidSignature as exc:
-                raise ValueError(
-                    "trust manifest signature verification failed"
-                ) from exc
+        if not self._authority_keys:
+            raise ValueError(
+                "trust manifest authority keys are required to verify CageReceiptTrustManifestV1"
+            )
+        authority_pub = self._authority_keys.get(authority_key_id)
+        if authority_pub is None:
+            raise ValueError("trust manifest authority key is unknown")
+        sig_input = MANIFEST_SIGNATURE_DOMAIN + bytes.fromhex(expected_digest)
+        try:
+            authority_pub.verify(signature_bytes, sig_input)
+        except InvalidSignature as exc:
+            raise ValueError("trust manifest signature verification failed") from exc
 
         if issued_at > now + timedelta(seconds=self._maximum_future_skew_seconds):
             raise ValueError("trust manifest is issued too far in the future")
