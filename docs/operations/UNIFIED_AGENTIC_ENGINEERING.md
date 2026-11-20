@@ -114,7 +114,7 @@ Committed to repository root to enforce programmatic search gates and mode routi
 
 #### Cost Guardrails Section (`AGENTS.md`)
 
-Codified in `AGENTS.md` (kept strictly under the 24KB cap):
+Codified in `AGENTS.md` (kept strictly `<= 24,000` bytes — the observed context-loader truncation cutoff):
 
 ```markdown
 ## 12. Agent Governance & Cost Guardrails
@@ -232,8 +232,9 @@ sequenceDiagram
 Run these terminal checks to confirm size limits, STPA freshness, and boundary integrity before submitting pull requests:
 
 ```bash
-# 1. Enforce AGENTS.md stays strictly under the 24KB limit
-uv run python scripts/check_agents_size.py
+# 1. Enforce all repo-scoped agent instruction/rule files stay <= 24,000 bytes
+#    (host-level files under ~/.gemini/config/rules/ sit outside repo-scoped gates)
+uv run python scripts/check_agents_size.py --verbose
 
 # 2. Verify STPA freshness and import boundaries
 uv run python scripts/check_stpa_freshness.py
