@@ -4,7 +4,7 @@ component-definition:
     title: Cybernetic Governance Engine — ISO 42001 AIMS Component Definition
     version: 1.0.0
     oscal-version: 1.0.4
-    last-modified: '2026-11-17T21:56:49Z'
+    last-modified: '2026-11-20T14:33:07Z'
     remarks: 'This component definition maps technical enforcement components to ISO/IEC
       42001:2023 Annex A controls. Each implemented requirement links to a Lula validation
       manifest for automated continuous compliance.
@@ -316,51 +316,51 @@ component-definition:
           preventing unsafe AI operation under data starvation.
         remarks: 'Three-way Confidence-Starvation Boundary: 0.95 (execute), 0.70-0.95
           (review), <0.70 (defer). Approved CAGE v0.1.0 architectural decision.'
-    - uuid: tqp007-component-0001-0000-0000-000000000001
-      title: TokenQuotaProxy
-      type: software
-      description: 'Kubernetes sidecar that enforces per-agent token spending quotas
-        to prevent resource exhaustion and denial-of-governance attacks. Uses Redis
-        as a distributed counter backend. When Redis is unavailable, the proxy must
-        fail-CLOSED (deny all inference requests) rather than fail-OPEN (allow uncapped
-        token spending). CTRL_TQP_007 asserts that the fail-closed behavior is configured
-        at deployment time.
+  - uuid: tqp007-component-0001-0000-0000-000000000001
+    title: TokenQuotaProxy
+    type: software
+    description: 'Kubernetes sidecar that enforces per-agent token spending quotas
+      to prevent resource exhaustion and denial-of-governance attacks. Uses Redis
+      as a distributed counter backend. When Redis is unavailable, the proxy must
+      fail-CLOSED (deny all inference requests) rather than fail-OPEN (allow uncapped
+      token spending). CTRL_TQP_007 asserts that the fail-closed behavior is configured
+      at deployment time.
 
-        '
-      purpose: 'Prevents denial-of-governance via uncapped LLM token spending. Implements
-        ISO 42001 §A.8.4 AI System Operation Controls (resource constraint enforcement)
-        and is a compensating control for STPA hazard H-7.
+      '
+    purpose: 'Prevents denial-of-governance via uncapped LLM token spending. Implements
+      ISO 42001 §A.8.4 AI System Operation Controls (resource constraint enforcement)
+      and is a compensating control for STPA hazard H-7.
 
-        '
-      responsible-roles:
-      - role-id: provider
-      control-implementations:
-      - uuid: tqp007-ctrl-impl-0001-0000-0000-000000000001
-        source: https://www.iso.org/standard/81230.html
-        description: ISO/IEC 42001:2023 Annex A.8.4 controls implemented by TokenQuotaProxy
-        implemented-requirements:
-        - uuid: tqp007-req-0001-0000-0000-000000000001
-          control-id: A.8.4
-          description: 'CTRL_TQP_007: TokenQuotaProxy enforces token spending quotas
-            to prevent resource exhaustion. When Redis is unavailable, TOKEN_QUOTA_FAIL_CLOSED=true
-            causes the proxy to deny all inference requests rather than allowing uncapped
-            spending (fail-open). This implements ISO 42001 §A.8.4 AI System Operation
-            Controls — specifically the requirement that AI system resource constraints
-            are enforced even during dependency failures.
+      '
+    responsible-roles:
+    - role-id: provider
+    control-implementations:
+    - uuid: tqp007-ctrl-impl-0001-0000-0000-000000000001
+      source: https://www.iso.org/standard/81230.html
+      description: ISO/IEC 42001:2023 Annex A.8.4 controls implemented by TokenQuotaProxy
+      implemented-requirements:
+      - uuid: tqp007-req-0001-0000-0000-000000000001
+        control-id: A.8.4
+        description: 'CTRL_TQP_007: TokenQuotaProxy enforces token spending quotas
+          to prevent resource exhaustion. When Redis is unavailable, TOKEN_QUOTA_FAIL_CLOSED=true
+          causes the proxy to deny all inference requests rather than allowing uncapped
+          spending (fail-open). This implements ISO 42001 §A.8.4 AI System Operation
+          Controls — specifically the requirement that AI system resource constraints
+          are enforced even during dependency failures.
 
-            '
-          remarks: 'Described as an env var TOKEN_QUOTA_FAIL_CLOSED=true on a token-quota-proxy
-            Deployment in the governance-stack namespace, but neither the variable
-            nor that Deployment appears in the committed Terraform or source. The
-            linked Lula manifest does not check the variable: since #664 it checks
-            only that the gateway is ready and sets REDIS_URL, and it is rated Stub
-            (POAM-2026-219). STPA hazard: H-7 (TokenQuotaProxy fail-OPEN scenario).
-            POAM reference: ISO-004 (POAM_ISO42001.md).
+          '
+        remarks: 'Described as an env var TOKEN_QUOTA_FAIL_CLOSED=true on a token-quota-proxy
+          Deployment in the governance-stack namespace, but neither the variable nor
+          that Deployment appears in the committed Terraform or source. The linked
+          Lula manifest does not check the variable: since #664 it checks only that
+          the gateway is ready and sets REDIS_URL, and it is rated Stub (POAM-2026-219).
+          STPA hazard: H-7 (TokenQuotaProxy fail-OPEN scenario). POAM reference: ISO-004
+          (POAM_ISO42001.md).
 
-            '
-          links:
-          - href: ../../compliance/lula/lula-validation-tqp007.yaml
-            rel: lula
+          '
+        links:
+        - href: ../../compliance/lula/lula-validation-tqp007.yaml
+          rel: lula
   - uuid: f10a5e8d-4b2c-5f99-8c3a-d41f7e8b9c2f
     title: FlowSignal Consequence Authority Integration
     type: software
@@ -612,7 +612,7 @@ component-definition:
     - name: control-structure-input
       value: config/stpa/
     - name: last-compiled
-      value: '2026-11-17T21:56:49Z'
+      value: '2026-11-20T14:33:07Z'
     - name: uca-count
       value: '12'
     control-implementations:
@@ -693,7 +693,7 @@ component-definition:
     - name: source-file
       value: src/gateway/governance/governor/stages/ftra.py
     - name: last-compiled
-      value: '2026-11-17T21:56:49Z'
+      value: '2026-11-20T14:33:07Z'
     control-implementations:
     - uuid: ftra0001-ctrl-impl-8000-classifier01
       source: https://csrc.nist.gov/projects/cprt/api/cprt/framework/version/SP_800_53_5_1_1/home

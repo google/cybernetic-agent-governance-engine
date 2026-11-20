@@ -3,7 +3,7 @@ system-security-plan:
   metadata:
     title: CAGE System Security Plan (US_FED — NIST SP 800-53 Rev 5 HIGH)
     published: '2026-03-06T00:00:00Z'
-    last-modified: '2026-11-18T13:11:25Z'
+    last-modified: '2026-11-20T14:33:07Z'
     version: 1.0.1-draft+stpa
     oscal-version: 1.0.4
     remarks: 'This System Security Plan (SSP) documents the security controls implemented
@@ -1077,10 +1077,12 @@ system-security-plan:
         \ OTel spans silently.\n\nRefusal and deferral parity (0cdb5aaa, #427): a\
         \ DENY writes a GOVERNANCE_REFUSAL record and a DEFER or REQUIRE_APPROVAL\
         \ writes a hash-chained GOVERNANCE_DEFERRAL record (src/gateway/governance/governor/verdicts.py).\
-        \ The writes are non-blocking because neither outcome executes anything, but\
-        \ a failed write logs at ERROR and increments cage_governance_evidence_publish_failures_total{kind}\
-        \ (src/gateway/governance/governor/metrics.py). For a warranted norm the RelianceRecord\
-        \ is bound into the routing seal's evidence record under record_hash (src/gateway/governance/warrant/reliance.py).\n"
+        \ Refusal and deferral writes are blocking under is_evidence_chain_blocking()\
+        \ (raising GovernanceInfrastructureError with REFUSAL_EVIDENCE_UNPERSISTED\
+        \ / DEFERRAL_EVIDENCE_UNPERSISTED on sink failure), logging at ERROR and incrementing\
+        \ cage_governance_evidence_publish_failures_total{kind} (src/gateway/governance/governor/metrics.py).\
+        \ For a warranted norm the RelianceRecord is bound into the routing seal's\
+        \ evidence record under record_hash (src/gateway/governance/warrant/reliance.py).\n"
       props:
       - name: implementation-status
         value: partial

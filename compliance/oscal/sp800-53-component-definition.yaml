@@ -429,11 +429,11 @@ component-definition:
                 fails closed.
               props:
                 - name: implementation-status
-                  value: implemented
+                  value: partial
                 - name: control-origination
                   value: system-specific
                 - name: poam-reference
-                  value: "POAM-2026-095"
+                  value: "POAM-2026-095, POAM-2026-235"
               links:
                 - href: "../../src/gateway/governance/routing_seal.py"
                   rel: implementation
@@ -724,7 +724,7 @@ component-definition:
                 ConsequenceToken JWS (src/gateway/governance/consequence_token.py) introduced
                 in FlowSignal Phase 2. The RawMessageSigner protocol decouples cryptographic
                 operations from key lifecycle management via dependency injection in
-                actuator_01 (src/integrations/actuator_01/adapter.py:117-142), replacing
+                actuator_01 (src/integrations/actuator_01/adapter.py:101), replacing
                 direct KMSGovernanceSigner coupling. All runtime signing paths are async
                 (KMSGovernanceSigner.sign_async, sign_raw_async, sign_jws_async,
                 sign_precomputed_digest_async, sign_decision_async,
@@ -761,7 +761,7 @@ component-definition:
                 section of AGENTS.md).
               props:
                 - name: implementation-status
-                  value: implemented
+                  value: partial
                 - name: control-origination
                   value: system-specific
                 - name: phase-2-implementation
@@ -769,7 +769,9 @@ component-definition:
                 - name: raw-signer-protocol
                   value: "src/gateway/governance/raw_signer_protocol.py"
                 - name: actuator-01-di
-                  value: "src/integrations/actuator_01/adapter.py:117-142"
+                  value: "src/integrations/actuator_01/adapter.py:101"
+                - name: poam-reference
+                  value: "POAM-2026-235"
               links:
                 - href: "https://csrc.nist.gov/projects/cprt/api/cprt/framework/version/SP_800_53_5_1_1/home?element=SC-13"
                   rel: reference

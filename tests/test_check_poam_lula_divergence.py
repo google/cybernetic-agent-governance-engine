@@ -1170,6 +1170,30 @@ def test_poam_235_short_circuit_closed_and_non_implemented_holds_audited(
         for e in errs_d
     ), errs_d
 
+    # (e) HOLDS row citing a test suite that sets CAGE_SEAL_STRICT_MODE="false" fails Check 1 & Check 4
+    fallback_test = synthetic_repo / "tests" / "unit" / "test_fallback_seal_mode.py"
+    fallback_test.write_text(
+        "import os\nimport pytest\n"
+        "pytestmark = [pytest.mark.unit, pytest.mark.local]\n"
+        'os.environ.setdefault("CAGE_SEAL_STRICT_MODE", "false")\n\n'
+        "def test_non_strict_roundtrip() -> None:\n"
+        "    assert True\n",
+        encoding="utf-8",
+    )
+    rows_e = json.loads(json.dumps(orig_rows))
+    rows_e[0]["evidence_named"] = ["tests/unit/test_fallback_seal_mode.py"]
+    rows_e[0]["read_back"]["check"] = "tests/unit/test_fallback_seal_mode.py:L6"
+    rows_e[0]["cites"] = ["tests/unit/test_fallback_seal_mode.py:L1-L7"]
+    errs_e, _ = _write_rows(rows_e)
+    assert any(
+        "[Check 1: Read-Back]" in e and "setting CAGE_SEAL_STRICT_MODE=false" in e
+        for e in errs_e
+    ), errs_e
+    assert any(
+        "[Check 4: Census]" in e and "setting CAGE_SEAL_STRICT_MODE=false" in e
+        for e in errs_e
+    ), errs_e
+
 
 def test_active_lula_and_observed_boolean_truth_table_on_holds_rows(
     synthetic_repo: pathlib.Path,
