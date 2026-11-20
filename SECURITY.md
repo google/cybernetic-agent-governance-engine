@@ -98,8 +98,11 @@ pull request(s):
    with its final public description (including a concrete non-code mitigation
    and with any `<!-- ... -->` comment templates removed), `ecosystem: "other"`
    structured range (`patched_versions: null` when remediating on `main` ahead
-   of a tag), verified CVSS 3.1 vector, and reporter `.credits`. Confirm HTTP
-   `200` on `GET` read-back so `T=0` requires only a state transition.
+   of a tag), and verified CVSS 3.1 vector. Set reporter `.credits` once before
+   acceptance, and **omit `credits` from all subsequent `PATCH` payloads once
+   `credits_detailed[].state == "accepted"`** (passing `credits` again resets an
+   accepted credit record back to `pending`). Confirm HTTP `200` on `GET`
+   read-back so `T=0` requires only a state transition.
 3. **Close all open PRs in the temporary private fork before publishing:**
    GitHub's advisory publish endpoint rejects `{"state": "published"}` with HTTP
    `422` while any pull request in the temporary private fork remains open.
@@ -110,7 +113,11 @@ pull request(s):
    - Immediately push the pre-verified fix branch(es) to `origin` and open
      public pull request(s) against `main`, then `PATCH` each live advisory's
      remediation line to cite the open PR (`Fix in flight in #<PR>` alongside
-     the immediate mitigation).
+     the immediate mitigation, omitting `credits`). While a newly published
+     advisory is `<= 24h` old and carries `Fix in flight in #<PR>` (before
+     `Fixed on main in`), [`scripts/check_advisory_traces.py`](scripts/check_advisory_traces.py)
+     (`--verify-github`) treats it as in-flight so `#<PR>`'s own CI stays green
+     before its squash-merge commit SHA exists on `main`.
 5. **Run all checks, squash-merge, stamp, and verify read-back:**
    - Wait for all automated checks in ruleset 25966171 (strict up-to-date branch
      policy is disabled, so independent PRs can run checks in parallel). Never
@@ -121,12 +128,32 @@ pull request(s):
      `--admin` in single-maintainer posture bypasses only ruleset 19769096's
      review rule while all nine checks in ruleset 25966171 pass).
    - Immediately stamp **`Fixed on main in <SHA> (#<PR>)`** onto the published
-     advisory without disturbing `.credits`, perform a **`GET` read-back** on
-     the advisory endpoint to verify `state == "published"`, the landed `main`
-     SHA, and intact `.credits`, and land the matching row in `## Security Advisories`
-     above so [`scripts/check_advisory_traces.py`](scripts/check_advisory_traces.py)
-     (`--verify-github`) passes on `main`. Delete temporary branches and worktrees
-     after post-merge checks pass on `main`.
+     advisory (`description` only — never pass `credits`), perform a **`GET`
+     read-back** on the advisory endpoint to verify `state == "published"`, the
+     landed `main` SHA, and `credits_detailed[].state == "accepted"`, and land
+     the matching row in `## Security Advisories` above so
+     [`scripts/check_advisory_traces.py`](scripts/check_advisory_traces.py)
+     (`--verify-github --strict`) passes on `main`. Delete temporary branches
+     and worktrees after post-merge checks pass on `main`.
+
+### Pre-remediated batch disclosures (fixes already on `main`)
+
+When one or more draft advisories are held for a coordinated release date after
+their fix commits have already landed on `main`:
+
+1. **Pre-stage the `SECURITY.md` trace branch locally before `T=0`:** Add the
+   new `## Security Advisories` row(s) citing each already-merged `main` fix SHA
+   and the scheduled publication date, and run
+   `uv run python scripts/check_advisory_traces.py --verbose` locally to confirm
+   every SHA is already an ancestor of `origin/main` (do not open the PR before
+   publishing, or `--verify-github` will reject unpublished GHSA IDs).
+2. **Publish and open the trace PR back-to-back at `T=0`:** `PATCH` each draft
+   advisory with `{"state": "published"}` only (never passing `credits`), verify
+   `state == "published"` and `credits_detailed[].state == "accepted"` via `GET`
+   read-back, and immediately push and open the pre-staged `SECURITY.md` PR. On
+   that PR's CI run, the API's newly published set matches `SECURITY.md` 1-to-1
+   with zero missing rows, keeping `advisory-trace-parity` green throughout the
+   disclosure.
 
 ## Package Distribution Channels
 

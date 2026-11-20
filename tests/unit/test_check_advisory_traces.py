@@ -21,6 +21,7 @@ import json
 import os
 import subprocess
 import sys
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 from unittest.mock import patch
@@ -83,14 +84,31 @@ def _write_security_md(path: Path, rows: list[tuple[str, str, str, str, str]]) -
     path.write_text("\n".join(lines) + "\n", encoding="utf-8")
 
 
-def test_real_repository_security_md_passes_ancestry_gate() -> None:
-    """Committed SECURITY.md parses >=10 rows and every SHA is an ancestor of main/HEAD."""
+def test_real_repository_security_md_passes_ancestry_gate(tmp_path: Path) -> None:
+    """Committed SECURITY.md passes ancestry without a static advisory-count constant."""
+    assert not hasattr(gate, "MIN_PUBLISHED_ADVISORIES")
+    assert gate.MIN_TABLE_ROWS == 1
     rows = gate.parse_security_md_advisories(REPO_ROOT / "SECURITY.md")
-    assert len(rows) >= gate.MIN_PUBLISHED_ADVISORIES
+    assert len(rows) >= gate.MIN_TABLE_ROWS
     # Use HEAD when running inside a detached snapshot where main may lag or match HEAD
     _, resolved = gate.verify_git_ancestry(rows, REPO_ROOT, main_ref="HEAD")
     assert len(resolved) == len(rows)
     assert any(r.ghsa_id == "GHSA-c9j3-q7hh-p95m" for r in rows)
+
+    # 1-row offline table passes parser non-vacuity, while 0-row table fails closed
+    one_row_md = tmp_path / "SECURITY_ONE.md"
+    _write_security_md(
+        one_row_md,
+        [("GHSA-2222-3333-4444", "2026-11-19", "Medium", "`dd27b66b`", "Single row")],
+    )
+    assert len(gate.parse_security_md_advisories(one_row_md)) == 1
+
+    zero_row_md = tmp_path / "SECURITY_ZERO.md"
+    _write_security_md(zero_row_md, [])
+    with pytest.raises(
+        gate.AdvisoryTraceError, match="missing markdown advisory table"
+    ):
+        gate.parse_security_md_advisories(zero_row_md)
 
 
 def test_non_ancestor_branch_commit_fails_closed(tmp_path: Path) -> None:
@@ -105,33 +123,26 @@ def test_non_ancestor_branch_commit_fails_closed(tmp_path: Path) -> None:
     )
     branch_only_sha = _git_commit(repo, env, "fix: not on main yet")
 
-    sample_ids = [
-        "GHSA-2222-3333-4444",
-        "GHSA-3333-4444-5555",
-        "GHSA-4444-5555-6666",
-        "GHSA-5555-6666-7777",
-        "GHSA-6666-7777-8888",
-        "GHSA-7777-8888-9999",
-        "GHSA-8888-9999-2222",
-        "GHSA-9999-2222-3333",
-        "GHSA-cccc-ffff-gggg",
-        "GHSA-hhhh-jjjj-mmmm",
-    ]
     sec_md = repo / "SECURITY.md"
-    table_rows = [
-        (gid, "2026-11-19", "Medium", f"`{main_sha[:8]}`", "Fixed issue")
-        for gid in sample_ids[:-1]
-    ]
-    table_rows.append(
-        (
-            sample_ids[-1],
-            "2026-11-20",
-            "High",
-            f"`{branch_only_sha[:8]}`",
-            "Branch-only SHA",
-        )
+    _write_security_md(
+        sec_md,
+        [
+            (
+                "GHSA-2222-3333-4444",
+                "2026-11-19",
+                "Medium",
+                f"`{main_sha[:8]}`",
+                "Fixed issue",
+            ),
+            (
+                "GHSA-hhhh-jjjj-mmmm",
+                "2026-11-20",
+                "High",
+                f"`{branch_only_sha[:8]}`",
+                "Branch-only SHA",
+            ),
+        ],
     )
-    _write_security_md(sec_md, table_rows)
 
     parsed = gate.parse_security_md_advisories(sec_md)
     with pytest.raises(
@@ -143,7 +154,7 @@ def test_non_ancestor_branch_commit_fails_closed(tmp_path: Path) -> None:
 def test_github_parity_catches_missing_extra_and_mismatched_rows(
     tmp_path: Path,
 ) -> None:
-    """verify_github_parity fails on missing published GHSA, phantom row, or SHA/metadata drift."""
+    """verify_github_parity fails on empty API, missing published GHSA, phantom row, or SHA drift."""
     sec_md = tmp_path / "SECURITY.md"
     gids = [
         "GHSA-2222-3333-4444",
@@ -156,7 +167,11 @@ def test_github_parity_catches_missing_extra_and_mismatched_rows(
             (gids[1], "2026-11-19", "High", "`c145a9cc` (`#813`)", "Summary B"),
         ],
     )
-    rows = gate.parse_security_md_advisories(sec_md, min_rows=2)
+    rows = gate.parse_security_md_advisories(sec_md)
+
+    # 0. Empty API response fails closed (API-derived floor refuses vacuous parity)
+    with pytest.raises(gate.AdvisoryTraceError, match="refusing vacuous parity check"):
+        gate.verify_github_parity(rows, [])
 
     matching_api = [
         gate.PublishedAdvisory(
@@ -164,15 +179,17 @@ def test_github_parity_catches_missing_extra_and_mismatched_rows(
             published_date="2026-11-19",
             severity="medium",
             description="Fixed on main in dd27b66b (#815).",
+            published_at="2026-11-19T12:00:00Z",
         ),
         gate.PublishedAdvisory(
             ghsa_id=gids[1],
             published_date="2026-11-19",
             severity="high",
             description="Fixed on main in c145a9cc (#813).",
+            published_at="2026-11-19T12:05:00Z",
         ),
     ]
-    gate.verify_github_parity(rows, matching_api)
+    assert gate.verify_github_parity(rows, matching_api) == []
 
     # 1. Published on GitHub, absent from SECURITY.md (exact GHSA-c9j3-q7hh-p95m failure mode)
     with pytest.raises(
@@ -187,6 +204,7 @@ def test_github_parity_catches_missing_extra_and_mismatched_rows(
                     published_date="2026-11-19",
                     severity="medium",
                     description="Fixed on main in dd27b66b (#815).",
+                    published_at="2026-11-19T13:13:29Z",
                 ),
             ],
         )
@@ -207,10 +225,61 @@ def test_github_parity_catches_missing_extra_and_mismatched_rows(
                     published_date="2026-11-19",
                     severity="medium",
                     description="Fixed on main in deadbeef (#999).",
+                    published_at="2026-11-19T12:00:00Z",
                 ),
                 matching_api[1],
             ],
         )
+
+
+def test_t0_fix_in_flight_window_stays_green_then_fails_closed(tmp_path: Path) -> None:
+    """Bounded <=24h 'Fix in flight in #<PR>' stays green at T=0, failing once stamped or >24h."""
+    sec_md = tmp_path / "SECURITY.md"
+    _write_security_md(
+        sec_md,
+        [("GHSA-2222-3333-4444", "2026-11-19", "Medium", "`dd27b66b`", "Summary A")],
+    )
+    rows = gate.parse_security_md_advisories(sec_md)
+    baseline = gate.PublishedAdvisory(
+        ghsa_id="GHSA-2222-3333-4444",
+        published_date="2026-11-19",
+        severity="medium",
+        description="Fixed on main in dd27b66b (#815).",
+        published_at="2026-11-19T12:00:00Z",
+    )
+    now = datetime(2026, 12, 4, 15, 0, 0, tzinfo=timezone.utc)
+    in_flight = gate.PublishedAdvisory(
+        ghsa_id="GHSA-4444-5555-6666",
+        published_date="2026-12-04",
+        severity="medium",
+        description="Remediation: Fix in flight in #850. Mitigation: disable flag.",
+        published_at="2026-12-04T14:55:00Z",
+    )
+    notices = gate.verify_github_parity(rows, [baseline, in_flight], now=now)
+    assert len(notices) == 1
+    assert "#850" in notices[0]
+
+    # Fails under --strict (allow_t0_in_flight=False)
+    with pytest.raises(gate.AdvisoryTraceError, match="missing from SECURITY.md"):
+        gate.verify_github_parity(
+            rows, [baseline, in_flight], now=now, allow_t0_in_flight=False
+        )
+
+    # Fails once >24h elapses without landing SECURITY.md trace row
+    expired_now = datetime(2026, 12, 5, 16, 0, 0, tzinfo=timezone.utc)
+    with pytest.raises(gate.AdvisoryTraceError, match="missing from SECURITY.md"):
+        gate.verify_github_parity(rows, [baseline, in_flight], now=expired_now)
+
+    # Fails immediately once 'Fixed on main in <SHA>' is stamped without SECURITY.md row
+    stamped = gate.PublishedAdvisory(
+        ghsa_id="GHSA-4444-5555-6666",
+        published_date="2026-12-04",
+        severity="medium",
+        description="Fixed on main in abcdef12 (#850). Previously Fix in flight in #850.",
+        published_at="2026-12-04T14:55:00Z",
+    )
+    with pytest.raises(gate.AdvisoryTraceError, match="missing from SECURITY.md"):
+        gate.verify_github_parity(rows, [baseline, stamped], now=now)
 
 
 def test_fetch_published_advisories_follows_pagination_and_rejects_bad_url() -> None:
@@ -285,6 +354,18 @@ def test_fetch_published_advisories_follows_pagination_and_rejects_bad_url() -> 
         "GHSA-2222-3333-4444",
         "GHSA-3333-4444-5555",
     ]
+
+    empty_responses = iter([_FakeResp([], link=None)])
+
+    class _EmptyHTTPSConnection(_FakeHTTPSConnection):
+        def getresponse(self) -> _FakeResp:
+            return next(empty_responses)
+
+    with (
+        patch.object(gate.http.client, "HTTPSConnection", _EmptyHTTPSConnection),
+        pytest.raises(gate.AdvisoryTraceError, match="returned 0 published advisories"),
+    ):
+        gate.fetch_published_advisories()
 
 
 def test_advisory_trace_gate_is_wired_into_ci_hooks_and_makefile() -> None:

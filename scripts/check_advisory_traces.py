@@ -21,11 +21,16 @@ advisories and the in-repository fix-trace register in ``SECURITY.md``:
 1. **Git ancestry (offline & CI):** Every row in the ``## Security Advisories``
    table of ``SECURITY.md`` carries a valid GHSA identifier, date, severity, and
    at least one commit SHA that resolves in git and is an ancestor of ``main``.
-2. **Bidirectional GitHub parity (``--verify-github``):** Every advisory returned
-   by ``GET /repos/{owner}/{repo}/security-advisories?state=published`` has a
-   matching row in ``SECURITY.md`` (no missing advisories, no unpublished/withdrawn
-   rows), with matching publication date, severity, and fix-commit SHA prefix in
-   the GitHub advisory body.
+2. **Bidirectional GitHub parity (``--verify-github``):** The expected advisory
+   set is derived dynamically from ``GET /repos/{owner}/{repo}/security-advisories?state=published``
+   (failing closed if the API returns zero published advisories), and every
+   published advisory has a matching row in ``SECURITY.md`` with matching
+   publication date, severity, and fix-commit SHA prefix in the GitHub advisory
+   body. During a ``T=0`` coordinated disclosure (``SECURITY.md`` Step 4), an
+   advisory published within the last 24 hours whose description carries
+   ``Fix in flight in #<PR>`` (and not yet ``Fixed on main in``) is recognized
+   as in-flight so the fix PR's own CI stays green before its squash-merge SHA
+   exists.
 """
 
 from __future__ import annotations
@@ -39,11 +44,13 @@ import subprocess
 import sys
 import urllib.parse
 from dataclasses import dataclass
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
 DEFAULT_REPO = "google/cybernetic-agent-governance-engine"
-MIN_PUBLISHED_ADVISORIES = 10
+MIN_TABLE_ROWS = 1
+IN_FLIGHT_MAX_AGE_SECONDS = 86_400
 
 _GHSA_RE = re.compile(
     r"^GHSA-[23456789cfghjmpqrvwx]{4}-[23456789cfghjmpqrvwx]{4}-[23456789cfghjmpqrvwx]{4}$"
@@ -52,6 +59,8 @@ _DATE_RE = re.compile(r"^\d{4}-\d{2}-\d{2}$")
 _SHA_TOKEN_RE = re.compile(r"\b([0-9a-f]{7,40})\b")
 _REPO_SLUG_RE = re.compile(r"^[A-Za-z0-9._-]+/[A-Za-z0-9._-]+$")
 _LINK_NEXT_RE = re.compile(r'<([^>]+)>\s*;\s*rel="next"')
+_IN_FLIGHT_RE = re.compile(r"\bfix in flight in #(\d+)\b", re.IGNORECASE)
+_FIXED_ON_MAIN_RE = re.compile(r"\bfixed on `?main`? in\b", re.IGNORECASE)
 _VALID_SEVERITIES = frozenset({"low", "medium", "high", "critical"})
 
 
@@ -79,6 +88,7 @@ class PublishedAdvisory:
     published_date: str
     severity: str
     description: str
+    published_at: str = ""
 
 
 def _strip_code_ticks(cell: str) -> str:
@@ -117,7 +127,7 @@ def _split_markdown_row(line: str) -> list[str]:
 def parse_security_md_advisories(
     security_md: Path,
     *,
-    min_rows: int = MIN_PUBLISHED_ADVISORIES,
+    min_rows: int = MIN_TABLE_ROWS,
 ) -> list[AdvisoryTableRow]:
     """Parse and validate the ``## Security Advisories`` table in *security_md*."""
     if not security_md.is_file():
@@ -411,23 +421,77 @@ def fetch_published_advisories(
                     published_date=published_at[:10],
                     severity=severity,
                     description=description,
+                    published_at=published_at,
                 )
             )
         next_url = _extract_next_link(link_header)
 
+    if not out:
+        raise AdvisoryTraceError(
+            f"GitHub Security Advisories API returned 0 published advisories for {repo}; "
+            "refusing vacuous parity check"
+        )
     return out
+
+
+def _t0_in_flight_pr(adv: PublishedAdvisory, *, now: datetime) -> str | None:
+    """Return ``#<PR>`` when *adv* is within the <=24h ``SECURITY.md`` Step 4 ``T=0`` window."""
+    if _FIXED_ON_MAIN_RE.search(adv.description):
+        return None
+    match = _IN_FLIGHT_RE.search(adv.description)
+    if match is None or not adv.published_at:
+        return None
+    normalized = (
+        f"{adv.published_at[:-1]}+00:00"
+        if adv.published_at.endswith("Z")
+        else adv.published_at
+    )
+    try:
+        pub_dt = datetime.fromisoformat(normalized)
+    except ValueError:
+        return None
+    if pub_dt.tzinfo is None:
+        return None
+    age_seconds = (now - pub_dt.astimezone(timezone.utc)).total_seconds()
+    if -300.0 <= age_seconds <= IN_FLIGHT_MAX_AGE_SECONDS:
+        return f"#{match.group(1)}"
+    return None
 
 
 def verify_github_parity(
     rows: list[AdvisoryTableRow],
     published: list[PublishedAdvisory],
-) -> None:
+    *,
+    now: datetime | None = None,
+    allow_t0_in_flight: bool = True,
+) -> list[str]:
     """Verify 1-to-1 parity and metadata/SHA agreement between ``SECURITY.md`` and GitHub."""
+    if not published:
+        raise AdvisoryTraceError(
+            "GitHub published advisory list is empty; refusing vacuous parity check"
+        )
+    effective_now = (
+        now.astimezone(timezone.utc) if now is not None else datetime.now(timezone.utc)
+    )
     by_table = {row.ghsa_id: row for row in rows}
     by_api = {adv.ghsa_id: adv for adv in published}
 
     errors: list[str] = []
-    missing_in_table = sorted(by_api.keys() - by_table.keys())
+    missing_in_table: list[str] = []
+    in_flight_notices: list[str] = []
+    for ghsa_id in sorted(by_api.keys() - by_table.keys()):
+        pr_ref = (
+            _t0_in_flight_pr(by_api[ghsa_id], now=effective_now)
+            if allow_t0_in_flight
+            else None
+        )
+        if pr_ref is not None:
+            in_flight_notices.append(
+                f"{ghsa_id} (published_at={by_api[ghsa_id].published_at}, Fix in flight in {pr_ref})"
+            )
+        else:
+            missing_in_table.append(ghsa_id)
+
     if missing_in_table:
         errors.append(
             "Published on GitHub but missing from SECURITY.md ## Security Advisories: "
@@ -463,6 +527,7 @@ def verify_github_parity(
             "GitHub Security Advisory parity check failed:\n  - "
             + "\n  - ".join(errors)
         )
+    return in_flight_notices
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -484,6 +549,11 @@ def main(argv: list[str] | None = None) -> int:
         help="Also query GitHub's security-advisories API and verify 1-to-1 parity",
     )
     parser.add_argument(
+        "--strict",
+        action="store_true",
+        help="Fail even when a newly published <=24h advisory carries 'Fix in flight in #<PR>'",
+    )
+    parser.add_argument(
         "--repo",
         default=DEFAULT_REPO,
         help=f"GitHub OWNER/REPO slug for --verify-github (default: {DEFAULT_REPO})",
@@ -498,6 +568,7 @@ def main(argv: list[str] | None = None) -> int:
     repo_root = args.repo_root.resolve()
     security_md = repo_root / "SECURITY.md"
 
+    in_flight_notices: list[str] = []
     try:
         rows = parse_security_md_advisories(security_md)
         resolved_ref, resolved_oids = verify_git_ancestry(
@@ -505,7 +576,11 @@ def main(argv: list[str] | None = None) -> int:
         )
         if args.verify_github:
             published = fetch_published_advisories(args.repo)
-            verify_github_parity(rows, published)
+            in_flight_notices = verify_github_parity(
+                rows,
+                published,
+                allow_t0_in_flight=not args.strict,
+            )
     except AdvisoryTraceError as exc:
         print(f"❌ {exc}", file=sys.stderr)
         return 1
@@ -517,6 +592,8 @@ def main(argv: list[str] | None = None) -> int:
                 f"  • {row.ghsa_id} ({row.published}, {row.severity}): "
                 f"ancestor of {resolved_ref} via [{oids}]"
             )
+    for notice in in_flight_notices:
+        print(f"  ⏳ T=0 advisory in flight (<=24h): {notice}")
     mode = (
         f"git ancestry ({resolved_ref}) + live GitHub API ({args.repo})"
         if args.verify_github
