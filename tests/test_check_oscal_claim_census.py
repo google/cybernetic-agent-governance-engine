@@ -18,6 +18,7 @@ from __future__ import annotations
 
 import copy
 import re
+import subprocess
 from pathlib import Path
 
 import pytest
@@ -30,11 +31,16 @@ pytestmark = [pytest.mark.unit, pytest.mark.local]
 def test_committed_census_passes_validation_and_counts() -> None:
     rows = census_mod.load_census()
     extracted = census_mod.extract_all_oscal_claims()
+    assert census_mod.validate_oscal_structure() == []
     errors = census_mod.validate_census(rows, extracted)
     assert errors == [], f"Unexpected census validation errors: {errors}"
 
-    assert len(extracted) == 208
-    assert len(rows) == 209
+    assert (
+        "components/cage_client_sdk.yaml#1a2b3c4d-5e6f-7a8b-9c0d-1e2f3a4b5c6d"
+        in extracted
+    )
+    assert len(extracted) == 212
+    assert len(rows) == 213
 
     counts: dict[str, int] = {}
     for row in rows:
@@ -42,8 +48,8 @@ def test_committed_census_passes_validation_and_counts() -> None:
         counts[v] = counts.get(v, 0) + 1
 
     assert counts == {
-        "HOLDS": 29,
-        "WEAKER": 63,
+        "HOLDS": 26,
+        "WEAKER": 70,
         "NOT_IN_FORCE": 24,
         "INHERITED": 45,
         "ROLLUP": 35,
@@ -271,3 +277,184 @@ def test_render_register_markdown_table_integrity_and_committed_parity(
         else:
             in_table = False
             expected_cols = None
+
+
+def test_validate_oscal_structure_rejects_nested_component_in_control_implementations(
+    tmp_path: Path,
+) -> None:
+    oscal_dir = tmp_path / "compliance" / "oscal"
+    oscal_dir.mkdir(parents=True)
+    (oscal_dir / "component-definition.yaml").write_text(
+        "component-definition:\n"
+        "  components:\n"
+        "  - uuid: comp-parent\n"
+        "    type: software\n"
+        "    title: ParentEngine\n"
+        "    control-implementations:\n"
+        "    - uuid: ci-valid\n"
+        "      source: sp800-53\n"
+        "      implemented-requirements: []\n"
+        "    - uuid: comp-misnested\n"
+        "      type: software\n"
+        "      title: MisnestedTokenQuotaProxy\n"
+        "      control-implementations: []\n",
+        encoding="utf-8",
+    )
+    struct_errs = census_mod.validate_oscal_structure(oscal_dir)
+    assert len(struct_errs) == 1
+    assert "MisnestedTokenQuotaProxy" in struct_errs[0]
+    assert "ParentEngine" in struct_errs[0]
+
+
+def test_pinned_path_exists_in_git_rejects_non_ancestor_commit(
+    tmp_path: Path,
+) -> None:
+    def _git(*args: str) -> str:
+        res = subprocess.run(
+            ["git", *args],
+            cwd=tmp_path,
+            check=True,
+            capture_output=True,
+            text=True,
+        )
+        return res.stdout.strip()
+
+    _git("init", "-b", "main")
+    _git("config", "user.email", "test@example.com")
+    _git("config", "user.name", "Test User")
+
+    (tmp_path / "README.md").write_text("mainline\n", encoding="utf-8")
+    _git("add", "README.md")
+    _git("commit", "-m", "initial mainline")
+    main_sha = _git("rev-parse", "HEAD")
+
+    _git("checkout", "--orphan", "unmerged-side")
+    _git("rm", "-rf", ".")
+    (tmp_path / "retired.py").write_text("x = 1\n", encoding="utf-8")
+    _git("add", "retired.py")
+    _git("commit", "-m", "orphan commit")
+    orphan_sha = _git("rev-parse", "HEAD")
+
+    _git("checkout", "main")
+
+    # Object exists in .git/objects, yet is NOT an ancestor of HEAD:
+    assert census_mod._pinned_path_exists_in_git(main_sha, "README.md", tmp_path)
+    assert not census_mod._pinned_path_exists_in_git(orphan_sha, "retired.py", tmp_path)
+
+
+def test_poam_235_holds_rejects_missing_test_fn_and_fallback_seal_or_software_signer(
+    tmp_path: Path,
+) -> None:
+    tests_dir = tmp_path / "tests"
+    tests_dir.mkdir(parents=True)
+    (tests_dir / "test_strict.py").write_text(
+        "def test_strict_enforced() -> None:\n    assert True\n",
+        encoding="utf-8",
+    )
+    (tests_dir / "test_non_strict_seal.py").write_text(
+        'import os\nos.environ.setdefault("CAGE_SEAL_STRICT_MODE", "false")\n'
+        "def test_seal_fallback() -> None:\n    assert True\n",
+        encoding="utf-8",
+    )
+    (tests_dir / "test_sw_signer_only.py").write_text(
+        "class SoftwareEd25519Provider:\n    pass\n"
+        "def test_sw_roundtrip() -> None:\n    assert SoftwareEd25519Provider() is not None\n",
+        encoding="utf-8",
+    )
+
+    sa11 = {
+        "id": "SA11-SYSTEMIC",
+        "verdict": "WEAKER",
+        "disposition": "restate",
+        "custody": {"grade": "CONFIG", "note": "ok"},
+        "read_back": {"grade": "PRESENCE", "check": "none", "runs_in": "none"},
+        "lifetime": {"grade": "REPO", "note": "ok"},
+        "description_sha256": census_mod.hashlib.sha256(b"").hexdigest(),
+    }
+
+    def _base_holds_row(rid: str, control: str = "ac-3") -> dict[str, object]:
+        return {
+            "id": rid,
+            "control": control,
+            "claim": "Strict control claim",
+            "verdict": "HOLDS",
+            "disposition": "holds",
+            "custody": {"grade": "PLANE", "note": "ok"},
+            "read_back": {
+                "grade": "OBSERVES",
+                "check": "tests/test_strict.py:L1 (test_strict_enforced)",
+                "runs_in": "ci:pytest-logic",
+            },
+            "lifetime": {"grade": "REPO", "note": "ok"},
+            "w_binding": {"value": False, "object": ""},
+            "cites": ["tests/test_strict.py:L1-L2"],
+            "evidence_named": ["tests/test_strict.py"],
+            "description_sha256": "b" * 64,
+            "status_extracted": "implemented",
+        }
+
+    ext_ok = {
+        "sp800-53-component-definition.yaml#ok-1": {
+            "id": "sp800-53-component-definition.yaml#ok-1",
+            "control": "ac-3",
+            "status": "implemented",
+            "text": "Verified by test_strict_enforced.",
+            "description_sha256": "b" * 64,
+        }
+    }
+    assert (
+        census_mod.validate_census(
+            [_base_holds_row("sp800-53-component-definition.yaml#ok-1"), sa11],
+            ext_ok,
+            repo_root=tmp_path,
+        )
+        == []
+    )
+
+    # (a) Missing test_* function in OSCAL text fails closed
+    ext_ghost = copy.deepcopy(ext_ok)
+    ext_ghost["sp800-53-component-definition.yaml#ok-1"]["text"] = (
+        "Verified by test_deleted_ghost_function."
+    )
+    errs_ghost = census_mod.validate_census(
+        [_base_holds_row("sp800-53-component-definition.yaml#ok-1"), sa11],
+        ext_ghost,
+        repo_root=tmp_path,
+    )
+    assert any(
+        "HOLDS oscal.text cites missing test function 'test_deleted_ghost_function'"
+        in e
+        for e in errs_ghost
+    ), errs_ghost
+
+    # (b) CAGE_SEAL_STRICT_MODE="false" test suite fails closed on HOLDS
+    row_seal = _base_holds_row("sp800-53-component-definition.yaml#ok-1")
+    row_seal["read_back"] = {
+        "grade": "OBSERVES",
+        "check": "tests/test_non_strict_seal.py:L3",
+        "runs_in": "ci:pytest-logic",
+    }
+    row_seal["cites"] = ["tests/test_non_strict_seal.py:L1-L4"]
+    row_seal["evidence_named"] = ["tests/test_non_strict_seal.py"]
+    errs_seal = census_mod.validate_census([row_seal, sa11], ext_ok, repo_root=tmp_path)
+    assert any("setting CAGE_SEAL_STRICT_MODE=false" in e for e in errs_seal), errs_seal
+
+    # (c) Implemented sc-13 HOLDS backed solely by SoftwareEd25519Provider fails closed
+    row_sw = _base_holds_row("sp800-53-component-definition.yaml#ok-1", control="sc-13")
+    row_sw["read_back"] = {
+        "grade": "OBSERVES",
+        "check": "tests/test_sw_signer_only.py:L3",
+        "runs_in": "ci:pytest-logic",
+    }
+    row_sw["cites"] = ["tests/test_sw_signer_only.py:L1-L4"]
+    row_sw["evidence_named"] = ["tests/test_sw_signer_only.py"]
+    ext_sw = copy.deepcopy(ext_ok)
+    ext_sw["sp800-53-component-definition.yaml#ok-1"]["control"] = "sc-13"
+    ext_sw["sp800-53-component-definition.yaml#ok-1"]["text"] = (
+        "Verified by test_sw_roundtrip."
+    )
+    errs_sw = census_mod.validate_census([row_sw, sa11], ext_sw, repo_root=tmp_path)
+    assert any(
+        "software-fallback test signers without KMS/IaC verification" in e
+        for e in errs_sw
+    ), errs_sw

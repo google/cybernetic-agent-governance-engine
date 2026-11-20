@@ -123,6 +123,20 @@ PROSE_PATH_LINE_RE = re.compile(
 SYMBOL_QUAL_RE = re.compile(
     r"(?<![A-Za-z0-9_./:-])((?:src|tests|scripts|packages|proof)/[A-Za-z0-9_./-]+\.py)::([A-Za-z_][A-Za-z0-9_]*(?:::[A-Za-z_][A-Za-z0-9_]*)?)"
 )
+TEST_FN_IDENT_RE = re.compile(
+    r"(?<![A-Za-z0-9_./:-])(test_[a-z0-9_]{4,})(?!\.py\b)(?![A-Za-z0-9_])"
+)
+DIRECT_FALLBACK_PROSE_RE = re.compile(
+    r"(?:\b_DevSigner\b|\bLocalEd25519\w*\b|\bhmac_fallback\b|CAGE_SEAL_STRICT_MODE\s*=\s*['\"]?false['\"]?)",
+    re.IGNORECASE,
+)
+NON_STRICT_SEAL_ENV_RE = re.compile(
+    r"""(?:(?:setenv|setdefault)\(\s*["']CAGE_SEAL_STRICT_MODE["']\s*,\s*["']false["']\s*\)|environ\s*\[\s*["']CAGE_SEAL_STRICT_MODE["']\s*\]\s*=\s*["']false["']|["']CAGE_SEAL_STRICT_MODE["']\s*:\s*["']false["'])""",
+    re.IGNORECASE,
+)
+SOFTWARE_SIGNER_FALLBACK_RE = re.compile(
+    r"\b(?:SoftwareEd25519Provider|is_software_fallback)\b"
+)
 
 
 @dataclass(frozen=True)
@@ -436,9 +450,12 @@ def extract_ssp(path: Path, doc: dict[str, Any]) -> list[dict[str, Any]]:
     return out
 
 
-def extract_generic(path: Path, doc: object) -> list[dict[str, Any]]:
+def extract_generic(
+    path: Path, doc: object, *, rel_file: str | None = None
+) -> list[dict[str, Any]]:
     """Extract control-bearing entries from a Ring-2 OSCAL YAML document."""
     out: list[dict[str, Any]] = []
+    file_key = rel_file or path.name
 
     def walk(node: object, comp: str, trail: str) -> None:
         if isinstance(node, dict):
@@ -454,8 +471,8 @@ def extract_generic(path: Path, doc: object) -> list[dict[str, Any]]:
                 out.append(
                     {
                         "ring": 2,
-                        "file": path.name,
-                        "id": f"{path.name}#{uid}",
+                        "file": file_key,
+                        "id": f"{file_key}#{uid}",
                         "level": "entry",
                         "control": node.get("control-id"),
                         "component": here or "",
@@ -475,19 +492,52 @@ def extract_generic(path: Path, doc: object) -> list[dict[str, Any]]:
     return out
 
 
-def extract_all_oscal_claims(
-    oscal_dir: Path = DEFAULT_OSCAL_DIR,
-) -> dict[str, dict[str, Any]]:
-    """Extract all structured claims across ``oscal_dir/*.yaml`` keyed by ``<file>#<uuid>``."""
-    extracted: dict[str, dict[str, Any]] = {}
-    for path in sorted(oscal_dir.glob("*.yaml")):
+def validate_oscal_structure(oscal_dir: Path = DEFAULT_OSCAL_DIR) -> list[str]:
+    """Validate structural invariants on OSCAL YAML documents under *oscal_dir*."""
+    errors: list[str] = []
+    if not oscal_dir.is_dir():
+        return errors
+    for path in sorted(oscal_dir.rglob("*.yaml")):
+        rel_file = path.relative_to(oscal_dir).as_posix()
         doc = yaml.safe_load(path.read_text(encoding="utf-8"))
         if not isinstance(doc, dict):
             continue
+        cd = doc.get("component-definition")
+        if isinstance(cd, dict):
+            for c_idx, comp in enumerate(cd.get("components") or []):
+                if not isinstance(comp, dict):
+                    continue
+                comp_title = (
+                    comp.get("title") or comp.get("uuid") or f"components[{c_idx}]"
+                )
+                for ci_idx, ci in enumerate(comp.get("control-implementations") or []):
+                    if not isinstance(ci, dict):
+                        continue
+                    if "type" in ci or "control-implementations" in ci:
+                        nested_title = (
+                            ci.get("title") or ci.get("uuid") or f"index {ci_idx}"
+                        )
+                        errors.append(
+                            f"{rel_file}: component {nested_title!r} is nested inside "
+                            f"{comp_title!r}.control-implementations[{ci_idx}] instead of top-level 'components:'"
+                        )
+    return errors
+
+
+def extract_all_oscal_claims(
+    oscal_dir: Path = DEFAULT_OSCAL_DIR,
+) -> dict[str, dict[str, Any]]:
+    """Extract all structured claims across ``oscal_dir/**/*.yaml`` keyed by ``<rel_file>#<uuid>``."""
+    extracted: dict[str, dict[str, Any]] = {}
+    for path in sorted(oscal_dir.rglob("*.yaml")):
+        doc = yaml.safe_load(path.read_text(encoding="utf-8"))
+        if not isinstance(doc, dict):
+            continue
+        rel_file = path.relative_to(oscal_dir).as_posix()
         rows = (
             extract_ssp(path, doc)
-            if path.name in RING1_FILES
-            else extract_generic(path, doc)
+            if rel_file in RING1_FILES
+            else extract_generic(path, doc, rel_file=rel_file)
         )
         for row in rows:
             extracted[row["id"]] = row
@@ -504,7 +554,7 @@ def load_census(census_path: Path = DEFAULT_CENSUS_PATH) -> list[dict[str, Any]]
 
 
 def _pinned_path_exists_in_git(rev: str, rel_path: str, repo_root: Path) -> bool:
-    """Verify a revision-pinned ``<sha>^:<path>`` citation against git history."""
+    """Verify a revision-pinned ``<sha>^:<path>`` citation resolves on an ancestor of HEAD."""
     proc = subprocess.run(
         ["git", "cat-file", "-e", f"{rev}:{rel_path}"],
         cwd=repo_root,
@@ -512,7 +562,40 @@ def _pinned_path_exists_in_git(rev: str, rel_path: str, repo_root: Path) -> bool
         text=True,
         check=False,
     )
-    return proc.returncode == 0
+    if proc.returncode != 0:
+        return False
+    base_rev = rev.rstrip("^")
+    anc = subprocess.run(
+        ["git", "merge-base", "--is-ancestor", base_rev, "HEAD"],
+        cwd=repo_root,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    return anc.returncode == 0
+
+
+def _discover_test_functions(repo_root: Path) -> set[str]:
+    """Return all ``def test_*`` / ``async def test_*`` symbol names across test trees."""
+    found: set[str] = set()
+    for sub in ("tests", "packages"):
+        root = repo_root / sub
+        if not root.is_dir():
+            continue
+        for py_path in root.rglob("*.py"):
+            try:
+                tree = ast.parse(
+                    py_path.read_text(encoding="utf-8", errors="replace"),
+                    filename=str(py_path),
+                )
+            except (OSError, SyntaxError):
+                continue
+            for node in ast.walk(tree):
+                if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)) and (
+                    node.name.startswith("test_")
+                ):
+                    found.add(node.name)
+    return found
 
 
 def _line_count(path: Path, cache: dict[Path, int]) -> int:
@@ -687,11 +770,14 @@ def validate_census(
     census_rows: list[dict[str, Any]],
     extracted: dict[str, dict[str, Any]],
     repo_root: Path = REPO_ROOT,
+    oscal_dir: Path | None = None,
 ) -> list[str]:
     """Validate completeness, freshness, schema, finding IDs, line bounds, and code anchors."""
-    errors: list[str] = []
+    effective_oscal_dir = oscal_dir or (repo_root / "compliance/oscal")
+    errors: list[str] = validate_oscal_structure(effective_oscal_dir)
     by_id: dict[str, dict[str, Any]] = {}
     line_cache: dict[Path, int] = {}
+    test_fn_cache: set[str] | None = None
     anchored_row_count = 0
 
     for idx, row in enumerate(census_rows, 1):
@@ -765,6 +851,72 @@ def validate_census(
                     errors.append(
                         f"Row {idx} ({rid}): HOLDS claim cannot rely on meta/schema test {meta_test!r}"
                     )
+
+            fb_match = DIRECT_FALLBACK_PROSE_RE.search(holds_rb_blob)
+            if fb_match:
+                errors.append(
+                    f"Row {idx} ({rid}): HOLDS claim cannot rely on fallback/dev signer marker {fb_match.group(0)!r}"
+                )
+
+            unpinned_holds_rb = PINNED_READ_BACK_REPO_PATH_RE.sub(" ", holds_rb_blob)
+            cited_test_files: list[tuple[str, str]] = []
+            seen_holds_paths: set[str] = set()
+            has_non_test_kms_check = False
+            for m_hp in READ_BACK_REPO_PATH_RE.finditer(unpinned_holds_rb):
+                hp_rel = m_hp.group(1).rstrip(".,;")
+                if hp_rel in seen_holds_paths:
+                    continue
+                seen_holds_paths.add(hp_rel)
+                hp_full = repo_root / hp_rel
+                if hp_rel.endswith((".tf", ".tftest.hcl")) and hp_full.is_file():
+                    has_non_test_kms_check = True
+                if (
+                    hp_rel.endswith(".py")
+                    and ("tests/" in hp_rel or Path(hp_rel).name.startswith("test_"))
+                    and hp_full.is_file()
+                ):
+                    hp_text = hp_full.read_text(encoding="utf-8", errors="replace")
+                    cited_test_files.append((hp_rel, hp_text))
+                    if NON_STRICT_SEAL_ENV_RE.search(hp_text):
+                        errors.append(
+                            f"Row {idx} ({rid}): HOLDS claim relies on fallback-mode test suite "
+                            f"{hp_rel!r} setting CAGE_SEAL_STRICT_MODE=false"
+                        )
+
+            ctrl_norm = str(row.get("control") or "").lower()
+            if (
+                ctrl_norm in {"sc-12", "sc-13"}
+                and row.get("status_extracted") == "implemented"
+                and cited_test_files
+                and not has_non_test_kms_check
+                and all(
+                    SOFTWARE_SIGNER_FALLBACK_RE.search(txt)
+                    for _, txt in cited_test_files
+                )
+            ):
+                errors.append(
+                    f"Row {idx} ({rid}): HOLDS implemented {ctrl_norm} claim relies solely on "
+                    "software-fallback test signers without KMS/IaC verification"
+                )
+
+            if (repo_root / "tests").is_dir():
+                oscal_text = str(extracted.get(rid, {}).get("text", "") or "")
+                fn_sources = (
+                    ("oscal.text", oscal_text),
+                    ("claim", str(row.get("claim") or "")),
+                    ("read_back.check", str(rb_check)),
+                )
+                for src_label, fn_blob in fn_sources:
+                    for m_fn in TEST_FN_IDENT_RE.finditer(fn_blob):
+                        fn_name = m_fn.group(1)
+                        if fn_name in paths_missing_blob:
+                            continue
+                        if test_fn_cache is None:
+                            test_fn_cache = _discover_test_functions(repo_root)
+                        if fn_name not in test_fn_cache:
+                            errors.append(
+                                f"Row {idx} ({rid}): HOLDS {src_label} cites missing test function {fn_name!r}"
+                            )
 
         prose_fields: list[tuple[str, str]] = [
             ("cites", " ; ".join(str(c) for c in (row.get("cites") or []))),
@@ -1007,7 +1159,7 @@ def render_register_markdown(rows: list[dict[str, Any]]) -> str:
     lines.append("## 1. Executive Summary & Cross-Tabulation")
     lines.append("")
     lines.append(
-        f"Across all 7 structured OSCAL files (`{n_oscal}` entries plus `SA11-SYSTEMIC` = **`{tot['total']}` entries**), "
+        f"Across all 8 structured OSCAL files (`{n_oscal}` entries plus `SA11-SYSTEMIC` = **`{tot['total']}` entries**), "
         f"**`{n_graded}` entries are substantively graded CAGE claims** "
         f"(`{tot['HOLDS']} HOLDS` / `{_pct(tot['HOLDS'], n_graded)}`, "
         f"`{tot['WEAKER']} WEAKER`, `{tot['NOT_IN_FORCE']} NOT_IN_FORCE`), "
@@ -1038,7 +1190,8 @@ def render_register_markdown(rows: list[dict[str, Any]]) -> str:
         (
             "ring2_sp80053cd",
             "**Ring 2a**",
-            f"[`sp800-53-component-definition.yaml`]({rel_root}/compliance/oscal/sp800-53-component-definition.yaml)",
+            f"[`sp800-53-component-definition.yaml`]({rel_root}/compliance/oscal/sp800-53-component-definition.yaml), "
+            f"[`components/cage_client_sdk.yaml`]({rel_root}/compliance/oscal/components/cage_client_sdk.yaml)",
         ),
         (
             "ring2_cd_patch",
@@ -1060,7 +1213,7 @@ def render_register_markdown(rows: list[dict[str, Any]]) -> str:
             f"{sc['w_binding']} | {sc['reopen']} |"
         )
     lines.append(
-        f"| **Total** | **All 7 OSCAL structured files + `SA11-SYSTEMIC`** | **{tot['total']}** | "
+        f"| **Total** | **All 8 OSCAL structured files + `SA11-SYSTEMIC`** | **{tot['total']}** | "
         f"**{tot['HOLDS']}** | **{tot['WEAKER']}** | **{tot['NOT_IN_FORCE']}** | "
         f"**{tot['INHERITED']}** | **{tot['ROLLUP']}** | **{tot['NOT_A_CLAIM']}** | "
         f"**{tot['w_binding']}** | **{tot['reopen']}** |"
@@ -1145,7 +1298,7 @@ def render_register_markdown(rows: list[dict[str, Any]]) -> str:
     titles = {
         "ring1_usfed": f"## 2. Ring 1a — `system-security-plan.yaml` (`US_FED`, {len(by_slice.get('ring1_usfed', []))} entries)",
         "ring1_euapac": f"## 3. Ring 1b — `system-security-plan-eu-ecb.yaml`, `system-security-plan-apac-mas.yaml` & `SA11-SYSTEMIC` ({len(by_slice.get('ring1_euapac', []))} entries)",
-        "ring2_sp80053cd": f"## 4. Ring 2a — `sp800-53-component-definition.yaml` ({len(by_slice.get('ring2_sp80053cd', []))} entries)",
+        "ring2_sp80053cd": f"## 4. Ring 2a — `sp800-53-component-definition.yaml` & `compliance/oscal/components/cage_client_sdk.yaml` ({len(by_slice.get('ring2_sp80053cd', []))} entries)",
         "ring2_cd_patch": f"## 5. Ring 2b — `component-definition.yaml` & `stpa_compiler_ssp_patch.yaml` ({len(by_slice.get('ring2_cd_patch', []))} entries)",
         "ring2_ccc": f"## 6. Ring 2c — `common-controls-catalog.yaml` ({len(by_slice.get('ring2_ccc', []))} entries)",
     }
@@ -1301,7 +1454,7 @@ def main(argv: list[str] | None = None) -> int:
 
     rows = load_census(args.census)
     extracted = extract_all_oscal_claims(args.oscal_dir)
-    errors = validate_census(rows, extracted, args.repo_root)
+    errors = validate_census(rows, extracted, args.repo_root, args.oscal_dir)
     if errors:
         for err in errors:
             print(f"FAIL: {err}", file=sys.stderr)

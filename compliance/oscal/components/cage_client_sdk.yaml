@@ -124,11 +124,13 @@ component-definition:
                 packages/cage-client/.
               props:
                 - name: implementation-status
-                  value: implemented
+                  value: partially-implemented
                 - name: control-origination
                   value: system-specific
                 - name: implementation-date
                   value: "2026-09-18"
+                - name: poam-reference
+                  value: "POAM-2026-241"
               links:
                 - href: "https://csrc.nist.gov/projects/cprt/api/cprt/framework/version/SP_800_53_5_1_1/home?element=AC-3"
                   rel: reference
@@ -155,8 +157,9 @@ component-definition:
                 NARROW / DENY / DEFER / REQUIRE_APPROVAL verdicts:
                 - Resolves signing public keys strictly out-of-band by kid via
                   JwksKeyResolver ({gateway_url}/governance/.well-known/jwks.json with
-                  single-flight refresh, HTTP 304 rejection, atomic rotation/revocation
-                  replacement, and hard max_jwks_staleness_s fail-closed eviction) or
+                  single-flight refresh, HTTP 304 rejection, rotation replacement,
+                  and hard max_jwks_staleness_s fail-closed eviction; empty-set HTTP 200
+                  revocation eviction tracked under POAM-2026-241) or
                   caller-pinned public_keys; embedded public keys or unexpected signature
                   fields inside the envelope raise RoutingSealVerificationError
                 - Canonicalizes the unsigned wire envelope via pure-stdlib RFC 8785 JCS
@@ -181,13 +184,15 @@ component-definition:
                 src/gateway/governance/kms_signer.py.
               props:
                 - name: implementation-status
-                  value: implemented
+                  value: partially-implemented
                 - name: control-origination
                   value: system-specific
                 - name: implementation-date
                   value: "2026-11-19"
                 - name: w3c-traceparent-propagation
                   value: "true"
+                - name: poam-reference
+                  value: "POAM-2026-241"
               links:
                 - href: "https://csrc.nist.gov/projects/cprt/api/cprt/framework/version/SP_800_53_5_1_1/home?element=AU-10"
                   rel: reference
@@ -259,10 +264,12 @@ component-definition:
                   rejects expired envelopes where
                   expires_at + timedelta(seconds=clock_skew_seconds) <= now(UTC) with
                   RoutingSealVerificationError
-                - Prevents cross-action and cross-parameter replay/substitution by
+                - Prevents cross-action and cross-parameter substitution by
                   verifying envelope.subject["action"] == action and constant-time
                   hmac.compare_digest() parity between envelope.subject["action_hash"]
                   and sha256:<hex> over RFC 8785 JCS {"action": action, "params": ...}
+                  (per-call correlation_id binding and deferral TTL separation open under
+                  POAM-2026-241)
 
                 Scope boundary: Stateless CageClient validates temporal freshness and
                 request-parameter hash binding per call; stateful server-side single-use
@@ -271,11 +278,13 @@ component-definition:
                 packages/cage-client/.
               props:
                 - name: implementation-status
-                  value: implemented
+                  value: partially-implemented
                 - name: control-origination
                   value: system-specific
                 - name: implementation-date
                   value: "2026-11-19"
+                - name: poam-reference
+                  value: "POAM-2026-241"
               links:
                 - href: "https://csrc.nist.gov/projects/cprt/api/cprt/framework/version/SP_800_53_5_1_1/home?element=SC-23"
                   rel: reference

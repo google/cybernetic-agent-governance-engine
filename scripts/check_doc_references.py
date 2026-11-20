@@ -1425,6 +1425,7 @@ CENSUS_ID_PATTERN = re.compile(
     r"(?:compliance/oscal/)?(?P<cid>(?:"
     r"system-security-plan(?:-eu-ecb|-apac-mas)?\.yaml"
     r"|(?:sp800-53-)?component-definition\.yaml"
+    r"|components/cage_client_sdk\.yaml"
     r"|common-controls-catalog\.yaml"
     r"|stpa_compiler_ssp_patch\.yaml"
     r"|eu-ai-act-profile\.yaml"
