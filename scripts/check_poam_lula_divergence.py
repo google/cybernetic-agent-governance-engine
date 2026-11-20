@@ -1899,13 +1899,9 @@ def _audit_oscal_checks(
         # an Active Lula manifest satisfies HOLDS only alongside a PR-CI runnable check or an
         # Observed YYYY-MM-DD live/Gate-W record (POAM-2026-235).
         observed_ok = bool(_OBSERVED_RECORD_RE.search(blob))
-        if (
-            not pr_ci_runnable_ok
-            and not (active_lula_ok and observed_ok)
-            and not observed_ok
-        ):
+        if not pr_ci_runnable_ok and not (active_lula_ok and observed_ok):
             errors.append(
-                f"[Check 1: Read-Back] OSCAL {rid}: {claim_kind} claim cites no resolvable PR-CI runnable test/tftest/CI-gate or Observed record"
+                f"[Check 1: Read-Back] OSCAL {rid}: {claim_kind} claim cites no resolvable PR-CI runnable test/tftest/CI-gate or Active Lula + Observed record"
             )
 
     return errors, impl_count
