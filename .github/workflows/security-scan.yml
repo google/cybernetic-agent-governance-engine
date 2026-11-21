@@ -55,10 +55,14 @@ jobs:
   python-dependency-audit:
     name: "Python Dependency Vulnerability Scan (Universal — NIST RA-5/SI-2 reporting: US_FED only)"
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
 
     steps:
       - name: Checkout repository
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
 
       - name: Install uv
         uses: astral-sh/setup-uv@07a047e608db84b3d8c06cd9a7c7dcc9c355c18e # v10.3.2
@@ -100,7 +104,7 @@ jobs:
           path: pip-audit-results.json
 
   # ---------------------------------------------------------------------------
-  # Job 2: Container Image & Filesystem Vulnerability Scan + SBOM
+  # Job 2: Container Image Vulnerability Scan + SBOM
   # Universal security hygiene — runs for ALL regions (US_FED, EU_ECB, APAC_MAS)
   # NIST SP 800-53: RA-5 (Vulnerability Scanning), CM-8 (Component Inventory) — US_FED reporting only
   # Addresses POAM-010 and POAM-006
@@ -126,19 +130,25 @@ jobs:
     steps:
       - name: Checkout repository
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
 
       - name: Build Docker image
+        env:
+          MATRIX_DOCKERFILE: ${{ matrix.dockerfile }}
+          IMAGE_SHA: ${{ github.sha }}
         run: |
-          docker build -f ${{ matrix.dockerfile }} \
-            -t scan-target:${{ github.sha }} .
+          docker build -f "${MATRIX_DOCKERFILE}" \
+            -t "scan-target:${IMAGE_SHA}" .
 
-      - name: Run Trivy filesystem scan
+      - name: Run Trivy container image scan
         # Pinned to v0.36.0 — Node 20 deprecation fix (was @master, unpinned).
-        # Update via Dependabot PR or bump manually when a new release ships.
+        # Scans the built container image (`scan-target:<sha>`), not repo filesystem (CIG-01).
         uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
         with:
-          scan-type: "fs"
-          scan-ref: "."
+          scan-type: "image"
+          image-ref: "scan-target:${{ github.sha }}"
+          trivyignores: ".trivyignore"
           format: "sarif"
           output: "trivy-results-${{ strategy.job-index }}.sarif"
           severity: "CRITICAL,HIGH"
@@ -153,11 +163,11 @@ jobs:
           category: "trivy-${{ matrix.dockerfile }}"
 
       - name: Generate SBOM with Trivy (CycloneDX — POAM-006)
-        # Pinned to v0.36.0 — Node 20 deprecation fix (was @master, unpinned).
+        # Pinned to v0.36.0 — generates CycloneDX SBOM from the built container image.
         uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
         with:
-          scan-type: "fs"
-          scan-ref: "."
+          scan-type: "image"
+          image-ref: "scan-target:${{ github.sha }}"
           format: "cyclonedx"
           output: "sbom-${{ strategy.job-index }}.cdx.json"
 
@@ -176,17 +186,25 @@ jobs:
   rego-policy-lint:
     name: "OPA Rego Policy Lint and Test (Universal — NIST CM-6/SI-7 reporting: US_FED only)"
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
 
     steps:
       - name: Checkout repository
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
 
       - name: Install OPA
         run: |
-          curl -L -o opa \
-            https://openpolicyagent.org/downloads/v0.61.0/opa_linux_amd64_static
-          chmod +x opa
-          sudo mv opa /usr/local/bin/
+          OPA_VERSION="0.70.0"
+          OPA_SHA256="00d114b94fdb1606a48cccdfc73c9ccdc62c38721150131ae578d5ff3df5c084"
+          curl --proto '=https' --tlsv1.2 -sSfL --retry 5 --retry-connrefused \
+            -o "${RUNNER_TEMP}/opa" \
+            "https://openpolicyagent.org/downloads/v${OPA_VERSION}/opa_linux_amd64_static"
+          echo "${OPA_SHA256}  ${RUNNER_TEMP}/opa" | sha256sum -c -
+          chmod 0755 "${RUNNER_TEMP}/opa"
+          sudo mv "${RUNNER_TEMP}/opa" /usr/local/bin/opa
 
       - name: Check Rego formatting
         run: |
@@ -231,11 +249,12 @@ jobs:
     needs: [python-dependency-audit]
     permissions:
       contents: read
-      packages: write
 
     steps:
       - name: Checkout repository
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
 
       - name: Install uv
         uses: astral-sh/setup-uv@07a047e608db84b3d8c06cd9a7c7dcc9c355c18e # v10.3.2
@@ -249,16 +268,26 @@ jobs:
 
       - name: Install Syft (SBOM generator — anchore/syft)
         run: |
-          curl -sSfL --retry 5 --retry-connrefused --retry-delay 2 \
-            https://raw.githubusercontent.com/anchore/syft/main/install.sh \
-            | sh -s -- -b /usr/local/bin
+          SYFT_VERSION="1.33.0"
+          SYFT_SHA256="adc1b944a827ed3432bcd9f1dbdbc8fa3c0dca7d3d449e7084c90248c2c6cb50"
+          curl --proto '=https' --tlsv1.2 -sSfL --retry 5 --retry-connrefused --retry-delay 2 \
+            -o "${RUNNER_TEMP}/syft.tar.gz" \
+            "https://github.com/anchore/syft/releases/download/v${SYFT_VERSION}/syft_${SYFT_VERSION}_linux_amd64.tar.gz"
+          echo "${SYFT_SHA256}  ${RUNNER_TEMP}/syft.tar.gz" | sha256sum -c -
+          sudo tar -xzf "${RUNNER_TEMP}/syft.tar.gz" -C /usr/local/bin syft
+          rm -f "${RUNNER_TEMP}/syft.tar.gz"
           syft version
 
       - name: Install Grype (vulnerability scanner — anchore/grype)
         run: |
-          curl -sSfL --retry 5 --retry-connrefused --retry-delay 2 \
-            https://raw.githubusercontent.com/anchore/grype/main/install.sh \
-            | sh -s -- -b /usr/local/bin
+          GRYPE_VERSION="0.99.1"
+          GRYPE_SHA256="7fde4d45fe097daa2554078cd9e81faa43e51266a888337f5446c1ffc42d451f"
+          curl --proto '=https' --tlsv1.2 -sSfL --retry 5 --retry-connrefused --retry-delay 2 \
+            -o "${RUNNER_TEMP}/grype.tar.gz" \
+            "https://github.com/anchore/grype/releases/download/v${GRYPE_VERSION}/grype_${GRYPE_VERSION}_linux_amd64.tar.gz"
+          echo "${GRYPE_SHA256}  ${RUNNER_TEMP}/grype.tar.gz" | sha256sum -c -
+          sudo tar -xzf "${RUNNER_TEMP}/grype.tar.gz" -C /usr/local/bin grype
+          rm -f "${RUNNER_TEMP}/grype.tar.gz"
           grype version
 
       - name: Sync locked project dependencies and install cyclonedx-bom (Python SBOM)
@@ -274,10 +303,12 @@ jobs:
             --output-dir compliance/sbom
 
       - name: Generate filesystem SBOM with Syft
+        env:
+          COMMIT_SHA: ${{ github.sha }}
         run: |
           syft dir:. \
             -o cyclonedx-json \
-            --file compliance/sbom/filesystem-${{ github.sha }}.cdx.json
+            --file "compliance/sbom/filesystem-${COMMIT_SHA}.cdx.json"
 
       - name: Upload SBOM artifacts (90-day retention — POAM-006 evidence)
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
@@ -314,10 +345,14 @@ jobs:
   dependency-lockfile-check:
     name: "Dependency Lockfile Validation (Universal — NIST SI-2/CM-8 reporting: US_FED only)"
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
 
     steps:
       - name: Checkout repository
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
 
       - name: Set up Python 3.11
         uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
@@ -379,6 +414,8 @@ jobs:
   nist-compliance-gate:
     name: "NIST SP 800-53 Compliance Gate (US_FED only)"
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
     # Previously gated on `vars.CAGE_DEPLOYMENT_REGION == 'US_FED'`. That
     # repository variable is not set, so this aggregate gate never executed.
     # It is a pure fan-in over the four universal scan jobs below and carries
@@ -393,6 +430,8 @@ jobs:
     steps:
       - name: Checkout repository
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
 
       - name: NIST RMF gate
         run: echo "NIST RMF gate active for US_FED deployment"
@@ -415,13 +454,18 @@ jobs:
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           fetch-depth: 0
+          persist-credentials: false
 
       - name: Install Gitleaks
         run: |
           GITLEAKS_VERSION="8.27.2"
-          curl -sSfL \
-            "https://github.com/gitleaks/gitleaks/releases/download/v${GITLEAKS_VERSION}/gitleaks_${GITLEAKS_VERSION}_linux_x64.tar.gz" \
-            | tar -xz -C /usr/local/bin gitleaks
+          GITLEAKS_SHA256="141c3b2dede46d8b3a53b47116da756bd223decc0374797559a6b50ecba5590c"
+          curl --proto '=https' --tlsv1.2 -sSfL --retry 5 --retry-connrefused \
+            -o "${RUNNER_TEMP}/gitleaks.tar.gz" \
+            "https://github.com/gitleaks/gitleaks/releases/download/v${GITLEAKS_VERSION}/gitleaks_${GITLEAKS_VERSION}_linux_x64.tar.gz"
+          echo "${GITLEAKS_SHA256}  ${RUNNER_TEMP}/gitleaks.tar.gz" | sha256sum -c -
+          sudo tar -xzf "${RUNNER_TEMP}/gitleaks.tar.gz" -C /usr/local/bin gitleaks
+          rm -f "${RUNNER_TEMP}/gitleaks.tar.gz"
           gitleaks version
 
       - name: Run Gitleaks secret scan
@@ -448,6 +492,8 @@ jobs:
     steps:
       - name: Checkout repository
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
 
       - name: Install uv
         uses: astral-sh/setup-uv@07a047e608db84b3d8c06cd9a7c7dcc9c355c18e # v10.3.2
@@ -472,6 +518,8 @@ jobs:
     steps:
       - name: Checkout repository
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
 
       - name: Install uv
         uses: astral-sh/setup-uv@07a047e608db84b3d8c06cd9a7c7dcc9c355c18e # v10.3.2
@@ -486,3 +534,4 @@ jobs:
       - name: Run Bandit SAST (medium+ severity, fail on error)
         run: |
           uv run --with bandit bandit -r src/ scripts/ -c pyproject.toml -ll -ii
+

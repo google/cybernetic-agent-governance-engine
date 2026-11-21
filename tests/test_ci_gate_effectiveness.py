@@ -1099,7 +1099,7 @@ def test_gate_locked_yanks_catches_planted_yanked_release(tmp_path: Path) -> Non
 
 
 def test_gate_gitleaks_scans_full_history_and_catches_planted_secret_patterns() -> None:
-    """`security-scan.yml` must scan full git history, and `.gitleaks.toml` custom rules must catch planted secrets."""
+    """`security-scan.yml` must scan full git history, and `.gitleaks.toml` must never blind docs/tests/plans or suppress lines containing placeholder keywords (CIG-03)."""
     sec_scan = (WORKFLOWS_DIR / "security-scan.yml").read_text(encoding="utf-8")
     assert "HEAD~1..HEAD" not in sec_scan, (
         "security-scan.yml must scan full commit history, not `--log-opts HEAD~1..HEAD`"
@@ -1111,28 +1111,77 @@ def test_gate_gitleaks_scans_full_history_and_catches_planted_secret_patterns() 
     rules = {r["id"]: re.compile(r["regex"]) for r in cfg.get("rules", [])}
     assert len(rules) >= 5, "Expected at least 5 custom rules in .gitleaks.toml"
 
-    # Build synthetic secret strings dynamically so no literal secret is stored in source
-    planted_samples = {
-        "cage-langfuse-key": "sk-lf-" + "a1b2c3d4e5f6g7h8i9j0k1",
-        "cage-huggingface-token": "hf_" + "A1b2C3d4E5f6G7h8I9j0K1l2",
-        "cage-google-credential": "GOOG" + "1234567890abcdefghij1234",
-        "cage-aws-access-key-id": "AKIA" + "1234567890ABCDEF",
-        "cage-private-key": "-----BEGIN " + "RSA PRIVATE KEY-----",
-    }
-    for rule_id, sample in planted_samples.items():
-        assert rule_id in rules, f"Missing rule {rule_id} in .gitleaks.toml"
-        assert rules[rule_id].search(sample), (
-            f"Rule {rule_id} failed to match planted secret pattern"
+    allowlist = cfg.get("allowlist", {})
+    assert "regexTarget" not in allowlist, (
+        ".gitleaks.toml must omit `regexTarget` so allowlist regexes match only the "
+        "extracted `Secret` value, never `line` or `match` (CIG-03)"
+    )
+    assert allowlist.get("paths") == [r"^\.gitleaks\.toml$"], (
+        ".gitleaks.toml `[allowlist].paths` must exclude only `.gitleaks.toml` itself; "
+        "broad exclusions (`^docs/`, `^plans/`, `^tests/`, `\\.env\\.example$`) blind secret scanning"
+    )
+    compiled_paths = [re.compile(pat) for pat in allowlist.get("paths", [])]
+    compiled_allow_regexes = []
+    for pat in allowlist.get("regexes", []):
+        assert pat.startswith("^") and pat.endswith("$"), (
+            f".gitleaks.toml allowlist regex {pat!r} must be anchored with `^...$`"
+        )
+        compiled_allow_regexes.append(re.compile(pat))
+
+    for must_scan_path in (
+        "infra/targets/gcp-gke/main.tf",
+        "docs/operations/GUIDE.md",
+        "plans/rollout.md",
+        "tests/test_secrets.py",
+        "contrib/provider_01/tests/test_provider.py",
+        ".env.example",
+    ):
+        assert not any(p.search(must_scan_path) for p in compiled_paths), (
+            f".gitleaks.toml path allowlist must not exclude {must_scan_path!r}"
         )
 
-    allowlist = cfg.get("allowlist", {})
-    for pat in allowlist.get("paths", []):
-        compiled = re.compile(pat)
-        assert not compiled.search("infra/targets/gcp-gke/main.tf"), (
-            f".gitleaks.toml path allowlist {pat!r} must not exclude active infra/ files"
+    # Build synthetic secret strings dynamically so no literal secret is stored in source.
+    # Place each sample on a line containing words/markers that previously suppressed
+    # the entire line under `regexTarget = "line"` (`example`, `placeholder`, `changeme`, `${VAR}`, `{{tpl}}`).
+    planted_samples = {
+        "cage-langfuse-key": (
+            "docs/README.md",
+            "sk-lf-" + "a1b2c3d4e5f6g7h8i9j0k1",
+        ),
+        "cage-huggingface-token": (
+            "plans/rollout.md",
+            "hf_" + "A1b2C3d4E5f6G7h8I9j0K1l2",
+        ),
+        "cage-google-credential": (
+            "tests/test_auth.py",
+            "GOOG" + "1234567890abcdefghij1234",
+        ),
+        "cage-aws-access-key-id": (
+            "contrib/provider_01/tests/test_x.py",
+            "AKIA" + "1234567890ABCDEF",
+        ),
+        "cage-private-key": (
+            ".env.example",
+            "-----BEGIN " + "RSA PRIVATE KEY-----",
+        ),
+    }
+    for rule_id, (target_path, sample_secret) in planted_samples.items():
+        assert rule_id in rules, f"Missing rule {rule_id} in .gitleaks.toml"
+        adversarial_line = (
+            f'SECRET="{sample_secret}" # example placeholder changeme '
+            "${ENV_REF} {{jinja_var}}"
         )
-    for pat in allowlist.get("regexes", []):
-        re.compile(pat)
+        match = rules[rule_id].search(adversarial_line)
+        assert match is not None, (
+            f"Rule {rule_id} failed to match planted secret pattern on {adversarial_line!r}"
+        )
+        extracted_secret = match.group(0)
+        assert not any(p.search(target_path) for p in compiled_paths), (
+            f"Planted secret path {target_path!r} was suppressed by [allowlist].paths"
+        )
+        assert not any(rx.search(extracted_secret) for rx in compiled_allow_regexes), (
+            f"Planted secret {extracted_secret!r} for {rule_id} was suppressed by [allowlist].regexes"
+        )
 
 
 def test_gate_license_guard_rejects_planted_gpl_dependency() -> None:
@@ -2001,12 +2050,21 @@ def test_publish_client_sdk_tag_version_guard_and_per_tag_scoping(
     assert "refs/tags/conformance-v" in ghcr_conf_if
     assert "refs/tags/client-v" not in ghcr_conf_if
     ghcr_conf_run = str(ghcr_conf["run"])
-    assert "FROM python:3.12-slim" in ghcr_conf_run
+    assert "FROM python:3.12-slim" not in ghcr_conf_run
+    assert "cgr.dev/chainguard/wolfi-base@sha256:" in ghcr_conf_run
+    assert "sha256sum -c -" in ghcr_conf_run
+    assert "trivy image" in ghcr_conf_run
+    assert "--severity CRITICAL,HIGH" in ghcr_conf_run
+    assert "--exit-code 1" in ghcr_conf_run
     assert 'ENTRYPOINT ["cage-conformance"]' in ghcr_conf_run
     assert 'grep -Fx "${CONF_VERSION}"' in ghcr_conf_run
     assert "FROM scratch" not in ghcr_conf_run
     assert "${{" not in ghcr_conf_run
-    assert ghcr_conf_run.index("docker run --rm") < ghcr_conf_run.index("docker push")
+    assert (
+        ghcr_conf_run.index("docker run --rm")
+        < ghcr_conf_run.index("trivy image")
+        < ghcr_conf_run.index("docker push")
+    )
 
     # PyPI publish steps scoped strictly to their own release tag (never cross-published or dispatched)
     pypi_client_if = str(
@@ -2073,3 +2131,143 @@ def test_ci_conformance_oidc_attest_smoke_job_is_enforcing_and_fork_safe() -> No
         assert required_fragment in smoke_run, (
             f"conformance-oidc-smoke missing {required_fragment!r}"
         )
+
+
+def test_gate_ci_workflow_binary_pinning_and_least_privilege_posture() -> None:
+    """Enforce CIG-01 & CIG-04: built-image CVE scans, SHA-256 verified CLI binaries, least-privilege tokens, and step-scoped S3 secrets."""
+    sec_yaml = yaml.safe_load(
+        (WORKFLOWS_DIR / "security-scan.yml").read_text(encoding="utf-8")
+    )
+    sbom_yaml = yaml.safe_load((WORKFLOWS_DIR / "sbom.yml").read_text(encoding="utf-8"))
+    ci_yaml = yaml.safe_load((WORKFLOWS_DIR / "ci.yml").read_text(encoding="utf-8"))
+    dep_rev_yaml = yaml.safe_load(
+        (WORKFLOWS_DIR / "dependency-review.yml").read_text(encoding="utf-8")
+    )
+    lula2_yaml = yaml.safe_load(
+        (WORKFLOWS_DIR / "lula2-pr-compliance.yml").read_text(encoding="utf-8")
+    )
+
+    # 1. Root Dockerfile must verify en_core_web_lg wheel via --require-hashes (CIG-01)
+    root_dockerfile = (REPO_ROOT / "Dockerfile").read_text(encoding="utf-8")
+    assert "en_core_web_lg-3.8.0-py3-none-any.whl" in root_dockerfile
+    assert "--require-hashes" in root_dockerfile
+    assert (
+        "--hash=sha256:293e9547a655b25499198ab15a525b05b9407a75f10255e405e8c3854329ab63"
+        in root_dockerfile
+    )
+
+    # 2. security-scan.yml: container-image-scan must scan built images, never fs "." (CIG-01)
+    img_job = sec_yaml["jobs"]["container-image-scan"]
+    trivy_steps = [
+        s
+        for s in img_job["steps"]
+        if str(s.get("uses", "")).startswith("aquasecurity/trivy-action@")
+    ]
+    assert len(trivy_steps) == 2
+    for ts in trivy_steps:
+        assert ts["with"].get("scan-type") == "image"
+        assert ts["with"].get("image-ref") == "scan-target:${{ github.sha }}"
+        assert "scan-ref" not in ts["with"]
+
+    # 3. security-scan.yml: least privilege & SHA-256 verified OPA v0.70.0 / Syft / Grype / Gitleaks (CIG-04)
+    assert sec_yaml["jobs"]["sbom-generation"]["permissions"] == {"contents": "read"}
+    opa_run = next(
+        s["run"]
+        for s in sec_yaml["jobs"]["rego-policy-lint"]["steps"]
+        if s.get("name") == "Install OPA"
+    )
+    assert 'OPA_VERSION="0.70.0"' in opa_run
+    assert "sha256sum -c -" in opa_run
+
+    for job_id, step_name in (
+        ("sbom-generation", "Install Syft (SBOM generator — anchore/syft)"),
+        ("sbom-generation", "Install Grype (vulnerability scanner — anchore/grype)"),
+        ("secret-scan", "Install Gitleaks"),
+    ):
+        run_block = next(
+            s["run"]
+            for s in sec_yaml["jobs"][job_id]["steps"]
+            if s.get("name") == step_name
+        )
+        assert "sha256sum -c -" in run_block, (
+            f"{job_id}::{step_name} must verify SHA-256"
+        )
+        assert "install.sh" not in run_block
+        assert re.search(r"\|\s*(?:ba)?sh\b", run_block) is None
+
+    # 4. sbom.yml: all 6 Wolfi images, expanded trigger paths, SHA-256 Trivy, step-scoped S3 secrets (CIG-01 & CIG-04)
+    sbom_on = sbom_yaml.get("on", sbom_yaml.get(True))
+    expected_sbom_paths = {
+        "src/**",
+        "packages/cage-client/**",
+        "config/**",
+        "compliance/**",
+        "Dockerfile*",
+        "deployment/docker/**",
+        ".trivyignore",
+        "pyproject.toml",
+        "uv.lock",
+        ".github/workflows/sbom.yml",
+    }
+    assert expected_sbom_paths <= set(sbom_on["push"]["paths"])
+    assert expected_sbom_paths <= set(sbom_on["pull_request"]["paths"])
+
+    sbom_job = sbom_yaml["jobs"]["sbom-scan"]
+    matrix_names = {
+        entry["name"] for entry in sbom_job["strategy"]["matrix"]["service"]
+    }
+    assert matrix_names == {
+        "governed-financial-advisor",
+        "gateway",
+        "compliance-bridge",
+        "nemo-guardrails",
+        "lula",
+        "inference-stub",
+    }
+    assert "env" not in sbom_job, (
+        "sbom.yml must not expose SBOM_S3_* secrets in job-wide `env:`"
+    )
+    for s in sbom_job["steps"]:
+        step_env = s.get("env") or {}
+        if s.get("name") != "Upload SBOM to object storage (S3-compatible)":
+            assert "AWS_ACCESS_KEY_ID" not in step_env
+            assert "AWS_SECRET_ACCESS_KEY" not in step_env
+            assert "SBOM_S3_ACCESS_KEY" not in step_env
+            assert "SBOM_S3_SECRET_KEY" not in step_env
+        if "run" in s:
+            assert "${{" not in s["run"], (
+                f"Template interpolation forbidden in sbom.yml step {s.get('name')!r}"
+            )
+    trivy_install_run = next(
+        s["run"] for s in sbom_job["steps"] if s.get("name") == "Install Trivy"
+    )
+    assert "sha256sum -c -" in trivy_install_run
+    assert "apt-get install -y trivy" not in trivy_install_run
+
+    # 5. ci.yml::mesh-conformance: SHA-256 verified Linkerd CLI & Gateway API manifest (CIG-04)
+    mesh_install_run = next(
+        s["run"]
+        for s in ci_yaml["jobs"]["mesh-conformance"]["steps"]
+        if s.get("name", "").startswith("Create kind cluster")
+    )
+    assert "install-edge" not in mesh_install_run
+    assert re.search(r"\|\s*(?:ba)?sh\b", mesh_install_run) is None
+    assert mesh_install_run.count("sha256sum -c -") >= 2
+
+    # 6. Least-privilege permissions & persist-credentials: false across audited PR workflows (CIG-04)
+    assert dep_rev_yaml["permissions"] == {"contents": "read"}
+    assert lula2_yaml["permissions"] == {"contents": "read"}
+    for wf_name, wf_doc in (
+        ("security-scan.yml", sec_yaml),
+        ("sbom.yml", sbom_yaml),
+        ("dependency-review.yml", dep_rev_yaml),
+        ("lula2-pr-compliance.yml", lula2_yaml),
+    ):
+        for job_name, job_cfg in wf_doc["jobs"].items():
+            for step in job_cfg.get("steps", []):
+                if str(step.get("uses", "")).startswith("actions/checkout@"):
+                    assert (step.get("with") or {}).get(
+                        "persist-credentials"
+                    ) is False, (
+                        f"{wf_name}::{job_name} checkout must set `persist-credentials: false`"
+                    )

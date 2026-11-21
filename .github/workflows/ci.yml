@@ -871,10 +871,23 @@ jobs:
           kind create cluster --name cage-mesh-test --wait 90s
           kind load image-archive "${RUNNER_TEMP}/cage-gateway-mesh-ci.tar" --name cage-mesh-test
           rm -f "${RUNNER_TEMP}/cage-gateway-mesh-ci.tar"
-          export LINKERD2_VERSION=edge-26.9.3
-          curl --proto '=https' --tlsv1.2 -sSfL https://run.linkerd.io/install-edge | sh
+          LINKERD2_VERSION="edge-26.9.3"
+          LINKERD2_SHA256="79045fbc9352e3886127015a671d86ca78237ad72a32353df4602f6c6f235694"
+          GW_CRD_VERSION="v1.5.1"
+          GW_CRD_SHA256="751002b3b91a87f7ae3bd2517c79a47a8d7ed6702901808a1cf9bd97d284f9b8"
+          mkdir -p "$HOME/.linkerd2/bin"
+          curl --proto '=https' --tlsv1.2 -sSfL --retry 5 --retry-connrefused \
+            -o "$HOME/.linkerd2/bin/linkerd" \
+            "https://github.com/linkerd/linkerd2/releases/download/${LINKERD2_VERSION}/linkerd2-cli-${LINKERD2_VERSION}-linux-amd64"
+          echo "${LINKERD2_SHA256}  $HOME/.linkerd2/bin/linkerd" | sha256sum -c -
+          chmod 0755 "$HOME/.linkerd2/bin/linkerd"
           export PATH="$HOME/.linkerd2/bin:$PATH"
-          kubectl apply --server-side -f https://github.com/kubernetes-sigs/gateway-api/releases/download/v1.5.1/standard-install.yaml
+          curl --proto '=https' --tlsv1.2 -sSfL --retry 5 --retry-connrefused \
+            -o "${RUNNER_TEMP}/gateway-api-standard-install.yaml" \
+            "https://github.com/kubernetes-sigs/gateway-api/releases/download/${GW_CRD_VERSION}/standard-install.yaml"
+          echo "${GW_CRD_SHA256}  ${RUNNER_TEMP}/gateway-api-standard-install.yaml" | sha256sum -c -
+          kubectl apply --server-side -f "${RUNNER_TEMP}/gateway-api-standard-install.yaml"
+          rm -f "${RUNNER_TEMP}/gateway-api-standard-install.yaml"
           linkerd install --crds | kubectl apply -f -
           linkerd install --set proxy.defaultInboundPolicy=all-authenticated | kubectl apply -f -
           linkerd check

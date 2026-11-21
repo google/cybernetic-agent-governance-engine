@@ -162,7 +162,7 @@ Run:
 
 ```bash
 if rg -n --hidden \
-  'BEGIN (RSA |EC |OPENSSH )?PRIVATE KEY|-----BEGIN PRIVATE KEY-----|pk-lf-[A-Za-z0-9_-]+|sk-[A-Za-z0-9_-]+|hf_[A-Za-z0-9]+' \
+  'BEGIN (RSA |EC |OPENSSH )?PRIVATE KEY|pk-lf-[A-Za-z0-9_-]+|sk-[A-Za-z0-9_-]+|hf_[A-Za-z0-9]+' \
   tests/fixtures/provider_06_conformance; then
   echo "credential or private-key material detected" >&2
   exit 1
