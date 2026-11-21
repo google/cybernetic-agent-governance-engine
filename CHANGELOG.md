@@ -9,6 +9,10 @@ Versions follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Added
+
+- **The evidence verifier recognises `.attestation.anchor.json` sidecars** (`feat(compliance)`, [`evidence_verifier.py`](src/compliance_bridge/evidence_verifier.py)). `verify_all()` no longer reports a sidecar beside a signed attestation as an unexpected object, and fails one with no signed attestation beside it. The verifier does not read sidecars yet; this lets verifiers ship before custodians write them ([#488](https://github.com/google/cybernetic-agent-governance-engine/issues/488)).
+
 ### Changed
 
 - **Committing runs seal, evidence and return the params the stages evaluated, and an approval is consumed only by a run whose evaluated params it covers** (`fix(governance)!`, [`governor.py`](src/gateway/governance/governor/governor.py), [`sealing.py`](src/gateway/governance/governor/sealing.py), [`approval.py`](src/gateway/governance/governor/approval.py), [`defer_queue.py`](src/gateway/governance/defer_queue.py), [`governance_envelope.py`](src/gateway/governance/governance_envelope.py), [`governance_middleware.py`](src/gateway/server/governance_middleware.py), [`cage_finance/tools/tool_provider.py`](src/cage_finance/tools/tool_provider.py), [`cage_healthcare/tools/tool_provider.py`](src/cage_healthcare/tools/tool_provider.py), [`ADR-008`](docs/adr/ADR-008-wire-phantom-gates-into-production-call-paths.md)).
