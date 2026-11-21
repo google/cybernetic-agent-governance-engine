@@ -40,7 +40,7 @@ from src.gateway.governance.execution_idempotency import (
 from src.gateway.governance.governor.errors import GovernanceInfrastructureError
 from src.gateway.governance.routing_seal import SymbolicGovernorViolation
 from src.gateway.governance.seams.actuation import ActuationOutcome, ActuationReceipt
-from tests.fixtures.trade_inputs import trade_governor
+from tests.fixtures.trade_inputs import sealed_governance, trade_governor
 
 pytestmark = [
     pytest.mark.unit,
@@ -90,7 +90,7 @@ def _pipeline(
     actuate: AsyncMock, governance: AsyncMock | None = None
 ) -> Iterator[tuple[AsyncMock, AsyncMock]]:
     """Seal-issuing governance, a no-op seal check and a scripted broker."""
-    governance = governance or AsyncMock(return_value="seal-1")
+    governance = governance or AsyncMock(side_effect=sealed_governance("seal-1"))
     with (
         patch("src.cage_finance.tools.tool_provider.enforce_governance", governance),
         patch(
@@ -241,7 +241,7 @@ async def test_an_approval_reclaims_a_blocked_key_and_executes_once(
     governor: MagicMock,
 ) -> None:
     refused = AsyncMock(side_effect=PermissionError("Governance Blocked: HITL"))
-    approved = AsyncMock(return_value="seal-1")
+    approved = AsyncMock(side_effect=sealed_governance("seal-1"))
     actuate = AsyncMock(return_value=_accepted())
     with (
         _pipeline(actuate, refused),

@@ -662,10 +662,9 @@ class TestComplianceBridgeEscalateEnforcingWebAuthn:
             assert r_bob.status_code == 200, r_bob.text
             assert r_bob.json()["status"] == "escalated"
 
-        redeemable = await queue.redeemable_approval(
+        redeemable = await queue.redeemable_token(
             token.defer_id,
             action="execute_trade",
-            covers=lambda _params: True,
         )
         assert redeemable is not None
         assert len(redeemable.approvals) == 2

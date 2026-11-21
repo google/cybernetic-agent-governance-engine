@@ -3,7 +3,7 @@ system-security-plan:
   metadata:
     title: CAGE System Security Plan (US_FED — NIST SP 800-53 Rev 5 HIGH)
     published: '2026-03-06T00:00:00Z'
-    last-modified: '2026-11-20T14:33:07Z'
+    last-modified: '2026-11-21T02:11:25Z'
     version: 1.0.1-draft+stpa
     oscal-version: 1.0.4
     remarks: 'This System Security Plan (SSP) documents the security controls implemented
@@ -1221,29 +1221,31 @@ system-security-plan:
         every caller value for latency_ms, drawdown, its aliases and portfolio_total
         before resolving them, in SymbolicGovernor.validate_action() (POST /governance/validate-action),
         SymbolicGovernor.verify() (the MCP simulate_governance_check dry run) and
-        the trade tool before its committing run. No STPA input is defaulted on a
-        dry run. UCA-6 (US_FED order-volume fraction 0.01) is evaluated on every trade
-        and refuses one lacking either input (POAM-2026-106 closed): order_size is
-        the caller''s notional amount divided by the verified quote price, and daily_vol
-        is the symbol''s average daily volume from the market-data feed (verified
-        source, traded symbol, finite and positive, at most four days old), both bound
-        server-side by TradeInputResolver. The same resolver is registered for execute_trade_bounded,
-        and bounding contract B2 compares the drawdown the gateway measured (never
-        a caller value) with drawdown.limit (US_FED 5%); an unmeasured drawdown is
-        a HARD refusal (POAM-2026-108 closed). Startup posture enforcement (CM-6 /
-        SC-24 / SA-8) is centralized in assert_production_posture() (src/gateway/governance/governor/posture.py),
-        invoked by bootstrap_governor() (src/gateway/governance/governor/bootstrap.py):
-        in enforcing postures (production, staging via is_enforcing()), it validates
-        all seven startup invariant groups (CAGE_DOMAIN=finance, OPA_STRICT_MODE=true,
-        kms_signing_mode=strict passed from KMSGovernanceSigner, EVIDENCE_CHAIN_BLOCKING=true,
-        CBF_ALLOW_STALE_STATE=false, thresholds_meta.fallback_used=False, and GOVERNANCE_SALT
-        set and non-default) and exits 1 with a consolidated violation list if any
-        check fails. assemble_governor() (src/gateway/governance/governor/assembly.py)
-        enforces load-time integrity checks on PluginContribution (non-empty plugin_name,
-        tiers, and claimed_actions; every claimed action registered in FTRA; non-negative
-        tier order; and thresholds_region == jurisdiction.region). Kubernetes ConfigMaps
-        and Cloud Secret Manager provide the configuration injection mechanism. IaC
-        (Terraform) manages infrastructure configuration in version-controlled HCL.
+        once inside each committing run (SymbolicGovernor.govern() / revalidate_post_hitl(),
+        returning a SealedAction over the bound params). No STPA input is defaulted
+        on a dry run. UCA-6 (US_FED order-volume fraction 0.01) is evaluated on every
+        trade and refuses one lacking either input (POAM-2026-106 closed): order_size
+        is the caller''s notional amount divided by the verified quote price, and
+        daily_vol is the symbol''s average daily volume from the market-data feed
+        (verified source, traded symbol, finite and positive, at most four days old),
+        both bound server-side by TradeInputResolver. The same resolver is registered
+        for execute_trade_bounded, and bounding contract B2 compares the drawdown
+        the gateway measured (never a caller value) with drawdown.limit (US_FED 5%);
+        an unmeasured drawdown is a HARD refusal (POAM-2026-108 closed). Startup posture
+        enforcement (CM-6 / SC-24 / SA-8) is centralized in assert_production_posture()
+        (src/gateway/governance/governor/posture.py), invoked by bootstrap_governor()
+        (src/gateway/governance/governor/bootstrap.py): in enforcing postures (production,
+        staging via is_enforcing()), it validates all seven startup invariant groups
+        (CAGE_DOMAIN=finance, OPA_STRICT_MODE=true, kms_signing_mode=strict passed
+        from KMSGovernanceSigner, EVIDENCE_CHAIN_BLOCKING=true, CBF_ALLOW_STALE_STATE=false,
+        thresholds_meta.fallback_used=False, and GOVERNANCE_SALT set and non-default)
+        and exits 1 with a consolidated violation list if any check fails. assemble_governor()
+        (src/gateway/governance/governor/assembly.py) enforces load-time integrity
+        checks on PluginContribution (non-empty plugin_name, tiers, and claimed_actions;
+        every claimed action registered in FTRA; non-negative tier order; and thresholds_region
+        == jurisdiction.region). Kubernetes ConfigMaps and Cloud Secret Manager provide
+        the configuration injection mechanism. IaC (Terraform) manages infrastructure
+        configuration in version-controlled HCL.
 
         '
       props:

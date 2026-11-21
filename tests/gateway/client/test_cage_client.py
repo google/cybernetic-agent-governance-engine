@@ -60,7 +60,7 @@ from src.gateway.governance.contracts import (
     ViolationKind,
 )
 from src.gateway.governance.decisions import GovernanceDecision
-from src.gateway.governance.governance_envelope import GovernanceEnvelopeBuilder
+from src.gateway.governance.governance_envelope import envelope_action_hash
 from src.gateway.governance.governor.errors import GovernanceError
 from src.gateway.governance.governor.governor import SymbolicGovernor
 from src.gateway.governance.governor.verdicts import build_refusal_receipt
@@ -120,6 +120,7 @@ def _build_signed_allow_envelope(
     now: datetime | None = None,
     ttl_s: float = 300.0,
     payload_overrides: dict[str, Any] | None = None,
+    subject_overrides: dict[str, str] | None = None,
 ) -> dict[str, Any]:
     """Build a fresh, subject-bound, cryptographically signed v3.0 envelope."""
     params = parameters if parameters is not None else {"symbol": "AAPL", "amount": 100}
@@ -143,6 +144,7 @@ def _build_signed_allow_envelope(
             "action": action,
             "action_hash": compute_expected_action_hash(action, params),
             "agent_id": "test-agent",
+            **(subject_overrides or {}),
         },
         "governance_context": {
             "policy_version": "sha256:policy01",
@@ -735,7 +737,6 @@ async def test_validate_action_http_200_unrecognised_verdict_fails_closed(
 
 def test_jcs_parity_against_kernel_canonicalizer() -> None:
     """Vendored _jcs in both clients is byte-identical to kernel jcs_canonicalize_plan."""
-    builder = GovernanceEnvelopeBuilder()
     vectors: list[tuple[str, dict[str, Any]]] = [
         (
             "execute_wire",
@@ -773,7 +774,7 @@ def test_jcs_parity_against_kernel_canonicalizer() -> None:
         client_bytes = client_jcs_canonicalize({"action": action, "params": params})
         assert client_bytes == kernel_bytes
 
-        expected_hash = builder._compute_action_hash(action, params)
+        expected_hash = envelope_action_hash(action, params)
         assert compute_expected_action_hash(action, params) == expected_hash
 
 
@@ -1294,6 +1295,93 @@ async def test_envelope_expiration_and_subject_binding_enforced(
 
 
 @respx.mock
+async def test_evaluated_action_hash_is_signed_metadata_never_the_request_binding(
+    mock_gateway_url: str,
+    patched_httpx_no_http2: None,
+) -> None:
+    """subject.evaluated_action_hash verifies as signed metadata only.
+
+    An envelope carrying it is accepted, subject.action_hash is still
+    checked against the params the client submitted, an envelope whose
+    action_hash names other (e.g. the evaluated) params is rejected, and a
+    tampered evaluated hash breaks the signature.
+    """
+    priv = ec.generate_private_key(ec.SECP256R1())
+    pem = priv.public_key().public_bytes(
+        serialization.Encoding.PEM,
+        serialization.PublicFormat.SubjectPublicKeyInfo,
+    )
+    params = {"symbol": "AAPL", "amount": 100}
+    evaluated_hash = envelope_action_hash(
+        "query_portfolio", {**params, "trader_role": "junior"}
+    )
+    route = f"{mock_gateway_url}/governance/validate-action"
+
+    async with CageClient(
+        gateway_url=mock_gateway_url,
+        public_keys={"ec-pin-01": pem},
+        clock_skew_seconds=5.0,
+    ) as client:
+        # 1. Accepted: the evaluated hash rides beside the request binding.
+        env = _build_signed_allow_envelope(
+            action="query_portfolio",
+            parameters=params,
+            priv_key=priv,
+            kid="ec-pin-01",
+            subject_overrides={"evaluated_action_hash": evaluated_hash},
+        )
+        respx.post(route).mock(return_value=httpx.Response(status_code=200, json=env))
+        accepted = await client.validate_action(
+            action="query_portfolio", parameters=params, agent_id="test-agent"
+        )
+        assert accepted.subject["evaluated_action_hash"] == evaluated_hash
+        assert accepted.subject["action_hash"] == compute_expected_action_hash(
+            "query_portfolio", params
+        )
+
+        # 2. The same envelope replayed for other params -> action_hash mismatch.
+        with pytest.raises(RoutingSealVerificationError, match="action_hash"):
+            await client.validate_action(
+                action="query_portfolio",
+                parameters={"symbol": "AAPL", "amount": 999999},
+                agent_id="test-agent",
+            )
+
+        # 3. A validly signed envelope binding the evaluated params instead of
+        #    the submitted ones does not bind this request.
+        swapped = _build_signed_allow_envelope(
+            action="query_portfolio",
+            parameters=params,
+            priv_key=priv,
+            kid="ec-pin-01",
+            subject_overrides={
+                "action_hash": evaluated_hash,
+                "evaluated_action_hash": evaluated_hash,
+            },
+        )
+        respx.post(route).mock(
+            return_value=httpx.Response(status_code=200, json=swapped)
+        )
+        with pytest.raises(RoutingSealVerificationError, match="action_hash"):
+            await client.validate_action(
+                action="query_portfolio", parameters=params, agent_id="test-agent"
+            )
+
+        # 4. The evaluated hash is covered by the signature.
+        tampered = json.loads(json.dumps(env))
+        tampered["subject"]["evaluated_action_hash"] = envelope_action_hash(
+            "query_portfolio", {**params, "trader_role": "senior"}
+        )
+        respx.post(route).mock(
+            return_value=httpx.Response(status_code=200, json=tampered)
+        )
+        with pytest.raises(RoutingSealVerificationError):
+            await client.validate_action(
+                action="query_portfolio", parameters=params, agent_id="test-agent"
+            )
+
+
+@respx.mock
 async def test_jwks_ttl_staleness_304_and_key_rotation_eviction(
     mock_gateway_url: str,
     patched_httpx_no_http2: None,
@@ -1785,6 +1873,45 @@ async def test_live_asgi_all_seven_gateway_outcomes(
             await dev_opt_out_client.aclose()
     finally:
         await client.aclose()
+
+
+async def test_live_asgi_envelope_carries_the_evaluated_action_hash(
+    live_governance_asgi: tuple[FastAPI, MagicMock, str],
+) -> None:
+    """The real gateway signs subject.evaluated_action_hash; the wheel accepts it.
+
+    The governor's evaluated hash (the server-bound params the stages
+    evaluated) is signed as subject metadata and never reaches the payload;
+    subject.action_hash still binds the params the client submitted.
+    """
+    root_app, mock_governor, expected_alg = live_governance_asgi
+    params = {"symbol": "AAPL", "amount": 250}
+    evaluated_hash = envelope_action_hash(
+        "query_portfolio", {**params, "trader_role": "junior"}
+    )
+    mock_governor.validate_action.return_value = {
+        "verdict": GovernanceDecision.ALLOW,
+        "agent_id": "agent-asgi-01",
+        "tiers_passed": ["stpa", "opa"],
+        "evaluated_action_hash": evaluated_hash,
+    }
+    client = await _make_asgi_client(root_app)
+    try:
+        env = await client.validate_action(
+            action="query_portfolio",
+            parameters=params,
+            agent_id="agent-asgi-01",
+        )
+    finally:
+        await client.aclose()
+
+    assert env.signature is not None
+    assert env.signature["algorithm"] == expected_alg
+    assert env.subject["evaluated_action_hash"] == evaluated_hash
+    assert env.subject["action_hash"] == compute_expected_action_hash(
+        "query_portfolio", params
+    )
+    assert "evaluated_action_hash" not in env.payload
 
 
 @respx.mock

@@ -509,10 +509,10 @@ async def test_warrant_still_eligible_after_approval_seals() -> None:
         "src.gateway.governance.routing_seal.generate_seal_with_evidence",
         return_value="seal-ok",
     ):
-        seal = await governor.revalidate_post_hitl(
+        sealed = await governor.revalidate_post_hitl(
             "execute_trade", dict(_TRADE), approval=granted_approval("PASS")
         )
-    assert seal == "seal-ok"
+    assert sealed.seal == "seal-ok"
     assert source.calls == [TRADE_CONFIDENCE_NORM_ID]
     assert barrier.commits == ["execute_trade"]
 

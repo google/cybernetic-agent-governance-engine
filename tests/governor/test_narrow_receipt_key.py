@@ -30,11 +30,13 @@ import hashlib
 import json
 import re
 import uuid
+from typing import Any
 from unittest.mock import AsyncMock, patch
 
 import fakeredis.aioredis
 import pytest
 
+from src.gateway.governance.governor.sealing import SealedAction
 from src.gateway.governance.narrow_receipt import (
     NARROW_RECEIPT_TTL_SECONDS,
     issue_narrow_receipt,
@@ -155,11 +157,24 @@ async def test_each_trade_redeems_only_its_own_receipt(
     )
     await asyncio.gather(_issue(narrowed_a, 10.0), _issue(narrowed_b, 20.0))
     verify = AsyncMock()
+    # The committing run, stubbed: the ALLOW run seals the params it was given;
+    # each NARROW run seals the clamped params its receipt names.
+    clamped = {narrowed_a: 10.0, narrowed_b: 20.0}
+    seals = iter((allowed, narrowed_a, narrowed_b))
+
+    async def _committing_run(
+        _governor: Any, action: str, params: dict[str, Any]
+    ) -> SealedAction:
+        seal = next(seals)
+        sealed = (
+            {"symbol": "AAPL", "amount": clamped[seal]} if seal in clamped else params
+        )
+        return SealedAction(action, seal, sealed)
 
     with (
         patch(
             "src.cage_finance.tools.tool_provider.enforce_governance",
-            AsyncMock(side_effect=[allowed, narrowed_a, narrowed_b]),
+            AsyncMock(side_effect=_committing_run),
         ),
         patch("src.gateway.governance.routing_seal.verify_and_consume_seal", verify),
     ):
@@ -177,7 +192,7 @@ async def test_each_trade_redeems_only_its_own_receipt(
         ]
 
     assert all(result.startswith("DRY_RUN: APPROVED") for result in results), results
-    # Each seal is verified against its own params: the ALLOW trade's
+    # Each seal is verified against the params it sealed: the ALLOW trade's
     # original amount, and each narrowed trade's clamped amount.
     verified = {call.args[0]: call.args[2]["amount"] for call in verify.await_args_list}
     assert verified == {allowed: 100.0, narrowed_a: 10.0, narrowed_b: 20.0}

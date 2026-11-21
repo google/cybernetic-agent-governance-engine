@@ -17,23 +17,32 @@
 Production approvals are ``DeferQueue`` tokens the gateway binds into a
 :class:`PostHitlApproval` (``enforce_approved_governance``). Governor-level
 tests that do not exercise the queue use :func:`granted_approval`, whose
-``spend`` succeeds exactly once, like the queue's compare-and-swap.
+``spend`` succeeds exactly once, like the queue's compare-and-swap, and only
+for evaluated params its ``covers`` accepts (by default: all).
 """
 
 from __future__ import annotations
 
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass, field
+from typing import Any
 
 from src.gateway.governance.governor.approval import PostHitlApproval
 
 
 @dataclass
 class SpendCounter:
-    """How often an approval's ``spend`` was called and whether it succeeded."""
+    """How an approval's ``spend`` / ``covers`` were called and what they answered.
+
+    ``params`` records the evaluated params handed to each ``spend`` call and
+    ``covered`` those handed to each ``covers`` call, in order.
+    """
 
     calls: int = 0
     spent: bool = False
     results: list[bool] = field(default_factory=list)
+    params: list[dict[str, Any]] = field(default_factory=list)
+    covered: list[dict[str, Any]] = field(default_factory=list)
 
 
 def granted_approval(
@@ -43,14 +52,25 @@ def granted_approval(
     thread_id: str | None = None,
     counter: SpendCounter | None = None,
     approved_holds: frozenset[tuple[str, str]] = frozenset(),
+    covers: Callable[[Mapping[str, Any]], bool] | None = None,
 ) -> PostHitlApproval:
-    """An unspent approval given against ``barrier_preview`` and ``approved_holds``; spends once."""
+    """An unspent approval given against ``barrier_preview`` and ``approved_holds``.
+
+    ``covers`` decides which evaluated params the approval covers (default:
+    every one). ``spend`` consumes it once, and only for covered params.
+    """
     state = counter if counter is not None else SpendCounter()
 
-    async def _spend() -> bool:
+    def _covers(evaluated: Mapping[str, Any]) -> bool:
+        state.covered.append(dict(evaluated))
+        return True if covers is None else bool(covers(evaluated))
+
+    async def _spend(evaluated: Mapping[str, Any]) -> bool:
         state.calls += 1
-        ok = not state.spent
-        state.spent = True
+        state.params.append(dict(evaluated))
+        ok = not state.spent and (True if covers is None else bool(covers(evaluated)))
+        if ok:
+            state.spent = True
         state.results.append(ok)
         return ok
 
@@ -58,6 +78,7 @@ def granted_approval(
         approval_id=approval_id,
         barrier_preview=barrier_preview,
         spend=_spend,
+        covers=_covers,
         thread_id=thread_id,
         approved_holds=approved_holds,
     )

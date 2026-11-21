@@ -126,7 +126,7 @@ async def administer_dose_action(
     order = DoseOrder(patient_id=patient_id, medication=medication, dose_mg=dose_mg)
     params: dict[str, Any] = {**order.model_dump(), "confidence": confidence}
     try:
-        seal = await enforce_governance(governor, "administer_dose", params)
+        governed = await enforce_governance(governor, "administer_dose", params)
     except _gm.ActionDeferred as exc:
         return {
             "status": "DEFERRED",
@@ -135,21 +135,25 @@ async def administer_dose_action(
         }
     except PermissionError as exc:
         return _blocked(str(exc), getattr(exc, "proof_hash", ""))
-    if not isinstance(seal, str) or not seal.strip():
+    # The seal commits to the evaluated params the run returned; they, never
+    # the caller's params, are verified, digested and actuated.
+    seal, evaluated = getattr(governed, "seal", None), getattr(governed, "params", None)
+    if not isinstance(seal, str) or not seal.strip() or not isinstance(evaluated, dict):
         raise _rs.SymbolicGovernorViolation("No seal", action="administer_dose")
     executed = False
     try:
         try:
-            await verify_and_consume_seal(seal, "administer_dose", params)
+            await verify_and_consume_seal(seal, "administer_dose", evaluated)
         except _rs.SymbolicGovernorViolation as exc:
-            return await _refuse(exc.reason, params)
+            return await _refuse(exc.reason, evaluated)
         act = get_actuator_registry().get_actuator("administer_dose")
         if act is None:
             raise _rs.SymbolicGovernorViolation("No actuator", action="administer_dose")
         tid, nonce = str(uuid.uuid4()), uuid.uuid4().hex[:32]
-        dig = hashlib.sha256(json.dumps(params, sort_keys=True).encode()).hexdigest()
+        dig = hashlib.sha256(json.dumps(evaluated, sort_keys=True).encode()).hexdigest()
         kw: dict[str, Any] = {"thread_id": tid, "decision": "ALLOW", "nonce": nonce}
-        kw |= {"decision_path": "DIRECT", "action": "administer_dose", "params": params}
+        kw |= {"decision_path": "DIRECT", "action": "administer_dose"}
+        kw |= {"params": evaluated}
         kw |= {"target": order.patient_id, "operator_urn": "clinician_001"}
         kw |= {"issued_at": int(time.time()), "correlation_id": tid}
         kw |= {"issued_at_provenance": "CONSTRUCTION_TIME", "opa_input_digest": dig}
@@ -170,7 +174,7 @@ async def administer_dose_action(
                     "receipt_id": rec.receipt_id,
                     "findings": f,
                 }
-            return await _refuse("Actuation rejected", params)
+            return await _refuse("Actuation rejected", evaluated)
         return {
             "status": "GOVERNED",
             **order.model_dump(),

@@ -19,7 +19,7 @@ import logging
 import time
 import uuid
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Any, Literal
+from typing import TYPE_CHECKING, Any, Literal, NoReturn
 
 from mcp.types import ToolAnnotations
 
@@ -44,7 +44,6 @@ from src.gateway.governance.execution_idempotency import (
     ExecutionStatus,
     UnsettledDuplicate,
 )
-from src.gateway.governance.governor.server_inputs import bind_server_inputs
 from src.gateway.governance.routing_seal import SymbolicGovernorViolation
 from src.gateway.governance.seams.actuation import ExecutionClearance
 from src.gateway.server.governance_middleware import (
@@ -129,9 +128,11 @@ async def execute_trade_action(
     This is the single committing run for a trade: ``/governance/validate-action``
     only routes, and never reserves budget or mints a seal.
 
-    Gap 2 fix (No-Direct-Bind): governance returns a routing seal. This
-    function verifies the seal before executing the trade, ensuring that
-    execution cannot proceed by ignoring the governance response.
+    Gap 2 fix (No-Direct-Bind): governance returns a sealed action (the
+    routing seal and the evaluated params it commits to). This function
+    verifies the seal against those params and actuates exactly them,
+    ensuring that execution cannot proceed by ignoring the governance
+    response.
     Satisfies: NoDirectBind == (phase = "EXECUTED") => (resolvedAllow = TRUE)
 
     At most once per ``transaction_id``: the key is claimed in the governor's
@@ -367,47 +368,23 @@ async def _govern_and_actuate(
     attempt: _TradeAttempt,
 ) -> str:
     """Govern, seal and actuate one trade; ``attempt.status`` tracks the broker."""
-    # Server-side inputs (the STPA measurements and the trader's role and id)
-    # are bound by the kernel, exactly as for previews; the seal names these
-    # bound params. A missing one is refused inside the governor (UCA-2 /
-    # UCA-5 / UCA-13, or the trade policy for a missing role), which records
-    # the refusal.
-    from src.gateway.governance.contracts import (
-        ServerInputUnavailableError,
-        Violation,
-        ViolationKind,
-    )
-    from src.gateway.governance.governor.verdicts import handle_infrastructure_block
+    # The kernel binds the server-side inputs (the STPA measurements and the
+    # trader's role and id) exactly once inside the committing run; the seal
+    # names those evaluated params and the run returns them
+    # (SealedAction.params). They, never the caller's params, are what is
+    # verified and actuated. A missing input is refused inside the governor
+    # (UCA-2 / UCA-5 / UCA-13, or the trade policy for a missing role), which
+    # records the refusal; an unavailable source blocks with a 503.
     from src.gateway.governance.routing_seal import (
         SymbolicGovernorViolation,
         seal_digest,
         verify_and_consume_seal,
     )
 
-    try:
-        params = await bind_server_inputs(
-            governor.components.server_inputs, "execute_trade", params
-        )
-    except ServerInputUnavailableError as exc:
-        await handle_infrastructure_block(
-            "execute_trade",
-            params,
-            [
-                Violation(
-                    tier=exc.dependency,
-                    code=exc.failure_code,
-                    message=str(exc),
-                    kind=ViolationKind.INFRASTRUCTURE,
-                )
-            ],
-            [],
-            {"infra_error_code": exc.error_code},
-        )
-
-    # Step 1: Enforce governance (commit + seal) and obtain the seal
+    # Step 1: Enforce governance (commit + seal) and obtain the sealed action
     try:
         if deferred_id:
-            governance_result = await enforce_approved_governance(
+            governed = await enforce_approved_governance(
                 governor,
                 "execute_trade",
                 params,
@@ -415,9 +392,7 @@ async def _govern_and_actuate(
                 approval_covers=_approval_covers_trade,
             )
         else:
-            governance_result = await enforce_governance(
-                governor, "execute_trade", params
-            )
+            governed = await enforce_governance(governor, "execute_trade", params)
     except ActionDeferred as exc:
         # Nothing sealed, committed or refused. After an approval, the same
         # approval redeems once the deferral clears (the warrant is eligible
@@ -427,17 +402,17 @@ async def _govern_and_actuate(
         return f"BLOCKED: {exc}"
 
     # CRITICAL: Fail-closed seal validation at entry — reject unsealed execution attempts
+    seal = getattr(governed, "seal", None)
+    action_params = getattr(governed, "params", None)
     if (
-        not governance_result
-        or not isinstance(governance_result, str)
-        or not governance_result.strip()
+        not isinstance(seal, str)
+        or not seal.strip()
+        or not isinstance(action_params, dict)
     ):
         raise SymbolicGovernorViolation(
             "CRITICAL: execute_trade_action invoked without mandatory routing seal.",
             action="execute_trade",
         )
-
-    seal = governance_result
 
     # Every exit from here on settles the seal's phase-2 commits exactly once
     # (ADR-009): confirmed whenever the trade may have executed (ACCEPTED,
@@ -448,83 +423,53 @@ async def _govern_and_actuate(
     try:
         # Step 3: NARROW Receipt Validation (CAGE-SEC-004 fix)
         # A narrowed committing run (SymbolicGovernor._sealed_narrow) seals the
-        # clamped params and issues a single-use receipt naming them.
-        action_params = params  # Default: use original params
-
-        from src.gateway.governance.narrow_receipt import narrow_receipt_key
-        from src.gateway.infrastructure.redis_client import redis_client
-
-        receipt_key = narrow_receipt_key(seal)
-
-        # Attempt to fetch NARROW receipt (fail-silent if not present)
-        if redis_client is not None:
-            try:
-                receipt_data = await redis_client.get(receipt_key)
-                if receipt_data:
-                    # Delete receipt immediately (one-time use — fetch-and-burn pattern)
-                    await redis_client.delete(receipt_key)
-
-                    receipt_payload = json.loads(receipt_data)
-                    narrowed_params = receipt_payload.get("narrowed_params", {})
-                    receipt_signature = receipt_payload.get("original_signature", "")
-
-                    # Verify original signature matches (prevents receipt forgery)
-                    if receipt_signature != seal:
-                        reason = "Narrowing receipt signature mismatch — possible forgery attempt"
-                        logger.error(
-                            "🚫 execute_trade: NARROW receipt signature mismatch. "
-                            "Receipt sig=%s, Seal=%s",
-                            receipt_signature[:16],
-                            seal[:16],
-                        )
-                        await record_refusal(
-                            "execute_trade",
-                            reason,
-                            oscal_control_ref="AC-3",
-                            params=params,
-                        )
-                        return f"BLOCKED: {reason}"
-
-                    # Use narrowed params for trade execution
-                    action_params = narrowed_params
-                    logger.info(
-                        "📐 execute_trade: NARROW receipt validated and consumed. "
-                        "Using narrowed params: %s",
-                        {
-                            k: narrowed_params.get(k)
-                            for k in ["symbol", "amount", "confidence"]
-                        },
-                    )
-            except json.JSONDecodeError as exc:
-                reason = "Narrowing receipt payload corrupted"
-                logger.error(
-                    "🚫 execute_trade: NARROW receipt payload invalid JSON: %s",
-                    exc,
+        # re-bound clamped params, returns them as governed.params and issues a
+        # single-use receipt naming them. governed.params is what is verified
+        # and actuated; the receipt is fetched, burned and must name exactly
+        # those params. Whenever the run narrowed the request the receipt is
+        # required, so a narrowing is never executed unconfirmed: a missing
+        # receipt, another seal's receipt or a receipt naming other params is a
+        # recorded refusal, and an unreachable receipt store blocks (503).
+        narrowed = _narrowed(params, action_params)
+        receipt, receipt_store_error = await _take_narrow_receipt(seal)
+        if receipt_store_error is not None and narrowed:
+            await _block_receipt_store_outage(action_params, receipt_store_error)
+        refusal: str | None = None
+        if receipt is _CORRUPT_RECEIPT:
+            refusal = "Narrowing receipt payload corrupted"
+        elif isinstance(receipt, dict):
+            if receipt.get("original_signature", "") != seal:
+                refusal = (
+                    "Narrowing receipt signature mismatch — possible forgery attempt"
                 )
-                await record_refusal(
-                    "execute_trade",
-                    reason,
-                    oscal_control_ref="AC-3",
-                    params=params,
+            elif not _same_params(receipt.get("narrowed_params"), action_params):
+                refusal = (
+                    "Narrowing receipt names params other than the sealed params "
+                    "— refusing"
                 )
-                return f"BLOCKED: {reason}"
-            except Exception as exc:
-                from src.gateway.governance.evidence.stream import (
-                    EvidenceChainUnavailableError,
-                )
-
-                if isinstance(exc, EvidenceChainUnavailableError):
-                    raise
-                # Only log errors, don't block — receipt may legitimately not exist
-                logger.debug(
-                    "execute_trade: NARROW receipt lookup failed (may be ALLOW verdict): %s",
-                    exc,
-                )
+        elif narrowed:
+            refusal = "Narrowing receipt missing — the narrowed params are unconfirmed"
+        if refusal is not None:
+            logger.error("🚫 execute_trade: NARROW receipt refused: %s", refusal)
+            await record_refusal(
+                "execute_trade",
+                refusal,
+                oscal_control_ref="AC-3",
+                params=action_params,
+            )
+            return f"BLOCKED: {refusal}"
+        if isinstance(receipt, dict):
+            logger.info(
+                "📐 execute_trade: NARROW receipt validated and consumed. "
+                "Executing narrowed params: %s",
+                {k: action_params.get(k) for k in ["symbol", "amount", "confidence"]},
+            )
 
         # Step 4: Seal verification and consumption (Gap 2 fix / CAGE-SEC-008)
         # verify_and_consume_seal() verifies the seal, then atomically consumes its
         # single-use nonce in Redis (POAM-2026-089: verify -> burn -> execute).
-        # Phase 3.2: Verify seal against the params that will actually be executed (narrowed or original)
+        # The seal is verified against the evaluated params the run sealed and
+        # returned (governed.params), the params that are actuated below.
         try:
             await verify_and_consume_seal(seal, "execute_trade", action_params)
         except SymbolicGovernorViolation as exc:
@@ -611,6 +556,115 @@ async def _govern_and_actuate(
         return f"EXECUTED: {action_params.get('symbol')} x {action_params.get('amount')} (Receipt ID: {receipt.receipt_id})"
     finally:
         await _settle(governor, seal, executed=executed)
+
+
+#: Sentinel for a NARROW receipt whose payload is not a JSON object.
+_CORRUPT_RECEIPT = object()
+
+
+def _narrowed(requested: dict[str, Any], sealed: dict[str, Any]) -> bool:
+    """True iff the run sealed other values for keys the tool requested (a NARROW).
+
+    The tool's params carry no server-owned key, so an ALLOW seals every
+    requested key unchanged; a narrower clamps a requested value (e.g. the
+    amount). A key the tool did not send cannot make this true, so server
+    inputs bound by the kernel never count as a narrowing.
+    """
+    return any(
+        key not in sealed or sealed[key] != value for key, value in requested.items()
+    )
+
+
+def _same_params(receipt_params: Any, sealed: dict[str, Any]) -> bool:
+    """Whether a receipt names exactly the sealed params, in the seal's own canonical form.
+
+    Both sides go through :func:`~src.gateway.governance.routing_seal.canonical_action_bytes`
+    (RFC 8785 JCS, the recipe of the seal's ``action_hash``), so the comparison
+    is byte-deterministic and cannot disagree with the seal. Anything that
+    recipe cannot represent is a mismatch.
+    """
+    from src.gateway.governance.routing_seal import (
+        SealCanonicalizationError,
+        canonical_action_bytes,
+    )
+
+    if not isinstance(receipt_params, dict):
+        return False
+    try:
+        return canonical_action_bytes(
+            "execute_trade", receipt_params
+        ) == canonical_action_bytes("execute_trade", sealed)
+    except SealCanonicalizationError:
+        return False
+
+
+async def _take_narrow_receipt(seal: str) -> tuple[Any, Exception | None]:
+    """Fetch and burn the NARROW receipt for ``seal``.
+
+    Returns ``(receipt, store_error)``: the receipt as a dict,
+    :data:`_CORRUPT_RECEIPT` for a payload that is not a JSON object, or
+    ``None`` when there is none (also when no receipt store is configured);
+    ``store_error`` is the exception raised by an unreachable store.
+    """
+    from src.gateway.governance.narrow_receipt import narrow_receipt_key
+    from src.gateway.infrastructure.redis_client import redis_client
+
+    if redis_client is None:
+        return None, None
+    receipt_key = narrow_receipt_key(seal)
+    try:
+        receipt_data = await redis_client.get(receipt_key)
+        if receipt_data:
+            # One-time use: the receipt is burned before it is read.
+            await redis_client.delete(receipt_key)
+    except Exception as exc:  # the store, not the receipt, failed
+        return None, exc
+    if not receipt_data:
+        return None, None
+    try:
+        payload = json.loads(receipt_data)
+    except (TypeError, ValueError):  # json.JSONDecodeError is a ValueError
+        return _CORRUPT_RECEIPT, None
+    return (payload if isinstance(payload, dict) else _CORRUPT_RECEIPT), None
+
+
+async def _block_receipt_store_outage(
+    params: dict[str, Any], exc: Exception
+) -> NoReturn:
+    """Block a narrowed trade whose receipt store is unreachable (503, no refusal).
+
+    An outage is not a policy refusal (POAM-2026-233): the block is chained
+    as ``GOVERNANCE_INFRASTRUCTURE_BLOCK`` and nothing executes.
+    """
+    from src.gateway.governance.contracts import Violation, ViolationKind
+    from src.gateway.governance.governor.errors import GovernanceInfrastructureError
+    from src.gateway.governance.governor.verdicts import handle_infrastructure_block
+
+    logger.error("execute_trade: NARROW receipt store unreachable: %s", exc)
+    await handle_infrastructure_block(
+        "execute_trade",
+        params,
+        [
+            Violation(
+                tier="narrow_receipt_store",
+                code="NARROW_RECEIPT_UNAVAILABLE",
+                message=(
+                    "NARROW receipt store unreachable; the narrowed params cannot "
+                    f"be confirmed: {type(exc).__name__}: {exc}"
+                ),
+                kind=ViolationKind.INFRASTRUCTURE,
+                infra_dependency="narrow_receipt_store",
+                infra_error_code="narrow_receipt_store_unavailable",
+            )
+        ],
+        [],
+    )
+    raise GovernanceInfrastructureError(
+        "handle_infrastructure_block returned without raising; blocking execute_trade",
+        dependency="narrow_receipt_store",
+        failure_code="NARROW_RECEIPT_UNAVAILABLE",
+        error_code="narrow_receipt_store_unavailable",
+    )  # fail closed
 
 
 async def _settle(governor: "SymbolicGovernor", seal: str, *, executed: bool) -> None:

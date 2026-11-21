@@ -202,12 +202,18 @@ telemetry staleness limit is `TELEMETRY_MAX_STALENESS_SECONDS` (300 s).
    ([`src/governed_financial_advisor/graph/governance/tool_guard.py`](../../src/governed_financial_advisor/graph/governance/tool_guard.py))
    and the advisor invokes the gateway's `execute_trade_action(..., deferred_id=deferred_id)` MCP tool.
    Inside [`src/gateway/server/governance_middleware.py`](../../src/gateway/server/governance_middleware.py),
-   `enforce_approved_governance()` checks the quorum-approved `HITL_REQUIRED` token without
-   spending it (`DeferQueue.redeemable_approval`, verifying action and canonical parameter SHA-256
-   binding) and calls `SymbolicGovernor.revalidate_post_hitl(..., approval=PostHitlApproval(...))` in
+   `enforce_approved_governance()` checks the state of the quorum-approved `HITL_REQUIRED` token
+   without spending it (`DeferQueue.redeemable_token`: approved, unspent, parked for this
+   action and carrying approved params; it decides no coverage and binds no server inputs) and
+   calls `SymbolicGovernor.revalidate_post_hitl(..., approval=PostHitlApproval(...))` in
    [`src/gateway/governance/governor/governor.py`](../../src/gateway/governance/governor/governor.py).
-   The governor spends the approval exactly once (`DeferQueue.consume_approval`, an atomic CAS)
-   only when the run is about to mint a seal. A DENY spends it; a `WARRANT_INELIGIBLE` DEFER
+   The run binds the request's server inputs once, and the approval must cover the resulting
+   evaluated params (`PostHitlApproval.covers`: same instrument, currency, side, trader and role,
+   and an amount no larger than approved) before any stage runs; otherwise the run is refused
+   `APPROVAL_NOT_REDEEMABLE` and the approval stays unspent.
+   The governor spends the approval exactly once (`DeferQueue.consume_approval`, an atomic CAS
+   that re-checks coverage of the same evaluated params) only when the run is about to mint a
+   seal over those params. A DENY spends it; a `WARRANT_INELIGIBLE` DEFER
    leaves it redeemable (POAM-2026-104), and the tool reports `DEFERRED:`.
    Under `Profile.POST_HITL` (`stage_runs_under` in `pipeline.py`), the governor re-runs the
    read-only stages whose verdict can change while a human decides: `opa`, the warrant gate

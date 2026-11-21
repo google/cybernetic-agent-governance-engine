@@ -126,7 +126,7 @@ unread `fiscal:reservation:{id}` sentinel key are removed.
   that spend is under-counted for the rest of the window. Closing this needs
   the actuation receipt itself (durable, keyed by seal) to drive the confirm.
 - **The ledger is in-process.** Governance and actuation share one process
-  today (`enforce_governance` returns the seal in-process). A split
+  today (`enforce_governance` returns the sealed action in-process). A split
   deployment would need a durable ledger keyed by seal.
 - **Seals nothing actuates.** The LangGraph harness
   (`src/gateway/governance/langgraph_harness/opa_node_factory.py`) calls

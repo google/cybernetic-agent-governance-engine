@@ -42,7 +42,7 @@ from src.gateway.governance.seams.actuation import (
     ActuationReceipt,
     ExecutionClearance,
 )
-from tests.fixtures.trade_inputs import trade_governor
+from tests.fixtures.trade_inputs import sealed_governance, trade_governor
 
 pytestmark = [pytest.mark.unit, pytest.mark.local]
 
@@ -275,8 +275,8 @@ async def test_execute_trade_action_traverses_actuator():
         with patch(
             "src.cage_finance.tools.tool_provider.enforce_governance"
         ) as mock_governance:
-            # Mock governance to return a seal
-            mock_governance.return_value = "test-seal-" + "a" * 56
+            # Mock governance to return a sealed action over the tool's params
+            mock_governance.side_effect = sealed_governance("test-seal-" + "a" * 56)
 
             with patch(
                 "src.gateway.governance.routing_seal.verify_and_consume_seal"

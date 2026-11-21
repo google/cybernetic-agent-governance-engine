@@ -490,10 +490,12 @@ async def test_end_to_end_stream_conforms_across_all_five_invariants(
 
     # 1. ALLOW flow: govern -> verify_and_consume_seal -> dispatch_actuation (ACCEPTED) -> settle(True)
     allow_params = {"symbol": "AAPL", "amount": 500.0, "confidence": 0.95}
-    allow_seal = await governor.govern(_ACTION, allow_params)
-    assert await rs.verify_and_consume_seal(allow_seal, _ACTION, allow_params) is True
+    allow = await governor.govern(_ACTION, allow_params)
+    allow_seal = allow.seal
+    assert allow.params == allow_params  # nothing server-bound for this action
+    assert await rs.verify_and_consume_seal(allow_seal, _ACTION, allow.params) is True
     allow_rcpt = await dispatch_actuation(
-        _TestActuator(accept=True), _make_clearance(allow_seal, allow_params)
+        _TestActuator(accept=True), _make_clearance(allow_seal, allow.params)
     )
     assert allow_rcpt.accepted is True
     assert await governor.settle(allow_seal, executed=True) == []
@@ -501,7 +503,10 @@ async def test_end_to_end_stream_conforms_across_all_five_invariants(
     # 2. NARROW flow: amount=2500 > soft_cap=1000 -> clamped to 1000 -> full rerun -> seal -> consume -> actuate -> settle(True)
     narrow_input = {"symbol": "MSFT", "amount": 2_500.0, "confidence": 0.95}
     clamped_params = {"symbol": "MSFT", "amount": 1_000.0, "confidence": 0.95}
-    narrow_seal = await governor.govern(_ACTION, narrow_input)
+    narrowed = await governor.govern(_ACTION, narrow_input)
+    narrow_seal = narrowed.seal
+    # The sealed action names the clamped params the re-run evaluated.
+    assert narrowed.params == clamped_params
     assert (
         await rs.verify_and_consume_seal(narrow_seal, _ACTION, clamped_params) is True
     )
@@ -514,13 +519,17 @@ async def test_end_to_end_stream_conforms_across_all_five_invariants(
     # 3. Rollback flow: govern -> consume -> actuator REJECTED -> settle(False) restores exact cost + idempotent NOOP rollback
     reject_params = {"symbol": "NVDA", "amount": 800.0, "confidence": 0.95}
     balance_before_reject = float(await live_stream.stream_redis.get(cbf.redis_key))
-    reject_seal = await governor.govern(_ACTION, reject_params)
+    rejected = await governor.govern(_ACTION, reject_params)
+    reject_seal = rejected.seal
+    assert rejected.params == reject_params
     assert float(await live_stream.stream_redis.get(cbf.redis_key)) == pytest.approx(
         balance_before_reject - 800.0
     )
-    assert await rs.verify_and_consume_seal(reject_seal, _ACTION, reject_params) is True
+    assert (
+        await rs.verify_and_consume_seal(reject_seal, _ACTION, rejected.params) is True
+    )
     reject_rcpt = await dispatch_actuation(
-        _TestActuator(accept=False), _make_clearance(reject_seal, reject_params)
+        _TestActuator(accept=False), _make_clearance(reject_seal, rejected.params)
     )
     assert reject_rcpt.accepted is False
     assert await governor.settle(reject_seal, executed=False) == []

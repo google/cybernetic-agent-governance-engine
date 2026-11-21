@@ -34,7 +34,7 @@ import logging
 import math
 import os
 import uuid
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
 from contextlib import AsyncExitStack
 from contextvars import ContextVar, Token
 from datetime import datetime, timezone
@@ -62,6 +62,7 @@ from src.gateway.governance.governor.metrics import (
     mark_request_refused,
 )
 from src.gateway.governance.governor.pipeline import OpaVerdict
+from src.gateway.governance.governor.sealing import SealedAction
 from src.gateway.governance.governor.stages.opa import decode_opa_verdict
 from src.gateway.governance.iso_control import stamp_iso_control
 from src.gateway.governance.jcs_canonicalizer import jcs_canonicalize_plan
@@ -171,16 +172,22 @@ class ActionDeferred(PermissionError):
 
 async def enforce_governance(
     governor: SymbolicGovernor, tool_name: str, params: dict[str, Any]
-) -> str:
+) -> SealedAction:
     """Run the full Symbolic Governor pipeline for the given tool call.
 
-    Gap 2 fix (No-Direct-Bind): ``govern()`` now returns a routing seal on
-    approval.  This function propagates that seal to callers so they can
-    verify it before executing the governed action, satisfying the invariant:
+    Gap 2 fix (No-Direct-Bind): ``govern()`` returns a
+    :class:`~src.gateway.governance.governor.sealing.SealedAction` on
+    approval: the routing seal and the evaluated params it commits to (the
+    caller's params with the action's server inputs bound once by the
+    kernel). Callers verify the seal against ``SealedAction.params`` and
+    actuate exactly those params, never their own input, satisfying the
+    invariant:
         NoDirectBind == (phase = "EXECUTED") => (resolvedAllow = TRUE)
 
+    Every tool call is governed; there is no exempt tool name.
+
     Returns:
-        HMAC-SHA256 routing seal string (non-empty on approval).
+        The ``SealedAction`` (``seal`` non-empty on approval).
 
     Raises:
         ActionDeferred: The committing run deferred (an ineligible warrant).
@@ -189,12 +196,8 @@ async def enforce_governance(
             a refusal whose receipt could not be signed (no unsigned receipt
             is committed).
     """
-    if tool_name in {"verify_content_safety"}:
-        return ""  # Exempt kernel-internal read-only tools from governance overhead
-
     try:
-        seal = await governor.govern(tool_name, params)
-        return seal
+        return await governor.govern(tool_name, params)
     except GovernanceDeferred as exc:
         # A warrant failure removes reliance; it is never a refusal. The
         # deferral (parked token + GOVERNANCE_DEFERRAL) is already evidenced.
@@ -243,29 +246,43 @@ async def enforce_approved_governance(
     *,
     deferred_id: str,
     approval_covers: Callable[[dict[str, Any], dict[str, Any]], bool],
-) -> str:
+) -> SealedAction:
     """Commit and seal a human-approved action: the post-approval committing run.
 
     1. Check that the ``HITL_REQUIRED`` token ``deferred_id`` in the gateway's
-       DeferQueue is redeemable (``DeferQueue.redeemable_approval``): quorum-
-       approved, unspent, parked for ``tool_name``, and
-       ``approval_covers(approved_params, params)`` holds, so an approval for
-       one action cannot authorise a different or larger one. Nothing is
-       spent yet.
+       DeferQueue is redeemable by its state alone
+       (``DeferQueue.redeemable_token``, which takes no ``covers``): quorum-
+       approved, unspent, parked for ``tool_name`` and carrying approved
+       params. This pre-check binds no server inputs and decides no coverage
+       of its own. Nothing is spent yet.
     2. Run ``SymbolicGovernor.revalidate_post_hitl()`` (POST_HITL profile) on
-       the fresh ``params``, handing it the approval bound to its
-       ``barrier_preview``, to the human-review holds the reviewer was shown
-       (``DeferToken.hitl_holds``; a hold outside them refuses the run) and
-       to a ``spend`` that re-checks the token and
-       consumes it with the ``RESOLVED -> CONSUMED`` compare-and-swap
-       (``DeferQueue.consume_approval``). The governor spends it only when
-       it seals (a replayed or concurrent ``deferred_id`` loses the swap and
-       seals nothing) or refuses; a warrant-ineligible DEFER leaves it
-       unspent, so the same approval redeems once the warrant returns
-       (POAM-2026-104).
+       the fresh ``params``. The governor binds their server inputs exactly
+       once; the evaluated params are what every stage evaluates and what is
+       sealed. It is handed the approval bound to its ``barrier_preview``,
+       to the human-review holds the reviewer was shown
+       (``DeferToken.hitl_holds``; a hold outside them refuses the run), to
+       a ``covers`` that checks the evaluated params against the token's
+       approved params (``approval_covers(approved_params, evaluated)``)
+       before any stage runs, and to a ``spend`` that consumes the token
+       with the ``RESOLVED -> CONSUMED`` compare-and-swap
+       (``DeferQueue.consume_approval``) only if ``approval_covers`` holds
+       for the same evaluated params. The governor spends it only when it
+       seals (a replayed or concurrent ``deferred_id`` loses the swap and
+       seals nothing) or refuses; an uncovered request, an infrastructure
+       block or a warrant-ineligible DEFER leaves it unspent, so the same
+       approval redeems once the warrant returns (POAM-2026-104).
+
+    An approval is consumed only by a run that seals exactly the params it
+    covers. Coverage is evaluated against the evaluated (sealed) params,
+    before any stage runs and again inside the compare-and-swap that
+    consumes the approval. There is no second server-input lookup, so an
+    approval for one action, trader or amount cannot authorise a different
+    or larger one. ``approval_covers(approved, evaluated)`` must be side
+    effect free; one that raises never authorises.
 
     Returns:
-        The routing seal for ``params``.
+        The ``SealedAction``: the seal and the evaluated params it commits
+        to. Callers verify the seal against, and actuate, those params.
 
     Raises:
         ActionDeferred: Post-approval re-validation deferred; the approval
@@ -280,15 +297,19 @@ async def enforce_approved_governance(
     """
     from src.gateway.governance.defer_queue import open_defer_queue
 
-    def _covers(approved: dict[str, Any]) -> bool:
+    def _covers(approved: Any, evaluated: Mapping[str, Any]) -> bool:
+        if not isinstance(approved, dict):
+            return False
         try:
-            return bool(approval_covers(approved, params))
+            return bool(approval_covers(approved, dict(evaluated)))
         except Exception as exc:  # a raising matcher never authorises
             logger.warning("approval_covers raised for %s: %s", tool_name, exc)
             return False
 
     async def _refuse_unredeemable() -> NoReturn:
-        reason = f"no unconsumed approval {deferred_id!r} covers this {tool_name}"
+        reason = (
+            f"no unconsumed approval {deferred_id!r} is redeemable for this {tool_name}"
+        )
         emitted = await _emit_refusal_receipt(
             action_id=tool_name,
             refusal_reason=reason,
@@ -317,9 +338,9 @@ async def enforce_approved_governance(
 
             try:
                 queue = await stack.enter_async_context(open_defer_queue())
-                token = await queue.redeemable_approval(
-                    deferred_id, action=tool_name, covers=_covers
-                )
+                # Token state only: coverage is decided against the evaluated
+                # params inside the committing run.
+                token = await queue.redeemable_token(deferred_id, action=tool_name)
             except Exception as exc:  # queue unreachable: block 503, preserve approval
                 logger.error("DeferQueue unavailable checking %s: %s", deferred_id, exc)
                 await handle_infrastructure_block(
@@ -342,11 +363,14 @@ async def enforce_approved_governance(
                 )
             if token is None:
                 await _refuse_unredeemable()
+            approved_params = token.opa_input_snapshot.get("params")
 
-            async def _spend() -> bool:
+            async def _spend(evaluated: Mapping[str, Any]) -> bool:
                 try:
                     spent = await queue.consume_approval(
-                        deferred_id, action=tool_name, covers=_covers
+                        deferred_id,
+                        action=tool_name,
+                        covers=lambda approved: _covers(approved, evaluated),
                     )
                 except (
                     Exception
@@ -364,6 +388,7 @@ async def enforce_approved_governance(
                 approval_id=deferred_id,
                 barrier_preview=token.barrier_preview,
                 spend=_spend,
+                covers=lambda evaluated: _covers(approved_params, evaluated),
                 thread_id=token.thread_id,
                 approved_holds=token.hitl_holds,
             )
@@ -1169,8 +1194,13 @@ async def validate_action_endpoint(
                     attestations.append(att)
 
         payload_result = {
-            k: v for k, v in result.items() if k != "external_attestations"
+            k: v
+            for k, v in result.items()
+            if k not in ("external_attestations", "evaluated_action_hash")
         }
+        # Audit binding of the server-bound params the stages evaluated; the
+        # request binding (subject.action_hash) stays over body.params.
+        evaluated_action_hash = result.get("evaluated_action_hash")
         if "violations" in payload_result and isinstance(
             payload_result["violations"], list
         ):
@@ -1211,6 +1241,11 @@ async def validate_action_endpoint(
             agent_id=result.get("agent_id"),
             tiers_passed=result.get("tiers_passed", []),
             external_attestations=attestations,
+            evaluated_action_hash=(
+                evaluated_action_hash
+                if isinstance(evaluated_action_hash, str)
+                else None
+            ),
         )
         return JSONResponse(content=envelope.to_dict(include_signature=True))
 

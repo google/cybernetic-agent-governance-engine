@@ -430,9 +430,9 @@ here for readability is, in the actual wire format, the envelope's own
 - `attempted_params` — direct carry-forward of `RefusalReceipt.attempted_params`
   ([`contracts.py:84`](../../src/gateway/governance/contracts.py:84)).
 - `action_hash` — **new**, computed with the same
-  `jcs_canonicalize_plan({"action": action, **safe_params})` recipe already
+  `jcs_canonicalize_plan({"action": action, "params": safe_params})` recipe already
   used by
-  [`GovernanceEnvelopeBuilder._compute_action_hash()`](../../src/gateway/governance/governance_envelope.py:294)
+  [`envelope_action_hash()`](../../src/gateway/governance/governance_envelope.py:139)
   and [`routing_seal.py`'s action-hash check](../../src/gateway/governance/routing_seal.py:688) —
   reusing the identical hash lets a verifier confirm the receipt's `intent`
   matches what a *would-be* seal's `action_hash` claim would have been, had

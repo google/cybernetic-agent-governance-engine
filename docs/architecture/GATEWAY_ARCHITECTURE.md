@@ -272,7 +272,7 @@ The single choke point for tool-level governance validation. Mounted under `/gov
 
 **Response — Signed `GovernanceEnvelope` (HTTP 200 for `ALLOW`, `NARROW`, `REQUIRE_APPROVAL`, `DEFER`; HTTP 403 for `DENIED`):**
 
-Every verdict from `POST /governance/validate-action` is wrapped in a signed `GovernanceEnvelope` (`envelope_version: "3.0"`, RFC 8785 JCS + `ES256`/`EdDSA` signature resolved out-of-band by `kid`, `subject.action_hash` binding, and `expires_at` freshness). On `DENIED`, the HTTP status is `403` and `payload` carries the `refusal_receipt` and `proof_hash`:
+Every verdict from `POST /governance/validate-action` is wrapped in a signed `GovernanceEnvelope` (`envelope_version: "3.0"`, RFC 8785 JCS + `ES256`/`EdDSA` signature resolved out-of-band by `kid`, `subject.action_hash` binding, and `expires_at` freshness). `subject.action_hash` is the request binding over the submitted `params`, which the client recomputes; HTTP `200` envelopes also carry `subject.evaluated_action_hash`, an audit binding over the server-bound params the stages evaluated, which the client cannot recompute (both from [`envelope_action_hash()`](../../src/gateway/governance/governance_envelope.py)). On `DENIED`, the HTTP status is `403` and `payload` carries the `refusal_receipt` (whose `params_hash` binds the evaluated params) and `proof_hash`:
 
 ```json
 {

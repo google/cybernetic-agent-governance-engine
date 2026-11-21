@@ -719,10 +719,10 @@ async def test_approved_escalation_still_escalating_is_sealed(defer_redis: Any) 
     approval = await _parked_approval(governor, counter)
 
     with patch(_MINT, side_effect=_mint) as mint:
-        seal = await governor.revalidate_post_hitl(
+        sealed = await governor.revalidate_post_hitl(
             "execute_trade", dict(_TRADE), approval=approval
         )
-    assert seal == "seal-ok"
+    assert sealed.seal == "seal-ok"
     mint.assert_called_once()
     assert len(provider.calls) == 2
     assert counter.results == [True]
@@ -736,12 +736,10 @@ async def test_admission_at_revalidation_is_sealed(defer_redis: Any) -> None:
 
     provider.result = ValidationResult(admitted=True)
     with patch(_MINT, side_effect=_mint):
-        assert (
-            await governor.revalidate_post_hitl(
-                "execute_trade", dict(_TRADE), approval=approval
-            )
-            == "seal-ok"
+        sealed = await governor.revalidate_post_hitl(
+            "execute_trade", dict(_TRADE), approval=approval
         )
+    assert sealed.seal == "seal-ok"
 
 
 @pytest.mark.asyncio
@@ -899,10 +897,10 @@ async def test_approved_hold_commits_the_barrier_and_seals() -> None:
     governor, barrier = _governor_with_kernel_and_barrier(_FakeProvider(_escalate()))
     approval = granted_approval("PASS", approved_holds=frozenset({_FRIA_HOLD}))
     with patch(_MINT, side_effect=_mint):
-        seal = await governor.revalidate_post_hitl(
+        sealed = await governor.revalidate_post_hitl(
             "execute_trade", dict(_TRADE), approval=approval
         )
-    assert seal == "seal-ok"
+    assert sealed.seal == "seal-ok"
     assert barrier.commits == ["execute_trade"]
     assert barrier.rollbacks == []
 

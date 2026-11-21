@@ -507,8 +507,9 @@ async def test_s10_committing_run_seals_the_narrowed_params(
 
     sealed = await gov.govern(ACTION, _params())
 
-    assert sealed == "sealed-narrow"
-    receipt = await receipt_store.get(narrow_receipt_key(sealed))
+    assert sealed.seal == "sealed-narrow"
+    assert sealed.params == {"amount": 1000.0, "agent_id": "agent-1"}
+    receipt = await receipt_store.get(narrow_receipt_key(sealed.seal))
     assert receipt is not None, "a sealed NARROW must leave its single-use receipt"
     assert '"amount": 1000.0' in receipt
     from unittest.mock import ANY

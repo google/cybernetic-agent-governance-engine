@@ -298,16 +298,20 @@ async def test_high_confidence_valid_trade_is_approved() -> None:
         "trader_role": "senior",
     }
 
-    # govern() returns a routing seal (non-empty string) on approval.
+    # govern() returns the sealed action (non-empty routing seal) on approval.
     # Mock generate_seal_with_evidence to avoid Redis dependency.
     with patch(
         "src.gateway.governance.routing_seal.generate_seal_with_evidence",
         new=AsyncMock(return_value="mock-seal-token"),
     ):
-        seal = await governor.govern("execute_trade", params)
-    assert isinstance(seal, str) and len(seal) > 0, (
-        f"Expected a routing seal for an approved trade; got: {seal!r}"
+        governed = await governor.govern("execute_trade", params)
+    assert isinstance(governed.seal, str) and len(governed.seal) > 0, (
+        f"Expected a routing seal for an approved trade; got: {governed!r}"
     )
+    assert governed.seal == "mock-seal-token"
+    # No server input binds anything for execute_trade here: the sealed
+    # (evaluated) params are the request.
+    assert governed.params == params
 
 
 # ---------------------------------------------------------------------------

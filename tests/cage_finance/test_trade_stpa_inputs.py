@@ -12,18 +12,21 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""The trade tool measures UCA-2 ``latency_ms`` and reads UCA-5 ``drawdown`` itself.
+"""The kernel measures UCA-2 ``latency_ms`` and reads UCA-5 ``drawdown`` for trades.
 
-``execute_trade_action`` takes neither value from its caller. For every
-committing run the kernel binds them through the governor's ``execute_trade``
-server-input resolver
+``execute_trade_action`` takes neither value from its caller and binds
+neither itself. For every committing run the kernel binds them exactly once
+through the governor's ``execute_trade`` server-input resolver
 (:class:`~src.cage_finance.tools.trade_inputs.TradeInputResolver` over
-:class:`~src.cage_finance.tools.trade_inputs.ServerTradeInputs`). The params
-it hands to governance run through the generated finance STPA rules for each
-region (UCA-5 drawdown 3.5 / 4.0 / 4.5 %, FIN-2 latency 150 / 175 / 200 ms):
+:class:`~src.cage_finance.tools.trade_inputs.ServerTradeInputs`). These tests
+run a real committing run whose sealing step is replaced by the generated
+finance STPA rules, so the params checked are exactly the evaluated params,
+for each region (UCA-5 drawdown 3.5 / 4.0 / 4.5 %, FIN-2 latency
+150 / 175 / 200 ms):
 
 * in-limit inputs clear the STPA stage; over-limit inputs are HARD UCA-2 / UCA-5;
-* a missing or faulted source leaves its input unset, and the rule refuses;
+* a missing or unreachable source blocks the run on infrastructure; a faulted
+  one leaves its input unset, and the rule refuses;
 * the advisor's trade payload (forwarded without ``latency_ms`` or ``drawdown``)
   now clears the STPA stage for a normal buy through ``execute_trade_action``.
 """
@@ -34,7 +37,6 @@ import asyncio
 import inspect
 import uuid
 from typing import Any
-from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
@@ -55,9 +57,10 @@ from src.cage_finance.tools.trade_inputs import (
     resolve_daily_drawdown_pct,
 )
 from src.gateway.governance.contracts import ViolationKind
+from src.gateway.governance.governor import governor as governor_mod
 from src.gateway.governance.schemas.thresholds import load_and_validate_thresholds
 from src.gateway.governance.seams.ground_truth import FaultMode
-from tests.fixtures.trade_inputs import trade_governor
+from tests.fixtures.trade_inputs import committing_trade_governor, trade_governor
 
 pytestmark = [
     pytest.mark.unit,
@@ -93,25 +96,31 @@ def region(request: pytest.FixtureRequest, monkeypatch: pytest.MonkeyPatch) -> s
 
 @pytest.fixture
 def stpa_gateway(monkeypatch: pytest.MonkeyPatch) -> list[dict[str, Any]]:
-    """``enforce_governance`` replaced by the generated finance STPA stage.
+    """The committing run, with the generated finance STPA rules as its only stage.
 
-    A HARD violation raises the ``PermissionError`` the middleware raises
-    (the tool returns ``BLOCKED: ...``); a clean run raises :class:`_Cleared`.
+    The real ``enforce_governance`` and ``SymbolicGovernor.govern`` run, so
+    the kernel binds the server inputs exactly once (an unavailable source
+    blocks the run on infrastructure before any stage runs). The sealing step
+    receives the evaluated params and is replaced here: a HARD violation
+    raises the ``PermissionError`` the tool reports as ``BLOCKED: ...``; a
+    clean run raises :class:`_Cleared`.
     """
     seen: list[dict[str, Any]] = []
 
-    async def _enforce(_governor: Any, action: str, params: dict[str, Any]) -> str:
-        seen.append(dict(params))
+    async def _stpa_stage(
+        _stages: Any, ctx: Any, evaluated: dict[str, Any], **_kwargs: Any
+    ) -> Any:
+        seen.append(dict(evaluated))
         hard = [
             v
-            for v in GeneratedSTPAValidator().validate(action, dict(params))
+            for v in GeneratedSTPAValidator().validate(ctx.action, dict(evaluated))
             if v.kind is ViolationKind.HARD
         ]
         if hard:
             raise PermissionError("; ".join(f"{v.code}: {v.message}" for v in hard))
-        raise _Cleared(dict(params))
+        raise _Cleared(dict(evaluated))
 
-    monkeypatch.setattr(tool_provider, "enforce_governance", _enforce)
+    monkeypatch.setattr(governor_mod, "run_sealed", _stpa_stage)
     return seen
 
 
@@ -139,7 +148,9 @@ async def _buy(inputs: ServerTradeInputs) -> str:
         currency="USD",
         confidence=0.99,
         transaction_id=str(uuid.uuid4()),
-        governor=trade_governor({"execute_trade": TradeInputResolver(inputs)}),
+        governor=committing_trade_governor(
+            {"execute_trade": TradeInputResolver(inputs)}
+        ),
     )
 
 
@@ -429,13 +440,15 @@ async def test_advisor_buy_payload_clears_the_stpa_stage(
     The gateway tool and its server-input resolver are the ones the finance
     plugin contributes, with the plugin's own simulated sources. The call
     carries only what the advisor's graph forwards (no latency or drawdown);
-    the gateway supplies both and the buy clears UCA-2 and UCA-5.
+    the governor's committing run binds both and the buy clears UCA-2 and
+    UCA-5.
     """
     from src.cage_finance.plugin import FinanceCagePlugin
 
     contribution = FinanceCagePlugin().contribute()
     tool = _register_with(
-        contribution.tool_provider, trade_governor(dict(contribution.server_inputs))
+        contribution.tool_provider,
+        committing_trade_governor(dict(contribution.server_inputs)),
     )["execute_trade_action"]
 
     with pytest.raises(_Cleared):

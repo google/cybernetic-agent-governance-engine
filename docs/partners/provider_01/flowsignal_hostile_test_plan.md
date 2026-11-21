@@ -370,9 +370,9 @@ kubectl logs -l app=gateway-service -n cage-dev | grep "Falling back to static p
 - Verify seal is validated at [`tool_provider.py:105-110`](src/cage_finance/tools/tool_provider.py:105-110)
 
 **Expected CAGE Behavior:**
-1. [`enforce_governance()`](src/cage_finance/tools/tool_provider.py:101) returns routing seal
-2. Seal validation at [line 106](src/cage_finance/tools/tool_provider.py:106) checks for non-empty string
-3. [`verify_and_consume_seal()`](src/cage_finance/tools/tool_provider.py:178) burns single-use nonce in Redis
+1. [`enforce_governance()`](src/cage_finance/tools/tool_provider.py:101) returns a `SealedAction` (the routing seal and the evaluated params it commits to)
+2. Seal validation at [line 106](src/cage_finance/tools/tool_provider.py:106) checks for a non-empty seal string and a `params` dict
+3. [`verify_and_consume_seal()`](src/cage_finance/tools/tool_provider.py:178) verifies the seal against `SealedAction.params` and burns single-use nonce in Redis
 4. Invalid/missing/consumed seal → `SymbolicGovernorViolation` raised
 
 **Success Criteria:**

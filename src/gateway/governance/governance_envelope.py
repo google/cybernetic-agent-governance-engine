@@ -35,7 +35,8 @@ Envelope Structure (RFC 8785 JCS-canonicalized):
         },
         "subject": {
             "action": "execute_action",
-            "action_hash": "sha256:...",
+            "action_hash": "sha256:...",            # request binding
+            "evaluated_action_hash": "sha256:...",  # audit binding (optional)
             "agent_id": "advisor-prod-v3"
         },
         "governance_context": {
@@ -63,6 +64,15 @@ Usage:
 
     # Verify an envelope
     verified = builder.verify(envelope)
+
+Subject hashes:
+    ``subject.action_hash`` is the request binding: :func:`envelope_action_hash`
+    over the action and the params the caller submitted, which a client
+    recomputes to bind the verdict to its own request.
+    ``subject.evaluated_action_hash`` (present when the decision evaluated
+    server-bound params) is the audit binding: the same recipe over the params
+    the stages evaluated, with the action's server inputs bound. A client
+    cannot recompute it, because server inputs are not disclosed.
 """
 
 from __future__ import annotations
@@ -71,6 +81,7 @@ import hashlib
 import logging
 import os
 import uuid
+from collections.abc import Mapping
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from enum import Enum
@@ -114,6 +125,31 @@ class EnvelopeType(str, Enum):
 # AttestationStatus is now imported from seams.attestation
 
 
+def _json_leaves(value: Any) -> Any:
+    """Recursively preserve JSON-native containers/scalars and stringify custom leaves."""
+    if isinstance(value, (str, int, float, bool, type(None))):
+        return value
+    if isinstance(value, dict):
+        return {str(k): _json_leaves(v) for k, v in value.items()}
+    if isinstance(value, (list, tuple)):
+        return [_json_leaves(item) for item in value]
+    return str(value)
+
+
+def envelope_action_hash(action: str, params: Mapping[str, Any]) -> str:
+    """``sha256:`` + the seal recipe's action hash over ``action`` and ``params``.
+
+    Non-JSON-native leaves are stringified first; the hash is
+    :func:`~src.gateway.governance.routing_seal.compute_action_hash` (RFC 8785
+    JCS of ``{"action", "params"}``). The envelope uses it for
+    ``subject.action_hash`` (the submitted params) and
+    ``subject.evaluated_action_hash`` (the evaluated, server-bound params).
+    """
+    from src.gateway.governance.routing_seal import compute_action_hash
+
+    return f"sha256:{compute_action_hash(action, _json_leaves(dict(params)))}"
+
+
 @dataclass
 class IssuerMetadata:
     """Metadata about the envelope issuer (gateway instance)."""
@@ -132,7 +168,13 @@ class IssuerMetadata:
 
 @dataclass
 class SubjectMetadata:
-    """Metadata about the governance subject (action being governed)."""
+    """Metadata about the governance subject (action being governed).
+
+    ``action_hash`` binds the request the caller submitted (client
+    verifiable). ``evaluated_action_hash``, when set, binds the params the
+    stages evaluated, with server inputs bound (an audit binding; not client
+    verifiable, since server inputs are not disclosed).
+    """
 
     action: str
     action_hash: str
@@ -140,6 +182,7 @@ class SubjectMetadata:
     consequence_ceiling: str = "LOW_INFORMATIONAL"
     target_route: str = "local://default"
     executor_id: str = "kernel"
+    evaluated_action_hash: str | None = None
 
     def to_dict(self) -> dict[str, Any]:
         result: dict[str, Any] = {
@@ -151,6 +194,8 @@ class SubjectMetadata:
         }
         if self.agent_id:
             result["agent_id"] = self.agent_id
+        if self.evaluated_action_hash is not None:
+            result["evaluated_action_hash"] = self.evaluated_action_hash
         return result
 
 
@@ -284,25 +329,6 @@ class GovernanceEnvelopeBuilder:
         self._issuer = issuer or IssuerMetadata()
         self._ttl_s = ttl_s
 
-    @classmethod
-    def _sanitize_for_action_hash(cls, value: Any) -> Any:
-        """Recursively preserve JSON-native containers/scalars and stringify custom leaves."""
-        if isinstance(value, (str, int, float, bool, type(None))):
-            return value
-        if isinstance(value, dict):
-            return {str(k): cls._sanitize_for_action_hash(v) for k, v in value.items()}
-        if isinstance(value, (list, tuple)):
-            return [cls._sanitize_for_action_hash(item) for item in value]
-        return str(value)
-
-    def _compute_action_hash(self, action: str, params: dict[str, Any]) -> str:
-        """Compute the action hash from action name and parameters."""
-        from src.gateway.governance.routing_seal import compute_action_hash
-
-        # Normalize non-JSON-native leaves while preserving nested dicts/lists
-        safe_params = self._sanitize_for_action_hash(params)
-        return f"sha256:{compute_action_hash(action, safe_params)}"
-
     def _get_policy_version(self) -> str:
         """Get the current policy version hash."""
         try:
@@ -324,6 +350,7 @@ class GovernanceEnvelopeBuilder:
         consequence_ceiling: str = "LOW_INFORMATIONAL",
         target_route: str = "local://default",
         executor_id: str = "kernel",
+        evaluated_action_hash: str | None = None,
     ) -> GovernanceEnvelope:
         """Build an unsigned envelope for external signing.
 
@@ -341,6 +368,9 @@ class GovernanceEnvelopeBuilder:
             consequence_ceiling: Consequence tier ceiling (e.g., "LOW_INFORMATIONAL", "HIGH_FINANCIAL").
             target_route: Target route for execution (e.g., "synthetic://resource/alpha").
             executor_id: Executor/actuator identifier (e.g., "actuator_01", "synthetic_actuator_01").
+            evaluated_action_hash: Optional :func:`envelope_action_hash` of the
+                params the stages evaluated (server inputs bound), emitted as
+                ``subject.evaluated_action_hash``; omitted when ``None``.
 
         Returns:
             An unsigned GovernanceEnvelope ready for signing.
@@ -348,7 +378,7 @@ class GovernanceEnvelopeBuilder:
         now = datetime.now(timezone.utc)
         expires = datetime.fromtimestamp(now.timestamp() + self._ttl_s, tz=timezone.utc)
 
-        action_hash = self._compute_action_hash(action, params)
+        action_hash = envelope_action_hash(action, params)
 
         subject = SubjectMetadata(
             action=action,
@@ -357,6 +387,7 @@ class GovernanceEnvelopeBuilder:
             consequence_ceiling=consequence_ceiling,
             target_route=target_route,
             executor_id=executor_id,
+            evaluated_action_hash=evaluated_action_hash,
         )
 
         context = GovernanceContext(
@@ -423,6 +454,7 @@ class GovernanceEnvelopeBuilder:
         consequence_ceiling: str = "LOW_INFORMATIONAL",
         target_route: str = "local://default",
         executor_id: str = "kernel",
+        evaluated_action_hash: str | None = None,
     ) -> GovernanceEnvelope:
         """Build a signed envelope using the KMS signer.
 
@@ -438,6 +470,8 @@ class GovernanceEnvelopeBuilder:
             consequence_ceiling: Consequence tier ceiling (e.g., "LOW_INFORMATIONAL", "HIGH_FINANCIAL").
             target_route: Target route for execution (e.g., "synthetic://resource/alpha").
             executor_id: Executor/actuator identifier (e.g., "actuator_01", "synthetic_actuator_01").
+            evaluated_action_hash: Optional :func:`envelope_action_hash` of the
+                evaluated params (see :meth:`build_unsigned`).
 
         Returns:
             A signed GovernanceEnvelope.
@@ -453,6 +487,7 @@ class GovernanceEnvelopeBuilder:
             consequence_ceiling=consequence_ceiling,
             target_route=target_route,
             executor_id=executor_id,
+            evaluated_action_hash=evaluated_action_hash,
         )
 
         try:
@@ -729,6 +764,7 @@ class GovernanceEnvelopeBuilder:
             ),
             target_route=subject_data.get("target_route", "local://default"),
             executor_id=subject_data.get("executor_id", "kernel"),
+            evaluated_action_hash=subject_data.get("evaluated_action_hash"),
         )
 
         context_data = data.get("governance_context", {})

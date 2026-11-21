@@ -164,7 +164,7 @@ async def test_issued_seal_keeps_commits(entry_point: str, seal: AsyncMock) -> N
     result = await _call(_governor(_two_tiers(log)), entry_point)
 
     assert log == ["commit:cbf", "commit:fiscal"]
-    assert result == "sealed"
+    assert result.seal == "sealed"
 
 
 @pytest.mark.asyncio

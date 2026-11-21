@@ -48,6 +48,7 @@ from src.cage_finance.actuators.broker_actuator import BrokerActuator
 from src.cage_finance.ground_truth import SimulatedCashLedgerProvider
 from src.cage_healthcare.tools.tool_provider import ClinicalDoseActuator
 from src.gateway.governance.execution_actuator import ActuatorRegistry
+from src.gateway.governance.governor.sealing import SealedAction
 from src.gateway.governance.governor.trace import seal_ref
 from src.gateway.governance.seams.actuation import ExecutionClearance
 from src.gateway.governance.seams.ground_truth import InMemoryLedgerJournal
@@ -195,11 +196,11 @@ async def test_finance_records_the_digest_and_hands_the_broker_the_seal(
 
     async def _mint_for_trade(
         _gov: Any, act: str, params: dict[str, Any], **_kw: Any
-    ) -> str:
+    ) -> SealedAction:
         s = await rs.generate_seal(act, params, record_hash="c" * 64)
         assert rs._is_jwt_seal(s) is rs._is_jwt_seal(seal)
         minted_seals.append(s)
-        return s
+        return SealedAction(act, s, dict(params))
 
     with ExitStack() as stack:
         for target, value in (
@@ -267,7 +268,11 @@ async def test_healthcare_records_the_digest_not_the_seal(
     with ExitStack() as stack:
         stack.enter_context(
             patch.object(
-                clinical, "enforce_governance", AsyncMock(return_value=hc_seal)
+                clinical,
+                "enforce_governance",
+                AsyncMock(
+                    return_value=SealedAction("administer_dose", hc_seal, dose_params)
+                ),
             )
         )
         stack.enter_context(
