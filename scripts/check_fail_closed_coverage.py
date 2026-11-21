@@ -48,14 +48,28 @@ Two complementary checks run together:
      ``--update-baseline`` can only lower the ceiling under an unchanged
      ``detector_sha256``; ``--recompute-baseline --reason "..."`` is permitted
      **only** when ``detector_sha256`` changes and records before/after counts
-     and the reason in an append-only history chain. Each uncovered pair should
-     be resolved via one of four paths rather than adding exemptions to a table:
-     (1) collapse identical-outcome handlers into one ``except`` tuple,
-     (2) fold pure-logging differences before identical fallbacks,
-     (3) pin security-distinct earlier handlers with an explicit inner-line
-     ``@pytest.mark.covers("module:qualname#anchor")`` mark, or
-     (4) assert the observable side effect (e.g. ``bundle.errors`` vs
-     ``bundle.warnings``) when both branches return the same sentinel.
+     and the reason in an append-only history chain.
+
+     **Standing-debt policy & remediation classes:** The tracked ceiling is
+     standing historical debt governed by a non-regression ratchet (preventing
+     new shadow-except pairs rather than committing to clear all historical
+     items). Optional burn-down prioritizes ``oscal_claim_cited`` pairs — source
+     modules cited on ``read_back``-backed claims in
+     ``compliance/oscal/evidence_claim_census.jsonl``, where a dead narrow
+     handler propagates into a published OSCAL claim. Uncovered pairs split into
+     two remediation classes recorded separately in the baseline:
+
+     - ``collapse_or_covers_pin``: identical return/raise/fallthrough or
+       ``reraise-vs-wrap`` outcomes — resolve by (1) collapsing identical
+       handlers into one ``except`` tuple, (2) folding pure-logging differences,
+       (3) pinning security-distinct earlier handlers with an anchored
+       ``@pytest.mark.covers("module:qualname#anchor")``, or (4) asserting the
+       observable side effect when both branches return the same sentinel.
+     - ``needs_structured_discriminator``: handlers whose ``return`` expressions
+       differ **only** by free-text prose (``message`` / ``error`` /
+       ``advisor_error``) — a ``@pytest.mark.covers`` pin does **not** clear
+       these; add a structured discriminator (``code`` / ``failure_kind`` /
+       ``reason_code``) or collapse the handlers.
 
    .. note::
       The name-token AST scan is a **candidate finder requiring reconciliation,
@@ -159,6 +173,15 @@ VALID_SCOPES: Final[tuple[str, ...]] = (
 VALID_PARAM_SCOPES: Final[frozenset[str]] = frozenset({"all_params", "any_param"})
 
 TEST_PATH_RE: Final[re.Pattern[str]] = re.compile(r"tests/[A-Za-z0-9_./-]+\.py")
+SOURCE_PATH_RE: Final[re.Pattern[str]] = re.compile(
+    r"(?<![0-9a-f]{8}:)((?:src|packages)/[A-Za-z0-9_./-]+\.py)"
+)
+
+REMEDIATION_COLLAPSE_OR_PIN: Final[str] = "collapse_or_covers_pin"
+REMEDIATION_STRUCTURED_DISCRIMINATOR: Final[str] = "needs_structured_discriminator"
+VALID_REMEDIATION_CLASSES: Final[frozenset[str]] = frozenset(
+    {REMEDIATION_COLLAPSE_OR_PIN, REMEDIATION_STRUCTURED_DISCRIMINATOR}
+)
 
 # Base directories searched when mapping a dotted Python module target to a file.
 _PACKAGE_ROOTS: Final[tuple[tuple[str, Path], ...]] = (
@@ -252,6 +275,8 @@ class ShadowExceptPair:
     later_end_lineno: int
     later_type: str
     outcome: str
+    remediation_class: str = REMEDIATION_COLLAPSE_OR_PIN
+    oscal_claim_cited: bool = False
     covered_by: tuple[str, ...] = ()
 
     @property
@@ -330,6 +355,34 @@ def load_census_readback_files(
         raise ValueError(
             f"Zero test files found in `read_back` field of {path} (verdicts={verdicts})"
         )
+    return files
+
+
+def load_census_claim_source_files(
+    repo_root: Path,
+    *,
+    census_path: Path | None = None,
+) -> set[str]:
+    """Extract live ``src/`` and ``packages/`` Python files cited on ``read_back`` OSCAL claims."""
+    path = census_path if census_path is not None else (repo_root / CENSUS_REL_PATH)
+    if not path.is_file():
+        return set()
+    files: set[str] = set()
+    for line in path.read_text(encoding="utf-8").splitlines():
+        if not line.strip():
+            continue
+        row = json.loads(line)
+        if not isinstance(row, dict) or not row.get("read_back"):
+            continue
+        for field_val in (row.get("cites"), row.get("read_back")):
+            if field_val is None:
+                continue
+            text = (
+                field_val
+                if isinstance(field_val, str)
+                else json.dumps(field_val, sort_keys=True)
+            )
+            files.update(SOURCE_PATH_RE.findall(text))
     return files
 
 
@@ -1226,7 +1279,7 @@ _KNOWN_EXCEPTION_PARENTS: Final[dict[str, tuple[str, ...]]] = {
     "InvalidAlgorithmError": ("InvalidTokenError",),
 }
 
-_OutcomeToken = tuple[str, str, str | None]
+_OutcomeToken = tuple[str, str, str | None, str | None]
 
 
 def _call_tail_name(node: ast.expr) -> str | None:
@@ -1397,11 +1450,12 @@ def _single_caught_name(htype: ast.expr | None) -> str | None:
 
 def _summarize_return_outcome(stmt: ast.Return) -> _OutcomeToken:
     if stmt.value is None:
-        return ("return_const", "return None", None)
+        return ("return_const", "return None", None, None)
     if isinstance(stmt.value, ast.Constant):
-        return ("return_const", f"return {stmt.value.value!r}", None)
+        return ("return_const", f"return {stmt.value.value!r}", None, None)
+    raw_expr = ast.unparse(stmt.value)
     normalized = _ProseFieldNormalizer().visit(copy.deepcopy(stmt.value))
-    return ("return_expr", f"return {ast.unparse(normalized)}", None)
+    return ("return_expr", f"return {ast.unparse(normalized)}", None, raw_expr)
 
 
 def _summarize_raise_outcome(
@@ -1415,16 +1469,16 @@ def _summarize_raise_outcome(
             "HTTPException",
         ):
             return {
-                ("reraise_typed", f"raise {caught_name}", caught_name),
-                ("raise", "reraise", None),
+                ("reraise_typed", f"raise {caught_name}", caught_name, None),
+                ("raise", "reraise", None, None),
             }
-        return {("raise", "reraise", None)}
+        return {("raise", "reraise", None, None)}
     if isinstance(stmt.exc, ast.Call):
         fn = _call_tail_name(stmt.exc.func) or ast.unparse(stmt.exc.func)
         sc = _status_code_kw(stmt.exc)
         detail = f"{fn}:{sc}" if sc is not None else fn
-        return {("raise_call", f"raise {detail}", fn if sc is None else None)}
-    return {("raise_expr", f"raise {ast.unparse(stmt.exc)}", None)}
+        return {("raise_call", f"raise {detail}", fn if sc is None else None, None)}
+    return {("raise_expr", f"raise {ast.unparse(stmt.exc)}", None, None)}
 
 
 def _handler_outcomes(
@@ -1433,46 +1487,48 @@ def _handler_outcomes(
 ) -> set[_OutcomeToken]:
     """Collect terminal control-flow outcomes across compound ``if``/``with`` tails."""
     if not stmts:
-        return {("fallthrough", "fallthrough", None)}
+        return {("fallthrough", "fallthrough", None, None)}
     last = stmts[-1]
     if isinstance(last, ast.Return):
         return {_summarize_return_outcome(last)}
     if isinstance(last, ast.Raise):
         return _summarize_raise_outcome(last, caught_name)
     if isinstance(last, ast.Break):
-        return {("break", "break", None)}
+        return {("break", "break", None, None)}
     if isinstance(last, ast.Continue):
-        return {("continue", "continue", None)}
+        return {("continue", "continue", None, None)}
     if isinstance(last, ast.If):
         then_out = _handler_outcomes(last.body, caught_name)
         else_out = (
             _handler_outcomes(last.orelse, caught_name)
             if last.orelse
-            else {("fallthrough", "fallthrough", None)}
+            else {("fallthrough", "fallthrough", None, None)}
         )
         return then_out | else_out
     if isinstance(last, (ast.With, ast.AsyncWith)):
         return _handler_outcomes(last.body, caught_name)
-    return {("fallthrough", "fallthrough", None)}
+    return {("fallthrough", "fallthrough", None, None)}
 
 
 def _pair_token_match(
     tok_i: _OutcomeToken,
     tok_j: _OutcomeToken,
     parents: dict[str, set[str]],
-) -> str | None:
-    k_i, lbl_i, cls_i = tok_i
-    k_j, lbl_j, cls_j = tok_j
+) -> tuple[str, str] | None:
+    k_i, lbl_i, cls_i, raw_i = tok_i
+    k_j, lbl_j, cls_j, raw_j = tok_j
     if k_i == "fallthrough" or k_j == "fallthrough":
         return None
     if k_i == k_j and lbl_i == lbl_j:
-        return lbl_i
+        if k_i == "return_expr" and raw_i != raw_j:
+            return (lbl_i, REMEDIATION_STRUCTURED_DISCRIMINATOR)
+        return (lbl_i, REMEDIATION_COLLAPSE_OR_PIN)
     if k_i == "reraise_typed" and k_j == "raise_call" and cls_i and cls_j:
         if cls_i == cls_j or cls_i in _exception_ancestors(cls_j, parents):
-            return lbl_j
+            return (lbl_j, REMEDIATION_COLLAPSE_OR_PIN)
     if k_i == "raise_call" and k_j == "reraise_typed" and cls_i and cls_j:
         if cls_i == cls_j or cls_j in _exception_ancestors(cls_i, parents):
-            return lbl_i
+            return (lbl_i, REMEDIATION_COLLAPSE_OR_PIN)
     return None
 
 
@@ -1480,22 +1536,29 @@ def _matching_shadow_outcome(
     h_earlier: ast.ExceptHandler,
     h_later: ast.ExceptHandler,
     parents: dict[str, set[str]],
-) -> str | None:
-    """Return shared normalized outcome string if ``h_later`` normalizes ``h_earlier``."""
+) -> tuple[str, str] | None:
+    """Return ``(outcome, remediation_class)`` if ``h_later`` normalizes ``h_earlier``."""
     out_i = _handler_outcomes(h_earlier.body, _single_caught_name(h_earlier.type))
     out_j = _handler_outcomes(h_later.body, _single_caught_name(h_later.type))
-    matched: set[str] = set()
+    matched: list[tuple[str, str]] = []
     for tok_i in out_i:
         for tok_j in out_j:
             hit = _pair_token_match(tok_i, tok_j, parents)
             if hit is not None:
-                matched.add(hit)
+                matched.append(hit)
     if matched:
-        non_bare = sorted(m for m in matched if m != "reraise")
-        return non_bare[0] if non_bare else "reraise"
-    pure_fallthrough = {("fallthrough", "fallthrough", None)}
+        ordered = sorted(
+            set(matched),
+            key=lambda item: (
+                item[0] == "reraise",
+                item[1] != REMEDIATION_COLLAPSE_OR_PIN,
+                item[0],
+            ),
+        )
+        return ordered[0]
+    pure_fallthrough = {("fallthrough", "fallthrough", None, None)}
     if out_i == pure_fallthrough and out_j == pure_fallthrough:
-        return "fallthrough"
+        return ("fallthrough", REMEDIATION_COLLAPSE_OR_PIN)
     return None
 
 
@@ -1511,9 +1574,16 @@ def _body_line_span(stmts: list[ast.stmt]) -> frozenset[int]:
 class _ShadowExceptVisitor(ast.NodeVisitor):
     """AST visitor collecting ordered outcome-normalizing ``except`` pairs."""
 
-    def __init__(self, rel_path: str, parents: dict[str, set[str]]) -> None:
+    def __init__(
+        self,
+        rel_path: str,
+        parents: dict[str, set[str]],
+        *,
+        oscal_claim_cited: bool = False,
+    ) -> None:
         self.rel_path = rel_path
         self._parents = parents
+        self._oscal_claim_cited = oscal_claim_cited
         self._qual_parts: list[str] = []
         self.pairs: list[ShadowExceptPair] = []
 
@@ -1540,9 +1610,10 @@ class _ShadowExceptVisitor(ast.NodeVisitor):
             for h_j in handlers[i + 1 :]:
                 if not _can_shadow(h_i, h_j, self._parents):
                     continue
-                outcome = _matching_shadow_outcome(h_i, h_j, self._parents)
-                if outcome is None:
+                match = _matching_shadow_outcome(h_i, h_j, self._parents)
+                if match is None:
                     continue
+                outcome, rem_cls = match
                 self.pairs.append(
                     ShadowExceptPair(
                         rel_path=self.rel_path,
@@ -1559,6 +1630,8 @@ class _ShadowExceptVisitor(ast.NodeVisitor):
                             ast.unparse(h_j.type) if h_j.type is not None else "bare"
                         ),
                         outcome=outcome,
+                        remediation_class=rem_cls,
+                        oscal_claim_cited=self._oscal_claim_cited,
                     )
                 )
         self.generic_visit(node)
@@ -1574,16 +1647,22 @@ def find_outcome_normalizing_except_pairs(
     repo_root: Path,
     *,
     src_dir: Path | None = None,
+    census_path: Path | None = None,
 ) -> list[ShadowExceptPair]:
     """Scan Python modules under ``src/`` and ``packages/*/src/`` for shadow-except pairs."""
     scan_dirs = _resolve_shadow_scan_dirs(repo_root, src_dir)
     if not scan_dirs:
         return []
+    claim_files = load_census_claim_source_files(repo_root, census_path=census_path)
     parsed_files = _collect_shadow_python_files(repo_root, scan_dirs)
     parents = _build_exception_parents(parsed_files)
     pairs: list[ShadowExceptPair] = []
     for rel_path, tree in parsed_files:
-        visitor = _ShadowExceptVisitor(rel_path, parents)
+        visitor = _ShadowExceptVisitor(
+            rel_path,
+            parents,
+            oscal_claim_cited=(rel_path in claim_files),
+        )
         visitor.visit(tree)
         pairs.extend(visitor.pairs)
     return pairs
@@ -1594,15 +1673,22 @@ def evaluate_shadow_except_pairs(
     resolved_by_nodeid: dict[str, list[ResolvedTarget]],
     *,
     src_dir: Path | None = None,
+    census_path: Path | None = None,
 ) -> tuple[list[ShadowExceptPair], list[ShadowExceptPair]]:
     """Classify each outcome-normalizing ``except`` pair as covered or uncovered.
 
-    A pair is covered when at least one anchored ``@pytest.mark.covers`` target
-    (``statement_anchor`` or ``branch_body_anchor`` — never coarse
-    ``function_body``) resolves inside the earlier handler's body without
-    touching the later handler's line span.
+    A ``collapse_or_covers_pin`` pair is covered when at least one anchored
+    ``@pytest.mark.covers`` target (``statement_anchor`` or
+    ``branch_body_anchor`` — never coarse ``function_body``) resolves inside the
+    earlier handler's body without touching the later handler's line span.
+    Pairs in ``needs_structured_discriminator`` (differentiated only by
+    free-text prose) are **never** cleared by a ``@pytest.mark.covers`` pin:
+    they require adding a structured ``code``/``failure_kind`` discriminator or
+    collapsing the handlers.
     """
-    raw_pairs = find_outcome_normalizing_except_pairs(repo_root, src_dir=src_dir)
+    raw_pairs = find_outcome_normalizing_except_pairs(
+        repo_root, src_dir=src_dir, census_path=census_path
+    )
     if not raw_pairs:
         return [], []
 
@@ -1618,14 +1704,16 @@ def evaluate_shadow_except_pairs(
     uncovered: list[ShadowExceptPair] = []
     for pair in raw_pairs:
         later_span = frozenset(range(pair.later_lineno, pair.later_end_lineno + 1))
-        hits = sorted(
-            {
-                nodeid
-                for nodeid, tgt in anchored_by_file.get(pair.rel_path, ())
-                if (tgt.target_lines & pair.earlier_body_lines)
-                and not (tgt.target_lines & later_span)
-            }
-        )
+        hits: list[str] = []
+        if pair.remediation_class != REMEDIATION_STRUCTURED_DISCRIMINATOR:
+            hits = sorted(
+                {
+                    nodeid
+                    for nodeid, tgt in anchored_by_file.get(pair.rel_path, ())
+                    if (tgt.target_lines & pair.earlier_body_lines)
+                    and not (tgt.target_lines & later_span)
+                }
+            )
         updated = ShadowExceptPair(
             rel_path=pair.rel_path,
             qualname=pair.qualname,
@@ -1637,6 +1725,8 @@ def evaluate_shadow_except_pairs(
             later_end_lineno=pair.later_end_lineno,
             later_type=pair.later_type,
             outcome=pair.outcome,
+            remediation_class=pair.remediation_class,
+            oscal_claim_cited=pair.oscal_claim_cited,
             covered_by=tuple(hits),
         )
         evaluated.append(updated)
@@ -1652,6 +1742,16 @@ MIN_RECOMPUTE_REASON_LEN: Final[int] = 24
 _DETECTOR_BEGIN_SENTINEL: Final[str] = "# BEGIN " + "SHADOW_EXCEPT_DETECTOR\n"
 _DETECTOR_END_SENTINEL: Final[str] = "# END " + "SHADOW_EXCEPT_DETECTOR"
 
+STANDING_DEBT_POLICY_DEFAULT: Final[str] = (
+    "Non-regression ratchet over standing historical debt: prevents new shadow-except "
+    "pairs rather than committing to clear all historical items. Optional burn-down "
+    "prioritizes oscal_claim_cited pairs (modules cited on read_back-backed claims in "
+    "compliance/oscal/evidence_claim_census.jsonl, where a dead narrow handler affects "
+    "a published OSCAL claim). Pairs in needs_structured_discriminator differ only by "
+    "free-text message/error prose and cannot be cleared by @pytest.mark.covers pins "
+    "— add a structured code/failure_kind discriminator or collapse the handlers."
+)
+
 
 @dataclass(frozen=True)
 class ShadowBaselineState:
@@ -1659,7 +1759,27 @@ class ShadowBaselineState:
 
     baseline: int
     detector_sha256: str
+    uncovered_breakdown: dict[str, int]
+    standing_debt_policy: str
     history: tuple[dict[str, object], ...]
+
+
+def summarize_shadow_uncovered_breakdown(
+    uncovered: Sequence[ShadowExceptPair],
+) -> dict[str, int]:
+    """Partition uncovered shadow pairs by remediation class and OSCAL claim citation."""
+    prose_only = sum(
+        1
+        for p in uncovered
+        if p.remediation_class == REMEDIATION_STRUCTURED_DISCRIMINATOR
+    )
+    collapse_or_pin = len(uncovered) - prose_only
+    oscal_cited = sum(1 for p in uncovered if p.oscal_claim_cited)
+    return {
+        REMEDIATION_COLLAPSE_OR_PIN: collapse_or_pin,
+        REMEDIATION_STRUCTURED_DISCRIMINATOR: prose_only,
+        "oscal_claim_cited": oscal_cited,
+    }
 
 
 def _docstring_spans(tree: ast.Module) -> tuple[set[tuple[int, int]], set[int]]:
@@ -1741,6 +1861,39 @@ def resolve_shadow_baseline_path(
 
 def _is_non_neg_int(val: object) -> bool:
     return isinstance(val, int) and not isinstance(val, bool) and val >= 0
+
+
+def _validate_uncovered_breakdown(
+    raw_bd: object,
+    expected_total: int,
+) -> tuple[dict[str, int] | None, str | None]:
+    if not isinstance(raw_bd, dict):
+        return None, "uncovered_breakdown must be a JSON object"
+    cp = raw_bd.get(REMEDIATION_COLLAPSE_OR_PIN)
+    ns = raw_bd.get(REMEDIATION_STRUCTURED_DISCRIMINATOR)
+    oc = raw_bd.get("oscal_claim_cited")
+    if not (_is_non_neg_int(cp) and _is_non_neg_int(ns) and _is_non_neg_int(oc)):
+        return (
+            None,
+            "uncovered_breakdown requires non-negative integer "
+            "collapse_or_covers_pin, needs_structured_discriminator, and oscal_claim_cited",
+        )
+    assert isinstance(cp, int) and isinstance(ns, int) and isinstance(oc, int)
+    if cp + ns != expected_total:
+        return (
+            None,
+            f"uncovered_breakdown remediation sum ({cp} + {ns}) != baseline ({expected_total})",
+        )
+    if oc > expected_total:
+        return (
+            None,
+            f"uncovered_breakdown.oscal_claim_cited ({oc}) > baseline ({expected_total})",
+        )
+    return {
+        REMEDIATION_COLLAPSE_OR_PIN: cp,
+        REMEDIATION_STRUCTURED_DISCRIMINATOR: ns,
+        "oscal_claim_cited": oc,
+    }, None
 
 
 def _validate_history_counts(idx: int, entry: dict[str, object]) -> str | None:
@@ -1844,10 +1997,9 @@ def _validate_history_entry(
     return _validate_history_transition(idx, event, entry, prev)
 
 
-def read_shadow_except_baseline(
+def _parse_baseline_json(
     baseline_path: Path,
-) -> tuple[ShadowBaselineState | None, str | None]:
-    """Read and validate the detector-bound baseline JSON and history chain."""
+) -> tuple[dict[str, object] | None, str | None]:
     if not baseline_path.is_file():
         return None, f"missing shadow-except baseline file {baseline_path}"
     raw = baseline_path.read_text(encoding="utf-8").strip()
@@ -1864,18 +2016,34 @@ def read_shadow_except_baseline(
             None,
             f"unsupported schema_version {payload.get('schema_version')!r} in {baseline_path}",
         )
+    return payload, None
+
+
+def read_shadow_except_baseline(
+    baseline_path: Path,
+) -> tuple[ShadowBaselineState | None, str | None]:
+    """Read and validate the detector-bound baseline JSON and history chain."""
+    payload, parse_err = _parse_baseline_json(baseline_path)
+    if parse_err is not None or payload is None:
+        return None, parse_err
     baseline = payload.get("baseline")
     det_sha = payload.get("detector_sha256")
+    policy = payload.get("standing_debt_policy")
     history = payload.get("history")
     if not _is_non_neg_int(baseline):
         return None, f"invalid baseline {baseline!r} in {baseline_path}"
+    assert isinstance(baseline, int)
     if not isinstance(det_sha, str) or not det_sha.strip():
         return None, f"invalid detector_sha256 {det_sha!r} in {baseline_path}"
+    if not isinstance(policy, str) or not policy.strip():
+        return None, f"missing standing_debt_policy in {baseline_path}"
+    breakdown, bd_err = _validate_uncovered_breakdown(
+        payload.get("uncovered_breakdown"), baseline
+    )
+    if bd_err is not None or breakdown is None:
+        return None, f"{baseline_path}: {bd_err}"
     if not isinstance(history, list) or not history:
-        return (
-            None,
-            f"history must be a non-empty list in {baseline_path}",
-        )
+        return None, f"history must be a non-empty list in {baseline_path}"
     prev_entry: dict[str, object] | None = None
     typed_history: list[dict[str, object]] = []
     for idx, item in enumerate(history):
@@ -1891,11 +2059,12 @@ def read_shadow_except_baseline(
             None,
             f"{baseline_path}: top-level baseline/detector_sha256 disagrees with history[-1]",
         )
-    assert isinstance(baseline, int)
     return (
         ShadowBaselineState(
             baseline=baseline,
             detector_sha256=det_sha,
+            uncovered_breakdown=breakdown,
+            standing_debt_policy=policy,
             history=tuple(typed_history),
         ),
         None,
@@ -1911,6 +2080,8 @@ def write_shadow_except_baseline_state(
         "schema_version": SHADOW_BASELINE_SCHEMA_VERSION,
         "baseline": state.baseline,
         "detector_sha256": state.detector_sha256,
+        "standing_debt_policy": state.standing_debt_policy,
+        "uncovered_breakdown": state.uncovered_breakdown,
         "history": list(state.history),
     }
     baseline_path.parent.mkdir(parents=True, exist_ok=True)
@@ -1929,6 +2100,8 @@ def write_initial_shadow_except_baseline(
     *,
     covered: int = 0,
     detector_sha256: str | None = None,
+    uncovered_breakdown: dict[str, int] | None = None,
+    standing_debt_policy: str = STANDING_DEBT_POLICY_DEFAULT,
     reason: str = "Initial shadow-except baseline.",
 ) -> ShadowBaselineState:
     """Initialize a fresh ``schema_version=1`` shadow-except baseline file."""
@@ -1939,6 +2112,15 @@ def write_initial_shadow_except_baseline(
         if detector_sha256 is not None
         else compute_shadow_detector_fingerprint()
     )
+    breakdown = (
+        dict(uncovered_breakdown)
+        if uncovered_breakdown is not None
+        else {
+            REMEDIATION_COLLAPSE_OR_PIN: count,
+            REMEDIATION_STRUCTURED_DISCRIMINATOR: 0,
+            "oscal_claim_cited": 0,
+        }
+    )
     entry: dict[str, object] = {
         "event": "initial_baseline",
         "before_baseline": None,
@@ -1947,11 +2129,51 @@ def write_initial_shadow_except_baseline(
         "after_total": count + covered,
         "before_detector_sha256": None,
         "detector_sha256": sha,
+        "uncovered_breakdown": breakdown,
         "reason": reason,
     }
-    state = ShadowBaselineState(baseline=count, detector_sha256=sha, history=(entry,))
+    state = ShadowBaselineState(
+        baseline=count,
+        detector_sha256=sha,
+        uncovered_breakdown=breakdown,
+        standing_debt_policy=standing_debt_policy,
+        history=(entry,),
+    )
     write_shadow_except_baseline_state(state, baseline_path)
     return state
+
+
+def _check_shadow_counts(
+    uncovered: Sequence[ShadowExceptPair],
+    state: ShadowBaselineState,
+) -> Violation | None:
+    if len(uncovered) > state.baseline:
+        sample = "; ".join(
+            f"{p.location} [{p.remediation_class}] ({p.earlier_type} vs {p.later_type} -> {p.outcome})"
+            for p in uncovered[:5]
+        )
+        return Violation(
+            "SHADOW_EXCEPT_BASELINE_EXCEEDED",
+            SHADOW_EXCEPT_BASELINE_REL_PATH.as_posix(),
+            f"uncovered outcome-normalizing except pairs increased from baseline "
+            f"{state.baseline} to {len(uncovered)} (sample: {sample}). Collapse "
+            "redundant handlers, add a structured discriminator (required for "
+            "needs_structured_discriminator), or pin collapse_or_covers_pin "
+            "handlers with @pytest.mark.covers('module:qualname#anchor').",
+        )
+    live_bd = summarize_shadow_uncovered_breakdown(uncovered)
+    max_prose = state.uncovered_breakdown[REMEDIATION_STRUCTURED_DISCRIMINATOR]
+    live_prose = live_bd[REMEDIATION_STRUCTURED_DISCRIMINATOR]
+    if live_prose > max_prose:
+        return Violation(
+            "SHADOW_EXCEPT_BASELINE_EXCEEDED",
+            SHADOW_EXCEPT_BASELINE_REL_PATH.as_posix(),
+            f"needs_structured_discriminator shadow-except pairs increased from "
+            f"{max_prose} to {live_prose}; prose-only handler pairs cannot be "
+            "offset by @pytest.mark.covers pins — add a structured "
+            "code/failure_kind discriminator or collapse the handlers.",
+        )
+    return None
 
 
 def check_shadow_except_baseline(
@@ -1960,12 +2182,16 @@ def check_shadow_except_baseline(
     *,
     shadow_baseline_path: Path | None = None,
     src_dir: Path | None = None,
+    census_path: Path | None = None,
     enforce: bool = True,
     expected_detector_sha256: str | None = None,
 ) -> tuple[list[ShadowExceptPair], list[ShadowExceptPair], int | None, list[Violation]]:
     """Audit outcome-normalizing ``except`` pairs against the detector-bound baseline."""
     evaluated, uncovered = evaluate_shadow_except_pairs(
-        repo_root, resolved_by_nodeid, src_dir=src_dir
+        repo_root,
+        resolved_by_nodeid,
+        src_dir=src_dir,
+        census_path=census_path,
     )
     baseline_file = resolve_shadow_baseline_path(repo_root, shadow_baseline_path)
     violations: list[Violation] = []
@@ -2013,21 +2239,10 @@ def check_shadow_except_baseline(
         )
         return evaluated, uncovered, state.baseline, violations
 
-    if enforce and len(uncovered) > state.baseline:
-        sample = "; ".join(
-            f"{p.location} ({p.earlier_type} vs {p.later_type} -> {p.outcome})"
-            for p in uncovered[:5]
-        )
-        violations.append(
-            Violation(
-                "SHADOW_EXCEPT_BASELINE_EXCEEDED",
-                SHADOW_EXCEPT_BASELINE_REL_PATH.as_posix(),
-                f"uncovered outcome-normalizing except pairs increased from baseline "
-                f"{state.baseline} to {len(uncovered)} (sample: {sample}). Resolve via "
-                "one of the 4 documented paths or pin the earlier handler with an "
-                "anchored @pytest.mark.covers('module:qualname#anchor').",
-            )
-        )
+    if enforce:
+        count_violation = _check_shadow_counts(uncovered, state)
+        if count_violation is not None:
+            violations.append(count_violation)
     return evaluated, uncovered, state.baseline, violations
 
 
@@ -2124,6 +2339,7 @@ def verify_static(
             repo_root,
             resolved_by_nodeid,
             shadow_baseline_path=shadow_baseline_path,
+            census_path=census_path,
             enforce=True,
             expected_detector_sha256=expected_detector_sha256,
         )
@@ -2497,7 +2713,7 @@ def _build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help=(
             "Print outcome-normalizing except pairs under src/ and packages/*/src/ "
-            "with cover status and exit 0."
+            "with remediation class, OSCAL claim tag, and cover status, then exit 0."
         ),
     )
     parser.add_argument(
@@ -2578,18 +2794,28 @@ def _run_list_candidates(
 def _run_list_shadow_excepts(
     repo_root: Path,
     resolved: dict[str, list[ResolvedTarget]],
+    *,
+    census_path: Path | None = None,
 ) -> int:
-    evaluated, uncovered = evaluate_shadow_except_pairs(repo_root, resolved)
+    evaluated, uncovered = evaluate_shadow_except_pairs(
+        repo_root, resolved, census_path=census_path
+    )
     for pair in evaluated:
         status = "COVERED" if pair.is_covered else "UNCOVERED"
+        oscal_tag = "oscal_claim" if pair.oscal_claim_cited else "-"
         covers = ",".join(pair.covered_by) if pair.covered_by else "-"
         print(
             f"{status}\t{pair.location}\t{pair.qualname}\t"
-            f"{pair.earlier_type}\t{pair.later_type}\t{pair.outcome}\t{covers}"
+            f"{pair.earlier_type}\t{pair.later_type}\t{pair.outcome}\t"
+            f"{pair.remediation_class}\t{oscal_tag}\t{covers}"
         )
+    bd = summarize_shadow_uncovered_breakdown(uncovered)
     print(
         f"# total_pairs={len(evaluated)} uncovered={len(uncovered)} "
-        f"covered={len(evaluated) - len(uncovered)}",
+        f"covered={len(evaluated) - len(uncovered)} "
+        f"collapse_or_covers_pin={bd[REMEDIATION_COLLAPSE_OR_PIN]} "
+        f"needs_structured_discriminator={bd[REMEDIATION_STRUCTURED_DISCRIMINATOR]} "
+        f"oscal_claim_cited={bd['oscal_claim_cited']}",
         file=sys.stderr,
     )
     return 0
@@ -2611,6 +2837,7 @@ def _run_update_baseline(
     violations: Sequence[Violation],
     *,
     shadow_baseline: Path | None,
+    census_path: Path | None = None,
     reason: str | None,
     expected_detector_sha256: str | None = None,
 ) -> int:
@@ -2642,16 +2869,23 @@ def _run_update_baseline(
             file=sys.stderr,
         )
         return 1
-    evaluated, uncovered = evaluate_shadow_except_pairs(repo_root, resolved)
+    evaluated, uncovered = evaluate_shadow_except_pairs(
+        repo_root, resolved, census_path=census_path
+    )
     covered_count = len(evaluated) - len(uncovered)
-    if len(uncovered) > existing.baseline:
+    breakdown = summarize_shadow_uncovered_breakdown(uncovered)
+    count_err = _check_shadow_counts(uncovered, existing)
+    if count_err is not None:
         print(
-            f"FAIL: refusing to raise shadow-except baseline from "
-            f"{existing.baseline} to {len(uncovered)} (monotonic ratchet).",
+            f"FAIL: refusing to raise shadow-except baseline (monotonic ratchet): "
+            f"{count_err.message}",
             file=sys.stderr,
         )
         return 1
-    if len(uncovered) == existing.baseline:
+    if (
+        len(uncovered) == existing.baseline
+        and breakdown == existing.uncovered_breakdown
+    ):
         print(
             f"UNCHANGED: {baseline_file} = {len(uncovered)} "
             f"(total_pairs={len(evaluated)}, covered={covered_count})"
@@ -2670,11 +2904,14 @@ def _run_update_baseline(
         "after_total": len(evaluated),
         "before_detector_sha256": existing.detector_sha256,
         "detector_sha256": live_sha,
+        "uncovered_breakdown": breakdown,
         "reason": note,
     }
     updated = ShadowBaselineState(
         baseline=len(uncovered),
         detector_sha256=live_sha,
+        uncovered_breakdown=breakdown,
+        standing_debt_policy=existing.standing_debt_policy,
         history=(*existing.history, entry),
     )
     write_shadow_except_baseline_state(updated, baseline_file)
@@ -2691,6 +2928,7 @@ def _run_recompute_baseline(
     violations: Sequence[Violation],
     *,
     shadow_baseline: Path | None,
+    census_path: Path | None = None,
     reason: str | None,
     expected_detector_sha256: str | None = None,
 ) -> int:
@@ -2709,8 +2947,11 @@ def _run_recompute_baseline(
         if expected_detector_sha256 is not None
         else compute_shadow_detector_fingerprint()
     )
-    evaluated, uncovered = evaluate_shadow_except_pairs(repo_root, resolved)
+    evaluated, uncovered = evaluate_shadow_except_pairs(
+        repo_root, resolved, census_path=census_path
+    )
     covered_count = len(evaluated) - len(uncovered)
+    breakdown = summarize_shadow_uncovered_breakdown(uncovered)
     baseline_file = resolve_shadow_baseline_path(repo_root, shadow_baseline)
     if not baseline_file.is_file():
         write_initial_shadow_except_baseline(
@@ -2718,6 +2959,7 @@ def _run_recompute_baseline(
             baseline_file,
             covered=covered_count,
             detector_sha256=live_sha,
+            uncovered_breakdown=breakdown,
             reason=reason_text,
         )
         print(
@@ -2747,11 +2989,14 @@ def _run_recompute_baseline(
         "after_total": len(evaluated),
         "before_detector_sha256": existing.detector_sha256,
         "detector_sha256": live_sha,
+        "uncovered_breakdown": breakdown,
         "reason": reason_text,
     }
     recomputed = ShadowBaselineState(
         baseline=len(uncovered),
         detector_sha256=live_sha,
+        uncovered_breakdown=breakdown,
+        standing_debt_policy=existing.standing_debt_policy,
         history=(*existing.history, entry),
     )
     write_shadow_except_baseline_state(recomputed, baseline_file)
@@ -2771,14 +3016,17 @@ def _print_reconciliation_summary(
     *,
     scope: str,
     shadow_baseline: Path | None,
+    census_path: Path | None = None,
 ) -> None:
     rec = build_reconciliation_report(all_tests)
     shadow_all, shadow_uncovered, shadow_base, _ = check_shadow_except_baseline(
         repo_root,
         resolved,
         shadow_baseline_path=shadow_baseline,
+        census_path=census_path,
         enforce=False,
     )
+    bd = summarize_shadow_uncovered_breakdown(shadow_uncovered)
     print(
         "Reconciliation report (AST name scan is a candidate finder requiring "
         "reconciliation, not a semantic definition of all fail-closed tests):"
@@ -2790,6 +3038,8 @@ def _print_reconciliation_summary(
         f"marked_exempt={rec['marked_exempt']} "
         f"shadow_except_pairs={len(shadow_all)} "
         f"shadow_except_uncovered={len(shadow_uncovered)} "
+        f"shadow_except_prose_only={bd[REMEDIATION_STRUCTURED_DISCRIMINATOR]} "
+        f"shadow_except_oscal_claim={bd['oscal_claim_cited']} "
         f"shadow_except_baseline={shadow_base}"
     )
     tok_line = ", ".join(
@@ -2833,13 +3083,16 @@ def main(argv: list[str] | None = None) -> int:
         return 2
 
     if args.list_shadow_excepts:
-        return _run_list_shadow_excepts(repo_root, resolved)
+        return _run_list_shadow_excepts(
+            repo_root, resolved, census_path=args.census_path
+        )
     if args.update_baseline:
         return _run_update_baseline(
             repo_root,
             resolved,
             violations,
             shadow_baseline=args.shadow_baseline,
+            census_path=args.census_path,
             reason=args.reason,
         )
     if args.recompute_baseline:
@@ -2848,6 +3101,7 @@ def main(argv: list[str] | None = None) -> int:
             resolved,
             violations,
             shadow_baseline=args.shadow_baseline,
+            census_path=args.census_path,
             reason=args.reason,
         )
 
@@ -2883,6 +3137,7 @@ def main(argv: list[str] | None = None) -> int:
             resolved,
             scope=args.scope,
             shadow_baseline=args.shadow_baseline,
+            census_path=args.census_path,
         )
 
     if violations:

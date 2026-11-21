@@ -70,6 +70,7 @@ def _write_shadow_baseline(
     *,
     covered: int = 0,
     detector_sha256: str | None = None,
+    uncovered_breakdown: dict[str, int] | None = None,
 ) -> Path:
     path = repo / "tests" / ".shadow-except-baseline"
     gate.write_initial_shadow_except_baseline(
@@ -77,6 +78,7 @@ def _write_shadow_baseline(
         path,
         covered=covered,
         detector_sha256=detector_sha256,
+        uncovered_breakdown=uncovered_breakdown,
         reason="Hermetic test baseline initialization.",
     )
     return path
@@ -694,6 +696,23 @@ class Service:
             raise
 """,
     )
+    _write_census(
+        tmp_path,
+        [
+            {
+                "id": "C-1",
+                "verdict": "HOLDS",
+                "cites": "src/sample.py:L605-L615, deadbeef:src/legacy_removed.py",
+                "read_back": "tests/test_sample.py",
+            },
+            {
+                "id": "C-2",
+                "verdict": "RETRACTED",
+                "cites": "src/no_readback.py",
+                "read_back": None,
+            },
+        ],
+    )
     pairs = gate.find_outcome_normalizing_except_pairs(tmp_path)
     by_method = {p.qualname: p for p in pairs}
     assert set(by_method) == {
@@ -718,8 +737,166 @@ class Service:
         "OPA_UNAVAILABLE" in by_method["Service.prose_only_return_diff_matches"].outcome
     )
     assert (
+        by_method["Service.prose_only_return_diff_matches"].remediation_class
+        == gate.REMEDIATION_STRUCTURED_DISCRIMINATOR
+    )
+    for m_name, pair in by_method.items():
+        assert pair.oscal_claim_cited is True
+        if m_name != "Service.prose_only_return_diff_matches":
+            assert pair.remediation_class == gate.REMEDIATION_COLLAPSE_OR_PIN
+    assert (
         by_method["Service.superclass_non_exception_shadow"].outcome == "return False"
     )
+
+
+def test_prose_only_shadow_pair_refuses_covers_pin_and_offset(
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    _make_sample_module(
+        tmp_path,
+        "src/verdict.py",
+        """\
+class Verdict:
+    def __init__(self, *, code: str, message: str) -> None:
+        self.code = code
+        self.message = message
+
+def eval_gate(flag: bool) -> Verdict:
+    try:
+        return Verdict(code="OK", message="ok")
+    except TimeoutError as exc:
+        tag = "PROSE_TIMEOUT_ANCHOR"
+        return Verdict(code="OPA_UNAVAILABLE", message=f"timeout: {exc}")
+    except Exception as exc:
+        return Verdict(code="OPA_UNAVAILABLE", message=f"failed: {exc}")
+
+def collapse_candidate(flag: bool) -> bool:
+    try:
+        return flag
+    except KeyError:
+        tag = "COLLAPSE_KEY_ANCHOR"
+        return False
+    except Exception:
+        return False
+""",
+    )
+    _write_census(
+        tmp_path,
+        [
+            {
+                "id": "C-1",
+                "verdict": "HOLDS",
+                "cites": "src/verdict.py",
+                "read_back": "tests/test_verdict.py",
+            }
+        ],
+    )
+    _make_sample_module(
+        tmp_path,
+        "tests/test_verdict.py",
+        """\
+import pytest
+
+pytestmark = [pytest.mark.unit, pytest.mark.local]
+
+@pytest.mark.covers("src.verdict:eval_gate#PROSE_TIMEOUT_ANCHOR")
+def test_prose_timeout_pin_fails_closed():
+    assert True
+""",
+    )
+    # Seed baseline=2 (1 collapse_or_covers_pin + 1 needs_structured_discriminator).
+    _write_shadow_baseline(
+        tmp_path,
+        2,
+        uncovered_breakdown={
+            gate.REMEDIATION_COLLAPSE_OR_PIN: 1,
+            gate.REMEDIATION_STRUCTURED_DISCRIMINATOR: 1,
+            "oscal_claim_cited": 2,
+        },
+    )
+
+    # 1. Anchored @pytest.mark.covers on prose-only pair does NOT clear it.
+    _, _, _, resolved, violations = gate.verify_static(
+        tmp_path, scope="readback-and-503"
+    )
+    assert violations == []
+    evaluated, uncovered = gate.evaluate_shadow_except_pairs(tmp_path, resolved)
+    by_fn = {p.qualname: p for p in evaluated}
+    assert (
+        by_fn["eval_gate"].remediation_class
+        == gate.REMEDIATION_STRUCTURED_DISCRIMINATOR
+    )
+    assert by_fn["eval_gate"].is_covered is False
+    assert by_fn["eval_gate"].covered_by == ()
+    assert len(uncovered) == 2
+
+    # 2. Pinning collapse_candidate while adding a 2nd prose-only pair keeps total=2
+    #    but raises needs_structured_discriminator (1 -> 2), which must fail closed!
+    _make_sample_module(
+        tmp_path,
+        "src/verdict.py",
+        """\
+class Verdict:
+    def __init__(self, *, code: str, message: str) -> None:
+        self.code = code
+        self.message = message
+
+def eval_gate(flag: bool) -> Verdict:
+    try:
+        return Verdict(code="OK", message="ok")
+    except TimeoutError as exc:
+        tag = "PROSE_TIMEOUT_ANCHOR"
+        return Verdict(code="OPA_UNAVAILABLE", message=f"timeout: {exc}")
+    except Exception as exc:
+        return Verdict(code="OPA_UNAVAILABLE", message=f"failed: {exc}")
+
+def second_prose_gate() -> dict[str, str]:
+    try:
+        return {"code": "OK", "message": ""}
+    except ValueError as exc:
+        return {"code": "BAD", "message": f"value error: {exc}"}
+    except Exception as exc:
+        return {"code": "BAD", "message": f"unexpected: {exc}"}
+
+def collapse_candidate(flag: bool) -> bool:
+    try:
+        return flag
+    except KeyError:
+        tag = "COLLAPSE_KEY_ANCHOR"
+        return False
+    except Exception:
+        return False
+""",
+    )
+    _make_sample_module(
+        tmp_path,
+        "tests/test_verdict.py",
+        """\
+import pytest
+
+pytestmark = [pytest.mark.unit, pytest.mark.local]
+
+@pytest.mark.covers("src.verdict:collapse_candidate#COLLAPSE_KEY_ANCHOR")
+def test_collapse_candidate_pin_fails_closed():
+    assert True
+""",
+    )
+    _, _, _, _, viol_offset = gate.verify_static(tmp_path, scope="readback-and-503")
+    assert [v.code for v in viol_offset] == ["SHADOW_EXCEPT_BASELINE_EXCEEDED"]
+    assert "needs_structured_discriminator" in viol_offset[0].message
+
+    rc_upd = gate.main(
+        [
+            "--repo-root",
+            str(tmp_path),
+            "--scope",
+            "readback-and-503",
+            "--update-baseline",
+        ]
+    )
+    assert rc_upd == 1
+    assert "needs_structured_discriminator" in capsys.readouterr().err
 
 
 def test_shadow_except_finder_walks_packages_and_skips_vendored_jcs(
@@ -913,13 +1090,45 @@ def normalize(flag: bool) -> bool:
     _, _, _, _, viol_missing = gate.verify_static(tmp_path, scope="readback-and-503")
     assert [v.code for v in viol_missing] == ["SHADOW_EXCEPT_BASELINE_EXCEEDED"]
 
-    # 2. Corrupt, empty, legacy plain-int, tampered update (> before), or forged recompute (same sha) -> INVALID.
+    # 2. Corrupt, empty, legacy plain-int, bad breakdown sum, tampered update (> before), or forged recompute (same sha) -> INVALID.
     live_sha = gate.compute_shadow_detector_fingerprint()
+    bd_2 = {
+        gate.REMEDIATION_COLLAPSE_OR_PIN: 2,
+        gate.REMEDIATION_STRUCTURED_DISCRIMINATOR: 0,
+        "oscal_claim_cited": 0,
+    }
+    forged_bad_breakdown_sum = json.dumps(
+        {
+            "schema_version": 1,
+            "baseline": 2,
+            "detector_sha256": live_sha,
+            "standing_debt_policy": gate.STANDING_DEBT_POLICY_DEFAULT,
+            "uncovered_breakdown": {
+                gate.REMEDIATION_COLLAPSE_OR_PIN: 1,
+                gate.REMEDIATION_STRUCTURED_DISCRIMINATOR: 0,
+                "oscal_claim_cited": 0,
+            },
+            "history": [
+                {
+                    "event": "initial_baseline",
+                    "before_baseline": None,
+                    "after_baseline": 2,
+                    "after_covered": 0,
+                    "after_total": 2,
+                    "before_detector_sha256": None,
+                    "detector_sha256": live_sha,
+                    "reason": "init",
+                }
+            ],
+        }
+    )
     forged_update = json.dumps(
         {
             "schema_version": 1,
             "baseline": 2,
             "detector_sha256": live_sha,
+            "standing_debt_policy": gate.STANDING_DEBT_POLICY_DEFAULT,
+            "uncovered_breakdown": bd_2,
             "history": [
                 {
                     "event": "initial_baseline",
@@ -949,6 +1158,8 @@ def normalize(flag: bool) -> bool:
             "schema_version": 1,
             "baseline": 2,
             "detector_sha256": live_sha,
+            "standing_debt_policy": gate.STANDING_DEBT_POLICY_DEFAULT,
+            "uncovered_breakdown": bd_2,
             "history": [
                 {
                     "event": "initial_baseline",
@@ -974,7 +1185,14 @@ def normalize(flag: bool) -> bool:
         }
     )
     baseline_path.parent.mkdir(parents=True, exist_ok=True)
-    for bad in ("not-json\n", "47\n", "", forged_update, forged_recompute_same_sha):
+    for bad in (
+        "not-json\n",
+        "47\n",
+        "",
+        forged_bad_breakdown_sum,
+        forged_update,
+        forged_recompute_same_sha,
+    ):
         baseline_path.write_text(bad, encoding="utf-8")
         _, _, _, _, viol_bad = gate.verify_static(tmp_path, scope="readback-and-503")
         assert [v.code for v in viol_bad] == ["SHADOW_EXCEPT_BASELINE_INVALID"]
@@ -1028,6 +1246,11 @@ def normalize(flag: bool) -> bool:
     assert err is None and state_after_recompute is not None
     assert state_after_recompute.baseline == 1
     assert state_after_recompute.detector_sha256 == live_sha
+    assert state_after_recompute.uncovered_breakdown == {
+        gate.REMEDIATION_COLLAPSE_OR_PIN: 1,
+        gate.REMEDIATION_STRUCTURED_DISCRIMINATOR: 0,
+        "oscal_claim_cited": 0,
+    }
     assert state_after_recompute.history[-1]["event"] == "recompute"
     assert state_after_recompute.history[-1]["before_baseline"] == 0
     assert state_after_recompute.history[-1]["after_baseline"] == 1
@@ -1090,6 +1313,11 @@ def test_normalize_val_err_fails_closed():
     state_dropped, err = gate.read_shadow_except_baseline(baseline_path)
     assert err is None and state_dropped is not None
     assert state_dropped.baseline == 0
+    assert state_dropped.uncovered_breakdown == {
+        gate.REMEDIATION_COLLAPSE_OR_PIN: 0,
+        gate.REMEDIATION_STRUCTURED_DISCRIMINATOR: 0,
+        "oscal_claim_cited": 0,
+    }
     assert state_dropped.history[-1]["event"] == "update"
     assert state_dropped.history[-1]["before_baseline"] == 1
     assert state_dropped.history[-1]["after_baseline"] == 0
@@ -1106,6 +1334,7 @@ def test_normalize_val_err_fails_closed():
     assert rc_list == 0
     captured = capsys.readouterr()
     assert "COVERED\tsrc/norm.py:" in captured.out
+    assert "collapse_or_covers_pin" in captured.out
 
 
 def test_detector_fingerprint_ignores_comments_and_docstrings_but_tracks_logic(
@@ -1154,11 +1383,22 @@ def test_repo_shadow_except_baseline_is_present_and_met() -> None:
     )
     assert err is None
     assert state is not None
-    assert state.baseline >= 0
+    assert 0 <= state.baseline <= 74
     assert state.detector_sha256 == gate.compute_shadow_detector_fingerprint()
+    assert "non-regression ratchet" in state.standing_debt_policy.lower()
+    assert (
+        state.uncovered_breakdown[gate.REMEDIATION_COLLAPSE_OR_PIN]
+        + state.uncovered_breakdown[gate.REMEDIATION_STRUCTURED_DISCRIMINATOR]
+        == state.baseline
+    )
+    assert (
+        0 <= state.uncovered_breakdown[gate.REMEDIATION_STRUCTURED_DISCRIMINATOR] <= 16
+    )
+    assert 0 <= state.uncovered_breakdown["oscal_claim_cited"] <= state.baseline
     assert len(state.history) >= 2
     assert state.history[1]["event"] == "recompute"
     assert state.history[1]["before_baseline"] == 47
+    assert state.history[1]["after_baseline"] == 74
 
 
 def test_check_script_is_wired_in_ci_hooks_and_makefile() -> None:
