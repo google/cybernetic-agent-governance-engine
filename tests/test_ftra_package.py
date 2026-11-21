@@ -1166,37 +1166,92 @@ class TestBugFtraSchema001:
         assert result["ftra_status"] == "HITL_REQUIRED"
         assert result["ftra_result"]["parse_failure_class"] == "SCHEMA_VALIDATION_ERROR"
 
-    # NOTE: ExecutionPlan.model_validate_json() raises pydantic.ValidationError
-    # (type=json_invalid), not json.JSONDecodeError, so the JSON_DECODE_ERROR
-    # handler in node_factory._parse_plan_with_result is currently bypassed and
-    # malformed JSON strings fall into the generic SCHEMA_VALIDATION_ERROR branch.
     @pytest.mark.covers(
-        "src.gateway.governance.ftra.node_factory:_parse_plan_with_result#Schema validation failed:",
-        "src.gateway.governance.ftra.node_factory:_run_ftra#schema validation error — DEFER for review",
+        "src.gateway.governance.ftra.node_factory:_parse_plan_with_result#JSON decode error:",
+        "src.gateway.governance.ftra.node_factory:_run_ftra#JSON decode error after sanitization",
     )
     def test_json_decode_error_returns_defer_not_blocked(self, tmp_path):
-        """BUG-FTRA-JSON-001: JSON decode errors should DEFER, not BLOCK.
+        """BUG-FTRA-JSON-001: Malformed (non-truncated) JSON must DEFER as JSON_DECODE_ERROR."""
+        from unittest.mock import patch
 
-        Prior to fix: invalid JSON → BLOCKED (false positive)
-        After fix: invalid JSON → HITL_REQUIRED (DEFER for review)
-        """
         from src.gateway.governance.ftra.node_factory import create_ftra_node
         from src.gateway.governance.langgraph_harness.types import FtraNodeConfig
 
         registry_path = self._registry_path(tmp_path, {})
         node = create_ftra_node(config=FtraNodeConfig(registry_path=registry_path))
 
-        # Invalid JSON string
+        # Invalid JSON syntax with balanced braces (not truncated)
+        state = {
+            "execution_plan_output": "{invalid: json}",
+            "evaluation_result": {"confidence": 0.9},
+        }
+        with patch(
+            "src.gateway.governance.ftra.node_factory._increment_parse_failure_counter"
+        ) as mock_counter:
+            result = asyncio.run(node(state))
+
+        assert result["ftra_status"] == "HITL_REQUIRED"
+        assert result["ftra_result"]["parse_failure_class"] == "JSON_DECODE_ERROR"
+        mock_counter.assert_called_once_with("JSON_DECODE_ERROR")
+
+    @pytest.mark.covers(
+        "src.gateway.governance.ftra.node_factory:_parse_plan_with_result#JSON decode error:",
+        "src.gateway.governance.ftra.node_factory:_run_ftra#plan appears truncated — DEFER for review",
+    )
+    def test_truncated_json_returns_defer_with_truncated_plan_class(self, tmp_path):
+        """Truncated (unbalanced) JSON string must DEFER as TRUNCATED_PLAN, not SCHEMA_VALIDATION_ERROR."""
+        from unittest.mock import patch
+
+        from src.gateway.governance.ftra.node_factory import create_ftra_node
+        from src.gateway.governance.langgraph_harness.types import FtraNodeConfig
+
+        registry_path = self._registry_path(tmp_path, {})
+        node = create_ftra_node(config=FtraNodeConfig(registry_path=registry_path))
+
         state = {
             "execution_plan_output": '{"invalid: json',
             "evaluation_result": {"confidence": 0.9},
         }
-        result = asyncio.run(node(state))
+        with patch(
+            "src.gateway.governance.ftra.node_factory._increment_parse_failure_counter"
+        ) as mock_counter:
+            result = asyncio.run(node(state))
 
-        # Key assertion: should be HITL_REQUIRED (DEFER), not BLOCKED
         assert result["ftra_status"] == "HITL_REQUIRED"
-        # Should include parse failure class
-        assert "parse_failure_class" in result["ftra_result"]
+        assert result["ftra_result"]["parse_failure_class"] == "TRUNCATED_PLAN"
+        mock_counter.assert_called_once_with("TRUNCATED_PLAN")
+
+    @pytest.mark.covers(
+        "src.gateway.governance.ftra.node_factory:_parse_plan_with_result#Schema validation failed:",
+        "src.gateway.governance.ftra.node_factory:_run_ftra#schema validation error — DEFER for review",
+    )
+    @pytest.mark.parametrize(
+        "payload", ['{"not_a_valid_plan": true}', "null", "[1, 2]"]
+    )
+    def test_valid_json_invalid_schema_string_returns_schema_validation_error(
+        self, tmp_path, payload
+    ):
+        """Syntactically valid JSON failing ExecutionPlan schema still reports SCHEMA_VALIDATION_ERROR."""
+        from unittest.mock import patch
+
+        from src.gateway.governance.ftra.node_factory import create_ftra_node
+        from src.gateway.governance.langgraph_harness.types import FtraNodeConfig
+
+        registry_path = self._registry_path(tmp_path, {})
+        node = create_ftra_node(config=FtraNodeConfig(registry_path=registry_path))
+
+        state = {
+            "execution_plan_output": payload,
+            "evaluation_result": {"confidence": 0.9},
+        }
+        with patch(
+            "src.gateway.governance.ftra.node_factory._increment_parse_failure_counter"
+        ) as mock_counter:
+            result = asyncio.run(node(state))
+
+        assert result["ftra_status"] == "HITL_REQUIRED"
+        assert result["ftra_result"]["parse_failure_class"] == "SCHEMA_VALIDATION_ERROR"
+        mock_counter.assert_called_once_with("SCHEMA_VALIDATION_ERROR")
 
     def test_empty_steps_high_confidence_returns_clear(self, tmp_path):
         """Empty plan with high confidence should ALLOW (CLEAR), not BLOCK.
