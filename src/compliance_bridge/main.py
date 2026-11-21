@@ -97,6 +97,10 @@ from .auth import (
 )
 from .cer_index import CERIndex
 from .cmek_guard import validate_cmek_configuration
+from .evidence_custodian import (
+    EvidenceCustodyIntegrityError,
+    NonEvidentiaryAttestationError,
+)
 from .infra_custody import (
     DEFAULT_INFRA_STREAM_KEY,
     IDEMPOTENCY_KEY_PATTERN,
@@ -107,7 +111,11 @@ from .infra_custody import (
     InfraIdempotencyConflictError,
     is_inline_custody_flush_enabled,
 )
-from .metrics import get_compliance_metrics, invalidate_compliance_metrics_cache
+from .metrics import (
+    get_cm6_thresholds_posture,
+    get_compliance_metrics,
+    invalidate_compliance_metrics_cache,
+)
 from .notifier import create_notifier
 from .oscal_exporter import build_oscal_assessment_results, findings_from_metrics_dict
 from .sla_monitor import run_sla_monitor
@@ -115,10 +123,12 @@ from .sse_events import event_bus
 from .types import (
     CRITICAL_CONTROLS,
     SUPPORTED_CONTROLS,
+    Cm6ThresholdsPosture,
     ComplianceMetrics,
     OscalFinding,
     get_control_meta,
     get_iso_control_map,
+    get_sla_seconds,
 )
 
 # ---------------------------------------------------------------------------
@@ -764,41 +774,90 @@ async def get_metrics_summary(
     # Use region-filtered controls — consistent with /v1/controls endpoint.
     active_region = resolve_deployment_region()
     region_control_ids: list[str] = list(get_control_meta(active_region).keys())
+    active_sla_map = get_sla_seconds(active_region)
 
     results: dict = {}
+    passing: list[str] = []
     failing: list[str] = []
+    errored_controls: list[str] = []
     critical_fails: list[str] = []
 
-    # Fetch all controls concurrently
+    # Fetch all controls concurrently; WORM custody tamper raises immediately.
     async def _fetch(cid: str) -> None:
         try:
-            m = await get_compliance_metrics(cid, window_hours)
+            m = await asyncio.wait_for(
+                get_compliance_metrics(cid, window_hours),
+                timeout=8.0,
+            )
             results[cid] = m.model_dump()
-            # A control is "failing" when safety_rate < 1.0 and not in grace period
-            # M-10: safety_rate is None when no traces exist — treat as not-failing
-            if (
+            # A control fails when safety_rate < 1.0 or evidence_age_seconds > SLA
+            # outside startup grace. Errored/timed-out controls never count as passing.
+            sla_limit = active_sla_map.get(cid)
+            safety_failed = (
                 m.safety_rate is not None
                 and m.safety_rate < 1.0
                 and not m.startup_grace_active
-            ):
+            )
+            freshness_failed = (
+                not m.startup_grace_active
+                and sla_limit is not None
+                and m.evidence_age_seconds > sla_limit
+            )
+            if safety_failed or freshness_failed:
                 failing.append(cid)
                 if cid in CRITICAL_CONTROLS:
                     critical_fails.append(cid)
+            else:
+                passing.append(cid)
+        except (EvidenceCustodyIntegrityError, NonEvidentiaryAttestationError):
+            raise
         except Exception as exc:
-            logger.warning("[metrics/summary] Failed to fetch %s: %s", cid, exc)
-            results[cid] = {"error": str(exc)}
+            is_timeout = isinstance(exc, (asyncio.TimeoutError, TimeoutError))
+            err_type = "timeout" if is_timeout else type(exc).__name__
+            err_msg = (
+                f"fetch timeout after 8s for {cid}"
+                if is_timeout and not str(exc)
+                else str(exc) or err_type
+            )
+            logger.warning(
+                "[metrics/summary] Failed to fetch %s (%s): %s", cid, err_type, err_msg
+            )
+            results[cid] = {"error": err_msg, "error_type": err_type}
+            errored_controls.append(cid)
+            failing.append(cid)
+            if cid in CRITICAL_CONTROLS:
+                critical_fails.append(cid)
 
     try:
         await asyncio.wait_for(
             asyncio.gather(*[_fetch(cid) for cid in region_control_ids]),
             timeout=25.0,
         )
+    except (EvidenceCustodyIntegrityError, NonEvidentiaryAttestationError) as exc:
+        logger.critical("[metrics/summary] 🚨 Custody integrity error: %s", exc)
+        raise HTTPException(
+            status_code=503,
+            detail={
+                "error": "custody_integrity_error",
+                "message": str(exc),
+            },
+        ) from exc
     except asyncio.TimeoutError:
         logger.warning(
-            "[metrics/summary] gather timed out after 25s — returning partial results"
+            "[metrics/summary] gather timed out after 25s — marking incomplete controls as errored"
         )
+        for cid in region_control_ids:
+            if cid not in results:
+                results[cid] = {
+                    "error": f"summary gather timeout after 25s for {cid}",
+                    "error_type": "timeout",
+                }
+                errored_controls.append(cid)
+                failing.append(cid)
+                if cid in CRITICAL_CONTROLS:
+                    critical_fails.append(cid)
 
-    passing_count = len(region_control_ids) - len(failing)
+    passing_count = len(passing)
     overall_rate = (
         passing_count / len(region_control_ids) if region_control_ids else 1.0
     )
@@ -807,8 +866,9 @@ async def get_metrics_summary(
         "overall_pass_rate": round(overall_rate, 4),
         "total_controls": len(region_control_ids),
         "passing_controls": passing_count,
-        "failing_controls": sorted(failing),
-        "critical_fails": sorted(critical_fails),
+        "failing_controls": sorted(set(failing)),
+        "errored_controls": sorted(set(errored_controls)),
+        "critical_fails": sorted(set(critical_fails)),
         "window_hours": window_hours,
         "controls": results,
     }
@@ -1888,6 +1948,16 @@ async def get_metrics(
     try:
         metrics = await get_compliance_metrics(control_id, window_hours)
         return metrics
+    except (EvidenceCustodyIntegrityError, NonEvidentiaryAttestationError) as exc:
+        logger.critical(
+            "[compliance-bridge] 🚨 Custody integrity error for %s: %s",
+            control_id,
+            exc,
+        )
+        raise HTTPException(
+            status_code=503,
+            detail={"error": "custody_integrity_error", "message": str(exc)},
+        ) from exc
     except Exception as exc:
         logger.error(
             "[compliance-bridge] Failed to fetch metrics for %s: %s", control_id, exc
@@ -1896,6 +1966,51 @@ async def get_metrics(
             status_code=500,
             detail={"error": "METRICS_FETCH_FAILED", "message": str(exc)},
         )
+
+
+async def _resolve_cm6_posture(window_hours: int) -> Cm6ThresholdsPosture:
+    try:
+        return await get_cm6_thresholds_posture(window_hours=window_hours)
+    except (EvidenceCustodyIntegrityError, NonEvidentiaryAttestationError) as exc:
+        logger.critical("[cm6] 🚨 Custody integrity error: %s", exc)
+        raise HTTPException(
+            status_code=503,
+            detail={"error": "custody_integrity_error", "message": str(exc)},
+        ) from exc
+    except Exception as exc:
+        logger.error("[cm6] Failed to read CM-6 thresholds custody stream: %s", exc)
+        raise HTTPException(
+            status_code=503,
+            detail={"error": "cm6_custody_unavailable", "message": str(exc)},
+        ) from exc
+
+
+@app.get(
+    "/v1/compliance/cm6",
+    response_model=Cm6ThresholdsPosture,
+    tags=["compliance"],
+    summary="Get NIST SP 800-53 CM-6 thresholds-digest posture from evidence stream",
+)
+async def get_compliance_cm6(
+    window_hours: int = Query(
+        default=168, ge=1, le=720, description="Cold-store look-back window in hours"
+    ),
+) -> Cm6ThresholdsPosture:
+    return await _resolve_cm6_posture(window_hours)
+
+
+@app.get(
+    "/v1/config/cm6",
+    response_model=Cm6ThresholdsPosture,
+    tags=["compliance"],
+    summary="Get NIST SP 800-53 CM-6 thresholds-digest posture (alias)",
+)
+async def get_config_cm6(
+    window_hours: int = Query(
+        default=168, ge=1, le=720, description="Cold-store look-back window in hours"
+    ),
+) -> Cm6ThresholdsPosture:
+    return await _resolve_cm6_posture(window_hours)
 
 
 # ---------------------------------------------------------------------------

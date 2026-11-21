@@ -1412,9 +1412,10 @@ component-definition:
                   cage-status: planned` and posts a pass/fail summary to POST /v1/infra/events,
                   which records it on the INFRA hash chain under the auditor's verified mesh
                   identity. Of the linked manifests, lula-validation-ra5.yaml is planned, and
-                  lula-validation-cm6.yaml is active but checks for a ConfigMap nothing creates
-                  (POAM-2026-151), so the auditor's summary cannot report a full pass until it
-                  is repointed.
+                  lula-validation-cm6.yaml queries compliance-bridge GET /v1/compliance/cm6 for
+                  KMS-signed GOVERNANCE_THRESHOLDS_LOADED digest posture and zero GOVERNANCE_DECISION
+                  digest drift (POAM-2026-151 Option 2 Step 2), remaining rated Stub in
+                  compliance/lula/README.md pending a recorded live in-cluster Lula run.
                 - Evidence age: the bridge lifespan runs the SLA monitor
                   (src/compliance_bridge/sla_monitor.py) every 5 minutes over per-control
                   metrics computed from the custody chain (src/compliance_bridge/metrics.py) and

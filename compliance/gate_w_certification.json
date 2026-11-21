@@ -169,9 +169,176 @@
     },
     "note": "Under POAM-2026-233 and POAM-2026-234, _is_control_effective_record() in src/compliance_bridge/metrics.py counts GOVERNANCE_REFUSAL, GOVERNANCE_REFUSAL_RECEIPT, GOVERNANCE_DEFERRAL (including unpersisted DeferQueue failures), and INFERENCE_PROXY_BLOCK (including fail-closed quarantine Redis errors) as control effectiveness in safety_rate, so an OPA or Redis outage can raise measured posture. Recomputing per-control safety_rate across all three published Gate W WORM archives with every refusal, deferral, refusal-receipt, and quarantine-block record excluded yields 1.0000 across all five populated controls in SUPPORTED_CONTROLS (A.5.2, A.5.3, A.8.4, A.9.2, SC-4) with 0 OPA-outage refusals. Published Gate W certification archive verdicts were not contaminated by refusal-as-effective scoring; this archive recomputation makes no claim about the OSCAL evidence claim census, and the structural defects remain open under POAM-2026-233 and POAM-2026-234."
   },
+  "lula_binary_cve_qualification_2026_11_21": {
+    "annotated_utc": "2026-11-21T23:15:00Z",
+    "annotation_scope": "Added after certification to disclose the supply-chain vulnerability posture of the Lula v0.16.0 CLI binary executed during the certified run (POAM-2026-243) and record the 57-CVE output-integrity assessment. It changes no certified result, and the published archives (gate-w-8956f505 and prior v4.1.0 fa772122) and their manifests are unchanged.",
+    "poam_id": "POAM-2026-243",
+    "remediated_in_repo_commit": "e34612822db4d86f3823b6eddf98594c3f874ab9",
+    "validation_results_affected": false,
+    "supply_chain_posture_compliant": false,
+    "binary_in_certified_run": {
+      "version": "v0.16.0",
+      "upstream_artifact": "lula_v0.16.0_Linux_amd64",
+      "sha256": "5581257b6d0bf446e0a6ca3598de1697565f343f40e73055d0320a11d3a8c25e",
+      "go_toolchain": "go1.23.5",
+      "executed_in": [
+        "Job/lula-gate-w (in-cluster, all 26 active specs)",
+        "CronJob/lula-audit (in-cluster)",
+        "Phase 3 host lula validate (22 Kubernetes-domain specs)"
+      ]
+    },
+    "cve_counts": {
+      "total_findings": 57,
+      "critical": 1,
+      "high": 56,
+      "unique_cve_ids": 54,
+      "duplicate_stdlib_and_x_net_ids": [
+        "CVE-2026-33814",
+        "CVE-2026-39821",
+        "CVE-2026-78669"
+      ]
+    },
+    "cve_impact_classification": {
+      "rego_or_oscal_evaluation_correctness": {
+        "count": 0,
+        "can_alter_validation_output": false,
+        "cves": [],
+        "rationale": "Zero CVEs touch OPA's embedded Rego evaluator (opa/rego, opa/ast, opa/topdown), YAML/JSON decoding, or OSCAL observation synthesis."
+      },
+      "unreached_subsystems": {
+        "count": 26,
+        "can_alter_validation_output": false,
+        "cves": [
+          "CVE-2025-46569",
+          "CVE-2025-22869",
+          "CVE-2025-47913",
+          "CVE-2026-24051",
+          "CVE-2026-25681",
+          "CVE-2026-27136",
+          "CVE-2026-33747",
+          "CVE-2026-33748",
+          "CVE-2026-39820",
+          "CVE-2026-39822",
+          "CVE-2026-39828",
+          "CVE-2026-39829",
+          "CVE-2026-39830",
+          "CVE-2026-39831",
+          "CVE-2026-39832",
+          "CVE-2026-39835",
+          "CVE-2026-39883",
+          "CVE-2026-42499",
+          "CVE-2026-42508",
+          "CVE-2026-46595",
+          "CVE-2026-46597",
+          "CVE-2026-56854",
+          "CVE-2026-56858",
+          "CVE-2026-56859",
+          "CVE-2026-56864",
+          "CVE-2026-56865"
+        ],
+        "rationale": "Code paths never invoked by lula validate: OPA standalone HTTP Data API server opa/server (1: CVE-2025-46569; lula embeds opa/rego in-process and runs no HTTP server), golang.org/x/crypto/ssh client/server/agent/knownhosts (12; zero SSH connections), moby/buildkit frontend and Git URL loaders (2; lula reads mounted YAML and K8s/HTTP JSON), golang.org/x/mod/sumdb GOSUMDB client (2; unused at runtime), go.opentelemetry.io/otel/sdk macOS/BSD/Solaris PATH lookup (2; ran on Linux), and HTML XSS, XML, net/mail, and Go-1.24 os.Root packages (7)."
+      },
+      "dos_or_resource_exhaustion_only": {
+        "count": 26,
+        "unique_cves": 24,
+        "can_alter_validation_output": false,
+        "cves": [
+          "CVE-2025-22868",
+          "CVE-2025-61726",
+          "CVE-2025-61729",
+          "CVE-2026-27145",
+          "CVE-2026-32280",
+          "CVE-2026-32281",
+          "CVE-2026-32283",
+          "CVE-2026-33811",
+          "CVE-2026-33814",
+          "CVE-2026-33818",
+          "CVE-2026-35469",
+          "CVE-2026-39836",
+          "CVE-2026-42504",
+          "CVE-2026-46600",
+          "CVE-2026-56851",
+          "CVE-2026-56852",
+          "CVE-2026-56853",
+          "CVE-2026-56860",
+          "CVE-2026-56862",
+          "CVE-2026-63209",
+          "CVE-2026-78661",
+          "CVE-2026-78667",
+          "CVE-2026-78669",
+          "CVE-2026-97031"
+        ],
+        "rationale": "CPU/memory exhaustion or panic vectors across klauspost/compress, moby/spdystream, x/oauth2/jws, x/text, x/net, and stdlib (net/http, crypto/tls, crypto/x509, encoding/asn1, mime, net/url). Any crash, timeout, or OOM exits non-zero without observations:, which run_lula_audit.sh and scripts/staging_lifecycle.sh reject fail-closed rather than scoring satisfied."
+      },
+      "transport_tls_x509_and_url_host_parsing": {
+        "count": 5,
+        "unique_cves": 4,
+        "can_alter_validation_output": false,
+        "cves": [
+          "CVE-2025-68121",
+          "CVE-2026-111943",
+          "CVE-2026-25679",
+          "CVE-2026-39821"
+        ],
+        "rationale": "CVE-2025-68121 (CRITICAL, crypto/tls session-resumption certificate validation), CVE-2026-111943 (HIGH, crypto/x509 untrusted intermediate MITM), CVE-2026-25679 (HIGH, net/url IPv6 literal parsing), and CVE-2026-39821 (HIGH, 2 rows across x/net/idna and stdlib Punycode label processing). In Gate W (8956f505), in-cluster API-domain specs in Job/lula-gate-w queried ASCII cluster-local HTTP (http://compliance-bridge.governance-stack.svc.cluster.local/...) with mTLS terminated out-of-process by Linkerd's Rust linkerd2-proxy sidecar rather than Go crypto/tls, and Kubernetes-domain specs queried the clean-room GKE kube-apiserver from fresh one-shot invocations (zero prior resumed TLS sessions, zero Punycode domains, zero IPv6 host literals, pinned cluster root CA)."
+      }
+    },
+    "note": "The certified Gate W (8956f505) validation results are unaffected (validation_results_affected=false: 0 of 57 CVEs touch Rego/OSCAL evaluation, 26 sit in unreached subsystems, 26 are DoS/panic vectors rejected fail-closed on non-zero exit, and 5 transport/TLS/URL findings were unexercised on ASCII Linkerd-meshed HTTP and fresh one-shot kube-apiserver connections), while the auditor binary's supply-chain posture violated policy (supply_chain_posture_compliant=false: 1 CRITICAL + 56 HIGH upstream-fixed CVEs in prebuilt lula v0.16.0 / Go 1.23.5 went undetected due to overlapping security-scan.yml scan-type='fs' and sbom.yml matrix omission, POAM-2026-243). Remediated in repository commit e34612822db4d86f3823b6eddf98594c3f874ab9 (#849) via source-built Wolfi lula with patched Go modules and zero .trivyignore suppressions; remains open on live staging until Cloud Build rebuild, Binary Authorization attestation, and terraform apply."
+  },
+  "worm_retention_and_release_archive_verification_2026_11_21": {
+    "annotated_utc": "2026-11-21T23:50:00Z",
+    "annotation_scope": "Added after certification to qualify the live GCS WORM custody claim in notes ('archived in retention-locked WORM storage') and record the 2026-11-21 live download, SHA-256, and offline CustodyVerifier cryptographic verification of all three published GitHub Release archives. It changes no certified result, and the published archives and their manifests are unchanged.",
+    "live_gcs_worm_custody_active": false,
+    "surviving_custody_medium": "github_release_tarball_with_embedded_pem_trust_anchors",
+    "certified_run_8956f505_bucket_status": "At 8956f505 (2026-11-14T01:59:25Z), module.worm_bucket and module.evidence_domain shared local.retention_period_seconds = 86400 (1 day) under var.environment == 'staging', so GCS object retention on gs://<PROJECT_ID>-evidence-worm-staging expired on 2026-11-15; the published GitHub Release tarball (archive_sha256) and its embedded signing-key-manifest PEM public keys are now the sole surviving immutable copy rather than live GCS WORM storage.",
+    "prior_v410_fa772122_bucket_status": "Origin clean-room GCP project deleted on 2026-11-02T01:36:54Z after 1-day staging retention expiry (POAM-2026-159); the two v4.1.0 GitHub Release tarballs are the sole surviving copies.",
+    "release_archives_verified_2026_11_21": [
+      {
+        "release_tag": "gate-w-8956f505",
+        "asset": "gate-w-8956f505-clean-room-worm-archive.tar.gz",
+        "size_bytes": 78917,
+        "sha256": "aa573aebee341e6d16608fb4e464946451201d2a415f5320a41d069e51a47242",
+        "manifest_sha256": "3d58b3f9afddf5a85f7b7eeb5d9fc89c6dff0958c7f019f9eb05ace354b89528",
+        "sha256_match": true,
+        "custody_verifier_ok": true,
+        "citable": true,
+        "verified_batches": 6,
+        "bound_rotations": 1,
+        "declared_gaps": 0,
+        "failures": 0
+      },
+      {
+        "release_tag": "v4.1.0",
+        "asset": "gate-w-fa772122-clean-room-worm-archive.tar.gz",
+        "size_bytes": 79425,
+        "sha256": "00d3fde4a2be36f7050de2d7a0db893f1004548b9f7e64ac04db222cad0f6ed7",
+        "manifest_sha256": "70513815ba2cfe7f57a1bf5d5106528cad5f605387307717569bd254e6551be4",
+        "sha256_match": true,
+        "custody_verifier_ok": true,
+        "citable": true,
+        "verified_batches": 7,
+        "bound_rotations": 1,
+        "declared_gaps": 0,
+        "failures": 0
+      },
+      {
+        "release_tag": "v4.1.0",
+        "asset": "gate-w-fa772122-recovery-worm-archive.tar.gz",
+        "size_bytes": 18110,
+        "sha256": "adc7bf35535b6598d4743ab906a6e058d2f25c156547dc3c50b4749d6654fdad",
+        "sha256_match": true,
+        "custody_verifier_ok": true,
+        "citable": true,
+        "verified_batches": 6,
+        "bound_rotations": 2,
+        "declared_gaps": 0,
+        "failures": 0
+      }
+    ]
+  },
   "next_gate_w_discharge": {
-    "annotated_utc": "2026-11-15T17:15:00Z",
-    "annotation_scope": "Combined discharge schedule for the three post-8956f505 archive disclosures above (lula_result_breakdown.ratings_from_2026_11_14, residency_result_breakdown, and custody_posture_qualification). All three discharge on the same next Gate W run and must be verified and retired together when refreshing this file so none is discharged piecemeal while leaving the others stale.",
+    "annotated_utc": "2026-11-21T23:50:00Z",
+    "annotation_scope": "Combined discharge schedule for the five post-8956f505 archive disclosures above (lula_result_breakdown.ratings_from_2026_11_14, residency_result_breakdown, custody_posture_qualification, lula_binary_cve_qualification_2026_11_21, and worm_retention_and_release_archive_verification_2026_11_21). All five discharge on the same next Gate W run and must be verified and retired together when refreshing this file so none is discharged piecemeal while leaving the others stale.",
     "target_run": {
       "deployment_target_mode": "fresh_project_clean_room",
       "compliance_region": "APAC_MAS",
@@ -196,6 +363,18 @@
         "disclosure_field": "custody_posture_qualification",
         "gap_in_certified_archive": "At 8956f505 and fa772122, EvidenceCustodian emitted cage-evidence-batch/1 without deployment_posture, so the published archives verify as citable=true with posture_status='unstamped_v1' and citable_qualifications=['unstamped_v1_posture'].",
         "required_in_next_run": "EvidenceCustodian emits cage-evidence-batch/2 with deployment_posture='staging' inside the KMS-signed JCS payload, and GET /v1/evidence/verify (enforced by scripts/staging_lifecycle.sh --fresh-project) reports posture_status == 'staging' and citable_qualifications == [] across both pre- and post-rebuild WORM chains."
+      },
+      {
+        "id": "POAM-2026-243",
+        "disclosure_field": "lula_binary_cve_qualification_2026_11_21",
+        "gap_in_certified_archive": "At 8956f505, Job/lula-gate-w, CronJob/lula-audit, and Phase 3 host validation executed the upstream prebuilt lula_v0.16.0_Linux_amd64 binary (Go 1.23.5) carrying 57 fixed Go CVEs (1 CRITICAL, 56 HIGH) that CI missed due to overlapping security-scan.yml scan-type='fs' and sbom.yml matrix omission.",
+        "required_in_next_run": "Cloud Build builds and attests deployment/docker/Dockerfile.lula from main at or after e3461282 (source-built Wolfi lula v0.16.0 with patched Go modules and 0 CRITICAL, 0 HIGH Trivy findings), Job/lula-gate-w and CronJob/lula-audit run that @sha256:-pinned digest in-cluster, and any host lula invocation uses the matching patched binary."
+      },
+      {
+        "id": "POAM-2026-084",
+        "disclosure_field": "worm_retention_and_release_archive_verification_2026_11_21",
+        "gap_in_certified_archive": "At 8956f505, module.worm_bucket and module.evidence_domain shared local.retention_period_seconds = 86400 (1 day) under var.environment == 'staging', so live GCS WORM retention expired on 2026-11-15 and only the published GitHub Release tarballs (verified offline via CustodyVerifier on 2026-11-21T23:49:13Z) remain immutable.",
+        "required_in_next_run": "Execute scripts/staging_lifecycle.sh --fresh-project --certification --evidence-project=<PERSISTENT_EVIDENCE_PROJECT_ID> so module.worm_bucket and module.evidence_domain lock for 220752000s (2,555 days) in a dedicated persistent evidence custody project decoupled from ephemeral workload teardown and CMEK destruction."
       }
     ]
   }

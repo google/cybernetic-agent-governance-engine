@@ -77,6 +77,7 @@ class ComplianceMetrics(BaseModel):
     total_traces: int = Field(ge=0)
     blocked_traces: int = Field(ge=0)
     passed_traces: int = Field(ge=0)
+    infrastructure_blocks: int = Field(default=0, ge=0)
     window_hours: float = Field(gt=0)
     last_event_utc: str  # ISO 8601 datetime string
     evidence_age_seconds: float = Field(ge=0)
@@ -88,6 +89,21 @@ class ComplianceMetrics(BaseModel):
     # when total_traces > 0; None otherwise.
     confabulation_rate: float | None = Field(default=None, ge=0.0, le=1.0)
     confabulation_blocked_traces: int = Field(default=0, ge=0)
+
+
+class Cm6ThresholdsPosture(BaseModel):
+    """Read-only NIST SP 800-53 CM-6 thresholds-digest posture from `cage:evidence:stream`."""
+
+    control_id: str = "CM-6"
+    assessment_status: Literal["satisfied", "not_satisfied"]
+    thresholds_digest: str = ""
+    region: str = ""
+    active_region: str
+    schema_version: int = Field(default=0, ge=0)
+    domain_sections: list[str] = Field(default_factory=list)
+    decisions_checked: int = Field(default=0, ge=0)
+    digest_mismatches: int = Field(default=0, ge=0)
+    loaded_at_utc: str | None = None
 
 
 # ---------------------------------------------------------------------------

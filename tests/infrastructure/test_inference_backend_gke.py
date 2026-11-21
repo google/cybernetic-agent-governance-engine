@@ -323,7 +323,11 @@ def _rego(manifest: str) -> tuple[list[str], str]:
     spec = yaml.safe_load(
         doc["component-definition"]["back-matter"]["resources"][0]["description"]
     )
-    names = [r["name"] for r in spec["domain"]["kubernetes-spec"]["resources"]]
+    domain = spec["domain"]
+    if domain["type"] == "api":
+        names = [r["name"] for r in domain["api-spec"]["requests"]]
+    else:
+        names = [r["name"] for r in domain["kubernetes-spec"]["resources"]]
     return names, spec["provider"]["opa-spec"]["rego"]
 
 
@@ -334,6 +338,21 @@ def _set(rego: str, name: str) -> set[str]:
 
 
 def test_cm6_no_longer_requires_the_nemo_configmap() -> None:
+    doc = yaml.safe_load(
+        _read(REPO_ROOT / "compliance" / "lula" / "lula-validation-cm6.yaml")
+    )
+    spec = yaml.safe_load(
+        doc["component-definition"]["back-matter"]["resources"][0]["description"]
+    )
     names, rego = _rego("lula-validation-cm6.yaml")
-    assert names == ["governance-thresholds-config"]
+    assert spec["domain"]["type"] == "api"
+    assert spec["domain"]["api-spec"]["requests"] == [
+        {
+            "name": "cm6_thresholds_posture",
+            "url": "http://compliance-bridge.governance-stack.svc.cluster.local/v1/compliance/cm6",
+            "method": "GET",
+        }
+    ]
+    assert names == ["cm6_thresholds_posture"]
     assert "nemo-guardrails-config" not in rego
+    assert "governance-thresholds-config" not in rego

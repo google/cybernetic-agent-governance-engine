@@ -15,45 +15,43 @@
 # lula-validation-cm6.yaml
 # NIST SP 800-53 Rev 5 — CM-6: Configuration Settings
 #
-# Asserts that the governance configuration is present and immutable in the
-# cluster — specifically:
-#   1. The governance-thresholds ConfigMap (from config/governance_thresholds.json)
-#      is deployed and contains the expected keys.
+# Queries compliance-bridge GET /v1/compliance/cm6 (backed by KMS-signed
+# GOVERNANCE_THRESHOLDS_LOADED and GOVERNANCE_DECISION custody records in
+# cage:evidence:stream) and asserts thresholds_loaded_valid:
+#   1. A verified GOVERNANCE_THRESHOLDS_LOADED record is present with a valid
+#      64-hex SHA-256 thresholds_digest, schema_version >= 1, non-empty
+#      domain_sections, and region matching the active CAGE_DEPLOYMENT_REGION.
+#   2. Zero thresholds_digest drift (digest_mismatches == 0) across subsequent
+#      GOVERNANCE_DECISION records since that load.
 #
-# It no longer asserts the NeMo Guardrails ConfigMap. NeMo rails are opt-in
-# (CAGE_NEMO_ENABLED=false by default), and the standalone server that created
-# that ConfigMap is off unless inference_backend = "vllm" and
-# enable_nemo_guardrails = true (W6).
+# It does not assert a Kubernetes ConfigMap/governance-thresholds-config (no
+# Terraform module creates one; config/governance_thresholds.json ships inside
+# the digest-pinned gateway image) or the retired standalone NeMo Guardrails
+# ConfigMap (opt-in in-process under W6).
 #
-# Known gaps, recorded rather than hidden:
-#   - No Terraform module or manifest in this repository creates
-#     governance-thresholds-config: the thresholds ship in the gateway image
-#     (COPY config /app/config). As written, this validation cannot pass
-#     (POAM-2026-151).
-#   - Lula v0.16.0 rejected this manifest's schema (Kubernetes resources
-#     without resource-rule) in every committed run (POAM-2026-150).
+# Rating status: remains rated Stub in compliance/lula/README.md under
+# POAM-2026-151 pending a recorded live in-cluster Lula / Gate W run.
 #
-# Domain: kubernetes → ConfigMaps
+# Domain: api → compliance-bridge (GET /v1/compliance/cm6)
 # Provider: opa (inline Rego)
 #
 # References:
 #   - config/governance_thresholds.json — Governance threshold settings
-#   - infra/modules/governed_advisor/main.tf — Financial advisor deployment module
-#   - docs/compliance/us_fed/NIST_RMF_CHUNK1_CURRENT_STATE.md — CM-6 current state analysis
-#
-# Namespace: governance-stack (confirmed from live cluster deployment snapshot)
+#   - src/compliance_bridge/main.py — GET /v1/compliance/cm6 (alias: GET /v1/config/cm6)
+#   - src/compliance_bridge/metrics.py — get_cm6_thresholds_posture()
+#   - docs/POAM.md — POAM-2026-151 (CM-6 validation remediation)
 
 component-definition:
   uuid: f1e70118-589f-520e-9ecf-d6783dfb5391
   metadata:
     title: CAGE Validation — CM6
-    last-modified: '2026-07-01T13:18:54Z'
-    version: 1.0.0
+    last-modified: '2026-11-21T23:15:00Z'
+    version: 1.1.0
     oscal-version: 1.1.2
     remarks: |-
       Auto-converted from standalone lula validation format.
       Region: US_FED. Posture: nist-sp800-53.
-      Notes: NIST SP 800-53 Rev 5 CM-6: Configuration Settings. Namespace: governance-stack (confirmed from live cluster deployment snapshot). Automated verification that the governance thresholds are deployed as a Kubernetes ConfigMap, ensuring the baseline security configuration is active and cluster-immutable (vs. local file edits). The governance thresholds (config/governance_thresholds.json) define the fiscal and risk limits enforced by OPA. The NeMo Guardrails configuration is no longer asserted: NeMo rails are opt-in, and their standalone server is off by default (W6). No manifest in this repository creates the thresholds ConfigMap, so this validation cannot pass as written (POAM-2026-151). This validation also addresses the CM-6/SI-7 POAM items flagged in docs/compliance/us_fed/NIST_RMF_CHUNK1_CURRENT_STATE.md regarding deprecated Rego stub confusion. See: compliance/continuous-monitoring/ISCM_STRATEGY.md — CM-6 monitoring cadence. See: docs/POAM.md — CM-6 POAM remediation item.
+      Notes: NIST SP 800-53 Rev 5 CM-6: Configuration Settings. Queries compliance-bridge GET /v1/compliance/cm6 (with GET /v1/config/cm6 alias) to verify that the active gateway emitted a KMS-signed GOVERNANCE_THRESHOLDS_LOADED custody record with a 64-hex SHA-256 thresholds_digest, region matching CAGE_DEPLOYMENT_REGION, schema_version >= 1, and non-empty domain_sections, and that zero subsequent GOVERNANCE_DECISION records drifted from that digest (digest_mismatches == 0). Replaces the vacuous ConfigMap/cage-deployment fallback (POAM-2026-151 Option 2 Step 2); remains rated Stub in compliance/lula/README.md pending a recorded live cluster Lula run. The NeMo Guardrails configuration is not asserted (opt-in under W6). See: compliance/continuous-monitoring/ISCM_STRATEGY.md — CM-6 monitoring cadence. See: docs/POAM.md — POAM-2026-151.
   components:
   - uuid: d5fa035a-4fb3-5485-88a4-347630f5fe50
     type: software
@@ -79,38 +77,60 @@ component-definition:
       - href: lula.dev
       description: |
         domain:
-          type: kubernetes
-          kubernetes-spec:
-            resources:
-              - name: governance-thresholds-config
-                resource-rule:
-                  group: ""
-                  version: v1
-                  resource: configmaps
-                  namespaces:
-                    - governance-stack
+          type: api
+          api-spec:
+            requests:
+              - name: cm6_thresholds_posture
+                url: http://compliance-bridge.governance-stack.svc.cluster.local/v1/compliance/cm6
+                method: GET
         provider:
           type: opa
           opa-spec:
             output:
               validation: lula.validate
+              observations:
+                - lula.assessment_remark
             rego: |
               package lula
 
               import future.keywords.if
-              import future.keywords.in
+
+              posture_doc := object.get(input.cm6_thresholds_posture, "response", input.cm6_thresholds_posture)
+              status := object.get(posture_doc, "assessment_status", "not_satisfied")
+              thresholds_digest := object.get(posture_doc, "thresholds_digest", "")
+              region := object.get(posture_doc, "region", "")
+              active_region := object.get(posture_doc, "active_region", "")
+              schema_version := object.get(posture_doc, "schema_version", 0)
+              domain_sections := object.get(posture_doc, "domain_sections", [])
+              decisions_checked := object.get(posture_doc, "decisions_checked", 0)
+              digest_mismatches := object.get(posture_doc, "digest_mismatches", 0)
 
               # CM-6: Configuration Settings
-              # Verifies that the governance thresholds ConfigMap (or in-state cage-deployment
-              # configuration) is present in governance-stack. The NeMo Guardrails ConfigMap
-              # is not asserted (opt-in under W6).
-              config_present if {
-                some cm in input["governance-thresholds-config"]
-                cm.metadata.name in {"governance-thresholds-config", "cage-deployment"}
-                count(cm.data) > 0
+              # Verifies KMS-signed GOVERNANCE_THRESHOLDS_LOADED digest posture and zero
+              # digest drift across subsequent GOVERNANCE_DECISION records.
+              thresholds_loaded_valid if {
+                status == "satisfied"
+                count(thresholds_digest) == 64
+                regex.match("^[0-9a-f]{64}$", thresholds_digest)
+                region != ""
+                region == active_region
+                schema_version >= 1
+                count(domain_sections) > 0
+                digest_mismatches == 0
               }
 
               validate if {
-                count(input["governance-thresholds-config"]) > 0
-                config_present
+                count(input.cm6_thresholds_posture) > 0
+                thresholds_loaded_valid
               }
+
+              remark_status := "missing_metrics_response" if {
+                count(input.cm6_thresholds_posture) == 0
+              } else := "satisfied" if {
+                thresholds_loaded_valid
+              } else := "threshold_violation"
+
+              assessment_remark := sprintf(
+                "assessment_status=%s; control_id=CM-6; thresholds_digest=%s; region=%s; active_region=%s; schema_version=%d; decisions_checked=%d; digest_mismatches=%d",
+                [remark_status, thresholds_digest, region, active_region, schema_version, decisions_checked, digest_mismatches],
+              )

@@ -56,6 +56,10 @@ from typing import Any
 
 from src.gateway.governance.env_posture import resolve_deployment_region
 
+from .evidence_custodian import (
+    EvidenceCustodyIntegrityError,
+    NonEvidentiaryAttestationError,
+)
 from .metrics import get_compliance_metrics, get_last_passing_lula_audit_age_seconds
 from .notifier import create_notifier
 from .types import OscalFinding, get_sla_seconds
@@ -69,6 +73,11 @@ LULA_AUDIT_MAX_AGE_SECONDS: int = int(
         "LULA_AUDIT_MAX_AGE_SECONDS", str(_DEFAULT_LULA_AUDIT_MAX_AGE_SECONDS)
     )
 )
+
+# Tracks control IDs whose critical tamper/fetch alerts were already dispatched
+# inline during the most recent `_check_sla_once()` call so `run_sla_monitor()`
+# does not double-send in the same poll cycle.
+_last_inline_alerted_controls: set[str] = set()
 
 LULA_AUDIT_DEADMAN_BREACHES_TOTAL: Any = None
 try:
@@ -217,11 +226,35 @@ async def _check_lula_audit_deadman(
     return finding
 
 
+async def _dispatch_sla_error_alerts(
+    *,
+    findings: list[OscalFinding],
+    audit_id: str,
+    label: str,
+) -> None:
+    """Dispatch a consolidated critical alert batch, logging transport failures."""
+    if not findings:
+        return
+    try:
+        notifier = create_notifier()
+        await notifier.send_critical_alert(findings, audit_id)
+    except Exception as exc:
+        logger.error(
+            "[sla_monitor] Failed to send %s critical alert (%s): %s",
+            label,
+            audit_id,
+            exc,
+        )
+
+
 async def _check_sla_once() -> list[str]:
     """Check all SLA-gated controls and the `2 x schedule` Lula dead-man's switch."""
     breached: list[str] = []
+    custody_tamper_errors: dict[str, str] = {}
+    fetch_errors: dict[str, str] = {}
     sla_map = _active_sla_seconds()
     a53_grace_active: bool | None = None
+    _last_inline_alerted_controls.clear()
 
     for control_id, sla_seconds in sla_map.items():
         try:
@@ -249,12 +282,73 @@ async def _check_sla_once() -> list[str]:
                     sla_h,
                 )
 
-        except Exception as exc:
-            logger.warning(
-                "[sla_monitor] Failed to fetch metrics for %s (non-fatal): %s",
+        except (EvidenceCustodyIntegrityError, NonEvidentiaryAttestationError) as exc:
+            logger.critical(
+                "[sla_monitor] 🚨 CRITICAL custody integrity tamper/violation on %s: %s",
                 control_id,
                 exc,
             )
+            custody_tamper_errors[control_id] = str(exc)
+            breached.append(control_id)
+        except Exception as exc:
+            err_kind = (
+                "timeout"
+                if isinstance(exc, (asyncio.TimeoutError, TimeoutError))
+                else type(exc).__name__
+            )
+            logger.error(
+                "[sla_monitor] Metrics fetch failed for %s (%s) — recording SLA check failure: %s",
+                control_id,
+                err_kind,
+                exc,
+            )
+            fetch_errors[control_id] = f"{err_kind}: {exc}"
+            breached.append(control_id)
+
+    now_ts = int(datetime.now(tz=timezone.utc).timestamp())
+    if custody_tamper_errors:
+        tamper_findings = [
+            OscalFinding(
+                control_id=cid,
+                result="FAIL",
+                assessment_status="custody_integrity_error",
+                finding_id=f"sla-custody-tamper-{cid}-{now_ts}",
+                remarks=(
+                    f"CRITICAL WORM custody integrity violation detected during SLA "
+                    f"monitoring for {cid}: {detail}"
+                ),
+                safety_rate=0.0,
+            )
+            for cid, detail in custody_tamper_errors.items()
+        ]
+        _last_inline_alerted_controls.update(custody_tamper_errors.keys())
+        await _dispatch_sla_error_alerts(
+            findings=tamper_findings,
+            audit_id=f"sla-custody-tamper-{now_ts}",
+            label="custody-tamper",
+        )
+
+    if fetch_errors:
+        error_findings = [
+            OscalFinding(
+                control_id=cid,
+                result="ERROR",
+                assessment_status="sla_fetch_error",
+                finding_id=f"sla-fetch-error-{cid}-{now_ts}",
+                remarks=(
+                    f"Evidence SLA check failed to fetch custody metrics for {cid} "
+                    f"({detail}). Control cannot be verified."
+                ),
+                safety_rate=0.0,
+            )
+            for cid, detail in fetch_errors.items()
+        ]
+        _last_inline_alerted_controls.update(fetch_errors.keys())
+        await _dispatch_sla_error_alerts(
+            findings=error_findings,
+            audit_id=f"sla-fetch-error-{now_ts}",
+            label="sla-fetch-error",
+        )
 
     if "A.5.3" in sla_map:
         await _check_lula_audit_deadman(startup_grace_active=a53_grace_active)
@@ -270,26 +364,46 @@ async def _fire_sla_alerts(breached: list[str]) -> None:
     notifier = create_notifier()
     sla_seconds_map = _active_sla_seconds()
     findings: list[OscalFinding] = []
+    now_ts = int(datetime.now(tz=timezone.utc).timestamp())
     for control_id in breached:
-        metrics = await get_compliance_metrics(control_id, window_hours=24)
-        sla_h = sla_seconds_map[control_id] / 3600
-        age_h = metrics.evidence_age_seconds / 3600
-        findings.append(
-            OscalFinding(
-                control_id=control_id,
-                result="FAIL",
-                finding_id=f"sla-breach-{control_id}-{int(datetime.now(tz=timezone.utc).timestamp())}",
-                remarks=(
-                    f"Evidence SLA breach: last event {age_h:.2f}h ago "
-                    f"(SLA={sla_h:.2f}h). "
-                    f"Last event UTC: {metrics.last_event_utc}. "
-                    "No new traces in the monitoring window."
-                ),
-                safety_rate=metrics.safety_rate,
+        try:
+            metrics = await get_compliance_metrics(control_id, window_hours=24)
+            sla_h = sla_seconds_map.get(control_id, 0) / 3600
+            age_h = metrics.evidence_age_seconds / 3600
+            findings.append(
+                OscalFinding(
+                    control_id=control_id,
+                    result="FAIL",
+                    finding_id=f"sla-breach-{control_id}-{now_ts}",
+                    remarks=(
+                        f"Evidence SLA breach: last event {age_h:.2f}h ago "
+                        f"(SLA={sla_h:.2f}h). "
+                        f"Last event UTC: {metrics.last_event_utc}. "
+                        "No new traces in the monitoring window."
+                    ),
+                    safety_rate=metrics.safety_rate,
+                )
             )
-        )
+        except Exception as exc:
+            findings.append(
+                OscalFinding(
+                    control_id=control_id,
+                    result="FAIL"
+                    if isinstance(
+                        exc,
+                        (EvidenceCustodyIntegrityError, NonEvidentiaryAttestationError),
+                    )
+                    else "ERROR",
+                    finding_id=f"sla-breach-{control_id}-{now_ts}",
+                    remarks=(
+                        f"Evidence SLA check failed for {control_id} "
+                        f"({type(exc).__name__}: {exc})."
+                    ),
+                    safety_rate=0.0,
+                )
+            )
 
-    audit_id = f"sla-monitor-{int(datetime.now(tz=timezone.utc).timestamp())}"
+    audit_id = f"sla-monitor-{now_ts}"
     try:
         await notifier.send_critical_alert(findings, audit_id)
         logger.warning(
@@ -334,9 +448,12 @@ async def run_sla_monitor() -> None:
                 breached = await _check_sla_once()
                 if "A.5.3" not in sla_keys:
                     await _check_lula_audit_deadman()
-                if breached:
-                    await _fire_sla_alerts(breached)
-                else:
+                pending_age_alerts = [
+                    cid for cid in breached if cid not in _last_inline_alerted_controls
+                ]
+                if pending_age_alerts:
+                    await _fire_sla_alerts(pending_age_alerts)
+                elif not breached:
                     logger.debug("[sla_monitor] All SLA checks passed.")
             except Exception as exc:
                 # Never crash the monitor — log and continue to next cycle
