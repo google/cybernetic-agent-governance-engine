@@ -1375,4 +1375,14 @@ Layer 1 warrant and estate-provider modules drop partner-branded schema defaults
 
 ---
 
+## Unreleased — Inference Proxy Returns HTTP 503 on Quarantine-Backend Outages (`POAM-2026-233`)
+
+`POST /v1/chat/completions` (`src/gateway/server/inference_proxy.py`) now calls `check_workload_quarantine_status()` instead of the lossy boolean `is_workload_quarantined()`. When Redis is unreachable or absent in an enforcing posture (`QuarantineCheckStatus.BACKEND_UNAVAILABLE`), the proxy no longer stamps `SC-7 BLOCK`, emits `INFERENCE_PROXY_BLOCK`, or returns HTTP `403 workload_quarantined`. Instead, it increments `infrastructure_block_decided("redis", "QUARANTINE_REDIS_UNAVAILABLE")`, chains a `GOVERNANCE_INFRASTRUCTURE_BLOCK` record (`dependency="redis"`, `failure_code="QUARANTINE_REDIS_UNAVAILABLE"`), and returns HTTP `503` `quarantine_backend_unavailable`. Confirmed quarantines (`QuarantineCheckStatus.QUARANTINED`) continue to return HTTP `403 workload_quarantined` and emit `INFERENCE_PROXY_BLOCK`, and both `body.thread_id` and `x-cage-thread-id` are checked so neither can shadow the other.
+
+| Item | Area | Clean Break Description | Architectural Rationale | Failure Mode on Stale Caller |
+|---|---|---|---|---|
+| **QP-01** | Inference proxy quarantine check ([`inference_proxy.py`](../src/gateway/server/inference_proxy.py)) | A Redis outage or missing Redis backend in enforcing postures on `POST /v1/chat/completions` now returns HTTP `503` (`error="quarantine_backend_unavailable"`, `dependency="redis"`, `failure_code="QUARANTINE_REDIS_UNAVAILABLE"`) and emits `GOVERNANCE_INFRASTRUCTURE_BLOCK` instead of HTTP `403` `workload_quarantined` + `INFERENCE_PROXY_BLOCK`. | Reporting a Redis outage as a confirmed `SC-7` workload quarantine produces false security attestations (`POAM-2026-233`) and contaminates `SC-7` effectiveness metrics (`POAM-2026-234`). | Callers expecting `403 workload_quarantined` on quarantine-store failures must treat `503 quarantine_backend_unavailable` as a retryable fail-closed outage. Confirmed quarantines still return `403`. |
+
+---
+
 **Last updated:** November 20, 2026
