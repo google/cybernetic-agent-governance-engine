@@ -64,6 +64,13 @@ def _write_census(repo: Path, rows: list[dict[str, object]]) -> Path:
     return path
 
 
+def _write_shadow_baseline(repo: Path, content: str = "0\n") -> Path:
+    path = repo / "tests" / ".shadow-except-baseline"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(content, encoding="utf-8")
+    return path
+
+
 def _make_sample_module(repo: Path, rel: str, code: str) -> Path:
     dest = repo / rel
     dest.parent.mkdir(parents=True, exist_ok=True)
@@ -259,6 +266,7 @@ def test_outside_census_name_only_fails_closed():
 """,
     )
 
+    _write_shadow_baseline(tmp_path)
     _, candidates, _, _, violations = gate.verify_static(
         tmp_path, scope="readback-and-503"
     )
@@ -400,6 +408,7 @@ finally:
     assert proc.returncode == 0
     assert db_path.is_file()
 
+    _write_shadow_baseline(tmp_path)
     all_tests, _, _, resolved, static_viols = gate.verify_static(
         tmp_path, scope="readback-and-503"
     )
@@ -535,6 +544,7 @@ finally:
     assert proc.returncode == 0
     assert db_path.is_file()
 
+    _write_shadow_baseline(tmp_path)
     all_tests, _, _, resolved, static_viols = gate.verify_static(
         tmp_path, scope="readback-and-503"
     )
@@ -545,6 +555,247 @@ finally:
     assert len(viols) == 1
     assert viols[0].code == "TARGET_NOT_REACHED"
     assert viols[0].nodeid == "tests/test_multi.py::test_strict_all_params[b]|run"
+
+
+def test_shadow_except_finder_identifies_normalizing_pairs_only(
+    tmp_path: Path,
+) -> None:
+    _make_sample_module(
+        tmp_path,
+        "src/sample.py",
+        """\
+class HTTPException(Exception):
+    def __init__(self, status_code: int, detail: str = "") -> None:
+        self.status_code = status_code
+
+class Service:
+    def same_http_503(self, x: int) -> int:
+        try:
+            return 10 // x
+        except ZeroDivisionError:
+            msg = "E_ZERO_DIV"
+            raise HTTPException(status_code=503, detail=msg)
+        except ValueError:
+            raise
+        except Exception:
+            raise HTTPException(503, "generic")
+
+    def distinct_outcomes(self, x: int) -> int:
+        try:
+            return 10 // x
+        except ZeroDivisionError:
+            raise HTTPException(status_code=400, detail="bad")
+        except Exception:
+            raise HTTPException(status_code=503, detail="err")
+
+    def fallthrough_pair(self) -> str:
+        out = "ok"
+        try:
+            out = "work"
+        except TimeoutError:
+            msg = "TIMEOUT_FALLTHROUGH"
+        except Exception:
+            out = "err"
+        return out
+""",
+    )
+    pairs = gate.find_outcome_normalizing_except_pairs(tmp_path)
+    assert len(pairs) == 2
+
+    by_method = {p.qualname: p for p in pairs}
+    assert set(by_method) == {"Service.same_http_503", "Service.fallthrough_pair"}
+    p_http = by_method["Service.same_http_503"]
+    assert p_http.earlier_type == "ZeroDivisionError"
+    assert p_http.later_type == "Exception"
+    assert p_http.outcome == "raise HTTPException:503"
+    assert p_http.rel_path == "src/sample.py"
+    assert p_http.earlier_lineno < p_http.later_lineno
+
+    p_fall = by_method["Service.fallthrough_pair"]
+    assert p_fall.earlier_type == "TimeoutError"
+    assert p_fall.later_type == "Exception"
+    assert p_fall.outcome == "fallthrough"
+
+
+def test_shadow_except_anchor_matching_requires_hitting_earlier_handler(
+    tmp_path: Path,
+) -> None:
+    _make_sample_module(
+        tmp_path,
+        "src/guard.py",
+        """\
+def check_token(tok: str) -> bool:
+    try:
+        return tok == "ok"
+    except KeyError:
+        sentinel = "SHADOW_KEY_ERROR"
+        return False
+    except Exception:
+        fallback = "FALLBACK_ERROR"
+        return False
+""",
+    )
+    _write_census(
+        tmp_path,
+        [{"id": "C-1", "verdict": "HOLDS", "read_back": "tests/test_guard.py"}],
+    )
+    _write_shadow_baseline(tmp_path, "0\n")
+
+    # 1. Covering only the later handler or unanchored module:fn leaves the earlier pair UNCOVERED.
+    test_file = _make_sample_module(
+        tmp_path,
+        "tests/test_guard.py",
+        """\
+import pytest
+
+pytestmark = [pytest.mark.unit, pytest.mark.local]
+
+@pytest.mark.covers("src.guard:check_token#FALLBACK_ERROR")
+def test_only_hits_later_handler_fails_closed():
+    assert True
+
+@pytest.mark.covers("src.guard:check_token")
+def test_unanchored_qualname_fails_closed():
+    assert True
+""",
+    )
+    _, _, _, resolved, violations = gate.verify_static(
+        tmp_path, scope="readback-and-503"
+    )
+    evaluated, uncovered = gate.evaluate_shadow_except_pairs(tmp_path, resolved)
+    assert len(evaluated) == 1
+    assert len(uncovered) == 1
+    assert [v.code for v in violations] == ["SHADOW_EXCEPT_BASELINE_EXCEEDED"]
+
+    # 2. Anchoring into the earlier handler marks the pair COVERED and passes the ratchet (0 <= 0).
+    test_file.write_text(
+        """\
+import pytest
+
+pytestmark = [pytest.mark.unit, pytest.mark.local]
+
+@pytest.mark.covers("src.guard:check_token#SHADOW_KEY_ERROR")
+def test_hits_earlier_handler_fails_closed():
+    assert True
+""",
+        encoding="utf-8",
+    )
+    _, _, _, resolved_ok, violations_ok = gate.verify_static(
+        tmp_path, scope="readback-and-503"
+    )
+    evaluated_ok, uncovered_ok = gate.evaluate_shadow_except_pairs(
+        tmp_path, resolved_ok
+    )
+    assert len(evaluated_ok) == 1
+    assert uncovered_ok == []
+    assert evaluated_ok[0].covered_by == (
+        "tests/test_guard.py::test_hits_earlier_handler_fails_closed",
+    )
+    assert violations_ok == []
+
+
+def test_shadow_except_ratchet_fails_closed_on_missing_corrupt_and_raise(
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    _make_sample_module(
+        tmp_path,
+        "src/norm.py",
+        """\
+def normalize(flag: bool) -> bool:
+    try:
+        return flag
+    except ValueError:
+        tag = "VAL_ERR"
+        return False
+    except Exception:
+        return False
+""",
+    )
+    _write_census(
+        tmp_path,
+        [{"id": "C-1", "verdict": "HOLDS", "read_back": "tests/test_norm.py"}],
+    )
+
+    # Missing baseline with uncovered pairs -> SHADOW_EXCEPT_BASELINE_EXCEEDED.
+    _, _, _, _, viol_missing = gate.verify_static(tmp_path, scope="readback-and-503")
+    assert [v.code for v in viol_missing] == ["SHADOW_EXCEPT_BASELINE_EXCEEDED"]
+
+    # Corrupt / negative / empty baselines -> SHADOW_EXCEPT_BASELINE_INVALID.
+    for bad in ("not-an-int\n", "-1\n", ""):
+        _write_shadow_baseline(tmp_path, bad)
+        _, _, _, _, viol_bad = gate.verify_static(tmp_path, scope="readback-and-503")
+        assert [v.code for v in viol_bad] == ["SHADOW_EXCEPT_BASELINE_INVALID"]
+
+    # Ratchet at 1 allows existing uncovered pair.
+    _write_shadow_baseline(tmp_path, "1\n")
+    rc = gate.main(["--repo-root", str(tmp_path), "--scope", "readback-and-503"])
+    assert rc == 0
+
+    # --update-baseline cannot raise baseline from 0 -> 1.
+    _write_shadow_baseline(tmp_path, "0\n")
+    rc_raise = gate.main(
+        [
+            "--repo-root",
+            str(tmp_path),
+            "--scope",
+            "readback-and-503",
+            "--update-baseline",
+        ]
+    )
+    assert rc_raise == 1
+    assert "monotonic ratchet" in capsys.readouterr().err
+
+    # Covering the pair drops uncovered to 0 and allows --update-baseline 1 -> 0.
+    _write_shadow_baseline(tmp_path, "1\n")
+    _make_sample_module(
+        tmp_path,
+        "tests/test_norm.py",
+        """\
+import pytest
+
+pytestmark = [pytest.mark.unit, pytest.mark.local]
+
+@pytest.mark.covers("src.norm:normalize#VAL_ERR")
+def test_normalize_val_err_fails_closed():
+    assert True
+""",
+    )
+    rc_drop = gate.main(
+        [
+            "--repo-root",
+            str(tmp_path),
+            "--scope",
+            "readback-and-503",
+            "--update-baseline",
+        ]
+    )
+    assert rc_drop == 0
+    assert (tmp_path / "tests" / ".shadow-except-baseline").read_text(
+        encoding="utf-8"
+    ).strip() == "0"
+
+    rc_list = gate.main(
+        [
+            "--repo-root",
+            str(tmp_path),
+            "--scope",
+            "readback-and-503",
+            "--list-shadow-excepts",
+        ]
+    )
+    assert rc_list == 0
+    captured = capsys.readouterr()
+    assert "COVERED\tsrc/norm.py:" in captured.out
+
+
+def test_repo_shadow_except_baseline_is_present_and_met() -> None:
+    baseline, err = gate.read_shadow_except_baseline(
+        REPO_ROOT / "tests" / ".shadow-except-baseline"
+    )
+    assert err is None
+    assert baseline is not None
+    assert baseline >= 0
 
 
 def test_check_script_is_wired_in_ci_hooks_and_makefile() -> None:

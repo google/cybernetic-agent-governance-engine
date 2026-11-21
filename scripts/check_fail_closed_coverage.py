@@ -39,6 +39,18 @@ Two complementary checks run together:
      and non-literal dynamic marker expressions.
    * Rejects stale ``@pytest.mark.covers_exempt`` markers whose reason omits an
      approved category prefix, lacks substance, or sits on a non-candidate test.
+   * Finds outcome-normalizing ``except`` fallthrough pairs under ``src/``
+     (ordered handlers on the same ``try`` whose tail statements produce
+     identical ``return`` / ``raise`` / HTTP ``status_code`` / fallthrough
+     outcomes) and enforces a monotonically-decreasing integer baseline
+     (``tests/.shadow-except-baseline``). Each uncovered pair should be resolved
+     via one of four paths rather than adding exemptions to a table:
+     (1) collapse identical-outcome handlers into one ``except`` tuple,
+     (2) fold pure-logging differences before identical fallbacks,
+     (3) pin security-distinct earlier handlers with an explicit inner-line
+     ``@pytest.mark.covers("module:qualname#anchor")`` mark, or
+     (4) assert the observable side effect (e.g. ``bundle.errors`` vs
+     ``bundle.warnings``) when both branches return the same sentinel.
 
    .. note::
       The name-token AST scan is a **candidate finder requiring reconciliation,
@@ -78,6 +90,8 @@ from typing import Final
 REPO_ROOT_DEFAULT: Final[Path] = Path(__file__).resolve().parent.parent
 CENSUS_REL_PATH: Final[Path] = Path("compliance/oscal/evidence_claim_census.jsonl")
 TESTS_REL_DIR: Final[Path] = Path("tests")
+SRC_REL_DIR: Final[Path] = Path("src")
+SHADOW_EXCEPT_BASELINE_REL_PATH: Final[Path] = Path("tests/.shadow-except-baseline")
 
 # Discovery name tokens (lowercased substring match against test function name).
 # Treated as a *candidate finder requiring reconciliation*, never a closed definition.
@@ -213,6 +227,31 @@ class Violation:
 
     def format_line(self) -> str:
         return f"[{self.code}] {self.nodeid}: {self.message}"
+
+
+@dataclass(frozen=True)
+class ShadowExceptPair:
+    """Two ordered ``except`` handlers in the same ``try`` with matching outcomes."""
+
+    rel_path: str
+    qualname: str
+    earlier_lineno: int
+    earlier_end_lineno: int
+    earlier_body_lines: frozenset[int]
+    earlier_type: str
+    later_lineno: int
+    later_end_lineno: int
+    later_type: str
+    outcome: str
+    covered_by: tuple[str, ...] = ()
+
+    @property
+    def is_covered(self) -> bool:
+        return bool(self.covered_by)
+
+    @property
+    def location(self) -> str:
+        return f"{self.rel_path}:L{self.earlier_lineno}-L{self.later_lineno}"
 
 
 # ---------------------------------------------------------------------------
@@ -1093,6 +1132,310 @@ def validate_exempt_reason(reason: str) -> str | None:
     return None
 
 
+# ---------------------------------------------------------------------------
+# Outcome-normalizing except fallthrough finder & baseline ratchet
+# ---------------------------------------------------------------------------
+
+
+_TRY_NODES: Final[tuple[type[ast.AST], ...]] = (
+    (ast.Try, ast.TryStar) if hasattr(ast, "TryStar") else (ast.Try,)
+)
+
+
+def _call_tail_name(node: ast.expr) -> str | None:
+    """Return bare identifier or attribute tail of a callee expression."""
+    if isinstance(node, ast.Name):
+        return node.id
+    if isinstance(node, ast.Attribute):
+        return node.attr
+    return None
+
+
+def _status_code_kw(call: ast.Call) -> object | None:
+    """Return constant ``status_code`` (keyword or positional on ``HTTPException``)."""
+    for kw in call.keywords:
+        if kw.arg == "status_code" and isinstance(kw.value, ast.Constant):
+            return kw.value.value
+    if (
+        _call_tail_name(call.func) == "HTTPException"
+        and call.args
+        and isinstance(call.args[0], ast.Constant)
+        and isinstance(call.args[0].value, int)
+    ):
+        return call.args[0].value
+    return None
+
+
+def _except_tail_outcome(handler: ast.ExceptHandler) -> tuple[str, str]:
+    """Summarize the control-flow tail outcome of an ``except`` handler body."""
+    if not handler.body:
+        return ("fallthrough", "fallthrough")
+    last = handler.body[-1]
+    if isinstance(last, ast.Return):
+        if last.value is None:
+            return ("return_const", "return None")
+        if isinstance(last.value, ast.Constant):
+            return ("return_const", f"return {last.value.value!r}")
+        return ("return_expr", f"return {ast.unparse(last.value)}")
+    if isinstance(last, ast.Raise):
+        if last.exc is None:
+            return ("raise", "reraise")
+        if isinstance(last.exc, ast.Call):
+            fn = _call_tail_name(last.exc.func) or ast.unparse(last.exc.func)
+            sc = _status_code_kw(last.exc)
+            detail = f"{fn}:{sc}" if sc is not None else fn
+            return ("raise_call", f"raise {detail}")
+        return ("raise_expr", f"raise {ast.unparse(last.exc)}")
+    if isinstance(last, ast.Break):
+        return ("break", "break")
+    if isinstance(last, ast.Continue):
+        return ("continue", "continue")
+    return ("fallthrough", "fallthrough")
+
+
+def _body_line_span(stmts: list[ast.stmt]) -> frozenset[int]:
+    """Collect all source line numbers spanned by statements in ``stmts``."""
+    lines: set[int] = set()
+    for stmt in stmts:
+        end = stmt.end_lineno if stmt.end_lineno is not None else stmt.lineno
+        lines.update(range(stmt.lineno, end + 1))
+    return frozenset(lines)
+
+
+class _ShadowExceptVisitor(ast.NodeVisitor):
+    """AST visitor collecting ordered outcome-normalizing ``except`` pairs."""
+
+    def __init__(self, rel_path: str) -> None:
+        self.rel_path = rel_path
+        self._qual_parts: list[str] = []
+        self.pairs: list[ShadowExceptPair] = []
+
+    def _visit_named(self, node: ast.AST, name: str) -> None:
+        self._qual_parts.append(name)
+        try:
+            self.generic_visit(node)
+        finally:
+            self._qual_parts.pop()
+
+    def visit_ClassDef(self, node: ast.ClassDef) -> None:
+        self._visit_named(node, node.name)
+
+    def visit_FunctionDef(self, node: ast.FunctionDef) -> None:
+        self._visit_named(node, node.name)
+
+    def visit_AsyncFunctionDef(self, node: ast.AsyncFunctionDef) -> None:
+        self._visit_named(node, node.name)
+
+    def _visit_try_node(self, node: ast.AST) -> None:
+        handlers: list[ast.ExceptHandler] = getattr(node, "handlers", [])
+        qualname = ".".join(self._qual_parts) if self._qual_parts else "<module>"
+        if len(handlers) >= 2:
+            summarized = [(_except_tail_outcome(h), h) for h in handlers]
+            for i in range(len(summarized)):
+                out_i, h_i = summarized[i]
+                for j in range(i + 1, len(summarized)):
+                    out_j, h_j = summarized[j]
+                    if out_i != out_j:
+                        continue
+                    self.pairs.append(
+                        ShadowExceptPair(
+                            rel_path=self.rel_path,
+                            qualname=qualname,
+                            earlier_lineno=h_i.lineno,
+                            earlier_end_lineno=h_i.end_lineno or h_i.lineno,
+                            earlier_body_lines=_body_line_span(h_i.body),
+                            earlier_type=(
+                                ast.unparse(h_i.type)
+                                if h_i.type is not None
+                                else "bare"
+                            ),
+                            later_lineno=h_j.lineno,
+                            later_end_lineno=h_j.end_lineno or h_j.lineno,
+                            later_type=(
+                                ast.unparse(h_j.type)
+                                if h_j.type is not None
+                                else "bare"
+                            ),
+                            outcome=out_i[1],
+                        )
+                    )
+        self.generic_visit(node)
+
+    def visit_Try(self, node: ast.Try) -> None:
+        self._visit_try_node(node)
+
+    def visit_TryStar(self, node: ast.AST) -> None:
+        self._visit_try_node(node)
+
+
+def find_outcome_normalizing_except_pairs(
+    repo_root: Path,
+    *,
+    src_dir: Path | None = None,
+) -> list[ShadowExceptPair]:
+    """Scan Python modules under ``src/`` for outcome-normalizing ``except`` pairs."""
+    search_dir = src_dir if src_dir is not None else (repo_root / SRC_REL_DIR)
+    if not search_dir.is_dir():
+        return []
+    pairs: list[ShadowExceptPair] = []
+    for py_path in sorted(search_dir.rglob("*.py")):
+        rel_path = _normalize_posix(str(py_path.relative_to(repo_root)))
+        source = py_path.read_text(encoding="utf-8")
+        tree = ast.parse(source, filename=rel_path)
+        visitor = _ShadowExceptVisitor(rel_path)
+        visitor.visit(tree)
+        pairs.extend(visitor.pairs)
+    return pairs
+
+
+def evaluate_shadow_except_pairs(
+    repo_root: Path,
+    resolved_by_nodeid: dict[str, list[ResolvedTarget]],
+    *,
+    src_dir: Path | None = None,
+) -> tuple[list[ShadowExceptPair], list[ShadowExceptPair]]:
+    """Classify each outcome-normalizing ``except`` pair as covered or uncovered.
+
+    A pair is covered when at least one anchored ``@pytest.mark.covers`` target
+    (``statement_anchor`` or ``branch_body_anchor`` — never coarse
+    ``function_body``) resolves inside the earlier handler's body without
+    touching the later handler's line span.
+    """
+    raw_pairs = find_outcome_normalizing_except_pairs(repo_root, src_dir=src_dir)
+    if not raw_pairs:
+        return [], []
+
+    anchored_by_file: dict[str, list[tuple[str, ResolvedTarget]]] = {}
+    for nodeid, targets in resolved_by_nodeid.items():
+        for tgt in targets:
+            if tgt.resolution_kind == "function_body":
+                continue
+            key = _normalize_posix(str(tgt.rel_path))
+            anchored_by_file.setdefault(key, []).append((nodeid, tgt))
+
+    evaluated: list[ShadowExceptPair] = []
+    uncovered: list[ShadowExceptPair] = []
+    for pair in raw_pairs:
+        later_span = frozenset(range(pair.later_lineno, pair.later_end_lineno + 1))
+        hits = sorted(
+            {
+                nodeid
+                for nodeid, tgt in anchored_by_file.get(pair.rel_path, ())
+                if (tgt.target_lines & pair.earlier_body_lines)
+                and not (tgt.target_lines & later_span)
+            }
+        )
+        updated = ShadowExceptPair(
+            rel_path=pair.rel_path,
+            qualname=pair.qualname,
+            earlier_lineno=pair.earlier_lineno,
+            earlier_end_lineno=pair.earlier_end_lineno,
+            earlier_body_lines=pair.earlier_body_lines,
+            earlier_type=pair.earlier_type,
+            later_lineno=pair.later_lineno,
+            later_end_lineno=pair.later_end_lineno,
+            later_type=pair.later_type,
+            outcome=pair.outcome,
+            covered_by=tuple(hits),
+        )
+        evaluated.append(updated)
+        if not updated.is_covered:
+            uncovered.append(updated)
+    return evaluated, uncovered
+
+
+def resolve_shadow_baseline_path(
+    repo_root: Path,
+    shadow_baseline_path: Path | None = None,
+) -> Path:
+    """Resolve the path to ``tests/.shadow-except-baseline``."""
+    return (
+        shadow_baseline_path
+        if shadow_baseline_path is not None
+        else (repo_root / SHADOW_EXCEPT_BASELINE_REL_PATH)
+    )
+
+
+def read_shadow_except_baseline(baseline_path: Path) -> tuple[int | None, str | None]:
+    """Read a non-negative integer baseline from ``baseline_path``."""
+    if not baseline_path.is_file():
+        return None, f"missing shadow-except baseline file {baseline_path}"
+    raw = baseline_path.read_text(encoding="utf-8").strip()
+    try:
+        value = int(raw)
+    except ValueError:
+        return (
+            None,
+            f"invalid integer {raw!r} in shadow-except baseline {baseline_path}",
+        )
+    if value < 0:
+        return None, f"negative baseline {value} in {baseline_path}"
+    return value, None
+
+
+def write_shadow_except_baseline(count: int, baseline_path: Path) -> None:
+    """Write ``count`` as a single-line monotonic ratchet baseline."""
+    if count < 0:
+        raise ValueError(f"baseline count must be >= 0, got {count}")
+    baseline_path.parent.mkdir(parents=True, exist_ok=True)
+    baseline_path.write_text(f"{count}\n", encoding="utf-8")
+
+
+def check_shadow_except_baseline(
+    repo_root: Path,
+    resolved_by_nodeid: dict[str, list[ResolvedTarget]],
+    *,
+    shadow_baseline_path: Path | None = None,
+    src_dir: Path | None = None,
+    enforce: bool = True,
+) -> tuple[list[ShadowExceptPair], list[ShadowExceptPair], int | None, list[Violation]]:
+    """Audit outcome-normalizing ``except`` pairs against the monotonic baseline."""
+    evaluated, uncovered = evaluate_shadow_except_pairs(
+        repo_root, resolved_by_nodeid, src_dir=src_dir
+    )
+    baseline_file = resolve_shadow_baseline_path(repo_root, shadow_baseline_path)
+    violations: list[Violation] = []
+
+    if not evaluated and not baseline_file.is_file() and shadow_baseline_path is None:
+        return evaluated, uncovered, None, violations
+
+    baseline_val: int | None = None
+    if baseline_file.is_file():
+        baseline_val, err = read_shadow_except_baseline(baseline_file)
+        if err is not None and enforce:
+            violations.append(
+                Violation("SHADOW_EXCEPT_BASELINE_INVALID", str(baseline_file), err)
+            )
+            return evaluated, uncovered, None, violations
+    elif enforce and uncovered:
+        violations.append(
+            Violation(
+                "SHADOW_EXCEPT_BASELINE_EXCEEDED",
+                str(baseline_file),
+                f"found {len(uncovered)} uncovered outcome-normalizing except pair(s) "
+                f"with no {SHADOW_EXCEPT_BASELINE_REL_PATH} baseline file",
+            )
+        )
+        return evaluated, uncovered, None, violations
+
+    if enforce and baseline_val is not None and len(uncovered) > baseline_val:
+        sample = "; ".join(
+            f"{p.location} ({p.earlier_type} vs {p.later_type} -> {p.outcome})"
+            for p in uncovered[:5]
+        )
+        violations.append(
+            Violation(
+                "SHADOW_EXCEPT_BASELINE_EXCEEDED",
+                SHADOW_EXCEPT_BASELINE_REL_PATH.as_posix(),
+                f"uncovered outcome-normalizing except pairs increased from baseline "
+                f"{baseline_val} to {len(uncovered)} (sample: {sample}). Resolve via "
+                "one of the 4 documented paths or pin the earlier handler with an "
+                "anchored @pytest.mark.covers('module:qualname#anchor').",
+            )
+        )
+    return evaluated, uncovered, baseline_val, violations
+
+
 def verify_static(
     repo_root: Path,
     *,
@@ -1100,6 +1443,8 @@ def verify_static(
     census_path: Path | None = None,
     tests_dir: Path | None = None,
     require_candidates_marked: bool = True,
+    shadow_baseline_path: Path | None = None,
+    enforce_shadow_baseline: bool = True,
 ) -> tuple[
     list[DiscoveredTest],
     set[str],
@@ -1107,7 +1452,7 @@ def verify_static(
     dict[str, list[ResolvedTarget]],
     list[Violation],
 ]:
-    """Run static discovery, exemption hygiene, and AST target resolution."""
+    """Run static discovery, exemption hygiene, target resolution, and shadow-except ratchet."""
     all_tests = scan_all_tests(repo_root, tests_dir=tests_dir)
     candidates, reasons = compute_scope_candidates(
         all_tests, scope=scope, repo_root=repo_root, census_path=census_path
@@ -1177,6 +1522,15 @@ def verify_static(
                     "without @pytest.mark.covers(...) or @pytest.mark.covers_exempt(reason=...).",
                 )
             )
+
+    if enforce_shadow_baseline:
+        _, _, _, shadow_violations = check_shadow_except_baseline(
+            repo_root,
+            resolved_by_nodeid,
+            shadow_baseline_path=shadow_baseline_path,
+            enforce=True,
+        )
+        violations.extend(shadow_violations)
 
     return all_tests, candidates, reasons, resolved_by_nodeid, violations
 
@@ -1542,6 +1896,25 @@ def _build_parser() -> argparse.ArgumentParser:
         help="Print only currently unmarked candidate nodeids for --scope and exit 0.",
     )
     parser.add_argument(
+        "--list-shadow-excepts",
+        action="store_true",
+        help="Print outcome-normalizing except pairs under src/ with cover status and exit 0.",
+    )
+    parser.add_argument(
+        "--shadow-baseline",
+        type=Path,
+        default=None,
+        help="Override path to tests/.shadow-except-baseline.",
+    )
+    parser.add_argument(
+        "--update-baseline",
+        action="store_true",
+        help=(
+            "Write current uncovered shadow-except count to tests/.shadow-except-baseline "
+            "(monotonic ratchet: fails if count exceeds existing baseline)."
+        ),
+    )
+    parser.add_argument(
         "--skip-discovery",
         action="store_true",
         help="Validate existing markers only without failing on unmarked candidates.",
@@ -1590,10 +1963,60 @@ def main(argv: list[str] | None = None) -> int:
             scope=args.scope,
             census_path=args.census_path,
             require_candidates_marked=not args.skip_discovery,
+            shadow_baseline_path=args.shadow_baseline,
+            enforce_shadow_baseline=not (
+                args.list_shadow_excepts or args.update_baseline
+            ),
         )
     except (FileNotFoundError, ValueError) as exc:
         print(f"ERROR: {exc}", file=sys.stderr)
         return 2
+
+    if args.list_shadow_excepts:
+        evaluated, uncovered = evaluate_shadow_except_pairs(repo_root, resolved)
+        for pair in evaluated:
+            status = "COVERED" if pair.is_covered else "UNCOVERED"
+            covers = ",".join(pair.covered_by) if pair.covered_by else "-"
+            print(
+                f"{status}\t{pair.location}\t{pair.qualname}\t"
+                f"{pair.earlier_type}\t{pair.later_type}\t{pair.outcome}\t{covers}"
+            )
+        print(
+            f"# total_pairs={len(evaluated)} uncovered={len(uncovered)} "
+            f"covered={len(evaluated) - len(uncovered)}",
+            file=sys.stderr,
+        )
+        return 0
+
+    if args.update_baseline:
+        if violations:
+            print(
+                f"FAIL: refusing --update-baseline with {len(violations)} static violation(s):",
+                file=sys.stderr,
+            )
+            for v in violations:
+                print(f"  {v.format_line()}", file=sys.stderr)
+            return 1
+        evaluated, uncovered = evaluate_shadow_except_pairs(repo_root, resolved)
+        baseline_file = resolve_shadow_baseline_path(repo_root, args.shadow_baseline)
+        if baseline_file.is_file():
+            existing, err = read_shadow_except_baseline(baseline_file)
+            if err is not None:
+                print(f"FAIL: {err}", file=sys.stderr)
+                return 1
+            if existing is not None and len(uncovered) > existing:
+                print(
+                    f"FAIL: refusing to raise shadow-except baseline from "
+                    f"{existing} to {len(uncovered)} (monotonic ratchet).",
+                    file=sys.stderr,
+                )
+                return 1
+        write_shadow_except_baseline(len(uncovered), baseline_file)
+        print(
+            f"UPDATED: {baseline_file} = {len(uncovered)} "
+            f"(total_pairs={len(evaluated)}, covered={len(evaluated) - len(uncovered)})"
+        )
+        return 0
 
     checks_eval = 0
     ctx_matched = 0
@@ -1621,6 +2044,12 @@ def main(argv: list[str] | None = None) -> int:
 
     if args.reconciliation_report or args.verbose:
         rec = build_reconciliation_report(all_tests)
+        shadow_all, shadow_uncovered, shadow_base, _ = check_shadow_except_baseline(
+            repo_root,
+            resolved,
+            shadow_baseline_path=args.shadow_baseline,
+            enforce=False,
+        )
         print(
             "Reconciliation report (AST name scan is a candidate finder requiring "
             "reconciliation, not a semantic definition of all fail-closed tests):"
@@ -1629,7 +2058,10 @@ def main(argv: list[str] | None = None) -> int:
             f"  total_tests={rec['total_tests']} "
             f"in_scope[{args.scope}]={len(candidates)} "
             f"marked_covers={rec['marked_covers']} "
-            f"marked_exempt={rec['marked_exempt']}"
+            f"marked_exempt={rec['marked_exempt']} "
+            f"shadow_except_pairs={len(shadow_all)} "
+            f"shadow_except_uncovered={len(shadow_uncovered)} "
+            f"shadow_except_baseline={shadow_base}"
         )
         tok_line = ", ".join(
             f"{tok}={rec[tok]}" for tok in ("asserts_503", *RECONCILIATION_TOKENS)

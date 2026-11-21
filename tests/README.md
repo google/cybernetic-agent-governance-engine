@@ -152,6 +152,8 @@ marker** — this is enforced at collection time by a fail-closed guard in
 | `covers` | Fail-closed reachability target (`"module:qualname"` or `"module:qualname#anchor"`) verified per-test against `coverage.py` `\|run` dynamic contexts by [`scripts/check_fail_closed_coverage.py`](../scripts/check_fail_closed_coverage.py). |
 | `covers_exempt` | Categorized exemption (`reason="<category>: <explanation>"`) for fail-closed discovery candidates with no measurable in-process Python source target (e.g. `non-src-target`, `subprocess-target`, `non-hermetic`, `negative-control`, `pure-model`, `omitted-source`). |
 
+`check_fail_closed_coverage.py` also enforces a monotonic shadow-except ratchet against [`tests/.shadow-except-baseline`](.shadow-except-baseline): outcome-normalizing `try/except` pairs under `src/` (an earlier specific handler producing the same terminal outcome as a broader subsequent handler) must stay at or below the tracked baseline unless covered by an anchored `@pytest.mark.covers("module:qualname#anchor")` hitting the earlier handler (`--list-shadow-excepts` to inspect, `--update-baseline` to lower).
+
 A facet marker **does not** make a test selectable by any CI gate. A test marked only
 `financial` or only `regression` will be rejected by the collection guard.
 
