@@ -75,6 +75,7 @@ Envelope structure (v2.1):
   "subject": {
     "action": "execute_trade",
     "action_hash": "sha256:...",
+    "evaluated_action_hash": "sha256:...",
     "record_hash": "sha256:...",
     "agent_id": "advisor-prod-v3"
   },
@@ -94,6 +95,8 @@ Envelope structure (v2.1):
 ```
 
 > **Update (`EP-1`):** Dry-run preview envelopes emitted by `POST /governance/validate-action` (`GovernanceEnvelope` v3.0) no longer declare `subject.record_hash` or `governance_context.controls_satisfied` because dry-run previews neither append an evidence-chain record nor compute satisfied control IDs. Committing runs bind `record_hash` on the routing seal and `ExecutionGrant`.
+
+> **Update (`SE-03`, 2026-11-20):** HTTP `200` validate-action envelopes also carry `subject.evaluated_action_hash`, an audit binding over the server-bound params the stages evaluated, beside the client-verifiable request binding `subject.action_hash` (see [Envelope Subject Bindings](#envelope-subject-bindings)). HTTP `403` refusal envelopes do not carry it.
 
 #### DeferQueue Fail-Closed Path
 [`DeferQueue`](../../src/gateway/governance/defer_queue.py) provides a Redis-backed (db=1, `noeviction` maxmemory policy) state machine for parking ambiguous decisions:
@@ -118,6 +121,40 @@ confidence < 0.70         → DEFER (data-hydration, NOT human triage)
 **TTL Defaults**:
 - Standard deferral: 4 hours (`_DEFAULT_TTL = 3600 * 4`)
 - External validation hold: 5 minutes (`_DEFAULT_HOLD_TTL = 300`)
+
+### Committing Runs Seal What They Evaluate
+
+> **Added 2026-11-20 (revision 1.1).** Committing runs sealed and evidenced the caller's pre-binding params instead of the params the stages evaluated. On the ALLOW path the routing seal is the execution boundary, so it must commit to exactly what the stages evaluated, and the caller must actuate exactly what was sealed.
+
+The committing runs are [`SymbolicGovernor.govern()`](../../src/gateway/governance/governor/governor.py) (`FULL` profile) and [`SymbolicGovernor.revalidate_post_hitl()`](../../src/gateway/governance/governor/governor.py) (`POST_HITL` profile, after a human approval). Each run:
+
+1. **Binds server inputs exactly once.** The run snapshots the caller's params and binds the action's server inputs into the snapshot once, through [`bind_server_inputs()`](../../src/gateway/governance/governor/server_inputs.py): caller values for server-owned keys (for a trade: quote age, drawdown, portfolio NAV, the trader's role and id) are dropped and resolved server-side. The result is the run's **evaluated params**. Callers do not bind before governance, and the run makes no second server-input lookup.
+2. **Seals exactly the params the stages evaluated.** Every stage evaluates its own copy of the evaluated params, and [`run_sealed()`](../../src/gateway/governance/governor/sealing.py) seals the same params: the seal's `action_hash` and the `params_hash` of the hash-chained `GOVERNANCE_DECISION` record ([`generate_seal_with_evidence()`](../../src/gateway/governance/routing_seal.py)) commit to them. A NARROW seals the clamped params with their server inputs re-bound, which is what its re-run evaluated, and its NARROW receipt names the same params.
+3. **Returns the evaluated params with the seal.** The run returns a [`SealedAction`](../../src/gateway/governance/governor/sealing.py) `(action, seal, params)` whose `params` are the evaluated params. [`enforce_governance()`](../../src/gateway/server/governance_middleware.py) and [`enforce_approved_governance()`](../../src/gateway/server/governance_middleware.py) return it unchanged; no tool name is exempt from `enforce_governance()`.
+4. **Names the evaluated params on every other outcome.** DENY refusal receipts (their `params_hash` and bounded `evaluated_params` projection), DEFER snapshots and their `GOVERNANCE_DEFERRAL` records, and `INFRASTRUCTURE_BLOCK` records name the evaluated params. Only when a server input cannot be bound, so that no evaluated params exist, does the `INFRASTRUCTURE_BLOCK` record name the unbound params: the snapshot of the caller's params, or a NARROW's unbound proposal.
+
+Callers verify the seal against `SealedAction.params` and actuate exactly those params, never their own input: [`verify_and_consume_seal()`](../../src/gateway/governance/routing_seal.py) fails closed on a seal verified against the caller's dict whenever a server input replaced a caller value. [`execute_trade_action()`](../../src/cage_finance/tools/tool_provider.py) verifies and actuates `SealedAction.params`, burns a NARROW receipt only as a cross-check (a receipt that names other params refuses the trade), and fails closed on any result that is not a `SealedAction`. [`administer_dose_action()`](../../src/cage_healthcare/tools/tool_provider.py) verifies, digests and actuates `SealedAction.params`.
+
+#### Envelope Subject Bindings
+
+`POST /governance/validate-action` is non-committing, but its signed envelope carries two subject hashes. Both are computed by [`envelope_action_hash()`](../../src/gateway/governance/governance_envelope.py): `"sha256:"` plus the seal recipe's [`compute_action_hash()`](../../src/gateway/governance/routing_seal.py), the SHA-256 of the RFC 8785 JCS form of `{"action", "params"}`, with non-JSON-native leaves stringified first.
+
+| Subject field | Binding | Over | Verifiable by |
+|---|---|---|---|
+| `subject.action_hash` | Request binding | The params the caller submitted | The client: [`CageClient`](../../packages/cage-client/src/cage_client/core.py) recomputes it from its own request and refuses a mismatched envelope |
+| `subject.evaluated_action_hash` | Audit binding | The params the stages evaluated, with the action's server inputs bound | An auditor holding the evaluated params; not the client, because server inputs are not disclosed to it |
+
+[`SymbolicGovernor.validate_action()`](../../src/gateway/governance/governor/governor.py) returns `evaluated_action_hash` with every verdict, and [`validate_action_endpoint()`](../../src/gateway/server/governance_middleware.py) moves it out of the payload into the subject of every HTTP `200` envelope (`ALLOW`, `NARROW`, `REQUIRE_APPROVAL`, `DEFER`). The field is optional and additive. It binds the preview's evaluation; a later committing run binds its server inputs afresh and commits to its own evaluated params through its seal and `GOVERNANCE_DECISION` record. HTTP `403` refusal envelopes are unchanged and do not carry the field: their signed refusal receipt already carries `params_hash` over the evaluated params.
+
+#### Approval Binding Invariant
+
+> An approval is consumed only by a run that seals exactly the params it covers. Coverage is evaluated against the evaluated (sealed) params, before any stage runs and again inside the compare-and-swap that consumes the approval. There is no second server-input lookup.
+
+The invariant is realised in three steps:
+
+1. **State-only pre-check.** [`enforce_approved_governance()`](../../src/gateway/server/governance_middleware.py) calls [`DeferQueue.redeemable_token()`](../../src/gateway/governance/defer_queue.py) (which takes no `covers` argument): the `HITL_REQUIRED` token must be quorum-approved, unspent, parked for this action and carry approved params. The pre-check binds no server inputs, decides no coverage and spends nothing.
+2. **Coverage before any stage runs.** `revalidate_post_hitl()` binds the evaluated params and asks [`PostHitlApproval.covers`](../../src/gateway/governance/governor/approval.py) whether the approval covers them (for a trade: the same instrument, currency, side, trader id and role, and an amount no larger than approved). If it does not, because the request or a server-bound input differs from what was approved, the run is refused `[APPROVAL_NOT_REDEEMABLE]` with a receipt naming the evaluated params: no stage runs, nothing is committed or sealed, and the approval is not spent.
+3. **Coverage again inside the spend.** A clean run calls `PostHitlApproval.spend(evaluated)` through the `admit` hook of `run_sealed()`, after every stage and before the seal is minted. The gateway binds `spend` to [`DeferQueue.consume_approval()`](../../src/gateway/governance/defer_queue.py), whose `RESOLVED -> CONSUMED` compare-and-swap re-checks coverage of the same evaluated params, so of concurrent redemptions at most one is sealed. A DENY spends the approval through the same `spend()`, passing the params its refusal names, so an approval that does not cover them is not consumed; a warrant-ineligible DEFER and an `INFRASTRUCTURE_BLOCK` leave it unspent.
 
 ---
 
@@ -177,6 +214,7 @@ confidence < 0.70         → DEFER (data-hydration, NOT human triage)
 - ✅ FTRA integration: [`_park_in_defer_queue()`](../../src/gateway/governance/ftra/node_factory.py:814) — parks HITL_REQUIRED verdicts
 - ✅ LangGraph defer node: [`defer_node()`](../../src/governed_financial_advisor/graph/nodes/defer_node.py:39) — parks ambiguous transactions in DeferQueue
 - ✅ Tool execution integration: [`execute_trade_action()`](../../src/cage_finance/tools/tool_provider.py) — `verify_and_consume_seal()` (verify, then consume the nonce) followed by `ActuatorRegistry` dispatch. *(Corrected 2026-10-02: this line previously claimed a `BoundedToolExecutor` performing ConsequenceGateway evaluation; neither exists on this path.)*
+- ✅ Committing runs seal what they evaluate (2026-11-20): `govern()` and `revalidate_post_hitl()` return a [`SealedAction`](../../src/gateway/governance/governor/sealing.py) whose `params` are exactly the params the stages evaluated and the seal commits to ([Committing Runs Seal What They Evaluate](#committing-runs-seal-what-they-evaluate))
 
 **Test Coverage**:
 - Unit tests: `tests/test_consequence_gateway.py`, `tests/test_defer_queue.py`, `tests/test_governance_envelope.py`
@@ -233,6 +271,7 @@ confidence < 0.70         → DEFER (data-hydration, NOT human triage)
 | Version | Date       | Author                     | Changes                                           |
 |---------|------------|----------------------------|---------------------------------------------------|
 | 1.0     | 2026-09-14 | CAGE Core Architecture Team | Initial formalization of implemented design      |
+| 1.1     | 2026-11-20 | CAGE Core Architecture Team | Committing runs seal and return the evaluated params (`SealedAction`); envelope `subject.evaluated_action_hash`; approval binding invariant |
 
 ---
 

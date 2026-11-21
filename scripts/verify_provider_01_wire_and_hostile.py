@@ -923,7 +923,7 @@ async def main() -> None:
         )
         spent_flags: list[bool] = []
 
-        async def _spend_once() -> bool:
+        async def _spend_once(_evaluated: Any) -> bool:
             if spent_flags:
                 return False
             spent_flags.append(True)
@@ -933,6 +933,7 @@ async def main() -> None:
             approval_id="appr-step1-drift-001",
             barrier_preview="PASS",
             spend=_spend_once,
+            covers=lambda _evaluated: True,
             thread_id=allow_payload["thread_id"],
         )
         drift_blocked = False

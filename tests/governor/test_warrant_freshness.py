@@ -458,10 +458,10 @@ async def test_post_hitl_inside_the_window_relies_on_the_cached_warrant() -> Non
         "src.gateway.governance.routing_seal.generate_seal_with_evidence",
         return_value="seal-ok",
     ):
-        seal = await governor.revalidate_post_hitl(
+        sealed = await governor.revalidate_post_hitl(
             "execute_trade", dict(_TRADE), approval=granted_approval("PASS")
         )
-    assert seal == "seal-ok"
+    assert sealed.seal == "seal-ok"
     assert source.calls == 1
 
 
@@ -498,10 +498,10 @@ async def test_post_hitl_with_an_expired_cache_seals_on_a_good_refetch() -> None
         "src.gateway.governance.routing_seal.generate_seal_with_evidence",
         return_value="seal-ok",
     ):
-        seal = await governor.revalidate_post_hitl(
+        sealed = await governor.revalidate_post_hitl(
             "execute_trade", dict(_TRADE), approval=granted_approval("PASS")
         )
-    assert seal == "seal-ok"
+    assert sealed.seal == "seal-ok"
     assert source.calls == 2
 
 

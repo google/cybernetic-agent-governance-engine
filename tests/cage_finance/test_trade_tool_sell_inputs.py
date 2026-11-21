@@ -12,19 +12,23 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""The trade tool sends ``side`` and a server-side ``portfolio_total`` to UCA-13.
+"""The trade tool sends ``side`` and the kernel binds ``portfolio_total`` for UCA-13.
 
-``execute_trade_action`` takes the order side from the caller. For a sell it
-sets ``portfolio_total`` to the current NAV from the gateway's
+``execute_trade_action`` takes the order side from the caller. For a sell the
+governor's committing run (``SymbolicGovernor.govern``) binds
+``portfolio_total`` to the current NAV from the gateway's
 :class:`~src.cage_finance.tools.trade_inputs.PortfolioNavSource`, never from
-the caller and never from the custodian cash balance. These tests run the
-params the tool hands to governance through the generated finance STPA rules
-for each region (FIN-1 sell fraction EU_ECB 0.08 / APAC_MAS 0.09 / US_FED 0.10):
+the caller and never from the custodian cash balance; the tool itself binds
+nothing. These tests run a real committing run whose sealing step is replaced
+by the generated finance STPA rules, so the params checked are exactly the
+evaluated params the kernel bound, for each region (FIN-1 sell fraction
+EU_ECB 0.08 / APAC_MAS 0.09 / US_FED 0.10):
 
 * a sell within the regional fraction of NAV clears the STPA stage;
 * a sell over it is a HARD UCA-13 violation;
-* a missing, faulted or untrustworthy NAV source leaves ``portfolio_total``
-  unset, and UCA-13 refuses the sell;
+* a missing or unreachable NAV source blocks the run on infrastructure, and a
+  faulted or untrustworthy one leaves ``portfolio_total`` unset, so UCA-13
+  refuses the sell;
 * a buy carries no ``portfolio_total`` and skips UCA-13.
 """
 
@@ -56,9 +60,10 @@ from src.cage_finance.tools.trade_inputs import (
     resolve_portfolio_total,
 )
 from src.gateway.governance.contracts import ViolationKind
+from src.gateway.governance.governor import governor as governor_mod
 from src.gateway.governance.schemas.thresholds import load_and_validate_thresholds
 from src.gateway.governance.seams.ground_truth import FaultMode
-from tests.fixtures.trade_inputs import trade_governor
+from tests.fixtures.trade_inputs import committing_trade_governor
 
 pytestmark = [
     pytest.mark.unit,
@@ -73,7 +78,7 @@ _CASH = "finance.cash_balance"
 
 
 class _Cleared(Exception):
-    """Raised by the fake gateway when the STPA stage has no HARD violation."""
+    """Raised by the STPA stand-in when the stage has no HARD violation."""
 
     def __init__(self, params: dict[str, Any]) -> None:
         super().__init__("cleared")
@@ -92,26 +97,32 @@ def region(request: pytest.FixtureRequest, monkeypatch: pytest.MonkeyPatch) -> s
 
 @pytest.fixture
 def stpa_gateway(monkeypatch: pytest.MonkeyPatch) -> list[dict[str, Any]]:
-    """Replace ``enforce_governance`` with the generated finance STPA stage.
+    """The committing run, with the generated finance STPA rules as its only stage.
 
-    A HARD violation becomes the ``PermissionError`` the real middleware
-    raises (the tool returns ``BLOCKED: ...``). A clean run raises
-    :class:`_Cleared` carrying the params, so the test stops before sealing.
+    The real ``enforce_governance`` and ``SymbolicGovernor.govern`` run, so
+    the kernel binds the trade's server inputs exactly once (an unavailable
+    source blocks the run on infrastructure before any stage runs). The
+    sealing step receives the evaluated params and is replaced here: a HARD
+    violation becomes the ``PermissionError`` the tool reports as
+    ``BLOCKED: ...``; a clean run raises :class:`_Cleared` carrying the
+    evaluated params, so the test stops before sealing.
     """
     seen: list[dict[str, Any]] = []
 
-    async def _enforce(_governor: Any, action: str, params: dict[str, Any]) -> str:
-        seen.append(dict(params))
+    async def _stpa_stage(
+        _stages: Any, ctx: Any, evaluated: dict[str, Any], **_kwargs: Any
+    ) -> Any:
+        seen.append(dict(evaluated))
         hard = [
             v
-            for v in GeneratedSTPAValidator().validate(action, dict(params))
+            for v in GeneratedSTPAValidator().validate(ctx.action, dict(evaluated))
             if v.kind is ViolationKind.HARD
         ]
         if hard:
             raise PermissionError("; ".join(f"{v.code}: {v.message}" for v in hard))
-        raise _Cleared(dict(params))
+        raise _Cleared(dict(evaluated))
 
-    monkeypatch.setattr(tool_provider, "enforce_governance", _enforce)
+    monkeypatch.setattr(governor_mod, "run_sealed", _stpa_stage)
     return seen
 
 
@@ -129,10 +140,12 @@ def _inputs(nav_source: Any = None, *, no_nav: bool = False) -> ServerTradeInput
 
 def _governor(
     inputs: ServerTradeInputs, providers: dict[str, Any] | None = None
-) -> MagicMock:
-    governor = trade_governor({"execute_trade": TradeInputResolver(inputs)})
-    governor.components.ground_truth_providers = providers or {}
-    return governor
+) -> Any:
+    """A real governor whose committing run binds ``inputs`` for execute_trade."""
+    return committing_trade_governor(
+        {"execute_trade": TradeInputResolver(inputs)},
+        ground_truth_providers=providers,
+    )
 
 
 async def _trade(

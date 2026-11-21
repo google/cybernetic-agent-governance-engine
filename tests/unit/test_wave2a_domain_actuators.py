@@ -61,7 +61,7 @@ from src.gateway.governance.seams.actuation import (
     ActuationOutcome,
     ExecutionClearance,
 )
-from tests.fixtures.trade_inputs import trade_governor
+from tests.fixtures.trade_inputs import sealed_governance, trade_governor
 
 pytestmark = [pytest.mark.unit, pytest.mark.local]
 
@@ -296,7 +296,7 @@ class TestDA01BrokerWirePhaseAndSettlement:
         with (
             patch(
                 "src.cage_finance.tools.tool_provider.enforce_governance",
-                AsyncMock(return_value=seal),
+                AsyncMock(side_effect=sealed_governance(seal)),
             ),
             patch(
                 "src.gateway.governance.routing_seal.verify_and_consume_seal",

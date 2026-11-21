@@ -538,7 +538,7 @@ silently breaking every downstream signature/hash comparison.
 | File:Line | Method Used | Should Use JCS? |
 |---|---|---|
 | [`governance_envelope.py:223,230`](../src/gateway/governance/governance_envelope.py:223) `to_canonical_bytes()` / `compute_digest()` | `jcs_canonicalize_plan()` | ✅ Already correct |
-| [`governance_envelope.py:277`](../src/gateway/governance/governance_envelope.py:277) `_compute_action_hash()` | `jcs_canonicalize_plan()` | ✅ Already correct |
+| [`governance_envelope.py:139`](../src/gateway/governance/governance_envelope.py:139) `envelope_action_hash()` | `jcs_canonicalize_plan()` | ✅ Already correct |
 | [`kms_signer.py:53-57`](../src/gateway/governance/kms_signer.py:53) `_canonicalise_plan()` | `jcs_canonicalize_plan()` | ✅ Already correct |
 | [`routing_seal.py:187-200`](../src/gateway/governance/routing_seal.py:187) `_canonical_payload()` (v2 HMAC seal path) | `json.dumps(sort_keys=True, separators=(",", ":"))` | ❌ **Inconsistent** — legacy HMAC fallback path never migrated to JCS |
 | [`routing_seal.py:227,244-245,485`](../src/gateway/governance/routing_seal.py:227) v3 JWT path (`action_hash`) | Mixed: `jcs_canonicalize_plan()` for `action_hash` at :227/:485, but raw `json.dumps(header)`/`json.dumps(payload)` (not sorted, not JCS) for the JWT header/payload themselves at :244-245 | ❌ **Partially inconsistent** — the JWT envelope structure itself is not JCS-canonicalized, only the embedded `action_hash` |

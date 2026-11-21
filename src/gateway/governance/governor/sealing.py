@@ -43,6 +43,24 @@ from src.gateway.governance.governor.settlement import SettlementLedger
 from src.gateway.governance.governor.verdicts import issue_seal
 
 
+@dataclasses.dataclass(frozen=True, eq=False)
+class SealedAction:
+    """What a committing run returns: the action, its seal and the evaluated params.
+
+    ``params`` are the evaluated params: the caller's params with the
+    action's server inputs bound exactly once. They are identical to what
+    the stages evaluated and to what the seal's ``action_hash`` commits to
+    (for a NARROW, the re-bound clamped params the re-run evaluated).
+    Callers verify the seal and actuate against ``params``, never against
+    their own input: caller values for server-owned keys were replaced, so
+    a seal verified against the caller's dict fails closed.
+    """
+
+    action: str
+    seal: str
+    params: dict[str, Any]
+
+
 def _build_decision_context(
     result: PipelineResult,
     *,
@@ -105,9 +123,11 @@ async def run_sealed(
     ``admit()`` is the last gate before a clean run is sealed: it runs inside
     the scope, after every stage and before the seal is minted.  It returns
     ``(result, None)`` when ``admit()`` answers ``False``: nothing is sealed
-    and the scope rolls every commit back.  The post-approval run passes the
-    approval's atomic ``spend`` here, so an approval is consumed only by the
-    run it authorises, and a run that loses a redemption race mints nothing.
+    and the scope rolls every commit back.  The post-approval run passes a
+    closure over the approval's atomic, coverage-checked
+    ``spend(evaluated)`` here, with the very params about to be sealed, so an
+    approval is consumed only by the run it authorises and covers, and a run
+    that loses a redemption race mints nothing.
 
     The seal's evidence record commits to the run's warrant reliance records
     (``PipelineResult.reliance``) and stage coverage context, so the seal
@@ -151,3 +171,6 @@ def assert_nothing_committed(result: PipelineResult) -> None:
         raise GovernanceError(
             f"[UNROLLED_COMMIT] refused run left commits outstanding: {stages}"
         )
+
+
+__all__ = ["SealedAction", "assert_nothing_committed", "run_sealed"]

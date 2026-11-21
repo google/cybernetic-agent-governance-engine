@@ -84,7 +84,10 @@ from src.gateway.governance.contracts import NarrowingResult
 from src.gateway.governance.decisions import GovernanceDecision
 from src.gateway.governance.defer_queue import ApprovalRecord, DeferQueue
 from src.gateway.governance.evidence import stream as evidence_stream
-from src.gateway.governance.governance_envelope import unwrap_governance_envelope
+from src.gateway.governance.governance_envelope import (
+    envelope_action_hash,
+    unwrap_governance_envelope,
+)
 from src.gateway.governance.governor import governor as governor_mod
 from src.gateway.governance.governor import pipeline as pipeline_mod
 from src.gateway.governance.governor.governor import GovernanceError, SymbolicGovernor
@@ -816,6 +819,48 @@ async def test_s1b_opa_manual_review_alone_requires_approval(gw: Gateway) -> Non
     assert body["verdict"] == GovernanceDecision.REQUIRE_APPROVAL
     assert body["classification_reason"] == "opa_manual_review"
     assert [v for v in body["violations"] if "FTRA" in str(v)] == []
+
+
+async def test_preview_envelope_binds_the_request_and_audits_the_evaluated_params(
+    gw: Gateway,
+) -> None:
+    # subject.action_hash binds what the caller sent; evaluated_action_hash
+    # names the params the stages evaluated (trader and STPA inputs bound).
+    params = trade(500.0)
+
+    resp = await gw.validate(params, identity=JUNIOR_DESK)
+
+    assert resp.status_code == 200, resp.text
+    envelope = resp.json()
+    subject = envelope["subject"]
+    assert subject["action_hash"] == envelope_action_hash("execute_trade", params)
+    assert subject["evaluated_action_hash"].startswith("sha256:")
+    assert subject["evaluated_action_hash"] != subject["action_hash"]
+    assert "evaluated_action_hash" not in envelope["payload"]
+    await _assert_nothing_committed(gw)
+
+
+async def test_the_trade_is_verified_and_actuated_with_the_evaluated_params(
+    gw: Gateway,
+) -> None:
+    # The committing run binds the trader and the STPA inputs once and seals
+    # them; the real seal check passes only against those evaluated params,
+    # and the broker receives exactly them (the caller supplied none).
+    result = await gw.execute(trade(500.0), identity=JUNIOR_DESK)
+
+    assert result.startswith("EXECUTED"), result
+    clearance = gw.actuate.await_args.args[0]
+    assert (clearance.params["trader_role"], clearance.params["trader_id"]) == (
+        "junior",
+        JUNIOR_DESK,
+    )
+    assert clearance.operator_urn == JUNIOR_DESK
+    assert {"latency_ms", "drawdown", "order_size", "daily_vol"} <= set(
+        clearance.params
+    )
+    evaluated = gw.policy.calls[-1]
+    assert evaluated["trader_role"] == clearance.params["trader_role"]
+    assert evaluated["trader_id"] == clearance.params["trader_id"]
 
 
 # ---------------------------------------------------------------------------

@@ -24,12 +24,15 @@ and build response body in _build_narrow_response(), but narrowed parameters
 cannot reach mcp_tool_server.py through Envoy ext_authz protocol.
 
 **Fix**: Receipt-based transport using Redis fetch-and-burn pattern:
-  1. SymbolicGovernor._sealed_narrow() stores the narrowed params via
+  1. SymbolicGovernor._sealed_narrow() seals the re-bound clamped params,
+     returns them as ``SealedAction.params`` and stores the same params via
      issue_narrow_receipt() under narrow_receipt_key(seal), i.e.
      narrow:receipt:<sha256(seal)>
   2. The tool provider uses the governor seal to look up and delete the receipt
   3. 5-minute TTL prevents receipt leakage
   4. Signature verification prevents receipt forgery
+  5. The receipt is a cross-check only: the tool verifies and actuates
+     ``SealedAction.params``, and a receipt naming other params refuses
 
 Test coverage:
   1. Receipt generation with seal-keyed storage
@@ -37,10 +40,12 @@ Test coverage:
   3. Fetch-and-burn pattern (one-time use)
   4. Receipt expiry handling
   5. Signature mismatch detection
-  6. Narrowed params applied to trade execution
-  7. Seal computed over narrowed params (not original)
+  6. Narrowed (sealed) params applied to trade execution
+  7. Seal verified over the narrowed params (not original)
   8. CAGE_NARROW_ENABLED=false fallback
   9. Receipt replay prevention
+ 10. A receipt naming params other than the sealed params is refused
+ 11. A matching receipt is burned and the sealed params are actuated
 """
 
 from __future__ import annotations
@@ -48,15 +53,31 @@ from __future__ import annotations
 import json
 import os
 import uuid
+from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
 from src.gateway.governance.decisions import GovernanceDecision
+from src.gateway.governance.governor.sealing import SealedAction
 from src.gateway.governance.narrow_receipt import narrow_receipt_key
-from tests.fixtures.trade_inputs import trade_governor
+from tests.fixtures.trade_inputs import sealed_governance, trade_governor
 
 pytestmark = [pytest.mark.usefixtures("connected_evidence_sink")]
+
+
+def _receipt(seal: str, narrowed_params: dict[str, Any], **extra: Any) -> str:
+    """A stored NARROW receipt payload, as issue_narrow_receipt() writes it."""
+    return json.dumps(
+        {
+            "narrowed_params": narrowed_params,
+            "original_signature": seal,
+            "timestamp": 1234567890.0,
+            "clamp_reason": "test",
+            "constraints_applied": [],
+            **extra,
+        }
+    )
 
 
 @pytest.mark.unit
@@ -66,17 +87,18 @@ async def test_mcp_server_fetches_and_burns_receipt():
     from src.cage_finance.tools.tool_provider import execute_trade_action
 
     seal = "c" * 64
+    narrowed = {
+        "symbol": "MSFT",
+        "amount": 25.0,
+        "currency": "USD",
+        "confidence": 0.95,
+        "transaction_id": "tx123",
+        "trader_id": "agent_001",
+        "trader_role": "junior",
+        "dry_run": True,
+    }
     receipt_payload = {
-        "narrowed_params": {
-            "symbol": "MSFT",
-            "amount": 25.0,
-            "currency": "USD",
-            "confidence": 0.95,
-            "transaction_id": "tx123",
-            "trader_id": "agent_001",
-            "trader_role": "junior",
-            "dry_run": True,
-        },
+        "narrowed_params": narrowed,
         "original_signature": seal,
         "timestamp": 1234567890.0,
         "clamp_reason": "test",
@@ -85,7 +107,8 @@ async def test_mcp_server_fetches_and_burns_receipt():
 
     mock_redis = AsyncMock()
     mock_redis.get.return_value = json.dumps(receipt_payload)
-    mock_enforce = AsyncMock(return_value=seal)
+    # The narrowed committing run returns the clamped params it sealed.
+    mock_enforce = AsyncMock(return_value=SealedAction("execute_trade", seal, narrowed))
     mock_verify = AsyncMock()
 
     with patch("src.gateway.infrastructure.redis_client.redis_client", mock_redis):
@@ -99,7 +122,7 @@ async def test_mcp_server_fetches_and_burns_receipt():
                 result = await execute_trade_action(
                     governor=trade_governor(),
                     transaction_id=str(uuid.uuid4()),
-                    symbol="AAPL",  # Original params (will be replaced by narrowed)
+                    symbol="AAPL",  # Original params (the seal names the narrowed)
                     amount=100.0,
                     currency="USD",
                     confidence=0.95,
@@ -131,23 +154,16 @@ async def test_expired_receipt_rejected():
     seal = "d" * 64
     mock_redis = AsyncMock()
     mock_redis.get.return_value = None  # Receipt expired or doesn't exist
-    mock_enforce = AsyncMock(return_value=seal)
+    mock_enforce = AsyncMock(side_effect=sealed_governance(seal))
 
     with patch("src.gateway.infrastructure.redis_client.redis_client", mock_redis):
         with patch(
             "src.cage_finance.tools.tool_provider.enforce_governance", mock_enforce
         ):
-            # When receipt is missing, it should fail silently (no NARROW receipt)
-            # and proceed with original params. To test expiry, we need to simulate
-            # a receipt that was expected but missing.
-            #
-            # Actually, looking at the implementation, if receipt is None, it just
-            # logs debug and continues with original params. This is correct because
-            # ALLOW verdicts won't have a receipt.
-            #
-            # To properly test expiry, we'd need to mock the scenario where
-            # _build_narrow_response was called but the receipt TTL expired.
-            # Since that's a race condition, let's verify the behavior is safe.
+            # A missing receipt is not an error by itself: an ALLOW verdict has
+            # none. The tool verifies the seal against the sealed params it was
+            # handed (SealedAction.params); here the seal is not a real one, so
+            # verification refuses the trade.
 
             result = await execute_trade_action(
                 governor=trade_governor(),
@@ -159,7 +175,7 @@ async def test_expired_receipt_rejected():
                 dry_run=True,
             )
 
-    # Should succeed with original params (no receipt found = ALLOW verdict path)
+    # Should succeed with the sealed params, or refuse an unverifiable seal
     assert "DRY_RUN: APPROVED" in result or "BLOCKED" in result
 
 
@@ -191,7 +207,7 @@ async def test_forged_receipt_rejected():
 
     mock_redis = AsyncMock()
     mock_redis.get.return_value = json.dumps(receipt_payload)
-    mock_enforce = AsyncMock(return_value=seal)
+    mock_enforce = AsyncMock(side_effect=sealed_governance(seal))
 
     with patch("src.gateway.infrastructure.redis_client.redis_client", mock_redis):
         with patch(
@@ -215,21 +231,22 @@ async def test_forged_receipt_rejected():
 @pytest.mark.unit
 @pytest.mark.asyncio
 async def test_narrowed_params_applied_to_trade():
-    """Test 6: Verify trade executes with narrowed params, not original."""
+    """Test 6: The trade runs the sealed (narrowed) params, never the original."""
     from src.cage_finance.tools.tool_provider import execute_trade_action
 
     seal = "g" * 64
+    narrowed = {
+        "symbol": "TSLA",
+        "amount": 10.0,  # Narrowed from 500.0
+        "currency": "USD",
+        "confidence": 0.95,
+        "transaction_id": "tx456",
+        "trader_id": "agent_001",
+        "trader_role": "junior",
+        "dry_run": True,
+    }
     receipt_payload = {
-        "narrowed_params": {
-            "symbol": "TSLA",
-            "amount": 10.0,  # Narrowed from 500.0
-            "currency": "USD",
-            "confidence": 0.95,
-            "transaction_id": "tx456",
-            "trader_id": "agent_001",
-            "trader_role": "junior",
-            "dry_run": True,
-        },
+        "narrowed_params": narrowed,
         "original_signature": seal,
         "timestamp": 1234567890.0,
         "clamp_reason": "amount clamped to fiscal limit",
@@ -238,7 +255,7 @@ async def test_narrowed_params_applied_to_trade():
 
     mock_redis = AsyncMock()
     mock_redis.get.return_value = json.dumps(receipt_payload)
-    mock_enforce = AsyncMock(return_value=seal)
+    mock_enforce = AsyncMock(return_value=SealedAction("execute_trade", seal, narrowed))
     mock_verify = AsyncMock()
 
     with patch("src.gateway.infrastructure.redis_client.redis_client", mock_redis):
@@ -253,7 +270,7 @@ async def test_narrowed_params_applied_to_trade():
                     governor=trade_governor(),
                     transaction_id=str(uuid.uuid4()),
                     symbol="AAPL",  # Original
-                    amount=500.0,  # Original (should be replaced)
+                    amount=500.0,  # Original (the seal names the narrowed amount)
                     currency="USD",
                     confidence=0.95,
                     dry_run=True,
@@ -272,11 +289,11 @@ async def test_narrowed_params_applied_to_trade():
 @pytest.mark.asyncio
 async def test_seal_computed_over_narrowed_params():
     """Test 7: Verify seal is computed over narrowed params, not original."""
-    # This is verified in SymbolicGovernor._narrow (governor/governor.py)
-    # The test here confirms the contract is honored end-to-end
+    # The governor seals the narrowed params (SymbolicGovernor._sealed_narrow,
+    # governor/governor.py) and returns them as SealedAction.params. The test
+    # here confirms the contract is honored end-to-end.
 
     from src.cage_finance.tools.tool_provider import execute_trade_action
-    from src.gateway.governance.routing_seal import generate_seal_with_evidence
 
     seal = "h" * 64
     narrowed_params = {
@@ -300,7 +317,9 @@ async def test_seal_computed_over_narrowed_params():
 
     mock_redis = AsyncMock()
     mock_redis.get.return_value = json.dumps(receipt_payload)
-    mock_enforce = AsyncMock(return_value=seal)
+    mock_enforce = AsyncMock(
+        return_value=SealedAction("execute_trade", seal, dict(narrowed_params))
+    )
     mock_verify = AsyncMock()
 
     with patch("src.gateway.infrastructure.redis_client.redis_client", mock_redis):
@@ -361,17 +380,18 @@ async def test_receipt_replay_blocked():
     from src.cage_finance.tools.tool_provider import execute_trade_action
 
     seal = "i" * 64
+    narrowed = {
+        "symbol": "AMD",
+        "amount": 20.0,
+        "currency": "USD",
+        "confidence": 0.95,
+        "transaction_id": "tx999",
+        "trader_id": "agent_001",
+        "trader_role": "junior",
+        "dry_run": True,
+    }
     receipt_payload = {
-        "narrowed_params": {
-            "symbol": "AMD",
-            "amount": 20.0,
-            "currency": "USD",
-            "confidence": 0.95,
-            "transaction_id": "tx999",
-            "trader_id": "agent_001",
-            "trader_role": "junior",
-            "dry_run": True,
-        },
+        "narrowed_params": narrowed,
         "original_signature": seal,
         "timestamp": 1234567890.0,
         "clamp_reason": "test",
@@ -384,7 +404,7 @@ async def test_receipt_replay_blocked():
         json.dumps(receipt_payload),  # First fetch succeeds
         None,  # Second fetch fails (burned)
     ]
-    mock_enforce = AsyncMock(return_value=seal)
+    mock_enforce = AsyncMock(return_value=SealedAction("execute_trade", seal, narrowed))
     mock_verify = AsyncMock()
 
     with patch("src.gateway.infrastructure.redis_client.redis_client", mock_redis):
@@ -406,7 +426,7 @@ async def test_receipt_replay_blocked():
                     dry_run=True,
                 )
 
-                # Second execution with same seal should use original params
+                # Second execution with the same seal finds no receipt
                 # (no receipt found = ALLOW path, not NARROW)
                 result2 = await execute_trade_action(
                     governor=trade_governor(),
@@ -424,5 +444,362 @@ async def test_receipt_replay_blocked():
     mock_redis.delete.assert_any_call(receipt_key)
 
     assert "DRY_RUN: APPROVED" in result1
-    # Second call should also succeed but with original params (no receipt)
+    # Second call verifies the sealed params without a receipt
     assert "DRY_RUN: APPROVED" in result2 or "BLOCKED" in result2
+
+
+@pytest.mark.unit
+@pytest.mark.asyncio
+async def test_receipt_naming_other_params_than_the_sealed_params_is_refused():
+    """Test 10: A receipt that does not name the sealed params refuses the trade.
+
+    The receipt is burned, an AC-3 refusal names the sealed params, and the
+    seal is neither verified nor actuated; its commits are released.
+    """
+    from src.cage_finance.tools.tool_provider import execute_trade_action
+
+    seal = "j" * 64
+    sealed_params = {
+        "symbol": "AAPL",
+        "amount": 25.0,
+        "currency": "USD",
+        "confidence": 0.95,
+        "transaction_id": "tx-sealed",
+        "trader_id": "agent_001",
+        "trader_role": "junior",
+        "dry_run": False,
+    }
+    mock_redis = AsyncMock()
+    mock_redis.get.return_value = _receipt(seal, {**sealed_params, "amount": 2500.0})
+    verify = AsyncMock()
+    actuate = AsyncMock()
+    governor = trade_governor()
+
+    with (
+        patch("src.gateway.infrastructure.redis_client.redis_client", mock_redis),
+        patch(
+            "src.cage_finance.tools.tool_provider.enforce_governance",
+            AsyncMock(return_value=SealedAction("execute_trade", seal, sealed_params)),
+        ),
+        patch("src.gateway.governance.routing_seal.verify_and_consume_seal", verify),
+        patch("src.cage_finance.tools.tool_provider._broker_actuator.actuate", actuate),
+        patch(
+            "src.cage_finance.tools.tool_provider.record_refusal",
+            new_callable=AsyncMock,
+        ) as refusals,
+    ):
+        result = await execute_trade_action(
+            governor=governor,
+            transaction_id=str(uuid.uuid4()),
+            symbol="AAPL",
+            amount=100.0,
+            currency="USD",
+            confidence=0.95,
+        )
+
+    assert result.startswith(
+        "BLOCKED: Narrowing receipt names params other than the sealed params"
+    ), result
+    mock_redis.delete.assert_called_once_with(narrow_receipt_key(seal))  # burned
+    refusals.assert_awaited_once()
+    action, reason = refusals.await_args.args
+    assert action == "execute_trade"
+    assert reason.startswith("Narrowing receipt names params other than the sealed")
+    assert refusals.await_args.kwargs["oscal_control_ref"] == "AC-3"
+    assert refusals.await_args.kwargs["params"] == sealed_params
+    verify.assert_not_awaited()
+    actuate.assert_not_awaited()
+    governor.settle.assert_awaited_once_with(seal, executed=False)
+
+
+@pytest.mark.unit
+@pytest.mark.asyncio
+async def test_matching_receipt_is_burned_and_the_sealed_params_are_actuated():
+    """Test 11: A receipt naming the sealed params lets the sealed params run."""
+    from src.cage_finance.tools.tool_provider import execute_trade_action
+    from src.gateway.governance.seams.actuation import (
+        ActuationOutcome,
+        ActuationReceipt,
+    )
+
+    seal = "k" * 64
+    narrowed = {
+        "symbol": "AAPL",
+        "amount": 30.0,  # Narrowed from 100.0
+        "currency": "USD",
+        "confidence": 0.95,
+        "transaction_id": "tx-narrowed",
+        "trader_id": "agent_001",
+        "trader_role": "junior",
+        "dry_run": False,
+    }
+    mock_redis = AsyncMock()
+    mock_redis.get.return_value = _receipt(seal, narrowed)
+    verify = AsyncMock()
+    actuate = AsyncMock(
+        return_value=ActuationReceipt(
+            accepted=True,
+            receipt_id="r-narrow",
+            session_uuid="s-narrow",
+            raw_receipt={},
+            findings=[],
+            retryable=False,
+            outcome=ActuationOutcome.ACCEPTED,
+        )
+    )
+    governor = trade_governor()
+
+    with (
+        patch("src.gateway.infrastructure.redis_client.redis_client", mock_redis),
+        patch(
+            "src.cage_finance.tools.tool_provider.enforce_governance",
+            AsyncMock(return_value=SealedAction("execute_trade", seal, narrowed)),
+        ),
+        patch("src.gateway.governance.routing_seal.verify_and_consume_seal", verify),
+        patch("src.cage_finance.tools.tool_provider._broker_actuator.actuate", actuate),
+    ):
+        result = await execute_trade_action(
+            governor=governor,
+            transaction_id=str(uuid.uuid4()),
+            symbol="AAPL",
+            amount=100.0,
+            currency="USD",
+            confidence=0.95,
+        )
+
+    assert result.startswith("EXECUTED: AAPL x 30.0"), result
+    mock_redis.delete.assert_called_once_with(narrow_receipt_key(seal))
+    verify.assert_awaited_once_with(seal, "execute_trade", narrowed)
+    assert actuate.await_args.args[0].params == narrowed
+    governor.settle.assert_awaited_once_with(seal, executed=True)
+
+
+@pytest.mark.unit
+@pytest.mark.asyncio
+async def test_missing_narrow_receipt_refuses_narrowed_trade():
+    """Decision 3: A narrowed trade with no receipt in Redis is refused (never unconfirmed)."""
+    from src.cage_finance.tools.tool_provider import execute_trade_action
+
+    tx_id = "00000000-0000-4000-8000-000000000001"
+    seal = "m" * 64
+    narrowed = {
+        "symbol": "AAPL",
+        "amount": 30.0,  # Narrowed from 100.0
+        "currency": "USD",
+        "confidence": 0.95,
+        "transaction_id": tx_id,
+        "trader_id": "agent_001",
+        "trader_role": "junior",
+        "dry_run": False,
+    }
+    mock_redis = AsyncMock()
+    mock_redis.get.return_value = None
+    verify = AsyncMock()
+    actuate = AsyncMock()
+    governor = trade_governor()
+
+    with (
+        patch("src.gateway.infrastructure.redis_client.redis_client", mock_redis),
+        patch(
+            "src.cage_finance.tools.tool_provider.enforce_governance",
+            AsyncMock(return_value=SealedAction("execute_trade", seal, narrowed)),
+        ),
+        patch("src.gateway.governance.routing_seal.verify_and_consume_seal", verify),
+        patch("src.cage_finance.tools.tool_provider._broker_actuator.actuate", actuate),
+        patch(
+            "src.cage_finance.tools.tool_provider.record_refusal",
+            new_callable=AsyncMock,
+        ) as refusals,
+    ):
+        result = await execute_trade_action(
+            governor=governor,
+            transaction_id=tx_id,
+            symbol="AAPL",
+            amount=100.0,
+            currency="USD",
+            confidence=0.95,
+        )
+
+    assert result.startswith("BLOCKED: Narrowing receipt missing"), result
+    refusals.assert_awaited_once()
+    assert refusals.await_args.kwargs["oscal_control_ref"] == "AC-3"
+    assert refusals.await_args.kwargs["params"] == narrowed
+    verify.assert_not_awaited()
+    actuate.assert_not_awaited()
+    governor.settle.assert_awaited_once_with(seal, executed=False)
+
+
+@pytest.mark.unit
+@pytest.mark.asyncio
+async def test_corrupt_narrow_receipt_refuses_trade():
+    """Decision 3: A non-JSON NARROW receipt payload is refused and recorded."""
+    from src.cage_finance.tools.tool_provider import execute_trade_action
+
+    tx_id = "00000000-0000-4000-8000-000000000002"
+    seal = "c" * 64
+    narrowed = {
+        "symbol": "AAPL",
+        "amount": 30.0,
+        "currency": "USD",
+        "confidence": 0.95,
+        "transaction_id": tx_id,
+        "trader_id": "agent_001",
+        "trader_role": "junior",
+        "dry_run": False,
+    }
+    mock_redis = AsyncMock()
+    mock_redis.get.return_value = "{not-valid-json"
+    verify = AsyncMock()
+    actuate = AsyncMock()
+    governor = trade_governor()
+
+    with (
+        patch("src.gateway.infrastructure.redis_client.redis_client", mock_redis),
+        patch(
+            "src.cage_finance.tools.tool_provider.enforce_governance",
+            AsyncMock(return_value=SealedAction("execute_trade", seal, narrowed)),
+        ),
+        patch("src.gateway.governance.routing_seal.verify_and_consume_seal", verify),
+        patch("src.cage_finance.tools.tool_provider._broker_actuator.actuate", actuate),
+        patch(
+            "src.cage_finance.tools.tool_provider.record_refusal",
+            new_callable=AsyncMock,
+        ) as refusals,
+    ):
+        result = await execute_trade_action(
+            governor=governor,
+            transaction_id=tx_id,
+            symbol="AAPL",
+            amount=100.0,
+            currency="USD",
+            confidence=0.95,
+        )
+
+    assert result == "BLOCKED: Narrowing receipt payload corrupted"
+    mock_redis.delete.assert_called_once_with(narrow_receipt_key(seal))
+    refusals.assert_awaited_once()
+    verify.assert_not_awaited()
+    actuate.assert_not_awaited()
+    governor.settle.assert_awaited_once_with(seal, executed=False)
+
+
+@pytest.mark.unit
+@pytest.mark.asyncio
+async def test_narrow_receipt_store_outage_raises_infrastructure_block_no_refusal():
+    """Decision 3: Redis outage on a narrowed trade raises 503 infrastructure block, not AC-3 refusal."""
+    from src.cage_finance.tools.tool_provider import execute_trade_action
+    from src.gateway.governance.governor.errors import GovernanceInfrastructureError
+
+    tx_id = "00000000-0000-4000-8000-000000000003"
+    seal = "o" * 64
+    narrowed = {
+        "symbol": "AAPL",
+        "amount": 30.0,
+        "currency": "USD",
+        "confidence": 0.95,
+        "transaction_id": tx_id,
+        "trader_id": "agent_001",
+        "trader_role": "junior",
+        "dry_run": False,
+    }
+    mock_redis = AsyncMock()
+    mock_redis.get.side_effect = ConnectionError("redis unreachable")
+    verify = AsyncMock()
+    actuate = AsyncMock()
+    governor = trade_governor()
+
+    with (
+        patch("src.gateway.infrastructure.redis_client.redis_client", mock_redis),
+        patch(
+            "src.cage_finance.tools.tool_provider.enforce_governance",
+            AsyncMock(return_value=SealedAction("execute_trade", seal, narrowed)),
+        ),
+        patch("src.gateway.governance.routing_seal.verify_and_consume_seal", verify),
+        patch("src.cage_finance.tools.tool_provider._broker_actuator.actuate", actuate),
+        patch(
+            "src.cage_finance.tools.tool_provider.record_refusal",
+            new_callable=AsyncMock,
+        ) as refusals,
+        patch(
+            "src.gateway.governance.governor.verdicts.publish_infrastructure_block",
+            new_callable=AsyncMock,
+        ) as publish_infra,
+    ):
+        with pytest.raises(GovernanceInfrastructureError) as exc_info:
+            await execute_trade_action(
+                governor=governor,
+                transaction_id=tx_id,
+                symbol="AAPL",
+                amount=100.0,
+                currency="USD",
+                confidence=0.95,
+            )
+
+    assert exc_info.value.failure_code == "NARROW_RECEIPT_UNAVAILABLE"
+    publish_infra.assert_awaited_once()
+    refusals.assert_not_awaited()
+    verify.assert_not_awaited()
+    actuate.assert_not_awaited()
+    governor.settle.assert_awaited_once_with(seal, executed=False)
+
+
+@pytest.mark.unit
+@pytest.mark.asyncio
+async def test_jcs_canonical_equivalence_accepts_int_float_narrow_receipt():
+    """Decision 2: _same_params compares via canonical_action_bytes (RFC 8785 JCS)."""
+    from src.cage_finance.tools.tool_provider import execute_trade_action
+    from src.gateway.governance.seams.actuation import (
+        ActuationOutcome,
+        ActuationReceipt,
+    )
+
+    tx_id = "00000000-0000-4000-8000-000000000004"
+    seal = "j" * 64
+    narrowed_float = {
+        "symbol": "AAPL",
+        "amount": 30.0,
+        "currency": "USD",
+        "confidence": 0.95,
+        "transaction_id": tx_id,
+        "trader_id": "agent_001",
+        "trader_role": "junior",
+        "dry_run": False,
+    }
+    narrowed_int_amount = {**narrowed_float, "amount": 30}
+    mock_redis = AsyncMock()
+    mock_redis.get.return_value = _receipt(seal, narrowed_int_amount)
+    verify = AsyncMock()
+    actuate = AsyncMock(
+        return_value=ActuationReceipt(
+            accepted=True,
+            receipt_id="r-jcs",
+            session_uuid="s-jcs",
+            raw_receipt={},
+            findings=[],
+            retryable=False,
+            outcome=ActuationOutcome.ACCEPTED,
+        )
+    )
+    governor = trade_governor()
+
+    with (
+        patch("src.gateway.infrastructure.redis_client.redis_client", mock_redis),
+        patch(
+            "src.cage_finance.tools.tool_provider.enforce_governance",
+            AsyncMock(return_value=SealedAction("execute_trade", seal, narrowed_float)),
+        ),
+        patch("src.gateway.governance.routing_seal.verify_and_consume_seal", verify),
+        patch("src.cage_finance.tools.tool_provider._broker_actuator.actuate", actuate),
+    ):
+        result = await execute_trade_action(
+            governor=governor,
+            transaction_id=tx_id,
+            symbol="AAPL",
+            amount=100.0,
+            currency="USD",
+            confidence=0.95,
+        )
+
+    assert result.startswith("EXECUTED: AAPL x 30.0"), result
+    verify.assert_awaited_once_with(seal, "execute_trade", narrowed_float)
+    governor.settle.assert_awaited_once_with(seal, executed=True)

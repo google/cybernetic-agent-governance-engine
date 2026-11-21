@@ -15,13 +15,14 @@
 """NARROW receipts: how a sealed narrowing reaches the tool that executes it.
 
 When the committing run (``SymbolicGovernor.govern``) narrows a request, the
-seal it returns covers the *clamped* params, not the ones the caller sent.
-The caller learns those params from a single-use receipt stored next to the
-seal (CAGE-SEC-004): keyed by the SHA-256 digest of the seal, holding the
-clamped params and the full seal, expiring after
-:data:`NARROW_RECEIPT_TTL_SECONDS`. The tool fetches and deletes it, then
-verifies the seal against the clamped params. A missing receipt fails closed
-on its own: the seal will not verify against the original params.
+seal covers the *clamped* params (server inputs re-bound), not the ones the
+caller sent, and the returned ``SealedAction`` carries them as ``params``. A
+single-use receipt stored next to the seal (CAGE-SEC-004) names the same
+params: keyed by the SHA-256 digest of the seal, holding the clamped params
+and the full seal, expiring after :data:`NARROW_RECEIPT_TTL_SECONDS`. The
+tool fetches and deletes it as a cross-check: a receipt naming another seal
+or other params refuses the action. The seal is verified against
+``SealedAction.params``, so it never verifies against the original params.
 """
 
 from __future__ import annotations

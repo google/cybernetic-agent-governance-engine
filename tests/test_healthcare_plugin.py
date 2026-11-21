@@ -364,6 +364,7 @@ class TestHealthcarePlugin:
         import src.gateway.governance.kms_signer as ks
         from src.cage_healthcare.tools.dose_order import DoseOrder
         from src.cage_healthcare.tools.tool_provider import administer_dose_action
+        from src.gateway.governance.governor.sealing import SealedAction
         from src.gateway.governance.routing_seal import (
             SymbolicGovernorViolation,
             generate_seal,
@@ -388,7 +389,11 @@ class TestHealthcarePlugin:
         with (
             patch(
                 "src.cage_healthcare.tools.tool_provider.enforce_governance",
-                AsyncMock(return_value=minted_seal),
+                AsyncMock(
+                    return_value=SealedAction(
+                        "administer_dose", minted_seal, dict(dose_params)
+                    )
+                ),
             ) as mock_enforce,
             patch(
                 "src.cage_healthcare.tools.tool_provider.verify_and_consume_seal",
@@ -407,7 +412,9 @@ class TestHealthcarePlugin:
         assert res["dose_mg"] == 2.0
         assert res.get("receipt_id") is not None
         mock_enforce.assert_awaited_once()
-        mock_verify_seal.assert_awaited_once()
+        mock_verify_seal.assert_awaited_once_with(
+            minted_seal, "administer_dose", dose_params
+        )
         governor.settle.assert_awaited_once_with(minted_seal, executed=True)
 
         # Replay / invalid seal blocks execution and settles with executed=False
@@ -415,7 +422,11 @@ class TestHealthcarePlugin:
         with (
             patch(
                 "src.cage_healthcare.tools.tool_provider.enforce_governance",
-                AsyncMock(return_value="seal-hc-replay"),
+                AsyncMock(
+                    return_value=SealedAction(
+                        "administer_dose", "seal-hc-replay", dict(dose_params)
+                    )
+                ),
             ),
             patch(
                 "src.cage_healthcare.tools.tool_provider.verify_and_consume_seal",

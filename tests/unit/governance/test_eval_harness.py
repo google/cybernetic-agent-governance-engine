@@ -949,25 +949,34 @@ async def test_fiscal_and_cbf_tier_shadow_state_preview_without_redis() -> None:
 
 
 @pytest.mark.asyncio
-async def test_revalidate_post_hitl_rebind_inputs_refreshes_server_telemetry(
+async def test_revalidate_post_hitl_binds_fresh_server_telemetry_once(
     connected_evidence_sink: Any,
 ) -> None:
-    """revalidate_post_hitl(rebind_inputs=True) refreshes server-owned inputs before OPA/Phase 2."""
+    """revalidate_post_hitl binds server-owned inputs afresh, exactly once, before OPA/Phase 2.
+
+    The caller's stale ``latency_ms`` is never read: the resolver's fresh value
+    is what the stages evaluate, what the approval's coverage is checked
+    against and what the refused run spends the approval for.
+    """
     from collections.abc import Mapping
 
     from src.gateway.governance.contracts import ServerInputResolver
-    from src.gateway.governance.governor.approval import PostHitlApproval
     from src.gateway.governance.governor.errors import GovernanceError
     from src.gateway.governance.governor.pipeline import (
         BarrierPreview,
         Stage,
         StageContext,
     )
+    from tests.fixtures.approval import SpendCounter, granted_approval
+
+    resolver_seen: list[dict[str, Any]] = []
+    stage_latencies: list[float] = []
 
     class _FreshLatencyResolver(ServerInputResolver):
         owned_keys = frozenset({"latency_ms"})
 
         async def resolve(self, params: Mapping[str, Any]) -> Mapping[str, Any]:
+            resolver_seen.append(dict(params))
             # Simulates quote becoming stale (350 ms > 200 ms) during 4h HITL wait
             return {"latency_ms": 350.0}
 
@@ -976,6 +985,7 @@ async def test_revalidate_post_hitl_rebind_inputs_refreshes_server_telemetry(
         mutating = False
 
         async def run(self, ctx: StageContext) -> list[Violation]:
+            stage_latencies.append(float(ctx.params.get("latency_ms", 0.0)))
             if float(ctx.params.get("latency_ms", 0.0)) > 200.0:
                 return [
                     Violation(
@@ -992,24 +1002,28 @@ async def test_revalidate_post_hitl_rebind_inputs_refreshes_server_telemetry(
         domain_tiers=(_BoundedTransferTier(),),
         server_inputs={"execute_transfer": _FreshLatencyResolver()},
     )
-    approval = PostHitlApproval(
+    counter = SpendCounter()
+    approval = granted_approval(
+        BarrierPreview.PASS.value,
         approval_id="app-toctou-01",
         thread_id="thread-toctou-01",
-        barrier_preview=BarrierPreview.PASS.value,
-        spend=lambda: _async_true(),
+        counter=counter,
     )
 
-    with pytest.raises(GovernanceError):
+    with pytest.raises(GovernanceError, match="UCA_2_STALE_QUOTE"):
         await governor.revalidate_post_hitl(
             "execute_transfer",
             {"amount": 50_000.0, "latency_ms": 10.0},
             approval=approval,
-            rebind_inputs=True,
         )
 
-
-async def _async_true() -> bool:
-    return True
+    evaluated = {"amount": 50_000.0, "latency_ms": 350.0}
+    # Bound exactly once; the resolver never sees the caller's value for its key.
+    assert resolver_seen == [{"amount": 50_000.0}]
+    assert stage_latencies == [350.0]
+    assert counter.covered == [evaluated]
+    # DENY spends the approval for the evaluated params, not the caller's.
+    assert counter.params == [evaluated]
 
 
 def test_causal_gatekeeper_telemetry_readiness() -> None:

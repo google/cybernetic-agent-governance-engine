@@ -424,7 +424,7 @@ async def test_cause3_path_a2_trapdoor1_atomic_resolve_failure_rolls_back_phase2
     )
     gov.components.opa.evaluate_policy = AsyncMock(return_value={"allow": "ALLOW"})
 
-    # Plant Trapdoor 1: hmget succeeds in redeemable_approval(), but Lua eval in
+    # Plant Trapdoor 1: hmget succeeds in redeemable_token(), but Lua eval in
     # DeferQueue._atomic_resolve() raises ConnectionError during _spend()!
     proxy_db1.fail_eval = ConnectionError("DB1 Lua eval socket lost")
 
@@ -470,7 +470,7 @@ async def test_cause3_path_a2_trapdoor1_atomic_resolve_failure_rolls_back_phase2
             new=AsyncMock(return_value="seal-after-db1-recovery"),
         ),
     ):
-        seal = await governance_middleware.enforce_approved_governance(
+        governed = await governance_middleware.enforce_approved_governance(
             gov,
             "execute_trade",
             {
@@ -485,7 +485,11 @@ async def test_cause3_path_a2_trapdoor1_atomic_resolve_failure_rolls_back_phase2
             deferred_id=deferred_id,
             approval_covers=_approval_covers_trade,
         )
-    assert seal == "seal-after-db1-recovery"
+    assert governed.seal == "seal-after-db1-recovery"
+    # The sealed params carry the trader bound from the verified caller identity.
+    assert governed.params["trader_id"] == "desk-a"
+    assert governed.params["trader_role"] == "senior"
+    assert governed.params["amount"] == 2_500.0
     assert await raw_db1.hget(f"DEFER:{deferred_id}", "status") == "CONSUMED"
 
 
@@ -1298,21 +1302,23 @@ async def test_cause2_server_input_outages_emit_503_and_preserve_approval_while_
         assert ver_res["decision"] == InfrastructureOutcome.INFRASTRUCTURE_BLOCK
         assert ver_res["violations"][0].code == exp_code
 
-        # revalidate_post_hitl (both rebind_inputs=False and True) -> preserves approval unspent!
-        for rebind in (False, True):
-            with (
-                _serving(_SENIOR_ID),
-                pytest.raises(GovernanceInfrastructureError) as rev_exc,
-            ):
-                await gov.revalidate_post_hitl(
-                    "execute_trade",
-                    {"symbol": "AAPL", "amount": 500.0, "confidence": 0.99},
-                    approval=granted_approval(counter=spend_counter),
-                    rebind_inputs=rebind,
-                )
-            assert rev_exc.value.error_code == "server_input_unavailable"
-            assert rev_exc.value.dependency == exp_dep
-            assert spend_counter.calls == 0
+        # revalidate_post_hitl binds server inputs exactly once, afresh, under
+        # the verified approval: an unavailable source blocks the run before
+        # any coverage check or stage runs and leaves the approval unspent.
+        with (
+            _serving(_SENIOR_ID),
+            pytest.raises(GovernanceInfrastructureError) as rev_exc,
+        ):
+            await gov.revalidate_post_hitl(
+                "execute_trade",
+                {"symbol": "AAPL", "amount": 500.0, "confidence": 0.99},
+                approval=granted_approval(counter=spend_counter),
+            )
+        assert rev_exc.value.error_code == "server_input_unavailable"
+        assert rev_exc.value.dependency == exp_dep
+        assert rev_exc.value.failure_code == exp_code
+        assert spend_counter.calls == 0
+        assert spend_counter.covered == []  # no evaluated params, no coverage
 
         assert "GOVERNANCE_REFUSAL" not in sink.types()
 

@@ -31,7 +31,7 @@ import pytest
 from src.cage_finance.tools.tool_provider import execute_trade_action
 from src.gateway.governance.routing_seal import SymbolicGovernorViolation
 from src.gateway.governance.seams.actuation import ActuationOutcome, ActuationReceipt
-from tests.fixtures.trade_inputs import trade_governor
+from tests.fixtures.trade_inputs import sealed_governance, trade_governor
 
 pytestmark = [
     pytest.mark.unit,
@@ -67,7 +67,7 @@ async def _run(
             patch(
                 "src.cage_finance.tools.tool_provider.enforce_governance",
                 new_callable=AsyncMock,
-                return_value=_SEAL,
+                side_effect=sealed_governance(_SEAL),
             )
         )
         stack.enter_context(

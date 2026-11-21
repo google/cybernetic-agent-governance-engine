@@ -1016,3 +1016,171 @@ class TestUnwrapGovernanceEnvelope:
         with patch("src.gateway.governance.jwks.get_jwks", return_value=jwks):
             assert builder.verify(valid_env) is False
             assert builder.verify(valid_env, verify_expiry=False) is True
+
+
+# ---------------------------------------------------------------------------
+# subject.evaluated_action_hash (audit binding of the evaluated params)
+# ---------------------------------------------------------------------------
+
+
+class TestEvaluatedActionHash:
+    """``subject.action_hash`` binds the request; ``evaluated_action_hash`` the evaluation."""
+
+    def test_envelope_action_hash_is_the_seal_recipe_over_json_leaves(
+        self, sample_governance_result
+    ):
+        from decimal import Decimal
+        from types import MappingProxyType
+
+        from src.gateway.governance.governance_envelope import (
+            GovernanceEnvelopeBuilder,
+            envelope_action_hash,
+        )
+        from src.gateway.governance.routing_seal import compute_action_hash
+
+        params = {"symbol": "AAPL", "amount": 10.0, "legs": [{"qty": 1}]}
+        expected = f"sha256:{compute_action_hash('execute_trade', params)}"
+
+        assert envelope_action_hash("execute_trade", params) == expected
+        assert envelope_action_hash("execute_trade", MappingProxyType(params)) == (
+            expected
+        )
+        # Non-JSON-native leaves are stringified before hashing.
+        assert envelope_action_hash(
+            "execute_trade", {"amount": Decimal("10.5")}
+        ) == envelope_action_hash("execute_trade", {"amount": "10.5"})
+        # The request binding of a built envelope is the same recipe.
+        env = GovernanceEnvelopeBuilder().build_unsigned(
+            action="execute_trade",
+            params=params,
+            governance_result=sample_governance_result,
+        )
+        assert env.subject.action_hash == expected
+
+    def test_subject_to_dict_omits_an_unset_evaluated_action_hash(self):
+        from src.gateway.governance.governance_envelope import SubjectMetadata
+
+        subject = SubjectMetadata(action="execute_trade", action_hash="sha256:req")
+
+        assert subject.evaluated_action_hash is None
+        assert "evaluated_action_hash" not in subject.to_dict()
+
+    def test_subject_to_dict_emits_a_set_evaluated_action_hash(self):
+        from src.gateway.governance.governance_envelope import SubjectMetadata
+
+        subject = SubjectMetadata(
+            action="execute_trade",
+            action_hash="sha256:req",
+            evaluated_action_hash="sha256:eval",
+        )
+
+        d = subject.to_dict()
+        assert d["evaluated_action_hash"] == "sha256:eval"
+        assert d["action_hash"] == "sha256:req"
+
+    def test_builder_carries_the_evaluated_action_hash_beside_the_request_binding(
+        self, sample_governance_result, sample_params
+    ):
+        from src.gateway.governance.governance_envelope import (
+            GovernanceEnvelopeBuilder,
+            envelope_action_hash,
+        )
+
+        builder = GovernanceEnvelopeBuilder()
+        evaluated = envelope_action_hash(
+            "execute_trade", {**sample_params, "trader_role": "junior"}
+        )
+
+        env = builder.build_unsigned(
+            action="execute_trade",
+            params=sample_params,
+            governance_result=sample_governance_result,
+            evaluated_action_hash=evaluated,
+        )
+        plain = builder.build_unsigned(
+            action="execute_trade",
+            params=sample_params,
+            governance_result=sample_governance_result,
+        )
+
+        assert env.subject.evaluated_action_hash == evaluated
+        assert env.subject.action_hash == envelope_action_hash(
+            "execute_trade", sample_params
+        )
+        assert env.to_dict()["subject"]["evaluated_action_hash"] == evaluated
+        assert "evaluated_action_hash" not in env.payload
+        assert plain.subject.evaluated_action_hash is None
+        assert "evaluated_action_hash" not in plain.to_dict()["subject"]
+
+    def test_envelope_from_dict_round_trips_the_evaluated_action_hash(
+        self, sample_governance_result, sample_params
+    ):
+        from src.gateway.governance.governance_envelope import GovernanceEnvelopeBuilder
+
+        builder = GovernanceEnvelopeBuilder()
+        evaluated = "sha256:" + "e" * 64
+        env = builder.build_unsigned(
+            action="execute_trade",
+            params=sample_params,
+            governance_result=sample_governance_result,
+            evaluated_action_hash=evaluated,
+        )
+        plain = builder.build_unsigned(
+            action="execute_trade",
+            params=sample_params,
+            governance_result=sample_governance_result,
+        )
+
+        reconstructed = builder._envelope_from_dict(env.to_dict())
+
+        assert reconstructed.subject.evaluated_action_hash == evaluated
+        assert reconstructed.subject.action_hash == env.subject.action_hash
+        assert reconstructed.compute_digest() == env.compute_digest()
+        assert (
+            builder._envelope_from_dict(plain.to_dict()).subject.evaluated_action_hash
+            is None
+        )
+
+    def test_signature_covers_the_evaluated_action_hash(
+        self, ec_key_pair, sample_governance_result, sample_params
+    ):
+        """A wire envelope verifies with its evaluated hash, and only with it."""
+        from cryptography.hazmat.primitives.asymmetric import utils
+
+        from src.gateway.governance.governance_envelope import (
+            GovernanceEnvelopeBuilder,
+            envelope_action_hash,
+        )
+        from src.gateway.governance.jwks import JWKSet, pem_to_jwk
+
+        private_key, _, public_pem = ec_key_pair
+        builder = GovernanceEnvelopeBuilder()
+        env = builder.build_unsigned(
+            action="execute_trade",
+            params=sample_params,
+            governance_result=sample_governance_result,
+            evaluated_action_hash=envelope_action_hash(
+                "execute_trade", {**sample_params, "trader_role": "junior"}
+            ),
+        )
+        signature_der = private_key.sign(
+            env.compute_digest(), ec.ECDSA(utils.Prehashed(hashes.SHA256()))
+        )
+        signed = builder.attach_signature(
+            env, signature_der, pem_to_jwk(public_pem)["kid"], "ES256"
+        )
+        jwks = JWKSet()
+        jwks.add_key(public_pem)
+
+        wire = signed.to_dict(include_signature=True)
+        tampered = json.loads(json.dumps(wire))
+        tampered["subject"]["evaluated_action_hash"] = envelope_action_hash(
+            "execute_trade", {**sample_params, "trader_role": "senior"}
+        )
+        stripped = json.loads(json.dumps(wire))
+        del stripped["subject"]["evaluated_action_hash"]
+
+        with patch("src.gateway.governance.jwks.get_jwks", return_value=jwks):
+            assert builder.verify(wire) is True
+            assert builder.verify(tampered) is False
+            assert builder.verify(stripped) is False

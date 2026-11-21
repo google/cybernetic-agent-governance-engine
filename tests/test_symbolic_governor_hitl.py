@@ -28,6 +28,7 @@ import pytest
 
 from src.cage_finance.tiers.cbf_tier import CBFTierPlugin
 from src.gateway.governance.governor.governor import GovernanceError
+from src.gateway.governance.governor.sealing import SealedAction
 from tests.fixtures.approval import SpendCounter, granted_approval
 from tests.fixtures.governor import make_governor
 
@@ -170,17 +171,21 @@ class TestC1PostHITLRevalidationFailClosed:
         ) as mock_seal:
             mock_seal.return_value = "mock_seal_12345"
 
-            # Execute: should return a routing seal (non-empty string)
-            seal = await mock_governor.revalidate_post_hitl(
+            # Execute: should return the sealed action (non-empty routing seal)
+            governed = await mock_governor.revalidate_post_hitl(
                 action="execute_trade",
                 params={"symbol": "AAPL", "amount": 100},
                 approval=granted_approval(),
             )
 
             # Assert: Seal issued means approval
-            assert isinstance(seal, str)
-            assert len(seal) > 0
-            assert seal == "mock_seal_12345"
+            assert isinstance(governed, SealedAction)
+            assert isinstance(governed.seal, str)
+            assert len(governed.seal) > 0
+            assert governed.seal == "mock_seal_12345"
+            # The seal commits to the evaluated params (no server input binds
+            # anything for execute_trade here, so they equal the request).
+            assert governed.params == {"symbol": "AAPL", "amount": 100}
 
     @pytest.mark.asyncio
     async def test_revalidate_still_fails_on_unsafe_prefix(self, mock_governor):
@@ -290,14 +295,15 @@ class TestC2PostHITLSequentialOrdering:
             mock_seal.return_value = "mock_seal_c2_test"
 
             # Execute
-            seal = await mock_governor.revalidate_post_hitl(
+            governed = await mock_governor.revalidate_post_hitl(
                 action="execute_trade",
                 params={"symbol": "AAPL", "amount": 100},
                 approval=granted_approval(),
             )
 
             # Assert: Seal issued (happy path)
-            assert seal == "mock_seal_c2_test"
+            assert governed.seal == "mock_seal_c2_test"
+            assert governed.params == {"symbol": "AAPL", "amount": 100}
 
             # C2 Assertion: CBF was called exactly once (after OPA passed)
             mock_governor.components.safety_filter.atomic_verify_and_commit.assert_called_once()

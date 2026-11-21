@@ -3,7 +3,7 @@ system-security-plan:
   metadata:
     title: CAGE System Security Plan (EU_ECB — EU AI Act / GDPR / DORA)
     published: '2026-06-15T00:00:00Z'
-    last-modified: '2026-11-20T14:33:11Z'
+    last-modified: '2026-11-21T02:11:31Z'
     version: 1.0.0-draft+stpa
     oscal-version: 1.0.4
     remarks: 'This System Security Plan (SSP) documents the compliance controls implemented
@@ -689,7 +689,8 @@ system-security-plan:
         and the kernel bind_server_inputs() (src/gateway/governance/governor/server_inputs.py)
         drops every caller value for latency_ms, drawdown, its aliases and portfolio_total
         before resolving them, in POST /governance/validate-action, the MCP simulate_governance_check
-        dry run and the trade tool before its committing run. No STPA input is defaulted
+        dry run and once inside each committing run (SymbolicGovernor.govern() / revalidate_post_hitl(),
+        returning a SealedAction over the bound params). No STPA input is defaulted
         on a dry run. UCA-6 (order-volume fraction 0.005) is evaluated on every trade
         and refuses one lacking either input (POAM-2026-106 closed): order_size is
         the caller''s notional amount divided by the verified quote price, and daily_vol

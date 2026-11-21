@@ -37,6 +37,7 @@ from src.cage_healthcare.tools.tool_provider import (
     ClinicalDoseActuator,
     administer_dose_action,
 )
+from src.gateway.governance.governor.sealing import SealedAction
 from src.gateway.governance.routing_seal import generate_seal, seal_digest
 from src.gateway.governance.safety.cbf_engine import ControlBarrierFunction
 from src.gateway.governance.seams.actuation import (
@@ -244,7 +245,9 @@ class TestClinicalDoseActuatorSecurity:
         with (
             patch(
                 "src.cage_healthcare.tools.tool_provider.enforce_governance",
-                AsyncMock(return_value=real_seal),
+                AsyncMock(
+                    return_value=SealedAction("administer_dose", real_seal, params)
+                ),
             ),
             patch(
                 "src.cage_healthcare.tools.tool_provider.verify_and_consume_seal",
@@ -273,3 +276,164 @@ class TestClinicalDoseActuatorSecurity:
         assert "indeterminate" in str(res["reason"])
         mock_refuse.assert_not_awaited()
         governor.settle.assert_awaited_once_with(real_seal, executed=True)
+
+
+class _RecordingClinicalActuator(ClinicalDoseActuator):
+    """The real clinical actuator, keeping every clearance it is handed."""
+
+    def __init__(self) -> None:
+        super().__init__(ledger=SimulatedSerumAssayProvider())
+        self.clearances: list[ExecutionClearance] = []
+
+    async def actuate(self, c: ExecutionClearance) -> Any:
+        self.clearances.append(c)
+        return await super().actuate(c)
+
+
+class TestAdministerDoseActuatesTheSealedParams:
+    """The dose tool verifies, digests and actuates ``SealedAction.params``."""
+
+    @staticmethod
+    def _caller_params() -> dict[str, Any]:
+        order = DoseOrder(patient_id="P-101", medication="vancomycin", dose_mg=2.0)
+        return {**order.model_dump(), "confidence": 0.99}
+
+    @pytest.mark.asyncio
+    async def test_seal_digest_and_clearance_name_the_evaluated_params(self) -> None:
+        """The committing run's evaluated params, never the caller's dict, are used.
+
+        The seal is minted over evaluated params that differ from the dict the
+        tool hands governance (a server-bound input was added). The real
+        clinical actuator re-verifies the seal against the clearance params,
+        so the dose is only governed if the clearance names the evaluated
+        params.
+        """
+        evaluated = {**self._caller_params(), "renal_clearance_ml_min": 85.0}
+        seal = await generate_seal("administer_dose", evaluated, record_hash="e" * 64)
+        actuator = _RecordingClinicalActuator()
+        verify = AsyncMock(return_value=None)
+        enforce = AsyncMock(
+            return_value=SealedAction("administer_dose", seal, evaluated)
+        )
+        governor = MagicMock(settle=AsyncMock(return_value=[]))
+
+        with (
+            patch(
+                "src.cage_healthcare.tools.tool_provider.enforce_governance", enforce
+            ),
+            patch(
+                "src.cage_healthcare.tools.tool_provider.verify_and_consume_seal",
+                verify,
+            ),
+            patch(
+                "src.cage_healthcare.tools.tool_provider.get_actuator_registry",
+                return_value=MagicMock(get_actuator=MagicMock(return_value=actuator)),
+            ),
+            patch(
+                "src.gateway.governance.execution_actuator.ingest_actuation_receipt",
+                AsyncMock(),
+            ),
+        ):
+            res = await administer_dose_action(
+                patient_id="P-101",
+                medication="vancomycin",
+                dose_mg=2.0,
+                governor=governor,
+            )
+
+        assert res["status"] == "GOVERNED", res
+        handed = enforce.await_args.args[2]
+        assert handed == self._caller_params()
+        verify.assert_awaited_once_with(seal, "administer_dose", evaluated)
+        (clearance,) = actuator.clearances
+        assert clearance.params == evaluated
+        assert clearance.routing_seal == seal
+        assert clearance.governance_decision_digest == seal_digest(seal)
+        assert (
+            clearance.opa_input_digest
+            == hashlib.sha256(
+                json.dumps(evaluated, sort_keys=True).encode()
+            ).hexdigest()
+        )
+        governor.settle.assert_awaited_once_with(seal, executed=True)
+
+    @pytest.mark.asyncio
+    async def test_refusal_names_the_evaluated_params(self) -> None:
+        """An invalid seal is refused (AC-3) naming the evaluated params."""
+        from src.gateway.governance.routing_seal import SymbolicGovernorViolation
+
+        evaluated = {**self._caller_params(), "renal_clearance_ml_min": 85.0}
+        governor = MagicMock(settle=AsyncMock(return_value=[]))
+
+        with (
+            patch(
+                "src.cage_healthcare.tools.tool_provider.enforce_governance",
+                AsyncMock(
+                    return_value=SealedAction("administer_dose", "seal-x", evaluated)
+                ),
+            ),
+            patch(
+                "src.cage_healthcare.tools.tool_provider.verify_and_consume_seal",
+                AsyncMock(
+                    side_effect=SymbolicGovernorViolation(
+                        "nonce already consumed", action="administer_dose"
+                    )
+                ),
+            ),
+            patch(
+                "src.cage_healthcare.tools.tool_provider._gm.record_refusal",
+                new_callable=AsyncMock,
+                return_value="",
+            ) as refuse,
+        ):
+            res = await administer_dose_action(
+                patient_id="P-101",
+                medication="vancomycin",
+                dose_mg=2.0,
+                governor=governor,
+            )
+
+        assert res["status"] == "BLOCKED"
+        refuse.assert_awaited_once()
+        assert refuse.await_args.kwargs["params"] == evaluated
+        assert refuse.await_args.kwargs["oscal_control_ref"] == "AC-3"
+        governor.settle.assert_awaited_once_with("seal-x", executed=False)
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        "governed",
+        [
+            "bare-seal-string",
+            SealedAction("administer_dose", "", {"dose_mg": 2.0}),
+            SealedAction("administer_dose", "seal-x", None),  # type: ignore[arg-type]
+        ],
+        ids=["bare-seal", "empty-seal", "no-params"],
+    )
+    async def test_a_result_without_seal_and_params_fails_closed(
+        self, governed: Any
+    ) -> None:
+        from src.gateway.governance.routing_seal import SymbolicGovernorViolation
+
+        governor = MagicMock(settle=AsyncMock(return_value=[]))
+        verify = AsyncMock(return_value=None)
+
+        with (
+            patch(
+                "src.cage_healthcare.tools.tool_provider.enforce_governance",
+                AsyncMock(return_value=governed),
+            ),
+            patch(
+                "src.cage_healthcare.tools.tool_provider.verify_and_consume_seal",
+                verify,
+            ),
+            pytest.raises(SymbolicGovernorViolation, match="No seal"),
+        ):
+            await administer_dose_action(
+                patient_id="P-101",
+                medication="vancomycin",
+                dose_mg=2.0,
+                governor=governor,
+            )
+
+        verify.assert_not_awaited()
+        governor.settle.assert_not_awaited()

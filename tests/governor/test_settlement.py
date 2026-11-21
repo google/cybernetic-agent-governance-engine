@@ -113,7 +113,7 @@ def seals(monkeypatch: pytest.MonkeyPatch) -> AsyncMock:
 async def test_executed_confirms_every_commit_in_order(seals: AsyncMock) -> None:
     log: list[str] = []
     gov = _governor([_Tier("cbf", 1, log), _Tier("fiscal", 2, log)])
-    seal = await gov.govern("act", {})
+    seal = (await gov.govern("act", {})).seal
     assert await gov.settle(seal, executed=True) == []
     assert log == ["commit:cbf", "commit:fiscal", "confirm:cbf", "confirm:fiscal"]
 
@@ -122,7 +122,7 @@ async def test_executed_confirms_every_commit_in_order(seals: AsyncMock) -> None
 async def test_not_executed_rolls_back_lifo(seals: AsyncMock) -> None:
     log: list[str] = []
     gov = _governor([_Tier("cbf", 1, log), _Tier("fiscal", 2, log)])
-    seal = await gov.govern("act", {})
+    seal = (await gov.govern("act", {})).seal
     assert await gov.settle(seal, executed=False) == []
     assert log == ["commit:cbf", "commit:fiscal", "rollback:fiscal", "rollback:cbf"]
 
@@ -133,7 +133,7 @@ async def test_settle_is_idempotent_per_seal(seals: AsyncMock, second: bool) -> 
     """A replayed or double settle can neither confirm nor refund twice."""
     log: list[str] = []
     gov = _governor([_Tier("fiscal", 1, log)])
-    seal = await gov.govern("act", {})
+    seal = (await gov.govern("act", {})).seal
     await gov.settle(seal, executed=True)
     assert await gov.settle(seal, executed=second) == []
     assert log == ["commit:fiscal", "confirm:fiscal"]
@@ -149,8 +149,8 @@ async def test_unknown_seal_settles_to_nothing(seals: AsyncMock) -> None:
 async def test_settlements_are_per_seal(seals: AsyncMock) -> None:
     log: list[str] = []
     gov = _governor([_Tier("fiscal", 1, log)])
-    first = await gov.govern("act", {})
-    second = await gov.govern("act", {})
+    first = (await gov.govern("act", {})).seal
+    second = (await gov.govern("act", {})).seal
     await gov.settle(second, executed=False)
     await gov.settle(first, executed=True)
     assert log == [
@@ -172,7 +172,7 @@ async def test_confirm_failure_is_reported_and_others_still_confirm(
             _Tier("fiscal", 2, log),
         ]
     )
-    seal = await gov.govern("act", {})
+    seal = (await gov.govern("act", {})).seal
     failures = await gov.settle(seal, executed=True)
     assert [(v.tier, v.code) for v in failures] == [("cbf", "CONFIRM_FAILED")]
     assert log[-2:] == ["confirm:cbf", "confirm:fiscal"]
@@ -190,7 +190,7 @@ async def test_settle_completes_despite_caller_cancellation(seals: AsyncMock) ->
             await super().rollback(action, params, receipt)
 
     gov = _governor([_Tier("cbf", 1, log), _Slow("fiscal", 2, log)])
-    seal = await gov.govern("act", {})
+    seal = (await gov.govern("act", {})).seal
     task = asyncio.ensure_future(gov.settle(seal, executed=False))
     await asyncio.sleep(0)
     task.cancel()
@@ -297,7 +297,7 @@ async def test_fiscal_executed_trade_is_confirmed_and_never_reclaimed(
     seals, fiscal
 ) -> None:
     guard, gov = fiscal
-    seal = await gov.govern("execute_trade", {"amount": 400})
+    seal = (await gov.govern("execute_trade", {"amount": 400})).seal
     await gov.settle(seal, executed=True)
     assert await guard.reclaim_expired(now=time.time() + 10_000) == 0
     assert await guard.current_spend_usd() == pytest.approx(400)
@@ -306,7 +306,7 @@ async def test_fiscal_executed_trade_is_confirmed_and_never_reclaimed(
 @pytest.mark.asyncio
 async def test_fiscal_failed_actuation_releases_the_reservation(seals, fiscal) -> None:
     guard, gov = fiscal
-    seal = await gov.govern("execute_trade", {"amount": 400})
+    seal = (await gov.govern("execute_trade", {"amount": 400})).seal
     assert await guard.current_spend_usd() == pytest.approx(400)
     await gov.settle(seal, executed=False)
     assert await guard.current_spend_usd() == 0.0
@@ -322,7 +322,7 @@ async def test_fiscal_crash_between_seal_and_actuation_expires(seals, fiscal) ->
     # ... then the reclaimer frees it.
     assert await guard.reclaim_expired(now=time.time() + 301) == 1
     assert await guard.current_spend_usd() == 0.0
-    seal = await gov.govern("execute_trade", {"amount": 1_000})
+    seal = (await gov.govern("execute_trade", {"amount": 1_000})).seal
     assert seal
 
 

@@ -18,7 +18,8 @@ Issue #379: ``govern()`` used to hand the caller's dict to the stages and to
 seal generation. A concurrent holder of that dict could change a value while
 the evidence commit was awaited, so the seal named params no stage had seen.
 These tests simulate that holder and a misbehaving stage, and require the seal
-to name the params as they were when ``govern()`` was called.
+(and the returned ``SealedAction.params``) to name the params as they were
+when ``govern()`` was called.
 """
 
 from __future__ import annotations
@@ -94,10 +95,12 @@ async def test_concurrent_mutation_of_caller_dict_does_not_reach_seal(
     holder = _ConcurrentMutator(params)
     gov = make_governor(core_stages=order_stages([holder]))
 
-    assert await gov.govern(ACTION, params) == "sealed"
+    governed = await gov.govern(ACTION, params)
 
+    assert governed.seal == "sealed"
     assert holder.seen == [10.0]
     assert params["amount"] == 1_000_000.0  # the concurrent write did happen
+    assert governed.params == {"amount": 10.0, "agent_id": "agent-1"}
     seal.assert_awaited_once_with(
         ACTION,
         {"amount": 10.0, "agent_id": "agent-1"},
@@ -113,10 +116,11 @@ async def test_stage_mutating_its_input_does_not_reach_seal(seal: AsyncMock) -> 
     tier = _SelfMutator()
     gov = make_governor(core_stages=order_stages([tier]))
 
-    await gov.govern(ACTION, params)
+    governed = await gov.govern(ACTION, params)
 
     assert tier.seen == [10.0]
     assert params == {"amount": 10.0, "agent_id": "agent-1"}  # caller's dict untouched
+    assert governed.params == {"amount": 10.0, "agent_id": "agent-1"}
     seal.assert_awaited_once_with(
         ACTION,
         {"amount": 10.0, "agent_id": "agent-1"},

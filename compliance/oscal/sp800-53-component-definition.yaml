@@ -145,20 +145,24 @@ component-definition:
                      and mints no seal (tests/test_trade_governance_e2e.py).
                    - Single commit: SymbolicGovernor.validate_action()
                      (src/gateway/governance/governor/governor.py) runs under Profile.DRY_RUN,
-                     mints no seal, and parks REQUIRE_APPROVAL verdicts as
-                     DeferReason.HITL_REQUIRED tokens. execute_trade_action(...,
-                     deferred_id=...) (src/cage_finance/tools/tool_provider.py) is the only
-                     committing path: enforce_approved_governance()
-                     (src/gateway/server/governance_middleware.py) checks the approved token
-                     without spending it (DeferQueue.redeemable_approval()), and
-                     revalidate_post_hitl() decides first and spends second: a clean run spends
-                     the approval with a RESOLVED to CONSUMED compare-and-set before the seal is
-                     minted, so concurrent redemptions seal at most once; a DENY spends it; a
+                     mints no seal, binds evaluated_action_hash into HTTP 200 envelope subjects,
+                     and parks REQUIRE_APPROVAL verdicts as DeferReason.HITL_REQUIRED tokens.
+                     execute_trade_action(..., deferred_id=...)
+                     (src/cage_finance/tools/tool_provider.py) is the only committing path:
+                     enforce_approved_governance()
+                     (src/gateway/server/governance_middleware.py) checks approved token state
+                     without spending it (DeferQueue.redeemable_token()), and
+                     revalidate_post_hitl() binds server inputs once, checks PostHitlApproval.covers()
+                     against the evaluated params before any stage runs, decides first and spends
+                     second via DeferQueue.consume_approval() (RESOLVED to CONSUMED CAS re-checking
+                     coverage of the same evaluated params) before returning a SealedAction whose
+                     seal and evaluated params the tool verifies and actuates; a DENY spends it; a
                      warrant-ineligible DEFER leaves it redeemable. When narrowing is enabled, a
                      narrow_hint is dry-run re-verified before it is surfaced
                      (_reverified_narrow_hint) and re-verified in full by the committing run
                      (_sealed_narrow with issue_narrow_receipt in
-                     src/gateway/governance/narrow_receipt.py, inside ReservationScope).
+                     src/gateway/governance/narrow_receipt.py, inside ReservationScope, required
+                     and JCS-verified by the tool before actuation).
 
                 Open: OPA's REST API takes no authentication, and only the gateway has Linkerd
                 Server and AuthorizationPolicy resources, so another pod in the namespace can

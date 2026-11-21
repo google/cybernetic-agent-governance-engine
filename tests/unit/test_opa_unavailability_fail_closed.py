@@ -670,13 +670,18 @@ async def test_revalidate_post_hitl_preserves_approval_when_opa_unavailable() ->
     governor = make_governor(opa=opa, domain_tiers=[spy_barrier])
     sink = _MemoryEvidenceSink()
     spend_mock = AsyncMock(return_value=True)
+    covers_mock = MagicMock(return_value=True)
     approval = PostHitlApproval(
         approval_id="appr-233",
         barrier_preview="PASS",
         spend=spend_mock,
+        covers=covers_mock,
         thread_id="thread-233",
         approved_holds=frozenset({("governance", "OPA_MANUAL_REVIEW")}),
     )
+    # No server input binds anything for execute_trade here, so the evaluated
+    # params the approval is checked and spent against are the request.
+    evaluated = {"symbol": "AAPL", "quantity": 10, "confidence": 0.99}
 
     with (
         patch(
@@ -699,6 +704,8 @@ async def test_revalidate_post_hitl_preserves_approval_when_opa_unavailable() ->
         assert exc_info.value.dependency == "opa"
         assert exc_info.value.failure_code == "OPA_UNAVAILABLE"
         assert spend_mock.await_count == 0
+        # Coverage was checked (side-effect free) before any stage ran.
+        covers_mock.assert_called_once_with(evaluated)
         assert spy_barrier.commit_calls == 0
         assert not any(e.get("type") == "GOVERNANCE_REFUSAL" for e in sink.events)
         assert any(
@@ -709,13 +716,16 @@ async def test_revalidate_post_hitl_preserves_approval_when_opa_unavailable() ->
         opa._get_client = lambda: _make_mock_http_client(  # type: ignore[method-assign]
             status_code=200, json_body={"result": "ALLOW"}
         )
-        seal = await governor.revalidate_post_hitl(
+        governed = await governor.revalidate_post_hitl(
             "execute_trade",
             {"symbol": "AAPL", "quantity": 10, "confidence": 0.99},
             approval=approval,
         )
-        assert seal == "seal-233"
+        assert governed.seal == "seal-233"
+        assert governed.params == evaluated
         assert spend_mock.await_count == 1
+        # Spent exactly for the evaluated params the seal commits to.
+        spend_mock.assert_awaited_once_with(evaluated)
         assert spy_barrier.commit_calls == 1
 
 

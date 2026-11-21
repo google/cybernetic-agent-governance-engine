@@ -360,7 +360,9 @@ async def test_allow_seal_evidence_carries_the_eligible_reliance_record(
     governor = _governor(StaticWarrantSource({warrant.norm_id: warrant}))
     params = _trade()
 
-    seal = await governor.govern(_ACTION, params)
+    governed = await governor.govern(_ACTION, params)
+    seal = governed.seal
+    assert governed.params == params  # no server input is bound for this action
 
     (decision,) = await chain.records("GOVERNANCE_DECISION")
     assert decision["record_hash"] == _record_hash_of(seal)
@@ -408,7 +410,7 @@ async def test_tampered_reliance_record_breaks_seal_verification(
 ) -> None:
     governor = _governor(StaticWarrantSource.eligible())
     params = _trade()
-    seal = await governor.govern(_ACTION, params)
+    seal = (await governor.govern(_ACTION, params)).seal
     (decision,) = await chain.records("GOVERNANCE_DECISION")
 
     payload = _payload(decision)
@@ -435,7 +437,7 @@ async def test_dropping_the_reliance_record_breaks_seal_verification(
 ) -> None:
     governor = _governor(StaticWarrantSource.eligible())
     params = _trade()
-    seal = await governor.govern(_ACTION, params)
+    seal = (await governor.govern(_ACTION, params)).seal
     (decision,) = await chain.records("GOVERNANCE_DECISION")
 
     payload = _payload(decision)
@@ -547,11 +549,13 @@ async def test_narrow_seal_carries_the_narrowed_runs_reliance(
     engine = ClassificationEngine(NarrowerRegistry([_Clamp()]), narrow_enabled=True)
     governor = _governor(source, _AmountCap(limit=50.0), classifier=engine)
 
-    assert await governor.govern(_ACTION, _trade(amount=500.0)) == "sealed-narrow"
+    governed = await governor.govern(_ACTION, _trade(amount=500.0))
+    assert governed.seal == "sealed-narrow"
 
     (seal,) = sealed
     assert seal["path"] == "govern_narrow"
     assert seal["params"]["amount"] == 50.0
+    assert governed.params == seal["params"]  # returned params are the sealed ones
     (record,) = seal["reliance"]
     assert record.reliance_status is RelianceStatus.ELIGIBLE
     # The narrowed re-run re-checks reliance through the cache; the warrant
@@ -981,7 +985,7 @@ async def test_unwarranted_seal_evidence_is_unchanged(chain: SimpleNamespace) ->
         domain_tiers=(TradeConfidenceTier(_UNWARRANTED),),
     )
     params = _trade()
-    seal = await governor.govern(_ACTION, params)
+    seal = (await governor.govern(_ACTION, params)).seal
 
     (decision,) = await chain.records("GOVERNANCE_DECISION")
     assert set(_payload(decision)) == _LEGACY_DECISION_KEYS

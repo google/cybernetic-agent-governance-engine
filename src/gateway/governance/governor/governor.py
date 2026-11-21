@@ -47,6 +47,7 @@ from src.gateway.governance.contracts import (
 )
 from src.gateway.governance.decisions import GovernanceDecision
 from src.gateway.governance.env_posture import is_enforcing
+from src.gateway.governance.governance_envelope import envelope_action_hash
 from src.gateway.governance.governor.approval import PostHitlApproval
 from src.gateway.governance.governor.errors import (
     ApprovalSpendUnavailableError,
@@ -65,7 +66,7 @@ from src.gateway.governance.governor.pipeline import (
     resolve_claims,
     run_pipeline,
 )
-from src.gateway.governance.governor.sealing import run_sealed
+from src.gateway.governance.governor.sealing import SealedAction, run_sealed
 from src.gateway.governance.governor.server_inputs import (
     KERNEL_SERVER_INPUT_ACTIONS,
     KERNEL_SERVER_INPUT_KEYS,
@@ -296,6 +297,12 @@ class SymbolicGovernor:
                 {"infra_error_code": exc.error_code},
                 emit_side_effects=emit_side_effects,
             )
+        # The audit binding of the params the stages evaluate (server inputs
+        # bound) is attached to returned verdicts only (ALLOW, NARROW,
+        # REQUIRE_APPROVAL, DEFER) after run_pipeline(); computing it ahead of
+        # the stages would reject non-finite inputs (NaN/Inf) with
+        # SealCanonicalizationError before the confidence stage can emit a
+        # [CTRL_AGT_001] refusal receipt.
         with tracer.start_as_current_span("cage.validate_action") as span:
             span.set_attribute(OBSERVATION_TYPE, "span")
             span.set_attribute(OBSERVATION_NAME, "governance_validate")
@@ -327,6 +334,7 @@ class SymbolicGovernor:
                     "agent_id": current_client_identity() or "",
                     **_context_meta(result),
                     **_reliance_meta(result),
+                    "evaluated_action_hash": envelope_action_hash(action, params),
                 }
 
             violations = list(result.violations)
@@ -356,14 +364,17 @@ class SymbolicGovernor:
             )
 
             if classification.decision == GovernanceDecision.NARROW:
-                return await self._narrow_candidate(
-                    action,
-                    params,
-                    result,
-                    meta,
-                    t0,
-                    emit_side_effects=emit_side_effects,
-                )
+                return {
+                    **await self._narrow_candidate(
+                        action,
+                        params,
+                        result,
+                        meta,
+                        t0,
+                        emit_side_effects=emit_side_effects,
+                    ),
+                    "evaluated_action_hash": envelope_action_hash(action, params),
+                }
 
             if classification.decision == GovernanceDecision.REQUIRE_APPROVAL:
                 meta = await self._reverified_narrow_hint(
@@ -400,7 +411,11 @@ class SymbolicGovernor:
                 **handler_kwargs,
             )
             resolved = await verdict if inspect.isawaitable(verdict) else verdict
-            return {**resolved, **_context_meta(result)}
+            return {
+                **resolved,
+                **_context_meta(result),
+                "evaluated_action_hash": envelope_action_hash(action, params),
+            }
 
     async def _rebind(self, action: str, proposal: dict[str, Any]) -> dict[str, Any]:
         """A narrower's proposal with its server inputs resolved afresh.
@@ -631,64 +646,61 @@ class SymbolicGovernor:
             **_reliance_meta(rerun),
         }
 
-    async def govern(self, tool_name: str, params: dict[str, Any]) -> str:
+    async def govern(self, tool_name: str, params: dict[str, Any]) -> SealedAction:
         """The committing run: commit phase 2 and seal, or refuse.
 
-        Returns the seal. When the run refuses with only NARROWABLE findings
-        and a narrower proposes clamped params, the seal covers *those*
-        params instead (see :meth:`_sealed_narrow`) and a NARROW receipt
-        names them. Any other refusal raises ``GovernanceError``.
+        Returns a :class:`~.sealing.SealedAction`: the seal and the evaluated
+        params it commits to. ``params`` is snapshotted on entry and the
+        action's server inputs are bound into the snapshot exactly once. The
+        result, the evaluated params, is what every stage evaluates, what the
+        seal's ``action_hash`` and the ``GOVERNANCE_DECISION`` event commit
+        to, what every refusal receipt and deferral snapshot names, and what
+        the caller must verify the seal against and actuate. Caller values
+        for server-owned keys never reach the seal or the evidence.
 
-        ``params`` is snapshotted on entry: the stages, the evidence event and
-        the seal all name that snapshot, never the caller's live dict. Without
-        it, a concurrent holder of the same dict could change a value during
-        the evidence-commit await, so the seal would name params no stage had
-        evaluated (issue #379). The stages get their own copy, as on the
-        narrow path, so a stage cannot mutate what is sealed either.
+        When the run refuses with only NARROWABLE findings and a narrower
+        proposes clamped params, the seal covers *those* params (server
+        inputs re-bound) instead (see :meth:`_sealed_narrow`), a NARROW
+        receipt names them, and the returned ``params`` are them. Any other
+        refusal raises ``GovernanceError``.
+
+        The snapshot keeps a concurrent holder of the caller's dict from
+        changing a value during the evidence-commit await, so the seal can
+        never name params no stage had evaluated (issue #379). The stages
+        get their own deep copy of the evaluated params, as on the narrow
+        path, so a stage cannot mutate what is sealed either. If a server
+        input cannot be bound, no evaluated params exist: the
+        infrastructure block names the snapshot.
         """
         with online_governance_scope(True):
-            sealed = copy.deepcopy(params)
+            snapshot = copy.deepcopy(params)
             with tracer.start_as_current_span("symbolic_governor.govern") as span:
                 span.set_attribute(OBSERVATION_TYPE, "span")
                 span.set_attribute(OBSERVATION_NAME, "governance_evaluation")
                 span.set_attribute(SPAN_ATTR_GOVERNANCE_TOOL, tool_name)
 
                 try:
-                    eval_params = await bind_server_inputs(
-                        self._components.server_inputs,
-                        tool_name,
-                        copy.deepcopy(sealed),
+                    evaluated = await bind_server_inputs(
+                        self._components.server_inputs, tool_name, snapshot
                     )
                 except ServerInputUnavailableError as exc:
-                    violation, infra_result = self._server_input_unavailable_result(
-                        tool_name, sealed, profile=Profile.FULL, exc=exc
-                    )
-                    await _trace(
-                        infra_result,
-                        tool_name,
-                        Profile.FULL,
-                        "govern",
-                        InfrastructureOutcome.INFRASTRUCTURE_BLOCK,
-                    )
-                    await handle_infrastructure_block(
-                        tool_name,
-                        sealed,
-                        [violation],
-                        [],
-                        {"infra_error_code": exc.error_code},
+                    await self._block_unbound(
+                        tool_name, snapshot, exc, profile=Profile.FULL, path="govern"
                     )
                 ctx = StageContext(
-                    action=tool_name, params=eval_params, profile=Profile.FULL
+                    action=tool_name,
+                    params=copy.deepcopy(evaluated),
+                    profile=Profile.FULL,
                 )
                 result, seal = await run_sealed(
                     self.stages,
                     ctx,
-                    sealed,
+                    evaluated,
                     path="govern",
                     settlements=self._settlements,
                 )
                 if seal is None:
-                    seal = await self._sealed_narrow(tool_name, sealed, result)
+                    sealed = await self._sealed_narrow(tool_name, evaluated, result)
                 else:
                     await _trace(
                         result,
@@ -698,13 +710,54 @@ class SymbolicGovernor:
                         GovernanceDecision.ALLOW,
                         seal=seal,
                     )
+                    sealed = SealedAction(tool_name, seal, evaluated)
                 span.set_attribute("cage.seal_issued", True)
                 span.set_attribute("cage.verdict", GovernanceDecision.ALLOW)
-                return seal
+                return sealed
+
+    async def _block_unbound(
+        self,
+        action: str,
+        snapshot: dict[str, Any],
+        exc: ServerInputUnavailableError,
+        *,
+        profile: Profile,
+        path: str,
+        meta: Mapping[str, Any] | None = None,
+    ) -> NoReturn:
+        """Block a committing run whose server inputs could not be bound.
+
+        No evaluated params exist, so the ``INFRASTRUCTURE_BLOCK`` record
+        names the snapshot of the caller's params. Nothing was evaluated,
+        committed or sealed, and no approval is spent (POAM-2026-233).
+        """
+        violation, infra_result = self._server_input_unavailable_result(
+            action, snapshot, profile=profile, exc=exc
+        )
+        await _trace(
+            infra_result,
+            action,
+            profile,
+            path,
+            InfrastructureOutcome.INFRASTRUCTURE_BLOCK,
+        )
+        await handle_infrastructure_block(
+            action,
+            snapshot,
+            [violation],
+            [],
+            {**(meta or {}), "infra_error_code": exc.error_code},
+        )
+        raise GovernanceInfrastructureError(
+            f"handle_infrastructure_block returned without raising; blocking {action}",
+            dependency=exc.dependency,
+            failure_code=exc.failure_code,
+            error_code=exc.error_code,
+        )  # fail closed
 
     async def _sealed_narrow(
         self, action: str, params: dict[str, Any], result: PipelineResult
-    ) -> str:
+    ) -> SealedAction:
         """Seal a narrower's proposal in the committing path, or deny.
 
         proof/model.py NARROW: (a) every violation NARROWABLE and (b) a
@@ -713,6 +766,12 @@ class SymbolicGovernor:
         The re-run is never classified, so the narrower runs once. The NARROW
         receipt is stored inside that run's ``ReservationScope``: if it
         cannot be stored, the commits are rolled back and the request denied.
+
+        ``params`` are the original run's evaluated params: the
+        classification and every refusal of the original run name them.
+        Returns the :class:`~.sealing.SealedAction` naming the clamped params
+        with their server inputs re-bound, which the re-run evaluated and the
+        seal commits to.
         """
         if self._blocks_on_infrastructure(result):
             await _trace(
@@ -844,7 +903,7 @@ class SymbolicGovernor:
                 f"handle_deny returned without raising; refusing {action}"
             )  # fail closed
         span.set_attribute("cage.verdict", GovernanceDecision.NARROW)
-        return seal
+        return SealedAction(action, seal, narrowed)
 
     async def revalidate_post_hitl(
         self,
@@ -852,34 +911,55 @@ class SymbolicGovernor:
         params: dict[str, Any],
         *,
         approval: PostHitlApproval,
-        rebind_inputs: bool = False,
-    ) -> str:
+    ) -> SealedAction:
         """The post-approval committing run: POST_HITL commit + seal, or not.
 
         ``approval`` is the verified, unspent human approval
-        (:class:`~.approval.PostHitlApproval`). When ``rebind_inputs=True``,
-        server-owned keys (e.g., quote staleness, drawdown, portfolio NAV) are
-        resolved afresh via :func:`bind_server_inputs` before ``OpaStage`` and
-        phase-2 barriers execute, preventing stale telemetry across the human
-        review window. The run decides first and spends second:
+        (:class:`~.approval.PostHitlApproval`). ``params`` is snapshotted and
+        the action's server inputs (e.g. quote staleness, drawdown, portfolio
+        NAV, the trader's role) are bound into the snapshot exactly once,
+        afresh, under the verified approval, so no telemetry goes stale
+        across the human review window. The result, the evaluated params, is
+        what every stage evaluates, what the seal and every refusal or
+        deferral record name, what the approval's coverage is checked
+        against, and what the returned :class:`~.sealing.SealedAction`
+        carries. If a server input cannot be bound, no evaluated params
+        exist and the records name the snapshot.
 
-        * **ALLOW** — the run is clean; ``approval.spend()`` consumes the
-          approval atomically inside the run's ``ReservationScope``, before
-          the seal is minted. If it was already spent (a replay or a
-          concurrent redemption won), the run is refused
-          ``[APPROVAL_NOT_REDEEMABLE]``, nothing is sealed and every commit
-          rolls back: at most one redemption seals.
+        An approval is consumed only by a run that seals exactly the params
+        it covers. Coverage is evaluated against the evaluated (sealed)
+        params, before any stage runs (``approval.covers``) and again inside
+        the compare-and-swap that consumes the approval (``approval.spend``).
+        There is no second server-input lookup. A refused run burns the
+        approval through the same coverage-checked ``spend`` (DENY below), so
+        only an approval that covers its evaluated params; it never seals.
+
+        The run decides first and spends second:
+
+        * **NOT COVERED** — the approval does not cover the evaluated params
+          (the request, or a server-bound input such as the trader's role,
+          differs from what was approved). The run is refused
+          ``[APPROVAL_NOT_REDEEMABLE]`` before any stage runs; nothing is
+          committed or sealed, and the approval is **not** spent.
+        * **ALLOW** — the run is clean; ``approval.spend(evaluated)`` consumes
+          the approval atomically inside the run's ``ReservationScope``,
+          before the seal is minted. If it was already spent (a replay or a
+          concurrent redemption won) or no longer covers the evaluated
+          params, the run is refused ``[APPROVAL_NOT_REDEEMABLE]``, nothing
+          is sealed and every commit rolls back: at most one redemption seals.
         * **DEFER** — the only findings are ``RELIANCE_INELIGIBLE`` (a
           warranted norm lost its warrant while the human decided). Nothing
           is sealed or committed, and the approval is **not** spent: the
           deferral is hash-chained naming it, and
           :class:`~.errors.GovernanceDeferred` is raised. The same approval
           redeems once the warrant is eligible again (POAM-2026-104).
-        * **INFRASTRUCTURE_BLOCK** — an authority is unreachable or returns an
-          undecodable reply without any HARD policy breach. Nothing is sealed
-          or committed, and the approval is **not** spent (POAM-2026-233).
-        * **DENY** — any other finding. The approval is spent, then the run
-          is refused, so the operator must approve a fresh request.
+        * **INFRASTRUCTURE_BLOCK** — an authority (or a server-input source)
+          is unreachable or returns an undecodable reply without any HARD
+          policy breach. Nothing is sealed or committed, and the approval is
+          **not** spent (POAM-2026-233).
+        * **DENY** — any other finding. The approval is spent (it covers the
+          evaluated params), then the run is refused, so the operator must
+          approve a fresh request.
 
         The approval covers only the context it was given against
         (``approval.barrier_preview``, bound into every ``ApprovalRecord`` by
@@ -899,19 +979,21 @@ class SymbolicGovernor:
         ``[APPROVAL_CONTEXT_DRIFT]``, and a HARD finding (an authority that
         now refuses, or is unreachable) denies.
         """
-        sealed = copy.deepcopy(params)
-        rebind_infra_exc: ServerInputUnavailableError | None = None
-        if rebind_inputs:
-            with (
-                online_governance_scope(True),
-                verified_post_hitl_approval(approval.approval_id),
-            ):
-                try:
-                    sealed = await bind_server_inputs(
-                        self._components.server_inputs, action, sealed
-                    )
-                except ServerInputUnavailableError as exc:
-                    rebind_infra_exc = exc
+        snapshot = copy.deepcopy(params)
+        bound: dict[str, Any] | ServerInputUnavailableError
+        with (
+            online_governance_scope(True),
+            verified_post_hitl_approval(approval.approval_id),
+        ):
+            try:
+                bound = await bind_server_inputs(
+                    self._components.server_inputs, action, snapshot
+                )
+            except ServerInputUnavailableError as exc:
+                bound = exc
+        # What the refusals ahead of the binding check name: the evaluated
+        # params, or the snapshot when no evaluated params exist.
+        named = snapshot if isinstance(bound, ServerInputUnavailableError) else bound
         with tracer.start_as_current_span(
             "symbolic_governor.revalidate_post_hitl"
         ) as span:
@@ -921,7 +1003,10 @@ class SymbolicGovernor:
             span.set_attribute(
                 "toctou.revalidation.scope", "opa+warrant+revalidated+phase2"
             )
-            span.set_attribute("toctou.server_inputs_rebound", rebind_inputs)
+            span.set_attribute(
+                "toctou.server_inputs_rebound",
+                not isinstance(bound, ServerInputUnavailableError),
+            )
             span.set_attribute("toctou.approval_id", approval.approval_id)
             span.set_attribute(
                 "toctou.approved_holds",
@@ -930,10 +1015,10 @@ class SymbolicGovernor:
             try:
                 approved = _parse_barrier_snapshot(approval.barrier_preview)
             except ValueError:
-                await _spend_refused(approval)
+                await _spend_refused(approval, named)
                 await handle_deny(
                     action,
-                    sealed,
+                    named,
                     [
                         _approval_drift(
                             f"unrecognised approval snapshot {approval.barrier_preview!r}"
@@ -951,13 +1036,13 @@ class SymbolicGovernor:
             span.set_attribute(
                 "toctou.approved_barrier_preview", approved.value if approved else ""
             )
-            if not self._is_governed_action(action, sealed):
+            if not self._is_governed_action(action, named):
                 # POST_HITL re-runs only claimed barriers; with none there is
                 # nothing to re-verify, so the approval cannot be honoured.
-                await _spend_refused(approval)
+                await _spend_refused(approval, named)
                 await handle_deny(
                     action,
-                    sealed,
+                    named,
                     [_UNGOVERNED_POST_HITL],
                     [],
                     {},
@@ -968,80 +1053,57 @@ class SymbolicGovernor:
                 raise GovernanceError(
                     f"no tier governs {action}; post-HITL re-validation refused"
                 )
-            if rebind_infra_exc is not None:
+            if isinstance(bound, ServerInputUnavailableError):
                 span.set_attribute("toctou.approval_spent", False)
-                violation, infra_result = self._server_input_unavailable_result(
-                    action, sealed, profile=Profile.POST_HITL, exc=rebind_infra_exc
-                )
-                await _trace(
-                    infra_result,
+                await self._block_unbound(
                     action,
-                    Profile.POST_HITL,
-                    "revalidate_post_hitl",
-                    InfrastructureOutcome.INFRASTRUCTURE_BLOCK,
+                    snapshot,
+                    bound,
+                    profile=Profile.POST_HITL,
+                    path="revalidate_post_hitl",
+                    meta={"approval_id": approval.approval_id},
                 )
-                await handle_infrastructure_block(
+            evaluated = bound
+            if not _approval_covers(approval, evaluated):
+                # The approval did not authorise these evaluated params; it
+                # stays unspent and nothing runs.
+                span.set_attribute("toctou.approval_covers", False)
+                span.set_attribute("toctou.approval_spent", False)
+                await handle_deny(
                     action,
-                    sealed,
-                    [violation],
+                    evaluated,
+                    [_approval_not_covering(approval.approval_id)],
                     [],
-                    {
-                        "approval_id": approval.approval_id,
-                        "infra_error_code": rebind_infra_exc.error_code,
-                    },
+                    {"approval_id": approval.approval_id},
+                    evaluated_param_specs=self._components.evaluated_param_specs,
+                    evaluated_stages=(),
+                    skipped_stages=tuple(s.name for s in self.stages),
                 )
-            with (
-                online_governance_scope(True),
-                verified_post_hitl_approval(approval.approval_id),
-            ):
-                try:
-                    eval_params = (
-                        copy.deepcopy(sealed)
-                        if rebind_inputs
-                        else await bind_server_inputs(
-                            self._components.server_inputs,
-                            action,
-                            copy.deepcopy(sealed),
-                        )
-                    )
-                except ServerInputUnavailableError as exc:
-                    span.set_attribute("toctou.approval_spent", False)
-                    violation, infra_result = self._server_input_unavailable_result(
-                        action, sealed, profile=Profile.POST_HITL, exc=exc
-                    )
-                    await _trace(
-                        infra_result,
-                        action,
-                        Profile.POST_HITL,
-                        "revalidate_post_hitl",
-                        InfrastructureOutcome.INFRASTRUCTURE_BLOCK,
-                    )
-                    await handle_infrastructure_block(
-                        action,
-                        sealed,
-                        [violation],
-                        [],
-                        {
-                            "approval_id": approval.approval_id,
-                            "infra_error_code": exc.error_code,
-                        },
-                    )
+                raise GovernanceError(
+                    f"handle_deny returned without raising; refusing {action}"
+                )  # fail closed
+            span.set_attribute("toctou.approval_covers", True)
             ctx = StageContext(
                 action=action,
-                params=eval_params,
+                params=copy.deepcopy(evaluated),
                 profile=Profile.POST_HITL,
                 approved_holds=approval.approved_holds,
             )
+
+            async def _admit() -> bool:
+                # Spent only iff the approval covers exactly the params sealed.
+                return await approval.spend(copy.deepcopy(evaluated))
+
             # The approval is spent only by the run it authorises: admit()
             # runs after every stage passed and before the seal is minted.
             try:
                 result, seal = await run_sealed(
                     self.stages,
                     ctx,
-                    sealed,
+                    evaluated,
                     path="revalidate_post_hitl",
                     settlements=self._settlements,
-                    admit=approval.spend,
+                    admit=_admit,
                 )
             except ApprovalSpendUnavailableError as exc:
                 span.set_attribute("toctou.approval_spent", False)
@@ -1069,7 +1131,7 @@ class SymbolicGovernor:
                 )
                 await handle_infrastructure_block(
                     action,
-                    sealed,
+                    evaluated,
                     [
                         Violation(
                             tier="defer_queue",
@@ -1098,7 +1160,7 @@ class SymbolicGovernor:
                         )
                     await handle_infrastructure_block(
                         action,
-                        sealed,
+                        evaluated,
                         [
                             Violation(
                                 tier="defer_queue",
@@ -1127,7 +1189,7 @@ class SymbolicGovernor:
                     GovernanceDecision.ALLOW,
                     seal=seal,
                 )
-                return seal
+                return SealedAction(action, seal, evaluated)
             if not result.violations:
                 # Clean, but the approval could not be spent: replayed, lost a
                 # concurrent redemption, expired or no longer covering.
@@ -1141,7 +1203,7 @@ class SymbolicGovernor:
                 )
                 await handle_deny(
                     action,
-                    sealed,
+                    evaluated,
                     [_approval_not_redeemable(approval.approval_id)],
                     [],
                     {"approval_id": approval.approval_id},
@@ -1165,7 +1227,7 @@ class SymbolicGovernor:
                     "revalidate_post_hitl",
                     InfrastructureOutcome.INFRASTRUCTURE_BLOCK,
                 )
-                await _block_infrastructure(action, sealed, result)
+                await _block_infrastructure(action, evaluated, result)
             if self._defers_on_reliance(result):
                 span.set_attribute("toctou.approval_spent", False)
                 await _trace(
@@ -1177,7 +1239,7 @@ class SymbolicGovernor:
                 )
                 await handle_post_hitl_defer(
                     action,
-                    sealed,
+                    evaluated,
                     list(result.violations),
                     dict(_RELIANCE_DEFER_META),
                     approval_id=approval.approval_id,
@@ -1185,7 +1247,7 @@ class SymbolicGovernor:
                     barrier_preview=approval.barrier_preview,
                     reliance=result.reliance,
                 )
-            await _spend_refused(approval)
+            await _spend_refused(approval, evaluated)
             span.set_attribute("toctou.approval_spent", True)
             await _trace(
                 result,
@@ -1200,7 +1262,7 @@ class SymbolicGovernor:
             ):
                 await _deny_drift(
                     action,
-                    sealed,
+                    evaluated,
                     result,
                     approved,
                     evaluated_param_specs=self._components.evaluated_param_specs,
@@ -1208,14 +1270,14 @@ class SymbolicGovernor:
             if unapproved := _unapproved_holds(result):
                 await _deny_unapproved_holds(
                     action,
-                    sealed,
+                    evaluated,
                     result,
                     unapproved,
                     evaluated_param_specs=self._components.evaluated_param_specs,
                 )
             await _deny(
                 action,
-                sealed,
+                evaluated,
                 result,
                 evaluated_param_specs=self._components.evaluated_param_specs,
             )
@@ -1386,6 +1448,34 @@ def _approval_not_redeemable(approval_id: str) -> Violation:
     )
 
 
+def _approval_not_covering(approval_id: str) -> Violation:
+    return Violation(
+        tier="kernel",
+        code=APPROVAL_NOT_REDEEMABLE,
+        kind=ViolationKind.HARD,
+        message=(
+            f"[{APPROVAL_NOT_REDEEMABLE}] approval {approval_id!r} does not cover "
+            "the evaluated params (the request or a server-bound input differs "
+            "from what was approved); nothing ran and the approval was not spent"
+        ),
+    )
+
+
+def _approval_covers(approval: PostHitlApproval, evaluated: dict[str, Any]) -> bool:
+    """``approval.covers`` over a copy of the evaluated params; an error is ``False``.
+
+    The copy keeps a misbehaving matcher from changing the params the run
+    evaluates and seals.
+    """
+    try:
+        return bool(approval.covers(copy.deepcopy(evaluated)))
+    except Exception as exc:  # a raising matcher never authorises
+        logger.warning(
+            "approval %s coverage check raised: %s", approval.approval_id, exc
+        )
+        return False
+
+
 #: Classification metadata of a warrant-ineligible DEFER (``handle_defer``
 #: maps it to ``DeferReason.WARRANT_INELIGIBLE``).
 _RELIANCE_DEFER_META: dict[str, Any] = {
@@ -1434,17 +1524,21 @@ async def _defer_commit(
     )
 
 
-async def _spend_refused(approval: PostHitlApproval) -> None:
+async def _spend_refused(approval: PostHitlApproval, params: dict[str, Any]) -> None:
     """Spend the approval of a run about to be refused (DENY burns it).
 
-    Best effort: the run is refused either way, so a failed spend only
-    leaves an approval that the committing run's own spend would still
-    re-check before any seal.
+    ``params`` are the run's evaluated params (the snapshot only when the
+    binding itself failed): the approval is consumed only if it covers them,
+    since an approval that does not cover the refused request did not
+    authorise it. Best effort: the run is refused either way, so a failed
+    spend only leaves an approval that the committing run's own spend would
+    still re-check before any seal.
     """
     try:
-        if not await approval.spend():
+        if not await approval.spend(copy.deepcopy(params)):
             logger.info(
-                "approval %s was already spent when its run was refused",
+                "approval %s was already spent, or does not cover the request, "
+                "when its run was refused",
                 approval.approval_id,
             )
     except Exception as exc:  # the refusal stands regardless
