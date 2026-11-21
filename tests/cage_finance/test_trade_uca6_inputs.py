@@ -185,6 +185,10 @@ async def test_caller_values_cannot_refuse_a_small_order(region: str) -> None:
 # ---------------------------------------------------------------------------
 
 
+@pytest.mark.covers(
+    "src.cage_finance.tools.trade_inputs:_resolve_market#daily_vol invalid (UCA-6 will refuse)",
+    "src.cage_finance.stpa.uca_rules:GeneratedSTPAValidator._check_uca_6#Missing required composite param",
+)
 @pytest.mark.parametrize("fault", _FEED_FAULTS, ids=str)
 async def test_a_faulted_daily_volume_refuses_the_trade(fault: FaultMode) -> None:
     feed = _feed()
@@ -197,6 +201,11 @@ async def test_a_faulted_daily_volume_refuses_the_trade(fault: FaultMode) -> Non
     assert "latency_ms" in bound  # the quote channel is independent
 
 
+@pytest.mark.covers(
+    "src.cage_finance.tools.trade_inputs:_resolve_market#quote invalid (UCA-2 / UCA-6 will refuse)",
+    "src.cage_finance.stpa.uca_rules:GeneratedSTPAValidator._check_uca_6#Missing required composite param",
+    scope="any_param",
+)
 @pytest.mark.parametrize("fault", _FEED_FAULTS, ids=str)
 async def test_a_faulted_quote_refuses_the_trade(fault: FaultMode) -> None:
     feed = _feed()
@@ -212,6 +221,10 @@ async def test_a_faulted_quote_refuses_the_trade(fault: FaultMode) -> None:
         assert found
 
 
+@pytest.mark.covers(
+    "src.cage_finance.tools.trade_inputs:fetch_verified_daily_volume#daily-volume fetch failed",
+    "src.cage_finance.tools.trade_inputs:_resolve_market#market-data daily-volume source unavailable",
+)
 @pytest.mark.parametrize("fault", _OUTAGE_FAULTS, ids=str)
 async def test_an_unavailable_market_feed_raises_server_input_unavailable(
     fault: FaultMode,
@@ -226,6 +239,9 @@ async def test_an_unavailable_market_feed_raises_server_input_unavailable(
     assert exc_info.value.failure_code == "MARKET_DATA_UNAVAILABLE"
 
 
+@pytest.mark.covers(
+    "src.cage_finance.tools.trade_inputs:ServerTradeInputs.resolve#no market-data feed assembled"
+)
 async def test_no_market_feed_raises_server_input_unavailable() -> None:
     from src.gateway.governance.contracts import ServerInputUnavailableError
 
@@ -246,6 +262,9 @@ async def test_an_unusable_amount_leaves_order_size_unset(amount: Any) -> None:
     assert found
 
 
+@pytest.mark.covers(
+    "src.cage_finance.stpa.uca_rules:GeneratedSTPAValidator._check_uca_6#Missing required composite param"
+)
 def test_uca6_refuses_when_either_input_is_missing() -> None:
     validator = GeneratedSTPAValidator()
     for params in ({}, {"order_size": 1.0}, {"daily_vol": 1.0}):

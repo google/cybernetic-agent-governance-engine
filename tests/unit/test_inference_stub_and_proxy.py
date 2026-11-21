@@ -822,6 +822,12 @@ async def test_proxy_enforces_stage1_block_quota_429_and_forwards_clean_stub_tur
 
 
 @pytest.mark.asyncio
+@pytest.mark.covers(
+    'src.gateway.server.inference_proxy:chat_completions#extra={"iso42001_control": "A.5.2", "ingress_stage": 1}',
+    'src.gateway.server.inference_proxy:chat_completions#event_type="TOKEN_QUOTA_DENIED"',
+    "src.gateway.server.inference_proxy:_emit_proxy_evidence#Inference proxy evidence emission failed closed",
+    "src.gateway.server.inference_proxy:_evidence_unavailable_response#evidence_chain_unavailable",
+)
 async def test_proxy_refusal_paths_fail_closed_503_when_blocking_evidence_unavailable(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

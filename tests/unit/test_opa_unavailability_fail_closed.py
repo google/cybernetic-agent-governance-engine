@@ -429,6 +429,10 @@ async def test_phase2_infra_failure_rolls_back_earlier_commit_and_blocks() -> No
     ] == ["GOVERNANCE_INFRASTRUCTURE_BLOCK"]
 
 
+@pytest.mark.covers(
+    "src.gateway.server.governance_middleware:validate_action_endpoint#_infrastructure_block_response(exc)",
+    "src.gateway.server.governance_middleware:_infrastructure_block_response",
+)
 def test_validate_action_endpoint_returns_typed_503_without_proof_hash_when_opa_down() -> (
     None
 ):
@@ -730,6 +734,9 @@ async def test_revalidate_post_hitl_preserves_approval_when_opa_unavailable() ->
 
 
 @pytest.mark.asyncio
+@pytest.mark.covers(
+    "src.gateway.server.mcp_tool_server:execute_tool_endpoint#Governance infrastructure unavailable during /tools/execute"
+)
 async def test_mcp_execute_tool_returns_503_on_governance_infrastructure_error() -> (
     None
 ):

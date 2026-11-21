@@ -196,6 +196,11 @@ class TestGovernorGatedRequestMetrics:
         assert permitted == 0.0
         assert blocked / (blocked + permitted) == 1.0
 
+    @pytest.mark.covers(
+        "src.gateway.server.workload_identity:WorkloadIdentityMiddleware.__call__#http_status >= 400",
+        "src.gateway.server.workload_identity:WorkloadIdentityMiddleware.__call__#INGRESS_IDENTITY_REFUSED",
+        "src.gateway.governance.governor.metrics:GovernorMetrics.gated_request_completed",
+    )
     def test_conservation_and_non_dilution_across_http_and_protocol_outcomes(
         self,
     ) -> None:

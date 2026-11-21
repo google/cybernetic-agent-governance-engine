@@ -330,6 +330,9 @@ async def test_barrier_drift_spends_the_approval() -> None:
     mint.assert_not_called()
 
 
+@pytest.mark.covers(
+    "src.gateway.governance.governor.governor:SymbolicGovernor.revalidate_post_hitl#unrecognised approval snapshot"
+)
 async def test_unrecognised_snapshot_spends_and_refuses_before_running() -> None:
     source = StaticWarrantSource.eligible()
     governor, barrier = _governor(source)

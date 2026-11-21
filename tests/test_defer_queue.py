@@ -1027,6 +1027,9 @@ async def test_cas_retry_exhaustion_returns_contention_aborted(fake_redis, monke
 
 
 @pytest.mark.asyncio
+@pytest.mark.covers(
+    "src.compliance_bridge.main:defer_inject#elif result == ReplayResult.DEFER_QUEUE_UNAVAILABLE:"
+)
 async def test_defer_inject_fails_closed_503_on_defer_queue_unavailable(
     fake_redis, monkeypatch
 ):
@@ -1085,6 +1088,10 @@ async def test_defer_inject_fails_closed_503_on_defer_queue_unavailable(
 
 
 @pytest.mark.asyncio
+@pytest.mark.covers(
+    "src.compliance_bridge.main:defer_inject#DEFER_REPLAY_UNEXPECTED_RESULT",
+    "src.compliance_bridge.main:defer_inject#[defer/inject] Redis connection error:",
+)
 async def test_defer_inject_fails_closed_503_on_unexpected_replay_result_and_queue_error(
     fake_redis, monkeypatch
 ):

@@ -233,6 +233,9 @@ class TestOperatorIdentityProvenance:
         assert "urn:cage:dev:" in exc_info.value.detail
 
     @pytest.mark.asyncio
+    @pytest.mark.covers(
+        "src.compliance_bridge.auth:require_operator_identity#No verified operator identity found. Required: OIDC JWT"
+    )
     async def test_dev_synthetic_blocked_in_production(self, monkeypatch):
         """Verify dev-mode synthetic is disabled in production env."""
         monkeypatch.setenv("CAGE_ENV", "prod")

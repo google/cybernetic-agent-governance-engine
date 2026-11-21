@@ -117,6 +117,9 @@ class TestNemoGuardrailNodeFactory:
         assert result["guardrail_blocked"] is False
         assert result["guardrail_reason"] == ""
 
+    @pytest.mark.covers(
+        "src.gateway.governance.langgraph_harness.nemo_node_factory:create_nemo_guardrail_node.nemo_guardrail_node#GUARDRAIL_ERROR: {exc}",
+    )
     @pytest.mark.asyncio
     async def test_fail_closed_on_exception(self):
         """Exception during validate_with_nemo → blocked (fail-closed)."""
@@ -241,6 +244,9 @@ class TestNemoGuardrailNodeFactory:
         call_args = mock_validate.call_args
         assert call_args[0][0] == "Hello from custom field"
 
+    @pytest.mark.covers(
+        "src.gateway.governance.langgraph_harness.nemo_node_factory:create_nemo_guardrail_node.nemo_guardrail_node#GUARDRAIL_ERROR: {exc}",
+    )
     @pytest.mark.asyncio
     async def test_fail_closed_when_rails_init_fails(self):
         """If get_nemo_rails() raises → blocked."""
@@ -359,6 +365,9 @@ class TestNemoOutputRailNodeFactory:
         assert len(result["messages"]) == 1
         assert result["messages"][0].content == "masked output"
 
+    @pytest.mark.covers(
+        "src.gateway.governance.langgraph_harness.nemo_node_factory:create_nemo_output_rail_node.nemo_output_rail_node#mask_failed = True",
+    )
     @pytest.mark.asyncio
     async def test_fail_closed_sentinel_on_exception(self):
         """Exception in verify_and_mask_output → sentinel output."""

@@ -404,6 +404,9 @@ class TestPostHitlRevalidateNode:
         result = await _revalidate(state)
         assert result["post_hitl_safety_status"] == "BLOCKED"
 
+    @pytest.mark.covers(
+        'src.governed_financial_advisor.graph.subgraphs.governed_trader_graph:post_hitl_revalidate_node#"drift_unverifiable"',
+    )
     @pytest.mark.asyncio
     @pytest.mark.parametrize(
         "rehydration",
@@ -478,6 +481,9 @@ class TestPostHitlRevalidateNode:
             == "drift_unverifiable"
         )
 
+    @pytest.mark.covers(
+        'src.governed_financial_advisor.graph.subgraphs.governed_trader_graph:post_hitl_revalidate_node#"invalid_slippage_tolerance"',
+    )
     @pytest.mark.asyncio
     @pytest.mark.parametrize(
         "bad_slippage",
@@ -787,8 +793,16 @@ class TestGraphTopology:
     def test_graph_contains_revalidate_node(self, governed_trader_graph):
         assert "post_hitl_revalidate" in governed_trader_graph.nodes
 
-    def test_graph_contains_drift_blocked_node(self, governed_trader_graph):
-        assert "drift_blocked" in governed_trader_graph.nodes
+    @pytest.mark.covers(
+        "src.governed_financial_advisor.graph.subgraphs.governed_trader_graph:build_governed_trader_graph#drift_blocked_node",
+    )
+    def test_graph_contains_drift_blocked_node(self):
+        from src.governed_financial_advisor.graph.subgraphs.governed_trader_graph import (
+            build_governed_trader_graph,
+        )
+
+        graph = build_governed_trader_graph()
+        assert "drift_blocked" in graph.nodes
 
     def test_graph_still_contains_executor_and_approval_nodes(
         self, governed_trader_graph
@@ -806,6 +820,9 @@ class TestGraphTopology:
 
 
 class TestRoutePostRevalidation:
+    @pytest.mark.covers(
+        'src.governed_financial_advisor.graph.subgraphs.governed_trader_graph:route_post_revalidation#return "drift_blocked"',
+    )
     def test_blocked_routes_to_drift_blocked(self):
         from src.governed_financial_advisor.graph.subgraphs.governed_trader_graph import (
             route_post_revalidation,
@@ -822,6 +839,9 @@ class TestRoutePostRevalidation:
         state = _base_state(post_hitl_safety_status="PASSED")
         assert route_post_revalidation(state) == "executor"
 
+    @pytest.mark.covers(
+        'src.governed_financial_advisor.graph.subgraphs.governed_trader_graph:route_post_revalidation#return "drift_blocked"',
+    )
     @pytest.mark.parametrize("bad_status", [None, "", "SKIPPED", "UNKNOWN"])
     def test_non_passed_status_routes_fail_closed_to_drift_blocked_poam_2026_240(
         self, bad_status

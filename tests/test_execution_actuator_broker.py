@@ -214,6 +214,9 @@ async def test_actuator_masks_credentials_in_logs(caplog):
 
 
 @pytest.mark.asyncio
+@pytest.mark.covers(
+    "src.integrations.actuator_01.adapter:Actuator01Adapter.actuate#CREDENTIAL_BROKER_FAILED"
+)
 async def test_actuator_fails_closed_on_credential_access_denied():
     """Actuator fails closed when SVID is unauthorized."""
     # Arrange
@@ -246,6 +249,9 @@ async def test_actuator_fails_closed_on_credential_access_denied():
 
 
 @pytest.mark.asyncio
+@pytest.mark.covers(
+    "src.integrations.actuator_01.adapter:Actuator01Adapter.actuate#CREDENTIAL_BROKER_FAILED"
+)
 async def test_actuator_fails_closed_on_credential_not_found():
     """Actuator fails closed when no credential exists for the tool."""
     # Arrange

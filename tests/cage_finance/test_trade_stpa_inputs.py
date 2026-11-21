@@ -249,6 +249,10 @@ async def test_missing_nav_source_blocks_on_infrastructure(
 
 
 @pytest.mark.asyncio
+@pytest.mark.covers(
+    "src.cage_finance.tools.trade_inputs:fetch_verified_quote#market-data fetch failed",
+    "src.cage_finance.tools.trade_inputs:_resolve_market#market-data quote source unavailable",
+)
 @pytest.mark.parametrize(
     "fault",
     [
@@ -303,6 +307,10 @@ async def test_stale_quote_is_measured_and_refused_by_uca2(
 
 
 @pytest.mark.asyncio
+@pytest.mark.covers(
+    "src.cage_finance.tools.trade_inputs:fetch_verified_nav#NAV fetch failed",
+    "src.cage_finance.tools.trade_inputs:ServerTradeInputs.resolve#portfolio NAV source unavailable",
+)
 @pytest.mark.parametrize(
     "fault",
     [

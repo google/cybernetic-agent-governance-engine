@@ -436,6 +436,9 @@ async def test_read_cbf_state_falls_back_when_reconciliation_raises(make_cbf):
 
 
 @pytest.mark.asyncio
+@pytest.mark.covers(
+    "src.gateway.governance.safety.cbf_engine:ControlBarrierFunction._read_cbf_state_atomic#Redis client unavailable."
+)
 async def test_read_cbf_state_raises_when_redis_unavailable(make_cbf):
     """_read_cbf_state_atomic raises RuntimeError when redis_client is None."""
     # Use make_cbf fixture factory
@@ -1030,6 +1033,9 @@ async def test_verify_action_never_accumulates_debits(make_cbf):
 class TestFenceEpochColdStartFailClosed:
     """Tests for B3a: fail-closed behavior when Redis is unavailable at init."""
 
+    @pytest.mark.covers(
+        "src.gateway.governance.safety.cbf_engine:ControlBarrierFunction._fetch_initial_fence_epoch_sync#Cannot initialize CBF: sync Redis client unavailable."
+    )
     def test_cbf_raises_initialization_error_when_redis_unavailable_in_production(self):
         """B3a: CBF must raise CBFInitializationError in production when Redis unavailable."""
         from src.cage_finance.invariants import CashBarrier, finance_cost_resolver

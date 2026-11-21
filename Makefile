@@ -121,6 +121,8 @@ lint:
 	@uv run python scripts/check_model_free_install.py
 	@echo "==> Verifying CAGE Client SDK dual-tree parity..."
 	@uv run python scripts/check_client_sdk_sync.py --verbose
+	@echo "==> Checking fail-closed test reachability markers (@pytest.mark.covers)..."
+	@uv run python scripts/check_fail_closed_coverage.py --verbose
 	@echo "✅ Lint checks passed."
 
 ## Run security scanning (lockfile check, Bandit SAST, pip-audit CVEs, Semgrep)
@@ -168,7 +170,8 @@ test-last-failed:
 
 ## Full local run with coverage (mirrors CI)
 test-coverage:
-	uv run pytest tests/ -m "local or unit" -n auto --dist loadscope -p no:langsmith -p no:langsmith_plugin --cov=src --cov-config=.coveragerc --cov-report=term-missing --cov-fail-under=70
+	uv run pytest tests/ -m "local or unit" -n auto --dist loadscope -p no:langsmith -p no:langsmith_plugin --cov=src --cov=cage_client --cov-context=test --cov-config=.coveragerc --cov-report=term-missing --cov-fail-under=70
+	uv run python scripts/check_fail_closed_coverage.py --verify-coverage .coverage --verbose
 
 ## Randomized test order (weekly, for dependency detection)
 ## Reproduce a failure: uv run pytest --randomly-seed=last

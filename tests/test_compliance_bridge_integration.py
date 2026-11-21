@@ -1663,6 +1663,9 @@ class TestDeferQueueEndpoints:
     unreachable — check the Redis Sentinel deployment and REDIS_URL secret.
     """
 
+    @pytest.mark.covers_exempt(
+        reason="non-hermetic: live HTTP integration test against deployed compliance-bridge pod via requests (no in-process src/ coverage)"
+    )
     def test_defer_pending_returns_200_or_503(self, session):
         """The endpoint must respond — 200/503 when authenticated, 401/403 when unauthenticated in staging/prod."""
         r = session.get(f"{BASE_URL}/v1/defer/pending", timeout=15)
@@ -1746,6 +1749,9 @@ class TestDeferQueueEndpoints:
             f"Expected DEFER_TOKEN_NOT_FOUND error, got {error!r}"
         )
 
+    @pytest.mark.covers_exempt(
+        reason="non-hermetic: live HTTP integration test against deployed compliance-bridge pod via requests (no in-process src/ coverage)"
+    )
     def test_defer_escalate_refuses_workload_svid_and_returns_404_for_human_oidc(
         self, session
     ):

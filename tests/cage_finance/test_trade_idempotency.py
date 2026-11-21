@@ -165,6 +165,10 @@ async def test_concurrent_duplicates_dispatch_exactly_once(governor: MagicMock) 
 
 
 @pytest.mark.asyncio
+@pytest.mark.covers(
+    "src.gateway.governance.execution_idempotency:ExecutionLedger.claim#no Redis is configured for the execution ledger",
+    "src.cage_finance.tools.tool_provider:execute_trade_action#EXECUTION_LEDGER_UNAVAILABLE",
+)
 async def test_enforcing_posture_without_redis_refuses(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -209,6 +213,11 @@ async def test_unknown_outcome_keeps_the_claim(
 
 
 @pytest.mark.asyncio
+@pytest.mark.covers(
+    "src.cage_finance.tools.tool_provider:_govern_and_actuate#Actuation rejected:",
+    "src.cage_finance.tools.tool_provider:execute_trade_action#attempt.status.value",
+    "src.cage_finance.tools.tool_provider:_refuse_duplicate#return duplicate.outcome",
+)
 async def test_rejected_actuation_is_recorded_as_blocked(governor: MagicMock) -> None:
     actuate = AsyncMock(return_value=_not_accepted(ActuationOutcome.REJECTED))
     with _pipeline(actuate):
@@ -237,6 +246,10 @@ async def test_governance_refusal_is_replayed_without_governing_again(
 
 
 @pytest.mark.asyncio
+@pytest.mark.covers(
+    "src.gateway.governance.execution_idempotency:ExecutionLedger.claim#if int(reclaimed) == 1:",
+    "src.cage_finance.tools.tool_provider:_govern_and_actuate#enforce_approved_governance(",
+)
 async def test_an_approval_reclaims_a_blocked_key_and_executes_once(
     governor: MagicMock,
 ) -> None:

@@ -277,12 +277,18 @@ class TestIngestWithNoRedis:
     """Tests for the graceful no-op path when Redis is unavailable."""
 
     @pytest.mark.asyncio
+    @pytest.mark.covers(
+        "src.gateway.governance.evidence.stream:EvidenceStreamSink.ingest#if self._redis is None:"
+    )
     async def test_ingest_returns_none_when_redis_unavailable(self):
         sink = _make_sink()
         result = await sink.ingest({"type": "AUDIT_FINDING", "controlId": "A.5.3"})
         assert result is None
 
     @pytest.mark.asyncio
+    @pytest.mark.covers(
+        "src.gateway.governance.evidence.stream:EvidenceStreamSink.ingest#if self._redis is None:"
+    )
     async def test_ingest_does_not_advance_chain_when_redis_unavailable(self):
         sink = _make_sink()
         await sink.ingest({"type": "AUDIT_FINDING"})
@@ -520,6 +526,10 @@ class TestCompareAndAppend:
         assert entries[1][1]["prev_hash"] == entries[0][1]["record_hash"]
 
     @pytest.mark.asyncio
+    @pytest.mark.covers(
+        "src.gateway.governance.evidence.stream:EvidenceStreamSink._commit_batch#lost the chain head race",
+        "src.gateway.governance.evidence.stream:EvidenceStreamSink.ingest#except EvidenceChainUnavailableError:",
+    )
     async def test_persistent_contention_fails_closed(self):
         """If every attempt loses the head, ingest raises instead of forking."""
         from src.gateway.governance.evidence.stream import (
@@ -1270,6 +1280,10 @@ class TestRetrySafeAppend:
         await sink.stop()
 
     @pytest.mark.asyncio
+    @pytest.mark.covers(
+        "src.gateway.governance.evidence.stream:EvidenceStreamSink._send_settled#whether it landed is unknown.",
+        "src.gateway.governance.evidence.stream:EvidenceStreamSink.ingest#except EvidenceAppendUnsettledError as exc:",
+    )
     async def test_unsettled_append_fails_closed_without_resealing(self):
         from src.gateway.governance.evidence.stream import (
             _MAX_SETTLE_ATTEMPTS,

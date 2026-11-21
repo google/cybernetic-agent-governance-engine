@@ -222,6 +222,10 @@ async def test_f45_two_distinct_approvers_sharing_decision_binding_reach_quorum(
 
 
 @pytest.mark.asyncio
+@pytest.mark.covers(
+    "src.gateway.server.governance_middleware:validate_action_endpoint#and not has_persisted_ticket",
+    "src.gateway.server.governance_middleware:validate_action_endpoint#DeferQueue unavailable during validate_action",
+)
 async def test_f04_validate_action_endpoint_returns_503_on_unpersisted_deferral() -> (
     None
 ):

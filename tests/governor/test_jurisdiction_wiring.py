@@ -453,11 +453,28 @@ async def test_refusal_without_review_is_hard() -> None:
 @pytest.mark.parametrize(
     "provider",
     [
-        _FakeProvider(hang=True),
-        _FakeProvider(exc=ConnectionError("provider down")),
-        _FakeProvider(ValidationResult(admitted=True, error="upstream 503")),
+        pytest.param(
+            _FakeProvider(hang=True),
+            id="timeout",
+            marks=pytest.mark.covers(
+                "src.gateway.governance.jurisdiction.eu_ai_act.fria_tier:FriaTier.evaluate#validate_fria timed out after"
+            ),
+        ),
+        pytest.param(
+            _FakeProvider(exc=ConnectionError("provider down")),
+            id="raises",
+            marks=pytest.mark.covers(
+                "src.gateway.governance.jurisdiction.eu_ai_act.fria_tier:FriaTier.evaluate#validate_fria raised"
+            ),
+        ),
+        pytest.param(
+            _FakeProvider(ValidationResult(admitted=True, error="upstream 503")),
+            id="error_field",
+            marks=pytest.mark.covers(
+                "src.gateway.governance.jurisdiction.eu_ai_act.fria_tier:FriaTier.evaluate#provider reported an error:"
+            ),
+        ),
     ],
-    ids=["timeout", "raises", "error_field"],
 )
 async def test_unavailable_provider_fails_closed(provider: _FakeProvider) -> None:
     [violation] = await _tier(provider).evaluate("execute_trade", dict(_TRADE))
@@ -771,8 +788,22 @@ async def test_hold_the_reviewer_never_saw_is_approval_drift(
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
     "outage",
-    [{"exc": ConnectionError("provider down")}, {"hang": True}],
-    ids=["raises", "timeout"],
+    [
+        pytest.param(
+            {"exc": ConnectionError("provider down")},
+            id="raises",
+            marks=pytest.mark.covers(
+                "src.gateway.governance.jurisdiction.eu_ai_act.fria_tier:FriaTier.evaluate#validate_fria raised"
+            ),
+        ),
+        pytest.param(
+            {"hang": True},
+            id="timeout",
+            marks=pytest.mark.covers(
+                "src.gateway.governance.jurisdiction.eu_ai_act.fria_tier:FriaTier.evaluate#validate_fria timed out after"
+            ),
+        ),
+    ],
 )
 async def test_provider_outage_at_revalidation_denies(
     defer_redis: Any, outage: dict[str, Any]
@@ -1029,6 +1060,10 @@ async def test_eu_contribution_presents_the_workload_identity_it_verified() -> N
 
 
 @pytest.mark.asyncio
+@pytest.mark.covers(
+    "src.gateway.governance.jurisdiction.eu_ai_act.fria_tier:FriaTier._payload#requires a non-empty correlation_id",
+    "src.gateway.governance.jurisdiction.eu_ai_act.fria_tier:FriaTier.evaluate#FRIA payload not built",
+)
 async def test_missing_trace_span_refuses_locally_without_calling_provider(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -1070,6 +1105,10 @@ async def test_missing_trace_span_refuses_locally_without_calling_provider(
     assert provider.calls == []
 
 
+@pytest.mark.covers(
+    "src.gateway.governance.governor.assembly:_require_configured_tracer#but OTEL_TRACES_EXPORTER=none",
+    "src.gateway.governance.governor.assembly:_require_configured_tracer#call setup_tracing() before assembling",
+)
 def test_enforcing_posture_refuses_assembly_without_configured_tracer(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -1155,6 +1194,11 @@ def _eu_components(provider: Any, posture: DeploymentPosture) -> GovernorCompone
     )
 
 
+@pytest.mark.covers(
+    "src.gateway.governance.jurisdiction.eu_ai_act:require_real_provider#backed by the stub",
+    'src.gateway.governance.governor.posture:_check_jurisdiction_requirements#raise RuntimeError(f"region',
+    'src.gateway.governance.governor.posture:assert_production_posture#raise PostureViolation(f"startup posture',
+)
 def test_enforcing_eu_posture_refuses_the_stub_provider(
     healthy: pytest.MonkeyPatch,
 ) -> None:

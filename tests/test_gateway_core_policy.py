@@ -908,6 +908,10 @@ class TestOPAClientEvaluatePolicy:
         assert client.cb.failures == 1
 
     @pytest.mark.asyncio
+    @pytest.mark.covers(
+        "src.gateway.core.policy:OPAClient._query_opa#OPA returned HTTP {status}",
+        "src.gateway.core.policy:OPAClient.evaluate_policy#except _OPAQueryFailed as exc:",
+    )
     async def test_5xx_raises_and_counts(self) -> None:
         client = self._make_opa_client()
         http = self._http(response=_response(503))

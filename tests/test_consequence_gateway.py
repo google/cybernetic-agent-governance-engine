@@ -514,6 +514,9 @@ async def test_binding_mismatch_substitution_attack(
 
 
 @pytest.mark.asyncio
+@pytest.mark.covers(
+    'src.gateway.governance.consequence_gateway:ConsequenceGateway.evaluate#reason_code="REDIS_ERROR"'
+)
 async def test_redis_error_fail_closed(
     store: ConsequenceAuthorityStore,
     signer,
@@ -648,6 +651,9 @@ async def test_consequence_gateway_emits_decisions_to_evidence_stream(
 
 
 @pytest.mark.asyncio
+@pytest.mark.covers(
+    "src.gateway.governance.consequence_gateway:ConsequenceGateway._emit_evaluation#Evidence stream unavailable on %s"
+)
 async def test_consequence_gateway_fails_closed_when_evidence_chain_unavailable(
     gateway: ConsequenceGateway,
     signer,
@@ -684,6 +690,10 @@ async def test_consequence_gateway_fails_closed_when_evidence_chain_unavailable(
 
 
 @pytest.mark.asyncio
+@pytest.mark.covers(
+    "src.gateway.governance.evidence.stream:EvidenceStreamSink.ingest_sync#Redis connection not established.",
+    "src.gateway.governance.consequence_gateway:ConsequenceGateway._emit_evaluation#Evidence stream unavailable on %s",
+)
 async def test_consequence_gateway_execute_fails_closed_when_sink_disconnected(
     gateway: ConsequenceGateway,
     signer,
@@ -718,6 +728,10 @@ async def test_consequence_gateway_execute_fails_closed_when_sink_disconnected(
 
 
 @pytest.mark.asyncio
+@pytest.mark.covers(
+    "src.gateway.governance.evidence.stream:EvidenceStreamSink.ingest_sync#Redis connection not established.",
+    "src.gateway.governance.consequence_gateway:ConsequenceGateway._emit_evaluation#Evidence stream unavailable on %s",
+)
 async def test_consequence_gateway_refusal_raises_when_evidence_chain_unavailable(
     gateway: ConsequenceGateway,
     action_payload: dict,

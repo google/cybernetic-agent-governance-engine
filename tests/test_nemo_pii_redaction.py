@@ -130,6 +130,9 @@ async def test_output_rail_masks_a_person_name(monkeypatch) -> None:
     assert "<PERSON>" in replacement.content
 
 
+@pytest.mark.covers(
+    "src.gateway.governance.langgraph_harness.nemo_node_factory:create_nemo_output_rail_node.nemo_output_rail_node#mask_failed = True",
+)
 @pytest.mark.asyncio
 async def test_output_rail_fails_closed_when_redaction_errors(monkeypatch) -> None:
     def broken(text: str) -> tuple[str, list[str]]:

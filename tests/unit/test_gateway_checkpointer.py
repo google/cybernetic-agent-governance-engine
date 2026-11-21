@@ -556,6 +556,10 @@ def test_permissive_posture_allows_memory_only_when_gateway_unset_or_explicit() 
 
 
 @pytest.mark.asyncio
+@pytest.mark.covers(
+    "src.governed_financial_advisor.server:health_check#non_durable_checkpointer",
+    "src.governed_financial_advisor.server:health_check#gateway_checkpointer_unreachable",
+)
 async def test_advisor_health_endpoint_reports_checkpointer_and_fails_closed_in_staging(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -676,6 +680,9 @@ def test_governed_advisor_terraform_configures_gateway_checkpointer_and_health_p
 
 
 @pytest.mark.asyncio
+@pytest.mark.covers(
+    "src.governed_financial_advisor.server:list_pending_approvals#Checkpoint store unavailable while listing pending approvals:"
+)
 async def test_pending_approvals_never_returns_partial_200_on_mid_iteration_checkpoint_outage(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -753,6 +760,10 @@ async def test_pending_approvals_never_returns_partial_200_on_mid_iteration_chec
 
 
 @pytest.mark.asyncio
+@pytest.mark.covers(
+    "src.governed_financial_advisor.server:query_agent#Checkpoint store unavailable during thread-owner check:",
+    "src.governed_financial_advisor.server:query_agent#Checkpoint store unavailable during graph execution:",
+)
 async def test_query_agent_returns_503_on_runtime_checkpoint_durability_error(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

@@ -274,7 +274,28 @@ class TestInferenceProxyPassEvidenceFailsClosed:
     """POAM-2026-217 (#2 & #3): Permitted completions fail closed 503 on dead sink and ignore stale app.state."""
 
     @pytest.mark.asyncio
-    @pytest.mark.parametrize("stream_mode", [False, True])
+    @pytest.mark.parametrize(
+        "stream_mode",
+        [
+            pytest.param(
+                False,
+                id="False",
+                marks=pytest.mark.covers(
+                    "src.gateway.server.inference_proxy:chat_completions#Inference proxy pass failed closed: evidence chain unavailable"
+                ),
+            ),
+            pytest.param(
+                True,
+                id="True",
+                marks=pytest.mark.covers(
+                    "src.gateway.server.inference_proxy:chat_completions#Inference proxy streaming pass failed closed: evidence chain unavailable"
+                ),
+            ),
+        ],
+    )
+    @pytest.mark.covers(
+        "src.gateway.server.inference_proxy:_emit_proxy_pass_evidence#Inference proxy pass-evidence emission failed closed"
+    )
     async def test_permitted_completion_returns_503_and_rolls_back_quota_on_stopped_sink(
         self, monkeypatch: pytest.MonkeyPatch, stream_mode: bool
     ) -> None:

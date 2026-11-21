@@ -556,6 +556,9 @@ class TestExecuteToolEndpointWorkloadIdentity:
             assert res["status"] == "SUCCESS"
             assert "INTERVENTION_ACK" in res["output"]
 
+    @pytest.mark.covers(
+        "src.gateway.server.mcp_tool_server:execute_tool_endpoint#except EvidenceChainUnavailableError as exc:",
+    )
     @pytest.mark.asyncio
     async def test_execute_tool_maps_evidence_chain_unavailable_to_503(
         self, monkeypatch

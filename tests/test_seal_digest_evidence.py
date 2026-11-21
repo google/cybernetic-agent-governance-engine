@@ -141,6 +141,10 @@ async def test_seal_digest_is_sha256_and_the_trace_join_key(seal: str) -> None:
 # ---------------------------------------------------------------------------
 
 
+@pytest.mark.covers(
+    "src.gateway.governance.seams.actuation:ExecutionClearance.__post_init__#require_sha256_hex",
+    "src.gateway.governance.seams.digests:require_sha256_hex#raise ValueError",
+)
 async def test_clearance_refuses_a_seal_in_the_digest_field(seal: str) -> None:
     with pytest.raises(ValueError, match="SHA-256") as refused:
         _clearance(digest=seal, routing_seal=seal)
@@ -161,6 +165,10 @@ async def test_clearance_refuses_a_seal_in_the_digest_field(seal: str) -> None:
         64,
     ],
     ids=["empty", "upper", "short", "long", "non-hex", "newline", "none", "int"],
+)
+@pytest.mark.covers(
+    "src.gateway.governance.seams.actuation:ExecutionClearance.__post_init__#require_sha256_hex",
+    "src.gateway.governance.seams.digests:require_sha256_hex#raise ValueError",
 )
 def test_clearance_refuses_any_non_digest(digest: Any) -> None:
     with pytest.raises(ValueError, match="SHA-256"):
@@ -295,6 +303,9 @@ async def test_healthcare_records_the_digest_not_the_seal(
     governor.settle.assert_awaited_once_with(hc_seal, executed=True)
 
 
+@pytest.mark.covers(
+    "src.cage_healthcare.tools.tool_provider:ClinicalDoseActuator.actuate#CLEARANCE_INVALID"
+)
 async def test_clinical_actuator_refuses_a_clearance_without_its_seal() -> None:
     clearance = _clearance(digest=rs.seal_digest("seal-under-test"))
     clearance.executor_id = ClinicalDoseActuator.actuator_id

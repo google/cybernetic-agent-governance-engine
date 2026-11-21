@@ -23,6 +23,9 @@ async def test_stpa_stage_happy_path():
 
 
 @pytest.mark.asyncio
+@pytest.mark.covers(
+    'src.gateway.governance.governor.stages.stpa:StpaStage.run#code="STPA_ERROR"'
+)
 async def test_stpa_stage_fail_closed_on_error():
     ctx = StageContext(action="test_action", params={}, profile=Profile.FULL)
     validator = MagicMock()
@@ -72,6 +75,9 @@ async def test_stpa_stage_evaluates_contributed_finance_uca_rules():
 
 
 @pytest.mark.asyncio
+@pytest.mark.covers(
+    "src.gateway.governance.stpa_validator:UcaRule.evaluate#evaluation error — failing closed"
+)
 async def test_stpa_validator_custom_uca_rule_fails_closed_on_predicate_error():
     def _broken_predicate(_params: dict) -> Violation | None:
         raise RuntimeError("predicate exploded")

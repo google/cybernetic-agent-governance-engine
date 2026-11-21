@@ -1114,6 +1114,11 @@ class TestFromEnvAndScheduler:
 
 class TestComplianceBridgeEndpoints:
     @pytest.mark.asyncio
+    @pytest.mark.covers(
+        "src.compliance_bridge.main:verify_evidence_custody#if not report.ok:",
+        'src.compliance_bridge.main:verify_evidence_custody#payload["citation_error"] = str(exc)',
+        "src.compliance_bridge.main:verify_evidence_custody#EVIDENCE_STORE_UNAVAILABLE",
+    )
     async def test_verify_endpoint_200_and_409_and_503(
         self, server, store, signer, provider, monkeypatch
     ):
@@ -1163,6 +1168,10 @@ class TestComplianceBridgeEndpoints:
                 )
 
     @pytest.mark.asyncio
+    @pytest.mark.covers(
+        "src.compliance_bridge.main:export_oscal_assessment_results#EVIDENCE_CUSTODY_UNVERIFIED",
+        "src.compliance_bridge.main:export_oscal_assessment_results#EVIDENCE_STORE_UNAVAILABLE",
+    )
     async def test_oscal_endpoint_verify_custody_passes_and_fails_closed(
         self, server, store, signer, provider, monkeypatch
     ):
@@ -1232,6 +1241,10 @@ class TestComplianceBridgeEndpoints:
                     resp_503.json()["detail"]["error"] == "EVIDENCE_STORE_UNAVAILABLE"
                 )
 
+    @pytest.mark.covers(
+        "src.compliance_bridge.evidence_verifier:CustodyVerifier.from_env#requires at least one trust anchor",
+        "src.compliance_bridge.main:lifespan#STARTUP FAILURE: evidence custody",
+    )
     def test_lifespan_enforcing_fails_closed_when_verifier_unconfigured(
         self, monkeypatch
     ):
@@ -1393,6 +1406,10 @@ class TestBoundGenesisRotation:
             report.assert_citable()
 
     @pytest.mark.asyncio
+    @pytest.mark.covers(
+        "src.compliance_bridge.evidence_verifier:CustodyVerifier.verify_batch#bound genesis rotation is missing",
+        "src.compliance_bridge.evidence_verifier:CustodyVerifier._check_continuity#genesis previous_batch_attestation_digest does not match",
+    )
     async def test_missing_or_mismatched_previous_batch_attestation_digest_fails_closed(
         self, server, store, signer, provider
     ):
@@ -1636,6 +1653,9 @@ class TestPostureStampingAndV1Qualification:
         ]
 
     @pytest.mark.asyncio
+    @pytest.mark.covers(
+        "src.compliance_bridge.evidence_verifier:CustodyVerifier._check_posture_consistency#mixes incompatible deployment postures"
+    )
     async def test_mixing_v2_staging_and_production_in_one_archive_fails_closed(
         self, server, store, signer, provider
     ):

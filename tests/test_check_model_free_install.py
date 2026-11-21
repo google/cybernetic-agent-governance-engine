@@ -142,6 +142,9 @@ def test_narrowing_g3_fails(copy: Path) -> None:
     ]
 
 
+@pytest.mark.covers_exempt(
+    reason="non-src-target: targets scripts/check_model_free_install.py:forbidden_vendor_sdks outside --cov=src/ measurement scope"
+)
 def test_reassigning_g3_after_the_literal_fails_closed(copy: Path) -> None:
     boundaries = copy / "scripts/check_import_boundaries.py"
     boundaries.write_text(

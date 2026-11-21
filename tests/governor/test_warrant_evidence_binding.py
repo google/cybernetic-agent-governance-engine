@@ -321,6 +321,9 @@ def test_record_is_always_unverified_and_cannot_be_upgraded() -> None:
     assert attestation.metadata["reliance_status"] == "ELIGIBLE"
 
 
+@pytest.mark.covers(
+    "src.gateway.governance.warrant.reliance:RelianceRecord.__post_init__#must be a non-empty string"
+)
 @pytest.mark.parametrize(
     "field", ["norm_id", "required_governing_version", "provider_name"], ids=str
 )
@@ -448,6 +451,10 @@ async def test_dropping_the_reliance_record_breaks_seal_verification(
         rs.verify_seal_against_evidence(seal, _ACTION, params, stripped, prev_hash="")
 
 
+@pytest.mark.covers(
+    "src.gateway.governance.routing_seal:generate_seal_with_evidence#reliance_evidence = _strict_json(",
+    "src.gateway.governance.routing_seal:_strict_json#is not a JSON value",
+)
 async def test_generate_seal_refuses_non_json_reliance_before_committing(
     chain: SimpleNamespace,
 ) -> None:
@@ -892,6 +899,14 @@ async def test_refusal_blocks_and_is_counted_when_the_sink_fails(
     )
 
 
+@pytest.mark.covers(
+    "src.gateway.governance.evidence.stream:commit_decision_evidence#Evidence sink is None",
+    'src.gateway.governance.evidence.stream:commit_decision_evidence#"ingest" in resolved_sink.__dict__',
+    "src.gateway.governance.evidence.stream:EvidenceStreamSink.ingest_sync#Redis connection not established",
+    "src.gateway.governance.governor.verdicts:publish_refusal#Failed to publish refusal receipt",
+    "src.gateway.governance.governor.verdicts:publish_deferral#Failed to publish deferral evidence",
+    "src.gateway.governance.governor.verdicts:handle_post_hitl_defer#Failed to publish post-approval deferral evidence",
+)
 async def test_refusal_and_deferral_fail_closed_when_sink_returns_none_or_is_missing_or_disconnected(
     chain: SimpleNamespace,
     monkeypatch: pytest.MonkeyPatch,
