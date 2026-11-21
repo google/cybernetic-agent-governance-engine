@@ -609,11 +609,21 @@ class TestEmitRefusalReceipt:
         assert "receipt_id" in receipt
         assert "timestamp_utc" in receipt
 
-    async def test_emit_receipt_kms_sign_failure_does_not_suppress(self, caplog):
-        """If KMS signing fails, the receipt is still emitted (unsigned) and error is logged."""
+    async def test_emit_receipt_kms_sign_failure_fails_closed(self, caplog):
+        """A signing failure blocks fail-closed; nothing unsigned is committed."""
         import logging
 
-        from src.gateway.server.governance_middleware import _emit_refusal_receipt
+        from src.gateway.governance.governor.errors import (
+            GovernanceInfrastructureError,
+        )
+        from src.gateway.governance.governor.verdicts import (
+            INFRASTRUCTURE_BLOCK_EVENT_TYPE,
+        )
+        from src.gateway.server.governance_middleware import (
+            _emit_refusal_receipt,
+            get_last_refusal_proof_hash,
+            set_last_refusal_proof_hash,
+        )
 
         failing_signer = MagicMock()
         failing_signer.sign = MagicMock(side_effect=RuntimeError("KMS unavailable"))
@@ -623,6 +633,7 @@ class TestEmitRefusalReceipt:
 
         sink = MagicMock()
         sink.ingest = AsyncMock(return_value="1700000000000-0")
+        set_last_refusal_proof_hash(None)
 
         with (
             patch(
@@ -633,19 +644,32 @@ class TestEmitRefusalReceipt:
                 "src.gateway.server.governance_middleware.get_evidence_sink",
                 return_value=sink,
             ),
+            patch(
+                "src.gateway.governance.evidence.stream.get_evidence_sink",
+                return_value=sink,
+            ),
+            patch(
+                "src.gateway.governance.evidence.stream.commit_decision_evidence",
+                new=AsyncMock(),
+            ) as commit,
         ):
             with caplog.at_level(logging.ERROR, logger="Gateway.GovernanceMiddleware"):
-                await _emit_refusal_receipt(
-                    action_id="execute_trade",
-                    refusal_reason="test_reason",
-                    oscal_control_ref="SC-4",
-                    params={},
-                )
+                with pytest.raises(GovernanceInfrastructureError) as excinfo:
+                    await _emit_refusal_receipt(
+                        action_id="execute_trade",
+                        refusal_reason="test_reason",
+                        oscal_control_ref="SC-4",
+                        params={},
+                    )
 
-        # Sink must still be called even though signing failed
-        sink.ingest.assert_awaited_once()
-        # Error must be logged
-        assert any("Failed to KMS-sign" in r.message for r in caplog.records)
+        assert excinfo.value.dependency == "kms"
+        assert excinfo.value.failure_code == "KMS_SIGNING_UNAVAILABLE"
+        labels = [c.kwargs.get("label") for c in commit.await_args_list]
+        assert labels == [INFRASTRUCTURE_BLOCK_EVENT_TYPE]
+        assert get_last_refusal_proof_hash() is None
+        assert any(
+            "Failed to sign refusal receipt" in r.message for r in caplog.records
+        )
 
     async def test_emit_receipt_sink_failure_raises_when_blocking(
         self, mock_kms_signer, caplog
