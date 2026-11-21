@@ -152,6 +152,7 @@ jobs:
           format: "sarif"
           output: "trivy-results-${{ strategy.job-index }}.sarif"
           severity: "CRITICAL,HIGH"
+          limit-severities-for-sarif: true
           ignore-unfixed: true
           exit-code: "1"
 

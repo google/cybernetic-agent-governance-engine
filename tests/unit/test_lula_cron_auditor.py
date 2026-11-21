@@ -57,8 +57,9 @@ class TestDockerfileAndModuleHardening:
         assert ":latest" not in text
         assert "ARG LULA_VERSION=0.16.0" in text
         assert (
-            "5581257b6d0bf446e0a6ca3598de1697565f343f40e73055d0320a11d3a8c25e" in text
+            "e0653beff9ea5b0d16773dc6c33e2900dfee13b1bb3da266bca5453e59be2ccd" in text
         )
+        assert "GOTOOLCHAIN=local" in text
         assert "sha256sum -c -" in text
         assert "apk add --no-cache ca-certificates curl jq" in text
         assert "USER 65532:65532" in text
