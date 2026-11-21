@@ -40,8 +40,14 @@ description = "PEM-encoded Private Key block"
 regex = '''-----BEGIN (?:RSA |EC |DSA |OPENSSH |PGP )?PRIVATE KEY-----'''
 tags = ["key", "pem", "cage"]
 
+[[rules.allowlists]]
+description = "Historical implementation plan commit quoting the rg PEM regex pattern in prose"
+commits = [
+    "ad83b9c44fa272d21d970b5ef5d74aacf8409e8e",
+]
+
 [allowlist]
-description = "Allowlist for non-secret placeholders, synthetic test/doc fixtures, and rotated historical commits"
+description = "Allowlist for non-secret identifiers, anchored synthetic test vectors, and rotated historical commits"
 
 # Historical commits containing a dev-only Langfuse init password in
 # infra/targets/gcp-gke/main.tf:411 that was removed from HCL in e5376b58 (#477)
@@ -53,34 +59,36 @@ commits = [
     "e608f3ac2488080762f6de93f9a932cb347c0fe1",
 ]
 
+# Only .gitleaks.toml itself is path-excluded; docs/, plans/, tests/, contrib/,
+# and .env.example remain fully scanned across HEAD and commit history (CIG-03).
 paths = [
     '''^\.gitleaks\.toml$''',
-    '''\.env\.example$''',
-    '''^tests/''',
-    '''^contrib/.*/tests/''',
-    '''^docs/''',
-    '''^plans/''',
 ]
 
-regexTarget = "line"
+# NOTE: `regexTarget` is intentionally omitted so Gitleaks tests `regexes`
+# strictly against the extracted `Secret` capture group (never `line` or `match`).
+# Every pattern below is anchored (`^...$`) so a real credential sharing a line
+# with words like "example" or "placeholder" is never suppressed.
 regexes = [
-    # Environment variable reference syntax
-    '''\$\{[A-Z_]+\}''',
-    '''\{\{.*\}\}''',
-    # Explicit placeholder / redaction markers
-    '''(?i)placeholder''',
-    '''(?i)example''',
-    '''(?i)changeme''',
-    '''(?i)your[_-]?(?:api[_-]?)?(?:key|secret|token|password)''',
-    '''REDACTED_[A-Z_]+''',
-    '''dev-only-insecure-placeholder''',
-    '''(?:sk|pk)-lf-x{8,}''',
-    '''hf_x{8,}''',
-    '''hf_abcdefghijklmnopqrstuvwxyz''',
-    # Non-secret identifiers flagged by generic-api-key entropy heuristics
-    '''ACTUATOR_01_SIGNING_KEYS_DIR''',
-    '''ACTUATOR_01_KMS_KEY''',
-    '''s3-reconciliation-bucket''',
-    '''nvapi-1234567890abcdef''',
-    '''projects/[^/]+/locations/[^/]+/keyRings/[^/]+/cryptoKeys/''',
+    # Exact environment-variable / template / redaction placeholders
+    '''^\$\{[A-Z0-9_]+\}$''',
+    '''^\{\{[^{}]+\}\}$''',
+    '''^REDACTED_[A-Z_]+$''',
+    '''^dev-only-insecure-placeholder$''',
+    '''^(?:sk|pk)-lf-x{8,}$''',
+    '''^hf_(?:x{8,}|abcdefghijklmnopqrstuvwxyz)$''',
+    '''^"pk-lf-b055e6fe-\.\.\.:sk-lf-ba166771-\.\.\."$''',
+    # Non-secret UUIDv4 identifiers (e.g. defer_token / trace IDs) and Python/CLI identifiers
+    '''^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$''',
+    '''^(?:ACTUATOR_01_SIGNING_KEYS_DIR|ACTUATOR_01_KMS_KEY|s3-reconciliation-bucket)$''',
+    '''^(?:ed25519\.)?Ed25519PrivateKey$''',
+    '''^(?:execution_verbs=healthcare_verbs|partner_slots=mismatched_slots|correlation_id=|cmd\+shift\+enter|S3-compatible)$''',
+    # Anchored deterministic synthetic test fixtures (never real credentials)
+    '''^(?:sk-lf-secret123456|nvapi-1234567890abcdef|def-tok-c91823ab|apr-9f1c2d3e|cbf_dose-reservation-001|lula-spoofed-ac3-insuff)$''',
+    '''^(?:a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4|vk_test_0123456789abcdef0123456789abcdef|GOOG1E234567890ABCDEF)$''',
+    '''^dGVzdC1hdXRoLWRhdGE(?:tYWxpY2U|tYm9i)?$''',
+    '''^vfdKKZV6j8c6iDxKhlRqWiKsJ4tEA37-Sv41IVu_OM4FAAAAAQ$''',
+    '''^eyJhbGciOiJSUzI1NiIs\.\.\.$''',
+    '''^eyJhbGciOiJ(?:ub25lIn0|SUzI1Ni(?:Is|J9))[\w.-]*\.(?:e30\.?|c2lnX3BsYWNlaG9sZGVy[\w-]*|c2lnbmF0dXJlX3BsYWNlaG9sZGVy[\w-]*|cGFkZGVkX2Zha2Vfc2lnbmF0dXJl[\w-]*)$''',
 ]
+

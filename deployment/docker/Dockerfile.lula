@@ -16,22 +16,51 @@
 # nemo, and compliance-bridge images (zero mutable floating tags).
 ARG WOLFI_BASE=cgr.dev/chainguard/wolfi-base@sha256:f15fea2f49cb14dceaea491fcbde0d35e0c190126a744ac05a9838440d47d994
 
-# ─── Stage 1: Fetch and verify pinned Lula CLI binary ────────────────────────
+# ─── Stage 1: Build Lula v0.16.0 from SHA-256 verified source on Wolfi Go ────
 # Official Lula Go CLI (OSCAL validator): https://github.com/defenseunicorns-labs/lula1
-# NOTE: github.com/defenseunicorns/lula is a TypeScript npm package (lula2), not this tool.
+# Upstream's prebuilt v0.16.0 binary (2025-01-31) linked Go 1.23.5 stdlib and
+# older x/crypto, x/net, opa v0.70.0, conftest v0.56.0, and buildkit v0.16.0
+# carrying 57 fixed HIGH/CRITICAL CVEs. Building from the SHA-256 verified v0.16.0
+# source archive with Wolfi's current Go compiler (`GOTOOLCHAIN=local`) and
+# patched Go module versions eliminates those CVEs without `.trivyignore` entries.
 FROM ${WOLFI_BASE} AS builder
 
 ARG LULA_VERSION=0.16.0
-ARG LULA_SHA256=5581257b6d0bf446e0a6ca3598de1697565f343f40e73055d0320a11d3a8c25e
+ARG LULA_SRC_SHA256=e0653beff9ea5b0d16773dc6c33e2900dfee13b1bb3da266bca5453e59be2ccd
+
+ENV GOTOOLCHAIN=local \
+    CGO_ENABLED=0
+
+WORKDIR /src
 
 RUN apk upgrade --no-cache && \
-    apk add --no-cache ca-certificates curl && \
+    apk add --no-cache ca-certificates curl git go && \
+    curl -fsSL --retry 5 --retry-connrefused \
+      "https://github.com/defenseunicorns-labs/lula1/archive/refs/tags/v${LULA_VERSION}.tar.gz" \
+      -o /tmp/lula-src.tar.gz && \
+    echo "${LULA_SRC_SHA256}  /tmp/lula-src.tar.gz" | sha256sum -c - && \
+    tar -xzf /tmp/lula-src.tar.gz --strip-components=1 -C /src && \
+    rm -f /tmp/lula-src.tar.gz && \
+    go mod edit -toolchain=none && \
+    go get \
+      github.com/open-policy-agent/conftest@v0.71.1 \
+      github.com/open-policy-agent/opa@v1.22.4 \
+      github.com/klauspost/compress@v1.20.5 \
+      github.com/moby/buildkit@v0.35.1 \
+      github.com/moby/spdystream@v0.5.1 \
+      go.opentelemetry.io/otel/sdk@v1.47.0 \
+      golang.org/x/crypto@v0.59.0 \
+      golang.org/x/mod@v0.43.0 \
+      golang.org/x/net@v0.63.0 \
+      golang.org/x/oauth2@v0.38.0 \
+      golang.org/x/text@v0.44.0 && \
+    go mod tidy && \
     mkdir -p /usr/local/bin && \
-    curl -fsSL \
-      "https://github.com/defenseunicorns-labs/lula1/releases/download/v${LULA_VERSION}/lula_v${LULA_VERSION}_Linux_amd64" \
-      -o /usr/local/bin/lula && \
-    echo "${LULA_SHA256}  /usr/local/bin/lula" | sha256sum -c - && \
-    chmod 0755 /usr/local/bin/lula
+    go build -trimpath \
+      -ldflags="-s -w -X github.com/defenseunicorns/lula/src/config.CLIVersion=v${LULA_VERSION}" \
+      -o /usr/local/bin/lula . && \
+    chmod 0755 /usr/local/bin/lula && \
+    /usr/local/bin/lula version
 
 # ─── Stage 2: Wolfi runtime image ────────────────────────────────────────────
 # Minimal Wolfi runtime providing /bin/sh, ca-certificates, curl, and jq for

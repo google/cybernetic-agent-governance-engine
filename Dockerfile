@@ -74,10 +74,13 @@ COPY packages/cage-client /app/packages/cage-client
 # --extra compliance pulls dowhy (Tier 6 causal gatekeeper, No-Direct-Bind Gap 4)
 RUN uv sync --frozen --no-dev --extra advisor --extra langfuse --extra gateway --extra nemo --extra compliance --no-install-project
 
-# Install spaCy large model via direct wheel URL (avoids CDN redirect failures).
-# Target the venv explicitly so the package lands in /app/.venv.
-RUN uv pip install --python /app/.venv --no-cache \
-    "https://github.com/explosion/spacy-models/releases/download/en_core_web_lg-3.8.0/en_core_web_lg-3.8.0-py3-none-any.whl"
+# Download and cryptographically verify spaCy en_core_web_lg 3.8.0 wheel via --require-hashes.
+# --no-config prevents uv from reading [tool.uv].override-dependencies (which uses >= pins) in --require-hashes mode.
+RUN printf '%s\n' \
+    'en-core-web-lg @ https://github.com/explosion/spacy-models/releases/download/en_core_web_lg-3.8.0/en_core_web_lg-3.8.0-py3-none-any.whl --hash=sha256:293e9547a655b25499198ab15a525b05b9407a75f10255e405e8c3854329ab63' \
+    > /tmp/spacy-model.requirements.txt \
+    && uv pip install --no-config --python /app/.venv --no-cache --no-deps --require-hashes -r /tmp/spacy-model.requirements.txt \
+    && rm -f /tmp/spacy-model.requirements.txt
 
 # ---------------------------------------------------------------------------
 # Stage 2 — runtime

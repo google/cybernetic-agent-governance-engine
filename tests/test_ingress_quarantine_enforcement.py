@@ -110,7 +110,7 @@ async def _isolated_quarantine_and_app_state(monkeypatch: pytest.MonkeyPatch) ->
     monkeypatch.setattr(
         redis_client_mod,
         "sync_redis_client",
-        SimpleNamespace(_get=lambda: iso_sync_redis),
+        MagicMock(_get=MagicMock(return_value=iso_sync_redis)),
     )
     active_sinks: list[EvidenceStreamSink] = []
     prev_gov = getattr(governance_app.state, "governor", None)

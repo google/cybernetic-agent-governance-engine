@@ -43,17 +43,27 @@ on:
     branches: [main]
     paths:
       - "src/**"
+      - "packages/cage-client/**"
+      - "config/**"
+      - "compliance/**"
       - "Dockerfile*"
-      - "deployment/docker/Dockerfile.nemo"
+      - "deployment/docker/**"
+      - ".trivyignore"
       - "pyproject.toml"
       - "uv.lock"
+      - ".github/workflows/sbom.yml"
   pull_request:
     paths:
       - "src/**"
+      - "packages/cage-client/**"
+      - "config/**"
+      - "compliance/**"
       - "Dockerfile*"
-      - "deployment/docker/Dockerfile.nemo"
+      - "deployment/docker/**"
+      - ".trivyignore"
       - "pyproject.toml"
       - "uv.lock"
+      - ".github/workflows/sbom.yml"
   workflow_dispatch:
 
 env:
@@ -74,9 +84,11 @@ jobs:
   sbom-scan:
     name: Generate SBOM and Scan for CVEs
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
     strategy:
       matrix:
-        # One leg per shipped Python image, mirroring scripts/build_images.sh.
+        # One leg per shipped Wolfi container image, mirroring scripts/build_images.sh.
         # The repo-root Dockerfile is the advisor, not the gateway.
         service:
           - name: governed-financial-advisor
@@ -91,23 +103,13 @@ jobs:
           - name: nemo-guardrails
             dockerfile: deployment/docker/Dockerfile.nemo
             image_suffix: nemo-guardrails
+          - name: lula
+            dockerfile: deployment/docker/Dockerfile.lula
+            image_suffix: lula
+          - name: inference-stub
+            dockerfile: src/integrations/inference_stub/Dockerfile
+            image_suffix: inference-stub
       fail-fast: false
-
-    # Expose S3-compatible storage secrets as env vars so step-level `if:`
-    # conditions can test whether they are configured.
-    # secrets context is not available in `if:` expressions — env vars are.
-    #
-    # Backend selection:
-    #   SBOM_S3_ENDPOINT unset  → AWS S3 (aws cli default)
-    #   SBOM_S3_ENDPOINT set    → custom S3-compatible endpoint
-    #                             e.g. https://storage.googleapis.com  (GCS)
-    #                                  https://<account>.r2.cloudflarestorage.com
-    #                                  http://minio:9000
-    env:
-      SBOM_S3_BUCKET: ${{ secrets.SBOM_S3_BUCKET }}
-      SBOM_S3_ACCESS_KEY: ${{ secrets.SBOM_S3_ACCESS_KEY }}
-      SBOM_S3_SECRET_KEY: ${{ secrets.SBOM_S3_SECRET_KEY }}
-      SBOM_S3_ENDPOINT: ${{ secrets.SBOM_S3_ENDPOINT }}
 
     steps:
       - name: Checkout
@@ -117,44 +119,53 @@ jobs:
 
       - name: Install Trivy
         run: |
-          sudo apt-get install -y wget apt-transport-https gnupg lsb-release
-          wget -qO - https://aquasecurity.github.io/trivy-repo/deb/public.key \
-            | gpg --dearmor \
-            | sudo tee /usr/share/keyrings/trivy-archive-keyring.gpg > /dev/null
-          echo "deb [signed-by=/usr/share/keyrings/trivy-archive-keyring.gpg] https://aquasecurity.github.io/trivy-repo/deb $(lsb_release -sc) main" \
-            | sudo tee /etc/apt/sources.list.d/trivy.list
-          sudo apt-get update && sudo apt-get install -y trivy
+          TRIVY_VERSION="0.69.3"
+          TRIVY_SHA256="1816b632dfe529869c740c0913e36bd1629cb7688bd5634f4a858c1d57c88b75"
+          curl --proto '=https' --tlsv1.2 -sSfL --retry 5 --retry-connrefused \
+            -o "${RUNNER_TEMP}/trivy.tar.gz" \
+            "https://github.com/aquasecurity/trivy/releases/download/v${TRIVY_VERSION}/trivy_${TRIVY_VERSION}_Linux-64bit.tar.gz"
+          echo "${TRIVY_SHA256}  ${RUNNER_TEMP}/trivy.tar.gz" | sha256sum -c -
+          sudo tar -xzf "${RUNNER_TEMP}/trivy.tar.gz" -C /usr/local/bin trivy
+          rm -f "${RUNNER_TEMP}/trivy.tar.gz"
+          trivy --version
 
       - name: Set image tag
         id: tag
+        env:
+          COMMIT_SHA: ${{ github.sha }}
+          IMAGE_SUFFIX: ${{ matrix.service.image_suffix }}
         run: |
-          echo "IMAGE_TAG=${{ github.sha }}" >> $GITHUB_OUTPUT
-          echo "IMAGE_REF=${{ env.REGISTRY }}/${PROJECT_ID}/${{ matrix.service.image_suffix }}:${{ github.sha }}" >> $GITHUB_OUTPUT
+          echo "IMAGE_TAG=${COMMIT_SHA}" >> "$GITHUB_OUTPUT"
+          echo "IMAGE_REF=${REGISTRY}/${PROJECT_ID}/${IMAGE_SUFFIX}:${COMMIT_SHA}" >> "$GITHUB_OUTPUT"
 
       - name: Build container image
+        env:
+          MATRIX_DOCKERFILE: ${{ matrix.service.dockerfile }}
+          STEPS_TAG_OUTPUTS_IMAGE_REF: ${{ steps.tag.outputs.IMAGE_REF }}
         run: |
           docker build \
-            -f ${{ matrix.service.dockerfile }} \
-            -t ${STEPS_TAG_OUTPUTS_IMAGE_REF} \
+            -f "${MATRIX_DOCKERFILE}" \
+            -t "${STEPS_TAG_OUTPUTS_IMAGE_REF}" \
             .
-        env:
-          STEPS_TAG_OUTPUTS_IMAGE_REF: ${{ steps.tag.outputs.IMAGE_REF }}
 
       # POAM-006: Generate CycloneDX SBOM for this container image
       - name: Generate CycloneDX SBOM
+        env:
+          SERVICE_NAME: ${{ matrix.service.name }}
+          STEPS_TAG_OUTPUTS_IMAGE_REF: ${{ steps.tag.outputs.IMAGE_REF }}
         run: |
           trivy image \
             --format cyclonedx \
-            --output sbom-${{ matrix.service.name }}.cdx.json \
-            ${STEPS_TAG_OUTPUTS_IMAGE_REF}
-          echo "✅ SBOM generated: sbom-${{ matrix.service.name }}.cdx.json"
-        env:
-          STEPS_TAG_OUTPUTS_IMAGE_REF: ${{ steps.tag.outputs.IMAGE_REF }}
+            --output "sbom-${SERVICE_NAME}.cdx.json" \
+            "${STEPS_TAG_OUTPUTS_IMAGE_REF}"
+          echo "✅ SBOM generated: sbom-${SERVICE_NAME}.cdx.json"
 
-      # POAM-006: Fail if CRITICAL CVEs are found (except .trivyignore allowlist)
+      # POAM-006: Fail if CRITICAL/HIGH CVEs are found (except .trivyignore allowlist)
       # --show-suppressed lists every .trivyignore match in the log, so stale
       # suppressions are auditable; it does not change the exit status.
       - name: Scan for CRITICAL CVEs
+        env:
+          STEPS_TAG_OUTPUTS_IMAGE_REF: ${{ steps.tag.outputs.IMAGE_REF }}
         run: |
           trivy image \
             --format table \
@@ -162,10 +173,8 @@ jobs:
             --ignorefile .trivyignore \
             --show-suppressed \
             --exit-code 1 \
-            ${STEPS_TAG_OUTPUTS_IMAGE_REF}
+            "${STEPS_TAG_OUTPUTS_IMAGE_REF}"
         continue-on-error: false  # Hard fail on CRITICAL CVEs
-        env:
-          STEPS_TAG_OUTPUTS_IMAGE_REF: ${{ steps.tag.outputs.IMAGE_REF }}
 
       - name: Upload SBOM as GitHub Artifact
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
@@ -175,61 +184,64 @@ jobs:
           retention-days: 90
 
       # Upload SBOM to object storage via the S3-compatible API.
-      # Works with AWS S3, GCS (HMAC), Cloudflare R2, MinIO, and any
-      # S3-compatible backend — no cloud-provider-specific auth action needed.
-      #
-      # GCS HMAC setup (one-time):
-      #   gcloud storage hmac create <service-account-email> \
-      #     --project=<project-id>
-      #   → copy Access ID → SBOM_S3_ACCESS_KEY secret
-      #   → copy Secret   → SBOM_S3_SECRET_KEY secret
-      #   Set SBOM_S3_ENDPOINT=https://storage.googleapis.com
-      #   Set SBOM_S3_BUCKET=<your-gcs-bucket-name>
+      # Storage credentials are scoped strictly to this single step (never job-wide)
+      # so earlier build/scanner steps never execute with S3 secrets in env (CIG-04).
       - name: Upload SBOM to object storage (S3-compatible)
-        if: env.SBOM_S3_BUCKET != '' && env.SBOM_S3_ACCESS_KEY != ''
+        id: s3_upload
         env:
+          COMMIT_SHA: ${{ github.sha }}
+          SERVICE_NAME: ${{ matrix.service.name }}
+          SBOM_S3_BUCKET: ${{ secrets.SBOM_S3_BUCKET }}
+          SBOM_S3_ENDPOINT: ${{ secrets.SBOM_S3_ENDPOINT }}
           AWS_ACCESS_KEY_ID: ${{ secrets.SBOM_S3_ACCESS_KEY }}
           AWS_SECRET_ACCESS_KEY: ${{ secrets.SBOM_S3_SECRET_KEY }}
-          # AWS_DEFAULT_REGION is required by the AWS CLI even for non-AWS
-          # endpoints; 'auto' is accepted by most S3-compatible backends.
           AWS_DEFAULT_REGION: ${{ secrets.SBOM_S3_REGION || 'auto' }}
         run: |
-          DEST="s3://${SBOM_S3_BUCKET}/sboms/${{ github.sha }}/sbom-${{ matrix.service.name }}.cdx.json"
-
-          # Build endpoint flag — omit for native AWS S3
-          if [ -n "${SBOM_S3_ENDPOINT}" ]; then
-            ENDPOINT_FLAG="--endpoint-url ${SBOM_S3_ENDPOINT}"
+          if [ -z "${SBOM_S3_BUCKET}" ] || [ -z "${AWS_ACCESS_KEY_ID}" ]; then
+            echo "uploaded=false" >> "$GITHUB_OUTPUT"
+            echo "Skipping S3 upload (SBOM_S3_BUCKET / SBOM_S3_ACCESS_KEY not configured)."
           else
-            ENDPOINT_FLAG=""
-          fi
+            DEST="s3://${SBOM_S3_BUCKET}/sboms/${COMMIT_SHA}/sbom-${SERVICE_NAME}.cdx.json"
 
-          aws s3 cp \
-            sbom-${{ matrix.service.name }}.cdx.json \
-            "$DEST" \
-            $ENDPOINT_FLAG \
-            --no-progress
+            if [ -n "${SBOM_S3_ENDPOINT}" ]; then
+              aws s3 cp \
+                "sbom-${SERVICE_NAME}.cdx.json" \
+                "$DEST" \
+                --endpoint-url "${SBOM_S3_ENDPOINT}" \
+                --no-progress
+            else
+              aws s3 cp \
+                "sbom-${SERVICE_NAME}.cdx.json" \
+                "$DEST" \
+                --no-progress
+            fi
 
-          echo "✅ SBOM uploaded to $DEST"
-          if [ -n "${SBOM_S3_ENDPOINT}" ]; then
-            echo "   Endpoint: ${SBOM_S3_ENDPOINT}"
+            BACKEND="${SBOM_S3_ENDPOINT:-AWS S3}"
+            echo "uploaded=true" >> "$GITHUB_OUTPUT"
+            echo "backend=${BACKEND}" >> "$GITHUB_OUTPUT"
+            echo "storage_prefix=s3://${SBOM_S3_BUCKET}/sboms/${COMMIT_SHA}/" >> "$GITHUB_OUTPUT"
+            echo "✅ SBOM uploaded to $DEST"
           fi
 
       - name: Summary
-        run: |
-          echo "## SBOM Generation Summary — ${{ matrix.service.name }}" >> $GITHUB_STEP_SUMMARY
-          echo "| Field | Value |" >> $GITHUB_STEP_SUMMARY
-          echo "|---|---|" >> $GITHUB_STEP_SUMMARY
-          echo "| Image | \`${STEPS_TAG_OUTPUTS_IMAGE_REF}\` |" >> $GITHUB_STEP_SUMMARY
-          echo "| SBOM Format | CycloneDX |" >> $GITHUB_STEP_SUMMARY
-          echo "| POAM Reference | POAM-006 (CM-8 / ISO 42001 §A.8.3) |" >> $GITHUB_STEP_SUMMARY
-          echo "| Artifact | \`sbom-${{ matrix.service.name }}.cdx.json\` |" >> $GITHUB_STEP_SUMMARY
-          if [ -n "${SBOM_S3_BUCKET}" ] && [ -n "${SBOM_S3_ACCESS_KEY}" ]; then
-            ENDPOINT="${SBOM_S3_ENDPOINT}"
-            BACKEND="${ENDPOINT:-AWS S3}"
-            echo "| Storage backend | \`${BACKEND}\` |" >> $GITHUB_STEP_SUMMARY
-            echo "| Storage path | \`s3://${SBOM_S3_BUCKET}/sboms/${{ github.sha }}/\` |" >> $GITHUB_STEP_SUMMARY
-          else
-            echo "| Storage backend | GitHub Artifact only (SBOM_S3_BUCKET not configured) |" >> $GITHUB_STEP_SUMMARY
-          fi
         env:
+          SERVICE_NAME: ${{ matrix.service.name }}
           STEPS_TAG_OUTPUTS_IMAGE_REF: ${{ steps.tag.outputs.IMAGE_REF }}
+          S3_UPLOADED: ${{ steps.s3_upload.outputs.uploaded }}
+          S3_BACKEND: ${{ steps.s3_upload.outputs.backend }}
+          S3_STORAGE_PREFIX: ${{ steps.s3_upload.outputs.storage_prefix }}
+        run: |
+          echo "## SBOM Generation Summary — ${SERVICE_NAME}" >> "$GITHUB_STEP_SUMMARY"
+          echo "| Field | Value |" >> "$GITHUB_STEP_SUMMARY"
+          echo "|---|---|" >> "$GITHUB_STEP_SUMMARY"
+          echo "| Image | \`${STEPS_TAG_OUTPUTS_IMAGE_REF}\` |" >> "$GITHUB_STEP_SUMMARY"
+          echo "| SBOM Format | CycloneDX |" >> "$GITHUB_STEP_SUMMARY"
+          echo "| POAM Reference | POAM-006 (CM-8 / ISO 42001 §A.8.3) |" >> "$GITHUB_STEP_SUMMARY"
+          echo "| Artifact | \`sbom-${SERVICE_NAME}.cdx.json\` |" >> "$GITHUB_STEP_SUMMARY"
+          if [ "${S3_UPLOADED}" = "true" ]; then
+            echo "| Storage backend | \`${S3_BACKEND}\` |" >> "$GITHUB_STEP_SUMMARY"
+            echo "| Storage path | \`${S3_STORAGE_PREFIX}\` |" >> "$GITHUB_STEP_SUMMARY"
+          else
+            echo "| Storage backend | GitHub Artifact only (SBOM_S3_BUCKET not configured) |" >> "$GITHUB_STEP_SUMMARY"
+          fi
+
