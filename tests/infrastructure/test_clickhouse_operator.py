@@ -17,8 +17,8 @@
 Enforces:
 1. Legacy ClickHouse modules are deleted (`infra/modules/clickhouse` and legacy Cloud Run `clickhouse_vm.tf`).
 2. System of record is the retention-locked GCS WORM bucket (`infra/modules/worm_bucket`) wired in `infra/targets/gcp-gke/main.tf`:
-   - dev: unlocked (`is_locked = false`)
-   - staging: locked with short retention (`86400`s)
+   - permissive dev (`enforce_in_dev = false`): unlocked (`is_locked = false`)
+   - staging & enforcing dev (`enforce_in_dev = true`): locked with short retention (`86400`s)
    - prod: locked with 7-year retention (`220752000`s = 2555 days)
    - CMEK wired (`enable_cmek = var.enable_cmek`, `kms_key_id = local.cmek_key_id`)
    - Jurisdictional data-residency precondition enforced
@@ -126,17 +126,17 @@ def test_worm_bucket_configured_as_system_of_record() -> None:
     assert "kms_key_id               = local.evidence_cmek_key_id" in block
 
     # Posture matrix (§1.1), shared with the Langfuse event-upload bucket through
-    # one pair of locals (POAM-2026-159; tests/retention_posture.tftest.hcl
+    # one pair of locals (POAM-2026-159, INF-02; tests/retention_posture.tftest.hcl
     # plans it per profile):
-    # - staging: short retention lock (86400s)
+    # - staging & enforcing dev (enforce_in_dev = true): short retention lock (86400s)
     # - prod: 7yr retention lock (220752000s = 2555 days)
-    # - dev: unlocked unless a compliance flag is set
+    # - permissive dev (enforce_in_dev = false): 2555 days unlocked
     # The lock is the enforcing-posture predicate, which also gives the
     # governance Valkey instance AOF persistence (POAM-2026-156).
     assert "retention_period_seconds = local.retention_period_seconds" in block
     assert "is_locked                = local.retention_locked" in block
     assert (
-        'retention_period_seconds = var.environment == "staging" ? 86400 : 220752000'
+        'retention_period_seconds = var.environment == "prod" ? 220752000 : (local.enforcing_posture ? 86400 : 220752000)'
         in gke_main
     )
     assert "retention_locked         = local.enforcing_posture" in gke_main

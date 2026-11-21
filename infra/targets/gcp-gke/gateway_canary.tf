@@ -130,7 +130,7 @@ resource "kubernetes_deployment_v1" "gateway_canary" {
           }
           env {
             name  = "CAGE_ENV"
-            value = var.environment
+            value = local.effective_cage_env
           }
           env {
             name  = "CAGE_GATEWAY_CANARY_URL"

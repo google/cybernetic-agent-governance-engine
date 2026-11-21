@@ -91,6 +91,7 @@ output "deployment_summary" {
   value = {
     target                 = "gcp-gke"
     environment            = var.environment
+    effective_cage_env     = local.effective_cage_env
     project_id             = var.project_id
     cluster_name           = module.gke.cluster_name
     cluster_location       = module.gke.cluster_location
