@@ -64,10 +64,21 @@ def _write_census(repo: Path, rows: list[dict[str, object]]) -> Path:
     return path
 
 
-def _write_shadow_baseline(repo: Path, content: str = "0\n") -> Path:
+def _write_shadow_baseline(
+    repo: Path,
+    count: int = 0,
+    *,
+    covered: int = 0,
+    detector_sha256: str | None = None,
+) -> Path:
     path = repo / "tests" / ".shadow-except-baseline"
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(content, encoding="utf-8")
+    gate.write_initial_shadow_except_baseline(
+        count,
+        path,
+        covered=covered,
+        detector_sha256=detector_sha256,
+        reason="Hermetic test baseline initialization.",
+    )
     return path
 
 
@@ -557,16 +568,38 @@ finally:
     assert viols[0].nodeid == "tests/test_multi.py::test_strict_all_params[b]|run"
 
 
-def test_shadow_except_finder_identifies_normalizing_pairs_only(
+def test_shadow_except_finder_identifies_normalizing_pairs_and_prunes_disjoint_siblings(
     tmp_path: Path,
 ) -> None:
     _make_sample_module(
         tmp_path,
         "src/sample.py",
         """\
+import asyncio
+import httpx
+import json
+import jwt as pyjwt
+
 class HTTPException(Exception):
     def __init__(self, status_code: int, detail: str = "") -> None:
         self.status_code = status_code
+
+class StoreError(Exception):
+    pass
+
+class StoreUnavailableError(StoreError):
+    pass
+
+class SiblingAError(Exception):
+    pass
+
+class SiblingBError(Exception):
+    pass
+
+class Verdict:
+    def __init__(self, *, code: str, message: str) -> None:
+        self.code = code
+        self.message = message
 
 class Service:
     def same_http_503(self, x: int) -> int:
@@ -597,24 +630,182 @@ class Service:
         except Exception:
             out = "err"
         return out
+
+    def canonical_reraise_vs_wrap(self) -> None:
+        try:
+            pass
+        except StoreError:
+            raise
+        except Exception as exc:
+            raise StoreUnavailableError(str(exc)) from exc
+
+    def conditional_if_reraise_vs_wrap(self, blocking: bool) -> None:
+        try:
+            pass
+        except StoreUnavailableError:
+            if blocking:
+                raise
+        except Exception as exc:
+            if blocking:
+                raise StoreUnavailableError(str(exc)) from exc
+
+    def prose_only_return_diff_matches(self) -> Verdict:
+        try:
+            return Verdict(code="OK", message="ok")
+        except TimeoutError as exc:
+            return Verdict(code="OPA_UNAVAILABLE", message=f"timeout: {exc}")
+        except Exception as exc:
+            return Verdict(code="OPA_UNAVAILABLE", message=f"failed: {exc}")
+
+    def structured_code_return_diff_skipped(self) -> Verdict:
+        try:
+            return Verdict(code="OK", message="ok")
+        except TimeoutError as exc:
+            return Verdict(code="OPA_TIMEOUT", message=str(exc))
+        except Exception as exc:
+            return Verdict(code="OPA_PARSE_ERR", message=str(exc))
+
+    def superclass_non_exception_shadow(self) -> bool:
+        try:
+            return True
+        except pyjwt.ExpiredSignatureError:
+            return False
+        except pyjwt.InvalidTokenError:
+            return False
+
+    def disjoint_siblings_skipped(self) -> bool:
+        try:
+            return True
+        except FileNotFoundError:
+            return False
+        except json.JSONDecodeError:
+            return False
+        except httpx.HTTPStatusError:
+            return False
+        except httpx.RequestError:
+            return False
+        except SiblingAError:
+            raise
+        except SiblingBError:
+            raise
+        except StoreError:
+            raise
+        except asyncio.CancelledError:
+            raise
 """,
     )
     pairs = gate.find_outcome_normalizing_except_pairs(tmp_path)
-    assert len(pairs) == 2
-
     by_method = {p.qualname: p for p in pairs}
-    assert set(by_method) == {"Service.same_http_503", "Service.fallthrough_pair"}
-    p_http = by_method["Service.same_http_503"]
-    assert p_http.earlier_type == "ZeroDivisionError"
-    assert p_http.later_type == "Exception"
-    assert p_http.outcome == "raise HTTPException:503"
-    assert p_http.rel_path == "src/sample.py"
-    assert p_http.earlier_lineno < p_http.later_lineno
+    assert set(by_method) == {
+        "Service.same_http_503",
+        "Service.fallthrough_pair",
+        "Service.canonical_reraise_vs_wrap",
+        "Service.conditional_if_reraise_vs_wrap",
+        "Service.prose_only_return_diff_matches",
+        "Service.superclass_non_exception_shadow",
+    }
+    assert by_method["Service.same_http_503"].outcome == "raise HTTPException:503"
+    assert by_method["Service.fallthrough_pair"].outcome == "fallthrough"
+    assert (
+        by_method["Service.canonical_reraise_vs_wrap"].outcome
+        == "raise StoreUnavailableError"
+    )
+    assert (
+        by_method["Service.conditional_if_reraise_vs_wrap"].outcome
+        == "raise StoreUnavailableError"
+    )
+    assert (
+        "OPA_UNAVAILABLE" in by_method["Service.prose_only_return_diff_matches"].outcome
+    )
+    assert (
+        by_method["Service.superclass_non_exception_shadow"].outcome == "return False"
+    )
 
-    p_fall = by_method["Service.fallthrough_pair"]
-    assert p_fall.earlier_type == "TimeoutError"
-    assert p_fall.later_type == "Exception"
-    assert p_fall.outcome == "fallthrough"
+
+def test_shadow_except_finder_walks_packages_and_skips_vendored_jcs(
+    tmp_path: Path,
+) -> None:
+    _make_sample_module(
+        tmp_path,
+        "packages/cage-client/src/cage_client/crypto.py",
+        """\
+class RoutingSealVerificationError(Exception):
+    pass
+
+def load_key() -> None:
+    try:
+        pass
+    except RoutingSealVerificationError:
+        tag = "PINNED_KEY_ERR"
+        raise
+    except Exception as exc:
+        raise RoutingSealVerificationError(str(exc)) from exc
+""",
+    )
+    _make_sample_module(
+        tmp_path,
+        "packages/cage-conformance/src/cage_conformance/verify.py",
+        """\
+class AttestationError(Exception):
+    pass
+
+def check_sig() -> bool:
+    try:
+        return True
+    except AttestationError:
+        tag = "ATTEST_ERR"
+        return False
+    except Exception:
+        return False
+""",
+    )
+    # Vendored _jcs directory must be excluded from shadow-except walk.
+    _make_sample_module(
+        tmp_path,
+        "packages/cage-client/src/cage_client/_jcs/vendored.py",
+        """\
+def ignored() -> bool:
+    try:
+        return True
+    except ValueError:
+        return False
+    except Exception:
+        return False
+""",
+    )
+    _write_census(
+        tmp_path,
+        [{"id": "C-1", "verdict": "HOLDS", "read_back": "tests/test_pkgs.py"}],
+    )
+    _make_sample_module(
+        tmp_path,
+        "tests/test_pkgs.py",
+        """\
+import pytest
+
+pytestmark = [pytest.mark.unit, pytest.mark.local]
+
+@pytest.mark.covers("cage_client.crypto:load_key#PINNED_KEY_ERR")
+def test_client_pinned_key_fails_closed():
+    assert True
+""",
+    )
+    _write_shadow_baseline(tmp_path, 1, covered=1)
+
+    _, _, _, resolved, violations = gate.verify_static(
+        tmp_path, scope="readback-and-503"
+    )
+    assert violations == []
+    evaluated, uncovered = gate.evaluate_shadow_except_pairs(tmp_path, resolved)
+    assert len(evaluated) == 2
+    assert len(uncovered) == 1
+    assert {p.rel_path for p in evaluated} == {
+        "packages/cage-client/src/cage_client/crypto.py",
+        "packages/cage-conformance/src/cage_conformance/verify.py",
+    }
+    assert uncovered[0].rel_path == (
+        "packages/cage-conformance/src/cage_conformance/verify.py"
+    )
 
 
 def test_shadow_except_anchor_matching_requires_hitting_earlier_handler(
@@ -639,7 +830,7 @@ def check_token(tok: str) -> bool:
         tmp_path,
         [{"id": "C-1", "verdict": "HOLDS", "read_back": "tests/test_guard.py"}],
     )
-    _write_shadow_baseline(tmp_path, "0\n")
+    _write_shadow_baseline(tmp_path, 0)
 
     # 1. Covering only the later handler or unanchored module:fn leaves the earlier pair UNCOVERED.
     test_file = _make_sample_module(
@@ -694,7 +885,7 @@ def test_hits_earlier_handler_fails_closed():
     assert violations_ok == []
 
 
-def test_shadow_except_ratchet_fails_closed_on_missing_corrupt_and_raise(
+def test_shadow_except_ratchet_and_detector_bound_recompute_controls(
     tmp_path: Path,
     capsys: pytest.CaptureFixture[str],
 ) -> None:
@@ -716,24 +907,148 @@ def normalize(flag: bool) -> bool:
         tmp_path,
         [{"id": "C-1", "verdict": "HOLDS", "read_back": "tests/test_norm.py"}],
     )
+    baseline_path = tmp_path / "tests" / ".shadow-except-baseline"
 
-    # Missing baseline with uncovered pairs -> SHADOW_EXCEPT_BASELINE_EXCEEDED.
+    # 1. Missing baseline with uncovered pairs -> SHADOW_EXCEPT_BASELINE_EXCEEDED.
     _, _, _, _, viol_missing = gate.verify_static(tmp_path, scope="readback-and-503")
     assert [v.code for v in viol_missing] == ["SHADOW_EXCEPT_BASELINE_EXCEEDED"]
 
-    # Corrupt / negative / empty baselines -> SHADOW_EXCEPT_BASELINE_INVALID.
-    for bad in ("not-an-int\n", "-1\n", ""):
-        _write_shadow_baseline(tmp_path, bad)
+    # 2. Corrupt, empty, legacy plain-int, tampered update (> before), or forged recompute (same sha) -> INVALID.
+    live_sha = gate.compute_shadow_detector_fingerprint()
+    forged_update = json.dumps(
+        {
+            "schema_version": 1,
+            "baseline": 2,
+            "detector_sha256": live_sha,
+            "history": [
+                {
+                    "event": "initial_baseline",
+                    "before_baseline": None,
+                    "after_baseline": 1,
+                    "after_covered": 0,
+                    "after_total": 1,
+                    "before_detector_sha256": None,
+                    "detector_sha256": live_sha,
+                    "reason": "init",
+                },
+                {
+                    "event": "update",
+                    "before_baseline": 1,
+                    "after_baseline": 2,
+                    "after_covered": 0,
+                    "after_total": 2,
+                    "before_detector_sha256": live_sha,
+                    "detector_sha256": live_sha,
+                    "reason": "forged upward update",
+                },
+            ],
+        }
+    )
+    forged_recompute_same_sha = json.dumps(
+        {
+            "schema_version": 1,
+            "baseline": 2,
+            "detector_sha256": live_sha,
+            "history": [
+                {
+                    "event": "initial_baseline",
+                    "before_baseline": None,
+                    "after_baseline": 1,
+                    "after_covered": 0,
+                    "after_total": 1,
+                    "before_detector_sha256": None,
+                    "detector_sha256": live_sha,
+                    "reason": "init",
+                },
+                {
+                    "event": "recompute",
+                    "before_baseline": 1,
+                    "after_baseline": 2,
+                    "after_covered": 0,
+                    "after_total": 2,
+                    "before_detector_sha256": live_sha,
+                    "detector_sha256": live_sha,
+                    "reason": "Forged recompute with unchanged detector hash.",
+                },
+            ],
+        }
+    )
+    baseline_path.parent.mkdir(parents=True, exist_ok=True)
+    for bad in ("not-json\n", "47\n", "", forged_update, forged_recompute_same_sha):
+        baseline_path.write_text(bad, encoding="utf-8")
         _, _, _, _, viol_bad = gate.verify_static(tmp_path, scope="readback-and-503")
         assert [v.code for v in viol_bad] == ["SHADOW_EXCEPT_BASELINE_INVALID"]
 
-    # Ratchet at 1 allows existing uncovered pair.
-    _write_shadow_baseline(tmp_path, "1\n")
-    rc = gate.main(["--repo-root", str(tmp_path), "--scope", "readback-and-503"])
-    assert rc == 0
+    # 3. Detector drift fails verify_static and blocks --update-baseline, requiring --recompute-baseline --reason.
+    _write_shadow_baseline(tmp_path, 0, detector_sha256="stale-detector-sha-v0")
+    _, _, _, _, viol_drift = gate.verify_static(tmp_path, scope="readback-and-503")
+    assert [v.code for v in viol_drift] == ["SHADOW_EXCEPT_DETECTOR_DRIFT"]
 
-    # --update-baseline cannot raise baseline from 0 -> 1.
-    _write_shadow_baseline(tmp_path, "0\n")
+    rc_upd_drift = gate.main(
+        [
+            "--repo-root",
+            str(tmp_path),
+            "--scope",
+            "readback-and-503",
+            "--update-baseline",
+        ]
+    )
+    assert rc_upd_drift == 1
+    assert "cannot absorb detector changes" in capsys.readouterr().err
+
+    # --recompute-baseline without substantive --reason fails closed.
+    rc_no_reason = gate.main(
+        [
+            "--repo-root",
+            str(tmp_path),
+            "--scope",
+            "readback-and-503",
+            "--recompute-baseline",
+        ]
+    )
+    assert rc_no_reason == 1
+    assert "--reason" in capsys.readouterr().err
+
+    # --recompute-baseline with substantive --reason succeeds when detector_sha256 changed (0 -> 1).
+    rc_recompute = gate.main(
+        [
+            "--repo-root",
+            str(tmp_path),
+            "--scope",
+            "readback-and-503",
+            "--recompute-baseline",
+            "--reason",
+            "Detector upgraded to bind bare raise to caught exception class.",
+        ]
+    )
+    assert rc_recompute == 0
+    capsys.readouterr()
+
+    state_after_recompute, err = gate.read_shadow_except_baseline(baseline_path)
+    assert err is None and state_after_recompute is not None
+    assert state_after_recompute.baseline == 1
+    assert state_after_recompute.detector_sha256 == live_sha
+    assert state_after_recompute.history[-1]["event"] == "recompute"
+    assert state_after_recompute.history[-1]["before_baseline"] == 0
+    assert state_after_recompute.history[-1]["after_baseline"] == 1
+
+    # 4. Immediate repeat --recompute-baseline with UNCHANGED detector_sha256 is refused!
+    rc_repeat_recompute = gate.main(
+        [
+            "--repo-root",
+            str(tmp_path),
+            "--scope",
+            "readback-and-503",
+            "--recompute-baseline",
+            "--reason",
+            "Attempting to re-run recompute without changing detector.",
+        ]
+    )
+    assert rc_repeat_recompute == 1
+    assert "detector_sha256 is unchanged" in capsys.readouterr().err
+
+    # 5. --update-baseline cannot raise baseline from 0 -> 1 under unchanged detector.
+    _write_shadow_baseline(tmp_path, 0)
     rc_raise = gate.main(
         [
             "--repo-root",
@@ -746,8 +1061,8 @@ def normalize(flag: bool) -> bool:
     assert rc_raise == 1
     assert "monotonic ratchet" in capsys.readouterr().err
 
-    # Covering the pair drops uncovered to 0 and allows --update-baseline 1 -> 0.
-    _write_shadow_baseline(tmp_path, "1\n")
+    # 6. Covering the pair drops uncovered to 0 and allows --update-baseline 1 -> 0.
+    _write_shadow_baseline(tmp_path, 1)
     _make_sample_module(
         tmp_path,
         "tests/test_norm.py",
@@ -771,9 +1086,13 @@ def test_normalize_val_err_fails_closed():
         ]
     )
     assert rc_drop == 0
-    assert (tmp_path / "tests" / ".shadow-except-baseline").read_text(
-        encoding="utf-8"
-    ).strip() == "0"
+    capsys.readouterr()
+    state_dropped, err = gate.read_shadow_except_baseline(baseline_path)
+    assert err is None and state_dropped is not None
+    assert state_dropped.baseline == 0
+    assert state_dropped.history[-1]["event"] == "update"
+    assert state_dropped.history[-1]["before_baseline"] == 1
+    assert state_dropped.history[-1]["after_baseline"] == 0
 
     rc_list = gate.main(
         [
@@ -789,17 +1108,61 @@ def test_normalize_val_err_fails_closed():
     assert "COVERED\tsrc/norm.py:" in captured.out
 
 
+def test_detector_fingerprint_ignores_comments_and_docstrings_but_tracks_logic(
+    tmp_path: Path,
+) -> None:
+    base_script = tmp_path / "detector_a.py"
+    comment_script = tmp_path / "detector_b.py"
+    no_doc_script = tmp_path / "detector_no_doc.py"
+    changed_script = tmp_path / "detector_c.py"
+
+    base_script.write_text(
+        "# BEGIN SHADOW_EXCEPT_DETECTOR\n"
+        'def f(x: int) -> int:\n    """Docstring v1."""\n    return x + 1\n'
+        "# END SHADOW_EXCEPT_DETECTOR\n",
+        encoding="utf-8",
+    )
+    comment_script.write_text(
+        "# BEGIN SHADOW_EXCEPT_DETECTOR\n"
+        'def f(\n    x: int  # extra comment\n) -> int:\n    """Updated docstring."""\n    return x + 1\n'
+        "# END SHADOW_EXCEPT_DETECTOR\n",
+        encoding="utf-8",
+    )
+    no_doc_script.write_text(
+        "# BEGIN SHADOW_EXCEPT_DETECTOR\n"
+        "def f(x: int) -> int:\n    return x + 1\n"
+        "# END SHADOW_EXCEPT_DETECTOR\n",
+        encoding="utf-8",
+    )
+    changed_script.write_text(
+        "# BEGIN SHADOW_EXCEPT_DETECTOR\n"
+        'def f(x: int) -> int:\n    """Docstring v1."""\n    return x + 2\n'
+        "# END SHADOW_EXCEPT_DETECTOR\n",
+        encoding="utf-8",
+    )
+    sha_a = gate.compute_shadow_detector_fingerprint(base_script)
+    sha_b = gate.compute_shadow_detector_fingerprint(comment_script)
+    sha_no_doc = gate.compute_shadow_detector_fingerprint(no_doc_script)
+    sha_c = gate.compute_shadow_detector_fingerprint(changed_script)
+    assert sha_a == sha_b == sha_no_doc
+    assert sha_a != sha_c
+
+
 def test_repo_shadow_except_baseline_is_present_and_met() -> None:
-    baseline, err = gate.read_shadow_except_baseline(
+    state, err = gate.read_shadow_except_baseline(
         REPO_ROOT / "tests" / ".shadow-except-baseline"
     )
     assert err is None
-    assert baseline is not None
-    assert baseline >= 0
+    assert state is not None
+    assert state.baseline >= 0
+    assert state.detector_sha256 == gate.compute_shadow_detector_fingerprint()
+    assert len(state.history) >= 2
+    assert state.history[1]["event"] == "recompute"
+    assert state.history[1]["before_baseline"] == 47
 
 
 def test_check_script_is_wired_in_ci_hooks_and_makefile() -> None:
-    """Confirm scripts/check_fail_closed_coverage.py stays wired into CI, hooks, and Makefile."""
+    """Confirm scripts/check_fail_closed_coverage.py and package --cov scopes stay wired."""
     ci_text = (REPO_ROOT / ".github" / "workflows" / "ci.yml").read_text(
         encoding="utf-8"
     )
@@ -810,6 +1173,9 @@ def test_check_script_is_wired_in_ci_hooks_and_makefile() -> None:
 
     assert "scripts/check_fail_closed_coverage.py" in ci_text
     assert "--cov-context=test" in ci_text
+    assert "--cov=cage_client" in ci_text
+    assert "--cov=packages/cage-conformance/src/cage_conformance" in ci_text
     assert "--verify-coverage .coverage" in ci_text
     assert "scripts/check_fail_closed_coverage.py" in hooks_text
     assert "scripts/check_fail_closed_coverage.py" in makefile_text
+    assert "--cov=packages/cage-conformance/src/cage_conformance" in makefile_text

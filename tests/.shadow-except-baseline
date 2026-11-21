@@ -1,1 +1,27 @@
-47
+{
+  "baseline": 74,
+  "detector_sha256": "3f58bb2c09ca225725735a8fc588ba6b6d59136b7239cd56a41aa015c5b9c2ee",
+  "history": [
+    {
+      "after_baseline": 47,
+      "after_covered": 7,
+      "after_total": 54,
+      "before_baseline": null,
+      "before_detector_sha256": null,
+      "detector_sha256": "pr846-v1-src-only-untyped-reraise-unfiltered-siblings",
+      "event": "initial_baseline",
+      "reason": "Initial PR #846 baseline across src/ only (54 total pairs, 7 covered, 47 uncovered)."
+    },
+    {
+      "after_baseline": 74,
+      "after_covered": 8,
+      "after_total": 82,
+      "before_baseline": 47,
+      "before_detector_sha256": "pr846-v1-src-only-untyped-reraise-unfiltered-siblings",
+      "detector_sha256": "3f58bb2c09ca225725735a8fc588ba6b6d59136b7239cd56a41aa015c5b9c2ee",
+      "event": "recompute",
+      "reason": "Extend shadow-except walk to packages/*/src/; bind bare raise to caught exception type (reraise-vs-wrap), recurse into compound if/with handler tails instead of classifying conditional raises as fallthrough, normalize prose-only return message/error kwargs, and prune provably disjoint sibling handlers. Prior 47 baseline misstated debt in both directions: overstated by 9 disjoint non-shadow sibling pairs, and understated by 36 newly-detected uncovered shadow pairs (2 in packages/cage-client/src, 18 bare-raise/compound-tail pairs in src/, 16 prose-normalized return pairs in src/; +1 covered pair in policy.py: 47 - 9 + 36 = 74 uncovered across 82 total pairs)."
+    }
+  ],
+  "schema_version": 1
+}
