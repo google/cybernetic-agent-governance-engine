@@ -815,27 +815,33 @@ def _parse_plan_with_result(raw: Any) -> ParseResult:
                 sanitization_applied=sanitization_applied,
             )
 
-        except json.JSONDecodeError as exc:
-            # JSON syntax error
-            _increment_parse_failure_counter(ParseFailureClass.JSON_DECODE_ERROR.value)
-
-            # Distinguish truncated from malformed
-            failure_class = (
-                ParseFailureClass.TRUNCATED_PLAN
-                if is_truncated
-                else ParseFailureClass.JSON_DECODE_ERROR
-            )
-
-            return ParseResult(
-                plan=None,
-                failure_class=failure_class,
-                raw_input=raw,
-                sanitized_input=sanitized_input if sanitization_applied else None,
-                error_message=f"JSON decode error: {exc}",
-                sanitization_applied=sanitization_applied,
-            )
-
         except Exception as exc:
+            from pydantic import ValidationError
+
+            is_json_syntax_error = isinstance(exc, json.JSONDecodeError)
+            if not is_json_syntax_error and isinstance(exc, ValidationError):
+                errs = exc.errors()
+                is_json_syntax_error = bool(errs) and all(
+                    err.get("type") == "json_invalid" for err in errs
+                )
+
+            if is_json_syntax_error:
+                # Distinguish truncated JSON from malformed JSON syntax.
+                failure_class = (
+                    ParseFailureClass.TRUNCATED_PLAN
+                    if is_truncated
+                    else ParseFailureClass.JSON_DECODE_ERROR
+                )
+                _increment_parse_failure_counter(failure_class.value)
+                return ParseResult(
+                    plan=None,
+                    failure_class=failure_class,
+                    raw_input=raw,
+                    sanitized_input=sanitized_input if sanitization_applied else None,
+                    error_message=f"JSON decode error: {exc}",
+                    sanitization_applied=sanitization_applied,
+                )
+
             # Pydantic validation error (valid JSON, invalid schema)
             _increment_parse_failure_counter(
                 ParseFailureClass.SCHEMA_VALIDATION_ERROR.value
