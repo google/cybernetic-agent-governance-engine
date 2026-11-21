@@ -834,6 +834,10 @@ async def test_proxy_refusal_paths_fail_closed_503_when_blocking_evidence_unavai
     monkeypatch.setattr(evidence_stream, "_evidence_sink", None)
     monkeypatch.setattr(evidence_stream, "get_evidence_sink", lambda: None)
     monkeypatch.setattr(evidence_stream, "is_evidence_chain_blocking", lambda: True)
+    quarantine_redis = fakeredis.aioredis.FakeRedis(decode_responses=True)
+    monkeypatch.setattr(
+        inference_proxy.inference_app.state, "redis", quarantine_redis, raising=False
+    )
 
     stub_app = create_stub_app(environ={"CAGE_ENV": "staging"})
     stub_client = httpx.AsyncClient(
@@ -908,5 +912,6 @@ async def test_proxy_refusal_paths_fail_closed_503_when_blocking_evidence_unavai
             assert quota_resp.status_code == 503
             assert quota_resp.json()["error"] == "evidence_chain_unavailable"
             assert stub_app.state.request_count == 0
+            uca_mock.log_quota_exceeded.assert_awaited_once()
     finally:
         await stub_client.aclose()

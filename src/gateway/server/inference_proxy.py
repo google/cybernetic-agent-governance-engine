@@ -56,6 +56,7 @@ import httpx
 from fastapi import BackgroundTasks, FastAPI, HTTPException, Request
 from fastapi.responses import JSONResponse, StreamingResponse
 from opentelemetry import trace
+from opentelemetry.trace import Status, StatusCode
 
 from src.gateway.governance.evidence.stream import EvidenceChainUnavailableError
 from src.gateway.governance.inference_backend import (
@@ -546,6 +547,27 @@ def _evidence_unavailable_response(exc: EvidenceChainUnavailableError) -> JSONRe
         status_code=503,
         content={"error": "evidence_chain_unavailable", "detail": str(exc)},
     )
+
+
+def _collect_quarantine_thread_ids(body: dict[str, Any], request: Request) -> list[str]:
+    """Return distinct non-empty thread IDs from body and ``x-cage-thread-id`` header."""
+    candidates: list[str] = []
+    raw_body_tid = body.get("thread_id")
+    if isinstance(raw_body_tid, str):
+        body_tid = raw_body_tid.strip()
+        if body_tid:
+            candidates.append(body_tid)
+    elif raw_body_tid is not None and not isinstance(raw_body_tid, (bool, dict, list)):
+        body_tid = str(raw_body_tid).strip()
+        if body_tid:
+            candidates.append(body_tid)
+
+    for raw_hdr_tid in request.headers.getlist("x-cage-thread-id"):
+        if isinstance(raw_hdr_tid, str):
+            hdr_tid = raw_hdr_tid.strip()
+            if hdr_tid and hdr_tid not in candidates:
+                candidates.append(hdr_tid)
+    return candidates
 
 
 def _create_blocked_response(reason: str) -> dict[str, Any]:
@@ -1162,18 +1184,74 @@ async def chat_completions(
             )
 
         # ── Step 2.5: Out-of-Band Quarantine Enforcement (SC-7 / AC-3) ──
-        from src.gateway.governance.quarantine_actuator import is_workload_quarantined
-
-        request_thread_id = body.get("thread_id") or request.headers.get(
-            "x-cage-thread-id"
+        # Separate confirmed SC-7 quarantine (403 workload_quarantined) from
+        # Redis / posture-backend unavailability (503 quarantine_backend_unavailable
+        # + GOVERNANCE_INFRASTRUCTURE_BLOCK, POAM-2026-233).
+        from src.gateway.governance.governor.metrics import governor_metrics
+        from src.gateway.governance.governor.verdicts import (
+            publish_infrastructure_block,
         )
+        from src.gateway.governance.quarantine_actuator import (
+            QuarantineCheckStatus,
+            check_workload_quarantine_status,
+        )
+
+        candidate_threads = _collect_quarantine_thread_ids(body, request)
+        primary_thread_id = candidate_threads[0] if candidate_threads else None
         app_state = getattr(getattr(request, "app", None), "state", None)
         shared_redis = getattr(app_state, "redis", None)
-        if await is_workload_quarantined(
-            thread_id=str(request_thread_id) if request_thread_id else None,
-            agent_svid=agent_id,
-            redis_client=shared_redis,
-        ):
+
+        q_status = QuarantineCheckStatus.CLEAR
+        matched_thread_id = primary_thread_id
+        for idx, cand_tid in enumerate(candidate_threads or [None]):
+            step_status = await check_workload_quarantine_status(
+                thread_id=cand_tid,
+                agent_svid=agent_id if idx == 0 else None,
+                redis_client=shared_redis,
+            )
+            if step_status is QuarantineCheckStatus.BACKEND_UNAVAILABLE:
+                q_status = QuarantineCheckStatus.BACKEND_UNAVAILABLE
+                break
+            if step_status is QuarantineCheckStatus.QUARANTINED:
+                q_status = QuarantineCheckStatus.QUARANTINED
+                matched_thread_id = cand_tid or primary_thread_id
+                break
+
+        if q_status is QuarantineCheckStatus.BACKEND_UNAVAILABLE:
+            span.set_attribute("cage.verdict", "INFRASTRUCTURE_BLOCK")
+            span.set_attribute("cage.infrastructure.dependency", "redis")
+            span.set_attribute(
+                "cage.infrastructure.failure_code", "QUARANTINE_REDIS_UNAVAILABLE"
+            )
+            span.set_status(Status(StatusCode.ERROR))
+            governor_metrics().infrastructure_block_decided(
+                "redis", "QUARANTINE_REDIS_UNAVAILABLE"
+            )
+            try:
+                await publish_infrastructure_block(
+                    action="inference_chat_completions",
+                    params={"thread_id": primary_thread_id or "default"},
+                    dependency="redis",
+                    failure_code="QUARANTINE_REDIS_UNAVAILABLE",
+                    detail="Quarantine Redis backend unavailable on POST /v1/chat/completions",
+                    control_id="SC-7",
+                )
+            except Exception as infra_exc:
+                logger.error(
+                    "[InferenceProxy] Failed to publish infrastructure block: %s",
+                    infra_exc,
+                )
+            return JSONResponse(
+                content={
+                    "error": "quarantine_backend_unavailable",
+                    "dependency": "redis",
+                    "failure_code": "QUARANTINE_REDIS_UNAVAILABLE",
+                    "message": "Quarantine state store unavailable; failing closed.",
+                },
+                status_code=503,
+            )
+
+        if q_status is QuarantineCheckStatus.QUARANTINED:
             stamp_iso_control(span, ingress_stage=1, control="SC-7", outcome="BLOCK")
             try:
                 await _emit_proxy_evidence(
@@ -1186,7 +1264,7 @@ async def chat_completions(
                     reason="Workload SVID or thread is quarantined",
                     model_id=model_id,
                     agent_id=agent_id,
-                    extra={"thread_id": request_thread_id},
+                    extra={"thread_id": matched_thread_id},
                 )
             except EvidenceChainUnavailableError as exc:
                 return _evidence_unavailable_response(exc)
@@ -1195,7 +1273,7 @@ async def chat_completions(
                     "error": "workload_quarantined",
                     "message": "Workload SVID or thread is quarantined by CAGE out-of-band governance",
                     "agent_id": agent_id,
-                    "thread_id": request_thread_id,
+                    "thread_id": matched_thread_id,
                 },
                 status_code=403,
             )
