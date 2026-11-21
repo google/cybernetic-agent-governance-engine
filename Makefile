@@ -170,7 +170,7 @@ test-last-failed:
 
 ## Full local run with coverage (mirrors CI)
 test-coverage:
-	uv run pytest tests/ -m "local or unit" -n auto --dist loadscope -p no:langsmith -p no:langsmith_plugin --cov=src --cov=cage_client --cov-context=test --cov-config=.coveragerc --cov-report=term-missing --cov-fail-under=70
+	uv run pytest tests/ -m "local or unit" -n auto --dist loadscope -p no:langsmith -p no:langsmith_plugin --cov=src --cov=cage_client --cov=packages/cage-conformance/src/cage_conformance --cov-context=test --cov-config=.coveragerc --cov-report=term-missing --cov-fail-under=70
 	uv run python scripts/check_fail_closed_coverage.py --verify-coverage .coverage --verbose
 
 ## Randomized test order (weekly, for dependency detection)
