@@ -27,59 +27,74 @@ from __future__ import annotations
 
 import asyncio
 import os
+import subprocess
+import sys
 from datetime import datetime, timezone
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
 
+def _read_import_time_blocking_flag(env_value: str | None) -> bool:
+    """Read `_EVIDENCE_CHAIN_BLOCKING` in a fresh Python interpreter.
+
+    Calling `importlib.reload(es)` in-process redefines
+    `EvidenceChainUnavailableError` and `ConfigurationError`, breaking class
+    identity in `except EvidenceChainUnavailableError:` blocks of already-imported
+    modules running later in the same pytest-xdist worker.
+    """
+    env = os.environ.copy()
+    if env_value is None:
+        env.pop("EVIDENCE_CHAIN_BLOCKING", None)
+    else:
+        env["EVIDENCE_CHAIN_BLOCKING"] = env_value
+    out = subprocess.check_output(
+        [
+            sys.executable,
+            "-c",
+            (
+                "import src.gateway.governance.evidence.stream as es; "
+                "print('1' if es._EVIDENCE_CHAIN_BLOCKING else '0')"
+            ),
+        ],
+        env=env,
+        text=True,
+        timeout=30,
+    ).strip()
+    return out == "1"
+
+
 class TestEvidenceChainBlockingGate:
     """Tests for the EVIDENCE_CHAIN_BLOCKING gate behavior."""
 
-    def test_default_blocking_mode_is_true(self):
+    def test_default_blocking_mode_is_true(self, monkeypatch):
         """Verify default EVIDENCE_CHAIN_BLOCKING is true (peer review Fix B).
 
         DEFAULT CHANGED (peer review Fix B): Enabled by default to ensure
         evidence durability before execution proceeds. This guarantees audit
         trail integrity at the cost of ~5ms latency.
         """
-        with patch.dict("os.environ", {}, clear=False):
-            # Force reimport to pick up env var
-            import importlib
+        import src.gateway.governance.evidence.stream as es
 
-            import src.gateway.governance.evidence.stream as es
+        monkeypatch.delenv("EVIDENCE_CHAIN_BLOCKING", raising=False)
+        assert _read_import_time_blocking_flag(None) is True
+        assert es.is_evidence_chain_blocking() is True
 
-            importlib.reload(es)
-
-            # Default should be true (peer review Fix B)
-            assert es._EVIDENCE_CHAIN_BLOCKING is True
-            assert es.is_evidence_chain_blocking() is True
-
-    def test_blocking_mode_disabled_when_env_false(self):
+    def test_blocking_mode_disabled_when_env_false(self, monkeypatch):
         """Verify EVIDENCE_CHAIN_BLOCKING=false disables blocking mode."""
-        with patch.dict(
-            "os.environ", {"EVIDENCE_CHAIN_BLOCKING": "false"}, clear=False
-        ):
-            import importlib
+        import src.gateway.governance.evidence.stream as es
 
-            import src.gateway.governance.evidence.stream as es
+        monkeypatch.setenv("EVIDENCE_CHAIN_BLOCKING", "false")
+        assert _read_import_time_blocking_flag("false") is False
+        assert es.is_evidence_chain_blocking() is False
 
-            importlib.reload(es)
-
-            assert es._EVIDENCE_CHAIN_BLOCKING is False
-            assert es.is_evidence_chain_blocking() is False
-
-    def test_blocking_mode_enabled_when_env_true(self):
+    def test_blocking_mode_enabled_when_env_true(self, monkeypatch):
         """Verify EVIDENCE_CHAIN_BLOCKING=true enables blocking mode."""
-        with patch.dict("os.environ", {"EVIDENCE_CHAIN_BLOCKING": "true"}, clear=False):
-            import importlib
+        import src.gateway.governance.evidence.stream as es
 
-            import src.gateway.governance.evidence.stream as es
-
-            importlib.reload(es)
-
-            assert es._EVIDENCE_CHAIN_BLOCKING is True
-            assert es.is_evidence_chain_blocking() is True
+        monkeypatch.setenv("EVIDENCE_CHAIN_BLOCKING", "true")
+        assert _read_import_time_blocking_flag("true") is True
+        assert es.is_evidence_chain_blocking() is True
 
 
 class TestEvidenceCommitResult:
@@ -263,25 +278,18 @@ class TestGenerateSealWithEvidence:
             clear=False,
         ):
             os.environ.pop("CAGE_REQUIRE_EVIDENCE_BINDING", None)
-            import importlib
-
             import src.gateway.governance.evidence.stream as es
-
-            importlib.reload(es)
 
             mock_sink = MagicMock()
             mock_sink.is_running = True
             mock_sink.ingest = AsyncMock(return_value="msg-id-123")
 
             with patch.object(es, "get_evidence_sink", return_value=mock_sink):
-                # routing_seal bound the exception class at its own import,
-                # before the reload above.
                 from src.gateway.governance.routing_seal import (
-                    EvidenceChainUnavailableError,
                     generate_seal_with_evidence,
                 )
 
-                with pytest.raises(EvidenceChainUnavailableError, match="binding"):
+                with pytest.raises(es.EvidenceChainUnavailableError, match="binding"):
                     await generate_seal_with_evidence(
                         action="execute_trade",
                         params={"symbol": "AAPL", "amount": 1000},
@@ -299,11 +307,7 @@ class TestGenerateSealWithEvidence:
             },
             clear=False,
         ):
-            import importlib
-
             import src.gateway.governance.evidence.stream as es
-
-            importlib.reload(es)
 
             # Mock evidence sink to track calls
             mock_sink = MagicMock()
@@ -330,11 +334,7 @@ class TestGenerateSealWithEvidence:
     async def test_blocking_mode_raises_when_evidence_fails(self):
         """Verify blocking mode raises EvidenceChainUnavailableError on failure."""
         with patch.dict("os.environ", {"EVIDENCE_CHAIN_BLOCKING": "true"}, clear=False):
-            import importlib
-
             import src.gateway.governance.evidence.stream as es
-
-            importlib.reload(es)
 
             # Mock evidence sink that fails
             mock_sink = MagicMock()
@@ -358,11 +358,7 @@ class TestGenerateSealWithEvidence:
     async def test_blocking_mode_returns_seal_on_success(self):
         """Verify blocking mode returns seal after successful evidence commit."""
         with patch.dict("os.environ", {"EVIDENCE_CHAIN_BLOCKING": "true"}, clear=False):
-            import importlib
-
             import src.gateway.governance.evidence.stream as es
-
-            importlib.reload(es)
 
             # Mock evidence sink that succeeds
             commit_result = es.EvidenceCommitResult(
@@ -403,8 +399,6 @@ class TestGenerateSealWithEvidence:
     @pytest.mark.asyncio
     async def test_ingest_sync_group_commit_binds_distinct_record_hashes_to_seals(self):
         """Concurrent generate_seal_with_evidence calls coalesce into a batch and bind each record's own hash."""
-        import importlib
-
         import fakeredis
 
         import src.gateway.governance.evidence.stream as es
@@ -422,7 +416,6 @@ class TestGenerateSealWithEvidence:
         redis_seal = fakeredis.FakeAsyncRedis(server=server, decode_responses=False)
 
         with patch.dict("os.environ", {"EVIDENCE_CHAIN_BLOCKING": "true"}, clear=False):
-            importlib.reload(es)
             sink = EvidenceStreamSink(
                 stream_key="cage:evidence:batch-blocking",
                 max_batch_size=8,
