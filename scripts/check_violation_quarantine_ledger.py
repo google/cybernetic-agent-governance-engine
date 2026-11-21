@@ -83,6 +83,7 @@ EXPLICIT_NO_QUARANTINE_CODES: frozenset[str] = frozenset(
         "FTRA_REGISTRY_ENTRY_INVALID",
         "FTRA_REGISTRY_UNAVAILABLE",
         "FTRA_UNREGISTERED_ACTION",
+        "KMS_SIGNING_UNAVAILABLE",  # refusal receipt unsignable: infra block, never quarantine
         "OPA_DENY",
         "OPA_MANUAL_REVIEW",
         "OPA_UNAVAILABLE",

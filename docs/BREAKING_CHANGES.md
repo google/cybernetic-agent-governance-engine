@@ -1365,4 +1365,14 @@ Layer 1 warrant and estate-provider modules drop partner-branded schema defaults
 
 ---
 
+## Unreleased — Refusal Receipts Fail Closed When They Cannot Be Signed (`POAM-2026-233`)
+
+`_emit_refusal_receipt()` backs every middleware refusal: `enforce_governance()`, `enforce_approved_governance()`, `record_refusal()` (finance and healthcare tool refusals), and the `POST /governance/validate-action` refusal path. It no longer commits a `GOVERNANCE_REFUSAL_RECEIPT` with `kms_signature=""` when signing fails. If a configured signer raises or returns an empty signature, or an enforcing posture has no active signer, it chains a `GOVERNANCE_INFRASTRUCTURE_BLOCK` (`dependency="kms"`, `failure_code="KMS_SIGNING_UNAVAILABLE"`) and raises `GovernanceInfrastructureError`, which gateway surfaces answer with HTTP `503`. The action stays refused; only the unsigned receipt is withheld. Non-enforcing postures with no signer configured by design (hermetic tests, unconfigured local runs) still emit unsigned receipts, and those are never evidence.
+
+| Item | Area | Clean Break Description | Architectural Rationale | Failure Mode on Stale Caller |
+|---|---|---|---|---|
+| **RS-01** | Middleware refusal receipts ([`governance_middleware.py`](../src/gateway/server/governance_middleware.py)) | A refusal whose receipt cannot be signed returns HTTP `503` (`dependency="kms"`, `failure_code="KMS_SIGNING_UNAVAILABLE"`) instead of HTTP `403` / `BLOCKED:` with an unsigned receipt. `refusal_decided("MIDDLEWARE")` and the advertised `proof_hash` are recorded only after signing succeeds. | An unsigned receipt in the tamper-evident chain records more than happened, which is the outage-recorded-as-refusal defect `POAM-2026-233` tracks. Matches the quarantine-refusal behaviour of the external contribution in #743. | Callers that treat every middleware refusal as `403` must handle `503` for this outage class and retry once signing is restored. The action was never executed. |
+
+---
+
 **Last updated:** November 20, 2026

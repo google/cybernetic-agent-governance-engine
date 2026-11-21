@@ -185,6 +185,9 @@ async def enforce_governance(
     Raises:
         ActionDeferred: The committing run deferred (an ineligible warrant).
         PermissionError: If the governor blocks the action.
+        GovernanceInfrastructureError: A dependency was unavailable, including
+            a refusal whose receipt could not be signed (no unsigned receipt
+            is committed).
     """
     if tool_name in {"verify_content_safety"}:
         return ""  # Exempt kernel-internal read-only tools from governance overhead
@@ -270,6 +273,10 @@ async def enforce_approved_governance(
         PermissionError: The approval is missing, unapproved, mismatched,
             expired or already consumed, or post-approval re-validation
             refused.
+        GovernanceInfrastructureError: A dependency was unavailable, including
+            a refusal whose receipt could not be signed (no unsigned receipt
+            is committed). The signing failure itself spends nothing;
+            an approval already spent by a DENY stays spent.
     """
     from src.gateway.governance.defer_queue import open_defer_queue
 
@@ -588,6 +595,10 @@ async def record_refusal(
     Such a refusal has no tier ``RefusalReceipt`` (for example, a resubmitted
     idempotency key the execution ledger turned away), so its summary receipt
     is signed and ingested like every other refusal in this module.
+
+    Raises:
+        GovernanceInfrastructureError: The receipt could not be signed; the
+            refusal stands but no unsigned receipt is committed.
     """
     return await _emit_refusal_receipt(
         action_id=action_id,
@@ -596,6 +607,98 @@ async def record_refusal(
         params=params,
         receipt_expected=False,
     )
+
+
+#: Dependency and failure code recorded when a refusal receipt cannot be signed.
+_RECEIPT_SIGNING_DEPENDENCY = "kms"
+_RECEIPT_SIGNING_FAILURE_CODE = "KMS_SIGNING_UNAVAILABLE"
+
+
+async def _sign_refusal_receipt(
+    signable: dict[str, Any],
+    *,
+    action_id: str,
+    receipt_id: str,
+    params: dict[str, Any],
+) -> str:
+    """Return the refusal receipt's signature, or block fail-closed.
+
+    An unsigned ``GOVERNANCE_REFUSAL_RECEIPT`` must never enter the
+    tamper-evident chain where a signature is expected. A configured signer
+    that raises or returns an empty signature blocks the request as an
+    infrastructure outage (``GOVERNANCE_INFRASTRUCTURE_BLOCK``,
+    ``dependency="kms"``, HTTP 503), in every posture; so does an enforcing
+    posture with no active signer. Only a non-enforcing posture with no signer
+    configured by design (hermetic tests, unconfigured local runs) returns
+    ``""``, and such a receipt is never evidence.
+
+    Raises:
+        GovernanceInfrastructureError: The receipt could not be signed.
+        EvidenceChainUnavailableError: The infrastructure block itself could
+            not be committed while ``EVIDENCE_CHAIN_BLOCKING`` is on.
+    """
+    from src.gateway.governance.contracts import Violation, ViolationKind
+    from src.gateway.governance.env_posture import is_enforcing, resolve_posture
+    from src.gateway.governance.governor.verdicts import handle_infrastructure_block
+
+    try:
+        signer = get_governance_signer()
+        active = bool(
+            getattr(signer, "is_kms_active", False)
+            and getattr(signer, "kms_active", True) is not False
+        )
+        if not active:
+            if not is_enforcing(resolve_posture()):
+                logger.warning(
+                    "⚠️ [P6] No active refusal-receipt signer in a non-enforcing "
+                    "posture: receipt_id=%s for action '%s' is emitted unsigned "
+                    "and is not evidence.",
+                    receipt_id,
+                    action_id,
+                )
+                return ""
+            raise RuntimeError(
+                "no active refusal-receipt signer in an enforcing posture"
+            )
+        signature = await signer.sign_async(signable)
+        if not isinstance(signature, str) or not signature.strip():
+            raise ValueError("signer returned an empty signature")
+        return signature
+    except Exception as sign_exc:  # every signing failure fails closed
+        logger.error(
+            "❌ [P6] Failed to sign refusal receipt for action '%s' "
+            "(receipt_id=%s): %s — failing closed as an infrastructure block; "
+            "no unsigned receipt is committed.",
+            action_id,
+            receipt_id,
+            sign_exc,
+        )
+        await handle_infrastructure_block(
+            action_id,
+            params,
+            [
+                Violation(
+                    tier=_RECEIPT_SIGNING_DEPENDENCY,
+                    code=_RECEIPT_SIGNING_FAILURE_CODE,
+                    message=(
+                        f"refusal receipt for {action_id!r} could not be signed "
+                        f"({type(sign_exc).__name__}); failing closed instead of "
+                        "committing an unsigned receipt"
+                    ),
+                    kind=ViolationKind.INFRASTRUCTURE,
+                    infra_dependency=_RECEIPT_SIGNING_DEPENDENCY,
+                    infra_error_code="kms_signing_unavailable",
+                )
+            ],
+            [],
+        )
+        # handle_infrastructure_block always raises; never fall through unsigned.
+        raise GovernanceInfrastructureError(
+            f"[{_RECEIPT_SIGNING_FAILURE_CODE}] refusal receipt for "
+            f"{action_id!r} could not be signed",
+            dependency=_RECEIPT_SIGNING_DEPENDENCY,
+            failure_code=_RECEIPT_SIGNING_FAILURE_CODE,
+        ) from sign_exc
 
 
 async def _emit_refusal_receipt(
@@ -610,12 +713,17 @@ async def _emit_refusal_receipt(
     """Emit a signed OSCAL compliance receipt for a hard governance refusal.
 
     Called from every ``GovernanceError`` handler in this module.  The receipt
-    is signed via ``KMSGovernanceSigner.sign()`` and published to the evidence
-    stream via ``EvidenceStreamSink.ingest()``.
+    is signed (:func:`_sign_refusal_receipt`) before the refusal is counted,
+    its ``proof_hash`` is advertised, or anything is published to the
+    evidence stream.
 
-    If OSCAL emission itself fails, the error is logged at ERROR level but the
-    original ``GovernanceError`` is NOT suppressed — the refusal must still
-    propagate to the caller.
+    Fail-closed contract: if the receipt cannot be signed, nothing is
+    committed as a ``GOVERNANCE_REFUSAL_RECEIPT``; a
+    ``GOVERNANCE_INFRASTRUCTURE_BLOCK`` (``dependency="kms"``) is chained and
+    :class:`GovernanceInfrastructureError` propagates, which gateway surfaces
+    answer with HTTP 503. The action is refused either way; only the receipt
+    is withheld. If publishing the signed receipt fails, the error is logged
+    and, under ``EVIDENCE_CHAIN_BLOCKING``, raised.
 
     A2 fix: Now accepts the full RefusalReceipt v3 object and serializes it
     with tier_failures and the 5-part proof chain intact. When receipt is None,
@@ -630,6 +738,11 @@ async def _emit_refusal_receipt(
         receipt:           Full RefusalReceipt v3 object (if available).
         receipt_expected:  False for a refusal decided outside the governor,
                            which never has a RefusalReceipt to attach.
+
+    Raises:
+        GovernanceInfrastructureError: The receipt could not be signed.
+        EvidenceChainUnavailableError: Evidence could not be committed while
+            ``EVIDENCE_CHAIN_BLOCKING`` is on.
     """
     receipt_id = str(uuid.uuid4())
     timestamp_utc = datetime.now(tz=timezone.utc).isoformat()
@@ -686,25 +799,21 @@ async def _emit_refusal_receipt(
         else:
             receipt_payload["proof_hash"] = computed_hash
         proof_hash = computed_hash
-        governor_metrics().refusal_decided("MIDDLEWARE")
 
+    # Sign before the refusal is counted, advertised or committed. A
+    # signing failure blocks fail-closed (HTTP 503 infrastructure block) and no
+    # unsigned GOVERNANCE_REFUSAL_RECEIPT enters the tamper-evident chain.
+    signable = {k: v for k, v in receipt_payload.items() if k != "kms_signature"}
+    receipt_payload["kms_signature"] = await _sign_refusal_receipt(
+        signable,
+        action_id=action_id,
+        receipt_id=receipt_id,
+        params=params,
+    )
+    if receipt is None:
+        governor_metrics().refusal_decided("MIDDLEWARE")
     if proof_hash:
         set_last_refusal_proof_hash(proof_hash)
-
-    # Sign the receipt via KMS
-    try:
-        signer = get_governance_signer()
-        # Sign a stable subset of the receipt (exclude kms_signature itself)
-        signable = {k: v for k, v in receipt_payload.items() if k != "kms_signature"}
-        receipt_payload["kms_signature"] = await signer.sign_async(signable)
-    except Exception as sign_exc:
-        logger.error(
-            "❌ [P6] Failed to KMS-sign refusal receipt for action '%s' "
-            "(receipt_id=%s): %s — receipt will be emitted unsigned.",
-            action_id,
-            receipt_id,
-            sign_exc,
-        )
 
     # Publish to evidence stream
     from src.gateway.governance.evidence.stream import (
@@ -743,6 +852,19 @@ async def _emit_refusal_receipt(
         if is_evidence_chain_blocking():
             raise
     return proof_hash
+
+
+def _infrastructure_block_response(exc: GovernanceInfrastructureError) -> JSONResponse:
+    """HTTP 503 body for a fail-closed infrastructure block (POAM-2026-233)."""
+    return JSONResponse(
+        status_code=503,
+        content={
+            "error": exc.error_code,
+            "dependency": exc.dependency,
+            "failure_code": exc.failure_code,
+            "detail": str(exc),
+        },
+    )
 
 
 @governance_app.get("/policy-version")
@@ -1105,15 +1227,7 @@ async def validate_action_endpoint(
             },
         )
     except GovernanceInfrastructureError as exc:
-        return JSONResponse(
-            status_code=503,
-            content={
-                "error": exc.error_code,
-                "dependency": exc.dependency,
-                "failure_code": exc.failure_code,
-                "detail": str(exc),
-            },
-        )
+        return _infrastructure_block_response(exc)
     except GovernanceError as exc:
         from src.gateway.governance.evidence.stream import (
             EvidenceChainUnavailableError,
@@ -1138,6 +1252,10 @@ async def validate_action_endpoint(
                     "detail": str(emit_exc),
                 },
             )
+        except GovernanceInfrastructureError as signing_exc:
+            # The receipt could not be signed and nothing unsigned was
+            # committed, so this answers as an infrastructure block, not a 403.
+            return _infrastructure_block_response(signing_exc)
 
         # ADR-008 Phase 3: Build canonical refusal payload and wrap in a signed
         # GovernanceEnvelope (identical JCS + KMS/Ed25519 signature, expires_at,
