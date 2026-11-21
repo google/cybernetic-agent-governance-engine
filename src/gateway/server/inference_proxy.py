@@ -549,27 +549,6 @@ def _evidence_unavailable_response(exc: EvidenceChainUnavailableError) -> JSONRe
     )
 
 
-def _collect_quarantine_thread_ids(body: dict[str, Any], request: Request) -> list[str]:
-    """Return distinct non-empty thread IDs from body and ``x-cage-thread-id`` header."""
-    candidates: list[str] = []
-    raw_body_tid = body.get("thread_id")
-    if isinstance(raw_body_tid, str):
-        body_tid = raw_body_tid.strip()
-        if body_tid:
-            candidates.append(body_tid)
-    elif raw_body_tid is not None and not isinstance(raw_body_tid, (bool, dict, list)):
-        body_tid = str(raw_body_tid).strip()
-        if body_tid:
-            candidates.append(body_tid)
-
-    for raw_hdr_tid in request.headers.getlist("x-cage-thread-id"):
-        if isinstance(raw_hdr_tid, str):
-            hdr_tid = raw_hdr_tid.strip()
-            if hdr_tid and hdr_tid not in candidates:
-                candidates.append(hdr_tid)
-    return candidates
-
-
 def _create_blocked_response(reason: str) -> dict[str, Any]:
     import time
 
@@ -1184,99 +1163,18 @@ async def chat_completions(
             )
 
         # ── Step 2.5: Out-of-Band Quarantine Enforcement (SC-7 / AC-3) ──
-        # Separate confirmed SC-7 quarantine (403 workload_quarantined) from
-        # Redis / posture-backend unavailability (503 quarantine_backend_unavailable
-        # + GOVERNANCE_INFRASTRUCTURE_BLOCK, POAM-2026-233).
-        from src.gateway.governance.governor.metrics import governor_metrics
-        from src.gateway.governance.governor.verdicts import (
-            publish_infrastructure_block,
-        )
-        from src.gateway.governance.quarantine_actuator import (
-            QuarantineCheckStatus,
-            check_workload_quarantine_status,
-        )
+        from src.gateway.server.quarantine_guard import refuse_if_quarantined
 
-        candidate_threads = _collect_quarantine_thread_ids(body, request)
-        primary_thread_id = candidate_threads[0] if candidate_threads else None
-        app_state = getattr(getattr(request, "app", None), "state", None)
-        shared_redis = getattr(app_state, "redis", None)
-
-        q_status = QuarantineCheckStatus.CLEAR
-        matched_thread_id = primary_thread_id
-        for idx, cand_tid in enumerate(candidate_threads or [None]):
-            step_status = await check_workload_quarantine_status(
-                thread_id=cand_tid,
-                agent_svid=agent_id if idx == 0 else None,
-                redis_client=shared_redis,
-            )
-            if step_status is QuarantineCheckStatus.BACKEND_UNAVAILABLE:
-                q_status = QuarantineCheckStatus.BACKEND_UNAVAILABLE
-                break
-            if step_status is QuarantineCheckStatus.QUARANTINED:
-                q_status = QuarantineCheckStatus.QUARANTINED
-                matched_thread_id = cand_tid or primary_thread_id
-                break
-
-        if q_status is QuarantineCheckStatus.BACKEND_UNAVAILABLE:
-            span.set_attribute("cage.verdict", "INFRASTRUCTURE_BLOCK")
-            span.set_attribute("cage.infrastructure.dependency", "redis")
-            span.set_attribute(
-                "cage.infrastructure.failure_code", "QUARANTINE_REDIS_UNAVAILABLE"
-            )
-            span.set_status(Status(StatusCode.ERROR))
-            governor_metrics().infrastructure_block_decided(
-                "redis", "QUARANTINE_REDIS_UNAVAILABLE"
-            )
-            try:
-                await publish_infrastructure_block(
-                    action="inference_chat_completions",
-                    params={"thread_id": primary_thread_id or "default"},
-                    dependency="redis",
-                    failure_code="QUARANTINE_REDIS_UNAVAILABLE",
-                    detail="Quarantine Redis backend unavailable on POST /v1/chat/completions",
-                    control_id="SC-7",
-                )
-            except Exception as infra_exc:
-                logger.error(
-                    "[InferenceProxy] Failed to publish infrastructure block: %s",
-                    infra_exc,
-                )
-            return JSONResponse(
-                content={
-                    "error": "quarantine_backend_unavailable",
-                    "dependency": "redis",
-                    "failure_code": "QUARANTINE_REDIS_UNAVAILABLE",
-                    "message": "Quarantine state store unavailable; failing closed.",
-                },
-                status_code=503,
-            )
-
-        if q_status is QuarantineCheckStatus.QUARANTINED:
-            stamp_iso_control(span, ingress_stage=1, control="SC-7", outcome="BLOCK")
-            try:
-                await _emit_proxy_evidence(
-                    request,
-                    span=span,
-                    body=body,
-                    event_type="INFERENCE_PROXY_BLOCK",
-                    control_id="SC-7",
-                    status_code=403,
-                    reason="Workload SVID or thread is quarantined",
-                    model_id=model_id,
-                    agent_id=agent_id,
-                    extra={"thread_id": matched_thread_id},
-                )
-            except EvidenceChainUnavailableError as exc:
-                return _evidence_unavailable_response(exc)
-            return JSONResponse(
-                content={
-                    "error": "workload_quarantined",
-                    "message": "Workload SVID or thread is quarantined by CAGE out-of-band governance",
-                    "agent_id": agent_id,
-                    "thread_id": matched_thread_id,
-                },
-                status_code=403,
-            )
+        if q_resp := await refuse_if_quarantined(
+            request,
+            action_id="inference_chat_completions",
+            surface="inference_proxy",
+            body_params=body,
+            fallback_app_obj=inference_app,
+            verified_agent_id=agent_id,
+            span=span,
+        ):
+            return q_resp
 
         # ── Step 3: Token Quota Enforcement (ISO 42001 Annex A.4) ──
         # Runs for ALL requests regardless of message role composition.

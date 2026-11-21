@@ -34,8 +34,8 @@ from src.gateway.governance.quarantine_actuator import (
     SimulatedQuarantineActuator,
     clear_local_quarantine_state,
     dispatch_quarantine,
-    is_workload_quarantined,
     load_quarantine_actuator_from_env,
+    probe_workload_quarantine,
 )
 from src.gateway.governance.seams.actuation import (
     ActuationOutcome,
@@ -230,16 +230,14 @@ class TestLayer1QuarantineBackends:
         directive = _make_directive(thread_id="thread-rogue-1", agent_svid=svid)
 
         assert (
-            await is_workload_quarantined(thread_id="thread-rogue-1", agent_svid=svid)
-            is False
-        )
+            await probe_workload_quarantine(thread_id="thread-rogue-1", agent_svid=svid)
+        ).quarantined is False
         receipt = await dispatch_quarantine(directive, actuator=actuator)
         assert receipt.quarantined is True
         assert receipt.enforcement_plane == "CAGE_INFERENCE_PROXY_SVID"
         assert (
-            await is_workload_quarantined(thread_id="thread-rogue-1", agent_svid=svid)
-            is True
-        )
+            await probe_workload_quarantine(thread_id="thread-rogue-1", agent_svid=svid)
+        ).quarantined is True
         assert len(sink.events) == 1
         assert sink.events[0]["type"] == "WORKLOAD_QUARANTINE_RECEIPT"
         assert sink.events[0]["controlId"] == "SC-7"
@@ -316,6 +314,7 @@ class TestLayer1QuarantineBackends:
             == "CAGE_INFERENCE_PROXY_SVID"
         )
         assert (
-            await is_workload_quarantined(thread_id="thread-breach-99", agent_svid=svid)
-            is True
-        )
+            await probe_workload_quarantine(
+                thread_id="thread-breach-99", agent_svid=svid
+            )
+        ).quarantined is True

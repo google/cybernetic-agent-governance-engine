@@ -876,66 +876,6 @@ async def _enforce_nemo_rate_limit(request: Request, route: str) -> None:
         )
 
 
-async def _enforce_nemo_quarantine(
-    request: Request, caller_identity: str, route: str
-) -> None:
-    """Enforce SC-7 workload quarantine on /v1/nemo/* without conflating Redis outages."""
-    from src.gateway.governance.governor.verdicts import (
-        publish_infrastructure_block,
-    )
-    from src.gateway.governance.quarantine_actuator import (
-        QuarantineCheckStatus,
-        check_workload_quarantine_status,
-    )
-
-    app_obj = request.scope.get("app")
-    app_state = getattr(app_obj, "state", None)
-    shared_redis = getattr(app_state, "redis", None)
-    raw_thread_id = request.headers.get("x-cage-thread-id")
-    thread_id = (
-        raw_thread_id.strip()
-        if isinstance(raw_thread_id, str) and raw_thread_id.strip()
-        else None
-    )
-    q_status = await check_workload_quarantine_status(
-        thread_id=thread_id,
-        agent_svid=caller_identity,
-        redis_client=shared_redis,
-    )
-    if q_status is QuarantineCheckStatus.BACKEND_UNAVAILABLE:
-        try:
-            await publish_infrastructure_block(
-                action=route,
-                params={"thread_id": thread_id or "default"},
-                dependency="redis",
-                failure_code="QUARANTINE_REDIS_UNAVAILABLE",
-                detail=f"Quarantine Redis backend unavailable on {route}",
-                control_id="SC-7",
-            )
-        except Exception as infra_exc:
-            logger.error(
-                "[NeMo/Refinement] Failed to publish infrastructure block: %s",
-                infra_exc,
-            )
-        raise HTTPException(
-            status_code=503,
-            detail={
-                "error": "quarantine_backend_unavailable",
-                "message": "Quarantine state store unavailable; failing closed.",
-            },
-        )
-    if q_status is QuarantineCheckStatus.QUARANTINED:
-        raise HTTPException(
-            status_code=403,
-            detail={
-                "error": "workload_quarantined",
-                "message": "Workload SVID or thread is quarantined by CAGE out-of-band governance",
-                "agent_id": caller_identity,
-                "thread_id": thread_id,
-            },
-        )
-
-
 def _require_nemo_approver_identity(approver_identity: str) -> None:
     """Fail closed (HTTP 403) when CAGE_NEMO_APPROVER_IDENTITIES is unset or caller is unlisted."""
     allowed_approvers_raw = os.environ.get("CAGE_NEMO_APPROVER_IDENTITIES", "").strip()
@@ -1091,11 +1031,12 @@ async def _cas_claim_refinement_proposal(
     return ok_flag, code, parsed if isinstance(parsed, dict) else None
 
 
-@root_app.post("/v1/nemo/propose-refinement")
+@root_app.post("/v1/nemo/propose-refinement", response_model=None)
 async def propose_nemo_refinement(
     request: Request, req: NeMoApplyRefinementRequest
-) -> dict[str, Any]:
+) -> dict[str, Any] | JSONResponse:
     """Stage a NeMo Guardrails refinement proposal for human review."""
+    from src.gateway.server.quarantine_guard import refuse_if_quarantined
     from src.gateway.server.workload_identity import extract_client_identity
 
     try:
@@ -1104,7 +1045,14 @@ async def propose_nemo_refinement(
         raise HTTPException(status_code=403, detail=str(exc)) from exc
 
     await _enforce_nemo_rate_limit(request, "nemo-propose")
-    await _enforce_nemo_quarantine(request, proposer_identity, "nemo-propose")
+    if q_resp := await refuse_if_quarantined(
+        request,
+        action_id="nemo-propose",
+        surface="hybrid_server",
+        fallback_app_obj=root_app,
+        verified_agent_id=proposer_identity,
+    ):
+        return q_resp
 
     proposal_id = str(_uuid.uuid4())
     proposal = {
@@ -1149,15 +1097,16 @@ async def propose_nemo_refinement(
     }
 
 
-@root_app.post("/v1/nemo/approve-refinement/{proposal_id}")
+@root_app.post("/v1/nemo/approve-refinement/{proposal_id}", response_model=None)
 async def approve_nemo_refinement(
     proposal_id: str,
     req: NeMoApproveRequest,
     request: Request,
-) -> dict[str, Any]:
+) -> dict[str, Any] | JSONResponse:
     """Approve or reject a staged NeMo refinement proposal via atomic Redis Lua CAS."""
     from src.gateway.governance.semantic_rail_factory import semantic_rails_refusal
     from src.gateway.server.inference_proxy import _safe_error_response
+    from src.gateway.server.quarantine_guard import refuse_if_quarantined
     from src.gateway.server.workload_identity import extract_client_identity
 
     try:
@@ -1166,7 +1115,14 @@ async def approve_nemo_refinement(
         raise HTTPException(status_code=403, detail=str(exc)) from exc
 
     await _enforce_nemo_rate_limit(request, "nemo-approve")
-    await _enforce_nemo_quarantine(request, approver_identity, "nemo-approve")
+    if q_resp := await refuse_if_quarantined(
+        request,
+        action_id="nemo-approve",
+        surface="hybrid_server",
+        fallback_app_obj=root_app,
+        verified_agent_id=approver_identity,
+    ):
+        return q_resp
     _require_nemo_approver_identity(approver_identity)
 
     reviewer = req.reviewer.strip() if req.reviewer else ""
@@ -1315,9 +1271,12 @@ async def approve_nemo_refinement(
     }
 
 
-@root_app.get("/v1/nemo/proposals/pending")
-async def list_pending_nemo_proposals(request: Request) -> dict[str, Any]:
+@root_app.get("/v1/nemo/proposals/pending", response_model=None)
+async def list_pending_nemo_proposals(
+    request: Request,
+) -> dict[str, Any] | JSONResponse:
     """List staged NeMo refinement proposals using bounded SSCAN (no unbounded HGETALL)."""
+    from src.gateway.server.quarantine_guard import refuse_if_quarantined
     from src.gateway.server.workload_identity import extract_client_identity
 
     try:
@@ -1326,7 +1285,14 @@ async def list_pending_nemo_proposals(request: Request) -> dict[str, Any]:
         raise HTTPException(status_code=403, detail=str(exc)) from exc
 
     await _enforce_nemo_rate_limit(request, "nemo-proposals")
-    await _enforce_nemo_quarantine(request, caller_identity, "nemo-proposals")
+    if q_resp := await refuse_if_quarantined(
+        request,
+        action_id="nemo-proposals",
+        surface="hybrid_server",
+        fallback_app_obj=root_app,
+        verified_agent_id=caller_identity,
+    ):
+        return q_resp
     redis_client = _get_refinement_redis(request.scope.get("app"))
     if redis_client is None or not hasattr(redis_client, "sscan"):
         raise HTTPException(
@@ -1383,11 +1349,12 @@ async def list_pending_nemo_proposals(request: Request) -> dict[str, Any]:
     return {"pending": pending, "count": len(pending)}
 
 
-@root_app.post("/v1/nemo/apply-refinement")
+@root_app.post("/v1/nemo/apply-refinement", response_model=None)
 async def apply_nemo_refinement(
     request: Request, req: NeMoApplyRefinementRequest
-) -> dict[str, Any]:
+) -> dict[str, Any] | JSONResponse:
     """Stage a NeMo refinement proposal and return pending_approval."""
+    from src.gateway.server.quarantine_guard import refuse_if_quarantined
     from src.gateway.server.workload_identity import extract_client_identity
 
     try:
@@ -1396,7 +1363,14 @@ async def apply_nemo_refinement(
         raise HTTPException(status_code=403, detail=str(exc)) from exc
 
     await _enforce_nemo_rate_limit(request, "nemo-propose")
-    await _enforce_nemo_quarantine(request, proposer_identity, "nemo-apply")
+    if q_resp := await refuse_if_quarantined(
+        request,
+        action_id="nemo-apply",
+        surface="hybrid_server",
+        fallback_app_obj=root_app,
+        verified_agent_id=proposer_identity,
+    ):
+        return q_resp
 
     logger.info(
         "[NeMo/Refinement] Routing to proposal flow. control_id=%s source=%s proposer=%s",

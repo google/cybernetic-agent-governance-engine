@@ -23,6 +23,7 @@ import json
 import logging
 import uuid
 from collections.abc import Mapping
+from contextlib import nullcontext
 from datetime import datetime, timezone
 from typing import Any
 
@@ -31,6 +32,7 @@ from opentelemetry import trace
 from opentelemetry.propagate import extract as otel_extract
 from opentelemetry.trace import Status, StatusCode
 
+from src.gateway.governance import env_posture as _env_posture
 from src.gateway.governance.evidence.stream import (
     EvidenceChainUnavailableError,
     commit_decision_evidence,
@@ -48,10 +50,7 @@ from src.gateway.governance.kms_signer import get_governance_signer
 from src.gateway.governance.quarantine_actuator import probe_workload_quarantine
 from src.gateway.infrastructure.privacy import scrub_pii
 from src.gateway.observability.mcp_tracing import sanitize_trace_carrier
-from src.gateway.server.workload_identity import (
-    current_client_identity,
-    extract_client_identity,
-)
+from src.gateway.server import workload_identity as _workload_identity
 
 logger = logging.getLogger("Gateway.QuarantineGuard")
 tracer = trace.get_tracer("gateway.quarantine_guard")
@@ -63,27 +62,31 @@ _QUARANTINE_MESSAGE = (
 _MAX_MCP_INSPECT_BYTES = 65536
 
 
+def _state_dict_of(app: Any) -> dict[str, Any] | None:
+    s = getattr(app, "state", None)
+    if s is None:
+        return None
+    d = getattr(s, "_state", None)
+    if isinstance(d, dict):
+        return d
+    raw = getattr(s, "__dict__", None)
+    return raw if isinstance(raw, dict) else None
+
+
 def _resolve_redis(*apps: Any) -> Any:
     for app in apps:
-        if (s := getattr(app, "state", None)) is None:
-            continue
-        d = getattr(s, "_state", None)
-        v = (
-            d.get("redis")
-            if isinstance(d, dict)
-            else getattr(s, "__dict__", {}).get("redis")
-        )
-        if v is not None:
+        d = _state_dict_of(app)
+        if d is not None and (v := d.get("redis")) is not None:
             return v
     return None
 
 
 def resolve_verified_workload_identity(scope: Mapping[str, Any]) -> str | None:
     """Return verified Linkerd caller identity from ``workload_identity.py`` only."""
-    if (ident := current_client_identity()) is not None:
+    if (ident := _workload_identity.current_client_identity()) is not None:
         return ident
     try:
-        return extract_client_identity(scope)
+        return _workload_identity.extract_client_identity(scope)
     except Exception:
         return None
 
@@ -102,20 +105,22 @@ def _extract_thread_id(val: Any) -> str | None:
     return s
 
 
+def _append_mapping_threads(mapping: Mapping[str, Any], found: list[str]) -> None:
+    for key in ("thread_id", "threadId"):
+        if (tid := _extract_thread_id(mapping.get(key))) and tid not in found:
+            found.append(tid)
+
+
 def extract_candidate_thread_ids(
     scope: Mapping[str, Any], body_params: Mapping[str, Any] | None = None
 ) -> tuple[str, ...]:
-    """Return candidate thread_ids from body params and x-cage-thread-id header."""
+    """Return candidate thread_ids from body/linkage/arguments/params and x-cage-thread-id headers."""
     found: list[str] = []
     if isinstance(body_params, Mapping):
-        if p := _extract_thread_id(body_params.get("thread_id")):
-            found.append(p)
-        for nested_key in ("arguments", "params"):
+        _append_mapping_threads(body_params, found)
+        for nested_key in ("arguments", "params", "linkage"):
             if isinstance(nested := body_params.get(nested_key), Mapping):
-                if (
-                    np := _extract_thread_id(nested.get("thread_id"))
-                ) and np not in found:
-                    found.append(np)
+                _append_mapping_threads(nested, found)
     for k, v in scope.get("headers") or ():
         if (
             isinstance(k, bytes)
@@ -174,6 +179,13 @@ async def _emit_quarantine_infrastructure_block(
                 "error": "evidence_chain_unavailable",
                 "detail": scrub_pii(str(exc)),
             }
+        except Exception as exc:
+            logger.error(
+                "Failed to publish quarantine infrastructure block (%s/%s): %s",
+                dependency,
+                failure_code,
+                exc,
+            )
 
     return 503, {
         "error": "governance_dependency_unavailable",
@@ -181,6 +193,35 @@ async def _emit_quarantine_infrastructure_block(
         "failure_code": failure_code,
         "detail": clean_detail,
     }
+
+
+async def _sign_quarantine_event(
+    signable: dict[str, Any],
+    *,
+    receipt_id: str,
+    action_id: str,
+) -> str:
+    """Sign an SC-7 refusal receipt, matching ``_sign_refusal_receipt()`` (#840)."""
+    signer = get_governance_signer()
+    active = bool(
+        getattr(signer, "is_kms_active", True)
+        and getattr(signer, "kms_active", True) is not False
+    )
+    if not active:
+        if not _env_posture.is_enforcing(_env_posture.resolve_posture()):
+            logger.warning(
+                "No active refusal-receipt signer in a non-enforcing posture: "
+                "SC-7 quarantine receipt %s for action %r is emitted unsigned "
+                "and is not evidence.",
+                receipt_id,
+                action_id,
+            )
+            return ""
+        raise RuntimeError("no active refusal-receipt signer in an enforcing posture")
+    signature = await signer.sign_async(signable)
+    if not isinstance(signature, str) or not signature.strip():
+        raise ValueError("KMS signer returned an empty signature")
+    return signature
 
 
 async def _emit_quarantine_refusal(
@@ -225,12 +266,11 @@ async def _emit_quarantine_refusal(
         **({"thread_id": thread_id} if thread_id else {}),
     }
     try:
-        signature = await get_governance_signer().sign_async(
-            {k: v for k, v in event.items() if k != "kms_signature"}
+        event["kms_signature"] = await _sign_quarantine_event(
+            {k: v for k, v in event.items() if k != "kms_signature"},
+            receipt_id=receipt_id,
+            action_id=action_id,
         )
-        if not isinstance(signature, str) or not signature.strip():
-            raise ValueError("KMS signer returned an empty signature")
-        event["kms_signature"] = signature
     except Exception as exc:
         logger.error(
             "Failed to KMS-sign SC-7 refusal %s; failing closed as 503 infrastructure block: %s",
@@ -267,6 +307,20 @@ async def _emit_quarantine_refusal(
     return proof_hash
 
 
+def _quarantine_span_context(scope: Mapping[str, Any], parent_span: Any) -> Any:
+    if parent_span is not None:
+        return nullcontext(parent_span)
+    hdrs = {
+        k.decode("latin-1", "ignore"): v.decode("latin-1", "ignore")
+        for k, v in (scope.get("headers") or ())
+        if isinstance(k, bytes) and isinstance(v, bytes)
+    }
+    return tracer.start_as_current_span(
+        "cage.quarantine_guard",
+        context=otel_extract(sanitize_trace_carrier(hdrs)),
+    )
+
+
 async def check_and_refuse_quarantined_workload(
     scope: Mapping[str, Any],
     *,
@@ -276,9 +330,15 @@ async def check_and_refuse_quarantined_workload(
     fallback_app_obj: Any = None,
     body_params: Mapping[str, Any] | None = None,
     explicit_thread_id: str | None = None,
+    verified_agent_id: str | None = None,
+    span: Any = None,
 ) -> tuple[int, dict[str, Any]] | None:
     """Return ``(status_code, json_payload)`` when caller SVID/thread is quarantined or backend fails."""
-    agent_id = resolve_verified_workload_identity(scope)
+    agent_id = (
+        verified_agent_id
+        if verified_agent_id is not None
+        else resolve_verified_workload_identity(scope)
+    )
     candidates: tuple[str, ...]
     if explicit_thread_id is not None:
         clean_exp = _extract_thread_id(explicit_thread_id)
@@ -310,18 +370,10 @@ async def check_and_refuse_quarantined_workload(
         return None
 
     sink = get_evidence_sink()
-    hdrs = {
-        k.decode("latin-1", "ignore"): v.decode("latin-1", "ignore")
-        for k, v in (scope.get("headers") or ())
-        if isinstance(k, bytes) and isinstance(v, bytes)
-    }
-    with tracer.start_as_current_span(
-        "cage.quarantine_guard",
-        context=otel_extract(sanitize_trace_carrier(hdrs)),
-    ) as span:
+    with _quarantine_span_context(scope, span) as active_span:
         if infra_failure is not None:
             return await _emit_quarantine_infrastructure_block(
-                span=span,
+                span=active_span,
                 action_id=action_id,
                 dependency=infra_failure[0],
                 failure_code=infra_failure[1],
@@ -340,7 +392,7 @@ async def check_and_refuse_quarantined_workload(
             )
         except _QuarantineKmsSigningError as exc:
             return await _emit_quarantine_infrastructure_block(
-                span=span,
+                span=active_span,
                 action_id=action_id,
                 dependency="kms",
                 failure_code="KMS_SIGNING_UNAVAILABLE",
@@ -354,7 +406,7 @@ async def check_and_refuse_quarantined_workload(
                 "error": "evidence_chain_unavailable",
                 "detail": scrub_pii(str(exc)),
             }
-        stamp_iso_control(span, ingress_stage=1, control="SC-7", outcome="BLOCK")
+        stamp_iso_control(active_span, ingress_stage=1, control="SC-7", outcome="BLOCK")
 
     logger.warning(
         "Quarantined workload refused on %s (action=%s, agent=%s)",
@@ -378,6 +430,8 @@ async def refuse_if_quarantined(
     surface: str,
     body_params: Mapping[str, Any] | None = None,
     fallback_app_obj: Any = None,
+    verified_agent_id: str | None = None,
+    span: Any = None,
 ) -> JSONResponse | None:
     """FastAPI helper returning a 403/503 ``JSONResponse`` when caller is quarantined."""
     scope = getattr(request, "scope", None)
@@ -390,6 +444,8 @@ async def refuse_if_quarantined(
         app_obj=scope.get("app"),
         fallback_app_obj=fallback_app_obj,
         body_params=body_params,
+        verified_agent_id=verified_agent_id,
+        span=span,
     ):
         return JSONResponse(status_code=ref[0], content=ref[1])
     return None

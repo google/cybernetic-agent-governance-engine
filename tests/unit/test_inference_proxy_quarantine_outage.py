@@ -12,16 +12,17 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Inference proxy quarantine outages fail closed as 503 infrastructure blocks.
+"""Inference proxy quarantine enforcement via consolidated ``quarantine_guard``.
 
-``POST /v1/chat/completions`` previously checked ``is_workload_quarantined()``,
-which collapsed a Redis outage or missing enforcing-posture Redis client into
-``True`` and returned HTTP 403 ``workload_quarantined`` alongside an
-``INFERENCE_PROXY_BLOCK`` record (``SC-7``). Under ``POAM-2026-233``, backend
-unavailability must instead return HTTP 503 ``quarantine_backend_unavailable``,
-record a ``GOVERNANCE_INFRASTRUCTURE_BLOCK`` without stamping ``SC-7 BLOCK`` or
-``INFERENCE_PROXY_BLOCK``, while confirmed quarantines keep HTTP 403 across both
-``body.thread_id`` and ``x-cage-thread-id`` without shadowing.
+``POST /v1/chat/completions`` delegates Step 2.5 SC-7 workload quarantine checks
+to :func:`src.gateway.server.quarantine_guard.refuse_if_quarantined`. Under
+``POAM-2026-233``, Redis outages or missing enforcing-posture Redis clients
+return HTTP 503 ``governance_dependency_unavailable``
+(``dependency="redis"``, ``failure_code="REDIS_QUARANTINE_UNAVAILABLE"``) and
+chain a ``GOVERNANCE_INFRASTRUCTURE_BLOCK`` without stamping ``SC-7 BLOCK`` or
+emitting a refusal receipt, while confirmed quarantines return HTTP 403
+``workload_quarantined`` with a KMS-signed ``GOVERNANCE_REFUSAL_RECEIPT`` across
+both ``body.thread_id`` and ``x-cage-thread-id`` without shadowing.
 """
 
 from __future__ import annotations
@@ -76,9 +77,10 @@ async def _proxy_harness(
     redis_client: Any = None,
     posture: DeploymentPosture = DeploymentPosture.DEV,
     publish_infra_side_effect: Any = None,
-    emit_proxy_side_effect: Any = None,
+    commit_evidence_side_effect: Any = None,
+    signer_side_effect: Any = None,
 ) -> AsyncIterator[dict[str, Any]]:
-    """Mount controlled Redis, posture, telemetry, and evidence doubles on inference_app."""
+    """Mount controlled Redis, posture, telemetry, signer, and evidence doubles on inference_app."""
     prev_app_redis = getattr(ip.inference_app.state, "redis", None)
     prev_default_redis = get_quarantine_redis()
     ip.inference_app.state.redis = redis_client
@@ -93,7 +95,22 @@ async def _proxy_harness(
 
     metrics = MagicMock()
     publish_infra = AsyncMock(side_effect=publish_infra_side_effect)
-    emit_proxy = AsyncMock(side_effect=emit_proxy_side_effect)
+    commit_evidence = AsyncMock(side_effect=commit_evidence_side_effect)
+    emit_proxy = AsyncMock()
+    stamp_iso = MagicMock()
+
+    signer = MagicMock()
+    signer.is_kms_active = True
+    signer.kms_active = True
+    signer.sign_async = (
+        AsyncMock(side_effect=signer_side_effect)
+        if signer_side_effect is not None
+        else AsyncMock(return_value="sig-sc7-proxy")
+    )
+
+    stub_sink = MagicMock()
+    stub_sink._running = True
+
     quota_proxy = MagicMock()
     quota_proxy.check_and_increment = AsyncMock(
         side_effect=AssertionError("token quota must not run after quarantine block")
@@ -114,15 +131,35 @@ async def _proxy_harness(
                 return_value=posture,
             ),
             patch(
-                "src.gateway.governance.governor.metrics.governor_metrics",
+                "src.gateway.governance.env_posture.resolve_posture",
+                return_value=posture,
+            ),
+            patch(
+                "src.gateway.server.quarantine_guard.governor_metrics",
                 return_value=metrics,
             ),
             patch(
-                "src.gateway.governance.governor.verdicts.publish_infrastructure_block",
+                "src.gateway.server.quarantine_guard.publish_infrastructure_block",
                 new=publish_infra,
             ),
+            patch(
+                "src.gateway.server.quarantine_guard.commit_decision_evidence",
+                new=commit_evidence,
+            ),
+            patch(
+                "src.gateway.server.quarantine_guard.get_evidence_sink",
+                return_value=stub_sink,
+            ),
+            patch(
+                "src.gateway.server.quarantine_guard.get_governance_signer",
+                return_value=signer,
+            ),
+            patch(
+                "src.gateway.server.quarantine_guard.stamp_iso_control",
+                new=stamp_iso,
+            ),
             patch.object(ip, "_emit_proxy_evidence", new=emit_proxy),
-            patch.object(ip, "stamp_iso_control") as stamp_iso,
+            patch.object(ip, "stamp_iso_control", new=stamp_iso),
             patch.object(ip, "_get_token_quota_proxy", return_value=quota_proxy),
             patch.object(ip, "_get_http_client", return_value=http_client),
             patch.object(ip.trace, "get_tracer", return_value=tracer),
@@ -136,7 +173,9 @@ async def _proxy_harness(
                     "span": span,
                     "metrics": metrics,
                     "publish_infra": publish_infra,
+                    "commit_evidence": commit_evidence,
                     "emit_proxy": emit_proxy,
+                    "signer": signer,
                     "stamp_iso": stamp_iso,
                     "quota_proxy": quota_proxy,
                     "http_client": http_client,
@@ -158,8 +197,9 @@ def _chat_body(**extra: Any) -> dict[str, Any]:
 
 @pytest.mark.asyncio
 @pytest.mark.covers(
-    "src.gateway.governance.quarantine_actuator:probe_workload_quarantine#Redis EXISTS check failed",
-    "src.gateway.server.inference_proxy:chat_completions#quarantine_backend_unavailable",
+    "src.gateway.server.inference_proxy:chat_completions#return q_resp",
+    "src.gateway.server.quarantine_guard:check_and_refuse_quarantined_workload#if infra_failure is not None:",
+    "src.gateway.server.quarantine_guard:_emit_quarantine_infrastructure_block#governance_dependency_unavailable",
 )
 async def test_redis_error_returns_503_infrastructure_block_not_false_403() -> None:
     broken_redis = MagicMock()
@@ -174,20 +214,22 @@ async def test_redis_error_returns_503_infrastructure_block_not_false_403() -> N
 
     assert resp.status_code == 503, resp.text
     payload = resp.json()
-    assert payload["error"] == "quarantine_backend_unavailable"
+    assert payload["error"] == "governance_dependency_unavailable"
     assert payload["dependency"] == "redis"
-    assert payload["failure_code"] == "QUARANTINE_REDIS_UNAVAILABLE"
+    assert payload["failure_code"] == "REDIS_QUARANTINE_UNAVAILABLE"
 
+    env["commit_evidence"].assert_not_awaited()
     env["emit_proxy"].assert_not_awaited()
+    env["signer"].sign_async.assert_not_awaited()
     env["metrics"].infrastructure_block_decided.assert_called_once_with(
-        "redis", "QUARANTINE_REDIS_UNAVAILABLE"
+        "redis", "REDIS_QUARANTINE_UNAVAILABLE"
     )
     env["publish_infra"].assert_awaited_once()
     pub_kwargs = env["publish_infra"].await_args.kwargs
     assert pub_kwargs["dependency"] == "redis"
-    assert pub_kwargs["failure_code"] == "QUARANTINE_REDIS_UNAVAILABLE"
+    assert pub_kwargs["failure_code"] == "REDIS_QUARANTINE_UNAVAILABLE"
     assert pub_kwargs["control_id"] == "SC-7"
-    assert pub_kwargs["params"] == {"thread_id": "thread-outage-1"}
+    assert pub_kwargs["params"]["thread_id"] == "thread-outage-1"
 
     # SC-7 BLOCK must never be stamped on a Redis outage; Stage 1 A.5.2 PASS ran earlier.
     sc7_stamps = [
@@ -199,7 +241,7 @@ async def test_redis_error_returns_503_infrastructure_block_not_false_403() -> N
     env["span"].set_attribute.assert_any_call("cage.verdict", "INFRASTRUCTURE_BLOCK")
     env["span"].set_attribute.assert_any_call("cage.infrastructure.dependency", "redis")
     env["span"].set_attribute.assert_any_call(
-        "cage.infrastructure.failure_code", "QUARANTINE_REDIS_UNAVAILABLE"
+        "cage.infrastructure.failure_code", "REDIS_QUARANTINE_UNAVAILABLE"
     )
 
 
@@ -209,8 +251,9 @@ async def test_redis_error_returns_503_infrastructure_block_not_false_403() -> N
     [DeploymentPosture.STAGING, DeploymentPosture.PRODUCTION],
 )
 @pytest.mark.covers(
-    "src.gateway.governance.quarantine_actuator:probe_workload_quarantine#Shared Redis client unavailable in enforcing posture — failing closed",
-    "src.gateway.server.inference_proxy:chat_completions#quarantine_backend_unavailable",
+    "src.gateway.server.inference_proxy:chat_completions#return q_resp",
+    "src.gateway.server.quarantine_guard:check_and_refuse_quarantined_workload#if infra_failure is not None:",
+    "src.gateway.server.quarantine_guard:_emit_quarantine_infrastructure_block#governance_dependency_unavailable",
 )
 async def test_missing_redis_in_enforcing_posture_returns_503_not_403(
     posture: DeploymentPosture,
@@ -219,37 +262,57 @@ async def test_missing_redis_in_enforcing_posture_returns_503_not_403(
         resp = await env["client"].post("/v1/chat/completions", json=_chat_body())
 
     assert resp.status_code == 503, resp.text
-    assert resp.json()["error"] == "quarantine_backend_unavailable"
+    payload = resp.json()
+    assert payload["error"] == "governance_dependency_unavailable"
+    assert payload["failure_code"] == "REDIS_QUARANTINE_UNAVAILABLE"
+    env["commit_evidence"].assert_not_awaited()
     env["emit_proxy"].assert_not_awaited()
     env["publish_infra"].assert_awaited_once()
     env["metrics"].infrastructure_block_decided.assert_called_once_with(
-        "redis", "QUARANTINE_REDIS_UNAVAILABLE"
+        "redis", "REDIS_QUARANTINE_UNAVAILABLE"
     )
 
 
 @pytest.mark.asyncio
 @pytest.mark.covers(
-    "src.gateway.server.inference_proxy:chat_completions#Failed to publish infrastructure block:",
-    "src.gateway.server.inference_proxy:chat_completions#quarantine_backend_unavailable",
+    "src.gateway.server.inference_proxy:chat_completions#return q_resp",
+    "src.gateway.server.quarantine_guard:_emit_quarantine_infrastructure_block#evidence_chain_unavailable",
+    "src.gateway.server.quarantine_guard:_emit_quarantine_infrastructure_block#Failed to publish quarantine infrastructure block",
 )
 async def test_concurrent_redis_and_evidence_outage_still_fails_closed_503() -> None:
     broken_redis = MagicMock()
     broken_redis.exists = AsyncMock(side_effect=ConnectionError("redis down"))
 
+    # 1. Blocking EvidenceChainUnavailableError -> 503 evidence_chain_unavailable
     async with _proxy_harness(
         redis_client=broken_redis,
         publish_infra_side_effect=EvidenceChainUnavailableError("evidence redis down"),
     ) as env:
-        resp = await env["client"].post("/v1/chat/completions", json=_chat_body())
+        resp_ev = await env["client"].post("/v1/chat/completions", json=_chat_body())
 
-    assert resp.status_code == 503, resp.text
-    assert resp.json()["error"] == "quarantine_backend_unavailable"
+    assert resp_ev.status_code == 503, resp_ev.text
+    assert resp_ev.json()["error"] == "evidence_chain_unavailable"
+    env["commit_evidence"].assert_not_awaited()
     env["emit_proxy"].assert_not_awaited()
     env["publish_infra"].assert_awaited_once()
 
+    # 2. Unexpected sink error -> logged and still fails closed 503 governance_dependency_unavailable
+    async with _proxy_harness(
+        redis_client=broken_redis,
+        publish_infra_side_effect=ValueError("unexpected sink serialization error"),
+    ) as env2:
+        resp_sink = await env2["client"].post("/v1/chat/completions", json=_chat_body())
+
+    assert resp_sink.status_code == 503, resp_sink.text
+    assert resp_sink.json()["error"] == "governance_dependency_unavailable"
+    assert resp_sink.json()["failure_code"] == "REDIS_QUARANTINE_UNAVAILABLE"
+    env2["publish_infra"].assert_awaited_once()
+
 
 @pytest.mark.asyncio
-async def test_confirmed_svid_quarantine_returns_403_and_emits_proxy_block() -> None:
+async def test_confirmed_svid_quarantine_returns_403_and_emits_signed_refusal_receipt() -> (
+    None
+):
     redis = fakeredis.aioredis.FakeRedis(decode_responses=True)
     await dispatch_quarantine(
         _make_directive(agent_svid=_TRUSTED_SVID),
@@ -270,10 +333,19 @@ async def test_confirmed_svid_quarantine_returns_403_and_emits_proxy_block() -> 
     assert payload["error"] == "workload_quarantined"
     assert payload["agent_id"] == _TRUSTED_SVID
     assert payload["thread_id"] == "thread-svid-1"
+    assert len(payload["proof_hash"]) == 64
+
     env["publish_infra"].assert_not_awaited()
-    env["emit_proxy"].assert_awaited_once()
-    assert env["emit_proxy"].await_args.kwargs["event_type"] == "INFERENCE_PROXY_BLOCK"
-    assert env["emit_proxy"].await_args.kwargs["control_id"] == "SC-7"
+    env["emit_proxy"].assert_not_awaited()
+    env["commit_evidence"].assert_awaited_once()
+    receipt_event = env["commit_evidence"].await_args.args[0]
+    assert receipt_event["type"] == "GOVERNANCE_REFUSAL_RECEIPT"
+    assert receipt_event["control_id"] == "SC-7"
+    assert receipt_event["surface"] == "inference_proxy"
+    assert receipt_event["action_id"] == "inference_chat_completions"
+    assert receipt_event["kms_signature"] == "sig-sc7-proxy"
+    assert receipt_event["proof_hash"] == payload["proof_hash"]
+
     sc7_stamps = [
         call
         for call in env["stamp_iso"].call_args_list
@@ -305,7 +377,7 @@ async def test_body_thread_id_cannot_shadow_quarantined_header_thread_id() -> No
     assert payload["error"] == "workload_quarantined"
     assert payload["thread_id"] == "quarantined-hdr-thread"
     env["publish_infra"].assert_not_awaited()
-    env["emit_proxy"].assert_awaited_once()
+    env["commit_evidence"].assert_awaited_once()
 
 
 @pytest.mark.asyncio
@@ -330,13 +402,14 @@ async def test_header_thread_id_cannot_shadow_quarantined_body_thread_id() -> No
     assert payload["error"] == "workload_quarantined"
     assert payload["thread_id"] == "quarantined-body-thread"
     env["publish_infra"].assert_not_awaited()
-    env["emit_proxy"].assert_awaited_once()
+    env["commit_evidence"].assert_awaited_once()
 
 
 @pytest.mark.asyncio
 @pytest.mark.covers(
-    'src.gateway.server.inference_proxy:chat_completions#reason="Workload SVID or thread is quarantined"',
-    "src.gateway.server.inference_proxy:_evidence_unavailable_response#evidence_chain_unavailable",
+    "src.gateway.server.inference_proxy:chat_completions#return q_resp",
+    "src.gateway.server.quarantine_guard:check_and_refuse_quarantined_workload#except EvidenceChainUnavailableError",
+    "src.gateway.server.quarantine_guard:_emit_quarantine_refusal#if isinstance(exc, EvidenceChainUnavailableError):",
 )
 async def test_confirmed_quarantine_fails_closed_503_when_evidence_chain_unavailable() -> (
     None
@@ -350,7 +423,9 @@ async def test_confirmed_quarantine_fails_closed_503_when_evidence_chain_unavail
     async with _proxy_harness(
         redis_client=redis,
         posture=DeploymentPosture.PRODUCTION,
-        emit_proxy_side_effect=EvidenceChainUnavailableError("evidence sink stopped"),
+        commit_evidence_side_effect=EvidenceChainUnavailableError(
+            "evidence sink stopped"
+        ),
     ) as env:
         resp = await env["client"].post(
             "/v1/chat/completions",
@@ -387,4 +462,4 @@ async def test_duplicate_thread_id_headers_cannot_shadow_quarantined_thread() ->
     assert payload["error"] == "workload_quarantined"
     assert payload["thread_id"] == "quarantined-second-hdr"
     env["publish_infra"].assert_not_awaited()
-    env["emit_proxy"].assert_awaited_once()
+    env["commit_evidence"].assert_awaited_once()

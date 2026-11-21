@@ -64,13 +64,7 @@ async def commit_state_endpoint(
     request: Request, body: StateCommitmentRequest
 ) -> dict[str, Any] | JSONResponse:
     """Sanitize, hash and retain ``body.snapshot``; return the receipt."""
-    from src.gateway.governance.governor.verdicts import (
-        publish_infrastructure_block,
-    )
-    from src.gateway.governance.quarantine_actuator import (
-        QuarantineCheckStatus,
-        check_workload_quarantine_status,
-    )
+    from src.gateway.server.quarantine_guard import refuse_if_quarantined
     from src.gateway.server.rate_limit import get_shared_rate_limiter
 
     try:
@@ -94,77 +88,16 @@ async def commit_state_endpoint(
             },
         )
 
-    app_obj = request.scope.get("app")
-    app_state = getattr(app_obj, "state", None)
-    shared_redis = getattr(app_state, "redis", None)
-    candidate_threads: list[str] = []
-    if isinstance(body.linkage, dict):
-        for t_key in ("threadId", "thread_id"):
-            raw_t = body.linkage.get(t_key)
-            if (
-                isinstance(raw_t, str)
-                and raw_t.strip()
-                and raw_t.strip() not in candidate_threads
-            ):
-                candidate_threads.append(raw_t.strip())
-    hdr_t = request.headers.get("x-cage-thread-id")
-    if (
-        isinstance(hdr_t, str)
-        and hdr_t.strip()
-        and hdr_t.strip() not in candidate_threads
+    if q_resp := await refuse_if_quarantined(
+        request,
+        action_id="state_commitment",
+        surface="state_commitment_api",
+        body_params=body.linkage,
+        verified_agent_id=caller_identity,
     ):
-        candidate_threads.append(hdr_t.strip())
-    primary_thread_id = candidate_threads[0] if candidate_threads else None
+        return q_resp
 
-    q_status = QuarantineCheckStatus.CLEAR
-    matched_thread_id = primary_thread_id
-    for idx, cand_tid in enumerate(candidate_threads or [None]):  # type: ignore[list-item]
-        step_status = await check_workload_quarantine_status(
-            thread_id=cand_tid,
-            agent_svid=caller_identity if idx == 0 else None,
-            redis_client=shared_redis,
-        )
-        if step_status is QuarantineCheckStatus.BACKEND_UNAVAILABLE:
-            q_status = QuarantineCheckStatus.BACKEND_UNAVAILABLE
-            break
-        if step_status is QuarantineCheckStatus.QUARANTINED:
-            q_status = QuarantineCheckStatus.QUARANTINED
-            matched_thread_id = cand_tid or primary_thread_id
-            break
-
-    if q_status is QuarantineCheckStatus.BACKEND_UNAVAILABLE:
-        try:
-            await publish_infrastructure_block(
-                action="state_commitment",
-                params={"thread_id": primary_thread_id or "default"},
-                dependency="redis",
-                failure_code="QUARANTINE_REDIS_UNAVAILABLE",
-                detail="Quarantine Redis backend unavailable on POST /governance/state-commitments",
-                control_id="SC-7",
-            )
-        except Exception as infra_exc:
-            logger.error(
-                "[StateCommitmentAPI] Failed to publish infrastructure block: %s",
-                infra_exc,
-            )
-        return JSONResponse(
-            status_code=503,
-            content={
-                "error": "quarantine_backend_unavailable",
-                "message": "Quarantine state store unavailable; failing closed.",
-            },
-        )
-    if q_status is QuarantineCheckStatus.QUARANTINED:
-        return JSONResponse(
-            status_code=403,
-            content={
-                "error": "workload_quarantined",
-                "message": "Workload SVID or thread is quarantined by CAGE out-of-band governance",
-                "agent_id": caller_identity,
-                "thread_id": matched_thread_id,
-            },
-        )
-
+    app_obj = request.scope.get("app")
     try:
         service = state_commitment_service_of(
             app_obj if app_obj is not None else request.app
