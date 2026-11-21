@@ -120,6 +120,9 @@ async def test_check_and_increment_allowed() -> None:
 
 @pytest.mark.local
 @pytest.mark.asyncio
+@pytest.mark.covers(
+    "src.gateway.governance.token_quota_proxy:TokenQuotaProxy.check_and_increment#TokenQuotaProxy: BLOCKED"
+)
 async def test_check_and_increment_blocked_returns_not_allowed() -> None:
     """check_and_increment returns allowed=False when Lua signals step_count block."""
     proxy, redis = _make_proxy(step_quota=5)

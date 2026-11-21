@@ -537,6 +537,9 @@ async def test_s3_concurrent_replay_executes_exactly_once(gw: Gateway) -> None:
     ("approvers", "why"),
     [((), "no approvals"), (("urn:op:alice",), "below quorum")],
 )
+@pytest.mark.covers(
+    "src.gateway.governance.defer_queue:DeferQueue.redeemable_token#status={status} resolution={token.resolution}"
+)
 async def test_s2_unapproved_token_is_blocked(
     gw: Gateway, approvers: tuple[str, ...], why: str
 ) -> None:
@@ -597,6 +600,9 @@ async def test_s2_approval_may_shrink_the_trade(gw: Gateway) -> None:
     assert await gw.fiscal.current_spend_usd() == 15_000.0
 
 
+@pytest.mark.covers(
+    "src.gateway.governance.defer_queue:DeferQueue.redeemable_token#unknown defer_id="
+)
 async def test_s2_unknown_deferred_id_is_blocked(gw: Gateway) -> None:
     assert (await gw.execute(trade(20_000.0), str(uuid.uuid4()))).startswith("BLOCKED")
     await _assert_nothing_committed(gw)
@@ -730,6 +736,9 @@ async def test_approve_stamps_the_token_snapshot_over_a_client_supplied_binding(
     assert [a.approved_barrier_preview for a in token.approvals] == ["PASS"]
 
 
+@pytest.mark.covers(
+    "src.gateway.governance.defer_queue:DeferQueue.redeemable_token#approvals bound to"
+)
 async def test_consume_refuses_an_approval_bound_to_another_snapshot(
     gw: Gateway,
 ) -> None:

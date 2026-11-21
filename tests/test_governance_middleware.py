@@ -1233,6 +1233,9 @@ class TestValidateActionCanonicalEnvelope:
         assert data.get("envelope_version") == "3.0"
         assert data["payload"]["verdict"] == "ALLOW"
 
+    @pytest.mark.covers(
+        "src.gateway.server.governance_middleware:validate_action_endpoint#isinstance(exc, EvidenceChainUnavailableError)",
+    )
     def test_validate_action_returns_503_when_governor_raises_evidence_chain_unavailable(
         self, client_for_external_hold, mock_kms_signer
     ):
@@ -1259,6 +1262,9 @@ class TestValidateActionCanonicalEnvelope:
         assert data["error"] == "evidence_chain_unavailable"
         assert "Redis connection not established" in data["detail"]
 
+    @pytest.mark.covers(
+        "src.gateway.server.governance_middleware:validate_action_endpoint#except EvidenceChainUnavailableError as emit_exc:",
+    )
     def test_validate_action_returns_503_when_refusal_receipt_sink_fails_closed(
         self, client_for_external_hold, mock_kms_signer
     ):

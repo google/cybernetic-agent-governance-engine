@@ -263,6 +263,10 @@ def _healthy_trade_resolver(
 
 
 @pytest.mark.asyncio
+@pytest.mark.covers(
+    "src.gateway.server.governance_middleware:enforce_approved_governance#DeferQueue unavailable checking %s",
+    "src.gateway.governance.governor.verdicts:handle_infrastructure_block",
+)
 async def test_cause3_path_a1_defer_queue_down_during_redeemable_approval_preserves_token(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -494,6 +498,12 @@ async def test_cause3_path_a2_trapdoor1_atomic_resolve_failure_rolls_back_phase2
 
 
 @pytest.mark.asyncio
+@pytest.mark.covers(
+    "src.cage_finance.tools.tool_provider:execute_trade_action#EXECUTION_LEDGER_UNAVAILABLE",
+    "src.cage_finance.tools.tool_provider:execute_trade_action#await ledger.release_unexecuted(claim)",
+    "src.gateway.server.mcp_tool_server:execute_tool_endpoint#Evidence chain unavailable during /tools/execute",
+    "src.gateway.server.mcp_tool_server:execute_tool_endpoint#Governance infrastructure unavailable during /tools/execute",
+)
 async def test_cause3_path_a3_execution_ledger_outage_and_release_unexecuted_plus_evidence_metric(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

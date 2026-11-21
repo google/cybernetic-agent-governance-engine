@@ -196,7 +196,9 @@ jobs:
           LANGFUSE_HOST: "http://localhost:3000"
           LANGFUSE_PUBLIC_KEY: "pk-dummy"
           LANGFUSE_SECRET_KEY: "sk-dummy"
-        run: uv run pytest -p no:langsmith -p no:langsmith_plugin tests/ -m "local or unit" -n auto --dist=loadscope -v --cov-branch --cov=src --cov-fail-under=70
+        run: uv run pytest -p no:langsmith -p no:langsmith_plugin tests/ -m "local or unit" -n auto --dist=loadscope -v --cov-branch --cov=src --cov=cage_client --cov-context=test --cov-fail-under=70
+      - name: Verify fail-closed test reachability (@pytest.mark.covers)
+        run: uv run python scripts/check_fail_closed_coverage.py --verify-coverage .coverage --verbose
       - name: Run Bandit SAST (medium+ severity)
         run: uv run bandit -r src/ scripts/ packages/cage-client/src/ packages/cage-conformance/src/ proof/ deployment/ -c pyproject.toml -ll -ii
 
@@ -364,6 +366,12 @@ jobs:
         # SHA that exists in git and is an ancestor of main.
         run: |
           uv run python scripts/check_advisory_traces.py --verbose
+      - name: Fail-closed test reachability marker gate (@pytest.mark.covers)
+        # AST checks every read_back and HTTP 503 fail-closed test carries a
+        # valid @pytest.mark.covers(...) target or categorized exemption
+        # (runtime reachability verified per '|run' context in pytest-logic).
+        run: |
+          uv run python scripts/check_fail_closed_coverage.py --verbose
 
   advisory-trace-parity:
     name: "Published Advisory Fix-Trace Parity"

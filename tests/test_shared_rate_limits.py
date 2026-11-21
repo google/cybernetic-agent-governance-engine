@@ -320,6 +320,12 @@ class TestGatewayClientPrincipalAndRetries:
     """Verify GatewayClient sends x-cage-principal and retries on 429/503."""
 
     @pytest.mark.asyncio
+    @pytest.mark.covers(
+        "src.governed_financial_advisor.infrastructure.gateway_client:_AdvisorTransport.handle_async_request#retry_statuses=frozenset({429})",
+        "src.governed_financial_advisor.infrastructure.gateway_client:_post_with_retries#response.status_code not in retry_statuses",
+        "src.governed_financial_advisor.infrastructure.gateway_client:_raise_unrouted#response.raise_for_status()",
+        "src.governed_financial_advisor.infrastructure.gateway_client:GatewayClient.validate_action#_raise_unrouted",
+    )
     async def test_validate_action_sends_principal_retries_429_and_never_retries_503(
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:

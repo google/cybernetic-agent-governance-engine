@@ -63,6 +63,9 @@ def test_reconciler_runs_loop_mode_with_ttl_margin() -> None:
     assert ttl >= 2 * poll, f"TTL {ttl}s must be >= 2 x poll interval {poll}s"
 
 
+@pytest.mark.covers(
+    "src.gateway.governance.reconciliation.daemon:GroundTruthReconciler.run_loop#must be >= 2 x poll interval"
+)
 def test_run_loop_refuses_ttl_shorter_than_two_ticks() -> None:
     reconciler = GroundTruthReconciler(
         redis_client=fakeredis.FakeRedis(), poll_interval=300, ttl=300

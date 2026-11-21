@@ -267,6 +267,9 @@ class TestEvidenceBindingDefault:
         assert await rs.seal_state(seal, redis_client=redis) is rs.SealState.CONSUMED
 
     @pytest.mark.asyncio
+    @pytest.mark.covers(
+        "src.gateway.governance.routing_seal:verify_and_consume_seal#evidence index unavailable (Redis error)"
+    )
     async def test_index_read_failure_fails_closed(self):
         broken = AsyncMock()
         broken.get.side_effect = ConnectionError("redis down")
@@ -307,6 +310,9 @@ class TestGenerateSealWithEvidence:
         )
 
     @pytest.mark.asyncio
+    @pytest.mark.covers(
+        "src.gateway.governance.routing_seal:generate_seal_with_evidence#evidence binding is required"
+    )
     async def test_nonblocking_refuses_to_mint_unbound_seal(self, redis):
         with (
             patch.object(rs.es, "is_evidence_chain_blocking", return_value=False),
@@ -398,6 +404,10 @@ class TestRevocation:
             await rs.revoke_seal(bad, "x", redis_client=redis)
 
     @pytest.mark.asyncio
+    @pytest.mark.covers(
+        "src.gateway.governance.routing_seal:revoke_seal#revocation failed (Redis error)",
+        "src.gateway.governance.routing_seal:seal_state#seal state unavailable (Redis error)",
+    )
     async def test_redis_failure_fails_closed(self):
         broken = AsyncMock()
         broken.set.side_effect = ConnectionError("redis down")

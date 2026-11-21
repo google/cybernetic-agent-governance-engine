@@ -150,6 +150,10 @@ async def test_acknowledged_marker_is_consumed(valkey, client) -> None:
     assert valkey.replica_value(_key("rcpt-1")) == valkey.value(_key("rcpt-1"))
 
 
+@pytest.mark.covers(
+    "src.gateway.governance.consequence_authority_store:ConsequenceAuthorityStore._acknowledge#if acks < policy.replicas:",
+    "src.gateway.governance.consequence_authority_store:ConsequenceAuthorityStore._unacknowledged#raise ConsumptionNotReplicatedError",
+)
 async def test_short_ack_under_strict_refuses_and_keeps_the_marker(
     valkey, client
 ) -> None:
@@ -162,6 +166,10 @@ async def test_short_ack_under_strict_refuses_and_keeps_the_marker(
     assert await store.consume_once("rcpt-2", BINDING) is False
 
 
+@pytest.mark.covers(
+    "src.gateway.governance.consequence_authority_store:ConsequenceAuthorityStore._acknowledge#WAIT failed (",
+    "src.gateway.governance.consequence_authority_store:ConsequenceAuthorityStore._unacknowledged#raise ConsumptionNotReplicatedError",
+)
 async def test_wait_error_under_strict_refuses_and_keeps_the_marker(
     valkey, client
 ) -> None:
@@ -213,6 +221,10 @@ async def test_a_waiting_policy_needs_a_positive_timeout(client) -> None:
         )
 
 
+@pytest.mark.covers(
+    "src.gateway.infrastructure.redis_replication:acknowledged_replicas#the socket that carried the write is gone",
+    "src.gateway.governance.consequence_authority_store:ConsequenceAuthorityStore._unacknowledged#raise ConsumptionNotReplicatedError",
+)
 async def test_unpinnable_client_refuses_under_strict() -> None:
     """A client the store cannot pin can't prove the WAIT counted the marker."""
     store = ConsequenceAuthorityStore(
@@ -261,6 +273,10 @@ async def test_wait_is_not_resent_after_a_connection_error(valkey, client) -> No
     assert valkey.connections_running("WAIT") == []
 
 
+@pytest.mark.covers(
+    "src.gateway.infrastructure.redis_replication:acknowledged_replicas#the socket that carried the write is gone",
+    "src.gateway.governance.consequence_authority_store:ConsequenceAuthorityStore._unacknowledged#raise ConsumptionNotReplicatedError",
+)
 async def test_reconnect_between_write_and_wait_refuses(
     valkey, client, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -282,6 +298,9 @@ async def test_reconnect_between_write_and_wait_refuses(
     assert valkey.connections_running("WAIT") == []
 
 
+@pytest.mark.covers(
+    "src.gateway.infrastructure.redis_replication:acknowledged_replicas#the socket that carried the write is gone"
+)
 async def test_acknowledged_replicas_refuses_a_replaced_socket(valkey, client) -> None:
     pinned, _ = await pinned_connection(client)
     try:

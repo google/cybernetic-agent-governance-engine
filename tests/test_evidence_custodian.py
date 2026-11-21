@@ -545,6 +545,9 @@ class TestNullColdStorePosture:
         backend_id = "null"
 
     @pytest.mark.parametrize("env", ["production", "staging"])
+    @pytest.mark.covers(
+        "src.compliance_bridge.evidence_custodian:EvidenceCustodian.__init__#EVIDENCE_COLD_STORE=null (or unset) is forbidden"
+    )
     def test_constructor_refuses_null_store_when_enforcing(
         self, server, monkeypatch, env
     ):
@@ -918,7 +921,25 @@ class TestCustodyCursorRecovery:
         }
 
     @pytest.mark.asyncio
-    @pytest.mark.parametrize("fail_target", ["list_keys", "get"])
+    @pytest.mark.parametrize(
+        "fail_target",
+        [
+            pytest.param(
+                "list_keys",
+                id="list_keys",
+                marks=pytest.mark.covers(
+                    'src.compliance_bridge.evidence_custodian:EvidenceCustodian._recover_cursor_from_cold_store#list_keys("evidence-stream/")'
+                ),
+            ),
+            pytest.param(
+                "get",
+                id="get",
+                marks=pytest.mark.covers(
+                    "src.compliance_bridge.evidence_custodian:EvidenceCustodian._recover_cursor_from_cold_store#await self._cold_store.get(key)"
+                ),
+            ),
+        ],
+    )
     async def test_cold_store_error_during_recovery_fails_closed(
         self, server, fail_target
     ):

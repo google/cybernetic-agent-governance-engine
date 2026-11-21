@@ -201,6 +201,10 @@ class TestSagaServerBoundParams:
         with pytest.raises(ValueError, match="server_bound"):
             ControlStructureModel(**raw)
 
+    @pytest.mark.covers(
+        "src.gateway.governance.stpa_compiler:ControlStructureModel._v_sagas_send_no_server_bound_param#return self",
+        "src.gateway.governance.stpa_compiler:generate_langgraph",
+    )
     def test_the_flag_is_what_refuses_it(self) -> None:
         from src.gateway.governance.stpa_compiler import generate_langgraph
 
@@ -461,6 +465,9 @@ class TestOpaGeneration:
         rego = generate_opa(minimal_cs)
         assert "package stpa.generated" in rego
 
+    @pytest.mark.covers(
+        "src.gateway.governance.stpa_compiler:generate_opa#default stpa_allow = false"
+    )
     def test_fail_closed_default(self, minimal_cs: ControlStructureModel) -> None:
         rego = generate_opa(minimal_cs)
         assert "default stpa_allow = false" in rego
@@ -932,6 +939,11 @@ class TestCompositeGrammar:
         ]
         assert composites, "UCA-6 should use the scaled-threshold composite"
 
+    @pytest.mark.covers(
+        "src.cage_finance.stpa.uca_rules:GeneratedSTPAValidator._check_uca_6#Missing required composite param",
+        "src.cage_finance.stpa.uca_rules:GeneratedSTPAValidator._check_uca_6#Non-finite composite param",
+        "src.cage_finance.stpa.uca_rules:GeneratedSTPAValidator._check_uca_6#exceeding allowable fraction of daily volume.",
+    )
     def test_composite_fails_closed_on_zero_negative_nan_or_missing_rhs(self) -> None:
         from src.cage_finance.stpa.uca_rules import GeneratedSTPAValidator
 

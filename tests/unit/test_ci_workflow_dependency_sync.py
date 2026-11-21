@@ -50,6 +50,7 @@ STDLIB_ONLY_WORKFLOW_SCRIPTS = frozenset(
         "check_advisory_traces.py",
         "check_client_sdk_sync.py",
         "check_conformance_sync.py",
+        "check_fail_closed_coverage.py",
         "check_locked_yanks.py",
         "check_repo_rules.py",
         "partner_harness.py",

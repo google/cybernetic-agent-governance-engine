@@ -194,6 +194,9 @@ async def test_double_release_does_not_go_negative(guard: FiscalLimitGuard) -> N
 
 
 @pytest.mark.asyncio
+@pytest.mark.covers(
+    "src.cage_finance.safety.fiscal_limit_guard:FiscalLimitGuard.reserve#store_unavailable = True"
+)
 async def test_redis_failure_fails_closed(
     redis_client: fakeredis.aioredis.FakeRedis,
 ) -> None:
@@ -435,6 +438,11 @@ async def test_preview_discounts_expired_reservations_without_writing(
 
 
 @pytest.mark.asyncio
+@pytest.mark.covers(
+    "src.cage_finance.safety.fiscal_limit_guard:FiscalLimitGuard._read_window_cents#pending-set read failed",
+    "src.cage_finance.safety.fiscal_limit_guard:FiscalLimitGuard.would_accept#if current_cents is None:",
+    "src.cage_finance.safety.fiscal_limit_guard:FiscalLimitGuard.headroom_usd#if current_cents is None:",
+)
 async def test_preview_fails_closed_when_pending_set_unreadable(
     redis_client: fakeredis.aioredis.FakeRedis, monkeypatch: pytest.MonkeyPatch
 ) -> None:

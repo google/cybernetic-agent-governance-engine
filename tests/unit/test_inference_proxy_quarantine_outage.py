@@ -157,6 +157,10 @@ def _chat_body(**extra: Any) -> dict[str, Any]:
 
 
 @pytest.mark.asyncio
+@pytest.mark.covers(
+    "src.gateway.governance.quarantine_actuator:check_workload_quarantine_status#Redis EXISTS check failed",
+    "src.gateway.server.inference_proxy:chat_completions#quarantine_backend_unavailable",
+)
 async def test_redis_error_returns_503_infrastructure_block_not_false_403() -> None:
     broken_redis = MagicMock()
     broken_redis.exists = AsyncMock(side_effect=RuntimeError("redis connection lost"))
@@ -204,6 +208,10 @@ async def test_redis_error_returns_503_infrastructure_block_not_false_403() -> N
     "posture",
     [DeploymentPosture.STAGING, DeploymentPosture.PRODUCTION],
 )
+@pytest.mark.covers(
+    "src.gateway.governance.quarantine_actuator:check_workload_quarantine_status#Shared Redis client unavailable in enforcing posture",
+    "src.gateway.server.inference_proxy:chat_completions#quarantine_backend_unavailable",
+)
 async def test_missing_redis_in_enforcing_posture_returns_503_not_403(
     posture: DeploymentPosture,
 ) -> None:
@@ -220,6 +228,10 @@ async def test_missing_redis_in_enforcing_posture_returns_503_not_403(
 
 
 @pytest.mark.asyncio
+@pytest.mark.covers(
+    "src.gateway.server.inference_proxy:chat_completions#Failed to publish infrastructure block:",
+    "src.gateway.server.inference_proxy:chat_completions#quarantine_backend_unavailable",
+)
 async def test_concurrent_redis_and_evidence_outage_still_fails_closed_503() -> None:
     broken_redis = MagicMock()
     broken_redis.exists = AsyncMock(side_effect=ConnectionError("redis down"))
@@ -322,6 +334,10 @@ async def test_header_thread_id_cannot_shadow_quarantined_body_thread_id() -> No
 
 
 @pytest.mark.asyncio
+@pytest.mark.covers(
+    'src.gateway.server.inference_proxy:chat_completions#reason="Workload SVID or thread is quarantined"',
+    "src.gateway.server.inference_proxy:_evidence_unavailable_response#evidence_chain_unavailable",
+)
 async def test_confirmed_quarantine_fails_closed_503_when_evidence_chain_unavailable() -> (
     None
 ):

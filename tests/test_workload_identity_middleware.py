@@ -306,6 +306,9 @@ async def test_a_header_from_another_pod_never_becomes_the_caller() -> None:
     assert seen == []
 
 
+@pytest.mark.covers(
+    "src.gateway.server.workload_identity:extract_client_identity#arrived from {_peer(scope)}"
+)
 def test_extract_client_identity_refuses_a_header_from_another_pod() -> None:
     scope = {
         "headers": [(b"l5d-client-id", ADVISOR.encode("latin-1"))],
@@ -490,6 +493,9 @@ async def test_dev_loopback_channel_requires_both_dev_posture_and_opt_in(
     "posture",
     ["dev", "test", "ci", "local", "staging", "production", "something-else"],
 )
+@pytest.mark.covers(
+    "src.gateway.server.workload_identity:load_identity_policy#There is no permissive bypass."
+)
 def test_without_identities_refuses_to_start_in_every_posture(
     monkeypatch, posture
 ) -> None:
@@ -515,6 +521,9 @@ def test_configured_identities_are_enforced_in_every_posture(
         "cage-advisor-sa",
         "CAGE-ADVISOR-SA.governance-stack.serviceaccount.identity.linkerd.cluster.local",
     ],
+)
+@pytest.mark.covers(
+    "src.gateway.server.workload_identity:load_identity_policy#the l5d-client-id format"
 )
 def test_malformed_identity_refuses_to_start(monkeypatch, bad) -> None:
     monkeypatch.setenv("CAGE_ENV", "test")
@@ -554,6 +563,10 @@ def test_every_open_path_is_a_real_gateway_route() -> None:
     assert not any(r.startswith("/v1/pause") for r in routes)
 
 
+@pytest.mark.covers(
+    "src.gateway.server.workload_identity:WorkloadIdentityMiddleware.__call__#INGRESS_IDENTITY_REFUSED",
+    "src.gateway.server.workload_identity:_refuse#not authorized for this route.",
+)
 def test_real_gateway_refuses_unidentified_calls_to_governed_routes() -> None:
     from src.gateway.server.hybrid_server import root_app
 

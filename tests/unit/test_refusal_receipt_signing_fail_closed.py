@@ -188,6 +188,10 @@ async def test_enforce_governance_surfaces_block_not_refusal() -> None:
     assert _RECEIPT_LABEL not in _labels(commit)
 
 
+@pytest.mark.covers(
+    "src.gateway.server.governance_middleware:_sign_refusal_receipt#Failed to sign refusal receipt",
+    "src.gateway.server.governance_middleware:validate_action_endpoint#_infrastructure_block_response(signing_exc)",
+)
 def test_validate_action_refusal_with_unsignable_receipt_returns_503() -> None:
     from src.gateway.governance.governor.governor import SymbolicGovernor
 

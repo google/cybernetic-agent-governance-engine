@@ -157,6 +157,9 @@ def test_non_numeric_floor_never_reaches_the_tier(floor: Any) -> None:
         TradeConfidenceTier(_binding(floor))
 
 
+@pytest.mark.covers(
+    "src.cage_finance.tiers.trade_confidence_tier:TradeConfidenceTier.__init__#TradeConfidenceTier needs the"
+)
 def test_tier_refuses_a_foreign_norm() -> None:
     with pytest.raises(ValueError, match=TRADE_CONFIDENCE_NORM_ID):
         TradeConfidenceTier(_binding(0.97, norm_id="other.norm"))
@@ -241,6 +244,10 @@ def test_plugin_wires_the_effective_floor_and_gamma(
     assert barrier.gamma == gamma
 
 
+@pytest.mark.covers(
+    "src.cage_finance.thresholds:load_finance_thresholds#FinanceThresholds.model_validate",
+    "src.cage_finance.plugin:FinanceCagePlugin.contribute#finance = load_finance_thresholds()",
+)
 def test_plugin_refuses_an_unknown_finance_key(monkeypatch: pytest.MonkeyPatch) -> None:
     from pydantic import ValidationError
 

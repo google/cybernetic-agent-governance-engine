@@ -263,6 +263,9 @@ async def test_concurrent_consumption_exactly_one_wins(
 
 
 @pytest.mark.asyncio
+@pytest.mark.covers(
+    "src.gateway.governance.consequence_authority_store:ConsequenceAuthorityStore.consume_once#ConsequenceAuthorityStore.consume_once: Redis error for"
+)
 async def test_redis_error_propagates_fail_closed(
     redis_client: fakeredis.aioredis.FakeRedis,
 ) -> None:
@@ -294,6 +297,9 @@ async def test_redis_error_propagates_fail_closed(
 
 
 @pytest.mark.asyncio
+@pytest.mark.covers(
+    "src.gateway.governance.consequence_authority_store:ConsequenceAuthorityStore.consume_once#ConsequenceAuthorityStore.consume_once: Redis error for"
+)
 async def test_redis_timeout_propagates_fail_closed(
     redis_client: fakeredis.aioredis.FakeRedis,
 ) -> None:
@@ -643,6 +649,10 @@ async def test_consume_once_and_init_reject_invalid_ttl_seconds(
 
 
 @pytest.mark.asyncio
+@pytest.mark.covers(
+    "src.gateway.governance.consequence_gateway:ConsequenceGateway.evaluate#Authority receipt expired: rec_exp=",
+    'src.gateway.governance.consequence_gateway:ConsequenceGateway.evaluate#reason_code = "ALREADY_CONSUMED"',
+)
 async def test_gateway_retains_600s_receipt_marker_and_refuses_expired_rec_exp_before_redis(
     redis_client: fakeredis.aioredis.FakeRedis,
     monkeypatch: pytest.MonkeyPatch,

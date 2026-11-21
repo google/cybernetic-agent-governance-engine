@@ -244,6 +244,11 @@ async def test_kms_concurrency_semaphore_bounds_in_flight_calls(
     assert provider.max_in_flight == 2
 
 
+@pytest.mark.covers(
+    "src.gateway.governance.kms_signer:_run_in_kms_executor#asyncio.timeout(timeout_s)",
+    "src.gateway.governance.kms_signer:KMSGovernanceSigner.sign_jws_async",
+    "src.gateway.governance.routing_seal:generate_seal#await signer.sign_jws_async(signing_input)",
+)
 async def test_kms_sign_timeout_fails_closed_without_issuing_seal(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

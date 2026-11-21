@@ -197,7 +197,26 @@ async def _first_attempt(ledger: ExecutionLedger, status: ExecutionStatus) -> Cl
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("backend", ["redis", "local"])
+@pytest.mark.parametrize(
+    "backend",
+    [
+        pytest.param(
+            "redis",
+            id="redis",
+            marks=pytest.mark.covers(
+                "src.gateway.governance.execution_idempotency:ExecutionLedger.claim#if int(reclaimed) == 1:"
+            ),
+        ),
+        pytest.param(
+            "local",
+            id="local",
+            marks=pytest.mark.covers(
+                "src.gateway.governance.execution_idempotency:ExecutionLedger._claim_local#self._local[key] = _LocalRecord(",
+                "src.gateway.governance.execution_idempotency:ExecutionLedger._claim_local#return Duplicate(key, existing.status, existing.outcome)",
+            ),
+        ),
+    ],
+)
 async def test_reclaim_blocked_takes_over_a_blocked_key_exactly_once(
     backend: str, redis: fakeredis.aioredis.FakeRedis, permissive: None
 ) -> None:
@@ -226,7 +245,25 @@ async def test_reclaim_blocked_takes_over_a_blocked_key_exactly_once(
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("backend", ["redis", "local"])
+@pytest.mark.parametrize(
+    "backend",
+    [
+        pytest.param(
+            "redis",
+            id="redis",
+            marks=pytest.mark.covers(
+                "src.gateway.governance.execution_idempotency:ExecutionLedger.claim#return Duplicate(key, status, outcome)"
+            ),
+        ),
+        pytest.param(
+            "local",
+            id="local",
+            marks=pytest.mark.covers(
+                "src.gateway.governance.execution_idempotency:ExecutionLedger._claim_local#return Duplicate(key, existing.status, existing.outcome)"
+            ),
+        ),
+    ],
+)
 @pytest.mark.parametrize(
     "status",
     [ExecutionStatus.IN_FLIGHT, ExecutionStatus.EXECUTED, ExecutionStatus.UNKNOWN],
@@ -307,6 +344,9 @@ async def test_shared_wrapper_resolves_its_raw_client(
 
 
 @pytest.mark.asyncio
+@pytest.mark.covers(
+    "src.gateway.governance.execution_idempotency:ExecutionLedger.claim#no Redis is configured for the execution ledger"
+)
 async def test_enforcing_posture_without_redis_refuses(enforcing: None) -> None:
     ledger = ExecutionLedger(None)
 
@@ -315,6 +355,9 @@ async def test_enforcing_posture_without_redis_refuses(enforcing: None) -> None:
 
 
 @pytest.mark.asyncio
+@pytest.mark.covers(
+    "src.gateway.governance.execution_idempotency:ExecutionLedger.claim#execution ledger could not claim"
+)
 @pytest.mark.parametrize("posture", ["enforcing", "permissive"])
 async def test_unreachable_redis_refuses_in_every_posture(
     posture: str, request: pytest.FixtureRequest

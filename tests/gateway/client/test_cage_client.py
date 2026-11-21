@@ -371,6 +371,10 @@ async def test_validate_action_defer_raises_deferral_pending(
 
 
 @respx.mock
+@pytest.mark.covers(
+    "cage_client.core:CageClient.validate_action#Failed to reach CAGE Gateway",
+    "cage_client.core:CageClient.validate_action#Gateway server error (status",
+)
 async def test_validate_action_transport_failure_fails_closed(
     cage_client: CageClient,
     mock_gateway_url: str,
@@ -416,6 +420,9 @@ def test_routing_seal_secret_rejected(mock_gateway_url: str) -> None:
         )
 
 
+@pytest.mark.covers(
+    "cage_client.transport:create_mtls_transport#Both cert_path and key_path must be provided together"
+)
 def test_create_mtls_transport_partial_cert_or_key_fails_closed() -> None:
     """Half-configured mTLS (cert without key or key without cert) raises ValueError (#533)."""
     with pytest.raises(
@@ -430,6 +437,9 @@ def test_create_mtls_transport_partial_cert_or_key_fails_closed() -> None:
 
 
 @respx.mock
+@pytest.mark.covers(
+    "cage_client.core:CageClient._mediate_deny_verdict#DENY envelope missing required non-blank"
+)
 async def test_deny_response_missing_audit_id_fails_closed(
     cage_client: CageClient,
     mock_gateway_url: str,
@@ -464,6 +474,9 @@ async def test_deny_response_missing_audit_id_fails_closed(
 
 
 @respx.mock
+@pytest.mark.covers(
+    "cage_client.core:CageClient._mediate_defer_verdict#DEFER envelope missing required"
+)
 async def test_defer_response_missing_ticket_id_fails_closed(
     cage_client: CageClient,
     mock_gateway_url: str,
@@ -495,6 +508,9 @@ async def test_defer_response_missing_ticket_id_fails_closed(
 
 
 @respx.mock
+@pytest.mark.covers(
+    "cage_client.core:CageClient._extract_envelope_dict#missing required 'envelope' field"
+)
 async def test_allow_response_missing_envelope_fails_closed(
     cage_client: CageClient,
     mock_gateway_url: str,
@@ -522,6 +538,9 @@ async def test_allow_response_missing_envelope_fails_closed(
 
 
 @respx.mock
+@pytest.mark.covers(
+    "cage_client.core:CageClient.validate_action#Unexpected gateway response (status"
+)
 async def test_unexpected_status_code_fails_closed(
     cage_client: CageClient,
     mock_gateway_url: str,
@@ -628,6 +647,10 @@ async def test_validate_action_http_200_require_approval_raises_deferral_pending
 
 
 @respx.mock
+@pytest.mark.covers(
+    "cage_client.core:CageClient._handle_allow_response#self._mediate_defer_verdict(envelope)",
+    "cage_client.core:CageClient._mediate_defer_verdict#DEFER envelope missing required",
+)
 async def test_validate_action_http_200_require_approval_unpersisted_fails_closed(
     cage_client: CageClient,
     mock_gateway_url: str,
@@ -704,6 +727,9 @@ async def test_validate_action_http_200_narrow_raises_policy_violation(
 
 
 @respx.mock
+@pytest.mark.covers(
+    "cage_client.core:CageClient._handle_allow_response#unrecognised verdict"
+)
 @pytest.mark.parametrize("verdict", [None, "ESCALATE"])
 async def test_validate_action_http_200_unrecognised_verdict_fails_closed(
     cage_client: CageClient,
@@ -779,6 +805,10 @@ def test_jcs_parity_against_kernel_canonicalizer() -> None:
 
 
 @respx.mock
+@pytest.mark.covers(
+    "cage_client.jwks:JwksKeyResolver.resolve_key#if resolved is None:",
+    "cage_client.jwks:JwksKeyResolver.resolve_key#JWKS unknown-kid refresh cooldown active",
+)
 async def test_validate_action_unknown_kid_fails_closed(
     mock_gateway_url: str,
     patched_httpx_no_http2: None,

@@ -466,6 +466,11 @@ class TestComplianceBridgeEscalateEnforcingWebAuthn:
 
     @pytest.mark.asyncio
     @pytest.mark.parametrize("posture", ["production", "staging"])
+    @pytest.mark.covers(
+        "src.compliance_bridge.main:defer_escalate#WEBAUTHN_BINDING_REQUIRED",
+        "src.compliance_bridge.main:defer_escalate#Out-of-band WebAuthn trust configuration unavailable",
+        "src.gateway.governance.webauthn_verifier:verify_webauthn_assertion",
+    )
     async def test_escalate_enforces_cryptographic_webauthn_when_channel_is_oidc(
         self, monkeypatch: pytest.MonkeyPatch, posture: str
     ) -> None:

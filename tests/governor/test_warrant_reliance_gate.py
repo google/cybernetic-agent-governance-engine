@@ -136,14 +136,62 @@ async def _run(stage: WarrantStage, action: str = "execute_trade") -> list[Viola
 @pytest.mark.parametrize(
     "kwargs",
     [
-        {"norm_id": ""},
-        {"value": True},
-        {"value": float("nan")},
-        {"requires_warrant": 1},
-        {"actions": frozenset()},
-        {"actions": "execute_trade"},
-        {"governing_version": ""},
-        {"governing_version": None},  # requires_warrant without a version
+        pytest.param(
+            {"norm_id": ""},
+            id="empty_norm_id",
+            marks=pytest.mark.covers(
+                "src.gateway.governance.contracts:NormBinding.__post_init__#must be a non-empty string"
+            ),
+        ),
+        pytest.param(
+            {"value": True},
+            id="bool_value",
+            marks=pytest.mark.covers(
+                "src.gateway.governance.contracts:NormBinding.__post_init__#value must be a finite number"
+            ),
+        ),
+        pytest.param(
+            {"value": float("nan")},
+            id="nan_value",
+            marks=pytest.mark.covers(
+                "src.gateway.governance.contracts:NormBinding.__post_init__#value must be a finite number"
+            ),
+        ),
+        pytest.param(
+            {"requires_warrant": 1},
+            id="non_bool_requires_warrant",
+            marks=pytest.mark.covers(
+                "src.gateway.governance.contracts:NormBinding.__post_init__#requires_warrant must be a bool"
+            ),
+        ),
+        pytest.param(
+            {"actions": frozenset()},
+            id="empty_actions",
+            marks=pytest.mark.covers(
+                "src.gateway.governance.contracts:NormBinding.__post_init__#actions must be non-empty strings"
+            ),
+        ),
+        pytest.param(
+            {"actions": "execute_trade"},
+            id="str_actions",
+            marks=pytest.mark.covers(
+                "src.gateway.governance.contracts:NormBinding.__post_init__#actions must be a set of names"
+            ),
+        ),
+        pytest.param(
+            {"governing_version": ""},
+            id="empty_governing_version",
+            marks=pytest.mark.covers(
+                "src.gateway.governance.contracts:NormBinding.__post_init__#governing_version must be a"
+            ),
+        ),
+        pytest.param(
+            {"governing_version": None},
+            id="missing_governing_version",
+            marks=pytest.mark.covers(
+                "src.gateway.governance.contracts:NormBinding.__post_init__#requires_warrant needs a"
+            ),
+        ),
     ],
 )
 def test_norm_binding_refuses_malformed_input(kwargs: dict[str, Any]) -> None:
@@ -262,6 +310,13 @@ async def test_out_of_jurisdiction_deployment_is_out_of_scope() -> None:
     assert violation.code == f"RELIANCE_{RelianceStatus.INELIGIBLE_OUT_OF_SCOPE.value}"
 
 
+@pytest.mark.covers(
+    "src.gateway.governance.governor.stages.warrant:WarrantStage.__init__#needs at least one warranted NormBinding",
+    "src.gateway.governance.governor.stages.warrant:WarrantStage.__init__#reads warrants through a WarrantCache",
+    "src.gateway.governance.governor.stages.warrant:WarrantStage.__init__#needs the deployment jurisdiction",
+    "src.gateway.governance.warrant.cache:WarrantCache.__init__#does not implement the WarrantSource seam",
+    "src.gateway.governance.warrant.cache:_positive_seconds#must be a finite positive number",
+)
 def test_stage_refuses_unwarranted_bindings_and_bad_sources() -> None:
     plain = NormBinding(
         norm_id="n", value=0.5, requires_warrant=False, actions=frozenset({"a"})
@@ -553,6 +608,9 @@ def _assemble_eu(**kwargs: Any) -> Any:
     )
 
 
+@pytest.mark.covers(
+    "src.gateway.governance.governor.assembly:_reject_ungateable_warranted_norms#no WarrantSource is configured"
+)
 def test_eu_assembly_without_a_warrant_source_refuses(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -561,6 +619,9 @@ def test_eu_assembly_without_a_warrant_source_refuses(
         _assemble_eu()
 
 
+@pytest.mark.covers(
+    "src.gateway.governance.governor.assembly:_reject_ungateable_warranted_norms#require a warrant but DEFER is disabled"
+)
 def test_eu_assembly_with_defer_disabled_refuses(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -572,6 +633,9 @@ def test_eu_assembly_with_defer_disabled_refuses(
         )
 
 
+@pytest.mark.covers(
+    "src.gateway.governance.governor.assembly:_reject_ungateable_warranted_norms#does not implement "
+)
 def test_eu_assembly_refuses_a_non_source(monkeypatch: pytest.MonkeyPatch) -> None:
     _use_region_thresholds(monkeypatch, "EU_ECB")
     with pytest.raises(GovernorAssemblyError):

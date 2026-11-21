@@ -29,6 +29,9 @@ async def test_ftra_stage_happy_path():
 
 
 @pytest.mark.asyncio
+@pytest.mark.covers(
+    'src.gateway.governance.governor.stages.ftra:FtraStage._ftra_boundary_check#code="FTRA_ERROR"'
+)
 async def test_ftra_stage_fail_closed_on_error():
     # It says "each fail-closed path (classifier raises; ... ) observed blocking"
     ctx = StageContext(action="test_action", params={}, profile=Profile.FULL)
@@ -51,6 +54,9 @@ async def test_ftra_stage_fail_closed_on_error():
 
 
 @pytest.mark.asyncio
+@pytest.mark.covers(
+    'src.gateway.governance.governor.stages.ftra:FtraStage._ftra_boundary_check#code="FTRA_ERROR"'
+)
 async def test_ftra_stage_fail_closed_when_classify_raises():
     """A classifier whose lookup raises fails closed to a HARD FTRA_ERROR."""
     ctx = StageContext(

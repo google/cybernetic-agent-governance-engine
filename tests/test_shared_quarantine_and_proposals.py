@@ -357,6 +357,11 @@ async def test_nemo_proposal_staged_on_replica_a_approved_on_replica_b_and_pubsu
 
 
 @pytest.mark.asyncio
+@pytest.mark.covers(
+    "src.gateway.server.hybrid_server:_save_refinement_proposal#Shared Redis backend unavailable for NeMo refinement proposals.",
+    "src.gateway.server.hybrid_server:list_pending_nemo_proposals#Shared Redis backend unavailable for NeMo refinement proposals.",
+    "src.gateway.server.hybrid_server:approve_nemo_refinement#Shared Redis backend unavailable for NeMo refinement proposals.",
+)
 async def test_nemo_proposal_routes_fail_closed_with_503_when_redis_unavailable(
     monkeypatch,
 ):

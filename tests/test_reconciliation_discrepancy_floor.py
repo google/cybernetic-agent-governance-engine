@@ -137,6 +137,10 @@ def test_zero_baseline_uses_floor(monkeypatch: pytest.MonkeyPatch) -> None:
 
 
 @pytest.mark.asyncio
+@pytest.mark.covers(
+    'src.gateway.governance.reconciliation.daemon:GroundTruthReconciler.reconcile#fence_trigger="custodian_discrepancy_spike"',
+    "src.gateway.governance.safety.cbf_engine:ControlBarrierFunction._resolve_ground_truth_balance#CBF_STRICT_RECONCILIATION_UNAVAILABLE",
+)
 async def test_delta_above_floor_and_ratio_fails_closed(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

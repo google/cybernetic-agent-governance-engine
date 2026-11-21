@@ -112,32 +112,111 @@ def test_configuration_maps_an_identity_to_a_role_and_an_optional_trader() -> No
 @pytest.mark.parametrize(
     "raw",
     [
-        pytest.param("senior", id="not-json"),
-        pytest.param("[]", id="array"),
-        pytest.param('"senior"', id="string"),
-        pytest.param(json.dumps({DESK: "admin"}), id="role-outside-policy"),
-        pytest.param(json.dumps({DESK: "Senior"}), id="role-wrong-case"),
-        pytest.param(json.dumps({DESK: ""}), id="empty-role"),
-        pytest.param(json.dumps({DESK: 1}), id="numeric-role"),
-        pytest.param(json.dumps({DESK: ["senior"]}), id="list-binding"),
-        pytest.param(json.dumps({DESK: {"trader_id": "d"}}), id="no-role"),
         pytest.param(
-            json.dumps({DESK: {"role": "senior", "limit": 1}}), id="unknown-field"
+            "senior",
+            id="not-json",
+            marks=pytest.mark.covers(
+                "src.cage_finance.tools.trader_binding:parse_trader_role_bindings#is not valid JSON"
+            ),
+        ),
+        pytest.param(
+            "[]",
+            id="array",
+            marks=pytest.mark.covers(
+                "src.cage_finance.tools.trader_binding:parse_trader_role_bindings#must be a JSON object mapping"
+            ),
+        ),
+        pytest.param(
+            '"senior"',
+            id="string",
+            marks=pytest.mark.covers(
+                "src.cage_finance.tools.trader_binding:parse_trader_role_bindings#must be a JSON object mapping"
+            ),
+        ),
+        pytest.param(
+            json.dumps({DESK: "admin"}),
+            id="role-outside-policy",
+            marks=pytest.mark.covers(
+                "src.cage_finance.tools.trader_binding:TraderBinding.__post_init__#is not one of"
+            ),
+        ),
+        pytest.param(
+            json.dumps({DESK: "Senior"}),
+            id="role-wrong-case",
+            marks=pytest.mark.covers(
+                "src.cage_finance.tools.trader_binding:TraderBinding.__post_init__#is not one of"
+            ),
+        ),
+        pytest.param(
+            json.dumps({DESK: ""}),
+            id="empty-role",
+            marks=pytest.mark.covers(
+                "src.cage_finance.tools.trader_binding:TraderBinding.__post_init__#is not one of"
+            ),
+        ),
+        pytest.param(
+            json.dumps({DESK: 1}),
+            id="numeric-role",
+            marks=pytest.mark.covers(
+                "src.cage_finance.tools.trader_binding:_binding#must be a role or an object"
+            ),
+        ),
+        pytest.param(
+            json.dumps({DESK: ["senior"]}),
+            id="list-binding",
+            marks=pytest.mark.covers(
+                "src.cage_finance.tools.trader_binding:_binding#must be a role or an object"
+            ),
+        ),
+        pytest.param(
+            json.dumps({DESK: {"trader_id": "d"}}),
+            id="no-role",
+            marks=pytest.mark.covers(
+                "src.cage_finance.tools.trader_binding:_binding#needs a string 'role'"
+            ),
+        ),
+        pytest.param(
+            json.dumps({DESK: {"role": "senior", "limit": 1}}),
+            id="unknown-field",
+            marks=pytest.mark.covers(
+                "src.cage_finance.tools.trader_binding:_binding#has unknown fields"
+            ),
         ),
         pytest.param(
             json.dumps({DESK: {"role": "senior", "trader_id": "a b"}}),
             id="malformed-trader-id",
+            marks=pytest.mark.covers(
+                "src.cage_finance.tools.trader_binding:TraderBinding.__post_init__#malformed trader_id"
+            ),
         ),
         pytest.param(
             json.dumps({DESK: {"role": "senior", "trader_id": 7}}),
             id="numeric-trader-id",
+            marks=pytest.mark.covers(
+                "src.cage_finance.tools.trader_binding:_binding#has a non-string 'trader_id'"
+            ),
         ),
         pytest.param(
             json.dumps({"spiffe://cluster.local/ns/trading/sa/desk-a": "senior"}),
             id="spiffe-uri-key",
+            marks=pytest.mark.covers(
+                "src.cage_finance.tools.trader_binding:TraderRoleBindings.__post_init__#keys must be Linkerd workload"
+            ),
         ),
-        pytest.param(json.dumps({DESK.upper(): "senior"}), id="non-canonical-key"),
-        pytest.param(f'{{"{DESK}": "junior", "{DESK}": "senior"}}', id="duplicate-key"),
+        pytest.param(
+            json.dumps({DESK.upper(): "senior"}),
+            id="non-canonical-key",
+            marks=pytest.mark.covers(
+                "src.cage_finance.tools.trader_binding:TraderRoleBindings.__post_init__#keys must be Linkerd workload"
+            ),
+        ),
+        pytest.param(
+            f'{{"{DESK}": "junior", "{DESK}": "senior"}}',
+            id="duplicate-key",
+            marks=pytest.mark.covers(
+                "src.cage_finance.tools.trader_binding:_no_duplicate_keys#more than once"
+            ),
+        ),
     ],
 )
 def test_invalid_configuration_fails_closed(raw: str) -> None:

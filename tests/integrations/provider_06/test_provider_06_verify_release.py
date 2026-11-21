@@ -543,6 +543,10 @@ async def test_verify_release_preserves_signed_refusal_on_release_refused(
 
 
 @pytest.mark.asyncio
+@pytest.mark.covers(
+    "src.integrations.provider_06.adapter:Provider06AgentIntegrityAdapter.verify_release#self._handle_technical_error_response(",
+    "src.integrations.provider_06.adapter:Provider06AgentIntegrityAdapter._handle_technical_error_response#error_code = raw_code",
+)
 async def test_verify_release_fails_closed_on_technical_error_response(
     tmp_path: Path,
 ) -> None:
@@ -591,6 +595,11 @@ async def test_verify_release_fails_closed_on_technical_error_response(
 
 
 @pytest.mark.asyncio
+@pytest.mark.covers(
+    "src.integrations.provider_06.lifecycle:SidecarHealthCheck.check_readiness_detail#retry_after = int(raw_retry)",
+    "src.integrations.provider_06.lifecycle:SidecarHealthCheck.check_readiness_detail#reasons = tuple(raw_reasons)",
+    "src.integrations.provider_06.lifecycle:SidecarHealthCheck.check_readiness_detail#probe NOT OK —",
+)
 async def test_check_readiness_detail_parses_503_reasons_and_retry_after() -> None:
     def handler(request: httpx.Request) -> httpx.Response:
         return httpx.Response(

@@ -149,6 +149,8 @@ marker** — this is enforced at collection time by a fail-closed guard in
 | `healthcare` | Healthcare domain plugin (`tests/cage_healthcare/`). |
 | `us_fed`, `eu_ecb`, `apac_mas` | Regional compliance posture. Hermetic tests run under the marked region; live tests run only against a deployment in that region (see [Deployment Region](#deployment-region)). |
 | `gke` | GKE target-specific tests requiring Kubernetes primitives or cluster port-forward tunnels. |
+| `covers` | Fail-closed reachability target (`"module:qualname"` or `"module:qualname#anchor"`) verified per-test against `coverage.py` `\|run` dynamic contexts by [`scripts/check_fail_closed_coverage.py`](../scripts/check_fail_closed_coverage.py). |
+| `covers_exempt` | Categorized exemption (`reason="<category>: <explanation>"`) for fail-closed discovery candidates with no measurable in-process Python source target (e.g. `non-src-target`, `subprocess-target`, `non-hermetic`, `negative-control`, `pure-model`, `omitted-source`). |
 
 A facet marker **does not** make a test selectable by any CI gate. A test marked only
 `financial` or only `regression` will be rejected by the collection guard.

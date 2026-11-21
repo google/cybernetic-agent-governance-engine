@@ -644,6 +644,10 @@ async def test_streaming_request_returns_event_stream(proxy_deps):
     assert "text/event-stream" in resp.headers.get("content-type", "")
 
 
+@pytest.mark.covers(
+    "src.gateway.server.inference_proxy:_stream_vllm#if resp.status_code >= 400:",
+    "src.gateway.server.inference_proxy:chat_completions#if stream_backend_error:",
+)
 @pytest.mark.asyncio
 async def test_streaming_upstream_4xx_yields_error_event(proxy_deps):
     """When vLLM streaming returns 4xx, an SSE error event is yielded and quota is rolled back."""
@@ -760,6 +764,9 @@ async def test_agent_id_from_spiffe_cert_used_for_quota(proxy_deps):
     )
 
 
+@pytest.mark.covers(
+    'src.gateway.server.inference_proxy:chat_completions#"authentication_required"',
+)
 @pytest.mark.asyncio
 async def test_missing_spiffe_certificate_fails_closed(monkeypatch):
     """Requests without Linkerd l5d-client-id are rejected with 401."""
@@ -1052,6 +1059,9 @@ async def test_inference_client_generate_extra_headers_not_duplicated():
 # ---------------------------------------------------------------------------
 
 
+@pytest.mark.covers(
+    "src.gateway.server.inference_proxy:chat_completions#INFERENCE_BACKEND_NONE",
+)
 @pytest.mark.asyncio
 async def test_none_backend_returns_503_before_rails_or_upstream(
     proxy_deps, monkeypatch
@@ -1077,6 +1087,10 @@ async def test_none_backend_returns_503_before_rails_or_upstream(
     proxy_deps["http_client"].post.assert_not_awaited()
 
 
+@pytest.mark.covers(
+    "src.gateway.server.inference_proxy:_resolve_backend_url#raise InferenceBackendUnavailable(",
+    "src.gateway.server.inference_proxy:chat_completions#except InferenceBackendUnavailable as exc:",
+)
 @pytest.mark.asyncio
 async def test_missing_backend_url_returns_503_and_rolls_back_quota(
     proxy_deps, monkeypatch

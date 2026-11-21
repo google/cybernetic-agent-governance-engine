@@ -116,11 +116,17 @@ def test_overlay_rejects_shape_change(base: Any, overlay: Any) -> None:
 # ── Regional file loading ────────────────────────────────────────────────────
 
 
+@pytest.mark.covers(
+    "src.gateway.governance.schemas.regional_overlay:load_regional_domains#cannot read regional threshold baseline"
+)
 def test_missing_regional_file_fails_closed(tmp_path: Path) -> None:
     with pytest.raises(RegionalOverlayError, match="cannot read"):
         load_regional_domains("XX_NOWHERE", tmp_path)
 
 
+@pytest.mark.covers(
+    "src.gateway.governance.schemas.regional_overlay:load_regional_domains#cannot read regional threshold baseline"
+)
 def test_malformed_regional_file_fails_closed(tmp_path: Path) -> None:
     (tmp_path / "XX_BASELINE.json").write_text("{not json")
     with pytest.raises(RegionalOverlayError, match="cannot read"):

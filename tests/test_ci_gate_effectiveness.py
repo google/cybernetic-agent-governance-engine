@@ -581,6 +581,9 @@ def _run_review_bypass_step(
     )
 
 
+@pytest.mark.covers_exempt(
+    reason="non-src-target: executes inline bash steps from .github/workflows/review-bypass-*.yml via subprocess outside --cov=src/ scope"
+)
 def test_gate_review_bypass_steps_fail_closed_on_planted_states(tmp_path: Path) -> None:
     """The review-bypass workflows pass only on an approval or verified records.
 

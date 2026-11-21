@@ -340,6 +340,9 @@ class TestTradeGovernanceRegoMocked:
         content = _POLICY_PATH.read_text()
         assert "package trade.governance" in content
 
+    @pytest.mark.covers_exempt(
+        reason="non-src-target: statically inspects trade_governance.rego text for default allow = DENY without executing Python code"
+    )
     def test_rego_policy_has_fail_closed_default(self):
         """Rego policy must declare default allow = \"DENY\" for fail-closed posture."""
         content = _POLICY_PATH.read_text()

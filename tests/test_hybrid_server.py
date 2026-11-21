@@ -326,6 +326,9 @@ async def test_healthz_returns_200_kms_active_in_prod(monkeypatch):
     assert body["kms_active"] is True
 
 
+@pytest.mark.covers(
+    "src.gateway.server.hybrid_server:healthz#KMS signer not active in production environment",
+)
 @pytest.mark.asyncio
 async def test_healthz_returns_503_kms_inactive_in_prod(monkeypatch):
     """In production with KMS inactive, /healthz returns 503."""
@@ -352,6 +355,9 @@ async def test_healthz_returns_503_kms_inactive_in_prod(monkeypatch):
     assert body["kms_active"] is False
 
 
+@pytest.mark.covers(
+    'src.gateway.server.hybrid_server:healthz#"reason": "KMS check failed"',
+)
 @pytest.mark.asyncio
 async def test_healthz_returns_503_on_kms_exception_in_prod(monkeypatch):
     """When KMS raises in production, /healthz returns 503."""
