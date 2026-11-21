@@ -352,7 +352,7 @@ class TestPoam209InferenceProxyBoundaries:
         )
         mock_tracer.start_as_current_span.return_value.__exit__ = lambda *a: None
 
-        from src.gateway.governance.quarantine_actuator import QuarantineCheckStatus
+        from src.gateway.governance.quarantine_actuator import QuarantineProbeResult
 
         with (
             patch(
@@ -378,9 +378,9 @@ class TestPoam209InferenceProxyBoundaries:
                 return_value="spiffe://cluster.local/ns/default/sa/inference-test-agent",
             ),
             patch(
-                "src.gateway.governance.quarantine_actuator.check_workload_quarantine_status",
+                "src.gateway.server.quarantine_guard.probe_workload_quarantine",
                 new_callable=AsyncMock,
-                return_value=QuarantineCheckStatus.CLEAR,
+                return_value=QuarantineProbeResult(quarantined=False),
             ),
             patch(
                 "src.gateway.server.inference_proxy._get_token_quota_proxy",

@@ -1594,35 +1594,41 @@ async def test_redis_outage_kms_failure_and_scope_without_app(
         )
         for mode in ("exception", "empty_sig", "inactive_signer"):
             if mode == "exception":
+                monkeypatch.delenv("CAGE_ENV", raising=False)
                 spy_signer.sign_async = AsyncMock(
                     side_effect=RuntimeError("Cloud KMS HSM unreachable")
                 )
                 monkeypatch.setattr(qg_mod, "get_governance_signer", lambda: spy_signer)
             elif mode == "empty_sig":
+                monkeypatch.delenv("CAGE_ENV", raising=False)
                 spy_signer.sign_async = AsyncMock(return_value="")
                 monkeypatch.setattr(qg_mod, "get_governance_signer", lambda: spy_signer)
             else:
+                monkeypatch.setenv("CAGE_ENV", "production")
                 monkeypatch.setattr(
                     qg_mod, "get_governance_signer", lambda: inactive_signer
                 )
 
-            async with httpx.AsyncClient(
-                transport=httpx.ASGITransport(app=gov_root, client=PROXY_PEER),
-                base_url=POD_BASE_URL,
-                headers={"l5d-client-id": QUARANTINED_ID},
-            ) as q_client:
-                r_kms = await q_client.post(
-                    "/governance/validate-action",
-                    json={"action": "execute_trade", "params": {"amount": 75}},
-                )
-                assert r_kms.status_code == 503
-                assert "Retry-After" not in r_kms.headers
-                b_kms = r_kms.json()
-                assert b_kms["error"] == "governance_dependency_unavailable"
-                assert b_kms["dependency"] == "kms"
-                assert b_kms["failure_code"] == "KMS_SIGNING_UNAVAILABLE"
-                assert "proof_hash" not in b_kms
-                gov.validate_action.assert_not_awaited()
+            try:
+                async with httpx.AsyncClient(
+                    transport=httpx.ASGITransport(app=gov_root, client=PROXY_PEER),
+                    base_url=POD_BASE_URL,
+                    headers={"l5d-client-id": QUARANTINED_ID},
+                ) as q_client:
+                    r_kms = await q_client.post(
+                        "/governance/validate-action",
+                        json={"action": "execute_trade", "params": {"amount": 75}},
+                    )
+                    assert r_kms.status_code == 503
+                    assert "Retry-After" not in r_kms.headers
+                    b_kms = r_kms.json()
+                    assert b_kms["error"] == "governance_dependency_unavailable"
+                    assert b_kms["dependency"] == "kms"
+                    assert b_kms["failure_code"] == "KMS_SIGNING_UNAVAILABLE"
+                    assert "proof_hash" not in b_kms
+                    gov.validate_action.assert_not_awaited()
+            finally:
+                monkeypatch.delenv("CAGE_ENV", raising=False)
 
         kms_entries = _read_stream_entries(kms_stream_server)
         assert len(kms_entries) == 3

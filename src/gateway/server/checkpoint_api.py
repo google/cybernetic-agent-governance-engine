@@ -16,9 +16,12 @@
 
 Mounted on ``governance_app`` (prefix ``/governance``). Every endpoint is gated
 by the root app's
-:class:`~src.gateway.server.workload_identity.WorkloadIdentityMiddleware` and
-additionally extracts the verified Linkerd ``l5d-client-id`` via
-:func:`~src.gateway.server.workload_identity.extract_client_identity`.
+:class:`~src.gateway.server.workload_identity.WorkloadIdentityMiddleware`,
+extracts the verified Linkerd ``l5d-client-id`` via
+:func:`~src.gateway.server.workload_identity.extract_client_identity`, and
+enforces out-of-band SC-7 workload quarantine via
+:func:`~src.gateway.server.quarantine_guard.refuse_if_quarantined` before
+accessing ``GatewayCheckpointStore``.
 
 Privacy invariant: ``thread_id`` values (which may carry a default
 ``<prefix><user_id>`` identifier) are transmitted exclusively in JSON request
@@ -32,6 +35,7 @@ import logging
 from typing import Any
 
 from fastapi import APIRouter, HTTPException, Request
+from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field
 
 from src.gateway.governance.checkpoint_store import (
@@ -45,6 +49,7 @@ from src.gateway.governance.checkpoint_store import (
     TypedBlob,
 )
 from src.gateway.server.app_state import checkpoint_store_of
+from src.gateway.server.quarantine_guard import refuse_if_quarantined
 from src.gateway.server.workload_identity import extract_client_identity
 
 logger = logging.getLogger("cage.gateway.checkpoint_api")
@@ -116,22 +121,34 @@ class DeleteThreadRequest(BaseModel):
     thread_id: str
 
 
-def _require_caller_and_store(request: Request) -> tuple[str, Any]:
+def _require_caller_identity(request: Request) -> str:
     try:
-        caller_identity = extract_client_identity(request.scope)
+        return extract_client_identity(request.scope)
     except ValueError as exc:
         raise HTTPException(status_code=403, detail=str(exc)) from exc
+
+
+def _require_checkpoint_store(request: Request) -> Any:
     try:
-        store = checkpoint_store_of(request.app)
+        return checkpoint_store_of(request.app)
     except RuntimeError as exc:
         raise HTTPException(status_code=503, detail=str(exc)) from exc
-    return caller_identity, store
 
 
-@router.get("/health")
-async def checkpoint_health_endpoint(request: Request) -> dict[str, Any]:
+@router.get("/health", response_model=None)
+async def checkpoint_health_endpoint(
+    request: Request,
+) -> dict[str, Any] | JSONResponse:
     """Authenticated readiness probe for agent startup and health checks."""
-    _caller_identity, store = _require_caller_and_store(request)
+    caller_identity = _require_caller_identity(request)
+    if q_resp := await refuse_if_quarantined(
+        request,
+        action_id="checkpoint_health",
+        surface="checkpoint_api",
+        verified_agent_id=caller_identity,
+    ):
+        return q_resp
+    store = _require_checkpoint_store(request)
     try:
         await store.ping()
     except CheckpointStoreUnavailableError as exc:
@@ -143,12 +160,21 @@ async def checkpoint_health_endpoint(request: Request) -> dict[str, Any]:
     }
 
 
-@router.put("/tuple")
+@router.put("/tuple", response_model=None)
 async def put_checkpoint_endpoint(
     request: Request, body: PutCheckpointRequest
-) -> dict[str, Any]:
+) -> dict[str, Any] | JSONResponse:
     """Persist a serialized checkpoint and its channel blobs under caller identity."""
-    caller_identity, store = _require_caller_and_store(request)
+    caller_identity = _require_caller_identity(request)
+    if q_resp := await refuse_if_quarantined(
+        request,
+        action_id="checkpoint_put",
+        surface="checkpoint_api",
+        body_params={"thread_id": body.thread_id},
+        verified_agent_id=caller_identity,
+    ):
+        return q_resp
+    store = _require_checkpoint_store(request)
     try:
         ttl_seconds = await store.put_checkpoint(
             caller_identity=caller_identity,
@@ -202,12 +228,21 @@ async def put_checkpoint_endpoint(
     }
 
 
-@router.put("/writes")
+@router.put("/writes", response_model=None)
 async def put_writes_endpoint(
     request: Request, body: PutWritesRequest
-) -> dict[str, Any]:
+) -> dict[str, Any] | JSONResponse:
     """Persist intermediate task writes linked to ``body.checkpoint_id``."""
-    caller_identity, store = _require_caller_and_store(request)
+    caller_identity = _require_caller_identity(request)
+    if q_resp := await refuse_if_quarantined(
+        request,
+        action_id="checkpoint_put_writes",
+        surface="checkpoint_api",
+        body_params={"thread_id": body.thread_id},
+        verified_agent_id=caller_identity,
+    ):
+        return q_resp
+    store = _require_checkpoint_store(request)
     try:
         ttl_seconds = await store.put_writes(
             caller_identity=caller_identity,
@@ -240,12 +275,21 @@ async def put_writes_endpoint(
     return {"ttl_seconds": ttl_seconds}
 
 
-@router.post("/get")
+@router.post("/get", response_model=None)
 async def get_checkpoint_endpoint(
     request: Request, body: GetCheckpointRequest
-) -> dict[str, Any]:
+) -> dict[str, Any] | JSONResponse:
     """Fetch a stored checkpoint without refreshing TTL."""
-    caller_identity, store = _require_caller_and_store(request)
+    caller_identity = _require_caller_identity(request)
+    if q_resp := await refuse_if_quarantined(
+        request,
+        action_id="checkpoint_get",
+        surface="checkpoint_api",
+        body_params={"thread_id": body.thread_id},
+        verified_agent_id=caller_identity,
+    ):
+        return q_resp
+    store = _require_checkpoint_store(request)
     try:
         record = await store.get_checkpoint(
             caller_identity=caller_identity,
@@ -264,12 +308,23 @@ async def get_checkpoint_endpoint(
     return {"found": True, "record": record.to_dict()}
 
 
-@router.post("/list")
+@router.post("/list", response_model=None)
 async def list_checkpoints_endpoint(
     request: Request, body: ListCheckpointsRequest
-) -> dict[str, Any]:
+) -> dict[str, Any] | JSONResponse:
     """List stored checkpoints newest-first without refreshing TTL."""
-    caller_identity, store = _require_caller_and_store(request)
+    caller_identity = _require_caller_identity(request)
+    if q_resp := await refuse_if_quarantined(
+        request,
+        action_id="checkpoint_list",
+        surface="checkpoint_api",
+        body_params={"thread_id": body.thread_id}
+        if body.thread_id is not None
+        else None,
+        verified_agent_id=caller_identity,
+    ):
+        return q_resp
+    store = _require_checkpoint_store(request)
     try:
         records = await store.list_checkpoints(
             caller_identity=caller_identity,
@@ -288,12 +343,21 @@ async def list_checkpoints_endpoint(
     return {"records": [r.to_dict() for r in records]}
 
 
-@router.post("/delete")
+@router.post("/delete", response_model=None)
 async def delete_thread_endpoint(
     request: Request, body: DeleteThreadRequest
-) -> dict[str, Any]:
+) -> dict[str, Any] | JSONResponse:
     """Delete all stored checkpoints and writes for ``body.thread_id``."""
-    caller_identity, store = _require_caller_and_store(request)
+    caller_identity = _require_caller_identity(request)
+    if q_resp := await refuse_if_quarantined(
+        request,
+        action_id="checkpoint_delete",
+        surface="checkpoint_api",
+        body_params={"thread_id": body.thread_id},
+        verified_agent_id=caller_identity,
+    ):
+        return q_resp
+    store = _require_checkpoint_store(request)
     try:
         deleted = await store.delete_thread(
             caller_identity=caller_identity,

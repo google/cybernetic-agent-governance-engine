@@ -183,7 +183,7 @@ def test_stage2_nemo_input_rail_receives_legacy_function_call_when_content_is_nu
     fake_quota.check_and_increment = AsyncMock(return_value=quota_ok)
     fake_quota.rollback_step = AsyncMock()
 
-    from src.gateway.governance.quarantine_actuator import QuarantineCheckStatus
+    from src.gateway.governance.quarantine_actuator import QuarantineProbeResult
 
     with (
         patch(
@@ -203,8 +203,8 @@ def test_stage2_nemo_input_rail_receives_legacy_function_call_when_content_is_nu
             return_value=_TRUSTED_SVID,
         ),
         patch(
-            "src.gateway.governance.quarantine_actuator.check_workload_quarantine_status",
-            new=AsyncMock(return_value=QuarantineCheckStatus.CLEAR),
+            "src.gateway.server.quarantine_guard.probe_workload_quarantine",
+            new=AsyncMock(return_value=QuarantineProbeResult(quarantined=False)),
         ),
         patch(
             "src.gateway.server.inference_proxy._get_token_quota_proxy",

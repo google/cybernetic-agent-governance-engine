@@ -73,17 +73,28 @@ _CANARY_ID = "cage-gateway-canary-sa.governance-stack.serviceaccount.identity.li
 _POD_IP = "10.24.0.19"
 
 
+_DEFAULT_QUARANTINE_REDIS = object()
+
+
 def _build_gated_checkpoint_app(
     store: GatewayCheckpointStore | None,
     *,
     recorded_paths: list[str] | None = None,
+    quarantine_redis: object = _DEFAULT_QUARANTINE_REDIS,
 ) -> FastAPI:
+    q_redis = (
+        fakeredis.aioredis.FakeRedis(decode_responses=True)
+        if quarantine_redis is _DEFAULT_QUARANTINE_REDIS
+        else quarantine_redis
+    )
     sub_app = FastAPI()
+    sub_app.state.redis = q_redis
     if store is not None:
         sub_app.state.checkpoint_store = store
     sub_app.include_router(checkpoint_router)
 
     root = FastAPI()
+    root.state.redis = q_redis
     if store is not None:
         root.state.checkpoint_store = store
 
