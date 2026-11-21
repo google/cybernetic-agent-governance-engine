@@ -24,13 +24,54 @@ if a replica hasn't replicated the latest epoch, reads from that replica
 will return a regressed epoch, which we detect and reject (fail-closed).
 """
 
+import json
 import os
+import subprocess
+import sys
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
 # Markers for test categorization
 pytestmark = [pytest.mark.local, pytest.mark.unit]
+
+
+def _read_cbf_module_flags(
+    *,
+    env_overrides: dict[str, str | None],
+) -> dict[str, object]:
+    """Import ``cbf_engine`` in a fresh interpreter and return env-initialized constants.
+
+    Avoids ``importlib.reload(cbf_engine)`` inside a shared pytest-xdist worker,
+    which replaces ``GroundTruthUnavailableError`` / ``GroundTruthIntegrityError`` /
+    ``GroundTruthRejectedError`` / ``CBFInitializationError`` with new class
+    objects and breaks ``except`` matching in already-imported callers.
+    """
+    env = os.environ.copy()
+    for key, val in env_overrides.items():
+        if val is None:
+            env.pop(key, None)
+        else:
+            env[key] = val
+    raw = subprocess.check_output(
+        [
+            sys.executable,
+            "-c",
+            (
+                "import json; "
+                "import src.gateway.governance.safety.cbf_engine as m; "
+                "print(json.dumps({"
+                "'fence_epoch_enabled': m._FENCE_EPOCH_ENABLED, "
+                "'wait_replicas': m._WAIT_REPLICAS, "
+                "'wait_timeout_ms': m._WAIT_TIMEOUT_MS"
+                "}))"
+            ),
+        ],
+        env=env,
+        text=True,
+        timeout=30,
+    ).strip()
+    return json.loads(raw)
 
 
 # ---------------------------------------------------------------------------
@@ -295,46 +336,18 @@ class TestFenceEpochDisabledByDefault:
         DEFAULT CHANGED (peer review Fix A2): Enabled by default to provide failover
         protection out-of-box. Operators can disable with CAGE_REDIS_SYNCHRONOUS_REPLICATION=false.
         """
-        # Save original and test with clean environment
-        original_env = os.environ.get("CAGE_REDIS_SYNCHRONOUS_REPLICATION")
-        try:
-            if "CAGE_REDIS_SYNCHRONOUS_REPLICATION" in os.environ:
-                del os.environ["CAGE_REDIS_SYNCHRONOUS_REPLICATION"]
-
-            # Re-import to get fresh flag evaluation
-            import importlib
-
-            import src.gateway.governance.safety.cbf_engine as cbf_module
-
-            importlib.reload(cbf_module)
-
-            # Fix A2: Default is now True for failover safety
-            assert cbf_module._FENCE_EPOCH_ENABLED is True
-        finally:
-            if original_env is not None:
-                os.environ["CAGE_REDIS_SYNCHRONOUS_REPLICATION"] = original_env
+        flags = _read_cbf_module_flags(
+            env_overrides={"CAGE_REDIS_SYNCHRONOUS_REPLICATION": None}
+        )
+        # Fix A2: Default is now True for failover safety
+        assert flags["fence_epoch_enabled"] is True
 
     def test_fence_epoch_flag_disabled_when_set_to_false(self):
         """R-05: CAGE_REDIS_SYNCHRONOUS_REPLICATION=false disables epoch validation."""
-        import importlib
-
-        import src.gateway.governance.safety.cbf_engine as cbf_module
-
-        original_env = os.environ.get("CAGE_REDIS_SYNCHRONOUS_REPLICATION")
-        try:
-            os.environ["CAGE_REDIS_SYNCHRONOUS_REPLICATION"] = "false"
-
-            importlib.reload(cbf_module)
-
-            assert cbf_module._FENCE_EPOCH_ENABLED is False
-        finally:
-            if original_env is not None:
-                os.environ["CAGE_REDIS_SYNCHRONOUS_REPLICATION"] = original_env
-            elif "CAGE_REDIS_SYNCHRONOUS_REPLICATION" in os.environ:
-                del os.environ["CAGE_REDIS_SYNCHRONOUS_REPLICATION"]
-            # Restore the module flags for later tests in this worker; without
-            # this reload _FENCE_EPOCH_ENABLED stays False process-wide.
-            importlib.reload(cbf_module)
+        flags = _read_cbf_module_flags(
+            env_overrides={"CAGE_REDIS_SYNCHRONOUS_REPLICATION": "false"}
+        )
+        assert flags["fence_epoch_enabled"] is False
 
     @pytest.mark.asyncio
     async def test_epoch_tracked_but_not_validated_when_disabled(
@@ -758,78 +771,28 @@ class TestWaitEnvironmentVariables:
         DEFAULT CHANGED (peer review Fix A1): Enabled by default (1 replica) to ensure
         durability before returning success to caller. Set CAGE_REDIS_WAIT_REPLICAS=0 to disable.
         """
-        original_env = os.environ.get("CAGE_REDIS_WAIT_REPLICAS")
-        try:
-            if "CAGE_REDIS_WAIT_REPLICAS" in os.environ:
-                del os.environ["CAGE_REDIS_WAIT_REPLICAS"]
-
-            import importlib
-
-            import src.gateway.governance.safety.cbf_engine as cbf_module
-
-            importlib.reload(cbf_module)
-
-            # Fix A1: Default is now 1 for durability
-            assert cbf_module._WAIT_REPLICAS == 1
-        finally:
-            if original_env is not None:
-                os.environ["CAGE_REDIS_WAIT_REPLICAS"] = original_env
+        flags = _read_cbf_module_flags(env_overrides={"CAGE_REDIS_WAIT_REPLICAS": None})
+        # Fix A1: Default is now 1 for durability
+        assert flags["wait_replicas"] == 1
 
     def test_wait_timeout_defaults_to_1000ms(self):
         """Phase 4.3: CAGE_REDIS_WAIT_TIMEOUT_MS defaults to 1000."""
-        original_env = os.environ.get("CAGE_REDIS_WAIT_TIMEOUT_MS")
-        try:
-            if "CAGE_REDIS_WAIT_TIMEOUT_MS" in os.environ:
-                del os.environ["CAGE_REDIS_WAIT_TIMEOUT_MS"]
-
-            import importlib
-
-            import src.gateway.governance.safety.cbf_engine as cbf_module
-
-            importlib.reload(cbf_module)
-
-            assert cbf_module._WAIT_TIMEOUT_MS == 1000
-        finally:
-            if original_env is not None:
-                os.environ["CAGE_REDIS_WAIT_TIMEOUT_MS"] = original_env
+        flags = _read_cbf_module_flags(
+            env_overrides={"CAGE_REDIS_WAIT_TIMEOUT_MS": None}
+        )
+        assert flags["wait_timeout_ms"] == 1000
 
     def test_wait_replicas_configurable(self):
         """Phase 4.3: CAGE_REDIS_WAIT_REPLICAS is configurable."""
-        original_env = os.environ.get("CAGE_REDIS_WAIT_REPLICAS")
-        try:
-            os.environ["CAGE_REDIS_WAIT_REPLICAS"] = "3"
-
-            import importlib
-
-            import src.gateway.governance.safety.cbf_engine as cbf_module
-
-            importlib.reload(cbf_module)
-
-            assert cbf_module._WAIT_REPLICAS == 3
-        finally:
-            if original_env is not None:
-                os.environ["CAGE_REDIS_WAIT_REPLICAS"] = original_env
-            elif "CAGE_REDIS_WAIT_REPLICAS" in os.environ:
-                del os.environ["CAGE_REDIS_WAIT_REPLICAS"]
+        flags = _read_cbf_module_flags(env_overrides={"CAGE_REDIS_WAIT_REPLICAS": "3"})
+        assert flags["wait_replicas"] == 3
 
     def test_wait_timeout_configurable(self):
         """Phase 4.3: CAGE_REDIS_WAIT_TIMEOUT_MS is configurable."""
-        original_env = os.environ.get("CAGE_REDIS_WAIT_TIMEOUT_MS")
-        try:
-            os.environ["CAGE_REDIS_WAIT_TIMEOUT_MS"] = "5000"
-
-            import importlib
-
-            import src.gateway.governance.safety.cbf_engine as cbf_module
-
-            importlib.reload(cbf_module)
-
-            assert cbf_module._WAIT_TIMEOUT_MS == 5000
-        finally:
-            if original_env is not None:
-                os.environ["CAGE_REDIS_WAIT_TIMEOUT_MS"] = original_env
-            elif "CAGE_REDIS_WAIT_TIMEOUT_MS" in os.environ:
-                del os.environ["CAGE_REDIS_WAIT_TIMEOUT_MS"]
+        flags = _read_cbf_module_flags(
+            env_overrides={"CAGE_REDIS_WAIT_TIMEOUT_MS": "5000"}
+        )
+        assert flags["wait_timeout_ms"] == 5000
 
 
 # ---------------------------------------------------------------------------
