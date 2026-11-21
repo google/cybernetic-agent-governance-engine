@@ -662,11 +662,22 @@ class McpRateLimitMiddleware:
         await self.app(scope, receive, send)
 
 
+from src.gateway.server.quarantine_guard import (
+    McpQuarantineMiddleware,
+    refuse_if_quarantined,
+)
+
 patch_mcp_tools(mcp)
 logger.info(
-    "Mounting Stateless MCP Streamable HTTP App at /mcp (with distributed tracing and GCRA rate limiting)..."
+    "Mounting Stateless MCP Streamable HTTP App at /mcp (with distributed tracing, quarantine, and GCRA rate limiting)..."
 )
-app.mount("/mcp", McpRateLimitMiddleware(mcp.streamable_http_app()))
+app.mount(
+    "/mcp",
+    McpQuarantineMiddleware(
+        McpRateLimitMiddleware(mcp.streamable_http_app()),
+        state_owner=app,
+    ),
+)
 
 
 # ---------------------------------------------------------------------------
@@ -732,6 +743,15 @@ async def execute_tool_endpoint(request_body: ToolExecutionRequest, request: Req
             status_code=403,
             detail="trusted workload identity required",
         )
+
+    if q_resp := await refuse_if_quarantined(
+        request,
+        action_id=request_body.tool_name,
+        surface="mcp_tool_server",
+        body_params=request_body.params,
+        fallback_app_obj=app,
+    ):
+        return q_resp
 
     # A4 / M-20: Shared dual-bucket GCRA rate limiting (identity + principal)
     if _check_rate_limit is not _default_check_rate_limit:

@@ -158,7 +158,7 @@ def _chat_body(**extra: Any) -> dict[str, Any]:
 
 @pytest.mark.asyncio
 @pytest.mark.covers(
-    "src.gateway.governance.quarantine_actuator:check_workload_quarantine_status#Redis EXISTS check failed",
+    "src.gateway.governance.quarantine_actuator:probe_workload_quarantine#Redis EXISTS check failed",
     "src.gateway.server.inference_proxy:chat_completions#quarantine_backend_unavailable",
 )
 async def test_redis_error_returns_503_infrastructure_block_not_false_403() -> None:
@@ -209,7 +209,7 @@ async def test_redis_error_returns_503_infrastructure_block_not_false_403() -> N
     [DeploymentPosture.STAGING, DeploymentPosture.PRODUCTION],
 )
 @pytest.mark.covers(
-    "src.gateway.governance.quarantine_actuator:check_workload_quarantine_status#Shared Redis client unavailable in enforcing posture",
+    "src.gateway.governance.quarantine_actuator:probe_workload_quarantine#Shared Redis client unavailable in enforcing posture — failing closed",
     "src.gateway.server.inference_proxy:chat_completions#quarantine_backend_unavailable",
 )
 async def test_missing_redis_in_enforcing_posture_returns_503_not_403(

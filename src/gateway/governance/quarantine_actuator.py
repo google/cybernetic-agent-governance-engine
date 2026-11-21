@@ -32,6 +32,7 @@ import hashlib
 import logging
 import os
 import time
+from dataclasses import dataclass
 from datetime import datetime, timezone
 from enum import Enum
 from typing import Any
@@ -91,12 +92,27 @@ def clear_local_quarantine_state() -> None:
     _LOCAL_QUARANTINED_SVIDS.clear()
 
 
-async def check_workload_quarantine_status(
+@dataclass(frozen=True)
+class QuarantineProbeResult:
+    """Outcome of probing quarantine state, separating confirmed quarantine from Redis unavailability."""
+
+    quarantined: bool
+    unavailable_code: str | None = None
+    unavailable_detail: str = ""
+
+
+async def probe_workload_quarantine(
     thread_id: str | None = None,
     agent_svid: str | None = None,
     redis_client: Any | None = None,
-) -> QuarantineCheckStatus:
-    """Evaluate whether ``thread_id`` or ``agent_svid`` is quarantined without conflating Redis outages."""
+) -> QuarantineProbeResult:
+    """Probe shared Redis (or permissive local state) for workload quarantine.
+
+    Distinguishes a confirmed quarantine entry from a Redis connectivity or
+    enforcing-posture availability failure so request-path callers can emit
+    ``GOVERNANCE_INFRASTRUCTURE_BLOCK`` (HTTP 503) rather than fabricating a
+    KMS-signed SC-7 policy refusal receipt (POAM-2026-233).
+    """
     active_redis = (
         redis_client if redis_client is not None else _default_quarantine_redis
     )
@@ -106,38 +122,60 @@ async def check_workload_quarantine_status(
     if agent_svid:
         keys.append(f"{_QUARANTINE_SVID_PREFIX}{agent_svid}")
     if not keys:
-        return QuarantineCheckStatus.CLEAR
+        return QuarantineProbeResult(quarantined=False)
 
     if active_redis is not None:
         try:
             exists_count = await active_redis.exists(*keys)
-            return (
-                QuarantineCheckStatus.QUARANTINED
-                if int(exists_count) > 0
-                else QuarantineCheckStatus.CLEAR
-            )
+            return QuarantineProbeResult(quarantined=bool(int(exists_count) > 0))
         except Exception as exc:
             logger.error(
-                "[QuarantineActuator] Redis EXISTS check failed (failing closed as BACKEND_UNAVAILABLE): %s",
+                "[QuarantineActuator] Redis EXISTS check failed (fail-closed quarantine): %s",
                 exc,
             )
-            return QuarantineCheckStatus.BACKEND_UNAVAILABLE
+            return QuarantineProbeResult(
+                quarantined=False,
+                unavailable_code="REDIS_QUARANTINE_UNAVAILABLE",
+                unavailable_detail=f"{type(exc).__name__}: {exc}",
+            )
 
     if is_enforcing(resolve_posture()):
         logger.error(
             "[QuarantineActuator] Shared Redis client unavailable in enforcing posture — failing closed"
         )
-        return QuarantineCheckStatus.BACKEND_UNAVAILABLE
+        return QuarantineProbeResult(
+            quarantined=False,
+            unavailable_code="REDIS_QUARANTINE_UNAVAILABLE",
+            unavailable_detail="Shared Redis client unavailable in enforcing posture",
+        )
 
     now = time.time()
     if thread_id:
         exp = _LOCAL_QUARANTINED_THREADS.get(thread_id)
         if exp is not None and exp > now:
-            return QuarantineCheckStatus.QUARANTINED
+            return QuarantineProbeResult(quarantined=True)
     if agent_svid:
         exp = _LOCAL_QUARANTINED_SVIDS.get(agent_svid)
         if exp is not None and exp > now:
-            return QuarantineCheckStatus.QUARANTINED
+            return QuarantineProbeResult(quarantined=True)
+    return QuarantineProbeResult(quarantined=False)
+
+
+async def check_workload_quarantine_status(
+    thread_id: str | None = None,
+    agent_svid: str | None = None,
+    redis_client: Any | None = None,
+) -> QuarantineCheckStatus:
+    """Thin adapter over ``probe_workload_quarantine()`` for transitional callers."""
+    probe = await probe_workload_quarantine(
+        thread_id=thread_id,
+        agent_svid=agent_svid,
+        redis_client=redis_client,
+    )
+    if probe.unavailable_code is not None:
+        return QuarantineCheckStatus.BACKEND_UNAVAILABLE
+    if probe.quarantined:
+        return QuarantineCheckStatus.QUARANTINED
     return QuarantineCheckStatus.CLEAR
 
 
@@ -146,13 +184,18 @@ async def is_workload_quarantined(
     agent_svid: str | None = None,
     redis_client: Any | None = None,
 ) -> bool:
-    """Return True if the thread_id or agent_svid is quarantined or quarantine state is unverifiable."""
-    status = await check_workload_quarantine_status(
+    """Return True if the thread_id or agent_svid has been quarantined by CAGE.
+
+    Uses a single ``EXISTS k1 k2`` command against shared Redis when available.
+    In an enforcing posture, a missing or failing Redis backend fails closed
+    (returns ``True``).
+    """
+    probe = await probe_workload_quarantine(
         thread_id=thread_id,
         agent_svid=agent_svid,
         redis_client=redis_client,
     )
-    return status is not QuarantineCheckStatus.CLEAR
+    return probe.quarantined or probe.unavailable_code is not None
 
 
 class UnavailableQuarantineActuator:
@@ -473,15 +516,19 @@ async def dispatch_quarantine(
 __all__ = [
     "InferenceProxySvidQuarantineActuator",
     "QuarantineActuator",
+    "QuarantineCheckStatus",
     "QuarantineDirective",
+    "QuarantineProbeResult",
     "QuarantineReceipt",
     "QuarantineTriggerReason",
     "SimulatedQuarantineActuator",
     "UnavailableQuarantineActuator",
     "bind_quarantine_redis",
+    "check_workload_quarantine_status",
     "clear_local_quarantine_state",
     "dispatch_quarantine",
     "get_quarantine_redis",
     "is_workload_quarantined",
     "load_quarantine_actuator_from_env",
+    "probe_workload_quarantine",
 ]
