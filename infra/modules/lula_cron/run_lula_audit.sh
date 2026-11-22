@@ -35,6 +35,17 @@ SPEC_DIR="${LULA_SPECS_DIR:-/etc/cage/lula}"
 OUT_DIR="${LULA_OUT_DIR:-/tmp}"
 LULA_BIN="${LULA_BIN:-/usr/local/bin/lula}"
 
+# Pre-warm compliance-bridge 24h metrics and 168h CM-6 WORM batch caches with a
+# generous timeout before `lula validate` fires its short Go HTTP client timeout,
+# preventing false timeouts right after a compliance-bridge pod rollout. Non-fatal:
+# if compliance-bridge is genuinely unreachable, `lula validate` still fails closed.
+if [ "${LULA_SKIP_CACHE_WARMUP:-false}" != "true" ] && [ -n "${COMPLIANCE_BRIDGE_EVENTS_URL:-}" ]; then
+  cb_base_url="${COMPLIANCE_BRIDGE_EVENTS_URL%/v1/infra/events}"
+  warm_timeout="${LULA_CACHE_WARM_TIMEOUT_SECONDS:-180}"
+  curl -sf --max-time "$warm_timeout" "${cb_base_url}/v1/metrics/A.5.3" >/dev/null 2>&1 || true
+  curl -sf --max-time "$warm_timeout" "${cb_base_url}/v1/compliance/cm6" >/dev/null 2>&1 || true
+fi
+
 total=0
 passed=0
 failed=0

@@ -388,8 +388,33 @@ async def lifespan(app: FastAPI):  # type: ignore[no-untyped-def]
         port=_cb_metrics_port, addr=_cb_metrics_addr
     )
 
+    async def _warm_cm6_cache_once() -> None:
+        try:
+            await get_cm6_thresholds_posture(window_hours=168)
+        except asyncio.CancelledError:
+            raise
+        except Exception as exc:
+            logger.warning("[cm6-cache-warmer] Warmup scan failed: %s", exc)
+
+    async def _run_cm6_cache_warmer() -> None:
+        interval = max(
+            30,
+            int(os.environ.get("EVIDENCE_SLA_POLL_INTERVAL_SECONDS", "300") or "300"),
+        )
+        while True:
+            await _warm_cm6_cache_once()
+            await asyncio.sleep(interval)
+
     # Start background tasks
     _sla_task = asyncio.create_task(run_sla_monitor(), name="sla-monitor")
+    _cm6_warm_task: asyncio.Task[None] | None = None
+    if (
+        _custodian is not None
+        and os.environ.get("EVIDENCE_SLA_DISABLED", "").strip() != "1"
+    ):
+        _cm6_warm_task = asyncio.create_task(
+            _run_cm6_cache_warmer(), name="cm6-cache-warmer"
+        )
 
     logger.info(
         "✅ compliance-bridge ready on port %s. Supported controls: %s",
@@ -401,6 +426,7 @@ async def lifespan(app: FastAPI):  # type: ignore[no-untyped-def]
     finally:
         for _task in (
             _sla_task,
+            _cm6_warm_task,
             _custody_task,
             _infra_custody_task,
             _verify_task,
