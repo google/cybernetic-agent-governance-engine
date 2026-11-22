@@ -811,3 +811,21 @@ class TestColdStoreReadCachingAndPooling:
         adapter = dict(mounted)["https://"]
         assert adapter._pool_maxsize == 48
         assert adapter._pool_connections == 48
+
+    def test_verified_batch_cache_ttl_covers_cm6_seven_day_window(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        import src.compliance_bridge.metrics as cb_metrics
+
+        monkeypatch.delenv("EVIDENCE_BATCH_CACHE_TTL_SECONDS", raising=False)
+        monkeypatch.delenv("EVIDENCE_BATCH_CACHE_MAX_ENTRIES", raising=False)
+        assert cb_metrics._resolve_batch_cache_ttl() == 7 * 24 * 3600
+        assert cb_metrics._resolve_batch_cache_maxsize() == 32768
+
+    def test_run_lula_audit_script_declares_bounded_preloop_cache_warmup(self) -> None:
+        script_path = Path("infra/modules/lula_cron/run_lula_audit.sh")
+        text = script_path.read_text(encoding="utf-8")
+        warm_idx = text.index("/v1/compliance/cm6")
+        loop_idx = text.index('for spec in "${SPEC_DIR}"/lula-validation-*.yaml')
+        assert warm_idx < loop_idx
+        assert "/v1/metrics/A.5.3" in text[:loop_idx]
