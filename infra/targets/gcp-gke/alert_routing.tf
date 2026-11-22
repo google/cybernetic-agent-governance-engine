@@ -86,6 +86,22 @@ locals {
 # observed at the destination Pub/Sub subscription). Never trip real operational
 # policies for scheduled delivery tests: synthetic pages on real alarms train
 # operators to ignore them.
+#
+# Explicit MetricDescriptor is required so google_monitoring_alert_policy
+# creation succeeds on a brand-new GCP project before any probe sample has been
+# written (Cloud Monitoring returns 404 on condition_threshold when a custom
+# metric descriptor does not yet exist).
+
+resource "google_monitoring_metric_descriptor" "alert_heartbeat_probe" {
+  count = local.enforcing_posture ? 1 : 0
+
+  project      = var.project_id
+  type         = "custom.googleapis.com/cage/alert_heartbeat_probe"
+  metric_kind  = "GAUGE"
+  value_type   = "INT64"
+  display_name = "CAGE Alert Pipeline Synthetic Heartbeat Probe"
+  description  = "Synthetic gauge (0 = idle, 1 = probe active) written exclusively by scripts/verify_alert_delivery.py to verify end-to-end Cloud Monitoring alert delivery without tripping operational alarms (POAM-2026-230)."
+}
 
 resource "google_monitoring_alert_policy" "alert_pipeline_heartbeat" {
   count = local.enforcing_posture ? 1 : 0
@@ -149,7 +165,10 @@ resource "google_monitoring_alert_policy" "alert_pipeline_heartbeat" {
     }
   }
 
-  depends_on = [module.gke]
+  depends_on = [
+    module.gke,
+    google_monitoring_metric_descriptor.alert_heartbeat_probe,
+  ]
 }
 
 # ─── Compliance-Bridge Pub/Sub Alert Publisher IAM (POAM-2026-230) ────────────
