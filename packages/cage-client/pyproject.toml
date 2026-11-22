@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "cage-client"
-version = "0.4.0"
+version = "0.4.1"
 description = "Lightweight LangGraph / LangChain PEP Client for CAGE Governance Gateway"
 readme = "README.md"
 requires-python = ">=3.10"
@@ -54,4 +54,4 @@ cage_client = ["py.typed"]
 #     and tag client-v<version> must not yet exist.
 #   - "published": tag client-v<version> must exist and match packages/cage-client/src/cage_client/
 #     byte-for-byte (zero post-tag drift).
-status = "published"
+status = "unreleased"

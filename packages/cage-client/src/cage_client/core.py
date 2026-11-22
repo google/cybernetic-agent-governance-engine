@@ -85,7 +85,7 @@ from .jwks import JwksKeyResolver, PublicKey, validate_http_url
 # Check for optional HTTP/2 support (h2 package)
 _HTTP2_AVAILABLE = importlib.util.find_spec("h2") is not None
 
-_USER_AGENT = "CageClient/0.4.0"
+_USER_AGENT = "CageClient/0.4.1"
 _BRACKETED_CODE_RE = re.compile(r"^\[([A-Za-z0-9_.:-]+)\]\s+")
 _DEV_POSTURES: frozenset[str] = frozenset(
     {"dev", "development", "local", "test", "testing"}

@@ -188,6 +188,7 @@ class AgentState(TypedDict):
     deferral_ticket_id: str | None  # default None
     deferral_reason: str | None  # default None
     deferred_id: str | None  # default None
+    deferred_step_ids: list[str | None] | None  # default None
 
     # CAGE Client SDK Governance Integration (@cage_guard decorator contract)
     # These fields are populated by @cage_guard decorator on all governed nodes.

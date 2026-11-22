@@ -72,14 +72,28 @@ def create_approval_node(
         logger.info("[ApprovalNode] Trade requires human approval — suspending graph.")
 
         ttl_seconds: int = resolve_hitl_approval_ttl_seconds()
+        step_ids = [
+            str(d)
+            for d in (state.get("deferred_step_ids") or [])
+            if isinstance(d, str) and d
+        ]
+        deferred_ids = step_ids or (
+            [str(state["deferred_id"])] if state.get("deferred_id") else []
+        )
+        execution_plan_view = (
+            state.get("execution_plan_output")
+            if state.get("execution_plan_output") is not None
+            else state.get("execution_plan")
+        )
         trade_payload: dict[str, Any] = {
             "reason": "trade_approval_required",
-            # The gateway-held approval token. The authoritative approval is
-            # recorded against it at POST /v1/defer/{deferred_id}/escalate (the
-            # compliance bridge); this interrupt only pauses the advisor's graph.
+            # The gateway-held approval token(s). The authoritative approval is
+            # recorded against each token at POST /v1/defer/{deferred_id}/escalate
+            # (the compliance bridge); this interrupt only pauses the advisor's graph.
             "deferred_id": state.get("deferred_id"),
+            "deferred_ids": deferred_ids,
             "trade": {
-                "execution_plan": state.get("execution_plan_output"),
+                "execution_plan": execution_plan_view,
                 "evaluation_result": state.get("evaluation_result"),
             },
             "timestamp": datetime.now(timezone.utc).isoformat(),
@@ -130,6 +144,7 @@ def create_approval_node(
                 update={
                     "approval_decision": approval_decision,
                     "hitl_expires_at": trade_payload["expires_at"],
+                    "approval_required": False,
                 },
                 goto=approved_target,
             )
@@ -140,10 +155,16 @@ def create_approval_node(
         update_payload: dict[str, Any] = {
             "approval_decision": approval_decision,
             "hitl_expires_at": trade_payload["expires_at"],
+            "deferred_id": None,
+            "deferred_step_ids": None,
+            "hitl_reference_quote": None,
+            "routing_verdict_cache": None,
+            "approval_required": False,
         }
         if rejected_target != "rejection":
             rejection_update = rejection_node({"approval_decision": approval_decision})
             update_payload["messages"] = rejection_update["messages"]
+            update_payload["approval_decision"] = None
         return Command(
             update=update_payload,
             goto=rejected_target,
@@ -202,4 +223,12 @@ def rejection_node(state: dict[str, Any]) -> dict[str, Any]:
         "your compliance officer if you believe this decision was made in error."
     )
 
-    return {"messages": [("ai", rejection_message)]}
+    return {
+        "messages": [("ai", rejection_message)],
+        "deferred_id": None,
+        "deferred_step_ids": None,
+        "approval_decision": None,
+        "hitl_reference_quote": None,
+        "routing_verdict_cache": None,
+        "approval_required": False,
+    }

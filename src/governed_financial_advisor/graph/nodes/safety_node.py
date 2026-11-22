@@ -92,6 +92,16 @@ def _signature_value(result: Mapping[str, Any]) -> str:
     return str(signature or "")
 
 
+def _cleared_hitl_fields() -> dict[str, Any]:
+    """Per-turn reset of HITL deferral fields so prior-turn state can never leak."""
+    return {
+        "deferred_id": None,
+        "deferred_step_ids": None,
+        "approval_decision": None,
+        "hitl_reference_quote": None,
+    }
+
+
 def _blocked(
     state: AgentState,
     *,
@@ -122,12 +132,14 @@ def _blocked(
             "consecutive_denials": new_denials,
             "last_violation": violation,
             "routing_verdict_cache": None,
+            **_cleared_hitl_fields(),
         }
     return {
         "safety_status": "BLOCKED",
         "consecutive_denials": new_denials,
         "last_violation": violation,
         "routing_verdict_cache": None,
+        **_cleared_hitl_fields(),
     }
 
 
@@ -149,6 +161,7 @@ def _gateway_error(
             "recoverable": False,
         },
         "routing_verdict_cache": None,
+        **_cleared_hitl_fields(),
     }
 
 
@@ -320,6 +333,7 @@ async def safety_check_node(state: AgentState) -> dict[str, Any]:
         return {
             "safety_status": "SKIPPED",
             "routing_verdict_cache": None,
+            **_cleared_hitl_fields(),
         }
 
     cached_cache = state.get("routing_verdict_cache")
@@ -339,6 +353,7 @@ async def safety_check_node(state: AgentState) -> dict[str, Any]:
             "last_violation": None,
             "governance_signature": _signature_value(reused),
             "routing_verdict_cache": cached_cache,
+            **_cleared_hitl_fields(),
         }
 
     routed: list[dict[str, Any]] = []
@@ -364,6 +379,7 @@ async def safety_check_node(state: AgentState) -> dict[str, Any]:
             "deferral_ticket_id": str(deferral["defer_token"]).strip(),
             "deferral_reason": defer_reason,
             "routing_verdict_cache": None,
+            **_cleared_hitl_fields(),
             # Do NOT reset or increment consecutive_denials — deferral is
             # neither approval nor refusal (LangGraphHarness.tla SafetyDefer).
         }
@@ -384,6 +400,7 @@ async def safety_check_node(state: AgentState) -> dict[str, Any]:
         "last_violation": None,
         "governance_signature": ",".join(signatures) if any(signatures) else "",
         "routing_verdict_cache": routing_cache,
+        **_cleared_hitl_fields(),
     }
     deferred_steps = [
         (str(result["deferred_id"]), trades[idx])
@@ -392,6 +409,11 @@ async def safety_check_node(state: AgentState) -> dict[str, Any]:
     ]
     if deferred_steps:
         out["deferred_id"] = deferred_steps[0][0]
+        out["deferred_step_ids"] = (
+            [str(r["deferred_id"]) if r.get("deferred_id") else None for r in routed]
+            if len(trades) > 1
+            else None
+        )
 
     approval_trade = (
         deferred_steps[0][1]
@@ -407,15 +429,11 @@ async def safety_check_node(state: AgentState) -> dict[str, Any]:
         deferred_symbol = normalize_ticker(approval_trade.get("symbol"))
         if deferred_symbol is not None:
             out["data_analyst_ticker"] = deferred_symbol
-            selected_quote = select_reference_quote_for_ticker(
+            out["hitl_reference_quote"] = select_reference_quote_for_ticker(
                 state,
                 ticker=deferred_symbol,
                 plan_raw=plan,
             )
-            if selected_quote is not None:
-                out["hitl_reference_quote"] = selected_quote
-            elif isinstance(state.get("hitl_reference_quote"), Mapping):
-                out["hitl_reference_quote"] = None
     return out
 
 

@@ -190,6 +190,8 @@ def test_end_user_jwt_refused_on_pending_approvals_and_listing_is_principal_scop
     alice_payload = {
         "reason": "trade_approval_required",
         "deferred_id": _ALICE_DEFERRED_ID,
+        "deferred_ids": [_ALICE_DEFERRED_ID],
+        "deferred_step_ids": [_ALICE_DEFERRED_ID],
         "defer_id": _ALICE_DEFERRED_ID,
         "trade": {
             "execution_plan": {"symbol": "MSFT", "side": "buy", "amount": 15000.0},
@@ -298,6 +300,8 @@ def test_end_user_jwt_refused_on_pending_approvals_and_listing_is_principal_scop
     assert _ALICE_DEFERRED_ID not in ok_resp.text
     assert _BOB_DEFERRED_ID not in ok_resp.text
     assert "deferred_id" not in ok_resp.text
+    assert "deferred_ids" not in ok_resp.text
+    assert "deferred_step_ids" not in ok_resp.text
     assert "defer_id" not in ok_resp.text
     assert "internal_only_secret" not in ok_resp.text
     assert entry["interrupt_payload"]["trade"]["evaluation_result"]["nested"] == [
@@ -844,6 +848,7 @@ def test_advisor_route_inventory_enforces_service_auth_outside_agent_query(
     }
 
     assert ("/agent/query", frozenset({"POST"})) in by_path_methods
+    assert ("/agent/resume", frozenset({"POST"})) in by_path_methods
     assert ("/v1/approvals/pending", frozenset({"GET"})) in by_path_methods
     assert ("/v1/refinement/trigger", frozenset({"POST"})) in by_path_methods
     assert ("/v1/webhooks/langfuse", frozenset({"POST"})) in by_path_methods
