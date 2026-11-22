@@ -216,6 +216,18 @@ def _without_model_deferred_id(args: Any) -> dict[str, Any]:
     }
 
 
+def _cleared_guard_hitl_state() -> dict[str, Any]:
+    """Return cleared HITL fields after consuming or refusing an approved batch."""
+    return {
+        "governance_envelope": None,
+        "deferred_id": None,
+        "deferred_step_ids": None,
+        "approval_decision": None,
+        "hitl_reference_quote": None,
+        "routing_verdict_cache": None,
+    }
+
+
 def _with_deferred_id(state: Any, deferred_id: str | None) -> Any:
     """Return ``state`` whose last message's tool calls carry only ``deferred_id``.
 
@@ -232,6 +244,120 @@ def _with_deferred_id(state: Any, deferred_id: str | None) -> Any:
         calls.append({**call, "args": args})
     messages[-1] = AIMessage(content=getattr(last, "content", ""), tool_calls=calls)
     return {**state, "messages": messages}
+
+
+def _with_step_deferred_ids(state: Any, step_ids: list[str | None]) -> Any:
+    """Return ``state`` where each tool call carries its step-bound ``deferred_id``."""
+    messages = list(state.get("messages") or [])
+    last = messages[-1]
+    raw_calls = list(getattr(last, "tool_calls", None) or [])
+    calls = []
+    for call, step_def_id in zip(raw_calls, step_ids, strict=True):
+        args = _without_model_deferred_id(call.get("args"))
+        if step_def_id is not None:
+            args["deferred_id"] = step_def_id
+        calls.append({**call, "args": args})
+    messages[-1] = AIMessage(content=getattr(last, "content", ""), tool_calls=calls)
+    return {**state, "messages": messages}
+
+
+def _parse_approved_step_ids(state: Any) -> tuple[bool, list[str | None] | None]:
+    """Validate ``state['deferred_step_ids']`` when ``approval_decision.approved`` is True.
+
+    Returns ``(present, validated_step_ids)``. When ``present`` is True and
+    ``validated_step_ids`` is None, ``deferred_step_ids`` was malformed and the
+    caller must refuse the batch fail-closed.
+    """
+    decision = state.get("approval_decision") or {}
+    if not (isinstance(decision, dict) and decision.get("approved") is True):
+        return False, None
+    raw = state.get("deferred_step_ids")
+    if raw is None:
+        return False, None
+    if not isinstance(raw, list) or not raw:
+        return True, None
+    parsed: list[str | None] = []
+    has_deferred = False
+    for item in raw:
+        if item is None:
+            parsed.append(None)
+        elif isinstance(item, str) and item.strip():
+            parsed.append(item.strip())
+            has_deferred = True
+        else:
+            return True, None
+    return (True, parsed) if has_deferred else (True, None)
+
+
+def _preview_call_params(call: dict[str, Any], action: str) -> dict[str, Any]:
+    """Build gateway ``validate-action`` params for one tool call without model ``deferred_id``."""
+    params: dict[str, Any] = {
+        **_without_model_deferred_id(call.get("args")),
+        "tool_name": call.get("name", ""),
+    }
+    if call.get("name") == TRADE_TOOL:
+        params.pop("transaction_id", None)
+    params.setdefault("action", action)
+    return params
+
+
+async def _execute_approved_step_batch(
+    func: NodeFn,
+    state: Any,
+    tool_calls: list[dict[str, Any]],
+    step_ids: list[str | None] | None,
+    *,
+    action: str,
+) -> dict[str, Any]:
+    """Execute a multi-step HITL-approved batch with per-step ``deferred_id`` binding."""
+    if step_ids is None or len(tool_calls) != len(step_ids):
+        return {
+            "messages": _answer_all(
+                tool_calls,
+                {},
+                "Governance refused this action: tool calls do not match approved plan steps",
+            ),
+            "governance_status": GOVERNANCE_DENIED,
+            **_cleared_guard_hitl_state(),
+        }
+
+    refusals: dict[str, str] = {}
+    verdicts: list[dict[str, Any]] = []
+    for call, step_def_id in zip(tool_calls, step_ids, strict=True):
+        if step_def_id is not None:
+            continue
+        params = _preview_call_params(call, action)
+        verdict, reason = await authorize_action(action, params)
+        if verdict is None:
+            refusals[str(call.get("id"))] = reason or "refused"
+        elif verdict.get("verdict") not in _EXECUTABLE_VERDICTS:
+            refusals[str(call.get("id"))] = (
+                "gateway requires human approval for an unapproved step"
+            )
+        else:
+            verdicts.append(verdict)
+
+    if refusals:
+        return {
+            "messages": _answer_all(
+                tool_calls,
+                {
+                    k: f"Governance refused this action: {v}"
+                    for k, v in refusals.items()
+                },
+                "Governance refused this action: another tool call in the same batch was refused",
+            ),
+            "governance_status": GOVERNANCE_DENIED,
+            **_cleared_guard_hitl_state(),
+        }
+
+    result = await func(_with_step_deferred_ids(state, step_ids))
+    return {
+        **result,
+        "governance_status": GOVERNANCE_ALLOWED,
+        **_cleared_guard_hitl_state(),
+        "governance_envelope": verdicts[-1] if verdicts else None,
+    }
 
 
 def gateway_tool_guard(
@@ -255,6 +381,13 @@ def gateway_tool_guard(
             if not tool_calls:
                 return {"messages": []}
 
+            if approvable:
+                has_step_ids, step_ids = _parse_approved_step_ids(state)
+                if has_step_ids:
+                    return await _execute_approved_step_batch(
+                        func, state, tool_calls, step_ids, action=action
+                    )
+
             approved_id = _approved_deferred_id(state) if approvable else None
             if approved_id is not None and len(tool_calls) > 1:
                 return {
@@ -264,11 +397,7 @@ def gateway_tool_guard(
                         "Governance refused this action: an approval covers exactly one call",
                     ),
                     "governance_status": GOVERNANCE_DENIED,
-                    "governance_envelope": None,
-                    "deferred_id": None,
-                    "approval_decision": None,
-                    "hitl_reference_quote": None,
-                    "routing_verdict_cache": None,
+                    **_cleared_guard_hitl_state(),
                 }
             if approved_id is not None:
                 # The gateway, not the advisor, decides whether the approval
@@ -277,11 +406,7 @@ def gateway_tool_guard(
                 return {
                     **result,
                     "governance_status": GOVERNANCE_ALLOWED,
-                    "governance_envelope": None,
-                    "deferred_id": None,
-                    "approval_decision": None,
-                    "hitl_reference_quote": None,
-                    "routing_verdict_cache": None,
+                    **_cleared_guard_hitl_state(),
                 }
 
             verdicts: list[dict[str, Any]] = []

@@ -12,6 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import inspect
 import logging
 import os
 import traceback
@@ -28,7 +29,7 @@ from fastapi import Depends, FastAPI, HTTPException, Query, Request
 from fastapi.responses import JSONResponse
 from langgraph.types import Command
 from opentelemetry import trace
-from pydantic import BaseModel, model_validator
+from pydantic import BaseModel, Field, field_validator, model_validator
 
 try:
     from opentelemetry.instrumentation.fastapi import FastAPIInstrumentor
@@ -67,10 +68,12 @@ from src.governed_financial_advisor.graph.graph import create_graph
 from src.governed_financial_advisor.infrastructure.auth import (
     ADVISOR_DEFAULT_THREAD_PREFIX,
     CallerCredentialKind,
+    _extract_user_oidc_token,
     require_api_key_or_user_token,
     require_service_api_key,
     require_thread_owner,
     resolve_request_principal,
+    verify_user_oidc_token,
 )
 from src.governed_financial_advisor.models.principal import (
     PRINCIPAL_MAX_LEN,
@@ -202,7 +205,59 @@ from src.governed_financial_advisor.graph.nodes.approval_contract import (
     ApprovalDecision as ApprovalResumeRequest,
 )
 
-# Deprecated class definition removed. Use ApprovalDecision directly.
+
+class AgentResumeRequest(ApprovalResumeRequest):
+    """Request body for ``POST /agent/resume`` (service-authenticated HITL continuation)."""
+
+    thread_id: str = Field(min_length=1, max_length=256)
+    user_id: str | None = Field(
+        default=None,
+        min_length=1,
+        max_length=PRINCIPAL_MAX_LEN,
+        pattern=PRINCIPAL_PATTERN,
+    )
+
+    @field_validator("thread_id", "reviewer")
+    @classmethod
+    def _require_non_blank_str(cls, value: str) -> str:
+        if not value or not value.strip():
+            raise ValueError("Field must be a non-blank string")
+        return value.strip()
+
+
+def _resolve_callback_factory(graph: Any) -> Any:
+    """Return ``graph._provider_02_callback_factory`` when explicitly configured."""
+    if inspect.getattr_static(graph, "_provider_02_callback_factory", None) is None:
+        return None
+    cb_factory = getattr(graph, "_provider_02_callback_factory", None)
+    return cb_factory if callable(cb_factory) else None
+
+
+def _build_invoke_config(graph: Any, thread_id: str) -> dict[str, Any]:
+    """Build LangGraph ``ainvoke`` config with per-thread Provider 02 callback when enabled."""
+    invoke_config: dict[str, Any] = {
+        "recursion_limit": 100,
+        "configurable": {"thread_id": thread_id},
+    }
+    cb_factory = _resolve_callback_factory(graph)
+    if cb_factory is not None:
+        invoke_config["callbacks"] = [cb_factory(thread_id)]
+    return invoke_config
+
+
+def _extract_final_response_text(res: Any) -> str:
+    """Extract the terminal assistant message text from a LangGraph state dictionary."""
+    messages = res.get("messages", []) if isinstance(res, Mapping) else []
+    if messages:
+        last_msg = messages[-1]
+        if hasattr(last_msg, "content"):
+            return str(last_msg.content)
+        if isinstance(last_msg, dict):
+            return str(last_msg.get("content", ""))
+        if isinstance(last_msg, tuple) and len(last_msg) >= 2:
+            return str(last_msg[1])
+        return str(last_msg)
+    return "No response generated."
 
 
 class RefinementTriggerRequest(BaseModel):
@@ -418,15 +473,15 @@ async def query_agent(  # type: ignore[no-untyped-def]
         import asyncio as _asyncio
 
         _GRAPH_TIMEOUT_SECONDS = float(os.environ.get("GRAPH_TIMEOUT_SECONDS", "240"))
+        invoke_config = _build_invoke_config(
+            request.app.state.graph, effective_thread_id
+        )
         logger.debug("Invoking Graph with prompt '%s'", req.prompt)
         try:
             res = await _asyncio.wait_for(
                 request.app.state.graph.ainvoke(
                     {"messages": [("user", req.prompt)], "user_id": principal.user_id},
-                    {
-                        "recursion_limit": 100,
-                        "configurable": {"thread_id": effective_thread_id},
-                    },
+                    invoke_config,
                 ),
                 timeout=_GRAPH_TIMEOUT_SECONDS,
             )
@@ -449,19 +504,7 @@ async def query_agent(  # type: ignore[no-untyped-def]
         # Extract the final response.  When the guardrail node blocks, the graph
         # terminates early via END without adding an AI message — the last message
         # is the user input.  In that case we surface the guardrail reason instead.
-        messages = res.get("messages", []) if res else []
-        if messages:
-            last_msg = messages[-1]
-            if hasattr(last_msg, "content"):
-                final_response_text = str(last_msg.content)
-            elif isinstance(last_msg, dict):
-                final_response_text = str(last_msg.get("content", ""))
-            elif isinstance(last_msg, tuple) and len(last_msg) >= 2:
-                final_response_text = str(last_msg[1])
-            else:
-                final_response_text = str(last_msg)
-        else:
-            final_response_text = "No response generated."
+        final_response_text = _extract_final_response_text(res)
 
         # If the guardrail blocked the request, return a safe user-facing message.
         if res and res.get("guardrail_blocked"):
@@ -526,7 +569,147 @@ _PENDING_APPROVAL_FIELDS: tuple[str, ...] = (
     "ctrl_id",
     "ftra_result",
 )
-_REDACTED_DEFER_KEYS: frozenset[str] = frozenset({"deferred_id", "defer_id"})
+_REDACTED_DEFER_KEYS: frozenset[str] = frozenset(
+    {"deferred_id", "defer_id", "deferred_ids", "deferred_step_ids"}
+)
+
+
+def _validate_resume_checkpoint(snapshot: Any, asserted_user_id: str | None) -> str:
+    """Validate that ``snapshot`` exists, carries a bound principal owner, and has a pending interrupt."""
+    if snapshot is None or not snapshot.values:
+        raise HTTPException(status_code=404, detail="Thread checkpoint not found")
+    owner = (
+        snapshot.values.get("user_id") if isinstance(snapshot.values, Mapping) else None
+    )
+    if not isinstance(owner, str) or not owner.strip():
+        raise HTTPException(
+            status_code=403, detail="Checkpoint has no bound principal owner"
+        )
+    owner = owner.strip()
+    if asserted_user_id is not None and asserted_user_id != owner:
+        raise HTTPException(
+            status_code=403, detail="user_id does not match thread owner"
+        )
+    interrupt_payloads = [
+        interrupt_obj
+        for task in (snapshot.tasks or [])
+        for interrupt_obj in (getattr(task, "interrupts", None) or [])
+    ]
+    if not snapshot.next or not interrupt_payloads:
+        raise HTTPException(
+            status_code=409, detail="Thread has no pending approval interrupt"
+        )
+    return owner
+
+
+@app.post("/agent/resume", response_model=QueryResponse)
+async def resume_agent(  # type: ignore[no-untyped-def]
+    req: AgentResumeRequest,
+    request: Request,
+    _auth: CallerCredentialKind = Depends(require_service_api_key),
+):
+    """Resume a HITL-interrupted advisor thread after compliance-bridge escalation.
+
+    Service-only (:func:`require_service_api_key`): end-user OIDC JWTs are never
+    accepted as Bearer credentials on this route. Verifies checkpoint existence,
+    non-empty principal ownership, optional ``user_id`` / ``X-CAGE-User-Token``
+    match, reserved-prefix thread ownership, and a live pending interrupt before
+    invoking ``Command(resume=...)``.
+    """
+    import asyncio as _asyncio
+
+    graph = request.app.state.graph
+    try:
+        snapshot = await graph.aget_state(
+            {"configurable": {"thread_id": req.thread_id}}
+        )
+        owner = _validate_resume_checkpoint(snapshot, req.user_id)
+        user_tok = _extract_user_oidc_token(request)
+        verified_principal = False
+        if user_tok is not None:
+            verified_identity = verify_user_oidc_token(user_tok)
+            if verified_identity.user_id != owner:
+                raise HTTPException(
+                    status_code=403,
+                    detail="Authenticated principal does not match thread owner",
+                )
+            verified_principal = True
+        await require_thread_owner(graph, req.thread_id, owner)
+    except HTTPException:
+        raise
+    except PermissionError as exc:
+        raise HTTPException(status_code=403, detail=str(exc)) from exc
+    except CheckpointDurabilityError as exc:
+        logger.error(
+            "Checkpoint store unavailable while preparing thread resume: %s", exc
+        )
+        raise HTTPException(
+            status_code=503,
+            detail={"error": "checkpoint_store_unavailable", "detail": str(exc)},
+        ) from exc
+
+    token = user_context.set(owner)
+    verified_token = principal_verified_context.set(verified_principal)
+    try:
+        current_span = trace.get_current_span()
+        trace_id = None
+        if current_span and current_span.is_recording():
+            current_span.set_attribute(
+                SPAN_ATTR_CAGE_PRINCIPAL_VERIFIED, verified_principal
+            )
+            if not req.thread_id.startswith(ADVISOR_DEFAULT_THREAD_PREFIX):
+                current_span.set_attribute(SPAN_ATTR_THREAD_ID, req.thread_id)
+            current_span.set_attribute(OBSERVATION_TYPE, "generation")
+            current_span.set_attribute("gen_ai.operation.name", "resume")
+            ctx = current_span.get_span_context()
+            if ctx.trace_flags.sampled:
+                trace_id = f"{ctx.trace_id:032x}"
+
+        invoke_config = _build_invoke_config(graph, req.thread_id)
+        resume_payload = req.model_dump(
+            exclude={"thread_id", "user_id"}, exclude_none=True
+        )
+        _GRAPH_TIMEOUT_SECONDS = float(os.environ.get("GRAPH_TIMEOUT_SECONDS", "240"))
+        try:
+            res = await _asyncio.wait_for(
+                graph.ainvoke(Command(resume=resume_payload), invoke_config),
+                timeout=_GRAPH_TIMEOUT_SECONDS,
+            )
+        except _asyncio.TimeoutError:
+            logger.error(
+                "graph.ainvoke resume exceeded %.0fs deadline for thread %r",
+                _GRAPH_TIMEOUT_SECONDS,
+                req.thread_id,
+            )
+            raise HTTPException(
+                status_code=504,
+                detail=(
+                    f"The governance engine did not respond within "
+                    f"{int(_GRAPH_TIMEOUT_SECONDS)} seconds while resuming the thread."
+                ),
+            )
+
+        final_response_text = _extract_final_response_text(res)
+        if current_span and current_span.is_recording():
+            current_span.set_attribute(
+                SPAN_ATTR_CONTENT_OUTPUT_LENGTH, len(final_response_text)
+            )
+        return {"response": final_response_text, "trace_id": trace_id}
+    except HTTPException:
+        raise
+    except CheckpointDurabilityError as exc:
+        logger.error("Checkpoint store unavailable during thread resume: %s", exc)
+        raise HTTPException(
+            status_code=503,
+            detail={"error": "checkpoint_store_unavailable", "detail": str(exc)},
+        ) from exc
+    except Exception as exc:
+        logger.error("Error resuming agent graph: %s", exc)
+        traceback.print_exc()
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
+    finally:
+        principal_verified_context.reset(verified_token)
+        user_context.reset(token)
 
 
 def _without_deferred_ids(value: Any) -> Any:

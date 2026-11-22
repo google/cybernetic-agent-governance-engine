@@ -243,6 +243,12 @@
         "null"
       ]
     },
+    "deferred_step_ids": {
+      "type": [
+        "array",
+        "null"
+      ]
+    },
     "agent_id": {
       "type": "string"
     },

@@ -36,7 +36,7 @@ from .exceptions import (
 from .jwks import JwksCache, JwksKeyResolver
 from .transport import create_mtls_transport
 
-__version__ = "0.4.0"
+__version__ = "0.4.1"
 
 __all__ = [
     "CageClient",

@@ -747,7 +747,14 @@ async def test_substring_steps_never_reach_the_gateway_or_the_denial_budget(
         }
     )
 
-    assert skipped == {"safety_status": "SKIPPED", "routing_verdict_cache": None}
+    assert skipped == {
+        "safety_status": "SKIPPED",
+        "routing_verdict_cache": None,
+        "deferred_id": None,
+        "deferred_step_ids": None,
+        "approval_decision": None,
+        "hitl_reference_quote": None,
+    }
     assert approved["safety_status"] == "APPROVED"
     assert approved["consecutive_denials"] == 0
     assert _symbols(seen) == ["AAA"]

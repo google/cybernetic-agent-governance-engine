@@ -341,6 +341,8 @@ async def governed_trader_node(state, *, subgraph):  # type: ignore[no-untyped-d
         ),  # TOCTOU: re-hydration
         "hitl_reference_quote": state.get("hitl_reference_quote"),
         "deferred_id": state.get("deferred_id"),
+        "deferred_step_ids": state.get("deferred_step_ids"),
+        "approval_required": bool(state.get("approval_required", False)),
         "approval_decision": state.get("approval_decision"),
     }
 
@@ -353,6 +355,10 @@ async def governed_trader_node(state, *, subgraph):  # type: ignore[no-untyped-d
     }
     if "deferred_id" in result:
         out["deferred_id"] = result["deferred_id"]
+    if "deferred_step_ids" in result:
+        out["deferred_step_ids"] = result["deferred_step_ids"]
+    if "approval_required" in result:
+        out["approval_required"] = result["approval_required"]
     if "approval_decision" in result:
         out["approval_decision"] = result["approval_decision"]
     if "hitl_reference_quote" in result:

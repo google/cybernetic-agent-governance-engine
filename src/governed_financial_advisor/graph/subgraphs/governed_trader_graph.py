@@ -98,6 +98,8 @@ class GovernedTraderState(TypedDict):
     evaluation_result: str
     # Approval fields (populated by gateway_tool_guard and approval_node)
     deferred_id: str | None  # gateway-held approval token (REQUIRE_APPROVAL)
+    deferred_step_ids: list[str | None] | None
+    approval_required: bool
     approval_decision: dict[str, Any] | None
     hitl_expires_at: str | None  # TTL expiration timestamp for pending state
     # TOCTOU Remediation — Phase 2 (Slippage Bounds + TTL)
@@ -356,6 +358,136 @@ def route_after_tools(state: GovernedTraderState) -> str:
 # ---------------------------------------------------------------------------
 
 
+def _resolve_deferred_step_tickers(state: GovernedTraderState) -> list[str]:
+    """Return unique normalized trade symbols for deferred steps in ``deferred_step_ids``."""
+    raw_step_ids = state.get("deferred_step_ids")
+    if not isinstance(raw_step_ids, list) or not any(
+        isinstance(item, str) and item.strip() for item in raw_step_ids
+    ):
+        return []
+
+    from src.governed_financial_advisor.graph.nodes.trade_contract import (
+        extract_trade_steps,
+    )
+
+    plan_raw = state.get("execution_plan", "")
+    plan_dict: dict[str, Any] = {}
+    if isinstance(plan_raw, dict):
+        plan_dict = plan_raw
+    elif isinstance(plan_raw, str) and plan_raw.strip():
+        try:
+            loaded = json.loads(plan_raw)
+            if isinstance(loaded, dict):
+                plan_dict = loaded
+        except json.JSONDecodeError:
+            plan_dict = {}
+
+    try:
+        trade_steps = extract_trade_steps(plan_dict)
+    except Exception:
+        return []
+
+    tickers: list[str] = []
+    for idx, step_id in enumerate(raw_step_ids):
+        if not (isinstance(step_id, str) and step_id.strip()):
+            continue
+        if idx >= len(trade_steps):
+            continue
+        sym = normalize_ticker(trade_steps[idx].get("symbol"))
+        if sym is not None and sym not in tickers:
+            tickers.append(sym)
+    return tickers
+
+
+async def _rehydrate_multiple_tickers(
+    state: GovernedTraderState,
+    tickers: list[str],
+    span: Any,
+) -> dict[str, Any]:
+    """Verify check-time and live quotes across every deferred trade symbol in a multi-step plan."""
+    step_quotes: list[dict[str, Any]] = []
+    worst: dict[str, Any] | None = None
+
+    for sym in tickers:
+        _, stale_price, _ = extract_reference_quote_from_state(
+            {**state, "data_analyst_ticker": sym},
+            preferred_ticker=sym,
+        )
+        if stale_price is None:
+            span.set_attribute("toctou.rehydration.status", "SKIPPED")
+            span.set_attribute("toctou.rehydration.reason", "missing_reference_price")
+            span.set_attribute("toctou.rehydration.ticker", sym)
+            return {
+                "rehydration_result": {
+                    "status": "SKIPPED",
+                    "reason": "missing_reference_price",
+                    "ticker": sym,
+                    "fresh_price": None,
+                    "stale_price": None,
+                    "drift_pct": None,
+                    "timestamp_utc": datetime.now(timezone.utc).isoformat(),
+                }
+            }
+        try:
+            fresh_price = await fetch_live_yfinance_price(sym)
+        except Exception as exc:
+            span.set_attribute("toctou.rehydration.status", "SKIPPED")
+            span.set_attribute("toctou.rehydration.reason", "yfinance_error")
+            span.set_attribute("toctou.rehydration.ticker", sym)
+            return {
+                "rehydration_result": {
+                    "status": "SKIPPED",
+                    "reason": f"yfinance_error: {exc}",
+                    "ticker": sym,
+                    "fresh_price": None,
+                    "stale_price": stale_price,
+                    "drift_pct": None,
+                    "timestamp_utc": datetime.now(timezone.utc).isoformat(),
+                }
+            }
+        if fresh_price is None:
+            span.set_attribute("toctou.rehydration.status", "SKIPPED")
+            span.set_attribute("toctou.rehydration.reason", "missing_fresh_price")
+            span.set_attribute("toctou.rehydration.ticker", sym)
+            return {
+                "rehydration_result": {
+                    "status": "SKIPPED",
+                    "reason": "missing_fresh_price",
+                    "ticker": sym,
+                    "fresh_price": None,
+                    "stale_price": stale_price,
+                    "drift_pct": None,
+                    "timestamp_utc": datetime.now(timezone.utc).isoformat(),
+                }
+            }
+
+        drift_pct = abs(fresh_price - stale_price) / stale_price * 100.0
+        entry = {
+            "ticker": sym,
+            "fresh_price": fresh_price,
+            "stale_price": stale_price,
+            "drift_pct": drift_pct,
+        }
+        step_quotes.append(entry)
+        if worst is None or drift_pct > worst["drift_pct"]:
+            worst = entry
+
+    assert worst is not None  # tickers has >= 2 items
+    span.set_attribute("toctou.rehydration.status", "OK")
+    span.set_attribute("toctou.rehydration.ticker", worst["ticker"])
+    span.set_attribute("toctou.rehydration.stale_price", worst["stale_price"])
+    span.set_attribute("toctou.rehydration.fresh_price", worst["fresh_price"])
+    span.set_attribute("toctou.rehydration.drift_pct", worst["drift_pct"])
+    return {
+        "rehydration_result": {
+            "status": "OK",
+            **worst,
+            "step_quotes": step_quotes,
+            "timestamp_utc": datetime.now(timezone.utc).isoformat(),
+        }
+    }
+
+
 @side_effect_node(kind="api_call", external_system="yfinance")
 async def post_hitl_rehydrate_node(state: GovernedTraderState) -> dict[str, Any]:
     """TOCTOU Remediation — State Re-hydration Node.
@@ -383,10 +515,18 @@ async def post_hitl_rehydrate_node(state: GovernedTraderState) -> dict[str, Any]
         span.set_attribute(OBSERVATION_NAME, "hitl_rehydration")
         span.set_attribute(OBSERVATION_TYPE, "span")
 
+        deferred_tickers = _resolve_deferred_step_tickers(state)
+        if len(deferred_tickers) > 1:
+            return await _rehydrate_multiple_tickers(state, deferred_tickers, span)
+
         # 1. Resolve validated ticker + check-time reference price from state,
         #    hitl_reference_quote, ExecutionPlan (nested PlanStep.parameters or
         #    flat step), pending tool call, or get_market_data message history.
-        ticker = normalize_ticker(state.get("data_analyst_ticker"))
+        ticker = (
+            deferred_tickers[0]
+            if len(deferred_tickers) == 1
+            else normalize_ticker(state.get("data_analyst_ticker"))
+        )
         plan_ticker, _ = extract_plan_ticker_and_price(
             state.get("execution_plan", ""),
             preferred_ticker=ticker,
@@ -657,6 +797,8 @@ def drift_blocked_node(state: GovernedTraderState) -> dict[str, Any]:
         "messages": [("ai", message)],
         "post_hitl_safety_status": "BLOCKED",
         "deferred_id": None,
+        "deferred_step_ids": None,
+        "approval_required": False,
         "approval_decision": None,
         "hitl_reference_quote": None,
     }
@@ -665,8 +807,12 @@ def drift_blocked_node(state: GovernedTraderState) -> dict[str, Any]:
 def route_entry(state: GovernedTraderState) -> str:
     """Route on subgraph entry: run post-HITL TOCTOU gate when entering with a resolved approval."""
     decision = state.get("approval_decision")
+    step_ids = state.get("deferred_step_ids")
+    has_step_ids = isinstance(step_ids, list) and any(
+        isinstance(item, str) and item.strip() for item in step_ids
+    )
     if (
-        state.get("deferred_id")
+        (state.get("deferred_id") or has_step_ids)
         and isinstance(decision, dict)
         and decision.get("approved") is True
     ):

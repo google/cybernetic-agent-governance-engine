@@ -305,7 +305,7 @@ async def _run_with_mock_handler(
 
 def test_standalone_exports() -> None:
     """Verify all top-level symbols export correctly."""
-    assert cage_client.__version__ == "0.4.0"
+    assert cage_client.__version__ == "0.4.1"
     assert cage_client.CageClient is CageClient
     assert cage_client.GovernanceEnvelope is GovernanceEnvelope
     assert cage_client.JwksKeyResolver is JwksKeyResolver
@@ -355,7 +355,7 @@ def test_pyproject_declares_cryptography_and_docs_describe_envelope_verification
     pyproject_data = tomllib.loads(
         (subpackage_root / "pyproject.toml").read_text(encoding="utf-8")
     )
-    assert pyproject_data["project"]["version"] == "0.4.0"
+    assert pyproject_data["project"]["version"] == "0.4.1"
     runtime_deps = pyproject_data["project"]["dependencies"]
     assert any(dep.startswith("cryptography>=41.0.0") for dep in runtime_deps), (
         f"cryptography>=41.0.0 must be declared in pyproject.toml: {runtime_deps}"
@@ -1103,12 +1103,20 @@ def test_standalone_jwks_ttl_staleness_304_rotation_and_flood_cooldown() -> None
                 await client.validate_action("query_resource", params, "agent-01")
             assert jwks_state["hits"] == 3
 
-            # 4. HTTP 304 is explicitly rejected fail-closed
+            # Immediate retry within jwks_min_refresh_interval_s=10s is gated by failed-refresh cooldown
+            now_mono[0] = 1309.0
+            with pytest.raises(RoutingSealVerificationError, match="cooldown active"):
+                await client.validate_action("query_resource", params, "agent-01")
+            assert jwks_state["hits"] == 3
+
+            # 4. HTTP 304 after cooldown expiry is explicitly rejected fail-closed
+            now_mono[0] = 1316.0
             jwks_state["status"] = 304
             with pytest.raises(RoutingSealVerificationError, match="304"):
                 await client.validate_action("query_resource", params, "agent-01")
 
-            # 5. Rotation to kid-v2 atomically evicts kid-v1
+            # 5. Rotation to kid-v2 after cooldown expiry atomically evicts kid-v1
+            now_mono[0] = 1327.0
             jwks_state["status"] = 200
             jwks_state["body"] = {"keys": [jwk_v2]}
             jwks_state["envelope"] = _sign_envelope_dict(
@@ -1121,7 +1129,7 @@ def test_standalone_jwks_ttl_staleness_304_rotation_and_flood_cooldown() -> None
             hits_after_v2 = jwks_state["hits"]
 
             # Forged unknown-kid burst within jwks_min_refresh_interval_s=10s hits JWKS at most ONCE!
-            now_mono[0] = 1306.0
+            now_mono[0] = 1328.0
             for idx in range(5):
                 forged = dict(jwks_state["envelope"])
                 forged["signature"] = {
@@ -1163,3 +1171,161 @@ def test_standalone_enforcing_posture_forbids_verification_opt_out(
             gateway_url="https://cage-standalone.example.test",
             **opt_out_kwargs,
         )
+
+
+def test_standalone_jwks_http_200_empty_or_malformed_evicts_cached_keys_immediately() -> (
+    None
+):
+    """SDK-02: HTTP 200 {"keys": []} or malformed 200 JWKS during ttl_s <= age < max_staleness_s evicts immediately."""
+    priv_v1, _, jwk_v1 = _make_ec_keypair(kid="kid-revoke-01")
+    params = {"limit": 10}
+    signed_env = _sign_envelope_dict(
+        _build_unsigned_envelope(parameters=params),
+        priv_key=priv_v1,
+        kid="kid-revoke-01",
+        algorithm="ES256",
+    )
+
+    for label, bad_200 in (
+        ("empty_keys", httpx.Response(200, json={"keys": []})),
+        ("malformed_json", httpx.Response(200, content=b"{not-json")),
+        ("missing_keys_field", httpx.Response(200, json={"status": "revoked"})),
+    ):
+        now_mono = [1000.0]
+        state: dict[str, Any] = {
+            "jwks_resp": httpx.Response(200, json={"keys": [jwk_v1]}),
+            "hits": 0,
+        }
+
+        def handler(req: httpx.Request, st: dict[str, Any] = state) -> httpx.Response:
+            if req.url.path == "/governance/.well-known/jwks.json":
+                st["hits"] += 1
+                return st["jwks_resp"]
+            return httpx.Response(200, json=signed_env)
+
+        async def _check(
+            st: dict[str, Any] = state,
+            bad: httpx.Response = bad_200,
+            clock_box: list[float] = now_mono,
+            case_label: str = label,
+        ) -> None:
+            client = CageClient(
+                gateway_url="https://cage-standalone.example.test",
+                jwks_ttl_s=300.0,
+                max_jwks_staleness_s=3600.0,
+                jwks_min_refresh_interval_s=5.0,
+                jwks_clock=lambda: clock_box[0],
+            )
+            await client._client.aclose()
+            client._client = httpx.AsyncClient(
+                transport=httpx.MockTransport(handler),
+                base_url="https://cage-standalone.example.test",
+            )
+            try:
+                # Warm cache at t=1000
+                await client.validate_action("query_resource", params, "agent-01")
+                assert st["hits"] == 1
+
+                # At t=1350 (ttl_s=300 <= age=350 < max_staleness_s=3600), authoritative HTTP 200
+                # revocation/invalid JWKS MUST evict immediately — NEVER serve stale key!
+                clock_box[0] = 1350.0
+                st["jwks_resp"] = bad
+                with pytest.raises(RoutingSealVerificationError) as exc_info:
+                    await client.validate_action("query_resource", params, "agent-01")
+                assert st["hits"] == 2, case_label
+                assert "Authoritative JWKS rejection" in str(exc_info.value)
+                assert client._jwks_resolver is not None
+                assert client._jwks_resolver._keys == {}
+                assert client._jwks_resolver._fetched_at is None
+
+                # Even if a transient 503 follows after cooldown, the evicted key is GONE!
+                clock_box[0] = 1360.0
+                st["jwks_resp"] = httpx.Response(503)
+                with pytest.raises(
+                    RoutingSealVerificationError, match="no fresh cached"
+                ):
+                    await client.validate_action("query_resource", params, "agent-01")
+                assert st["hits"] == 3
+            finally:
+                await client.aclose()
+
+        asyncio.run(_check())
+
+
+def test_standalone_jwks_outage_concurrent_callers_bounded_by_cooldown() -> None:
+    """SDK-02: N=20 concurrent callers during 503/timeout outage make at most 1 HTTP call per min_refresh_interval_s."""
+    priv_v1, _, jwk_v1 = _make_ec_keypair(kid="kid-outage-01")
+    params = {"limit": 10}
+    signed_env = _sign_envelope_dict(
+        _build_unsigned_envelope(parameters=params),
+        priv_key=priv_v1,
+        kid="kid-outage-01",
+        algorithm="ES256",
+    )
+
+    for mode in ("503_warm", "timeout_warm", "503_cold"):
+        now_mono = [1000.0]
+        hits = [0]
+
+        async def _async_handler(
+            req: httpx.Request,
+            cur_mode: str = mode,
+            hit_box: list[int] = hits,
+            clock_box: list[float] = now_mono,
+        ) -> httpx.Response:
+            if req.url.path == "/governance/.well-known/jwks.json":
+                hit_box[0] += 1
+                await asyncio.sleep(0.005)
+                if cur_mode.endswith("_warm") and clock_box[0] < 1100.0:
+                    return httpx.Response(200, json={"keys": [jwk_v1]})
+                if cur_mode.startswith("timeout"):
+                    raise httpx.ReadTimeout("JWKS endpoint timed out", request=req)
+                return httpx.Response(503, json={"detail": "unavailable"})
+            return httpx.Response(200, json=signed_env)
+
+        async def _run_burst(
+            cur_mode: str = mode,
+            hit_box: list[int] = hits,
+            clock_box: list[float] = now_mono,
+        ) -> None:
+            client = CageClient(
+                gateway_url="https://cage-standalone.example.test",
+                jwks_ttl_s=300.0,
+                max_jwks_staleness_s=3600.0,
+                jwks_min_refresh_interval_s=10.0,
+                jwks_clock=lambda: clock_box[0],
+            )
+            await client._client.aclose()
+            client._client = httpx.AsyncClient(
+                transport=httpx.MockTransport(_async_handler),
+                base_url="https://cage-standalone.example.test",
+            )
+            try:
+                if cur_mode.endswith("_warm"):
+                    await client.validate_action("query_resource", params, "agent-01")
+                    assert hit_box[0] == 1
+                    clock_box[0] = 1400.0  # past ttl_s=300, within max_staleness_s=3600
+
+                before = hit_box[0]
+                outcomes = await asyncio.gather(
+                    *(
+                        client.validate_action("query_resource", params, "agent-01")
+                        for _ in range(20)
+                    ),
+                    return_exceptions=True,
+                )
+                assert hit_box[0] - before == 1, (
+                    f"{cur_mode}: expected exactly 1 JWKS HTTP call for N=20 burst, got {hit_box[0] - before}"
+                )
+                if cur_mode.endswith("_warm"):
+                    assert all(isinstance(o, GovernanceEnvelope) for o in outcomes), (
+                        outcomes
+                    )
+                else:
+                    assert all(
+                        isinstance(o, RoutingSealVerificationError) for o in outcomes
+                    ), outcomes
+            finally:
+                await client.aclose()
+
+        asyncio.run(_run_burst())
