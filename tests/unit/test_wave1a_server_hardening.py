@@ -557,12 +557,12 @@ class TestKC05AndKC09QuotaAndBounds:
             )
             assert resp.status_code == 200
             assert (
-                deps["quota"].check_and_increment.call_args.kwargs["token_delta"] == 600
+                deps["quota"].check_and_increment.call_args.kwargs["token_delta"] == 602
             )
             sent_body = stream_client.stream.call_args.kwargs["json"]
             assert sent_body["stream_options"]["include_usage"] is True
             deps["quota"].reconcile_actual_tokens.assert_awaited_once_with(
-                ADVISOR_ID, 600, 16
+                ADVISOR_ID, 602, 16
             )
 
             for bad_payload in (

@@ -82,44 +82,106 @@ logger = logging.getLogger("Gateway.Governance.TokenQuotaProxy")
 # and the increment.
 
 # check_and_increment: atomically increment step and token counters.
+# Supports single-scope (KEYS[1..2]) or dual-scope session + workload ceiling
+# (KEYS[1..4]) in a single atomic Lua execution so neither counter stays
+# incremented when either limit is exceeded.
 # Returns {allowed, steps, tokens, reason} as a 4-element list.
 _LUA_CHECK_AND_INCREMENT = """
 -- KEYS[1] = steps_key, KEYS[2] = tokens_key
+-- Optional: KEYS[3] = workload_steps_key, KEYS[4] = workload_tokens_key
 -- ARGV[1] = step_quota_max, ARGV[2] = token_quota_max
 -- ARGV[3] = token_delta, ARGV[4] = ttl_seconds
+-- Optional: ARGV[5] = workload_step_quota_max, ARGV[6] = workload_token_quota_max
+local delta  = tonumber(ARGV[3])
 local steps  = redis.call('INCR', KEYS[1])
-local tokens = redis.call('INCRBY', KEYS[2], ARGV[3])
+local tokens = redis.call('INCRBY', KEYS[2], delta)
 redis.call('EXPIRE', KEYS[1], ARGV[4])
 redis.call('EXPIRE', KEYS[2], ARGV[4])
 if steps > tonumber(ARGV[1]) then
     redis.call('DECR', KEYS[1])
-    redis.call('DECRBY', KEYS[2], ARGV[3])
-    return {0, steps - 1, tokens - tonumber(ARGV[3]), 'step_count'}
+    redis.call('DECRBY', KEYS[2], delta)
+    return {0, steps - 1, tokens - delta, 'step_count'}
 end
 if tokens > tonumber(ARGV[2]) then
     redis.call('DECR', KEYS[1])
-    redis.call('DECRBY', KEYS[2], ARGV[3])
-    return {0, steps - 1, tokens - tonumber(ARGV[3]), 'token_count'}
+    redis.call('DECRBY', KEYS[2], delta)
+    return {0, steps - 1, tokens - delta, 'token_count'}
+end
+if #KEYS >= 4 then
+    local w_steps  = redis.call('INCR', KEYS[3])
+    local w_tokens = redis.call('INCRBY', KEYS[4], delta)
+    redis.call('EXPIRE', KEYS[3], ARGV[4])
+    redis.call('EXPIRE', KEYS[4], ARGV[4])
+    if w_steps > tonumber(ARGV[5]) then
+        redis.call('DECR', KEYS[1])
+        redis.call('DECRBY', KEYS[2], delta)
+        redis.call('DECR', KEYS[3])
+        redis.call('DECRBY', KEYS[4], delta)
+        return {0, w_steps - 1, w_tokens - delta, 'workload_step_count'}
+    end
+    if w_tokens > tonumber(ARGV[6]) then
+        redis.call('DECR', KEYS[1])
+        redis.call('DECRBY', KEYS[2], delta)
+        redis.call('DECR', KEYS[3])
+        redis.call('DECRBY', KEYS[4], delta)
+        return {0, w_steps - 1, w_tokens - delta, 'workload_token_count'}
+    end
 end
 return {1, steps, tokens, ''}
 """
 
-# rollback: atomically decrement both counters after a downstream failure.
+# rollback: atomically decrement session (and optional workload) counters after a downstream failure.
 _LUA_ROLLBACK = """
 -- KEYS[1] = steps_key, KEYS[2] = tokens_key
+-- Optional: KEYS[3] = workload_steps_key, KEYS[4] = workload_tokens_key
 -- ARGV[1] = reserved_tokens
-redis.call('DECR', KEYS[1])
-redis.call('DECRBY', KEYS[2], ARGV[1])
+local s = redis.call('DECR', KEYS[1])
+if s <= 0 then
+    redis.call('DEL', KEYS[1])
+end
+local t = redis.call('DECRBY', KEYS[2], ARGV[1])
+if t <= 0 then
+    redis.call('DEL', KEYS[2])
+end
+if #KEYS >= 4 then
+    local ws = redis.call('DECR', KEYS[3])
+    if ws <= 0 then
+        redis.call('DEL', KEYS[3])
+    end
+    local wt = redis.call('DECRBY', KEYS[4], ARGV[1])
+    if wt <= 0 then
+        redis.call('DEL', KEYS[4])
+    end
+end
 return 1
 """
 
-# reconcile: adjust token counter by (actual - reserved) after vLLM responds.
+# reconcile: adjust token counter(s) by (actual - reserved) after vLLM responds.
 _LUA_RECONCILE = """
--- KEYS[1] = tokens_key
+-- KEYS[1] = tokens_key [, KEYS[2] = workload_tokens_key]
 -- ARGV[1] = reserved_tokens, ARGV[2] = actual_tokens_used
 local delta = tonumber(ARGV[2]) - tonumber(ARGV[1])
 if delta ~= 0 then
-    redis.call('INCRBY', KEYS[1], delta)
+    if redis.call('EXISTS', KEYS[1]) == 1 then
+        local t = redis.call('INCRBY', KEYS[1], delta)
+        if t < 0 then
+            local ttl = redis.call('TTL', KEYS[1])
+            redis.call('SET', KEYS[1], 0)
+            if ttl > 0 then
+                redis.call('EXPIRE', KEYS[1], ttl)
+            end
+        end
+    end
+    if #KEYS >= 2 and redis.call('EXISTS', KEYS[2]) == 1 then
+        local wt = redis.call('INCRBY', KEYS[2], delta)
+        if wt < 0 then
+            local wttl = redis.call('TTL', KEYS[2])
+            redis.call('SET', KEYS[2], 0)
+            if wttl > 0 then
+                redis.call('EXPIRE', KEYS[2], wttl)
+            end
+        end
+    end
 end
 return 1
 """
@@ -211,11 +273,23 @@ class TokenQuotaProxy:
         step_quota_max: int = 12,
         token_quota_max: int = 100_000,
         session_ttl: int = 3600,
+        workload_step_quota_max: int | None = None,
+        workload_token_quota_max: int | None = None,
     ) -> None:
         self._redis = redis_client
         self._step_quota_max = step_quota_max
         self._token_quota_max = token_quota_max
         self._session_ttl = session_ttl
+        self._workload_step_quota_max = (
+            workload_step_quota_max
+            if workload_step_quota_max is not None
+            else max(step_quota_max * 100, 1200)
+        )
+        self._workload_token_quota_max = (
+            workload_token_quota_max
+            if workload_token_quota_max is not None
+            else max(token_quota_max * 100, 10_000_000)
+        )
         # SHA hashes loaded at init time via _load_scripts()
         self._sha_check: str | None = None
         self._sha_rollback: str | None = None
@@ -226,10 +300,12 @@ class TokenQuotaProxy:
         """Construct from environment variables.
 
         Environment variables:
-            REDIS_URL          — Redis connection URL (default: redis://localhost:6379)
-            STEP_QUOTA_MAX     — Hard step limit per session (default: 12)
-            TOKEN_QUOTA_MAX    — Hard token limit per session (default: 100000)
-            SESSION_TTL_SECONDS — Session TTL in seconds (default: 3600)
+            REDIS_URL                — Redis connection URL (default: redis://localhost:6379)
+            STEP_QUOTA_MAX           — Hard step limit per session (default: 12)
+            TOKEN_QUOTA_MAX          — Hard token limit per session (default: 100000)
+            SESSION_TTL_SECONDS      — Session TTL in seconds (default: 3600)
+            WORKLOAD_STEP_QUOTA_MAX  — Optional pod-wide workload step ceiling
+            WORKLOAD_TOKEN_QUOTA_MAX — Optional pod-wide workload token ceiling
 
         Raises:
             RuntimeError: If redis-py is not installed.
@@ -240,6 +316,14 @@ class TokenQuotaProxy:
         step_max = int(os.environ.get("STEP_QUOTA_MAX", "12"))
         token_max = int(os.environ.get("TOKEN_QUOTA_MAX", "100000"))
         ttl = int(os.environ.get("SESSION_TTL_SECONDS", "3600"))
+        raw_w_step = os.environ.get("WORKLOAD_STEP_QUOTA_MAX")
+        raw_w_token = os.environ.get("WORKLOAD_TOKEN_QUOTA_MAX")
+        workload_step_max = (
+            int(raw_w_step) if raw_w_step and raw_w_step.strip() else None
+        )
+        workload_token_max = (
+            int(raw_w_token) if raw_w_token and raw_w_token.strip() else None
+        )
 
         client = build_async_redis(redis_url, socket_timeout=3.0)
         return cls(
@@ -247,6 +331,8 @@ class TokenQuotaProxy:
             step_quota_max=step_max,
             token_quota_max=token_max,
             session_ttl=ttl,
+            workload_step_quota_max=workload_step_max,
+            workload_token_quota_max=workload_token_max,
         )
 
     # ------------------------------------------------------------------
@@ -256,6 +342,10 @@ class TokenQuotaProxy:
     def _session_key(self, agent_id: str, suffix: str) -> str:
         """Build a namespaced Redis key for a session counter."""
         return f"quota:session:{agent_id}:{suffix}"
+
+    def _workload_key(self, workload_id: str, suffix: str) -> str:
+        """Build a namespaced Redis key for a pod-wide workload ceiling counter."""
+        return f"quota:workload:{workload_id}:{suffix}"
 
     @staticmethod
     def _validate_non_negative_int(value: Any, name: str) -> int:
@@ -333,6 +423,8 @@ class TokenQuotaProxy:
         self,
         agent_id: str,
         token_delta: int = 0,
+        *,
+        workload_id: str | None = None,
     ) -> QuotaCheckResult:
         """Atomically check quota and increment counters if within limits.
 
@@ -343,25 +435,31 @@ class TokenQuotaProxy:
         request is blocked rather than allowed through.
 
         Args:
-            agent_id:    The agent UUID identifying this session.
-            token_delta: The number of tokens to reserve (from max_tokens
-                         in the request body).  Use 0 if unknown.
+            agent_id:    The session scope key (or agent UUID when unscoped).
+            token_delta: The number of tokens to reserve.  Use 0 if unknown.
+            workload_id: Optional pod-wide Linkerd SVID when ``agent_id`` is
+                         session-scoped; enforces the pod-wide workload safety
+                         ceiling atomically in the same Lua hop.
 
         Returns:
             QuotaCheckResult with allowed=True if within quota.
 
         Raises:
-            QuotaExceededError: If quota is exceeded OR Redis is unavailable.
+            QuotaExceededError: If token_delta is invalid OR Redis is unavailable.
         """
         steps_key = self._session_key(agent_id, "steps")
         tokens_key = self._session_key(agent_id, "tokens")
+        enforce_workload = bool(workload_id and workload_id != agent_id)
+        reported_agent_id = (
+            workload_id if (enforce_workload and workload_id is not None) else agent_id
+        )
         try:
             validated_delta = self._validate_non_negative_int(
                 token_delta, "token_delta"
             )
         except ValueError as exc:
             raise QuotaExceededError(
-                agent_id=agent_id,
+                agent_id=reported_agent_id,
                 reason="invalid_token_delta",
                 current_value=0,
                 quota_max=self._token_quota_max,
@@ -369,28 +467,47 @@ class TokenQuotaProxy:
             ) from exc
 
         try:
-            result = await self._evalsha_with_reload(
-                "check",
-                _LUA_CHECK_AND_INCREMENT,
-                2,  # numkeys
-                steps_key,
-                tokens_key,
-                str(self._step_quota_max),
-                str(self._token_quota_max),
-                str(validated_delta),
-                str(self._session_ttl),
-            )
+            if enforce_workload and workload_id is not None:
+                w_steps_key = self._workload_key(workload_id, "steps")
+                w_tokens_key = self._workload_key(workload_id, "tokens")
+                result = await self._evalsha_with_reload(
+                    "check",
+                    _LUA_CHECK_AND_INCREMENT,
+                    4,
+                    steps_key,
+                    tokens_key,
+                    w_steps_key,
+                    w_tokens_key,
+                    str(self._step_quota_max),
+                    str(self._token_quota_max),
+                    str(validated_delta),
+                    str(self._session_ttl),
+                    str(self._workload_step_quota_max),
+                    str(self._workload_token_quota_max),
+                )
+            else:
+                result = await self._evalsha_with_reload(
+                    "check",
+                    _LUA_CHECK_AND_INCREMENT,
+                    2,  # numkeys
+                    steps_key,
+                    tokens_key,
+                    str(self._step_quota_max),
+                    str(self._token_quota_max),
+                    str(validated_delta),
+                    str(self._session_ttl),
+                )
         except Exception as exc:
             # 'token' = LLM usage-token counts; logs agent id/counters/error only.
             # nosemgrep: python.lang.security.audit.logging.logger-credential-leak.python-logger-credential-disclosure
             logger.error(
                 "TokenQuotaProxy.check_and_increment: Redis error agent=%s err=%s "
                 "— failing CLOSED.",
-                agent_id,
+                reported_agent_id,
                 exc,
             )
             raise QuotaExceededError(
-                agent_id=agent_id,
+                agent_id=reported_agent_id,
                 reason="redis_unavailable",
                 current_value=0,
                 quota_max=self._step_quota_max,
@@ -403,13 +520,23 @@ class TokenQuotaProxy:
         tokens = int(result[2])
         reason = str(result[3]) if result[3] else None
 
+        is_workload_block = reason in ("workload_step_count", "workload_token_count")
+        effective_step_max = (
+            self._workload_step_quota_max if is_workload_block else self._step_quota_max
+        )
+        effective_token_max = (
+            self._workload_token_quota_max
+            if is_workload_block
+            else self._token_quota_max
+        )
+
         quota_result = QuotaCheckResult(
             allowed=allowed_flag == 1,
-            agent_id=agent_id,
+            agent_id=reported_agent_id,
             step_count=steps,
             accumulated_tokens=tokens,
-            step_quota_max=self._step_quota_max,
-            token_quota_max=self._token_quota_max,
+            step_quota_max=effective_step_max,
+            token_quota_max=effective_token_max,
             block_reason=reason,
             session_ttl=self._session_ttl,
         )
@@ -419,23 +546,23 @@ class TokenQuotaProxy:
             # nosemgrep: python.lang.security.audit.logging.logger-credential-leak.python-logger-credential-disclosure
             logger.info(
                 "TokenQuotaProxy: ALLOWED agent=%s steps=%d/%d tokens=%d/%d",
-                agent_id,
+                reported_agent_id,
                 steps,
-                self._step_quota_max,
+                effective_step_max,
                 tokens,
-                self._token_quota_max,
+                effective_token_max,
             )
         else:
             # 'token' = LLM usage-token counts; logs agent id/counters/error only.
             # nosemgrep: python.lang.security.audit.logging.logger-credential-leak.python-logger-credential-disclosure
             logger.warning(
                 "TokenQuotaProxy: BLOCKED agent=%s reason=%s steps=%d/%d tokens=%d/%d",
-                agent_id,
+                reported_agent_id,
                 reason,
                 steps,
-                self._step_quota_max,
+                effective_step_max,
                 tokens,
-                self._token_quota_max,
+                effective_token_max,
             )
 
         return quota_result
@@ -445,6 +572,8 @@ class TokenQuotaProxy:
         agent_id: str,
         reserved_tokens: int,
         actual_tokens_used: int,
+        *,
+        workload_id: str | None = None,
     ) -> None:
         """Correct token over-allocation after vLLM responds.
 
@@ -452,9 +581,10 @@ class TokenQuotaProxy:
         counter from the reserved amount to the actual tokens used.
 
         Args:
-            agent_id:          The agent UUID for this session.
-            reserved_tokens:   The token_delta passed to check_and_increment.
+            agent_id:           The session scope key (or agent UUID).
+            reserved_tokens:    The token_delta passed to check_and_increment.
             actual_tokens_used: The actual tokens consumed (from vLLM response).
+            workload_id:        Optional pod-wide Linkerd SVID when session-scoped.
         """
         reserved_valid = self._validate_non_negative_int(
             reserved_tokens, "reserved_tokens"
@@ -466,15 +596,28 @@ class TokenQuotaProxy:
             return  # No adjustment needed
 
         tokens_key = self._session_key(agent_id, "tokens")
+        enforce_workload = bool(workload_id and workload_id != agent_id)
         try:
-            await self._evalsha_with_reload(
-                "reconcile",
-                _LUA_RECONCILE,
-                1,  # numkeys
-                tokens_key,
-                str(reserved_valid),
-                str(actual_valid),
-            )
+            if enforce_workload and workload_id is not None:
+                w_tokens_key = self._workload_key(workload_id, "tokens")
+                await self._evalsha_with_reload(
+                    "reconcile",
+                    _LUA_RECONCILE,
+                    2,
+                    tokens_key,
+                    w_tokens_key,
+                    str(reserved_valid),
+                    str(actual_valid),
+                )
+            else:
+                await self._evalsha_with_reload(
+                    "reconcile",
+                    _LUA_RECONCILE,
+                    1,  # numkeys
+                    tokens_key,
+                    str(reserved_valid),
+                    str(actual_valid),
+                )
             delta = actual_tokens_used - reserved_tokens
             # 'token' = LLM usage-token counts; logs agent id/counters/error only.
             # nosemgrep: python.lang.security.audit.logging.logger-credential-leak.python-logger-credential-disclosure
@@ -500,6 +643,8 @@ class TokenQuotaProxy:
         self,
         agent_id: str,
         reserved_tokens: int,
+        *,
+        workload_id: str | None = None,
     ) -> None:
         """Atomically decrement counters after a downstream failure.
 
@@ -507,23 +652,39 @@ class TokenQuotaProxy:
         check_and_increment() already reserved quota.
 
         Args:
-            agent_id:        The agent UUID for this session.
+            agent_id:        The session scope key (or agent UUID).
             reserved_tokens: The token_delta that was reserved.
+            workload_id:     Optional pod-wide Linkerd SVID when session-scoped.
         """
         reserved_valid = self._validate_non_negative_int(
             reserved_tokens, "reserved_tokens"
         )
         steps_key = self._session_key(agent_id, "steps")
         tokens_key = self._session_key(agent_id, "tokens")
+        enforce_workload = bool(workload_id and workload_id != agent_id)
         try:
-            await self._evalsha_with_reload(
-                "rollback",
-                _LUA_ROLLBACK,
-                2,  # numkeys
-                steps_key,
-                tokens_key,
-                str(reserved_valid),
-            )
+            if enforce_workload and workload_id is not None:
+                w_steps_key = self._workload_key(workload_id, "steps")
+                w_tokens_key = self._workload_key(workload_id, "tokens")
+                await self._evalsha_with_reload(
+                    "rollback",
+                    _LUA_ROLLBACK,
+                    4,
+                    steps_key,
+                    tokens_key,
+                    w_steps_key,
+                    w_tokens_key,
+                    str(reserved_valid),
+                )
+            else:
+                await self._evalsha_with_reload(
+                    "rollback",
+                    _LUA_ROLLBACK,
+                    2,  # numkeys
+                    steps_key,
+                    tokens_key,
+                    str(reserved_valid),
+                )
             # 'token' = LLM usage-token counts; logs agent id/counters/error only.
             # nosemgrep: python.lang.security.audit.logging.logger-credential-leak.python-logger-credential-disclosure
             logger.info(
