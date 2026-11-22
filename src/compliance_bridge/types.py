@@ -59,6 +59,7 @@ its own TradingKnowledgeGraph.get_control_map(region) for short-form event mappi
 
 from __future__ import annotations
 
+import math
 from enum import Enum
 from typing import Literal
 
@@ -69,10 +70,50 @@ from pydantic import BaseModel, ConfigDict, Field, model_validator
 # This is the exact object that Lula's OPA Rego provider receives as `input`.
 # ---------------------------------------------------------------------------
 
-# Canonical minimum trace population required before statistical rate-based
-# compliance thresholds (e.g. A.5.2 >= 0.99, A.5.3 >= 0.98, A.9.2 == 1.0)
-# can be declared `satisfied`. Configurable via `COMPLIANCE_MIN_SAMPLE_SIZE`.
-DEFAULT_MIN_SAMPLE_SIZE: int = 30
+# Authoritative safety-rate thresholds per statistical trace-rate control.
+CONTROL_SAFETY_THRESHOLDS: dict[str, float] = {
+    "A.5.2": 0.99,
+    "A.5.3": 0.98,
+    "A.9.2": 1.0,
+}
+
+# Minimum tolerated failure count `k` before a rate control (`threshold < 1.0`)
+# can breach its threshold `tau`: `n >= ceil(k / (1 - tau))`. With `k = 3`
+# (matching the Poisson/binomial 95% Rule-of-Three bound `-ln(0.05) ~= 3.00`),
+# single- or two-event Poisson noise does not breach the threshold:
+#   - A.5.3 (tau = 0.98, 1 - tau = 0.02): ceil(3 / 0.02) = 150
+#     (1..3 failures -> >= 0.9800 satisfied; 4 failures -> 0.9733 breaches)
+#   - A.5.2 (tau = 0.99, 1 - tau = 0.01): ceil(3 / 0.01) = 300
+#     (1..3 failures -> >= 0.9900 satisfied; 4 failures -> 0.9867 breaches)
+# For zero-tolerance controls (`tau == 1.0`, e.g. A.9.2 PII scrub), any single
+# failure (`safety_rate < 1.0`) breaches immediately at `n = 1` as
+# `threshold_violation`; on the zero-failure `satisfied` side (`1 - tau == 0`),
+# Rule-of-Three at 95% one-sided confidence against a 1% unobserved defect rate
+# (`ZERO_TOLERANCE_RESIDUAL_RISK_BOUND = 0.01`) yields `ceil(3 / 0.01) = 300`.
+# Overridable explicitly via `COMPLIANCE_MIN_SAMPLE_SIZE`.
+MIN_TOLERATED_FAILURES_FOR_RATE_STABILITY: int = 3
+ZERO_TOLERANCE_RESIDUAL_RISK_BOUND: float = 0.01
+
+
+def derive_min_sample_size(
+    control_id: str,
+    *,
+    threshold: float | None = None,
+) -> int:
+    """Derive the minimum sample size for `control_id` from its safety threshold."""
+    resolved_threshold = (
+        threshold
+        if threshold is not None
+        else CONTROL_SAFETY_THRESHOLDS.get(control_id, 1.0)
+    )
+    defect_budget = round(1.0 - resolved_threshold, 9)
+    if defect_budget <= 0.0:
+        return math.ceil(
+            MIN_TOLERATED_FAILURES_FOR_RATE_STABILITY
+            / ZERO_TOLERANCE_RESIDUAL_RISK_BOUND
+        )
+    return math.ceil(MIN_TOLERATED_FAILURES_FOR_RATE_STABILITY / defect_budget)
+
 
 # Canonical event types produced by evaluating a control (meta-level assessment
 # output rather than object-level governed telemetry). Records of these types
@@ -97,7 +138,7 @@ class ComplianceMetrics(BaseModel):
     passed_traces: int = Field(ge=0)
     infrastructure_blocks: int = Field(default=0, ge=0)
     self_evaluation_records_excluded: int = Field(default=0, ge=0)
-    min_sample_size: int = Field(default=DEFAULT_MIN_SAMPLE_SIZE, ge=1)
+    min_sample_size: int = Field(default=150, ge=1)
     sample_sufficient: bool = Field(default=False)
     window_hours: float = Field(gt=0)
     last_event_utc: str  # ISO 8601 datetime string
@@ -113,7 +154,11 @@ class ComplianceMetrics(BaseModel):
 
     @model_validator(mode="after")
     def _derive_sample_sufficiency(self) -> ComplianceMetrics:
-        """Default `sample_sufficient` from `total_traces >= min_sample_size` when omitted."""
+        """Default `min_sample_size` from `control_id`'s threshold and compute `sample_sufficient`."""
+        if "min_sample_size" not in self.model_fields_set:
+            object.__setattr__(
+                self, "min_sample_size", derive_min_sample_size(self.control_id)
+            )
         if "sample_sufficient" not in self.model_fields_set:
             object.__setattr__(
                 self, "sample_sufficient", self.total_traces >= self.min_sample_size
@@ -671,17 +716,20 @@ from src.gateway.governance.iso_control import (
 
 __all__ = [
     "CONTROL_EVALUATION_EVENT_TYPES",
+    "CONTROL_SAFETY_THRESHOLDS",
     "CRITICAL_CONTROLS",
-    "DEFAULT_MIN_SAMPLE_SIZE",
     "FRAMEWORK_CONTROLS",
+    "MIN_TOLERATED_FAILURES_FOR_RATE_STABILITY",
     "STATISTICAL_TRACE_LULA_SPECS",
     "SUPPORTED_CONTROLS",
     "SUPPORTED_FRAMEWORKS",
+    "ZERO_TOLERANCE_RESIDUAL_RISK_BOUND",
     "AssurancePosture",
     "AssuranceStatus",
     "ComplianceMetrics",
     "OscalFinding",
     "OscalResult",
+    "derive_min_sample_size",
     "get_control_meta",
     "get_iso_control_map",
     "get_sla_seconds",

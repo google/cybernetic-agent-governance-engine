@@ -62,7 +62,7 @@ from src.compliance_bridge.oscal_exporter import (
     findings_from_metrics_dict,
 )
 from src.compliance_bridge.oscal_parser import parse_oscal_yaml
-from src.compliance_bridge.types import ComplianceMetrics
+from src.compliance_bridge.types import ComplianceMetrics, derive_min_sample_size
 from src.gateway.governance.env_posture import DeploymentPosture
 from src.integrations.storage_gcs.cold_store import GcsColdStore
 
@@ -319,49 +319,70 @@ class TestGeneralizedAntiLatchRule:
 class TestMinimumSampleSizeFloor:
     """Verify minimum population floor across metrics, OSCAL, verifier, and bridge."""
 
-    def test_resolve_min_sample_size_env_parsing(
+    def test_derive_and_resolve_min_sample_size_from_threshold(
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:
+        # ceil(3 / (1 - 0.98)) == 150 (1..3 failures stay >= 0.9800; 4 breaches)
+        assert derive_min_sample_size("A.5.3") == 150
+        assert (150 - 1) / 150 >= 0.98
+        assert (150 - 3) / 150 >= 0.98
+        assert (150 - 4) / 150 < 0.98
+
+        # ceil(3 / (1 - 0.99)) == 300 (1..3 failures stay >= 0.9900; 4 breaches)
+        assert derive_min_sample_size("A.5.2") == 300
+        assert (300 - 3) / 300 >= 0.99
+        assert (300 - 4) / 300 < 0.99
+
+        # Zero-tolerance A.9.2 (tau=1.0): Rule-of-Three at alpha=0.01 -> 300
+        assert derive_min_sample_size("A.9.2") == 300
+
         monkeypatch.delenv("COMPLIANCE_MIN_SAMPLE_SIZE", raising=False)
-        assert _resolve_min_sample_size() == 30
+        assert _resolve_min_sample_size("A.5.3") == 150
+        assert _resolve_min_sample_size("A.5.2") == 300
+        assert _resolve_min_sample_size("A.9.2") == 300
         monkeypatch.setenv("COMPLIANCE_MIN_SAMPLE_SIZE", "50")
-        assert _resolve_min_sample_size() == 50
+        assert _resolve_min_sample_size("A.5.3") == 50
+        assert _resolve_min_sample_size("A.5.2") == 50
         monkeypatch.setenv("COMPLIANCE_MIN_SAMPLE_SIZE", "0")
-        assert _resolve_min_sample_size() == 1
+        assert _resolve_min_sample_size("A.5.3") == 1
         monkeypatch.setenv("COMPLIANCE_MIN_SAMPLE_SIZE", "not-a-number")
-        assert _resolve_min_sample_size() == 30
+        assert _resolve_min_sample_size("A.5.3") == 150
+        assert _resolve_min_sample_size("A.5.2") == 300
 
     def test_oscal_exporter_and_parser_insufficient_sample_vs_zero_tolerance(
         self,
     ) -> None:
         now_iso = _iso_ago(60)
-        # A.5.3 with 12 traces (below 30) and 1.0 -> insufficient_sample
-        m_a53_low_pass = ComplianceMetrics(
+        # Crucial statistical property: 1 failure in 30 on A.5.3 gives 29/30 = 0.9667 < 0.98,
+        # which is below the derived floor of 150 and MUST emit insufficient_sample
+        # rather than falsely breaching 0.98 on single-event noise!
+        m_a53_one_in_thirty = ComplianceMetrics(
             control_id="A.5.3",
-            safety_rate=1.0,
-            total_traces=12,
-            passed_traces=12,
-            blocked_traces=0,
-            min_sample_size=30,
+            safety_rate=round(29 / 30, 4),
+            total_traces=30,
+            passed_traces=29,
+            blocked_traces=1,
             window_hours=24.0,
             evidence_age_seconds=60.0,
             last_event_utc=now_iso,
             startup_grace_active=False,
             startup_grace_remaining_hours=0.0,
         )
+        assert m_a53_one_in_thirty.min_sample_size == 150
+        assert m_a53_one_in_thirty.sample_sufficient is False
         m_a52_low_rate = ComplianceMetrics(
             control_id="A.5.2",
             safety_rate=0.75,
             total_traces=20,
             passed_traces=15,
             blocked_traces=5,
-            min_sample_size=30,
             window_hours=24.0,
             evidence_age_seconds=60.0,
             last_event_utc=now_iso,
             startup_grace_active=False,
             startup_grace_remaining_hours=0.0,
         )
+        assert m_a52_low_rate.min_sample_size == 300
         # Zero-tolerance A.9.2 (threshold == 1.0): a single violation MUST fail
         # immediately as threshold_violation even when total_traces < min_sample_size!
         m_a92_single_violation = ComplianceMetrics(
@@ -370,7 +391,6 @@ class TestMinimumSampleSizeFloor:
             total_traces=2,
             passed_traces=1,
             blocked_traces=1,
-            min_sample_size=30,
             window_hours=24.0,
             evidence_age_seconds=60.0,
             last_event_utc=now_iso,
@@ -379,7 +399,7 @@ class TestMinimumSampleSizeFloor:
         )
         findings_in = findings_from_metrics_dict(
             {
-                "A.5.3": m_a53_low_pass.model_dump(),
+                "A.5.3": m_a53_one_in_thirty.model_dump(),
                 "A.5.2": m_a52_low_rate.model_dump(),
                 "A.9.2": m_a92_single_violation.model_dump(),
             },

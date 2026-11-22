@@ -67,10 +67,10 @@ from .evidence_custodian import (
 from .infra_custody import DEFAULT_INFRA_STREAM_KEY, INFRA_STREAM_KEY_ENV
 from .types import (
     CONTROL_EVALUATION_EVENT_TYPES,
-    DEFAULT_MIN_SAMPLE_SIZE,
     STATISTICAL_TRACE_LULA_SPECS,
     Cm6ThresholdsPosture,
     ComplianceMetrics,
+    derive_min_sample_size,
 )
 
 logger = logging.getLogger(__name__)
@@ -87,20 +87,22 @@ _DEFAULT_BATCH_CACHE_MAX_ENTRIES = 16384
 _DEFAULT_BATCH_CACHE_TTL_SECONDS = 3600
 
 
-def _resolve_min_sample_size() -> int:
-    """Return the configured minimum trace population floor (never below 1)."""
+def _resolve_min_sample_size(control_id: str = "A.5.3") -> int:
+    """Return the threshold-derived minimum population floor (or explicit env override)."""
+    derived = derive_min_sample_size(control_id)
     raw = os.environ.get("COMPLIANCE_MIN_SAMPLE_SIZE", "").strip()
     if not raw:
-        return DEFAULT_MIN_SAMPLE_SIZE
+        return derived
     try:
         return max(1, int(raw))
     except ValueError:
         logger.warning(
-            "[metrics] Invalid COMPLIANCE_MIN_SAMPLE_SIZE=%r; using default %d.",
+            "[metrics] Invalid COMPLIANCE_MIN_SAMPLE_SIZE=%r for %s; using derived floor %d.",
             raw,
-            DEFAULT_MIN_SAMPLE_SIZE,
+            control_id,
+            derived,
         )
-        return DEFAULT_MIN_SAMPLE_SIZE
+        return derived
 
 
 def _resolve_cold_store_read_concurrency() -> int:
@@ -1909,7 +1911,7 @@ def _fetch_from_evidence_stream_sync(
                 last_event_date = record_date
 
     blocked_traces = total_traces - passed_traces
-    min_sample_size = _resolve_min_sample_size()
+    min_sample_size = _resolve_min_sample_size(control_id)
     # Return None when no evidence records exist — 1.0 would be a false-positive score
     safety_rate = (passed_traces / total_traces) if total_traces > 0 else None
     now = datetime.now(tz=timezone.utc)

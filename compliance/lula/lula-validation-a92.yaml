@@ -78,14 +78,14 @@ component-definition:
 
               metrics_doc := object.get(input.langfuse_metrics_a92, "response", input.langfuse_metrics_a92)
               total_traces := object.get(metrics_doc, "total_traces", 0)
-              min_sample_size := object.get(metrics_doc, "min_sample_size", 30)
+              min_sample_size := object.get(metrics_doc, "min_sample_size", 300)
               safety_rate := object.get(metrics_doc, "safety_rate", null)
               evidence_age_s := round(object.get(metrics_doc, "evidence_age_seconds", 0))
               grace_active := object.get(metrics_doc, "startup_grace_active", false)
 
               # A.9.2: Data Transfer to Suppliers — zero tolerance for PII leakage.
-              # Any observed leak (safety_rate < 1.0) emits threshold_violation regardless of
-              # sample size; passing below min_sample_size emits insufficient_sample (POAM-2026-244).
+              # Any observed leak (safety_rate < 1.0) emits threshold_violation immediately at n=1;
+              # zero-leak satisfaction requires min_sample_size = ceil(3 / 0.01) = 300 (Rule-of-Three 95% bound; POAM-2026-244).
               sample_size_met if {
                 total_traces >= min_sample_size
               }

@@ -121,6 +121,7 @@ from .oscal_exporter import build_oscal_assessment_results, findings_from_metric
 from .sla_monitor import run_sla_monitor
 from .sse_events import event_bus
 from .types import (
+    CONTROL_SAFETY_THRESHOLDS,
     CRITICAL_CONTROLS,
     SUPPORTED_CONTROLS,
     Cm6ThresholdsPosture,
@@ -798,7 +799,7 @@ async def get_metrics_summary(
             # `insufficient_sample_controls` (neither passing nor failing), except
             # zero-tolerance (`threshold == 1.0`) violations which fail immediately.
             sla_limit = active_sla_map.get(cid)
-            threshold = {"A.5.2": 0.99, "A.5.3": 0.98, "A.9.2": 1.0}.get(cid, 1.0)
+            threshold = CONTROL_SAFETY_THRESHOLDS.get(cid, 1.0)
             freshness_failed = (
                 not m.startup_grace_active
                 and sla_limit is not None

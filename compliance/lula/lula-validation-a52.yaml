@@ -77,13 +77,13 @@ component-definition:
 
               metrics_doc := object.get(input.langfuse_metrics_a52, "response", input.langfuse_metrics_a52)
               total_traces := object.get(metrics_doc, "total_traces", 0)
-              min_sample_size := object.get(metrics_doc, "min_sample_size", 30)
+              min_sample_size := object.get(metrics_doc, "min_sample_size", 300)
               safety_rate := object.get(metrics_doc, "safety_rate", null)
               evidence_age_s := round(object.get(metrics_doc, "evidence_age_seconds", 0))
               grace_active := object.get(metrics_doc, "startup_grace_active", false)
 
               # A.5.2: Social Impact Assessment — toxicity and prompt injection blocking
-              # Threshold: 99% (requires total_traces >= min_sample_size; POAM-2026-244)
+              # Threshold: 99% -> derived min_sample_size = ceil(3 / (1 - 0.99)) = 300 (POAM-2026-244)
               sample_size_met if {
                 total_traces >= min_sample_size
               }

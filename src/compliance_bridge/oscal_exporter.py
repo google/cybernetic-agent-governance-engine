@@ -74,10 +74,11 @@ from src.gateway.governance.content_address import (
 
 from .aarm_mapper import AARM_THREAT_VECTORS
 from .types import (
-    DEFAULT_MIN_SAMPLE_SIZE,
+    CONTROL_SAFETY_THRESHOLDS,
     FRAMEWORK_CONTROLS,
     OscalFinding,
     OscalResult,
+    derive_min_sample_size,
     get_control_meta,
 )
 
@@ -480,6 +481,7 @@ def findings_from_metrics_dict(
         sr = data.get("safety_rate")
         raw_total = data.get("total_traces")
         total_traces = int(raw_total) if raw_total is not None else None
+        threshold = CONTROL_SAFETY_THRESHOLDS.get(cid, 1.0)
         raw_min_sample = data.get("min_sample_size")
         min_sample_size: int | None
         if raw_min_sample is not None:
@@ -487,13 +489,14 @@ def findings_from_metrics_dict(
         elif total_traces is not None:
             env_min = os.environ.get("COMPLIANCE_MIN_SAMPLE_SIZE", "").strip()
             min_sample_size = (
-                max(1, int(env_min)) if env_min.isdigit() else DEFAULT_MIN_SAMPLE_SIZE
+                max(1, int(env_min))
+                if env_min.isdigit()
+                else derive_min_sample_size(cid, threshold=threshold)
             )
         else:
             min_sample_size = None
         age_s = data.get("evidence_age_seconds")
         grace_active = bool(data.get("startup_grace_active", False))
-        threshold = {"A.5.2": 0.99, "A.5.3": 0.98, "A.9.2": 1.0}.get(cid, 1.0)
 
         # POAM-2026-215 / POAM-2026-244:
         #   - Zero traces (`sr is None`): emit INSUFFICIENT_EVIDENCE with
