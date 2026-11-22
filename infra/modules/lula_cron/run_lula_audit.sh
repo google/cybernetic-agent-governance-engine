@@ -39,10 +39,12 @@ total=0
 passed=0
 failed=0
 insufficient_traffic=0
+insufficient_sample=0
 startup_grace=0
 satisfied_list=""
 failed_list=""
 insufficient_traffic_list=""
+insufficient_sample_list=""
 startup_grace_list=""
 
 for spec in "${SPEC_DIR}"/lula-validation-*.yaml; do
@@ -118,7 +120,7 @@ for spec in "${SPEC_DIR}"/lula-validation-*.yaml; do
        ! grep -q 'lula-validation-error' "$out_file" && \
        grep -Eq 'state:[[:space:]]*not-satisfied' "$out_file" && \
        grep -Eq 'lula\.assessment_remark:[[:space:]]*assessment_status=insufficient_traffic([[:space:];]|$)' "$out_file" && \
-       ! grep -Eq 'lula\.assessment_remark:[[:space:]]*assessment_status=(threshold_violation|stale_evidence|missing_metrics_response)([[:space:];]|$)' "$out_file"; then
+       ! grep -Eq 'lula\.assessment_remark:[[:space:]]*assessment_status=(threshold_violation|stale_evidence|missing_metrics_response|insufficient_sample)([[:space:];]|$)' "$out_file"; then
     insufficient_traffic=$((insufficient_traffic + 1))
     if [ -z "$insufficient_traffic_list" ]; then
       insufficient_traffic_list="$name"
@@ -126,6 +128,20 @@ for spec in "${SPEC_DIR}"/lula-validation-*.yaml; do
       insufficient_traffic_list="${insufficient_traffic_list},${name}"
     fi
     echo "INSUFFICIENT_TRAFFIC: ${name} (not-satisfied: total_traces=0)"
+  elif [ "$lula_rc" -eq 0 ] && \
+       [ -s "$out_file" ] && \
+       grep -q 'observations:' "$out_file" && \
+       ! grep -q 'lula-validation-error' "$out_file" && \
+       grep -Eq 'state:[[:space:]]*not-satisfied' "$out_file" && \
+       grep -Eq 'lula\.assessment_remark:[[:space:]]*assessment_status=insufficient_sample([[:space:];]|$)' "$out_file" && \
+       ! grep -Eq 'lula\.assessment_remark:[[:space:]]*assessment_status=(threshold_violation|stale_evidence|missing_metrics_response|insufficient_traffic)([[:space:];]|$)' "$out_file"; then
+    insufficient_sample=$((insufficient_sample + 1))
+    if [ -z "$insufficient_sample_list" ]; then
+      insufficient_sample_list="$name"
+    else
+      insufficient_sample_list="${insufficient_sample_list},${name}"
+    fi
+    echo "INSUFFICIENT_SAMPLE: ${name} (not-satisfied: total_traces < min_sample_size)"
   else
     failed=$((failed + 1))
     if [ -z "$failed_list" ]; then
@@ -143,7 +159,7 @@ if [ "$total" -eq 0 ]; then
 fi
 
 ts=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
-if [ "$failed" -eq 0 ] && [ "$insufficient_traffic" -eq 0 ]; then
+if [ "$failed" -eq 0 ] && [ "$insufficient_traffic" -eq 0 ] && [ "$insufficient_sample" -eq 0 ]; then
   if [ "$startup_grace" -gt 0 ]; then
     summary=$(printf 'lula_audit PASS: %s/%s active validations satisfied (%s startup_grace: %s)' "$passed" "$total" "$startup_grace" "$startup_grace_list" | cut -c1-480)
     sealed_counts="${passed}/${total} satisfied, 0 not-satisfied, ${startup_grace} startup_grace [${startup_grace_list}]"
@@ -151,15 +167,28 @@ if [ "$failed" -eq 0 ] && [ "$insufficient_traffic" -eq 0 ]; then
     summary="lula_audit PASS: ${passed}/${total} active validations satisfied"
     sealed_counts="${passed}/${total} satisfied, 0 not-satisfied"
   fi
-elif [ "$failed" -eq 0 ]; then
+elif [ "$failed" -eq 0 ] && [ "$insufficient_sample" -eq 0 ]; then
   summary=$(printf 'lula_audit INSUFFICIENT_TRAFFIC: %s/%s satisfied (%s not-satisfied [insufficient_traffic]: %s)' "$passed" "$total" "$insufficient_traffic" "$insufficient_traffic_list" | cut -c1-480)
   sealed_counts="${passed}/${total} satisfied, 0 failed, ${insufficient_traffic} not-satisfied [insufficient_traffic]"
-elif [ "$insufficient_traffic" -eq 0 ]; then
+elif [ "$failed" -eq 0 ] && [ "$insufficient_traffic" -eq 0 ]; then
+  summary=$(printf 'lula_audit INSUFFICIENT_SAMPLE: %s/%s satisfied (%s not-satisfied [insufficient_sample]: %s)' "$passed" "$total" "$insufficient_sample" "$insufficient_sample_list" | cut -c1-480)
+  sealed_counts="${passed}/${total} satisfied, 0 failed, ${insufficient_sample} not-satisfied [insufficient_sample]"
+elif [ "$failed" -eq 0 ]; then
+  summary=$(printf 'lula_audit INSUFFICIENT_SAMPLE: %s/%s satisfied (%s insufficient_sample: %s; %s insufficient_traffic: %s)' "$passed" "$total" "$insufficient_sample" "$insufficient_sample_list" "$insufficient_traffic" "$insufficient_traffic_list" | cut -c1-480)
+  sealed_counts="${passed}/${total} satisfied, 0 failed, ${insufficient_sample} not-satisfied [insufficient_sample], ${insufficient_traffic} not-satisfied [insufficient_traffic]"
+elif [ "$insufficient_traffic" -eq 0 ] && [ "$insufficient_sample" -eq 0 ]; then
   summary=$(printf 'lula_audit FAIL: %s/%s satisfied (%s failed: %s)' "$passed" "$total" "$failed" "$failed_list" | cut -c1-480)
   sealed_counts="${passed}/${total} satisfied, ${failed} not-satisfied"
 else
-  total_not_sat=$((failed + insufficient_traffic))
-  summary=$(printf 'lula_audit FAIL: %s/%s satisfied (%s failed: %s; %s insufficient_traffic: %s)' "$passed" "$total" "$failed" "$failed_list" "$insufficient_traffic" "$insufficient_traffic_list" | cut -c1-480)
+  total_not_sat=$((failed + insufficient_traffic + insufficient_sample))
+  detail="${failed} failed: ${failed_list}"
+  if [ "$insufficient_traffic" -gt 0 ]; then
+    detail="${detail}; ${insufficient_traffic} insufficient_traffic: ${insufficient_traffic_list}"
+  fi
+  if [ "$insufficient_sample" -gt 0 ]; then
+    detail="${detail}; ${insufficient_sample} insufficient_sample: ${insufficient_sample_list}"
+  fi
+  summary=$(printf 'lula_audit FAIL: %s/%s satisfied (%s)' "$passed" "$total" "$detail" | cut -c1-480)
   sealed_counts="${passed}/${total} satisfied, ${total_not_sat} not-satisfied"
 fi
 
@@ -172,9 +201,11 @@ payload=$(jq -nc \
   --argjson satisfied_count "$passed" \
   --argjson failed_count "$failed" \
   --argjson insufficient_traffic_count "$insufficient_traffic" \
+  --argjson insufficient_sample_count "$insufficient_sample" \
   --argjson startup_grace_count "$startup_grace" \
   --arg failed_csv "$failed_list" \
   --arg insufficient_csv "$insufficient_traffic_list" \
+  --arg insufficient_sample_csv "$insufficient_sample_list" \
   --arg startup_grace_csv "$startup_grace_list" \
   '{
     event_type: "lula_audit",
@@ -185,9 +216,11 @@ payload=$(jq -nc \
     satisfied_count: $satisfied_count,
     failed_count: $failed_count,
     insufficient_traffic_count: $insufficient_traffic_count,
+    insufficient_sample_count: $insufficient_sample_count,
     startup_grace_count: $startup_grace_count,
     failed_controls: (if $failed_csv == "" then [] else ($failed_csv | split(",")) end),
     insufficient_traffic_controls: (if $insufficient_csv == "" then [] else ($insufficient_csv | split(",")) end),
+    insufficient_sample_controls: (if $insufficient_sample_csv == "" then [] else ($insufficient_sample_csv | split(",")) end),
     startup_grace_controls: (if $startup_grace_csv == "" then [] else ($startup_grace_csv | split(",")) end)
   }')
 
@@ -209,6 +242,7 @@ if resp=$(curl -sf -X POST "${COMPLIANCE_BRIDGE_EVENTS_URL}" \
     --argjson satisfied_count "$passed" \
     --argjson failed_count "$failed" \
     --argjson insufficient_traffic_count "$insufficient_traffic" \
+    --argjson insufficient_sample_count "$insufficient_sample" \
     --argjson startup_grace_count "$startup_grace" \
     --arg sat_csv "$satisfied_list" \
     --arg sg_csv "$startup_grace_list" \
@@ -221,6 +255,7 @@ if resp=$(curl -sf -X POST "${COMPLIANCE_BRIDGE_EVENTS_URL}" \
         satisfied_count: $satisfied_count,
         failed_count: $failed_count,
         insufficient_traffic_count: $insufficient_traffic_count,
+        insufficient_sample_count: $insufficient_sample_count,
         startup_grace_count: $startup_grace_count,
         satisfied_controls: (if $sat_csv == "" then [] else ($sat_csv | split(",")) end),
         startup_grace_controls: (if $sg_csv == "" then [] else ($sg_csv | split(",")) end)

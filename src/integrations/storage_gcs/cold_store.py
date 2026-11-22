@@ -108,6 +108,7 @@ class GcsColdStore(EvidenceColdStore):
 
             try:
                 self._client = gcs.Client(project=self._project_id)
+                self._configure_http_pool(self._client)
                 logger.info(
                     "[storage_gcs] Initialized GCS client (project=%s)",
                     self._project_id or "inferred",
@@ -118,6 +119,25 @@ class GcsColdStore(EvidenceColdStore):
                     f"Failed to initialize GCS client: {exc}",
                     backend_id="gcs",
                 ) from exc
+
+    @staticmethod
+    def _configure_http_pool(client: Any) -> None:
+        """Expand the underlying requests HTTPS connection pool for concurrent reads."""
+        raw_pool = os.environ.get("EVIDENCE_COLD_STORE_POOL_SIZE", "32").strip()
+        try:
+            pool_size = max(16, min(128, int(raw_pool)))
+        except ValueError:
+            pool_size = 32
+        session = getattr(client, "_http", None)
+        if session is None or not callable(getattr(session, "mount", None)):
+            return
+        try:
+            from requests.adapters import HTTPAdapter
+        except ImportError:
+            return
+        adapter = HTTPAdapter(pool_connections=pool_size, pool_maxsize=pool_size)
+        session.mount("https://", adapter)
+        session.mount("http://", adapter)
 
     def _resolve_bucket(self) -> str:
         if not self._bucket_name:

@@ -51,6 +51,7 @@ References:
 from __future__ import annotations
 
 import logging
+import os
 import uuid
 from datetime import datetime, timezone
 from typing import TYPE_CHECKING
@@ -72,7 +73,14 @@ from src.gateway.governance.content_address import (
 )
 
 from .aarm_mapper import AARM_THREAT_VECTORS
-from .types import FRAMEWORK_CONTROLS, OscalFinding, OscalResult, get_control_meta
+from .types import (
+    CONTROL_SAFETY_THRESHOLDS,
+    FRAMEWORK_CONTROLS,
+    OscalFinding,
+    OscalResult,
+    derive_min_sample_size,
+    get_control_meta,
+)
 
 logger = logging.getLogger("cage.oscal_exporter")
 
@@ -473,14 +481,32 @@ def findings_from_metrics_dict(
         sr = data.get("safety_rate")
         raw_total = data.get("total_traces")
         total_traces = int(raw_total) if raw_total is not None else None
+        threshold = CONTROL_SAFETY_THRESHOLDS.get(cid, 1.0)
+        raw_min_sample = data.get("min_sample_size")
+        min_sample_size: int | None
+        if raw_min_sample is not None:
+            min_sample_size = max(1, int(raw_min_sample))
+        elif total_traces is not None:
+            env_min = os.environ.get("COMPLIANCE_MIN_SAMPLE_SIZE", "").strip()
+            min_sample_size = (
+                max(1, int(env_min))
+                if env_min.isdigit()
+                else derive_min_sample_size(cid, threshold=threshold)
+            )
+        else:
+            min_sample_size = None
         age_s = data.get("evidence_age_seconds")
         grace_active = bool(data.get("startup_grace_active", False))
 
-        # POAM-2026-215: safety_rate is None when zero traces exist in the window.
-        # Never map zero traces to NOT_APPLICABLE (which falsely asserts the
-        # control is out of scope for CAGE) or to a vacuous PASS. Emit
-        # INSUFFICIENT_EVIDENCE (OSCAL `not-satisfied`) with explicit structured
-        # remarks so evaluators can distinguish zero traffic from violations.
+        # POAM-2026-215 / POAM-2026-244:
+        #   - Zero traces (`sr is None`): emit INSUFFICIENT_EVIDENCE with
+        #     `assessment_status=insufficient_traffic` (never NOT_APPLICABLE / PASS).
+        #   - Zero-tolerance controls (`threshold == 1.0`, e.g. A.9.2 PII leak)
+        #     with ANY concrete failure (`sr < 1.0`): fail closed immediately as
+        #     `FAIL` / `threshold_violation` regardless of sample size.
+        #   - Small population (`0 < total_traces < min_sample_size`): emit
+        #     INSUFFICIENT_EVIDENCE (`not-satisfied`) with `assessment_status=insufficient_sample`
+        #     so small samples neither falsely satisfy nor falsely fail rate thresholds.
         if sr is None:
             effective_total = total_traces if total_traces is not None else 0
             age_int = int(age_s) if age_s is not None else 0
@@ -493,8 +519,26 @@ def findings_from_metrics_dict(
                 f"evidence_age_seconds={age_int}; "
                 f"startup_grace_active={str(grace_active).lower()}"
             )
+        elif threshold == 1.0 and sr < 1.0:
+            result = "FAIL"
+            assessment_status = "threshold_violation"
+            remarks = None
+        elif (
+            total_traces is not None
+            and min_sample_size is not None
+            and total_traces < min_sample_size
+        ):
+            age_int = int(age_s) if age_s is not None else 0
+            result = "INSUFFICIENT_EVIDENCE"
+            assessment_status = "insufficient_sample"
+            remarks = (
+                f"assessment_status=insufficient_sample; control_id={cid}; "
+                f"total_traces={total_traces}; min_sample_size={min_sample_size}; "
+                f"safety_rate={sr}; threshold={threshold}; "
+                f"evidence_age_seconds={age_int}; "
+                f"startup_grace_active={str(grace_active).lower()}"
+            )
         else:
-            threshold = {"A.5.2": 0.99, "A.5.3": 0.98, "A.9.2": 1.0}.get(cid, 1.0)
             result = "PASS" if sr >= threshold else "FAIL"
             assessment_status = (
                 "satisfied" if result == "PASS" else "threshold_violation"

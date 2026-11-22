@@ -101,6 +101,7 @@ def test_live_repository_inventory_meets_all_corpus_floors_and_discovers_known_s
         lula_by_path["compliance/lula/lula-validation-a52.yaml"].referenced_fields
     ) == {
         "evidence_age_seconds",
+        "min_sample_size",
         "safety_rate",
         "startup_grace_active",
         "total_traces",

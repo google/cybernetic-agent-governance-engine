@@ -267,6 +267,15 @@ def verify_lula_gate_w_job_logs(
             "Job/lula-gate-w Lula assessment-results satisfied one or more controls via startup_grace."
         ]
 
+    if re.search(
+        r"assessment_status\s*=\s*insufficient_sample|\blula_audit\s+INSUFFICIENT_SAMPLE\s*:",
+        logs,
+        re.IGNORECASE,
+    ):
+        return False, [
+            "Job/lula-gate-w Lula assessment-results reported one or more controls as insufficient_sample."
+        ]
+
     if not re.search(r"\b(?:assessment-results|satisfied|observations)\b", logs):
         return False, [
             "Job/lula-gate-w logs lack Lula assessment-results evaluation proof."
@@ -378,6 +387,12 @@ def verify_lula_gate_w_job_logs(
             errors.append(
                 f"cage_lula_audit_receipt_v1.insufficient_traffic_count={int_fields['insufficient_traffic_count']} (expected 0)"
             )
+        if "insufficient_sample_count" in receipt:
+            sample_cnt = receipt.get("insufficient_sample_count")
+            if type(sample_cnt) is not int or sample_cnt != 0:
+                errors.append(
+                    f"cage_lula_audit_receipt_v1.insufficient_sample_count={sample_cnt!r} (expected 0)"
+                )
         if int_fields["startup_grace_count"] != 0:
             errors.append(
                 "Job/lula-gate-w Lula assessment-results satisfied one or more controls via startup_grace "

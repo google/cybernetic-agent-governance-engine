@@ -402,9 +402,9 @@ class TestIab04CustodyTamperAndSummaryAccounting:
             return ComplianceMetrics(
                 control_id=control_id,
                 safety_rate=1.0,
-                total_traces=10,
+                total_traces=300,
                 blocked_traces=0,
-                passed_traces=10,
+                passed_traces=300,
                 window_hours=float(window_hours),
                 last_event_utc=datetime.now(tz=timezone.utc).isoformat(),
                 evidence_age_seconds=age,
@@ -421,6 +421,41 @@ class TestIab04CustodyTamperAndSummaryAccounting:
         assert "A.9.2" in data["failing_controls"]
         assert "A.9.2" in data["critical_fails"]
         assert data["passing_controls"] == data["total_controls"] - 1
+
+    def test_metrics_summary_marks_small_sample_below_floor_not_passing(
+        self, bridge_client: TestClient
+    ) -> None:
+        """POAM-2026-244: 1.0 safety_rate over < derived min_sample_size cannot report passing."""
+
+        async def _small_sample(
+            control_id: str, window_hours: int = 24
+        ) -> ComplianceMetrics:
+            return ComplianceMetrics(
+                control_id=control_id,
+                safety_rate=1.0,
+                total_traces=30,
+                blocked_traces=0,
+                passed_traces=30,
+                window_hours=float(window_hours),
+                last_event_utc=datetime.now(tz=timezone.utc).isoformat(),
+                evidence_age_seconds=10.0,
+                startup_grace_active=False,
+                startup_grace_remaining_hours=0.0,
+            )
+
+        with patch(
+            "src.compliance_bridge.main.get_compliance_metrics",
+            new=AsyncMock(side_effect=_small_sample),
+        ):
+            data = bridge_client.get("/v1/metrics/summary").json()
+
+        assert data["passing_controls"] == 0
+        assert set(data["insufficient_sample_controls"]) == set(data["controls"].keys())
+        assert data["failing_controls"] == []
+        assert data["overall_pass_rate"] == 0.0
+        assert data["controls"]["A.5.3"]["min_sample_size"] == 150
+        assert data["controls"]["A.5.2"]["min_sample_size"] == 300
+        assert data["controls"]["A.9.2"]["min_sample_size"] == 300
 
     @pytest.mark.asyncio
     @pytest.mark.covers(
