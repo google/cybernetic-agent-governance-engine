@@ -41,6 +41,7 @@ Governance pipeline applied here:
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import inspect
 import json
 import logging
@@ -67,7 +68,11 @@ from src.gateway.governance.inference_backend import (
 )
 from src.gateway.governance.iso_control import stamp_iso_control
 from src.gateway.governance.text_filter import ac_keyword_scan
-from src.gateway.governance.token_quota_proxy import _get_token_quota_proxy
+from src.gateway.governance.token_quota_proxy import (
+    QuotaCheckResult,
+    QuotaExceededError,
+    _get_token_quota_proxy,
+)
 from src.gateway.governance.uca_logger import _get_uca_logger
 from src.gateway.infrastructure.config_manager import config_manager
 from src.gateway.infrastructure.privacy import scrub_pii
@@ -158,6 +163,85 @@ def _reject_non_finite_json(token: str) -> Any:
     raise ValueError(f"Non-finite JSON constant {token!r} is not permitted")
 
 
+_ALLOWED_CHAT_COMPLETION_TOP_KEYS = frozenset(
+    {
+        "model",
+        "messages",
+        "prompt",
+        "system",
+        "stream",
+        "stream_options",
+        "temperature",
+        "top_p",
+        "top_k",
+        "min_p",
+        "typical_p",
+        "n",
+        "best_of",
+        "use_beam_search",
+        "length_penalty",
+        "early_stopping",
+        "max_tokens",
+        "max_completion_tokens",
+        "min_tokens",
+        "stop",
+        "stop_token_ids",
+        "include_stop_str_in_output",
+        "ignore_eos",
+        "presence_penalty",
+        "frequency_penalty",
+        "repetition_penalty",
+        "logit_bias",
+        "logprobs",
+        "top_logprobs",
+        "prompt_logprobs",
+        "user",
+        "seed",
+        "tools",
+        "tool_choice",
+        "parallel_tool_calls",
+        "functions",
+        "function_call",
+        "response_format",
+        "reasoning_effort",
+        "include_reasoning",
+        "store",
+        "metadata",
+        "modalities",
+        "audio",
+        "prediction",
+        "service_tier",
+        "web_search_options",
+        "guided_json",
+        "guided_regex",
+        "guided_choice",
+        "guided_grammar",
+        "guided_decoding_backend",
+        "guided_whitespace_pattern",
+        "structural_tag",
+        "structured_outputs",
+        "chat_template",
+        "chat_template_kwargs",
+        "add_generation_prompt",
+        "continue_final_message",
+        "echo",
+        "spaces_between_special_tokens",
+        "truncate_prompt_tokens",
+        "skip_special_tokens",
+        "lora_request",
+        "priority",
+        "kv_transfer_params",
+        "vllm_xargs",
+        "extra_body",
+        "thread_id",
+        "trace_id",
+        "session_id",
+        "conversation_id",
+        "agent_id",
+    }
+)
+
+
 async def _read_validated_chat_body(
     request: Request,
 ) -> tuple[dict[str, Any] | None, JSONResponse | None]:
@@ -244,6 +328,20 @@ async def _read_validated_chat_body(
                 "message": "Request body must be a JSON object",
             },
         )
+    unknown_top_keys = sorted(
+        str(k)[:64] for k in parsed if k not in _ALLOWED_CHAT_COMPLETION_TOP_KEYS
+    )
+    if unknown_top_keys:
+        return None, JSONResponse(
+            status_code=400,
+            content={
+                "error": "invalid_request_error",
+                "message": (
+                    f"Unsupported top-level request field(s): "
+                    f"{', '.join(unknown_top_keys[:10])}"
+                ),
+            },
+        )
     if "messages" in parsed:
         raw_messages = parsed.get("messages")
         if not isinstance(raw_messages, list) or any(
@@ -325,11 +423,90 @@ def _compute_token_reservation(body: dict[str, Any], scannable_prompt_text: str)
     explicit_max = max(explicit_limits)
     if explicit_max == 0:
         return prompt_estimate
-    return explicit_max * num_choices
+    return prompt_estimate + (explicit_max * num_choices)
+
+
+def _resolve_quota_session_id(
+    agent_id: str, request: Request, body: dict[str, Any]
+) -> str:
+    """Build a collision-resistant quota scope key for ``agent_id`` + session/thread."""
+    candidates: tuple[Any, ...] = (
+        request.headers.get("x-cage-thread-id"),
+        request.headers.get("x-cage-session-id"),
+        body.get("thread_id"),
+        body.get("session_id"),
+        body.get("conversation_id"),
+    )
+    for raw in candidates:
+        if isinstance(raw, str):
+            cleaned = raw.strip()
+            if cleaned:
+                digest = hashlib.sha256(cleaned.encode("utf-8")).hexdigest()[:16]
+                return f"{agent_id}:s:{digest}"
+    return agent_id
+
+
+def _supports_workload_id_kwarg(fn: Any) -> bool:
+    """Return True if *fn* accepts ``workload_id=...`` (or ``**kwargs``)."""
+    try:
+        sig = inspect.signature(fn)
+    except (TypeError, ValueError):
+        return False
+    if "workload_id" in sig.parameters:
+        return True
+    return any(p.kind == inspect.Parameter.VAR_KEYWORD for p in sig.parameters.values())
+
+
+async def _check_quota_step(
+    quota_session_id: str, agent_id: str, token_delta: int
+) -> Any:
+    quota_proxy = _get_token_quota_proxy()
+    check_fn = quota_proxy.check_and_increment
+    if quota_session_id != agent_id and _supports_workload_id_kwarg(check_fn):
+        return await check_fn(
+            agent_id=quota_session_id,
+            token_delta=token_delta,
+            workload_id=agent_id,
+        )
+    return await check_fn(
+        agent_id=quota_session_id,
+        token_delta=token_delta,
+    )
+
+
+async def _rollback_quota_step(
+    quota_session_id: str, agent_id: str, reserved_tokens: int
+) -> None:
+    quota_proxy = _get_token_quota_proxy()
+    rollback_fn = quota_proxy.rollback_step
+    if quota_session_id != agent_id and _supports_workload_id_kwarg(rollback_fn):
+        await rollback_fn(
+            quota_session_id,
+            reserved_tokens=reserved_tokens,
+            workload_id=agent_id,
+        )
+        return
+    await rollback_fn(quota_session_id, reserved_tokens=reserved_tokens)
+
+
+async def _shielded_quota_rollback(
+    quota_session_id: str, agent_id: str, reserved_tokens: int
+) -> None:
+    """Run quota rollback shielded from task cancellation on BaseException."""
+    try:
+        await asyncio.shield(
+            _rollback_quota_step(quota_session_id, agent_id, reserved_tokens)
+        )
+    except asyncio.CancelledError:
+        pass
 
 
 async def _reconcile_actual_usage(
-    agent_id: str, reserved_tokens: int, usage: Any
+    quota_session_id: str,
+    reserved_tokens: int,
+    usage: Any,
+    *,
+    workload_id: str | None = None,
 ) -> None:
     """Reconcile reserved token quota against actual vLLM usage.total_tokens when present."""
     if not isinstance(usage, dict):
@@ -344,7 +521,19 @@ async def _reconcile_actual_usage(
     quota_proxy = _get_token_quota_proxy()
     reconcile_fn = getattr(quota_proxy, "reconcile_actual_tokens", None)
     if callable(reconcile_fn):
-        res = reconcile_fn(agent_id, reserved_tokens, total_tokens)
+        if (
+            workload_id
+            and workload_id != quota_session_id
+            and _supports_workload_id_kwarg(reconcile_fn)
+        ):
+            res = reconcile_fn(
+                quota_session_id,
+                reserved_tokens,
+                total_tokens,
+                workload_id=workload_id,
+            )
+        else:
+            res = reconcile_fn(quota_session_id, reserved_tokens, total_tokens)
         if inspect.isawaitable(res):
             await res
 
@@ -606,10 +795,22 @@ async def _mask_json_value(rails: Any, value: Any) -> tuple[Any, bool]:
     if isinstance(value, dict):
         modified = False
         out_dict: dict[str, Any] = {}
-        for key, item in value.items():
+        for idx, (key, item) in enumerate(value.items()):
+            raw_key = str(key)
+            raw_scrubbed = scrub_pii(raw_key)
+            scrubbed_key = (
+                raw_scrubbed if isinstance(raw_scrubbed, str) else str(raw_scrubbed)
+            )
+            final_key = scrubbed_key
+            if final_key in out_dict:
+                suffix = idx
+                while f"{scrubbed_key}_{suffix}" in out_dict:
+                    suffix += 1
+                final_key = f"{scrubbed_key}_{suffix}"
+            key_mod = final_key != raw_key
             new_item, item_mod = await _mask_json_value(rails, item)
-            out_dict[str(key)] = new_item
-            modified = modified or item_mod
+            out_dict[final_key] = new_item
+            modified = modified or key_mod or item_mod
         return out_dict, modified
     return value, False
 
@@ -797,12 +998,65 @@ def _extract_scannable_messages_text(messages: Any) -> str:
     return " ".join(fragments)
 
 
+_SCANNABLE_SCHEMA_TOP_KEYS = (
+    "functions",
+    "tools",
+    "tool_choice",
+    "function_call",
+    "prompt",
+    "system",
+    "response_format",
+    "guided_json",
+    "guided_regex",
+    "guided_choice",
+    "guided_grammar",
+    "guided_decoding_backend",
+    "guided_whitespace_pattern",
+    "structural_tag",
+    "structured_outputs",
+    "chat_template",
+    "chat_template_kwargs",
+    "stop",
+    "metadata",
+    "prediction",
+    "extra_body",
+    "vllm_xargs",
+    "logit_bias",
+    "lora_request",
+    "kv_transfer_params",
+    "web_search_options",
+    "audio",
+    "modalities",
+    "reasoning_effort",
+    "service_tier",
+    "user",
+)
+
+
+def _iter_nonbinary_schema_fragments(value: Any, fragments: list[str]) -> None:
+    """Append non-binary string leaves and dict keys from schema/decoding fields."""
+    if isinstance(value, str):
+        if value:
+            fragments.append(value)
+    elif isinstance(value, list):
+        for item in value:
+            _iter_nonbinary_schema_fragments(item, fragments)
+    elif isinstance(value, dict):
+        for key, item in value.items():
+            key_str = str(key)
+            if key_str in _BINARY_CONTENT_KEYS:
+                continue
+            if key_str:
+                fragments.append(key_str)
+            _iter_nonbinary_schema_fragments(item, fragments)
+
+
 def _extract_scannable_request_schema_text(body: dict[str, Any]) -> str:
-    """Extract string leaves from top-level prompt/tool schema fields forwarded upstream."""
+    """Extract string leaves and dynamic dict keys from request schema/decoding fields."""
     fragments: list[str] = []
-    for top_key in ("functions", "tools", "prompt", "system"):
+    for top_key in _SCANNABLE_SCHEMA_TOP_KEYS:
         if body.get(top_key) is not None:
-            _iter_nonbinary_string_leaves(body.get(top_key), fragments)
+            _iter_nonbinary_schema_fragments(body.get(top_key), fragments)
     return " ".join(fragments)
 
 
@@ -1179,11 +1433,66 @@ async def chat_completions(
         # ── Step 3: Token Quota Enforcement (ISO 42001 Annex A.4) ──
         # Runs for ALL requests regardless of message role composition.
         token_delta = _compute_token_reservation(body, stage1_scan_text)
+        quota_session_id = _resolve_quota_session_id(agent_id, request, body)
 
-        quota_result = await _get_token_quota_proxy().check_and_increment(
-            agent_id=agent_id,
-            token_delta=token_delta,
-        )
+        try:
+            quota_result = await _check_quota_step(
+                quota_session_id, agent_id, token_delta
+            )
+        except QuotaExceededError as quota_exc:
+            if quota_exc.reason == "redis_unavailable":
+                if span.is_recording():
+                    span.set_attribute("cage.verdict", "INFRASTRUCTURE_BLOCK")
+                    span.set_attribute("cage.infrastructure.dependency", "redis")
+                    span.set_attribute(
+                        "cage.infrastructure.failure_code", "quota_store_unavailable"
+                    )
+                try:
+                    await _emit_proxy_evidence(
+                        request,
+                        span=span,
+                        body=body,
+                        event_type="GOVERNANCE_INFRASTRUCTURE_BLOCK",
+                        control_id="A.5.3",
+                        status_code=503,
+                        reason="Token quota store (Redis) unavailable; failing closed.",
+                        model_id=model_id,
+                        agent_id=agent_id,
+                        extra={
+                            "decision": "INFRASTRUCTURE_BLOCK",
+                            "dependency": "redis",
+                            "reason_code": "quota_store_unavailable",
+                        },
+                    )
+                except EvidenceChainUnavailableError as exc:
+                    return _evidence_unavailable_response(exc)
+                return JSONResponse(
+                    status_code=503,
+                    content={
+                        "error": "governance_dependency_unavailable",
+                        "dependency": "redis",
+                        "reason_code": "quota_store_unavailable",
+                        "message": "Token quota store (Redis) unavailable; failing closed.",
+                    },
+                )
+            if quota_exc.reason == "invalid_token_delta":
+                return JSONResponse(
+                    status_code=400,
+                    content={
+                        "error": "invalid_request_error",
+                        "message": str(quota_exc),
+                    },
+                )
+            quota_result = QuotaCheckResult(
+                allowed=False,
+                agent_id=agent_id,
+                step_count=quota_exc.current_value,
+                accumulated_tokens=quota_exc.current_value,
+                step_quota_max=quota_exc.quota_max,
+                token_quota_max=quota_exc.quota_max,
+                block_reason=quota_exc.reason,
+                session_ttl=0,
+            )
         if not quota_result.allowed:
             stamp_iso_control(span, ingress_stage=2, control="A.4", outcome="BLOCK")
             # Awaited inline — WORM and evidence stream writes must complete before
@@ -1237,7 +1546,7 @@ async def chat_completions(
         # records SKIPPED with the reason code instead of a PASS that never
         # happened. Steps 4-7 are wrapped in a try/except so that any downstream
         # failure triggers a quota rollback (CTRL_TQP_007 §5.3).
-        nemo_input_text = all_messages_text if all_messages_text else last_user_msg
+        nemo_input_text = stage1_scan_text if stage1_scan_text else last_user_msg
         try:
             if rails_refusal is not None:
                 # Off by configuration. An enabled-but-absent rail (rails
@@ -1278,24 +1587,18 @@ async def chat_completions(
             raw_client = _get_http_client()
             client = await raw_client if inspect.isawaitable(raw_client) else raw_client
         except EvidenceChainUnavailableError as exc:
-            await _get_token_quota_proxy().rollback_step(
-                agent_id, reserved_tokens=token_delta
-            )
+            await _rollback_quota_step(quota_session_id, agent_id, token_delta)
             logger.error(
                 "Inference proxy refusal failed closed: evidence chain unavailable: %s",
                 exc,
             )
             return _evidence_unavailable_response(exc)
         except InferenceBackendUnavailable as exc:
-            await _get_token_quota_proxy().rollback_step(
-                agent_id, reserved_tokens=token_delta
-            )
+            await _rollback_quota_step(quota_session_id, agent_id, token_delta)
             logger.error("Inference proxy cannot forward: %s", exc)
             return _backend_unavailable_response(exc.reason_code, str(exc))
-        except Exception:
-            await _get_token_quota_proxy().rollback_step(
-                agent_id, reserved_tokens=token_delta
-            )
+        except BaseException:
+            await _shielded_quota_rollback(quota_session_id, agent_id, token_delta)
             raise
 
         # Respect the caller's streaming preference. When stream=True the proxy
@@ -1348,22 +1651,15 @@ async def chat_completions(
                         stream_overflow = True
                         break
                     collected_chunks.append(chunk)
-            except HTTPException:
-                await _get_token_quota_proxy().rollback_step(
-                    agent_id, reserved_tokens=token_delta
-                )
-                raise
-            except Exception as exc:
-                await _get_token_quota_proxy().rollback_step(
-                    agent_id, reserved_tokens=token_delta
-                )
+            except BaseException as exc:
+                await _shielded_quota_rollback(quota_session_id, agent_id, token_delta)
+                if isinstance(exc, HTTPException) or not isinstance(exc, Exception):
+                    raise
                 safe_err = _safe_error_response(exc)
                 raise HTTPException(status_code=500, detail=safe_err) from exc
 
             if stream_overflow:
-                await _get_token_quota_proxy().rollback_step(
-                    agent_id, reserved_tokens=token_delta
-                )
+                await _rollback_quota_step(quota_session_id, agent_id, token_delta)
                 return JSONResponse(
                     status_code=413,
                     content={
@@ -1418,9 +1714,7 @@ async def chat_completions(
 
             # [KC-01] / [F-15] FIRST: Abort on streaming backend >= 400 error BEFORE emitting PASS evidence!
             if stream_backend_error:
-                await _get_token_quota_proxy().rollback_step(
-                    agent_id, reserved_tokens=token_delta
-                )
+                await _rollback_quota_step(quota_session_id, agent_id, token_delta)
                 upstream_status = (
                     stream_backend_status if 400 <= stream_backend_status < 600 else 502
                 )
@@ -1440,9 +1734,7 @@ async def chat_completions(
             # the egress allowlist, so it is neither masked as text nor
             # replayed: the request fails closed before any PASS evidence.
             if stream_protocol_error:
-                await _get_token_quota_proxy().rollback_step(
-                    agent_id, reserved_tokens=token_delta
-                )
+                await _rollback_quota_step(quota_session_id, agent_id, token_delta)
                 protocol_correlation_id = str(_uuid.uuid4())
                 logger.error(
                     "Upstream stream carried a data payload that is not a JSON "
@@ -1466,10 +1758,8 @@ async def chat_completions(
                     fallback_model=model_id,
                     now=int(time.time()),
                 )
-            except Exception:
-                await _get_token_quota_proxy().rollback_step(
-                    agent_id, reserved_tokens=token_delta
-                )
+            except BaseException:
+                await _shielded_quota_rollback(quota_session_id, agent_id, token_delta)
                 raise
 
             # Record lengths ONLY — never message/response content on OTel spans (#774).
@@ -1491,17 +1781,21 @@ async def chat_completions(
                     output_fields_dropped=stream_report.fields_dropped,
                 )
             except EvidenceChainUnavailableError as exc:
-                await _get_token_quota_proxy().rollback_step(
-                    agent_id, reserved_tokens=token_delta
-                )
+                await _rollback_quota_step(quota_session_id, agent_id, token_delta)
                 logger.error(
                     "Inference proxy streaming pass failed closed: evidence chain unavailable: %s",
                     exc,
                 )
                 return _evidence_unavailable_response(exc)
+            except BaseException:
+                await _shielded_quota_rollback(quota_session_id, agent_id, token_delta)
+                raise
 
             await _reconcile_actual_usage(
-                agent_id, token_delta, stream_completion.get("usage")
+                quota_session_id,
+                token_delta,
+                stream_completion.get("usage"),
+                workload_id=agent_id,
             )
 
             if stream_report.pii_redacted:
@@ -1554,17 +1848,11 @@ async def chat_completions(
             upstream_completion = resp.json()
             if not isinstance(upstream_completion, dict):
                 raise ValueError("Upstream inference response was not a JSON object")
-        except HTTPException:
-            # MED-6 fix: roll back quota on vLLM HTTP errors (4xx/5xx).
-            await _get_token_quota_proxy().rollback_step(
-                agent_id, reserved_tokens=token_delta
-            )
-            raise
-        except Exception as exc:
-            # MED-6 fix: roll back quota on connection/timeout/parse errors.
-            await _get_token_quota_proxy().rollback_step(
-                agent_id, reserved_tokens=token_delta
-            )
+        except BaseException as exc:
+            # MED-6 / KC-05 fix: shielded rollback on HTTP errors, network errors, and CancelledError.
+            await _shielded_quota_rollback(quota_session_id, agent_id, token_delta)
+            if isinstance(exc, HTTPException) or not isinstance(exc, Exception):
+                raise
             safe_err = _safe_error_response(exc)
             raise HTTPException(status_code=500, detail=safe_err) from exc
 
@@ -1578,10 +1866,8 @@ async def chat_completions(
                 fallback_model=model_id,
                 now=int(time.time()),
             )
-        except Exception:
-            await _get_token_quota_proxy().rollback_step(
-                agent_id, reserved_tokens=token_delta
-            )
+        except BaseException:
+            await _shielded_quota_rollback(quota_session_id, agent_id, token_delta)
             raise
 
         # Record lengths ONLY — never message/response content on OTel spans (#774).
@@ -1602,14 +1888,20 @@ async def chat_completions(
                 output_fields_dropped=report.fields_dropped,
             )
         except EvidenceChainUnavailableError as exc:
-            await _get_token_quota_proxy().rollback_step(
-                agent_id, reserved_tokens=token_delta
-            )
+            await _rollback_quota_step(quota_session_id, agent_id, token_delta)
             logger.error(
                 "Inference proxy pass failed closed: evidence chain unavailable: %s",
                 exc,
             )
             return _evidence_unavailable_response(exc)
+        except BaseException:
+            await _shielded_quota_rollback(quota_session_id, agent_id, token_delta)
+            raise
 
-        await _reconcile_actual_usage(agent_id, token_delta, completion.get("usage"))
+        await _reconcile_actual_usage(
+            quota_session_id,
+            token_delta,
+            completion.get("usage"),
+            workload_id=agent_id,
+        )
         return JSONResponse(content=completion)

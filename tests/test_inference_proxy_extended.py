@@ -1026,7 +1026,7 @@ async def test_output_filter_exception_triggers_quota_rollback(proxy_deps, monke
 
     quota_proxy.rollback_step.assert_awaited_once_with(
         "cage-advisor-sa.governance-stack.serviceaccount.identity.linkerd.cluster.local",
-        reserved_tokens=250,
+        reserved_tokens=252,
     )
 
 
