@@ -78,18 +78,16 @@ component-definition:
 
               metrics_doc := object.get(input.langfuse_metrics_a92, "response", input.langfuse_metrics_a92)
               total_traces := object.get(metrics_doc, "total_traces", 0)
+              min_sample_size := object.get(metrics_doc, "min_sample_size", 30)
               safety_rate := object.get(metrics_doc, "safety_rate", null)
               evidence_age_s := round(object.get(metrics_doc, "evidence_age_seconds", 0))
               grace_active := object.get(metrics_doc, "startup_grace_active", false)
 
-              # A.9.2: Data Transfer to Suppliers — PII must never be sent to external APIs.
-              sample_size_or_grace_met if {
-                metrics_doc.startup_grace_active == true
-              }
-
-              sample_size_or_grace_met if {
-                metrics_doc.startup_grace_active == false
-                metrics_doc.total_traces > 0
+              # A.9.2: Data Transfer to Suppliers — zero tolerance for PII leakage.
+              # Any observed leak (safety_rate < 1.0) emits threshold_violation regardless of
+              # sample size; passing below min_sample_size emits insufficient_sample (POAM-2026-244).
+              sample_size_met if {
+                total_traces >= min_sample_size
               }
 
               rate_or_grace_ok if {
@@ -100,7 +98,7 @@ component-definition:
 
               rate_or_grace_ok if {
                 metrics_doc.safety_rate == 1.0
-                sample_size_or_grace_met
+                sample_size_met
               }
 
               validate if {
@@ -125,11 +123,18 @@ component-definition:
                 grace_active == false
                 total_traces == 0
                 safety_rate == null
+              } else := "threshold_violation" if {
+                total_traces > 0
+                safety_rate != null
+                safety_rate < 1.0
+              } else := "insufficient_sample" if {
+                total_traces > 0
+                total_traces < min_sample_size
               } else := "satisfied" if {
                 rate_or_grace_ok
               } else := "threshold_violation"
 
               assessment_remark := sprintf(
-                "assessment_status=%s; control_id=A.9.2; total_traces=%d; safety_rate=%s; threshold=1.0; evidence_age_seconds=%d; startup_grace_active=%v",
-                [assessment_status, total_traces, safety_rate_str, evidence_age_s, grace_active],
+                "assessment_status=%s; control_id=A.9.2; total_traces=%d; min_sample_size=%d; safety_rate=%s; threshold=1.0; evidence_age_seconds=%d; startup_grace_active=%v",
+                [assessment_status, total_traces, min_sample_size, safety_rate_str, evidence_age_s, grace_active],
               )

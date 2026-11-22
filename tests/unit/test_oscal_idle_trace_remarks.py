@@ -361,7 +361,36 @@ class TestLulaNativeObservationsStatisticalSpecs:
                             "control_id": cid,
                             "safety_rate": None,
                             "total_traces": 0,
+                            "min_sample_size": 30,
                             "evidence_age_seconds": 0.0,
+                            "startup_grace_active": False,
+                        },
+                        "not-satisfied",
+                        False,
+                    ),
+                    (
+                        "insufficient_sample",
+                        {
+                            "control_id": cid,
+                            "safety_rate": pass_rate,
+                            "total_traces": 15,
+                            "min_sample_size": 30,
+                            "evidence_age_seconds": 120.0,
+                            "startup_grace_active": False,
+                        },
+                        "not-satisfied",
+                        False,
+                    ),
+                    (
+                        "threshold_violation"
+                        if cid == "A.9.2"
+                        else "insufficient_sample",
+                        {
+                            "control_id": cid,
+                            "safety_rate": fail_rate,
+                            "total_traces": 20,
+                            "min_sample_size": 30,
+                            "evidence_age_seconds": 120.0,
                             "startup_grace_active": False,
                         },
                         "not-satisfied",
@@ -372,7 +401,8 @@ class TestLulaNativeObservationsStatisticalSpecs:
                         {
                             "control_id": cid,
                             "safety_rate": fail_rate,
-                            "total_traces": 20,
+                            "total_traces": 40,
+                            "min_sample_size": 30,
                             "evidence_age_seconds": 120.0,
                             "startup_grace_active": False,
                         },
@@ -384,7 +414,8 @@ class TestLulaNativeObservationsStatisticalSpecs:
                         {
                             "control_id": cid,
                             "safety_rate": pass_rate,
-                            "total_traces": 20,
+                            "total_traces": 40,
+                            "min_sample_size": 30,
                             "evidence_age_seconds": 200000.0,
                             "startup_grace_active": False,
                         },
@@ -397,6 +428,7 @@ class TestLulaNativeObservationsStatisticalSpecs:
                             "control_id": cid,
                             "safety_rate": None,
                             "total_traces": 0,
+                            "min_sample_size": 30,
                             "evidence_age_seconds": 0.0,
                             "startup_grace_active": True,
                         },
@@ -408,7 +440,8 @@ class TestLulaNativeObservationsStatisticalSpecs:
                         {
                             "control_id": cid,
                             "safety_rate": pass_rate,
-                            "total_traces": 25,
+                            "total_traces": 40,
+                            "min_sample_size": 30,
                             "evidence_age_seconds": 45.0,
                             "startup_grace_active": False,
                         },
@@ -965,11 +998,13 @@ class TestThreeStateLulaAuditPipeline:
             assert a53_metrics.total_traces == 0
             assert a53_metrics.safety_rate is None
 
-            # Yet the 1800s dead-man's switch recognizes the healthy 26-manifest
-            # 0-failure execution so idle nights do not page after 30 minutes!
+            # POAM-2026-234 (item 4): an `insufficient_traffic` lula_audit record
+            # MUST NOT reset the dead-man's switch (which resets strictly on clean
+            # passing `lula_audit PASS:` evaluations).
+            assert a53_metrics.self_evaluation_records_excluded == 1
             age_s, last_iso = get_last_passing_lula_audit_age_seconds(window_hours=24)
-            assert age_s is not None and age_s < 600.0
-            assert last_iso is not None
+            assert age_s is None
+            assert last_iso is None
 
         live_metrics = MagicMock()
         live_metrics.startup_grace_active = False
@@ -995,9 +1030,12 @@ class TestThreeStateLulaAuditPipeline:
         ):
             await sla_mod._check_sla_once()
 
-        mock_notifier.send_critical_alert.assert_not_called()
+        # Because no clean passing `lula_audit PASS:` record exists in the
+        # 24h window, the dead-man's switch breaches (fail-closed) and fires.
+        mock_notifier.send_critical_alert.assert_called_once()
         assert (
-            _metric_value(sla_mod.LULA_AUDIT_DEADMAN_BREACHES_TOTAL) == before_deadman
+            _metric_value(sla_mod.LULA_AUDIT_DEADMAN_BREACHES_TOTAL)
+            == before_deadman + 1.0
         )
 
     def test_non_statistical_control_claiming_insufficient_traffic_fails_closed_and_pages(

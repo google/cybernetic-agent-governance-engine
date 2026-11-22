@@ -781,6 +781,8 @@ async def get_metrics_summary(
     failing: list[str] = []
     errored_controls: list[str] = []
     critical_fails: list[str] = []
+    insufficient_traffic_controls: list[str] = []
+    insufficient_sample_controls: list[str] = []
 
     # Fetch all controls concurrently; WORM custody tamper raises immediately.
     async def _fetch(cid: str) -> None:
@@ -790,23 +792,43 @@ async def get_metrics_summary(
                 timeout=8.0,
             )
             results[cid] = m.model_dump()
-            # A control fails when safety_rate < 1.0 or evidence_age_seconds > SLA
-            # outside startup grace. Errored/timed-out controls never count as passing.
+            # A control fails when safety_rate violates its threshold or
+            # evidence_age_seconds > SLA outside startup grace. Small populations
+            # (`0 < total_traces < min_sample_size`) land in
+            # `insufficient_sample_controls` (neither passing nor failing), except
+            # zero-tolerance (`threshold == 1.0`) violations which fail immediately.
             sla_limit = active_sla_map.get(cid)
-            safety_failed = (
-                m.safety_rate is not None
-                and m.safety_rate < 1.0
-                and not m.startup_grace_active
-            )
+            threshold = {"A.5.2": 0.99, "A.5.3": 0.98, "A.9.2": 1.0}.get(cid, 1.0)
             freshness_failed = (
                 not m.startup_grace_active
                 and sla_limit is not None
                 and m.evidence_age_seconds > sla_limit
             )
+            zero_tol_violation = (
+                threshold == 1.0
+                and m.safety_rate is not None
+                and m.safety_rate < 1.0
+                and not m.startup_grace_active
+            )
+            sample_sufficient = m.total_traces >= m.min_sample_size
+            safety_failed = zero_tol_violation or (
+                sample_sufficient
+                and m.safety_rate is not None
+                and m.safety_rate < threshold
+                and not m.startup_grace_active
+            )
             if safety_failed or freshness_failed:
                 failing.append(cid)
                 if cid in CRITICAL_CONTROLS:
                     critical_fails.append(cid)
+            elif not m.startup_grace_active and m.safety_rate is None:
+                insufficient_traffic_controls.append(cid)
+            elif (
+                not m.startup_grace_active
+                and m.total_traces > 0
+                and not sample_sufficient
+            ):
+                insufficient_sample_controls.append(cid)
             else:
                 passing.append(cid)
         except (EvidenceCustodyIntegrityError, NonEvidentiaryAttestationError):
@@ -867,6 +889,8 @@ async def get_metrics_summary(
         "total_controls": len(region_control_ids),
         "passing_controls": passing_count,
         "failing_controls": sorted(set(failing)),
+        "insufficient_traffic_controls": sorted(set(insufficient_traffic_controls)),
+        "insufficient_sample_controls": sorted(set(insufficient_sample_controls)),
         "errored_controls": sorted(set(errored_controls)),
         "critical_fails": sorted(set(critical_fails)),
         "window_hours": window_hours,
@@ -901,6 +925,7 @@ LULA_AUDIT_RUNS_TOTAL: Any = None
 LULA_AUDIT_EVALUATED_MANIFESTS: Any = None
 LULA_AUDIT_NOT_SATISFIED_CONTROLS: Any = None
 LULA_AUDIT_INSUFFICIENT_TRAFFIC_CONTROLS: Any = None
+LULA_AUDIT_INSUFFICIENT_SAMPLE_CONTROLS: Any = None
 LULA_AUDIT_LAST_PASS_TIMESTAMP_SECONDS: Any = None
 try:
     from prometheus_client import REGISTRY as _PROM_REGISTRY
@@ -935,6 +960,10 @@ try:
     LULA_AUDIT_INSUFFICIENT_TRAFFIC_CONTROLS = _bridge_gauge(
         "cage_lula_audit_insufficient_traffic_controls",
         "Number of statistical trace-rate controls reporting not-satisfied due to insufficient_traffic in the latest lula_audit run",
+    )
+    LULA_AUDIT_INSUFFICIENT_SAMPLE_CONTROLS = _bridge_gauge(
+        "cage_lula_audit_insufficient_sample_controls",
+        "Number of statistical trace-rate controls reporting not-satisfied due to insufficient_sample (< min_sample_size) in the latest lula_audit run",
     )
     LULA_AUDIT_LAST_PASS_TIMESTAMP_SECONDS = _bridge_gauge(
         "cage_lula_audit_last_pass_timestamp_seconds",
@@ -976,10 +1005,14 @@ class InfraEvent(BaseModel):
     satisfied_count: int | None = Field(default=None, ge=0)
     failed_count: int | None = Field(default=None, ge=0)
     insufficient_traffic_count: int | None = Field(default=None, ge=0)
+    insufficient_sample_count: int | None = Field(default=None, ge=0)
     startup_grace_count: int | None = Field(default=None, ge=0)
     not_satisfied_count: int | None = Field(default=None, ge=0)
     failed_controls: tuple[str, ...] | list[str] | None = Field(default=None)
     insufficient_traffic_controls: tuple[str, ...] | list[str] | None = Field(
+        default=None
+    )
+    insufficient_sample_controls: tuple[str, ...] | list[str] | None = Field(
         default=None
     )
     startup_grace_controls: tuple[str, ...] | list[str] | None = Field(default=None)
@@ -1010,6 +1043,7 @@ class InfraEvent(BaseModel):
     @field_validator(
         "failed_controls",
         "insufficient_traffic_controls",
+        "insufficient_sample_controls",
         "startup_grace_controls",
     )
     @classmethod
@@ -1201,6 +1235,14 @@ async def ingest_infra_event(
         if event.insufficient_traffic_controls is not None
         else None
     )
+    scrubbed_insufficient_sample_controls = (
+        [
+            _CREDENTIAL_PATTERN.sub("[REDACTED]", c)[:128]
+            for c in event.insufficient_sample_controls
+        ]
+        if event.insufficient_sample_controls is not None
+        else None
+    )
     scrubbed_startup_grace_controls = (
         [
             _CREDENTIAL_PATTERN.sub("[REDACTED]", c)[:128]
@@ -1257,9 +1299,11 @@ async def ingest_infra_event(
             not_satisfied_count=event.not_satisfied_count,
             failed_count=event.failed_count,
             insufficient_traffic_count=event.insufficient_traffic_count,
+            insufficient_sample_count=event.insufficient_sample_count,
             startup_grace_count=event.startup_grace_count,
             failed_controls=scrubbed_failed_controls,
             insufficient_traffic_controls=scrubbed_insufficient_controls,
+            insufficient_sample_controls=scrubbed_insufficient_sample_controls,
             startup_grace_controls=scrubbed_startup_grace_controls,
         )
     except InfraIdempotencyConflictError as exc:
@@ -1296,6 +1340,7 @@ async def ingest_infra_event(
             scrubbed_summary=scrubbed_summary,
             scrubbed_failed_controls=scrubbed_failed_controls,
             scrubbed_insufficient_controls=scrubbed_insufficient_controls,
+            scrubbed_insufficient_sample_controls=scrubbed_insufficient_sample_controls,
             scrubbed_startup_grace_controls=scrubbed_startup_grace_controls,
             receipt_hash=receipt.record_hash,
             idempotent_replay=receipt.idempotent_replay,
@@ -1305,7 +1350,7 @@ async def ingest_infra_event(
 
 
 _LULA_SUMMARY_RATIO_RE = re.compile(
-    r"\blula_audit\s+(PASS|FAIL|INSUFFICIENT_TRAFFIC)\s*:\s*(\d+)\s*/\s*(\d+)\b",
+    r"\blula_audit\s+(PASS|FAIL|INSUFFICIENT_TRAFFIC|INSUFFICIENT_SAMPLE)\s*:\s*(\d+)\s*/\s*(\d+)\b",
     re.IGNORECASE,
 )
 _LULA_SUMMARY_FAILED_BLOCK_RE = re.compile(
@@ -1328,6 +1373,7 @@ async def _handle_lula_audit_post_custody(
     scrubbed_summary: str,
     scrubbed_failed_controls: list[str] | None,
     scrubbed_insufficient_controls: list[str] | None = None,
+    scrubbed_insufficient_sample_controls: list[str] | None = None,
     scrubbed_startup_grace_controls: list[str] | None = None,
     receipt_hash: str,
     idempotent_replay: bool,
@@ -1361,17 +1407,36 @@ async def _handle_lula_audit_post_custody(
         failed_controls_list = []
 
     insufficient_controls_raw = [c for c in (scrubbed_insufficient_controls or []) if c]
+    insufficient_sample_raw = [
+        c for c in (scrubbed_insufficient_sample_controls or []) if c
+    ]
     startup_grace_controls_raw = [
         c for c in (scrubbed_startup_grace_controls or []) if c
     ]
     # Server-authoritative allowlist: ONLY statistical trace-rate Lula manifests
-    # (`a52`, `a53`, `a92`) can report `insufficient_traffic` or `startup_grace`.
-    # Any structural or unknown manifest claiming either state is promoted to a failure.
-    valid_insufficient_controls = [
-        c for c in insufficient_controls_raw if c in STATISTICAL_TRACE_LULA_SPECS
-    ]
+    # (`a52`, `a53`, `a92`) can report `insufficient_traffic`, `insufficient_sample`,
+    # or `startup_grace`. Any structural or unknown manifest claiming any of those
+    # states (or duplicated across states) is promoted to a failure.
+    valid_insufficient_controls = list(
+        dict.fromkeys(
+            c for c in insufficient_controls_raw if c in STATISTICAL_TRACE_LULA_SPECS
+        )
+    )
     invalid_insufficient_controls = [
         c for c in insufficient_controls_raw if c not in STATISTICAL_TRACE_LULA_SPECS
+    ]
+    valid_insufficient_sample_controls = list(
+        dict.fromkeys(
+            c for c in insufficient_sample_raw if c in STATISTICAL_TRACE_LULA_SPECS
+        )
+    )
+    invalid_insufficient_sample_controls = [
+        c for c in insufficient_sample_raw if c not in STATISTICAL_TRACE_LULA_SPECS
+    ]
+    overlapping_insufficient = [
+        c
+        for c in valid_insufficient_sample_controls
+        if c in set(valid_insufficient_controls)
     ]
     invalid_startup_grace_controls = [
         c for c in startup_grace_controls_raw if c not in STATISTICAL_TRACE_LULA_SPECS
@@ -1381,6 +1446,8 @@ async def _handle_lula_audit_post_custody(
             [
                 *failed_controls_list,
                 *invalid_insufficient_controls,
+                *invalid_insufficient_sample_controls,
+                *overlapping_insufficient,
                 *invalid_startup_grace_controls,
             ]
         )
@@ -1390,9 +1457,16 @@ async def _handle_lula_audit_post_custody(
     has_pass_prefix = bool(
         re.search(r"\blula_audit\s+pass\s*:", scrubbed_summary, re.IGNORECASE)
     )
-    has_insufficient_prefix = bool(
+    has_insufficient_traffic_prefix = bool(
         re.search(
             r"\blula_audit\s+insufficient_traffic\s*:",
+            scrubbed_summary,
+            re.IGNORECASE,
+        )
+    )
+    has_insufficient_sample_prefix = bool(
+        re.search(
+            r"\blula_audit\s+insufficient_sample\s*:",
             scrubbed_summary,
             re.IGNORECASE,
         )
@@ -1419,24 +1493,46 @@ async def _handle_lula_audit_post_custody(
         and not_satisfied == 0
         and len(effective_failed_controls) == 0
         and len(valid_insufficient_controls) == 0
+        and len(valid_insufficient_sample_controls) == 0
         and (event.insufficient_traffic_count or 0) == 0
+        and (event.insufficient_sample_count or 0) == 0
         and satisfied_count >= evaluated_count
         and not summary_indicated_fail
     )
 
-    is_insufficient_traffic_only = (
+    has_any_insufficient_prefix = (
+        has_insufficient_sample_prefix
+        if len(valid_insufficient_sample_controls) > 0
+        else has_insufficient_traffic_prefix
+    )
+    is_insufficient_evidence_only = (
         not is_clean_pass
         and not corpus_floor_breach
         and (event.failed_count or 0) == 0
         and (event.not_satisfied_count or 0) == 0
         and len(effective_failed_controls) == 0
-        and len(valid_insufficient_controls) > 0
+        and (
+            len(valid_insufficient_controls) + len(valid_insufficient_sample_controls)
+            > 0
+        )
+        and len(insufficient_controls_raw) == len(valid_insufficient_controls)
+        and len(insufficient_sample_raw) == len(valid_insufficient_sample_controls)
         and (
             event.insufficient_traffic_count is None
             or event.insufficient_traffic_count == len(valid_insufficient_controls)
         )
-        and satisfied_count + len(valid_insufficient_controls) == evaluated_count
-        and has_insufficient_prefix
+        and (
+            event.insufficient_sample_count is None
+            or event.insufficient_sample_count
+            == len(valid_insufficient_sample_controls)
+        )
+        and (
+            satisfied_count
+            + len(valid_insufficient_controls)
+            + len(valid_insufficient_sample_controls)
+            == evaluated_count
+        )
+        and has_any_insufficient_prefix
         and "FAIL" not in summary_upper
         and m_failed_block is None
     )
@@ -1444,16 +1540,26 @@ async def _handle_lula_audit_post_custody(
     if is_clean_pass:
         effective_not_satisfied_gauge = 0
         effective_insufficient_gauge = 0
+        effective_insufficient_sample_gauge = 0
         run_outcome = "pass"
-    elif is_insufficient_traffic_only:
+    elif is_insufficient_evidence_only:
         effective_not_satisfied_gauge = 0
         effective_insufficient_gauge = len(valid_insufficient_controls)
-        run_outcome = "insufficient_traffic"
+        effective_insufficient_sample_gauge = len(valid_insufficient_sample_controls)
+        run_outcome = (
+            "insufficient_sample"
+            if len(valid_insufficient_sample_controls) > 0
+            else "insufficient_traffic"
+        )
     else:
         effective_insufficient_gauge = len(valid_insufficient_controls)
+        effective_insufficient_sample_gauge = len(valid_insufficient_sample_controls)
         unaccounted_failures = max(
             0,
-            evaluated_count - satisfied_count - len(valid_insufficient_controls),
+            evaluated_count
+            - satisfied_count
+            - len(valid_insufficient_controls)
+            - len(valid_insufficient_sample_controls),
         )
         effective_not_satisfied_gauge = max(
             event.not_satisfied_count or 0,
@@ -1474,14 +1580,20 @@ async def _handle_lula_audit_post_custody(
         LULA_AUDIT_INSUFFICIENT_TRAFFIC_CONTROLS.set(
             float(effective_insufficient_gauge)
         )
+    if LULA_AUDIT_INSUFFICIENT_SAMPLE_CONTROLS is not None:
+        LULA_AUDIT_INSUFFICIENT_SAMPLE_CONTROLS.set(
+            float(effective_insufficient_sample_gauge)
+        )
     if not idempotent_replay and LULA_AUDIT_RUNS_TOTAL is not None:
         LULA_AUDIT_RUNS_TOTAL.labels(outcome=run_outcome).inc()
+    # Neither `insufficient_traffic` nor `insufficient_sample` advances the last
+    # clean-pass timestamp (POAM-2026-234 / POAM-2026-244).
     if is_clean_pass and LULA_AUDIT_LAST_PASS_TIMESTAMP_SECONDS is not None:
         LULA_AUDIT_LAST_PASS_TIMESTAMP_SECONDS.set(
             datetime.now(tz=timezone.utc).timestamp()
         )
 
-    if is_clean_pass or is_insufficient_traffic_only or idempotent_replay:
+    if is_clean_pass or is_insufficient_evidence_only or idempotent_replay:
         return
 
     reasons: list[str] = []
@@ -1494,6 +1606,16 @@ async def _handle_lula_audit_post_custody(
         reasons.append(
             "non-statistical controls rejected from insufficient_traffic="
             f"{','.join(invalid_insufficient_controls)}"
+        )
+    if invalid_insufficient_sample_controls:
+        reasons.append(
+            "non-statistical controls rejected from insufficient_sample="
+            f"{','.join(invalid_insufficient_sample_controls)}"
+        )
+    if overlapping_insufficient:
+        reasons.append(
+            "overlapping insufficient_traffic and insufficient_sample controls="
+            f"{','.join(overlapping_insufficient)}"
         )
     if effective_not_satisfied_gauge > 0:
         reasons.append(f"not_satisfied={effective_not_satisfied_gauge}")

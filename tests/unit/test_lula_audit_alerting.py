@@ -222,8 +222,11 @@ class TestLulaAuditMetricPoisoningFix:
             is False
         )
 
-        # Aggregation over 1 older pass + 1 recent fail lowers safety_rate to 0.5
-        # AND preserves older_pass_ts rather than resetting A.5.3 evidence age!
+        # POAM-2026-201: `lula_audit` records are control-evaluation outputs for
+        # A.5.3 and MUST be excluded from A.5.3's own input denominator across
+        # both PASS and FAIL entries (preventing the self-referential feedback
+        # latch), while preserving dead-man SLA visibility via
+        # `get_last_passing_lula_audit_age_seconds()`.
         pass_rec = _make_lula_record(
             older_pass_ts,
             summary="lula_audit PASS: 26/26 active validations satisfied",
@@ -237,12 +240,17 @@ class TestLulaAuditMetricPoisoningFix:
             return_value=[fail_rec, pass_rec],
         ):
             metrics = _fetch_from_evidence_stream_sync("A.5.3", 24)
+            age_s, last_pass_iso = get_last_passing_lula_audit_age_seconds(
+                window_hours=24
+            )
 
-        assert metrics.total_traces == 2
-        assert metrics.passed_traces == 1
-        assert metrics.blocked_traces == 1
-        assert metrics.safety_rate == 0.5
-        assert metrics.evidence_age_seconds >= 7000
+        assert metrics.total_traces == 0
+        assert metrics.passed_traces == 0
+        assert metrics.blocked_traces == 0
+        assert metrics.safety_rate is None
+        assert metrics.self_evaluation_records_excluded == 2
+        assert age_s is not None and age_s >= 7000
+        assert last_pass_iso is not None
 
 
 # ---------------------------------------------------------------------------

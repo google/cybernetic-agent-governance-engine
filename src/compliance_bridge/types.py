@@ -62,12 +62,30 @@ from __future__ import annotations
 from enum import Enum
 from typing import Literal
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 # ---------------------------------------------------------------------------
 # ComplianceMetrics — the JSON response shape returned by GET /v1/metrics/:control_id
 # This is the exact object that Lula's OPA Rego provider receives as `input`.
 # ---------------------------------------------------------------------------
+
+# Canonical minimum trace population required before statistical rate-based
+# compliance thresholds (e.g. A.5.2 >= 0.99, A.5.3 >= 0.98, A.9.2 == 1.0)
+# can be declared `satisfied`. Configurable via `COMPLIANCE_MIN_SAMPLE_SIZE`.
+DEFAULT_MIN_SAMPLE_SIZE: int = 30
+
+# Canonical event types produced by evaluating a control (meta-level assessment
+# output rather than object-level governed telemetry). Records of these types
+# emitted for control X are structurally excluded from X's input population so
+# a failing assessment can never feed back into the metric it validates
+# (POAM-2026-201 / POAM-2026-244).
+CONTROL_EVALUATION_EVENT_TYPES: frozenset[str] = frozenset(
+    {
+        "lula_audit",
+        "control_assessment",
+        "assessment_result",
+    }
+)
 
 
 class ComplianceMetrics(BaseModel):
@@ -78,6 +96,9 @@ class ComplianceMetrics(BaseModel):
     blocked_traces: int = Field(ge=0)
     passed_traces: int = Field(ge=0)
     infrastructure_blocks: int = Field(default=0, ge=0)
+    self_evaluation_records_excluded: int = Field(default=0, ge=0)
+    min_sample_size: int = Field(default=DEFAULT_MIN_SAMPLE_SIZE, ge=1)
+    sample_sufficient: bool = Field(default=False)
     window_hours: float = Field(gt=0)
     last_event_utc: str  # ISO 8601 datetime string
     evidence_age_seconds: float = Field(ge=0)
@@ -89,6 +110,15 @@ class ComplianceMetrics(BaseModel):
     # when total_traces > 0; None otherwise.
     confabulation_rate: float | None = Field(default=None, ge=0.0, le=1.0)
     confabulation_blocked_traces: int = Field(default=0, ge=0)
+
+    @model_validator(mode="after")
+    def _derive_sample_sufficiency(self) -> ComplianceMetrics:
+        """Default `sample_sufficient` from `total_traces >= min_sample_size` when omitted."""
+        if "sample_sufficient" not in self.model_fields_set:
+            object.__setattr__(
+                self, "sample_sufficient", self.total_traces >= self.min_sample_size
+            )
+        return self
 
 
 class Cm6ThresholdsPosture(BaseModel):
@@ -118,15 +148,20 @@ OscalResult = Literal[
     "NOT_APPLICABLE",
     "ERROR",
 ]
-# Result semantics (per NIST SP 800-53A §3.2 assessment procedures & POAM-2026-215):
-#   PASS                  — evidence meets the assessment objective (OSCAL: satisfied)
+# Result semantics (per NIST SP 800-53A §3.2 assessment procedures & POAM-2026-215/244):
+#   PASS                  — evidence meets the assessment objective with sufficient
+#                           sample size (`total_traces >= min_sample_size`, OSCAL: satisfied)
 #   FAIL                  — evidence fails the assessment objective (OSCAL: not-satisfied)
-#   INSUFFICIENT_EVIDENCE — the control applies to this system, but zero governed traces
-#                           were observed in the look-back window (`total_traces == 0`,
-#                           `safety_rate is None`). Exported as OSCAL `not-satisfied` with
-#                           explicit `assessment_status=insufficient_traffic` remarks —
-#                           NEVER `not-applicable` (which falsely claims the control is
-#                           out of scope, POAM-2026-215) and NEVER `satisfied`.
+#   INSUFFICIENT_EVIDENCE — the control applies to this system, but either zero governed traces
+#                           were observed (`total_traces == 0`, `safety_rate is None`,
+#                           `assessment_status=insufficient_traffic`) or the observed trace
+#                           population is below `min_sample_size` (`0 < total_traces < min_sample_size`,
+#                           `assessment_status=insufficient_sample`, POAM-2026-244). Exported
+#                           as OSCAL `not-satisfied` — NEVER `not-applicable`, NEVER `satisfied`,
+#                           and NEVER resets the `lula_audit` dead-man's switch timer. Note:
+#                           zero-tolerance controls (`threshold == 1.0`, e.g. A.9.2 PII leak)
+#                           with any concrete violation (`safety_rate < 1.0`) emit `FAIL`
+#                           immediately regardless of sample size.
 #   NOT_APPLICABLE        — the control does not apply to this system component
 #                           (e.g. a wireless control on a wired-only system)
 #   ERROR                 — the control applies but the scanner/collector failed to
@@ -136,9 +171,9 @@ OscalResult = Literal[
 #                           security blind spot is visible.  (NIST SP 800-53A §3.2)
 
 # Statistical trace-rate Lula manifests whose `not-satisfied` verdict may carry
-# `lula.assessment_remark: assessment_status=insufficient_traffic` when
-# `total_traces == 0` outside startup grace. Structural/Kubernetes/config specs
-# are NEVER eligible for `insufficient_traffic` classification.
+# `lula.assessment_remark: assessment_status=insufficient_traffic` (`total_traces == 0`)
+# or `assessment_status=insufficient_sample` (`0 < total_traces < min_sample_size`).
+# Structural/Kubernetes/config specs are NEVER eligible for either classification.
 STATISTICAL_TRACE_LULA_SPECS: frozenset[str] = frozenset(
     {
         "lula-validation-a52",
@@ -635,7 +670,9 @@ from src.gateway.governance.iso_control import (
 )
 
 __all__ = [
+    "CONTROL_EVALUATION_EVENT_TYPES",
     "CRITICAL_CONTROLS",
+    "DEFAULT_MIN_SAMPLE_SIZE",
     "FRAMEWORK_CONTROLS",
     "STATISTICAL_TRACE_LULA_SPECS",
     "SUPPORTED_CONTROLS",
