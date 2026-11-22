@@ -42,14 +42,18 @@ import logging
 import os
 import re
 import threading
-from collections.abc import Mapping
+from collections.abc import Mapping, Sequence
 from datetime import datetime, timedelta, timezone
 from typing import Any
 from urllib.parse import unquote, urlparse
 
 from cachetools import TTLCache
 
-from src.gateway.governance.env_posture import is_enforcing, resolve_posture
+from src.gateway.governance.env_posture import (
+    is_enforcing,
+    resolve_deployment_region,
+    resolve_posture,
+)
 from src.gateway.governance.evidence.cold_store import EvidenceColdStore
 from src.gateway.governance.evidence.factory import get_cold_store
 
@@ -60,7 +64,7 @@ from .evidence_custodian import (
     assert_citable,
 )
 from .infra_custody import DEFAULT_INFRA_STREAM_KEY, INFRA_STREAM_KEY_ENV
-from .types import ComplianceMetrics
+from .types import Cm6ThresholdsPosture, ComplianceMetrics
 
 logger = logging.getLogger(__name__)
 
@@ -695,6 +699,70 @@ def _is_passing_lula_audit(
     return True
 
 
+_OCSF_HEX64_RE = re.compile(r"^[0-9a-f]{64}\Z")
+_OCSF_ALLOW_DISPOSITIONS: frozenset[str] = frozenset({"allowed", "logged", "observed"})
+_OCSF_CONTAINMENT_DISPOSITIONS: frozenset[str] = frozenset(
+    {"blocked", "denied", "dropped", "rejected"}
+)
+_OCSF_ALLOW_ACTIONS: frozenset[str] = frozenset({"observed", "allowed", "logged"})
+_OCSF_CONTAINMENT_ACTIONS: frozenset[str] = frozenset(
+    {"observed", "blocked", "denied", "dropped", "rejected"}
+)
+
+
+def _classify_sandbox_ocsf_telemetry(
+    record: Mapping[str, Any] | Any,
+    payload: dict[str, Any],
+) -> tuple[bool, bool]:
+    """Classify `SANDBOX_OCSF_TELEMETRY` into `(is_passing, is_control_effective)`."""
+    raw_digest = payload.get("governance_decision_digest")
+    if raw_digest is None:
+        raw_digest = _get_record_field(record, "governance_decision_digest")
+    if not isinstance(raw_digest, str) or not _OCSF_HEX64_RE.fullmatch(
+        raw_digest.strip()
+    ):
+        return False, False
+
+    raw_disp = payload.get("ocsf_disposition")
+    if raw_disp is None:
+        raw_disp = _get_record_field(record, "ocsf_disposition")
+    if not isinstance(raw_disp, str) or not raw_disp.strip():
+        return False, False
+    disposition = raw_disp.strip().lower()
+
+    raw_action = payload.get("ocsf_action")
+    if raw_action is None:
+        raw_action = _get_record_field(record, "ocsf_action")
+    if raw_action is None:
+        action = "observed"
+    elif isinstance(raw_action, str) and raw_action.strip():
+        action = raw_action.strip().lower()
+    else:
+        return False, False
+
+    raw_sev = payload.get("ocsf_severity_id")
+    if raw_sev is None:
+        raw_sev = _get_record_field(record, "ocsf_severity_id")
+    ok_sev, parsed_sev = _coerce_optional_int(raw_sev)
+    if not ok_sev:
+        return False, False
+    severity_id = 1 if parsed_sev is None else parsed_sev
+    if severity_id < 0 or severity_id > 6:
+        return False, False
+
+    if disposition in _OCSF_ALLOW_DISPOSITIONS:
+        if action in _OCSF_ALLOW_ACTIONS and 1 <= severity_id <= 3:
+            return True, True
+        return False, False
+
+    if disposition in _OCSF_CONTAINMENT_DISPOSITIONS:
+        if action in _OCSF_CONTAINMENT_ACTIONS and 1 <= severity_id <= 5:
+            return False, True
+        return False, False
+
+    return False, False
+
+
 def _is_passing_evidence_record(record: Mapping[str, Any] | Any) -> bool:
     """Classify whether an authoritative `cage_evidence` record represents a passing outcome.
 
@@ -732,6 +800,13 @@ def _is_passing_evidence_record(record: Mapping[str, Any] | Any) -> bool:
         return _is_passing_lula_audit(record, payload)
 
     event_type = raw_event_type.upper()
+    if event_type == "GOVERNANCE_INFRASTRUCTURE_BLOCK":
+        return False
+
+    if event_type == "SANDBOX_OCSF_TELEMETRY":
+        is_passing, _ = _classify_sandbox_ocsf_telemetry(record, payload)
+        return is_passing
+
     if event_type in BLOCKING_EVIDENCE_EVENT_TYPES or any(
         token in event_type for token in _BLOCKING_EVENT_TOKENS
     ):
@@ -832,6 +907,13 @@ def _is_control_effective_record(record: Mapping[str, Any] | Any) -> bool:
         return False
 
     event_type = raw_event_type.upper()
+    if event_type == "GOVERNANCE_INFRASTRUCTURE_BLOCK":
+        return False
+
+    if event_type == "SANDBOX_OCSF_TELEMETRY":
+        _, is_effective = _classify_sandbox_ocsf_telemetry(record, payload)
+        return is_effective
+
     if event_type in {
         "CBF_ROLLBACK",
         "WORKLOAD_QUARANTINE_RECEIPT",
@@ -1178,7 +1260,9 @@ def _query_cage_evidence_records(
                 )
                 fetched_raw.extend(archived)
             except Exception as exc:
-                if enforcing:
+                if enforcing or isinstance(
+                    exc, (EvidenceCustodyIntegrityError, NonEvidentiaryAttestationError)
+                ):
                     raise
                 logger.warning(
                     "[metrics] Failed to read WORM custody archive for control %s: %s",
@@ -1195,7 +1279,9 @@ def _query_cage_evidence_records(
                 )
                 fetched_raw.extend(hot_records)
             except Exception as exc:
-                if enforcing:
+                if enforcing or isinstance(
+                    exc, (EvidenceCustodyIntegrityError, NonEvidentiaryAttestationError)
+                ):
                     raise
                 logger.warning(
                     "[metrics] Failed to read Redis DB 1 custody stream for control %s: %s",
@@ -1264,6 +1350,7 @@ def _fetch_from_evidence_stream_sync(
 
     total_traces = 0
     passed_traces = 0
+    infrastructure_blocks = 0
     last_event_date = datetime.fromtimestamp(0, tz=timezone.utc)
 
     for record in records:
@@ -1284,6 +1371,13 @@ def _fetch_from_evidence_stream_sync(
             or record_payload.get("type")
             or ""
         ).strip()
+        # Gateway 503 infrastructure blocks (`GOVERNANCE_INFRASTRUCTURE_BLOCK`)
+        # measure dependency availability rather than control effectiveness:
+        # partition them into `infrastructure_blocks` without polluting
+        # `total_traces`, `passed_traces`, `safety_rate`, or `last_event_date`.
+        if rec_event_type.upper() == "GOVERNANCE_INFRASTRUCTURE_BLOCK":
+            infrastructure_blocks += 1
+            continue
         # Idle-cluster `lula_audit` runs whose sole non-satisfied specs are
         # statistical `insufficient_traffic` controls (`a52`, `a53`, `a92`) are
         # observer-schedule records, neither governed AI traffic (`passed`) nor
@@ -1324,6 +1418,7 @@ def _fetch_from_evidence_stream_sync(
         total_traces=total_traces,
         blocked_traces=blocked_traces,
         passed_traces=passed_traces,
+        infrastructure_blocks=infrastructure_blocks,
         window_hours=float(window_hours),
         last_event_utc=last_event_utc,
         evidence_age_seconds=max(0.0, evidence_age_seconds),
@@ -1424,3 +1519,302 @@ def get_last_passing_lula_audit_age_seconds(
     now = datetime.now(tz=timezone.utc)
     age_seconds = max(0.0, (now - latest_pass_ts).total_seconds())
     return (age_seconds, latest_pass_ts.isoformat())
+
+
+def _read_primary_evidence_stream_records(
+    redis_url: str,
+    limit: int = 5000,
+) -> list[dict[str, Any]]:
+    """Read hot records from the primary `cage:evidence:stream` key on Redis DB 1."""
+    primary_stream = (
+        os.environ.get("EVIDENCE_STREAM_KEY", "cage:evidence:stream").strip()
+        or "cage:evidence:stream"
+    )
+    client = _build_evidence_sync_redis(redis_url)
+    records: list[dict[str, Any]] = []
+    try:
+        entries = client.xrevrange(primary_stream, "+", "-", count=limit)
+        for entry_id, fields in entries or []:
+            if not isinstance(fields, Mapping):
+                continue
+            rec = dict(fields)
+            rec.setdefault("stream_id", entry_id)
+            records.append(rec)
+    finally:
+        if hasattr(client, "close"):
+            try:
+                client.close()
+            except Exception as close_exc:
+                logger.debug(
+                    "[metrics] Ignoring Redis client close error: %s", close_exc
+                )
+    return records
+
+
+def _query_cm6_stream_records(
+    window_hours: int = 168,
+    limit: int = 5000,
+) -> list[dict[str, Any]]:
+    """Read custody-verified records from WORM cold store and `cage:evidence:stream` for CM-6."""
+    now = datetime.now(tz=timezone.utc)
+    window_start = now - timedelta(hours=window_hours)
+    enforcing = is_enforcing()
+
+    cold_store = _resolve_metrics_cold_store()
+    redis_url = (
+        os.environ.get("EVIDENCE_STREAM_REDIS_URL", "").strip()
+        or os.environ.get("REDIS_URL", "").strip()
+    )
+
+    if cold_store is None and not redis_url:
+        if enforcing:
+            raise RuntimeError(
+                "No authoritative custody-chain store is configured "
+                "(set EVIDENCE_COLD_STORE/EVIDENCE_ARCHIVE_BUCKET and/or "
+                "EVIDENCE_STREAM_REDIS_URL) under enforcing posture."
+            )
+        return []
+
+    fetched_raw: list[dict[str, Any]] = []
+    if cold_store is not None:
+        try:
+            archived = _run_coro_sync(
+                _read_cold_store_records_async(cold_store, window_start, now)
+            )
+            fetched_raw.extend(archived)
+        except Exception as exc:
+            if enforcing or isinstance(
+                exc, (EvidenceCustodyIntegrityError, NonEvidentiaryAttestationError)
+            ):
+                raise
+            logger.warning(
+                "[metrics] Failed to read WORM custody archive for CM-6: %s", exc
+            )
+
+    if redis_url:
+        try:
+            hot_records = _read_primary_evidence_stream_records(
+                redis_url=redis_url,
+                limit=limit,
+            )
+            fetched_raw.extend(hot_records)
+        except Exception as exc:
+            if enforcing or isinstance(
+                exc, (EvidenceCustodyIntegrityError, NonEvidentiaryAttestationError)
+            ):
+                raise
+            logger.warning(
+                "[metrics] Failed to read Redis DB 1 stream for CM-6: %s", exc
+            )
+
+    return fetched_raw
+
+
+def _extract_record_event_type(record: Mapping[str, Any]) -> str:
+    payload = _parse_evidence_payload(record)
+    return (
+        str(
+            _get_record_field(record, "event_type")
+            or _get_record_field(record, "type")
+            or payload.get("event_type")
+            or payload.get("type")
+            or ""
+        )
+        .strip()
+        .upper()
+    )
+
+
+def _extract_decision_thresholds_digest(record: Mapping[str, Any]) -> Any:
+    payload = _parse_evidence_payload(record)
+    val = payload.get("thresholds_digest")
+    if val is None:
+        val = _get_record_field(record, "thresholds_digest")
+    return val
+
+
+def evaluate_cm6_thresholds_records(
+    records: Sequence[Mapping[str, Any]],
+    active_region: str,
+) -> Cm6ThresholdsPosture:
+    """Evaluate NIST SP 800-53 CM-6 thresholds-digest posture over stream records."""
+    seen_keys: set[tuple[str, ...]] = set()
+    deduped: list[tuple[int, dict[str, Any]]] = []
+    for idx, rec in enumerate(records):
+        if not isinstance(rec, Mapping):
+            continue
+        rec_dict = dict(rec)
+        dedup_key = _record_dedup_key(rec_dict)
+        if dedup_key in seen_keys:
+            continue
+        seen_keys.add(dedup_key)
+        if _is_canary_evidence_record(rec_dict):
+            continue
+        deduped.append((idx, rec_dict))
+
+    load_candidates: list[tuple[int, dict[str, Any]]] = []
+    decision_candidates: list[tuple[int, dict[str, Any]]] = []
+    for pos, rec_dict in deduped:
+        ev_type = _extract_record_event_type(rec_dict)
+        if ev_type == "GOVERNANCE_THRESHOLDS_LOADED" and _record_matches_control(
+            rec_dict, "CM-6"
+        ):
+            load_candidates.append((pos, rec_dict))
+        elif ev_type == "GOVERNANCE_DECISION":
+            decision_candidates.append((pos, rec_dict))
+
+    if not load_candidates:
+        return Cm6ThresholdsPosture(
+            assessment_status="not_satisfied",
+            active_region=active_region,
+        )
+
+    def _load_order_key(item: tuple[int, dict[str, Any]]) -> tuple[float, int, int]:
+        pos, rec_dict = item
+        ts = _parse_evidence_timestamp(rec_dict)
+        ts_val = ts.timestamp() if ts is not None else -1.0
+        ok_seq, seq_val = _coerce_optional_int(rec_dict.get("sequence"))
+        eff_seq = seq_val if (ok_seq and seq_val is not None) else -1
+        return (ts_val, eff_seq, pos)
+
+    # When all candidates share one non-empty chain_id with valid sequences, sequence order wins.
+    chains = {
+        str(r.get("chain_id") or "").strip()
+        for _, r in load_candidates
+        if str(r.get("chain_id") or "").strip()
+    }
+    if len(chains) == 1 and all(
+        _coerce_optional_int(r.get("sequence"))[1] is not None
+        for _, r in load_candidates
+    ):
+        load_pos, latest_load = max(
+            load_candidates,
+            key=lambda it: (
+                int(_coerce_optional_int(it[1].get("sequence"))[1] or 0),
+                it[0],
+            ),
+        )
+    else:
+        load_pos, latest_load = max(load_candidates, key=_load_order_key)
+
+    payload = _parse_evidence_payload(latest_load)
+    raw_digest = payload.get("thresholds_digest")
+    if raw_digest is None:
+        raw_digest = _get_record_field(latest_load, "thresholds_digest")
+    digest_str = raw_digest.strip() if isinstance(raw_digest, str) else ""
+    digest_valid = bool(_OCSF_HEX64_RE.fullmatch(digest_str))
+
+    raw_region = payload.get("region")
+    if raw_region is None:
+        raw_region = _get_record_field(latest_load, "region")
+    region_str = raw_region.strip().upper() if isinstance(raw_region, str) else ""
+    region_valid = bool(region_str) and region_str == active_region.upper()
+
+    raw_schema = payload.get("schema_version")
+    if raw_schema is None:
+        raw_schema = _get_record_field(latest_load, "schema_version")
+    ok_schema, parsed_schema = _coerce_optional_int(raw_schema)
+    schema_version = (
+        parsed_schema
+        if (ok_schema and parsed_schema is not None and parsed_schema >= 1)
+        else 0
+    )
+    schema_valid = schema_version >= 1
+
+    raw_domains = payload.get("domain_sections")
+    if raw_domains is None:
+        raw_domains = _get_record_field(latest_load, "domain_sections")
+    domains_valid = (
+        isinstance(raw_domains, list)
+        and len(raw_domains) > 0
+        and all(isinstance(d, str) and bool(d.strip()) for d in raw_domains)
+    )
+    domain_sections = [d.strip() for d in raw_domains] if domains_valid else []
+
+    load_ts = _parse_evidence_timestamp(latest_load)
+    raw_ts = payload.get("timestamp_utc") or _get_record_field(
+        latest_load, "timestamp_utc"
+    )
+    loaded_at_utc = (
+        raw_ts.strip()
+        if isinstance(raw_ts, str) and raw_ts.strip()
+        else (load_ts.isoformat() if load_ts is not None else None)
+    )
+
+    load_chain = str(latest_load.get("chain_id") or "").strip()
+    _, load_seq = _coerce_optional_int(latest_load.get("sequence"))
+
+    decisions_checked = 0
+    digest_mismatches = 0
+    for dec_pos, dec_rec in decision_candidates:
+        dec_chain = str(dec_rec.get("chain_id") or "").strip()
+        _, dec_seq = _coerce_optional_int(dec_rec.get("sequence"))
+        dec_ts = _parse_evidence_timestamp(dec_rec)
+
+        if (
+            load_chain
+            and dec_chain
+            and dec_chain == load_chain
+            and load_seq is not None
+            and dec_seq is not None
+        ):
+            is_since = dec_seq > load_seq
+        elif (
+            not load_chain
+            and not dec_chain
+            and load_seq is not None
+            and dec_seq is not None
+        ):
+            is_since = dec_seq > load_seq
+        elif load_ts is not None and dec_ts is not None:
+            is_since = dec_ts >= load_ts
+        else:
+            is_since = dec_pos > load_pos
+
+        if not is_since:
+            continue
+
+        decisions_checked += 1
+        dec_digest = _extract_decision_thresholds_digest(dec_rec)
+        if (
+            not digest_valid
+            or not isinstance(dec_digest, str)
+            or dec_digest.strip() != digest_str
+        ):
+            digest_mismatches += 1
+
+    satisfied = (
+        digest_valid
+        and region_valid
+        and schema_valid
+        and domains_valid
+        and digest_mismatches == 0
+    )
+    return Cm6ThresholdsPosture(
+        control_id="CM-6",
+        assessment_status="satisfied" if satisfied else "not_satisfied",
+        thresholds_digest=digest_str if digest_valid else "",
+        region=region_str,
+        active_region=active_region,
+        schema_version=schema_version,
+        domain_sections=domain_sections,
+        decisions_checked=decisions_checked,
+        digest_mismatches=digest_mismatches,
+        loaded_at_utc=loaded_at_utc,
+    )
+
+
+def _fetch_cm6_thresholds_posture_sync(
+    window_hours: int = 168,
+) -> Cm6ThresholdsPosture:
+    active_region = resolve_deployment_region()
+    records = _query_cm6_stream_records(window_hours=window_hours)
+    return evaluate_cm6_thresholds_records(records, active_region=active_region)
+
+
+async def get_cm6_thresholds_posture(
+    window_hours: int = 168,
+) -> Cm6ThresholdsPosture:
+    """Return NIST SP 800-53 CM-6 thresholds-digest posture over the custody chain."""
+    async with _EVIDENCE_CONCURRENCY:
+        return await asyncio.to_thread(_fetch_cm6_thresholds_posture_sync, window_hours)
