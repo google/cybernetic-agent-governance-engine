@@ -237,29 +237,40 @@ locals {
   effective_cage_env = local.enforcing_posture && var.environment == "dev" ? "staging" : var.environment
 }
 
-# ─── Retention Posture (§1.1, NIST AU-9 / AU-11, POAM-2026-159, INF-02) ───────
-# The one source of the retention lock on both retention-locked buckets: the
-# Langfuse event-upload bucket and the evidence WORM bucket. Production locks
-# both buckets for 2555 days (7 years). Non-prod enforcing postures (staging and
-# dev with enforce_in_dev = true, e.g. eu-dev and apac-dev) exercise genuine GCS
-# WORM locking (is_locked = true) with a 1-day (86400 s) period so ephemeral dev
-# and staging GCP projects are never irreversibly locked for 7 years. Permissive
-# dev (enforce_in_dev = false) keeps 2555 days unlocked so force_destroy works.
+# ─── Retention Posture by Data Class (§1.1, AU-9 / AU-11, POAM-2026-159, INF-02)
+# Retention is split by data class first, custody/certification second:
+#   1. Operational telemetry (google_storage_bucket.langfuse_event_upload):
+#      2555 days locked in prod; 1 day (86400 s) locked in non-prod enforcing
+#      postures (staging, eu-dev, apac-dev); 2555 days unlocked in permissive dev.
+#   2. Evidentiary WORM custody (module.worm_bucket & module.evidence_domain):
+#      2555 days (7 years) whenever environment == "prod", cross-project evidence
+#      custody is active (external_evidence_domain_enabled or evidence_project_id
+#      != project_id), or certification_mode == true; 1 day (86400 s) locked in
+#      ordinary single-project staging / enforcing dev; 2555 days unlocked in
+#      permissive single-project dev.
 #
-#   tier                        retention period          locked
-#   dev (enforce_in_dev=false)  220752000 s (2555 days)   false
-#   dev (enforce_in_dev=true)   86400 s (1 day)           true
-#   staging                     86400 s (1 day)           true
-#   prod                        220752000 s (2555 days)   true
+#   posture                                       telemetry     evidence      locked
+#   dev (enforce_in_dev=false, single-project)    220752000 s   220752000 s   false
+#   dev (enforce_in_dev=true, single-project)     86400 s       86400 s       true
+#   staging (single-project, ordinary)            86400 s       86400 s       true
+#   non-prod + cross-project or certification     86400 s       220752000 s   enforcing
+#   prod                                          220752000 s   220752000 s   true
 locals {
-  retention_period_seconds = var.environment == "prod" ? 220752000 : (local.enforcing_posture ? 86400 : 220752000)
-  retention_locked         = local.enforcing_posture
+  evidence_project_id            = coalesce(var.evidence_project_id, var.project_id)
+  cross_project_evidence_custody = var.external_evidence_domain_enabled || local.evidence_project_id != var.project_id
+}
+
+locals {
+  telemetry_retention_period_seconds = var.environment == "prod" ? 220752000 : (local.enforcing_posture ? 86400 : 220752000)
+  evidence_retention_period_seconds  = (var.environment == "prod" || local.cross_project_evidence_custody || var.certification_mode) ? 220752000 : (local.enforcing_posture ? 86400 : 220752000)
+  retention_period_seconds           = local.telemetry_retention_period_seconds
+  retention_locked                   = local.enforcing_posture
 }
 
 # ─── GCS Bucket for Langfuse Event Uploads ────────────────────────────────────
 # Langfuse writes every raw ingestion event here (LANGFUSE_S3_EVENT_UPLOAD_BUCKET)
 # and its worker reads the events back into ClickHouse. The events stay for at
-# least the retention period above: 1 day in non-prod enforcing postures, 2555 days in prod and unlocked dev.
+# least local.telemetry_retention_period_seconds: 1 day in non-prod enforcing postures, 2555 days in prod and unlocked dev.
 
 resource "random_id" "bucket_suffix" {
   byte_length = 4
@@ -282,9 +293,9 @@ resource "google_storage_bucket" "langfuse_event_upload" {
   }
 
   # AU-9 / AU-11: no object can be deleted or overwritten before it is
-  # local.retention_period_seconds old. Locking is irreversible.
+  # local.telemetry_retention_period_seconds old. Locking is irreversible.
   retention_policy {
-    retention_period = local.retention_period_seconds
+    retention_period = local.telemetry_retention_period_seconds
     is_locked        = local.retention_locked
   }
 
@@ -356,7 +367,7 @@ module "worm_bucket" {
   enable_cmek              = var.enable_cmek
   kms_key_id               = local.evidence_cmek_key_id
   cmek_iam_ready           = module.evidence_domain.evidence_cmek_iam_ready
-  retention_period_seconds = local.retention_period_seconds
+  retention_period_seconds = local.evidence_retention_period_seconds
   is_locked                = local.retention_locked
   force_destroy            = !local.enforcing_posture
   depends_on               = [terraform_data.evidence_domain_isolation_guard]
@@ -368,7 +379,7 @@ module "worm_bucket" {
 # google_service_account.langfuse) avoids service-account HMAC keys so clean-room
 # projects enforcing constraints/iam.disableServiceAccountKeyCreation provision
 # cleanly. Least-privilege bucket-scoped roles only; the bucket's retention
-# policy refuses overwrites or deletes until local.retention_period_seconds.
+# policy refuses overwrites or deletes until local.telemetry_retention_period_seconds.
 resource "google_storage_bucket_iam_member" "langfuse_gcs_creator" {
   bucket = google_storage_bucket.langfuse_event_upload.name
   role   = "roles/storage.objectUser"
@@ -1502,7 +1513,6 @@ resource "terraform_data" "inference_backend_guard" {
 # ─── Persistent Evidence Custody Domain (§10a, R-10, F-66, F-94, F-97) ─────────
 
 locals {
-  evidence_project_id = coalesce(var.evidence_project_id, var.project_id)
   evidence_bucket_name = (
     var.evidence_bucket_name != ""
     ? var.evidence_bucket_name
@@ -1511,7 +1521,7 @@ locals {
   require_separate_evidence_project = (
     var.require_separate_evidence_project != null
     ? var.require_separate_evidence_project
-    : (var.environment == "prod")
+    : (var.environment == "prod" || var.certification_mode)
   )
   effective_kms_protection_level = (
     var.kms_protection_level != ""
@@ -1524,8 +1534,8 @@ locals {
 resource "terraform_data" "evidence_domain_isolation_guard" {
   lifecycle {
     precondition {
-      condition     = !local.require_separate_evidence_project || var.external_evidence_domain_enabled || local.evidence_project_id != var.project_id
-      error_message = "[AU-9(4) / F-66 / F-97] Production evidence custody isolation requires external_evidence_domain_enabled = true or a dedicated evidence_project_id ('${local.evidence_project_id}') distinct from project_id ('${var.project_id}') so the workload deployer SA holds zero destroy path over evidence resources."
+      condition     = !local.require_separate_evidence_project || local.cross_project_evidence_custody
+      error_message = "[AU-9(4) / F-66 / F-97] Production and certification_mode = true evidence custody isolation requires external_evidence_domain_enabled = true or a dedicated evidence_project_id ('${local.evidence_project_id}') distinct from project_id ('${var.project_id}') so the workload deployer SA holds zero destroy path over evidence resources and 2,555-day locked WORM objects are never encrypted under an ephemeral workload project's CMEK key."
     }
 
     precondition {
@@ -1548,7 +1558,7 @@ module "evidence_domain" {
   require_separate_evidence_project = local.require_separate_evidence_project
   evidence_bucket_name              = module.worm_bucket.bucket_name
   audit_logs_bucket_name            = var.audit_logs_bucket_name
-  retention_period_seconds          = local.retention_period_seconds
+  retention_period_seconds          = local.evidence_retention_period_seconds
   retention_locked                  = local.retention_locked
   enable_cmek                       = var.enable_cmek
   kms_protection_level              = local.effective_kms_protection_level

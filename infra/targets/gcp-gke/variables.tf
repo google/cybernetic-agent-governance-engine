@@ -1443,8 +1443,15 @@ variable "external_evidence_cmek_key_id" {
   default     = ""
 }
 
+variable "certification_mode" {
+  description = "When true, Gate W / regulatory certification runs lock evidentiary WORM custody (module.worm_bucket and module.evidence_domain) for 220752000 s (2,555 days) while keeping workload operational telemetry (google_storage_bucket.langfuse_event_upload) at 86400 s (1 day) in non-prod, and require a separate evidence_project_id or external_evidence_domain_enabled = true unless require_separate_evidence_project = false is explicitly overridden so 7-year locked objects are never encrypted under an ephemeral workload project's CMEK key (AU-9(4), F-66, F-97)."
+  type        = bool
+  default     = false
+  nullable    = false
+}
+
 variable "require_separate_evidence_project" {
-  description = "When true (defaults to true in prod, false in dev/staging when null), enforces at plan time that external_evidence_domain_enabled = true or evidence_project_id != var.project_id so the workload deployer SA holds zero storage/KMS admin roles in the evidence domain (AU-9(4), F-66, F-97)."
+  description = "When true (defaults to true when environment == \"prod\" or certification_mode == true, false in ordinary dev/staging when null), enforces at plan time that external_evidence_domain_enabled = true or evidence_project_id != var.project_id so the workload deployer SA holds zero storage/KMS admin roles in the evidence domain and 7-year locked objects are never encrypted under an ephemeral workload project's CMEK key (AU-9(4), F-66, F-97)."
   type        = bool
   default     = null
   nullable    = true
