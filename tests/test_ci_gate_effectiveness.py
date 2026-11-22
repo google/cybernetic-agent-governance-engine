@@ -2134,7 +2134,7 @@ def test_ci_conformance_oidc_attest_smoke_job_is_enforcing_and_fork_safe() -> No
 
 
 def test_gate_ci_workflow_binary_pinning_and_least_privilege_posture() -> None:
-    """Enforce CIG-01 & CIG-04: built-image CVE scans, SHA-256 verified CLI binaries, least-privilege tokens, and step-scoped S3 secrets."""
+    """Enforce CIG-01, CIG-04 & POAM-2026-243: built-image CVE scans, 6-image Wolfi sbom.yml matrix (including lula and inference-stub), SHA-256 verified CLI binaries, least-privilege tokens, and step-scoped S3 secrets."""
     sec_yaml = yaml.safe_load(
         (WORKFLOWS_DIR / "security-scan.yml").read_text(encoding="utf-8")
     )

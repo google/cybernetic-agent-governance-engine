@@ -122,6 +122,7 @@ run "staging_plans_lula_cron_active_specs_and_dedicated_ksas" {
       length(google_monitoring_alert_policy.lula_audit_failure[0].conditions) == 1 &&
       google_monitoring_alert_policy.lula_audit_failure[0].user_labels["owner"] == "platform-compliance-oncall" &&
       strcontains(google_monitoring_alert_policy.lula_audit_failure[0].documentation[0].content, "platform-compliance-oncall") &&
+      strcontains(google_monitoring_alert_policy.lula_audit_failure[0].documentation[0].content, "43200s") &&
       google_monitoring_alert_policy.lula_audit_failure[0].conditions[0].condition_prometheus_query_language[0].disable_metric_validation == true &&
       length(google_monitoring_alert_policy.lula_audit_pod_restart) == 1 &&
       google_monitoring_alert_policy.lula_audit_pod_restart[0].user_labels["owner"] == "platform-compliance-oncall" &&
@@ -135,6 +136,7 @@ run "staging_plans_lula_cron_active_specs_and_dedicated_ksas" {
       strcontains(google_monitoring_alert_policy.prometheus_metrics_scrape_liveness[0].conditions[0].condition_prometheus_query_language[0].query, "absent_over_time(cage_lula_audit_not_satisfied_controls") &&
       strcontains(google_monitoring_alert_policy.prometheus_metrics_scrape_liveness[0].conditions[0].condition_prometheus_query_language[0].query, "absent_over_time(cage_lula_audit_insufficient_traffic_controls") &&
       strcontains(google_monitoring_alert_policy.prometheus_metrics_scrape_liveness[0].conditions[0].condition_prometheus_query_language[0].query, "absent_over_time(cage_lula_audit_insufficient_sample_controls") &&
+      strcontains(google_monitoring_alert_policy.prometheus_metrics_scrape_liveness[0].conditions[0].condition_prometheus_query_language[0].query, "absent_over_time(cage_lula_audit_last_healthy_run_timestamp_seconds") &&
       strcontains(google_monitoring_alert_policy.prometheus_metrics_scrape_liveness[0].conditions[0].condition_prometheus_query_language[0].query, "absent_over_time(cage_evidence_verified_batches") &&
       strcontains(google_monitoring_alert_policy.prometheus_metrics_scrape_liveness[0].conditions[0].condition_prometheus_query_language[0].query, "absent_over_time(cage_gateway_gated_requests_total") &&
       length(google_monitoring_alert_policy.gateway_sustained_refusal_ratio) == 1 &&

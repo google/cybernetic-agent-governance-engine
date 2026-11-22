@@ -202,6 +202,11 @@ resource "kubernetes_deployment" "compliance_bridge" {
           }
 
           env {
+            name  = "LULA_AUDIT_MAX_AGE_SECONDS"
+            value = tostring(var.lula_audit_max_age_seconds)
+          }
+
+          env {
             name = "LANGFUSE_PUBLIC_KEY"
             value_from {
               secret_key_ref {

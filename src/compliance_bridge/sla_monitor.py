@@ -19,7 +19,7 @@ Implements NIST SP 800-53 CA-7 (Continuous Monitoring) by periodically
 polling per-control compliance metrics and firing notifier alerts when
 evidence age exceeds the per-control SLA for the active deployment region
 (see get_sla_seconds() in types.py), alongside a `2 x schedule` dead-man's
-switch over the most recent PASSING `lula_audit` custody record.
+switch over the most recent auditor-healthy `lula_audit` custody record.
 
 Lifecycle:
   - Started as an asyncio background task in compliance_bridge/main.py lifespan.
@@ -30,7 +30,7 @@ Lifecycle:
   - On SLA breach, calls notifier.send_critical_alert() with a synthetic
     OscalFinding (result="FAIL", remarks="Evidence SLA breach").
   - Enforces a `2 x schedule` dead-man's switch (`LULA_AUDIT_MAX_AGE_SECONDS`,
-    default 1800s = 2 x 15m) over `get_last_passing_lula_audit_age_seconds()`.
+    default 43200s = 2 x 6h) over `get_last_healthy_lula_audit_age_seconds()`.
   - Startup grace period is respected — no alerts during grace window.
 
 Environment variables:
@@ -41,7 +41,7 @@ Environment variables:
                                         resolution in main.py).
   EVIDENCE_SLA_POLL_INTERVAL_SECONDS — poll cadence (default: 300)
   EVIDENCE_SLA_DISABLED              — set to "1" to disable the monitor
-  LULA_AUDIT_MAX_AGE_SECONDS         — max age of last passing lula_audit (default: 1800)
+  LULA_AUDIT_MAX_AGE_SECONDS         — max age of last healthy lula_audit (default: 43200)
   LULA_AUDIT_DEADMAN_DISABLED        — set to "1" to opt out of dead-man's switch
 """
 
@@ -60,14 +60,19 @@ from .evidence_custodian import (
     EvidenceCustodyIntegrityError,
     NonEvidentiaryAttestationError,
 )
-from .metrics import get_compliance_metrics, get_last_passing_lula_audit_age_seconds
+from .metrics import (
+    get_compliance_metrics,
+    get_last_healthy_lula_audit_age_seconds,
+)
 from .notifier import create_notifier
 from .types import OscalFinding, get_sla_seconds
 
 logger = logging.getLogger(__name__)
 
 _DEFAULT_POLL_INTERVAL = 300  # 5 minutes
-_DEFAULT_LULA_AUDIT_MAX_AGE_SECONDS = 1800  # 2 x 15m CronJob/lula-audit schedule
+_DEFAULT_LULA_AUDIT_MAX_AGE_SECONDS = (
+    43200  # 2 x 6h default CronJob/lula-audit schedule ("0 */6 * * *")
+)
 LULA_AUDIT_MAX_AGE_SECONDS: int = int(
     os.environ.get(
         "LULA_AUDIT_MAX_AGE_SECONDS", str(_DEFAULT_LULA_AUDIT_MAX_AGE_SECONDS)
@@ -141,7 +146,7 @@ async def _check_lula_audit_deadman(
     *,
     startup_grace_active: bool | None = None,
 ) -> OscalFinding | None:
-    """Check the `2 x schedule` dead-man's switch for passing `lula_audit` runs."""
+    """Check the `2 x schedule` dead-man's switch for auditor-healthy `lula_audit` runs."""
     if _is_lula_deadman_disabled():
         return None
 
@@ -166,17 +171,17 @@ async def _check_lula_audit_deadman(
     read_error: str | None = None
     try:
         res = await asyncio.to_thread(
-            get_last_passing_lula_audit_age_seconds, window_hours
+            get_last_healthy_lula_audit_age_seconds, window_hours
         )
         if inspect.isawaitable(res):
             res = await res
-        age_seconds, last_pass_utc = res
+        age_seconds, last_healthy_utc = res
     except Exception as exc:
         logger.error(
-            "[sla_monitor] Failed to query last passing lula_audit custody age: %s",
+            "[sla_monitor] Failed to query last healthy lula_audit custody age: %s",
             exc,
         )
-        age_seconds, last_pass_utc = None, None
+        age_seconds, last_healthy_utc = None, None
         read_error = str(exc)
 
     if age_seconds is not None and age_seconds <= max_age_seconds:
@@ -187,7 +192,7 @@ async def _check_lula_audit_deadman(
         detail = (
             f"custody query error ({read_error})"
             if read_error
-            else f"no passing lula_audit record found in last {window_hours}h"
+            else f"no auditor-healthy lula_audit record found in last {window_hours}h"
         )
         remarks = (
             f"Lula dead-man's switch breach (2x schedule = {max_age_seconds}s): "
@@ -196,9 +201,9 @@ async def _check_lula_audit_deadman(
         )
     else:
         remarks = (
-            f"Lula dead-man's switch breach: last passing lula_audit was "
+            f"Lula dead-man's switch breach: last healthy lula_audit was "
             f"{age_seconds:.0f}s ago (max_age={max_age_seconds}s, "
-            f"last_pass_utc={last_pass_utc})."
+            f"last_healthy_utc={last_healthy_utc})."
         )
 
     finding = OscalFinding(

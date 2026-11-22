@@ -968,6 +968,24 @@ module "langfuse" {
 
 # ─── Deploy Compliance Bridge ───────────────────────────────────────────────────
 
+locals {
+  lula_schedule_tokens = split(" ", trimspace(replace(var.lula_schedule, "/\\s+/", " ")))
+  lula_schedule_interval_seconds = (
+    length(local.lula_schedule_tokens) >= 2 && can(regex("^\\*/([0-9]+)$", local.lula_schedule_tokens[0])) && local.lula_schedule_tokens[1] == "*"
+    ? tonumber(regex("^\\*/([0-9]+)$", local.lula_schedule_tokens[0])[0]) * 60
+    : (
+      length(local.lula_schedule_tokens) >= 2 && can(regex("^\\*/([0-9]+)$", local.lula_schedule_tokens[1]))
+      ? tonumber(regex("^\\*/([0-9]+)$", local.lula_schedule_tokens[1])[0]) * 3600
+      : (
+        length(local.lula_schedule_tokens) >= 2 && local.lula_schedule_tokens[1] == "*"
+        ? 3600
+        : 86400
+      )
+    )
+  )
+  lula_audit_max_age_seconds = local.lula_schedule_interval_seconds * 2
+}
+
 module "compliance_bridge" {
   count = var.enable_compliance_bridge ? 1 : 0
 
@@ -997,6 +1015,7 @@ module "compliance_bridge" {
   cmek_key_resource_name     = var.enable_cmek ? local.evidence_cmek_key_id : ""
   cage_env                   = local.effective_cage_env
   startup_grace_hours        = var.startup_grace_hours
+  lula_audit_max_age_seconds = local.lula_audit_max_age_seconds
   deployment_config_map_name = module.deployment_config.config_map_name
 
   # POAM-2026-220: inject the WORM bucket's immutable GCS location rather than

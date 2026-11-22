@@ -43,6 +43,7 @@ locals {
     "absent_over_time(cage_lula_audit_not_satisfied_controls{namespace=\"${module.namespace.name}\"}[5m])",
     "absent_over_time(cage_lula_audit_insufficient_traffic_controls{namespace=\"${module.namespace.name}\"}[5m])",
     "absent_over_time(cage_lula_audit_insufficient_sample_controls{namespace=\"${module.namespace.name}\"}[5m])",
+    "absent_over_time(cage_lula_audit_last_healthy_run_timestamp_seconds{namespace=\"${module.namespace.name}\"}[5m])",
     "absent_over_time(cage_evidence_verified_batches{namespace=\"${module.namespace.name}\"}[5m])",
   ])
   prometheus_metrics_scrape_liveness_promql = var.enable_compliance_bridge ? "${local.gateway_metrics_scrape_failure_promql} or ${local.compliance_bridge_metrics_scrape_failure_promql}" : local.gateway_metrics_scrape_failure_promql

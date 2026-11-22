@@ -954,6 +954,7 @@ LULA_AUDIT_NOT_SATISFIED_CONTROLS: Any = None
 LULA_AUDIT_INSUFFICIENT_TRAFFIC_CONTROLS: Any = None
 LULA_AUDIT_INSUFFICIENT_SAMPLE_CONTROLS: Any = None
 LULA_AUDIT_LAST_PASS_TIMESTAMP_SECONDS: Any = None
+LULA_AUDIT_LAST_HEALTHY_RUN_TIMESTAMP_SECONDS: Any = None
 try:
     from prometheus_client import REGISTRY as _PROM_REGISTRY
     from prometheus_client import Counter as _PromCounter
@@ -994,7 +995,11 @@ try:
     )
     LULA_AUDIT_LAST_PASS_TIMESTAMP_SECONDS = _bridge_gauge(
         "cage_lula_audit_last_pass_timestamp_seconds",
-        "Unix timestamp (UTC seconds) of the most recent clean passing lula_audit run",
+        "Unix timestamp (UTC seconds) of the most recent statistically clean (26/26 satisfied) lula_audit run",
+    )
+    LULA_AUDIT_LAST_HEALTHY_RUN_TIMESTAMP_SECONDS = _bridge_gauge(
+        "cage_lula_audit_last_healthy_run_timestamp_seconds",
+        "Unix timestamp (UTC seconds) of the most recent auditor-healthy (>= 26 evaluated, failed_count == 0) lula_audit run",
     )
 except ImportError:  # pragma: no cover - optional runtime dependency
     pass
@@ -1613,12 +1618,17 @@ async def _handle_lula_audit_post_custody(
         )
     if not idempotent_replay and LULA_AUDIT_RUNS_TOTAL is not None:
         LULA_AUDIT_RUNS_TOTAL.labels(outcome=run_outcome).inc()
-    # Neither `insufficient_traffic` nor `insufficient_sample` advances the last
-    # clean-pass timestamp (POAM-2026-234 / POAM-2026-244).
+    # Separate statistical satisfaction (strictly `26/26` `is_clean_pass`,
+    # POAM-2026-234) from auditor & structural liveness (`>= 26` evaluated,
+    # `failed_count == 0`, including statistical `insufficient_traffic` /
+    # `insufficient_sample` runs on quiet clusters).
+    now_epoch = datetime.now(tz=timezone.utc).timestamp()
     if is_clean_pass and LULA_AUDIT_LAST_PASS_TIMESTAMP_SECONDS is not None:
-        LULA_AUDIT_LAST_PASS_TIMESTAMP_SECONDS.set(
-            datetime.now(tz=timezone.utc).timestamp()
-        )
+        LULA_AUDIT_LAST_PASS_TIMESTAMP_SECONDS.set(now_epoch)
+    if (
+        is_clean_pass or is_insufficient_evidence_only
+    ) and LULA_AUDIT_LAST_HEALTHY_RUN_TIMESTAMP_SECONDS is not None:
+        LULA_AUDIT_LAST_HEALTHY_RUN_TIMESTAMP_SECONDS.set(now_epoch)
 
     if is_clean_pass or is_insufficient_evidence_only or idempotent_replay:
         return
