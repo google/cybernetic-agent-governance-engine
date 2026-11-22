@@ -215,44 +215,62 @@ module "service_mesh" {
   depends_on = [module.gke]
 }
 
-# ─── Enforcing Posture ────────────────────────────────────────────────────────
+# ─── Enforcing Posture & Effective Runtime Environment ────────────────────────
 # The one predicate for the controls that hold whenever this deployment
 # enforces: the prod and staging tiers always, whatever jurisdiction they
 # select, and dev only with enforce_in_dev (POAM-2026-130). It gates the retention
-# lock (POAM-2026-159), governance Valkey AOF (POAM-2026-156 item 3), the
-# control-plane and POAM-019 guards, module.gke's allowlist, Cloud SQL PITR and
-# the NeMo securityContext (POAM-2026-181), so staging rehearses prod anywhere.
+# lock (POAM-2026-159), governance Valkey AOF and replica count (POAM-2026-156),
+# the control-plane and POAM-019 guards, module.gke's allowlist, Cloud SQL PITR
+# (POAM-2026-181), and workload runtime CAGE_ENV (INF-02), so staging and
+# enforcing dev profiles rehearse prod without dev-only runtime bypasses.
 #
-#   tier      enforcing
-#   dev       only with enforce_in_dev = true
-#   staging   always
-#   prod      always
+#   tier                        enforcing   effective_cage_env
+#   dev (enforce_in_dev=false)  false       "dev"
+#   dev (enforce_in_dev=true)   true        "staging"
+#   staging                     true        "staging"
+#   prod                        true        "prod"
 locals {
   enforcing_posture = var.environment == "prod" || var.environment == "staging" || var.enforce_in_dev
 }
 
-# ─── Retention Posture (§1.1, NIST AU-9 / AU-11, POAM-2026-159) ──────────────
-# The one source of the retention lock on both retention-locked buckets: the
-# Langfuse event-upload bucket and the evidence WORM bucket. The tier
-# (var.environment, which variables.tf limits to dev, staging and prod) selects
-# it, and only the exact tier "staging" gets the short period: every other value,
-# the dev default included, keeps 2555 days. Staging is always locked,
-# because GCS refuses to shorten or remove a locked policy and the provider
-# replaces a bucket whose lock is turned off.
-#
-#   tier      retention period          locked
-#   dev       220752000 s (2555 days)   only with enforce_in_dev = true
-#   staging   86400 s (1 day)           always
-#   prod      220752000 s (2555 days)   always
 locals {
-  retention_period_seconds = var.environment == "staging" ? 86400 : 220752000
-  retention_locked         = local.enforcing_posture
+  effective_cage_env = local.enforcing_posture && var.environment == "dev" ? "staging" : var.environment
+}
+
+# ─── Retention Posture by Data Class (§1.1, AU-9 / AU-11, POAM-2026-159, INF-02)
+# Retention is split by data class first, custody/certification second:
+#   1. Operational telemetry (google_storage_bucket.langfuse_event_upload):
+#      2555 days locked in prod; 1 day (86400 s) locked in non-prod enforcing
+#      postures (staging, eu-dev, apac-dev); 2555 days unlocked in permissive dev.
+#   2. Evidentiary WORM custody (module.worm_bucket & module.evidence_domain):
+#      2555 days (7 years) whenever environment == "prod", cross-project evidence
+#      custody is active (external_evidence_domain_enabled or evidence_project_id
+#      != project_id), or certification_mode == true; 1 day (86400 s) locked in
+#      ordinary single-project staging / enforcing dev; 2555 days unlocked in
+#      permissive single-project dev.
+#
+#   posture                                       telemetry     evidence      locked
+#   dev (enforce_in_dev=false, single-project)    220752000 s   220752000 s   false
+#   dev (enforce_in_dev=true, single-project)     86400 s       86400 s       true
+#   staging (single-project, ordinary)            86400 s       86400 s       true
+#   non-prod + cross-project or certification     86400 s       220752000 s   enforcing
+#   prod                                          220752000 s   220752000 s   true
+locals {
+  evidence_project_id            = coalesce(var.evidence_project_id, var.project_id)
+  cross_project_evidence_custody = var.external_evidence_domain_enabled || local.evidence_project_id != var.project_id
+}
+
+locals {
+  telemetry_retention_period_seconds = var.environment == "prod" ? 220752000 : (local.enforcing_posture ? 86400 : 220752000)
+  evidence_retention_period_seconds  = (var.environment == "prod" || local.cross_project_evidence_custody || var.certification_mode) ? 220752000 : (local.enforcing_posture ? 86400 : 220752000)
+  retention_period_seconds           = local.telemetry_retention_period_seconds
+  retention_locked                   = local.enforcing_posture
 }
 
 # ─── GCS Bucket for Langfuse Event Uploads ────────────────────────────────────
 # Langfuse writes every raw ingestion event here (LANGFUSE_S3_EVENT_UPLOAD_BUCKET)
 # and its worker reads the events back into ClickHouse. The events stay for at
-# least the retention period above: one day in staging, 2555 days elsewhere.
+# least local.telemetry_retention_period_seconds: 1 day in non-prod enforcing postures, 2555 days in prod and unlocked dev.
 
 resource "random_id" "bucket_suffix" {
   byte_length = 4
@@ -275,9 +293,9 @@ resource "google_storage_bucket" "langfuse_event_upload" {
   }
 
   # AU-9 / AU-11: no object can be deleted or overwritten before it is
-  # local.retention_period_seconds old. Locking is irreversible.
+  # local.telemetry_retention_period_seconds old. Locking is irreversible.
   retention_policy {
-    retention_period = local.retention_period_seconds
+    retention_period = local.telemetry_retention_period_seconds
     is_locked        = local.retention_locked
   }
 
@@ -349,7 +367,7 @@ module "worm_bucket" {
   enable_cmek              = var.enable_cmek
   kms_key_id               = local.evidence_cmek_key_id
   cmek_iam_ready           = module.evidence_domain.evidence_cmek_iam_ready
-  retention_period_seconds = local.retention_period_seconds
+  retention_period_seconds = local.evidence_retention_period_seconds
   is_locked                = local.retention_locked
   force_destroy            = !local.enforcing_posture
   depends_on               = [terraform_data.evidence_domain_isolation_guard]
@@ -361,7 +379,7 @@ module "worm_bucket" {
 # google_service_account.langfuse) avoids service-account HMAC keys so clean-room
 # projects enforcing constraints/iam.disableServiceAccountKeyCreation provision
 # cleanly. Least-privilege bucket-scoped roles only; the bucket's retention
-# policy refuses overwrites or deletes until local.retention_period_seconds.
+# policy refuses overwrites or deletes until local.telemetry_retention_period_seconds.
 resource "google_storage_bucket_iam_member" "langfuse_gcs_creator" {
   bucket = google_storage_bucket.langfuse_event_upload.name
   role   = "roles/storage.objectUser"
@@ -464,10 +482,10 @@ module "memorystore_governance" {
   network_id  = local.memorystore_network_name
 
   # §1.1 Infrastructure Posture:
-  # dev: 0 replicas (saves 1s per commit on WAIT)
-  # staging: 1 replica (enables real WAIT 1 testing)
+  # permissive dev (enforce_in_dev=false): 0 replicas (saves 1s per commit on WAIT)
+  # staging & enforcing dev (enforce_in_dev=true): 1 replica (enables real WAIT 1 under effective_cage_env="staging")
   # prod: 2+ replicas across zones
-  replica_count = var.environment == "prod" ? 2 : (var.environment == "staging" ? 1 : 0)
+  replica_count = var.environment == "prod" ? 2 : (local.enforcing_posture ? 1 : 0)
   shard_count   = 1
   node_type     = var.environment == "prod" ? "HIGHMEM_MEDIUM" : "SHARED_CORE_NANO"
   mode          = "CLUSTER_DISABLED"
@@ -872,7 +890,7 @@ module "inference_stub" {
 
   namespace            = module.namespace.name
   image                = var.inference_stub_image != "" ? var.inference_stub_image : var.image_digests["inference-stub"]
-  environment          = var.environment
+  environment          = local.effective_cage_env
   service_account_name = kubernetes_service_account.workload["inference_stub"].metadata[0].name
   network_policy_hash  = local.network_policy_spec_hash
 
@@ -977,7 +995,7 @@ module "compliance_bridge" {
   evidence_cold_store        = "gcs"
   evidence_cold_store_bucket = module.worm_bucket.bucket_name
   cmek_key_resource_name     = var.enable_cmek ? local.evidence_cmek_key_id : ""
-  cage_env                   = var.environment
+  cage_env                   = local.effective_cage_env
   startup_grace_hours        = var.startup_grace_hours
   deployment_config_map_name = module.deployment_config.config_map_name
 
@@ -1070,7 +1088,7 @@ module "gateway" {
   region                         = var.region
   enable_logging                 = "true"
   cage_domain                    = var.cage_domain
-  cage_env                       = var.environment
+  cage_env                       = local.effective_cage_env
   redis_host                     = module.memorystore_governance.primary_endpoint_ip
   redis_port                     = tostring(module.memorystore_governance.primary_endpoint_port)
   redis_password                 = ""
@@ -1157,7 +1175,7 @@ module "reconciliation_worker" {
   service_account_name       = kubernetes_service_account.workload["reconciler"].metadata[0].name
   reconciler_kms_key         = local.reconciler_snapshot_key_version
   deployment_config_map_name = module.deployment_config.config_map_name
-  cage_env                   = var.environment
+  cage_env                   = local.effective_cage_env
   cage_kms_provider          = "gcp"
 
   # Governance Memorystore Valkey: db 0 for ground-truth snapshots + settlement
@@ -1202,7 +1220,7 @@ module "governed_advisor" {
   # POAM-2026-079: own KSA with no cloud identity and no signing key. The
   # advisor refuses to start if a signing-key variable is set.
   service_account_name = kubernetes_service_account.workload["advisor"].metadata[0].name
-  cage_env             = var.environment
+  cage_env             = local.effective_cage_env
   enable_e2e_mode      = var.enable_e2e_advisor
 
   # K-4: wire OTLP auth header so governed-financial-advisor traces reach
@@ -1310,7 +1328,7 @@ module "app_secrets" {
   source = "../../modules/app_secrets"
 
   namespace = module.namespace.name
-  cage_env  = local.enforcing_posture ? "staging" : var.environment
+  cage_env  = local.effective_cage_env
 
   governance_salt      = var.governance_salt
   salt                 = random_password.advisor_salt.result
@@ -1495,7 +1513,6 @@ resource "terraform_data" "inference_backend_guard" {
 # ─── Persistent Evidence Custody Domain (§10a, R-10, F-66, F-94, F-97) ─────────
 
 locals {
-  evidence_project_id = coalesce(var.evidence_project_id, var.project_id)
   evidence_bucket_name = (
     var.evidence_bucket_name != ""
     ? var.evidence_bucket_name
@@ -1504,7 +1521,7 @@ locals {
   require_separate_evidence_project = (
     var.require_separate_evidence_project != null
     ? var.require_separate_evidence_project
-    : (var.environment == "prod")
+    : (var.environment == "prod" || var.certification_mode)
   )
   effective_kms_protection_level = (
     var.kms_protection_level != ""
@@ -1517,8 +1534,8 @@ locals {
 resource "terraform_data" "evidence_domain_isolation_guard" {
   lifecycle {
     precondition {
-      condition     = !local.require_separate_evidence_project || var.external_evidence_domain_enabled || local.evidence_project_id != var.project_id
-      error_message = "[AU-9(4) / F-66 / F-97] Production evidence custody isolation requires external_evidence_domain_enabled = true or a dedicated evidence_project_id ('${local.evidence_project_id}') distinct from project_id ('${var.project_id}') so the workload deployer SA holds zero destroy path over evidence resources."
+      condition     = !local.require_separate_evidence_project || local.cross_project_evidence_custody
+      error_message = "[AU-9(4) / F-66 / F-97] Production and certification_mode = true evidence custody isolation requires external_evidence_domain_enabled = true or a dedicated evidence_project_id ('${local.evidence_project_id}') distinct from project_id ('${var.project_id}') so the workload deployer SA holds zero destroy path over evidence resources and 2,555-day locked WORM objects are never encrypted under an ephemeral workload project's CMEK key."
     }
 
     precondition {
@@ -1541,7 +1558,7 @@ module "evidence_domain" {
   require_separate_evidence_project = local.require_separate_evidence_project
   evidence_bucket_name              = module.worm_bucket.bucket_name
   audit_logs_bucket_name            = var.audit_logs_bucket_name
-  retention_period_seconds          = local.retention_period_seconds
+  retention_period_seconds          = local.evidence_retention_period_seconds
   retention_locked                  = local.retention_locked
   enable_cmek                       = var.enable_cmek
   kms_protection_level              = local.effective_kms_protection_level

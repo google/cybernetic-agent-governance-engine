@@ -17,8 +17,8 @@
 Enforces:
 1. Legacy ClickHouse modules are deleted (`infra/modules/clickhouse` and legacy Cloud Run `clickhouse_vm.tf`).
 2. System of record is the retention-locked GCS WORM bucket (`infra/modules/worm_bucket`) wired in `infra/targets/gcp-gke/main.tf`:
-   - dev: unlocked (`is_locked = false`)
-   - staging: locked with short retention (`86400`s)
+   - permissive dev (`enforce_in_dev = false`): unlocked (`is_locked = false`)
+   - staging & enforcing dev (`enforce_in_dev = true`): locked with short retention (`86400`s)
    - prod: locked with 7-year retention (`220752000`s = 2555 days)
    - CMEK wired (`enable_cmek = var.enable_cmek`, `kms_key_id = local.cmek_key_id`)
    - Jurisdictional data-residency precondition enforced
@@ -125,21 +125,22 @@ def test_worm_bucket_configured_as_system_of_record() -> None:
     assert "enable_cmek              = var.enable_cmek" in block
     assert "kms_key_id               = local.evidence_cmek_key_id" in block
 
-    # Posture matrix (§1.1), shared with the Langfuse event-upload bucket through
-    # one pair of locals (POAM-2026-159; tests/retention_posture.tftest.hcl
-    # plans it per profile):
-    # - staging: short retention lock (86400s)
-    # - prod: 7yr retention lock (220752000s = 2555 days)
-    # - dev: unlocked unless a compliance flag is set
-    # The lock is the enforcing-posture predicate, which also gives the
-    # governance Valkey instance AOF persistence (POAM-2026-156).
-    assert "retention_period_seconds = local.retention_period_seconds" in block
+    # Posture matrix (§1.1), split by data class (POAM-2026-159, INF-02;
+    # tests/retention_posture.tftest.hcl plans it per profile):
+    # - ordinary single-project staging & enforcing dev: short retention lock (86400s)
+    # - prod, cross-project evidence custody, or certification_mode: 7yr WORM lock (220752000s)
+    # - permissive dev (enforce_in_dev = false): 2555 days unlocked
+    assert "retention_period_seconds = local.evidence_retention_period_seconds" in block
     assert "is_locked                = local.retention_locked" in block
     assert (
-        'retention_period_seconds = var.environment == "staging" ? 86400 : 220752000'
+        'telemetry_retention_period_seconds = var.environment == "prod" ? 220752000 : (local.enforcing_posture ? 86400 : 220752000)'
         in gke_main
     )
-    assert "retention_locked         = local.enforcing_posture" in gke_main
+    assert (
+        'evidence_retention_period_seconds  = (var.environment == "prod" || local.cross_project_evidence_custody || var.certification_mode) ? 220752000 : (local.enforcing_posture ? 86400 : 220752000)'
+        in gke_main
+    )
+    assert "retention_locked                   = local.enforcing_posture" in gke_main
     assert (
         'enforcing_posture = var.environment == "prod" || var.environment == "staging" || var.enforce_in_dev'
         in gke_main
@@ -156,7 +157,7 @@ def test_langfuse_event_bucket_shares_the_worm_retention_locals() -> None:
         line for line in bucket.splitlines() if not line.lstrip().startswith("#")
     )
 
-    assert "retention_period = local.retention_period_seconds" in bucket
+    assert "retention_period = local.telemetry_retention_period_seconds" in bucket
     assert "is_locked        = local.retention_locked" in bucket
     assert not re.search(r"retention_period\s*=\s*\d", bucket), (
         "the Langfuse event-upload bucket must not carry its own retention literal"

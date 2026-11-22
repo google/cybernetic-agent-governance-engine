@@ -164,3 +164,16 @@ langfuse_s3_secret_key = "" # Empty selects native GCS Workload Identity (no HMA
 # ─── Signing keys (POAM-2026-079) ─────────────────────────────────────────────
 # Dev posture only: SOFTWARE protection. Staging/prod keep the HSM default.
 kms_signing_protection_level = "SOFTWARE"
+
+# ─── Human HITL Operator Identity (POAM-2026-196) ─────────────────────────────
+# Non-secret human OIDC allowlist and trust-anchor defaults required when
+# enforce_in_dev = true promotes workload CAGE_ENV to "staging" (INF-02);
+# override in terraform.auto.tfvars with your organization's real IdP issuer,
+# JWKS URI, and human risk-officer sub claims before cutover.
+trusted_operator_identities = [
+  "risk-officer-primary@example.com",
+  "risk-officer-secondary@example.com",
+]
+operator_oidc_issuer   = "https://idp.cage.example"
+operator_oidc_audience = "cage-compliance-bridge"
+operator_jwks_uri      = "https://idp.cage.example/.well-known/jwks.json"

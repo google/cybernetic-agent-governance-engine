@@ -71,8 +71,7 @@ SKIP_REBUILD=false
 NO_DESTROY=false
 FRESH_PROJECT=false
 ALLOW_LEGACY_LIEN_SURVIVOR=false
-ENABLE_E2E_ADVISOR=false
-ALLOW_PARTNER_OUTAGE=false
+ENABLE_E2E_ADVISOR=false; ALLOW_PARTNER_OUTAGE=false; CERTIFICATION_MODE="${CERTIFICATION_MODE:-false}"; EVIDENCE_PROJECT_ID="${EVIDENCE_PROJECT_ID:-${TF_VAR_evidence_project_id:-}}"
 ARCHIVE_DIR="${CAGE_GATE_W_ARCHIVE_DIR:-}"
 PROJECT_ID="${GOOGLE_CLOUD_PROJECT:-}"
 BILLING_ACCOUNT_ID="${BILLING_ACCOUNT_ID:-}"
@@ -90,8 +89,9 @@ Options:
                            provisioning and verify post-destroy cleanliness
   --billing-account=<id>   Billing account ID to link when creating a fresh project
   --project=<id>           GCP project ID (default: \$GOOGLE_CLOUD_PROJECT)
-  --archive-dir=<path>     Output directory for the Gate W evidence archive & manifest.json
-                           (default: artifacts/w-run-<UTC>)
+  --evidence-project=<id>  Dedicated persistent GCP project ID for WORM evidence custody
+  --certification          Enable Gate W certification mode (2,555-day WORM lock; requires --evidence-project=<id>)
+  --archive-dir=<path>     Output directory for Gate W archive & manifest.json (default: artifacts/w-run-<UTC>)
   --enable-e2e-advisor     Opt-in non-production E2E advisor + deterministic inference-stub mode
   --allow-partner-outage   Record partner_conformance_status=unreachable_waived on partner outage
   --skip-provision         Skip Phase 0–1 provisioning (resume validation on running cluster)
@@ -108,46 +108,23 @@ EOF
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --skip-provision) SKIP_PROVISION=true; shift ;;
-    --skip-lula)
-      SKIP_LULA=true; shift ;;
-    --skip-posture)
-      SKIP_POSTURE=true
-      shift
-      ;;
-    --skip-live-sweep)
-      SKIP_LIVE_SWEEP=true
-      shift
-      ;;
-    --skip-telemetry)
-      SKIP_TELEMETRY=true
-      shift
-      ;;
-    --skip-rebuild)
-      SKIP_REBUILD=true
-      shift
-      ;;
-    --no-destroy)
-      NO_DESTROY=true
-      shift
-      ;;
+    --skip-lula) SKIP_LULA=true; shift ;;
+    --skip-posture) SKIP_POSTURE=true; shift ;;
+    --skip-live-sweep) SKIP_LIVE_SWEEP=true; shift ;;
+    --skip-telemetry) SKIP_TELEMETRY=true; shift ;;
+    --skip-rebuild) SKIP_REBUILD=true; shift ;;
+    --no-destroy) NO_DESTROY=true; shift ;;
     --fresh-project) FRESH_PROJECT=true; shift ;;
-    --allow-legacy-lien-survivor)
-      ALLOW_LEGACY_LIEN_SURVIVOR=true; shift ;;
-    --enable-e2e-advisor)
-      ENABLE_E2E_ADVISOR=true; shift ;;
-    --allow-partner-outage)
-      ALLOW_PARTNER_OUTAGE=true; shift ;;
-    --archive-dir=*)
-      ARCHIVE_DIR="${1#*=}"
-      shift
-      ;;
-    --archive-dir)
-      ARCHIVE_DIR="${2:-}"
-      shift 2
-      ;;
+    --allow-legacy-lien-survivor) ALLOW_LEGACY_LIEN_SURVIVOR=true; shift ;;
+    --enable-e2e-advisor) ENABLE_E2E_ADVISOR=true; shift ;;
+    --allow-partner-outage) ALLOW_PARTNER_OUTAGE=true; shift ;;
+    --certification) CERTIFICATION_MODE=true; shift ;;
+    --evidence-project=*) EVIDENCE_PROJECT_ID="${1#*=}"; shift ;;
+    --evidence-project) EVIDENCE_PROJECT_ID="${2:-}"; shift 2 ;;
+    --archive-dir=*) ARCHIVE_DIR="${1#*=}"; shift ;;
+    --archive-dir) ARCHIVE_DIR="${2:-}"; shift 2 ;;
     --fresh-project=*)
-      FRESH_PROJECT=true
-      PROJECT_ID="${1#*=}"
+      FRESH_PROJECT=true; PROJECT_ID="${1#*=}"
       shift
       ;;
     --billing-account=*)
@@ -221,6 +198,16 @@ unset REGISTRY_URL || true
 # Gate W runs in non-grace enforcing mode by default (Memo §2) unless explicitly overridden.
 export TF_VAR_startup_grace_hours="${TF_VAR_startup_grace_hours:-0}"
 
+[[ -n "$EVIDENCE_PROJECT_ID" ]] && export TF_VAR_evidence_project_id="$EVIDENCE_PROJECT_ID"
+EFFECTIVE_EVIDENCE_PROJECT_ID="${TF_VAR_evidence_project_id:-$PROJECT_ID}"; AUDIT_CORROBORATION_EXTRA_ARGS=()
+[[ -n "${TF_VAR_evidence_project_id:-}" ]] && AUDIT_CORROBORATION_EXTRA_ARGS+=("--evidence-project" "${TF_VAR_evidence_project_id}")
+if [[ "$CERTIFICATION_MODE" == "true" ]]; then
+  export TF_VAR_certification_mode="true"
+  if [[ "${TF_VAR_require_separate_evidence_project:-}" != "false" && "${TF_VAR_external_evidence_domain_enabled:-false}" != "true" && ( -z "${TF_VAR_evidence_project_id:-}" || "${TF_VAR_evidence_project_id}" == "$PROJECT_ID" ) ]]; then
+    error "--certification locks WORM evidence custody for 2,555 days (7 years) and requires a separate persistent --evidence-project=<id> distinct from workload project '${PROJECT_ID}' (or TF_VAR_external_evidence_domain_enabled=true) so ephemeral project/CMEK teardown cannot orphan encrypted objects (F-97). Pass --evidence-project=<id> or set TF_VAR_require_separate_evidence_project=false to override explicitly."; exit 1
+  fi
+fi
+
 E2E_SUITE_SCRIPT="${CAGE_E2E_SUITE_SCRIPT:-$REPO_ROOT/tests/e2e/run_gke_e2e_suite.py}"
 E2E_KEY_FILE="${CAGE_E2E_KEY_FILE:-}"
 E2E_WEBAUTHN_KEY_FILE="${CAGE_E2E_WEBAUTHN_PRIVATE_KEYS_FILE:-}"
@@ -228,7 +215,7 @@ DOTENV_SHIELD_PATH=""
 LIVE_ENV_FILE="$(mktemp "${TMPDIR:-/tmp}/cage-live-env-XXXXXX")"
 chmod 600 "$LIVE_ENV_FILE"
 
-python3 - "$REPO_ROOT/.env" "$LIVE_ENV_FILE" "$PROJECT_ID" "$REGION" <<'PY'
+python3 - "$REPO_ROOT/.env" "$LIVE_ENV_FILE" "$PROJECT_ID" "$REGION" "$EFFECTIVE_EVIDENCE_PROJECT_ID" <<'PY'
 from pathlib import Path
 import sys
 
@@ -236,6 +223,7 @@ src_env = Path(sys.argv[1])
 dst_env = Path(sys.argv[2])
 project_id = sys.argv[3]
 region = sys.argv[4]
+evidence_project_id = sys.argv[5]
 
 override_keys = {
     "GOOGLE_CLOUD_PROJECT",
@@ -269,7 +257,7 @@ lines.extend(
         f"GOOGLE_CLOUD_PROJECT={project_id}",
         f"GOOGLE_CLOUD_LOCATION={region}",
         "CAGE_ENV=staging",
-        f"EVIDENCE_ARCHIVE_BUCKET={project_id}-evidence-worm-staging",
+        f"EVIDENCE_ARCHIVE_BUCKET={evidence_project_id}-evidence-worm-staging",
         f"KMS_GOVERNANCE_KEY=projects/{project_id}/locations/{region}/keyRings/cage-signing-staging/cryptoKeys/gateway-seal/cryptoKeyVersions/1",
         "LANGFUSE_HOST=http://localhost:3000", "LANGFUSE_COMPLIANCE_HOST=http://localhost:3001",
         "LANGFUSE_PROJECT_ID=cybernetic-governance",
@@ -287,6 +275,9 @@ DEPLOY_EXTRA_ARGS=(
   "--var" "region=${REGION}"
   "--var" "registry_url="
 )
+[[ "$CERTIFICATION_MODE" == "true" ]] && DEPLOY_EXTRA_ARGS+=("--var" "certification_mode=true")
+[[ -n "${TF_VAR_evidence_project_id:-}" ]] && DEPLOY_EXTRA_ARGS+=("--var" "evidence_project_id=${TF_VAR_evidence_project_id}")
+[[ -n "${TF_VAR_require_separate_evidence_project:-}" ]] && DEPLOY_EXTRA_ARGS+=("--var" "require_separate_evidence_project=${TF_VAR_require_separate_evidence_project}")
 if [[ "$ENABLE_E2E_ADVISOR" == "true" ]]; then
   export TF_VAR_enable_e2e_advisor="true"
   DEPLOY_EXTRA_ARGS+=("--var" "enable_e2e_advisor=true")
@@ -371,6 +362,8 @@ write_gate_w_archive_manifest() {
   MANIFEST_GIT_SHA="$git_sha" \
   MANIFEST_GIT_SHORT_SHA="$git_short_sha" \
   MANIFEST_PROJECT_ID="$PROJECT_ID" \
+  MANIFEST_EVIDENCE_PROJECT_ID="${EFFECTIVE_EVIDENCE_PROJECT_ID}" \
+  MANIFEST_CERTIFICATION_MODE="$CERTIFICATION_MODE" \
   MANIFEST_REGION="$REGION" \
   MANIFEST_CAGE_REGION="${CAGE_DEPLOYMENT_REGION:-US_FED}" \
   MANIFEST_TARGET_MODE="$target_mode" \
@@ -488,6 +481,8 @@ manifest = {
     "git_commit_sha": os.environ.get("MANIFEST_GIT_SHA", ""),
     "git_short_sha": os.environ.get("MANIFEST_GIT_SHORT_SHA", ""),
     "project_id": os.environ.get("MANIFEST_PROJECT_ID", ""),
+    "evidence_project_id": os.environ.get("MANIFEST_EVIDENCE_PROJECT_ID", ""),
+    "certification_mode": _b("MANIFEST_CERTIFICATION_MODE"),
     "region": os.environ.get("MANIFEST_REGION", ""),
     "cage_deployment_region": os.environ.get("MANIFEST_CAGE_REGION", "US_FED"),
     "deployment_target_mode": os.environ.get("MANIFEST_TARGET_MODE", ""),
@@ -578,6 +573,9 @@ build_tf_var_args() {
     "-var=registry_url="
     "-var=cage_deployment_region=${CAGE_DEPLOYMENT_REGION:-US_FED}"
   )
+  [[ "$CERTIFICATION_MODE" == "true" ]] && TF_VAR_ARGS+=("-var=certification_mode=true")
+  [[ -n "${TF_VAR_evidence_project_id:-}" ]] && TF_VAR_ARGS+=("-var=evidence_project_id=${TF_VAR_evidence_project_id}")
+  [[ -n "${TF_VAR_require_separate_evidence_project:-}" ]] && TF_VAR_ARGS+=("-var=require_separate_evidence_project=${TF_VAR_require_separate_evidence_project}")
   if [[ "$ENABLE_E2E_ADVISOR" == "true" ]]; then
     TF_VAR_ARGS+=("-var=enable_e2e_advisor=true")
     if [[ -n "${TF_VAR_e2e_operator_jwks_json:-}" ]]; then
@@ -1155,6 +1153,7 @@ if [[ "$FRESH_PROJECT" == "true" && "$SKIP_PROVISION" == "false" ]]; then
     FRESH_PROJECT_TARGET_MODE="$(
       PRE_INV_OUT="$PRE_RUN_INVENTORY_JSON" \
       PRE_INV_PROJECT="$PROJECT_ID" \
+      PRE_INV_EVIDENCE_PROJECT="${TF_VAR_evidence_project_id:-$PROJECT_ID}" \
       PRE_INV_REGION="$REGION" \
       PRE_INV_SERVICES="$_pre_services" \
       PRE_INV_BUCKETS="$_pre_buckets" \
@@ -1181,6 +1180,7 @@ def _gcloud(args: list[str]) -> list[str]:
 
 
 proj = os.environ["PRE_INV_PROJECT"]
+ev_proj = os.environ.get("PRE_INV_EVIDENCE_PROJECT") or proj
 region = os.environ["PRE_INV_REGION"]
 services = _lines("PRE_INV_SERVICES")
 buckets = _lines("PRE_INV_BUCKETS")
@@ -1191,7 +1191,7 @@ kms_keys = sorted({
     for kr in keyrings
     for k in _gcloud(["kms", "keys", "list", f"--keyring={kr}", f"--location={region}", f"--project={proj}", "--format=value(name)"])
 })
-worm_objs = [o for o in _gcloud(["storage", "ls", f"gs://{proj}-evidence-worm-staging/evidence-stream/**", f"--project={proj}"]) if not o.endswith("/:")]
+worm_objs = [o for o in _gcloud(["storage", "ls", f"gs://{ev_proj}-evidence-worm-staging/evidence-stream/**", f"--project={ev_proj}"]) if not o.endswith("/:")]
 attestors = [a for a in _lines("PRE_INV_ATTESTORS") if a != "built-by-cloud-build"]
 custom_sas = [sa for sa in _lines("PRE_INV_SAS") if sa.endswith(f"@{proj}.iam.gserviceaccount.com")]
 clusters = _lines("PRE_INV_CLUSTERS")
@@ -1288,7 +1288,7 @@ echo -e "${CYAN}╔════════════════════�
 echo -e "${CYAN}║  Phase 1: Provisioning staging + zero-drift read-back            ║${RESET}"
 echo -e "${CYAN}╚══════════════════════════════════════════════════════════════════╝${RESET}"
 echo ""
-if [[ "$FRESH_PROJECT" == "true" && "$SKIP_PROVISION" == "false" && -z "${TF_VAR_evidence_previous_chain_head_hash:-}" ]]; then _anchor_script="${CAGE_WORM_ANCHOR_SCRIPT:-$REPO_ROOT/scripts/read_worm_chain_anchor.py}"; if [[ -f "$_anchor_script" ]]; then _anchor_py="$REPO_ROOT/.venv/bin/python"; [[ -x "$_anchor_py" ]] || _anchor_py="python3"; _pre_worm_exp="$(CAGE_DEPLOYMENT_REGION="${CAGE_DEPLOYMENT_REGION:-US_FED}" GOOGLE_API_USE_CLIENT_CERTIFICATE=false "$_anchor_py" "$_anchor_script" --gcs-bucket="${PROJECT_ID}-evidence-worm-staging" --gcs-project="$PROJECT_ID" --kms-key="projects/${PROJECT_ID}/locations/${REGION}/keyRings/cage-signing-staging/cryptoKeys/compliance-evidence/cryptoKeyVersions/1" --pre-run-inventory="$PRE_RUN_INVENTORY_JSON" --all-streams --if-exists --format=export)" || exit 1; eval "$_pre_worm_exp"; fi; fi
+if [[ "$FRESH_PROJECT" == "true" && "$SKIP_PROVISION" == "false" && -z "${TF_VAR_evidence_previous_chain_head_hash:-}" ]]; then _anchor_script="${CAGE_WORM_ANCHOR_SCRIPT:-$REPO_ROOT/scripts/read_worm_chain_anchor.py}"; if [[ -f "$_anchor_script" ]]; then _anchor_py="$REPO_ROOT/.venv/bin/python"; [[ -x "$_anchor_py" ]] || _anchor_py="python3"; _pre_worm_exp="$(CAGE_DEPLOYMENT_REGION="${CAGE_DEPLOYMENT_REGION:-US_FED}" GOOGLE_API_USE_CLIENT_CERTIFICATE=false "$_anchor_py" "$_anchor_script" --gcs-bucket="${TF_VAR_evidence_project_id:-$PROJECT_ID}-evidence-worm-staging" --gcs-project="${TF_VAR_evidence_project_id:-$PROJECT_ID}" --kms-key="projects/${PROJECT_ID}/locations/${REGION}/keyRings/cage-signing-staging/cryptoKeys/compliance-evidence/cryptoKeyVersions/1" --pre-run-inventory="$PRE_RUN_INVENTORY_JSON" --all-streams --if-exists --format=export)" || exit 1; eval "$_pre_worm_exp"; fi; fi
 if [[ "$SKIP_PROVISION" == "false" ]]; then info "Deploying staging with full security posture..."
 if ! "$REPO_ROOT/deploy_all.sh" --target gcp-gke --env staging --auto-approve ${DEPLOY_EXTRA_ARGS[@]+"${DEPLOY_EXTRA_ARGS[@]}"}; then
   error "Staging provision failed. Check Terraform output above."
@@ -1720,7 +1720,7 @@ if errors:
         GOOGLE_CLOUD_PROJECT="$PROJECT_ID" \
         GOOGLE_CLOUD_LOCATION="$REGION" \
         CAGE_ENV="staging" \
-        EVIDENCE_ARCHIVE_BUCKET="${PROJECT_ID}-evidence-worm-staging" \
+        EVIDENCE_ARCHIVE_BUCKET="${TF_VAR_evidence_project_id:-$PROJECT_ID}-evidence-worm-staging" \
         uv run --env-file "$LIVE_ENV_FILE" pytest "$REPO_ROOT/tests/infrastructure/test_data_residency.py" --run-integration -v --tb=short; then
       ((POSTURE_FAILURES++)) || true
     fi
@@ -1763,7 +1763,7 @@ if errors:
         CAGE_ALLOW_MACOS_TESTS=1 \
         GOOGLE_CLOUD_PROJECT="$PROJECT_ID" \
         GOOGLE_CLOUD_LOCATION="$REGION" \
-        CAGE_LIVE_WORM_BUCKET="${PROJECT_ID}-evidence-worm-staging" KMS_GOVERNANCE_KEY="projects/${PROJECT_ID}/locations/${REGION}/keyRings/cage-signing-staging/cryptoKeys/gateway-seal/cryptoKeyVersions/1" \
+        CAGE_LIVE_WORM_BUCKET="${TF_VAR_evidence_project_id:-$PROJECT_ID}-evidence-worm-staging" KMS_GOVERNANCE_KEY="projects/${PROJECT_ID}/locations/${REGION}/keyRings/cage-signing-staging/cryptoKeys/gateway-seal/cryptoKeyVersions/1" \
         CAGE_CAS_PROJECT_ID="$PROJECT_ID" \
         CAGE_CAS_LOCATION="$REGION" \
         CAGE_CAS_POOL_ID="$(terraform -chdir="$TF_DIR" output -raw service_mesh_ca_pool_name 2>/dev/null || echo "cage-mesh-staging")" \
@@ -1779,7 +1779,7 @@ if errors:
         GOOGLE_CLOUD_PROJECT="$PROJECT_ID" \
         GOOGLE_CLOUD_LOCATION="$REGION" \
         CAGE_ENV="staging" COMPLIANCE_BRIDGE_INTERNAL_TOKEN="$(kubectl get secret compliance-bridge-secrets -n "$NAMESPACE" -o jsonpath='{.data.COMPLIANCE_BRIDGE_INTERNAL_TOKEN}' 2>/dev/null | base64 --decode || true)" \
-        EVIDENCE_ARCHIVE_BUCKET="${PROJECT_ID}-evidence-worm-staging" \
+        EVIDENCE_ARCHIVE_BUCKET="${TF_VAR_evidence_project_id:-$PROJECT_ID}-evidence-worm-staging" \
         uv run --env-file "$LIVE_ENV_FILE" pytest "$REPO_ROOT/tests/" --ignore="$REPO_ROOT/tests/integration/test_linkerd_mesh_conformance.py" -m integration --run-integration -v --tb=short; then
       ((SWEEP_FAILURES++)) || true
     fi
@@ -1848,7 +1848,7 @@ if errors:
     AUDIT_CORROBORATION_SCRIPT="${CAGE_AUDIT_CORROBORATION_SCRIPT:-$REPO_ROOT/scripts/verify_audit_corroboration.py}"
     if [[ -f "$AUDIT_CORROBORATION_SCRIPT" ]]; then
       info "Running Cloud Audit Log corroboration hook (${AUDIT_CORROBORATION_SCRIPT})..."
-      if ! CAGE_ALLOW_MACOS_TESTS=1 uv run python "$AUDIT_CORROBORATION_SCRIPT" --project "$PROJECT_ID" --output "$ARCHIVE_DIR/audit-corroboration-phase5.json"; then
+      if ! CAGE_ALLOW_MACOS_TESTS=1 uv run python "$AUDIT_CORROBORATION_SCRIPT" --project "$PROJECT_ID" ${AUDIT_CORROBORATION_EXTRA_ARGS[@]+"${AUDIT_CORROBORATION_EXTRA_ARGS[@]}"} --output "$ARCHIVE_DIR/audit-corroboration-phase5.json"; then
         error "Cloud Audit Log corroboration hook FAILED: ${AUDIT_CORROBORATION_SCRIPT}"
         ((TELEMETRY_FAILURES++)) || true
       else
@@ -1941,6 +1941,9 @@ run_terraform_destroy() {
     "-var=registry_url="
     "-var=cage_deployment_region=${CAGE_DEPLOYMENT_REGION:-US_FED}"
   )
+  [[ "$CERTIFICATION_MODE" == "true" ]] && destroy_args+=("-var=certification_mode=true")
+  [[ -n "${TF_VAR_evidence_project_id:-}" ]] && destroy_args+=("-var=evidence_project_id=${TF_VAR_evidence_project_id}")
+  [[ -n "${TF_VAR_require_separate_evidence_project:-}" ]] && destroy_args+=("-var=require_separate_evidence_project=${TF_VAR_require_separate_evidence_project}")
   if [[ "$ENABLE_E2E_ADVISOR" == "true" ]]; then
     destroy_args+=("-var=enable_e2e_advisor=true")
     if [[ -n "${TF_VAR_e2e_operator_jwks_json:-}" ]]; then
@@ -2107,7 +2110,7 @@ if ! has_gate_failures && [[ "$SKIP_REBUILD" == "false" ]]; then
               if [[ ! -f "$AUDIT_CORROBORATION_SCRIPT" ]]; then
                 error "Stage 5b required AS-6 Cloud Audit Log corroboration script missing: ${AUDIT_CORROBORATION_SCRIPT}"
                 ((REBUILD_FAILURES++)) || true
-              elif ! CAGE_ALLOW_MACOS_TESTS=1 uv run python "$AUDIT_CORROBORATION_SCRIPT" --project "$PROJECT_ID" --output "$ARCHIVE_DIR/audit-corroboration-stage5b.json"; then
+              elif ! CAGE_ALLOW_MACOS_TESTS=1 uv run python "$AUDIT_CORROBORATION_SCRIPT" --project "$PROJECT_ID" ${AUDIT_CORROBORATION_EXTRA_ARGS[@]+"${AUDIT_CORROBORATION_EXTRA_ARGS[@]}"} --output "$ARCHIVE_DIR/audit-corroboration-stage5b.json"; then
                 error "Stage 5b post-rebuild Cloud Audit Log corroboration FAILED: ${AUDIT_CORROBORATION_SCRIPT}"
                 ((REBUILD_FAILURES++)) || true
               else
@@ -2212,6 +2215,7 @@ if [[ "$FRESH_PROJECT" == "true" ]]; then
   POST_INV_OUT="$ARCHIVE_DIR/post-destroy-project-inventory.json" \
   POST_INV_PRE="$PRE_RUN_INVENTORY_JSON" \
   POST_INV_PROJECT="$PROJECT_ID" \
+  POST_INV_EVIDENCE_PROJECT="${TF_VAR_evidence_project_id:-$PROJECT_ID}" \
   POST_INV_ALLOW_LEGACY="$ALLOW_LEGACY_LIEN_SURVIVOR" \
   POST_INV_ALL_BUCKETS="$_post_all_buckets" \
   POST_INV_UNEXPECTED_BUCKETS="$remaining_buckets" \
@@ -2237,6 +2241,7 @@ def _gcloud(args: list[str]) -> list[str]:
 
 
 proj = os.environ["POST_INV_PROJECT"]
+ev_proj = os.environ.get("POST_INV_EVIDENCE_PROJECT") or proj
 allow_legacy = os.environ.get("POST_INV_ALLOW_LEGACY", "false").lower() == "true"
 all_buckets = _lines("POST_INV_ALL_BUCKETS")
 unexpected_buckets = _lines("POST_INV_UNEXPECTED_BUCKETS")
@@ -2260,7 +2265,7 @@ retained_by_design = {
     "langfuse_retention_locked": [b for b in all_buckets if langfuse_re.match(b)],
     "legacy_waived": [b for b in all_buckets if allow_legacy and b.startswith("langfuse-events-")],
 }
-worm_objs = [o for o in _gcloud(["storage", "ls", f"gs://{proj}-evidence-worm-staging/evidence-stream/**", f"--project={proj}"]) if not o.endswith("/:")]
+worm_objs = [o for o in _gcloud(["storage", "ls", f"gs://{ev_proj}-evidence-worm-staging/evidence-stream/**", f"--project={ev_proj}"]) if not o.endswith("/:")]
 custom_sas = [sa for sa in _gcloud(["iam", "service-accounts", "list", f"--project={proj}", "--format=value(email)"]) if sa.endswith(f"@{proj}.iam.gserviceaccount.com")]
 retained_sas = sorted(set(custom_sas) - set(unexpected_sas))
 all_attestors = _gcloud(["container", "binauthz", "attestors", "list", f"--project={proj}", "--format=value(name)"])
@@ -2375,7 +2380,7 @@ summary = {
 out_path.write_text(json.dumps(summary, indent=2) + "\n", encoding="utf-8")
 PY
   mkdir -p "$ARCHIVE_DIR/worm-objects"
-  gcloud storage rsync -r "gs://${PROJECT_ID}-evidence-worm-staging" "$ARCHIVE_DIR/worm-objects" --quiet >/dev/null 2>&1 || true
+  gcloud storage rsync -r "gs://${TF_VAR_evidence_project_id:-$PROJECT_ID}-evidence-worm-staging" "$ARCHIVE_DIR/worm-objects" --project="${TF_VAR_evidence_project_id:-$PROJECT_ID}" --quiet >/dev/null 2>&1 || true
 fi
 
 check_gate_failures
@@ -2403,3 +2408,4 @@ fi
 echo -e "${GREEN}║    ✅  Ephemeral staging cluster destroyed cleanly                ║${RESET}"
 echo -e "${GREEN}╚══════════════════════════════════════════════════════════════════╝${RESET}"
 echo ""
+
