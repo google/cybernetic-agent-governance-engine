@@ -15,7 +15,14 @@
 # POAM-2026-132 / Probe #12: plan-time contracts for GPU pool total autoscaling,
 # zero initial node count, and verified regional L4 + g2-standard-8 zones.
 
-mock_provider "google" {}
+mock_provider "google" {
+  mock_data "google_monitoring_notification_channel" {
+    defaults = {
+      enabled = true
+      name    = "projects/cage-test-project/notificationChannels/12345"
+    }
+  }
+}
 mock_provider "helm" {}
 mock_provider "kubernetes" {}
 mock_provider "random" {}

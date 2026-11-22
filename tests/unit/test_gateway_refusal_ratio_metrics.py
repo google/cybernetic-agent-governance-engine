@@ -28,8 +28,9 @@ Verifies the telemetry and alerting contract closing the silent-100%-refusal bli
      carrying in-band governance refusals (``refusal_decided``, ``policy-precheck`` ``DENY``,
      ``verify_content_safety`` ``BLOCKED``, ``evaluate_policy`` ``DENIED``) as ``blocked``.
   4. ``infra/targets/gcp-gke/metrics_alerting.tf`` provisions
-     ``google_monitoring_alert_policy.gateway_sustained_refusal_ratio`` paging
-     ``var.lula_alert_owner`` when blocked-over-total over ``[5m]`` meets ``>= 0.95`` with a
+     ``google_monitoring_alert_policy.gateway_sustained_refusal_ratio`` bound to
+     ``var.alert_notification_channels`` (labeled ``var.alert_owner_label``) when
+     blocked-over-total over ``[5m]`` meets ``>= 0.95`` with a
      minimum volume floor (``>= 5``) sustained for ``180s``.
 """
 

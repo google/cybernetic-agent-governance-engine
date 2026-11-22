@@ -39,3 +39,19 @@ image_digests = {
   "governed-financial-advisor" = "registry.invalid/cage-test/governed-financial-advisor@sha256:deadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeef"
   "inference-stub"             = "registry.invalid/cage-test/inference-stub@sha256:deadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeef"
 }
+
+# POAM-2026-230: Committed .tfvars profiles intentionally leave
+# alert_notification_channels = [] and compliance_alert_channel = "" so real
+# enforcing plans fail closed until an adopter binds verified destinations.
+# Mock-provider terraform test suites plan with this fake test-only Pub/Sub sink;
+# negative expect_failures runs in lula_cron.tftest.hcl override these to prove
+# empty, disabled, mismatched, and console configurations are refused.
+alert_notification_channels = [
+  {
+    display_name = "cage-test-alerts-pubsub"
+    type         = "pubsub"
+  }
+]
+compliance_alert_channel = "pubsub"
+alert_pubsub_topic       = "projects/cage-test-project/topics/cage-test-alerts"
+

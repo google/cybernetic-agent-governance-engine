@@ -116,7 +116,11 @@ from .metrics import (
     get_compliance_metrics,
     invalidate_compliance_metrics_cache,
 )
-from .notifier import create_notifier
+from .notifier import (
+    create_notifier,
+    is_external_notifier_configured,
+    validate_notifier_config,
+)
 from .oscal_exporter import build_oscal_assessment_results, findings_from_metrics_dict
 from .sla_monitor import run_sla_monitor
 from .sse_events import event_bus
@@ -239,9 +243,11 @@ async def lifespan(app: FastAPI):  # type: ignore[no-untyped-def]
             "is True or CAGE_ENV is not 'dev'/'development' (POAM-2026-167 / LT-1)."
         )
 
-    # POAM-018: fail closed on missing Langfuse credentials before any custody
-    # client, background task or connection is created.
+    # POAM-018 & POAM-2026-230: fail closed on missing Langfuse credentials or
+    # unconfigured/console alert notifier before any custody client, background
+    # task or connection is created.
     validate_langfuse_credentials()
+    validate_notifier_config()
 
     _custodian: EvidenceCustodian | None = None
     _custody_task: asyncio.Task | None = None
@@ -625,6 +631,7 @@ async def health() -> dict:
         "langfuse_compliance_configured": langfuse_compliance_configured,
         "langfuse_app_configured": langfuse_app_configured,
         "oscal_storage_configured": oscal_storage_configured,
+        "alert_channel_configured": is_external_notifier_configured(),
         "environment": active_env,
     }
 
@@ -1707,7 +1714,13 @@ async def _handle_lula_audit_post_custody(
     audit_id = f"lula-audit-{receipt_hash[:16]}"
     try:
         notifier = create_notifier()
-        await notifier.send_critical_alert(findings, audit_id)
+        delivered = (await notifier.send_critical_alert(findings, audit_id)) is True
+        if not delivered:
+            logger.error(
+                "[infra/events] Notifier did not confirm external delivery for CRITICAL "
+                "lula_audit event (record_hash=%s)",
+                receipt_hash,
+            )
     except Exception as notify_exc:
         logger.error(
             "[infra/events] Notifier transport failed after CRITICAL lula_audit log "

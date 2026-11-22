@@ -171,6 +171,22 @@ enable_compliance_bridge = false
 # compliance_bridge_image = "gcr.io/your-project/compliance-bridge@sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
 
 # ═══════════════════════════════════════════════════════════════════════════════
+# Alert Routing & Compliance-Bridge Notifier (Required in Enforcing Postures)
+# ═══════════════════════════════════════════════════════════════════════════════
+# Enforcing postures (staging, prod, or enforce_in_dev = true) fail closed at
+# plan time unless alert_notification_channels resolves at least one existing,
+# enabled Cloud Monitoring NotificationChannel AND compliance_alert_channel is
+# set to an external backend (pubsub, slack, webhook, or pagerduty).
+# In CAGE's reference architecture, GCP Pub/Sub is the verified terminal sink:
+#
+# alert_owner_label                = "platform-compliance-oncall" # metadata label only; routes nothing
+# alert_notification_channels      = [{ display_name = "cage-staging-alerts-pubsub", type = "pubsub" }]
+# compliance_alert_channel         = "pubsub"
+# alert_pubsub_topic               = "projects/your-gcp-project-id/topics/cage-staging-alerts"
+# alert_verify_pubsub_subscription = "cage-staging-alerts-verify"
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
 # OPA Policy Engine
 # ═══════════════════════════════════════════════════════════════════════════════
 

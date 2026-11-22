@@ -64,12 +64,17 @@ from .metrics import (
     get_compliance_metrics,
     get_last_healthy_lula_audit_age_seconds,
 )
-from .notifier import create_notifier
+from .notifier import (
+    create_notifier,
+    is_external_notifier_configured,
+    send_notifier_heartbeat,
+)
 from .types import OscalFinding, get_sla_seconds
 
 logger = logging.getLogger(__name__)
 
 _DEFAULT_POLL_INTERVAL = 300  # 5 minutes
+_DEFAULT_HEARTBEAT_INTERVAL = 21600  # 6 hours (POAM-2026-230 synthetic notifier probe)
 _DEFAULT_LULA_AUDIT_MAX_AGE_SECONDS = (
     43200  # 2 x 6h default CronJob/lula-audit schedule ("0 */6 * * *")
 )
@@ -122,6 +127,13 @@ def _poll_interval() -> int:
     return int(
         os.environ.get("EVIDENCE_SLA_POLL_INTERVAL_SECONDS", _DEFAULT_POLL_INTERVAL)
     )
+
+
+def _heartbeat_interval() -> int:
+    raw = os.environ.get(
+        "ALERT_HEARTBEAT_INTERVAL_SECONDS", str(_DEFAULT_HEARTBEAT_INTERVAL)
+    )
+    return max(0, int(raw.strip() or "0"))
 
 
 def _active_sla_seconds() -> dict[str, int]:
@@ -222,7 +234,11 @@ async def _check_lula_audit_deadman(
     audit_id = f"lula-audit-deadman-{now_ts}"
     try:
         notifier = create_notifier()
-        await notifier.send_critical_alert([finding], audit_id)
+        delivered = (await notifier.send_critical_alert([finding], audit_id)) is True
+        if not delivered:
+            logger.error(
+                "[sla_monitor] Dead-man alert NOT delivered externally (%s)", audit_id
+            )
     except Exception as exc:
         logger.error(
             "[sla_monitor] Failed to send lula-audit-deadman critical alert: %s", exc
@@ -236,13 +252,20 @@ async def _dispatch_sla_error_alerts(
     findings: list[OscalFinding],
     audit_id: str,
     label: str,
-) -> None:
-    """Dispatch a consolidated critical alert batch, logging transport failures."""
+) -> bool:
+    """Dispatch a consolidated critical alert batch, returning observed delivery."""
     if not findings:
-        return
+        return False
     try:
         notifier = create_notifier()
-        await notifier.send_critical_alert(findings, audit_id)
+        delivered = (await notifier.send_critical_alert(findings, audit_id)) is True
+        if not delivered:
+            logger.error(
+                "[sla_monitor] %s critical alert NOT delivered externally (%s)",
+                label,
+                audit_id,
+            )
+        return delivered
     except Exception as exc:
         logger.error(
             "[sla_monitor] Failed to send %s critical alert (%s): %s",
@@ -250,6 +273,7 @@ async def _dispatch_sla_error_alerts(
             audit_id,
             exc,
         )
+        return False
 
 
 async def _check_sla_once() -> list[str]:
@@ -410,13 +434,44 @@ async def _fire_sla_alerts(breached: list[str]) -> None:
 
     audit_id = f"sla-monitor-{now_ts}"
     try:
-        await notifier.send_critical_alert(findings, audit_id)
-        logger.warning(
-            "[sla_monitor] 🚨 SLA breach alert sent for: %s",
-            ", ".join(breached),
-        )
+        delivered = (await notifier.send_critical_alert(findings, audit_id)) is True
+        if delivered:
+            logger.warning(
+                "[sla_monitor] 🚨 SLA breach alert delivered for: %s",
+                ", ".join(breached),
+            )
+        else:
+            logger.error(
+                "[sla_monitor] SLA breach alert NOT delivered externally for: %s",
+                ", ".join(breached),
+            )
     except Exception as exc:
         logger.error("[sla_monitor] Failed to send SLA breach alert: %s", exc)
+
+
+async def _maybe_emit_notifier_heartbeat(
+    last_hb_monotonic: float | None,
+) -> float | None:
+    """Emit a synthetic non-paging notifier heartbeat when the interval elapses."""
+    hb_interval = _heartbeat_interval()
+    if hb_interval <= 0 or not is_external_notifier_configured():
+        return last_hb_monotonic
+    now_mono = asyncio.get_running_loop().time()
+    if last_hb_monotonic is not None and (now_mono - last_hb_monotonic) < hb_interval:
+        return last_hb_monotonic
+    try:
+        delivered, hb_id = await send_notifier_heartbeat()
+        if delivered:
+            logger.info(
+                "[sla_monitor] Synthetic notifier heartbeat delivered (%s)", hb_id
+            )
+            return now_mono
+        logger.error(
+            "[sla_monitor] Synthetic notifier heartbeat NOT delivered (%s)", hb_id
+        )
+    except Exception as exc:
+        logger.error("[sla_monitor] Synthetic notifier heartbeat failed: %s", exc)
+    return last_hb_monotonic
 
 
 async def run_sla_monitor() -> None:
@@ -445,10 +500,15 @@ async def run_sla_monitor() -> None:
         ", ".join(_active_sla_seconds().keys()),
     )
 
+    last_hb_monotonic: float | None = None
     try:
+        last_hb_monotonic = await _maybe_emit_notifier_heartbeat(last_hb_monotonic)
         while True:
             await asyncio.sleep(poll_interval)
             try:
+                last_hb_monotonic = await _maybe_emit_notifier_heartbeat(
+                    last_hb_monotonic
+                )
                 sla_keys = set(_active_sla_seconds().keys())
                 breached = await _check_sla_once()
                 if "A.5.3" not in sla_keys:

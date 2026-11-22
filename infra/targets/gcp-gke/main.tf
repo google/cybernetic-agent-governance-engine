@@ -1002,21 +1002,25 @@ module "compliance_bridge" {
   # EA-1: model backends admit TCP 8000 from the gateway alone
   # (model-backend-ingress), so the bridge has no model to call. "none" records
   # the remediation advisory as not performed instead of dialling a dropped URL.
-  cage_inference_backend     = "none"
-  vllm_base_url              = ""
-  vllm_api_key               = ""
-  alert_channel              = "console"
-  oscal_s3_bucket            = module.worm_bucket.bucket_name
-  trusted_mesh_identities    = ["${local.ksa_gateway}.${module.namespace.name}.${module.service_mesh.identity_suffix}"]
-  auditor_mesh_identity      = "${local.ksa_lula}.${module.namespace.name}.${module.service_mesh.identity_suffix}"
-  oscal_s3_region            = var.region
-  evidence_cold_store        = "gcs"
-  evidence_cold_store_bucket = module.worm_bucket.bucket_name
-  cmek_key_resource_name     = var.enable_cmek ? local.evidence_cmek_key_id : ""
-  cage_env                   = local.effective_cage_env
-  startup_grace_hours        = var.startup_grace_hours
-  lula_audit_max_age_seconds = local.lula_audit_max_age_seconds
-  deployment_config_map_name = module.deployment_config.config_map_name
+  cage_inference_backend           = "none"
+  vllm_base_url                    = ""
+  vllm_api_key                     = ""
+  alert_channel                    = local.effective_compliance_alert_channel
+  alert_pubsub_topic               = var.alert_pubsub_topic
+  alert_webhook_configured         = trimspace(var.compliance_alert_webhook_url) != ""
+  pagerduty_routing_key_configured = trimspace(var.pagerduty_routing_key) != ""
+  alert_heartbeat_interval_seconds = var.alert_heartbeat_interval_seconds
+  oscal_s3_bucket                  = module.worm_bucket.bucket_name
+  trusted_mesh_identities          = ["${local.ksa_gateway}.${module.namespace.name}.${module.service_mesh.identity_suffix}"]
+  auditor_mesh_identity            = "${local.ksa_lula}.${module.namespace.name}.${module.service_mesh.identity_suffix}"
+  oscal_s3_region                  = var.region
+  evidence_cold_store              = "gcs"
+  evidence_cold_store_bucket       = module.worm_bucket.bucket_name
+  cmek_key_resource_name           = var.enable_cmek ? local.evidence_cmek_key_id : ""
+  cage_env                         = local.effective_cage_env
+  startup_grace_hours              = var.startup_grace_hours
+  lula_audit_max_age_seconds       = local.lula_audit_max_age_seconds
+  deployment_config_map_name       = module.deployment_config.config_map_name
 
   # POAM-2026-220: inject the WORM bucket's immutable GCS location rather than
   # expanding runtime IAM with storage.buckets.get (roles/storage.legacyBucketReader).
@@ -1060,7 +1064,15 @@ module "compliance_bridge" {
   infra_evidence_previous_chain_head_hash          = var.infra_evidence_previous_chain_head_hash
   infra_evidence_previous_batch_attestation_digest = var.infra_evidence_previous_batch_attestation_digest
 
-  depends_on = [module.langfuse, module.vllm, module.worm_bucket, module.memorystore_governance, module.service_mesh, terraform_data.memorystore_ca_pinning_guard]
+  depends_on = [
+    module.langfuse,
+    module.vllm,
+    module.worm_bucket,
+    module.memorystore_governance,
+    module.service_mesh,
+    terraform_data.memorystore_ca_pinning_guard,
+    google_pubsub_topic_iam_member.compliance_bridge_alert_publisher,
+  ]
 }
 
 
@@ -1391,6 +1403,9 @@ module "app_secrets" {
   langfuse_compliance_public_key = var.langfuse_compliance_public_key
   langfuse_compliance_secret_key = var.langfuse_compliance_secret_key
 
+  compliance_alert_channel     = local.effective_compliance_alert_channel
+  compliance_alert_webhook_url = var.compliance_alert_webhook_url
+  pagerduty_routing_key        = var.pagerduty_routing_key
 
   cage_deployment_region = var.cage_deployment_region
 

@@ -200,9 +200,13 @@ def test_compliance_bridge_wired_to_worm_bucket_and_object_creator_iam() -> None
     gke_main = _GKE_MAIN.read_text()
     cb_block = _extract_module_block("compliance_bridge", gke_main)
 
-    assert "oscal_s3_bucket            = module.worm_bucket.bucket_name" in cb_block
-    assert 'evidence_cold_store        = "gcs"' in cb_block
-    assert "evidence_cold_store_bucket = module.worm_bucket.bucket_name" in cb_block
+    assert re.search(
+        r"oscal_s3_bucket\s*=\s*module\.worm_bucket\.bucket_name", cb_block
+    )
+    assert re.search(r'evidence_cold_store\s*=\s*"gcs"', cb_block)
+    assert re.search(
+        r"evidence_cold_store_bucket\s*=\s*module\.worm_bucket\.bucket_name", cb_block
+    )
     assert "clickhouse" not in cb_block.lower()
 
     cb_module_main = _COMPLIANCE_BRIDGE_MAIN.read_text()

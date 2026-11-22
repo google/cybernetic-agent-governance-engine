@@ -111,8 +111,38 @@ variable "vllm_api_key" {
 }
 
 variable "alert_channel" {
-  type    = string
-  default = "console"
+  description = "Compliance-bridge ALERT_CHANNEL ('pubsub', 'webhook', 'slack', 'pagerduty'; 'console' allowed only in non-enforcing dev/test/ci postures; POAM-2026-230)."
+  type        = string
+  default     = "console"
+}
+
+variable "alert_pubsub_topic" {
+  description = "GCP Pub/Sub topic ('projects/<project>/topics/<topic>') injected as COMPLIANCE_ALERT_PUBSUB_TOPIC when alert_channel = 'pubsub' (POAM-2026-230)."
+  type        = string
+  default     = ""
+}
+
+variable "alert_webhook_configured" {
+  description = "True when an https:// webhook URL is populated in Secret/compliance-alert-secrets ('webhook-url') for alert_channel = 'webhook' or 'slack' (POAM-2026-230)."
+  type        = bool
+  default     = false
+}
+
+variable "pagerduty_routing_key_configured" {
+  description = "True when a non-empty PagerDuty Events API v2 routing key is populated in Secret/compliance-alert-secrets ('pagerduty-routing-key') for alert_channel = 'pagerduty' (POAM-2026-230)."
+  type        = bool
+  default     = false
+}
+
+variable "alert_heartbeat_interval_seconds" {
+  description = "Interval in seconds between synthetic non-paging compliance-bridge notifier heartbeats (ALERT_HEARTBEAT_INTERVAL_SECONDS; 0 disables; POAM-2026-230)."
+  type        = number
+  default     = 21600
+
+  validation {
+    condition     = var.alert_heartbeat_interval_seconds >= 0 && floor(var.alert_heartbeat_interval_seconds) == var.alert_heartbeat_interval_seconds
+    error_message = "alert_heartbeat_interval_seconds must be a non-negative integer."
+  }
 }
 
 variable "oscal_s3_bucket" {

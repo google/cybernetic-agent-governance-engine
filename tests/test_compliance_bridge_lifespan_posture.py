@@ -163,6 +163,15 @@ def _set_startup_env(
     monkeypatch.setenv(
         "CAGE_TRUSTED_OPERATOR_IDENTITIES", "operator:auditor@example.org"
     )
+    if credentials:
+        monkeypatch.setenv("ALERT_CHANNEL", "pubsub")
+        monkeypatch.setenv(
+            "COMPLIANCE_ALERT_PUBSUB_TOPIC",
+            "projects/cage-test-01/topics/cage-alerts",
+        )
+    else:
+        monkeypatch.delenv("ALERT_CHANNEL", raising=False)
+        monkeypatch.delenv("COMPLIANCE_ALERT_PUBSUB_TOPIC", raising=False)
     for var in LANGFUSE_CREDENTIAL_ENV_VARS:
         if credentials:
             monkeypatch.setenv(var, f"synthetic-{var.lower()}")
@@ -197,6 +206,7 @@ def test_lifespan_starts_in_staging_with_credentials_and_health_reports_them(
 
     assert body["langfuse_compliance_configured"] is True
     assert body["langfuse_app_configured"] is True
+    assert body["alert_channel_configured"] is True
     assert body["environment"] == "staging"
 
 
@@ -215,4 +225,5 @@ def test_lifespan_starts_in_dev_without_credentials_and_health_reports_absence(
 
     assert body["langfuse_compliance_configured"] is False
     assert body["langfuse_app_configured"] is False
+    assert body["alert_channel_configured"] is False
     assert any("[POAM-018]" in rec.getMessage() for rec in caplog.records)

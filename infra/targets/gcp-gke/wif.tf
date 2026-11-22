@@ -164,3 +164,65 @@ resource "google_kms_crypto_key_iam_policy" "partner_harness_kms_signer" {
   crypto_key_id = "projects/${var.project_id}/locations/${var.region}/keyRings/${var.partner_harness_kms_keyring}/cryptoKeys/${var.partner_harness_kms_key}"
   policy_data   = data.google_iam_policy.partner_harness_kms_signer[0].policy_data
 }
+
+# ─── 3. Scheduled Alert-Delivery Verifier Identity (POAM-2026-230 Property 4) ─
+# Dedicated low-privilege GSA for .github/workflows/alert-delivery-check.yml:
+#   - Restricted via WIF to var.github_deployer_ref (refs/heads/main), where
+#     scheduled workflows execute.
+#   - Holds zero cluster, KMS, Secret Manager, or GCS access.
+#   - Permitted only to read Cloud Monitoring AlertPolicy/NotificationChannel
+#     metadata, write the synthetic custom.googleapis.com/cage/alert_heartbeat_probe
+#     gauge, and pull/nack/ack synthetic heartbeats on var.alert_verify_pubsub_subscription.
+
+resource "google_service_account" "alert_verifier" {
+  account_id   = "cage-alert-verifier"
+  display_name = "CAGE Alert Delivery Verifier"
+  description  = "Least-privilege WIF identity for scheduled independent alert-delivery verification (POAM-2026-230)"
+  project      = var.project_id
+}
+
+resource "google_service_account_iam_binding" "alert_verifier_workload_identity" {
+  service_account_id = google_service_account.alert_verifier.name
+  role               = "roles/iam.workloadIdentityUser"
+  members = [
+    "principalSet://iam.googleapis.com/${google_iam_workload_identity_pool.github_actions.name}/attribute.ref/${var.github_deployer_ref}",
+  ]
+}
+
+resource "google_service_account_iam_binding" "alert_verifier_token_creator" {
+  service_account_id = google_service_account.alert_verifier.name
+  role               = "roles/iam.serviceAccountTokenCreator"
+  members = [
+    "principalSet://iam.googleapis.com/${google_iam_workload_identity_pool.github_actions.name}/attribute.ref/${var.github_deployer_ref}",
+    "serviceAccount:${google_service_account.alert_verifier.email}",
+  ]
+}
+
+resource "google_project_iam_member" "alert_verifier_monitoring_viewer" {
+  project = var.project_id
+  role    = "roles/monitoring.viewer"
+  member  = "serviceAccount:${google_service_account.alert_verifier.email}"
+}
+
+resource "google_project_iam_member" "alert_verifier_metric_writer" {
+  project = var.project_id
+  role    = "roles/monitoring.metricWriter"
+  member  = "serviceAccount:${google_service_account.alert_verifier.email}"
+}
+
+resource "google_pubsub_subscription_iam_member" "alert_verifier_subscriber" {
+  count        = trimspace(var.alert_verify_pubsub_subscription) != "" ? 1 : 0
+  project      = var.project_id
+  subscription = trimspace(var.alert_verify_pubsub_subscription)
+  role         = "roles/pubsub.subscriber"
+  member       = "serviceAccount:${google_service_account.alert_verifier.email}"
+}
+
+resource "google_pubsub_subscription_iam_member" "alert_verifier_viewer" {
+  count        = trimspace(var.alert_verify_pubsub_subscription) != "" ? 1 : 0
+  project      = var.project_id
+  subscription = trimspace(var.alert_verify_pubsub_subscription)
+  role         = "roles/pubsub.viewer"
+  member       = "serviceAccount:${google_service_account.alert_verifier.email}"
+}
+

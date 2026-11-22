@@ -1485,7 +1485,12 @@ class TestFailClosedPersistenceAndIdempotency:
         monkeypatch.setenv(
             "CAGE_TRUSTED_OPERATOR_IDENTITIES", "operator:auditor@example.org"
         )
-        # Synthetic, non-secret values satisfying the POAM-018 lifespan pre-flight.
+        # Synthetic, non-secret values satisfying the POAM-018 & POAM-2026-230 lifespan pre-flights.
+        monkeypatch.setenv("ALERT_CHANNEL", "pubsub")
+        monkeypatch.setenv(
+            "COMPLIANCE_ALERT_PUBSUB_TOPIC",
+            "projects/cage-test-01/topics/cage-alerts",
+        )
         for var in LANGFUSE_CREDENTIAL_ENV_VARS:
             monkeypatch.setenv(var, f"synthetic-{var.lower()}")
         monkeypatch.delenv(INFRA_INLINE_FLUSH_ENV, raising=False)

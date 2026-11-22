@@ -1257,7 +1257,12 @@ class TestComplianceBridgeEndpoints:
 
         monkeypatch.setenv("CAGE_ENV", "staging")
         monkeypatch.setenv("EVIDENCE_STREAM_ENABLED", "true")
-        # Synthetic, non-secret values satisfying the POAM-018 lifespan pre-flight.
+        # Synthetic, non-secret values satisfying the POAM-018 & POAM-2026-230 lifespan pre-flights.
+        monkeypatch.setenv("ALERT_CHANNEL", "pubsub")
+        monkeypatch.setenv(
+            "COMPLIANCE_ALERT_PUBSUB_TOPIC",
+            "projects/cage-test-01/topics/cage-alerts",
+        )
         for var in LANGFUSE_CREDENTIAL_ENV_VARS:
             monkeypatch.setenv(var, f"synthetic-{var.lower()}")
         monkeypatch.setattr(
