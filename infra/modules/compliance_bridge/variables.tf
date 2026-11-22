@@ -140,6 +140,17 @@ variable "startup_grace_hours" {
   }
 }
 
+variable "lula_audit_max_age_seconds" {
+  description = "Maximum allowed age in seconds (2 x CronJob/lula-audit schedule) of the most recent auditor-healthy lula_audit custody record before the CA-7 dead-man's switch breaches (LULA_AUDIT_MAX_AGE_SECONDS)."
+  type        = number
+  default     = 43200
+
+  validation {
+    condition     = var.lula_audit_max_age_seconds > 0 && floor(var.lula_audit_max_age_seconds) == var.lula_audit_max_age_seconds
+    error_message = "lula_audit_max_age_seconds must be a positive integer."
+  }
+}
+
 # K-3 / Track 6d (§5.2): EVIDENCE_KMS_KEY for the compliance-bridge KMSBatchSigner.
 # Separate from the gateway's KMS_GOVERNANCE_KEY and the reconciler's RECONCILER_KMS_KEY.
 # There is no HMAC fallback: empty is allowed only in dev/test/ci postures, where

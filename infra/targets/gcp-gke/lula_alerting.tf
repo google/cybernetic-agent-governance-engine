@@ -42,7 +42,7 @@ resource "google_monitoring_alert_policy" "lula_audit_failure" {
 
       - **Owner:** `${trimspace(var.lula_alert_owner)}`
       - **Cluster:** `${var.cluster_name}` (`${var.namespace}`)
-      - **Schedule:** `${var.lula_schedule}` (`2 x schedule` = `1800s` dead-man window)
+      - **Schedule:** `${var.lula_schedule}` (`2 x schedule` = `${local.lula_audit_max_age_seconds}s` dead-man window)
 
       Fires when:
       1. `cage_lula_audit_not_satisfied_controls > 0`
@@ -51,11 +51,12 @@ resource "google_monitoring_alert_policy" "lula_audit_failure" {
          `assessment_status=insufficient_traffic` (`total_traces == 0`) or
          `assessment_status=insufficient_sample` (`0 < total_traces < min_sample_size`)
          report separately on `cage_lula_audit_insufficient_traffic_controls` and
-         `cage_lula_audit_insufficient_sample_controls` without resetting the
-         dead-man's switch timer),
+         `cage_lula_audit_insufficient_sample_controls`, advancing auditor liveness
+         `cage_lula_audit_last_healthy_run_timestamp_seconds` without claiming
+         statistical satisfaction on `cage_lula_audit_last_pass_timestamp_seconds`),
       2. `increase(cage_lula_audit_deadman_breaches_total[5m]) > 0`
-         because no clean passing (`26/26` satisfied) `lula_audit` run completed
-         within `2 x schedule`, or
+         because no auditor-healthy (`>= 26` evaluated, `failed_count == 0`)
+         `lula_audit` run completed within `2 x schedule` (`${local.lula_audit_max_age_seconds}s`), or
       3. `kubernetes.io/container/restart_count` increases for `lula-audit` pods.
     EOT
   }

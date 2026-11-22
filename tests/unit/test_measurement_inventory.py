@@ -123,6 +123,7 @@ def test_live_repository_inventory_meets_all_corpus_floors_and_discovers_known_s
         "_is_control_effective_record",
         "_fetch_from_evidence_stream_sync",
         "get_last_passing_lula_audit_age_seconds",
+        "get_last_healthy_lula_audit_age_seconds",
         "_check_sla_once",
         "_check_lula_audit_deadman",
         "_get_grace_status",

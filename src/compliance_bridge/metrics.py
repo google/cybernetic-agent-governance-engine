@@ -892,6 +892,136 @@ def _is_insufficient_traffic_lula_audit(
     return saw_insuff_prefix
 
 
+def _is_insufficient_evidence_only_lula_audit(
+    record: Mapping[str, Any] | Any,
+    payload: dict[str, Any],
+) -> bool:
+    """Return True iff `record` is an auditor-healthy `lula_audit` run whose sole non-satisfied specs are statistical `insufficient_traffic` / `insufficient_sample` controls (`a52`/`a53`/`a92`).
+
+    Answers the auditor-liveness question (separate from statistical satisfaction):
+    `evaluated_count >= LULA_AUDIT_MIN_MANIFESTS`, zero `failed_count` /
+    `not_satisfied_count` / `failed_controls`, disjoint subset of
+    `STATISTICAL_TRACE_LULA_SPECS`, exact count conservation, and an
+    `INSUFFICIENT_TRAFFIC` or `INSUFFICIENT_SAMPLE` summary with zero `FAIL`.
+    """
+    raw_failed = payload.get("failed_count")
+    if raw_failed is None:
+        raw_failed = _get_record_field(record, "failed_count")
+    ok_failed, failed_count = _coerce_optional_int(raw_failed)
+    if not ok_failed or (failed_count is not None and failed_count != 0):
+        return False
+
+    raw_not_sat = payload.get("not_satisfied_count")
+    if raw_not_sat is None:
+        raw_not_sat = _get_record_field(record, "not_satisfied_count")
+    ok_not_sat, not_satisfied_count = _coerce_optional_int(raw_not_sat)
+    if not ok_not_sat or (not_satisfied_count is not None and not_satisfied_count != 0):
+        return False
+
+    raw_failed_controls = payload.get("failed_controls")
+    if raw_failed_controls is None:
+        raw_failed_controls = _get_record_field(record, "failed_controls")
+    if _has_nonempty_failed_controls(raw_failed_controls):
+        return False
+
+    raw_insuff_controls = payload.get("insufficient_traffic_controls")
+    if raw_insuff_controls is None:
+        raw_insuff_controls = _get_record_field(record, "insufficient_traffic_controls")
+    if raw_insuff_controls is None:
+        insuff_controls: list[str] = []
+    else:
+        ok_insuff_list, insuff_controls = _parse_control_list(raw_insuff_controls)
+        if not ok_insuff_list:
+            return False
+
+    raw_sample_controls = payload.get("insufficient_sample_controls")
+    if raw_sample_controls is None:
+        raw_sample_controls = _get_record_field(record, "insufficient_sample_controls")
+    if raw_sample_controls is None:
+        sample_controls: list[str] = []
+    else:
+        ok_sample_list, sample_controls = _parse_control_list(raw_sample_controls)
+        if not ok_sample_list:
+            return False
+
+    if not insuff_controls and not sample_controls:
+        return False
+    if any(c not in STATISTICAL_TRACE_LULA_SPECS for c in insuff_controls):
+        return False
+    if any(c not in STATISTICAL_TRACE_LULA_SPECS for c in sample_controls):
+        return False
+    if set(insuff_controls) & set(sample_controls):
+        return False
+
+    raw_insuff_count = payload.get("insufficient_traffic_count")
+    if raw_insuff_count is None:
+        raw_insuff_count = _get_record_field(record, "insufficient_traffic_count")
+    ok_insuff_cnt, insuff_count = _coerce_optional_int(raw_insuff_count)
+    if not ok_insuff_cnt or (
+        insuff_count is not None and insuff_count != len(insuff_controls)
+    ):
+        return False
+
+    raw_sample_count = payload.get("insufficient_sample_count")
+    if raw_sample_count is None:
+        raw_sample_count = _get_record_field(record, "insufficient_sample_count")
+    ok_sample_cnt, sample_count = _coerce_optional_int(raw_sample_count)
+    if not ok_sample_cnt or (
+        sample_count is not None and sample_count != len(sample_controls)
+    ):
+        return False
+
+    raw_eval = payload.get("evaluated_count")
+    if raw_eval is None:
+        raw_eval = _get_record_field(record, "evaluated_count")
+    ok_eval, evaluated_count = _coerce_optional_int(raw_eval)
+    min_manifests = _lula_min_manifests_floor()
+    if not ok_eval or evaluated_count is None or evaluated_count < min_manifests:
+        return False
+
+    raw_sat = payload.get("satisfied_count")
+    if raw_sat is None:
+        raw_sat = _get_record_field(record, "satisfied_count")
+    ok_sat, satisfied_count = _coerce_optional_int(raw_sat)
+    if (
+        not ok_sat
+        or satisfied_count is None
+        or satisfied_count < 0
+        or satisfied_count + len(insuff_controls) + len(sample_controls)
+        != evaluated_count
+    ):
+        return False
+
+    summaries = [
+        cand.strip()
+        for cand in (
+            _get_record_field(record, "scrubbed_summary"),
+            _get_record_field(record, "summary"),
+            payload.get("summary"),
+        )
+        if isinstance(cand, str) and cand.strip()
+    ]
+    if not summaries:
+        return False
+
+    expected_prefix_re = (
+        _LULA_INSUFFICIENT_SAMPLE_PREFIX_RE
+        if sample_controls
+        else _LULA_INSUFFICIENT_PREFIX_RE
+    )
+    saw_expected_prefix = False
+    for text in summaries:
+        if _LULA_FAIL_PREFIX_RE.search(text):
+            return False
+        for m_fc in _LULA_FAILED_COUNT_RE.finditer(text):
+            if int(m_fc.group(1)) > 0:
+                return False
+        if expected_prefix_re.search(text):
+            saw_expected_prefix = True
+
+    return saw_expected_prefix
+
+
 def _is_passing_lula_audit(
     record: Mapping[str, Any] | Any,
     payload: dict[str, Any],
@@ -1994,19 +2124,19 @@ async def get_compliance_metrics(
 def get_last_passing_lula_audit_age_seconds(
     window_hours: int = 24,
 ) -> tuple[float | None, str | None]:
-    """Return `(age_seconds, last_pass_iso_utc)` of the newest clean passing `lula_audit` record.
+    """Return `(age_seconds, last_pass_iso_utc)` of the newest statistically clean (`26/26 satisfied`) `lula_audit` record.
 
-    Scans `A.5.3` custody records over `window_hours` and considers **strictly**
+    Answers **Question 2 (statistical satisfaction attestation, `POAM-2026-234`)**:
+    scans `A.5.3` custody records over `window_hours` and considers **strictly**
     `event_type == "lula_audit"` records where `_is_passing_evidence_record(rec)`
     is `True` (proving `>= LULA_AUDIT_MIN_MANIFESTS` specs were evaluated and
     **all** satisfied with zero failures, zero `insufficient_traffic`, and zero
     `insufficient_sample`).
 
-    Failing, corpus-floor-breaching, `insufficient_traffic`, and
-    `insufficient_sample` `lula_audit` runs **never** reset this age
-    (`POAM-2026-234` / `POAM-2026-244`), preventing idle-cluster or low-sample
-    runs from silencing the dead-man's switch timer.
-    Returns `(None, None)` when no clean passing `lula_audit` exists in the window.
+    Auditor-liveness dead-man monitoring uses
+    :func:`get_last_healthy_lula_audit_age_seconds` instead so quiet clusters do
+    not conflate statistical sample size with CronJob execution liveness.
+    Returns `(None, None)` when no clean `26/26` passing `lula_audit` exists in the window.
     """
     records = _query_cage_evidence_records("A.5.3", window_hours=window_hours)
     latest_pass_ts: datetime | None = None
@@ -2036,6 +2166,53 @@ def get_last_passing_lula_audit_age_seconds(
     now = datetime.now(tz=timezone.utc)
     age_seconds = max(0.0, (now - latest_pass_ts).total_seconds())
     return (age_seconds, latest_pass_ts.isoformat())
+
+
+def get_last_healthy_lula_audit_age_seconds(
+    window_hours: int = 24,
+) -> tuple[float | None, str | None]:
+    """Return `(age_seconds, last_healthy_iso_utc)` of the newest auditor-healthy `lula_audit` record.
+
+    Answers **Question 1 (auditor & structural liveness)** for the `2 x schedule`
+    dead-man's switch: did `CronJob/lula-audit` execute `>= LULA_AUDIT_MIN_MANIFESTS`
+    manifests, seal its receipt into WORM custody, and observe `failed_count == 0`
+    (`_is_passing_evidence_record(rec)` or
+    `_is_insufficient_evidence_only_lula_audit(rec, payload)`)?
+
+    Suspended CronJobs, `< 26` corpus-floor breaches, structural control failures,
+    and spoofed non-statistical `insufficient_*` claims never advance this timer.
+    """
+    records = _query_cage_evidence_records("A.5.3", window_hours=window_hours)
+    latest_healthy_ts: datetime | None = None
+
+    for rec in records:
+        payload = _parse_evidence_payload(rec)
+        raw_event_type = str(
+            _get_record_field(rec, "event_type")
+            or _get_record_field(rec, "type")
+            or payload.get("event_type")
+            or payload.get("type")
+            or ""
+        ).strip()
+        if raw_event_type.lower() != "lula_audit":
+            continue
+        if not (
+            _is_passing_evidence_record(rec)
+            or _is_insufficient_evidence_only_lula_audit(rec, payload)
+        ):
+            continue
+        rec_ts = _parse_evidence_timestamp(rec)
+        if rec_ts is None:
+            continue
+        if latest_healthy_ts is None or rec_ts > latest_healthy_ts:
+            latest_healthy_ts = rec_ts
+
+    if latest_healthy_ts is None:
+        return (None, None)
+
+    now = datetime.now(tz=timezone.utc)
+    age_seconds = max(0.0, (now - latest_healthy_ts).total_seconds())
+    return (age_seconds, latest_healthy_ts.isoformat())
 
 
 def _read_primary_evidence_stream_records(

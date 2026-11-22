@@ -54,6 +54,7 @@ from src.compliance_bridge.metrics import (
     _read_cold_store_records_async,
     _resolve_metrics_cold_store,
     _resolve_min_sample_size,
+    get_last_healthy_lula_audit_age_seconds,
     get_last_passing_lula_audit_age_seconds,
     invalidate_compliance_metrics_cache,
 )
@@ -527,22 +528,46 @@ class TestMinimumSampleSizeFloor:
             insufficient_sample_controls=["lula-validation-a53"],
         )
 
-        # Without a clean PASS, dead-man returns (None, None)
+        # Question 2 (statistical pass): without a clean 26/26 PASS, returns (None, None)
+        # Question 1 (auditor liveness): advances on healthy INSUFFICIENT_SAMPLE / INSUFFICIENT_TRAFFIC
         with patch(
             "src.compliance_bridge.metrics._query_cage_evidence_records",
             return_value=[newer_insuff_sample, newer_insuff_traffic],
         ):
             age_s, ts = get_last_passing_lula_audit_age_seconds(window_hours=24)
+            healthy_age_s, healthy_ts = get_last_healthy_lula_audit_age_seconds(
+                window_hours=24
+            )
         assert age_s is None and ts is None
+        assert healthy_age_s is not None and healthy_age_s < 60.0
+        assert healthy_ts is not None
 
-        # With an older clean PASS, neither newer record advances the timestamp
+        # Non-statistical control claiming insufficient_sample NEVER advances healthy age
+        spoofed_ac3 = _lula_audit_record(
+            "lula_audit INSUFFICIENT_SAMPLE: 25/26 satisfied (1 insufficient_sample, 0 failed)",
+            seq=4,
+            age_s=5.0,
+            satisfied_count=25,
+            insufficient_sample_controls=["lula-validation-ac3"],
+        )
+        with patch(
+            "src.compliance_bridge.metrics._query_cage_evidence_records",
+            return_value=[spoofed_ac3],
+        ):
+            bad_age_s, bad_ts = get_last_healthy_lula_audit_age_seconds(window_hours=24)
+        assert bad_age_s is None and bad_ts is None
+
+        # With an older clean PASS, neither newer record advances statistical pass age,
+        # while healthy run age reflects the newer 10s run
         with patch(
             "src.compliance_bridge.metrics._query_cage_evidence_records",
             return_value=[newer_insuff_sample, newer_insuff_traffic, older_pass],
         ):
             age_s, ts = get_last_passing_lula_audit_age_seconds(window_hours=24)
+            healthy_age_s, _ = get_last_healthy_lula_audit_age_seconds(window_hours=24)
         assert age_s is not None and age_s >= 9900.0
         assert ts is not None
+        assert healthy_age_s is not None and healthy_age_s < 60.0
 
     def test_infra_events_records_insufficient_sample_and_fails_closed_on_non_statistical(
         self,

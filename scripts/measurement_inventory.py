@@ -57,10 +57,10 @@ PrometheusMetricType = Literal["counter", "gauge", "histogram", "summary"]
 BridgeSurfaceKind = Literal["model", "endpoint", "stream_record", "evaluator"]
 
 # Tight non-vacuous corpus floors calibrated against the live repository.
-MIN_PROMETHEUS_METRICS = 42
+MIN_PROMETHEUS_METRICS = 43
 MIN_ALERT_POLICIES = 8
 MIN_LULA_BRIDGE_SPECS = 4
-MIN_BRIDGE_SCORES = 51
+MIN_BRIDGE_SCORES = 53
 
 _PROM_CLASS_TO_TYPE: dict[str, PrometheusMetricType] = {
     "Counter": "counter",
@@ -1189,7 +1189,7 @@ _EVALUATOR_FUNC_PATTERNS: tuple[re.Pattern[str], ...] = (
     re.compile(r"^_get_grace_status$"),
     re.compile(r"^_fetch_from_.*"),
     re.compile(r"^get_compliance_metrics$"),
-    re.compile(r"^get_last_passing_.*"),
+    re.compile(r"^get_last_(?:passing|healthy)_.*"),
     re.compile(r"^_check_.*"),
     re.compile(r"^findings_from_.*"),
     re.compile(r"^_finding_to_state$"),
