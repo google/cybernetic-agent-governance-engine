@@ -1064,7 +1064,15 @@ module "compliance_bridge" {
   infra_evidence_previous_chain_head_hash          = var.infra_evidence_previous_chain_head_hash
   infra_evidence_previous_batch_attestation_digest = var.infra_evidence_previous_batch_attestation_digest
 
-  depends_on = [module.langfuse, module.vllm, module.worm_bucket, module.memorystore_governance, module.service_mesh, terraform_data.memorystore_ca_pinning_guard]
+  depends_on = [
+    module.langfuse,
+    module.vllm,
+    module.worm_bucket,
+    module.memorystore_governance,
+    module.service_mesh,
+    terraform_data.memorystore_ca_pinning_guard,
+    google_pubsub_topic_iam_member.compliance_bridge_alert_publisher,
+  ]
 }
 
 
