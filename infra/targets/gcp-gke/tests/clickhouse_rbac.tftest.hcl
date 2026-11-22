@@ -17,7 +17,14 @@
 # together using the scoped `langfuse_app` principal and `langfuse` database,
 # never sharing ClickHouse `default` superuser credentials.
 
-mock_provider "google" {}
+mock_provider "google" {
+  mock_data "google_monitoring_notification_channel" {
+    defaults = {
+      enabled = true
+      name    = "projects/cage-test-project/notificationChannels/12345"
+    }
+  }
+}
 mock_provider "helm" {}
 mock_provider "kubernetes" {}
 mock_provider "random" {}

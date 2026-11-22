@@ -19,6 +19,12 @@
 # per the POAM-2026-180 guard placement matrix in infra/targets/gcp-gke/main.tf.
 
 mock_provider "google" {
+  mock_data "google_monitoring_notification_channel" {
+    defaults = {
+      enabled = true
+      name    = "projects/cage-test-project/notificationChannels/12345"
+    }
+  }
   mock_resource "google_container_cluster" {
     override_during = plan
     defaults = {

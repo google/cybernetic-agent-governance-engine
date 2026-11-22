@@ -54,9 +54,10 @@ STDLIB_ONLY_WORKFLOW_SCRIPTS = frozenset(
         "check_locked_yanks.py",
         "check_repo_rules.py",
         "partner_harness.py",
-        # Runs in jobs that can mint a signing identity, which therefore
-        # install nothing (POAM-2026-115).
+        # Runs in jobs that can mint a signing or GCP WIF identity, which
+        # therefore install nothing (POAM-2026-115 / POAM-2026-230).
         "review_bypass_attestation.py",
+        "verify_alert_delivery.py",
     }
 )
 

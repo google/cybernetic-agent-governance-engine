@@ -1417,4 +1417,15 @@ All six authenticated gateway surfaces now enforce out-of-band `SC-7` workload q
 
 ---
 
-**Last updated:** November 21, 2026
+## Unreleased — Fail-Closed Cloud Monitoring Alert Channel Resolution & Compliance-Bridge Notifier Startup Contract (`POAM-2026-230`)
+
+`infra/targets/gcp-gke/` and `src/compliance_bridge/notifier.py` remove silent empty-channel and console-fallback alerting in enforcing postures, rename the misleadingly Lula-prefixed target-wide alert variables, and return observed boolean delivery confirmations from notifier methods.
+
+| Item | Area | Clean Break Description | Architectural Rationale | Failure Mode on Stale Caller |
+|---|---|---|---|---|
+| **AL-01** | Target-wide Cloud Monitoring channel resolution, `compliance-bridge` notifier startup validation, and observed delivery return types ([`variables.tf`](../infra/targets/gcp-gke/variables.tf), [`alert_routing.tf`](../infra/targets/gcp-gke/alert_routing.tf), [`lula_alerting.tf`](../infra/targets/gcp-gke/lula_alerting.tf), [`metrics_alerting.tf`](../infra/targets/gcp-gke/metrics_alerting.tf), [`compliance_bridge/main.tf`](../infra/modules/compliance_bridge/main.tf), [`notifier.py`](../src/compliance_bridge/notifier.py)) | Renames `lula_alert_notification_channels` (`list(string)`) to `var.alert_notification_channels` (`list(object({ display_name, type, labels, name }))`), resolved at plan time via `data.google_monitoring_notification_channel.bound` and guarded by a `lifecycle` `precondition` on all nine `google_monitoring_alert_policy` resources. Renames `lula_alert_owner` to `var.alert_owner_label`. Requires `var.compliance_alert_channel` (`pubsub`, `slack`, `webhook`, or `pagerduty`) plus its destination topic/secret in enforcing postures at both Terraform plan time (`kubernetes_deployment.compliance_bridge` precondition) and pod startup (`validate_notifier_config()` / `create_notifier()` raising `NotifierConfigError`, with zero silent fallback to `ConsoleNotifier`). `send_critical_alert()` and `send_remediation_followup()` now return `bool` (`ConsoleNotifier` returns `False`). | Defaulting `lula_alert_notification_channels = []` without plan-time resolution and pinning `alert_channel = "console"` shipped silent alerting across every enforcing profile (`POAM-2026-230`), handing adopters enabled policies that route nowhere and `alerted = True` audit records backed only by stdout logs. | Passing `lula_alert_notification_channels` or `lula_alert_owner` in `.tfvars` or CLI `-var` flags fails Terraform input validation; migrate to `alert_notification_channels = [{ display_name = "...", type = "pubsub" }]` and `alert_owner_label`. Running `terraform plan` or booting `compliance-bridge` in `staging`/`prod` without `alert_notification_channels` and `compliance_alert_channel` fails closed with `[POAM-2026-230]` precondition or `NotifierConfigError`. Test doubles of `send_critical_alert()` / `send_remediation_followup()` must return `True` (`AsyncMock(return_value=True)`) when simulating confirmed delivery. |
+
+---
+
+**Last updated:** November 22, 2026
+

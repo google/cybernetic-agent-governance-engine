@@ -73,7 +73,7 @@ MAKEFILE_PATH = REPO_ROOT / "Makefile"
 GITLEAKS_TOML_PATH = REPO_ROOT / ".gitleaks.toml"
 STAGING_LIFECYCLE_PATH = REPO_ROOT / "scripts" / "staging_lifecycle.sh"
 
-# Complete classification of all 21 workflows in .github/workflows/
+# Complete classification of all 22 workflows in .github/workflows/
 NON_GATE_WORKFLOWS: frozenset[str] = frozenset(
     {
         "publish-client-sdk.yml",  # Tag/manual release workflow building & pushing cage-client wheel/GHCR package
@@ -82,6 +82,10 @@ NON_GATE_WORKFLOWS: frozenset[str] = frozenset(
 
 GATE_WORKFLOWS: frozenset[str] = frozenset(
     {
+        # Scheduled independent Cloud Monitoring & notifier Pub/Sub delivery
+        # verification (POAM-2026-230 Property 4); planted-defect tests in
+        # tests/unit/test_verify_alert_delivery.py.
+        "alert-delivery-check.yml",
         "apac-mas-compliance.yml",
         "ci-integration.yml",
         "ci-partner-integration.yml",
@@ -159,7 +163,7 @@ def test_workflow_inventory_is_complete_and_classified() -> None:
         "Register new workflows in GATE_WORKFLOWS and add adversarial gate tests."
     )
     assert not missing, f"Classified workflow(s) missing from disk: {missing}"
-    assert len(on_disk) == 21, f"Expected 21 workflows, found {len(on_disk)}"
+    assert len(on_disk) == 22, f"Expected 22 workflows, found {len(on_disk)}"
 
     # Verify publish-client-sdk.yml is genuinely a release workflow, not a disguised test gate
     pub_data = yaml.safe_load(

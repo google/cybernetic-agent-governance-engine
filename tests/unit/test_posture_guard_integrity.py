@@ -371,6 +371,11 @@ async def test_compliance_bridge_lifespan_invokes_kms_guard_in_all_enforcing_pos
 
     monkeypatch.setenv("CAGE_ENV", cage_env)
     monkeypatch.setenv("EVIDENCE_STREAM_ENABLED", "true")
+    monkeypatch.setenv("ALERT_CHANNEL", "pubsub")
+    monkeypatch.setenv(
+        "COMPLIANCE_ALERT_PUBSUB_TOPIC",
+        "projects/cage-test-01/topics/cage-alerts",
+    )
     for var in LANGFUSE_CREDENTIAL_ENV_VARS:
         monkeypatch.setenv(var, f"synthetic-{var.lower()}")
 

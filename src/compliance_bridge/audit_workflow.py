@@ -391,13 +391,20 @@ async def _step4_alert_on_critical_fail(
         return False, []
 
     notifier = create_notifier()
-    await notifier.send_critical_alert(critical_fails, audit_id)
+    delivered = (await notifier.send_critical_alert(critical_fails, audit_id)) is True
 
     alert_targets = [f.control_id for f in critical_fails]
-    logger.info(
-        "[audit_workflow] Critical alert sent for: %s", ", ".join(alert_targets)
-    )
-    return True, alert_targets
+    if delivered:
+        logger.info(
+            "[audit_workflow] Critical alert delivered for: %s",
+            ", ".join(alert_targets),
+        )
+    else:
+        logger.error(
+            "[audit_workflow] Critical alert NOT delivered externally for: %s",
+            ", ".join(alert_targets),
+        )
+    return delivered, alert_targets
 
 
 # ---------------------------------------------------------------------------
@@ -626,13 +633,15 @@ async def _step5_one_control(
 
     # Deliver notification
     notifier = create_notifier()
-    await notifier.send_remediation_followup(
-        control_id=control_id,
-        audit_id=audit_id,
-        model_name=model_name,
-        remediation_text=remediation_text,
-        trace_ids=trace_ids_sampled,
-    )
+    remediation_delivered = (
+        await notifier.send_remediation_followup(
+            control_id=control_id,
+            audit_id=audit_id,
+            model_name=model_name,
+            remediation_text=remediation_text,
+            trace_ids=trace_ids_sampled,
+        )
+    ) is True
 
     # Log advisory to compliance Langfuse (non-fatal)
     # C-09: Use correct Langfuse SDK v2 API — propagate_attributes and
@@ -706,7 +715,7 @@ async def _step5_one_control(
 
     return {
         "control_id": control_id,
-        "remediation_sent": True,
+        "remediation_sent": remediation_delivered,
         "remediation_text": remediation_text,
         "advisor_error": None,
         "trace_ids_sampled": trace_ids_sampled,

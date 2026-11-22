@@ -18,6 +18,12 @@
 # NetworkPolicy isolation (CA-2, CA-7, SC-7).
 
 mock_provider "google" {
+  mock_data "google_monitoring_notification_channel" {
+    defaults = {
+      enabled = true
+      name    = "projects/cage-test-project/notificationChannels/12345"
+    }
+  }
   mock_resource "google_container_cluster" {
     override_during = plan
     defaults = {
@@ -253,12 +259,26 @@ run "lula_image_latest_tag_is_refused" {
   expect_failures = [var.lula_image]
 }
 
-run "custom_lula_alert_owner_and_channels_propagate" {
+run "custom_alert_owner_label_and_channels_propagate" {
   command = plan
 
   variables {
-    lula_alert_owner                 = "secops-compliance-oncall"
-    lula_alert_notification_channels = ["projects/lula-cron-test-project/notificationChannels/12345"]
+    alert_owner_label = "secops-compliance-oncall"
+    alert_notification_channels = [
+      {
+        display_name = "cage-staging-alerts-pubsub"
+        type         = "pubsub"
+        name         = "projects/lula-cron-test-project/notificationChannels/12345"
+      }
+    ]
+  }
+
+  override_data {
+    target = data.google_monitoring_notification_channel.bound["0"]
+    values = {
+      enabled = true
+      name    = "projects/lula-cron-test-project/notificationChannels/12345"
+    }
   }
 
   assert {
@@ -266,36 +286,190 @@ run "custom_lula_alert_owner_and_channels_propagate" {
       google_monitoring_alert_policy.lula_audit_failure[0].user_labels["owner"] == "secops-compliance-oncall" &&
       strcontains(google_monitoring_alert_policy.lula_audit_failure[0].documentation[0].content, "secops-compliance-oncall") &&
       contains(google_monitoring_alert_policy.lula_audit_failure[0].notification_channels, "projects/lula-cron-test-project/notificationChannels/12345") &&
+      google_monitoring_alert_policy.lula_audit_failure[0].alert_strategy[0].auto_close == "1800s" &&
       google_monitoring_alert_policy.lula_audit_pod_restart[0].user_labels["owner"] == "secops-compliance-oncall" &&
       contains(google_monitoring_alert_policy.lula_audit_pod_restart[0].notification_channels, "projects/lula-cron-test-project/notificationChannels/12345") &&
+      google_monitoring_alert_policy.lula_audit_pod_restart[0].alert_strategy[0].auto_close == "1800s" &&
+      google_monitoring_alert_policy.lula_audit_pod_restart[0].conditions[0].condition_threshold[0].aggregations[0].cross_series_reducer == "REDUCE_SUM" &&
       google_monitoring_alert_policy.prometheus_metrics_scrape_liveness[0].user_labels["owner"] == "secops-compliance-oncall" &&
       contains(google_monitoring_alert_policy.prometheus_metrics_scrape_liveness[0].notification_channels, "projects/lula-cron-test-project/notificationChannels/12345") &&
+      google_monitoring_alert_policy.prometheus_metrics_scrape_liveness[0].alert_strategy[0].auto_close == "1800s" &&
+      google_monitoring_alert_policy.prometheus_metrics_scrape_liveness[0].conditions[0].condition_prometheus_query_language[0].duration == "600s" &&
+      strcontains(google_monitoring_alert_policy.prometheus_metrics_scrape_liveness[0].conditions[0].condition_prometheus_query_language[0].query, "max by (job, namespace)") &&
+      strcontains(google_monitoring_alert_policy.prometheus_metrics_scrape_liveness[0].conditions[0].condition_prometheus_query_language[0].query, "[10m]") &&
       google_monitoring_alert_policy.gateway_sustained_refusal_ratio[0].user_labels["owner"] == "secops-compliance-oncall" &&
       strcontains(google_monitoring_alert_policy.gateway_sustained_refusal_ratio[0].documentation[0].content, "secops-compliance-oncall") &&
       contains(google_monitoring_alert_policy.gateway_sustained_refusal_ratio[0].notification_channels, "projects/lula-cron-test-project/notificationChannels/12345") &&
+      google_monitoring_alert_policy.gateway_sustained_refusal_ratio[0].alert_strategy[0].auto_close == "1800s" &&
       google_monitoring_alert_policy.gateway_zero_permitted_requests[0].user_labels["owner"] == "secops-compliance-oncall" &&
       strcontains(google_monitoring_alert_policy.gateway_zero_permitted_requests[0].documentation[0].content, "secops-compliance-oncall") &&
       contains(google_monitoring_alert_policy.gateway_zero_permitted_requests[0].notification_channels, "projects/lula-cron-test-project/notificationChannels/12345") &&
+      google_monitoring_alert_policy.gateway_zero_permitted_requests[0].alert_strategy[0].auto_close == "1800s" &&
       google_monitoring_alert_policy.gateway_canary_probe_absent[0].user_labels["owner"] == "secops-compliance-oncall" &&
       strcontains(google_monitoring_alert_policy.gateway_canary_probe_absent[0].documentation[0].content, "secops-compliance-oncall") &&
       contains(google_monitoring_alert_policy.gateway_canary_probe_absent[0].notification_channels, "projects/lula-cron-test-project/notificationChannels/12345") &&
+      google_monitoring_alert_policy.gateway_canary_probe_absent[0].alert_strategy[0].auto_close == "1800s" &&
       google_monitoring_alert_policy.gateway_canary_pod_health[0].user_labels["owner"] == "secops-compliance-oncall" &&
       strcontains(google_monitoring_alert_policy.gateway_canary_pod_health[0].documentation[0].content, "secops-compliance-oncall") &&
       contains(google_monitoring_alert_policy.gateway_canary_pod_health[0].notification_channels, "projects/lula-cron-test-project/notificationChannels/12345") &&
+      google_monitoring_alert_policy.gateway_canary_pod_health[0].alert_strategy[0].auto_close == "1800s" &&
+      google_monitoring_alert_policy.gateway_canary_pod_health[0].conditions[0].condition_threshold[0].aggregations[0].cross_series_reducer == "REDUCE_SUM" &&
+      google_monitoring_alert_policy.gateway_canary_pod_health[0].conditions[1].condition_absent[0].aggregations[0].cross_series_reducer == "REDUCE_MAX" &&
       google_monitoring_alert_policy.gateway_evidence_append_reconciliation[0].user_labels["owner"] == "secops-compliance-oncall" &&
       strcontains(google_monitoring_alert_policy.gateway_evidence_append_reconciliation[0].documentation[0].content, "secops-compliance-oncall") &&
-      contains(google_monitoring_alert_policy.gateway_evidence_append_reconciliation[0].notification_channels, "projects/lula-cron-test-project/notificationChannels/12345")
+      contains(google_monitoring_alert_policy.gateway_evidence_append_reconciliation[0].notification_channels, "projects/lula-cron-test-project/notificationChannels/12345") &&
+      google_monitoring_alert_policy.gateway_evidence_append_reconciliation[0].alert_strategy[0].auto_close == "1800s" &&
+      google_monitoring_alert_policy.alert_pipeline_heartbeat[0].user_labels["owner"] == "secops-compliance-oncall" &&
+      google_monitoring_alert_policy.alert_pipeline_heartbeat[0].user_labels["alert_kind"] == "heartbeat" &&
+      contains(google_monitoring_alert_policy.alert_pipeline_heartbeat[0].notification_channels, "projects/lula-cron-test-project/notificationChannels/12345") &&
+      google_monitoring_alert_policy.alert_pipeline_heartbeat[0].alert_strategy[0].auto_close == "1800s"
     )
-    error_message = "custom lula_alert_owner and lula_alert_notification_channels must propagate into Lula, GMP scrape-liveness, gateway refusal-ratio, gateway zero-permitted, gateway canary liveness, and gateway evidence reconciliation alert policies"
+    error_message = "alert_owner_label, resolved alert_notification_channels, Finding A pod-series reducers/auto_close, and Finding B 10m scrape-liveness window must propagate across all 9 Cloud Monitoring alert policies"
   }
 }
 
-run "empty_lula_alert_owner_is_refused" {
+run "empty_alert_owner_label_is_refused" {
   command = plan
 
   variables {
-    lula_alert_owner = "   "
+    alert_owner_label = "   "
   }
 
-  expect_failures = [var.lula_alert_owner]
+  expect_failures = [var.alert_owner_label]
 }
+
+run "empty_alert_notification_channels_refused_in_enforcing_posture" {
+  command = plan
+
+  variables {
+    alert_notification_channels = []
+  }
+
+  expect_failures = [
+    google_monitoring_alert_policy.alert_pipeline_heartbeat,
+    google_monitoring_alert_policy.lula_audit_failure,
+    google_monitoring_alert_policy.lula_audit_pod_restart,
+    google_monitoring_alert_policy.prometheus_metrics_scrape_liveness,
+    google_monitoring_alert_policy.gateway_sustained_refusal_ratio,
+    google_monitoring_alert_policy.gateway_zero_permitted_requests,
+    google_monitoring_alert_policy.gateway_canary_probe_absent,
+    google_monitoring_alert_policy.gateway_canary_pod_health,
+    google_monitoring_alert_policy.gateway_evidence_append_reconciliation,
+  ]
+}
+
+run "disabled_notification_channel_refused_in_enforcing_posture" {
+  command = plan
+
+  override_data {
+    target = data.google_monitoring_notification_channel.bound["0"]
+    values = {
+      enabled = false
+      name    = "projects/cage-test-project/notificationChannels/12345"
+    }
+  }
+
+  expect_failures = [
+    google_monitoring_alert_policy.alert_pipeline_heartbeat,
+    google_monitoring_alert_policy.lula_audit_failure,
+    google_monitoring_alert_policy.lula_audit_pod_restart,
+    google_monitoring_alert_policy.prometheus_metrics_scrape_liveness,
+    google_monitoring_alert_policy.gateway_sustained_refusal_ratio,
+    google_monitoring_alert_policy.gateway_zero_permitted_requests,
+    google_monitoring_alert_policy.gateway_canary_probe_absent,
+    google_monitoring_alert_policy.gateway_canary_pod_health,
+    google_monitoring_alert_policy.gateway_evidence_append_reconciliation,
+  ]
+}
+
+run "mismatched_notification_channel_name_refused_in_enforcing_posture" {
+  command = plan
+
+  variables {
+    alert_notification_channels = [
+      {
+        display_name = "cage-test-alerts-pubsub"
+        type         = "pubsub"
+        name         = "projects/cage-test-project/notificationChannels/99999"
+      }
+    ]
+  }
+
+  expect_failures = [
+    google_monitoring_alert_policy.alert_pipeline_heartbeat,
+    google_monitoring_alert_policy.lula_audit_failure,
+    google_monitoring_alert_policy.lula_audit_pod_restart,
+    google_monitoring_alert_policy.prometheus_metrics_scrape_liveness,
+    google_monitoring_alert_policy.gateway_sustained_refusal_ratio,
+    google_monitoring_alert_policy.gateway_zero_permitted_requests,
+    google_monitoring_alert_policy.gateway_canary_probe_absent,
+    google_monitoring_alert_policy.gateway_canary_pod_health,
+    google_monitoring_alert_policy.gateway_evidence_append_reconciliation,
+  ]
+}
+
+run "invalid_compliance_alert_channel_is_refused" {
+  command = plan
+
+  variables {
+    compliance_alert_channel = "telegram"
+  }
+
+  expect_failures = [var.compliance_alert_channel]
+}
+
+run "console_compliance_alert_channel_refused_in_enforcing_posture" {
+  command = plan
+
+  module {
+    source = "../../modules/compliance_bridge"
+  }
+
+  variables {
+    namespace                    = "governance-stack"
+    image                        = "registry.invalid/cage-test/compliance-bridge@sha256:deadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeef"
+    service_account_name         = "cage-compliance-bridge-sa"
+    vllm_base_url                = "http://vllm-inference:8000/v1"
+    vllm_api_key                 = "not-needed"
+    oscal_s3_bucket              = "cage-oscal-staging"
+    oscal_s3_region              = "us-central1"
+    evidence_stream_redis_url    = "rediss://10.10.0.5:6379"
+    evidence_stream_redis_db     = 0
+    evidence_stream_key          = "cage:evidence:stream"
+    enable_redis_tls             = true
+    redis_ca_pem                 = "-----BEGIN CERTIFICATE-----\ntest\n-----END CERTIFICATE-----\n"
+    deployment_config_map_name   = "cage-deployment"
+    cage_env                     = "staging"
+    evidence_cold_store_location = "us-central1"
+    alert_channel                = "console"
+    trusted_operator_identities  = ["alice@example.org"]
+    operator_oidc_issuer         = "https://idp.example.org"
+    operator_oidc_audience       = "cage-compliance-bridge"
+    operator_jwks_uri            = "https://idp.example.org/.well-known/jwks.json"
+  }
+
+  expect_failures = [
+    kubernetes_deployment.compliance_bridge,
+  ]
+}
+
+run "dev_non_enforcing_posture_allows_empty_alert_channels_and_console_notifier" {
+  command = plan
+
+  variables {
+    environment                 = "dev"
+    enforce_in_dev              = false
+    alert_notification_channels = []
+    compliance_alert_channel    = ""
+  }
+
+  assert {
+    condition = (
+      length(google_monitoring_alert_policy.alert_pipeline_heartbeat) == 0 &&
+      length(google_monitoring_alert_policy.lula_audit_failure) == 0 &&
+      local.effective_compliance_alert_channel == "console"
+    )
+    error_message = "non-enforcing dev posture must omit Cloud Monitoring alert policies and default effective_compliance_alert_channel to console"
+  }
+}
+

@@ -25,7 +25,14 @@
 #   4. prod refuses single-project custody unless external_evidence_domain_enabled = true
 #      or evidence_project_id != project_id, while staging allows single-project mode.
 
-mock_provider "google" {}
+mock_provider "google" {
+  mock_data "google_monitoring_notification_channel" {
+    defaults = {
+      enabled = true
+      name    = "projects/cage-test-project/notificationChannels/12345"
+    }
+  }
+}
 mock_provider "helm" {}
 mock_provider "kubernetes" {}
 mock_provider "random" {}

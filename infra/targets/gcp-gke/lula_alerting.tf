@@ -14,9 +14,11 @@
 
 # ─── In-Cluster Lula Compliance Audit Alerting (ISO/IEC 42001 A.5.3 / CA-7) ───
 # Pairs with compliance-bridge `ingest_infra_event` (`cage_lula_audit_*` GMP
-# metrics) and `sla_monitor.py` (`2 x schedule` = 1800s dead-man's switch) so
-# every `lula_audit` failure, `< 26` manifest corpus-floor breach, dead-man
-# breach, or `lula-audit` container restart pages the named owner.
+# metrics) and `sla_monitor.py` (`2 x schedule` dead-man's switch) so every
+# `lula_audit` failure, `< 26` manifest corpus-floor breach, dead-man breach,
+# or `lula-audit` container restart routes to `var.alert_notification_channels`
+# (GCP Pub/Sub terminal sink by design in the CAGE reference architecture;
+# `var.alert_owner_label` is triage metadata only and routes nothing).
 
 resource "google_monitoring_alert_policy" "lula_audit_failure" {
   count = var.enable_compliance_bridge && local.enforcing_posture ? 1 : 0
@@ -26,10 +28,14 @@ resource "google_monitoring_alert_policy" "lula_audit_failure" {
   combiner              = "OR"
   enabled               = true
   severity              = "CRITICAL"
-  notification_channels = var.lula_alert_notification_channels
+  notification_channels = local.resolved_alert_notification_channels
+
+  alert_strategy {
+    auto_close = "1800s"
+  }
 
   user_labels = {
-    owner       = trimspace(var.lula_alert_owner)
+    owner       = trimspace(var.alert_owner_label)
     component   = "compliance-auditor"
     control     = "a-5-3"
     environment = var.environment
@@ -40,7 +46,8 @@ resource "google_monitoring_alert_policy" "lula_audit_failure" {
     content   = <<-EOT
       ## CAGE In-Cluster Lula Compliance Audit Alert (ISO/IEC 42001 A.5.3 / NIST CA-7)
 
-      - **Owner:** `${trimspace(var.lula_alert_owner)}`
+      - **Owner Label (metadata only; routes nothing):** `${trimspace(var.alert_owner_label)}`
+      - **Delivery Route:** Bound `var.alert_notification_channels` (GCP Pub/Sub terminal sink in reference architecture)
       - **Cluster:** `${var.cluster_name}` (`${var.namespace}`)
       - **Schedule:** `${var.lula_schedule}` (`2 x schedule` = `${local.lula_audit_max_age_seconds}s` dead-man window)
 
@@ -53,11 +60,10 @@ resource "google_monitoring_alert_policy" "lula_audit_failure" {
          report separately on `cage_lula_audit_insufficient_traffic_controls` and
          `cage_lula_audit_insufficient_sample_controls`, advancing auditor liveness
          `cage_lula_audit_last_healthy_run_timestamp_seconds` without claiming
-         statistical satisfaction on `cage_lula_audit_last_pass_timestamp_seconds`),
+         statistical satisfaction on `cage_lula_audit_last_pass_timestamp_seconds`), or
       2. `increase(cage_lula_audit_deadman_breaches_total[5m]) > 0`
          because no auditor-healthy (`>= 26` evaluated, `failed_count == 0`)
-         `lula_audit` run completed within `2 x schedule` (`${local.lula_audit_max_age_seconds}s`), or
-      3. `kubernetes.io/container/restart_count` increases for `lula-audit` pods.
+         `lula_audit` run completed within `2 x schedule` (`${local.lula_audit_max_age_seconds}s`).
     EOT
   }
 
@@ -72,6 +78,13 @@ resource "google_monitoring_alert_policy" "lula_audit_failure" {
     }
   }
 
+  lifecycle {
+    precondition {
+      condition     = local.alert_channels_valid
+      error_message = "[POAM-2026-230] Enforcing posture requires var.alert_notification_channels to specify at least one existing, enabled Cloud Monitoring NotificationChannel resolved via data.google_monitoring_notification_channel."
+    }
+  }
+
   depends_on = [module.gke]
 }
 
@@ -83,10 +96,16 @@ resource "google_monitoring_alert_policy" "lula_audit_pod_restart" {
   combiner              = "OR"
   enabled               = true
   severity              = "CRITICAL"
-  notification_channels = var.lula_alert_notification_channels
+  notification_channels = local.resolved_alert_notification_channels
+
+  # POAM-2026-230 Finding A: CronJob Job pods terminate after completion, stopping
+  # per-pod series; REDUCE_SUM + 30m auto_close prevents 7-day orphaned incidents.
+  alert_strategy {
+    auto_close = "1800s"
+  }
 
   user_labels = {
-    owner       = trimspace(var.lula_alert_owner)
+    owner       = trimspace(var.alert_owner_label)
     component   = "compliance-auditor"
     control     = "a-5-3"
     environment = var.environment
@@ -97,12 +116,15 @@ resource "google_monitoring_alert_policy" "lula_audit_pod_restart" {
     content   = <<-EOT
       ## CAGE In-Cluster Lula Auditor Pod Restart Alert (ISO/IEC 42001 A.5.3 / NIST CA-7)
 
-      - **Owner:** `${trimspace(var.lula_alert_owner)}`
+      - **Owner Label (metadata only; routes nothing):** `${trimspace(var.alert_owner_label)}`
+      - **Delivery Route:** Bound `var.alert_notification_channels` (GCP Pub/Sub terminal sink in reference architecture)
       - **Cluster:** `${var.cluster_name}` (`${var.namespace}`)
 
-      Fires when `kubernetes.io/container/restart_count` increases for `lula-audit` pods.
-      Separated from `lula_audit_failure` because Cloud Monitoring restricts
-      `prometheus_query_language` alert policies to a single condition.
+      Fires when workload-aggregated `kubernetes.io/container/restart_count` delta
+      exceeds `0` for `lula-audit` pods (`REDUCE_SUM` across pod turnovers with
+      `1800s` `auto_close` so completed CronJob pods never leave 7-day orphaned
+      incidents). Separated from `lula_audit_failure` because Cloud Monitoring
+      restricts `prometheus_query_language` alert policies to a single condition.
     EOT
   }
 
@@ -116,9 +138,17 @@ resource "google_monitoring_alert_policy" "lula_audit_pod_restart" {
       duration        = "0s"
 
       aggregations {
-        alignment_period   = "300s"
-        per_series_aligner = "ALIGN_DELTA"
+        alignment_period     = "300s"
+        per_series_aligner   = "ALIGN_DELTA"
+        cross_series_reducer = "REDUCE_SUM"
       }
+    }
+  }
+
+  lifecycle {
+    precondition {
+      condition     = local.alert_channels_valid
+      error_message = "[POAM-2026-230] Enforcing posture requires var.alert_notification_channels to specify at least one existing, enabled Cloud Monitoring NotificationChannel resolved via data.google_monitoring_notification_channel."
     }
   }
 

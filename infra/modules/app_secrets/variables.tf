@@ -198,3 +198,23 @@ variable "gateway_redis_password" {
   default     = ""
   sensitive   = true
 }
+
+variable "compliance_alert_channel" {
+  description = "Configured compliance-bridge ALERT_CHANNEL stored in Secret/compliance-alert-channel (POAM-2026-230)."
+  type        = string
+  default     = "console"
+}
+
+variable "compliance_alert_webhook_url" {
+  description = "HTTPS webhook URL for SlackNotifier or WebhookNotifier stored in Secret/compliance-alert-secrets (POAM-2026-230)."
+  type        = string
+  sensitive   = true
+  default     = ""
+}
+
+variable "pagerduty_routing_key" {
+  description = "PagerDuty Events API v2 routing key stored in Secret/compliance-alert-secrets (POAM-2026-230)."
+  type        = string
+  sensitive   = true
+  default     = ""
+}

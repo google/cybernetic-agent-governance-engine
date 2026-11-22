@@ -83,6 +83,16 @@ resource "kubernetes_deployment" "compliance_bridge" {
       condition     = !strcontains(var.webauthn_credentials_json, "PRIVATE KEY")
       error_message = "CAGE Invariant (IA-2 / POAM-2026-210): webauthn_credentials_json must contain only asymmetric public keys (never PRIVATE KEY material)."
     }
+
+    precondition {
+      condition = !contains(["staging", "prod", "production"], lower(var.cage_env)) || (
+        contains(["pubsub", "webhook", "slack", "pagerduty"], lower(trimspace(var.alert_channel))) &&
+        (lower(trimspace(var.alert_channel)) != "pubsub" || can(regex("^projects/[a-z][a-z0-9-]{4,28}[a-z0-9]/topics/[A-Za-z][A-Za-z0-9-_.~%+]{2,254}$", trimspace(var.alert_pubsub_topic)))) &&
+        (!contains(["webhook", "slack"], lower(trimspace(var.alert_channel))) || var.alert_webhook_configured) &&
+        (lower(trimspace(var.alert_channel)) != "pagerduty" || var.pagerduty_routing_key_configured)
+      )
+      error_message = "CAGE Invariant (IR-6 / AU-5 / CA-7 / POAM-2026-230): under an enforcing posture, compliance-bridge alert_channel must be 'pubsub', 'webhook', 'slack', or 'pagerduty' (never unset or 'console') with its corresponding destination configured."
+    }
   }
 
   metadata {
@@ -300,11 +310,32 @@ resource "kubernetes_deployment" "compliance_bridge" {
           }
 
           env {
+            name  = "COMPLIANCE_ALERT_PUBSUB_TOPIC"
+            value = var.alert_pubsub_topic
+          }
+
+          env {
+            name  = "ALERT_HEARTBEAT_INTERVAL_SECONDS"
+            value = tostring(var.alert_heartbeat_interval_seconds)
+          }
+
+          env {
             name = "COMPLIANCE_ALERT_WEBHOOK_URL"
             value_from {
               secret_key_ref {
                 name     = "compliance-alert-secrets"
                 key      = "webhook-url"
+                optional = true
+              }
+            }
+          }
+
+          env {
+            name = "PAGERDUTY_ROUTING_KEY"
+            value_from {
+              secret_key_ref {
+                name     = "compliance-alert-secrets"
+                key      = "pagerduty-routing-key"
                 optional = true
               }
             }

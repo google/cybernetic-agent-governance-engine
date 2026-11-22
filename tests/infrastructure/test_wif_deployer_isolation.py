@@ -150,3 +150,41 @@ def test_partner_harness_kms_key_defaults_empty_for_clean_projects() -> None:
         'var.partner_harness_kms_keyring != "" && var.partner_harness_kms_key != ""'
         in wif_text
     )
+
+
+def test_alert_verifier_isolation_and_least_privilege_grants() -> None:
+    text = WIF_TF.read_text(encoding="utf-8")
+    verifier_sa = _extract_resource_block(
+        text, "google_service_account", "alert_verifier"
+    )
+    assert 'account_id   = "cage-alert-verifier"' in verifier_sa
+
+    for binding_name in (
+        "alert_verifier_workload_identity",
+        "alert_verifier_token_creator",
+    ):
+        block = _extract_resource_block(
+            text, "google_service_account_iam_binding", binding_name
+        )
+        assert "attribute.ref/${var.github_deployer_ref}" in block
+        assert "attribute.repository/" not in block
+        assert "-compute@developer.gserviceaccount.com" not in block
+
+    mon_viewer = _extract_resource_block(
+        text, "google_project_iam_member", "alert_verifier_monitoring_viewer"
+    )
+    assert 'role    = "roles/monitoring.viewer"' in mon_viewer
+    mon_writer = _extract_resource_block(
+        text, "google_project_iam_member", "alert_verifier_metric_writer"
+    )
+    assert 'role    = "roles/monitoring.metricWriter"' in mon_writer
+
+    for sub_binding in ("alert_verifier_subscriber", "alert_verifier_viewer"):
+        block = _extract_resource_block(
+            text, "google_pubsub_subscription_iam_member", sub_binding
+        )
+        assert 'trimspace(var.alert_verify_pubsub_subscription) != ""' in block
+        assert (
+            'member       = "serviceAccount:${google_service_account.alert_verifier.email}"'
+            in block
+        )
