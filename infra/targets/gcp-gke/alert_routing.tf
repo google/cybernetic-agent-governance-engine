@@ -73,6 +73,11 @@ locals {
   effective_compliance_alert_channel = local.enforcing_posture ? trimspace(var.compliance_alert_channel) : (
     trimspace(var.compliance_alert_channel) != "" ? trimspace(var.compliance_alert_channel) : "console"
   )
+
+  alert_channels_error_message = trimspace(<<-EOT
+    [POAM-2026-230] Enforcing posture refuses empty, disabled, or mismatched Cloud Monitoring notification channels. To remediate: (1) If upgrading from lula_alert_notification_channels (ignored with 'Warning: Value for undeclared variable' in .tfvars), migrate to alert_notification_channels = [{ display_name = "<channel-display-name>", type = "pubsub" }] in gitignored infra/targets/gcp-gke/terraform.auto.tfvars (see AL-01 in docs/BREAKING_CHANGES.md). (2) On a new project, create a Pub/Sub topic + Cloud Monitoring channel ('gcloud pubsub topics create cage-alerts --project=${var.project_id}' and 'gcloud beta monitoring channels create --project=${var.project_id} --display-name=cage-alerts-pubsub --type=pubsub --channel-labels=topic=projects/${var.project_id}/topics/cage-alerts') and bind it in terraform.auto.tfvars (see terraform.auto.tfvars.example). (3) If an existing channel is disabled, run 'gcloud beta monitoring channels update <CHANNEL_ID> --enabled --project=${var.project_id}'. (4) If a bound channel was deleted out-of-band and you are running terraform destroy, pass -var='alert_notification_channels=[]' so data.google_monitoring_notification_channel.bound is skipped during teardown.
+  EOT
+  )
 }
 
 # ─── Synthetic Alert Pipeline Heartbeat Policy (POAM-2026-230 Property 3) ─────
@@ -140,7 +145,7 @@ resource "google_monitoring_alert_policy" "alert_pipeline_heartbeat" {
   lifecycle {
     precondition {
       condition     = local.alert_channels_valid
-      error_message = "[POAM-2026-230] Enforcing posture requires var.alert_notification_channels to specify at least one existing, enabled Cloud Monitoring NotificationChannel resolved via data.google_monitoring_notification_channel."
+      error_message = local.alert_channels_error_message
     }
   }
 

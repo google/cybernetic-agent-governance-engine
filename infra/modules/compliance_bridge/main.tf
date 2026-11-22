@@ -91,7 +91,7 @@ resource "kubernetes_deployment" "compliance_bridge" {
         (!contains(["webhook", "slack"], lower(trimspace(var.alert_channel))) || var.alert_webhook_configured) &&
         (lower(trimspace(var.alert_channel)) != "pagerduty" || var.pagerduty_routing_key_configured)
       )
-      error_message = "CAGE Invariant (IR-6 / AU-5 / CA-7 / POAM-2026-230): under an enforcing posture, compliance-bridge alert_channel must be 'pubsub', 'webhook', 'slack', or 'pagerduty' (never unset or 'console') with its corresponding destination configured."
+      error_message = "CAGE Invariant (IR-6 / AU-5 / CA-7 / POAM-2026-230): under an enforcing posture, compliance-bridge alert_channel must be 'pubsub', 'webhook', 'slack', or 'pagerduty' (never unset or 'console') with its destination configured. Set compliance_alert_channel = \"pubsub\" and alert_pubsub_topic = \"projects/<project-id>/topics/<topic>\" (or compliance_alert_webhook_url / pagerduty_routing_key) in gitignored infra/targets/gcp-gke/terraform.auto.tfvars (see terraform.auto.tfvars.example and AL-01 in docs/BREAKING_CHANGES.md)."
     }
   }
 

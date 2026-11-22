@@ -181,8 +181,11 @@ def validate_notifier_config(env: Mapping[str, str] | None = None) -> str:
         if not channel or channel == "console":
             raise NotifierConfigError(
                 "[POAM-2026-230] ALERT_CHANNEL is unset or 'console' under an enforcing "
-                "posture. Set ALERT_CHANNEL to 'pubsub', 'webhook', 'slack', or 'pagerduty' "
-                "with a configured destination."
+                "posture. Set ALERT_CHANNEL to 'pubsub' (with COMPLIANCE_ALERT_PUBSUB_TOPIC="
+                "'projects/<project-id>/topics/<topic-name>'), 'webhook'/'slack' (with https:// "
+                "COMPLIANCE_ALERT_WEBHOOK_URL), or 'pagerduty' (with PAGERDUTY_ROUTING_KEY) — on "
+                "GKE, populate compliance_alert_channel and alert_pubsub_topic in gitignored "
+                "infra/targets/gcp-gke/terraform.auto.tfvars (see AL-01 in docs/BREAKING_CHANGES.md)."
             )
         if channel == "mock":
             raise NotifierConfigError(

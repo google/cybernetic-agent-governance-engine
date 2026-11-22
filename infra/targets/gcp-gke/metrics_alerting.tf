@@ -146,7 +146,7 @@ resource "google_monitoring_alert_policy" "prometheus_metrics_scrape_liveness" {
   lifecycle {
     precondition {
       condition     = local.alert_channels_valid
-      error_message = "[POAM-2026-230] Enforcing posture requires var.alert_notification_channels to specify at least one existing, enabled Cloud Monitoring NotificationChannel resolved via data.google_monitoring_notification_channel."
+      error_message = local.alert_channels_error_message
     }
   }
 
@@ -255,7 +255,7 @@ resource "google_monitoring_alert_policy" "gateway_sustained_refusal_ratio" {
   lifecycle {
     precondition {
       condition     = local.alert_channels_valid
-      error_message = "[POAM-2026-230] Enforcing posture requires var.alert_notification_channels to specify at least one existing, enabled Cloud Monitoring NotificationChannel resolved via data.google_monitoring_notification_channel."
+      error_message = local.alert_channels_error_message
     }
   }
 
@@ -320,7 +320,7 @@ resource "google_monitoring_alert_policy" "gateway_zero_permitted_requests" {
   lifecycle {
     precondition {
       condition     = local.alert_channels_valid
-      error_message = "[POAM-2026-230] Enforcing posture requires var.alert_notification_channels to specify at least one existing, enabled Cloud Monitoring NotificationChannel resolved via data.google_monitoring_notification_channel."
+      error_message = local.alert_channels_error_message
     }
   }
 
@@ -387,7 +387,7 @@ resource "google_monitoring_alert_policy" "gateway_canary_probe_absent" {
   lifecycle {
     precondition {
       condition     = local.alert_channels_valid
-      error_message = "[POAM-2026-230] Enforcing posture requires var.alert_notification_channels to specify at least one existing, enabled Cloud Monitoring NotificationChannel resolved via data.google_monitoring_notification_channel."
+      error_message = local.alert_channels_error_message
     }
   }
 
@@ -469,7 +469,7 @@ resource "google_monitoring_alert_policy" "gateway_canary_pod_health" {
   lifecycle {
     precondition {
       condition     = local.alert_channels_valid
-      error_message = "[POAM-2026-230] Enforcing posture requires var.alert_notification_channels to specify at least one existing, enabled Cloud Monitoring NotificationChannel resolved via data.google_monitoring_notification_channel."
+      error_message = local.alert_channels_error_message
     }
   }
 
@@ -544,7 +544,7 @@ resource "google_monitoring_alert_policy" "gateway_evidence_append_reconciliatio
   lifecycle {
     precondition {
       condition     = local.alert_channels_valid
-      error_message = "[POAM-2026-230] Enforcing posture requires var.alert_notification_channels to specify at least one existing, enabled Cloud Monitoring NotificationChannel resolved via data.google_monitoring_notification_channel."
+      error_message = local.alert_channels_error_message
     }
   }
 
