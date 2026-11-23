@@ -319,6 +319,9 @@ run "custom_alert_owner_label_and_channels_propagate" {
       strcontains(google_monitoring_alert_policy.gateway_evidence_append_reconciliation[0].documentation[0].content, "secops-compliance-oncall") &&
       contains(google_monitoring_alert_policy.gateway_evidence_append_reconciliation[0].notification_channels, "projects/lula-cron-test-project/notificationChannels/12345") &&
       google_monitoring_alert_policy.gateway_evidence_append_reconciliation[0].alert_strategy[0].auto_close == "1800s" &&
+      google_monitoring_metric_descriptor.alert_heartbeat_probe[0].type == "custom.googleapis.com/cage/alert_heartbeat_probe" &&
+      google_monitoring_metric_descriptor.alert_heartbeat_probe[0].metric_kind == "GAUGE" &&
+      google_monitoring_metric_descriptor.alert_heartbeat_probe[0].value_type == "INT64" &&
       google_monitoring_alert_policy.alert_pipeline_heartbeat[0].user_labels["owner"] == "secops-compliance-oncall" &&
       google_monitoring_alert_policy.alert_pipeline_heartbeat[0].user_labels["alert_kind"] == "heartbeat" &&
       contains(google_monitoring_alert_policy.alert_pipeline_heartbeat[0].notification_channels, "projects/lula-cron-test-project/notificationChannels/12345") &&
