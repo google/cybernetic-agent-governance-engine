@@ -11,4 +11,4 @@ This Incident Response Plan governs anomalies, policy breaches, and barrier viol
 ## 2. Severity Classification & Escalation
 - **SEV-1 (Critical Barrier Breach):** Failure of a Control Barrier Function (CBF) invariant leading to unconstrained state transition or unauthorized socket egress. Triggers immediate automated circuit-breaker termination and Authorizing Official notification.
 - **SEV-2 (Attestation / Drift Failure):** Repeated attestation fetch failures (`ExternalAttestation` errors) or upstream permit invalidation resulting in degraded operational mode or forced `DEFER` zero-authority parking.
-- **SEV-3 (Telemetry Anomaly):** High latency in provenance chain writes or intermittent OTel span dropouts.
+- **SEV-3 (Telemetry Anomaly):** High latency in evidence stream writes or intermittent OTel span dropouts.

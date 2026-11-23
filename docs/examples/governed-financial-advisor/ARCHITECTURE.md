@@ -41,7 +41,7 @@ The Layer 1 kernel ([`src/gateway/`](../../../src/gateway/)) has **zero awarenes
 - Universal dispatch loop ([`src/gateway/governance/governor/governor.py`](../../../src/gateway/governance/governor/governor.py))
 - FTRA reachability analysis ([`src/gateway/governance/ftra/`](../../../src/gateway/governance/ftra/))
 - Consequence Gateway atomic verification ([`consequence_gateway.py`](../../../src/gateway/governance/consequence_gateway.py))
-- Evidence accumulation ([`provenance_chain.py`](../../../src/gateway/governance/provenance_chain.py))
+- Evidence accumulation ([`evidence/stream.py`](../../../src/gateway/governance/evidence/stream.py); not [`provenance_chain.py`](../../../src/gateway/governance/provenance_chain.py), an unwired library with no production caller, `POAM-2026-246`)
 
 The GFA **consumes** these primitives via HTTP endpoints and LangGraph node factories, but the kernel does not import from, call into, or depend on the GFA codebase. This strict boundary is enforced by Gate G3 ([`scripts/check_import_boundaries.py`](../../../scripts/check_import_boundaries.py)).
 

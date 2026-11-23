@@ -84,7 +84,7 @@ The EU AI Act Art. 27 Fundamental Rights Impact Assessment is a separate phase-1
 | Confabulation risk | `risk_score = 1.0 − confidence` |
 | Causal lock | $\beta \le 0 \lor \min(1.0, 0.5 + \beta \times \text{amount}) > 0.95 \lor \text{placebo invalid} \implies \text{DENY}$ |
 | Operational budget cap | $500k/day (integer cents) in the financial reference deployment; 86,400s window, exponential backoff — threshold is domain-configurable |
-| Provenance chain | SHA-256 hash chain, O(n) construction, sorted-key JSON |
+| Provenance chain | SHA-256 hash-chain library over RFC 8785 JCS, O(n) construction; unwired, with no production caller (`POAM-2026-246`) |
 
 ---
 

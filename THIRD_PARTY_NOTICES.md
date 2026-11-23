@@ -372,7 +372,7 @@ Packages used by one or more of the Python services (`src/gateway`,
 ### python-ulid ≥3.0
 - **License:** MIT
 - **Homepage:** https://github.com/mdomke/python-ulid
-- **Usage:** ULID generation for audit event and provenance chain identifiers.
+- **Usage:** ULID generation for audit event identifiers.
 
 ### PyYAML ≥6.0
 - **License:** MIT

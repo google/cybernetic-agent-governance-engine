@@ -1194,7 +1194,9 @@ def contract_b7_audit_trail_sealing(request: BoundedTradeRequest) -> ContractRes
 
     Per Phase 5 Master Plan Section 4.7:
     - Severity: HARD_BLOCK (audit integrity invariant)
-    - Reuses KMS signer and provenance chain infrastructure
+    - Checks only that the KMS signer module is importable; it does not
+      sign or chain anything itself, and it does not use
+      ``provenance_chain.py`` (an unwired library, POAM-2026-246)
     - Fails closed if KMS signer module is unavailable
 
     Args:

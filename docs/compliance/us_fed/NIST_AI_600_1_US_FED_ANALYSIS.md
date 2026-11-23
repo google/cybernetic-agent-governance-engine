@@ -936,7 +936,7 @@ The following POAM items are derived from the AI 600-1 gap analysis. They are nu
 | **Baseline (pre-implementation)** | **17%** (2/12 partial) | No AI 600-1 controls formally addressed | — |
 | **After Phase 0** | **33%** | Risk taxonomy adopted; human oversight scope documented; model cards reviewed | ✅ **Complete** (2026-06-15) |
 | **After Phase 1** | **50%** | Model weight integrity verified; indirect injection mitigated; HITL Lula validation active | ✅ **Complete** (2026-06-15) |
-| **After Phase 2** | **67%** | Confabulation scorer live; PII audit log hardened; prompt injection detector (8 patterns); HITL escalator; provenance chain | ✅ **Complete** (2026-06-15) |
+| **After Phase 2** | **67%** | Confabulation scorer live; PII audit log hardened; prompt injection detector (8 patterns); HITL escalator; provenance chain (library only: never wired into a production call path, `POAM-2026-246`) | ✅ **Complete** (2026-06-15) |
 | **After Phase 3 (partial)** | **75%** | NeMo CBRN rail deployed; CBRN keyword scanner (15 terms); recursive governance risk mitigated | ✅ **Complete** (2026-06-15) |
 | **After Phase 3 (full)** | **92%** | Full AI 600-1 compliance evidence package; memorization assessment; provenance tracking; all Lula stubs hardened | ⏳ Pending (Weeks 16–52) |
 
@@ -969,7 +969,7 @@ The following POAM items are derived from the AI 600-1 gap analysis. They are nu
 | Prompt injection detector | `src/gateway/governance/prompt_injection_detector.py` | 2 | AI600-003 | `tests/test_prompt_injection_detector.py` (28 tests) |
 | Adversarial prompts fixture | `tests/fixtures/adversarial_prompts.json` | 2 | AI600-003 | `tests/test_prompt_injection_detector.py` |
 | HITL escalator | `src/gateway/governance/hitl_escalator.py` | 2 | AI600-005 | `tests/test_hitl_escalator.py` (19 tests) |
-| Provenance chain | `src/gateway/governance/provenance_chain.py` | 2 | AI600-005 | `tests/test_provenance_chain.py` (21 tests) |
+| Provenance chain (unwired library, no production caller: `POAM-2026-246`) | `src/gateway/governance/provenance_chain.py` | 2 | AI600-005 | `tests/test_provenance_chain.py` (21 tests; unit tests of the library only) |
 | NeMo CBRN Colang rail | `src/gateway/governance/nemo/colang/cbrn_rails.co` | 3 | AI600-007 | `tests/test_nemo_cbrn_rails.py` (12 tests) |
 | Recursive governance risk tests | `tests/test_recursive_governance_risk.py` | 3 | AI600-005 | 35 tests |
 | GovernanceControl enum extension | `src/gateway/governance/constants.py` | 0 | AI600-005 | `tests/test_agentic_scope.py` |

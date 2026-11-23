@@ -173,7 +173,7 @@ An enforcing `EU_ECB` posture refuses to start when the `NormativeProvider` is t
 
 ### 2.6 Provenance Hash Chain Integrity
 
-**Source:** [`src/gateway/governance/provenance_chain.py`](src/gateway/governance/provenance_chain.py) · **Control:** `CTRL_CTX_007`
+**Source:** [`src/compliance_bridge/context_accumulator.py`](src/compliance_bridge/context_accumulator.py) · **Control:** `CTRL_CTX_007` · **Correction (`2026-11-23`, `POAM-2026-246`):** this section previously named [`src/gateway/governance/provenance_chain.py`](src/gateway/governance/provenance_chain.py), an unwired library with no production caller; the formula below is the context accumulator's `_link_hash()` chain, which `CTRL_CTX_007` maps to in the tables above.
 
 SHA-256 hash chain with O(n) construction:
 
