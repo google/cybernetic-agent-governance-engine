@@ -54,7 +54,7 @@ Feedback Loop (complianceAuditWorkflow → Langfuse compliance project)
 
 - **10.1 Nonconformity and corrective action:**
   - **Implementation (Immediate):** The **Interrupt Mechanism** (Redis-based) is an automated corrective action that stops nonconforming behavior immediately via the `trigger_safety_intervention` tool.
-  - **Implementation (Audit-Driven):** The **complianceAuditWorkflow** (Mastra) ingests OSCAL findings back into Langfuse and fires Slack/PagerDuty alerts for critical control failures (A.9.2 Data Privacy, SC-4 Fiscal Limits). **Correction (`2026-11-16`, `POAM-2026-230`):** every committed profile pins the compliance-bridge `alert_channel` to `console`, so these alerts are log lines and reach no one until `POAM-2026-230` closes.
+  - **Implementation (Audit-Driven):** The **complianceAuditWorkflow** (Mastra) ingests OSCAL findings back into Langfuse and dispatches alerts for critical control failures (A.9.2 Data Privacy, SC-4 Fiscal Limits). **Note (`POAM-2026-230`):** enforcing postures refuse `console` at plan time and pod startup, publishing to GCP Cloud Pub/Sub via `PubSubNotifier` as CAGE's verified reference-architecture terminal sink, with Slack/Webhook/PagerDuty or downstream human fan-out adopter-operated.
   - **Code:** [`src/compliance_bridge/audit_workflow.py`](../../../src/compliance_bridge/audit_workflow.py)
 
 ---
@@ -70,7 +70,7 @@ Feedback Loop (complianceAuditWorkflow → Langfuse compliance project)
 | **SC-4**  | Fiscal Limits and RBAC     | `trade_governance.rego` (OPA)          | [`lula-validation-sc4.yaml`](../../../compliance/lula/lula-validation-sc4.yaml) | k8s label present                   | **Yes** — CRITICAL_CONTROL |
 | **A.8.4** | AI System Operation Controls | HITL + Saga WAL; DEFER state machine | N/A (no manifest)                                                         | STPA UCA checks pass                | **Yes** — CRITICAL_CONTROL |
 
-> **Note on `ERROR` state (CAGE v2.2.0):** A scanner/collector failure on any control produces an `ERROR` finding — not `NOT_APPLICABLE`. For the three `CRITICAL_CONTROL` entries above (A.9.2, SC-4, A.8.4), an `ERROR` finding triggers the same Slack/PagerDuty alert as an explicit `FAIL` (**Correction (`2026-11-16`, `POAM-2026-230`):** no committed profile configures Slack or PagerDuty, so that alert is a log line until `POAM-2026-230` closes). This ensures evidence gaps on the most sensitive controls are never silently hidden. See [`src/compliance_bridge/oscal_parser.py`](../../../src/compliance_bridge/oscal_parser.py) and [`GOVERNANCE_CROSSWALK.md`](../cross-region/GOVERNANCE_CROSSWALK.md) for the full four-state semantics table.
+> **Note on `ERROR` state (CAGE v2.2.0):** A scanner/collector failure on any control produces an `ERROR` finding — not `NOT_APPLICABLE`. For the three `CRITICAL_CONTROL` entries above (A.9.2, SC-4, A.8.4), an `ERROR` finding triggers the same external notifier alert as an explicit `FAIL` (`PubSubNotifier` verified terminal sink in CAGE's reference architecture, with Slack/Webhook/PagerDuty fan-out adopter-operated; `POAM-2026-230`). This ensures evidence gaps on the most sensitive controls are never silently hidden. See [`src/compliance_bridge/oscal_parser.py`](../../../src/compliance_bridge/oscal_parser.py) and [`GOVERNANCE_CROSSWALK.md`](../cross-region/GOVERNANCE_CROSSWALK.md) for the full four-state semantics table.
 
 ---
 

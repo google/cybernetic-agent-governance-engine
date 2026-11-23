@@ -3,7 +3,7 @@ system-security-plan:
   metadata:
     title: CAGE System Security Plan (US_FED — NIST SP 800-53 Rev 5 HIGH)
     published: '2026-03-06T00:00:00Z'
-    last-modified: '2026-11-21T23:31:55Z'
+    last-modified: '2026-11-23T00:57:52Z'
     version: 1.0.1-draft+stpa
     oscal-version: 1.0.4
     remarks: 'This System Security Plan (SSP) documents the security controls implemented
@@ -662,11 +662,11 @@ system-security-plan:
       type: software
       title: Compliance Bridge Service
       description: 'Python service aggregating OTel spans into time-windowed safety_rate
-        metrics, parsing OSCAL assessment results, and triggering Slack/PagerDuty
-        alerts for compliance violations. Runs automated_auditor.py for continuous
-        AU-12 audit record generation and review. Correction (2026-11-16, POAM-2026-230):
-        every committed profile pins alert_channel = "console", so these alerts are
-        log lines.
+        metrics, parsing OSCAL assessment results, and publishing compliance alerts.
+        Runs automated_auditor.py for continuous AU-12 audit record generation and
+        review. Note (POAM-2026-230): enforcing postures refuse console fallback and
+        publish to GCP Cloud Pub/Sub (PubSubNotifier, reference-architecture terminal
+        sink), while Slack/PagerDuty human fan-out is adopter-operated.
 
         '
       purpose: 'Implements AU-12 audit record generation, IR-6 incident reporting
@@ -1067,22 +1067,22 @@ system-security-plan:
         \ AU-12 implementations — the choice depends on whether\nthe deployment prioritizes\
         \ availability (decision-time) or non-repudiation\n(evidence-of-execution).\n\
         \nAudit records are exported to GCS buckets for long-term retention per SEC\n\
-        Rule 17a-4. The Compliance Bridge Service triggers Slack/PagerDuty alerts\n\
-        when safety_rate thresholds are breached. Correction (2026-11-16, POAM-2026-230):\
-        \ no committed profile configures Slack or PagerDuty (alert_channel is console),\
-        \ so these alerts are log lines. Correction (2026-11-18, POAM-2026-236): on\
-        \ gcp-gke, module.langfuse does not seed the dedicated gateway telemetry key\
-        \ pair from gateway-secrets, so in-cluster Langfuse rejects every gateway\
-        \ OTLP span batch with HTTP 401 Unauthorized and drops 100% of gateway decision-time\
-        \ OTel spans silently.\n\nRefusal and deferral parity (0cdb5aaa, #427): a\
-        \ DENY writes a GOVERNANCE_REFUSAL record and a DEFER or REQUIRE_APPROVAL\
-        \ writes a hash-chained GOVERNANCE_DEFERRAL record (src/gateway/governance/governor/verdicts.py).\
-        \ Refusal and deferral writes are blocking under is_evidence_chain_blocking()\
-        \ (raising GovernanceInfrastructureError with REFUSAL_EVIDENCE_UNPERSISTED\
-        \ / DEFERRAL_EVIDENCE_UNPERSISTED on sink failure), logging at ERROR and incrementing\
-        \ cage_governance_evidence_publish_failures_total{kind} (src/gateway/governance/governor/metrics.py).\
-        \ For a warranted norm the RelianceRecord is bound into the routing seal's\
-        \ evidence record under record_hash (src/gateway/governance/warrant/reliance.py).\n"
+        Rule 17a-4. The Compliance Bridge Service publishes alerts\nwhen safety_rate\
+        \ thresholds are breached. Note (POAM-2026-230): enforcing postures refuse\
+        \ console fallback and deliver to GCP Cloud Pub/Sub (PubSubNotifier, reference-architecture\
+        \ terminal sink), with Slack/PagerDuty human fan-out adopter-operated. Correction\
+        \ (2026-11-18, POAM-2026-236): on gcp-gke, module.langfuse does not seed the\
+        \ dedicated gateway telemetry key pair from gateway-secrets, so in-cluster\
+        \ Langfuse rejects every gateway OTLP span batch with HTTP 401 Unauthorized\
+        \ and drops 100% of gateway decision-time OTel spans silently.\n\nRefusal\
+        \ and deferral parity (0cdb5aaa, #427): a DENY writes a GOVERNANCE_REFUSAL\
+        \ record and a DEFER or REQUIRE_APPROVAL writes a hash-chained GOVERNANCE_DEFERRAL\
+        \ record (src/gateway/governance/governor/verdicts.py). Refusal and deferral\
+        \ writes are blocking under is_evidence_chain_blocking() (raising GovernanceInfrastructureError\
+        \ with REFUSAL_EVIDENCE_UNPERSISTED / DEFERRAL_EVIDENCE_UNPERSISTED on sink\
+        \ failure), logging at ERROR and incrementing cage_governance_evidence_publish_failures_total{kind}\
+        \ (src/gateway/governance/governor/metrics.py). For a warranted norm the RelianceRecord\
+        \ is bound into the routing seal's evidence record under record_hash (src/gateway/governance/warrant/reliance.py).\n"
       props:
       - name: implementation-status
         value: partial
@@ -1338,29 +1338,32 @@ system-security-plan:
         integration for P1/P2 escalation is planned but not yet implemented; this
         gap is tracked and the automated Slack notification provides interim reporting
         capability. External incident reporting to regulators (SEC, FINRA) follows
-        manual procedures documented in the IR plan. Correction (2026-11-16, POAM-2026-230):
-        the reference Terraform pins alert_channel = "console" in every committed
-        profile, so no Slack notification is sent; alerts are log lines until POAM-2026-230
-        closes.
+        manual procedures documented in the IR plan. Note (POAM-2026-230): enforcing
+        postures refuse console fallback at plan time and pod startup and publish
+        to GCP Cloud Pub/Sub (PubSubNotifier, reference-architecture terminal sink);
+        Slack/PagerDuty human fan-out and OTel span-event alerting remain adopter-operated
+        or unimplemented.
 
         '
       props:
       - name: implementation-status
         value: partially-implemented
       - name: current-capability
-        value: Slack notifications via compliance_bridge/notifier.py (not delivered
-          in any committed profile; POAM-2026-230, 2026-11-16)
+        value: GCP Cloud Pub/Sub notifications via compliance_bridge/notifier.py (PubSubNotifier,
+          reference-architecture terminal sink; human fan-out adopter-operated, POAM-2026-230)
       - name: planned-capability
-        value: PagerDuty P1/P2 escalation (pending)
+        value: Adopter-operated PagerDuty/Slack P1/P2 fan-out and regulator-reporting
+          runbook (pending)
       responsible-roles:
       - role-id: isso
       by-components:
       - component-uuid: e5000004-0000-4000-8000-000000000004
         uuid: h8000008-0000-4000-8000-000000000009
-        description: 'src/compliance_bridge/notifier.py implements Slack alert notifications.
-          PagerDuty integration pending. Manual escalation procedures documented in
-          IR plan for external regulatory reporting. Correction (2026-11-16, POAM-2026-230):
-          no committed profile configures a Slack channel (alert_channel = "console").
+        description: 'src/compliance_bridge/notifier.py enforces external alert delivery
+          in staging/prod via PubSubNotifier (GCP Cloud Pub/Sub reference-architecture
+          terminal sink, POAM-2026-230), with optional Slack/Webhook/PagerDuty adapters;
+          human escalation fan-out is adopter-operated and external regulatory reporting
+          procedures remain pending in the IR plan.
 
           '
         implementation-status:

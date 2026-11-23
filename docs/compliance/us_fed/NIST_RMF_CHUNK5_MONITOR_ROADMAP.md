@@ -158,8 +158,8 @@ SC-4 (OPA ConfigMap label compliance) has continuous drift detection via the 60-
 | #      | Gap                                                                                                                    | SP 800-53 Requirement              | Severity |
 | ------ | ---------------------------------------------------------------------------------------------------------------------- | ---------------------------------- | -------- |
 | G7.3-1 | No formal `docs/POAM.md` — no structured POA&M item tracking with control ID, weakness, scheduled completion           | CA-5 Plan of Action and Milestones | Critical |
-| G7.3-2 | No SLA tracking for remediation (Slack alert fires but no ticket/deadline created automatically) (**Correction (`2026-11-16`, `POAM-2026-230`):** no Slack alert fires in any committed profile; `alert_channel = "console"`) | CA-5                               | High |
-| G7.3-3 | No tiered escalation (Level 1 → Level 2 → AO) — only single Slack channel alert (**Correction (`2026-11-16`, `POAM-2026-230`):** no Slack channel is configured in any committed profile) | IR-6, CA-5                         | High |
+| G7.3-2 | No SLA tracking for remediation (`PubSubNotifier` alert fires to GCP Pub/Sub terminal sink per `POAM-2026-230`, while Slack/ticketing/deadline fan-out is adopter-operated) | CA-5                               | High |
+| G7.3-3 | No tiered escalation (Level 1 → Level 2 → AO) — single-sink alert delivery (`PubSubNotifier` verified terminal sink; human paging fan-out adopter-operated, `POAM-2026-230`) | IR-6, CA-5                         | High |
 | G7.3-4 | LLM remediation advisory limited to first critical failure only — multiple concurrent failures not fully addressed     | CA-5                               | Medium   |
 | G7.3-5 | `docs/proposals/004_risk_remediation_plan.md` is a proposal only — OPA bundle server and GitOps policy not implemented | CM-3, SC-12                        | Medium   |
 | G7.3-6 | No remediation closure verification — no re-assessment trigger after fix applied                                       | CA-5, CA-7                         | Medium   |

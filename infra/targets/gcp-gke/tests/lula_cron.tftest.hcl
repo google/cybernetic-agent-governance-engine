@@ -325,7 +325,8 @@ run "custom_alert_owner_label_and_channels_propagate" {
       google_monitoring_alert_policy.alert_pipeline_heartbeat[0].user_labels["owner"] == "secops-compliance-oncall" &&
       google_monitoring_alert_policy.alert_pipeline_heartbeat[0].user_labels["alert_kind"] == "heartbeat" &&
       contains(google_monitoring_alert_policy.alert_pipeline_heartbeat[0].notification_channels, "projects/lula-cron-test-project/notificationChannels/12345") &&
-      google_monitoring_alert_policy.alert_pipeline_heartbeat[0].alert_strategy[0].auto_close == "1800s"
+      google_monitoring_alert_policy.alert_pipeline_heartbeat[0].alert_strategy[0].auto_close == "1800s" &&
+      contains(google_monitoring_alert_policy.alert_pipeline_heartbeat[0].conditions[0].condition_threshold[0].aggregations[0].group_by_fields, "metric.label.probe_id")
     )
     error_message = "alert_owner_label, resolved alert_notification_channels, Finding A pod-series reducers/auto_close, and Finding B 10m scrape-liveness window must propagate across all 9 Cloud Monitoring alert policies"
   }

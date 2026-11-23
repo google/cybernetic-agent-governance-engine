@@ -101,6 +101,18 @@ resource "google_monitoring_metric_descriptor" "alert_heartbeat_probe" {
   value_type   = "INT64"
   display_name = "CAGE Alert Pipeline Synthetic Heartbeat Probe"
   description  = "Synthetic gauge (0 = idle, 1 = probe active) written exclusively by scripts/verify_alert_delivery.py to verify end-to-end Cloud Monitoring alert delivery without tripping operational alarms (POAM-2026-230)."
+
+  labels {
+    key         = "probe_id"
+    value_type  = "STRING"
+    description = "Per-execution probe identifier isolating synthetic heartbeat runs."
+  }
+
+  labels {
+    key         = "probe_source"
+    value_type  = "STRING"
+    description = "Emitter identifier for synthetic alert-delivery verification."
+  }
 }
 
 resource "google_monitoring_alert_policy" "alert_pipeline_heartbeat" {
@@ -154,6 +166,7 @@ resource "google_monitoring_alert_policy" "alert_pipeline_heartbeat" {
         alignment_period     = "60s"
         per_series_aligner   = "ALIGN_MAX"
         cross_series_reducer = "REDUCE_MAX"
+        group_by_fields      = ["metric.label.probe_id"]
       }
     }
   }
