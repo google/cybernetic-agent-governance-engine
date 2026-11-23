@@ -630,6 +630,14 @@ def _looks_like_title(title: str) -> bool:
     return not re.fullmatch(r"[A-Z][A-Z-]*(?:\s.*)?", title.split()[0] + " ")
 
 
+_UNICODE_DASH_RE: Final[re.Pattern[str]] = re.compile(r"[\u2010-\u2015\u2212]")
+
+
+def _norm_exact_title(text: str) -> str:
+    """Normalize whitespace and Unicode dashes to ASCII '-' for exact-title matching."""
+    return " ".join(_UNICODE_DASH_RE.sub("-", text).split())
+
+
 def exact_title_violation(table: Table, rid: str, title: str, mode: str) -> str | None:
     """Return a message if a structured title slot is not the exact table title."""
     row = table.rows.get(rid)
@@ -637,13 +645,17 @@ def exact_title_violation(table: Table, rid: str, title: str, mode: str) -> str 
         return None
     got = " ".join(title.split())
     want = " ".join(row.title.split())
+    got_norm = _norm_exact_title(title)
+    want_norm = _norm_exact_title(row.title)
     if mode == "exact":
-        ok = got == want
+        ok = got_norm == want_norm
     else:
-        low = got.casefold()
+        low = got_norm.casefold()
         ok = any(
             low.startswith(c) and (len(low) == len(c) or not low[len(c)].isalnum())
-            for c in (" ".join(x.split()).casefold() for x in (row.title, *row.aliases))
+            for c in (
+                _norm_exact_title(x).casefold() for x in (row.title, *row.aliases)
+            )
         )
     if ok:
         return None
@@ -1133,7 +1145,13 @@ def scan_framework_mapping(
         table = tables.get(key_std)
         if table is None:
             continue
-        title_part = re.split(r"\s+[—\u2013]\s+", desc, maxsplit=1)[0]
+        parts = re.split(r"\s+[—\u2013]\s+", desc)
+        title_part = parts[0]
+        for k in range(1, len(parts) + 1):
+            candidate = " — ".join(parts[:k])
+            if exact_title_violation(table, cit.cited, candidate, "exact") is None:
+                title_part = candidate
+                break
         cit = Citation(
             cit.standard,
             cit.cited,

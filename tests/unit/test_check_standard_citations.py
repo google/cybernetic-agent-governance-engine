@@ -261,6 +261,54 @@ def test_oscal_title_field_uses_exact_prefix(tables, families) -> None:
     assert list(gate.scan_text_lines(rel, good, tables, families, oscal=True)) == []
 
 
+def test_exact_title_normalizes_unicode_dashes_and_whitespace(tables, families) -> None:
+    ascii_hyphen = _mapping(
+        {
+            "Annex XI": (
+                "Technical documentation referred to in Article 53(1), point (a) - "
+                "technical documentation for providers of general-purpose AI models"
+            )
+        }
+    )
+    em_dash_with_elaboration = _mapping(
+        {
+            "Annex XI": (
+                "Technical documentation   referred to in Article 53(1), point (a) — "
+                "technical documentation for providers of general\u2011purpose AI models — "
+                "CAGE model card mapping"
+            )
+        }
+    )
+    assert (
+        list(
+            gate.scan_framework_mapping(
+                "m.json", ascii_hyphen, gate.STD_EU, tables, families
+            )
+        )
+        == []
+    )
+    assert (
+        list(
+            gate.scan_framework_mapping(
+                "m.json", em_dash_with_elaboration, gate.STD_EU, tables, families
+            )
+        )
+        == []
+    )
+    rel = "compliance/oscal/sp800-53-component-definition.yaml"
+    oj_typo_alias = [
+        (
+            1,
+            "      title: EU AI Act Art. 111 AI systems already placed on the market "
+            "or put into service and general-purpose AI models already placed on the marked",
+        )
+    ]
+    assert (
+        list(gate.scan_text_lines(rel, oj_typo_alias, tables, families, oscal=True))
+        == []
+    )
+
+
 def test_map_literals_are_exact_title_slots(tables, families) -> None:
     source = textwrap.dedent(
         """

@@ -5,8 +5,10 @@
   "source_url": "https://eur-lex.europa.eu/eli/reg/2016/679/oj",
   "version": "Regulation (EU) 2016/679, OJ L 119, 4 May 2016",
   "retrieved": "2026-11-23",
-  "source_quality": "knowledge-unverified",
-  "source_notes": "Primary-source fetch of eur-lex.europa.eu was denied (permission prompt timed out) on 2026-11-23; rows compiled from knowledge of the published text and must be verified against source_url before this table is upgraded to primary.",
+  "source_quality": "primary",
+  "source_sha256": "962539af03738bf552319ff4ce42d69e5f95a576307c4dfed7bf87e81b646b9d",
+  "source_notes": "Verified against the Official Journal English XHTML text retrieved from EUR-Lex on 2026-11-23 (source_sha256 is the XHTML body digest). All 99 article titles (Articles 1–99) are verbatim Official Journal headings. Because Official Journal paragraphs and points carry no formal headings, the 25 paragraph/point rows (4(1), 5(1), 5(1)(a)–5(1)(f), 5(2), 6(1), 9(1), 9(2), 17(3), 17(3)(b), 17(3)(e), 22(1), 22(2), 22(2)(a)–22(2)(c), 22(3), 22(4), 35(1), 35(3), 35(3)(a)) use editorial descriptors or Official Journal parenthetical labels verified against the primary clause text.",
+  "license": "European Union legislation published in the Official Journal of the European Union; reuse authorized under Commission Decision 2011/833/EU (EUR-Lex, © European Union, 1998–2026). Only identifiers, article titles, and clause descriptors are retained here.",
   "complete": true,
   "rows": [
     {

@@ -5,8 +5,10 @@
   "source_url": "https://eur-lex.europa.eu/eli/reg/2024/1689/oj",
   "version": "Regulation (EU) 2024/1689, OJ L, 12 July 2024",
   "retrieved": "2026-11-23",
-  "source_quality": "knowledge-unverified",
-  "source_notes": "Primary-source fetch of eur-lex.europa.eu was denied (permission prompt timed out) on 2026-11-23; rows compiled from knowledge of the published text and must be verified against source_url before this table is upgraded to primary.",
+  "source_quality": "primary",
+  "source_sha256": "8f0b656302f9864cc87e040c371f209a9d65ae1a6cecc25ca5eb737e872d721a",
+  "source_notes": "Verified against the Official Journal English XHTML text retrieved from EUR-Lex on 2026-11-23 (source_sha256 is the XHTML body digest). Article titles (Articles 1–113) and annex titles (Annexes I–XIII) match the Official Journal text, with one deliberate non-propagation of an Official Journal typographical error: Article 111's OJ heading prints 'placed on the marked' at the end; row 111 retains 'market' in title (so structured exact-title slots do not flag correct English) and records the verbatim OJ spelling in aliases. Because Official Journal paragraphs and points carry no formal headings, the 18 paragraph/point rows (9(1), 9(2), 9(2)(a)–9(2)(d), 9(3)–9(10), 10(2)(f), 10(3), 10(5), Annex III 5(b)) are editorial descriptors verified against the primary clause text.",
+  "license": "European Union legislation published in the Official Journal of the European Union; reuse authorized under Commission Decision 2011/833/EU (EUR-Lex, © European Union, 1998–2026). Only identifiers, article/annex titles, and clause descriptors are retained here.",
   "complete": true,
   "rows": [
     {
@@ -782,7 +784,7 @@
     },
     {
       "id": "108",
-      "title": "Amendment to Regulation (EU) 2018/1139",
+      "title": "Amendments to Regulation (EU) 2018/1139",
       "status": "active",
       "kind": "article"
     },
@@ -802,7 +804,10 @@
       "id": "111",
       "title": "AI systems already placed on the market or put into service and general-purpose AI models already placed on the market",
       "status": "active",
-      "kind": "article"
+      "kind": "article",
+      "aliases": [
+        "AI systems already placed on the market or put into service and general-purpose AI models already placed on the marked"
+      ]
     },
     {
       "id": "112",
@@ -890,13 +895,13 @@
     },
     {
       "id": "Annex XI",
-      "title": "Technical documentation referred to in Article 53(1), point (a) - technical documentation for providers of general-purpose AI models",
+      "title": "Technical documentation referred to in Article 53(1), point (a) — technical documentation for providers of general-purpose AI models",
       "status": "active",
       "kind": "annex"
     },
     {
       "id": "Annex XII",
-      "title": "Transparency information referred to in Article 53(1), point (b) - technical documentation for providers of general-purpose AI models to downstream providers that integrate the model into their AI system",
+      "title": "Transparency information referred to in Article 53(1), point (b) — technical documentation for providers of general-purpose AI models to downstream providers that integrate the model into their AI system",
       "status": "active",
       "kind": "annex"
     },

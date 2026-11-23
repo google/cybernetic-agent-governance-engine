@@ -5,8 +5,10 @@
   "source_url": "https://eur-lex.europa.eu/eli/reg/2022/2554/oj",
   "version": "Regulation (EU) 2022/2554, OJ L 333, 27 December 2022",
   "retrieved": "2026-11-23",
-  "source_quality": "knowledge-unverified",
-  "source_notes": "Primary-source fetch of eur-lex.europa.eu was denied (permission prompt timed out) on 2026-11-23; rows compiled from knowledge of the published text and must be verified against source_url before this table is upgraded to primary.",
+  "source_quality": "primary",
+  "source_sha256": "cf50d8f023d23b2a56f535aaee0760eba7f1925ef08a9858c5c31d43d414f46b",
+  "source_notes": "Verified against the Official Journal English XHTML text retrieved from EUR-Lex on 2026-11-23 (source_sha256 is the XHTML body digest). All 64 article titles (Articles 1–64) are verbatim Official Journal headings. Because Official Journal paragraphs and points carry no formal headings, the 4 paragraph/point rows (12(1), 12(1)(a), 12(1)(b), 12(3)) are editorial descriptors verified against the primary clause text.",
+  "license": "European Union legislation published in the Official Journal of the European Union; reuse authorized under Commission Decision 2011/833/EU (EUR-Lex, © European Union, 1998–2026). Only identifiers, article titles, and clause descriptors are retained here.",
   "complete": true,
   "rows": [
     {
@@ -290,7 +292,7 @@
     },
     {
       "id": "41",
-      "title": "Harmonisation of conditions enabling the conduct of oversight activities",
+      "title": "Harmonisation of conditions enabling the conduct of the oversight activities",
       "status": "active",
       "kind": "article"
     },

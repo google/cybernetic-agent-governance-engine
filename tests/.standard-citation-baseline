@@ -1,6 +1,6 @@
 {
   "schema_version": 1,
-  "detector_sha256": "5c87d7670b9e9c8e6c29fb7a96b4be48299267c08d78b2f80d988c84da163f3f",
+  "detector_sha256": "5465722002894f1c7b5d02211b247d4be6e8f0f32360c8a1947c18b0b4044d15",
   "baseline": 234,
   "standing_debt_policy": "Non-regression ratchet over standing standards-citation debt (POAM-2026-247). New violation identities fail immediately. Corrections are a follow-up, ordered: generated sources (config/oscal/framework_mappings, iso_control.py maps) first, then OSCAL/Lula/census, then prose and tests; each correction lowers the baseline with --update-baseline.",
   "counts": {
@@ -376,6 +376,59 @@
         }
       },
       "reason": "upgrade nist_ai_600_1.json to primary (17/17 verbatim) and record mas.gov.sg JS-challenge blocker notes"
+    },
+    {
+      "event": "recompute",
+      "date": "2026-11-23",
+      "detector_sha256": "5465722002894f1c7b5d02211b247d4be6e8f0f32360c8a1947c18b0b4044d15",
+      "before_detector_sha256": "5c87d7670b9e9c8e6c29fb7a96b4be48299267c08d78b2f80d988c84da163f3f",
+      "before_baseline": 234,
+      "after_baseline": 234,
+      "counts": {
+        "dora": {
+          "EXACT_TITLE_MISMATCH": 1,
+          "NONEXISTENT": 4,
+          "WRONG_TITLE": 11
+        },
+        "eu-ai-act": {
+          "EXACT_TITLE_MISMATCH": 14,
+          "WRONG_TITLE": 3
+        },
+        "gdpr": {
+          "EXACT_TITLE_MISMATCH": 2,
+          "WRONG_TITLE": 3
+        },
+        "iso-iec-42001-2023": {
+          "EXACT_TITLE_MISMATCH": 7,
+          "NONEXISTENT": 3,
+          "WRONG_TITLE": 61
+        },
+        "mas-feat": {
+          "EXACT_TITLE_MISMATCH": 3
+        },
+        "mas-notice-655": {
+          "EXACT_TITLE_MISMATCH": 1,
+          "WRONG_TITLE": 1
+        },
+        "mas-trm": {
+          "EXACT_TITLE_MISMATCH": 2,
+          "WRONG_TITLE": 4
+        },
+        "nist-ai-600-1": {
+          "NONEXISTENT": 31,
+          "WRONG_TITLE": 63
+        },
+        "nist-ai-rmf-1.0": {
+          "WRONG_TITLE": 2
+        },
+        "nist-sp-800-53-r5": {
+          "EXACT_TITLE_MISMATCH": 2,
+          "ID_COLLISION": 7,
+          "NONEXISTENT": 1,
+          "WITHDRAWN": 8
+        }
+      },
+      "reason": "verify GDPR, DORA, and EU AI Act tables against EUR-Lex OJ texts and normalize Unicode dashes in exact-title comparison"
     }
   ]
 }
