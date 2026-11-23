@@ -1,0 +1,915 @@
+{
+  "schema_version": 1,
+  "standard": "eu-ai-act",
+  "title": "Regulation (EU) 2024/1689 laying down harmonised rules on artificial intelligence (Artificial Intelligence Act)",
+  "source_url": "https://eur-lex.europa.eu/eli/reg/2024/1689/oj",
+  "version": "Regulation (EU) 2024/1689, OJ L, 12 July 2024",
+  "retrieved": "2026-11-23",
+  "source_quality": "primary",
+  "source_sha256": "8f0b656302f9864cc87e040c371f209a9d65ae1a6cecc25ca5eb737e872d721a",
+  "source_notes": "Verified against the Official Journal English XHTML text retrieved from EUR-Lex on 2026-11-23 (source_sha256 is the XHTML body digest). Article titles (Articles 1–113) and annex titles (Annexes I–XIII) match the Official Journal text, with one deliberate non-propagation of an Official Journal typographical error: Article 111's OJ heading prints 'placed on the marked' at the end; row 111 retains 'market' in title (so structured exact-title slots do not flag correct English) and records the verbatim OJ spelling in aliases. Because Official Journal paragraphs and points carry no formal headings, the 18 paragraph/point rows (9(1), 9(2), 9(2)(a)–9(2)(d), 9(3)–9(10), 10(2)(f), 10(3), 10(5), Annex III 5(b)) are editorial descriptors verified against the primary clause text.",
+  "license": "European Union legislation published in the Official Journal of the European Union; reuse authorized under Commission Decision 2011/833/EU (EUR-Lex, © European Union, 1998–2026). Only identifiers, article/annex titles, and clause descriptors are retained here.",
+  "complete": true,
+  "rows": [
+    {
+      "id": "1",
+      "title": "Subject matter",
+      "status": "active",
+      "kind": "article"
+    },
+    {
+      "id": "2",
+      "title": "Scope",
+      "status": "active",
+      "kind": "article"
+    },
+    {
+      "id": "3",
+      "title": "Definitions",
+      "status": "active",
+      "kind": "article"
+    },
+    {
+      "id": "4",
+      "title": "AI literacy",
+      "status": "active",
+      "kind": "article",
+      "aliases": [
+        "AI literacy"
+      ]
+    },
+    {
+      "id": "5",
+      "title": "Prohibited AI practices",
+      "status": "active",
+      "kind": "article"
+    },
+    {
+      "id": "6",
+      "title": "Classification rules for high-risk AI systems",
+      "status": "active",
+      "kind": "article"
+    },
+    {
+      "id": "7",
+      "title": "Amendments to Annex III",
+      "status": "active",
+      "kind": "article"
+    },
+    {
+      "id": "8",
+      "title": "Compliance with the requirements",
+      "status": "active",
+      "kind": "article"
+    },
+    {
+      "id": "9",
+      "title": "Risk management system",
+      "status": "active",
+      "kind": "article",
+      "aliases": [
+        "RMS"
+      ],
+      "children_complete": true
+    },
+    {
+      "id": "9(1)",
+      "title": "Risk management system established, implemented, documented and maintained",
+      "status": "active",
+      "kind": "paragraph"
+    },
+    {
+      "id": "9(2)",
+      "title": "Continuous iterative risk management process across the lifecycle",
+      "status": "active",
+      "kind": "paragraph",
+      "children_complete": true
+    },
+    {
+      "id": "9(2)(a)",
+      "title": "Identification and analysis of known and reasonably foreseeable risks",
+      "status": "active",
+      "kind": "point"
+    },
+    {
+      "id": "9(2)(b)",
+      "title": "Estimation and evaluation of risks under intended use and foreseeable misuse",
+      "status": "active",
+      "kind": "point"
+    },
+    {
+      "id": "9(2)(c)",
+      "title": "Evaluation of other risks based on post-market monitoring data",
+      "status": "active",
+      "kind": "point"
+    },
+    {
+      "id": "9(2)(d)",
+      "title": "Adoption of appropriate and targeted risk management measures",
+      "status": "active",
+      "kind": "point"
+    },
+    {
+      "id": "9(3)",
+      "title": "Risks limited to those reasonably mitigable by design or technical information",
+      "status": "active",
+      "kind": "paragraph"
+    },
+    {
+      "id": "9(4)",
+      "title": "Consideration of combined effects of Section 2 requirements",
+      "status": "active",
+      "kind": "paragraph"
+    },
+    {
+      "id": "9(5)",
+      "title": "Residual risk judged acceptable; elimination, mitigation and deployer information",
+      "status": "active",
+      "kind": "paragraph"
+    },
+    {
+      "id": "9(6)",
+      "title": "Testing to identify appropriate and targeted risk management measures",
+      "status": "active",
+      "kind": "paragraph"
+    },
+    {
+      "id": "9(7)",
+      "title": "Testing may include real-world testing under Article 60",
+      "status": "active",
+      "kind": "paragraph"
+    },
+    {
+      "id": "9(8)",
+      "title": "Testing against prior defined metrics and probabilistic thresholds",
+      "status": "active",
+      "kind": "paragraph"
+    },
+    {
+      "id": "9(9)",
+      "title": "Consideration of adverse impact on minors and vulnerable groups",
+      "status": "active",
+      "kind": "paragraph"
+    },
+    {
+      "id": "9(10)",
+      "title": "Integration with risk management under other Union law",
+      "status": "active",
+      "kind": "paragraph"
+    },
+    {
+      "id": "10",
+      "title": "Data and data governance",
+      "status": "active",
+      "kind": "article"
+    },
+    {
+      "id": "10(2)(f)",
+      "title": "Examination of data sets for possible biases",
+      "status": "active",
+      "kind": "point"
+    },
+    {
+      "id": "10(3)",
+      "title": "Data sets relevant, representative, error-free and complete",
+      "status": "active",
+      "kind": "paragraph"
+    },
+    {
+      "id": "10(5)",
+      "title": "Exceptional processing of special category data for bias detection and correction",
+      "status": "active",
+      "kind": "paragraph"
+    },
+    {
+      "id": "11",
+      "title": "Technical documentation",
+      "status": "active",
+      "kind": "article"
+    },
+    {
+      "id": "12",
+      "title": "Record-keeping",
+      "status": "active",
+      "kind": "article"
+    },
+    {
+      "id": "13",
+      "title": "Transparency and provision of information to deployers",
+      "status": "active",
+      "kind": "article"
+    },
+    {
+      "id": "14",
+      "title": "Human oversight",
+      "status": "active",
+      "kind": "article",
+      "aliases": [
+        "Human oversight"
+      ]
+    },
+    {
+      "id": "15",
+      "title": "Accuracy, robustness and cybersecurity",
+      "status": "active",
+      "kind": "article"
+    },
+    {
+      "id": "16",
+      "title": "Obligations of providers of high-risk AI systems",
+      "status": "active",
+      "kind": "article"
+    },
+    {
+      "id": "17",
+      "title": "Quality management system",
+      "status": "active",
+      "kind": "article"
+    },
+    {
+      "id": "18",
+      "title": "Documentation keeping",
+      "status": "active",
+      "kind": "article"
+    },
+    {
+      "id": "19",
+      "title": "Automatically generated logs",
+      "status": "active",
+      "kind": "article"
+    },
+    {
+      "id": "20",
+      "title": "Corrective actions and duty of information",
+      "status": "active",
+      "kind": "article"
+    },
+    {
+      "id": "21",
+      "title": "Cooperation with competent authorities",
+      "status": "active",
+      "kind": "article"
+    },
+    {
+      "id": "22",
+      "title": "Authorised representatives of providers of high-risk AI systems",
+      "status": "active",
+      "kind": "article"
+    },
+    {
+      "id": "23",
+      "title": "Obligations of importers",
+      "status": "active",
+      "kind": "article"
+    },
+    {
+      "id": "24",
+      "title": "Obligations of distributors",
+      "status": "active",
+      "kind": "article"
+    },
+    {
+      "id": "25",
+      "title": "Responsibilities along the AI value chain",
+      "status": "active",
+      "kind": "article"
+    },
+    {
+      "id": "26",
+      "title": "Obligations of deployers of high-risk AI systems",
+      "status": "active",
+      "kind": "article"
+    },
+    {
+      "id": "27",
+      "title": "Fundamental rights impact assessment for high-risk AI systems",
+      "status": "active",
+      "kind": "article",
+      "aliases": [
+        "FRIA",
+        "Fundamental rights impact assessment"
+      ]
+    },
+    {
+      "id": "28",
+      "title": "Notifying authorities",
+      "status": "active",
+      "kind": "article"
+    },
+    {
+      "id": "29",
+      "title": "Application of a conformity assessment body for notification",
+      "status": "active",
+      "kind": "article"
+    },
+    {
+      "id": "30",
+      "title": "Notification procedure",
+      "status": "active",
+      "kind": "article"
+    },
+    {
+      "id": "31",
+      "title": "Requirements relating to notified bodies",
+      "status": "active",
+      "kind": "article"
+    },
+    {
+      "id": "32",
+      "title": "Presumption of conformity with requirements relating to notified bodies",
+      "status": "active",
+      "kind": "article"
+    },
+    {
+      "id": "33",
+      "title": "Subsidiaries of notified bodies and subcontracting",
+      "status": "active",
+      "kind": "article"
+    },
+    {
+      "id": "34",
+      "title": "Operational obligations of notified bodies",
+      "status": "active",
+      "kind": "article"
+    },
+    {
+      "id": "35",
+      "title": "Identification numbers and lists of notified bodies",
+      "status": "active",
+      "kind": "article"
+    },
+    {
+      "id": "36",
+      "title": "Changes to notifications",
+      "status": "active",
+      "kind": "article"
+    },
+    {
+      "id": "37",
+      "title": "Challenge to the competence of notified bodies",
+      "status": "active",
+      "kind": "article"
+    },
+    {
+      "id": "38",
+      "title": "Coordination of notified bodies",
+      "status": "active",
+      "kind": "article"
+    },
+    {
+      "id": "39",
+      "title": "Conformity assessment bodies of third countries",
+      "status": "active",
+      "kind": "article"
+    },
+    {
+      "id": "40",
+      "title": "Harmonised standards and standardisation deliverables",
+      "status": "active",
+      "kind": "article"
+    },
+    {
+      "id": "41",
+      "title": "Common specifications",
+      "status": "active",
+      "kind": "article"
+    },
+    {
+      "id": "42",
+      "title": "Presumption of conformity with certain requirements",
+      "status": "active",
+      "kind": "article"
+    },
+    {
+      "id": "43",
+      "title": "Conformity assessment",
+      "status": "active",
+      "kind": "article"
+    },
+    {
+      "id": "44",
+      "title": "Certificates",
+      "status": "active",
+      "kind": "article"
+    },
+    {
+      "id": "45",
+      "title": "Information obligations of notified bodies",
+      "status": "active",
+      "kind": "article"
+    },
+    {
+      "id": "46",
+      "title": "Derogation from conformity assessment procedure",
+      "status": "active",
+      "kind": "article"
+    },
+    {
+      "id": "47",
+      "title": "EU declaration of conformity",
+      "status": "active",
+      "kind": "article"
+    },
+    {
+      "id": "48",
+      "title": "CE marking",
+      "status": "active",
+      "kind": "article"
+    },
+    {
+      "id": "49",
+      "title": "Registration",
+      "status": "active",
+      "kind": "article"
+    },
+    {
+      "id": "50",
+      "title": "Transparency obligations for providers and deployers of certain AI systems",
+      "status": "active",
+      "kind": "article",
+      "aliases": [
+        "Transparency obligations"
+      ]
+    },
+    {
+      "id": "51",
+      "title": "Classification of general-purpose AI models as general-purpose AI models with systemic risk",
+      "status": "active",
+      "kind": "article"
+    },
+    {
+      "id": "52",
+      "title": "Procedure",
+      "status": "active",
+      "kind": "article"
+    },
+    {
+      "id": "53",
+      "title": "Obligations for providers of general-purpose AI models",
+      "status": "active",
+      "kind": "article"
+    },
+    {
+      "id": "54",
+      "title": "Authorised representatives of providers of general-purpose AI models",
+      "status": "active",
+      "kind": "article"
+    },
+    {
+      "id": "55",
+      "title": "Obligations of providers of general-purpose AI models with systemic risk",
+      "status": "active",
+      "kind": "article"
+    },
+    {
+      "id": "56",
+      "title": "Codes of practice",
+      "status": "active",
+      "kind": "article"
+    },
+    {
+      "id": "57",
+      "title": "AI regulatory sandboxes",
+      "status": "active",
+      "kind": "article"
+    },
+    {
+      "id": "58",
+      "title": "Detailed arrangements for, and functioning of, AI regulatory sandboxes",
+      "status": "active",
+      "kind": "article"
+    },
+    {
+      "id": "59",
+      "title": "Further processing of personal data for developing certain AI systems in the public interest in the AI regulatory sandbox",
+      "status": "active",
+      "kind": "article"
+    },
+    {
+      "id": "60",
+      "title": "Testing of high-risk AI systems in real world conditions outside AI regulatory sandboxes",
+      "status": "active",
+      "kind": "article"
+    },
+    {
+      "id": "61",
+      "title": "Informed consent to participate in testing in real world conditions outside AI regulatory sandboxes",
+      "status": "active",
+      "kind": "article"
+    },
+    {
+      "id": "62",
+      "title": "Measures for providers and deployers, in particular SMEs, including start-ups",
+      "status": "active",
+      "kind": "article"
+    },
+    {
+      "id": "63",
+      "title": "Derogations for specific operators",
+      "status": "active",
+      "kind": "article"
+    },
+    {
+      "id": "64",
+      "title": "AI Office",
+      "status": "active",
+      "kind": "article"
+    },
+    {
+      "id": "65",
+      "title": "Establishment and structure of the European Artificial Intelligence Board",
+      "status": "active",
+      "kind": "article"
+    },
+    {
+      "id": "66",
+      "title": "Tasks of the Board",
+      "status": "active",
+      "kind": "article"
+    },
+    {
+      "id": "67",
+      "title": "Advisory forum",
+      "status": "active",
+      "kind": "article"
+    },
+    {
+      "id": "68",
+      "title": "Scientific panel of independent experts",
+      "status": "active",
+      "kind": "article"
+    },
+    {
+      "id": "69",
+      "title": "Access to the pool of experts by the Member States",
+      "status": "active",
+      "kind": "article"
+    },
+    {
+      "id": "70",
+      "title": "Designation of national competent authorities and single points of contact",
+      "status": "active",
+      "kind": "article"
+    },
+    {
+      "id": "71",
+      "title": "EU database for high-risk AI systems listed in Annex III",
+      "status": "active",
+      "kind": "article"
+    },
+    {
+      "id": "72",
+      "title": "Post-market monitoring by providers and post-market monitoring plan for high-risk AI systems",
+      "status": "active",
+      "kind": "article",
+      "aliases": [
+        "Post-market monitoring"
+      ]
+    },
+    {
+      "id": "73",
+      "title": "Reporting of serious incidents",
+      "status": "active",
+      "kind": "article",
+      "aliases": [
+        "Serious incident reporting"
+      ]
+    },
+    {
+      "id": "74",
+      "title": "Market surveillance and control of AI systems in the Union market",
+      "status": "active",
+      "kind": "article"
+    },
+    {
+      "id": "75",
+      "title": "Mutual assistance, market surveillance and control of general-purpose AI systems",
+      "status": "active",
+      "kind": "article"
+    },
+    {
+      "id": "76",
+      "title": "Supervision of testing in real world conditions by market surveillance authorities",
+      "status": "active",
+      "kind": "article"
+    },
+    {
+      "id": "77",
+      "title": "Powers of authorities protecting fundamental rights",
+      "status": "active",
+      "kind": "article"
+    },
+    {
+      "id": "78",
+      "title": "Confidentiality",
+      "status": "active",
+      "kind": "article"
+    },
+    {
+      "id": "79",
+      "title": "Procedure at national level for dealing with AI systems presenting a risk",
+      "status": "active",
+      "kind": "article"
+    },
+    {
+      "id": "80",
+      "title": "Procedure for dealing with AI systems classified by the provider as non-high-risk in application of Annex III",
+      "status": "active",
+      "kind": "article"
+    },
+    {
+      "id": "81",
+      "title": "Union safeguard procedure",
+      "status": "active",
+      "kind": "article"
+    },
+    {
+      "id": "82",
+      "title": "Compliant AI systems which present a risk",
+      "status": "active",
+      "kind": "article"
+    },
+    {
+      "id": "83",
+      "title": "Formal non-compliance",
+      "status": "active",
+      "kind": "article"
+    },
+    {
+      "id": "84",
+      "title": "Union AI testing support structures",
+      "status": "active",
+      "kind": "article"
+    },
+    {
+      "id": "85",
+      "title": "Right to lodge a complaint with a market surveillance authority",
+      "status": "active",
+      "kind": "article"
+    },
+    {
+      "id": "86",
+      "title": "Right to explanation of individual decision-making",
+      "status": "active",
+      "kind": "article",
+      "aliases": [
+        "Right to explanation"
+      ]
+    },
+    {
+      "id": "87",
+      "title": "Reporting of infringements and protection of reporting persons",
+      "status": "active",
+      "kind": "article"
+    },
+    {
+      "id": "88",
+      "title": "Enforcement of the obligations of providers of general-purpose AI models",
+      "status": "active",
+      "kind": "article"
+    },
+    {
+      "id": "89",
+      "title": "Monitoring actions",
+      "status": "active",
+      "kind": "article"
+    },
+    {
+      "id": "90",
+      "title": "Alerts of systemic risks by the scientific panel",
+      "status": "active",
+      "kind": "article"
+    },
+    {
+      "id": "91",
+      "title": "Power to request documentation and information",
+      "status": "active",
+      "kind": "article"
+    },
+    {
+      "id": "92",
+      "title": "Power to conduct evaluations",
+      "status": "active",
+      "kind": "article"
+    },
+    {
+      "id": "93",
+      "title": "Power to request measures",
+      "status": "active",
+      "kind": "article"
+    },
+    {
+      "id": "94",
+      "title": "Procedural rights of economic operators of the general-purpose AI model",
+      "status": "active",
+      "kind": "article"
+    },
+    {
+      "id": "95",
+      "title": "Codes of conduct for voluntary application of specific requirements",
+      "status": "active",
+      "kind": "article"
+    },
+    {
+      "id": "96",
+      "title": "Guidelines from the Commission on the implementation of this Regulation",
+      "status": "active",
+      "kind": "article"
+    },
+    {
+      "id": "97",
+      "title": "Exercise of the delegation",
+      "status": "active",
+      "kind": "article"
+    },
+    {
+      "id": "98",
+      "title": "Committee procedure",
+      "status": "active",
+      "kind": "article"
+    },
+    {
+      "id": "99",
+      "title": "Penalties",
+      "status": "active",
+      "kind": "article"
+    },
+    {
+      "id": "100",
+      "title": "Administrative fines on Union institutions, bodies, offices and agencies",
+      "status": "active",
+      "kind": "article"
+    },
+    {
+      "id": "101",
+      "title": "Fines for providers of general-purpose AI models",
+      "status": "active",
+      "kind": "article"
+    },
+    {
+      "id": "102",
+      "title": "Amendment to Regulation (EC) No 300/2008",
+      "status": "active",
+      "kind": "article"
+    },
+    {
+      "id": "103",
+      "title": "Amendment to Regulation (EU) No 167/2013",
+      "status": "active",
+      "kind": "article"
+    },
+    {
+      "id": "104",
+      "title": "Amendment to Regulation (EU) No 168/2013",
+      "status": "active",
+      "kind": "article"
+    },
+    {
+      "id": "105",
+      "title": "Amendment to Directive 2014/90/EU",
+      "status": "active",
+      "kind": "article"
+    },
+    {
+      "id": "106",
+      "title": "Amendment to Directive (EU) 2016/797",
+      "status": "active",
+      "kind": "article"
+    },
+    {
+      "id": "107",
+      "title": "Amendment to Regulation (EU) 2018/858",
+      "status": "active",
+      "kind": "article"
+    },
+    {
+      "id": "108",
+      "title": "Amendments to Regulation (EU) 2018/1139",
+      "status": "active",
+      "kind": "article"
+    },
+    {
+      "id": "109",
+      "title": "Amendment to Regulation (EU) 2019/2144",
+      "status": "active",
+      "kind": "article"
+    },
+    {
+      "id": "110",
+      "title": "Amendment to Directive (EU) 2020/1828",
+      "status": "active",
+      "kind": "article"
+    },
+    {
+      "id": "111",
+      "title": "AI systems already placed on the market or put into service and general-purpose AI models already placed on the market",
+      "status": "active",
+      "kind": "article",
+      "aliases": [
+        "AI systems already placed on the market or put into service and general-purpose AI models already placed on the marked"
+      ]
+    },
+    {
+      "id": "112",
+      "title": "Evaluation and review",
+      "status": "active",
+      "kind": "article"
+    },
+    {
+      "id": "113",
+      "title": "Entry into force and application",
+      "status": "active",
+      "kind": "article"
+    },
+    {
+      "id": "Annex I",
+      "title": "List of Union harmonisation legislation",
+      "status": "active",
+      "kind": "annex"
+    },
+    {
+      "id": "Annex II",
+      "title": "List of criminal offences referred to in Article 5(1), first subparagraph, point (h)(iii)",
+      "status": "active",
+      "kind": "annex"
+    },
+    {
+      "id": "Annex III",
+      "title": "High-risk AI systems referred to in Article 6(2)",
+      "status": "active",
+      "kind": "annex",
+      "aliases": [
+        "High-risk use cases"
+      ]
+    },
+    {
+      "id": "Annex III 5(b)",
+      "title": "Creditworthiness evaluation and credit scoring of natural persons",
+      "status": "active",
+      "kind": "point",
+      "aliases": [
+        "Credit scoring"
+      ]
+    },
+    {
+      "id": "Annex IV",
+      "title": "Technical documentation referred to in Article 11(1)",
+      "status": "active",
+      "kind": "annex"
+    },
+    {
+      "id": "Annex V",
+      "title": "EU declaration of conformity",
+      "status": "active",
+      "kind": "annex"
+    },
+    {
+      "id": "Annex VI",
+      "title": "Conformity assessment procedure based on internal control",
+      "status": "active",
+      "kind": "annex"
+    },
+    {
+      "id": "Annex VII",
+      "title": "Conformity based on an assessment of the quality management system and an assessment of the technical documentation",
+      "status": "active",
+      "kind": "annex"
+    },
+    {
+      "id": "Annex VIII",
+      "title": "Information to be submitted upon the registration of high-risk AI systems in accordance with Article 49",
+      "status": "active",
+      "kind": "annex"
+    },
+    {
+      "id": "Annex IX",
+      "title": "Information to be submitted upon the registration of high-risk AI systems listed in Annex III in relation to testing in real world conditions in accordance with Article 60",
+      "status": "active",
+      "kind": "annex"
+    },
+    {
+      "id": "Annex X",
+      "title": "Union legislative acts on large-scale IT systems in the area of Freedom, Security and Justice",
+      "status": "active",
+      "kind": "annex"
+    },
+    {
+      "id": "Annex XI",
+      "title": "Technical documentation referred to in Article 53(1), point (a) — technical documentation for providers of general-purpose AI models",
+      "status": "active",
+      "kind": "annex"
+    },
+    {
+      "id": "Annex XII",
+      "title": "Transparency information referred to in Article 53(1), point (b) — technical documentation for providers of general-purpose AI models to downstream providers that integrate the model into their AI system",
+      "status": "active",
+      "kind": "annex"
+    },
+    {
+      "id": "Annex XIII",
+      "title": "Criteria for the designation of general-purpose AI models with systemic risk referred to in Article 51",
+      "status": "active",
+      "kind": "annex"
+    }
+  ]
+}

@@ -96,6 +96,7 @@ gate_scripts=(
   scripts/check_project_id_hygiene.py
   scripts/check_agents_size.py
   scripts/check_doc_references.py
+  scripts/check_standard_citations.py
   scripts/check_partner_headers.py
   scripts/check_yaml_unique_keys.py
   scripts/check_write_only_state.py
