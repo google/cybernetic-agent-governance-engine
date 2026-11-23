@@ -326,9 +326,14 @@ run "custom_alert_owner_label_and_channels_propagate" {
       google_monitoring_alert_policy.alert_pipeline_heartbeat[0].user_labels["alert_kind"] == "heartbeat" &&
       contains(google_monitoring_alert_policy.alert_pipeline_heartbeat[0].notification_channels, "projects/lula-cron-test-project/notificationChannels/12345") &&
       google_monitoring_alert_policy.alert_pipeline_heartbeat[0].alert_strategy[0].auto_close == "1800s" &&
-      contains(google_monitoring_alert_policy.alert_pipeline_heartbeat[0].conditions[0].condition_threshold[0].aggregations[0].group_by_fields, "metric.label.probe_id")
+      contains(google_monitoring_alert_policy.alert_pipeline_heartbeat[0].conditions[0].condition_threshold[0].aggregations[0].group_by_fields, "metric.label.probe_id") &&
+      google_monitoring_metric_descriptor.main_result_reconciler_heartbeat[0].type == "custom.googleapis.com/cage/main_result_reconciler_heartbeat" &&
+      google_monitoring_alert_policy.main_result_reconciler_absent[0].user_labels["owner"] == "secops-compliance-oncall" &&
+      contains(google_monitoring_alert_policy.main_result_reconciler_absent[0].notification_channels, "projects/lula-cron-test-project/notificationChannels/12345") &&
+      google_monitoring_alert_policy.main_result_reconciler_absent[0].alert_strategy[0].auto_close == "1800s" &&
+      google_monitoring_alert_policy.main_result_reconciler_absent[0].conditions[0].condition_absent[0].duration == "21600s"
     )
-    error_message = "alert_owner_label, resolved alert_notification_channels, Finding A pod-series reducers/auto_close, and Finding B 10m scrape-liveness window must propagate across all 9 Cloud Monitoring alert policies"
+    error_message = "alert_owner_label, resolved alert_notification_channels, Finding A pod-series reducers/auto_close, Finding B 10m scrape-liveness window, and POAM-2026-171 reconciler absence policy must propagate across all 10 Cloud Monitoring alert policies"
   }
 }
 
@@ -351,6 +356,7 @@ run "empty_alert_notification_channels_refused_in_enforcing_posture" {
 
   expect_failures = [
     google_monitoring_alert_policy.alert_pipeline_heartbeat,
+    google_monitoring_alert_policy.main_result_reconciler_absent,
     google_monitoring_alert_policy.lula_audit_failure,
     google_monitoring_alert_policy.lula_audit_pod_restart,
     google_monitoring_alert_policy.prometheus_metrics_scrape_liveness,
@@ -375,6 +381,7 @@ run "disabled_notification_channel_refused_in_enforcing_posture" {
 
   expect_failures = [
     google_monitoring_alert_policy.alert_pipeline_heartbeat,
+    google_monitoring_alert_policy.main_result_reconciler_absent,
     google_monitoring_alert_policy.lula_audit_failure,
     google_monitoring_alert_policy.lula_audit_pod_restart,
     google_monitoring_alert_policy.prometheus_metrics_scrape_liveness,
@@ -401,6 +408,7 @@ run "mismatched_notification_channel_name_refused_in_enforcing_posture" {
 
   expect_failures = [
     google_monitoring_alert_policy.alert_pipeline_heartbeat,
+    google_monitoring_alert_policy.main_result_reconciler_absent,
     google_monitoring_alert_policy.lula_audit_failure,
     google_monitoring_alert_policy.lula_audit_pod_restart,
     google_monitoring_alert_policy.prometheus_metrics_scrape_liveness,
@@ -470,6 +478,7 @@ run "dev_non_enforcing_posture_allows_empty_alert_channels_and_console_notifier"
   assert {
     condition = (
       length(google_monitoring_alert_policy.alert_pipeline_heartbeat) == 0 &&
+      length(google_monitoring_alert_policy.main_result_reconciler_absent) == 0 &&
       length(google_monitoring_alert_policy.lula_audit_failure) == 0 &&
       local.effective_compliance_alert_channel == "console"
     )

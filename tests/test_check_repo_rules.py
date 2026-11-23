@@ -13,16 +13,17 @@
 # limitations under the License.
 # Closure regression guard for: POAM-2026-116, POAM-2026-133
 
-"""Tests for scripts/check_repo_rules.py (POAM-2026-169, POAM-2026-170).
+"""Tests for scripts/check_repo_rules.py (POAM-2026-169, POAM-2026-170, POAM-2026-171).
 
 The fixtures are the API's responses on 2026-11-02, read without credentials,
 after ruleset 26377312 was applied and all eight required checks were pinned,
 with one entry added in the shape the API returns it: the ninth required check,
 `Approved review or recorded bypass`, which the change adding it also adds to
 ruleset 25966171 (POAM-2026-115).
-Every planted defect below is a way the live configuration could drift from
-.github/branch-protection-rules.md; each must be reported. The recorded
-responses must report nothing, or the planted defects prove nothing.
+Every planted defect below is a way the live configuration or committed workflow
+guards could drift from .github/branch-protection-rules.md; each must be
+reported. The recorded responses and committed workflows must report nothing,
+or the planted defects prove nothing.
 """
 
 from __future__ import annotations
@@ -31,6 +32,7 @@ import copy
 import importlib.util
 import json
 import re
+import shutil
 import sys
 from collections.abc import Callable
 from pathlib import Path
@@ -81,6 +83,20 @@ def _checks(rules: list[dict[str, Any]]) -> list[dict[str, Any]]:
 def test_recorded_configuration_reports_nothing() -> None:
     assert rules_mod.main_rule_drift(_main_rules()) == []
     assert rules_mod.tag_ruleset_drift(_tag_ruleset()) == []
+    assert rules_mod.workflow_guard_drift(REPO_ROOT) == []
+
+
+def test_main_push_check_pins_derive_from_required_checks() -> None:
+    assert len(rules_mod.EXPECTED_MAIN_PUSH_CHECKS) == 9
+    assert rules_mod.REVIEW_BYPASS_CHECK not in rules_mod.EXPECTED_MAIN_PUSH_CHECKS
+    assert (
+        rules_mod.EXPECTED_MAIN_PUSH_CHECKS[rules_mod.REVIEW_BYPASS_LEDGER_CHECK]
+        == rules_mod.GITHUB_ACTIONS_APP_ID
+    )
+    assert rules_mod.EXPECTED_MAIN_CHECK_SUITE_COUNTS["license-check"] == 2
+    for check_name, count in rules_mod.EXPECTED_MAIN_CHECK_SUITE_COUNTS.items():
+        if check_name != "license-check":
+            assert count == 1
 
 
 def _drop_rule(rule_type: str) -> Callable[[list[dict[str, Any]]], None]:
@@ -218,6 +234,135 @@ def test_tag_ruleset_drift_is_reported(name: str) -> None:
     assert any(expected in problem for problem in problems), problems
 
 
+def _copy_guarded_workflows(tmp_path: Path) -> Path:
+    wf_dir = tmp_path / ".github" / "workflows"
+    wf_dir.mkdir(parents=True, exist_ok=True)
+    for wf_name in (
+        *rules_mod.REQUIRED_CHECK_CONCURRENCY_WORKFLOWS,
+        rules_mod.MAIN_RESULT_RECONCILER_WORKFLOW,
+    ):
+        shutil.copy2(WORKFLOWS / wf_name, wf_dir / wf_name)
+    return wf_dir
+
+
+def _edit_wf(wf_dir: Path, name: str, old: str, new: str) -> None:
+    target = wf_dir / name
+    text = target.read_text(encoding="utf-8")
+    assert old in text, f"{old!r} not found in {name}"
+    target.write_text(text.replace(old, new, 1), encoding="utf-8")
+
+
+WORKFLOW_PLANTS: dict[str, tuple[Callable[[Path], None], str]] = {
+    "ci.yml cancels push runs again": (
+        lambda d: _edit_wf(
+            d,
+            "ci.yml",
+            "cancel-in-progress: ${{ github.event_name == 'pull_request' }}",
+            "cancel-in-progress: true",
+        ),
+        "ci.yml: concurrency `cancel-in-progress` is 'true'",
+    ),
+    "security-scan.yml shares push group by ref instead of sha": (
+        lambda d: _edit_wf(
+            d,
+            "security-scan.yml",
+            rules_mod.EXPECTED_PR_ONLY_CONCURRENCY_GROUP,
+            "${{ github.workflow }}-${{ github.event_name }}-${{ github.head_ref || github.ref }}",
+        ),
+        "security-scan.yml: concurrency `group`",
+    ),
+    "license_guard.yml drops concurrency block": (
+        lambda d: _edit_wf(
+            d,
+            "license_guard.yml",
+            f"concurrency:\n  group: {rules_mod.EXPECTED_PR_ONLY_CONCURRENCY_GROUP}\n  cancel-in-progress: {rules_mod.EXPECTED_PR_ONLY_CANCEL_IN_PROGRESS}\n",
+            "",
+        ),
+        "license_guard.yml: missing top-level `concurrency` block",
+    ),
+    "ci.yml adds job-level cancel-in-progress true": (
+        lambda d: _edit_wf(
+            d,
+            "ci.yml",
+            "  license-check:\n    runs-on: ubuntu-latest",
+            "  license-check:\n    runs-on: ubuntu-latest\n    concurrency:\n      group: lic\n      cancel-in-progress: true",
+        ),
+        "ci.yml: job-level `cancel-in-progress` is 'true'",
+    ),
+    "reconciler workflow deleted": (
+        lambda d: (d / "main-result-reconciler.yml").unlink(),
+        "workflow `main-result-reconciler.yml` is missing",
+    ),
+    "reconciler schedule cron removed": (
+        lambda d: _edit_wf(
+            d,
+            "main-result-reconciler.yml",
+            '  schedule:\n    - cron: "37 */2 * * *"\n',
+            "",
+        ),
+        "main-result-reconciler.yml: missing `on.schedule` cron trigger",
+    ),
+    "reconciler cancel-in-progress set true": (
+        lambda d: _edit_wf(
+            d,
+            "main-result-reconciler.yml",
+            "cancel-in-progress: false",
+            "cancel-in-progress: true",
+        ),
+        "main-result-reconciler.yml: concurrency `cancel-in-progress` is 'true'",
+    ),
+    "reconciler drops issues write permission": (
+        lambda d: _edit_wf(
+            d,
+            "main-result-reconciler.yml",
+            "issues: write",
+            "issues: read",
+        ),
+        "main-result-reconciler.yml: job permission `issues` is 'read'",
+    ),
+    "reconciler drops id-token write permission": (
+        lambda d: _edit_wf(
+            d,
+            "main-result-reconciler.yml",
+            "id-token: write",
+            "id-token: none",
+        ),
+        "main-result-reconciler.yml: job permission `id-token` is 'none'",
+    ),
+    "reconciler script call replaced with echo": (
+        lambda d: (d / "main-result-reconciler.yml").write_text(
+            (d / "main-result-reconciler.yml")
+            .read_text(encoding="utf-8")
+            .replace(
+                "python3 scripts/reconcile_main_check_results.py",
+                "echo scripts/reconcile_main_check_results.py",
+            ),
+            encoding="utf-8",
+        ),
+        "main-result-reconciler.yml: no job step invokes `scripts/reconcile_main_check_results.py`",
+    ),
+    "reconciler interpolates untrusted input in run block": (
+        lambda d: _edit_wf(
+            d,
+            "main-result-reconciler.yml",
+            '--ref "${INPUT_REF}"',
+            '--ref "${{ inputs.ref }}"',
+        ),
+        "main-result-reconciler.yml: `run:` block contains `${{`",
+    ),
+}
+
+
+@pytest.mark.parametrize("name", sorted(WORKFLOW_PLANTS))
+def test_workflow_guard_drift_is_reported(name: str, tmp_path: Path) -> None:
+    plant, expected = WORKFLOW_PLANTS[name]
+    wf_dir = _copy_guarded_workflows(tmp_path)
+    assert rules_mod.workflow_guard_drift(tmp_path) == []
+    plant(wf_dir)
+    problems = rules_mod.workflow_guard_drift(tmp_path)
+    assert any(expected in problem for problem in problems), problems
+
+
 def _fake_fetch(responses: dict[str, Any]) -> Callable[[str], Any]:
     def fetch(url: str) -> Any:
         for suffix, body in responses.items():
@@ -228,7 +373,9 @@ def _fake_fetch(responses: dict[str, Any]) -> Callable[[str], Any]:
     return fetch
 
 
-def test_run_exit_status_follows_the_drift(capsys: pytest.CaptureFixture[str]) -> None:
+def test_run_exit_status_follows_the_drift(
+    capsys: pytest.CaptureFixture[str], tmp_path: Path
+) -> None:
     clean = _fake_fetch(
         {"/rules/branches/main": _main_rules(), "/rulesets/25965917": _tag_ruleset()}
     )
@@ -241,6 +388,17 @@ def test_run_exit_status_follows_the_drift(capsys: pytest.CaptureFixture[str]) -
     )
     assert rules_mod.run("owner/repo", "main", fetch=drifted) == 1
     assert "`non_fast_forward` does not apply" in capsys.readouterr().out
+
+    # Workflow drift alone must also cause run() to exit 1.
+    wf_dir = _copy_guarded_workflows(tmp_path)
+    _edit_wf(
+        wf_dir,
+        "ci.yml",
+        "cancel-in-progress: ${{ github.event_name == 'pull_request' }}",
+        "cancel-in-progress: true",
+    )
+    assert rules_mod.run("owner/repo", "main", fetch=clean, repo_root=tmp_path) == 1
+    assert "ci.yml: concurrency `cancel-in-progress`" in capsys.readouterr().out
 
 
 def test_unreadable_api_fails_closed() -> None:

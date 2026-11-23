@@ -13,12 +13,12 @@
 # limitations under the License.
 
 name: build
-# Cancel superseded runs for the same ref. Without this, the push +
-# pull_request double-trigger consumes two identical sets of runners on
-# every push to an open PR (measured: 23.3 duplicated job-minutes per push).
+# Cancel superseded runs on pull_request only; push runs set cancel-in-progress
+# false and key group by github.sha because shared groups still cancel queued
+# pending runs when a third run arrives, letting every main commit finish (POAM-2026-171).
 concurrency:
-  group: ${{ github.workflow }}-${{ github.event_name }}-${{ github.head_ref || github.ref }}
-  cancel-in-progress: true
+  group: ${{ github.workflow }}-${{ github.event_name }}-${{ github.event_name == 'pull_request' && github.head_ref || (github.event_name == 'push' && github.sha || github.run_id) }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 on:
   push:
