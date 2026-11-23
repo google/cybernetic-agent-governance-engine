@@ -123,6 +123,26 @@ def test_sp800_53_table_is_derived_from_the_nist_catalog(
     assert rows["SC-4"].title == "Information in Shared System Resources"
 
 
+def test_six_primary_tables_record_source_sha256() -> None:
+    expected_primary = {
+        "dora_2022_2554.json",
+        "eu_ai_act_2024_1689.json",
+        "gdpr_2016_679.json",
+        "nist_ai_600_1.json",
+        "nist_ai_rmf_1_0.json",
+        "nist_sp_800_53_r5.json",
+    }
+    actual_primary = set()
+    for path in sorted(TABLES_DIR.glob("*.json")):
+        doc = json.loads(path.read_text(encoding="utf-8"))
+        if doc["source_quality"] == "primary":
+            actual_primary.add(path.name)
+            sha = doc.get("source_sha256", "")
+            assert isinstance(sha, str) and len(sha) == 64, path.name
+            assert isinstance(doc.get("license"), str) and doc["license"], path.name
+    assert actual_primary == expected_primary
+
+
 # --- rule 1: existence --------------------------------------------------------
 
 
