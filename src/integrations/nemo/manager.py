@@ -82,8 +82,15 @@ logger.setLevel(logging.INFO)
 # ---------------------------------------------------------------------------
 
 
-def _get_analyzer_patch():  # type: ignore[no-untyped-def]
-    """Delegate analyzer creation to Layer 3 Microsoft Presidio adapter."""
+def _get_analyzer_patch(*_args: Any, **_kwargs: Any) -> Any:
+    """Delegate analyzer creation to Layer 3 Microsoft Presidio adapter.
+
+    Accepts ``score_threshold`` and any future positional/keyword arguments from
+    ``nemoguardrails.library.sensitive_data_detection.actions`` so both
+    ``detect_sensitive_data`` (which passes ``score_threshold=...``) and
+    ``mask_sensitive_data`` (which passes no arguments) invoke the shared
+    offline-configured Presidio singleton cleanly (POAM-2026-248).
+    """
     from src.integrations.presidio.redactor import get_analyzer_patch
 
     return get_analyzer_patch()

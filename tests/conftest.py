@@ -64,6 +64,16 @@ os.environ.setdefault(
     "cage-advisor-sa.governance-stack.serviceaccount.identity.linkerd.cluster.local",
 )
 
+# Force tldextract onto its bundled .tld_set_snapshot (suffix_list_urls=(),
+# cache_dir=None) across all xdist workers before any test imports Presidio
+# EmailRecognizer directly (POAM-2026-248).
+try:
+    from src.integrations.presidio.redactor import configure_offline_tldextract
+
+    configure_offline_tldextract()
+except ImportError:
+    pass
+
 import pytest
 
 from tests.fixtures.deployment_region import REGION_MARKERS
