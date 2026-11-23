@@ -1,0 +1,158 @@
+{
+  "schema_version": 1,
+  "standard": "mas-feat",
+  "title": "MAS Principles to Promote Fairness, Ethics, Accountability and Transparency (FEAT) in the Use of AI and Data Analytics in Singapore's Financial Sector",
+  "source_url": "https://www.mas.gov.sg/publications/monographs-or-information-paper/2018/feat",
+  "version": "MAS FEAT Principles, November 2018",
+  "retrieved": "2026-11-23",
+  "source_quality": "knowledge-unverified",
+  "source_notes": "Primary-source fetch of mas.gov.sg was denied (permission prompt timed out) on 2026-11-23. Principle numbering compiled from knowledge of the 2018 document: Fairness 1-4, Ethics 5-6, Accountability 7-11 (internal 7-9, external 10-11), Transparency 12-14. Titles are short paraphrases, not quotations. The document's own section numbering (e.g. a cited section 3.2) is NOT enumerated and is not judged. Must be verified against source_url before upgrading to primary.",
+  "complete": true,
+  "rows": [
+    {
+      "id": "1",
+      "title": "Fairness (Justifiability): individuals or groups are not systematically disadvantaged unless justified",
+      "status": "active",
+      "kind": "principle",
+      "aliases": [
+        "Fairness",
+        "Justifiability"
+      ]
+    },
+    {
+      "id": "2",
+      "title": "Fairness (Justifiability): use of personal attributes as input factors is justified",
+      "status": "active",
+      "kind": "principle",
+      "aliases": [
+        "Fairness",
+        "Justifiability",
+        "Personal attributes"
+      ]
+    },
+    {
+      "id": "3",
+      "title": "Fairness (Accuracy and Bias): data and models are regularly reviewed for accuracy, relevance and unintentional bias",
+      "status": "active",
+      "kind": "principle",
+      "aliases": [
+        "Fairness",
+        "Accuracy and bias",
+        "Bias"
+      ]
+    },
+    {
+      "id": "4",
+      "title": "Fairness (Accuracy and Bias): AIDA-driven decisions are regularly reviewed so models behave as designed",
+      "status": "active",
+      "kind": "principle",
+      "aliases": [
+        "Fairness",
+        "Accuracy and bias",
+        "Model review"
+      ]
+    },
+    {
+      "id": "5",
+      "title": "Ethics: use of AIDA is aligned with the firm's ethical standards, values and codes of conduct",
+      "status": "active",
+      "kind": "principle",
+      "aliases": [
+        "Ethics"
+      ]
+    },
+    {
+      "id": "6",
+      "title": "Ethics: AIDA-driven decisions are held to at least the same ethical standards as human-driven decisions",
+      "status": "active",
+      "kind": "principle",
+      "aliases": [
+        "Ethics"
+      ]
+    },
+    {
+      "id": "7",
+      "title": "Accountability (Internal): use of AIDA is approved by an appropriate internal authority",
+      "status": "active",
+      "kind": "principle",
+      "aliases": [
+        "Accountability",
+        "Internal accountability"
+      ]
+    },
+    {
+      "id": "8",
+      "title": "Accountability (Internal): firms are accountable for internally developed and externally sourced AIDA models",
+      "status": "active",
+      "kind": "principle",
+      "aliases": [
+        "Accountability",
+        "Internal accountability"
+      ]
+    },
+    {
+      "id": "9",
+      "title": "Accountability (Internal): firms proactively raise management and Board awareness of their use of AIDA",
+      "status": "active",
+      "kind": "principle",
+      "aliases": [
+        "Accountability",
+        "Internal accountability"
+      ]
+    },
+    {
+      "id": "10",
+      "title": "Accountability (External): data subjects have channels to enquire about, appeal and request review of AIDA-driven decisions",
+      "status": "active",
+      "kind": "principle",
+      "aliases": [
+        "Accountability",
+        "External accountability",
+        "Appeal",
+        "Human review"
+      ]
+    },
+    {
+      "id": "11",
+      "title": "Accountability (External): verified supplementary data from data subjects is considered when reviewing AIDA-driven decisions",
+      "status": "active",
+      "kind": "principle",
+      "aliases": [
+        "Accountability",
+        "External accountability"
+      ]
+    },
+    {
+      "id": "12",
+      "title": "Transparency: use of AIDA is proactively disclosed to data subjects",
+      "status": "active",
+      "kind": "principle",
+      "aliases": [
+        "Transparency",
+        "Disclosure"
+      ]
+    },
+    {
+      "id": "13",
+      "title": "Transparency: data subjects receive, on request, clear explanations of what data is used and how it affects the decision",
+      "status": "active",
+      "kind": "principle",
+      "aliases": [
+        "Transparency",
+        "Explainability",
+        "Explanation"
+      ]
+    },
+    {
+      "id": "14",
+      "title": "Transparency: data subjects receive, on request, clear explanations of the consequences of AIDA-driven decisions",
+      "status": "active",
+      "kind": "principle",
+      "aliases": [
+        "Transparency",
+        "Explainability",
+        "Explanation"
+      ]
+    }
+  ]
+}

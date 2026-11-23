@@ -1,0 +1,823 @@
+{
+  "schema_version": 1,
+  "standard": "iso-iec-42001-2023",
+  "title": "ISO/IEC 42001:2023, Information technology — Artificial intelligence — Management system",
+  "source_url": "https://www.iso.org/standard/81230.html",
+  "version": "ISO/IEC 42001:2023 (first edition, December 2023)",
+  "retrieved": "2026-11-23",
+  "source_quality": "secondary",
+  "source_notes": "The ISO text is paywalled and was not consulted. Clause titles follow the ISO harmonized structure; Annex A identifiers and titles were cross-checked on 2026-11-23 via web search against the public secondary summaries listed in secondary_sources, which agree on the 38 controls in areas A.2-A.10. Identifiers and titles only; no ISO prose is reproduced. Annex A has no lettered sub-items. Control numbering in each area (and in the A.6.1 and A.6.2 sub-groups) starts at .2 because the .1 position carries the objective; those objective rows are listed with kind 'objective'. Whether the published table prints the .1 numbers explicitly was not confirmed from the ISO text.",
+  "secondary_sources": [
+    "https://www.enactia.com/",
+    "https://gaicc.org/",
+    "https://www.mindsetcyber.com.au/",
+    "https://www.riskprofs.com/",
+    "https://www.konfirmity.com/"
+  ],
+  "complete": true,
+  "rows": [
+    {
+      "id": "4",
+      "title": "Context of the organization",
+      "status": "active",
+      "kind": "clause",
+      "children_complete": true
+    },
+    {
+      "id": "4.1",
+      "title": "Understanding the organization and its context",
+      "status": "active",
+      "kind": "clause",
+      "children_complete": true
+    },
+    {
+      "id": "4.2",
+      "title": "Understanding the needs and expectations of interested parties",
+      "status": "active",
+      "kind": "clause",
+      "children_complete": true
+    },
+    {
+      "id": "4.3",
+      "title": "Determining the scope of the AI management system",
+      "status": "active",
+      "kind": "clause",
+      "children_complete": true
+    },
+    {
+      "id": "4.4",
+      "title": "AI management system",
+      "status": "active",
+      "kind": "clause",
+      "children_complete": true
+    },
+    {
+      "id": "5",
+      "title": "Leadership",
+      "status": "active",
+      "kind": "clause",
+      "children_complete": true
+    },
+    {
+      "id": "5.1",
+      "title": "Leadership and commitment",
+      "status": "active",
+      "kind": "clause",
+      "children_complete": true
+    },
+    {
+      "id": "5.2",
+      "title": "AI policy",
+      "status": "active",
+      "kind": "clause",
+      "children_complete": true
+    },
+    {
+      "id": "5.3",
+      "title": "Roles, responsibilities and authorities",
+      "status": "active",
+      "kind": "clause",
+      "children_complete": true
+    },
+    {
+      "id": "6",
+      "title": "Planning",
+      "status": "active",
+      "kind": "clause",
+      "children_complete": true
+    },
+    {
+      "id": "6.1",
+      "title": "Actions to address risks and opportunities",
+      "status": "active",
+      "kind": "clause",
+      "children_complete": true
+    },
+    {
+      "id": "6.1.1",
+      "title": "General",
+      "status": "active",
+      "kind": "clause",
+      "children_complete": true
+    },
+    {
+      "id": "6.1.2",
+      "title": "AI risk assessment",
+      "status": "active",
+      "kind": "clause",
+      "children_complete": true
+    },
+    {
+      "id": "6.1.3",
+      "title": "AI risk treatment",
+      "status": "active",
+      "kind": "clause",
+      "children_complete": true
+    },
+    {
+      "id": "6.1.4",
+      "title": "AI system impact assessment",
+      "status": "active",
+      "kind": "clause",
+      "children_complete": true
+    },
+    {
+      "id": "6.2",
+      "title": "AI objectives and planning to achieve them",
+      "status": "active",
+      "kind": "clause",
+      "children_complete": true
+    },
+    {
+      "id": "6.3",
+      "title": "Planning of changes",
+      "status": "active",
+      "kind": "clause",
+      "children_complete": true
+    },
+    {
+      "id": "7",
+      "title": "Support",
+      "status": "active",
+      "kind": "clause",
+      "children_complete": true
+    },
+    {
+      "id": "7.1",
+      "title": "Resources",
+      "status": "active",
+      "kind": "clause",
+      "children_complete": true
+    },
+    {
+      "id": "7.2",
+      "title": "Competence",
+      "status": "active",
+      "kind": "clause",
+      "children_complete": true
+    },
+    {
+      "id": "7.3",
+      "title": "Awareness",
+      "status": "active",
+      "kind": "clause",
+      "children_complete": true
+    },
+    {
+      "id": "7.4",
+      "title": "Communication",
+      "status": "active",
+      "kind": "clause",
+      "children_complete": true
+    },
+    {
+      "id": "7.5",
+      "title": "Documented information",
+      "status": "active",
+      "kind": "clause",
+      "children_complete": true
+    },
+    {
+      "id": "7.5.1",
+      "title": "General",
+      "status": "active",
+      "kind": "clause",
+      "children_complete": true
+    },
+    {
+      "id": "7.5.2",
+      "title": "Creating and updating documented information",
+      "status": "active",
+      "kind": "clause",
+      "children_complete": true
+    },
+    {
+      "id": "7.5.3",
+      "title": "Control of documented information",
+      "status": "active",
+      "kind": "clause",
+      "children_complete": true
+    },
+    {
+      "id": "8",
+      "title": "Operation",
+      "status": "active",
+      "kind": "clause",
+      "children_complete": true
+    },
+    {
+      "id": "8.1",
+      "title": "Operational planning and control",
+      "status": "active",
+      "kind": "clause",
+      "children_complete": true
+    },
+    {
+      "id": "8.2",
+      "title": "AI risk assessment",
+      "status": "active",
+      "kind": "clause",
+      "children_complete": true
+    },
+    {
+      "id": "8.3",
+      "title": "AI risk treatment",
+      "status": "active",
+      "kind": "clause",
+      "children_complete": true
+    },
+    {
+      "id": "8.4",
+      "title": "AI system impact assessment",
+      "status": "active",
+      "kind": "clause",
+      "children_complete": true
+    },
+    {
+      "id": "9",
+      "title": "Performance evaluation",
+      "status": "active",
+      "kind": "clause",
+      "children_complete": true
+    },
+    {
+      "id": "9.1",
+      "title": "Monitoring, measurement, analysis and evaluation",
+      "status": "active",
+      "kind": "clause",
+      "children_complete": true,
+      "aliases": [
+        "Monitoring and measurement"
+      ]
+    },
+    {
+      "id": "9.2",
+      "title": "Internal audit",
+      "status": "active",
+      "kind": "clause",
+      "children_complete": true
+    },
+    {
+      "id": "9.2.1",
+      "title": "General",
+      "status": "active",
+      "kind": "clause",
+      "children_complete": true
+    },
+    {
+      "id": "9.2.2",
+      "title": "Internal audit programme",
+      "status": "active",
+      "kind": "clause",
+      "children_complete": true
+    },
+    {
+      "id": "9.3",
+      "title": "Management review",
+      "status": "active",
+      "kind": "clause",
+      "children_complete": true
+    },
+    {
+      "id": "9.3.1",
+      "title": "General",
+      "status": "active",
+      "kind": "clause",
+      "children_complete": true
+    },
+    {
+      "id": "9.3.2",
+      "title": "Management review inputs",
+      "status": "active",
+      "kind": "clause",
+      "children_complete": true
+    },
+    {
+      "id": "9.3.3",
+      "title": "Management review results",
+      "status": "active",
+      "kind": "clause",
+      "children_complete": true
+    },
+    {
+      "id": "10",
+      "title": "Improvement",
+      "status": "active",
+      "kind": "clause",
+      "children_complete": true
+    },
+    {
+      "id": "10.1",
+      "title": "Continual improvement",
+      "status": "active",
+      "kind": "clause",
+      "children_complete": true
+    },
+    {
+      "id": "10.2",
+      "title": "Nonconformity and corrective action",
+      "status": "active",
+      "kind": "clause",
+      "children_complete": true
+    },
+    {
+      "id": "A.2",
+      "title": "Policies related to AI",
+      "status": "active",
+      "kind": "area",
+      "children_complete": true
+    },
+    {
+      "id": "A.2.2",
+      "title": "AI policy",
+      "status": "active",
+      "kind": "control",
+      "children_complete": true
+    },
+    {
+      "id": "A.2.3",
+      "title": "Alignment with other organizational policies",
+      "status": "active",
+      "kind": "control",
+      "children_complete": true
+    },
+    {
+      "id": "A.2.4",
+      "title": "Review of the AI policy",
+      "status": "active",
+      "kind": "control",
+      "children_complete": true
+    },
+    {
+      "id": "A.3",
+      "title": "Internal organization",
+      "status": "active",
+      "kind": "area",
+      "children_complete": true
+    },
+    {
+      "id": "A.3.2",
+      "title": "AI roles and responsibilities",
+      "status": "active",
+      "kind": "control",
+      "aliases": [
+        "Roles and responsibilities",
+        "Accountability"
+      ],
+      "children_complete": true
+    },
+    {
+      "id": "A.3.3",
+      "title": "Reporting of concerns",
+      "status": "active",
+      "kind": "control",
+      "children_complete": true
+    },
+    {
+      "id": "A.4",
+      "title": "Resources for AI systems",
+      "status": "active",
+      "kind": "area",
+      "children_complete": true
+    },
+    {
+      "id": "A.4.2",
+      "title": "Resource documentation",
+      "status": "active",
+      "kind": "control",
+      "children_complete": true
+    },
+    {
+      "id": "A.4.3",
+      "title": "Data resources",
+      "status": "active",
+      "kind": "control",
+      "children_complete": true
+    },
+    {
+      "id": "A.4.4",
+      "title": "Tooling resources",
+      "status": "active",
+      "kind": "control",
+      "children_complete": true
+    },
+    {
+      "id": "A.4.5",
+      "title": "System and computing resources",
+      "status": "active",
+      "kind": "control",
+      "children_complete": true
+    },
+    {
+      "id": "A.4.6",
+      "title": "Human resources",
+      "status": "active",
+      "kind": "control",
+      "children_complete": true
+    },
+    {
+      "id": "A.5",
+      "title": "Assessing impacts of AI systems",
+      "status": "active",
+      "kind": "area",
+      "aliases": [
+        "Impact assessment"
+      ],
+      "children_complete": true
+    },
+    {
+      "id": "A.5.2",
+      "title": "AI system impact assessment process",
+      "status": "active",
+      "kind": "control",
+      "aliases": [
+        "Impact assessment process"
+      ],
+      "children_complete": true
+    },
+    {
+      "id": "A.5.3",
+      "title": "Documentation of AI system impact assessments",
+      "status": "active",
+      "kind": "control",
+      "aliases": [
+        "Documentation of impact assessments"
+      ],
+      "children_complete": true
+    },
+    {
+      "id": "A.5.4",
+      "title": "Assessing AI system impact on individuals or groups of individuals",
+      "status": "active",
+      "kind": "control",
+      "aliases": [
+        "Impact on individuals"
+      ],
+      "children_complete": true
+    },
+    {
+      "id": "A.5.5",
+      "title": "Assessing societal impacts of AI systems",
+      "status": "active",
+      "kind": "control",
+      "aliases": [
+        "Societal impact",
+        "Social impact",
+        "Societal impacts"
+      ],
+      "children_complete": true
+    },
+    {
+      "id": "A.6",
+      "title": "AI system life cycle",
+      "status": "active",
+      "kind": "area",
+      "aliases": [
+        "AI system lifecycle",
+        "Lifecycle"
+      ],
+      "children_complete": true
+    },
+    {
+      "id": "A.6.1",
+      "title": "Management guidance for AI system development",
+      "status": "active",
+      "kind": "objective",
+      "children_complete": true
+    },
+    {
+      "id": "A.6.1.2",
+      "title": "Objectives for responsible development of AI system",
+      "status": "active",
+      "kind": "control",
+      "children_complete": true
+    },
+    {
+      "id": "A.6.1.3",
+      "title": "Processes for responsible AI system design and development",
+      "status": "active",
+      "kind": "control",
+      "children_complete": true
+    },
+    {
+      "id": "A.6.2",
+      "title": "AI system life cycle",
+      "status": "active",
+      "kind": "objective",
+      "aliases": [
+        "AI system lifecycle",
+        "Lifecycle"
+      ],
+      "children_complete": true
+    },
+    {
+      "id": "A.6.2.2",
+      "title": "AI system requirements and specification",
+      "status": "active",
+      "kind": "control",
+      "children_complete": true
+    },
+    {
+      "id": "A.6.2.3",
+      "title": "Documentation of AI system design and development",
+      "status": "active",
+      "kind": "control",
+      "children_complete": true
+    },
+    {
+      "id": "A.6.2.4",
+      "title": "AI system verification and validation",
+      "status": "active",
+      "kind": "control",
+      "aliases": [
+        "Verification and validation"
+      ],
+      "children_complete": true
+    },
+    {
+      "id": "A.6.2.5",
+      "title": "AI system deployment",
+      "status": "active",
+      "kind": "control",
+      "aliases": [
+        "Deployment"
+      ],
+      "children_complete": true
+    },
+    {
+      "id": "A.6.2.6",
+      "title": "AI system operation and monitoring",
+      "status": "active",
+      "kind": "control",
+      "aliases": [
+        "Operation and monitoring",
+        "AI system operation",
+        "Runtime monitoring"
+      ],
+      "children_complete": true
+    },
+    {
+      "id": "A.6.2.7",
+      "title": "AI system technical documentation",
+      "status": "active",
+      "kind": "control",
+      "aliases": [
+        "Technical documentation"
+      ],
+      "children_complete": true
+    },
+    {
+      "id": "A.6.2.8",
+      "title": "AI system recording of event logs",
+      "status": "active",
+      "kind": "control",
+      "aliases": [
+        "Event logs",
+        "Recording of event logs",
+        "Logging",
+        "Event logging",
+        "Audit logging"
+      ],
+      "children_complete": true
+    },
+    {
+      "id": "A.7",
+      "title": "Data for AI systems",
+      "status": "active",
+      "kind": "area",
+      "children_complete": true
+    },
+    {
+      "id": "A.7.2",
+      "title": "Data for development and enhancement of AI system",
+      "status": "active",
+      "kind": "control",
+      "children_complete": true
+    },
+    {
+      "id": "A.7.3",
+      "title": "Acquisition of data",
+      "status": "active",
+      "kind": "control",
+      "children_complete": true
+    },
+    {
+      "id": "A.7.4",
+      "title": "Quality of data for AI systems",
+      "status": "active",
+      "kind": "control",
+      "aliases": [
+        "Data quality"
+      ],
+      "children_complete": true
+    },
+    {
+      "id": "A.7.5",
+      "title": "Data provenance",
+      "status": "active",
+      "kind": "control",
+      "aliases": [
+        "Provenance"
+      ],
+      "children_complete": true
+    },
+    {
+      "id": "A.7.6",
+      "title": "Data preparation",
+      "status": "active",
+      "kind": "control",
+      "children_complete": true
+    },
+    {
+      "id": "A.8",
+      "title": "Information for interested parties of AI systems",
+      "status": "active",
+      "kind": "area",
+      "children_complete": true
+    },
+    {
+      "id": "A.8.2",
+      "title": "System documentation and information for users",
+      "status": "active",
+      "kind": "control",
+      "aliases": [
+        "Information for users",
+        "Transparency"
+      ],
+      "children_complete": true
+    },
+    {
+      "id": "A.8.3",
+      "title": "External reporting",
+      "status": "active",
+      "kind": "control",
+      "children_complete": true
+    },
+    {
+      "id": "A.8.4",
+      "title": "Communication of incidents",
+      "status": "active",
+      "kind": "control",
+      "aliases": [
+        "Incident communication"
+      ],
+      "children_complete": true
+    },
+    {
+      "id": "A.8.5",
+      "title": "Information for interested parties",
+      "status": "active",
+      "kind": "control",
+      "children_complete": true
+    },
+    {
+      "id": "A.9",
+      "title": "Use of AI systems",
+      "status": "active",
+      "kind": "area",
+      "children_complete": true
+    },
+    {
+      "id": "A.9.2",
+      "title": "Processes for responsible use of AI systems",
+      "status": "active",
+      "kind": "control",
+      "aliases": [
+        "Responsible use"
+      ],
+      "children_complete": true
+    },
+    {
+      "id": "A.9.3",
+      "title": "Objectives for responsible use of AI system",
+      "status": "active",
+      "kind": "control",
+      "aliases": [
+        "Use objectives"
+      ],
+      "children_complete": true
+    },
+    {
+      "id": "A.9.4",
+      "title": "Intended use of the AI system",
+      "status": "active",
+      "kind": "control",
+      "aliases": [
+        "Intended use"
+      ],
+      "children_complete": true
+    },
+    {
+      "id": "A.10",
+      "title": "Third-party and customer relationships",
+      "status": "active",
+      "kind": "area",
+      "children_complete": true
+    },
+    {
+      "id": "A.10.2",
+      "title": "Allocating responsibilities",
+      "status": "active",
+      "kind": "control",
+      "children_complete": true
+    },
+    {
+      "id": "A.10.3",
+      "title": "Suppliers",
+      "status": "active",
+      "kind": "control",
+      "aliases": [
+        "Supplier relationships",
+        "Supply chain"
+      ],
+      "children_complete": true
+    },
+    {
+      "id": "A.10.4",
+      "title": "Customers",
+      "status": "active",
+      "kind": "control",
+      "children_complete": true
+    },
+    {
+      "id": "A.2.1",
+      "title": "Objective of A.2 (Policies related to AI)",
+      "status": "active",
+      "kind": "objective",
+      "children_complete": true
+    },
+    {
+      "id": "A.3.1",
+      "title": "Objective of A.3 (Internal organization)",
+      "status": "active",
+      "kind": "objective",
+      "children_complete": true
+    },
+    {
+      "id": "A.4.1",
+      "title": "Objective of A.4 (Resources for AI systems)",
+      "status": "active",
+      "kind": "objective",
+      "children_complete": true
+    },
+    {
+      "id": "A.5.1",
+      "title": "Objective of A.5 (Assessing impacts of AI systems)",
+      "status": "active",
+      "kind": "objective",
+      "children_complete": true
+    },
+    {
+      "id": "A.6.1.1",
+      "title": "Objective of A.6.1 (Management guidance for AI system development)",
+      "status": "active",
+      "kind": "objective",
+      "children_complete": true
+    },
+    {
+      "id": "A.6.2.1",
+      "title": "Objective of A.6.2 (AI system life cycle)",
+      "status": "active",
+      "kind": "objective",
+      "children_complete": true
+    },
+    {
+      "id": "A.7.1",
+      "title": "Objective of A.7 (Data for AI systems)",
+      "status": "active",
+      "kind": "objective",
+      "children_complete": true
+    },
+    {
+      "id": "A.8.1",
+      "title": "Objective of A.8 (Information for interested parties of AI systems)",
+      "status": "active",
+      "kind": "objective",
+      "children_complete": true
+    },
+    {
+      "id": "A.9.1",
+      "title": "Objective of A.9 (Use of AI systems)",
+      "status": "active",
+      "kind": "objective",
+      "children_complete": true
+    },
+    {
+      "id": "A.10.1",
+      "title": "Objective of A.10 (Third-party and customer relationships)",
+      "status": "active",
+      "kind": "objective",
+      "children_complete": true
+    },
+    {
+      "id": "A",
+      "title": "Reference control objectives and controls",
+      "status": "active",
+      "kind": "annex",
+      "aliases": [
+        "Annex A"
+      ],
+      "children_complete": true
+    }
+  ]
+}

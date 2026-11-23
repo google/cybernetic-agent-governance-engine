@@ -1,0 +1,206 @@
+{
+  "schema_version": 1,
+  "standard": "nist-ai-600-1",
+  "title": "NIST AI 600-1, Artificial Intelligence Risk Management Framework: Generative Artificial Intelligence Profile",
+  "source_url": "https://nvlpubs.nist.gov/nistpubs/ai/NIST.AI.600-1.pdf",
+  "version": "NIST AI 600-1, July 2024 (doi:10.6028/NIST.AI.600-1)",
+  "retrieved": "2026-11-23",
+  "source_quality": "knowledge-unverified",
+  "source_notes": "Primary-source fetch of nvlpubs.nist.gov was denied (permission prompt timed out) on 2026-11-23; the twelve-risk order of Section 2 and the appendix titles were compiled from knowledge of the published profile and the 2026-11-23 standards-section audit, and must be verified against source_url before this table is upgraded to primary. Section 3 action identifiers (GV-/MP-/MS-/MG-x.y-nnn) are not enumerated because the repository cites none; Section 3 is therefore not children_complete. Section 2 risks have no numbered subsections.",
+  "complete": true,
+  "rows": [
+    {
+      "id": "1",
+      "title": "Introduction",
+      "status": "active",
+      "kind": "section",
+      "children_complete": true
+    },
+    {
+      "id": "2",
+      "title": "Overview of Risks Unique to or Exacerbated by GAI",
+      "status": "active",
+      "kind": "section",
+      "aliases": [
+        "Risks"
+      ],
+      "children_complete": true
+    },
+    {
+      "id": "2.1",
+      "title": "CBRN Information or Capabilities",
+      "status": "active",
+      "kind": "section",
+      "aliases": [
+        "CBRN",
+        "Chemical, biological, radiological, or nuclear information"
+      ],
+      "children_complete": true
+    },
+    {
+      "id": "2.2",
+      "title": "Confabulation",
+      "status": "active",
+      "kind": "section",
+      "aliases": [
+        "Hallucination"
+      ],
+      "children_complete": true
+    },
+    {
+      "id": "2.3",
+      "title": "Dangerous, Violent, or Hateful Content",
+      "status": "active",
+      "kind": "section",
+      "aliases": [
+        "Dangerous content",
+        "Violent content",
+        "Hateful content"
+      ],
+      "children_complete": true
+    },
+    {
+      "id": "2.4",
+      "title": "Data Privacy",
+      "status": "active",
+      "kind": "section",
+      "aliases": [
+        "Privacy",
+        "PII"
+      ],
+      "children_complete": true
+    },
+    {
+      "id": "2.5",
+      "title": "Environmental Impacts",
+      "status": "active",
+      "kind": "section",
+      "aliases": [
+        "Environmental impact",
+        "Energy"
+      ],
+      "children_complete": true
+    },
+    {
+      "id": "2.6",
+      "title": "Harmful Bias and Homogenization",
+      "status": "active",
+      "kind": "section",
+      "aliases": [
+        "Harmful bias",
+        "Bias",
+        "Homogenization",
+        "Fairness"
+      ],
+      "children_complete": true
+    },
+    {
+      "id": "2.7",
+      "title": "Human-AI Configuration",
+      "status": "active",
+      "kind": "section",
+      "aliases": [
+        "Human-AI configuration",
+        "Human oversight",
+        "Automation bias",
+        "Over-reliance"
+      ],
+      "children_complete": true
+    },
+    {
+      "id": "2.8",
+      "title": "Information Integrity",
+      "status": "active",
+      "kind": "section",
+      "aliases": [
+        "Information integrity",
+        "Misinformation",
+        "Disinformation",
+        "Content provenance"
+      ],
+      "children_complete": true
+    },
+    {
+      "id": "2.9",
+      "title": "Information Security",
+      "status": "active",
+      "kind": "section",
+      "aliases": [
+        "Information security",
+        "Cybersecurity",
+        "Prompt injection",
+        "Data poisoning"
+      ],
+      "children_complete": true
+    },
+    {
+      "id": "2.10",
+      "title": "Intellectual Property",
+      "status": "active",
+      "kind": "section",
+      "aliases": [
+        "IP",
+        "Copyright"
+      ],
+      "children_complete": true
+    },
+    {
+      "id": "2.11",
+      "title": "Obscene, Degrading, and/or Abusive Content",
+      "status": "active",
+      "kind": "section",
+      "aliases": [
+        "Obscene content",
+        "Abusive content",
+        "CSAM",
+        "NCII"
+      ],
+      "children_complete": true
+    },
+    {
+      "id": "2.12",
+      "title": "Value Chain and Component Integration",
+      "status": "active",
+      "kind": "section",
+      "aliases": [
+        "Value chain",
+        "Component integration",
+        "Supply chain",
+        "Third-party components"
+      ],
+      "children_complete": true
+    },
+    {
+      "id": "3",
+      "title": "Suggested Actions to Manage GAI Risks",
+      "status": "active",
+      "kind": "section",
+      "aliases": [
+        "Suggested Actions",
+        "Actions"
+      ]
+    },
+    {
+      "id": "Appendix A",
+      "title": "Primary GAI Considerations",
+      "status": "active",
+      "kind": "appendix",
+      "aliases": [
+        "Governance",
+        "Pre-Deployment Testing",
+        "Content Provenance",
+        "Incident Disclosure"
+      ]
+    },
+    {
+      "id": "Appendix B",
+      "title": "References",
+      "status": "active",
+      "kind": "appendix",
+      "aliases": [
+        "Bibliography"
+      ],
+      "children_complete": true
+    }
+  ]
+}

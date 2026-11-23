@@ -1,0 +1,606 @@
+{
+  "schema_version": 1,
+  "standard": "nist-ai-rmf-1.0",
+  "title": "Artificial Intelligence Risk Management Framework (AI RMF 1.0)",
+  "source_url": "https://nvlpubs.nist.gov/nistpubs/ai/NIST.AI.100-1.pdf",
+  "version": "NIST AI 100-1 (AI RMF 1.0), January 2023",
+  "retrieved": "2026-11-23",
+  "source_quality": "knowledge-unverified",
+  "source_notes": "Primary-source fetch of nvlpubs.nist.gov was denied (permission prompt timed out) on 2026-11-23; rows compiled from knowledge of the published text and must be verified against source_url before this table is upgraded to primary.",
+  "complete": true,
+  "rows": [
+    {
+      "id": "GOVERN",
+      "title": "Cultivate and implement a culture of AI risk management",
+      "status": "active",
+      "kind": "function",
+      "children_complete": true
+    },
+    {
+      "id": "GOVERN 1",
+      "title": "Policies, processes and practices for AI risk management are in place",
+      "status": "active",
+      "kind": "category",
+      "children_complete": true
+    },
+    {
+      "id": "GOVERN 1.1",
+      "title": "Legal and regulatory requirements involving AI are understood and documented",
+      "status": "active",
+      "kind": "subcategory"
+    },
+    {
+      "id": "GOVERN 1.2",
+      "title": "Trustworthy AI characteristics integrated into organizational policies",
+      "status": "active",
+      "kind": "subcategory"
+    },
+    {
+      "id": "GOVERN 1.3",
+      "title": "Processes determine needed risk management level based on risk tolerance",
+      "status": "active",
+      "kind": "subcategory"
+    },
+    {
+      "id": "GOVERN 1.4",
+      "title": "Risk management process established through transparent policies and controls",
+      "status": "active",
+      "kind": "subcategory"
+    },
+    {
+      "id": "GOVERN 1.5",
+      "title": "Ongoing monitoring and periodic review of the risk management process",
+      "status": "active",
+      "kind": "subcategory"
+    },
+    {
+      "id": "GOVERN 1.6",
+      "title": "Mechanisms to inventory AI systems",
+      "status": "active",
+      "kind": "subcategory"
+    },
+    {
+      "id": "GOVERN 1.7",
+      "title": "Processes for decommissioning and phasing out AI systems",
+      "status": "active",
+      "kind": "subcategory"
+    },
+    {
+      "id": "GOVERN 2",
+      "title": "Accountability structures empower and train teams for AI risk management",
+      "status": "active",
+      "kind": "category",
+      "children_complete": true
+    },
+    {
+      "id": "GOVERN 2.1",
+      "title": "Roles, responsibilities and lines of communication are documented",
+      "status": "active",
+      "kind": "subcategory"
+    },
+    {
+      "id": "GOVERN 2.2",
+      "title": "Personnel and partners receive AI risk management training",
+      "status": "active",
+      "kind": "subcategory"
+    },
+    {
+      "id": "GOVERN 2.3",
+      "title": "Executive leadership takes responsibility for AI risk decisions",
+      "status": "active",
+      "kind": "subcategory"
+    },
+    {
+      "id": "GOVERN 3",
+      "title": "Workforce diversity, equity, inclusion and accessibility are prioritized",
+      "status": "active",
+      "kind": "category",
+      "children_complete": true
+    },
+    {
+      "id": "GOVERN 3.1",
+      "title": "Risk decisions informed by a diverse team",
+      "status": "active",
+      "kind": "subcategory"
+    },
+    {
+      "id": "GOVERN 3.2",
+      "title": "Policies defining roles for human-AI configurations and oversight",
+      "status": "active",
+      "kind": "subcategory"
+    },
+    {
+      "id": "GOVERN 4",
+      "title": "Teams committed to a culture that considers and communicates AI risk",
+      "status": "active",
+      "kind": "category",
+      "children_complete": true
+    },
+    {
+      "id": "GOVERN 4.1",
+      "title": "Policies foster critical thinking and a safety-first mindset",
+      "status": "active",
+      "kind": "subcategory"
+    },
+    {
+      "id": "GOVERN 4.2",
+      "title": "Teams document and communicate risks and impacts of AI technology",
+      "status": "active",
+      "kind": "subcategory"
+    },
+    {
+      "id": "GOVERN 4.3",
+      "title": "Practices enable AI testing, incident identification and information sharing",
+      "status": "active",
+      "kind": "subcategory"
+    },
+    {
+      "id": "GOVERN 5",
+      "title": "Robust engagement with relevant AI actors",
+      "status": "active",
+      "kind": "category",
+      "children_complete": true
+    },
+    {
+      "id": "GOVERN 5.1",
+      "title": "Collect and integrate external feedback on individual and societal impacts",
+      "status": "active",
+      "kind": "subcategory"
+    },
+    {
+      "id": "GOVERN 5.2",
+      "title": "Mechanisms to incorporate adjudicated feedback into system design",
+      "status": "active",
+      "kind": "subcategory"
+    },
+    {
+      "id": "GOVERN 6",
+      "title": "Policies addressing third-party software, data and supply-chain risks",
+      "status": "active",
+      "kind": "category",
+      "children_complete": true
+    },
+    {
+      "id": "GOVERN 6.1",
+      "title": "Policies address AI risks associated with third-party entities",
+      "status": "active",
+      "kind": "subcategory"
+    },
+    {
+      "id": "GOVERN 6.2",
+      "title": "Contingency processes for failures in high-risk third-party data or systems",
+      "status": "active",
+      "kind": "subcategory"
+    },
+    {
+      "id": "MAP",
+      "title": "Establish context to frame AI risks",
+      "status": "active",
+      "kind": "function",
+      "children_complete": true
+    },
+    {
+      "id": "MAP 1",
+      "title": "Context is established and understood",
+      "status": "active",
+      "kind": "category",
+      "children_complete": true
+    },
+    {
+      "id": "MAP 1.1",
+      "title": "Intended purposes, context-specific laws, norms and deployment settings documented",
+      "status": "active",
+      "kind": "subcategory"
+    },
+    {
+      "id": "MAP 1.2",
+      "title": "Interdisciplinary and diverse AI actors establish context",
+      "status": "active",
+      "kind": "subcategory"
+    },
+    {
+      "id": "MAP 1.3",
+      "title": "Organizational mission and goals for AI technology are documented",
+      "status": "active",
+      "kind": "subcategory"
+    },
+    {
+      "id": "MAP 1.4",
+      "title": "Business value or context of business use is clearly defined",
+      "status": "active",
+      "kind": "subcategory"
+    },
+    {
+      "id": "MAP 1.5",
+      "title": "Organizational risk tolerances are determined and documented",
+      "status": "active",
+      "kind": "subcategory"
+    },
+    {
+      "id": "MAP 1.6",
+      "title": "System requirements elicited from and understood by relevant AI actors",
+      "status": "active",
+      "kind": "subcategory"
+    },
+    {
+      "id": "MAP 2",
+      "title": "Categorization of the AI system is performed",
+      "status": "active",
+      "kind": "category",
+      "children_complete": true
+    },
+    {
+      "id": "MAP 2.1",
+      "title": "Specific tasks and implementation methods of the AI system are defined",
+      "status": "active",
+      "kind": "subcategory"
+    },
+    {
+      "id": "MAP 2.2",
+      "title": "Knowledge limits and human use and oversight of outputs documented",
+      "status": "active",
+      "kind": "subcategory"
+    },
+    {
+      "id": "MAP 2.3",
+      "title": "Scientific integrity and TEVV considerations are identified and documented",
+      "status": "active",
+      "kind": "subcategory"
+    },
+    {
+      "id": "MAP 3",
+      "title": "AI capabilities, usage, goals, benefits and costs are understood",
+      "status": "active",
+      "kind": "category",
+      "children_complete": true
+    },
+    {
+      "id": "MAP 3.1",
+      "title": "Potential benefits of intended AI functionality are examined and documented",
+      "status": "active",
+      "kind": "subcategory"
+    },
+    {
+      "id": "MAP 3.2",
+      "title": "Potential costs, including non-monetary costs of AI errors, documented",
+      "status": "active",
+      "kind": "subcategory"
+    },
+    {
+      "id": "MAP 3.3",
+      "title": "Targeted application scope is specified and documented",
+      "status": "active",
+      "kind": "subcategory"
+    },
+    {
+      "id": "MAP 3.4",
+      "title": "Processes for operator and practitioner proficiency are defined",
+      "status": "active",
+      "kind": "subcategory"
+    },
+    {
+      "id": "MAP 3.5",
+      "title": "Processes for human oversight are defined, assessed and documented",
+      "status": "active",
+      "kind": "subcategory"
+    },
+    {
+      "id": "MAP 4",
+      "title": "Risks and benefits mapped for all components including third-party",
+      "status": "active",
+      "kind": "category",
+      "children_complete": true
+    },
+    {
+      "id": "MAP 4.1",
+      "title": "Approaches for mapping technology and legal risks of components documented",
+      "status": "active",
+      "kind": "subcategory"
+    },
+    {
+      "id": "MAP 4.2",
+      "title": "Internal risk controls for AI system components are identified",
+      "status": "active",
+      "kind": "subcategory"
+    },
+    {
+      "id": "MAP 5",
+      "title": "Impacts to individuals, groups, communities and society are characterized",
+      "status": "active",
+      "kind": "category",
+      "children_complete": true
+    },
+    {
+      "id": "MAP 5.1",
+      "title": "Likelihood and magnitude of each identified impact are documented",
+      "status": "active",
+      "kind": "subcategory"
+    },
+    {
+      "id": "MAP 5.2",
+      "title": "Practices for regular engagement and impact feedback are in place",
+      "status": "active",
+      "kind": "subcategory"
+    },
+    {
+      "id": "MEASURE",
+      "title": "Analyze, assess, benchmark and monitor AI risk and impacts",
+      "status": "active",
+      "kind": "function",
+      "children_complete": true
+    },
+    {
+      "id": "MEASURE 1",
+      "title": "Appropriate methods and metrics are identified and applied",
+      "status": "active",
+      "kind": "category",
+      "children_complete": true
+    },
+    {
+      "id": "MEASURE 1.1",
+      "title": "Measurement approaches and metrics selected starting with significant risks",
+      "status": "active",
+      "kind": "subcategory"
+    },
+    {
+      "id": "MEASURE 1.2",
+      "title": "Appropriateness of metrics and effectiveness of controls regularly assessed",
+      "status": "active",
+      "kind": "subcategory"
+    },
+    {
+      "id": "MEASURE 1.3",
+      "title": "Independent assessors involved in regular assessments and updates",
+      "status": "active",
+      "kind": "subcategory"
+    },
+    {
+      "id": "MEASURE 2",
+      "title": "AI systems are evaluated for trustworthy characteristics",
+      "status": "active",
+      "kind": "category",
+      "children_complete": true
+    },
+    {
+      "id": "MEASURE 2.1",
+      "title": "Test sets, metrics and TEVV tool details are documented",
+      "status": "active",
+      "kind": "subcategory"
+    },
+    {
+      "id": "MEASURE 2.2",
+      "title": "Human-subject evaluations meet requirements and are representative",
+      "status": "active",
+      "kind": "subcategory"
+    },
+    {
+      "id": "MEASURE 2.3",
+      "title": "Performance or assurance criteria measured for deployment-like conditions",
+      "status": "active",
+      "kind": "subcategory"
+    },
+    {
+      "id": "MEASURE 2.4",
+      "title": "AI system functionality and behavior monitored in production",
+      "status": "active",
+      "kind": "subcategory"
+    },
+    {
+      "id": "MEASURE 2.5",
+      "title": "AI system is demonstrated to be valid and reliable",
+      "status": "active",
+      "kind": "subcategory"
+    },
+    {
+      "id": "MEASURE 2.6",
+      "title": "AI system evaluated for safety risks and can fail safely",
+      "status": "active",
+      "kind": "subcategory"
+    },
+    {
+      "id": "MEASURE 2.7",
+      "title": "AI system security and resilience are evaluated and documented",
+      "status": "active",
+      "kind": "subcategory"
+    },
+    {
+      "id": "MEASURE 2.8",
+      "title": "Transparency and accountability risks are examined and documented",
+      "status": "active",
+      "kind": "subcategory"
+    },
+    {
+      "id": "MEASURE 2.9",
+      "title": "AI model is explained, validated and documented",
+      "status": "active",
+      "kind": "subcategory"
+    },
+    {
+      "id": "MEASURE 2.10",
+      "title": "Privacy risk of the AI system is examined and documented",
+      "status": "active",
+      "kind": "subcategory"
+    },
+    {
+      "id": "MEASURE 2.11",
+      "title": "Fairness and bias are evaluated and results documented",
+      "status": "active",
+      "kind": "subcategory"
+    },
+    {
+      "id": "MEASURE 2.12",
+      "title": "Environmental impact and sustainability are assessed and documented",
+      "status": "active",
+      "kind": "subcategory"
+    },
+    {
+      "id": "MEASURE 2.13",
+      "title": "Effectiveness of TEVV metrics and processes is evaluated",
+      "status": "active",
+      "kind": "subcategory"
+    },
+    {
+      "id": "MEASURE 3",
+      "title": "Mechanisms for tracking identified AI risks over time are in place",
+      "status": "active",
+      "kind": "category",
+      "children_complete": true
+    },
+    {
+      "id": "MEASURE 3.1",
+      "title": "Existing, unanticipated and emergent AI risks are regularly tracked",
+      "status": "active",
+      "kind": "subcategory"
+    },
+    {
+      "id": "MEASURE 3.2",
+      "title": "Risk tracking considered where risks are difficult to measure",
+      "status": "active",
+      "kind": "subcategory"
+    },
+    {
+      "id": "MEASURE 3.3",
+      "title": "Feedback processes for end users to report problems and appeal outcomes",
+      "status": "active",
+      "kind": "subcategory"
+    },
+    {
+      "id": "MEASURE 4",
+      "title": "Feedback about efficacy of measurement is gathered and assessed",
+      "status": "active",
+      "kind": "category",
+      "children_complete": true
+    },
+    {
+      "id": "MEASURE 4.1",
+      "title": "Measurement approaches connected to deployment context and domain experts",
+      "status": "active",
+      "kind": "subcategory"
+    },
+    {
+      "id": "MEASURE 4.2",
+      "title": "Trustworthiness measurement results validated with domain experts and AI actors",
+      "status": "active",
+      "kind": "subcategory"
+    },
+    {
+      "id": "MEASURE 4.3",
+      "title": "Measurable performance improvements or declines are identified and documented",
+      "status": "active",
+      "kind": "subcategory"
+    },
+    {
+      "id": "MANAGE",
+      "title": "Allocate resources to mapped and measured AI risks",
+      "status": "active",
+      "kind": "function",
+      "children_complete": true
+    },
+    {
+      "id": "MANAGE 1",
+      "title": "AI risks from MAP and MEASURE are prioritized, responded to and managed",
+      "status": "active",
+      "kind": "category",
+      "children_complete": true
+    },
+    {
+      "id": "MANAGE 1.1",
+      "title": "Determine whether AI system achieves purpose and should proceed",
+      "status": "active",
+      "kind": "subcategory"
+    },
+    {
+      "id": "MANAGE 1.2",
+      "title": "Treatment of documented AI risks is prioritized",
+      "status": "active",
+      "kind": "subcategory"
+    },
+    {
+      "id": "MANAGE 1.3",
+      "title": "Responses to high-priority AI risks are developed and documented",
+      "status": "active",
+      "kind": "subcategory"
+    },
+    {
+      "id": "MANAGE 1.4",
+      "title": "Negative residual risks to acquirers and end users are documented",
+      "status": "active",
+      "kind": "subcategory"
+    },
+    {
+      "id": "MANAGE 2",
+      "title": "Strategies to maximize AI benefits and minimize negative impacts",
+      "status": "active",
+      "kind": "category",
+      "children_complete": true
+    },
+    {
+      "id": "MANAGE 2.1",
+      "title": "Resources and non-AI alternatives considered to reduce impacts",
+      "status": "active",
+      "kind": "subcategory"
+    },
+    {
+      "id": "MANAGE 2.2",
+      "title": "Mechanisms to sustain the value of deployed AI systems",
+      "status": "active",
+      "kind": "subcategory"
+    },
+    {
+      "id": "MANAGE 2.3",
+      "title": "Procedures to respond to and recover from previously unknown risks",
+      "status": "active",
+      "kind": "subcategory"
+    },
+    {
+      "id": "MANAGE 2.4",
+      "title": "Mechanisms to supersede, disengage or deactivate AI systems",
+      "status": "active",
+      "kind": "subcategory"
+    },
+    {
+      "id": "MANAGE 3",
+      "title": "AI risks and benefits from third-party entities are managed",
+      "status": "active",
+      "kind": "category",
+      "children_complete": true
+    },
+    {
+      "id": "MANAGE 3.1",
+      "title": "Third-party AI risks regularly monitored and risk controls applied",
+      "status": "active",
+      "kind": "subcategory"
+    },
+    {
+      "id": "MANAGE 3.2",
+      "title": "Pre-trained models used for development are monitored",
+      "status": "active",
+      "kind": "subcategory"
+    },
+    {
+      "id": "MANAGE 4",
+      "title": "Risk treatments and communication plans are documented and monitored",
+      "status": "active",
+      "kind": "category",
+      "children_complete": true
+    },
+    {
+      "id": "MANAGE 4.1",
+      "title": "Post-deployment monitoring plans, including appeal, override and decommissioning",
+      "status": "active",
+      "kind": "subcategory"
+    },
+    {
+      "id": "MANAGE 4.2",
+      "title": "Measurable continual improvement activities integrated into AI system updates",
+      "status": "active",
+      "kind": "subcategory"
+    },
+    {
+      "id": "MANAGE 4.3",
+      "title": "Incidents and errors are communicated, tracked and recovered from",
+      "status": "active",
+      "kind": "subcategory"
+    }
+  ]
+}

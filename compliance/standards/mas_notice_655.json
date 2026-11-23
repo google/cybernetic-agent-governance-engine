@@ -1,0 +1,77 @@
+{
+  "schema_version": 1,
+  "standard": "mas-notice-655",
+  "title": "MAS Notice 655 on Cyber Hygiene",
+  "source_url": "https://www.mas.gov.sg/regulation/notices/notice-655",
+  "version": "MAS Notice 655 (issued 6 August 2019, effective 6 August 2020)",
+  "retrieved": "2026-11-23",
+  "source_quality": "knowledge-unverified",
+  "source_notes": "Primary-source fetch of mas.gov.sg was denied (permission prompt timed out) on 2026-11-23. Only paragraph 4 (the six cyber hygiene practices) is enumerated, from knowledge of the Notice; the remaining paragraph list is NOT confirmed, so the table is not complete and citations of other paragraph numbers are not judged. None of 4.1-4.6 is an audit-logging requirement.",
+  "complete": false,
+  "rows": [
+    {
+      "id": "4",
+      "title": "Cyber Hygiene Practices",
+      "status": "active",
+      "kind": "paragraph",
+      "aliases": [
+        "Cyber hygiene"
+      ],
+      "children_complete": true
+    },
+    {
+      "id": "4.1",
+      "title": "Administrative Accounts",
+      "status": "active",
+      "kind": "paragraph",
+      "aliases": [
+        "Privileged accounts"
+      ]
+    },
+    {
+      "id": "4.2",
+      "title": "Security Patches",
+      "status": "active",
+      "kind": "paragraph",
+      "aliases": [
+        "Patching"
+      ]
+    },
+    {
+      "id": "4.3",
+      "title": "Security Standards",
+      "status": "active",
+      "kind": "paragraph",
+      "aliases": [
+        "Security baseline"
+      ]
+    },
+    {
+      "id": "4.4",
+      "title": "Network Perimeter Defence",
+      "status": "active",
+      "kind": "paragraph",
+      "aliases": [
+        "Network security"
+      ]
+    },
+    {
+      "id": "4.5",
+      "title": "Malware Protection",
+      "status": "active",
+      "kind": "paragraph",
+      "aliases": [
+        "Anti-malware"
+      ]
+    },
+    {
+      "id": "4.6",
+      "title": "Multi-Factor Authentication",
+      "status": "active",
+      "kind": "paragraph",
+      "aliases": [
+        "MFA"
+      ]
+    }
+  ]
+}

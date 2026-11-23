@@ -305,6 +305,12 @@ jobs:
         # mainline commit (`<sha>^:<path>`), which this gate verifies against history.
         run: |
           uv run python scripts/check_doc_references.py
+      - name: Standards-citation gate (POAM-2026-247)
+        # Cited standard sections/articles/controls must exist, not be withdrawn,
+        # and carry the standard's meaning, checked against the sourced tables in
+        # compliance/standards/. Ratchet: tests/.standard-citation-baseline.
+        run: |
+          uv run python scripts/check_standard_citations.py
       - name: Partner content banner check (docs/partners)
         # Every docs/partners document carries a banner saying it is third-party
         # integration material, not a Google certification or endorsement of the

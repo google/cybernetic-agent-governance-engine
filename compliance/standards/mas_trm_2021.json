@@ -1,0 +1,490 @@
+{
+  "schema_version": 1,
+  "standard": "mas-trm",
+  "title": "Monetary Authority of Singapore, Technology Risk Management Guidelines",
+  "source_url": "https://www.mas.gov.sg/regulation/guidelines/technology-risk-management-guidelines",
+  "version": "MAS TRM Guidelines, January 2021",
+  "retrieved": "2026-11-23",
+  "source_quality": "knowledge-unverified",
+  "source_notes": "Primary-source fetch of mas.gov.sg was denied (permission prompt timed out) on 2026-11-23; chapter and section headings compiled from knowledge of the January 2021 Guidelines and must be verified against source_url before this table is upgraded to primary. The TRM Guidelines contain no data-residency section and no AI/model-risk section. Appendices are not enumerated.",
+  "complete": true,
+  "rows": [
+    {
+      "id": "1",
+      "title": "Preface",
+      "status": "active",
+      "kind": "chapter"
+    },
+    {
+      "id": "2",
+      "title": "Application of the Guidelines",
+      "status": "active",
+      "kind": "chapter"
+    },
+    {
+      "id": "3",
+      "title": "Technology Risk Governance and Oversight",
+      "status": "active",
+      "kind": "chapter",
+      "children_complete": true
+    },
+    {
+      "id": "3.1",
+      "title": "Role of the Board of Directors and Senior Management",
+      "status": "active",
+      "kind": "section"
+    },
+    {
+      "id": "3.2",
+      "title": "Policies, Standards and Procedures",
+      "status": "active",
+      "kind": "section"
+    },
+    {
+      "id": "3.3",
+      "title": "Management of Information Assets",
+      "status": "active",
+      "kind": "section"
+    },
+    {
+      "id": "3.4",
+      "title": "Management of Third Party Services",
+      "status": "active",
+      "kind": "section"
+    },
+    {
+      "id": "3.5",
+      "title": "Competency and Background Review",
+      "status": "active",
+      "kind": "section"
+    },
+    {
+      "id": "3.6",
+      "title": "Security Awareness and Training",
+      "status": "active",
+      "kind": "section"
+    },
+    {
+      "id": "4",
+      "title": "Technology Risk Management Framework",
+      "status": "active",
+      "kind": "chapter",
+      "children_complete": true
+    },
+    {
+      "id": "4.1",
+      "title": "Risk Management Framework",
+      "status": "active",
+      "kind": "section"
+    },
+    {
+      "id": "4.2",
+      "title": "Risk Identification",
+      "status": "active",
+      "kind": "section"
+    },
+    {
+      "id": "4.3",
+      "title": "Risk Assessment",
+      "status": "active",
+      "kind": "section"
+    },
+    {
+      "id": "4.4",
+      "title": "Risk Treatment",
+      "status": "active",
+      "kind": "section"
+    },
+    {
+      "id": "4.5",
+      "title": "Risk Monitoring, Review and Reporting",
+      "status": "active",
+      "kind": "section"
+    },
+    {
+      "id": "5",
+      "title": "IT Project Management and Security-by-Design",
+      "status": "active",
+      "kind": "chapter",
+      "children_complete": true
+    },
+    {
+      "id": "5.1",
+      "title": "Project Management Framework",
+      "status": "active",
+      "kind": "section"
+    },
+    {
+      "id": "5.2",
+      "title": "Project Steering Committee",
+      "status": "active",
+      "kind": "section"
+    },
+    {
+      "id": "5.3",
+      "title": "System Acquisition",
+      "status": "active",
+      "kind": "section"
+    },
+    {
+      "id": "5.4",
+      "title": "System Development Life Cycle and Security-by-Design",
+      "status": "active",
+      "kind": "section"
+    },
+    {
+      "id": "5.5",
+      "title": "System Requirements Analysis",
+      "status": "active",
+      "kind": "section"
+    },
+    {
+      "id": "5.6",
+      "title": "System Design and Implementation",
+      "status": "active",
+      "kind": "section"
+    },
+    {
+      "id": "5.7",
+      "title": "System Testing and Acceptance",
+      "status": "active",
+      "kind": "section"
+    },
+    {
+      "id": "5.8",
+      "title": "Quality Management",
+      "status": "active",
+      "kind": "section"
+    },
+    {
+      "id": "6",
+      "title": "Software Application Development and Management",
+      "status": "active",
+      "kind": "chapter",
+      "children_complete": true
+    },
+    {
+      "id": "6.1",
+      "title": "Secure Coding, Source Code Review and Application Security Testing",
+      "status": "active",
+      "kind": "section"
+    },
+    {
+      "id": "6.2",
+      "title": "Management of End User Computing and Applications",
+      "status": "active",
+      "kind": "section"
+    },
+    {
+      "id": "6.3",
+      "title": "DevSecOps Management",
+      "status": "active",
+      "kind": "section"
+    },
+    {
+      "id": "6.4",
+      "title": "Application Programming Interface Development",
+      "status": "active",
+      "kind": "section"
+    },
+    {
+      "id": "7",
+      "title": "IT Service Management",
+      "status": "active",
+      "kind": "chapter",
+      "children_complete": true
+    },
+    {
+      "id": "7.1",
+      "title": "IT Service Management Framework",
+      "status": "active",
+      "kind": "section"
+    },
+    {
+      "id": "7.2",
+      "title": "Configuration Management",
+      "status": "active",
+      "kind": "section"
+    },
+    {
+      "id": "7.3",
+      "title": "Technology Refresh Management",
+      "status": "active",
+      "kind": "section"
+    },
+    {
+      "id": "7.4",
+      "title": "Patch Management",
+      "status": "active",
+      "kind": "section"
+    },
+    {
+      "id": "7.5",
+      "title": "Change Management",
+      "status": "active",
+      "kind": "section"
+    },
+    {
+      "id": "7.6",
+      "title": "Software Release Management",
+      "status": "active",
+      "kind": "section"
+    },
+    {
+      "id": "7.7",
+      "title": "Incident Management",
+      "status": "active",
+      "kind": "section"
+    },
+    {
+      "id": "7.8",
+      "title": "Problem Management",
+      "status": "active",
+      "kind": "section"
+    },
+    {
+      "id": "8",
+      "title": "IT Resilience",
+      "status": "active",
+      "kind": "chapter",
+      "aliases": [
+        "Resilience",
+        "Availability",
+        "Recovery"
+      ],
+      "children_complete": true
+    },
+    {
+      "id": "8.1",
+      "title": "System Availability",
+      "status": "active",
+      "kind": "section"
+    },
+    {
+      "id": "8.2",
+      "title": "System Recoverability",
+      "status": "active",
+      "kind": "section"
+    },
+    {
+      "id": "8.3",
+      "title": "Testing of Disaster Recovery Plan",
+      "status": "active",
+      "kind": "section"
+    },
+    {
+      "id": "8.4",
+      "title": "System Backup and Recovery",
+      "status": "active",
+      "kind": "section"
+    },
+    {
+      "id": "8.5",
+      "title": "Data Centre Resilience",
+      "status": "active",
+      "kind": "section"
+    },
+    {
+      "id": "9",
+      "title": "Access Control",
+      "status": "active",
+      "kind": "chapter",
+      "children_complete": true
+    },
+    {
+      "id": "9.1",
+      "title": "User Access Management",
+      "status": "active",
+      "kind": "section",
+      "aliases": [
+        "Access control"
+      ]
+    },
+    {
+      "id": "9.2",
+      "title": "Privileged Access Management",
+      "status": "active",
+      "kind": "section"
+    },
+    {
+      "id": "9.3",
+      "title": "Remote Access Management",
+      "status": "active",
+      "kind": "section"
+    },
+    {
+      "id": "10",
+      "title": "Cryptography",
+      "status": "active",
+      "kind": "chapter",
+      "children_complete": true
+    },
+    {
+      "id": "10.1",
+      "title": "Cryptographic Algorithm and Protocol",
+      "status": "active",
+      "kind": "section"
+    },
+    {
+      "id": "10.2",
+      "title": "Cryptographic Key Management",
+      "status": "active",
+      "kind": "section"
+    },
+    {
+      "id": "11",
+      "title": "Data and Infrastructure Security",
+      "status": "active",
+      "kind": "chapter",
+      "children_complete": true
+    },
+    {
+      "id": "11.1",
+      "title": "Data Security",
+      "status": "active",
+      "kind": "section",
+      "aliases": [
+        "Data protection"
+      ]
+    },
+    {
+      "id": "11.2",
+      "title": "Network Security",
+      "status": "active",
+      "kind": "section"
+    },
+    {
+      "id": "11.3",
+      "title": "System Security",
+      "status": "active",
+      "kind": "section"
+    },
+    {
+      "id": "11.4",
+      "title": "Virtualisation Security",
+      "status": "active",
+      "kind": "section"
+    },
+    {
+      "id": "11.5",
+      "title": "Internet of Things",
+      "status": "active",
+      "kind": "section"
+    },
+    {
+      "id": "12",
+      "title": "Cyber Security Operations",
+      "status": "active",
+      "kind": "chapter",
+      "children_complete": true
+    },
+    {
+      "id": "12.1",
+      "title": "Cyber Threat Intelligence and Information Sharing",
+      "status": "active",
+      "kind": "section"
+    },
+    {
+      "id": "12.2",
+      "title": "Cyber Event Monitoring and Detection",
+      "status": "active",
+      "kind": "section",
+      "aliases": [
+        "Security monitoring"
+      ]
+    },
+    {
+      "id": "12.3",
+      "title": "Cyber Incident Response and Management",
+      "status": "active",
+      "kind": "section"
+    },
+    {
+      "id": "13",
+      "title": "Cyber Security Assessment",
+      "status": "active",
+      "kind": "chapter",
+      "children_complete": true
+    },
+    {
+      "id": "13.1",
+      "title": "Vulnerability Assessment",
+      "status": "active",
+      "kind": "section"
+    },
+    {
+      "id": "13.2",
+      "title": "Penetration Testing",
+      "status": "active",
+      "kind": "section"
+    },
+    {
+      "id": "13.3",
+      "title": "Cyber Exercises",
+      "status": "active",
+      "kind": "section"
+    },
+    {
+      "id": "13.4",
+      "title": "Adversarial Attack Simulation Exercise",
+      "status": "active",
+      "kind": "section"
+    },
+    {
+      "id": "13.5",
+      "title": "Intelligence-Based Scenario Design",
+      "status": "active",
+      "kind": "section"
+    },
+    {
+      "id": "13.6",
+      "title": "Remediation Management",
+      "status": "active",
+      "kind": "section"
+    },
+    {
+      "id": "14",
+      "title": "Online Financial Services",
+      "status": "active",
+      "kind": "chapter",
+      "children_complete": true
+    },
+    {
+      "id": "14.1",
+      "title": "Security of Online Financial Services",
+      "status": "active",
+      "kind": "section"
+    },
+    {
+      "id": "14.2",
+      "title": "Customer Authentication and Transaction Signing",
+      "status": "active",
+      "kind": "section"
+    },
+    {
+      "id": "14.3",
+      "title": "Fraud Monitoring",
+      "status": "active",
+      "kind": "section"
+    },
+    {
+      "id": "14.4",
+      "title": "Customer Education and Communication",
+      "status": "active",
+      "kind": "section"
+    },
+    {
+      "id": "15",
+      "title": "IT Audit",
+      "status": "active",
+      "kind": "chapter",
+      "children_complete": true
+    },
+    {
+      "id": "15.1",
+      "title": "Audit Function",
+      "status": "active",
+      "kind": "section"
+    }
+  ]
+}
