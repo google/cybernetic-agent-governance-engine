@@ -222,6 +222,8 @@ class TestNonDestructiveSubscriptionInspection:
 
         acked: list[str] = []
         nacked: list[str] = []
+        leased: list[str] = []
+        pulls = [0]
 
         def _fake_http(
             method: str,
@@ -232,13 +234,16 @@ class TestNonDestructiveSubscriptionInspection:
         ) -> dict[str, Any]:
             assert method == "POST"
             if url.endswith(":pull"):
-                return {"receivedMessages": messages}
+                pulls[0] += 1
+                return {"receivedMessages": messages if pulls[0] == 1 else []}
             if url.endswith(":acknowledge"):
                 acked.extend(payload["ackIds"])
                 return {}
             if url.endswith(":modifyAckDeadline"):
-                assert payload["ackDeadlineSeconds"] == 0
-                nacked.extend(payload["ackIds"])
+                if payload["ackDeadlineSeconds"] > 0:
+                    leased.extend(payload["ackIds"])
+                else:
+                    nacked.extend(payload["ackIds"])
                 return {}
             raise AssertionError(f"Unexpected URL {url}")
 
@@ -253,12 +258,118 @@ class TestNonDestructiveSubscriptionInspection:
         assert res["monitoring_incident_id"] == "inc-hb-1"
         assert res["freshest_bridge_heartbeat_epoch"] == pytest.approx(now_epoch)
         assert res["operational_messages_preserved"] == 2
+        assert len(leased) == 5
         assert set(acked) == {"ack-synth-mon", "ack-bridge-hb-older"}
         assert set(nacked) == {
             "ack-real-mon",
             "ack-real-bridge",
             "ack-bridge-hb-newest",
         }
+
+    def test_multi_batch_drain_reaches_tail_heartbeat_behind_operational_backlog(
+        self,
+    ) -> None:
+        now_epoch = 1795400500.0
+        now_iso = datetime.fromtimestamp(now_epoch, tz=timezone.utc).isoformat()
+
+        batch_1 = [
+            {
+                "ackId": f"ack-backlog-{i}",
+                "message": {
+                    "messageId": f"msg-backlog-{i}",
+                    "publishTime": now_iso,
+                    "data": _b64_json(
+                        {
+                            "incident": {
+                                "incident_id": f"inc-op-{i}",
+                                "policy_name": "cage-staging - Lula Compliance Audit Failure",
+                                "policy_user_labels": {"control": "ca-7"},
+                                "state": "open",
+                                "started_at": int(now_epoch) - 3600,
+                            }
+                        }
+                    ),
+                },
+            }
+            for i in range(35)
+        ]
+        batch_2 = [
+            {
+                "ackId": "ack-tail-mon",
+                "message": {
+                    "messageId": "msg-tail-mon",
+                    "publishTime": now_iso,
+                    "data": _b64_json(
+                        {
+                            "incident": {
+                                "incident_id": "0.ofc950vlgew1",
+                                "policy_name": "cage-staging - Alert Pipeline Synthetic Heartbeat",
+                                "policy_user_labels": {"alert_kind": "heartbeat"},
+                                "state": "open",
+                                "started_at": int(now_epoch),
+                            }
+                        }
+                    ),
+                },
+            },
+            {
+                "ackId": "ack-tail-bridge",
+                "message": {
+                    "messageId": "msg-tail-bridge",
+                    "publishTime": now_iso,
+                    "data": _b64_json(
+                        {
+                            "source": "compliance-bridge",
+                            "alert_type": "heartbeat",
+                            "timestamp": now_iso,
+                        }
+                    ),
+                },
+            },
+        ]
+
+        pulls = [0]
+        acked: list[str] = []
+        released: list[str] = []
+
+        def _fake_http(
+            method: str,
+            url: str,
+            _token: str,
+            payload: Any = None,
+            timeout: float = 30.0,
+        ) -> dict[str, Any]:
+            if url.endswith(":pull"):
+                pulls[0] += 1
+                if pulls[0] == 1:
+                    return {"receivedMessages": batch_1}
+                if pulls[0] == 2:
+                    return {"receivedMessages": batch_2}
+                return {"receivedMessages": []}
+            if url.endswith(":acknowledge"):
+                acked.extend(payload["ackIds"])
+                return {}
+            if url.endswith(":modifyAckDeadline"):
+                if payload["ackDeadlineSeconds"] == 0:
+                    released.extend(payload["ackIds"])
+                return {}
+            raise AssertionError(f"Unexpected URL {url}")
+
+        with patch.object(verifier, "_http_json", side_effect=_fake_http):
+            res = verifier.inspect_subscription_batch(
+                subscription_path=SUB_PATH,
+                token="tok",
+                trip_started_epoch=now_epoch - 5.0,
+            )
+
+        assert pulls[0] == 3
+        assert res["monitoring_heartbeat_observed"] is True
+        assert res["monitoring_incident_id"] == "0.ofc950vlgew1"
+        assert res["freshest_bridge_heartbeat_epoch"] == pytest.approx(now_epoch)
+        assert res["operational_messages_preserved"] == 35
+        assert acked == ["ack-tail-mon"]
+        assert len(released) == 36
+        assert "ack-tail-bridge" in released
 
     def test_verify_end_to_end_resets_metric_in_finally_on_timeout(self) -> None:
         writes: list[int] = []

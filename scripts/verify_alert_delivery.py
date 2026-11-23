@@ -402,19 +402,32 @@ def _ack_messages(subscription_path: str, token: str, ack_ids: list[str]) -> Non
     if not ack_ids:
         return
     url = f"{PUBSUB_API_BASE}/{subscription_path}:acknowledge"
-    _http_json("POST", url, token, payload={"ackIds": ack_ids})
+    for offset in range(0, len(ack_ids), 200):
+        _http_json(
+            "POST", url, token, payload={"ackIds": ack_ids[offset : offset + 200]}
+        )
 
 
-def _nack_messages(subscription_path: str, token: str, ack_ids: list[str]) -> None:
+def _modify_ack_deadline(
+    subscription_path: str, token: str, ack_ids: list[str], seconds: int
+) -> None:
     if not ack_ids:
         return
     url = f"{PUBSUB_API_BASE}/{subscription_path}:modifyAckDeadline"
-    _http_json(
-        "POST",
-        url,
-        token,
-        payload={"ackIds": ack_ids, "ackDeadlineSeconds": 0},
-    )
+    for offset in range(0, len(ack_ids), 200):
+        _http_json(
+            "POST",
+            url,
+            token,
+            payload={
+                "ackIds": ack_ids[offset : offset + 200],
+                "ackDeadlineSeconds": seconds,
+            },
+        )
+
+
+def _nack_messages(subscription_path: str, token: str, ack_ids: list[str]) -> None:
+    _modify_ack_deadline(subscription_path, token, ack_ids, 0)
 
 
 def inspect_subscription_batch(
@@ -423,123 +436,160 @@ def inspect_subscription_batch(
     token: str,
     trip_started_epoch: float,
     expected_ondemand_probe_id: str | None = None,
+    max_batches: int = 10,
 ) -> dict[str, Any]:
-    """Pull up to 50 messages, ack only synthetic probes, and nack all real alerts."""
-    pull_url = f"{PUBSUB_API_BASE}/{subscription_path}:pull"
-    resp = _http_json(
-        "POST",
-        pull_url,
-        token,
-        payload={"returnImmediately": True, "maxMessages": 50},
-        timeout=20.0,
-    )
-    received = resp.get("receivedMessages") or []
-    if not received:
-        return {
-            "monitoring_heartbeat_observed": False,
-            "monitoring_incident_id": None,
-            "ondemand_bridge_probe_observed": False,
-            "freshest_bridge_heartbeat_epoch": None,
-            "operational_messages_preserved": 0,
-        }
+    """Drain up to ``max_batches`` Pub/Sub pulls, acking only synthetic probes.
 
+    Pub/Sub ``pull(returnImmediately=True)`` frequently returns partial shards
+    (~20-30 messages) even when ``maxMessages=50``. Holding temporary 45s ack
+    leases across ``max_batches`` consecutive pulls before releasing all
+    operational messages (``ackDeadlineSeconds=0``) in ``finally`` guarantees
+    new heartbeats at the tail of an unacked operational backlog are observed
+    without consuming real alerts.
+    """
+    pull_url = f"{PUBSUB_API_BASE}/{subscription_path}:pull"
     ack_ids: list[str] = []
     nack_ids: list[str] = []
+    seen_message_ids: set[str] = set()
     monitoring_heartbeat_observed = False
     monitoring_incident_id: str | None = None
     ondemand_bridge_probe_observed = False
     periodic_bridge_heartbeats: list[tuple[float, str]] = []
     operational_preserved = 0
 
-    for item in received:
-        ack_id = str(item.get("ackId", "")).strip()
-        msg = item.get("message") or {}
-        raw_b64 = str(msg.get("data", "")).strip()
-        publish_epoch = _parse_iso_epoch(str(msg.get("publishTime", ""))) or 0.0
-
-        payload: dict[str, Any] | None = None
-        if raw_b64:
-            try:
-                decoded = base64.b64decode(raw_b64).decode("utf-8", errors="replace")
-                parsed = json.loads(decoded)
-                if isinstance(parsed, dict):
-                    payload = parsed
-            except Exception:
-                payload = None
-
-        if payload is None:
-            if ack_id:
-                nack_ids.append(ack_id)
-                operational_preserved += 1
-            continue
-
-        # Case 1: Cloud Monitoring AlertPolicy notification envelope
-        incident = payload.get("incident")
-        if isinstance(incident, dict):
-            user_labels = incident.get("policy_user_labels") or {}
-            policy_name = str(incident.get("policy_name", ""))
-            is_synthetic_hb = (
-                user_labels.get("alert_kind") == "heartbeat"
-                or "Synthetic Heartbeat" in policy_name
+    try:
+        for _ in range(max(1, max_batches)):
+            resp = _http_json(
+                "POST",
+                pull_url,
+                token,
+                payload={"returnImmediately": True, "maxMessages": 50},
+                timeout=20.0,
             )
-            if is_synthetic_hb:
-                started_at = float(incident.get("started_at") or 0)
-                state = str(incident.get("state", "")).lower()
-                if state == "open" and (
-                    started_at >= trip_started_epoch - 120.0
-                    or publish_epoch >= trip_started_epoch - 10.0
+            received = resp.get("receivedMessages") or []
+            if not received:
+                break
+
+            batch_lease_ids = [
+                str(it.get("ackId", "")).strip()
+                for it in received
+                if str(it.get("ackId", "")).strip()
+            ]
+            # Extend lease across the multi-batch scan so subsequent pulls fetch
+            # remaining queued messages rather than repeating the first shard.
+            _modify_ack_deadline(subscription_path, token, batch_lease_ids, 45)
+
+            new_in_batch = 0
+            for item in received:
+                ack_id = str(item.get("ackId", "")).strip()
+                msg = item.get("message") or {}
+                msg_id = str(msg.get("messageId", "")).strip() or ack_id
+                if msg_id in seen_message_ids:
+                    if ack_id:
+                        nack_ids.append(ack_id)
+                    continue
+                seen_message_ids.add(msg_id)
+                new_in_batch += 1
+
+                raw_b64 = str(msg.get("data", "")).strip()
+                publish_epoch = _parse_iso_epoch(str(msg.get("publishTime", ""))) or 0.0
+
+                payload: dict[str, Any] | None = None
+                if raw_b64:
+                    try:
+                        decoded = base64.b64decode(raw_b64).decode(
+                            "utf-8", errors="replace"
+                        )
+                        parsed = json.loads(decoded)
+                        if isinstance(parsed, dict):
+                            payload = parsed
+                    except Exception:
+                        payload = None
+
+                if payload is None:
+                    if ack_id:
+                        nack_ids.append(ack_id)
+                        operational_preserved += 1
+                    continue
+
+                # Case 1: Cloud Monitoring AlertPolicy notification envelope
+                incident = payload.get("incident")
+                if isinstance(incident, dict):
+                    user_labels = incident.get("policy_user_labels") or {}
+                    policy_name = str(incident.get("policy_name", ""))
+                    is_synthetic_hb = (
+                        user_labels.get("alert_kind") == "heartbeat"
+                        or "Synthetic Heartbeat" in policy_name
+                    )
+                    if is_synthetic_hb:
+                        started_at = float(incident.get("started_at") or 0)
+                        state = str(incident.get("state", "")).lower()
+                        if state == "open" and (
+                            started_at >= trip_started_epoch - 120.0
+                            or publish_epoch >= trip_started_epoch - 10.0
+                        ):
+                            monitoring_heartbeat_observed = True
+                            monitoring_incident_id = str(
+                                incident.get("incident_id", "")
+                            )
+                        # Ack all synthetic Cloud Monitoring heartbeat messages (open/close/stale)
+                        # so synthetic delivery checks never clutter the subscription.
+                        if ack_id:
+                            ack_ids.append(ack_id)
+                    else:
+                        if ack_id:
+                            nack_ids.append(ack_id)
+                            operational_preserved += 1
+                    continue
+
+                # Case 2: compliance-bridge notifier envelope
+                if (
+                    payload.get("source") in ("compliance-bridge", "compliance_bridge")
+                    and payload.get("alert_type") == "heartbeat"
                 ):
-                    monitoring_heartbeat_observed = True
-                    monitoring_incident_id = str(incident.get("incident_id", ""))
-                # Ack all synthetic Cloud Monitoring heartbeat messages (open/close/stale)
-                # so synthetic delivery checks never clutter the subscription.
-                if ack_id:
-                    ack_ids.append(ack_id)
-            else:
+                    probe_id = str(payload.get("probe_id", "")).strip()
+                    msg_epoch = (
+                        _parse_iso_epoch(str(payload.get("timestamp", "")))
+                        or publish_epoch
+                    )
+                    if (
+                        expected_ondemand_probe_id
+                        and probe_id == expected_ondemand_probe_id
+                    ):
+                        ondemand_bridge_probe_observed = True
+                        if ack_id:
+                            ack_ids.append(ack_id)
+                    elif probe_id:
+                        # Stale on-demand probe from an earlier run -> ack to keep queue clean.
+                        if ack_id:
+                            ack_ids.append(ack_id)
+                    else:
+                        # Periodic SLA-monitor heartbeat from compliance-bridge pod:
+                        # keep only the newest unacked so repeated verification runs are idempotent!
+                        if ack_id:
+                            periodic_bridge_heartbeats.append((msg_epoch, ack_id))
+                    continue
+
+                # Everything else is an operational alert -> preserve in queue!
                 if ack_id:
                     nack_ids.append(ack_id)
                     operational_preserved += 1
-            continue
 
-        # Case 2: compliance-bridge notifier envelope
-        if (
-            payload.get("source") in ("compliance-bridge", "compliance_bridge")
-            and payload.get("alert_type") == "heartbeat"
-        ):
-            probe_id = str(payload.get("probe_id", "")).strip()
-            msg_epoch = (
-                _parse_iso_epoch(str(payload.get("timestamp", ""))) or publish_epoch
-            )
-            if expected_ondemand_probe_id and probe_id == expected_ondemand_probe_id:
-                ondemand_bridge_probe_observed = True
-                if ack_id:
-                    ack_ids.append(ack_id)
-            elif probe_id:
-                # Stale on-demand probe from an earlier run -> ack to keep queue clean.
-                if ack_id:
-                    ack_ids.append(ack_id)
-            else:
-                # Periodic SLA-monitor heartbeat from compliance-bridge pod:
-                # keep only the newest unacked so repeated verification runs are idempotent!
-                if ack_id:
-                    periodic_bridge_heartbeats.append((msg_epoch, ack_id))
-            continue
+            if new_in_batch == 0:
+                break
 
-        # Everything else is an operational alert -> preserve in queue!
-        if ack_id:
-            nack_ids.append(ack_id)
-            operational_preserved += 1
-
-    freshest_bridge_epoch: float | None = None
-    if periodic_bridge_heartbeats:
-        periodic_bridge_heartbeats.sort(key=lambda pair: pair[0], reverse=True)
-        freshest_bridge_epoch, newest_ack_id = periodic_bridge_heartbeats[0]
-        nack_ids.append(newest_ack_id)
-        for _older_epoch, older_ack_id in periodic_bridge_heartbeats[1:]:
-            ack_ids.append(older_ack_id)
-
-    _ack_messages(subscription_path, token, ack_ids)
-    _nack_messages(subscription_path, token, nack_ids)
+        freshest_bridge_epoch: float | None = None
+        if periodic_bridge_heartbeats:
+            periodic_bridge_heartbeats.sort(key=lambda pair: pair[0], reverse=True)
+            freshest_bridge_epoch, newest_ack_id = periodic_bridge_heartbeats[0]
+            nack_ids.append(newest_ack_id)
+            for _older_epoch, older_ack_id in periodic_bridge_heartbeats[1:]:
+                ack_ids.append(older_ack_id)
+    finally:
+        if ack_ids:
+            _ack_messages(subscription_path, token, ack_ids)
+        if nack_ids:
+            _nack_messages(subscription_path, token, nack_ids)
 
     return {
         "monitoring_heartbeat_observed": monitoring_heartbeat_observed,
@@ -555,7 +605,7 @@ def verify_end_to_end_delivery(
     project: str,
     subscription: str,
     token: str,
-    timeout_seconds: int = 240,
+    timeout_seconds: int = 360,
     poll_interval_seconds: int = 10,
     require_bridge_heartbeat: bool = True,
     max_bridge_heartbeat_age_seconds: int = 25200,
@@ -691,8 +741,8 @@ def _build_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--timeout-seconds",
         type=int,
-        default=240,
-        help="Max seconds to wait for heartbeat incident delivery (default: 240).",
+        default=360,
+        help="Max seconds to wait for heartbeat incident delivery (default: 360).",
     )
     parser.add_argument(
         "--poll-interval-seconds",
