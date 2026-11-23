@@ -139,7 +139,7 @@ The following weaknesses are documented in [`compliance/us_fed/POAM_US_FED.md`](
 | **EU AI Act Art. 27** — FRIA (Step 8) | 🟡 Partial | `fria` tier enforces FRIA currency + provider validation (`CTRL_FRIA_006`, `EU_ECB` only); EU AI Office registration pending |
 | **EU AI Act Art. 61** — Post-market monitoring | 🟡 Partial | Lula CronJob + OSCAL Assessment Results active; formal post-market plan pending |
 | **DORA Art. 10** — ICT risk management | 🟡 Partial | Architecture mapped; full DORA compliance testing pending |
-| **DORA Art. 11** — ICT-related incident management | 🟡 Partial | `GovernanceEventBus` + Slack/PagerDuty alerts active; formal DORA incident plan pending (**Correction (`2026-11-16`, `POAM-2026-230`):** no committed profile configures Slack or PagerDuty (`alert_channel = "console"`), so these alerts are log lines) |
+| **DORA Art. 11** — ICT-related incident management | 🟡 Partial | `GovernanceEventBus` + enforced `PubSubNotifier` alert delivery (`POAM-2026-230`); downstream Slack/PagerDuty human fan-out adopter-operated and formal DORA incident plan pending |
 | **DORA Art. 12** — Digital operational resilience testing | ❌ Not started | No DORA resilience testing performed |
 | **GDPR Art. 22** — Automated decision-making | 🟡 Partial | HITL gate enforced; DPIA integration pending |
 | **EBA Guidelines (2023/02)** — Internal governance | 🟡 Partial | Model governance mapped; ECB SSM TRIM validation pending |

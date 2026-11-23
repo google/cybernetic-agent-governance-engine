@@ -199,7 +199,7 @@
 1. **IR-1 (Incident Response Policy):** No incident response policy or plan document exists in the repository. Alerting infrastructure exists (Slack, console) but there is no documented incident classification taxonomy, escalation path, or response procedures.
 2. **IR-2 (Incident Response Training):** No evidence of incident response training or exercises.
 3. **IR-3 (Incident Response Testing):** No tabletop exercise records, no automated IR drill (e.g., chaos injection that triggers alerts and verifies end-to-end alert delivery).
-4. **IR-4 (Incident Handling):** Alert delivery via `SlackNotifier` is a one-way push. There is no incident ticketing integration (PagerDuty, Jira, ServiceNow) and no acknowledgement or escalation workflow — if the webhook times out in 10 seconds (`httpx.AsyncClient(timeout=10.0)`), the alert is silently lost without retry. **Correction (`2026-11-16`, `POAM-2026-230`):** no committed profile configures `SlackNotifier`: the reference Terraform pins `alert_channel = "console"`, so alerts are log lines until `POAM-2026-230` closes.
+4. **IR-4 (Incident Handling):** Alert delivery via `SlackNotifier` is a one-way push. There is no incident ticketing integration (PagerDuty, Jira, ServiceNow) and no acknowledgement or escalation workflow — if the webhook times out in 10 seconds (`httpx.AsyncClient(timeout=10.0)`), the alert is silently lost without retry. **Note (`POAM-2026-230`):** enforcing postures refuse `console` at plan time and pod startup and publish to GCP Cloud Pub/Sub (`PubSubNotifier`, reference-architecture terminal sink), while Slack/Webhook/PagerDuty or ticketing fan-out is adopter-operated.
 5. **IR-5 (Incident Monitoring):** No centralized incident log distinct from the compliance audit trail. `GOVERNANCE_VIOLATION` events are streamed to SSE but not persisted to a separate incident log store.
 6. **IR-6 (Incident Reporting):** No documented process for reporting to US-CERT/CISA within required timeframes. No contact information in the system documentation.
 7. **IR-8 (Incident Response Plan):** No documented IRP. The notifier infrastructure is the only response automation.
@@ -411,7 +411,7 @@ The cybernetic-governance-engine demonstrates sophisticated domain-specific cont
 
 **Strengths driving the score up (from baseline of 0):**
 
-- **AU:** 5-step audit pipeline with deterministic OSCAL parsing, Langfuse compliance project, SSE real-time streaming, and Slack/PagerDuty alerting — strongest family (54% coverage) **Correction (`2026-11-16`, `POAM-2026-230`):** no committed profile configures Slack or PagerDuty (`alert_channel = "console"`); see `POAM-2026-230`.
+- **AU:** 5-step audit pipeline with deterministic OSCAL parsing, Langfuse compliance project, SSE real-time streaming, and `PubSubNotifier` alerting — strongest family (54% coverage) **Note (`POAM-2026-230`):** enforcing postures publish to GCP Cloud Pub/Sub as CAGE's verified reference-architecture terminal sink, while Slack/PagerDuty human fan-out is adopter-operated.
 - **SC:** Kubernetes NetworkPolicy with default-deny, Cloud NAT, HMAC request integrity — meaningful boundary protection
 - **SI:** Aho-Corasick keyword scan, CBF formal safety, STPA invariant checking, fail-closed OPA enforcement — strong domain-specific integrity controls
 - **CM:** Single-source-of-truth `governance_thresholds.json`, Pydantic-validated singleton, fail-fast settings validation

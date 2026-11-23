@@ -302,6 +302,7 @@ def write_heartbeat_metric(
     project: str,
     token: str,
     value: int,
+    probe_id: str = "default",
 ) -> None:
     """Write an INT64 gauge point to custom.googleapis.com/cage/alert_heartbeat_probe."""
     now_iso = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%S.%fZ")
@@ -314,7 +315,10 @@ def write_heartbeat_metric(
             {
                 "metric": {
                     "type": HEARTBEAT_METRIC_TYPE,
-                    "labels": {"probe_source": "verify_alert_delivery"},
+                    "labels": {
+                        "probe_source": "verify_alert_delivery",
+                        "probe_id": probe_id,
+                    },
                 },
                 "resource": {
                     "type": "global",
@@ -623,6 +627,7 @@ def verify_end_to_end_delivery(
             probe_id=ondemand_probe_id,
         )
 
+    monitoring_probe_id = uuid.uuid4().hex[:12]
     trip_started_epoch = time.time()
     last_metric_write = 0.0
     monitoring_ok = False
@@ -635,7 +640,12 @@ def verify_end_to_end_delivery(
         while time.time() < deadline:
             now = time.time()
             if now - last_metric_write >= 55.0:
-                write_heartbeat_metric(project=project, token=token, value=1)
+                write_heartbeat_metric(
+                    project=project,
+                    token=token,
+                    value=1,
+                    probe_id=monitoring_probe_id,
+                )
                 last_metric_write = now
 
             batch = inspect_subscription_batch(
@@ -667,7 +677,12 @@ def verify_end_to_end_delivery(
             time.sleep(max(poll_interval_seconds, 1))
     finally:
         # Always reset the synthetic probe gauge to 0 so the heartbeat policy closes.
-        write_heartbeat_metric(project=project, token=token, value=0)
+        write_heartbeat_metric(
+            project=project,
+            token=token,
+            value=0,
+            probe_id=monitoring_probe_id,
+        )
 
     if not monitoring_ok:
         raise AlertVerificationError(

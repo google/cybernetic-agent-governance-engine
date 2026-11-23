@@ -656,10 +656,9 @@ profile:
         values:
           - "P1 Critical: 1 hour to ISSO/AO; P2 High: 4 hours; P3 Medium: 24 hours; External regulatory reporting per applicable law (SEC/FINRA: varies by incident type)"
         remarks: >
-          Slack notifications provide automated P1/P2 alerting. PagerDuty escalation
-          pending POAM-IR-6-001. Correction (2026-11-16, POAM-2026-230): no committed
-          profile configures a Slack or PagerDuty channel (alert_channel = console), so
-          no P1/P2 alert is delivered until POAM-2026-230 closes.
+          Enforcing postures publish automated alerts to GCP Cloud Pub/Sub (PubSubNotifier,
+          reference-architecture terminal sink; POAM-2026-230). Downstream Slack/PagerDuty
+          human P1/P2 fan-out is adopter-operated (POAM-IR-6-001).
 
       # SC-12: Cryptographic Key Establishment
       - param-id: "sc-12_prm_1"
