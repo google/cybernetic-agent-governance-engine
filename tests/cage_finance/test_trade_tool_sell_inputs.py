@@ -59,6 +59,7 @@ from src.cage_finance.tools.trade_inputs import (
     TradeInputUnavailable,
     resolve_portfolio_total,
 )
+from src.gateway.governance.commit_outcome import CommitOutcome, CommitStatus
 from src.gateway.governance.contracts import ViolationKind
 from src.gateway.governance.governor import governor as governor_mod
 from src.gateway.governance.schemas.thresholds import load_and_validate_thresholds
@@ -154,7 +155,7 @@ async def _trade(
     inputs: ServerTradeInputs | None = None,
     governor: Any = None,
     **kwargs: Any,
-) -> str:
+) -> CommitOutcome:
     return await execute_trade_action(
         symbol="AAPL",
         amount=amount,
@@ -196,8 +197,9 @@ async def test_sell_over_regional_limit_is_hard_uca13(
     region: str, stpa_gateway: list[dict[str, Any]]
 ) -> None:
     result = await _trade(_limit(region) * 1.5, side="sell")
-    assert result.startswith("BLOCKED:")
-    assert _UCA_13 in result
+    assert result.status is CommitStatus.REFUSED
+    assert result.message.startswith("BLOCKED:")
+    assert _UCA_13 in result.message
     assert stpa_gateway[-1]["portfolio_total"] == pytest.approx(_OPEN_NAV)
 
 
@@ -207,9 +209,12 @@ async def test_regions_differ_at_the_same_sell(
 ) -> None:
     """8,500 of a 100,000 NAV is refused under EU_ECB (8%) only."""
     try:
-        result = await _trade(8_500.0, side="sell")
+        outcome = await _trade(8_500.0, side="sell")
     except _Cleared:
         result = "CLEARED"
+    else:
+        assert outcome.status is CommitStatus.REFUSED
+        result = outcome.message
     assert (_UCA_13 in result) is (region == "EU_ECB")
 
 
@@ -226,7 +231,8 @@ async def test_limit_tracks_current_nav_not_opening_nav(
     inputs = _inputs(_nav(drawdown_pct=2.0))
     amount = (_limit(region, current) + _limit(region)) / 2
     result = await _trade(amount, side="sell", inputs=inputs)
-    assert _UCA_13 in result
+    assert result.status is CommitStatus.REFUSED
+    assert _UCA_13 in result.message
     assert stpa_gateway[-1]["portfolio_total"] == pytest.approx(current)
     assert stpa_gateway[-1]["drawdown"] == pytest.approx(2.0)
 
@@ -308,8 +314,9 @@ async def test_faulted_nav_source_refuses_sell(
     nav = _nav()
     nav.inject_fault(fault)
     result = await _trade(1.0, side="sell", inputs=_inputs(nav))
-    assert result.startswith("BLOCKED:")
-    assert _UCA_13 in result
+    assert result.status is CommitStatus.REFUSED
+    assert result.message.startswith("BLOCKED:")
+    assert _UCA_13 in result.message
     assert "portfolio_total" not in stpa_gateway[-1]
 
 
@@ -319,7 +326,8 @@ async def test_zero_nav_refuses_sell(
 ) -> None:
     """A 100% drawdown is a valid UCA-5 reading but no FIN-1 base."""
     result = await _trade(1.0, side="sell", inputs=_inputs(_nav(drawdown_pct=100.0)))
-    assert _UCA_13 in result
+    assert result.status is CommitStatus.REFUSED
+    assert _UCA_13 in result.message
     assert "portfolio_total" not in stpa_gateway[-1]
     assert stpa_gateway[-1]["drawdown"] == pytest.approx(100.0)
 
@@ -341,7 +349,8 @@ async def test_invalid_side_is_blocked_before_governance(
     stpa_gateway: list[dict[str, Any]],
 ) -> None:
     result = await _trade(1.0, side="short")  # type: ignore[arg-type]
-    assert result.startswith("BLOCKED: invalid trade side")
+    assert result.status is CommitStatus.REFUSED
+    assert result.message.startswith("BLOCKED: invalid trade side")
     assert stpa_gateway == []
 
 

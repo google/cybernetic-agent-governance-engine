@@ -31,6 +31,7 @@ import fakeredis.aioredis
 import pytest
 
 from src.cage_finance.tools.tool_provider import execute_trade_action
+from src.gateway.governance.commit_outcome import CommitOutcome, CommitStatus
 from src.gateway.governance.execution_idempotency import (
     SHARED_CALLER,
     ExecutionLedger,
@@ -107,7 +108,7 @@ def _pipeline(
         yield governance, refusals
 
 
-async def _trade(governor: Any, **overrides: Any) -> str:
+async def _trade(governor: Any, **overrides: Any) -> CommitOutcome:
     kwargs: dict[str, Any] = {
         "symbol": "AAPL",
         "amount": 10.0,
@@ -129,7 +130,8 @@ async def test_duplicate_returns_the_original_outcome_and_dispatches_once(
         first = await _trade(governor)
         second = await _trade(governor)
 
-    assert first.startswith("EXECUTED: AAPL x 10.0")
+    assert first.status is CommitStatus.EXECUTED
+    assert first.message.startswith("EXECUTED: AAPL x 10.0")
     assert second == first
     assert actuate.await_count == 1
     assert governance.await_count == 1  # the duplicate is not governed again
@@ -153,14 +155,17 @@ async def test_concurrent_duplicates_dispatch_exactly_once(governor: MagicMock) 
         )
 
     assert actuate.await_count == 1
-    executed = [r for r in results if isinstance(r, str)]
+    executed = [r for r in results if isinstance(r, CommitOutcome)]
     in_flight = [
         r
         for r in results
         if isinstance(r, UnsettledDuplicate) and str(r).startswith("IN_FLIGHT:")
     ]
     assert len(executed) >= 1
-    assert all(r.startswith("EXECUTED: AAPL") for r in executed)
+    assert all(
+        r.status is CommitStatus.EXECUTED and r.message.startswith("EXECUTED: AAPL")
+        for r in executed
+    )
     assert len(executed) + len(in_flight) == len(results)
 
 
@@ -216,7 +221,7 @@ async def test_unknown_outcome_keeps_the_claim(
 @pytest.mark.covers(
     "src.cage_finance.tools.tool_provider:_govern_and_actuate#Actuation rejected:",
     "src.cage_finance.tools.tool_provider:execute_trade_action#attempt.status.value",
-    "src.cage_finance.tools.tool_provider:_refuse_duplicate#return duplicate.outcome",
+    "src.cage_finance.tools.tool_provider:_refuse_duplicate#return CommitOutcome(_REPLAYED_STATUS[duplicate.status], duplicate.outcome)",
 )
 async def test_rejected_actuation_is_recorded_as_blocked(governor: MagicMock) -> None:
     actuate = AsyncMock(return_value=_not_accepted(ActuationOutcome.REJECTED))
@@ -225,7 +230,8 @@ async def test_rejected_actuation_is_recorded_as_blocked(governor: MagicMock) ->
             await _trade(governor)
         replay = await _trade(governor)
 
-    assert replay.startswith("BLOCKED: ")
+    assert replay.status is CommitStatus.REFUSED
+    assert replay.message.startswith("BLOCKED: ")
     assert actuate.await_count == 1
 
 
@@ -239,7 +245,9 @@ async def test_governance_refusal_is_replayed_without_governing_again(
         first = await _trade(governor)
         second = await _trade(governor)
 
-    assert first == "BLOCKED: Governance Blocked: DENY"
+    assert first == CommitOutcome(
+        CommitStatus.REFUSED, "BLOCKED: Governance Blocked: DENY"
+    )
     assert second == first
     assert governance.await_count == 1
     actuate.assert_not_awaited()
@@ -270,8 +278,11 @@ async def test_an_approval_reclaims_a_blocked_key_and_executes_once(
         assert await _trade(governor, deferred_id="d-2") == executed
         assert await _trade(governor) == executed
 
-    assert blocked == "BLOCKED: Governance Blocked: HITL"
-    assert executed.startswith("EXECUTED: AAPL")
+    assert blocked == CommitOutcome(
+        CommitStatus.REFUSED, "BLOCKED: Governance Blocked: HITL"
+    )
+    assert executed.status is CommitStatus.EXECUTED
+    assert executed.message.startswith("EXECUTED: AAPL")
     assert refused.await_count == 1
     assert approved.await_count == 1
     assert actuate.await_count == 1
@@ -295,7 +306,8 @@ async def test_missing_or_invalid_transaction_id_is_refused(
     with _pipeline(actuate) as (governance, _):
         result = await _trade(governor, transaction_id=transaction_id)
 
-    assert result.startswith(expected)
+    assert result.status is CommitStatus.REFUSED
+    assert result.message.startswith(expected)
     governance.assert_not_awaited()
     actuate.assert_not_awaited()
 
@@ -319,9 +331,12 @@ async def test_dry_run_claims_nothing(
 ) -> None:
     actuate = AsyncMock(return_value=_accepted())
     with _pipeline(actuate):
-        assert (await _trade(governor, dry_run=True)).startswith("DRY_RUN:")
+        dry = await _trade(governor, dry_run=True)
+        assert dry.status is CommitStatus.DRY_RUN
+        assert dry.message.startswith("DRY_RUN:")
         assert await redis.exists(_KEY) == 0
         executed = await _trade(governor)
 
-    assert executed.startswith("EXECUTED: AAPL")
+    assert executed.status is CommitStatus.EXECUTED
+    assert executed.message.startswith("EXECUTED: AAPL")
     assert actuate.await_count == 1

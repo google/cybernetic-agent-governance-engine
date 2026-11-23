@@ -151,10 +151,11 @@ component-definition:
                      (src/cage_finance/tools/tool_provider.py) is the only committing path:
                      enforce_approved_governance()
                      (src/gateway/server/governance_middleware.py) checks approved token state
-                     without spending it (DeferQueue.redeemable_token()), and
+                     without spending it (DeferQueue.check_redemption(), which names
+                     the ApprovalRedemptionRefusal of a token it refuses), and
                      revalidate_post_hitl() binds server inputs once, checks PostHitlApproval.covers()
                      against the evaluated params before any stage runs, decides first and spends
-                     second via DeferQueue.consume_approval() (RESOLVED to CONSUMED CAS re-checking
+                     second via DeferQueue.consume_redemption() (RESOLVED to CONSUMED CAS re-checking
                      coverage of the same evaluated params) before returning a SealedAction whose
                      seal and evaluated params the tool verifies and actuates; a DENY spends it; a
                      warrant-ineligible DEFER leaves it redeemable. When narrowing is enabled, a

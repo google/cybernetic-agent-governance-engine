@@ -45,7 +45,7 @@ from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import JSONResponse
 from mcp.server.fastmcp import FastMCP
 from mcp.server.transport_security import TransportSecuritySettings
-from mcp.types import ToolAnnotations
+from mcp.types import CallToolResult, TextContent, ToolAnnotations
 from pydantic import BaseModel, field_validator
 
 from src.gateway.observability.attributes import (
@@ -849,7 +849,19 @@ async def execute_tool_endpoint(request_body: ToolExecutionRequest, request: Req
             output = await func(**request_body.params)
         else:
             output = await asyncio.to_thread(func, **request_body.params)
-        output_str = str(output)
+        # A committing tool answers with an MCP CallToolResult: its prose is
+        # the output text and its typed outcome (structuredContent) is
+        # forwarded as ``outcome`` (POAM-2026-245).
+        structured_outcome: dict[str, Any] | None = None
+        tool_error = False
+        if isinstance(output, CallToolResult):
+            output_str = "\n".join(
+                block.text for block in output.content if isinstance(block, TextContent)
+            )
+            structured_outcome = output.structuredContent
+            tool_error = bool(output.isError)
+        else:
+            output_str = str(output)
         current_span = trace.get_current_span()
         is_rec = getattr(current_span, "is_recording", None)
         active_span = (
@@ -879,10 +891,16 @@ async def execute_tool_endpoint(request_body: ToolExecutionRequest, request: Req
                 status_code=403,
                 content=blocked_output_payload,
             )
-        response: dict[str, Any] = {"status": "SUCCESS", "output": output_str}
+        response: dict[str, Any] = {
+            "status": "ERROR" if tool_error else "SUCCESS",
+            "output": output_str,
+        }
+        if structured_outcome is not None:
+            response["outcome"] = structured_outcome
         proof_hash = get_last_refusal_proof_hash()
-        if proof_hash:
+        if tool_error or proof_hash:
             mark_request_refused()
+        if proof_hash:
             response["proof_hash"] = proof_hash
         return response
     except EvidenceChainUnavailableError as exc:

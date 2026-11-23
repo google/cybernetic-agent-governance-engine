@@ -203,8 +203,9 @@ telemetry staleness limit is `TELEMETRY_MAX_STALENESS_SECONDS` (300 s).
    and the advisor invokes the gateway's `execute_trade_action(..., deferred_id=deferred_id)` MCP tool.
    Inside [`src/gateway/server/governance_middleware.py`](../../src/gateway/server/governance_middleware.py),
    `enforce_approved_governance()` checks the state of the quorum-approved `HITL_REQUIRED` token
-   without spending it (`DeferQueue.redeemable_token`: approved, unspent, parked for this
-   action and carrying approved params; it decides no coverage and binds no server inputs) and
+   without spending it (`DeferQueue.check_redemption`: approved, unspent, parked for this
+   action and carrying approved params; it decides no coverage and binds no server inputs, and
+   names the `ApprovalRedemptionRefusal` of a token it refuses, POAM-2026-245) and
    calls `SymbolicGovernor.revalidate_post_hitl(..., approval=PostHitlApproval(...))` in
    [`src/gateway/governance/governor/governor.py`](../../src/gateway/governance/governor/governor.py).
    The run binds the request's server inputs once, and the approval must cover the resulting

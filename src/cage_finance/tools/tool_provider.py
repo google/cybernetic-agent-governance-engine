@@ -21,7 +21,7 @@ import uuid
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, Literal, NoReturn
 
-from mcp.types import ToolAnnotations
+from mcp.types import CallToolResult, TextContent, ToolAnnotations
 
 if TYPE_CHECKING:
     from mcp.server.fastmcp import FastMCP
@@ -31,6 +31,11 @@ if TYPE_CHECKING:
 from src.cage_finance.actuators.broker_actuator import BrokerActuator
 from src.cage_finance.models.trade_order import is_valid_transaction_id
 from src.cage_finance.tools.market_service import get_market_data
+from src.gateway.governance.commit_outcome import (
+    NOT_EXECUTED_STATUSES,
+    CommitOutcome,
+    CommitStatus,
+)
 from src.gateway.governance.contracts import DomainToolProvider
 from src.gateway.governance.execution_actuator import (
     dispatch_actuation,
@@ -48,6 +53,7 @@ from src.gateway.governance.routing_seal import SymbolicGovernorViolation
 from src.gateway.governance.seams.actuation import ExecutionClearance
 from src.gateway.server.governance_middleware import (
     ActionDeferred,
+    ApprovalRedemptionRefused,
     enforce_approved_governance,
     enforce_governance,
     record_refusal,
@@ -122,7 +128,7 @@ async def execute_trade_action(
     side: TradeSide = "buy",
     *,
     governor: "SymbolicGovernor",
-) -> str:
+) -> CommitOutcome:
     """Execute a financial trade under strict governance.
 
     This is the single committing run for a trade: ``/governance/validate-action``
@@ -179,6 +185,11 @@ async def execute_trade_action(
             ``trader_role`` (the RBAC role that sets the trade's OPA limits)
             and ``trader_id`` from the caller's verified workload identity,
             which is why neither is a parameter here (GHSA-w39v-5v7h-fxg9).
+
+    Returns:
+        A ``CommitOutcome``: its ``status`` (EXECUTED, DRY_RUN, REFUSED or
+        DEFERRED) is the result and ``message`` is prose only. A refused
+        ``deferred_id`` names why in ``redemption_refusal``.
     """
     logger.info(
         "Tool Call: execute_trade(%s, %s, side=%s, confidence=%s, deferred_id=%s)",
@@ -202,13 +213,13 @@ async def execute_trade_action(
         await record_refusal(
             "execute_trade", reason, oscal_control_ref="AC-3", params=raw_params
         )
-        return f"BLOCKED: {reason}"
+        return _refused(reason)
     if not transaction_id:
         reason = "transaction_id is required (a UUIDv4 or UUIDv5 idempotency key)."
         await record_refusal(
             "execute_trade", reason, oscal_control_ref="AC-3", params=raw_params
         )
-        return f"BLOCKED: {reason}"
+        return _refused(reason)
     if not is_valid_transaction_id(transaction_id):
         reason = (
             f"invalid transaction_id {str(transaction_id)[:64]!r}; "
@@ -217,7 +228,7 @@ async def execute_trade_action(
         await record_refusal(
             "execute_trade", reason, oscal_control_ref="AC-3", params=raw_params
         )
-        return f"BLOCKED: {reason}"
+        return _refused(reason)
     transaction_id = transaction_id.lower()
 
     params: dict[str, Any] = {
@@ -313,12 +324,36 @@ async def execute_trade_action(
                 )
         raise
     if claim is not None:
-        await ledger.record_outcome(claim, attempt.status, outcome)
+        await ledger.record_outcome(claim, attempt.status, outcome.message)
     return outcome
 
 
-#: Ledger statuses whose recorded reply settles a resubmission.
-_SETTLED = frozenset({ExecutionStatus.EXECUTED, ExecutionStatus.BLOCKED})
+#: Ledger statuses whose recorded reply settles a resubmission, and the
+#: outcome status a replay of each reports (a BLOCKED attempt executed nothing).
+_REPLAYED_STATUS: dict[ExecutionStatus, CommitStatus] = {
+    ExecutionStatus.EXECUTED: CommitStatus.EXECUTED,
+    ExecutionStatus.BLOCKED: CommitStatus.REFUSED,
+}
+_SETTLED = frozenset(_REPLAYED_STATUS)
+
+
+def _refused(reason: str) -> CommitOutcome:
+    """A ``REFUSED`` outcome: nothing was executed."""
+    return CommitOutcome(CommitStatus.REFUSED, f"BLOCKED: {reason}")
+
+
+def _call_tool_result(outcome: CommitOutcome) -> CallToolResult:
+    """The MCP result of a committing run.
+
+    The typed outcome is ``structuredContent`` (``CommitOutcome.to_wire``);
+    ``content`` carries only its prose. ``isError`` is set whenever nothing
+    was executed, so a caller that reads only the text still fails closed.
+    """
+    return CallToolResult(
+        content=[TextContent(type="text", text=outcome.message)],
+        structuredContent=outcome.to_wire(),
+        isError=outcome.status in NOT_EXECUTED_STATUSES,
+    )
 
 
 @dataclass
@@ -330,7 +365,7 @@ class _TradeAttempt:
 
 async def _refuse_duplicate(
     duplicate: Duplicate, transaction_id: str, params: dict[str, Any]
-) -> str:
+) -> CommitOutcome:
     """Answer a resubmitted ``transaction_id`` without governing it again.
 
     A first attempt that finished (EXECUTED or BLOCKED) is answered with its
@@ -347,7 +382,7 @@ async def _refuse_duplicate(
         "execute_trade", reason, oscal_control_ref="AC-3", params=params
     )
     if duplicate.outcome is not None and duplicate.status in _SETTLED:
-        return duplicate.outcome
+        return CommitOutcome(_REPLAYED_STATUS[duplicate.status], duplicate.outcome)
     state = {
         ExecutionStatus.IN_FLIGHT: "has not finished",
         ExecutionStatus.UNKNOWN: "has an unknown outcome, pending reconciliation",
@@ -366,7 +401,7 @@ async def _govern_and_actuate(
     dry_run: bool,
     governor: "SymbolicGovernor",
     attempt: _TradeAttempt,
-) -> str:
+) -> CommitOutcome:
     """Govern, seal and actuate one trade; ``attempt.status`` tracks the broker."""
     # The kernel binds the server-side inputs (the STPA measurements and the
     # trader's role and id) exactly once inside the committing run; the seal
@@ -397,9 +432,22 @@ async def _govern_and_actuate(
         # Nothing sealed, committed or refused. After an approval, the same
         # approval redeems once the deferral clears (the warrant is eligible
         # again); otherwise the request is parked as exc.deferred_id.
-        return f"DEFERRED: {exc}"
+        return CommitOutcome(
+            CommitStatus.DEFERRED,
+            f"DEFERRED: {exc}",
+            deferred_id=exc.deferred_id or None,
+            approval_retained=exc.approval_retained,
+        )
+    except ApprovalRedemptionRefused as exc:
+        # The named approval is not redeemable: the typed reason travels in
+        # the outcome so the caller can tell "not yet approved" from "gone".
+        return CommitOutcome(
+            CommitStatus.REFUSED,
+            f"BLOCKED: {exc}",
+            redemption_refusal=exc.refusal,
+        )
     except PermissionError as exc:
-        return f"BLOCKED: {exc}"
+        return _refused(str(exc))
 
     # CRITICAL: Fail-closed seal validation at entry — reject unsealed execution attempts
     seal = getattr(governed, "seal", None)
@@ -457,7 +505,7 @@ async def _govern_and_actuate(
                 oscal_control_ref="AC-3",
                 params=action_params,
             )
-            return f"BLOCKED: {refusal}"
+            return _refused(refusal)
         if isinstance(receipt, dict):
             logger.info(
                 "📐 execute_trade: NARROW receipt validated and consumed. "
@@ -488,10 +536,12 @@ async def _govern_and_actuate(
                 oscal_control_ref="AC-3",
                 params=action_params,
             )
-            return f"BLOCKED: {reason}"
+            return _refused(reason)
 
         if dry_run:
-            return "DRY_RUN: APPROVED by OPA, Safety, and Consensus."
+            return CommitOutcome(
+                CommitStatus.DRY_RUN, "DRY_RUN: APPROVED by OPA, Safety, and Consensus."
+            )
 
         # Step 5: Construct ExecutionClearance (ADR-008 Phase 2 + v3.0 Routing)
         clearance = ExecutionClearance(
@@ -553,7 +603,11 @@ async def _govern_and_actuate(
             )
 
         attempt.status = ExecutionStatus.EXECUTED
-        return f"EXECUTED: {action_params.get('symbol')} x {action_params.get('amount')} (Receipt ID: {receipt.receipt_id})"
+        return CommitOutcome(
+            CommitStatus.EXECUTED,
+            f"EXECUTED: {action_params.get('symbol')} x {action_params.get('amount')} "
+            f"(Receipt ID: {receipt.receipt_id})",
+        )
     finally:
         await _settle(governor, seal, executed=executed)
 
@@ -699,8 +753,9 @@ class FinancialToolProvider(DomainToolProvider):
             dry_run: bool = False,
             deferred_id: str | None = None,
             side: TradeSide = "buy",
-        ) -> str:
-            return await execute_trade_action(
+        ) -> CallToolResult:
+            # The typed outcome rides in structuredContent (POAM-2026-245).
+            outcome = await execute_trade_action(
                 symbol,
                 amount,
                 currency,
@@ -711,6 +766,7 @@ class FinancialToolProvider(DomainToolProvider):
                 side,
                 governor=governor,
             )
+            return _call_tool_result(outcome)
 
         @server.tool(annotations=_READ_ONLY_TOOL)
         async def check_market_status(symbol: str) -> str:

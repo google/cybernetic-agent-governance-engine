@@ -39,7 +39,9 @@ from langchain_core.messages import AIMessage, ToolMessage
 from langgraph.graph import END
 
 import src.governed_financial_advisor.graph.governance.tool_guard as tool_guard_module
+from src.gateway.governance.commit_outcome import CommitOutcome, CommitStatus
 from src.governed_financial_advisor.graph.governance.tool_guard import (
+    COMMIT_OUTCOMES,
     derive_transaction_id,
     gateway_tool_guard,
 )
@@ -98,7 +100,16 @@ class _SpyNode:
     async def __call__(self, state: dict[str, Any]) -> dict[str, Any]:
         self.calls += 1
         self.states.append(state)
-        return {"messages": [ToolMessage(content="executed", tool_call_id="t1")]}
+        calls = getattr(state["messages"][-1], "tool_calls", None) or []
+        # Like tool_executor_node: one typed outcome per committing call.
+        return {
+            "messages": [ToolMessage(content="executed", tool_call_id="t1")],
+            COMMIT_OUTCOMES: {
+                str(c.get("id")): CommitOutcome(CommitStatus.EXECUTED, "executed")
+                for c in calls
+                if c.get("name") == "execute_trade_action"
+            },
+        }
 
 
 def _state(*tool_calls: dict[str, Any]) -> dict[str, Any]:
@@ -298,7 +309,9 @@ class TestGuardRequireApproval:
         assert result["deferred_id"] == "d-1"
         (msg,) = result["messages"]
         assert msg.tool_call_id == "t1"
-        assert "Awaiting human approval" in msg.content
+        assert "needs reviewer approval" in msg.content
+        # Deferral handles belong to reviewers at the bridge (SA-1, POAM-2026-245).
+        assert "d-1" not in msg.content and "deferred_id" not in msg.content
 
     @pytest.mark.asyncio
     async def test_approval_in_multi_call_batch_refuses(self, gateway) -> None:

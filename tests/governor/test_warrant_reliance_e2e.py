@@ -81,6 +81,11 @@ from src.cage_finance.tiers.trade_confidence_tier import TRADE_CONFIDENCE_NORM_I
 from src.cage_finance.tools.tool_provider import execute_trade_action
 from src.gateway.governance import constants
 from src.gateway.governance import defer_queue as defer_queue_mod
+from src.gateway.governance.commit_outcome import (
+    ApprovalRedemptionRefusal,
+    CommitOutcome,
+    CommitStatus,
+)
 from src.gateway.governance.consequence_magnitude import ConsequenceMagnitudes
 from src.gateway.governance.contracts import PluginContribution
 from src.gateway.governance.decisions import GovernanceDecision
@@ -227,7 +232,7 @@ class Stack:
 
     async def execute(
         self, params: dict[str, Any], deferred_id: str | None = None
-    ) -> str:
+    ) -> CommitOutcome:
         # The advisor's MCP call reaches the tool behind WorkloadIdentityMiddleware,
         # which makes its verified identity current (the trader binding reads it).
         with _serving(ADVISOR):
@@ -309,9 +314,9 @@ async def assert_commit_defers(
     """
     before = len(await stack.records("GOVERNANCE_DEFERRAL"))
     result = await stack.execute(params)
-    assert result.startswith("DEFERRED"), result
-    assert DeferReason.WARRANT_INELIGIBLE.value in result
-    assert f"RELIANCE_{status}" in result
+    assert result.status is CommitStatus.DEFERRED, result
+    assert DeferReason.WARRANT_INELIGIBLE.value in result.message
+    assert f"RELIANCE_{status}" in result.message
     await stack.assert_nothing_actuated()
     assert await stack.records("GOVERNANCE_REFUSAL") == []
     stack.refusals.assert_not_awaited()
@@ -551,7 +556,8 @@ async def test_a_active_vec_001_allows_seals_the_reliance_and_executes_once(
 
     # Commit through the trade tool: one seal, consumed, one actuation.
     result = await stack.execute(trade(0.98))
-    assert result.startswith("EXECUTED: AAPL x 500.0"), result
+    assert result.status is CommitStatus.EXECUTED, result
+    assert result.message.startswith("EXECUTED: AAPL x 500.0"), result
     stack.actuate.assert_awaited_once()
     clearance = stack.actuate.await_args.args[0]
 
@@ -603,7 +609,7 @@ async def test_a_reliance_is_fetched_once_per_window_across_preview_and_commit(
     monkeypatch.setattr(stack.source, "fetch", _counting)
     assert _body(await stack.validate(trade()))["verdict"] == GovernanceDecision.ALLOW
     stack.clock.advance(59.0)
-    assert (await stack.execute(trade())).startswith("EXECUTED")
+    assert (await stack.execute(trade())).status is CommitStatus.EXECUTED
     assert fetches == [TRADE_CONFIDENCE_NORM_ID]
 
 
@@ -622,7 +628,7 @@ async def test_eu_floor_live_below_097_is_not_allowed_despite_an_eligible_warran
     assert body.get("defer_reason") != DeferReason.WARRANT_INELIGIBLE.value
     (reliance,) = body["reliance"]
     assert reliance["reliance_status"] == "ELIGIBLE"  # the warrant is not the issue
-    assert (await stack.execute(trade(0.96))).startswith("BLOCKED")
+    assert (await stack.execute(trade(0.96))).status is CommitStatus.REFUSED
     await stack.assert_nothing_actuated()
 
 
@@ -833,7 +839,7 @@ async def test_kernel_hard_refusal_denies_before_the_warrant_is_consulted(
     assert body["refusal_receipt"].get("reliance", []) == []
     assert fetches == []
     assert await stack.records("GOVERNANCE_DEFERRAL") == []
-    assert (await stack.execute(trade())).startswith("BLOCKED")
+    assert (await stack.execute(trade())).status is CommitStatus.REFUSED
     await stack.assert_nothing_actuated()
 
 
@@ -857,7 +863,7 @@ async def test_post_hitl_approval_executes_while_the_warrant_holds(
     deferred_id = await _approved_floor_breach(stack)
     stack.clock.advance(120.0)  # re-fetched after the window: still ACTIVE
     result = await stack.execute(trade(0.96), deferred_id)
-    assert result.startswith("EXECUTED"), result
+    assert result.status is CommitStatus.EXECUTED, result
     stack.actuate.assert_awaited_once()
 
 
@@ -866,12 +872,14 @@ async def _approval_status(stack: Stack, deferred_id: str) -> str | None:
 
 
 async def _assert_post_hitl_deferral(
-    stack: Stack, deferred_id: str, result: str, reliance_status: str
+    stack: Stack, deferred_id: str, result: CommitOutcome, reliance_status: str
 ) -> dict[str, Any]:
     """A post-approval warrant failure: DEFER, nothing sealed, approval kept."""
-    assert result.startswith("DEFERRED"), result
-    assert DeferReason.WARRANT_INELIGIBLE.value in result
-    assert f"RELIANCE_{reliance_status}" in result
+    assert result.status is CommitStatus.DEFERRED, result
+    assert result.approval_retained is True, result
+    assert result.deferred_id == deferred_id, result
+    assert DeferReason.WARRANT_INELIGIBLE.value in result.message
+    assert f"RELIANCE_{reliance_status}" in result.message
     await stack.assert_nothing_actuated()
     # The approval was not spent: still RESOLVED (approved), not CONSUMED.
     assert await _approval_status(stack, deferred_id) == "RESOLVED"
@@ -893,14 +901,15 @@ async def _assert_post_hitl_deferral(
 async def _assert_redeems_once(stack: Stack, deferred_id: str) -> None:
     """The same approval now executes, sealed, and can never be replayed."""
     result = await stack.execute(trade(0.96), deferred_id)
-    assert result.startswith("EXECUTED"), result
+    assert result.status is CommitStatus.EXECUTED, result
     stack.actuate.assert_awaited_once()
     assert await _approval_status(stack, deferred_id) == "CONSUMED"
     (decision,) = await stack.records("GOVERNANCE_DECISION")  # exactly one seal
     (reliance,) = _payload(decision)["reliance"]
     assert reliance["reliance_status"] == "ELIGIBLE"
     replay = await stack.execute(trade(0.96), deferred_id)
-    assert replay.startswith("BLOCKED"), replay
+    assert replay.status is CommitStatus.REFUSED, replay
+    assert replay.redemption_refusal is ApprovalRedemptionRefusal.CONSUMED, replay
     stack.actuate.assert_awaited_once()
     assert len(await stack.records("GOVERNANCE_DECISION")) == 1
 
@@ -974,7 +983,8 @@ async def test_post_hitl_deferred_approval_still_expires(
     stack.source.seed(_vec(SHARED_WARRANT))
     stack.clock.advance(60.001)
     result = await stack.execute(trade(0.96), deferred_id)
-    assert result.startswith("BLOCKED"), result
+    assert result.status is CommitStatus.REFUSED, result
+    assert result.redemption_refusal is ApprovalRedemptionRefusal.UNKNOWN_OR_EXPIRED
     await stack.assert_nothing_actuated()
 
 
@@ -990,7 +1000,7 @@ async def test_post_hitl_hard_refusal_still_spends_the_approval(
     stack.clock.advance(60.001)
     stack.opa.verdict = "DENY"
     result = await stack.execute(trade(0.96), deferred_id)
-    assert result.startswith("BLOCKED"), result
+    assert result.status is CommitStatus.REFUSED, result
     await stack.assert_nothing_actuated()
     assert await _approval_status(stack, deferred_id) == "CONSUMED"
     stack.refusals.assert_awaited_once()
@@ -999,7 +1009,9 @@ async def test_post_hitl_hard_refusal_still_spends_the_approval(
     stack.opa.verdict = "ALLOW"
     stack.source.seed(_vec(SHARED_WARRANT))
     stack.clock.advance(60.001)
-    assert (await stack.execute(trade(0.96), deferred_id)).startswith("BLOCKED")
+    replay = await stack.execute(trade(0.96), deferred_id)
+    assert replay.status is CommitStatus.REFUSED, replay
+    assert replay.redemption_refusal is ApprovalRedemptionRefusal.CONSUMED, replay
     await stack.assert_nothing_actuated()
 
 
@@ -1020,8 +1032,10 @@ async def test_post_hitl_concurrent_redemptions_after_a_deferral_commit_once(
     results = await asyncio.gather(
         *(stack.execute(trade(0.96), deferred_id) for _ in range(5))
     )
-    assert sum(r.startswith("EXECUTED") for r in results) == 1, results
-    assert all(r.startswith(("EXECUTED", "BLOCKED")) for r in results), results
+    assert sum(r.status is CommitStatus.EXECUTED for r in results) == 1, results
+    assert all(
+        r.status in (CommitStatus.EXECUTED, CommitStatus.REFUSED) for r in results
+    ), results
     stack.actuate.assert_awaited_once()
     assert len(await stack.records("GOVERNANCE_DECISION")) == 1
     assert await _approval_status(stack, deferred_id) == "CONSUMED"
@@ -1050,13 +1064,16 @@ async def test_post_hitl_retries_under_one_transaction_id_execute_once(
     await _assert_post_hitl_deferral(stack, deferred_id, result, "INELIGIBLE_REVOKED")
     assert len(await stack.records("GOVERNANCE_DEFERRAL")) == 3  # park + 2 retries
 
-    assert await stack.execute(params) == result  # a plain resubmission replays
+    # A plain resubmission replays the recorded reply; nothing executed then.
+    replayed = await stack.execute(params)
+    assert replayed.status is CommitStatus.REFUSED, replayed
+    assert replayed.message == result.message, replayed
     assert len(await stack.records("GOVERNANCE_DEFERRAL")) == 3
 
     stack.source.seed(_vec(SHARED_WARRANT))
     stack.clock.advance(60.001)
     executed = await stack.execute(params, deferred_id)
-    assert executed.startswith("EXECUTED"), executed
+    assert executed.status is CommitStatus.EXECUTED, executed
     assert await stack.execute(params, deferred_id) == executed
     assert await stack.execute(params) == executed
     stack.actuate.assert_awaited_once()
@@ -1108,7 +1125,7 @@ async def test_us_fed_unchanged_095_clears_and_executes_without_a_warrant(
     body = _body(await stack.validate(trade(0.95)))
     assert body["verdict"] == GovernanceDecision.ALLOW
     assert "reliance" not in body
-    assert (await stack.execute(trade(0.95))).startswith("EXECUTED")
+    assert (await stack.execute(trade(0.95))).status is CommitStatus.EXECUTED
     (decision,) = await stack.records("GOVERNANCE_DECISION")
     assert "reliance" not in _payload(decision)
     assert fetches == []
@@ -1132,7 +1149,7 @@ async def test_contract_fields_in_the_chained_allow_decision_and_envelope(
 ) -> None:
     stack = await build(seed=_vec(SHARED_WARRANT))
     envelope = (await stack.validate(trade(0.98))).json()
-    assert (await stack.execute(trade(0.98))).startswith("EXECUTED")
+    assert (await stack.execute(trade(0.98))).status is CommitStatus.EXECUTED
 
     (decision,) = await stack.records("GOVERNANCE_DECISION")  # chain verified
     (reliance,) = _payload(decision)["reliance"]
@@ -1248,7 +1265,8 @@ async def test_provider_05_v02_active_warrant_is_verified_and_executes_e2e(
     )
 
     out = await stack.execute(trade(0.98))
-    assert out.startswith("EXECUTED:")
+    assert out.status is CommitStatus.EXECUTED, out
+    assert out.message.startswith("EXECUTED:")
     stack.actuate.assert_awaited_once()
     (decision,) = await stack.records("GOVERNANCE_DECISION")
     (reliance,) = _payload(decision)["reliance"]

@@ -492,9 +492,16 @@ class TestEnforceApprovedGovernance:
 
     @staticmethod
     def _queue(token: Any):
+        from src.gateway.governance.commit_outcome import ApprovalRedemptionRefusal
+        from src.gateway.governance.defer_queue import Redemption
+
         queue = MagicMock()
-        queue.redeemable_token = AsyncMock(return_value=token)
-        queue.consume_approval = AsyncMock(return_value=token)
+        queue.check_redemption = AsyncMock(
+            return_value=Redemption(token, None)
+            if token is not None
+            else Redemption(None, ApprovalRedemptionRefusal.PENDING)
+        )
+        queue.consume_redemption = AsyncMock(return_value=Redemption(token, None))
 
         @asynccontextmanager
         async def _open():
@@ -569,9 +576,9 @@ class TestEnforceApprovedGovernance:
         assert approval.thread_id == "thread-9"
         # GHSA-f6xq-23f7-9grm: ... and to the human-review holds the reviewer saw.
         assert approval.approved_holds == holds
-        assert queue.redeemable_token.await_args.kwargs["action"] == "execute_trade"
+        assert queue.check_redemption.await_args.kwargs["action"] == "execute_trade"
         # Checking spends nothing: only the governor's committing run spends.
-        queue.consume_approval.assert_not_awaited()
+        queue.consume_redemption.assert_not_awaited()
         emit.assert_not_awaited()
 
     async def test_pre_check_reads_token_state_only_and_binds_no_server_inputs(self):
@@ -590,8 +597,8 @@ class TestEnforceApprovedGovernance:
 
         await self._call(governor, open_queue, AsyncMock(), covers=matcher)
 
-        assert queue.redeemable_token.await_args.args == ("defer-1",)
-        assert queue.redeemable_token.await_args.kwargs == {"action": "execute_trade"}
+        assert queue.check_redemption.await_args.args == ("defer-1",)
+        assert queue.check_redemption.await_args.kwargs == {"action": "execute_trade"}
         governor.bind_server_inputs.assert_not_called()
         matcher.assert_not_called()
 
@@ -636,7 +643,7 @@ class TestEnforceApprovedGovernance:
 
         The pre-check is state-only, so the matcher is reached only through
         ``approval.covers`` and the ``covers`` that ``spend`` hands
-        ``consume_approval``: both answer False and nothing is consumed.
+        ``consume_redemption``: both answer False and nothing is consumed.
         """
 
         def _boom(approved: Any, evaluated: Any) -> bool:
@@ -646,16 +653,26 @@ class TestEnforceApprovedGovernance:
         verdicts: list[bool] = []
 
         async def _consume(defer_id: str, *, action: str, covers: Any) -> Any:
+            from src.gateway.governance.commit_outcome import (
+                ApprovalRedemptionRefusal,
+            )
+            from src.gateway.governance.defer_queue import Redemption
+
             covered = covers(dict(_PARAMS))
             verdicts.append(covered)
-            return self._token() if covered else None  # consumes only if covered
+            # consumes only if covered
+            return (
+                Redemption(self._token(), None)
+                if covered
+                else Redemption(None, ApprovalRedemptionRefusal.PARAMS_NOT_COVERED)
+            )
 
-        queue.consume_approval = _consume
+        queue.consume_redemption = _consume
 
         assert approval.covers(dict(_PARAMS)) is False
         assert await approval.spend(dict(_PARAMS)) is False
         assert verdicts == [False]
-        assert "covers" not in queue.redeemable_token.await_args.kwargs
+        assert "covers" not in queue.check_redemption.await_args.kwargs
 
     async def test_spend_consumes_only_if_the_matcher_covers_the_evaluated_params(
         self,
@@ -671,11 +688,11 @@ class TestEnforceApprovedGovernance:
 
         assert await approval.spend(evaluated) is True
 
-        call = queue.consume_approval.await_args
+        call = queue.consume_redemption.await_args
         assert call.args == ("defer-1",)
         assert call.kwargs["action"] == "execute_trade"
         covers = call.kwargs["covers"]
-        # consume_approval hands the closure the token's approved params; the
+        # consume_redemption hands the closure the token's approved params; the
         # closure decides approval_covers(approved, evaluated) for the
         # evaluated params this spend was given.
         assert covers({"symbol": "AAPL", "amount": 20.0}) is True
@@ -698,9 +715,9 @@ class TestEnforceApprovedGovernance:
 
         assert sealed.seal == "SEAL"
         assert spent == [True]
-        queue.consume_approval.assert_awaited_once()
-        assert queue.consume_approval.await_args.args == ("defer-1",)
-        assert queue.consume_approval.await_args.kwargs["action"] == "execute_trade"
+        queue.consume_redemption.assert_awaited_once()
+        assert queue.consume_redemption.await_args.args == ("defer-1",)
+        assert queue.consume_redemption.await_args.kwargs["action"] == "execute_trade"
 
     async def test_spend_fails_closed_when_the_queue_raises(self):
         from src.gateway.governance.governor.errors import (
@@ -715,12 +732,15 @@ class TestEnforceApprovedGovernance:
 
         governor.revalidate_post_hitl = _revalidate
         queue, open_queue = self._queue(self._token())
-        queue.consume_approval = AsyncMock(side_effect=ConnectionError("redis down"))
+        queue.consume_redemption = AsyncMock(side_effect=ConnectionError("redis down"))
 
         with pytest.raises(ApprovalSpendUnavailableError, match="defer-1"):
             await self._call(governor, open_queue, AsyncMock())
 
     async def test_no_approval_refuses_with_receipt_and_never_commits(self):
+        from src.gateway.governance.commit_outcome import ApprovalRedemptionRefusal
+        from src.gateway.server.governance_middleware import ApprovalRedemptionRefused
+
         governor = _mock_governor()
         governor.revalidate_post_hitl = AsyncMock(
             return_value=_sealed("execute_trade", "SEAL", _PARAMS)
@@ -728,14 +748,16 @@ class TestEnforceApprovedGovernance:
         _, open_queue = self._queue(None)
         emit = AsyncMock()
 
-        with pytest.raises(PermissionError, match="defer-1"):
+        with pytest.raises(ApprovalRedemptionRefused, match="defer-1") as refused:
             await self._call(governor, open_queue, emit)
 
+        # The typed reason rides on the exception (POAM-2026-245).
+        assert refused.value.refusal is ApprovalRedemptionRefusal.PENDING
         governor.revalidate_post_hitl.assert_not_awaited()
         emit.assert_awaited_once()
         assert emit.await_args.kwargs["oscal_control_ref"] == "AC-3"
         assert emit.await_args.kwargs["refusal_reason"] == (
-            "no unconsumed approval 'defer-1' is redeemable for this execute_trade"
+            "approval 'defer-1' is not redeemable for this execute_trade (PENDING)"
         )
 
     async def test_queue_unavailable_fails_closed(self):
@@ -808,7 +830,7 @@ class TestEnforceApprovedGovernance:
         assert deferred.value.approval_retained is True
         assert deferred.value.defer_reason == "WARRANT_INELIGIBLE"
         assert deferred.value.reliance == [{"reliance_status": "INELIGIBLE_REVOKED"}]
-        queue.consume_approval.assert_not_awaited()
+        queue.consume_redemption.assert_not_awaited()
         emit.assert_not_awaited()  # a deferral is evidenced as a deferral
 
 

@@ -64,6 +64,7 @@ from src.gateway.observability.attributes import (
 )
 from src.governed_financial_advisor.graph.annotations import side_effect_node
 from src.governed_financial_advisor.graph.governance.tool_guard import (
+    COMMIT_OUTCOMES,
     GOVERNANCE_ALLOWED,
     GOVERNANCE_REQUIRE_APPROVAL,
     gateway_tool_guard,
@@ -83,6 +84,7 @@ from src.governed_financial_advisor.graph.nodes.toctou_quote import (
     resolve_check_time_reference_quote,
     resolve_decision_slippage_pct,
 )
+from src.governed_financial_advisor.graph.nodes.trade_contract import TRADE_TOOL
 from src.governed_financial_advisor.infrastructure.llm.models import chat_model
 
 logger = logging.getLogger(__name__)
@@ -116,6 +118,8 @@ class GovernedTraderState(TypedDict):
     governance_envelope: dict[str, Any] | None  # Gateway ALLOW/NARROW verdict
     governance_status: str | None  # "ALLOWED" | "DENIED" | "REQUIRE_APPROVAL"
     routing_verdict_cache: dict[str, Any] | None  # Cached ALLOW routing verdict
+    # ApprovalRedemptionRefusal value of the last refused redemption, or None
+    redemption_refusal: str | None
 
 
 # ---------------------------------------------------------------------------
@@ -182,6 +186,11 @@ async def tool_executor_node(state: GovernedTraderState) -> dict[str, Any]:
     TOCTOU Closure: after approval, ``execute_trade_action(deferred_id=...)``
     re-validates the fresh params in the gateway (POST_HITL profile) at
     actuation time, not check time.
+
+    The committing tool is invoked for its typed ``CommitOutcome``
+    (``ainvoke_commit``), returned under ``COMMIT_OUTCOMES`` keyed by tool
+    call id for ``gateway_tool_guard`` to route on (``None`` when no outcome
+    could be obtained). The ``ToolMessage`` carries only the outcome's prose.
     """
     mcp_client = get_mcp_client()
     await mcp_client.ensure_connected()
@@ -190,16 +199,28 @@ async def tool_executor_node(state: GovernedTraderState) -> dict[str, Any]:
 
     last_message = state["messages"][-1]
     tool_outputs = []
+    commit_outcomes: dict[str, Any] = {}
 
     if hasattr(last_message, "tool_calls"):
         for tool_call in last_message.tool_calls:
             tool_name = tool_call["name"]
             tool_args = tool_call["args"]
             tool_id = tool_call["id"]
+            committing = tool_name == TRADE_TOOL
+            if committing:
+                # No outcome until one is decoded: an error leaves None.
+                commit_outcomes[str(tool_id)] = None
 
             if tool_name in tools_by_name:
                 try:
-                    result = await tools_by_name[tool_name].ainvoke(tool_args)
+                    if committing:
+                        outcome = await tools_by_name[tool_name].ainvoke_commit(
+                            tool_args
+                        )
+                        commit_outcomes[str(tool_id)] = outcome
+                        result = outcome.message
+                    else:
+                        result = await tools_by_name[tool_name].ainvoke(tool_args)
                     tool_outputs.append(
                         ToolMessage(
                             tool_call_id=tool_id,
@@ -224,7 +245,7 @@ async def tool_executor_node(state: GovernedTraderState) -> dict[str, Any]:
                     )
                 )
 
-    return {"messages": tool_outputs}
+    return {"messages": tool_outputs, COMMIT_OUTCOMES: commit_outcomes}
 
 
 async def executor_node(state: GovernedTraderState) -> dict[str, Any]:
@@ -333,8 +354,10 @@ def route_after_tools(state: GovernedTraderState) -> str:
     """Route on the ``gateway_tool_guard`` outcome.
 
     ``ALLOWED`` loops to the executor; ``REQUIRE_APPROVAL`` (with a gateway
-    ``deferred_id``) pauses at the approval node; anything else ends the
-    subgraph, so a refused trade cannot be re-proposed in the same run.
+    ``deferred_id``) pauses at the approval node, including a re-pause on the
+    same ticket after an approved resume the gateway could not redeem yet;
+    anything else ends the subgraph, so a refused trade cannot be re-proposed
+    in the same run.
     """
     status = state.get("governance_status")
     if status == GOVERNANCE_ALLOWED:

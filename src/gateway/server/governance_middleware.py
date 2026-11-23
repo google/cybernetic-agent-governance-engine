@@ -47,6 +47,7 @@ from opentelemetry import context as otel_context
 from opentelemetry.propagate import extract as otel_extract
 from pydantic import BaseModel, Field, field_validator
 
+from src.gateway.governance.commit_outcome import ApprovalRedemptionRefusal
 from src.gateway.governance.decisions import GovernanceDecision
 from src.gateway.governance.evidence.stream import get_evidence_sink
 from src.gateway.governance.governance_envelope import GovernanceEnvelopeBuilder
@@ -151,6 +152,25 @@ class GovernanceBlockedError(PermissionError):
         super().__init__(message)
         self.proof_hash: str = proof_hash
         self.violated_tier: str = violated_tier
+
+
+class ApprovalRedemptionRefused(GovernanceBlockedError):
+    """The committing run refused because the named approval was not redeemable.
+
+    ``refusal`` is the typed reason (POAM-2026-245); callers decide on it
+    (``is_retryable_refusal``), never on the message.
+    """
+
+    def __init__(
+        self,
+        message: str,
+        *,
+        refusal: ApprovalRedemptionRefusal,
+        proof_hash: str = "",
+        violated_tier: str = "",
+    ) -> None:
+        super().__init__(message, proof_hash=proof_hash, violated_tier=violated_tier)
+        self.refusal: ApprovalRedemptionRefusal = refusal
 
 
 class ActionDeferred(PermissionError):
@@ -288,9 +308,9 @@ async def enforce_approved_governance(
     Raises:
         ActionDeferred: Post-approval re-validation deferred; the approval
             is retained (``approval_retained``).
-        PermissionError: The approval is missing, unapproved, mismatched,
-            expired or already consumed, or post-approval re-validation
-            refused.
+        ApprovalRedemptionRefused: The approval is not redeemable; ``refusal``
+            names why (pending, consumed, expired, mismatched, uncovered...).
+        PermissionError: Post-approval re-validation refused.
         GovernanceInfrastructureError: A dependency was unavailable, including
             a refusal whose receipt could not be signed (no unsigned receipt
             is committed). The signing failure itself spends nothing;
@@ -307,9 +327,15 @@ async def enforce_approved_governance(
             logger.warning("approval_covers raised for %s: %s", tool_name, exc)
             return False
 
-    async def _refuse_unredeemable() -> NoReturn:
+    # Why the approval was refused inside the committing run (not covering the
+    # evaluated params, or not spendable), recorded where it is decided so the
+    # refusal raised below names it without reading any message.
+    run_refusals: list[ApprovalRedemptionRefusal] = []
+
+    async def _refuse_unredeemable(refusal: ApprovalRedemptionRefusal) -> NoReturn:
         reason = (
-            f"no unconsumed approval {deferred_id!r} is redeemable for this {tool_name}"
+            f"approval {deferred_id!r} is not redeemable for this {tool_name} "
+            f"({refusal.value})"
         )
         emitted = await _emit_refusal_receipt(
             action_id=tool_name,
@@ -321,8 +347,9 @@ async def enforce_approved_governance(
         resolved_hash = emitted if isinstance(emitted, str) else ""
         if resolved_hash:
             set_last_refusal_proof_hash(resolved_hash)
-        raise GovernanceBlockedError(
+        raise ApprovalRedemptionRefused(
             f"Governance Blocked: {reason}",
+            refusal=refusal,
             proof_hash=resolved_hash,
             violated_tier="MIDDLEWARE",
         )
@@ -341,7 +368,7 @@ async def enforce_approved_governance(
                 queue = await stack.enter_async_context(open_defer_queue())
                 # Token state only: coverage is decided against the evaluated
                 # params inside the committing run.
-                token = await queue.redeemable_token(deferred_id, action=tool_name)
+                checked = await queue.check_redemption(deferred_id, action=tool_name)
             except Exception as exc:  # queue unreachable: block 503, preserve approval
                 logger.error("DeferQueue unavailable checking %s: %s", deferred_id, exc)
                 await handle_infrastructure_block(
@@ -362,13 +389,16 @@ async def enforce_approved_governance(
                     ],
                     [],
                 )
+            token = checked.token
             if token is None:
-                await _refuse_unredeemable()
+                await _refuse_unredeemable(
+                    checked.refusal or ApprovalRedemptionRefusal.UNRECOGNIZED_STATE
+                )
             approved_params = token.opa_input_snapshot.get("params")
 
             async def _spend(evaluated: Mapping[str, Any]) -> bool:
                 try:
-                    spent = await queue.consume_approval(
+                    spent = await queue.consume_redemption(
                         deferred_id,
                         action=tool_name,
                         covers=lambda approved: _covers(approved, evaluated),
@@ -383,13 +413,24 @@ async def enforce_approved_governance(
                         f"DeferQueue unavailable spending approval "
                         f"{deferred_id}: {type(exc).__name__}: {exc}"
                     ) from exc
-                return spent is not None
+                if spent.token is None:
+                    run_refusals.append(
+                        spent.refusal or ApprovalRedemptionRefusal.UNRECOGNIZED_STATE
+                    )
+                    return False
+                return True
+
+            def _approval_covers_evaluated(evaluated: Mapping[str, Any]) -> bool:
+                if _covers(approved_params, evaluated):
+                    return True
+                run_refusals.append(ApprovalRedemptionRefusal.PARAMS_NOT_COVERED)
+                return False
 
             approval = PostHitlApproval(
                 approval_id=deferred_id,
                 barrier_preview=token.barrier_preview,
                 spend=_spend,
-                covers=lambda evaluated: _covers(approved_params, evaluated),
+                covers=_approval_covers_evaluated,
                 thread_id=token.thread_id,
                 approved_holds=token.hitl_holds,
             )
@@ -422,12 +463,24 @@ async def enforce_approved_governance(
         )
         if resolved_hash:
             set_last_refusal_proof_hash(resolved_hash)
+        violated_tier = (
+            str(getattr(exc.receipt, "violated_tier", "") or "")
+            if exc.receipt is not None
+            else ""
+        )
+        if run_refusals:
+            # The governor refused because the approval did not cover the
+            # evaluated params or could not be spent.
+            raise ApprovalRedemptionRefused(
+                f"Governance Blocked: {exc}",
+                refusal=run_refusals[-1],
+                proof_hash=resolved_hash,
+                violated_tier=violated_tier,
+            ) from exc
         raise GovernanceBlockedError(
             f"Governance Blocked: {exc}",
             proof_hash=resolved_hash,
-            violated_tier=str(getattr(exc.receipt, "violated_tier", "") or "")
-            if exc.receipt is not None
-            else "",
+            violated_tier=violated_tier,
         ) from exc
 
 

@@ -58,6 +58,7 @@ from src.cage_finance.tools.trade_inputs import (
 )
 from src.cage_finance.tools.trader_binding import TraderBinding, TraderRoleBindings
 from src.gateway.governance.classification_engine import InfrastructureOutcome
+from src.gateway.governance.commit_outcome import CommitStatus
 from src.gateway.governance.contracts import (
     CommitReceipt,
     MutatingTier,
@@ -379,7 +380,7 @@ async def test_cause3_path_a1_defer_queue_down_during_redeemable_approval_preser
         status2, body2_bytes, _ = await _dispatch_execute(tx_a1)
     body2 = body2_bytes if isinstance(body2_bytes, dict) else json.loads(body2_bytes)
     assert status2 == 200, body2
-    assert body2["output"].startswith("EXECUTED:")
+    assert body2["output"].status is CommitStatus.EXECUTED
     assert await raw_db1.hget(f"DEFER:{deferred_id}", "status") == "CONSUMED"
 
 

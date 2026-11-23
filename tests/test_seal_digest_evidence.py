@@ -199,6 +199,7 @@ async def test_finance_records_the_digest_and_hands_the_broker_the_seal(
     registry.register(BrokerActuator(ledger=ledger), claims={"execute_trade"})
     broker_execute = AsyncMock(return_value="EXECUTED (mock): AAPL x 10.0 buy")
     from src.cage_finance.tools.tool_provider import execute_trade_action
+    from src.gateway.governance.commit_outcome import CommitStatus
 
     minted_seals: list[str] = []
 
@@ -243,7 +244,8 @@ async def test_finance_records_the_digest_and_hands_the_broker_the_seal(
 
     assert len(minted_seals) == 1
     fin_seal = minted_seals[0]
-    assert result.startswith("EXECUTED"), result
+    assert result.status is CommitStatus.EXECUTED, result
+    assert result.message.startswith("EXECUTED"), result
     # The broker re-checks the seal itself, never the digest.
     assert broker_execute.await_args.kwargs["routing_seal"] == fin_seal
     receipt = sink.only("ACTUATION_RECEIPT")

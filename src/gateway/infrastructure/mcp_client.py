@@ -26,6 +26,10 @@ import httpx
 from mcp import ClientSession
 from mcp.client.streamable_http import streamable_http_client
 
+from src.gateway.governance.commit_outcome import (
+    CommitOutcome,
+    CommitOutcomeDecodeError,
+)
 from src.gateway.observability.attributes import (
     OBSERVATION_TYPE,
     SPAN_ATTR_GEN_AI_OPERATION_NAME,
@@ -64,6 +68,16 @@ class MCPToolExecutionError(MCPToolCallError):
     def __init__(self, tool_name: str, text: str) -> None:
         super().__init__(tool_name, f"MCP tool {tool_name!r} returned an error: {text}")
         self.text = text
+
+
+class MCPCommitOutcomeUnrecognizedError(MCPToolCallError):
+    """A committing tool answered without a commit outcome this client understands.
+
+    Raised by :meth:`GatewayMCPClient.call_commit_tool` when the result's
+    ``structuredContent`` is absent or does not decode
+    (``CommitOutcome.from_wire``). The action may or may not have executed;
+    callers treat this as terminal and never retry or re-approve on it.
+    """
 
 
 def _result_text(result: Any) -> str:
@@ -393,6 +407,42 @@ class GatewayMCPClient:
             Exception: The session could not be established on either
                 attempt; the request was never sent.
         """
+        result = await self._traced_call(name, arguments)
+        text = _result_text(result)
+        if getattr(result, "isError", False):
+            raise MCPToolExecutionError(name, text)
+        return text
+
+    async def call_commit_tool(
+        self, name: str, arguments: dict[str, Any]
+    ) -> CommitOutcome:
+        """Invoke a committing MCP tool and return its typed outcome.
+
+        A committing tool (one that commits, seals and actuates) answers with
+        a ``CommitOutcome`` in ``structuredContent`` whether or not
+        ``isError`` is set (``isError`` marks only that nothing executed).
+        The outcome is decoded with ``CommitOutcome.from_wire``; the prose in
+        ``content`` is never read for a decision. Sending follows
+        :meth:`call_tool` (at most once unless annotated retry-safe).
+
+        Raises:
+            MCPCommitOutcomeUnrecognizedError: The result carries no
+                decodable outcome (absent, wrong schema, unknown status).
+            MCPToolOutcomeUnknownError: The request may have reached the
+                gateway and no result came back; the caller must reconcile.
+            Exception: The session could not be established on either
+                attempt; the request was never sent.
+        """
+        result = await self._traced_call(name, arguments)
+        try:
+            return CommitOutcome.from_wire(getattr(result, "structuredContent", None))
+        except CommitOutcomeDecodeError as exc:
+            raise MCPCommitOutcomeUnrecognizedError(
+                name, f"MCP tool {name!r} returned no recognised commit outcome: {exc}"
+            ) from exc
+
+    async def _traced_call(self, name: str, arguments: dict[str, Any]) -> Any:
+        """Send one ``tools/call`` (at most once) inside an ``mcp_tool`` span."""
         logger.info("📞 Calling MCP Tool: %s", name)
 
         from opentelemetry import trace
@@ -404,14 +454,13 @@ class GatewayMCPClient:
 
             try:
                 result = await self._call_tool_at_most_once(name, arguments)
-                text = _result_text(result)
-                if getattr(result, "isError", False):
-                    raise MCPToolExecutionError(name, text)
-                span.set_attribute(SPAN_ATTR_MCP_TOOL_RESULT_LENGTH, len(text))
-                return text
             except Exception as e:
                 span.record_exception(e)
                 raise
+            span.set_attribute(
+                SPAN_ATTR_MCP_TOOL_RESULT_LENGTH, len(_result_text(result))
+            )
+            return result
 
     async def _call_tool_at_most_once(
         self, name: str, arguments: dict[str, Any]
@@ -604,6 +653,12 @@ class MCPBoundTool(dict[str, Any]):
     ) -> str:
         """Invoke the MCP tool via GatewayMCPClient.call_tool()."""
         return await self._client.call_tool(self.name, dict(input_args or {}))
+
+    async def ainvoke_commit(
+        self, input_args: dict[str, Any] | None = None
+    ) -> CommitOutcome:
+        """Invoke a committing tool via GatewayMCPClient.call_commit_tool()."""
+        return await self._client.call_commit_tool(self.name, dict(input_args or {}))
 
     async def __call__(self, **kwargs: Any) -> str:
         """Invoke the MCP tool directly with keyword arguments."""

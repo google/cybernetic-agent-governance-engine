@@ -249,6 +249,12 @@
         "null"
       ]
     },
+    "redemption_refusal": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
     "agent_id": {
       "type": "string"
     },

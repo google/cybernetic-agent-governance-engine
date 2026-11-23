@@ -31,6 +31,7 @@ from unittest.mock import AsyncMock, patch
 import pytest
 
 from src.cage_finance.tools.tool_provider import execute_trade_action
+from src.gateway.governance.commit_outcome import CommitStatus
 from src.gateway.governance.governor.sealing import SealedAction
 from src.gateway.governance.routing_seal import SymbolicGovernorViolation, seal_digest
 from src.gateway.governance.seams.actuation import ActuationOutcome, ActuationReceipt
@@ -170,8 +171,9 @@ class TestExecuteTradeActionRoutingSealEnforcement:
             )
 
             # Should reach execute_trade without raising seal error
-            assert "EXECUTED" in result
-            assert "AAPL" in result
+            assert result.status is CommitStatus.EXECUTED
+            assert "EXECUTED" in result.message
+            assert "AAPL" in result.message
             # The executed trade settles its seal: reservations become permanent.
             deps["governor"].settle.assert_awaited_once_with(
                 "valid-seal-abc123", executed=True
@@ -219,7 +221,8 @@ class TestExecuteTradeActionRoutingSealEnforcement:
                 **deps, symbol="AAPL", amount=100.0, currency="USD", confidence=0.99
             )
 
-        assert result.startswith("EXECUTED: AAPL x 100.0"), result
+        assert result.status is CommitStatus.EXECUTED, result
+        assert result.message.startswith("EXECUTED: AAPL x 100.0"), result
         handed = governance.await_args.args[2]
         assert "trader_role" not in handed  # the tool binds nothing itself
         verify.assert_awaited_once_with(seal, "execute_trade", evaluated)

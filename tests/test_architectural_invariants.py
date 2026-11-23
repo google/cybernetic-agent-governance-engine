@@ -254,6 +254,7 @@ async def test_execute_trade_action_traverses_actuator():
         and assert that actuate() was called with a valid ExecutionClearance.
     """
     from src.cage_finance.tools.tool_provider import execute_trade_action
+    from src.gateway.governance.commit_outcome import CommitStatus
 
     # Create a spy receipt that will be returned by the mocked actuate()
     spy_receipt = ActuationReceipt(
@@ -318,7 +319,8 @@ async def test_execute_trade_action_traverses_actuator():
     )
 
     # Assert result reflects actuation success
-    assert "EXECUTED" in result or "Receipt ID" in result
+    assert result.status is CommitStatus.EXECUTED, result
+    assert "Receipt ID" in result.message
 
 
 # ──────────────────────────────────────────────────────────────────────────────
