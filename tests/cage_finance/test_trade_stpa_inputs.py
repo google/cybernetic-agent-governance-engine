@@ -56,6 +56,7 @@ from src.cage_finance.tools.trade_inputs import (
     measure_market_data_latency_ms,
     resolve_daily_drawdown_pct,
 )
+from src.gateway.governance.commit_outcome import CommitOutcome, CommitStatus
 from src.gateway.governance.contracts import ViolationKind
 from src.gateway.governance.governor import governor as governor_mod
 from src.gateway.governance.schemas.thresholds import load_and_validate_thresholds
@@ -141,7 +142,7 @@ def _inputs(
     return ServerTradeInputs(**fields)
 
 
-async def _buy(inputs: ServerTradeInputs) -> str:
+async def _buy(inputs: ServerTradeInputs) -> CommitOutcome:
     return await execute_trade_action(
         symbol="AAPL",
         amount=500.0,
@@ -184,9 +185,10 @@ async def test_latency_over_fin2_is_hard_uca2(
 ) -> None:
     _, latency = _LIMITS[region]
     result = await _buy(_inputs(delay_ms=latency + 5.0))
-    assert result.startswith("BLOCKED:")
-    assert f"{_UCA_2}: Agent executes trade with stale market data" in result
-    assert _UCA_5 not in result
+    assert result.status is CommitStatus.REFUSED
+    assert result.message.startswith("BLOCKED:")
+    assert f"{_UCA_2}: Agent executes trade with stale market data" in result.message
+    assert _UCA_5 not in result.message
     assert stpa_gateway[-1]["latency_ms"] > latency
 
 
@@ -196,12 +198,13 @@ async def test_drawdown_over_limit_is_hard_uca5(
 ) -> None:
     drawdown, _ = _LIMITS[region]
     result = await _buy(_inputs(drawdown_pct=drawdown + 0.01))
-    assert result.startswith("BLOCKED:")
+    assert result.status is CommitStatus.REFUSED
+    assert result.message.startswith("BLOCKED:")
     assert (
         f"{_UCA_5}: Agent executes buy order when daily drawdown exceeds limit"
-        in result
+        in result.message
     )
-    assert _UCA_2 not in result
+    assert _UCA_2 not in result.message
 
 
 @pytest.mark.asyncio
@@ -210,9 +213,12 @@ async def test_regions_differ_at_the_same_inputs(
 ) -> None:
     """160 ms and 3.8 % breach only EU_ECB's limits (150 ms, 3.5 %)."""
     try:
-        result = await _buy(_inputs(delay_ms=160.0, drawdown_pct=3.8))
+        outcome = await _buy(_inputs(delay_ms=160.0, drawdown_pct=3.8))
     except _Cleared:
         result = "CLEARED"
+    else:
+        assert outcome.status is CommitStatus.REFUSED
+        result = outcome.message
     assert (_UCA_2 in result) is (region == "EU_ECB")
     assert (_UCA_5 in result) is (region == "EU_ECB")
 
@@ -291,7 +297,8 @@ async def test_faulted_market_feed_is_refused_by_uca2(
     feed = _feed(20.0)
     feed.inject_fault(fault)
     result = await _buy(_inputs(market_feed=feed))
-    assert f"{_UCA_2}: Missing required param `latency_ms`." in result
+    assert result.status is CommitStatus.REFUSED
+    assert f"{_UCA_2}: Missing required param `latency_ms`." in result.message
     assert "latency_ms" not in stpa_gateway[-1]
 
 
@@ -302,7 +309,8 @@ async def test_stale_quote_is_measured_and_refused_by_uca2(
     feed = _feed(20.0)
     feed.inject_fault(FaultMode.STALE_TIMESTAMP)
     result = await _buy(_inputs(market_feed=feed))
-    assert f"{_UCA_2}: Agent executes trade with stale market data" in result
+    assert result.status is CommitStatus.REFUSED
+    assert f"{_UCA_2}: Agent executes trade with stale market data" in result.message
     assert stpa_gateway[-1]["latency_ms"] >= 3_600_000.0
 
 
@@ -350,7 +358,8 @@ async def test_faulted_nav_source_is_refused_by_uca5(
     nav = SimulatedPortfolioNavSource()
     nav.inject_fault(fault)
     result = await _buy(_inputs(nav_source=nav))
-    assert f"{_UCA_5}: Missing required param `drawdown`." in result
+    assert result.status is CommitStatus.REFUSED
+    assert f"{_UCA_5}: Missing required param `drawdown`." in result.message
     assert "drawdown" not in stpa_gateway[-1]
 
 

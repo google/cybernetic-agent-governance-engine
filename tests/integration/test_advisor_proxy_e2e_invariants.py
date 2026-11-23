@@ -1299,6 +1299,7 @@ async def test_advisor_proxy_e2e_all_five_invariants_and_negative_controls(
     # mints & burns ES256 seal, actuates, and settles.
     exec_allow_json = await e2e_stack.advisor_execute_trade(allow_args)
     assert exec_allow_json["status"] == "SUCCESS"
+    assert exec_allow_json["outcome"]["status"] == "EXECUTED"
     assert exec_allow_json["output"].startswith("EXECUTED: AAPL x 1200.0")
     assert len(e2e_stack.recorded_executions) == 1
     first_clearance = e2e_stack.recorded_executions[0]
@@ -1377,6 +1378,8 @@ async def test_advisor_proxy_e2e_all_five_invariants_and_negative_controls(
     exec_deny = await e2e_stack.execute_tool("execute_trade_action", deny_args)
     assert exec_deny.status_code == 200
     exec_deny_json = exec_deny.json()
+    assert exec_deny_json["status"] == "ERROR"
+    assert exec_deny_json["outcome"]["status"] == "REFUSED"
     assert exec_deny_json["output"].startswith("BLOCKED:")
     assert isinstance(exec_deny_json.get("proof_hash"), str)
     assert len(exec_deny_json["proof_hash"]) == 64
@@ -1417,6 +1420,8 @@ async def test_advisor_proxy_e2e_all_five_invariants_and_negative_controls(
         {**defer_args, "transaction_id": str(uuid.uuid4())},
     )
     assert unapproved_direct.status_code == 200
+    assert unapproved_direct.json()["status"] == "ERROR"
+    assert unapproved_direct.json()["outcome"]["status"] == "REFUSED"
     assert unapproved_direct.json()["output"].startswith("BLOCKED:")
     if unapproved_direct.json().get("proof_hash"):
         observed_refusal_hashes.append(unapproved_direct.json()["proof_hash"])
@@ -1544,6 +1549,10 @@ async def test_advisor_proxy_e2e_all_five_invariants_and_negative_controls(
         "execute_trade_action",
         {**defer_args, "transaction_id": premature_tx, "deferred_id": defer_id},
     )
+    assert premature_exec.json()["status"] == "ERROR"
+    premature_outcome = premature_exec.json()["outcome"]
+    assert premature_outcome["status"] == "REFUSED"
+    assert premature_outcome["redemption_refusal"] == "QUORUM_INCOMPLETE"
     assert premature_exec.json()["output"].startswith("BLOCKED:")
     if premature_exec.json().get("proof_hash"):
         observed_refusal_hashes.append(premature_exec.json()["proof_hash"])
@@ -1588,6 +1597,7 @@ async def test_advisor_proxy_e2e_all_five_invariants_and_negative_controls(
 
     redeem_exec = await e2e_stack.advisor_execute_trade(redeem_args)
     assert redeem_exec["status"] == "SUCCESS"
+    assert redeem_exec["outcome"]["status"] == "EXECUTED"
     assert redeem_exec["output"].startswith("EXECUTED: MSFT x 7500.0")
     assert len(e2e_stack.recorded_executions) == 2
     assert e2e_stack.recorded_executions[1].params["symbol"] == "MSFT"
@@ -1603,6 +1613,10 @@ async def test_advisor_proxy_e2e_all_five_invariants_and_negative_controls(
         "execute_trade_action",
         {**redeem_args, "transaction_id": str(uuid.uuid4())},
     )
+    assert replay_exec.json()["status"] == "ERROR"
+    replay_outcome = replay_exec.json()["outcome"]
+    assert replay_outcome["status"] == "REFUSED"
+    assert replay_outcome["redemption_refusal"] == "CONSUMED"
     assert replay_exec.json()["output"].startswith("BLOCKED:")
     assert replay_exec.json().get("proof_hash")
     observed_refusal_hashes.append(replay_exec.json()["proof_hash"])
@@ -1649,6 +1663,10 @@ async def test_advisor_proxy_e2e_all_five_invariants_and_negative_controls(
         ),
     )
     race_outputs = [race_res_a.json()["output"], race_res_b.json()["output"]]
+    race_statuses = sorted(
+        r.json()["outcome"]["status"] for r in (race_res_a, race_res_b)
+    )
+    assert race_statuses == ["EXECUTED", "REFUSED"], race_outputs
     blocked_race = [o for o in race_outputs if o.startswith("BLOCKED:")]
     succeeded_race = [o for o in race_outputs if o.startswith("EXECUTED: GOOGL")]
     assert len(succeeded_race) == 1, race_outputs

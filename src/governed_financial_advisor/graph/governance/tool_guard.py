@@ -43,6 +43,23 @@ forwards the ``deferred_id`` in each tool call's arguments and the gateway
 consumes that approval exactly once, re-validating the fresh params. The
 advisor never decides that an approval holds.
 
+The committing run answers with a typed ``CommitOutcome``
+(``src.gateway.governance.commit_outcome``), which the wrapped node hands
+back under :data:`COMMIT_OUTCOMES`. The guard decides on its fields only,
+never on message text (POAM-2026-245):
+
+* ``EXECUTED`` / ``DRY_RUN`` → ``ALLOWED``;
+* the approval is not redeemable *yet* (a retryable ``redemption_refusal``)
+  or the run deferred and retained the approval → ``REQUIRE_APPROVAL`` on the
+  **same** ``deferred_id``, with ``approval_decision`` cleared, so the graph
+  re-interrupts on that ticket (no new deferral, nothing spent);
+* anything else (a terminal refusal, a deferral without a retained approval,
+  or no decodable outcome) → ``DENIED`` and the subgraph ends.
+
+No message the advisor writes names a ``deferred_id``: the handle belongs to
+reviewers at the compliance bridge (BREAKING_CHANGES SA-1). The trade is
+identified by its own params instead.
+
 A ``deferred_id`` the model put in a tool call never counts: it is removed
 from the call ``validate-action`` previews and from every call the wrapped
 node executes. Only the approved resume above adds one, so an ALLOW for one
@@ -71,6 +88,12 @@ from typing import Any, Protocol
 from langchain_core.messages import AIMessage, ToolMessage
 from langgraph.config import get_config
 
+from src.gateway.governance.commit_outcome import (
+    ApprovalRedemptionRefusal,
+    CommitOutcome,
+    CommitStatus,
+    is_retryable_refusal,
+)
 from src.gateway.governance.decisions import GovernanceDecision
 from src.governed_financial_advisor.graph.nodes.trade_contract import (
     TRADE_ACTION,
@@ -94,6 +117,53 @@ GOVERNANCE_REQUIRE_APPROVAL = GovernanceDecision.REQUIRE_APPROVAL.value
 
 #: Verdicts under which the wrapped node may execute the batch.
 _EXECUTABLE_VERDICTS = frozenset({GovernanceDecision.ALLOW, GovernanceDecision.NARROW})
+
+#: Key under which a wrapped node returns ``{tool_call_id: CommitOutcome | None}``
+#: for the committing calls it ran (``None``: no decodable outcome). The guard
+#: consumes it; it never reaches graph state.
+COMMIT_OUTCOMES = "commit_outcomes"
+
+#: Commit statuses after which the batch counts as executed as routed.
+_COMPLETED_STATUSES = frozenset({CommitStatus.EXECUTED, CommitStatus.DRY_RUN})
+
+#: Why a ticket can't be redeemed, as told to the trade's owner.
+REFUSAL_DESCRIPTIONS: dict[ApprovalRedemptionRefusal, str] = {
+    ApprovalRedemptionRefusal.PENDING: "it has no reviewer approval yet",
+    ApprovalRedemptionRefusal.QUORUM_INCOMPLETE: (
+        "it does not have all the reviewer approvals it needs yet"
+    ),
+    ApprovalRedemptionRefusal.UNKNOWN_OR_EXPIRED: (
+        "its approval request no longer exists (it expired or was never recorded)"
+    ),
+    ApprovalRedemptionRefusal.NOT_AN_APPROVAL: (
+        "the hold on it is not one a reviewer approval can release"
+    ),
+    ApprovalRedemptionRefusal.CONSUMED: "its approval has already been used",
+    ApprovalRedemptionRefusal.EXPIRED: (
+        "its approval request expired before reviewers approved it"
+    ),
+    ApprovalRedemptionRefusal.RESOLVED_WITHOUT_APPROVAL: (
+        "its approval request was closed without a reviewer approval"
+    ),
+    ApprovalRedemptionRefusal.QUORUM_NOT_DISTINCT: (
+        "its approvals did not come from enough distinct reviewers"
+    ),
+    ApprovalRedemptionRefusal.UNRECOGNIZED_STATE: (
+        "its approval request is in a state the gateway does not recognise"
+    ),
+    ApprovalRedemptionRefusal.ACTION_MISMATCH: (
+        "its approval was granted for a different action"
+    ),
+    ApprovalRedemptionRefusal.STALE_BARRIER_PREVIEW: (
+        "it was approved against conditions that have since changed"
+    ),
+    ApprovalRedemptionRefusal.NO_APPROVED_PARAMS: (
+        "its approval does not record what was approved"
+    ),
+    ApprovalRedemptionRefusal.PARAMS_NOT_COVERED: (
+        "it no longer matches what reviewers approved"
+    ),
+}
 
 #: Namespace of the UUIDv5 transaction ids derived for trade tool calls.
 _TRANSACTION_ID_NAMESPACE = uuid.uuid5(
@@ -228,6 +298,211 @@ def _cleared_guard_hitl_state() -> dict[str, Any]:
     }
 
 
+def describe_trade(call: dict[str, Any]) -> str:
+    """The trade a tool call asks for, rendered from its params alone.
+
+    Only ``side``, ``symbol``, ``amount`` and ``currency`` are read, so no
+    other argument (in particular a ``deferred_id``) can reach the text.
+    """
+    args = call.get("args")
+    args = args if isinstance(args, dict) else {}
+    side = str(args.get("side") or "buy").upper()
+    symbol = str(args.get("symbol") or "?")
+    amount, currency = args.get("amount"), args.get("currency")
+    notional = f" for {amount} {currency}" if amount is not None and currency else ""
+    return f"{side} {symbol}{notional}"
+
+
+def _awaiting_approval_message(call: dict[str, Any]) -> str:
+    return (
+        f"Nothing was executed. Your {describe_trade(call)} trade needs reviewer "
+        "approval at the compliance bridge; it is in your pending approvals."
+    )
+
+
+def _still_awaiting_message(call: dict[str, Any], outcome: CommitOutcome) -> str:
+    if outcome.status is CommitStatus.DEFERRED:
+        return (
+            f"Nothing was executed. The gateway deferred your "
+            f"{describe_trade(call)} trade after its approval; the approval is "
+            "retained and nothing was spent. Resume once the deferral has "
+            "cleared; it remains in your pending approvals."
+        )
+    return (
+        f"Nothing was executed. Your {describe_trade(call)} trade is still "
+        "awaiting reviewer approval at the compliance bridge. Resume after a "
+        "reviewer has approved it; it remains in your pending approvals."
+    )
+
+
+def _terminal_message(call: dict[str, Any], outcome: CommitOutcome | None) -> str:
+    trade = describe_trade(call)
+    if outcome is None:
+        # The run may have executed: never invite a resubmission.
+        return (
+            f"The outcome of your {trade} trade could not be confirmed. Do not "
+            "submit it again until it has been reconciled."
+        )
+    if outcome.status is CommitStatus.DEFERRED:
+        reason = "the gateway deferred it and holds no approval for it"
+    elif outcome.redemption_refusal is not None:
+        reason = REFUSAL_DESCRIPTIONS[outcome.redemption_refusal]
+    else:
+        reason = "the gateway refused it"
+    return (
+        f"Nothing was executed. Your {trade} trade can't proceed: {reason}. "
+        "Submit a new request if you still want it."
+    )
+
+
+def _awaits_same_ticket(outcome: CommitOutcome | None) -> bool:
+    """Whether ``outcome`` leaves the approval it redeemed redeemable later."""
+    if outcome is None:
+        return False
+    if outcome.status is CommitStatus.DEFERRED:
+        return outcome.approval_retained
+    return outcome.status is CommitStatus.REFUSED and is_retryable_refusal(
+        outcome.redemption_refusal
+    )
+
+
+def _split_outcomes(
+    result: dict[str, Any], tool_calls: list[dict[str, Any]]
+) -> tuple[dict[str, Any], dict[str, CommitOutcome | None]]:
+    """Separate the wrapped node's state update from its commit outcomes.
+
+    Returns the update without :data:`COMMIT_OUTCOMES` and the outcome of
+    every committing call in the batch. A committing call the node reported
+    no outcome for maps to ``None``.
+    """
+    update = dict(result)
+    reported = update.pop(COMMIT_OUTCOMES, None)
+    reported = reported if isinstance(reported, dict) else {}
+    outcomes: dict[str, CommitOutcome | None] = {}
+    for call in tool_calls:
+        if call.get("name") != TRADE_TOOL:
+            continue
+        call_id = str(call.get("id"))
+        outcome = reported.get(call_id)
+        outcomes[call_id] = outcome if isinstance(outcome, CommitOutcome) else None
+    return update, outcomes
+
+
+def _with_messages(
+    update: dict[str, Any],
+    tool_calls: list[dict[str, Any]],
+    texts: dict[str, str],
+) -> dict[str, Any]:
+    """``update`` whose answer to each call in ``texts`` is replaced by that text."""
+    if not texts:
+        return update
+    by_id = {str(c.get("id")): c for c in tool_calls}
+    messages = [
+        message
+        for message in update.get("messages") or []
+        if str(getattr(message, "tool_call_id", "")) not in texts
+    ]
+    messages.extend(
+        ToolMessage(
+            content=text,
+            tool_call_id=by_id[call_id].get("id"),
+            name=by_id[call_id].get("name"),
+        )
+        for call_id, text in texts.items()
+    )
+    return {**update, "messages": messages}
+
+
+def _refused_batch(
+    update: dict[str, Any],
+    tool_calls: list[dict[str, Any]],
+    outcomes: dict[str, CommitOutcome | None],
+) -> dict[str, Any] | None:
+    """The terminal ``DENIED`` update when a committing call did not complete, else ``None``."""
+    unfinished = {
+        call_id: outcome
+        for call_id, outcome in outcomes.items()
+        if outcome is None or outcome.status not in _COMPLETED_STATUSES
+    }
+    if not unfinished:
+        return None
+    by_id = {str(c.get("id")): c for c in tool_calls}
+    refusal = next(
+        (
+            o.redemption_refusal
+            for o in unfinished.values()
+            if o is not None and o.redemption_refusal is not None
+        ),
+        None,
+    )
+    logger.warning(
+        "Committing run did not complete for %d of %d call(s): %s",
+        len(unfinished),
+        len(tool_calls),
+        {k: (o.status.value if o else None) for k, o in unfinished.items()},
+    )
+    return {
+        **_with_messages(
+            update,
+            tool_calls,
+            {k: _terminal_message(by_id[k], o) for k, o in unfinished.items()},
+        ),
+        "governance_status": GOVERNANCE_DENIED,
+        **_cleared_guard_hitl_state(),
+        "redemption_refusal": refusal.value if refusal is not None else None,
+    }
+
+
+def _after_approved_redemption(
+    update: dict[str, Any],
+    call: dict[str, Any],
+    outcome: CommitOutcome | None,
+    deferred_id: str,
+) -> dict[str, Any]:
+    """Route one approved call on the typed outcome of redeeming ``deferred_id``."""
+    if outcome is not None and outcome.status in _COMPLETED_STATUSES:
+        return {
+            **update,
+            "governance_status": GOVERNANCE_ALLOWED,
+            **_cleared_guard_hitl_state(),
+            "redemption_refusal": None,
+        }
+    if outcome is not None and _awaits_same_ticket(outcome):
+        # Not redeemable yet: keep the ticket, require a fresh resume. Nothing
+        # was spent and the gateway's ticket is left exactly as it is.
+        logger.info(
+            "Approved %s not redeemable yet (%s) — re-interrupting on the same ticket",
+            call.get("name"),
+            outcome.redemption_refusal.value
+            if outcome.redemption_refusal is not None
+            else outcome.status.value,
+        )
+        return {
+            **_with_messages(
+                update,
+                [call],
+                {str(call.get("id")): _still_awaiting_message(call, outcome)},
+            ),
+            "governance_status": GOVERNANCE_REQUIRE_APPROVAL,
+            "governance_envelope": None,
+            "routing_verdict_cache": None,
+            "deferred_id": deferred_id,
+            "deferred_step_ids": None,
+            "approval_decision": None,
+            "approval_required": True,
+            "redemption_refusal": (
+                outcome.redemption_refusal.value
+                if outcome.redemption_refusal is not None
+                else None
+            ),
+        }
+    return _refused_batch(update, [call], {str(call.get("id")): outcome}) or {
+        **update,
+        "governance_status": GOVERNANCE_DENIED,
+        **_cleared_guard_hitl_state(),
+    }  # unreachable: an outcome that did not complete always refuses
+
+
 def _with_deferred_id(state: Any, deferred_id: str | None) -> Any:
     """Return ``state`` whose last message's tool calls carry only ``deferred_id``.
 
@@ -351,12 +626,20 @@ async def _execute_approved_step_batch(
             **_cleared_guard_hitl_state(),
         }
 
-    result = await func(_with_step_deferred_ids(state, step_ids))
+    update, outcomes = _split_outcomes(
+        await func(_with_step_deferred_ids(state, step_ids)), tool_calls
+    )
+    # A multi-step batch may already have executed some steps, so it is never
+    # re-run: any step that did not complete ends it (DENIED).
+    denied = _refused_batch(update, tool_calls, outcomes)
+    if denied is not None:
+        return denied
     return {
-        **result,
+        **update,
         "governance_status": GOVERNANCE_ALLOWED,
         **_cleared_guard_hitl_state(),
         "governance_envelope": verdicts[-1] if verdicts else None,
+        "redemption_refusal": None,
     }
 
 
@@ -402,12 +685,14 @@ def gateway_tool_guard(
             if approved_id is not None:
                 # The gateway, not the advisor, decides whether the approval
                 # covers these params; the id is single-use on both sides.
-                result = await func(_with_deferred_id(state, approved_id))
-                return {
-                    **result,
-                    "governance_status": GOVERNANCE_ALLOWED,
-                    **_cleared_guard_hitl_state(),
-                }
+                # The route follows the typed outcome of the redemption.
+                (call,) = tool_calls
+                update, outcomes = _split_outcomes(
+                    await func(_with_deferred_id(state, approved_id)), tool_calls
+                )
+                return _after_approved_redemption(
+                    update, call, outcomes.get(str(call.get("id"))), approved_id
+                )
 
             verdicts: list[dict[str, Any]] = []
             refusals: dict[str, str] = {}
@@ -486,11 +771,14 @@ def gateway_tool_guard(
                     deferred_id,
                 )
                 return {
-                    "messages": _answer_all(
-                        tool_calls,
-                        {},
-                        f"Awaiting human approval (deferred_id={deferred_id}); not executed.",
-                    ),
+                    "messages": [
+                        ToolMessage(
+                            content=_awaiting_approval_message(call),
+                            tool_call_id=call.get("id"),
+                            name=call.get("name"),
+                        )
+                        for call in tool_calls
+                    ],
                     "governance_status": GOVERNANCE_REQUIRE_APPROVAL,
                     "governance_envelope": None,
                     "deferred_id": deferred_id,
@@ -498,9 +786,14 @@ def gateway_tool_guard(
                 }
 
             # Execute exactly what was validated: no model-supplied deferred_id.
-            result = await func(_with_deferred_id(state, None))
+            update, outcomes = _split_outcomes(
+                await func(_with_deferred_id(state, None)), tool_calls
+            )
+            denied = _refused_batch(update, tool_calls, outcomes)
+            if denied is not None:
+                return denied
             return {
-                **result,
+                **update,
                 "governance_status": GOVERNANCE_ALLOWED,
                 "governance_envelope": verdicts[-1] if verdicts else None,
                 "routing_verdict_cache": None,

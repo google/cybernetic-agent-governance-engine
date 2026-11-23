@@ -74,7 +74,7 @@ def test_schema_file_is_valid_json():
 
 
 def test_all_agent_state_fields_present():
-    """Assert all 42 AgentState fields are present under properties.
+    """Assert all 43 AgentState fields are present under properties.
 
     Failure means the expected field count has changed. This is a regression guard
     to detect unintentional field additions or removals.
@@ -88,10 +88,12 @@ def test_all_agent_state_fields_present():
       - hitl_reference_quote (optional): Check-time market quote for post-HITL TOCTOU drift gate
     Updated from 41 to 42 on 2026-11-21 (DOMADV-05):
       - deferred_step_ids (optional): Per-step gateway deferred_id list for multi-step HITL plans
+    Updated from 42 to 43 on 2026-11-23 (POAM-2026-245):
+      - redemption_refusal (optional): ApprovalRedemptionRefusal of a refused redemption
     """
     schema_props = get_schema_properties()
-    assert len(schema_props) == 42, (
-        f"Expected exactly 42 properties in AgentState schema, found {len(schema_props)}. "
+    assert len(schema_props) == 43, (
+        f"Expected exactly 43 properties in AgentState schema, found {len(schema_props)}. "
         f"Properties: {sorted(schema_props)}"
     )
 

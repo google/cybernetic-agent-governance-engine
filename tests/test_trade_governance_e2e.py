@@ -79,6 +79,11 @@ from src.cage_healthcare.tiers.dose_barrier_tier import DoseBarrierTier
 from src.gateway.governance import defer_queue as defer_queue_mod
 from src.gateway.governance.causal.gatekeeper import CausalDecision
 from src.gateway.governance.classification_engine import ClassificationEngine
+from src.gateway.governance.commit_outcome import (
+    ApprovalRedemptionRefusal,
+    CommitOutcome,
+    CommitStatus,
+)
 from src.gateway.governance.consensus import extract_field_magnitude
 from src.gateway.governance.contracts import NarrowingResult
 from src.gateway.governance.decisions import GovernanceDecision
@@ -267,7 +272,7 @@ class Gateway:
         deferred_id: str | None = None,
         *,
         identity: str | None = ADVISOR,
-    ) -> str:
+    ) -> CommitOutcome:
         """The trade tool's committing run, as the MCP call ``identity`` makes it.
 
         WorkloadIdentityMiddleware makes the caller's verified identity current
@@ -504,14 +509,15 @@ async def test_s2_approved_token_executes_once_with_one_commit(gw: Gateway) -> N
 
     result = await gw.execute(params, deferred_id)
 
-    assert result.startswith("EXECUTED: AAPL x 20000.0"), result
+    assert result.status is CommitStatus.EXECUTED, result
+    assert result.message.startswith("EXECUTED: AAPL x 20000.0"), result
     assert await gw.fiscal.current_spend_usd() == 20_000.0
     assert await gw.cash() == OPENING_CASH - 20_000.0
     gw.actuate.assert_awaited_once()
     assert await gw.defer_redis.hget(f"DEFER:{deferred_id}", "status") == "CONSUMED"
 
 
-async def _replay_concurrently(gw: Gateway) -> list[str]:
+async def _replay_concurrently(gw: Gateway) -> list[CommitOutcome]:
     params = trade(20_000.0)
     deferred_id = await _require_approval(gw, params)
     await gw.approve(deferred_id, "urn:op:alice", "urn:op:bob")
@@ -522,8 +528,11 @@ async def _replay_concurrently(gw: Gateway) -> list[str]:
     )
 
 
-def _assert_single_execution(results: list[str], spend: float) -> None:
-    assert sorted(r.split(":")[0] for r in results) == ["BLOCKED", "EXECUTED"], results
+def _assert_single_execution(results: list[CommitOutcome], spend: float) -> None:
+    assert sorted(r.status.value for r in results) == [
+        CommitStatus.EXECUTED.value,
+        CommitStatus.REFUSED.value,
+    ], results
     assert spend == 20_000.0
 
 
@@ -534,14 +543,24 @@ async def test_s3_concurrent_replay_executes_exactly_once(gw: Gateway) -> None:
 
 
 @pytest.mark.parametrize(
-    ("approvers", "why"),
-    [((), "no approvals"), (("urn:op:alice",), "below quorum")],
+    ("approvers", "why", "refusal"),
+    [
+        ((), "no approvals", ApprovalRedemptionRefusal.PENDING),
+        (
+            ("urn:op:alice",),
+            "below quorum",
+            ApprovalRedemptionRefusal.QUORUM_INCOMPLETE,
+        ),
+    ],
 )
 @pytest.mark.covers(
-    "src.gateway.governance.defer_queue:DeferQueue.redeemable_token#status={status} resolution={token.resolution}"
+    "src.gateway.governance.defer_queue:_redemption_refusal#return _AWAITING_APPROVAL[status]"
 )
 async def test_s2_unapproved_token_is_blocked(
-    gw: Gateway, approvers: tuple[str, ...], why: str
+    gw: Gateway,
+    approvers: tuple[str, ...],
+    why: str,
+    refusal: ApprovalRedemptionRefusal,
 ) -> None:
     params = trade(20_000.0)
     deferred_id = await _require_approval(gw, params)
@@ -549,7 +568,8 @@ async def test_s2_unapproved_token_is_blocked(
 
     result = await gw.execute(params, deferred_id)
 
-    assert result.startswith("BLOCKED"), (why, result)
+    assert result.status is CommitStatus.REFUSED, (why, result)
+    assert result.redemption_refusal is refusal, (why, result)
     await _assert_nothing_committed(gw)
     gw.refusals.assert_awaited()
 
@@ -566,10 +586,12 @@ async def test_s2_approval_does_not_cover_other_params_and_is_not_burned(
     deferred_id = await _require_approval(gw, params)
     await gw.approve(deferred_id, "urn:op:alice", "urn:op:bob")
 
-    assert (await gw.execute({**params, **change}, deferred_id)).startswith("BLOCKED")
+    mismatched = await gw.execute({**params, **change}, deferred_id)
+    assert mismatched.status is CommitStatus.REFUSED, mismatched
     await _assert_nothing_committed(gw)
     # A mismatched request does not burn the approval; the approved trade still runs.
-    assert (await gw.execute(params, deferred_id)).startswith("EXECUTED")
+    executed = await gw.execute(params, deferred_id)
+    assert executed.status is CommitStatus.EXECUTED, executed
 
 
 async def test_s2_approval_redeems_only_for_the_identity_it_was_granted_to(
@@ -584,9 +606,10 @@ async def test_s2_approval_redeems_only_for_the_identity_it_was_granted_to(
 
     result = await gw.execute(params, deferred_id, identity=JUNIOR_DESK)
 
-    assert result.startswith("BLOCKED"), result
+    assert result.status is CommitStatus.REFUSED, result
     await _assert_nothing_committed(gw)
-    assert (await gw.execute(params, deferred_id)).startswith("EXECUTED")
+    executed = await gw.execute(params, deferred_id)
+    assert executed.status is CommitStatus.EXECUTED, executed
 
 
 async def test_s2_approval_may_shrink_the_trade(gw: Gateway) -> None:
@@ -594,17 +617,18 @@ async def test_s2_approval_may_shrink_the_trade(gw: Gateway) -> None:
     deferred_id = await _require_approval(gw, params)
     await gw.approve(deferred_id, "urn:op:alice", "urn:op:bob")
 
-    assert (await gw.execute({**params, "amount": 15_000.0}, deferred_id)).startswith(
-        "EXECUTED"
-    )
+    result = await gw.execute({**params, "amount": 15_000.0}, deferred_id)
+    assert result.status is CommitStatus.EXECUTED, result
     assert await gw.fiscal.current_spend_usd() == 15_000.0
 
 
 @pytest.mark.covers(
-    "src.gateway.governance.defer_queue:DeferQueue.redeemable_token#unknown defer_id="
+    "src.gateway.governance.defer_queue:DeferQueue.check_redemption#ApprovalRedemptionRefusal.UNKNOWN_OR_EXPIRED"
 )
 async def test_s2_unknown_deferred_id_is_blocked(gw: Gateway) -> None:
-    assert (await gw.execute(trade(20_000.0), str(uuid.uuid4()))).startswith("BLOCKED")
+    result = await gw.execute(trade(20_000.0), str(uuid.uuid4()))
+    assert result.status is CommitStatus.REFUSED, result
+    assert result.redemption_refusal is ApprovalRedemptionRefusal.UNKNOWN_OR_EXPIRED
     await _assert_nothing_committed(gw)
 
 
@@ -667,7 +691,7 @@ async def test_s6_fiscal_drift_after_approval_blocks_in_the_committing_run(
 
     result = await gw.execute(params, deferred_id)
 
-    assert result.startswith("BLOCKED"), result
+    assert result.status is CommitStatus.REFUSED, result
     assert await gw.fiscal.current_spend_usd() == 490_000.0
     assert await gw.cash() == OPENING_CASH
     gw.actuate.assert_not_awaited()
@@ -688,8 +712,8 @@ async def test_s6_barrier_drift_after_approval_is_refused_as_context_drift(
 
     result = await gw.execute(params, deferred_id)
 
-    assert result.startswith("BLOCKED"), result
-    assert "APPROVAL_CONTEXT_DRIFT" in result, result
+    assert result.status is CommitStatus.REFUSED, result
+    assert "APPROVAL_CONTEXT_DRIFT" in result.message, result
     assert await gw.cash() == 5000.0
     assert await gw.fiscal.current_spend_usd() == 0.0  # fiscal commit rolled back
     assert await gw.seal_redis.dbsize() == 0  # no seal minted
@@ -710,7 +734,7 @@ async def test_approval_given_against_a_failing_preview_may_run_once_it_passes(
 
     result = await gw.execute({**params, "amount": 15_000.0}, str(body["deferred_id"]))
 
-    assert result.startswith("EXECUTED"), result
+    assert result.status is CommitStatus.EXECUTED, result
     assert await gw.fiscal.current_spend_usd() == 15_000.0
 
 
@@ -737,7 +761,7 @@ async def test_approve_stamps_the_token_snapshot_over_a_client_supplied_binding(
 
 
 @pytest.mark.covers(
-    "src.gateway.governance.defer_queue:DeferQueue.redeemable_token#approvals bound to"
+    "src.gateway.governance.defer_queue:_redemption_refusal#ApprovalRedemptionRefusal.STALE_BARRIER_PREVIEW"
 )
 async def test_consume_refuses_an_approval_bound_to_another_snapshot(
     gw: Gateway,
@@ -752,7 +776,8 @@ async def test_consume_refuses_an_approval_bound_to_another_snapshot(
 
     result = await gw.execute(params, deferred_id)
 
-    assert result.startswith("BLOCKED"), result
+    assert result.status is CommitStatus.REFUSED, result
+    assert result.redemption_refusal is ApprovalRedemptionRefusal.STALE_BARRIER_PREVIEW
     await _assert_nothing_committed(gw)
     assert await gw.defer_redis.hget(key, "status") == "RESOLVED"  # not consumed
 
@@ -818,7 +843,8 @@ async def test_s1a_small_trade_allowed_then_committed_exactly_once(gw: Gateway) 
     assert "seal" not in body
     await _assert_nothing_committed(gw)
 
-    assert (await gw.execute(params, identity=JUNIOR_DESK)).startswith("EXECUTED")
+    result = await gw.execute(params, identity=JUNIOR_DESK)
+    assert result.status is CommitStatus.EXECUTED, result
     assert await gw.fiscal.current_spend_usd() == 500.0
 
 
@@ -857,7 +883,7 @@ async def test_the_trade_is_verified_and_actuated_with_the_evaluated_params(
     # and the broker receives exactly them (the caller supplied none).
     result = await gw.execute(trade(500.0), identity=JUNIOR_DESK)
 
-    assert result.startswith("EXECUTED"), result
+    assert result.status is CommitStatus.EXECUTED, result
     clearance = gw.actuate.await_args.args[0]
     assert (clearance.params["trader_role"], clearance.params["trader_id"]) == (
         "junior",
@@ -903,7 +929,7 @@ async def test_claimed_senior_role_never_executes_on_the_committing_path(
         identity=JUNIOR_DESK,
     )
 
-    assert not result.startswith("EXECUTED"), result
+    assert result.status is not CommitStatus.EXECUTED, result
     assert [c["trader_role"] for c in gw.policy.calls] == ["junior"]
     await _assert_nothing_committed(gw)
 
@@ -932,7 +958,7 @@ async def test_no_verified_identity_is_refused_under_an_enforcing_posture(
     # binds no role, and the policy refuses the missing role.
     result = await gw.execute(trade(500.0, trader_role="senior"), identity=None)
 
-    assert result.startswith("BLOCKED"), result
+    assert result.status is CommitStatus.REFUSED, result
     (evaluated,) = gw.policy.calls
     assert "trader_role" not in evaluated
     assert "trader_id" not in evaluated
@@ -1026,7 +1052,8 @@ async def test_s10_autonomous_trade_is_narrowed_to_the_remaining_cap(
     )
     await gw.fiscal.reserve(agent_id="other-desk", amount_usd=497_000.0)
     result = await gw.execute(trade(4_000.0))
-    assert result.startswith("EXECUTED: AAPL x 3000.0"), result
+    assert result.status is CommitStatus.EXECUTED, result
+    assert result.message.startswith("EXECUTED: AAPL x 3000.0"), result
     assert await gw.fiscal.current_spend_usd() == DAILY_CAP_USD
     assert await _receipts(gw) == []  # the narrow receipt was fetched and burned
 
@@ -1082,7 +1109,8 @@ async def test_committing_run_seals_and_executes_the_narrowed_trade(
 
     result = await gw.execute(trade(4_000.0))
 
-    assert result.startswith("EXECUTED: AAPL x 3000.0"), result
+    assert result.status is CommitStatus.EXECUTED, result
+    assert result.message.startswith("EXECUTED: AAPL x 3000.0"), result
     assert await gw.fiscal.current_spend_usd() == DAILY_CAP_USD
     assert await gw.cash() == OPENING_CASH - 3_000.0
     assert gw.actuate.await_args.args[0].params["amount"] == 3_000.0
@@ -1095,7 +1123,7 @@ async def test_narrowed_params_that_still_breach_are_denied_and_commit_nothing(
     _narrowing(gw, 3_500.0)  # still over the $3,000 headroom: the re-run refuses
     await gw.fiscal.reserve(agent_id="other-desk", amount_usd=497_000.0)
 
-    assert (await gw.execute(trade(4_000.0))).startswith("BLOCKED")
+    assert (await gw.execute(trade(4_000.0))).status is CommitStatus.REFUSED
     assert await gw.fiscal.current_spend_usd() == 497_000.0
     assert await gw.cash() == OPENING_CASH
     assert await _receipts(gw) == []
@@ -1112,7 +1140,7 @@ async def test_undeliverable_narrow_receipt_rolls_the_commits_back(
         raise ConnectionError("redis unreachable")
 
     monkeypatch.setattr(gw.seal_redis, "setex", _down)
-    assert (await gw.execute(trade(4_000.0))).startswith("BLOCKED")
+    assert (await gw.execute(trade(4_000.0))).status is CommitStatus.REFUSED
     assert await gw.fiscal.current_spend_usd() == 497_000.0
     assert await gw.cash() == OPENING_CASH
     gw.actuate.assert_not_awaited()
@@ -1120,7 +1148,7 @@ async def test_undeliverable_narrow_receipt_rolls_the_commits_back(
 
 async def test_committing_run_without_narrowing_enabled_denies(gw: Gateway) -> None:
     await gw.fiscal.reserve(agent_id="other-desk", amount_usd=497_000.0)
-    assert (await gw.execute(trade(4_000.0))).startswith("BLOCKED")
+    assert (await gw.execute(trade(4_000.0))).status is CommitStatus.REFUSED
     assert await gw.fiscal.current_spend_usd() == 497_000.0
     assert await _receipts(gw) == []
 
@@ -1184,7 +1212,8 @@ async def test_require_approval_carries_a_reverified_narrow_hint(gw: Gateway) ->
     # Approving the hinted (shrunk) trade executes it in the committing run.
     await gw.approve(body["deferred_id"], "urn:op:alice", "urn:op:bob")
     result = await gw.execute(body["narrowed_params"], body["deferred_id"])
-    assert result.startswith("EXECUTED: AAPL x 10000.0"), result
+    assert result.status is CommitStatus.EXECUTED, result
+    assert result.message.startswith("EXECUTED: AAPL x 10000.0"), result
     assert await gw.fiscal.current_spend_usd() == DAILY_CAP_USD
 
 

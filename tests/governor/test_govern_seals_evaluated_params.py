@@ -59,6 +59,10 @@ from src.cage_finance.tools.tool_provider import (
     execute_trade_action,
 )
 from src.gateway.governance import defer_queue as defer_queue_module
+from src.gateway.governance.commit_outcome import (
+    ApprovalRedemptionRefusal,
+    CommitStatus,
+)
 from src.gateway.governance.contracts import (
     NormBinding,
     ReadOnlyTier,
@@ -67,7 +71,7 @@ from src.gateway.governance.contracts import (
     ViolationKind,
 )
 from src.gateway.governance.decisions import GovernanceDecision
-from src.gateway.governance.defer_queue import DeferQueue
+from src.gateway.governance.defer_queue import DeferQueue, Redemption
 from src.gateway.governance.evidence.stream import EvidenceStreamSink
 from src.gateway.governance.governance_envelope import (
     GovernanceEnvelopeBuilder,
@@ -286,9 +290,10 @@ def _warrant_ineligible_governor(resolver: Any) -> SymbolicGovernor:
 class _ApprovalQueue:
     """``DeferQueue`` stand-in holding one quorum-approved ``HITL_REQUIRED`` token.
 
-    ``redeemable_token`` checks token state only (no ``covers`` parameter);
-    ``consume_approval`` applies ``covers`` to the approved params and spends
-    the token at most once, like the queue's compare-and-swap.
+    ``check_redemption`` checks token state only (no ``covers`` parameter);
+    ``consume_redemption`` applies ``covers`` to the approved params and spends
+    the token at most once, like the queue's compare-and-swap. Each answers a
+    ``Redemption`` naming the typed refusal whenever no token is returned.
     ``stale_state_check`` lets a replay slip past the state check, as a
     concurrent redemption can. ``probe`` is sampled at every state check.
     """
@@ -317,38 +322,51 @@ class _ApprovalQueue:
     def _approved_params(self) -> dict[str, Any]:
         return copy.deepcopy(self.token.opa_input_snapshot["params"])
 
-    async def redeemable_token(
+    def _state_refusal(
+        self, defer_id: str, action: str, *, honor_stale: bool
+    ) -> ApprovalRedemptionRefusal | None:
+        if defer_id != DEFER_ID:
+            return ApprovalRedemptionRefusal.UNKNOWN_OR_EXPIRED
+        if action != ACTION:
+            return ApprovalRedemptionRefusal.ACTION_MISMATCH
+        if self.consumed and not (honor_stale and self.stale_state_check):
+            return ApprovalRedemptionRefusal.CONSUMED
+        return None
+
+    async def check_redemption(
         self,
         defer_id: str,
         *,
         action: str,
-    ) -> SimpleNamespace | None:
+    ) -> Redemption:
         self.state_checks.append((defer_id, action))
         if self.probe is not None:
             self.probes.append(self.probe())
-        if defer_id != DEFER_ID or action != ACTION:
-            return None
-        if self.consumed and not self.stale_state_check:
-            return None
-        return self.token
+        refusal = self._state_refusal(defer_id, action, honor_stale=True)
+        if refusal is not None:
+            return Redemption(None, refusal)
+        return Redemption(self.token, None)
 
-    async def consume_approval(
+    async def consume_redemption(
         self,
         defer_id: str,
         *,
         action: str,
         covers: Callable[[dict[str, Any]], bool],
-    ) -> SimpleNamespace | None:
+    ) -> Redemption:
         self.consuming = True
         try:
             covered = bool(covers(self._approved_params()))
         finally:
             self.consuming = False
         self.consume_calls.append(covered)
-        if defer_id != DEFER_ID or action != ACTION or self.consumed or not covered:
-            return None
+        refusal = self._state_refusal(defer_id, action, honor_stale=False)
+        if refusal is None and not covered:
+            refusal = ApprovalRedemptionRefusal.PARAMS_NOT_COVERED
+        if refusal is not None:
+            return Redemption(None, refusal)
         self.consumed = True
-        return self.token
+        return Redemption(self.token, None)
 
 
 def _serve(monkeypatch: pytest.MonkeyPatch, queue: _ApprovalQueue) -> AsyncMock:
@@ -663,7 +681,8 @@ async def test_trade_with_drifting_telemetry_seals_verifies_and_actuates_one_par
             governor=governor,
         )
 
-        assert outcome.startswith("EXECUTED"), outcome
+        assert outcome.status is CommitStatus.EXECUTED, outcome
+        assert outcome.message.startswith("EXECUTED"), outcome
         assert telemetry.calls == trade  # one lookup per trade, in the committing run
         clearance = actuate.await_args.args[1]
         assert sealed[-1] == verified[-1] == clearance.params
@@ -814,15 +833,19 @@ async def test_replayed_redemption_seals_nothing_and_is_refused(
     seal_mock.assert_awaited_once()
 
     # A replay of the spent approval is refused by the state check: nothing runs.
-    with pytest.raises(PermissionError, match="no unconsumed approval"):
+    with pytest.raises(gm.ApprovalRedemptionRefused, match="not redeemable") as replay:
         await _redeem(governor)
+    assert replay.value.refusal is ApprovalRedemptionRefusal.CONSUMED
     assert len(resolver.calls) == 1
     assert queue.consume_calls == [True]
 
     # A replay that raced past the state check loses the compare-and-swap.
     queue.stale_state_check = True
-    with pytest.raises(PermissionError, match=APPROVAL_NOT_REDEEMABLE):
+    with pytest.raises(
+        gm.ApprovalRedemptionRefused, match=APPROVAL_NOT_REDEEMABLE
+    ) as raced:
         await _redeem(governor)
+    assert raced.value.refusal is ApprovalRedemptionRefusal.CONSUMED
     assert queue.consume_calls == [True, True]  # covered, but already spent
     seal_mock.assert_awaited_once()  # neither replay sealed anything
 

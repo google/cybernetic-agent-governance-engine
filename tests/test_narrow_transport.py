@@ -58,6 +58,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
+from src.gateway.governance.commit_outcome import CommitOutcome, CommitStatus
 from src.gateway.governance.decisions import GovernanceDecision
 from src.gateway.governance.governor.sealing import SealedAction
 from src.gateway.governance.narrow_receipt import narrow_receipt_key
@@ -142,7 +143,8 @@ async def test_mcp_server_fetches_and_burns_receipt():
     assert verified_params["amount"] == 25.0  # Narrowed, not original 100.0
     assert verified_params["symbol"] == "MSFT"  # Narrowed, not original AAPL
 
-    assert "DRY_RUN: APPROVED" in result
+    assert result.status is CommitStatus.DRY_RUN
+    assert "DRY_RUN: APPROVED" in result.message
 
 
 @pytest.mark.unit
@@ -176,7 +178,8 @@ async def test_expired_receipt_rejected():
             )
 
     # Should succeed with the sealed params, or refuse an unverifiable seal
-    assert "DRY_RUN: APPROVED" in result or "BLOCKED" in result
+    assert result.status in (CommitStatus.DRY_RUN, CommitStatus.REFUSED)
+    assert "DRY_RUN: APPROVED" in result.message or "BLOCKED" in result.message
 
 
 @pytest.mark.unit
@@ -224,8 +227,9 @@ async def test_forged_receipt_rejected():
             )
 
     # Should block due to signature mismatch
-    assert "BLOCKED" in result
-    assert "signature mismatch" in result
+    assert result.status is CommitStatus.REFUSED
+    assert "BLOCKED" in result.message
+    assert "signature mismatch" in result.message
 
 
 @pytest.mark.unit
@@ -282,7 +286,8 @@ async def test_narrowed_params_applied_to_trade():
     assert verified_params["amount"] == 10.0  # Narrowed
     assert verified_params["symbol"] == "TSLA"  # Narrowed
 
-    assert "DRY_RUN: APPROVED" in result
+    assert result.status is CommitStatus.DRY_RUN
+    assert "DRY_RUN: APPROVED" in result.message
 
 
 @pytest.mark.unit
@@ -370,7 +375,8 @@ async def test_narrow_disabled_uses_original_params():
             dry_run=True,
         )
 
-    assert "BLOCKED" in result
+    assert result.status is CommitStatus.REFUSED
+    assert "BLOCKED" in result.message
 
 
 @pytest.mark.unit
@@ -443,9 +449,11 @@ async def test_receipt_replay_blocked():
     assert mock_redis.delete.call_count >= 1
     mock_redis.delete.assert_any_call(receipt_key)
 
-    assert "DRY_RUN: APPROVED" in result1
+    assert result1.status is CommitStatus.DRY_RUN
+    assert "DRY_RUN: APPROVED" in result1.message
     # Second call verifies the sealed params without a receipt
-    assert "DRY_RUN: APPROVED" in result2 or "BLOCKED" in result2
+    assert result2.status in (CommitStatus.DRY_RUN, CommitStatus.REFUSED)
+    assert "DRY_RUN: APPROVED" in result2.message or "BLOCKED" in result2.message
 
 
 @pytest.mark.unit
@@ -497,7 +505,8 @@ async def test_receipt_naming_other_params_than_the_sealed_params_is_refused():
             confidence=0.95,
         )
 
-    assert result.startswith(
+    assert result.status is CommitStatus.REFUSED, result
+    assert result.message.startswith(
         "BLOCKED: Narrowing receipt names params other than the sealed params"
     ), result
     mock_redis.delete.assert_called_once_with(narrow_receipt_key(seal))  # burned
@@ -567,7 +576,8 @@ async def test_matching_receipt_is_burned_and_the_sealed_params_are_actuated():
             confidence=0.95,
         )
 
-    assert result.startswith("EXECUTED: AAPL x 30.0"), result
+    assert result.status is CommitStatus.EXECUTED, result
+    assert result.message.startswith("EXECUTED: AAPL x 30.0"), result
     mock_redis.delete.assert_called_once_with(narrow_receipt_key(seal))
     verify.assert_awaited_once_with(seal, "execute_trade", narrowed)
     assert actuate.await_args.args[0].params == narrowed
@@ -620,7 +630,8 @@ async def test_missing_narrow_receipt_refuses_narrowed_trade():
             confidence=0.95,
         )
 
-    assert result.startswith("BLOCKED: Narrowing receipt missing"), result
+    assert result.status is CommitStatus.REFUSED, result
+    assert result.message.startswith("BLOCKED: Narrowing receipt missing"), result
     refusals.assert_awaited_once()
     assert refusals.await_args.kwargs["oscal_control_ref"] == "AC-3"
     assert refusals.await_args.kwargs["params"] == narrowed
@@ -675,7 +686,9 @@ async def test_corrupt_narrow_receipt_refuses_trade():
             confidence=0.95,
         )
 
-    assert result == "BLOCKED: Narrowing receipt payload corrupted"
+    assert result == CommitOutcome(
+        CommitStatus.REFUSED, "BLOCKED: Narrowing receipt payload corrupted"
+    )
     mock_redis.delete.assert_called_once_with(narrow_receipt_key(seal))
     refusals.assert_awaited_once()
     verify.assert_not_awaited()
@@ -800,6 +813,7 @@ async def test_jcs_canonical_equivalence_accepts_int_float_narrow_receipt():
             confidence=0.95,
         )
 
-    assert result.startswith("EXECUTED: AAPL x 30.0"), result
+    assert result.status is CommitStatus.EXECUTED, result
+    assert result.message.startswith("EXECUTED: AAPL x 30.0"), result
     verify.assert_awaited_once_with(seal, "execute_trade", narrowed_float)
     governor.settle.assert_awaited_once_with(seal, executed=True)

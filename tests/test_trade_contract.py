@@ -46,6 +46,7 @@ import pytest
 from langchain_core.messages import AIMessage, ToolMessage
 
 from src.cage_finance.tools.tool_provider import execute_trade_action
+from src.gateway.governance.commit_outcome import CommitOutcome, CommitStatus
 from src.gateway.governance.decisions import GovernanceDecision
 from src.governed_financial_advisor.graph.governance import tool_guard as guard_mod
 from src.governed_financial_advisor.graph.nodes import evaluator_node as evaluator_mod
@@ -345,7 +346,12 @@ async def _guarded_call(
     async def executor(state: dict[str, Any]) -> dict[str, Any]:
         if executed is not None:
             executed.append(dict(state["messages"][-1].tool_calls[0]["args"]))
-        return {"messages": [ToolMessage(content="EXECUTED", tool_call_id="c1")]}
+        return {
+            "messages": [ToolMessage(content="EXECUTED", tool_call_id="c1")],
+            guard_mod.COMMIT_OUTCOMES: {
+                "c1": CommitOutcome(CommitStatus.EXECUTED, "EXECUTED")
+            },
+        }
 
     call = {"name": "execute_trade_action", "id": "c1", "args": args}
     out = await guard_mod.gateway_tool_guard("execute_trade", approvable=True)(

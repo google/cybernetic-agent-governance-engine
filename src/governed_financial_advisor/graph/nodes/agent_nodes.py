@@ -357,6 +357,8 @@ async def governed_trader_node(state, *, subgraph):  # type: ignore[no-untyped-d
         out["deferred_id"] = result["deferred_id"]
     if "deferred_step_ids" in result:
         out["deferred_step_ids"] = result["deferred_step_ids"]
+    if "redemption_refusal" in result:
+        out["redemption_refusal"] = result["redemption_refusal"]
     if "approval_required" in result:
         out["approval_required"] = result["approval_required"]
     if "approval_decision" in result:

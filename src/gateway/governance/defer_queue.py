@@ -63,10 +63,11 @@ from collections.abc import AsyncIterator, Awaitable, Callable, Collection, Sequ
 from contextlib import asynccontextmanager
 from datetime import datetime, timezone
 from enum import Enum
-from typing import Any
+from typing import Any, NamedTuple
 
 from pydantic import BaseModel, Field, field_validator, model_validator
 
+from src.gateway.governance.commit_outcome import ApprovalRedemptionRefusal
 from src.gateway.governance.contracts import ViolationKind
 from src.gateway.governance.env_posture import DeploymentPosture, is_enforcing
 from src.gateway.governance.webauthn_verifier import (
@@ -625,6 +626,71 @@ def _distinct_approver_count(approvals: Sequence[ApprovalRecord]) -> int:
         if not _is_duplicate_approval(accepted, rec):
             accepted.append(rec)
     return len(accepted)
+
+
+class Redemption(NamedTuple):
+    """An approval check: the redeemable (or consumed) token, or why there is none.
+
+    Exactly one of ``token`` / ``refusal`` is set.
+    """
+
+    token: DeferToken | None
+    refusal: ApprovalRedemptionRefusal | None
+
+
+#: Status of a ticket still collecting approvals, by how far it got.
+_AWAITING_APPROVAL: dict[str, ApprovalRedemptionRefusal] = {
+    "PARKED": ApprovalRedemptionRefusal.PENDING,
+    "PARTIALLY_APPROVED": ApprovalRedemptionRefusal.QUORUM_INCOMPLETE,
+}
+
+#: Resolutions other than a quorum approval (``ESCALATED``).
+_RESOLVED_WITHOUT_QUORUM: dict[str | None, ApprovalRedemptionRefusal] = {
+    "EXPIRED": ApprovalRedemptionRefusal.EXPIRED,
+    "INJECTED": ApprovalRedemptionRefusal.RESOLVED_WITHOUT_APPROVAL,
+}
+
+
+def _redemption_refusal(
+    token: DeferToken, status: str | None, action: str
+) -> ApprovalRedemptionRefusal | None:
+    """The one refusal ``token`` (in ``status``) maps to for ``action``; ``None`` if redeemable.
+
+    Checked in order: the ticket must be a human-approval deferral; it must
+    have left the approval-collecting statuses (``PARKED`` → ``PENDING``,
+    ``PARTIALLY_APPROVED`` → ``QUORUM_INCOMPLETE``, both retryable) and not
+    been spent (``CONSUMED``); it must be ``RESOLVED`` by a quorum approval
+    (``ESCALATED``; ``EXPIRED`` and ``INJECTED`` resolutions are terminal) of
+    enough distinct approvers; and then parked for ``action``, approved
+    against its current ``barrier_preview`` (D-H) and carrying approved
+    params. A status or resolution the kernel does not know is
+    ``UNRECOGNIZED_STATE``.
+    """
+    if token.defer_reason != DeferReason.HITL_REQUIRED:
+        return ApprovalRedemptionRefusal.NOT_AN_APPROVAL
+    if status in _AWAITING_APPROVAL:
+        return _AWAITING_APPROVAL[status]
+    if status == "CONSUMED":
+        return ApprovalRedemptionRefusal.CONSUMED
+    if status != "RESOLVED":
+        return ApprovalRedemptionRefusal.UNRECOGNIZED_STATE
+    if token.resolution != "ESCALATED":
+        return _RESOLVED_WITHOUT_QUORUM.get(
+            token.resolution, ApprovalRedemptionRefusal.UNRECOGNIZED_STATE
+        )
+    if _distinct_approver_count(token.approvals) < token.required_quorum:
+        return ApprovalRedemptionRefusal.QUORUM_NOT_DISTINCT
+    if token.opa_input_snapshot.get("action") != action:
+        return ApprovalRedemptionRefusal.ACTION_MISMATCH
+    if any(
+        a.approved_barrier_preview != token.barrier_preview for a in token.approvals
+    ):
+        # Every approval must have been given against the snapshot the
+        # committing run will be checked against (D-H).
+        return ApprovalRedemptionRefusal.STALE_BARRIER_PREVIEW
+    if not isinstance(token.opa_input_snapshot.get("params"), dict):
+        return ApprovalRedemptionRefusal.NO_APPROVED_PARAMS
+    return None
 
 
 async def _is_logically_expired(redis_client: Any, defer_id: str) -> bool:
@@ -1204,13 +1270,13 @@ class DeferQueue:
     # redeemable_token / consume_approval — check state, then spend exactly once
     # ------------------------------------------------------------------
 
-    async def redeemable_token(
+    async def check_redemption(
         self,
         defer_id: str,
         *,
         action: str,
-    ) -> DeferToken | None:
-        """The approved ``HITL_REQUIRED`` token for ``action``, by its state alone.
+    ) -> Redemption:
+        """Whether the ``HITL_REQUIRED`` token for ``action`` is redeemable, and if not, why.
 
         Read-only and state-only: nothing is consumed and no coverage is
         decided. The token must be a governor-parked approval
@@ -1222,58 +1288,43 @@ class DeferQueue:
 
         The gateway's pre-check (``enforce_approved_governance``) uses this
         to fetch the token. It cannot spend: the only spend is
-        :meth:`consume_approval`, which requires ``covers``. Coverage is
+        :meth:`consume_redemption`, which requires ``covers``. Coverage is
         decided against the committing run's evaluated params, before any
         stage runs (``PostHitlApproval.covers``) and again inside
-        :meth:`consume_approval`, which runs only once the run commits, so a
-        run that defers (POAM-2026-104) leaves the approval redeemable.
+        :meth:`consume_redemption`, which runs only once the run commits, so
+        a run that defers (POAM-2026-104) leaves the approval redeemable.
 
         Returns:
-            The token, or ``None`` when it is unknown or expired, is not an
-            approval, is not (yet) approved, was parked for another action,
-            carries no approved params, or was already consumed. Every
-            ``None`` must block execution.
+            ``Redemption(token, None)`` when redeemable, else
+            ``Redemption(None, refusal)`` naming the one
+            :class:`ApprovalRedemptionRefusal` the token's state maps to
+            (:func:`_redemption_refusal`). Every refusal blocks execution;
+            only ``RETRYABLE_REDEMPTION_REFUSALS`` can later turn into a
+            redeemable approval on the same ticket.
         """
         token, status, _rev = await self._read_token_with_rev(defer_id)
-        if token is None:
-            logger.warning(
-                "[defer_queue] approval check: unknown defer_id=%s", defer_id
-            )
-            return None
-        distinct_approvers = _distinct_approver_count(token.approvals)
-        approved_params = token.opa_input_snapshot.get("params")
-        refusal = None
-        if token.defer_reason != DeferReason.HITL_REQUIRED:
-            refusal = f"reason {token.defer_reason.value} is not an approval"
-        elif status != "RESOLVED" or token.resolution != "ESCALATED":
-            refusal = (
-                f"status={status} resolution={token.resolution} is not an approval"
-            )
-        elif distinct_approvers < token.required_quorum:
-            refusal = f"{distinct_approvers}/{token.required_quorum} approvals"
-        elif token.opa_input_snapshot.get("action") != action:
-            refusal = (
-                f"parked for {token.opa_input_snapshot.get('action')!r}, not {action!r}"
-            )
-        elif any(
-            a.approved_barrier_preview != token.barrier_preview for a in token.approvals
-        ):
-            # Every approval must have been given against the snapshot the
-            # committing run will be checked against (D-H).
-            refusal = (
-                f"approvals bound to {sorted({str(a.approved_barrier_preview) for a in token.approvals})}, "
-                f"token barrier_preview={token.barrier_preview!r}"
-            )
-        elif not isinstance(approved_params, dict):
-            refusal = "approval carries no approved params"
+        refusal = (
+            ApprovalRedemptionRefusal.UNKNOWN_OR_EXPIRED
+            if token is None
+            else _redemption_refusal(token, status, action)
+        )
         if refusal is not None:
             logger.warning(
                 "[defer_queue] approval refused defer_id=%s: %s",
                 defer_id,
-                refusal,
+                refusal.value,
             )
-            return None
-        return token
+            return Redemption(None, refusal)
+        return Redemption(token, None)
+
+    async def redeemable_token(
+        self,
+        defer_id: str,
+        *,
+        action: str,
+    ) -> DeferToken | None:
+        """The redeemable token of :meth:`check_redemption`, or ``None`` when refused."""
+        return (await self.check_redemption(defer_id, action=action)).token
 
     async def consume_approval(
         self,
@@ -1282,9 +1333,21 @@ class DeferQueue:
         action: str,
         covers: Callable[[dict[str, Any]], bool],
     ) -> DeferToken | None:
+        """The consumed token of :meth:`consume_redemption`, or ``None`` when refused."""
+        return (
+            await self.consume_redemption(defer_id, action=action, covers=covers)
+        ).token
+
+    async def consume_redemption(
+        self,
+        defer_id: str,
+        *,
+        action: str,
+        covers: Callable[[dict[str, Any]], bool],
+    ) -> Redemption:
         """Consume an approved ``HITL_REQUIRED`` token for ``action``, exactly once.
 
-        Re-checks :meth:`redeemable_token`, then ``covers(approved_params)``
+        Re-checks :meth:`check_redemption`, then ``covers(approved_params)``
         (mandatory: the committing run passes the coverage check of the exact
         evaluated params it is about to seal), so a mismatched request, or a
         token that expired since it was checked, does not burn the approval.
@@ -1295,29 +1358,39 @@ class DeferQueue:
         ``RESOLVED``), so the token checked is the token consumed.
 
         Returns:
-            The consumed token, or ``None`` (see :meth:`redeemable_token`,
-            plus: the approved params do not satisfy ``covers``, or another
-            caller consumed it first). Every ``None`` must block execution.
+            ``Redemption(token, None)`` for the consumed token, else
+            ``Redemption(None, refusal)``: the :meth:`check_redemption`
+            refusal, ``PARAMS_NOT_COVERED`` when the approved params do not
+            satisfy ``covers``, or, when another caller won the
+            compare-and-swap, the state the token was left in (``CONSUMED``,
+            or ``UNKNOWN_OR_EXPIRED`` once its key is gone). Every refusal
+            must block execution.
         """
-        token = await self.redeemable_token(defer_id, action=action)
+        checked = await self.check_redemption(defer_id, action=action)
+        token = checked.token
         if token is None:
-            return None
+            return checked
         approved_params = token.opa_input_snapshot.get("params")
         if not isinstance(approved_params, dict) or not covers(approved_params):
             logger.warning(
                 "[defer_queue] approval refused defer_id=%s: %s",
                 defer_id,
-                "approved params do not cover the request",
+                ApprovalRedemptionRefusal.PARAMS_NOT_COVERED.value,
             )
-            return None
+            return Redemption(None, ApprovalRedemptionRefusal.PARAMS_NOT_COVERED)
         if not await self._atomic_resolve(
             defer_id,
             expected_status="RESOLVED",
             new_status="CONSUMED",
             raise_on_error=True,
         ):
-            return None  # another caller consumed it first (replay)
-        return token
+            # Another caller consumed it first (replay), or its key expired.
+            after = await self.check_redemption(defer_id, action=action)
+            return Redemption(
+                None,
+                after.refusal or ApprovalRedemptionRefusal.UNRECOGNIZED_STATE,
+            )
+        return Redemption(token, None)
 
     # ------------------------------------------------------------------
     # approve — append an approval and check quorum (Phase 2, Stream B)

@@ -687,7 +687,9 @@ async def test_mcp_execute_tool_attaches_proof_hash_on_refusal(
         ),
         req,
     )
-    assert body["status"] == "SUCCESS"
+    # Nothing executed: the typed outcome says REFUSED (POAM-2026-245).
+    assert body["status"] == "ERROR"
+    assert body["outcome"]["status"] == "REFUSED"
     assert "BLOCKED" in str(body.get("output", ""))
     assert len(body.get("proof_hash", "")) == 64
 

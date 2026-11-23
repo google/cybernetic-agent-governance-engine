@@ -40,8 +40,10 @@ from langgraph.graph import END, START, StateGraph
 from langgraph.graph.message import add_messages
 from langgraph.types import Command
 
+from src.gateway.governance.commit_outcome import CommitOutcome, CommitStatus
 from src.governed_financial_advisor.graph.checkpointer import CheckpointDurabilityError
 from src.governed_financial_advisor.graph.governance.tool_guard import (
+    COMMIT_OUTCOMES,
     gateway_tool_guard,
 )
 from src.governed_financial_advisor.graph.nodes.agent_nodes import governed_trader_node
@@ -807,13 +809,16 @@ class TestDomadv05MultiStepHitlExecution:
 
         executed_tool_args: list[dict[str, Any]] = []
 
-        async def fake_ainvoke(args: dict[str, Any]) -> str:
+        async def fake_ainvoke_commit(args: dict[str, Any]) -> CommitOutcome:
             executed_tool_args.append(dict(args))
-            return json.dumps({"status": "FILLED", "symbol": args["symbol"]})
+            return CommitOutcome(
+                CommitStatus.EXECUTED,
+                json.dumps({"status": "FILLED", "symbol": args["symbol"]}),
+            )
 
         fake_tool = MagicMock()
         fake_tool.name = "execute_trade_action"
-        fake_tool.ainvoke = AsyncMock(side_effect=fake_ainvoke)
+        fake_tool.ainvoke_commit = AsyncMock(side_effect=fake_ainvoke_commit)
         fake_mcp = MagicMock()
         fake_mcp.ensure_connected = AsyncMock()
         fake_mcp.get_tools = AsyncMock(return_value=[fake_tool])
@@ -902,7 +907,11 @@ class TestDomadv05MultiStepHitlExecution:
                 "messages": [
                     ToolMessage(content="ok-1", tool_call_id="c1"),
                     ToolMessage(content="ok-2", tool_call_id="c2"),
-                ]
+                ],
+                COMMIT_OUTCOMES: {
+                    cid: CommitOutcome(CommitStatus.EXECUTED, "ok")
+                    for cid in ("c1", "c2")
+                },
             }
 
         guarded = gateway_tool_guard("execute_trade", approvable=True)(spy_node)

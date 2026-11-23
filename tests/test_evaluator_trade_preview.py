@@ -36,6 +36,7 @@ from typing import Any
 import pytest
 
 from src.cage_finance import REGISTERED_ACTIONS
+from src.gateway.governance.commit_outcome import CommitOutcome, CommitStatus
 from src.gateway.governance.decisions import GovernanceDecision
 from src.gateway.governance.ftra.classifier import _load_registry_document
 from src.governed_financial_advisor.graph.nodes import evaluator_node as evaluator_mod
@@ -355,7 +356,12 @@ async def test_allow_routing_verdict_reused_across_evaluator_safety_and_tool_gua
     async def _fake_executor(state: dict[str, Any]) -> dict[str, Any]:
         nonlocal executed
         executed += 1
-        return {"messages": [ToolMessage(content="EXECUTED", tool_call_id="c1")]}
+        return {
+            "messages": [ToolMessage(content="EXECUTED", tool_call_id="c1")],
+            guard_mod.COMMIT_OUTCOMES: {
+                "c1": CommitOutcome(CommitStatus.EXECUTED, "EXECUTED")
+            },
+        }
 
     tool_call = {
         "name": "execute_trade_action",

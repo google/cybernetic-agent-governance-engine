@@ -189,6 +189,9 @@ class AgentState(TypedDict):
     deferral_reason: str | None  # default None
     deferred_id: str | None  # default None
     deferred_step_ids: list[str | None] | None  # default None
+    # ApprovalRedemptionRefusal value naming why the gateway could not redeem
+    # the approved deferred_id (POAM-2026-245); None otherwise.
+    redemption_refusal: str | None  # default None
 
     # CAGE Client SDK Governance Integration (@cage_guard decorator contract)
     # These fields are populated by @cage_guard decorator on all governed nodes.

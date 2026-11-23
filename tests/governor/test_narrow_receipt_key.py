@@ -151,6 +151,7 @@ async def test_each_trade_redeems_only_its_own_receipt(
 ) -> None:
     """Two narrowed trades and one ALLOW trade, all sharing a seal header."""
     from src.cage_finance.tools.tool_provider import execute_trade_action
+    from src.gateway.governance.commit_outcome import CommitStatus
 
     allowed, narrowed_a, narrowed_b = (
         _jwt_seal(nonce) for nonce in ("allow", "narrow-a", "narrow-b")
@@ -191,7 +192,11 @@ async def test_each_trade_redeems_only_its_own_receipt(
             for _ in range(3)
         ]
 
-    assert all(result.startswith("DRY_RUN: APPROVED") for result in results), results
+    assert all(
+        result.status is CommitStatus.DRY_RUN
+        and result.message.startswith("DRY_RUN: APPROVED")
+        for result in results
+    ), results
     # Each seal is verified against the params it sealed: the ALLOW trade's
     # original amount, and each narrowed trade's clamped amount.
     verified = {call.args[0]: call.args[2]["amount"] for call in verify.await_args_list}
