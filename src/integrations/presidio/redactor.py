@@ -53,6 +53,57 @@ _presidio_analyzer: Any = None
 _presidio_anonymizer: Any = None
 _presidio_init_done: bool = False
 _presidio_init_lock = threading.Lock()
+_tldextract_offline_done: bool = False
+_tldextract_init_lock = threading.Lock()
+
+
+def configure_offline_tldextract() -> Any:
+    """Replace ``tldextract``'s global extractor with an offline snapshot-only instance.
+
+    ``presidio_analyzer.predefined_recognizers.EmailRecognizer.validate_result``
+    calls module-level ``tldextract.extract()``, which delegates to
+    ``tldextract.tldextract.TLD_EXTRACTOR``. At import time ``tldextract``
+    constructs ``TLD_EXTRACTOR`` with ``suffix_list_urls=PUBLIC_SUFFIX_LIST_URLS``,
+    ``cache_fetch_timeout=None``, and ``cache_dir=get_cache_dir()``. On an
+    air-gapped runner or a default-deny egress pod without a populated cache,
+    the first email regex match stalls across two outbound HTTPS URLs for two
+    full TCP SYN retry cycles (~254 s), and an existing cache directory on a
+    ``readOnlyRootFilesystem`` fails ``FileLock`` with ``EROFS``.
+
+    Setting ``suffix_list_urls=()`` and ``cache_dir=None`` (both by mutating any
+    pre-existing ``TLD_EXTRACTOR`` instance in place for bound-object callers
+    and by replacing ``tldextract.tldextract.TLD_EXTRACTOR``) forces immediate
+    in-memory loading of the wheel's bundled ``.tld_set_snapshot`` with zero
+    outbound network requests and zero filesystem writes (POAM-2026-248).
+    """
+    global _tldextract_offline_done
+    import tldextract
+    import tldextract.cache as _tldextract_cache
+    import tldextract.tldextract as _tldextract_mod
+
+    current = getattr(_tldextract_mod, "TLD_EXTRACTOR", None)
+    if (
+        _tldextract_offline_done
+        and current is not None
+        and getattr(current, "suffix_list_urls", None) == ()
+        and not getattr(getattr(current, "_cache", None), "enabled", True)
+    ):
+        return current
+    with _tldextract_init_lock:
+        prev = getattr(_tldextract_mod, "TLD_EXTRACTOR", None)
+        if prev is not None:
+            prev.suffix_list_urls = ()
+            prev.fallback_to_snapshot = True
+            prev._cache = _tldextract_cache.DiskCache(None)
+            prev._extractor = None
+        offline_extractor = tldextract.TLDExtract(
+            suffix_list_urls=(),
+            cache_dir=None,
+            fallback_to_snapshot=True,
+        )
+        _tldextract_mod.TLD_EXTRACTOR = offline_extractor
+        _tldextract_offline_done = True
+        return offline_extractor
 
 
 def ensure_presidio_engines() -> None:
@@ -72,6 +123,7 @@ def ensure_presidio_engines() -> None:
         if _presidio_init_done:
             return
         try:
+            configure_offline_tldextract()
             import spacy as _spacy
             from presidio_analyzer import AnalyzerEngine
             from presidio_analyzer.nlp_engine import NlpEngineProvider
@@ -185,3 +237,13 @@ def build_presidio_sdd_action() -> Any:
         return [r for r in results if r.score >= score_threshold]
 
     return detect_sensitive_data
+
+
+# Eagerly neutralize tldextract's live PSL URLs on module import (including
+# when src.integrations.nemo.manager imports build_presidio_sdd_action at
+# import time) before any AnalyzerEngine — ours or NeMo's — can reach
+# EmailRecognizer.validate_result() (POAM-2026-248).
+try:
+    configure_offline_tldextract()
+except ImportError:
+    pass
