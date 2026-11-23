@@ -188,3 +188,13 @@ def test_alert_verifier_isolation_and_least_privilege_grants() -> None:
             'member       = "serviceAccount:${google_service_account.alert_verifier.email}"'
             in block
         )
+
+    pub_binding = _extract_resource_block(
+        text, "google_pubsub_topic_iam_member", "alert_verifier_publisher"
+    )
+    assert 'trimspace(var.alert_pubsub_topic) != ""' in pub_binding
+    assert 'role    = "roles/pubsub.publisher"' in pub_binding
+    assert (
+        'member  = "serviceAccount:${google_service_account.alert_verifier.email}"'
+        in pub_binding
+    )

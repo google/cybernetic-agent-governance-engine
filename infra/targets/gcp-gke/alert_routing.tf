@@ -184,6 +184,109 @@ resource "google_monitoring_alert_policy" "alert_pipeline_heartbeat" {
   ]
 }
 
+# ─── Post-Merge Main Check-Result Reconciler Liveness Policy (POAM-2026-171) ─
+# Layer 1 (ephemeral infrastructure watcher) of the 2-layer watcher chain for
+# .github/workflows/main-result-reconciler.yml (scripts/reconcile_main_check_results.py):
+#   - Layer 1 (this policy): pages via var.alert_notification_channels (GCP Pub/Sub
+#     terminal sink in the reference architecture) when no heartbeat sample arrives on
+#     custom.googleapis.com/cage/main_result_reconciler_heartbeat for 21600s (6h = 3x
+#     the 2-hour schedule). Disappears when the GCP stack is torn down.
+#   - Layer 2 (durable repository fallback): each reconciler run stamps
+#     `last-checked: <UTC>` into the `main-check-reconciliation` GitHub issue body
+#     before touching GCP, leaving a durable human-inspectable staleness signal in
+#     GitHub when GCP infrastructure is absent.
+
+resource "google_monitoring_metric_descriptor" "main_result_reconciler_heartbeat" {
+  count = local.enforcing_posture ? 1 : 0
+
+  project      = var.project_id
+  type         = "custom.googleapis.com/cage/main_result_reconciler_heartbeat"
+  metric_kind  = "GAUGE"
+  value_type   = "INT64"
+  display_name = "CAGE Main Required-Check Reconciler Liveness Heartbeat"
+  description  = "Liveness heartbeat (1 = run completed) written on every scheduled execution of scripts/reconcile_main_check_results.py (.github/workflows/main-result-reconciler.yml, POAM-2026-171)."
+
+  labels {
+    key         = "repo"
+    value_type  = "STRING"
+    description = "GitHub owner/repository reconciled by scripts/reconcile_main_check_results.py."
+  }
+
+  labels {
+    key         = "ref"
+    value_type  = "STRING"
+    description = "Normalized Git branch/ref reconciled (main for scheduled runs)."
+  }
+}
+
+resource "google_monitoring_alert_policy" "main_result_reconciler_absent" {
+  count = local.enforcing_posture ? 1 : 0
+
+  project               = var.project_id
+  display_name          = "${var.cluster_name} - Main Required-Check Reconciler Heartbeat Absent (CM-3 / CA-7)"
+  combiner              = "OR"
+  enabled               = true
+  severity              = "CRITICAL"
+  notification_channels = local.resolved_alert_notification_channels
+
+  alert_strategy {
+    auto_close = "1800s"
+  }
+
+  user_labels = {
+    owner       = trimspace(var.alert_owner_label)
+    component   = "main-result-reconciler"
+    control     = "cm-3"
+    environment = var.environment
+  }
+
+  documentation {
+    mime_type = "text/markdown"
+    content   = <<-EOT
+      ## CAGE Post-Merge `main` Required-Check Reconciler Absent (`POAM-2026-171`, NIST CM-3 / CA-7)
+
+      - **Owner Label (metadata only; routes nothing):** `${trimspace(var.alert_owner_label)}`
+      - **Cluster:** `${var.cluster_name}` (`${var.namespace}`)
+      - **Delivery Route:** Bound `var.alert_notification_channels` (GCP Pub/Sub terminal sink in reference architecture)
+
+      Fires when `.github/workflows/main-result-reconciler.yml` (`scripts/reconcile_main_check_results.py`)
+      writes no `custom.googleapis.com/cage/main_result_reconciler_heartbeat` point (`ref = "main"`)
+      for `21600s` (`6h`, `3x` the `2h` schedule). Known silent-stop causes: workflow manually
+      disabled, workflow YAML syntax error (no run created), GitHub Actions outage or quota
+      exhaustion, or GitHub auto-disabling scheduled workflows after 60 days of repository
+      inactivity. Inspect `.github/workflows/main-result-reconciler.yml` runs and the
+      `last-checked:` timestamp on the `main-check-reconciliation` GitHub issue.
+    EOT
+  }
+
+  conditions {
+    display_name = "Main required-check reconciler heartbeat absent for 21600s (6h)"
+
+    condition_absent {
+      filter   = "resource.type = \"global\" AND metric.type = \"custom.googleapis.com/cage/main_result_reconciler_heartbeat\" AND metric.labels.ref = \"main\""
+      duration = "21600s"
+
+      aggregations {
+        alignment_period     = "300s"
+        per_series_aligner   = "ALIGN_MAX"
+        cross_series_reducer = "REDUCE_MAX"
+      }
+    }
+  }
+
+  lifecycle {
+    precondition {
+      condition     = local.alert_channels_valid
+      error_message = local.alert_channels_error_message
+    }
+  }
+
+  depends_on = [
+    module.gke,
+    google_monitoring_metric_descriptor.main_result_reconciler_heartbeat,
+  ]
+}
+
 # ─── Compliance-Bridge Pub/Sub Alert Publisher IAM (POAM-2026-230) ────────────
 # Grants least-privilege topic-scoped publisher authority exclusively to the
 # dedicated compliance-bridge GSA when PubSubNotifier is the active notifier.

@@ -166,13 +166,15 @@ resource "google_kms_crypto_key_iam_policy" "partner_harness_kms_signer" {
 }
 
 # ─── 3. Scheduled Alert-Delivery Verifier Identity (POAM-2026-230 Property 4) ─
-# Dedicated low-privilege GSA for .github/workflows/alert-delivery-check.yml:
+# Dedicated low-privilege GSA for .github/workflows/alert-delivery-check.yml
+# and .github/workflows/main-result-reconciler.yml (POAM-2026-171):
 #   - Restricted via WIF to var.github_deployer_ref (refs/heads/main), where
 #     scheduled workflows execute.
 #   - Holds zero cluster, KMS, Secret Manager, or GCS access.
 #   - Permitted only to read Cloud Monitoring AlertPolicy/NotificationChannel
-#     metadata, write the synthetic custom.googleapis.com/cage/alert_heartbeat_probe
-#     gauge, and pull/nack/ack synthetic heartbeats on var.alert_verify_pubsub_subscription.
+#     metadata, write synthetic/liveness heartbeat gauges, pull/nack/ack
+#     synthetic heartbeats on var.alert_verify_pubsub_subscription, and publish
+#     reconciler heartbeat/violation envelopes on var.alert_pubsub_topic.
 
 resource "google_service_account" "alert_verifier" {
   account_id   = "cage-alert-verifier"
@@ -224,5 +226,13 @@ resource "google_pubsub_subscription_iam_member" "alert_verifier_viewer" {
   subscription = trimspace(var.alert_verify_pubsub_subscription)
   role         = "roles/pubsub.viewer"
   member       = "serviceAccount:${google_service_account.alert_verifier.email}"
+}
+
+resource "google_pubsub_topic_iam_member" "alert_verifier_publisher" {
+  count   = trimspace(var.alert_pubsub_topic) != "" ? 1 : 0
+  project = var.project_id
+  topic   = trimspace(var.alert_pubsub_topic)
+  role    = "roles/pubsub.publisher"
+  member  = "serviceAccount:${google_service_account.alert_verifier.email}"
 }
 

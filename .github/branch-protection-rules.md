@@ -44,7 +44,17 @@ What that enforces:
   `main` as it stood when the run started, and the checks are not re-run when `main` moves
   before the merge, so the commit that lands may never have been tested; its own runs start
   after it lands. #598's head passed `Pytest Logic Tests`, and its squash commit `43528275`
-  failed it on `main` (POAM-2026-171).
+  failed it on `main` (POAM-2026-171). [`ci.yml`](workflows/ci.yml),
+  [`security-scan.yml`](workflows/security-scan.yml) and
+  [`license_guard.yml`](workflows/license_guard.yml) now cancel superseded runs on
+  `pull_request` events only and key `push` concurrency groups by `github.sha` so every
+  commit on `main` finishes, and [`main-result-reconciler.yml`](workflows/main-result-reconciler.yml)
+  ([`reconcile_main_check_results.py`](../scripts/reconcile_main_check_results.py))
+  reconciles every commit older than the grace window against the nine post-merge checks
+  (`EXPECTED_MAIN_PUSH_CHECKS`, including both `license-check` suites and `Record an
+  unreviewed merge`), updating the durable `main-check-reconciliation` GitHub issue first
+  and publishing heartbeats and `CRITICAL` violation alerts to GCP Pub/Sub and Cloud
+  Monitoring (`google_monitoring_alert_policy.main_result_reconciler_absent`).
 - **History.** `main` cannot be force-pushed or deleted, by anyone, since 2026-11-02. Before
   that, nothing blocked either (POAM-2026-170).
 - **Not enforced.** Up-to-date branches, review-thread resolution, signed commits, and any push
@@ -262,7 +272,8 @@ After any ruleset change:
 | `security-scan.yml` `secret-scan` and `rego-policy-lint` jobs | §3 → ruleset `25966171`: `Secret Scanning (Gitleaks)`, `OPA Rego Policy Lint and Test ...` |
 | `license_guard.yml` `license-check` job (dependency licences) | §3 → ruleset `25966171`: `license-check` |
 | `review-bypass-attestation.yml` | §3 → ruleset `25966171`: `Approved review or recorded bypass` (§3.1) |
-| `review-bypass-ledger.yml` | None: it runs after each merge, and a failed run on `main` is the signal (§3.1) |
+| `review-bypass-ledger.yml` | None: it runs after each merge, and a failed run on `main` is the signal (§3.1; reconciled post-merge by `main-result-reconciler.yml`) |
+| `main-result-reconciler.yml` (`scripts/reconcile_main_check_results.py`) | Scheduled post-merge reconciliation of the nine push checks on `main` (POAM-2026-171): stamps `last-checked: <UTC>` on the durable `main-check-reconciliation` GitHub issue first and publishes heartbeats + `CRITICAL` violation envelopes via keyless WIF to GCP Pub/Sub and Cloud Monitoring (`google_monitoring_alert_policy.main_result_reconciler_absent`). Guarded in CI by `check_repo_rules.py` (`workflow_guard_drift()`) |
 | `dependency-review.yml` | §5 → dependency graph |
 | `scripts/setup_git_hooks.sh` pre-push hook (refuses pushes to `main`) | Local only. Server side, ruleset `19769096` requires pull requests and `26377312` blocks force pushes and deletion |
 | `dependabot.yml` weekly Actions scan | §5 → Dependabot alerts |
@@ -273,8 +284,11 @@ After any ruleset change:
 
 `repo-rules.yml` runs `scripts/check_repo_rules.py` on every pull request, every push to
 `main` and daily. It compares the rules on `main` (§1), the required checks and their pins
-(§3) and the release-tag ruleset (§4) with the API, and fails on any difference in either
-direction; `tests/test_check_repo_rules.py` holds the §3 table equal to the checker's pins.
+(§3), the release-tag ruleset (§4) and the committed post-merge workflow guards
+(`workflow_guard_drift()`: PR-only `cancel-in-progress`, per-SHA `push` concurrency groups
+and `main-result-reconciler.yml`) against the pinned configuration, and fails on any
+difference in either direction; `tests/test_check_repo_rules.py` holds the §3 table equal
+to the checker's pins.
 An intended change updates the ruleset, the checker and this document together. The other
 sections are checked by hand with the commands below.
 
