@@ -378,6 +378,37 @@ commit message matches the PR title and follows Conventional Commits format."*
 > been disabled. The CI `squash-merge-guard` job and the repository settings
 > above close that gap.
 
+### 4.6 Citing commits in POA&M trackers
+
+Squash merge discards every branch commit, so a POA&M row that cites a
+pre-squash SHA points at an object that is not on `main` (and, once the branch
+is deleted, at nothing). [`check_poam_sha_citations.py`](../../scripts/check_poam_sha_citations.py)
+(`Lint` job and `pre-commit`) checks every hexadecimal code span in
+`docs/POAM.md` and `docs/compliance/**/POAM_*.md`. It looks the token up in git
+first, then reads a typed label; the full grammar is in the script's docstring.
+
+| Cited object | Write it as | Example |
+|---|---|---|
+| Commit on `main` | the bare SHA, no label | `` `a3ab1b52` `` |
+| Squash commit plus its CI branch head (preferred for PR evidence) | PR number, main SHA and a `branch head` / `PR commit` / `sub-commit` / `head` label in the same parenthetical (or the same `,` / `;` / sentence clause outside parentheses) | `` `#628` (`a3ab1b52`, branch head `e92e2d12`) `` |
+| Off-`main` commit kept on purpose | the commit next to the tag that holds it | `` `5735a3d7` (tag `archive/causal-outcome-detector`) `` |
+| Tree, blob or tag object | `tree` / `blob` / `tag` / `tag object` label matching the object type | `` tree `efd181c166e0` `` |
+| Non-git identifier | `run`, `job`, `check run`, `ruleset`, `revision`, `build`, `image`, `claim ID` or `bucket` | `` run `41362761903` `` |
+| SHA cited because it does not exist | `absent` before it, or `(non-existent ...)` / `(which resolves nowhere ...)` after it | `` absent `d103ff9d` `` |
+
+A plural label (`runs`, `commits`) types every token in a following `,` / `and`
+list; a singular label types one token. Commits outside `main`'s history count
+as missing even when your clone still has them, because CI's clone does not.
+For a closed row, every commit cited as closure or remediation evidence must
+have a committer date (UTC day) on or before the closure date.
+
+Existing debt is recorded in `tests/.poam-sha-citation-baseline`. It only
+shrinks: a new violation fails even if you fix another one in the same change.
+After correcting citations, lower it with
+`python scripts/check_poam_sha_citations.py --update-baseline`. Re-deriving it
+(`--recompute-baseline --reason "..."`) is refused unless the detector itself
+changed.
+
 ---
 
 ## 5. Protected Branch Workflow
