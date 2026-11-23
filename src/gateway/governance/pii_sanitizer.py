@@ -43,11 +43,14 @@ Usage::
 
 from __future__ import annotations
 
+import base64
+import binascii
 import logging
 import os
 import re
 from collections.abc import Callable, Mapping
 from datetime import datetime, timezone
+from urllib.parse import unquote
 
 from src.gateway.governance.env_posture import resolve_deployment_region
 
@@ -231,6 +234,249 @@ PHONE_PATTERN: re.Pattern[str] = re.compile(
     r"(?<!\w)(?:\+?1[-.\s]?)?\(?\d{3}\)?[-.\s]?\d{3}[-.\s]?\d{4}\b"
 )
 
+# ---------------------------------------------------------------------------
+# Hardened deterministic credential, payment-card, IBAN, and encoded-layer
+# sanitization primitives (pure stdlib, linear O(n) bounded scanning).
+# ---------------------------------------------------------------------------
+
+_MAX_PEM_BODY_LEN: int = 16_384
+_PEM_PRIVATE_KEY_HEADER_PATTERN: re.Pattern[str] = re.compile(
+    r"-----BEGIN [A-Z0-9 ]{0,32}PRIVATE KEY(?: BLOCK)?-----"
+)
+_PEM_PRIVATE_KEY_END_PATTERN: re.Pattern[str] = re.compile(
+    r"-----END [A-Z0-9 ]{0,32}PRIVATE KEY(?: BLOCK)?-----"
+)
+
+
+def _redact_pem_private_keys(text: str) -> str:
+    """Scrub PEM/PGP private key blocks and truncated headers in linear O(n) time."""
+    if "PRIVATE KEY" not in text:
+        return text
+    out_parts: list[str] = []
+    cursor = 0
+    text_len = len(text)
+    while cursor < text_len:
+        begin_match = _PEM_PRIVATE_KEY_HEADER_PATTERN.search(text, cursor)
+        if begin_match is None:
+            out_parts.append(text[cursor:])
+            break
+        out_parts.append(text[cursor : begin_match.start()])
+        max_end = min(text_len, begin_match.end() + _MAX_PEM_BODY_LEN)
+        next_begin = text.find("-----BEGIN ", begin_match.end(), max_end)
+        search_limit = next_begin if next_begin != -1 else max_end
+        end_match = _PEM_PRIVATE_KEY_END_PATTERN.search(
+            text, begin_match.end(), search_limit
+        )
+        out_parts.append("[REDACTED_PRIVATE_KEY]")
+        cursor = end_match.end() if end_match is not None else begin_match.end()
+    return "".join(out_parts)
+
+
+_URL_USERINFO_CREDENTIAL_PATTERN: re.Pattern[str] = re.compile(
+    r"\b([a-zA-Z][a-zA-Z0-9+.\-]{1,15}://[^:\s/\"'@]{1,128}):([^@\s/\"']{1,256})@([^\s\"']{1,255})"
+)
+
+
+def _redact_url_userinfo(match: re.Match[str]) -> str:
+    if match.group(2) == "[REDACTED_PASSWORD]":
+        return match.group(0)
+    return f"{match.group(1)}:[REDACTED_PASSWORD]@{match.group(3)}"
+
+
+def _luhn_valid(digits: str) -> bool:
+    """Return True if *digits* is a 13-19 digit string satisfying ISO/IEC 7812 Luhn."""
+    if not (13 <= len(digits) <= 19) or not digits.isascii() or not digits.isdigit():
+        return False
+    if len(set(digits)) == 1:
+        return False
+    total = 0
+    for idx, ch in enumerate(reversed(digits)):
+        val = ord(ch) - 48
+        if idx % 2 == 1:
+            val *= 2
+            if val > 9:
+                val -= 9
+        total += val
+    return total % 10 == 0
+
+
+# Additive Luhn-validated payment card matcher for obfuscated (dot-separated,
+# irregular-grouped) and international 13-19 digit cards (IIN 2-6).
+_LUHN_PAN_CANDIDATE_PATTERN: re.Pattern[str] = re.compile(
+    r"(?<![A-Za-z0-9_])([2-6](?:[ \-.]?\d){12,18})(?![A-Za-z0-9_])"
+)
+
+
+def _redact_luhn_pan(match: re.Match[str]) -> str:
+    raw = match.group(1)
+    seps = {ch for ch in raw if ch in " -."}
+    if len(seps) > 1:
+        return raw
+    if len(seps) == 1:
+        sep = next(iter(seps))
+        groups = raw.split(sep)
+        # Preserve single-dot floating-point decimals (e.g. "3.141592653589793")
+        # and single-digit dotted sequences.
+        if sep == "." and len(groups) < 3:
+            return raw
+        if any(len(group) < 2 for group in groups):
+            return raw
+    digits = "".join(ch for ch in raw if ch.isdigit())
+    if _luhn_valid(digits):
+        return "[REDACTED_CC]"
+    return raw
+
+
+# Official ISO 13616 IBAN lengths by ISO 3166-1 alpha-2 country code.
+_IBAN_LENGTHS: dict[str, int] = {
+    "AD": 24,
+    "AE": 23,
+    "AL": 28,
+    "AT": 20,
+    "AZ": 28,
+    "BA": 20,
+    "BE": 16,
+    "BG": 22,
+    "BH": 22,
+    "BI": 27,
+    "BR": 29,
+    "BY": 28,
+    "CH": 21,
+    "CR": 22,
+    "CY": 28,
+    "CZ": 24,
+    "DE": 22,
+    "DJ": 27,
+    "DK": 18,
+    "DO": 28,
+    "EE": 20,
+    "EG": 29,
+    "ES": 24,
+    "FI": 18,
+    "FK": 18,
+    "FO": 18,
+    "FR": 27,
+    "GB": 22,
+    "GE": 22,
+    "GI": 23,
+    "GL": 18,
+    "GR": 27,
+    "GT": 28,
+    "HN": 28,
+    "HR": 21,
+    "HU": 28,
+    "IE": 22,
+    "IL": 23,
+    "IQ": 23,
+    "IS": 26,
+    "IT": 27,
+    "JO": 30,
+    "KW": 30,
+    "KZ": 20,
+    "LB": 28,
+    "LC": 32,
+    "LI": 21,
+    "LT": 20,
+    "LU": 20,
+    "LV": 21,
+    "LY": 25,
+    "MC": 27,
+    "MD": 24,
+    "ME": 22,
+    "MK": 19,
+    "MN": 20,
+    "MR": 27,
+    "MT": 31,
+    "MU": 30,
+    "NI": 28,
+    "NL": 18,
+    "NO": 15,
+    "OM": 23,
+    "PK": 24,
+    "PL": 28,
+    "PS": 29,
+    "PT": 25,
+    "QA": 29,
+    "RO": 24,
+    "RS": 22,
+    "RU": 33,
+    "SA": 24,
+    "SC": 31,
+    "SD": 18,
+    "SE": 24,
+    "SI": 19,
+    "SK": 24,
+    "SM": 27,
+    "SO": 23,
+    "ST": 25,
+    "SV": 28,
+    "TL": 23,
+    "TN": 24,
+    "TR": 26,
+    "UA": 29,
+    "VA": 22,
+    "VG": 24,
+    "XK": 20,
+    "YE": 30,
+}
+
+_SPACED_IBAN_CANDIDATE_PATTERN: re.Pattern[str] = re.compile(
+    r"\b[A-Z]{2}\d{2}(?:[ \-][A-Z0-9]{1,4}){3,8}\b"
+)
+
+
+def _iban_mod97_valid(compact: str) -> bool:
+    """Validate a contiguous uppercase IBAN via ISO 13616 length and Mod-97."""
+    if not (15 <= len(compact) <= 34):
+        return False
+    expected_len = _IBAN_LENGTHS.get(compact[:2])
+    if expected_len is None or len(compact) != expected_len:
+        return False
+    if not compact[2:4].isdigit() or not compact[4:].isalnum():
+        return False
+    rearranged = compact[4:] + compact[:4]
+    remainder = 0
+    for ch in rearranged:
+        if "0" <= ch <= "9":
+            remainder = (remainder * 10 + (ord(ch) - 48)) % 97
+        elif "A" <= ch <= "Z":
+            remainder = (remainder * 100 + (ord(ch) - 55)) % 97
+        else:
+            return False
+    return remainder == 1
+
+
+def _redact_spaced_iban(match: re.Match[str]) -> str:
+    raw = match.group(0)
+    expected_len = _IBAN_LENGTHS.get(raw[:2])
+    if expected_len is None:
+        return raw
+    compact_chunks: list[str] = []
+    compact_len = 0
+    consumed_end = 0
+    idx = 0
+    raw_len = len(raw)
+    while idx < raw_len:
+        group_start = idx
+        while idx < raw_len and raw[idx] not in " -":
+            idx += 1
+        chunk = raw[group_start:idx]
+        compact_chunks.append(chunk)
+        compact_len += len(chunk)
+        if compact_len == expected_len:
+            consumed_end = idx
+            break
+        if compact_len > expected_len:
+            return raw
+        if idx < raw_len:
+            idx += 1
+    if consumed_end == 0:
+        return raw
+    if not _iban_mod97_valid("".join(compact_chunks)):
+        return raw
+    return "[REDACTED_IBAN]" + raw[consumed_end:]
+
+
 _CREDENTIAL_PATTERNS: list[
     tuple[re.Pattern[str], str | Callable[[re.Match[str]], str]]
 ] = [
@@ -248,12 +494,29 @@ _CREDENTIAL_PATTERNS: list[
         re.compile(r"\brediss?://[^:\s/\"']*:[^@\s\"']+@[^\s\"']+"),
         "[REDACTED_REDIS_URL]",
     ),
-    # API keys and Bearer tokens: Langfuse (pk-lf-*, sk-lf-*), HuggingFace
-    # (hf_*), Google API/credential tokens (GOOG*), and generic Bearer tokens
-    # (run before UUID preservation so opaque ``Bearer <uuid>`` tokens are scrubbed).
+    # Generic URL userinfo credentials (runs after Redis URL scrubbing so
+    # ``rediss?://`` retains ``[REDACTED_REDIS_URL]``).
+    (_URL_USERINFO_CREDENTIAL_PATTERN, _redact_url_userinfo),
+    # API keys and Bearer tokens: telemetry keys (pk-lf-*, sk-lf-*), model-hub
+    # tokens (hf_*), cloud/VCS/messaging provider keys (GOOG*, AIza*,
+    # AKIA*/ASIA*/ABIA*/ACCA*, gh[pousr]_*, github_pat_*, sk-*, xox[abprs]-*),
+    # and generic Bearer tokens (run before UUID preservation so opaque
+    # ``Bearer <uuid>`` tokens are scrubbed).
     (
         re.compile(
-            r"\b(?:pk-lf-[A-Za-z0-9_\-]{8,}|sk-lf-[A-Za-z0-9_\-]{8,}|hf_[A-Za-z0-9_\-]{8,}|GOOG[A-Za-z0-9_\-]{12,}|(?i:Bearer)\s+[A-Za-z0-9_\-\.=]{8,})(?![A-Za-z0-9_\-])"
+            r"\b(?:"
+            r"pk-lf-[A-Za-z0-9_\-]{8,}"
+            r"|sk-lf-[A-Za-z0-9_\-]{8,}"
+            r"|hf_[A-Za-z0-9_\-]{8,}"
+            r"|GOOG[A-Za-z0-9_\-]{12,}"
+            r"|(?:AKIA|ASIA|ABIA|ACCA)[0-9A-Z]{16}"
+            r"|gh[pousr]_[A-Za-z0-9]{20,255}"
+            r"|github_pat_[A-Za-z0-9_]{20,255}"
+            r"|sk-(?:proj-|live-|ant-)?[A-Za-z0-9_\-]{20,255}"
+            r"|xox[abprs]-[A-Za-z0-9\-]{10,255}"
+            r"|AIza[0-9A-Za-z_\-]{35}"
+            r"|(?i:Bearer)\s+[A-Za-z0-9_\-\.=]{8,}"
+            r")(?![A-Za-z0-9_\-])"
         ),
         "[REDACTED_API_KEY]",
     ),
@@ -262,8 +525,13 @@ _CREDENTIAL_PATTERNS: list[
 _SPAN_PII_PATTERNS: list[
     tuple[re.Pattern[str], str | Callable[[re.Match[str]], str]]
 ] = [
+    # ISO 13616 Mod-97 validated space/hyphen-grouped IBANs MUST run before
+    # credit-card patterns so multi-group IBANs (e.g. FR76 3000 6000 ...) are
+    # never partially mangled as payment cards.
+    (_SPACED_IBAN_CANDIDATE_PATTERN, _redact_spaced_iban),
     (SSN_PATTERN, "[REDACTED_SSN]"),
     (CREDIT_CARD_PATTERN, "[REDACTED_CC]"),
+    (_LUHN_PAN_CANDIDATE_PATTERN, _redact_luhn_pan),
     # M-14: IBAN — International Bank Account Number (up to 34 alphanumeric chars).
     # Format: 2-letter country code + 2 check digits + up to 30 BBAN chars.
     (
@@ -280,6 +548,163 @@ _PII_PATTERNS: list[tuple[re.Pattern[str], str | Callable[[re.Match[str]], str]]
     *_SPAN_PII_PATTERNS,
     *_CREDENTIAL_PATTERNS,
 ]
+
+_MAX_UNWRAP_DEPTH: int = 3
+_MAX_ENCODED_TOKEN_LEN: int = 4096
+_MIN_B64_TOKEN_LEN: int = 12
+_MIN_HEX_TOKEN_LEN: int = 18
+
+_ENCODED_SPAN_PATTERN: re.Pattern[str] = re.compile(r"[^\s\"'<>()\[\]{},;]{6,}")
+_QUERY_SPLIT_PATTERN: re.Pattern[str] = re.compile(r"([?&])")
+_URL_PCT_ESCAPE_RE: re.Pattern[str] = re.compile(r"%[0-9A-Fa-f]{2}")
+_HEX_TOKEN_RE: re.Pattern[str] = re.compile(r"^[0-9A-Fa-f]+$")
+_B64_TOKEN_RE: re.Pattern[str] = re.compile(r"^[A-Za-z0-9+/_-]+={0,2}$")
+
+
+def _is_printable_text(text: str) -> bool:
+    if not text:
+        return False
+    return all(ch in "\t\n\r" or (ord(ch) >= 32 and ch.isprintable()) for ch in text)
+
+
+def _try_decode_one_layer(token: str) -> str | None:
+    if "%" in token and _URL_PCT_ESCAPE_RE.search(token):
+        decoded = unquote(token)
+        if decoded != token and _is_printable_text(decoded):
+            return decoded
+
+    if (
+        len(token) >= _MIN_HEX_TOKEN_LEN
+        and len(token) % 2 == 0
+        and _HEX_TOKEN_RE.fullmatch(token)
+    ):
+        try:
+            hex_decoded = bytes.fromhex(token).decode("utf-8")
+        except (ValueError, UnicodeDecodeError):
+            hex_decoded = ""
+        if hex_decoded and _is_printable_text(hex_decoded):
+            return hex_decoded
+
+    if len(token) >= _MIN_B64_TOKEN_LEN and _B64_TOKEN_RE.fullmatch(token):
+        stripped = token.rstrip("=")
+        mod = len(stripped) % 4
+        if mod == 1:
+            return None
+        has_std = "+" in stripped or "/" in stripped
+        has_url = "-" in stripped or "_" in stripped
+        if has_std and has_url:
+            return None
+        padded = stripped + ("=" * ((4 - mod) % 4))
+        try:
+            raw_bytes = (
+                base64.urlsafe_b64decode(padded.encode("ascii"))
+                if has_url
+                else base64.b64decode(padded.encode("ascii"), validate=True)
+            )
+            b64_decoded = raw_bytes.decode("utf-8")
+        except (ValueError, binascii.Error, UnicodeDecodeError):
+            return None
+        if b64_decoded != token and _is_printable_text(b64_decoded):
+            return b64_decoded
+
+    return None
+
+
+def _apply_credential_patterns(text: str) -> str:
+    result = _redact_pem_private_keys(text)
+    for pattern, replacement in _CREDENTIAL_PATTERNS:
+        result = pattern.sub(replacement, result)
+    return result
+
+
+def _apply_plaintext_span_pii_patterns(span: str) -> str:
+    result = span
+    for pattern, replacement in _SPAN_PII_PATTERNS:
+        result = pattern.sub(replacement, result)
+    return result
+
+
+def _classify_decoded_layer(decoded: str) -> str | None:
+    if _apply_credential_patterns(decoded) != decoded:
+        return "CREDENTIAL"
+    if redact_preserving_uuids(decoded, _apply_plaintext_span_pii_patterns) != decoded:
+        return "PII"
+    return None
+
+
+def _classify_encoded_token(token: str, cache: dict[str, str | None]) -> str | None:
+    if token in cache:
+        return cache[token]
+    if (
+        len(token) < 6
+        or len(token) > _MAX_ENCODED_TOKEN_LEN
+        or token.startswith("REDACTED_")
+    ):
+        cache[token] = None
+        return None
+
+    current = token
+    for _ in range(_MAX_UNWRAP_DEPTH):
+        decoded = _try_decode_one_layer(current)
+        if decoded is None:
+            break
+        kind = _classify_decoded_layer(decoded)
+        if kind is not None:
+            cache[token] = kind
+            return kind
+        current = decoded
+
+    cache[token] = None
+    return None
+
+
+def _redact_encoded_atom(atom: str, cache: dict[str, str | None]) -> str:
+    core = atom.rstrip(".,!?")
+    trailing = atom[len(core) :]
+    if len(core) < 6 or len(core) > _MAX_ENCODED_TOKEN_LEN:
+        return atom
+
+    eq_idx = core.find("=")
+    if eq_idx > 0:
+        rhs = core[eq_idx + 1 :]
+        if rhs and set(rhs) != {"="}:
+            rhs_kind = _classify_encoded_token(rhs, cache)
+            if rhs_kind is not None:
+                return f"{core[: eq_idx + 1]}[REDACTED_ENCODED_{rhs_kind}]{trailing}"
+
+    if "://" not in core:
+        colon_idx = core.find(":")
+        if colon_idx > 0:
+            rhs = core[colon_idx + 1 :]
+            if rhs:
+                rhs_kind = _classify_encoded_token(rhs, cache)
+                if rhs_kind is not None:
+                    return f"{core[: colon_idx + 1]}[REDACTED_ENCODED_{rhs_kind}]{trailing}"
+
+    kind = _classify_encoded_token(core, cache)
+    if kind is not None:
+        return f"[REDACTED_ENCODED_{kind}]{trailing}"
+
+    return atom
+
+
+def _redact_encoded_tokens(span: str) -> str:
+    """Detect and redact bounded Base64/Hex/URL-encoded PII or credentials."""
+    cache: dict[str, str | None] = {}
+
+    def _replace_span(match: re.Match[str]) -> str:
+        token = match.group(0)
+        if len(token) > _MAX_ENCODED_TOKEN_LEN:
+            return token
+        if "?" in token or "&" in token:
+            parts = _QUERY_SPLIT_PATTERN.split(token)
+            return "".join(
+                part if part in ("?", "&") else _redact_encoded_atom(part, cache)
+                for part in parts
+            )
+        return _redact_encoded_atom(token, cache)
+
+    return _ENCODED_SPAN_PATTERN.sub(_replace_span, span)
 
 
 def redact_preserving_uuids(text: str, transform_span: Callable[[str], str]) -> str:
@@ -325,10 +750,8 @@ _KEY_DENYLIST: set[str] = {
 
 
 def _apply_span_pii_patterns(span: str) -> str:
-    result = span
-    for pattern, replacement in _SPAN_PII_PATTERNS:
-        result = pattern.sub(replacement, result)
-    return result
+    result = _apply_plaintext_span_pii_patterns(span)
+    return _redact_encoded_tokens(result)
 
 
 class PIISanitizer:
@@ -343,9 +766,7 @@ class PIISanitizer:
         if not text:
             return text
 
-        result = text
-        for pattern, replacement in _CREDENTIAL_PATTERNS:
-            result = pattern.sub(replacement, result)
+        result = _apply_credential_patterns(text)
         result = redact_preserving_uuids(result, _apply_span_pii_patterns)
 
         if result != text:

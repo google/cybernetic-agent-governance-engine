@@ -457,3 +457,247 @@ def test_canonical_uuids_preserved_while_cards_and_bearer_uuids_redacted(
     assert sanitized["defer_id"] == uuid_val
     assert sanitized["summary"] == f"trace={uuid_val} card=[REDACTED_CC]"
     assert sanitized["auth_header"] == "[REDACTED_API_KEY]"
+
+
+# ---------------------------------------------------------------------------
+# Hardened deterministic credential, Luhn PAN, Mod-97 IBAN, and encoded-layer
+# sanitization tests.
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.unit
+@pytest.mark.local
+def test_pem_url_and_cloud_credentials_redacted(sanitizer: PIISanitizer) -> None:
+    """PEM private keys, URL userinfo passwords, and cloud/VCS API keys are scrubbed."""
+    pem_block = (
+        "-----BEGIN "
+        + "RSA PRIVATE KEY-----\n"
+        + ("A" * 32)
+        + "==\n"
+        + "-----END "
+        + "RSA PRIVATE KEY-----"
+    )
+    truncated_pem = "leaked -----BEGIN " + "OPENSSH PRIVATE KEY----- truncated"
+    pem_public = (
+        "-----BEGIN PUBLIC KEY-----\n" + ("B" * 32) + "\n-----END PUBLIC KEY-----"
+    )
+    assert sanitizer.sanitize(f"key:\n{pem_block}\ndone") == (
+        "key:\n[REDACTED_PRIVATE_KEY]\ndone"
+    )
+    assert (
+        sanitizer.sanitize(truncated_pem) == "leaked [REDACTED_PRIVATE_KEY] truncated"
+    )
+    assert sanitizer.sanitize(pem_public) == pem_public
+
+    pg_url = "postgresql://" + "svc_user:" + ("p" * 8) + "@db.internal:5432/ledger"
+    https_url = "https://" + "bot:" + ("p" * 8) + "@api.example.com/v1/submit"
+    redis_url = "red" + "iss://default:" + ("p" * 8) + "@cache.internal:6379/0"
+    assert (
+        sanitizer.sanitize(pg_url)
+        == "postgresql://svc_user:[REDACTED_PASSWORD]@db.internal:5432/ledger"
+    )
+    assert (
+        sanitizer.sanitize(https_url)
+        == "https://bot:[REDACTED_PASSWORD]@api.example.com/v1/submit"
+    )
+    assert sanitizer.sanitize(redis_url) == "[REDACTED_REDIS_URL]"
+    assert (
+        sanitizer.sanitize("https://example.com:8443/docs?ref=main")
+        == "https://example.com:8443/docs?ref=main"
+    )
+    assert (
+        sanitizer.sanitize("postgresql://db.internal:5432/ledger")
+        == "postgresql://db.internal:5432/ledger"
+    )
+
+    synthetic_keys = [
+        "AK" + "IA" + ("A" * 16),
+        "AS" + "IA" + ("B" * 16),
+        "AB" + "IA" + ("C" * 16),
+        "AC" + "CA" + ("D" * 16),
+        "gh" + "p_" + ("a" * 36),
+        "github_" + "pat_" + ("a" * 36),
+        "sk-" + "proj-" + ("a" * 28),
+        "sk-" + "ant-" + ("a" * 28),
+        "xox" + "b-" + ("1" * 10) + "-" + ("2" * 10) + "-" + ("a" * 12),
+        "AI" + "za" + ("x" * 35),
+    ]
+    for key in synthetic_keys:
+        assert sanitizer.sanitize(f"token={key} end") == "token=[REDACTED_API_KEY] end"
+
+
+@pytest.mark.unit
+@pytest.mark.local
+def test_luhn_validated_obfuscated_and_international_cards(
+    sanitizer: PIISanitizer,
+) -> None:
+    """Additive Luhn pass redacts obfuscated and international cards while preserving non-cards."""
+    valid_cards = [
+        "4111.1111.1111.1111",  # dot-separated Visa (Luhn valid)
+        "550000 555555 5559",  # irregular-grouped Mastercard (Luhn valid)
+        "6221 2600 0000 0000",  # spaced UnionPay 16-digit (Luhn valid)
+        "6221260000000000",  # contiguous UnionPay 16-digit (Luhn valid)
+        "6304 9500 0000 0000 000",  # 19-digit Maestro (Luhn valid)
+    ]
+    for card in valid_cards:
+        assert sanitizer.sanitize(f"pan={card} ok") == "pan=[REDACTED_CC] ok"
+
+    preserved_values = [
+        "order 9999.8888.7777.6666 ok",  # non-payment IIN & non-Luhn
+        "pi=3.141592653589793",  # high-precision float (single dot)
+        "ratio=4.111111111111111",  # single-dot float even when Luhn-valid digits
+        "epoch_ms=1700000000004",  # 13-digit Unix ms timestamp (IIN 1 excluded)
+        "zeros=0000-0000-0000-0000",  # trivial repeated digits
+        "date=2026-08-27 1234567",  # mixed separators
+    ]
+    for text in preserved_values:
+        assert sanitizer.sanitize(text) == text
+
+
+@pytest.mark.unit
+@pytest.mark.local
+def test_mod97_space_grouped_iban_redacted_and_invalid_preserved(
+    sanitizer: PIISanitizer,
+) -> None:
+    """ISO 13616 Mod-97 spaced IBANs redact cleanly without false positives or partial card mangling."""
+    assert (
+        sanitizer.sanitize("IBAN DE89 3704 0044 0532 0130 00 paid")
+        == "IBAN [REDACTED_IBAN] paid"
+    )
+    assert (
+        sanitizer.sanitize("IBAN: GB29 NWBK 6016 1331 9268 19 EUR")
+        == "IBAN: [REDACTED_IBAN] EUR"
+    )
+    assert (
+        sanitizer.sanitize("wire FR76 3000 6000 0112 3456 7890 189")
+        == "wire [REDACTED_IBAN]"
+    )
+
+    invalid_ibans = [
+        "ref DE00 3704 0044 0532 0130 00",  # invalid Mod-97 check digits
+        "ref DE89 3704 0044 0532",  # wrong length for DE (16 != 22)
+        "ref US12 3456 7890 1234",  # US is not an ISO 13616 IBAN country
+    ]
+    for text in invalid_ibans:
+        assert sanitizer.sanitize(text) == text
+
+
+@pytest.mark.unit
+@pytest.mark.local
+def test_encoded_base64_hex_url_pii_and_secrets_redacted(
+    sanitizer: PIISanitizer,
+) -> None:
+    """Bounded multi-layer Base64/Hex/URL-encoded PII and credentials are redacted without false positives."""
+    import base64
+    import hashlib
+    from urllib.parse import quote
+
+    def b64(value: str) -> str:
+        return base64.b64encode(value.encode("utf-8")).decode("ascii")
+
+    ssn_b64_1x = b64("123-45-6789")
+    ssn_b64_2x = b64(ssn_b64_1x)
+    ssn_b64_3x = b64(ssn_b64_2x)
+    ssn_b64_4x = b64(ssn_b64_3x)
+
+    assert (
+        sanitizer.sanitize(f"leaked {ssn_b64_1x}.") == "leaked [REDACTED_ENCODED_PII]."
+    )
+    assert sanitizer.sanitize(f"d2={ssn_b64_2x}") == "d2=[REDACTED_ENCODED_PII]"
+    assert sanitizer.sanitize(f"d3={ssn_b64_3x}") == "d3=[REDACTED_ENCODED_PII]"
+    # Exceeds bounded unwrap depth (3) — terminates cleanly without redacting.
+    assert sanitizer.sanitize(f"d4={ssn_b64_4x}") == f"d4={ssn_b64_4x}"
+
+    # Mixed-layer: URL-encoded Base64 SSN
+    mixed = quote(ssn_b64_1x, safe="")
+    assert sanitizer.sanitize(f"mix={mixed}") == "mix=[REDACTED_ENCODED_PII]"
+
+    # Base64-encoded credentials (AWS key and PEM private key)
+    aws_sample = "AK" + "IA" + ("A" * 16)
+    pem_header = "-----BEGIN " + "RSA PRIVATE KEY-----"
+    assert (
+        sanitizer.sanitize(f"k={b64(aws_sample)}") == "k=[REDACTED_ENCODED_CREDENTIAL]"
+    )
+    assert (
+        sanitizer.sanitize(f"pem={b64(pem_header)}")
+        == "pem=[REDACTED_ENCODED_CREDENTIAL]"
+    )
+
+    # Hex-encoded PII and credential
+    email_hex = b"user@example.com".hex()
+    aws_hex = aws_sample.encode("utf-8").hex()
+    assert sanitizer.sanitize(f"h:{email_hex}") == "h:[REDACTED_ENCODED_PII]"
+    assert sanitizer.sanitize(f"h:{aws_hex}") == "h:[REDACTED_ENCODED_CREDENTIAL]"
+
+    # URL-encoded PII and credential URL
+    assert sanitizer.sanitize("ssn=123%2D45%2D6789") == "ssn=[REDACTED_ENCODED_PII]"
+    assert (
+        sanitizer.sanitize(
+            "https://example.com/search?email=alice%40example.com&page=1"
+        )
+        == "https://example.com/search?email=[REDACTED_ENCODED_PII]&page=1"
+    )
+    encoded_cred_url = quote(
+        "https://" + "svc:" + ("p" * 8) + "@db.internal/prod", safe=""
+    )
+    assert (
+        sanitizer.sanitize(f"target={encoded_cred_url}")
+        == "target=[REDACTED_ENCODED_CREDENTIAL]"
+    )
+
+    # False-positive guards: benign Base64, SHA-256 hex digest, benign URL encoding,
+    # and Base64-encoded canonical UUID remain intact.
+    benign_b64 = b64("hello.world.foobar")
+    sha256_hex = hashlib.sha256(b"").hexdigest()
+    uuid_b64 = b64("41112222-3333-4444-ab77-f4f1ecb70374")
+    for safe_text in (
+        f"msg={benign_b64}",
+        f"digest={sha256_hex}",
+        "https://example.com/search?q=hello%20world&page=1",
+        f"corr={uuid_b64}",
+    ):
+        assert sanitizer.sanitize(safe_text) == safe_text
+
+
+@pytest.mark.unit
+@pytest.mark.local
+def test_hardened_patterns_idempotent_and_linear_time(
+    sanitizer: PIISanitizer,
+) -> None:
+    """Hardened sanitizer is idempotent across all markers and linear O(n) on 60k-char inputs."""
+    import base64
+    import time
+
+    samples = [
+        "-----BEGIN "
+        + "EC PRIVATE KEY-----\n"
+        + ("A" * 16)
+        + "==\n-----END "
+        + "EC PRIVATE KEY-----",
+        "postgresql://" + "svc:" + ("p" * 8) + "@db.internal:5432/app",
+        "AK" + "IA" + ("A" * 16),
+        "4111.1111.1111.1111",
+        "DE89 3704 0044 0532 0130 00",
+        base64.b64encode(b"123-45-6789").decode("ascii"),
+    ]
+    for sample in samples:
+        once = sanitizer.sanitize(sample)
+        twice = sanitizer.sanitize(once)
+        assert once != sample
+        assert twice == once
+
+    adversarial_inputs = [
+        ("-----BEGIN " + "PRIVATE KEY-----") * 2_000
+        + ("-----END " + "PRIVATE KEY-----"),
+        "4." * 30_000,
+        "AA00 " * 12_000,
+        "aGVsbG8ud29ybGQ= " * 3_500,
+        "https://" + "a" * 60_000,
+    ]
+    for payload in adversarial_inputs:
+        start = time.perf_counter()
+        sanitizer.sanitize(payload)
+        elapsed = time.perf_counter() - start
+        assert elapsed < 1.0, (
+            f"sanitize took {elapsed:.2f}s on {len(payload)}-char adversarial payload"
+        )
