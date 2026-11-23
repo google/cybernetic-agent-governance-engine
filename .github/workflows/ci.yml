@@ -209,8 +209,9 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-          # Full history: G9 verifies revision-pinned paths (`<sha>^:<path>`) against
-          # git history and fails closed in a shallow clone.
+          # Full history: G9 verifies revision-pinned paths (`<sha>^:<path>`) and
+          # check_poam_sha_citations.py verifies POA&M citations against git
+          # history; both fail closed in a shallow clone.
           fetch-depth: 0
       - name: Install uv
         uses: astral-sh/setup-uv@07a047e608db84b3d8c06cd9a7c7dcc9c355c18e # v10.3.2
@@ -366,6 +367,14 @@ jobs:
         # SHA that exists in git and is an ancestor of main.
         run: |
           uv run python scripts/check_advisory_traces.py --verbose
+      - name: POA&M SHA-citation grammar, chronology & ratchet gate
+        # Classifies every hex code span in docs/POAM.md and
+        # docs/compliance/**/POAM_*.md by git object (reachable from main) and
+        # typed label, checks closure dates against committer dates, and fails
+        # on any violation not in tests/.poam-sha-citation-baseline (needs the
+        # full history above; fails closed in a shallow clone).
+        run: |
+          uv run python scripts/check_poam_sha_citations.py
       - name: Fail-closed test reachability marker gate (@pytest.mark.covers)
         # AST checks every read_back and HTTP 503 fail-closed test carries a
         # valid @pytest.mark.covers(...) target or categorized exemption
