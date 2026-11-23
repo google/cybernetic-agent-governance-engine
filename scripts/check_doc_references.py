@@ -116,6 +116,7 @@ DOC_SCOPE = (
     "docs/compliance/universal/POAM_ISO42001.md",
     "docs/compliance/eu_ecb/POAM_EU_ECB.md",
     "docs/compliance/apac_mas/POAM_APAC_MAS.md",
+    "docs/operations/ALERT_QUEUE_READBACK.md",
     "docs/architecture",
     "compliance",
     "infra",
