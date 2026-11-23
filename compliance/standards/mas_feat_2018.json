@@ -6,7 +6,7 @@
   "version": "MAS FEAT Principles, November 2018",
   "retrieved": "2026-11-23",
   "source_quality": "knowledge-unverified",
-  "source_notes": "Primary-source fetch of mas.gov.sg was denied (permission prompt timed out) on 2026-11-23. Principle numbering compiled from knowledge of the 2018 document: Fairness 1-4, Ethics 5-6, Accountability 7-11 (internal 7-9, external 10-11), Transparency 12-14. Titles are short paraphrases, not quotations. The document's own section numbering (e.g. a cited section 3.2) is NOT enumerated and is not judged. Must be verified against source_url before upgrading to primary.",
+  "source_notes": "Direct non-browser HTTP fetch of www.mas.gov.sg on 2026-11-23 returned a client-side JavaScript bot-protection challenge shell rather than the PDF/monograph body, blocking automated primary-source verification in this pass. Principle numbering compiled from knowledge of the 2018 document: Fairness 1-4, Ethics 5-6, Accountability 7-11 (internal 7-9, external 10-11), Transparency 12-14. Titles are short paraphrases, not quotations. The document's own section numbering (e.g. a cited section 3.2) is NOT enumerated and is not judged. Must be verified against a retrieved copy of the MAS FEAT monograph before upgrading to primary.",
   "complete": true,
   "rows": [
     {

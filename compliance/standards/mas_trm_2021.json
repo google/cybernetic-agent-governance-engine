@@ -6,7 +6,7 @@
   "version": "MAS TRM Guidelines, January 2021",
   "retrieved": "2026-11-23",
   "source_quality": "knowledge-unverified",
-  "source_notes": "Primary-source fetch of mas.gov.sg was denied (permission prompt timed out) on 2026-11-23; chapter and section headings compiled from knowledge of the January 2021 Guidelines and must be verified against source_url before this table is upgraded to primary. The TRM Guidelines contain no data-residency section and no AI/model-risk section. Appendices are not enumerated.",
+  "source_notes": "Direct non-browser HTTP fetch of www.mas.gov.sg on 2026-11-23 returned a client-side JavaScript bot-protection challenge shell rather than the Guidelines PDF/text, blocking automated primary-source verification in this pass; chapter and section headings were compiled from knowledge of the January 2021 Guidelines and must be verified against a retrieved copy of the MAS TRM Guidelines before this table is upgraded to primary. The TRM Guidelines contain no data-residency section and no AI/model-risk section. Appendices are not enumerated.",
   "complete": true,
   "rows": [
     {

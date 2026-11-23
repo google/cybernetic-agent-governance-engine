@@ -1,6 +1,6 @@
 {
   "schema_version": 1,
-  "detector_sha256": "b2ee03e6cd82fd2c516bd60ed6d8e03f89fea98721200aa6f149caf1498b45cf",
+  "detector_sha256": "5c87d7670b9e9c8e6c29fb7a96b4be48299267c08d78b2f80d988c84da163f3f",
   "baseline": 234,
   "standing_debt_policy": "Non-regression ratchet over standing standards-citation debt (POAM-2026-247). New violation identities fail immediately. Corrections are a follow-up, ordered: generated sources (config/oscal/framework_mappings, iso_control.py maps) first, then OSCAL/Lula/census, then prose and tests; each correction lowers the baseline with --update-baseline.",
   "counts": {
@@ -323,6 +323,59 @@
         }
       },
       "reason": "Initial POAM-2026-247 seed from the tree at origin/main 1279cf95 plus this branch: 234 anchored violations across ten sourced reference tables; reconciled against the 2026-11-23 standards-section audit TSV."
+    },
+    {
+      "event": "recompute",
+      "date": "2026-11-23",
+      "detector_sha256": "5c87d7670b9e9c8e6c29fb7a96b4be48299267c08d78b2f80d988c84da163f3f",
+      "before_detector_sha256": "b2ee03e6cd82fd2c516bd60ed6d8e03f89fea98721200aa6f149caf1498b45cf",
+      "before_baseline": 234,
+      "after_baseline": 234,
+      "counts": {
+        "dora": {
+          "EXACT_TITLE_MISMATCH": 1,
+          "NONEXISTENT": 4,
+          "WRONG_TITLE": 11
+        },
+        "eu-ai-act": {
+          "EXACT_TITLE_MISMATCH": 14,
+          "WRONG_TITLE": 3
+        },
+        "gdpr": {
+          "EXACT_TITLE_MISMATCH": 2,
+          "WRONG_TITLE": 3
+        },
+        "iso-iec-42001-2023": {
+          "EXACT_TITLE_MISMATCH": 7,
+          "NONEXISTENT": 3,
+          "WRONG_TITLE": 61
+        },
+        "mas-feat": {
+          "EXACT_TITLE_MISMATCH": 3
+        },
+        "mas-notice-655": {
+          "EXACT_TITLE_MISMATCH": 1,
+          "WRONG_TITLE": 1
+        },
+        "mas-trm": {
+          "EXACT_TITLE_MISMATCH": 2,
+          "WRONG_TITLE": 4
+        },
+        "nist-ai-600-1": {
+          "NONEXISTENT": 31,
+          "WRONG_TITLE": 63
+        },
+        "nist-ai-rmf-1.0": {
+          "WRONG_TITLE": 2
+        },
+        "nist-sp-800-53-r5": {
+          "EXACT_TITLE_MISMATCH": 2,
+          "ID_COLLISION": 7,
+          "NONEXISTENT": 1,
+          "WITHDRAWN": 8
+        }
+      },
+      "reason": "upgrade nist_ai_600_1.json to primary (17/17 verbatim) and record mas.gov.sg JS-challenge blocker notes"
     }
   ]
 }

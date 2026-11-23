@@ -5,8 +5,10 @@
   "source_url": "https://nvlpubs.nist.gov/nistpubs/ai/NIST.AI.600-1.pdf",
   "version": "NIST AI 600-1, July 2024 (doi:10.6028/NIST.AI.600-1)",
   "retrieved": "2026-11-23",
-  "source_quality": "knowledge-unverified",
-  "source_notes": "Primary-source fetch of nvlpubs.nist.gov was denied (permission prompt timed out) on 2026-11-23; the twelve-risk order of Section 2 and the appendix titles were compiled from knowledge of the published profile and the 2026-11-23 standards-section audit, and must be verified against source_url before this table is upgraded to primary. Section 3 action identifiers (GV-/MP-/MS-/MG-x.y-nnn) are not enumerated because the repository cites none; Section 3 is therefore not children_complete. Section 2 risks have no numbered subsections.",
+  "source_quality": "primary",
+  "source_sha256": "6e73620ab6b64e90ef2c04bf0e0d6246185a2f4b1b13cab0df494496cff89b6a",
+  "source_notes": "Verified verbatim (17/17 section and appendix headings) against NIST.AI.600-1.pdf retrieved from source_url on 2026-11-23 (source_sha256 is the PDF digest). Section 3 action identifiers (GV-/MP-/MS-/MG-x.y-nnn) are not enumerated because the repository cites none; Section 3 is therefore not children_complete. Section 2 risks have no numbered subsections.",
+  "license": "NIST AI 600-1 is a work of the U.S. Government (National Institute of Standards and Technology) and is not subject to copyright protection in the United States (17 U.S.C. 105). Attribution: NIST, Artificial Intelligence Risk Management Framework: Generative Artificial Intelligence Profile (NIST AI 600-1, July 2024). Only identifiers and section/appendix titles are retained here.",
   "complete": true,
   "rows": [
     {
