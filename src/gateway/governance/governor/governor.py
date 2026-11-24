@@ -1297,6 +1297,13 @@ class SymbolicGovernor:
         """
         return self._components.classifier.defers_on_reliance(result.violations)
 
+    def held_receipt(self, seal: str, tier: str) -> Any | None:
+        """Return the held ``CommitReceipt.token`` for ``tier`` behind ``seal`` before settlement."""
+        for held in self._settlements.peek(seal):
+            if held.stage.name == tier:
+                return held.receipt.token
+        return None
+
     async def settle(self, seal: str, *, executed: bool) -> list[Violation]:
         """Settle the phase-2 commits behind ``seal`` after the sealed action.
 

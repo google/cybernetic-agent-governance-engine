@@ -50,7 +50,11 @@ from src.gateway.governance.execution_idempotency import (
     UnsettledDuplicate,
 )
 from src.gateway.governance.routing_seal import SymbolicGovernorViolation
-from src.gateway.governance.seams.actuation import ExecutionClearance
+from src.gateway.governance.seams.actuation import (
+    ActuationIndeterminateError,
+    ActuationRejectedError,
+    ExecutionClearance,
+)
 from src.gateway.server.governance_middleware import (
     ActionDeferred,
     ApprovalRedemptionRefused,
@@ -60,15 +64,6 @@ from src.gateway.server.governance_middleware import (
 )
 
 logger = logging.getLogger(__name__)
-
-
-class ActuationIndeterminateError(SymbolicGovernorViolation):
-    """Raised when trade actuation reached an indeterminate (UNKNOWN) outcome.
-
-    Distinct from a provable pre-execution rejection (``SymbolicGovernorViolation``):
-    phase-2 reservations remain confirmed pending broker reconciliation (F-06,
-    POAM-2026-232) and callers must not treat the order as safely unexecuted.
-    """
 
 
 # ── Module-level actuator registration ──
@@ -377,12 +372,13 @@ async def _refuse_duplicate(
         f"duplicate submission of transaction_id {transaction_id} "
         f"(first attempt {duplicate.status.value})"
     )
-    logger.warning("execute_trade refused: %s", reason)
-    await record_refusal(
-        "execute_trade", reason, oscal_control_ref="AC-3", params=params
-    )
     if duplicate.outcome is not None and duplicate.status in _SETTLED:
+        logger.warning("execute_trade refused: %s", reason)
+        await record_refusal(
+            "execute_trade", reason, oscal_control_ref="AC-3", params=params
+        )
         return CommitOutcome(_REPLAYED_STATUS[duplicate.status], duplicate.outcome)
+    logger.warning("execute_trade unsettled duplicate blocked: %s", reason)
     state = {
         ExecutionStatus.IN_FLIGHT: "has not finished",
         ExecutionStatus.UNKNOWN: "has an unknown outcome, pending reconciliation",
@@ -411,7 +407,6 @@ async def _govern_and_actuate(
     # (UCA-2 / UCA-5 / UCA-13, or the trade policy for a missing role), which
     # records the refusal; an unavailable source blocks with a 503.
     from src.gateway.governance.routing_seal import (
-        SymbolicGovernorViolation,
         seal_digest,
         verify_and_consume_seal,
     )
@@ -596,10 +591,13 @@ async def _govern_and_actuate(
                     f"Actuation outcome indeterminate (reservations confirmed "
                     f"pending reconciliation): {findings_str}",
                     action="execute_trade",
+                    findings=receipt.findings,
                 )
             attempt.status = ExecutionStatus.BLOCKED
-            raise SymbolicGovernorViolation(
-                f"Actuation rejected: {findings_str}", action="execute_trade"
+            raise ActuationRejectedError(
+                f"Actuation rejected: {findings_str}",
+                action="execute_trade",
+                findings=receipt.findings,
             )
 
         attempt.status = ExecutionStatus.EXECUTED
@@ -609,7 +607,19 @@ async def _govern_and_actuate(
             f"(Receipt ID: {receipt.receipt_id})",
         )
     finally:
+        fiscal_token = (
+            governor.held_receipt(seal, "fiscal")
+            if hasattr(governor, "held_receipt")
+            else None
+        )
         await _settle(governor, seal, executed=executed)
+        if executed and attempt.status is ExecutionStatus.UNKNOWN:
+            await _record_unknown_fiscal_hold(
+                governor,
+                transaction_id=str(action_params.get("transaction_id") or ""),
+                symbol=str(action_params.get("symbol") or ""),
+                fiscal_token=fiscal_token,
+            )
 
 
 #: Sentinel for a NARROW receipt whose payload is not a JSON object.
@@ -721,6 +731,45 @@ async def _block_receipt_store_outage(
     )  # fail closed
 
 
+def _fiscal_guard_from(governor: "SymbolicGovernor") -> Any | None:
+    """Return the domain ``FiscalLimitGuard`` held by ``governor``, if any."""
+    components = getattr(governor, "components", None)
+    for tier in getattr(components, "domain_tiers", ()) or ():
+        if getattr(tier, "tier_name", None) == "fiscal":
+            return getattr(tier, "guard", None)
+    return None
+
+
+async def _record_unknown_fiscal_hold(
+    governor: "SymbolicGovernor",
+    *,
+    transaction_id: str,
+    symbol: str,
+    fiscal_token: Any | None,
+) -> None:
+    """Record a confirmed UNKNOWN fiscal reservation for same-day broker reconciliation."""
+    metrics = getattr(getattr(governor, "components", None), "metrics", None)
+    if metrics is not None and hasattr(metrics, "unknown_actuation_event"):
+        metrics.unknown_actuation_event("recorded")
+    if fiscal_token is None or not transaction_id:
+        return
+    guard = _fiscal_guard_from(governor)
+    if guard is None or not hasattr(guard, "record_unverified_unknown"):
+        return
+    try:
+        await guard.record_unverified_unknown(
+            transaction_id,
+            fiscal_token,
+            symbol=symbol,
+        )
+    except Exception as exc:
+        logger.critical(
+            "execute_trade: failed to record unverified UNKNOWN fiscal hold tx=%s: %s",
+            transaction_id,
+            exc,
+        )
+
+
 async def _settle(governor: "SymbolicGovernor", seal: str, *, executed: bool) -> None:
     """Confirm or release the seal's reservations; failures need reconciliation."""
     failures = await governor.settle(seal, executed=executed)
@@ -754,18 +803,25 @@ class FinancialToolProvider(DomainToolProvider):
             deferred_id: str | None = None,
             side: TradeSide = "buy",
         ) -> CallToolResult:
-            # The typed outcome rides in structuredContent (POAM-2026-245).
-            outcome = await execute_trade_action(
-                symbol,
-                amount,
-                currency,
-                confidence,
-                transaction_id,
-                dry_run,
-                deferred_id,
-                side,
-                governor=governor,
-            )
+            # The typed outcome rides in structuredContent (POAM-2026-245 / 232).
+            try:
+                outcome = await execute_trade_action(
+                    symbol,
+                    amount,
+                    currency,
+                    confidence,
+                    transaction_id,
+                    dry_run,
+                    deferred_id,
+                    side,
+                    governor=governor,
+                )
+            except ActuationIndeterminateError as exc:
+                outcome = CommitOutcome(CommitStatus.INDETERMINATE, str(exc))
+            except UnsettledDuplicate as exc:
+                outcome = CommitOutcome(CommitStatus.UNSETTLED_DUPLICATE, str(exc))
+            except ActuationRejectedError as exc:
+                outcome = CommitOutcome(CommitStatus.REFUSED, str(exc))
             return _call_tool_result(outcome)
 
         @server.tool(annotations=_READ_ONLY_TOOL)

@@ -104,8 +104,12 @@ try:
         "cage_lula_audit_deadman_breaches_total",
         "Total breaches of the 2x-schedule in-cluster Lula audit dead-man's switch",
     )
+    AGED_UNKNOWN_ACTUATIONS_ALERTS_TOTAL = _deadman_counter(
+        "cage_aged_unknown_actuations_alerts_total",
+        "Total alerts emitted for aged unresolved UNKNOWN actuations",
+    )
 except ImportError:  # pragma: no cover - optional runtime dependency
-    pass
+    AGED_UNKNOWN_ACTUATIONS_ALERTS_TOTAL = None
 
 
 def _is_disabled() -> bool:
@@ -121,6 +125,13 @@ def _lula_audit_max_age_seconds() -> int:
     if raw is not None and raw.strip():
         return int(raw.strip())
     return int(LULA_AUDIT_MAX_AGE_SECONDS)
+
+
+def _unknown_actuation_max_age_seconds() -> int:
+    raw = os.environ.get("UNKNOWN_ACTUATION_MAX_AGE_SECONDS")
+    if raw is not None and raw.strip():
+        return max(1, int(raw.strip()))
+    return 300
 
 
 def _poll_interval() -> int:
@@ -474,6 +485,84 @@ async def _maybe_emit_notifier_heartbeat(
     return last_hb_monotonic
 
 
+async def _check_aged_unknown_actuations(
+    *,
+    now: float | None = None,
+    redis_client: Any | None = None,
+) -> OscalFinding | None:
+    """Alert via configured Pub/Sub notifier if any UNKNOWN fiscal holds are aged."""
+    max_age_s = _unknown_actuation_max_age_seconds()
+    current_time = (
+        datetime.now(tz=timezone.utc).timestamp() if now is None else float(now)
+    )
+    cutoff = current_time - max_age_s
+    client = redis_client
+    if client is None:
+        try:
+            from src.gateway.infrastructure.redis_client import redis_client as gw_redis
+
+            client = gw_redis
+        except Exception as exc:
+            logger.debug(
+                "[sla_monitor] Redis client unavailable for UNKNOWN check: %s", exc
+            )
+            return None
+    if client is None:
+        return None
+    try:
+        get_raw = getattr(client, "get_raw_client", None)
+        raw: Any = await get_raw() if get_raw is not None else client
+        if raw is None:
+            return None
+        zrange = raw.zrangebyscore("fiscal:unverified_unknown", "-inf", cutoff)
+        aged_ids = await zrange if inspect.isawaitable(zrange) else zrange
+    except Exception as exc:
+        logger.warning(
+            "[sla_monitor] Failed to inspect fiscal:unverified_unknown: %s", exc
+        )
+        return None
+    if not aged_ids:
+        return None
+
+    tx_list = [
+        item.decode("utf-8", errors="replace") if isinstance(item, bytes) else str(item)
+        for item in aged_ids
+    ]
+    now_ts = int(current_time)
+    remarks = (
+        f"Aged unresolved UNKNOWN actuation(s) exceeded {max_age_s}s without "
+        f"broker reconciliation: {', '.join(tx_list[:10])}"
+        + (f" (+{len(tx_list) - 10} more)" if len(tx_list) > 10 else "")
+    )
+    finding = OscalFinding(
+        control_id="SC-4",
+        result="FAIL",
+        assessment_status="aged_unknown_actuations",
+        finding_id=f"aged-unknown-actuations-{now_ts}",
+        remarks=remarks,
+        safety_rate=0.0,
+    )
+    if AGED_UNKNOWN_ACTUATIONS_ALERTS_TOTAL is not None:
+        AGED_UNKNOWN_ACTUATIONS_ALERTS_TOTAL.inc()
+    logger.critical("[sla_monitor] 🚨 %s", remarks)
+    audit_id = f"aged-unknown-{now_ts}"
+    try:
+        notifier = create_notifier()
+        delivered = (await notifier.send_critical_alert([finding], audit_id)) is True
+        if not delivered:
+            logger.error(
+                "[sla_monitor] Aged UNKNOWN actuation alert NOT delivered (%s)",
+                audit_id,
+            )
+    except Exception as exc:
+        logger.error(
+            "[sla_monitor] Failed to send aged UNKNOWN actuation alert (%s): %s",
+            audit_id,
+            exc,
+        )
+    return finding
+
+
 async def run_sla_monitor() -> None:
     """
     Continuous SLA monitoring loop — runs until the task is cancelled.
@@ -513,6 +602,7 @@ async def run_sla_monitor() -> None:
                 breached = await _check_sla_once()
                 if "A.5.3" not in sla_keys:
                     await _check_lula_audit_deadman()
+                await _check_aged_unknown_actuations()
                 pending_age_alerts = [
                     cid for cid in breached if cid not in _last_inline_alerted_controls
                 ]

@@ -73,15 +73,16 @@ class TestClassify200:
     def test_missing_receipt_id(self):
         resp = _make_response(200, {"status": "ACCEPTED"})
         result = classify_response(resp)
-        assert result.category == ResponseCategory.REJECTED_TERMINAL
+        assert result.category == ResponseCategory.INDETERMINATE
         assert result.error_code == "MISSING_RECEIPT_ID"
         assert result.retryable is False
 
     def test_unparseable_body(self):
         resp = _make_response(200, None)
         result = classify_response(resp)
-        assert result.category == ResponseCategory.REJECTED_TERMINAL
+        assert result.category == ResponseCategory.INDETERMINATE
         assert result.error_code == "UNPARSEABLE_RECEIPT"
+        assert result.retryable is False
 
     def test_receipt_with_extra_fields(self):
         resp = _make_response(
@@ -89,12 +90,36 @@ class TestClassify200:
             {
                 "receipt_id": "rcpt-002",
                 "session_uuid": "sess-002",
+                "status": "ACCEPTED",
                 "extra_field": "ignored",
             },
         )
         result = classify_response(resp)
         assert result.category == ResponseCategory.ACCEPTED
         assert result.receipt_id == "rcpt-002"
+
+    def test_missing_status_on_200_is_indeterminate(self):
+        resp = _make_response(
+            200,
+            {"receipt_id": "rcpt-002", "session_uuid": "sess-002"},
+        )
+        result = classify_response(resp)
+        assert result.category == ResponseCategory.INDETERMINATE
+        assert result.error_code == "AMBIGUOUS_RECEIPT_STATUS"
+        assert result.retryable is False
+
+    def test_rejected_status_on_200_is_terminal(self):
+        resp = _make_response(
+            200,
+            {
+                "receipt_id": "rcpt-003",
+                "session_uuid": "sess-003",
+                "status": "REJECTED",
+            },
+        )
+        result = classify_response(resp)
+        assert result.category == ResponseCategory.REJECTED_TERMINAL
+        assert result.retryable is False
 
 
 # ── Test: 403 Disambiguation ─────────────────────────────────────────────
@@ -161,34 +186,34 @@ class TestClassify403:
         assert result.category == ResponseCategory.REJECTED_RETRYABLE
 
 
-# ── Test: Retryable Status Codes ─────────────────────────────────────────
+# ── Test: Ambiguous Post-Dispatch Status Codes ───────────────────────────
 
 
 class TestRetryableStatusCodes:
-    """Status codes that should be retried with backoff."""
+    """Ambiguous HTTP status codes (408/409/421/422/429/5xx) classify as INDETERMINATE."""
 
-    @pytest.mark.parametrize("status", [408, 429, 500, 502, 503, 504])
-    def test_retryable_status_codes(self, status):
+    @pytest.mark.parametrize("status", [408, 409, 421, 422, 429, 500, 502, 503, 504])
+    def test_ambiguous_status_codes_are_indeterminate(self, status):
         resp = _make_response(status, {"error": f"ERROR_{status}"})
         result = classify_response(resp)
-        assert result.category == ResponseCategory.REJECTED_RETRYABLE
-        assert result.retryable is True
+        assert result.category == ResponseCategory.INDETERMINATE
+        assert result.retryable is False
 
-    @pytest.mark.parametrize("status", [408, 429, 500, 502, 503, 504])
-    def test_retryable_with_no_body(self, status):
+    @pytest.mark.parametrize("status", [408, 409, 421, 422, 429, 500, 502, 503, 504])
+    def test_ambiguous_with_no_body_are_indeterminate(self, status):
         resp = _make_response(status, None)
         result = classify_response(resp)
-        assert result.category == ResponseCategory.REJECTED_RETRYABLE
-        assert result.retryable is True
+        assert result.category == ResponseCategory.INDETERMINATE
+        assert result.retryable is False
 
 
 # ── Test: Terminal Status Codes ───────────────────────────────────────────
 
 
 class TestTerminalStatusCodes:
-    """Status codes that should NOT be retried."""
+    """Deterministic pre-execution refusal HTTP codes (400/401) are terminal."""
 
-    @pytest.mark.parametrize("status", [400, 401, 409, 421, 422])
+    @pytest.mark.parametrize("status", [400, 401])
     def test_terminal_status_codes(self, status):
         resp = _make_response(status, {"error": "VALIDATION_FAILED"})
         result = classify_response(resp)
@@ -200,13 +225,13 @@ class TestTerminalStatusCodes:
 
 
 class TestUnrecognisedStatusCodes:
-    """Fail-closed: unrecognised status codes → terminal."""
+    """Fail-closed: unrecognised post-dispatch status codes → INDETERMINATE."""
 
     @pytest.mark.parametrize("status", [201, 204, 301, 418, 451, 599])
-    def test_unrecognised_status_is_terminal(self, status):
+    def test_unrecognised_status_is_indeterminate(self, status):
         resp = _make_response(status, None)
         result = classify_response(resp)
-        assert result.category == ResponseCategory.REJECTED_TERMINAL
+        assert result.category == ResponseCategory.INDETERMINATE
         assert result.retryable is False
 
 

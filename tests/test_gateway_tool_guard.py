@@ -557,6 +557,10 @@ class TestGuardTransactionIds:
 
     @pytest.mark.asyncio
     async def test_overrides_the_model_supplied_transaction_id(self, gateway) -> None:
+        from src.governed_financial_advisor.graph.governance.tool_guard import (
+            derive_plan_step_key,
+        )
+
         seen = gateway(lambda r: httpx.Response(200, json=_ALLOW))
         spy = _SpyNode()
         call = _call("call-1")
@@ -569,7 +573,10 @@ class TestGuardTransactionIds:
         txn = executed["args"]["transaction_id"]
         assert txn != "chosen-by-the-model"
         assert uuid.UUID(txn).version == 5
-        assert txn == derive_transaction_id("call-1", thread_id=None, message_id="ai-1")
+        expected_step = derive_plan_step_key(call["args"])
+        assert txn == derive_transaction_id(
+            expected_step, thread_id=None, message_id="ai-1"
+        )
         # Only transaction_id changes.
         assert {k: v for k, v in executed["args"].items() if k != "transaction_id"} == {
             k: v for k, v in call["args"].items() if k != "transaction_id"
@@ -578,21 +585,30 @@ class TestGuardTransactionIds:
         assert "transaction_id" not in json.loads(seen[0].content)["params"]
 
     @pytest.mark.asyncio
-    async def test_same_tool_call_in_the_same_thread_keeps_its_key(
+    async def test_same_intent_in_same_thread_keeps_key_even_with_new_tool_call_id(
         self, gateway, monkeypatch: pytest.MonkeyPatch
     ) -> None:
+        from src.governed_financial_advisor.graph.governance.tool_guard import (
+            derive_plan_step_key,
+        )
+
         gateway(lambda r: httpx.Response(200, json=_ALLOW))
         spy = _SpyNode()
         guarded = gateway_tool_guard("execute_trade")(spy)
         thread = {"configurable": {"thread_id": "thread-7"}}
         monkeypatch.setattr(tool_guard_module, "get_config", lambda: thread)
 
-        # A re-run rebuilds the AIMessage (new message id), same tool call id.
+        # A regenerated AIMessage produces a fresh LLM tool_call_id and message id,
+        # yet the trade intent in the same thread must keep the same transaction_id.
         await guarded(
             {"messages": [AIMessage(content="", tool_calls=[_call("c-1")], id="a")]}
         )
         await guarded(
-            {"messages": [AIMessage(content="", tool_calls=[_call("c-1")], id="b")]}
+            {
+                "messages": [
+                    AIMessage(content="", tool_calls=[_call("c-regenerated")], id="b")
+                ]
+            }
         )
         thread["configurable"]["thread_id"] = "thread-8"
         await guarded(
@@ -602,8 +618,9 @@ class TestGuardTransactionIds:
         first, rerun, other_thread = (self._txn(s) for s in spy.states)
         assert first == rerun
         assert first != other_thread
+        expected_step = derive_plan_step_key(_call("c-1")["args"])
         assert first == derive_transaction_id(
-            "c-1", thread_id="thread-7", message_id=None
+            expected_step, thread_id="thread-7", message_id=None
         )
 
     @pytest.mark.asyncio
@@ -630,6 +647,10 @@ class TestGuardTransactionIds:
 
     @pytest.mark.asyncio
     async def test_approved_resubmission_keeps_the_derived_key(self, gateway) -> None:
+        from src.governed_financial_advisor.graph.governance.tool_guard import (
+            derive_plan_step_key,
+        )
+
         seen = gateway(lambda r: httpx.Response(200, json=_ALLOW))
         spy = _SpyNode()
         state = {
@@ -642,8 +663,9 @@ class TestGuardTransactionIds:
 
         args = spy.states[0]["messages"][-1].tool_calls[0]["args"]
         assert args["deferred_id"] == "d-1"
+        expected_step = derive_plan_step_key(_call("t1")["args"])
         assert args["transaction_id"] == derive_transaction_id(
-            "t1", thread_id=None, message_id="ai-9"
+            expected_step, thread_id=None, message_id="ai-9"
         )
         assert seen == []  # an approved call is not re-validated
 

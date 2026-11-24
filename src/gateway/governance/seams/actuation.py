@@ -277,6 +277,63 @@ class ActuationReceipt:
         return self.outcome is not ActuationOutcome.REJECTED
 
 
+class ActuationError(RuntimeError):
+    """Base typed exception surfaced across actuation seams.
+
+    Separates downstream execution failures from governor policy refusals so
+    callers and metrics never account indeterminate fills as policy denials.
+    """
+
+    def __init__(
+        self,
+        message: str,
+        *,
+        action: str = "",
+        outcome: ActuationOutcome = ActuationOutcome.UNKNOWN,
+        findings: list[dict] | None = None,
+    ) -> None:
+        super().__init__(message)
+        self.action = action
+        self.outcome = outcome
+        self.findings = list(findings or ())
+
+
+class ActuationRejectedError(ActuationError):
+    """Definitive pre-execution refusal by a downstream actuator; side effect did not happen."""
+
+    def __init__(
+        self,
+        message: str,
+        *,
+        action: str = "",
+        findings: list[dict] | None = None,
+    ) -> None:
+        super().__init__(
+            message,
+            action=action,
+            outcome=ActuationOutcome.REJECTED,
+            findings=findings,
+        )
+
+
+class ActuationIndeterminateError(ActuationError):
+    """Post-dispatch actuation reached an UNKNOWN outcome; reservations remain confirmed."""
+
+    def __init__(
+        self,
+        message: str,
+        *,
+        action: str = "",
+        findings: list[dict] | None = None,
+    ) -> None:
+        super().__init__(
+            message,
+            action=action,
+            outcome=ActuationOutcome.UNKNOWN,
+            findings=findings,
+        )
+
+
 @runtime_checkable
 class ExecutionActuator(Protocol):
     """

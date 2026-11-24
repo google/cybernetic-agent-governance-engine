@@ -64,6 +64,7 @@ from __future__ import annotations
 
 import asyncio
 import functools
+import json
 import logging
 import math
 import os
@@ -82,6 +83,8 @@ _LAST_FISCAL_STORE_ERROR: ContextVar[str | None] = ContextVar(
 
 PENDING_KEY = "fiscal:pending"
 RECLAIMED_KEY = "fiscal:reclaimed"
+UNVERIFIED_UNKNOWN_KEY = "fiscal:unverified_unknown"
+UNVERIFIED_UNKNOWN_META_KEY = "fiscal:unverified_unknown:meta"
 _RECLAIM_BATCH = 100
 
 _LUA_RESERVE = """
@@ -143,6 +146,52 @@ end
 redis.call('ZREMRANGEBYSCORE', KEYS[2], '-inf', ARGV[3])
 return reclaimed
 """
+
+# KEYS[1] = UNVERIFIED_UNKNOWN_KEY, KEYS[2] = UNVERIFIED_UNKNOWN_META_KEY
+# ARGV[1] = transaction_id, ARGV[2] = confirmed_at (string score), ARGV[3] = JSON meta
+_LUA_RECORD_UNVERIFIED = """
+redis.call('ZADD', KEYS[1], tonumber(ARGV[2]), ARGV[1])
+redis.call('HSET', KEYS[2], ARGV[1], ARGV[3])
+return 1
+"""
+
+# KEYS[1] = UNVERIFIED_UNKNOWN_KEY, KEYS[2] = UNVERIFIED_UNKNOWN_META_KEY
+# ARGV[1] = transaction_id, ARGV[2] = '1' (executed) or '0' (reclaim)
+# Returns 1 when settled, 0 when not found.
+_LUA_SETTLE_UNKNOWN = """
+local raw = redis.call('HGET', KEYS[2], ARGV[1])
+redis.call('ZREM', KEYS[1], ARGV[1])
+redis.call('HDEL', KEYS[2], ARGV[1])
+if not raw then return 0 end
+if ARGV[2] == '0' then
+  local ok, meta = pcall(cjson.decode, raw)
+  if ok and type(meta) == 'table' then
+    local window = meta['window_key']
+    local cents = tonumber(meta['amount_cents'] or '0')
+    if window and cents > 0 and redis.call('EXISTS', window) == 1 then
+      local total = redis.call('DECRBY', window, cents)
+      if total < 0 then
+        redis.call('SET', window, 0, 'KEEPTTL')
+      end
+    end
+  end
+end
+return 1
+"""
+
+
+@dataclass(frozen=True)
+class UnverifiedUnknownReservation:
+    """Confirmed fiscal reservation awaiting broker reconciliation after an UNKNOWN outcome."""
+
+    transaction_id: str
+    reservation_id: str
+    agent_id: str
+    amount_usd: float
+    amount_cents: int
+    window_key: str
+    symbol: str
+    confirmed_at: float
 
 
 @dataclass(frozen=True)
@@ -435,6 +484,105 @@ class FiscalLimitGuard:
                 token.amount_usd,
                 token.reservation_id,
             )
+
+    async def record_unverified_unknown(
+        self,
+        transaction_id: str,
+        token: ReservationToken,
+        *,
+        symbol: str = "",
+        confirmed_at: float | None = None,
+    ) -> None:
+        """Record a confirmed reservation resulting from an UNKNOWN actuation for reconciliation."""
+        if token.rejected or not transaction_id:
+            return
+        ts = time.time() if confirmed_at is None else float(confirmed_at)
+        meta = json.dumps(
+            {
+                "transaction_id": transaction_id,
+                "reservation_id": token.reservation_id,
+                "agent_id": token.agent_id,
+                "amount_usd": token.amount_usd,
+                "amount_cents": token.amount_cents,
+                "window_key": token.window_key,
+                "symbol": symbol,
+                "confirmed_at": ts,
+            },
+            sort_keys=True,
+        )
+        await self._eval(
+            _LUA_RECORD_UNVERIFIED,
+            [UNVERIFIED_UNKNOWN_KEY, UNVERIFIED_UNKNOWN_META_KEY],
+            [transaction_id, repr(ts), meta],
+        )
+        logger.warning(
+            "FiscalLimitGuard: UNVERIFIED_UNKNOWN recorded tx=%s agent=%s amount=%.2f symbol=%s",
+            transaction_id,
+            token.agent_id,
+            token.amount_usd,
+            symbol,
+        )
+
+    async def list_unverified_unknown(
+        self,
+        *,
+        older_than_seconds: float = 0.0,
+        now: float | None = None,
+    ) -> list[UnverifiedUnknownReservation]:
+        """List confirmed UNKNOWN reservations awaiting broker reconciliation."""
+        current_time = time.time() if now is None else float(now)
+        max_score: float | str = (
+            current_time - older_than_seconds if older_than_seconds > 0 else "+inf"
+        )
+        members = await self._call(
+            "zrangebyscore", UNVERIFIED_UNKNOWN_KEY, "-inf", max_score
+        )
+        if not members:
+            return []
+        tx_ids = [m.decode() if isinstance(m, bytes) else str(m) for m in members]
+        raw_metas = await self._call("hmget", UNVERIFIED_UNKNOWN_META_KEY, *tx_ids)
+        out: list[UnverifiedUnknownReservation] = []
+        for tx_id, raw in zip(tx_ids, raw_metas or (), strict=False):
+            if raw is None:
+                continue
+            text = raw.decode() if isinstance(raw, bytes) else str(raw)
+            try:
+                data = json.loads(text)
+                out.append(
+                    UnverifiedUnknownReservation(
+                        transaction_id=str(data.get("transaction_id") or tx_id),
+                        reservation_id=str(data.get("reservation_id") or ""),
+                        agent_id=str(data.get("agent_id") or ""),
+                        amount_usd=float(data["amount_usd"]),
+                        amount_cents=int(data["amount_cents"]),
+                        window_key=str(data["window_key"]),
+                        symbol=str(data.get("symbol") or ""),
+                        confirmed_at=float(data["confirmed_at"]),
+                    )
+                )
+            except (KeyError, TypeError, ValueError) as exc:
+                logger.warning(
+                    "FiscalLimitGuard: skipping malformed unverified UNKNOWN metadata tx=%s: %s",
+                    tx_id,
+                    exc,
+                )
+        return out
+
+    async def settle_unknown(self, transaction_id: str, *, executed: bool) -> bool:
+        """Finalize (executed=True) or reclaim (executed=False) an UNKNOWN fiscal reservation."""
+        res = await self._eval(
+            _LUA_SETTLE_UNKNOWN,
+            [UNVERIFIED_UNKNOWN_KEY, UNVERIFIED_UNKNOWN_META_KEY],
+            [transaction_id, "1" if executed else "0"],
+        )
+        settled = int(res) == 1
+        if settled:
+            logger.info(
+                "FiscalLimitGuard: SETTLED UNKNOWN tx=%s executed=%s",
+                transaction_id,
+                executed,
+            )
+        return settled
 
     async def current_spend_usd(self) -> float:
         """Return the current reserved + confirmed spend for today's window."""

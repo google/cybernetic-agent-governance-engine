@@ -800,10 +800,19 @@ async def execute_tool_endpoint(request_body: ToolExecutionRequest, request: Req
             status_code=404, detail=f"Tool '{request_body.tool_name}' not found."
         )
 
+    from src.gateway.governance.commit_outcome import (
+        NON_REFUSAL_STATUSES,
+        CommitOutcome,
+        CommitStatus,
+    )
     from src.gateway.governance.evidence.stream import EvidenceChainUnavailableError
     from src.gateway.governance.execution_idempotency import UnsettledDuplicate
     from src.gateway.governance.governor.errors import GovernanceInfrastructureError
     from src.gateway.governance.routing_seal import SymbolicGovernorViolation
+    from src.gateway.governance.seams.actuation import (
+        ActuationIndeterminateError,
+        ActuationRejectedError,
+    )
     from src.gateway.infrastructure.privacy import scrub_pii
     from src.gateway.server.governance_middleware import (
         ActionDeferred,
@@ -832,9 +841,20 @@ async def execute_tool_endpoint(request_body: ToolExecutionRequest, request: Req
         GovernanceInfrastructureError,
         exclude=(BaseException, Exception, RuntimeError),
     )
+    actuation_rejected_types = _valid_exc_types(
+        ActuationRejectedError,
+        exclude=(BaseException, Exception, RuntimeError),
+    )
+    actuation_indeterminate_types = _valid_exc_types(
+        ActuationIndeterminateError,
+        exclude=(BaseException, Exception, RuntimeError),
+    )
+    unsettled_duplicate_types = _valid_exc_types(
+        UnsettledDuplicate,
+        exclude=(BaseException, Exception, RuntimeError),
+    )
     governed_error_types = _valid_exc_types(
         SymbolicGovernorViolation,
-        UnsettledDuplicate,
         exclude=(BaseException, Exception, RuntimeError),
     )
 
@@ -891,10 +911,23 @@ async def execute_tool_endpoint(request_body: ToolExecutionRequest, request: Req
             "status": "ERROR" if tool_error else "SUCCESS",
             "output": output_str,
         }
+        if tool_error:
+            response["error"] = scrub_pii(output_str)
+        non_refusal_outcome = False
         if structured_outcome is not None:
             response["outcome"] = structured_outcome
+            raw_status = structured_outcome.get("status")
+            non_refusal_outcome = isinstance(raw_status, str) and raw_status in {
+                s.value for s in NON_REFUSAL_STATUSES
+            }
+            if raw_status in {
+                CommitStatus.INDETERMINATE.value,
+                CommitStatus.UNSETTLED_DUPLICATE.value,
+            }:
+                response["actuation_outcome"] = "UNKNOWN"
+                response["may_have_executed"] = True
         proof_hash = get_last_refusal_proof_hash()
-        if tool_error or proof_hash:
+        if (tool_error and not non_refusal_outcome) or proof_hash:
             mark_request_refused()
         if proof_hash:
             response["proof_hash"] = proof_hash
@@ -939,9 +972,70 @@ async def execute_tool_endpoint(request_body: ToolExecutionRequest, request: Req
                 "approval_retained": bool(getattr(exc, "approval_retained", False)),
             },
         )
+    except actuation_indeterminate_types as exc:
+        # Indeterminate outcomes are NOT policy refusals; keep reservations confirmed
+        # and do not call mark_request_refused() (POAM-2026-232 Stage 3).
+        msg = scrub_pii(str(exc))
+        logger.warning(
+            "Governed tool execution indeterminate (%s): %s",
+            type(exc).__name__,
+            exc,
+        )
+        return _SubscriptableJSONResponse(
+            status_code=200,
+            content={
+                "status": "ERROR",
+                "error_type": type(exc).__name__,
+                "actuation_outcome": "UNKNOWN",
+                "may_have_executed": True,
+                "outcome": CommitOutcome(CommitStatus.INDETERMINATE, msg).to_wire(),
+                "error": msg,
+            },
+        )
+    except unsettled_duplicate_types as exc:
+        # Duplicate of an IN_FLIGHT/UNKNOWN attempt is blocked for safety, not a policy refusal.
+        msg = scrub_pii(str(exc))
+        logger.warning(
+            "Governed tool execution unsettled duplicate (%s): %s",
+            type(exc).__name__,
+            exc,
+        )
+        return _SubscriptableJSONResponse(
+            status_code=200,
+            content={
+                "status": "ERROR",
+                "error_type": type(exc).__name__,
+                "actuation_outcome": "UNKNOWN",
+                "may_have_executed": True,
+                "outcome": CommitOutcome(
+                    CommitStatus.UNSETTLED_DUPLICATE, msg
+                ).to_wire(),
+                "error": msg,
+            },
+        )
+    except actuation_rejected_types as exc:
+        # Definitive pre-execution actuator refusal (no side effect occurred).
+        mark_request_refused()
+        msg = scrub_pii(str(exc))
+        logger.warning(
+            "Governed tool execution rejected by actuator (%s): %s",
+            type(exc).__name__,
+            exc,
+        )
+        rej_payload: dict[str, Any] = {
+            "status": "ERROR",
+            "error_type": type(exc).__name__,
+            "actuation_outcome": "REJECTED",
+            "may_have_executed": False,
+            "outcome": CommitOutcome(CommitStatus.REFUSED, msg).to_wire(),
+            "error": msg,
+        }
+        proof_hash = get_last_refusal_proof_hash()
+        if proof_hash:
+            rej_payload["proof_hash"] = proof_hash
+        return _SubscriptableJSONResponse(status_code=200, content=rej_payload)
     except governed_error_types as exc:
-        # Structured governed rejections (SymbolicGovernorViolation, UnsettledDuplicate)
-        # preserve the /tools/execute HTTP 200 protocol envelope while marking the request refused.
+        # Structured governor rejections preserve the /tools/execute HTTP 200 protocol envelope.
         mark_request_refused()
         logger.warning(
             "Governed tool execution rejected (%s): %s",

@@ -36,8 +36,11 @@ from typing import Any
 # Re-export seam contracts for backward compatibility during transition.
 # New code should import directly from seams.actuation.
 from src.gateway.governance.seams.actuation import (
+    ActuationError,
+    ActuationIndeterminateError,
     ActuationOutcome,
     ActuationReceipt,
+    ActuationRejectedError,
     ActuatorCapability,
     ExecutionActuator,
     ExecutionClearance,
@@ -47,8 +50,11 @@ from src.gateway.governance.seams.actuation import (
 logger = logging.getLogger("Gateway.Governance.ExecutionActuator")
 
 __all__ = [
+    "ActuationError",
+    "ActuationIndeterminateError",
     "ActuationOutcome",
     "ActuationReceipt",
+    "ActuationRejectedError",
     "ActuatorCapability",
     "ActuatorRegistry",
     "ExecutionActuator",

@@ -83,9 +83,10 @@ _CAPABILITIES: set[ActuatorCapability] = {
     ActuatorCapability.DIGEST_ONLY_PAYLOAD,
 }
 
-_DEFINITIVE_REFUSAL_STATUSES: frozenset[int] = frozenset(
-    {400, 401, 403, 409, 421, 422, 429, 503}
-)
+# Only 400/401/403 prove pre-execution refusal without ambiguity; 409/421/422/429/503
+# can reflect upstream proxy failures or duplicate/already-committed executions
+# and therefore settle UNKNOWN (POAM-2026-232).
+_DEFINITIVE_REFUSAL_STATUSES: frozenset[int] = frozenset({400, 401, 403})
 _PRE_SEND_TRANSPORT_ERRORS: tuple[type[httpx.HTTPError], ...] = (
     httpx.ConnectError,
     httpx.ConnectTimeout,
@@ -545,7 +546,6 @@ class Actuator02Adapter:
             )
 
         if resp.status_code in _DEFINITIVE_REFUSAL_STATUSES:
-            retryable = resp.status_code in (429, 503)
             return ActuationReceipt(
                 accepted=False,
                 receipt_id=None,
@@ -554,11 +554,11 @@ class Actuator02Adapter:
                 findings=[
                     _finding(
                         f"SUPERVISOR_HTTP_{resp.status_code}",
-                        "TRANSIENT" if retryable else "TERMINAL",
+                        "TERMINAL",
                         f"Supervisor refused request with HTTP {resp.status_code}",
                     )
                 ],
-                retryable=retryable,
+                retryable=False,
                 envelope_digest=envelope_digest,
                 timestamp_utc=now_utc,
                 outcome=ActuationOutcome.REJECTED,

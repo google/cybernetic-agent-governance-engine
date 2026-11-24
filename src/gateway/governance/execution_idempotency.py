@@ -108,6 +108,20 @@ redis.call('DEL', KEYS[1])
 return 1
 """
 
+# KEYS[1] = record key; ARGV = target_status ('EXECUTED' or 'BLOCKED'), outcome.
+# Transitions only when current status is 'UNKNOWN'.
+_RESOLVE_UNKNOWN_LUA = """
+local raw = redis.call('GET', KEYS[1])
+if not raw then return 0 end
+local ok, record = pcall(cjson.decode, raw)
+if (not ok) or type(record) ~= 'table' then return -1 end
+if record['status'] ~= 'UNKNOWN' then return -1 end
+record['status'] = ARGV[1]
+record['outcome'] = ARGV[2]
+redis.call('SET', KEYS[1], cjson.encode(record), 'KEEPTTL')
+return 1
+"""
+
 
 class ExecutionStatus(str, Enum):
     """What an execution ledger record says about the side effect."""
@@ -369,6 +383,51 @@ class ExecutionLedger:
             return int(result) == 1
         return False
 
+    async def resolve_unknown(
+        self,
+        action: str,
+        caller_identity: str,
+        idempotency_key: str,
+        *,
+        status: ExecutionStatus,
+        outcome: str,
+    ) -> bool:
+        """Transition an ``UNKNOWN`` ledger record to ``EXECUTED`` or ``BLOCKED`` after reconciliation."""
+        if status not in (ExecutionStatus.EXECUTED, ExecutionStatus.BLOCKED):
+            raise ValueError(
+                f"resolve_unknown requires EXECUTED or BLOCKED, got {status!r}"
+            )
+        key = self.key_for(action, caller_identity, idempotency_key)
+        try:
+            redis = await self._raw_redis()
+        except ExecutionLedgerUnavailable as exc:
+            logger.warning(
+                "execution ledger unknown record %s could not be resolved: %s",
+                key,
+                exc,
+            )
+            return False
+        if redis is None:
+            return self._resolve_unknown_local(key, status, outcome)
+        for _ in range(_REDIS_ATTEMPTS):
+            try:
+                result = await redis.eval(
+                    _RESOLVE_UNKNOWN_LUA,
+                    1,
+                    key,
+                    status.value,
+                    outcome,
+                )
+            except Exception as exc:
+                logger.warning(
+                    "execution ledger unknown resolution retry failed for %s: %s",
+                    key,
+                    exc,
+                )
+                continue
+            return int(result) == 1
+        return False
+
     async def _raw_redis(self) -> Any | None:
         """The raw async client behind ``redis_client`` (None when unconfigured)."""
         client = self._redis_client
@@ -435,4 +494,15 @@ class ExecutionLedger:
             ):
                 return False
             del self._local[claim.key]
+        return True
+
+    def _resolve_unknown_local(
+        self, key: str, status: ExecutionStatus, outcome: str
+    ) -> bool:
+        with self._local_lock:
+            record = self._local.get(key)
+            if record is None or record.status is not ExecutionStatus.UNKNOWN:
+                return False
+            record.status = status
+            record.outcome = outcome
         return True

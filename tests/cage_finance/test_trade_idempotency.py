@@ -199,10 +199,15 @@ async def test_enforcing_posture_without_redis_refuses(
 async def test_unknown_outcome_keeps_the_claim(
     governor: MagicMock, redis: fakeredis.aioredis.FakeRedis
 ) -> None:
+    from src.gateway.governance.seams.actuation import ActuationIndeterminateError
+
     actuate = AsyncMock(return_value=_not_accepted(ActuationOutcome.UNKNOWN))
     with _pipeline(actuate) as (governance, _):
-        with pytest.raises(SymbolicGovernorViolation, match="indeterminate"):
+        with pytest.raises(
+            ActuationIndeterminateError, match="indeterminate"
+        ) as exc_info:
             await _trade(governor)
+        assert not isinstance(exc_info.value, SymbolicGovernorViolation)
         # Never read as settled: the duplicate raises, as the first attempt did.
         with pytest.raises(UnsettledDuplicate, match="^UNKNOWN: .*pending"):
             await _trade(governor)
@@ -224,10 +229,15 @@ async def test_unknown_outcome_keeps_the_claim(
     "src.cage_finance.tools.tool_provider:_refuse_duplicate#return CommitOutcome(_REPLAYED_STATUS[duplicate.status], duplicate.outcome)",
 )
 async def test_rejected_actuation_is_recorded_as_blocked(governor: MagicMock) -> None:
+    from src.gateway.governance.seams.actuation import ActuationRejectedError
+
     actuate = AsyncMock(return_value=_not_accepted(ActuationOutcome.REJECTED))
     with _pipeline(actuate):
-        with pytest.raises(SymbolicGovernorViolation, match="Actuation rejected"):
+        with pytest.raises(
+            ActuationRejectedError, match="Actuation rejected"
+        ) as exc_info:
             await _trade(governor)
+        assert not isinstance(exc_info.value, SymbolicGovernorViolation)
         replay = await _trade(governor)
 
     assert replay.status is CommitStatus.REFUSED
