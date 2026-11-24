@@ -15,8 +15,8 @@
     "_comment_pvalue": "Standard frequentist significance level for causal lock decisions. Consistent with SR 26-2 MRM back-testing requirements (CTRL_TEL_003).",
     "placebo_effect_magnitude": 0.2,
     "_comment_placebo": "If absolute placebo refuter new_effect exceeds this, estimated causal effect is unreliable. 0.2 corresponds to Cohen's d ≈ 0.2 (medium effect).",
-    "risk_boundary": 0.95,
-    "_comment_risk": "If (0.5 + estimated_marginal_effect) exceeds this, trade is predicted to push risk above safety boundary. Leaves 5% safety margin.",
+    "risk_boundary": 0.45,
+    "_comment_risk": "Maximum permitted marginal causal risk contribution (beta * treatment / scale) before the causal lock trips (POAM-2026-117).",
     "min_samples": 50,
     "_comment_samples": "[EV-4] Consolidated from CAUSAL_MIN_SAMPLES and CAUSAL_MIN_LIVE_SAMPLES. Minimum telemetry samples required for causal model training."
   },

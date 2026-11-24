@@ -182,11 +182,11 @@ class CausalThresholds(BaseModel):
         ),
     )
     risk_boundary: float = Field(
-        default=0.95,
+        default=0.45,
         gt=0.0,
         le=1.0,
         description=(
-            "Risk score ceiling with safety margin. "
+            "Maximum permitted marginal causal risk contribution (beta * treatment / scale). "
             "Env override: CAUSAL_LOCK_RISK_BOUNDARY"
         ),
     )

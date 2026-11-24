@@ -82,7 +82,7 @@ The EU AI Act Art. 27 Fundamental Rights Impact Assessment is a separate phase-1
 | Mediation Coverage | Whole-graph FTRA + 7 in-pipeline tiers + fail-closed actuator enforcement |
 | Counterfactual DPO Synthesis | `NARROW` projection $\Pi_{\mathcal{C}}(u_t)$ reverified under `Profile.DRY_RUN` yields minimal-edit pair $(y_w, y_l)$ |
 | Confabulation risk | `risk_score = 1.0 − confidence` |
-| Causal lock | $\beta \le 0 \lor \min(1.0, 0.5 + \beta \times \text{amount}) > 0.95 \lor \text{placebo invalid} \implies \text{DENY}$ |
+| Causal lock | $\beta \le 0 \lor \min(1.0, \beta \times \text{amount} / \text{normalization\_scale}) > 0.45 \lor \text{placebo invalid} \implies \text{DENY}$ |
 | Operational budget cap | $500k/day (integer cents) in the financial reference deployment; 86,400s window, exponential backoff — threshold is domain-configurable |
 | Provenance chain | SHA-256 hash-chain library over RFC 8785 JCS, O(n) construction; unwired, with no production caller (`POAM-2026-246`) |
 

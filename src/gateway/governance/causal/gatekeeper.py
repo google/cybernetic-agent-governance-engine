@@ -30,12 +30,13 @@ Telemetry & Bounded Risk Formulation:
       before DoWhy fits the model, so beta is the outcome change per
       normalised unit of treatment.
     - If causal slope beta <= 0, the gate triggers a fail-closed lock.
-    - If beta > 0, marginal risk is computed as
-      min(1.0, max(0.0, 0.5 + beta * treatment_value / normalization_scale)),
-      i.e. 0.5 plus the predicted change in the outcome metric. The scale
-      cancels, so it cannot move the treatment value at which the boundary
-      trips.
-    - If risk exceeds CAUSAL_LOCK_RISK_BOUNDARY (0.95), the action is blocked.
+    - If beta > 0, marginal causal risk effect is computed as
+      min(1.0, max(0.0, beta * treatment_value / normalization_scale)),
+      i.e. the predicted change in the outcome metric with zero hardcoded
+      baseline intercept. The scale cancels, so it cannot move the treatment
+      value at which the boundary trips.
+    - If the marginal risk effect exceeds CAUSAL_LOCK_RISK_BOUNDARY (0.45),
+      the action is blocked.
 
 The placebo refuter permutes the treatment column. The gatekeeper "locks" the
 cage (the action is blocked because the underlying causal assumptions cannot
@@ -958,20 +959,20 @@ class CausalGatekeeper:
 def _marginal_risk(
     beta: float, treatment_value: float, normalization_scale: float
 ) -> float:
-    """Predicted outcome metric for one request, clamped to ``[0, 1]``.
+    """Estimated marginal causal risk contribution for one request, clamped to ``[0, 1]``.
 
-    ``0.5 + beta * treatment_value / normalization_scale``. ``beta`` is the
-    outcome change per normalised unit of treatment (:func:`validate_world_model`
-    fits on ``treatment / normalization_scale``), so the second term is the
-    predicted change in the outcome metric and the scale cancels: the treatment
-    value at which the boundary trips does not depend on it.
+    ``beta * treatment_value / normalization_scale``. ``beta`` is the outcome
+    change per normalised unit of treatment (:func:`validate_world_model`
+    fits on ``treatment / normalization_scale``), so the product is the
+    estimated causal effect contribution without an arbitrary ``0.5`` intercept
+    (POAM-2026-117), and the scale cancels.
 
     Raises ``ValueError`` for a non-finite or non-positive scale (callers fail
     closed).
     """
     if not _is_positive_finite(normalization_scale):
         raise ValueError("normalization_scale must be a finite number > 0")
-    return min(1.0, max(0.0, 0.5 + beta * treatment_value / normalization_scale))
+    return min(1.0, max(0.0, beta * treatment_value / normalization_scale))
 
 
 @dataclass(frozen=True)

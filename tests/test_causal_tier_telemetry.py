@@ -240,7 +240,7 @@ async def test_enforcing_posture_60_rows_reaches_refuter_in_background_and_reque
 async def test_enforcing_posture_risk_boundary_keeps_generic_code(
     enforcing, stable_dowhy, monkeypatch
 ):
-    monkeypatch.setattr(gk_mod, "CAUSAL_LOCK_RISK_BOUNDARY", 0.5)
+    monkeypatch.setattr(gk_mod, "CAUSAL_LOCK_RISK_BOUNDARY", 1e-7)
     tier = CausalTierPlugin(telemetry_provider=_Provider(_frame(60)))
     assert tier.refresher is not None
     await tier.refresher.refresh_once()
@@ -401,7 +401,7 @@ def test_gatekeeper_evaluate_reports_reasons(enforcing, stable_dowhy):
 
 
 def test_gatekeeper_evaluate_risk_boundary_reason(enforcing, stable_dowhy, monkeypatch):
-    monkeypatch.setattr(gk_mod, "CAUSAL_LOCK_RISK_BOUNDARY", 0.5)
+    monkeypatch.setattr(gk_mod, "CAUSAL_LOCK_RISK_BOUNDARY", 1e-7)
     gk = build_finance_causal_gatekeeper()
     assert gk.evaluate(PARAMS, _frame(60)) == CausalDecision(
         False, REASON_RISK_BOUNDARY

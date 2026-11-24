@@ -51,9 +51,9 @@ pytestmark = [pytest.mark.unit, pytest.mark.local]
 _GRAPH_A = "digraph { c -> x; c -> y; x -> y; }"
 _GRAPH_B = "digraph { z -> x; z -> y; x -> y; }"
 
-# beta=0.5, scale=10_000: risk = 0.5 + 0.5 * amount / 10_000
-_SMALL = 100.0  # risk 0.505 -> within the 0.95 boundary
-_LARGE = 10_000_000.0  # risk clamps to 1.0 -> exceeds the boundary
+# beta=0.5, scale=10_000: marginal risk = 0.5 * amount / 10_000
+_SMALL = 100.0  # marginal risk 0.005 -> within the 0.45 boundary
+_LARGE = 10_000_000.0  # marginal risk clamps to 1.0 -> exceeds the 0.45 boundary
 
 
 class _FakeDoWhy:
