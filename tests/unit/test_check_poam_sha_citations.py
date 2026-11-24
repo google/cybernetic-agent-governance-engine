@@ -585,8 +585,23 @@ def test_detector_fingerprint_ignores_comments_but_not_code(tmp_path: Path) -> N
     assert gate.compute_detector_fingerprint(changed) != base
 
 
+def test_table_row_before_horizontal_rule_is_scanned(repo: Repo) -> None:
+    """Bare `---` horizontal rules must never hide the preceding table row."""
+    c1 = _s(repo.c1)
+    text = (
+        "| ID | Desc | Closed |\n"
+        "| --- | :---: | ---: |\n"
+        f"| POAM-1 | Remediation commit: `{c1}`. | 2026-01-05 |\n"
+        "| POAM-2 | Remediation commit: `abcdef1`. | 2026-01-06 |\n"
+        "---\n"
+    )
+    res = _scan(repo, text)
+    assert _verdicts(res, "abcdef1") == ["dead_commit_claim"]
+    assert _chron(res) == {c1: "chronology_ok", "abcdef1": "chronology_undatable"}
+
+
 # ---------------------------------------------------------------- mutations
-# PSC-M1..PSC-M10: each mutant of the detector must be killed by its scenario.
+# PSC-M1..PSC-M11: each mutant of the detector must be killed by its scenario.
 
 
 def _load_mutant(tmp_path: Path, old: str, new: str) -> ModuleType:
@@ -718,6 +733,19 @@ MUTANTS: list[tuple[str, str, str, Callable[[Repo, ModuleType], object]]] = [
         '        if c.raw_type == "commit":\n'
         '            c.canon_type, c.canon_oid = "commit", c.raw_oid',
         _verdict_of(lambda r: _s(r.gone), lambda r: f"Seen `{_s(r.gone)}`.\n"),
+    ),
+    (
+        "PSC-M11 bare --- rule never hides the preceding table row",
+        '    r"^\\s*\\|?(?:\\s*:?-{3,}:?\\s*\\|)+\\s*(?::?-{3,}:?\\s*)?$"',
+        '    r"^\\s*\\|?\\s*:?-{3,}"',
+        _verdict_of(
+            lambda r: "abcdef1",
+            lambda r: (
+                "| ID | Desc |\n|---|---|\n"
+                f"| P-0 | Landed as `{_s(r.c1)}`. |\n"
+                "| P-1 | Remediation commit: `abcdef1`. |\n---\n"
+            ),
+        ),
     ),
 ]
 

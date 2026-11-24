@@ -276,7 +276,9 @@ _PR_OPENED_RE: Final[re.Pattern[str]] = re.compile(r"#\d+`?\s*$")
 _CELL_DATE_RE: Final[re.Pattern[str]] = re.compile(
     r"^[\s*\u2705]*`?(\d{4}-\d{2}-\d{2})"
 )
-_TABLE_SEP_RE: Final[re.Pattern[str]] = re.compile(r"^\s*\|?\s*:?-{3,}")
+_TABLE_SEP_RE: Final[re.Pattern[str]] = re.compile(
+    r"^\s*\|?(?:\s*:?-{3,}:?\s*\|)+\s*(?::?-{3,}:?\s*)?$"
+)
 _MASK: Final[str] = "\x01"
 _CONTEXT_WORDS: Final[int] = 4
 
