@@ -841,7 +841,7 @@ risk categories and 7 POAM items.
 | §2.4 Harmful Bias | ⚠️ 40% | ⚠️ 35% | NeMo bias rails (partial — ongoing measurement gap) |
 | §2.5 Human-AI Configuration | ✅ 90% | ✅ 85% | HITL escalator + ConsensusEngine |
 | §2.6 CBRN | ✅ 85% | ✅ 80% | NeMo CBRN rails + Tier-1 CBRN keywords |
-| §2.7 Information Integrity | ✅ 90% | ✅ 85% | KMS-signed provenance chain |
+| §2.7 Information Integrity | ✅ 90% | ✅ 85% | KMS-signed provenance chain (planned; never built: `provenance_chain.py` has no caller, signer or WORM path, `POAM-2026-246`) |
 | §2.8 Value Chain | ✅ 85% | ✅ 80% | SBOM + Trivy + model weight verification |
 | §2.9 Environmental Impact | ⚠️ 30% | ⚠️ 25% | CTRL_TQP_007 token quota (partial — no carbon measurement) |
 | §2.10 IP / Copyright | ⚠️ 50% | ⚠️ 45% | NeMo output filter (partial — no training data audit) |
@@ -1318,6 +1318,11 @@ Kubernetes assertions. This is the final step before AI 600-1 release gate closu
 2. Integrate `provenance_chain` into the LangGraph harness
    (`src/gateway/governance/langgraph_harness/`): after each node execution,
    call `build_provenance_record` and append to the state's `provenance_chain` list.
+
+   > **Not done (`2026-11-23`, `POAM-2026-246`):** step 1 shipped in `8c6e9361`; this
+   > step never did. No commit has ever called `build_provenance_record` from `src/`,
+   > so no node produces a provenance record, and the integration acceptance
+   > criterion below has never been met.
 
 3. Write `tests/test_provenance_chain.py`:
    - Assert `compute_hash` is deterministic for identical inputs

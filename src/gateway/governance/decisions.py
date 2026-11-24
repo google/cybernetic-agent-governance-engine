@@ -30,7 +30,12 @@ overlapping vocabularies across layers:
   normative_provider.py   | ALLOW / DENY / DEFER
   validate_action() return| APPROVED (only; MANUAL_REVIEW never returned)
   adapter HTTP body       | APPROVED / DENIED / DEFERRED
-  provenance_chain.py     | ALLOW / BLOCK / ESCALATE
+  provenance_chain.py (*) | ALLOW / BLOCK / ESCALATE
+
+  (*) provenance_chain.py is an unwired library with no production caller
+      (POAM-2026-246). It is listed for the vocabulary its VALID_DECISIONS
+      once accepted, not as a live layer; VALID_DECISIONS is now derived
+      from GovernanceDecision.
 
 This caused:
   1. MANUAL_REVIEW and DEFER to collapse into the same HTTP 202 "DEFERRED"
@@ -65,8 +70,8 @@ Internal-to-canonical mapping
 Workflow/execution statuses (NOT policy decisions)
 --------------------------------------------------
   APPROVED, BLOCKED, ESCALATED — these are execution-phase status values
-  used inside LangGraph nodes and the provenance chain. They are NOT
-  canonical policy decisions and must not appear in gateway HTTP responses.
+  used inside LangGraph nodes. They are NOT canonical policy decisions and
+  must not appear in gateway HTTP responses.
 
 ISO 42001 mapping: A.8.4 (AI System Operation Controls)
 AARM mapping: CSA AARM-V7 "Context Window Overflow" (DEFER path)
@@ -88,7 +93,8 @@ class GovernanceDecision(str, Enum):
       - validate_action() return values (``verdict`` key)
       - HTTP response body ``verdict`` fields on gateway endpoints
       - Audit event ``verdict`` fields
-      - Provenance chain ``decision`` fields
+      - Provenance chain ``decision`` fields (provenance_chain.py; an
+        unwired library with no production caller, POAM-2026-246)
 
     It MUST NOT be used for:
       - Internal OPA policy strings (those remain ALLOW/DENY/MANUAL_REVIEW

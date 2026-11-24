@@ -247,7 +247,8 @@ The resolution: have each child receipt commit to its predecessors'
 certificate hashes. CAGE already owns the primitive —
 [`ProvenanceRecord.parent_hash`](../src/gateway/governance/provenance_chain.py:94)
 with [`verify_chain_integrity()`](../src/gateway/governance/provenance_chain.py:220),
-RFC 8785 canonicalized, the same JCS the vendor uses. Carrying
+RFC 8785 canonicalized, the same JCS the vendor uses. (The primitive exists as a
+library only: nothing in production calls it today, `POAM-2026-246`.) Carrying
 `parentCertificateHashes[]` in the child snapshot makes edges signed and omission
 detectable **with no vendor schema change**, since it is opaque snapshot data.
 

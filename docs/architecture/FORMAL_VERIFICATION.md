@@ -456,11 +456,13 @@ verify_seal(seal, action, params, expected_record_hash)
 
 **Source:** [`src/gateway/governance/provenance_chain.py`](../../src/gateway/governance/provenance_chain.py)
 
-The provenance chain builds a cryptographic audit trail linking each LangGraph governance node's input and output. It satisfies **NIST AU-10** (non-repudiation), **ISO 42001 §A.7.5** (records integrity), and **AARM-V1** (Memory Poisoning neutralization).
+> **Not wired (`POAM-2026-246`):** `provenance_chain.py` has no production caller. No governance node produces a `ProvenanceRecord`, and no record is signed or persisted. The properties below hold for the library functions under [`tests/test_provenance_chain.py`](../../tests/test_provenance_chain.py) only; they are not a runtime control. The authoritative hash-chained decision record is the evidence stream ([`evidence/stream.py`](../../src/gateway/governance/evidence/stream.py)).
+
+The library defines a hash chain that would link each LangGraph governance node's input and output if anything called it. Nothing does, so it satisfies no control today. This section previously listed it against **NIST AU-10** (non-repudiation), **ISO 42001 §A.7.5** (records integrity) and **AARM-V1** (Memory Poisoning neutralization); those mappings are withdrawn.
 
 ### Hash Chain Construction
 
-Each governance node execution produces a `ProvenanceRecord`:
+`build_provenance_record()` returns a `ProvenanceRecord` (no governance node calls it today):
 
 ```python
 record_n = ProvenanceRecord(
@@ -487,7 +489,7 @@ $$\forall n: \text{record\_hash}_n = \text{SHA256}(\text{prev\_hash}_{n-1} \| \t
 
 **Valid decisions:** the canonical five — `ALLOW`, `DENY`, `DEFER`, `NARROW`, `REQUIRE_APPROVAL` (`VALID_DECISIONS` is derived from the `GovernanceDecision` enum; the retired `PAUSE` value is rejected). `build_provenance_record()` raises `ValueError` for any other value, preventing silent chain corruption from invalid decision strings.
 
-In production, each record is signed with the KMS key ring via [`src/gateway/governance/kms_signer.py`](../../src/gateway/governance/kms_signer.py) and written to the GCS WORM bucket under `provenance/<date>/<trace_id>.json`.
+No record is signed or persisted: there is no path from this module to [`src/gateway/governance/kms_signer.py`](../../src/gateway/governance/kms_signer.py) and no `provenance/<date>/<trace_id>.json` WORM prefix. An earlier version of this section said each record was KMS-signed and written to the GCS WORM bucket in production; that claim was never true and is withdrawn (`POAM-2026-246`).
 
 ---
 

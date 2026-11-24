@@ -753,8 +753,9 @@ component-definition:
                 digest of the RFC 8785 JCS-canonicalized action payload in the 'act' claim,
                 providing cryptographic binding between governance evaluation and execution.
                 The backward-compatibility remediation (BC-01–BC-08, 2026-08-27) migrated
-                all hash-chain modules (provenance_chain.py, evidence_stream.py,
-                context_accumulator.py) from json.dumps(sort_keys=True) to RFC 8785 JCS
+                all hash-chain modules (evidence_stream.py, context_accumulator.py, and
+                provenance_chain.py, an unwired library with no production caller per
+                POAM-2026-246) from json.dumps(sort_keys=True) to RFC 8785 JCS
                 (jcs_canonicalize_plan) for deterministic cross-platform evidence integrity
                 verification. This migration was a breaking change — records written before
                 2026-08-27 are not verifiable by the current code. No cryptographic path is
@@ -856,7 +857,8 @@ component-definition:
                 eliminating float-representation and key-ordering drift that could
                 cause spurious integrity check failures. The backward-compatibility
                 remediation (BC-01–BC-08, 2026-08-27) migrated all hash-chain modules
-                (provenance_chain.py, evidence_stream.py, context_accumulator.py) to
+                (evidence_stream.py, context_accumulator.py, and provenance_chain.py, an
+                unwired library with no production caller per POAM-2026-246) to
                 RFC 8785 JCS with no compatibility shim; previously-signed records will
                 not verify under the current code.
               props:

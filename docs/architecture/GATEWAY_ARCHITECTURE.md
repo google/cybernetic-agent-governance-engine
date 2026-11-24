@@ -402,7 +402,7 @@ The following governance modules ([`src/gateway/governance/`](../../src/gateway/
 |---|---|---|---|
 | [`confabulation_scorer.py`](../../src/gateway/governance/confabulation_scorer.py) | §2.1 Confabulation | Emits Langfuse confabulation-risk scores (`risk = 1.0 - confidence`); blocks when confidence falls below minimum. | Active |
 | [`prompt_injection_detector.py`](../../src/gateway/governance/prompt_injection_detector.py) | §2.3 Prompt Injection | 14 structural regex patterns detecting ChatML injection, jailbreaks, and persona overrides; fails fast on first match. | Active |
-| [`provenance_chain.py`](../../src/gateway/governance/provenance_chain.py) | §2.7 Information Integrity | Cryptographic SHA-256 hash chain with RFC 8785 JCS canonicalization tracking every governance decision to immutable storage. | Active |
+| [`provenance_chain.py`](../../src/gateway/governance/provenance_chain.py) | §2.7 Information Integrity | SHA-256 hash-chain library with RFC 8785 JCS canonicalization. Nothing calls it: no governance decision is chained, signed or written to storage by it. | **Unwired** (no production caller, `POAM-2026-246`) |
 | [`text_filter.py`](../../src/gateway/governance/text_filter.py) | §2.6 CBRN Content | Stateless $O(n)$ Aho-Corasick keyword scanner for hazardous concepts and prompt abuse strings. | Active |
 | [`pii_sanitizer.py`](../../src/gateway/governance/pii_sanitizer.py) | §2.2 Data Privacy | Pre-ledger PII redaction applying 8 compiled regex patterns (SSN, credit cards, IBAN, API keys, JWS/JWT tokens) before ledgering. | Active |
 
@@ -432,7 +432,7 @@ run_pipeline()  (sequential)
       ▼ (parallel / adjacent utilities — not sequential pipeline tiers)
 [confabulation_scorer.py] ← Langfuse confabulation-risk score payload builder
 [pii_sanitizer.py]        ← Pre-ledger PII redaction inside uca_logger.py before WORM write
-[provenance_chain.py]     ← SHA-256 hash chain record per governance node
+[provenance_chain.py]     ← NOT CALLED: unwired library, no record per node (POAM-2026-246)
       │
       ▼
 UCA Logger → Immutable WORM Storage
@@ -496,7 +496,7 @@ Downstream evidence custody and cold-store verification metrics are documented i
 
 - **US_FED** (`CAGE_DEPLOYMENT_REGION=US_FED`):
   - **SR 26-2**: Agentic AI model risk management; 4-hour HITL SLA; MRM scope for CBF and DoWhy.
-  - **NIST AI 600-1**: Confabulation scoring, HITL escalation, prompt injection defense, provenance chaining, CBRN filtering.
+  - **NIST AI 600-1**: Confabulation scoring, HITL escalation, prompt injection defense, CBRN filtering (the provenance-chain library is unwired, `POAM-2026-246`).
   - **NIST SP 800-53 Rev 5 HIGH**: FedRAMP readiness controls.
   - **NIST AI RMF (SP 800-37)**: Continuous world-model validation.
 - **EU_ECB** (`CAGE_DEPLOYMENT_REGION=EU_ECB`):
