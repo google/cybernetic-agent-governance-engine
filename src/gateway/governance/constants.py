@@ -72,6 +72,7 @@ Usage::
 
 from __future__ import annotations
 
+import copy
 import hashlib
 import json
 import logging
@@ -94,20 +95,192 @@ logger = logging.getLogger("Gateway.Governance.Constants")
 
 
 # ---------------------------------------------------------------------------
-# Plugin overlay registry (PR B, T-B4)
+# Plugin overlay registry & fail-closed composition contract (PR B, T-B4; POAM-2026-123)
 # ---------------------------------------------------------------------------
 
 _OVERLAY_DIRS: list[Path] = []
+_EXTENSIBLE_CONTROL_FIELDS: frozenset[str] = frozenset(
+    {"co_frameworks", "domain_extensions"}
+)
+_ALLOWED_OVERLAY_META_KEYS: frozenset[str] = frozenset(
+    {"_comment", "_declared_extensions"}
+)
+
+
+class ControlOverlayCollisionError(RuntimeError):
+    """Raised when a plugin compliance overlay collides with an existing mapping.
+
+    Plugin overlays are strictly additive unless an overlay explicitly lists a
+    control ID in ``"_declared_extensions"`` and modifies only additive
+    extensible fields (``co_frameworks``, ``domain_extensions``).
+    """
+
+
+def _merge_declared_extension(
+    existing: dict[str, Any],
+    ext_spec: dict[str, Any],
+    control_id: str,
+    overlay_path: Path,
+) -> tuple[dict[str, Any], dict[str, Any]]:
+    """Merge an explicitly declared additive extension onto an existing control."""
+    disallowed = sorted(set(ext_spec) - _EXTENSIBLE_CONTROL_FIELDS)
+    if disallowed:
+        raise ControlOverlayCollisionError(
+            f"Declared control extension for {control_id!r} in {overlay_path} "
+            f"attempts to modify protected field(s) {disallowed}; only "
+            f"{sorted(_EXTENSIBLE_CONTROL_FIELDS)} may be extended."
+        )
+    merged = copy.deepcopy(existing)
+    added_co_frameworks: list[str] = []
+    added_domain_extensions: dict[str, Any] = {}
+
+    if "co_frameworks" in ext_spec:
+        ext_co = ext_spec["co_frameworks"]
+        if not isinstance(ext_co, list) or not all(
+            isinstance(item, str) for item in ext_co
+        ):
+            raise ControlOverlayCollisionError(
+                f"Declared extension for {control_id!r} in {overlay_path}: "
+                f"'co_frameworks' must be a list of strings."
+            )
+        base_co = merged.get("co_frameworks", [])
+        if not isinstance(base_co, list):
+            raise ControlOverlayCollisionError(
+                f"Declared extension for {control_id!r} in {overlay_path}: "
+                f"existing 'co_frameworks' is not a list."
+            )
+        combined = list(base_co)
+        for item in ext_co:
+            if item not in combined:
+                combined.append(item)
+                added_co_frameworks.append(item)
+        merged["co_frameworks"] = combined
+
+    if "domain_extensions" in ext_spec:
+        ext_dom = ext_spec["domain_extensions"]
+        if not isinstance(ext_dom, dict) or not ext_dom:
+            raise ControlOverlayCollisionError(
+                f"Declared extension for {control_id!r} in {overlay_path}: "
+                f"'domain_extensions' must be a non-empty mapping."
+            )
+        base_dom = merged.get("domain_extensions")
+        if base_dom is None:
+            base_dom = {}
+        elif not isinstance(base_dom, dict):
+            raise ControlOverlayCollisionError(
+                f"Declared extension for {control_id!r} in {overlay_path}: "
+                f"existing 'domain_extensions' is not a dict."
+            )
+        overlap = sorted(set(base_dom) & set(ext_dom))
+        if overlap:
+            raise ControlOverlayCollisionError(
+                f"Declared extension for {control_id!r} in {overlay_path} "
+                f"collides on 'domain_extensions' key(s) {overlap}."
+            )
+        merged_dom = dict(base_dom)
+        merged_dom.update(ext_dom)
+        merged["domain_extensions"] = merged_dom
+        added_domain_extensions = dict(ext_dom)
+
+    record = {
+        "control_id": control_id,
+        "overlay": str(overlay_path),
+        "co_frameworks_added": added_co_frameworks,
+        "domain_extensions_added": sorted(added_domain_extensions),
+    }
+    return merged, record
+
+
+def _apply_overlay_file(
+    raw: dict[str, Any],
+    overlay_path: Path,
+) -> list[dict[str, Any]]:
+    """Apply a regional plugin overlay onto ``raw`` fail-closed."""
+    try:
+        with open(overlay_path) as fh:
+            overlay_raw = json.load(fh)
+    except json.JSONDecodeError as exc:
+        raise RuntimeError(
+            f"ControlRegistry: overlay JSON at {overlay_path} is malformed: {exc}"
+        ) from exc
+
+    if not isinstance(overlay_raw, dict):
+        raise ControlOverlayCollisionError(
+            f"ControlRegistry: overlay at {overlay_path} must be a JSON object."
+        )
+
+    declared_raw = overlay_raw.get("_declared_extensions", [])
+    if not isinstance(declared_raw, list) or not all(
+        isinstance(item, str) and item for item in declared_raw
+    ):
+        raise ControlOverlayCollisionError(
+            f"ControlRegistry: '_declared_extensions' in {overlay_path} "
+            f"must be a list of non-empty strings."
+        )
+    declared_set = set(declared_raw)
+
+    for key in overlay_raw:
+        if key.startswith("_") and key not in _ALLOWED_OVERLAY_META_KEYS:
+            raise ControlOverlayCollisionError(
+                f"Control mapping collision: overlay {overlay_path} cannot set "
+                f"protected metadata key {key!r}."
+            )
+
+    missing_declared = sorted(
+        ext_id
+        for ext_id in declared_set
+        if ext_id not in overlay_raw or ext_id not in raw
+    )
+    if missing_declared:
+        raise ControlOverlayCollisionError(
+            f"ControlRegistry: '_declared_extensions' in {overlay_path} "
+            f"references unknown or non-existing control(s): {missing_declared}."
+        )
+
+    records: list[dict[str, Any]] = []
+    for key, value in overlay_raw.items():
+        if key.startswith("_"):
+            continue
+        if not isinstance(value, dict):
+            raise ControlOverlayCollisionError(
+                f"ControlRegistry: control entry {key!r} in {overlay_path} "
+                f"must be a JSON object."
+            )
+        if key not in raw:
+            raw[key] = value
+            continue
+        if key not in declared_set:
+            raise ControlOverlayCollisionError(
+                f"Control mapping collision: {key!r} from {overlay_path} "
+                f"attempts to redefine existing mapping without a declared extension."
+            )
+        existing = raw[key]
+        if not isinstance(existing, dict):
+            raise ControlOverlayCollisionError(
+                f"Control mapping collision: {key!r} from {overlay_path} "
+                f"cannot extend non-dict baseline entry."
+            )
+        merged, record = _merge_declared_extension(existing, value, key, overlay_path)
+        raw[key] = merged
+        records.append(record)
+        logger.info(
+            "Applied declared control extension for %s from %s (co_frameworks=%s, domain_extensions=%s)",
+            key,
+            overlay_path,
+            record["co_frameworks_added"],
+            record["domain_extensions_added"],
+        )
+    return records
 
 
 def register_overlay_dir(path: Path) -> None:
     """Register a plugin's compliance-overlay directory.
 
     Called by the server lifespan for each ``PluginContribution.compliance_overlay_dirs``
-    entry. Directories are applied in
-    registration order, which is deterministic because plugin discovery
-    iterates entry points in a stable order. A later plugin overriding an
-    earlier plugin's control mapping is logged at WARNING.
+    entry. Directories are applied in registration order, which is deterministic
+    because plugin discovery iterates entry points in a stable order. Collisions
+    without an explicit additive ``_declared_extensions`` entry fail closed
+    with :class:`ControlOverlayCollisionError`.
 
     Args:
         path: Path to the plugin's compliance overlay directory
@@ -249,6 +422,7 @@ class ControlRegistry:
     # Empty until a profile loads: no region is in force before then.
     _active_region: str = ""
     _active_hash: str = ""
+    _declared_extensions: tuple[dict[str, Any], ...] = ()
 
     # Paths
     _REPO_ROOT: Path = Path(__file__).resolve().parents[3]
@@ -264,6 +438,7 @@ class ControlRegistry:
                     instance._load_registry()
                     cls._active_region = instance._region
                     cls._active_hash = instance._hash
+                    cls._declared_extensions = instance._declared_extensions
                     cls._instance = instance
         return cls._instance
 
@@ -285,6 +460,17 @@ class ControlRegistry:
         """Read-only access to the pinned baseline profile hash."""
         with self.__class__._lock:
             return getattr(self, "_hash", self.__class__._active_hash)
+
+    @property
+    def declared_extensions(self) -> tuple[dict[str, Any], ...]:
+        """Read-only record of declared additive control extensions applied."""
+        with self.__class__._lock:
+            exts = getattr(
+                self,
+                "_declared_extensions",
+                self.__class__._declared_extensions,
+            )
+            return tuple(copy.deepcopy(exts))
 
     @classmethod
     def _coerce_floats(cls, data: Any) -> Any:
@@ -314,6 +500,9 @@ class ControlRegistry:
         Raises:
             DeploymentRegionError: If the region is not a supported region, or
                 is unset in an enforcing posture. There is no default profile.
+            ControlOverlayCollisionError: If a plugin overlay attempts an
+                undeclared control redefinition, protected-field write, or
+                kernel metadata override.
         """
         if region is None:
             region = resolve_deployment_region()
@@ -335,22 +524,12 @@ class ControlRegistry:
             with open(config_path) as fh:
                 raw = json.load(fh)
 
-            # Apply plugin-supplied overlays in registration order (PR B, T-B4)
+            # Apply plugin-supplied overlays fail-closed in registration order (PR B, T-B4; POAM-2026-123)
+            declared_extensions: list[dict[str, Any]] = []
             for overlay_dir in _OVERLAY_DIRS:
                 overlay_path = overlay_dir / f"{region}_OVERLAY.json"
                 if overlay_path.exists():
-                    with open(overlay_path) as fh:
-                        overlay_raw = json.load(fh)
-                    # Warn on control collision (later plugin overriding earlier)
-                    for key in overlay_raw:
-                        if key in raw and not key.startswith("_"):
-                            logger.warning(
-                                "Control mapping collision: %s from %s overrides "
-                                "earlier mapping",
-                                key,
-                                overlay_path,
-                            )
-                    raw.update(overlay_raw)
+                    declared_extensions.extend(_apply_overlay_file(raw, overlay_path))
 
             # Strip meta-keys that start with "_"
             self._mappings = {
@@ -359,6 +538,7 @@ class ControlRegistry:
                 if not k.startswith("_") and isinstance(v, dict)
             }
             self._region = region
+            self._declared_extensions = tuple(declared_extensions)
 
             # Canonical stringification: sorted keys, compact separators
             # v3.1.0: Migrated to RFC 8785 JCS canonicalization
@@ -476,6 +656,7 @@ class ControlRegistry:
             cls._mappings = dict(new_instance._mappings)
             cls._active_region = loaded_region
             cls._active_hash = new_instance._hash
+            cls._declared_extensions = new_instance._declared_extensions
             cls._instance = new_instance
 
         logger.info("ControlRegistry reconfigured to region: %s", loaded_region)
@@ -496,6 +677,8 @@ class ControlRegistry:
             cls._instance = None
             cls._mappings = {}
             cls._active_region = ""
+            cls._active_hash = ""
+            cls._declared_extensions = ()
 
 
 # ---------------------------------------------------------------------------

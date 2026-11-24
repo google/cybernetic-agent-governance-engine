@@ -1,19 +1,19 @@
 # Regional Posture Validation Report
 
-> **Note (2026-10-28):** The composition claim in §3 is false, and the executive summary and conclusion repeat it. See POAM-2026-121 in [`POAM.md`](../POAM.md).
+> **Correction Notice (`POAM-2026-121` / `POAM-2026-123`):** The independent-composability claims in the original v3.0.1 publication (Executive Summary, §3 `Independence Guarantee` / `Key Finding`, and §7 Conclusion) are **withdrawn**, the superseded §3 12-cell hash table (computed against `3b69207c`) is **removed**, and §5.2's nonexistent ISO 42001 JSON path is corrected to `config/oscal/framework_mappings/ISO_42001.json` and `compliance/oscal/component-definition.yaml`. Under `POAM-2026-123`, [`ControlRegistry`](../../src/gateway/governance/constants.py) now fails closed with `ControlOverlayCollisionError` on undeclared collisions, the duplicate `CTRL_FTRA_001` override has been removed from `src/cage_finance/config/compliance/US_FED_OVERLAY.json`, and collision + multi-plugin composition enforcement is tested in [`tests/test_regional_overlay_merge.py`](../../tests/test_regional_overlay_merge.py) (`pytest-logic`). The remaining sections retain the historical v3.0.1 test/posture record; `.github/workflows/regional-posture.yml` watches plugin overlay/threshold paths and runs as a post-merge/dispatch check rather than a PR-blocking gate.
 
-**Date:** 2026-09-04  
-**CAGE Version:** v3.0.1 (post-consolidation)  
-**Validator:** Automated Test Suite + Manual Verification  
+**Date:** 2026-09-04 (withdrawal applied under `POAM-2026-121`)
+**CAGE Version:** v3.0.1 (historical snapshot; overlay enforcement updated in `ControlRegistry`)
+**Validator:** Automated Test Suite + Manual Verification
 **Scope:** Task C2 — Regional Compliance Posture Validation
 
 ---
 
 ## Executive Summary
 
-All three regional compliance postures (`US_FED`, `EU_ECB`, `APAC_MAS`) have been validated against their respective regulatory frameworks. Regional test suites and posture checkers pass successfully, confirming independent composability of domain plugins and jurisdictional overlays.
+All three regional compliance postures (`US_FED`, `EU_ECB`, `APAC_MAS`) ran their v3.0.1 regional marker suites and posture checks. **Withdrawn claim (`POAM-2026-121`):** the original statement asserting *"confirming independent composability of domain plugins and jurisdictional overlays"* is withdrawn. Runtime additive-only overlay composition is now enforced fail-closed by [`ControlRegistry`](../../src/gateway/governance/constants.py) (`ControlOverlayCollisionError`) and verified on PRs in [`tests/test_regional_overlay_merge.py`](../../tests/test_regional_overlay_merge.py).
 
-**Overall Status:** ✅ **PASS**
+**Overall Status (Historical v3.0.1 Snapshot):** ⚠️ **RETAINED WITH §3 INDEPENDENCE CLAIM WITHDRAWN (`POAM-2026-121`)**
 
 | Region | Test Suite | Posture Checker | Status |
 |--------|-----------|-----------------|--------|
@@ -85,8 +85,8 @@ CAGE_DEPLOYMENT_REGION=EU_ECB uv run pytest tests/ -m eu_ecb -v
 
 **Compliance Artifacts Verified:**
 - `config/compliance/EU_ECB_BASELINE.json`
-- `infra/targets/gcp-gke/eu_dev.tfvars`
-- `infra/targets/gcp-gke/eu_prod.tfvars`
+- `infra/targets/gcp-gke/eu-dev.tfvars`
+- `infra/targets/gcp-gke/eu-prod.tfvars`
 - `compliance/lula/lula-validation-eu-ai-act-art9.yaml`
 - `compliance/lula/lula-validation-eu-fria.yaml`
 
@@ -117,7 +117,7 @@ CAGE_DEPLOYMENT_REGION=APAC_MAS uv run pytest tests/ -m apac_mas -v
 
 **Compliance Artifacts Verified:**
 - `config/compliance/APAC_MAS_BASELINE.json`
-- `infra/targets/gcp-gke/apac_prod.tfvars`
+- `infra/targets/gcp-gke/apac-prod.tfvars`
 - `compliance/lula/lula-validation-mas-feat.yaml`
 - `compliance/lula/lula-validation-mas-notice655.yaml`
 - `compliance/lula/lula-validation-mas-trm-s6.yaml`
@@ -188,38 +188,11 @@ uv run python scripts/verify_langfuse_posture.py --dry-run --posture development
 
 ---
 
-## 3. Plugin × Region Composition Matrix
+## 3. Plugin × Region Composition Matrix (**§3 Independence Claim Withdrawn**)
 
-> **Do not rely on this section (2026-10-28).** Its independence claim is false: `cage_finance`'s US_FED overlay redefines the kernel's `CTRL_FTRA_001`, and the registry logs the collision. The hashes below were computed by the documented method on `3b69207c`, the parent of the commit that published them, and match no tree that contains this report. The section is kept as published pending correction or withdrawal under POAM-2026-121 in [`POAM.md`](../POAM.md).
-
-Per [`plans/post_consolidation_roadmap.md`](../../plans/post_consolidation_roadmap.md#533-c2--regional-compliance-posture-validation), CAGE claims that domain plugins and jurisdictional postures compose independently. This is validated through the following matrix:
-
-| Plugin Configuration | US_FED | EU_ECB | APAC_MAS |
-|---------------------|:------:|:------:|:--------:|
-| **Neither (Kernel Only)** | 7 controls (`489f444aca7b...`) | 7 controls (`cd305cf5822b...`) | 6 controls (`997d071a0b48...`) |
-| **Finance Only** | 8 controls (`f73c07e90c22...`) | 8 controls (`bc2018f8d2ee...`) | 7 controls (`04bdee297176...`) |
-| **Healthcare Only** | 8 controls (`d3285bc61e2c...`) | 8 controls (`e2353b583171...`) | 7 controls (`95a793a8f7e3...`) |
-| **Both Plugins** | 9 controls (`6dbefdbbb607...`) | 9 controls (`d4ca30de6ed9...`) | 8 controls (`fbf4efa77879...`) |
-
-**Validation Method & Verified Hashes:**
-- **Dynamic Registration**: Tested across all 12 permutations via `ControlRegistry.reconfigure(region)` with dynamic `register_overlay_dir()`.
-- **Deterministic Canonicalization**: Each combination computes an RFC 8785 JCS canonical SHA-256 hash over the active regulatory control dictionary.
-- **Independence Guarantee**: Installing `cage_finance` and `cage_healthcare` adds domain-specific controls without colliding on common controls or polluting core regulatory schemas.
-- **Full Hash Registry (12 Cells)**:
-  - `neither` × `US_FED`: `489f444aca7b3c537ad1096c5fd5393278bdfc4b3c6caa485bafad8807eb94d0`
-  - `neither` × `EU_ECB`: `cd305cf5822b10fb6a2cadac104e3b97228bec540f7544ab13e102c753c711c8`
-  - `neither` × `APAC_MAS`: `997d071a0b48137a476053755cf1ca437bf36718512f5f7929304257c8662ddf`
-  - `finance` × `US_FED`: `f73c07e90c22aafb60ab03ebec6ada4782d4d1c5f299ef6935efc8ca73a21921`
-  - `finance` × `EU_ECB`: `bc2018f8d2eea8d8dd336f07cf7e4db05c6f47d93a85a0a72724b841ef3712a7`
-  - `finance` × `APAC_MAS`: `04bdee29717634b65e88699fd8bd132b7b1d62585b5e2ad6529d68f4e74a8203`
-  - `healthcare` × `US_FED`: `d3285bc61e2c7f6af4497f135c840b28612aead66cd005c83f227fae46a7691d`
-  - `healthcare` × `EU_ECB`: `e2353b5831710ef1298bb1b5dfd5957557e3844b4ef14ddfc5a4dc5283ad49b9`
-  - `healthcare` × `APAC_MAS`: `95a793a8f7e360a7a8352e405b58f37e8882912d1a04818cda970531ee5d2177`
-  - `both` × `US_FED`: `6dbefdbbb607c18cb6645777113626699e59bac0f40ce73fdd9f1b83b2dad771`
-  - `both` × `EU_ECB`: `d4ca30de6ed9aa0297b0c9c8f865a0ece819f467baf7f80e21e1496eb9b22844`
-  - `both` × `APAC_MAS`: `fbf4efa77879ad1432064f5441de8d6db83cace3f86f34c9e88b656dfcc53dba`
-
-**Key Finding:** ✅ All 12 matrix cells validate successfully and deterministically. Domain plugins and regional postures compose orthogonally.
+> **Withdrawn Claim (`POAM-2026-121` / `POAM-2026-123`):** Both the *"Independence Guarantee"* and *"Key Finding"* originally published in this section are **withdrawn**, and the 12-cell RFC 8785 JCS hash table originally published here has been **removed**. When published, `src/cage_finance/config/compliance/US_FED_OVERLAY.json` redefined the kernel's `CTRL_FTRA_001` (with colliding `internal_id`, `primary_framework`, `co_frameworks`, `legacy_citation`, and `description`), and [`ControlRegistry`](../../src/gateway/governance/constants.py) logged `"Control mapping collision"` at `WARNING` without failing. The removed 12-cell hashes reproduced only against `3b69207c` (the parent of the commit that published them) and matched no tree containing this report.
+>
+> **Current Enforcement (`HEAD`):** [`ControlRegistry`](../../src/gateway/governance/constants.py) enforces additive-only overlay composition (`ControlOverlayCollisionError` on undeclared collisions, protected-field writes, or `_`-meta overwrites), the stale `CTRL_FTRA_001` override is removed from `US_FED_OVERLAY.json`, and collision + multi-plugin composition enforcement is pinned in [`tests/test_regional_overlay_merge.py`](../../tests/test_regional_overlay_merge.py) (`pytest-logic`, required PR check). `.github/workflows/regional-posture.yml` watches `src/cage_*/config/compliance/**` and `src/cage_*/config/thresholds/**` alongside kernel baselines and runs post-merge/dispatch regional marker suites across `US_FED`, `EU_ECB`, and `APAC_MAS` (`continue-on-error: false`), not as a PR gate.
 
 ---
 
@@ -297,11 +270,11 @@ Validated via `scripts/check_lula_stub_count.py` and `scripts/check_poam_lula_di
 
 ---
 
-### 5.2 OSCAL Component Definitions
+### 5.2 OSCAL Component Definitions & Framework Mappings
 
 | Framework | File Path | Status |
 |-----------|-----------|--------|
-| **ISO 42001** | `compliance/oscal/components/cage_iso42001.json` | ✅ Present |
+| **ISO 42001** | `config/oscal/framework_mappings/ISO_42001.json`, `compliance/oscal/component-definition.yaml` | ✅ Present (corrected under `POAM-2026-121`; original report cited a nonexistent JSON component path) |
 | **NIST SP 800-53** | `config/oscal/framework_mappings/NIST_SP800_53.json` | ✅ Present |
 | **EU AI Act** | `config/oscal/framework_mappings/EU_AI_ACT.json` | ✅ Present |
 | **MAS FEAT** | `config/oscal/framework_mappings/MAS_FEAT.json` | ✅ Present |
@@ -336,16 +309,13 @@ All baseline files are valid JSON and contain required sections (`hitl`, `stpa`,
 
 ## 7. Conclusion
 
-All three regional compliance postures (`US_FED`, `EU_ECB`, `APAC_MAS`) have been validated successfully. The CAGE v3.0.1 architecture demonstrates **true composability** of domain plugins and jurisdictional overlays, with all 12 matrix cells passing validation.
+The three regional posture test runs from v3.0.1 ran with 40 passing and 3 skipped cases across `US_FED`, `EU_ECB`, and `APAC_MAS`. **Withdrawn claim (`POAM-2026-121`):** the original conclusion asserting **true composability** across all 12 matrix cells is withdrawn. Active fail-closed overlay enforcement (`ControlOverlayCollisionError` in [`ControlRegistry`](../../src/gateway/governance/constants.py)) and cross-plugin overlay checks run on every PR via [`tests/test_regional_overlay_merge.py`](../../tests/test_regional_overlay_merge.py) (`pytest-logic`), with post-merge/dispatch regional marker suites in `.github/workflows/regional-posture.yml`.
 
-**Regional test suites:** 40 total tests, 40 passed, 3 skipped (infrastructure-specific), 0 failed.
+**Regional test suites (historical v3.0.1 run):** 40 passed, 3 skipped (infrastructure-specific), 0 failed.
 
 **Posture checkers:** EU_ECB and APAC_MAS posture checkers pass all validation gates.
 
-**Task C2 Status:** ✅ **COMPLETE**
-
 ---
 
-**Last Updated:** 2026-09-04  
-**Next Review:** Prior to v3.1.0 release  
+**Last Updated:** 2026-11-24 (`POAM-2026-121` withdrawal applied)
 **Validator:** CAGE Automated Compliance Pipeline
