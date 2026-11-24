@@ -15,6 +15,7 @@
 """Microsoft Presidio PII Detection & Anonymization Adapter (Layer 3)."""
 
 from src.integrations.presidio.redactor import (
+    PresidioUnavailableError,
     build_presidio_sdd_action,
     ensure_presidio_engines,
     get_analyzer_patch,
@@ -23,6 +24,7 @@ from src.integrations.presidio.redactor import (
 )
 
 __all__ = [
+    "PresidioUnavailableError",
     "build_presidio_sdd_action",
     "ensure_presidio_engines",
     "get_analyzer_patch",
