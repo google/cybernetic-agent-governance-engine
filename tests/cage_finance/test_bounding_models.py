@@ -36,17 +36,19 @@ class TestContractSeverity:
     """Tests for ContractSeverity enum."""
 
     def test_three_severity_levels_exist(self):
-        """ContractSeverity must have exactly three levels per Phase 5 plan."""
-        assert len(ContractSeverity) == 3
+        """ContractSeverity must include policy severities and INFRASTRUCTURE (FA-3)."""
+        assert len(ContractSeverity) == 4
         assert ContractSeverity.HARD_BLOCK == "HARD_BLOCK"
         assert ContractSeverity.HITL_ESCALATE == "HITL_ESCALATE"
         assert ContractSeverity.ADVISORY == "ADVISORY"
+        assert ContractSeverity.INFRASTRUCTURE == "INFRASTRUCTURE"
 
     def test_severity_is_string_enum(self):
         """ContractSeverity must be string-valued for JSON serialization."""
         assert isinstance(ContractSeverity.HARD_BLOCK.value, str)
         assert isinstance(ContractSeverity.HITL_ESCALATE.value, str)
         assert isinstance(ContractSeverity.ADVISORY.value, str)
+        assert isinstance(ContractSeverity.INFRASTRUCTURE.value, str)
 
 
 class TestContractResult:

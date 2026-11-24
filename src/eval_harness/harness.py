@@ -1327,6 +1327,7 @@ class FoundationModelEvalHarness:
         narrowed_args: dict[str, Any] | None = None
         reasons: list[str] = []
 
+        from src.gateway.governance.governor.errors import GovernanceInfrastructureError
         from src.gateway.governance.governor.governor import SymbolicGovernor
 
         try:
@@ -1337,6 +1338,14 @@ class FoundationModelEvalHarness:
                     tool_name, merged_params
                 )
             raw_verdict = response.get("verdict", GovernanceDecision.DENY)
+            if raw_verdict == "INFRASTRUCTURE_BLOCK":
+                raise GovernanceInfrastructureError(
+                    "Governance returned INFRASTRUCTURE_BLOCK during evaluation",
+                    dependency=str(response.get("dependency") or "governance"),
+                    failure_code=str(
+                        response.get("failure_code") or "INFRASTRUCTURE_BLOCK"
+                    ),
+                )
             decision = GovernanceDecision(raw_verdict)
             for v in response.get("violations", ()):
                 msg = (
@@ -1352,6 +1361,8 @@ class FoundationModelEvalHarness:
                     narrowed_args = {
                         k: candidate[k] for k in arguments if k in candidate
                     }
+        except GovernanceInfrastructureError:
+            raise
         except GovernanceError as exc:
             decision = GovernanceDecision.DENY
             reasons.append(str(exc))
@@ -1778,6 +1789,12 @@ class FoundationModelEvalHarness:
           narrowing context unless the caller explicitly sets
           ``trust_receipt_standing=True`` or supplies ``trusted_standing_override``.
         """
+        from src.gateway.governance.governor.errors import GovernanceInfrastructureError
+        from src.gateway.governance.governor.verdicts import (
+            INFRASTRUCTURE_FAILURE_CODES,
+        )
+
+        _infra_codes = INFRASTRUCTURE_FAILURE_CODES | {"FRIA_PROVIDER_UNAVAILABLE"}
         harvested: list[DPOPreferenceTriplet] = []
         lookup = prompt_by_thread or {}
 
@@ -1786,6 +1803,9 @@ class FoundationModelEvalHarness:
                 raise ValueError(
                     f"RefusalReceipt proof_hash verification failed for thread_id={receipt.thread_id!r}"
                 )
+            violated_rule = str(getattr(receipt, "violated_rule", "") or "")
+            if any(code in violated_rule for code in _infra_codes):
+                continue
             prompt = lookup.get(
                 receipt.thread_id,
                 f"[thread:{receipt.thread_id}] Execute {receipt.action}",
@@ -1801,9 +1821,12 @@ class FoundationModelEvalHarness:
                 context = {}
 
             attempted = dict(receipt.attempted_params)
-            decision, narrowed_args, reasons = await self._evaluate_single(
-                receipt.action, attempted, context
-            )
+            try:
+                decision, narrowed_args, reasons = await self._evaluate_single(
+                    receipt.action, attempted, context
+                )
+            except GovernanceInfrastructureError:
+                continue
             if not reasons and receipt.violated_rule:
                 reasons = [receipt.violated_rule]
 

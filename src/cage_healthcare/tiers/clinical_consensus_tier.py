@@ -65,8 +65,9 @@ class ClinicalConsensusTier(_ct.ReadOnlyTier):
     async def evaluate(
         self, action: str, params: dict[str, Any]
     ) -> list[_ct.Violation]:
+        infra = _ct.ViolationKind.INFRASTRUCTURE
         if self.consensus_engine is None:
-            return self._reject("Clinical consensus engine is not configured")
+            return self._reject("No consensus engine", infra, "CONSENSUS_UNAVAILABLE")
         res = await self.consensus_engine.check_consensus(
             action_type=action, params=params
         )
@@ -75,9 +76,9 @@ class ClinicalConsensusTier(_ct.ReadOnlyTier):
         if _cs.consensus_admits(res):
             return []
         r = str(res.get("reason") or "Multi-critic consensus not achieved")
-        k = (
-            _ct.ViolationKind.HITL
-            if res.get("status") == "ESCALATE"
-            else _ct.ViolationKind.HARD
-        )
+        s = res.get("status")
+        if s == "UNAVAILABLE":
+            c = _cs.consensus_violation_code(res, "CONSENSUS_UNAVAILABLE")
+            return self._reject(r, infra, c)
+        k = _ct.ViolationKind.HITL if s == "ESCALATE" else _ct.ViolationKind.HARD
         return self._reject(r, k=k, c=_cs.consensus_violation_code(res, _REJ))

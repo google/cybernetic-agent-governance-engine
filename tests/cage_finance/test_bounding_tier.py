@@ -244,12 +244,28 @@ class TestB10ClosedWindowIsHitl:
 
     @pytest.mark.asyncio
     @pytest.mark.parametrize(
-        "capability",
+        ("capability", "expected_code", "expected_kind"),
         [
-            RuntimeError("settlement provider down"),
-            {**_OPEN, "supported": False},
-            {**_OPEN, "api_available": False},
-            {**_OPEN, "max_window_seconds": 120},
+            (
+                RuntimeError("settlement provider down"),
+                "BOUNDING_PROVIDER_UNAVAILABLE",
+                ViolationKind.INFRASTRUCTURE,
+            ),
+            (
+                {**_OPEN, "supported": False},
+                "B10_ROLLBACK_WINDOW_CLOSED",
+                ViolationKind.HITL,
+            ),
+            (
+                {**_OPEN, "api_available": False},
+                "B10_ROLLBACK_WINDOW_CLOSED",
+                ViolationKind.HITL,
+            ),
+            (
+                {**_OPEN, "max_window_seconds": 120},
+                "B10_ROLLBACK_WINDOW_CLOSED",
+                ViolationKind.HITL,
+            ),
         ],
         ids=[
             "provider_unavailable",
@@ -258,13 +274,15 @@ class TestB10ClosedWindowIsHitl:
             "window_over_capability",
         ],
     )
-    async def test_closed_window_is_a_hitl_violation(self, capability):
+    async def test_closed_window_is_a_hitl_violation(
+        self, capability, expected_code, expected_kind
+    ):
         violations = await _b10_tier(capability).evaluate(
             "execute_trade_bounded", _B10_PARAMS
         )
         assert len(violations) == 1
-        assert violations[0].code == "B10_ROLLBACK_WINDOW_CLOSED"
-        assert violations[0].kind == ViolationKind.HITL
+        assert violations[0].code == expected_code
+        assert violations[0].kind == expected_kind
 
     @pytest.mark.asyncio
     async def test_window_below_minimum_is_a_hitl_violation(self):

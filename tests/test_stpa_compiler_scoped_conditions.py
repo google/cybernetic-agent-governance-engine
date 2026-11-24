@@ -128,9 +128,24 @@ class TestPython:
         assert "(lhs_val is None) != (rhs_val is None)" in py
         assert "scope_val" not in py
 
-    def test_composite_rejects_bool_and_non_numeric_operands(self) -> None:
+    def test_composite_rejects_bool_and_non_numeric_operands(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
         py = generate_python(_cs())
-        assert "isinstance(v, bool) or not isinstance(v, (int, float, str))" in py
+        assert "isinstance(raw, bool) or not isinstance(raw, (int, float, str))" in py
+        assert "_parse_numeric_value(lhs_val" in py
+        namespace: dict[str, Any] = {}
+        exec(compile(py, "<generated>", "exec"), namespace)  # noqa: S102
+        monkeypatch.setitem(namespace, "_resolve_threshold", lambda _path: 0.5)
+        check = namespace["GeneratedSTPAValidator"]()._check_uca_1
+        for bad in (
+            {"qty": True, "pool": 10},
+            {"qty": 1, "pool": False},
+            {"qty": "not-a-number", "pool": 10},
+        ):
+            v = check("do_thing", bad)
+            assert v is not None and v.kind.value == "hard"
+            assert v.code == "STPA_UCA_UCA_1"
 
     def test_generated_module_enforces_scope_and_required_params(
         self, monkeypatch: pytest.MonkeyPatch

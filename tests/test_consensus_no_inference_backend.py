@@ -90,8 +90,8 @@ async def test_at_threshold_denies_under_none_when_critics_enabled(
 ) -> None:
     result = await _gate().check_consensus("act", {}, magnitude=_THRESHOLD)
 
-    assert result["status"] == "DENY"
-    assert result["decision"] == "DENY"
+    assert result["status"] == "UNAVAILABLE"
+    assert result["decision"] == "UNAVAILABLE"
     assert result["reason_code"] == CONSENSUS_NO_INFERENCE_BACKEND
     assert result["votes"] == []
 
@@ -102,7 +102,7 @@ async def test_high_stakes_action_denies_under_none_when_critics_enabled(
 ) -> None:
     result = await _gate().check_consensus("HIGH_STAKES_ACTION", {}, magnitude=1.0)
 
-    assert result["status"] == "DENY"
+    assert result["status"] == "UNAVAILABLE"
     assert result["reason_code"] == CONSENSUS_NO_INFERENCE_BACKEND
 
 
@@ -142,7 +142,7 @@ def test_admit_mapping_refuses_reason_coded_and_non_status_results() -> None:
 
 # ---------------------------------------------------------------------------
 # Domain tiers record NOTIONAL_THRESHOLD_ESCALATION (HITL) by default, and
-# CONSENSUS_NO_INFERENCE_BACKEND (HARD) when critics are enabled without a backend
+# CONSENSUS_NO_INFERENCE_BACKEND (INFRASTRUCTURE) when critics are enabled without a backend
 # ---------------------------------------------------------------------------
 
 
@@ -192,7 +192,7 @@ async def test_finance_tier_records_no_backend_code(
     )
 
     assert [(v.code, v.kind) for v in violations] == [
-        (CONSENSUS_NO_INFERENCE_BACKEND, ViolationKind.HARD)
+        (CONSENSUS_NO_INFERENCE_BACKEND, ViolationKind.INFRASTRUCTURE)
     ]
 
 
@@ -209,7 +209,7 @@ async def test_healthcare_tier_records_no_backend_code(
     )
 
     assert [(v.code, v.kind) for v in violations] == [
-        (CONSENSUS_NO_INFERENCE_BACKEND, ViolationKind.HARD)
+        (CONSENSUS_NO_INFERENCE_BACKEND, ViolationKind.INFRASTRUCTURE)
     ]
 
 
@@ -226,5 +226,5 @@ async def test_physical_tier_records_no_backend_code(
     )
 
     assert [(v.code, v.kind) for v in violations] == [
-        (CONSENSUS_NO_INFERENCE_BACKEND, ViolationKind.HARD)
+        (CONSENSUS_NO_INFERENCE_BACKEND, ViolationKind.INFRASTRUCTURE)
     ]

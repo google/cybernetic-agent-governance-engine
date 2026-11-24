@@ -94,11 +94,11 @@ _VALID_DECISIONS: frozenset[str] = frozenset({"APPROVE", "REJECT", "ESCALATE"})
 # the default; read by feature_flags.consensus_critics_enabled()).
 NOTIONAL_THRESHOLD_ESCALATION: Final[str] = "NOTIONAL_THRESHOLD_ESCALATION"
 
-# A triggered check refused because critics are enabled
+# A triggered check is unavailable because critics are enabled
 # (CAGE_CONSENSUS_CRITICS_ENABLED=true) but no model exists to act as a critic
-# (CAGE_INFERENCE_BACKEND=none). It is a DENY that the evidence chain can
-# tell apart from a REJECT on the merits.
+# (CAGE_INFERENCE_BACKEND=none) or no critics are configured (POAM-2026-233).
 CONSENSUS_NO_INFERENCE_BACKEND: Final[str] = "CONSENSUS_NO_INFERENCE_BACKEND"
+CONSENSUS_NO_CRITICS_CONFIGURED: Final[str] = "CONSENSUS_NO_CRITICS_CONFIGURED"
 
 # The statuses a domain tier admits. The mapping lives here, once, so no
 # domain can translate a refusal into an admit.
@@ -600,14 +600,14 @@ class ConsensusGate:
         if getattr(self, "_inference_disabled", False):
             logger.warning(
                 "ConsensusGate triggered for action=%s magnitude=%.2f with no "
-                "inference backend (CAGE_INFERENCE_BACKEND=none) — DENY %s",
+                "inference backend (CAGE_INFERENCE_BACKEND=none) — UNAVAILABLE %s",
                 resolved_action,
                 resolved_magnitude,
                 CONSENSUS_NO_INFERENCE_BACKEND,
             )
             return {
-                "status": "DENY",
-                "decision": "DENY",
+                "status": "UNAVAILABLE",
+                "decision": "UNAVAILABLE",
                 "reason": (
                     "No semantic inference backend (CAGE_INFERENCE_BACKEND=none/stub): consensus "
                     "needs model critics, so no critic was consulted."
@@ -619,14 +619,15 @@ class ConsensusGate:
         critics: tuple[CriticSpec, ...] = tuple(getattr(self, "critics", ()))
         if not critics:
             logger.error(
-                "ConsensusGate triggered for action=%s magnitude=%.2f with no critics configured — failing closed (DENY)",
+                "ConsensusGate triggered for action=%s magnitude=%.2f with no critics configured — failing closed (UNAVAILABLE)",
                 resolved_action,
                 resolved_magnitude,
             )
             return {
-                "status": "DENY",
-                "decision": "DENY",
+                "status": "UNAVAILABLE",
+                "decision": "UNAVAILABLE",
                 "reason": "no_critics_configured",
+                "reason_code": CONSENSUS_NO_CRITICS_CONFIGURED,
                 "votes": [],
             }
 

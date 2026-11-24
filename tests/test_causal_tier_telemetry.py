@@ -143,10 +143,10 @@ def stable_dowhy(monkeypatch):
     return _StableDoWhy
 
 
-def _only(violations):
+def _only(violations, *, kind: ViolationKind = ViolationKind.HARD):
     assert len(violations) == 1, violations
     v = violations[0]
-    assert v.kind is ViolationKind.HARD
+    assert v.kind is kind
     assert v.tier == "causal"
     return v
 
@@ -163,7 +163,10 @@ async def test_cold_start_before_first_refresh_denies_with_telemetry_unavailable
     """Before the background refresher completes its first cycle, trades fail closed."""
     provider = _Provider(_frame(60))
     tier = CausalTierPlugin(telemetry_provider=provider)
-    v = _only(await tier.evaluate("execute_trade", PARAMS))
+    v = _only(
+        await tier.evaluate("execute_trade", PARAMS),
+        kind=ViolationKind.INFRASTRUCTURE,
+    )
     assert v.code == CODE_TELEMETRY_UNAVAILABLE
     assert provider.requested == []
     assert stable_dowhy.refuted == 0
@@ -176,7 +179,10 @@ async def test_enforcing_posture_null_provider_denies_with_telemetry_unavailable
     tier = CausalTierPlugin(telemetry_provider=NullTelemetryProvider())
     assert tier.refresher is not None
     await tier.refresher.refresh_once()
-    v = _only(await tier.evaluate("execute_trade", PARAMS))
+    v = _only(
+        await tier.evaluate("execute_trade", PARAMS),
+        kind=ViolationKind.INFRASTRUCTURE,
+    )
     assert v.code == CODE_TELEMETRY_UNAVAILABLE
     assert stable_dowhy.refuted == 0
 
@@ -188,7 +194,10 @@ async def test_enforcing_posture_no_provider_denies_with_telemetry_unavailable(
     tier = CausalTierPlugin()
     assert tier.refresher is not None
     await tier.refresher.refresh_once()
-    v = _only(await tier.evaluate("execute_trade", PARAMS))
+    v = _only(
+        await tier.evaluate("execute_trade", PARAMS),
+        kind=ViolationKind.INFRASTRUCTURE,
+    )
     assert v.code == CODE_TELEMETRY_UNAVAILABLE
 
 
@@ -247,7 +256,10 @@ async def test_provider_error_denies_with_telemetry_unavailable(
     tier = CausalTierPlugin(telemetry_provider=_Provider(exc=RuntimeError("feed down")))
     assert tier.refresher is not None
     await tier.refresher.refresh_once()
-    v = _only(await tier.evaluate("execute_trade", PARAMS))
+    v = _only(
+        await tier.evaluate("execute_trade", PARAMS),
+        kind=ViolationKind.INFRASTRUCTURE,
+    )
     assert v.code == CODE_TELEMETRY_UNAVAILABLE
     assert "feed down" in v.message
 

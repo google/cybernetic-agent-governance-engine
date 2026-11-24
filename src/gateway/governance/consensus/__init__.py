@@ -20,6 +20,7 @@ opt-in switches in :mod:`src.gateway.governance.feature_flags`.
 
 from src.gateway.governance.consensus.engine import (
     CONSENSUS_ADMIT_STATUSES,
+    CONSENSUS_NO_CRITICS_CONFIGURED,
     CONSENSUS_NO_INFERENCE_BACKEND,
     NOTIONAL_THRESHOLD_ESCALATION,
     ConsensusGate,
@@ -32,6 +33,7 @@ from src.gateway.governance.consensus.engine import (
 
 __all__ = [
     "CONSENSUS_ADMIT_STATUSES",
+    "CONSENSUS_NO_CRITICS_CONFIGURED",
     "CONSENSUS_NO_INFERENCE_BACKEND",
     "NOTIONAL_THRESHOLD_ESCALATION",
     "ConsensusGate",

@@ -299,16 +299,21 @@ def _extract_signals(node_name: str, state: dict[str, Any]) -> dict[str, Any]:
     return signals
 
 
+_GATEWAY_INFRA_STEP_STATUSES: frozenset[str] = frozenset(
+    {"GATEWAY_ERROR", "INFRASTRUCTURE_BLOCK", "UNAVAILABLE"}
+)
+
+
 def _is_gateway_error_step(step: ProjectBundleStepEntry) -> bool:
-    """Return True if ``step`` recorded a gateway transport/verification failure."""
-    if step.signals.get("safetyStatus") == "GATEWAY_ERROR":
+    """Return True if ``step`` recorded a gateway transport/infrastructure failure."""
+    if step.signals.get("safetyStatus") in _GATEWAY_INFRA_STEP_STATUSES:
         return True
-    if step.signals.get("violationReasonCode") == "GATEWAY_ERROR":
+    if step.signals.get("violationReasonCode") in _GATEWAY_INFRA_STEP_STATUSES:
         return True
     last_violation = step.signals.get("last_violation")
     return (
         isinstance(last_violation, Mapping)
-        and last_violation.get("reason_code") == "GATEWAY_ERROR"
+        and last_violation.get("reason_code") in _GATEWAY_INFRA_STEP_STATUSES
     )
 
 

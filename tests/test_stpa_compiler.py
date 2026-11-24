@@ -941,7 +941,7 @@ class TestCompositeGrammar:
 
     @pytest.mark.covers(
         "src.cage_finance.stpa.uca_rules:GeneratedSTPAValidator._check_uca_6#Missing required composite param",
-        "src.cage_finance.stpa.uca_rules:GeneratedSTPAValidator._check_uca_6#Non-finite composite param",
+        "src.cage_finance.stpa.uca_rules:_parse_numeric_value#Non-finite",
         "src.cage_finance.stpa.uca_rules:GeneratedSTPAValidator._check_uca_6#exceeding allowable fraction of daily volume.",
     )
     def test_composite_fails_closed_on_zero_negative_nan_or_missing_rhs(self) -> None:

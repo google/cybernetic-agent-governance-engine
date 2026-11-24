@@ -1097,17 +1097,66 @@ async def policy_precheck_endpoint(
     remote_ctx = otel_extract(carrier)
     token = otel_context.attach(remote_ctx)
     try:
+        from src.gateway.governance.contracts import (
+            PolicyEngineUnavailableError,
+            ServerInputUnavailableError,
+        )
+
         try:
             bound_params = await governor.bind_server_inputs(body.action, body.params)
             # body.action always overrides any caller-supplied "action" inside params.
             opa_payload: dict[str, Any] = {**bound_params, "action": body.action}
             raw_result = await governor.components.opa.evaluate_policy(opa_payload)
             verdict = decode_opa_verdict(raw_result)
-        except Exception as exc:
+        except ServerInputUnavailableError as exc:
             logger.error(
-                "OPA policy-precheck failed for action=%s: %s", body.action, exc
+                "OPA policy-precheck server-input failure for action=%s: %s",
+                body.action,
+                exc,
             )
-            verdict = OpaVerdict.DENY
+            return JSONResponse(
+                status_code=503,
+                content={
+                    "schema_version": "1.0.0",
+                    "action": body.action,
+                    "decision": "UNAVAILABLE",
+                    "dry_run": True,
+                    "advisory": True,
+                    "error": "server_input_unavailable",
+                },
+            )
+        except (PolicyEngineUnavailableError, Exception) as exc:
+            logger.error(
+                "OPA policy-precheck engine error for action=%s: %s", body.action, exc
+            )
+            return JSONResponse(
+                status_code=503,
+                content={
+                    "schema_version": "1.0.0",
+                    "action": body.action,
+                    "decision": "UNAVAILABLE",
+                    "dry_run": True,
+                    "advisory": True,
+                    "error": "policy_engine_unavailable",
+                },
+            )
+
+        if verdict is None:
+            logger.error(
+                "OPA policy-precheck undecodable verdict for action=%s",
+                body.action,
+            )
+            return JSONResponse(
+                status_code=503,
+                content={
+                    "schema_version": "1.0.0",
+                    "action": body.action,
+                    "decision": "UNAVAILABLE",
+                    "dry_run": True,
+                    "advisory": True,
+                    "error": "policy_engine_unavailable",
+                },
+            )
 
         if verdict is OpaVerdict.ALLOW:
             decision = "ALLOW"

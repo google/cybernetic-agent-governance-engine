@@ -119,9 +119,11 @@ class ConsensusTierPlugin(ReadOnlyTier):
             return [
                 Violation(
                     tier=self.tier_name,
-                    code="CONSENSUS_REJECTED",
+                    code="CONSENSUS_UNAVAILABLE",
                     message="Consensus engine is not configured",
-                    kind=ViolationKind.HARD,
+                    kind=ViolationKind.INFRASTRUCTURE,
+                    infra_dependency="consensus",
+                    infra_error_code="consensus_backend_unavailable",
                 )
             ]
         raw_amount = params.get("amount", 0.0) if isinstance(params, dict) else None
@@ -177,6 +179,17 @@ class ConsensusTierPlugin(ReadOnlyTier):
                     code=consensus_violation_code(result, "CONSENSUS_ESCALATED"),
                     message=reason,
                     kind=ViolationKind.HITL,
+                )
+            ]
+        if status == "UNAVAILABLE":
+            return [
+                Violation(
+                    tier=self.tier_name,
+                    code=consensus_violation_code(result, "CONSENSUS_UNAVAILABLE"),
+                    message=reason,
+                    kind=ViolationKind.INFRASTRUCTURE,
+                    infra_dependency="consensus",
+                    infra_error_code="consensus_backend_unavailable",
                 )
             ]
         return [

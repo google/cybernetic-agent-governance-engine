@@ -180,7 +180,6 @@ class TestGuardFailClosed:
                 lambda r: httpx.Response(200, json={"verdict": "DENIED"}),
                 id="denied-200",
             ),
-            pytest.param(lambda r: httpx.Response(500), id="gateway-500"),
             pytest.param(lambda r: httpx.Response(401), id="unauthenticated-401"),
             pytest.param(
                 # PAUSE was removed from GovernanceDecision; a gateway that still
@@ -230,6 +229,23 @@ class TestGuardFailClosed:
         assert msg.tool_call_id == "t1"
         assert msg.content.startswith("Governance refused this action")
 
+    @pytest.mark.asyncio
+    async def test_gateway_500_fails_as_unavailable(self, gateway) -> None:
+        gateway(lambda _r: httpx.Response(500))
+        spy = _SpyNode()
+
+        result = await gateway_tool_guard("execute_trade")(spy)(_state(_call("t1")))
+
+        assert spy.calls == 0
+        assert result["governance_status"] == "UNAVAILABLE"
+        assert result["governance_envelope"] is None
+        (msg,) = result["messages"]
+        assert isinstance(msg, ToolMessage)
+        assert msg.tool_call_id == "t1"
+        assert msg.content.startswith(
+            "Governance unavailable (gateway infrastructure error)"
+        )
+
     @pytest.mark.parametrize(
         "exc",
         [httpx.ReadTimeout, httpx.ConnectError],
@@ -246,7 +262,10 @@ class TestGuardFailClosed:
         result = await gateway_tool_guard("market_analysis")(spy)(_state(_call("t1")))
 
         assert spy.calls == 0
-        assert result["governance_status"] == "DENIED"
+        assert result["governance_status"] == "UNAVAILABLE"
+        assert result["messages"][0].content.startswith(
+            "Governance unavailable (gateway infrastructure error)"
+        )
         assert exc.__name__ in result["messages"][0].content
 
     @pytest.mark.asyncio

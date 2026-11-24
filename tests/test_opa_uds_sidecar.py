@@ -768,7 +768,7 @@ class TestServerBoundPolicyPrecheckEndpoint:
     @pytest.mark.covers(
         "src.gateway.server.governance_middleware:PolicyPrecheckRequest._reject_blank_action#non-empty string",
         "src.gateway.server.governance_middleware:_check_non_finite_recursive#contains non-finite float",
-        "src.gateway.server.governance_middleware:policy_precheck_endpoint#OPA policy-precheck failed for action=",
+        "src.gateway.server.governance_middleware:policy_precheck_endpoint#OPA policy-precheck engine error for action=",
         "src.gateway.server.governance_middleware:policy_precheck_endpoint#if not rl_verdict.allowed:",
     )
     @pytest.mark.asyncio
@@ -803,14 +803,15 @@ class TestServerBoundPolicyPrecheckEndpoint:
                     "/governance/policy-precheck",
                     json={"action": "execute_trade", "params": {"amount": 10}},
                 )
-                assert r_err.status_code == 200
+                assert r_err.status_code == 503
                 body = r_err.json()
                 assert body == {
                     "schema_version": "1.0.0",
                     "action": "execute_trade",
-                    "decision": "DENY",
+                    "decision": "UNAVAILABLE",
                     "dry_run": True,
                     "advisory": True,
+                    "error": "policy_engine_unavailable",
                 }
                 for forbidden_key in (
                     "seal",

@@ -368,8 +368,10 @@ class TestEnforcingPosturesAndUnconfiguredProviders:
         }
         b3_res = contract_b3_liquidity_depth(req, thresholds, mkt)
         assert b3_res.admitted is False
-        assert b3_res.severity is ContractSeverity.HARD_BLOCK
+        assert b3_res.severity is ContractSeverity.INFRASTRUCTURE
+        assert b3_res.code == "BOUNDING_PROVIDER_UNAVAILABLE"
 
         b10_res = contract_b10_rollback_window(req, thresholds, rb)
         assert b10_res.admitted is False
-        assert b10_res.severity is ContractSeverity.HARD_BLOCK
+        assert b10_res.severity is ContractSeverity.INFRASTRUCTURE
+        assert b10_res.code == "BOUNDING_PROVIDER_UNAVAILABLE"

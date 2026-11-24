@@ -137,14 +137,19 @@ _PROFILES = pytest.mark.parametrize("profile", [Profile.FULL, Profile.DRY_RUN])
 async def test_non_hard_stpa_finding_is_promoted_and_stops_before_confidence(
     profile: Profile, kind: ViolationKind
 ) -> None:
-    """(a) A validator's non-HARD UCA becomes HARD; confidence never runs."""
+    """(a) A validator's routable UCA becomes HARD (INFRASTRUCTURE preserved); confidence never runs."""
     finding = Violation(tier="stpa", code="STPA_UCA_TEST", message="uca", kind=kind)
     stages, spy = _assembled(_Opa({"allow": True}), _stpa(finding))
 
     result = await _run(stages, profile)
 
+    expected_kind = (
+        ViolationKind.INFRASTRUCTURE
+        if kind is ViolationKind.INFRASTRUCTURE
+        else ViolationKind.HARD
+    )
     assert [(v.code, v.kind) for v in result.violations] == [
-        ("STPA_UCA_TEST", ViolationKind.HARD)
+        ("STPA_UCA_TEST", expected_kind)
     ]
     assert spy.seen == []
 
