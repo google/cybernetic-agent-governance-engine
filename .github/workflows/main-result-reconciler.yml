@@ -101,8 +101,8 @@ jobs:
           [[ -z "${TARGET_PROJECT}" ]] && missing+=("CAGE_ALERT_VERIFY_GCP_PROJECT")
           [[ -z "${TARGET_TOPIC}" ]] && missing+=("CAGE_ALERT_VERIFY_PUBSUB_TOPIC")
           if (( ${#missing[@]} > 0 )); then
-            echo "::error::[POAM-2026-171] Missing required repository secrets/variables for main-result-reconciler GCP delivery: ${missing[*]}"
-            exit 1
+            echo "::error::[POAM-2026-171] NOT WIRED (exit 3): missing required repository secrets/variables for main-result-reconciler GCP delivery: ${missing[*]}"
+            exit 3
           fi
 
       - name: Mint short-lived GCP access token via keyless WIF
@@ -135,6 +135,7 @@ jobs:
           if [[ "${INPUT_SKIP_LEDGER}" == "true" ]]; then
             extra_args+=(--no-ledger-check)
           fi
+          set +e
           python3 scripts/reconcile_main_check_results.py \
             --ref "${INPUT_REF}" \
             --grace-minutes "${INPUT_GRACE_MINUTES}" \
@@ -143,6 +144,23 @@ jobs:
             --pubsub-topic "${TARGET_TOPIC}" \
             --require-gcp-delivery \
             "${extra_args[@]}"
+          rc=$?
+          set -e
+          case "${rc}" in
+            0) ;;
+            1)
+              echo "::error::[POAM-2026-171] FOUND VIOLATIONS (exit 1): post-merge required-check violations detected on ${INPUT_REF}; GitHub issue and GCP alerts updated."
+              exit 1
+              ;;
+            2)
+              echo "::error::[POAM-2026-171] DELIVERY BROKEN (exit 2): operational error or GCP Pub/Sub / Cloud Monitoring sink failure suppressed the heartbeat metric."
+              exit 2
+              ;;
+            *)
+              echo "::error::[POAM-2026-171] UNEXPECTED FAILURE (exit ${rc}): reconcile_main_check_results.py exited with status ${rc}."
+              exit "${rc}"
+              ;;
+          esac
 
       # Teardown backstop: if GCP WIF preflight failed (e.g., WIF pool destroyed
       # during full project teardown) before `steps.reconcile` ran, still update
@@ -164,8 +182,26 @@ jobs:
           if [[ "${INPUT_SKIP_LEDGER}" == "true" ]]; then
             extra_args+=(--no-ledger-check)
           fi
+          set +e
           python3 scripts/reconcile_main_check_results.py \
             --ref "${INPUT_REF}" \
             --grace-minutes "${INPUT_GRACE_MINUTES}" \
             --sync-github-issue \
             "${extra_args[@]}"
+          rc=$?
+          set -e
+          case "${rc}" in
+            0) ;;
+            1)
+              echo "::error::[POAM-2026-171] FOUND VIOLATIONS (exit 1) during WIF-skipped fallback issue sync on ${INPUT_REF}."
+              exit 1
+              ;;
+            2)
+              echo "::error::[POAM-2026-171] OPERATIONAL FAILURE (exit 2) during WIF-skipped fallback issue sync on ${INPUT_REF}."
+              exit 2
+              ;;
+            *)
+              echo "::error::[POAM-2026-171] UNEXPECTED FAILURE (exit ${rc}) during WIF-skipped fallback issue sync."
+              exit "${rc}"
+              ;;
+          esac

@@ -938,3 +938,18 @@ def test_multi_commit_sha_range_attested_across_issue_pubsub_and_stdout(
     assert stdout_json["floor_sha"] == SHA_FLOOR[:12]
     assert stdout_json["require_ledger_check"] is True
     assert stdout_json["expected_check_count"] == 9
+
+
+def test_workflow_distinguishes_exit_codes_with_error_annotations() -> None:
+    """Workflow emits distinct ::error:: failure annotations for exit 1, 2, and 3."""
+    wf_path = (
+        Path(__file__).resolve().parents[2]
+        / ".github/workflows/main-result-reconciler.yml"
+    )
+    wf_text = wf_path.read_text(encoding="utf-8")
+    assert "::error::[POAM-2026-171] FOUND VIOLATIONS (exit 1)" in wf_text
+    assert "exit 1" in wf_text
+    assert "::error::[POAM-2026-171] DELIVERY BROKEN (exit 2)" in wf_text
+    assert "exit 2" in wf_text
+    assert "::error::[POAM-2026-171] NOT WIRED (exit 3)" in wf_text
+    assert "exit 3" in wf_text
