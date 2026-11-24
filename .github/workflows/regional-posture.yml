@@ -22,14 +22,18 @@ concurrency:
 
 
 # Triggers on pushes to main that touch shared governance/compliance modules
-# (per AGENTS.md Architecture & Design Standards — these paths deploy to all
-# three regional postures simultaneously: US_FED, EU_ECB, APAC_MAS).
+# or plugin overlays across all three regional postures (US_FED, EU_ECB, APAC_MAS).
+# PR-blocking regional & overlay-collision tests run inside `pytest-logic`;
+# this workflow runs post-merge full regional marker suites with
+# `continue-on-error: false` for all three regions.
 on:
   push:
     branches: [main]
     paths:
       - 'config/compliance/**'
       - 'config/thresholds/**'
+      - 'src/cage_*/config/compliance/**'
+      - 'src/cage_*/config/thresholds/**'
       - 'src/gateway/governance/**'
       - 'src/compliance_bridge/**'
   workflow_dispatch:
