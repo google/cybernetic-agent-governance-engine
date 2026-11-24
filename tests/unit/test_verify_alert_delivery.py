@@ -416,3 +416,198 @@ class TestNonDestructiveSubscriptionInspection:
             verifier._validate_https_url(
                 "http://monitoring.googleapis.com/v3/projects/x"
             )
+
+    def test_reconciler_violation_preserved_and_heartbeat_deduped(self) -> None:
+        now_epoch = 1795401000.0
+        older_epoch = now_epoch - 7200.0
+        now_iso = datetime.fromtimestamp(now_epoch, tz=timezone.utc).isoformat()
+        older_iso = datetime.fromtimestamp(older_epoch, tz=timezone.utc).isoformat()
+
+        messages = [
+            {
+                "ackId": "ack-reconciler-viol",
+                "message": {
+                    "messageId": "msg-reconciler-viol",
+                    "publishTime": now_iso,
+                    "data": _b64_json(
+                        {
+                            "source": "main_result_reconciler",
+                            "alert_type": "main_check_violation",
+                            "head_sha": "deadbeef1234567890abcdef",
+                            "violations": [{"sha": "5ebee1edabcdef1234"}],
+                        }
+                    ),
+                },
+            },
+            {
+                "ackId": "ack-reconciler-hb-older",
+                "message": {
+                    "messageId": "msg-reconciler-hb-older",
+                    "publishTime": older_iso,
+                    "data": _b64_json(
+                        {
+                            "source": "main_result_reconciler",
+                            "alert_type": "heartbeat",
+                            "last_checked": older_iso,
+                        }
+                    ),
+                },
+            },
+            {
+                "ackId": "ack-reconciler-hb-newest",
+                "message": {
+                    "messageId": "msg-reconciler-hb-newest",
+                    "publishTime": now_iso,
+                    "data": _b64_json(
+                        {
+                            "source": "main_result_reconciler",
+                            "alert_type": "heartbeat",
+                            "last_checked": now_iso,
+                        }
+                    ),
+                },
+            },
+        ]
+
+        acked: list[str] = []
+        nacked: list[str] = []
+        pulls = [0]
+
+        def _fake_http(
+            method: str,
+            url: str,
+            _token: str,
+            payload: Any = None,
+            timeout: float = 30.0,
+        ) -> dict[str, Any]:
+            if url.endswith(":pull"):
+                pulls[0] += 1
+                return {"receivedMessages": messages if pulls[0] == 1 else []}
+            if url.endswith(":acknowledge"):
+                acked.extend(payload["ackIds"])
+                return {}
+            if url.endswith(":modifyAckDeadline"):
+                if payload["ackDeadlineSeconds"] == 0:
+                    nacked.extend(payload["ackIds"])
+                return {}
+            raise AssertionError(f"Unexpected URL {url}")
+
+        with patch.object(verifier, "_http_json", side_effect=_fake_http):
+            res = verifier.inspect_subscription_batch(
+                subscription_path=SUB_PATH,
+                token="tok",
+                trip_started_epoch=now_epoch - 5.0,
+                expected_violation_head_sha="5ebee1ed",
+            )
+
+        assert res["main_check_violation_observed"] is True
+        assert res["main_check_violation_count"] == 1
+        assert res["main_check_violation_head_shas"] == ["deadbeef1234567890abcdef"]
+        assert res["expected_violation_observed"] is True
+        assert res["freshest_reconciler_heartbeat_epoch"] == pytest.approx(now_epoch)
+        assert res["operational_messages_preserved"] == 1
+        assert acked == ["ack-reconciler-hb-older"]
+        assert set(nacked) == {"ack-reconciler-viol", "ack-reconciler-hb-newest"}
+
+    def test_verify_end_to_end_requires_expected_violation_sha(self) -> None:
+        writes: list[int] = []
+        clock = [200.0]
+
+        def _advance_clock() -> float:
+            val = clock[0]
+            clock[0] += 8.0
+            return val
+
+        batch_without_expected = {
+            "monitoring_heartbeat_observed": True,
+            "monitoring_incident_id": "inc-1",
+            "ondemand_bridge_probe_observed": False,
+            "freshest_bridge_heartbeat_epoch": None,
+            "freshest_reconciler_heartbeat_epoch": 195.0,
+            "main_check_violation_observed": False,
+            "main_check_violation_count": 0,
+            "main_check_violation_head_shas": [],
+            "expected_violation_observed": False,
+            "operational_messages_preserved": 0,
+        }
+
+        with (
+            patch.object(
+                verifier,
+                "write_heartbeat_metric",
+                side_effect=lambda **kw: writes.append(kw["value"]),
+            ),
+            patch.object(
+                verifier,
+                "inspect_subscription_batch",
+                return_value=batch_without_expected,
+            ),
+            patch.object(verifier.time, "sleep", return_value=None),
+            patch.object(verifier.time, "time", side_effect=_advance_clock),
+        ):
+            with pytest.raises(
+                AlertVerificationError, match="main_check_violation envelope"
+            ):
+                verifier.verify_end_to_end_delivery(
+                    project="cage-test-01",
+                    subscription="cage-staging-alerts-verify",
+                    token="tok",
+                    timeout_seconds=15,
+                    poll_interval_seconds=1,
+                    require_bridge_heartbeat=False,
+                    expected_violation_head_sha="5ebee1ed",
+                )
+
+        assert writes == [1, 0]
+
+        writes.clear()
+        batch_with_expected = {
+            **batch_without_expected,
+            "main_check_violation_observed": True,
+            "main_check_violation_count": 1,
+            "main_check_violation_head_shas": ["5ebee1edabcdef"],
+            "expected_violation_observed": True,
+        }
+        with (
+            patch.object(
+                verifier,
+                "write_heartbeat_metric",
+                side_effect=lambda **kw: writes.append(kw["value"]),
+            ),
+            patch.object(
+                verifier,
+                "inspect_subscription_batch",
+                return_value=batch_with_expected,
+            ),
+            patch.object(verifier.time, "sleep", return_value=None),
+            patch.object(verifier.time, "time", return_value=300.0),
+        ):
+            report = verifier.verify_end_to_end_delivery(
+                project="cage-test-01",
+                subscription="cage-staging-alerts-verify",
+                token="tok",
+                timeout_seconds=15,
+                poll_interval_seconds=1,
+                require_bridge_heartbeat=False,
+                expected_violation_head_sha="5ebee1ed",
+            )
+
+        assert report["main_check_violation_observed"] is True
+        assert report["main_check_violation_count"] == 1
+        assert report["main_check_violation_head_shas"] == ["5ebee1edabcdef"]
+        assert report["expected_main_check_violation_sha"] == "5ebee1ed"
+        assert report["periodic_reconciler_heartbeat_age_seconds"] is not None
+        assert writes == [1, 0]
+
+    def test_cli_parses_expect_main_check_violation_sha(self) -> None:
+        args = verifier._build_parser().parse_args(
+            [
+                "--project",
+                "cage-test-01",
+                "--subscription",
+                "cage-staging-alerts-verify",
+                "--expect-main-check-violation-sha",
+                "5ebee1ed",
+            ]
+        )
+        assert args.expect_main_check_violation_sha == "5ebee1ed"

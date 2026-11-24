@@ -101,8 +101,8 @@ jobs:
           [[ -z "${TARGET_PROJECT}" ]] && missing+=("CAGE_ALERT_VERIFY_GCP_PROJECT")
           [[ -z "${TARGET_TOPIC}" ]] && missing+=("CAGE_ALERT_VERIFY_PUBSUB_TOPIC")
           if (( ${#missing[@]} > 0 )); then
-            echo "::error::[POAM-2026-171] Missing required repository secrets/variables for main-result-reconciler GCP delivery: ${missing[*]}"
-            exit 1
+            echo "::error::[POAM-2026-171] Missing required repository secrets/variables for main-result-reconciler GCP delivery (exit 3; distinct from exit 1 violations-found and exit 2 operational/delivery failure): ${missing[*]}"
+            exit 3
           fi
 
       - name: Mint short-lived GCP access token via keyless WIF

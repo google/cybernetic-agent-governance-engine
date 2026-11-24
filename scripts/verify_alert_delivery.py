@@ -434,12 +434,29 @@ def _nack_messages(subscription_path: str, token: str, ack_ids: list[str]) -> No
     _modify_ack_deadline(subscription_path, token, ack_ids, 0)
 
 
+def _retain_newest_periodic(
+    entries: list[tuple[float, str]],
+    nack_ids: list[str],
+    ack_ids: list[str],
+) -> float | None:
+    """Keep the newest periodic heartbeat unacked and ack older duplicates."""
+    if not entries:
+        return None
+    entries.sort(key=lambda pair: pair[0], reverse=True)
+    freshest_epoch, newest_ack_id = entries[0]
+    nack_ids.append(newest_ack_id)
+    for _older_epoch, older_ack_id in entries[1:]:
+        ack_ids.append(older_ack_id)
+    return freshest_epoch
+
+
 def inspect_subscription_batch(
     *,
     subscription_path: str,
     token: str,
     trip_started_epoch: float,
     expected_ondemand_probe_id: str | None = None,
+    expected_violation_head_sha: str | None = None,
     max_batches: int = 10,
 ) -> dict[str, Any]:
     """Drain up to ``max_batches`` Pub/Sub pulls, acking only synthetic probes.
@@ -459,6 +476,12 @@ def inspect_subscription_batch(
     monitoring_incident_id: str | None = None
     ondemand_bridge_probe_observed = False
     periodic_bridge_heartbeats: list[tuple[float, str]] = []
+    periodic_reconciler_heartbeats: list[tuple[float, str]] = []
+    main_check_violation_observed = False
+    main_check_violation_count = 0
+    main_check_violation_head_shas: list[str] = []
+    expected_violation_norm = (expected_violation_head_sha or "").strip().lower()
+    expected_violation_observed = False
     operational_preserved = 0
 
     try:
@@ -574,6 +597,40 @@ def inspect_subscription_batch(
                             periodic_bridge_heartbeats.append((msg_epoch, ack_id))
                     continue
 
+                # Case 3: main-result-reconciler envelopes (POAM-2026-171)
+                if payload.get("source") == "main_result_reconciler":
+                    alert_type = str(payload.get("alert_type", "")).strip()
+                    if alert_type == "main_check_violation":
+                        main_check_violation_observed = True
+                        main_check_violation_count += 1
+                        head_sha = str(payload.get("head_sha", "")).strip()
+                        if head_sha and head_sha not in main_check_violation_head_shas:
+                            main_check_violation_head_shas.append(head_sha)
+                        if expected_violation_norm:
+                            viol_shas = [
+                                str(v.get("sha", "")).strip().lower()
+                                for v in (payload.get("violations") or [])
+                                if isinstance(v, dict)
+                            ]
+                            if head_sha.lower().startswith(
+                                expected_violation_norm
+                            ) or any(
+                                s.startswith(expected_violation_norm) for s in viol_shas
+                            ):
+                                expected_violation_observed = True
+                        if ack_id:
+                            nack_ids.append(ack_id)
+                            operational_preserved += 1
+                        continue
+                    if alert_type == "heartbeat":
+                        msg_epoch = (
+                            _parse_iso_epoch(str(payload.get("last_checked", "")))
+                            or publish_epoch
+                        )
+                        if ack_id:
+                            periodic_reconciler_heartbeats.append((msg_epoch, ack_id))
+                        continue
+
                 # Everything else is an operational alert -> preserve in queue!
                 if ack_id:
                     nack_ids.append(ack_id)
@@ -582,13 +639,12 @@ def inspect_subscription_batch(
             if new_in_batch == 0:
                 break
 
-        freshest_bridge_epoch: float | None = None
-        if periodic_bridge_heartbeats:
-            periodic_bridge_heartbeats.sort(key=lambda pair: pair[0], reverse=True)
-            freshest_bridge_epoch, newest_ack_id = periodic_bridge_heartbeats[0]
-            nack_ids.append(newest_ack_id)
-            for _older_epoch, older_ack_id in periodic_bridge_heartbeats[1:]:
-                ack_ids.append(older_ack_id)
+        freshest_bridge_epoch = _retain_newest_periodic(
+            periodic_bridge_heartbeats, nack_ids, ack_ids
+        )
+        freshest_reconciler_epoch = _retain_newest_periodic(
+            periodic_reconciler_heartbeats, nack_ids, ack_ids
+        )
     finally:
         if ack_ids:
             _ack_messages(subscription_path, token, ack_ids)
@@ -600,6 +656,11 @@ def inspect_subscription_batch(
         "monitoring_incident_id": monitoring_incident_id,
         "ondemand_bridge_probe_observed": ondemand_bridge_probe_observed,
         "freshest_bridge_heartbeat_epoch": freshest_bridge_epoch,
+        "freshest_reconciler_heartbeat_epoch": freshest_reconciler_epoch,
+        "main_check_violation_observed": main_check_violation_observed,
+        "main_check_violation_count": main_check_violation_count,
+        "main_check_violation_head_shas": main_check_violation_head_shas,
+        "expected_violation_observed": expected_violation_observed,
         "operational_messages_preserved": operational_preserved,
     }
 
@@ -614,6 +675,7 @@ def verify_end_to_end_delivery(
     require_bridge_heartbeat: bool = True,
     max_bridge_heartbeat_age_seconds: int = 25200,
     emit_bridge_heartbeat_topic: str = "",
+    expected_violation_head_sha: str = "",
 ) -> dict[str, Any]:
     """Trip Cloud Monitoring synthetic heartbeat + verify arrival on Pub/Sub."""
     subscription_path = _normalize_subscription(project, subscription)
@@ -627,6 +689,7 @@ def verify_end_to_end_delivery(
             probe_id=ondemand_probe_id,
         )
 
+    expected_violation_sha = expected_violation_head_sha.strip()
     monitoring_probe_id = uuid.uuid4().hex[:12]
     trip_started_epoch = time.time()
     last_metric_write = 0.0
@@ -634,6 +697,11 @@ def verify_end_to_end_delivery(
     monitoring_incident_id: str | None = None
     ondemand_ok = ondemand_probe_id is None
     freshest_bridge_epoch: float | None = None
+    freshest_reconciler_epoch: float | None = None
+    main_check_violation_observed = False
+    main_check_violation_count = 0
+    main_check_violation_head_shas: list[str] = []
+    expected_violation_ok = not expected_violation_sha
 
     try:
         deadline = trip_started_epoch + max(timeout_seconds, 15)
@@ -653,6 +721,7 @@ def verify_end_to_end_delivery(
                 token=token,
                 trip_started_epoch=trip_started_epoch,
                 expected_ondemand_probe_id=ondemand_probe_id,
+                expected_violation_head_sha=expected_violation_sha or None,
             )
             if batch["monitoring_heartbeat_observed"]:
                 monitoring_ok = True
@@ -665,13 +734,36 @@ def verify_end_to_end_delivery(
                     or batch["freshest_bridge_heartbeat_epoch"] > freshest_bridge_epoch
                 ):
                     freshest_bridge_epoch = batch["freshest_bridge_heartbeat_epoch"]
+            reconciler_epoch = batch.get("freshest_reconciler_heartbeat_epoch")
+            if reconciler_epoch is not None:
+                if (
+                    freshest_reconciler_epoch is None
+                    or reconciler_epoch > freshest_reconciler_epoch
+                ):
+                    freshest_reconciler_epoch = reconciler_epoch
+            if batch.get("main_check_violation_observed"):
+                main_check_violation_observed = True
+            main_check_violation_count = max(
+                main_check_violation_count,
+                int(batch.get("main_check_violation_count") or 0),
+            )
+            for sha in batch.get("main_check_violation_head_shas") or []:
+                if sha not in main_check_violation_head_shas:
+                    main_check_violation_head_shas.append(sha)
+            if batch.get("expected_violation_observed"):
+                expected_violation_ok = True
 
             bridge_fresh_ok = not require_bridge_heartbeat or (
                 freshest_bridge_epoch is not None
                 and (time.time() - freshest_bridge_epoch)
                 <= max_bridge_heartbeat_age_seconds
             )
-            if monitoring_ok and ondemand_ok and bridge_fresh_ok:
+            if (
+                monitoring_ok
+                and ondemand_ok
+                and bridge_fresh_ok
+                and expected_violation_ok
+            ):
                 break
 
             time.sleep(max(poll_interval_seconds, 1))
@@ -696,9 +788,22 @@ def verify_end_to_end_delivery(
             f"not observed on {subscription_path!r} within {timeout_seconds}s."
         )
 
+    if not expected_violation_ok:
+        raise AlertVerificationError(
+            f"Expected main_result_reconciler main_check_violation envelope for SHA "
+            f"{expected_violation_sha!r} was not observed on {subscription_path!r} "
+            f"within {timeout_seconds}s (seen={main_check_violation_head_shas!r})."
+        )
+
     bridge_age_seconds: float | None = None
     if freshest_bridge_epoch is not None:
         bridge_age_seconds = round(max(0.0, time.time() - freshest_bridge_epoch), 2)
+
+    reconciler_age_seconds: float | None = None
+    if freshest_reconciler_epoch is not None:
+        reconciler_age_seconds = round(
+            max(0.0, time.time() - freshest_reconciler_epoch), 2
+        )
 
     if require_bridge_heartbeat:
         if bridge_age_seconds is None:
@@ -720,6 +825,11 @@ def verify_end_to_end_delivery(
         "monitoring_incident_id": monitoring_incident_id,
         "ondemand_bridge_probe_delivered": ondemand_probe_id is not None,
         "periodic_bridge_heartbeat_age_seconds": bridge_age_seconds,
+        "periodic_reconciler_heartbeat_age_seconds": reconciler_age_seconds,
+        "main_check_violation_observed": main_check_violation_observed,
+        "main_check_violation_count": main_check_violation_count,
+        "main_check_violation_head_shas": main_check_violation_head_shas,
+        "expected_main_check_violation_sha": expected_violation_sha or None,
     }
 
 
@@ -781,6 +891,14 @@ def _build_parser() -> argparse.ArgumentParser:
         default="",
         help="Optional Pub/Sub topic to publish an immediate on-demand bridge probe.",
     )
+    parser.add_argument(
+        "--expect-main-check-violation-sha",
+        default="",
+        help=(
+            "Optional git commit SHA (prefix or full) expected in a "
+            "main_result_reconciler main_check_violation envelope on the queue."
+        ),
+    )
     return parser
 
 
@@ -804,6 +922,7 @@ def main(argv: list[str] | None = None) -> int:
             require_bridge_heartbeat=not args.skip_bridge_heartbeat,
             max_bridge_heartbeat_age_seconds=args.max_bridge_heartbeat_age_seconds,
             emit_bridge_heartbeat_topic=args.emit_bridge_heartbeat_topic,
+            expected_violation_head_sha=args.expect_main_check_violation_sha,
         )
     except AlertVerificationError as exc:
         print(

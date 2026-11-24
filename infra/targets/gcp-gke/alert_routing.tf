@@ -251,11 +251,15 @@ resource "google_monitoring_alert_policy" "main_result_reconciler_absent" {
 
       Fires when `.github/workflows/main-result-reconciler.yml` (`scripts/reconcile_main_check_results.py`)
       writes no `custom.googleapis.com/cage/main_result_reconciler_heartbeat` point (`ref = "main"`)
-      for `21600s` (`6h`, `3x` the `2h` schedule). Known silent-stop causes: workflow manually
-      disabled, workflow YAML syntax error (no run created), GitHub Actions outage or quota
-      exhaustion, or GitHub auto-disabling scheduled workflows after 60 days of repository
-      inactivity. Inspect `.github/workflows/main-result-reconciler.yml` runs and the
-      `last-checked:` timestamp on the `main-check-reconciliation` GitHub issue.
+      for `21600s` (`6h`, `3x` the `2h` schedule). Because `deliver_gcp_sinks()` runs
+      `_publish_pubsub_envelope()` before `_write_reconciler_heartbeat_metric()`, any Pub/Sub publish
+      failure (for example `HTTP 403 PERMISSION_DENIED` on `roles/pubsub.publisher`) suppresses the
+      heartbeat metric and pages as `absent`: a red workflow log with `403` is a likelier first
+      cause than a dead scheduler. Other silent-stop causes: workflow manually disabled, workflow
+      YAML syntax error (no run created), GitHub Actions outage or quota exhaustion, or GitHub
+      auto-disabling scheduled workflows after 60 days of repository inactivity. Inspect
+      `.github/workflows/main-result-reconciler.yml` runs and the `last-checked:` timestamp on the
+      `main-check-reconciliation` GitHub issue.
     EOT
   }
 
