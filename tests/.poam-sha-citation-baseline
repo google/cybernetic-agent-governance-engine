@@ -1,5 +1,5 @@
 {
-  "baseline": 214,
+  "baseline": 208,
   "class_counts": {
     "ambiguous_abbreviation": 0,
     "chronology_undatable": 9,
@@ -10,7 +10,7 @@
     "paired_main_not_ancestor": 3,
     "paired_missing_pr": 1,
     "unlabelled_kind": 0,
-    "unlabelled_unresolved": 80
+    "unlabelled_unresolved": 74
   },
   "detector_sha256": "ec17e080e2eb3c0da204ff3b830a6de8e29c1d61a36a75f3fe480a2d4325fdc7",
   "history": [
@@ -34,6 +34,38 @@
       "detector_sha256": "ec17e080e2eb3c0da204ff3b830a6de8e29c1d61a36a75f3fe480a2d4325fdc7",
       "event": "initial_baseline",
       "reason": "Initial baseline over docs/POAM.md and docs/compliance/**/POAM_*.md at main 1279cf95: standing citation debt recorded per class; dead_commit_claim and chronology_violation are burned down first by correcting the POA&M citations in a follow-up change."
+    },
+    {
+      "after_baseline": 208,
+      "after_class_counts": {
+        "ambiguous_abbreviation": 0,
+        "chronology_undatable": 9,
+        "chronology_violation": 7,
+        "closure_date_unparseable": 69,
+        "dead_commit_claim": 45,
+        "label_type_mismatch": 0,
+        "paired_main_not_ancestor": 3,
+        "paired_missing_pr": 1,
+        "unlabelled_kind": 0,
+        "unlabelled_unresolved": 74
+      },
+      "before_baseline": 214,
+      "before_class_counts": {
+        "ambiguous_abbreviation": 0,
+        "chronology_undatable": 9,
+        "chronology_violation": 7,
+        "closure_date_unparseable": 69,
+        "dead_commit_claim": 45,
+        "label_type_mismatch": 0,
+        "paired_main_not_ancestor": 3,
+        "paired_missing_pr": 1,
+        "unlabelled_kind": 0,
+        "unlabelled_unresolved": 80
+      },
+      "before_detector_sha256": "ec17e080e2eb3c0da204ff3b830a6de8e29c1d61a36a75f3fe480a2d4325fdc7",
+      "detector_sha256": "ec17e080e2eb3c0da204ff3b830a6de8e29c1d61a36a75f3fe480a2d4325fdc7",
+      "event": "update",
+      "reason": "Close Wave 0 POAM items (#768, #742/#839, #749, #806/#830, #825, #871)"
     }
   ],
   "schema_version": 1,
@@ -315,7 +347,7 @@
     "36d5cab9c97cd123faa50b1f": {
       "class": "unlabelled_unresolved",
       "context": "eu-ecb-bycomp-0007 , 0c2d40d7 , <> , 2f94e8b5 ) relied",
-      "count": 2,
+      "count": 1,
       "file": "docs/POAM.md",
       "subject": "c6fc7ee5"
     },
@@ -637,7 +669,7 @@
     "75ad769ed9a8a508fa9c1e1a": {
       "class": "unlabelled_unresolved",
       "context": "rows ( eu-ecb-bycomp-0007 , <> , c6fc7ee5 , 2f94e8b5",
-      "count": 3,
+      "count": 1,
       "file": "docs/POAM.md",
       "subject": "0c2d40d7"
     },
@@ -879,13 +911,6 @@
       "file": "docs/POAM.md",
       "subject": "row"
     },
-    "a0c2d4759eb7ffff32a23d5f": {
-      "class": "unlabelled_unresolved",
-      "context": "0c2d40d7 , c6fc7ee5 , <> ) are restated to",
-      "count": 1,
-      "file": "docs/POAM.md",
-      "subject": "2f94e8b5"
-    },
     "a1004b4e5405397b7b6e21cc": {
       "class": "unlabelled_unresolved",
       "context": "it on main ( <> ).",
@@ -1078,7 +1103,7 @@
     "ca750060d43c1f2c1659febb": {
       "class": "unlabelled_unresolved",
       "context": "0c2d40d7 , c6fc7ee5 , <> ) relied on test",
-      "count": 2,
+      "count": 1,
       "file": "docs/POAM.md",
       "subject": "2f94e8b5"
     },
@@ -1102,13 +1127,6 @@
       "count": 1,
       "file": "docs/POAM.md",
       "subject": "cb4f7d3a"
-    },
-    "cd8ac5cc1cdc24c2e3ac7702": {
-      "class": "unlabelled_unresolved",
-      "context": "eu-ecb-bycomp-0007 , 0c2d40d7 , <> , 2f94e8b5 ) are",
-      "count": 1,
-      "file": "docs/POAM.md",
-      "subject": "c6fc7ee5"
     },
     "ceae27d5940100d1805b4cce": {
       "class": "dead_commit_claim",
