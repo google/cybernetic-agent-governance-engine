@@ -108,20 +108,26 @@ async def test_accepted_trade_confirms() -> None:
 
 @pytest.mark.asyncio
 async def test_rejected_trade_releases() -> None:
+    from src.gateway.governance.seams.actuation import ActuationRejectedError
+
     governor = _governor()
-    with pytest.raises(SymbolicGovernorViolation, match="Actuation rejected"):
+    with pytest.raises(ActuationRejectedError, match="Actuation rejected") as exc_info:
         await _run(governor, actuate=AsyncMock(return_value=_receipt(False)))
+    assert not isinstance(exc_info.value, SymbolicGovernorViolation)
     governor.settle.assert_awaited_once_with(_SEAL, executed=False)
 
 
 @pytest.mark.asyncio
 async def test_actuation_error_confirms() -> None:
+    from src.gateway.governance.seams.actuation import ActuationIndeterminateError
+
     # An actuator that raised (e.g. timed out mid-request) gives no proof the
     # order did not fill: dispatch_actuation records it as an UNKNOWN receipt,
     # so reservations are confirmed (conservative), never released.
     governor = _governor()
-    with pytest.raises(SymbolicGovernorViolation, match="indeterminate"):
+    with pytest.raises(ActuationIndeterminateError, match="indeterminate") as exc_info:
         await _run(governor, actuate=AsyncMock(side_effect=TimeoutError("broker")))
+    assert not isinstance(exc_info.value, SymbolicGovernorViolation)
     governor.settle.assert_awaited_once_with(_SEAL, executed=True)
 
 

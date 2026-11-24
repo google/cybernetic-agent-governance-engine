@@ -80,15 +80,18 @@ without it.
 from __future__ import annotations
 
 import functools
+import hashlib
+import json
 import logging
 import uuid
-from collections.abc import Awaitable, Callable
+from collections.abc import Awaitable, Callable, Mapping
 from typing import Any, Protocol
 
 from langchain_core.messages import AIMessage, ToolMessage
 from langgraph.config import get_config
 
 from src.gateway.governance.commit_outcome import (
+    INDETERMINATE_STATUSES,
     ApprovalRedemptionRefusal,
     CommitOutcome,
     CommitStatus,
@@ -98,6 +101,7 @@ from src.gateway.governance.decisions import GovernanceDecision
 from src.governed_financial_advisor.graph.nodes.trade_contract import (
     TRADE_ACTION,
     TRADE_TOOL,
+    extract_trade_steps,
     reusable_allow_verdict,
 )
 from src.governed_financial_advisor.infrastructure.gateway_client import GatewayClient
@@ -260,15 +264,92 @@ def _run_thread_id() -> str | None:
     return str(thread_id) if thread_id else None
 
 
-def derive_transaction_id(
-    tool_call_id: str, *, thread_id: str | None, message_id: str | None
-) -> str:
-    """The deterministic UUIDv5 idempotency key of one trade tool call.
+def _canonical_intent_tuple(args: Any) -> tuple[str, str, str, str]:
+    """Extract normalized ``(symbol, currency, side, amount_key)`` from tool call args."""
+    mapping = args if isinstance(args, Mapping) else {}
+    symbol = str(mapping.get("symbol") or "").strip().upper()
+    currency = str(mapping.get("currency") or "USD").strip().upper()
+    side = str(mapping.get("side") or "buy").strip().lower()
+    raw_amount = mapping.get("amount")
+    if isinstance(raw_amount, (int, float)) and not isinstance(raw_amount, bool):
+        amount_key = f"{float(raw_amount):.8f}"
+    else:
+        amount_key = str(raw_amount or "").strip()
+    return (symbol, currency, side, amount_key)
 
-    Scoped by the LangGraph thread; without one, by the ``AIMessage`` id.
+
+def _plan_step_bindings(state: Any) -> tuple[str | None, list[dict[str, Any]]]:
+    """Return ``(plan_digest, trade_steps)`` from ``state.get('execution_plan')`` if parseable."""
+    if not isinstance(state, Mapping):
+        return None, []
+    plan_raw = state.get("execution_plan")
+    plan_dict: Mapping[str, Any] | None = None
+    if isinstance(plan_raw, Mapping):
+        plan_dict = plan_raw
+    elif isinstance(plan_raw, str) and plan_raw.strip():
+        try:
+            loaded = json.loads(plan_raw)
+            if isinstance(loaded, Mapping):
+                plan_dict = loaded
+        except json.JSONDecodeError:
+            plan_dict = None
+    if not plan_dict:
+        return None, []
+    try:
+        steps = extract_trade_steps(plan_dict)
+    except Exception:
+        steps = []
+    canonical_plan = json.dumps(
+        plan_dict, sort_keys=True, separators=(",", ":"), default=str
+    )
+    plan_digest = hashlib.sha256(canonical_plan.encode("utf-8")).hexdigest()[:24]
+    return plan_digest, steps
+
+
+def derive_plan_step_key(
+    args: Any,
+    *,
+    plan_digest: str | None = None,
+    plan_steps: list[dict[str, Any]] | None = None,
+    used_step_indices: set[int] | None = None,
+    occurrence: int = 0,
+) -> str:
+    """Bind a trade call deterministically to its approved plan step or canonical intent."""
+    symbol, currency, side, amount_key = _canonical_intent_tuple(args)
+    if plan_digest is not None and plan_steps:
+        taken = used_step_indices if used_step_indices is not None else set()
+        # Match exact plan step by (symbol, currency, side, amount), or (symbol, currency, side)
+        # in case a narrowed step adjusted amount, falling back to plan step order.
+        for exact in (True, False):
+            for idx, step in enumerate(plan_steps):
+                if idx in taken:
+                    continue
+                s_sym, s_cur, s_side, s_amt = _canonical_intent_tuple(step)
+                if (s_sym, s_cur, s_side) == (symbol, currency, side) and (
+                    not exact or s_amt == amount_key
+                ):
+                    taken.add(idx)
+                    return f"plan:{plan_digest}|step:{idx}|{s_sym}|{s_cur}|{s_side}|{s_amt}"
+        for idx, step in enumerate(plan_steps):
+            if idx not in taken:
+                taken.add(idx)
+                s_sym, s_cur, s_side, s_amt = _canonical_intent_tuple(step)
+                return f"plan:{plan_digest}|step:{idx}|{s_sym}|{s_cur}|{s_side}|{s_amt}"
+        return f"plan:{plan_digest}|extra:{occurrence}|{symbol}|{currency}|{side}|{amount_key}"
+    return f"intent:{symbol}|{amount_key}|{currency}|{side}|occ:{occurrence}"
+
+
+def derive_transaction_id(
+    step_key: str, *, thread_id: str | None, message_id: str | None
+) -> str:
+    """The deterministic UUIDv5 idempotency key of one trade step/intent.
+
+    Scoped by the LangGraph thread (so retries across LLM turns keep the same key);
+    without one, by the ``AIMessage`` id. Bound to plan step & canonical intent
+    rather than per-LLM-call ``tool_call_id`` (POAM-2026-232 Stage 4).
     """
     scope = f"thread:{thread_id}" if thread_id else f"message:{message_id}"
-    return str(uuid.uuid5(_TRANSACTION_ID_NAMESPACE, f"{scope}|call:{tool_call_id}"))
+    return str(uuid.uuid5(_TRANSACTION_ID_NAMESPACE, f"{scope}|step:{step_key}"))
 
 
 def _with_derived_transaction_ids(state: Any) -> Any:
@@ -285,16 +366,29 @@ def _with_derived_transaction_ids(state: Any) -> Any:
         return state
     thread_id = _run_thread_id()
     message_id = getattr(last, "id", None)
+    plan_digest, plan_steps = _plan_step_bindings(state)
+    used_step_indices: set[int] = set()
+    intent_counts: dict[tuple[str, str, str, str], int] = {}
     rewritten = []
     for call in calls:
         if call.get("name") == TRADE_TOOL:
             args = call.get("args")
+            intent = _canonical_intent_tuple(args)
+            occ = intent_counts.get(intent, 0)
+            intent_counts[intent] = occ + 1
+            step_key = derive_plan_step_key(
+                args,
+                plan_digest=plan_digest,
+                plan_steps=plan_steps,
+                used_step_indices=used_step_indices,
+                occurrence=occ,
+            )
             call = {
                 **call,
                 "args": {
                     **(args if isinstance(args, dict) else {}),
                     "transaction_id": derive_transaction_id(
-                        str(call.get("id")), thread_id=thread_id, message_id=message_id
+                        step_key, thread_id=thread_id, message_id=message_id
                     ),
                 },
             }
@@ -363,7 +457,7 @@ def _still_awaiting_message(call: dict[str, Any], outcome: CommitOutcome) -> str
 
 def _terminal_message(call: dict[str, Any], outcome: CommitOutcome | None) -> str:
     trade = describe_trade(call)
-    if outcome is None:
+    if outcome is None or outcome.status in INDETERMINATE_STATUSES:
         # The run may have executed: never invite a resubmission.
         return (
             f"The outcome of your {trade} trade could not be confirmed. Do not "

@@ -58,13 +58,16 @@ class ResponseCategory(str, Enum):
     """Classification of an actuator response."""
 
     ACCEPTED = "ACCEPTED"
-    """200 OK with a valid receipt body."""
+    """200 OK with a valid receipt body and explicit acceptance status."""
 
     REJECTED_TERMINAL = "REJECTED_TERMINAL"
-    """Non-retryable rejection — do not retry."""
+    """Definitive pre-execution non-retryable rejection — do not retry."""
 
     REJECTED_RETRYABLE = "REJECTED_RETRYABLE"
-    """Transient failure — safe to retry with backoff."""
+    """Definitive pre-execution transient rejection — safe to retry with backoff."""
+
+    INDETERMINATE = "INDETERMINATE"
+    """Ambiguous status or unconfirmed 200 receipt — side effect cannot be ruled out."""
 
     NETWORK_ERROR = "NETWORK_ERROR"
     """Transport-level failure (connection refused, RST, DNS, TLS)."""
@@ -103,11 +106,15 @@ class ClassifiedResponse:
 
 # ── Status code sets ──────────────────────────────────────────────────────
 
-_RETRYABLE_STATUS_CODES: frozenset[int] = frozenset({408, 429, 500, 502, 503, 504})
+# Only 400/401/403 prove pre-execution refusal without ambiguity. Statuses such
+# as 408/409/421/422/429/500/502/503/504 can originate from proxies or duplicate
+# state conflicts after a prior attempt executed and therefore settle UNKNOWN.
+_TERMINAL_STATUS_CODES: frozenset[int] = frozenset({400, 401})
+_AMBIGUOUS_HTTP_STATUS_CODES: frozenset[int] = frozenset(
+    {408, 409, 421, 422, 429, 500, 502, 503, 504}
+)
 
-_TERMINAL_STATUS_CODES: frozenset[int] = frozenset({400, 401, 409, 421, 422})
-
-# 403 is ambiguous — must inspect the response body.
+# 403 is disambiguated via response body (LOAD_SHED vs terminal admission refusal).
 _AMBIGUOUS_STATUS_CODE = 403
 
 
@@ -191,8 +198,12 @@ def _classify_403(body: dict | None) -> ClassifiedResponse:
     )
 
 
+_ACCEPTED_RECEIPT_STATUSES: frozenset[str] = frozenset({"ACCEPTED", "OK", "EXECUTED"})
+_REJECTED_RECEIPT_STATUSES: frozenset[str] = frozenset({"REJECTED", "DENIED"})
+
+
 def _classify_200(body: dict | None) -> ClassifiedResponse:
-    """Parse a 200 OK response and extract receipt fields.
+    """Parse a 200 OK response and verify explicit acceptance status and receipt_id.
 
     Expected body shape (per wire contract):
     ```json
@@ -204,13 +215,15 @@ def _classify_200(body: dict | None) -> ClassifiedResponse:
     }
     ```
 
-    If the body is unparseable or missing required fields, the response is
-    classified as REJECTED_TERMINAL (fail-closed: a 200 without a valid
-    receipt is treated as a rejection, not a silent accept).
+    Any 200 OK whose body is unparseable, lacks ``receipt_id``, or carries a
+    missing/non-accepted ``status`` (other than explicit ``REJECTED`` /
+    ``DENIED``) is classified as ``INDETERMINATE`` so downstream callers keep
+    reservations held rather than treating an unconfirmed 200 as accepted or
+    safely rejected (POAM-2026-232).
     """
-    if body is None:
+    if body is None or not isinstance(body, dict):
         return ClassifiedResponse(
-            category=ResponseCategory.REJECTED_TERMINAL,
+            category=ResponseCategory.INDETERMINATE,
             status_code=200,
             error_code="UNPARSEABLE_RECEIPT",
             error_message="200 OK but response body is not valid JSON",
@@ -219,17 +232,64 @@ def _classify_200(body: dict | None) -> ClassifiedResponse:
                 {
                     "code": "UNPARSEABLE_RECEIPT",
                     "severity": "TERMINAL",
-                    "detail": "200 OK with unparseable body — fail-closed",
+                    "detail": "200 OK with unparseable body — outcome indeterminate",
                 }
             ],
         )
 
     receipt_id = body.get("receipt_id")
     session_uuid = body.get("session_uuid")
+    raw_status = body.get("status")
+    status_str = raw_status.strip().upper() if isinstance(raw_status, str) else ""
 
-    if not receipt_id:
+    if status_str in _REJECTED_RECEIPT_STATUSES:
+        error_code, message = _extract_error(body)
         return ClassifiedResponse(
             category=ResponseCategory.REJECTED_TERMINAL,
+            status_code=200,
+            receipt_id=receipt_id
+            if isinstance(receipt_id, str) and receipt_id
+            else None,
+            session_uuid=session_uuid,
+            raw_body=body,
+            error_code=error_code or f"PARTNER_STATUS_{status_str}",
+            error_message=message
+            or f"200 OK with explicit refusal status={status_str!r}",
+            retryable=False,
+            findings=[
+                {
+                    "code": error_code or f"PARTNER_STATUS_{status_str}",
+                    "severity": "TERMINAL",
+                    "detail": message
+                    or f"Explicit partner refusal status={status_str!r}",
+                }
+            ],
+        )
+
+    if status_str not in _ACCEPTED_RECEIPT_STATUSES:
+        return ClassifiedResponse(
+            category=ResponseCategory.INDETERMINATE,
+            status_code=200,
+            receipt_id=receipt_id
+            if isinstance(receipt_id, str) and receipt_id
+            else None,
+            session_uuid=session_uuid,
+            raw_body=body,
+            error_code="AMBIGUOUS_RECEIPT_STATUS",
+            error_message=f"200 OK with unconfirmed receipt status={raw_status!r}",
+            retryable=False,
+            findings=[
+                {
+                    "code": "AMBIGUOUS_RECEIPT_STATUS",
+                    "severity": "TERMINAL",
+                    "detail": f"200 OK without explicit ACCEPTED/OK/EXECUTED status (got {raw_status!r}) — outcome indeterminate",
+                }
+            ],
+        )
+
+    if not isinstance(receipt_id, str) or not receipt_id.strip():
+        return ClassifiedResponse(
+            category=ResponseCategory.INDETERMINATE,
             status_code=200,
             session_uuid=session_uuid,
             raw_body=body,
@@ -240,7 +300,7 @@ def _classify_200(body: dict | None) -> ClassifiedResponse:
                 {
                     "code": "MISSING_RECEIPT_ID",
                     "severity": "TERMINAL",
-                    "detail": "200 OK with no receipt_id — fail-closed",
+                    "detail": "200 OK with no receipt_id — outcome indeterminate",
                 }
             ],
         )
@@ -260,8 +320,9 @@ def classify_response(response: httpx.Response) -> ClassifiedResponse:
     """Classify an actuator HTTP response.
 
     This is the single entry point used by ``Actuator01Adapter.actuate()``.
-    Follows fail-closed semantics: any unrecognised status code or malformed
-    body is treated as a terminal rejection.
+    Follows fail-closed semantics: only explicit pre-execution refusals
+    (``400``, ``401``, ``403``) reject; ambiguous or unrecognised statuses and
+    unconfirmed ``200`` responses classify as ``INDETERMINATE``.
 
     Args:
         response: The ``httpx.Response`` from ``ActuatorHttpClient.submit_envelope``.
@@ -295,33 +356,7 @@ def classify_response(response: httpx.Response) -> ClassifiedResponse:
         )
         return result
 
-    # ── Retryable status codes ────────────────────────────────────────────
-    if status in _RETRYABLE_STATUS_CODES:
-        result = ClassifiedResponse(
-            category=ResponseCategory.REJECTED_RETRYABLE,
-            status_code=status,
-            receipt_id=receipt_id,
-            session_uuid=session_uuid,
-            raw_body=body,
-            error_code=error_code,
-            error_message=message or f"Retryable HTTP {status}",
-            retryable=True,
-            findings=[
-                {
-                    "code": error_code or f"HTTP_{status}",
-                    "severity": "TRANSIENT",
-                    "detail": message or f"HTTP {status} — retryable with backoff",
-                }
-            ],
-        )
-        logger.warning(
-            "[actuator_01/response] HTTP %d → RETRYABLE error_code=%s",
-            status,
-            error_code,
-        )
-        return result
-
-    # ── Known terminal status codes ───────────────────────────────────────
+    # ── Definitive pre-execution terminal status codes (400, 401) ─────────
     if status in _TERMINAL_STATUS_CODES:
         result = ClassifiedResponse(
             category=ResponseCategory.REJECTED_TERMINAL,
@@ -336,7 +371,8 @@ def classify_response(response: httpx.Response) -> ClassifiedResponse:
                 {
                     "code": error_code or f"HTTP_{status}",
                     "severity": "TERMINAL",
-                    "detail": message or f"HTTP {status} — not retryable",
+                    "detail": message
+                    or f"HTTP {status} — definitive pre-execution refusal",
                 }
             ],
         )
@@ -347,27 +383,33 @@ def classify_response(response: httpx.Response) -> ClassifiedResponse:
         )
         return result
 
-    # ── Unrecognised status code → fail-closed as terminal ────────────────
+    # ── Ambiguous or unrecognised status codes → INDETERMINATE ────────────
+    indeterminate_code = error_code or (
+        f"HTTP_{status}"
+        if status in _AMBIGUOUS_HTTP_STATUS_CODES
+        else f"UNRECOGNISED_{status}"
+    )
     result = ClassifiedResponse(
-        category=ResponseCategory.REJECTED_TERMINAL,
+        category=ResponseCategory.INDETERMINATE,
         status_code=status,
         receipt_id=receipt_id,
         session_uuid=session_uuid,
         raw_body=body,
-        error_code=error_code or f"UNRECOGNISED_{status}",
-        error_message=message or f"Unrecognised HTTP {status} — fail-closed",
+        error_code=indeterminate_code,
+        error_message=message or f"Indeterminate HTTP {status} — outcome unknown",
         retryable=False,
         findings=[
             {
-                "code": f"UNRECOGNISED_{status}",
+                "code": indeterminate_code,
                 "severity": "TERMINAL",
-                "detail": f"Unrecognised HTTP {status} — treated as terminal (fail-closed)",
+                "detail": message or f"HTTP {status} — side effect cannot be ruled out",
             }
         ],
     )
     logger.warning(
-        "[actuator_01/response] HTTP %d → TERMINAL (unrecognised, fail-closed)",
+        "[actuator_01/response] HTTP %d → INDETERMINATE error_code=%s",
         status,
+        indeterminate_code,
     )
     return result
 

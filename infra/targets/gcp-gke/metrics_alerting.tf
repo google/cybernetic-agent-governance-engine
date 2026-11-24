@@ -551,3 +551,62 @@ resource "google_monitoring_alert_policy" "gateway_evidence_append_reconciliatio
 
   depends_on = [module.gke]
 }
+
+resource "google_monitoring_alert_policy" "gateway_aged_unknown_actuations" {
+  count = local.enforcing_posture ? 1 : 0
+
+  project               = var.project_id
+  display_name          = "${var.cluster_name} - Aged Unresolved UNKNOWN Actuations (SC-4 / SC-24)"
+  combiner              = "OR"
+  enabled               = true
+  severity              = "CRITICAL"
+  notification_channels = local.resolved_alert_notification_channels
+
+  alert_strategy {
+    auto_close = "1800s"
+  }
+
+  user_labels = {
+    owner       = trimspace(var.alert_owner_label)
+    component   = "gateway"
+    control     = "sc-24"
+    environment = var.environment
+  }
+
+  documentation {
+    mime_type = "text/markdown"
+    content   = <<-EOT
+      ## CAGE Aged Unresolved UNKNOWN Actuations Alert (NIST SP 800-53 SC-4 / SC-24 / POAM-2026-232)
+
+      - **Owner Label (metadata only; routes nothing):** `${trimspace(var.alert_owner_label)}`
+      - **Delivery Route:** Bound `var.alert_notification_channels` (GCP Pub/Sub terminal sink in reference architecture)
+      - **Cluster:** `${var.cluster_name}` (`${var.namespace}`)
+      - **Metric:** `cage_gateway_aged_unknown_actuations`
+
+      Fires whenever one or more confirmed fiscal reservations originating from
+      `ActuationOutcome.UNKNOWN` actuations remain unresolved beyond the
+      reconciliation age threshold (`max_age_seconds`). Daily fiscal capacity stays
+      held fail-closed until broker lookup or operator settlement resolves the trade.
+    EOT
+  }
+
+  conditions {
+    display_name = "Aged unresolved UNKNOWN actuations > 0 for 300s"
+
+    condition_prometheus_query_language {
+      query                     = "max(cage_gateway_aged_unknown_actuations{job=\"gateway-metrics\",namespace=\"${module.namespace.name}\"}) > 0"
+      duration                  = "300s"
+      evaluation_interval       = "60s"
+      disable_metric_validation = true
+    }
+  }
+
+  lifecycle {
+    precondition {
+      condition     = local.alert_channels_valid
+      error_message = local.alert_channels_error_message
+    }
+  }
+
+  depends_on = [module.gke]
+}

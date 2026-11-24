@@ -35,8 +35,10 @@ from src.cage_finance.tools.tool_provider import (
 from src.gateway.governance.execution_actuator import dispatch_actuation
 from src.gateway.governance.routing_seal import SymbolicGovernorViolation
 from src.gateway.governance.seams.actuation import (
+    ActuationError,
     ActuationOutcome,
     ActuationReceipt,
+    ActuationRejectedError,
     ExecutionClearance,
 )
 from tests.fixtures.trade_inputs import sealed_governance, trade_governor
@@ -186,7 +188,7 @@ async def _run_trade(actuate_mock: AsyncMock) -> tuple[MagicMock, object]:
                 currency="USD",
                 confidence=0.99,
             )
-        except SymbolicGovernorViolation as exc:
+        except (ActuationError, SymbolicGovernorViolation) as exc:
             outcome = exc
     return governor, outcome
 
@@ -198,6 +200,7 @@ class TestSettlementDirection:
             AsyncMock(return_value=_receipt(outcome=ActuationOutcome.UNKNOWN))
         )
         assert isinstance(result, ActuationIndeterminateError)
+        assert not isinstance(result, SymbolicGovernorViolation)
         assert "indeterminate" in str(result)
         governor.settle.assert_awaited_once_with(_SEAL, executed=True)
 
@@ -206,7 +209,8 @@ class TestSettlementDirection:
         governor, result = await _run_trade(
             AsyncMock(return_value=_receipt(outcome=ActuationOutcome.REJECTED))
         )
-        assert isinstance(result, SymbolicGovernorViolation)
+        assert isinstance(result, ActuationRejectedError)
+        assert not isinstance(result, SymbolicGovernorViolation)
         assert not isinstance(result, ActuationIndeterminateError)
         assert "Actuation rejected" in str(result)
         governor.settle.assert_awaited_once_with(_SEAL, executed=False)
@@ -218,5 +222,6 @@ class TestSettlementDirection:
             AsyncMock(side_effect=RuntimeError("venue socket died"))
         )
         assert isinstance(result, ActuationIndeterminateError)
+        assert not isinstance(result, SymbolicGovernorViolation)
         assert "ACTUATOR_EXCEPTION" in str(result)
         governor.settle.assert_awaited_once_with(_SEAL, executed=True)

@@ -795,7 +795,7 @@ class TestAdapterReceiptVerification:
     async def test_verified_refusal_strict_mode_stays_rejected(self) -> None:
         receipt = await _adapter(
             lambda intent: (
-                409,
+                400,
                 _sign({"error": "VENUE_HALT", "intent_hash": intent}),
             ),
             receipt_key_resolver=_RESOLVER,

@@ -332,9 +332,13 @@ run "custom_alert_owner_label_and_channels_propagate" {
       google_monitoring_alert_policy.main_result_reconciler_absent[0].user_labels["owner"] == "secops-compliance-oncall" &&
       contains(google_monitoring_alert_policy.main_result_reconciler_absent[0].notification_channels, "projects/lula-cron-test-project/notificationChannels/12345") &&
       google_monitoring_alert_policy.main_result_reconciler_absent[0].alert_strategy[0].auto_close == "1800s" &&
-      google_monitoring_alert_policy.main_result_reconciler_absent[0].conditions[0].condition_absent[0].duration == "21600s"
+      google_monitoring_alert_policy.main_result_reconciler_absent[0].conditions[0].condition_absent[0].duration == "21600s" &&
+      google_monitoring_alert_policy.gateway_aged_unknown_actuations[0].user_labels["owner"] == "secops-compliance-oncall" &&
+      strcontains(google_monitoring_alert_policy.gateway_aged_unknown_actuations[0].documentation[0].content, "secops-compliance-oncall") &&
+      contains(google_monitoring_alert_policy.gateway_aged_unknown_actuations[0].notification_channels, "projects/lula-cron-test-project/notificationChannels/12345") &&
+      google_monitoring_alert_policy.gateway_aged_unknown_actuations[0].alert_strategy[0].auto_close == "1800s"
     )
-    error_message = "alert_owner_label, resolved alert_notification_channels, Finding A pod-series reducers/auto_close, Finding B 10m scrape-liveness window, and POAM-2026-171 reconciler absence policy must propagate across all 10 Cloud Monitoring alert policies"
+    error_message = "alert_owner_label, resolved alert_notification_channels, Finding A pod-series reducers/auto_close, Finding B 10m scrape-liveness window, POAM-2026-171 reconciler absence, and POAM-2026-232 UNKNOWN alert policy must propagate across all 11 Cloud Monitoring alert policies"
   }
 }
 
@@ -366,6 +370,7 @@ run "empty_alert_notification_channels_refused_in_enforcing_posture" {
     google_monitoring_alert_policy.gateway_canary_probe_absent,
     google_monitoring_alert_policy.gateway_canary_pod_health,
     google_monitoring_alert_policy.gateway_evidence_append_reconciliation,
+    google_monitoring_alert_policy.gateway_aged_unknown_actuations,
   ]
 }
 
@@ -391,6 +396,7 @@ run "disabled_notification_channel_refused_in_enforcing_posture" {
     google_monitoring_alert_policy.gateway_canary_probe_absent,
     google_monitoring_alert_policy.gateway_canary_pod_health,
     google_monitoring_alert_policy.gateway_evidence_append_reconciliation,
+    google_monitoring_alert_policy.gateway_aged_unknown_actuations,
   ]
 }
 
@@ -418,6 +424,7 @@ run "mismatched_notification_channel_name_refused_in_enforcing_posture" {
     google_monitoring_alert_policy.gateway_canary_probe_absent,
     google_monitoring_alert_policy.gateway_canary_pod_health,
     google_monitoring_alert_policy.gateway_evidence_append_reconciliation,
+    google_monitoring_alert_policy.gateway_aged_unknown_actuations,
   ]
 }
 
@@ -481,6 +488,7 @@ run "dev_non_enforcing_posture_allows_empty_alert_channels_and_console_notifier"
       length(google_monitoring_alert_policy.alert_pipeline_heartbeat) == 0 &&
       length(google_monitoring_alert_policy.main_result_reconciler_absent) == 0 &&
       length(google_monitoring_alert_policy.lula_audit_failure) == 0 &&
+      length(google_monitoring_alert_policy.gateway_aged_unknown_actuations) == 0 &&
       local.effective_compliance_alert_channel == "console"
     )
     error_message = "non-enforcing dev posture must omit Cloud Monitoring alert policies and default effective_compliance_alert_channel to console"

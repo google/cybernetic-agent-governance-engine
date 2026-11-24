@@ -125,22 +125,37 @@ def decode_redemption_refusal(raw: object) -> ApprovalRedemptionRefusal | None:
 class CommitStatus(str, Enum):
     """How a committing run ended.
 
-    EXECUTED: The action was sealed and actuated.
-    DRY_RUN:  The action was sealed; a dry run actuates nothing.
-    REFUSED:  Nothing was executed; the run was refused.
-    DEFERRED: Nothing was sealed, committed or refused; the run deferred.
+    EXECUTED:            The action was sealed and actuated.
+    DRY_RUN:             The action was sealed; a dry run actuates nothing.
+    REFUSED:             Nothing was executed; the run was refused.
+    DEFERRED:            Nothing was sealed, committed or refused; the run deferred.
+    INDETERMINATE:       Post-wire outcome is UNKNOWN; reservations remain held.
+    UNSETTLED_DUPLICATE: Duplicate idempotency key whose prior attempt is IN_FLIGHT/UNKNOWN.
     """
 
     EXECUTED = "EXECUTED"
     DRY_RUN = "DRY_RUN"
     REFUSED = "REFUSED"
     DEFERRED = "DEFERRED"
+    INDETERMINATE = "INDETERMINATE"
+    UNSETTLED_DUPLICATE = "UNSETTLED_DUPLICATE"
 
 
-#: Statuses after which nothing was executed.
+#: Statuses after which nothing was guaranteed executed.
 NOT_EXECUTED_STATUSES: Final[frozenset[CommitStatus]] = frozenset(
-    {CommitStatus.REFUSED, CommitStatus.DEFERRED}
+    {
+        CommitStatus.REFUSED,
+        CommitStatus.DEFERRED,
+        CommitStatus.INDETERMINATE,
+        CommitStatus.UNSETTLED_DUPLICATE,
+    }
 )
+
+#: Statuses indicating outcome is indeterminate or awaiting settlement, not a policy refusal.
+INDETERMINATE_STATUSES: Final[frozenset[CommitStatus]] = frozenset(
+    {CommitStatus.INDETERMINATE, CommitStatus.UNSETTLED_DUPLICATE}
+)
+NON_REFUSAL_STATUSES: Final[frozenset[CommitStatus]] = INDETERMINATE_STATUSES
 
 #: Version tag of :meth:`CommitOutcome.to_wire`. A payload without exactly
 #: this tag is not a commit outcome.

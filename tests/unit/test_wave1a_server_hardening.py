@@ -914,7 +914,7 @@ class TestKC06McpSanitizerWiring:
             assert "123-45-6789" not in res_sgv["error"]
             assert was_request_refused() is True
 
-        # 3. UnsettledDuplicate -> HTTP 200 structured ERROR by exception type
+        # 3. UnsettledDuplicate -> HTTP 200 structured ERROR, not a policy refusal (POAM-2026-232)
         async def _unsettled_dup_tool(**_kwargs: Any) -> str:
             raise UnsettledDuplicate(
                 "IN_FLIGHT: transaction_id 22222222-2222-4222-8222-222222222222 already submitted"
@@ -930,8 +930,10 @@ class TestKC06McpSanitizerWiring:
             assert res_dup.status_code == 200
             assert res_dup["status"] == "ERROR"
             assert res_dup["error_type"] == "UnsettledDuplicate"
+            assert res_dup["actuation_outcome"] == "UNKNOWN"
+            assert res_dup["may_have_executed"] is True
             assert "IN_FLIGHT" in res_dup["error"]
-            assert was_request_refused() is True
+            assert was_request_refused() is False
 
         # 4. GovernanceBlockedError (PermissionError subclass) -> attributed HTTP 403
         proof_hex = "a" * 64

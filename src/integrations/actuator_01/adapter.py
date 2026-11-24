@@ -119,12 +119,11 @@ _CAPABILITIES: set[ActuatorCapability] = {
 }
 
 # HTTP statuses that are an explicit partner refusal: the envelope was
-# received and definitively NOT executed.  Every other non-accepted status
-# (200 without a valid receipt, 408, 500, 502, 504, unrecognised) leaves the
-# execution state indeterminate.
-_DEFINITIVE_REFUSAL_STATUSES: frozenset[int] = frozenset(
-    {400, 401, 403, 409, 421, 422, 429, 503}
-)
+# received and definitively NOT executed (400/401/403 pre-execution refusal).
+# Every other non-accepted status (200 without accepted status/receipt, 408,
+# 409, 421, 422, 429, 500, 502, 503, 504, unrecognised) leaves the execution
+# outcome indeterminate (POAM-2026-232).
+_DEFINITIVE_REFUSAL_STATUSES: frozenset[int] = frozenset({400, 401, 403})
 
 # Transport errors raised before any request bytes leave the client.
 _PRE_SEND_TRANSPORT_ERRORS: tuple[type[httpx.HTTPError], ...] = (
@@ -661,7 +660,13 @@ class Actuator01Adapter:
         # ── Step 7: Verify receipt signature, build ActuationReceipt ───────
         if classified.category == ResponseCategory.ACCEPTED:
             outcome = ActuationOutcome.ACCEPTED
-        elif classified.status_code in _DEFINITIVE_REFUSAL_STATUSES:
+        elif classified.category in (
+            ResponseCategory.REJECTED_TERMINAL,
+            ResponseCategory.REJECTED_RETRYABLE,
+        ) and (
+            classified.status_code in _DEFINITIVE_REFUSAL_STATUSES
+            or classified.status_code == 200
+        ):
             outcome = ActuationOutcome.REJECTED
         else:
             outcome = ActuationOutcome.UNKNOWN

@@ -30,11 +30,12 @@ from contextlib import contextmanager
 from typing import Any
 
 try:
-    from prometheus_client import REGISTRY, CollectorRegistry, Counter
+    from prometheus_client import REGISTRY, CollectorRegistry, Counter, Gauge
 except ImportError:  # pragma: no cover - exercised only without prometheus_client
     REGISTRY = None  # type: ignore[assignment]
     CollectorRegistry = Any  # type: ignore[misc, assignment]
     Counter = None  # type: ignore[misc, assignment]
+    Gauge = None  # type: ignore[misc, assignment]
 
 GATED_REQUEST_OUTCOMES: tuple[str, str] = ("blocked", "permitted")
 
@@ -89,6 +90,7 @@ class GovernorMetrics:
     """Governor collectors bound to one registry. Build via :func:`governor_metrics`."""
 
     __slots__ = (
+        "_aged_unknown_actuations",
         "_canary_requests",
         "_evidence_publish_failures",
         "_evidence_records_appended",
@@ -97,6 +99,7 @@ class GovernorMetrics:
         "_gated_requests",
         "_infrastructure_blocks",
         "_refusals",
+        "_unknown_actuations",
     )
 
     def __init__(self, registry: CollectorRegistry | None) -> None:
@@ -145,6 +148,7 @@ class GovernorMetrics:
             self._canary_requests = None
             self._evidence_records_appended = None
             self._evidenced_requests_permitted = None
+            self._unknown_actuations = None
         else:
             self._gated_requests = Counter(
                 "cage_gateway_gated_requests_total",
@@ -168,9 +172,31 @@ class GovernorMetrics:
                 "Total permitted gateway requests on routes or actions obligated to append at least one evidence record",
                 registry=registry,
             )
+            self._unknown_actuations = Counter(
+                "cage_gateway_unknown_actuations_total",
+                "Total UNKNOWN actuation lifecycle events partitioned by outcome",
+                ["outcome"],
+                registry=registry,
+            )
             for outcome in GATED_REQUEST_OUTCOMES:
                 self._gated_requests.labels(outcome=outcome)
                 self._canary_requests.labels(outcome=outcome)
+            for ua_outcome in (
+                "recorded",
+                "settled_executed",
+                "settled_reclaimed",
+                "indeterminate",
+            ):
+                self._unknown_actuations.labels(outcome=ua_outcome)
+        self._aged_unknown_actuations = (
+            None
+            if Gauge is None or registry is None
+            else Gauge(
+                "cage_gateway_aged_unknown_actuations",
+                "Current count of aged unresolved UNKNOWN actuations awaiting broker reconciliation",
+                registry=registry,
+            )
+        )
 
     def evidence_publish_failure(self, kind: str) -> None:
         """Count one evidence write that failed (``refusal``, ``seal_consumed``, ``inference_proxy_pass``, etc.)."""
@@ -216,6 +242,16 @@ class GovernorMetrics:
         """Count one FTRA boundary check outcome (``passed``, ``conditional_clear``, ``hitl_required``, ``error``)."""
         if self._ftra_boundary_checks is not None:
             self._ftra_boundary_checks.labels(result=result).inc()
+
+    def set_aged_unknown_actuations(self, count: int) -> None:
+        """Set the current gauge of aged unresolved UNKNOWN actuations."""
+        if self._aged_unknown_actuations is not None:
+            self._aged_unknown_actuations.set(max(0, int(count)))
+
+    def unknown_actuation_event(self, outcome: str) -> None:
+        """Count an UNKNOWN actuation lifecycle transition (recorded/settled_executed/settled_reclaimed/indeterminate)."""
+        if self._unknown_actuations is not None:
+            self._unknown_actuations.labels(outcome=outcome).inc()
 
 
 _lock = threading.Lock()
