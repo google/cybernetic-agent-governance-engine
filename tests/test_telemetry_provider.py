@@ -294,6 +294,19 @@ class TestGetTelemetryProviderFactory:
             ):
                 get_telemetry_provider()
 
+    @pytest.mark.parametrize("cage_env", ["prod", "production", "staging", "local"])
+    def test_factory_mock_provider_rejected_in_enforcing_postures(self, cage_env):
+        """POAM-2026-118: Enforcing postures refuse CAGE_TELEMETRY_PROVIDER=mock."""
+        with patch.dict(
+            os.environ,
+            {"CAGE_TELEMETRY_PROVIDER": "mock", "CAGE_ENV": cage_env},
+        ):
+            with pytest.raises(
+                ConfigurationError,
+                match="forbidden in production and all enforcing postures",
+            ):
+                get_telemetry_provider()
+
     def test_factory_unknown_provider_rejected(self):
         with patch.dict(os.environ, {"CAGE_TELEMETRY_PROVIDER": "unsupported_vendor"}):
             with pytest.raises(ConfigurationError, match="Unknown telemetry provider"):
