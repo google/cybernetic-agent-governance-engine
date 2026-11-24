@@ -586,7 +586,7 @@ def test_detector_fingerprint_ignores_comments_but_not_code(tmp_path: Path) -> N
 
 
 def test_table_row_before_horizontal_rule_is_scanned(repo: Repo) -> None:
-    """Bare `---` horizontal rules must never hide the preceding table row."""
+    """Bare `---` horizontal rules must never hide the preceding table row (POAM-2026-250)."""
     c1 = _s(repo.c1)
     text = (
         "| ID | Desc | Closed |\n"
