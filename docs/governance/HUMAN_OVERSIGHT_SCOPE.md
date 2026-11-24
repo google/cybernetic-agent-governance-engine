@@ -231,6 +231,20 @@ telemetry staleness limit is `TELEMETRY_MAX_STALENESS_SECONDS` (300 s).
    strictly inside `governance_middleware.py`; the advisor never receives a seal (POAM-2026-079).
 7. **Audit record persisted:** Override decision stored in Langfuse compliance project.
 
+### Premature Resume, Redemption Refusals, and Operator-Visible Outcomes
+
+The LangGraph resume payload (`approved: true`) is not the approval authority: it can reject, but it cannot authorize. Only a quorum-approved `DeferToken` held in the gateway's `DeferQueue` is redeemable. When `execute_trade_action(..., deferred_id=...)` returns a typed `CommitOutcome` ([`src/gateway/governance/commit_outcome.py`](../../src/gateway/governance/commit_outcome.py)), [`gateway_tool_guard`](../../src/governed_financial_advisor/graph/governance/tool_guard.py) branches strictly on the typed `ApprovalRedemptionRefusal` and `CommitStatus` fields (never on prose substrings):
+
+- **Not yet approved (`PENDING`, `QUORUM_INCOMPLETE`) or retained post-approval deferral:** The gateway's `check_redemption()` is read-only and leaves the ticket redeemable. The advisor keeps the same `deferred_id` in graph state (never in `messages` or HTTP responses), clears `approval_decision`, sets `governance_status = REQUIRE_APPROVAL`, and routes back to `approval_node` to **re-interrupt on the same ticket** (`_still_awaiting_message()`, naming only the trade parameters). No LLM loop runs and no second deferral is created.
+- **Terminal refusal (`CONSUMED`, `EXPIRED`, `ACTION_MISMATCH`, `QUORUM_NOT_DISTINCT`, `PARAMS_NOT_COVERED`, etc.) or undecodable outcome:** The advisor clears HITL state, sets `governance_status = DENIED`, emits a `ToolMessage` from `REFUSAL_DESCRIPTIONS` (`_terminal_message()`), and routes fail-closed to `END`.
+- **Market data unreachable at resume (`POAM-2026-240`):** `post_hitl_rehydrate_node()` / `post_hitl_revalidate_node()` in [`src/governed_financial_advisor/graph/subgraphs/governed_trader_graph.py`](../../src/governed_financial_advisor/graph/subgraphs/governed_trader_graph.py) block fail-closed (`drift_unverifiable`) and route to `drift_blocked_node()` (`END`) before contacting the gateway, leaving the `DeferQueue` approval unconsumed until its 4 h `_DEFAULT_TTL`.
+
+| Resume Path | What the Operator Sees | What Remains in `DeferQueue` |
+|---|---|---|
+| Resumed `approved: true`, bridge approval `PENDING` or `QUORUM_INCOMPLETE` | Re-interrupt (`REQUIRE_APPROVAL`) on the same ticket, describing the trade parameters and instructing the operator to wait for reviewer approval at the compliance bridge | Original `DeferToken` stays `PARKED` / `PARTIALLY_APPROVED` and redeemable once quorum is recorded (`POAM-2026-245`) |
+| Resumed `approved: true`, terminal `ApprovalRedemptionRefusal` (`CONSUMED`, `EXPIRED`, `ACTION_MISMATCH`, `QUORUM_NOT_DISTINCT`, etc.) | Terminal `DENIED` message naming the refusal reason; thread ends (`END`) | No new ticket; refusal receipt recorded in the tamper-evident evidence chain (`POAM-2026-245`) |
+| Resumed `approved: true`, market data (`yfinance`) unreachable | `drift_blocked_node` message (`drift_unverifiable`); thread ends (`END`) | Approved `DeferToken` remains `RESOLVED` / unconsumed until its 4 h `_DEFAULT_TTL` (`POAM-2026-240`) |
+
 ---
 
 ## Scope Boundaries
