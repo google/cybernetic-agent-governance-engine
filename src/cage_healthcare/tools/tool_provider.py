@@ -123,10 +123,19 @@ async def administer_dose_action(
     *,
     governor: SymbolicGovernor,
 ) -> dict[str, object]:
+    from src.gateway.governance.governor.errors import GovernanceInfrastructureError
+
     order = DoseOrder(patient_id=patient_id, medication=medication, dose_mg=dose_mg)
     params: dict[str, Any] = {**order.model_dump(), "confidence": confidence}
     try:
         governed = await enforce_governance(governor, "administer_dose", params)
+    except GovernanceInfrastructureError as e:
+        u: dict[str, object] = {"status": "UNAVAILABLE", "error": e.error_code}
+        return u | {
+            "dependency": e.dependency,
+            "failure_code": e.failure_code,
+            "reason": str(e),
+        }
     except _gm.ActionDeferred as exc:
         return {
             "status": "DEFERRED",
@@ -153,26 +162,23 @@ async def administer_dose_action(
         dig = hashlib.sha256(json.dumps(evaluated, sort_keys=True).encode()).hexdigest()
         kw: dict[str, Any] = {"thread_id": tid, "decision": "ALLOW", "nonce": nonce}
         kw |= {"decision_path": "DIRECT", "action": "administer_dose"}
-        kw |= {"params": evaluated}
+        kw |= {"params": evaluated, "consequence_ceiling": "HIGH_CLINICAL"}
         kw |= {"target": order.patient_id, "operator_urn": "clinician_001"}
         kw |= {"issued_at": int(time.time()), "correlation_id": tid}
         kw |= {"issued_at_provenance": "CONSTRUCTION_TIME", "opa_input_digest": dig}
         kw |= {"correlation_id_source": "THREAD_DERIVED", "routing_seal": seal}
         kw |= {"governance_decision_digest": _rs.seal_digest(seal)}
         kw |= {"executor_id": "cage_healthcare_clinical", "required_quorum": 0}
-        kw |= {"consequence_ceiling": "HIGH_CLINICAL"}
         executed = True
         rec = await _act.dispatch_actuation(act, _seam.ExecutionClearance(**kw))
         executed = rec.may_have_executed
         if not rec.accepted:
             if executed:
-                msg = "Actuation indeterminate (reservations confirmed)"
-                f = list(rec.findings)
                 return {
                     "status": "INDETERMINATE",
-                    "reason": msg,
+                    "reason": "Actuation indeterminate (reservations confirmed)",
                     "receipt_id": rec.receipt_id,
-                    "findings": f,
+                    "findings": list(rec.findings),
                 }
             return await _refuse("Actuation rejected", evaluated)
         return {

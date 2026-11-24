@@ -992,13 +992,46 @@ _INFRA_DEPENDENCY_BY_CODE: Mapping[str, tuple[str, str]] = {
         "execution_ledger_unavailable",
     ),
     "SERVER_INPUT_UNAVAILABLE": ("server_inputs", "server_input_unavailable"),
+    "CBF_RECONCILIATION_UNAVAILABLE": ("cbf", "governance_dependency_unavailable"),
+    "FISCAL_STORE_UNAVAILABLE": ("fiscal", "governance_dependency_unavailable"),
+    "FTRA_ERROR": ("ftra", "governance_dependency_unavailable"),
+    "FTRA_REGISTRY_UNAVAILABLE": ("ftra", "governance_dependency_unavailable"),
+    "TIER_EXCEPTION": ("governance", "governance_dependency_unavailable"),
+    "ROLLBACK_FAILED": ("governance", "governance_dependency_unavailable"),
+    "CONFIRM_FAILED": ("governance", "governance_dependency_unavailable"),
+    "KMS_SIGNING_UNAVAILABLE": ("kms", "kms_signing_unavailable"),
+    "NARROW_RECEIPT_UNAVAILABLE": ("evidence_stream", "narrow_receipt_unavailable"),
+    "CAUSAL_TELEMETRY_UNAVAILABLE": (
+        "causal_telemetry",
+        "causal_telemetry_unavailable",
+    ),
+    "CONSENSUS_NO_INFERENCE_BACKEND": (
+        "consensus",
+        "consensus_backend_unavailable",
+    ),
+    "CONSENSUS_NO_CRITICS_CONFIGURED": (
+        "consensus",
+        "consensus_backend_unavailable",
+    ),
+    "CONSENSUS_UNAVAILABLE": ("consensus", "consensus_backend_unavailable"),
+    "STPA_ERROR": ("stpa", "stpa_evaluation_error"),
+    "BOUNDING_PROVIDER_UNAVAILABLE": (
+        "bounding",
+        "bounding_provider_unavailable",
+    ),
 }
+
+INFRASTRUCTURE_FAILURE_CODES: frozenset[str] = frozenset(_INFRA_DEPENDENCY_BY_CODE)
 
 _INFRA_DEPENDENCY_BY_TIER: Mapping[str, tuple[str, str]] = {
     "opa": ("opa", "policy_engine_unavailable"),
     "defer_queue": ("defer_queue", "defer_queue_unavailable"),
     "execution_ledger": ("execution_ledger", "execution_ledger_unavailable"),
     "server_inputs": ("server_inputs", "server_input_unavailable"),
+    "causal": ("causal_telemetry", "causal_telemetry_unavailable"),
+    "consensus": ("consensus", "consensus_backend_unavailable"),
+    "stpa": ("stpa", "stpa_evaluation_error"),
+    "bounding": ("bounding", "bounding_provider_unavailable"),
 }
 
 

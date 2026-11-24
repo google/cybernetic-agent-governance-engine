@@ -29,6 +29,7 @@ class ContractSeverity(str, Enum):
 
     HARD_BLOCK = "HARD_BLOCK"
     HITL_ESCALATE = "HITL_ESCALATE"
+    INFRASTRUCTURE = "INFRASTRUCTURE"
     ADVISORY = "ADVISORY"
 
 

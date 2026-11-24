@@ -266,6 +266,9 @@ class TestInBandHttp200RefusalHooks:
     """Verify HTTP 200 endpoints that carry refusal verdicts mark the request refused."""
 
     @pytest.mark.asyncio
+    @pytest.mark.covers(
+        "src.gateway.server.governance_middleware:policy_precheck_endpoint#OPA policy-precheck engine error for action=",
+    )
     async def test_policy_precheck_deny_marks_request_refused(
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:
@@ -277,15 +280,14 @@ class TestInBandHttp200RefusalHooks:
         )
         from src.gateway.server import governance_middleware as gm
 
+        class _DenyingOpa:
+            async def evaluate_policy(self, _payload: dict[str, Any]) -> str:
+                return "DENY"
+
         class _BrokenOpa:
             async def evaluate_policy(self, _payload: dict[str, Any]) -> str:
                 raise ConnectionError("OPA UDS unreachable")
 
-        fake_gov = SimpleNamespace(
-            bind_server_inputs=self._async_identity_bind,
-            components=SimpleNamespace(opa=_BrokenOpa()),
-        )
-        monkeypatch.setattr(gm, "governor_of", lambda _app: fake_gov)
         monkeypatch.setattr(
             gm,
             "_check_validate_action_rate_limit",
@@ -302,10 +304,25 @@ class TestInBandHttp200RefusalHooks:
         req = Request(scope)
         body = gm.PolicyPrecheckRequest(action="governed_action", params={"amount": 10})
 
+        fake_deny_gov = SimpleNamespace(
+            bind_server_inputs=self._async_identity_bind,
+            components=SimpleNamespace(opa=_DenyingOpa()),
+        )
+        monkeypatch.setattr(gm, "governor_of", lambda _app: fake_deny_gov)
         with track_gated_request():
             resp = await gm.policy_precheck_endpoint(req, body)
             assert resp.status_code == 200
             assert was_request_refused() is True
+
+        fake_broken_gov = SimpleNamespace(
+            bind_server_inputs=self._async_identity_bind,
+            components=SimpleNamespace(opa=_BrokenOpa()),
+        )
+        monkeypatch.setattr(gm, "governor_of", lambda _app: fake_broken_gov)
+        with track_gated_request():
+            resp = await gm.policy_precheck_endpoint(req, body)
+            assert resp.status_code == 503
+            assert was_request_refused() is False
 
     @pytest.mark.asyncio
     async def test_verify_content_safety_blocked_marks_request_refused(
@@ -323,6 +340,24 @@ class TestInBandHttp200RefusalHooks:
         monkeypatch.setenv("CAGE_INFERENCE_BACKEND", "vllm")
         monkeypatch.setenv("CAGE_NEMO_ENABLED", "true")
 
+        # Missing rails backend is infrastructure unavailability, not a policy refusal.
+        with track_gated_request():
+            verdict = await mcp_tool_server.verify_content_safety("probe")
+            assert verdict.startswith("BLOCKED:")
+            assert was_request_refused() is False
+
+        # An explicit safety rail rejection does mark the request as policy-refused.
+        monkeypatch.setattr(
+            mcp_tool_server.app.state, "nemo_rails", object(), raising=False
+        )
+
+        async def _unsafe(_text: str, _rails: object) -> tuple[bool, str, bool]:
+            return False, "Input policy violation", False
+
+        monkeypatch.setattr(
+            "src.gateway.governance.semantic_rail_factory.validate_with_semantic_rail",
+            _unsafe,
+        )
         with track_gated_request():
             verdict = await mcp_tool_server.verify_content_safety("probe")
             assert verdict.startswith("BLOCKED:")

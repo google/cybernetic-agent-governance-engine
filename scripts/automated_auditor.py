@@ -481,6 +481,16 @@ class TraceAuditor:
                     for s in gov_spans
                 ):
                     self.report_violation(trace["trace_id"], "Execution despite DENY")
+                elif any(
+                    s["attributes"].get("cage.verdict") == "INFRASTRUCTURE_BLOCK"
+                    or s["attributes"].get("governance.decision")
+                    == "INFRASTRUCTURE_BLOCK"
+                    for s in gov_spans
+                ):
+                    self.report_violation(
+                        trace["trace_id"],
+                        "Execution despite INFRASTRUCTURE_BLOCK",
+                    )
                 else:
                     self.report_violation(
                         trace["trace_id"], "Orphaned Execution (No linking Check)"

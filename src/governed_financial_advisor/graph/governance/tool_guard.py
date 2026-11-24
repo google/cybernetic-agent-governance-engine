@@ -113,6 +113,7 @@ class NodeFn(Protocol):
 
 GOVERNANCE_ALLOWED = "ALLOWED"
 GOVERNANCE_DENIED = "DENIED"
+GOVERNANCE_UNAVAILABLE = "UNAVAILABLE"
 GOVERNANCE_REQUIRE_APPROVAL = GovernanceDecision.REQUIRE_APPROVAL.value
 
 #: Verdicts under which the wrapped node may execute the batch.
@@ -171,6 +172,41 @@ _TRANSACTION_ID_NAMESPACE = uuid.uuid5(
 )
 
 
+def _is_gateway_unavailability_error(exc: BaseException) -> bool:
+    """Return True when ``exc`` reflects transport or 5xx gateway unavailability."""
+    import httpx
+
+    if isinstance(exc, httpx.RequestError):
+        return True
+    if isinstance(exc, httpx.HTTPStatusError):
+        return exc.response.status_code >= 500
+    from cage_client import CageGatewayError
+
+    return isinstance(exc, CageGatewayError)
+
+
+async def _authorize_action_classified(
+    action: str, params: dict[str, Any]
+) -> tuple[dict[str, Any] | None, str | None, bool]:
+    """Classify gateway preview outcome into ``(verdict, reason, is_unavailable)``."""
+    try:
+        result = await GatewayClient().validate_action(action=action, params=params)
+    except Exception as exc:
+        return (
+            None,
+            f"{type(exc).__name__}: {exc}",
+            _is_gateway_unavailability_error(exc),
+        )
+    verdict = result.get("verdict") if isinstance(result, dict) else None
+    if verdict in _EXECUTABLE_VERDICTS:
+        return result, None, False
+    if verdict == GovernanceDecision.REQUIRE_APPROVAL:
+        if result.get("deferred_id"):
+            return result, None, False
+        return None, "gateway requires approval but parked no deferred_id", False
+    return None, f"gateway returned verdict {verdict!r}, not ALLOW or NARROW", False
+
+
 async def authorize_action(
     action: str, params: dict[str, Any]
 ) -> tuple[dict[str, Any] | None, str | None]:
@@ -182,18 +218,8 @@ async def authorize_action(
         ``(None, reason)``. Never raises: every failure mode is reported as a
         refusal reason so callers cannot fail open by accident.
     """
-    try:
-        result = await GatewayClient().validate_action(action=action, params=params)
-    except Exception as exc:  # refusal (PermissionError), HTTP error, timeout: refuse
-        return None, f"{type(exc).__name__}: {exc}"
-    verdict = result.get("verdict") if isinstance(result, dict) else None
-    if verdict in _EXECUTABLE_VERDICTS:
-        return result, None
-    if verdict == GovernanceDecision.REQUIRE_APPROVAL:
-        if result.get("deferred_id"):
-            return result, None
-        return None, "gateway requires approval but parked no deferred_id"
-    return None, f"gateway returned verdict {verdict!r}, not ALLOW or NARROW"
+    verdict, reason, _ = await _authorize_action_classified(action, params)
+    return verdict, reason
 
 
 def _pending_tool_calls(state: Any) -> list[dict[str, Any]]:
@@ -597,14 +623,22 @@ async def _execute_approved_step_batch(
         }
 
     refusals: dict[str, str] = {}
+    unavailable_errors: dict[str, str] = {}
     verdicts: list[dict[str, Any]] = []
     for call, step_def_id in zip(tool_calls, step_ids, strict=True):
         if step_def_id is not None:
             continue
         params = _preview_call_params(call, action)
-        verdict, reason = await authorize_action(action, params)
+        verdict, reason, is_unavailable = await _authorize_action_classified(
+            action, params
+        )
         if verdict is None:
-            refusals[str(call.get("id"))] = reason or "refused"
+            if is_unavailable:
+                unavailable_errors[str(call.get("id"))] = (
+                    reason or "gateway unavailable"
+                )
+            else:
+                refusals[str(call.get("id"))] = reason or "refused"
         elif verdict.get("verdict") not in _EXECUTABLE_VERDICTS:
             refusals[str(call.get("id"))] = (
                 "gateway requires human approval for an unapproved step"
@@ -612,17 +646,29 @@ async def _execute_approved_step_batch(
         else:
             verdicts.append(verdict)
 
-    if refusals:
+    if refusals or unavailable_errors:
+        all_errors = {**unavailable_errors, **refusals}
+        only_unavailable = not refusals
         return {
             "messages": _answer_all(
                 tool_calls,
                 {
-                    k: f"Governance refused this action: {v}"
-                    for k, v in refusals.items()
+                    k: (
+                        f"Governance unavailable (gateway infrastructure error): {v}"
+                        if k in unavailable_errors and k not in refusals
+                        else f"Governance refused this action: {v}"
+                    )
+                    for k, v in all_errors.items()
                 },
-                "Governance refused this action: another tool call in the same batch was refused",
+                (
+                    "Governance unavailable: gateway infrastructure error on another tool call in the same batch"
+                    if only_unavailable
+                    else "Governance refused this action: another tool call in the same batch was refused"
+                ),
             ),
-            "governance_status": GOVERNANCE_DENIED,
+            "governance_status": (
+                GOVERNANCE_UNAVAILABLE if only_unavailable else GOVERNANCE_DENIED
+            ),
             **_cleared_guard_hitl_state(),
         }
 
@@ -696,6 +742,7 @@ def gateway_tool_guard(
 
             verdicts: list[dict[str, Any]] = []
             refusals: dict[str, str] = {}
+            unavailable_errors: dict[str, str] = {}
             deferred_ids: dict[str, str] = {}
             cached_cache = (
                 state.get("routing_verdict_cache")
@@ -721,9 +768,16 @@ def gateway_tool_guard(
                 if reused is not None:
                     verdicts.append(reused)
                     continue
-                verdict, reason = await authorize_action(action, params)
+                verdict, reason, is_unavailable = await _authorize_action_classified(
+                    action, params
+                )
                 if verdict is None:
-                    refusals[str(call.get("id"))] = reason or "refused"
+                    if is_unavailable:
+                        unavailable_errors[str(call.get("id"))] = (
+                            reason or "gateway unavailable"
+                        )
+                    else:
+                        refusals[str(call.get("id"))] = reason or "refused"
                 elif verdict.get("verdict") == GovernanceDecision.REQUIRE_APPROVAL:
                     if not approvable:
                         refusals[str(call.get("id"))] = (
@@ -741,24 +795,39 @@ def gateway_tool_guard(
                     refusals.setdefault(
                         call_id, "a call that requires approval must be submitted alone"
                     )
-            if refusals:
+            if refusals or unavailable_errors:
+                all_errors = {**unavailable_errors, **refusals}
+                only_unavailable = not refusals
                 logger.warning(
-                    "Gateway refused %s for %d of %d tool call(s) — batch not executed: %s",
+                    "Gateway %s %s for %d of %d tool call(s) — batch not executed: %s",
+                    "unavailable" if only_unavailable else "refused",
                     action,
-                    len(refusals),
+                    len(all_errors),
                     len(tool_calls),
-                    refusals,
+                    all_errors,
                 )
                 return {
                     "messages": _answer_all(
                         tool_calls,
                         {
-                            k: f"Governance refused this action: {v}"
-                            for k, v in refusals.items()
+                            k: (
+                                f"Governance unavailable (gateway infrastructure error): {v}"
+                                if k in unavailable_errors and k not in refusals
+                                else f"Governance refused this action: {v}"
+                            )
+                            for k, v in all_errors.items()
                         },
-                        "Governance refused this action: another tool call in the same batch was refused",
+                        (
+                            "Governance unavailable: gateway infrastructure error on another tool call in the same batch"
+                            if only_unavailable
+                            else "Governance refused this action: another tool call in the same batch was refused"
+                        ),
                     ),
-                    "governance_status": GOVERNANCE_DENIED,
+                    "governance_status": (
+                        GOVERNANCE_UNAVAILABLE
+                        if only_unavailable
+                        else GOVERNANCE_DENIED
+                    ),
                     "governance_envelope": None,
                     "routing_verdict_cache": None,
                 }

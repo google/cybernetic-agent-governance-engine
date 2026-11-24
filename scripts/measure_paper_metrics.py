@@ -1019,7 +1019,11 @@ def _classify_response(
     # must be classified as CRASHED so it does not inflate the benign FPR
     # (it would otherwise be caught by the BLOCKED residual marker or produce
     # a PASSED outcome, both of which misrepresent the system state).
-    if "[PLAN_GENERATION_ERROR]" in body:
+    if (
+        "[PLAN_GENERATION_ERROR]" in body
+        or "Governance unavailable (gateway infrastructure error)" in body
+        or "GOVERNANCE_INFRASTRUCTURE_BLOCK" in body
+    ):
         return "CRASHED"
 
     body_lower = body.lower()

@@ -155,12 +155,14 @@ class UcaRule:
             return [
                 Violation(
                     tier="stpa",
-                    code=code,
+                    code="STPA_ERROR",
                     message=(
                         f"{self.uca_id} ({action_name}): Evaluation error — "
                         f"failing closed ({exc})."
                     ),
-                    kind=ViolationKind.HARD,
+                    kind=ViolationKind.INFRASTRUCTURE,
+                    infra_dependency="stpa",
+                    infra_error_code="stpa_evaluation_error",
                 )
             ]
 

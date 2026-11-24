@@ -149,6 +149,7 @@ run "staging_plans_lula_cron_active_specs_and_dedicated_ksas" {
       length(google_monitoring_alert_policy.gateway_sustained_refusal_ratio[0].conditions) == 1 &&
       google_monitoring_alert_policy.gateway_sustained_refusal_ratio[0].user_labels["owner"] == "platform-compliance-oncall" &&
       strcontains(google_monitoring_alert_policy.gateway_sustained_refusal_ratio[0].documentation[0].content, "platform-compliance-oncall") &&
+      strcontains(google_monitoring_alert_policy.gateway_sustained_refusal_ratio[0].documentation[0].content, "cage_governance_infrastructure_blocks_total") &&
       google_monitoring_alert_policy.gateway_sustained_refusal_ratio[0].conditions[0].condition_prometheus_query_language[0].disable_metric_validation == true &&
       google_monitoring_alert_policy.gateway_sustained_refusal_ratio[0].conditions[0].condition_prometheus_query_language[0].duration == "180s" &&
       strcontains(google_monitoring_alert_policy.gateway_sustained_refusal_ratio[0].conditions[0].condition_prometheus_query_language[0].query, "cage_gateway_gated_requests_total") &&

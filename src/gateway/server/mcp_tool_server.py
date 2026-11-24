@@ -517,8 +517,7 @@ async def _evaluate_policy_internal(
             span.record_exception(exc)
             span.set_status(trace.Status(trace.StatusCode.ERROR, str(exc)))
             span.set_attribute("opa.allowed", False)
-            mark_request_refused()
-            return "DENIED: policy evaluation error"
+            return "UNAVAILABLE: policy evaluation unavailable"
 
 
 _SAFETY_INTERVENTION_TTL_SECONDS: int = int(
@@ -577,11 +576,9 @@ async def verify_content_safety(text: str) -> str:
 
     refusal = semantic_rails_refusal()
     if refusal is not None:
-        mark_request_refused()
         return blocked_verdict(refusal_reason(*refusal))
     rails = getattr(app.state, "nemo_rails", None)
     if rails is None:
-        mark_request_refused()
         return blocked_verdict(
             refusal_reason(
                 CONTENT_SAFETY_RAILS_UNAVAILABLE,
@@ -592,7 +589,6 @@ async def verify_content_safety(text: str) -> str:
         is_safe, response, _deterministic = await validate_with_nemo(text, rails)
     except Exception as exc:
         logger.error("verify_content_safety: rail check raised — blocking: %s", exc)
-        mark_request_refused()
         return blocked_verdict(
             refusal_reason(CONTENT_SAFETY_ERROR, "the rail check raised an error.")
         )

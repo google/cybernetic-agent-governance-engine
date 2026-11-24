@@ -106,14 +106,16 @@ component-definition:
                    (src/gateway/governance/governor/stages/opa.py) queries the active domain's
                    package, which Terraform loads into the in-cluster OPA from
                    src/cage_<domain>/opa/ (finance: src/cage_finance/opa/trade_governance.rego);
-                   an OPA DENY or an OPA failure is a HARD violation. FTRA sends an action
-                   absent from the domain's terminal registry to human approval
-                   (FTRA_UNREGISTERED_ACTION), and assemble_governor()
-                   (src/gateway/governance/governor/assembly.py) refuses to start when an
-                   IRREVERSIBLE_TERMINAL action in the registry is claimed by no tier. With
-                   EVIDENCE_CHAIN_BLOCKING=true (Terraform's setting), a DENY is returned only
-                   after its GOVERNANCE_REFUSAL record is committed to the hash-chained evidence
-                   stream (see AU-12).
+                   an OPA DENY is a HARD violation, whereas OPA or dependency unavailability
+                   emits ViolationKind.INFRASTRUCTURE and blocks fail-closed with HTTP 503 and a
+                   hash-chained GOVERNANCE_INFRASTRUCTURE_BLOCK record without signing a
+                   GOVERNANCE_REFUSAL receipt. FTRA sends an action absent from the domain's
+                   terminal registry to human approval (FTRA_UNREGISTERED_ACTION), and
+                   assemble_governor() (src/gateway/governance/governor/assembly.py) refuses to
+                   start when an IRREVERSIBLE_TERMINAL action in the registry is claimed by no
+                   tier. With EVIDENCE_CHAIN_BLOCKING=true (Terraform's setting), a policy DENY
+                   is returned only after its GOVERNANCE_REFUSAL record is committed to the
+                   hash-chained evidence stream (see AU-12).
 
                 3. Dual-control approval and single-commit binding:
                    - Human approval: POST /v1/defer/{defer_id}/escalate
@@ -253,8 +255,12 @@ component-definition:
                    CustodyVerifier re-verifies the archive on a schedule (see AU-9, AU-9(3) and
                    AU-10). Decisions use the five-value vocabulary ALLOW, DENY, DEFER, NARROW
                    and REQUIRE_APPROVAL (GovernanceDecision in
-                   src/gateway/governance/decisions.py); PAUSE was removed and a transient fault
-                   is a DENY with a refusal receipt.
+                   src/gateway/governance/decisions.py); PAUSE was removed, and dependency or
+                   infrastructure unavailability fails closed via
+                   InfrastructureOutcome.INFRASTRUCTURE_BLOCK and handle_infrastructure_block()
+                   (src/gateway/governance/governor/verdicts.py), hash-chaining a
+                   GOVERNANCE_INFRASTRUCTURE_BLOCK event without signing a GOVERNANCE_REFUSAL
+                   receipt.
 
                 2. WARRANT RELIANCE: when a region marks a norm requires_warrant, the
                    RelianceRecord for each warranted norm
@@ -1266,11 +1272,14 @@ component-definition:
                 Access enforcement decisions on governed actions come from the governor's OPA
                 stage (src/gateway/governance/governor/stages/opa.py), which queries the active
                 domain's package (finance: src/cage_finance/opa/trade_governance.rego); an OPA
-                DENY or an OPA failure is a HARD violation and the action is refused. The audit
-                trail of a refusal is the hash-chained evidence stream: handle_deny() builds a
-                refusal receipt naming the violated tier and violation codes and commits it as a
-                GOVERNANCE_REFUSAL record (publish_refusal in
-                src/gateway/governance/governor/verdicts.py), blocking under
+                DENY is a HARD violation and the action is refused, whereas an OPA or
+                governance dependency failure emits ViolationKind.INFRASTRUCTURE, blocks
+                fail-closed via handle_infrastructure_block(), hash-chains a
+                GOVERNANCE_INFRASTRUCTURE_BLOCK record, and returns HTTP 503 without signing a
+                GOVERNANCE_REFUSAL receipt. The audit trail of a policy refusal is the
+                hash-chained evidence stream: handle_deny() builds a refusal receipt naming the
+                violated tier and violation codes and commits it as a GOVERNANCE_REFUSAL record
+                (publish_refusal in src/gateway/governance/governor/verdicts.py), blocking under
                 EVIDENCE_CHAIN_BLOCKING=true, which Terraform sets. POST
                 /governance/validate-action returns HTTP 403 with the violations and the
                 receipt's proof_hash, or 503 when the record cannot be committed. The compliance
@@ -1784,9 +1793,10 @@ component-definition:
                 |baseline|, reconciliation.discrepancy_abs_floor). The symbolic governor records
                 each request's tier violations (for example fiscal limits and STPA constraints).
                 The authoritative record of these events is the hash-chained evidence stream:
-                every DENY writes a GOVERNANCE_REFUSAL record, a CBF rollback writes a
-                CBF_ROLLBACK record, and a fence writes a RECONCILIATION_DISCREPANCY_FENCE
-                record. CBF violations are also emitted as OTel span events with severity
+                every policy DENY writes a GOVERNANCE_REFUSAL record, dependency
+                unavailability writes an unsigned GOVERNANCE_INFRASTRUCTURE_BLOCK record, a
+                CBF rollback writes a CBF_ROLLBACK record, and a fence writes a
+                RECONCILIATION_DISCREPANCY_FENCE record. CBF violations are also emitted as OTel span events with severity
                 WARNING or CRITICAL; these are telemetry only, feed no alerting, and on gcp-gke
                 currently fail OTLP export to in-cluster Langfuse with HTTP 401 Unauthorized
                 because module.langfuse does not seed the gateway telemetry key pair

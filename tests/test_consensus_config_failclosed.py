@@ -99,7 +99,7 @@ class TestConsensusFailClosedOnEmptyCritics:
 
     @pytest.mark.asyncio
     async def test_empty_critics_above_threshold_returns_deny(self):
-        """When critics are enabled, magnitude >= threshold, and critics is empty, returns DENY."""
+        """When critics are enabled, magnitude >= threshold, and critics is empty, returns UNAVAILABLE."""
         gate = ConsensusGate(
             critics=(),
             threshold=100.0,
@@ -112,13 +112,13 @@ class TestConsensusFailClosedOnEmptyCritics:
             "some_action",
             context={"value": 500.0},
         )
-        assert result["status"] == "DENY"
-        assert result["decision"] == "DENY"
+        assert result["status"] == "UNAVAILABLE"
+        assert result["decision"] == "UNAVAILABLE"
         assert result["reason"] == "no_critics_configured"
 
     @pytest.mark.asyncio
     async def test_empty_critics_on_high_stakes_action_returns_deny(self):
-        """When critics are enabled, action is in high_stakes_actions, and critics is empty, returns DENY even below threshold."""
+        """When critics are enabled, action is in high_stakes_actions, and critics is empty, returns UNAVAILABLE even below threshold."""
         gate = ConsensusGate(
             critics=(),
             threshold=10000.0,
@@ -132,8 +132,8 @@ class TestConsensusFailClosedOnEmptyCritics:
             "override_contraindication",
             context={"patient_id": "P1"},
         )
-        assert result["status"] == "DENY"
-        assert result["decision"] == "DENY"
+        assert result["status"] == "UNAVAILABLE"
+        assert result["decision"] == "UNAVAILABLE"
         assert result["reason"] == "no_critics_configured"
 
 
@@ -325,7 +325,7 @@ class TestKernelAndConsumerTiersFailClosed:
 
     @pytest.mark.asyncio
     async def test_consumer_tiers_fail_closed_when_engine_is_none(self):
-        """All three consumer tiers fail closed with ViolationKind.HARD if their engine attribute is None."""
+        """All three consumer tiers fail closed with ViolationKind.INFRASTRUCTURE if their engine attribute is None."""
         from src.cage_finance.tiers.consensus_tier import ConsensusTierPlugin
         from src.cage_healthcare.tiers.clinical_consensus_tier import (
             ClinicalConsensusTier,
@@ -338,15 +338,18 @@ class TestKernelAndConsumerTiersFailClosed:
         fin_tier = ConsensusTierPlugin(consensus=MagicMock())
         fin_tier.consensus = None
         fin_v = await fin_tier.evaluate("execute_trade", {"amount": 100.0})
-        assert len(fin_v) == 1 and fin_v[0].kind == ViolationKind.HARD
+        assert len(fin_v) == 1 and fin_v[0].kind == ViolationKind.INFRASTRUCTURE
+        assert fin_v[0].code == "CONSENSUS_UNAVAILABLE"
 
         hc_tier = ClinicalConsensusTier(consensus_engine=MagicMock())
         hc_tier.consensus_engine = None
         hc_v = await hc_tier.evaluate("administer_dose", {"dose_mg": 10.0})
-        assert len(hc_v) == 1 and hc_v[0].kind == ViolationKind.HARD
+        assert len(hc_v) == 1 and hc_v[0].kind == ViolationKind.INFRASTRUCTURE
+        assert hc_v[0].code == "CONSENSUS_UNAVAILABLE"
 
         phys_tier = PhysicalSafetyConsensusTier(consensus_engine=MagicMock())
         phys_tier.consensus_engine = None
         phys_v = await phys_tier.evaluate("dispatch_trajectory", {"velocity_m_s": 1.0})
-        assert len(phys_v) == 1 and phys_v[0].kind == ViolationKind.HARD
+        assert len(phys_v) == 1 and phys_v[0].kind == ViolationKind.INFRASTRUCTURE
+        assert phys_v[0].code == "CONSENSUS_UNAVAILABLE"
         assert phys_v[0].message.startswith("[CTRL_PHYS_004]")

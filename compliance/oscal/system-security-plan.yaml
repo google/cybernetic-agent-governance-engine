@@ -1080,8 +1080,10 @@ system-security-plan:
         \ dedicated gateway telemetry key pair from gateway-secrets, so in-cluster\
         \ Langfuse rejects every gateway OTLP span batch with HTTP 401 Unauthorized\
         \ and drops 100% of gateway decision-time OTel spans silently.\n\nRefusal\
-        \ and deferral parity (0cdb5aaa, #427): a DENY writes a GOVERNANCE_REFUSAL\
-        \ record and a DEFER or REQUIRE_APPROVAL writes a hash-chained GOVERNANCE_DEFERRAL\
+        \ and deferral parity (0cdb5aaa, #427; FA-1..FA-3, POAM-2026-233): a policy\
+        \ DENY writes a GOVERNANCE_REFUSAL record, dependency unavailability writes\
+        \ an unsigned GOVERNANCE_INFRASTRUCTURE_BLOCK record without KMS refusal signing,\
+        \ and a DEFER or REQUIRE_APPROVAL writes a hash-chained GOVERNANCE_DEFERRAL\
         \ record (src/gateway/governance/governor/verdicts.py). Refusal and deferral\
         \ writes are blocking under is_evidence_chain_blocking() (raising GovernanceInfrastructureError\
         \ with REFUSAL_EVIDENCE_UNPERSISTED / DEFERRAL_EVIDENCE_UNPERSISTED on sink\

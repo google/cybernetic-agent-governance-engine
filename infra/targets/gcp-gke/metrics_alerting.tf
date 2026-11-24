@@ -232,9 +232,10 @@ resource "google_monitoring_alert_policy" "gateway_sustained_refusal_ratio" {
 
       ### Triage Checklist
       1. **Fail-closed dependency outage (gateway alive, `/healthz` = `200`, routes `403`/`503`):**
-         Check gateway logs for quarantine Redis / evidence stream connectivity,
-         OPA UDS sidecar readiness, KMS signing errors, or `INGRESS_IDENTITY_*`
-         Linkerd `l5d-client-id` proxy mismatches.
+         Correlate `cage_governance_infrastructure_blocks_total{dependency,code}`
+         against `503` responses, then check gateway logs for quarantine Redis /
+         evidence stream connectivity, OPA UDS sidecar readiness, KMS signing
+         errors, or `INGRESS_IDENTITY_*` Linkerd `l5d-client-id` proxy mismatches.
       2. **Sustained adversarial probing or GCRA rate-limit flood:**
          Correlate `cage_governance_refusals_total{tier}` and
          `cage_rate_limit_hits_total{route,scope}` with gateway refusal receipts.

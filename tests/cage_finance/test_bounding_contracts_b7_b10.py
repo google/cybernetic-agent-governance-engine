@@ -82,7 +82,8 @@ class TestContractB7AuditTrailSealing:
 
         assert result.admitted is False
         assert result.contract_id == "B7"
-        assert result.severity == ContractSeverity.HARD_BLOCK
+        assert result.severity == ContractSeverity.INFRASTRUCTURE
+        assert result.code == "BOUNDING_PROVIDER_UNAVAILABLE"
         assert len(result.findings) == 1
         assert (
             "KMS signer module unavailable" in result.findings[0]["reason"]
@@ -317,14 +318,13 @@ class TestContractB10RollbackWindow:
 
         assert result.admitted is False
         assert result.contract_id == "B10"
-        assert result.severity == ContractSeverity.HITL_ESCALATE
+        assert result.severity == ContractSeverity.INFRASTRUCTURE
         assert len(result.findings) == 1
         assert (
             result.findings[0]["reason"] == "Rollback capability provider unavailable"
         )
         assert "Settlement provider unavailable" in result.findings[0]["error"]
-        assert "human approval required" in result.findings[0]["note"]
-        assert result.code == "B10_ROLLBACK_WINDOW_CLOSED"  # parks for approval
+        assert result.code == "BOUNDING_PROVIDER_UNAVAILABLE"
 
     def test_b10_missing_threshold_hard_blocks(self):
         """B10 rejects when threshold is missing, a configuration error stays HARD_BLOCK."""

@@ -478,7 +478,10 @@ async def test_refusal_without_review_is_hard() -> None:
 )
 async def test_unavailable_provider_fails_closed(provider: _FakeProvider) -> None:
     [violation] = await _tier(provider).evaluate("execute_trade", dict(_TRADE))
-    assert (violation.code, violation.kind) == (CODE_UNAVAILABLE, ViolationKind.HARD)
+    assert (violation.code, violation.kind) == (
+        CODE_UNAVAILABLE,
+        ViolationKind.INFRASTRUCTURE,
+    )
 
 
 @pytest.mark.asyncio
@@ -637,11 +640,15 @@ async def test_fria_hold_parks_an_approval_token(defer_redis: Any) -> None:
 
 @pytest.mark.asyncio
 async def test_fria_provider_timeout_denies_with_a_receipt(defer_redis: Any) -> None:
-    with pytest.raises(GovernanceError) as exc:
+    from src.gateway.governance.governor.errors import GovernanceInfrastructureError
+
+    with pytest.raises(GovernanceInfrastructureError) as exc:
         await _fria_only_governor(_FakeProvider(hang=True)).validate_action(
             "execute_trade", {"amount": 10}
         )
-    assert exc.value.receipt is not None
+    assert exc.value.receipt is None
+    assert exc.value.dependency == "fria"
+    assert exc.value.failure_code == "FRIA_PROVIDER_UNAVAILABLE"
     assert "CTRL_FRIA_006" in str(exc.value)
 
 
@@ -1079,7 +1086,7 @@ async def test_missing_trace_span_refuses_locally_without_calling_provider(
             tier._payload("execute_trade", {"amount": 10})
         [violation] = await tier.evaluate("execute_trade", {"amount": 10})
     assert violation.code == CODE_UNAVAILABLE
-    assert violation.kind == ViolationKind.HARD
+    assert violation.kind == ViolationKind.INFRASTRUCTURE
     assert "correlation_id" in violation.message
     assert provider.calls == []
 
