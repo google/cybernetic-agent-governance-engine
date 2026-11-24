@@ -14,11 +14,13 @@
 
 """Causal marginal risk boundary: beta's units and where the boundary trips.
 
-The documented rule is ``0.5 + beta * amount > 0.95``. ``validate_world_model``
-divides the treatment column by ``CausalSpec.normalization_scale`` before
-fitting, so beta is per normalised unit ($10,000 of trade amount for finance)
-and the boundary divides by the same scale: the scale cancels. On the finance
-synthetic telemetry the boundary trips between $9,143 and $9,145.
+The documented rule is ``beta * amount / scale > CAUSAL_LOCK_RISK_BOUNDARY``
+(``0.45``, with no hardcoded ``0.5`` intercept under ``POAM-2026-117``).
+``validate_world_model`` divides the treatment column by
+``CausalSpec.normalization_scale`` before fitting, so beta is per normalised
+unit ($10,000 of trade amount for finance) and the boundary divides by the same
+scale: the scale cancels. On the finance synthetic telemetry the boundary
+re-derives the same $9,143.93 trip point (``0.45 * 10_000 / 0.4921298``).
 
 Previously beta was fitted per dollar and then divided by the scale again, so
 the boundary tripped 10,000x too high (about $91.4M). Every earlier test
@@ -33,6 +35,7 @@ import time
 from typing import Any
 from unittest.mock import AsyncMock
 
+import numpy as np
 import pandas as pd
 import pytest
 
@@ -50,6 +53,7 @@ from src.gateway.governance.causal.gatekeeper import (
     REASON_DESIGN_ILL_CONDITIONED,
     REASON_TRUSTED,
     CausalGatekeeper,
+    _marginal_risk,
     _spec_fingerprint,
 )
 from src.gateway.governance.causal.world_model_refresher import WorldModelRefresher
@@ -68,7 +72,7 @@ requires_dowhy = pytest.mark.skipif(
     not gk_mod._DOWHY_AVAILABLE, reason="dowhy not installed"
 )
 
-# 0.45 / beta on the finance synthetic telemetry (beta = 4.9213e-05 per dollar).
+# 0.45 / beta on the finance synthetic telemetry (beta = 4.921298e-05 per dollar).
 SYNTHETIC_TRIP_USD = 9_143.93
 
 
@@ -80,12 +84,8 @@ def _gatekeeper(scale: float | None = None) -> CausalGatekeeper:
 
 
 def _trip_point(gatekeeper: CausalGatekeeper, beta: float) -> float:
-    """Treatment value at which 0.5 + beta * x / scale reaches the boundary."""
-    return (
-        (gk_mod.CAUSAL_LOCK_RISK_BOUNDARY - 0.5)
-        * gatekeeper.spec.normalization_scale
-        / beta
-    )
+    """Treatment value at which beta * x / scale reaches CAUSAL_LOCK_RISK_BOUNDARY (0.45)."""
+    return gk_mod.CAUSAL_LOCK_RISK_BOUNDARY * gatekeeper.spec.normalization_scale / beta
 
 
 @requires_dowhy
@@ -102,6 +102,44 @@ def test_real_estimator_trips_at_the_documented_point() -> None:
     assert gatekeeper._within_risk_boundary(verdict.beta, 9_143.0) is True
     assert gatekeeper._within_risk_boundary(verdict.beta, 9_145.0) is False
     assert gatekeeper._within_risk_boundary(verdict.beta, 9_500.0) is False
+
+
+@requires_dowhy
+def test_poam_2026_117_20261027_rng_frame_bounds_causal_effect_without_intercept() -> (
+    None
+):
+    """Reproduce the exact POAM-2026-117 seed-20261027 frame and verify zero 0.5 intercept."""
+    rng = np.random.default_rng(20261027)
+    n = 600
+    volatility = rng.uniform(0.1, 0.9, n)
+    amount = np.clip(rng.normal(5_000, 1_500, n) - 2_000 * volatility, 100, 10_000)
+    noise = rng.normal(0, 0.05, n)
+    risk = 0.05 + 0.8 * volatility + 0.2 * amount / 10_000.0 + noise
+    frame = pd.DataFrame(
+        {
+            "market_volatility": volatility,
+            "trade_amount": amount,
+            "risk_score": risk,
+            "timestamp": np.full(n, time.time()),
+        }
+    )
+
+    gatekeeper = _gatekeeper()
+    verdict = gatekeeper._validate_world_model(frame)
+    assert verdict.trusted, verdict
+    assert verdict.beta == pytest.approx(0.1764373, abs=1e-5)
+
+    # Zero treatment must yield zero causal risk contribution (fails at 0.5 before fix).
+    assert _marginal_risk(verdict.beta, 0.0, gatekeeper.spec.normalization_scale) == 0.0
+    # Marginal effect is strictly linear beta * amount / scale (no +0.5 offset).
+    assert _marginal_risk(
+        verdict.beta, 10_000.0, gatekeeper.spec.normalization_scale
+    ) == pytest.approx(verdict.beta, rel=1e-12)
+    assert _marginal_risk(
+        verdict.beta, 9_619.17, gatekeeper.spec.normalization_scale
+    ) == pytest.approx(verdict.beta * 9_619.17 / 10_000.0, rel=1e-12)
+    assert gk_mod.CAUSAL_LOCK_RISK_BOUNDARY == pytest.approx(0.45)
+    assert _trip_point(gatekeeper, verdict.beta) == pytest.approx(25_504.81, abs=0.05)
 
 
 @requires_dowhy

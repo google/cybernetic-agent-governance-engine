@@ -902,7 +902,7 @@ class TestBoundedRiskScore:
         assert estimated_risk == 0.0, "Risk score must be clamped at 0.0"
 
     def test_normal_amount_produces_valid_risk(self):
-        """0.5 + beta * amount / scale: beta 0.02 per $10,000 at $5,000 is 0.51."""
+        """beta * amount / scale: beta 0.02 per $10,000 at $5,000 is 0.01."""
         from src.gateway.governance.causal.gatekeeper import (
             CAUSAL_NORMALIZATION_SCALE,
             _marginal_risk,
@@ -910,7 +910,16 @@ class TestBoundedRiskScore:
 
         estimated_risk = _marginal_risk(0.02, 5000, CAUSAL_NORMALIZATION_SCALE)
 
-        assert estimated_risk == pytest.approx(0.51)
+        assert estimated_risk == pytest.approx(0.01)
+
+    def test_zero_treatment_produces_zero_marginal_risk(self):
+        """Zero treatment magnitude produces 0.0 marginal risk (no hardcoded 0.5 baseline)."""
+        from src.gateway.governance.causal.gatekeeper import (
+            CAUSAL_NORMALIZATION_SCALE,
+            _marginal_risk,
+        )
+
+        assert _marginal_risk(0.2, 0.0, CAUSAL_NORMALIZATION_SCALE) == 0.0
 
     @pytest.mark.parametrize("scale", [0.0, -1.0, float("nan"), float("inf")])
     def test_invalid_normalization_scale_raises(self, scale):

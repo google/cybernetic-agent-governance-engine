@@ -140,16 +140,16 @@ task.
 When the causal gatekeeper's marginal risk boundary condition is triggered:
 
 ```
-(0.5 + β × amount / normalization_scale) > CAUSAL_LOCK_RISK_BOUNDARY  (0.95)
+(β × amount / normalization_scale) > CAUSAL_LOCK_RISK_BOUNDARY  (0.45)
 ```
 
 the request is **denied, not escalated**. β is fitted per normalised unit of
-trade amount ($10,000 for finance), so the left-hand side is 0.5 plus the
-predicted change in risk score for this trade; on the finance synthetic
-telemetry the boundary trips at about $9,144. Every causal failure is a HARD
-violation (decision D3), and HARD outranks HITL in the classifier, so no human
-approval can override a causal lock, including for trades that other tiers
-would route to review.
+trade amount ($10,000 for finance), so the left-hand side is the predicted
+marginal change in risk score for this trade (with zero hardcoded 0.5
+intercept); on the finance synthetic telemetry the boundary trips at about
+$9,144 (`$9,143.93`). Every causal failure is a HARD violation (decision D3),
+and HARD outranks HITL in the classifier, so no human approval can override a
+causal lock, including for trades that other tiers would route to review.
 
 The other causal lock conditions are refusals of the world model itself, with
 the same HARD outcome:

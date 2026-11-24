@@ -131,7 +131,7 @@ See [GOVERNANCE_CROSSWALK.md](compliance/cross-region/GOVERNANCE_CROSSWALK.md) f
 |---|---|---|
 | `get_causal_lock_p_value_threshold()` | `0.05` | Significance threshold for PlaceboTreatmentRefuter (Tier 6) |
 | `get_causal_lock_placebo_effect_magnitude()` | `0.2` | Maximum tolerated placebo effect magnitude |
-| `get_causal_lock_risk_boundary()` | `0.95` | Risk boundary above which causal lock is enforced |
+| `get_causal_lock_risk_boundary()` | `0.45` | Marginal causal risk effect boundary (`beta * treatment / scale`) above which causal lock is enforced |
 | `get_agent_confidence_threshold()` | `0.95` | ALLOW floor of the universal confidence band (`confidence.agent_threshold`, env `AGENT_CONFIDENCE_THRESHOLD`); read by `ConfidenceStage` (Tier 2) and FTRA in every region |
 | `get_confidence_defer_floor()` | `0.70` | Lower edge of the HITL zone (`confidence.defer_floor`, env `CONFIDENCE_DEFER_FLOOR`); below it `ConfidenceStage` defers and FTRA blocks, in every region. Not an EU AI Act FRIA (that is the `EU_ECB`-only `fria` tier) |
 
