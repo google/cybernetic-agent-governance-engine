@@ -620,6 +620,15 @@ def _map_upstream_error_status(upstream_status: int) -> int:
     return 502
 
 
+class UpstreamStreamingBackendError(Exception):
+    """Typed out-of-band signal for upstream HTTP >= 400 streaming responses."""
+
+    def __init__(self, upstream_status: int, correlation_id: str) -> None:
+        self.upstream_status = upstream_status
+        self.correlation_id = correlation_id
+        super().__init__(f"Upstream inference error {upstream_status}")
+
+
 async def _stream_vllm(
     target_url: str,
     body: dict[str, Any],
@@ -632,7 +641,9 @@ async def _stream_vllm(
     The bytes this yields never reach the client: ``chat_completions``
     buffers them, parses each ``data:`` payload and returns frames that
     :func:`~src.gateway.server.completion_egress.encode_sse_frames` builds
-    from the allowlisted, masked completion.
+    from the allowlisted, masked completion. Upstream HTTP ``>= 400`` status
+    codes raise :class:`UpstreamStreamingBackendError` out-of-band rather than
+    injecting synthetic frames onto the SSE stream (``POAM-2026-237``).
 
     When *span* and *request_start_ns* are provided, captures the time-to-
     first-token (TTFT) on the first non-empty chunk and records it on the span
@@ -656,13 +667,10 @@ async def _stream_vllm(
                 correlation_id,
                 scrub_pii(error_body.decode(errors="replace")[:200]),
             )
-            err_event = {
-                "error": f"vLLM backend error {resp.status_code}",
-                "status_code": int(resp.status_code),
-                "correlation_id": correlation_id,
-            }
-            yield f"data: {json.dumps(err_event)}\n\n".encode()
-            return
+            raise UpstreamStreamingBackendError(
+                upstream_status=int(resp.status_code),
+                correlation_id=correlation_id,
+            )
         async for chunk in resp.aiter_bytes():
             if chunk:
                 # ── TTFT capture ───────────────────────────────────────
@@ -1651,6 +1659,22 @@ async def chat_completions(
                         stream_overflow = True
                         break
                     collected_chunks.append(chunk)
+            except UpstreamStreamingBackendError as exc:
+                await _shielded_quota_rollback(quota_session_id, agent_id, token_delta)
+                upstream_status = (
+                    exc.upstream_status if 400 <= exc.upstream_status < 600 else 502
+                )
+                gateway_status = _map_upstream_error_status(upstream_status)
+                return JSONResponse(
+                    status_code=gateway_status,
+                    content={
+                        "error": "upstream_inference_error",
+                        "upstream_status": upstream_status,
+                        "message": f"vLLM backend error {upstream_status}",
+                        "correlation_id": _canonical_uuid(exc.correlation_id)
+                        or str(_uuid.uuid4()),
+                    },
+                )
             except BaseException as exc:
                 await _shielded_quota_rollback(quota_session_id, agent_id, token_delta)
                 if isinstance(exc, HTTPException) or not isinstance(exc, Exception):
@@ -1670,9 +1694,7 @@ async def chat_completions(
 
             raw_stream = b"".join(collected_chunks).decode(errors="replace")
             assembler = StreamAssembler()
-            stream_backend_error = False
-            stream_backend_status = 502
-            stream_error_correlation_id: str | None = None
+            stream_sse_error = False
             stream_protocol_error = False
 
             for data_str in _iter_sse_data_payloads(raw_stream):
@@ -1685,48 +1707,33 @@ async def chat_completions(
                     stream_protocol_error = True
                     break
 
-                # POAM-2026-237 (GHSA-5c7p-g73w-v4m3 open follow-up): this
-                # prefix check only catches synthetic frames emitted by
-                # _stream_vllm() on upstream HTTP >= 400. Upstream HTTP-200
-                # SSE {"error": ...} frames miss this branch and are stripped
-                # by StreamAssembler into empty choices under PII_SCRUB_PASS;
-                # tracked for out-of-band stream error signaling + fail-closed
-                # HTTP-200 error-frame rejection in POAM-2026-237.
-                err_field = str(chunk_json.get("error", ""))
-                if err_field.startswith("vLLM backend error"):
-                    stream_backend_error = True
-                    raw_status = chunk_json.get("status_code")
-                    if isinstance(raw_status, int) and not isinstance(raw_status, bool):
-                        stream_backend_status = raw_status
-                    else:
-                        parts = err_field.rsplit(" ", 1)
-                        if len(parts) == 2 and parts[1].isdigit():
-                            stream_backend_status = int(parts[1])
-                    # _stream_vllm() mints this as a uuid4; any other string in
-                    # this position came from upstream and is not echoed.
-                    stream_error_correlation_id = (
-                        _canonical_uuid(chunk_json.get("correlation_id"))
-                        or stream_error_correlation_id
-                    )
-                    continue
+                # POAM-2026-237: Fail closed before StreamAssembler.absorb() on
+                # any upstream HTTP-200 SSE JSON frame carrying a non-null
+                # "error" key. Never trust upstream status_code or
+                # correlation_id fields from the untrusted SSE stream.
+                if chunk_json.get("error") is not None:
+                    stream_sse_error = True
+                    break
 
                 assembler.absorb(chunk_json)
 
-            # [KC-01] / [F-15] FIRST: Abort on streaming backend >= 400 error BEFORE emitting PASS evidence!
-            if stream_backend_error:
+            # [KC-01] / [F-15] / [POAM-2026-237]: Abort on upstream HTTP-200 SSE
+            # error frames BEFORE sanitize_stream() or emitting PASS evidence.
+            if stream_sse_error:
                 await _rollback_quota_step(quota_session_id, agent_id, token_delta)
-                upstream_status = (
-                    stream_backend_status if 400 <= stream_backend_status < 600 else 502
+                sse_correlation_id = str(_uuid.uuid4())
+                logger.error(
+                    "Upstream HTTP-200 SSE stream emitted an error frame; "
+                    "failing closed [correlation_id=%s]",
+                    sse_correlation_id,
                 )
-                gateway_status = _map_upstream_error_status(upstream_status)
                 return JSONResponse(
-                    status_code=gateway_status,
+                    status_code=502,
                     content={
                         "error": "upstream_inference_error",
-                        "upstream_status": upstream_status,
-                        "message": f"vLLM backend error {upstream_status}",
-                        "correlation_id": stream_error_correlation_id
-                        or str(_uuid.uuid4()),
+                        "upstream_status": 502,
+                        "message": "Upstream inference stream returned an error frame",
+                        "correlation_id": sse_correlation_id,
                     },
                 )
 

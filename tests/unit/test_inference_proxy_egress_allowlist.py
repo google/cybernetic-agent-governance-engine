@@ -800,31 +800,81 @@ class TestNoVerbatimUpstreamBytes:
         proxy.quota.rollback_step.assert_awaited_once()
         proxy.sink.ingest.assert_not_awaited()
 
+    @pytest.mark.covers(
+        "src.gateway.server.inference_proxy:chat_completions#if stream_sse_error:",
+    )
     @pytest.mark.asyncio
     async def test_error_frame_correlation_id_from_upstream_is_not_echoed(
         self, proxy: SimpleNamespace
     ) -> None:
-        """Only the proxy's own reader mints error correlation ids (uuid4)."""
+        """Only the proxy's own reader mints error correlation ids and status (POAM-2026-237)."""
         proxy.upstream_stream(
             [
                 _frame(
                     {
-                        "error": "vLLM backend error 500",
-                        "status_code": 500,
+                        "error": "vLLM backend error 418",
+                        "status_code": 418,
                         "correlation_id": f"SSN {PII}",
                     }
                 )
             ]
         )
         resp = await _post(stream=True)
-        assert resp.status_code == 500
-        assert resp.json()["error"] == "upstream_inference_error"
+        assert resp.status_code == 502
+        body = resp.json()
+        assert body["error"] == "upstream_inference_error"
+        assert body["upstream_status"] == 502
         assert PII not in resp.text
-        assert (
-            str(uuid.UUID(resp.json()["correlation_id"]))
-            == (resp.json()["correlation_id"])
-        )
+        assert "418" not in resp.text
+        assert str(uuid.UUID(body["correlation_id"])) == body["correlation_id"]
+        proxy.quota.rollback_step.assert_awaited_once()
         proxy.sink.ingest.assert_not_awaited()
+
+    @pytest.mark.parametrize(
+        "error_value",
+        [
+            {"message": f"overloaded: {PII}", "type": "server_error"},
+            f"rate_limit_exceeded ({PII})",
+        ],
+        ids=["dict-error", "str-error"],
+    )
+    @pytest.mark.asyncio
+    async def test_http_200_midstream_sse_error_frame_fails_closed_before_pass_evidence(
+        self, proxy: SimpleNamespace, error_value: Any
+    ) -> None:
+        """HTTP-200 SSE frames with non-null 'error' fail closed with rollback and zero PASS evidence."""
+        proxy.upstream_stream(
+            [
+                _frame(_chunk({"content": "Hello "})),
+                _frame({"error": error_value}),
+                b"data: [DONE]\n\n",
+            ]
+        )
+        resp = await _post(stream=True)
+        assert resp.status_code == 502
+        body = resp.json()
+        assert body["error"] == "upstream_inference_error"
+        assert body["upstream_status"] == 502
+        assert PII not in resp.text
+        proxy.quota.rollback_step.assert_awaited_once()
+        proxy.sink.ingest.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    async def test_http_200_sse_null_error_key_still_succeeds(
+        self, proxy: SimpleNamespace
+    ) -> None:
+        """Explicit JSON {'error': null} alongside valid delta content does not trigger failure."""
+        proxy.upstream_stream(
+            [
+                _frame({"choices": [{"delta": {"content": "ok"}}], "error": None}),
+                _frame({"choices": [{"delta": {}, "finish_reason": "stop"}]}),
+                b"data: [DONE]\n\n",
+            ]
+        )
+        resp = await _post(stream=True)
+        assert resp.status_code == 200
+        assert "ok" in resp.text
+        proxy.quota.rollback_step.assert_not_called()
 
 
 # ---------------------------------------------------------------------------
