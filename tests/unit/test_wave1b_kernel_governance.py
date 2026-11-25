@@ -727,8 +727,14 @@ async def test_f30_dispatch_actuation_cancelled_ingests_unknown_receipt_and_rera
         required_quorum=0,
     )
 
-    with pytest.raises(asyncio.CancelledError):
-        await exec_act_mod.dispatch_actuation(_CancellingActuator(), clearance)  # type: ignore[arg-type]
+    from src.gateway.governance.execution_idempotency import (
+        ExecutionStatus,
+        actuation_attempt_scope,
+    )
+
+    with actuation_attempt_scope() as attempt:
+        with pytest.raises(asyncio.CancelledError):
+            await exec_act_mod.dispatch_actuation(_CancellingActuator(), clearance)  # type: ignore[arg-type]
 
     assert len(ingested) == 1
     _clr, rec, act_id = ingested[0]
@@ -736,3 +742,4 @@ async def test_f30_dispatch_actuation_cancelled_ingests_unknown_receipt_and_rera
     assert rec.accepted is False
     assert rec.outcome is ActuationOutcome.UNKNOWN
     assert rec.findings[0]["code"] == "ACTUATOR_CANCELLED"
+    assert attempt.status is ExecutionStatus.UNKNOWN

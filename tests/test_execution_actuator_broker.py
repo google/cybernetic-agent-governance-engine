@@ -368,6 +368,9 @@ async def test_credential_denial_and_accepted_receipts_ingest_into_evidence_stre
 
     from src.gateway.governance.evidence.stream import EvidenceStreamSink
     from src.gateway.governance.execution_actuator import dispatch_actuation
+    from src.gateway.governance.execution_idempotency import (
+        actuation_attempt_scope,
+    )
 
     fake_redis = fakeredis.aioredis.FakeRedis(decode_responses=True)
     sink = EvidenceStreamSink()
@@ -393,7 +396,8 @@ async def test_credential_denial_and_accepted_receipts_ingest_into_evidence_stre
     await denied_adapter.actuate(clearance)
     assert await fake_redis.xrange(sink._stream_key) == []
 
-    refusal_receipt = await dispatch_actuation(denied_adapter, clearance)
+    with actuation_attempt_scope():
+        refusal_receipt = await dispatch_actuation(denied_adapter, clearance)
     assert refusal_receipt.accepted is False
 
     # 2. Accepted path
@@ -410,7 +414,8 @@ async def test_credential_denial_and_accepted_receipts_ingest_into_evidence_stre
         signer=MockSigner(),
         credential_broker=MockCredentialBroker(),
     )
-    accepted_receipt = await dispatch_actuation(accepted_adapter, clearance)
+    with actuation_attempt_scope():
+        accepted_receipt = await dispatch_actuation(accepted_adapter, clearance)
     assert accepted_receipt.accepted is True
 
     entries = await fake_redis.xrange(sink._stream_key)

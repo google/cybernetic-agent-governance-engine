@@ -44,6 +44,14 @@ enforcing posture, makes :meth:`ExecutionLedger.claim` raise
 :class:`ExecutionLedgerUnavailable`. Only a non-enforcing posture without
 Redis falls back to a process-local registry, as the quarantine actuator does.
 
+Attempt state (POAM-2026-252): whether the current attempt may have executed
+is answered once, by the kernel. :func:`actuation_attempt_scope` opens an
+:class:`ActuationAttempt` record for a committing run; ``dispatch_actuation()``
+is its only writer (it marks the record before ``actuate()`` is awaited and
+settles it from the receipt), and the domain tool's settlement and ledger
+decision, :meth:`ExecutionLedger.release_unexecuted`, the domain tool result
+and ``/tools/execute`` all read the same record instead of keeping copies.
+
 Domain-agnostic kernel code (Layer 1): the caller names the action.
 """
 
@@ -55,10 +63,14 @@ import re
 import secrets
 import threading
 import time
+from collections.abc import Iterator
+from contextlib import contextmanager
+from contextvars import ContextVar, Token
 from dataclasses import dataclass
 from enum import Enum
 from typing import Any
 
+from src.gateway.governance.commit_outcome import CommitOutcome, CommitStatus
 from src.gateway.governance.env_posture import is_enforcing, resolve_posture
 
 logger = logging.getLogger(__name__)
@@ -160,6 +172,198 @@ class Duplicate:
     key: str
     status: ExecutionStatus
     outcome: str | None
+
+
+# ── Attempt state: what the current committing run has dispatched ──────────
+
+#: How settled statuses combine: a later ``REJECTED`` receipt never hides an
+#: earlier dispatch that may have executed.
+_ATTEMPT_RANK: dict[ExecutionStatus, int] = {
+    ExecutionStatus.BLOCKED: 0,
+    ExecutionStatus.EXECUTED: 1,
+    ExecutionStatus.UNKNOWN: 2,
+}
+
+
+def _dominant(a: ExecutionStatus, b: ExecutionStatus) -> ExecutionStatus:
+    return a if _ATTEMPT_RANK[a] >= _ATTEMPT_RANK[b] else b
+
+
+class ActuationAttemptScopeError(RuntimeError):
+    """``dispatch_actuation()`` was called with no attempt scope open.
+
+    Raised before the actuator is awaited, so nothing was sent: outside a
+    scope no caller could read what the dispatch did.
+    """
+
+
+class ActuationAttempt:
+    """Whether the current committing run may have executed: the kernel's answer.
+
+    Opened by :func:`actuation_attempt_scope`. ``status`` is ``BLOCKED`` until
+    something is dispatched. Only ``dispatch_actuation()`` writes the record:
+    it marks a dispatch before ``actuate()`` is awaited (the record reads
+    ``UNKNOWN`` from then on) and settles it once the receipt is in the
+    evidence stream (``ACCEPTED`` -> ``EXECUTED``, ``UNKNOWN`` -> ``UNKNOWN``,
+    ``REJECTED`` -> ``BLOCKED``). A dispatch that ends without a settled
+    receipt (an exception or a cancellation) leaves the record ``UNKNOWN``.
+
+    The record only moves towards "may have executed": a ``REJECTED`` receipt
+    is the only way back to ``BLOCKED``, and only while nothing else in the
+    scope may have executed. ``dispatched`` never goes back to ``False``.
+    """
+
+    __slots__ = ("_dispatched", "_in_flight", "_settled", "_unsettled")
+
+    def __init__(self) -> None:
+        self._dispatched = False
+        self._in_flight = 0
+        self._settled = ExecutionStatus.BLOCKED
+        self._unsettled = False
+
+    @property
+    def dispatched(self) -> bool:
+        """Whether anything in this scope was handed to an actuator."""
+        return self._dispatched
+
+    @property
+    def status(self) -> ExecutionStatus:
+        """``BLOCKED``, ``EXECUTED`` or ``UNKNOWN``, as the ledger records it."""
+        if self._in_flight or self._unsettled:
+            return ExecutionStatus.UNKNOWN
+        return self._settled
+
+    @property
+    def may_have_executed(self) -> bool:
+        """False only while nothing was dispatched or every dispatch was rejected."""
+        return self.status is not ExecutionStatus.BLOCKED
+
+    def __repr__(self) -> str:
+        return (
+            f"ActuationAttempt(status={self.status.value}, "
+            f"dispatched={self._dispatched})"
+        )
+
+    def _absorb(self, closed: ActuationAttempt) -> None:
+        """Fold a closed nested scope into this one without losing a dispatch."""
+        self._dispatched = self._dispatched or closed._dispatched
+        # A dispatch still in flight when its scope closed never settles here.
+        self._unsettled = self._unsettled or closed._unsettled or closed._in_flight > 0
+        self._settled = _dominant(self._settled, closed._settled)
+
+
+_current_attempt: ContextVar[ActuationAttempt | None] = ContextVar(
+    "cage_actuation_attempt", default=None
+)
+
+
+def open_actuation_attempt() -> Token[ActuationAttempt | None]:
+    """Open a fresh attempt record in the current context.
+
+    For a request boundary that keeps a token (``/tools/execute``): close it
+    with :func:`close_actuation_attempt` in a ``finally``. Everything else
+    uses :func:`actuation_attempt_scope`.
+    """
+    return _current_attempt.set(ActuationAttempt())
+
+
+def close_actuation_attempt(token: Token[ActuationAttempt | None]) -> None:
+    """Close the record ``token`` opened and fold it into the enclosing one."""
+    closed = _current_attempt.get()
+    _current_attempt.reset(token)
+    enclosing = _current_attempt.get()
+    if enclosing is not None and closed is not None:
+        enclosing._absorb(closed)
+
+
+@contextmanager
+def actuation_attempt_scope() -> Iterator[ActuationAttempt]:
+    """Open a fresh attempt record for one committing run.
+
+    Every dispatch inside the block is recorded here; ``dispatch_actuation()``
+    refuses to run outside one. On exit, before an exception reaches an
+    enclosing handler, the record is folded into the enclosing scope's, so a
+    request boundary sees everything its tool dispatched. Context copies
+    (``asyncio.to_thread``, task creation) share the record by reference, so
+    a dispatch made under one is still recorded where the scope's owner
+    reads it.
+    """
+    attempt = ActuationAttempt()
+    token = _current_attempt.set(attempt)
+    try:
+        yield attempt
+    finally:
+        close_actuation_attempt(token)
+
+
+def current_actuation_attempt() -> ActuationAttempt | None:
+    """The record of the innermost open scope; ``None`` outside every scope."""
+    return _current_attempt.get()
+
+
+def exceptions_after_dispatch() -> tuple[type[Exception], ...]:
+    """``(Exception,)`` once the current attempt may have executed, else ``()``.
+
+    For an ``except`` clause, whose expression is evaluated only when an
+    error reaches it: such a clause catches every error after dispatch and
+    none before, so the attempt record, not the error's type, decides how an
+    error escaping after dispatch is answered.
+    """
+    attempt = _current_attempt.get()
+    if attempt is not None and attempt.may_have_executed:
+        return (Exception,)
+    return ()
+
+
+def outcome_after_dispatch(message: str) -> CommitOutcome | None:
+    """The committing outcome for an error that escaped once dispatch may have executed.
+
+    Read from the current attempt record, whatever the error's type:
+    ``EXECUTED`` when the receipt was accepted, ``INDETERMINATE`` while the
+    outcome is unknown. ``None`` while nothing in the scope may have
+    executed (or outside every scope): the caller keeps its own mapping.
+    """
+    attempt = _current_attempt.get()
+    if attempt is None or not attempt.may_have_executed:
+        return None
+    if attempt.status is ExecutionStatus.EXECUTED:
+        return CommitOutcome(CommitStatus.EXECUTED, message)
+    return CommitOutcome(CommitStatus.INDETERMINATE, message)
+
+
+def mark_dispatch() -> ActuationAttempt:
+    """Mark a dispatch in the current record before anything is sent.
+
+    Called only by ``dispatch_actuation()``, synchronously and before it
+    awaits the actuator, so the record reads ``UNKNOWN`` before any byte can
+    leave.
+
+    Raises:
+        ActuationAttemptScopeError: No scope is open; nothing may be sent.
+    """
+    attempt = _current_attempt.get()
+    if attempt is None:
+        raise ActuationAttemptScopeError(
+            "dispatch_actuation() was called outside actuation_attempt_scope(); "
+            "nothing could read what the dispatch did, so it was not sent"
+        )
+    attempt._dispatched = True
+    attempt._in_flight += 1
+    return attempt
+
+
+def settle_dispatch(attempt: ActuationAttempt, status: ExecutionStatus | None) -> None:
+    """Close one dispatch :func:`mark_dispatch` marked (``dispatch_actuation()`` only).
+
+    ``status`` is what the recorded receipt says. ``None`` (the dispatch ended
+    without one) or any status other than ``BLOCKED``, ``EXECUTED`` or
+    ``UNKNOWN`` leaves the record ``UNKNOWN``.
+    """
+    attempt._in_flight = max(0, attempt._in_flight - 1)
+    if status is not None and status in _ATTEMPT_RANK:
+        attempt._settled = _dominant(attempt._settled, status)
+    else:
+        attempt._unsettled = True
 
 
 @dataclass
@@ -353,7 +557,29 @@ class ExecutionLedger:
         before actuation started, so retrying the same ``transaction_id`` after
         the dependency recovers does not collide with a stale ``BLOCKED`` or
         ``IN_FLIGHT`` record (F-03, POAM-2026-233).
+
+        Never once the current attempt has dispatched (POAM-2026-252): the
+        claim is kept, the attempt's own status is recorded in its place
+        (``UNKNOWN`` while the outcome is in doubt, which unknown-actuation
+        reconciliation can resolve; ``EXECUTED`` or ``BLOCKED`` once a receipt
+        settled it), and ``False`` is returned.
         """
+        attempt = _current_attempt.get()
+        if attempt is not None and attempt.dispatched:
+            status = attempt.status
+            logger.critical(
+                "execution ledger claim %s not released: the attempt was "
+                "dispatched; recording %s instead",
+                claim.key,
+                status.value,
+            )
+            await self.record_outcome(
+                claim,
+                status,
+                f"{status.value}: the claim was kept because the attempt had "
+                "been dispatched",
+            )
+            return False
         try:
             redis = await self._raw_redis()
         except ExecutionLedgerUnavailable as exc:

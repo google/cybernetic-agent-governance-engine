@@ -27,6 +27,7 @@ from src.cage_healthcare import ground_truth as _gt
 from src.cage_healthcare.tools.dose_order import DoseOrder
 from src.gateway.governance import contracts as _ct
 from src.gateway.governance import execution_actuator as _act
+from src.gateway.governance import execution_idempotency as _ei
 from src.gateway.governance import routing_seal as _rs
 from src.gateway.governance.execution_actuator import get_actuator_registry
 from src.gateway.governance.routing_seal import verify_and_consume_seal
@@ -149,45 +150,45 @@ async def administer_dose_action(
     seal, evaluated = getattr(governed, "seal", None), getattr(governed, "params", None)
     if not isinstance(seal, str) or not seal.strip() or not isinstance(evaluated, dict):
         raise _rs.SymbolicGovernorViolation("No seal", action="administer_dose")
-    executed = False
-    try:
+    tid, nonce = str(uuid.uuid4()), uuid.uuid4().hex[:32]
+    dig = hashlib.sha256(json.dumps(evaluated, sort_keys=True).encode()).hexdigest()
+    kw: dict[str, Any] = {"thread_id": tid, "decision": "ALLOW", "nonce": nonce}
+    kw |= {"decision_path": "DIRECT", "action": "administer_dose"}
+    kw |= {"params": evaluated, "consequence_ceiling": "HIGH_CLINICAL"}
+    kw |= {"target": order.patient_id, "operator_urn": "clinician_001"}
+    kw |= {"issued_at": int(time.time()), "correlation_id": tid}
+    kw |= {"issued_at_provenance": "CONSTRUCTION_TIME", "opa_input_digest": dig}
+    kw |= {"correlation_id_source": "THREAD_DERIVED", "routing_seal": seal}
+    kw |= {"governance_decision_digest": _rs.seal_digest(seal)}
+    kw |= {"executor_id": "cage_healthcare_clinical", "required_quorum": 0}
+    # The kernel's attempt record, written only by dispatch_actuation(), says
+    # whether the dose may have been given (POAM-2026-252); no local copy.
+    with _ei.actuation_attempt_scope() as attempt:
         try:
-            await verify_and_consume_seal(seal, "administer_dose", evaluated)
-        except _rs.SymbolicGovernorViolation as exc:
-            return await _refuse(exc.reason, evaluated)
-        act = get_actuator_registry().get_actuator("administer_dose")
-        if act is None:
-            raise _rs.SymbolicGovernorViolation("No actuator", action="administer_dose")
-        tid, nonce = str(uuid.uuid4()), uuid.uuid4().hex[:32]
-        dig = hashlib.sha256(json.dumps(evaluated, sort_keys=True).encode()).hexdigest()
-        kw: dict[str, Any] = {"thread_id": tid, "decision": "ALLOW", "nonce": nonce}
-        kw |= {"decision_path": "DIRECT", "action": "administer_dose"}
-        kw |= {"params": evaluated, "consequence_ceiling": "HIGH_CLINICAL"}
-        kw |= {"target": order.patient_id, "operator_urn": "clinician_001"}
-        kw |= {"issued_at": int(time.time()), "correlation_id": tid}
-        kw |= {"issued_at_provenance": "CONSTRUCTION_TIME", "opa_input_digest": dig}
-        kw |= {"correlation_id_source": "THREAD_DERIVED", "routing_seal": seal}
-        kw |= {"governance_decision_digest": _rs.seal_digest(seal)}
-        kw |= {"executor_id": "cage_healthcare_clinical", "required_quorum": 0}
-        executed = True
-        rec = await _act.dispatch_actuation(act, _seam.ExecutionClearance(**kw))
-        executed = rec.may_have_executed
-        if not rec.accepted:
-            if executed:
+            try:
+                await verify_and_consume_seal(seal, "administer_dose", evaluated)
+            except _rs.SymbolicGovernorViolation as exc:
+                return await _refuse(exc.reason, evaluated)
+            act = get_actuator_registry().get_actuator("administer_dose")
+            if act is None:
+                raise _rs.SymbolicGovernorViolation("No actuator", action=kw["action"])
+            rec = await _act.dispatch_actuation(act, _seam.ExecutionClearance(**kw))
+            if attempt.status is _ei.ExecutionStatus.UNKNOWN:
                 return {
                     "status": "INDETERMINATE",
                     "reason": "Actuation indeterminate (reservations confirmed)",
                     "receipt_id": rec.receipt_id,
                     "findings": list(rec.findings),
                 }
-            return await _refuse("Actuation rejected", evaluated)
-        return {
-            "status": "GOVERNED",
-            **order.model_dump(),
-            "receipt_id": rec.receipt_id,
-        }
-    finally:
-        await governor.settle(seal, executed=executed)
+            if attempt.status is _ei.ExecutionStatus.BLOCKED:
+                return await _refuse("Actuation rejected", evaluated)
+            return {
+                "status": "GOVERNED",
+                **order.model_dump(),
+                "receipt_id": rec.receipt_id,
+            }
+        finally:
+            await governor.settle(seal, executed=attempt.may_have_executed)
 
 
 class ClinicalToolProvider(_ct.DomainToolProvider):

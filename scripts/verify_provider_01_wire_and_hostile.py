@@ -114,6 +114,7 @@ from src.gateway.governance.execution_actuator import (
     ExecutionClearance,
     dispatch_actuation,
 )
+from src.gateway.governance.execution_idempotency import actuation_attempt_scope
 from src.gateway.governance.governor.approval import PostHitlApproval
 from src.gateway.governance.governor.assembly import (
     GovernorComponents,
@@ -726,9 +727,10 @@ async def main() -> None:
             executor_id="rogue_external_actuator",
             target_route="local://default",
         )
-        receipt_exec_drift = await dispatch_actuation(
-            broker_actuator, clearance_executor_drift
-        )
+        with actuation_attempt_scope():
+            receipt_exec_drift = await dispatch_actuation(
+                broker_actuator, clearance_executor_drift
+            )
         assert receipt_exec_drift.outcome is not None
         exec_drift_codes = [f.get("code") for f in receipt_exec_drift.findings]
         print(
@@ -761,9 +763,10 @@ async def main() -> None:
             executor_id=broker_actuator.actuator_id,
             target_route="https://untrusted-egress.example.com/settle",
         )
-        receipt_route_drift = await dispatch_actuation(
-            broker_actuator, clearance_route_drift
-        )
+        with actuation_attempt_scope():
+            receipt_route_drift = await dispatch_actuation(
+                broker_actuator, clearance_route_drift
+            )
         assert receipt_route_drift.outcome is not None
         route_drift_codes = [f.get("code") for f in receipt_route_drift.findings]
         print(

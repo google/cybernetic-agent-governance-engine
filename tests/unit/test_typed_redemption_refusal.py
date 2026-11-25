@@ -512,7 +512,6 @@ async def _govern(side_effect: BaseException | None, *, deferred_id: str | None)
             deferred_id=deferred_id,
             dry_run=False,
             governor=MagicMock(),
-            attempt=tp._TradeAttempt(),
         )
 
 

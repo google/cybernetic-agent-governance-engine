@@ -712,6 +712,12 @@ async def execute_tool_endpoint(request_body: ToolExecutionRequest, request: Req
     The caller is authenticated by mesh workload identity before this handler
     runs (WorkloadIdentityMiddleware on the gateway root app, POAM-2026-080,
     and enforced directly here as defense-in-depth for GHSA-4x3x-w2m3-8mfh).
+
+    Each request opens a kernel attempt record (POAM-2026-252). Once
+    ``dispatch_actuation()`` has marked it, any error that escapes is answered
+    HTTP 200 with ``may_have_executed: true`` and an ``INDETERMINATE`` or
+    ``EXECUTED`` outcome, as the record says, whatever the error's type;
+    before dispatch, or after a ``REJECTED`` receipt, errors are mapped by type.
     """
     from src.gateway.server.workload_identity import (
         extract_client_identity,
@@ -806,11 +812,18 @@ async def execute_tool_endpoint(request_body: ToolExecutionRequest, request: Req
         CommitStatus,
     )
     from src.gateway.governance.evidence.stream import EvidenceChainUnavailableError
-    from src.gateway.governance.execution_idempotency import UnsettledDuplicate
+    from src.gateway.governance.execution_idempotency import (
+        UnsettledDuplicate,
+        close_actuation_attempt,
+        exceptions_after_dispatch,
+        open_actuation_attempt,
+        outcome_after_dispatch,
+    )
     from src.gateway.governance.governor.errors import GovernanceInfrastructureError
     from src.gateway.governance.routing_seal import SymbolicGovernorViolation
     from src.gateway.governance.seams.actuation import (
         ActuationIndeterminateError,
+        ActuationOutcome,
         ActuationRejectedError,
     )
     from src.gateway.infrastructure.privacy import scrub_pii
@@ -860,6 +873,10 @@ async def execute_tool_endpoint(request_body: ToolExecutionRequest, request: Req
 
     func = tool_map[request_body.tool_name]
     refusal_token = set_last_refusal_proof_hash(None)
+    # One kernel attempt record per request; dispatch_actuation() marks it
+    # before anything is sent (POAM-2026-252). A sync tool run by
+    # asyncio.to_thread sees the same record through the copied context.
+    attempt_token = open_actuation_attempt()
     try:
         if inspect.iscoroutinefunction(func):
             output = await func(**request_body.params)
@@ -926,12 +943,45 @@ async def execute_tool_endpoint(request_body: ToolExecutionRequest, request: Req
             }:
                 response["actuation_outcome"] = "UNKNOWN"
                 response["may_have_executed"] = True
+            elif raw_status == CommitStatus.EXECUTED.value:
+                response["may_have_executed"] = True
         proof_hash = get_last_refusal_proof_hash()
         if (tool_error and not non_refusal_outcome) or proof_hash:
             mark_request_refused()
         if proof_hash:
             response["proof_hash"] = proof_hash
         return response
+    except exceptions_after_dispatch() as exc:
+        # Matches every error once the attempt record may have executed, and
+        # none before: the record, not the error's type, decides the answer,
+        # so a dispatched action is never reported as an outage or a refusal
+        # (POAM-2026-252). Not a policy refusal: no mark_request_refused().
+        msg = scrub_pii(str(exc) or type(exc).__name__)
+        after_dispatch = outcome_after_dispatch(msg) or CommitOutcome(
+            CommitStatus.INDETERMINATE, msg
+        )
+        accepted = after_dispatch.status is CommitStatus.EXECUTED
+        logger.warning(
+            "Governed tool error after dispatch answered as %s (%s): %s",
+            after_dispatch.status.value,
+            type(exc).__name__,
+            exc,
+        )
+        return _SubscriptableJSONResponse(
+            status_code=200,
+            content={
+                "status": "ERROR",
+                "error_type": type(exc).__name__,
+                "actuation_outcome": (
+                    ActuationOutcome.ACCEPTED.value
+                    if accepted
+                    else ActuationOutcome.UNKNOWN.value
+                ),
+                "may_have_executed": True,
+                "outcome": after_dispatch.to_wire(),
+                "error": msg,
+            },
+        )
     except EvidenceChainUnavailableError as exc:
         logger.error("Evidence chain unavailable during /tools/execute: %s", exc)
         return _SubscriptableJSONResponse(
@@ -1085,6 +1135,7 @@ async def execute_tool_endpoint(request_body: ToolExecutionRequest, request: Req
         return _SubscriptableJSONResponse(status_code=500, content=err_response)
     finally:
         reset_last_refusal_proof_hash(refusal_token)
+        close_actuation_attempt(attempt_token)
 
 
 @app.get("/health")

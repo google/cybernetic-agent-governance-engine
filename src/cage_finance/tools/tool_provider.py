@@ -18,7 +18,6 @@ import json
 import logging
 import time
 import uuid
-from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, Literal, NoReturn
 
 from mcp.types import CallToolResult, TextContent, ToolAnnotations
@@ -31,16 +30,14 @@ if TYPE_CHECKING:
 from src.cage_finance.actuators.broker_actuator import BrokerActuator
 from src.cage_finance.models.trade_order import is_valid_transaction_id
 from src.cage_finance.tools.market_service import get_market_data
+from src.gateway.governance import execution_actuator as _exec_actuator
 from src.gateway.governance.commit_outcome import (
     NOT_EXECUTED_STATUSES,
     CommitOutcome,
     CommitStatus,
 )
 from src.gateway.governance.contracts import DomainToolProvider
-from src.gateway.governance.execution_actuator import (
-    dispatch_actuation,
-    get_actuator_registry,
-)
+from src.gateway.governance.execution_actuator import get_actuator_registry
 from src.gateway.governance.execution_idempotency import (
     SHARED_CALLER,
     Claim,
@@ -48,6 +45,9 @@ from src.gateway.governance.execution_idempotency import (
     ExecutionLedgerUnavailable,
     ExecutionStatus,
     UnsettledDuplicate,
+    actuation_attempt_scope,
+    current_actuation_attempt,
+    outcome_after_dispatch,
 )
 from src.gateway.governance.routing_seal import SymbolicGovernorViolation
 from src.gateway.governance.seams.actuation import (
@@ -285,42 +285,46 @@ async def execute_trade_action(
             return await _refuse_duplicate(claimed, transaction_id, params)
         claim = claimed
 
-    attempt = _TradeAttempt()
-    try:
-        outcome = await _govern_and_actuate(
-            params,
-            deferred_id=deferred_id,
-            dry_run=dry_run,
-            governor=governor,
-            attempt=attempt,
-        )
-    except BaseException as exc:
-        if claim is not None:
-            from src.gateway.governance.evidence.stream import (
-                EvidenceChainUnavailableError,
+    # The kernel's attempt record, written only by dispatch_actuation(), is the
+    # single answer to "may this trade have executed?" for settlement, the
+    # ledger and the tool result (POAM-2026-252); this tool keeps no copy.
+    with actuation_attempt_scope() as attempt:
+        try:
+            outcome = await _govern_and_actuate(
+                params,
+                deferred_id=deferred_id,
+                dry_run=dry_run,
+                governor=governor,
             )
-            from src.gateway.governance.governor.errors import (
-                GovernanceInfrastructureError,
-            )
+        except BaseException as exc:
+            if claim is not None:
+                from src.gateway.governance.evidence.stream import (
+                    EvidenceChainUnavailableError,
+                )
+                from src.gateway.governance.governor.errors import (
+                    GovernanceInfrastructureError,
+                )
 
-            if (
-                isinstance(
-                    exc,
-                    (GovernanceInfrastructureError, EvidenceChainUnavailableError),
-                )
-                and attempt.status is ExecutionStatus.BLOCKED
-            ):
-                await ledger.release_unexecuted(claim)
-            else:
-                await ledger.record_outcome(
-                    claim,
-                    attempt.status,
-                    f"{attempt.status.value}: {str(exc) or type(exc).__name__}",
-                )
-        raise
-    if claim is not None:
-        await ledger.record_outcome(claim, attempt.status, outcome.message)
-    return outcome
+                # Only an outage before anything was dispatched frees the key;
+                # once the trade was handed to the broker its status is kept.
+                if (
+                    isinstance(
+                        exc,
+                        (GovernanceInfrastructureError, EvidenceChainUnavailableError),
+                    )
+                    and not attempt.dispatched
+                ):
+                    await ledger.release_unexecuted(claim)
+                else:
+                    await ledger.record_outcome(
+                        claim,
+                        attempt.status,
+                        f"{attempt.status.value}: {str(exc) or type(exc).__name__}",
+                    )
+            raise
+        if claim is not None:
+            await ledger.record_outcome(claim, attempt.status, outcome.message)
+        return outcome
 
 
 #: Ledger statuses whose recorded reply settles a resubmission, and the
@@ -349,13 +353,6 @@ def _call_tool_result(outcome: CommitOutcome) -> CallToolResult:
         structuredContent=outcome.to_wire(),
         isError=outcome.status in NOT_EXECUTED_STATUSES,
     )
-
-
-@dataclass
-class _TradeAttempt:
-    """What one attempt did at the broker, as the execution ledger records it."""
-
-    status: ExecutionStatus = ExecutionStatus.BLOCKED
 
 
 async def _refuse_duplicate(
@@ -396,9 +393,14 @@ async def _govern_and_actuate(
     deferred_id: str | None,
     dry_run: bool,
     governor: "SymbolicGovernor",
-    attempt: _TradeAttempt,
 ) -> CommitOutcome:
-    """Govern, seal and actuate one trade; ``attempt.status`` tracks the broker."""
+    """Govern, seal and actuate one trade.
+
+    Runs inside :func:`execute_trade_action`'s attempt scope. Whether the
+    trade may have executed is read from the kernel's attempt record, which
+    only ``dispatch_actuation()`` writes (POAM-2026-252); this function never
+    derives it from the receipt itself.
+    """
     # The kernel binds the server-side inputs (the STPA measurements and the
     # trader's role and id) exactly once inside the committing run; the seal
     # names those evaluated params and the run returns them
@@ -458,11 +460,11 @@ async def _govern_and_actuate(
         )
 
     # Every exit from here on settles the seal's phase-2 commits exactly once
-    # (ADR-009): confirmed whenever the trade may have executed (ACCEPTED,
-    # UNKNOWN, or mid-dispatch cancellation), and released only on provable
-    # pre-execution paths (blocked receipt, invalid seal, dry run, missing
-    # actuator, or deterministic REJECTED receipt).
-    executed = False
+    # (ADR-009), as the kernel's attempt record says: confirmed whenever the
+    # trade may have executed (ACCEPTED, UNKNOWN, or mid-dispatch
+    # cancellation), and released only while nothing was dispatched or the
+    # receipt was a deterministic REJECTED (blocked receipt, invalid seal, dry
+    # run, missing actuator, REJECTED receipt).
     try:
         # Step 3: NARROW Receipt Validation (CAGE-SEC-004 fix)
         # A narrowed committing run (SymbolicGovernor._sealed_narrow) seals the
@@ -564,7 +566,7 @@ async def _govern_and_actuate(
             routing_seal=seal,
         )
 
-        # Step 6: Dispatch through ActuatorRegistry (ADR-008 Phase 1)
+        # Step 6: Dispatch through ActuatorRegistry (ADR-008 Phase 1).
         actuator = get_actuator_registry().get_actuator("execute_trade")
         if actuator is None:
             raise SymbolicGovernorViolation(
@@ -572,54 +574,61 @@ async def _govern_and_actuate(
                 action="execute_trade",
             )
 
-        # Flip executed=True and attempt.status=UNKNOWN BEFORE awaiting
-        # dispatch_actuation so mid-flight cancellation (BaseException) or
-        # indeterminate outcomes NEVER roll back CBF or FiscalLimitGuard
-        # reservations; only a provable REJECTED receipt resets executed=False.
-        attempt.status = ExecutionStatus.UNKNOWN
-        executed = True
-        receipt = await dispatch_actuation(actuator, clearance)
-        executed = receipt.may_have_executed
-
-        if not receipt.accepted:
-            findings_str = "; ".join(
-                f"{f.get('code', 'UNKNOWN')}: {f.get('detail', '')}"
-                for f in receipt.findings
+        # dispatch_actuation() marks the kernel attempt record UNKNOWN before
+        # it awaits the broker, so mid-flight cancellation (BaseException) or
+        # an indeterminate outcome NEVER rolls back CBF or FiscalLimitGuard
+        # reservations; only a provable REJECTED receipt settles it BLOCKED.
+        receipt = await _exec_actuator.dispatch_actuation(actuator, clearance)
+        status = _attempt_status()
+        if status is ExecutionStatus.EXECUTED:
+            return CommitOutcome(
+                CommitStatus.EXECUTED,
+                f"EXECUTED: {action_params.get('symbol')} x {action_params.get('amount')} "
+                f"(Receipt ID: {receipt.receipt_id})",
             )
-            if executed:
-                raise ActuationIndeterminateError(
-                    f"Actuation outcome indeterminate (reservations confirmed "
-                    f"pending reconciliation): {findings_str}",
-                    action="execute_trade",
-                    findings=receipt.findings,
-                )
-            attempt.status = ExecutionStatus.BLOCKED
-            raise ActuationRejectedError(
-                f"Actuation rejected: {findings_str}",
+        findings_str = "; ".join(
+            f"{f.get('code', 'UNKNOWN')}: {f.get('detail', '')}"
+            for f in receipt.findings
+        )
+        if status is ExecutionStatus.UNKNOWN:
+            raise ActuationIndeterminateError(
+                f"Actuation outcome indeterminate (reservations confirmed "
+                f"pending reconciliation): {findings_str}",
                 action="execute_trade",
                 findings=receipt.findings,
             )
-
-        attempt.status = ExecutionStatus.EXECUTED
-        return CommitOutcome(
-            CommitStatus.EXECUTED,
-            f"EXECUTED: {action_params.get('symbol')} x {action_params.get('amount')} "
-            f"(Receipt ID: {receipt.receipt_id})",
+        raise ActuationRejectedError(
+            f"Actuation rejected: {findings_str}",
+            action="execute_trade",
+            findings=receipt.findings,
         )
     finally:
+        attempt_status = _attempt_status()
         fiscal_token = (
             governor.held_receipt(seal, "fiscal")
             if hasattr(governor, "held_receipt")
             else None
         )
-        await _settle(governor, seal, executed=executed)
-        if executed and attempt.status is ExecutionStatus.UNKNOWN:
+        await _settle(
+            governor, seal, executed=attempt_status is not ExecutionStatus.BLOCKED
+        )
+        if attempt_status is ExecutionStatus.UNKNOWN:
             await _record_unknown_fiscal_hold(
                 governor,
                 transaction_id=str(action_params.get("transaction_id") or ""),
                 symbol=str(action_params.get("symbol") or ""),
                 fiscal_token=fiscal_token,
             )
+
+
+def _attempt_status() -> ExecutionStatus:
+    """The trade's status in the kernel attempt record (POAM-2026-252).
+
+    ``BLOCKED`` outside every scope: ``dispatch_actuation()`` refuses to run
+    there, so nothing can have been dispatched.
+    """
+    attempt = current_actuation_attempt()
+    return ExecutionStatus.BLOCKED if attempt is None else attempt.status
 
 
 #: Sentinel for a NARROW receipt whose payload is not a JSON object.
@@ -804,24 +813,45 @@ class FinancialToolProvider(DomainToolProvider):
             side: TradeSide = "buy",
         ) -> CallToolResult:
             # The typed outcome rides in structuredContent (POAM-2026-245 / 232).
-            try:
-                outcome = await execute_trade_action(
-                    symbol,
-                    amount,
-                    currency,
-                    confidence,
-                    transaction_id,
-                    dry_run,
-                    deferred_id,
-                    side,
-                    governor=governor,
-                )
-            except ActuationIndeterminateError as exc:
-                outcome = CommitOutcome(CommitStatus.INDETERMINATE, str(exc))
-            except UnsettledDuplicate as exc:
-                outcome = CommitOutcome(CommitStatus.UNSETTLED_DUPLICATE, str(exc))
-            except ActuationRejectedError as exc:
-                outcome = CommitOutcome(CommitStatus.REFUSED, str(exc))
+            # An error that escapes once the trade may have executed is
+            # answered from the kernel attempt record, whatever its type; the
+            # type mapping applies only while nothing may have executed
+            # (POAM-2026-252).
+            with actuation_attempt_scope():
+                try:
+                    outcome = await execute_trade_action(
+                        symbol,
+                        amount,
+                        currency,
+                        confidence,
+                        transaction_id,
+                        dry_run,
+                        deferred_id,
+                        side,
+                        governor=governor,
+                    )
+                except Exception as exc:
+                    after_dispatch = outcome_after_dispatch(
+                        str(exc) or type(exc).__name__
+                    )
+                    if after_dispatch is not None:
+                        logger.warning(
+                            "Trade error after dispatch answered as %s (%s): %s",
+                            after_dispatch.status.value,
+                            type(exc).__name__,
+                            exc,
+                        )
+                        outcome = after_dispatch
+                    elif isinstance(exc, ActuationIndeterminateError):
+                        outcome = CommitOutcome(CommitStatus.INDETERMINATE, str(exc))
+                    elif isinstance(exc, UnsettledDuplicate):
+                        outcome = CommitOutcome(
+                            CommitStatus.UNSETTLED_DUPLICATE, str(exc)
+                        )
+                    elif isinstance(exc, ActuationRejectedError):
+                        outcome = CommitOutcome(CommitStatus.REFUSED, str(exc))
+                    else:
+                        raise
             return _call_tool_result(outcome)
 
         @server.tool(annotations=_READ_ONLY_TOOL)
