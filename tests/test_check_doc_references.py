@@ -1560,3 +1560,31 @@ def test_non_strict_mode_checks_pin_existence_only(
     monkeypatch.setattr(g9, "STRICT_SYMBOL_ANCHORS", False)
     repo, deleting = history_repo
     assert _audit(repo, f"`{deleting[:8]}^:src/gone.py:9` was removed") == []
+
+
+# --- Pin clause tokens: paths and the pinned filename are not identifiers ---
+
+
+@pytest.mark.parametrize(
+    "named",
+    [
+        "`src/retired_flag.py`",  # a path, not an identifier
+        "`retired_flag.py`",  # a concrete filename
+        "`gone`",  # part of the pinned filename itself
+    ],
+)
+def test_pin_clause_tokens_ignore_paths_and_the_pinned_filename(
+    strict_pins: tuple[Path, str], named: str
+) -> None:
+    # Line 2 really holds RETIRED_FLAG, but a clause that only *names a path*
+    # whose stem happens to match is not agreement evidence and must be refused.
+    repo, pin = strict_pins
+    issues = _audit(repo, f"`{pin}^:src/gone.py:2` see {named}")
+    assert [i.reference_type for i in issues] == ["Pinned Line"]
+    assert "names no identifier" in issues[0].reason
+
+
+def test_pin_clause_tokens_keep_backticked_identifiers() -> None:
+    assert g9._pin_clause_tokens(
+        "`abc1234^:src/gone.py:2` sets `RETIRED_FLAG` via `src/x.py`", "src/gone.py"
+    ) == {"retired_flag"}

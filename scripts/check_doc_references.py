@@ -2450,20 +2450,26 @@ def _pin_line_spans(spec: str) -> list[tuple[int, int]]:
     )
 
 
-def _pin_clause_tokens(clause: str) -> set[str]:
+def _pin_clause_tokens(clause: str, pinned_path: str) -> set[str]:
     """Lower-cased identifiers the clause itself names in backticks (pin excluded)."""
     tokens: set[str] = set()
+    name = Path(pinned_path).name.lower()
     for cm in INLINE_CODE_PATTERN.finditer(clause):
         snippet = cm.group(1).strip()
-        if PINNED_PATH_PATTERN.match(snippet) or re.match(
-            r"^(?:POAM-|#\d+|[0-9a-f]{7,40}\^?$|\d+$|lines?\s)",
-            snippet,
-            re.IGNORECASE,
+        if (
+            PINNED_PATH_PATTERN.match(snippet)
+            or "/" in snippet
+            or Path(snippet).suffix in CONCRETE_EXTENSIONS
+            or re.match(
+                r"^(?:POAM-|#\d+|[0-9a-f]{7,40}\^?$|\d+$|lines?\s)",
+                snippet,
+                re.IGNORECASE,
+            )
         ):
             continue
         for ident in re.findall(r"[A-Za-z_][A-Za-z0-9_-]{1,}", snippet):
             low = ident.lower()
-            if low not in _PIN_TOKEN_STOPWORDS:
+            if low not in _PIN_TOKEN_STOPWORDS and low not in name:
                 tokens.add(low)
     return tokens
 
@@ -2550,7 +2556,7 @@ def _audit_pinned_refs(
         clause_start = max(0, m.start() - PIN_GOVERNANCE_WINDOW)
         if "|" in line[clause_start : m.start()]:
             clause_start = line.rindex("|", clause_start, m.start()) + 1
-        tokens = _pin_clause_tokens(line[clause_start:clause_end])
+        tokens = _pin_clause_tokens(line[clause_start:clause_end], pin_path)
 
         line_suffix = suffix if suffix and re.match(r"^(?::|#L\d)", suffix) else ""
         symbol = (
