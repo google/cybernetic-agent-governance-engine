@@ -193,12 +193,12 @@ class AgentState(TypedDict):
     # the approved deferred_id (POAM-2026-245); None otherwise.
     redemption_refusal: str | None  # default None
 
-    # CAGE Client SDK Governance Integration (@cage_guard decorator contract)
-    # These fields are populated by @cage_guard decorator on all governed nodes.
+    # Governance state fields populated by safety_node and gateway_tool_guard
+    # (never by the retired @cage_guard decorator; SDK migration tracked in POAM-2026-251):
     # agent_id:            Identifier for audit trail (default: "financial-advisor-v3")
-    # proposed_action:     Parameters extracted by upstream nodes for governance validation
-    # governance_envelope: Signed ALLOW decision from Gateway PDP (None until first guard)
-    # governance_status:   Tri-state: "ALLOWED" | "DENIED" | "DEFERRED" | None
+    # proposed_action:     Candidate action parameters extracted by upstream nodes
+    # governance_envelope: Signed preview decision envelope from Gateway PDP
+    # governance_status:   "ALLOWED" | "DENIED" | "REQUIRE_APPROVAL" | "UNAVAILABLE" | "INDETERMINATE" | None
     agent_id: str  # default "financial-advisor-v3"
     proposed_action: dict[str, Any] | None  # default None
     governance_envelope: dict[str, Any] | None  # default None

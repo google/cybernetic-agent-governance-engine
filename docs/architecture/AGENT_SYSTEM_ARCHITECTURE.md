@@ -106,8 +106,8 @@ All graph nodes share a single state object defined in `src/governed_financial_a
 | `deferral_ticket_id`    | DeferQueue ticket ID for `DEFER` holds             | Extended          | `safety_node`, `defer_node`   |
 | `deferral_reason`       | Justification string for `DEFER` holds             | Extended          | `safety_node`, `defer_node`   |
 | `deferred_id`           | Gateway `REQUIRE_APPROVAL` token ID                | Extended          | `safety_node`, `gateway_tool_guard` |
-| `agent_id`              | Audit identifier (`"financial-advisor-v3"`)        | Extended          | `@cage_guard`                 |
-| `proposed_action`       | Candidate action parameters                        | Extended          | `@cage_guard`                 |
+| `agent_id`              | Audit identifier (`"financial-advisor-v3"`)        | Extended          | Caller / graph invocation     |
+| `proposed_action`       | Candidate action parameters                        | Extended          | `safety_node`, `gateway_tool_guard` |
 | `governance_envelope`   | Signed gateway decision envelope                   | Extended          | `gateway_tool_guard`          |
 | `governance_status`     | `"ALLOWED"` / `"DENIED"` / `"REQUIRE_APPROVAL"`    | Extended          | `gateway_tool_guard`          |
 | `routing_verdict_cache` | Fingerprint-bound single-use `ALLOW` preview cache | Extended          | `evaluator_node`, `safety_node` |

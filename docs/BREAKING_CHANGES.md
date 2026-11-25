@@ -1475,5 +1475,14 @@ alert_verify_pubsub_subscription = "cage-staging-alerts-verify"
 
 ---
 
-**Last updated:** November 23, 2026
+## Unreleased — `cage-client` `0.5.0`: `@cage_guard` Removal & Fail-Closed Unset/`local` `CAGE_ENV` Posture Enforcement (`POAM-2026-241`, `POAM-2026-251`)
 
+[`packages/cage-client/`](../packages/cage-client/) `0.5.0` removes the broken `@cage_guard` LangGraph node decorator (`a71d6a6b:packages/cage-client/src/cage_client/adapters/langgraph.py`) and tightens [`enforce_verification_posture()`](../packages/cage-client/src/cage_client/core.py) so unset, blank, and `"local"` `CAGE_ENV` / `ENVIRONMENT` values fail closed like `"production"`.
+
+| Item | Area | Clean Break Description | Architectural Rationale | Failure Mode on Stale Caller |
+|---|---|---|---|---|
+| **SDK-01** | `cage-client` `0.5.0` LangGraph decorator removal & posture guard ([`__init__.py`](../packages/cage-client/src/cage_client/__init__.py), [`core.py`](../packages/cage-client/src/cage_client/core.py)) | Removes `cage_client.adapters.langgraph`, `cage_client.adapters`, and `cage_client.cage_guard` (`"cage_guard"` removed from `cage_client.__all__`), along with `a71d6a6b:examples/langgraph_cage_guard_demo.py`, `a71d6a6b:docs/guides/LANGGRAPH_INTEGRATION_SUMMARY.md`, and `a71d6a6b:docs/guides/langgraph_governance_tutorial.ipynb`. Tightens [`enforce_verification_posture()`](../packages/cage-client/src/cage_client/core.py) (`_DEV_POSTURES = frozenset({"dev", "development", "test", "testing"})`, defaulting unset/blank `CAGE_ENV` and `ENVIRONMENT` to `"production"`) so passing `verify_signature=False`, `verify_expiration=False`, or `verify_subject=False` raises `ValueError` unless `CAGE_ENV` / `ENVIRONMENT` is explicitly `dev`, `development`, `test`, or `testing`. | `@cage_guard` gated arbitrary Python functions behind dry-run `POST /governance/validate-action` (which reserves no budget, mints no single-use routing seal, and records no actuation), raised `DeferralPending` before LangGraph could checkpoint `deferred_id`, fabricated `agent_id="unknown"` and `proposed_action={}` when state keys were absent, and executed synchronous functions to completion before raising `TypeError` (`POAM-2026-241`, `POAM-2026-251`). Treating unset or `"local"` `CAGE_ENV` as non-enforcing allowed accidental verification opt-outs in unconfigured deployments (`POAM-2026-241`). | `from cage_client import cage_guard` or `from cage_client.adapters.langgraph import cage_guard` raises `ImportError`. Route preview checks explicitly through `CageClient.validate_action()` (preview-only) and committing tool calls through the gateway's `/tools/execute` surface (see [`src/governed_financial_advisor/`](../src/governed_financial_advisor/) while the replacement `governed_node` / `approval_park_node` factory in `POAM-2026-251` is built). Constructing `CageClient(..., verify_signature=False)` (or `verify_expiration=False` / `verify_subject=False`) with `CAGE_ENV` unset or `"local"` now raises `ValueError`; set `CAGE_ENV=test` or `CAGE_ENV=dev` in hermetic local tests that intentionally disable verification. |
+
+---
+
+**Last updated:** November 24, 2026

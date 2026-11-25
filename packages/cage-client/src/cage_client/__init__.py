@@ -23,7 +23,6 @@ TLS/mTLS (``sc-8``) protects only the wire transport and does NOT substitute
 for end-to-end envelope signature verification.
 """
 
-from .adapters.langgraph import cage_guard
 from .core import CageClient, enforce_verification_posture
 from .crypto import compute_expected_action_hash, generate_w3c_traceparent
 from .envelope import ExecutionGrant, GovernanceEnvelope
@@ -49,7 +48,6 @@ __all__ = [
     "PolicyViolationException",
     "RoutingSealVerificationError",
     "__version__",
-    "cage_guard",
     "compute_expected_action_hash",
     "create_mtls_transport",
     "enforce_verification_posture",

@@ -61,7 +61,6 @@ from cage_client import (
     JwksKeyResolver,
     PolicyViolationException,
     RoutingSealVerificationError,
-    cage_guard,
     compute_expected_action_hash,
     enforce_verification_posture,
     generate_w3c_traceparent,
@@ -311,18 +310,20 @@ def _standalone_test_posture(monkeypatch: pytest.MonkeyPatch) -> None:
 
 
 def test_standalone_exports() -> None:
-    """Verify all top-level symbols export correctly."""
+    """Verify all top-level symbols export correctly and retired @cage_guard is absent."""
     assert cage_client.__version__ == "0.5.0"
     assert cage_client.CageClient is CageClient
     assert cage_client.GovernanceEnvelope is GovernanceEnvelope
     assert cage_client.JwksKeyResolver is JwksKeyResolver
     assert cage_client.JwksCache is JwksKeyResolver
-    assert cage_client.cage_guard is cage_guard
     assert cage_client.enforce_verification_posture is enforce_verification_posture
     assert issubclass(PolicyViolationException, CageGatewayError)
     assert issubclass(DeferralPending, CageGatewayError)
     assert issubclass(RoutingSealVerificationError, CageGatewayError)
     assert "verify_routing_seal" not in cage_client.__all__
+    assert "cage_guard" not in cage_client.__all__
+    assert not hasattr(cage_client, "cage_guard")
+    assert importlib.util.find_spec("cage_client.adapters") is None
 
 
 def test_routing_seal_secret_rejected() -> None:
