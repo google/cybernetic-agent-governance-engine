@@ -106,13 +106,13 @@ MIN_CODE_ANCHORED_ROWS = 10
 
 LEGACY_N_FINDING_RE = re.compile(r"\bN-\d+\b")
 PINNED_CITE_PATH_RE = re.compile(
-    r"^(?P<rev>[0-9a-f]{7,40}\^?):(?P<path>(?:src|infra|tests|compliance|deployment|scripts|config|docs|\.github|packages|proof)/[^\s:();,]+)"
+    r"^(?P<rev>[0-9a-f]{7,40}\^?):(?P<path>(?:src|infra|tests|compliance|deployment|scripts|config|docs|\.github|packages|proof)/[^\s:#();,]+)"
 )
 CITED_REPO_PATH_RE = re.compile(
-    r"^((?:src|infra|tests|compliance|deployment|scripts|config|docs|\.github|packages|proof)/[^\s:();,]+)"
+    r"^((?:src|infra|tests|compliance|deployment|scripts|config|docs|\.github|packages|proof)/[^\s:#();,]+)"
 )
 PINNED_READ_BACK_REPO_PATH_RE = re.compile(
-    r"(?<![A-Za-z0-9_./:-])(?P<rev>[0-9a-f]{7,40}\^?):(?P<path>(?:src|infra|tests|compliance|deployment|scripts|config|docs|\.github|packages|proof)/(?:[A-Za-z0-9_./-]+/)?(?:Dockerfile(?![.A-Za-z0-9_-])|Makefile(?![.A-Za-z0-9_-])|[A-Za-z0-9_./-]+\.[A-Za-z0-9_]+))(?::L?\d+(?:[-,L\d]+)?)?"
+    r"(?<![A-Za-z0-9_./:-])(?P<rev>[0-9a-f]{7,40}\^?):(?P<path>(?:src|infra|tests|compliance|deployment|scripts|config|docs|\.github|packages|proof)/(?:[A-Za-z0-9_./-]+/)?(?:Dockerfile(?![.A-Za-z0-9_-])|Makefile(?![.A-Za-z0-9_-])|[A-Za-z0-9_./-]+\.[A-Za-z0-9_]+))(?::L?\d+(?:[-,L\d]+)?|#[A-Za-z0-9_.:/-]+)?"
 )
 READ_BACK_REPO_PATH_RE = re.compile(
     r"(?<![A-Za-z0-9_./:-])((?:src|infra|tests|compliance|deployment|scripts|config|docs|\.github|packages|proof)/(?:[A-Za-z0-9_./-]+/)?(?:Dockerfile(?![.A-Za-z0-9_-])|Makefile(?![.A-Za-z0-9_-])|[A-Za-z0-9_./-]+\.[A-Za-z0-9_]+))"

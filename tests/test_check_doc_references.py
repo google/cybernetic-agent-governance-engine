@@ -40,14 +40,20 @@ def _write_sample_target(tmp_path: Path, lines: int = 10) -> Path:
     return target
 
 
-def test_verify_file_path_valid_line_anchor_passes(tmp_path: Path) -> None:
+def test_verify_file_path_valid_line_anchor_passes(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(g9, "STRICT_SYMBOL_ANCHORS", False)
     _write_sample_target(tmp_path, lines=10)
     valid, reason = verify_file_path(tmp_path, "sample.py#L1-L10")
     assert valid is True
     assert reason == ""
 
 
-def test_verify_file_path_anchor_past_eof_fails(tmp_path: Path) -> None:
+def test_verify_file_path_anchor_past_eof_fails(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(g9, "STRICT_SYMBOL_ANCHORS", False)
     _write_sample_target(tmp_path, lines=10)
     valid, reason = verify_file_path(tmp_path, "sample.py#L99999")
     assert valid is False
@@ -61,7 +67,10 @@ def test_verify_file_path_anchor_past_eof_fails(tmp_path: Path) -> None:
     assert "exceeds file length" in issues[0].reason
 
 
-def test_verify_file_path_inverted_line_anchor_fails(tmp_path: Path) -> None:
+def test_verify_file_path_inverted_line_anchor_fails(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(g9, "STRICT_SYMBOL_ANCHORS", False)
     _write_sample_target(tmp_path, lines=20)
     valid, reason = verify_file_path(tmp_path, "sample.py#L10-L5")
     assert valid is False
@@ -74,7 +83,10 @@ def test_verify_file_path_inverted_line_anchor_fails(tmp_path: Path) -> None:
     assert "inverted range" in issues[0].reason
 
 
-def test_verify_file_path_zero_start_line_anchor_fails(tmp_path: Path) -> None:
+def test_verify_file_path_zero_start_line_anchor_fails(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(g9, "STRICT_SYMBOL_ANCHORS", False)
     _write_sample_target(tmp_path, lines=10)
     valid, reason = verify_file_path(tmp_path, "sample.py#L0-L5")
     assert valid is False
@@ -87,13 +99,14 @@ def test_main_nonexistent_path_fails_closed() -> None:
 
 
 def test_main_explicit_markdown_file_outside_doc_roots(tmp_path: Path) -> None:
-    _write_sample_target(tmp_path, lines=10)
+    sample = tmp_path / "sample.py"
+    sample.write_text("def handle() -> None:\n    return None\n", encoding="utf-8")
     valid_doc = tmp_path / "external_plan.md"
-    valid_doc.write_text("See [sample](sample.py#L1-L10).\n", encoding="utf-8")
+    valid_doc.write_text("See [sample](sample.py#handle).\n", encoding="utf-8")
     assert main(["--path", str(valid_doc)]) == 0
 
     broken_doc = tmp_path / "broken_plan.md"
-    broken_doc.write_text("See [sample](sample.py#L99999).\n", encoding="utf-8")
+    broken_doc.write_text("See [sample](sample.py#no_such_symbol).\n", encoding="utf-8")
     assert main(["--path", str(broken_doc)]) == 1
 
 
@@ -369,7 +382,10 @@ def test_terraform_symbol_nonexistent_module_output_fails(tf_repo: Path) -> None
 # ---------------------------------------------------------------------------
 
 
-def test_inline_colon_line_anchor_valid_and_out_of_bounds(tmp_path: Path) -> None:
+def test_inline_colon_line_anchor_valid_and_out_of_bounds(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(g9, "STRICT_SYMBOL_ANCHORS", False)
     _write_sample_target(tmp_path, lines=10)
     doc = tmp_path / "doc.md"
     doc.write_text(
@@ -383,7 +399,10 @@ def test_inline_colon_line_anchor_valid_and_out_of_bounds(tmp_path: Path) -> Non
     ]
 
 
-def test_prose_line_reference_bounds_blank_and_clause_tokens(tmp_path: Path) -> None:
+def test_prose_line_reference_bounds_blank_and_clause_tokens(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(g9, "STRICT_SYMBOL_ANCHORS", False)
     sample = tmp_path / "sample.py"
     sample.write_text(
         "ALPHA_TOKEN = 1\n"
@@ -413,7 +432,10 @@ def test_prose_line_reference_bounds_blank_and_clause_tokens(tmp_path: Path) -> 
     assert "beta_handler" in issues[2].reason
 
 
-def test_prose_line_reference_yaml_uuid_span_validation(tmp_path: Path) -> None:
+def test_prose_line_reference_yaml_uuid_span_validation(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(g9, "STRICT_SYMBOL_ANCHORS", False)
     yaml_file = tmp_path / "component-definition.yaml"
     yaml_file.write_text(
         "implemented-requirements:\n"
@@ -802,9 +824,9 @@ def test_census_non_implemented_holds_read_back_paths_are_verified(
         "lifetime": {"grade": "OUTLIVES"},
         "read_back": {
             "grade": "OBSERVES",
-            "check": "proof/real_inv.py:1",
+            "check": "proof/real_inv.py#x",
         },
-        "cites": ["proof/real_inv.py:1"],
+        "cites": ["proof/real_inv.py#x"],
         "evidence_named": ["proof/real_inv.py"],
         "description_sha256": "a" * 64,
     }
@@ -1143,3 +1165,258 @@ def test_python_symbol_check_rejects_string_literal_spoofing(
     assert [(i.line_number, i.reference_type, i.target) for i in issues] == [
         (1, "Python Symbol", "mod.py::nonexistent_helper")
     ]
+
+
+# ---------------------------------------------------------------------------
+# Two-Tier Structural Symbol Anchors & Strict Unpinned Line-Number Rejection
+# ---------------------------------------------------------------------------
+
+
+def test_tier1_python_structural_anchors_and_ambiguous_leaf_rejection(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(g9, "REPO_ROOT", tmp_path)
+    monkeypatch.setattr(g9, "STRICT_SYMBOL_ANCHORS", True)
+    g9._extract_structural_symbols_cached.cache_clear()
+
+    py_file = tmp_path / "engine.py"
+    py_file.write_text(
+        "MAX_RETRIES: int = 3\n"
+        'SPOOF = "ghost_fn"\n'
+        "async def run_pipeline() -> None:\n"
+        "    return None\n"
+        "class Alpha:\n"
+        "    KIND = 'alpha'\n"
+        "    def execute(self) -> int:\n"
+        "        return 1\n"
+        "class Beta:\n"
+        "    def execute(self) -> int:\n"
+        "        return 2\n"
+        "    def unique_method(self) -> int:\n"
+        "        return 3\n",
+        encoding="utf-8",
+    )
+
+    stats = g9.AnchorStats()
+    doc = tmp_path / "doc.md"
+    doc.write_text(
+        "Valid const: [MAX_RETRIES](engine.py#MAX_RETRIES)\n"
+        "Valid async fn: [run_pipeline](engine.py#run_pipeline)\n"
+        "Valid class attr: [Alpha.KIND](engine.py#Alpha.KIND)\n"
+        "Valid qualified method: `engine.py::Alpha.execute`\n"
+        "Valid unique leaf method: [unique_method](engine.py#unique_method)\n"
+        "Ambiguous leaf method: [execute](engine.py#execute)\n"
+        "Spoofed string literal: [ghost_fn](engine.py#ghost_fn)\n",
+        encoding="utf-8",
+    )
+    issues = audit_markdown_file(doc, anchor_stats=stats)
+    assert [(i.line_number, i.reference_type) for i in issues] == [
+        (6, "Markdown Link"),
+        (7, "Markdown Link"),
+    ]
+    assert "Ambiguous unqualified symbol 'execute'" in issues[0].reason
+    assert "Symbol anchor 'ghost_fn' not found" in issues[1].reason
+    assert stats.tier1_structural == 5
+    assert stats.tier2_scoped_subtoken == 0
+
+
+def test_tier1_polyglot_grammars_rego_hcl_yaml_json_toml_sh_docker_sql_ts_md(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(g9, "REPO_ROOT", tmp_path)
+    monkeypatch.setattr(g9, "STRICT_SYMBOL_ANCHORS", True)
+    g9._extract_structural_symbols_cached.cache_clear()
+
+    (tmp_path / "policy.rego").write_text(
+        'package cage.authz\ndefault allow := false\ndeny_reason[msg] {\n  msg := "no"\n}\n',
+        encoding="utf-8",
+    )
+    (tmp_path / "main.tf").write_text(
+        'resource "google_kms_key_ring" "signing" {\n  name = "ring"\n}\n'
+        'variable "project_id" {\n  type = string\n}\n'
+        "locals {\n  enforced_mode = true\n}\n",
+        encoding="utf-8",
+    )
+    (tmp_path / "suite.tftest.hcl").write_text(
+        'run "rejects_public_endpoint" {\n  command = plan\n}\n',
+        encoding="utf-8",
+    )
+    (tmp_path / "monitors.yaml").write_text(
+        "apiVersion: monitoring.googleapis.com/v1\n"
+        "kind: PodMonitoring\n"
+        "metadata:\n"
+        "  name: gateway-metrics\n"
+        "spec:\n"
+        "  endpoints:\n"
+        "    - port: metrics\n"
+        "---\n"
+        "implemented-requirements:\n"
+        "  - uuid: 423a5590-5440-411f-a3fd-81a950236704\n"
+        "    control-id: cm-2\n",
+        encoding="utf-8",
+    )
+    (tmp_path / "schema.json").write_text(
+        '{"$defs": {"Decision": {"type": "object"}}, "properties": {"verdict": {"type": "string"}}}\n',
+        encoding="utf-8",
+    )
+    (tmp_path / "config.toml").write_text(
+        '[tool.bandit]\nskips = ["B101"]\n',
+        encoding="utf-8",
+    )
+    (tmp_path / "gate.sh").write_text(
+        "#!/usr/bin/env bash\nreadonly GATE_TIMEOUT=30\nrun_gate() {\n  echo ok\n}\n",
+        encoding="utf-8",
+    )
+    (tmp_path / "Dockerfile").write_text(
+        "FROM python:3.12-slim AS builder\nARG APP_USER=cage\nENV PORT=8080\n",
+        encoding="utf-8",
+    )
+    (tmp_path / "init.sql").write_text(
+        "CREATE TABLE IF NOT EXISTS audit_ledger (id TEXT PRIMARY KEY);\n"
+        "CREATE INDEX idx_audit_ts ON audit_ledger (id);\n",
+        encoding="utf-8",
+    )
+    (tmp_path / "client.ts").write_text(
+        "export interface Envelope { id: string; }\n"
+        "export async function sendEnvelope(): Promise<void> {}\n",
+        encoding="utf-8",
+    )
+    (tmp_path / "target.md").write_text(
+        "# Architecture Overview\n\n"
+        "## Duplicate Heading\n\n"
+        "## Duplicate Heading\n\n"
+        "| ID | Control |\n|---|---|\n| POAM-2026-233 | AU-10 |\n",
+        encoding="utf-8",
+    )
+
+    stats = g9.AnchorStats()
+    doc = tmp_path / "index.md"
+    doc.write_text(
+        "[rego allow](policy.rego#allow) and [rego rule](policy.rego#deny_reason)\n"
+        "[tf res](main.tf#google_kms_key_ring.signing) and [tf local](main.tf#local.enforced_mode)\n"
+        "[tftest](suite.tftest.hcl#run.rejects_public_endpoint)\n"
+        "[k8s](monitors.yaml#PodMonitoring/gateway-metrics) and [oscal](monitors.yaml#uuid:423a5590-5440-411f-a3fd-81a950236704)\n"
+        "[json](schema.json#properties.verdict) and [defs](schema.json#$defs.Decision)\n"
+        "[toml](config.toml#tool.bandit.skips)\n"
+        "[sh fn](gate.sh#run_gate)\n"
+        "[docker stage](Dockerfile#stage:builder) and [docker env](Dockerfile#PORT)\n"
+        "[sql tbl](init.sql#audit_ledger) and [sql idx](init.sql#idx_audit_ts)\n"
+        "[ts iface](client.ts#Envelope) and [ts fn](client.ts#sendEnvelope)\n"
+        "[md slug](target.md#duplicate-heading-1) and [md row](target.md#POAM-2026-233)\n"
+        "[bad sh var](gate.sh#GATE_TIMEOUT)\n"
+        "[bad rego](policy.rego#missing_rule)\n"
+        "[bad md](target.md#missing-heading)\n",
+        encoding="utf-8",
+    )
+    issues = audit_markdown_file(doc, anchor_stats=stats)
+    assert [(i.line_number, i.target) for i in issues] == [
+        (12, "gate.sh#GATE_TIMEOUT"),
+        (13, "policy.rego#missing_rule"),
+        (14, "target.md#missing-heading"),
+    ]
+    assert stats.tier1_structural == 19
+
+
+def test_tier2_scoped_subtoken_strips_comments_and_enforces_span_isolation(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(g9, "REPO_ROOT", tmp_path)
+    monkeypatch.setattr(g9, "STRICT_SYMBOL_ANCHORS", True)
+    g9._extract_structural_symbols_cached.cache_clear()
+
+    (tmp_path / "guard.py").write_text(
+        "def verify_seal(token: str) -> bool:\n"
+        "    # SPOOFED_IN_COMMENT should never satisfy Tier 2\n"
+        "    if not token:\n"
+        "        raise ValueError('SEAL_MISSING')\n"
+        "    return True\n\n"
+        "def other_fn() -> str:\n"
+        "    return 'ONLY_IN_OTHER_FN'\n",
+        encoding="utf-8",
+    )
+    (tmp_path / "handler.ts").write_text(
+        "export function checkHeader(hdr: string): boolean {\n"
+        "  // COMMENT_ONLY_TOKEN\n"
+        "  /* BLOCK_COMMENT_TOKEN */\n"
+        "  return hdr === 'l5d-client-id';\n"
+        "}\n",
+        encoding="utf-8",
+    )
+    (tmp_path / "ledger.sql").write_text(
+        "CREATE TABLE ledger_entries (\n"
+        "  -- SQL_COMMENT_SPOOF\n"
+        "  entry_hash TEXT NOT NULL\n"
+        ");\n",
+        encoding="utf-8",
+    )
+
+    stats = g9.AnchorStats()
+    doc = tmp_path / "doc.md"
+    doc.write_text(
+        "Valid link subtoken: [seal](guard.py#verify_seal:SEAL_MISSING)\n"
+        "Valid code subtoken: `guard.py::verify_seal#SEAL_MISSING`\n"
+        "Valid ts subtoken: [ts](handler.ts#checkHeader:l5d-client-id)\n"
+        "Valid sql subtoken: [sql](ledger.sql#ledger_entries:entry_hash)\n"
+        "Py comment spoof: [spoof1](guard.py#verify_seal:SPOOFED_IN_COMMENT)\n"
+        "Wrong span spoof: [spoof2](guard.py#verify_seal:ONLY_IN_OTHER_FN)\n"
+        "TS line comment spoof: [spoof3](handler.ts#checkHeader:COMMENT_ONLY_TOKEN)\n"
+        "TS block comment spoof: [spoof4](handler.ts#checkHeader:BLOCK_COMMENT_TOKEN)\n"
+        "SQL comment spoof: [spoof5](ledger.sql#ledger_entries:SQL_COMMENT_SPOOF)\n"
+        "Too short subtoken: [short](guard.py#verify_seal:x)\n",
+        encoding="utf-8",
+    )
+    issues = audit_markdown_file(doc, anchor_stats=stats)
+    assert [i.line_number for i in issues] == [5, 6, 7, 8, 9, 10]
+    for issue in issues[:5]:
+        assert "not found in non-comment body" in issue.reason
+    assert ">= 2 characters" in issues[5].reason
+    assert stats.tier1_structural == 0
+    assert stats.tier2_scoped_subtoken == 4
+
+
+def test_strict_mode_rejects_all_unpinned_line_citations_and_allows_sha_pinned(
+    history_repo: tuple[Path, str], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    repo, deleting = history_repo
+    monkeypatch.setattr(g9, "STRICT_SYMBOL_ANCHORS", True)
+    g9._extract_structural_symbols_cached.cache_clear()
+
+    live = repo / "kept.py"
+    live.write_text("def check_ok() -> bool:\n    return True\n", encoding="utf-8")
+
+    oscal_dir = repo / "compliance" / "oscal"
+    oscal_dir.mkdir(parents=True)
+    (oscal_dir / "profile.yaml").write_text(
+        "profile:\n"
+        "  uuid: 55555555-5555-4555-8555-555555555555\n"
+        "  metadata:\n"
+        "    remarks: >-\n"
+        "      Bad unpinned src/missing_no_wait.py is separate; check kept.py is root, so use docs/ref.md:1.\n",
+        encoding="utf-8",
+    )
+    (repo / "docs").mkdir()
+    (repo / "docs" / "ref.md").write_text("# Heading\n", encoding="utf-8")
+
+    doc = repo / "doc.md"
+    doc.write_text(
+        f"Allowed pinned colon: `{deleting[:8]}^:src/gone.py:1` and prose at `{deleting[:8]}^:src/gone.py` (line 1).\n"
+        "Allowed structural: [check_ok](kept.py#check_ok) on port :8080, STPA Loss L1 (L1), g2-standard-8 (L4), 24m, v1.2.3.\n"
+        "Forbidden hash line: [kept](kept.py#L1-L2)\n"
+        "Forbidden colon line: `kept.py:1`\n"
+        "Forbidden prose word: see [kept](kept.py) at line 2.\n"
+        "Forbidden prose L-span: see [kept](kept.py) (L1-L2).\n",
+        encoding="utf-8",
+    )
+    md_issues = audit_markdown_file(doc)
+    assert [(i.line_number, i.reference_type) for i in md_issues] == [
+        (3, "Markdown Link"),
+        (4, "File Path"),
+        (5, "Unpinned Line Number"),
+        (6, "Unpinned Line Number"),
+    ]
+
+    oscal_issues = g9.audit_oscal_and_lula_yaml(repo)
+    assert any(
+        i.reference_type == "OSCAL File Path" and i.target == "docs/ref.md:1"
+        for i in oscal_issues
+    )
