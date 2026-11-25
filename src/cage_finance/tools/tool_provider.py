@@ -28,9 +28,9 @@ if TYPE_CHECKING:
     from src.gateway.governance.governor.governor import SymbolicGovernor
 
 from src.cage_finance.actuators.broker_actuator import BrokerActuator
-from src.cage_finance.models.trade_order import is_valid_transaction_id
 from src.cage_finance.tools.market_service import get_market_data
 from src.gateway.governance import execution_actuator as _exec_actuator
+from src.gateway.governance import execution_idempotency as _idempotency
 from src.gateway.governance.commit_outcome import (
     NOT_EXECUTED_STATUSES,
     CommitOutcome,
@@ -39,10 +39,6 @@ from src.gateway.governance.commit_outcome import (
 from src.gateway.governance.contracts import DomainToolProvider
 from src.gateway.governance.execution_actuator import get_actuator_registry
 from src.gateway.governance.execution_idempotency import (
-    SHARED_CALLER,
-    Claim,
-    Duplicate,
-    ExecutionLedgerUnavailable,
     ExecutionStatus,
     UnsettledDuplicate,
     actuation_attempt_scope,
@@ -98,18 +94,12 @@ def _approval_covers_trade(approved: dict, requested: dict) -> bool:
     ``(0, approved amount]``: re-hydration may shrink a trade, never grow or
     redirect it.
     """
-    if any(approved.get(f) != requested.get(f) for f in _APPROVAL_BOUND_FIELDS):
-        return False
-    try:
-        raw_approved = approved["amount"]
-        raw_requested = requested["amount"]
-        if isinstance(raw_approved, bool) or isinstance(raw_requested, bool):
-            return False
-        approved_amount = float(raw_approved)
-        requested_amount = float(raw_requested)
-    except (KeyError, TypeError, ValueError):
-        return False
-    return 0.0 < requested_amount <= approved_amount
+    return _exec_actuator.approval_covers_bounded(
+        approved,
+        requested,
+        _APPROVAL_BOUND_FIELDS,
+        "amount",
+    )
 
 
 async def execute_trade_action(
@@ -209,131 +199,53 @@ async def execute_trade_action(
             "execute_trade", reason, oscal_control_ref="AC-3", params=raw_params
         )
         return _refused(reason)
-    if not transaction_id:
-        reason = "transaction_id is required (a UUIDv4 or UUIDv5 idempotency key)."
-        await record_refusal(
-            "execute_trade", reason, oscal_control_ref="AC-3", params=raw_params
+    # Kernel-owned at-most-once claim lifecycle (POAM-2026-254) and single
+    # attempt record (POAM-2026-252): this tool holds no private ledger calls.
+    async with _idempotency.execution_claim_scope(
+        governor,
+        action="execute_trade",
+        idempotency_key=transaction_id,
+        params=raw_params,
+        dry_run=dry_run,
+        reclaim_blocked=bool(deferred_id),
+        key_field_name="transaction_id",
+    ) as scope:
+        if scope.invalid_key_reason is not None:
+            return _refused(scope.invalid_key_reason)
+        if scope.duplicate is not None:
+            return CommitOutcome(
+                _REPLAYED_STATUS[scope.duplicate.status],
+                scope.duplicate.outcome or "",
+            )
+        normalized_txn = scope.idempotency_key
+        if not normalized_txn:
+            return _refused(
+                "transaction_id is required (a UUIDv4 or UUIDv5 idempotency key)."
+            )
+        params: dict[str, Any] = {
+            "symbol": symbol,
+            "amount": amount,
+            "currency": currency,
+            "confidence": confidence,
+            "transaction_id": normalized_txn,
+            "dry_run": dry_run,
+            "side": side,
+        }
+        outcome = await _govern_and_actuate(
+            params,
+            deferred_id=deferred_id,
+            dry_run=dry_run,
+            governor=governor,
         )
-        return _refused(reason)
-    if not is_valid_transaction_id(transaction_id):
-        reason = (
-            f"invalid transaction_id {str(transaction_id)[:64]!r}; "
-            "expected a UUIDv4 or UUIDv5."
-        )
-        await record_refusal(
-            "execute_trade", reason, oscal_control_ref="AC-3", params=raw_params
-        )
-        return _refused(reason)
-    transaction_id = transaction_id.lower()
-
-    params: dict[str, Any] = {
-        "symbol": symbol,
-        "amount": amount,
-        "currency": currency,
-        "confidence": confidence,
-        "transaction_id": transaction_id,
-        "dry_run": dry_run,
-        "side": side,
-    }
-    ledger = governor.components.execution_ledger
-    claim: Claim | None = None
-    if not dry_run:
-        # Keys are namespaced by action only: this tool is also reached through
-        # the gateway's HTTP /tools/execute dispatch, which passes no request
-        # context, and a resubmission must collide whichever path it takes.
-        # Both paths admit only trusted workload identities. An approval is
-        # new authority, so it may take over a key whose attempt was BLOCKED;
-        # a key whose trade may have executed is never claimed again.
-        try:
-            claimed = await ledger.claim(
-                "execute_trade",
-                SHARED_CALLER,
-                transaction_id,
-                reclaim_blocked=bool(deferred_id),
-            )
-        except ExecutionLedgerUnavailable as exc:
-            from src.gateway.governance.contracts import Violation, ViolationKind
-            from src.gateway.governance.governor.verdicts import (
-                handle_infrastructure_block,
-            )
-
-            reason = (
-                "execution ledger unavailable, at-most-once execution cannot be "
-                f"guaranteed: {exc}"
-            )
-            logger.error(
-                "execute_trade %s blocked on execution ledger outage: %s",
-                transaction_id,
-                reason,
-            )
-            await handle_infrastructure_block(
-                "execute_trade",
-                params,
-                [
-                    Violation(
-                        tier="execution_ledger",
-                        code="EXECUTION_LEDGER_UNAVAILABLE",
-                        message=reason,
-                        kind=ViolationKind.INFRASTRUCTURE,
-                        infra_dependency="execution_ledger",
-                        infra_error_code="execution_ledger_unavailable",
-                    )
-                ],
-                [],
-            )
-        if isinstance(claimed, Duplicate):
-            return await _refuse_duplicate(claimed, transaction_id, params)
-        claim = claimed
-
-    # The kernel's attempt record, written only by dispatch_actuation(), is the
-    # single answer to "may this trade have executed?" for settlement, the
-    # ledger and the tool result (POAM-2026-252); this tool keeps no copy.
-    with actuation_attempt_scope() as attempt:
-        try:
-            outcome = await _govern_and_actuate(
-                params,
-                deferred_id=deferred_id,
-                dry_run=dry_run,
-                governor=governor,
-            )
-        except BaseException as exc:
-            if claim is not None:
-                from src.gateway.governance.evidence.stream import (
-                    EvidenceChainUnavailableError,
-                )
-                from src.gateway.governance.governor.errors import (
-                    GovernanceInfrastructureError,
-                )
-
-                # Only an outage before anything was dispatched frees the key;
-                # once the trade was handed to the broker its status is kept.
-                if (
-                    isinstance(
-                        exc,
-                        (GovernanceInfrastructureError, EvidenceChainUnavailableError),
-                    )
-                    and not attempt.dispatched
-                ):
-                    await ledger.release_unexecuted(claim)
-                else:
-                    await ledger.record_outcome(
-                        claim,
-                        attempt.status,
-                        f"{attempt.status.value}: {str(exc) or type(exc).__name__}",
-                    )
-            raise
-        if claim is not None:
-            await ledger.record_outcome(claim, attempt.status, outcome.message)
+        scope.set_outcome_summary(outcome.message)
         return outcome
 
 
-#: Ledger statuses whose recorded reply settles a resubmission, and the
-#: outcome status a replay of each reports (a BLOCKED attempt executed nothing).
+#: Outcome status reported when replaying a settled ledger duplicate.
 _REPLAYED_STATUS: dict[ExecutionStatus, CommitStatus] = {
     ExecutionStatus.EXECUTED: CommitStatus.EXECUTED,
     ExecutionStatus.BLOCKED: CommitStatus.REFUSED,
 }
-_SETTLED = frozenset(_REPLAYED_STATUS)
 
 
 def _refused(reason: str) -> CommitOutcome:
@@ -352,38 +264,6 @@ def _call_tool_result(outcome: CommitOutcome) -> CallToolResult:
         content=[TextContent(type="text", text=outcome.message)],
         structuredContent=outcome.to_wire(),
         isError=outcome.status in NOT_EXECUTED_STATUSES,
-    )
-
-
-async def _refuse_duplicate(
-    duplicate: Duplicate, transaction_id: str, params: dict[str, Any]
-) -> CommitOutcome:
-    """Answer a resubmitted ``transaction_id`` without governing it again.
-
-    A first attempt that finished (EXECUTED or BLOCKED) is answered with its
-    own reply. One that may still act, or may have acted (IN_FLIGHT,
-    UNKNOWN), raises ``UnsettledDuplicate``, as an UNKNOWN actuation raises,
-    so that no caller reads the reply as settled.
-    """
-    reason = (
-        f"duplicate submission of transaction_id {transaction_id} "
-        f"(first attempt {duplicate.status.value})"
-    )
-    if duplicate.outcome is not None and duplicate.status in _SETTLED:
-        logger.warning("execute_trade refused: %s", reason)
-        await record_refusal(
-            "execute_trade", reason, oscal_control_ref="AC-3", params=params
-        )
-        return CommitOutcome(_REPLAYED_STATUS[duplicate.status], duplicate.outcome)
-    logger.warning("execute_trade unsettled duplicate blocked: %s", reason)
-    state = {
-        ExecutionStatus.IN_FLIGHT: "has not finished",
-        ExecutionStatus.UNKNOWN: "has an unknown outcome, pending reconciliation",
-    }.get(duplicate.status, "left no recorded reply")
-    first = f" First attempt: {duplicate.outcome}" if duplicate.outcome else ""
-    raise UnsettledDuplicate(
-        f"{duplicate.status.value}: transaction_id {transaction_id} was already "
-        f"submitted and its first attempt {state}; it is not executed again.{first}"
     )
 
 

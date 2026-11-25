@@ -143,8 +143,10 @@ async def test_consensus_no_critics_returns_unavailable(
 @pytest.mark.asyncio
 async def test_healthcare_administer_dose_returns_unavailable_on_infra_error() -> None:
     from src.cage_healthcare.tools.tool_provider import administer_dose_action
+    from src.gateway.governance.execution_idempotency import ExecutionLedger
 
     governor = MagicMock()
+    governor.components.execution_ledger = ExecutionLedger(None)
     infra_err = GovernanceInfrastructureError(
         "Consensus backend down",
         dependency="consensus",
@@ -166,6 +168,7 @@ async def test_healthcare_administer_dose_returns_unavailable_on_infra_error() -
             patient_id="P001",
             medication="vancomycin",
             dose_mg=2.0,
+            idempotency_key="55555555-5555-4555-8555-555555555555",
             governor=governor,
         )
 

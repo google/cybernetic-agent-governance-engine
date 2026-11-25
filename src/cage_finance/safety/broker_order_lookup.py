@@ -27,7 +27,7 @@ from enum import Enum
 
 import httpx
 
-from src.cage_finance.models.trade_order import is_valid_transaction_id
+from src.gateway.governance.execution_idempotency import is_valid_idempotency_key
 from src.gateway.infrastructure.config_manager import config_manager
 
 logger = logging.getLogger(__name__)
@@ -77,7 +77,7 @@ async def lookup_broker_order_status(
     returns ``NOT_EXECUTED``; ambiguous, in-flight, error, or unconfigured states
     return ``INDETERMINATE`` so fiscal reservations are never prematurely released.
     """
-    if not is_valid_transaction_id(transaction_id):
+    if not is_valid_idempotency_key(transaction_id):
         return BrokerOrderLookupResult(
             BrokerOrderStatus.INDETERMINATE,
             detail=f"invalid transaction_id {transaction_id!r}",

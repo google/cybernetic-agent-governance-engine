@@ -93,10 +93,12 @@ _TRADE: dict[str, Any] = {
     "confidence": 0.99,
     "transaction_id": _TXN,
 }
+_DOSE_KEY = "8e4d2c1b-0a9f-4e8d-9c7b-6a5f4e3d2c1b"
 _DOSE: dict[str, Any] = {
     "patient_id": "P-101",
     "medication": "vancomycin",
     "dose_mg": 2.0,
+    "idempotency_key": _DOSE_KEY,
 }
 _CALLER = (
     "cage-advisor-sa.cage-governance.serviceaccount.identity.linkerd.cluster.local"
@@ -205,6 +207,7 @@ def _trade_pipeline(
         stack.enter_context(
             patch.object(finance_tools, "record_refusal", new_callable=AsyncMock)
         )
+        stack.enter_context(patch.object(gm, "record_refusal", new_callable=AsyncMock))
         if settle_error is not None:
             stack.enter_context(
                 patch.object(
@@ -275,7 +278,9 @@ def _dispatch_then_raise(
     """A tool that converts nothing: it dispatches, then lets an error escape."""
 
     async def _tool(**_kwargs: Any) -> Any:
-        await dispatch_actuation(_ScopeObserver(outcome), _clearance())
+        clr = _clearance()
+        await ExecutionLedger(None).claim(clr.action, SHARED_CALLER, clr.thread_id)
+        await dispatch_actuation(_ScopeObserver(outcome), clr)
         raise error()
 
     return _tool
@@ -464,7 +469,12 @@ async def test_tools_execute_answers_any_post_dispatch_error_from_the_record(
 )
 async def test_tools_execute_reads_the_record_a_sync_tool_dispatched_under() -> None:
     def _sync_tool(**_kwargs: Any) -> Any:
-        asyncio.run(dispatch_actuation(_ScopeObserver(_UNKNOWN), _clearance()))
+        async def _run() -> None:
+            clr = _clearance()
+            await ExecutionLedger(None).claim(clr.action, SHARED_CALLER, clr.thread_id)
+            await dispatch_actuation(_ScopeObserver(_UNKNOWN), clr)
+
+        asyncio.run(_run())
         raise _infra()
 
     with _endpoint({"sync_tool": _sync_tool}) as refused:
@@ -568,6 +578,7 @@ async def test_finance_dispatches_inside_a_scope_on_the_mcp_path(
 def _clinical_pipeline(actuator: Any) -> Iterator[MagicMock]:
     """Seal-issuing governance, a no-op seal check and ``actuator`` for doses."""
     governor = MagicMock(settle=AsyncMock(return_value=[]))
+    governor.components.execution_ledger = ExecutionLedger(None)
     evaluated = {**DoseOrder(**_DOSE).model_dump(), "confidence": 0.99}
     with ExitStack() as stack:
         stack.enter_context(
@@ -672,7 +683,7 @@ def _opens_scope(tree: ast.AST) -> bool:
                         if isinstance(func, ast.Attribute)
                         else getattr(func, "id", "")
                     )
-                    if name == "actuation_attempt_scope":
+                    if name == "execution_claim_scope":
                         return True
     return False
 

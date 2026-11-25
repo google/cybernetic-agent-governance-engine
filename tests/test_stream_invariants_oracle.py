@@ -62,7 +62,11 @@ from src.gateway.governance.contracts import (
 from src.gateway.governance.evidence import stream as es_module
 from src.gateway.governance.evidence.stream import EvidenceStreamSink
 from src.gateway.governance.execution_actuator import dispatch_actuation
-from src.gateway.governance.execution_idempotency import actuation_attempt_scope
+from src.gateway.governance.execution_idempotency import (
+    SHARED_CALLER,
+    ExecutionLedger,
+    actuation_attempt_scope,
+)
 from src.gateway.governance.governor.assembly import kernel_stages
 from src.gateway.governance.governor.errors import GovernanceError
 from src.gateway.governance.governor.metrics import governor_metrics
@@ -489,16 +493,18 @@ async def test_end_to_end_stream_conforms_across_all_five_invariants(
         classifier=classifier,
     )
 
+    oracle_ledger = ExecutionLedger(live_stream.stream_redis)
+
     # 1. ALLOW flow: govern -> verify_and_consume_seal -> dispatch_actuation (ACCEPTED) -> settle(True)
     allow_params = {"symbol": "AAPL", "amount": 500.0, "confidence": 0.95}
     allow = await governor.govern(_ACTION, allow_params)
     allow_seal = allow.seal
     assert allow.params == allow_params  # nothing server-bound for this action
     assert await rs.verify_and_consume_seal(allow_seal, _ACTION, allow.params) is True
+    allow_clr = _make_clearance(allow_seal, allow.params)
     with actuation_attempt_scope():
-        allow_rcpt = await dispatch_actuation(
-            _TestActuator(accept=True), _make_clearance(allow_seal, allow.params)
-        )
+        await oracle_ledger.claim(_ACTION, SHARED_CALLER, allow_clr.thread_id)
+        allow_rcpt = await dispatch_actuation(_TestActuator(accept=True), allow_clr)
     assert allow_rcpt.accepted is True
     assert await governor.settle(allow_seal, executed=True) == []
 
@@ -512,11 +518,10 @@ async def test_end_to_end_stream_conforms_across_all_five_invariants(
     assert (
         await rs.verify_and_consume_seal(narrow_seal, _ACTION, clamped_params) is True
     )
+    narrow_clr = _make_clearance(narrow_seal, clamped_params)
     with actuation_attempt_scope():
-        narrow_rcpt = await dispatch_actuation(
-            _TestActuator(accept=True),
-            _make_clearance(narrow_seal, clamped_params),
-        )
+        await oracle_ledger.claim(_ACTION, SHARED_CALLER, narrow_clr.thread_id)
+        narrow_rcpt = await dispatch_actuation(_TestActuator(accept=True), narrow_clr)
     assert narrow_rcpt.accepted is True
     assert await governor.settle(narrow_seal, executed=True) == []
 
@@ -532,11 +537,10 @@ async def test_end_to_end_stream_conforms_across_all_five_invariants(
     assert (
         await rs.verify_and_consume_seal(reject_seal, _ACTION, rejected.params) is True
     )
+    reject_clr = _make_clearance(reject_seal, rejected.params)
     with actuation_attempt_scope():
-        reject_rcpt = await dispatch_actuation(
-            _TestActuator(accept=False),
-            _make_clearance(reject_seal, rejected.params),
-        )
+        await oracle_ledger.claim(_ACTION, SHARED_CALLER, reject_clr.thread_id)
+        reject_rcpt = await dispatch_actuation(_TestActuator(accept=False), reject_clr)
     assert reject_rcpt.accepted is False
     assert await governor.settle(reject_seal, executed=False) == []
     assert float(await live_stream.stream_redis.get(cbf.redis_key)) == pytest.approx(

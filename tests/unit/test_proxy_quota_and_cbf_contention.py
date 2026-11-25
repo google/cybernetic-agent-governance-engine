@@ -57,7 +57,6 @@ from src.cage_finance.simulated_feeds import (
 )
 from src.cage_finance.tiers.cbf_tier import CBFTierPlugin
 from src.cage_finance.tools.tool_provider import (
-    SHARED_CALLER,
     _approval_covers_trade,
     execute_trade_action,
 )
@@ -73,6 +72,7 @@ from src.gateway.governance.defer_queue import (
 )
 from src.gateway.governance.evidence.stream import EvidenceChainUnavailableError
 from src.gateway.governance.execution_idempotency import (
+    SHARED_CALLER,
     Claim,
     Duplicate,
     ExecutionLedger,

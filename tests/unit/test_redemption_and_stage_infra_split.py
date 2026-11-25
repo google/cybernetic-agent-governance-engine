@@ -48,7 +48,6 @@ from src.cage_finance.tiers.cbf_tier import CBFTierPlugin
 from src.cage_finance.tiers.fiscal_tier import FiscalTierPlugin
 from src.cage_finance.tools import tool_provider
 from src.cage_finance.tools.tool_provider import (
-    SHARED_CALLER,
     _approval_covers_trade,
     execute_trade_action,
 )
@@ -76,6 +75,7 @@ from src.gateway.governance.defer_queue import (
 )
 from src.gateway.governance.evidence.stream import EvidenceChainUnavailableError
 from src.gateway.governance.execution_idempotency import (
+    SHARED_CALLER,
     Duplicate,
     ExecutionLedger,
     ExecutionLedgerUnavailable,
@@ -500,8 +500,8 @@ async def test_cause3_path_a2_trapdoor1_atomic_resolve_failure_rolls_back_phase2
 
 @pytest.mark.asyncio
 @pytest.mark.covers(
-    "src.cage_finance.tools.tool_provider:execute_trade_action#EXECUTION_LEDGER_UNAVAILABLE",
-    "src.cage_finance.tools.tool_provider:execute_trade_action#await ledger.release_unexecuted(claim)",
+    'src.gateway.governance.execution_idempotency:execution_claim_scope#infra_dependency="execution_ledger"',
+    "src.gateway.governance.execution_idempotency:_settle_claim_on_error#await ledger.release_unexecuted(claim)",
     "src.gateway.server.mcp_tool_server:execute_tool_endpoint#Evidence chain unavailable during /tools/execute",
     "src.gateway.server.mcp_tool_server:execute_tool_endpoint#Governance infrastructure unavailable during /tools/execute",
 )

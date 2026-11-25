@@ -101,7 +101,7 @@ def _pipeline(
         patch("src.cage_finance.tools.tool_provider._broker_actuator.actuate", actuate),
         patch("src.gateway.infrastructure.redis_client.redis_client", None),
         patch(
-            "src.cage_finance.tools.tool_provider.record_refusal",
+            "src.gateway.server.governance_middleware.record_refusal",
             new_callable=AsyncMock,
         ) as refusals,
     ):
@@ -172,7 +172,7 @@ async def test_concurrent_duplicates_dispatch_exactly_once(governor: MagicMock) 
 @pytest.mark.asyncio
 @pytest.mark.covers(
     "src.gateway.governance.execution_idempotency:ExecutionLedger.claim#no Redis is configured for the execution ledger",
-    "src.cage_finance.tools.tool_provider:execute_trade_action#EXECUTION_LEDGER_UNAVAILABLE",
+    'src.gateway.governance.execution_idempotency:execution_claim_scope#infra_dependency="execution_ledger"',
 )
 async def test_enforcing_posture_without_redis_refuses(
     monkeypatch: pytest.MonkeyPatch,
@@ -225,8 +225,8 @@ async def test_unknown_outcome_keeps_the_claim(
 @pytest.mark.asyncio
 @pytest.mark.covers(
     "src.cage_finance.tools.tool_provider:_govern_and_actuate#Actuation rejected:",
-    "src.cage_finance.tools.tool_provider:execute_trade_action#attempt.status.value",
-    "src.cage_finance.tools.tool_provider:_refuse_duplicate#return CommitOutcome(_REPLAYED_STATUS[duplicate.status], duplicate.outcome)",
+    "src.gateway.governance.execution_idempotency:_settle_claim_on_error#attempt.status.value",
+    "src.gateway.governance.execution_idempotency:execution_claim_scope#duplicate=claimed",
 )
 async def test_rejected_actuation_is_recorded_as_blocked(governor: MagicMock) -> None:
     from src.gateway.governance.seams.actuation import ActuationRejectedError

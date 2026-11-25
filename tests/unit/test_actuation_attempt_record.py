@@ -36,6 +36,7 @@ from src.gateway.governance import execution_actuator as exec_act
 from src.gateway.governance.commit_outcome import CommitStatus
 from src.gateway.governance.execution_actuator import dispatch_actuation
 from src.gateway.governance.execution_idempotency import (
+    SHARED_CALLER,
     ActuationAttemptScopeError,
     Claim,
     Duplicate,
@@ -59,9 +60,9 @@ _REJECTED = ActuationOutcome.REJECTED
 _UNKNOWN = ActuationOutcome.UNKNOWN
 
 
-def _clearance() -> ExecutionClearance:
+def _clearance(thread_id: str = "t-attempt") -> ExecutionClearance:
     return ExecutionClearance(
-        thread_id="t-attempt",
+        thread_id=thread_id,
         decision="ALLOW",
         decision_path="DIRECT",
         action="governed_action",
@@ -76,6 +77,15 @@ def _clearance() -> ExecutionClearance:
         nonce="c" * 32,
         required_quorum=0,
     )
+
+
+async def _claim_for(
+    clearance: ExecutionClearance, ledger: ExecutionLedger | None = None
+) -> Claim:
+    target = ledger or ExecutionLedger(None)
+    claimed = await target.claim(clearance.action, SHARED_CALLER, clearance.thread_id)
+    assert isinstance(claimed, Claim)
+    return claimed
 
 
 def _receipt(outcome: ActuationOutcome) -> ActuationReceipt:
@@ -136,10 +146,12 @@ def test_a_fresh_scope_says_nothing_was_dispatched() -> None:
 async def test_a_nested_scope_is_fresh_and_folds_into_the_enclosing_one_on_exit(
     ingest: AsyncMock,
 ) -> None:
+    clr = _clearance()
     with actuation_attempt_scope() as outer:
         with actuation_attempt_scope() as inner:
             assert inner is not outer
-            await dispatch_actuation(_Actuator(_ACCEPTED), _clearance())
+            await _claim_for(clr)
+            await dispatch_actuation(_Actuator(_ACCEPTED), clr)
             assert inner.status is ExecutionStatus.EXECUTED
             # The enclosing record learns of the dispatch only on exit.
             assert outer.dispatched is False
@@ -154,9 +166,11 @@ async def test_the_enclosing_record_knows_before_an_escaping_error_reaches_it(
 ) -> None:
     seen: tuple[bool, ExecutionStatus] | None = None
     with actuation_attempt_scope() as outer:
+        clr = _clearance()
         try:
             with actuation_attempt_scope():
-                await dispatch_actuation(_Actuator(_UNKNOWN), _clearance())
+                await _claim_for(clr)
+                await dispatch_actuation(_Actuator(_UNKNOWN), clr)
                 raise RuntimeError("raised after dispatch")
         except RuntimeError:
             seen = (outer.dispatched, outer.status)
@@ -174,10 +188,12 @@ async def test_a_scope_closed_with_a_dispatch_in_flight_leaves_the_enclosing_rec
             await release.wait()
             return await super().actuate(clearance)
 
+    clr = _clearance()
     with actuation_attempt_scope() as outer:
         with actuation_attempt_scope():
+            await _claim_for(clr)
             in_flight = asyncio.create_task(
-                dispatch_actuation(_Waiting(_REJECTED), _clearance())
+                dispatch_actuation(_Waiting(_REJECTED), clr)
             )
             await asyncio.sleep(0)
         assert outer.status is ExecutionStatus.UNKNOWN
@@ -192,13 +208,15 @@ async def test_the_record_reaches_a_sync_tool_run_by_to_thread(
     ingest: AsyncMock,
 ) -> None:
     actuator = _Actuator(_UNKNOWN)
+    clr = _clearance()
 
     def _sync_tool() -> None:
         # A sync tool can only dispatch on its own loop; its task copies the
         # thread's context, which asyncio.to_thread copied from the caller.
-        asyncio.run(dispatch_actuation(actuator, _clearance()))
+        asyncio.run(dispatch_actuation(actuator, clr))
 
     with actuation_attempt_scope() as attempt:
+        await _claim_for(clr)
         await asyncio.to_thread(_sync_tool)
         assert actuator.seen == [(True, ExecutionStatus.UNKNOWN)]
         assert attempt.dispatched is True
@@ -209,10 +227,10 @@ async def test_the_record_reaches_a_sync_tool_run_by_to_thread(
 async def test_the_record_reaches_a_dispatch_in_a_created_task(
     ingest: AsyncMock,
 ) -> None:
+    clr = _clearance()
     with actuation_attempt_scope() as attempt:
-        await asyncio.create_task(
-            dispatch_actuation(_Actuator(_ACCEPTED), _clearance())
-        )
+        await _claim_for(clr)
+        await asyncio.create_task(dispatch_actuation(_Actuator(_ACCEPTED), clr))
         assert attempt.status is ExecutionStatus.EXECUTED
 
 
@@ -225,7 +243,9 @@ async def test_concurrent_requests_keep_separate_records(ingest: AsyncMock) -> N
     ) -> tuple[bool, ExecutionStatus]:
         with actuation_attempt_scope() as attempt:
             if outcome is not None:
-                await dispatch_actuation(_Actuator(outcome), _clearance())
+                clr = _clearance()
+                await _claim_for(clr)
+                await dispatch_actuation(_Actuator(outcome), clr)
             await both_inside.wait()
             return attempt.dispatched, attempt.status
 
@@ -252,9 +272,13 @@ async def test_a_later_rejected_receipt_never_hides_an_earlier_dispatch(
     second: ActuationOutcome,
     final: ExecutionStatus,
 ) -> None:
+    ledger = ExecutionLedger(None)
+    c1, c2 = _clearance("t-first"), _clearance("t-second")
     with actuation_attempt_scope() as attempt:
-        await dispatch_actuation(_Actuator(first), _clearance())
-        await dispatch_actuation(_Actuator(second), _clearance())
+        await _claim_for(c1, ledger)
+        await dispatch_actuation(_Actuator(first), c1)
+        await _claim_for(c2, ledger)
+        await dispatch_actuation(_Actuator(second), c2)
         assert attempt.dispatched is True
         assert attempt.status is final
 
@@ -270,12 +294,14 @@ async def test_the_record_stays_unknown_while_any_dispatch_is_in_flight(
             await release.wait()
             return await super().actuate(clearance)
 
+    ledger = ExecutionLedger(None)
+    c1, c2 = _clearance("t-waiting"), _clearance("t-second")
     with actuation_attempt_scope() as attempt:
-        waiting = asyncio.create_task(
-            dispatch_actuation(_Waiting(_ACCEPTED), _clearance())
-        )
+        await _claim_for(c1, ledger)
+        waiting = asyncio.create_task(dispatch_actuation(_Waiting(_ACCEPTED), c1))
         await asyncio.sleep(0)
-        await dispatch_actuation(_Actuator(_REJECTED), _clearance())
+        await _claim_for(c2, ledger)
+        await dispatch_actuation(_Actuator(_REJECTED), c2)
         assert attempt.status is ExecutionStatus.UNKNOWN
         release.set()
         await waiting
@@ -288,8 +314,10 @@ async def test_the_record_stays_unknown_while_any_dispatch_is_in_flight(
 @pytest.mark.asyncio
 async def test_dispatch_marks_the_record_before_actuate_runs(ingest: AsyncMock) -> None:
     actuator = _Actuator(_REJECTED)
+    clr = _clearance()
     with actuation_attempt_scope():
-        await dispatch_actuation(actuator, _clearance())
+        await _claim_for(clr)
+        await dispatch_actuation(actuator, clr)
     assert actuator.seen == [(True, ExecutionStatus.UNKNOWN)]
 
 
@@ -308,8 +336,10 @@ async def test_the_receipt_settles_the_record(
     status: ExecutionStatus,
     may_have_executed: bool,
 ) -> None:
+    clr = _clearance()
     with actuation_attempt_scope() as attempt:
-        receipt = await dispatch_actuation(_Actuator(outcome), _clearance())
+        await _claim_for(clr)
+        receipt = await dispatch_actuation(_Actuator(outcome), clr)
         assert receipt.outcome is outcome
         assert attempt.dispatched is True
         assert attempt.status is status
@@ -329,8 +359,10 @@ async def test_the_record_is_settled_only_after_the_receipt_is_ingested(
         return "msg-1"
 
     monkeypatch.setattr(exec_act, "ingest_actuation_receipt", _ingest)
+    clr = _clearance()
     with actuation_attempt_scope() as attempt:
-        await dispatch_actuation(_Actuator(_REJECTED), _clearance())
+        await _claim_for(clr)
+        await dispatch_actuation(_Actuator(_REJECTED), clr)
     assert during_ingest == [ExecutionStatus.UNKNOWN]
     assert attempt.status is ExecutionStatus.BLOCKED
 
@@ -343,8 +375,10 @@ async def test_an_actuator_that_raises_leaves_the_record_unknown(
         async def actuate(self, clearance: ExecutionClearance) -> ActuationReceipt:
             raise TimeoutError("raised before or after the request left")
 
+    clr = _clearance()
     with actuation_attempt_scope() as attempt:
-        receipt = await dispatch_actuation(_Raising(_ACCEPTED), _clearance())
+        await _claim_for(clr)
+        receipt = await dispatch_actuation(_Raising(_ACCEPTED), clr)
     assert receipt.outcome is _UNKNOWN
     assert attempt.status is ExecutionStatus.UNKNOWN
 
@@ -357,9 +391,11 @@ async def test_cancellation_mid_actuate_leaves_the_record_unknown(
         async def actuate(self, clearance: ExecutionClearance) -> ActuationReceipt:
             raise asyncio.CancelledError("caller went away mid-dispatch")
 
+    clr = _clearance()
     with actuation_attempt_scope() as attempt:
+        await _claim_for(clr)
         with pytest.raises(asyncio.CancelledError):
-            await dispatch_actuation(_Cancelled(_REJECTED), _clearance())
+            await dispatch_actuation(_Cancelled(_REJECTED), clr)
     assert attempt.dispatched is True
     assert attempt.status is ExecutionStatus.UNKNOWN
 
@@ -374,9 +410,11 @@ async def test_cancellation_while_ingesting_leaves_the_record_unknown(
         "ingest_actuation_receipt",
         AsyncMock(side_effect=asyncio.CancelledError("cancelled while recording")),
     )
+    clr = _clearance()
     with actuation_attempt_scope() as attempt:
+        await _claim_for(clr)
         with pytest.raises(asyncio.CancelledError):
-            await dispatch_actuation(_Actuator(outcome), _clearance())
+            await dispatch_actuation(_Actuator(outcome), clr)
     assert attempt.status is ExecutionStatus.UNKNOWN
 
 
@@ -403,8 +441,10 @@ async def test_dispatch_outside_a_scope_is_refused_before_actuate(
 async def test_after_dispatch_every_error_is_answered_from_the_record(
     ingest: AsyncMock, outcome: ActuationOutcome, expected: CommitStatus
 ) -> None:
+    clr = _clearance()
     with actuation_attempt_scope():
-        await dispatch_actuation(_Actuator(outcome), _clearance())
+        await _claim_for(clr)
+        await dispatch_actuation(_Actuator(outcome), clr)
         assert exceptions_after_dispatch() == (Exception,)
         after = outcome_after_dispatch("raised after dispatch")
     assert after is not None
@@ -416,8 +456,10 @@ async def test_after_dispatch_every_error_is_answered_from_the_record(
 async def test_after_a_rejected_receipt_errors_keep_their_type_mapping(
     ingest: AsyncMock,
 ) -> None:
+    clr = _clearance()
     with actuation_attempt_scope() as attempt:
-        await dispatch_actuation(_Actuator(_REJECTED), _clearance())
+        await _claim_for(clr)
+        await dispatch_actuation(_Actuator(_REJECTED), clr)
         assert attempt.dispatched is True
         assert exceptions_after_dispatch() == ()
         assert outcome_after_dispatch("raised after a rejection") is None
@@ -452,10 +494,11 @@ async def test_release_after_dispatch_keeps_the_key_and_records_the_attempt(
     recorded: ExecutionStatus,
 ) -> None:
     ledger = make_ledger()
-    claim = await ledger.claim("governed_action", "caller", "k-1")
-    assert isinstance(claim, Claim)
+    clr = _clearance("k-1")
     with actuation_attempt_scope():
-        await dispatch_actuation(_Actuator(outcome), _clearance())
+        claim = await ledger.claim(clr.action, "caller", clr.thread_id)
+        assert isinstance(claim, Claim)
+        await dispatch_actuation(_Actuator(outcome), clr)
         assert await ledger.release_unexecuted(claim) is False
     duplicate = await ledger.claim("governed_action", "caller", "k-1")
     assert isinstance(duplicate, Duplicate)
