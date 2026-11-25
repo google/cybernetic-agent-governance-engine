@@ -808,6 +808,7 @@ async def execute_tool_endpoint(request_body: ToolExecutionRequest, request: Req
 
     from src.gateway.governance.commit_outcome import (
         NON_REFUSAL_STATUSES,
+        NOT_EXECUTED_STATUSES,
         CommitOutcome,
         CommitStatus,
     )
@@ -815,11 +816,15 @@ async def execute_tool_endpoint(request_body: ToolExecutionRequest, request: Req
     from src.gateway.governance.execution_idempotency import (
         UnsettledDuplicate,
         close_actuation_attempt,
+        current_actuation_attempt,
         exceptions_after_dispatch,
         open_actuation_attempt,
         outcome_after_dispatch,
     )
     from src.gateway.governance.governor.errors import GovernanceInfrastructureError
+    from src.gateway.governance.post_execution_sanitizer import (
+        evaluate_post_execution_output,
+    )
     from src.gateway.governance.routing_seal import SymbolicGovernorViolation
     from src.gateway.governance.seams.actuation import (
         ActuationIndeterminateError,
@@ -831,7 +836,6 @@ async def execute_tool_endpoint(request_body: ToolExecutionRequest, request: Req
         ActionDeferred,
         get_last_refusal_proof_hash,
         reset_last_refusal_proof_hash,
-        sanitize_mcp_tool_response,
         set_last_refusal_proof_hash,
     )
 
@@ -902,20 +906,24 @@ async def execute_tool_endpoint(request_body: ToolExecutionRequest, request: Req
             if current_span is not None and (not callable(is_rec) or is_rec())
             else None
         )
-        san_res = sanitize_mcp_tool_response(
+        san_outcome = await evaluate_post_execution_output(
             request_body.tool_name,
-            output_str,
+            output,
             span=active_span,
+            attempt=current_actuation_attempt(),
+            transport="tools_execute",
         )
-        violation = await san_res if inspect.isawaitable(san_res) else san_res
-        if isinstance(violation, str) and violation:
+        if san_outcome.blocked:
             mark_request_refused()
             blocked_output_payload: dict[str, Any] = {
                 "status": "ERROR",
                 "error_type": "IndirectPromptInjectionError",
                 "stage": "post_execution_output_sanitizer",
-                "violation": violation,
-                "error": f"Tool response blocked by indirect prompt-injection guard ({violation})",
+                "violation": san_outcome.violation,
+                "error": (
+                    "Tool response blocked by indirect prompt-injection guard "
+                    f"({san_outcome.violation})"
+                ),
             }
             proof_hash = get_last_refusal_proof_hash()
             if proof_hash:
@@ -924,10 +932,23 @@ async def execute_tool_endpoint(request_body: ToolExecutionRequest, request: Req
                 status_code=403,
                 content=blocked_output_payload,
             )
+        output_redacted = False
+        sanitizer_violation: str | None = None
+        if san_outcome.redacted and san_outcome.redacted_outcome is not None:
+            output_redacted = True
+            sanitizer_violation = san_outcome.violation
+            output_str = (
+                san_outcome.redacted_message or san_outcome.redacted_outcome.message
+            )
+            structured_outcome = san_outcome.redacted_outcome.to_wire()
+            tool_error = san_outcome.redacted_outcome.status in NOT_EXECUTED_STATUSES
         response: dict[str, Any] = {
             "status": "ERROR" if tool_error else "SUCCESS",
             "output": output_str,
         }
+        if output_redacted:
+            response["output_redacted"] = True
+            response["sanitizer_violation"] = sanitizer_violation
         if tool_error:
             response["error"] = scrub_pii(output_str)
         non_refusal_outcome = False

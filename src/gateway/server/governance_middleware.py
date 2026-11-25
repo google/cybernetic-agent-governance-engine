@@ -501,24 +501,34 @@ async def sanitize_mcp_tool_response(
     tool_name: str,
     response_text: str,
     span: Any = None,
+    *,
+    post_exec_protected: bool = False,
 ) -> str | None:
     """Sanitize an MCP tool response for indirect injection (AI 600-1 §2.3, AI600-003).
 
     Checks the tool response against the indirect injection pattern set in
     ``prompt_injection_detector.detect_indirect_injection()``.  Called in the
     governance middleware after every MCP tool invocation, before the response
-    is returned to the agent pipeline.
+    is returned to the agent pipeline. Stamps ISO 42001 ``A.9.2`` ``BLOCK``
+    only when ``not post_exec_protected`` (POAM-2026-253).
 
     Args:
-        tool_name:     Name of the MCP tool that produced the response.
-        response_text: The raw string content returned by the tool call.
-        span:          Active OTel span for evidence stamping (optional).
+        tool_name:           Name of the MCP tool that produced the response.
+        response_text:       The raw string content returned by the tool call.
+        span:                Active OTel span for evidence stamping (optional).
+        post_exec_protected: True when the tool run executed or may have
+                             executed; suppresses ``A.9.2`` ``BLOCK`` stamping.
 
     Returns:
         A violation description string if indirect injection was detected,
         ``None`` if the response is clean.
     """
-    return await _sanitize_mcp_tool_response(tool_name, response_text, span=span)
+    return await _sanitize_mcp_tool_response(
+        tool_name,
+        response_text,
+        span=span,
+        post_exec_protected=post_exec_protected,
+    )
 
 
 # ---------------------------------------------------------------------------
