@@ -1585,6 +1585,39 @@ def test_pin_clause_tokens_ignore_paths_and_the_pinned_filename(
 
 
 def test_pin_clause_tokens_keep_backticked_identifiers() -> None:
-    assert g9._pin_clause_tokens(
-        "`abc1234^:src/gone.py:2` sets `RETIRED_FLAG` via `src/x.py`", "src/gone.py"
-    ) == {"retired_flag"}
+    line = "`abc1234^:src/gone.py:2` sets `RETIRED_FLAG` via `src/x.py`"
+    assert g9._pin_clause_tokens(line, 0, len(line), "src/gone.py") == {"retired_flag"}
+
+
+# --- Pin clause window: code spans are paired on the whole line -------------
+
+_LONG_SPAN = "a" * 200  # longer than PIN_GOVERNANCE_WINDOW
+
+
+def test_pin_clause_tokens_drop_spans_straddling_the_window() -> None:
+    line = f"x `straddle_name` `{_LONG_SPAN}` sets `RETIRED_FLAG`"
+    start = line.index("straddle_name") + 3  # cut inside the first span
+    end = len(line)
+    assert g9._pin_clause_tokens(line, start, end, "src/gone.py") == {"retired_flag"}
+
+
+@pytest.mark.parametrize(
+    "prefix",
+    [
+        # Odd parity: the clause window starts inside this code span, so
+        # pairing backticks on the slice would invert every pair and read the
+        # prose between spans as identifiers while dropping RETIRED_FLAG.
+        f"see `{_LONG_SPAN}` ",
+        # Even-parity control: the long run is prose, not a code span.
+        f"see `x` {_LONG_SPAN} ",
+    ],
+    ids=["odd-parity", "even-parity-control"],
+)
+def test_pin_clause_window_parity_does_not_flip_code_spans(
+    strict_pins: tuple[Path, str], prefix: str
+) -> None:
+    repo, pin = strict_pins
+    issues = _audit(repo, f"{prefix}`{pin}^:src/gone.py:2` sets `RETIRED_FLAG`")
+    assert [
+        i.reference_type for i in issues if i.reference_type.startswith("Pinned")
+    ] == []

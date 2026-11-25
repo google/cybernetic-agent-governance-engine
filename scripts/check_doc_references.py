@@ -2450,11 +2450,22 @@ def _pin_line_spans(spec: str) -> list[tuple[int, int]]:
     )
 
 
-def _pin_clause_tokens(clause: str, pinned_path: str) -> set[str]:
-    """Lower-cased identifiers the clause itself names in backticks (pin excluded)."""
+def _pin_clause_tokens(
+    line: str, clause_start: int, clause_end: int, pinned_path: str
+) -> set[str]:
+    """Lower-cased identifiers the clause itself names in backticks (pin excluded).
+
+    Code spans are paired on the whole *line*, and only spans lying entirely
+    inside ``[clause_start, clause_end)`` count. Pairing backticks inside the
+    sliced clause instead would invert every pair whenever the window starts
+    inside a span (odd backtick parity before the cut), turning prose words
+    into identifiers and dropping the real ones.
+    """
     tokens: set[str] = set()
     name = Path(pinned_path).name.lower()
-    for cm in INLINE_CODE_PATTERN.finditer(clause):
+    for cm in INLINE_CODE_PATTERN.finditer(line):
+        if cm.start() < clause_start or cm.end() > clause_end:
+            continue
         snippet = cm.group(1).strip()
         if (
             PINNED_PATH_PATTERN.match(snippet)
@@ -2556,7 +2567,7 @@ def _audit_pinned_refs(
         clause_start = max(0, m.start() - PIN_GOVERNANCE_WINDOW)
         if "|" in line[clause_start : m.start()]:
             clause_start = line.rindex("|", clause_start, m.start()) + 1
-        tokens = _pin_clause_tokens(line[clause_start:clause_end], pin_path)
+        tokens = _pin_clause_tokens(line, clause_start, clause_end, pin_path)
 
         line_suffix = suffix if suffix and re.match(r"^(?::|#L\d)", suffix) else ""
         symbol = (
