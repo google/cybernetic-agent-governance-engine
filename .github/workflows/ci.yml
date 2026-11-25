@@ -157,7 +157,7 @@ jobs:
         # No -m filter: the guard must see EVERY collected item.
         # -p no:xdist / -n0 keeps the failure message single-copy and readable.
         run: |
-          uv run pytest tests/ --collect-only -q --no-cov -n0 \
+          uv run pytest tests/ packages/cage-client/tests/ --collect-only -q --no-cov -n0 \
             -p no:langsmith -p no:langsmith_plugin
 
   pytest-logic:
@@ -196,7 +196,7 @@ jobs:
           LANGFUSE_HOST: "http://localhost:3000"
           LANGFUSE_PUBLIC_KEY: "pk-dummy"
           LANGFUSE_SECRET_KEY: "sk-dummy"
-        run: uv run pytest -p no:langsmith -p no:langsmith_plugin tests/ -m "local or unit" -n auto --dist=loadscope -v --cov-branch --cov=src --cov=cage_client --cov=packages/cage-conformance/src/cage_conformance --cov-context=test --cov-fail-under=70
+        run: uv run pytest -p no:langsmith -p no:langsmith_plugin tests/ packages/cage-client/tests/ -m "local or unit" -n auto --dist=loadscope -v --cov-branch --cov=src --cov=cage_client --cov=packages/cage-conformance/src/cage_conformance --cov-context=test --cov-fail-under=70
       - name: Verify fail-closed test reachability (@pytest.mark.covers)
         run: uv run python scripts/check_fail_closed_coverage.py --verify-coverage .coverage --verbose
       - name: Run Bandit SAST (medium+ severity)

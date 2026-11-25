@@ -128,8 +128,9 @@ jobs:
           CLIENT_VERSION=$(python3 -c 'import tomllib; print(tomllib.load(open("pyproject.toml", "rb"))["project"]["version"])')
           SMOKE_VENV="$(mktemp -d)/wheel-venv"
           uv venv "$SMOKE_VENV"
-          uv pip install --python "$SMOKE_VENV/bin/python" "dist/cage_client-${CLIENT_VERSION}-py3-none-any.whl"
+          uv pip install --python "$SMOKE_VENV/bin/python" "dist/cage_client-${CLIENT_VERSION}-py3-none-any.whl" pytest
           "$SMOKE_VENV/bin/python" -I -c "import cage_client; assert cage_client.__version__ == '${CLIENT_VERSION}', cage_client.__version__; print('Verified built wheel:', cage_client.__file__, cage_client.__version__)"
+          "$SMOKE_VENV/bin/pytest" tests/ -v -o addopts="" -W ignore::pytest.PytestUnknownMarkWarning
           rm -rf "$(dirname "$SMOKE_VENV")"
 
       - name: Build CAGE Conformance Verifier Wheel & Sdist
