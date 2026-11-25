@@ -167,6 +167,7 @@ CONCRETE_EXTENSIONS = {
     ".tsx",
     ".js",
     ".mjs",
+    ".tla",
 }
 
 # Literal words or tokens to ignore
@@ -1592,6 +1593,51 @@ def _extract_ts_symbols(text: str) -> list[SymbolSpan]:
     return out
 
 
+# TLA+ top-level definition header: `Name == ...`, `Name(a, b) == ...`,
+# `THEOREM Name == ...` / `LEMMA Name == ...`, or a VARIABLE(S)/CONSTANT(S) list.
+TLA_DEF_PATTERN = re.compile(
+    r"^(?:(?:LOCAL\s+)?(?P<op>[A-Za-z_][A-Za-z0-9_]*)\s*(?:\([^)]*\)|\[[^\]]*\])?\s*=="
+    r"|(?:THEOREM|LEMMA|COROLLARY|PROPOSITION)\s+(?P<thm>[A-Za-z_][A-Za-z0-9_]*)\s*=="
+    r"|(?P<decl>VARIABLES?|CONSTANTS?)\s+(?P<names>.+))"
+)
+TLA_SEPARATOR_PATTERN = re.compile(r"^(?:-{4,}|={4,})")
+
+
+def _extract_tla_symbols(text: str) -> list[SymbolSpan]:
+    """Top-level TLA+ definitions, each spanning to the line before the next header."""
+    lines = text.splitlines()
+    headers: list[tuple[int, list[tuple[str, str]]]] = []
+    in_block_comment = False
+    for idx, raw in enumerate(lines, start=1):
+        if in_block_comment:
+            in_block_comment = "*)" not in raw
+            continue
+        if raw.lstrip().startswith("(*"):
+            in_block_comment = "*)" not in raw
+            continue
+        if TLA_SEPARATOR_PATTERN.match(raw):
+            headers.append((idx, []))
+            continue
+        m = TLA_DEF_PATTERN.match(raw)
+        if not m:
+            continue
+        if m.group("op"):
+            headers.append((idx, [(m.group("op"), "tla_op")]))
+        elif m.group("thm"):
+            headers.append((idx, [(m.group("thm"), "tla_theorem")]))
+        else:
+            names = re.split(r"\s*,\s*", m.group("names").split("\\*", 1)[0].strip())
+            decls = [(n, "tla_decl") for n in names if re.fullmatch(r"[A-Za-z_]\w*", n)]
+            headers.append((idx, decls))
+    out: list[SymbolSpan] = []
+    for pos, (start, symbols) in enumerate(headers):
+        end = headers[pos + 1][0] - 1 if pos + 1 < len(headers) else len(lines)
+        while end > start and not lines[end - 1].strip():
+            end -= 1
+        out.extend(SymbolSpan(name, kind, start, end) for name, kind in symbols)
+    return out
+
+
 @functools.lru_cache(maxsize=512)
 def _extract_structural_symbols_cached(
     resolved_path: Path, mtime_ns: int, size: int
@@ -1637,6 +1683,8 @@ def _extract_structural_symbols_cached(
         return _merge_symbol_spans(_extract_ts_symbols(text))
     if suffix == ".md":
         return _merge_symbol_spans(_extract_markdown_symbols(text))
+    if suffix == ".tla":
+        return _merge_symbol_spans(_extract_tla_symbols(text))
     return ()
 
 
@@ -1715,6 +1763,9 @@ def _strip_comments_in_span(resolved_path: Path, start_line: int, end_line: int)
         return _strip_line_comments_outside_quotes(
             no_block, allow_hash=True, allow_slash=True, allow_sql_dash=False
         )
+    if suffix == ".tla":
+        no_block = re.sub(r"\(\*.*?\*\)", " ", snippet, flags=re.DOTALL)
+        return "\n".join(line.split("\\*", 1)[0] for line in no_block.splitlines())
     if suffix == ".sql":
         no_block = re.sub(r"/\*.*?\*/", " ", snippet, flags=re.DOTALL)
         return _strip_line_comments_outside_quotes(

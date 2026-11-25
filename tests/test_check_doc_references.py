@@ -1420,3 +1420,56 @@ def test_strict_mode_rejects_all_unpinned_line_citations_and_allows_sha_pinned(
         i.reference_type == "OSCAL File Path" and i.target == "docs/ref.md:1"
         for i in oscal_issues
     )
+
+
+# --- TLA+ structural anchors -------------------------------------------------
+
+_TLA_SPEC = (
+    "---- MODULE Spec ----\n"  # 1
+    "VARIABLES seal, nonce \\* governed state\n"  # 2
+    "\n"  # 3
+    "\\* Ghost == not a header: line comment\n"  # 4
+    "Init == seal = 0\n"  # 5
+    "\n"  # 6
+    "Next(x) ==\n"  # 7
+    "    /\\ seal' = x  \\* consumes nonce\n"  # 8
+    "\n"  # 9
+    "(*\n"  # 10
+    "Phantom == commented out\n"  # 11
+    "*)\n"  # 12
+    "THEOREM Safety == Init => Next(1)\n"  # 13
+    "====\n"  # 14
+)
+
+
+def test_tla_extractor_spans_operators_theorems_and_declarations() -> None:
+    spans = {
+        (s.name, s.kind): (s.start_line, s.end_line)
+        for s in g9._extract_tla_symbols(_TLA_SPEC)
+    }
+    # Each span runs to the line before the next header (trailing comments
+    # included; they are stripped before any subtoken check).
+    assert spans == {
+        ("seal", "tla_decl"): (2, 4),
+        ("nonce", "tla_decl"): (2, 4),
+        ("Init", "tla_op"): (5, 5),
+        ("Next", "tla_op"): (7, 12),
+        ("Safety", "tla_theorem"): (13, 13),
+    }
+
+
+def test_tla_anchor_resolves_definitions_and_refuses_commented_names(
+    tmp_path: Path,
+) -> None:
+    spec = tmp_path / "Spec.tla"
+    spec.write_text(_TLA_SPEC, encoding="utf-8")
+    g9._extract_structural_symbols_cached.cache_clear()
+
+    assert g9.resolve_symbol_anchor(spec, "Next")[0]
+    assert g9.resolve_symbol_anchor(spec, "Safety")[0]
+    assert g9.resolve_symbol_anchor(spec, "Next:seal")[0]
+    # A line comment, a block comment, and a subtoken only present in a
+    # `\*` comment must not satisfy an anchor.
+    assert not g9.resolve_symbol_anchor(spec, "Ghost")[0]
+    assert not g9.resolve_symbol_anchor(spec, "Phantom")[0]
+    assert not g9.resolve_symbol_anchor(spec, "Next:nonce")[0]
