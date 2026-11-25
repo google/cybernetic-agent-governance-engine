@@ -1,6 +1,6 @@
 # PII Scrubbing Policy — CAGE Compliance Bridge
 
-**Document:** AI600-002 / NIST AI 600-1 §2.4 / GDPR Art. 25 Data Minimisation
+**Document:** AI600-002 / NIST AI 600-1 §2.4 / GDPR Art. 25 Data Protection by Design and by Default
 **Date:** 2026-06-23
 **Status:** Active
 **POAM:** AI600-002

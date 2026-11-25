@@ -46,7 +46,7 @@ In this project, Lula validations (`compliance/lula/lula-validation-*.yaml`) eva
 | [`lula-validation-ai600-data-privacy.yaml`](lula-validation-ai600-data-privacy.yaml) | SI-19, SC-28 | NIST AI 600-1 | US_FED | 🔶 Stub | AI 600-1 §2.4 Data Privacy — asserts PII audit log retention ≥ 90 days and Presidio score threshold ≥ 0.5 (POAM AI600-002). |
 | [`lula-validation-ai600-prompt-injection.yaml`](lula-validation-ai600-prompt-injection.yaml) | SI-3, SI-10, CA-8 | NIST AI 600-1 | US_FED | 🔶 Stub | AI 600-1 §2.9 Prompt Injection — asserts injection detector ConfigMap present and deflection score ≥ 4 (POAM AI600-003). |
 | [`lula-validation-ai600-human-ai-config.yaml`](lula-validation-ai600-human-ai-config.yaml) | AC-5, AU-3, CA-7 | NIST AI 600-1 | US_FED | 🔶 Stub | AI 600-1 §2.7 Human-AI Configuration — asserts DEFER queue SLA ≤ 4h for CRITICAL escalations and HITL audit trail present (POAM AI600-005). |
-| [`lula-validation-ai600-cbrn.yaml`](lula-validation-ai600-cbrn.yaml) | SA-12, SR-3, SI-7 | NIST AI 600-1 | US_FED | 🔶 Stub | AI 600-1 §2.1 / §2.12 CBRN & Value Chain — asserts CBRN keyword list ≥ 10 terms enabled and NeMo CBRN rail deployed (POAM AI600-007). **Cat-M: requires AO pre-approval before activation.** |
+| [`lula-validation-ai600-cbrn.yaml`](lula-validation-ai600-cbrn.yaml) | SA-12, SR-3, SI-7 | NIST AI 600-1 | US_FED | 🔶 Stub | AI 600-1 §2.1 CBRN / §2.12 Value Chain — asserts CBRN keyword list ≥ 10 terms enabled and NeMo CBRN rail deployed (POAM AI600-007). **Cat-M: requires AO pre-approval before activation.** |
 
 ### EU_ECB Controls (EU AI Act / GDPR / DORA — EU_ECB only)
 

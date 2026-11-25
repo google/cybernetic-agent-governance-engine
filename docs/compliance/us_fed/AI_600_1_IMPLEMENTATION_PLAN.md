@@ -846,7 +846,7 @@ risk categories and 7 POAM items.
 | §2.5 Environmental Impact | ⚠️ 30% | ⚠️ 25% | CTRL_TQP_007 token quota (partial — no carbon measurement) |
 | §2.10 IP / Copyright | ⚠️ 50% | ⚠️ 45% | NeMo output filter (partial — no training data audit) |
 | §2.11 Obscene Content | ✅ 80% | ✅ 75% | NeMo content rails + Tier-1 keywords |
-| §2.12 Information Security | ✅ 90% | ✅ 88% | RoutingSeal + KMS + Linkerd mTLS |
+| §2.9 Information Security | ✅ 90% | ✅ 88% | RoutingSeal + KMS + Linkerd mTLS |
 
 ### 8.3 POAM Item Status Tracker
 
