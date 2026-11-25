@@ -24,7 +24,18 @@ git's own revision syntax: `<sha>:<path>` or `<sha>^:<path>`. A pinned path is
 verified against history: the commit must exist and be an ancestor of HEAD, and
 the path must exist in that commit. Verification needs full history and fails
 closed in a shallow clone (CI checks out with fetch-depth: 0). Pins break if
-history is rewritten; whoever rewrites `main` owns re-pinning them.
+history is rewritten; whoever rewrites `main` owns re-pinning them. A pin may
+be backticked or written bare in parentheses, `(<sha>:<path>)`; both are
+verified. When STRICT_SYMBOL_ANCHORS is enabled, a pin's own `:<line>` / `#L<n>` /
+`#symbol` suffix, and any prose `line(s) <n>` / `L<n>` citation it governs, is
+checked against the pinned blob (`git show <sha>:<path>`): bounds, non-blank
+single lines, and agreement with the clause's backticked identifiers.
+
+Anchor accounting reports three tiers separately so nobody reads the gate as
+proving more than it does: Tier 1 structural anchors (a named definition
+exists), Tier 2 scoped subtokens (a definition exists and a literal appears in
+its non-comment body), and pinned-blob citations (checked against history, not
+HEAD).
 
 The label of a Markdown link with a local target is display text: the target is
 the reference, and it is what gets verified.
@@ -50,6 +61,7 @@ from __future__ import annotations
 
 import argparse
 import ast
+import atexit
 import functools
 import io
 import json
@@ -57,6 +69,7 @@ import re
 import shutil
 import subprocess
 import sys
+import tempfile
 import tokenize
 from dataclasses import dataclass
 from datetime import date
@@ -141,8 +154,26 @@ MD_LINK_PATTERN = re.compile(r"\[([^\]]+)\]\(([^)]+)\)")
 INLINE_CODE_PATTERN = re.compile(r"`([^`\n]+)`")
 # Revision-pinned path: `<sha>:<path>` or `<sha>^:<path>` (with optional trailing `:line` or `#anchor`)
 PINNED_PATH_PATTERN = re.compile(
-    r"^(?P<commit>[0-9a-f]{7,40})(?P<parent>\^?):(?P<path>(?:\.[A-Za-z0-9_]|[A-Za-z0-9_])[A-Za-z0-9_./-]*)(?::L?\d+(?:[-\u2013]L?\d+)?|#[^\s]+)?$"
+    r"^(?P<commit>[0-9a-f]{7,40})(?P<parent>\^?):(?P<path>(?:\.[A-Za-z0-9_]|[A-Za-z0-9_])[A-Za-z0-9_./-]*)(?P<suffix>:L?\d+(?:[-\u2013]L?\d+)?|#[^\s]+)?$"
 )
+# Any path-bearing pin in prose, backticked (`<sha>:<path>[suffix]`) or bare in
+# parentheses ((<sha>:<path>[suffix]), optionally followed by `:<line>`). The
+# suffix is `:<line_spec>`, `#L<n>[-L<m>]` or `#symbol`.
+PINNED_REF_PATTERN = re.compile(
+    r"`(?P<b_commit>[0-9a-f]{7,40})(?P<b_parent>\^?):"
+    r"(?P<b_path>(?:\.[A-Za-z0-9_]|[A-Za-z0-9_])[A-Za-z0-9_./-]*?)"
+    r"(?P<b_suffix>:L?\d+(?:[-\u2013]L?\d+)?|#[^\s`]+)?`"
+    r"|(?<![`A-Za-z0-9_])\((?P<p_commit>[0-9a-f]{7,40})(?P<p_parent>\^?):"
+    r"(?P<p_path>(?:\.[A-Za-z0-9_]|[A-Za-z0-9_])[A-Za-z0-9_./-]*?)"
+    r"(?P<p_suffix>:L?\d+(?:[-\u2013]L?\d+)?|#[^\s)`]+)?\)"
+    r"(?P<p_tail>:L?\d+(?:[-\u2013]L?\d+)?\b)?"
+)
+# Commit-only pin clause (no path): "at `<sha>`", "in commit `<sha>`"
+COMMIT_CLAUSE_PATTERN = re.compile(
+    r"(?:at|in|commit|commits)\s+`(?P<commit>[0-9a-f]{7,40})\^?`", re.IGNORECASE
+)
+# A pin governs prose line citations at most this many characters after it
+PIN_GOVERNANCE_WINDOW = 140
 GIT_TIMEOUT_SECONDS = 30
 
 # Concrete file extensions to check
@@ -205,6 +236,7 @@ class SymbolSpan:
 class AnchorStats:
     tier1_structural: int = 0
     tier2_scoped_subtoken: int = 0
+    pinned_blob: int = 0
 
 
 # Markdown link line anchor: #L<start> or #L<start>-L<end>
@@ -239,7 +271,8 @@ UNPINNED_PROSE_L_SPAN_PATTERN = re.compile(
     r"(?::L\d+(?:[-\u2013]L?\d+)?|\(\s*(?:L\d{2,}(?:[-\u2013,\s]+L?\d+)*|L[1-9][-\u2013,\s]+L?\d+(?:[-\u2013,\s]+L?\d+)*)\s*\)|\bL\d{2,}(?:[-\u2013]L?\d+)?\b|\bL[1-9][-\u2013]L?\d+\b)"
 )
 PINNED_CLAUSE_PREFIX_PATTERN = re.compile(
-    r"(?:`[0-9a-f]{7,40}\^?:[A-Za-z0-9_./-]+`|(?:at|in|commit|commits)\s+`[0-9a-f]{7,40}\^?`)"
+    r"(?:`[0-9a-f]{7,40}\^?:[A-Za-z0-9_./-]+`|\([0-9a-f]{7,40}\^?:[A-Za-z0-9_./-]+[^\s)]*\)"
+    r"|(?:at|in|commit|commits)\s+`[0-9a-f]{7,40}\^?`)"
 )
 
 # HCL / Terraform block header in .tf files
@@ -572,8 +605,11 @@ def verify_file_path(
     return False, f"Target path '{clean_target}' does not exist on disk"
 
 
-def _git(repo_root: Path, *args: str) -> tuple[bool, str]:
-    """Run git with a fixed argument list (no shell) in *repo_root*."""
+def _git(repo_root: Path, *args: str, strip: bool = True) -> tuple[bool, str]:
+    """Run git with a fixed argument list (no shell) in *repo_root*.
+
+    *strip* is False when the caller needs byte-exact line numbering (blob reads).
+    """
     git = shutil.which("git")
     if git is None:
         return False, "git is not installed"
@@ -588,7 +624,7 @@ def _git(repo_root: Path, *args: str) -> tuple[bool, str]:
         )
     except (OSError, subprocess.TimeoutExpired) as err:
         return False, str(err)
-    return result.returncode == 0, result.stdout.strip()
+    return result.returncode == 0, (result.stdout.strip() if strip else result.stdout)
 
 
 @functools.lru_cache(maxsize=8)
@@ -620,6 +656,36 @@ def verify_pinned_path(commit: str, parent: str, path: str) -> tuple[bool, str]:
     if not _git(REPO_ROOT, "cat-file", "-e", f"{revision}:{path}")[0]:
         return False, f"'{path}' does not exist at {revision}"
     return True, ""
+
+
+_PIN_BLOB_ROOT: list[Path] = []
+
+
+def _pin_blob_root() -> Path:
+    """Lazily create one private temp tree for pinned blobs, removed at exit."""
+    if not _PIN_BLOB_ROOT:
+        root = Path(tempfile.mkdtemp(prefix="g9-pinned-"))
+        atexit.register(shutil.rmtree, root, True)
+        _PIN_BLOB_ROOT.append(root)
+    return _PIN_BLOB_ROOT[0]
+
+
+@functools.lru_cache(maxsize=1024)
+def _materialize_pinned_blob(repo_root: Path, revision: str, path: str) -> Path | None:
+    """Write `git show <revision>:<path>` to a temp file (same relative path), or None.
+
+    Callers verify the pin with verify_pinned_path() first. Absolute paths and
+    `..` segments are refused so the write cannot escape the temp tree.
+    """
+    if Path(path).is_absolute() or ".." in Path(path).parts:
+        return None
+    ok, out = _git(repo_root, "show", f"{revision}:{path}", strip=False)
+    if not ok:
+        return None
+    dest = _pin_blob_root() / re.sub(r"[^0-9A-Za-z]", "_", revision) / path
+    dest.parent.mkdir(parents=True, exist_ok=True)
+    dest.write_text(out, encoding="utf-8")
+    return dest
 
 
 def _parse_tf_blocks(text: str, tf_path: Path) -> list[TerraformBlock]:
@@ -2357,6 +2423,181 @@ def _audit_unpinned_prose_line_numbers(
     return issues
 
 
+_PIN_CLAUSE_BREAK_PATTERN = re.compile(r";|\. |\s—\s|\s\|\s")
+_PIN_TOKEN_STOPWORDS = frozenset(
+    {
+        "line",
+        "lines",
+        "true",
+        "false",
+        "none",
+        "null",
+        "in",
+        "on",
+        "to",
+        "of",
+        "or",
+        "if",
+    }
+)
+
+
+def _pin_line_spans(spec: str) -> list[tuple[int, int]]:
+    """Parse a pin suffix or prose span (`:12`, `#L3-L9`, `L40`, `lines 4, 7-9`)."""
+    cleaned = re.sub(r"(?i)^(?::|#)?|lines?\s+|L(?=\d)", "", spec.strip())
+    return (
+        _parse_line_spec(cleaned) if re.fullmatch(r"[\d,\s\-\u2013]+", cleaned) else []
+    )
+
+
+def _pin_clause_tokens(clause: str) -> set[str]:
+    """Lower-cased identifiers the clause itself names in backticks (pin excluded)."""
+    tokens: set[str] = set()
+    for cm in INLINE_CODE_PATTERN.finditer(clause):
+        snippet = cm.group(1).strip()
+        if PINNED_PATH_PATTERN.match(snippet) or re.match(
+            r"^(?:POAM-|#\d+|[0-9a-f]{7,40}\^?$|\d+$|lines?\s)",
+            snippet,
+            re.IGNORECASE,
+        ):
+            continue
+        for ident in re.findall(r"[A-Za-z_][A-Za-z0-9_-]{1,}", snippet):
+            low = ident.lower()
+            if low not in _PIN_TOKEN_STOPWORDS:
+                tokens.add(low)
+    return tokens
+
+
+def _check_pinned_lines(
+    blob: Path,
+    spans: list[tuple[int, int]],
+    tokens: set[str],
+    label: str,
+) -> str:
+    """Return a refusal reason for pinned line spans, or "" when they hold.
+
+    Bounds and blank-line checks run against the pinned blob. Agreement is
+    bidirectional: the clause must already name an identifier, and the cited
+    lines (+/- 1, plus any enclosing Python definition) must contain it. A
+    pinned line the document never named is refused rather than guessed at.
+    """
+    flines = blob.read_text(encoding="utf-8", errors="replace").splitlines()
+    total = len(flines)
+    for start, end in spans:
+        if start < 1 or end < start or end > total:
+            return f"Pinned {label} exceeds the pinned blob ({total} lines)"
+        if start == end and not flines[start - 1].strip():
+            return f"Pinned {label} is a blank line in the pinned blob"
+    if not tokens:
+        return (
+            f"Pinned {label} names no identifier; cite the symbol in backticks "
+            "or use '<sha>:<path>#symbol'"
+        )
+    chunks = ["\n".join(flines[max(0, s - 2) : min(total, e + 1)]) for s, e in spans]
+    if blob.suffix == ".py":
+        chunks.extend(
+            name
+            for name, sym_s, sym_e in _get_python_symbol_spans(blob)
+            if any(sym_s <= e and sym_e >= s for s, e in spans)
+        )
+    window = "\n".join(chunks).lower()
+    if not any(tok in window for tok in tokens):
+        return (
+            f"Pinned {label} does not contain the clause's identifier(s) "
+            f"{sorted(tokens)[:4]} in the pinned blob"
+        )
+    return ""
+
+
+def _audit_pinned_refs(
+    path: Path,
+    line_idx: int,
+    line: str,
+    *,
+    anchor_stats: AnchorStats | None = None,
+) -> list[Issue]:
+    """Verify every `<sha>[^]:<path>` pin on *line*, backticked or parenthesized.
+
+    Always: the commit is an ancestor of HEAD and holds the path. Under
+    STRICT_SYMBOL_ANCHORS: the pin's own line / symbol suffix and the prose line
+    citations it governs (up to PIN_GOVERNANCE_WINDOW characters, stopping at
+    the next pin or clause break) are checked against the pinned blob.
+    """
+    issues: list[Issue] = []
+    matches = list(PINNED_REF_PATTERN.finditer(line))
+    for pos, m in enumerate(matches):
+        kind = "b" if m.group("b_commit") else "p"
+        commit, parent = m.group(f"{kind}_commit"), m.group(f"{kind}_parent")
+        pin_path = m.group(f"{kind}_path")
+        suffix = m.group(f"{kind}_suffix") or (
+            m.group("p_tail") if kind == "p" else None
+        )
+        token = m.group(0)
+        valid, reason = verify_pinned_path(commit, parent, pin_path)
+        if not valid:
+            issues.append(Issue(path, line_idx, "Pinned Path", token, reason))
+            continue
+        if not STRICT_SYMBOL_ANCHORS:
+            continue
+
+        limit = min(
+            len(line),
+            m.end() + PIN_GOVERNANCE_WINDOW,
+            matches[pos + 1].start() if pos + 1 < len(matches) else len(line),
+        )
+        brk = _PIN_CLAUSE_BREAK_PATTERN.search(line, m.end(), limit)
+        clause_end = brk.start() if brk else limit
+        clause_start = max(0, m.start() - PIN_GOVERNANCE_WINDOW)
+        if "|" in line[clause_start : m.start()]:
+            clause_start = line.rindex("|", clause_start, m.start()) + 1
+        tokens = _pin_clause_tokens(line[clause_start:clause_end])
+
+        line_suffix = suffix if suffix and re.match(r"^(?::|#L\d)", suffix) else ""
+        symbol = (
+            suffix[1:] if suffix and suffix.startswith("#") and not line_suffix else ""
+        )
+        cited: list[tuple[str, list[tuple[int, int]]]] = []
+        if line_suffix:
+            spans = _pin_line_spans(line_suffix)
+            if spans:
+                cited.append((f"line(s) '{line_suffix}'", spans))
+        follow = line[m.end() : clause_end]
+        for pat in (UNPINNED_PROSE_LINE_WORD_PATTERN, UNPINNED_PROSE_L_SPAN_PATTERN):
+            for pm in pat.finditer(follow):
+                spans = _pin_line_spans(pm.group(0).strip("() "))
+                if spans:
+                    cited.append((f"line(s) '{pm.group(0).strip()}'", spans))
+        if not cited and not symbol:
+            continue
+
+        blob = _materialize_pinned_blob(REPO_ROOT, f"{commit}{parent}", pin_path)
+        if blob is None:
+            issues.append(
+                Issue(
+                    path,
+                    line_idx,
+                    "Pinned Path",
+                    token,
+                    "pinned blob could not be read",
+                )
+            )
+            continue
+        if symbol:
+            ok, why = resolve_symbol_anchor(blob, symbol, subtoken_sep=":")
+            if not ok:
+                issues.append(Issue(path, line_idx, "Pinned Symbol", token, why))
+                continue
+        for label, spans in cited:
+            why = _check_pinned_lines(blob, spans, tokens, label)
+            if why:
+                issues.append(Issue(path, line_idx, "Pinned Line", token, why))
+                break
+        else:
+            if anchor_stats is not None:
+                anchor_stats.pinned_blob += 1
+    return issues
+
+
 def audit_markdown_file(
     path: Path,
     *,
@@ -2464,16 +2705,8 @@ def audit_markdown_file(
             if " " in code_snippet:
                 continue
 
-            pinned = PINNED_PATH_PATTERN.match(code_snippet)
-            if pinned:
-                valid, reason = verify_pinned_path(
-                    pinned["commit"], pinned["parent"], pinned["path"]
-                )
-                if not valid:
-                    issues.append(
-                        Issue(path, line_idx, "Pinned Path", code_snippet, reason)
-                    )
-                continue
+            if PINNED_PATH_PATTERN.match(code_snippet):
+                continue  # verified by _audit_pinned_refs below
 
             clean_snippet = re.split(r"[:#]", code_snippet)[0].strip()
             if "=" in clean_snippet:
@@ -2545,7 +2778,10 @@ def audit_markdown_file(
                         Issue(path, line_idx, "Python Symbol", code_snippet, reason)
                     )
 
-        # 3. Prose line references, YAML UUID spans, and contextual Python symbols
+        # 3. Pinned references, prose line references, YAML UUID spans, and contextual Python symbols
+        issues.extend(
+            _audit_pinned_refs(path, line_idx, line, anchor_stats=anchor_stats)
+        )
         if not in_fence:
             issues.extend(_audit_unpinned_prose_line_numbers(path, line_idx, line))
         issues.extend(
@@ -3512,7 +3748,8 @@ def main(argv: list[str] | None = None) -> int:
 
     out_lines: list[str] = [
         f"Anchor accounting: structural_anchors={anchor_stats.tier1_structural}, "
-        f"scoped_subtoken_anchors={anchor_stats.tier2_scoped_subtoken}"
+        f"scoped_subtoken_anchors={anchor_stats.tier2_scoped_subtoken}, "
+        f"pinned_blob_anchors={anchor_stats.pinned_blob}"
     ]
     if not all_issues:
         out_lines.append(

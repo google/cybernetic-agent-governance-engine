@@ -145,7 +145,10 @@ def history_repo(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> tuple[Path,
     repo.mkdir()
     _git(repo, "init", "-q")
     (repo / "src").mkdir()
-    (repo / "src" / "gone.py").write_text("GONE = 1\n", encoding="utf-8")
+    (repo / "src" / "gone.py").write_text(
+        "GONE = 1\nRETIRED_FLAG = True\n\ndef legacy_refusal() -> bool:\n    return RETIRED_FLAG\n",
+        encoding="utf-8",
+    )
     _git(repo, "add", "-A")
     _git(repo, "commit", "-q", "-m", "add")
     _git(repo, "rm", "-q", "src/gone.py")
@@ -1399,7 +1402,7 @@ def test_strict_mode_rejects_all_unpinned_line_citations_and_allows_sha_pinned(
 
     doc = repo / "doc.md"
     doc.write_text(
-        f"Allowed pinned colon: `{deleting[:8]}^:src/gone.py:1` and prose at `{deleting[:8]}^:src/gone.py` (line 1).\n"
+        f"Allowed pinned colon: `{deleting[:8]}^:src/gone.py:2` set `RETIRED_FLAG` and prose at `{deleting[:8]}^:src/gone.py` (line 2, `RETIRED_FLAG`).\n"
         "Allowed structural: [check_ok](kept.py#check_ok) on port :8080, STPA Loss L1 (L1), g2-standard-8 (L4), 24m, v1.2.3.\n"
         "Forbidden hash line: [kept](kept.py#L1-L2)\n"
         "Forbidden colon line: `kept.py:1`\n"
@@ -1473,3 +1476,87 @@ def test_tla_anchor_resolves_definitions_and_refuses_commented_names(
     assert not g9.resolve_symbol_anchor(spec, "Ghost")[0]
     assert not g9.resolve_symbol_anchor(spec, "Phantom")[0]
     assert not g9.resolve_symbol_anchor(spec, "Next:nonce")[0]
+
+
+# --- Pinned-blob line and symbol verification (strict mode) ----------------
+
+
+@pytest.fixture
+def strict_pins(
+    history_repo: tuple[Path, str], monkeypatch: pytest.MonkeyPatch
+) -> tuple[Path, str]:
+    monkeypatch.setattr(g9, "STRICT_SYMBOL_ANCHORS", True)
+    g9._extract_structural_symbols_cached.cache_clear()
+    repo, deleting = history_repo
+    return repo, deleting[:8]
+
+
+@pytest.mark.parametrize(
+    ("clause", "reference_type", "reason"),
+    [
+        (
+            "`{p}^:src/gone.py:9` set `RETIRED_FLAG`",
+            "Pinned Line",
+            "exceeds the pinned blob (5 lines)",
+        ),
+        (
+            "`{p}^:src/gone.py:3` defines `legacy_refusal`",
+            "Pinned Line",
+            "is a blank line",
+        ),
+        (
+            "`{p}^:src/gone.py:1` defines `legacy_refusal`",
+            "Pinned Line",
+            "does not contain the clause's identifier",
+        ),
+        ("`{p}^:src/gone.py:2` was removed", "Pinned Line", "names no identifier"),
+        (
+            "`{p}^:src/gone.py` (line 9, `RETIRED_FLAG`)",
+            "Pinned Line",
+            "exceeds the pinned blob",
+        ),
+        ("`{p}^:src/gone.py#missing_fn` was removed", "Pinned Symbol", "missing_fn"),
+    ],
+)
+def test_strict_pin_refuses_lines_and_symbols_the_blob_does_not_hold(
+    strict_pins: tuple[Path, str], clause: str, reference_type: str, reason: str
+) -> None:
+    repo, pin = strict_pins
+    issues = _audit(repo, clause.format(p=pin))
+    assert [i.reference_type for i in issues] == [reference_type]
+    assert reason in issues[0].reason
+
+
+@pytest.mark.parametrize(
+    "clause",
+    [
+        "`{p}^:src/gone.py:2` set `RETIRED_FLAG`",
+        "`{p}^:src/gone.py:5` returns `RETIRED_FLAG`",
+        "`{p}^:src/gone.py` (line 4, `legacy_refusal`)",
+        "`{p}^:src/gone.py#legacy_refusal` was removed",
+    ],
+)
+def test_strict_pin_accepts_lines_and_symbols_the_blob_holds(
+    strict_pins: tuple[Path, str], clause: str
+) -> None:
+    repo, pin = strict_pins
+    assert _audit(repo, clause.format(p=pin)) == []
+
+
+def test_pin_clause_break_stops_line_governance(strict_pins: tuple[Path, str]) -> None:
+    # The bad span sits in the next clause, so it is not checked against this pin.
+    repo, pin = strict_pins
+    issues = _audit(
+        repo, f"`{pin}^:src/gone.py:2` set `RETIRED_FLAG`; unrelated (line 99)"
+    )
+    assert [
+        i.reference_type for i in issues if i.reference_type.startswith("Pinned")
+    ] == []
+
+
+def test_non_strict_mode_checks_pin_existence_only(
+    history_repo: tuple[Path, str], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(g9, "STRICT_SYMBOL_ANCHORS", False)
+    repo, deleting = history_repo
+    assert _audit(repo, f"`{deleting[:8]}^:src/gone.py:9` was removed") == []
