@@ -85,11 +85,9 @@ from .jwks import JwksKeyResolver, PublicKey, validate_http_url
 # Check for optional HTTP/2 support (h2 package)
 _HTTP2_AVAILABLE = importlib.util.find_spec("h2") is not None
 
-_USER_AGENT = "CageClient/0.4.1"
+_USER_AGENT = "CageClient/0.5.0"
 _BRACKETED_CODE_RE = re.compile(r"^\[([A-Za-z0-9_.:-]+)\]\s+")
-_DEV_POSTURES: frozenset[str] = frozenset(
-    {"dev", "development", "local", "test", "testing"}
-)
+_DEV_POSTURES: frozenset[str] = frozenset({"dev", "development", "test", "testing"})
 _ALLOWED_SIGNATURE_KEYS: frozenset[str] = frozenset({"algorithm", "kid", "value"})
 _EMBEDDED_KEY_FIELDS: frozenset[str] = frozenset(
     {"public_key", "public_key_pem", "jwk", "jwks", "x5c", "x5u", "jku"}
@@ -146,12 +144,18 @@ def enforce_verification_posture(
     verify_expiration: bool = True,
     verify_subject: bool = True,
 ) -> None:
-    """Reject verification opt-outs when running in any non-dev/test posture."""
+    """Reject verification opt-outs unless running in an explicit dev/test posture.
+
+    Unset/blank ``CAGE_ENV`` and ``ENVIRONMENT`` default fail-secure to
+    ``"production"``, and ``"local"`` is enforcing (matching kernel
+    ``env_posture.is_enforcing()``; POAM-2026-241).
+    """
     raw_env = (
         os.environ.get("CAGE_ENV", "").strip()
         or os.environ.get("ENVIRONMENT", "").strip()
+        or "production"
     ).lower()
-    if raw_env and raw_env not in _DEV_POSTURES:
+    if raw_env not in _DEV_POSTURES:
         if not verify_signature or not verify_expiration or not verify_subject:
             raise ValueError(
                 f"Disabling GovernanceEnvelope verification "

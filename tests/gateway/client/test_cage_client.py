@@ -1511,9 +1511,22 @@ async def test_jwks_ttl_staleness_304_and_key_rotation_eviction(
         await client.aclose()
 
 
+@pytest.mark.covers("cage_client.core:enforce_verification_posture")
 @pytest.mark.parametrize(
     "posture",
-    ["production", "prod", "staging", "uat", "canary", "preprod", "custom-enforcing"],
+    [
+        None,
+        "",
+        "   ",
+        "local",
+        "production",
+        "prod",
+        "staging",
+        "uat",
+        "canary",
+        "preprod",
+        "custom-enforcing",
+    ],
 )
 @pytest.mark.parametrize(
     "opt_out_kwargs",
@@ -1526,11 +1539,15 @@ async def test_jwks_ttl_staleness_304_and_key_rotation_eviction(
 async def test_verification_posture_guard_enforced_in_non_dev_postures(
     mock_gateway_url: str,
     monkeypatch: pytest.MonkeyPatch,
-    posture: str,
+    posture: str | None,
     opt_out_kwargs: dict[str, bool],
 ) -> None:
-    """Disabling any verification invariant in non-dev/test CAGE_ENV raises ValueError."""
-    monkeypatch.setenv("CAGE_ENV", posture)
+    """Disabling any verification invariant when CAGE_ENV is unset, blank, 'local', or enforcing raises ValueError."""
+    monkeypatch.delenv("ENVIRONMENT", raising=False)
+    if posture is None:
+        monkeypatch.delenv("CAGE_ENV", raising=False)
+    else:
+        monkeypatch.setenv("CAGE_ENV", posture)
     with pytest.raises(ValueError, match="enforcing posture"):
         enforce_verification_posture(**opt_out_kwargs)
     with pytest.raises(ValueError, match="enforcing posture"):
@@ -1984,3 +2001,28 @@ def test_cage_client_resolves_from_installed_wheel_with_py_typed() -> None:
     assert (mod_path.parent / "py.typed").is_file(), (
         f"Missing py.typed in installed wheel: {mod_path.parent}"
     )
+
+
+def test_standalone_sdk_tests_collected_in_pytest_and_ci() -> None:
+    """Ensure standalone cage-client tests are wired into pytest.ini, Makefile, and CI (POAM-2026-241)."""
+    import configparser
+
+    repo_root = Path(__file__).resolve().parents[3]
+    ini = configparser.ConfigParser()
+    ini.read(repo_root / "pytest.ini", encoding="utf-8")
+    testpaths = ini.get("pytest", "testpaths").split()
+    assert "packages/cage-client/tests" in testpaths, (
+        f"packages/cage-client/tests missing from pytest.ini testpaths: {testpaths}"
+    )
+
+    makefile = (repo_root / "Makefile").read_text(encoding="utf-8")
+    assert "tests/ packages/cage-client/tests/" in makefile
+
+    ci_yml = (repo_root / ".github/workflows/ci.yml").read_text(encoding="utf-8")
+    assert "uv run pytest tests/ packages/cage-client/tests/ --collect-only" in ci_yml
+    assert 'tests/ packages/cage-client/tests/ -m "local or unit"' in ci_yml
+
+    publish_yml = (repo_root / ".github/workflows/publish-client-sdk.yml").read_text(
+        encoding="utf-8"
+    )
+    assert '"$SMOKE_VENV/bin/pytest" tests/' in publish_yml

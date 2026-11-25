@@ -357,62 +357,59 @@ Sources: [`config/stpa/core_system.yaml`](config/stpa/core_system.yaml) (kernel)
 
 The last column lists the targets each UCA declares, not what is loaded at runtime. Which generated artifacts are actually evaluated is graded in [`OSCAL_EVIDENCE_CLAIM_REGISTER.md`](docs/compliance/OSCAL_EVIDENCE_CLAIM_REGISTER.md), which rates the compiler's coverage claim weaker than written. The hazard analysis is in [`STPA_ANALYSIS.md`](docs/security/STPA_ANALYSIS.md).
 
-## Using CAGE with LangGraph (`cage-client`)
+## Using CAGE from Python & LangGraph (`cage-client`)
 
-[`packages/cage-client`](packages/cage-client/) 0.3.0 is the policy enforcement point for an application that uses CAGE as a service. It is the first release that works: 0.1.0 and 0.2.0 never completed a call against a live gateway and verified no signature.
+[`packages/cage-client`](packages/cage-client/) (`0.5.0` in-tree; `client-v0.3.0` latest tagged release) is the out-of-process verification client for applications calling CAGE over HTTP (`0.1.0` and `0.2.0` never completed a call against a live gateway and verified no signature).
 
 ```bash
-pip install https://github.com/google/cybernetic-agent-governance-engine/releases/download/client-v0.3.0/cage_client-0.3.0-py3-none-any.whl
-# or from source, with the LangGraph extra:
-pip install "cage-client[langgraph] @ git+https://github.com/google/cybernetic-agent-governance-engine.git#subdirectory=packages/cage-client"
+pip install "git+https://github.com/google/cybernetic-agent-governance-engine.git#subdirectory=packages/cage-client"
 ```
 
 ```python
 from cage_client import CageClient
-from cage_client.adapters.langgraph import cage_guard
 
-cage = CageClient(gateway_url="http://localhost:8080")
-
-
-@cage_guard(client=cage, action="execute_trade")
-async def trade_execution_node(state: dict) -> dict:
-    # Runs only after the gateway's ALLOW envelope has been verified.
-    return {"trade_status": "EXECUTED"}
+async with CageClient(gateway_url="https://cage-gateway.example.com") as cage:
+    # Preview-only check against POST /governance/validate-action (no seal minted, no side effect):
+    envelope = await cage.validate_action(
+        action="query_portfolio",
+        parameters={"account_scope": "summary"},
+        agent_id="research-analyst-01",
+    )
 ```
 
-The guard reads the action's parameters from `state["proposed_action"]`, optional context from `state["context"]` and the agent identifier from `state["agent_id"]`, then calls the gateway before the node body runs.
+`validate_action()` previews admissibility only (`POST /governance/validate-action`); committing execution runs on the gateway (`POST /tools/execute` or MCP `/mcp/`), where the kernel mints and consumes the single-use routing seal, claims the idempotency ledger slot, and dispatches the registered actuator. The earlier `@cage_guard` node decorator was removed in `0.5.0` (`POAM-2026-251`); see [`src/governed_financial_advisor/`](src/governed_financial_advisor/) for the worked two-node LangGraph integration while the replacement SDK node factory is built.
 
 ### What the client verifies, by default
 
-Every HTTP 200 envelope is checked before the client returns or acts on its verdict:
+Every HTTP 200 and HTTP 403 `GovernanceEnvelope` is checked before the client returns or dispatches its verdict:
 
-1. **Key resolution out of band.** The signing key is looked up by `kid` from `{gateway_url}/governance/.well-known/jwks.json`, or from keys you pin with `public_keys={kid: pem}`. An envelope that carries its own key (`jwk`, `jku`, `x5c` and similar) is refused. The key set refreshes after 300 seconds and is evicted, failing closed, after 3,600 seconds stale.
+1. **Key resolution out of band.** The signing key is looked up by `kid` from `{gateway_url}/governance/.well-known/jwks.json`, or from keys you pin with `public_keys={kid: pem}`. An envelope that carries its own key (`jwk`, `jku`, `x5c` and similar) is refused. The key set refreshes after 300 seconds, evicts immediately on an authoritative HTTP 200 empty or malformed JWKS response, and evicts fail-closed after 3,600 seconds stale.
 2. **Two algorithms only.** `ES256` on P-256 and `EdDSA` on Ed25519, the two the gateway signs with. Any other algorithm or key type is rejected, and a key set containing any other key is refused whole.
 3. **Signature over canonical bytes** (RFC 8785).
 4. **Freshness.** `expires_at` must be in the future within a 5-second skew, and later than `issued_at`.
 5. **Request binding.** `subject.action` and `subject.action_hash` must match what was submitted, so an envelope for one request cannot answer another.
 
-The response is parsed as strict JSON, and nothing is stripped or coerced before the signed values are read. Turning any check off raises at construction unless `CAGE_ENV` is a development or test posture. TLS or mTLS protects the channel and does not replace this.
+The response is parsed as strict JSON, and nothing is stripped or coerced before the signed values are read. Turning any check off raises at construction unless `CAGE_ENV` is explicitly a development or test posture (`unset` and `"local"` enforce). TLS or mTLS protects the channel and does not replace this.
 
-### Outcomes
+### Outcomes (`validate_action` preview)
 
 | Gateway outcome | Client behaviour |
 |---|---|
-| Verified `ALLOW` | Returns the envelope; the guard runs the node |
-| `DENY` or `NARROW` (HTTP 403, 422, or a 200 carrying that verdict) | Raises `PolicyViolationException` with `reason_code`, `violation_details`, `audit_id` |
+| Verified `ALLOW` | Returns the verified `GovernanceEnvelope` |
+| `DENY` or `NARROW` (verified HTTP 403 refusal envelope or HTTP 200 carrying that verdict) | Raises `PolicyViolationException` with `reason_code`, `violation_details`, `audit_id` |
 | `DEFER` or `REQUIRE_APPROVAL` | Raises `DeferralPending` with `ticket_id`, `defer_reason`, `expires_at` |
 | Signature, freshness or binding failure | Raises `RoutingSealVerificationError` |
-| Network failure, 5xx, malformed body | Raises; the node does not run |
+| Network failure, 5xx, unsigned `202`/`409`/`422`, non-envelope `403`, malformed body | Raises `CageGatewayError` |
 
 ### The reference advisor uses the same wheel
 
-The advisor in this repository is not a special case. Its [`GatewayClient`](src/governed_financial_advisor/infrastructure/gateway_client.py) delegates `validate_action()` to `CageClient` from the published `client-v0.3.0` wheel and routes on a verdict only after the envelope verifies. A transport adapter sends the SDK's requests through the advisor's own HTTP client, which keeps its trace headers, principal header and retry budget. That is the pattern to copy when your application already owns an HTTP client.
+The advisor in this repository is not a special case. Its [`GatewayClient`](src/governed_financial_advisor/infrastructure/gateway_client.py) installs `cage-client` as a built non-editable wheel and routes on a preview verdict only after the envelope verifies, while committing tool calls run through [`tool_guard.py`](src/governed_financial_advisor/graph/governance/tool_guard.py) against the gateway's governed tool surface.
 
 The in-tree mirror of the client under the gateway package is retired. [`check_client_sdk_sync.py`](scripts/check_client_sdk_sync.py) fails if a file reappears there, if anything imports it, or if the dependency stops being a built wheel.
 
 For code that lives inside this repository, such as a new domain plugin, the node factories in [`langgraph_harness/`](src/gateway/governance/langgraph_harness/) embed the checks in process. Everything else should use the client.
 
-More: [`packages/cage-client/README.md`](packages/cage-client/README.md), [`LANGGRAPH_QUICKSTART.md`](docs/guides/LANGGRAPH_QUICKSTART.md), and the [tutorial notebook](docs/guides/langgraph_governance_tutorial.ipynb).
+More: [`packages/cage-client/README.md`](packages/cage-client/README.md) and [`LANGGRAPH_QUICKSTART.md`](docs/guides/LANGGRAPH_QUICKSTART.md).
 
 ## Evaluating on GCP / GKE
 
@@ -569,7 +566,7 @@ cybernetic-agent-governance-engine/
 │   ├── eval_harness/                 # Offline evaluation plane
 │   └── governed_financial_advisor/   # Reference application (a client of the gateway)
 ├── packages/
-│   ├── cage-client/                  # Client SDK (0.3.0)
+│   ├── cage-client/                  # Client SDK (0.5.0 in-tree; client-v0.3.0 tagged)
 │   └── cage-conformance/             # Standalone verifier (0.4.1), standard library only
 ├── proof/                            # Formal model, stream invariants, TLA+ specifications
 ├── config/
@@ -586,7 +583,7 @@ cybernetic-agent-governance-engine/
 │   └── modules/                      #   Cluster, mesh, KMS, evidence domain, gateway, ...
 ├── scripts/                          # Lifecycle, bootstrap, CI gates
 ├── tests/                            # Unit, integration, live, partner and chaos suites
-├── examples/                         # Governance demo, playground, cage_guard demo
+├── examples/                         # Governance demo and playground
 └── docs/                             # Architecture, compliance, operations, partners
 ```
 
@@ -601,7 +598,7 @@ Worth being direct about the boundaries:
 
 ## Project status
 
-Active development, pre-1.0 on the external contract. The Substrate Contract is versioned and carries deprecation guarantees; everything under `src/` may move. The platform is at 4.1.0, `cage-client` at 0.3.0 and `cage-conformance` at 0.4.1.
+Active development, pre-1.0 on the external contract. The Substrate Contract is versioned and carries deprecation guarantees; everything under `src/` may move. The platform is at 4.1.0, `cage-client` at 0.5.0 in-tree (`client-v0.3.0` latest release tag) and `cage-conformance` at 0.4.1.
 
 - Release notes, including everything earlier READMEs carried as "What's New": [`CHANGELOG.md`](CHANGELOG.md)
 - Breaking changes: [`docs/BREAKING_CHANGES.md`](docs/BREAKING_CHANGES.md)

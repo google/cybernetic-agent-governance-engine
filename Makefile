@@ -162,21 +162,21 @@ docs-check:
 
 ## Fast local test run (no coverage, parallel) — the default developer shortcut
 test-fast:
-	uv run pytest tests/ -m "local or unit" -n auto --dist loadscope --no-cov -p no:langsmith -q
+	uv run pytest tests/ packages/cage-client/tests/ -m "local or unit" -n auto --dist loadscope --no-cov -p no:langsmith -q
 
 ## Run only tests that failed in the last run (fastest feedback loop)
 test-last-failed:
-	uv run pytest tests/ -m "local or unit" --lf --dist loadscope -n auto -q
+	uv run pytest tests/ packages/cage-client/tests/ -m "local or unit" --lf --dist loadscope -n auto -q
 
 ## Full local run with coverage (mirrors CI)
 test-coverage:
-	uv run pytest tests/ -m "local or unit" -n auto --dist loadscope -p no:langsmith -p no:langsmith_plugin --cov=src --cov=cage_client --cov=packages/cage-conformance/src/cage_conformance --cov-context=test --cov-config=.coveragerc --cov-report=term-missing --cov-fail-under=70
+	uv run pytest tests/ packages/cage-client/tests/ -m "local or unit" -n auto --dist loadscope -p no:langsmith -p no:langsmith_plugin --cov=src --cov=cage_client --cov=packages/cage-conformance/src/cage_conformance --cov-context=test --cov-config=.coveragerc --cov-report=term-missing --cov-fail-under=70
 	uv run python scripts/check_fail_closed_coverage.py --verify-coverage .coverage --verbose
 
 ## Randomized test order (weekly, for dependency detection)
 ## Reproduce a failure: uv run pytest --randomly-seed=last
 test-random:
-	uv run pytest tests/ -m "local or unit" -n auto --dist loadscope -p randomly --randomly-seed=0 -q
+	uv run pytest tests/ packages/cage-client/tests/ -m "local or unit" -n auto --dist loadscope -p randomly --randomly-seed=0 -q
 
 ## Default: fast run
 test: test-fast
@@ -184,7 +184,7 @@ test: test-fast
 ## Legacy alias — run local (non-infrastructure) tests verbosely
 test-integration:
 	@echo "==> Running local (non-infrastructure) tests..."
-	@uv run pytest tests/ -v --tb=short -m local
+	@uv run pytest tests/ packages/cage-client/tests/ -v --tb=short -m local
 
 ## Run live external partner integration tests (requires partner credentials)
 test-partner:

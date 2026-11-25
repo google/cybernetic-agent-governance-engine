@@ -79,11 +79,11 @@ def test_all_agent_state_fields_present():
     Failure means the expected field count has changed. This is a regression guard
     to detect unintentional field additions or removals.
 
-    Updated from 36 to 40 after adding cage-client governance integration fields:
+    Updated from 36 to 40 after adding governance integration fields:
       - agent_id (required): Agent identifier for governance tracking
-      - proposed_action (optional): Action payload for @cage_guard decorator
+      - proposed_action (optional): Candidate action payload for governance validation
       - governance_envelope (optional): Validation envelope from CageClient
-      - governance_status (optional): Governance decision (ALLOWED/DENIED/DEFERRED)
+      - governance_status (optional): Governance decision status
     Updated from 40 to 41 on 2026-11-20 (POAM-2026-240):
       - hitl_reference_quote (optional): Check-time market quote for post-HITL TOCTOU drift gate
     Updated from 41 to 42 on 2026-11-21 (DOMADV-05):
