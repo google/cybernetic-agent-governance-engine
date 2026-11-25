@@ -74,7 +74,7 @@ before promotion from staging to production (see `.roo/rules` §8.4).
 ### 1.2 CAGE Agentic AI Components in Scope
 
 All components listed below are in scope for AI 600-1. Components marked ★ carry
-**heightened risk** under AI 600-1 §2.5.2 (real-world actuators) or §2.5.3 (inter-agent trust).
+**heightened risk** under AI 600-1 §2.7 (real-world actuators, inter-agent trust).
 
 | Component | File | AI 600-1 Risk Category | Posture |
 |---|---|---|---|
@@ -103,7 +103,7 @@ Phase 0 evidence links.
 
 ### 4.1 Agentic Scope Statement `[BOTH]`
 
-**POAM**: AI600-004 | **AI 600-1 ref**: §2.5.1, §2.5.4 | **SR 26-2 ref**: §3.1
+**POAM**: AI600-004 | **AI 600-1 ref**: §2.7 | **SR 26-2 ref**: §3.1
 
 **What**: Create a formal agentic scope statement that defines CAGE's authorized action
 space, human oversight boundaries, and inter-agent trust model. This is a prerequisite for
@@ -140,7 +140,7 @@ ATO under SR 26-2.
 
 **Commit message**:
 ```
-docs(governance): add agentic scope statement for AI 600-1 §2.5
+docs(governance): add agentic scope statement for AI 600-1 §2.7
 
 Closes AI600-004
 ```
@@ -772,7 +772,7 @@ domain rails. CBRN-specific Colang rail definitions are not present.
 
 ### 7.3 Recursive Governance Risk Mitigation `[BOTH]`
 
-**POAM**: AI600-001 (secondary) | **AI 600-1 ref**: §2.2, §2.5.3
+**POAM**: AI600-001 (secondary) | **AI 600-1 ref**: §2.2, §2.7
 **Controls**: `ConsensusEngine` (LLM-governed-by-LLM risk)
 
 **What**: The `ConsensusEngine` uses LLM inference to govern LLM outputs — creating
@@ -835,15 +835,15 @@ risk categories and 7 POAM items.
 
 | AI 600-1 Risk Category | Dev (Phase 3) | Prod (Phase 3) | Primary Control |
 |---|---|---|---|
-| §2.1 Confabulation | ✅ 95% | ✅ 90% | CTRL_AGT_001 + confabulation scorer |
-| §2.2 Data Privacy | ✅ 90% | ✅ 85% | Presidio + CMEK PII audit log |
-| §2.3 Data Poisoning / Prompt Injection | ✅ 85% | ✅ 80% | Prompt injection detector + CausalGatekeeper |
-| §2.4 Harmful Bias | ⚠️ 40% | ⚠️ 35% | NeMo bias rails (partial — ongoing measurement gap) |
-| §2.5 Human-AI Configuration | ✅ 90% | ✅ 85% | HITL escalator + ConsensusEngine |
-| §2.6 CBRN | ✅ 85% | ✅ 80% | NeMo CBRN rails + Tier-1 CBRN keywords |
-| §2.7 Information Integrity | ✅ 90% | ✅ 85% | KMS-signed provenance chain (planned; never built: `provenance_chain.py` has no caller, signer or WORM path, `POAM-2026-246`) |
-| §2.8 Value Chain | ✅ 85% | ✅ 80% | SBOM + Trivy + model weight verification |
-| §2.9 Environmental Impact | ⚠️ 30% | ⚠️ 25% | CTRL_TQP_007 token quota (partial — no carbon measurement) |
+| §2.2 Confabulation | ✅ 95% | ✅ 90% | CTRL_AGT_001 + confabulation scorer |
+| §2.4 Data Privacy | ✅ 90% | ✅ 85% | Presidio + CMEK PII audit log |
+| §2.9 Data Poisoning / Prompt Injection | ✅ 85% | ✅ 80% | Prompt injection detector + CausalGatekeeper |
+| §2.6 Harmful Bias | ⚠️ 40% | ⚠️ 35% | NeMo bias rails (partial — ongoing measurement gap) |
+| §2.7 Human-AI Configuration | ✅ 90% | ✅ 85% | HITL escalator + ConsensusEngine |
+| §2.1 CBRN | ✅ 85% | ✅ 80% | NeMo CBRN rails + Tier-1 CBRN keywords |
+| §2.8 Information Integrity | ✅ 90% | ✅ 85% | KMS-signed provenance chain (planned; never built: `provenance_chain.py` has no caller, signer or WORM path, `POAM-2026-246`) |
+| §2.12 Value Chain | ✅ 85% | ✅ 80% | SBOM + Trivy + model weight verification |
+| §2.5 Environmental Impact | ⚠️ 30% | ⚠️ 25% | CTRL_TQP_007 token quota (partial — no carbon measurement) |
 | §2.10 IP / Copyright | ⚠️ 50% | ⚠️ 45% | NeMo output filter (partial — no training data audit) |
 | §2.11 Obscene Content | ✅ 80% | ✅ 75% | NeMo content rails + Tier-1 keywords |
 | §2.12 Information Security | ✅ 90% | ✅ 88% | RoutingSeal + KMS + Linkerd mTLS |

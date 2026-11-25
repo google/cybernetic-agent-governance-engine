@@ -365,7 +365,7 @@ class GovernanceControl(Enum):
     ISO 42001 Annex A.4. Enforcement tier 2. Primary enforcer: TokenQuotaProxy."""
 
     AGENTIC_SCOPE_STATEMENT = "agentic_scope_statement"
-    """Reference to the agentic scope statement document (SR 26-2 §3.1, AI 600-1 §2.5).
+    """Reference to the agentic scope statement document (SR 26-2 §3.1, AI 600-1 §2.7).
     Declares authorized action space, HITL boundaries, and inter-agent trust model.
     POAM: AI600-001 (secondary). Region: US_FED."""
 

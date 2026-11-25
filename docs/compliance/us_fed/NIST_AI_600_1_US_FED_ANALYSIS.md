@@ -59,11 +59,11 @@ CAGE sits at the intersection of all three layers: it is a federal information s
 
 **AI 600-1 covers — SP 800-53 has no equivalent:**
 - **Confabulation (§2.2):** SP 800-53 SI-10 validates API input schemas; it has no concept of an LLM generating a confident but factually incorrect market price. The [`ConsensusEngine`](../src/gateway/governance/consensus/engine.py) critics are themselves LLMs that can confabulate risk assessments — SP 800-53 has no control for this.
-- **Agentic autonomy scope (§2.5.1–2.5.4):** SP 800-53 AC-5 covers separation of duties between human roles. It has no concept of an AI agent autonomously selecting which MCP tools to call. AI 600-1 §2.5.4 requires a formal human oversight scope statement — no SP 800-53 control requires this.
+- **Agentic autonomy scope (§2.7):** SP 800-53 AC-5 covers separation of duties between human roles. It has no concept of an AI agent autonomously selecting which MCP tools to call. AI 600-1 §2.7 requires a formal human oversight scope statement — no SP 800-53 control requires this.
 - **Indirect prompt injection (§2.4):** SP 800-53 SI-3 covers antivirus/malware. It has no concept of a market data API response containing embedded instructions that hijack LLM behavior. CAGE's `get_market_data` MCP tool response flows into the LLM context window with no sanitization — invisible to SP 800-53.
 - **Harmful bias / algorithmic fairness (§2.6):** SP 800-53 has no fairness control. AI 600-1 §2.6 requires assessing disparate impact in financial recommendations — a direct ECOA/Regulation B obligation.
 - **Training data memorization (§2.3):** SP 800-53 SC-28 covers encryption at rest. It has no concept of PII memorized in model weights that can be extracted via inference queries.
-- **Inter-agent trust model (§2.5.3):** SP 800-53 has no control for trust hierarchies between AI agents. CAGE's ConsensusEngine creates a trust chain where LLM-generated "Risk Manager" outputs influence governance decisions — no SP 800-53 control governs this.
+- **Inter-agent trust model (§2.7):** SP 800-53 has no control for trust hierarchies between AI agents. CAGE's ConsensusEngine creates a trust chain where LLM-generated "Risk Manager" outputs influence governance decisions — no SP 800-53 control governs this.
 
 ### 0.4 The Overlap Zone — Where AI 600-1 Extends SP 800-53
 
@@ -79,11 +79,11 @@ In these overlap zones, satisfying SP 800-53 alone is **insufficient** — AI 60
 
 ### 0.5 CAGE's Agentic AI Role Makes AI 600-1 Non-Optional
 
-CAGE is not merely a system that uses AI — it is an **agentic AI system** under AI 600-1 §2.5's definition: "systems that can plan and execute multi-step tasks with varying degrees of human oversight." This triggers the most demanding AI 600-1 requirements:
+CAGE is not merely a system that uses AI — it is an **agentic AI system** under AI 600-1 §2.7's definition: "systems that can plan and execute multi-step tasks with varying degrees of human oversight." This triggers the most demanding AI 600-1 requirements:
 
-1. **Real-world actuators with irreversible effects:** The `execute_trade` MCP tool causes real financial transactions. AI 600-1 §2.5.2 specifically flags "actions with real-world consequences" as requiring heightened oversight — there is no SP 800-53 equivalent for this obligation.
+1. **Real-world actuators with irreversible effects:** The `execute_trade` MCP tool causes real financial transactions. AI 600-1 §2.7 specifically flags "actions with real-world consequences" as requiring heightened oversight — there is no SP 800-53 equivalent for this obligation.
 
-2. **Multi-agent trust chains:** The ConsensusEngine creates a trust chain where LLM-generated "Risk Manager" and "Compliance Officer" outputs influence governance decisions. AI 600-1 §2.5.3 requires documenting the inter-agent trust model — SP 800-53 has no such requirement.
+2. **Multi-agent trust chains:** The ConsensusEngine creates a trust chain where LLM-generated "Risk Manager" and "Compliance Officer" outputs influence governance decisions. AI 600-1 §2.7 requires documenting the inter-agent trust model — SP 800-53 has no such requirement.
 
 3. **Recursive governance risk:** CAGE's governance pipeline itself uses LLM inference (consensus personas) to govern LLM outputs (financial advisor). AI 600-1 risks in the governance layer propagate to the governed system — a recursive risk that SP 800-53 cannot address because it has no model of LLM behavior.
 
@@ -116,8 +116,8 @@ CAGE v2.0.0 is an **agentic AI governance platform** that deploys an 8-tier gove
 |---------|----------|-------------------|-----|
 | No AI 600-1 risk taxonomy formally adopted | **Critical** | None | Full taxonomy adoption required for US_FED ATO |
 | Confabulation risk not formally measured | **High** | Partial (consensus engine) | No hallucination rate metric; no confabulation Lula validation |
-| Agentic action scope not formally bounded | **High** | Partial (STPA UCAs) | No AI 600-1 §2.5 "agentic AI" scope document |
-| Multi-agent trust hierarchy undocumented | **High** | Partial (ConsensusEngine) | No inter-agent trust model per AI 600-1 §2.5.3 |
+| Agentic action scope not formally bounded | **High** | Partial (STPA UCAs) | No AI 600-1 §2.7 "agentic AI" scope document |
+| Multi-agent trust hierarchy undocumented | **High** | Partial (ConsensusEngine) | No inter-agent trust model per AI 600-1 §2.7 |
 | Data poisoning controls not formally assessed | **High** | Partial (Aho-Corasick) | No training data provenance; no poisoning Lula validation |
 | Human-AI configuration not formally documented | **High** | Partial (HITL TOCTOU) | No AI 600-1 §2.7 human oversight scope statement |
 | Value chain risk (model weights) unassessed | **High** | None | No model card verification; no weight integrity check |
@@ -149,7 +149,7 @@ CAGE meets **all three applicability criteria** for AI 600-1:
 
 1. **Generative AI deployer:** CAGE deploys `DeepSeek-R1-Distill-Llama-8B` and `Meta-Llama-3.1-8B-Instruct` via vLLM for financial advisory generation. These are generative AI models producing novel text outputs.
 
-2. **Agentic AI operator:** The governed financial advisor is a **multi-agent LangGraph StateGraph** with autonomous tool-calling capability (MCP tools: `execute_trade`, `get_market_data`, `get_portfolio`). AI 600-1 §2.5 specifically addresses agentic AI systems with "increased autonomy" and "multi-step task completion."
+2. **Agentic AI operator:** The governed financial advisor is a **multi-agent LangGraph StateGraph** with autonomous tool-calling capability (MCP tools: `execute_trade`, `get_market_data`, `get_portfolio`). AI 600-1 §2.7 specifically addresses agentic AI systems with "increased autonomy" and "multi-step task completion."
 
 3. **AI governance system:** CAGE's governance pipeline (OPA, NeMo, STPA, CBF, ConsensusEngine) itself uses LLM inference for the consensus "Risk Manager" and "Compliance Officer" personas — making the governance layer itself a GenAI system subject to AI 600-1.
 
@@ -166,7 +166,7 @@ Under `CAGE_DEPLOYMENT_REGION=US_FED`, the following regulatory instruments make
 
 ## 3. CAGE Agentic AI Functionality Inventory
 
-Before mapping AI 600-1 risks, this section inventories all CAGE components that constitute "agentic AI" under AI 600-1 §2.5 ("systems that can plan and execute multi-step tasks with varying degrees of human oversight").
+Before mapping AI 600-1 risks, this section inventories all CAGE components that constitute "agentic AI" under AI 600-1 §2.7 ("systems that can plan and execute multi-step tasks with varying degrees of human oversight").
 
 | Component | AI 600-1 Role | Autonomy Level | Human Oversight Mechanism |
 |-----------|--------------|----------------|--------------------------|
@@ -185,7 +185,7 @@ Before mapping AI 600-1 risks, this section inventories all CAGE components that
 
 CAGE's agentic AI risk surface is **unusually broad** because:
 
-1. **Real-world actuators with irreversible effects:** `execute_trade` MCP tool causes real financial transactions. AI 600-1 §2.5.2 specifically flags "actions with real-world consequences" as requiring heightened oversight.
+1. **Real-world actuators with irreversible effects:** `execute_trade` MCP tool causes real financial transactions. AI 600-1 §2.7 specifically flags "actions with real-world consequences" as requiring heightened oversight.
 
 2. **Multi-agent trust chains:** The ConsensusEngine creates a trust chain where LLM-generated "Risk Manager" and "Compliance Officer" outputs influence governance decisions. A compromised or hallucinating consensus agent could approve harmful trades.
 
@@ -384,7 +384,7 @@ CAGE's agentic AI risk surface is **unusually broad** because:
 
 ### 4.7 Human-AI Configuration
 
-**AI 600-1 Definition:** Risk arising from "inappropriate levels of human oversight or control over AI systems," including over-reliance on AI outputs, automation bias, and insufficient human review of consequential AI decisions. AI 600-1 §2.5.4 specifically addresses agentic AI systems where "the degree of human oversight may be reduced."
+**AI 600-1 Definition:** Risk arising from "inappropriate levels of human oversight or control over AI systems," including over-reliance on AI outputs, automation bias, and insufficient human review of consequential AI decisions. AI 600-1 §2.7 specifically addresses agentic AI systems where "the degree of human oversight may be reduced."
 
 **CAGE Applicability:** **Critical** — CAGE's agentic financial advisor makes autonomous trade decisions with real financial consequences. The HITL (Human-in-the-Loop) approval gate is the primary human oversight mechanism, but it is subject to TOCTOU race conditions (now remediated) and automation bias (not yet addressed).
 
@@ -396,7 +396,7 @@ CAGE's agentic AI risk surface is **unusually broad** because:
 - **LLM remediation advisory:** Step 5 of audit workflow requires `human_review_required: true` before applying LLM suggestions
 
 **Gaps:**
-1. **No formal Human Oversight Scope Statement.** AI 600-1 §2.5.4 requires documenting "the degree of human oversight" for each agentic AI capability. There is no document specifying: which decisions require human approval, what information humans are shown, what the expected review time is, and what happens if the human approver is unavailable.
+1. **No formal Human Oversight Scope Statement.** AI 600-1 §2.7 requires documenting "the degree of human oversight" for each agentic AI capability. There is no document specifying: which decisions require human approval, what information humans are shown, what the expected review time is, and what happens if the human approver is unavailable.
 2. **Automation bias not addressed.** The HITL approval interface (if any exists) is not documented. If human approvers are shown only the AI's recommendation without counterfactual alternatives, automation bias (rubber-stamping AI decisions) is likely. AI 600-1 §2.7 specifically flags this.
 3. **No DEFER queue SLA.** The DEFER queue stores confidence-starved contexts for human review, but there is no documented SLA for how quickly a human must review and resolve a deferred decision. Stale deferred decisions could block legitimate trades indefinitely.
 4. **Trades below USD 10,000 have no human review.** The consensus threshold is USD 10,000 — trades below this amount are approved/denied entirely by the automated governance pipeline with no human review option. AI 600-1 §2.7 requires justification for any autonomous decision with real-world consequences.
@@ -602,7 +602,7 @@ This section consolidates all recommended updates to the five existing NIST RMF 
 
 | Update ID | Section | Change Required | AI 600-1 Source |
 |-----------|---------|-----------------|-----------------|
-| C2-U1 | §4 FIPS 199 Categorization | Add AI 600-1 as a required input to FIPS 199 categorization. The presence of agentic AI with real-world actuators (execute_trade) elevates Integrity impact to **High** — consistent with existing categorization but now formally justified by AI 600-1 §2.5.2. | §4.7 Human-AI Config |
+| C2-U1 | §4 FIPS 199 Categorization | Add AI 600-1 as a required input to FIPS 199 categorization. The presence of agentic AI with real-world actuators (execute_trade) elevates Integrity impact to **High** — consistent with existing categorization but now formally justified by AI 600-1 §2.7. | §4.7 Human-AI Config |
 | C2-U2 | §5 Information Type Identification | Add three new information types: (a) **AI Training Data Memorization Risk** — C=High, I=Moderate, A=Low; (b) **AI-Generated Financial Recommendations** — C=Low, I=High, A=Moderate (with IP ownership note); (c) **AI Model Weights** — C=High, I=High, A=High (supply chain criticality). | §4.3, §4.10, §4.12 |
 | C2-U3 | §5 Information Type Identification | Add note: AI 600-1 §2.6 (Harmful Bias) requires "AI Model Fairness/Bias Risk" as an information type with I=High under ECOA/Regulation B for US_FED financial institutions. | §4.6 Bias |
 | C2-U4 | §7 Priority Matrix | Add new P1 item: **Create `docs/compliance/universal/AI_RISK_TAXONOMY.md`** adopting AI 600-1's 12-category risk taxonomy as the formal GenAI risk framework for CAGE US_FED. Effort: S, Impact: H, Priority: **P1**. | All §4.x |
@@ -856,7 +856,7 @@ The following POAM items are derived from the AI 600-1 gap analysis. They are nu
 | **AI600-002** | SI-19, SC-28 | §2.4 Data Privacy | No training data memorization assessment. DeepSeek-R1 and Llama-3.1 may have memorized PII from training corpora. No differential privacy or membership inference attack testing. Presidio score_threshold=0.3 may be too permissive for HIGH-baseline financial system. | **High** | 2026-10-31 | Open |
 | **AI600-003** | SI-3, SI-10, CA-8 | §2.9 Data Poisoning | Indirect prompt injection via MCP tool responses (market data API, portfolio data) is unmitigated. Only 14 Tier-1 keywords cover direct injection. No multi-turn injection testing. No adversarial robustness metric. Red team pass threshold (deflection_score >= 3) insufficient for HIGH baseline. | **Critical** | 2026-08-31 | Open |
 | **AI600-004** | RA-3, SI-12 | §2.6 Harmful Bias | No fairness metric or demographic impact assessment. Financial advisor may produce systematically different recommendations for different demographic groups — potential ECOA/Regulation B violation. No homogenization risk assessment per AI 600-1 §2.6. | **High** | 2026-11-30 | Open |
-| **AI600-005** | AC-5, AU-3, CA-7 | §2.7 Human-AI Config | No formal Human Oversight Scope Statement per AI 600-1 §2.5.4. No DEFER queue SLA documented. No automation bias assessment. No human override audit trail. Trades below USD 10,000 have no human review option with no documented justification. | **High** | 2026-09-30 | Open |
+| **AI600-005** | AC-5, AU-3, CA-7 | §2.7 Human-AI Config | No formal Human Oversight Scope Statement per AI 600-1 §2.7. No DEFER queue SLA documented. No automation bias assessment. No human override audit trail. Trades below USD 10,000 have no human review option with no documented justification. | **High** | 2026-09-30 | Open |
 | **AI600-006** | CA-8, RA-5, SC-7 | §2.9 Information Security | No model extraction attack testing. No advanced jailbreak testing (DAN, role-play, many-shot). vLLM API accessible within cluster without authentication layer. CAGE_ROUTING_SEAL_SECRET bypass (POAM-012) also constitutes an AI 600-1 §2.9 gap. | **High** | 2026-09-30 | Open |
 | **AI600-007** | SA-12, SR-3, SI-7 | §2.12 Value Chain | No model weight integrity verification (SHA-256 against signed manifest). No model card review for DeepSeek-R1 or Llama-3.1. Model licenses not formally reviewed for US_FED compatibility. NeMo Guardrails integrity not verified at deployment. Langfuse compliance project is a SaaS single point of failure (see also POAM-018). | **Critical** | 2026-08-31 | Open |
 

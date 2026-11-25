@@ -13,7 +13,7 @@
 # limitations under the License.
 
 """
-Tests for Recursive Governance Risk Mitigation — AI 600-1 §2.2, §2.5.3
+Tests for Recursive Governance Risk Mitigation — AI 600-1 §2.2, §2.7
 (POAM AI600-001 secondary).
 
 The ConsensusGate uses LLM inference to govern LLM outputs — creating a
@@ -89,16 +89,16 @@ class TestRecursiveGovernanceRiskDocumented:
         ), "docs/AGENTIC_SCOPE_STATEMENT.md does not reference ConsensusGate"
 
     def test_scope_statement_mentions_ai600_section(self):
-        """Scope statement must reference AI 600-1 §2.1 or §2.5."""
+        """Scope statement must reference AI 600-1 §2.1 or §2.7."""
         content = SCOPE_STATEMENT_PATH.read_text(encoding="utf-8")
         has_ref = (
             "AI 600-1" in content
             or "§2.1" in content
-            or "§2.5" in content
+            or "§2.7" in content
             or "600-1" in content
         )
         assert has_ref, (
-            "docs/AGENTIC_SCOPE_STATEMENT.md does not reference AI 600-1 §2.1/§2.5"
+            "docs/AGENTIC_SCOPE_STATEMENT.md does not reference AI 600-1 §2.1/§2.7"
         )
 
 
