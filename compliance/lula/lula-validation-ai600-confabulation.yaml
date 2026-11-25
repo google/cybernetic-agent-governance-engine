@@ -13,7 +13,7 @@
 # limitations under the License.
 
 # lula-validation-ai600-confabulation.yaml
-# NIST AI 600-1 §2.1 — Confabulation controls
+# NIST AI 600-1 §2.2 — Confabulation controls
 #
 # Validates: CTRL_AGT_001 (confidence ≥ 0.95), confabulation_scorer.py active.
 # POAM: AI600-001
@@ -27,7 +27,7 @@ component-definition:
     last-modified: '2026-07-09T00:00:00Z'
     version: 1.0.0
     oscal-version: 1.1.2
-    remarks: 'Phase-0 stub for AI 600-1 §2.1 Confabulation controls. Always passes until Phase 2 real assertions are implemented.
+    remarks: 'Phase-0 stub for AI 600-1 §2.2 Confabulation controls. Always passes until Phase 2 real assertions are implemented.
       Region: US_FED. POAM: AI600-001.'
   components:
   - uuid: 4b206f69-825f-41d6-902d-77d23a8c0daa
@@ -42,7 +42,7 @@ component-definition:
       implemented-requirements:
       - uuid: 28838c8d-8386-4bb7-8d75-98ace7480441
         control-id: ai600-confabulation
-        description: Phase-0 stub for AI 600-1 §2.1 confabulation controls.
+        description: Phase-0 stub for AI 600-1 §2.2 confabulation controls.
         links:
         - href: '#fedddcdb-2789-4575-9b7e-dbaca5ccb90f'
           rel: lula

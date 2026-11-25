@@ -48,6 +48,6 @@
     "citation": "SR 26-2 §3.2 (Federal Reserve HITL SLA — 4 hours)",
     "sla_hours": 4.0,
     "pii_retention_authority": "FISMA AU-11",
-    "injection_citation": "AI 600-1 §2.3 (prompt injection — US Federal posture)"
+    "injection_citation": "AI 600-1 §2.9 (prompt injection — US Federal posture)"
   }
 }

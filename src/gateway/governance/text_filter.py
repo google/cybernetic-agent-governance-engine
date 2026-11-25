@@ -78,7 +78,7 @@ def _load_tier1_keywords() -> list[str]:
 
 
 def _load_cbrn_keywords() -> list[str]:
-    """Return the CBRN Tier-1 keyword list when enabled (AI 600-1 §2.6, US_FED only).
+    """Return the CBRN Tier-1 keyword list when enabled (AI 600-1 §2.1, US_FED only).
 
     Returns an empty list when ``tier1_keywords_cbrn_enabled`` is False,
     allowing the CBRN filter to be disabled without removing the keyword list
@@ -175,7 +175,7 @@ def ac_keyword_scan(text: str) -> bool:
 
 
 def ac_cbrn_keyword_scan(text: str) -> bool:
-    """O(n*m) CBRN Tier-1 keyword scan - AI 600-1 SS2.6 (US_FED only).
+    """O(n*m) CBRN Tier-1 keyword scan - AI 600-1 SS2.1 (US_FED only).
 
     Checks the input text against the CBRN keyword list from the governance
     threshold singleton.  Returns ``False`` immediately when
@@ -199,7 +199,7 @@ def ac_cbrn_keyword_scan(text: str) -> bool:
     for kw in cbrn_keywords:
         if kw in upper_text:
             logger.warning(
-                "🚨 CBRN keyword detected: %r — blocking request (AI 600-1 §2.6).", kw
+                "🚨 CBRN keyword detected: %r — blocking request (AI 600-1 §2.1).", kw
             )
             return True
     return False

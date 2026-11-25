@@ -675,7 +675,7 @@ class TestPoamReferenceLoader:
                 """\
                 | ID | Control | Description |
                 |---|---|---|
-                | AI600-005 | §2.5 | Tracks `lula-validation-ai600-human-ai-config.yaml` |
+                | AI600-005 | §2.7 | Tracks `lula-validation-ai600-human-ai-config.yaml` |
                 | **EU-006** | GDPR Art. 22 | Tracks `lula-validation-gdpr-art22.yaml` |
                 """
             ),

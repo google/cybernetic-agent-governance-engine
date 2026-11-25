@@ -13,7 +13,7 @@
 # limitations under the License.
 
 """
-Tests for CBRN keyword filter — AI 600-1 §2.6 (POAM AI600-007).
+Tests for CBRN keyword filter — AI 600-1 §2.1 (POAM AI600-007).
 
 Validates:
 - ac_cbrn_keyword_scan() detects all 15 CBRN terms from governance_thresholds.json
