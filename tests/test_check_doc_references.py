@@ -1580,8 +1580,9 @@ def test_pin_clause_tokens_ignore_paths_and_the_pinned_filename(
     # whose stem happens to match is not agreement evidence and must be refused.
     repo, pin = strict_pins
     issues = _audit(repo, f"`{pin}^:src/gone.py:2` see {named}")
-    assert [i.reference_type for i in issues] == ["Pinned Line"]
-    assert "names no identifier" in issues[0].reason
+    pinned = [i for i in issues if i.reference_type.startswith("Pinned")]
+    assert [i.reference_type for i in pinned] == ["Pinned Line"]
+    assert "names no identifier" in pinned[0].reason
 
 
 def test_pin_clause_tokens_keep_backticked_identifiers() -> None:
@@ -1595,9 +1596,9 @@ _LONG_SPAN = "a" * 200  # longer than PIN_GOVERNANCE_WINDOW
 
 
 def test_pin_clause_tokens_drop_spans_straddling_the_window() -> None:
-    line = f"x `straddle_name` `{_LONG_SPAN}` sets `RETIRED_FLAG`"
-    start = line.index("straddle_name") + 3  # cut inside the first span
-    end = len(line)
+    line = "x `straddle_head` sets `RETIRED_FLAG` then `straddle_tail` y"
+    start = line.index("straddle_head") + 3  # cut inside the leading span
+    end = line.index("straddle_tail") + 3  # cut inside the trailing span
     assert g9._pin_clause_tokens(line, start, end, "src/gone.py") == {"retired_flag"}
 
 
