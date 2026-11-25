@@ -303,9 +303,16 @@ async def _run_with_mock_handler(
         await client.aclose()
 
 
+@pytest.fixture(autouse=True)
+def _standalone_test_posture(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Pin standalone test runs (including wheel smoke venvs without root conftest) to test posture."""
+    monkeypatch.setenv("CAGE_ENV", "test")
+    monkeypatch.delenv("ENVIRONMENT", raising=False)
+
+
 def test_standalone_exports() -> None:
     """Verify all top-level symbols export correctly."""
-    assert cage_client.__version__ == "0.4.1"
+    assert cage_client.__version__ == "0.5.0"
     assert cage_client.CageClient is CageClient
     assert cage_client.GovernanceEnvelope is GovernanceEnvelope
     assert cage_client.JwksKeyResolver is JwksKeyResolver
@@ -355,7 +362,7 @@ def test_pyproject_declares_cryptography_and_docs_describe_envelope_verification
     pyproject_data = tomllib.loads(
         (subpackage_root / "pyproject.toml").read_text(encoding="utf-8")
     )
-    assert pyproject_data["project"]["version"] == "0.4.1"
+    assert pyproject_data["project"]["version"] == "0.5.0"
     runtime_deps = pyproject_data["project"]["dependencies"]
     assert any(dep.startswith("cryptography>=41.0.0") for dep in runtime_deps), (
         f"cryptography>=41.0.0 must be declared in pyproject.toml: {runtime_deps}"
@@ -1149,7 +1156,19 @@ def test_standalone_jwks_ttl_staleness_304_rotation_and_flood_cooldown() -> None
 
 @pytest.mark.parametrize(
     "enforcing_env",
-    ["staging", "prod", "production", "ci", "uat", "canary", "custom-env"],
+    [
+        None,
+        "",
+        "   ",
+        "local",
+        "staging",
+        "prod",
+        "production",
+        "ci",
+        "uat",
+        "canary",
+        "custom-env",
+    ],
 )
 @pytest.mark.parametrize(
     "opt_out_kwargs",
@@ -1161,11 +1180,15 @@ def test_standalone_jwks_ttl_staleness_304_rotation_and_flood_cooldown() -> None
 )
 def test_standalone_enforcing_posture_forbids_verification_opt_out(
     monkeypatch: pytest.MonkeyPatch,
-    enforcing_env: str,
+    enforcing_env: str | None,
     opt_out_kwargs: dict[str, bool],
 ) -> None:
-    """Any non-dev/test CAGE_ENV rejects verification opt-out at CageClient init."""
-    monkeypatch.setenv("CAGE_ENV", enforcing_env)
+    """Unset, blank, 'local', or enforcing CAGE_ENV rejects verification opt-out at CageClient init."""
+    monkeypatch.delenv("ENVIRONMENT", raising=False)
+    if enforcing_env is None:
+        monkeypatch.delenv("CAGE_ENV", raising=False)
+    else:
+        monkeypatch.setenv("CAGE_ENV", enforcing_env)
     with pytest.raises(ValueError, match="forbidden in enforcing posture"):
         CageClient(
             gateway_url="https://cage-standalone.example.test",

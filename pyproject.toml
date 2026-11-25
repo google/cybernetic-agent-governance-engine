@@ -65,7 +65,7 @@ test = [
     # The coverage plugin behind CI's --cov gate: a test tool, not a runtime
     # dependency (it was in the base install until POAM-2026-168).
     "pytest-cov>=7.1.0",
-    "cage-client==0.4.1",
+    "cage-client==0.5.0",
 ]
 dev = [
     { include-group = "test" },
@@ -166,7 +166,7 @@ advisor = [
     # Built as a non-editable standalone wheel from packages/cage-client via
     # [tool.uv.sources] (release-state and site-packages SHA-256 parity enforced
     # by scripts/check_client_sdk_sync.py; never editable or in-tree mirror).
-    "cage-client==0.4.1",
+    "cage-client==0.5.0",
     # litellm: model alias registry in src/governed_financial_advisor/infrastructure/llm/config.py
     "litellm>=1.104.0",
     "langgraph>=1.1.0",

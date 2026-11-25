@@ -1511,9 +1511,22 @@ async def test_jwks_ttl_staleness_304_and_key_rotation_eviction(
         await client.aclose()
 
 
+@pytest.mark.covers("cage_client.core:enforce_verification_posture")
 @pytest.mark.parametrize(
     "posture",
-    ["production", "prod", "staging", "uat", "canary", "preprod", "custom-enforcing"],
+    [
+        None,
+        "",
+        "   ",
+        "local",
+        "production",
+        "prod",
+        "staging",
+        "uat",
+        "canary",
+        "preprod",
+        "custom-enforcing",
+    ],
 )
 @pytest.mark.parametrize(
     "opt_out_kwargs",
@@ -1526,11 +1539,15 @@ async def test_jwks_ttl_staleness_304_and_key_rotation_eviction(
 async def test_verification_posture_guard_enforced_in_non_dev_postures(
     mock_gateway_url: str,
     monkeypatch: pytest.MonkeyPatch,
-    posture: str,
+    posture: str | None,
     opt_out_kwargs: dict[str, bool],
 ) -> None:
-    """Disabling any verification invariant in non-dev/test CAGE_ENV raises ValueError."""
-    monkeypatch.setenv("CAGE_ENV", posture)
+    """Disabling any verification invariant when CAGE_ENV is unset, blank, 'local', or enforcing raises ValueError."""
+    monkeypatch.delenv("ENVIRONMENT", raising=False)
+    if posture is None:
+        monkeypatch.delenv("CAGE_ENV", raising=False)
+    else:
+        monkeypatch.setenv("CAGE_ENV", posture)
     with pytest.raises(ValueError, match="enforcing posture"):
         enforce_verification_posture(**opt_out_kwargs)
     with pytest.raises(ValueError, match="enforcing posture"):
