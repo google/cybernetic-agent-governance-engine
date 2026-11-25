@@ -963,10 +963,9 @@ component-definition:
                 EMAIL_ADDRESS, PHONE_NUMBER, CREDIT_CARD, CRYPTO, US_SSN, US_ITIN, US_PASSPORT,
                 US_BANK_NUMBER, US_DRIVER_LICENSE, IBAN_CODE, IP_ADDRESS;
                 src/integrations/presidio/redactor.py), failing closed in enforcing postures
-                when redaction raises, and blocks input that matches the Stage 1 keyword list
-                (tier1_keywords in config/governance_thresholds.json). A Presidio engine that
-                fails to initialise leaves input unredacted instead of failing closed
-                (POAM-2026-147, open). The gateway's inference proxy
+                when redaction or Presidio engine initialisation fails (PresidioUnavailableError;
+                POAM-2026-147 closed 2026-11-24), and blocks input that matches the Stage 1 keyword list
+                (tier1_keywords in config/governance_thresholds.json). The gateway's inference proxy
                 (src/gateway/server/inference_proxy.py) runs the same keyword scan over every
                 message of each request it receives and stamps the outcome on the request's OTel
                 span, but the reference deployment does not route the advisor's model calls

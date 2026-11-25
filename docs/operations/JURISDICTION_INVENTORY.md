@@ -49,10 +49,10 @@ All values verified by loading them through the threshold loader, `ControlRegist
 | HITL SLA at runtime | 4 h | 8 h | 12 h (see section 7) |
 | OSCAL profile | NIST SP 800-53 | EU AI Act | MAS FEAT |
 | Compliance-bridge control set | 14 | 8 | 7 |
-| Plugin compliance overlays | finance, healthcare, physical_ai | healthcare | healthcare |
+| Plugin compliance overlays | finance (`{}`), healthcare, physical_ai | healthcare | healthcare |
 
 - **Regional policy.** The only regional Rego is the US_FED test bundle under `compliance/postures/us_fed/opa/`. There is no EU or APAC Rego and no per-region OPA data (verified, `git ls-files`).
-- **The finance overlay redefines a kernel control.** Its US_FED overlay redefines `CTRL_FTRA_001`; see POAM-2026-121 and POAM-2026-123.
+- **Plugin overlays compose additively (`POAM-2026-121`, `POAM-2026-123` closed).** [`ControlRegistry`](../../src/gateway/governance/constants.py) fails closed with `ControlOverlayCollisionError` on undeclared control collisions, protected-field writes, or `_`-prefixed metadata overrides (`#888`, `8a6167b7`), and `src/cage_finance/config/compliance/US_FED_OVERLAY.json` no longer redefines `CTRL_FTRA_001` (`{}`).
 
 ## 3. Deployment profiles (`infra/targets/gcp-gke/`)
 

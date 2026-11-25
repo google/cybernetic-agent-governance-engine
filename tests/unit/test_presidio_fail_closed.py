@@ -173,6 +173,10 @@ def test_redact_pii_and_accessors_fail_closed_when_engines_unset(
 
 
 @pytest.mark.asyncio
+@pytest.mark.covers(
+    "src.integrations.presidio.redactor:build_presidio_sdd_action.detect_sensitive_data#ensure_presidio_engines(require_anonymizer=False)",
+    "src.integrations.presidio.redactor:_raise_if_enforcing_unavailable#detail = cause or _presidio_init_error",
+)
 async def test_build_presidio_sdd_action_fails_closed_in_enforcing_posture(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -190,6 +194,11 @@ async def test_build_presidio_sdd_action_fails_closed_in_enforcing_posture(
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("env_value", ["production", "staging"])
+@pytest.mark.covers(
+    "src.integrations.presidio.redactor:_raise_if_enforcing_unavailable#detail = cause or _presidio_init_error",
+    "src.gateway.governance.langgraph_harness.nemo_node_factory:create_nemo_guardrail_node.nemo_guardrail_node#GUARDRAIL_ERROR",
+    "src.gateway.governance.langgraph_harness.nemo_node_factory:create_nemo_output_rail_node.nemo_output_rail_node#masked_text = cfg.output_blocked_sentinel",
+)
 async def test_langgraph_input_and_output_rails_fail_closed_when_engines_unset(
     monkeypatch: pytest.MonkeyPatch, env_value: str
 ) -> None:
