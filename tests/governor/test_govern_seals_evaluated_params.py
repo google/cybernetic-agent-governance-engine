@@ -651,8 +651,6 @@ async def test_trade_with_drifting_telemetry_seals_verifies_and_actuates_one_par
         verified.append(copy.deepcopy(params))
         return await consume(seal, action, params, **kwargs)
 
-    registry = MagicMock()
-    registry.get_actuator.return_value = MagicMock(actuator_id="test_broker")
     actuate = AsyncMock(
         return_value=ActuationReceipt(
             accepted=True,
@@ -662,10 +660,15 @@ async def test_trade_with_drifting_telemetry_seals_verifies_and_actuates_one_par
             outcome=ActuationOutcome.ACCEPTED,
         )
     )
+    # The actuator is stubbed, not dispatch_actuation(): the kernel dispatch
+    # path writes the attempt record the trade tool reads (POAM-2026-252).
+    registry = MagicMock()
+    registry.get_actuator.return_value = MagicMock(
+        actuator_id="test_broker", actuate=actuate
+    )
     monkeypatch.setattr(sealing_module, "issue_seal", _issue)
     monkeypatch.setattr(rs, "verify_and_consume_seal", _verify)
     monkeypatch.setattr(tool_provider_module, "get_actuator_registry", lambda: registry)
-    monkeypatch.setattr(tool_provider_module, "dispatch_actuation", actuate)
     # The NARROW receipt lookup finds nothing for an ALLOW seal.
     monkeypatch.setattr(
         "src.gateway.infrastructure.redis_client.redis_client", real_seals.index
@@ -684,7 +687,7 @@ async def test_trade_with_drifting_telemetry_seals_verifies_and_actuates_one_par
         assert outcome.status is CommitStatus.EXECUTED, outcome
         assert outcome.message.startswith("EXECUTED"), outcome
         assert telemetry.calls == trade  # one lookup per trade, in the committing run
-        clearance = actuate.await_args.args[1]
+        clearance = actuate.await_args.args[0]
         assert sealed[-1] == verified[-1] == clearance.params
         assert clearance.params["latency_ms"] == 10.0 + trade
         assert clearance.params["trader_role"] == BOUND_ROLE

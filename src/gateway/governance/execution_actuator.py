@@ -33,6 +33,9 @@ import os
 from datetime import datetime, timezone
 from typing import Any
 
+from src.gateway.governance import execution_idempotency as _idempotency
+from src.gateway.governance.execution_idempotency import ExecutionStatus
+
 # Re-export seam contracts for backward compatibility during transition.
 # New code should import directly from seams.actuation.
 from src.gateway.governance.seams.actuation import (
@@ -72,6 +75,13 @@ _EVENT_TYPE_BY_OUTCOME: dict[ActuationOutcome, str] = {
     ActuationOutcome.UNKNOWN: "ACTUATION_INDETERMINATE_RECEIPT",
 }
 
+#: What a recorded receipt says about the side effect, in ledger terms.
+_ATTEMPT_STATUS_BY_OUTCOME: dict[ActuationOutcome, ExecutionStatus] = {
+    ActuationOutcome.ACCEPTED: ExecutionStatus.EXECUTED,
+    ActuationOutcome.REJECTED: ExecutionStatus.BLOCKED,
+    ActuationOutcome.UNKNOWN: ExecutionStatus.UNKNOWN,
+}
+
 
 async def dispatch_actuation(
     actuator: ExecutionActuator,
@@ -85,7 +95,21 @@ async def dispatch_actuation(
     place. An exception raised by the actuator is not proof the side effect
     did not happen, so it is converted into an ``UNKNOWN``, non-retryable
     receipt rather than propagated.
+
+    It is also the only writer of the current attempt record
+    (:class:`~src.gateway.governance.execution_idempotency.ActuationAttempt`,
+    POAM-2026-252). The dispatch is marked before ``actuate()`` is awaited, so
+    the record says the action may have executed before any byte can leave,
+    and it is settled from the receipt only once the receipt is in the
+    evidence stream. A dispatch that is cancelled, or raises past this point,
+    is never settled and leaves the record ``UNKNOWN``.
+
+    Raises:
+        ActuationAttemptScopeError: No ``actuation_attempt_scope()`` is open;
+            the actuator is never awaited.
     """
+    # Synchronous: mark the record before actuate() is even awaited.
+    attempt = _idempotency.mark_dispatch()
     try:
         receipt = await actuator.actuate(clearance)
     except asyncio.CancelledError:
@@ -146,6 +170,16 @@ async def dispatch_actuation(
             outcome=ActuationOutcome.UNKNOWN,
         )
     await ingest_actuation_receipt(clearance, receipt, actuator_id=actuator.actuator_id)
+    # Only after the receipt is in the evidence stream; REJECTED is the only
+    # receipt that can take the record back to "nothing executed". A receipt
+    # without a readable outcome settles nothing and leaves the record UNKNOWN.
+    outcome = getattr(receipt, "outcome", None)
+    _idempotency.settle_dispatch(
+        attempt,
+        _ATTEMPT_STATUS_BY_OUTCOME.get(outcome)
+        if isinstance(outcome, ActuationOutcome)
+        else None,
+    )
     return receipt
 
 

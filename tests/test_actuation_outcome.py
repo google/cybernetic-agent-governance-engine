@@ -33,6 +33,7 @@ from src.cage_finance.tools.tool_provider import (
     execute_trade_action,
 )
 from src.gateway.governance.execution_actuator import dispatch_actuation
+from src.gateway.governance.execution_idempotency import actuation_attempt_scope
 from src.gateway.governance.routing_seal import SymbolicGovernorViolation
 from src.gateway.governance.seams.actuation import (
     ActuationError,
@@ -78,10 +79,13 @@ class TestDispatchActuation:
         actuator.actuate = AsyncMock(
             return_value=_receipt(accepted=True, outcome=ActuationOutcome.ACCEPTED)
         )
-        with patch(
-            "src.gateway.governance.execution_actuator.ingest_actuation_receipt",
-            new_callable=AsyncMock,
-        ) as ingest:
+        with (
+            patch(
+                "src.gateway.governance.execution_actuator.ingest_actuation_receipt",
+                new_callable=AsyncMock,
+            ) as ingest,
+            actuation_attempt_scope(),
+        ):
             receipt = await dispatch_actuation(actuator, self._clearance())
         assert receipt.outcome is ActuationOutcome.ACCEPTED
         ingest.assert_awaited_once()
@@ -91,10 +95,13 @@ class TestDispatchActuation:
     async def test_actuator_exception_becomes_recorded_unknown_receipt(self) -> None:
         actuator = MagicMock(actuator_id="stub")
         actuator.actuate = AsyncMock(side_effect=TimeoutError("venue"))
-        with patch(
-            "src.gateway.governance.execution_actuator.ingest_actuation_receipt",
-            new_callable=AsyncMock,
-        ) as ingest:
+        with (
+            patch(
+                "src.gateway.governance.execution_actuator.ingest_actuation_receipt",
+                new_callable=AsyncMock,
+            ) as ingest,
+            actuation_attempt_scope(),
+        ):
             receipt = await dispatch_actuation(actuator, self._clearance())
         assert receipt.outcome is ActuationOutcome.UNKNOWN
         assert receipt.retryable is False

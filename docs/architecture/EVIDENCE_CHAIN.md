@@ -110,6 +110,15 @@ evidentiary weight as an ALLOW. Both the actuation seam and the post-FRIA
   happened). Each event also records the receipt's signature `verification`
   status (`VERIFIED` / `UNVERIFIED` / `INVALID`, see
   [`ReceiptVerification`](../../src/gateway/governance/seams/actuation.py)).
+  It is also the only writer of the kernel attempt record
+  ([`ActuationAttempt`](../../src/gateway/governance/execution_idempotency.py),
+  `POAM-2026-252`): it refuses to run outside
+  [`actuation_attempt_scope()`](../../src/gateway/governance/execution_idempotency.py),
+  marks the dispatch before `actuate()` is awaited, and settles it from the
+  receipt only after the receipt is ingested. The domain tool's settlement and
+  ledger decision, `ExecutionLedger.release_unexecuted()`, the finance tool
+  result and `/tools/execute` all read that record to decide whether the
+  action may have executed.
 - **`ConsequenceGateway` decisions (`CONSEQUENCE_GATEWAY_DECISION` / `CONSEQUENCE_GATEWAY_REFUSAL`)**:
   [`ConsequenceGateway.evaluate()`](../../src/gateway/governance/consequence_gateway.py)
   emits every `EXECUTE` (`CONSEQUENCE_GATEWAY_DECISION`) and `BLOCK` / `HOLD`
