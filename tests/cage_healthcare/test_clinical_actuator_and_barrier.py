@@ -37,6 +37,7 @@ from src.cage_healthcare.tools.tool_provider import (
     ClinicalDoseActuator,
     administer_dose_action,
 )
+from src.gateway.governance.execution_idempotency import ExecutionLedger
 from src.gateway.governance.governor.sealing import SealedAction
 from src.gateway.governance.routing_seal import generate_seal, seal_digest
 from src.gateway.governance.safety.cbf_engine import ControlBarrierFunction
@@ -69,10 +70,12 @@ async def _make_clinical_clearance(
     required_quorum: int = 0,
     approvals: list[dict[str, Any]] | None = None,
 ) -> ExecutionClearance:
+    tid = str(uuid.uuid4())
     payload = params or {
         "patient_id": "P-101",
         "medication": "vancomycin",
         "dose_mg": 2.5,
+        "idempotency_key": tid,
         "route": "iv",
         "indication": "sepsis",
         "confidence": 0.99,
@@ -83,7 +86,6 @@ async def _make_clinical_clearance(
         else await generate_seal("administer_dose", payload, record_hash="e" * 64)
     )
     gov_digest = digest if digest is not None else seal_digest(minted_seal)
-    tid = str(uuid.uuid4())
     return ExecutionClearance(
         thread_id=tid,
         decision=decision,  # type: ignore[arg-type]
@@ -118,7 +120,12 @@ class TestDoseOrderAndCostResolver:
         self, bad_dose: Any
     ) -> None:
         with pytest.raises((ValidationError, ValueError)):
-            DoseOrder(patient_id="P1", medication="heparin", dose_mg=bad_dose)
+            DoseOrder(
+                patient_id="P1",
+                medication="heparin",
+                dose_mg=bad_dose,
+                idempotency_key=str(uuid.uuid4()),
+            )
 
     @pytest.mark.parametrize(
         "bad_dose", [True, False, 0, 0.0, -5.0, math.nan, math.inf]
@@ -235,9 +242,14 @@ class TestClinicalDoseActuatorSecurity:
 
         governor = MagicMock()
         governor.settle = AsyncMock(return_value=[])
+        governor.components.execution_ledger = ExecutionLedger(None)
+        dose_key = str(uuid.uuid4())
         params = {
             **DoseOrder(
-                patient_id="P-101", medication="vancomycin", dose_mg=2.0
+                patient_id="P-101",
+                medication="vancomycin",
+                dose_mg=2.0,
+                idempotency_key=dose_key,
             ).model_dump(),
             "confidence": 0.99,
         }
@@ -270,6 +282,7 @@ class TestClinicalDoseActuatorSecurity:
                 patient_id="P-101",
                 medication="vancomycin",
                 dose_mg=2.0,
+                idempotency_key=dose_key,
                 governor=governor,
             )
         assert res["status"] == "INDETERMINATE"
@@ -293,9 +306,16 @@ class _RecordingClinicalActuator(ClinicalDoseActuator):
 class TestAdministerDoseActuatesTheSealedParams:
     """The dose tool verifies, digests and actuates ``SealedAction.params``."""
 
-    @staticmethod
-    def _caller_params() -> dict[str, Any]:
-        order = DoseOrder(patient_id="P-101", medication="vancomycin", dose_mg=2.0)
+    _DOSE_KEY = "a4a4a4a4-1111-4222-8333-444444444444"
+
+    @classmethod
+    def _caller_params(cls) -> dict[str, Any]:
+        order = DoseOrder(
+            patient_id="P-101",
+            medication="vancomycin",
+            dose_mg=2.0,
+            idempotency_key=cls._DOSE_KEY,
+        )
         return {**order.model_dump(), "confidence": 0.99}
 
     @pytest.mark.asyncio
@@ -316,6 +336,7 @@ class TestAdministerDoseActuatesTheSealedParams:
             return_value=SealedAction("administer_dose", seal, evaluated)
         )
         governor = MagicMock(settle=AsyncMock(return_value=[]))
+        governor.components.execution_ledger = ExecutionLedger(None)
 
         with (
             patch(
@@ -338,6 +359,7 @@ class TestAdministerDoseActuatesTheSealedParams:
                 patient_id="P-101",
                 medication="vancomycin",
                 dose_mg=2.0,
+                idempotency_key=self._DOSE_KEY,
                 governor=governor,
             )
 
@@ -364,6 +386,7 @@ class TestAdministerDoseActuatesTheSealedParams:
 
         evaluated = {**self._caller_params(), "renal_clearance_ml_min": 85.0}
         governor = MagicMock(settle=AsyncMock(return_value=[]))
+        governor.components.execution_ledger = ExecutionLedger(None)
 
         with (
             patch(
@@ -390,6 +413,7 @@ class TestAdministerDoseActuatesTheSealedParams:
                 patient_id="P-101",
                 medication="vancomycin",
                 dose_mg=2.0,
+                idempotency_key=self._DOSE_KEY,
                 governor=governor,
             )
 
@@ -415,6 +439,7 @@ class TestAdministerDoseActuatesTheSealedParams:
         from src.gateway.governance.routing_seal import SymbolicGovernorViolation
 
         governor = MagicMock(settle=AsyncMock(return_value=[]))
+        governor.components.execution_ledger = ExecutionLedger(None)
         verify = AsyncMock(return_value=None)
 
         with (
@@ -432,6 +457,7 @@ class TestAdministerDoseActuatesTheSealedParams:
                 patient_id="P-101",
                 medication="vancomycin",
                 dose_mg=2.0,
+                idempotency_key=self._DOSE_KEY,
                 governor=governor,
             )
 

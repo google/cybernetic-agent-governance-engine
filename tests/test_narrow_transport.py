@@ -531,13 +531,14 @@ async def test_matching_receipt_is_burned_and_the_sealed_params_are_actuated():
         ActuationReceipt,
     )
 
+    tx_id = str(uuid.uuid4())
     seal = "k" * 64
     narrowed = {
         "symbol": "AAPL",
         "amount": 30.0,  # Narrowed from 100.0
         "currency": "USD",
         "confidence": 0.95,
-        "transaction_id": "tx-narrowed",
+        "transaction_id": tx_id,
         "trader_id": "agent_001",
         "trader_role": "junior",
         "dry_run": False,
@@ -569,7 +570,7 @@ async def test_matching_receipt_is_burned_and_the_sealed_params_are_actuated():
     ):
         result = await execute_trade_action(
             governor=governor,
-            transaction_id=str(uuid.uuid4()),
+            transaction_id=tx_id,
             symbol="AAPL",
             amount=100.0,
             currency="USD",

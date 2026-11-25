@@ -369,6 +369,10 @@ async def test_credential_denial_and_accepted_receipts_ingest_into_evidence_stre
     from src.gateway.governance.evidence.stream import EvidenceStreamSink
     from src.gateway.governance.execution_actuator import dispatch_actuation
     from src.gateway.governance.execution_idempotency import (
+        SHARED_CALLER,
+        Claim,
+        ExecutionLedger,
+        ExecutionStatus,
         actuation_attempt_scope,
     )
 
@@ -396,8 +400,14 @@ async def test_credential_denial_and_accepted_receipts_ingest_into_evidence_stre
     await denied_adapter.actuate(clearance)
     assert await fake_redis.xrange(sink._stream_key) == []
 
+    ledger = ExecutionLedger(fake_redis)
     with actuation_attempt_scope():
+        refusal_claim = await ledger.claim(
+            clearance.action, SHARED_CALLER, clearance.thread_id
+        )
+        assert isinstance(refusal_claim, Claim)
         refusal_receipt = await dispatch_actuation(denied_adapter, clearance)
+        await ledger.record_outcome(refusal_claim, ExecutionStatus.BLOCKED, "rejected")
     assert refusal_receipt.accepted is False
 
     # 2. Accepted path
@@ -415,6 +425,10 @@ async def test_credential_denial_and_accepted_receipts_ingest_into_evidence_stre
         credential_broker=MockCredentialBroker(),
     )
     with actuation_attempt_scope():
+        accepted_claim = await ledger.claim(
+            clearance.action, SHARED_CALLER, clearance.thread_id, reclaim_blocked=True
+        )
+        assert isinstance(accepted_claim, Claim)
         accepted_receipt = await dispatch_actuation(accepted_adapter, clearance)
     assert accepted_receipt.accepted is True
 

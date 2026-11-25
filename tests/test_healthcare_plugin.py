@@ -116,6 +116,7 @@ class TestHealthcarePlugin:
             patient_id="P12345",
             medication="warfarin",
             dose_mg=5.0,
+            idempotency_key="11111111-1111-4111-8111-111111111111",
             route="oral",
             indication="anticoagulation",
         )
@@ -364,6 +365,7 @@ class TestHealthcarePlugin:
         import src.gateway.governance.kms_signer as ks
         from src.cage_healthcare.tools.dose_order import DoseOrder
         from src.cage_healthcare.tools.tool_provider import administer_dose_action
+        from src.gateway.governance.execution_idempotency import ExecutionLedger
         from src.gateway.governance.governor.sealing import SealedAction
         from src.gateway.governance.routing_seal import (
             SymbolicGovernorViolation,
@@ -373,9 +375,14 @@ class TestHealthcarePlugin:
         provider = ks.SoftwareEd25519Provider(key_id="hc-plugin-test-k1")
         monkeypatch.setattr(ks, "_signer", ks.KMSGovernanceSigner(provider=provider))
         monkeypatch.setattr(jwks_mod, "_global_jwks", None)
+        dose_key = "22222222-2222-4222-8222-222222222222"
+        replay_key = "33333333-3333-4333-8333-333333333333"
         dose_params = {
             **DoseOrder(
-                patient_id="P001", medication="vancomycin", dose_mg=2.0
+                patient_id="P001",
+                medication="vancomycin",
+                dose_mg=2.0,
+                idempotency_key=dose_key,
             ).model_dump(),
             "confidence": 0.99,
         }
@@ -385,6 +392,7 @@ class TestHealthcarePlugin:
 
         governor = MagicMock()
         governor.settle = AsyncMock(return_value=[])
+        governor.components.execution_ledger = ExecutionLedger(None)
 
         with (
             patch(
@@ -404,6 +412,7 @@ class TestHealthcarePlugin:
                 patient_id="P001",
                 medication="vancomycin",
                 dose_mg=2.0,
+                idempotency_key=dose_key,
                 governor=governor,
             )
 
@@ -441,6 +450,7 @@ class TestHealthcarePlugin:
                 patient_id="P001",
                 medication="vancomycin",
                 dose_mg=2.0,
+                idempotency_key=replay_key,
                 governor=governor,
             )
 

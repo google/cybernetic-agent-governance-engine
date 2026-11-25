@@ -63,8 +63,8 @@ import re
 import secrets
 import threading
 import time
-from collections.abc import Iterator
-from contextlib import contextmanager
+from collections.abc import AsyncIterator, Iterator
+from contextlib import asynccontextmanager, contextmanager
 from contextvars import ContextVar, Token
 from dataclasses import dataclass
 from enum import Enum
@@ -80,6 +80,18 @@ KEY_PREFIX = "cage:exec"
 #: identity; every caller of the action then shares one key space.
 SHARED_CALLER = "_shared"
 DEFAULT_TTL_SECONDS = 7 * 24 * 60 * 60
+
+#: A committing action's idempotency key: a canonical UUID of version 4
+#: (random) or 5 (name-based, e.g. derived from a tool call).
+_IDEMPOTENCY_KEY_RE = re.compile(
+    r"^[0-9a-f]{8}-[0-9a-f]{4}-[45][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$"
+)
+
+
+def is_valid_idempotency_key(value: object) -> bool:
+    """Whether ``value`` is an accepted idempotency key (UUIDv4 or UUIDv5)."""
+    return isinstance(value, str) and bool(_IDEMPOTENCY_KEY_RE.fullmatch(value.lower()))
+
 
 # No ':' (the key separator), whitespace or glob characters in a key part.
 _KEY_PART = re.compile(r"^[A-Za-z0-9_][A-Za-z0-9_.@-]{0,254}$")
@@ -197,29 +209,57 @@ class ActuationAttemptScopeError(RuntimeError):
     """
 
 
+class UnclaimedActuationError(ActuationAttemptScopeError):
+    """``dispatch_actuation()`` was called without a live kernel ``ExecutionLedger`` claim.
+
+    Raised synchronously before ``_dispatched`` flips and before the actuator
+    is awaited, so nothing was sent. Covers absent claims, already-consumed
+    claims (single-dispatch enforcement), and claims whose
+    ``(action, idempotency_key)`` does not match
+    ``(clearance.action, clearance.thread_id)``.
+    """
+
+
 class ActuationAttempt:
     """Whether the current committing run may have executed: the kernel's answer.
 
     Opened by :func:`actuation_attempt_scope`. ``status`` is ``BLOCKED`` until
-    something is dispatched. Only ``dispatch_actuation()`` writes the record:
-    it marks a dispatch before ``actuate()`` is awaited (the record reads
-    ``UNKNOWN`` from then on) and settles it once the receipt is in the
-    evidence stream (``ACCEPTED`` -> ``EXECUTED``, ``UNKNOWN`` -> ``UNKNOWN``,
-    ``REJECTED`` -> ``BLOCKED``). A dispatch that ends without a settled
-    receipt (an exception or a cancellation) leaves the record ``UNKNOWN``.
+    something is dispatched. Only ``dispatch_actuation()`` writes the dispatch
+    state and only :meth:`ExecutionLedger.claim` attaches a live :class:`Claim`
+    to the active record (no public setter accepts a ``Claim``).
+    ``dispatch_actuation()`` verifies and consumes that claim synchronously
+    before flipping ``_dispatched`` and before awaiting ``actuate()`` (the
+    record reads ``UNKNOWN`` from then on), and settles it once the receipt is
+    in the evidence stream (``ACCEPTED`` -> ``EXECUTED``, ``UNKNOWN`` ->
+    ``UNKNOWN``, ``REJECTED`` -> ``BLOCKED``). A dispatch that ends without a
+    settled receipt (an exception or a cancellation) leaves the record
+    ``UNKNOWN``.
 
     The record only moves towards "may have executed": a ``REJECTED`` receipt
     is the only way back to ``BLOCKED``, and only while nothing else in the
     scope may have executed. ``dispatched`` never goes back to ``False``.
     """
 
-    __slots__ = ("_dispatched", "_in_flight", "_settled", "_unsettled")
+    __slots__ = (
+        "_claim",
+        "_claim_consumed",
+        "_claimed_action",
+        "_claimed_idempotency_key",
+        "_dispatched",
+        "_in_flight",
+        "_settled",
+        "_unsettled",
+    )
 
     def __init__(self) -> None:
         self._dispatched = False
         self._in_flight = 0
         self._settled = ExecutionStatus.BLOCKED
         self._unsettled = False
+        self._claim: Claim | None = None
+        self._claimed_action: str | None = None
+        self._claimed_idempotency_key: str | None = None
+        self._claim_consumed: bool = False
 
     @property
     def dispatched(self) -> bool:
@@ -331,15 +371,33 @@ def outcome_after_dispatch(message: str) -> CommitOutcome | None:
     return CommitOutcome(CommitStatus.INDETERMINATE, message)
 
 
-def mark_dispatch() -> ActuationAttempt:
-    """Mark a dispatch in the current record before anything is sent.
+def _bind_claim_to_attempt(claim: Claim, *, action: str, idempotency_key: str) -> Claim:
+    """Attach a kernel-minted ``Claim`` onto the active attempt record (private).
+
+    Called strictly from :meth:`ExecutionLedger.claim` on a successful claim;
+    there is no public setter accepting a ``Claim`` instance (POAM-2026-254).
+    """
+    attempt = _current_attempt.get()
+    if attempt is not None:
+        attempt._claim = claim
+        attempt._claimed_action = action
+        attempt._claimed_idempotency_key = idempotency_key
+        attempt._claim_consumed = False
+    return claim
+
+
+def mark_dispatch(*, action: str, idempotency_key: str) -> ActuationAttempt:
+    """Verify the active kernel claim and mark a dispatch before anything is sent.
 
     Called only by ``dispatch_actuation()``, synchronously and before it
-    awaits the actuator, so the record reads ``UNKNOWN`` before any byte can
-    leave.
+    awaits the actuator, so an unclaimed, spent, or mismatched dispatch is
+    refused before ``_dispatched`` flips or any byte leaves, and a valid
+    dispatch makes the record read ``UNKNOWN`` before any byte can leave.
 
     Raises:
         ActuationAttemptScopeError: No scope is open; nothing may be sent.
+        UnclaimedActuationError: The active scope holds no live unspent kernel
+            ``ExecutionLedger`` claim matching ``(action, idempotency_key)``.
     """
     attempt = _current_attempt.get()
     if attempt is None:
@@ -347,6 +405,26 @@ def mark_dispatch() -> ActuationAttempt:
             "dispatch_actuation() was called outside actuation_attempt_scope(); "
             "nothing could read what the dispatch did, so it was not sent"
         )
+    if not isinstance(attempt._claim, Claim):
+        raise UnclaimedActuationError(
+            f"dispatch_actuation() for action={action!r} thread_id={idempotency_key!r} "
+            "refused: no kernel ExecutionLedger claim is bound to the active attempt"
+        )
+    if attempt._claim_consumed:
+        raise UnclaimedActuationError(
+            f"dispatch_actuation() for action={action!r} thread_id={idempotency_key!r} "
+            "refused: the bound ExecutionLedger claim was already consumed"
+        )
+    if (
+        attempt._claimed_action != action
+        or attempt._claimed_idempotency_key != idempotency_key
+    ):
+        raise UnclaimedActuationError(
+            f"dispatch_actuation() for action={action!r} thread_id={idempotency_key!r} "
+            f"refused: bound claim is for action={attempt._claimed_action!r} "
+            f"idempotency_key={attempt._claimed_idempotency_key!r}"
+        )
+    attempt._claim_consumed = True
     attempt._dispatched = True
     attempt._in_flight += 1
     return attempt
@@ -463,7 +541,12 @@ class ExecutionLedger:
                     "no Redis is configured for the execution ledger under an "
                     "enforcing posture"
                 )
-            return self._claim_local(key, token, reclaim_blocked=reclaim_blocked)
+            local_res = self._claim_local(key, token, reclaim_blocked=reclaim_blocked)
+            if isinstance(local_res, Claim):
+                return _bind_claim_to_attempt(
+                    local_res, action=action, idempotency_key=idempotency_key
+                )
+            return local_res
 
         record = json.dumps(
             {"token": token, "status": ExecutionStatus.IN_FLIGHT.value, "outcome": None}
@@ -472,13 +555,21 @@ class ExecutionLedger:
         for _ in range(_REDIS_ATTEMPTS):
             try:
                 if await redis.set(key, record, nx=True, ex=self._ttl_seconds):
-                    return Claim(key, token)
+                    return _bind_claim_to_attempt(
+                        Claim(key, token),
+                        action=action,
+                        idempotency_key=idempotency_key,
+                    )
                 raw = await redis.get(key)
                 if raw is None:  # expired between SET NX and GET
                     continue
                 owner, status, outcome = _decode_record(raw)
                 if owner == token:  # an earlier write of this attempt landed
-                    return Claim(key, token)
+                    return _bind_claim_to_attempt(
+                        Claim(key, token),
+                        action=action,
+                        idempotency_key=idempotency_key,
+                    )
                 if (
                     not reclaim_blocked
                     or status is not ExecutionStatus.BLOCKED
@@ -489,7 +580,11 @@ class ExecutionLedger:
                     _RECLAIM_BLOCKED_LUA, 1, key, owner, record, self._ttl_seconds
                 )
                 if int(reclaimed) == 1:
-                    return Claim(key, token)
+                    return _bind_claim_to_attempt(
+                        Claim(key, token),
+                        action=action,
+                        idempotency_key=idempotency_key,
+                    )
                 # The record changed after the GET: read it again.
             except Exception as exc:  # a write may have landed: resend it
                 last_exc = exc
@@ -518,7 +613,12 @@ class ExecutionLedger:
             logger.critical("execution ledger outcome for %s lost: %s", claim.key, exc)
             return False
         if redis is None:
-            return self._record_local(claim, status, outcome)
+            recorded = self._record_local(claim, status, outcome)
+            if recorded:
+                attempt = _current_attempt.get()
+                if attempt is not None and attempt._claim == claim:
+                    attempt._claim_consumed = True
+            return recorded
         last_exc: Exception | None = None
         for _ in range(_REDIS_ATTEMPTS):
             try:
@@ -534,6 +634,9 @@ class ExecutionLedger:
                 last_exc = exc
                 continue
             if int(result) == 1:
+                attempt = _current_attempt.get()
+                if attempt is not None and attempt._claim == claim:
+                    attempt._claim_consumed = True
                 return True
             logger.critical(
                 "execution ledger outcome %s for %s not recorded: the claim %s",
@@ -590,7 +693,13 @@ class ExecutionLedger:
             )
             return False
         if redis is None:
-            return self._release_local(claim)
+            released = self._release_local(claim)
+            if released and attempt is not None and attempt._claim == claim:
+                attempt._claim = None
+                attempt._claimed_action = None
+                attempt._claimed_idempotency_key = None
+                attempt._claim_consumed = False
+            return released
         for _ in range(_REDIS_ATTEMPTS):
             try:
                 result = await redis.eval(
@@ -606,7 +715,13 @@ class ExecutionLedger:
                     exc,
                 )
                 continue
-            return int(result) == 1
+            released = int(result) == 1
+            if released and attempt is not None and attempt._claim == claim:
+                attempt._claim = None
+                attempt._claimed_action = None
+                attempt._claimed_idempotency_key = None
+                attempt._claim_consumed = False
+            return released
         return False
 
     async def resolve_unknown(
@@ -732,3 +847,267 @@ class ExecutionLedger:
             record.status = status
             record.outcome = outcome
         return True
+
+
+# ── Kernel-owned claim lifecycle scope (POAM-2026-254) ──────────────────────
+
+#: Ledger statuses whose recorded reply settles a resubmission.
+_SETTLED_REPLAY_STATUSES: frozenset[ExecutionStatus] = frozenset(
+    {ExecutionStatus.EXECUTED, ExecutionStatus.BLOCKED}
+)
+
+
+class ExecutionClaimScope:
+    """Return-type-agnostic handle yielded by :func:`execution_claim_scope`.
+
+    Domain tools inspect ``invalid_key_reason`` and ``duplicate`` to format
+    refusals or replays in their own return shape, record their outcome prose
+    via :meth:`set_outcome_summary`, and never call ``ExecutionLedger``
+    methods directly.
+    """
+
+    __slots__ = (
+        "_outcome_summary",
+        "_pre_dispatch_infra_failure",
+        "attempt",
+        "duplicate",
+        "idempotency_key",
+        "invalid_key_reason",
+        "proof_hash",
+    )
+
+    def __init__(
+        self,
+        *,
+        attempt: ActuationAttempt,
+        idempotency_key: str | None = None,
+        invalid_key_reason: str | None = None,
+        duplicate: Duplicate | None = None,
+        proof_hash: str = "",
+    ) -> None:
+        self.attempt: ActuationAttempt = attempt
+        self.idempotency_key: str | None = idempotency_key
+        self.invalid_key_reason: str | None = invalid_key_reason
+        self.duplicate: Duplicate | None = duplicate
+        self.proof_hash: str = proof_hash
+        self._outcome_summary: str | None = None
+        self._pre_dispatch_infra_failure: bool = False
+
+    def set_outcome_summary(self, summary: str) -> None:
+        """Store the settled outcome prose for ``ExecutionLedger.record_outcome()``."""
+        self._outcome_summary = summary
+
+    def mark_pre_dispatch_infra_failure(self) -> None:
+        """Request key release on normal exit when a pre-dispatch outage was caught.
+
+        Honored on exit ONLY while ``not self.attempt.dispatched``; once
+        ``dispatch_actuation()`` has run, the claim is never released.
+        """
+        self._pre_dispatch_infra_failure = True
+
+
+async def _settle_claim_on_error(
+    ledger: ExecutionLedger,
+    claim: Claim,
+    attempt: ActuationAttempt,
+    exc: BaseException,
+) -> None:
+    """Release an unexecuted claim on pre-dispatch outage; otherwise record ``attempt.status``."""
+    from src.gateway.governance.evidence.stream import (
+        EvidenceChainUnavailableError,
+    )
+    from src.gateway.governance.governor.errors import (
+        GovernanceInfrastructureError,
+    )
+
+    # Only an outage before anything was dispatched frees the key;
+    # once the action was handed to an actuator its status is kept.
+    if (
+        isinstance(
+            exc,
+            (GovernanceInfrastructureError, EvidenceChainUnavailableError),
+        )
+        and not attempt.dispatched
+    ):
+        await ledger.release_unexecuted(claim)
+    else:
+        await ledger.record_outcome(
+            claim,
+            attempt.status,
+            f"{attempt.status.value}: {str(exc) or type(exc).__name__}",
+        )
+
+
+@asynccontextmanager
+async def execution_claim_scope(
+    governor: Any,
+    *,
+    action: str,
+    idempotency_key: Any,
+    params: dict[str, Any],
+    dry_run: bool = False,
+    reclaim_blocked: bool = False,
+    caller_identity: str = SHARED_CALLER,
+    key_field_name: str = "idempotency_key",
+) -> AsyncIterator[ExecutionClaimScope]:
+    """Own the Layer 1 at-most-once claim lifecycle for a committing action.
+
+    Opens an :func:`actuation_attempt_scope`, validates ``idempotency_key`` via
+    :func:`is_valid_idempotency_key`, acquires the kernel ``ExecutionLedger``
+    claim (attaching it onto the active ``ActuationAttempt`` inside
+    :meth:`ExecutionLedger.claim`), handles ledger outages (``503`` via
+    ``handle_infrastructure_block``), settles or raises on duplicates, and on
+    exit either releases the claim on a pre-dispatch infrastructure error or
+    records ``attempt.status`` and the caller's summary.
+
+    Decoupled from ``CommitOutcome`` so domain plugins with different return
+    shapes share one kernel enforcement seam (POAM-2026-254).
+    """
+    from src.gateway.server import governance_middleware as _gm
+
+    with actuation_attempt_scope() as attempt:
+        if idempotency_key is None or idempotency_key == "":
+            reason = (
+                f"{key_field_name} is required (a UUIDv4 or UUIDv5 idempotency key)."
+            )
+            proof_hash = await _gm.record_refusal(
+                action, reason, oscal_control_ref="AC-3", params=params
+            )
+            yield ExecutionClaimScope(
+                attempt=attempt,
+                invalid_key_reason=reason,
+                proof_hash=proof_hash,
+            )
+            return
+
+        if not is_valid_idempotency_key(idempotency_key):
+            reason = (
+                f"invalid {key_field_name} {str(idempotency_key)[:64]!r}; "
+                "expected a UUIDv4 or UUIDv5."
+            )
+            proof_hash = await _gm.record_refusal(
+                action, reason, oscal_control_ref="AC-3", params=params
+            )
+            yield ExecutionClaimScope(
+                attempt=attempt,
+                invalid_key_reason=reason,
+                proof_hash=proof_hash,
+            )
+            return
+
+        normalized_key = idempotency_key.lower()
+        normalized_params = {**params, key_field_name: normalized_key}
+        claim: Claim | None = None
+        ledger: ExecutionLedger | None = None
+
+        if not dry_run:
+            try:
+                components = getattr(governor, "components", None)
+                candidate = getattr(components, "execution_ledger", None)
+                if not isinstance(candidate, ExecutionLedger):
+                    raise ExecutionLedgerUnavailable(
+                        "governor.components.execution_ledger is not configured"
+                    )
+                ledger = candidate
+                claimed = await ledger.claim(
+                    action,
+                    caller_identity,
+                    normalized_key,
+                    reclaim_blocked=reclaim_blocked,
+                )
+            except ExecutionLedgerUnavailable as exc:
+                from src.gateway.governance.contracts import Violation, ViolationKind
+                from src.gateway.governance.governor.errors import (
+                    GovernanceInfrastructureError,
+                )
+                from src.gateway.governance.governor.verdicts import (
+                    handle_infrastructure_block,
+                )
+
+                reason = (
+                    "execution ledger unavailable, at-most-once execution cannot be "
+                    f"guaranteed: {exc}"
+                )
+                logger.error(
+                    "%s %s blocked on execution ledger outage: %s",
+                    action,
+                    normalized_key,
+                    reason,
+                )
+                await handle_infrastructure_block(
+                    action,
+                    normalized_params,
+                    [
+                        Violation(
+                            tier="execution_ledger",
+                            code="EXECUTION_LEDGER_UNAVAILABLE",
+                            message=reason,
+                            kind=ViolationKind.INFRASTRUCTURE,
+                            infra_dependency="execution_ledger",
+                            infra_error_code="execution_ledger_unavailable",
+                        )
+                    ],
+                    [],
+                )
+                raise GovernanceInfrastructureError(
+                    f"handle_infrastructure_block returned without raising; blocking {action}",
+                    dependency="execution_ledger",
+                    failure_code="EXECUTION_LEDGER_UNAVAILABLE",
+                    error_code="execution_ledger_unavailable",
+                ) from exc
+
+            if isinstance(claimed, Duplicate):
+                dup_reason = (
+                    f"duplicate submission of {key_field_name} {normalized_key} "
+                    f"(first attempt {claimed.status.value})"
+                )
+                if (
+                    claimed.outcome is not None
+                    and claimed.status in _SETTLED_REPLAY_STATUSES
+                ):
+                    logger.warning("%s refused: %s", action, dup_reason)
+                    proof_hash = await _gm.record_refusal(
+                        action,
+                        dup_reason,
+                        oscal_control_ref="AC-3",
+                        params=normalized_params,
+                    )
+                    yield ExecutionClaimScope(
+                        attempt=attempt,
+                        idempotency_key=normalized_key,
+                        duplicate=claimed,
+                        proof_hash=proof_hash,
+                    )
+                    return
+                logger.warning("%s unsettled duplicate blocked: %s", action, dup_reason)
+                state = {
+                    ExecutionStatus.IN_FLIGHT: "has not finished",
+                    ExecutionStatus.UNKNOWN: "has an unknown outcome, pending reconciliation",
+                }.get(claimed.status, "left no recorded reply")
+                first = f" First attempt: {claimed.outcome}" if claimed.outcome else ""
+                raise UnsettledDuplicate(
+                    f"{claimed.status.value}: {key_field_name} {normalized_key} was already "
+                    f"submitted and its first attempt {state}; it is not executed again.{first}"
+                )
+            claim = claimed
+
+        scope = ExecutionClaimScope(
+            attempt=attempt,
+            idempotency_key=normalized_key,
+        )
+        try:
+            yield scope
+        except BaseException as exc:
+            if claim is not None and ledger is not None:
+                await _settle_claim_on_error(ledger, claim, attempt, exc)
+            raise
+        if claim is not None and ledger is not None:
+            if scope._pre_dispatch_infra_failure and not attempt.dispatched:
+                await ledger.release_unexecuted(claim)
+            else:
+                summary = (
+                    scope._outcome_summary
+                    if scope._outcome_summary is not None
+                    else attempt.status.value
+                )
+                await ledger.record_outcome(claim, attempt.status, summary)

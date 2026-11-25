@@ -25,8 +25,9 @@ import httpx
 import pytest
 from pydantic import ValidationError
 
-from src.cage_finance.models.trade_order import TradeOrder, is_valid_transaction_id
+from src.cage_finance.models.trade_order import TradeOrder
 from src.cage_finance.tools import trade_executor
+from src.gateway.governance.execution_idempotency import is_valid_idempotency_key
 from src.gateway.governance.routing_seal import SymbolicGovernorViolation, generate_seal
 
 pytestmark = [pytest.mark.unit, pytest.mark.local]
@@ -53,7 +54,7 @@ def _order(transaction_id: str) -> TradeOrder:
     ids=["uuid4", "uuid5", "uuid4-upper"],
 )
 def test_uuid4_and_uuid5_are_accepted(transaction_id: str) -> None:
-    assert is_valid_transaction_id(transaction_id)
+    assert is_valid_idempotency_key(transaction_id)
     assert _order(transaction_id).transaction_id == transaction_id
 
 
@@ -69,14 +70,14 @@ def test_uuid4_and_uuid5_are_accepted(transaction_id: str) -> None:
     ids=["uuid1", "uuid3", "hex", "trailing-newline", "garbage"],
 )
 def test_other_transaction_ids_are_refused(transaction_id: str) -> None:
-    assert not is_valid_transaction_id(transaction_id)
+    assert not is_valid_idempotency_key(transaction_id)
     with pytest.raises(ValidationError, match="UUID v4 or v5"):
         _order(transaction_id)
 
 
 def test_non_string_transaction_id_is_not_valid() -> None:
-    assert not is_valid_transaction_id(None)
-    assert not is_valid_transaction_id(uuid.uuid4())
+    assert not is_valid_idempotency_key(None)
+    assert not is_valid_idempotency_key(uuid.uuid4())
 
 
 @pytest.mark.asyncio

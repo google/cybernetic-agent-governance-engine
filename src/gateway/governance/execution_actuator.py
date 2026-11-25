@@ -28,8 +28,15 @@ in the same PR per the C0 specification.
 from __future__ import annotations
 
 import asyncio
+import hashlib
+import hmac
+import json
 import logging
+import math
 import os
+import time
+import uuid
+from collections.abc import Mapping
 from datetime import datetime, timezone
 from typing import Any
 
@@ -63,10 +70,14 @@ __all__ = [
     "ExecutionActuator",
     "ExecutionClearance",
     "ReceiptVerification",
+    "approval_covers_bounded",
+    "build_execution_clearance",
     "dispatch_actuation",
     "get_actuator_registry",
     "ingest_actuation_receipt",
     "load_actuators_from_env",
+    "require_sealed_action",
+    "verify_clearance_contract",
 ]
 
 _EVENT_TYPE_BY_OUTCOME: dict[ActuationOutcome, str] = {
@@ -81,6 +92,114 @@ _ATTEMPT_STATUS_BY_OUTCOME: dict[ActuationOutcome, ExecutionStatus] = {
     ActuationOutcome.REJECTED: ExecutionStatus.BLOCKED,
     ActuationOutcome.UNKNOWN: ExecutionStatus.UNKNOWN,
 }
+
+
+def approval_covers_bounded(
+    approved: Mapping[str, Any],
+    requested: Mapping[str, Any],
+    bound_fields: tuple[str, ...],
+    quantity_field: str,
+) -> bool:
+    """True iff ``approved`` matches ``requested`` on ``bound_fields`` and bounds ``quantity_field``."""
+    if any(approved.get(field) != requested.get(field) for field in bound_fields):
+        return False
+    try:
+        raw_approved = approved[quantity_field]
+        raw_requested = requested[quantity_field]
+        if isinstance(raw_approved, bool) or isinstance(raw_requested, bool):
+            return False
+        approved_qty = float(raw_approved)
+        requested_qty = float(raw_requested)
+    except (KeyError, TypeError, ValueError):
+        return False
+    if not (math.isfinite(approved_qty) and math.isfinite(requested_qty)):
+        return False
+    return 0.0 < requested_qty <= approved_qty
+
+
+def require_sealed_action(governed: Any, action: str) -> tuple[str, dict[str, Any]]:
+    """Extract validated ``(seal, evaluated_params)`` from a ``SealedAction``."""
+    from src.gateway.governance.routing_seal import SymbolicGovernorViolation
+
+    seal = getattr(governed, "seal", None)
+    evaluated = getattr(governed, "params", None)
+    if not isinstance(seal, str) or not seal.strip() or not isinstance(evaluated, dict):
+        raise SymbolicGovernorViolation("No seal", action=action)
+    return seal, evaluated
+
+
+def verify_clearance_contract(
+    clearance: ExecutionClearance, executor_id: str
+) -> tuple[str, str] | None:
+    """Verify local clearance routing, quorum, seal digest, and routing seal.
+
+    Returns ``None`` when valid, or ``(error_code, detail)`` on failure.
+    """
+    from src.gateway.governance import routing_seal as _rs
+
+    seal = clearance.routing_seal
+    if (
+        clearance.executor_id != executor_id
+        or clearance.decision != "ALLOW"
+        or not isinstance(seal, str)
+        or not seal.strip()
+    ):
+        return ("CLEARANCE_INVALID", "")
+    if clearance.target_route.rstrip("/") not in ("local://default", "*"):
+        return ("TARGET_ROUTE_MISMATCH", clearance.target_route)
+    if len(clearance.approvals) < clearance.required_quorum:
+        return ("QUORUM_NOT_MET", "")
+    if not hmac.compare_digest(
+        _rs.seal_digest(seal), clearance.governance_decision_digest
+    ):
+        return ("SEAL_DIGEST_MISMATCH", "")
+    try:
+        if not _rs.verify_seal(seal, clearance.action, dict(clearance.params)):
+            return ("INVALID_ROUTING_SEAL", "verify_seal False")
+    except _rs.SymbolicGovernorViolation as exc:
+        return ("INVALID_ROUTING_SEAL", exc.reason)
+    return None
+
+
+def build_execution_clearance(
+    action: str,
+    thread_id: str,
+    target: str,
+    operator_urn: str,
+    executor_id: str,
+    consequence_ceiling: str,
+    params: dict[str, Any],
+    routing_seal: str,
+    *,
+    target_route: str = "local://default",
+) -> ExecutionClearance:
+    """Build a direct ``ExecutionClearance`` bound to ``routing_seal`` and ``params``."""
+    from src.gateway.governance.routing_seal import seal_digest
+
+    return ExecutionClearance(
+        thread_id=thread_id,
+        decision="ALLOW",
+        decision_path="DIRECT",
+        action=action,
+        target=target,
+        operator_urn=operator_urn,
+        issued_at=int(time.time()),
+        issued_at_provenance="CONSTRUCTION_TIME",
+        correlation_id=thread_id,
+        correlation_id_source="THREAD_DERIVED",
+        governance_decision_digest=seal_digest(routing_seal),
+        opa_input_digest=hashlib.sha256(
+            json.dumps(params, sort_keys=True).encode()
+        ).hexdigest(),
+        nonce=uuid.uuid4().hex[:32],
+        params=params,
+        executor_id=executor_id,
+        target_route=target_route,
+        consequence_ceiling=consequence_ceiling,
+        approvals=[],
+        required_quorum=0,
+        routing_seal=routing_seal,
+    )
 
 
 async def dispatch_actuation(
@@ -98,18 +217,29 @@ async def dispatch_actuation(
 
     It is also the only writer of the current attempt record
     (:class:`~src.gateway.governance.execution_idempotency.ActuationAttempt`,
-    POAM-2026-252). The dispatch is marked before ``actuate()`` is awaited, so
-    the record says the action may have executed before any byte can leave,
-    and it is settled from the receipt only once the receipt is in the
-    evidence stream. A dispatch that is cancelled, or raises past this point,
-    is never settled and leaves the record ``UNKNOWN``.
+    POAM-2026-252 / POAM-2026-254). Synchronously before ``actuate()`` is
+    awaited, it verifies that the active attempt holds a live, unspent,
+    kernel-attached ``ExecutionLedger`` claim matching
+    ``(clearance.action, clearance.thread_id)``, consumes that claim, and marks
+    the dispatch so the record says the action may have executed before any
+    byte can leave. It settles the record from the receipt only once the
+    receipt is in the evidence stream. A dispatch that is cancelled, or raises
+    past this point, is never settled and leaves the record ``UNKNOWN``.
 
     Raises:
         ActuationAttemptScopeError: No ``actuation_attempt_scope()`` is open;
             the actuator is never awaited.
+        UnclaimedActuationError: The active attempt holds no live unspent
+            kernel ``ExecutionLedger`` claim matching
+            ``(clearance.action, clearance.thread_id)``; ``_dispatched`` stays
+            ``False`` and the actuator is never awaited.
     """
-    # Synchronous: mark the record before actuate() is even awaited.
-    attempt = _idempotency.mark_dispatch()
+    # Synchronous: verify the kernel claim, consume it, and mark the record
+    # before actuate() is even awaited.
+    attempt = _idempotency.mark_dispatch(
+        action=clearance.action,
+        idempotency_key=clearance.thread_id,
+    )
     try:
         receipt = await actuator.actuate(clearance)
     except asyncio.CancelledError:

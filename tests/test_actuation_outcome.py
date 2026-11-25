@@ -33,7 +33,11 @@ from src.cage_finance.tools.tool_provider import (
     execute_trade_action,
 )
 from src.gateway.governance.execution_actuator import dispatch_actuation
-from src.gateway.governance.execution_idempotency import actuation_attempt_scope
+from src.gateway.governance.execution_idempotency import (
+    SHARED_CALLER,
+    ExecutionLedger,
+    actuation_attempt_scope,
+)
 from src.gateway.governance.routing_seal import SymbolicGovernorViolation
 from src.gateway.governance.seams.actuation import (
     ActuationError,
@@ -79,6 +83,7 @@ class TestDispatchActuation:
         actuator.actuate = AsyncMock(
             return_value=_receipt(accepted=True, outcome=ActuationOutcome.ACCEPTED)
         )
+        clearance = self._clearance()
         with (
             patch(
                 "src.gateway.governance.execution_actuator.ingest_actuation_receipt",
@@ -86,7 +91,10 @@ class TestDispatchActuation:
             ) as ingest,
             actuation_attempt_scope(),
         ):
-            receipt = await dispatch_actuation(actuator, self._clearance())
+            await ExecutionLedger(None).claim(
+                clearance.action, SHARED_CALLER, clearance.thread_id
+            )
+            receipt = await dispatch_actuation(actuator, clearance)
         assert receipt.outcome is ActuationOutcome.ACCEPTED
         ingest.assert_awaited_once()
         assert ingest.await_args.kwargs["actuator_id"] == "stub"
@@ -95,6 +103,7 @@ class TestDispatchActuation:
     async def test_actuator_exception_becomes_recorded_unknown_receipt(self) -> None:
         actuator = MagicMock(actuator_id="stub")
         actuator.actuate = AsyncMock(side_effect=TimeoutError("venue"))
+        clearance = self._clearance()
         with (
             patch(
                 "src.gateway.governance.execution_actuator.ingest_actuation_receipt",
@@ -102,7 +111,10 @@ class TestDispatchActuation:
             ) as ingest,
             actuation_attempt_scope(),
         ):
-            receipt = await dispatch_actuation(actuator, self._clearance())
+            await ExecutionLedger(None).claim(
+                clearance.action, SHARED_CALLER, clearance.thread_id
+            )
+            receipt = await dispatch_actuation(actuator, clearance)
         assert receipt.outcome is ActuationOutcome.UNKNOWN
         assert receipt.retryable is False
         assert receipt.findings[0]["code"] == "ACTUATOR_EXCEPTION"

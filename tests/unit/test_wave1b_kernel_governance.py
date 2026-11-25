@@ -728,11 +728,16 @@ async def test_f30_dispatch_actuation_cancelled_ingests_unknown_receipt_and_rera
     )
 
     from src.gateway.governance.execution_idempotency import (
+        SHARED_CALLER,
+        ExecutionLedger,
         ExecutionStatus,
         actuation_attempt_scope,
     )
 
     with actuation_attempt_scope() as attempt:
+        await ExecutionLedger(None).claim(
+            clearance.action, SHARED_CALLER, clearance.thread_id
+        )
         with pytest.raises(asyncio.CancelledError):
             await exec_act_mod.dispatch_actuation(_CancellingActuator(), clearance)  # type: ignore[arg-type]
 

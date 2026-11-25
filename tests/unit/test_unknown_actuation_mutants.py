@@ -176,9 +176,9 @@ def _compile_mutant(module: ModuleType, name: str, edits: tuple[Edit, ...]) -> A
 # --------------------------------- shared probe clearance / receipt helpers
 
 
-def _probe_clearance() -> ExecutionClearance:
+def _probe_clearance(thread_id: str = "t-da-probe") -> ExecutionClearance:
     return ExecutionClearance(
-        thread_id="t-da-probe",
+        thread_id=thread_id,
         decision="ALLOW",
         decision_path="DIRECT",
         action="execute_trade",
@@ -253,6 +253,7 @@ def _trade_pipeline(actuate: AsyncMock) -> Iterator[None]:
         patch(f"{_TOOL_PROVIDER}._broker_actuator.actuate", actuate),
         patch("src.gateway.infrastructure.redis_client.redis_client", None),
         patch(f"{_TOOL_PROVIDER}.record_refusal", new_callable=AsyncMock),
+        patch.object(governance_middleware, "record_refusal", new_callable=AsyncMock),
     ):
         yield
 
@@ -505,8 +506,10 @@ async def _endpoint_on_post_dispatch_infra_error() -> object:
     exec_actuator = importlib.import_module(_EXECUTION_ACTUATOR)
 
     async def tool(**_kw: Any) -> Any:
+        clr = _probe_clearance()
+        await ExecutionLedger(None).claim(clr.action, SHARED_CALLER, clr.thread_id)
         await exec_actuator.dispatch_actuation(
-            _probe_actuator(ActuationOutcome.UNKNOWN), _probe_clearance()
+            _probe_actuator(ActuationOutcome.UNKNOWN), clr
         )
         raise GovernanceInfrastructureError(
             "settlement store unreachable after dispatch",
@@ -533,16 +536,17 @@ async def _ledger_release_after_dispatch() -> object:
     """DA-M11: ``ExecutionLedger.release_unexecuted`` refuses after dispatch."""
     exec_actuator = importlib.import_module(_EXECUTION_ACTUATOR)
     ledger = ExecutionLedger(fakeredis.aioredis.FakeRedis())
-    claim = await ledger.claim("execute_trade", SHARED_CALLER, "k-da-m11")
-    assert isinstance(claim, Claim)
+    clr = _probe_clearance("k-da-m11")
     with (
         patch.object(
             exec_actuator, "ingest_actuation_receipt", AsyncMock(return_value="m-da11")
         ),
         actuation_attempt_scope(),
     ):
+        claim = await ledger.claim(clr.action, SHARED_CALLER, clr.thread_id)
+        assert isinstance(claim, Claim)
         await exec_actuator.dispatch_actuation(
-            _probe_actuator(ActuationOutcome.UNKNOWN), _probe_clearance()
+            _probe_actuator(ActuationOutcome.UNKNOWN), clr
         )
         released = await ledger.release_unexecuted(claim)
     again = await ledger.claim("execute_trade", SHARED_CALLER, "k-da-m11")
@@ -558,8 +562,8 @@ async def _dispatch_without_open_scope() -> object:
     ):
         try:
             await exec_actuator.dispatch_actuation(actuator, _probe_clearance())
-        except ActuationAttemptScopeError:
-            return "refused", actuator.actuate.await_count
+        except ActuationAttemptScopeError as exc:
+            return type(exc).__name__, actuator.actuate.await_count
     return "dispatched", actuator.actuate.await_count
 
 
@@ -572,11 +576,15 @@ async def _later_rejected_in_same_scope() -> object:
         ),
         actuation_attempt_scope() as attempt,
     ):
+        ledger = ExecutionLedger(None)
+        c1, c2 = _probe_clearance("t-da-14a"), _probe_clearance("t-da-14b")
+        await ledger.claim(c1.action, SHARED_CALLER, c1.thread_id)
         await exec_actuator.dispatch_actuation(
-            _probe_actuator(ActuationOutcome.ACCEPTED), _probe_clearance()
+            _probe_actuator(ActuationOutcome.ACCEPTED), c1
         )
+        await ledger.claim(c2.action, SHARED_CALLER, c2.thread_id)
         await exec_actuator.dispatch_actuation(
-            _probe_actuator(ActuationOutcome.REJECTED), _probe_clearance()
+            _probe_actuator(ActuationOutcome.REJECTED), c2
         )
         return attempt.status, attempt.may_have_executed
 
@@ -590,9 +598,11 @@ async def _nested_scope_merge_on_exit() -> object:
         ),
         actuation_attempt_scope() as outer,
     ):
+        clr = _probe_clearance("t-da-15")
         with actuation_attempt_scope():
+            await ExecutionLedger(None).claim(clr.action, SHARED_CALLER, clr.thread_id)
             await exec_actuator.dispatch_actuation(
-                _probe_actuator(ActuationOutcome.UNKNOWN), _probe_clearance()
+                _probe_actuator(ActuationOutcome.UNKNOWN), clr
             )
         return outer.dispatched, outer.status, outer.may_have_executed
 
@@ -602,7 +612,13 @@ async def _healthcare_on_unknown_dispatch() -> object:
     clinical_tools = importlib.import_module(_HEALTHCARE_PROVIDER)
     exec_actuator = importlib.import_module(_EXECUTION_ACTUATOR)
     governor = MagicMock(settle=AsyncMock(return_value=[]))
-    dose = {"patient_id": "P-101", "medication": "vancomycin", "dose_mg": 2.0}
+    governor.components.execution_ledger = ExecutionLedger(None)
+    dose = {
+        "patient_id": "P-101",
+        "medication": "vancomycin",
+        "dose_mg": 2.0,
+        "idempotency_key": "9f5e3d2c-1b0a-4f9e-8d7c-6b5a4f3e2d1c",
+    }
     evaluated = {**DoseOrder(**dose).model_dump(), "confidence": 0.99}
     actuator = _probe_actuator(ActuationOutcome.UNKNOWN)
     with (
@@ -635,9 +651,9 @@ async def _healthcare_on_unknown_dispatch() -> object:
 MUTANTS: list[tuple[str, str, str, tuple[Edit, ...], Scenario]] = [
     (
         "DA-M1 unsafe: ledger key release called on an infrastructure error by type alone",
-        _TOOL_PROVIDER,
-        "execute_trade_action",
-        (("                    and not attempt.dispatched\n", ""),),
+        _IDEMPOTENCY,
+        "_settle_claim_on_error",
+        (("        and not attempt.dispatched\n", ""),),
         _resubmit_after_post_dispatch_infra_error,
     ),
     (
@@ -646,13 +662,19 @@ MUTANTS: list[tuple[str, str, str, tuple[Edit, ...], Scenario]] = [
         "dispatch_actuation",
         (
             (
-                "    attempt = _idempotency.mark_dispatch()\n",
+                "    attempt = _idempotency.mark_dispatch(\n"
+                "        action=clearance.action,\n"
+                "        idempotency_key=clearance.thread_id,\n"
+                "    )\n",
                 "",
             ),
             (
                 "    await ingest_actuation_receipt("
                 "clearance, receipt, actuator_id=actuator.actuator_id)\n",
-                "    attempt = _idempotency.mark_dispatch()\n"
+                "    attempt = _idempotency.mark_dispatch(\n"
+                "        action=clearance.action,\n"
+                "        idempotency_key=clearance.thread_id,\n"
+                "    )\n"
                 "    await ingest_actuation_receipt("
                 "clearance, receipt, actuator_id=actuator.actuator_id)\n",
             ),
@@ -822,7 +844,11 @@ MUTANTS: list[tuple[str, str, str, tuple[Edit, ...], Scenario]] = [
                 '            "dispatch_actuation() was called outside actuation_attempt_scope(); "\n'
                 '            "nothing could read what the dispatch did, so it was not sent"\n'
                 "        )\n",
-                "    if attempt is None:\n        attempt = ActuationAttempt()\n",
+                "    if attempt is None:\n"
+                "        attempt = ActuationAttempt()\n"
+                "        attempt._dispatched = True\n"
+                "        attempt._in_flight += 1\n"
+                "        return attempt\n",
             ),
         ),
         _dispatch_without_open_scope,

@@ -258,10 +258,15 @@ async def test_healthcare_records_the_digest_not_the_seal(
 ) -> None:
     from src.cage_healthcare.tools import tool_provider as clinical
     from src.cage_healthcare.tools.dose_order import DoseOrder
+    from src.gateway.governance.execution_idempotency import ExecutionLedger
 
+    dose_key = "44444444-4444-4444-8444-444444444444"
     dose_params = {
         **DoseOrder(
-            patient_id="patient-1", medication="heparin", dose_mg=2.0
+            patient_id="patient-1",
+            medication="heparin",
+            dose_mg=2.0,
+            idempotency_key=dose_key,
         ).model_dump(),
         "confidence": 0.99,
     }
@@ -274,6 +279,7 @@ async def test_healthcare_records_the_digest_not_the_seal(
     registry = ActuatorRegistry()
     registry.register(ClinicalDoseActuator(), claims={"administer_dose"})
     governor = MagicMock(settle=AsyncMock(return_value=[]))
+    governor.components.execution_ledger = ExecutionLedger(None)
 
     with ExitStack() as stack:
         stack.enter_context(
@@ -295,7 +301,7 @@ async def test_healthcare_records_the_digest_not_the_seal(
         )
         stack.enter_context(patch(_SINK, MagicMock(return_value=sink)))
         result = await clinical.administer_dose_action(
-            "patient-1", "heparin", 2.0, governor=governor
+            "patient-1", "heparin", 2.0, dose_key, governor=governor
         )
 
     assert result["status"] == "GOVERNED", result
