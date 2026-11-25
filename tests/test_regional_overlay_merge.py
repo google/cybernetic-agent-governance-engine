@@ -233,3 +233,34 @@ def test_real_plugin_overlays_compose_across_all_regions_without_collision(
         assert reg.declared_extensions == ()
     finally:
         ControlRegistry.reset_for_testing()
+
+
+def test_validation_report_withdrawal_and_regional_posture_triggers() -> None:
+    """POAM-2026-121: Report withdraws independent-composition claims, drops stale hashes, and workflow watches plugin overlays."""
+    import yaml
+
+    repo_root = Path(__file__).resolve().parents[1]
+    report = (
+        repo_root / "docs" / "compliance" / "REGIONAL_POSTURE_VALIDATION_REPORT.md"
+    ).read_text(encoding="utf-8")
+    assert "POAM-2026-121" in report
+    assert "§3 Independence Claim Withdrawn" in report
+    assert "489f444aca7b" not in report
+    assert "6dbefdbbb607" not in report
+    assert "cage_iso42001.json" not in report
+    assert "config/oscal/framework_mappings/ISO_42001.json" in report
+    assert "compliance/oscal/component-definition.yaml" in report
+
+    workflow = yaml.safe_load(
+        (repo_root / ".github" / "workflows" / "regional-posture.yml").read_text(
+            encoding="utf-8"
+        )
+    )
+    on_block = workflow.get("on") or workflow.get(True)
+    push_paths = set(on_block["push"]["paths"])
+    assert "src/cage_*/config/compliance/**" in push_paths
+    assert "src/cage_*/config/thresholds/**" in push_paths
+    for job in workflow["jobs"].values():
+        assert job.get("continue-on-error") is not True
+        for step in job.get("steps", []):
+            assert step.get("continue-on-error") is not True

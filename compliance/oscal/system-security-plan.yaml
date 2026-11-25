@@ -3,7 +3,7 @@ system-security-plan:
   metadata:
     title: CAGE System Security Plan (US_FED — NIST SP 800-53 Rev 5 HIGH)
     published: '2026-03-06T00:00:00Z'
-    last-modified: '2026-11-23T13:47:17Z'
+    last-modified: '2026-11-25T00:19:58Z'
     version: 1.0.1-draft+stpa
     oscal-version: 1.0.4
     remarks: 'This System Security Plan (SSP) documents the security controls implemented
@@ -418,15 +418,15 @@ system-security-plan:
         at the gateway boundary.
 
         Internal processing pipeline: the governed agent''s input rail redacts identity
-        PII from each user message in-process (Presidio; it fails open if the engines
-        cannot initialise, POAM-2026-147) and runs the Stage 1 keyword scan before
-        any agent or model sees the text → Gateway inference proxy (Stage 1 keyword
-        scan over every message; regex PII scrub of every model response) → OPA Policy
-        Engine (HTTP, intra-cluster; fiscal limits and RBAC enforcement) → LLM inference
-        layer. NeMo Guardrails joins this path only when CAGE_NEMO_ENABLED=true. All
-        services emit OTel spans to the Langfuse collector endpoint. AgentSight eBPF
-        monitor observes kernel-level syscalls for anomaly detection without data
-        exfiltration.
+        PII from each user message in-process (Presidio; failing closed in enforcing
+        postures if the engines cannot initialise, POAM-2026-147 closed 2026-11-24)
+        and runs the Stage 1 keyword scan before any agent or model sees the text
+        → Gateway inference proxy (Stage 1 keyword scan over every message; regex
+        PII scrub of every model response) → OPA Policy Engine (HTTP, intra-cluster;
+        fiscal limits and RBAC enforcement) → LLM inference layer. NeMo Guardrails
+        joins this path only when CAGE_NEMO_ENABLED=true. All services emit OTel spans
+        to the Langfuse collector endpoint. AgentSight eBPF monitor observes kernel-level
+        syscalls for anomaly detection without data exfiltration.
 
         Outbound: model inference does not leave the cluster. On GKE the inference
         backend is in-cluster vLLM (inference_backend = "vllm") or none, and the "external"
@@ -594,28 +594,27 @@ system-security-plan:
         SSN, credit card, email and phone patterns with regular expressions. The governed
         agent''s input rail node (src/gateway/governance/langgraph_harness/nemo_node_factory.py)
         replaces each user message with its redacted text before any agent or model
-        sees it. It fails closed in enforcing postures when redaction raises, but
-        not when the Presidio engines failed to initialise: redaction then returns
-        the text unchanged and the message passes unredacted (POAM-2026-147). The
-        output rail node applies both passes to every agent answer and returns the
-        blocked sentinel on any error. The gateway''s inference proxy applies scrub_pii
-        to every model response and to the prompt text it records in telemetry.
+        sees it, failing closed in enforcing postures when redaction or Presidio engine
+        initialisation fails (PresidioUnavailableError, POAM-2026-147 closed 2026-11-24).
+        The output rail node applies both passes to every agent answer and returns
+        the blocked sentinel on any error. The gateway''s inference proxy applies
+        scrub_pii to every model response and to the prompt text it records in telemetry.
 
         '
       purpose: 'Keeps identity PII in user input from reaching the inference layer
-        while the Presidio engines are initialised (POAM-2026-147), and PII in model
+        in enforcing postures (POAM-2026-147 closed 2026-11-24), and PII in model
         output from reaching users or telemetry. Implements ISO 42001 A.9.2 data transfer
-        controls and supports NIST SP 800-53 PT-2/PT-3 PII processing controls. A.9.2''s
-        automated evidence has no producer yet (POAM-2026-146).
+        controls and supports NIST SP 800-53 PT-2/PT-3 PII processing controls, with
+        custody-chain A.9.2 metrics evaluated at /v1/metrics/A.9.2 (INFERENCE_PROXY_PII_SCRUB_PASS,
+        POAM-2026-146 closed 2026-11-12).
 
         '
       status:
         state: operational
-        remarks: 'Operational with a documented fail-open: if the Presidio engines
-          fail to initialise, input redaction passes text through unredacted, in enforcing
-          postures too (POAM-2026-147, reproduced 2026-10-29). The shipped advisor
-          image installs Presidio and its spaCy models, so the defect is latent there.
-          Output keeps its regex scrub_pii pass.
+        remarks: 'Operational: ensure_presidio_engines() raises PresidioUnavailableError
+          in every enforcing posture when Presidio analyzer or anonymizer engines
+          fail to initialise (POAM-2026-147 closed 2026-11-24), and output retains
+          both Presidio and regex scrub_pii passes.
 
           '
       responsible-roles:
@@ -627,12 +626,6 @@ system-security-plan:
         value: In-process library (governed agent rail nodes, gateway inference proxy)
       - name: namespace
         value: governance-stack
-      - name: poam-gap
-        value: POAM-2026-147
-        remarks: Input redaction fails open when the Presidio engines fail to initialise
-      - name: poam-gap-evidence
-        value: POAM-2026-146
-        remarks: A.9.2's automated Lula evidence has no producer
     - uuid: e5000003-0000-4000-8000-000000000003
       type: software
       title: OPA Policy Engine

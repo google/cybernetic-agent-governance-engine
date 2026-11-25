@@ -173,12 +173,12 @@ component-definition:
         control-id: A.9.2
         description: 'The governed agent''s input rail node (src/gateway/governance/langgraph_harness/nemo_node_factory.py)
           replaces each user message with its Presidio-redacted text before any agent
-          or model sees it. It fails closed in enforcing postures when redaction raises,
-          but not when the Presidio engines failed to initialise: redaction then returns
-          the text unchanged and the message passes unredacted (POAM-2026-147). The
-          output rail node applies Presidio and scrub_pii to every agent answer and
-          returns the blocked sentinel on any error. The gateway''s inference proxy
-          applies scrub_pii to every model response.
+          or model sees it, failing closed in enforcing postures when redaction or
+          Presidio engine initialisation fails (PresidioUnavailableError in src/integrations/presidio/redactor.py;
+          POAM-2026-147 closed 2026-11-24). The output rail node applies Presidio
+          and scrub_pii to every agent answer and returns the blocked sentinel on
+          any error. The gateway''s inference proxy applies scrub_pii to every model
+          response.
 
           '
         remarks: 'Zero-tolerance control: lula-validation-a92.yaml requires a safety_rate

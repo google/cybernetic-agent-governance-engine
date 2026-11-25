@@ -1,7 +1,7 @@
 {
   "schema_version": 1,
   "detector_sha256": "2349a08be773941e71abf8281e45c5879ba79bdf9bc43a5813574d4c449c58b0",
-  "baseline": 231,
+  "baseline": 230,
   "standing_debt_policy": "Non-regression ratchet over standing standards-citation debt (POAM-2026-247). New violation identities fail immediately. Corrections are a follow-up, ordered: generated sources (config/oscal/framework_mappings, iso_control.py maps) first, then OSCAL/Lula/census, then prose and tests; each correction lowers the baseline with --update-baseline.",
   "counts": {
     "dora": {
@@ -20,7 +20,7 @@
     "iso-iec-42001-2023": {
       "EXACT_TITLE_MISMATCH": 7,
       "NONEXISTENT": 3,
-      "WRONG_TITLE": 61
+      "WRONG_TITLE": 60
     },
     "mas-feat": {
       "EXACT_TITLE_MISMATCH": 3
@@ -144,7 +144,6 @@
     "iso-iec-42001-2023|A.8.4|WRONG_TITLE|d22d6a544600bbac": 1,
     "iso-iec-42001-2023|A.8.4|WRONG_TITLE|d7fd8328221634e4": 1,
     "iso-iec-42001-2023|A.9.2|EXACT_TITLE_MISMATCH|f47876b4cf834b20": 1,
-    "iso-iec-42001-2023|A.9.2|WRONG_TITLE|06ee954e4e8bf691": 1,
     "iso-iec-42001-2023|A.9.2|WRONG_TITLE|0dac23490f1c4a20": 1,
     "iso-iec-42001-2023|A.9.2|WRONG_TITLE|37df431952a8d317": 1,
     "iso-iec-42001-2023|A.9.2|WRONG_TITLE|4b54feca5b779593": 1,
@@ -532,6 +531,59 @@
         }
       },
       "reason": "PR #876 (POAM-2026-245) cleared 3 baselined standards-citation violations (234 -> 231)"
+    },
+    {
+      "event": "update",
+      "date": "2026-11-24",
+      "detector_sha256": "2349a08be773941e71abf8281e45c5879ba79bdf9bc43a5813574d4c449c58b0",
+      "before_detector_sha256": "2349a08be773941e71abf8281e45c5879ba79bdf9bc43a5813574d4c449c58b0",
+      "before_baseline": 231,
+      "after_baseline": 230,
+      "counts": {
+        "dora": {
+          "EXACT_TITLE_MISMATCH": 1,
+          "NONEXISTENT": 4,
+          "WRONG_TITLE": 11
+        },
+        "eu-ai-act": {
+          "EXACT_TITLE_MISMATCH": 14,
+          "WRONG_TITLE": 3
+        },
+        "gdpr": {
+          "EXACT_TITLE_MISMATCH": 2,
+          "WRONG_TITLE": 3
+        },
+        "iso-iec-42001-2023": {
+          "EXACT_TITLE_MISMATCH": 7,
+          "NONEXISTENT": 3,
+          "WRONG_TITLE": 60
+        },
+        "mas-feat": {
+          "EXACT_TITLE_MISMATCH": 3
+        },
+        "mas-notice-655": {
+          "EXACT_TITLE_MISMATCH": 1,
+          "WRONG_TITLE": 1
+        },
+        "mas-trm": {
+          "EXACT_TITLE_MISMATCH": 2,
+          "WRONG_TITLE": 4
+        },
+        "nist-ai-600-1": {
+          "NONEXISTENT": 29,
+          "WRONG_TITLE": 62
+        },
+        "nist-ai-rmf-1.0": {
+          "WRONG_TITLE": 2
+        },
+        "nist-sp-800-53-r5": {
+          "EXACT_TITLE_MISMATCH": 2,
+          "ID_COLLISION": 7,
+          "NONEXISTENT": 1,
+          "WITHDRAWN": 8
+        }
+      },
+      "reason": "Close POAM-2026-147 and fix ISO 42001 A.9.2 title on docs/POAM.md:54 (231 -> 230)"
     }
   ]
 }
