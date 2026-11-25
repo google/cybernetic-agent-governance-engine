@@ -553,6 +553,19 @@ def _validate_resolved_path_anchors(
                 subtoken_sep="#",
                 anchor_stats=anchor_stats,
             )
+        # Default-mode bypass: a `path::symbol` citation passes on the path
+        # alone and the symbol is never looked up. Preconditions for removing
+        # it (the first step of the strict-mode flip):
+        # 1. Done: _pin_clause_tokens cuts path substrings out of each code
+        #    span and keeps the identifiers around them.
+        # 2. Not implemented: a generic token may corroborate a pinned line
+        #    citation but must never be its only match; the citation passes
+        #    only if at least one non-generic clause token is on the cited
+        #    lines. Generic tokens are command words and language built-ins
+        #    found on many lines, e.g. `cd`, `path`, `file`, `source`. Without
+        #    this, a citation whose real identifiers drift off the cited lines
+        #    keeps passing on a generic token, and a detectable drift becomes
+        #    a silent pass.
         return True, ""
 
     hash_match = HASH_SYMBOL_ANCHOR_PATTERN.search(stripped_target)
