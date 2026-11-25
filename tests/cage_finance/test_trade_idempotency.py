@@ -350,3 +350,92 @@ async def test_dry_run_claims_nothing(
     assert executed.status is CommitStatus.EXECUTED
     assert executed.message.startswith("EXECUTED: AAPL")
     assert actuate.await_count == 1
+
+
+def _infrastructure_error_after_dispatch(kind: str) -> Exception:
+    """An infrastructure failure of ``kind``, raised once the broker was called.
+
+    Nothing after dispatch raises one today: the settle step stands in for
+    the first step that does. Both types the ledger may free a key on are
+    covered.
+    """
+    if kind == "governance":
+        return GovernanceInfrastructureError(
+            "settlement store unreachable after dispatch",
+            dependency="settlement_store",
+            failure_code="SETTLEMENT_STORE_UNAVAILABLE",
+            error_code="settlement_store_unavailable",
+        )
+    from src.gateway.governance.evidence.stream import EvidenceChainUnavailableError
+
+    return EvidenceChainUnavailableError("evidence chain unreachable after dispatch")
+
+
+def _first_attempt_errors() -> tuple[type[BaseException], ...]:
+    """What the first attempt may raise; only the ledger's answer is asserted."""
+    from src.gateway.governance.evidence.stream import EvidenceChainUnavailableError
+    from src.gateway.governance.seams.actuation import ActuationIndeterminateError
+
+    return (
+        GovernanceInfrastructureError,
+        EvidenceChainUnavailableError,
+        ActuationIndeterminateError,
+    )
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("kind", ["governance", "evidence_chain"])
+async def test_infrastructure_error_after_accepted_dispatch_keeps_the_claim(
+    governor: MagicMock, kind: str
+) -> None:
+    """The broker accepted, so the key stays EXECUTED whatever fails afterwards.
+
+    The ledger frees a key on an infrastructure error only while nothing has
+    been dispatched (``release_unexecuted``). After dispatch it records what
+    the broker said, and a resubmission replays that reply instead of
+    trading again.
+    """
+    actuate = AsyncMock(return_value=_accepted())
+    settle = AsyncMock(side_effect=_infrastructure_error_after_dispatch(kind))
+    with _pipeline(actuate) as (governance, _):
+        with patch("src.cage_finance.tools.tool_provider._settle", settle):
+            with pytest.raises(_first_attempt_errors()):
+                await _trade(governor)
+        replay = await _trade(governor)  # same transaction_id, healthy settle
+
+    assert replay.status is CommitStatus.EXECUTED
+    assert actuate.await_count == 1
+    assert governance.await_count == 1
+    duplicate = await governor.components.execution_ledger.claim(
+        "execute_trade", SHARED_CALLER, _TXN
+    )
+    assert duplicate.status is ExecutionStatus.EXECUTED
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("kind", ["governance", "evidence_chain"])
+async def test_infrastructure_error_after_unknown_dispatch_keeps_the_claim(
+    governor: MagicMock, kind: str
+) -> None:
+    """The broker answered UNKNOWN, so the key stays UNKNOWN whatever fails afterwards.
+
+    A resubmission raises ``UnsettledDuplicate``, as for any first attempt
+    that may have executed, and an approval cannot re-claim the key either.
+    """
+    actuate = AsyncMock(return_value=_not_accepted(ActuationOutcome.UNKNOWN))
+    settle = AsyncMock(side_effect=_infrastructure_error_after_dispatch(kind))
+    with _pipeline(actuate) as (governance, _):
+        with patch("src.cage_finance.tools.tool_provider._settle", settle):
+            with pytest.raises(_first_attempt_errors()):
+                await _trade(governor)
+        with pytest.raises(UnsettledDuplicate, match="^UNKNOWN: "):
+            await _trade(governor)
+        with pytest.raises(UnsettledDuplicate, match="^UNKNOWN: "):
+            await _trade(governor, deferred_id="d-1")
+
+    assert actuate.await_count == 1
+    assert governance.await_count == 1
+    duplicate = await governor.components.execution_ledger.claim(
+        "execute_trade", SHARED_CALLER, _TXN
+    )
+    assert duplicate.status is ExecutionStatus.UNKNOWN
