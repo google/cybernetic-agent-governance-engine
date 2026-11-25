@@ -1590,6 +1590,120 @@ def test_pin_clause_tokens_keep_backticked_identifiers() -> None:
     assert g9._pin_clause_tokens(line, 0, len(line), "src/gone.py") == {"retired_flag"}
 
 
+# --- Pin clause spans: paths are cut out, the rest of the span still counts ---
+
+
+@pytest.mark.parametrize(
+    ("span", "expected"),
+    [
+        ('`RETIRED_FLAG = "10.0.0.0/20"`', {"retired_flag"}),
+        ("`./tools/run.sh --flag retired_flag`", {"flag", "retired_flag"}),
+        ("`src/retired/flag`", set()),
+        ("`infra/`", set()),
+        ("`/tmp/retired_flag`", set()),
+    ],
+    ids=["cidr-value", "command-with-path", "bare-path", "directory", "absolute-path"],
+)
+def test_pin_clause_tokens_cut_paths_out_of_spans(
+    span: str, expected: set[str]
+) -> None:
+    line = f"`abc1234^:src/gone.py:2` sets {span}"
+    assert g9._pin_clause_tokens(line, 0, len(line), "src/gone.py") == expected
+
+
+_SPAN_BLOBS = {
+    "infra/staging.tfvars": (
+        'memorystore_governance_psc_cidr = "10.128.0.0/20"\n'
+        'memorystore_app_psc_cidr        = "10.128.0.0/20"\n'
+    ),
+    "deploy_all.sh": (
+        "#!/usr/bin/env bash\n"
+        "# Targets\n"
+        "#   agnostic   Deploy to any existing Kubernetes cluster\n"
+    ),
+    "infra/gcp_gke_cluster/variables.tf": (
+        'variable "database_encryption_state" {\n  type = string\n}\n'
+    ),
+    "src/storage.py": (
+        "import tempfile\n\n\ndef storage_root() -> str:\n"
+        "    return tempfile.gettempdir()\n"
+    ),
+    "infra/main.tf": 'locals {\n  tf_state = "gcs"\n}\n',
+    "COMPLIANCE.md": "# Compliance\n\nRun scripts/check_stpa_freshness.py first.\n",
+    "src/seams/actuation.py": 'def settle_actuation() -> str:\n    return "actuation"\n',
+}
+
+
+@pytest.fixture
+def span_pins(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> tuple[Path, str]:
+    """Strict mode over blobs that exist only before the returned commit."""
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    _git(repo, "init", "-q")
+    for rel, text in _SPAN_BLOBS.items():
+        (repo / rel).parent.mkdir(parents=True, exist_ok=True)
+        (repo / rel).write_text(text, encoding="utf-8")
+    _git(repo, "add", "-A")
+    _git(repo, "commit", "-q", "-m", "add")
+    _git(repo, "rm", "-q", "-r", "infra", "src", "COMPLIANCE.md", "deploy_all.sh")
+    (repo / "kept.md").write_text("kept\n", encoding="utf-8")
+    _git(repo, "add", "-A")
+    _git(repo, "commit", "-q", "-m", "delete")
+    monkeypatch.setattr(g9, "REPO_ROOT", repo)
+    monkeypatch.setattr(g9, "STRICT_SYMBOL_ANCHORS", True)
+    g9._history_unavailable.cache_clear()
+    g9._extract_structural_symbols_cached.cache_clear()
+    return repo, _git(repo, "rev-parse", "HEAD")[:8]
+
+
+def _pinned_types(repo: Path, clause: str) -> list[str]:
+    return [
+        i.reference_type
+        for i in _audit(repo, clause)
+        if i.reference_type.startswith("Pinned")
+    ]
+
+
+@pytest.mark.parametrize(
+    "clause",
+    [
+        # A CIDR value inside an assignment: the key is still named.
+        "`{p}^:infra/staging.tfvars` (`lines 1-2`) set "
+        '`memorystore_app_psc_cidr = "10.128.0.0/20"`',
+        # A shell command that contains a path: its arguments are still named.
+        "`{p}^:deploy_all.sh` (`line 3`) documents "
+        "`./deploy_all.sh --target agnostic --env dev`",
+    ],
+    ids=["cidr-in-assignment", "command-with-path"],
+)
+def test_strict_pin_accepts_identifiers_beside_a_path_in_a_span(
+    span_pins: tuple[Path, str], clause: str
+) -> None:
+    repo, pin = span_pins
+    assert _pinned_types(repo, clause.format(p=pin)) == []
+
+
+@pytest.mark.parametrize(
+    "clause",
+    [
+        # Each clause names only a path, the pinned filename, or a token taken
+        # from one, while the cited line really contains that token.
+        "`{p}^:infra/gcp_gke_cluster/variables.tf` (`lines 1-3`) is a `variable`",
+        "`{p}^:src/storage.py` (`line 4`) moved `storage` off `/tmp`",
+        "`{p}^:infra/main.tf` (`lines 1-3`) sets `tf`",
+        "`{p}^:COMPLIANCE.md` (`line 3`) cites `scripts/check_stpa_freshness.py`",
+        "`{p}^:src/seams/actuation.py` (`line 1`) via "
+        "`python src/seams/actuation.py --check`",
+    ],
+    ids=["variable", "storage", "tf", "py", "actuation"],
+)
+def test_strict_pin_refuses_stray_path_and_filename_tokens(
+    span_pins: tuple[Path, str], clause: str
+) -> None:
+    repo, pin = span_pins
+    assert _pinned_types(repo, clause.format(p=pin)) == ["Pinned Line"]
+
+
 # --- Pin clause window: code spans are paired on the whole line -------------
 
 _LONG_SPAN = "a" * 200  # longer than PIN_GOVERNANCE_WINDOW

@@ -2424,6 +2424,11 @@ def _audit_unpinned_prose_line_numbers(
 
 
 _PIN_CLAUSE_BREAK_PATTERN = re.compile(r";|\. |\s—\s|\s\|\s")
+# A path inside a pin-clause code span: `a/b/c`, `./run.sh`, `/etc/x`, `infra/`,
+# `10.0.0.0/20`. Anything with a `/` between, before or after a name segment.
+_PIN_SPAN_PATH_PATTERN = re.compile(
+    r"(?:\.{1,2}/|/)[\w.-]+(?:/[\w.-]+)*/?|[\w.-]+(?:/[\w.-]+)+/?|[\w.-]+/"
+)
 _PIN_TOKEN_STOPWORDS = frozenset(
     {
         "line",
@@ -2460,6 +2465,11 @@ def _pin_clause_tokens(
     sliced clause instead would invert every pair whenever the window starts
     inside a span (odd backtick parity before the cut), turning prose words
     into identifiers and dropping the real ones.
+
+    A path is not identifier evidence, so paths are cut out of each span
+    before it is read; the rest of the span still is. Discarding every span
+    that contains ``/`` would also drop `x = "10.0.0.0/20"` and
+    `./deploy.sh --target t`, which do name identifiers.
     """
     tokens: set[str] = set()
     name = Path(pinned_path).name.lower()
@@ -2469,7 +2479,6 @@ def _pin_clause_tokens(
         snippet = cm.group(1).strip()
         if (
             PINNED_PATH_PATTERN.match(snippet)
-            or "/" in snippet
             or Path(snippet).suffix in CONCRETE_EXTENSIONS
             or re.match(
                 r"^(?:POAM-|#\d+|[0-9a-f]{7,40}\^?$|\d+$|lines?\s)",
@@ -2478,7 +2487,8 @@ def _pin_clause_tokens(
             )
         ):
             continue
-        for ident in re.findall(r"[A-Za-z_][A-Za-z0-9_-]{1,}", snippet):
+        remainder = _PIN_SPAN_PATH_PATTERN.sub(" ", snippet)
+        for ident in re.findall(r"[A-Za-z_][A-Za-z0-9_-]{1,}", remainder):
             low = ident.lower()
             if low not in _PIN_TOKEN_STOPWORDS and low not in name:
                 tokens.add(low)
