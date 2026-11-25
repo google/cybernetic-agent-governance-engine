@@ -40,6 +40,7 @@ from langgraph.graph import END
 
 import src.governed_financial_advisor.graph.governance.tool_guard as tool_guard_module
 from src.gateway.governance.commit_outcome import CommitOutcome, CommitStatus
+from src.gateway.infrastructure.mcp_client import MCPToolOutcomeUnknownError
 from src.governed_financial_advisor.graph.governance.tool_guard import (
     COMMIT_OUTCOMES,
     derive_transaction_id,
@@ -91,7 +92,11 @@ def gateway() -> Iterator[Callable[[Handler], list[httpx.Request]]]:
 
 
 class _SpyNode:
-    """Stand-in tool executor that records whether it ran."""
+    """Stand-in tool executor that records whether it ran.
+
+    It always reports EXECUTED; ``_ScriptedOutcomeNode`` reports the outcomes
+    that can follow a sent request without confirming it.
+    """
 
     def __init__(self) -> None:
         self.calls = 0
@@ -763,4 +768,216 @@ class TestLinkerdEmpty403FailsClosed:
         assert decision == "DENY"
 
 
-# Regression coverage binding: POAM-2026-080, POAM-2026-227, POAM-2026-228
+# ---------------------------------------------------------------------------
+# After the request was sent: outcomes that do not confirm execution
+# ---------------------------------------------------------------------------
+
+#: The guard's three ways of running a committing call (see ``_path_state``).
+_GUARD_PATHS = ("autonomous", "approved_redemption", "multi_step_approved")
+#: What may follow a sent request without confirming it: a ``CommitStatus``,
+#: ``"none"`` (no decodable outcome) or ``"missing"`` (no ``COMMIT_OUTCOMES``
+#: entry for the call).
+_UNCONFIRMED_MODES = ("none", "missing", "INDETERMINATE", "UNSETTLED_DUPLICATE")
+
+
+class _ScriptedOutcomeNode:
+    """Stand-in tool executor that ran the batch and reports a scripted outcome.
+
+    ``_SpyNode`` always reports EXECUTED, so it cannot drive the guard down a
+    path where the request went out and no outcome came back confirmed. This
+    one reports ``mode`` for the last trade call of the batch (earlier ones
+    report EXECUTED): a ``CommitStatus`` value, ``"none"`` (what
+    ``tool_executor_node`` records when it decoded no outcome) or
+    ``"missing"`` (no ``COMMIT_OUTCOMES`` entry for the call at all).
+    """
+
+    def __init__(self, mode: str) -> None:
+        self.mode = mode
+        self.calls = 0
+
+    async def __call__(self, state: dict[str, Any]) -> dict[str, Any]:
+        self.calls += 1
+        trades = [
+            c
+            for c in state["messages"][-1].tool_calls
+            if c.get("name") == "execute_trade_action"
+        ]
+        messages: list[ToolMessage] = []
+        outcomes: dict[str, CommitOutcome | None] = {}
+        for index, call in enumerate(trades):
+            mode = self.mode if index == len(trades) - 1 else "EXECUTED"
+            messages.append(
+                ToolMessage(
+                    content=f"executor reported {mode}",
+                    tool_call_id=call["id"],
+                    name=call["name"],
+                )
+            )
+            if mode == "missing":
+                continue
+            outcomes[str(call["id"])] = (
+                None
+                if mode == "none"
+                else CommitOutcome(CommitStatus(mode), f"executor reported {mode}")
+            )
+        return {"messages": messages, COMMIT_OUTCOMES: outcomes}
+
+
+def _path_state(path: str) -> tuple[dict[str, Any], str]:
+    """The guard's input on ``path``, and the id of the call whose outcome is tested.
+
+    * ``autonomous``: one call, routed ALLOW by validate-action.
+    * ``approved_redemption``: one call redeeming the approved ``d-1``.
+    * ``multi_step_approved``: step 1 routed ALLOW (it executes), step 2
+      redeeming the approved ``d-2``.
+    """
+    approval = {"approved": True, "reviewer": "r@x"}
+    if path == "autonomous":
+        return _state(_call("t1", symbol="MSFT")), "t1"
+    if path == "approved_redemption":
+        return {
+            **_state(_call("t1", symbol="MSFT")),
+            "deferred_id": "d-1",
+            "approval_decision": approval,
+        }, "t1"
+    assert path == "multi_step_approved", path
+    return {
+        **_state(_call("s1"), _call("s2", symbol="MSFT")),
+        "deferred_id": "d-2",
+        "deferred_step_ids": [None, "d-2"],
+        "approval_decision": approval,
+    }, "s2"
+
+
+def _assert_held_for_reconciliation(result: dict[str, Any], call_id: str) -> None:
+    """The batch ends and the model is told not to resubmit the trade."""
+    # DENIED, never UNAVAILABLE: that status says nothing was sent.
+    assert result["governance_status"] == "DENIED"
+    assert result["deferred_id"] is None
+    replies = [m.content for m in result["messages"] if m.tool_call_id == call_id]
+    assert len(replies) == 1, replies
+    assert "could not be confirmed" in replies[0]
+    assert "Do not submit it again until it has been reconciled" in replies[0]
+    for message in result["messages"]:
+        assert "Nothing was executed" not in message.content
+        assert "Submit a new request" not in message.content
+
+
+class TestGuardUnconfirmedOutcome:
+    """After a send, an unconfirmed outcome holds the trade for reconciliation.
+
+    POAM-2026-232: after a possible fill, telling the model that nothing was
+    executed, or to submit a new request, asks it to place an order that may
+    already be live.
+    """
+
+    @pytest.mark.parametrize("path", _GUARD_PATHS)
+    @pytest.mark.parametrize("mode", _UNCONFIRMED_MODES)
+    @pytest.mark.asyncio
+    async def test_unconfirmed_outcome_is_held_for_reconciliation(
+        self, gateway, mode: str, path: str
+    ) -> None:
+        gateway(lambda r: httpx.Response(200, json=_ALLOW))
+        state, call_id = _path_state(path)
+        node = _ScriptedOutcomeNode(mode)
+
+        result = await gateway_tool_guard("execute_trade", approvable=True)(node)(state)
+
+        assert node.calls == 1  # the batch ran: the request went out
+        _assert_held_for_reconciliation(result, call_id)
+
+    @pytest.mark.parametrize("path", _GUARD_PATHS)
+    @pytest.mark.asyncio
+    async def test_executed_outcome_is_allowed(self, gateway, path: str) -> None:
+        gateway(lambda r: httpx.Response(200, json=_ALLOW))
+        state, _ = _path_state(path)
+        node = _ScriptedOutcomeNode("EXECUTED")
+
+        result = await gateway_tool_guard("execute_trade", approvable=True)(node)(state)
+
+        assert node.calls == 1
+        assert result["governance_status"] == "ALLOWED"
+
+
+def _read_timeout() -> Exception:
+    return httpx.ReadTimeout(
+        "timed out reading the reply to a sent request",
+        request=httpx.Request("POST", "http://gateway.test/mcp/"),
+    )
+
+
+def _outcome_unknown() -> Exception:
+    """What ``GatewayMCPClient`` raises when a sent call's reply is lost."""
+    exc = MCPToolOutcomeUnknownError(
+        "execute_trade_action",
+        "MCP tool 'execute_trade_action' may have run: the request was sent "
+        "but no result came back",
+    )
+    exc.__cause__ = _read_timeout()
+    return exc
+
+
+class _LostReplyTradeTool:
+    """``execute_trade_action`` over MCP, whose reply for ``lost_symbol`` is lost."""
+
+    name = "execute_trade_action"
+
+    def __init__(self, error: Callable[[], Exception], lost_symbol: str) -> None:
+        self.error = error
+        self.lost_symbol = lost_symbol
+        self.sent: list[dict[str, Any]] = []
+
+    async def ainvoke_commit(self, args: dict[str, Any]) -> CommitOutcome:
+        self.sent.append(dict(args))
+        if args.get("symbol") == self.lost_symbol:
+            raise self.error()
+        return CommitOutcome(CommitStatus.EXECUTED, f"EXECUTED: {args.get('symbol')}")
+
+
+class _FakeMCPClient:
+    def __init__(self, *tools: Any) -> None:
+        self.tools = list(tools)
+
+    async def ensure_connected(self) -> None:
+        return None
+
+    async def get_tools(self) -> list[Any]:
+        return self.tools
+
+
+class TestRealExecutorUnconfirmedOutcome:
+    """The trader graph's own guarded executor, when a sent trade's reply is lost."""
+
+    @pytest.mark.parametrize(
+        "error",
+        [_read_timeout, _outcome_unknown],
+        ids=["read_timeout", "outcome_unknown"],
+    )
+    @pytest.mark.parametrize("path", _GUARD_PATHS)
+    @pytest.mark.asyncio
+    async def test_lost_reply_is_held_for_reconciliation(
+        self,
+        gateway,
+        monkeypatch: pytest.MonkeyPatch,
+        path: str,
+        error: Callable[[], Exception],
+    ) -> None:
+        from src.governed_financial_advisor.graph.subgraphs import (
+            governed_trader_graph as trader,
+        )
+
+        gateway(lambda r: httpx.Response(200, json=_ALLOW))
+        tool = _LostReplyTradeTool(error, lost_symbol="MSFT")
+        monkeypatch.setattr(trader, "get_mcp_client", lambda: _FakeMCPClient(tool))
+        state, call_id = _path_state(path)
+
+        result = await trader.guarded_tool_executor_node(state)
+
+        # tool_executor_node sent every call; the MSFT reply never came back.
+        assert [args["symbol"] for args in tool.sent] == [
+            c["args"]["symbol"] for c in state["messages"][-1].tool_calls
+        ]
+        _assert_held_for_reconciliation(result, call_id)
+
+
+# Regression coverage binding: POAM-2026-080, POAM-2026-227, POAM-2026-228, POAM-2026-232
