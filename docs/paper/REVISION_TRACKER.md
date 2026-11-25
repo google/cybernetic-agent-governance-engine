@@ -78,7 +78,7 @@ response to the reviewer is grounded in code rather than in the analysis:
 | ID | Finding | Phase | Status | Evidence |
 |---|---|---|---|---|
 | ST1 | Tier count inconsistent (7 vs 8) across abstract, Table 1, §4.2 | 4 | **FIXED** | Table 1 → 8-tier; §4.2 → eight tiers; §4.4 proof → 8 tiers |
-| ST2 | `ConfabulationScorer` never defined | 4 | **FIXED** | Table 1 Reasoning plane updated with definition (AI 600-1 §2.1 non-blocking scorer) |
+| ST2 | `ConfabulationScorer` never defined | 4 | **FIXED** | Table 1 Reasoning plane updated with definition (AI 600-1 §2.2 non-blocking scorer) |
 | ST3 | REDACT and TERMINATE primitives unmapped | 4 | **FIXED** | §3.1 mapping added: REDACT→`scrub_pii()`; TERMINATE→`TERMINATED_WITH_ROLLBACK` |
 | ST4 | VSM System 4 "adaptive self-healing loop" not implemented | 4 | **FIXED** | §2.2 System 4 corrected (static compiler + OSCAL exporter; adaptive loop = future work) |
 | ST5 | FTRA assumes plan-and-execute; dynamic routing unaddressed | 4 | **FIXED** | §4.2 FTRA description updated with plan-and-execute assumption + fail-closed caveat |
