@@ -1736,3 +1736,112 @@ def test_pin_clause_window_parity_does_not_flip_code_spans(
     assert [
         i.reference_type for i in issues if i.reference_type.startswith("Pinned")
     ] == []
+
+
+# --- Precondition #2: generic tokens corroborate but never solely match ----
+
+
+@pytest.fixture
+def generic_token_pins(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> tuple[Path, str]:
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    _git(repo, "init", "-q")
+    script = repo / "scripts/run_step.sh"
+    script.parent.mkdir(parents=True, exist_ok=True)
+    script.write_text(
+        "#!/usr/bin/env bash\n"  # 1
+        "cd /opt/work && source env.sh\n"  # 2
+        "export CAGE_SPECIAL_TOKEN=enabled\n"  # 3
+        "echo done\n",  # 4
+        encoding="utf-8",
+    )
+    _git(repo, "add", "-A")
+    _git(repo, "commit", "-q", "-m", "add")
+    _git(repo, "rm", "-q", "-r", "scripts")
+    (repo / "kept.md").write_text("kept\n", encoding="utf-8")
+    _git(repo, "add", "-A")
+    _git(repo, "commit", "-q", "-m", "delete")
+    monkeypatch.setattr(g9, "REPO_ROOT", repo)
+    monkeypatch.setattr(g9, "STRICT_SYMBOL_ANCHORS", True)
+    g9._history_unavailable.cache_clear()
+    g9._extract_structural_symbols_cached.cache_clear()
+    return repo, _git(repo, "rev-parse", "HEAD")[:8]
+
+
+@pytest.mark.parametrize(
+    "generic",
+    ["cd", "source", "export"],
+)
+def test_strict_pin_refuses_generic_only_clause_tokens(
+    generic_token_pins: tuple[Path, str], generic: str
+) -> None:
+    repo, pin = generic_token_pins
+    issues = _audit(repo, f"`{pin}^:scripts/run_step.sh:2-3` runs `{generic}`")
+    pinned = [i for i in issues if i.reference_type.startswith("Pinned")]
+    assert [i.reference_type for i in pinned] == ["Pinned Line"]
+    assert "only generic token" in pinned[0].reason
+
+
+def test_strict_pin_refuses_drift_when_only_generic_token_matches_cited_lines(
+    generic_token_pins: tuple[Path, str],
+) -> None:
+    # Line 1-2 has `cd` (line 2), while `CAGE_SPECIAL_TOKEN` is on line 3.
+    # Citing `:1` with both `cd` and `CAGE_SPECIAL_TOKEN` leaves only `cd` in
+    # the line 1 (+/- 1, so lines 1-2) window and must fail closed.
+    repo, pin = generic_token_pins
+    issues = _audit(
+        repo,
+        f"`{pin}^:scripts/run_step.sh:1` runs `cd` before `CAGE_SPECIAL_TOKEN`",
+    )
+    pinned = [i for i in issues if i.reference_type.startswith("Pinned")]
+    assert [i.reference_type for i in pinned] == ["Pinned Line"]
+    assert "matches only generic token" in pinned[0].reason
+
+
+def test_strict_pin_allows_generic_token_corroborated_by_specific_identifier(
+    generic_token_pins: tuple[Path, str],
+) -> None:
+    repo, pin = generic_token_pins
+    issues = _audit(
+        repo,
+        f"`{pin}^:scripts/run_step.sh:3` runs `cd` and sets `CAGE_SPECIAL_TOKEN`",
+    )
+    assert [
+        i.reference_type for i in issues if i.reference_type.startswith("Pinned")
+    ] == []
+
+
+# --- Default-mode double-colon symbol anchor enforcement -------------------
+
+
+def test_default_mode_resolves_double_colon_symbol_anchors(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(g9, "REPO_ROOT", tmp_path)
+    monkeypatch.setattr(g9, "STRICT_SYMBOL_ANCHORS", False)
+    g9._extract_structural_symbols_cached.cache_clear()
+
+    mod_dir = tmp_path / "src"
+    mod_dir.mkdir()
+    (mod_dir / "engine.py").write_text(
+        "def real_handler() -> None:\n    return None\n",
+        encoding="utf-8",
+    )
+    doc = mod_dir / "doc.md"
+    doc.write_text(
+        "Slashed valid: `src/engine.py::real_handler`\n"
+        "Slashed missing: `src/engine.py::ghost_handler`\n"
+        "Relative valid: `engine.py::real_handler`\n"
+        "Relative missing: `engine.py::ghost_handler`\n",
+        encoding="utf-8",
+    )
+    stats = g9.AnchorStats()
+    issues = audit_markdown_file(doc, anchor_stats=stats)
+    assert [(i.line_number, i.reference_type, i.target) for i in issues] == [
+        (2, "File Path", "src/engine.py::ghost_handler"),
+        (4, "File Path", "engine.py::ghost_handler"),
+    ]
+    assert all("not found" in i.reason for i in issues)
+    assert stats.tier1_structural == 2
