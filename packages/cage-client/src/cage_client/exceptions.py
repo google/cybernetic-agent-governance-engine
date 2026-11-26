@@ -116,3 +116,7 @@ class RoutingSealVerificationError(CageGatewayError):
 
 class CommitOutcomeDecodeError(RoutingSealVerificationError):
     """Raised when a committing-tool ``CommitOutcome`` fails decoding, signature, or binding verification."""
+
+
+class MissingDeferralTicketError(CageGatewayError):
+    """Raised when an approval park node is entered without a checkpointed deferral ticket in state."""

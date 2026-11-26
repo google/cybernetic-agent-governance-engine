@@ -307,12 +307,17 @@ async def test_safety_gate_extracts_trade_step_from_structured_execution_plan(
 async def test_allow_routing_verdict_reused_across_evaluator_safety_and_tool_guard(
     monkeypatch,
 ) -> None:
-    """A fresh ALLOW verdict from evaluator_node is reused by safety_check_node and gateway_tool_guard."""
-    from langchain_core.messages import AIMessage, ToolMessage
+    """A fresh ALLOW verdict from evaluator_node is reused by safety_check_node and governed_tool_node."""
+    import httpx
+    from langchain_core.messages import AIMessage
 
-    from src.governed_financial_advisor.graph.governance.tool_guard import (
-        gateway_tool_guard,
+    from src.governed_financial_advisor.graph.subgraphs.governed_trader_graph import (
+        guarded_tool_executor_node,
     )
+    from src.governed_financial_advisor.infrastructure.gateway_client import (
+        GatewayClient,
+    )
+    from tests.fixtures.signed_gateway import SignedGatewayStub
 
     _install_dry_run(monkeypatch, "ALLOW")
     structured_plan = _plan(_CONFIDENT_TRADE_STEP)
@@ -347,46 +352,57 @@ async def test_allow_routing_verdict_reused_across_evaluator_safety_and_tool_gua
     assert safety_out["consecutive_denials"] == 0
     assert validate_calls == 0
 
-    from src.governed_financial_advisor.graph.governance import tool_guard as guard_mod
-
-    monkeypatch.setattr(guard_mod, "GatewayClient", _FailingClient)
-
+    GatewayClient._instance = None
+    stub = SignedGatewayStub()
     executed = 0
 
-    async def _fake_executor(state: dict[str, Any]) -> dict[str, Any]:
-        nonlocal executed
+    def handler(request: httpx.Request) -> httpx.Response:
+        nonlocal executed, validate_calls
+        if request.url.path == "/governance/validate-action":
+            validate_calls += 1
+            raise AssertionError("validate-action should be skipped on fresh ALLOW hit")
         executed += 1
-        return {
-            "messages": [ToolMessage(content="EXECUTED", tool_call_id="c1")],
-            guard_mod.COMMIT_OUTCOMES: {
-                "c1": CommitOutcome(CommitStatus.EXECUTED, "EXECUTED")
+        return httpx.Response(
+            200,
+            json={
+                "status": "SUCCESS",
+                "output": "EXECUTED",
+                "outcome": {"status": "EXECUTED", "message": "EXECUTED"},
+            },
+        )
+
+    client = GatewayClient()
+    client._http = httpx.AsyncClient(
+        transport=httpx.MockTransport(stub.transport_handler(handler)),
+        base_url="http://gateway.test",
+    )
+    try:
+        tool_call = {
+            "name": "execute_trade_action",
+            "id": "c1",
+            "args": {
+                "symbol": "AAPL",
+                "amount": 500.0,
+                "currency": "USD",
+                "confidence": 0.99,
+                "side": "buy",
             },
         }
-
-    tool_call = {
-        "name": "execute_trade_action",
-        "id": "c1",
-        "args": {
-            "symbol": "AAPL",
-            "amount": 500.0,
-            "currency": "USD",
-            "confidence": 0.99,
-            "side": "buy",
-        },
-    }
-    guard_out = await gateway_tool_guard("execute_trade", approvable=True)(
-        _fake_executor
-    )(
-        {
-            "messages": [AIMessage(content="", tool_calls=[tool_call])],
-            "routing_verdict_cache": safety_out["routing_verdict_cache"],
-        }
-    )
-    assert executed == 1
-    assert validate_calls == 0
-    assert guard_out["governance_status"] == "ALLOWED"
-    assert guard_out["governance_envelope"]["verdict"] == "ALLOW"
-    assert guard_out["routing_verdict_cache"] is None
+        cmd = await guarded_tool_executor_node(
+            {
+                "messages": [AIMessage(content="", tool_calls=[tool_call])],
+                "routing_verdict_cache": safety_out["routing_verdict_cache"],
+            }
+        )
+        guard_out = dict(cmd.update or {})
+        assert executed == 1
+        assert validate_calls == 0
+        assert guard_out["governance_status"] == "ALLOWED"
+        assert guard_out["governance_envelope"]["verdict"] == "ALLOW"
+        assert guard_out["routing_verdict_cache"] is None
+    finally:
+        await client.close()
+        GatewayClient._instance = None
 
 
 @pytest.mark.asyncio

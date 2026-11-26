@@ -124,6 +124,7 @@ pytestmark = [
 _TOOL_PROVIDER = "src.cage_finance.tools.tool_provider"
 _HEALTHCARE_PROVIDER = "src.cage_healthcare.tools.tool_provider"
 _TOOL_GUARD = "src.governed_financial_advisor.graph.governance.tool_guard"
+_CAGE_LANGGRAPH = "cage_client.langgraph"
 _TOOL_SERVER = "src.gateway.server.mcp_tool_server"
 _EXECUTION_ACTUATOR = "src.gateway.governance.execution_actuator"
 _IDEMPOTENCY = "src.gateway.governance.execution_idempotency"
@@ -338,74 +339,104 @@ async def _finance_mcp_tool_on_post_dispatch_infra_error() -> object:
     return result.isError, (result.structuredContent or {}).get("status")
 
 
-# ------------------------------------------------- gateway_tool_guard (M3-M5, M9)
-
-_ALLOW_PREVIEW = (
-    {"verdict": "ALLOW", "violations": [], "latency_ms": 1.0},
-    None,
-    False,
-)
-_UNREACHABLE_PREVIEW = (None, "ConnectError: gateway unreachable", True)
+# ------------------------------------------------- governed_tool_node & advisor_tool_message (M3-M5, M9)
 
 
-class _ReportingNode:
-    """A tool executor that ran the batch and reports ``outcome`` for every call."""
+async def _guarded_via_sdk(
+    *,
+    outcome_status: str | None = "INDETERMINATE",
+    unreachable: bool = False,
+) -> tuple[str, tuple[str, ...], int]:
+    """Run one trade call through live ``cage_client.langgraph.governed_tool_node``."""
+    import httpx
+    from cage_client import CageClient
 
-    def __init__(self, outcome: CommitOutcome | None) -> None:
-        self.outcome = outcome
-        self.calls = 0
+    from tests.fixtures.signed_gateway import SignedGatewayStub
 
-    async def __call__(self, state: dict[str, Any]) -> dict[str, Any]:
-        self.calls += 1
-        calls = state["messages"][-1].tool_calls
-        return {
-            "messages": [
-                ToolMessage(content="tool ran", tool_call_id=c["id"], name=c["name"])
-                for c in calls
-            ],
-            COMMIT_OUTCOMES: {str(c["id"]): self.outcome for c in calls},
-        }
-
-
-async def _guarded(node: _ReportingNode, preview: tuple[Any, ...]) -> dict[str, Any]:
-    """Run one trade call through ``tool_guard.gateway_tool_guard`` as resolved now."""
+    langgraph_mod = importlib.import_module(_CAGE_LANGGRAPH)
     tool_guard = importlib.import_module(_TOOL_GUARD)
+    stub = SignedGatewayStub()
+    execute_calls = 0
+
+    def _handler(request: httpx.Request) -> httpx.Response:
+        nonlocal execute_calls
+        if unreachable and request.url.path == "/governance/validate-action":
+            raise httpx.ConnectError("gateway unreachable", request=request)
+        if request.url.path == "/governance/validate-action":
+            return httpx.Response(
+                200, json={"verdict": "ALLOW", "violations": [], "latency_ms": 1.0}
+            )
+        execute_calls += 1
+        if outcome_status is None:
+            return httpx.Response(200, json={"status": "ERROR", "error": "no outcome"})
+        return httpx.Response(
+            200,
+            json={
+                "status": "ERROR",
+                "actuation_outcome": "UNKNOWN",
+                "may_have_executed": True,
+                "outcome": {
+                    "status": outcome_status,
+                    "message": "broker reply lost after send",
+                },
+            },
+        )
+
     call = {
         "name": "execute_trade_action",
         "args": {"symbol": "AAPL", "amount": 100.0, "currency": "USD"},
         "id": "t1",
     }
     state = {"messages": [AIMessage(content="", tool_calls=[call])]}
-    with patch.object(
-        tool_guard, "_authorize_action_classified", AsyncMock(return_value=preview)
-    ):
-        guarded = tool_guard.gateway_tool_guard("execute_trade", approvable=True)
-        return await guarded(node)(state)
-
-
-async def _guard_reply(outcome: CommitOutcome | None) -> object:
-    out = await _guarded(_ReportingNode(outcome), _ALLOW_PREVIEW)
+    async with CageClient(
+        "http://gateway.test",
+        http_transport=httpx.MockTransport(stub.transport_handler(_handler)),
+    ) as client:
+        node = langgraph_mod.governed_tool_node(
+            client=client,
+            action="execute_trade",
+            mode="execute",
+            idempotency_param="transaction_id",
+            committing_tools={"execute_trade_action"},
+            principal_extractor=lambda _s: "advisor-sa",
+            message_formatter=lambda c, e, o: tool_guard.advisor_tool_message(c, e, o),
+            on_complete="executor",
+            on_approval_required="approval",
+            on_defer="__end__",
+            on_deny="__end__",
+            on_unavailable="__end__",
+            on_indeterminate="__end__",
+            approvable=True,
+        )
+        cmd = await node(state)
+    out = dict(cmd.update or {})
     replies = tuple(m.content for m in out["messages"] if m.tool_call_id == "t1")
-    return out["governance_status"], replies
+    return str(out["governance_status"]), replies, execute_calls
 
 
 async def _guard_after_indeterminate() -> object:
-    """DA-M3: the executor ran and reports an INDETERMINATE outcome."""
-    return await _guard_reply(
-        CommitOutcome(CommitStatus.INDETERMINATE, "broker reply lost after send")
-    )
+    """DA-M3: /tools/execute reports an INDETERMINATE outcome."""
+    status, replies, _ = await _guarded_via_sdk(outcome_status="INDETERMINATE")
+    return status, replies
 
 
 async def _guard_after_no_outcome() -> object:
-    """DA-M4, DA-M5: the executor ran and decoded no outcome (None)."""
-    return await _guard_reply(None)
+    """DA-M4, DA-M5: advisor_tool_message formats an indeterminate/missing CommitOutcome."""
+    tool_guard = importlib.import_module(_TOOL_GUARD)
+    call = {
+        "name": "execute_trade_action",
+        "args": {"symbol": "AAPL", "amount": 100.0, "currency": "USD"},
+        "id": "t1",
+    }
+    msg = tool_guard.advisor_tool_message(call, "terminal_outcome", None)
+    status, replies, _ = await _guarded_via_sdk(outcome_status=None)
+    return status, (msg,), replies
 
 
 async def _guard_on_unreachable_gateway() -> object:
-    """DA-M9: validate-action is unreachable, so the executor never runs."""
-    node = _ReportingNode(None)
-    out = await _guarded(node, _UNREACHABLE_PREVIEW)
-    return out["governance_status"], node.calls
+    """DA-M9: validate-action is unreachable, so /tools/execute never runs."""
+    status, _replies, calls = await _guarded_via_sdk(unreachable=True)
+    return status, calls
 
 
 # -------------------------------------------- /tools/execute (M6, M7, M8, M10)
@@ -682,60 +713,49 @@ MUTANTS: list[tuple[str, str, str, tuple[Edit, ...], Scenario]] = [
         _cancel_mid_dispatch,
     ),
     (
-        "DA-M3 unsafe: guard reports a None/INDETERMINATE outcome as UNAVAILABLE",
-        _TOOL_GUARD,
-        "_refused_batch",
+        "DA-M3 unsafe: governed_tool_node reports an INDETERMINATE outcome as UNAVAILABLE",
+        _CAGE_LANGGRAPH,
+        "governed_tool_node",
         (
             (
-                '        "governance_status": GOVERNANCE_DENIED,\n'
-                "        **_cleared_guard_hitl_state(),\n"
-                '        "redemption_refusal": refusal.value'
-                " if refusal is not None else None,\n",
-                '        "governance_status": (\n'
-                "            GOVERNANCE_UNAVAILABLE\n"
-                "            if all(o is None or o.status in INDETERMINATE_STATUSES"
-                " for o in unfinished.values())\n"
-                "            else GOVERNANCE_DENIED\n"
-                "        ),\n"
-                "        **_cleared_guard_hitl_state(),\n"
-                '        "redemption_refusal": refusal.value'
-                " if refusal is not None else None,\n",
+                "                halt_status = CommitStatus.INDETERMINATE.value\n",
+                "                halt_status = GovernanceDecision.UNAVAILABLE.value\n",
             ),
         ),
         _guard_after_indeterminate,
     ),
     (
-        "DA-M4 unsafe: guard drops None from its may-have-executed branch (crash)",
+        "DA-M4 unsafe: advisor_tool_message drops None from its may-have-executed branch (crash)",
         _TOOL_GUARD,
-        "_terminal_message",
+        "advisor_tool_message",
         (
             (
-                "    if outcome is None or outcome.status in INDETERMINATE_STATUSES:\n",
-                "    if outcome is not None and outcome.status"
+                "        if outcome is None or outcome.status in INDETERMINATE_STATUSES:\n",
+                "        if outcome is not None and outcome.status"
                 " in INDETERMINATE_STATUSES:\n",
             ),
         ),
         _guard_after_no_outcome,
     ),
     (
-        "DA-M5 unsafe: guard tells a None outcome to submit a new request",
+        "DA-M5 unsafe: advisor_tool_message tells a None outcome to submit a new request",
         _TOOL_GUARD,
-        "_terminal_message",
+        "advisor_tool_message",
         (
             (
-                "    if outcome is None or outcome.status in INDETERMINATE_STATUSES:\n",
-                "    if outcome is not None and outcome.status"
+                "        if outcome is None or outcome.status in INDETERMINATE_STATUSES:\n",
+                "        if outcome is not None and outcome.status"
                 " in INDETERMINATE_STATUSES:\n",
             ),
             (
-                "    if outcome.status is CommitStatus.DEFERRED:\n"
-                '        reason = "the gateway deferred it and holds no approval for it"\n',
-                "    if outcome is not None and outcome.status is CommitStatus.DEFERRED:\n"
-                '        reason = "the gateway deferred it and holds no approval for it"\n',
+                "        if outcome.status is CommitStatus.DEFERRED:\n"
+                '            reason = "the gateway deferred it and holds no approval for it"\n',
+                "        if outcome is not None and outcome.status is CommitStatus.DEFERRED:\n"
+                '            reason = "the gateway deferred it and holds no approval for it"\n',
             ),
             (
-                "    elif outcome.redemption_refusal is not None:\n",
-                "    elif outcome is not None and outcome.redemption_refusal is not None:\n",
+                "        elif outcome.redemption_refusal is not None:\n",
+                "        elif outcome is not None and outcome.redemption_refusal is not None:\n",
             ),
         ),
         _guard_after_no_outcome,
@@ -789,15 +809,15 @@ MUTANTS: list[tuple[str, str, str, tuple[Edit, ...], Scenario]] = [
         _endpoint_on_infrastructure_error,
     ),
     (
-        "DA-M9 safe: guard reports a gateway outage before dispatch as DENIED",
-        _TOOL_GUARD,
-        "gateway_tool_guard",
+        "DA-M9 safe: governed_tool_node reports a gateway outage before dispatch as DENIED",
+        _CAGE_LANGGRAPH,
+        "governed_tool_node",
         (
             (
-                "                        GOVERNANCE_UNAVAILABLE\n"
-                "                        if only_unavailable\n",
-                "                        GOVERNANCE_DENIED\n"
-                "                        if only_unavailable\n",
+                "                    target = on_unavailable or on_deny\n"
+                "                    status = GovernanceDecision.UNAVAILABLE.value\n",
+                "                    target = on_unavailable or on_deny\n"
+                "                    status = GovernanceDecision.DENIED.value\n",
             ),
         ),
         _guard_on_unreachable_gateway,

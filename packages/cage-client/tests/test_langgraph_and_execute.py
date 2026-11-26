@@ -56,6 +56,7 @@ from cage_client import (  # noqa: E402
     GatewayUnavailableError,
     GovernanceDecision,
     IndeterminateProvenance,
+    MissingDeferralTicketError,
     RoutingSealVerificationError,
     compute_expected_action_hash,
     derive_idempotency_key,
@@ -806,9 +807,8 @@ def test_langgraph_nodes_fail_closed_without_fabricating_defaults() -> None:
             assert cmd_batch.update["messages"][0].tool_call_id == "tc-1"
 
             park = approval_park_node(approved_target="exec", rejected_target="reject")
-            cmd_park = park({})
-            assert cmd_park.goto == "reject"
-            assert cmd_park.update["governance_status"] == "DENIED"
+            with pytest.raises(MissingDeferralTicketError):
+                park({})
 
     asyncio.run(_run())
     assert http_calls == 0
@@ -1198,7 +1198,7 @@ def test_real_checkpointer_defer_interrupt_resume_redeem_and_second_replay_refus
             assert "__interrupt__" in r2
             assert r2["deferred_id"] == "def-e2e-1"
             assert r2["approval_decision"] is None
-            assert r2["redemption_refusal"] == "pending"
+            assert r2["redemption_refusal"] == "PENDING"
             assert exec_calls[0]["deferred_id"] == "def-e2e-1"
 
             # 3. Approved resume -> redeems def-e2e-1 once and completes.
@@ -1241,7 +1241,149 @@ def test_real_checkpointer_defer_interrupt_resume_redeem_and_second_replay_refus
                 config=replay_cfg,
             )
             assert r4["governance_status"] == "DENIED"
-            assert r4["redemption_refusal"] == "consumed"
+            assert r4["redemption_refusal"] == "CONSUMED"
             assert "already been used" in str(r4["messages"][-1].content)
+
+    asyncio.run(_run())
+
+
+def test_governed_tool_node_preview_mode_and_idempotency_param() -> None:
+    priv, jwk = _make_ed25519_keypair()
+    seen_paths: list[str] = []
+    executed_params: list[dict[str, Any]] = []
+
+    def handler(req: httpx.Request) -> httpx.Response:
+        if req.url.path == "/governance/.well-known/jwks.json":
+            return httpx.Response(200, json={"keys": [jwk]})
+        import json as _json
+
+        seen_paths.append(req.url.path)
+        data = _json.loads(req.content)
+        if req.url.path == "/governance/validate-action":
+            if data["parameters"].get("symbol") == "CLAMP":
+                return httpx.Response(
+                    200,
+                    json=_signed_preview_envelope(
+                        action=data["action"],
+                        parameters=data["parameters"],
+                        payload={
+                            "verdict": "NARROW",
+                            "narrowed_params": {"amount": 25.0},
+                            "violations": [],
+                        },
+                        priv=priv,
+                        kid=jwk["kid"],
+                        correlation_id=data.get("correlation_id"),
+                    ),
+                )
+            return httpx.Response(
+                200,
+                json=_signed_preview_envelope(
+                    action=data["action"],
+                    parameters=data["parameters"],
+                    payload={"verdict": "ALLOW"},
+                    priv=priv,
+                    kid=jwk["kid"],
+                    correlation_id=data.get("correlation_id"),
+                ),
+            )
+        p = data["params"]
+        executed_params.append(dict(p))
+        return httpx.Response(
+            200,
+            json={
+                "status": "SUCCESS",
+                "output": "FILLED",
+                "outcome": _signed_outcome(
+                    status=CommitStatus.EXECUTED,
+                    message="FILLED",
+                    tool_name=data["tool_name"],
+                    idempotency_key=p["transaction_id"],
+                    priv=priv,
+                    kid=jwk["kid"],
+                ),
+            },
+        )
+
+    async def _run() -> None:
+        async with CageClient(
+            "https://gateway.example.test",
+            http_transport=httpx.MockTransport(handler),
+        ) as client:
+            with pytest.raises(ValueError, match="committing_tools"):
+                governed_tool_node(
+                    client=client,
+                    action="market_analysis",
+                    mode="preview",
+                    committing_tools={"execute_trade_action"},
+                    principal_extractor=lambda s: s["principal"],
+                    on_complete="mcp_execute",
+                    on_deny="reporter",
+                )
+
+            preview_node = governed_tool_node(
+                client=lambda: client,
+                action="market_analysis",
+                mode="preview",
+                committing_tools=frozenset(),
+                principal_extractor=lambda s: s["principal"],
+                on_complete="mcp_execute",
+                on_deny="reporter",
+            )
+            narrow_call = {
+                "id": "ro-1",
+                "name": "get_market_data",
+                "args": {"symbol": "CLAMP", "amount": 100.0, "deferred_id": "forged"},
+            }
+            cmd_ro = await preview_node(
+                {
+                    "messages": [
+                        AIMessage(id="ai-ro", content="", tool_calls=[narrow_call])
+                    ],
+                    "principal": "alice",
+                }
+            )
+            assert cmd_ro.goto == "mcp_execute"
+            assert cmd_ro.update["governance_status"] == "ALLOWED"
+            assert cmd_ro.update["governance_envelope"]["verdict"] == "NARROW"
+            assert seen_paths == ["/governance/validate-action"]
+            # Sanitized & narrowed tool call passed forward without executing /tools/execute
+            forwarded = cmd_ro.update["messages"][0].tool_calls[0]["args"]
+            assert forwarded["amount"] == 25.0
+            assert "deferred_id" not in forwarded
+
+            exec_node = governed_tool_node(
+                client=client,
+                action="execute_trade",
+                mode="execute",
+                idempotency_param="transaction_id",
+                committing_tools={"execute_trade_action"},
+                principal_extractor=lambda s: s["principal"],
+                on_complete="agent",
+                on_deny="deny",
+            )
+            cmd_ex = await exec_node(
+                {
+                    "messages": [
+                        AIMessage(
+                            id="ai-ex",
+                            content="",
+                            tool_calls=[
+                                {
+                                    "id": "tr-1",
+                                    "name": "execute_trade_action",
+                                    "args": {"symbol": "AAPL", "amount": 50.0},
+                                }
+                            ],
+                        )
+                    ],
+                    "principal": "alice",
+                }
+            )
+            assert cmd_ex.goto == "agent"
+            assert cmd_ex.update["governance_status"] == "ALLOWED"
+            assert len(executed_params) == 1
+            assert "transaction_id" in executed_params[0]
+            assert "idempotency_key" not in executed_params[0]
 
     asyncio.run(_run())

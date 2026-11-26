@@ -21,7 +21,7 @@ a fast LLM to MCP ToolNodes for trade execution.
 The gateway decides whether a trade needs a human; the advisor applies no
 approval thresholds of its own. Flow:
 
-    START → executor → tools (gateway_tool_guard)
+    START → executor → tools (governed_tool_node)
         ALLOW / NARROW    → execute_trade_action runs (the gateway's single
                             committing run) → executor
         REQUIRE_APPROVAL  → approval (interrupt, carries ``deferred_id``)
@@ -46,10 +46,10 @@ import os
 from datetime import datetime, timezone
 from typing import Annotated, Any, TypedDict
 
+from cage_client.langgraph import governed_tool_node
 from langchain_core.messages import (
     BaseMessage,
     SystemMessage,
-    ToolMessage,
 )
 from langgraph.graph import END, START, StateGraph
 
@@ -64,10 +64,14 @@ from src.gateway.observability.attributes import (
 )
 from src.governed_financial_advisor.graph.annotations import side_effect_node
 from src.governed_financial_advisor.graph.governance.tool_guard import (
-    COMMIT_OUTCOMES,
-    GOVERNANCE_ALLOWED,
-    GOVERNANCE_REQUIRE_APPROVAL,
-    gateway_tool_guard,
+    ADVISOR_EXTRA_CLEAR_KEYS,
+    ADVISOR_TERMINAL_CLEAR_KEYS,
+    advisor_principal_extractor,
+    advisor_tool_message,
+    canonical_trade_intent,
+    extract_trader_plan_steps,
+    lookup_cached_trade_preview,
+    preview_trade_with_drift_revalidation,
 )
 from src.governed_financial_advisor.graph.nodes.approval_node import (
     approval_node,
@@ -84,7 +88,11 @@ from src.governed_financial_advisor.graph.nodes.toctou_quote import (
     resolve_check_time_reference_quote,
     resolve_decision_slippage_pct,
 )
-from src.governed_financial_advisor.graph.nodes.trade_contract import TRADE_TOOL
+from src.governed_financial_advisor.graph.nodes.trade_contract import (
+    TRADE_ACTION,
+    TRADE_TOOL,
+)
+from src.governed_financial_advisor.infrastructure.gateway_client import GatewayClient
 from src.governed_financial_advisor.infrastructure.llm.models import chat_model
 
 logger = logging.getLogger(__name__)
@@ -159,101 +167,16 @@ def get_executor_instruction() -> str:
 
 
 # ---------------------------------------------------------------------------
-# Executor nodes (CAGE governance enforced)
+# Executor node (CAGE governance enforced downstream by governed_tool_node)
 # ---------------------------------------------------------------------------
-
-
-@side_effect_node(kind="api_call", external_system="gateway_mcp")
-async def tool_executor_node(state: GovernedTraderState) -> dict[str, Any]:
-    """Execute trade tools after CAGE governance validation.
-
-    CRITICAL SECURITY GATE: This node invokes execute_trade_action via MCP, which
-    triggers real financial transactions. ``gateway_tool_guard`` (applied in the
-    graph builder below) submits every pending tool call to the gateway's
-    ``POST /governance/validate-action`` (full 8-tier pipeline: FTRA, STPA,
-    Confidence, CBF, OPA, Fiscal, Consensus, Causal — plus the ``fria`` tier
-    under ``CAGE_DEPLOYMENT_REGION=EU_ECB``) before ANY tool executes.
-
-    Governance Contract:
-        - Every tool call must be routed ALLOW or NARROW, or carry the
-          ``deferred_id`` of a human-approved REQUIRE_APPROVAL
-        - Refusals, DEFER verdicts, HTTP errors, timeouts and an
-          unreachable gateway all refuse the batch: this node does not run,
-          ``governance_status`` becomes "DENIED" and the subgraph ends
-        - The gateway commits and seals inside ``execute_trade_action``; the
-          advisor never holds a seal
-
-    TOCTOU Closure: after approval, ``execute_trade_action(deferred_id=...)``
-    re-validates the fresh params in the gateway (POST_HITL profile) at
-    actuation time, not check time.
-
-    The committing tool is invoked for its typed ``CommitOutcome``
-    (``ainvoke_commit``), returned under ``COMMIT_OUTCOMES`` keyed by tool
-    call id for ``gateway_tool_guard`` to route on (``None`` when no outcome
-    could be obtained). The ``ToolMessage`` carries only the outcome's prose.
-    """
-    mcp_client = get_mcp_client()
-    await mcp_client.ensure_connected()
-    mcp_tools = await mcp_client.get_tools()
-    tools_by_name = {t.name: t for t in mcp_tools}
-
-    last_message = state["messages"][-1]
-    tool_outputs = []
-    commit_outcomes: dict[str, Any] = {}
-
-    if hasattr(last_message, "tool_calls"):
-        for tool_call in last_message.tool_calls:
-            tool_name = tool_call["name"]
-            tool_args = tool_call["args"]
-            tool_id = tool_call["id"]
-            committing = tool_name == TRADE_TOOL
-            if committing:
-                # No outcome until one is decoded: an error leaves None.
-                commit_outcomes[str(tool_id)] = None
-
-            if tool_name in tools_by_name:
-                try:
-                    if committing:
-                        outcome = await tools_by_name[tool_name].ainvoke_commit(
-                            tool_args
-                        )
-                        commit_outcomes[str(tool_id)] = outcome
-                        result = outcome.message
-                    else:
-                        result = await tools_by_name[tool_name].ainvoke(tool_args)
-                    tool_outputs.append(
-                        ToolMessage(
-                            tool_call_id=tool_id,
-                            name=tool_name,
-                            content=str(result),
-                        )
-                    )
-                except Exception as e:
-                    tool_outputs.append(
-                        ToolMessage(
-                            tool_call_id=tool_id,
-                            name=tool_name,
-                            content=f"Error executing tool {tool_name}: {e}",
-                        )
-                    )
-            else:
-                tool_outputs.append(
-                    ToolMessage(
-                        tool_call_id=tool_id,
-                        name=tool_name,
-                        content=f"Error: Tool {tool_name} not found.",
-                    )
-                )
-
-    return {"messages": tool_outputs, COMMIT_OUTCOMES: commit_outcomes}
 
 
 async def executor_node(state: GovernedTraderState) -> dict[str, Any]:
     """Generate execute_trade_action tool calls from the approved plan.
 
-    The downstream ``gateway_tool_guard`` validates every emitted tool call with
-    the gateway before ``tool_executor_node`` may run it.
-    """
+    The downstream ``governed_tool_node`` previews every emitted tool call with
+    the gateway (``POST /governance/validate-action``) and executes approved calls
+    over ``POST /tools/execute``."""
     tracer = get_tracer()
 
     with tracer.start_as_current_span("GovernedTrader: Executor") as span:
@@ -347,24 +270,6 @@ def should_continue(state: GovernedTraderState) -> str:
 
     if getattr(last_message, "tool_calls", None):
         return "tools"
-    return END
-
-
-def route_after_tools(state: GovernedTraderState) -> str:
-    """Route on the ``gateway_tool_guard`` outcome.
-
-    ``ALLOWED`` loops to the executor; ``REQUIRE_APPROVAL`` (with a gateway
-    ``deferred_id``) pauses at the approval node, including a re-pause on the
-    same ticket after an approved resume the gateway could not redeem yet;
-    anything else ends the subgraph, so a refused trade cannot be re-proposed
-    in the same run.
-    """
-    status = state.get("governance_status")
-    if status == GOVERNANCE_ALLOWED:
-        return "executor"
-    if status == GOVERNANCE_REQUIRE_APPROVAL and state.get("deferred_id"):
-        return "approval"
-    logger.warning("[GovernedTrader] Gateway refused the tool batch — ending subgraph.")
     return END
 
 
@@ -862,15 +767,36 @@ def route_post_revalidation(state: GovernedTraderState) -> str:
 # Build Graph
 # ---------------------------------------------------------------------------
 
-# Every tool call is routed by the gateway (POST /governance/validate-action)
-# before execution; REQUIRE_APPROVAL pauses for a human, and any other
-# non-executable outcome refuses the batch (fail closed).
-guarded_tool_executor_node = gateway_tool_guard("execute_trade", approvable=True)(
-    tool_executor_node
+# Every tool call is previewed by the gateway (POST /governance/validate-action)
+# and executed via POST /tools/execute using the canonical ``transaction_id``
+# idempotency parameter; REQUIRE_APPROVAL routes to ``approval``, while refusals
+# and INDETERMINATE halt directly to END.
+guarded_tool_executor_node = governed_tool_node(
+    client=lambda: GatewayClient().sdk_client(),
+    action=TRADE_ACTION,
+    mode="execute",
+    idempotency_param="transaction_id",
+    committing_tools=frozenset({TRADE_TOOL}),
+    principal_extractor=advisor_principal_extractor,
+    plan_extractor=lambda s: s.get("execution_plan"),
+    step_extractor=extract_trader_plan_steps,
+    step_canonical_extractor=canonical_trade_intent,
+    preview_cache_lookup=lookup_cached_trade_preview,
+    preview_fn=preview_trade_with_drift_revalidation,
+    message_formatter=advisor_tool_message,
+    on_complete="executor",
+    on_approval_required="approval",
+    on_defer=END,
+    on_deny=END,
+    on_unavailable=END,
+    on_indeterminate=END,
+    approvable=True,
+    extra_clear_keys=ADVISOR_EXTRA_CLEAR_KEYS,
+    terminal_clear_keys=ADVISOR_TERMINAL_CLEAR_KEYS,
 )
 
 
-def build_governed_trader_graph() -> Any:
+def build_governed_trader_graph(*, checkpointer: Any | None = None) -> Any:
     """Compile the governed-trader subgraph.
 
     Every governance decision is a network call to the gateway; the advisor
@@ -892,7 +818,7 @@ def build_governed_trader_graph() -> Any:
         "drift_blocked", drift_blocked_node
     )  # TOCTOU: fail-closed terminal
     builder.add_node("executor", executor_node)
-    builder.add_node("tools", guarded_tool_executor_node)  # CAGE governance enforced
+    builder.add_node("tools", guarded_tool_executor_node)  # CAGE SDK execute node
 
     # Entry: if resumed from parent-graph HITL approval with deferred_id +
     # approval_decision, run the post-HITL TOCTOU slippage gate before executor.
@@ -915,18 +841,13 @@ def build_governed_trader_graph() -> Any:
     )
     builder.add_edge("drift_blocked", END)
 
-    # Executor tool-call loop; REQUIRE_APPROVAL pauses for a human and a
-    # gateway refusal terminates the subgraph.
+    # Executor tool-call loop; tools returns Command(goto="executor" | "approval" | END)
+    # directly so LangGraph resolves navigation without static edges on tools.
     builder.add_conditional_edges(
         "executor", should_continue, {"tools": "tools", END: END}
-    )
-    builder.add_conditional_edges(
-        "tools",
-        route_after_tools,
-        {"executor": "executor", "approval": "approval", END: END},
     )
 
     # Rejection terminates the subgraph
     builder.add_edge("rejection", END)
 
-    return builder.compile()
+    return builder.compile(checkpointer=checkpointer)

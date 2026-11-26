@@ -42,10 +42,6 @@ from langgraph.types import Command
 
 from src.gateway.governance.commit_outcome import CommitOutcome, CommitStatus
 from src.governed_financial_advisor.graph.checkpointer import CheckpointDurabilityError
-from src.governed_financial_advisor.graph.governance.tool_guard import (
-    COMMIT_OUTCOMES,
-    gateway_tool_guard,
-)
 from src.governed_financial_advisor.graph.nodes.agent_nodes import governed_trader_node
 from src.governed_financial_advisor.graph.nodes.approval_node import (
     create_approval_node,
@@ -56,6 +52,7 @@ from src.governed_financial_advisor.graph.state import AgentState
 from src.governed_financial_advisor.graph.subgraphs.governed_trader_graph import (
     build_governed_trader_graph,
     drift_blocked_node,
+    guarded_tool_executor_node,
     post_hitl_rehydrate_node,
     post_hitl_revalidate_node,
 )
@@ -803,22 +800,39 @@ class TestDomadv05MultiStepHitlExecution:
         assert reval_bad["post_hitl_safety_status"] == "BLOCKED"
         assert rehyd_bad["rehydration_result"]["ticker"] == "NVDA"
 
-        # When both legs stay within 2% slippage, subgraph executes and binds each call's deferred_id!
+        # When both legs stay within 2% slippage, subgraph executes via /tools/execute and binds each call's deferred_id!
         async def within_bounds_quotes(sym: str, **_kw: Any) -> float:
             return 201.0 if sym == "AAPL" else 101.0
 
         executed_tool_args: list[dict[str, Any]] = []
 
-        async def fake_ainvoke_commit(args: dict[str, Any]) -> CommitOutcome:
-            executed_tool_args.append(dict(args))
-            return CommitOutcome(
-                CommitStatus.EXECUTED,
-                json.dumps({"status": "FILLED", "symbol": args["symbol"]}),
+        def execute_handler(req: httpx.Request) -> httpx.Response:
+            body = json.loads(req.content)
+            if req.url.path == "/tools/execute":
+                params = dict(body["params"])
+                executed_tool_args.append(params)
+                return httpx.Response(
+                    200,
+                    json={
+                        "status": "SUCCESS",
+                        "output": json.dumps(
+                            {"status": "FILLED", "symbol": params["symbol"]}
+                        ),
+                        "outcome": {
+                            "status": "EXECUTED",
+                            "message": json.dumps(
+                                {"status": "FILLED", "symbol": params["symbol"]}
+                            ),
+                        },
+                    },
+                )
+            return httpx.Response(
+                200, json={"verdict": "ALLOW", "violations": [], "latency_ms": 1.0}
             )
 
+        gateway(execute_handler)
         fake_tool = MagicMock()
         fake_tool.name = "execute_trade_action"
-        fake_tool.ainvoke_commit = AsyncMock(side_effect=fake_ainvoke_commit)
         fake_mcp = MagicMock()
         fake_mcp.ensure_connected = AsyncMock()
         fake_mcp.get_tools = AsyncMock(return_value=[fake_tool])
@@ -898,23 +912,8 @@ class TestDomadv05MultiStepHitlExecution:
     async def test_multistep_tool_guard_revalidates_none_steps_and_fails_closed_on_mismatch(
         self, gateway
     ) -> None:
-        """gateway_tool_guard re-validates None entries in deferred_step_ids and refuses count/tamper mismatches."""
-        executed_states: list[dict[str, Any]] = []
-
-        async def spy_node(st: dict[str, Any]) -> dict[str, Any]:
-            executed_states.append(st)
-            return {
-                "messages": [
-                    ToolMessage(content="ok-1", tool_call_id="c1"),
-                    ToolMessage(content="ok-2", tool_call_id="c2"),
-                ],
-                COMMIT_OUTCOMES: {
-                    cid: CommitOutcome(CommitStatus.EXECUTED, "ok")
-                    for cid in ("c1", "c2")
-                },
-            }
-
-        guarded = gateway_tool_guard("execute_trade", approvable=True)(spy_node)
+        """governed_tool_node re-validates None entries in deferred_step_ids and refuses count/tamper mismatches."""
+        executed_params: list[dict[str, Any]] = []
 
         def make_calls(*symbols: str) -> list[dict[str, Any]]:
             return [
@@ -931,13 +930,25 @@ class TestDomadv05MultiStepHitlExecution:
                 for idx, sym in enumerate(symbols)
             ]
 
-        # 1. Mixed [None, "def-2"] where c1 re-validates ALLOW -> c1 gets no deferred_id, c2 gets "def-2"
-        seen = gateway(
-            lambda _r: httpx.Response(
+        def _ok_handler(request: httpx.Request) -> httpx.Response:
+            body = json.loads(request.content)
+            if request.url.path == "/tools/execute":
+                executed_params.append(dict(body["params"]))
+                return httpx.Response(
+                    200,
+                    json={
+                        "status": "SUCCESS",
+                        "output": "ok",
+                        "outcome": {"status": "EXECUTED", "message": "ok"},
+                    },
+                )
+            return httpx.Response(
                 200, json={"verdict": "ALLOW", "violations": [], "latency_ms": 1.0}
             )
-        )
-        ok_res = await guarded(
+
+        # 1. Mixed [None, "def-2"] where c1 re-validates ALLOW -> c1 gets no deferred_id, c2 gets "def-2"
+        seen = gateway(_ok_handler)
+        cmd_ok = await guarded_tool_executor_node(
             {
                 "messages": [
                     AIMessage(content="", tool_calls=make_calls("MSFT", "NVDA"))
@@ -947,14 +958,16 @@ class TestDomadv05MultiStepHitlExecution:
                 "approval_decision": {"approved": True, "reviewer": "r@x.com"},
             }
         )
-        assert len(seen) == 1  # Only the None step was re-validated
-        assert json.loads(seen[0].content)["params"]["symbol"] == "MSFT"
+        ok_res = dict(cmd_ok.update or {})
+        preview_reqs = [r for r in seen if r.url.path == "/governance/validate-action"]
+        assert len(preview_reqs) == 1  # Only the None step was re-validated
+        assert json.loads(preview_reqs[0].content)["params"]["symbol"] == "MSFT"
         assert ok_res["governance_status"] == "ALLOWED"
         assert ok_res["deferred_id"] is None
         assert ok_res["deferred_step_ids"] is None
-        sent_calls = executed_states[0]["messages"][-1].tool_calls
-        assert "deferred_id" not in sent_calls[0]["args"]
-        assert sent_calls[1]["args"]["deferred_id"] == "def-2"
+        assert len(executed_params) == 2
+        assert "deferred_id" not in executed_params[0]
+        assert executed_params[1]["deferred_id"] == "def-2"
 
         # 2. Tampered None step now triggers REQUIRE_APPROVAL -> whole batch refused fail-closed!
         gateway(
@@ -967,7 +980,7 @@ class TestDomadv05MultiStepHitlExecution:
                 },
             )
         )
-        tamper_res = await guarded(
+        cmd_tamper = await guarded_tool_executor_node(
             {
                 "messages": [
                     AIMessage(content="", tool_calls=make_calls("MSFT", "NVDA"))
@@ -977,7 +990,8 @@ class TestDomadv05MultiStepHitlExecution:
                 "approval_decision": {"approved": True, "reviewer": "r@x.com"},
             }
         )
-        assert len(executed_states) == 1  # spy_node NOT called again
+        tamper_res = dict(cmd_tamper.update or {})
+        assert len(executed_params) == 2  # NOT executed again
         assert tamper_res["governance_status"] == "DENIED"
         assert tamper_res["deferred_id"] is None
         assert tamper_res["deferred_step_ids"] is None
@@ -989,7 +1003,7 @@ class TestDomadv05MultiStepHitlExecution:
             (make_calls("AAPL", "NVDA"), [None, None]),
             (make_calls("AAPL", "NVDA"), ["", "def-2"]),
         ):
-            mismatch = await guarded(
+            cmd_mismatch = await guarded_tool_executor_node(
                 {
                     "messages": [AIMessage(content="", tool_calls=bad_calls)],
                     "deferred_id": "def-1",
@@ -997,7 +1011,8 @@ class TestDomadv05MultiStepHitlExecution:
                     "approval_decision": {"approved": True, "reviewer": "r@x.com"},
                 }
             )
-            assert len(executed_states) == 1
+            mismatch = dict(cmd_mismatch.update or {})
+            assert len(executed_params) == 2
             assert mismatch["governance_status"] == "DENIED"
             assert mismatch["deferred_id"] is None
             assert mismatch["deferred_step_ids"] is None
@@ -1110,11 +1125,21 @@ class TestDomadv05ServerResumeAndCallbacks:
             {"configurable": {"thread_id": "bob-done-thread"}},
         )
         await graph.ainvoke(
-            {"messages": [("user", "No owner")], "user_id": "   ", "park": True},
+            {
+                "messages": [("user", "No owner")],
+                "user_id": "   ",
+                "park": True,
+                "deferred_id": "def-ownerless-1",
+            },
             {"configurable": {"thread_id": "ownerless-thread"}},
         )
         await graph.ainvoke(
-            {"messages": [("user", "Mismatch")], "user_id": "bob", "park": True},
+            {
+                "messages": [("user", "Mismatch")],
+                "user_id": "bob",
+                "park": True,
+                "deferred_id": "def-alice-1",
+            },
             {"configurable": {"thread_id": "advisor_session_alice"}},
         )
 

@@ -33,20 +33,35 @@ Provides three composable node factories built over ``CageClient.preview()`` and
 
 from __future__ import annotations
 
+import inspect
 import logging
 from collections.abc import Awaitable, Callable, Mapping, Sequence
 from datetime import datetime, timezone
-from typing import Any
+from typing import Any, Literal, Protocol
 
 from langchain_core.messages import ToolMessage
 from langgraph.config import get_config
 from langgraph.types import Command, interrupt
+
+
+class SyncStateNode(Protocol):
+    """Typed LangGraph sync node callable accepting a mapping ``state``."""
+
+    def __call__(self, state: Mapping[str, Any]) -> Command[Any]: ...
+
+
+class AsyncStateNode(Protocol):
+    """Typed LangGraph async node callable accepting a mapping ``state``."""
+
+    def __call__(self, state: Mapping[str, Any]) -> Awaitable[Command[Any]]: ...
+
 
 from .core import CageClient
 from .exceptions import (
     CageGatewayError,
     CommitOutcomeDecodeError,
     GatewayUnavailableError,
+    MissingDeferralTicketError,
     RoutingSealVerificationError,
 )
 from .idempotency import (
@@ -82,6 +97,51 @@ def _require_callable(fn: Any, *, name: str) -> Callable[..., Any]:
     if not callable(fn):
         raise TypeError(f"{name} is required and must be callable")
     return fn
+
+
+async def _resolve_client(
+    client: CageClient | Callable[[], Any],
+) -> CageClient:
+    """Resolve either a concrete ``CageClient`` or a sync/async factory callable."""
+    resolved = client if isinstance(client, CageClient) else client()
+    if inspect.isawaitable(resolved):
+        resolved = await resolved
+    if not isinstance(resolved, CageClient):
+        raise TypeError("client must resolve to a CageClient instance")
+    return resolved
+
+
+def _parse_approved_step_tokens(
+    state: Mapping[str, Any],
+    *,
+    deferred_step_ids_key: str,
+    approval_decision_key: str,
+) -> tuple[bool, list[str | None] | None]:
+    """Validate per-step ``deferred_step_ids`` when ``approval_decision.approved`` is True.
+
+    Returns ``(present, validated_step_tokens)``. When ``present`` is True and
+    ``validated_step_tokens`` is None, ``deferred_step_ids`` is malformed and the
+    batch must fail closed.
+    """
+    decision = state.get(approval_decision_key)
+    if not (isinstance(decision, Mapping) and decision.get("approved") is True):
+        return False, None
+    raw = state.get(deferred_step_ids_key)
+    if raw is None:
+        return False, None
+    if not isinstance(raw, list) or not raw:
+        return True, None
+    parsed: list[str | None] = []
+    has_deferred = False
+    for item in raw:
+        if item is None:
+            parsed.append(None)
+        elif isinstance(item, str) and item.strip():
+            parsed.append(item.strip())
+            has_deferred = True
+        else:
+            return True, None
+    return (True, parsed) if has_deferred else (True, None)
 
 
 def _safe_extract_principal(
@@ -302,7 +362,7 @@ def governed_node(
     commit_outcome_key: str = "commit_outcome",
     deferred_id_key: str = "deferred_id",
     approval_decision_key: str = "approval_decision",
-) -> Callable[[Mapping[str, Any]], Awaitable[Command[Any]]]:
+) -> AsyncStateNode:
     """Create a LangGraph node governing one action via preview and/or ``/tools/execute``.
 
     Validates ``principal_extractor`` and ``action_extractor`` before any
@@ -565,16 +625,26 @@ def approval_park_node(
     approval_decision_key: str = "approval_decision",
     payload_builder: Callable[[Mapping[str, Any], str, list[str]], Mapping[str, Any]]
     | None = None,
+    decision_validator: Callable[
+        [Mapping[str, Any], Mapping[str, Any]], Mapping[str, Any]
+    ]
+    | None = None,
+    interrupt_fn: Callable[[Any], Any] | None = None,
     require_rationale: bool = True,
-) -> Callable[[Mapping[str, Any]], Command[Any]]:
+) -> SyncStateNode:
     """Create a LangGraph HITL suspension node backed by ``langgraph.types.interrupt()``.
 
     Requires a previously checkpointed ``deferred_id`` (or ``deferred_step_ids``)
-    in state and fails closed to ``rejected_target`` if none is present or if the
-    resume payload lacks valid approval metadata.
+    in state — raising :class:`MissingDeferralTicketError` if none is present —
+    and fails closed to ``rejected_target`` if the resume payload lacks valid
+    approval metadata.
     """
     if payload_builder is not None:
         _require_callable(payload_builder, name="payload_builder")
+    if decision_validator is not None:
+        _require_callable(decision_validator, name="decision_validator")
+    if interrupt_fn is not None:
+        _require_callable(interrupt_fn, name="interrupt_fn")
 
     def _node(state: Mapping[str, Any]) -> Command[Any]:
         step_ids = [
@@ -587,13 +657,8 @@ def approval_park_node(
         primary_ticket = deferred_id or (deferred_ids[0] if deferred_ids else None)
 
         if primary_ticket is None:
-            return Command(
-                goto=rejected_target,
-                update={
-                    "governance_status": GovernanceDecision.DENIED.value,
-                    "approval_required": False,
-                    "error": "approval_park_node requires a checkpointed deferred_id in state",
-                },
+            raise MissingDeferralTicketError(
+                "approval_park_node requires a checkpointed deferred_id in state"
             )
 
         payload: dict[str, Any] = {
@@ -605,46 +670,66 @@ def approval_park_node(
         if payload_builder is not None:
             payload.update(dict(payload_builder(state, primary_ticket, deferred_ids)))
 
-        resumed = interrupt(payload)
-        if not isinstance(resumed, Mapping) or not isinstance(
-            resumed.get("approved"), bool
-        ):
-            return Command(
-                goto=rejected_target,
-                update={
-                    "governance_status": GovernanceDecision.DENIED.value,
-                    "error": "Invalid approval resume payload: boolean 'approved' required",
-                    **_cleared_hitl_update(
-                        deferred_id_key=deferred_id_key,
-                        deferred_step_ids_key=deferred_step_ids_key,
-                        approval_decision_key=approval_decision_key,
-                    ),
-                },
-            )
+        active_interrupt = interrupt_fn if interrupt_fn is not None else interrupt
+        resumed = active_interrupt(payload)
 
-        approved = resumed["approved"]
-        reviewer = _non_blank_str(resumed.get("reviewer"))
-        rationale = _non_blank_str(resumed.get("rationale"))
-        if require_rationale and (reviewer is None or rationale is None):
-            return Command(
-                goto=rejected_target,
-                update={
-                    "governance_status": GovernanceDecision.DENIED.value,
-                    "error": "Approval resume payload requires non-empty 'reviewer' and 'rationale'",
-                    **_cleared_hitl_update(
-                        deferred_id_key=deferred_id_key,
-                        deferred_step_ids_key=deferred_step_ids_key,
-                        approval_decision_key=approval_decision_key,
-                    ),
-                },
-            )
+        if decision_validator is not None:
+            if not isinstance(resumed, Mapping):
+                return Command(
+                    goto=rejected_target,
+                    update={
+                        "governance_status": GovernanceDecision.DENIED.value,
+                        "error": "Invalid approval resume payload: mapping required",
+                        **_cleared_hitl_update(
+                            deferred_id_key=deferred_id_key,
+                            deferred_step_ids_key=deferred_step_ids_key,
+                            approval_decision_key=approval_decision_key,
+                        ),
+                    },
+                )
+            decision_record = dict(decision_validator(resumed, payload))
+            approved = bool(decision_record.get("approved"))
+        else:
+            if not isinstance(resumed, Mapping) or not isinstance(
+                resumed.get("approved"), bool
+            ):
+                return Command(
+                    goto=rejected_target,
+                    update={
+                        "governance_status": GovernanceDecision.DENIED.value,
+                        "error": "Invalid approval resume payload: boolean 'approved' required",
+                        **_cleared_hitl_update(
+                            deferred_id_key=deferred_id_key,
+                            deferred_step_ids_key=deferred_step_ids_key,
+                            approval_decision_key=approval_decision_key,
+                        ),
+                    },
+                )
 
-        decision_record = {
-            **dict(resumed),
-            "approved": approved,
-            "reviewer": reviewer or "",
-            "rationale": rationale or "",
-        }
+            approved = resumed["approved"]
+            reviewer = _non_blank_str(resumed.get("reviewer"))
+            rationale = _non_blank_str(resumed.get("rationale"))
+            if require_rationale and (reviewer is None or rationale is None):
+                return Command(
+                    goto=rejected_target,
+                    update={
+                        "governance_status": GovernanceDecision.DENIED.value,
+                        "error": "Approval resume payload requires non-empty 'reviewer' and 'rationale'",
+                        **_cleared_hitl_update(
+                            deferred_id_key=deferred_id_key,
+                            deferred_step_ids_key=deferred_step_ids_key,
+                            approval_decision_key=approval_decision_key,
+                        ),
+                    },
+                )
+
+            decision_record = {
+                **dict(resumed),
+                "approved": approved,
+                "reviewer": reviewer or "",
+                "rationale": rationale or "",
+            }
+
         if approved:
             return Command(
                 goto=approved_target,
@@ -839,14 +924,29 @@ def _execute_error_halt(
 
 def governed_tool_node(
     *,
-    client: CageClient,
+    client: CageClient | Callable[[], Any],
     action: str | Callable[[str, Mapping[str, Any], Mapping[str, Any]], str],
     principal_extractor: Callable[[Mapping[str, Any]], str],
     committing_tools: frozenset[str] | set[str] | None = None,
+    mode: Literal["execute", "preview"] = "execute",
+    idempotency_param: str = "idempotency_key",
     plan_extractor: Callable[[Mapping[str, Any]], Any] | None = None,
     step_extractor: Callable[[Mapping[str, Any]], Sequence[Mapping[str, Any]]]
     | None = None,
     step_canonical_extractor: Callable[[Any], tuple[str, ...]] | None = None,
+    preview_cache_lookup: Callable[
+        [Mapping[str, Any], Mapping[str, Any], int], Mapping[str, Any] | None
+    ]
+    | None = None,
+    preview_fn: Callable[
+        [CageClient, str, Mapping[str, Any], str, Mapping[str, Any]],
+        Awaitable[PreviewResult],
+    ]
+    | None = None,
+    message_formatter: Callable[
+        [Mapping[str, Any], str, CommitOutcome | None], str | None
+    ]
+    | None = None,
     on_complete: str,
     on_approval_required: str | None = None,
     on_defer: str | None = None,
@@ -858,10 +958,21 @@ def governed_tool_node(
     verify_signature: bool | None = None,
     messages_key: str = "messages",
     deferred_id_key: str = "deferred_id",
+    deferred_step_ids_key: str = "deferred_step_ids",
     approval_decision_key: str = "approval_decision",
     commit_outcomes_key: str = "commit_outcomes",
-) -> Callable[[Mapping[str, Any]], Awaitable[Command[Any]]]:
+    extra_clear_keys: Sequence[str] = (),
+    terminal_clear_keys: Sequence[str] = (),
+) -> AsyncStateNode:
     """Create a LangGraph batch node mediating ``1..N`` ``AIMessage.tool_calls``.
+
+    Supports two explicit modes:
+      - ``mode="execute"`` (default): previews via ``CageClient.preview()`` (unless
+        redeeming a previously checkpointed human approval) and executes approved
+        calls over ``POST /tools/execute`` via ``CageClient.execute_tool()``.
+      - ``mode="preview"``: validates and previews non-committing read-only batches
+        via ``CageClient.preview()`` and routes approved calls to ``on_complete``
+        without invoking ``/tools/execute`` (refuses non-empty ``committing_tools``).
 
     Guarantees:
       - Zero fabricated default principals or ``{}`` args: missing principal or
@@ -869,14 +980,21 @@ def governed_tool_node(
       - Every model-supplied ``deferred_id`` / ``approval_token`` is stripped;
         only an approved state token is forwarded to ``/tools/execute``.
       - Deterministic per-step idempotency keys via ``derive_plan_step_key()``
-        and ``derive_idempotency_key()`` for committing calls.
+        and ``derive_idempotency_key()`` for committing calls under ``idempotency_param``.
       - Every tool call ID in ``AIMessage.tool_calls`` receives a paired
-        ``ToolMessage(tool_call_id=...)`` on every exit (completed, refused,
-        deferred, unavailable, or indeterminate), preserving message history
-        without ever leaking ``deferred_id`` into prompt text.
+        ``ToolMessage(tool_call_id=...)`` on every halted/completed execute exit
+        and every preview refusal/deferral/unavailable exit without ever leaking
+        ``deferred_id`` into prompt text.
     """
-    if not isinstance(client, CageClient):
-        raise TypeError("client must be a CageClient instance")
+    if not isinstance(client, CageClient) and not callable(client):
+        raise TypeError(
+            "client must be a CageClient instance or callable returning one"
+        )
+    if mode not in ("execute", "preview"):
+        raise ValueError("mode must be 'execute' or 'preview'")
+    if not isinstance(idempotency_param, str) or not idempotency_param.strip():
+        raise ValueError("idempotency_param must be a non-empty string")
+    idem_param_name = idempotency_param.strip()
     if isinstance(action, str):
         if not action.strip():
             raise ValueError("action must be a non-empty string or callable")
@@ -885,8 +1003,38 @@ def governed_tool_node(
     _require_callable(principal_extractor, name="principal_extractor")
     if plan_extractor is not None:
         _require_callable(plan_extractor, name="plan_extractor")
+    if preview_cache_lookup is not None:
+        _require_callable(preview_cache_lookup, name="preview_cache_lookup")
+    if preview_fn is not None:
+        _require_callable(preview_fn, name="preview_fn")
+    if message_formatter is not None:
+        _require_callable(message_formatter, name="message_formatter")
 
-    commit_set = frozenset(committing_tools) if committing_tools is not None else None
+    commit_set = (
+        frozenset(committing_tools)
+        if committing_tools is not None
+        else (frozenset() if mode == "preview" else None)
+    )
+    if mode == "preview" and commit_set:
+        raise ValueError(
+            "mode='preview' cannot be paired with non-empty committing_tools; "
+            "read-only preview nodes must not gate committing tools"
+        )
+
+    protected_keys = {
+        messages_key,
+        deferred_id_key,
+        deferred_step_ids_key,
+        approval_decision_key,
+        commit_outcomes_key,
+    }
+    extra_clears: dict[str, Any] = {
+        str(k): None for k in extra_clear_keys if str(k) not in protected_keys
+    }
+    terminal_clears: dict[str, Any] = {
+        str(k): None for k in terminal_clear_keys if str(k) not in protected_keys
+    }
+    non_park_clears: dict[str, Any] = {**extra_clears, **terminal_clears}
 
     def _is_committing(tool_name: str) -> bool:
         if commit_set is None:
@@ -903,22 +1051,44 @@ def governed_tool_node(
             return resolved.strip()
         return action.strip()
 
+    def _format_custom_or_default(
+        call: Mapping[str, Any],
+        event: str,
+        default_text: str,
+        outcome: CommitOutcome | None = None,
+    ) -> str:
+        if message_formatter is not None:
+            formatted = message_formatter(call, event, outcome)
+            if isinstance(formatted, str) and formatted:
+                return formatted
+        return default_text
+
     async def _node(state: Mapping[str, Any]) -> Command[Any]:
         messages = list(state.get(messages_key) or [])
         if not messages:
             return Command(goto=on_complete, update={messages_key: []})
 
+        has_step_ids, step_tokens = (
+            _parse_approved_step_tokens(
+                state,
+                deferred_step_ids_key=deferred_step_ids_key,
+                approval_decision_key=approval_decision_key,
+            )
+            if approvable
+            else (False, None)
+        )
         approved_token = (
             _approved_token_from_state(
                 state,
                 deferred_id_key=deferred_id_key,
                 approval_decision_key=approval_decision_key,
             )
-            if approvable
+            if (approvable and not has_step_ids)
             else None
         )
         last_msg, raw_calls = _find_target_tool_calls(
-            messages, allow_trailing_tool_messages=approved_token is not None
+            messages,
+            allow_trailing_tool_messages=(approved_token is not None or has_step_ids),
         )
         if not raw_calls:
             return Command(goto=on_complete, update={messages_key: []})
@@ -934,9 +1104,12 @@ def governed_tool_node(
                         calls, {}, f"Governance refused tool call: {principal_err}"
                     ),
                     "governance_status": GovernanceDecision.DENIED.value,
+                    "governance_envelope": None,
                     "error": principal_err,
+                    **non_park_clears,
                     **_cleared_hitl_update(
                         deferred_id_key=deferred_id_key,
+                        deferred_step_ids_key=deferred_step_ids_key,
                         approval_decision_key=approval_decision_key,
                     ),
                 },
@@ -996,8 +1169,33 @@ def governed_tool_node(
                         "Governance refused this batch: another tool call in the batch was invalid.",
                     ),
                     "governance_status": GovernanceDecision.DENIED.value,
+                    "governance_envelope": None,
+                    **non_park_clears,
                     **_cleared_hitl_update(
                         deferred_id_key=deferred_id_key,
+                        deferred_step_ids_key=deferred_step_ids_key,
+                        approval_decision_key=approval_decision_key,
+                    ),
+                },
+            )
+
+        if has_step_ids and (
+            step_tokens is None or len(step_tokens) != len(cleaned_calls)
+        ):
+            return Command(
+                goto=on_deny,
+                update={
+                    messages_key: _paired_tool_messages(
+                        calls,
+                        {},
+                        "Governance refused this action: tool calls do not match approved plan steps.",
+                    ),
+                    "governance_status": GovernanceDecision.DENIED.value,
+                    "governance_envelope": None,
+                    **non_park_clears,
+                    **_cleared_hitl_update(
+                        deferred_id_key=deferred_id_key,
+                        deferred_step_ids_key=deferred_step_ids_key,
                         approval_decision_key=approval_decision_key,
                     ),
                 },
@@ -1013,24 +1211,43 @@ def governed_tool_node(
                         "Governance refused this action: an approval covers exactly one tool call.",
                     ),
                     "governance_status": GovernanceDecision.DENIED.value,
+                    "governance_envelope": None,
+                    **non_park_clears,
                     **_cleared_hitl_update(
                         deferred_id_key=deferred_id_key,
+                        deferred_step_ids_key=deferred_step_ids_key,
                         approval_decision_key=approval_decision_key,
                     ),
                 },
             )
 
-        # Preview phase (skipped only when redeeming an approved ticket for a single call).
+        resolved_client = await _resolve_client(client)
+
+        # Preview phase: runs on all unapproved calls, and also on un-deferred steps
+        # in multi-step ``deferred_step_ids`` resume batches.
         exec_args_list: list[dict[str, Any]] = [
             dict(args) for _, _, args, _ in cleaned_calls
         ]
-        if preview_before_execute and approved_token is None:
+        last_preview_envelope: dict[str, Any] | None = None
+        should_preview = (preview_before_execute and approved_token is None) or (
+            has_step_ids
+            and step_tokens is not None
+            and any(t is None for t in step_tokens)
+        )
+
+        if should_preview:
             preview_refusals: dict[str, str] = {}
             preview_unavailable: dict[str, str] = {}
             approval_tickets: dict[str, str] = {}
             terminal_defers: dict[str, str] = {}
 
             for idx, (call, tname, clean_args, _idem) in enumerate(cleaned_calls):
+                if (
+                    has_step_ids
+                    and step_tokens is not None
+                    and step_tokens[idx] is not None
+                ):
+                    continue
                 cid = str(call.get("id") or "")
                 try:
                     gov_action = _action_for(tname, clean_args, state)
@@ -1045,16 +1262,42 @@ def governed_tool_node(
                 preview_params["tool_name"] = tname
                 preview_params.setdefault("action", gov_action)
 
-                prev_res = await client.preview(
-                    action=gov_action,
-                    parameters=preview_params,
-                    agent_id=principal,
-                )
+                if preview_cache_lookup is not None and not has_step_ids:
+                    cached_verdict = preview_cache_lookup(
+                        state, preview_params, len(cleaned_calls)
+                    )
+                    if cached_verdict is not None:
+                        last_preview_envelope = dict(cached_verdict)
+                        if cached_verdict.get("verdict") == "NARROW" and isinstance(
+                            cached_verdict.get("narrowed_params"), Mapping
+                        ):
+                            exec_args_list[idx].update(
+                                cached_verdict["narrowed_params"]
+                            )
+                        continue
+
+                if preview_fn is not None:
+                    prev_res = await preview_fn(
+                        resolved_client, gov_action, preview_params, principal, state
+                    )
+                else:
+                    prev_res = await resolved_client.preview(
+                        action=gov_action,
+                        parameters=preview_params,
+                        agent_id=principal,
+                    )
                 if prev_res.decision is GovernanceDecision.ALLOWED:
+                    if prev_res.envelope is not None:
+                        last_preview_envelope = dict(prev_res.envelope.payload)
                     continue
                 if prev_res.decision is GovernanceDecision.NARROWED:
                     if isinstance(prev_res.narrowed_params, Mapping):
                         exec_args_list[idx].update(prev_res.narrowed_params)
+                    last_preview_envelope = {
+                        "verdict": "NARROW",
+                        "narrowed_params": dict(prev_res.narrowed_params or {}),
+                        "violations": list(prev_res.violations),
+                    }
                     continue
                 if prev_res.decision is GovernanceDecision.UNAVAILABLE:
                     preview_unavailable[cid] = (
@@ -1062,7 +1305,11 @@ def governed_tool_node(
                     )
                     continue
                 if prev_res.decision is GovernanceDecision.DEFERRED:
-                    if (
+                    if has_step_ids:
+                        preview_refusals[cid] = (
+                            "Governance refused this action: gateway requires human approval for an unapproved step."
+                        )
+                    elif (
                         prev_res.requires_approval
                         and approvable
                         and prev_res.deferred_id
@@ -1123,8 +1370,11 @@ def governed_tool_node(
                     update={
                         messages_key: _paired_tool_messages(calls, per_call, fallback),
                         "governance_status": status,
+                        "governance_envelope": None,
+                        **non_park_clears,
                         **_cleared_hitl_update(
                             deferred_id_key=deferred_id_key,
+                            deferred_step_ids_key=deferred_step_ids_key,
                             approval_decision_key=approval_decision_key,
                         ),
                     },
@@ -1132,21 +1382,57 @@ def governed_tool_node(
 
             if approval_tickets:
                 (ticket_id,) = approval_tickets.values()
+                waiting_per_call = {
+                    str(call.get("id") or ""): _format_custom_or_default(
+                        call,
+                        "approval_required",
+                        "Nothing was executed. This action requires reviewer approval "
+                        "at the compliance bridge; it is in your pending approvals.",
+                    )
+                    for call in calls
+                }
                 waiting_msgs = _paired_tool_messages(
                     calls,
-                    {},
+                    waiting_per_call,
                     "Nothing was executed. This action requires reviewer approval "
                     "at the compliance bridge; it is in your pending approvals.",
                 )
+                park_clears = {
+                    k: v for k, v in extra_clears.items() if k != deferred_step_ids_key
+                }
                 return Command(
                     goto=on_approval_required or on_defer or on_deny,
                     update={
                         messages_key: waiting_msgs,
                         "governance_status": "REQUIRE_APPROVAL",
+                        "governance_envelope": None,
+                        **park_clears,
                         deferred_id_key: ticket_id,
                         "approval_required": True,
                     },
                 )
+
+        if mode == "preview":
+            preview_update: dict[str, Any] = {
+                "governance_status": GovernanceDecision.ALLOWED.value,
+                "governance_envelope": last_preview_envelope,
+                **extra_clears,
+            }
+            preview_update["governance_envelope"] = last_preview_envelope
+            args_modified = any(
+                exec_args_list[idx]
+                != (call.get("args") if isinstance(call.get("args"), Mapping) else {})
+                for idx, call in enumerate(calls)
+            )
+            if args_modified and hasattr(last_msg, "model_copy"):
+                sanitized_calls = [
+                    {**call, "args": exec_args_list[idx]}
+                    for idx, call in enumerate(calls)
+                ]
+                preview_update[messages_key] = [
+                    last_msg.model_copy(update={"tool_calls": sanitized_calls})
+                ]
+            return Command(goto=on_complete, update=preview_update)
 
         # Execution phase across 1..N calls on POST /tools/execute.
         tool_messages: list[ToolMessage] = []
@@ -1159,12 +1445,18 @@ def governed_tool_node(
         for idx, (call, tname, _clean_args, idem_key) in enumerate(cleaned_calls):
             cid = str(call.get("id") or "")
             exec_args = exec_args_list[idx]
+            step_approval = (
+                step_tokens[idx]
+                if (has_step_ids and step_tokens is not None)
+                else approved_token
+            )
             try:
-                outcome = await client.execute_tool(
+                outcome = await resolved_client.execute_tool(
                     tname,
                     exec_args,
                     idempotency_key=idem_key,
-                    approval_token=approved_token,
+                    idempotency_param=idem_param_name,
+                    approval_token=step_approval,
                     verify_signature=verify_signature,
                     require_commit_outcome=_is_committing(tname),
                     headers={"x-cage-principal": principal},
@@ -1190,9 +1482,30 @@ def governed_tool_node(
                 break
 
             outcomes_by_id[cid] = outcome.to_dict()
+            if outcome.is_completed:
+                msg_text = _format_custom_or_default(
+                    call,
+                    "completed",
+                    _format_commit_outcome_message(outcome),
+                    outcome,
+                )
+            elif outcome.awaits_same_ticket and approvable and not has_step_ids:
+                msg_text = _format_custom_or_default(
+                    call,
+                    "awaiting_same_ticket",
+                    _format_commit_outcome_message(outcome),
+                    outcome,
+                )
+            else:
+                msg_text = _format_custom_or_default(
+                    call,
+                    "terminal_outcome",
+                    _format_commit_outcome_message(outcome),
+                    outcome,
+                )
             tool_messages.append(
                 _make_tool_message(
-                    content=_format_commit_outcome_message(outcome),
+                    content=msg_text,
                     tool_call_id=cid,
                     name=tname,
                 )
@@ -1201,7 +1514,7 @@ def governed_tool_node(
                 continue
 
             halted_idx = idx
-            if outcome.awaits_same_ticket and approvable:
+            if outcome.awaits_same_ticket and approvable and not has_step_ids:
                 retained_ticket_id = outcome.deferred_id or approved_token
                 halt_status = (
                     "REQUIRE_APPROVAL"
@@ -1215,6 +1528,7 @@ def governed_tool_node(
                 )
                 halt_extra = {
                     deferred_id_key: retained_ticket_id,
+                    deferred_step_ids_key: None,
                     approval_decision_key: None,
                     "approval_required": bool(retained_ticket_id),
                     "redemption_refusal": (
@@ -1227,11 +1541,14 @@ def governed_tool_node(
                 outcome.status is CommitStatus.DEFERRED
                 and outcome.deferred_id
                 and approvable
+                and not has_step_ids
+                and step_approval is None
             ):
                 halt_status = "REQUIRE_APPROVAL"
                 halt_target = on_approval_required or on_defer or on_deny
                 halt_extra = {
                     deferred_id_key: outcome.deferred_id,
+                    deferred_step_ids_key: None,
                     approval_decision_key: None,
                     "approval_required": True,
                 }
@@ -1242,6 +1559,7 @@ def governed_tool_node(
                     "may_have_executed": True,
                     **_cleared_hitl_update(
                         deferred_id_key=deferred_id_key,
+                        deferred_step_ids_key=deferred_step_ids_key,
                         approval_decision_key=approval_decision_key,
                     ),
                 }
@@ -1256,6 +1574,7 @@ def governed_tool_node(
                     ),
                     **_cleared_hitl_update(
                         deferred_id_key=deferred_id_key,
+                        deferred_step_ids_key=deferred_step_ids_key,
                         approval_decision_key=approval_decision_key,
                     ),
                 }
@@ -1274,28 +1593,39 @@ def governed_tool_node(
                         name=tname,
                     )
                 )
+            halt_clears = (
+                {k: v for k, v in extra_clears.items() if k != deferred_step_ids_key}
+                if halt_status == "REQUIRE_APPROVAL"
+                else non_park_clears
+            )
             return Command(
                 goto=halt_target,
                 update={
                     messages_key: tool_messages,
                     commit_outcomes_key: outcomes_by_id,
                     "governance_status": halt_status,
+                    "governance_envelope": None,
+                    **halt_clears,
                     **halt_extra,
                 },
             )
 
+        complete_update: dict[str, Any] = {
+            messages_key: tool_messages,
+            commit_outcomes_key: outcomes_by_id,
+            "governance_status": GovernanceDecision.ALLOWED.value,
+            "redemption_refusal": None,
+            **non_park_clears,
+            **_cleared_hitl_update(
+                deferred_id_key=deferred_id_key,
+                deferred_step_ids_key=deferred_step_ids_key,
+                approval_decision_key=approval_decision_key,
+            ),
+        }
+        complete_update["governance_envelope"] = last_preview_envelope
         return Command(
             goto=on_complete,
-            update={
-                messages_key: tool_messages,
-                commit_outcomes_key: outcomes_by_id,
-                "governance_status": GovernanceDecision.ALLOWED.value,
-                "redemption_refusal": None,
-                **_cleared_hitl_update(
-                    deferred_id_key=deferred_id_key,
-                    approval_decision_key=approval_decision_key,
-                ),
-            },
+            update=complete_update,
         )
 
     return _node
