@@ -2083,8 +2083,16 @@ def test_standalone_sdk_tests_collected_in_pytest_and_ci() -> None:
     ci_yml = (repo_root / ".github/workflows/ci.yml").read_text(encoding="utf-8")
     assert "uv run pytest tests/ packages/cage-client/tests/ --collect-only" in ci_yml
     assert 'tests/ packages/cage-client/tests/ -m "local or unit"' in ci_yml
+    assert "bash scripts/smoke_test_client_wheel.sh" in ci_yml
 
     publish_yml = (repo_root / ".github/workflows/publish-client-sdk.yml").read_text(
         encoding="utf-8"
     )
-    assert '"$SMOKE_VENV/bin/pytest" tests/' in publish_yml
+    assert "bash scripts/smoke_test_client_wheel.sh" in publish_yml
+
+    smoke_sh = (repo_root / "scripts/smoke_test_client_wheel.sh").read_text(
+        encoding="utf-8"
+    )
+    assert '"$SMOKE_VENV/bin/pytest" tests/test_cage_client_standalone.py' in smoke_sh
+    assert "[langgraph]" in smoke_sh
+    assert '"$SMOKE_VENV/bin/pytest" tests/' in smoke_sh
