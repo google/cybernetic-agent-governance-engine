@@ -34,22 +34,30 @@ This module is the kernel's single definition of those outcomes:
   load-bearing. :meth:`CommitOutcome.to_wire` / :meth:`CommitOutcome.from_wire`
   are the wire form carried in an MCP ``CallToolResult.structuredContent``.
 
-The wire form is **not signed**: the advisor trusts it on the same mesh-mTLS
-channel it already trusts for committing results. A forged refusal code can
-only choose between two fail-closed outcomes (wait on the same ticket, or
-stop); it can never cause an execution. The tamper-evident record of every
-refusal is the refusal receipt in the evidence chain.
+The wire form carries an additive KMS signature (``signature``) and request-binding
+fields (``tool_name``, ``idempotency_key``, plus informational ``issued_at``)
+verified out of band by ``kid`` against the gateway's JWKS (POAM-2026-249).
 """
 
 from __future__ import annotations
 
-from collections.abc import Mapping
-from dataclasses import dataclass
+import base64
+import hashlib
+import hmac
+import inspect
+import logging
+import re
+from collections.abc import Awaitable, Callable, Mapping
+from dataclasses import dataclass, replace
+from datetime import datetime, timezone
 from enum import Enum
+from types import MappingProxyType
 from typing import TYPE_CHECKING, Any, Final
 
 if TYPE_CHECKING:
     from mcp.types import CallToolResult
+
+logger = logging.getLogger("Gateway.Governance.CommitOutcome")
 
 
 class ApprovalRedemptionRefusal(str, Enum):
@@ -165,8 +173,81 @@ NON_REFUSAL_STATUSES: Final[frozenset[CommitStatus]] = INDETERMINATE_STATUSES
 COMMIT_OUTCOME_SCHEMA: Final[str] = "cage.commit_outcome/1"
 
 
+#: Valid fields inside the ``CommitOutcome.signature`` block.
+_ALLOWED_SIGNATURE_KEYS: Final[frozenset[str]] = frozenset(
+    {"algorithm", "kid", "value"}
+)
+#: Signature algorithms admitted for CommitOutcome verification (matching JWKS).
+_ALLOWED_SIGNATURE_ALGORITHMS: Final[frozenset[str]] = frozenset({"ES256", "EdDSA"})
+#: Embedded key fields rejected anywhere in an envelope/outcome payload.
+_EMBEDDED_KEY_FIELDS: Final[frozenset[str]] = frozenset(
+    {"jwk", "jku", "x5c", "x5u", "public_key", "publicKey", "pem"}
+)
+_B64URL_RE = re.compile(r"^[A-Za-z0-9_-]+={0,2}$")
+_P256_COORDINATE_BYTES: Final[int] = 32
+
+
 class CommitOutcomeDecodeError(ValueError):
     """A payload is not a :class:`CommitOutcome` this kernel understands."""
+
+
+def _validate_optional_str(value: object, field_name: str) -> str | None:
+    if value is None:
+        return None
+    if not isinstance(value, str) or not value:
+        raise CommitOutcomeDecodeError(
+            f"commit outcome {field_name} must be a non-empty string"
+        )
+    return value
+
+
+def _validate_signature_mapping(sig: object) -> Mapping[str, str] | None:
+    if sig is None:
+        return None
+    if not isinstance(sig, Mapping):
+        raise CommitOutcomeDecodeError("commit outcome signature must be a mapping")
+    unexpected = set(sig.keys()) - _ALLOWED_SIGNATURE_KEYS
+    if unexpected:
+        raise CommitOutcomeDecodeError(
+            f"commit outcome signature contains unexpected fields: {sorted(unexpected)!r}"
+        )
+    alg = sig.get("algorithm")
+    kid = sig.get("kid")
+    val = sig.get("value")
+    if (
+        not isinstance(alg, str)
+        or not alg
+        or not isinstance(kid, str)
+        or not kid
+        or not isinstance(val, str)
+        or not val
+    ):
+        raise CommitOutcomeDecodeError(
+            "commit outcome signature requires non-empty algorithm, kid, and value"
+        )
+    if alg not in _ALLOWED_SIGNATURE_ALGORITHMS:
+        raise CommitOutcomeDecodeError(
+            f"unsupported commit outcome signature algorithm {alg!r}"
+        )
+    return MappingProxyType({"algorithm": alg, "kid": kid, "value": val})
+
+
+def _check_expected_binding(
+    *,
+    tool_name: str | None,
+    idempotency_key: str | None,
+    expected_tool_name: str | None,
+    expected_idempotency_key: str | None,
+) -> None:
+    """Enforce exact request binding when ``tool_name`` or ``idempotency_key`` is checked."""
+    if expected_tool_name is not None and tool_name is not None:
+        if tool_name != expected_tool_name:
+            raise CommitOutcomeDecodeError(
+                f"commit outcome tool_name mismatch: {tool_name!r} != {expected_tool_name!r}"
+            )
+    if expected_idempotency_key is not None and idempotency_key is not None:
+        if idempotency_key != expected_idempotency_key:
+            raise CommitOutcomeDecodeError("commit outcome idempotency_key mismatch")
 
 
 @dataclass(frozen=True)
@@ -184,6 +265,12 @@ class CommitOutcome:
             retained approval itself when ``approval_retained``).
         approval_retained: For ``DEFERRED`` after an approval: the approval was
             not spent and stays redeemable (POAM-2026-104).
+        tool_name: Bound gateway tool name for cross-tool replay prevention.
+        idempotency_key: Bound client idempotency key for per-request replay
+            prevention.
+        issued_at: Informational ISO-8601 UTC signing timestamp.
+        signature: Detached-format ``{algorithm, kid, value}`` block over the
+            RFC 8785 JCS canonical body excluding ``signature``.
     """
 
     status: CommitStatus
@@ -191,6 +278,10 @@ class CommitOutcome:
     redemption_refusal: ApprovalRedemptionRefusal | None = None
     deferred_id: str | None = None
     approval_retained: bool = False
+    tool_name: str | None = None
+    idempotency_key: str | None = None
+    issued_at: str | None = None
+    signature: Mapping[str, str] | None = None
 
     def __post_init__(self) -> None:
         if not isinstance(self.status, CommitStatus):
@@ -202,15 +293,33 @@ class CommitOutcome:
             raise ValueError("redemption_refusal is only set on a REFUSED outcome")
         if self.approval_retained and self.status is not CommitStatus.DEFERRED:
             raise ValueError("approval_retained is only set on a DEFERRED outcome")
+        if self.tool_name is not None and (
+            not isinstance(self.tool_name, str) or not self.tool_name
+        ):
+            raise ValueError("tool_name must be a non-empty string when set")
+        if self.idempotency_key is not None and (
+            not isinstance(self.idempotency_key, str) or not self.idempotency_key
+        ):
+            raise ValueError("idempotency_key must be a non-empty string when set")
+        if self.issued_at is not None and (
+            not isinstance(self.issued_at, str) or not self.issued_at
+        ):
+            raise ValueError("issued_at must be a non-empty string when set")
+        if self.signature is not None and not isinstance(
+            self.signature, MappingProxyType
+        ):
+            object.__setattr__(
+                self, "signature", _validate_signature_mapping(self.signature)
+            )
 
     @property
     def executed(self) -> bool:
         """Whether the action was actuated."""
         return self.status is CommitStatus.EXECUTED
 
-    def to_wire(self) -> dict[str, Any]:
-        """JSON-safe wire form (MCP ``structuredContent``)."""
-        return {
+    def to_wire(self, *, include_signature: bool = True) -> dict[str, Any]:
+        """JSON-safe wire form (MCP ``structuredContent`` & HTTP ``outcome``)."""
+        wire: dict[str, Any] = {
             "schema": COMMIT_OUTCOME_SCHEMA,
             "status": self.status.value,
             "message": self.message,
@@ -222,22 +331,58 @@ class CommitOutcome:
             "deferred_id": self.deferred_id,
             "approval_retained": self.approval_retained,
         }
+        if self.tool_name is not None:
+            wire["tool_name"] = self.tool_name
+        if self.idempotency_key is not None:
+            wire["idempotency_key"] = self.idempotency_key
+        if self.issued_at is not None:
+            wire["issued_at"] = self.issued_at
+        if include_signature and self.signature is not None:
+            wire["signature"] = dict(self.signature)
+        return wire
+
+    def with_binding(
+        self,
+        *,
+        tool_name: str | None = None,
+        idempotency_key: str | None = None,
+        issued_at: str | None = None,
+        signature: Mapping[str, str] | None = None,
+    ) -> CommitOutcome:
+        """Return a copy with additive request binding / signature metadata."""
+        return replace(
+            self,
+            tool_name=tool_name if tool_name is not None else self.tool_name,
+            idempotency_key=(
+                idempotency_key if idempotency_key is not None else self.idempotency_key
+            ),
+            issued_at=issued_at if issued_at is not None else self.issued_at,
+            signature=signature if signature is not None else self.signature,
+        )
 
     @classmethod
-    def from_wire(cls, payload: object) -> CommitOutcome:
+    def from_wire(
+        cls,
+        payload: object,
+        *,
+        expected_tool_name: str | None = None,
+        expected_idempotency_key: str | None = None,
+    ) -> CommitOutcome:
         """Decode :meth:`to_wire` output, failing closed.
 
         Raises:
-            CommitOutcomeDecodeError: ``payload`` is not a mapping, lacks the
-                exact schema tag, or carries an unknown or missing status.
-
-        A ``REFUSED`` payload whose ``redemption_refusal`` is absent or not a
-        known member decodes with ``redemption_refusal=None``, which is
-        terminal (:func:`is_retryable_refusal`). ``approval_retained`` counts
-        only when it is exactly ``True`` on a ``DEFERRED`` payload.
+            CommitOutcomeDecodeError: ``payload`` is not a mapping, embeds public
+                key material, lacks the exact schema tag, carries an unknown or
+                missing status, has malformed signature/binding fields, or
+                violates an expected bound field.
         """
         if not isinstance(payload, Mapping):
             raise CommitOutcomeDecodeError("commit outcome is not a mapping")
+        embedded = _EMBEDDED_KEY_FIELDS.intersection(payload.keys())
+        if embedded:
+            raise CommitOutcomeDecodeError(
+                f"commit outcome contains embedded key material: {sorted(embedded)!r}"
+            )
         if payload.get("schema") != COMMIT_OUTCOME_SCHEMA:
             raise CommitOutcomeDecodeError(
                 f"commit outcome schema is not {COMMIT_OUTCOME_SCHEMA!r}"
@@ -251,6 +396,20 @@ class CommitOutcome:
             raise CommitOutcomeDecodeError(
                 f"unknown commit outcome status {raw_status[:32]!r}"
             ) from exc
+        tool_name = _validate_optional_str(payload.get("tool_name"), "tool_name")
+        idempotency_key = _validate_optional_str(
+            payload.get("idempotency_key"), "idempotency_key"
+        )
+        issued_at = _validate_optional_str(payload.get("issued_at"), "issued_at")
+        signature = _validate_signature_mapping(payload.get("signature"))
+
+        _check_expected_binding(
+            tool_name=tool_name,
+            idempotency_key=idempotency_key,
+            expected_tool_name=expected_tool_name,
+            expected_idempotency_key=expected_idempotency_key,
+        )
+
         message = payload.get("message")
         deferred_id = payload.get("deferred_id")
         return cls(
@@ -272,21 +431,341 @@ class CommitOutcome:
                 status is CommitStatus.DEFERRED
                 and payload.get("approval_retained") is True
             ),
+            tool_name=tool_name,
+            idempotency_key=idempotency_key,
+            issued_at=issued_at,
+            signature=signature,
         )
 
 
-def commit_tool_result(outcome: CommitOutcome) -> CallToolResult:
+def extract_request_idempotency_key(
+    params: Mapping[str, Any] | None, *, attempt: Any | None = None
+) -> str | None:
+    """Return the caller's request idempotency key from tool args or active attempt."""
+    if isinstance(params, Mapping):
+        for field in ("idempotency_key", "transaction_id"):
+            val = params.get(field)
+            if isinstance(val, str) and val:
+                return val
+    if attempt is not None:
+        claimed = getattr(attempt, "_claimed_idempotency_key", None)
+        if isinstance(claimed, str) and claimed:
+            return claimed
+    return None
+
+
+def _normalize_signing_alg(raw_alg: str) -> str:
+    upper = raw_alg.strip().upper()
+    if upper in {"EDDSA", "ED25519"}:
+        return "EdDSA"
+    if upper in {"ES256", "ECDSA_P256_SHA256"}:
+        return "ES256"
+    raise ValueError(
+        f"Unsupported CommitOutcome signing algorithm {raw_alg!r} (expected ES256 or EdDSA)"
+    )
+
+
+async def sign_commit_outcome_wire(
+    outcome_or_wire: CommitOutcome | Mapping[str, Any],
+    *,
+    tool_name: str | None = None,
+    idempotency_key: str | None = None,
+    issued_at: str | None = None,
+    signer: Any | None = None,
+) -> dict[str, Any]:
+    """Attach request binding + KMS signature (or posture-gated dev fallback) to a wire outcome."""
+    from src.gateway.governance.env_posture import is_enforcing, resolve_posture
+    from src.gateway.governance.jcs_canonicalizer import jcs_canonicalize_plan
+    from src.gateway.governance.kms_signer import get_governance_signer
+
+    if isinstance(outcome_or_wire, CommitOutcome):
+        wire = outcome_or_wire.to_wire(include_signature=False)
+    elif isinstance(outcome_or_wire, Mapping):
+        CommitOutcome.from_wire(outcome_or_wire)
+        wire = {k: v for k, v in outcome_or_wire.items() if k != "signature"}
+    else:
+        raise TypeError(
+            f"Expected CommitOutcome or mapping, got {type(outcome_or_wire).__name__}"
+        )
+
+    if tool_name and not wire.get("tool_name"):
+        wire["tool_name"] = tool_name
+    if idempotency_key and not wire.get("idempotency_key"):
+        wire["idempotency_key"] = idempotency_key
+    if not wire.get("issued_at"):
+        wire["issued_at"] = issued_at or (
+            datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%S.%f")[:-3] + "Z"
+        )
+
+    active_signer = signer if signer is not None else get_governance_signer()
+    kms_active = bool(
+        getattr(active_signer, "is_kms_active", False)
+        and getattr(active_signer, "kms_active", True) is not False
+    )
+    if not kms_active:
+        if is_enforcing(resolve_posture()):
+            raise RuntimeError(
+                "Cannot emit unsigned CommitOutcome in enforcing posture: KMS signer is inactive"
+            )
+        logger.warning(
+            "KMS not active in non-enforcing posture — CommitOutcome emitted unsigned"
+        )
+        return wire
+
+    jwk = active_signer.public_jwk
+    kid = str(jwk["kid"])
+    alg_label = _normalize_signing_alg(str(jwk.get("alg", "ES256")))
+    canonical = jcs_canonicalize_plan(wire)
+
+    if alg_label == "EdDSA":
+        if not hasattr(active_signer, "sign_raw_async"):
+            raise RuntimeError("EdDSA CommitOutcome signing requires sign_raw_async")
+        sig_bytes = await active_signer.sign_raw_async(canonical)
+    else:
+        digest = hashlib.sha256(canonical).digest()
+        sig_hex = await active_signer.sign_precomputed_digest_async(digest)
+        sig_bytes = bytes.fromhex(sig_hex)
+
+    sig_b64 = base64.urlsafe_b64encode(sig_bytes).rstrip(b"=").decode("ascii")
+    wire["signature"] = {
+        "algorithm": alg_label,
+        "kid": kid,
+        "value": sig_b64,
+    }
+    return wire
+
+
+def _decode_b64url_strict(value: str, *, field_name: str) -> bytes:
+    if not _B64URL_RE.match(value):
+        raise CommitOutcomeDecodeError(f"invalid base64url in {field_name}")
+    unpadded = value.rstrip("=")
+    if not unpadded or len(unpadded) % 4 == 1:
+        raise CommitOutcomeDecodeError(f"invalid base64url length in {field_name}")
+    padded = unpadded + ("=" * ((4 - len(unpadded) % 4) % 4))
+    try:
+        decoded = base64.urlsafe_b64decode(padded)
+    except Exception as exc:
+        raise CommitOutcomeDecodeError(
+            f"failed to decode base64url in {field_name}: {exc}"
+        ) from exc
+    canonical = base64.urlsafe_b64encode(decoded).rstrip(b"=").decode("ascii")
+    if canonical != unpadded:
+        raise CommitOutcomeDecodeError(
+            f"non-canonical base64url padding in {field_name}"
+        )
+    return decoded
+
+
+def _coerce_public_key(raw_key: Any) -> Any:
+    from cryptography.hazmat.primitives import serialization
+    from cryptography.hazmat.primitives.asymmetric import ec, ed25519
+
+    if isinstance(raw_key, (ec.EllipticCurvePublicKey, ed25519.Ed25519PublicKey)):
+        return raw_key
+    if isinstance(raw_key, bytes):
+        return serialization.load_pem_public_key(raw_key)
+    if isinstance(raw_key, str):
+        return serialization.load_pem_public_key(raw_key.encode("utf-8"))
+    if isinstance(raw_key, Mapping):
+        if any(f in raw_key for f in ("d", "p", "q", "dp", "dq", "qi", "oth", "k")):
+            raise CommitOutcomeDecodeError("refusing private key material in JWK")
+        kty = raw_key.get("kty")
+        if kty == "EC":
+            if raw_key.get("crv") != "P-256":
+                raise CommitOutcomeDecodeError(
+                    f"unsupported EC curve {raw_key.get('crv')!r}"
+                )
+            x_b = _decode_b64url_strict(str(raw_key.get("x", "")), field_name="JWK.x")
+            y_b = _decode_b64url_strict(str(raw_key.get("y", "")), field_name="JWK.y")
+            if len(x_b) != _P256_COORDINATE_BYTES or len(y_b) != _P256_COORDINATE_BYTES:
+                raise CommitOutcomeDecodeError("EC P-256 coordinates must be 32 bytes")
+            return ec.EllipticCurvePublicNumbers(
+                int.from_bytes(x_b, "big"), int.from_bytes(y_b, "big"), ec.SECP256R1()
+            ).public_key()
+        if kty == "OKP":
+            if raw_key.get("crv") != "Ed25519":
+                raise CommitOutcomeDecodeError(
+                    f"unsupported OKP curve {raw_key.get('crv')!r}"
+                )
+            x_b = _decode_b64url_strict(str(raw_key.get("x", "")), field_name="JWK.x")
+            if len(x_b) != _P256_COORDINATE_BYTES:
+                raise CommitOutcomeDecodeError("Ed25519 public key must be 32 bytes")
+            return ed25519.Ed25519PublicKey.from_public_bytes(x_b)
+        raise CommitOutcomeDecodeError(f"unsupported JWK kty={kty!r}")
+    raise CommitOutcomeDecodeError(
+        f"unsupported public key object {type(raw_key).__name__}"
+    )
+
+
+def _verify_outcome_signature_bytes(
+    *,
+    canonical_bytes: bytes,
+    algorithm: str,
+    signature_b64: str,
+    public_key: Any,
+) -> None:
+    from cryptography.exceptions import InvalidSignature
+    from cryptography.hazmat.primitives import hashes
+    from cryptography.hazmat.primitives.asymmetric import ec, ed25519, utils
+
+    sig_bytes = _decode_b64url_strict(signature_b64, field_name="signature.value")
+    try:
+        if algorithm == "EdDSA":
+            if not isinstance(public_key, ed25519.Ed25519PublicKey):
+                raise CommitOutcomeDecodeError(
+                    f"algorithm EdDSA requires Ed25519 key, got {type(public_key).__name__}"
+                )
+            public_key.verify(sig_bytes, canonical_bytes)
+            return
+        if algorithm == "ES256":
+            if not isinstance(public_key, ec.EllipticCurvePublicKey):
+                raise CommitOutcomeDecodeError(
+                    f"algorithm ES256 requires EC key, got {type(public_key).__name__}"
+                )
+            if public_key.curve.name != "secp256r1":
+                raise CommitOutcomeDecodeError(
+                    f"algorithm ES256 requires P-256 key, got {public_key.curve.name!r}"
+                )
+            key_size = 32
+            if len(sig_bytes) == key_size * 2:
+                try:
+                    utils.decode_dss_signature(sig_bytes)
+                    der_sig = sig_bytes
+                except ValueError:
+                    r = int.from_bytes(sig_bytes[:key_size], "big")
+                    s = int.from_bytes(sig_bytes[key_size:], "big")
+                    der_sig = utils.encode_dss_signature(r, s)
+            else:
+                der_sig = sig_bytes
+            public_key.verify(der_sig, canonical_bytes, ec.ECDSA(hashes.SHA256()))
+            return
+    except InvalidSignature as exc:
+        raise CommitOutcomeDecodeError("commit outcome signature invalid") from exc
+    raise CommitOutcomeDecodeError(f"unsupported signature algorithm {algorithm!r}")
+
+
+async def verify_commit_outcome_wire(
+    payload: object,
+    *,
+    key_resolver: Callable[[str], Awaitable[Any] | Any] | None = None,
+    public_keys: Mapping[str, Any] | None = None,
+    require_signature: bool | None = None,
+    expected_tool_name: str | None = None,
+    expected_idempotency_key: str | None = None,
+) -> CommitOutcome:
+    """Decode and cryptographically verify a ``CommitOutcome`` payload fail-closed.
+
+    Verification rules:
+    1. Reject embedded keys, malformed JSON types, and schema mismatches.
+    2. In enforcing postures (or when ``require_signature=True``), disabling
+       verification is refused at call time and an absent signature fails closed.
+    3. Whenever ``signature`` is present (in ANY posture, including dev/test),
+       resolve the signing key strictly out of band by ``kid`` (never falling
+       back on unknown ``kid``), verify ``ES256``/``EdDSA`` over RFC 8785 JCS
+       bytes excluding ``signature``, and require exact agreement on
+       ``expected_tool_name`` and ``expected_idempotency_key`` when provided.
+    """
+    from src.gateway.governance.env_posture import is_enforcing, resolve_posture
+    from src.gateway.governance.jcs_canonicalizer import jcs_canonicalize_plan
+
+    enforcing = is_enforcing(resolve_posture())
+    if require_signature is False and enforcing:
+        raise ValueError(
+            "Disabling CommitOutcome signature verification is prohibited in enforcing posture"
+        )
+    must_sign = bool(enforcing or require_signature is True)
+
+    outcome = CommitOutcome.from_wire(
+        payload,
+        expected_tool_name=expected_tool_name,
+        expected_idempotency_key=expected_idempotency_key,
+    )
+    if outcome.signature is None:
+        if must_sign:
+            raise CommitOutcomeDecodeError(
+                "commit outcome is missing required KMS signature"
+            )
+        return outcome
+
+    # When signed, any requested request bindings must be present in the signed body.
+    if expected_tool_name is not None and outcome.tool_name is None:
+        raise CommitOutcomeDecodeError(
+            "signed commit outcome is missing required bound 'tool_name'"
+        )
+    if expected_idempotency_key is not None and outcome.idempotency_key is None:
+        raise CommitOutcomeDecodeError(
+            "signed commit outcome is missing required bound 'idempotency_key'"
+        )
+
+    assert isinstance(payload, Mapping)
+    kid = outcome.signature["kid"]
+    alg = outcome.signature["algorithm"]
+    sig_val = outcome.signature["value"]
+
+    raw_key: Any = None
+    if public_keys is not None:
+        raw_key = public_keys.get(kid)
+    elif key_resolver is not None:
+        resolved = key_resolver(kid)
+        raw_key = await resolved if inspect.isawaitable(resolved) else resolved
+    else:
+        from src.gateway.governance.jwks import get_jwks
+
+        raw_key = get_jwks().get_pem(kid)
+
+    if raw_key is None:
+        raise CommitOutcomeDecodeError(f"commit outcome signed by unknown kid={kid!r}")
+
+    public_key = _coerce_public_key(raw_key)
+    unsigned_dict = {k: v for k, v in payload.items() if k != "signature"}
+    canonical = jcs_canonicalize_plan(unsigned_dict)
+    _verify_outcome_signature_bytes(
+        canonical_bytes=canonical,
+        algorithm=alg,
+        signature_b64=sig_val,
+        public_key=public_key,
+    )
+    return outcome
+
+
+def commit_tool_result(
+    outcome: CommitOutcome,
+    *,
+    structured_override: Mapping[str, Any] | None = None,
+) -> CallToolResult:
     """Build the MCP ``CallToolResult`` for a committing run's :class:`CommitOutcome`.
 
-    The typed outcome rides in ``structuredContent`` (:meth:`CommitOutcome.to_wire`);
-    ``content`` carries only its prose. ``isError`` is set whenever nothing was
-    guaranteed executed (:data:`NOT_EXECUTED_STATUSES`), so a caller that reads
-    only ``isError`` or text still fails closed (POAM-2026-245 / POAM-2026-255).
+    The typed outcome rides in ``structuredContent`` (:meth:`CommitOutcome.to_wire`
+    or a pre-signed payload override); ``content`` carries only its prose. ``isError``
+    is set whenever nothing was guaranteed executed (:data:`NOT_EXECUTED_STATUSES`),
+    so a caller that reads only ``isError`` or text still fails closed
+    (POAM-2026-245 / POAM-2026-255).
     """
     from mcp.types import CallToolResult, TextContent
 
     return CallToolResult(
         content=[TextContent(type="text", text=outcome.message)],
-        structuredContent=outcome.to_wire(),
+        structuredContent=(
+            dict(structured_override)
+            if structured_override is not None
+            else outcome.to_wire()
+        ),
         isError=outcome.status in NOT_EXECUTED_STATUSES,
     )
+
+
+async def signed_commit_tool_result(
+    outcome: CommitOutcome,
+    *,
+    tool_name: str | None = None,
+    idempotency_key: str | None = None,
+    signer: Any | None = None,
+) -> CallToolResult:
+    """Build a ``CallToolResult`` carrying a request-bound, KMS-signed ``CommitOutcome``."""
+    signed_wire = await sign_commit_outcome_wire(
+        outcome,
+        tool_name=tool_name,
+        idempotency_key=idempotency_key,
+        signer=signer,
+    )
+    return commit_tool_result(outcome, structured_override=signed_wire)

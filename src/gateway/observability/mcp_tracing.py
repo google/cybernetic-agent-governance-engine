@@ -39,8 +39,11 @@ from opentelemetry import trace
 from opentelemetry.trace.propagation.tracecontext import TraceContextTextMapPropagator
 
 from src.gateway.governance.commit_outcome import (
+    COMMIT_OUTCOME_SCHEMA,
     CommitOutcome,
     commit_tool_result,
+    extract_request_idempotency_key,
+    sign_commit_outcome_wire,
 )
 from src.gateway.governance.execution_idempotency import (
     actuation_attempt_scope,
@@ -117,6 +120,45 @@ def _build_redacted_call_tool_result(outcome: CommitOutcome) -> Any:
     return commit_tool_result(outcome)
 
 
+async def _sign_mcp_commit_result(
+    result: Any,
+    *,
+    tool_name: str,
+    idempotency_key: str | None,
+) -> Any:
+    """Sign any ``CommitOutcome`` inside an MCP tool result (``CallToolResult`` or 2-tuple)."""
+    structured_attr = getattr(result, "structuredContent", None)
+    if (
+        isinstance(structured_attr, Mapping)
+        and structured_attr.get("schema") == COMMIT_OUTCOME_SCHEMA
+    ):
+        signed_wire = await sign_commit_outcome_wire(
+            structured_attr,
+            tool_name=tool_name,
+            idempotency_key=idempotency_key,
+        )
+        from mcp.types import CallToolResult
+
+        return CallToolResult(
+            content=result.content,
+            structuredContent=signed_wire,
+            isError=bool(getattr(result, "isError", False)),
+        )
+    if (
+        isinstance(result, tuple)
+        and len(result) == 2
+        and isinstance(result[1], Mapping)
+        and result[1].get("schema") == COMMIT_OUTCOME_SCHEMA
+    ):
+        signed_wire = await sign_commit_outcome_wire(
+            result[1],
+            tool_name=tool_name,
+            idempotency_key=idempotency_key,
+        )
+        return (result[0], signed_wire)
+    return result
+
+
 def patch_mcp_tools(mcp_server) -> None:  # type: ignore[no-untyped-def]
     """
     Monkey-patches ToolManager.call_tool to extract the W3C traceparent
@@ -145,8 +187,15 @@ def patch_mcp_tools(mcp_server) -> None:  # type: ignore[no-untyped-def]
             # dispatch_actuation() inside the tool folds into `attempt` on exit
             # (POAM-2026-252 / POAM-2026-253 / POAM-2026-255).
             with actuation_attempt_scope() as attempt:
+                req_idem_key = extract_request_idempotency_key(
+                    arguments, attempt=attempt
+                )
                 result = await original_call_tool(
                     name, arguments, context=context, convert_result=convert_result
+                )
+                req_idem_key = (
+                    extract_request_idempotency_key(arguments, attempt=attempt)
+                    or req_idem_key
                 )
 
                 # 4. Sanitize tool response against indirect prompt injection
@@ -186,7 +235,14 @@ def patch_mcp_tools(mcp_server) -> None:  # type: ignore[no-untyped-def]
                 result = commit_tool_result(enforced_outcome)
                 result_str = enforced_outcome.message
 
-            # 6. Record the result size only — never raw content (#774)
+            # 6. Bind to request and KMS-sign CommitOutcome structuredContent (POAM-2026-249).
+            result = await _sign_mcp_commit_result(
+                result,
+                tool_name=name,
+                idempotency_key=req_idem_key,
+            )
+
+            # 7. Record the result size only — never raw content (#774)
             span.set_attribute(SPAN_ATTR_MCP_TOOL_RESULT_LENGTH, len(result_str))
             return result
 

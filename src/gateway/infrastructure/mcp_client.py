@@ -19,8 +19,10 @@ import inspect
 import logging
 import os
 import time
+from collections.abc import Mapping
 from contextlib import AsyncExitStack
 from typing import Any
+from urllib.parse import urlsplit
 
 import httpx
 from mcp import ClientSession
@@ -29,7 +31,10 @@ from mcp.client.streamable_http import streamable_http_client
 from src.gateway.governance.commit_outcome import (
     CommitOutcome,
     CommitOutcomeDecodeError,
+    extract_request_idempotency_key,
+    verify_commit_outcome_wire,
 )
+from src.gateway.governance.env_posture import is_enforcing, resolve_posture
 from src.gateway.observability.attributes import (
     OBSERVATION_TYPE,
     SPAN_ATTR_GEN_AI_OPERATION_NAME,
@@ -112,6 +117,13 @@ def _normalize_mcp_url(raw_url: str | None) -> str:
     return url
 
 
+def _derive_jwks_url(mcp_url: str) -> str | None:
+    parts = urlsplit(mcp_url)
+    if parts.scheme in ("http", "https") and parts.netloc:
+        return f"{parts.scheme}://{parts.netloc}/governance/.well-known/jwks.json"
+    return None
+
+
 class GatewayMCPClient:
     """Client for interacting with the Gateway's stateless MCP Streamable HTTP server.
 
@@ -128,10 +140,25 @@ class GatewayMCPClient:
         *,
         tools_cache_ttl_s: float | None = None,
         http_transport: httpx.AsyncBaseTransport | None = None,
+        jwks_url: str | None = None,
+        verify_signature: bool | None = None,
+        public_keys: Mapping[str, Any] | None = None,
     ) -> None:
+        if verify_signature is False and is_enforcing(resolve_posture()):
+            raise ValueError(
+                "Disabling CommitOutcome signature verification is prohibited in enforcing posture"
+            )
         self.mcp_url = _normalize_mcp_url(mcp_url)
         # Keep sse_url as an alias for callers that inspect the attribute.
         self.sse_url = self.mcp_url
+        self._jwks_url = (
+            jwks_url.strip()
+            if isinstance(jwks_url, str) and jwks_url.strip()
+            else _derive_jwks_url(self.mcp_url)
+        )
+        self._verify_signature_mode = verify_signature
+        self._public_keys = public_keys
+        self._jwks_resolver: Any | None = None
         self.session: ClientSession | None = None
         self._exit_stack: AsyncExitStack | None = None
         self._http_client: httpx.AsyncClient | None = None
@@ -413,29 +440,136 @@ class GatewayMCPClient:
             raise MCPToolExecutionError(name, text)
         return text
 
+    def _effective_verify_signature(self) -> bool | None:
+        """Return configured signature enforcement mode (``None`` in dev/test auto mode)."""
+        if getattr(self, "_verify_signature_mode", None) is False:
+            return False
+        if getattr(self, "_verify_signature_mode", None) is True:
+            return True
+        if is_enforcing(resolve_posture()):
+            return True
+        return None
+
+    async def _fetch_jwks_map(self, jwks_url: str) -> dict[str, Mapping[str, Any]]:
+        parts = urlsplit(jwks_url)
+        if parts.scheme not in ("http", "https") or not parts.netloc:
+            raise CommitOutcomeDecodeError(f"invalid JWKS URL {jwks_url!r}")
+        existing_client = getattr(self, "_http_client", None)
+        if existing_client is not None:
+            resp = await existing_client.get(jwks_url)
+        else:
+            async with self._build_http_client() as client:
+                resp = await client.get(jwks_url)
+        if resp.status_code != 200:
+            raise CommitOutcomeDecodeError(
+                f"JWKS endpoint {jwks_url!r} returned HTTP {resp.status_code}"
+            )
+        payload = resp.json()
+        raw_keys = payload.get("keys") if isinstance(payload, Mapping) else None
+        if not isinstance(raw_keys, list) or not raw_keys:
+            raise CommitOutcomeDecodeError(
+                "JWKS endpoint returned empty or malformed key set"
+            )
+        keys_by_kid: dict[str, Mapping[str, Any]] = {}
+        for jwk in raw_keys:
+            if not isinstance(jwk, Mapping):
+                raise CommitOutcomeDecodeError("JWKS entry is not an object")
+            kty = jwk.get("kty")
+            crv = jwk.get("crv")
+            alg = jwk.get("alg")
+            if kty == "EC" and crv == "P-256" and alg in (None, "ES256"):
+                pass
+            elif kty == "OKP" and crv == "Ed25519" and alg in (None, "EdDSA"):
+                pass
+            else:
+                raise CommitOutcomeDecodeError(
+                    f"JWKS contains unsupported key type kty={kty!r} crv={crv!r} alg={alg!r}"
+                )
+            kid = jwk.get("kid")
+            if isinstance(kid, str) and kid:
+                keys_by_kid[kid] = dict(jwk)
+        return keys_by_kid
+
+    async def _resolve_commit_outcome_key(self, kid: str) -> Any:
+        jwks_url = getattr(self, "_jwks_url", None)
+        if not isinstance(jwks_url, str) or not jwks_url:
+            raise CommitOutcomeDecodeError(
+                f"no out-of-band JWKS URL available to verify kid={kid!r}"
+            )
+        lock = getattr(self, "_jwks_lock", None)
+        bound_loop = getattr(self, "_jwks_loop", None)
+        loop = asyncio.get_running_loop()
+        if lock is None or bound_loop is not loop:
+            lock = asyncio.Lock()
+            self._jwks_lock = lock
+            self._jwks_loop = loop
+        async with lock:
+            cache: dict[str, Mapping[str, Any]] = getattr(self, "_jwks_cache", {})
+            fetched_at = float(getattr(self, "_jwks_fetched_at", 0.0))
+            last_unknown_refresh = float(getattr(self, "_jwks_unknown_refresh_at", 0.0))
+            now = time.monotonic()
+            ttl_expired = (now - fetched_at) >= 300.0
+            staleness_expired = bool(cache) and (now - fetched_at) >= 3600.0
+            if staleness_expired:
+                cache = {}
+                self._jwks_cache = cache
+            need_refresh = (
+                (not cache)
+                or ttl_expired
+                or (kid not in cache and (now - last_unknown_refresh) >= 5.0)
+            )
+            if need_refresh:
+                if kid not in cache:
+                    self._jwks_unknown_refresh_at = now
+                try:
+                    cache = await self._fetch_jwks_map(jwks_url)
+                except CommitOutcomeDecodeError:
+                    if not cache or (now - fetched_at) >= 3600.0:
+                        self._jwks_cache = {}
+                    raise
+                self._jwks_cache = cache
+                self._jwks_fetched_at = now
+            return cache.get(kid)
+
     async def call_commit_tool(
         self, name: str, arguments: dict[str, Any]
     ) -> CommitOutcome:
-        """Invoke a committing MCP tool and return its typed outcome.
+        """Invoke a committing MCP tool and return its typed, verified outcome.
 
         A committing tool (one that commits, seals and actuates) answers with
         a ``CommitOutcome`` in ``structuredContent`` whether or not
         ``isError`` is set (``isError`` marks only that nothing executed).
-        The outcome is decoded with ``CommitOutcome.from_wire``; the prose in
-        ``content`` is never read for a decision. Sending follows
-        :meth:`call_tool` (at most once unless annotated retry-safe).
+        Whenever cryptographic verification applies (all enforcing postures,
+        explicit ``verify_signature=True``, or any response carrying a
+        ``signature``), keys are resolved strictly out of band by ``kid`` from
+        JWKS (or caller-pinned ``public_keys``), unknown ``kid`` fails closed,
+        and the bound ``tool_name`` and ``idempotency_key`` are verified against
+        the caller's request.
 
         Raises:
             MCPCommitOutcomeUnrecognizedError: The result carries no
-                decodable outcome (absent, wrong schema, unknown status).
+                decodable or verified outcome.
             MCPToolOutcomeUnknownError: The request may have reached the
                 gateway and no result came back; the caller must reconcile.
             Exception: The session could not be established on either
                 attempt; the request was never sent.
         """
+        expected_idem_key = extract_request_idempotency_key(arguments)
         result = await self._traced_call(name, arguments)
+        public_keys = getattr(self, "_public_keys", None)
         try:
-            return CommitOutcome.from_wire(getattr(result, "structuredContent", None))
+            return await verify_commit_outcome_wire(
+                getattr(result, "structuredContent", None),
+                public_keys=public_keys,
+                key_resolver=(
+                    None
+                    if public_keys is not None
+                    else self._resolve_commit_outcome_key
+                ),
+                require_signature=self._effective_verify_signature(),
+                expected_tool_name=name,
+                expected_idempotency_key=expected_idem_key,
+            )
         except CommitOutcomeDecodeError as exc:
             raise MCPCommitOutcomeUnrecognizedError(
                 name, f"MCP tool {name!r} returned no recognised commit outcome: {exc}"
