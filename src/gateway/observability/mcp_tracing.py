@@ -31,7 +31,6 @@ Architecture Note:
   at ToolManager.call_tool() — before validation — to extract the carrier.
 """
 
-import json
 import logging
 from collections.abc import Mapping
 from typing import Any
@@ -39,10 +38,16 @@ from typing import Any
 from opentelemetry import trace
 from opentelemetry.trace.propagation.tracecontext import TraceContextTextMapPropagator
 
+from src.gateway.governance.commit_outcome import (
+    NOT_EXECUTED_STATUSES,
+    CommitOutcome,
+)
+from src.gateway.governance.execution_idempotency import actuation_attempt_scope
 from src.gateway.governance.governor.metrics import mark_request_refused
-from src.gateway.governance.iso_control import stamp_iso_control
-from src.gateway.governance.prompt_injection_detector import (
-    detect_indirect_injection,
+from src.gateway.governance.post_execution_sanitizer import (
+    evaluate_post_execution_output,
+    extract_tool_output_text,
+    scan_tool_response_text,
 )
 from src.gateway.observability.attributes import SPAN_ATTR_MCP_TOOL_RESULT_LENGTH
 
@@ -80,42 +85,39 @@ async def sanitize_mcp_tool_response(
     tool_name: str,
     response_text: Any,
     span: Any = None,
+    *,
+    post_exec_protected: bool = False,
 ) -> str | None:
     """Sanitize an MCP tool response for indirect injection (AI 600-1 §2.3, AI600-003).
 
     Checks the tool response against ``detect_indirect_injection()`` using
     lightweight kernel imports (avoiding cold-importing FastAPI/middleware on
     the hot ``ToolManager.call_tool`` path) and skips ISO control stamping when
-    *span* is non-recording.
+    *span* is non-recording. Stamps ISO 42001 ``A.9.2`` ``BLOCK`` only when
+    ``not post_exec_protected`` (POAM-2026-253).
 
     Returns:
         A violation description string if indirect injection was detected,
         ``None`` if the response is clean.
     """
-    safe_text = (
-        response_text
-        if isinstance(response_text, str)
-        else str(response_text if response_text is not None else "")
+    violation, _pattern = scan_tool_response_text(
+        tool_name,
+        response_text,
+        span=span,
+        post_exec_protected=post_exec_protected,
     )
-    active_span = span
-    if active_span is not None:
-        is_rec = getattr(active_span, "is_recording", None)
-        if callable(is_rec) and not is_rec():
-            active_span = None
-    result = detect_indirect_injection(tool_name, safe_text)
-    if result.detected:
-        stamp_iso_control(
-            active_span, ingress_stage=2, control="A.9.2", outcome="BLOCK"
-        )
-        logger.warning(
-            "🔴 [AI600-003] MCP tool response rejected: tool=%s pattern=%s "
-            "(ISO 42001 A.9.2 — indirect injection blocked)",
-            tool_name,
-            result.pattern_matched,
-        )
-        return f"indirect_injection:{result.pattern_matched}"
-    stamp_iso_control(active_span, ingress_stage=2, control="A.9.2", outcome="PASS")
-    return None
+    return violation
+
+
+def _build_redacted_call_tool_result(outcome: CommitOutcome) -> Any:
+    """Build an MCP ``CallToolResult`` carrying a redacted post-execution outcome."""
+    from mcp.types import CallToolResult, TextContent
+
+    return CallToolResult(
+        content=[TextContent(type="text", text=outcome.message)],
+        structuredContent=outcome.to_wire(),
+        isError=outcome.status in NOT_EXECUTED_STATUSES,
+    )
 
 
 def patch_mcp_tools(mcp_server) -> None:  # type: ignore[no-untyped-def]
@@ -142,23 +144,45 @@ def patch_mcp_tools(mcp_server) -> None:  # type: ignore[no-untyped-def]
             # the result length go on the span.
             span.set_attribute("mcp.tool.name", name)
 
-            # 3. Delegate to original (validates args, calls fn)
-            result = await original_call_tool(
-                name, arguments, context=context, convert_result=convert_result
-            )
-
-            # 4. Sanitize tool response against indirect prompt injection (AI 600-1 §2.3 / A.9.2)
-            result_str = _extract_mcp_result_text(result)
-            violation = await sanitize_mcp_tool_response(name, result_str, span=span)
-            if violation is not None:
-                mark_request_refused()
-                span.set_attribute("mcp.tool.blocked_output", violation)
-                span.set_attribute("mcp.tool.output_sanitized_after_execution", True)
-                raise PermissionError(
-                    f"MCP tool response blocked by indirect prompt-injection guard ({violation})"
+            # 3. Delegate to original inside a kernel attempt scope so any
+            # dispatch_actuation() inside the tool folds into `attempt` on exit
+            # (POAM-2026-252 / POAM-2026-253).
+            with actuation_attempt_scope() as attempt:
+                result = await original_call_tool(
+                    name, arguments, context=context, convert_result=convert_result
                 )
 
+                # 4. Sanitize tool response against indirect prompt injection
+                # (AI 600-1 §2.3 / A.9.2 / POAM-2026-253: never refuse after execution)
+                san_outcome = await evaluate_post_execution_output(
+                    name,
+                    result,
+                    span=span,
+                    attempt=attempt,
+                    transport="mcp",
+                )
+            if san_outcome.blocked:
+                mark_request_refused()
+                span.set_attribute(
+                    "mcp.tool.blocked_output", san_outcome.violation or ""
+                )
+                span.set_attribute("mcp.tool.output_sanitized_after_execution", True)
+                raise PermissionError(
+                    "MCP tool response blocked by indirect prompt-injection guard "
+                    f"({san_outcome.violation})"
+                )
+            if san_outcome.redacted and san_outcome.redacted_outcome is not None:
+                redacted_result = _build_redacted_call_tool_result(
+                    san_outcome.redacted_outcome
+                )
+                span.set_attribute(
+                    SPAN_ATTR_MCP_TOOL_RESULT_LENGTH,
+                    len(san_outcome.redacted_outcome.message),
+                )
+                return redacted_result
+
             # 5. Record the result size only — never raw content (#774)
+            result_str = _extract_mcp_result_text(result)
             span.set_attribute(SPAN_ATTR_MCP_TOOL_RESULT_LENGTH, len(result_str))
             return result
 
@@ -174,28 +198,4 @@ def patch_mcp_tools(mcp_server) -> None:  # type: ignore[no-untyped-def]
 
 def _extract_mcp_result_text(result: Any) -> str:
     """Extract scannable text from raw or FastMCP-converted tool outputs."""
-    if isinstance(result, str):
-        return result
-    if isinstance(result, dict):
-        return json.dumps(result, default=str)
-    content_attr = getattr(result, "content", None)
-    structured_attr = getattr(result, "structuredContent", None)
-    if isinstance(content_attr, (list, tuple)) or isinstance(structured_attr, dict):
-        extracted_parts: list[str] = []
-        if isinstance(content_attr, (list, tuple)):
-            extracted_parts.append(_extract_mcp_result_text(content_attr))
-        if isinstance(structured_attr, dict):
-            extracted_parts.append(json.dumps(structured_attr, default=str))
-        return "\n".join(p for p in extracted_parts if p)
-    if isinstance(result, (list, tuple)):
-        parts: list[str] = []
-        for item in result:
-            text_attr = getattr(item, "text", None)
-            if isinstance(text_attr, str):
-                parts.append(text_attr)
-            elif isinstance(item, (list, tuple, dict)):
-                parts.append(_extract_mcp_result_text(item))
-            elif item is not None:
-                parts.append(str(item))
-        return "\n".join(parts)
-    return str(result)
+    return extract_tool_output_text(result)
