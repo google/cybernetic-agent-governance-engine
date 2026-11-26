@@ -236,22 +236,25 @@ component-definition:
                   (generate_w3c_traceparent()) for distributed audit correlation
 
                 Point-to-point transport mTLS (sc-8) protects the wire channel only and
-                does not substitute for end-to-end GovernanceEnvelope.signature
-                verification. Remains marked partially-implemented under POAM-2026-241
-                pending tagged release publication of cage-client v0.5.0. Server-side KMS
-                envelope signing lives in src/gateway/governance/governance_envelope.py
-                and src/gateway/governance/kms_signer.py.
+                does not substitute for end-to-end GovernanceEnvelope.signature or
+                CommitOutcome.signature verification (verified in
+                verify_commit_outcome_payload() across HTTP 200/202/403 CommitOutcomes).
+                Published in tagged release cage-client v0.5.0 (tag client-v0.5.0,
+                2026-11-26; two-phase wheel smoke verified across bare and [langgraph]
+                installs; POAM-2026-241 closed). Server-side KMS envelope and
+                CommitOutcome signing lives in
+                src/gateway/governance/governance_envelope.py,
+                src/gateway/governance/commit_outcome.py, and
+                src/gateway/governance/kms_signer.py.
               props:
                 - name: implementation-status
-                  value: partially-implemented
+                  value: implemented
                 - name: control-origination
                   value: system-specific
                 - name: implementation-date
-                  value: "2026-11-24"
+                  value: "2026-11-26"
                 - name: w3c-traceparent-propagation
                   value: "true"
-                - name: poam-reference
-                  value: "POAM-2026-241"
               links:
                 - href: "https://csrc.nist.gov/projects/cprt/api/cprt/framework/version/SP_800_53_5_1_1/home?element=AU-10"
                   rel: reference
@@ -260,13 +263,16 @@ component-definition:
                   text: "W3C Trace Context specification"
                 - href: "../../packages/cage-client/src/cage_client/core.py"
                   rel: implementation
-                  text: "Pre-verdict GovernanceEnvelope signature verification in CageClient._verify_envelope_response()"
+                  text: "Pre-verdict GovernanceEnvelope and CommitOutcome verification in CageClient"
                 - href: "../../packages/cage-client/src/cage_client/crypto.py"
                   rel: implementation
                   text: "Asymmetric signature verification, pinned key validation, and W3C traceparent generation"
                 - href: "../../packages/cage-client/src/cage_client/jwks.py"
                   rel: implementation
-                  text: "Out-of-band kid JWKS resolver with bounded TTL and max_jwks_staleness_s eviction"
+                  text: "Out-of-band kid JWKS resolver with bounded TTL, immediate HTTP 200 empty eviction, and max_jwks_staleness_s eviction"
+                - href: "../../packages/cage-client/src/cage_client/outcomes.py"
+                  rel: implementation
+                  text: "Signed CommitOutcome verification in verify_commit_outcome_payload()"
 
             - uuid: "3c4d5e6f-7a8b-9c0d-1e2f-3a4b5c6d7e8f"
               control-id: sc-8
