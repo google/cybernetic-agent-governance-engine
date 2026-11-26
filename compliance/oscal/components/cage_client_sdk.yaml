@@ -253,11 +253,21 @@ component-definition:
             - uuid: "4d5e6f7a-8b9c-0d1e-2f3a-4b5c6d7e8f9a"
               control-id: sc-23
               description: |
-                Client-side envelope temporal freshness and request-subject authenticity
-                binding are implemented in packages/cage-client/src/cage_client/core.py
-                (CageClient._verify_timestamps(), CageClient._verify_subject_binding())
-                and packages/cage-client/src/cage_client/crypto.py
-                (compute_expected_action_hash()).
+                Client-side envelope temporal freshness, request-subject authenticity,
+                per-call correlation_id replay binding, and deferral ticket TTL
+                separation are implemented in packages/cage-client/src/cage_client/core.py
+                (CageClient._verify_timestamps(), CageClient._verify_subject_binding(),
+                CageClient._mediate_defer_verdict()),
+                packages/cage-client/src/cage_client/crypto.py
+                (compute_expected_action_hash()),
+                packages/cage-client/src/cage_client/exceptions.py (DeferralPending),
+                and packages/cage-client/src/cage_client/outcomes.py (PreviewResult),
+                paired with gateway-side envelope binding and deferral TTL emission in
+                src/gateway/governance/governance_envelope.py
+                (GovernanceEnvelopeBuilder.build()),
+                src/gateway/server/governance_middleware.py
+                (_resolve_validate_correlation_id()), and
+                src/gateway/governance/governor/verdicts.py (_defer_ttl_fields()).
 
                 By default (verify_expiration=True, verify_subject=True,
                 clock_skew_seconds=5.0), CageClient enforces on every HTTP 200 and
@@ -269,39 +279,64 @@ component-definition:
                   rejects expired envelopes where
                   expires_at + timedelta(seconds=clock_skew_seconds) <= now(UTC) with
                   RoutingSealVerificationError
-                - Prevents cross-action and cross-parameter substitution by
-                  verifying envelope.subject["action"] == action and constant-time
+                - Prevents cross-action, cross-parameter, and cross-call replay by
+                  verifying envelope.subject["action"] == action, constant-time
                   hmac.compare_digest() parity between envelope.subject["action_hash"]
-                  and sha256:<hex> over RFC 8785 JCS {"action": action, "params": ...}
-                  (per-call correlation_id binding and deferral TTL separation open under
-                  POAM-2026-241)
+                  and sha256:<hex> over RFC 8785 JCS {"action": action, "params": ...},
+                  and isinstance(str) + non-blank + constant-time hmac.compare_digest()
+                  parity between signed envelope.payload["correlation_id"] and the
+                  caller's per-call correlation_id (while gateway binds
+                  payload["correlation_id"] conditionally when supplied, returning HTTP
+                  400 on whitespace-only values or body/header mismatches)
+                - Separates multi-hour HITL deferral ticket lifetime (defer_expires_at,
+                  parsed from strict RFC 3339 defer_expires_at or derived from
+                  issued_at + ttl_seconds with a WARNING log when falling back to
+                  14400s — never envelope.expires_at) onto DeferralPending.expires_at /
+                  DeferralPending.defer_expires_at (distinct from envelope_expires_at)
+                  and PreviewResult.defer_expires_at
 
-                Scope boundary: Stateless CageClient validates temporal freshness and
-                request-parameter hash binding per call; stateful server-side single-use
-                seal nonce consumption via atomic Redis SETNX (verify_and_consume_seal())
-                lives in src/gateway/governance/routing_seal.py, outside
-                packages/cage-client/.
+                Scope boundary: Stateless CageClient validates temporal freshness,
+                request-parameter hash binding, and per-call correlation_id parity per
+                call; stateful server-side single-use seal nonce consumption via atomic
+                Redis SETNX (verify_and_consume_seal()) lives in
+                src/gateway/governance/routing_seal.py, outside packages/cage-client/.
               props:
                 - name: implementation-status
-                  value: partially-implemented
+                  value: implemented
                 - name: control-origination
                   value: system-specific
                 - name: implementation-date
-                  value: "2026-11-19"
-                - name: poam-reference
-                  value: "POAM-2026-241"
+                  value: "2026-11-26"
               links:
                 - href: "https://csrc.nist.gov/projects/cprt/api/cprt/framework/version/SP_800_53_5_1_1/home?element=SC-23"
                   rel: reference
                 - href: "../../packages/cage-client/src/cage_client/core.py"
                   rel: implementation
-                  text: "Temporal freshness and subject binding checks in CageClient._verify_timestamps() and _verify_subject_binding()"
+                  text: "Temporal freshness, subject/correlation_id binding, and defer_expires_at mediation in CageClient"
                 - href: "../../packages/cage-client/src/cage_client/crypto.py"
                   rel: implementation
                   text: "RFC 8785 JCS compute_expected_action_hash() request-parameter binding"
                 - href: "../../packages/cage-client/src/cage_client/envelope.py"
                   rel: implementation
-                  text: "Immutable GovernanceEnvelope issued_at, expires_at, and subject schema fields"
+                  text: "Immutable GovernanceEnvelope issued_at, expires_at, payload, and subject schema fields"
+                - href: "../../packages/cage-client/src/cage_client/exceptions.py"
+                  rel: implementation
+                  text: "DeferralPending defer_expires_at vs envelope_expires_at separation"
+                - href: "../../src/gateway/governance/governance_envelope.py"
+                  rel: implementation
+                  text: "GovernanceEnvelopeBuilder signed payload.correlation_id binding"
+                - href: "../../src/gateway/server/governance_middleware.py"
+                  rel: implementation
+                  text: "POST /governance/validate-action correlation_id validation and envelope binding"
+                - href: "../../src/gateway/governance/governor/verdicts.py"
+                  rel: implementation
+                  text: "Explicit defer_expires_at and ttl_seconds emission in _defer_ttl_fields()"
+                - href: "../../packages/cage-client/tests/test_sc23_correlation_and_ttl.py"
+                  rel: implementation
+                  text: "Standalone SC-23 correlation_id binding and defer_expires_at unit and mutant tests"
+                - href: "../../tests/gateway/test_sc23_gateway_binding.py"
+                  rel: implementation
+                  text: "Live ASGI and dual-column SC23-M1..M5 mutation tests for gateway and SDK SC-23 binding"
 
   # -------------------------------------------------------------------------
   # Related Components (References Only)

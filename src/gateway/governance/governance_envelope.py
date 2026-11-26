@@ -351,6 +351,7 @@ class GovernanceEnvelopeBuilder:
         target_route: str = "local://default",
         executor_id: str = "kernel",
         evaluated_action_hash: str | None = None,
+        correlation_id: str | None = None,
     ) -> GovernanceEnvelope:
         """Build an unsigned envelope for external signing.
 
@@ -371,6 +372,9 @@ class GovernanceEnvelopeBuilder:
             evaluated_action_hash: Optional :func:`envelope_action_hash` of the
                 params the stages evaluated (server inputs bound), emitted as
                 ``subject.evaluated_action_hash``; omitted when ``None``.
+            correlation_id: Optional caller-supplied per-request correlation nonce.
+                When provided, bound into ``payload["correlation_id"]`` so the
+                JCS signature covers it against cross-call replay (`POAM-2026-241`).
 
         Returns:
             An unsigned GovernanceEnvelope ready for signing.
@@ -396,6 +400,16 @@ class GovernanceEnvelopeBuilder:
             deployment_region=resolve_deployment_region(),
         )
 
+        payload_data = dict(governance_result)
+        if correlation_id is not None:
+            if not isinstance(correlation_id, str) or not correlation_id.strip():
+                raise ValueError("correlation_id must be a non-empty string")
+            cleaned_corr = correlation_id.strip()
+            existing_corr = payload_data.get("correlation_id")
+            if existing_corr is not None and existing_corr != cleaned_corr:
+                raise ValueError("governance_result carries conflicting correlation_id")
+            payload_data["correlation_id"] = cleaned_corr
+
         return GovernanceEnvelope(
             envelope_version=_ENVELOPE_VERSION,
             envelope_type=envelope_type.value,
@@ -407,7 +421,7 @@ class GovernanceEnvelopeBuilder:
             issuer=self._issuer,
             subject=subject,
             governance_context=context,
-            payload=governance_result,
+            payload=payload_data,
             external_attestations=external_attestations or [],
             signature=None,
         )
@@ -455,6 +469,7 @@ class GovernanceEnvelopeBuilder:
         target_route: str = "local://default",
         executor_id: str = "kernel",
         evaluated_action_hash: str | None = None,
+        correlation_id: str | None = None,
     ) -> GovernanceEnvelope:
         """Build a signed envelope using the KMS signer.
 
@@ -472,6 +487,8 @@ class GovernanceEnvelopeBuilder:
             executor_id: Executor/actuator identifier (e.g., "actuator_01", "synthetic_actuator_01").
             evaluated_action_hash: Optional :func:`envelope_action_hash` of the
                 evaluated params (see :meth:`build_unsigned`).
+            correlation_id: Optional caller-supplied per-request correlation nonce
+                bound into ``payload["correlation_id"]`` before signing.
 
         Returns:
             A signed GovernanceEnvelope.
@@ -488,6 +505,7 @@ class GovernanceEnvelopeBuilder:
             target_route=target_route,
             executor_id=executor_id,
             evaluated_action_hash=evaluated_action_hash,
+            correlation_id=correlation_id,
         )
 
         try:

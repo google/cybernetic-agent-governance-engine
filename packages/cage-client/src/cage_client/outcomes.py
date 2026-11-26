@@ -24,6 +24,7 @@ from __future__ import annotations
 import math
 from collections.abc import Awaitable, Callable, Mapping
 from dataclasses import dataclass
+from datetime import datetime
 from enum import Enum
 from types import MappingProxyType
 from typing import Any
@@ -63,6 +64,7 @@ class PreviewResult:
     narrowed_params: dict[str, Any] | None = None
     deferred_id: str | None = None
     defer_reason: str | None = None
+    defer_expires_at: datetime | None = None
     requires_approval: bool = False
     reason_code: str | None = None
     audit_id: str | None = None

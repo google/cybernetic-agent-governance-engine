@@ -18,7 +18,7 @@ import os
 import re
 import uuid
 from collections.abc import Mapping, Sequence
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from typing import TYPE_CHECKING, Any, NoReturn
 
 from opentelemetry import trace
@@ -646,6 +646,20 @@ async def handle_post_hitl_defer(
     )
 
 
+def _defer_ttl_fields() -> dict[str, Any]:
+    """Return authoritative ``ttl_seconds`` and RFC 3339 ``defer_expires_at`` from ``DeferQueue``."""
+    from src.gateway.governance.defer_queue import _DEFAULT_TTL
+
+    ttl_s = int(_DEFAULT_TTL)
+    expires_at = datetime.now(timezone.utc) + timedelta(seconds=ttl_s)
+    return {
+        "ttl_seconds": ttl_s,
+        "defer_expires_at": expires_at.isoformat(timespec="milliseconds").replace(
+            "+00:00", "Z"
+        ),
+    }
+
+
 async def handle_require_approval(
     action: str,
     params: dict[str, Any],
@@ -715,6 +729,7 @@ async def handle_require_approval(
         "narrowed_params": (classification_meta.get("narrow_hint") or {}).get(
             "narrowed_params"
         ),
+        **(_defer_ttl_fields() if deferred_id else {}),
         **_reliance_field(reliance),
     }
 
@@ -779,6 +794,7 @@ async def handle_defer(
         "deferrable": classification_meta.get("deferrable", True),
         "retry_after_seconds": 300,
         "agent_id": agent_id,
+        **(_defer_ttl_fields() if defer_token else {}),
         **_reliance_field(reliance),
     }
 

@@ -169,7 +169,9 @@ class SignedGatewayStub:
                 return response
             if not isinstance(body, dict) or isinstance(body.get("signature"), dict):
                 return response
-            payload = body["payload"] if isinstance(body.get("payload"), dict) else body
+            payload = dict(
+                body["payload"] if isinstance(body.get("payload"), dict) else body
+            )
             if response.status_code == 403:
                 if payload.get("verdict") not in (
                     "DENY",
@@ -178,6 +180,11 @@ class SignedGatewayStub:
                     return response
             envelope_id = body.get("envelope_id")
             sent = json.loads(request.content)
+            if (
+                isinstance(sent.get("correlation_id"), str)
+                and "correlation_id" not in payload
+            ):
+                payload["correlation_id"] = sent["correlation_id"]
             return httpx.Response(
                 response.status_code,
                 json=self.envelope(

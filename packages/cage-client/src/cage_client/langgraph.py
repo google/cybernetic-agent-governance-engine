@@ -396,6 +396,11 @@ def governed_node(
                     },
                 )
             if preview_res.decision is GovernanceDecision.DEFERRED:
+                serialized_defer_exp = (
+                    preview_res.defer_expires_at.isoformat()
+                    if preview_res.defer_expires_at is not None
+                    else None
+                )
                 if preview_res.requires_approval and preview_res.deferred_id:
                     return Command(
                         goto=on_approval_required or on_defer or on_deny,
@@ -403,6 +408,7 @@ def governed_node(
                             "governance_status": "REQUIRE_APPROVAL",
                             deferred_id_key: preview_res.deferred_id,
                             "defer_reason": preview_res.defer_reason,
+                            "defer_expires_at": serialized_defer_exp,
                             "approval_required": True,
                         },
                     )
@@ -412,6 +418,7 @@ def governed_node(
                         "governance_status": GovernanceDecision.DEFERRED.value,
                         deferred_id_key: preview_res.deferred_id,
                         "defer_reason": preview_res.defer_reason,
+                        "defer_expires_at": serialized_defer_exp,
                         "approval_required": False,
                     },
                 )

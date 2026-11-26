@@ -606,12 +606,47 @@ class ValidateActionRequest(BaseModel):
     action: str
     params: dict[str, Any]
     policy_version_id: str | None = None
+    correlation_id: str | None = None
 
     @field_validator("params")
     @classmethod
     def _reject_non_finite_floats(cls, v: dict[str, Any]) -> dict[str, Any]:
         _check_non_finite_recursive(v, "params")
         return v
+
+
+def _resolve_validate_correlation_id(
+    body_correlation_id: str | None,
+    header_correlation_id: str | None,
+) -> tuple[str | None, JSONResponse | None]:
+    """Resolve and validate per-request correlation_id from body and X-Correlation-ID."""
+    body_clean: str | None = None
+    if body_correlation_id is not None:
+        body_clean = body_correlation_id.strip()
+        if not body_clean:
+            return None, JSONResponse(
+                status_code=400,
+                content={
+                    "error": "invalid_correlation_id",
+                    "detail": "correlation_id must not be empty when supplied.",
+                },
+            )
+    header_clean: str | None = None
+    if header_correlation_id is not None:
+        header_clean = header_correlation_id.strip() or None
+    if (
+        body_clean is not None
+        and header_clean is not None
+        and body_clean != header_clean
+    ):
+        return None, JSONResponse(
+            status_code=400,
+            content={
+                "error": "mismatched_correlation_id",
+                "detail": "Body correlation_id does not match X-Correlation-ID header.",
+            },
+        )
+    return body_clean or header_clean, None
 
 
 class PolicyPrecheckRequest(BaseModel):
@@ -1241,6 +1276,13 @@ async def validate_action_endpoint(
     if canary_rejection is not None:
         return canary_rejection
 
+    req_correlation_id, corr_err = _resolve_validate_correlation_id(
+        body.correlation_id,
+        request.headers.get("X-Correlation-ID"),
+    )
+    if corr_err is not None:
+        return corr_err
+
     # ── Rate limiting: shared dual-bucket GCRA (identity + principal) ─────────
     rl_res = await _check_validate_action_rate_limit(request)
     if inspect.isawaitable(rl_res):
@@ -1375,6 +1417,7 @@ async def validate_action_endpoint(
                 if isinstance(evaluated_action_hash, str)
                 else None
             ),
+            correlation_id=req_correlation_id,
         )
         return JSONResponse(content=envelope.to_dict(include_signature=True))
 
@@ -1446,6 +1489,7 @@ async def validate_action_endpoint(
                 params=body.params,
                 governance_result=jsonable_encoder(refusal_content),
                 tiers_passed=[],
+                correlation_id=req_correlation_id,
             )
         except Exception:
             logger.error("❌ Failed to sign HTTP 403 refusal envelope", exc_info=True)

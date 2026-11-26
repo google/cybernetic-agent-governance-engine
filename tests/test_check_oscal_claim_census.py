@@ -48,8 +48,8 @@ def test_committed_census_passes_validation_and_counts() -> None:
         counts[v] = counts.get(v, 0) + 1
 
     assert counts == {
-        "HOLDS": 28,
-        "WEAKER": 68,
+        "HOLDS": 29,
+        "WEAKER": 67,
         "NOT_IN_FORCE": 24,
         "INHERITED": 45,
         "ROLLUP": 35,
