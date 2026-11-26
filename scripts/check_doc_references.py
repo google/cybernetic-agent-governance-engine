@@ -546,27 +546,12 @@ def _validate_resolved_path_anchors(
         else None
     )
     if dbl_match is not None:
-        if STRICT_SYMBOL_ANCHORS or "#" in dbl_match.group("anchor"):
-            return resolve_symbol_anchor(
-                resolved,
-                dbl_match.group("anchor"),
-                subtoken_sep="#",
-                anchor_stats=anchor_stats,
-            )
-        # Default-mode bypass: a `path::symbol` citation passes on the path
-        # alone and the symbol is never looked up. Preconditions for removing
-        # it (the first step of the strict-mode flip):
-        # 1. Done: _pin_clause_tokens cuts path substrings out of each code
-        #    span and keeps the identifiers around them.
-        # 2. Not implemented: a generic token may corroborate a pinned line
-        #    citation but must never be its only match; the citation passes
-        #    only if at least one non-generic clause token is on the cited
-        #    lines. Generic tokens are command words and language built-ins
-        #    found on many lines, e.g. `cd`, `path`, `file`, `source`. Without
-        #    this, a citation whose real identifiers drift off the cited lines
-        #    keeps passing on a generic token, and a detectable drift becomes
-        #    a silent pass.
-        return True, ""
+        return resolve_symbol_anchor(
+            resolved,
+            dbl_match.group("anchor"),
+            subtoken_sep="#",
+            anchor_stats=anchor_stats,
+        )
 
     hash_match = HASH_SYMBOL_ANCHOR_PATTERN.search(stripped_target)
     if hash_match is not None:
@@ -2458,6 +2443,150 @@ _PIN_TOKEN_STOPWORDS = frozenset(
         "if",
     }
 )
+# Command words and language built-ins common across many lines: they may
+# corroborate a pinned-line citation when a specific identifier also matches,
+# but must never be the sole match proving cited lines have not drifted.
+_PIN_GENERIC_TOKENS = frozenset(
+    {
+        "cd",
+        "path",
+        "file",
+        "source",
+        "export",
+        "echo",
+        "cat",
+        "ls",
+        "cp",
+        "mv",
+        "rm",
+        "mkdir",
+        "rmdir",
+        "touch",
+        "chmod",
+        "chown",
+        "grep",
+        "rg",
+        "sed",
+        "awk",
+        "find",
+        "xargs",
+        "head",
+        "tail",
+        "sort",
+        "uniq",
+        "wc",
+        "cut",
+        "tr",
+        "tee",
+        "curl",
+        "wget",
+        "env",
+        "pwd",
+        "exit",
+        "exec",
+        "eval",
+        "set",
+        "unset",
+        "shift",
+        "trap",
+        "test",
+        "read",
+        "printf",
+        "git",
+        "uv",
+        "pip",
+        "python",
+        "python3",
+        "bash",
+        "sh",
+        "zsh",
+        "make",
+        "sudo",
+        "def",
+        "class",
+        "return",
+        "import",
+        "from",
+        "as",
+        "with",
+        "try",
+        "except",
+        "finally",
+        "raise",
+        "assert",
+        "pass",
+        "break",
+        "continue",
+        "for",
+        "while",
+        "else",
+        "elif",
+        "and",
+        "not",
+        "is",
+        "lambda",
+        "yield",
+        "async",
+        "await",
+        "global",
+        "nonlocal",
+        "del",
+        "str",
+        "int",
+        "float",
+        "bool",
+        "list",
+        "dict",
+        "tuple",
+        "frozenset",
+        "bytes",
+        "object",
+        "type",
+        "len",
+        "any",
+        "all",
+        "open",
+        "print",
+        "range",
+        "enumerate",
+        "zip",
+        "map",
+        "filter",
+        "sorted",
+        "reversed",
+        "isinstance",
+        "issubclass",
+        "hasattr",
+        "getattr",
+        "setattr",
+        "super",
+        "self",
+        "cls",
+        "exception",
+        "valueerror",
+        "typeerror",
+        "keyerror",
+        "runtimeerror",
+        "attributeerror",
+        "indexerror",
+        "var",
+        "local",
+        "locals",
+        "module",
+        "resource",
+        "data",
+        "variable",
+        "output",
+        "provider",
+        "terraform",
+        "required_version",
+        "required_providers",
+        "for_each",
+        "count",
+        "depends_on",
+        "lifecycle",
+    }
+)
 
 
 def _pin_line_spans(spec: str) -> list[tuple[int, int]]:
@@ -2517,9 +2646,10 @@ def _check_pinned_lines(
     """Return a refusal reason for pinned line spans, or "" when they hold.
 
     Bounds and blank-line checks run against the pinned blob. Agreement is
-    bidirectional: the clause must already name an identifier, and the cited
-    lines (+/- 1, plus any enclosing Python definition) must contain it. A
-    pinned line the document never named is refused rather than guessed at.
+    bidirectional: the clause must name at least one non-generic identifier,
+    and the cited lines (+/- 1, plus any enclosing Python definition) must
+    contain at least one non-generic clause token. Generic tokens may
+    corroborate a citation alongside a specific identifier, never alone.
     """
     flines = blob.read_text(encoding="utf-8", errors="replace").splitlines()
     total = len(flines)
@@ -2533,6 +2663,13 @@ def _check_pinned_lines(
             f"Pinned {label} names no identifier; cite the symbol in backticks "
             "or use '<sha>:<path>#symbol'"
         )
+    specific = tokens - _PIN_GENERIC_TOKENS
+    if not specific:
+        return (
+            f"Pinned {label} names only generic token(s) "
+            f"{sorted(tokens)[:4]}; cite a specific identifier in backticks "
+            "or use '<sha>:<path>#symbol'"
+        )
     chunks = ["\n".join(flines[max(0, s - 2) : min(total, e + 1)]) for s, e in spans]
     if blob.suffix == ".py":
         chunks.extend(
@@ -2541,10 +2678,17 @@ def _check_pinned_lines(
             if any(sym_s <= e and sym_e >= s for s, e in spans)
         )
     window = "\n".join(chunks).lower()
-    if not any(tok in window for tok in tokens):
+    matched = {tok for tok in tokens if tok in window}
+    if not matched:
         return (
             f"Pinned {label} does not contain the clause's identifier(s) "
             f"{sorted(tokens)[:4]} in the pinned blob"
+        )
+    if not (matched - _PIN_GENERIC_TOKENS):
+        return (
+            f"Pinned {label} matches only generic token(s) "
+            f"{sorted(matched)[:4]}; none of {sorted(specific)[:4]} "
+            "appear on the cited lines"
         )
     return ""
 
@@ -2764,10 +2908,7 @@ def audit_markdown_file(
             has_colon_spec = bool(COLON_LINE_SPEC_PATTERN.match(code_snippet))
             has_symbol_anchor = bool(
                 HASH_SYMBOL_ANCHOR_PATTERN.search(code_snippet)
-                or (
-                    (STRICT_SYMBOL_ANCHORS or "#" in code_snippet)
-                    and DOUBLE_COLON_ANCHOR_PATTERN.match(code_snippet)
-                )
+                or DOUBLE_COLON_ANCHOR_PATTERN.match(code_snippet)
             )
             is_explicit_path = (
                 (
