@@ -87,11 +87,21 @@ component-definition:
             - uuid: "1a2b3c4d-5e6f-7a8b-9c0d-1e2f3a4b5c6d"
               control-id: ac-3
               description: |
-                Preview-plane access mediation in packages/cage-client/ (v0.5.0) is
-                implemented in packages/cage-client/src/cage_client/core.py
-                (CageClient.validate_action(), enforce_verification_posture()).
+                Preview and committing access mediation in packages/cage-client/
+                (`v0.5.0`) and the migrated reference advisor is implemented in
+                packages/cage-client/src/cage_client/core.py
+                (CageClient.validate_action(), CageClient.preview(),
+                CageClient.execute_tool(), enforce_verification_posture()),
+                packages/cage-client/src/cage_client/langgraph.py
+                (governed_node(), governed_tool_node(), approval_park_node()),
+                packages/cage-client/src/cage_client/outcomes.py
+                (ApprovalRedemptionRefusal, CommitResult, CommitStatus,
+                GovernanceDecision), and
+                packages/cage-client/src/cage_client/exceptions.py
+                (MissingDeferralTicketError).
 
-                CageClient.validate_action() posts canonicalized action parameters to
+                1. Preview-plane access mediation (CageClient.validate_action() /
+                CageClient.preview()): posts canonicalized action parameters to
                 POST /governance/validate-action (dry-run preview only — reserves no
                 budget, mints no single-use routing seal, and performs no actuation) and
                 mediates verdicts fail-closed by HTTP response status, cryptographic
@@ -117,32 +127,76 @@ component-definition:
                   expiration, or subject verification with ValueError unless CAGE_ENV /
                   ENVIRONMENT is explicitly in {"dev", "development", "test", "testing"}
 
-                Scope boundary: The legacy @cage_guard LangGraph node decorator was
-                removed in cage-client 0.5.0 because it gated arbitrary node functions
-                behind preview-only /governance/validate-action and raised across DEFER
-                before LangGraph could checkpoint deferred_id; a committing /tools/execute
-                client method and replacement LangGraph node factory (governed_node /
-                approval_park_node) are open under POAM-2026-251. Server-side v3
-                asymmetric KMS JWT routing seals and Redis SETNX single-use nonce
-                consumption live in src/gateway/governance/routing_seal.py, and
-                consecutive denial budget tracking (MAX_CONSECUTIVE_DENIALS) lives in
+                2. Committing execution & LangGraph HITL factories
+                (CageClient.execute_tool(), governed_node(), governed_tool_node(),
+                approval_park_node()): posts to POST /tools/execute with
+                idempotency_key (or configurable idempotency_param), optional
+                approval_token, and fail-closed HTTP/CommitOutcome decoding across
+                EXECUTED, DRY_RUN, REFUSED, DEFERRED, INDETERMINATE, and
+                UNSETTLED_DUPLICATE (with canonical uppercase ApprovalRedemptionRefusal
+                decoding and HTTP 429/503 GatewayUnavailableError vs HTTP 500/502/504
+                or transport-error client-inferred INDETERMINATE halt behavior).
+                governed_node(), governed_tool_node(), and approval_park_node() require
+                explicit non-empty principal and action extractors (no fabricated
+                "unknown" or {} fallback), return langgraph.types.Command so
+                deferred_id / deferred_step_ids checkpoint before
+                langgraph.types.interrupt(), raise MissingDeferralTicketError when a
+                park node is entered without a deferral ticket, and differentiate
+                retryable (PENDING, QUORUM_INCOMPLETE) vs terminal
+                ApprovalRedemptionRefusal codes (including CONSUMED single-use replay
+                refusal).
+
+                3. Reference advisor integration (src/governed_financial_advisor/):
+                governed_trader_graph uses governed_tool_node(mode="execute",
+                idempotency_param="transaction_id"), data_analyst_graph uses
+                governed_tool_node(mode="preview"), approval_node delegates to
+                approval_park_node(), and tool_guard.py is reduced strictly to
+                advisor-specific TOCTOU drift revalidation, REFUSAL_DESCRIPTIONS, and
+                trade-description allowlisting (retiring legacy gateway_tool_guard /
+                @cage_guard / local trade actuation). Full DEFER -> MemorySaver
+                checkpoint -> interrupt() -> premature resume re-park -> quorum
+                approve -> single-use redemption -> CONSUMED replay refusal is
+                verified end-to-end against real DeferQueue and execute_trade_action in
+                tests/unit/test_advisor_sdk_checkpointer_e2e.py.
+
+                Scope boundary: Server-side v3 asymmetric KMS JWT routing seals,
+                ActuatorRegistry dispatch, and Redis SETNX single-use nonce
+                consumption live in src/gateway/governance/routing_seal.py and
+                src/gateway/governance/execution_actuator.py, and consecutive denial
+                budget tracking (MAX_CONSECUTIVE_DENIALS) lives in
                 src/governed_financial_advisor/graph/nodes/safety_node.py, outside
                 packages/cage-client/.
               props:
                 - name: implementation-status
-                  value: partially-implemented
+                  value: implemented
                 - name: control-origination
                   value: system-specific
                 - name: implementation-date
-                  value: "2026-11-24"
-                - name: poam-reference
-                  value: "POAM-2026-251"
+                  value: "2026-11-26"
               links:
                 - href: "https://csrc.nist.gov/projects/cprt/api/cprt/framework/version/SP_800_53_5_1_1/home?element=AC-3"
                   rel: reference
                 - href: "../../packages/cage-client/src/cage_client/core.py"
                   rel: implementation
-                  text: "Out-of-process preview verification and fail-closed posture guard in CageClient"
+                  text: "Out-of-process preview, committing POST /tools/execute mediation, and fail-closed posture guard in CageClient"
+                - href: "../../packages/cage-client/src/cage_client/langgraph.py"
+                  rel: implementation
+                  text: "Command-based LangGraph factories governed_node(), governed_tool_node(), and approval_park_node()"
+                - href: "../../packages/cage-client/src/cage_client/outcomes.py"
+                  rel: implementation
+                  text: "Canonical uppercase ApprovalRedemptionRefusal and CommitOutcome decoding"
+                - href: "../../packages/cage-client/src/cage_client/exceptions.py"
+                  rel: implementation
+                  text: "MissingDeferralTicketError and fail-closed SDK exceptions"
+                - href: "../../src/governed_financial_advisor/graph/subgraphs/governed_trader_graph.py"
+                  rel: implementation
+                  text: "Reference financial advisor trader graph running on governed_tool_node(mode='execute')"
+                - href: "../../packages/cage-client/tests/test_langgraph_and_execute.py"
+                  rel: implementation
+                  text: "Unit and negative-extractor tests for execute_tool(), governed_node(), governed_tool_node(), and approval_park_node()"
+                - href: "../../tests/unit/test_advisor_sdk_checkpointer_e2e.py"
+                  rel: implementation
+                  text: "Real MemorySaver checkpointer + DeferQueue + execute_trade_action HITL and single-use replay refusal E2E tests"
 
             - uuid: "2b3c4d5e-6f7a-8b9c-0d1e-2f3a4b5c6d7e"
               control-id: au-10
