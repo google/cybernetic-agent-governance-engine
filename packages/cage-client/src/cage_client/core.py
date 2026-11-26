@@ -76,11 +76,23 @@ from .crypto import (
 from .envelope import GovernanceEnvelope
 from .exceptions import (
     CageGatewayError,
+    CommitOutcomeDecodeError,
     DeferralPending,
+    GatewayUnavailableError,
     PolicyViolationException,
     RoutingSealVerificationError,
 )
 from .jwks import JwksKeyResolver, PublicKey, validate_http_url
+from .outcomes import (
+    INDETERMINATE_STATUSES,
+    CommitOutcome,
+    CommitStatus,
+    GovernanceDecision,
+    IndeterminateProvenance,
+    PreviewResult,
+    _validate_json_scalars,
+    verify_commit_outcome_payload,
+)
 
 # Check for optional HTTP/2 support (h2 package)
 _HTTP2_AVAILABLE = importlib.util.find_spec("h2") is not None
@@ -91,6 +103,11 @@ _DEV_POSTURES: frozenset[str] = frozenset({"dev", "development", "test", "testin
 _ALLOWED_SIGNATURE_KEYS: frozenset[str] = frozenset({"algorithm", "kid", "value"})
 _EMBEDDED_KEY_FIELDS: frozenset[str] = frozenset(
     {"public_key", "public_key_pem", "jwk", "jwks", "x5c", "x5u", "jku"}
+)
+_PRE_DISPATCH_CONNECT_ERRORS = (
+    httpx.ConnectError,
+    httpx.ConnectTimeout,
+    httpx.PoolTimeout,
 )
 
 logger = logging.getLogger("CageClient")
@@ -143,27 +160,39 @@ def enforce_verification_posture(
     verify_signature: bool = True,
     verify_expiration: bool = True,
     verify_subject: bool = True,
+    subject_label: str = "GovernanceEnvelope",
 ) -> None:
     """Reject verification opt-outs unless running in an explicit dev/test posture.
 
     Unset/blank ``CAGE_ENV`` and ``ENVIRONMENT`` default fail-secure to
     ``"production"``, and ``"local"`` is enforcing (matching kernel
-    ``env_posture.is_enforcing()``; POAM-2026-241).
+    ``env_posture.is_enforcing()``; POAM-2026-241). Whenever an opt-out is
+    permitted in an explicit dev/test posture, emit a warning so permissive
+    settings are never silent.
     """
     raw_env = (
         os.environ.get("CAGE_ENV", "").strip()
         or os.environ.get("ENVIRONMENT", "").strip()
         or "production"
     ).lower()
-    if raw_env not in _DEV_POSTURES:
-        if not verify_signature or not verify_expiration or not verify_subject:
+    if not verify_signature or not verify_expiration or not verify_subject:
+        if raw_env not in _DEV_POSTURES:
             raise ValueError(
-                f"Disabling GovernanceEnvelope verification "
+                f"Disabling {subject_label} verification "
                 f"(verify_signature={verify_signature}, "
                 f"verify_expiration={verify_expiration}, "
                 f"verify_subject={verify_subject}) is forbidden in "
                 f"enforcing posture {raw_env!r}"
             )
+        logger.warning(
+            "Disabling %s verification (verify_signature=%s, verify_expiration=%s, "
+            "verify_subject=%s) under non-enforcing posture %r; never use this in production.",
+            subject_label,
+            verify_signature,
+            verify_expiration,
+            verify_subject,
+            raw_env,
+        )
 
 
 class CageClient:
@@ -729,11 +758,386 @@ class CageClient:
             or envelope.payload.get("retry_after_seconds")
             or 14400
         )
+        verdict_val = CageClient._extract_verdict(envelope)
         raise DeferralPending(
             ticket_id=ticket_id,
             defer_reason=defer_reason,
             expires_at=envelope.expires_at,
             ttl_seconds=ttl_seconds,
+            verdict=str(verdict_val) if isinstance(verdict_val, str) else None,
+        )
+
+    async def preview(
+        self,
+        action: str,
+        parameters: Mapping[str, Any],
+        agent_id: str,
+        context: Mapping[str, Any] | None = None,
+    ) -> PreviewResult:
+        """Evaluate a proposed action in dry-run preview mode and return a 5-outcome ``PreviewResult``.
+
+        Wraps :meth:`validate_action` without raising on policy/infra verdicts so
+        workflow routers can branch explicitly on :class:`GovernanceDecision`
+        (``ALLOWED``, ``NARROWED``, ``DENIED``, ``DEFERRED``, ``UNAVAILABLE``).
+        """
+        if not isinstance(action, str) or not action.strip():
+            raise ValueError("preview() requires a non-empty 'action' string")
+        if not isinstance(parameters, Mapping):
+            raise ValueError("preview() requires a mapping for 'parameters'")
+        if not isinstance(agent_id, str) or not agent_id.strip():
+            raise ValueError("preview() requires a non-empty 'agent_id' string")
+
+        try:
+            envelope = await self.validate_action(
+                action=action,
+                parameters=dict(parameters),
+                agent_id=agent_id,
+                context=dict(context) if context is not None else None,
+            )
+            return PreviewResult(
+                decision=GovernanceDecision.ALLOWED,
+                envelope=envelope,
+                gateway_verdict="ALLOW",
+            )
+        except PolicyViolationException as exc:
+            details = (
+                exc.violation_details
+                if isinstance(exc.violation_details, Mapping)
+                else {}
+            )
+            raw_violations = details.get("violations")
+            violations = (
+                tuple(raw_violations) if isinstance(raw_violations, list) else ()
+            )
+            if exc.reason_code == "NARROWED":
+                narrowed = details.get("narrowed_params")
+                return PreviewResult(
+                    decision=GovernanceDecision.NARROWED,
+                    gateway_verdict="NARROW",
+                    narrowed_params=(
+                        dict(narrowed) if isinstance(narrowed, Mapping) else None
+                    ),
+                    reason_code="NARROWED",
+                    audit_id=exc.audit_id,
+                    violations=violations,
+                    recoverable=True,
+                )
+            return PreviewResult(
+                decision=GovernanceDecision.DENIED,
+                gateway_verdict="DENY",
+                reason_code=exc.reason_code,
+                audit_id=exc.audit_id,
+                violations=violations,
+                recoverable=exc.recoverable,
+            )
+        except DeferralPending as exc:
+            verdict_str = exc.verdict or "DEFER"
+            return PreviewResult(
+                decision=GovernanceDecision.DEFERRED,
+                gateway_verdict=verdict_str,
+                deferred_id=exc.ticket_id,
+                defer_reason=exc.defer_reason,
+                requires_approval=(verdict_str == "REQUIRE_APPROVAL"),
+            )
+        except RoutingSealVerificationError as exc:
+            logger.error("Preview verification failed fail-closed: %s", exc)
+            return PreviewResult(
+                decision=GovernanceDecision.UNAVAILABLE,
+                reason_code="VERIFICATION_FAILED",
+                recoverable=False,
+                error=str(exc),
+            )
+        except (CageGatewayError, httpx.RequestError) as exc:
+            logger.error("Preview gateway call unavailable fail-closed: %s", exc)
+            return PreviewResult(
+                decision=GovernanceDecision.UNAVAILABLE,
+                reason_code="GATEWAY_UNAVAILABLE",
+                recoverable=False,
+                error=str(exc),
+            )
+
+    @staticmethod
+    def _build_execute_unavailable_error(
+        response: httpx.Response,
+    ) -> GatewayUnavailableError:
+        """Build a pre-dispatch ``GatewayUnavailableError`` from HTTP 429/503 responses."""
+        status = response.status_code
+        retry_after: int | None = None
+        if status == 429:
+            raw_ra = response.headers.get("Retry-After")
+            if raw_ra:
+                try:
+                    retry_after = int(float(raw_ra))
+                except ValueError:
+                    retry_after = None
+        body: Mapping[str, Any] = {}
+        try:
+            parsed = response.json()
+            if isinstance(parsed, Mapping):
+                body = parsed
+        except Exception:
+            body = {}
+        error_code = _non_blank_str(body.get("error")) or (
+            "rate_limit_exceeded" if status == 429 else f"http_{status}_unavailable"
+        )
+        dependency = _non_blank_str(body.get("dependency"))
+        failure_code = _non_blank_str(body.get("failure_code"))
+        detail = (
+            _non_blank_str(body.get("detail"))
+            or _non_blank_str(body.get("error"))
+            or f"Gateway /tools/execute returned HTTP {status}"
+        )
+        return GatewayUnavailableError(
+            f"Gateway /tools/execute unavailable (HTTP {status}: {detail})",
+            status_code=status,
+            error_code=error_code,
+            dependency=dependency,
+            failure_code=failure_code,
+            retry_after_seconds=retry_after,
+        )
+
+    @staticmethod
+    def _client_inferred_indeterminate(
+        *,
+        message: str,
+        tool_name: str,
+        idempotency_key: str | None,
+        http_status: int | None = None,
+    ) -> CommitOutcome:
+        return CommitOutcome(
+            status=CommitStatus.INDETERMINATE,
+            message=message,
+            tool_name=tool_name,
+            idempotency_key=idempotency_key,
+            provenance=IndeterminateProvenance.CLIENT_INFERRED,
+            verified=False,
+            may_have_executed=True,
+            http_status=http_status,
+        )
+
+    async def execute_tool(
+        self,
+        tool_name: str,
+        params: Mapping[str, Any],
+        *,
+        idempotency_key: str | None = None,
+        approval_token: str | None = None,
+        verify_signature: bool | None = None,
+        require_commit_outcome: bool = True,
+        timeout_s: float | None = None,
+        headers: Mapping[str, str] | None = None,
+    ) -> CommitOutcome:
+        """Invoke a named tool via ``POST /tools/execute`` and verify the returned ``CommitOutcome``.
+
+        Verifies KMS-signed ``CommitOutcome`` payloads across HTTP ``200``, ``202``
+        (``DEFERRED``), and ``403`` (``REFUSED``) by default via the single
+        ``enforce_verification_posture()`` policy (mandatory in enforcing postures;
+        opt-out allowed only in explicit ``dev``/``test`` postures with a warning).
+
+        Args:
+            tool_name: Registered gateway tool name (e.g. ``"execute_trade_action"``).
+            params: Tool call arguments (model-supplied ``deferred_id`` is stripped
+                unless ``approval_token`` is passed explicitly).
+            idempotency_key: Optional caller idempotency key injected into tool params
+                and verified against the signed outcome's ``idempotency_key`` binding.
+            approval_token: Optional human-approved ``deferred_id`` forwarded as
+                ``params["deferred_id"]`` on resume.
+            verify_signature: Optional per-call override (defaults to client's
+                ``verify_signature`` setting). Forbidden as ``False`` in enforcing
+                postures via ``enforce_verification_posture()``.
+            require_commit_outcome: Whether HTTP ``200`` responses must include a
+                structured ``"outcome"`` block (``True`` for committing tools;
+                ``False`` permits plain read-only tool outputs while still verifying
+                any ``"outcome"`` that is present).
+            timeout_s: Optional per-call HTTP timeout override in seconds.
+            headers: Optional additional request headers (e.g. ``x-cage-principal``).
+        """
+        if not isinstance(tool_name, str) or not tool_name.strip():
+            raise ValueError("execute_tool() requires a non-empty 'tool_name' string")
+        if not isinstance(params, Mapping):
+            raise ValueError("execute_tool() requires a mapping for 'params'")
+        if timeout_s is not None and (not math.isfinite(timeout_s) or timeout_s <= 0):
+            raise ValueError("timeout_s must be a finite number > 0")
+
+        effective_verify = (
+            self._verify_signature if verify_signature is None else verify_signature
+        )
+        enforce_verification_posture(
+            verify_signature=effective_verify,
+            subject_label="CommitOutcome",
+        )
+
+        wire_params: dict[str, Any] = {
+            k: v
+            for k, v in params.items()
+            if k not in ("deferred_id", "approval_token")
+        }
+        _validate_json_scalars(wire_params, "params")
+
+        if approval_token is not None:
+            if not isinstance(approval_token, str) or not approval_token.strip():
+                raise ValueError(
+                    "approval_token must be a non-empty string when provided"
+                )
+            wire_params["deferred_id"] = approval_token.strip()
+
+        if idempotency_key is not None:
+            if not isinstance(idempotency_key, str) or not idempotency_key.strip():
+                raise ValueError(
+                    "idempotency_key must be a non-empty string when provided"
+                )
+            wire_params["idempotency_key"] = idempotency_key
+
+        expected_key = (
+            _non_blank_str(idempotency_key)
+            or _non_blank_str(wire_params.get("idempotency_key"))
+            or _non_blank_str(wire_params.get("transaction_id"))
+        )
+
+        traceparent = generate_w3c_traceparent()
+        correlation_id = secrets.token_hex(16)
+        req_headers = {
+            "Content-Type": "application/json",
+            "traceparent": traceparent,
+            "X-Correlation-ID": correlation_id,
+            "User-Agent": _USER_AGENT,
+        }
+        if headers:
+            for k, v in headers.items():
+                req_headers[k] = v
+
+        endpoint = f"{self.gateway_url}/tools/execute"
+        body_payload = {"tool_name": tool_name, "params": wire_params}
+        effective_timeout = self.timeout_s if timeout_s is None else float(timeout_s)
+
+        try:
+            response = await self._client.post(
+                endpoint,
+                json=body_payload,
+                headers=req_headers,
+                timeout=effective_timeout,
+            )
+        except _PRE_DISPATCH_CONNECT_ERRORS as exc:
+            logger.error(
+                "Gateway /tools/execute pre-dispatch connect failure (%s): %s",
+                tool_name,
+                exc,
+            )
+            raise GatewayUnavailableError(
+                f"Failed to connect to CAGE Gateway at {endpoint}: {exc}"
+            ) from exc
+        except httpx.RequestError as exc:
+            logger.warning(
+                "Gateway /tools/execute transport ambiguity (%s): %s — classifying client-inferred INDETERMINATE",
+                tool_name,
+                exc,
+            )
+            return self._client_inferred_indeterminate(
+                message=(
+                    f"Gateway transport error after /tools/execute transmission ({type(exc).__name__}); "
+                    "execution state unknown — do not retry until reconciled."
+                ),
+                tool_name=tool_name,
+                idempotency_key=expected_key,
+            )
+
+        if response.status_code in (429, 503):
+            raise self._build_execute_unavailable_error(response)
+
+        if response.status_code in (500, 502, 504):
+            logger.warning(
+                "Gateway /tools/execute HTTP %d for %s — classifying client-inferred INDETERMINATE",
+                response.status_code,
+                tool_name,
+            )
+            return self._client_inferred_indeterminate(
+                message=(
+                    f"Gateway returned HTTP {response.status_code} during /tools/execute; "
+                    "execution state unknown — do not retry until reconciled."
+                ),
+                tool_name=tool_name,
+                idempotency_key=expected_key,
+                http_status=response.status_code,
+            )
+
+        if response.status_code not in (200, 202, 403):
+            raise CageGatewayError(
+                f"Unexpected /tools/execute status {response.status_code}: {response.text[:200]}"
+            )
+
+        try:
+            body = json.loads(
+                response.content,
+                object_pairs_hook=_refuse_duplicate_keys,
+                parse_constant=_refuse_non_finite_number,
+            )
+        except RoutingSealVerificationError:
+            raise
+        except json.JSONDecodeError as exc:
+            if response.status_code == 403:
+                raise GatewayUnavailableError(
+                    f"Gateway /tools/execute rejected request without JSON outcome (HTTP 403): {exc}",
+                    status_code=403,
+                    error_code="proxy_or_identity_forbidden",
+                ) from exc
+            return self._client_inferred_indeterminate(
+                message=(
+                    f"Malformed JSON in /tools/execute HTTP {response.status_code} response; "
+                    "execution state unknown — do not retry until reconciled."
+                ),
+                tool_name=tool_name,
+                idempotency_key=expected_key,
+                http_status=response.status_code,
+            )
+
+        if not isinstance(body, Mapping):
+            raise CageGatewayError("/tools/execute response must be a JSON object")
+
+        raw_outcome = body.get("outcome")
+        if raw_outcome is not None:
+            raw_mhe = body.get("may_have_executed")
+            mhe = raw_mhe if isinstance(raw_mhe, bool) else None
+            raw_output = body.get("output")
+            output_str = raw_output if isinstance(raw_output, str) else None
+            return await verify_commit_outcome_payload(
+                raw_outcome,
+                resolve_key=self._resolve_public_key,
+                require_signature=effective_verify,
+                expected_tool_name=tool_name,
+                expected_idempotency_key=expected_key,
+                may_have_executed=mhe,
+                http_status=response.status_code,
+                proof_hash=_non_blank_str(body.get("proof_hash")),
+                output=output_str,
+                output_redacted=bool(body.get("output_redacted", False)),
+            )
+
+        if response.status_code == 403:
+            raise GatewayUnavailableError(
+                "Gateway /tools/execute HTTP 403 missing signed 'outcome'",
+                status_code=403,
+                error_code="unverified_403_without_outcome",
+            )
+        if response.status_code == 202 or require_commit_outcome:
+            raise CommitOutcomeDecodeError(
+                f"Gateway /tools/execute HTTP {response.status_code} response missing required 'outcome'"
+            )
+
+        plain_status = body.get("status")
+        if plain_status == "SUCCESS":
+            plain_output = str(body.get("output") or "")
+            return CommitOutcome(
+                status=CommitStatus.EXECUTED,
+                message=plain_output,
+                tool_name=tool_name,
+                idempotency_key=expected_key,
+                verified=False,
+                may_have_executed=None,
+                http_status=response.status_code,
+                output=plain_output,
+            )
+        raise CageGatewayError(
+            f"Read-only /tools/execute failed without CommitOutcome (status={plain_status!r})"
         )
 
     async def _handle_allow_response(
