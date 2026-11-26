@@ -1318,3 +1318,49 @@ jobs:
           echo "${VERIFY_OUT}"
           grep -q "conformant=True" <<<"${VERIFY_OUT}"
           grep -q "posture=AUTHOR_SELF_TEST" <<<"${VERIFY_OUT}"
+
+  client-sdk-wheel-smoke:
+    name: "Client SDK Built-Wheel Smoke (Bare + [langgraph])"
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          fetch-depth: 0
+      - name: Check whether client SDK or release smoke path changed
+        id: changed
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+        run: |
+          if [ "$EVENT_NAME" != "pull_request" ]; then
+            echo "run=true" >> "$GITHUB_OUTPUT"
+          else
+            changed=$(git diff --name-only "$BASE_SHA"...HEAD -- \
+              packages/cage-client/ \
+              scripts/smoke_test_client_wheel.sh \
+              .github/workflows/publish-client-sdk.yml \
+              .github/workflows/ci.yml)
+            if [ -n "$changed" ]; then
+              echo "run=true" >> "$GITHUB_OUTPUT"
+            else
+              echo "run=false" >> "$GITHUB_OUTPUT"
+              echo "No cage-client / wheel-smoke changes in PR; skipping built-wheel smoke."
+            fi
+          fi
+      - name: Install uv
+        if: steps.changed.outputs.run == 'true'
+        uses: astral-sh/setup-uv@07a047e608db84b3d8c06cd9a7c7dcc9c355c18e # v10.3.2
+        with:
+          enable-cache: true
+      - name: Set up Python
+        if: steps.changed.outputs.run == 'true'
+        uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
+        with:
+          python-version-file: "pyproject.toml"
+      - name: Build & Two-Phase Smoke-Test cage-client Wheel
+        if: steps.changed.outputs.run == 'true'
+        run: bash scripts/smoke_test_client_wheel.sh

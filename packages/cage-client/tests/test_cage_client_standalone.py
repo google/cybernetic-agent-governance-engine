@@ -351,6 +351,42 @@ def test_standalone_exports() -> None:
     assert importlib.util.find_spec("cage_client.adapters") is None
 
 
+def test_standalone_base_import_does_not_pull_optional_extras() -> None:
+    """Base `import cage_client` must never load optional langgraph/langchain_core extras."""
+    import os
+    import subprocess
+
+    spec = importlib.util.find_spec("cage_client")
+    assert spec is not None and spec.origin is not None
+    from_site_packages = "site-packages" in Path(spec.origin).resolve().as_posix()
+
+    env = dict(os.environ)
+    env["CAGE_ENV"] = "test"
+    env.pop("ENVIRONMENT", None)
+    if not from_site_packages:
+        existing_pp = env.get("PYTHONPATH", "")
+        env["PYTHONPATH"] = (
+            f"{subpackage_src}{os.pathsep}{existing_pp}"
+            if existing_pp
+            else str(subpackage_src)
+        )
+
+    probe = (
+        "import sys, cage_client\n"
+        "assert cage_client.__version__ == '0.5.0', cage_client.__version__\n"
+        "for mod in ('langgraph', 'langchain_core', 'cage_client.langgraph'):\n"
+        "    assert mod not in sys.modules, f'import cage_client loaded {mod}'\n"
+    )
+    flags = ["-I", "-c", probe] if from_site_packages else ["-c", probe]
+    subprocess.run(
+        [sys.executable, *flags],
+        check=True,
+        capture_output=True,
+        text=True,
+        env=env,
+    )
+
+
 def test_routing_seal_secret_rejected() -> None:
     """Verify CageClient v0.4.0 rejects removed routing_seal_secret parameter."""
     with pytest.raises(TypeError):
